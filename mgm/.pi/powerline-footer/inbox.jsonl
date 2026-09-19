@@ -1,0 +1,1 @@
+{"id":"aea464bf","text":"those mcps are not enabled, why are they consuming context?","createdAt":1789853642226,"updatedAt":1789853705818,"source":{"cwd":"/Users/mgm/localllm/mgm/bin","sessionId":"01a0bb8b-3c07-7064-acc5-054bcaf5d703"},"target":{"kind":"current-session"},"intent":"post-compact","status":"blocked","error":"Compaction failed: Already compacted"}

@@ -78,7 +78,8 @@ export function backends(env: Record<string, string>, litellmMeta: Map<string, M
       discover: true,
       filter: (id) => !/embed/i.test(id),
       fallback: [env.LMSTUDIO_MODEL || "qwen/qwen3.6-35b-a3b"],
-      model: (id) => ({ id, name: id, input: ["text", "image"], cost: FREE, contextWindow: 32768, maxTokens: 8192, reasoning: true, thinkingLevelMap: QWEN_THINKING_MAP, compat: PROXY_COMPAT }),
+      // LMSTUDIO_CONTEXT is the window pi budgets against; LM Studio may serve more (MLX ignores -c)
+      model: (id) => ({ id, name: id, input: ["text", "image"], cost: FREE, contextWindow: Number(env.LMSTUDIO_CONTEXT) || 32768, maxTokens: 8192, reasoning: true, thinkingLevelMap: QWEN_THINKING_MAP, compat: PROXY_COMPAT }),
     },
     {
       id: "litellm",

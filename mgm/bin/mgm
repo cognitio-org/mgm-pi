@@ -10,4 +10,16 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [[ -f "$ROOT/../.env" ]]; then set -a; source "$ROOT/../.env"; set +a; fi
 if [[ -f "$ROOT/.env" ]]; then set -a; source "$ROOT/.env"; set +a; fi
 export PI_CODING_AGENT_DIR="$ROOT/.pi"
+
+# Make sure the local model is resident so pi does not stall on LM Studio's just-in-time reload.
+# The context length LM Studio serves cannot be forced from the CLI for MLX models (the flag is
+# ignored, Qwen 3.6 loads at 183k); pi budgets against the window the provider declares
+# (LMSTUDIO_CONTEXT, default 32768), which is deliberately the smaller of the two.
+LMS="${LMS:-$HOME/.lmstudio/bin/lms}"; MODEL="${LMSTUDIO_MODEL:-qwen/qwen3.6-35b-a3b}"
+if [[ "${MGM_SKIP_LMS:-}" != 1 && -x "$LMS" ]]; then
+  if ! "$LMS" ps --json 2>/dev/null | grep -q "\"identifier\":\"$MODEL\""; then
+    echo "mgm: loading $MODEL in LM Studio…" >&2
+    timeout 180 "$LMS" load "$MODEL" --context-length "${LMSTUDIO_CONTEXT:-32768}" --ttl 86400 -y >/dev/null 2>&1 || echo "mgm: LM Studio load failed or timed out; continuing" >&2
+  fi
+fi
 exec "$ROOT/node_modules/.bin/pi" -a "$@"

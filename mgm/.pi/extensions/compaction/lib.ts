@@ -1,0 +1,162 @@
+/**
+ * Pure logic for mgm's compaction extension. Unit-tested in tests/compaction.test.ts.
+ *
+ * Why this exists: pi's defaults (reserve 16k, keep 20k recent, one summarization request to the
+ * same model with no input cap) cannot work inside a 32k window. This module sizes everything from
+ * the model's real context window, prunes old tool output before any summary is needed, and folds
+ * history into a summary in chunks small enough for the summarizer.
+ */
+
+export type Budgets = {
+  contextWindow: number;
+  keepRecentTokens: number;   // verbatim tail kept after compaction
+  summaryMaxTokens: number;   // hard cap on the summary the model may write
+  chunkTokens: number;        // max serialized history per summarization request
+  triggerPercent: number;     // proactive compaction point (agent idle)
+  keepResults: number;        // most recent tool results kept verbatim; older large ones get pruned
+  maskMinChars: number;       // ...if larger than this
+  small: boolean;             // window ≤ 64k: aggressive settings
+};
+
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, Math.round(v)));
+
+export function budgets(contextWindow: number): Budgets {
+  const w = contextWindow > 0 ? contextWindow : 128_000;
+  const small = w <= 65_536;
+  return {
+    contextWindow: w,
+    keepRecentTokens: clamp(w * 0.25, 4_000, 40_000),
+    summaryMaxTokens: clamp(w * 0.05, 1_000, 3_000),
+    // 30%, not more: pi estimates chars/4 but code and lockfiles tokenize nearer chars/2.5
+    chunkTokens: clamp(w * 0.3, 6_000, 40_000),
+    triggerPercent: small ? 60 : 85,
+    keepResults: small ? 2 : 8,
+    maskMinChars: small ? 1_500 : 4_000,
+    small,
+  };
+}
+
+/** Same chars/4 heuristic pi uses for trailing messages. */
+export const estimateText = (s: string) => Math.ceil(s.length / 4);
+
+// ---------- observation masking ----------
+type Block = { type: string; text?: string; [k: string]: unknown };
+export type Msg = { role: string; content?: Block[] | string; toolName?: string; toolCallId?: string; [k: string]: unknown };
+
+export const ELIDED_MARK = "elided by mgm compaction";
+
+export type MaskResult = { messages: Msg[]; masked: number; savedChars: number };
+
+/**
+ * Replace the body of large tool results, except the most recent `keepResults`, with a short head
+ * plus a marker. Recency is by tool result, not by user turn, so a long read/grep loop inside one
+ * turn is pruned too (the pattern that overflows small windows). Tool-call blocks and the result's
+ * identity are untouched, so the call/result pairing stays valid.
+ */
+export function maskOldToolResults(messages: Msg[], opts: { keepResults: number; minChars: number; headChars?: number }): MaskResult {
+  const headChars = opts.headChars ?? 400;
+  const resultIdx = messages.map((m, i) => (m.role === "toolResult" ? i : -1)).filter((i) => i >= 0);
+  const protectedFrom = resultIdx.length > opts.keepResults ? resultIdx[resultIdx.length - opts.keepResults] : (resultIdx[0] ?? messages.length);
+  let masked = 0, savedChars = 0;
+  const out = messages.map((m, i) => {
+    if (i >= protectedFrom || m.role !== "toolResult" || !Array.isArray(m.content)) return m;
+    const text = m.content.filter((b) => b.type === "text").map((b) => b.text ?? "").join("\n");
+    if (text.length <= opts.minChars || text.includes(ELIDED_MARK)) return m;
+    const head = text.slice(0, headChars).trimEnd();
+    const marker = `${head}\n…[${text.length - head.length} more chars of ${m.toolName ?? "tool"} output ${ELIDED_MARK}; re-run the tool if you need it]`;
+    masked++; savedChars += text.length - marker.length;
+    return { ...m, content: [{ type: "text", text: marker }, ...m.content.filter((b) => b.type !== "text")] };
+  });
+  return { messages: out, masked, savedChars };
+}
+
+// ---------- chunking ----------
+/**
+ * Split messages into consecutive chunks whose estimated size stays under `maxTokens`.
+ * A chunk never starts with a tool result (it belongs to the assistant call before it), and a
+ * single oversized message still gets its own chunk rather than being dropped.
+ */
+export function chunkMessages<T>(messages: T[], maxTokens: number, estimate: (m: T) => number, isToolResult: (m: T) => boolean): T[][] {
+  const chunks: T[][] = [];
+  let cur: T[] = [], size = 0;
+  for (const m of messages) {
+    const t = estimate(m);
+    if (cur.length && size + t > maxTokens && !isToolResult(m)) { chunks.push(cur); cur = []; size = 0; }
+    cur.push(m); size += t;
+  }
+  if (cur.length) chunks.push(cur);
+  return chunks;
+}
+
+// ---------- prompts (same section layout pi's built-in summary uses, so the model sees one format) ----------
+export const SUMMARY_SYSTEM_PROMPT = "You write context checkpoints for a coding agent that will continue the work with a small context window. Be precise and terse. Never invent details. Output markdown only, no preamble.";
+
+const TEMPLATE = `## Goal
+[what the user is trying to accomplish]
+
+## Constraints & Preferences
+- [requirements or preferences the user stated]
+
+## Progress
+### Done
+- [x] [completed]
+### In Progress
+- [ ] [current]
+### Blocked
+- [issues, or "none"]
+
+## Key Decisions
+- **[decision]**: [rationale]
+
+## Next Steps
+1. [what should happen next]
+
+## Critical Context
+- [exact paths, commands, identifiers, error messages needed to continue]
+
+<read-files>
+[one path per line]
+</read-files>
+<modified-files>
+[one path per line]
+</modified-files>`;
+
+export function summaryPrompt(conversationText: string, previousSummary: string | undefined, instructions: string | undefined, maxWords: number): string {
+  const head = previousSummary
+    ? `<previous-summary>\n${previousSummary}\n</previous-summary>\n\n<new-messages>\n${conversationText}\n</new-messages>\n\nUpdate the previous summary with the new messages. Keep everything still relevant, drop what is superseded, and merge the file lists.`
+    : `<conversation>\n${conversationText}\n</conversation>\n\nSummarize the conversation as a context checkpoint.`;
+  const focus = instructions ? `\n\nAdditional focus: ${instructions}` : "";
+  return `${head}${focus}\n\nUse EXACTLY this format and stay under ${maxWords} words:\n\n${TEMPLATE}`;
+}
+
+export function shortenPrompt(partialSummary: string, maxWords: number): string {
+  return `The following summary was cut off because it was too long. Rewrite it complete and under ${maxWords} words, same sections, keeping the most recent state and every path, command and identifier:\n\n${partialSummary}`;
+}
+
+/** ~0.75 words per token, with headroom so a compliant answer never hits the cap. */
+export const wordBudget = (maxTokens: number) => Math.max(150, Math.floor(maxTokens * 0.55));
+
+// ---------- summarizer selection ----------
+export type ModelRef = { provider: string; id: string; contextWindow: number };
+
+/**
+ * Prefer the configured summarizer (e.g. a cheap cloud model via LiteLLM) when it exists and is
+ * authenticated; otherwise summarize with the working model itself, chunked to its window.
+ */
+export function pickSummarizer(current: ModelRef, preferred: string | undefined, find: (provider: string, id: string) => ModelRef | undefined, hasAuth: (m: ModelRef) => boolean): { model: ModelRef; reason: string } {
+  if (preferred) {
+    const slash = preferred.indexOf("/");
+    if (slash > 0) {
+      const m = find(preferred.slice(0, slash), preferred.slice(slash + 1));
+      if (m && hasAuth(m)) return { model: m, reason: "configured summarizer" };
+      return { model: current, reason: m ? `${preferred} has no credentials` : `${preferred} not found` };
+    }
+  }
+  return { model: current, reason: "no summarizer configured" };
+}
+
+export function statusText(percent: number | null | undefined, masked: number, small: boolean): string {
+  const pct = percent == null ? "?" : `${Math.round(percent)}%`;
+  const pruned = masked ? ` · ${masked} pruned` : "";
+  return `${small ? "◔" : "◕"} ctx ${pct}${pruned}`;
+}

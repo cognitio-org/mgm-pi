@@ -1,6 +1,6 @@
 {
-  "defaultProvider": "litellm",
-  "defaultModel": "local-qwen-mlx",
+  "defaultProvider": "lmstudio",
+  "defaultModel": "qwen/qwen3.6-35b-a3b",
   "packages": [
     "npm:pi-mcp-adapter",
     "npm:pi-web-access",
@@ -16,5 +16,13 @@
   "powerline": {
     "preset": "default",
     "welcome": false
+  },
+  "compaction": {
+    "reserveTokens": 8192,
+    "keepRecentTokens": 6000
+  },
+  "modelThinkingLevels": {
+    "lmstudio/qwen/qwen3.6-35b-a3b": "off",
+    "litellm/local-qwen-mlx": "off"
   }
 }

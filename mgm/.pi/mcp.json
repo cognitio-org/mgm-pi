@@ -11,14 +11,14 @@
       "url": "https://gcs-admin-mcp-ucpy26yrfa-uc.a.run.app/mcp",
       "auth": "oauth",
       "oauth": {
-        "clientName": "mgm pi agent"
+        "clientName": "mgm agent"
       }
     },
     "augment_admin": {
       "url": "https://l.augment-code.support/mcp",
       "auth": "oauth",
       "oauth": {
-        "clientName": "mgm pi agent"
+        "clientName": "mgm agent"
       },
       "directTools": false
     }

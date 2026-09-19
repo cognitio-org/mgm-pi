@@ -35,14 +35,14 @@ export function bannerLines(paint: Painter, input: BannerInput): string[] {
     .map((p) => (m?.provider === p ? paint("success", `● ${p}`) : paint("dim", `○ ${p}`)))
     .join(narrow ? " " : "   ");
   if (narrow) {
-    return ["", "  " + paint("accent", "▌MGM▐") + " " + paint("dim", `pi v${version}`), "  " + providers, "  " + paint("text", "⇄ ") + paint("accent", where), ""];
+    return ["", "  " + paint("accent", "▌MGM▐") + " " + paint("dim", `on pi v${version}`), "  " + providers, "  " + paint("text", "⇄ ") + paint("accent", where), ""];
   }
   const w = Math.max(20, Math.min(width - 4, 44));
   return [
     "",
     ...letters(paint),
     "",
-    "  " + paint("muted", "the studio of one   ·   ") + paint("dim", `pi v${version}`),
+    "  " + paint("muted", "the studio of one   ·   ") + paint("dim", `mgm on pi v${version}`),
     "  " + providers,
     "  " + paint("text", "⇄ ") + paint("accent", where),
     "  " + paint("dim", "─".repeat(w)) + " " + paint("dim", "/connect  /model  /help"),

@@ -1,11 +1,11 @@
 {
-  "name": "pi-agent",
+  "name": "mgm",
   "private": true,
   "type": "module",
-  "description": "pi coding agent with a /connect command for LM Studio (MLX), the LiteLLM router, or OpenRouter",
+  "description": "mgm coding agent (built on pi) with a /connect command for LM Studio (MLX), the LiteLLM router, or OpenRouter",
   "scripts": {
-    "start": "pi",
-    "models": "pi --list-models",
+    "start": "./bin/mgm",
+    "models": "./bin/mgm --list-models",
     "test": "node --test tests/",
     "test:e2e": "MGM_E2E=1 node --test tests/e2e.test.ts"
   },

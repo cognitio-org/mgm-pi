@@ -1,19 +1,19 @@
-# pi-agent
+# mgm
 
-[pi](https://github.com/earendil-works/pi) coding agent, project-local, with a `/connect`
-command that switches between three backends:
+The **mgm** coding agent: a project-local build of [pi](https://github.com/earendil-works/pi)
+with a `/connect` command that switches between three backends:
 
 | Backend | What | Models |
 |---|---|---|
 | `lmstudio` | Local LM Studio (MLX) on `localhost:1234` | discovered live (`qwen/qwen3.6-35b-a3b`, ...) |
-| `litellm` | Cloud router `litellm.augment-code.support` | discovered live, scoped to the `pi-agent` key's team (`tools`) |
+| `litellm` | Cloud router `litellm.augment-code.support` | discovered live, scoped to the agent key's team |
 | `openrouter` | openrouter.ai | curated list, override with `OPENROUTER_MODELS` |
 
 ## Run (from any repo)
 
 ```bash
 npm install                                   # once, in this folder
-alias mgm=~/localllm/pi-agent/bin/mgm         # put in ~/.zshrc
+alias mgm=~/localllm/mgm/bin/mgm              # put in ~/.zshrc
 cd ~/code/some-repo && mgm                    # interactive
 mgm -p "explain this repo"                    # non-interactive
 ```
@@ -88,7 +88,7 @@ double registration with pi-mcp-adapter.
 
 ## Manage on the router
 
-`~/code/openllm/litellm-config/teams/tools.json` owns the `pi-agent` key and the team's models and
+`~/code/openllm/litellm-config/teams/tools.json` owns the original `pi-agent` key (alias kept on the router) and the team's models and
 MCP servers (`object_permission.mcp_servers`); apply with `./apply-teams.sh`.
 
 ## MCP servers and how each authenticates

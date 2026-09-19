@@ -1,0 +1,51 @@
+mgm/README.md
+  s_25c805ebe232f3::t_03c2c4dc7f67ae 58-72,93-95,99-100,103,107,112-116,126
+  s_25c805ebe232f3::t_0bcf9fbbc5221c 73-92,96-98,101-102,104-106,108-111,117-125
+  s_25c805ebe232f3::t_47b50b70620b69 127-128
+mgm/.pi/extensions/compaction/lib.ts
+  s_25c805ebe232f3::t_654e8097ad36a1 1-15,17-29,34-50,55,57,60-162
+  s_25c805ebe232f3::t_8faacc9dbd6919 16,30-33,51-54,56,58-59
+mgm/.pi/powerline-footer/inbox.jsonl
+  s_25c805ebe232f3::t_64da374e435192 1
+mgm/tests/compaction.test.ts
+  s_25c805ebe232f3::t_8faacc9dbd6919 11-13,46-50,55-57,59-68,74,79
+  s_25c805ebe232f3::t_e92fa18de81fe7 19-26
+  s_25c805ebe232f3::t_db5ff506a1a450 1-10,14-18,27-45,51-54,58,69-73,75-78,80-144
+.env.example
+  s_25c805ebe232f3::t_9ca2ed7ad1433f 18-20
+mgm/.pi/settings.json
+  s_25c805ebe232f3::t_6ebb44cd604030 2-3
+  s_25c805ebe232f3::t_9ca2ed7ad1433f 23-26
+  s_25c805ebe232f3::t_a86b2a57452cba 19-22,28
+pi-agent/.pi/auth.json
+  s_25c805ebe232f3::t_15d7b31c31fe9e 1
+mgm/bin/mgm
+  s_25c805ebe232f3::t_9c59be81f9e101 13,19,23-24
+  s_25c805ebe232f3::t_64da374e435192 14-18,20-22
+mgm/.pi/extensions/compaction/index.ts
+  s_25c805ebe232f3::t_3e97318187a5de 1-4,7-37,39-47,50-126,128-133,135,138-140,142-154,156-160
+  s_25c805ebe232f3::t_8faacc9dbd6919 5-6,38,49,127,134,137,155
+  s_25c805ebe232f3::t_9ca2ed7ad1433f 141
+  s_25c805ebe232f3::t_1b44f1e388c756 48
+  s_25c805ebe232f3::t_ca704b924e3198 136
+mgm/docs/compaction-research.md
+  s_25c805ebe232f3::t_b1b59f1b7c6366 1-59
+mgm/.pi/extensions/connect/lib.ts
+  s_25c805ebe232f3::t_64da374e435192 81-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "d5b3a48c258019345bbe03d82520aa5cf273a98c",
+  "prompts": {},
+  "sessions": {
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

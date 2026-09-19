@@ -35,6 +35,22 @@ export function parseModelInfo(json: any): { ids: string[]; meta: Map<string, Mo
   return { ids: [...meta.keys()].sort(), meta };
 }
 
+// ---------- LM Studio native /api/v0/models: the served context window ----------
+export type LmStudioMeta = { contextWindow: number; loaded: boolean; vision?: boolean; toolUse?: boolean };
+
+/** `loaded_context_length` is what the server will actually accept; `max_context_length` is the model's ceiling. */
+export function parseLmStudioModels(json: any): Map<string, LmStudioMeta> {
+  const out = new Map<string, LmStudioMeta>();
+  for (const m of json?.data ?? []) {
+    if (!m?.id || (m.type && !["llm", "vlm"].includes(m.type))) continue;
+    const loaded = m.state === "loaded";
+    const ctx = (loaded && m.loaded_context_length) || m.max_context_length;
+    if (typeof ctx !== "number" || ctx <= 0) continue;
+    out.set(m.id, { contextWindow: ctx, loaded, vision: m.type === "vlm", toolUse: Array.isArray(m.capabilities) ? m.capabilities.includes("tool_use") : undefined });
+  }
+  return out;
+}
+
 // ---------- backend definitions ----------
 export type BackendId = "lmstudio" | "litellm" | "openrouter";
 export type ModelConfig = {
@@ -67,7 +83,9 @@ export const DEFAULT_OPENROUTER_MODELS = [
   "qwen/qwen3.6-35b-a3b", "deepseek/deepseek-v4", "moonshotai/kimi-k3", "z-ai/glm-5.1",
 ];
 
-export function backends(env: Record<string, string>, litellmMeta: Map<string, ModelMeta>): Backend[] {
+export function backends(env: Record<string, string>, litellmMeta: Map<string, ModelMeta>, lmstudioMeta: Map<string, LmStudioMeta> = new Map()): Backend[] {
+  // LMSTUDIO_CONTEXT caps the window pi budgets against; the served window comes from /api/v0/models
+  const lmCap = Number(env.LMSTUDIO_CONTEXT) || Infinity;
   return [
     {
       id: "lmstudio",
@@ -78,8 +96,10 @@ export function backends(env: Record<string, string>, litellmMeta: Map<string, M
       discover: true,
       filter: (id) => !/embed/i.test(id),
       fallback: [env.LMSTUDIO_MODEL || "qwen/qwen3.6-35b-a3b"],
-      // LMSTUDIO_CONTEXT is the window pi budgets against; LM Studio may serve more (MLX ignores -c)
-      model: (id) => ({ id, name: id, input: ["text", "image"], cost: FREE, contextWindow: Number(env.LMSTUDIO_CONTEXT) || 32768, maxTokens: 8192, reasoning: true, thinkingLevelMap: QWEN_THINKING_MAP, compat: PROXY_COMPAT }),
+      model: (id) => {
+        const m = lmstudioMeta.get(id);
+        return { id, name: id, input: m?.vision === false ? ["text"] : ["text", "image"], cost: FREE, contextWindow: Math.min(m?.contextWindow ?? 32768, lmCap), maxTokens: 8192, reasoning: true, thinkingLevelMap: QWEN_THINKING_MAP, compat: PROXY_COMPAT };
+      },
     },
     {
       id: "litellm",

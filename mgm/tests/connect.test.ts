@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
-  parseEnvText, parseModelInfo, backends, rootUrl, parseSpendHeaders, sessionEstimate,
+  parseEnvText, parseModelInfo, parseLmStudioModels, backends, rootUrl, parseSpendHeaders, sessionEstimate,
   money, pctText, price, fit, bar, budgetRows, renderPanel, footerStatus, plainLen, QWEN_THINKING_MAP, DEFAULT_OPENROUTER_MODELS,
 } from "../.pi/extensions/connect/lib.ts";
 
@@ -69,6 +69,28 @@ describe("backends", () => {
     assert.equal(rootUrl("https://x/v1"), "https://x");
     assert.equal(rootUrl("https://x/v1/"), "https://x");
     assert.equal(rootUrl("https://x"), "https://x");
+  });
+});
+
+describe("LM Studio /api/v0/models parsing", () => {
+  const sample = { data: [
+    { id: "qwen/qwen3.6-35b-a3b", type: "vlm", state: "loaded", max_context_length: 262144, loaded_context_length: 183296, capabilities: ["tool_use"] },
+    { id: "nvidia/nemotron-3-nano-omni", type: "vlm", state: "not-loaded", max_context_length: 262144, capabilities: [] },
+    { id: "text-embedding-nomic-embed-text-v1.5", type: "embeddings", state: "loaded", max_context_length: 2048 },
+  ] };
+  test("loaded models report the served window, unloaded ones their ceiling, embeddings are skipped", () => {
+    const m = parseLmStudioModels(sample);
+    assert.deepEqual([...m.keys()], ["qwen/qwen3.6-35b-a3b", "nvidia/nemotron-3-nano-omni"]);
+    assert.deepEqual(m.get("qwen/qwen3.6-35b-a3b"), { contextWindow: 183296, loaded: true, vision: true, toolUse: true });
+    assert.deepEqual(m.get("nvidia/nemotron-3-nano-omni"), { contextWindow: 262144, loaded: false, vision: true, toolUse: false });
+  });
+  test("provider uses the served window, capped by LMSTUDIO_CONTEXT, with a 32k fallback", () => {
+    const meta = parseLmStudioModels(sample);
+    const lm = (env: Record<string, string>) => backends(env, new Map(), meta)[0];
+    assert.equal(lm({}).model("qwen/qwen3.6-35b-a3b").contextWindow, 183296);
+    assert.equal(lm({ LMSTUDIO_CONTEXT: "131072" }).model("qwen/qwen3.6-35b-a3b").contextWindow, 131072);
+    assert.equal(lm({ LMSTUDIO_CONTEXT: "131072" }).model("unknown-model").contextWindow, 32768);
+    assert.equal(parseLmStudioModels(undefined).size, 0);
   });
 });
 

@@ -19,7 +19,7 @@ import { homedir } from "node:os";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import {
-  type Backend, type ModelMeta, backends, parseEnvText, parseModelInfo, parseSpendHeaders, rootUrl,
+  type Backend, type ModelMeta, type LmStudioMeta, backends, parseEnvText, parseModelInfo, parseLmStudioModels, parseSpendHeaders, rootUrl,
   sessionEstimate, money, footerStatus, budgetRows, renderPanel,
 } from "./lib.ts";
 
@@ -40,8 +40,12 @@ async function getJson(url: string, apiKey: string, timeoutMs = 4000): Promise<a
   } catch { return undefined; }
 }
 
-async function discover(b: Backend, litellmMeta: Map<string, ModelMeta>): Promise<string[]> {
+async function discover(b: Backend, litellmMeta: Map<string, ModelMeta>, lmstudioMeta: Map<string, LmStudioMeta>): Promise<string[]> {
   if (!b.discover) return b.fallback;
+  if (b.id === "lmstudio") {
+    const native = await getJson(`${rootUrl(b.baseUrl)}/api/v0/models`, b.apiKey);
+    if (native) for (const [k, v] of parseLmStudioModels(native)) lmstudioMeta.set(k, v);
+  }
   if (b.id === "litellm") {
     const info = await getJson(`${rootUrl(b.baseUrl)}/model/info`, b.apiKey);
     if (info) { const { ids, meta } = parseModelInfo(info); for (const [k, v] of meta) litellmMeta.set(k, v); if (ids.length) return ids; }
@@ -66,11 +70,12 @@ function saveDefault(provider: string, model: string) {
 export default async function (pi: ExtensionAPI) {
   const env = loadEnv(process.cwd());
   const litellmMeta = new Map<string, ModelMeta>();
-  const defs = backends(env, litellmMeta);
+  const lmstudioMeta = new Map<string, LmStudioMeta>();
+  const defs = backends(env, litellmMeta, lmstudioMeta);
   const models = new Map<string, string[]>();
 
   await Promise.all(defs.map(async (b) => {
-    const ids = await discover(b, litellmMeta);
+    const ids = await discover(b, litellmMeta, lmstudioMeta);
     models.set(b.id, ids);
     pi.registerProvider(b.id, { name: b.label, baseUrl: b.baseUrl, apiKey: b.apiKey, api: "openai-completions", models: ids.map(b.model) as any });
   }));

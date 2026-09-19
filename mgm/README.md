@@ -72,9 +72,11 @@ Read from `~/localllm/.env` (shared with the rest of the localllm project), then
 
 ## Context window and compaction on the local model
 
-**Declared window: 128k** (`LMSTUDIO_CONTEXT` in `~/localllm/.env`). LM Studio's MLX engine ignores
-the CLI context flag and serves Qwen 3.6 at 183k regardless; the declared value is what pi budgets
-against. Qwen 3.6 35B-A3B is a hybrid with 10 full-attention layers and 2 KV heads, so its KV cache
+**Window discovery.** The OpenAI-compatible `/v1/models` says nothing about context, so the
+provider reads LM Studio's native `/api/v0/models` at startup: `loaded_context_length` for loaded
+models, `max_context_length` otherwise (Qwen 3.6 serves 183k; the MLX engine ignores the CLI
+context flag). `LMSTUDIO_CONTEXT` in `~/localllm/.env` caps what pi budgets against, 128k by
+default; leave it empty to use the served window. Qwen 3.6 35B-A3B is a hybrid with 10 full-attention layers and 2 KV heads, so its KV cache
 is tiny: ~2.5 GB at 128k, ~3.5 GB at 183k, on top of 20.4 GB of weights. The real cost of a large
 window is prefill (~500 tok/s: a cold 100k prompt is ~3 min; LM Studio's prompt cache makes
 follow-up turns incremental) and long-context quality, not memory. Set 65536 if you want faster

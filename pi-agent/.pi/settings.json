@@ -1,0 +1,20 @@
+{
+  "defaultProvider": "litellm",
+  "defaultModel": "local-qwen-mlx",
+  "packages": [
+    "npm:pi-mcp-adapter",
+    "npm:pi-web-access",
+    "npm:pi-subagents",
+    "npm:pi-powerline-footer",
+    "npm:pi-memory",
+    "npm:open-codebase-index",
+    "npm:pi-lsp",
+    "npm:@codexstar/pi-listen"
+  ],
+  "lastChangelogVersion": "0.85.1",
+  "theme": "dark",
+  "powerline": {
+    "preset": "default",
+    "welcome": false
+  }
+}

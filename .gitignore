@@ -1,0 +1,18 @@
+# secrets
+.env
+# tooling state
+.omc/
+node_modules/
+# pi agent runtime state (installed packages, sessions, caches, credentials)
+pi-agent/.pi/npm/
+pi-agent/.pi/sessions/
+pi-agent/.pi/mcp-cache.json
+pi-agent/.pi/models-store.json
+pi-agent/.pi/auth.json
+pi-agent/.pi/trust.json
+pi-agent/.pi/pi-tui-crash.log
+pi-agent/.pi/bin/
+# code index data (keep the config)
+.codebase-index/*
+!.codebase-index/config.json
+pi-agent/.pi/web-search-cache/

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# mgm — launch pi with the ~/localllm/pi-agent config from ANY directory.
+#   mgm                      interactive, in the current repo
+#   mgm -p "prompt"          non-interactive
+#   mgm --model litellm/claude-sonnet-5:high
+# Config (extensions, packages, settings, sessions) lives in ~/localllm/pi-agent/.pi;
+# secrets come from ~/localllm/.env and are exported so packages (pi-mcp-adapter) can use ${VAR}.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ -f "$ROOT/../.env" ]]; then set -a; source "$ROOT/../.env"; set +a; fi
+if [[ -f "$ROOT/.env" ]]; then set -a; source "$ROOT/.env"; set +a; fi
+export PI_CODING_AGENT_DIR="$ROOT/.pi"
+exec "$ROOT/node_modules/.bin/pi" -a "$@"

@@ -1,0 +1,57 @@
+.env.example
+  s_25c805ebe232f3::t_b0f058040a19e6 1-20
+.gitignore
+  s_25c805ebe232f3::t_52059a9ac41dd0 1-18
+README.md
+  s_25c805ebe232f3::t_1a0de0e38f04f3 1-63
+bench.py
+  s_25c805ebe232f3::t_f14dafb9a4e1a1 1-18
+chat.mjs
+  s_25c805ebe232f3::t_2bec4582306e98 1-48
+pi-agent/.codebase-index/config.json
+  s_25c805ebe232f3::t_9146d9beeb16b2 1-8
+pi-agent/.pi/extensions/connect/index.ts
+  s_25c805ebe232f3::t_7244c07a31fdff 1-181
+pi-agent/.pi/extensions/connect/lib.ts
+  s_25c805ebe232f3::t_cd39ece8e82c06 1-208
+pi-agent/.pi/extensions/mgm-banner/index.ts
+  s_25c805ebe232f3::t_21913866628828 1-28
+pi-agent/.pi/extensions/mgm-banner/lib.ts
+  s_25c805ebe232f3::t_9d20e3464c09f4 1-51
+pi-agent/README.md
+  s_25c805ebe232f3::t_01f8ae13fcdf6e 1-107
+pi-agent/bin/mgm
+  s_25c805ebe232f3::t_c7d3ddaa281a02 1-13
+pi-agent/package.json
+  s_25c805ebe232f3::t_b48674b081edc2 1-15
+pi-agent/tests/banner.test.ts
+  s_25c805ebe232f3::t_bab52d87269ad6 1-47
+pi-agent/tests/connect.test.ts
+  s_25c805ebe232f3::t_5d3460440ee0a8 1-198
+pi-agent/tests/e2e.test.ts
+  s_25c805ebe232f3::t_56da8553a4100a 1-37
+tunnel.sh
+  s_25c805ebe232f3::t_e8ec9eb165037b 1-16
+pi-agent/.pi/mcp.json
+  s_25c805ebe232f3::t_4f20f32a73c7da 1-26
+pi-agent/.pi/settings.json
+  s_25c805ebe232f3::t_cd48fe9a784f61 1-20
+pi-agent/package-lock.json
+  s_25c805ebe232f3::t_5a9d10ff19469b 1-2241
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "a0a850b2aa74a365447c218d896a6d0d9d8cc55f",
+  "prompts": {},
+  "sessions": {
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

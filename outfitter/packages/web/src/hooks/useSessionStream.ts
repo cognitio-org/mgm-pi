@@ -9,6 +9,20 @@ export interface StreamState {
   costEstimate?: number;
 }
 
+/** Code review N1 (docs/reports/code-review-pr15.md): the initial `GET .../entries` fetch and the
+ * SSE `EventSource` open essentially back-to-back with no ordering guarantee. If an `entry` SSE
+ * event lands (and is appended) before the initial fetch resolves, unconditionally replacing
+ * `entries` with the fetch result would silently drop it. Merge instead: `initial` is already in
+ * tree order (per the API's own contract), so it's authoritative for anything it contains; any
+ * entry already in `current` but missing from `initial` arrived over SSE in the gap and is
+ * appended after, preserving the order it arrived in. Exported as a pure function so it's testable
+ * without a fake EventSource. */
+export function mergeEntries(current: PiEntry[], initial: PiEntry[]): PiEntry[] {
+  const initialIds = new Set(initial.map((e) => e.id));
+  const streamedBeforeInitial = current.filter((e) => !initialIds.has(e.id));
+  return [...initial, ...streamedBeforeInitial];
+}
+
 /** Loads a session's entries, then keeps them (plus run state and pending UI requests) live via
  * GET /api/sessions/:id/stream (SSE: event: entry|event|status|spend|checkpoint -- protocol.md). */
 export function useSessionStream(sessionId: string): StreamState {
@@ -29,7 +43,7 @@ export function useSessionStream(sessionId: string): StreamState {
     api.entries(sessionId).then((initial) => {
       if (cancelled) return;
       for (const e of initial) entryIds.current.add(e.id);
-      setEntries(initial);
+      setEntries((prev) => mergeEntries(prev, initial));
     });
 
     const source = new EventSource(api.streamUrl(sessionId));

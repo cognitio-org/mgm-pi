@@ -1,0 +1,24 @@
+outfitter/image/Dockerfile
+  s_2209f22f830d7f::t_cecb4d19ee8224 41-44
+outfitter/packages/agentd/src/run.ts
+  s_2209f22f830d7f::t_8b2d014654a9a7 393-398,403
+outfitter/packages/agentd/test/run.test.ts
+  s_2209f22f830d7f::t_38bba94651246c 748-749,771
+  s_2209f22f830d7f::t_af65a2a8505988 750-770
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "4bbb91b985459450ab6403871ccc64bc3fcf0249",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

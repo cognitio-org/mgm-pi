@@ -1,0 +1,44 @@
+outfitter/packages/api/Dockerfile
+  s_2209f22f830d7f::t_52534cea51e8e5 5-23,28-30
+outfitter/EPIC.md
+  s_2209f22f830d7f::t_484f36d370ea7c 226-230
+outfitter/deploy/service.sh
+  s_2209f22f830d7f::t_242dbefb109094 100-103,109
+outfitter/packages/api/test/cloudrun.test.ts
+  s_2209f22f830d7f::t_b7687e80b8aa5d 1-141
+outfitter/packages/api/src/providers/cloudrun.ts
+  s_2209f22f830d7f::t_cef2503d111326 14-58,61,63,65-69,72,74,77,79,83,101-131,136,142
+outfitter/packages/api/test/agentlink.test.ts
+  s_2209f22f830d7f::t_a51445028138bf 545-563,567-599
+  s_2209f22f830d7f::t_ea100c71e19ece 564-566
+outfitter/packages/agentd/src/main.ts
+  s_2209f22f830d7f::t_0b0deed7338b94 119-122
+  s_2209f22f830d7f::t_d53ce5366e0267 55-59,61
+  s_2209f22f830d7f::t_cabc8dd7646791 135
+outfitter/packages/agentd/src/link.ts
+  s_2209f22f830d7f::t_0b0deed7338b94 32-34,83,129-132,284
+outfitter/docs/reports/deploy-gaps.md
+  s_2209f22f830d7f::t_8f97c409182a1b 270-356
+outfitter/packages/api/src/agentlink.ts
+  s_2209f22f830d7f::t_7fb8dba5a063d0 191-199,203,208-211,213,218-221,223-226,235-237,240,243-247,274,291-305
+  s_2209f22f830d7f::t_a54a8b690341f8 577-580
+  s_2209f22f830d7f::t_73142a1a90b782 526-576,581-612,614-623,626,628,630
+outfitter/packages/agentd/src/run.ts
+  s_2209f22f830d7f::t_d53ce5366e0267 368-371
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "5ff22d81f55c2e8f99044386fa2d2dc2739eda50",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

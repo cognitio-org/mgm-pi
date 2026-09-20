@@ -7,7 +7,6 @@
     "npm:pi-subagents",
     "npm:pi-powerline-footer",
     "npm:pi-memory",
-    "npm:open-codebase-index",
     "npm:pi-lsp",
     "npm:@codexstar/pi-listen"
   ],

@@ -371,6 +371,33 @@ unchanged.
 Off by default. Set `teleport.autoPush: true` in `.pi/settings.json` to push after every turn
 (`agent_end`) when the tree is clean. It's silent about "not ready to push yet" (dirty tree, no repo,
 ephemeral `--no-session`) and only notifies on a real failure; it never blocks or throws.
+## Codebase search (`open-codebase-index`)
+
+Semantic and keyword retrieval over the repo you are in: `/index` builds it, then the model gets
+`codebase_context`, `codebase_peek`, `codebase_search`, `implementation_lookup`, `find_similar`,
+`call_graph` and `pr_impact`. Embeddings come from your own model server, so indexing costs nothing
+and never leaves the machine: `.pi/extensions/mgm-codebase-index` writes
+`~/.config/codebase-index/config.json` on first run, pointing at `LMSTUDIO_BASE_URL` with
+`text-embedding-nomic-embed-text-v1.5`. A project's own `.codebase-index/config.json` still wins,
+and a config you have edited is never overwritten. `MGM_NO_CODEBASE_INDEX=1` turns it off.
+
+The package cannot be listed in `packages`: pi loads package extensions through jiti, which hands
+the runtime a data: URL of the transpiled 1 MB entry, and pi's Bun-compiled binary rejects a
+specifier that long (`ResolveMessage: NameTooLong`). Requiring the package's own CommonJS build
+fails too, because its dependencies are ESM-only and Bun cannot `require(esm)`. So
+`scripts/prebundle.sh` (run by `scripts/package.sh`, or `npm run build:index` in a checkout) uses
+esbuild to inline every dependency into one CommonJS file inside the package's `dist/`, which
+`require()` loads straight from disk; `mgm-codebase-index` loads that when present and falls back to
+the package's own entry under Node. Only packages that need it are pre-bundled (`PREBUNDLE`);
+everything else loads the normal way, and pre-bundling them all would add a build step and break on
+every package update for no gain.
+
+Indexing ~50 files takes about half a minute. Tuning lives in that config file: `indexing.autoIndex`
+(off here, so indexing stays an explicit request), `indexing.watchFiles`, `search.maxResults`,
+`search.minScore`, and `knowledgeBases` to index extra directories such as pi's own docs.
+
+One trap: running an installed bundle from inside this checkout loads both copies of the extensions
+and pi refuses the duplicate tools. Run the installed `mgm` anywhere else, or use `bin/mgm` here.
 
 ## Startup banner
 

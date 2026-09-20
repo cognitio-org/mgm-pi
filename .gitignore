@@ -22,3 +22,6 @@ mgm/.pi/web-search-cache/
 pi-agent/
 **/.pi/auth.json
 mgm/.pi/bug-reports/
+# codebase index state (rebuilt on demand)
+.codebase-index/index/
+**/.opencode/

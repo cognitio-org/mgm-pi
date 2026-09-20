@@ -19,7 +19,12 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 AR_REPO="${AR_REPO:-outfitter}"
 SERVICE="outfitter-link"
-TUNNEL_DOMAIN_LMSTUDIO="${TUNNEL_DOMAIN_LMSTUDIO:-mgm-lmstudio.ngrok.app}"
+# The laptop tunnel domain lives in ~/localllm/.env (same value tunnel.sh uses); read it from there
+# unless overridden, so the preflight probes the real endpoint.
+if [[ -z "${TUNNEL_DOMAIN_LMSTUDIO:-}" && -f "${HOME}/localllm/.env" ]]; then
+  TUNNEL_DOMAIN_LMSTUDIO="$(grep -E '^TUNNEL_DOMAIN_LMSTUDIO=' "${HOME}/localllm/.env" | cut -d= -f2- | tr -d '"'"'"'"' )"
+fi
+TUNNEL_DOMAIN_LMSTUDIO="${TUNNEL_DOMAIN_LMSTUDIO:?set TUNNEL_DOMAIN_LMSTUDIO (see ~/localllm/.env)}"
 
 API_SA_EMAIL="outfitter-api@${PROJECT}.iam.gserviceaccount.com"
 AGENT_SA_EMAIL="outfitter-agent@${PROJECT}.iam.gserviceaccount.com"

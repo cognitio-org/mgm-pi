@@ -1,0 +1,16 @@
+{
+  "name": "outfitter",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "pretest": "npm run build",
+    "test": "npm test --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

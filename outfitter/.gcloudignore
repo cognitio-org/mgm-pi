@@ -1,0 +1,6 @@
+# Keep Cloud Build uploads small: only sources and lockfiles go up.
+node_modules/
+**/node_modules/
+**/dist/
+.omc/
+docs/reports/

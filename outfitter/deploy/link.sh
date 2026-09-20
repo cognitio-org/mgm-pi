@@ -24,7 +24,7 @@ TUNNEL_DOMAIN_LMSTUDIO="${TUNNEL_DOMAIN_LMSTUDIO:-mgm-lmstudio.ngrok.app}"
 API_SA_EMAIL="outfitter-api@${PROJECT}.iam.gserviceaccount.com"
 AGENT_SA_EMAIL="outfitter-agent@${PROJECT}.iam.gserviceaccount.com"
 
-SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../packages/api" && pwd)"
+SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # outfitter/, the workspace root
 TAG="$(git -C "${SOURCE_DIR}" rev-parse --short HEAD 2>/dev/null || date +%s)"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}/outfitter-api:${TAG}"
 
@@ -32,12 +32,28 @@ IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}/outfitter-api:${TAG}"
 # both run in this role too — see registerRoutes/buildApp, src/server.ts). GITHUB_PAT and
 # LITELLM_ADMIN_KEY aren't read yet (see README.md "Secret Manager" note in api.sh) but are kept
 # identical to api.sh's set to avoid two different secret lists to maintain.
-SECRETS="MONGODB_URI=outfitter-mongodb-uri:latest,GITHUB_PAT=outfitter-github-pat:latest,LITELLM_ADMIN_KEY=outfitter-litellm-admin:latest,LOCAL_TUNNEL_TOKEN=outfitter-local-tunnel-token:latest"
+# Only mount secrets that exist: Cloud Run refuses the whole deploy when any referenced secret is
+# missing, and the API tolerates GITHUB_PAT / LITELLM_ADMIN_KEY being absent until they are needed.
+existing_secrets() {
+  local out="" pair name
+  for pair in "$@"; do
+    name="${pair#*=}"; name="${name%%:*}"
+    if gcloud secrets describe "${name}" --project="${PROJECT}" &>/dev/null; then
+      out="${out:+${out},}${pair}"
+    else
+      echo "   note: secret ${name} does not exist yet; not mounting ${pair%%=*}" >&2
+    fi
+  done
+  printf '%s' "${out}"
+}
+SECRETS="$(existing_secrets MONGODB_URI=outfitter-mongodb-uri:latest GITHUB_PAT=outfitter-github-pat:latest LITELLM_ADMIN_KEY=outfitter-litellm-admin:latest LOCAL_TUNNEL_TOKEN=outfitter-local-tunnel-token:latest)"
 
 echo "== Building ${IMAGE} with Cloud Build (reused if api.sh already built this commit) =="
 gcloud builds submit "${SOURCE_DIR}" \
   --project="${PROJECT}" \
-  --pack="image=${IMAGE}"
+  --config="${SOURCE_DIR}/deploy/cloudbuild-api.yaml" \
+  --substitutions="_IMAGE=${IMAGE}" \
+  --timeout=20m
 
 # OUTFITTER_ORIGIN must be *this* service's own URL: it's the audience agentd's Google ID token is
 # checked against (auth.ts verifyAgentToken), which is per-service, not shared with outfitter-api.

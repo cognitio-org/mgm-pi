@@ -271,10 +271,12 @@ export class MongoStore implements Store {
     this.users = new MongoUsers(db.collection("users"));
   }
 
-  static async connect(uri: string): Promise<MongoStore> {
+  /** `dbName` wins over the database in the URI; the stored URI has none, so the default keeps
+   * us out of the driver's implicit `test` database. */
+  static async connect(uri: string, dbName = "outfitter"): Promise<MongoStore> {
     const client = new MongoClient(uri);
     await client.connect();
-    const db = client.db();
+    const db = client.db(dbName);
     const store = new MongoStore(client, db);
     await store.ensureIndexes(db);
     return store;

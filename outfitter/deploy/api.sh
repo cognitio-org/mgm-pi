@@ -33,16 +33,32 @@ TUNNEL_DOMAIN_LMSTUDIO="${TUNNEL_DOMAIN_LMSTUDIO:-mgm-lmstudio.ngrok.app}"
 API_SA_EMAIL="outfitter-api@${PROJECT}.iam.gserviceaccount.com"
 AGENT_SA_EMAIL="outfitter-agent@${PROJECT}.iam.gserviceaccount.com"
 
-SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../packages/api" && pwd)"
+SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # outfitter/, the workspace root
 TAG="$(git -C "${SOURCE_DIR}" rev-parse --short HEAD 2>/dev/null || date +%s)"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}/outfitter-api:${TAG}"
 
-SECRETS="MONGODB_URI=outfitter-mongodb-uri:latest,GITHUB_PAT=outfitter-github-pat:latest,LITELLM_ADMIN_KEY=outfitter-litellm-admin:latest,LOCAL_TUNNEL_TOKEN=outfitter-local-tunnel-token:latest"
+# Only mount secrets that exist: Cloud Run refuses the whole deploy when any referenced secret is
+# missing, and the API tolerates GITHUB_PAT / LITELLM_ADMIN_KEY being absent until they are needed.
+existing_secrets() {
+  local out="" pair name
+  for pair in "$@"; do
+    name="${pair#*=}"; name="${name%%:*}"
+    if gcloud secrets describe "${name}" --project="${PROJECT}" &>/dev/null; then
+      out="${out:+${out},}${pair}"
+    else
+      echo "   note: secret ${name} does not exist yet; not mounting ${pair%%=*}" >&2
+    fi
+  done
+  printf '%s' "${out}"
+}
+SECRETS="$(existing_secrets MONGODB_URI=outfitter-mongodb-uri:latest GITHUB_PAT=outfitter-github-pat:latest LITELLM_ADMIN_KEY=outfitter-litellm-admin:latest LOCAL_TUNNEL_TOKEN=outfitter-local-tunnel-token:latest)"
 
-echo "== Building ${IMAGE} with Cloud Build (buildpacks: packages/api has no Dockerfile yet) =="
+echo "== Building ${IMAGE} with Cloud Build (packages/api/Dockerfile, context outfitter/) =="
 gcloud builds submit "${SOURCE_DIR}" \
   --project="${PROJECT}" \
-  --pack="image=${IMAGE}"
+  --config="${SOURCE_DIR}/deploy/cloudbuild-api.yaml" \
+  --substitutions="_IMAGE=${IMAGE}" \
+  --timeout=20m
 
 # OUTFITTER_ORIGIN is the API's own URL: agentd's token audience (auth.ts verifyAgentToken) and the
 # base for any links the UI prints. Cloud Run only hands out that URL once the service exists, so a

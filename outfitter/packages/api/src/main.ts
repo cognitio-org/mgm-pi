@@ -5,7 +5,7 @@ import { MemorySecretsBroker, GcpSecretsBroker, type SecretsBroker } from "./sec
 import { buildApp } from "./server.ts";
 
 const config = loadConfig();
-const store = await openStore(config.mongodbUri);
+const store = await openStore(config.mongodbUri, config.mongodbDb);
 const provider = await createProvider(config);
 const secretsBroker: SecretsBroker = config.devMode
   ? new MemorySecretsBroker()

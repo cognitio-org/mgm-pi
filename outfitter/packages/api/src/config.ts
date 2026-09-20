@@ -42,6 +42,8 @@ export interface Config {
   tunnelDomainLmstudio: string;
   /** Bearer token tunnel.sh's traffic policy requires on requests to the laptop tunnel. */
   localTunnelToken: string;
+  /** MONGODB_DB: database name, default outfitter (the URI in Secret Manager names none). */
+  mongodbDb: string;
   /** Model ids that only exist on the laptop; requires the E2.8 preflight before use in the cloud. */
   localModels: string[];
   /** Model substituted in when a run wants a local model and the laptop preflight is offline, and
@@ -89,6 +91,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     idleStopSeconds: envInt("IDLE_STOP_SECONDS", 600),
     tunnelDomainLmstudio: env.TUNNEL_DOMAIN_LMSTUDIO ?? "",
     localTunnelToken: env.LOCAL_TUNNEL_TOKEN ?? "",
+    mongodbDb: env.MONGODB_DB ?? "outfitter",
     localModels: envList("LOCAL_MODELS", ["litellm/local-qwen-mlx"], env),
     defaultCloudModel: env.DEFAULT_CLOUD_MODEL ?? "litellm/claude-auto-llm",
     ngrokWebhookSecret: env.NGROK_WEBHOOK_SECRET ?? "",

@@ -1,0 +1,9 @@
+# Builds the control-plane image from packages/api/Dockerfile with outfitter/ as the context
+# (the workspace lockfile lives there). Used by deploy/api.sh and deploy/link.sh:
+#   gcloud builds submit outfitter/ --config=deploy/cloudbuild-api.yaml --substitutions=_IMAGE=<image>
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-f", "packages/api/Dockerfile", "-t", "${_IMAGE}", "."]
+images: ["${_IMAGE}"]
+options:
+  logging: CLOUD_LOGGING_ONLY

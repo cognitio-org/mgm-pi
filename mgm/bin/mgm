@@ -3,7 +3,7 @@
 #   mgm                      interactive, in the current repo
 #   mgm -p "prompt"          non-interactive
 #   mgm --model litellm/claude-sonnet-5:high
-# Config (extensions, packages, settings, sessions) lives in ~/localllm/mgm/.pi;
+# Config (extensions, packages, settings, sessions) lives in <bundle or checkout>/.pi;
 # secrets come from ~/localllm/.env and are exported so packages (pi-mcp-adapter) can use ${VAR}.
 set -euo pipefail
 # Resolve symlinks (install.sh links ~/.local/bin/mgm here) so ROOT is the real bundle directory.

@@ -3,6 +3,13 @@
 Local LLM setup for this MacBook Pro (M4 Pro, 48 GB unified memory), plus the wiring that
 exposes it to the cloud LiteLLM router.
 
+## The mgm agent
+
+The coding agent built on top of this setup lives in [`mgm/`](mgm/README.md): pi with mgm's
+extensions (connections to LM Studio / the LiteLLM router / OpenRouter, budget tracking,
+compaction tuned for local models, voice input, per-user banner) and a release pipeline that ships
+self-contained bundles (`mgm/README.md` → *Releases*). Run it from any repo with `mgm`.
+
 ## Stack
 
 - **LM Studio** (`brew install --cask lm-studio`) with the **MLX** backend. OpenAI-compatible
@@ -14,7 +21,7 @@ exposes it to the cloud LiteLLM router.
 
 ```bash
 lms server start                                            # after a reboot
-lms load qwen/qwen3.6-35b-a3b --context-length 32768 -y     # load (first request after load is slow: MLX compile)
+lms load qwen/qwen3.6-35b-a3b --ttl 86400 -y                # load (first request after load is slow: MLX compile)
 lms ps                                                      # what's loaded
 lms unload --all
 lms get <hf-name> --mlx                                     # download another MLX model
@@ -36,8 +43,9 @@ node chat.mjs openrouter "..."
 ## Model sizing for 48 GB
 
 Q4 ≈ 0.6 GB per billion params plus context. Keep ~10 GB for macOS; ~35 GB is the comfortable
-ceiling, and never keep two 30B-class models loaded at once (the machine swaps). Set context to
-32K on load; this model's default is 183K and inflates memory.
+ceiling, and never keep two 30B-class models loaded at once (the machine swaps). MLX ignores
+`--context-length` (this model always serves 183K); mgm declares a 128K window to the agent
+(`LMSTUDIO_CONTEXT`) so budgets stay honest without touching the server.
 
 Candidates: `qwen/qwen3.6-27b` coding variant (dense, stronger at code, slower), `gemma-4` 27B/31B,
 `openai/gpt-oss-20b` (needs the bundled harmony runtime). Dense 70B is cloud territory.

@@ -18,3 +18,6 @@ mgm/.pi/bin/
 .codebase-index/*
 !.codebase-index/config.json
 mgm/.pi/web-search-cache/
+# stray pi agent dirs / credential stores
+pi-agent/
+**/.pi/auth.json

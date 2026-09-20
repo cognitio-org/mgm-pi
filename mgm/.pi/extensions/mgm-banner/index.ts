@@ -1,6 +1,6 @@
 /**
  * mgm startup banner — replaces pi's built-in header with the user's block letters (MGM for
- * Matthew, TEJ for Matej, initials for anyone else), a provider indicator and the live model line.
+ * Matthew, MATEK for Matej, initials for anyone else), a provider indicator and the live model line.
  * Recognised users get an entrance animation: letters reveal left to right, then the colours pulse.
  * /builtin-header restores pi's default header.
  *

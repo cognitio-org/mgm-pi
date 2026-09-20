@@ -59,9 +59,18 @@ read -rs MONGODB_URI && printf '%s' "$MONGODB_URI" | gcloud secrets create outfi
 
 Free at any tier; needs Organization Owner in Atlas and super-admin in the Workspace admin console.
 
-1. Atlas: **Organization Settings** > **Federated Authentication Settings** > **Identity Providers** >
-   **Configure Identity Provider** > **SAML**. Atlas shows its **Assertion Consumer Service URL**
-   and **Audience URI**; keep that tab open.
+0. Workspace first: the org-level Google SAML signing certificate lasts five years and this org
+   dates from 2018, so it has expired. Admin console > **Security** > **Authentication** > **SSO with
+   Google as SAML IdP** > **Manage certificates** > **Add certificate**. Do this before creating the
+   app, otherwise the app shows the expired certificate.
+1. Atlas: **Organization** > **Settings** > **Federated Authentication Settings** > **Manage
+   Federation Settings** > **Identity Providers** > **Configure Identity Provider** > **SAML**, name
+   it `Google Workspace`. The next screen shows Atlas's **Assertion Consumer Service URL**
+   (`https://auth.mongodb.com/sso/saml2/<id>`) and **Audience URI**
+   (`https://www.okta.com/saml2/service-provider/<id>`; Atlas's SAML broker runs on Okta, so this is
+   expected). Copy both; if Atlas will not save the provider before the Google fields are filled,
+   do step 2 to 3 first and come back. Both values are also visible later under the provider's
+   details.
 2. Workspace admin (https://admin.google.com): **Apps** > **Web and mobile apps** > **Add app** >
    **Add custom SAML app**. Name it `MongoDB Atlas`. On the Google Identity Provider details page
    copy the **SSO URL**, **Entity ID**, and download the **Certificate**.

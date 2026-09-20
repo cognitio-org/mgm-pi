@@ -1,0 +1,101 @@
+outfitter/image/strip-native-binaries.sh
+  s_2209f22f830d7f::t_1d17f083c35739 30-31,33
+  s_2209f22f830d7f::t_6c9d207a18b1b8 1,17-23,26-27,34-40,54-55,57,59,62
+  s_2209f22f830d7f::t_85c8f6c2beae1c 2-16,24-25,28-29,32,41-53,56,58,60-61,63
+outfitter/packages/agentd/test/guru.test.ts
+  s_2209f22f830d7f::t_30efc458cc0072 96-121
+outfitter/docs/protocol.md
+  s_2209f22f830d7f::t_78816fa98e7588 73
+outfitter/packages/api/src/store/types.ts
+  s_2209f22f830d7f::t_d71e815af8c967 95-100
+outfitter/packages/api/src/agentlink.ts
+  s_2209f22f830d7f::t_ce4c2df58b65c6 385-391
+outfitter/packages/agentd/pi-extension/outfitter-spend.ts
+  s_2209f22f830d7f::t_a164016de83578 1-115
+outfitter/docs/reports/cost-and-logs.md
+  s_2209f22f830d7f::t_24dba274d918ad 1-146
+outfitter/packages/agentd/test/run.test.ts
+  s_2209f22f830d7f::t_1ada5e764fb64d 631-692
+outfitter/EPIC.md
+  s_2209f22f830d7f::t_a53dd2a0977cbc 232-253
+  s_2209f22f830d7f::t_6ce7eebcdb2d71 254-271
+outfitter/packages/agentd/src/main.ts
+  s_2209f22f830d7f::t_70e1286867496f 114,121,129-132
+  s_2209f22f830d7f::t_1b97bc72975cfa 97-99,102
+  s_2209f22f830d7f::t_6f8f733be38659 14
+  s_2209f22f830d7f::t_e8de72d3c7e10b 57-66
+  s_2209f22f830d7f::t_45ea11e307cae6 103
+outfitter/packages/agentd/tsconfig.json
+  s_2209f22f830d7f::t_3a9017c8a43017 19
+outfitter/packages/agentd/src/run.ts
+  s_2209f22f830d7f::t_368842eb58b471 553
+  s_2209f22f830d7f::t_175b529e08826a 460
+  s_2209f22f830d7f::t_5cb7d3589908e6 208
+  s_2209f22f830d7f::t_650ca45762d1af 73-79
+  s_2209f22f830d7f::t_0584f588c57d7a 154-158
+  s_2209f22f830d7f::t_b9b3e14d3ce59b 11,13
+  s_2209f22f830d7f::t_c01d3c8f77da39 94-107
+  s_2209f22f830d7f::t_72b18146b3e27f 296-300
+  s_2209f22f830d7f::t_1df6c2eb1ee409 401-409,414-426
+  s_2209f22f830d7f::t_03598f30e45187 357-362,365-368,380-386
+  s_2209f22f830d7f::t_6c06979d2fc512 521
+  s_2209f22f830d7f::t_5d54c862225d2a 537
+  s_2209f22f830d7f::t_402fd0ab0f95a0 427-428
+outfitter/packages/agentd/src/logger.ts
+  s_2209f22f830d7f::t_bf8c4c5d6bd8b4 1-135
+outfitter/docs/reports/image-trim.md
+  s_2209f22f830d7f::t_096cf96be5a693 1-232
+  s_2209f22f830d7f::t_96974d0af57dc7 233-248
+outfitter/image/Dockerfile
+  s_2209f22f830d7f::t_1e1f1fbcaf80fd 54-56,61
+  s_2209f22f830d7f::t_241363e5f5d409 57-60
+  s_2209f22f830d7f::t_1f5fe667b99756 95
+  s_2209f22f830d7f::t_df79175cc2ccb0 62
+  s_2209f22f830d7f::t_d21e406a7bed4c 13-53,68-84,97-101,104-107,117,122-123,134
+  s_2209f22f830d7f::t_a0e67b17de7205 90-94
+  s_2209f22f830d7f::t_f9644dc4e79b6c 142-151
+  s_d71e62cb6f304c::t_249a954fcdcf35 63-67,85-89,96
+outfitter/image/build.sh
+  s_2209f22f830d7f::t_a9961fc4f8dadc 4-11,15-16
+outfitter/packages/agentd/test/logger.test.ts
+  s_2209f22f830d7f::t_939c67da0e282d 1-117
+outfitter/image/render-settings.sh
+  s_2209f22f830d7f::t_44e24511b063b4 13-16
+  s_2209f22f830d7f::t_577f53daa83580 1-12,17-26
+outfitter/packages/agentd/src/guru.ts
+  s_2209f22f830d7f::t_ed5f60614a37b5 26-30
+  s_2209f22f830d7f::t_1ef472736e3762 60-61
+outfitter/packages/agentd/src/pi.ts
+  s_2209f22f830d7f::t_c300f00a9e7016 185-267
+outfitter/packages/agentd/src/protocol.ts
+  s_2209f22f830d7f::t_f0c26e5a554f13 66-77
+outfitter/packages/agentd/test/outfitter-spend.test.ts
+  s_2209f22f830d7f::t_4c5af250cdd481 49-53
+  s_2209f22f830d7f::t_a7bb5c7538f422 1-48,54-60
+outfitter/packages/api/test/agentlink.test.ts
+  s_2209f22f830d7f::t_3d72d451724041 464-497
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "c65232a194a726e37dc769d69ab430079e60ae21",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_d71e62cb6f304c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "598183a5-6865-48f8-80e7-37d24447f686",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

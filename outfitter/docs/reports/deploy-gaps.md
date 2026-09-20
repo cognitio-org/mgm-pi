@@ -267,3 +267,90 @@ run.
 
 **Test run:** `npm test` from `outfitter/` (all workspaces): `@outfitter/agentd` 64/64,
 `@outfitter/api` 51/51, `@outfitter/provider-local` 2/2 — all green.
+
+## Round-two stack: hello race and execution handle
+
+Two bugs from the first cloud session run against the round-two stack (`outfitter/round-three`
+branch): a real `hello`-frame race that stranded a run for its entire reconnect backoff, and a
+`CloudRunProvider` handle bug that made the reconciler's cancel of a stale run a no-op.
+
+### 1. `hello`, sent immediately after connect, was dropped by a listener-attachment race
+
+**Observed:** agentd connects and sends `hello` as the very first thing it does once the WS upgrade
+completes — there's nothing for it to wait on. But `AgentLink.handleConnection`
+(`packages/api/src/agentlink.ts`) used to `await verifyAgentToken` (a real network call for Google's
+certs on Cloud Run) and three store lookups (`runs.findById`, `sessions.findById`, `gurus.findById`)
+*before* ever calling `waitForHello`, which is what attached the connection's first `'message'`
+listener. `ws` emits `'message'` synchronously with no listener attached — it doesn't buffer — so a
+`hello` that arrived during those awaits was simply lost. `waitForHello` then had nothing left to
+wait for: agentd only sends `hello` once per connection, so the socket sat open with nobody ever
+going to send it another frame. The observed symptom was the connection eventually giving up (agentd
+gave up on `maxUnspecMs` and reconnected; the API's own log line was the pre-existing "closing
+connection with a missing or invalid run token" warning, since the *retried* connection's `hello` won
+the same race often enough to look like a real bad-token failure) — a run stuck in `provisioning`
+for minutes over a frame that had, in fact, already been sent correctly the first time.
+
+**Fix (`packages/api/src/agentlink.ts`):** a new `FrameBuffer` class wraps the raw socket and starts
+buffering `'message'` frames the moment it's constructed — the very first statement in
+`handleConnection`, before the `verifyAgentToken` call or any other `await`. `waitForHello` now reads
+from that buffer (`FrameBuffer#next`): anything already queued first, then live frames — so it sees
+the connection's true first frame regardless of when the awaits ahead of it finish. Once `hello` is
+accepted, any *further* frames that piled up in the buffer during those same awaits (e.g. agentd
+sending an `entry` right behind `hello`) are replayed through the normal `handleUpFrame` path, in
+order, before the buffering listener is torn down and the connection's regular `'message'` listener
+takes over — so nothing sent this early is lost or reordered. The buffer is capped at 256 frames
+(`FRAME_BUFFER_CAP`); a connection that overflows it before ever getting through the handshake is
+closed with `4400` rather than allowed to grow unbounded. Separately, `waitForHello`'s wait is now
+bounded at 30s (`HELLO_TIMEOUT_MS`) instead of unbounded — agentd sends `hello` immediately, so there
+is no legitimate reason to wait on it for anywhere near the ~5–10 minutes a stuck connection was
+previously left hanging before something else (agentd's own reconnect backoff) finally moved it
+along.
+
+**Tests:** `packages/api/test/agentlink.test.ts`, new `describe("hello sent immediately after
+connect is never dropped", ...)` — stubs `OAuth2Client.prototype.verifyIdToken` (devMode off, the
+real production auth path) behind a promise the test controls explicitly, sends `hello` plus an
+`entry` frame while that promise is still pending (reproducing the exact race), then releases
+verification and asserts the connection still gets `run.spec` and that the entry was acked and
+persisted, in order.
+
+### 2. `CloudRunProvider.start` stored the runJob *operation* name as the run handle, not the execution's
+
+**Observed:** `CloudRunProvider.start` (`packages/api/src/providers/cloudrun.ts`) stored
+`operation.name` — the `JobsClient#runJob` long-running operation's own resource name
+(`.../operations/<uuid>`) — as the run's `SandboxHandle`. `status()` and `stop()` both hand that
+handle straight to `ExecutionsClient#getExecution` / `#cancelExecution`, which only understand
+*execution* resource names (`.../jobs/<job>/executions/<name>`), not operation names. Against the
+real API this silently no-ops in both directions: `getExecution` 404s (caught and reported as
+`"unknown"`), and `cancelExecution` 404s and cancels nothing. `RunManager.reconcileOnce`'s stale-run
+handling calls exactly that `stop()` before marking a run failed — so a stale run's Cloud Run Job
+execution just kept running, unaffected, until someone cancelled it by hand.
+
+**Fix (`packages/api/src/providers/cloudrun.ts`):** the execution's real resource name is available
+off the runJob operation itself — `@google-cloud/run`'s generated `JobsClient#runJob` decodes the
+LRO's `metadata` field as a `google.cloud.run.v2.Execution` synchronously in the gax `Operation`
+constructor (`google-gax`'s `longrunning.js`, `_unpackResponse`), populated as soon as Cloud Run
+accepts the job run — well before the execution itself finishes. `start()` now reads
+`operation.metadata.name` for the handle instead of `operation.name`. For the rare case
+`metadata.name` isn't present yet on the first response, a new bounded fallback
+(`resolveExecutionName`) polls `operation.getOperation()` (which refreshes `metadata` in place) up to
+`executionNamePoll.maxAttempts` times (default 10, 1s apart) and throws rather than ever storing an
+operation name as the handle. `CloudRunProvider`'s constructor now also takes an optional `deps`
+param (`jobsClient`/`executionsClient`/`executionNamePoll` factories) so this can be exercised
+without real GCP credentials; production callers (`packages/api/src/providers/index.ts`) are
+unaffected since the param is optional and defaults to the real lazy `@google-cloud/run` imports.
+`status()`/`stop()` needed no changes — they were already calling `ExecutionsClient` correctly, just
+with the wrong handle.
+
+**Tests:** `packages/api/test/cloudrun.test.ts` (new) — stubbed `JobsClient`/`ExecutionsClient`:
+`start()` stores `metadata.name` (not `operation.name`); falls back to polling `getOperation()` when
+`metadata` isn't populated on the first response; throws (rather than storing a bad handle) if the
+execution name never appears within the bounded poll; `status()`/`stop()` call `ExecutionsClient`
+with the stored execution-name handle; `status()`'s starting/running/exited mapping per the v2
+`Execution` field semantics already documented in `status()`'s own comment.
+
+**Files touched:** `packages/api/src/agentlink.ts`, `packages/api/src/providers/cloudrun.ts`,
+`packages/api/test/agentlink.test.ts`, `packages/api/test/cloudrun.test.ts` (new).
+
+**Test run:** `npm test` from `outfitter/` (all workspaces): `@outfitter/api` 86/86,
+`@outfitter/agentd` and `@outfitter/provider-local` unaffected and still green — all passing, no
+failures anywhere in the workspace.

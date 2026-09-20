@@ -542,6 +542,61 @@ describe("down-message queue poller (cross-process delivery)", () => {
   });
 });
 
+describe("hello sent immediately after connect is never dropped", () => {
+  // Observed production bug: agentd sends `hello` the instant the WS upgrade completes, but
+  // handleConnection used to await verifyAgentToken (a real network call on Cloud Run) and several
+  // store lookups *before* attaching any 'message' listener. ws emits 'message' with no listener
+  // attached, so a hello (and anything sent right after it) that arrived during those awaits was
+  // silently lost, and the connection then sat waiting out agentd's reconnect backoff instead of
+  // ever getting run.spec. Fixed by buffering frames from the moment handleConnection starts,
+  // before any await -- this test makes verifyAgentToken's own promise controllable so hello (and
+  // an entry frame right behind it) can be sent while it's still pending, the same as production.
+  test("hello (and a frame behind it) sent while token verification is still pending still gets run.spec, and the entry is persisted, in order", async (t) => {
+    let releaseVerification: (() => void) | undefined;
+    const verificationGate = new Promise<void>((resolve) => {
+      releaseVerification = resolve;
+    });
+    t.mock.method(OAuth2Client.prototype, "verifyIdToken", async () => {
+      await verificationGate; // held open until the test explicitly releases it, below
+      return { getPayload: () => ({ email: "agent@test.local" }) };
+    });
+    const app = await buildTestApp({ OUTFITTER_DEV: "0", AGENT_SA_EMAIL: "agent@test.local" });
+    // repo-less: keeps this test focused on the hello/buffering race, not buildRunSpec's separate
+    // (devMode-off) missing-githubToken check, which the default test secrets broker would trip.
+    const { session, runId, runToken } = await makeRunningSession(app, { repo: null, branch: undefined });
+
+    const agent = await openAgentSocket(app, runId, "any-google-id-token");
+    // Both frames land on the wire well before verifyAgentToken's promise ever resolves.
+    sendHello(agent, runId, session.id, runToken);
+    agent.send({ t: "entry", seq: 1, entry: { id: "e1", parentId: null, type: "message" } });
+    // Give the server's buffering listener a couple of event-loop turns to actually receive both
+    // frames before letting verification proceed, so this exercises the buffer rather than getting
+    // lucky with scheduling.
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(agent.messageCount(), 0); // nothing sent back yet -- still mid-handshake
+
+    releaseVerification?.();
+
+    const spec = await agent.nextMessage();
+    assert.equal(spec.t, "run.spec");
+
+    // The entry frame, buffered behind hello, gets replayed (in order) once the connection is
+    // fully accepted: it's acked and persisted just like it would be over the normal listener.
+    assert.deepEqual(await agent.nextMessage(), { t: "ack", seq: 1 });
+    const stored = await app.store.entries.listForSession(session.id);
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0].entry.id, "e1");
+
+    agent.send({ t: "bye", reason: "stop" });
+    const close = await agent.nextClose();
+    assert.equal(close.code, 1000);
+
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+});
+
 describe("run.spec build validates secrets", () => {
   test("closes with WS code 4412 and marks the run failed when a repo session's githubToken secret is missing (devMode off)", async (t) => {
     const emptyGithubBroker: SecretsBroker = {

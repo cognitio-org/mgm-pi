@@ -188,22 +188,42 @@ export class AgentLink {
     const runId = String((request.query as Record<string, unknown> | undefined)?.run ?? "");
     if (!runId) return closeQuietly(socket, 4400, "missing run query param");
 
+    // Bug fix: agentd sends `hello` immediately once the WS upgrade completes -- it doesn't wait
+    // for anything from us first. This handler used to await verifyAgentToken (a network call for
+    // Google certs on Cloud Run) and three store lookups *before* attaching any 'message' listener;
+    // ws emits 'message' with no listener attached, so a hello that arrived during those awaits was
+    // silently dropped, and the connection then sat waiting for a hello that was never going to be
+    // resent (agentd only sends it once per connection) until it gave up and reconnected. Attach a
+    // buffering listener synchronously, before any await, so no frame sent this early is ever lost.
+    const buffer = new FrameBuffer(socket);
+
     try {
       await verifyAgentToken(bearerFromHeader(request), this.config);
     } catch {
+      buffer.stop();
       return closeQuietly(socket, 4401, "unauthorized");
     }
 
     const run = await this.store.runs.findById(runId);
-    if (!run) return closeQuietly(socket, 4404, "run not found");
+    if (!run) {
+      buffer.stop();
+      return closeQuietly(socket, 4404, "run not found");
+    }
     if (!["provisioning", "running", "idle"].includes(run.state)) {
+      buffer.stop();
       return closeQuietly(socket, 4409, `run is ${run.state}`);
     }
 
     const session = await this.store.sessions.findById(run.sessionId);
-    if (!session) return closeQuietly(socket, 4404, "session not found");
+    if (!session) {
+      buffer.stop();
+      return closeQuietly(socket, 4404, "session not found");
+    }
     const guru = await this.store.gurus.findById(session.guruId);
-    if (!guru) return closeQuietly(socket, 4404, "guru not found");
+    if (!guru) {
+      buffer.stop();
+      return closeQuietly(socket, 4404, "guru not found");
+    }
 
     // Finding #2 (docs/reports/security-review-pr1.md): every Cloud Run Job execution for
     // outfitter-agent shares one service-account identity, so a valid agent id token only proves
@@ -212,10 +232,18 @@ export class AgentLink {
     // after connect") and require it to carry the per-run secret RunManager.wake generated
     // (RUN_TOKEN, handed to the provider at launch) before touching the run any further: no
     // run.spec, no other frame handling, no socket registration until the hash checks out.
-    const hello = await waitForHello(socket);
+    // waitForHello consumes from `buffer` first (anything that arrived during the awaits above),
+    // then live frames -- either way it's the connection's actual first frame, same as before.
+    const hello = await waitForHello(buffer);
     if (!hello || !runTokenMatches(hello.runToken, run.runTokenHash)) {
       request.log.warn({ runId }, "agentlink: closing connection with a missing or invalid run token");
+      buffer.stop();
       return closeQuietly(socket, 4401, "unauthorized");
+    }
+    if (buffer.overflowed) {
+      request.log.warn({ runId }, "agentlink: closing connection, too many frames buffered before hello");
+      buffer.stop();
+      return closeQuietly(socket, 4400, "too many buffered frames");
     }
 
     this.sockets.set(runId, socket);
@@ -228,11 +256,6 @@ export class AgentLink {
         pending.reject(new Error("agent connection closed"));
         this.pendingRequests.delete(reqId);
       }
-    });
-    socket.on("message", (raw: Buffer | string) => {
-      this.handleUpFrame(runId, session.id, socket, raw).catch((err) => {
-        request.log.error(err, "agentlink up-frame failed");
-      });
     });
 
     let spec: RunSpecMessage;
@@ -248,6 +271,7 @@ export class AgentLink {
           updatedAt: now,
         });
         this.sockets.delete(runId);
+        buffer.stop();
         return closeQuietly(socket, 4412, err.message);
       }
       throw err;
@@ -264,6 +288,21 @@ export class AgentLink {
       const pending = await this.store.runs.drainDownMessages(runId);
       for (const message of pending) socket.send(JSON.stringify(message));
     }
+
+    // Replay, in order, any further frames that arrived (and got buffered) while we were still
+    // verifying the token / looking up the run / building run.spec -- before switching over to the
+    // normal per-connection listener below, so nothing sent this early is lost or reordered.
+    for (let raw = buffer.shiftQueued(); raw !== undefined; raw = buffer.shiftQueued()) {
+      await this.handleUpFrame(runId, session.id, socket, raw).catch((err) => {
+        request.log.error(err, "agentlink up-frame failed");
+      });
+    }
+    buffer.stop();
+    socket.on("message", (raw: Buffer | string) => {
+      this.handleUpFrame(runId, session.id, socket, raw).catch((err) => {
+        request.log.error(err, "agentlink up-frame failed");
+      });
+    });
   }
 
   private async buildRunSpec(runId: string, session: Session, guru: Guru): Promise<RunSpecMessage> {
@@ -484,31 +523,111 @@ export class AgentLink {
   }
 }
 
-/** Waits for the connection's first message frame and returns it only if it's a well-formed
- * `hello`; resolves `undefined` on malformed JSON, a non-hello first frame, or the socket closing
- * before either arrives. Used by handleConnection to gate everything else (run.spec, socket
- * registration, other frame handling) on the run-token check -- finding #2. */
-function waitForHello(socket: WebSocket): Promise<UpFrame | undefined> {
+/** How many raw frames FrameBuffer holds for a connection that hasn't been fully accepted yet
+ * (still verifying its token / hello / building run.spec). A well-behaved agentd sends at most
+ * `hello` plus a handful of frames before it's heard back; this is generous headroom against a
+ * misbehaving or malicious client flooding the socket before it's ever registered. */
+const FRAME_BUFFER_CAP = 256;
+
+/** How long handleConnection waits for `hello` after the socket is otherwise ready to accept it.
+ * agentd sends `hello` as the very first thing it does after the WS upgrade completes -- there is
+ * nothing for it to wait on -- so this only needs to cover a slow connect, not agentd doing real
+ * work; 30s is generous. (Previously unbounded: a hello frame lost to the listener-attachment race
+ * this file used to have -- see handleConnection -- meant the connection just hung until agentd's
+ * own ~5min reconnect gave up and tried again.) */
+const HELLO_TIMEOUT_MS = 30_000;
+
+/**
+ * Buffers raw WebSocket frames from the moment it's constructed (synchronously, before any await
+ * a caller might otherwise do first) so nothing sent this early is lost to the classic "ws emits
+ * 'message' with no listener attached" gap. `next()` consumes one frame at a time -- first from
+ * whatever's already queued, then from the live socket -- for `waitForHello`; `shiftQueued()` lets
+ * a caller drain (without waiting) anything that piled up in the meantime, for replay once the
+ * connection is fully accepted. `stop()` detaches the buffering listener; from then on the caller
+ * owns `socket`'s 'message' events.
+ */
+class FrameBuffer {
+  private readonly queue: Array<Buffer | string> = [];
+  private waiter: ((raw: Buffer | string | undefined) => void) | undefined;
+  /** Set once `queue` would have exceeded FRAME_BUFFER_CAP; handleConnection checks this and
+   * closes the connection (4400) rather than let it grow unbounded. */
+  overflowed = false;
+
+  private readonly onMessage = (raw: Buffer | string): void => {
+    if (this.waiter) {
+      const resolve = this.waiter;
+      this.waiter = undefined;
+      resolve(raw);
+      return;
+    }
+    if (this.queue.length >= FRAME_BUFFER_CAP) {
+      this.overflowed = true;
+      return;
+    }
+    this.queue.push(raw);
+  };
+
+  private readonly onClose = (): void => {
+    if (!this.waiter) return;
+    const resolve = this.waiter;
+    this.waiter = undefined;
+    resolve(undefined);
+  };
+
+  private readonly socket: WebSocket;
+
+  constructor(socket: WebSocket) {
+    this.socket = socket;
+    socket.on("message", this.onMessage);
+    socket.on("close", this.onClose);
+  }
+
+  /** Resolves with the next frame (queued or live), or `undefined` if the socket closes first
+   * without one arriving. */
+  next(): Promise<Buffer | string | undefined> {
+    const queued = this.queue.shift();
+    if (queued !== undefined) return Promise.resolve(queued);
+    return new Promise((resolve) => {
+      this.waiter = resolve;
+    });
+  }
+
+  /** Pops one already-queued frame without waiting, or `undefined` if none are queued right now. */
+  shiftQueued(): Buffer | string | undefined {
+    return this.queue.shift();
+  }
+
+  /** Detaches the buffering listener. Idempotent. */
+  stop(): void {
+    this.socket.off("message", this.onMessage);
+    this.socket.off("close", this.onClose);
+  }
+}
+
+/** Waits (up to HELLO_TIMEOUT_MS) for the connection's first message frame -- consumed from
+ * `buffer`, so a hello that arrived before this was even called still counts -- and returns it
+ * only if it's a well-formed `hello`; resolves `undefined` on malformed JSON, a non-hello first
+ * frame, the socket closing, or the timeout. Used by handleConnection to gate everything else
+ * (run.spec, socket registration, other frame handling) on the run-token check -- finding #2. */
+function waitForHello(buffer: FrameBuffer, timeoutMs = HELLO_TIMEOUT_MS): Promise<UpFrame | undefined> {
   return new Promise((resolve) => {
-    const onMessage = (raw: Buffer | string) => {
-      cleanup();
+    let settled = false;
+    const finish = (value: UpFrame | undefined): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(undefined), timeoutMs);
+    buffer.next().then((raw) => {
+      if (raw === undefined) return finish(undefined);
       try {
         const frame = JSON.parse(typeof raw === "string" ? raw : raw.toString("utf8")) as UpFrame;
-        resolve(frame.t === "hello" ? frame : undefined);
+        finish(frame.t === "hello" ? frame : undefined);
       } catch {
-        resolve(undefined);
+        finish(undefined);
       }
-    };
-    const onClose = () => {
-      cleanup();
-      resolve(undefined);
-    };
-    function cleanup(): void {
-      socket.off("message", onMessage);
-      socket.off("close", onClose);
-    }
-    socket.on("message", onMessage);
-    socket.on("close", onClose);
+    });
   });
 }
 

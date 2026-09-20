@@ -110,6 +110,10 @@ async function main(): Promise<void> {
   // terminal. 4404/4409 mean the run is already done server-side (exit 0, nothing to do); 4400/4401
   // mean agentd itself is misconfigured (exit 1); 4412 means the run has no usable secret and can
   // never start (exit 1).
+  link.onClose((code, reason, terminal) => {
+    logger.info("link closed", { code, reason: reason || undefined, terminal });
+  });
+
   link.onTerminal((code, reason) => {
     logger.error(`link closed with terminal code ${code}: ${reason || "(no reason given)"}`, { code });
     process.exit(code === 4404 || code === 4409 ? 0 : 1);

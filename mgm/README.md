@@ -331,6 +331,121 @@ Notes from setting this up:
   workspace — so a `.rs` file outside one gets `⚠️ rust: root markers not found (Cargo.toml,
   rust-project.json)` instead of a server. `node_modules`, `dist`, `build`, `*.min.js`, virtualenvs
   and `target` are excluded.
+## Teleport
+
+Move a pi session between machines, the way Claude Code's teleport does: push it from one checkout,
+pull it into another. `.pi/extensions/teleport/lib.ts` defines a small `Store` interface
+(`list`/`get`/`put`) and a `GitStore` implementation on top of it, so the store can later be swapped
+for a cloud API ("Outfitter") without touching the commands in `.pi/extensions/teleport/index.ts`.
+
+**What gets pushed.** `/teleport push` sends the *entire* session transcript -- every prompt, tool
+call and tool result, which can include file contents, command output and anything pasted into the
+chat -- to `MGM_TELEPORT_STORE`'s git remote, unencrypted and with no secret-pattern scan beforehand.
+Make sure that remote is a **private**, access-controlled repo before you set it up; treat anything
+teleported there the same as you would a checked-in secret.
+
+```
+/teleport                 interactive picker: pick a pushed session, then pull it
+/teleport list            list sessions in the store
+/teleport push [name]     push the current session
+/teleport pull [id]       pull a session by id (prompts to pick one if omitted)
+mgm --teleport <id>       headless pull + launch, from any shell (see below)
+```
+
+### Store layout
+
+`GitStore` is a local clone directory — `MGM_TELEPORT_STORE`, default `~/.mgm-sessions` — that is
+itself a git repo (`git remote add origin <your-private-repo>` once; it works local-only, with a
+warning, if there's no remote or it's unreachable):
+
+```
+~/.mgm-sessions/
+  index.json            # array of {id, name?, cwd, repo?, branch?, updatedAt, host}
+  sessions/<id>.jsonl   # the session file, byte-for-byte
+  sessions/<id>.json    # manifest: {id, name?, host, cwd, repo?: {remote, ownerRepo, branch, head}, pushedAt}
+```
+
+`push` first syncs the clone (`git pull --ff-only`, falling back to `git pull --rebase` if another
+machine pushed in between), then writes those files, updates `index.json` from the now-synced state,
+and does `git add`/`commit`/`push`. If `push` is rejected as non-fast-forward (another push landed
+between the sync above and this one), it rebases once more and retries; if that still fails — including
+being offline with no remote reachable — the commit stays local-only and `put()` throws, so `/teleport
+push` reports a clear error instead of claiming success. `list`/`pull` do their own `git pull --ff-only`
+first. Push also appends a `custom` session entry (`customType: "teleport"`, via `pi.appendEntry`)
+recording the manifest, so `/session`-style tooling can see when and where a session was last
+teleported.
+
+### Requirements, mirrored from Claude Code's teleport
+
+- **Clean tree.** `push` and `pull` both refuse (`commit or stash first`) if `git status --porcelain`
+  is non-empty in the target checkout.
+- **Same repo.** If the manifest has a `repo` (i.e. the source checkout had a git remote), `pull`
+  compares its `ownerRepo` (parsed from `https://…`, `git@host:owner/repo.git`, and `ssh://` remotes)
+  against the current checkout's `origin`. A mismatch refuses and names both repos.
+- **Branch pushed.** `push` runs `git push -u origin <branch>` first when the branch has no upstream
+  or is ahead of it, so the commit the session was working from is actually reachable. `pull` does
+  `git fetch origin <branch> && git checkout <branch>` before importing.
+- The session id is preserved across the hop (`SessionManager.forkFrom(tmpFile, cwd, undefined, {
+  id })`); if a session with that id already exists locally, the interactive `/teleport pull` asks
+  whether to overwrite it or fork under a new id, and the headless `mgm --teleport` always forks
+  under a new id (the non-destructive default with no one there to ask).
+
+### Model remap
+
+Sessions record which provider/model they were using. `pickModelForHost` looks at the last
+`model_change` on the imported session: if that provider is available on this host (has configured
+auth), it's kept; otherwise the session falls back to `litellm/local-qwen-mlx`, which every `mgm`
+install can reach. `/teleport pull` notifies which model it picked.
+
+### What doesn't travel
+
+Same caveats as any cross-machine handoff: environment secrets (`~/localllm/.env`, `LITELLM_AGENT_KEY`,
+etc. — each machine needs its own), MCP OAuth tokens sitting in the macOS keychain (`/mcp-auth
+<server>` again on the new machine), and anything that only exists in that machine's LM Studio
+(local-only model weights, `lmstudio/...` sessions won't have a usable model there unless LM Studio
+is also running with the same model loaded).
+
+### Headless: `mgm --teleport <id>`
+
+pi has no "run a slash command at startup" flag, so `bin/mgm` handles `--teleport` itself: before pi
+starts, `.pi/extensions/teleport/cli.ts` does the store lookup, repo/branch checks, and
+`SessionManager.forkFrom` import (headlessly — no interactive prompts, so an id collision always
+forks under a new id), prints the resulting session file path, and `bin/mgm` execs
+`pi -a --session <path> ...` pointed at it. Everything else about `mgm`'s argument handling is
+unchanged.
+
+### Auto-push
+
+Off by default. Set `teleport.autoPush: true` in `.pi/settings.json` to push after every turn
+(`agent_end`) when the tree is clean. It's silent about "not ready to push yet" (dirty tree, no repo,
+ephemeral `--no-session`) and only notifies on a real failure; it never blocks or throws.
+## Codebase search (`open-codebase-index`)
+
+Semantic and keyword retrieval over the repo you are in: `/index` builds it, then the model gets
+`codebase_context`, `codebase_peek`, `codebase_search`, `implementation_lookup`, `find_similar`,
+`call_graph` and `pr_impact`. Embeddings come from your own model server, so indexing costs nothing
+and never leaves the machine: `.pi/extensions/mgm-codebase-index` writes
+`~/.config/codebase-index/config.json` on first run, pointing at `LMSTUDIO_BASE_URL` with
+`text-embedding-nomic-embed-text-v1.5`. A project's own `.codebase-index/config.json` still wins,
+and a config you have edited is never overwritten. `MGM_NO_CODEBASE_INDEX=1` turns it off.
+
+The package cannot be listed in `packages`: pi loads package extensions through jiti, which hands
+the runtime a data: URL of the transpiled 1 MB entry, and pi's Bun-compiled binary rejects a
+specifier that long (`ResolveMessage: NameTooLong`). Requiring the package's own CommonJS build
+fails too, because its dependencies are ESM-only and Bun cannot `require(esm)`. So
+`scripts/prebundle.sh` (run by `scripts/package.sh`, or `npm run build:index` in a checkout) uses
+esbuild to inline every dependency into one CommonJS file inside the package's `dist/`, which
+`require()` loads straight from disk; `mgm-codebase-index` loads that when present and falls back to
+the package's own entry under Node. Only packages that need it are pre-bundled (`PREBUNDLE`);
+everything else loads the normal way, and pre-bundling them all would add a build step and break on
+every package update for no gain.
+
+Indexing ~50 files takes about half a minute. Tuning lives in that config file: `indexing.autoIndex`
+(off here, so indexing stays an explicit request), `indexing.watchFiles`, `search.maxResults`,
+`search.minScore`, and `knowledgeBases` to index extra directories such as pi's own docs.
+
+One trap: running an installed bundle from inside this checkout loads both copies of the extensions
+and pi refuses the duplicate tools. Run the installed `mgm` anywhere else, or use `bin/mgm` here.
 
 ## Startup banner
 

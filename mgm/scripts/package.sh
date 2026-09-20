@@ -32,10 +32,11 @@ mkdir -p "$STAGE/.pi/npm" "$STAGE/bin"
 cp -R "$ROOT/.pi/extensions" "$STAGE/.pi/"
 cp "$ROOT/.pi/mcp.json" "$STAGE/.pi/"
 mkdir -p "$STAGE/.pi/agent"; cp "$ROOT/.pi/agent/lsp.json" "$STAGE/.pi/agent/"   # pi-lsp reads it via PI_AGENT_DIR
-# open-codebase-index cannot load under pi's Bun-compiled binary (its single-file extension trips a
-# NameTooLong in the binary's module loader; reproduced on pi 0.85.1 and 0.86.1). Bundles ship
-# without it; source installs (npm pi under Node) keep it. Everything else loads as under Node.
-BUNDLE_EXCLUDE="${BUNDLE_EXCLUDE:-open-codebase-index}"
+# Packages pi must not load as extensions. open-codebase-index used to live here: pi loads a package
+# extension through jiti, which hands the Bun-compiled binary a data: URL of the transpiled 1 MB
+# entry and trips NameTooLong. It now ships and is loaded by .pi/extensions/mgm-codebase-index,
+# which requires the package's CommonJS build from disk instead. Set BUNDLE_EXCLUDE to drop others.
+BUNDLE_EXCLUDE="${BUNDLE_EXCLUDE-}"
 node -e '
   const fs = require("fs"); const s = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
   const ex = process.argv[2].split(",").filter(Boolean);
@@ -43,7 +44,7 @@ node -e '
   fs.writeFileSync(process.argv[3], JSON.stringify(s, null, 2) + "\n");
 ' "$ROOT/.pi/settings.json" "$BUNDLE_EXCLUDE" "$STAGE/.pi/settings.json"
 cp "$ROOT/.pi/npm/package.json" "$ROOT/.pi/npm/package-lock.json" "$STAGE/.pi/npm/"
-cp "$ROOT/bin/mgm" "$STAGE/bin/mgm"; chmod +x "$STAGE/bin/mgm"
+cp "$ROOT"/bin/* "$STAGE/bin/"; chmod +x "$STAGE"/bin/*
 cp "$ROOT/README.md" "$STAGE/"; cp -R "$ROOT/docs" "$STAGE/docs"
 cp "$ROOT/../.env.example" "$STAGE/.env.example" 2>/dev/null || cp "$ROOT/.env.example" "$STAGE/.env.example"
 mkdir -p "$STAGE/.codebase-index"; cp "$ROOT/.codebase-index/config.json" "$STAGE/.codebase-index/config.json"
@@ -64,6 +65,9 @@ while IFS= read -r f; do
   if [[ "$base" =~ (darwin|linux|win32|windows)[-_](x64|arm64|x86_64|aarch64)|(x64|arm64|x86_64|aarch64)[-_](darwin|linux|win32|apple) ]] && [[ ! "$base" =~ $keep ]]; then rm -f "$f"; fi
 done < <(find "$STAGE/.pi/npm/node_modules" \( -name "*.node" -o -name "*.dylib" -o -name "*.so" \))
 for e in ${BUNDLE_EXCLUDE//,/ }; do rm -rf "$STAGE/.pi/npm/node_modules/$e"; done
+
+# 4c. Packages pi cannot load inside its compiled binary are pre-bundled into one CommonJS file.
+bash "$ROOT/scripts/prebundle.sh" "$STAGE/.pi/npm/node_modules"
 echo "packages: $(du -sh "$STAGE/.pi/npm/node_modules" | cut -f1) (excluded: ${BUNDLE_EXCLUDE:-none})"
 
 # 4. smoke test the bundle offline: the pi binary must load our extensions and list our providers

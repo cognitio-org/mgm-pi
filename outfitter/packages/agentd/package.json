@@ -1,0 +1,28 @@
+{
+  "name": "@outfitter/agentd",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/src/main.js",
+  "bin": {
+    "agentd": "dist/src/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "postbuild": "chmod +x dist/test/fake-pi.js",
+    "pretest": "npm run build",
+    "test": "node --test dist/test/",
+    "dev:fake-api": "npm run build && node dist/dev/fake-api.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/ws": "^8.5.13",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

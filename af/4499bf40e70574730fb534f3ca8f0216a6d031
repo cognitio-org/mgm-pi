@@ -1,0 +1,54 @@
+outfitter/packages/agentd/src/pi.ts
+  s_2209f22f830d7f::t_7ba479839d9b21 200-201,203-214,216-217,219-223,225-231,234,236,239-242,245-254,260,263-265,268,290,292,305,311,315,325-344
+outfitter/packages/agentd/test/pi.test.ts
+  s_2209f22f830d7f::t_cfd78026e31351 88-171
+  s_2209f22f830d7f::t_ad27a676133bfe 6
+outfitter/packages/agentd/test/run.test.ts
+  s_2209f22f830d7f::t_98cd908be9d953 690-744
+outfitter/packages/agentd/src/run.ts
+  s_2209f22f830d7f::t_4d3ad4964e0081 136-150,448
+  s_2209f22f830d7f::t_3f613ca5754112 74-76,79
+  s_2209f22f830d7f::t_a11b397f8b3e24 11
+  s_2209f22f830d7f::t_cefba80e411598 7,385-388,434-447
+  s_2209f22f830d7f::t_fac1a1f7a53036 452-466
+  s_2209f22f830d7f::t_e8b0b7add66e42 449
+outfitter/docs/reports/cost-and-logs.md
+  s_2209f22f830d7f::t_38f99ff013164b 133-192
+outfitter/docs/reports/image-trim.md
+  s_2209f22f830d7f::t_b24436787199b7 249-305
+outfitter/image/Dockerfile
+  s_2209f22f830d7f::t_46eef268fb4faa 147-148,156-157,159-179
+  s_2209f22f830d7f::t_d0bf725ccb3ad2 137-146
+outfitter/packages/agentd/pi-extension/outfitter-spend.ts
+  s_2209f22f830d7f::t_7347a7682704e5 94,101-111,116-118
+outfitter/image/strip-native-binaries.sh
+  s_2209f22f830d7f::t_bbdbeabe765037 52
+  s_2209f22f830d7f::t_4fdb6dc2b20b3e 32-36,38
+  s_2209f22f830d7f::t_ec6429b4fd6f3b 61
+outfitter/packages/agentd/test/logger.test.ts
+  s_2209f22f830d7f::t_46af8ace9a08cf 106-171
+outfitter/image/strip-native-binaries.test.sh
+  s_2209f22f830d7f::t_6bd8315b5e6691 1-55
+outfitter/packages/agentd/test/outfitter-spend.test.ts
+  s_2209f22f830d7f::t_24ae1f59887635 64-135
+  s_2209f22f830d7f::t_55ba1bd172bf72 3-6
+outfitter/packages/agentd/src/logger.ts
+  s_2209f22f830d7f::t_e5a6c2bbe241e6 44-46
+  s_2209f22f830d7f::t_7f3430239cc9d5 89-111,118,123-134,160,172
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "af4499bf40e70574730fb534f3ca8f0216a6d031",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -56,8 +56,15 @@ Non-interactive: `npx pi -a -p --model lmstudio/qwen/qwen3.6-35b-a3b "prompt"` (
 `~/localllm/.env` (a source checkout), then the `.env` next to the agent dir (a release bundle):
 
 - `LITELLM_AGENT_KEY` — the agent's own LiteLLM virtual key (its team decides which models and MCP servers appear). Falls back to `LITELLM_API_KEY` if unset.
-- `OPENROUTER_API_KEY` — from openrouter.ai
+- `OPENROUTER_API_KEY` — from openrouter.ai (starts with `sk-or-v1-`)
 - optional: `LMSTUDIO_BASE_URL`, `LITELLM_BASE_URL`, `OPENROUTER_MODELS`
+
+Keys are normalised before use (surrounding quotes, a pasted `Bearer `/`Token ` prefix and stray
+whitespace are stripped) and checked against the provider at start-up and after `/setup`. A cloud
+backend whose key is missing or rejected is hidden entirely: none of its models appear in `/model`
+or `/connect`, and the banner/start-up notice says why (e.g. `openrouter rejected the key (401:
+Missing Authentication header)`). OpenRouter's built-in pi provider is switched off in the same
+case, so no OpenRouter model is ever offered unless OpenRouter is actually connected.
 
 ## How the extension works (`.pi/extensions/connect/index.ts`)
 

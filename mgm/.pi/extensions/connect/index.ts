@@ -20,7 +20,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import {
   type Backend, type ModelMeta, type LmStudioMeta, backends, parseEnvText, parseModelInfo, parseLmStudioModels, parseSpendHeaders, rootUrl, normalizeBaseUrl,
-  sessionEstimate, money, footerStatus, budgetRows, renderPanel,
+  sessionEstimate, money, footerStatus, budgetRows, renderPanel, cleanKey, keyCheckUrl, authFailureText,
 } from "./lib.ts";
 
 /** The .env that /setup writes: next to the agent dir (bundle root or the mgm/ checkout). */
@@ -58,6 +58,21 @@ async function getJson(url: string, apiKey: string, timeoutMs = 4000): Promise<a
 }
 
 const reachable = new Set<string>();   // backends whose server answered discovery
+const keyRejected = new Map<string, string>();   // backend id → why the provider refused its key (401/403)
+
+/** Verify a key against the backend's cheapest authenticated endpoint; only a definite 401/403 counts. */
+async function checkKey(b: Backend, timeoutMs = 5000): Promise<boolean> {
+  const url = keyCheckUrl(b);
+  if (!url || process.env.MGM_NO_DISCOVERY) return true;
+  try {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), timeoutMs);
+    const res = await fetch(url, { headers: { authorization: `Bearer ${b.apiKey}` }, signal: ctl.signal });
+    clearTimeout(t);
+    if (res.status === 401 || res.status === 403) { keyRejected.set(b.id, authFailureText(res.status, await res.text().catch(() => ""))); return false; }
+  } catch {}
+  return true;   // unreachable / other errors: not the key's fault, register as usual
+}
+const keyHint = (id: string) => id === "openrouter" ? "OpenRouter keys start with sk-or-v1-; paste just the key, no \"Bearer\" or quotes." : "Ask Matthew to check the key.";
 async function discover(b: Backend, litellmMeta: Map<string, ModelMeta>, lmstudioMeta: Map<string, LmStudioMeta>): Promise<string[]> {
   if (!b.discover || process.env.MGM_NO_DISCOVERY) return b.fallback;   // MGM_NO_DISCOVERY: offline / tests
   if (b.id === "lmstudio") {
@@ -94,12 +109,18 @@ export default async function (pi: ExtensionAPI) {
 
   async function registerAll(envOverride?: Record<string, string>) {
     const env = { ...loadEnv(process.cwd()), ...(envOverride ?? {}) };
-    litellmMeta.clear(); lmstudioMeta.clear(); reachable.clear();
+    litellmMeta.clear(); lmstudioMeta.clear(); reachable.clear(); keyRejected.clear();
     defs = backends(env, litellmMeta, lmstudioMeta);
     await Promise.all(defs.map(async (b) => {
       // A cloud backend without a key is not registered at all: otherwise its models show up in
       // pi's own /model picker and every request fails with a bare 401 from the provider.
-      if (!b.apiKey) { models.set(b.id, []); try { pi.unregisterProvider?.(b.id); } catch {} return; }
+      const usable = !!b.apiKey && (await checkKey(b));
+      // pi has a built-in "openrouter" provider that reads OPENROUTER_API_KEY itself and comes back
+      // whenever ours is unregistered. Keep that variable in step with what we decided: the cleaned
+      // key when it works, gone when it is missing or rejected, so no OpenRouter model is offered
+      // anywhere unless OpenRouter is actually connected.
+      if (b.id === "openrouter") { if (usable) process.env.OPENROUTER_API_KEY = b.apiKey; else delete process.env.OPENROUTER_API_KEY; }
+      if (!usable) { models.set(b.id, []); try { pi.unregisterProvider?.(b.id); } catch {} return; }
       const ids = await discover(b, litellmMeta, lmstudioMeta);
       models.set(b.id, ids);
       pi.registerProvider(b.id, { name: b.label, baseUrl: b.baseUrl, apiKey: b.apiKey, api: "openai-completions", models: ids.map(b.model) as any });
@@ -143,23 +164,26 @@ export default async function (pi: ExtensionAPI) {
         const hint = current ? `${maskPrefix}…${current.slice(-4)}` : "";
         const v = await ctx.ui.input(hint ? `${title}  (Enter keeps ${hint})` : `${title}  (blank to skip)`, "");
         if (v === undefined) return undefined;
-        return v.trim();   // "" = keep current / skip
+        return cleanKey(v);   // "" = keep current / skip
       };
       const llKey = await keyPrompt("LiteLLM key for this agent (ask Matthew for one)", cur.LITELLM_AGENT_KEY, "sk"); if (llKey === undefined) return; if (llKey) values.LITELLM_AGENT_KEY = llKey;
       const orKey = await keyPrompt("OpenRouter API key (openrouter.ai/keys)", cur.OPENROUTER_API_KEY, "sk-or"); if (orKey === undefined) return; if (orKey) values.OPENROUTER_API_KEY = orKey;
+      if (orKey && !orKey.startsWith("sk-or-")) ctx.ui.notify(`That does not look like an OpenRouter key (they start with sk-or-v1-). Saved anyway; run /setup again if OpenRouter rejects it.`, "warning");
 
       const file = envFilePath();
       let text = ""; try { text = readFileSync(file, "utf8"); } catch {}
       writeFileSync(file, upsertEnv(text, values));
       for (const [k, v] of Object.entries(values)) if (v !== undefined) process.env[k] = v;
       await registerAll();
-      const ok = defs.filter((d) => d.apiKey).map((d) => d.id);
+      const ok = defs.filter((d) => d.apiKey && !keyRejected.has(d.id)).map((d) => d.id);
       ctx.ui.notify(`Saved ${file}. Connections ready: ${ok.join(", ") || "none"}. Use /connect to pick a model.`, "info");
+      for (const [id, why] of keyRejected) ctx.ui.notify(`${id} rejected the key (${why}). ${keyHint(id)}`, "warning");
     },
   });
   pi.on("session_start", async (_ev, ctx) => {
     const anyKey = defs.some((d) => d.id !== "lmstudio" && d.apiKey);
     if (ctx.hasUI && !anyKey && !reachable.has("lmstudio")) ctx.ui.notify("No model connections yet: no API keys and no local model server answering. Run /setup.", "warning");
+    if (ctx.hasUI) for (const [id, why] of keyRejected) ctx.ui.notify(`${id} rejected the key (${why}); its models are hidden until /setup saves a working one. ${keyHint(id)}`, "warning");
   });
 
   // ---------- /connect ----------
@@ -172,6 +196,7 @@ export default async function (pi: ExtensionAPI) {
       b = defs[defs.map((d) => d.label).indexOf(pick)];
     }
     if (!b.apiKey) { ctx.ui.notify(`No API key for ${b.id}: run /setup (or set ${b.keyVar} in the .env next to mgm)`, "error"); return; }
+    if (keyRejected.has(b.id)) { ctx.ui.notify(`${b.id} rejected the key (${keyRejected.get(b.id)}). Run /setup and paste it again. ${keyHint(b.id)}`, "error"); return; }
     const ids = models.get(b.id) ?? [];
     if (!modelId) {
       modelId = ids.length === 1 ? ids[0] : await ctx.ui.select(`Model on ${b.id}`, ids);

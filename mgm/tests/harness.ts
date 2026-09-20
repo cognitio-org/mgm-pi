@@ -86,6 +86,7 @@ export function stubFetch(routes: Record<string, (init?: any) => any>) {
     const u = String(url);
     for (const [prefix, handler] of Object.entries(routes)) if (u.startsWith(prefix) || u.includes(prefix)) {
       const body = handler(init); if (body instanceof Error) throw body;
+      if (body && typeof body === "object" && "__status" in body) return new Response(typeof body.body === "string" ? body.body : JSON.stringify(body.body), { status: body.__status, headers: { "content-type": "application/json" } });
       return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
     }
     return new Response("not found", { status: 404 });

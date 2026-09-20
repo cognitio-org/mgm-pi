@@ -14,6 +14,37 @@ export function parseEnvText(text: string): Record<string, string> {
   return out;
 }
 
+/**
+ * Keys as users actually paste them: surrounded by quotes, prefixed with "Bearer " / "Token "
+ * (copied from a curl example), or with stray whitespace. OpenRouter answers all of those with
+ * a bare `401 Missing Authentication header`, so normalise before the key ever reaches a header.
+ */
+export function cleanKey(raw: string | undefined): string {
+  let k = (raw ?? "").trim();
+  k = k.replace(/^["'`]+|["'`]+$/g, "").trim();
+  k = k.replace(/^(bearer|token)\s+/i, "").trim();
+  k = k.replace(/^["'`]+|["'`]+$/g, "").trim();
+  return k;
+}
+
+/** Cheap authenticated endpoint per backend: a 401/403 there means the key itself is wrong. */
+export function keyCheckUrl(b: { id: BackendId; baseUrl: string }): string | undefined {
+  if (b.id === "openrouter") return `${b.baseUrl}/auth/key`;
+  if (b.id === "litellm") return `${b.baseUrl}/models`;
+  return undefined;
+}
+
+/** Human-readable reason from a provider's 401/403 body (OpenRouter, LiteLLM and Deepgram shapes). */
+export function authFailureText(status: number, body: string): string {
+  try {
+    const j = JSON.parse(body);
+    const msg = j?.error?.message ?? j?.message ?? j?.err_msg ?? j?.detail?.error ?? j?.detail;
+    if (typeof msg === "string" && msg.trim()) return `${status}: ${msg.trim().slice(0, 160)}`;
+  } catch {}
+  const t = body.trim().slice(0, 160);
+  return t ? `${status}: ${t}` : `HTTP ${status}`;
+}
+
 // ---------- LiteLLM /model/info ----------
 export type Cost = { input: number; output: number; cacheRead: number; cacheWrite: number };
 export type ModelMeta = { cost: Cost; contextWindow?: number; maxTokens?: number; vision?: boolean; reasoning?: boolean };
@@ -105,7 +136,7 @@ export function backends(env: Record<string, string>, litellmMeta: Map<string, M
       id: "litellm",
       label: "LiteLLM router  (litellm.augment-code.support)",
       baseUrl: normalizeBaseUrl(env.LITELLM_BASE_URL, "https://litellm.augment-code.support/v1"),
-      apiKey: env.LITELLM_AGENT_KEY || env.LITELLM_API_KEY || "",  // agent-specific key first
+      apiKey: cleanKey(env.LITELLM_AGENT_KEY || env.LITELLM_API_KEY),  // agent-specific key first
       keyVar: "LITELLM_AGENT_KEY",
       discover: true,
       fallback: ["local-qwen-mlx", "claude-auto-llm", "claude-auto-agentic", "gemini-auto-llm", "claude-sonnet-5", "claude-opus-5-high"],
@@ -128,7 +159,7 @@ export function backends(env: Record<string, string>, litellmMeta: Map<string, M
       id: "openrouter",
       label: "OpenRouter  (openrouter.ai)",
       baseUrl: normalizeBaseUrl(env.OPENROUTER_BASE_URL, "https://openrouter.ai/api/v1"),
-      apiKey: env.OPENROUTER_API_KEY || "",
+      apiKey: cleanKey(env.OPENROUTER_API_KEY),
       keyVar: "OPENROUTER_API_KEY",
       discover: false,
       fallback: (env.OPENROUTER_MODELS || DEFAULT_OPENROUTER_MODELS.join(",")).split(",").map((s) => s.trim()).filter(Boolean),

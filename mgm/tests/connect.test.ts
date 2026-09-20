@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   parseEnvText, parseModelInfo, parseLmStudioModels, backends, normalizeBaseUrl, rootUrl, parseSpendHeaders, sessionEstimate,
   money, pctText, price, fit, bar, budgetRows, renderPanel, footerStatus, plainLen, QWEN_THINKING_MAP, DEFAULT_OPENROUTER_MODELS,
+  cleanKey, keyCheckUrl, authFailureText,
 } from "../.pi/extensions/connect/lib.ts";
 
 const id = (_c: string, t: string) => t;   // identity painter
@@ -11,6 +12,34 @@ describe("env parsing", () => {
   test("handles export, quotes, comments and blanks", () => {
     const env = parseEnvText(`# comment\nexport A=1\nB="two words"\nC='x'\n\nD = spaced \nlower=ignored\n`);
     assert.deepEqual(env, { A: "1", B: "two words", C: "x", D: "spaced" });
+  });
+});
+
+describe("key hygiene", () => {
+  test("cleanKey strips quotes, Bearer/Token prefixes and whitespace (all of which OpenRouter answers with 'Missing Authentication header')", () => {
+    for (const raw of ['"sk-or-v1-abc"', "'sk-or-v1-abc'", "Bearer sk-or-v1-abc", "bearer  sk-or-v1-abc", "Token sk-or-v1-abc", "  sk-or-v1-abc\n", 'Bearer "sk-or-v1-abc"', "`sk-or-v1-abc`"]) {
+      assert.equal(cleanKey(raw), "sk-or-v1-abc", JSON.stringify(raw));
+    }
+    assert.equal(cleanKey(undefined), "");
+    assert.equal(cleanKey('""'), "");
+    assert.equal(cleanKey("Bearer"), "Bearer", "a bare word is left alone");
+  });
+  test("backends() applies cleanKey to keys read from the environment", () => {
+    const bs = backends({ LITELLM_AGENT_KEY: ' "Bearer sk-x" ', OPENROUTER_API_KEY: "Token sk-or-v1-y" }, new Map());
+    assert.equal(bs.find((b) => b.id === "litellm")!.apiKey, "sk-x");
+    assert.equal(bs.find((b) => b.id === "openrouter")!.apiKey, "sk-or-v1-y");
+  });
+  test("keyCheckUrl: an authenticated endpoint for cloud backends, none for the local server", () => {
+    assert.equal(keyCheckUrl({ id: "openrouter", baseUrl: "https://openrouter.ai/api/v1" }), "https://openrouter.ai/api/v1/auth/key");
+    assert.equal(keyCheckUrl({ id: "litellm", baseUrl: "https://r/v1" }), "https://r/v1/models");
+    assert.equal(keyCheckUrl({ id: "lmstudio", baseUrl: "http://localhost:1234/v1" }), undefined);
+  });
+  test("authFailureText reads OpenRouter, LiteLLM and Deepgram error shapes", () => {
+    assert.equal(authFailureText(401, '{"error":{"message":"Missing Authentication header","code":401}}'), "401: Missing Authentication header");
+    assert.equal(authFailureText(401, '{"error":{"message":"Authentication Error, No api key passed in.","type":"auth_error"}}'), "401: Authentication Error, No api key passed in.");
+    assert.equal(authFailureText(401, '{"err_code":"INVALID_AUTH","err_msg":"Invalid credentials."}'), "401: Invalid credentials.");
+    assert.equal(authFailureText(403, "forbidden"), "403: forbidden");
+    assert.equal(authFailureText(401, ""), "HTTP 401");
   });
 });
 

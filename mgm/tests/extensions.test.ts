@@ -258,6 +258,46 @@ describe("connect extension", async () => {
     } finally { process.env.MGM_NO_DISCOVERY = "1"; process.env.LITELLM_AGENT_KEY = "sk-test"; }
   });
 
+  test("a key the provider rejects hides that backend, is explained at start-up and in /connect, and clears once /setup saves a good one", async () => {
+    // Matej's case: the key was pasted as "Bearer sk-or-…" → OpenRouter answers every call with a bare
+    // 401 "Missing Authentication header". cleanKey() fixes the paste; a genuinely bad key is caught by
+    // the /auth/key probe instead of surfacing as a failed chat request.
+    delete process.env.MGM_NO_DISCOVERY; process.env.OPENROUTER_API_KEY = "Bearer sk-or-v1-revoked";
+    let openrouterAccepts = false;
+    const restore = stubFetch({
+      "/auth/key": () => openrouterAccepts ? { data: { label: "matej" } } : { __status: 401, body: { error: { message: "Missing Authentication header", code: 401 } } },
+      "litellm.augment-code.support/v1/models": () => ({ data: [{ id: "gpt-5.4-nano" }] }),
+    });
+    try {
+      const p2 = makePi(); await mod.default(p2 as any);
+      assert.ok(!p2.providers.some((p) => p.name === "openrouter"), "rejected key → not registered");
+      assert.ok(p2.unregistered.includes("openrouter"));
+      assert.ok(p2.providers.some((p) => p.name === "litellm"), "the good key is unaffected");
+      assert.equal(process.env.OPENROUTER_API_KEY, undefined, "pi's built-in openrouter provider is switched off too");
+      const ctx = makeCtx({ hasUI: true, models: [] }); await p2.emit("session_start", {}, ctx);
+      const warn = ctx.notices.find((n) => n.msg.includes("openrouter rejected the key"));
+      assert.ok(warn && warn.type === "warning", JSON.stringify(ctx.notices));
+      assert.match(warn!.msg, /401: Missing Authentication header/);
+      assert.match(warn!.msg, /sk-or-v1-/, "tells the user what a real key looks like");
+      await p2.commands.get("connect")!.handler("openrouter", ctx);
+      assert.match(ctx.notices.at(-1)!.msg, /openrouter rejected the key/);
+      // /setup with a working key (pasted with quotes, which cleanKey strips) re-registers it
+      openrouterAccepts = true;
+      ctx.answers.push("Matej", "No local model on this machine", "https://litellm.augment-code.support/v1", "", '"sk-or-v1-good"');
+      await p2.commands.get("setup")!.handler("", ctx);
+      assert.ok(store.env().includes("OPENROUTER_API_KEY=sk-or-v1-good\n"), store.env());
+      assert.equal(p2.providers.filter((p) => p.name === "openrouter").at(-1)?.config.apiKey, "sk-or-v1-good");
+      assert.equal(process.env.OPENROUTER_API_KEY, "sk-or-v1-good", "env carries the cleaned key for pi's own lookup");
+      const saved = ctx.notices.findIndex((n) => n.msg.startsWith("Saved"));
+      assert.match(ctx.notices[saved].msg, /Connections ready: lmstudio, litellm, openrouter/);
+      assert.ok(!ctx.notices.slice(saved).some((n) => n.msg.includes("rejected")), "no rejection after the fix");
+      // a key that does not look like an OpenRouter key gets a warning at /setup time
+      ctx.answers.push("Matej", "No local model on this machine", "https://litellm.augment-code.support/v1", "", "sk-proj-openai-key");
+      await p2.commands.get("setup")!.handler("", ctx);
+      assert.ok(ctx.notices.some((n) => n.msg.includes("does not look like an OpenRouter key")));
+    } finally { restore(); process.env.MGM_NO_DISCOVERY = "1"; delete process.env.OPENROUTER_API_KEY; delete process.env.MGM_USER; }
+  });
+
   test("/connect: cancelled picker does nothing; a refused model switch is reported", async () => {
     const ctx = ctxWith();
     const cmd = pi.commands.get("connect")!;

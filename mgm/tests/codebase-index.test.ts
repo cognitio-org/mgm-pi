@@ -4,15 +4,19 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadPlan, defaultConfig, embeddingBaseUrl, shouldSeed, parseStatus, resultText, configView, panelRows, indexStatusLine, actions, SUBCOMMANDS, FIELDS, getAt, setAt, applyEdit, fieldRow, invalidatesIndex, configFromView, maskSecret, rerankerProblem, rerankerBlock, routerFromEnv, refreshRouterKey, DEFAULT_EMBEDDING_MODEL, DEFAULT_DIMENSIONS } from "../.pi/extensions/mgm-codebase-index/lib.ts";
+import { hiddenSourceDirs, loadPlan, defaultConfig, embeddingBaseUrl, shouldSeed, parseStatus, resultText, configView, panelRows, indexStatusLine, actions, SUBCOMMANDS, FIELDS, getAt, setAt, applyEdit, fieldRow, invalidatesIndex, configFromView, maskSecret, rerankerProblem, rerankerBlock, routerFromEnv, refreshRouterKey, DEFAULT_EMBEDDING_MODEL, DEFAULT_DIMENSIONS } from "../.pi/extensions/mgm-codebase-index/lib.ts";
 import { makePi, makeCtx, stubFetch } from "./harness.ts";
 
 const STATUS_INDEXED = `Auto-index: disabled (state: idle)
 
-Indexed chunks (all branches): 190
+Indexing mode: hybrid
+Indexed chunks (all branches): 1,615
+Provider: custom
+Model: text-embedding-nomic-embed-text-v1.5
 Location: /Users/x/proj/.codebase-index/index
 Current branch: main
-Active branch catalog chunks: 190`;
+Active branch catalog chunks: 1,615
+Compatibility: Index is compatible with the current provider and model.`;
 const STATUS_EMPTY = `Auto-index: disabled (state: idle)
 
 Indexed chunks (all branches): 0
@@ -98,7 +102,10 @@ describe("codebase index extension", async () => {
 describe("index status and panel", () => {
   test("parseStatus reads the facts a panel needs and keeps the raw text", () => {
     const a = parseStatus(STATUS_INDEXED);
-    assert.deepEqual([a.indexed, a.chunks, a.branch, a.autoIndex], [true, 190, "main", "disabled (state: idle)"]);
+    assert.deepEqual([a.indexed, a.chunks, a.branch, a.autoIndex], [true, 1615, "main", "disabled (state: idle)"], "thousands separators are read, not truncated to 1");
+    assert.deepEqual([a.mode, a.model, a.incompatible], ["hybrid", "text-embedding-nomic-embed-text-v1.5", undefined]);
+    const stale = parseStatus(STATUS_INDEXED.replace("Index is compatible with the current provider and model.", "Index was built with nomic-embed-text and the configured model is embeddinggemma-300m."));
+    assert.match(stale.incompatible!, /was built with nomic-embed-text/);
     assert.equal(a.location, "/Users/x/proj/.codebase-index/index");
     const b = parseStatus(STATUS_EMPTY);
     assert.deepEqual([b.indexed, b.chunks], [false, 0]);
@@ -116,24 +123,50 @@ describe("index status and panel", () => {
     assert.equal(resultText(undefined), "");
   });
 
-  test("configView prefers a project config, then the user's, then the built-in defaults", () => {
-    const project = { file: "/proj/.codebase-index/config.json", scope: "project" as const, text: JSON.stringify({ embeddingProvider: "openai", search: { maxResults: 5 } }) };
-    const user = { file: "/home/.config/codebase-index/config.json", scope: "user" as const, text: JSON.stringify({ embeddingProvider: "custom", customProvider: { baseUrl: "http://localhost:1234/v1", model: "m", dimensions: 768 } }) };
-    assert.deepEqual([configView([project, user], {}).scope, configView([project, user], {}).provider, configView([project, user], {}).maxResults], ["project", "openai", 5]);
+  test("configView merges the way the package does: user as the base, project overriding whole keys, knowledge bases unioned", () => {
+    const user = { file: "/home/.config/codebase-index/config.json", scope: "user" as const, text: JSON.stringify({ embeddingProvider: "custom", customProvider: { baseUrl: "http://localhost:1234/v1", model: "m", dimensions: 768 }, search: { maxResults: 20, minScore: 0.1, fusionStrategy: "rrf" }, reranker: { enabled: true, model: "voyage/rerank-3-lite" }, knowledgeBases: ["/a"] }) };
+    const project = { file: "/proj/.codebase-index/config.json", scope: "project" as const, text: JSON.stringify({ search: { maxResults: 5 }, knowledgeBases: ["/b"] }) };
+    const both = configView([project, user], {});
+    assert.equal(both.scope, "project+user");
+    assert.deepEqual(both.files, [project.file, user.file]);
+    assert.equal(both.maxResults, 5, "the project replaces the whole search key");
+    assert.equal(both.minScore, undefined, "which is why its siblings disappear, exactly as the package does it");
+    assert.equal(both.model, "m", "keys the project does not mention come from the user config");
+    assert.equal(both.reranker?.model, "voyage/rerank-3-lite", "reranking set by the user survives a project config");
+    assert.deepEqual(both.knowledgeBases, ["/a", "/b"], "knowledge bases are unioned, not replaced");
     assert.equal(configView([{ ...project, text: undefined }, user], {}).scope, "user");
-    assert.equal(configView([{ ...project, text: "not json" }, user], {}).file, user.file, "an unparsable file is skipped, not fatal");
+    assert.equal(configView([{ ...project, text: "not json" }, user], {}).scope, "user", "an unparsable file is skipped, not fatal");
     const none = configView([], { LMSTUDIO_BASE_URL: "http://box:1234/v1" });
     assert.deepEqual([none.scope, none.baseUrl, none.model], ["defaults", "http://box:1234/v1", DEFAULT_EMBEDDING_MODEL]);
+  });
+
+  test("hiddenSourceDirs finds tracked source the index can never reach, and respects knowledge bases", () => {
+    const tracked = [
+      "mgm/.pi/extensions/connect/index.ts", "mgm/.pi/extensions/connect/lib.ts", "mgm/.pi/settings.json",
+      "mgm/tests/harness.ts", "README.md", ".github/workflows/ci.yml", ".github/workflows/release.yml",
+      "mgm/.pi/npm/package-lock.json", "docs/notes.md", "",
+    ];
+    assert.deepEqual(hiddenSourceDirs([...tracked, ".codebase-index/config.json", ".git/hooks/pre-commit.sh"]), [
+      { dir: "mgm/.pi", files: 4 },
+      { dir: ".github", files: 2 },
+    ], "counted per dot-directory, most first; visible paths and tooling state ignored");
+    assert.deepEqual(hiddenSourceDirs(tracked, ["mgm/.pi/extensions"]), [{ dir: ".github", files: 2 }], "a covering knowledge base removes the warning");
+    assert.deepEqual(hiddenSourceDirs(tracked, ["mgm/.pi", ".github"]), []);
+    assert.deepEqual(hiddenSourceDirs([]), [], "outside a git repo there is nothing to say");
   });
 
   test("panelRows shows the index, the embedding state and where the settings came from", () => {
     const base = { config: configView([], {}), project: "/proj", toolCount: 19, knowledgeBases: [] };
     const flat = (rows: any[][]) => rows.map((r) => r.map(([t]: any) => t).join("")).join("\n");
     const ready = flat(panelRows({ ...base, status: parseStatus(STATUS_INDEXED), embeddings: { reachable: true, loaded: true } }));
-    assert.match(ready, /190 chunks/); assert.match(ready, /branch main/); assert.match(ready, /ready/);
+    assert.match(ready, /1,615 chunks/, "grouped for reading"); assert.match(ready, /branch main · hybrid/); assert.match(ready, /ready/);
+    const stale = flat(panelRows({ ...base, status: { ...parseStatus(STATUS_INDEXED), incompatible: "Index was built with another model." } }));
+    assert.match(stale, /stale +Index was built with another model\./);
     assert.match(ready, new RegExp(DEFAULT_EMBEDDING_MODEL)); assert.match(ready, /768d/);
     assert.match(ready, /min score 0\.1/); assert.match(ready, /auto off · watch on/);
-    assert.match(ready, /built-in defaults/); assert.match(ready, /no knowledge bases/); assert.match(ready, /19 available/);
+    assert.match(ready, /built-in defaults/);
+    const withHidden = flat(panelRows({ ...base, status: parseStatus(STATUS_INDEXED), hidden: [{ dir: "mgm/.pi", files: 37 }] }));
+    assert.match(withHidden, /skipped +mgm\/\.pi \(37 tracked files\)/); assert.match(ready, /no knowledge bases/); assert.match(ready, /19 available/);
     const cold = flat(panelRows({ ...base, status: parseStatus(STATUS_EMPTY), embeddings: { reachable: true, loaded: false } }));
     assert.match(cold, /not indexed/); assert.match(cold, /model not loaded yet/);
     const down = flat(panelRows({ ...base, status: parseStatus(STATUS_EMPTY), embeddings: { reachable: false } }));
@@ -141,7 +174,7 @@ describe("index status and panel", () => {
   });
 
   test("the status line and the first action follow whether an index exists", () => {
-    assert.equal(indexStatusLine(parseStatus(STATUS_INDEXED)), "⌕ 190 chunks");
+    assert.equal(indexStatusLine(parseStatus(STATUS_INDEXED)), "⌕ 1615 chunks");
     assert.equal(indexStatusLine(parseStatus(STATUS_EMPTY)), "⌕ no index");
     assert.match(actions(parseStatus(STATUS_EMPTY))[0].label, /Index this codebase now/);
     assert.match(actions(parseStatus(STATUS_INDEXED))[0].label, /Update the index/);
@@ -200,7 +233,7 @@ describe("/index command", async () => {
     assert.deepEqual(calls.filter((c) => c.name === "index_codebase"), [{ name: "index_codebase", params: { force: true } }]);
     assert.match(ctx.notices.map((n) => n.msg).join("\n"), /Rebuilt 190 chunks/);
     assert.equal(ctx.widgets.get("codebase-index"), undefined, "Close panel takes it down");
-    assert.equal(ctx.statuses.get("index"), "⌕ 190 chunks");
+    assert.equal(ctx.statuses.get("index"), "⌕ 1615 chunks");
     assert.ok(calls.filter((c) => c.name === "index_status").length >= 2, "status is re-read after the action");
   });
 

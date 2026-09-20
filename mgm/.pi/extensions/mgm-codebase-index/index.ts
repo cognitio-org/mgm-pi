@@ -11,6 +11,7 @@
  *   MGM_INDEX_CONFIG         config path to seed (tests)
  *   MGM_EMBEDDING_MODEL, MGM_EMBEDDING_DIMENSIONS
  */
+import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -20,7 +21,7 @@ import { truncateToWidth } from "@earendil-works/pi-tui";
 import { renderPanel } from "../connect/lib.ts";
 import {
   FIELDS, PACKAGE, SUBCOMMANDS, actions, applyEdit, configFromView, configView, defaultConfig, fieldRow, getAt, indexStatusLine,
-  invalidatesIndex, loadPlan, maskSecret, panelRows, parseStatus, refreshRouterKey, rerankerBlock, rerankerProblem, resultText, routerFromEnv, shouldSeed,
+  hiddenSourceDirs, invalidatesIndex, loadPlan, maskSecret, panelRows, parseStatus, refreshRouterKey, rerankerBlock, rerankerProblem, resultText, routerFromEnv, shouldSeed,
   setAt,
   type ConfigView, type Embeddings, type Field, type IndexStatus, type LoadPlan, type PanelData,
 } from "./lib.ts";
@@ -107,6 +108,13 @@ async function rerankModels(baseUrl: string, apiKey: string): Promise<string[]> 
   } catch { return []; }
 }
 
+/** Tracked paths, so the panel can tell real source from build output; empty outside a git repo. */
+function trackedFiles(cwd: string): Promise<string[]> {
+  return new Promise((resolve) => {
+    execFile("git", ["ls-files"], { cwd, maxBuffer: 8 * 1024 * 1024, timeout: 5000, encoding: "utf8" }, (err, out) => resolve(err ? [] : out.split("\n")));
+  });
+}
+
 export default async function (pi: ExtensionAPI, deps: Deps = {}) {
   if (process.env.MGM_NO_CODEBASE_INDEX) return;
   const prebundledPath = join(distDir(), "pi-extension.mgm.cjs");
@@ -149,13 +157,15 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
 
   async function collect(ctx: ExtensionCommandContext): Promise<PanelData> {
     const s = await status(ctx);
+    const projectFile = join(ctx.cwd, ".codebase-index", "config.json");
     const view = configView([
-      { file: join(ctx.cwd, ".codebase-index", "config.json"), scope: "project", text: read(join(ctx.cwd, ".codebase-index", "config.json")) },
+      { file: projectFile, scope: "project", text: read(projectFile) },
       { file: configPath(), scope: "user", text: read(configPath()) },
     ], process.env);
-    const [embeddings, basesText] = await Promise.all([probeEmbeddings(view.baseUrl, view.model), run("knowledge_base_list", {}, ctx)]);
-    const knowledgeBases = basesText.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("/") || l.startsWith("~"));
-    return { status: s, config: view, embeddings, knowledgeBases, toolCount: tools.size, project: ctx.cwd };
+    const [embeddings, basesText, tracked] = await Promise.all([probeEmbeddings(view.baseUrl, view.model), run("knowledge_base_list", {}, ctx), trackedFiles(ctx.cwd)]);
+    const listed = basesText.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("/") || l.startsWith("~"));
+    const knowledgeBases = listed.length ? listed : view.knowledgeBases;
+    return { status: s, config: view, embeddings, knowledgeBases, toolCount: tools.size, project: ctx.cwd, hidden: hiddenSourceDirs(tracked, knowledgeBases) };
   }
 
   function showPanel(ctx: ExtensionCommandContext, data: PanelData) {
@@ -313,13 +323,20 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
       let data = await collect(ctx);
       showPanel(ctx, data);
       for (;;) {
-        const list = actions(data.status);
+        const list = actions(data.status, data.hidden);
         const pick = await ctx.ui.select("Codebase index", list.map((a) => a.label));
         if (pick === undefined) return;                       // Escape leaves the panel up
         const action = list[list.map((a) => a.label).indexOf(pick)];
         if (action.kind === "close") { ctx.ui.setWidget("codebase-index", undefined); return; }
         if (action.kind === "settings") await editSettings(ctx, data);
-        if (action.kind === "kb-add" || action.kind === "kb-remove") {
+        if (action.kind === "kb-hidden") {
+          const choice = await ctx.ui.select("Directories the index skips (dot-directories are never walked, whatever include rules say)", (data.hidden ?? []).map((h) => `${h.dir}  (${h.files} files)`));
+          if (choice === undefined) continue;
+          const dir = choice.split("  (")[0];
+          ctx.ui.notify(await run("knowledge_base_add", { path: join(ctx.cwd, dir) }, ctx), "info");
+          const rebuild = await ctx.ui.select(`${dir} is added. Index it now?`, ["Index now", "Later"]);
+          if (rebuild === "Index now") { ctx.ui.setStatus("index", "⌕ indexing…"); ctx.ui.notify(await run("index_codebase", {}, ctx), "info"); }
+        } else if (action.kind === "kb-add" || action.kind === "kb-remove") {
           const path = await ctx.ui.input(action.kind === "kb-add" ? "Directory to index as a knowledge base" : "Knowledge base directory to remove", "");
           if (path === undefined || !path.trim()) continue;
           ctx.ui.notify(await run(action.kind === "kb-add" ? "knowledge_base_add" : "knowledge_base_remove", { path: path.trim() }, ctx), "info");

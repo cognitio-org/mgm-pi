@@ -60,19 +60,27 @@ export type IndexStatus = {
   branch?: string;
   location?: string;
   autoIndex?: string;      // e.g. "disabled (state: idle)"
+  mode?: string;           // hybrid | semantic
+  model?: string;          // what the stored vectors were built with
+  incompatible?: string;   // set when the store no longer matches the configured provider/model
   raw: string;
 };
 
 /** index_status prints human-readable lines; read the few facts a panel needs, keep the rest as raw. */
 export function parseStatus(text: string): IndexStatus {
   const line = (re: RegExp) => text.match(re)?.[1]?.trim();
-  const chunks = line(/Indexed chunks[^:]*:\s*(\d+)/);
+  // The count is printed with thousands separators once an index is any size at all.
+  const chunks = line(/Indexed chunks[^:]*:\s*([\d,]+)/)?.replace(/,/g, "");
+  const compatibility = line(/Compatibility:\s*(.+)/);
   return {
     indexed: !/is not indexed/i.test(text) && Number(chunks ?? 0) > 0,
-    chunks: chunks === undefined ? undefined : Number(chunks),
+    chunks: chunks === undefined || chunks === "" ? undefined : Number(chunks),
     branch: line(/Current branch:\s*(.+)/),
     location: line(/Location:\s*(.+)/),
     autoIndex: line(/Auto-index:\s*(.+)/),
+    mode: line(/Indexing mode:\s*(.+)/),
+    model: line(/^Model:\s*(.+)$/m),
+    incompatible: compatibility && !/is compatible/i.test(compatibility) ? compatibility : undefined,
     raw: text.trim(),
   };
 }
@@ -88,31 +96,72 @@ export function resultText(result: unknown): string {
 }
 
 // ---------- config in effect ----------
-export type ConfigView = { file?: string; scope: "project" | "user" | "defaults"; provider: string; baseUrl?: string; model?: string; dimensions?: number; autoIndex?: unknown; watchFiles?: unknown; maxResults?: unknown; minScore?: unknown; fusion?: unknown };
+export type ConfigView = { files: string[]; scope: "project" | "user" | "project+user" | "defaults"; provider: string; baseUrl?: string; model?: string; dimensions?: number; autoIndex?: unknown; watchFiles?: unknown; maxResults?: unknown; minScore?: unknown; fusion?: unknown; knowledgeBases: string[]; reranker?: Record<string, any> };
 
-/** The nearest config wins: a project's own file, else the user's, else the built-in defaults. */
-export function configView(candidates: { file: string; scope: "project" | "user"; text?: string }[], env: Record<string, string | undefined>): ConfigView {
-  for (const c of candidates) {
-    if (c.text === undefined) continue;
-    let parsed: any;
-    try { parsed = JSON.parse(c.text); } catch { continue; }
-    if (!parsed || typeof parsed !== "object") continue;
-    return {
-      file: c.file, scope: c.scope,
-      provider: String(parsed.embeddingProvider ?? "auto"),
-      baseUrl: parsed.customProvider?.baseUrl, model: parsed.customProvider?.model, dimensions: parsed.customProvider?.dimensions,
-      autoIndex: parsed.indexing?.autoIndex, watchFiles: parsed.indexing?.watchFiles,
-      maxResults: parsed.search?.maxResults, minScore: parsed.search?.minScore, fusion: parsed.search?.fusionStrategy,
-    };
+/**
+ * The package merges its two layers rather than letting the nearer one win: the user's config is the
+ * base, a project config replaces whole top-level keys it declares (PROJECT_OVERRIDE_KEYS in the
+ * package: embeddingProvider, customProvider, reranker, indexing, search, include, exclude, scope…)
+ * and `knowledgeBases` is unioned across both. This mirrors that, so the panel reports what the
+ * indexer will actually do.
+ */
+const OVERRIDE_KEYS = ["embeddingProvider", "customProvider", "embeddingModel", "reranker", "include", "exclude", "indexing", "search", "scope"];
+
+export function configView(layers: { file: string; scope: "project" | "user"; text?: string }[], env: Record<string, string | undefined>): ConfigView {
+  const parsed: { file: string; scope: "project" | "user"; data: Record<string, any> }[] = [];
+  for (const l of layers) {
+    if (l.text === undefined) continue;
+    try { const data = JSON.parse(l.text); if (data && typeof data === "object") parsed.push({ ...l, data }); } catch {}
   }
+  const user = parsed.find((l) => l.scope === "user");
+  const project = parsed.find((l) => l.scope === "project");
+  const merged: Record<string, any> = { ...(user?.data ?? {}) };
+  for (const key of OVERRIDE_KEYS) if (project?.data && key in project.data) merged[key] = project.data[key];
+  merged.knowledgeBases = [...new Set([...(user?.data?.knowledgeBases ?? []), ...(project?.data?.knowledgeBases ?? [])].map(String))];
+
   const d = defaultConfig(env);
-  return { scope: "defaults", provider: d.embeddingProvider, baseUrl: d.customProvider!.baseUrl, model: d.customProvider!.model, dimensions: d.customProvider!.dimensions, autoIndex: d.indexing!.autoIndex, watchFiles: d.indexing!.watchFiles, maxResults: d.search!.maxResults, minScore: d.search!.minScore, fusion: d.search!.fusionStrategy };
+  const scope = project && user ? "project+user" : project ? "project" : user ? "user" : "defaults";
+  const source = parsed.length ? merged : { ...d, knowledgeBases: [] };
+  return {
+    files: parsed.map((l) => l.file), scope,
+    provider: String(source.embeddingProvider ?? "auto"),
+    baseUrl: source.customProvider?.baseUrl, model: source.customProvider?.model, dimensions: source.customProvider?.dimensions,
+    autoIndex: source.indexing?.autoIndex, watchFiles: source.indexing?.watchFiles,
+    maxResults: source.search?.maxResults, minScore: source.search?.minScore, fusion: source.search?.fusionStrategy,
+    knowledgeBases: source.knowledgeBases ?? [], reranker: source.reranker,
+  };
+}
+
+// ---------- directories the indexer cannot see ----------
+const CODE = /\.(ts|tsx|js|jsx|mjs|cjs|py|rs|go|java|rb|cs|c|h|cpp|swift|php|sh|bash|zsh|sql|md|json|ya?ml|toml)$/i;
+
+/**
+ * The package's directory walk skips any path segment starting with a dot before it consults include
+ * or exclude rules, so no setting can bring `.pi/extensions` or `.github/workflows` into the index.
+ * A knowledge base is the only supported route. This finds tracked source under dot-directories that
+ * no knowledge base already covers, so the panel can say so and offer to add it.
+ */
+export function hiddenSourceDirs(trackedPaths: string[], knowledgeBases: string[] = []): { dir: string; files: number }[] {
+  const covered = knowledgeBases.map((k) => k.replace(/^\.\//, "").replace(/\/+$/, ""));
+  const counts = new Map<string, number>();
+  for (const raw of trackedPaths) {
+    const path = raw.trim();
+    if (!path || !CODE.test(path)) continue;
+    const parts = path.split("/");
+    const index = parts.findIndex((p, i) => i < parts.length - 1 && p.startsWith("."));
+    if (index === -1) continue;
+    const dir = parts.slice(0, index + 1).join("/");
+    if (/(^|\/)(\.git|\.codebase-index|\.opencode)$/.test(dir)) continue;   // tooling state, not source
+    if (covered.some((c) => c === dir || dir.startsWith(`${c}/`) || c.startsWith(`${dir}/`))) continue;
+    counts.set(dir, (counts.get(dir) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([dir, files]) => ({ dir, files })).sort((a, b) => b.files - a.files || a.dir.localeCompare(b.dir));
 }
 
 // ---------- panel ----------
 export type Seg = [string, string | null];
 export type Embeddings = { reachable: boolean; loaded?: boolean; note?: string };
-export type PanelData = { status: IndexStatus; config: ConfigView; embeddings?: Embeddings; knowledgeBases?: string[]; toolCount?: number; project: string };
+export type PanelData = { status: IndexStatus; config: ConfigView; embeddings?: Embeddings; knowledgeBases?: string[]; toolCount?: number; project: string; hidden?: { dir: string; files: number }[] };
 
 const yesNo = (v: unknown) => (v === true ? "on" : v === false ? "off" : v === undefined ? "—" : String(v));
 const label = (text: string): Seg => [text.padEnd(9), "muted"];   // one column, so values line up
@@ -121,7 +170,7 @@ export function panelRows(d: PanelData): Seg[][] {
   const s = d.status;
   const rows: Seg[][] = [];
   rows.push(s.indexed
-    ? [label("index"), [`${s.chunks} chunks`, "success"], [`  branch ${s.branch ?? "—"}`, "dim"]]
+    ? [label("index"), [`${s.chunks?.toLocaleString("en-US")} chunks`, "success"], [`  branch ${s.branch ?? "—"}${s.mode ? ` · ${s.mode}` : ""}`, "dim"]]
     : [label("index"), ["not indexed", "warning"], ["  ask the agent to index this repo", "dim"]]);
   rows.push([label("project"), [d.project, "text"]]);
   if (s.location) rows.push([label("store"), [s.location, "dim"]]);
@@ -131,8 +180,13 @@ export function panelRows(d: PanelData): Seg[][] {
   rows.push([label(""), [`${d.config.provider} · ${d.config.baseUrl ?? "—"}`, "dim"]]);
   rows.push([label("search"), [`${yesNo(d.config.maxResults)} results · min score ${yesNo(d.config.minScore)} · ${yesNo(d.config.fusion)}`, "text"]]);
   rows.push([label("indexing"), [`auto ${yesNo(d.config.autoIndex)} · watch ${yesNo(d.config.watchFiles)}`, "text"], [s.autoIndex ? `  (${s.autoIndex})` : "", "dim"]]);
-  rows.push([label("config"), [d.config.file ?? "built-in defaults", "dim"], [`  (${d.config.scope})`, "dim"]]);
+  rows.push([label("config"), [d.config.files.join(" + ") || "built-in defaults", "dim"], [`  (${d.config.scope})`, "dim"]]);
   if (d.knowledgeBases !== undefined) rows.push([label("extra"), [d.knowledgeBases.length ? d.knowledgeBases.join(", ") : "no knowledge bases", d.knowledgeBases.length ? "text" : "dim"]]);
+  if (s.incompatible) rows.push([label("stale"), [s.incompatible, "error"], ["  rebuild to match the current model", "dim"]]);
+  if (d.config.reranker?.enabled) rows.push([label("rerank"), [String(d.config.reranker.model ?? "?"), "accent"], ["  on the router", "dim"]]);
+  for (const h of d.hidden ?? []) {
+    rows.push([label("skipped"), [`${h.dir} (${h.files} tracked files)`, "warning"], ["  dot-directories are invisible to the index", "dim"]]);
+  }
   if (d.toolCount) rows.push([label("tools"), [`${d.toolCount} available`, "dim"]]);
   return rows;
 }
@@ -143,9 +197,10 @@ export function indexStatusLine(s: IndexStatus): string {
 }
 
 // ---------- actions ----------
-export type Action = { label: string; tool?: string; params?: Record<string, unknown>; kind?: "refresh" | "close" | "kb-add" | "kb-remove" | "settings" };
-export function actions(s: IndexStatus): Action[] {
+export type Action = { label: string; tool?: string; params?: Record<string, unknown>; kind?: "refresh" | "close" | "kb-add" | "kb-remove" | "settings" | "kb-hidden" };
+export function actions(s: IndexStatus, hidden: { dir: string; files: number }[] = []): Action[] {
   return [
+    ...(hidden.length ? [{ label: `Index the skipped ${hidden[0].dir} as a knowledge base`, kind: "kb-hidden" as const }] : []),
     { label: s.indexed ? "Update the index (changed files only)" : "Index this codebase now", tool: "index_codebase", params: {} },
     { label: "Rebuild from scratch", tool: "index_codebase", params: { force: true } },
     { label: "Estimate first (no writes)", tool: "index_codebase", params: { estimateOnly: true } },

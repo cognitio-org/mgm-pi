@@ -459,6 +459,18 @@ only ever shown as `set (…4321)`. Reranking is a query-time pass, so turning i
 invalidates the index. The package also supports Cohere and Jina directly; those are not offered here
 and can be set by hand in the config file, as can `ignore` globs and `scope`.
 
+**A trap worth knowing, because it made search useless here.** The package's directory walk skips any
+path segment beginning with a dot *before* it looks at include or exclude rules, so nothing in
+`.pi/`, `.github/` or any other dot-directory can be indexed by configuration. In this repo that is
+the entire implementation: the first index of `~/localllm` held 23 files, all tests, docs and
+scripts, and not one extension source, so searches for real code returned test files and README
+prose. Adding `mgm/.pi/extensions` as a knowledge base (the only supported route into a
+dot-directory) took it to 140 files and 1,615 chunks, and the same query then returned
+`connect/index.ts` as the top hit at 96.9%. The panel now says so on its own: a `skipped` row lists
+dot-directories that hold tracked source no knowledge base covers, with an action that adds one and
+reindexes. Reranking cannot rescue a corpus that never contained the answer, which is why turning it
+on before this was found changed nothing useful.
+
 The index is per project, in `<project>/.codebase-index/`, and it is built on request, never on
 start. Indexing needs the embedding model, so the local model server has to be up; it loads
 `text-embedding-nomic-embed-text-v1.5` on the first request. To see where you stand, ask the agent

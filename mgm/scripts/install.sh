@@ -9,8 +9,9 @@ REPO="mgmonteleone/mgm-pi"; HOME_DIR="${MGM_HOME:-$HOME/.mgm}"; BIN_DIR="${MGM_B
 os=$(uname -s | tr '[:upper:]' '[:lower:]'); arch=$(uname -m | sed 's/x86_64/x64/; s/aarch64/arm64/')
 case "$os-$arch" in darwin-arm64|darwin-x64|linux-x64|linux-arm64) platform="$os-$arch" ;; *) echo "unsupported platform $os-$arch" >&2; exit 1 ;; esac
 auth=(); [[ -n "${GH_TOKEN:-}" ]] && auth=(-H "Authorization: Bearer $GH_TOKEN")
+# note: bash 3.2 (macOS default) treats an empty array as unbound under set -u, hence ${auth[@]+"${auth[@]}"} below
 if [[ -z "${MGM_VERSION:-}" ]]; then
-  MGM_VERSION=$(curl -fsSL "${auth[@]}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/releases/latest" | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p' | head -1)
+  MGM_VERSION=$(curl -fsSL ${auth[@]+"${auth[@]}"} -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/releases/latest" | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p' | head -1)
   [[ -n "$MGM_VERSION" ]] || { echo "could not determine the latest release (private repo? set GH_TOKEN)" >&2; exit 1; }
 fi
 name="mgm-$MGM_VERSION-$platform"; tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
@@ -20,11 +21,11 @@ if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
 elif [[ -n "${GH_TOKEN:-}" ]]; then
   # private repo without gh: resolve asset ids through the API and download them as octet-streams
   command -v python3 >/dev/null || { echo "python3 (or the gh CLI) is required to download from a private repo" >&2; exit 1; }
-  curl -fsSL "${auth[@]}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/releases/tags/v$MGM_VERSION" > "$tmp/release.json"
+  curl -fsSL ${auth[@]+"${auth[@]}"} -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/releases/tags/v$MGM_VERSION" > "$tmp/release.json"
   for f in "$name.tar.gz" "$name.tar.gz.sha256"; do
     id=$(python3 -c 'import json,sys; a=[x["id"] for x in json.load(open(sys.argv[1]))["assets"] if x["name"]==sys.argv[2]]; print(a[0] if a else "")' "$tmp/release.json" "$f")
     [[ -n "$id" ]] || { echo "asset $f not found in release v$MGM_VERSION" >&2; exit 1; }
-    curl -fsSL "${auth[@]}" -H "Accept: application/octet-stream" -o "$tmp/$f" "https://api.github.com/repos/$REPO/releases/assets/$id"
+    curl -fsSL ${auth[@]+"${auth[@]}"} -H "Accept: application/octet-stream" -o "$tmp/$f" "https://api.github.com/repos/$REPO/releases/assets/$id"
   done
 else
   for f in "$name.tar.gz" "$name.tar.gz.sha256"; do curl -fsSL -o "$tmp/$f" "https://github.com/$REPO/releases/download/v$MGM_VERSION/$f"; done

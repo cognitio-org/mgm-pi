@@ -1,0 +1,33 @@
+mgm/.pi/extensions/teleport/cli.ts
+  s_2209f22f830d7f::t_6a26323179f08d 1-74
+mgm/README.md
+  s_2209f22f830d7f::t_82a99e2f1bee9f 286-363
+mgm/bin/mgm
+  s_2209f22f830d7f::t_5710c9f3180cf3 6,20,75,76
+  s_2209f22f830d7f::t_9b09784fced4b9 50-60
+mgm/tests/teleport.test.ts
+  s_2209f22f830d7f::t_ca26aa2f26564c 1-233
+mgm/.pi/extensions/teleport/lib.ts
+  s_2209f22f830d7f::t_add9a403c79e84 104-106
+  s_2209f22f830d7f::t_38f33898740115 1-103,107-266
+mgm/.pi/extensions/teleport/index.ts
+  s_2209f22f830d7f::t_801fc1263c0df5 1-249
+mgm/package-lock.json
+  s_2209f22f830d7f::t_b084c983c33ea9 2,7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "4aac5984c5fbfb3f11c3750528e9afc99f1b4ea7",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

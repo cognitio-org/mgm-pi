@@ -1,0 +1,80 @@
+outfitter/docs/reports/deploy-gaps.md
+  s_2209f22f830d7f::t_a6d5a6dc521890 52-165
+  s_2209f22f830d7f::t_bbe6b395b701f5 1-51
+outfitter/packages/api/src/server.ts
+  s_2209f22f830d7f::t_02e5fddbefd47a 78-85,87-91
+  s_2209f22f830d7f::t_1cd4e875043a2a 31-32
+outfitter/packages/api/src/auth.ts
+  s_2209f22f830d7f::t_f5ba752cc4c502 4-10
+outfitter/deploy/api.sh
+  s_2209f22f830d7f::t_8f0583ac389807 43-47
+  s_2209f22f830d7f::t_66ed0c759d8cae 112
+  s_2209f22f830d7f::t_f2f663c6f8ebc1 14-15,21-25
+outfitter/packages/agentd/src/link.ts
+  s_2209f22f830d7f::t_9058c5910539dc 50-57
+  s_2209f22f830d7f::t_c3c6c193e0d80a 113-125,133,141-145
+  s_2209f22f830d7f::t_4170a89c90e565 20-31
+  s_2209f22f830d7f::t_c688f28d7dd428 74-75,78-84,89-90
+  s_2209f22f830d7f::t_3f54570d6d410b 102-103
+  s_2209f22f830d7f::t_b4012688290c7d 222-226,240,251-263,267,269,271-281
+  s_2209f22f830d7f::t_1be142931ef828 321-349
+outfitter/packages/api/test/helpers.ts
+  s_2209f22f830d7f::t_21e2e067768895 8,16-28,36,38-39
+outfitter/packages/api/test/secrets.test.ts
+  s_2209f22f830d7f::t_e9749fe9b1a846 1-84
+outfitter/packages/api/src/config.ts
+  s_2209f22f830d7f::t_9b4895ccdc6687 57-62
+  s_2209f22f830d7f::t_88255b8ce9da38 105
+outfitter/deploy/README.md
+  s_2209f22f830d7f::t_f0c89e06574372 65,74-78,81-89
+  s_2209f22f830d7f::t_0d79307b5a46d8 101-105
+  s_2209f22f830d7f::t_f3d5e4c3dcc28d 90
+outfitter/packages/api/src/secrets.ts
+  s_2209f22f830d7f::t_582ae56bdfd3bb 40-50,54,56-58,60,65-66,71-87,97-105
+  s_2209f22f830d7f::t_6d25943541442b 16-20,26
+  s_25c805ebe232f3::t_bcf4129a69e326 106
+outfitter/packages/api/test/agentlink.test.ts
+  s_2209f22f830d7f::t_6e895f9a83fd2b 5-6
+  s_2209f22f830d7f::t_ec8df4e0d4c0cf 367-374,377-392,397-446
+  s_2209f22f830d7f::t_8a3751ed79c835 375-376,393-396
+outfitter/packages/api/src/agentlink.ts
+  s_2209f22f830d7f::t_9c1e88cc5474c8 258-261
+  s_2209f22f830d7f::t_4d286356a2fbef 21-25
+  s_2209f22f830d7f::t_6ab48b33ced81f 252-257,262
+  s_2209f22f830d7f::t_0ed4bfec463964 111-123,125-131,136-144
+  s_2209f22f830d7f::t_100b12c479aba7 124,132-135
+  s_2209f22f830d7f::t_dc64531cd09d7c 221-230
+  s_25c805ebe232f3::t_57d3e0616fa8f6 110
+outfitter/packages/agentd/src/main.ts
+  s_2209f22f830d7f::t_5282e9956262f6 81-96
+outfitter/packages/agentd/test/link.test.ts
+  s_2209f22f830d7f::t_8cc053a0cc5e27 34,47-48,50
+  s_2209f22f830d7f::t_44b6c148f101d7 324-325,329-330,333-334,338
+  s_2209f22f830d7f::t_8979fe187b0988 373-374,379
+  s_2209f22f830d7f::t_065fb15cfc3812 272-323,326-328,331-332,335-337,339-351,354-358,360-372,375-378,380-421
+  s_2209f22f830d7f::t_ac266400c0ccd5 352-353,359
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "823747f0b3ddd6149d4b3cc8a1ad6d8ef3ebbd9e",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

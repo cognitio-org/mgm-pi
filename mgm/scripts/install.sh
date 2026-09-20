@@ -10,13 +10,18 @@ os=$(uname -s | tr '[:upper:]' '[:lower:]'); arch=$(uname -m | sed 's/x86_64/x64
 case "$os-$arch" in darwin-arm64|darwin-x64|linux-x64|linux-arm64) platform="$os-$arch" ;; *) echo "unsupported platform $os-$arch" >&2; exit 1 ;; esac
 auth=(); [[ -n "${GH_TOKEN:-}" ]] && auth=(-H "Authorization: Bearer $GH_TOKEN")
 # note: bash 3.2 (macOS default) treats an empty array as unbound under set -u, hence ${auth[@]+"${auth[@]}"} below
+have_gh() { command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; }
 if [[ -z "${MGM_VERSION:-}" ]]; then
-  MGM_VERSION=$(curl -fsSL ${auth[@]+"${auth[@]}"} -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/releases/latest" | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p' | head -1)
-  [[ -n "$MGM_VERSION" ]] || { echo "could not determine the latest release (private repo? set GH_TOKEN)" >&2; exit 1; }
+  if have_gh; then
+    MGM_VERSION=$(gh release view --repo "$REPO" --json tagName --jq '.tagName' 2>/dev/null | sed 's/^v//')
+  else
+    MGM_VERSION=$(curl -fsSL ${auth[@]+"${auth[@]}"} -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p' | head -1 || true)
+  fi
+  [[ -n "$MGM_VERSION" ]] || { echo "could not determine the latest release of $REPO. The repo is private: log in with 'gh auth login' or set GH_TOKEN, or pass MGM_VERSION=x.y.z" >&2; exit 1; }
 fi
 name="mgm-$MGM_VERSION-$platform"; tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 echo "installing mgm $MGM_VERSION ($platform) to $HOME_DIR"
-if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+if have_gh; then
   gh release download "v$MGM_VERSION" --repo "$REPO" --pattern "$name.tar.gz" --pattern "$name.tar.gz.sha256" --dir "$tmp"
 elif [[ -n "${GH_TOKEN:-}" ]]; then
   # private repo without gh: resolve asset ids through the API and download them as octet-streams

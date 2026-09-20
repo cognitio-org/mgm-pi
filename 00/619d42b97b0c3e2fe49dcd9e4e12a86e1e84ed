@@ -1,0 +1,34 @@
+mgm/.pi/extensions/connect/index.ts
+  s_25c805ebe232f3::t_ae7ba5bafa7250 44
+mgm/tests/harness.ts
+  s_25c805ebe232f3::t_ae7ba5bafa7250 1-77
+mgm/package.json
+  s_25c805ebe232f3::t_ae7ba5bafa7250 9-11
+mgm/tests/extensions.test.ts
+  s_25c805ebe232f3::t_1006d358fa2572 1-31,33-121,123-212
+  s_25c805ebe232f3::t_21ea4bf2f09b6f 32,122
+  s_25c805ebe232f3::t_5c6cb08ba89257 213
+mgm/.pi/extensions/compaction/index.ts
+  s_25c805ebe232f3::t_21ea4bf2f09b6f 227
+mgm/tests/resolve-pi.mjs
+  s_25c805ebe232f3::t_ae7ba5bafa7250 1-2
+  s_25c805ebe232f3::t_a354a8f651317c 3-12
+mgm/README.md
+  s_25c805ebe232f3::t_8f316dc9ca569e 149-162
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "00619d42b97b0c3e2fe49dcd9e4e12a86e1e84ed",
+  "prompts": {},
+  "sessions": {
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

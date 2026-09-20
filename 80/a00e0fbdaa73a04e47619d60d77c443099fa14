@@ -1,0 +1,245 @@
+.gitignore
+  s_25c805ebe232f3::t_df8c65db23462e 25-27
+mgm/.pi/extensions/mgm-codebase-index/index.ts
+  s_25c805ebe232f3::t_0a8a9d932dc790 1-56
+mgm/.pi/extensions/mgm-codebase-index/lib.ts
+  s_25c805ebe232f3::t_a99b18d7c83d96 1-54
+mgm/.pi/extensions/teleport/cli.ts
+  s_25c805ebe232f3::t_510d7ea12d4c37 1-74
+mgm/.pi/extensions/teleport/index.ts
+  s_25c805ebe232f3::t_9c038c9820a243 1-258
+mgm/.pi/extensions/teleport/lib.ts
+  s_25c805ebe232f3::t_3f44d91713b4ad 1-297
+mgm/README.md
+  s_25c805ebe232f3::t_ae0136cfabaf3a 334-448
+mgm/bin/mgm
+  s_25c805ebe232f3::t_111772bf4567d9 6,56-66
+mgm/package.json
+  s_25c805ebe232f3::t_62cd4b6bc0496f 12-13
+mgm/scripts/package.sh
+  s_25c805ebe232f3::t_17e866d6ba8bdb 35-39,47,68-70
+mgm/scripts/prebundle.sh
+  s_25c805ebe232f3::t_912b7f61f3b402 1-28
+mgm/tests/codebase-index.test.ts
+  s_25c805ebe232f3::t_fec7610dcc7e57 1-82
+mgm/tests/teleport.test.ts
+  s_25c805ebe232f3::t_bd0e18cf648833 1-303
+outfitter/.gcloudignore
+  s_25c805ebe232f3::t_45a9e4578dd628 1-6
+outfitter/.gitignore
+  s_25c805ebe232f3::t_5cbef74b79e55f 1-7
+outfitter/EPIC.md
+  s_25c805ebe232f3::t_b5de7dc346f833 1-317
+outfitter/README.md
+  s_25c805ebe232f3::t_d29cb567bb4011 1-126
+outfitter/deploy/README.md
+  s_25c805ebe232f3::t_da3480082c40d4 1-154
+outfitter/deploy/agent-job.sh
+  s_25c805ebe232f3::t_613473d745b98e 1-55
+outfitter/deploy/api.sh
+  s_25c805ebe232f3::t_38126147b36d0c 1-6
+outfitter/deploy/atlas.md
+  s_25c805ebe232f3::t_909e83aa6e731a 1-111
+outfitter/deploy/baseline.sh
+  s_25c805ebe232f3::t_484de7d031b17a 1-125
+outfitter/deploy/cloudbuild-api.yaml
+  s_25c805ebe232f3::t_0c08d6973a68f0 1-9
+outfitter/deploy/env.sh
+  s_25c805ebe232f3::t_9714afc03a961a 1-41
+outfitter/deploy/link.sh
+  s_25c805ebe232f3::t_e46ba0cdae7dc4 1-6
+outfitter/deploy/service.sh
+  s_25c805ebe232f3::t_28e46d4211d110 1-150
+outfitter/docs/protocol.md
+  s_25c805ebe232f3::t_76ae070dcee18b 1-133
+outfitter/docs/reports/agentd.md
+  s_25c805ebe232f3::t_cf0e7674295357 1-277
+outfitter/docs/reports/api.md
+  s_25c805ebe232f3::t_54bbf49e286662 1-196
+outfitter/docs/reports/deploy-gaps.md
+  s_25c805ebe232f3::t_fbf985103302c1 1-269
+outfitter/docs/reports/maintainability-review-pr1.md
+  s_25c805ebe232f3::t_1d9692f6668489 1-278
+outfitter/docs/reports/review-fixes-agentd.md
+  s_25c805ebe232f3::t_497ec3eeb94dbf 1-216
+outfitter/docs/reports/review-fixes-api.md
+  s_25c805ebe232f3::t_d6898ce036c556 1-137
+outfitter/docs/reports/review-fixes-teleport.md
+  s_25c805ebe232f3::t_e22747e2b5c707 1-52
+outfitter/docs/reports/security-review-pr1.md
+  s_25c805ebe232f3::t_1856a47fb4969b 1-404
+outfitter/image/Dockerfile
+  s_25c805ebe232f3::t_e24ec9735782b1 1-89
+outfitter/image/build.sh
+  s_25c805ebe232f3::t_1c9c137ad0d533 1-7
+outfitter/package-lock.json
+  s_25c805ebe232f3::t_ae2c8754349d60 1-2131
+outfitter/package.json
+  s_25c805ebe232f3::t_357e640d3e0653 1-16
+outfitter/packages/agentd/dev/fake-api.ts
+  s_25c805ebe232f3::t_435c9dfc7e7018 1-66
+outfitter/packages/agentd/package.json
+  s_25c805ebe232f3::t_98006d43d3bd22 1-28
+outfitter/packages/agentd/src/auth.ts
+  s_25c805ebe232f3::t_47304d02e5c05a 1-54
+outfitter/packages/agentd/src/git.ts
+  s_25c805ebe232f3::t_0ee09ca320df51 1-208
+outfitter/packages/agentd/src/guru.ts
+  s_25c805ebe232f3::t_7e7a9ed718ba63 1-78
+outfitter/packages/agentd/src/link.ts
+  s_25c805ebe232f3::t_106aca1de857d9 1-356
+outfitter/packages/agentd/src/main.ts
+  s_25c805ebe232f3::t_a0bf3eec390fe6 1-116
+outfitter/packages/agentd/src/pi.ts
+  s_25c805ebe232f3::t_b6ccf498cbe278 1-263
+outfitter/packages/agentd/src/protocol.ts
+  s_25c805ebe232f3::t_08e7981700148c 1-273
+outfitter/packages/agentd/src/run-as-user.ts
+  s_25c805ebe232f3::t_46eb3c317d26c9 1-91
+outfitter/packages/agentd/src/run.ts
+  s_25c805ebe232f3::t_55699bcb533615 1-580
+outfitter/packages/agentd/src/session.ts
+  s_25c805ebe232f3::t_8678c0fd4bdda6 1-87
+outfitter/packages/agentd/src/snapshot-url.ts
+  s_25c805ebe232f3::t_cadbb9928282b5 1-60
+outfitter/packages/agentd/src/workspace.ts
+  s_25c805ebe232f3::t_5f204525247b4f 1-177
+outfitter/packages/agentd/test/fake-pi.ts
+  s_25c805ebe232f3::t_128754a85cfb69 1-95
+outfitter/packages/agentd/test/git.test.ts
+  s_25c805ebe232f3::t_d7a4bdb33d94ac 1-191
+outfitter/packages/agentd/test/guru.test.ts
+  s_25c805ebe232f3::t_e528d59ce53140 1-101
+outfitter/packages/agentd/test/link.test.ts
+  s_25c805ebe232f3::t_a1d9ad7711233d 1-423
+outfitter/packages/agentd/test/pi.test.ts
+  s_25c805ebe232f3::t_f877d9ad8ee2cb 1-118
+outfitter/packages/agentd/test/run-as-user.test.ts
+  s_25c805ebe232f3::t_e33f65226daf20 1-45
+outfitter/packages/agentd/test/run.test.ts
+  s_25c805ebe232f3::t_e127a0c3af4fca 1-630
+outfitter/packages/agentd/test/snapshot-url.test.ts
+  s_25c805ebe232f3::t_24905021988aaa 1-63
+outfitter/packages/agentd/test/workspace.test.ts
+  s_25c805ebe232f3::t_bb386210bc0912 1-68
+outfitter/packages/agentd/tsconfig.json
+  s_25c805ebe232f3::t_ad7b5482dcf47f 1-20
+outfitter/packages/api/Dockerfile
+  s_25c805ebe232f3::t_e920df867a4420 1-17
+outfitter/packages/api/README.md
+  s_25c805ebe232f3::t_8785d264d03cfb 1-80
+outfitter/packages/api/docs/data-model.md
+  s_25c805ebe232f3::t_9aba85bebfb85d 1-133
+outfitter/packages/api/package.json
+  s_25c805ebe232f3::t_6a10a1e8547b6c 1-27
+outfitter/packages/api/src/agentlink.ts
+  s_25c805ebe232f3::t_3601878ea58280 1-540
+outfitter/packages/api/src/auth.ts
+  s_25c805ebe232f3::t_98ca71449213b4 1-82
+outfitter/packages/api/src/config.ts
+  s_25c805ebe232f3::t_387e5e03b0c222 1-120
+outfitter/packages/api/src/laptop.ts
+  s_25c805ebe232f3::t_405025a437deda 1-116
+outfitter/packages/api/src/main.ts
+  s_25c805ebe232f3::t_5307a839591cac 1-26
+outfitter/packages/api/src/providers/cloudrun.ts
+  s_25c805ebe232f3::t_1002a965c879a0 1-76
+outfitter/packages/api/src/providers/index.ts
+  s_25c805ebe232f3::t_1bc6c155db28f2 1-49
+outfitter/packages/api/src/providers/noop.ts
+  s_25c805ebe232f3::t_2c1666eb65109e 1-26
+outfitter/packages/api/src/routes/context.ts
+  s_25c805ebe232f3::t_aeaba26b2d729a 1-16
+outfitter/packages/api/src/routes/environments.ts
+  s_25c805ebe232f3::t_5ab572804a894f 1-27
+outfitter/packages/api/src/routes/gurus.ts
+  s_25c805ebe232f3::t_67ad4312451964 1-49
+outfitter/packages/api/src/routes/hooks.ts
+  s_25c805ebe232f3::t_6c26f45f9e0e85 1-75
+outfitter/packages/api/src/routes/index.ts
+  s_25c805ebe232f3::t_968817711fcb77 1-26
+outfitter/packages/api/src/routes/me.ts
+  s_25c805ebe232f3::t_8512ffdef1cab1 1-11
+outfitter/packages/api/src/routes/sessions.ts
+  s_25c805ebe232f3::t_530d848b4e3f27 1-256
+outfitter/packages/api/src/routes/static.ts
+  s_25c805ebe232f3::t_1ae80da796d34a 1-22
+outfitter/packages/api/src/runs.ts
+  s_25c805ebe232f3::t_c4b0c52fd1135d 1-136
+outfitter/packages/api/src/secrets.ts
+  s_25c805ebe232f3::t_88baa31dc1616c 1-121
+outfitter/packages/api/src/server.ts
+  s_25c805ebe232f3::t_ef0933cf5b60dd 1-94
+outfitter/packages/api/src/snapshot-url.ts
+  s_25c805ebe232f3::t_b340b4e0fe7285 1-60
+outfitter/packages/api/src/sse.ts
+  s_25c805ebe232f3::t_4ddd52db88eb88 1-55
+outfitter/packages/api/src/store/index.ts
+  s_25c805ebe232f3::t_e250d9e8809a01 1-14
+outfitter/packages/api/src/store/memory.ts
+  s_25c805ebe232f3::t_aef0c81a05ef65 1-211
+outfitter/packages/api/src/store/mongo.ts
+  s_25c805ebe232f3::t_2669ad0d9d495d 1-297
+outfitter/packages/api/src/store/types.ts
+  s_25c805ebe232f3::t_2632658165cfb9 1-192
+outfitter/packages/api/src/types/fastify.d.ts
+  s_25c805ebe232f3::t_f46fea698e187d 1-8
+outfitter/packages/api/test/agentlink.test.ts
+  s_25c805ebe232f3::t_88216286a631f6 1-586
+outfitter/packages/api/test/auth.test.ts
+  s_25c805ebe232f3::t_e23e81a718edbd 1-45
+outfitter/packages/api/test/config.test.ts
+  s_25c805ebe232f3::t_9bc71c7a5328b0 1-43
+outfitter/packages/api/test/e2e.test.ts
+  s_25c805ebe232f3::t_7512e7cde2a2c3 1-191
+outfitter/packages/api/test/gurus.test.ts
+  s_25c805ebe232f3::t_52974510e3a3e0 1-54
+outfitter/packages/api/test/helpers.ts
+  s_25c805ebe232f3::t_788776975a0eab 1-56
+outfitter/packages/api/test/hooks.test.ts
+  s_25c805ebe232f3::t_d1748e38e0c7a6 1-93
+outfitter/packages/api/test/laptop.test.ts
+  s_25c805ebe232f3::t_8dbf0c8e35357b 1-117
+outfitter/packages/api/test/roles.test.ts
+  s_25c805ebe232f3::t_0bbcd524f1c186 1-66
+outfitter/packages/api/test/routes.test.ts
+  s_25c805ebe232f3::t_b2e967d9d27adc 1-156
+outfitter/packages/api/test/runs.test.ts
+  s_25c805ebe232f3::t_b21965747a5e1f 1-136
+outfitter/packages/api/test/secrets.test.ts
+  s_25c805ebe232f3::t_2d3a68c7bd0f04 1-84
+outfitter/packages/api/test/snapshot-url.test.ts
+  s_25c805ebe232f3::t_9ad186511041ee 1-44
+outfitter/packages/api/tsconfig.json
+  s_25c805ebe232f3::t_5e1b37506ea394 1-18
+outfitter/packages/provider-local/package.json
+  s_25c805ebe232f3::t_eebba08532c809 1-20
+outfitter/packages/provider-local/src/in-process.ts
+  s_25c805ebe232f3::t_54bc4d676f7394 1-58
+outfitter/packages/provider-local/src/index.ts
+  s_25c805ebe232f3::t_929cf01cd7118f 1-3
+outfitter/packages/provider-local/src/local-docker.ts
+  s_25c805ebe232f3::t_44a5c8eea8e353 1-76
+outfitter/packages/provider-local/src/types.ts
+  s_25c805ebe232f3::t_08312fba687465 1-32
+outfitter/packages/provider-local/test/in-process.test.ts
+  s_25c805ebe232f3::t_ab168577fd8d5a 1-37
+outfitter/packages/provider-local/tsconfig.json
+  s_25c805ebe232f3::t_6c7d97ecf919d5 1-19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "80a00e0fbdaa73a04e47619d60d77c443099fa14",
+  "prompts": {},
+  "sessions": {
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

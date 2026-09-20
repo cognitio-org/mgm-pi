@@ -29,6 +29,9 @@ import { isSeqUpMessage, type DownMessage, type UpMessage } from "./protocol.js"
 export const TERMINAL_CLOSE_CODES = new Set([4400, 4401, 4404, 4409, 4412]);
 
 export type TerminalHandler = (code: number, reason: string) => void;
+/** Every socket close, terminal or not, with the code the server (or the proxy) actually sent. The
+ * first cloud session on the round-two stack closed server-side and agentd left no trace of it. */
+export type CloseHandler = (code: number, reason: string, terminal: boolean) => void;
 export type UnspecTimeoutHandler = () => void;
 
 export interface LinkOptions {
@@ -77,6 +80,7 @@ export class Link {
   private closed = false;
   private handlers: LinkHandler[] = [];
   private terminalHandlers: TerminalHandler[] = [];
+  private closeHandlers: CloseHandler[] = [];
   private unspecTimeoutHandlers: UnspecTimeoutHandler[] = [];
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private connectionAgeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -120,6 +124,10 @@ export class Link {
    * exit code; Link itself has already stopped reconnecting by the time this fires. */
   onTerminal(handler: TerminalHandler): void {
     this.terminalHandlers.push(handler);
+  }
+
+  onClose(handler: CloseHandler): void {
+    this.closeHandlers.push(handler);
   }
 
   /** Invoked once if `maxUnspecMs` elapses without ever receiving `run.spec` -- a misconfigured job
@@ -273,6 +281,7 @@ export class Link {
     ws.on("close", (code: number, reasonBuf: Buffer) => {
       this.clearConnectionAgeTimer();
       this.clearStableTimer();
+      for (const h of this.closeHandlers) h(code, reasonBuf ? reasonBuf.toString() : "", TERMINAL_CLOSE_CODES.has(code));
       if (this.closed) return;
       if (TERMINAL_CLOSE_CODES.has(code)) {
         this.closed = true;

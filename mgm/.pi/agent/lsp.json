@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "servers": [
+    {
+      "id": "typescript",
+      "enabled": true,
+      "include": ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"],
+      "exclude": ["**/node_modules/**", "**/dist/**", "**/build/**", "**/*.min.js"],
+      "rootMarkers": ["tsconfig.json", "jsconfig.json", "package.json", ".git"],
+      "bin": "typescript-language-server",
+      "args": ["--stdio"],
+      "cwd": "{root}",
+      "languageIdByExtension": {
+        ".ts": "typescript",
+        ".mts": "typescript",
+        ".cts": "typescript",
+        ".tsx": "typescriptreact",
+        ".js": "javascript",
+        ".mjs": "javascript",
+        ".cjs": "javascript",
+        ".jsx": "javascriptreact"
+      },
+      "startupTimeoutMs": 45000,
+      "diagnosticsWaitMs": 2500
+    },
+    {
+      "id": "python",
+      "enabled": true,
+      "include": ["**/*.py", "**/*.pyi"],
+      "exclude": ["**/.venv/**", "**/venv/**", "**/site-packages/**", "**/__pycache__/**"],
+      "rootMarkers": ["pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", ".git"],
+      "bin": "pyright-langserver",
+      "args": ["--stdio"],
+      "cwd": "{root}",
+      "languageIdByExtension": { ".py": "python", ".pyi": "python" },
+      "startupTimeoutMs": 45000,
+      "diagnosticsWaitMs": 2500
+    },
+    {
+      "id": "rust",
+      "enabled": true,
+      "include": ["**/*.rs"],
+      "exclude": ["**/target/**"],
+      "rootMarkers": ["Cargo.toml", "rust-project.json"],
+      "bin": "rust-analyzer",
+      "args": [],
+      "cwd": "{root}",
+      "languageIdByExtension": { ".rs": "rust" },
+      "startupTimeoutMs": 60000,
+      "diagnosticsWaitMs": 6000
+    }
+  ]
+}

@@ -415,9 +415,20 @@ Off by default. Set `teleport.autoPush: true` in `.pi/settings.json` to push aft
 ephemeral `--no-session`) and only notifies on a real failure; it never blocks or throws.
 ## Codebase search (`open-codebase-index`)
 
-Semantic and keyword retrieval over the repo you are in: `/index` builds it, then the model gets
+Semantic and keyword retrieval over the repo you are in. It is all model-facing: the package
+registers tools, not slash commands, so you ask for it in words ("index this repo", "search the
+codebase for where X happens") and the agent calls `index_codebase`, `index_status`,
 `codebase_context`, `codebase_peek`, `codebase_search`, `implementation_lookup`, `find_similar`,
-`call_graph` and `pr_impact`. Embeddings come from your own model server, so indexing costs nothing
+`call_graph`, `call_graph_path` or `pr_impact`. The package's `codebase-search` skill, which tells
+the model to reach for those before grepping, is copied into `.pi/skills/` by `scripts/prebundle.sh`
+(pi installs a package's skills only for packages it manages, and this one is loaded by
+`.pi/extensions/mgm-codebase-index`).
+
+The index is per project, in `<project>/.codebase-index/`, and it is built on request, never on
+start. Indexing needs the embedding model, so the local model server has to be up; it loads
+`text-embedding-nomic-embed-text-v1.5` on the first request. To see where you stand, ask the agent
+for the index status: it reports the chunk count and says `Codebase is not indexed` when there is
+nothing yet. Embeddings come from your own model server, so indexing costs nothing
 and never leaves the machine: `.pi/extensions/mgm-codebase-index` writes
 `~/.config/codebase-index/config.json` on first run, pointing at `LMSTUDIO_BASE_URL` with
 `text-embedding-nomic-embed-text-v1.5`. A project's own `.codebase-index/config.json` still wins,

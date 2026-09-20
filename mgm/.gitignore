@@ -1,2 +1,5 @@
 # pi-lsp keeps the hashes of trusted project-local .pi/lsp.json files here (PI_AGENT_DIR=.pi/agent)
 .pi/agent/trust/
+
+# skills copied in by scripts/prebundle.sh
+.pi/skills/

@@ -25,4 +25,13 @@ for p in ${PREBUNDLE//,/ }; do
     --outfile="$out" "$src" >/dev/null
   [[ -f "$NM/tiktoken/tiktoken_bg.wasm" ]] && cp "$NM/tiktoken/tiktoken_bg.wasm" "$NM/$p/dist/"
   echo "prebundled: $p ($(du -h "$out" | cut -f1))"
+  # pi installs a package's skills only for packages it manages itself, and this one is loaded by
+  # our own extension instead, so its skill (which tells the model to reach for the index before
+  # grepping) has to be copied into the agent's skills directory by hand.
+  agent="$(cd -P "$NM/../.." && pwd)"
+  if [[ -d "$NM/$p/skills" ]]; then
+    mkdir -p "$agent/skills"
+    cp -R "$NM/$p/skills/." "$agent/skills/"
+    echo "skills: $(ls "$NM/$p/skills" | tr '\n' ' ')→ $agent/skills"
+  fi
 done

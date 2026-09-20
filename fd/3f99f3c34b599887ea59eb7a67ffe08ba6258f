@@ -1,0 +1,40 @@
+mgm/scripts/prebundle.sh
+  s_25c805ebe232f3::t_14ec884ad316c9 1-28
+mgm/scripts/package.sh
+  s_25c805ebe232f3::t_e786647854f0b2 46
+  s_25c805ebe232f3::t_a9de46f92f85d0 67
+  s_25c805ebe232f3::t_9c145662848191 34-38
+  s_25c805ebe232f3::t_14ec884ad316c9 68-69
+mgm/.pi/extensions/mgm-codebase-index/lib.ts
+  s_25c805ebe232f3::t_e4cb41b8836598 1,4,6-22,30,37-39,50
+  s_25c805ebe232f3::t_55c2efe8986b01 2-3,5,23-29,31-36,40-49,51-54
+mgm/.pi/extensions/mgm-codebase-index/index.ts
+  s_25c805ebe232f3::t_f290d4579588bf 1,5,12,16-17,19,23,30,56
+  s_25c805ebe232f3::t_e4cb41b8836598 2-4,6-11,13,18,20-21,37-42,44-52,54
+  s_25c805ebe232f3::t_55c2efe8986b01 14-15,22,24-29,31-36,43,53,55
+mgm/package.json
+  s_25c805ebe232f3::t_14ec884ad316c9 13
+  s_25c805ebe232f3::t_e4cb41b8836598 12
+mgm/README.md
+  s_25c805ebe232f3::t_76e75564e1358b 286-313
+mgm/tests/codebase-index.test.ts
+  s_25c805ebe232f3::t_1ac1f80e5b24e3 1-82
+.gitignore
+  s_25c805ebe232f3::t_014ad6d85020bc 25-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "fd3f99f3c34b599887ea59eb7a67ffe08ba6258f",
+  "prompts": {},
+  "sessions": {
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

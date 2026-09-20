@@ -1,0 +1,67 @@
+outfitter/EPIC.md
+  s_2209f22f830d7f::t_94c28bc94a18eb 232-273
+outfitter/docs/protocol.md
+  s_2209f22f830d7f::t_5f9eee7b2b475f 73
+outfitter/docs/reports/cost-and-logs.md
+  s_2209f22f830d7f::t_5b80cef0de8c6f 1-206
+outfitter/docs/reports/image-trim.md
+  s_2209f22f830d7f::t_1d071b79ce50ec 1-305
+outfitter/image/Dockerfile
+  s_2209f22f830d7f::t_a06142d174d2ec 13-101,104-107,117,122-123,134,137-148,154-181
+outfitter/image/build.sh
+  s_2209f22f830d7f::t_9bdfd6a693fbb6 4-11,15-16
+outfitter/image/render-settings.sh
+  s_2209f22f830d7f::t_6ecd866a998364 1-26
+outfitter/image/strip-native-binaries.sh
+  s_2209f22f830d7f::t_0325fdb255baa2 1-68
+outfitter/image/strip-native-binaries.test.sh
+  s_2209f22f830d7f::t_639b4e027316a0 1-55
+outfitter/packages/agentd/pi-extension/outfitter-spend.ts
+  s_2209f22f830d7f::t_42ad06933a34ea 1-128
+outfitter/packages/agentd/src/guru.ts
+  s_2209f22f830d7f::t_c9b14236f6ea16 26-30,60-61
+outfitter/packages/agentd/src/logger.ts
+  s_2209f22f830d7f::t_e93672b1bc134f 1-173
+outfitter/packages/agentd/src/main.ts
+  s_2209f22f830d7f::t_f33fd07091bd44 14,57-66,97-99,102-103,114,121,129-132
+outfitter/packages/agentd/src/pi.ts
+  s_2209f22f830d7f::t_2d6a4dace9a968 185,187-236,239-242,245-254,260,263-265,268,290,292,305,311,315,325-344
+outfitter/packages/agentd/src/protocol.ts
+  s_2209f22f830d7f::t_9543fc0f32a53a 66-77
+outfitter/packages/agentd/src/run.ts
+  s_2209f22f830d7f::t_7bfe6bdfadc72b 7,11,13,73-81,96-109,136-150,171-175,225,313-317,374-379,382-388,400-406,421-429,434-477,509,570,586,602
+outfitter/packages/agentd/test/guru.test.ts
+  s_2209f22f830d7f::t_bff81b353536d8 96-121
+outfitter/packages/agentd/test/logger.test.ts
+  s_2209f22f830d7f::t_05ff70c2846ce3 1-185
+outfitter/packages/agentd/test/outfitter-spend.test.ts
+  s_2209f22f830d7f::t_976f452839dd2a 1-135
+outfitter/packages/agentd/test/pi.test.ts
+  s_2209f22f830d7f::t_6f3c76c9d26f4e 6,88-171
+outfitter/packages/agentd/test/run.test.ts
+  s_2209f22f830d7f::t_ef5ea8ee28e9b1 631-747
+outfitter/packages/agentd/tsconfig.json
+  s_2209f22f830d7f::t_082c6a47a113ef 19
+outfitter/packages/api/src/agentlink.ts
+  s_2209f22f830d7f::t_68eb32735f21e4 385-391
+outfitter/packages/api/src/store/types.ts
+  s_2209f22f830d7f::t_d35f2e373573b3 95-100
+outfitter/packages/api/test/agentlink.test.ts
+  s_2209f22f830d7f::t_777b8885b7d91e 464-497
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "d355ca35cadd463a742dc1ecc91275d79ea73fc1",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

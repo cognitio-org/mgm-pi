@@ -1,0 +1,80 @@
+outfitter/image/Dockerfile
+  s_d71e62cb6f304c::t_e7432fbc3c7301 13-101,104-107,117,122-123,134,142-151
+outfitter/docs/reports/cost-and-logs.md
+  s_25c805ebe232f3::t_c3c414f955f779 1-146
+outfitter/EPIC.md
+  s_2209f22f830d7f::t_11ed22f03aabf4 232-273
+outfitter/packages/agentd/pi-extension/outfitter-spend.ts
+  s_2209f22f830d7f::t_bdb25df8af8cd6 1-115
+outfitter/image/build.sh
+  s_25c805ebe232f3::t_d2f9cf946558ed 4-11,15-16
+outfitter/packages/agentd/test/guru.test.ts
+  s_2209f22f830d7f::t_b393187d313b00 96-121
+outfitter/packages/agentd/test/run.test.ts
+  s_2209f22f830d7f::t_98f5b2f8f4e61a 631-692
+outfitter/docs/reports/image-trim.md
+  s_2209f22f830d7f::t_d5a66ee902096e 1-248
+outfitter/packages/agentd/tsconfig.json
+  s_25c805ebe232f3::t_680b39fb469930 19
+outfitter/packages/agentd/src/main.ts
+  s_2209f22f830d7f::t_42976ec8f3838f 14,57-66,97-99,102-103,114,121,129-132
+outfitter/packages/agentd/src/protocol.ts
+  s_2209f22f830d7f::t_813231b8656d8d 66-77
+outfitter/packages/api/test/agentlink.test.ts
+  s_2209f22f830d7f::t_e8571c781adb4a 464-497
+outfitter/image/strip-native-binaries.sh
+  s_25c805ebe232f3::t_e3c62bd71e1597 1-63
+outfitter/packages/agentd/src/guru.ts
+  s_2209f22f830d7f::t_895eaa6911dea1 26-30,60-61
+outfitter/packages/agentd/test/logger.test.ts
+  s_25c805ebe232f3::t_22ef2711feea4f 1-119
+outfitter/packages/agentd/src/pi.ts
+  s_2209f22f830d7f::t_e48d6b29d34a53 185-267
+outfitter/packages/api/src/store/types.ts
+  s_2209f22f830d7f::t_42f979ae2d3148 95-100
+outfitter/packages/agentd/src/logger.ts
+  s_2209f22f830d7f::t_c37e45e4a94143 1-135
+outfitter/docs/protocol.md
+  s_2209f22f830d7f::t_fc81e586062bb8 73
+outfitter/packages/agentd/src/run.ts
+  s_2209f22f830d7f::t_425793f72e8ceb 11,13,73-79,94-107,154-158,208,296-300,357-362,365-368,380-386,401-409,414-428,460,521,537,553
+outfitter/packages/api/src/agentlink.ts
+  s_2209f22f830d7f::t_1a7b670a3292d1 385-391
+outfitter/image/render-settings.sh
+  s_2209f22f830d7f::t_4153d1e9354313 2-26
+  s_2209f22f830d7f::t_cf0116bbbb238a 1
+outfitter/packages/agentd/test/outfitter-spend.test.ts
+  s_25c805ebe232f3::t_23233746607b34 1-60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "947fc780a92432e7e02860999396b959fa536dc2",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_d71e62cb6f304c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "598183a5-6865-48f8-80e7-37d24447f686",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

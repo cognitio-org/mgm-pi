@@ -1,0 +1,164 @@
+outfitter/docs/reports/maintainability-review-pr1.md
+  s_2209f22f830d7f::t_d249900ac5afb9 1-203
+  s_2209f22f830d7f::t_b22b8adb8464b8 204-278
+outfitter/packages/api/src/providers/cloudrun.ts
+  s_2209f22f830d7f::t_889660a3ec2ac4 5,31,41,47-49,52-53,55,58-59,61,65,67,69-73
+outfitter/EPIC.md
+  s_2209f22f830d7f::t_fc5ba393bb9801 178-184
+  s_2209f22f830d7f::t_aae8360b95e2c8 124
+outfitter/package.json
+  s_2209f22f830d7f::t_1bb43cd5d435e9 10
+outfitter/packages/agentd/package.json
+  s_2209f22f830d7f::t_d1d3c786a7135a 12
+outfitter/packages/agentd/src/guru.ts
+  s_2209f22f830d7f::t_7480abb4b9b1fa 25,28-39,64-72
+  s_2209f22f830d7f::t_1709a854900445 26-27
+outfitter/packages/agentd/src/run.ts
+  s_2209f22f830d7f::t_7480abb4b9b1fa 8,13-14,93-103,281-284,303-305,324,333-334,533-535,554-561
+outfitter/deploy/README.md
+  s_2209f22f830d7f::t_26c95dbb751162 25-31
+outfitter/packages/api/test/gurus.test.ts
+  s_2209f22f830d7f::t_30b0adb28fd4bc 1-54
+outfitter/packages/api/test/snapshot-url.test.ts
+  s_2209f22f830d7f::t_4b20eff762d9f8 1-44
+outfitter/packages/api/src/server.ts
+  s_2209f22f830d7f::t_103d05ccba83fb 88,93
+  s_2209f22f830d7f::t_4518f40b3a15a8 33
+  s_2209f22f830d7f::t_e2d5c2558823d5 9
+outfitter/packages/agentd/test/run.test.ts
+  s_2209f22f830d7f::t_8213d8868797b1 275-284
+  s_2209f22f830d7f::t_ac32911a971189 605-614
+  s_2209f22f830d7f::t_08d7b2a4bcc956 233-245
+outfitter/packages/agentd/src/workspace.ts
+  s_2209f22f830d7f::t_7480abb4b9b1fa 13,17-69,115-117,121-128,134-138,156
+outfitter/packages/agentd/test/fake-pi.ts
+  s_2209f22f830d7f::t_c5843a0e2680ef 3-12,18-26
+mgm/README.md
+  s_2209f22f830d7f::t_7d5e7c638d9965 266-271
+outfitter/packages/agentd/test/run-as-user.test.ts
+  s_2209f22f830d7f::t_862d69a9ec6630 1-45
+mgm/.pi/extensions/teleport/index.ts
+  s_2209f22f830d7f::t_cd1238d08b2132 110-118
+outfitter/packages/api/test/e2e.test.ts
+  s_2209f22f830d7f::t_2e9af3f1a0e07f 16,29-30,35-59
+  s_2209f22f830d7f::t_99ca3fa91a25e9 20
+  s_2209f22f830d7f::t_bb2c6ff504be5d 92-96
+  s_2209f22f830d7f::t_75c961482b3974 114-115
+  s_2209f22f830d7f::t_54c4ff8dd6a480 1-15,17-19,21-28,31-34,60-91,97-113,116-191
+outfitter/packages/api/test/agentlink.test.ts
+  s_2209f22f830d7f::t_66510286dffa7d 414,420-430,433
+  s_2209f22f830d7f::t_def15f8ad3a0cf 435,438-442
+  s_2209f22f830d7f::t_d1accb45b3bf1d 3
+  s_2209f22f830d7f::t_d7aade0514eaaf 122,156,170,187,207,239,278,310,364,406-407,444,464,482
+  s_2209f22f830d7f::t_17546efe435855 418-419,443,445-463
+outfitter/packages/api/test/config.test.ts
+  s_2209f22f830d7f::t_e1451bba18a1d0 1-43
+outfitter/packages/agentd/test/guru.test.ts
+  s_2209f22f830d7f::t_5a51535de7cd6f 76-95
+outfitter/packages/api/src/agentlink.ts
+  s_2209f22f830d7f::t_c7f7e2e5b9b1b3 23-27
+  s_2209f22f830d7f::t_52fa0c01b6534a 267-270
+  s_2209f22f830d7f::t_fe577468c6f8fc 18
+  s_2209f22f830d7f::t_226975e087de6f 409-412,420-421
+  s_2209f22f830d7f::t_c3da87ca32b283 398-401,404-405,414-416,423
+  s_2209f22f830d7f::t_4c7fe897a48b6b 402,406-408,413,417-419,422
+  s_2209f22f830d7f::t_58bf641ac4de37 231-238
+  s_2209f22f830d7f::t_40b7539c59d68e 403
+outfitter/docs/reports/deploy-gaps.md
+  s_2209f22f830d7f::t_5ae7c801403736 166-269
+outfitter/docs/reports/security-review-pr1.md
+  s_2209f22f830d7f::t_03ce5edbaf25a0 251-254,260-362
+  s_2209f22f830d7f::t_aaeb044e8545b5 1-250,255-259
+outfitter/packages/api/src/secrets.ts
+  s_2209f22f830d7f::t_ce7168074817a6 56-57
+  s_2209f22f830d7f::t_5ade6aafd5a202 58
+  s_2209f22f830d7f::t_d86329f5025045 92,98-110
+  s_2209f22f830d7f::t_c36fc24ba4eabc 17-21,27
+outfitter/packages/api/src/snapshot-url.ts
+  s_2209f22f830d7f::t_bb7efdd1628b95 1-60
+outfitter/docs/protocol.md
+  s_2209f22f830d7f::t_d2a0f55c4852d2 26-41
+  s_2209f22f830d7f::t_5bbe94244877b6 42-51
+outfitter/packages/agentd/src/snapshot-url.ts
+  s_2209f22f830d7f::t_3876392467bb88 1-60
+outfitter/packages/api/package.json
+  s_2209f22f830d7f::t_231f4e3d036698 18
+outfitter/packages/api/src/routes/gurus.ts
+  s_2209f22f830d7f::t_537b49d9d3997b 8-21,28-31,41-44
+outfitter/packages/api/test/runs.test.ts
+  s_2209f22f830d7f::t_627117ad37368e 31,37,43,52,61,74,77,82
+outfitter/packages/api/src/providers/index.ts
+  s_2209f22f830d7f::t_637d2e6f0cb894 2,4,8-13,17-29,31-35
+outfitter/image/Dockerfile
+  s_2209f22f830d7f::t_ce6fbcd0696f15 74-75,77-86
+outfitter/packages/api/src/config.ts
+  s_2209f22f830d7f::t_9c9533fbf62a0b 106
+  s_2209f22f830d7f::t_25ab3bf8449899 65-78,80
+outfitter/packages/api/src/providers/noop.ts
+  s_2209f22f830d7f::t_d1ffebd99bcfd0 3,6-9,11,13,15,18,22
+outfitter/packages/agentd/src/pi.ts
+  s_2209f22f830d7f::t_7480abb4b9b1fa 58-63,71-86,101,103-104
+outfitter/packages/api/src/store/types.ts
+  s_2209f22f830d7f::t_c5a7f5d9a7c7d0 13-17
+  s_2209f22f830d7f::t_d29301e431d090 70-73
+outfitter/packages/api/src/auth.ts
+  s_2209f22f830d7f::t_e772ab1768273d 49-52
+  s_2209f22f830d7f::t_31ff1dca42d740 69-70
+outfitter/packages/api/test/routes.test.ts
+  s_2209f22f830d7f::t_02f1ee1b808861 21
+outfitter/packages/agentd/test/snapshot-url.test.ts
+  s_2209f22f830d7f::t_f3a797b6f105d2 1-63
+outfitter/deploy/env.sh
+  s_2209f22f830d7f::t_4bbe8e335bdb51 25-41
+outfitter/deploy/link.sh
+  s_2209f22f830d7f::t_169586a7cdc5c4 2-4,6
+outfitter/packages/api/src/main.ts
+  s_2209f22f830d7f::t_d7aade0514eaaf 21
+outfitter/packages/agentd/src/link.ts
+  s_2209f22f830d7f::t_a75d29cd2864fc 141
+  s_2209f22f830d7f::t_8b22a3e72a7139 25-29
+outfitter/deploy/api.sh
+  s_2209f22f830d7f::t_c4203f4db93240 2-4,6
+outfitter/packages/api/src/runs.ts
+  s_2209f22f830d7f::t_31061e93ffd600 113-114
+  s_2209f22f830d7f::t_2883dcb734c5e6 44-51
+  s_2209f22f830d7f::t_6541a1efb139a5 9
+outfitter/packages/agentd/src/git.ts
+  s_2209f22f830d7f::t_7480abb4b9b1fa 3-16,23,37-46,48-53,55-58,69-75,80,82,84-88,105,135-137,149,175-176
+outfitter/deploy/service.sh
+  s_2209f22f830d7f::t_df1d52c4cc9d96 1-150
+outfitter/packages/agentd/src/run-as-user.ts
+  s_2209f22f830d7f::t_c4b9db3d0ea129 1-91
+outfitter/packages/api/src/routes/sessions.ts
+  s_2209f22f830d7f::t_9cffb0f3140bce 73-75
+outfitter/packages/agentd/test/git.test.ts
+  s_2209f22f830d7f::t_7480abb4b9b1fa 3,9-12,14,16-17,20-21,24-25,28-29,32-33,36-39,58,60-66,69-72,89-90,92,95-98,111-113,115,166-169,186
+outfitter/packages/agentd/src/main.ts
+  s_2209f22f830d7f::t_5d6cebae0ebb45 56
+  s_2209f22f830d7f::t_7480abb4b9b1fa 13,55,57-59,80-84,94-95
+outfitter/packages/agentd/test/link.test.ts
+  s_2209f22f830d7f::t_e6e9d4b4c50262 273,275
+outfitter/packages/agentd/test/workspace.test.ts
+  s_2209f22f830d7f::t_0d63dd52359d60 1-45,58-59,61-68
+  s_2209f22f830d7f::t_d1953bee6bf8f5 46-57,60
+outfitter/packages/provider-local/package.json
+  s_2209f22f830d7f::t_7e3b5b63f07fd2 6-7
+outfitter/package-lock.json
+  s_2209f22f830d7f::t_7e9fcac5bed332 910-912,918,2109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "8e801b99da3dcf2a67bb299c9ce6206c4ef53235",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

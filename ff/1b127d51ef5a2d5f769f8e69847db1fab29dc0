@@ -1,0 +1,61 @@
+outfitter/packages/api/src/config.ts
+  s_2209f22f830d7f::t_68fe16c5ad8ac7 57-60
+  s_2209f22f830d7f::t_954cb9e44e405c 122
+outfitter/packages/api/src/routes/sessions.ts
+  s_2209f22f830d7f::t_3f65655626c73a 151-156,158-171
+outfitter/packages/api/test/stop.test.ts
+  s_2209f22f830d7f::t_c265e4244cd305 1-23,25-266,276-321
+  s_2209f22f830d7f::t_38649c4b7e66fd 24
+  s_2209f22f830d7f::t_c76da82535a8ef 267-275
+outfitter/packages/api/src/agentlink.ts
+  s_2209f22f830d7f::t_4c6e3ff315d42a 321-333,335-339
+  s_2209f22f830d7f::t_e33fbb40473b68 424-427,431-432
+  s_2209f22f830d7f::t_0e62decf510e4b 529-531
+  s_2209f22f830d7f::t_43120c0eca85bc 232
+  s_2209f22f830d7f::t_78971874d82585 71-78,81-82,86-91,93-100
+outfitter/packages/api/src/store/mongo.ts
+  s_2209f22f830d7f::t_1ae2eb9018bc58 155-159
+  s_2209f22f830d7f::t_c133e4c0c5ed61 27
+outfitter/packages/api/src/runs.ts
+  s_2209f22f830d7f::t_95edd649511e6c 109,144-168
+  s_2209f22f830d7f::t_abc23d7071e454 100-101,107
+  s_2209f22f830d7f::t_7f0e2ebe3952ec 1-9
+  s_d71e62cb6f304c::t_6440bee013779f 108
+outfitter/packages/api/src/store/types.ts
+  s_2209f22f830d7f::t_67ef177d5d660e 6
+  s_2209f22f830d7f::t_e58d53a6885905 166-169
+outfitter/packages/api/src/store/memory.ts
+  s_2209f22f830d7f::t_e62a9d5619963f 112,118-119
+  s_2209f22f830d7f::t_bc2d8e47de2843 96
+  s_d71e62cb6f304c::t_934b2d39f6644b 120-121
+outfitter/docs/protocol.md
+  s_2209f22f830d7f::t_490edee999ffcf 133-146
+  s_2209f22f830d7f::t_3b1699e90d8802 70
+  s_2209f22f830d7f::t_0254d705192a0a 113-116
+outfitter/docs/reports/deploy-gaps.md
+  s_2209f22f830d7f::t_ca7ab268fe4c0a 357-443
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "ff1b127d51ef5a2d5f769f8e69847db1fab29dc0",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_d71e62cb6f304c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "598183a5-6865-48f8-80e7-37d24447f686",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

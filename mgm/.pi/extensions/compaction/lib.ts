@@ -202,3 +202,63 @@ export function stripPinned(summary: string | undefined): string | undefined {
   if (a < 0 || b < 0) return summary;
   return (summary.slice(0, a) + summary.slice(b + PIN_CLOSE.length)).trim() || undefined;
 }
+
+// ---------- profiles and user preferences ----------
+export type Profile = "code" | "research" | "chat";
+export type Prefs = {
+  profile?: Profile | "auto";
+  keepResults?: number;        // override: newest tool results kept verbatim
+  triggerPercent?: number;     // override: proactive compaction point
+  masking?: boolean;           // observation masking on/off
+  summaryWords?: number;       // override: summary word budget
+};
+
+/** Per-profile tuning applied on top of the window-derived budgets. */
+export const PROFILE_TUNING: Record<Profile, { keepResultsDelta: number; maskMinCharsFactor: number; focus: string }> = {
+  code: { keepResultsDelta: 0, maskMinCharsFactor: 1, focus: "This is software work. Keep every file path, function or symbol name, command, error message, version and test result verbatim. Record what was changed in each file and what remains unverified." },
+  research: { keepResultsDelta: +2, maskMinCharsFactor: 2, focus: "This is research or reading. Keep every source URL, document title, quoted figure and the conclusion drawn from each; preserve open questions and disagreements between sources." },
+  chat: { keepResultsDelta: -1, maskMinCharsFactor: 0.5, focus: "This is a conversation. Keep the user's stated preferences, decisions and their reasons, and any commitments made." },
+};
+
+const CODE_TOOLS = new Set(["read", "edit", "write", "bash", "grep", "find", "ls", "codebase_search", "lsp_diagnostics", "lsp_definition", "lsp_references", "call_graph"]);
+const RESEARCH_TOOLS = new Set(["web_search", "fetch_content", "fetch", "mcp", "search_ce_knowledge_base", "memory_search"]);
+
+/** Infer the profile from tool usage on the branch; no LLM call, deterministic. */
+export function detectProfile(entries: any[]): { profile: Profile; code: number; research: number; total: number } {
+  let code = 0, research = 0, total = 0;
+  for (const e of entries) {
+    if (e?.type !== "message" || e.message?.role !== "assistant" || !Array.isArray(e.message.content)) continue;
+    for (const b of e.message.content) {
+      if (b?.type !== "toolCall") continue;
+      total++;
+      if (CODE_TOOLS.has(b.name)) code++;
+      else if (RESEARCH_TOOLS.has(b.name)) research++;
+    }
+  }
+  const profile: Profile = total === 0 ? "chat" : research > code ? "research" : code > 0 ? "code" : "chat";
+  return { profile, code, research, total };
+}
+
+/** Effective settings = window budgets → profile tuning → explicit user overrides. */
+export function effective(b: Budgets, profile: Profile, prefs: Prefs): Budgets & { profile: Profile; focus: string; masking: boolean; summaryWords: number } {
+  const t = PROFILE_TUNING[profile];
+  return {
+    ...b,
+    keepResults: prefs.keepResults ?? Math.max(1, b.keepResults + t.keepResultsDelta),
+    maskMinChars: Math.round(b.maskMinChars * t.maskMinCharsFactor),
+    triggerPercent: prefs.triggerPercent ?? b.triggerPercent,
+    masking: prefs.masking ?? true,
+    summaryWords: prefs.summaryWords ?? wordBudget(b.summaryMaxTokens),
+    profile,
+    focus: t.focus,
+  };
+}
+
+/** Summarizer candidates for the picker: authenticated, big enough window, cheapest first, with a $/fold label. */
+export type Candidate = { provider: string; id: string; contextWindow: number; cost?: { input: number; output: number } };
+export function rankSummarizers(models: Candidate[], minWindow = 32_000): { key: string; label: string; perFold: number }[] {
+  return models
+    .filter((m) => m.contextWindow >= minWindow)
+    .map((m) => { const perFold = ((m.cost?.input ?? 0) * 10 + (m.cost?.output ?? 0) * 1.5) / 1000; return { key: `${m.provider}/${m.id}`, perFold, label: `${m.provider}/${m.id}  —  ${perFold === 0 ? "free" : "$" + perFold.toFixed(4) + "/fold"}, ${Math.round(m.contextWindow / 1000)}k ctx` }; })
+    .sort((a, b) => a.perFold - b.perFold || a.key.localeCompare(b.key));
+}

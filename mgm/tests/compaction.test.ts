@@ -176,3 +176,37 @@ describe("pinned content", async () => {
     assert.equal(composeSummary([], "s"), "s");
   });
 });
+
+describe("profiles and preferences", async () => {
+  const { detectProfile, effective, rankSummarizers, PROFILE_TUNING } = await import("../.pi/extensions/compaction/lib.ts");
+  const call = (name: string) => ({ type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "x", name, arguments: {} }] } });
+  test("detects code vs research vs chat from tool calls", () => {
+    assert.equal(detectProfile([call("read"), call("edit"), call("web_search")]).profile, "code");
+    assert.equal(detectProfile([call("web_search"), call("fetch_content"), call("read")]).profile, "research");
+    assert.equal(detectProfile([]).profile, "chat");
+    assert.deepEqual(detectProfile([call("read"), call("mcp"), call("unknown_tool")]), { profile: "code", code: 1, research: 1, total: 3 });
+  });
+  test("profile tuning then user overrides", () => {
+    const b = budgets(32_768);
+    const code = effective(b, "code", {});
+    assert.equal(code.keepResults, 2); assert.equal(code.maskMinChars, 1_500); assert.equal(code.masking, true); assert.equal(code.summaryWords, 900);
+    const research = effective(b, "research", {});
+    assert.equal(research.keepResults, 4); assert.equal(research.maskMinChars, 3_000);
+    const chat = effective(b, "chat", {});
+    assert.equal(chat.keepResults, 1, "never below 1"); assert.equal(chat.maskMinChars, 750);
+    const custom = effective(b, "code", { keepResults: 6, triggerPercent: 40, masking: false, summaryWords: 400 });
+    assert.deepEqual([custom.keepResults, custom.triggerPercent, custom.masking, custom.summaryWords, custom.profile], [6, 40, false, 400, "code"]);
+    assert.ok(custom.focus === PROFILE_TUNING.code.focus);
+  });
+  test("summarizer ranking is cheapest first, filtered by window, with $/fold labels", () => {
+    const r = rankSummarizers([
+      { provider: "litellm", id: "claude-haiku-4-5", contextWindow: 200_000, cost: { input: 1, output: 5 } },
+      { provider: "litellm", id: "gpt-5.4-nano", contextWindow: 272_000, cost: { input: 0.2, output: 1.25 } },
+      { provider: "lmstudio", id: "qwen", contextWindow: 131_072, cost: { input: 0, output: 0 } },
+      { provider: "tiny", id: "m", contextWindow: 8_000, cost: { input: 0, output: 0 } },
+    ]);
+    assert.deepEqual(r.map((x) => x.key), ["lmstudio/qwen", "litellm/gpt-5.4-nano", "litellm/claude-haiku-4-5"]);
+    assert.match(r[1].label, /\$0\.0039\/fold, 272k ctx/);
+    assert.match(r[0].label, /free, 131k ctx/);
+  });
+});

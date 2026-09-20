@@ -110,7 +110,17 @@ messages (e.g. pi-memory notes) that pi's default compaction would drop, and any
 
 `.pi/settings.json` sets `compaction.keepRecentTokens: 6000` / `reserveTokens: 8192` only so pi's own
 preparation succeeds on small windows; the extension re-derives the real budgets from the model.
-`/compaction` shows them; `/compaction now` compacts; `MGM_COMPACTION=off` disables the extension;
+**`/compaction` opens a settings dialog**: summarizer (list of authenticated models, cheapest first,
+with a $/fold estimate), profile, pruning depth, masking on/off, trigger point, summary length,
+compact now, reset. Choices persist under `mgm.compaction` in `.pi/settings.json`.
+**Profiles** tune the layers for the kind of work: `code` keeps paths, symbols, commands and errors
+and prunes tool output hardest; `research` keeps twice as many tool results and larger ones, and the
+summary focuses on sources, figures and conclusions; `chat` prunes most and keeps preferences and
+decisions. The default is `auto`, detected each session from the tools actually called (read/edit/
+bash/grep → code; web_search/fetch/mcp → research; none → chat). Detection is deterministic and
+free; it is not asked of the model, so behaviour stays predictable. Pin a profile when you know
+better. `/compaction now` compacts; `/compaction model <provider/id>` sets the summarizer directly;
+`MGM_COMPACTION=off` disables the extension;
 `MGM_COMPACTION_LOG=<file>` logs every mask/compact event (`MGM_COMPACTION_DEBUG=1` adds per-request
 context and overhead lines). Verified on a 32k declared window: two overflow-triggered compactions
 via claude-haiku produced 300–425-token summaries and the task completed.

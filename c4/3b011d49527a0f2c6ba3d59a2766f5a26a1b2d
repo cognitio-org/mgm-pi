@@ -1,0 +1,37 @@
+mgm/README.md
+  s_25c805ebe232f3::t_b6693c3c8dd6f7 299-303
+  s_25c805ebe232f3::t_818bdf2b331639 287-290,292-298,304-308,316-329,334
+  s_25c805ebe232f3::t_717207cd03edb7 330-333
+  s_25c805ebe232f3::t_f922317710762e 286,291,309-315,350
+mgm/bin/mgm
+  s_25c805ebe232f3::t_92144fe90d64f0 20-24
+  s_25c805ebe232f3::t_19ec8efa555e81 19
+mgm/tests/lsp.test.ts
+  s_25c805ebe232f3::t_2b67e3a8186120 1
+  s_25c805ebe232f3::t_49289b336ddfd5 2-8,10-58,63-64
+  s_25c805ebe232f3::t_a4a5f61103d18e 9
+  s_25c805ebe232f3::t_47a45f09249e98 59-62
+mgm/.gitignore
+  s_25c805ebe232f3::t_8fd43a0d44a6b0 1-2
+mgm/scripts/package.sh
+  s_25c805ebe232f3::t_78f7b27b168767 34
+  s_25c805ebe232f3::t_3e8f44eb4faad7 82
+mgm/.pi/agent/lsp.json
+  s_25c805ebe232f3::t_1bd54d58447cbd 1-53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "c43b011d49527a0f2c6ba3d59a2766f5a26a1b2d",
+  "prompts": {},
+  "sessions": {
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

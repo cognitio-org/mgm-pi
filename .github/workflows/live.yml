@@ -1,0 +1,22 @@
+name: mgm live tests
+# Cheap integration tests against the real LiteLLM router (a few calls to gpt-5.4-nano, < $0.01).
+# Runs on demand here, and as a gate in the release workflow. Needs the LITELLM_CI_KEY repo secret;
+# without it the suite skips itself.
+on:
+  workflow_dispatch:
+jobs:
+  live:
+    runs-on: ubuntu-24.04
+    defaults: { run: { working-directory: mgm } }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 24, cache: npm, cache-dependency-path: mgm/package-lock.json }
+      - run: npm ci
+      - name: Live tests against the router
+        env:
+          LITELLM_AGENT_KEY: ${{ secrets.LITELLM_CI_KEY }}
+          LITELLM_BASE_URL: ${{ vars.LITELLM_BASE_URL || 'https://litellm.augment-code.support/v1' }}
+        run: |
+          if [[ -z "$LITELLM_AGENT_KEY" ]]; then echo "::notice::LITELLM_CI_KEY secret not set; live tests skipped"; exit 0; fi
+          npm run test:live

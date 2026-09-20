@@ -29,8 +29,24 @@ jobs:
         with: { node-version: 24, cache: npm, cache-dependency-path: mgm/package-lock.json }
       - run: npm ci
       - run: npm test
-  build:
+  live:
+    # Real calls to the router (< $0.01). Skips itself when the LITELLM_CI_KEY secret is absent.
     needs: [validate, test]
+    runs-on: ubuntu-24.04
+    defaults: { run: { working-directory: mgm } }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 24, cache: npm, cache-dependency-path: mgm/package-lock.json }
+      - run: npm ci
+      - env:
+          LITELLM_AGENT_KEY: ${{ secrets.LITELLM_CI_KEY }}
+          LITELLM_BASE_URL: ${{ vars.LITELLM_BASE_URL || 'https://litellm.augment-code.support/v1' }}
+        run: |
+          if [[ -z "$LITELLM_AGENT_KEY" ]]; then echo "::notice::LITELLM_CI_KEY secret not set; live tests skipped"; exit 0; fi
+          npm run test:live
+  build:
+    needs: [validate, test, live]
     strategy:
       fail-fast: false
       matrix:

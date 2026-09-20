@@ -204,6 +204,16 @@ npm run test:coverage  # same, with per-file coverage
 npm run test:e2e       # live runs against LM Studio, LiteLLM and OpenRouter (MGM_E2E=1)
 ```
 
+`npm run test:live` runs `tests/live.test.ts` against the real LiteLLM router: model listing, a
+minimal completion with spend headers, the agent answering and calling a tool through the router,
+and one real compaction fold on the default summarizer. It uses the cheapest capable model
+(`gpt-5.4-nano`), tiny token limits and a hard cost ceiling read from the router's own cost
+headers; a run costs well under $0.01. It needs `LITELLM_AGENT_KEY` (and `MGM_LIVE=1`); in GitHub
+it reads the `LITELLM_CI_KEY` repository secret, runs as a gate in the release workflow and on
+demand from *Actions → mgm live tests*, and skips itself when the secret is absent. Set the secret
+with `gh secret set LITELLM_CI_KEY --repo mgmonteleone/mgm-pi`, ideally with a dedicated router key
+on a small budget.
+
 `tests/*.test.ts` cover the pure libraries; `tests/extensions.test.ts` drives the real entry points
 through a fake pi and context (`tests/harness.ts`): scripted dialog answers, stubbed summarizer,
 temporary agent dir for settings persistence. `tests/resolve-pi.mjs` lets plain Node resolve pi's

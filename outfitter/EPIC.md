@@ -330,12 +330,33 @@ research on Sonnet; review on Opus).
 
 ### E4 Teleport, both directions
 
-- **E4.1 `OutfitterStore`** in the mgm teleport extension: `list/get/put` against the API using the
-  user's Google identity (gcloud ADC user token with the IAP client audience, or a personal API token
-  issued by the API). Selected by `MGM_TELEPORT_STORE=outfitter`.
-- **E4.2 Cloud → laptop**: `mgm --teleport <id>` verifies repo and clean tree, fetches the session
-  branch, imports the transcript with the same id, remaps the model. The cloud run is stopped first
-  (the API refuses pull while a run is `running` unless `--force`).
+- **E4.1 `OutfitterStore`** — done. `mgm/.pi/extensions/teleport/outfitter-store.ts` implements the
+  same `Store` interface as `GitStore` (`list`/`get`/`put`) against the Outfitter API
+  (`OUTFITTER_API`), selected by `MGM_TELEPORT_STORE=outfitter` via
+  `mgm/.pi/extensions/teleport/store-factory.ts`. Auth: `OUTFITTER_TOKEN` as `Authorization: Bearer`
+  (works today only against `OUTFITTER_DEV=1`, since there's no server-side personal-token check
+  yet), or `OUTFITTER_IAP_CLIENT_ID` -- a Google identity token minted via `gcloud auth
+  print-identity-token --audiences=<id>` (the active gcloud account, never hardcoded), sent the same
+  way; IAP accepts that header on programmatic requests and verifies it itself, so no API-side
+  change was needed for that path. Neither token touches disk. `list()` maps `GET /api/sessions`;
+  `get()` pulls `GET /api/sessions/:id/export.jsonl`; `put()` is `PUT /api/sessions/:id/import`,
+  which already creates the session server-side when the id doesn't exist yet (no API change
+  needed there either). Tests: `mgm/tests/teleport-outfitter.test.ts` (fake fetch: list/get/put
+  mapping, stop-then-poll flow, `--force`, timeout, auth header selection).
+- **E4.2 Cloud → laptop** — store half done, CLI verification not yet wired up. `OutfitterStore.get`
+  does the "stop the cloud run first" part: if the session has an active run it calls `POST
+  /api/sessions/:id/stop` and polls `GET /api/sessions/:id`'s new `runState` field (small API
+  addition, `outfitter/packages/api/src/routes/sessions.ts`, tested in
+  `outfitter/packages/api/test/routes.test.ts`) until it's no longer active, 90s timeout, skippable
+  with `--force` (threaded through `mgm --teleport <id> --force` and `/teleport pull <id> --force`).
+  What `mgm --teleport <id>` does **not** yet do for an Outfitter-backed pull specifically: repo and
+  clean-tree verification. That logic already exists in `cli.ts`/`index.ts` and runs unconditionally
+  for any store whose manifest carries a `repo` section (same code path GitStore uses) -- it isn't
+  Outfitter-specific, and OutfitterStore's `get()` does populate `manifest.repo` (from the session's
+  `repo`/`branch`/`checkpoint.head`) when the cloud session has a repo, so the existing check does
+  cover it. What's still open is model remap fidelity beyond what `pickModelForHost` already does
+  (unchanged, reused as-is) and end-to-end testing against a real deployed API (only unit-tested
+  against a fake fetch so far).
 - **E4.3 Laptop → cloud** (the direction Claude Code lacks): `/teleport push --cloud [guru]` pushes
   the branch and transcript and asks the API to wake a run that continues the conversation.
 - **E4.4 Web "Open in terminal"**: copies the `mgm --teleport` command; and `/teleport` typed inside a

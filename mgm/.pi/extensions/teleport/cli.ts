@@ -10,14 +10,15 @@
  * resolved by forking under a fresh id (the safe, non-destructive default for a non-interactive
  * path — the interactive /teleport pull command asks instead).
  *
- * Usage: node cli.ts <session-id> [cwd]
+ * Usage: node cli.ts <session-id> [cwd] [--force]
  */
 import { execFileSync } from "node:child_process";
 import { writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { GitStore, parseOwnerRepo, verifyOwnerRepo, isWorkingTreeDirty } from "./lib.ts";
+import { parseOwnerRepo, verifyOwnerRepo, isWorkingTreeDirty } from "./lib.ts";
+import { createStore } from "./store-factory.ts";
 
 function fail(message: string): never {
   console.error(`mgm --teleport: ${message}`);
@@ -33,14 +34,16 @@ function git(args: string[], cwd: string): { stdout: string; code: number } {
 }
 
 async function main() {
-  const [id, cwdArg] = process.argv.slice(2);
-  if (!id) fail("usage: cli.ts <session-id> [cwd]");
+  const argv = process.argv.slice(2);
+  const force = argv.includes("--force");
+  const [id, cwdArg] = argv.filter((a) => a !== "--force");
+  if (!id) fail("usage: cli.ts <session-id> [cwd] [--force]");
   const cwd = cwdArg ? join(cwdArg) : process.cwd();
 
-  const store = new GitStore({ warn: (msg) => console.error(`mgm --teleport: ${msg}`) });
+  const store = createStore((msg) => console.error(`mgm --teleport: ${msg}`));
   let got;
   try {
-    got = await store.get(id);
+    got = await store.get(id, { force });
   } catch (err: any) {
     fail(`no session "${id}" in the store: ${err?.message ?? err}`);
   }

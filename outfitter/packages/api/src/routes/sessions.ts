@@ -102,7 +102,11 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
   app.get("/api/sessions/:id", async (req, reply) => {
     const session = await getSessionOr404(ctx, req, reply);
     if (!session) return;
-    return session;
+    // runState (not on Session itself -- see store/types.ts's Run) lets a caller like the mgm
+    // teleport extension's OutfitterStore poll "has the active run stopped yet?" without a second
+    // request; GET /api/sessions already computes the same thing per-row via summarize().
+    const run = await ctx.store.runs.findActiveForSession(session.id);
+    return { ...session, runState: run?.state };
   });
 
   app.get("/api/sessions/:id/entries", async (req, reply) => {

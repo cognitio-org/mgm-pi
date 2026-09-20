@@ -36,11 +36,13 @@ export type Manifest = {
   pushedAt: string; // ISO timestamp
 };
 
-/** Pluggable transcript store. GitStore below is the phase-1/2 implementation; a future "Outfitter"
- * cloud API can implement the same interface without touching the teleport commands. */
+/** Pluggable transcript store. GitStore below is the phase-1/2 implementation; OutfitterStore
+ * (../outfitter-store.ts) implements the same interface against the Outfitter cloud API instead. */
 export interface Store {
   list(): Promise<SessionRef[]>;
-  get(id: string): Promise<{ file: string; manifest: Manifest }>;
+  /** opts.force: skip any "stop the active run first" wait a store implementation may do (only
+   * meaningful for OutfitterStore -- GitStore has no notion of an active run and ignores it). */
+  get(id: string, opts?: { force?: boolean }): Promise<{ file: string; manifest: Manifest }>;
   put(id: string, jsonl: string, manifest: Manifest): Promise<void>;
 }
 

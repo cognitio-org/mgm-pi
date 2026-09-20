@@ -35,8 +35,10 @@ describe("backends", () => {
     assert.deepEqual(lm.model("x").thinkingLevelMap, QWEN_THINKING_MAP);
   });
 
-  test("proxied providers disable the OpenAI store flag", () => {
-    for (const b of backends({}, new Map())) assert.equal(b.model("m").compat?.supportsStore, false, b.id);
+  test("proxied providers disable the OpenAI store flag and keep pi's strict finish_reason check", () => {
+    // supportsFinishReason stays on: under pi 0.85.1's binary, turning it off made a dropped LM Studio
+    // stream return an instant empty reply instead of an error. pi 0.86.1 fixed the stream itself.
+    for (const b of backends({}, new Map())) { assert.equal(b.model("m").compat?.supportsStore, false, b.id); assert.equal(b.model("m").compat?.supportsFinishReason, undefined, b.id); }
   });
 
   test("litellm models use router metadata when present, defaults otherwise, and cap max tokens", () => {

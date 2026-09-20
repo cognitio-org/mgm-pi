@@ -1,0 +1,27 @@
+mgm/.pi/extensions/mgm-context/index.ts
+  s_25c805ebe232f3::t_a971d6fe6d817c 1-150
+mgm/.pi/extensions/mgm-context/report.ts
+  s_25c805ebe232f3::t_9a8145cd91ef0a 1-97
+mgm/tests/context.test.ts
+  s_25c805ebe232f3::t_5742f10dfb6b41 1-201
+mgm/.pi/extensions/mgm-context/lib.ts
+  s_25c805ebe232f3::t_bb26a0727286d7 1-149
+mgm/README.md
+  s_25c805ebe232f3::t_ca83a7b946bb8d 216-243
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "01f314c2461d411cca0f8743b37e64be77a0d338",
+  "prompts": {},
+  "sessions": {
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

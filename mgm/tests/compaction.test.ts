@@ -108,7 +108,7 @@ describe("prompts", () => {
   test("first summary vs update carry the right wrappers and the word budget", () => {
     const first = summaryPrompt("[User]: hi", undefined, undefined, 500);
     assert.ok(first.includes("<conversation>") && !first.includes("<previous-summary>"));
-    assert.ok(first.includes("under 500 words") && first.includes("## Goal") && first.includes("<modified-files>"));
+    assert.ok(first.includes("up to 500 words") && first.includes("## Goal") && first.includes("<modified-files>"));
     const upd = summaryPrompt("[User]: more", "## Goal\nold", "focus on tests", 300);
     assert.ok(upd.includes("<previous-summary>\n## Goal\nold") && upd.includes("<new-messages>") && upd.includes("Additional focus: focus on tests"));
   });

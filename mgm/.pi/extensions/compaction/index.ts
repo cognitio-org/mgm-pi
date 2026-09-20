@@ -9,7 +9,7 @@
  *     chunks no larger than 40% of the summarizer's window, with a hard cap on summary length and
  *     a "shorten" retry instead of pi's discard-on-length. Budgets derive from ctx.model.contextWindow.
  *  3. Configurable summarizer: `/compaction model <provider/id>` (persisted in settings.json as
- *     mgm.summaryModel; MGM_SUMMARY_MODEL overrides; default litellm/claude-haiku-4-5; "self" =
+ *     mgm.summaryModel; MGM_SUMMARY_MODEL overrides; default litellm/gpt-5.4-nano; "self" =
  *     the working model). Falls back to the working model when the choice has no credentials.
  *  4. Proactive trigger (`agent_end`): compact at 70% (small windows) / 85% instead of waiting for
  *     pi's reserve threshold or an overflow error, because LM Studio silently truncates the prompt
@@ -36,7 +36,7 @@ import {
 } from "./lib.ts";
 
 const OFF = process.env.MGM_COMPACTION === "off";
-const DEFAULT_SUMMARIZER = "litellm/claude-haiku-4-5";
+const DEFAULT_SUMMARIZER = "litellm/gpt-5.4-nano";   // see docs/summarizer-benchmark.md
 // Summarizer resolution: MGM_SUMMARY_MODEL env > settings.json "mgm": {"summaryModel"} > default.
 // "self" means: always summarize with the working model.
 const settingsPath = () => join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "settings.json");

@@ -126,7 +126,7 @@ export function summaryPrompt(conversationText: string, previousSummary: string 
     ? `<previous-summary>\n${previousSummary}\n</previous-summary>\n\n<new-messages>\n${conversationText}\n</new-messages>\n\nUpdate the previous summary with the new messages. Keep everything still relevant, drop what is superseded, and merge the file lists.`
     : `<conversation>\n${conversationText}\n</conversation>\n\nSummarize the conversation as a context checkpoint.`;
   const focus = instructions ? `\n\nAdditional focus: ${instructions}` : "";
-  return `${head}${focus}\n\nUse EXACTLY this format and stay under ${maxWords} words:\n\n${TEMPLATE}`;
+  return `${head}${focus}\n\nUse EXACTLY this format, including both file lists (leave a list empty if nothing applies). You have up to ${maxWords} words: prefer completeness over brevity. Keep every path, command, identifier, API or function name, URL, version and error message verbatim; drop pleasantries and narration.\n\n${TEMPLATE}`;
 }
 
 export function shortenPrompt(partialSummary: string, maxWords: number): string {

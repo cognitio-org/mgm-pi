@@ -234,6 +234,13 @@ research on Sonnet; review on Opus).
   start time 38 to 46 s; start time to first WebSocket connect about 3 min (image pull happens
   after start time); prompt to answer 3 s; idle-stop and clean exit verified. Cold wake is about
   4 min today and is dominated by image size, so E1.5 (trim the image) comes before any tuning.
+  Ten wakes on the trimmed 681 MB image (2026-09-20, same session woken and stopped ten times):
+  93, 97, 111, 113, 118, 128, 134, 145, 172, 177 s; median 123 s. Breakdown of one wake: 32 s
+  Cloud Run scheduling, 97 s image pull and container start, 3.5 s agentd to run.spec, 13 s
+  session restore, then pi's own extension loading about 15 s. Stop takes 1 to 2 s. Decisions
+  from the data: IDLE_STOP_SECONDS=1800 for the deployed services (a 2 min wake is worth avoiding
+  far more often than 4 cents of idle); next levers are pi's startup (mgm extensions doing network
+  discovery at load) and the image pull, not the API.
 - **E1.5 Trim the agent image** (done, `docs/reports/image-trim.md`): multi-stage Dockerfile
   (builder stages for mgm's deps and agentd's build never reach the runtime stage); `pi update`
   (silently failing the whole time -- every image shipped so far had **none** of settings.json's

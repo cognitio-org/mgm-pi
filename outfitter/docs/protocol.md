@@ -20,8 +20,21 @@ local dev where there's no IAP anyway. See `deploy/README.md` and `deploy/link.s
 
 Connect: `wss://<api>/agent/ws?run=<runId>` with header `Authorization: Bearer <google id token>`
 (audience = API origin; local dev: `OUTFITTER_DEV_TOKEN`). The API verifies the token, checks the run
-exists and is `provisioning|running|idle`, then sends `run.spec`. agentd reconnects with backoff and
-resends `hello` with `lastAckedSeq`; the API replays anything after it.
+exists and is `provisioning|running|idle`, then waits for the first frame (`hello`) before doing
+anything else with the socket. agentd reconnects with backoff and resends `hello` with
+`lastAckedSeq`; the API replays anything after it.
+
+**Run token.** The id token above only proves the caller is *some* execution of the outfitter-agent
+Cloud Run Job -- every execution of that job runs as the same service account, so it says nothing
+about *which* run the caller is actually supposed to be driving
+(docs/reports/security-review-pr1.md finding #2). `RunManager.wake` (`packages/api/src/runs.ts`)
+generates a 32-byte random `runToken` per run, stores only its sha256 hash on the `Run` record, and
+hands the plaintext to the provider as the `RUN_TOKEN` container-override env var (alongside
+`RUN_ID`). agentd reads `RUN_TOKEN` and sends it back as `hello.runToken`; the API hashes it and
+compares against the stored hash in constant time before registering the socket, sending
+`run.spec`, or handling any other frame -- a missing or mismatched token closes the connection with
+`4401` and no `run.spec` is ever sent. The plaintext token itself is never logged or persisted
+anywhere.
 
 Close codes the API can send, and how agentd (`TERMINAL_CLOSE_CODES`, `packages/agentd/src/link.ts`)
 treats them:
@@ -29,7 +42,7 @@ treats them:
 | code | reason | agentd behavior |
 |---|---|---|
 | `4400` | missing run query param | terminal, exit 1 (misconfiguration) |
-| `4401` | unauthorized | terminal, exit 1 (misconfiguration) |
+| `4401` | unauthorized, or `hello.runToken` missing/incorrect for this run | terminal, exit 1 (misconfiguration) |
 | `4404` | run/session/guru not found | terminal, exit 0 (nothing left to do) |
 | `4409` | run is in a terminal state already | terminal, exit 0 (nothing left to do) |
 | `4412` | run cannot start: missing secret (a repo session with no usable GitHub token) | terminal, exit 1; the API also marks the run `failed` with a reason before closing |
@@ -53,7 +66,7 @@ Up (agentd → api):
 
 | t | fields | when |
 |---|---|---|
-| `hello` | `runId, sessionId, agentdVersion, piVersion, lastAckedSeq` | first frame after connect |
+| `hello` | `runId, sessionId, agentdVersion, piVersion, lastAckedSeq, runToken` | first frame after connect; `runToken` is `RUN_TOKEN` echoed back (see "Run token" above) |
 | `status` | `state: "cloning"\|"restoring"\|"starting"\|"running"\|"idle"\|"checkpointing"\|"stopping", detail?` | on change |
 | `entry` | `seq, entry` (a pi session entry exactly as pi writes it to JSONL: message, model_change, compaction, custom, ...) | whenever pi appends to the session file (agentd tails the file; this is the durable transcript) |
 | `event` | `seq, event` (a raw pi RPC event: agent_start, message_update, tool_execution_start/update/end, agent_end, extension_ui_request, ...) | streamed for live UI; not persisted except `extension_ui_request` |

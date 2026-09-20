@@ -52,4 +52,4 @@ gcloud run jobs deploy "${JOB}" \
   --set-env-vars="OUTFITTER_API=${OUTFITTER_API}"
 
 echo "== Done: ${JOB} deployed with ${IMAGE} =="
-echo "RunManager (src/runs.ts via CloudRunProvider) overrides RUN_ID per execution; OUTFITTER_API is the only fixed job env var."
+echo "RunManager (src/runs.ts via CloudRunProvider) overrides RUN_ID/RUN_TOKEN per execution; OUTFITTER_API is the only fixed job env var."

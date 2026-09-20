@@ -38,6 +38,7 @@ export class CloudRunProvider implements SandboxProvider {
           {
             env: [
               { name: "RUN_ID", value: run.runId },
+              { name: "RUN_TOKEN", value: run.runToken },
               { name: "OUTFITTER_API", value: run.apiOrigin },
             ],
           },

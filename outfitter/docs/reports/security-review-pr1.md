@@ -263,10 +263,7 @@ build any query either.
 
 ## Applied (this pass)
 
-Fixed findings 1, 3, 4, 6, 7, 8, 9, and partially addressed 5 (recorded but not enforced). Finding 2
-(agent SA token not bound to a specific run) was deliberately left for a follow-up pass — it needs
-coordination with the Cloud Run Job provider wiring another agent was concurrently changing in this
-same PR, and is tracked as its own piece of work rather than bundled here.
+Fixed findings 1, 2, 3, 4, 6, 7, 8, 9, and partially addressed 5 (recorded but not enforced).
 
 ### 1. GitHub PAT in argv — fixed via a Linux user split, not just env-vs-argv
 - `image/Dockerfile`: the entrypoint (agentd) now stays **root**; `USER agent` was removed. The
@@ -293,6 +290,50 @@ same PR, and is tracked as its own piece of work rather than bundled here.
 - Tests: `packages/agentd/test/git.test.ts` rewritten to assert the auth header lands in `env`,
   never in `args`; `packages/agentd/test/run-as-user.test.ts` (new) covers both the root and
   non-root paths and `chownRecursive`'s success/failure.
+
+### 2. Agent identity not bound to a specific run — fixed with a per-run token in `hello`
+- `packages/api/src/runs.ts`: `RunManager.wake` now generates a 32-byte random `runToken` (hex,
+  `crypto.randomBytes`) per run, stores only its sha256 hash on the `Run` record
+  (`runTokenHash`, `store/types.ts`), and hands the plaintext to the provider as part of
+  `RunLaunch`. The plaintext is never persisted or logged anywhere.
+- `packages/provider-local/src/types.ts`: `RunLaunch` gained a required `runToken` field.
+  `InProcessProvider` and `LocalDockerProvider` (`packages/provider-local/src`) pass it through
+  as the `RUN_TOKEN` env var, alongside `RUN_ID`. `packages/api/src/providers/cloudrun.ts` passes
+  it the same way, as a `RUN_TOKEN` container-override env var next to `RUN_ID`.
+- `packages/agentd/src/main.ts` reads `RUN_TOKEN` (`requireEnv`, same as `RUN_ID`) and passes it
+  to `Link`; `packages/agentd/src/link.ts`'s `Link` sends it back as `hello.runToken` on every
+  (re)connect, alongside the existing `runId`/`sessionId`/`lastAckedSeq` fields
+  (`packages/agentd/src/protocol.ts`'s `UpHello` gained `runToken`).
+- `packages/api/src/agentlink.ts`'s `AgentLink.handleConnection`: after the bearer id token is
+  verified and the run/session/guru are looked up, the handler now waits for the connection's
+  first frame (`waitForHello`) instead of registering the socket and sending `run.spec`
+  immediately. It's accepted only if it's a well-formed `hello` whose `runToken` hashes
+  (sha256) to the run's stored `runTokenHash`, compared with `crypto.timingSafeEqual`
+  (`runTokenMatches`) — a missing, malformed, or mismatched token, or a first frame that isn't
+  `hello` at all, closes the socket with `4401` and logs a warning, with the socket never
+  registered and `run.spec` never sent. Only once that check passes does the handler register the
+  socket, attach the message/close listeners, build and send `run.spec`, and run the pre-existing
+  `hello` behaviour (record `lastSeenAt`, drain queued down-messages if the run was already ready
+  — e.g. a reconnect). The old `hello` case inside `handleUpFrame`'s frame switch was removed:
+  `hello` is always the first frame of a connection, so it's now fully handled before that
+  listener is even attached.
+- `docs/protocol.md`: documents the `RUN_TOKEN`/`hello.runToken` handshake in a new "Run token"
+  paragraph, updates the `hello` row of the up-frame table, and notes in the close-codes table
+  that `4401` also covers a missing/incorrect run token.
+- The dev/in-process path is unchanged in effect: `SANDBOX_PROVIDER=inprocess` and `docker` both
+  now also thread `RUN_TOKEN` through like every other provider, so a local `npm test`/e2e run
+  authenticates the same way production does, just with a token minted by the in-memory store's
+  `RunManager` instead of a real Cloud Run Job.
+- Tests: `packages/api/test/runs.test.ts` (`RunManager.wake` describe block, new) — a token is
+  generated and handed to the provider, only its hash is stored, and two runs get distinct
+  tokens/hashes. `packages/api/test/agentlink.test.ts` — new cases: wrong `runToken` closes 4401
+  with no `run.spec` sent; missing `runToken` closes 4401 with no `run.spec` sent; a first frame
+  that isn't `hello` closes 4401; the correct `runToken` proceeds to `run.spec`. Every other
+  agentlink test that opens a socket was updated to send a valid `hello` (with the run's real
+  token, recovered from what `RunManager.wake` handed the test's `NoopProvider`) before waiting
+  for `run.spec`. `packages/agentd/test/link.test.ts` asserts `hello.runToken` is sent.
+  `packages/api/test/e2e.test.ts` required no changes — it drives a real built agentd end to end
+  and continues to pass unmodified, proving the real handshake still works.
 
 ### 3. Unvalidated `checkpoint`/`snapshot` URLs — SSRF + tar path traversal
 - `packages/agentd/src/snapshot-url.ts` (new) and `packages/api/src/snapshot-url.ts` (new,
@@ -357,6 +398,7 @@ same PR, and is tracked as its own piece of work rather than bundled here.
   dependency ranges were touched.
 
 ### Verification
-- `npm test` from `outfitter/`: 84 (agentd) + 73 (api) + 2 (provider-local) tests, all green.
+- `npm test` from `outfitter/`: 84 (agentd) + 79 (api) + 2 (provider-local) tests, all green (finding
+  #2's run-token pass added 6 api tests and 1 agentd test on top of the 73/84/2 counted here before).
 - `npm test` from `mgm/`: 129 tests, all green.
 - No commits made; working tree left as-is per instructions.

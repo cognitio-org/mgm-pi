@@ -4,7 +4,7 @@
 // still reports them as provisioning or the run is still within its provisioning grace window,
 // stopping the provider execution first so a reconciled run doesn't leave an orphaned Job running.
 
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID, createHash } from "node:crypto";
 import type { Store, Run } from "./store/types.ts";
 import type { SandboxProvider } from "@outfitter/provider-local";
 import type { Config } from "./config.ts";
@@ -40,10 +40,19 @@ export class RunManager {
     };
     await this.store.runs.insert(run);
 
+    // Finding #2 (docs/reports/security-review-pr1.md): every sandbox execution shares one agent
+    // SA identity, so a valid agent id token alone doesn't prove the caller is *this* run's own
+    // execution. runToken is a per-run secret handed to the provider (RUN_TOKEN env) and never
+    // stored itself -- only its sha256 hash lands on the Run record, for AgentLink.handleConnection
+    // to compare against what the real agentd sends back in its `hello` frame.
+    const runToken = randomBytes(32).toString("hex");
+    const runTokenHash = createHash("sha256").update(runToken).digest("hex");
+
     try {
       const { handle } = await this.provider.start({
         runId: run.id,
         apiOrigin: this.config.origin,
+        runToken,
         // devToken is the SANDBOX_PROVIDER=inprocess/docker auth bypass (see @outfitter/
         // provider-local's RunLaunch doc); cloudrun ignores it, and the sandbox authenticates
         // with the job's own metadata-server identity token instead.
@@ -53,6 +62,7 @@ export class RunManager {
         (await this.store.runs.update(run.id, {
           state: "provisioning",
           providerHandle: handle,
+          runTokenHash,
           lastSeenAt: now,
           updatedAt: new Date().toISOString(),
         })) ?? run

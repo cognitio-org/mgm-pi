@@ -71,6 +71,11 @@ export interface Run {
    * provider-local's SandboxHandle -- a Cloud Run execution name, a docker container id, or a
    * synthetic in-process id). Callers should not parse it. */
   providerHandle?: string;
+  /** sha256 (hex) of the per-run secret RunManager.wake generates and hands to the provider as
+   * RUN_TOKEN. AgentLink.handleConnection compares this against sha256(hello.runToken) before
+   * registering the socket -- see docs/reports/security-review-pr1.md finding #2. Only the hash is
+   * ever stored; the plaintext token exists only in the provider launch env and the hello frame. */
+  runTokenHash?: string;
   // Deviation from protocol.md: extension_ui_request events are "not persisted except
   // extension_ui_request" per the protocol, but it doesn't say where. Stored here so a browser
   // that reconnects (or opens the session fresh) still sees a question the run is waiting on;

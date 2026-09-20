@@ -1,9 +1,11 @@
-// RunManager.reconcileOnce (src/runs.ts): stops orphaned provider executions and respects the
-// provisioning grace window before marking a stale run failed.
+// RunManager.wake / reconcileOnce (src/runs.ts): starting a run mints a per-run secret bound to
+// the run's own token hash (finding #2, docs/reports/security-review-pr1.md); reconcileOnce stops
+// orphaned provider executions and respects the provisioning grace window before marking a stale
+// run failed.
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { loadConfig } from "../src/config.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { NoopProvider } from "../src/providers/noop.ts";
@@ -23,6 +25,49 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     ...overrides,
   };
 }
+
+describe("RunManager.wake", () => {
+  test("generates a per-run token, hands the plaintext to the provider, and stores only its hash", async () => {
+    const store = new MemoryStore();
+    const provider = new NoopProvider();
+    const config = loadConfig({} as NodeJS.ProcessEnv);
+    const runs = new RunManager(store, provider, config);
+
+    const run = await runs.wake("s1");
+
+    assert.equal(provider.startCalls.length, 1);
+    const launched = provider.startCalls[0];
+    assert.equal(launched.runId, run.id);
+    assert.equal(typeof launched.runToken, "string");
+    assert.ok(launched.runToken.length >= 32); // 32 random bytes, hex-encoded
+
+    const stored = await store.runs.findById(run.id);
+    assert.equal(typeof stored?.runTokenHash, "string");
+    // Only the hash is ever persisted -- never the plaintext token itself.
+    assert.notEqual(stored?.runTokenHash, launched.runToken);
+    const expectedHash = createHash("sha256").update(launched.runToken).digest("hex");
+    assert.equal(stored?.runTokenHash, expectedHash);
+  });
+
+  test("two runs get distinct tokens and distinct hashes", async () => {
+    const store = new MemoryStore();
+    const provider = new NoopProvider();
+    const config = loadConfig({} as NodeJS.ProcessEnv);
+    const runs = new RunManager(store, provider, config);
+
+    const run1 = await runs.wake("s1");
+    // s1 already has an active run, so wake() again for the same session is a no-op; use a
+    // different session to force a second real launch.
+    const run2 = await runs.wake("s2");
+
+    assert.notEqual(run1.id, run2.id);
+    const [call1, call2] = provider.startCalls;
+    assert.notEqual(call1.runToken, call2.runToken);
+    const stored1 = await store.runs.findById(run1.id);
+    const stored2 = await store.runs.findById(run2.id);
+    assert.notEqual(stored1?.runTokenHash, stored2?.runTokenHash);
+  });
+});
 
 describe("RunManager.reconcileOnce", () => {
   test("stops the provider handle (best effort) before marking a stale run failed", async () => {

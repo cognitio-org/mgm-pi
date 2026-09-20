@@ -1,6 +1,6 @@
 /**
  * Dev-only SandboxProvider that runs the outfitter-agent image with `docker run`, using the same
- * env vars a Cloud Run Job execution would set (OUTFITTER_API, RUN_ID, OUTFITTER_DEV_TOKEN). The
+ * env vars a Cloud Run Job execution would set (OUTFITTER_API, RUN_ID, RUN_TOKEN, OUTFITTER_DEV_TOKEN). The
  * handle is the container id `docker run -d` prints.
  */
 import { execFile } from "node:child_process";
@@ -36,6 +36,8 @@ export class LocalDockerProvider implements SandboxProvider {
       `OUTFITTER_API=${run.apiOrigin}`,
       "-e",
       `RUN_ID=${run.runId}`,
+      "-e",
+      `RUN_TOKEN=${run.runToken}`,
     ];
     if (run.devToken) args.push("-e", `OUTFITTER_DEV_TOKEN=${run.devToken}`);
     for (const [k, v] of Object.entries(run.env ?? {})) args.push("-e", `${k}=${v}`);

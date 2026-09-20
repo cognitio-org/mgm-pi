@@ -74,6 +74,7 @@ function makeLink(overrides: Partial<ConstructorParameters<typeof Link>[0]> = {}
     url: "wss://api.example.test/agent/ws?run=run1",
     headers: async () => ({ Authorization: "Bearer t" }),
     runId: "run1",
+    runToken: "test-run-token",
     sessionId: "sess1",
     agentdVersion: "0.1.0",
     piVersion: "0.85.1",
@@ -93,6 +94,7 @@ test("Link: sends hello with lastAckedSeq=0 on first open", async (t) => {
   assert.equal(hello.t, "hello");
   assert.equal(hello.runId, "run1");
   assert.equal(hello.lastAckedSeq, 0);
+  assert.equal(hello.runToken, "test-run-token");
 });
 
 test("Link: sendSeq assigns monotonic seq and buffers until acked", async (t) => {

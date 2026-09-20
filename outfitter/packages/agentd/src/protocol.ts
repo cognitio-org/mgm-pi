@@ -37,6 +37,10 @@ export interface UpHello {
   agentdVersion: string;
   piVersion: string;
   lastAckedSeq: number;
+  /** The RUN_TOKEN the provider launched this sandbox with (docs/reports/security-review-pr1.md
+   * finding #2). Proves the connecting process is the execution the api itself started for this
+   * run, not just something holding a valid agent SA id token for some other run. */
+  runToken: string;
 }
 
 export interface UpStatus {

@@ -24,6 +24,9 @@ function makeQueue<T>() {
       if (item !== undefined) return Promise.resolve(item);
       return new Promise((resolve) => waiters.push(resolve));
     },
+    count(): number {
+      return items.length;
+    },
   };
 }
 
@@ -35,6 +38,9 @@ interface SocketHandle {
   // which the injectWS test transport doesn't always signal promptly; terminate() clears it so
   // node:test's process can exit immediately instead of waiting out that timer.
   nextClose: () => Promise<{ code: number; reason: string }>;
+  // Number of messages already received and not yet consumed via nextMessage() -- used to assert
+  // "no run.spec was ever sent" without racing a nextMessage() call that would hang forever.
+  messageCount: () => number;
 }
 
 async function openAgentSocket(
@@ -62,13 +68,23 @@ async function openAgentSocket(
       ws.terminate();
       return close;
     },
+    messageCount: messages.count,
   };
+}
+
+/** RunManager.wake (src/runs.ts) generates a fresh runToken per run and only ever stores its hash
+ * (finding #2, docs/reports/security-review-pr1.md) -- tests recover the plaintext the same way
+ * agentd would receive it, from what wake() actually handed the provider. */
+function runTokenFor(app: Awaited<ReturnType<typeof buildTestApp>>, runId: string): string {
+  const call = [...app.provider.startCalls].reverse().find((c) => c.runId === runId);
+  if (!call) throw new Error(`no provider.start call recorded for run ${runId}`);
+  return call.runToken;
 }
 
 async function makeRunningSession(
   app: Awaited<ReturnType<typeof buildTestApp>>,
   overrides: Partial<Session> = {},
-): Promise<{ session: Session; runId: string }> {
+): Promise<{ session: Session; runId: string; runToken: string }> {
   await seedGuru(app.store);
   const now = new Date().toISOString();
   const session: Session = {
@@ -84,22 +100,33 @@ async function makeRunningSession(
   };
   await app.store.sessions.insert(session);
   const run = await app.runs.wake(session.id);
-  return { session, runId: run.id };
+  return { session, runId: run.id, runToken: runTokenFor(app, run.id) };
+}
+
+/** Sends the `hello` handshake every connection needs now (finding #2): the api waits for it,
+ * checked against the run's token, before sending `run.spec` or handling anything else. */
+function sendHello(
+  agent: SocketHandle,
+  runId: string,
+  sessionId: string,
+  runToken: string,
+  lastAckedSeq = 0,
+): void {
+  agent.send({ t: "hello", runId, sessionId, lastAckedSeq, runToken });
 }
 
 describe("agentd <-> api WebSocket", () => {
-  test("connect sends run.spec, then hello/ack/entry-dedup/bye", async () => {
+  test("connect waits for hello, then sends run.spec, then ack/entry-dedup/bye", async () => {
     const app = await buildTestApp();
-    const { session, runId } = await makeRunningSession(app);
+    const { session, runId, runToken } = await makeRunningSession(app);
 
     const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
 
     const spec = await agent.nextMessage();
     assert.equal(spec.t, "run.spec");
     assert.equal(spec.session.id, session.id);
     assert.equal(spec.repo.branch, "main");
-
-    agent.send({ t: "hello", runId, sessionId: session.id, lastAckedSeq: 0 });
 
     // send the same entry twice; the second must be a no-op (idempotent on entry.id)
     const entry = { id: "e1", parentId: null, type: "message" };
@@ -125,7 +152,7 @@ describe("agentd <-> api WebSocket", () => {
 
   test("event frames are fanned out over SSE and acked", async () => {
     const app = await buildTestApp();
-    const { session, runId } = await makeRunningSession(app);
+    const { session, runId, runToken } = await makeRunningSession(app);
 
     const received: { type: string; data: unknown }[] = [];
     const fakeReply = {
@@ -142,6 +169,7 @@ describe("agentd <-> api WebSocket", () => {
     app.sse.subscribe(session.id, fakeReply as any);
 
     const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
     await agent.nextMessage(); // run.spec
 
     agent.send({ t: "event", seq: 1, event: { type: "agent_start" } });
@@ -157,7 +185,7 @@ describe("agentd <-> api WebSocket", () => {
     await app.fastify.close();
   });
 
-  test("closes the connection with a bad token instead of sending run.spec", async () => {
+  test("closes the connection with a bad bearer token instead of sending run.spec", async () => {
     const app = await buildTestApp();
     const { runId } = await makeRunningSession(app);
 
@@ -171,11 +199,75 @@ describe("agentd <-> api WebSocket", () => {
     await app.fastify.close();
   });
 
-  test("run.spec omits repo and carries workspace for a repo-less session", async () => {
+  // Finding #2 (docs/reports/security-review-pr1.md): a valid agent SA bearer token only proves the
+  // caller is *some* execution of the outfitter-agent job -- every execution shares that identity.
+  // The run-scoped secret RunManager.wake hands the provider (RUN_TOKEN) is what proves the caller
+  // is *this run's* execution, and the api must not do anything else with the socket until it's
+  // checked.
+  test("closes with 4401 and never sends run.spec when hello carries the wrong runToken", async () => {
     const app = await buildTestApp();
-    const { runId } = await makeRunningSession(app, { repo: null, branch: undefined });
+    const { session, runId } = await makeRunningSession(app);
 
     const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, "not-the-real-run-token");
+    const close = await agent.nextClose();
+    assert.equal(close.code, 4401);
+    assert.equal(agent.messageCount(), 0);
+
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("closes with 4401 and never sends run.spec when hello carries no runToken", async () => {
+    const app = await buildTestApp();
+    const { session, runId } = await makeRunningSession(app);
+
+    const agent = await openAgentSocket(app, runId);
+    agent.send({ t: "hello", runId, sessionId: session.id, lastAckedSeq: 0 });
+    const close = await agent.nextClose();
+    assert.equal(close.code, 4401);
+    assert.equal(agent.messageCount(), 0);
+
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("closes with 4401 when the first frame isn't hello at all", async () => {
+    const app = await buildTestApp();
+    const { runId, runToken } = await makeRunningSession(app);
+
+    const agent = await openAgentSocket(app, runId);
+    // A correct runToken doesn't help if it isn't delivered as the required first (hello) frame.
+    agent.send({ t: "heartbeat", idleSeconds: 0, memMb: 1, runToken });
+    const close = await agent.nextClose();
+    assert.equal(close.code, 4401);
+    assert.equal(agent.messageCount(), 0);
+
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("proceeds to run.spec once hello carries the correct runToken", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    const spec = await agent.nextMessage();
+    assert.equal(spec.t, "run.spec");
+
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("run.spec omits repo and carries workspace for a repo-less session", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app, { repo: null, branch: undefined });
+
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
     const spec = await agent.nextMessage();
 
     assert.equal(spec.repo, undefined);
@@ -190,9 +282,10 @@ describe("agentd <-> api WebSocket", () => {
 
   test("a checkpoint frame with only workspaceUrl stores just that field", async () => {
     const app = await buildTestApp();
-    const { session, runId } = await makeRunningSession(app, { repo: null, branch: undefined });
+    const { session, runId, runToken } = await makeRunningSession(app, { repo: null, branch: undefined });
 
     const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
     await agent.nextMessage(); // run.spec
 
     agent.send({ t: "checkpoint", workspaceUrl: "file:///tmp/s1-workspace.tar.gz" });
@@ -228,6 +321,7 @@ describe("agentd <-> api WebSocket", () => {
     const run = await app.runs.wake(session.id);
 
     const agent = await openAgentSocket(app, run.id);
+    sendHello(agent, run.id, session.id, runTokenFor(app, run.id));
     const spec = await agent.nextMessage();
     assert.equal(spec.guru.model, "litellm/gpt-5-mini");
 
@@ -242,7 +336,7 @@ describe("agentd <-> api WebSocket", () => {
 
   test("down-messages queue during provisioning and drain after the first idle/running status, in order", async () => {
     const app = await buildTestApp();
-    const { session, runId } = await makeRunningSession(app);
+    const { session, runId, runToken } = await makeRunningSession(app);
 
     // run.state is "provisioning" (wake() just started it): both sends must queue, not deliver.
     await app.agentLink.send(runId, { t: "prompt", text: "first" });
@@ -251,9 +345,9 @@ describe("agentd <-> api WebSocket", () => {
     assert.equal(queued?.pending.length, 2);
 
     const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
     await agent.nextMessage(); // run.spec
 
-    agent.send({ t: "hello", runId, sessionId: session.id, lastAckedSeq: 0 });
     // hello must NOT drain: the run is still provisioning at this point.
     const afterHello = await app.store.runs.findById(runId);
     assert.equal(afterHello?.pending.length, 2);
@@ -299,6 +393,7 @@ describe("agentd <-> api WebSocket", () => {
     const run = await app.runs.wake(session.id);
 
     const agent = await openAgentSocket(app, run.id);
+    sendHello(agent, run.id, session.id, runTokenFor(app, run.id));
     const spec = await agent.nextMessage();
     assert.equal(spec.guru.model, "litellm/local-qwen-mlx");
 
@@ -313,9 +408,10 @@ describe("agentd <-> api WebSocket", () => {
 
   test("session cost is the sum of each run's delta above the key's spend at that run's start, not the raw cumulative key spend", async () => {
     const app = await buildTestApp();
-    const { session, runId: run1Id } = await makeRunningSession(app);
+    const { session, runId: run1Id, runToken: run1Token } = await makeRunningSession(app);
 
     const agent1 = await openAgentSocket(app, run1Id);
+    sendHello(agent1, run1Id, session.id, run1Token);
     await agent1.nextMessage(); // run.spec
 
     // key balance is 5 when run1 first reports spend: that's run1's baseline, contributing 0 yet.
@@ -341,6 +437,7 @@ describe("agentd <-> api WebSocket", () => {
     // a second run on the same session: the key's cumulative spend continues from 8, not reset.
     const run2 = await app.runs.wake(session.id);
     const agent2 = await openAgentSocket(app, run2.id);
+    sendHello(agent2, run2.id, session.id, runTokenFor(app, run2.id));
     await agent2.nextMessage(); // run.spec
 
     // run2's own baseline is pinned to 8 (its own first spend frame), so it starts at 0 too.
@@ -376,8 +473,9 @@ describe("down-message queue poller (cross-process delivery)", () => {
     const owner = await buildTestApp({}, { store });
     const sender = await buildTestApp({}, { store });
 
-    const { runId } = await makeRunningSession(owner);
+    const { session, runId, runToken } = await makeRunningSession(owner);
     const agent = await openAgentSocket(owner, runId);
+    sendHello(agent, runId, session.id, runToken);
     await agent.nextMessage(); // run.spec
 
     // Mirrors what a real "status: idle" frame would do: the poller only drains a run it
@@ -428,9 +526,10 @@ describe("run.spec build validates secrets", () => {
       { OUTFITTER_DEV: "0", AGENT_SA_EMAIL: "agent@test.local" },
       { secretsBroker: emptyGithubBroker },
     );
-    const { runId } = await makeRunningSession(app); // default fixture has repo: "o/r"
+    const { session, runId, runToken } = await makeRunningSession(app); // default fixture has repo: "o/r"
 
     const agent = await openAgentSocket(app, runId, "any-google-id-token");
+    sendHello(agent, runId, session.id, runToken);
     const close = await agent.nextClose();
     assert.equal(close.code, 4412);
     assert.match(close.reason, /missing github token/);
@@ -452,9 +551,10 @@ describe("run.spec build validates secrets", () => {
     // buildTestApp defaults to OUTFITTER_DEV=1 (devMode on): a missing secret means "no secrets
     // available", not "fail the run" -- the clone just runs anonymously.
     const app = await buildTestApp({}, { secretsBroker: emptyGithubBroker });
-    const { runId } = await makeRunningSession(app); // default fixture has repo: "o/r"
+    const { session, runId, runToken } = await makeRunningSession(app); // default fixture has repo: "o/r"
 
     const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
     const spec = await agent.nextMessage();
     assert.equal(spec.t, "run.spec");
     assert.equal(spec.secrets.githubToken, "");
@@ -470,9 +570,10 @@ describe("run.spec build validates secrets", () => {
       secretsForRun: async () => ({ githubToken: "", litellmKey: "some-key" }),
     };
     const app = await buildTestApp({}, { secretsBroker: emptyGithubBroker });
-    const { runId } = await makeRunningSession(app, { repo: null, branch: undefined });
+    const { session, runId, runToken } = await makeRunningSession(app, { repo: null, branch: undefined });
 
     const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
     const spec = await agent.nextMessage();
     assert.equal(spec.t, "run.spec");
     assert.equal(spec.secrets.githubToken, "");

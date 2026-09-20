@@ -5,7 +5,7 @@
 // queue drains once agentd reports the run running/idle — on that first "status", or on a later
 // reconnect's "hello" if it was already ready).
 
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { WebSocket } from "@fastify/websocket";
 import type { Config } from "./config.ts";
@@ -205,6 +205,19 @@ export class AgentLink {
     const guru = await this.store.gurus.findById(session.guruId);
     if (!guru) return closeQuietly(socket, 4404, "guru not found");
 
+    // Finding #2 (docs/reports/security-review-pr1.md): every Cloud Run Job execution for
+    // outfitter-agent shares one service-account identity, so a valid agent id token only proves
+    // the caller is *some* execution of that job -- not that it's the specific execution the api
+    // itself started for this run. Wait for the first frame (hello, protocol.md's "first frame
+    // after connect") and require it to carry the per-run secret RunManager.wake generated
+    // (RUN_TOKEN, handed to the provider at launch) before touching the run any further: no
+    // run.spec, no other frame handling, no socket registration until the hash checks out.
+    const hello = await waitForHello(socket);
+    if (!hello || !runTokenMatches(hello.runToken, run.runTokenHash)) {
+      request.log.warn({ runId }, "agentlink: closing connection with a missing or invalid run token");
+      return closeQuietly(socket, 4401, "unauthorized");
+    }
+
     this.sockets.set(runId, socket);
     socket.on("close", () => {
       if (this.sockets.get(runId) === socket) this.sockets.delete(runId);
@@ -240,6 +253,17 @@ export class AgentLink {
       throw err;
     }
     socket.send(JSON.stringify(spec));
+
+    // Existing hello behaviour, now run against the same frame the run-token check above already
+    // consumed: record first contact and drain anything queued while this run was ready before this
+    // connection (a reconnect). A first connect's run is always still `provisioning` here, so this
+    // never drains then -- see the "status" case in handleUpFrame for why that's deliberate.
+    const now = new Date().toISOString();
+    const updated = await this.store.runs.update(runId, { lastSeenAt: now, updatedAt: now });
+    if (updated && isReadyState(updated.state)) {
+      const pending = await this.store.runs.drainDownMessages(runId);
+      for (const message of pending) socket.send(JSON.stringify(message));
+    }
   }
 
   private async buildRunSpec(runId: string, session: Session, guru: Guru): Promise<RunSpecMessage> {
@@ -317,19 +341,10 @@ export class AgentLink {
     const now = new Date().toISOString();
 
     switch (frame.t) {
-      case "hello": {
-        // Reconnect tolerance: only drain here if the run was already ready before this hello (a
-        // reconnect after running/idle). A first connect's hello arrives before agentd has ever
-        // reported running/idle, so draining then would deliver down-messages (e.g. the initial
-        // prompt) before pi exists to receive them; the "status" case below drains once instead,
-        // the first time the run actually becomes ready.
-        const updated = await this.store.runs.update(runId, { lastSeenAt: now, updatedAt: now });
-        if (updated && isReadyState(updated.state)) {
-          const pending = await this.store.runs.drainDownMessages(runId);
-          for (const message of pending) socket.send(JSON.stringify(message));
-        }
-        break;
-      }
+      // "hello" is not handled here: it's always the first frame of a connection (protocol.md), and
+      // handleConnection now consumes it itself (via waitForHello) before this listener is even
+      // attached, to check the per-run token (finding #2) before doing anything else with the
+      // socket. That's also where its lastSeenAt/drain behaviour now lives.
       case "status": {
         const state = mapStatusToRunState(String(frame.state));
         const before = await this.store.runs.findById(runId);
@@ -460,6 +475,50 @@ export class AgentLink {
     socket.send(JSON.stringify({ t: "ack", seq }));
     await this.store.runs.update(runId, { lastAckedSeq: seq, lastSeenAt: now, updatedAt: now });
   }
+}
+
+/** Waits for the connection's first message frame and returns it only if it's a well-formed
+ * `hello`; resolves `undefined` on malformed JSON, a non-hello first frame, or the socket closing
+ * before either arrives. Used by handleConnection to gate everything else (run.spec, socket
+ * registration, other frame handling) on the run-token check -- finding #2. */
+function waitForHello(socket: WebSocket): Promise<UpFrame | undefined> {
+  return new Promise((resolve) => {
+    const onMessage = (raw: Buffer | string) => {
+      cleanup();
+      try {
+        const frame = JSON.parse(typeof raw === "string" ? raw : raw.toString("utf8")) as UpFrame;
+        resolve(frame.t === "hello" ? frame : undefined);
+      } catch {
+        resolve(undefined);
+      }
+    };
+    const onClose = () => {
+      cleanup();
+      resolve(undefined);
+    };
+    function cleanup(): void {
+      socket.off("message", onMessage);
+      socket.off("close", onClose);
+    }
+    socket.on("message", onMessage);
+    socket.on("close", onClose);
+  });
+}
+
+/** Constant-time check that `candidate` (hello.runToken, untrusted) hashes to `expectedHashHex`
+ * (Run.runTokenHash, from RunManager.wake). false for a missing/non-string candidate or a run with
+ * no stored hash -- never treated as "no check needed". */
+function runTokenMatches(candidate: unknown, expectedHashHex: string | undefined): boolean {
+  if (typeof candidate !== "string" || !candidate || !expectedHashHex) return false;
+  const candidateHash = createHash("sha256").update(candidate).digest();
+  let expectedHash: Buffer;
+  try {
+    expectedHash = Buffer.from(expectedHashHex, "hex");
+  } catch {
+    return false;
+  }
+  if (candidateHash.length !== expectedHash.length) return false;
+  return timingSafeEqual(candidateHash, expectedHash);
 }
 
 const CLOSE_HANDSHAKE_GRACE_MS = 2000;

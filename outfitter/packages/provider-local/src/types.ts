@@ -5,12 +5,17 @@ export interface RunLaunch {
   runId: string;
   /** OUTFITTER_API: the api origin agentd dials for its WebSocket link. */
   apiOrigin: string;
+  /** RUN_TOKEN: the per-run secret RunManager.wake (packages/api/src/runs.ts) generates and hashes
+   * onto the Run record. agentd sends it back in the `hello` frame so AgentLink can prove the
+   * connecting process is *this* run's own execution, not merely something holding a valid agent
+   * SA id token for *some* run (docs/reports/security-review-pr1.md finding #2). */
+  runToken: string;
   /** OUTFITTER_DEV_TOKEN: local-dev auth bypass; omitted in real deployments (GCE metadata token
    * is used instead). */
   devToken?: string;
   /** Docker image reference, LocalDockerProvider only. Defaults to "outfitter-agent". */
   image?: string;
-  /** Extra env vars merged on top of the fixed OUTFITTER_API/RUN_ID/OUTFITTER_DEV_TOKEN set. */
+  /** Extra env vars merged on top of the fixed OUTFITTER_API/RUN_ID/RUN_TOKEN/OUTFITTER_DEV_TOKEN set. */
   env?: Record<string, string>;
 }
 

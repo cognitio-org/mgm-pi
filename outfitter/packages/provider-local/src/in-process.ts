@@ -31,6 +31,7 @@ export class InProcessProvider implements SandboxProvider {
       ...process.env,
       OUTFITTER_API: run.apiOrigin,
       RUN_ID: run.runId,
+      RUN_TOKEN: run.runToken,
       WORKSPACE: this.opts.workspace ?? "/workspace",
       PI_BIN: this.opts.piBin,
       ...(this.opts.piCodingAgentDir ? { PI_CODING_AGENT_DIR: this.opts.piCodingAgentDir } : {}),

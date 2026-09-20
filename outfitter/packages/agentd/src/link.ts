@@ -37,6 +37,9 @@ export interface LinkOptions {
    * token. */
   headers: () => Promise<Record<string, string>>;
   runId: string;
+  /** RUN_TOKEN (main.ts), echoed back in every `hello` frame so AgentLink can bind this connection
+   * to the specific run it was launched for (docs/reports/security-review-pr1.md finding #2). */
+  runToken: string;
   sessionId: string;
   agentdVersion: string;
   piVersion: string;
@@ -233,6 +236,7 @@ export class Link {
         agentdVersion: this.opts.agentdVersion,
         piVersion: this.opts.piVersion,
         lastAckedSeq: this.lastAckedSeq,
+        runToken: this.opts.runToken,
       };
       this.transmit(hello);
       // Resend everything still unacked, in original order, so the api can replay/dedupe past

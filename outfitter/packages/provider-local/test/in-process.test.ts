@@ -21,7 +21,7 @@ test("InProcessProvider: start reports running, stop reports exited", async () =
   await writeFile(script, "setInterval(() => {}, 1000);\n");
 
   const provider = new InProcessProvider({ agentdPath: script, piBin: "/bin/true" });
-  const { handle } = await provider.start({ runId: "r1", apiOrigin: "http://localhost:9" });
+  const { handle } = await provider.start({ runId: "r1", apiOrigin: "http://localhost:9", runToken: "test-run-token" });
 
   await waitFor(async () => (await provider.status(handle)) === "running");
   assert.equal(await provider.status(handle), "running");

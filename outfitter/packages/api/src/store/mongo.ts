@@ -24,7 +24,7 @@ import type {
 
 // Typed as RunState[], not inferred as string[]: used in a Mongo `$in` filter against Run.state,
 // which the mongodb driver's Filter<T> types as a union of the literal RunState strings.
-const ACTIVE_RUN_STATES: RunState[] = ["queued", "provisioning", "running", "idle"];
+const ACTIVE_RUN_STATES: RunState[] = ["queued", "provisioning", "running", "idle", "stopping"];
 
 // Every collection here stores its own `id` field as Mongo's `_id` (see each class's `insert`) so
 // reads need to drop `_id` before returning the document as its public type T. Not every T has an
@@ -149,6 +149,11 @@ class MongoRuns implements RunsCollection {
         $or: [{ lastSeenAt: { $lt: cutoffIso } }, { lastSeenAt: { $exists: false }, createdAt: { $lt: cutoffIso } }],
       })
       .toArray();
+    return rows.map((r) => stripIdStrict<Run>(r));
+  }
+
+  async listStopping(cutoffIso: string): Promise<Run[]> {
+    const rows = await this.col.find({ state: "stopping", updatedAt: { $lt: cutoffIso } }).toArray();
     return rows.map((r) => stripIdStrict<Run>(r));
   }
 

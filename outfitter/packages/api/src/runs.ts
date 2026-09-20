@@ -1,8 +1,12 @@
-// Run lifecycle: `queued -> provisioning -> running <-> idle -> stopped | failed` (protocol.md
-// "Run state machine"). wake() starts a provider execution for a session; stop() asks the provider
-// to cancel; the reconciler marks runs failed once their lastSeenAt is stale, unless the provider
-// still reports them as provisioning or the run is still within its provisioning grace window,
-// stopping the provider execution first so a reconciled run doesn't leave an orphaned Job running.
+// Run lifecycle: `queued -> provisioning -> running <-> idle -> stopping -> stopped | failed`
+// (protocol.md "Run state machine"). wake() starts a provider execution for a session; stop() asks
+// the provider to cancel directly (used only when there's no live agent to ask gracefully, or once
+// a graceful stop's grace period has expired); the reconciler marks runs failed once their
+// lastSeenAt is stale, unless the provider still reports them as provisioning or the run is still
+// within its provisioning grace window, stopping the provider execution first so a reconciled run
+// doesn't leave an orphaned Job running. reconcileStoppingOnce separately cancels any run stuck in
+// `stopping` (agentd never got, or never acted on, the graceful `stop` down-message) past
+// config.stopGraceMs.
 
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import type { Store, Run } from "./store/types.ts";
@@ -93,10 +97,14 @@ export class RunManager {
     });
   }
 
-  /** Starts the 60s reconciler loop; returns a function that stops it. */
+  /** Starts the 60s reconciler loop (stale-run failure and stuck-stopping cancellation); returns a
+   * function that stops it. */
   startReconciler(intervalMs = RECONCILE_INTERVAL_MS): () => void {
     const timer = setInterval(() => {
       this.reconcileOnce().catch(() => {
+        // errors are transient (store/provider hiccup); next tick retries
+      });
+      this.reconcileStoppingOnce().catch(() => {
         // errors are transient (store/provider hiccup); next tick retries
       });
     }, intervalMs);
@@ -129,6 +137,31 @@ export class RunManager {
       await this.store.runs.update(run.id, {
         state: "failed",
         reason: "no heartbeat",
+        updatedAt: new Date().toISOString(),
+      });
+    }
+  }
+
+  /**
+   * Cancels any run still `stopping` whose graceful stop (routes/sessions.ts's `/stop` enqueues a
+   * `stop` down-message and sets `stopping`; agentlink.ts's `bye` handler is what normally finishes
+   * the job by marking it `stopped`) hasn't completed within `graceMs` of entering that state --
+   * agentd never got the down-message (e.g. its socket died before the queue poller could deliver
+   * it), or got it but never sent `bye`. Best-effort provider cancel first, same as reconcileOnce,
+   * so a stuck run doesn't leave an orphaned sandbox behind.
+   */
+  async reconcileStoppingOnce(graceMs = this.config.stopGraceMs): Promise<void> {
+    const cutoff = new Date(Date.now() - graceMs).toISOString();
+    const stuck = await this.store.runs.listStopping(cutoff);
+    for (const run of stuck) {
+      if (run.providerHandle) {
+        await this.provider.stop(run.providerHandle).catch(() => {
+          // best effort: still mark the run stopped below even if the provider stop call itself fails
+        });
+      }
+      await this.store.runs.update(run.id, {
+        state: "stopped",
+        reason: "stop grace expired",
         updatedAt: new Date().toISOString(),
       });
     }

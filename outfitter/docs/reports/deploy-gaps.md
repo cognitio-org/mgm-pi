@@ -354,3 +354,90 @@ with the stored execution-name handle; `status()`'s starting/running/exited mapp
 **Test run:** `npm test` from `outfitter/` (all workspaces): `@outfitter/api` 86/86,
 `@outfitter/agentd` and `@outfitter/provider-local` unaffected and still green — all passing, no
 failures anywhere in the workspace.
+
+## Round-two stack: `/stop` used the wrong signal, and one socket's frames could race each other
+
+Two more bugs found on the deployed stack (`outfitter/round-three` branch), both from the same root
+cause: `packages/api` runs as two Cloud Run services (`outfitter-api` web role, `outfitter-link` link
+role) sharing one Atlas store, but `AgentLink` keeps live WebSocket sockets in an in-process `Map` —
+anything that assumes "this process's socket state" reflects the run's real state is wrong on the
+role that doesn't hold the socket.
+
+### 1. `POST /api/sessions/:id/stop` on the web role always sent SIGTERM instead of a graceful stop
+
+**Observed:** the route branched on `ctx.agentLink.hasSocket(run.id)` to decide between a graceful
+stop (send agentd a `stop` down-message, let it checkpoint and say `bye`) and a hard provider cancel.
+`hasSocket` is process-local (`AgentLink.sockets`, an in-memory `Map`), and the web role
+(`outfitter-api`) never registers `/agent/ws` at all (`server.ts`: `agentLink.register(fastify)` only
+runs for role `link`/`all`) — so `hasSocket` was `false` for *every* call on that role, regardless of
+whether the run had a live agent connected on `outfitter-link`. Every stop request from the browser
+(which only ever reaches the web role, behind IAP) fell through to `ctx.runs.stop()`, which calls
+`provider.stop()` — a hard cancel (SIGTERM to the sandbox on `docker`/`inprocess`, `cancelExecution`
+on `cloudrun`) — skipping the checkpoint entirely and losing whatever wasn't already pushed.
+
+**Fix (`packages/api/src/routes/sessions.ts`, `src/store/types.ts`, `src/agentlink.ts`,
+`src/runs.ts`, `src/config.ts`):** `/stop` no longer looks at `hasSocket` at all. For a `running`/
+`idle` run it always calls `agentLink.send(run.id, { t: "stop", reason: "user" })` — which already
+does the right process-independent thing (deliver immediately if this process happens to hold the
+socket, else enqueue in the store for the link role's existing down-queue poller to pick up) — then
+marks the run a new `stopping` state. `stopping` is added to `RunState`, to both stores' active-run
+sets (`ACTIVE_RUN_STATES` in `mongo.ts`, the two local `Set`s in `memory.ts`) so `findActiveForSession`
+still finds it (no second `wake()` starts on the same session mid-stop) and to `AgentLink`'s
+`isReadyState` (the agent is still connected, just draining toward `bye`, so a queued message must
+still get delivered) and to `handleConnection`'s run-state gate (a reconnecting agentd mid-stop is
+still accepted). A `queued`/`provisioning` run has no live agent to ask gracefully, so `/stop` still
+cancels it via the provider directly in that case, same as before. `RunManager.reconcileStoppingOnce`
+(new; wired into the existing 60s reconciler loop alongside `reconcileOnce`) cancels any run still
+`stopping` past `STOP_GRACE_MS` (env, default 60s) via the provider and marks it `stopped` — the
+backstop for agentd never getting, or never acting on, the down-message. `docs/protocol.md`'s run
+state machine and REST section now document `stopping`.
+
+**Tests:** `packages/api/test/stop.test.ts` (new) — `RunManager.reconcileStoppingOnce` cancels a run
+stuck `stopping` past the grace and marks it `stopped` (and leaves one alone still inside the grace
+window); a two-`buildTestApp`-sharing-one-`MemoryStore` test (same shape as the existing
+cross-process down-queue test in `agentlink.test.ts`) asserting a `/stop` call on the process with no
+socket for the run enqueues `{t:"stop",reason:"user"}` in the store and marks it `stopping` — never
+calling `provider.stop` on either process — then that the owning process's poller delivers it and a
+`bye` finishes the job; a `queued`/`provisioning` run still gets a direct provider cancel.
+
+### 2. Up-frames on one socket were handled concurrently, so a late store write could undo `bye`
+
+**Observed:** `AgentLink.handleConnection`'s `socket.on("message", ...)` called `handleUpFrame` per
+message without awaiting the previous call's promise — each invocation does its own
+`store.runs.findById` then `store.runs.update` round trip, so two frames arriving close together ran
+those round trips concurrently instead of in sequence. In production, a `status: "stopping"` frame
+(mapped, before this fix, to `provisioning` — see below) and the following `bye` frame raced: `bye`'s
+update (`state: "stopped"`) resolved first, but the earlier `status` frame's update resolved *after*
+it and silently overwrote the terminal `stopped` back to `provisioning` — a run that had actually
+finished looked, to the store, like it was still starting up.
+
+**Fix (`packages/api/src/agentlink.ts`):** `handleConnection` now serializes up-frame handling per
+connection with a promise chain (`chain = chain.then(() => this.handleUpFrame(...).catch(...))`) — a
+frame's handling (all its awaited store calls included) fully settles before the next frame on the
+same socket even starts; errors are still caught and logged inline so one bad frame never wedges the
+chain for every frame after it. Independently, `bye` is now final: the `status` and `heartbeat` cases
+both check the run's current stored state first and no-op if it's already terminal (`stopped`/
+`failed`), so a frame that's somehow still in flight or delivered after `bye` (the socket's own close
+handshake, or a client oddity) can't resurrect a finished run either. Separately fixed the actual
+`status`→state mapping bug this surfaced: `mapStatusToRunState` used to fall every unrecognized
+`status.state` through to `provisioning`, which included agentd's own `checkpointing` and `stopping`
+statuses (protocol.md always specced these; the mapping function just never handled them) — a
+mid-turn checkpoint's `status: "checkpointing"` briefly overwrote a `running`/`idle` run back to
+`provisioning`, and agentd's own `status: "stopping"` (distinct from this api's `stopping` run state,
+sent while agentd is mid-shutdown) did the same. `checkpointing` now leaves the run's current state
+untouched; `stopping` now maps to the new `stopping` run state.
+
+**Tests:** `packages/api/test/stop.test.ts` — a custom `RunsCollection` wrapping `MemoryStore`'s whose
+first `update()` call is artificially delayed 50ms (simulating a store whose writes can resolve out
+of order) proves serialization: `status`+`bye` sent back-to-back land in `stopped` regardless of the
+delay, where the old concurrent handling would have let the delayed `status` write clobber `bye`'s
+terminal state; a second test sends `bye` then a `status` frame right behind it on the same
+(still-open a moment longer) socket and asserts the run stays `stopped`.
+
+**Files touched:** `packages/api/src/routes/sessions.ts`, `packages/api/src/store/types.ts`,
+`packages/api/src/store/memory.ts`, `packages/api/src/store/mongo.ts`, `packages/api/src/agentlink.ts`,
+`packages/api/src/runs.ts`, `packages/api/src/config.ts`, `packages/api/test/stop.test.ts` (new),
+`docs/protocol.md`.
+
+**Test run:** `npm test` from `outfitter/` (all workspaces): `@outfitter/agentd` 123/123,
+`@outfitter/api` 92/92, `@outfitter/provider-local` 2/2 — all green.

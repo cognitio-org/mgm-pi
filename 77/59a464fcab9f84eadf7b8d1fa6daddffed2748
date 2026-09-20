@@ -1,0 +1,25 @@
+.gitignore
+  s_25c805ebe232f3::t_e646e2d84b9af4 21-23
+mgm/.pi/extensions/mgm-banner/index.ts
+  s_25c805ebe232f3::t_e646e2d84b9af4 3
+README.md
+  s_25c805ebe232f3::t_e646e2d84b9af4 6-12,24,46-48
+mgm/bin/mgm
+  s_25c805ebe232f3::t_e646e2d84b9af4 6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "7759a464fcab9f84eadf7b8d1fa6daddffed2748",
+  "prompts": {},
+  "sessions": {
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

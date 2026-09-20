@@ -6,9 +6,9 @@
   "scripts": {
     "start": "./bin/mgm",
     "models": "./bin/mgm --list-models",
-    "test": "node --import ./tests/resolve-pi.mjs --test tests/",
+    "test": "node --import ./tests/resolve-pi.mjs --test 'tests/*.test.ts'",
     "test:e2e": "MGM_E2E=1 node --import ./tests/resolve-pi.mjs --test tests/e2e.test.ts",
-    "test:coverage": "node --import ./tests/resolve-pi.mjs --test --experimental-test-coverage --test-coverage-include='.pi/extensions/**/*.ts' tests/"
+    "test:coverage": "node --import ./tests/resolve-pi.mjs --test --experimental-test-coverage --test-coverage-include='.pi/extensions/**/*.ts' 'tests/*.test.ts'"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.85.1"

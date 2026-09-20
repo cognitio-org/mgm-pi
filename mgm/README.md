@@ -204,6 +204,20 @@ is a shell script). Why not compile mgm ourselves with Bun or Node SEA: pi alrea
 binary, and it must load extensions from a directory on disk, so a second compile step would add
 nothing.
 
+### Staying up to date
+
+An installed bundle checks GitHub for a newer release once a day (extension `mgm-update`, cached in
+`~/.mgm/.update-check.json`, via the `gh` CLI or `GH_TOKEN`). When one exists the start-up notice
+and the status bar say so, e.g. `⬆ 0.1.5 available · /update`. Then either
+
+- inside the agent: `/update` (or `/update check` to just look), then restart mgm; or
+- from a shell: `mgm update` (`mgm update 0.1.5` for a specific version), `mgm version` to see what
+  is installed.
+
+Both run the release installer: the new bundle lands next to the old one under `~/.mgm`, `current`
+moves to it, and the `.env` with your keys is carried over. Source checkouts are never nagged;
+`git pull` is the update there. `MGM_NO_UPDATE_CHECK=1` disables the automatic check.
+
 ## Tests
 
 ```bash

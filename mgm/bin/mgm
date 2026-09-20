@@ -17,6 +17,22 @@ if [[ -f "$ROOT/.env" ]]; then set -a; source "$ROOT/.env"; set +a; found_env=1;
 [[ $found_env == 1 ]] || echo "mgm: no .env yet — run /setup inside the agent to configure your connections" >&2
 export PI_CODING_AGENT_DIR="$ROOT/.pi"
 
+# Bundle maintenance:  mgm version   |   mgm update [x.y.z]   (release bundles only; a checkout uses git)
+REPO="mgmonteleone/mgm-pi"
+case "${1:-}" in
+  version|--version) [[ -f "$ROOT/VERSION" ]] && cat "$ROOT/VERSION" || echo "mgm (source checkout at $ROOT)"; exit 0 ;;
+  update|--update)
+    [[ -f "$ROOT/VERSION" ]] || { echo "mgm: $ROOT is a source checkout — update it with git pull" >&2; exit 1; }
+    tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+      gh release download ${2:+"v$2"} --repo "$REPO" --pattern install.sh --dir "$tmp" --clobber
+    else
+      curl -fsSL ${GH_TOKEN:+-H "Authorization: Bearer $GH_TOKEN"} -o "$tmp/install.sh" "https://github.com/$REPO/releases/${2:+download/v$2}${2:-latest/download}/install.sh" \
+        || { echo "mgm: could not download the installer — log in with 'gh auth login' or set GH_TOKEN" >&2; exit 1; }
+    fi
+    MGM_HOME="$(cd -P "$ROOT/.." && pwd)" MGM_VERSION="${2:-}" bash "$tmp/install.sh"; exit $? ;;
+esac
+
 # Make sure the local model is resident so pi does not stall on LM Studio's just-in-time reload.
 # The context length LM Studio serves cannot be forced from the CLI for MLX models (the flag is
 # ignored, Qwen 3.6 loads at 183k); pi budgets against the window the provider declares

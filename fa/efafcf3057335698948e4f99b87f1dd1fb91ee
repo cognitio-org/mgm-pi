@@ -1,0 +1,39 @@
+outfitter/packages/api/Dockerfile
+  s_2209f22f830d7f::t_e80633d18e69b1 1-17
+outfitter/deploy/link.sh
+  s_2209f22f830d7f::t_d64074e41313a0 35-49
+  s_2209f22f830d7f::t_247cd8587ba7a6 27,54-55
+  s_2209f22f830d7f::t_e80633d18e69b1 56
+outfitter/packages/api/src/store/mongo.ts
+  s_2209f22f830d7f::t_f0092fd24813f5 274-276,279
+outfitter/packages/api/src/store/index.ts
+  s_2209f22f830d7f::t_247cd8587ba7a6 7,13
+outfitter/deploy/cloudbuild-api.yaml
+  s_2209f22f830d7f::t_247cd8587ba7a6 1-9
+outfitter/packages/api/src/config.ts
+  s_2209f22f830d7f::t_f0092fd24813f5 45-46,94
+outfitter/deploy/api.sh
+  s_2209f22f830d7f::t_247cd8587ba7a6 36,59-60
+  s_2209f22f830d7f::t_e80633d18e69b1 56,61
+  s_2209f22f830d7f::t_d64074e41313a0 40-54
+outfitter/packages/api/src/main.ts
+  s_2209f22f830d7f::t_247cd8587ba7a6 8
+outfitter/.gcloudignore
+  s_2209f22f830d7f::t_247cd8587ba7a6 1-6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "faefafcf3057335698948e4f99b87f1dd1fb91ee",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

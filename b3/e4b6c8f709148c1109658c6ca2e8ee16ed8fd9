@@ -1,0 +1,20 @@
+.github/workflows/outfitter-ci.yml
+  s_2209f22f830d7f::t_263a8c61519179 45-53,56-66
+  s_2209f22f830d7f::t_ec31d7cc488762 54-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "b3e4b6c8f709148c1109658c6ca2e8ee16ed8fd9",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

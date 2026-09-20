@@ -156,10 +156,14 @@ export const api = {
     }
   },
 
-  sessions(filter: { status?: string; guru?: string } = {}): Promise<SessionSummary[]> {
+  sessions(filter: { status?: string; guru?: string; runState?: string } = {}): Promise<SessionSummary[]> {
     const params = new URLSearchParams();
     if (filter.status) params.set("status", filter.status);
     if (filter.guru) params.set("guru", filter.guru);
+    // Code review M1 (docs/reports/code-review-pr15.md): the fleet filter offers run states
+    // (queued/running/idle/...), which the API filters post-hoc via `runState`, distinct from
+    // `status` (open/closed).
+    if (filter.runState) params.set("runState", filter.runState);
     const qs = params.toString();
     return request(`/api/sessions${qs ? `?${qs}` : ""}`);
   },

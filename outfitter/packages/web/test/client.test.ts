@@ -79,6 +79,16 @@ describe("api client", () => {
     ).rejects.toMatchObject(new ApiError(400, "guruId and prompt are required"));
   });
 
+  it("sends runState (not status) for the fleet page's run-state filter (code review M1)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.sessions({ runState: "running", guru: "g1" });
+
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/sessions?guru=g1&runState=running");
+  });
+
   it("sends a JSON body with Content-Type for POST requests", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ run: { id: "r1" } }));
     vi.stubGlobal("fetch", fetchMock);

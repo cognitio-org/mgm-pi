@@ -94,9 +94,15 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
   });
 
   app.get("/api/sessions", async (req) => {
-    const query = req.query as { status?: string; guru?: string };
+    // Code review M1 (docs/reports/code-review-pr15.md): `status` here is Session.status
+    // ("open"/"closed"), while `runState` (queued/provisioning/running/idle/stopping/stopped/
+    // failed) only exists per-run, computed by summarize() below -- it isn't a store-level filter.
+    // Filter on it post-hoc, after summarizing, rather than pretending the store can push it down.
+    const query = req.query as { status?: string; guru?: string; runState?: string };
     const sessions = await ctx.store.sessions.list({ status: query.status, guruId: query.guru });
-    return Promise.all(sessions.map((s) => summarize(ctx, s)));
+    const summaries = await Promise.all(sessions.map((s) => summarize(ctx, s)));
+    if (!query.runState) return summaries;
+    return summaries.filter((s) => s.runState === query.runState);
   });
 
   app.get("/api/sessions/:id", async (req, reply) => {

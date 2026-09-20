@@ -15,7 +15,7 @@ export function FleetPage() {
   const navigate = useNavigate();
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [gurus, setGurus] = useState<Guru[]>([]);
-  const [statusFilter, setStatusFilter] = useState("");
+  const [runStateFilter, setRunStateFilter] = useState("");
   const [guruFilter, setGuruFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -26,7 +26,10 @@ export function FleetPage() {
     setError(null);
     try {
       const [sessionList, guruList] = await Promise.all([
-        api.sessions({ status: statusFilter || undefined, guru: guruFilter || undefined }),
+        // Code review M1 (docs/reports/code-review-pr15.md): this dropdown offers run states
+        // (queued/running/idle/...), which is `runState`, not `status` (open/closed) -- the two
+        // were being conflated, so the filter never matched anything.
+        api.sessions({ runState: runStateFilter || undefined, guru: guruFilter || undefined }),
         api.gurus(),
       ]);
       setSessions(sessionList);
@@ -41,14 +44,18 @@ export function FleetPage() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter, guruFilter]);
+  }, [runStateFilter, guruFilter]);
 
   const guruName = (id: string) => gurus.find((g) => g.id === id)?.name ?? id;
 
   return (
     <div>
       <div className="toolbar">
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label="Filter by run state">
+        <select
+          value={runStateFilter}
+          onChange={(e) => setRunStateFilter(e.target.value)}
+          aria-label="Filter by run state"
+        >
           <option value="">All statuses</option>
           {RUN_STATES.map((s) => (
             <option key={s} value={s}>

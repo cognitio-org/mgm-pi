@@ -41,7 +41,7 @@ async function getJson(url: string, apiKey: string, timeoutMs = 4000): Promise<a
 }
 
 async function discover(b: Backend, litellmMeta: Map<string, ModelMeta>, lmstudioMeta: Map<string, LmStudioMeta>): Promise<string[]> {
-  if (!b.discover) return b.fallback;
+  if (!b.discover || process.env.MGM_NO_DISCOVERY) return b.fallback;   // MGM_NO_DISCOVERY: offline / tests
   if (b.id === "lmstudio") {
     const native = await getJson(`${rootUrl(b.baseUrl)}/api/v0/models`, b.apiKey);
     if (native) for (const [k, v] of parseLmStudioModels(native)) lmstudioMeta.set(k, v);

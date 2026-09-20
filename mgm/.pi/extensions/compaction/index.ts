@@ -60,7 +60,6 @@ export default function (pi: ExtensionAPI) {
     return { ...effective(budgets(ctx.model?.contextWindow ?? 128_000), profile, prefs), detected, prefs };
   };
   const refreshStatus = (ctx: any) => { const u = ctx.getContextUsage?.(); ctx.ui.setStatus("compaction", statusText(u?.percent, lastMasked, eff(ctx).small)); };
-  const findModel = (key: string) => { const i = key.indexOf("/"); return i > 0 ? ctx0.registry?.find(key.slice(0, i), key.slice(i + 1)) : undefined; };
   const ctx0: { registry?: any } = {};
   pi.on("session_start", async (_ev, ctx) => { ctx0.registry = ctx.modelRegistry; refreshStatus(ctx); });
 
@@ -225,7 +224,7 @@ export default function (pi: ExtensionAPI) {
         const v = rest[0];
         if (!v) { const p = summarizerSetting(); ctx.ui.notify(`summarizer: ${p.value} (from ${p.source})`, "info"); return; }
         if (v === "default") { writePrefs({ summaryModel: undefined }); ctx.ui.notify(`summarizer reset to ${DEFAULT_SUMMARIZER}`, "info"); return; }
-        if (v !== "self") { const m = findModel(v); if (!m) { ctx.ui.notify(`Unknown model "${v}"`, "error"); return; } if (!ctx.modelRegistry.hasConfiguredAuth(m)) ctx.ui.notify(`${v} has no credentials; compaction will fall back to the working model`, "warning"); }
+        if (v !== "self") { const i = v.indexOf("/"); const m = i > 0 ? ctx.modelRegistry.find(v.slice(0, i), v.slice(i + 1)) : undefined; if (!m) { ctx.ui.notify(`Unknown model "${v}"`, "error"); return; } if (!ctx.modelRegistry.hasConfiguredAuth(m)) ctx.ui.notify(`${v} has no credentials; compaction will fall back to the working model`, "warning"); }
         writePrefs({ summaryModel: v }); ctx.ui.notify(`summarizer set to ${v}`, "info"); return;
       }
       if (!ctx.hasUI) { const e = eff(ctx); ctx.ui.notify(`summarizer ${summarizerSetting().value}; profile ${e.profile}; keep ${e.keepResults} results; trigger ${e.triggerPercent}%`, "info"); return; }

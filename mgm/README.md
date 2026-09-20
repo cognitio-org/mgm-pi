@@ -146,6 +146,20 @@ via the router plus a second `mgm` launch). Thinking off by default keeps genera
 the wait is seconds rather than minutes. If a launch sits silent, check `lms ps --json` for
 `generating`/`processingPrompt` and wait or `lms unload --all`.
 
+## Tests
+
+```bash
+npm test               # unit + extension harness tests (no services needed)
+npm run test:coverage  # same, with per-file coverage
+npm run test:e2e       # live runs against LM Studio, LiteLLM and OpenRouter (MGM_E2E=1)
+```
+
+`tests/*.test.ts` cover the pure libraries; `tests/extensions.test.ts` drives the real entry points
+through a fake pi and context (`tests/harness.ts`): scripted dialog answers, stubbed summarizer,
+temporary agent dir for settings persistence. `tests/resolve-pi.mjs` lets plain Node resolve pi's
+nested `pi-ai` / `pi-tui` packages the way pi does for extensions. `MGM_NO_DISCOVERY=1` skips the
+network model discovery (used by the tests; also handy offline).
+
 ## Startup banner
 
 `.pi/extensions/mgm-banner/` replaces pi's header with block-letter MGM, the provider indicator

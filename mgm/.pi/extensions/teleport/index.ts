@@ -107,6 +107,15 @@ export default function (pi: ExtensionAPI) {
       await store.put(id, jsonl, manifest);
       pi.appendEntry("teleport", manifest);
       await refreshCache();
+      if (!opts.quiet) {
+        // The full transcript (prompts, tool calls, tool output -- anything that appeared in this
+        // session) just went to MGM_TELEPORT_STORE's git remote in plaintext, so this reminder is
+        // only shown for an explicit /teleport push, not a silent agent_end autoPush.
+        ctx.ui.notify(
+          "Pushed the full session transcript (may include file contents, command output, or pasted secrets) to your teleport store's git remote -- make sure that remote is private.",
+          "info",
+        );
+      }
       ctx.ui.notify(`Teleported ${id.slice(0, 8)}. Pull it elsewhere with: mgm --teleport ${id}  (or /teleport pull ${id})`, "info");
     } catch (err: any) {
       ctx.ui.notify(`teleport push failed: ${err?.message ?? err}`, "error");

@@ -23,6 +23,32 @@ Connect: `wss://<api>/agent/ws?run=<runId>` with header `Authorization: Bearer <
 exists and is `provisioning|running|idle`, then sends `run.spec`. agentd reconnects with backoff and
 resends `hello` with `lastAckedSeq`; the API replays anything after it.
 
+Close codes the API can send, and how agentd (`TERMINAL_CLOSE_CODES`, `packages/agentd/src/link.ts`)
+treats them:
+
+| code | reason | agentd behavior |
+|---|---|---|
+| `4400` | missing run query param | terminal, exit 1 (misconfiguration) |
+| `4401` | unauthorized | terminal, exit 1 (misconfiguration) |
+| `4404` | run/session/guru not found | terminal, exit 0 (nothing left to do) |
+| `4409` | run is in a terminal state already | terminal, exit 0 (nothing left to do) |
+| `4412` | run cannot start: missing secret (a repo session with no usable GitHub token) | terminal, exit 1; the API also marks the run `failed` with a reason before closing |
+| `1011` | internal error | transient, agentd keeps reconnecting with backoff |
+
+Any other code is treated as transient too. `4412` exists specifically so a run stuck without a
+clonable secret fails fast instead of agentd retrying for up to ten minutes (`maxUnspecMs`) with the
+run sitting in `provisioning`.
+
+**Two Linux users inside the sandbox.** `image/Dockerfile`'s entrypoint (agentd) runs as root; `git`
+therefore also runs as root, so the `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0`/`GIT_CONFIG_VALUE_0` env
+vars agentd's git.ts uses to authenticate a clone/fetch/push (instead of `-c ...` on argv, which is
+readable via `/proc/<pid>/cmdline` by anyone sharing that process's Linux user) sit in an
+environment only root can read. `pi` -- and everything the model's shell tool runs -- is spawned as
+the unprivileged `agent` user instead (`PI_RUN_AS_USER`, agentd's run-as-user.ts), so it can never
+read agentd's own git child's `/proc/<pid>/environ`. agentd chowns whatever git wrote into
+`/workspace` back to `agent` right after each clone and each push (see run.ts's `chownWorkspace`)
+so pi's own tools (which do run as `agent`) still have a normal, writable checkout.
+
 Up (agentd → api):
 
 | t | fields | when |

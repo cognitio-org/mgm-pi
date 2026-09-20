@@ -15,12 +15,16 @@ import type { SseHub } from "./sse.ts";
 import { verifyAgentToken, bearerFromHeader } from "./auth.ts";
 import type { LaptopProbe } from "./laptop.ts";
 import { resolveRunModel } from "./laptop.ts";
+import { validateSnapshotUrl, snapshotHostAllowlist } from "./snapshot-url.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
 /** Thrown by buildRunSpec when a repo session has no usable GitHub token secret; handleConnection
- * catches it specifically to close the socket with a clear 1011 reason instead of the generic
- * "internal error" other buildRunSpec failures get. */
+ * catches it specifically to close the socket with the terminal 4412 code (docs/protocol.md) and
+ * mark the run failed, instead of the generic "internal error" other buildRunSpec failures get. A
+ * 1011 here would make agentd (TERMINAL_CLOSE_CODES, link.ts) treat it as transient and retry for
+ * up to ten minutes with the run stuck in provisioning -- this secret is never going to appear on
+ * its own, so there is nothing to retry for. */
 export class MissingGithubTokenError extends Error {}
 
 interface PendingRequest {
@@ -224,7 +228,14 @@ export class AgentLink {
     } catch (err) {
       if (err instanceof MissingGithubTokenError) {
         request.log.warn(err, "run.spec build failed: missing github token secret");
-        return closeQuietly(socket, 1011, err.message);
+        const now = new Date().toISOString();
+        await this.store.runs.update(runId, {
+          state: "failed",
+          reason: err.message,
+          updatedAt: now,
+        });
+        this.sockets.delete(runId);
+        return closeQuietly(socket, 4412, err.message);
       }
       throw err;
     }
@@ -253,8 +264,10 @@ export class AgentLink {
     // to "" rather than throwing, so a session with no repo (which needs no GitHub token at all)
     // is never blocked by it. A *repo* session with an empty token would otherwise agentd-clone
     // with no credentials and fail confusingly deep inside the sandbox; fail fast here instead,
-    // with a reason the agentd/operator can act on.
-    if (session.repo && !secrets.githubToken) {
+    // with a reason the agentd/operator can act on. Dev mode is exempt: it means "no secrets
+    // available" (MemorySecretsBroker defaults githubToken to ""), and a dev/test repo session
+    // should still be able to clone a public repo anonymously rather than being blocked here.
+    if (session.repo && !secrets.githubToken && !this.config.devMode) {
       // Close reasons are capped at 123 UTF-8 bytes by the WebSocket protocol; keep this short
       // even for a long (e.g. UUID) session id. The full secret name is in the server log line
       // above instead.
@@ -382,8 +395,32 @@ export class AgentLink {
         const checkpoint: NonNullable<Session["checkpoint"]> = {};
         if (frame.branch !== undefined) checkpoint.branch = String(frame.branch);
         if (frame.head !== undefined) checkpoint.head = String(frame.head);
-        if (frame.snapshotUrl !== undefined) checkpoint.snapshotUrl = String(frame.snapshotUrl);
-        if (frame.workspaceUrl !== undefined) checkpoint.workspaceUrl = String(frame.workspaceUrl);
+        // Finding #3 (docs/reports/security-review-pr1.md): snapshotUrl/workspaceUrl round-trip
+        // back out as run.spec.snapshot.url / run.spec.workspace.snapshotUrl on the *next* run and
+        // get fetched there -- validate before persisting rather than storing whatever a
+        // (potentially forged, see finding #2) checkpoint frame claims.
+        const allowlist = snapshotHostAllowlist();
+        const devMode = this.config.devMode;
+        if (frame.snapshotUrl !== undefined) {
+          const url = String(frame.snapshotUrl);
+          try {
+            validateSnapshotUrl(url, { allowlist, devMode });
+            checkpoint.snapshotUrl = url;
+          } catch {
+            // Rejected (not https, or host not in SNAPSHOT_HOST_ALLOWLIST): drop this field rather
+            // than persist a URL agentd would refuse to fetch on resume anyway (workspace.ts /
+            // run.ts run the same validation). branch/head/workspaceUrl still get saved below.
+          }
+        }
+        if (frame.workspaceUrl !== undefined) {
+          const url = String(frame.workspaceUrl);
+          try {
+            validateSnapshotUrl(url, { allowlist, devMode });
+            checkpoint.workspaceUrl = url;
+          } catch {
+            // See snapshotUrl above.
+          }
+        }
         await this.store.sessions.update(sessionId, { checkpoint, updatedAt: now });
         this.sse.publish(sessionId, { type: "checkpoint", data: frame });
         break;

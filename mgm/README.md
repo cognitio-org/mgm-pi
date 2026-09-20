@@ -290,6 +290,12 @@ pull it into another. `.pi/extensions/teleport/lib.ts` defines a small `Store` i
 (`list`/`get`/`put`) and a `GitStore` implementation on top of it, so the store can later be swapped
 for a cloud API ("Outfitter") without touching the commands in `.pi/extensions/teleport/index.ts`.
 
+**What gets pushed.** `/teleport push` sends the *entire* session transcript -- every prompt, tool
+call and tool result, which can include file contents, command output and anything pasted into the
+chat -- to `MGM_TELEPORT_STORE`'s git remote, unencrypted and with no secret-pattern scan beforehand.
+Make sure that remote is a **private**, access-controlled repo before you set it up; treat anything
+teleported there the same as you would a checked-in secret.
+
 ```
 /teleport                 interactive picker: pick a pushed session, then pull it
 /teleport list            list sessions in the store

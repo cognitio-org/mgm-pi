@@ -10,6 +10,11 @@ export type ByeReason = "idle" | "stop" | "sigterm" | "error";
 export interface Session {
   id: string;
   name?: string;
+  /** Email of the caller who created this session (req.identity.email at POST /api/sessions time).
+   * Recorded but not yet enforced -- finding #5 in docs/reports/security-review-pr1.md flags that
+   * every session route is open to every authenticated domain user today with no ownership check;
+   * whether to add one is an open decision, tracked in EPIC.md under E2.2. */
+  ownerEmail?: string;
   guruId: string;
   /** null = non-coding session (protocol.md: `repo` omitted on POST /api/sessions). */
   repo: string | null;
@@ -62,7 +67,10 @@ export interface Run {
   lastSeenAt?: string;
   lastAckedSeq: number;
   pending: DownMessage[];
-  providerHandle?: unknown;
+  /** Opaque provider handle (SandboxProvider.start's return; a plain string per @outfitter/
+   * provider-local's SandboxHandle -- a Cloud Run execution name, a docker container id, or a
+   * synthetic in-process id). Callers should not parse it. */
+  providerHandle?: string;
   // Deviation from protocol.md: extension_ui_request events are "not persisted except
   // extension_ui_request" per the protocol, but it doesn't say where. Stored here so a browser
   // that reconnects (or opens the session fresh) still sees a question the run is waiting on;

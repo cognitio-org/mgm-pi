@@ -6,7 +6,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import fastifyWebsocket from "@fastify/websocket";
 import type { Store } from "./store/types.ts";
 import type { Config } from "./config.ts";
-import type { SandboxProvider } from "./providers/types.ts";
+import type { SandboxProvider } from "@outfitter/provider-local";
 import type { SecretsBroker } from "./secrets.ts";
 import { identityFromRequest } from "./auth.ts";
 import { RunManager } from "./runs.ts";
@@ -30,7 +30,7 @@ export interface App {
   laptopProbe: LaptopProbe;
   /** Stops the run reconciler interval and (role link/all) the down-queue poller; call from tests
    * and from main.ts on shutdown. */
-  stopReconciler: () => void;
+  stopBackgroundTasks: () => void;
 }
 
 export async function buildApp(opts: BuildAppOptions): Promise<App> {
@@ -85,10 +85,10 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   }
 
   const stopRunReconciler = runs.startReconciler();
-  const stopReconciler = () => {
+  const stopBackgroundTasks = () => {
     stopRunReconciler();
     stopDownQueuePoller?.();
   };
 
-  return { fastify, runs, agentLink, sse, laptopProbe, stopReconciler };
+  return { fastify, runs, agentLink, sse, laptopProbe, stopBackgroundTasks };
 }

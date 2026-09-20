@@ -1,24 +1,25 @@
 // Test double: records every call instead of starting real compute.
 
-import type { SandboxProvider, RunStartInput, ProviderStatus } from "./types.ts";
+import type { SandboxProvider, RunLaunch, SandboxStatus, SandboxHandle } from "@outfitter/provider-local";
 
 export class NoopProvider implements SandboxProvider {
-  readonly startCalls: RunStartInput[] = [];
-  readonly stopCalls: unknown[] = [];
-  readonly statusCalls: unknown[] = [];
+  readonly startCalls: RunLaunch[] = [];
+  readonly stopCalls: SandboxHandle[] = [];
+  readonly statusCalls: SandboxHandle[] = [];
+  private nextId = 1;
   /** Overridable per test; defaults to reporting the sandbox as running. */
-  nextStatus: ProviderStatus = { state: "running" };
+  nextStatus: SandboxStatus = "running";
 
-  async start(run: RunStartInput): Promise<{ handle: unknown }> {
+  async start(run: RunLaunch): Promise<{ handle: SandboxHandle }> {
     this.startCalls.push(run);
-    return { handle: { runId: run.runId } };
+    return { handle: `noop-${this.nextId++}` };
   }
 
-  async stop(handle: unknown): Promise<void> {
+  async stop(handle: SandboxHandle): Promise<void> {
     this.stopCalls.push(handle);
   }
 
-  async status(handle: unknown): Promise<ProviderStatus> {
+  async status(handle: SandboxHandle): Promise<SandboxStatus> {
     this.statusCalls.push(handle);
     return this.nextStatus;
   }

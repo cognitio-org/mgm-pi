@@ -18,7 +18,7 @@ await app.fastify.listen({ port, host: "0.0.0.0" });
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.on(signal, async () => {
-    app.stopReconciler();
+    app.stopBackgroundTasks();
     await app.fastify.close();
     await store.close();
     process.exit(0);

@@ -6,7 +6,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { Store, Run } from "./store/types.ts";
-import type { SandboxProvider } from "./providers/types.ts";
+import type { SandboxProvider } from "@outfitter/provider-local";
 import type { Config } from "./config.ts";
 
 const STALE_AFTER_MS = 90_000;
@@ -41,7 +41,14 @@ export class RunManager {
     await this.store.runs.insert(run);
 
     try {
-      const { handle } = await this.provider.start({ runId: run.id, sessionId, apiOrigin: this.config.origin });
+      const { handle } = await this.provider.start({
+        runId: run.id,
+        apiOrigin: this.config.origin,
+        // devToken is the SANDBOX_PROVIDER=inprocess/docker auth bypass (see @outfitter/
+        // provider-local's RunLaunch doc); cloudrun ignores it, and the sandbox authenticates
+        // with the job's own metadata-server identity token instead.
+        devToken: this.config.devMode ? this.config.devToken : undefined,
+      });
       return (
         (await this.store.runs.update(run.id, {
           state: "provisioning",
@@ -103,8 +110,8 @@ export class RunManager {
       if (ageMs < this.config.provisioningGraceMs) continue;
 
       if (run.providerHandle) {
-        const status = await this.provider.status(run.providerHandle).catch(() => ({ state: "unknown" as const }));
-        if (status.state === "provisioning") continue;
+        const status = await this.provider.status(run.providerHandle).catch(() => "unknown" as const);
+        if (status === "starting") continue;
         await this.provider.stop(run.providerHandle).catch(() => {
           // best effort: still mark the run failed below even if the provider stop call itself fails
         });

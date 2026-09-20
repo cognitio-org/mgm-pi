@@ -270,9 +270,9 @@ test("Link: the connection-age timer does not fire again after close() (no leake
   assert.equal(FakeWebSocket.instances.length, 1);
 });
 
-// --- terminal close codes (4400/4401/4404/4409) -----------------------------------------------
+// --- terminal close codes (4400/4401/4404/4409/4412) --------------------------------------------
 
-for (const code of [4400, 4401, 4404, 4409]) {
+for (const code of [4400, 4401, 4404, 4409, 4412]) {
   test(`Link: close code ${code} is terminal -- stops reconnecting and fires onTerminal`, async (t) => {
     const link = makeLink();
     t.after(() => link.close());

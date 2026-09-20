@@ -28,19 +28,19 @@ describe("RunManager.reconcileOnce", () => {
   test("stops the provider handle (best effort) before marking a stale run failed", async () => {
     const store = new MemoryStore();
     const provider = new NoopProvider();
-    provider.nextStatus = { state: "running" }; // not "provisioning": eligible to be failed
+    provider.nextStatus = "running"; // not "starting": eligible to be failed
     const config = loadConfig({} as NodeJS.ProcessEnv);
     const runs = new RunManager(store, provider, config);
 
     const staleAt = new Date(Date.now() - 20 * 60_000).toISOString(); // well past both the stale
     // cutoff and the provisioning grace window
-    const run = makeRun({ createdAt: staleAt, lastSeenAt: staleAt, providerHandle: { executionName: "exec-1" } });
+    const run = makeRun({ createdAt: staleAt, lastSeenAt: staleAt, providerHandle: "exec-1" });
     await store.runs.insert(run);
 
     await runs.reconcileOnce(60_000);
 
     assert.equal(provider.stopCalls.length, 1);
-    assert.deepEqual(provider.stopCalls[0], { executionName: "exec-1" });
+    assert.equal(provider.stopCalls[0], "exec-1");
     const stored = await store.runs.findById(run.id);
     assert.equal(stored?.state, "failed");
     assert.equal(stored?.reason, "no heartbeat");
@@ -49,7 +49,7 @@ describe("RunManager.reconcileOnce", () => {
   test("never fails a run younger than the provisioning grace window, even if stale by heartbeat", async () => {
     const store = new MemoryStore();
     const provider = new NoopProvider();
-    provider.nextStatus = { state: "running" };
+    provider.nextStatus = "running";
     const config = loadConfig({ PROVISIONING_GRACE_MS: "600000" } as NodeJS.ProcessEnv); // 10 min default
     const runs = new RunManager(store, provider, config);
 
@@ -58,7 +58,7 @@ describe("RunManager.reconcileOnce", () => {
     const run = makeRun({
       state: "provisioning",
       createdAt: recentlyCreated,
-      providerHandle: { executionName: "exec-2" },
+      providerHandle: "exec-2",
     });
     await store.runs.insert(run);
 
@@ -71,15 +71,15 @@ describe("RunManager.reconcileOnce", () => {
     assert.equal(stored?.state, "provisioning");
   });
 
-  test("skips (does not stop or fail) a run the provider still reports as provisioning", async () => {
+  test("skips (does not stop or fail) a run the provider still reports as starting", async () => {
     const store = new MemoryStore();
     const provider = new NoopProvider();
-    provider.nextStatus = { state: "provisioning" };
+    provider.nextStatus = "starting";
     const config = loadConfig({} as NodeJS.ProcessEnv);
     const runs = new RunManager(store, provider, config);
 
     const staleAt = new Date(Date.now() - 20 * 60_000).toISOString();
-    const run = makeRun({ createdAt: staleAt, lastSeenAt: staleAt, providerHandle: { executionName: "exec-3" } });
+    const run = makeRun({ createdAt: staleAt, lastSeenAt: staleAt, providerHandle: "exec-3" });
     await store.runs.insert(run);
 
     await runs.reconcileOnce(60_000);

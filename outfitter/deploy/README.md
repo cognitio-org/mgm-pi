@@ -22,6 +22,13 @@ REST/SSE, and `outfitter-link` (`OUTFITTER_ROLE=link`, `--allow-unauthenticated`
 and `/api/hooks/*`, each authenticating its own requests instead of relying on IAP. Both share the
 same Atlas store. See `docs/protocol.md` "Two origins".
 
+**`service.sh <web|link>`.** Both deploys share one script — the build, the bootstrap-deploy-to-
+learn-the-URL dance, and the secret list are otherwise byte-for-byte identical between the two
+roles, so `service.sh` takes the role as its one argument and only branches on it for the
+IAP/`--allow-unauthenticated` flags, `IAP_AUDIENCE`, and the two IAM bindings (`web` only).
+`api.sh` and `link.sh` are two-line wrappers (`./service.sh web` / `./service.sh link`) kept around
+so the commands below still work unchanged.
+
 ## Order of operations
 
 1. **`./baseline.sh`** — enables the required APIs, creates the `outfitter` Artifact Registry

@@ -55,11 +55,33 @@ export interface PiProcessOptions {
   args: string[];
   env: Record<string, string>;
   cwd: string;
+  /** Linux uid/gid to spawn pi as (node:child_process.spawn's own `uid`/`gid` options), dropping
+   * privilege from agentd's own (root, in the sandbox image) user -- see run-as-user.ts and
+   * finding #1 in docs/reports/security-review-pr1.md. Omitted when agentd isn't root (nothing to
+   * drop) or outside the sandbox image (tests, local dev). */
+  uid?: number;
+  gid?: number;
   /** Injectable for tests; defaults to node:child_process.spawn. */
   spawnFn?: typeof spawn;
   /** Sink for swallowed stdio errors (e.g. EPIPE once pi has exited) and no-op `send()` calls after
    * exit. Defaults to a no-op. */
   onLog?: (line: string) => void;
+}
+
+/** agentd's own process env, minus the GIT_CONFIG_* variables git.ts's authHeaderEnv sets for a
+ * single git child invocation. Those never actually land in agentd's own process.env (git.ts passes
+ * them as a per-call overlay to execFile, not via process.env mutation), but this strips them
+ * defensively anyway so pi's environment can never inherit the GitHub auth header even if that
+ * invariant were ever broken -- see finding #1's "pi's environment never inherits GIT_CONFIG_* or
+ * the token" requirement. */
+function baseEnvForPi(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value === undefined) continue;
+    if (key === "GIT_CONFIG_COUNT" || /^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(key)) continue;
+    env[key] = value;
+  }
+  return env;
 }
 
 export interface PiProcess {
@@ -76,8 +98,10 @@ export function spawnPi(opts: PiProcessOptions): PiProcess {
   const onLog = opts.onLog ?? (() => {});
   const child: ChildProcessWithoutNullStreams = spawnFn(opts.piBin, opts.args, {
     cwd: opts.cwd,
-    env: { ...process.env, ...opts.env },
+    env: { ...baseEnvForPi(), ...opts.env },
     stdio: ["pipe", "pipe", "pipe"],
+    ...(opts.uid !== undefined ? { uid: opts.uid } : {}),
+    ...(opts.gid !== undefined ? { gid: opts.gid } : {}),
   }) as ChildProcessWithoutNullStreams;
 
   const reader = new JsonlLineReader();

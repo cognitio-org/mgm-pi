@@ -5,11 +5,13 @@
  * `abort`, `ui_response`, `rpc`, `checkpoint`, `diff`, `read`, `stop`).
  */
 import { mkdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { resolve, sep } from "node:path";
 import { renderGuru } from "./guru.js";
 import type { GitOps } from "./git.js";
 import { spawnPi, SessionTailer, type PiProcess } from "./pi.js";
 import { importSession, writeSnapshotFile, emptySessionJsonl } from "./session.js";
+import type { RunAsUser } from "./run-as-user.js";
+import { validateSnapshotUrl, snapshotHostAllowlist, isDevMode } from "./snapshot-url.js";
 import {
   snapshotWorkspaceFiles,
   diffWorkspaceFiles,
@@ -88,6 +90,17 @@ export interface RunControllerDeps {
   now?: () => number;
   onExit?: (code: number) => void;
   onLog?: (line: string) => void;
+  /** Resolved once at startup (main.ts, via run-as-user.ts's resolveRunAsUser): the uid/gid pi is
+   * spawned as when agentd itself is root, so pi (and the model's shell) never shares a Linux user
+   * -- and therefore /proc/<pid>/environ visibility -- with agentd's own git child. `undefined` when
+   * agentd isn't root (nothing to drop; see run-as-user.ts). */
+  runAsUser?: RunAsUser;
+  /** Recursively chowns a path to `runAsUser`'s uid/gid. Called after `git clone` and after every
+   * push (see checkpointNow) because those run as agentd's own (root) user for the auth env vars to
+   * stay root-only-readable, which would otherwise leave every file git writes/touches in
+   * /workspace owned by root instead of the `agent` user pi actually runs as. No-op when
+   * `runAsUser` is undefined. */
+  chownWorkspace?: (path: string) => Promise<void>;
 }
 
 export type StateChangeHandler = (state: RunState, detail?: string) => void;
@@ -265,6 +278,10 @@ export class RunController {
         },
         this.deps.workspace,
       );
+      // git ran as agentd's own (root, in the sandbox image) user -- see git.ts's module doc and
+      // RunControllerDeps.chownWorkspace's doc comment. Hand the clone back to the user pi is about
+      // to run as before pi (or the model's shell) ever touches it.
+      await this.deps.chownWorkspace?.(this.deps.workspace);
       this.setState("restoring");
     } else {
       // Non-coding session: no repo to clone. Start with an empty /workspace, optionally restored
@@ -283,6 +300,9 @@ export class RunController {
     const importSessionFn = this.deps.importSession ?? importSession;
     let jsonl = spec.snapshot.jsonl;
     if (!jsonl && spec.snapshot.url) {
+      // Finding #3 (docs/reports/security-review-pr1.md): validate before fetching, same as
+      // workspace.ts's restoreWorkspace -- an unvalidated snapshot.url is a blind SSRF primitive.
+      validateSnapshotUrl(spec.snapshot.url, { allowlist: snapshotHostAllowlist(), devMode: isDevMode() });
       const fetchFn = this.deps.fetchFn ?? fetch;
       const res = await fetchFn(spec.snapshot.url);
       if (!res.ok) {
@@ -301,7 +321,7 @@ export class RunController {
     }
 
     this.setState("starting");
-    const rendered = renderGuru(spec.guru, { piBin: this.deps.piBin, sessionFile });
+    const rendered = renderGuru(spec.guru, { piBin: this.deps.piBin, sessionFile, onLog: this.onLog });
     const secretEnv: Record<string, string> = {};
     if (spec.secrets.litellmKey) secretEnv.LITELLM_AGENT_KEY = spec.secrets.litellmKey;
     const spawnFn = this.deps.spawnPi ?? spawnPi;
@@ -310,6 +330,8 @@ export class RunController {
       args: rendered.args,
       env: { ...rendered.env, ...secretEnv },
       cwd: this.deps.workspace,
+      uid: this.deps.runAsUser?.uid,
+      gid: this.deps.runAsUser?.gid,
       onLog: this.onLog,
     });
     this.pi.onEvent((event) => this.handlePiEvent(event));
@@ -508,6 +530,9 @@ export class RunController {
       );
       head = res.head;
       pushed = true;
+      // git commit/push ran as agentd's own (root) user; hand any new/changed files back to the
+      // unprivileged user pi runs as (see chownWorkspace's doc comment on RunControllerDeps).
+      await this.deps.chownWorkspace?.(this.deps.workspace);
     }
     this.deps.link.send({ t: "checkpoint", branch: this.spec.repo.branch, head, pushed });
   }
@@ -526,7 +551,14 @@ export class RunController {
 
   private async handleRead(reqId: string, path: string): Promise<void> {
     try {
-      const content = await readFile(join(this.deps.workspace, path), "utf8");
+      // Finding #4 (docs/reports/security-review-pr1.md): join() alone doesn't contain a `path`
+      // like "../../../../etc/passwd" -- resolve it and refuse anything that lands outside the
+      // workspace, rather than trusting a relative-looking down-message field.
+      const target = resolve(this.deps.workspace, path);
+      if (target !== this.deps.workspace && !target.startsWith(this.deps.workspace + sep)) {
+        throw new Error(`read: path escapes workspace: ${path}`);
+      }
+      const content = await readFile(target, "utf8");
       this.deps.link.send({ t: "read.result", reqId, content });
     } catch (err: any) {
       this.deps.link.send({ t: "read.result", reqId, error: String(err?.message ?? err) });

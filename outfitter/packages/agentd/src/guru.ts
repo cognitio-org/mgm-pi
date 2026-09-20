@@ -22,6 +22,21 @@ export interface RenderOptions {
   sessionFile: string;
   /** RPC mode is always on, `-a` (trust project files) is always on: fixed by the sandbox contract,
    * not chosen per-guru. */
+  onLog?: (line: string) => void;
+}
+
+/** guru.env keys that would let a guru author plant persistent code-exec or credential leakage into
+ * every future run of a guru other people also use (finding #6, docs/reports/security-review-pr1.md):
+ * NODE_OPTIONS/LD_PRELOAD/LD_LIBRARY_PATH can load arbitrary code into the pi process, PATH can
+ * shadow `git`/`gh`/etc with a malicious binary, GIT_* can hijack the auth-header env vars git.ts
+ * sets per-invocation (see git.ts's module doc), and HOME can redirect where pi/git read config and
+ * credentials from. The API's POST/PUT /api/gurus routes reject these keys outright (belt and
+ * suspenders); this list is agentd's own last line of defense in case a guru predating that check,
+ * or written directly into the store, still has one set. */
+const DENYLISTED_GURU_ENV_KEYS = new Set(["NODE_OPTIONS", "LD_PRELOAD", "LD_LIBRARY_PATH", "PATH", "HOME"]);
+
+function isDenylistedGuruEnvKey(key: string): boolean {
+  return DENYLISTED_GURU_ENV_KEYS.has(key) || key.startsWith("GIT_");
 }
 
 /** `provider/id` (+ optional `:thinking`) pi model pattern, per rpc.md's `--model` flag. */
@@ -46,7 +61,15 @@ export function renderGuru(guru: RunSpecGuru, opts: RenderOptions): RenderedPi {
     args.push("--exclude-tools", guru.excludeTools.join(","));
   }
 
-  const env: Record<string, string> = { ...(guru.env ?? {}) };
+  const onLog = opts.onLog ?? (() => {});
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(guru.env ?? {})) {
+    if (isDenylistedGuruEnvKey(key)) {
+      onLog(`renderGuru: dropping guru.env key "${key}" (not allowed -- see denylist in guru.ts)`);
+      continue;
+    }
+    env[key] = value;
+  }
   if (guru.packages && guru.packages.length > 0) {
     env.OUTFITTER_GURU_PACKAGES = guru.packages.join(",");
   }

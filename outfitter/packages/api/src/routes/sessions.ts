@@ -70,6 +70,9 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     const session: Session = {
       id: randomUUID(),
       name: body.name,
+      // Recorded but not yet enforced -- see Session.ownerEmail's doc comment and EPIC.md's E2.2
+      // note (finding #5, docs/reports/security-review-pr1.md).
+      ownerEmail: req.identity?.email,
       guruId: body.guruId,
       // repo omitted = non-coding session (protocol.md): no clone, no branch.
       repo: body.repo ?? null,

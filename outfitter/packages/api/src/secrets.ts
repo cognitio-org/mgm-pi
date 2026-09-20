@@ -14,16 +14,17 @@ export interface SecretsBroker {
 }
 
 /** Dev broker: reads fixed values from env so local runs work with no Secret Manager. Defaults to
- * a placeholder (non-empty) githubToken: agentlink.ts's buildRunSpec treats an *empty* token as
- * fatal for a repo session (see GcpSecretsBroker's doc comment), and dev/test repo sessions
- * should work out of the box without OUTFITTER_DEV_GITHUB_TOKEN set — same reasoning as
- * config.ts's devToken default for agentd's own bearer token. */
+ * an empty githubToken: dev mode means "no secrets available", so agentlink.ts's buildRunSpec
+ * skips the missing-token check entirely when config.devMode is true, and a repo session clones
+ * anonymously instead. A non-empty placeholder here would otherwise be sent to git as a real
+ * credential and turn an anonymous public clone into a 401 (see agentlink.ts). Set
+ * OUTFITTER_DEV_GITHUB_TOKEN when a dev/test repo session actually needs to clone a private repo. */
 export class MemorySecretsBroker implements SecretsBroker {
   private readonly githubToken: string;
   private readonly litellmKey: string;
 
   constructor(
-    githubToken = process.env.OUTFITTER_DEV_GITHUB_TOKEN ?? "dev-github-token",
+    githubToken = process.env.OUTFITTER_DEV_GITHUB_TOKEN ?? "",
     litellmKey = process.env.OUTFITTER_DEV_LITELLM_KEY ?? "",
   ) {
     this.githubToken = githubToken;
@@ -52,6 +53,9 @@ export class MemorySecretsBroker implements SecretsBroker {
 export class GcpSecretsBroker implements SecretsBroker {
   private readonly project: string;
   private readonly fetchSecret: (secretId: string) => Promise<string>;
+  /** Lazily built on first access and reused after that, instead of a fresh GoogleAuth client (and
+   * its own ADC lookup) per secret fetch. */
+  private authClientPromise: ReturnType<GcpSecretsBroker["buildAuthClient"]> | undefined;
 
   /** `fetchSecret` is injectable so tests can stub Secret Manager access without touching ADC or
    * the network; production code (main.ts) always omits it and gets accessSecretFromGcp. */
@@ -85,13 +89,24 @@ export class GcpSecretsBroker implements SecretsBroker {
   }
 
   private async accessSecretFromGcp(secretId: string): Promise<string> {
-    const { GoogleAuth } = await import("google-auth-library");
-    const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
-    const client = await auth.getClient();
+    const client = await this.getAuthClient();
     const url = `https://secretmanager.googleapis.com/v1/projects/${this.project}/secrets/${secretId}/versions/latest:access`;
     const res = await client.request<{ payload: { data: string } }>({ url });
     const base64 = res.data.payload.data;
     return Buffer.from(base64, "base64").toString("utf8");
+  }
+
+  /** Builds the ADC client once (lazily, on first secret access) and reuses it for every
+   * subsequent fetch, instead of a fresh `GoogleAuth` instance (and its own ADC lookup) per call. */
+  private getAuthClient() {
+    if (!this.authClientPromise) this.authClientPromise = this.buildAuthClient();
+    return this.authClientPromise;
+  }
+
+  private async buildAuthClient() {
+    const { GoogleAuth } = await import("google-auth-library");
+    const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
+    return auth.getClient();
   }
 }
 

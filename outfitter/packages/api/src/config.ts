@@ -62,9 +62,22 @@ export interface Config {
   downQueuePollMs: number;
 }
 
+const OUTFITTER_ROLES: readonly OutfitterRole[] = ["all", "web", "link"];
+const SANDBOX_PROVIDERS: readonly SandboxProviderName[] = ["inprocess", "docker", "cloudrun"];
+
+/** Validates an env var against a fixed set of literal values, failing loudly at boot (rather than
+ * silently defaulting, or failing later the first time the bad value is actually used — see
+ * docs/reports/maintainability-review-pr1.md's "SANDBOX_PROVIDER doesn't type-check" finding). An
+ * unset var falls back to `fallback`; a set-but-unrecognized value throws. */
+function envEnum<T extends string>(name: string, allowed: readonly T[], fallback: T, env: NodeJS.ProcessEnv): T {
+  const raw = env[name];
+  if (!raw) return fallback;
+  if ((allowed as readonly string[]).includes(raw)) return raw as T;
+  throw new Error(`invalid ${name}: ${JSON.stringify(raw)} (expected one of ${allowed.join(", ")})`);
+}
+
 function envRole(env: NodeJS.ProcessEnv): OutfitterRole {
-  const raw = env.OUTFITTER_ROLE;
-  return raw === "web" || raw === "link" ? raw : "all";
+  return envEnum("OUTFITTER_ROLE", OUTFITTER_ROLES, "all", env);
 }
 
 function envInt(name: string, fallback: number): number {
@@ -90,7 +103,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     role: envRole(env),
     agentSaEmail: env.AGENT_SA_EMAIL ?? "",
     iapAudience: env.IAP_AUDIENCE ?? "",
-    sandboxProvider: (env.SANDBOX_PROVIDER as SandboxProviderName) ?? "inprocess",
+    sandboxProvider: envEnum("SANDBOX_PROVIDER", SANDBOX_PROVIDERS, "inprocess", env),
     cloudRunJob: env.CLOUDRUN_JOB ?? "outfitter-agent",
     gcpProject: env.GCP_PROJECT ?? "",
     gcpRegion: env.GCP_REGION ?? "us-central1",

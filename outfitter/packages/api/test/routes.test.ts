@@ -18,7 +18,7 @@ describe("POST /api/sessions", () => {
     assert.equal(body.session.status, "open");
     assert.equal(body.run.state, "provisioning");
     assert.equal(app.provider.startCalls.length, 1);
-    assert.equal(app.provider.startCalls[0].sessionId, body.session.id);
+    assert.equal(app.provider.startCalls[0].runId, body.run.id);
 
     await app.fastify.close();
   });

@@ -121,6 +121,7 @@ Ten agent-hours a day is roughly $2/day of compute. Set a GCP budget alert at $2
 | Idle-stop | 30 min for human-driven sessions, 5 min for delegated worker sessions, plus wake-on-open in the UI. Revisit after measuring real wake times (E2.9). |
 | Laptop model in the cloud | Allowed, opt-in per guru or per session, never the default. Guarded by the preflight in E2.8. |
 | Vocabulary | Reusable agent configs are **Gurus** (not "Experts"). |
+| Session visibility | Org-shared: every signed-in mgmonteleone.com user can see and steer every session (as Cosmos treats shared sessions). `Session.ownerEmail` is recorded but not enforced; per-user privacy is a later, one-line check if ever wanted. |
 
 
 ## 3. Epics and stories
@@ -174,6 +175,13 @@ research on Sonnet; review on Opus).
   `POST /sessions/:id/ui-response`, `POST /sessions/:id/stop`, `GET /sessions/:id/export.jsonl`,
   `GET /sessions/:id/diff`, gurus and environments CRUD. Identity from IAP header; a dev bypass
   only when `OUTFITTER_DEV=1`.
+  - **Open decision (finding #5, docs/reports/security-review-pr1.md):** every session route
+    currently checks only that a session exists (`getSessionOr404`), not who's asking -- any signed-in
+    domain user can read/steer/stop/import over any other user's session. `Session.ownerEmail`
+    (store/types.ts) is now recorded from `req.identity.email` on `POST /sessions`, but nothing reads
+    it back yet. Plausible either way for an org-wide fleet UI (like a shared Cosmos/Kubernetes
+    dashboard) -- decide explicitly whether to add an ownership/role check in `getSessionOr404`
+    before this ships past internal use, rather than leaving it as an unreviewed default.
 - **E2.3 Run lifecycle**: state machine `queued → provisioning → running → idle → stopped | failed`;
   "wake" creates a new Cloud Run Job execution with per-execution env overrides (`RUN_ID`); "stop"
   cancels the execution after a checkpoint ack; reconciler every minute against

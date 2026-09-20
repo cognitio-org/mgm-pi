@@ -46,6 +46,10 @@ export async function identityFromRequest(req: RequestLike, config: Config): Pro
   const ticket = await client.verifySignedJwtWithCertsAsync(jwt, pubkeys, config.iapAudience, IAP_ISSUERS);
   const payload = ticket.getPayload();
   if (!payload?.email) throw new Error("IAP assertion has no email claim");
+  // Finding #7 (docs/reports/security-review-pr1.md): defense in depth. verifySignedJwtWithCertsAsync
+  // already validates signature/issuer/audience/expiry; this only matters if a token ever carried an
+  // explicit `email_verified: false` (missing/undefined is fine -- most tokens don't set the claim).
+  if (payload.email_verified === false) throw new Error("IAP assertion email is not verified");
   return { email: payload.email };
 }
 
@@ -62,6 +66,8 @@ export async function verifyAgentToken(bearer: string | undefined, config: Confi
   const ticket = await client.verifyIdToken({ idToken: bearer, audience: config.origin });
   const payload = ticket.getPayload();
   if (!payload?.email) throw new Error("agent id token has no email claim");
+  // Finding #7 (docs/reports/security-review-pr1.md): same defense-in-depth as identityFromRequest.
+  if (payload.email_verified === false) throw new Error("agent id token email is not verified");
   if (payload.email !== config.agentSaEmail) throw new Error("agent id token email does not match AGENT_SA_EMAIL");
   return { email: payload.email };
 }

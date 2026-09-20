@@ -230,6 +230,19 @@ test("RunController: diff and read down-messages get replies", async (t) => {
   await waitFor(() => link.sent.filter((m) => m.t === "read.result").length === 2);
   const missing = link.sent.filter((m) => m.t === "read.result").find((m: any) => m.reqId === "r2") as any;
   assert.ok(missing.error);
+
+  // Finding #4 (docs/reports/security-review-pr1.md): a `..`-relative path must not escape the
+  // workspace, and neither should an absolute path pointed straight at a file outside it.
+  link.deliver({ t: "read", reqId: "r3", path: "../../../../etc/passwd" });
+  await waitFor(() => link.sent.filter((m) => m.t === "read.result").length === 3);
+  const traversal = link.sent.filter((m) => m.t === "read.result").find((m: any) => m.reqId === "r3") as any;
+  assert.ok(traversal.error, "expected an error, not the contents of /etc/passwd");
+  assert.match(traversal.error, /escapes workspace/);
+
+  link.deliver({ t: "read", reqId: "r4", path: "/etc/passwd" });
+  await waitFor(() => link.sent.filter((m) => m.t === "read.result").length === 4);
+  const absolute = link.sent.filter((m) => m.t === "read.result").find((m: any) => m.reqId === "r4") as any;
+  assert.ok(absolute.error);
 });
 
 test("RunController: stop checkpoints, sends bye('stop'), and exits 0", async (t) => {
@@ -259,6 +272,16 @@ test("RunController: idle-stop fires after idleStopSeconds and sends bye('idle')
 });
 
 test("RunController: repo-less run skips cloning, restores a workspace tarball, and checkpoint/diff avoid git", async (t) => {
+  // This test restores from a plain local tar path (not https://, not file://), which
+  // snapshot-url.ts's validateSnapshotUrl only accepts when OUTFITTER_DEV=1 (finding #3,
+  // docs/reports/security-review-pr1.md) -- same as any other local smoke test.
+  const previousDevEnv = process.env.OUTFITTER_DEV;
+  process.env.OUTFITTER_DEV = "1";
+  t.after(() => {
+    if (previousDevEnv === undefined) delete process.env.OUTFITTER_DEV;
+    else process.env.OUTFITTER_DEV = previousDevEnv;
+  });
+
   const workspace = await mkdtemp(join(tmpdir(), "outfitter-run-test-"));
   const link = new FakeLink();
   const gitOps = fakeGitOps();
@@ -579,6 +602,16 @@ test("RunController: an agent_settled arriving mid-checkpoint resolves to idle a
 });
 
 test("RunController: a non-2xx snapshot fetch fails the run with a clear, status-including message (instead of importing an error page as the session)", async (t) => {
+  // snapshot-url.ts's validateSnapshotUrl (finding #3, docs/reports/security-review-pr1.md) only
+  // fetches an https URL whose host is in SNAPSHOT_HOST_ALLOWLIST -- allow this test's host so the
+  // fetch (and its 404) is actually reached, same as any other local smoke test would need to.
+  const previousAllowlist = process.env.SNAPSHOT_HOST_ALLOWLIST;
+  process.env.SNAPSHOT_HOST_ALLOWLIST = "example.test";
+  t.after(() => {
+    if (previousAllowlist === undefined) delete process.env.SNAPSHOT_HOST_ALLOWLIST;
+    else process.env.SNAPSHOT_HOST_ALLOWLIST = previousAllowlist;
+  });
+
   const { controller, link, states, spec, getExitCode } = await setupController(
     { snapshot: { url: "https://example.test/missing-snapshot.jsonl" } },
     { fetchFn: (async () => new Response("not found", { status: 404, statusText: "Not Found" })) as any },

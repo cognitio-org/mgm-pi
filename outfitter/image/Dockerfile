@@ -71,9 +71,19 @@ ENV PI_CODING_AGENT_DIR=/opt/mgm/.pi \
     PI_OFFLINE=1 \
     PI_SKIP_VERSION_CHECK=1 \
     PI_BIN=/opt/mgm/node_modules/.bin/pi \
-    WORKSPACE=/workspace
+    WORKSPACE=/workspace \
+    PI_RUN_AS_USER=agent
 
-USER agent
+# Two Linux users on purpose (finding #1, docs/reports/security-review-pr1.md): the entrypoint
+# (agentd, and therefore its `git` child) stays root; `pi` -- and, through it, every command the
+# model's shell tool runs -- is spawned as the unprivileged `agent` user (agentd's run-as-user.ts,
+# resolveRunAsUser/PI_RUN_AS_USER). Without this split, agentd and pi shared one Linux user, so any
+# command the model ran could read the GitHub token straight out of agentd's own git child's
+# environment via /proc/<pid>/environ (or, before that fix, its argv via /proc/<pid>/cmdline) for
+# the lifetime of that git invocation. Running the entrypoint as root is what makes root's own
+# /proc/<pid>/environ (kernel-restricted to uid 0) actually root-only; agentd chowns whatever git
+# writes into /workspace back to `agent` afterward (run.ts's chownWorkspace) so pi never has to run
+# as root to use its own working tree. WORKDIR is deliberately not switched to the `agent` user here.
 WORKDIR /workspace
 
 ENTRYPOINT ["node", "/opt/outfitter/agentd/dist/src/main.js"]

@@ -73,6 +73,26 @@ test("renderGuru: env passthrough plus packages -> OUTFITTER_GURU_PACKAGES", () 
   assert.deepEqual(env, { FOO: "bar", OUTFITTER_GURU_PACKAGES: "npm:pi-memory,npm:pi-lsp" });
 });
 
+test("renderGuru: drops denylisted guru.env keys (NODE_OPTIONS, LD_PRELOAD, PATH, GIT_*, HOME) and logs each", () => {
+  const guru: RunSpecGuru = {
+    model: "litellm/local-qwen-mlx",
+    env: {
+      SAFE: "ok",
+      NODE_OPTIONS: "--require=evil.js",
+      LD_PRELOAD: "/tmp/evil.so",
+      LD_LIBRARY_PATH: "/tmp",
+      PATH: "/tmp/evil:/usr/bin",
+      HOME: "/tmp/fake-home",
+      GIT_CONFIG_COUNT: "1",
+      GIT_SSH_COMMAND: "evil",
+    },
+  };
+  const logged: string[] = [];
+  const { env } = renderGuru(guru, { piBin: "pi", sessionFile: "/tmp/s.jsonl", onLog: (l) => logged.push(l) });
+  assert.deepEqual(env, { SAFE: "ok" });
+  assert.equal(logged.length, 7);
+});
+
 test("renderGuru: empty tools/excludeTools arrays render no flags", () => {
   const guru: RunSpecGuru = { model: "m", tools: [], excludeTools: [] };
   const { args } = renderGuru(guru, { piBin: "pi", sessionFile: "/tmp/s.jsonl" });

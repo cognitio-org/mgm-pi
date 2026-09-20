@@ -1,5 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { OAuth2Client } from "google-auth-library";
 import { buildTestApp, seedGuru } from "./helpers.ts";
 import type { Session } from "../src/store/types.ts";
 import type { SecretsBroker } from "../src/secrets.ts";
@@ -118,7 +119,7 @@ describe("agentd <-> api WebSocket", () => {
     const run = await app.store.runs.findById(runId);
     assert.equal(run?.state, "stopped");
 
-    app.stopReconciler();
+    app.stopBackgroundTasks();
     await app.fastify.close();
   });
 
@@ -152,7 +153,7 @@ describe("agentd <-> api WebSocket", () => {
 
     agent.send({ t: "bye", reason: "stop" });
     await agent.nextClose();
-    app.stopReconciler();
+    app.stopBackgroundTasks();
     await app.fastify.close();
   });
 
@@ -166,7 +167,7 @@ describe("agentd <-> api WebSocket", () => {
     const close = await agent.nextClose();
     assert.equal(close.code, 4401);
 
-    app.stopReconciler();
+    app.stopBackgroundTasks();
     await app.fastify.close();
   });
 
@@ -183,7 +184,7 @@ describe("agentd <-> api WebSocket", () => {
 
     agent.send({ t: "bye", reason: "stop" });
     await agent.nextClose(); // leaving this socket open makes fastify.close() hang (see closeQuietly)
-    app.stopReconciler();
+    app.stopBackgroundTasks();
     await app.fastify.close();
   });
 
@@ -203,7 +204,7 @@ describe("agentd <-> api WebSocket", () => {
 
     agent.send({ t: "bye", reason: "stop" });
     await agent.nextClose();
-    app.stopReconciler();
+    app.stopBackgroundTasks();
     await app.fastify.close();
   });
 
@@ -235,7 +236,7 @@ describe("agentd <-> api WebSocket", () => {
 
     agent.send({ t: "bye", reason: "stop" });
     await agent.nextClose();
-    app.stopReconciler();
+    app.stopBackgroundTasks();
     await app.fastify.close();
   });
 
@@ -274,7 +275,7 @@ describe("agentd <-> api WebSocket", () => {
 
     agent.send({ t: "bye", reason: "stop" });
     await agent.nextClose();
-    app.stopReconciler();
+    app.stopBackgroundTasks();
     await app.fastify.close();
   });
 
@@ -306,7 +307,7 @@ describe("agentd <-> api WebSocket", () => {
 
     agent.send({ t: "bye", reason: "stop" });
     await agent.nextClose();
-    app.stopReconciler();
+    app.stopBackgroundTasks();
     await app.fastify.close();
   });
 
@@ -360,7 +361,7 @@ describe("agentd <-> api WebSocket", () => {
 
     agent2.send({ t: "bye", reason: "stop" });
     await agent2.nextClose();
-    app.stopReconciler();
+    app.stopBackgroundTasks();
     await app.fastify.close();
   });
 });
@@ -402,27 +403,65 @@ describe("down-message queue poller (cross-process delivery)", () => {
 
     agent.send({ t: "bye", reason: "stop" });
     await agent.nextClose();
-    owner.stopReconciler();
-    sender.stopReconciler();
+    owner.stopBackgroundTasks();
+    sender.stopBackgroundTasks();
     await owner.fastify.close();
     await sender.fastify.close();
   });
 });
 
 describe("run.spec build validates secrets", () => {
-  test("closes with WS code 1011 when a repo session's githubToken secret is missing", async () => {
+  test("closes with WS code 4412 and marks the run failed when a repo session's githubToken secret is missing (devMode off)", async (t) => {
     const emptyGithubBroker: SecretsBroker = {
       secretsForRun: async () => ({ githubToken: "", litellmKey: "some-key" }),
     };
+    // devMode off: this is the production path, where a missing token really would make agentd
+    // clone with no credentials. In dev mode the same missing-token check is skipped (see the
+    // next test) so a public repo can still be cloned anonymously. With devMode off, agentd's
+    // bearer is verified as a real Google id token (auth.ts's verifyAgentToken) instead of
+    // matching OUTFITTER_DEV_TOKEN, so verifyIdToken is stubbed here rather than pulling in a
+    // real GCE/ADC identity for this one connection.
+    t.mock.method(OAuth2Client.prototype, "verifyIdToken", async () => ({
+      getPayload: () => ({ email: "agent@test.local" }),
+    }));
+    const app = await buildTestApp(
+      { OUTFITTER_DEV: "0", AGENT_SA_EMAIL: "agent@test.local" },
+      { secretsBroker: emptyGithubBroker },
+    );
+    const { runId } = await makeRunningSession(app); // default fixture has repo: "o/r"
+
+    const agent = await openAgentSocket(app, runId, "any-google-id-token");
+    const close = await agent.nextClose();
+    assert.equal(close.code, 4412);
+    assert.match(close.reason, /missing github token/);
+
+    // 4412 is terminal for agentd (link.ts's TERMINAL_CLOSE_CODES) precisely because there's
+    // nothing to retry -- the run should already be marked failed, not left in provisioning.
+    const run = await app.store.runs.findById(runId);
+    assert.equal(run?.state, "failed");
+    assert.match(run?.reason ?? "", /missing github token/);
+
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("a missing githubToken does not fail a repo session in dev mode (anonymous clone)", async () => {
+    const emptyGithubBroker: SecretsBroker = {
+      secretsForRun: async () => ({ githubToken: "", litellmKey: "some-key" }),
+    };
+    // buildTestApp defaults to OUTFITTER_DEV=1 (devMode on): a missing secret means "no secrets
+    // available", not "fail the run" -- the clone just runs anonymously.
     const app = await buildTestApp({}, { secretsBroker: emptyGithubBroker });
     const { runId } = await makeRunningSession(app); // default fixture has repo: "o/r"
 
     const agent = await openAgentSocket(app, runId);
-    const close = await agent.nextClose();
-    assert.equal(close.code, 1011);
-    assert.match(close.reason, /missing github token/);
+    const spec = await agent.nextMessage();
+    assert.equal(spec.t, "run.spec");
+    assert.equal(spec.secrets.githubToken, "");
 
-    app.stopReconciler();
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
     await app.fastify.close();
   });
 
@@ -440,7 +479,7 @@ describe("run.spec build validates secrets", () => {
 
     agent.send({ t: "bye", reason: "stop" });
     await agent.nextClose();
-    app.stopReconciler();
+    app.stopBackgroundTasks();
     await app.fastify.close();
   });
 });

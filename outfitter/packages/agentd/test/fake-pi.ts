@@ -1,14 +1,29 @@
 #!/usr/bin/env node
 /**
- * Fake pi RPC process for run.test.ts: speaks a subset of docs/rpc.md. Reads `--session <path>`
- * from argv; on a `prompt` command emits `agent_start`, one `message_update`, appends a fake entry
- * to the session file, then `agent_end` and `agent_settled`. Not a real pi -- just enough of the
- * wire contract to drive RunController's state machine in tests without pi installed.
+ * Fake pi RPC process: speaks a subset of docs/rpc.md. Reads `--session <path>` from argv; on a
+ * `prompt` command emits `agent_start`, one `message_update`, appends a fake entry to the session
+ * file, then `agent_end` and `agent_settled`. Not a real pi -- just enough of the wire contract to
+ * drive RunController's state machine in tests without pi installed.
+ *
+ * Used two ways: spawned directly via `node fake-pi.js` (run.test.ts, which overrides piBin to
+ * process.execPath and prepends this file to argv), and as a standalone executable pointed to by
+ * PI_BIN (packages/agentd's postbuild `chmod +x`s the compiled dist/test/fake-pi.js -- see
+ * packages/api/test/e2e.test.ts, which spawns a *real* agentd that execs $PI_BIN directly, the way
+ * it execs a real pi in production).
  */
 import { appendFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 
 const args = process.argv.slice(2);
+
+// agentd's own startup (main.ts's getPiVersion) runs `$PI_BIN --version` before ever touching
+// --session, and waits up to 5s for it -- answer immediately instead of hanging until that
+// timeout, the way a real `pi --version` would.
+if (args.includes("--version")) {
+  process.stdout.write("fake-pi 0.0.0-test\n");
+  process.exit(0);
+}
+
 const sessionIdx = args.indexOf("--session");
 const sessionFile = sessionIdx !== -1 ? args[sessionIdx + 1] : undefined;
 

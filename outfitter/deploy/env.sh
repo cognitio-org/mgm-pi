@@ -22,3 +22,20 @@ case "${PROJECT}" in
   *) echo "deploy: PROJECT=${PROJECT} is not an Outfitter project; refusing to run." >&2; exit 1 ;;
 esac
 echo "deploy: account=${ACCOUNT} project=${PROJECT} region=${REGION}"
+
+# Shared by api.sh and link.sh: builds a --set-secrets value from "ENV_VAR=secret:version" pairs,
+# dropping any pair whose secret doesn't exist yet in this project. Cloud Run refuses the whole
+# deploy when any referenced secret is missing, and the API tolerates GITHUB_PAT / LITELLM_ADMIN_KEY
+# being absent until they're actually needed.
+existing_secrets() {
+  local out="" pair name
+  for pair in "$@"; do
+    name="${pair#*=}"; name="${name%%:*}"
+    if gcloud secrets describe "${name}" --project="${PROJECT}" &>/dev/null; then
+      out="${out:+${out},}${pair}"
+    else
+      echo "   note: secret ${name} does not exist yet; not mounting ${pair%%=*}" >&2
+    fi
+  done
+  printf '%s' "${out}"
+}

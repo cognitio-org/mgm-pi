@@ -22,9 +22,11 @@ import { isSeqUpMessage, type DownMessage, type UpMessage } from "./protocol.js"
  * run had already vanished server-side. Without this, agentd treated every close code as transient
  * and reconnected twice a second forever. 4400 bad request / 4401 unauthorized are agentd
  * misconfiguration (exit 1); 4404 run/session/guru not found / 4409 run in a terminal state mean
- * there's simply nothing left to do (exit 0). 1011 (server internal error) and everything else stay
- * transient and keep reconnecting. */
-export const TERMINAL_CLOSE_CODES = new Set([4400, 4401, 4404, 4409]);
+ * there's simply nothing left to do (exit 0); 4412 means the run cannot start because it has no
+ * usable secret (e.g. a repo session with no GitHub token) -- that will never resolve itself on
+ * retry, so it's terminal too (exit 1). See docs/protocol.md's close-codes table. 1011 (server
+ * internal error) and everything else stay transient and keep reconnecting. */
+export const TERMINAL_CLOSE_CODES = new Set([4400, 4401, 4404, 4409, 4412]);
 
 export type TerminalHandler = (code: number, reason: string) => void;
 export type UnspecTimeoutHandler = () => void;
@@ -136,7 +138,7 @@ export class Link {
 
   close(): void {
     this.closed = true;
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    if (this.reconnectTimer) this.clearTimeoutFn(this.reconnectTimer);
     this.clearConnectionAgeTimer();
     this.clearStableTimer();
     if (this.unspecTimer) {

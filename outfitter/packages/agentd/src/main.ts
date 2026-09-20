@@ -10,6 +10,7 @@ import { getIdToken } from "./auth.js";
 import { createGitOps } from "./git.js";
 import { Link } from "./link.js";
 import { RunController } from "./run.js";
+import { resolveRunAsUser, chownRecursive } from "./run-as-user.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -51,6 +52,11 @@ async function main(): Promise<void> {
 
   const piVersion = await getPiVersion(piBin);
   const wsUrl = buildWsUrl(apiOrigin, runId);
+  const onLog = (line: string) => console.error(`[agentd] ${line}`);
+
+  // Resolved once at startup: the uid/gid pi is spawned as (finding #1, run-as-user.ts). undefined
+  // when agentd isn't root (local dev outside the sandbox image) -- nothing to drop there.
+  const runAsUser = await resolveRunAsUser({ onLog });
 
   const link = new Link({
     url: wsUrl,
@@ -71,7 +77,11 @@ async function main(): Promise<void> {
     agentdVersion: AGENTD_VERSION,
     piVersion,
     workspaceSnapshotDir: process.env.WORKSPACE_SNAPSHOT_DIR,
-    onLog: (line) => console.error(`[agentd] ${line}`),
+    runAsUser,
+    chownWorkspace: runAsUser
+      ? (path: string) => chownRecursive(path, runAsUser.uid, runAsUser.gid)
+      : undefined,
+    onLog,
   });
 
   process.once("SIGTERM", () => {
@@ -81,7 +91,8 @@ async function main(): Promise<void> {
   // See link.ts's TERMINAL_CLOSE_CODES doc: the first real Cloud Run execution hit 4404 ("run not
   // found") and reconnected twice a second forever because no close code was ever treated as
   // terminal. 4404/4409 mean the run is already done server-side (exit 0, nothing to do); 4400/4401
-  // mean agentd itself is misconfigured (exit 1).
+  // mean agentd itself is misconfigured (exit 1); 4412 means the run has no usable secret and can
+  // never start (exit 1).
   link.onTerminal((code, reason) => {
     console.error(`[agentd] link closed with terminal code ${code}: ${reason || "(no reason given)"}`);
     process.exit(code === 4404 || code === 4409 ? 0 : 1);

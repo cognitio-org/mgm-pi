@@ -163,3 +163,107 @@ format was confirmed by fetching the current IAP docs page directly rather than 
 **Test run:** `npm test` in `packages/api` (typecheck via `pretest`, then `node --test test/`):
 50/50 passing. `npm test` from `outfitter/` (all workspaces): also green
 (`@outfitter/api` 50/50, `@outfitter/provider-local` 2/2).
+
+## Six review findings from the previous two gaps' own fixes
+
+A follow-up review of the two sections above turned up six more issues — one a real correctness bug
+(the missing-secret 1011 kept agentd retrying for ten minutes), the rest cleanup/consistency.
+
+### 1. Missing-GitHub-token 1011 close made agentd retry a run that could never start
+
+**Observed:** the previous gap's fix (`## api: ...`, item 2) closed the agentd socket with `1011`
+when a repo session had no usable GitHub token secret. `1011` isn't in agentd's
+`TERMINAL_CLOSE_CODES` (`packages/agentd/src/link.ts`), so agentd treated it as transient and kept
+reconnecting with backoff for up to `maxUnspecMs` (10 minutes) while the run sat in `provisioning`
+the entire time — the exact reconnect-storm shape the first gap's fix was written to prevent, just
+for a condition (a secret that will never appear) that can never resolve itself.
+
+**Fix:** added close code `4412` ("run cannot start: missing secret") to `docs/protocol.md`'s new
+close-codes table and to agentd's `TERMINAL_CLOSE_CODES` (`packages/agentd/src/link.ts`) — terminal,
+`main.ts` exits 1 for it (same bucket as `4400`/`4401` misconfiguration). `agentlink.ts`'s
+`handleConnection` now marks the run `failed` (with `err.message` as `reason`) and removes it from
+the live-sockets map *before* closing with `4412`, instead of just closing with `1011` and leaving
+the run's state for the reconciler to eventually notice.
+
+**Tests:** `packages/api/test/agentlink.test.ts` — the missing-token test now runs with `devMode`
+off (the real production path; `verifyIdToken` is stubbed via `t.mock.method` so the WS connection
+can still authenticate in-process) and asserts close code `4412` plus `run.state === "failed"` with
+a matching `reason`. `packages/agentd/test/link.test.ts` — `4412` added to the existing
+terminal-close-codes test loop (alongside `4400/4401/4404/4409`).
+
+### 2. `GcpSecretsBroker` built a new `GoogleAuth` client (and did an ADC lookup) per secret access
+
+**Observed:** `accessSecretFromGcp` called `new GoogleAuth(...)` and `auth.getClient()` on every
+single secret fetch. `secretsForRun` fetches two secrets per run (`githubToken`, `litellmKey`), so
+every run start did the ADC handshake twice for no reason — the client doesn't need to change
+between calls.
+
+**Fix (`packages/api/src/secrets.ts`):** `GcpSecretsBroker` now lazily builds the auth client once
+(`getAuthClient`/`buildAuthClient`, cached in `authClientPromise`) and reuses it for every
+subsequent `accessSecretFromGcp` call in that broker's lifetime.
+
+### 3. `MemorySecretsBroker`'s placeholder githubToken turned an anonymous dev clone into a 401
+
+**Observed:** the previous gap's fix (item 2) gave `MemorySecretsBroker` a non-empty default
+`githubToken` (`"dev-github-token"`) specifically so the new missing-token check wouldn't block
+dev/test repo sessions. But that placeholder is then sent to git as a real `Authorization` header on
+clone — for a public repo cloned anonymously, presenting a bogus credential turns what would have
+been a working anonymous clone into a `401`, which is worse than the problem it was meant to avoid.
+
+**Fix:** `MemorySecretsBroker`'s `githubToken` default is back to `""`
+(`OUTFITTER_DEV_GITHUB_TOKEN` still overrides it for a dev/test session that actually needs a
+private-repo token). The missing-token check itself now understands the dev-mode case instead:
+`agentlink.ts`'s `buildRunSpec` only treats an empty `githubToken` as fatal for a repo session when
+`config.devMode` is false — in dev mode "no secret configured" means "clone anonymously", not "fail
+the run", matching how a real anonymous `git clone` of a public repo behaves with no credentials at
+all.
+
+**Tests:** `packages/api/test/agentlink.test.ts` — the pre-existing "empty githubToken" test (which
+relied on the non-empty placeholder never actually going empty) is now two tests: one with
+`devMode` off asserting the `4412` failure (see item 1 above), and a new one with `devMode` on (the
+`buildTestApp` default) asserting a repo session with an empty token still gets a normal `run.spec`
+with `secrets.githubToken === ""`.
+
+### 4. `Link.close()` used the global `clearTimeout` instead of the injectable `clearTimeoutFn`
+
+**Observed:** every other timer in `packages/agentd/src/link.ts` (`connectionAgeTimer`,
+`stableTimer`, `unspecTimer`) is cleared through `this.clearTimeoutFn`, injectable for tests — except
+`close()`'s `reconnectTimer` clear, which called the global `clearTimeout` directly. Harmless with
+real timers, but inconsistent, and would silently stop working if a test ever swapped in a fake
+`clearTimeoutFn` and expected `close()` to use it too.
+
+**Fix:** `close()` now calls `this.clearTimeoutFn(this.reconnectTimer)`, matching every other timer
+in the class.
+
+### 5. `stopReconciler` also stopped the down-queue poller — name didn't match what it did
+
+**Observed:** the previous gap's fix (item 1) added `stopDownQueuePoller` and folded it into the
+function `buildApp` already returned as `stopReconciler`, but never renamed it — so the `App`
+interface and every caller kept calling something that stopped two different background tasks
+`stopReconciler`.
+
+**Fix (`packages/api/src/server.ts`):** renamed to `stopBackgroundTasks` (interface field, local
+`const`, and the returned object); doc comment already described both jobs, left as-is. Updated the
+one caller (`packages/api/src/main.ts`) and every test call site (`packages/api/test/agentlink.test.ts`,
+15 call sites across the file).
+
+### 6. `existing_secrets()` was duplicated verbatim in `deploy/api.sh` and `deploy/link.sh`
+
+**Observed:** both scripts defined the identical `existing_secrets()` shell function (filters a
+`--set-secrets` pair list down to secrets that actually exist yet, per-secret `gcloud secrets
+describe`) — a straight copy-paste, already diverging in nothing but guaranteed to eventually.
+
+**Fix:** moved `existing_secrets()` into `deploy/env.sh`, which both scripts already `source` first
+thing (the shared project/account guard). `api.sh` and `link.sh` now each just call it, with a
+one-line comment pointing at `env.sh`.
+
+**Verification:** `bash -n` on all three scripts (`env.sh`, `api.sh`, `link.sh`) — no gcloud commands
+run.
+
+**Files touched:** `docs/protocol.md`, `packages/api/src/agentlink.ts`, `packages/api/src/secrets.ts`,
+`packages/api/src/server.ts`, `packages/api/src/main.ts`, `packages/agentd/src/link.ts`,
+`packages/agentd/src/main.ts`, `packages/api/test/agentlink.test.ts`,
+`packages/agentd/test/link.test.ts`, `deploy/env.sh`, `deploy/api.sh`, `deploy/link.sh`.
+
+**Test run:** `npm test` from `outfitter/` (all workspaces): `@outfitter/agentd` 64/64,
+`@outfitter/api` 51/51, `@outfitter/provider-local` 2/2 — all green.

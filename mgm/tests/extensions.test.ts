@@ -219,9 +219,10 @@ describe("connect extension", async () => {
     });
     try {
       const ctx = ctxWith();
-      ctx.answers.push("Matej", "Yes, configure it", "http://localhost:1234/v1", "google/gemma-4-e4b", "https://litellm.augment-code.support/v1", "", "");
+      ctx.answers.push("Matej", "Yes, configure it", "127.0.0.1:1234", "google/gemma-4-e4b", "https://litellm.augment-code.support/v1", "", "");
       await pi.commands.get("setup")!.handler("", ctx);
       assert.ok(store.env().includes("LMSTUDIO_MODEL=google/gemma-4-e4b\n"));
+      assert.ok(store.env().includes("LMSTUDIO_BASE_URL=http://127.0.0.1:1234/v1\n"), "typed without scheme or /v1, saved normalised");
       assert.ok(!ctx.notices.some((n) => n.msg.includes("Could not reach")));
       const lm = pi.providers.filter((p) => p.name === "lmstudio").at(-1)!.config.models.map((m: any) => m.id);
       assert.deepEqual(lm, ["google/gemma-4-e4b", "nvidia/nemotron-3-nano-omni"], "discovered from the server, embeddings excluded");

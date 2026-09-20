@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
-  parseEnvText, parseModelInfo, parseLmStudioModels, backends, rootUrl, parseSpendHeaders, sessionEstimate,
+  parseEnvText, parseModelInfo, parseLmStudioModels, backends, normalizeBaseUrl, rootUrl, parseSpendHeaders, sessionEstimate,
   money, pctText, price, fit, bar, budgetRows, renderPanel, footerStatus, plainLen, QWEN_THINKING_MAP, DEFAULT_OPENROUTER_MODELS,
 } from "../.pi/extensions/connect/lib.ts";
 
@@ -65,6 +65,17 @@ describe("backends", () => {
     const or = backends({ OPENROUTER_MODELS: " a/b, c/d ,, " }, new Map()).find((b) => b.id === "openrouter")!;
     assert.deepEqual(or.fallback, ["a/b", "c/d"]);
     assert.deepEqual(backends({}, new Map()).find((b) => b.id === "openrouter")!.fallback, DEFAULT_OPENROUTER_MODELS);
+  });
+
+  test("normalizeBaseUrl repairs what people type", () => {
+    const d = "http://localhost:1234/v1";
+    assert.equal(normalizeBaseUrl("http://127.0.0.1:1234", d), "http://127.0.0.1:1234/v1", "the bug: missing /v1");
+    assert.equal(normalizeBaseUrl("localhost:1234", d), "http://localhost:1234/v1");
+    assert.equal(normalizeBaseUrl("http://localhost:1234/v1/", d), "http://localhost:1234/v1");
+    assert.equal(normalizeBaseUrl("litellm.example.com", d), "https://litellm.example.com/v1");
+    assert.equal(normalizeBaseUrl("https://openrouter.ai/api/v1", d), "https://openrouter.ai/api/v1");
+    assert.equal(normalizeBaseUrl("", d), d);
+    assert.equal(backends({ LMSTUDIO_BASE_URL: "127.0.0.1:1234" }, new Map())[0].baseUrl, "http://127.0.0.1:1234/v1", "env values are normalised too");
   });
 
   test("rootUrl strips a trailing /v1", () => {

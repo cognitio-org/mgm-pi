@@ -19,7 +19,7 @@ import { homedir } from "node:os";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import {
-  type Backend, type ModelMeta, type LmStudioMeta, backends, parseEnvText, parseModelInfo, parseLmStudioModels, parseSpendHeaders, rootUrl,
+  type Backend, type ModelMeta, type LmStudioMeta, backends, parseEnvText, parseModelInfo, parseLmStudioModels, parseSpendHeaders, rootUrl, normalizeBaseUrl,
   sessionEstimate, money, footerStatus, budgetRows, renderPanel,
 } from "./lib.ts";
 
@@ -111,14 +111,21 @@ export default async function (pi: ExtensionAPI) {
     handler: async (_args, ctx) => {
       if (!ctx.hasUI) { ctx.ui.notify(`Edit ${envFilePath()} (see .env.example); /setup needs the interactive UI`, "warning"); return; }
       const cur = loadEnv(process.cwd());
-      const ask = async (title: string, current: string | undefined, placeholder?: string) => { const v = await ctx.ui.input(current ? `${title}  (current: ${current})` : title, placeholder ?? current ?? ""); return v === undefined ? undefined : v.trim(); };
+      // Enter on an empty field keeps what is shown (current value or default); Escape cancels the wizard.
+      const ask = async (title: string, current: string | undefined, fallback?: string) => {
+        const shown = current || fallback || "";
+        const v = await ctx.ui.input(shown ? `${title}  (Enter keeps: ${shown})` : title, shown);
+        if (v === undefined) return undefined;
+        return v.trim() === "" ? shown : v.trim();
+      };
       const values: Record<string, string | undefined> = {};
-      const name = await ask("Your name (shown in the banner)", cur.MGM_USER, cur.MGM_USER || process.env.USER); if (name === undefined) return; if (name) values.MGM_USER = name;
+      const name = await ask("Your name (shown in the banner)", cur.MGM_USER, process.env.USER); if (name === undefined) return; if (name) values.MGM_USER = name;
 
       const useLocal = await ctx.ui.select("Local model server (LM Studio or any OpenAI-compatible server)", ["Yes, configure it", "No local model on this machine"]);
       if (useLocal === undefined) return;
       if (useLocal.startsWith("Yes")) {
-        const url = await ask("Local server URL", cur.LMSTUDIO_BASE_URL || "http://localhost:1234/v1"); if (url === undefined) return; values.LMSTUDIO_BASE_URL = url;
+        const typed = await ask("Local server URL", cur.LMSTUDIO_BASE_URL, "http://localhost:1234/v1"); if (typed === undefined) return;
+        const url = normalizeBaseUrl(typed, "http://localhost:1234/v1"); values.LMSTUDIO_BASE_URL = url;
         const native = await getJson(`${rootUrl(url)}/api/v0/models`, "lm-studio");
         const listed = native ? [...parseLmStudioModels(native).entries()].map(([id, m]) => `${id}${m.loaded ? "  (loaded)" : ""}`) : ((await getJson(`${url}/models`, "lm-studio"))?.data ?? []).map((m: any) => String(m.id));
         let model: string | undefined;
@@ -127,9 +134,16 @@ export default async function (pi: ExtensionAPI) {
         if (model) values.LMSTUDIO_MODEL = model;
         if (!listed.length) ctx.ui.notify(`Could not reach ${url}; saved anyway. Start the server and run /setup again to pick a model.`, "warning");
       }
-      const llUrl = await ask("LiteLLM router URL", cur.LITELLM_BASE_URL || "https://litellm.augment-code.support/v1"); if (llUrl === undefined) return; values.LITELLM_BASE_URL = llUrl;
-      const llKey = await ask("LiteLLM key for this agent (ask Matthew for one; leave blank to skip)", cur.LITELLM_AGENT_KEY ? "sk-…" + cur.LITELLM_AGENT_KEY.slice(-4) : undefined, ""); if (llKey === undefined) return; if (llKey && !llKey.startsWith("sk-…")) values.LITELLM_AGENT_KEY = llKey;
-      const orKey = await ask("OpenRouter API key (openrouter.ai/keys; blank to skip)", cur.OPENROUTER_API_KEY ? "sk-or-…" + cur.OPENROUTER_API_KEY.slice(-4) : undefined, ""); if (orKey === undefined) return; if (orKey && !orKey.startsWith("sk-or-…")) values.OPENROUTER_API_KEY = orKey;
+      const llUrl = await ask("LiteLLM router URL", cur.LITELLM_BASE_URL, "https://litellm.augment-code.support/v1"); if (llUrl === undefined) return; values.LITELLM_BASE_URL = normalizeBaseUrl(llUrl, "https://litellm.augment-code.support/v1");
+      // keys: the prompt shows a masked hint; Enter keeps the existing key, a new value replaces it
+      const keyPrompt = async (title: string, current: string | undefined, maskPrefix: string) => {
+        const hint = current ? `${maskPrefix}…${current.slice(-4)}` : "";
+        const v = await ctx.ui.input(hint ? `${title}  (Enter keeps ${hint})` : `${title}  (blank to skip)`, "");
+        if (v === undefined) return undefined;
+        return v.trim();   // "" = keep current / skip
+      };
+      const llKey = await keyPrompt("LiteLLM key for this agent (ask Matthew for one)", cur.LITELLM_AGENT_KEY, "sk"); if (llKey === undefined) return; if (llKey) values.LITELLM_AGENT_KEY = llKey;
+      const orKey = await keyPrompt("OpenRouter API key (openrouter.ai/keys)", cur.OPENROUTER_API_KEY, "sk-or"); if (orKey === undefined) return; if (orKey) values.OPENROUTER_API_KEY = orKey;
 
       const file = envFilePath();
       let text = ""; try { text = readFileSync(file, "utf8"); } catch {}

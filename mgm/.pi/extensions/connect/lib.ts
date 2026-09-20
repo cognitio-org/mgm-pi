@@ -90,7 +90,7 @@ export function backends(env: Record<string, string>, litellmMeta: Map<string, M
     {
       id: "lmstudio",
       label: "LM Studio  (local MLX, port 1234)",
-      baseUrl: env.LMSTUDIO_BASE_URL || "http://localhost:1234/v1",
+      baseUrl: normalizeBaseUrl(env.LMSTUDIO_BASE_URL, "http://localhost:1234/v1"),
       apiKey: "lm-studio",
       keyVar: "LMSTUDIO_BASE_URL",
       discover: true,
@@ -104,7 +104,7 @@ export function backends(env: Record<string, string>, litellmMeta: Map<string, M
     {
       id: "litellm",
       label: "LiteLLM router  (litellm.augment-code.support)",
-      baseUrl: env.LITELLM_BASE_URL || "https://litellm.augment-code.support/v1",
+      baseUrl: normalizeBaseUrl(env.LITELLM_BASE_URL, "https://litellm.augment-code.support/v1"),
       apiKey: env.LITELLM_AGENT_KEY || env.LITELLM_API_KEY || "",  // agent-specific key first
       keyVar: "LITELLM_AGENT_KEY",
       discover: true,
@@ -127,7 +127,7 @@ export function backends(env: Record<string, string>, litellmMeta: Map<string, M
     {
       id: "openrouter",
       label: "OpenRouter  (openrouter.ai)",
-      baseUrl: env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1",
+      baseUrl: normalizeBaseUrl(env.OPENROUTER_BASE_URL, "https://openrouter.ai/api/v1"),
       apiKey: env.OPENROUTER_API_KEY || "",
       keyVar: "OPENROUTER_API_KEY",
       discover: false,
@@ -139,6 +139,19 @@ export function backends(env: Record<string, string>, litellmMeta: Map<string, M
       }),
     },
   ];
+}
+
+/**
+ * Normalise an OpenAI-compatible base URL as users type it: add the scheme, drop a trailing slash,
+ * and append /v1 when no version path is present ("localhost:1234" → "http://localhost:1234/v1").
+ */
+export function normalizeBaseUrl(input: string, fallback: string): string {
+  let u = (input || "").trim();
+  if (!u) return fallback;
+  if (!/^https?:\/\//i.test(u)) u = (/^(localhost|127\.|10\.|192\.168\.|0\.0\.0\.0|\[::1\])/.test(u) ? "http://" : "https://") + u;
+  u = u.replace(/\/+$/, "");
+  if (!/\/v\d+$/i.test(u)) u += "/v1";
+  return u;
 }
 
 /** Strip a trailing /v1 so management endpoints (/model/info, /key/info) can be appended. */

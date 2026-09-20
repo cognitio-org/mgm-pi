@@ -97,6 +97,9 @@ export default async function (pi: ExtensionAPI) {
     litellmMeta.clear(); lmstudioMeta.clear(); reachable.clear();
     defs = backends(env, litellmMeta, lmstudioMeta);
     await Promise.all(defs.map(async (b) => {
+      // A cloud backend without a key is not registered at all: otherwise its models show up in
+      // pi's own /model picker and every request fails with a bare 401 from the provider.
+      if (!b.apiKey) { models.set(b.id, []); try { pi.unregisterProvider?.(b.id); } catch {} return; }
       const ids = await discover(b, litellmMeta, lmstudioMeta);
       models.set(b.id, ids);
       pi.registerProvider(b.id, { name: b.label, baseUrl: b.baseUrl, apiKey: b.apiKey, api: "openai-completions", models: ids.map(b.model) as any });
@@ -168,7 +171,7 @@ export default async function (pi: ExtensionAPI) {
       if (!pick) return;
       b = defs[defs.map((d) => d.label).indexOf(pick)];
     }
-    if (!b.apiKey) { ctx.ui.notify(`No API key for ${b.id}: set ${b.keyVar} in ~/localllm/.env`, "error"); return; }
+    if (!b.apiKey) { ctx.ui.notify(`No API key for ${b.id}: run /setup (or set ${b.keyVar} in the .env next to mgm)`, "error"); return; }
     const ids = models.get(b.id) ?? [];
     if (!modelId) {
       modelId = ids.length === 1 ? ids[0] : await ctx.ui.select(`Model on ${b.id}`, ids);

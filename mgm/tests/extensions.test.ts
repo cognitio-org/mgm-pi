@@ -150,10 +150,10 @@ describe("connect extension", async () => {
   const modelsOf = (name: string) => pi.providers.find((p) => p.name === name)!.config.models;
   const ctxWith = (extra: any = {}) => makeCtx({ models: pi.providers.flatMap((p) => p.config.models.map((m: any) => ({ ...m, provider: p.name }))), ...extra });
 
-  test("registers three providers with fallback models and the agent key", () => {
-    assert.deepEqual(pi.providers.map((p) => p.name).sort(), ["litellm", "lmstudio", "openrouter"]);
+  test("registers only backends that have a key (the local server always); a keyless cloud backend stays out of pi's picker", () => {
+    assert.deepEqual(pi.providers.map((p) => p.name).sort(), ["litellm", "lmstudio"], "no OpenRouter key set → not registered");
     assert.equal(pi.providers.find((p) => p.name === "litellm")!.config.apiKey, "sk-test");
-    assert.equal(pi.providers.find((p) => p.name === "openrouter")!.config.apiKey, "", "no OpenRouter key set");
+    assert.ok(pi.unregistered.includes("openrouter"), "stale registration removed if any");
     assert.equal(modelsOf("lmstudio")[0].thinkingLevelMap.off, "none");
     assert.equal(modelsOf("litellm").find((m: any) => m.id === "local-qwen-mlx").thinkingLevelMap.off, "none");
     assert.equal(modelsOf("litellm").find((m: any) => m.id === "claude-sonnet-5").thinkingLevelMap.off, undefined);
@@ -201,6 +201,7 @@ describe("connect extension", async () => {
     assert.match(ctx.notices.at(-1)!.msg, /Connections ready: lmstudio, litellm, openrouter/);
     const litellm = pi.providers.filter((p) => p.name === "litellm").at(-1)!;
     assert.equal(litellm.config.apiKey, "sk-new-key", "providers re-registered live");
+    assert.equal(pi.providers.filter((p) => p.name === "openrouter").at(-1)!.config.apiKey, "sk-or-new", "OpenRouter registered once its key exists");
     assert.equal(pi.providers.filter((p) => p.name === "lmstudio").at(-1)!.config.models[0].id, "my-local-model");
     // second run keeps existing keys when left blank and updates only the name
     ctx.answers.push("Matej Monteleone", "No local model on this machine", "https://litellm.augment-code.support/v1", "", "");

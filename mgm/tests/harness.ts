@@ -9,16 +9,18 @@ export function makePi() {
   const handlers = new Map<string, Handler[]>();
   const commands = new Map<string, { description?: string; handler: (args: string, ctx: any) => Promise<void>; getArgumentCompletions?: (p: string) => any }>();
   const providers: any[] = [];
+  const unregistered: string[] = [];
   const entries: any[] = [];
   const setModelCalls: any[] = [];
   const pi = {
     on(ev: string, h: Handler) { handlers.set(ev, [...(handlers.get(ev) ?? []), h]); },
     registerCommand(name: string, def: any) { commands.set(name, def); },
     registerProvider(name: string, config: any) { providers.push({ name, config }); },
+    unregisterProvider(name: string) { unregistered.push(name); },
     appendEntry(customType: string, data: any) { entries.push({ type: "custom", customType, data }); },
     async setModel(model: any) { setModelCalls.push(model); return true; },
     async emit(ev: string, event: any, ctx: any) { let result: any; for (const h of handlers.get(ev) ?? []) { const r = await h(event, ctx); if (r !== undefined) result = r; } return result; },
-    handlers, commands, providers, entries, setModelCalls,
+    handlers, commands, providers, unregistered, entries, setModelCalls,
   };
   return pi;
 }

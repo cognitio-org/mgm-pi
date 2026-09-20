@@ -1,0 +1,23 @@
+outfitter/packages/agentd/package.json
+  s_2209f22f830d7f::t_f953752ec0aaa4 14
+outfitter/packages/api/package.json
+  s_2209f22f830d7f::t_75d2dbf3765577 12
+outfitter/packages/provider-local/package.json
+  s_2209f22f830d7f::t_990797b6968d23 11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "d0a9b68cae85803bbf3cf144e84f534e8f72ab2e",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

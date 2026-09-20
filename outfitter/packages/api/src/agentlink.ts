@@ -382,6 +382,13 @@ export class AgentLink {
       }
       case "spend": {
         this.sse.publish(sessionId, { type: "spend", data: frame });
+        // E2.11: `estimate` is agentd's own running total (pi-extension/outfitter-spend.ts's usage,
+        // accumulated by agentd's SpendTailer) -- a straight assignment, not a delta to fold into
+        // anything, and populated independently of `keySpend` below (a guru whose route returns no
+        // LiteLLM headers at all still gets a real Run.costEstimate).
+        if (typeof frame.estimate === "number") {
+          await this.store.runs.update(runId, { costEstimate: frame.estimate, updatedAt: now });
+        }
         if (typeof frame.keySpend === "number") {
           // frame.keySpend is the LiteLLM *key's* cumulative spend, shared by every run and
           // session using that guru's key — not this run's own cost. Pin keySpendStart to the

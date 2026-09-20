@@ -93,6 +93,32 @@ test("renderGuru: drops denylisted guru.env keys (NODE_OPTIONS, LD_PRELOAD, PATH
   assert.equal(logged.length, 7);
 });
 
+test("renderGuru: spendExtensionPath renders --extension right after the fixed rpc/-a/session prefix", () => {
+  const guru: RunSpecGuru = { model: "litellm/local-qwen-mlx" };
+  const { args } = renderGuru(guru, {
+    piBin: "pi",
+    sessionFile: "/tmp/s.jsonl",
+    spendExtensionPath: "/opt/outfitter/agentd/pi-extension/outfitter-spend.js",
+  });
+  assert.deepEqual(args, [
+    "--mode",
+    "rpc",
+    "-a",
+    "--session",
+    "/tmp/s.jsonl",
+    "--extension",
+    "/opt/outfitter/agentd/pi-extension/outfitter-spend.js",
+    "--model",
+    "litellm/local-qwen-mlx",
+  ]);
+});
+
+test("renderGuru: no spendExtensionPath means no --extension flag (interactive/local pi runs unaffected)", () => {
+  const guru: RunSpecGuru = { model: "litellm/local-qwen-mlx" };
+  const { args } = renderGuru(guru, { piBin: "pi", sessionFile: "/tmp/s.jsonl" });
+  assert.ok(!args.includes("--extension"));
+});
+
 test("renderGuru: empty tools/excludeTools arrays render no flags", () => {
   const guru: RunSpecGuru = { model: "m", tools: [], excludeTools: [] };
   const { args } = renderGuru(guru, { piBin: "pi", sessionFile: "/tmp/s.jsonl" });

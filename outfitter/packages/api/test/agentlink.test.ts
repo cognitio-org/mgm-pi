@@ -461,6 +461,40 @@ describe("agentd <-> api WebSocket", () => {
     app.stopBackgroundTasks();
     await app.fastify.close();
   });
+
+  // E2.11: agentd's SpendTailer sends `estimate` as its own running total (pi's per-message cost
+  // estimate, independent of LiteLLM's key-spend headers) on every `spend` frame; the handler stores
+  // it on the run as-is (not folded like `cost`'s keySpendStart delta) so it stays correct even for a
+  // guru whose route returns no LiteLLM headers at all.
+  test("spend.estimate is stored on the run as costEstimate, independently of keySpend/cost", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    await agent.nextMessage(); // run.spec
+
+    // A route with no LiteLLM headers at all still gets a real costEstimate.
+    agent.send({ t: "spend", estimate: 0.03 });
+    await new Promise((resolve) => setImmediate(resolve));
+    let run = await app.store.runs.findById(runId);
+    assert.equal(run?.costEstimate, 0.03);
+    assert.equal(run?.cost, undefined); // no keySpend on this frame: cost/keySpendStart untouched
+
+    // A later frame carries both: keySpend still drives cost's delta-from-baseline, estimate is a
+    // straight overwrite (agentd already accumulates it) -- the two fields evolve independently.
+    agent.send({ t: "spend", keySpend: 5, keyMax: 20, modelGroup: "sonnet", callId: "call-2", estimate: 0.08 });
+    await new Promise((resolve) => setImmediate(resolve));
+    run = await app.store.runs.findById(runId);
+    assert.equal(run?.costEstimate, 0.08);
+    assert.equal(run?.keySpendStart, 5);
+    assert.equal(run?.cost, 0);
+
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
 });
 
 // outfitter-api (web role) and outfitter-link (link role) are separate Cloud Run services sharing

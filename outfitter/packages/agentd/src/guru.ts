@@ -23,6 +23,11 @@ export interface RenderOptions {
   /** RPC mode is always on, `-a` (trust project files) is always on: fixed by the sandbox contract,
    * not chosen per-guru. */
   onLog?: (line: string) => void;
+  /** E2.11: path to packages/agentd/pi-extension/outfitter-spend.ts (or its built equivalent), loaded
+   * via `-e <path>` so pi reports LiteLLM spend headers and its own per-message cost estimate back to
+   * agentd (OUTFITTER_SPEND_FILE) without every non-agentd pi run picking it up. Omitted outside
+   * agentd (interactive/local pi never sets this). */
+  spendExtensionPath?: string;
 }
 
 /** guru.env keys that would let a guru author plant persistent code-exec or credential leakage into
@@ -51,6 +56,8 @@ export function renderModelArg(model: string, thinking?: string): string {
  * `pi --mode rpc -a --session <file> ...` with. */
 export function renderGuru(guru: RunSpecGuru, opts: RenderOptions): RenderedPi {
   const args: string[] = ["--mode", "rpc", "-a", "--session", opts.sessionFile];
+
+  if (opts.spendExtensionPath) args.push("--extension", opts.spendExtensionPath);
 
   args.push("--model", renderModelArg(guru.model, guru.thinking));
 

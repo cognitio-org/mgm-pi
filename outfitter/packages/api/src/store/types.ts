@@ -92,6 +92,12 @@ export interface Run {
   // its runs' cost fields (kept incrementally; see agentlink.ts's "spend" handler).
   keySpendStart?: number;
   cost?: number;
+  // E2.11: `spend.estimate` (agentlink.ts's "spend" handler) is pi's own cumulative cost estimate for
+  // this run, from the outfitter-spend pi extension's per-response usage, independent of LiteLLM's
+  // key-spend headers -- unlike `cost` above, it's a straight assignment (agentd already sends the
+  // running total, not a delta to fold in) and it's populated even for a guru whose route never
+  // returns LiteLLM spend headers at all (`cost`/`keySpendStart` would then stay unset).
+  costEstimate?: number;
   createdAt: string;
   updatedAt: string;
 }

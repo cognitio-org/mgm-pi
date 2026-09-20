@@ -229,14 +229,48 @@ research on Sonnet; review on Opus).
   start time 38 to 46 s; start time to first WebSocket connect about 3 min (image pull happens
   after start time); prompt to answer 3 s; idle-stop and clean exit verified. Cold wake is about
   4 min today and is dominated by image size, so E1.5 (trim the image) comes before any tuning.
-- **E1.5 Trim the agent image**: only the packages a cloud guru needs; measure again. Target under
-  600 MB and a cold wake near one minute.
-- **E1.6 Job container logs**: agentd's stderr does not appear in Cloud Logging for the Job
-  (only audit entries); make agentd log structured JSON to stdout and confirm it shows under the
-  execution.
-- **E2.11 Spend frames from cloud runs**: `Session.cost` stayed 0 on the first run; the connect
-  extension's spend headers are not yet relayed by agentd as `spend` frames. Wire an extension
-  hook (custom entry or stderr line agentd parses) so per-run cost is real.
+- **E1.5 Trim the agent image** (done, `docs/reports/image-trim.md`): multi-stage Dockerfile
+  (builder stages for mgm's deps and agentd's build never reach the runtime stage); `pi update`
+  (silently failing the whole time -- every image shipped so far had **none** of settings.json's
+  packages installed, a correctness bug this also fixes) replaced with `npm ci` against
+  `mgm/.pi/npm`'s committed lockfile; TUI/laptop-only packages (`pi-listen`, `pi-powerline-footer`,
+  `pi-lsp`, and `open-codebase-index`, whose embeddings point at the laptop's LM Studio) dropped from
+  an image-only `settings.json` derived from the real one
+  (`image/render-settings.sh`); every platform's native binaries stripped except the build's own
+  (`image/strip-native-binaries.sh`; esbuild alone: 285 MB → 11 MB); `COPY --chown` instead of a
+  trailing `chown -R` (was costing +461 MB by itself, overlayfs copy-up of every file's metadata).
+  Result: **2.16 GB → 681 MB actual content** (932 MB before dropping the index; see report
+  section 7), verified on
+  both `linux/arm64` and `linux/amd64` (the real Cloud Run target -- `build.sh` now defaults to it;
+  an arm64 dev-machine build hits an unrelated glibc gap, `libmvec` never having been built for
+  aarch64, that only affects `open-codebase-index`'s native addon and doesn't reproduce on amd64).
+  **Did not hit the 600 MB target**: `node:24-bookworm-slim` + git/ripgrep/gh alone is ~500 MB
+  before any application code, and the four packages named as required (pi-mcp-adapter,
+  pi-web-access, pi-memory, pi-subagents) plus their own provider-SDK weight in
+  `@earendil-works/pi-coding-agent` account for the rest; see the report's "Why 600 MB isn't
+  reachable" for the full breakdown and the remaining levers (`open-codebase-index` is ~140 MB
+  including its deps and is the biggest one left, kept because it's genuinely useful for a cloud
+  guru and wasn't on the required-or-excluded list -- left as a product decision, not folded into
+  this size pass). Cold-wake-near-one-minute follow-up needs a re-run of E2.9's measurement against
+  this image once it's deployed.
+- **E1.6 Job container logs** (done, `docs/reports/cost-and-logs.md`): agentd now has a structured
+  JSON logger (`packages/agentd/src/logger.ts`) -- one `{"severity":...,"message":...,runId,
+  sessionId?,state?,...}` line per event on stdout (human-readable when stdout is a TTY, e.g. local
+  dev); `RUN_TOKEN` and `run.spec.secrets` are registered with it so they can never appear in a log
+  line, plus unconditional URL-userinfo/secret-query-param redaction. pi's own stderr is routed
+  through the same logger at DEBUG (`source: "pi"`), tagged separately from agentd's own INFO lines.
+  Still needs confirming against a real Cloud Run Job execution's Logs tab once E1.5/deploy land.
+- **E2.11 Spend frames from cloud runs** (done, `docs/reports/cost-and-logs.md`): a new pi extension,
+  `packages/agentd/pi-extension/outfitter-spend.ts`, loaded via `-e <path>` only under agentd
+  (`renderGuru`'s `spendExtensionPath`, gated on `RunControllerDeps.spendFile`), relays LiteLLM's
+  `x-litellm-key-spend` etc. headers plus pi's own per-response cost estimate to
+  `OUTFITTER_SPEND_FILE`; agentd tails it (`pi.ts`'s `SpendTailer`, same approach as `SessionTailer`)
+  and emits `spend` up-frames with a new `estimate` field (agentd's running total of pi's own cost
+  estimate, independent of the LiteLLM headers). The API stores `estimate` on `Run.costEstimate`
+  (plain overwrite) alongside the existing `keySpend`-delta `cost`/session-cost logic, so cost is real
+  even for a route with no LiteLLM headers at all. `image/Dockerfile` still needs to `COPY` the new
+  `pi-extension/` directory and set `OUTFITTER_SPEND_EXTENSION`/wire a real `spendFile` path -- left
+  to the image/build-scripts workstream (see the report's "Follow-up").
 - **E2.7 Deploy** ⇄: `deploy/api.sh` builds with Cloud Build, deploys, enables IAP with the domain
   principal. Done when the URL prompts for Google login and rejects a non-domain account.
 

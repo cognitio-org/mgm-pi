@@ -16,5 +16,5 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "dev/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "dev/**/*.ts", "pi-extension/**/*.ts"]
 }

@@ -182,29 +182,90 @@ export function spawnPi(opts: PiProcessOptions): PiProcess {
   };
 }
 
-// ---------- session file tailer ----------
+// ---------- spend log tailer (E2.11) ----------
 
-export interface SessionTailerOptions {
-  /** Poll interval in ms. */
-  intervalMs?: number;
+/** One line the outfitter-spend pi extension appends to OUTFITTER_SPEND_FILE per LiteLLM-backed
+ * provider response (pi-extension/outfitter-spend.ts). `usage` is pi's own per-message cost estimate
+ * for that one response (not a running total); RunController accumulates it into the run's
+ * `costEstimate`. keySpend/keyMax are absent when the response carried no (or an incomplete) LiteLLM
+ * spend header, e.g. a key with no budget cap set. */
+export interface SpendLogLine {
+  keySpend?: number;
+  keyMax?: number;
+  modelGroup?: string;
+  callId?: string;
+  usage?: number;
 }
 
-/** Polls `sessionFile` for newly appended JSONL lines and emits parsed entries. The first line
- * (the session header, `type: "session"`) is consumed but never emitted as an entry. Handles the
- * file not existing yet by retrying until it appears. */
-export class SessionTailer {
+const SPEND_STRING_FIELD_MAX_LENGTH = 200;
+const SPEND_USAGE_MAX = 1000;
+
+/** OUTFITTER_SPEND_FILE lives in /tmp inside the sandbox image and is writable by the model's own
+ * shell user (it can run arbitrary shell commands) -- a line in it is untrusted input, not just
+ * possibly-malformed JSON. Validates shape and ranges before a parsed JSON value is treated as a
+ * `SpendLogLine` anywhere (an up-frame to the control plane, this run's cost accounting): `usage`
+ * must be a finite number in [0, 1000] (a single response "costing" more than $1000 is certainly
+ * bogus); `keySpend`/`keyMax`, if present, must be finite non-negative numbers; `modelGroup`/`callId`,
+ * if present, must be strings under 200 chars. Returns `undefined` for anything else -- including a
+ * non-object value, extra/prototype-polluting keys (only the known fields are ever read), or a field
+ * of the wrong shape -- so the caller can drop the line and log a WARNING instead of using it. */
+export function validateSpendLine(value: unknown): SpendLogLine | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const v = value as Record<string, unknown>;
+
+  const finiteNonNegative = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x) && x >= 0;
+  const shortString = (x: unknown): x is string => typeof x === "string" && x.length < SPEND_STRING_FIELD_MAX_LENGTH;
+
+  if (v.usage !== undefined && !(finiteNonNegative(v.usage) && v.usage <= SPEND_USAGE_MAX)) return undefined;
+  if (v.keySpend !== undefined && !finiteNonNegative(v.keySpend)) return undefined;
+  if (v.keyMax !== undefined && !finiteNonNegative(v.keyMax)) return undefined;
+  if (v.modelGroup !== undefined && !shortString(v.modelGroup)) return undefined;
+  if (v.callId !== undefined && !shortString(v.callId)) return undefined;
+
+  return {
+    usage: v.usage as number | undefined,
+    keySpend: v.keySpend as number | undefined,
+    keyMax: v.keyMax as number | undefined,
+    modelGroup: v.modelGroup as string | undefined,
+    callId: v.callId as string | undefined,
+  };
+}
+
+// ---------- JSONL tailer ----------
+
+export interface JsonlTailerOptions {
+  /** Poll interval in ms. */
+  intervalMs?: number;
+  /** Called on each parsed line until it returns true once (e.g. the pi session file's header line,
+   * `type: "session"`) -- that line is consumed but never passed to `onLine`. Omit when the file has
+   * no header to skip (e.g. OUTFITTER_SPEND_FILE). */
+  skipHeader?: (parsed: unknown) => boolean;
+}
+
+/** Alias kept for the pre-existing SessionTailer/SpendTailer constructor signature. */
+export type SessionTailerOptions = JsonlTailerOptions;
+
+/** Polls `file` for newly appended JSONL lines (poll-by-byte-offset) and emits each parsed line to
+ * `onLine`. Handles the file not existing yet by retrying until it appears -- e.g. the spend
+ * extension only creates OUTFITTER_SPEND_FILE on its first LiteLLM-backed response, which may be
+ * well after pi starts, and the session file doesn't exist until importSession writes it. Shared by
+ * `SessionTailer` (session file, skips the `type: "session"` header) and `SpendTailer`
+ * (OUTFITTER_SPEND_FILE, no header) below -- previously two near-identical classes. */
+export class JsonlTailer {
   private offset = 0;
   private timer: ReturnType<typeof setInterval> | undefined;
   private reading = false;
   private sawHeader = false;
   private readonly intervalMs: number;
+  private readonly skipHeader?: (parsed: unknown) => boolean;
 
   constructor(
-    private readonly sessionFile: string,
-    private readonly onEntry: (entry: PiSessionEntry) => void,
-    opts: SessionTailerOptions = {},
+    private readonly file: string,
+    private readonly onLine: (parsed: unknown) => void,
+    opts: JsonlTailerOptions = {},
   ) {
     this.intervalMs = opts.intervalMs ?? 250;
+    this.skipHeader = opts.skipHeader;
   }
 
   start(): void {
@@ -226,9 +287,9 @@ export class SessionTailer {
     if (this.reading) return;
     this.reading = true;
     try {
-      const st = await stat(this.sessionFile).catch(() => undefined);
+      const st = await stat(this.file).catch(() => undefined);
       if (!st || st.size <= this.offset) return;
-      const handle = await open(this.sessionFile, "r");
+      const handle = await open(this.file, "r");
       try {
         const length = st.size - this.offset;
         const buffer = Buffer.alloc(length);
@@ -241,17 +302,17 @@ export class SessionTailer {
         const { lines } = splitJsonlChunk(consumed);
         for (const line of lines) {
           if (line.length === 0) continue;
-          let parsed: any;
+          let parsed: unknown;
           try {
             parsed = JSON.parse(line);
           } catch {
             continue;
           }
-          if (!this.sawHeader && parsed.type === "session") {
+          if (!this.sawHeader && this.skipHeader?.(parsed)) {
             this.sawHeader = true;
             continue;
           }
-          this.onEntry(parsed as PiSessionEntry);
+          this.onLine(parsed);
         }
       } finally {
         await handle.close();
@@ -259,5 +320,25 @@ export class SessionTailer {
     } finally {
       this.reading = false;
     }
+  }
+}
+
+/** Thin wrapper over JsonlTailer: OUTFITTER_SPEND_FILE has no header line to skip. Each parsed JSON
+ * value is handed to `onLine` as-is (unvalidated) -- run.ts's `handleSpendLine` validates it with
+ * `validateSpendLine` before using it, since the file is untrusted (see validateSpendLine's doc). */
+export class SpendTailer extends JsonlTailer {
+  constructor(file: string, onLine: (line: unknown) => void, opts: JsonlTailerOptions = {}) {
+    super(file, onLine, opts);
+  }
+}
+
+/** Thin wrapper over JsonlTailer: the pi session file's first line is a `type: "session"` header,
+ * consumed but never emitted as an entry. */
+export class SessionTailer extends JsonlTailer {
+  constructor(sessionFile: string, onEntry: (entry: PiSessionEntry) => void, opts: JsonlTailerOptions = {}) {
+    super(sessionFile, (parsed) => onEntry(parsed as PiSessionEntry), {
+      ...opts,
+      skipHeader: (parsed) => (parsed as { type?: unknown })?.type === "session",
+    });
   }
 }

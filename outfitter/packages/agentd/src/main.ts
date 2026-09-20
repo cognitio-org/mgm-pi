@@ -11,6 +11,7 @@ import { createGitOps } from "./git.js";
 import { Link } from "./link.js";
 import { RunController } from "./run.js";
 import { resolveRunAsUser, chownRecursive } from "./run-as-user.js";
+import { createLogger } from "./logger.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -53,7 +54,16 @@ async function main(): Promise<void> {
 
   const piVersion = await getPiVersion(piBin);
   const wsUrl = buildWsUrl(apiOrigin, runId);
-  const onLog = (line: string) => console.error(`[agentd] ${line}`);
+
+  // E1.6: one structured JSON log line per event to stdout (human-readable when stdout is a TTY,
+  // e.g. local dev) instead of plain-text console.error, which Cloud Run Jobs was not surfacing
+  // anywhere but the job's own audit entries -- see docs/reports/cost-and-logs.md. RUN_TOKEN and,
+  // once run.spec arrives, the per-run secrets (RunController.begin) are registered so they can
+  // never appear in a log line even if an error message or pi's own stderr happens to echo one back.
+  const logger = createLogger({ runId });
+  logger.addSecret(runToken);
+  logger.addSecret(devToken);
+  const onLog = (line: string) => logger.info(line);
 
   // Resolved once at startup: the uid/gid pi is spawned as (finding #1, run-as-user.ts). undefined
   // when agentd isn't root (local dev outside the sandbox image) -- nothing to drop there.
@@ -84,7 +94,12 @@ async function main(): Promise<void> {
       ? (path: string) => chownRecursive(path, runAsUser.uid, runAsUser.gid)
       : undefined,
     onLog,
+    logger,
+    spendFile: process.env.OUTFITTER_SPEND_FILE,
+    spendExtensionPath: process.env.OUTFITTER_SPEND_EXTENSION,
   });
+
+  controller.onStateChange((state) => logger.info("state change", { state }));
 
   process.once("SIGTERM", () => {
     void controller.handleSigterm();
@@ -96,14 +111,14 @@ async function main(): Promise<void> {
   // mean agentd itself is misconfigured (exit 1); 4412 means the run has no usable secret and can
   // never start (exit 1).
   link.onTerminal((code, reason) => {
-    console.error(`[agentd] link closed with terminal code ${code}: ${reason || "(no reason given)"}`);
+    logger.error(`link closed with terminal code ${code}: ${reason || "(no reason given)"}`, { code });
     process.exit(code === 4404 || code === 4409 ? 0 : 1);
   });
 
   // A misconfigured job (bad URL, api never provisions the run, ...) would otherwise reconnect
   // quietly until it hits its own much longer (e.g. 24h) timeout. Give up loudly well before that.
   link.onUnspecTimeout(() => {
-    console.error("[agentd] no run.spec received within the retry window; giving up");
+    logger.error("no run.spec received within the retry window; giving up");
     process.exit(1);
   });
 
@@ -111,6 +126,9 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error(`agentd: fatal: ${err?.message ?? err}`);
+  // Fallback logger: main() can throw before requireEnv/createLogger ever runs (e.g. a missing env
+  // var), so this can't rely on the `logger` declared inside main(). Still structured JSON on stdout,
+  // matching every other agentd log line, rather than a bare console.error string on stderr.
+  createLogger().error(`agentd: fatal: ${err?.message ?? err}`);
   process.exit(1);
 });

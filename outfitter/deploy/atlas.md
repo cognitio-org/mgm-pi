@@ -61,8 +61,10 @@ Free at any tier; needs Organization Owner in Atlas and super-admin in the Works
 
 0. Workspace first: the org-level Google SAML signing certificate lasts five years and this org
    dates from 2018, so it has expired. Admin console > **Security** > **Authentication** > **SSO with
-   Google as SAML IdP** > **Manage certificates** > **Add certificate**. Do this before creating the
-   app, otherwise the app shows the expired certificate.
+   SAML applications** (not the neighbouring "SSO with third-party IdPs" page) > **Add another
+   certificate** (max two; delete an expired one first if needed). Do this before creating the app;
+   an existing app is switched under **Apps** > **Web and mobile apps** > the app > **Service
+   provider details** > **Certificate**. Google says up to 24 h to propagate.
 1. Atlas: **Organization** > **Settings** > **Federated Authentication Settings** > **Manage
    Federation Settings** > **Identity Providers** > **Configure Identity Provider** > **SAML**, name
    it `Google Workspace`. The next screen shows Atlas's **Assertion Consumer Service URL**

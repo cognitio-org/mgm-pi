@@ -1,0 +1,75 @@
+outfitter/packages/api/src/routes/context.ts
+  s_2209f22f830d7f::t_d9180fac5039c2 7,17
+outfitter/packages/api/src/store/types.ts
+  s_2209f22f830d7f::t_4a9adff28414cb 238
+  s_2209f22f830d7f::t_4318551f1047b6 138-174
+outfitter/packages/api/src/store/memory.ts
+  s_2209f22f830d7f::t_eeaaed4844aa1a 21-22
+  s_2209f22f830d7f::t_9a28fbff8b657c 206-222,230
+outfitter/packages/api/test/providers-status.test.ts
+  s_2209f22f830d7f::t_cd698dc6bb3cd2 326,336-337
+  s_2209f22f830d7f::t_87dbb3e7eedaf6 1-325,327-335,338-421,426-445
+  s_2209f22f830d7f::t_8b99f62ab9383b 422-425
+outfitter/packages/api/src/routes/index.ts
+  s_2209f22f830d7f::t_59638249e3f180 22
+  s_2209f22f830d7f::t_f54bd8f559191f 8
+outfitter/packages/api/test/agentlink.test.ts
+  s_2209f22f830d7f::t_23f6ff1ebaf4d7 639,675,697
+outfitter/packages/api/src/config.ts
+  s_2209f22f830d7f::t_4535187059d796 138-141
+  s_2209f22f830d7f::t_97b7135bd69234 67-80
+outfitter/packages/api/src/store/mongo.ts
+  s_2209f22f830d7f::t_97f137cbbbacd1 275-278
+  s_2209f22f830d7f::t_613014de5ff133 258-274,279-281
+  s_2209f22f830d7f::t_691d5384de0ac0 23-24
+  s_2209f22f830d7f::t_214357cdd4485d 293,304
+outfitter/packages/api/src/server.ts
+  s_2209f22f830d7f::t_a5d63ade18ed24 16-17
+  s_2209f22f830d7f::t_af4c4a48302551 33-35
+  s_2209f22f830d7f::t_fce59ba2749f28 61-76
+  s_2209f22f830d7f::t_62251abd1072a8 96
+  s_2209f22f830d7f::t_5126a5dc3fac2f 107-117,121,124
+outfitter/deploy/service.sh
+  s_2209f22f830d7f::t_756f86d92e8e68 111
+  s_2209f22f830d7f::t_90e4f5e3b7326b 65-73
+outfitter/docs/reports/providers-status.md
+  s_2209f22f830d7f::t_c39f13aeb41abd 1-116
+outfitter/packages/api/test/stop.test.ts
+  s_2209f22f830d7f::t_fcf8059a6dadb1 274
+outfitter/packages/api/src/secrets.ts
+  s_2209f22f830d7f::t_4cae9bbd4ec214 41-44
+  s_2209f22f830d7f::t_f239ae97c997f2 86-89
+  s_2209f22f830d7f::t_78c68a4e607380 14-17
+outfitter/packages/api/src/routes/hooks.ts
+  s_2209f22f830d7f::t_31ed55a404631a 4-7
+  s_2209f22f830d7f::t_d915f8c9ea93f5 72,75
+outfitter/deploy/README.md
+  s_2209f22f830d7f::t_e33112c8a25a91 60-61,67-69,72-75
+  s_2209f22f830d7f::t_afdfbb7a64a052 76
+outfitter/packages/api/src/routes/providers.ts
+  s_2209f22f830d7f::t_5c044ec2ece6cf 1-23
+outfitter/packages/api/src/providers/cloudrun.ts
+  s_2209f22f830d7f::t_7dfdcdae169a77 166
+  s_2209f22f830d7f::t_72566437d38de7 160-165,167-170
+  s_2209f22f830d7f::t_8767fdcda6818c 42-44
+outfitter/packages/api/src/providers-status.ts
+  s_2209f22f830d7f::t_c39aabdafeac21 1-418
+outfitter/EPIC.md
+  s_2209f22f830d7f::t_d49e9ebd564e8e 214-241
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "d6f342df4387b6437898fa7ebb97274bde4f2b28",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

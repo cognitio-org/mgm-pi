@@ -19,7 +19,7 @@ with a `/connect` command that switches between three backends:
 3. `/connect` picks a backend and model at any time; `/model` is pi's own picker; `/budget` shows
    what a session costs on the router.
 
-The banner shows your block letters: **MGM** for Matthew, **TEJ** for Matej (recognised from
+The banner shows your block letters: **MGM** for Matthew, **MATEK** for Matej (recognised from
 `MGM_USER`, git email, GitHub login or OS user), initials for anyone else, with an entrance
 animation for recognised users (`MGM_NO_ANIMATION=1` skips it).
 

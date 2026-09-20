@@ -49,7 +49,7 @@ export type Identity = {
 /** Recognised users. Matching is by MGM_USER, git email/name, GitHub login or OS user, case-insensitive. */
 export const PROFILES: { match: RegExp; identity: Identity }[] = [
   { match: /^(mgm|matthew|mgm@|mgmonteleone|matthewm@)/i, identity: { name: "Matthew", letters: "MGM", tagline: "the studio of one", sweep: ["accent", "accent", "borderAccent", "text", "muted"], known: true } },
-  { match: /^(matej|tej|tej42000|matej@)/i, identity: { name: "Matej", letters: "TEJ", tagline: "welcome back, Matej  ·  TEJ42000", sweep: ["success", "success", "accent", "accent", "borderAccent"], known: true } },
+  { match: /^(matej|tej|tej42000|matej@)/i, identity: { name: "Matej", letters: "MATEK", tagline: "welcome back, Matej  ·  TEJ42000", sweep: ["success", "success", "accent", "accent", "borderAccent"], known: true } },
 ];
 
 export type IdentityHints = { MGM_USER?: string; gitEmail?: string; gitName?: string; githubLogin?: string; osUser?: string };

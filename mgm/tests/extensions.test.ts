@@ -222,7 +222,7 @@ describe("mgm banner extension", async () => {
   const mod = await import("../.pi/extensions/mgm-banner/index.ts");
   test("detects the user, installs an animated width-safe header, and can restore the built-in one", async () => {
     process.env.MGM_USER = "matej";
-    assert.deepEqual([mod.detectIdentity().letters, mod.detectIdentity().known], ["TEJ", true]);
+    assert.deepEqual([mod.detectIdentity().letters, mod.detectIdentity().known], ["MATEK", true]);
     const pi = makePi(); mod.default(pi as any);
     const ctx = makeCtx({ model: { provider: "litellm", id: "claude-sonnet-5", contextWindow: 1, maxTokens: 1 } });
     await pi.emit("session_start", {}, ctx);
@@ -234,7 +234,7 @@ describe("mgm banner extension", async () => {
     const first = comp.render(120);
     assert.ok(!first.join("").includes("█"), "frame 0 of the entrance animation shows no letters yet");
     await new Promise((r) => setTimeout(r, 45 * 30));
-    assert.ok(renders >= 15, `animation requested re-renders (${renders})`);
+    assert.ok(renders >= 25, `animation requested re-renders (${renders})`);
     const done = comp.render(120);
     assert.ok(done.some((l: string) => l.includes("welcome back, Matej")) && done.join("").includes("█"));
     for (const width of [40, 47, 80, 140]) for (const l of comp.render(width)) assert.ok(visibleWidth(l) <= width, `width ${width}`);

@@ -6,14 +6,21 @@
  * Auth, two modes (see ../../../../outfitter/packages/api/src/auth.ts for what the API accepts):
  *   - OUTFITTER_TOKEN: sent as `Authorization: Bearer <token>`. Only meaningful against the API
  *     running with OUTFITTER_DEV=1 today -- dev mode accepts any (or no) bearer and identifies the
- *     caller as dev@localhost; there is no server-side personal-token verification yet.
- *   - OUTFITTER_IAP_CLIENT_ID: no token configured, so a Google identity token for this audience is
- *     minted by shelling out to `gcloud auth print-identity-token --audiences=<id>` (the currently
- *     active gcloud account -- never hardcoded here) and sent the same way, `Authorization: Bearer`.
- *     Google's Identity-Aware Proxy accepts that header on programmatic (non-browser) requests: IAP
- *     verifies it itself and forwards to the API with x-goog-iap-jwt-assertion set, which is what
- *     auth.ts's identityFromRequest already verifies -- no API change needed for this path.
- * Neither token is ever written to disk by this module.
+ *     caller as dev@localhost; there is no server-side personal-token verification yet. This is the
+ *     only mode confirmed to work end-to-end.
+ *   - OUTFITTER_IAP_CLIENT_ID: NOT YET SUPPORTED against a real deployed API -- verified NOT
+ *     working on 2026-09-21 (critic review, outfitter/docs/reports/critic-review-pr15.md, and
+ *     outfitter/EPIC.md's E4.1 entry). The code mints a Google identity token for this audience by
+ *     shelling out to `gcloud auth print-identity-token --audiences=<id>` (the currently active
+ *     gcloud account -- never hardcoded here) and sends it the same way, `Authorization: Bearer`,
+ *     on the theory that IAP would verify that header itself the same way it verifies browser
+ *     traffic. It doesn't: `gcloud auth print-identity-token` can't mint a token audienced to
+ *     Google's IAP OAuth client for a user account, and the deployed service uses IAP's
+ *     Google-managed OAuth client, whose credentials aren't available for programmatic access at
+ *     all -- every call in this mode gets a 401. Left in place (harmless to try, and the code may
+ *     still be useful once a real auth path -- e.g. a custom IAP OAuth brand, or personal API
+ *     tokens on the link service -- is decided), but don't rely on it. Neither token is ever
+ *     written to disk by this module.
  *
  * Before get() returns a session with an active cloud run, it stops the run (POST .../stop) and
  * polls GET /api/sessions/:id until the run is no longer active, so the exported transcript is
@@ -140,7 +147,12 @@ export class OutfitterStore implements Store {
       // retry after re-auth does mint a fresh one instead of reusing the stale cached token.
       this.cachedIapToken = undefined;
       throw new Error(
-        "teleport: Outfitter API returned 401 Unauthorized. Sign in with 'gcloud auth login' as your mgmonteleone.com account (IAP mode), or check OUTFITTER_TOKEN (dev mode).",
+        this.token
+          ? "teleport: Outfitter API returned 401 Unauthorized. Check OUTFITTER_TOKEN -- this only works against an API running with OUTFITTER_DEV=1."
+          : "teleport: Outfitter API returned 401 Unauthorized. OUTFITTER_IAP_CLIENT_ID mode is not yet supported against a real deployed API " +
+              "(verified NOT working on 2026-09-21 -- see outfitter/docs/reports/critic-review-pr15.md and outfitter/EPIC.md's E4.1 entry: " +
+              "gcloud cannot mint an identity token audienced to IAP's Google-managed OAuth client for a user account). " +
+              "Re-authenticating with 'gcloud auth login' will not fix this. Use OUTFITTER_TOKEN against a dev-mode (OUTFITTER_DEV=1) API instead.",
       );
     }
     if (res.status === 403) {

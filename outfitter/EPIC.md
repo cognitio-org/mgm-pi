@@ -328,15 +328,21 @@ research on Sonnet; review on Opus).
 
 ### E3 Web UI
 
-- **E3.1 Shell** ⇄: Vite + React, served from the API. Fleet list with status, guru, repo/branch,
-  cost, last activity; filters; parent/child grouping.
-- **E3.2 Session view**: transcript with `@earendil-works/pi-web-ui` message components fed from SSE;
-  composer with send/steer/follow-up (queued while running, like Cosmos and pi's queue); abort; stop
-  and wake; questions and permission prompts rendered from `extension_ui_request`.
+- **E3.1 Shell** ⇄ — done, `docs/reports/web-ui.md`. Vite + React, served from the API. Fleet list
+  with status, guru, repo/branch, cost, last activity, and filters (status/guru; run-state filtering
+  fixed in the PR #15 review pass, `docs/reports/review-fixes-api.md`). Not built: parent/child
+  grouping.
+- **E3.2 Session view** — done, `docs/reports/web-ui.md`. Transcript fed from SSE, composer with
+  send/steer/follow-up, abort, stop and wake, questions and permission prompts rendered from
+  `extension_ui_request`. Deviation from the sketch below: renders via a lightweight custom
+  `EntryItem` component, not `@earendil-works/pi-web-ui` (that package wasn't pulled in) -- see
+  `web-ui.md`'s "pi-web-ui" decision. Not built: markdown rendering of message text (rendered as
+  plain text/`<pre>` today).
 - **E3.3 Diff and files tabs**: `GET /sessions/:id/diff` (agentd runs `git diff base...HEAD` plus
   working tree) rendered with a diff component; file viewer via agentd `read`.
-- **E3.4 New session dialog**: guru, optional repository (from a configured list or GitHub search
-  via the broker; "no repository" for non-coding work), base branch, prompt; "run locally" hint that prints `mgm --teleport <id>`.
+- **E3.4 New session dialog** — done, `docs/reports/web-ui.md`. Guru dropdown, optional repository,
+  base branch, prompt; "run locally" hint that prints `mgm --teleport <id>`. Not built: repository
+  picker from a configured list or GitHub search via the broker (a plain text field today).
 - **E3.5 Cost page**: per session, per guru, per day; LiteLLM key budget bars (reuse the budget
   panel logic from connect/lib.ts).
 - **E3.6 Providers dashboard**: a status page (also the landing page's header strip) listing every
@@ -345,22 +351,29 @@ research on Sonnet; review on Opus).
   and budget bars, OpenRouter credits, and sandbox capacity (running jobs versus limit). Live via SSE,
   with a 7-day uptime sparkline per endpoint and a "wake laptop model" hint when a guru wants it and
   it is offline. Designed to grow: providers are rows in a table keyed by kind, not hard-coded panels.
+  Follow-up (code review N3, `docs/reports/code-review-pr15.md`): `GET /api/providers/stream` is
+  already fully implemented server-side (E2.10), but nothing in `packages/web` subscribes to it yet
+  (`useProviders` polls once on mount) -- the web strip/dashboard should open it once E3.6 is built.
 
 ### E4 Teleport, both directions
 
-- **E4.1 `OutfitterStore`** — done. `mgm/.pi/extensions/teleport/outfitter-store.ts` implements the
-  same `Store` interface as `GitStore` (`list`/`get`/`put`) against the Outfitter API
-  (`OUTFITTER_API`), selected by `MGM_TELEPORT_STORE=outfitter` via
-  `mgm/.pi/extensions/teleport/store-factory.ts`. Auth: `OUTFITTER_TOKEN` as `Authorization: Bearer`
-  (works today only against `OUTFITTER_DEV=1`, since there's no server-side personal-token check
-  yet), or `OUTFITTER_IAP_CLIENT_ID` -- a Google identity token minted via `gcloud auth
-  print-identity-token --audiences=<id>` (the active gcloud account, never hardcoded), sent the same
-  way; IAP accepts that header on programmatic requests and verifies it itself, so no API-side
-  change was needed for that path. Neither token touches disk. `list()` maps `GET /api/sessions`;
-  `get()` pulls `GET /api/sessions/:id/export.jsonl`; `put()` is `PUT /api/sessions/:id/import`,
-  which already creates the session server-side when the id doesn't exist yet (no API change
-  needed there either). Tests: `mgm/tests/teleport-outfitter.test.ts` (fake fetch: list/get/put
-  mapping, stop-then-poll flow, `--force`, timeout, auth header selection).
+- **E4.1 `OutfitterStore`** — done for dev-token auth; IAP identity-token mode verified NOT working
+  on 2026-09-21: gcloud cannot mint audience-specific identity tokens for user accounts, and IAP
+  returns 401 for gcloud's default identity token; the OAuth-brand admin APIs are being shut down.
+  Auth design for the laptop path is an open decision (personal API tokens on the link service is
+  the leading option). `mgm/.pi/extensions/teleport/outfitter-store.ts` implements the same `Store`
+  interface as `GitStore` (`list`/`get`/`put`) against the Outfitter API (`OUTFITTER_API`), selected
+  by `MGM_TELEPORT_STORE=outfitter` via `mgm/.pi/extensions/teleport/store-factory.ts`. Auth:
+  `OUTFITTER_TOKEN` as `Authorization: Bearer` works today against `OUTFITTER_DEV=1` (no
+  server-side personal-token check yet). `OUTFITTER_IAP_CLIENT_ID` (a Google identity token minted
+  via `gcloud auth print-identity-token --audiences=<id>`, the active gcloud account, never
+  hardcoded) does not work against the real deployed API as configured -- see the correction above
+  (critic review #1, `docs/reports/critic-review-pr15.md`). Neither token touches disk. `list()`
+  maps `GET /api/sessions`; `get()` pulls `GET /api/sessions/:id/export.jsonl`; `put()` is
+  `PUT /api/sessions/:id/import`, which already creates the session server-side when the id doesn't
+  exist yet (no API change needed there either). Tests: `mgm/tests/teleport-outfitter.test.ts`
+  (fake fetch: list/get/put mapping, stop-then-poll flow, `--force`, timeout, auth header
+  selection) -- all against a fake fetch, never a real deployed API.
 - **E4.2 Cloud → laptop** — store half done, CLI verification not yet wired up. `OutfitterStore.get`
   does the "stop the cloud run first" part: if the session has an active run it calls `POST
   /api/sessions/:id/stop` and polls `GET /api/sessions/:id`'s new `runState` field (small API

@@ -412,20 +412,23 @@ pushing a laptop-only session id is fine.
 
 **Auth**, in priority order:
 
-- `OUTFITTER_TOKEN` -- sent as `Authorization: Bearer <token>`. Today this only works against an API
+- `OUTFITTER_TOKEN` -- sent as `Authorization: Bearer <token>`. This works today against an API
   running with `OUTFITTER_DEV=1` (dev mode identifies every caller as `dev@localhost` regardless of
-  what's in the header); there is no server-side personal-token verification yet.
-- `OUTFITTER_IAP_CLIENT_ID` -- no token needed. The store shells out to `gcloud auth
-  print-identity-token --audiences=<OUTFITTER_IAP_CLIENT_ID>` (using whatever account `gcloud` is
-  currently logged in as -- run `gcloud auth login` first if that's stale) and sends the result the
-  same way, `Authorization: Bearer`. Google's Identity-Aware Proxy accepts that header on
-  programmatic (non-browser) requests: it verifies the token itself and forwards the request to the
-  API with `x-goog-iap-jwt-assertion` set, which is what the API already checks for browser traffic
-  -- no API-side change needed for this path. Neither token is ever written to disk.
+  what's in the header); there is no server-side personal-token verification yet. This is the only
+  mode confirmed to work.
+- `OUTFITTER_IAP_CLIENT_ID` -- **not yet supported against the real deployed API.** The store shells
+  out to `gcloud auth print-identity-token --audiences=<OUTFITTER_IAP_CLIENT_ID>` and sends the
+  result as `Authorization: Bearer`, but this was verified NOT working on 2026-09-21 (critic review,
+  `outfitter/docs/reports/critic-review-pr15.md`): `gcloud auth print-identity-token` cannot mint a
+  token audienced to Google's IAP OAuth client for a user account, and the deployed service uses IAP's
+  Google-managed OAuth client, whose credentials aren't available for programmatic access at all --
+  every call in this mode gets a 401. Auth design for this path is an open decision (personal API
+  tokens on the link service is the leading option); don't rely on `OUTFITTER_IAP_CLIENT_ID` until
+  that's resolved. Neither token is ever written to disk.
 
-A 401 from the API means the token was rejected: sign in with `gcloud auth login` as your
-mgmonteleone.com account (IAP mode), or check `OUTFITTER_TOKEN` (dev mode). A 403 means that account
-isn't allowed to use this Outfitter deployment at all.
+A 401 from the API usually means `OUTFITTER_IAP_CLIENT_ID` mode was used against a real deployment
+(see above, not yet supported) -- use `OUTFITTER_TOKEN` against a dev-mode (`OUTFITTER_DEV=1`) API
+instead. A 403 means that account isn't allowed to use this Outfitter deployment at all.
 
 **Stop-before-pull.** `pull`/`mgm --teleport <id>` first checks whether the session has an active
 cloud run (queued/provisioning/running/idle/stopping); if it does, it calls `POST

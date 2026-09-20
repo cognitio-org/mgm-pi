@@ -1,6 +1,6 @@
 # mgm
 
-The **mgm** coding agent: a project-local build of [pi](https://github.com/earendil-works/pi)
+The **mgm** coding agent: a project-local build of [pi](https://github.com/earendil-works/pi) 0.86.1
 with a `/connect` command that switches between three backends:
 
 | Backend | What | Models |

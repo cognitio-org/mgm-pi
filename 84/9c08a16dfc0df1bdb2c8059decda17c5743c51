@@ -1,0 +1,28 @@
+outfitter/EPIC.md
+  s_2209f22f830d7f::t_addb9d25f8e3f3 331-340,343-345
+  s_2209f22f830d7f::t_f05ba1661f9f4b 360-376
+  s_2209f22f830d7f::t_a9f6beebeca668 354-356
+mgm/README.md
+  s_2209f22f830d7f::t_d11bc71a9cdae5 415,417-431
+mgm/.pi/extensions/teleport/outfitter-store.ts
+  s_2209f22f830d7f::t_af3a48cb92044b 150-155
+  s_2209f22f830d7f::t_8aa2bd67ecf5d8 9-23
+mgm/tests/teleport-outfitter.test.ts
+  s_2209f22f830d7f::t_6df5175c6cd6d1 55-59,62-73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "849c08a16dfc0df1bdb2c8059decda17c5743c51",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

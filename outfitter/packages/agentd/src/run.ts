@@ -365,6 +365,10 @@ export class RunController {
     if (!jsonl) jsonl = emptySessionJsonl(spec.session.id, spec.session.cwd);
     const snapshotFile = await writeSnapshotFileFn(jsonl);
     const sessionFile = await importSessionFn(snapshotFile, this.deps.workspace, spec.session.id);
+    // The import ran as agentd (root in the image); pi, running as the unprivileged agent user,
+    // appends to this file and creates siblings in its directory, so hand both over now. Without
+    // this the first round-two session died with EACCES on its first write.
+    await this.deps.chownWorkspace?.(resolve(sessionFile, ".."));
 
     if (!spec.repo) {
       this.workspaceBaseline = await snapshotWorkspaceFiles(this.deps.workspace);

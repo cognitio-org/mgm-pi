@@ -40,7 +40,12 @@ mkdir -p "$HOME_DIR" "$BIN_DIR"
 keep_env=""; [[ -f "$HOME_DIR/current/.env" ]] && keep_env=$(cat "$HOME_DIR/current/.env")
 rm -rf "$HOME_DIR/$name" && tar xzf "$tmp/$name.tar.gz" -C "$HOME_DIR"
 ln -sfn "$HOME_DIR/$name" "$HOME_DIR/current"
-[[ -n "$keep_env" ]] && printf '%s\n' "$keep_env" > "$HOME_DIR/current/.env"
+if [[ -n "$keep_env" ]]; then
+  # keep the user's .env; add only keys the bundle ships that the user does not have yet
+  shipped=""; [[ -f "$HOME_DIR/current/.env" ]] && shipped=$(cat "$HOME_DIR/current/.env")
+  printf '%s\n' "$keep_env" > "$HOME_DIR/current/.env"
+  printf '%s\n' "$shipped" | grep -E '^[A-Z0-9_]+=' | while IFS= read -r line; do k=${line%%=*}; grep -q "^$k=." "$HOME_DIR/current/.env" || printf '%s\n' "$line" >> "$HOME_DIR/current/.env"; done
+fi
 ln -sf "$HOME_DIR/current/bin/mgm" "$BIN_DIR/mgm"
 echo "installed: $HOME_DIR/current  →  $BIN_DIR/mgm"
 if ! command -v rec >/dev/null 2>&1 && ! command -v ffmpeg >/dev/null 2>&1 && ! command -v arecord >/dev/null 2>&1; then

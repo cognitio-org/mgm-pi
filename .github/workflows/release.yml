@@ -64,6 +64,8 @@ jobs:
       - name: Stamp the version
         run: npm version "${{ needs.validate.outputs.version }}" --no-git-tag-version --allow-same-version
       - name: Build, smoke-test and checksum the bundle
+        env:
+          DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}   # shipped in the bundle's .env when set
         run: scripts/package.sh "${{ needs.validate.outputs.version }}" "${{ matrix.platform }}"
       - name: Attach to the release
         env: { GH_TOKEN: "${{ github.token }}" }

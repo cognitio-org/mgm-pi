@@ -80,6 +80,17 @@ else
 fi
 rm -rf "${SMOKE_HOME:-/nonexistent}" "$STAGE/Library" "$STAGE/.pi/sessions" "$STAGE/.pi/trust.json" "$STAGE/.pi/auth.json" "$STAGE/.pi/models-store.json" "$STAGE/.pi/mcp-cache.json"
 
+# 4b. shared keys shipped in the bundle's .env (private-repo distribution to family users).
+#     DEEPGRAM_API_KEY: from the CI secret, or from ~/localllm/.env when building locally. /setup
+#     merges into this file; install.sh keeps a user's existing .env and only adds missing keys.
+if [[ -z "${DEEPGRAM_API_KEY:-}" && -f "$HOME/localllm/.env" ]]; then DEEPGRAM_API_KEY=$(grep '^DEEPGRAM_API_KEY=' "$HOME/localllm/.env" | cut -d= -f2- || true); fi
+if [[ -n "${DEEPGRAM_API_KEY:-}" ]]; then
+  printf '# Shared voice key (pi-listen Deepgram streaming); /setup adds the rest.\nDEEPGRAM_API_KEY=%s\n' "$DEEPGRAM_API_KEY" > "$STAGE/.env"
+  echo "bundle .env: DEEPGRAM_API_KEY included"
+else
+  echo "bundle .env: no DEEPGRAM_API_KEY available; voice falls back to the local model"
+fi
+
 # 5. archive + checksum
 tar czf "$OUT" -C "$ROOT/dist" "$NAME"
 (cd "$ROOT/dist" && sha "$NAME.tar.gz" > "$NAME.tar.gz.sha256")

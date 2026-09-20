@@ -31,6 +31,7 @@ export function findAudioTool(): string | undefined {
 export default function (pi: ExtensionAPI) {
   if (process.env.MGM_VOICE === "off") return;
   const seeded = seedFile();   // at load time: runs before any extension's session_start
+  if (process.env.MGM_VOICE_DEBUG) console.error(`[mgm-voice] ${seeded.reason} → ${seeded.path}`);
   pi.on("session_start", async (_e, ctx) => {
     if (!ctx.hasUI) return;
     if (seeded.changed) ctx.ui.notify(`Voice input ready: local model ${process.env.MGM_VOICE_MODEL || "parakeet-v3"} (downloads on first use). Hold ctrl+shift+v to talk; /voice-settings to change.`, "info");

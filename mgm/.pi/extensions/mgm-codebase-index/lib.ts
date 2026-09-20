@@ -43,7 +43,10 @@ export function defaultConfig(env: Record<string, string | undefined>): IndexCon
     embeddingProvider: "custom",
     customProvider: { baseUrl: embeddingBaseUrl(env), model: env.MGM_EMBEDDING_MODEL || DEFAULT_EMBEDDING_MODEL, dimensions: Number(env.MGM_EMBEDDING_DIMENSIONS) || DEFAULT_DIMENSIONS },
     indexing: { autoIndex: false, watchFiles: true, requireProjectMarker: true },
-    search: { maxResults: 20, minScore: 0.1, fusionStrategy: "rrf" },
+    // rerankTopN 100 (the package defaults to 20, equal to maxResults, so a reranker could only
+    // reorder what fusion already returned). Measured on this repo: MRR 0.556 → 0.597, top-1 5 → 6
+    // of 12. See docs/index-retrieval.md.
+    search: { maxResults: 20, minScore: 0.1, fusionStrategy: "rrf", rerankTopN: 100 },
   };
 }
 

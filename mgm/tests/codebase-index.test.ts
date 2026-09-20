@@ -56,6 +56,9 @@ describe("embedding defaults", () => {
     assert.equal(c.embeddingProvider, "custom");
     assert.deepEqual(c.customProvider, { baseUrl: "http://localhost:1234/v1", model: DEFAULT_EMBEDDING_MODEL, dimensions: DEFAULT_DIMENSIONS });
     assert.equal(c.indexing!.autoIndex, false, "indexing stays an explicit request");
+    // measured on this repo: the package reranks only maxResults candidates by default, so a wider
+    // candidate set is the one tuning change that pays (docs/index-retrieval.md)
+    assert.equal(c.search!.rerankTopN, 100, "the reranker gets more than the returned set to work with");
     assert.equal(c.indexing!.watchFiles, true);
     const custom = defaultConfig({ MGM_EMBEDDING_MODEL: "nomic-embed-text-v2", MGM_EMBEDDING_DIMENSIONS: "1024" });
     assert.deepEqual(custom.customProvider, { baseUrl: "http://localhost:1234/v1", model: "nomic-embed-text-v2", dimensions: 1024 });

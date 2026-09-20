@@ -459,6 +459,15 @@ only ever shown as `set (…4321)`. Reranking is a query-time pass, so turning i
 invalidates the index. The package also supports Cohere and Jina directly; those are not offered here
 and can be set by hand in the config file, as can `ignore` globs and `scope`.
 
+**What the tuning found** (numbers and method in `docs/index-retrieval.md`, rerun with
+`node --import ./tests/resolve-pi.mjs scripts/index-eval.mjs`): reranking is the only lever that
+matters, doubling top-three hits and tripling top-one on a twelve-question set. Keyword balance,
+weighted fusion and the score floor changed nothing. The one tuning default worth shipping is
+`search.rerankTopN: 100`, because the package reranks only `maxResults` candidates otherwise, so the
+reranker could merely reorder what fusion had already chosen. `voyage/rerank-3` beats the lite model.
+What is left is not tuning: shell scripts are chunked at function declarations only, so a script's
+body is not in the corpus, and extensionless files such as `bin/mgm` are never walked at all.
+
 **A trap worth knowing, because it made search useless here.** The package's directory walk skips any
 path segment beginning with a dot *before* it looks at include or exclude rules, so nothing in
 `.pi/`, `.github/` or any other dot-directory can be indexed by configuration. In this repo that is

@@ -285,22 +285,24 @@ research on Sonnet; review on Opus).
   to the image/build-scripts workstream (see the report's "Follow-up").
   **Confirmed on Cloud Run 2026-09-21** (image `b8de53b`, repo-less session, guru `default` on
   `litellm/claude-auto-llm`): spend frames arrive, `keySpendStart` pins to the key's real balance,
-  and the second call moved `Run.cost` by ~$0.007. Two caveats to fix in E2.11b: (1) the baseline is
-  taken from the *first* spend frame, which LiteLLM emits with the key's pre-call balance, so every
-  run under-reports by exactly its first call (a one-call run shows $0) -- fix by having the
-  extension probe the key's own `/key/info` at `session_start` (a key may read its own info) and
-  write a baseline line before any provider call; (2) pi's estimate is $0 for the *auto-router*
-  groups only (`claude-auto-llm`, `gemini-auto-llm`, `*-agentic`, `*-affinity`): LiteLLM's
-  `/model/info` prices every concrete model, but a routing group has no price of its own because the
-  underlying model is chosen per call, and mgm's `connect` extension takes that zero at face value.
-  LiteLLM does name the resolved model on every response, streamed or not
-  (`x-litellm-model-name: claude-haiku-4-5`, verified 2026-09-21), and adds `x-litellm-classifier-cost`
-  for the router's own classification call; `x-litellm-response-cost` is only non-zero on
-  non-streamed responses, and pi streams. Fix: the spend extension fetches `/model/info` once at
-  `session_start` (the key can read it), and on each `after_provider_response` whose group is
-  unpriced computes this call's cost from pi's token usage × the resolved model's prices, plus the
-  classifier cost, and reports that as `usage` (agentd's running `costEstimate`). Same treatment
-  for mgm's `connect` extension so the TUI `/budget` panel stops showing auto gurus as free.
+  and the second call moved `Run.cost` by ~$0.007. The two accounting defects that run exposed
+  (one-call runs showing $0; auto-router gurus estimated at $0) are fixed in E2.11b below.
+- **E2.11b Auto-router pricing and first-call baseline** (done, `docs/reports/spend-fix.md`): two
+  defects verified against the live LiteLLM router. (1) `/model/info` prices an auto-router group
+  (`claude-auto-llm`, `gemini-auto-llm`, `*-agentic`, `*-affinity`) at $0 since its model is picked
+  per call, so pi's own per-message cost estimate was $0 for those gurus -- `outfitter-spend.ts` now
+  fetches `/model/info` once at `session_start`, and when the requested group's price is
+  zero/unknown but the resolved model (`x-litellm-model-name` header) is priced, computes that
+  response's cost from the newest assistant message's token counts times the resolved model's price
+  plus `x-litellm-classifier-cost`, instead of the (zero) delta. mgm's `connect/lib.ts` gets the same
+  fix for the interactive `/budget` panel: an all-zero-priced id containing "auto" is priced as
+  unknown-paid (`DEFAULT_PAID`) instead of free. (2) `Run.keySpendStart` used to pin from the first
+  real spend frame, which already carries the *post-call* balance, so a one-call run's cost showed
+  $0 -- the extension now probes `GET /key/info` at `session_start`, before any provider call, and
+  appends a `{ baseline: true, keySpend }` line; agentd forwards it as a `spend` frame with no
+  `usage`, and the API's existing "pin from the first frame seen" logic then baselines correctly.
+  Both fixes degrade to the prior behaviour on any network failure (logged once to stderr, never
+  thrown). `npm test`: agentd 140/140, api 93/93, mgm 219/219.
 - **E2.13 Graceful stop confirmed on Cloud Run** (done): `POST /sessions/:id/stop` from the web
   role while the link role holds the socket: `stopping` → `stopped` in 8 s, agentd checkpointed
   (workspace tarball skipped for the repo-less run), sent `bye`, and the Job execution ended

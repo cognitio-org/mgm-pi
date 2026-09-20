@@ -75,6 +75,12 @@ export interface UpSpend {
    * independent of LiteLLM's key-spend headers. Lets the API set Run.costEstimate even for a guru
    * whose model group/route never returns x-litellm-key-spend at all. */
   estimate?: number;
+  /** E2.11b: true only on the one frame built from the outfitter-spend extension's session_start
+   * baseline line -- `keySpend` there is the LiteLLM key's balance *before* this run's first
+   * provider call (from GET /key/info), sent ahead of any real call so the API's "pin
+   * keySpendStart from the first frame seen" logic baselines from the true pre-call balance
+   * instead of under-reporting the first call's cost. */
+  baseline?: boolean;
 }
 
 export interface UpCheckpoint {

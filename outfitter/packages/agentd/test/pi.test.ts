@@ -105,7 +105,7 @@ test("SpendTailer is a JsonlTailer with no skipHeader (SessionTailer/SpendTailer
 
 test("validateSpendLine: accepts a well-formed line and passes its fields through unchanged", () => {
   const line = validateSpendLine({ usage: 0.5, keySpend: 1.5, keyMax: 10, modelGroup: "sonnet", callId: "call-1" });
-  assert.deepEqual(line, { usage: 0.5, keySpend: 1.5, keyMax: 10, modelGroup: "sonnet", callId: "call-1" });
+  assert.deepEqual(line, { usage: 0.5, keySpend: 1.5, keyMax: 10, modelGroup: "sonnet", callId: "call-1", baseline: undefined });
 });
 
 test("validateSpendLine: accepts a line with only some fields present", () => {
@@ -115,6 +115,7 @@ test("validateSpendLine: accepts a line with only some fields present", () => {
     keyMax: undefined,
     modelGroup: undefined,
     callId: undefined,
+    baseline: undefined,
   });
   assert.deepEqual(validateSpendLine({}), {
     usage: undefined,
@@ -122,7 +123,20 @@ test("validateSpendLine: accepts a line with only some fields present", () => {
     keyMax: undefined,
     modelGroup: undefined,
     callId: undefined,
+    baseline: undefined,
   });
+});
+
+// ---------- E2.11b: baseline lines ----------
+
+test("validateSpendLine: accepts a baseline line (baseline: true, keySpend, no usage)", () => {
+  const line = validateSpendLine({ baseline: true, keySpend: 4.5 });
+  assert.deepEqual(line, { usage: undefined, keySpend: 4.5, keyMax: undefined, modelGroup: undefined, callId: undefined, baseline: true });
+});
+
+test("validateSpendLine: rejects a non-boolean baseline field", () => {
+  assert.equal(validateSpendLine({ baseline: "true", keySpend: 4.5 }), undefined);
+  assert.equal(validateSpendLine({ baseline: 1, keySpend: 4.5 }), undefined);
 });
 
 test("validateSpendLine: rejects a non-object value (malformed/hostile line)", () => {

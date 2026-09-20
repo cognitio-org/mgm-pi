@@ -664,6 +664,40 @@ test("RunController: E2.11 spend tailer lines become `spend` up-frames with an a
   assert.equal(spendFrames[1].keySpend, 1.5);
 });
 
+// E2.11b: the outfitter-spend extension's session_start baseline line ({ baseline: true, keySpend })
+// must reach the API as a `spend` frame with `baseline: true` so its keySpend can be used as the
+// first-call baseline instead of a post-call balance.
+test("RunController: a baseline spend line forwards `baseline: true` on its spend frame", async (t) => {
+  let onLine: ((line: any) => void) | undefined;
+  const spendTailer = { start() {}, stop() {}, async poll() {} };
+  const { controller, link, spec } = await setupController(
+    {},
+    {
+      spendFile: "/tmp/does-not-need-to-exist-for-this-fake.jsonl",
+      spendExtensionPath: "/opt/outfitter/agentd/pi-extension/outfitter-spend.js",
+      createSpendTailer: (file, cb) => {
+        onLine = cb;
+        return spendTailer;
+      },
+    },
+  );
+  t.after(() => controller.dispose());
+  link.deliver(spec);
+  await waitFor(() => states_includes_idle(link));
+  assert.ok(onLine);
+
+  onLine!({ baseline: true, keySpend: 4.5 });
+  onLine!({ keySpend: 4.55, keyMax: 10, modelGroup: "claude-auto-llm", callId: "call-1", usage: 0.05 });
+
+  const spendFrames = link.sent.filter((m: any) => m.t === "spend") as any[];
+  assert.equal(spendFrames.length, 2);
+  assert.equal(spendFrames[0].baseline, true);
+  assert.equal(spendFrames[0].keySpend, 4.5);
+  assert.equal(spendFrames[0].estimate, 0); // the baseline line has no `usage`; costEstimate untouched
+  assert.equal(spendFrames[1].baseline, undefined);
+  assert.equal(spendFrames[1].keySpend, 4.55);
+});
+
 test("RunController: no spendFile configured -> no spend extension arg, no OUTFITTER_SPEND_FILE, no spend tailer", async (t) => {
   let spawnedArgs: string[] | undefined;
   let spawnedEnv: Record<string, string> | undefined;

@@ -101,7 +101,14 @@ export type Backend = {
 };
 
 export const FREE: Cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-const DEFAULT_PAID: Cost = { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 };
+export const DEFAULT_PAID: Cost = { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 };
+
+/** True when every price field is 0 -- LiteLLM's /model/info shape for an auto-router group
+ * (claude-auto-llm, gemini-auto-llm, *-agentic, *-affinity): its underlying model is only picked
+ * per call, so there's no single deployment to price and every field reads 0. */
+export function isZeroCost(cost: Cost | undefined): boolean {
+  return !cost || (cost.input === 0 && cost.output === 0 && cost.cacheRead === 0 && cost.cacheWrite === 0);
+}
 
 /** Qwen 3.6 reasoning knobs: pi's `off` must reach the server as reasoning_effort "none". */
 export const QWEN_THINKING_MAP = { off: "none", minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "high", max: "high" };
@@ -144,9 +151,17 @@ export function backends(env: Record<string, string>, litellmMeta: Map<string, M
         const local = id.startsWith("local-");
         const claude = /claude/.test(id);
         const meta = litellmMeta.get(id);
+        // An auto-router group's own /model/info entry prices every field at 0 (its underlying
+        // model is only picked per call -- see isZeroCost); showing that as $0/token in /budget
+        // would tell the user an auto-routed model is free, which it isn't. Treat it as
+        // unknown-paid (DEFAULT_PAID) instead. A real per-response price from LiteLLM's
+        // x-litellm-model-name header would need per-call state this static model-registry cost
+        // field doesn't have room for, so this is the DEFAULT_PAID fallback the interactive
+        // /budget panel already uses for any other unpriced model.
+        const cost = local ? FREE : isZeroCost(meta?.cost) && id.includes("auto") ? DEFAULT_PAID : meta?.cost ?? DEFAULT_PAID;
         return {
           id, name: id, input: meta?.vision === false ? ["text"] : ["text", "image"],
-          cost: local ? FREE : meta?.cost ?? DEFAULT_PAID,
+          cost,
           contextWindow: meta?.contextWindow ?? (local ? 32768 : claude ? 200000 : 1000000),
           maxTokens: Math.min(meta?.maxTokens ?? (local ? 8192 : 32000), 64000),
           reasoning: meta?.reasoning ?? true,

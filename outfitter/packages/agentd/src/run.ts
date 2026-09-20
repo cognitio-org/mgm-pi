@@ -485,6 +485,7 @@ export class RunController {
       modelGroup: line.modelGroup,
       callId: line.callId,
       estimate: this.costEstimate,
+      baseline: line.baseline,
     });
   }
 

@@ -1,0 +1,140 @@
+outfitter/packages/api/src/server.ts
+  s_2209f22f830d7f::t_bbbfb4e87bb562 57-74,77
+outfitter/packages/api/src/runs.ts
+  s_2209f22f830d7f::t_1896783c71ac3c 4-5
+  s_2209f22f830d7f::t_8ff9df3684576d 90-96,98-99,102-104,108-110
+outfitter/packages/agentd/src/git.ts
+  s_2209f22f830d7f::t_daf4dee851e47b 147-149,151-153
+  s_2209f22f830d7f::t_f2d782c257d65b 108-109,112-114,122,124-126
+  s_2209f22f830d7f::t_f8b851b8102751 3-16,46-52,55,57,59-61,76-82
+  s_2209f22f830d7f::t_787aeb4253c6f8 83-84
+outfitter/docs/protocol.md
+  s_2209f22f830d7f::t_2f067d423a82bd 6-18
+outfitter/docs/reports/review-fixes-api.md
+  s_2209f22f830d7f::t_321ad22e4c1fbc 1-35,46-137
+  s_2209f22f830d7f::t_52c84da5b96e5b 36-45
+outfitter/deploy/atlas.md
+  s_2209f22f830d7f::t_0a1e77ad743cf3 1-100
+outfitter/packages/api/test/runs.test.ts
+  s_2209f22f830d7f::t_1c0d4a7c6257ef 1-91
+outfitter/packages/api/src/providers/cloudrun.ts
+  s_2209f22f830d7f::t_e517e603c2b0fd 67-80
+outfitter/packages/agentd/test/pi.test.ts
+  s_2209f22f830d7f::t_f47214e6831de6 6-14
+  s_2209f22f830d7f::t_81d9a045e70aee 88-106
+outfitter/packages/agentd/src/link.ts
+  s_2209f22f830d7f::t_5c819218063b4a 93
+  s_2209f22f830d7f::t_3358ceeb88a286 148-150,153-166,183,198,215-227,233-238
+  s_2209f22f830d7f::t_b97e1dbf7ccf4e 228-232
+  s_2209f22f830d7f::t_bf2b5046e14019 7-8,11-15,22-24,35-40
+  s_2209f22f830d7f::t_4385504e4262e8 55,59-61,70-72
+outfitter/packages/api/src/routes/index.ts
+  s_2209f22f830d7f::t_b0f6b5f380fb62 12-14,16-25
+outfitter/packages/api/test/roles.test.ts
+  s_2209f22f830d7f::t_348d52753ec4de 1-17,19-61,63-66
+  s_2209f22f830d7f::t_141f861e8e4f2f 18
+  s_2209f22f830d7f::t_d31a3887f0db15 62
+mgm/tests/teleport.test.ts
+  s_2209f22f830d7f::t_509b67edf87fa0 233-302
+outfitter/packages/api/test/agentlink.test.ts
+  s_2209f22f830d7f::t_083c2284090fba 310-335,337-363
+  s_2209f22f830d7f::t_6a81f6db42ab02 240-278
+  s_2209f22f830d7f::t_045621dd07849c 336
+outfitter/packages/api/src/agentlink.ts
+  s_2209f22f830d7f::t_e1b209055ce784 298-315
+  s_2209f22f830d7f::t_661fdb557ab153 105-110,113-115
+  s_2209f22f830d7f::t_95b7ace5d4c26f 4-6
+  s_2209f22f830d7f::t_03fe637139de49 248-257,262-263,266-270
+  s_2209f22f830d7f::t_4211b744514b07 68-73
+outfitter/deploy/link.sh
+  s_2209f22f830d7f::t_0090e266f561dd 1-17,20-79
+  s_2209f22f830d7f::t_4c5bd221ca1062 18-19
+outfitter/docs/reports/review-fixes-agentd.md
+  s_2209f22f830d7f::t_7b89045ac5f079 1-216
+outfitter/EPIC.md
+  s_2209f22f830d7f::t_52c4e2f3f98928 55-56
+outfitter/packages/agentd/src/run.ts
+  s_2209f22f830d7f::t_72a51ebc373db9 389-399
+  s_2209f22f830d7f::t_1bcef1523fd233 288-292
+  s_2209f22f830d7f::t_0e532e4d5edbce 130-137
+  s_2209f22f830d7f::t_e64a158446f20c 22-23,25-26,28,36-49
+  s_2209f22f830d7f::t_2703ddd3944e54 178-187,197-215
+  s_2209f22f830d7f::t_d36dedec67ce95 313
+  s_2209f22f830d7f::t_f9fae465bab0e1 462,465-475
+  s_2209f22f830d7f::t_8ea8836c380d3c 319-324
+  s_2209f22f830d7f::t_d3e8c78fb0fae2 340-346,348-355
+  s_2209f22f830d7f::t_5a3d50e7cf96f7 50
+outfitter/deploy/env.sh
+  s_2209f22f830d7f::t_b3b60dae5bb63e 1-24
+outfitter/packages/api/src/store/types.ts
+  s_2209f22f830d7f::t_0e2a7603bf1ddc 75-81
+mgm/.pi/extensions/teleport/lib.ts
+  s_2209f22f830d7f::t_162c2b429c2c24 163-166,169-170,187-198
+  s_2209f22f830d7f::t_c8989a1f2ab9d3 123-137
+outfitter/packages/api/src/config.ts
+  s_2209f22f830d7f::t_26e41fcfb10bb5 52-59
+  s_2209f22f830d7f::t_d7f9908e5d5b34 82
+  s_2209f22f830d7f::t_67acc85f2ef131 6-18,28-29
+  s_2209f22f830d7f::t_b2100001d0b0c0 95
+outfitter/deploy/baseline.sh
+  s_2209f22f830d7f::t_e42b81143512dc 24,35-36
+  s_2209f22f830d7f::t_73230304a6f581 97-100,107
+  s_2209f22f830d7f::t_b3b60dae5bb63e 10-11
+outfitter/packages/agentd/src/main.ts
+  s_2209f22f830d7f::t_6e07a3073c0065 57-59
+outfitter/docs/reports/review-fixes-teleport.md
+  s_2209f22f830d7f::t_d6fdbb3a000254 1-52
+outfitter/packages/agentd/test/link.test.ts
+  s_2209f22f830d7f::t_eb872621b763f1 207,215,229,238,241-242,248,250,262,264
+  s_2209f22f830d7f::t_61375c3d36502e 18,20,23,61-69,74,89,100,123,135,160,176,186,206,208-214,216-228,230-237,239-240,243-247,249,251-261,263,265-270
+  s_2209f22f830d7f::t_b038cfd32ba561 120,122,132,134
+  s_2209f22f830d7f::t_b8886c38fa1846 86,88,97,99
+  s_2209f22f830d7f::t_d0720793242d13 157,159
+  s_2209f22f830d7f::t_440c855abe86de 183,185
+outfitter/deploy/api.sh
+  s_2209f22f830d7f::t_91d130496caa5b 3-9
+  s_2209f22f830d7f::t_238d3e76ffeb1d 25-26
+  s_2209f22f830d7f::t_3a0bcf17fa97f4 84
+outfitter/packages/agentd/test/run.test.ts
+  s_2209f22f830d7f::t_44b4977fbdaf92 538-542
+  s_2209f22f830d7f::t_12d80c5a103583 109-112,140
+  s_2209f22f830d7f::t_c7fae1a8e77ebd 348-372,395,407-408,410-411,413,421-537,543-563,565,572-581,583-597
+  s_2209f22f830d7f::t_a0557e1068e31d 85-108
+  s_2209f22f830d7f::t_db4cf5b95c451b 373-394,396-406,409,412,414-420
+  s_2209f22f830d7f::t_9653c076032b1a 7,10,12
+  s_2209f22f830d7f::t_6ff8fcb6aebf81 582
+  s_2209f22f830d7f::t_d02fccb065ac52 564,566-571
+outfitter/deploy/README.md
+  s_2209f22f830d7f::t_ef3ae791258c73 6-16
+  s_2209f22f830d7f::t_66aaafa7b4c850 102,108-118
+  s_2209f22f830d7f::t_3645e5d586d9ea 125-127
+  s_2209f22f830d7f::t_b4f89c94b2e840 84-95,97-98,100
+  s_2209f22f830d7f::t_7cd3295cef27f6 17-24
+outfitter/packages/agentd/test/git.test.ts
+  s_2209f22f830d7f::t_87f35d29a99506 1-184
+outfitter/packages/agentd/src/pi.ts
+  s_2209f22f830d7f::t_9983ddeaa35913 127,133-141
+  s_2209f22f830d7f::t_69504b4068c5a9 60-62
+  s_2209f22f830d7f::t_865b51097f5ba8 76,87-100
+outfitter/deploy/agent-job.sh
+  s_2209f22f830d7f::t_d3b5b8eda3ca7a 12-13
+  s_2209f22f830d7f::t_9531a65a421ed5 5-10,17
+mgm/README.md
+  s_2209f22f830d7f::t_f314d36c571fe3 86-94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "fd8f8014f062ee28e3b24dad787d74c0fce8f9ea",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -444,8 +444,12 @@ difference between working search and silent nonsense. Values are validated befo
 and changing anything that alters how text is embedded (server, model, dimensions, provider) offers
 the rebuild those changes require, or warns that search stays stale until you run one. Edits go to
 whichever config file is in effect, and one entry copies the current settings into the project so a
-repo can override your user defaults. The package's `scope`, `ignore` and external `reranker` keys
-are deliberately not in the dialog: they need judgement it cannot supply, so hand-edit those.
+repo can override your user defaults. Three of the package's keys are not in the dialog yet, for
+reasons worth stating plainly rather than calling them unsuitable: `reranker` (Cohere, Jina or a
+custom endpoint) is perfectly pickable, but enabling it posts candidate snippets to a third party and
+stores the API key in plaintext in the config file, since the package reads `reranker.apiKey`
+directly with no environment indirection; `ignore` globs are a list an input could take; and `scope`
+needs its semantics understood first. Hand-edit those for now.
 
 The index is per project, in `<project>/.codebase-index/`, and it is built on request, never on
 start. Indexing needs the embedding model, so the local model server has to be up; it loads

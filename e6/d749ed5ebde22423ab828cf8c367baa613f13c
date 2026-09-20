@@ -1,0 +1,21 @@
+mgm/README.md
+  s_25c805ebe232f3::t_e6d1f7eb099fa0 101
+mgm/.pi/extensions/compaction/index.ts
+  s_25c805ebe232f3::t_e6d1f7eb099fa0 11-13,27-29,39-53,56,59,97,100,187-195,197-211,214-215,220-221
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "e6d749ed5ebde22423ab828cf8c367baa613f13c",
+  "prompts": {},
+  "sessions": {
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

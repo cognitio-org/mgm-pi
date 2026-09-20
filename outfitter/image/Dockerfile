@@ -38,6 +38,10 @@ RUN npm ci --omit=dev
 COPY mgm/bin/ ./bin/
 COPY mgm/.pi/mcp.json ./.pi/mcp.json
 COPY mgm/.pi/extensions/ ./.pi/extensions/
+# Laptop-only mgm extensions stay out of the cloud image: mgm-voice (microphone; it also creates
+# ~/.pi/agent at load and was the first thing to trip on the agent user's HOME) and mgm-update
+# (checks GitHub releases at session start; a sandbox is replaced by redeploying the image).
+RUN rm -rf ./.pi/extensions/mgm-voice ./.pi/extensions/mgm-update
 
 # TUI/laptop-only packages (voice input, terminal footer, editor LSP) make no sense for a cloud
 # guru with no terminal, no editor and no microphone attached; drop them from the image's

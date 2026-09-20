@@ -1,0 +1,49 @@
+outfitter/packages/api/test/routes.test.ts
+  s_2209f22f830d7f::t_d1e351330037f0 58-87
+outfitter/packages/api/src/routes/sessions.ts
+  s_2209f22f830d7f::t_bc8d83e25de927 105-109
+mgm/README.md
+  s_2209f22f830d7f::t_4d7935f51ad5d0 404-436
+  s_2209f22f830d7f::t_7a828f426c6489 332-335
+mgm/.pi/extensions/teleport/lib.ts
+  s_2209f22f830d7f::t_888adc5b7dbabd 39-40,43-45
+outfitter/EPIC.md
+  s_2209f22f830d7f::t_6d166e9acc6495 333-359
+mgm/tests/teleport-outfitter.test.ts
+  s_2209f22f830d7f::t_213d4c3ad55de2 1-146,148-153,155,157-158,160-174
+  s_2209f22f830d7f::t_06913cfd5ccf6f 147,154,156,159
+mgm/.pi/extensions/teleport/outfitter-store.ts
+  s_2209f22f830d7f::t_ac1dcb07db645c 81-83,96
+  s_2209f22f830d7f::t_c549e5ca5dfec7 111
+  s_2209f22f830d7f::t_91f5a98cd84be1 1-80,84-95,97-110,112-192,194-196,198-242
+  s_2209f22f830d7f::t_6c4e35ec27d151 193,197
+mgm/.pi/extensions/teleport/store-factory.ts
+  s_2209f22f830d7f::t_2ce11c075d5950 1-11
+mgm/.pi/extensions/teleport/index.ts
+  s_2209f22f830d7f::t_1527f7f5e2acff 26,30
+  s_2209f22f830d7f::t_7f3b432889e71e 127,130,139
+  s_2209f22f830d7f::t_be80d12b74f4e8 52
+  s_2209f22f830d7f::t_4af31d38d297d0 226
+  s_2209f22f830d7f::t_d3e801951427ab 243-247
+mgm/.pi/extensions/teleport/cli.ts
+  s_2209f22f830d7f::t_c5b46ac900283a 13,20-21,37-40,43,46
+mgm/bin/mgm
+  s_2209f22f830d7f::t_7f258f74b37082 62,64,67-71
+  s_2209f22f830d7f::t_35cf49a858dc6b 65-66,72-73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "7f666dddc2f3ac11a882431e1eeb92b05aecce4b",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

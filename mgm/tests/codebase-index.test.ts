@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { hiddenSourceDirs, loadPlan, defaultConfig, embeddingBaseUrl, shouldSeed, parseStatus, resultText, configView, panelRows, indexStatusLine, actions, SUBCOMMANDS, FIELDS, getAt, setAt, applyEdit, fieldRow, invalidatesIndex, configFromView, maskSecret, rerankerProblem, rerankerBlock, routerFromEnv, refreshRouterKey, DEFAULT_EMBEDDING_MODEL, DEFAULT_DIMENSIONS } from "../.pi/extensions/mgm-codebase-index/lib.ts";
+import { docsKnowledgeBaseUpdate, isPiDocsPath, piDocsCandidates, hiddenSourceDirs, loadPlan, defaultConfig, embeddingBaseUrl, shouldSeed, parseStatus, resultText, configView, panelRows, indexStatusLine, actions, SUBCOMMANDS, FIELDS, getAt, setAt, applyEdit, fieldRow, invalidatesIndex, configFromView, maskSecret, rerankerProblem, rerankerBlock, routerFromEnv, refreshRouterKey, DEFAULT_EMBEDDING_MODEL, DEFAULT_DIMENSIONS } from "../.pi/extensions/mgm-codebase-index/lib.ts";
 import { makePi, makeCtx, stubFetch } from "./harness.ts";
 
 const STATUS_INDEXED = `Auto-index: disabled (state: idle)
@@ -282,6 +282,48 @@ describe("/index command", async () => {
     const ctx = makeCtx({ hasUI: false }); (ctx as any).cwd = "/proj";
     await pi.commands.get("index")!.handler("", ctx);
     assert.match(ctx.notices.at(-1)!.msg, /index_status failed: engine down/);
+  });
+});
+
+describe("the agent's own documentation as a knowledge base", () => {
+  test("pi's docs are looked for in both layouts: a release bundle and a checkout", () => {
+    assert.deepEqual(piDocsCandidates("/Users/x/.mgm/mgm-0.1.11-darwin-arm64"), [
+      "/Users/x/.mgm/mgm-0.1.11-darwin-arm64/pi/docs",
+      "/Users/x/.mgm/mgm-0.1.11-darwin-arm64/node_modules/@earendil-works/pi-coding-agent/docs",
+    ]);
+  });
+
+  test("a pi-docs path is recognised in either layout, and nothing else is", () => {
+    assert.ok(isPiDocsPath("/Users/x/.mgm/mgm-0.1.11-darwin-arm64/pi/docs"));
+    assert.ok(isPiDocsPath("/repo/node_modules/@earendil-works/pi-coding-agent/docs/"));
+    for (const other of ["/repo/docs", "/repo/mgm/.pi/extensions", "/repo/pi/docs/images"]) assert.equal(isPiDocsPath(other), false, other);
+  });
+
+  test("an upgrade moves the docs, so the stale entry is dropped and the current one added", () => {
+    const old = "/Users/x/.mgm/mgm-0.1.10-darwin-arm64/pi/docs";
+    const now = "/Users/x/.mgm/mgm-0.1.11-darwin-arm64/pi/docs";
+    assert.deepEqual(docsKnowledgeBaseUpdate([old, "/work/notes"], now), { add: now, remove: [old] });
+    assert.deepEqual(docsKnowledgeBaseUpdate([now], now), { add: undefined, remove: [] }, "already current: nothing to do");
+    assert.deepEqual(docsKnowledgeBaseUpdate([`${now}/`], now), { add: undefined, remove: [] }, "a trailing slash is the same path");
+    assert.deepEqual(docsKnowledgeBaseUpdate([], now), { add: now, remove: [] });
+    assert.deepEqual(docsKnowledgeBaseUpdate([old], undefined), { add: undefined, remove: [old] }, "docs gone from disk: drop the entry, add nothing");
+    assert.deepEqual(docsKnowledgeBaseUpdate(["/work/notes"], now).remove, [], "other knowledge bases are never touched");
+  });
+
+  test("the panel offers indexing the docs until they are, then offers re-pointing", () => {
+    const empty = parseStatus(STATUS_EMPTY);
+    const labels = (docs: any) => actions(empty, [], docs).map((a) => a.label);
+    assert.ok(labels({ path: "/p/pi/docs", indexed: false }).some((l) => l.includes("Index the agent's own documentation")));
+    assert.ok(labels({ path: "/p/pi/docs", indexed: true }).some((l) => l.includes("Re-point the agent's documentation")));
+    assert.ok(!labels(undefined).some((l) => l.includes("documentation")), "nothing offered when the docs are not on disk");
+  });
+
+  test("the panel names a stale knowledge base rather than leaving a silent dead entry", () => {
+    const flat = (rows: any[][]) => rows.map((r) => r.map(([t]: any) => t).join("")).join("\n");
+    const out = flat(panelRows({ status: parseStatus(STATUS_INDEXED), config: configView([], {}), project: "/proj", knowledgeBases: ["/gone/pi/docs"], staleBases: ["/gone/pi/docs"], docs: { path: "/now/pi/docs", indexed: false } }));
+    assert.match(out, /stale kb +\/gone\/pi\/docs/);
+    assert.match(out, /gone from disk/);
+    assert.match(out, /pi docs +not indexed/);
   });
 });
 

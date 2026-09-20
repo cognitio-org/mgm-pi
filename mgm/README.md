@@ -468,6 +468,15 @@ reranker could merely reorder what fusion had already chosen. `voyage/rerank-3` 
 What is left is not tuning: shell scripts are chunked at function declarations only, so a script's
 body is not in the corpus, and extensionless files such as `bin/mgm` are never walked at all.
 
+**The agent's own documentation** can be indexed too, from the same picker: *Index the agent's own
+documentation*. pi ships its docs on disk in both layouts (`pi/docs` in a bundle,
+`node_modules/@earendil-works/pi-coding-agent/docs` in a checkout), so questions about hooks,
+settings and the extension API come from the index instead of grep. It is opt-in because it is about
+2.7 MB of Markdown and a minute of local embedding. A bundle's path carries its version, so the entry
+is re-pointed rather than left dangling after an upgrade: the panel shows a `stale kb` row for a
+knowledge base that has vanished from disk, and the same action drops the old entry and adds the
+current one.
+
 **A trap worth knowing, because it made search useless here.** The package's directory walk skips any
 path segment beginning with a dot *before* it looks at include or exclude rules, so nothing in
 `.pi/`, `.github/` or any other dot-directory can be indexed by configuration. In this repo that is

@@ -164,7 +164,7 @@ export function hiddenSourceDirs(trackedPaths: string[], knowledgeBases: string[
 // ---------- panel ----------
 export type Seg = [string, string | null];
 export type Embeddings = { reachable: boolean; loaded?: boolean; note?: string };
-export type PanelData = { status: IndexStatus; config: ConfigView; embeddings?: Embeddings; knowledgeBases?: string[]; toolCount?: number; project: string; hidden?: { dir: string; files: number }[] };
+export type PanelData = { status: IndexStatus; config: ConfigView; embeddings?: Embeddings; knowledgeBases?: string[]; staleBases?: string[]; toolCount?: number; project: string; hidden?: { dir: string; files: number }[]; docs?: { path?: string; indexed: boolean } };
 
 const yesNo = (v: unknown) => (v === true ? "on" : v === false ? "off" : v === undefined ? "—" : String(v));
 const label = (text: string): Seg => [text.padEnd(9), "muted"];   // one column, so values line up
@@ -185,6 +185,8 @@ export function panelRows(d: PanelData): Seg[][] {
   rows.push([label("indexing"), [`auto ${yesNo(d.config.autoIndex)} · watch ${yesNo(d.config.watchFiles)}`, "text"], [s.autoIndex ? `  (${s.autoIndex})` : "", "dim"]]);
   rows.push([label("config"), [d.config.files.join(" + ") || "built-in defaults", "dim"], [`  (${d.config.scope})`, "dim"]]);
   if (d.knowledgeBases !== undefined) rows.push([label("extra"), [d.knowledgeBases.length ? d.knowledgeBases.join(", ") : "no knowledge bases", d.knowledgeBases.length ? "text" : "dim"]]);
+  for (const stale of d.staleBases ?? []) rows.push([label("stale kb"), [stale, "warning"], ["  gone from disk (an upgrade moved it)", "dim"]]);
+  if (d.docs && !d.docs.indexed && d.docs.path) rows.push([label("pi docs"), ["not indexed", "dim"], ["  hooks, settings and the extension API are grep-only until they are", "dim"]]);
   if (s.incompatible) rows.push([label("stale"), [s.incompatible, "error"], ["  rebuild to match the current model", "dim"]]);
   if (d.config.reranker?.enabled) rows.push([label("rerank"), [String(d.config.reranker.model ?? "?"), "accent"], ["  on the router", "dim"]]);
   for (const h of d.hidden ?? []) {
@@ -200,9 +202,11 @@ export function indexStatusLine(s: IndexStatus): string {
 }
 
 // ---------- actions ----------
-export type Action = { label: string; tool?: string; params?: Record<string, unknown>; kind?: "refresh" | "close" | "kb-add" | "kb-remove" | "settings" | "kb-hidden" };
-export function actions(s: IndexStatus, hidden: { dir: string; files: number }[] = []): Action[] {
+export type Action = { label: string; tool?: string; params?: Record<string, unknown>; kind?: "refresh" | "close" | "kb-add" | "kb-remove" | "settings" | "kb-hidden" | "kb-docs" };
+export function actions(s: IndexStatus, hidden: { dir: string; files: number }[] = [], docs?: { path?: string; indexed: boolean }): Action[] {
   return [
+    ...(docs?.path && !docs.indexed ? [{ label: "Index the agent's own documentation (pi docs)", kind: "kb-docs" as const }] : []),
+    ...(docs?.path && docs.indexed ? [{ label: "Re-point the agent's documentation at this version", kind: "kb-docs" as const }] : []),
     ...(hidden.length ? [{ label: `Index the skipped ${hidden[0].dir} as a knowledge base`, kind: "kb-hidden" as const }] : []),
     { label: s.indexed ? "Update the index (changed files only)" : "Index this codebase now", tool: "index_codebase", params: {} },
     { label: "Rebuild from scratch", tool: "index_codebase", params: { force: true } },
@@ -231,6 +235,34 @@ export const SUBCOMMANDS: Record<string, { tool?: string; params?: Record<string
   bases: { tool: "knowledge_base_list", params: {} },
   off: { kind: "off" },
 };
+
+// ---------- the agent's own documentation as a knowledge base ----------
+/**
+ * pi ships its documentation on disk in both layouts: `pi/docs` inside a release bundle, and
+ * `node_modules/@earendil-works/pi-coding-agent/docs` in a checkout. Indexing it answers questions
+ * about hooks, settings and the extension API from the index instead of from grep.
+ */
+export const piDocsCandidates = (root: string): string[] => [
+  `${root}/pi/docs`,
+  `${root}/node_modules/@earendil-works/pi-coding-agent/docs`,
+];
+
+/** A knowledge base that points at some version's pi docs, ours or an older install's. */
+export const isPiDocsPath = (path: string) => /(^|\/)(pi\/docs|pi-coding-agent\/docs)\/?$/.test(path);
+
+/**
+ * A bundle's path carries its version, so a stored knowledge base goes stale on every upgrade.
+ * Given what is stored and where the docs are now, say what to add and what to drop.
+ */
+export function docsKnowledgeBaseUpdate(existing: string[], current: string | undefined): { add?: string; remove: string[] } {
+  const normalise = (p: string) => p.replace(/\/+$/, "");
+  const stored = existing.map(normalise);
+  const now = current ? normalise(current) : undefined;
+  return {
+    add: now && !stored.includes(now) ? now : undefined,
+    remove: stored.filter((p) => isPiDocsPath(p) && p !== now),
+  };
+}
 
 // ---------- editable settings ----------
 export type FieldKind = "url" | "model" | "dimensions" | "number" | "bool" | "choice" | "rerank-model";

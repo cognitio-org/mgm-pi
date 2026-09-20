@@ -21,7 +21,7 @@ import { truncateToWidth } from "@earendil-works/pi-tui";
 import { renderPanel } from "../connect/lib.ts";
 import {
   FIELDS, PACKAGE, SUBCOMMANDS, actions, applyEdit, configFromView, configView, defaultConfig, fieldRow, getAt, indexStatusLine,
-  hiddenSourceDirs, invalidatesIndex, loadPlan, maskSecret, panelRows, parseStatus, refreshRouterKey, rerankerBlock, rerankerProblem, resultText, routerFromEnv, shouldSeed,
+  docsKnowledgeBaseUpdate, hiddenSourceDirs, invalidatesIndex, loadPlan, maskSecret, panelRows, parseStatus, piDocsCandidates, refreshRouterKey, rerankerBlock, rerankerProblem, resultText, routerFromEnv, shouldSeed,
   setAt,
   type ConfigView, type Embeddings, type Field, type IndexStatus, type LoadPlan, type PanelData,
 } from "./lib.ts";
@@ -31,6 +31,8 @@ export type Deps = { plan?: LoadPlan; load?: (entry: string, kind: LoadPlan["kin
 
 const agentDir = () => process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
 const distDir = () => join(agentDir(), "npm", "node_modules", PACKAGE, "dist");
+/** Where this install keeps pi's documentation: a bundle's pi/docs, or the checkout's node_modules. */
+export const piDocsDir = () => piDocsCandidates(dirname(agentDir())).find((p) => existsSync(p));
 export const configPath = () => process.env.MGM_INDEX_CONFIG || join(homedir(), ".config", "codebase-index", "config.json");
 const read = (f: string) => { try { return existsSync(f) ? readFileSync(f, "utf8") : undefined; } catch { return undefined; } };
 
@@ -165,7 +167,13 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
     const [embeddings, basesText, tracked] = await Promise.all([probeEmbeddings(view.baseUrl, view.model), run("knowledge_base_list", {}, ctx), trackedFiles(ctx.cwd)]);
     const listed = basesText.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("/") || l.startsWith("~"));
     const knowledgeBases = listed.length ? listed : view.knowledgeBases;
-    return { status: s, config: view, embeddings, knowledgeBases, toolCount: tools.size, project: ctx.cwd, hidden: hiddenSourceDirs(tracked, knowledgeBases) };
+    const docsPath = piDocsDir();
+    const staleBases = knowledgeBases.filter((k) => !existsSync(k));
+    return {
+      status: s, config: view, embeddings, knowledgeBases, staleBases, toolCount: tools.size, project: ctx.cwd,
+      hidden: hiddenSourceDirs(tracked, knowledgeBases),
+      docs: { path: docsPath, indexed: !!docsPath && knowledgeBases.some((k) => k.replace(/\/+$/, "") === docsPath) },
+    };
   }
 
   function showPanel(ctx: ExtensionCommandContext, data: PanelData) {
@@ -323,13 +331,24 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
       let data = await collect(ctx);
       showPanel(ctx, data);
       for (;;) {
-        const list = actions(data.status, data.hidden);
+        const list = actions(data.status, data.hidden, data.docs);
         const pick = await ctx.ui.select("Codebase index", list.map((a) => a.label));
         if (pick === undefined) return;                       // Escape leaves the panel up
         const action = list[list.map((a) => a.label).indexOf(pick)];
         if (action.kind === "close") { ctx.ui.setWidget("codebase-index", undefined); return; }
         if (action.kind === "settings") await editSettings(ctx, data);
-        if (action.kind === "kb-hidden") {
+        if (action.kind === "kb-docs") {
+          // A bundle path carries its version, so an upgrade leaves the old entry pointing at nothing:
+          // drop any pi-docs entry that is not this install's before adding the current one.
+          const plan = docsKnowledgeBaseUpdate(data.knowledgeBases ?? [], data.docs?.path);
+          for (const gone of plan.remove) ctx.ui.notify(await run("knowledge_base_remove", { path: gone }, ctx), "info");
+          if (plan.add) ctx.ui.notify(await run("knowledge_base_add", { path: plan.add }, ctx), "info");
+          else if (!plan.remove.length) ctx.ui.notify("The agent's documentation is already indexed for this version.", "info");
+          if (plan.add || plan.remove.length) {
+            const go = await ctx.ui.select("pi's documentation is about 2.7 MB of Markdown; indexing it takes a minute on the local embedder. Index now?", ["Index now", "Later"]);
+            if (go === "Index now") { ctx.ui.setStatus("index", "⌕ indexing docs…"); ctx.ui.notify(await run("index_codebase", {}, ctx), "info"); }
+          }
+        } else if (action.kind === "kb-hidden") {
           const choice = await ctx.ui.select("Directories the index skips (dot-directories are never walked, whatever include rules say)", (data.hidden ?? []).map((h) => `${h.dir}  (${h.files} files)`));
           if (choice === undefined) continue;
           const dir = choice.split("  (")[0];

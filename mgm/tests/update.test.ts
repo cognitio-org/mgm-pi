@@ -83,6 +83,21 @@ describe("update extension", async () => {
     delete process.env.MGM_NO_UPDATE_CHECK;
   });
 
+  test("/update extensions forwards to pi's package updater and asks for a restart", async () => {
+    const calls: string[][] = [];
+    const { pi, ctx } = await startWith("v0.1.3", "0.1.3", { run: async (args: string[], onLine: (l: string) => void) => { calls.push(args); onLine("updating pi-subagents"); return { code: 0, tail: "pi-subagents 0.4.0 → 0.4.1" }; } });
+    await pi.commands.get("update")!.handler("extensions", ctx);
+    assert.deepEqual(calls, [["update", "--extensions"]]);
+    assert.match(ctx.notices.at(-1)!.msg, /Packages updated\. Restart mgm to load them\./);
+    assert.ok(ctx.notices.at(-1)!.msg.includes("pi-subagents 0.4.0 → 0.4.1"));
+    assert.equal(ctx.statuses.get("update"), "⬆ restart mgm");
+    // works on a source checkout too (packages are not tied to the bundle version)
+    const r2 = await startWith("v0.1.3", null, { run: async () => ({ code: 1, tail: "npm ERR!" }) });
+    await r2.pi.commands.get("update")!.handler("extensions", r2.ctx);
+    assert.equal(r2.ctx.notices.at(-1)!.type, "error");
+    assert.match(r2.ctx.notices.at(-1)!.msg, /Package update failed \(exit 1\)/);
+  });
+
   test("/update check forces a fresh look and reports either way", async () => {
     const { pi, ctx, calls } = await startWith("v0.1.3");
     await pi.commands.get("update")!.handler("check", ctx);
@@ -95,9 +110,11 @@ describe("update extension", async () => {
 
   test("/update runs the launcher upgrade, streams progress to the status bar and asks for a restart", async () => {
     const lines = ["installing mgm 0.1.4 (darwin-arm64) to /Users/x/.mgm", "installed: /Users/x/.mgm/current  →  /Users/x/.local/bin/mgm"];
-    const run = async (onLine: (l: string) => void) => { for (const l of lines) onLine(l); return { code: 0, tail: lines.join("\n") }; };
+    const calls: string[][] = [];
+    const run = async (args: string[], onLine: (l: string) => void) => { calls.push(args); for (const l of lines) onLine(l); return { code: 0, tail: lines.join("\n") }; };
     const { pi, ctx } = await startWith("v0.1.4", "0.1.3", { run });
     await pi.commands.get("update")!.handler("", ctx);
+    assert.deepEqual(calls, [["update"]], "the launcher is asked for a bundle upgrade");
     assert.match(ctx.notices.at(-2)!.msg, /Upgrading mgm 0\.1\.3/);
     assert.match(ctx.notices.at(-1)!.msg, /Restart mgm to use the new version/);
     assert.ok(ctx.notices.at(-1)!.msg.includes("installed: /Users/x/.mgm/current"));

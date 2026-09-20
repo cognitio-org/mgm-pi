@@ -220,6 +220,19 @@ Both run the release installer: the new bundle lands next to the old one under `
 moves to it, and the `.env` with your keys is carried over. Source checkouts are never nagged;
 `git pull` is the update there. `MGM_NO_UPDATE_CHECK=1` disables the automatic check.
 
+**Extension packages** are a separate thing from the bundle. pi notices when one of the installed
+packages has a new version and says so at start-up; update them with `/update extensions` in the
+agent, or `mgm update --extensions` (also `--extension <name>` for one, `--models` to refresh pi's
+model catalogs). `mgm update` with no flag is the bundle; `--all` and `--self` are refused so the
+two never get confused.
+
+In a release bundle a package update lives in that bundle only, and the next `mgm update` restores
+the versions the release pinned. The durable path is this repo: run `mgm update --extensions` in a
+checkout, commit the changed `.pi/npm/package.json` and `package-lock.json`, and the next release
+ships them. pi's updater rewrites the lockfile from the installed tree, which drops entries nothing
+needs (it no longer records pi's own dependency tree); `npm ci` for all four release targets still
+resolves, and `scripts/package.sh` smoke-tests the result.
+
 ## Tests
 
 ```bash

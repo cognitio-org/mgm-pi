@@ -15,7 +15,7 @@ import { REPO, checkDue, parseVersion, showVersion, tagFromGh, updateNotice, typ
 
 export type Deps = {
   latest: () => Promise<string | undefined>;                         // latest release tag, e.g. "v0.1.4"
-  run: (onLine: (l: string) => void) => Promise<{ code: number; tail: string }>;   // the upgrade itself
+  run: (args: string[], onLine: (l: string) => void) => Promise<{ code: number; tail: string }>;   // `mgm <args>`
   now?: () => number;
 };
 
@@ -46,10 +46,10 @@ async function apiLatest(): Promise<string | undefined> {
 }
 const defaultLatest = async () => (await ghLatest()) ?? (await apiLatest());
 
-function defaultRun(onLine: (l: string) => void): Promise<{ code: number; tail: string }> {
+function defaultRun(args: string[], onLine: (l: string) => void): Promise<{ code: number; tail: string }> {
   return new Promise((resolve) => {
     const lines: string[] = [];
-    const child = spawn("bash", [join(root(), "bin", "mgm"), "update"], { env: { ...process.env, MGM_SKIP_LMS: "1" }, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("bash", [join(root(), "bin", "mgm"), ...args], { env: { ...process.env, MGM_SKIP_LMS: "1" }, stdio: ["ignore", "pipe", "pipe"] });
     const feed = (chunk: Buffer) => { for (const l of chunk.toString().split("\n")) { const s = l.trim(); if (s) { lines.push(s); onLine(s); } } };
     child.stdout.on("data", feed); child.stderr.on("data", feed);
     child.on("error", (e) => resolve({ code: 1, tail: String(e) }));
@@ -79,7 +79,7 @@ export default function (pi: ExtensionAPI, deps: Partial<Deps> = {}) {
   });
 
   pi.registerCommand("update", {
-    description: "Upgrade mgm to the latest release (or `/update check` to just look)",
+    description: "Upgrade mgm to the latest release (`check` to just look, `extensions` for the pi packages)",
     handler: async (args, ctx) => {
       const installed = installedVersion();
       if (args.trim() === "check") {
@@ -88,10 +88,22 @@ export default function (pi: ExtensionAPI, deps: Partial<Deps> = {}) {
         ctx.ui.notify(notice ?? (latest ? `mgm ${installed ?? "(source checkout)"} is up to date (latest release ${latest}).` : "Could not reach GitHub (is the gh CLI logged in?)."), notice ? "info" : latest ? "info" : "warning");
         return;
       }
+      if (args.trim() === "extensions") {
+        // Package updates are pi's own updater; in a bundle they last until the next bundle upgrade
+        // (which restores the release's pinned versions), so say so.
+        ctx.ui.notify("Updating the installed pi packages…", "info");
+        ctx.ui.setStatus("update", "⬆ packages…");
+        const r = await d.run(["update", "--extensions"], (l) => ctx.ui.setStatus("update", `⬆ ${l.slice(0, 60)}`));
+        ctx.ui.setStatus("update", r.code === 0 ? "⬆ restart mgm" : undefined);
+        ctx.ui.notify(r.code === 0
+          ? `Packages updated. Restart mgm to load them.\n${r.tail}`
+          : `Package update failed (exit ${r.code}):\n${r.tail}`, r.code === 0 ? "info" : "error");
+        return;
+      }
       if (!parseVersion(installed)) { ctx.ui.notify("This is a source checkout; update it with git pull.", "warning"); return; }
       ctx.ui.notify(`Upgrading mgm ${installed} → latest release. Keys in .env are kept…`, "info");
       ctx.ui.setStatus("update", "⬆ installing…");
-      const { code, tail } = await d.run((l) => ctx.ui.setStatus("update", `⬆ ${l.slice(0, 60)}`));
+      const { code, tail } = await d.run(["update"], (l) => ctx.ui.setStatus("update", `⬆ ${l.slice(0, 60)}`));
       if (code === 0) {
         ctx.ui.setStatus("update", "⬆ restart mgm");
         ctx.ui.notify(`Installed. Restart mgm to use the new version.\n${tail}`, "info");

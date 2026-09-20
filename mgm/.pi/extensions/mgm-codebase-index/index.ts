@@ -12,7 +12,7 @@
  *   MGM_EMBEDDING_MODEL, MGM_EMBEDDING_DIMENSIONS
  */
 import { createRequire } from "node:module";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -20,7 +20,7 @@ import { truncateToWidth } from "@earendil-works/pi-tui";
 import { renderPanel } from "../connect/lib.ts";
 import {
   FIELDS, PACKAGE, SUBCOMMANDS, actions, applyEdit, configFromView, configView, defaultConfig, fieldRow, getAt, indexStatusLine,
-  invalidatesIndex, loadPlan, panelRows, parseStatus, resultText, shouldSeed,
+  invalidatesIndex, loadPlan, maskSecret, panelRows, parseStatus, rerankerProblem, resultText, shouldSeed,
   type ConfigView, type Embeddings, type Field, type IndexStatus, type LoadPlan, type PanelData,
 } from "./lib.ts";
 
@@ -92,6 +92,19 @@ async function detectDimensions(baseUrl: string, model: string): Promise<number 
   } catch { return undefined; }
 }
 
+/** Rerank models a LiteLLM-style router advertises (mode "rerank"); empty for anything else. */
+async function rerankModels(baseUrl: string, apiKey: string): Promise<string[]> {
+  try {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 4000);
+    const res = await fetch(`${baseUrl.replace(/\/v1\/?$/, "")}/model/info`, { headers: { authorization: `Bearer ${apiKey}` }, signal: ctl.signal });
+    clearTimeout(t);
+    if (!res.ok) return [];
+    return ((await res.json())?.data ?? [])
+      .filter((m: any) => m?.model_info?.mode === "rerank")
+      .map((m: any) => String(m.model_name));
+  } catch { return []; }
+}
+
 export default async function (pi: ExtensionAPI, deps: Deps = {}) {
   if (process.env.MGM_NO_CODEBASE_INDEX) return;
   const prebundledPath = join(distDir(), "pi-extension.mgm.cjs");
@@ -156,6 +169,12 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
   function settingsTarget(ctx: ExtensionCommandContext, view: ConfigView): string {
     return view.file ?? configPath();
   }
+  /** Written 0600 when it holds a key: the package reads reranker.apiKey from this file, in plaintext. */
+  function writeConfig(file: string, config: Record<string, any>) {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
+    if (config?.reranker?.apiKey) { try { chmodSync(file, 0o600); } catch {} }
+  }
   function readConfigObject(file: string, view: ConfigView): Record<string, any> {
     const text = read(file);
     if (text) { try { const parsed = JSON.parse(text); if (parsed && typeof parsed === "object") return parsed; } catch {} }
@@ -171,12 +190,27 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
     for (;;) {
       const rows = FIELDS.map((f) => fieldRow(f, config));
       const projectFile = join(ctx.cwd, ".codebase-index", "config.json");
-      const extra = file === projectFile ? [] : ["Copy these settings into this project"];
+      const router = process.env.LITELLM_BASE_URL, routerKey = process.env.LITELLM_AGENT_KEY || process.env.LITELLM_API_KEY;
+      const extra = [
+        ...(router && routerKey ? ["Set up reranking on the LiteLLM router"] : []),
+        ...(file === projectFile ? [] : ["Copy these settings into this project"]),
+      ];
       const pick = await ctx.ui.select(`Codebase index settings  (${file})`, [...rows, ...extra, "Back"]);
       if (pick === undefined || pick === "Back") return touched;
+      if (pick === "Set up reranking on the LiteLLM router") {
+        const models = await rerankModels(router!, routerKey!);
+        const model = models.length === 1 ? models[0] : await ctx.ui.select("Rerank model on the router", models.length ? models : ["type another id"]);
+        if (model === undefined) continue;
+        const chosen = model === "type another id" ? await ctx.ui.input("Rerank model id", "") : model;
+        if (chosen === undefined || !chosen.trim()) continue;
+        config = { ...config, reranker: { enabled: true, provider: "custom", baseUrl: router!.replace(/\/+$/, ""), model: chosen.trim(), apiKey: routerKey! } };
+        writeConfig(file, config);
+        touched = true;
+        ctx.ui.notify(`Reranking on via ${chosen.trim()} through the router. Your search snippets are sent there and billed to the router key, which is now stored in ${file} (0600).`, "warning");
+        continue;
+      }
       if (pick === "Copy these settings into this project") {
-        mkdirSync(dirname(projectFile), { recursive: true });
-        writeFileSync(projectFile, `${JSON.stringify(config, null, 2)}\n`);
+        writeConfig(projectFile, config);
         ctx.ui.notify(`Wrote ${projectFile}. This project now overrides your user settings.`, "info");
         file = projectFile; touched = true; continue;
       }
@@ -213,6 +247,18 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
           if (typed === undefined) continue;
           raw = typed;
         }
+      } else if (field.kind === "secret") {
+        const typed = await ctx.ui.input(`${field.label} — ${field.help}${current ? `  (Enter keeps ${maskSecret(current)})` : ""}`, "");
+        if (typed === undefined || !typed.trim()) continue;
+        raw = typed.trim();
+      } else if (field.kind === "rerank-model") {
+        const baseUrl = String(getAt(config, ["reranker", "baseUrl"]) ?? "");
+        const key = String(getAt(config, ["reranker", "apiKey"]) ?? "");
+        const listed = baseUrl && key ? await rerankModels(baseUrl, key) : [];
+        const answer = await ctx.ui.select(`${field.label} — ${listed.length ? "rerank models on that endpoint" : "endpoint not queried; type a model id"}`, [...listed, "type another id"]);
+        if (answer === undefined) continue;
+        raw = answer === "type another id" ? await ctx.ui.input(`${field.label} id`, String(current ?? "")) : answer;
+        if (raw === undefined) continue;
       } else {
         const typed = await ctx.ui.input(`${field.label} — ${field.help}`, String(current ?? ""));
         if (typed === undefined) continue;
@@ -222,10 +268,12 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
       if (edit.error) { ctx.ui.notify(edit.error, "error"); continue; }
       if (String(getAt(edit.config!, field.path)) === String(current)) continue;   // nothing changed
       config = edit.config!;
-      mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
+      writeConfig(file, config);
       touched = true;
-      ctx.ui.notify(`${field.label} → ${String(getAt(config, field.path))}  (saved to ${file})`, "info");
+      const shown = field.kind === "secret" ? maskSecret(getAt(config, field.path)) : String(getAt(config, field.path));
+      ctx.ui.notify(`${field.label} → ${shown}  (saved to ${file})`, "info");
+      const problem = rerankerProblem(config);
+      if (problem) ctx.ui.notify(`${problem}; reranking stays off until that is set`, "warning");
       if (invalidatesIndex(field) && data.status.indexed) {
         const rebuild = await ctx.ui.select("That changes how text is embedded, so the stored vectors no longer match. Rebuild the index now?", ["Rebuild now", "Later"]);
         if (rebuild === "Rebuild now") {

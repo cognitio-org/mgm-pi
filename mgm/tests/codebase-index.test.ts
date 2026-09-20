@@ -1,10 +1,10 @@
 /** mgm-codebase-index: how the indexer is loaded in each runtime, and the embedding defaults. */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadPlan, defaultConfig, embeddingBaseUrl, shouldSeed, parseStatus, resultText, configView, panelRows, indexStatusLine, actions, SUBCOMMANDS, FIELDS, getAt, setAt, applyEdit, fieldRow, invalidatesIndex, configFromView, DEFAULT_EMBEDDING_MODEL, DEFAULT_DIMENSIONS } from "../.pi/extensions/mgm-codebase-index/lib.ts";
+import { loadPlan, defaultConfig, embeddingBaseUrl, shouldSeed, parseStatus, resultText, configView, panelRows, indexStatusLine, actions, SUBCOMMANDS, FIELDS, getAt, setAt, applyEdit, fieldRow, invalidatesIndex, configFromView, maskSecret, rerankerProblem, DEFAULT_EMBEDDING_MODEL, DEFAULT_DIMENSIONS } from "../.pi/extensions/mgm-codebase-index/lib.ts";
 import { makePi, makeCtx, stubFetch } from "./harness.ts";
 
 const STATUS_INDEXED = `Auto-index: disabled (state: idle)
@@ -407,5 +407,93 @@ describe("/index settings dialog", async () => {
     assert.equal(read(projectFile).search.maxResults, 33);
     assert.match(ctx.notices.map((n: any) => n.msg).join("\n"), /now overrides your user settings/);
     delete process.env.MGM_INDEX_CONFIG;
+  });
+});
+
+describe("reranking", () => {
+  const field = (label: string) => FIELDS.find((f) => f.label === label)!;
+
+  test("a key is never shown, only that it is set and its last four characters", () => {
+    assert.equal(maskSecret("sk-1234567890abcd"), "set (…abcd)");
+    assert.equal(maskSecret(""), "—");
+    assert.equal(maskSecret(undefined), "—");
+    assert.equal(fieldRow(field("Rerank key"), { reranker: { apiKey: "sk-secret-value-9999" } }), "Rerank key         set (…9999)");
+    assert.ok(!fieldRow(field("Rerank key"), { reranker: { apiKey: "sk-secret-value-9999" } }).includes("secret-value"));
+  });
+
+  test("rerankerProblem mirrors the package's own requirements", () => {
+    assert.equal(rerankerProblem({}), undefined, "off means nothing to check");
+    assert.equal(rerankerProblem({ reranker: { enabled: false, model: "" } }), undefined);
+    assert.match(rerankerProblem({ reranker: { enabled: true } })!, /no rerank model/);
+    assert.match(rerankerProblem({ reranker: { enabled: true, model: "voyage/rerank-3" } })!, /no key/);
+    assert.match(rerankerProblem({ reranker: { enabled: true, model: "m", apiKey: "k", provider: "custom" } })!, /needs an endpoint/);
+    assert.equal(rerankerProblem({ reranker: { enabled: true, model: "m", apiKey: "k", provider: "cohere" } }), undefined, "hosted providers carry their own endpoint");
+    assert.equal(rerankerProblem({ reranker: { enabled: true, model: "m", apiKey: "k", provider: "custom", baseUrl: "https://r/v1" } }), undefined);
+  });
+
+  test("reranking is a query-time pass, so changing it never invalidates the index", () => {
+    for (const l of ["Reranking", "Rerank provider", "Rerank model", "Rerank endpoint", "Rerank key", "Rerank top N"]) assert.equal(invalidatesIndex(field(l)), false, l);
+    for (const l of ["Embedding model", "Dimensions", "Embedding server", "Provider"]) assert.equal(invalidatesIndex(field(l)), true, l);
+  });
+
+  test("a rerank key is accepted as typed, and an empty one is refused", () => {
+    assert.equal(getAt(applyEdit({}, field("Rerank key"), " sk-abc ").config!, ["reranker", "apiKey"]), "sk-abc");
+    assert.match(applyEdit({}, field("Rerank key"), "  ").error!, /cannot be empty/);
+  });
+});
+
+describe("/index reranking through the router", async () => {
+  const mod = await import("../.pi/extensions/mgm-codebase-index/index.ts");
+  const STATUS = `Indexed chunks (all branches): 190\nLocation: /proj/.codebase-index/index\nCurrent branch: main`;
+
+  function start(dir: string) {
+    const pkg = async (pi: any) => {
+      const tool = (name: string, text: string) => ({ name, label: name, description: "", parameters: {}, execute: async () => ({ content: [{ type: "text", text }] }) });
+      pi.registerTool(tool("index_status", STATUS));
+      pi.registerTool(tool("index_codebase", "Rebuilt"));
+      pi.registerTool(tool("knowledge_base_list", ""));
+    };
+    process.env.MGM_INDEX_CONFIG = join(dir, "user", "config.json");
+    process.env.LITELLM_BASE_URL = "https://litellm.example/v1";
+    process.env.LITELLM_AGENT_KEY = "sk-router-key-4321";
+    const pi = makePi();
+    const ctx: any = makeCtx({ hasUI: true });
+    ctx.cwd = join(dir, "proj"); mkdirSync(ctx.cwd, { recursive: true });
+    return { pi, ctx, userConfig: process.env.MGM_INDEX_CONFIG, ready: mod.default(pi as any, { plan: { kind: "prebundled", entry: "fake" }, load: async () => ({ default: pkg }) }) };
+  }
+  const cleanup = () => { delete process.env.MGM_INDEX_CONFIG; delete process.env.LITELLM_BASE_URL; delete process.env.LITELLM_AGENT_KEY; };
+
+  test("the router shortcut lists its rerank models, writes a complete config and warns what it costs", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgm-idx-rr-"));
+    const restore = stubFetch({
+      "/model/info": () => ({ data: [
+        { model_name: "voyage/rerank-3", model_info: { mode: "rerank" } },
+        { model_name: "voyage/rerank-3-lite", model_info: { mode: "rerank" } },
+        { model_name: "gpt-5.4-nano", model_info: { mode: "chat" } },
+      ] }),
+    });
+    try {
+      const { pi, ctx, userConfig, ready } = start(dir);
+      await ready;
+      ctx.answers.push("Settings", "Set up reranking on the LiteLLM router", "voyage/rerank-3-lite", "Back", "Close panel");
+      await pi.commands.get("index")!.handler("", ctx);
+      const saved = JSON.parse(readFileSync(userConfig!, "utf8"));
+      assert.deepEqual(saved.reranker, { enabled: true, provider: "custom", baseUrl: "https://litellm.example/v1", model: "voyage/rerank-3-lite", apiKey: "sk-router-key-4321" });
+      assert.equal(rerankerProblem(saved), undefined, "the shortcut leaves nothing missing");
+      assert.equal(statSync(userConfig!).mode & 0o777, 0o600, "a file holding a key is owner-only");
+      const said = ctx.notices.map((n: any) => n.msg).join("\n");
+      assert.match(said, /snippets are sent there and billed/);
+      assert.ok(!said.includes("sk-router-key-4321"), "the key is never printed");
+    } finally { restore(); cleanup(); }
+  });
+
+  test("an incomplete reranker is called out instead of failing later at search time", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgm-idx-rr-"));
+    const { pi, ctx, ready } = start(dir);
+    await ready;
+    ctx.answers.push("Settings", "Reranking", "on", "Back", "Close panel");
+    await pi.commands.get("index")!.handler("", ctx);
+    assert.match(ctx.notices.map((n: any) => n.msg).join("\n"), /no rerank model is set; reranking stays off/);
+    cleanup();
   });
 });

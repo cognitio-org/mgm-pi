@@ -444,12 +444,17 @@ difference between working search and silent nonsense. Values are validated befo
 and changing anything that alters how text is embedded (server, model, dimensions, provider) offers
 the rebuild those changes require, or warns that search stays stale until you run one. Edits go to
 whichever config file is in effect, and one entry copies the current settings into the project so a
-repo can override your user defaults. Three of the package's keys are not in the dialog yet, for
-reasons worth stating plainly rather than calling them unsuitable: `reranker` (Cohere, Jina or a
-custom endpoint) is perfectly pickable, but enabling it posts candidate snippets to a third party and
-stores the API key in plaintext in the config file, since the package reads `reranker.apiKey`
-directly with no environment indirection; `ignore` globs are a list an input could take; and `scope`
-needs its semantics understood first. Hand-edit those for now.
+repo can override your user defaults. **Reranking** is in the dialog too, and the LiteLLM router can do it: the router carries
+`voyage/rerank-3` and `voyage/rerank-3-lite`, and its `/v1/rerank` endpoint takes the Cohere-shaped
+request the package posts to `<endpoint>/rerank`. One entry, *Set up reranking on the LiteLLM
+router*, lists the router's rerank models, writes a complete `reranker` block with the router URL and
+your agent key, and says plainly what that means: search snippets go to the router and its upstream
+provider, queries are billed to that key, and the key ends up in this config file because the package
+reads `reranker.apiKey` from there and has no environment indirection. A config file holding a key is
+written `0600`. Cohere and Jina are available as providers too. Reranking is a query-time pass, so
+turning it on or off never invalidates the index, and an incomplete setup is reported (the package's
+own rules: a model and a key, plus an endpoint for the custom provider) rather than failing at search
+time. Left to hand-editing: `ignore` globs, and `scope`, whose semantics I have not read yet.
 
 The index is per project, in `<project>/.codebase-index/`, and it is built on request, never on
 start. Indexing needs the embedding model, so the local model server has to be up; it loads

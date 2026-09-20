@@ -217,6 +217,18 @@ research on Sonnet; review on Opus).
   that depends on that provider.
 - **E2.9 Wake latency measurement**: script that wakes a stopped session ten times against the real
   Cloud Run Job and records time to `status running`; sets the idle-stop defaults from data.
+  First measurements (2026-09-20, 2.16 GB image, 1 vCPU/2 GiB): execution created to Cloud Run
+  start time 38 to 46 s; start time to first WebSocket connect about 3 min (image pull happens
+  after start time); prompt to answer 3 s; idle-stop and clean exit verified. Cold wake is about
+  4 min today and is dominated by image size, so E1.5 (trim the image) comes before any tuning.
+- **E1.5 Trim the agent image**: only the packages a cloud guru needs; measure again. Target under
+  600 MB and a cold wake near one minute.
+- **E1.6 Job container logs**: agentd's stderr does not appear in Cloud Logging for the Job
+  (only audit entries); make agentd log structured JSON to stdout and confirm it shows under the
+  execution.
+- **E2.11 Spend frames from cloud runs**: `Session.cost` stayed 0 on the first run; the connect
+  extension's spend headers are not yet relayed by agentd as `spend` frames. Wire an extension
+  hook (custom entry or stderr line agentd parses) so per-run cost is real.
 - **E2.7 Deploy** ⇄: `deploy/api.sh` builds with Cloud Build, deploys, enables IAP with the domain
   principal. Done when the URL prompts for Google login and rejects a non-domain account.
 

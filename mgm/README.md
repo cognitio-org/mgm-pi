@@ -181,7 +181,8 @@ gh release create v0.2.0 --title "mgm 0.2.0" --notes "..."          # → CI bui
 scripts/package.sh 0.2.0 darwin-arm64                               # the same build, locally → dist/
 
 # install (user)
-curl -fsSL https://github.com/mgmonteleone/mgm-pi/releases/latest/download/install.sh | GH_TOKEN=... bash
+# while the repo is private, download through a logged-in gh (the curl form needs a public repo):
+gh release download --repo mgmonteleone/mgm-pi --pattern install.sh --dir /tmp --clobber && bash /tmp/install.sh
 cp ~/.mgm/current/.env.example ~/.mgm/current/.env   # add keys; kept across upgrades
 mgm
 ```

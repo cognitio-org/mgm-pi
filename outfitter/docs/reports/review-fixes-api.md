@@ -127,11 +127,136 @@ sharing one LiteLLM key whose balance keeps climbing (5 → 8 → 8 → 12). Ses
 3 (run 1's delta) + 4 (run 2's delta) = 7, not `max(3, 12) = 12` (what the old bug would have
 computed).
 
-## Verification
+## Fixes for PR #15 review
+
+Findings from the three verified review reports (`docs/reports/security-review-pr15.md`,
+`docs/reports/code-review-pr15.md`, `docs/reports/critic-review-pr15.md`), fixed on
+`outfitter/round-four` in worktree `pi-agent-teleport-84d05f`. Not covered here: critic finding #1
+(IAP auth in `outfitter-store.ts`) beyond the docs correction — out of scope per the task.
+
+### 1. Security #1 (HIGH) — guru-controlled `LITELLM_BASE_URL` credential exfiltration + SSRF
+
+**What changed:**
+- `outfitter/packages/api/src/routes/gurus.ts:8-27` — added `LITELLM_BASE_URL`, `LITELLM_API_KEY`,
+  `LITELLM_AGENT_KEY` to `DENYLISTED_GURU_ENV_KEYS`.
+- `outfitter/packages/agentd/src/guru.ts:33-52` — same three keys added to agentd's own denylist
+  (belt and suspenders).
+- `outfitter/packages/agentd/src/protocol.ts:165-172` — `RunSpecSecrets` gets an optional
+  `litellmBaseUrl?: string`, server-controlled, never guru-editable.
+- `outfitter/packages/api/src/agentlink.ts:60-63,403` — `RunSpecMessage.secrets` carries
+  `litellmBaseUrl` (non-optional on the wire), populated from `this.config.litellmBaseUrl` in
+  `buildRunSpec`.
+- `outfitter/packages/agentd/src/run.ts:384-389` — `secretEnv.LITELLM_BASE_URL` is now pinned from
+  `spec.secrets.litellmBaseUrl` when present, spread after `rendered.env` (guru.env), so a
+  guru-supplied value can never win.
+- `outfitter/docs/protocol.md:82,91-95` — documents the new field and why it's server-controlled.
+- Noted in the fix commit: the pre-existing mgm connect extension
+  (`mgm/.pi/extensions/connect/lib.ts`) has the same `LITELLM_BASE_URL`-to-Bearer-key pattern, but
+  it isn't guru-configurable, so the denylist here is the actual fix for the exploitable path.
+
+**Tests:** `outfitter/packages/api/test/gurus.test.ts` (3 new denylisted-key cases in the existing
+loop), `outfitter/packages/agentd/test/guru.test.ts` (extended the existing denylist test with the
+3 new keys, updated the expected dropped-key count).
+
+### 2. Security #3 (MEDIUM) — `POST /api/providers/refresh` had no rate limit
+
+**What changed:** `outfitter/packages/api/src/routes/providers.ts:9-29` — added a 10s global
+cooldown (`REFRESH_COOLDOWN_MS`); a call inside the window returns `429` instead of triggering
+another poll.
+
+**Tests:** `outfitter/packages/api/test/providers-status.test.ts` — new case: a second
+`POST /api/providers/refresh` immediately after the first returns 429.
+
+### 3. Security #2 (MEDIUM) — ngrok webhook replay: deferred, per the reviewer's own recommendation
+
+**What changed:** no code change. Added the deviation/deferral note to
+`outfitter/docs/reports/api.md`'s "Deviations from `docs/protocol.md`" section (item 6), recording
+why (the real ngrok event-destination envelope isn't confirmed yet, and the blast radius — a
+status flag, not a privileged action — is low) and what to do once it is (timestamp-skew check +
+short-TTL seen-signature cache in `verifyNgrokSignature`).
+
+### 4. Code review M1 (Major) — fleet run-state filter matched nothing
+
+**What changed:**
+- `outfitter/packages/api/src/routes/sessions.ts:96-105` — `GET /api/sessions` now accepts
+  `?runState=<RunState>`, filtered post-hoc on the computed `runState` field after `summarize()`
+  (it isn't a store-level field); `status` (`open`/`closed`) still filters at the store as before.
+- `outfitter/packages/web/src/api/client.ts:159-167` — `api.sessions()` takes and sends `runState`.
+- `outfitter/packages/web/src/pages/FleetPage.tsx` — the run-state dropdown now drives a
+  `runStateFilter` state var sent as `runState`, not overloaded onto `status`.
+
+**Tests:** `outfitter/packages/api/test/routes.test.ts` (new `GET /api/sessions?runState=`
+describe block: filters correctly, `status`-based listing still works unfiltered), and
+`outfitter/packages/web/test/client.test.ts` (new case: `api.sessions({runState, guru})` builds
+`?guru=...&runState=...`, not `status=`).
+
+### 5. Code review M2 (Major) — `/stop` could force-kill an already-stopping run
+
+**What changed:**
+- `outfitter/packages/api/src/routes/sessions.ts:154-176` — `/stop` now branches explicitly:
+  `running`/`idle` → graceful stop (unchanged); `queued`/`provisioning` → direct provider cancel
+  (unchanged); already `stopping` → no-op, returns the current run so a second caller can't force a
+  cancel mid-checkpoint/mid-drain.
+- `mgm/.pi/extensions/teleport/outfitter-store.ts` (`ensureStopped`) — skips re-`POST`ing `/stop`
+  when the session's observed `runState` is already `"stopping"`, going straight to the poll loop;
+  removed the dead `409`-tolerance branch (N2) — `POST .../stop` only ever returns `404` or `200`.
+
+**Tests:** `outfitter/packages/api/test/stop.test.ts` (new case: a second `/stop` call while the
+run is already `stopping` returns the run unchanged and calls `provider.stop()` zero times), and
+`mgm/tests/teleport-outfitter.test.ts` (new case: `ensureStopped` against a session already
+`stopping` never calls `/stop`, only polls).
+
+### 6. Code review N1 (Minor) — `useSessionStream` could clobber SSE entries with the initial fetch
+
+**What changed:** `outfitter/packages/web/src/hooks/useSessionStream.ts` — factored the merge into
+a pure `mergeEntries(current, initial)` function (union by id; `initial`'s tree order is
+authoritative, anything already in `current` but missing from `initial` — i.e. streamed in over
+SSE before the fetch resolved — is appended after) and used it instead of `setEntries(initial)`.
+
+**Tests:** `outfitter/packages/web/test/session-stream.test.ts` (new file): no-race case, the
+race case (SSE entry not dropped), a dedup case, and an empty-current case.
+
+### 7. Code review N6 (Minor) — CI's image smoke test never exercised the web bundle
+
+**What changed:** `.github/workflows/outfitter-ci.yml` (`images` job) — added a second boot of the
+same API image with `OUTFITTER_ROLE=web`, `MONGODB_URI=memory`, `OUTFITTER_DEV=1` (no IAP),
+`SANDBOX_PROVIDER=inprocess`; asserts `GET /` returns 200 with a `<title>` tag, `GET /sessions/x`
+returns 200 (SPA fallback for a client-side route), and `GET /api/nope` returns 404 JSON.
+
+**Verification:** built `outfitter/packages/api/Dockerfile` locally and ran the exact commands
+against the resulting image before committing (see commit message for the manual run's output).
+
+### 8. Docs honesty — critic #2 (E3.1/E3.2/E3.4 undersold) and critic #1 (E4.1 overclaimed)
+
+**What changed:**
+- `outfitter/EPIC.md` — E3.1, E3.2, E3.4 marked done with one-line summaries pointing at
+  `docs/reports/web-ui.md` (noting the pi-web-ui decision, and that parent/child grouping,
+  markdown rendering, and a real repo picker aren't built). E4.1's status changed from a flat
+  "done" to: done for dev-token auth; IAP identity-token mode verified NOT working on 2026-09-21
+  (gcloud can't mint an audience-specific identity token for a user account against IAP's
+  Google-managed OAuth client, and the OAuth-brand admin APIs needed for a custom client are being
+  shut down); auth design for the laptop path left as an open decision (personal API tokens on the
+  link service is the leading option).
+- `mgm/README.md` (teleport section) — same correction: `OUTFITTER_IAP_CLIENT_ID` marked not yet
+  supported against a real deployment; the 401 troubleshooting line no longer sends the reader in
+  circles re-running `gcloud auth login`.
+- `mgm/.pi/extensions/teleport/outfitter-store.ts` — header comment corrected (code unchanged,
+  left in place per the task); the 401 error message now differs by auth mode: `OUTFITTER_TOKEN`
+  mode points at `OUTFITTER_TOKEN`/`OUTFITTER_DEV`, IAP mode says it's not yet supported and points
+  at `OUTFITTER_TOKEN` for dev instead of suggesting `gcloud auth login`.
+
+**Tests:** `mgm/tests/teleport-outfitter.test.ts` — updated the old "401 surfaces a gcloud auth
+login hint" test into two cases, one per auth mode, matching the new messages.
+
+### 9. Code review N3 (Minor) — providers SSE channel unused by the web strip
+
+**What changed:** added a one-line follow-up under E3.6 in `outfitter/EPIC.md`: `GET
+/api/providers/stream` is already fully implemented server-side (E2.10); the web strip/dashboard
+should subscribe to it once E3.6 is built (`useProviders` currently only polls once on mount).
+
+## Verification (PR #15 fixes)
 
 ```
-cd packages/api && npm test   # typecheck (pretest) + node --test: 42/42 pass
-cd outfitter && npm test      # packages/api and provider-local green;
-                               # packages/agentd fails to build — pre-existing, mid-edit by
-                               # another concurrent agent, not touched by this change
+cd outfitter && npm test   # all workspaces (agentd 140, api 130, provider-local 2, web 23): 0 fail
+cd mgm && npm test         # 231/231 pass
 ```

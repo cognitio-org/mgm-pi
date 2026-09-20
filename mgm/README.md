@@ -444,17 +444,20 @@ difference between working search and silent nonsense. Values are validated befo
 and changing anything that alters how text is embedded (server, model, dimensions, provider) offers
 the rebuild those changes require, or warns that search stays stale until you run one. Edits go to
 whichever config file is in effect, and one entry copies the current settings into the project so a
-repo can override your user defaults. **Reranking** is in the dialog too, and the LiteLLM router can do it: the router carries
-`voyage/rerank-3` and `voyage/rerank-3-lite`, and its `/v1/rerank` endpoint takes the Cohere-shaped
-request the package posts to `<endpoint>/rerank`. One entry, *Set up reranking on the LiteLLM
-router*, lists the router's rerank models, writes a complete `reranker` block with the router URL and
-your agent key, and says plainly what that means: search snippets go to the router and its upstream
-provider, queries are billed to that key, and the key ends up in this config file because the package
-reads `reranker.apiKey` from there and has no environment indirection. A config file holding a key is
-written `0600`. Cohere and Jina are available as providers too. Reranking is a query-time pass, so
-turning it on or off never invalidates the index, and an incomplete setup is reported (the package's
-own rules: a model and a key, plus an endpoint for the custom provider) rather than failing at search
-time. Left to hand-editing: `ignore` globs, and `scope`, whose semantics I have not read yet.
+repo can override your user defaults. **Reranking** runs on the LiteLLM router and nowhere else. The router carries `voyage/rerank-3` and
+`voyage/rerank-3-lite`, and its `/v1/rerank` takes the Cohere-shaped request the package posts to
+`<endpoint>/rerank`. So the dialog asks for one thing: switch *Reranking* on and pick a model from the
+router's live list of rerank deployments. The endpoint and key come from `LITELLM_BASE_URL` and
+`LITELLM_AGENT_KEY`, which the agent already has, and they are refreshed from the environment on
+every start, so rotating the router key needs no visit here. Switching it off keeps the model for next
+time. Without a router configured it says to run `/setup` instead of writing anything.
+
+Two things it tells you when you turn it on: result snippets go to the router and its upstream
+provider and are billed to that key, and the key ends up in the config file (written owner-only)
+because the package reads `reranker.apiKey` from there and has no environment indirection. The key is
+only ever shown as `set (…4321)`. Reranking is a query-time pass, so turning it on or off never
+invalidates the index. The package also supports Cohere and Jina directly; those are not offered here
+and can be set by hand in the config file, as can `ignore` globs and `scope`.
 
 The index is per project, in `<project>/.codebase-index/`, and it is built on request, never on
 start. Indexing needs the embedding model, so the local model server has to be up; it loads

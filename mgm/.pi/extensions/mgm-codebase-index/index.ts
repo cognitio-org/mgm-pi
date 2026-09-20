@@ -20,7 +20,8 @@ import { truncateToWidth } from "@earendil-works/pi-tui";
 import { renderPanel } from "../connect/lib.ts";
 import {
   FIELDS, PACKAGE, SUBCOMMANDS, actions, applyEdit, configFromView, configView, defaultConfig, fieldRow, getAt, indexStatusLine,
-  invalidatesIndex, loadPlan, maskSecret, panelRows, parseStatus, rerankerProblem, resultText, shouldSeed,
+  invalidatesIndex, loadPlan, maskSecret, panelRows, parseStatus, refreshRouterKey, rerankerBlock, rerankerProblem, resultText, routerFromEnv, shouldSeed,
+  setAt,
   type ConfigView, type Embeddings, type Field, type IndexStatus, type LoadPlan, type PanelData,
 } from "./lib.ts";
 
@@ -68,11 +69,11 @@ async function embeddingModels(baseUrl: string): Promise<string[]> {
     const native = await fetch(`${root}/api/v0/models`, { signal: ctl.signal }).catch(() => undefined);
     if (native?.ok) {
       clearTimeout(t);
-      return ((await native.json())?.data ?? []).filter((m: any) => m.type === "embeddings").map((m: any) => String(m.id));
+      return [...new Set(((await native.json())?.data ?? []).filter((m: any) => m.type === "embeddings").map((m: any) => String(m.id)))].sort() as string[];
     }
     const res = await fetch(`${baseUrl}/models`, { signal: ctl.signal });
     clearTimeout(t);
-    return res.ok ? ((await res.json())?.data ?? []).map((m: any) => String(m.id)) : [];
+    return res.ok ? [...new Set(((await res.json())?.data ?? []).map((m: any) => String(m.id)))].sort() as string[] : [];
   } catch { return []; }
 }
 
@@ -99,9 +100,10 @@ async function rerankModels(baseUrl: string, apiKey: string): Promise<string[]> 
     const res = await fetch(`${baseUrl.replace(/\/v1\/?$/, "")}/model/info`, { headers: { authorization: `Bearer ${apiKey}` }, signal: ctl.signal });
     clearTimeout(t);
     if (!res.ok) return [];
-    return ((await res.json())?.data ?? [])
+    // A router can carry several deployments behind one alias, so the same name comes back twice.
+    return [...new Set(((await res.json())?.data ?? [])
       .filter((m: any) => m?.model_info?.mode === "rerank")
-      .map((m: any) => String(m.model_name));
+      .map((m: any) => String(m.model_name)))].sort() as string[];
   } catch { return []; }
 }
 
@@ -165,6 +167,16 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
     setStatusLine(ctx, data.status);
   }
 
+  /** The router's rerank deployments, live; typing an id stays possible if the list is empty. */
+  async function pickRerankModel(ctx: ExtensionCommandContext, router: { baseUrl?: string; apiKey?: string }, current: string): Promise<string | undefined> {
+    const listed = await rerankModels(router.baseUrl!, router.apiKey!);
+    const answer = await ctx.ui.select(listed.length ? "Rerank model on the router" : "The router lists no rerank models; type an id", [...listed, "type another id"]);
+    if (answer === undefined) return undefined;
+    if (answer !== "type another id") return answer;
+    const typed = await ctx.ui.input("Rerank model id", current);
+    return typed?.trim() || undefined;
+  }
+
   /** Read the file the settings live in (or the user's, creating it on first write). */
   function settingsTarget(ctx: ExtensionCommandContext, view: ConfigView): string {
     return view.file ?? configPath();
@@ -190,25 +202,9 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
     for (;;) {
       const rows = FIELDS.map((f) => fieldRow(f, config));
       const projectFile = join(ctx.cwd, ".codebase-index", "config.json");
-      const router = process.env.LITELLM_BASE_URL, routerKey = process.env.LITELLM_AGENT_KEY || process.env.LITELLM_API_KEY;
-      const extra = [
-        ...(router && routerKey ? ["Set up reranking on the LiteLLM router"] : []),
-        ...(file === projectFile ? [] : ["Copy these settings into this project"]),
-      ];
+      const extra = file === projectFile ? [] : ["Copy these settings into this project"];
       const pick = await ctx.ui.select(`Codebase index settings  (${file})`, [...rows, ...extra, "Back"]);
       if (pick === undefined || pick === "Back") return touched;
-      if (pick === "Set up reranking on the LiteLLM router") {
-        const models = await rerankModels(router!, routerKey!);
-        const model = models.length === 1 ? models[0] : await ctx.ui.select("Rerank model on the router", models.length ? models : ["type another id"]);
-        if (model === undefined) continue;
-        const chosen = model === "type another id" ? await ctx.ui.input("Rerank model id", "") : model;
-        if (chosen === undefined || !chosen.trim()) continue;
-        config = { ...config, reranker: { enabled: true, provider: "custom", baseUrl: router!.replace(/\/+$/, ""), model: chosen.trim(), apiKey: routerKey! } };
-        writeConfig(file, config);
-        touched = true;
-        ctx.ui.notify(`Reranking on via ${chosen.trim()} through the router. Your search snippets are sent there and billed to the router key, which is now stored in ${file} (0600).`, "warning");
-        continue;
-      }
       if (pick === "Copy these settings into this project") {
         writeConfig(projectFile, config);
         ctx.ui.notify(`Wrote ${projectFile}. This project now overrides your user settings.`, "info");
@@ -218,6 +214,20 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
       if (!field) continue;
       const current = getAt(config, field.path);
       let raw: string | boolean | undefined;
+      if (field.path[0] === "reranker" && field.kind === "bool") {
+        const answer = await ctx.ui.select(`${field.label} — ${field.help}`, ["on", "off"]);
+        if (answer === undefined) continue;
+        if (answer === "off") { config = setAt(config, ["reranker", "enabled"], false); writeConfig(file, config); touched = true; ctx.ui.notify("Reranking off", "info"); continue; }
+        const router = routerFromEnv(process.env);
+        if (!router.baseUrl || !router.apiKey) { ctx.ui.notify("Reranking runs on the LiteLLM router; run /setup to add its URL and key first.", "error"); continue; }
+        const model = await pickRerankModel(ctx, router, String(getAt(config, ["reranker", "model"]) ?? ""));
+        if (!model) continue;
+        config = { ...config, reranker: rerankerBlock(router, model) };
+        writeConfig(file, config);
+        touched = true;
+        ctx.ui.notify(`Reranking on with ${model}. Result snippets go to the router and its upstream provider, billed to the router key (${maskSecret(router.apiKey)}), which is stored in ${file} (owner-only).`, "warning");
+        continue;
+      }
       if (field.kind === "bool") {
         const answer = await ctx.ui.select(`${field.label} — ${field.help}`, ["on", "off"]);
         if (answer === undefined) continue;
@@ -247,18 +257,16 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
           if (typed === undefined) continue;
           raw = typed;
         }
-      } else if (field.kind === "secret") {
-        const typed = await ctx.ui.input(`${field.label} — ${field.help}${current ? `  (Enter keeps ${maskSecret(current)})` : ""}`, "");
-        if (typed === undefined || !typed.trim()) continue;
-        raw = typed.trim();
       } else if (field.kind === "rerank-model") {
-        const baseUrl = String(getAt(config, ["reranker", "baseUrl"]) ?? "");
-        const key = String(getAt(config, ["reranker", "apiKey"]) ?? "");
-        const listed = baseUrl && key ? await rerankModels(baseUrl, key) : [];
-        const answer = await ctx.ui.select(`${field.label} — ${listed.length ? "rerank models on that endpoint" : "endpoint not queried; type a model id"}`, [...listed, "type another id"]);
-        if (answer === undefined) continue;
-        raw = answer === "type another id" ? await ctx.ui.input(`${field.label} id`, String(current ?? "")) : answer;
-        if (raw === undefined) continue;
+        const router = routerFromEnv(process.env);
+        if (!router.baseUrl || !router.apiKey) { ctx.ui.notify("Reranking runs on the LiteLLM router; run /setup to add its URL and key first.", "error"); continue; }
+        const model = await pickRerankModel(ctx, router, String(current ?? ""));
+        if (!model) continue;
+        config = { ...config, reranker: rerankerBlock(router, model) };   // endpoint and key come from the environment
+        writeConfig(file, config);
+        touched = true;
+        ctx.ui.notify(`Rerank model → ${model}  (saved to ${file})`, "info");
+        continue;
       } else {
         const typed = await ctx.ui.input(`${field.label} — ${field.help}`, String(current ?? ""));
         if (typed === undefined) continue;
@@ -325,6 +333,16 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
       }
     },
   });
+
+  // Rotating the router key should not require a visit to the dialog.
+  try {
+    const file = configPath();
+    const text = read(file);
+    if (text) {
+      const refreshed = refreshRouterKey(JSON.parse(text), routerFromEnv(process.env));
+      if (refreshed) { writeFileSync(file, `${JSON.stringify(refreshed, null, 2)}\n`); chmodSync(file, 0o600); }
+    }
+  } catch {}
 
   pi.on("session_start", async (_e, ctx) => {
     if (!ctx.hasUI) return;

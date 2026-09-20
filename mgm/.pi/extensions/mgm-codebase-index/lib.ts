@@ -175,7 +175,7 @@ export const SUBCOMMANDS: Record<string, { tool?: string; params?: Record<string
 };
 
 // ---------- editable settings ----------
-export type FieldKind = "url" | "model" | "dimensions" | "number" | "bool" | "choice" | "secret" | "rerank-model";
+export type FieldKind = "url" | "model" | "dimensions" | "number" | "bool" | "choice" | "rerank-model";
 export type Field = { path: string[]; label: string; kind: FieldKind; choices?: string[]; min?: number; max?: number; help: string };
 
 /**
@@ -195,21 +195,41 @@ export const FIELDS: Field[] = [
   { path: ["search", "minScore"], label: "Min score", kind: "number", min: 0, max: 1, help: "drops weak matches; raise it when results are noisy" },
   { path: ["search", "fusionStrategy"], label: "Fusion", kind: "choice", choices: ["rrf", "weighted"], help: "how semantic and keyword candidates are combined" },
   { path: ["search", "rerankTopN"], label: "Rerank top N", kind: "number", min: 0, max: 200, help: "candidates reranked before the cut" },
-  { path: ["reranker", "enabled"], label: "Reranking", kind: "bool", help: "a second pass that reorders candidates; costs money and sends snippets to the provider" },
-  { path: ["reranker", "provider"], label: "Rerank provider", kind: "choice", choices: ["custom", "cohere", "jina"], help: "custom covers any Cohere-shaped /rerank endpoint, including the LiteLLM router" },
-  { path: ["reranker", "model"], label: "Rerank model", kind: "rerank-model", help: "e.g. voyage/rerank-3-lite on the router" },
-  { path: ["reranker", "baseUrl"], label: "Rerank endpoint", kind: "url", help: "the package posts to <endpoint>/rerank; required for the custom provider" },
-  { path: ["reranker", "apiKey"], label: "Rerank key", kind: "secret", help: "stored in this config file in plaintext, because the package reads it from there" },
+  { path: ["reranker", "enabled"], label: "Reranking", kind: "bool", help: "a second pass that reorders results; runs on the LiteLLM router and is billed to its key" },
+  { path: ["reranker", "model"], label: "Rerank model", kind: "rerank-model", help: "the router's rerank deployments, e.g. voyage/rerank-3-lite" },
 ];
 
-/** The package's own rules, so the dialog can say what is missing before a search fails. */
-export function rerankerProblem(config: Record<string, any>): string | undefined {
+/**
+ * Reranking is wired to the LiteLLM router only: the endpoint and key come from the environment the
+ * agent already has, so the dialog asks for nothing but the model. Cohere and Jina are supported by
+ * the package and can still be set by hand in the config file; they are not offered here.
+ */
+export type Router = { baseUrl?: string; apiKey?: string };
+export const routerFromEnv = (env: Record<string, string | undefined>): Router => ({
+  baseUrl: env.LITELLM_BASE_URL?.replace(/\/+$/, ""),
+  apiKey: env.LITELLM_AGENT_KEY || env.LITELLM_API_KEY,
+});
+
+/** The reranker block for a chosen model, complete and ready for the package to read. */
+export const rerankerBlock = (router: Router, model: string) => ({ enabled: true, provider: "custom", baseUrl: router.baseUrl, model, apiKey: router.apiKey });
+
+/** What is missing, in the package's terms, so a search does not fail silently later. */
+export function rerankerProblem(config: Record<string, any>, router: Router = { baseUrl: "set", apiKey: "set" }): string | undefined {
   const r = (config as any).reranker;
   if (!r?.enabled) return undefined;
-  if (!r.model) return "reranking is on but no rerank model is set";
-  if (!r.apiKey) return "reranking is on but no key is set";
-  if ((r.provider ?? "custom") === "custom" && !r.baseUrl) return "the custom rerank provider needs an endpoint";
+  if ((r.provider ?? "custom") !== "custom") return undefined;      // hand-configured hosted provider
+  if (!router.baseUrl || !router.apiKey) return "reranking needs the LiteLLM router; run /setup to add its URL and key";
+  if (!r.model) return "reranking is on but no rerank model is chosen";
+  if (!r.baseUrl || !r.apiKey) return "the rerank endpoint or key is missing from the config";
   return undefined;
+}
+
+/** Keep a stored block in step with the environment, so rotating the router key just works. */
+export function refreshRouterKey(config: Record<string, any>, router: Router): Record<string, any> | undefined {
+  const r = (config as any).reranker;
+  if (!r?.enabled || (r.provider ?? "custom") !== "custom" || !router.baseUrl || !router.apiKey) return undefined;
+  if (r.baseUrl === router.baseUrl && r.apiKey === router.apiKey) return undefined;
+  return { ...config, reranker: { ...r, baseUrl: router.baseUrl, apiKey: router.apiKey } };
 }
 
 export const getAt = (obj: any, path: string[]): unknown => path.reduce((o, k) => (o == null ? undefined : o[k]), obj);
@@ -223,12 +243,12 @@ export function setAt<T extends Record<string, any>>(obj: T, path: string[], val
 }
 
 const show = (v: unknown) => (v === undefined ? "—" : typeof v === "boolean" ? (v ? "on" : "off") : String(v));
-/** A key is never shown, only whether one is set and its last four characters. */
+/** A key is never shown in full, only that one is set and its last four characters. */
 export const maskSecret = (v: unknown) => (typeof v === "string" && v.trim() ? `set (…${v.trim().slice(-4)})` : "—");
 /** Picker row: label and current value. */
 export function fieldRow(f: Field, config: Record<string, any>): string {
   const value = getAt(config, f.path);
-  return `${f.label.padEnd(18)} ${f.kind === "secret" ? maskSecret(value) : show(value)}`;
+  return `${f.label.padEnd(18)} ${show(value)}`;
 }
 
 /** Validate and coerce one edit. Returns the new config, or a message saying why not. */
@@ -240,7 +260,6 @@ export function applyEdit(config: Record<string, any>, f: Field, raw: string | b
     if (!f.choices?.includes(text)) return { error: `${f.label} must be one of ${f.choices?.join(", ")}` };
     return { config: setAt(config, f.path, text) };
   }
-  if (f.kind === "secret") return { config: setAt(config, f.path, text) };
   if (f.kind === "url") {
     if (!/^https?:\/\//.test(text)) return { error: "the server must be an http(s) URL" };
     return { config: setAt(config, f.path, text.replace(/\/+$/, "")) };

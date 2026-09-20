@@ -283,6 +283,19 @@ research on Sonnet; review on Opus).
   even for a route with no LiteLLM headers at all. `image/Dockerfile` still needs to `COPY` the new
   `pi-extension/` directory and set `OUTFITTER_SPEND_EXTENSION`/wire a real `spendFile` path -- left
   to the image/build-scripts workstream (see the report's "Follow-up").
+  **Confirmed on Cloud Run 2026-09-21** (image `b8de53b`, repo-less session, guru `default` on
+  `litellm/claude-auto-llm`): spend frames arrive, `keySpendStart` pins to the key's real balance,
+  and the second call moved `Run.cost` by ~$0.007. Two caveats to fix in E2.11b: (1) the baseline is
+  taken from the *first* spend frame, which LiteLLM emits with the key's pre-call balance, so every
+  run under-reports by exactly its first call (a one-call run shows $0) -- fix by having the
+  extension probe the key's own `/key/info` at `session_start` (a key may read its own info) and
+  write a baseline line before any provider call; (2) pi's own `usage.cost.total` is 0 for
+  `litellm/*` models (no pricing in pi's registry), so `costEstimate` is only meaningful for gurus
+  on a directly-priced provider; the LiteLLM-header path is the one that counts for this fleet.
+- **E2.13 Graceful stop confirmed on Cloud Run** (done): `POST /sessions/:id/stop` from the web
+  role while the link role holds the socket: `stopping` → `stopped` in 8 s, agentd checkpointed
+  (workspace tarball skipped for the repo-less run), sent `bye`, and the Job execution ended
+  `Completed` with `succeededCount=1` rather than cancelled. Round two closes here.
 - **E2.7 Deploy** ⇄: `deploy/api.sh` builds with Cloud Build, deploys, enables IAP with the domain
   principal. Done when the URL prompts for Google login and rejects a non-domain account.
 

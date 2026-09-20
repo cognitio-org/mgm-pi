@@ -24,6 +24,8 @@ export interface RunAsUser {
   uid: number;
   gid: number;
   user: string;
+  /** The user's home directory from its passwd entry; pi's HOME, so ~/.pi lands somewhere it can write. */
+  home: string;
 }
 
 export interface IdExecResult {
@@ -65,17 +67,25 @@ export async function resolveRunAsUser(opts: ResolveRunAsUserOptions = {}): Prom
   }
   const targetUser = opts.targetUser ?? process.env.PI_RUN_AS_USER ?? "agent";
   const exec = opts.execFn ?? defaultIdExec;
-  const [uidRes, gidRes] = await Promise.all([exec("id", ["-u", targetUser]), exec("id", ["-g", targetUser])]);
+  const [uidRes, gidRes, pwRes] = await Promise.all([
+    exec("id", ["-u", targetUser]),
+    exec("id", ["-g", targetUser]),
+    exec("getent", ["passwd", targetUser]),
+  ]);
   if (uidRes.code !== 0 || gidRes.code !== 0) {
     throw new Error(`resolveRunAsUser: could not resolve uid/gid for PI_RUN_AS_USER="${targetUser}"`);
   }
+  // passwd fields: name:x:uid:gid:gecos:home:shell. Fall back to the conventional path only if the
+  // lookup itself failed (no getent on an unusual base image), never silently on a malformed line.
+  const home = pwRes.code === 0 ? pwRes.stdout.trim().split(":")[5] : `/home/${targetUser}`;
+  if (!home) throw new Error(`resolveRunAsUser: passwd entry for "${targetUser}" has no home directory`);
   const targetUid = Number.parseInt(uidRes.stdout.trim(), 10);
   const targetGid = Number.parseInt(gidRes.stdout.trim(), 10);
   if (!Number.isInteger(targetUid) || !Number.isInteger(targetGid)) {
     throw new Error(`resolveRunAsUser: unparseable uid/gid for PI_RUN_AS_USER="${targetUser}"`);
   }
-  onLog(`resolveRunAsUser: pi will run as ${targetUser} (uid=${targetUid} gid=${targetGid})`);
-  return { uid: targetUid, gid: targetGid, user: targetUser };
+  onLog(`resolveRunAsUser: pi will run as ${targetUser} (uid=${targetUid} gid=${targetGid} home=${home})`);
+  return { uid: targetUid, gid: targetGid, user: targetUser, home };
 }
 
 /** Recursively chowns `path` to `uid:gid`. Used after `git clone`/`git push` (which, per finding

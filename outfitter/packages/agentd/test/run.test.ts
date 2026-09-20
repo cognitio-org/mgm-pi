@@ -746,14 +746,13 @@ function states_includes_idle(link: FakeLink): boolean {
   return link.sent.some((m) => m.t === "status" && (m as any).state === "idle");
 }
 
-
 test("RunController: pi is spawned with the run-as user's HOME and identity, never root's", async (t) => {
   let spawnedEnv: Record<string, string> | undefined;
   let spawnedUid: number | undefined;
   const { controller, link, spec } = await setupController(
     {},
     {
-      runAsUser: { uid: 1001, gid: 1001, user: "agent" },
+      runAsUser: { uid: 1001, gid: 1001, user: "agent", home: "/home/agent" },
       spawnPi: (opts) => {
         spawnedEnv = opts.env;
         spawnedUid = opts.uid;

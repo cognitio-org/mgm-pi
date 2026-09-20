@@ -394,7 +394,7 @@ export class RunController {
     // environment; the first extension to touch ~/.pi then dies with EACCES on /root (every run of
     // the first benchmark). Point the child at that user's own home.
     const userEnv: Record<string, string> = this.deps.runAsUser
-      ? { HOME: `/home/${this.deps.runAsUser.user}`, USER: this.deps.runAsUser.user, LOGNAME: this.deps.runAsUser.user }
+      ? { HOME: this.deps.runAsUser.home, USER: this.deps.runAsUser.user, LOGNAME: this.deps.runAsUser.user }
       : {};
     const spawnFn = this.deps.spawnPi ?? spawnPi;
     this.pi = spawnFn({

@@ -1,5 +1,6 @@
 {
   "knowledgeBases": [
-    "mgm/.pi/extensions"
+    "mgm/.pi/extensions",
+    "mgm/node_modules/@earendil-works/pi-coding-agent/docs"
   ]
 }

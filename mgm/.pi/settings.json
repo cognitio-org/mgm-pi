@@ -1,6 +1,6 @@
 {
   "defaultProvider": "litellm",
-  "defaultModel": "claude-auto-llm",
+  "defaultModel": "gpt-5.4-nano",
   "packages": [
     "npm:pi-mcp-adapter",
     "npm:pi-web-access",

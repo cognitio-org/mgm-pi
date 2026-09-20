@@ -3,7 +3,7 @@
 //
 // See docs/data-model.md for schema, indexes and the "session == pi JSONL file" rationale.
 
-export type RunState = "queued" | "provisioning" | "running" | "idle" | "stopped" | "failed";
+export type RunState = "queued" | "provisioning" | "running" | "idle" | "stopping" | "stopped" | "failed";
 
 export type ByeReason = "idle" | "stop" | "sigterm" | "error";
 
@@ -163,6 +163,10 @@ export interface RunsCollection {
   update(id: string, patch: Partial<Run>): Promise<Run | null>;
   /** Runs in an active state whose lastSeenAt is older than the cutoff (reconciler input). */
   listStale(cutoffIso: string): Promise<Run[]>;
+  /** Runs still `stopping` whose updatedAt (the moment they entered `stopping`) is older than the
+   * cutoff -- RunManager.reconcileStoppingOnce's input for cancelling a run whose graceful stop
+   * never got an agentd `bye` within STOP_GRACE_MS. */
+  listStopping(cutoffIso: string): Promise<Run[]>;
   enqueueDownMessage(id: string, message: DownMessage): Promise<void>;
   /** Removes and returns all queued down-messages, in FIFO order. */
   drainDownMessages(id: string): Promise<DownMessage[]>;

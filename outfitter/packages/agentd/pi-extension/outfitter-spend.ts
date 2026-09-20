@@ -104,6 +104,7 @@ export default function outfitterSpend(pi: PiExtensionApi): void {
   // provider call, so its entries are exactly the prior history to baseline against; the
   // after_provider_response handler below also lazily initialises from its own ctx (before computing
   // the delta) as a fallback in case session_start doesn't fire first for some reason.
+  let warned = false;
   let previousTotal: number | undefined;
 
   pi.on("session_start", (_ev, ctx) => {
@@ -120,9 +121,13 @@ export default function outfitterSpend(pi: PiExtensionApi): void {
     previousTotal = currentTotal;
     try {
       appendFileSync(spendFile, `${JSON.stringify(line)}\n`);
-    } catch {
-      // Best-effort: a write failure here (e.g. disk full) shouldn't break the agent turn. agentd's
-      // own SpendTailer simply sees one fewer line; the run's cost estimate just under-counts.
+    } catch (err: any) {
+      // Best-effort: a write failure must not break the agent turn, but it must be visible: the
+      // first cloud sessions lost every spend line to a permission error that this swallowed.
+      if (!warned) {
+        warned = true;
+        process.stderr.write(`outfitter-spend: cannot append to ${spendFile}: ${err?.message ?? err}\n`);
+      }
     }
   });
 }

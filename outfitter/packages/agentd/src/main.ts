@@ -52,7 +52,13 @@ async function main(): Promise<void> {
   const workspace = process.env.WORKSPACE ?? DEFAULT_WORKSPACE;
   const piBin = process.env.PI_BIN ?? DEFAULT_PI_BIN;
 
+  // Startup phases are timed: the first cloud sessions showed ~3 minutes between Cloud Run's start
+  // time and agentd's first log line, and nothing here should take more than seconds.
+  const bootStart = Date.now();
+  const phase = (name: string) => console.log(JSON.stringify({ severity: "INFO", message: `startup: ${name}`, elapsedMs: Date.now() - bootStart, runId }));
+  phase("main entered");
   const piVersion = await getPiVersion(piBin);
+  phase(`pi version resolved (${piVersion})`);
   const wsUrl = buildWsUrl(apiOrigin, runId);
 
   // E1.6: one structured JSON log line per event to stdout (human-readable when stdout is a TTY,
@@ -126,6 +132,7 @@ async function main(): Promise<void> {
     process.exit(1);
   });
 
+  phase("connecting to the link");
   link.connect();
 }
 

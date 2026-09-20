@@ -68,16 +68,36 @@ function cloneUrlFor(repo: string): string {
   return repo.includes("://") || repo.startsWith("git@") ? repo : `https://github.com/${repo}.git`;
 }
 
-function mapStatusToRunState(status: string): Run["state"] {
+/** Maps an agentd `status.state` (protocol.md: cloning|restoring|starting|running|idle|
+ * checkpointing|stopping) to the Run.state this api stores. `checkpointing` is a transient blip
+ * inside whatever the run was already doing (a mid-turn checkpoint push) so it leaves the run's
+ * current state untouched rather than falling through to "provisioning" and spuriously re-queuing
+ * down-messages or hiding the run's real state from the UI. `stopping` maps to the run state of the
+ * same name (routes/sessions.ts's graceful `/stop` also sets it directly, ahead of agentd ever
+ * reporting it). Anything else not yet running/idle (cloning/restoring/starting) is "provisioning". */
+function mapStatusToRunState(status: string, currentState: Run["state"]): Run["state"] {
   if (status === "running") return "running";
   if (status === "idle") return "idle";
+  if (status === "checkpointing") return currentState;
+  if (status === "stopping") return "stopping";
   return "provisioning";
 }
 
-/** A run is "ready" once agentd has reported it running or idle — i.e. pi is up and can actually
- * receive a prompt/steer/etc. Before that (provisioning) down-messages must stay queued. */
+/** A run is "ready" once agentd has reported it running or idle -- i.e. pi is up and can actually
+ * receive a prompt/steer/etc -- or once this api itself has asked it to stop (`stopping`): the
+ * agent is still live and connected in that state, just draining toward a graceful `bye`, so a
+ * queued `stop` down-message (or anything else still pending) must still be delivered rather than
+ * held back. Before "ready" (provisioning) down-messages must stay queued -- there's no pi process
+ * listening yet. */
 function isReadyState(state: Run["state"]): boolean {
-  return state === "running" || state === "idle";
+  return state === "running" || state === "idle" || state === "stopping";
+}
+
+/** True once a run has reached a terminal state (bye already processed it, or it failed). Used to
+ * make `bye` final: a `status`/`heartbeat` frame that arrives after it (e.g. a straggler the socket
+ * still delivers post-bye) must not resurrect the run into a non-terminal state. */
+function isTerminalState(state: Run["state"]): boolean {
+  return state === "stopped" || state === "failed";
 }
 
 export class AgentLink {
@@ -209,7 +229,7 @@ export class AgentLink {
       buffer.stop();
       return closeQuietly(socket, 4404, "run not found");
     }
-    if (!["provisioning", "running", "idle"].includes(run.state)) {
+    if (!["provisioning", "running", "idle", "stopping"].includes(run.state)) {
       buffer.stop();
       return closeQuietly(socket, 4409, `run is ${run.state}`);
     }
@@ -298,10 +318,25 @@ export class AgentLink {
       });
     }
     buffer.stop();
+
+    // Bug fix: up-frames used to be handed to handleUpFrame per-message with no await on the
+    // previous call, so two frames on the same connection (e.g. a `status` frame immediately
+    // followed by `bye`) were handled concurrently instead of in arrival order. Each call does its
+    // own async store round-trips (findById, then update), so whichever call's update happened to
+    // land last won regardless of which frame arrived first -- observed in production as a `bye`'s
+    // terminal "stopped" getting silently overwritten back to "provisioning" by a `status:
+    // stopping` frame that arrived first but finished its store update after `bye`'s. `chain`
+    // serializes handling per connection: each frame's handleUpFrame only starts once the previous
+    // one has fully settled. Errors are caught and logged (matching the previous per-message
+    // behavior) rather than left to reject `chain`, so one bad frame never wedges every frame after
+    // it on this connection.
+    let chain: Promise<void> = Promise.resolve();
     socket.on("message", (raw: Buffer | string) => {
-      this.handleUpFrame(runId, session.id, socket, raw).catch((err) => {
-        request.log.error(err, "agentlink up-frame failed");
-      });
+      chain = chain.then(() =>
+        this.handleUpFrame(runId, session.id, socket, raw).catch((err) => {
+          request.log.error(err, "agentlink up-frame failed");
+        }),
+      );
     });
   }
 
@@ -385,12 +420,16 @@ export class AgentLink {
       // attached, to check the per-run token (finding #2) before doing anything else with the
       // socket. That's also where its lastSeenAt/drain behaviour now lives.
       case "status": {
-        const state = mapStatusToRunState(String(frame.state));
         const before = await this.store.runs.findById(runId);
+        // Make `bye` final: once a run has reached a terminal state, a straggler status frame
+        // (e.g. one already in flight when `bye` landed) must not resurrect it.
+        if (before && isTerminalState(before.state)) break;
+        const state = mapStatusToRunState(String(frame.state), before?.state ?? "provisioning");
         const wasReady = !!before && isReadyState(before.state);
         await this.store.runs.update(runId, { state, lastSeenAt: now, updatedAt: now });
         this.sse.publish(sessionId, { type: "status", data: frame });
-        // First transition into running/idle: drain anything queued while provisioning (in order).
+        // First transition into running/idle/stopping: drain anything queued while provisioning
+        // (in order).
         if (!wasReady && isReadyState(state)) {
           const pending = await this.store.runs.drainDownMessages(runId);
           for (const message of pending) socket.send(JSON.stringify(message));
@@ -487,6 +526,9 @@ export class AgentLink {
         break;
       }
       case "heartbeat": {
+        const before = await this.store.runs.findById(runId);
+        // See the "status" case above: bye is final, a late heartbeat must not touch a terminal run.
+        if (before && isTerminalState(before.state)) break;
         await this.store.runs.update(runId, { lastSeenAt: now, updatedAt: now });
         break;
       }

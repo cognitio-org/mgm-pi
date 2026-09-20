@@ -54,6 +54,10 @@ export interface Config {
   /** A stale run younger than this is never reconciler-failed for missing heartbeats: it may
    * simply still be provisioning (Cloud Run Job cold start). Default 10 minutes. */
   provisioningGraceMs: number;
+  /** STOP_GRACE_MS: how long a run may sit in `stopping` (waiting for agentd's graceful `stop` ->
+   * checkpoint -> `bye`) before RunManager.reconcileStoppingOnce cancels its provider execution
+   * directly and marks it `stopped`. Default 60s. */
+  stopGraceMs: number;
   /** DOWN_QUEUE_POLL_MS: how often the "link" role polls the store for down-messages queued by a
    * sibling process (web role, or another link instance) for a run whose socket lives in *this*
    * process. Needed because AgentLink keeps sockets in memory and outfitter-api / outfitter-link
@@ -115,6 +119,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     defaultCloudModel: env.DEFAULT_CLOUD_MODEL ?? "litellm/claude-auto-llm",
     ngrokWebhookSecret: env.NGROK_WEBHOOK_SECRET ?? "",
     provisioningGraceMs: envInt("PROVISIONING_GRACE_MS", 10 * 60_000),
+    stopGraceMs: envInt("STOP_GRACE_MS", 60_000),
     downQueuePollMs: envInt("DOWN_QUEUE_POLL_MS", 1500),
   };
 }

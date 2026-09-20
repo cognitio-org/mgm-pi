@@ -148,13 +148,27 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     if (!session) return;
     const run = await ctx.store.runs.findActiveForSession(session.id);
     if (!run) return reply.code(404).send({ error: "no active run" });
-    if (ctx.agentLink.hasSocket(run.id)) {
-      // graceful: agentd checkpoints, sends bye, and agentlink's bye handler marks it stopped
-      await ctx.agentLink.send(run.id, { t: "stop", reason: "user" });
-      return { run };
+
+    if (run.state !== "running" && run.state !== "idle") {
+      // No live agent yet (queued/provisioning) to ask gracefully -- cancel the provider execution
+      // directly, same as before.
+      const stopped = await ctx.runs.stop(run.id, "user");
+      return { run: stopped };
     }
-    const stopped = await ctx.runs.stop(run.id, "user");
-    return { run: stopped };
+
+    // Graceful stop: always enqueue the `stop` down-message through the store rather than branch on
+    // ctx.agentLink.hasSocket, which is process-local -- outfitter-api (this, the web role) never
+    // holds an agentd socket at all (see docs/protocol.md "Two origins"), so hasSocket is always
+    // false here and used to fall through to a provider cancel (SIGTERM) instead of the graceful
+    // stop this route means to send. agentLink.send delivers immediately if this process happens to
+    // hold the live socket (e.g. local dev's role "all"), otherwise the link role's poller picks the
+    // message up from the store on its next tick. Mark the run `stopping` *after* the send call so
+    // an immediate, same-process delivery above still sees the run as running/idle and isn't forced
+    // to queue instead. If agentd never finishes the graceful stop (checkpoint + `bye`) within
+    // STOP_GRACE_MS, RunManager.reconcileStoppingOnce cancels the sandbox via the provider.
+    await ctx.agentLink.send(run.id, { t: "stop", reason: "user" });
+    const stopping = await ctx.store.runs.update(run.id, { state: "stopping", updatedAt: new Date().toISOString() });
+    return { run: stopping };
   });
 
   app.post("/api/sessions/:id/wake", async (req, reply) => {

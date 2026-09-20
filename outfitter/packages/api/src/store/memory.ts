@@ -93,7 +93,7 @@ class MemoryRuns implements RunsCollection {
   }
 
   async findActiveForSession(sessionId: string): Promise<Run | null> {
-    const active = new Set(["queued", "provisioning", "running", "idle"]);
+    const active = new Set(["queued", "provisioning", "running", "idle", "stopping"]);
     for (const row of this.rows.values()) {
       if (row.sessionId === sessionId && active.has(row.state)) return clone(row);
     }
@@ -109,10 +109,14 @@ class MemoryRuns implements RunsCollection {
   }
 
   async listStale(cutoffIso: string): Promise<Run[]> {
-    const active = new Set(["queued", "provisioning", "running", "idle"]);
+    const active = new Set(["queued", "provisioning", "running", "idle", "stopping"]);
     return [...this.rows.values()]
       .filter((r) => active.has(r.state) && (r.lastSeenAt ?? r.createdAt) < cutoffIso)
       .map(clone);
+  }
+
+  async listStopping(cutoffIso: string): Promise<Run[]> {
+    return [...this.rows.values()].filter((r) => r.state === "stopping" && r.updatedAt < cutoffIso).map(clone);
   }
 
   async enqueueDownMessage(id: string, message: DownMessage): Promise<void> {

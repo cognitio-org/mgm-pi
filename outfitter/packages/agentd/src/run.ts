@@ -365,6 +365,10 @@ export class RunController {
     if (!jsonl) jsonl = emptySessionJsonl(spec.session.id, spec.session.cwd);
     const snapshotFile = await writeSnapshotFileFn(jsonl);
     const sessionFile = await importSessionFn(snapshotFile, this.deps.workspace, spec.session.id);
+    // The import ran as agentd (root in the image); pi, running as the unprivileged agent user,
+    // appends to this file and creates siblings in its directory, so hand both over now. Without
+    // this the first round-two session died with EACCES on its first write.
+    await this.deps.chownWorkspace?.(resolve(sessionFile, ".."));
 
     if (!spec.repo) {
       this.workspaceBaseline = await snapshotWorkspaceFiles(this.deps.workspace);
@@ -386,11 +390,17 @@ export class RunController {
       secretEnv.OUTFITTER_SPEND_FILE = this.deps.spendFile;
       await this.ensureSpendFile(this.deps.spendFile);
     }
+    // pi runs as the unprivileged agent user but would otherwise inherit root's HOME from agentd's
+    // environment; the first extension to touch ~/.pi then dies with EACCES on /root (every run of
+    // the first benchmark). Point the child at that user's own home.
+    const userEnv: Record<string, string> = this.deps.runAsUser
+      ? { HOME: this.deps.runAsUser.home, USER: this.deps.runAsUser.user, LOGNAME: this.deps.runAsUser.user }
+      : {};
     const spawnFn = this.deps.spawnPi ?? spawnPi;
     this.pi = spawnFn({
       piBin: this.deps.piBin,
       args: rendered.args,
-      env: { ...rendered.env, ...secretEnv },
+      env: { ...rendered.env, ...secretEnv, ...userEnv },
       cwd: this.deps.workspace,
       uid: this.deps.runAsUser?.uid,
       gid: this.deps.runAsUser?.gid,
@@ -440,6 +450,9 @@ export class RunController {
     try {
       await mkdir(resolve(path, ".."), { recursive: true });
       const handle = await openFile(path, "a", 0o660);
+      // The mode passed to open() is subject to root's umask (022 in the image), which strips the
+      // group write bit and leaves the agent user unable to append. Set it explicitly.
+      await handle.chmod(0o660);
       await handle.close();
       if (this.deps.runAsUser) await chown(path, 0, this.deps.runAsUser.gid);
     } catch (err: any) {

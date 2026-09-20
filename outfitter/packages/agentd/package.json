@@ -11,7 +11,7 @@
     "build": "tsc -p tsconfig.json",
     "postbuild": "chmod +x dist/test/fake-pi.js",
     "pretest": "npm run build",
-    "test": "node --test dist/test/",
+    "test": "node --test 'dist/test/*.test.js'",
     "dev:fake-api": "npm run build && node dist/dev/fake-api.js"
   },
   "dependencies": {

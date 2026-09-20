@@ -745,3 +745,26 @@ test("RunController: handleSpendLine drops a malformed/hostile spend line instea
 function states_includes_idle(link: FakeLink): boolean {
   return link.sent.some((m) => m.t === "status" && (m as any).state === "idle");
 }
+
+test("RunController: pi is spawned with the run-as user's HOME and identity, never root's", async (t) => {
+  let spawnedEnv: Record<string, string> | undefined;
+  let spawnedUid: number | undefined;
+  const { controller, link, spec } = await setupController(
+    {},
+    {
+      runAsUser: { uid: 1001, gid: 1001, user: "agent", home: "/home/agent" },
+      spawnPi: (opts) => {
+        spawnedEnv = opts.env;
+        spawnedUid = opts.uid;
+        // Do not actually drop privileges in the test process: spawn the fake pi as ourselves.
+        return spawnPi({ ...opts, uid: undefined, gid: undefined, piBin: process.execPath, args: [fakePiPath, ...opts.args] });
+      },
+    },
+  );
+  t.after(() => controller.dispose());
+  link.deliver(spec);
+  await waitFor(() => states_includes_idle(link));
+  assert.equal(spawnedUid, 1001);
+  assert.equal(spawnedEnv!.HOME, "/home/agent");
+  assert.equal(spawnedEnv!.USER, "agent");
+});

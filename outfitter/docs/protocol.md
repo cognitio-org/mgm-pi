@@ -67,7 +67,7 @@ Up (agentd → api):
 | t | fields | when |
 |---|---|---|
 | `hello` | `runId, sessionId, agentdVersion, piVersion, lastAckedSeq, runToken` | first frame after connect; `runToken` is `RUN_TOKEN` echoed back (see "Run token" above) |
-| `status` | `state: "cloning"\|"restoring"\|"starting"\|"running"\|"idle"\|"checkpointing"\|"stopping", detail?` | on change |
+| `status` | `state: "cloning"\|"restoring"\|"starting"\|"running"\|"idle"\|"checkpointing"\|"stopping", detail?` | on change; the api maps this to `Run.state` (`agentlink.ts`'s `mapStatusToRunState`): `running`/`idle` map straight across, `checkpointing` leaves the run's current state untouched (a mid-turn checkpoint push, not a state change), `stopping` maps to the `Run.state` of the same name, anything else (`cloning`/`restoring`/`starting`) maps to `provisioning`. A `status`/`heartbeat` frame that arrives after the run has already reached a terminal state (`bye` already processed) is ignored — `bye` is final. |
 | `entry` | `seq, entry` (a pi session entry exactly as pi writes it to JSONL: message, model_change, compaction, custom, ...) | whenever pi appends to the session file (agentd tails the file; this is the durable transcript) |
 | `event` | `seq, event` (a raw pi RPC event: agent_start, message_update, tool_execution_start/update/end, agent_end, extension_ui_request, ...) | streamed for live UI; not persisted except `extension_ui_request` |
 | `spend` | `keySpend?, keyMax?, modelGroup?, callId?, estimate?` | `keySpend`/`keyMax`/`modelGroup`/`callId` from LiteLLM's `x-litellm-key-spend`/`-max-budget`/`-model-group`/`-call-id` response headers (relayed by the `outfitter-spend` pi extension's `after_provider_response` hook, `packages/agentd/pi-extension/outfitter-spend.ts`, loaded only under agentd -- see E2.11); absent fields mean the response carried no LiteLLM headers at all (non-LiteLLM route) or an incomplete set (e.g. no budget cap, so no `-max-budget`). `estimate` is pi's own cumulative cost estimate for the run so far (agentd's running sum of the extension's own per-response `usage` estimates, `packages/agentd/src/pi.ts`'s `SpendTailer`), independent of LiteLLM's headers -- it is what lets `Run.costEstimate` be real even for a guru whose route never returns spend headers. |
@@ -110,7 +110,10 @@ it.
 - `GET /api/sessions/:id/entries?after=<entryId>` → pi entries in tree order
 - `GET /api/sessions/:id/stream` → SSE: `event: entry|event|status|spend|checkpoint`, `data: <json>`
 - `POST /api/sessions/:id/messages` `{text, behavior?}` → wakes a run if none is running
-- `POST /api/sessions/:id/abort` · `/stop` · `/wake` · `/ui-response {id,value}`
+- `POST /api/sessions/:id/abort` · `/stop` (graceful for a `running`/`idle` run: enqueues a `stop`
+  down-message through the store and sets `stopping` — see "Run state machine" above; cancels via
+  the provider directly for a `queued`/`provisioning` run, which has no live agent to ask) · `/wake`
+  · `/ui-response {id,value}`
 - `GET /api/sessions/:id/diff` · `GET /api/sessions/:id/export.jsonl`
 - `GET|POST|PUT /api/gurus`, `/api/environments`
 - `GET /api/me` → `{email}` from `x-goog-iap-jwt-assertion` (dev: `OUTFITTER_DEV=1` → `dev@localhost`)
@@ -127,7 +130,17 @@ same id, refused while a run is `running`), and `GET /api/sessions` for the pick
 
 ## Run state machine
 
-`queued → provisioning → running ⇄ idle → stopped | failed`. `idle` means pi is waiting for input;
-after `idleStopSeconds` agentd checkpoints and exits (`bye idle`), the API marks the run `stopped` and
-the session stays `open`. A new message on an open session with no live run creates a new run
-(`wake`) that restores from the last snapshot.
+`queued → provisioning → running ⇄ idle → stopping → stopped | failed`. `idle` means pi is waiting
+for input; after `idleStopSeconds` agentd checkpoints and exits (`bye idle`), the API marks the run
+`stopped` and the session stays `open`. A new message on an open session with no live run creates a
+new run (`wake`) that restores from the last snapshot.
+
+`stopping` is entered by `POST /api/sessions/:id/stop` (see below) while a run is `running`/`idle`:
+the graceful path, waiting on agentd to checkpoint and send `bye`. It's an active state (counts for
+`findActiveForSession`/`wake`, so no second run starts on the same session while one is stopping) and
+a "ready" one for down-message delivery purposes (the agent is still connected, just draining toward
+`bye`). If agentd never finishes within `STOP_GRACE_MS` (env, default 60s) of entering `stopping`,
+`RunManager.reconcileStoppingOnce` (the same reconciler loop as the stale-run check above) cancels
+the sandbox via the provider directly and marks the run `stopped` (`reason: "stop grace expired"`).
+A `queued`/`provisioning` run has no live agent to ask gracefully, so `/stop` cancels it via the
+provider immediately instead of going through `stopping`.

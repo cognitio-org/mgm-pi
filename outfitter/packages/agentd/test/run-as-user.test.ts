@@ -14,11 +14,13 @@ test("resolveRunAsUser: as root, resolves PI_RUN_AS_USER's uid/gid via the injec
     targetUser: "agent",
     execFn: async (cmd, args) => {
       calls.push({ cmd, args });
+      if (cmd === "getent") return { stdout: "agent:x:1000:1000::/home/agent:/usr/sbin/nologin\n", code: 0 };
       if (args[0] === "-u") return { stdout: "1000\n", code: 0 };
       return { stdout: "1000\n", code: 0 };
     },
   });
-  assert.deepEqual(result, { uid: 1000, gid: 1000, user: "agent" });
+  assert.deepEqual(result, { uid: 1000, gid: 1000, user: "agent", home: "/home/agent" });
+  assert.ok(calls.some((c) => c.cmd === "getent" && c.args[1] === "agent"));
   assert.ok(calls.some((c) => c.cmd === "id" && c.args[0] === "-u" && c.args[1] === "agent"));
   assert.ok(calls.some((c) => c.cmd === "id" && c.args[0] === "-g" && c.args[1] === "agent"));
 });

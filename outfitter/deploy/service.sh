@@ -100,7 +100,7 @@ fi
 # SANDBOX_PROVIDER and CLOUDRUN_JOB go to BOTH roles: the provider is constructed at boot (config
 # validation), even though only the web role ever wakes a run. Without them the API defaults to the
 # in-process dev provider and refuses to start (the link revision 00005 failure).
-ENV_VARS="OUTFITTER_ROLE=${ROLE},OUTFITTER_ORIGIN=${ORIGIN},AGENT_SA_EMAIL=${AGENT_SA_EMAIL},GCP_PROJECT=${PROJECT},GCP_REGION=${REGION},TUNNEL_DOMAIN_LMSTUDIO=${TUNNEL_DOMAIN_LMSTUDIO},SANDBOX_PROVIDER=cloudrun,CLOUDRUN_JOB=${CLOUDRUN_JOB}"
+ENV_VARS="OUTFITTER_ROLE=${ROLE},OUTFITTER_ORIGIN=${ORIGIN},AGENT_SA_EMAIL=${AGENT_SA_EMAIL},GCP_PROJECT=${PROJECT},GCP_REGION=${REGION},TUNNEL_DOMAIN_LMSTUDIO=${TUNNEL_DOMAIN_LMSTUDIO},SANDBOX_PROVIDER=cloudrun,CLOUDRUN_JOB=${CLOUDRUN_JOB},IDLE_STOP_SECONDS=${IDLE_STOP_SECONDS:-1800}"
 if [[ "${ROLE}" == "web" ]]; then
   # Needed both for IAP_AUDIENCE (below) and for the run.invoker binding further down.
   PROJECT_NUMBER="$(gcloud projects describe "${PROJECT}" --format='value(projectNumber)')"

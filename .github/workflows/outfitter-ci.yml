@@ -1,0 +1,67 @@
+name: Outfitter CI
+on:
+  push:
+    branches: [main]
+    paths: ["outfitter/**", "mgm/**", ".github/workflows/outfitter-ci.yml"]
+  pull_request:
+    paths: ["outfitter/**", "mgm/**", ".github/workflows/outfitter-ci.yml"]
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    defaults: { run: { working-directory: outfitter } }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 24, cache: npm, cache-dependency-path: outfitter/package-lock.json }
+      - run: npm ci
+      - name: Unit, integration and end-to-end tests (all workspaces)
+        run: npm test
+
+  # E2.12: the deploy failures of 2026-09-20 were all image or deploy-env problems invisible to
+  # `npm test`. Build both images the way deploy/ does and boot each with the environment the deploy
+  # scripts set, so a packaging or boot-time config regression fails here instead of on Cloud Run.
+  images:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build the control-plane image
+        run: docker build -f outfitter/packages/api/Dockerfile -t outfitter-api:ci outfitter/
+      - name: Boot the control-plane image in the link role with the deploy environment
+        run: |
+          docker run -d --name api -p 18080:8080 \
+            -e MONGODB_URI=memory -e OUTFITTER_DEV=1 -e OUTFITTER_DEV_TOKEN=ci \
+            -e OUTFITTER_ROLE=link -e OUTFITTER_ORIGIN=http://localhost:8080 \
+            -e AGENT_SA_EMAIL=agent@ci.local -e GCP_PROJECT=ci -e GCP_REGION=us-central1 \
+            -e TUNNEL_DOMAIN_LMSTUDIO=ci.ngrok.app -e SANDBOX_PROVIDER=cloudrun -e CLOUDRUN_JOB=ci \
+            -e IDLE_STOP_SECONDS=1800 outfitter-api:ci
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -d '{}' http://localhost:18080/api/hooks/ngrok || true)
+            [ "$code" = "401" ] && break; sleep 1
+          done
+          docker logs api
+          [ "$code" = "401" ] || { echo "link role did not come up (got '$code')"; exit 1; }
+          curl -s -o /dev/null -w '%{http_code}\n' http://localhost:18080/api/sessions | grep -qx 404
+          docker rm -f api
+      - name: Build the sandbox image
+        run: docker build -f outfitter/image/Dockerfile -t outfitter-agent:ci .
+      - name: pi starts as the agent user with its own home and loads every extension
+        run: |
+          docker run --rm --entrypoint sh outfitter-agent:ci -c '
+            set -e
+            test "$(stat -c %U /workspace)" = agent
+            test "$(stat -c %U:%G /run/outfitter)" = root:agent
+            home=$(getent passwd agent | cut -d: -f6); test -d "$home"
+            su agent -s /bin/sh -c "cd /tmp && HOME=$home /opt/mgm/node_modules/.bin/pi --version"
+            out=$(su agent -s /bin/sh -c "cd /tmp && HOME=$home /opt/mgm/node_modules/.bin/pi --help" 2>&1) || { echo "$out"; exit 1; }
+            ! echo "$out" | grep -qi "failed to load extension"
+            ! test -e /opt/mgm/.pi/extensions/mgm-voice
+            ! test -e /opt/mgm/.pi/npm/node_modules/open-codebase-index
+          '
+      - name: agentd refuses to start without its run identity (and says so in structured JSON)
+        run: |
+          set +e
+          out=$(docker run --rm outfitter-agent:ci 2>&1); code=$?
+          set -e
+          echo "$out"
+          [ "$code" -ne 0 ]
+          echo "$out" | grep -q '"severity":"ERROR"'

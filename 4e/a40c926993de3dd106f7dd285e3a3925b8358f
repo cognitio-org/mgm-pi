@@ -1,0 +1,41 @@
+mgm/.pi/extensions/connect/index.ts
+  s_25c805ebe232f3::t_cea9b4dff929a6 26-42,45,90,93-103,106-143
+  s_25c805ebe232f3::t_6a05dfe75fac13 144
+mgm/tests/banner.test.ts
+  s_25c805ebe232f3::t_43fd046e9cf87e 3,6-7,9-48,50,53,55-57,59-65,67-74
+mgm/.pi/extensions/mgm-banner/lib.ts
+  s_25c805ebe232f3::t_c0d81e9981d4e3 60-62
+  s_25c805ebe232f3::t_f6c93bd72ba0a4 1,4,6-11,13-35,40-59,63-67,69-71,73-75,77,83-84,86,88-92,94-95,102,104-107,111,113,116,120-122
+mgm/tests/harness.ts
+  s_25c805ebe232f3::t_43fd046e9cf87e 2,27-28,31
+mgm/.pi/extensions/mgm-banner/index.ts
+  s_25c805ebe232f3::t_738a66ff176162 2-7,9,13-19,22,25-41
+mgm/scripts/install.sh
+  s_25c805ebe232f3::t_5deecf8d11a6c3 3,8
+mgm/README.md
+  s_25c805ebe232f3::t_07b32968b7f13a 12-25,55-56
+  s_25c805ebe232f3::t_5deecf8d11a6c3 184
+mgm/tests/extensions.test.ts
+  s_25c805ebe232f3::t_9f8625a68fff53 224,246
+  s_25c805ebe232f3::t_43fd046e9cf87e 192-218,223,225,232-241,245,247-251
+mgm/bin/mgm
+  s_25c805ebe232f3::t_07b32968b7f13a 13-17
+.env.example
+  s_25c805ebe232f3::t_07b32968b7f13a 1-2,4-5,7-8,11,14-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "4ea40c926993de3dd106f7dd285e3a3925b8358f",
+  "prompts": {},
+  "sessions": {
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -223,11 +223,11 @@ research on Sonnet; review on Opus).
   bounded history (last 7 days of transitions) so the dashboard can show uptime. Exposed as
   `GET /api/providers` and an SSE stream; each transition is a `custom` entry on any running session
   that depends on that provider.
-- **E2.12 Image smoke in CI**: `npm test` exercises the built workspace, not the container images,
-  so a packaging error (a workspace dependency missing from `packages/api/Dockerfile`, found by the
-  first deploy after the provider refactor) is invisible until Cloud Run rejects the revision. Add a
-  CI job that builds both images and boots each with a health probe (api in the link role; agent
-  image running `pi --version` as the agent user).
+- **E2.12 Image smoke in CI** (done, `.github/workflows/outfitter-ci.yml`): the repo's CI only ran
+  on `mgm/**`, so no Outfitter PR had run its tests in CI at all, and image or deploy-env errors
+  only surfaced when Cloud Run rejected a revision. The workflow now runs every suite and builds
+  both images, boots the API in the link role with the deploy script's environment, and starts pi
+  in the sandbox image as the agent user checking that every extension loads.
 - **E2.9 Wake latency measurement**: script that wakes a stopped session ten times against the real
   Cloud Run Job and records time to `status running`; sets the idle-stop defaults from data.
   First measurements (2026-09-20, 2.16 GB image, 1 vCPU/2 GiB): execution created to Cloud Run

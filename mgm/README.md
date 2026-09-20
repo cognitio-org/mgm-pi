@@ -213,6 +213,34 @@ Loading this package at all needs a pre-bundling step, for reasons in
 One trap: running an installed bundle from inside this checkout loads both copies of the extensions
 and pi refuses the duplicate tools. Run the installed `mgm` anywhere else, or use `bin/mgm` here.
 
+## Context window (`/context`)
+
+What is actually in the window, measured from the request pi sends rather than guessed from the
+transcript: the system prompt, every tool schema, your messages, replies, thinking, tool output and
+images, with the free space and a one-line verdict. Tool output is usually the surprise.
+
+```
+█████████████████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+61,500 of 128,000 tokens 48% used
+■ system prompt      5,501   4.3%     ■ tool output       48,317    38%
+■ tool schemas       4,716   3.7%     □ free              66,500
+```
+
+It also says what a compaction would reclaim and where the trigger sits, since mgm's compaction knows
+what it would mask first. `/context off` hides the panel.
+
+`/context export` writes a **self-contained HTML report** and opens it in your browser: one file with
+inline SVG (a proportional bar and a donut), a legend, the largest tool schemas, and the Mermaid
+source in a fold for pasting into a document. No scripts, no fonts, no network, so it still works
+offline and can be mailed to someone. Reports go to `~/.mgm/reports` (`MGM_REPORT_DIR` to move them,
+`MGM_NO_BROWSER=1` to write without opening).
+
+The report builder is deliberately generic — `htmlReport`, `svgBar`, `svgDonut`, `legend`, `table`
+from `.pi/extensions/mgm-context/report.ts` — so any extension can turn what it knows into a page you
+can look at. Mermaid renders nowhere in a terminal; pi's own toolkit can display images in Kitty,
+iTerm2, Ghostty, WezTerm and Warp, but rendering Mermaid to an image needs a headless browser, which
+is not worth a few hundred megabytes for a picture a good text layout beats.
+
 ## Language servers (`.pi/agent/lsp.json`)
 
 `pi-lsp` starts a language server after a `write` or `edit`, waits for its diagnostics and appends

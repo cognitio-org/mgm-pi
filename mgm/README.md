@@ -98,7 +98,7 @@ and lockfiles by up to 40%. `.pi/extensions/compaction/` addresses this in layer
 | Observation masking | all but the newest N (2 on ≤64k windows, 8 above) tool results larger than 1.5k/4k chars are replaced by a 400-char head + marker, by result age not user turn, so a read loop inside one turn is pruned too (no LLM call; the session file keeps the full output) | every request, `context` hook |
 | Proactive trigger | compact at 60% of the window (85% above 64k) while idle, before pi's threshold or an overflow | `agent_end` |
 | Chunked summary | history folded into the summary in chunks ≤ 30% of the summarizer's window, summary capped at 5% of the working window (1k–3k), "shorten" retry instead of discard on length | `session_before_compact` |
-| Cloud summarizer | `MGM_SUMMARY_MODEL` (default `litellm/claude-haiku-4-5`) writes the summary when it has credentials; otherwise the working model does | same |
+| Configurable summarizer | `/compaction model <provider/id>` picks who writes the summary (saved as `mgm.summaryModel` in `.pi/settings.json`; `self` = the working model; `default` = `litellm/claude-haiku-4-5`; `MGM_SUMMARY_MODEL` env overrides). Falls back to the working model when the choice has no credentials | same |
 
 **What is never touched.** The system prompt and tool schemas live outside the message list, so
 neither masking nor compaction can see them. Masking only rewrites the text of `toolResult`

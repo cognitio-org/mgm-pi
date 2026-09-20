@@ -8,8 +8,9 @@
  *  2. Chunked summarization (`session_before_compact`): history is folded into the summary in
  *     chunks no larger than 40% of the summarizer's window, with a hard cap on summary length and
  *     a "shorten" retry instead of pi's discard-on-length. Budgets derive from ctx.model.contextWindow.
- *  3. Cloud summarizer: MGM_SUMMARY_MODEL (default litellm/claude-haiku-4-5) writes the summary
- *     when reachable; otherwise the working model does, chunked to its own window.
+ *  3. Configurable summarizer: `/compaction model <provider/id>` (persisted in settings.json as
+ *     mgm.summaryModel; MGM_SUMMARY_MODEL overrides; default litellm/claude-haiku-4-5; "self" =
+ *     the working model). Falls back to the working model when the choice has no credentials.
  *  4. Proactive trigger (`agent_end`): compact at 70% (small windows) / 85% instead of waiting for
  *     pi's reserve threshold or an overflow error, because LM Studio silently truncates the prompt
  *     on overflow and pi never sees an error to recover from.
@@ -23,7 +24,9 @@
  *  /compaction now      compact immediately
  *  MGM_COMPACTION=off   disable everything; MGM_COMPACTION_LOG=<file> appends a JSON line per event
  */
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { convertToLlm, serializeConversation, estimateTokens, findCutPoint } from "@earendil-works/pi-coding-agent";
 import { uuidv7 } from "@earendil-works/pi-ai";
@@ -33,11 +36,27 @@ import {
 } from "./lib.ts";
 
 const OFF = process.env.MGM_COMPACTION === "off";
-const PREFERRED = process.env.MGM_SUMMARY_MODEL ?? "litellm/claude-haiku-4-5";
+const DEFAULT_SUMMARIZER = "litellm/claude-haiku-4-5";
+// Summarizer resolution: MGM_SUMMARY_MODEL env > settings.json "mgm": {"summaryModel"} > default.
+// "self" means: always summarize with the working model.
+const settingsPath = () => join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "settings.json");
+const readSettings = (): any => { try { return JSON.parse(readFileSync(settingsPath(), "utf8")); } catch { return {}; } };
+function summarizerSetting(): { value: string; source: string } {
+  if (process.env.MGM_SUMMARY_MODEL) return { value: process.env.MGM_SUMMARY_MODEL, source: "MGM_SUMMARY_MODEL" };
+  const v = readSettings().mgm?.summaryModel;
+  return v ? { value: String(v), source: "settings.json mgm.summaryModel" } : { value: DEFAULT_SUMMARIZER, source: "default" };
+}
+function saveSummarizer(value: string | undefined) {
+  const s = readSettings(); s.mgm = { ...(s.mgm ?? {}) };
+  if (value) s.mgm.summaryModel = value; else delete s.mgm.summaryModel;
+  writeFileSync(settingsPath(), JSON.stringify(s, null, 2) + "\n");
+}
 const log = (o: object) => { if (process.env.MGM_COMPACTION_LOG) appendFileSync(process.env.MGM_COMPACTION_LOG, JSON.stringify({ t: new Date().toISOString(), ...o }) + "\n"); };
 
+let ctx0Models: () => string[] = () => [];
 export default function (pi: ExtensionAPI) {
   if (OFF) return;
+  pi.on("session_start", async (_ev, ctx) => { ctx0Models = () => ctx.modelRegistry.getAvailable().map((m) => `${m.provider}/${m.id}`); });
   let lastMasked = 0, lastSaved = 0;
   let compacting = false;
   let backoffUntilPercent = 0;   // after "nothing to compact", wait until usage grows before retrying
@@ -75,9 +94,10 @@ export default function (pi: ExtensionAPI) {
     const toSummarize = (branchEntries.slice(boundaryStart, cut.firstKeptEntryIndex) as any[]).filter((e) => e.type === "message").map((e) => e.message);
     if (!firstKept?.id || toSummarize.length === 0) return;   // let pi's default handle it
 
+    const pref = summarizerSetting().value;
     const pick = pickSummarizer(
       { provider: current.provider, id: current.id, contextWindow: current.contextWindow },
-      PREFERRED,
+      pref === "self" ? undefined : pref,
       (p, id) => { const m = ctx.modelRegistry.find(p, id); return m ? { provider: m.provider, id: m.id, contextWindow: m.contextWindow } : undefined; },
       (m) => { const full = ctx.modelRegistry.find(m.provider, m.id); return !!full && ctx.modelRegistry.hasConfiguredAuth(full); },
     );
@@ -164,17 +184,41 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("compaction", {
-    description: "Show compaction budgets for the current model, or `/compaction now` to compact",
+    description: "Compaction: status | now | model <provider/id|self|default>",
+    getArgumentCompletions: (prefix) => {
+      const [first, second] = prefix.split(/\s+/);
+      if (first === "model") {
+        const ids = ["self", "default", ...ctx0Models()].filter((m) => m.startsWith(second ?? ""));
+        return ids.map((m) => ({ value: `model ${m}`, label: m }));
+      }
+      return ["now", "model"].filter((c) => c.startsWith(first ?? "")).map((c) => ({ value: c, label: c }));
+    },
     handler: async (args, ctx) => {
-      if (args.trim() === "now") { compacting = true; ctx.compact({ onError: (e) => { compacting = false; ctx.ui.notify(`Compaction failed: ${e.message}`, "error"); } }); return; }
+      const [sub, ...rest] = args.trim().split(/\s+/).filter(Boolean);
+      if (sub === "model") {
+        const v = rest[0];
+        if (!v) { const p = summarizerSetting(); ctx.ui.notify(`summarizer: ${p.value} (from ${p.source}). Usage: /compaction model <provider/id> | self | default`, "info"); return; }
+        if (process.env.MGM_SUMMARY_MODEL) { ctx.ui.notify(`MGM_SUMMARY_MODEL=${process.env.MGM_SUMMARY_MODEL} is set in the environment and overrides settings; unset it to use this`, "warning"); }
+        if (v === "default") { saveSummarizer(undefined); ctx.ui.notify(`summarizer reset to ${DEFAULT_SUMMARIZER}`, "info"); return; }
+        if (v !== "self") {
+          const slash = v.indexOf("/");
+          const m = slash > 0 ? ctx.modelRegistry.find(v.slice(0, slash), v.slice(slash + 1)) : undefined;
+          if (!m) { ctx.ui.notify(`Unknown model "${v}". Use provider/id as shown by /model, or self`, "error"); return; }
+          if (!ctx.modelRegistry.hasConfiguredAuth(m)) ctx.ui.notify(`${v} has no credentials yet; compaction will fall back to the working model until it does`, "warning");
+        }
+        saveSummarizer(v); ctx.ui.notify(`summarizer set to ${v} (saved in settings.json)`, "info"); return;
+      }
+      if (sub === "now") { compacting = true; ctx.compact({ onError: (e) => { compacting = false; ctx.ui.notify(`Compaction failed: ${e.message}`, "error"); } }); return; }
       const bud = b(ctx); const u = ctx.getContextUsage?.();
       const cur = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id, contextWindow: ctx.model.contextWindow } : undefined;
-      const pick = cur ? pickSummarizer(cur, PREFERRED, (p, id) => { const m = ctx.modelRegistry.find(p, id); return m ? { provider: m.provider, id: m.id, contextWindow: m.contextWindow } : undefined; }, (m) => { const f = ctx.modelRegistry.find(m.provider, m.id); return !!f && ctx.modelRegistry.hasConfiguredAuth(f); }) : undefined;
+      const pref = summarizerSetting();
+      const pick = cur ? pickSummarizer(cur, pref.value === "self" ? undefined : pref.value, (p, id) => { const m = ctx.modelRegistry.find(p, id); return m ? { provider: m.provider, id: m.id, contextWindow: m.contextWindow } : undefined; }, (m) => { const f = ctx.modelRegistry.find(m.provider, m.id); return !!f && ctx.modelRegistry.hasConfiguredAuth(f); }) : undefined;
       ctx.ui.notify([
         `context ${u?.tokens?.toLocaleString() ?? "?"} / ${bud.contextWindow.toLocaleString()} tokens (${u?.percent == null ? "?" : Math.round(u.percent) + "%"}) — proactive compaction at ${bud.triggerPercent}%`,
         `after compaction keep ~${bud.keepRecentTokens.toLocaleString()} recent tokens; summary ≤ ${bud.summaryMaxTokens} tokens; ≤ ${bud.chunkTokens.toLocaleString()} tokens per summarizer request`,
         `pruning: tool results > ${bud.maskMinChars} chars except the newest ${bud.keepResults} — currently ${lastMasked} pruned, ~${Math.round(lastSaved / 4).toLocaleString()} tokens saved`,
-        pick ? `summarizer: ${pick.model.provider}/${pick.model.id} (${pick.reason})` : "",
+        pick ? `summarizer: ${pick.model.provider}/${pick.model.id} (${pick.reason}; setting "${pref.value}" from ${pref.source})` : "",
+        `change with /compaction model <provider/id> | self | default`,
       ].filter(Boolean).join("\n"), "info");
     },
   });

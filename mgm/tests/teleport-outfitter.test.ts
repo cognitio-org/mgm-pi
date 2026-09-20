@@ -138,6 +138,25 @@ describe("OutfitterStore.get", () => {
     assert.ok(!calls.some((c) => c.url.endsWith("/stop")));
   });
 
+  test("code review M2/N2: an already-stopping run skips re-POSTing /stop and goes straight to polling", async () => {
+    let sessionCalls = 0;
+    const { fn, calls } = fakeFetch((method, path) => {
+      if (path === "/api/sessions/s1" && method === "GET") {
+        sessionCalls += 1;
+        // Already "stopping" from a previous ensureStopped call (e.g. a retried teleport pull
+        // after the first attempt's stopTimeoutMs expired).
+        const runState = sessionCalls < 2 ? "stopping" : undefined;
+        return { status: 200, body: { id: "s1", repo: null, updatedAt: "2026-09-21T00:00:00.000Z", runState } };
+      }
+      if (path === "/api/sessions/s1/export.jsonl") return { status: 200, text: '{"type":"session","id":"s1"}\n' };
+      throw new Error(`unexpected ${method} ${path} -- /stop should not be called again while already stopping`);
+    });
+    const store = new OutfitterStore({ apiBase: "https://api.example.com", token: "t", fetchFn: fn, pollIntervalMs: 0, sleep: async () => {} });
+    await store.get("s1");
+    assert.ok(!calls.some((c) => c.url.endsWith("/stop")));
+    assert.ok(sessionCalls >= 2);
+  });
+
   test("times out with an actionable error if the run never stops", async () => {
     const { fn } = fakeFetch((method, path) => {
       if (path === "/api/sessions/s1" && method === "GET") return { status: 200, body: { id: "s1", repo: null, updatedAt: "now", runState: "running" } };

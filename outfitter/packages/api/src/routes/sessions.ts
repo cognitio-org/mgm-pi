@@ -159,6 +159,16 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     const run = await ctx.store.runs.findActiveForSession(session.id);
     if (!run) return reply.code(404).send({ error: "no active run" });
 
+    // Code review M2 (docs/reports/code-review-pr15.md): branch explicitly on all three cases
+    // instead of collapsing "not running/idle" into "cancel directly" -- that used to also catch
+    // an already-`stopping` run and force-kill it via the provider mid-checkpoint/mid-drain, which
+    // is exactly what the `stopping` grace period exists to avoid. A second `/stop` call while
+    // already stopping is a no-op: return the current run and let the existing grace-period /
+    // RunManager.reconcileStoppingOnce path finish it.
+    if (run.state === "stopping") {
+      return { run };
+    }
+
     if (run.state !== "running" && run.state !== "idle") {
       // No live agent yet (queued/provisioning) to ask gracefully -- cancel the provider execution
       // directly, same as before.

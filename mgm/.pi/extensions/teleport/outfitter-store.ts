@@ -180,14 +180,21 @@ export class OutfitterStore implements Store {
       return;
     }
 
-    const stopRes = await this.fetchFn(`${this.apiBase}/api/sessions/${id}/stop`, {
-      method: "POST",
-      headers: { Authorization: await this.authHeader() },
-    });
-    if (stopRes.status === 404) return; // "no active run" -- already stopped between our check and this call
-    if (!stopRes.ok && stopRes.status !== 409) {
-      const text = await stopRes.text().catch(() => "");
-      throw new Error(`teleport: could not stop the cloud run for ${id.slice(0, 8)}: ${stopRes.status} ${text.trim()}`);
+    // Code review M2/N2 (docs/reports/code-review-pr15.md): a run already `stopping` (e.g. a
+    // previous ensureStopped call's own /stop, or the web UI's Stop button, or an earlier timed-out
+    // retry of this same call) doesn't need another /stop -- POST /api/sessions/:id/stop returns
+    // 404 or 200 only; it never returns 409 (that tolerance was dead code, written against a status
+    // code the route doesn't produce). Go straight to polling instead of re-POSTing.
+    if (session.runState !== "stopping") {
+      const stopRes = await this.fetchFn(`${this.apiBase}/api/sessions/${id}/stop`, {
+        method: "POST",
+        headers: { Authorization: await this.authHeader() },
+      });
+      if (stopRes.status === 404) return; // "no active run" -- already stopped between our check and this call
+      if (!stopRes.ok) {
+        const text = await stopRes.text().catch(() => "");
+        throw new Error(`teleport: could not stop the cloud run for ${id.slice(0, 8)}: ${stopRes.status} ${text.trim()}`);
+      }
     }
 
     const deadline = this.now() + this.stopTimeoutMs;

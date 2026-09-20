@@ -42,6 +42,28 @@ jobs:
           [ "$code" = "401" ] || { echo "link role did not come up (got '$code')"; exit 1; }
           curl -s -o /dev/null -w '%{http_code}\n' http://localhost:18080/api/sessions | grep -qx 404
           docker rm -f api
+      - name: Boot the control-plane image in the web role and exercise the SPA it now ships
+        # Code review N6 (docs/reports/code-review-pr15.md): the images job only ever booted the
+        # link role, which never reaches static.ts's SPA fallback code path at all. Boot the same
+        # image in the web role (no IAP -- OUTFITTER_DEV=1) and confirm the web bundle baked into
+        # this image (packages/web/dist) is actually served.
+        run: |
+          docker run -d --name api-web -p 18081:8080 \
+            -e MONGODB_URI=memory -e OUTFITTER_DEV=1 -e OUTFITTER_DEV_TOKEN=ci \
+            -e OUTFITTER_ROLE=web -e OUTFITTER_ORIGIN=http://localhost:8080 \
+            -e SANDBOX_PROVIDER=inprocess -e AGENTD_MAIN=/app/packages/api/src/main.ts \
+            outfitter-api:ci
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:18081/ || true)
+            [ "$code" = "200" ] && break; sleep 1
+          done
+          docker logs api-web
+          [ "$code" = "200" ] || { echo "web role did not come up (got '$code')"; exit 1; }
+          curl -s http://localhost:18081/ | grep -qi '<title>'
+          curl -s -o /dev/null -w '%{http_code}\n' http://localhost:18081/sessions/x | grep -qx 200
+          curl -s http://localhost:18081/api/nope -o /tmp/nope.json -w '%{http_code}\n' | grep -qx 404
+          grep -qi 'error' /tmp/nope.json
+          docker rm -f api-web
       - name: Build the sandbox image
         run: docker build -f outfitter/image/Dockerfile -t outfitter-agent:ci .
       - name: pi starts as the agent user with its own home and loads every extension

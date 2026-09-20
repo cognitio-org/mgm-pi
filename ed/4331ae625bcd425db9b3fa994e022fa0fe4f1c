@@ -1,0 +1,51 @@
+.gitignore
+  s_25c805ebe232f3::t_e49fb13db0d8fa 7-9
+mgm/bin/mgm
+  s_25c805ebe232f3::t_e49fb13db0d8fa 10,26-28
+mgm/scripts/package.sh
+  s_25c805ebe232f3::t_e49fb13db0d8fa 1-33,44-50,67-69,71,73,76-80,82-86
+  s_25c805ebe232f3::t_a3d47a4361f512 51-60
+  s_25c805ebe232f3::t_7c0bde7099d16d 37,74
+  s_25c805ebe232f3::t_fc5560c2af7498 61-64
+  s_25c805ebe232f3::t_7e39233c7d63a5 70,72,81
+  s_25c805ebe232f3::t_104c8c5a17bd00 34-36,38-43,65-66,75
+mgm/.pi/npm/.gitignore
+  s_25c805ebe232f3::t_7e39233c7d63a5 1-4
+.github/workflows/ci.yml
+  s_25c805ebe232f3::t_3ea01e90ee4ec1 1-26
+mgm/README.md
+  s_25c805ebe232f3::t_1f41f2c8b018cb 149-179,182
+  s_25c805ebe232f3::t_724994a71f267b 180-181,183
+mgm/scripts/install.sh
+  s_25c805ebe232f3::t_3ea01e90ee4ec1 1-38
+.github/workflows/release.yml
+  s_25c805ebe232f3::t_3ea01e90ee4ec1 1-62
+mgm/.pi/npm/package-lock.json
+  s_6c71c2a23324da::t_4ffe97a79bb958 1-9261
+mgm/.pi/npm/package.json
+  s_6c71c2a23324da::t_b4b958c8c8953e 1-14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "ed4331ae625bcd425db9b3fa994e022fa0fe4f1c",
+  "prompts": {},
+  "sessions": {
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_6c71c2a23324da": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a1ac663dc5da30ded",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

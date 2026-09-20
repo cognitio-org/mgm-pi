@@ -289,9 +289,18 @@ research on Sonnet; review on Opus).
   taken from the *first* spend frame, which LiteLLM emits with the key's pre-call balance, so every
   run under-reports by exactly its first call (a one-call run shows $0) -- fix by having the
   extension probe the key's own `/key/info` at `session_start` (a key may read its own info) and
-  write a baseline line before any provider call; (2) pi's own `usage.cost.total` is 0 for
-  `litellm/*` models (no pricing in pi's registry), so `costEstimate` is only meaningful for gurus
-  on a directly-priced provider; the LiteLLM-header path is the one that counts for this fleet.
+  write a baseline line before any provider call; (2) pi's estimate is $0 for the *auto-router*
+  groups only (`claude-auto-llm`, `gemini-auto-llm`, `*-agentic`, `*-affinity`): LiteLLM's
+  `/model/info` prices every concrete model, but a routing group has no price of its own because the
+  underlying model is chosen per call, and mgm's `connect` extension takes that zero at face value.
+  LiteLLM does name the resolved model on every response, streamed or not
+  (`x-litellm-model-name: claude-haiku-4-5`, verified 2026-09-21), and adds `x-litellm-classifier-cost`
+  for the router's own classification call; `x-litellm-response-cost` is only non-zero on
+  non-streamed responses, and pi streams. Fix: the spend extension fetches `/model/info` once at
+  `session_start` (the key can read it), and on each `after_provider_response` whose group is
+  unpriced computes this call's cost from pi's token usage × the resolved model's prices, plus the
+  classifier cost, and reports that as `usage` (agentd's running `costEstimate`). Same treatment
+  for mgm's `connect` extension so the TUI `/budget` panel stops showing auto gurus as free.
 - **E2.13 Graceful stop confirmed on Cloud Run** (done): `POST /sessions/:id/stop` from the web
   role while the link role holds the socket: `stopping` → `stopped` in 8 s, agentd checkpointed
   (workspace tarball skipped for the repo-less run), sent `bye`, and the Job execution ended

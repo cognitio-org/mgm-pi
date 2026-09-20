@@ -1,0 +1,26 @@
+{
+  "name": "@outfitter/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Outfitter control-plane API: REST + SSE for the browser, WebSocket ingress for agentd, run lifecycle, secrets broker",
+  "scripts": {
+    "dev": "node --watch src/main.ts",
+    "start": "node src/main.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "pretest": "npm run typecheck",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "@fastify/static": "^10.1.4",
+    "@fastify/websocket": "^11.3.1",
+    "@google-cloud/run": "^4.1.0",
+    "fastify": "^5.12.5",
+    "google-auth-library": "^9.15.1",
+    "mongodb": "^6.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,23 @@
+outfitter/packages/api/test/providers-status.test.ts
+  s_2209f22f830d7f::t_1ca153a844aceb 421-436
+outfitter/docs/reports/api.md
+  s_2209f22f830d7f::t_9140e2dede320d 149-157
+outfitter/packages/api/src/routes/providers.ts
+  s_2209f22f830d7f::t_19772e9ea28d6e 9-15,17-18,29-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "ac711e76cf552cb4479b85c824d3a3f2d55d7ddf",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

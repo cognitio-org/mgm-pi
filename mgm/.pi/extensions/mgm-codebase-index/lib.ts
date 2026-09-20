@@ -180,7 +180,9 @@ export function panelRows(d: PanelData): Seg[][] {
   const e = d.embeddings;
   const embedState: Seg = e === undefined ? ["—", "dim"] : e.reachable ? (e.loaded === false ? ["server up, model not loaded yet", "warning"] : ["ready", "success"]) : ["server unreachable", "error"];
   rows.push([label("embed"), [`${d.config.model ?? "?"} `, "accent"], [`${d.config.dimensions ?? "?"}d  `, "dim"], embedState]);
-  rows.push([label(""), [`${d.config.provider} · ${d.config.baseUrl ?? "—"}`, "dim"]]);
+  rows.push([label(""), [`${d.config.provider} · ${d.config.baseUrl ?? "—"}`, d.config.provider === "custom" ? "dim" : "error"]]);
+  const problem = embeddingProblem(d.config);
+  if (problem) rows.push([label("problem"), [problem, "error"]]);
   rows.push([label("search"), [`${yesNo(d.config.maxResults)} results · min score ${yesNo(d.config.minScore)} · ${yesNo(d.config.fusion)}`, "text"]]);
   rows.push([label("indexing"), [`auto ${yesNo(d.config.autoIndex)} · watch ${yesNo(d.config.watchFiles)}`, "text"], [s.autoIndex ? `  (${s.autoIndex})` : "", "dim"]]);
   rows.push([label("config"), [d.config.files.join(" + ") || "built-in defaults", "dim"], [`  (${d.config.scope})`, "dim"]]);
@@ -235,6 +237,47 @@ export const SUBCOMMANDS: Record<string, { tool?: string; params?: Record<string
   bases: { tool: "knowledge_base_list", params: {} },
   off: { kind: "off" },
 };
+
+// ---------- where embeddings come from ----------
+export type EmbeddingChoice = { source: "local" | "router"; id: string; dimensions?: number };
+
+export const embeddingChoiceLabel = (c: EmbeddingChoice) => `${c.source.padEnd(6)} ${c.id}${c.dimensions ? `  (${c.dimensions}d)` : ""}`;
+
+export function parseEmbeddingChoice(label: string, choices: EmbeddingChoice[]): EmbeddingChoice | undefined {
+  return choices.find((c) => embeddingChoiceLabel(c) === label);
+}
+
+/**
+ * `embeddingProvider` decides where embeddings come from. "custom" uses `customProvider`; anything
+ * else makes the package hunt for ollama, openai or google credentials and ignore the endpoint
+ * entirely, which fails at index time with "No embedding-capable provider found" even though the
+ * panel shows a reachable server. Worth saying out loud, because the contradiction is invisible.
+ */
+export function embeddingProblem(config: { provider: string; baseUrl?: string; model?: string; dimensions?: number }): string | undefined {
+  const configured = !!config.baseUrl && !!config.model;
+  if (config.provider !== "custom") {
+    return configured
+      ? `provider is "${config.provider}", so the endpoint below is ignored: indexing will look for ollama, openai or google credentials instead`
+      : `provider is "${config.provider}": indexing needs ollama, openai or google credentials, or an endpoint of your own`;
+  }
+  if (!configured) return "no embedding endpoint or model is set";
+  if (!config.dimensions) return "no dimension count is set; the indexer needs one that matches the model";
+  return undefined;
+}
+
+/** What to write when an embedding model is picked: the endpoint, the key when it needs one. */
+export function embeddingBlock(choice: EmbeddingChoice, sources: { localUrl: string; router?: { baseUrl?: string; apiKey?: string } }) {
+  const fromRouter = choice.source === "router";
+  return {
+    embeddingProvider: "custom",
+    customProvider: {
+      baseUrl: fromRouter ? sources.router?.baseUrl : sources.localUrl,
+      model: choice.id,
+      dimensions: choice.dimensions,
+      ...(fromRouter && sources.router?.apiKey ? { apiKey: sources.router.apiKey } : {}),
+    },
+  };
+}
 
 // ---------- the agent's own documentation as a knowledge base ----------
 /**

@@ -21,9 +21,9 @@ import { truncateToWidth } from "@earendil-works/pi-tui";
 import { renderPanel } from "../connect/lib.ts";
 import {
   FIELDS, PACKAGE, SUBCOMMANDS, actions, applyEdit, configFromView, configView, defaultConfig, fieldRow, getAt, indexStatusLine,
-  docsKnowledgeBaseUpdate, hiddenSourceDirs, invalidatesIndex, loadPlan, maskSecret, panelRows, parseStatus, piDocsCandidates, refreshRouterKey, rerankerBlock, rerankerProblem, resultText, routerFromEnv, shouldSeed,
+  docsKnowledgeBaseUpdate, embeddingBlock, embeddingChoiceLabel, embeddingProblem, hiddenSourceDirs, invalidatesIndex, loadPlan, maskSecret, panelRows, parseEmbeddingChoice, parseStatus, piDocsCandidates, refreshRouterKey, rerankerBlock, rerankerProblem, resultText, routerFromEnv, shouldSeed,
   setAt,
-  type ConfigView, type Embeddings, type Field, type IndexStatus, type LoadPlan, type PanelData,
+  type ConfigView, type EmbeddingChoice, type Embeddings, type Field, type IndexStatus, type LoadPlan, type PanelData,
 } from "./lib.ts";
 
 /** Injection seam: tests supply the package instead of loading 2 MB of bundled indexer. */
@@ -80,13 +80,31 @@ async function embeddingModels(baseUrl: string): Promise<string[]> {
   } catch { return []; }
 }
 
+/** Embedding deployments the router advertises, with the vector size it declares when it does. */
+async function routerEmbeddingModels(baseUrl: string, apiKey: string): Promise<EmbeddingChoice[]> {
+  try {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 4000);
+    const res = await fetch(`${baseUrl.replace(/\/v1\/?$/, "")}/model/info`, { headers: { authorization: `Bearer ${apiKey}` }, signal: ctl.signal });
+    clearTimeout(t);
+    if (!res.ok) return [];
+    const seen = new Map<string, EmbeddingChoice>();
+    for (const m of (await res.json())?.data ?? []) {
+      if (m?.model_info?.mode !== "embedding") continue;
+      const id = String(m.model_name);
+      const dimensions = typeof m.model_info.output_vector_size === "number" ? m.model_info.output_vector_size : undefined;
+      if (!seen.has(id) || (dimensions && !seen.get(id)!.dimensions)) seen.set(id, { source: "router", id, dimensions });
+    }
+    return [...seen.values()].sort((a, b) => a.id.localeCompare(b.id));
+  } catch { return []; }
+}
+
 /** Ask the server for one embedding and count it: the only reliable source for the dimension. */
-async function detectDimensions(baseUrl: string, model: string): Promise<number | undefined> {
+async function detectDimensions(baseUrl: string, model: string, apiKey = "lm-studio"): Promise<number | undefined> {
   try {
     const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 20_000);
     const res = await fetch(`${baseUrl}/embeddings`, {
       method: "POST", signal: ctl.signal,
-      headers: { "content-type": "application/json", authorization: "Bearer lm-studio" },
+      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({ model, input: "dimension probe" }),
     });
     clearTimeout(t);
@@ -255,12 +273,49 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
         if (answer === undefined) continue;
         raw = answer;
       } else if (field.kind === "model") {
-        const baseUrl = String(getAt(config, ["customProvider", "baseUrl"]) ?? "");
-        const listed = baseUrl ? await embeddingModels(baseUrl) : [];
-        const answer = await ctx.ui.select(`${field.label} — ${listed.length ? "from the server" : "server not reachable; type an id"}`, [...listed, "type another id"]);
-        if (answer === undefined) continue;
-        raw = answer === "type another id" ? await ctx.ui.input(`${field.label} id`, String(current ?? "")) : answer;
-        if (raw === undefined) continue;
+        // Two sources: the local server, and the LiteLLM router's embedding deployments. Picking one
+        // writes the endpoint, the dimensions and (for the router) the key, because a model from the
+        // wrong endpoint or with the wrong dimension count fails in ways that are hard to read.
+        const localUrl = String(getAt(config, ["customProvider", "baseUrl"]) ?? "") || "http://localhost:1234/v1";
+        const router = routerFromEnv(process.env);
+        const [local, hosted] = await Promise.all([
+          embeddingModels(localUrl).then((ids) => ids.map((id) => ({ source: "local" as const, id }))),
+          router.baseUrl && router.apiKey ? routerEmbeddingModels(router.baseUrl, router.apiKey) : Promise.resolve([]),
+        ]);
+        const choices: EmbeddingChoice[] = [...local, ...hosted];
+        if (!choices.length) {
+          const typed = await ctx.ui.input(`${field.label} id (no server reachable)`, String(current ?? ""));
+          if (typed === undefined || !typed.trim()) continue;
+          raw = typed.trim();
+        } else {
+          const labels = choices.map(embeddingChoiceLabel);
+          const answer = await ctx.ui.select(`${field.label} — local server and router deployments`, [...labels, "type another id"]);
+          if (answer === undefined) continue;
+          if (answer === "type another id") {
+            const typed = await ctx.ui.input(`${field.label} id`, String(current ?? ""));
+            if (typed === undefined || !typed.trim()) continue;
+            raw = typed.trim();
+          } else {
+            const choice = parseEmbeddingChoice(answer, choices)!;
+            const block = embeddingBlock(choice, { localUrl, router });
+            let dimensions = block.customProvider.dimensions;
+            if (!dimensions) {
+              ctx.ui.setStatus("index", "⌕ measuring embedding…");
+              dimensions = await detectDimensions(block.customProvider.baseUrl!, choice.id, choice.source === "router" ? router.apiKey : undefined);
+              if (!dimensions) { ctx.ui.notify(`${choice.id} did not answer an embeddings call, so its dimension count is unknown. Set it by hand if you know it.`, "error"); continue; }
+            }
+            config = { ...config, ...block, customProvider: { ...block.customProvider, dimensions } };
+            writeConfig(file, config);
+            touched = true;
+            ctx.ui.notify(`Embeddings → ${choice.source === "router" ? "router" : "local server"} ${choice.id} at ${dimensions} dimensions  (saved to ${file})`, "info");
+            if (data.status.indexed) {
+              const rebuild = await ctx.ui.select("A different embedding model means the stored vectors no longer match. Rebuild the index now?", ["Rebuild now", "Later"]);
+              if (rebuild === "Rebuild now") { ctx.ui.setStatus("index", "⌕ rebuilding…"); ctx.ui.notify(await run("index_codebase", { force: true }, ctx), "info"); }
+              else ctx.ui.notify("Search will stay stale until the index is rebuilt (/index reindex).", "warning");
+            }
+            continue;
+          }
+        }
       } else if (field.kind === "dimensions") {
         const answer = await ctx.ui.select(`${field.label} — ${field.help}`, ["Detect from the server", "Type a number"]);
         if (answer === undefined) continue;
@@ -300,6 +355,8 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
       ctx.ui.notify(`${field.label} → ${shown}  (saved to ${file})`, "info");
       const problem = rerankerProblem(config);
       if (problem) ctx.ui.notify(`${problem}; reranking stays off until that is set`, "warning");
+      const embedding = embeddingProblem({ provider: String(getAt(config, ["embeddingProvider"]) ?? "auto"), baseUrl: getAt(config, ["customProvider", "baseUrl"]) as string, model: getAt(config, ["customProvider", "model"]) as string, dimensions: getAt(config, ["customProvider", "dimensions"]) as number });
+      if (embedding) ctx.ui.notify(`Embeddings: ${embedding}`, "warning");
       if (invalidatesIndex(field) && data.status.indexed) {
         const rebuild = await ctx.ui.select("That changes how text is embedded, so the stored vectors no longer match. Rebuild the index now?", ["Rebuild now", "Later"]);
         if (rebuild === "Rebuild now") {

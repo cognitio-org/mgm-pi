@@ -152,6 +152,19 @@ scripts, `/index status | update | reindex | estimate | health | metrics | logs 
 instead. The command drives the package's own tools through a capture of `registerTool`, so there is
 no second implementation of anything.
 
+**Embeddings can come from the local server or the router.** The model picker lists both: what your
+local server reports as an embedding model, and the router's embedding deployments (ten of them,
+including `voyage/voyage-code-4`, which is trained for code). Picking one writes the endpoint, the
+dimension count and, for a router model, the key — together, because a model with the wrong endpoint
+or the wrong dimension count fails in ways that are hard to read. The router declares its vector
+sizes, so nothing is measured; a local model is measured by asking it for one embedding, and is
+refused rather than saved if it cannot answer.
+
+One trap the panel now names outright: `embeddingProvider` must be `custom` for your endpoint to be
+used at all. On anything else the indexer hunts for ollama, openai or google credentials and ignores
+the endpoint, failing with *No embedding-capable provider found* while the panel shows a perfectly
+reachable server. A `problem` row says so, and picking a model always sets the provider that uses it.
+
 **Settings** are editable from the same picker, not just readable. The dialog lists every setting the
 shipped package actually reads, with its current value: embedding server, embedding model,
 dimensions, provider, index-automatically, watch-files, semantic-only, max results, min score,

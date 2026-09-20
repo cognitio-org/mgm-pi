@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { docsKnowledgeBaseUpdate, isPiDocsPath, piDocsCandidates, hiddenSourceDirs, loadPlan, defaultConfig, embeddingBaseUrl, shouldSeed, parseStatus, resultText, configView, panelRows, indexStatusLine, actions, SUBCOMMANDS, FIELDS, getAt, setAt, applyEdit, fieldRow, invalidatesIndex, configFromView, maskSecret, rerankerProblem, rerankerBlock, routerFromEnv, refreshRouterKey, DEFAULT_EMBEDDING_MODEL, DEFAULT_DIMENSIONS } from "../.pi/extensions/mgm-codebase-index/lib.ts";
+import { docsKnowledgeBaseUpdate, embeddingBlock, embeddingChoiceLabel, embeddingProblem, parseEmbeddingChoice, isPiDocsPath, piDocsCandidates, hiddenSourceDirs, loadPlan, defaultConfig, embeddingBaseUrl, shouldSeed, parseStatus, resultText, configView, panelRows, indexStatusLine, actions, SUBCOMMANDS, FIELDS, getAt, setAt, applyEdit, fieldRow, invalidatesIndex, configFromView, maskSecret, rerankerProblem, rerankerBlock, routerFromEnv, refreshRouterKey, DEFAULT_EMBEDDING_MODEL, DEFAULT_DIMENSIONS } from "../.pi/extensions/mgm-codebase-index/lib.ts";
 import { makePi, makeCtx, stubFetch } from "./harness.ts";
 
 const STATUS_INDEXED = `Auto-index: disabled (state: idle)
@@ -285,6 +285,43 @@ describe("/index command", async () => {
   });
 });
 
+describe("where embeddings come from", () => {
+  test("a provider other than custom ignores the endpoint, which is exactly the failure it caused", () => {
+    // Reported: "No embedding-capable provider found. Please authenticate with OpenCode using one of:
+    // ollama, openai, google" while the panel showed a reachable server. The config said auto.
+    const configured = { provider: "auto", baseUrl: "http://localhost:1234/v1", model: "nomic", dimensions: 768 };
+    assert.match(embeddingProblem(configured)!, /provider is "auto", so the endpoint below is ignored/);
+    assert.match(embeddingProblem({ provider: "openai" })!, /needs ollama, openai or google credentials/);
+    assert.equal(embeddingProblem({ ...configured, provider: "custom" }), undefined);
+    assert.match(embeddingProblem({ provider: "custom" })!, /no embedding endpoint or model/);
+    assert.match(embeddingProblem({ provider: "custom", baseUrl: "u", model: "m" })!, /no dimension count/);
+  });
+
+  test("a choice carries its source, and reads back from its own label", () => {
+    const choices = [{ source: "local" as const, id: "nomic" }, { source: "router" as const, id: "voyage/voyage-code-4", dimensions: 1024 }];
+    assert.equal(embeddingChoiceLabel(choices[0]), "local  nomic");
+    assert.equal(embeddingChoiceLabel(choices[1]), "router voyage/voyage-code-4  (1024d)");
+    assert.deepEqual(parseEmbeddingChoice("router voyage/voyage-code-4  (1024d)", choices), choices[1]);
+    assert.equal(parseEmbeddingChoice("something else", choices), undefined);
+  });
+
+  test("the written block points at the source that was chosen, with a key only where one is needed", () => {
+    const sources = { localUrl: "http://localhost:1234/v1", router: { baseUrl: "https://r/v1", apiKey: "sk-k" } };
+    const local = embeddingBlock({ source: "local", id: "nomic", dimensions: 768 }, sources);
+    assert.deepEqual(local, { embeddingProvider: "custom", customProvider: { baseUrl: "http://localhost:1234/v1", model: "nomic", dimensions: 768 } });
+    const hosted = embeddingBlock({ source: "router", id: "voyage/voyage-4", dimensions: 1024 }, sources);
+    assert.deepEqual(hosted.customProvider, { baseUrl: "https://r/v1", model: "voyage/voyage-4", dimensions: 1024, apiKey: "sk-k" });
+    assert.equal(hosted.embeddingProvider, "custom", "never left on a provider that would ignore it");
+  });
+
+  test("the panel says the provider is wrong rather than only showing it", () => {
+    const flat = (rows: any[][]) => rows.map((r) => r.map(([t]: any) => t).join("")).join("\n");
+    const broken = configView([{ file: "/u", scope: "user", text: JSON.stringify({ embeddingProvider: "auto", customProvider: { baseUrl: "http://localhost:1234/v1", model: "nomic", dimensions: 768 } }) }], {});
+    const out = flat(panelRows({ status: parseStatus(STATUS_EMPTY), config: broken, project: "/p", embeddings: { reachable: true, loaded: true } }));
+    assert.match(out, /problem +provider is "auto", so the endpoint below is ignored/);
+  });
+});
+
 describe("the agent's own documentation as a knowledge base", () => {
   test("pi's docs are looked for in both layouts: a release bundle and a checkout", () => {
     assert.deepEqual(piDocsCandidates("/Users/x/.mgm/mgm-0.1.11-darwin-arm64"), [
@@ -423,32 +460,74 @@ describe("/index settings dialog", async () => {
     delete process.env.MGM_INDEX_CONFIG;
   });
 
-  test("picking an embedding model lists the server's embedding models and offers the rebuild it needs", async () => {
+  test("the embedding model picker offers the local server and the router, and writes endpoint, dimensions and key together", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgm-idx-set-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example/v1";
+    process.env.LITELLM_AGENT_KEY = "sk-router-9876";
+    const restore = stubFetch({
+      "/api/v0/models": () => ({ data: [{ id: "embeddinggemma-300m", type: "embeddings" }, { id: "qwen/qwen3.6-35b-a3b", type: "llm" }] }),
+      "/model/info": () => ({ data: [
+        { model_name: "voyage/voyage-code-4", model_info: { mode: "embedding", output_vector_size: 1024 } },
+        { model_name: "text-embedding-3-small", model_info: { mode: "embedding", output_vector_size: 1536 } },
+        { model_name: "gpt-5.4-nano", model_info: { mode: "chat" } },
+      ] }),
+      "/embeddings": () => ({ data: [{ embedding: new Array(768).fill(0) }] }),
+    });
+    try {
+      const { pi, ctx, userConfig, ready } = start(dir);
+      await ready;
+      const seen: string[][] = [];
+      const select = ctx.ui.select;
+      ctx.ui.select = async (title: string, options: string[]) => { seen.push(options); return select(title, options); };
+      // a router model carries its own dimension count, so nothing needs measuring
+      ctx.answers.push("Settings", "Embedding model", "router voyage/voyage-code-4  (1024d)", "Later", "Back", "Close panel");
+      await pi.commands.get("index")!.handler("", ctx);
+      const offered = seen.find((o) => o.some((l) => l.includes("voyage/voyage-code-4")))!;
+      assert.deepEqual(offered, [
+        "local  embeddinggemma-300m",
+        "router text-embedding-3-small  (1536d)",
+        "router voyage/voyage-code-4  (1024d)",
+        "type another id",
+      ], "both sources, labelled, chat models excluded");
+      const saved = read(userConfig);
+      assert.equal(saved.embeddingProvider, "custom", "picking a model always sets the provider that uses it");
+      assert.deepEqual(saved.customProvider, { baseUrl: "https://litellm.example/v1", model: "voyage/voyage-code-4", dimensions: 1024, apiKey: "sk-router-9876" });
+      assert.match(ctx.notices.map((n: any) => n.msg).join("\n"), /Embeddings → router voyage\/voyage-code-4 at 1024 dimensions/);
+      assert.match(ctx.notices.map((n: any) => n.msg).join("\n"), /stay stale until the index is rebuilt/);
+    } finally { restore(); delete process.env.MGM_INDEX_CONFIG; delete process.env.LITELLM_BASE_URL; delete process.env.LITELLM_AGENT_KEY; }
+  });
+
+  test("a local model has no declared dimensions, so they are measured, and the rebuild is offered", async () => {
     const dir = mkdtempSync(join(tmpdir(), "mgm-idx-set-"));
     const restore = stubFetch({
-      "/api/v0/models": () => ({ data: [{ id: "text-embedding-nomic-embed-text-v1.5", type: "embeddings" }, { id: "embeddinggemma-300m", type: "embeddings" }, { id: "qwen/qwen3.6-35b-a3b", type: "llm" }] }),
+      "/api/v0/models": () => ({ data: [{ id: "embeddinggemma-300m", type: "embeddings" }] }),
+      "/embeddings": () => ({ data: [{ embedding: new Array(1152).fill(0.1) }] }),
     });
     try {
       const { pi, ctx, calls, userConfig, ready } = start(dir);
       await ready;
-      ctx.answers.push("Settings", "Embedding model", "embeddinggemma-300m", "Rebuild now", "Back", "Close panel");
+      ctx.answers.push("Settings", "Embedding model", "local  embeddinggemma-300m", "Rebuild now", "Back", "Close panel");
       await pi.commands.get("index")!.handler("", ctx);
-      assert.equal(read(userConfig).customProvider.model, "embeddinggemma-300m");
-      assert.deepEqual(calls.filter((c) => c.name === "index_codebase"), [{ name: "index_codebase", params: { force: true } }], "rebuilt once, forced");
-      assert.match(ctx.notices.map((n: any) => n.msg).join("\n"), /no longer match|Rebuilt/);
+      const saved = read(userConfig);
+      assert.deepEqual(saved.customProvider, { baseUrl: "http://localhost:1234/v1", model: "embeddinggemma-300m", dimensions: 1152 }, "measured, and no key for a local server");
+      assert.deepEqual(calls.filter((c) => c.name === "index_codebase"), [{ name: "index_codebase", params: { force: true } }]);
     } finally { restore(); delete process.env.MGM_INDEX_CONFIG; }
   });
 
-  test("declining the rebuild warns that search is stale", async () => {
+  test("a model that cannot be measured is refused rather than written with no dimensions", async () => {
     const dir = mkdtempSync(join(tmpdir(), "mgm-idx-set-"));
-    const restore = stubFetch({ "/api/v0/models": () => ({ data: [{ id: "other-embed", type: "embeddings" }] }) });
+    const restore = stubFetch({
+      "/api/v0/models": () => ({ data: [{ id: "broken-embed", type: "embeddings" }] }),
+      "/embeddings": () => new Error("connection refused"),
+    });
     try {
-      const { pi, ctx, calls, ready } = start(dir);
+      const { pi, ctx, userConfig, ready } = start(dir);
       await ready;
-      ctx.answers.push("Settings", "Embedding model", "other-embed", "Later", "Back", "Close panel");
+      const before = readFileSync(userConfig!, "utf8");
+      ctx.answers.push("Settings", "Embedding model", "local  broken-embed", "Back", "Close panel");
       await pi.commands.get("index")!.handler("", ctx);
-      assert.equal(calls.filter((c) => c.name === "index_codebase").length, 0, "nothing rebuilt");
-      assert.match(ctx.notices.map((n: any) => n.msg).join("\n"), /stay stale until the index is rebuilt/);
+      assert.match(ctx.notices.at(-1)!.msg, /did not answer an embeddings call/);
+      assert.equal(readFileSync(userConfig!, "utf8"), before, "nothing written");
     } finally { restore(); delete process.env.MGM_INDEX_CONFIG; }
   });
 
@@ -458,6 +537,7 @@ describe("/index settings dialog", async () => {
     const restore = stubFetch({
       "/embeddings": () => (ok ? { data: [{ embedding: new Array(1024).fill(0.1) }] } : new Error("connection refused")),
       "/api/v0/models": () => ({ data: [] }),
+      "/model/info": () => ({ data: [] }),
     });
     try {
       const { pi, ctx, userConfig, ready } = start(dir);

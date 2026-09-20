@@ -120,6 +120,21 @@ export class GitStore implements Store {
     if (r.code !== 0) this.warn(`teleport: could not reach the session store remote (offline?); using local copy. ${r.stderr.trim()}`);
   }
 
+  /** Same idea as syncFromRemote(), but called right before put() writes/commits: a ff-only pull
+   * that falls back to a rebase when another machine pushed in between (so this clone was behind
+   * and would otherwise diverge). Both failure paths are tolerated here — offline stays local-only,
+   * put() itself is what enforces that the *push* side of that eventually surfaces as an error. */
+  private async syncBeforePut(): Promise<void> {
+    if (!(await this.hasRemote())) return;
+    const ff = await this.exec("git", ["pull", "--ff-only"], this.dir);
+    if (ff.code !== 0) {
+      const rebase = await this.exec("git", ["pull", "--rebase"], this.dir);
+      if (rebase.code !== 0) {
+        this.warn(`teleport: could not sync the session store before pushing (offline?); continuing with the local copy. ${rebase.stderr.trim()}`);
+      }
+    }
+  }
+
   private async readIndex(): Promise<SessionRef[]> {
     try {
       return JSON.parse(await readFile(join(this.dir, "index.json"), "utf8"));
@@ -145,8 +160,14 @@ export class GitStore implements Store {
 
   async put(id: string, jsonl: string, manifest: Manifest): Promise<void> {
     await this.ensureRepo();
+    // Sync first: a remote may have moved since this clone last synced (another machine pushed a
+    // session in between). Without this, the writes below build on a stale index and the commit
+    // below diverges from the remote, so every push from here on fails as non-fast-forward.
+    await this.syncBeforePut();
     await writeFile(join(this.dir, "sessions", `${id}.jsonl`), jsonl, "utf8");
     await writeFile(join(this.dir, "sessions", `${id}.json`), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    // Re-read after syncing (not before): the pull above may have brought in a newer index.json,
+    // and index.json is regenerated from the merged state, not carried over from before the sync.
     const refs = await this.readIndex();
     const ref: SessionRef = {
       id: manifest.id, name: manifest.name, cwd: manifest.cwd,
@@ -163,8 +184,18 @@ export class GitStore implements Store {
       throw new Error(`teleport: git commit failed: ${commit.stderr.trim()}`);
     }
     if (await this.hasRemote()) {
-      const push = await this.exec("git", ["push"], this.dir);
-      if (push.code !== 0) this.warn(`teleport: pushed locally but could not reach the store remote (offline?): ${push.stderr.trim()}`);
+      let push = await this.exec("git", ["push"], this.dir);
+      if (push.code !== 0) {
+        // Most likely rejected as non-fast-forward (someone else pushed after our syncBeforePut()
+        // above); rebase onto the new remote tip and retry exactly once.
+        const rebase = await this.exec("git", ["pull", "--rebase"], this.dir);
+        if (rebase.code === 0) push = await this.exec("git", ["push"], this.dir);
+      }
+      if (push.code !== 0) {
+        // Commit already happened locally, but it's not visible elsewhere until a push succeeds -
+        // that must not be reported as a successful teleport, so throw rather than warn.
+        throw new Error(`teleport: pushed locally only, will not be visible elsewhere until the next successful push: ${push.stderr.trim()}`);
+      }
     }
   }
 }

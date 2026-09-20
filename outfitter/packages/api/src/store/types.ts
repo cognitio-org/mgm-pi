@@ -72,6 +72,13 @@ export interface Run {
   // session's `litellm/local-qwen-mlx`-style model for the guru's fallbackModel because the laptop
   // tunnel probed offline. Surfaced so the UI can show "running on X instead of Y".
   modelFallback?: { wanted: string; used: string };
+  // Not in protocol.md: `spend.keySpend` (agentlink.ts) is the LiteLLM *key's* cumulative spend,
+  // not this run's own — the key is shared across every run/session using that guru. keySpendStart
+  // is set to keySpend on the first spend frame this run sees; cost is then
+  // max(0, keySpend - keySpendStart), i.e. only what this run added. session.cost is the sum of
+  // its runs' cost fields (kept incrementally; see agentlink.ts's "spend" handler).
+  keySpendStart?: number;
+  cost?: number;
   createdAt: string;
   updatedAt: string;
 }

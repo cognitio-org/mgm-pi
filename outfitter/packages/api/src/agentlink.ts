@@ -1,7 +1,9 @@
 // agentd <-> api WebSocket ingress: GET /agent/ws?run=<runId>. Implements the "agentd <-> api"
 // table in docs/protocol.md — verifies the agent's token, sends run.spec, persists entry frames
 // idempotently, fans event frames to SSE, acks seq, and delivers down-messages queued while no
-// socket was connected (REST calls queue in the store; hello drains the queue).
+// socket was connected or the run was still provisioning (REST calls queue in the store; the
+// queue drains once agentd reports the run running/idle — on that first "status", or on a later
+// reconnect's "hello" if it was already ready).
 
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
@@ -63,6 +65,12 @@ function mapStatusToRunState(status: string): Run["state"] {
   return "provisioning";
 }
 
+/** A run is "ready" once agentd has reported it running or idle — i.e. pi is up and can actually
+ * receive a prompt/steer/etc. Before that (provisioning) down-messages must stay queued. */
+function isReadyState(state: Run["state"]): boolean {
+  return state === "running" || state === "idle";
+}
+
 export class AgentLink {
   private readonly sockets = new Map<string, WebSocket>();
   private readonly pendingRequests = new Map<string, PendingRequest>();
@@ -94,10 +102,17 @@ export class AgentLink {
     return !!socket && socket.readyState === socket.OPEN;
   }
 
-  /** Sends a down-message now if the run has a live socket, else queues it for delivery on connect. */
+  /**
+   * Sends a down-message now if the run has a live socket *and* agentd has already reported it
+   * running/idle, else queues it in the store for delivery once that happens (the "hello" and
+   * "status" handlers below both drain the queue when the run becomes ready). A run that is still
+   * provisioning has no pi process listening yet, so delivering early would just be lost.
+   */
   async send(runId: string, message: DownMessage): Promise<void> {
     const socket = this.sockets.get(runId);
-    if (socket && socket.readyState === socket.OPEN) {
+    const run = await this.store.runs.findById(runId);
+    const ready = !!run && isReadyState(run.state);
+    if (socket && socket.readyState === socket.OPEN && ready) {
       socket.send(JSON.stringify(message));
       return;
     }
@@ -230,15 +245,29 @@ export class AgentLink {
 
     switch (frame.t) {
       case "hello": {
-        await this.store.runs.update(runId, { lastSeenAt: now, updatedAt: now });
-        const pending = await this.store.runs.drainDownMessages(runId);
-        for (const message of pending) socket.send(JSON.stringify(message));
+        // Reconnect tolerance: only drain here if the run was already ready before this hello (a
+        // reconnect after running/idle). A first connect's hello arrives before agentd has ever
+        // reported running/idle, so draining then would deliver down-messages (e.g. the initial
+        // prompt) before pi exists to receive them; the "status" case below drains once instead,
+        // the first time the run actually becomes ready.
+        const updated = await this.store.runs.update(runId, { lastSeenAt: now, updatedAt: now });
+        if (updated && isReadyState(updated.state)) {
+          const pending = await this.store.runs.drainDownMessages(runId);
+          for (const message of pending) socket.send(JSON.stringify(message));
+        }
         break;
       }
       case "status": {
         const state = mapStatusToRunState(String(frame.state));
+        const before = await this.store.runs.findById(runId);
+        const wasReady = !!before && isReadyState(before.state);
         await this.store.runs.update(runId, { state, lastSeenAt: now, updatedAt: now });
         this.sse.publish(sessionId, { type: "status", data: frame });
+        // First transition into running/idle: drain anything queued while provisioning (in order).
+        if (!wasReady && isReadyState(state)) {
+          const pending = await this.store.runs.drainDownMessages(runId);
+          for (const message of pending) socket.send(JSON.stringify(message));
+        }
         break;
       }
       case "entry": {
@@ -266,9 +295,24 @@ export class AgentLink {
       case "spend": {
         this.sse.publish(sessionId, { type: "spend", data: frame });
         if (typeof frame.keySpend === "number") {
-          const session = await this.store.sessions.findById(sessionId);
-          const cost = Math.max(session?.cost ?? 0, frame.keySpend);
-          await this.store.sessions.update(sessionId, { cost, updatedAt: now });
+          // frame.keySpend is the LiteLLM *key's* cumulative spend, shared by every run and
+          // session using that guru's key — not this run's own cost. Pin keySpendStart to the
+          // key's balance the first time this run sees a spend frame, then this run's cost is only
+          // what it added since: max(0, keySpend - keySpendStart). session.cost is kept as the sum
+          // of its runs' costs by applying this run's delta to it directly, run-cost -> +delta.
+          const run = await this.store.runs.findById(runId);
+          if (run) {
+            const keySpendStart = run.keySpendStart ?? frame.keySpend;
+            const cost = Math.max(0, frame.keySpend - keySpendStart);
+            const previousCost = run.cost ?? 0;
+            const patch: Partial<Run> = { cost, updatedAt: now };
+            if (run.keySpendStart === undefined) patch.keySpendStart = keySpendStart;
+            await this.store.runs.update(runId, patch);
+
+            const session = await this.store.sessions.findById(sessionId);
+            const sessionCost = Math.max(0, (session?.cost ?? 0) - previousCost + cost);
+            await this.store.sessions.update(sessionId, { cost: sessionCost, updatedAt: now });
+          }
         }
         break;
       }

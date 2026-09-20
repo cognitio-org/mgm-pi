@@ -311,10 +311,15 @@ warning, if there's no remote or it's unreachable):
   sessions/<id>.json    # manifest: {id, name?, host, cwd, repo?: {remote, ownerRepo, branch, head}, pushedAt}
 ```
 
-`push` writes those files, updates `index.json`, and does `git add`/`commit`/`push`. `list`/`pull`
-`git pull --ff-only` first. Push also appends a `custom` session entry (`customType: "teleport"`,
-via `pi.appendEntry`) recording the manifest, so `/session`-style tooling can see when and where a
-session was last teleported.
+`push` first syncs the clone (`git pull --ff-only`, falling back to `git pull --rebase` if another
+machine pushed in between), then writes those files, updates `index.json` from the now-synced state,
+and does `git add`/`commit`/`push`. If `push` is rejected as non-fast-forward (another push landed
+between the sync above and this one), it rebases once more and retries; if that still fails — including
+being offline with no remote reachable — the commit stays local-only and `put()` throws, so `/teleport
+push` reports a clear error instead of claiming success. `list`/`pull` do their own `git pull --ff-only`
+first. Push also appends a `custom` session entry (`customType: "teleport"`, via `pi.appendEntry`)
+recording the manifest, so `/session`-style tooling can see when and where a session was last
+teleported.
 
 ### Requirements, mirrored from Claude Code's teleport
 

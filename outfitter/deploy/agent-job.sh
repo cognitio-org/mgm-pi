@@ -2,16 +2,19 @@
 # Build the outfitter-agent sandbox image and deploy/update it as a Cloud Run Job (EPIC.md E1.1,
 # E2.3, "Decisions taken": 1 vCPU / 2 GiB default sandbox size). One execution per run; agentd
 # itself owns checkpointing and idle-stop, so this job never retries a failed execution.
-# DOES NOT RUN ON ITS OWN — run by hand after baseline.sh and api.sh:
-#   PROJECT=outfitter-509211 REGION=us-central1 OUTFITTER_API=https://outfitter-api-xyz.run.app ./agent-job.sh
+#
+# OUTFITTER_API must be the `outfitter-link` service URL (link.sh prints it), NOT outfitter-api's:
+# agentd only ever dials /agent/ws, which lives on the unauthenticated "link" role service, not the
+# IAP-protected "web" role one — see link.sh and docs/protocol.md "Two origins".
+# DOES NOT RUN ON ITS OWN — run by hand after baseline.sh, api.sh, and link.sh:
+#   PROJECT=outfitter-509211 REGION=us-central1 OUTFITTER_API=https://outfitter-link-xyz.run.app ./agent-job.sh
 set -euo pipefail
-
-PROJECT="${PROJECT:-outfitter-509211}"
-REGION="${REGION:-us-central1}"
+# shellcheck source=env.sh
+source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 AR_REPO="${AR_REPO:-outfitter}"
 JOB="outfitter-agent"
 AGENT_SA_EMAIL="outfitter-agent@${PROJECT}.iam.gserviceaccount.com"
-OUTFITTER_API="${OUTFITTER_API:?set OUTFITTER_API to the outfitter-api service URL (api.sh prints it)}"
+OUTFITTER_API="${OUTFITTER_API:?set OUTFITTER_API to the outfitter-link service URL (link.sh prints it)}"
 
 # image/Dockerfile COPYs both mgm/ (the pi build) and outfitter/ (agentd), so the build context is
 # the repo root, one level above this outfitter/ checkout -- matching image/build.sh's own cd logic.

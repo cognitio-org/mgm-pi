@@ -64,7 +64,19 @@ export class CloudRunProvider implements SandboxProvider {
     if (!executionName) return { state: "unknown" };
     const client = await this.executionsClient();
     const [execution] = await client.getExecution({ name: executionName });
-    if (!execution.completionTime) return { state: "running" };
-    return { state: "stopped", detail: execution.failedCount ? "failed tasks" : undefined };
+    // Cloud Run v2 Execution resource fields
+    // (https://cloud.google.com/run/docs/reference/rest/v2/projects.locations.jobs.executions#Execution):
+    // startTime is unset until the first task actually starts running, so an execution still
+    // waiting on a cold start (image pull, scheduling) reports no startTime yet -> "provisioning".
+    // completionTime is set once every task has reached a terminal phase (succeeded/failed/
+    // cancelled) -> "stopped". In between, runningCount > 0 means at least one task is actively
+    // executing -> "running"; runningCount === 0 with a startTime but no completionTime yet
+    // (e.g. between retries, or briefly at task startup) is still "provisioning".
+    if (!execution.startTime) return { state: "provisioning" };
+    if (execution.completionTime) {
+      return { state: "stopped", detail: execution.failedCount ? "failed tasks" : undefined };
+    }
+    if ((execution.runningCount ?? 0) > 0) return { state: "running" };
+    return { state: "provisioning" };
   }
 }

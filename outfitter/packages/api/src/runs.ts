@@ -1,7 +1,8 @@
 // Run lifecycle: `queued -> provisioning -> running <-> idle -> stopped | failed` (protocol.md
 // "Run state machine"). wake() starts a provider execution for a session; stop() asks the provider
 // to cancel; the reconciler marks runs failed once their lastSeenAt is stale, unless the provider
-// still reports them as provisioning.
+// still reports them as provisioning or the run is still within its provisioning grace window,
+// stopping the provider execution first so a reconciled run doesn't leave an orphaned Job running.
 
 import { randomUUID } from "node:crypto";
 import type { Store, Run } from "./store/types.ts";
@@ -86,14 +87,27 @@ export class RunManager {
     return () => clearInterval(timer);
   }
 
-  /** Marks runs with no heartbeat/status for STALE_AFTER_MS as failed, unless still provisioning. */
+  /**
+   * Marks runs with no heartbeat/status for STALE_AFTER_MS as failed, unless still provisioning.
+   * A run younger than config.provisioningGraceMs is skipped outright (a cold Cloud Run Job start
+   * can outlast STALE_AFTER_MS with no heartbeat yet, and that's not a failure). Before marking a
+   * run failed, best-effort stops its provider handle first so a reconciled run's Job execution
+   * doesn't keep running as an orphan after the run is marked dead.
+   */
   async reconcileOnce(staleAfterMs = STALE_AFTER_MS): Promise<void> {
-    const cutoff = new Date(Date.now() - staleAfterMs).toISOString();
+    const now = Date.now();
+    const cutoff = new Date(now - staleAfterMs).toISOString();
     const stale = await this.store.runs.listStale(cutoff);
     for (const run of stale) {
+      const ageMs = now - new Date(run.createdAt).getTime();
+      if (ageMs < this.config.provisioningGraceMs) continue;
+
       if (run.providerHandle) {
         const status = await this.provider.status(run.providerHandle).catch(() => ({ state: "unknown" as const }));
         if (status.state === "provisioning") continue;
+        await this.provider.stop(run.providerHandle).catch(() => {
+          // best effort: still mark the run failed below even if the provider stop call itself fails
+        });
       }
       await this.store.runs.update(run.id, {
         state: "failed",

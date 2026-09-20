@@ -57,6 +57,9 @@ export interface PiProcessOptions {
   cwd: string;
   /** Injectable for tests; defaults to node:child_process.spawn. */
   spawnFn?: typeof spawn;
+  /** Sink for swallowed stdio errors (e.g. EPIPE once pi has exited) and no-op `send()` calls after
+   * exit. Defaults to a no-op. */
+  onLog?: (line: string) => void;
 }
 
 export interface PiProcess {
@@ -70,6 +73,7 @@ export interface PiProcess {
 
 export function spawnPi(opts: PiProcessOptions): PiProcess {
   const spawnFn = opts.spawnFn ?? spawn;
+  const onLog = opts.onLog ?? (() => {});
   const child: ChildProcessWithoutNullStreams = spawnFn(opts.piBin, opts.args, {
     cwd: opts.cwd,
     env: { ...process.env, ...opts.env },
@@ -80,6 +84,20 @@ export function spawnPi(opts: PiProcessOptions): PiProcess {
   const eventHandlers: Array<(event: PiRpcEvent) => void> = [];
   const stderrHandlers: Array<(chunk: string) => void> = [];
   const exitHandlers: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = [];
+  let exited = false;
+
+  // A write to (or from) a dead child's stdio throws/emits EPIPE. Node's EventEmitter contract makes
+  // an unhandled 'error' event on any of these streams fatal to the whole process -- without these
+  // handlers, a send() racing pi's exit (or pi dying mid-write) would crash agentd, not just this run.
+  child.stdin.on("error", (err: NodeJS.ErrnoException) => {
+    onLog(`pi stdin error: ${err?.code ?? err?.message ?? err}`);
+  });
+  child.stdout.on("error", (err: NodeJS.ErrnoException) => {
+    onLog(`pi stdout error: ${err?.code ?? err?.message ?? err}`);
+  });
+  child.stderr.on("error", (err: NodeJS.ErrnoException) => {
+    onLog(`pi stderr error: ${err?.code ?? err?.message ?? err}`);
+  });
 
   function emitLine(line: string) {
     if (line.length === 0) return;
@@ -106,12 +124,21 @@ export function spawnPi(opts: PiProcessOptions): PiProcess {
   });
 
   child.on("exit", (code, signal) => {
+    exited = true;
     for (const h of exitHandlers) h(code, signal);
   });
 
   return {
     send(command) {
-      child.stdin.write(`${JSON.stringify(command)}\n`);
+      if (exited) {
+        onLog(`pi send() ignored after exit: ${command.type}`);
+        return;
+      }
+      try {
+        child.stdin.write(`${JSON.stringify(command)}\n`);
+      } catch (err: any) {
+        onLog(`pi stdin write failed: ${err?.code ?? err?.message ?? err}`);
+      }
     },
     onEvent(handler) {
       eventHandlers.push(handler);

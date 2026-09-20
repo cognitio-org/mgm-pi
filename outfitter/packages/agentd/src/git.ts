@@ -1,8 +1,19 @@
 /**
  * Git operations for a run's workspace: clone with a token, create/checkout the session branch,
- * commit-all, push, and diff. The GitHub token is rewritten into the clone/push URL only (never into
- * argv that gets logged elsewhere, never printed) via `withAccessTokenUrl`, a pure helper so the
- * rewrite itself is unit-testable without touching a real URL containing a secret.
+ * commit-all, push, and diff. The GitHub token is passed as a per-invocation `http.extraheader` (via
+ * `authHeaderArgs`, a pure helper so the header construction is unit-testable without touching a
+ * real URL) rather than embedded in the remote URL -- an embedded-in-URL token is exactly what `git
+ * clone`/`git push -u` persist into `.git/config` (`remote.origin.url`), so it would sit there in
+ * plaintext for the lifetime of the workspace. `-c http.extraheader=...` is a one-shot config
+ * override for that single git invocation only and is never written anywhere.
+ *
+ * GitHub's git-over-HTTP endpoint rejects the `Bearer` auth scheme for this header (confirmed via
+ * GitHub's own docs and community reports of `Bearer` being rejected while `Basic` succeeds, e.g.
+ * https://github.com/mitkox/ecdf/issues/1); GitHub instead documents Basic auth with a PAT/token as
+ * the password, i.e. `AUTHORIZATION: basic base64(x-access-token:<token>)`
+ * (https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens),
+ * so `authHeaderArgs` builds that Basic form even though GitHub's REST API separately accepts
+ * `Bearer`.
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -32,22 +43,22 @@ export async function defaultExec(cmd: string, args: string[], cwd: string): Pro
   }
 }
 
-/** Rewrites an https GitHub URL to embed `x-access-token:<token>@github.com`. Pure string logic;
- * the caller is responsible for never logging the result. Non-GitHub or non-https URLs (e.g. a
- * `file://` URL used in local smoke tests) are returned unchanged since there is nothing to embed a
- * token into. */
-export function withAccessTokenUrl(cloneUrl: string, token: string | undefined): string {
-  if (!token) return cloneUrl;
+/** Builds the `-c http.extraheader=...` git argument pair that authenticates a single clone/fetch/
+ * push against `remoteUrl` with `token`, without embedding the token in the URL (see module doc for
+ * why that matters) or in `.git/config`. Returns `[]` when there's no token, the URL isn't parseable,
+ * or the URL isn't an https github.com remote (e.g. a `file://` URL used in local smoke tests --
+ * those need no auth at all). */
+export function authHeaderArgs(remoteUrl: string, token: string | undefined): string[] {
+  if (!token) return [];
   let url: URL;
   try {
-    url = new URL(cloneUrl);
+    url = new URL(remoteUrl);
   } catch {
-    return cloneUrl;
+    return [];
   }
-  if (url.protocol !== "https:" || url.host !== "github.com") return cloneUrl;
-  url.username = "x-access-token";
-  url.password = token;
-  return url.toString();
+  if (url.protocol !== "https:" || url.host !== "github.com") return [];
+  const basic = Buffer.from(`x-access-token:${token}`, "utf8").toString("base64");
+  return ["-c", `http.extraheader=AUTHORIZATION: basic ${basic}`];
 }
 
 /** Redacts a possibly-token-bearing URL for safe logging: keeps scheme/host/path, drops userinfo. */
@@ -60,6 +71,15 @@ export function redactUrl(url: string): string {
   } catch {
     return url;
   }
+}
+
+/** Strips a token value out of process output before it's embedded in a thrown Error or logged --
+ * defense in depth in case git ever echoes the invocation (e.g. under `GIT_TRACE`) back on
+ * stdout/stderr, since `authHeaderArgs`'s header no longer appears in the URL we log via
+ * `redactUrl`. */
+function redactToken(text: string, token: string | undefined): string {
+  if (!token) return text;
+  return text.split(token).join("<redacted>");
 }
 
 export interface CloneSpec {
@@ -85,11 +105,13 @@ export function createGitOps(exec: ExecFn = defaultExec): GitOps {
 
   return {
     async clone(spec, dest) {
-      const authedUrl = withAccessTokenUrl(spec.cloneUrl, spec.githubToken);
-      const cloneArgs = ["clone", "--branch", spec.baseBranch, "--single-branch", authedUrl, dest];
+      const authArgs = authHeaderArgs(spec.cloneUrl, spec.githubToken);
+      const cloneArgs = [...authArgs, "clone", "--branch", spec.baseBranch, "--single-branch", spec.cloneUrl, dest];
       const cloned = await exec("git", cloneArgs, process.cwd());
       if (cloned.code !== 0) {
-        throw new Error(`git clone failed (${redactUrl(spec.cloneUrl)}): ${cloned.stderr.trim()}`);
+        throw new Error(
+          `git clone failed (${redactUrl(spec.cloneUrl)}): ${redactToken(cloned.stderr.trim(), spec.githubToken)}`,
+        );
       }
       if (spec.createBranch) {
         const created = await run(dest, ["checkout", "-b", spec.branch]);
@@ -97,9 +119,11 @@ export function createGitOps(exec: ExecFn = defaultExec): GitOps {
           throw new Error(`git checkout -b ${spec.branch} failed: ${created.stderr.trim()}`);
         }
       } else {
-        const fetched = await run(dest, ["fetch", "origin", spec.branch]);
+        const fetched = await exec("git", [...authArgs, "fetch", "origin", spec.branch], dest);
         if (fetched.code !== 0) {
-          throw new Error(`git fetch origin ${spec.branch} failed: ${fetched.stderr.trim()}`);
+          throw new Error(
+            `git fetch origin ${spec.branch} failed: ${redactToken(fetched.stderr.trim(), spec.githubToken)}`,
+          );
         }
         const checked = await run(dest, ["checkout", "-B", spec.branch, `origin/${spec.branch}`]);
         if (checked.code !== 0) {
@@ -120,10 +144,13 @@ export function createGitOps(exec: ExecFn = defaultExec): GitOps {
 
     async push(cwd, branch, githubToken) {
       const remote = await run(cwd, ["remote", "get-url", "origin"]);
-      const pushUrl = withAccessTokenUrl(remote.stdout.trim(), githubToken);
-      const push = await run(cwd, ["push", "-u", pushUrl, `HEAD:${branch}`]);
+      const remoteUrl = remote.stdout.trim();
+      const authArgs = authHeaderArgs(remoteUrl, githubToken);
+      const push = await exec("git", [...authArgs, "push", "-u", "origin", `HEAD:${branch}`], cwd);
       if (push.code !== 0) {
-        throw new Error(`git push -u ${redactUrl(remote.stdout.trim())} HEAD:${branch} failed: ${push.stderr.trim()}`);
+        throw new Error(
+          `git push -u ${redactUrl(remoteUrl)} HEAD:${branch} failed: ${redactToken(push.stderr.trim(), githubToken)}`,
+        );
       }
       const head = await run(cwd, ["rev-parse", "HEAD"]);
       return { head: head.stdout.trim() };

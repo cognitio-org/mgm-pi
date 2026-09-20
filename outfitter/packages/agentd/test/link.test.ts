@@ -15,10 +15,12 @@ class FakeWebSocket extends EventEmitter {
   readyState = FakeWebSocket.CONNECTING;
   sent: string[] = [];
   url: string;
+  opts: { headers?: Record<string, string> };
 
-  constructor(url: string, _opts?: unknown) {
+  constructor(url: string, opts?: { headers?: Record<string, string> }) {
     super();
     this.url = url;
+    this.opts = opts ?? {};
     FakeWebSocket.instances.push(this);
   }
 
@@ -56,11 +58,20 @@ async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void
   }
 }
 
+/** connect() and wait for the Nth (1-based) FakeWebSocket instance to be constructed -- open() is
+ * async now (it awaits the headers provider before constructing the socket), so instances are no
+ * longer available synchronously right after connect(). */
+async function connectAndGetInstance(link: Link, n = 1): Promise<FakeWebSocket> {
+  link.connect();
+  await waitFor(() => FakeWebSocket.instances.length >= n);
+  return FakeWebSocket.instances[n - 1];
+}
+
 function makeLink(overrides: Partial<ConstructorParameters<typeof Link>[0]> = {}): Link {
   FakeWebSocket.instances = [];
   return new Link({
     url: "wss://api.example.test/agent/ws?run=run1",
-    headers: { Authorization: "Bearer t" },
+    headers: async () => ({ Authorization: "Bearer t" }),
     runId: "run1",
     sessionId: "sess1",
     agentdVersion: "0.1.0",
@@ -72,10 +83,10 @@ function makeLink(overrides: Partial<ConstructorParameters<typeof Link>[0]> = {}
   });
 }
 
-test("Link: sends hello with lastAckedSeq=0 on first open", () => {
+test("Link: sends hello with lastAckedSeq=0 on first open", async (t) => {
   const link = makeLink();
-  link.connect();
-  const ws = FakeWebSocket.instances[0];
+  t.after(() => link.close());
+  const ws = await connectAndGetInstance(link);
   ws.triggerOpen();
   const hello = JSON.parse(ws.sent[0]);
   assert.equal(hello.t, "hello");
@@ -83,10 +94,10 @@ test("Link: sends hello with lastAckedSeq=0 on first open", () => {
   assert.equal(hello.lastAckedSeq, 0);
 });
 
-test("Link: sendSeq assigns monotonic seq and buffers until acked", () => {
+test("Link: sendSeq assigns monotonic seq and buffers until acked", async (t) => {
   const link = makeLink();
-  link.connect();
-  const ws = FakeWebSocket.instances[0];
+  t.after(() => link.close());
+  const ws = await connectAndGetInstance(link);
   ws.triggerOpen();
   ws.sent.length = 0; // drop the hello frame from the log
 
@@ -106,10 +117,10 @@ test("Link: sendSeq assigns monotonic seq and buffers until acked", () => {
   assert.equal(received[0].t, "ack");
 });
 
-test("Link: non-seq frames (heartbeat, status) are not buffered", () => {
+test("Link: non-seq frames (heartbeat, status) are not buffered", async (t) => {
   const link = makeLink();
-  link.connect();
-  const ws = FakeWebSocket.instances[0];
+  t.after(() => link.close());
+  const ws = await connectAndGetInstance(link);
   ws.triggerOpen();
   ws.sent.length = 0;
 
@@ -118,10 +129,10 @@ test("Link: non-seq frames (heartbeat, status) are not buffered", () => {
   assert.equal(ws.sent.length, 1);
 });
 
-test("Link: reconnects with backoff and resends hello + unacked frames in order", async () => {
+test("Link: reconnects with backoff and resends hello + unacked frames in order", async (t) => {
   const link = makeLink();
-  link.connect();
-  const ws1 = FakeWebSocket.instances[0];
+  t.after(() => link.close());
+  const ws1 = await connectAndGetInstance(link);
   ws1.triggerOpen();
   ws1.sent.length = 0;
 
@@ -143,10 +154,10 @@ test("Link: reconnects with backoff and resends hello + unacked frames in order"
   assert.equal(resent.seq, 2);
 });
 
-test("Link: setSessionId changes the sessionId used in later hello frames", async () => {
+test("Link: setSessionId changes the sessionId used in later hello frames", async (t) => {
   const link = makeLink({ sessionId: "" });
-  link.connect();
-  const ws1 = FakeWebSocket.instances[0];
+  t.after(() => link.close());
+  const ws1 = await connectAndGetInstance(link);
   ws1.triggerOpen();
   let hello = JSON.parse(ws1.sent[0]);
   assert.equal(hello.sessionId, "");
@@ -162,18 +173,17 @@ test("Link: setSessionId changes the sessionId used in later hello frames", asyn
 
 test("Link: close() stops reconnecting", async () => {
   const link = makeLink();
-  link.connect();
-  const ws1 = FakeWebSocket.instances[0];
+  const ws1 = await connectAndGetInstance(link);
   ws1.triggerOpen();
   link.close();
   await new Promise((r) => setTimeout(r, 50));
   assert.equal(FakeWebSocket.instances.length, 1);
 });
 
-test("Link: sendAndFlush resolves only after the socket confirms the write", async () => {
+test("Link: sendAndFlush resolves only after the socket confirms the write", async (t) => {
   const link = makeLink();
-  link.connect();
-  const ws = FakeWebSocket.instances[0];
+  t.after(() => link.close());
+  const ws = await connectAndGetInstance(link);
   ws.triggerOpen();
   ws.sent.length = 0;
 
@@ -192,4 +202,69 @@ test("Link: sendAndFlush resolves immediately when not connected (nothing to flu
   const link = makeLink();
   // never call connect()/triggerOpen() -- no socket
   await link.sendAndFlush({ t: "bye", reason: "stop" }); // must not hang
+});
+
+test("Link: the headers provider is invoked fresh on every (re)connect, not cached from the first connect", async (t) => {
+  let calls = 0;
+  const link = makeLink({
+    headers: async () => {
+      calls++;
+      return { Authorization: `Bearer token-${calls}` };
+    },
+  });
+  t.after(() => link.close());
+
+  const ws1 = await connectAndGetInstance(link);
+  assert.equal(calls, 1);
+  assert.equal(ws1.opts.headers?.Authorization, "Bearer token-1");
+  ws1.triggerOpen();
+
+  ws1.triggerClose(); // simulate a drop -- Link should reconnect and re-fetch headers
+  await waitFor(() => FakeWebSocket.instances.length === 2);
+  const ws2 = FakeWebSocket.instances[1];
+  assert.equal(calls, 2);
+  assert.equal(ws2.opts.headers?.Authorization, "Bearer token-2");
+});
+
+test("Link: a headers-provider failure is treated like a failed connection attempt and retried with backoff", async (t) => {
+  let calls = 0;
+  const link = makeLink({
+    headers: async () => {
+      calls++;
+      if (calls === 1) throw new Error("metadata server unreachable");
+      return { Authorization: "Bearer token-2" };
+    },
+  });
+  t.after(() => link.close());
+
+  link.connect();
+  // The eventual (successful, retried) connection is the observable outcome; the retry happens
+  // fast enough (backoffBaseMs=5ms) that asserting "no socket yet" in between is inherently racy.
+  await waitFor(() => FakeWebSocket.instances.length === 1, 2000);
+  assert.equal(calls, 2);
+  assert.equal(FakeWebSocket.instances[0].opts.headers?.Authorization, "Bearer token-2");
+});
+
+test("Link: proactively reconnects once a connection reaches maxConnectionAgeMs (Cloud Run's 60 min cap)", async (t) => {
+  const link = makeLink({ maxConnectionAgeMs: 15 });
+  t.after(() => link.close());
+  const ws1 = await connectAndGetInstance(link);
+  ws1.triggerOpen(); // arms the connection-age timer
+
+  // Without any external close/error, the connection should be proactively rotated.
+  await waitFor(() => FakeWebSocket.instances.length === 2, 2000);
+  assert.equal(ws1.readyState, FakeWebSocket.CLOSED);
+  const ws2 = FakeWebSocket.instances[1];
+  ws2.triggerOpen();
+  assert.equal(JSON.parse(ws2.sent[0]).t, "hello");
+});
+
+test("Link: the connection-age timer does not fire again after close() (no leaked reconnect)", async (t) => {
+  const link = makeLink({ maxConnectionAgeMs: 15 });
+  t.after(() => link.close());
+  const ws1 = await connectAndGetInstance(link);
+  ws1.triggerOpen();
+  link.close();
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(FakeWebSocket.instances.length, 1);
 });

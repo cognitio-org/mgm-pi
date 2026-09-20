@@ -54,20 +54,27 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   });
   const agentLink = new AgentLink(store, config, secretsBroker, sse, laptopProbe);
 
-  fastify.addHook("preHandler", async (req, reply) => {
-    // /api/hooks/* (currently just POST /api/hooks/ngrok) is called by an external service with no
-    // IAP session and no agentd identity token; it authenticates itself via its own HMAC signature
-    // instead (routes/hooks.ts), so it's carved out of the IAP check here.
-    if (!req.url.startsWith("/api/") || req.url.startsWith("/api/hooks/")) return;
-    try {
-      req.identity = await identityFromRequest(req, config);
-    } catch (err) {
-      reply.code(401).send({ error: err instanceof Error ? err.message : "unauthorized" });
-    }
-  });
+  // IAP guards the browser routes only (role "web"/"all"). It must never sit in front of role
+  // "link": IAP is enforced service-wide by Cloud Run, so it would block agentd's WebSocket (its
+  // token's audience is this service's own origin, not IAP's client id) and the unauthenticated
+  // ngrok webhook before either reached the app. Those two carry their own per-request auth
+  // instead (verifyAgentToken / HMAC in routes/hooks.ts) — see config.ts's OutfitterRole doc.
+  if (config.role !== "link") {
+    fastify.addHook("preHandler", async (req, reply) => {
+      // /api/hooks/* (currently just POST /api/hooks/ngrok) is called by an external service with
+      // no IAP session and no agentd identity token; it authenticates itself via its own HMAC
+      // signature instead (routes/hooks.ts), so it's carved out of the IAP check here.
+      if (!req.url.startsWith("/api/") || req.url.startsWith("/api/hooks/")) return;
+      try {
+        req.identity = await identityFromRequest(req, config);
+      } catch (err) {
+        reply.code(401).send({ error: err instanceof Error ? err.message : "unauthorized" });
+      }
+    });
+  }
 
   await registerRoutes(fastify, { store, config, runs, agentLink, sse, laptopProbe });
-  agentLink.register(fastify);
+  if (config.role !== "web") agentLink.register(fastify);
 
   const stopReconciler = runs.startReconciler();
 

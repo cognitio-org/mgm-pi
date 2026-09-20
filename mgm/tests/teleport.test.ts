@@ -230,4 +230,74 @@ describe("GitStore", () => {
     const refs = await store.list();
     assert.deepEqual(refs.map((r) => r.id), ["newer", "older"]);
   });
+
+  test("put() pulls --ff-only before writing, and merges into the index that pull brought in", async () => {
+    const dir = await tmpDir();
+    // A stale local index, as if this clone hasn't synced since another machine pushed.
+    await mkdir(join(dir, "sessions"), { recursive: true });
+    await writeFile(join(dir, "index.json"), JSON.stringify([{ id: "stale", cwd: "/x", updatedAt: "2020-01-01T00:00:00.000Z", host: "other" }]), "utf8");
+    const calls: string[][] = [];
+    const exec: ExecFn = async (cmd, args) => {
+      calls.push([cmd, ...args]);
+      if (cmd !== "git") return { stdout: "", stderr: "", code: 0 };
+      if (args[0] === "remote") return { stdout: "origin\n", stderr: "", code: 0 };
+      if (args[0] === "pull" && args.includes("--ff-only")) {
+        // Simulate the pull fast-forwarding in a session another machine pushed meanwhile.
+        await writeFile(join(dir, "index.json"), JSON.stringify([
+          { id: "stale", cwd: "/x", updatedAt: "2020-01-01T00:00:00.000Z", host: "other" },
+          { id: "fromRemote", cwd: "/y", updatedAt: "2026-09-19T00:00:00.000Z", host: "other" },
+        ]), "utf8");
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return { stdout: "", stderr: "", code: 0 };
+    };
+    const store = new GitStore({ dir, exec, host: "mac" });
+    await store.put("sess1", "{}\n", manifest);
+
+    const index = JSON.parse(await readFile(join(dir, "index.json"), "utf8"));
+    const ids = index.map((r: any) => r.id);
+    assert.ok(ids.includes("fromRemote"), "the ref that arrived via pull survives into the merged index");
+    assert.ok(ids.includes("stale"));
+    assert.ok(ids.includes("sess1"));
+
+    const subcommands = calls.filter((c) => c[0] === "git").map((c) => c[1]);
+    assert.ok(subcommands.indexOf("pull") !== -1 && subcommands.indexOf("pull") < subcommands.indexOf("add"), "pull happens before add/commit");
+  });
+
+  test("put() rebases and retries once when push is rejected, and succeeds", async () => {
+    const dir = await tmpDir();
+    let pushCalls = 0;
+    const calls: string[][] = [];
+    const exec: ExecFn = async (cmd, args) => {
+      calls.push([cmd, ...args]);
+      if (cmd !== "git") return { stdout: "", stderr: "", code: 0 };
+      if (args[0] === "remote") return { stdout: "origin\n", stderr: "", code: 0 };
+      if (args[0] === "push") {
+        pushCalls++;
+        if (pushCalls === 1) return { stdout: "", stderr: "! [rejected] main -> main (non-fast-forward)", code: 1 };
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return { stdout: "", stderr: "", code: 0 };
+    };
+    const store = new GitStore({ dir, exec, host: "mac" });
+    await assert.doesNotReject(store.put("sess1", "{}\n", manifest));
+    assert.equal(pushCalls, 2, "rejected once, then retried after rebasing");
+    assert.ok(calls.some((c) => c[0] === "git" && c[1] === "pull" && c.includes("--rebase")));
+  });
+
+  test("put() throws when push still fails after the rebase retry, instead of reporting success", async () => {
+    const dir = await tmpDir();
+    const exec: ExecFn = async (cmd, args) => {
+      if (cmd !== "git") return { stdout: "", stderr: "", code: 0 };
+      if (args[0] === "remote") return { stdout: "origin\n", stderr: "", code: 0 };
+      if (args[0] === "push") return { stdout: "", stderr: "offline", code: 1 };
+      if (args[0] === "pull" && args.includes("--rebase")) return { stdout: "", stderr: "offline", code: 1 };
+      return { stdout: "", stderr: "", code: 0 };
+    };
+    const store = new GitStore({ dir, exec, host: "mac" });
+    await assert.rejects(store.put("sess1", "{}\n", manifest), /pushed locally only/i);
+    // The commit still happened locally; it's the push that must be reported as failed.
+    const index = JSON.parse(await readFile(join(dir, "index.json"), "utf8"));
+    assert.equal(index[0].id, "sess1");
+  });
 });

@@ -3,6 +3,25 @@
 `gcloud` scripts for the GCP side of the control plane (EPIC.md E0.2, E2.7). Every script is
 idempotent and **none of them run on their own** — review, then run by hand in this order.
 
+**`env.sh`.** Every script sources `env.sh` right after `set -euo pipefail`. It pins `PROJECT`
+(default `outfitter-509211`), `REGION` (default `us-central1`) and `ACCOUNT` (default
+`mgm@mgms.eu`) and exports them as `CLOUDSDK_CORE_PROJECT` / `CLOUDSDK_CORE_ACCOUNT` /
+`CLOUDSDK_BILLING_QUOTA_PROJECT`, then refuses to run if `ACCOUNT` isn't logged in to `gcloud` or
+`PROJECT` doesn't look like an `outfitter-*` project. This exists because the active `gcloud`
+config on this laptop can point at an unrelated work project, and a billing-account-scoped call
+(budgets) was once charged against it as quota project — nothing here may depend on the active
+`gcloud` config again. Every `gcloud` call in these scripts still also passes an explicit
+`--project` (or a positional project id); `env.sh` is a second, independent guard, not a
+replacement for that.
+
+**Two Cloud Run services, one image.** IAP on a Cloud Run service is service-wide — it can't let
+agentd's WebSocket or the unauthenticated ngrok webhook through while still gating the browser
+routes. So `packages/api`'s image is deployed twice, picking its routes via `OUTFITTER_ROLE`
+(`src/config.ts`, `src/server.ts`): `outfitter-api` (`OUTFITTER_ROLE=web`, IAP on) for browser
+REST/SSE, and `outfitter-link` (`OUTFITTER_ROLE=link`, `--allow-unauthenticated`) for `/agent/ws`
+and `/api/hooks/*`, each authenticating its own requests instead of relying on IAP. Both share the
+same Atlas store. See `docs/protocol.md` "Two origins".
+
 ## Order of operations
 
 1. **`./baseline.sh`** — enables the required APIs, creates the `outfitter` Artifact Registry
@@ -62,40 +81,50 @@ idempotent and **none of them run on their own** — review, then run by hand in
    `LITELLM_ADMIN_KEY` (a) has no consumer today because nothing in this story needed an
    admin-level LiteLLM key yet — only per-guru virtual keys (b). See `docs/reports/api.md`
    "deviations" for the full writeup.
-4. **`./api.sh`** — builds `packages/api` with Cloud Build and deploys it to Cloud Run with IAP
-   enabled directly on the service, IAP access restricted to `domain:mgmonteleone.com`, and the
-   four (a) secrets above mounted as env vars. Prints the service URL. The (b) secrets are created
-   per session/guru as needed, not by this script. Also **not** set by `api.sh` today:
-   `NGROK_WEBHOOK_SECRET` — `POST /api/hooks/ngrok` (see `docs/protocol.md`) 401s every delivery
-   until it's set, which is the deliberately-safe default while that push path has no confirmed
-   real sender (see `docs/reports/api.md`); add
+4. **`./api.sh`** — builds `packages/api` with Cloud Build and deploys it to Cloud Run **as the
+   `web` role** (`OUTFITTER_ROLE=web`) with IAP enabled directly on the service, IAP access
+   restricted to `domain:mgmonteleone.com`, and the four (a) secrets above mounted as env vars.
+   Prints the service URL. The (b) secrets are created per session/guru as needed, not by this
+   script.
+5. **`./link.sh`** — deploys the *same* `packages/api` image a second time, **as the `link` role**
+   (`OUTFITTER_ROLE=link`), to its own Cloud Run service `outfitter-link`, `--allow-unauthenticated`
+   (no IAP — it authenticates `/agent/ws` and `/api/hooks/*` itself). Mounts the same four (a)
+   secrets as `api.sh`. Prints the service URL agentd actually dials. Also **not** set by `link.sh`
+   today: `NGROK_WEBHOOK_SECRET` — `POST /api/hooks/ngrok` (see `docs/protocol.md`) 401s every
+   delivery until it's set, which is the deliberately-safe default while that push path has no
+   confirmed real sender (see `docs/reports/api.md`); add
    `NGROK_WEBHOOK_SECRET=$(gcloud secrets versions access latest --secret=<your secret>)` to
-   `api.sh`'s `--set-env-vars` once it does.
-5. **`./agent-job.sh`** — builds `image/Dockerfile` (repo root context) with Cloud Build and
+   `link.sh`'s `--set-env-vars` once it does.
+6. **`./agent-job.sh`** — builds `image/Dockerfile` (repo root context) with Cloud Build and
    deploys/updates the `outfitter-agent` Cloud Run Job. Needs `OUTFITTER_API` set to the URL
-   `api.sh` printed.
+   `link.sh` printed (not `api.sh`'s — agentd only ever dials `outfitter-link`).
 
-Common env vars across all three scripts: `PROJECT` (default `outfitter-509211`), `REGION`
+Common env vars across all four scripts: `PROJECT` (default `outfitter-509211`), `REGION`
 (default `us-central1`), `AR_REPO` (default `outfitter`). See each script's header for its other
 inputs and their defaults.
 
 ## Rollback
 
-- **`outfitter-api`** (a Cloud Run *service*, so it keeps prior revisions): list them with
-  `gcloud run revisions list --service=outfitter-api --region=us-central1`, then shift traffic
-  back with
-  `gcloud run services update-traffic outfitter-api --region=us-central1 --to-revisions=<prior-revision>=100`.
-  To turn IAP off entirely in an emergency: `gcloud run services update outfitter-api --region=us-central1 --no-iap`
-  (or `gcloud beta run services update ... --no-iap` if `--no-iap` isn't on your GA channel yet —
-  see `api.sh`'s header).
+- **`outfitter-api`** and **`outfitter-link`** (both Cloud Run *services*, so each keeps prior
+  revisions): list them with `gcloud run revisions list --service=<service> --region=us-central1`,
+  then shift traffic back with
+  `gcloud run services update-traffic <service> --region=us-central1 --to-revisions=<prior-revision>=100`.
+  To turn IAP off on `outfitter-api` entirely in an emergency:
+  `gcloud run services update outfitter-api --region=us-central1 --no-iap` (or
+  `gcloud beta run services update ... --no-iap` if `--no-iap` isn't on your GA channel yet — see
+  `api.sh`'s header). `outfitter-link` has no IAP to toggle; its equivalent emergency lever is
+  redeploying `outfitter-api` with `OUTFITTER_ROLE=all` and pointing `agent-job.sh`'s
+  `OUTFITTER_API` back at it, collapsing both roles onto the one IAP-protected service again (loses
+  the ngrok webhook and agentd's connection until IAP is disabled too, so only as a last resort).
 - **`outfitter-agent`** (a Cloud Run *Job*, no traffic split): re-run `agent-job.sh` with `IMAGE`
   pointed at a prior tag (`IMAGE=us-central1-docker.pkg.dev/outfitter-509211/outfitter/outfitter-agent:<old-tag> ./agent-job.sh`
   after commenting out the build step, or `gcloud run jobs update outfitter-agent --image=<prior image>`
   directly) — new executions pick up the change immediately; a Job has no live traffic to shift.
 - **IAP domain access**: remove it with
   `gcloud iap web remove-iam-policy-binding --resource-type=cloud-run --service=outfitter-api --region=us-central1 --member=domain:mgmonteleone.com --role=roles/iap.httpsResourceAccessor`.
-- **Full teardown** (reverse of `baseline.sh`): delete the Cloud Run service and job, then the AR
-  repo (`gcloud artifacts repositories delete outfitter --location=us-central1`), then the two
+- **Full teardown** (reverse of `baseline.sh`): delete both Cloud Run services (`outfitter-api`,
+  `outfitter-link`) and the job (`outfitter-agent`), then the AR repo
+  (`gcloud artifacts repositories delete outfitter --location=us-central1`), then the two
   service accounts, then the budget (`gcloud billing budgets delete <name>`); leave the enabled
   APIs (harmless, and other work in the project may depend on them) unless decommissioning the
   whole project.

@@ -4,17 +4,24 @@
  *  - monotonic `seq` numbering for `entry`/`event` up-frames
  *  - buffering sent seq-frames until the api `ack`s them, so a reconnect can safely resend
  *  - the `hello` handshake with `lastAckedSeq` on every (re)connect
+ *  - proactive reconnect before Cloud Run's 60-minute connection cap (EPIC.md E2.4: "Cloud Run 60
+ *    min cap: agentd reconnects at 55 min")
  *
  * `ws` is the one runtime dependency (per the deliverable spec); everything else here is plain
- * Node. Connection setup (URL, headers, auth token refresh) is the caller's job via `connect()`
- * params -- link.ts does not know about GCE metadata or run.spec.
+ * Node. Connection setup (URL, auth) is the caller's job via `connect()` params -- link.ts does not
+ * know about GCE metadata or run.spec. `headers` is a *provider*, not a static object: the GCE
+ * metadata server's identity tokens are short-lived, so a long-running agentd process must fetch a
+ * fresh one on every (re)connect rather than reusing whatever was valid at startup (main.ts:58's
+ * bug -- a token that expired hours into a run would make every reconnect fail with 401 forever).
  */
 import WebSocket from "ws";
 import { isSeqUpMessage, type DownMessage, type UpMessage } from "./protocol.js";
 
 export interface LinkOptions {
   url: string;
-  headers: Record<string, string>;
+  /** Invoked fresh on every open()/reconnect so the Authorization header always carries a live
+   * token. */
+  headers: () => Promise<Record<string, string>>;
   runId: string;
   sessionId: string;
   agentdVersion: string;
@@ -25,6 +32,12 @@ export interface LinkOptions {
   backoffMaxMs?: number;
   /** Injectable WebSocket constructor, for tests. */
   WebSocketImpl?: typeof WebSocket;
+  /** Proactively close and reconnect once a connection has been open this long, ahead of Cloud
+   * Run's 60-minute cap. Default 55 minutes. */
+  maxConnectionAgeMs?: number;
+  /** Injectable timer functions, for tests. */
+  setTimeoutFn?: typeof setTimeout;
+  clearTimeoutFn?: typeof clearTimeout;
 }
 
 export type LinkHandler = (msg: DownMessage) => void;
@@ -39,9 +52,13 @@ export class Link {
   private closed = false;
   private handlers: LinkHandler[] = [];
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  private connectionAgeTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly WebSocketImpl: typeof WebSocket;
   private readonly backoffBaseMs: number;
   private readonly backoffMaxMs: number;
+  private readonly maxConnectionAgeMs: number;
+  private readonly setTimeoutFn: typeof setTimeout;
+  private readonly clearTimeoutFn: typeof clearTimeout;
   /** Mutable because the sessionId isn't known until `run.spec` arrives on the first connection --
    * only later reconnects can send it in `hello`. See main.ts / run.ts's `begin()`. */
   private sessionId: string;
@@ -50,6 +67,9 @@ export class Link {
     this.WebSocketImpl = opts.WebSocketImpl ?? WebSocket;
     this.backoffBaseMs = opts.backoffBaseMs ?? 500;
     this.backoffMaxMs = opts.backoffMaxMs ?? 30_000;
+    this.maxConnectionAgeMs = opts.maxConnectionAgeMs ?? 55 * 60 * 1000;
+    this.setTimeoutFn = opts.setTimeoutFn ?? setTimeout;
+    this.clearTimeoutFn = opts.clearTimeoutFn ?? clearTimeout;
     this.sessionId = opts.sessionId;
   }
 
@@ -70,6 +90,7 @@ export class Link {
   close(): void {
     this.closed = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.clearConnectionAgeTimer();
     this.ws?.close();
   }
 
@@ -124,9 +145,25 @@ export class Link {
     // non-seq frames like heartbeat, which the next heartbeat tick will re-send anyway).
   }
 
+  /** Fetches fresh headers (a live identity token) and opens the socket with them. Called on the
+   * initial connect and on every reconnect -- never reuses a header snapshot from an earlier
+   * (re)connect, since GCE metadata identity tokens are short-lived. */
   private open(): void {
     if (this.closed) return;
-    const ws = new this.WebSocketImpl(this.opts.url, { headers: this.opts.headers });
+    this.opts.headers().then(
+      (headers) => this.openWithHeaders(headers),
+      () => {
+        // The headers provider failed (e.g. a transient metadata-server hiccup). Treat it like a
+        // failed connection attempt and retry with backoff rather than throwing out of here.
+        if (this.closed) return;
+        this.scheduleReconnect();
+      },
+    );
+  }
+
+  private openWithHeaders(headers: Record<string, string>): void {
+    if (this.closed) return;
+    const ws = new this.WebSocketImpl(this.opts.url, { headers });
     this.ws = ws;
 
     ws.on("open", () => {
@@ -143,6 +180,7 @@ export class Link {
       // Resend everything still unacked, in original order, so the api can replay/dedupe past
       // lastAckedSeq.
       for (const msg of this.pending) this.transmit(msg);
+      this.armConnectionAgeTimer();
     });
 
     ws.on("message", (data: WebSocket.RawData) => {
@@ -157,6 +195,7 @@ export class Link {
     });
 
     ws.on("close", () => {
+      this.clearConnectionAgeTimer();
       if (this.closed) return;
       this.scheduleReconnect();
     });
@@ -172,5 +211,29 @@ export class Link {
     const delay = Math.min(this.backoffMaxMs, this.backoffBaseMs * 2 ** this.attempt);
     this.attempt++;
     this.reconnectTimer = setTimeout(() => this.open(), delay);
+  }
+
+  /** Cloud Run caps a connection at 60 minutes (EPIC.md E2.4); proactively close and reconnect
+   * before hitting that cap instead of waiting for the platform to kill the socket mid-frame. */
+  private armConnectionAgeTimer(): void {
+    this.clearConnectionAgeTimer();
+    this.connectionAgeTimer = this.setTimeoutFn(() => {
+      if (this.closed) return;
+      // A planned rotation, not a failure: reconnect promptly (no backoff) once the current socket
+      // closes -- resetting `attempt` here means the 'close' handler's scheduleReconnect() uses the
+      // base delay, not whatever backoff the last real failure left `attempt` at.
+      this.attempt = 0;
+      this.ws?.close();
+    }, this.maxConnectionAgeMs);
+    // Don't let this timer alone keep the process alive -- the open WebSocket handle (and, while a
+    // run is live, the heartbeat interval / pi child / tailer) already do that. Unref'ing matters
+    // most for tests, which would otherwise hang for up to `maxConnectionAgeMs` waiting on this
+    // handle to clear.
+    this.connectionAgeTimer?.unref?.();
+  }
+
+  private clearConnectionAgeTimer(): void {
+    if (this.connectionAgeTimer) this.clearTimeoutFn(this.connectionAgeTimer);
+    this.connectionAgeTimer = undefined;
   }
 }

@@ -3,6 +3,19 @@
 Two links: **agentd ⇄ api** (WebSocket, JSON text frames, one message per frame) and **browser ⇄ api**
 (REST + SSE). All messages are `{ "t": "<type>", ... }`. Timestamps are ISO strings. Ids are strings.
 
+## Two origins
+
+In production these two links don't share an origin. IAP on a Cloud Run service is service-wide,
+so a single IAP-protected service can't also carry agentd's WebSocket (its Google ID token's
+audience is the service's own origin, not IAP's client id) or the unauthenticated ngrok webhook —
+IAP would reject both before they reached the app. So `packages/api`'s image runs as two Cloud Run
+services, picking its routes by env var `OUTFITTER_ROLE` (`src/config.ts`): `outfitter-api`
+(`OUTFITTER_ROLE=web`, IAP on) serves everything under "browser ⇄ api (REST)" below; `outfitter-link`
+(`OUTFITTER_ROLE=link`, `--allow-unauthenticated`) serves only `GET /agent/ws` and
+`POST /api/hooks/ngrok`, each authenticating its own requests as described in their own sections.
+Both roles share one Atlas store. `OUTFITTER_ROLE=all` (the default) runs both on one process, for
+local dev where there's no IAP anyway. See `deploy/README.md` and `deploy/link.sh`.
+
 ## agentd ⇄ api
 
 Connect: `wss://<api>/agent/ws?run=<runId>` with header `Authorization: Bearer <google id token>`

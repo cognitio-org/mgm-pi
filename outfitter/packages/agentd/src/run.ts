@@ -19,14 +19,34 @@ import {
 } from "./workspace.js";
 import type {
   ByeReason,
+  DownAbort,
+  DownFollowUp,
   DownMessage,
+  DownPrompt,
+  DownRpc,
   DownRunSpec,
+  DownSteer,
   DownUiResponse,
   PiRpcCommand,
   PiRpcEvent,
   RunState,
   UpMessage,
 } from "./protocol.js";
+
+/** Down-messages that target the pi process directly. Queued (see `pendingPiMessages`) while `pi`
+ * hasn't been spawned yet -- e.g. a prompt that arrives during `cloning`/`restoring`/`starting`. */
+type PiTargetedDownMessage = DownPrompt | DownSteer | DownFollowUp | DownAbort | DownUiResponse | DownRpc;
+
+function isPiTargetedDownMessage(msg: DownMessage): msg is PiTargetedDownMessage {
+  return (
+    msg.t === "prompt" ||
+    msg.t === "steer" ||
+    msg.t === "follow_up" ||
+    msg.t === "abort" ||
+    msg.t === "ui_response" ||
+    msg.t === "rpc"
+  );
+}
 
 export interface LinkPort {
   sendSeq(build: (seq: number) => UpMessage): number;
@@ -107,6 +127,14 @@ export class RunController {
   /** Repo-less runs only: file mtimes as of the last checkpoint (or run start), for `diff` and
    * `checkpoint` without git. */
   private workspaceBaseline: FileMtimes | undefined;
+  /** prompt/steer/follow_up/abort/ui_response/rpc down-messages that arrived before `pi` was
+   * spawned (still `cloning`/`restoring`/`starting`). Flushed in order right after `begin()` spawns
+   * pi -- without this, e.g. a prompt sent the instant a session opens is silently dropped. */
+  private pendingPiMessages: PiTargetedDownMessage[] = [];
+  /** Set by `handlePiEvent` when `agent_start`/`agent_settled` arrives *during* an explicit
+   * `checkpoint()`, so it isn't lost -- `checkpoint()` would otherwise blindly restore whatever
+   * state preceded it, even if that's now stale (see `checkpoint()`). */
+  private stateAfterCheckpoint: RunState | undefined;
   private readonly now: () => number;
   private readonly onExit: (code: number) => void;
   private readonly onLog: (line: string) => void;
@@ -147,6 +175,16 @@ export class RunController {
   }
 
   handleDown(msg: DownMessage): void {
+    if (isPiTargetedDownMessage(msg)) {
+      if (!this.pi) {
+        // pi isn't up yet (still cloning/restoring/starting) -- queue it rather than dropping it;
+        // begin() flushes this queue, in order, right after spawning pi.
+        this.pendingPiMessages.push(msg);
+        return;
+      }
+      this.dispatchToPi(msg);
+      return;
+    }
     switch (msg.t) {
       case "run.spec":
         if (!this.began) {
@@ -156,6 +194,25 @@ export class RunController {
         return;
       case "ack":
         return; // Link already drops acked frames from its own buffer.
+      case "checkpoint":
+        void this.checkpoint(msg.message);
+        return;
+      case "diff":
+        void this.handleDiff(msg.reqId);
+        return;
+      case "read":
+        void this.handleRead(msg.reqId, msg.path);
+        return;
+      case "stop":
+        void this.handleStop(msg.reason);
+        return;
+    }
+  }
+
+  /** Sends a pi-targeted down-message to the (assumed running) pi process. Shared by `handleDown`
+   * (once pi is up) and `begin()` (flushing messages queued before pi was up). */
+  private dispatchToPi(msg: PiTargetedDownMessage): void {
+    switch (msg.t) {
       case "prompt":
         this.markActivity();
         this.pi?.send({
@@ -181,18 +238,6 @@ export class RunController {
         return;
       case "rpc":
         this.pi?.send(msg.command);
-        return;
-      case "checkpoint":
-        void this.checkpoint(msg.message);
-        return;
-      case "diff":
-        void this.handleDiff(msg.reqId);
-        return;
-      case "read":
-        void this.handleRead(msg.reqId, msg.path);
-        return;
-      case "stop":
-        void this.handleStop(msg.reason);
         return;
     }
   }
@@ -240,6 +285,11 @@ export class RunController {
     if (!jsonl && spec.snapshot.url) {
       const fetchFn = this.deps.fetchFn ?? fetch;
       const res = await fetchFn(spec.snapshot.url);
+      if (!res.ok) {
+        throw new Error(
+          `snapshot fetch failed: ${res.status} ${res.statusText} (${spec.snapshot.url})`,
+        );
+      }
       jsonl = await res.text();
     }
     if (!jsonl) jsonl = emptySessionJsonl(spec.session.id, spec.session.cwd);
@@ -260,10 +310,17 @@ export class RunController {
       args: rendered.args,
       env: { ...rendered.env, ...secretEnv },
       cwd: this.deps.workspace,
+      onLog: this.onLog,
     });
     this.pi.onEvent((event) => this.handlePiEvent(event));
     this.pi.onStderr((chunk) => this.onLog(`pi stderr: ${chunk}`));
     this.pi.onExit((code, signal) => this.handlePiExit(code, signal));
+
+    // Flush anything that arrived (prompt/steer/follow_up/abort/ui_response/rpc) while pi was still
+    // being spawned, in the order it was received.
+    const queued = this.pendingPiMessages;
+    this.pendingPiMessages = [];
+    for (const queuedMsg of queued) this.dispatchToPi(queuedMsg);
 
     const createTailer = this.deps.createTailer ?? ((file, onEntry) => new SessionTailer(file, onEntry as any));
     this.tailer = createTailer(sessionFile, (entry) => {
@@ -280,9 +337,22 @@ export class RunController {
     if (event.type === "agent_start") {
       this.markActivity();
       this.clearIdleTimer();
-      if (this.state !== "checkpointing" && this.state !== "stopping") this.setState("running");
+      if (this.state === "checkpointing") {
+        // Don't flip state mid-checkpoint -- record it so checkpoint() resolves to "running"
+        // afterward instead of blindly restoring whatever state preceded the checkpoint.
+        this.stateAfterCheckpoint = "running";
+      } else if (this.state !== "stopping") {
+        this.setState("running");
+      }
     } else if (event.type === "agent_settled") {
-      if (this.state !== "checkpointing" && this.state !== "stopping") this.enterIdle();
+      if (this.state === "checkpointing") {
+        // Same deal: the turn settled while checkpointNow() was still in flight. Without tracking
+        // this, checkpoint() would restore "running" once the checkpoint finishes even though pi
+        // is actually idle now -- losing this agent_settled entirely.
+        this.stateAfterCheckpoint = "idle";
+      } else if (this.state !== "stopping") {
+        this.enterIdle();
+      }
     }
   }
 
@@ -316,8 +386,17 @@ export class RunController {
 
   private markActivity(): void {
     this.lastActivityAt = this.now();
-    this.idleSince = undefined;
-    this.clearIdleTimer();
+    if (this.state === "idle") {
+      // Activity while idle -- e.g. a `/command` prompt pi handles locally, or one it rejects
+      // outright -- never produces agent_start/agent_settled, so nothing would otherwise re-arm
+      // the idle timer: it would stay cleared (disarmed) for the rest of the run. Reset it instead,
+      // the same way entering idle does, so idle-stop still eventually fires.
+      this.idleSince = this.now();
+      this.armIdleTimer();
+    } else {
+      this.idleSince = undefined;
+      this.clearIdleTimer();
+    }
   }
 
   private armIdleTimer(): void {
@@ -380,9 +459,20 @@ export class RunController {
 
   private async checkpoint(message?: string): Promise<void> {
     const previous = this.state;
+    this.stateAfterCheckpoint = undefined;
     this.setState("checkpointing");
     await this.checkpointNow(message);
-    if (!this.stopping) this.setState(previous);
+    if (this.stopping) return;
+    // Prefer what actually happened to pi *during* the checkpoint (an agent_start/agent_settled
+    // that arrived mid-checkpoint) over blindly restoring the pre-checkpoint state -- restoring
+    // "running" when pi has since settled (or vice versa) would silently lose that transition and
+    // leave the idle timer disarmed. See handlePiEvent().
+    const resolved = this.stateAfterCheckpoint ?? previous;
+    if (resolved === "idle") {
+      this.enterIdle();
+    } else {
+      this.setState(resolved);
+    }
   }
 
   private async checkpointNow(message?: string): Promise<void> {

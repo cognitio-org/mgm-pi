@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # Build outfitter-api with Cloud Build and deploy it to Cloud Run with IAP enabled directly on the
-# service (EPIC.md E2.7). DOES NOT RUN ON ITS OWN — run by hand after baseline.sh and the manual
-# Atlas/Secret Manager steps in README.md:
+# service (EPIC.md E2.7). This is the "web" role only (OUTFITTER_ROLE=web, src/config.ts): browser
+# REST/SSE behind IAP. It does NOT run /agent/ws or /api/hooks/* — IAP is service-wide on Cloud Run
+# and would block agentd's WebSocket and the unauthenticated ngrok webhook before either reached
+# the app, so those live on the separate `outfitter-link` service instead (./link.sh,
+# `--allow-unauthenticated`, each request authenticating itself). See docs/protocol.md "Two
+# origins". DOES NOT RUN ON ITS OWN — run by hand after baseline.sh and the manual Atlas/Secret
+# Manager steps in README.md:
 #   PROJECT=outfitter-509211 REGION=us-central1 ./api.sh
 #
 # Docs consulted (also see docs/reports/api.md "gcloud commands you were least sure about"):
@@ -17,9 +22,8 @@
 #   the doc text itself -- verify the binding actually took (`gcloud iap web get-iam-policy`)
 #   before relying on it to gate real access.
 set -euo pipefail
-
-PROJECT="${PROJECT:-outfitter-509211}"
-REGION="${REGION:-us-central1}"
+# shellcheck source=env.sh
+source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 AR_REPO="${AR_REPO:-outfitter}"
 SERVICE="outfitter-api"
 IAP_DOMAIN="${IAP_DOMAIN:-mgmonteleone.com}"
@@ -77,7 +81,7 @@ gcloud run deploy "${SERVICE}" \
   --no-allow-unauthenticated \
   --iap \
   --set-secrets="${SECRETS}" \
-  --set-env-vars="OUTFITTER_ORIGIN=${ORIGIN},AGENT_SA_EMAIL=${AGENT_SA_EMAIL},CLOUDRUN_JOB=${CLOUDRUN_JOB},GCP_PROJECT=${PROJECT},GCP_REGION=${REGION},TUNNEL_DOMAIN_LMSTUDIO=${TUNNEL_DOMAIN_LMSTUDIO}"
+  --set-env-vars="OUTFITTER_ROLE=web,OUTFITTER_ORIGIN=${ORIGIN},AGENT_SA_EMAIL=${AGENT_SA_EMAIL},CLOUDRUN_JOB=${CLOUDRUN_JOB},GCP_PROJECT=${PROJECT},GCP_REGION=${REGION},TUNNEL_DOMAIN_LMSTUDIO=${TUNNEL_DOMAIN_LMSTUDIO}"
 
 echo "== Granting the IAP service agent roles/run.invoker on ${SERVICE} =="
 PROJECT_NUMBER="$(gcloud projects describe "${PROJECT}" --format='value(projectNumber)')"

@@ -50,12 +50,13 @@ async function main(): Promise<void> {
   const piBin = process.env.PI_BIN ?? DEFAULT_PI_BIN;
 
   const piVersion = await getPiVersion(piBin);
-  const idToken = await getIdToken(apiOrigin, devToken);
   const wsUrl = buildWsUrl(apiOrigin, runId);
 
   const link = new Link({
     url: wsUrl,
-    headers: { Authorization: `Bearer ${idToken}` },
+    // Called fresh on every (re)connect so a run that outlives one identity token's lifetime still
+    // authenticates -- see link.ts's module doc.
+    headers: async () => ({ Authorization: `Bearer ${await getIdToken(apiOrigin, devToken)}` }),
     runId,
     sessionId: "", // learned from run.spec; see Link.setSessionId
     agentdVersion: AGENTD_VERSION,

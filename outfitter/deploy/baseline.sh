@@ -7,9 +7,8 @@
 #
 # Run this before api.sh and agent-job.sh; both assume the service accounts and AR repo it creates.
 set -euo pipefail
-
-PROJECT="${PROJECT:-outfitter-509211}"
-REGION="${REGION:-us-central1}"
+# shellcheck source=env.sh
+source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 AR_REPO="${AR_REPO:-outfitter}"
 BILLING_ACCOUNT="${BILLING_ACCOUNT:-01DEC0-9358E1-C1FF0D}"
 BUDGET_AMOUNT_USD="${BUDGET_AMOUNT_USD:-25}"
@@ -22,7 +21,7 @@ AGENT_SA_EMAIL="${AGENT_SA}@${PROJECT}.iam.gserviceaccount.com"
 
 echo "== Outfitter baseline: project=${PROJECT} region=${REGION} =="
 
-echo "-- Enabling APIs (run, artifactregistry, secretmanager, iap, cloudscheduler, cloudbuild, pubsub, iamcredentials, billingbudgets) --"
+echo "-- Enabling APIs (run, artifactregistry, secretmanager, iap, cloudscheduler, cloudbuild, pubsub, iamcredentials, billingbudgets, cloudresourcemanager, iam) --"
 gcloud services enable \
   run.googleapis.com \
   artifactregistry.googleapis.com \
@@ -33,6 +32,8 @@ gcloud services enable \
   pubsub.googleapis.com \
   iamcredentials.googleapis.com \
   billingbudgets.googleapis.com \
+  cloudresourcemanager.googleapis.com \
+  iam.googleapis.com \
   --project="${PROJECT}"
 
 echo "-- Artifact Registry repo '${AR_REPO}' (docker, ${REGION}) --"
@@ -93,13 +94,17 @@ gcloud projects add-iam-policy-binding "${PROJECT}" \
   --quiet >/dev/null
 
 echo "-- Budget alert: ${BUDGET_AMOUNT_USD} USD/month at 50/90/100%, billing account ${BILLING_ACCOUNT} --"
-existing_budget="$(gcloud billing budgets list --billing-account="${BILLING_ACCOUNT}" \
+# The Budgets API is billing-account scoped, so gcloud bills the call to the *quota project*, which
+# defaults to the active gcloud config project (possibly an unrelated one). Pin it to this project,
+# where billingbudgets.googleapis.com was enabled above.
+existing_budget="$(gcloud billing budgets list --billing-account="${BILLING_ACCOUNT}" --billing-project="${PROJECT}" \
   --format='value(displayName)' 2>/dev/null | grep -Fx "${BUDGET_DISPLAY_NAME}" || true)"
 if [[ -n "${existing_budget}" ]]; then
   echo "   '${BUDGET_DISPLAY_NAME}' already exists, skipping (edit amount/thresholds in the console if they've changed)"
 else
   gcloud billing budgets create \
     --billing-account="${BILLING_ACCOUNT}" \
+    --billing-project="${PROJECT}" \
     --display-name="${BUDGET_DISPLAY_NAME}" \
     --budget-amount="${BUDGET_AMOUNT_USD}USD" \
     --threshold-rule=percent=0.5 \

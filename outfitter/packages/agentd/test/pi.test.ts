@@ -3,7 +3,15 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile, appendFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { splitJsonlChunk, JsonlLineReader, SessionTailer } from "../src/pi.js";
+import { splitJsonlChunk, JsonlLineReader, SessionTailer, spawnPi } from "../src/pi.js";
+
+async function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) throw new Error("waitFor: timed out");
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
 
 test("splitJsonlChunk: splits on LF only, strips trailing CR, keeps partial tail", () => {
   const { lines, rest } = splitJsonlChunk('{"a":1}\n{"b":2}\r\n{"c":3');
@@ -75,6 +83,25 @@ test("SessionTailer: does not emit a partial (no trailing newline) line until it
   assert.equal(seen.length, 1);
   assert.equal(seen[0].id, "partial");
   tailer.stop();
+});
+
+test("spawnPi: send() after the child has exited does not throw, and is logged instead", async () => {
+  const logs: string[] = [];
+  const exitCodes: Array<number | null> = [];
+  const pi = spawnPi({
+    piBin: process.execPath,
+    args: ["-e", "process.exit(0)"],
+    env: {},
+    cwd: process.cwd(),
+    onLog: (line) => logs.push(line),
+  });
+  pi.onExit((code) => exitCodes.push(code));
+
+  await waitFor(() => exitCodes.length === 1);
+  assert.equal(exitCodes[0], 0);
+
+  assert.doesNotThrow(() => pi.send({ type: "prompt", message: "hello" }));
+  assert.ok(logs.some((l) => l.includes("send() ignored after exit")), logs.join("\n"));
 });
 
 test("SessionTailer: tolerates the file not existing yet", async () => {

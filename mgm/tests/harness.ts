@@ -76,3 +76,17 @@ export const text = (t: string) => [{ type: "text", text: t }];
 export const userMsg = (t: string) => ({ type: "message", id: `u${Math.random()}`, message: { role: "user", content: text(t) } });
 export const asstCall = (name: string, t = "") => ({ type: "message", id: `a${Math.random()}`, message: { role: "assistant", content: [...text(t), { type: "toolCall", id: "c", name, arguments: {} }] } });
 export const toolResult = (t: string, name = "read") => ({ type: "message", id: `t${Math.random()}`, message: { role: "toolResult", toolName: name, toolCallId: "c", content: text(t) } });
+
+/** Route global fetch to an in-test handler; returns a restore function. Unmatched URLs get a 404. */
+export function stubFetch(routes: Record<string, (init?: any) => any>) {
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (url: any, init?: any) => {
+    const u = String(url);
+    for (const [prefix, handler] of Object.entries(routes)) if (u.startsWith(prefix) || u.includes(prefix)) {
+      const body = handler(init); if (body instanceof Error) throw body;
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response("not found", { status: 404 });
+  }) as any;
+  return () => { globalThis.fetch = real; };
+}

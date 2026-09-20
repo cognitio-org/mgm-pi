@@ -57,17 +57,19 @@ async function getJson(url: string, apiKey: string, timeoutMs = 4000): Promise<a
   } catch { return undefined; }
 }
 
+const reachable = new Set<string>();   // backends whose server answered discovery
 async function discover(b: Backend, litellmMeta: Map<string, ModelMeta>, lmstudioMeta: Map<string, LmStudioMeta>): Promise<string[]> {
   if (!b.discover || process.env.MGM_NO_DISCOVERY) return b.fallback;   // MGM_NO_DISCOVERY: offline / tests
   if (b.id === "lmstudio") {
     const native = await getJson(`${rootUrl(b.baseUrl)}/api/v0/models`, b.apiKey);
-    if (native) for (const [k, v] of parseLmStudioModels(native)) lmstudioMeta.set(k, v);
+    if (native) { reachable.add(b.id); for (const [k, v] of parseLmStudioModels(native)) lmstudioMeta.set(k, v); }
   }
   if (b.id === "litellm") {
     const info = await getJson(`${rootUrl(b.baseUrl)}/model/info`, b.apiKey);
     if (info) { const { ids, meta } = parseModelInfo(info); for (const [k, v] of meta) litellmMeta.set(k, v); if (ids.length) return ids; }
   }
   const list = await getJson(`${b.baseUrl}/models`, b.apiKey);
+  if (list) reachable.add(b.id);
   const ids = ((list?.data ?? []) as any[]).map((m) => String(m.id)).filter(b.filter ?? (() => true));
   return ids.length ? ids.sort() : b.fallback;
 }
@@ -92,7 +94,7 @@ export default async function (pi: ExtensionAPI) {
 
   async function registerAll(envOverride?: Record<string, string>) {
     const env = { ...loadEnv(process.cwd()), ...(envOverride ?? {}) };
-    litellmMeta.clear(); lmstudioMeta.clear();
+    litellmMeta.clear(); lmstudioMeta.clear(); reachable.clear();
     defs = backends(env, litellmMeta, lmstudioMeta);
     await Promise.all(defs.map(async (b) => {
       const ids = await discover(b, litellmMeta, lmstudioMeta);
@@ -139,7 +141,8 @@ export default async function (pi: ExtensionAPI) {
     },
   });
   pi.on("session_start", async (_ev, ctx) => {
-    if (ctx.hasUI && !defs.some((d) => d.id !== "lmstudio" && d.apiKey) && !(models.get("lmstudio") ?? []).length) ctx.ui.notify("No model connections configured yet. Run /setup.", "warning");
+    const anyKey = defs.some((d) => d.id !== "lmstudio" && d.apiKey);
+    if (ctx.hasUI && !anyKey && !reachable.has("lmstudio")) ctx.ui.notify("No model connections yet: no API keys and no local model server answering. Run /setup.", "warning");
   });
 
   // ---------- /connect ----------

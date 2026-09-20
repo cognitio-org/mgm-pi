@@ -5,7 +5,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { makePi, makeCtx, tmpAgentDir, userMsg, asstCall, toolResult, type FakeModel } from "./harness.ts";
+import { makePi, makeCtx, tmpAgentDir, stubFetch, userMsg, asstCall, toolResult, type FakeModel } from "./harness.ts";
 
 const qwen: FakeModel = { provider: "lmstudio", id: "qwen/qwen3.6-35b-a3b", contextWindow: 32_768, maxTokens: 8_192, cost: { input: 0, output: 0 } };
 const nano: FakeModel = { provider: "litellm", id: "gpt-5.4-nano", contextWindow: 272_000, maxTokens: 64_000, cost: { input: 0.2, output: 1.25 } };
@@ -209,6 +209,83 @@ describe("connect extension", async () => {
     assert.ok(env2.includes("MGM_USER=Matej Monteleone\n") && env2.includes("LITELLM_AGENT_KEY=sk-new-key\n") && env2.includes("OPENROUTER_API_KEY=sk-or-new\n"));
     assert.equal((env2.match(/^MGM_USER=/gm) ?? []).length, 1, "keys are updated in place, not duplicated");
     process.env.LITELLM_AGENT_KEY = "sk-test"; delete process.env.OPENROUTER_API_KEY; delete process.env.MGM_USER; delete process.env.LMSTUDIO_MODEL; delete process.env.LMSTUDIO_BASE_URL;
+  });
+
+  test("/setup with a reachable local server offers its models; 'type another id' falls back to input", async () => {
+    delete process.env.MGM_NO_DISCOVERY;
+    const restore = stubFetch({
+      "/api/v0/models": () => ({ data: [{ id: "google/gemma-4-e4b", type: "llm", state: "loaded", max_context_length: 131072, loaded_context_length: 131072 }, { id: "nvidia/nemotron-3-nano-omni", type: "vlm", state: "not-loaded", max_context_length: 262144 }, { id: "text-embedding-nomic-embed-text-v1.5", type: "embeddings", state: "loaded", max_context_length: 2048 }] }),
+      "/v1/models": () => ({ data: [{ id: "google/gemma-4-e4b" }, { id: "nvidia/nemotron-3-nano-omni" }, { id: "text-embedding-nomic-embed-text-v1.5" }] }),
+    });
+    try {
+      const ctx = ctxWith();
+      ctx.answers.push("Matej", "Yes, configure it", "http://localhost:1234/v1", "google/gemma-4-e4b", "https://litellm.augment-code.support/v1", "", "");
+      await pi.commands.get("setup")!.handler("", ctx);
+      assert.ok(store.env().includes("LMSTUDIO_MODEL=google/gemma-4-e4b\n"));
+      assert.ok(!ctx.notices.some((n) => n.msg.includes("Could not reach")));
+      const lm = pi.providers.filter((p) => p.name === "lmstudio").at(-1)!.config.models.map((m: any) => m.id);
+      assert.deepEqual(lm, ["google/gemma-4-e4b", "nvidia/nemotron-3-nano-omni"], "discovered from the server, embeddings excluded");
+      assert.equal(pi.providers.filter((p) => p.name === "lmstudio").at(-1)!.config.models[0].contextWindow, 131072, "served window from the native API");
+      ctx.answers.push("Matej", "Yes, configure it", "http://localhost:1234/v1", "type another id", "my/custom-model", "https://litellm.augment-code.support/v1", "", "");
+      await pi.commands.get("setup")!.handler("", ctx);
+      assert.ok(store.env().includes("LMSTUDIO_MODEL=my/custom-model\n"));
+    } finally { restore(); process.env.MGM_NO_DISCOVERY = "1"; delete process.env.MGM_USER; delete process.env.LMSTUDIO_MODEL; delete process.env.LMSTUDIO_BASE_URL; }
+  });
+
+  test("/setup can be cancelled at any prompt without writing", async () => {
+    const ctx = ctxWith();
+    ctx.answers.push("Matej");   // then the local-server select gets no answer → cancel
+    await pi.commands.get("setup")!.handler("", ctx);
+    assert.ok(!store.env().includes("MGM_USER="), "nothing written on cancel");
+    assert.equal(pi.providers.filter((p) => p.name === "lmstudio").length, 1, "providers not re-registered on cancel");
+  });
+
+  test("first start warns only when there are no keys and no local server answering", async () => {
+    delete process.env.MGM_NO_DISCOVERY; delete process.env.LITELLM_AGENT_KEY;
+    const restore = stubFetch({});   // every server unreachable
+    try {
+      const p2 = makePi(); await mod.default(p2 as any);
+      const ctx = makeCtx({ hasUI: true }); await p2.emit("session_start", {}, ctx);
+      assert.ok(ctx.notices.some((n) => n.type === "warning" && n.msg.includes("Run /setup")), "warned");
+      restore();
+      const restore2 = stubFetch({ "/api/v0/models": () => ({ data: [{ id: "m", type: "llm", state: "loaded", max_context_length: 8192, loaded_context_length: 8192 }] }) });
+      const p3 = makePi(); await mod.default(p3 as any);
+      const ctx3 = makeCtx({ hasUI: true }); await p3.emit("session_start", {}, ctx3);
+      assert.ok(!ctx3.notices.some((n) => n.msg.includes("Run /setup")), "a live local server counts as a connection");
+      restore2();
+    } finally { process.env.MGM_NO_DISCOVERY = "1"; process.env.LITELLM_AGENT_KEY = "sk-test"; }
+  });
+
+  test("/connect: cancelled picker does nothing; a refused model switch is reported", async () => {
+    const ctx = ctxWith();
+    const cmd = pi.commands.get("connect")!;
+    const before = pi.setModelCalls.length;
+    await cmd.handler("", ctx);                       // no scripted answer → select returns undefined
+    assert.equal(pi.setModelCalls.length, before);
+    ctx.answers.push("LiteLLM");                      // backend picked, model picker cancelled
+    await cmd.handler("", ctx);
+    assert.equal(pi.setModelCalls.length, before);
+    pi.setModel = async () => false;
+    await cmd.handler("litellm claude-sonnet-5", ctx);
+    assert.match(ctx.notices.at(-1)!.msg, /Could not switch/);
+    await cmd.handler("litellm no-such-model", ctx);
+    assert.match(ctx.notices.at(-1)!.msg, /not found on litellm/);
+  });
+
+  test("/budget with UI draws the panel; session_start seeds spend from /key/info", async () => {
+    const restore = stubFetch({ "/key/info": () => ({ info: { key_alias: "MGM-Pi", spend: 0.5, max_budget: 100, team_id: "t1" } }), "/team/info": () => ({ team_info: { team_alias: "Customer Engineering", spend: 3, max_budget: 500, budget_duration: "24h" } }) });
+    try {
+      const ctx = ctxWith({ model: { provider: "litellm", id: "claude-sonnet-5", contextWindow: 1_000_000, maxTokens: 64_000 }, hasUI: true });
+      await pi.emit("session_start", {}, ctx);
+      assert.equal(ctx.statuses.get("budget"), "◆ $0.0000 · key $0.50/$100.00 (0.5%)", "seeded before any call");
+      await pi.commands.get("budget")!.handler("", ctx);
+      const w = ctx.widgets.get("budget"); assert.ok(w, "panel widget set");
+      const lines = w({}, { fg: (_c: string, t: string) => t }).render(100);
+      assert.ok(lines[0].includes("LiteLLM budget") && lines.some((l: string) => l.includes("MGM-Pi")) && lines.some((l: string) => l.includes("Customer Engineer")), lines.join("\n"));
+      for (const l of lines) assert.ok(visibleWidth(l) <= 100);
+      await pi.commands.get("budget")!.handler("off", ctx);
+      assert.equal(ctx.widgets.get("budget"), undefined);
+    } finally { restore(); }
   });
 
   test("non-UI /setup points at the env file", async () => {

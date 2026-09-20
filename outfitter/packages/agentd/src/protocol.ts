@@ -63,10 +63,18 @@ export interface UpEvent {
 
 export interface UpSpend {
   t: "spend";
-  keySpend: number;
-  keyMax: number;
-  modelGroup: string;
-  callId: string;
+  /** Absent when the provider response carried no (or an incomplete) LiteLLM spend header -- e.g. a
+   * key with no budget cap set never sends x-litellm-key-max-budget. Deviation from protocol.md's
+   * table, which doesn't mark these optional. */
+  keySpend?: number;
+  keyMax?: number;
+  modelGroup?: string;
+  callId?: string;
+  /** E2.11: pi's own cumulative cost estimate for this run (sum of assistant-turn usage.cost.total,
+   * agentd-side running total over every outfitter-spend.ts log line -- see pi.ts's SpendTailer),
+   * independent of LiteLLM's key-spend headers. Lets the API set Run.costEstimate even for a guru
+   * whose model group/route never returns x-litellm-key-spend at all. */
+  estimate?: number;
 }
 
 export interface UpCheckpoint {

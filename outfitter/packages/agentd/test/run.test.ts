@@ -628,3 +628,120 @@ test("RunController: a non-2xx snapshot fetch fails the run with a clear, status
   await waitFor(() => getExitCode() === 1);
   assert.ok(!states.includes("idle"));
 });
+
+test("RunController: E2.11 spend tailer lines become `spend` up-frames with an accumulated `estimate`", async (t) => {
+  let onLine: ((line: any) => void) | undefined;
+  const spendTailer = {
+    start() {},
+    stop() {},
+    async poll() {},
+  };
+  const { controller, link, spec } = await setupController(
+    {},
+    {
+      spendFile: "/tmp/does-not-need-to-exist-for-this-fake.jsonl",
+      spendExtensionPath: "/opt/outfitter/agentd/pi-extension/outfitter-spend.js",
+      createSpendTailer: (file, cb) => {
+        assert.equal(file, "/tmp/does-not-need-to-exist-for-this-fake.jsonl");
+        onLine = cb;
+        return spendTailer;
+      },
+    },
+  );
+  t.after(() => controller.dispose());
+  link.deliver(spec);
+  await waitFor(() => states_includes_idle(link));
+  assert.ok(onLine, "createSpendTailer should have been called once pi was spawned");
+
+  onLine!({ keySpend: 1, keyMax: 10, modelGroup: "sonnet", callId: "call-1", usage: 0.01 });
+  onLine!({ keySpend: 1.5, keyMax: 10, modelGroup: "sonnet", callId: "call-2", usage: 0.02 });
+
+  const spendFrames = link.sent.filter((m: any) => m.t === "spend") as any[];
+  assert.equal(spendFrames.length, 2);
+  assert.equal(spendFrames[0].estimate, 0.01);
+  assert.equal(spendFrames[0].callId, "call-1");
+  assert.equal(spendFrames[1].estimate, 0.03); // accumulated: 0.01 + 0.02
+  assert.equal(spendFrames[1].keySpend, 1.5);
+});
+
+test("RunController: no spendFile configured -> no spend extension arg, no OUTFITTER_SPEND_FILE, no spend tailer", async (t) => {
+  let spawnedArgs: string[] | undefined;
+  let spawnedEnv: Record<string, string> | undefined;
+  const { controller, link, spec } = await setupController(
+    {},
+    {
+      createSpendTailer: () => {
+        throw new Error("should not be called when spendFile is unset");
+      },
+      spawnPi: (opts) => {
+        spawnedArgs = opts.args;
+        spawnedEnv = opts.env;
+        return spawnPi({ ...opts, piBin: process.execPath, args: [fakePiPath, ...opts.args] });
+      },
+    },
+  );
+  t.after(() => controller.dispose());
+  link.deliver(spec);
+  await waitFor(() => states_includes_idle(link));
+  assert.ok(!spawnedArgs!.includes("--extension"));
+  assert.equal(spawnedEnv!.OUTFITTER_SPEND_FILE, undefined);
+});
+
+test("RunController: handleSpendLine drops a malformed/hostile spend line instead of sending a spend frame, and logs a WARNING", async (t) => {
+  let onLine: ((line: unknown) => void) | undefined;
+  const spendTailer = { start() {}, stop() {}, async poll() {} };
+  const warnings: Array<{ message: string; fields?: Record<string, unknown> }> = [];
+  const fakeLogger = {
+    debug() {},
+    info() {},
+    warn(message: string, fields?: Record<string, unknown>) {
+      warnings.push({ message, fields });
+    },
+    error() {},
+    child() {
+      return fakeLogger;
+    },
+    addSecret() {},
+  };
+  const { controller, link, spec } = await setupController(
+    {},
+    {
+      spendFile: "/tmp/does-not-need-to-exist-for-this-fake.jsonl",
+      spendExtensionPath: "/opt/outfitter/agentd/pi-extension/outfitter-spend.js",
+      logger: fakeLogger as any,
+      createSpendTailer: (_file, cb) => {
+        onLine = cb;
+        return spendTailer;
+      },
+    },
+  );
+  t.after(() => controller.dispose());
+  link.deliver(spec);
+  await waitFor(() => states_includes_idle(link));
+  assert.ok(onLine, "createSpendTailer should have been called once pi was spawned");
+
+  // A valid line first, to prove good lines still work alongside dropped ones.
+  onLine!({ usage: 0.01, callId: "call-1" });
+  // Malformed/hostile lines: out-of-range usage, wrong types, not an object at all, oversized string
+  // field, and a prototype-pollution attempt -- none of these should ever reach a `spend` up-frame.
+  onLine!({ usage: 999999 });
+  onLine!({ usage: -1 });
+  onLine!({ keySpend: "not a number" });
+  onLine!({ modelGroup: "x".repeat(500) });
+  onLine!("just a string, not even an object");
+  onLine!(null);
+  onLine!([1, 2, 3]);
+  onLine!(JSON.parse('{"__proto__": {"polluted": true}, "keyMax": -5}'));
+
+  const spendFrames = link.sent.filter((m: any) => m.t === "spend") as any[];
+  assert.equal(spendFrames.length, 1, "only the one valid line should have produced a spend frame");
+  assert.equal(spendFrames[0].callId, "call-1");
+  assert.equal(({} as any).polluted, undefined);
+
+  assert.equal(warnings.length, 8, "one WARNING per dropped line");
+  for (const w of warnings) assert.match(w.message, /dropped invalid spend line/i);
+});
+
+function states_includes_idle(link: FakeLink): boolean {
+  return link.sent.some((m) => m.t === "status" && (m as any).state === "idle");
+}

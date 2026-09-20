@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile, appendFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { splitJsonlChunk, JsonlLineReader, SessionTailer, spawnPi } from "../src/pi.js";
+import { splitJsonlChunk, JsonlLineReader, SessionTailer, SpendTailer, JsonlTailer, validateSpendLine, spawnPi } from "../src/pi.js";
 
 async function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<void> {
   const start = Date.now();
@@ -83,6 +83,90 @@ test("SessionTailer: does not emit a partial (no trailing newline) line until it
   assert.equal(seen.length, 1);
   assert.equal(seen[0].id, "partial");
   tailer.stop();
+});
+
+test("SpendTailer: emits every line, no header to skip (unlike SessionTailer)", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "outfitter-pi-test-"));
+  const file = join(dir, "spend.jsonl");
+  await writeFile(file, `${JSON.stringify({ usage: 0.01, callId: "call-1" })}\n`);
+
+  const seen: any[] = [];
+  const tailer = new SpendTailer(file, (line) => seen.push(line), { intervalMs: 20 });
+  await tailer.poll();
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].callId, "call-1");
+  tailer.stop();
+});
+
+test("SpendTailer is a JsonlTailer with no skipHeader (SessionTailer/SpendTailer share one tailer implementation)", () => {
+  assert.ok(new SpendTailer("/nonexistent", () => {}) instanceof JsonlTailer);
+  assert.ok(new SessionTailer("/nonexistent", () => {}) instanceof JsonlTailer);
+});
+
+test("validateSpendLine: accepts a well-formed line and passes its fields through unchanged", () => {
+  const line = validateSpendLine({ usage: 0.5, keySpend: 1.5, keyMax: 10, modelGroup: "sonnet", callId: "call-1" });
+  assert.deepEqual(line, { usage: 0.5, keySpend: 1.5, keyMax: 10, modelGroup: "sonnet", callId: "call-1" });
+});
+
+test("validateSpendLine: accepts a line with only some fields present", () => {
+  assert.deepEqual(validateSpendLine({ usage: 0.01 }), {
+    usage: 0.01,
+    keySpend: undefined,
+    keyMax: undefined,
+    modelGroup: undefined,
+    callId: undefined,
+  });
+  assert.deepEqual(validateSpendLine({}), {
+    usage: undefined,
+    keySpend: undefined,
+    keyMax: undefined,
+    modelGroup: undefined,
+    callId: undefined,
+  });
+});
+
+test("validateSpendLine: rejects a non-object value (malformed/hostile line)", () => {
+  assert.equal(validateSpendLine(null), undefined);
+  assert.equal(validateSpendLine(undefined), undefined);
+  assert.equal(validateSpendLine("not an object"), undefined);
+  assert.equal(validateSpendLine(42), undefined);
+  assert.equal(validateSpendLine(true), undefined);
+  assert.equal(validateSpendLine([1, 2, 3]), undefined);
+});
+
+test("validateSpendLine: rejects usage outside [0, 1000] or non-finite", () => {
+  assert.equal(validateSpendLine({ usage: -0.01 }), undefined);
+  assert.equal(validateSpendLine({ usage: 1000.01 }), undefined);
+  assert.equal(validateSpendLine({ usage: Infinity }), undefined);
+  assert.equal(validateSpendLine({ usage: NaN }), undefined);
+  assert.equal(validateSpendLine({ usage: "0.01" }), undefined);
+  assert.ok(validateSpendLine({ usage: 1000 }));
+  assert.ok(validateSpendLine({ usage: 0 }));
+});
+
+test("validateSpendLine: rejects keySpend/keyMax that are negative, non-finite, or the wrong type", () => {
+  assert.equal(validateSpendLine({ keySpend: -1 }), undefined);
+  assert.equal(validateSpendLine({ keySpend: Infinity }), undefined);
+  assert.equal(validateSpendLine({ keySpend: "1" }), undefined);
+  assert.equal(validateSpendLine({ keyMax: -1 }), undefined);
+  assert.equal(validateSpendLine({ keyMax: NaN }), undefined);
+  assert.ok(validateSpendLine({ keySpend: 0, keyMax: 0 }));
+});
+
+test("validateSpendLine: rejects modelGroup/callId that are too long or the wrong type", () => {
+  assert.equal(validateSpendLine({ modelGroup: "x".repeat(200) }), undefined);
+  assert.equal(validateSpendLine({ callId: "x".repeat(200) }), undefined);
+  assert.equal(validateSpendLine({ modelGroup: 123 }), undefined);
+  assert.equal(validateSpendLine({ callId: { toString: () => "call-1" } }), undefined);
+  assert.ok(validateSpendLine({ modelGroup: "x".repeat(199), callId: "call-1" }));
+});
+
+test("validateSpendLine: a prototype-pollution attempt is rejected without touching the prototype", () => {
+  const hostile = JSON.parse('{"__proto__": {"polluted": true}, "usage": 0.01}');
+  const line = validateSpendLine(hostile);
+  assert.ok(line);
+  assert.equal(line!.usage, 0.01);
+  assert.equal(({} as any).polluted, undefined);
 });
 
 test("spawnPi: send() after the child has exited does not throw, and is logged instead", async () => {

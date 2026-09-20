@@ -4,12 +4,13 @@
  * and handles every down-message in protocol.md (`run.spec`, `ack`, `prompt`, `steer`, `follow_up`,
  * `abort`, `ui_response`, `rpc`, `checkpoint`, `diff`, `read`, `stop`).
  */
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, open as openFile, chown } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { renderGuru } from "./guru.js";
 import type { GitOps } from "./git.js";
-import { spawnPi, SessionTailer, type PiProcess } from "./pi.js";
+import { spawnPi, SessionTailer, SpendTailer, validateSpendLine, type PiProcess, type SpendLogLine } from "./pi.js";
 import { importSession, writeSnapshotFile, emptySessionJsonl } from "./session.js";
+import type { Logger } from "./logger.js";
 import type { RunAsUser } from "./run-as-user.js";
 import { validateSnapshotUrl, snapshotHostAllowlist, isDevMode } from "./snapshot-url.js";
 import {
@@ -69,6 +70,15 @@ export type TailerFactory = (
   onEntry: (entry: Record<string, unknown>) => void,
 ) => { start(): void; stop(): void; poll(): Promise<void> };
 
+/** E2.11: same shape as TailerFactory, for OUTFITTER_SPEND_FILE (pi-extension/outfitter-spend.ts's
+ * output) instead of the pi session file. `onLine` receives the raw parsed JSON value, unvalidated --
+ * OUTFITTER_SPEND_FILE lives in /tmp and is writable by the model's own shell user, so `handleSpendLine`
+ * validates each line with `validateSpendLine` before using it (see pi.ts). */
+export type SpendTailerFactory = (
+  spendFile: string,
+  onLine: (line: unknown) => void,
+) => { start(): void; stop(): void; poll(): Promise<void> };
+
 export interface RunControllerDeps {
   link: LinkPort;
   gitOps: GitOps;
@@ -83,6 +93,20 @@ export interface RunControllerDeps {
   fetchFn?: typeof fetch;
   /** WORKSPACE_SNAPSHOT_DIR: where repo-less checkpoints write their workspace tarball. */
   workspaceSnapshotDir?: string;
+  /** E2.11 (OUTFITTER_SPEND_FILE): path the outfitter-spend pi extension appends one JSON line to per
+   * LiteLLM-backed response. Set -> the extension is loaded (`spendExtensionPath` below) and this
+   * file is set as its own OUTFITTER_SPEND_FILE env var, and this run tails it and emits `spend`
+   * up-frames. Unset -> no extension, no tailer, unchanged from before E2.11. */
+  spendFile?: string;
+  /** E2.11: path to pi-extension/outfitter-spend.ts (or its built .js), passed to renderGuru so it
+   * adds `-e <path>` -- see guru.ts's RenderOptions doc. */
+  spendExtensionPath?: string;
+  createSpendTailer?: SpendTailerFactory;
+  /** E1.6: structured JSON logging (logger.ts). Optional so existing tests (and any caller that only
+   * wants the plain `onLog` string sink) keep working unchanged. When present, pi's own stderr goes
+   * to `logger.debug` (tagged `source: "pi"`) instead of `onLog`, and run.spec's secrets are
+   * registered with it (`logger.addSecret`) the moment they're known. */
+  logger?: Logger;
   restoreWorkspace?: typeof restoreWorkspace;
   checkpointWorkspaceTarball?: typeof checkpointWorkspaceTarball;
   heartbeatIntervalMs?: number;
@@ -109,6 +133,21 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Renders an untrusted, already-parsed spend-line value for a WARNING log without ever throwing
+ * (a hostile line could be a huge string or a structure that isn't cleanly JSON-serialisable) or
+ * flooding the log with an attacker-controlled amount of text. */
+function summarizeForLog(raw: unknown): string {
+  const MAX_LENGTH = 300;
+  let text: string;
+  try {
+    text = typeof raw === "string" ? raw : JSON.stringify(raw);
+  } catch {
+    text = "<unserialisable>";
+  }
+  text ??= String(raw);
+  return text.length > MAX_LENGTH ? `${text.slice(0, MAX_LENGTH)}...(truncated)` : text;
+}
+
 /** Maps a `ui_response` down-message's generic `{id, value}` onto pi's extension_ui_response shape,
  * which distinguishes value/confirmed/cancelled responses (see rpc.md's Extension UI Protocol).
  * Deviation from protocol.md: the doc gives `ui_response` a single generic `value` field; pi needs to
@@ -129,6 +168,11 @@ export class RunController {
   private began = false;
   private pi: PiProcess | undefined;
   private tailer: { start(): void; stop(): void; poll(): Promise<void> } | undefined;
+  /** E2.11: only set when deps.spendFile is configured. */
+  private spendTailer: { start(): void; stop(): void; poll(): Promise<void> } | undefined;
+  /** E2.11: running sum of every outfitter-spend.ts log line's `usage` (pi's own per-message cost
+   * estimate) seen so far this run -- sent as `spend.estimate` on every frame. */
+  private costEstimate = 0;
   private spec: DownRunSpec | undefined;
   private stateHandlers: StateChangeHandler[] = [];
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -178,6 +222,7 @@ export class RunController {
     this.clearIdleTimer();
     this.stopHeartbeat();
     this.tailer?.stop();
+    this.spendTailer?.stop();
     this.pi?.kill();
   }
 
@@ -265,6 +310,11 @@ export class RunController {
   private async begin(spec: DownRunSpec): Promise<void> {
     this.spec = spec;
     this.deps.link.setSessionId?.(spec.session.id);
+    // E1.6: register the run's own secrets before anything else can log a line that might echo one
+    // back (a failed clone, a raw fetch error). RUN_TOKEN itself is registered once at startup, in
+    // main.ts, before this controller even exists.
+    this.deps.logger?.addSecret(spec.secrets.githubToken);
+    this.deps.logger?.addSecret(spec.secrets.litellmKey);
 
     if (spec.repo) {
       this.setState("cloning");
@@ -321,9 +371,21 @@ export class RunController {
     }
 
     this.setState("starting");
-    const rendered = renderGuru(spec.guru, { piBin: this.deps.piBin, sessionFile, onLog: this.onLog });
+    const rendered = renderGuru(spec.guru, {
+      piBin: this.deps.piBin,
+      sessionFile,
+      onLog: this.onLog,
+      spendExtensionPath: this.deps.spendFile ? this.deps.spendExtensionPath : undefined,
+    });
     const secretEnv: Record<string, string> = {};
     if (spec.secrets.litellmKey) secretEnv.LITELLM_AGENT_KEY = spec.secrets.litellmKey;
+    // E2.11: only set when this run actually wants spend frames (deps.spendFile configured) --
+    // otherwise the outfitter-spend extension isn't loaded at all (spendExtensionPath above), so the
+    // env var would just be unused.
+    if (this.deps.spendFile) {
+      secretEnv.OUTFITTER_SPEND_FILE = this.deps.spendFile;
+      await this.ensureSpendFile(this.deps.spendFile);
+    }
     const spawnFn = this.deps.spawnPi ?? spawnPi;
     this.pi = spawnFn({
       piBin: this.deps.piBin,
@@ -335,7 +397,13 @@ export class RunController {
       onLog: this.onLog,
     });
     this.pi.onEvent((event) => this.handlePiEvent(event));
-    this.pi.onStderr((chunk) => this.onLog(`pi stderr: ${chunk}`));
+    // E1.6: pi's own stderr goes to the structured logger at DEBUG (tagged so it's distinguishable
+    // from agentd's own INFO lines) when one is configured; falls back to the old onLog string sink
+    // otherwise, unchanged from before E1.6.
+    this.pi.onStderr((chunk) => {
+      if (this.deps.logger) this.deps.logger.debug(chunk, { source: "pi" });
+      else this.onLog(`pi stderr: ${chunk}`);
+    });
     this.pi.onExit((code, signal) => this.handlePiExit(code, signal));
 
     // Flush anything that arrived (prompt/steer/follow_up/abort/ui_response/rpc) while pi was still
@@ -350,8 +418,61 @@ export class RunController {
     });
     this.tailer.start();
 
+    // E2.11: reuses the SessionTailer approach (poll-by-byte-offset over an append-only file) for
+    // OUTFITTER_SPEND_FILE -- see pi.ts's SpendTailer and pi-extension/outfitter-spend.ts.
+    if (this.deps.spendFile) {
+      const createSpendTailer =
+        this.deps.createSpendTailer ?? ((file, onLine) => new SpendTailer(file, onLine));
+      this.spendTailer = createSpendTailer(this.deps.spendFile, (line) => this.handleSpendLine(line));
+      this.spendTailer.start();
+    }
+
     this.enterIdle();
     this.startHeartbeat();
+  }
+
+  /** E2.11: the spend file lives in a root-owned 0750 directory in the image (/run/outfitter, see
+   * image/Dockerfile), so pi, running as the unprivileged agent user, cannot create it. agentd (root
+   * in the image) creates it empty with mode 0660 and hands the agent user's group write access, so
+   * pi's extension can append. Outside the image (local dev, tests) the directory is whatever the
+   * caller chose and any failure here is logged, not fatal: the run just has no spend frames. */
+  private async ensureSpendFile(path: string): Promise<void> {
+    try {
+      await mkdir(resolve(path, ".."), { recursive: true });
+      const handle = await openFile(path, "a", 0o660);
+      await handle.close();
+      if (this.deps.runAsUser) await chown(path, 0, this.deps.runAsUser.gid);
+    } catch (err: any) {
+      this.onLog(`spend file ${path} could not be prepared: ${err?.message ?? err}`);
+    }
+  }
+
+  /** E2.11: one outfitter-spend.ts log line -> one `spend` up-frame, with `estimate` accumulated
+   * across every line seen this run (independent of the LiteLLM key-spend headers, which may be
+   * absent for a non-LiteLLM route or a key with no budget cap).
+   *
+   * `raw` is unvalidated: OUTFITTER_SPEND_FILE lives in /tmp inside the sandbox image and is
+   * writable by the model's own shell user (it can run arbitrary shell commands), so a line in it is
+   * untrusted input, not just possibly-malformed JSON -- validateSpendLine (pi.ts) checks shape and
+   * ranges before anything here trusts it. Anything that fails validation is dropped and logged at
+   * WARNING rather than used. */
+  private handleSpendLine(raw: unknown): void {
+    const line = validateSpendLine(raw);
+    if (!line) {
+      const detail = summarizeForLog(raw);
+      if (this.deps.logger) this.deps.logger.warn("dropped invalid spend line", { line: detail });
+      else this.onLog(`dropped invalid spend line: ${detail}`);
+      return;
+    }
+    this.costEstimate += line.usage ?? 0;
+    this.deps.link.send({
+      t: "spend",
+      keySpend: line.keySpend,
+      keyMax: line.keyMax,
+      modelGroup: line.modelGroup,
+      callId: line.callId,
+      estimate: this.costEstimate,
+    });
   }
 
   private handlePiEvent(event: PiRpcEvent): void {
@@ -385,6 +506,7 @@ export class RunController {
     this.clearIdleTimer();
     this.stopHeartbeat();
     this.tailer?.stop();
+    this.spendTailer?.stop();
     void this.bye("error", `pi exited: code=${code} signal=${signal}`).then(() => this.onExit(1));
   }
 
@@ -445,6 +567,7 @@ export class RunController {
     this.pi?.kill();
     this.stopHeartbeat();
     this.tailer?.stop();
+    this.spendTailer?.stop();
     await this.bye("idle");
     this.onExit(0);
   }
@@ -460,6 +583,7 @@ export class RunController {
     this.pi?.kill();
     this.stopHeartbeat();
     this.tailer?.stop();
+    this.spendTailer?.stop();
     await this.bye("stop", reason);
     this.onExit(0);
   }
@@ -475,6 +599,7 @@ export class RunController {
     this.pi?.kill();
     this.stopHeartbeat();
     this.tailer?.stop();
+    this.spendTailer?.stop();
     await this.bye("sigterm");
     this.onExit(0);
   }

@@ -12,10 +12,12 @@ with a `/connect` command that switches between three backends:
 ## Quick start for a new user
 
 1. Install a release (see *Releases and installing without Node*), or clone and `npm install` here.
-2. Run `mgm` from any project directory. The first time, type `/setup`: it asks your name, your
-   local model server (LM Studio by default: it lists the models the server offers and you pick
-   one), the shared LiteLLM router key (ask Matthew), and your own OpenRouter key. It writes `.env`
-   next to the install and connects immediately, no restart.
+2. Run `mgm` from any project directory. The first time, type `/setup`: it asks your name, the
+   shared LiteLLM router key (ask Matthew), your own OpenRouter key, and optionally a local model
+   server (LM Studio: it lists the models the server offers and you pick one). It writes `.env`
+   next to the install and connects immediately, no restart. The router is the default backend
+   (`litellm/gpt-5.4-nano`, the cheapest capable route; `/connect` or `/model` for a stronger one); LM Studio is only preloaded at start when you have made it your
+   default with `/connect` (or set `MGM_PRELOAD_LMS=1`).
 3. `/connect` picks a backend and model at any time; `/model` is pi's own picker; `/budget` shows
    what a session costs on the router.
 

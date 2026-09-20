@@ -192,8 +192,8 @@ describe("connect extension", async () => {
 
   test("/setup writes .env next to the agent dir and re-registers providers with the new keys", async () => {
     const ctx = ctxWith();
-    // name, local server yes, unreachable URL (→ typed model id), litellm url, litellm key, openrouter key
-    ctx.answers.push("Matej", "Yes, configure it", "http://127.0.0.1:9/v1", "my-local-model", "https://litellm.augment-code.support/v1", "sk-new-key", "sk-or-new");
+    // name, litellm url, litellm key, openrouter key, then the optional local server: yes, unreachable URL (→ typed model id)
+    ctx.answers.push("Matej", "https://litellm.augment-code.support/v1", "sk-new-key", "sk-or-new", "Yes, configure it", "http://127.0.0.1:9/v1", "my-local-model");
     await pi.commands.get("setup")!.handler("", ctx);
     const env = store.env();
     for (const line of ["MGM_USER=Matej", "LMSTUDIO_BASE_URL=http://127.0.0.1:9/v1", "LMSTUDIO_MODEL=my-local-model", "LITELLM_AGENT_KEY=sk-new-key", "OPENROUTER_API_KEY=sk-or-new"]) assert.ok(env.includes(line + "\n"), line);
@@ -204,7 +204,7 @@ describe("connect extension", async () => {
     assert.equal(pi.providers.filter((p) => p.name === "openrouter").at(-1)!.config.apiKey, "sk-or-new", "OpenRouter registered once its key exists");
     assert.equal(pi.providers.filter((p) => p.name === "lmstudio").at(-1)!.config.models[0].id, "my-local-model");
     // second run keeps existing keys when left blank and updates only the name
-    ctx.answers.push("Matej Monteleone", "No local model on this machine", "https://litellm.augment-code.support/v1", "", "");
+    ctx.answers.push("Matej Monteleone", "https://litellm.augment-code.support/v1", "", "", "No local model on this machine");
     await pi.commands.get("setup")!.handler("", ctx);
     const env2 = store.env();
     assert.ok(env2.includes("MGM_USER=Matej Monteleone\n") && env2.includes("LITELLM_AGENT_KEY=sk-new-key\n") && env2.includes("OPENROUTER_API_KEY=sk-or-new\n"));
@@ -220,7 +220,7 @@ describe("connect extension", async () => {
     });
     try {
       const ctx = ctxWith();
-      ctx.answers.push("Matej", "Yes, configure it", "127.0.0.1:1234", "google/gemma-4-e4b", "https://litellm.augment-code.support/v1", "", "");
+      ctx.answers.push("Matej", "https://litellm.augment-code.support/v1", "", "", "Yes, configure it", "127.0.0.1:1234", "google/gemma-4-e4b");
       await pi.commands.get("setup")!.handler("", ctx);
       assert.ok(store.env().includes("LMSTUDIO_MODEL=google/gemma-4-e4b\n"));
       assert.ok(store.env().includes("LMSTUDIO_BASE_URL=http://127.0.0.1:1234/v1\n"), "typed without scheme or /v1, saved normalised");
@@ -228,7 +228,7 @@ describe("connect extension", async () => {
       const lm = pi.providers.filter((p) => p.name === "lmstudio").at(-1)!.config.models.map((m: any) => m.id);
       assert.deepEqual(lm, ["google/gemma-4-e4b", "nvidia/nemotron-3-nano-omni"], "discovered from the server, embeddings excluded");
       assert.equal(pi.providers.filter((p) => p.name === "lmstudio").at(-1)!.config.models[0].contextWindow, 131072, "served window from the native API");
-      ctx.answers.push("Matej", "Yes, configure it", "http://localhost:1234/v1", "type another id", "my/custom-model", "https://litellm.augment-code.support/v1", "", "");
+      ctx.answers.push("Matej", "https://litellm.augment-code.support/v1", "", "", "Yes, configure it", "http://localhost:1234/v1", "type another id", "my/custom-model");
       await pi.commands.get("setup")!.handler("", ctx);
       assert.ok(store.env().includes("LMSTUDIO_MODEL=my/custom-model\n"));
     } finally { restore(); process.env.MGM_NO_DISCOVERY = "1"; delete process.env.MGM_USER; delete process.env.LMSTUDIO_MODEL; delete process.env.LMSTUDIO_BASE_URL; }
@@ -236,7 +236,7 @@ describe("connect extension", async () => {
 
   test("/setup can be cancelled at any prompt without writing", async () => {
     const ctx = ctxWith();
-    ctx.answers.push("Matej");   // then the local-server select gets no answer → cancel
+    ctx.answers.push("Matej");   // then the router URL prompt gets no answer → cancel
     await pi.commands.get("setup")!.handler("", ctx);
     assert.ok(!store.env().includes("MGM_USER="), "nothing written on cancel");
     assert.equal(pi.providers.filter((p) => p.name === "lmstudio").length, 1, "providers not re-registered on cancel");
@@ -283,7 +283,7 @@ describe("connect extension", async () => {
       assert.match(ctx.notices.at(-1)!.msg, /openrouter rejected the key/);
       // /setup with a working key (pasted with quotes, which cleanKey strips) re-registers it
       openrouterAccepts = true;
-      ctx.answers.push("Matej", "No local model on this machine", "https://litellm.augment-code.support/v1", "", '"sk-or-v1-good"');
+      ctx.answers.push("Matej", "https://litellm.augment-code.support/v1", "", '"sk-or-v1-good"', "No local model on this machine");
       await p2.commands.get("setup")!.handler("", ctx);
       assert.ok(store.env().includes("OPENROUTER_API_KEY=sk-or-v1-good\n"), store.env());
       assert.equal(p2.providers.filter((p) => p.name === "openrouter").at(-1)?.config.apiKey, "sk-or-v1-good");
@@ -292,7 +292,7 @@ describe("connect extension", async () => {
       assert.match(ctx.notices[saved].msg, /Connections ready: lmstudio, litellm, openrouter/);
       assert.ok(!ctx.notices.slice(saved).some((n) => n.msg.includes("rejected")), "no rejection after the fix");
       // a key that does not look like an OpenRouter key gets a warning at /setup time
-      ctx.answers.push("Matej", "No local model on this machine", "https://litellm.augment-code.support/v1", "", "sk-proj-openai-key");
+      ctx.answers.push("Matej", "https://litellm.augment-code.support/v1", "", "sk-proj-openai-key", "No local model on this machine");
       await p2.commands.get("setup")!.handler("", ctx);
       assert.ok(ctx.notices.some((n) => n.msg.includes("does not look like an OpenRouter key")));
     } finally { restore(); process.env.MGM_NO_DISCOVERY = "1"; delete process.env.OPENROUTER_API_KEY; delete process.env.MGM_USER; }

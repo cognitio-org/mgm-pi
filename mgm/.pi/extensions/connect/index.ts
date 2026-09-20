@@ -131,7 +131,7 @@ export default async function (pi: ExtensionAPI) {
 
   // ---------- /setup: first-run wizard, writes .env and re-registers providers live ----------
   pi.registerCommand("setup", {
-    description: "Configure your name, local model server, LiteLLM router and OpenRouter (writes .env)",
+    description: "Configure your name, LiteLLM router, OpenRouter and an optional local model server (writes .env)",
     handler: async (_args, ctx) => {
       if (!ctx.hasUI) { ctx.ui.notify(`Edit ${envFilePath()} (see .env.example); /setup needs the interactive UI`, "warning"); return; }
       const cur = loadEnv(process.cwd());
@@ -145,7 +145,20 @@ export default async function (pi: ExtensionAPI) {
       const values: Record<string, string | undefined> = {};
       const name = await ask("Your name (shown in the banner)", cur.MGM_USER, process.env.USER); if (name === undefined) return; if (name) values.MGM_USER = name;
 
-      const useLocal = await ctx.ui.select("Local model server (LM Studio or any OpenAI-compatible server)", ["Yes, configure it", "No local model on this machine"]);
+      const llUrl = await ask("LiteLLM router URL", cur.LITELLM_BASE_URL, "https://litellm.augment-code.support/v1"); if (llUrl === undefined) return; values.LITELLM_BASE_URL = normalizeBaseUrl(llUrl, "https://litellm.augment-code.support/v1");
+      // keys: the prompt shows a masked hint; Enter keeps the existing key, a new value replaces it
+      const keyPrompt = async (title: string, current: string | undefined, maskPrefix: string) => {
+        const hint = current ? `${maskPrefix}…${current.slice(-4)}` : "";
+        const v = await ctx.ui.input(hint ? `${title}  (Enter keeps ${hint})` : `${title}  (blank to skip)`, "");
+        if (v === undefined) return undefined;
+        return cleanKey(v);   // "" = keep current / skip
+      };
+      const llKey = await keyPrompt("LiteLLM key for this agent (ask Matthew for one)", cur.LITELLM_AGENT_KEY, "sk"); if (llKey === undefined) return; if (llKey) values.LITELLM_AGENT_KEY = llKey;
+      const orKey = await keyPrompt("OpenRouter API key (openrouter.ai/keys)", cur.OPENROUTER_API_KEY, "sk-or"); if (orKey === undefined) return; if (orKey) values.OPENROUTER_API_KEY = orKey;
+      if (orKey && !orKey.startsWith("sk-or-")) ctx.ui.notify(`That does not look like an OpenRouter key (they start with sk-or-v1-). Saved anyway; run /setup again if OpenRouter rejects it.`, "warning");
+
+      // Local server last: the router is the default backend, the local model is an extra.
+      const useLocal = await ctx.ui.select("Optional: local model server (LM Studio or any OpenAI-compatible server)", ["Yes, configure it", "No local model on this machine"]);
       if (useLocal === undefined) return;
       if (useLocal.startsWith("Yes")) {
         const typed = await ask("Local server URL", cur.LMSTUDIO_BASE_URL, "http://localhost:1234/v1"); if (typed === undefined) return;
@@ -158,17 +171,6 @@ export default async function (pi: ExtensionAPI) {
         if (model) values.LMSTUDIO_MODEL = model;
         if (!listed.length) ctx.ui.notify(`Could not reach ${url}; saved anyway. Start the server and run /setup again to pick a model.`, "warning");
       }
-      const llUrl = await ask("LiteLLM router URL", cur.LITELLM_BASE_URL, "https://litellm.augment-code.support/v1"); if (llUrl === undefined) return; values.LITELLM_BASE_URL = normalizeBaseUrl(llUrl, "https://litellm.augment-code.support/v1");
-      // keys: the prompt shows a masked hint; Enter keeps the existing key, a new value replaces it
-      const keyPrompt = async (title: string, current: string | undefined, maskPrefix: string) => {
-        const hint = current ? `${maskPrefix}…${current.slice(-4)}` : "";
-        const v = await ctx.ui.input(hint ? `${title}  (Enter keeps ${hint})` : `${title}  (blank to skip)`, "");
-        if (v === undefined) return undefined;
-        return cleanKey(v);   // "" = keep current / skip
-      };
-      const llKey = await keyPrompt("LiteLLM key for this agent (ask Matthew for one)", cur.LITELLM_AGENT_KEY, "sk"); if (llKey === undefined) return; if (llKey) values.LITELLM_AGENT_KEY = llKey;
-      const orKey = await keyPrompt("OpenRouter API key (openrouter.ai/keys)", cur.OPENROUTER_API_KEY, "sk-or"); if (orKey === undefined) return; if (orKey) values.OPENROUTER_API_KEY = orKey;
-      if (orKey && !orKey.startsWith("sk-or-")) ctx.ui.notify(`That does not look like an OpenRouter key (they start with sk-or-v1-). Saved anyway; run /setup again if OpenRouter rejects it.`, "warning");
 
       const file = envFilePath();
       let text = ""; try { text = readFileSync(file, "utf8"); } catch {}

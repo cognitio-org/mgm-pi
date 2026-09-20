@@ -139,7 +139,7 @@ export function backends(env: Record<string, string>, litellmMeta: Map<string, M
       apiKey: cleanKey(env.LITELLM_AGENT_KEY || env.LITELLM_API_KEY),  // agent-specific key first
       keyVar: "LITELLM_AGENT_KEY",
       discover: true,
-      fallback: ["local-qwen-mlx", "claude-auto-llm", "claude-auto-agentic", "gemini-auto-llm", "claude-sonnet-5", "claude-opus-5-high"],
+      fallback: ["local-qwen-mlx", "gpt-5.4-nano", "claude-auto-llm", "claude-auto-agentic", "gemini-auto-llm", "claude-sonnet-5", "claude-opus-5-high"],
       model: (id) => {
         const local = id.startsWith("local-");
         const claude = /claude/.test(id);

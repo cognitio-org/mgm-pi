@@ -4,8 +4,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadPlan, defaultConfig, embeddingBaseUrl, shouldSeed, parseStatus, resultText, configView, panelRows, indexStatusLine, actions, SUBCOMMANDS, DEFAULT_EMBEDDING_MODEL, DEFAULT_DIMENSIONS } from "../.pi/extensions/mgm-codebase-index/lib.ts";
-import { makePi, makeCtx } from "./harness.ts";
+import { loadPlan, defaultConfig, embeddingBaseUrl, shouldSeed, parseStatus, resultText, configView, panelRows, indexStatusLine, actions, SUBCOMMANDS, FIELDS, getAt, setAt, applyEdit, fieldRow, invalidatesIndex, configFromView, DEFAULT_EMBEDDING_MODEL, DEFAULT_DIMENSIONS } from "../.pi/extensions/mgm-codebase-index/lib.ts";
+import { makePi, makeCtx, stubFetch } from "./harness.ts";
 
 const STATUS_INDEXED = `Auto-index: disabled (state: idle)
 
@@ -246,5 +246,166 @@ describe("/index command", async () => {
     const ctx = makeCtx({ hasUI: false }); (ctx as any).cwd = "/proj";
     await pi.commands.get("index")!.handler("", ctx);
     assert.match(ctx.notices.at(-1)!.msg, /index_status failed: engine down/);
+  });
+});
+
+describe("settings editing", () => {
+  const field = (label: string) => FIELDS.find((f) => f.label === label)!;
+  const base = () => ({ embeddingProvider: "custom", customProvider: { baseUrl: "http://localhost:1234/v1", model: "m", dimensions: 768 }, indexing: { autoIndex: false, watchFiles: true }, search: { maxResults: 20, minScore: 0.1, fusionStrategy: "rrf" }, keepMe: { untouched: true } });
+
+  test("setAt writes a nested value without disturbing its siblings or the original", () => {
+    const before = base();
+    const after = setAt(before, ["search", "maxResults"], 40);
+    assert.equal(getAt(after, ["search", "maxResults"]), 40);
+    assert.equal(getAt(after, ["search", "minScore"]), 0.1, "sibling kept");
+    assert.deepEqual(getAt(after, ["keepMe"]), { untouched: true }, "unrelated keys kept");
+    assert.equal(getAt(before, ["search", "maxResults"]), 20, "input not mutated");
+    assert.equal(getAt(setAt({}, ["a", "b", "c"], 1), ["a", "b", "c"]), 1, "creates missing levels");
+    assert.equal(getAt(base(), ["nope", "deep"]), undefined);
+  });
+
+  test("applyEdit validates every kind and reports why, instead of writing nonsense", () => {
+    assert.equal(getAt(applyEdit(base(), field("Max results"), "40").config!, ["search", "maxResults"]), 40);
+    assert.match(applyEdit(base(), field("Max results"), "0").error!, /at least 1/);
+    assert.match(applyEdit(base(), field("Max results"), "abc").error!, /must be a number/);
+    assert.match(applyEdit(base(), field("Min score"), "2").error!, /at most 1/);
+    assert.match(applyEdit(base(), field("Dimensions"), "768.5").error!, /whole number/);
+    assert.match(applyEdit(base(), field("Dimensions"), "4").error!, /at least 8/);
+    assert.equal(getAt(applyEdit(base(), field("Embedding server"), "http://box:1234/v1/").config!, ["customProvider", "baseUrl"]), "http://box:1234/v1", "trailing slash trimmed");
+    assert.match(applyEdit(base(), field("Embedding server"), "box:1234").error!, /http\(s\) URL/);
+    assert.match(applyEdit(base(), field("Provider"), "azure").error!, /must be one of custom, auto/);
+    assert.equal(getAt(applyEdit(base(), field("Provider"), "ollama").config!, ["embeddingProvider"]), "ollama");
+    assert.equal(getAt(applyEdit(base(), field("Watch files"), false).config!, ["indexing", "watchFiles"]), false);
+    assert.equal(getAt(applyEdit(base(), field("Semantic only"), "on").config!, ["indexing", "semanticOnly"]), true);
+    assert.match(applyEdit(base(), field("Embedding model"), "   ").error!, /cannot be empty/);
+  });
+
+  test("only the fields that change how text is embedded force a rebuild", () => {
+    for (const l of ["Embedding model", "Dimensions", "Embedding server", "Provider"]) assert.equal(invalidatesIndex(field(l)), true, l);
+    for (const l of ["Max results", "Min score", "Watch files", "Fusion", "Rerank top N"]) assert.equal(invalidatesIndex(field(l)), false, l);
+  });
+
+  test("rows show the current value, and a fresh file starts from what is in effect", () => {
+    assert.match(fieldRow(field("Max results"), base()), /^Max results +20$/);
+    assert.match(fieldRow(field("Watch files"), base()), /on$/);
+    assert.match(fieldRow(field("Dimensions"), {}), /—$/);
+    const view = configView([], {});
+    const fresh = configFromView(view);
+    assert.equal(getAt(fresh, ["customProvider", "model"]), DEFAULT_EMBEDDING_MODEL);
+    assert.equal(getAt(fresh, ["search", "fusionStrategy"]), "rrf");
+  });
+});
+
+describe("/index settings dialog", async () => {
+  const mod = await import("../.pi/extensions/mgm-codebase-index/index.ts");
+  const STATUS = `Auto-index: disabled (state: idle)\n\nIndexed chunks (all branches): 190\nLocation: /proj/.codebase-index/index\nCurrent branch: main`;
+
+  function start(dir: string) {
+    const calls: { name: string; params: any }[] = [];
+    const pkg = async (pi: any) => {
+      const tool = (name: string, text: (p: any) => string) => ({ name, label: name, description: "", parameters: {}, execute: async (_i: string, params: any) => { calls.push({ name, params }); return { content: [{ type: "text", text: text(params) }] }; } });
+      pi.registerTool(tool("index_status", () => STATUS));
+      pi.registerTool(tool("index_codebase", () => "Rebuilt"));
+      pi.registerTool(tool("knowledge_base_list", () => ""));
+    };
+    const userConfig = join(dir, "user", "config.json");
+    process.env.MGM_INDEX_CONFIG = userConfig;
+    const pi = makePi();
+    const ctx: any = makeCtx({ hasUI: true });
+    ctx.cwd = join(dir, "proj");
+    mkdirSync(ctx.cwd, { recursive: true });
+    return { pi, ctx, calls, userConfig, ready: mod.default(pi as any, { plan: { kind: "prebundled", entry: "fake" }, load: async () => ({ default: pkg }) }) };
+  }
+  const read = (f: string) => JSON.parse(readFileSync(f, "utf8"));
+
+  test("changing a search setting writes the user config and keeps the rest of the file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgm-idx-set-"));
+    const { pi, ctx, userConfig, ready } = start(dir);
+    await ready;
+    ctx.answers.push("Settings", "Max results", "40", "Back", "Close panel");
+    await pi.commands.get("index")!.handler("", ctx);
+    const saved = read(userConfig);
+    assert.equal(saved.search.maxResults, 40);
+    assert.equal(saved.search.minScore, 0.1, "untouched settings survive");
+    assert.equal(saved.customProvider.model, DEFAULT_EMBEDDING_MODEL);
+    assert.match(ctx.notices.map((n: any) => n.msg).join("\n"), /Max results → 40/);
+    delete process.env.MGM_INDEX_CONFIG;
+  });
+
+  test("a rejected value is explained and nothing is written", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgm-idx-set-"));
+    const { pi, ctx, userConfig, ready } = start(dir);
+    await ready;
+    const before = readFileSync(userConfig, "utf8");   // the extension seeds defaults when it loads
+    ctx.answers.push("Settings", "Min score", "5", "Back", "Close panel");
+    await pi.commands.get("index")!.handler("", ctx);
+    assert.equal(ctx.notices.at(-1)!.type, "error");
+    assert.match(ctx.notices.at(-1)!.msg, /at most 1/);
+    assert.equal(readFileSync(userConfig, "utf8"), before, "a rejected edit changes nothing on disk");
+    delete process.env.MGM_INDEX_CONFIG;
+  });
+
+  test("picking an embedding model lists the server's embedding models and offers the rebuild it needs", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgm-idx-set-"));
+    const restore = stubFetch({
+      "/api/v0/models": () => ({ data: [{ id: "text-embedding-nomic-embed-text-v1.5", type: "embeddings" }, { id: "embeddinggemma-300m", type: "embeddings" }, { id: "qwen/qwen3.6-35b-a3b", type: "llm" }] }),
+    });
+    try {
+      const { pi, ctx, calls, userConfig, ready } = start(dir);
+      await ready;
+      ctx.answers.push("Settings", "Embedding model", "embeddinggemma-300m", "Rebuild now", "Back", "Close panel");
+      await pi.commands.get("index")!.handler("", ctx);
+      assert.equal(read(userConfig).customProvider.model, "embeddinggemma-300m");
+      assert.deepEqual(calls.filter((c) => c.name === "index_codebase"), [{ name: "index_codebase", params: { force: true } }], "rebuilt once, forced");
+      assert.match(ctx.notices.map((n: any) => n.msg).join("\n"), /no longer match|Rebuilt/);
+    } finally { restore(); delete process.env.MGM_INDEX_CONFIG; }
+  });
+
+  test("declining the rebuild warns that search is stale", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgm-idx-set-"));
+    const restore = stubFetch({ "/api/v0/models": () => ({ data: [{ id: "other-embed", type: "embeddings" }] }) });
+    try {
+      const { pi, ctx, calls, ready } = start(dir);
+      await ready;
+      ctx.answers.push("Settings", "Embedding model", "other-embed", "Later", "Back", "Close panel");
+      await pi.commands.get("index")!.handler("", ctx);
+      assert.equal(calls.filter((c) => c.name === "index_codebase").length, 0, "nothing rebuilt");
+      assert.match(ctx.notices.map((n: any) => n.msg).join("\n"), /stay stale until the index is rebuilt/);
+    } finally { restore(); delete process.env.MGM_INDEX_CONFIG; }
+  });
+
+  test("dimensions can be measured from the server, and a dead server says so", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgm-idx-set-"));
+    let ok = true;
+    const restore = stubFetch({
+      "/embeddings": () => (ok ? { data: [{ embedding: new Array(1024).fill(0.1) }] } : new Error("connection refused")),
+      "/api/v0/models": () => ({ data: [] }),
+    });
+    try {
+      const { pi, ctx, userConfig, ready } = start(dir);
+      await ready;
+      // a new dimension count invalidates the stored vectors, so the rebuild prompt comes up too
+      ctx.answers.push("Settings", "Dimensions", "Detect from the server", "Later", "Back", "Close panel");
+      await pi.commands.get("index")!.handler("", ctx);
+      assert.equal(read(userConfig).customProvider.dimensions, 1024);
+      assert.match(ctx.notices.map((n: any) => n.msg).join("\n"), /returns 1024 dimensions/);
+      ok = false;
+      const again = start(dir); await again.ready;
+      again.ctx.answers.push("Settings", "Dimensions", "Detect from the server", "Back", "Close panel");   // no prompt: nothing was saved
+      await again.pi.commands.get("index")!.handler("", again.ctx);
+      assert.match(again.ctx.notices.map((n: any) => n.msg).join("\n"), /Could not measure the embedding/);
+    } finally { restore(); delete process.env.MGM_INDEX_CONFIG; }
+  });
+
+  test("settings can be copied into the project, which then overrides the user file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgm-idx-set-"));
+    const { pi, ctx, ready } = start(dir);
+    await ready;
+    ctx.answers.push("Settings", "Max results", "33", "Copy these settings into this project", "Back", "Close panel");
+    await pi.commands.get("index")!.handler("", ctx);
+    const projectFile = join(ctx.cwd, ".codebase-index", "config.json");
+    assert.equal(read(projectFile).search.maxResults, 33);
+    assert.match(ctx.notices.map((n: any) => n.msg).join("\n"), /now overrides your user settings/);
+    delete process.env.MGM_INDEX_CONFIG;
   });
 });

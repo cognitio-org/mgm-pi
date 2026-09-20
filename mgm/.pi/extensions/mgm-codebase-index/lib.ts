@@ -143,7 +143,7 @@ export function indexStatusLine(s: IndexStatus): string {
 }
 
 // ---------- actions ----------
-export type Action = { label: string; tool?: string; params?: Record<string, unknown>; kind?: "refresh" | "close" | "kb-add" | "kb-remove" };
+export type Action = { label: string; tool?: string; params?: Record<string, unknown>; kind?: "refresh" | "close" | "kb-add" | "kb-remove" | "settings" };
 export function actions(s: IndexStatus): Action[] {
   return [
     { label: s.indexed ? "Update the index (changed files only)" : "Index this codebase now", tool: "index_codebase", params: {} },
@@ -152,6 +152,7 @@ export function actions(s: IndexStatus): Action[] {
     { label: "Health check", tool: "index_health_check", params: {} },
     { label: "Metrics", tool: "index_metrics", params: {} },
     { label: "Recent log", tool: "index_logs", params: { limit: 20 } },
+    { label: "Settings (embedding server, model, dimensions, search)", kind: "settings" },
     { label: "Add a knowledge base directory", kind: "kb-add" },
     { label: "Remove a knowledge base directory", kind: "kb-remove" },
     { label: "Refresh", kind: "refresh" },
@@ -172,3 +173,79 @@ export const SUBCOMMANDS: Record<string, { tool?: string; params?: Record<string
   bases: { tool: "knowledge_base_list", params: {} },
   off: { kind: "off" },
 };
+
+// ---------- editable settings ----------
+export type FieldKind = "url" | "model" | "dimensions" | "number" | "bool" | "choice";
+export type Field = { path: string[]; label: string; kind: FieldKind; choices?: string[]; min?: number; max?: number; help: string };
+
+/**
+ * The settings /index can edit. Only keys the shipped package actually reads (verified against its
+ * bundle) are here; `scope`, `ignore` and the external `reranker` are left to hand-editing because
+ * they need judgement the dialog cannot supply.
+ */
+export const FIELDS: Field[] = [
+  { path: ["customProvider", "baseUrl"], label: "Embedding server", kind: "url", help: "OpenAI-compatible endpoint; LM Studio serves one on http://localhost:1234/v1" },
+  { path: ["customProvider", "model"], label: "Embedding model", kind: "model", help: "picked from the models the server reports" },
+  { path: ["customProvider", "dimensions"], label: "Dimensions", kind: "dimensions", min: 8, max: 8192, help: "must match the model; wrong values corrupt search silently" },
+  { path: ["embeddingProvider"], label: "Provider", kind: "choice", choices: ["custom", "auto", "ollama", "openai", "google", "cohere"], help: "custom = the server above; the others need their own credentials" },
+  { path: ["indexing", "autoIndex"], label: "Index automatically", kind: "bool", help: "off keeps indexing an explicit request" },
+  { path: ["indexing", "watchFiles"], label: "Watch files", kind: "bool", help: "keeps the index current as files change" },
+  { path: ["indexing", "semanticOnly"], label: "Semantic only", kind: "bool", help: "off blends keyword (BM25) with embeddings" },
+  { path: ["search", "maxResults"], label: "Max results", kind: "number", min: 1, max: 200, help: "how many chunks a search may return" },
+  { path: ["search", "minScore"], label: "Min score", kind: "number", min: 0, max: 1, help: "drops weak matches; raise it when results are noisy" },
+  { path: ["search", "fusionStrategy"], label: "Fusion", kind: "choice", choices: ["rrf", "weighted"], help: "how semantic and keyword candidates are combined" },
+  { path: ["search", "rerankTopN"], label: "Rerank top N", kind: "number", min: 0, max: 200, help: "candidates reranked before the cut" },
+];
+
+export const getAt = (obj: any, path: string[]): unknown => path.reduce((o, k) => (o == null ? undefined : o[k]), obj);
+/** Returns a copy; unknown keys elsewhere in the file are preserved by the caller's spread. */
+export function setAt<T extends Record<string, any>>(obj: T, path: string[], value: unknown): T {
+  const out: any = { ...obj };
+  let node = out;
+  for (const key of path.slice(0, -1)) { node[key] = { ...(node[key] ?? {}) }; node = node[key]; }
+  node[path.at(-1)!] = value;
+  return out;
+}
+
+const show = (v: unknown) => (v === undefined ? "—" : typeof v === "boolean" ? (v ? "on" : "off") : String(v));
+/** Picker row: label, current value, and the hint that explains it. */
+export function fieldRow(f: Field, config: Record<string, any>): string {
+  return `${f.label.padEnd(18)} ${show(getAt(config, f.path))}`;
+}
+
+/** Validate and coerce one edit. Returns the new config, or a message saying why not. */
+export function applyEdit(config: Record<string, any>, f: Field, raw: string | boolean | number): { config?: Record<string, any>; error?: string } {
+  if (f.kind === "bool") return { config: setAt(config, f.path, typeof raw === "boolean" ? raw : String(raw) === "on") };
+  const text = String(raw).trim();
+  if (!text) return { error: `${f.label} cannot be empty` };
+  if (f.kind === "choice") {
+    if (!f.choices?.includes(text)) return { error: `${f.label} must be one of ${f.choices?.join(", ")}` };
+    return { config: setAt(config, f.path, text) };
+  }
+  if (f.kind === "url") {
+    if (!/^https?:\/\//.test(text)) return { error: "the server must be an http(s) URL" };
+    return { config: setAt(config, f.path, text.replace(/\/+$/, "")) };
+  }
+  if (f.kind === "number" || f.kind === "dimensions") {
+    const n = Number(text);
+    if (!Number.isFinite(n)) return { error: `${f.label} must be a number` };
+    if (f.min !== undefined && n < f.min) return { error: `${f.label} must be at least ${f.min}` };
+    if (f.max !== undefined && n > f.max) return { error: `${f.label} must be at most ${f.max}` };
+    if (f.kind === "dimensions" && !Number.isInteger(n)) return { error: "dimensions must be a whole number" };
+    return { config: setAt(config, f.path, n) };
+  }
+  return { config: setAt(config, f.path, text) };   // model id
+}
+
+/** Changing these invalidates the vectors already stored, so the index has to be rebuilt. */
+export const invalidatesIndex = (f: Field) => f.kind === "model" || f.kind === "dimensions" || f.path[0] === "embeddingProvider" || f.path.includes("baseUrl");
+
+/** A config object holding only what the dialog manages, for writing a fresh file. */
+export function configFromView(view: ConfigView): Record<string, any> {
+  return {
+    embeddingProvider: view.provider,
+    customProvider: { baseUrl: view.baseUrl, model: view.model, dimensions: view.dimensions },
+    indexing: { autoIndex: view.autoIndex, watchFiles: view.watchFiles },
+    search: { maxResults: view.maxResults, minScore: view.minScore, fusionStrategy: view.fusion },
+  };
+}

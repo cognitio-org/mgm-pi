@@ -434,6 +434,19 @@ scripts, `/index status | update | reindex | estimate | health | metrics | logs 
 instead. The command drives the package's own tools through a capture of `registerTool`, so there is
 no second implementation of anything.
 
+**Settings** are editable from the same picker, not just readable. The dialog lists every setting the
+shipped package actually reads, with its current value: embedding server, embedding model,
+dimensions, provider, index-automatically, watch-files, semantic-only, max results, min score,
+fusion strategy and rerank top N. Choosing the model lists the embedding models the server reports
+(LM Studio types them, so only embedding models are offered); choosing dimensions can measure them
+by asking the server for one embedding and counting it, which is the only reliable source and the
+difference between working search and silent nonsense. Values are validated before they are written,
+and changing anything that alters how text is embedded (server, model, dimensions, provider) offers
+the rebuild those changes require, or warns that search stays stale until you run one. Edits go to
+whichever config file is in effect, and one entry copies the current settings into the project so a
+repo can override your user defaults. The package's `scope`, `ignore` and external `reranker` keys
+are deliberately not in the dialog: they need judgement it cannot supply, so hand-edit those.
+
 The index is per project, in `<project>/.codebase-index/`, and it is built on request, never on
 start. Indexing needs the embedding model, so the local model server has to be up; it loads
 `text-embedding-nomic-embed-text-v1.5` on the first request. To see where you stand, ask the agent

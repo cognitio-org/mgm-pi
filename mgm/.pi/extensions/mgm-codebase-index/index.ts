@@ -19,8 +19,9 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { renderPanel } from "../connect/lib.ts";
 import {
-  PACKAGE, SUBCOMMANDS, actions, configView, defaultConfig, indexStatusLine, loadPlan, panelRows, parseStatus, resultText, shouldSeed,
-  type Embeddings, type IndexStatus, type LoadPlan, type PanelData,
+  FIELDS, PACKAGE, SUBCOMMANDS, actions, applyEdit, configFromView, configView, defaultConfig, fieldRow, getAt, indexStatusLine,
+  invalidatesIndex, loadPlan, panelRows, parseStatus, resultText, shouldSeed,
+  type ConfigView, type Embeddings, type Field, type IndexStatus, type LoadPlan, type PanelData,
 } from "./lib.ts";
 
 /** Injection seam: tests supply the package instead of loading 2 MB of bundled indexer. */
@@ -57,6 +58,38 @@ async function probeEmbeddings(baseUrl: string | undefined, model: string | unde
     const entry = data.find((m: any) => String(m.id) === model);
     return { reachable: true, loaded: entry?.state === undefined ? undefined : entry.state === "loaded" };
   } catch { return { reachable: false }; }
+}
+
+/** Embedding-capable models the server reports; LM Studio types them, plain OpenAI servers do not. */
+async function embeddingModels(baseUrl: string): Promise<string[]> {
+  const root = baseUrl.replace(/\/v1\/?$/, "");
+  try {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 3000);
+    const native = await fetch(`${root}/api/v0/models`, { signal: ctl.signal }).catch(() => undefined);
+    if (native?.ok) {
+      clearTimeout(t);
+      return ((await native.json())?.data ?? []).filter((m: any) => m.type === "embeddings").map((m: any) => String(m.id));
+    }
+    const res = await fetch(`${baseUrl}/models`, { signal: ctl.signal });
+    clearTimeout(t);
+    return res.ok ? ((await res.json())?.data ?? []).map((m: any) => String(m.id)) : [];
+  } catch { return []; }
+}
+
+/** Ask the server for one embedding and count it: the only reliable source for the dimension. */
+async function detectDimensions(baseUrl: string, model: string): Promise<number | undefined> {
+  try {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 20_000);
+    const res = await fetch(`${baseUrl}/embeddings`, {
+      method: "POST", signal: ctl.signal,
+      headers: { "content-type": "application/json", authorization: "Bearer lm-studio" },
+      body: JSON.stringify({ model, input: "dimension probe" }),
+    });
+    clearTimeout(t);
+    if (!res.ok) return undefined;
+    const vector = (await res.json())?.data?.[0]?.embedding;
+    return Array.isArray(vector) && vector.length ? vector.length : undefined;
+  } catch { return undefined; }
 }
 
 export default async function (pi: ExtensionAPI, deps: Deps = {}) {
@@ -119,6 +152,90 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
     setStatusLine(ctx, data.status);
   }
 
+  /** Read the file the settings live in (or the user's, creating it on first write). */
+  function settingsTarget(ctx: ExtensionCommandContext, view: ConfigView): string {
+    return view.file ?? configPath();
+  }
+  function readConfigObject(file: string, view: ConfigView): Record<string, any> {
+    const text = read(file);
+    if (text) { try { const parsed = JSON.parse(text); if (parsed && typeof parsed === "object") return parsed; } catch {} }
+    return configFromView(view);          // no file yet: start from what is in effect
+  }
+
+  /** Field picker → edit → write → offer the rebuild that a changed embedding needs. */
+  async function editSettings(ctx: ExtensionCommandContext, data: PanelData): Promise<boolean> {
+    let view = data.config;
+    let file = settingsTarget(ctx, view);
+    let config = readConfigObject(file, view);
+    let touched = false;
+    for (;;) {
+      const rows = FIELDS.map((f) => fieldRow(f, config));
+      const projectFile = join(ctx.cwd, ".codebase-index", "config.json");
+      const extra = file === projectFile ? [] : ["Copy these settings into this project"];
+      const pick = await ctx.ui.select(`Codebase index settings  (${file})`, [...rows, ...extra, "Back"]);
+      if (pick === undefined || pick === "Back") return touched;
+      if (pick === "Copy these settings into this project") {
+        mkdirSync(dirname(projectFile), { recursive: true });
+        writeFileSync(projectFile, `${JSON.stringify(config, null, 2)}\n`);
+        ctx.ui.notify(`Wrote ${projectFile}. This project now overrides your user settings.`, "info");
+        file = projectFile; touched = true; continue;
+      }
+      const field = FIELDS[rows.indexOf(pick)];
+      if (!field) continue;
+      const current = getAt(config, field.path);
+      let raw: string | boolean | undefined;
+      if (field.kind === "bool") {
+        const answer = await ctx.ui.select(`${field.label} — ${field.help}`, ["on", "off"]);
+        if (answer === undefined) continue;
+        raw = answer === "on";
+      } else if (field.kind === "choice") {
+        const answer = await ctx.ui.select(`${field.label} — ${field.help}`, field.choices!);
+        if (answer === undefined) continue;
+        raw = answer;
+      } else if (field.kind === "model") {
+        const baseUrl = String(getAt(config, ["customProvider", "baseUrl"]) ?? "");
+        const listed = baseUrl ? await embeddingModels(baseUrl) : [];
+        const answer = await ctx.ui.select(`${field.label} — ${listed.length ? "from the server" : "server not reachable; type an id"}`, [...listed, "type another id"]);
+        if (answer === undefined) continue;
+        raw = answer === "type another id" ? await ctx.ui.input(`${field.label} id`, String(current ?? "")) : answer;
+        if (raw === undefined) continue;
+      } else if (field.kind === "dimensions") {
+        const answer = await ctx.ui.select(`${field.label} — ${field.help}`, ["Detect from the server", "Type a number"]);
+        if (answer === undefined) continue;
+        if (answer.startsWith("Detect")) {
+          ctx.ui.setStatus("index", "⌕ measuring embedding…");
+          const detected = await detectDimensions(String(getAt(config, ["customProvider", "baseUrl"]) ?? ""), String(getAt(config, ["customProvider", "model"]) ?? ""));
+          if (detected === undefined) { ctx.ui.notify("Could not measure the embedding: is the server up and the model available?", "error"); continue; }
+          raw = String(detected);
+          ctx.ui.notify(`${getAt(config, ["customProvider", "model"])} returns ${detected} dimensions`, "info");
+        } else {
+          const typed = await ctx.ui.input(`${field.label}`, String(current ?? ""));
+          if (typed === undefined) continue;
+          raw = typed;
+        }
+      } else {
+        const typed = await ctx.ui.input(`${field.label} — ${field.help}`, String(current ?? ""));
+        if (typed === undefined) continue;
+        raw = typed;
+      }
+      const edit = applyEdit(config, field, raw as any);
+      if (edit.error) { ctx.ui.notify(edit.error, "error"); continue; }
+      if (String(getAt(edit.config!, field.path)) === String(current)) continue;   // nothing changed
+      config = edit.config!;
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
+      touched = true;
+      ctx.ui.notify(`${field.label} → ${String(getAt(config, field.path))}  (saved to ${file})`, "info");
+      if (invalidatesIndex(field) && data.status.indexed) {
+        const rebuild = await ctx.ui.select("That changes how text is embedded, so the stored vectors no longer match. Rebuild the index now?", ["Rebuild now", "Later"]);
+        if (rebuild === "Rebuild now") {
+          ctx.ui.setStatus("index", "⌕ rebuilding…");
+          ctx.ui.notify(await run("index_codebase", { force: true }, ctx), "info");
+        } else ctx.ui.notify("Search will stay stale until the index is rebuilt (/index reindex).", "warning");
+      }
+    }
+  }
+
   pi.registerCommand("index", {
     description: "Codebase index panel: state, embeddings, settings; reindex and knowledge bases (/index off hides it)",
     getArgumentCompletions: (prefix) => Object.keys(SUBCOMMANDS).filter((k) => k && k.startsWith(prefix.trim())).map((k) => ({ value: k, label: k })),
@@ -145,6 +262,7 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
         if (pick === undefined) return;                       // Escape leaves the panel up
         const action = list[list.map((a) => a.label).indexOf(pick)];
         if (action.kind === "close") { ctx.ui.setWidget("codebase-index", undefined); return; }
+        if (action.kind === "settings") await editSettings(ctx, data);
         if (action.kind === "kb-add" || action.kind === "kb-remove") {
           const path = await ctx.ui.input(action.kind === "kb-add" ? "Directory to index as a knowledge base" : "Knowledge base directory to remove", "");
           if (path === undefined || !path.trim()) continue;

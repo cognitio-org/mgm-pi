@@ -1,0 +1,27 @@
+mgm/tests/voice.test.ts
+  s_25c805ebe232f3::t_3b177991fb7291 1-68
+mgm/.pi/extensions/mgm-voice/index.ts
+  s_25c805ebe232f3::t_3b177991fb7291 1-40
+mgm/.pi/extensions/mgm-voice/lib.ts
+  s_25c805ebe232f3::t_3b177991fb7291 1-41
+mgm/scripts/install.sh
+  s_25c805ebe232f3::t_63d3476a3befce 46-48
+mgm/README.md
+  s_25c805ebe232f3::t_63d3476a3befce 224-235
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "4437ab835054484d8978f8f207db8eb8751e85dd",
+  "prompts": {},
+  "sessions": {
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -1,0 +1,84 @@
+outfitter/packages/web/src/api/client.ts
+  s_2209f22f830d7f::t_3e2a99787c2611 109
+  s_2209f22f830d7f::t_8e846c4346c489 107
+  s_2209f22f830d7f::t_dcc64c14f981c5 1-106,108,110-210
+outfitter/packages/web/test/relative-time.test.ts
+  s_2209f22f830d7f::t_84bb4dd8f4103c 1-32
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_2209f22f830d7f::t_62c87ebdbee230 105
+  s_2209f22f830d7f::t_95f1abd5c79164 1-104,106-118
+outfitter/packages/web/src/components/Composer.tsx
+  s_2209f22f830d7f::t_68a57c2349ee3a 1-55
+outfitter/packages/web/index.html
+  s_2209f22f830d7f::t_edc7428df5dbf8 1-14
+outfitter/packages/web/src/style.css
+  s_2209f22f830d7f::t_f6085ae54320ad 1-365
+outfitter/packages/web/src/hooks/useSessionStream.ts
+  s_2209f22f830d7f::t_b5cabfac0d3dc2 3,8
+  s_2209f22f830d7f::t_7d56457697652f 1-2,4-7,9-51,54-69
+  s_2209f22f830d7f::t_4adc81cd5cf1b2 52-53
+outfitter/packages/web/src/lib/relative-time.ts
+  s_2209f22f830d7f::t_e8aeca0e6918ab 1-19
+outfitter/packages/web/src/main.tsx
+  s_2209f22f830d7f::t_684061e2096dd4 1-15
+outfitter/packages/web/tsconfig.json
+  s_2209f22f830d7f::t_dd786add05aa74 1-20
+outfitter/packages/web/src/components/StatusPill.tsx
+  s_2209f22f830d7f::t_0f00aa548b0974 1-4
+outfitter/packages/web/src/components/NewSessionDialog.tsx
+  s_2209f22f830d7f::t_fd6b90211e9af8 1-101
+outfitter/packages/web/test/entry-view.test.ts
+  s_2209f22f830d7f::t_7009f8fe718569 1-77
+outfitter/packages/web/src/App.tsx
+  s_2209f22f830d7f::t_27363158545c37 1-31
+outfitter/packages/web/src/pages/FleetPage.tsx
+  s_2209f22f830d7f::t_cdd07c52179a5c 1-119
+outfitter/packages/web/vite.config.ts
+  s_2209f22f830d7f::t_f7b1576631b613 1
+  s_2209f22f830d7f::t_eaa11011874af8 2-22,28-29
+  s_2209f22f830d7f::t_4b3caf9e3d408e 23-27
+outfitter/packages/api/Dockerfile
+  s_2209f22f830d7f::t_c97d2d14f31b63 11-15,23-24,28-30,40
+outfitter/packages/web/src/components/ProviderStrip.tsx
+  s_2209f22f830d7f::t_382f06aa6a8860 1-18
+outfitter/packages/web/src/pages/ProvidersPage.tsx
+  s_2209f22f830d7f::t_41f60e69190687 1-37
+outfitter/docs/reports/web-ui.md
+  s_2209f22f830d7f::t_69c018c887bf6d 1-123
+outfitter/packages/web/src/components/UiRequestPanel.tsx
+  s_2209f22f830d7f::t_8e576ac2ccc55a 8-26,29,46,61,78,86
+  s_2209f22f830d7f::t_f9e706c378c7b0 1-7,27-28,30-45,47-60,62-77,79-85,87-103
+outfitter/packages/web/src/components/EntryItem.tsx
+  s_2209f22f830d7f::t_8bfaca3bf07356 1-77
+outfitter/packages/api/src/routes/static.ts
+  s_2209f22f830d7f::t_32ca638c4bd9a6 14-28
+outfitter/packages/web/src/lib/entry-view.ts
+  s_2209f22f830d7f::t_c988fa0930256c 1-108
+outfitter/packages/web/package.json
+  s_2209f22f830d7f::t_52b78476969179 25-26
+  s_2209f22f830d7f::t_12d60a375c5f32 1-24,27-28
+outfitter/packages/web/test/client.test.ts
+  s_2209f22f830d7f::t_3f54117d24f8bf 48
+  s_2209f22f830d7f::t_8a6ce112614970 8-24,27
+  s_2209f22f830d7f::t_86b62232ee39ea 1-7,25-26,28-47,49-94
+outfitter/packages/web/src/hooks/useProviders.ts
+  s_2209f22f830d7f::t_452df1a348a324 1-30
+outfitter/package-lock.json
+  s_2209f22f830d7f::t_d4e9eb4c27443e 15-904,1144-1193,1222-1241,1263-1266,1330-1795,1805-1824,1831-1962,1965-1968,1971-1974,1978-1983,2074-2090,2149-2161,2183-2216,2232-2303,2336-2348,2362-2368,2382-2409,2419-2432,2450-2476,2495-2509,2531-2537,2553-2663,2679-2698,2824-2841,2879-2895,2908-2932,2945-2955,2967-3005,3157-3169,3183-3237,3284-3296,3321-3327,3340-3400,3435-3447,3518-3524,3534-3553,3572-3594,3681-3699,3762-3778,3806-3818,3835-3871,3909-3937,4004-4072,4142-4195,4198-4202,4256-4281,4322-4328,4338-4347,4366-4372,4382-4388,4439-4458,4465-4471,4523-4603,4622-4634,4667-4697,4704-4887,4906-4929,4943-4959,5004-5020,5030-5036,5109-5126
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "ab6640f014345c48888c15edea48fff6487b5a80",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

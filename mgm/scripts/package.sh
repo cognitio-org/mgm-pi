@@ -31,6 +31,7 @@ tar xzf "$PI_TGZ" -C "$STAGE"          # → $STAGE/pi/pi + assets
 mkdir -p "$STAGE/.pi/npm" "$STAGE/bin"
 cp -R "$ROOT/.pi/extensions" "$STAGE/.pi/"
 cp "$ROOT/.pi/mcp.json" "$STAGE/.pi/"
+mkdir -p "$STAGE/.pi/agent"; cp "$ROOT/.pi/agent/lsp.json" "$STAGE/.pi/agent/"   # pi-lsp reads it via PI_AGENT_DIR
 # open-codebase-index cannot load under pi's Bun-compiled binary (its single-file extension trips a
 # NameTooLong in the binary's module loader; reproduced on pi 0.85.1 and 0.86.1). Bundles ship
 # without it; source installs (npm pi under Node) keep it. Everything else loads as under Node.
@@ -78,7 +79,7 @@ if [[ "$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/x64/; s/aarch64/arm64
 else
   echo "(cross-platform build: smoke test skipped)"
 fi
-rm -rf "${SMOKE_HOME:-/nonexistent}" "$STAGE/Library" "$STAGE/.pi/sessions" "$STAGE/.pi/trust.json" "$STAGE/.pi/auth.json" "$STAGE/.pi/models-store.json" "$STAGE/.pi/mcp-cache.json"
+rm -rf "${SMOKE_HOME:-/nonexistent}" "$STAGE/Library" "$STAGE/.pi/sessions" "$STAGE/.pi/trust.json" "$STAGE/.pi/auth.json" "$STAGE/.pi/models-store.json" "$STAGE/.pi/mcp-cache.json" "$STAGE/.pi/agent/trust"
 
 # 4b. shared keys shipped in the bundle's .env (private-repo distribution to family users).
 #     DEEPGRAM_API_KEY: from the CI secret, or from ~/localllm/.env when building locally. /setup

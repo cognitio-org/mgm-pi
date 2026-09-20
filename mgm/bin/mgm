@@ -16,6 +16,12 @@ if [[ -f "$ROOT/../.env" ]]; then set -a; source "$ROOT/../.env"; set +a; found_
 if [[ -f "$ROOT/.env" ]]; then set -a; source "$ROOT/.env"; set +a; found_env=1; fi
 [[ $found_env == 1 ]] || echo "mgm: no .env yet — run /setup inside the agent to configure your connections" >&2
 export PI_CODING_AGENT_DIR="$ROOT/.pi"
+# pi-lsp (and its siblings) look for their own agent dir under $PI_AGENT_DIR, defaulting to
+# ~/.pi/agent, which mgm does not use. Point it at the bundle so .pi/agent/lsp.json is read as the
+# user-owned (auto-trusted) config: a project-local .pi/lsp.json needs a trust prompt and is
+# rejected outright in -p mode. One level below .pi/ so that running mgm inside this folder does
+# not also find it by walking up for a project-local .pi/lsp.json.
+export PI_AGENT_DIR="$ROOT/.pi/agent"
 
 # Release bundles ship pi's official standalone binary in ./pi; a source checkout uses the npm one.
 if [[ -x "$ROOT/pi/pi" ]]; then PI="$ROOT/pi/pi"; else PI="$ROOT/node_modules/.bin/pi"; fi

@@ -424,6 +424,16 @@ the model to reach for those before grepping, is copied into `.pi/skills/` by `s
 (pi installs a package's skills only for packages it manages, and this one is loaded by
 `.pi/extensions/mgm-codebase-index`).
 
+`/index` is mgm's own panel over it: the chunk count and branch, where the store is, the embedding
+model with whether the server answers and has it resident, the search settings and indexing flags,
+which config file is in effect, the knowledge bases and the tool count. The picker under it runs the
+same tools the model uses: update the index, rebuild from scratch, estimate first, health check,
+metrics, recent log, add or remove a knowledge base. Escape leaves the panel up, `/index off` takes
+it down, and the status bar keeps a `⌕ 190 chunks` (or `⌕ no index`) entry. Without the TUI, and for
+scripts, `/index status | update | reindex | estimate | health | metrics | logs | bases` print text
+instead. The command drives the package's own tools through a capture of `registerTool`, so there is
+no second implementation of anything.
+
 The index is per project, in `<project>/.codebase-index/`, and it is built on request, never on
 start. Indexing needs the embedding model, so the local model server has to be up; it loads
 `text-embedding-nomic-embed-text-v1.5` on the first request. To see where you stand, ask the agent

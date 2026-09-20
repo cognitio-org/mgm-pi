@@ -14,15 +14,14 @@ const byId = new Map<string, any>(config.servers.map((s: any) => [s.id, s]));
 const PLACEHOLDERS = /\{(workspace|root|file|relFile|dir|relDir|config|configDir)\}/g;
 
 describe("pi-lsp configuration", () => {
-  test("declares the three languages mgm works in, each with a stdio binary", () => {
+  test("declares the languages mgm works in, each with a stdio binary", () => {
     assert.equal(config.version, 1);
-    assert.deepEqual([...byId.keys()], ["typescript", "python", "rust"]);
+    assert.deepEqual([...byId.keys()], ["typescript", "python"]);
     assert.deepEqual(
       [...byId.values()].map((s) => [s.id, s.enabled, s.bin, (s.args ?? []).join(" ")]),
       [
         ["typescript", true, "typescript-language-server", "--stdio"],
         ["python", true, "pyright-langserver", "--stdio"],
-        ["rust", true, "rust-analyzer", ""],
       ],
     );
   });
@@ -38,8 +37,6 @@ describe("pi-lsp configuration", () => {
       assert.ok(server.startupTimeoutMs >= 30_000, `${server.id}: startupTimeoutMs`);
       assert.ok(server.diagnosticsWaitMs >= 1_500, `${server.id}: diagnosticsWaitMs`);
     }
-    // rust-analyzer's diagnostics come from cargo check, which needs several seconds on a cold start.
-    assert.ok(byId.get("rust").diagnosticsWaitMs >= 6_000, "rust waits for cargo check");
   });
 
   test("every extension the include globs match has a language id", () => {

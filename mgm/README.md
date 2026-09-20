@@ -288,18 +288,16 @@ notice says where it is.
 `pi-lsp` starts a language server after a `write` or `edit`, waits for its diagnostics and appends
 them to the tool result, so the model sees a type error in the file it just wrote without running a
 build. It also gives the model `lsp_diagnostics`, `lsp_hover`, `lsp_definition`, `lsp_references`
-and `lsp_symbols`. `.pi/agent/lsp.json` configures three servers:
+and `lsp_symbols`. `.pi/agent/lsp.json` configures two servers:
 
 | id | Files | Binary | Install it with |
 |---|---|---|---|
 | `typescript` | `.ts .tsx .mts .cts .js .jsx .mjs .cjs` | `typescript-language-server --stdio` | `npm install -g typescript-language-server "typescript@5"` |
 | `python` | `.py .pyi` | `pyright-langserver --stdio` | `npm install -g pyright` |
-| `rust` | `.rs` | `rust-analyzer` | `rustup component add rust-analyzer` |
 
-**Nothing is bundled.** Language servers belong to your toolchain, not to the agent: rust-analyzer
-is a 37 MB native binary that has to match the platform and would have to be downloaded for all four
-release targets, and both Node servers want to be global so they work in every repo. So install the
-ones for the languages you actually write, and skip the rest. **A server that is not installed
+**Nothing is bundled.** Language servers belong to your toolchain, not to the agent, and both of
+these want to be global so they work in every repo. Install the ones for the languages you actually
+write, and skip the rest. **A server that is not installed
 costs one line** on the write or edit that would have used it —
 `⚠️ typescript: LSP binary not found: typescript-language-server` — and nothing else: no start-up
 error, the tool call still succeeds, and pi-lsp backs off before trying again. Nothing at all
@@ -310,7 +308,7 @@ it did before.
 which is what makes that file pi-lsp's user-owned, auto-trusted config in whatever repo you run mgm.
 A *project-local* `.pi/lsp.json` is a different thing: pi-lsp asks to trust it once per content hash
 and refuses it outright in `-p` mode. Use one in a repo to override an entry by `id`
-(`{"version": 1, "servers": [{"id": "rust", "enabled": false}]}` switches one off there). The
+(`{"version": 1, "servers": [{"id": "python", "enabled": false}]}` switches one off there). The
 config sits one level below `.pi/` precisely so that running mgm inside this folder does not find
 the same file again as an untrusted project-local one.
 
@@ -320,17 +318,13 @@ Notes from setting this up:
   `lib/tsserver.js` and the server exits with *Could not find a valid TypeScript installation*.
   Installed globally beside it, that copy is used in every repo, including repos with no
   `typescript` dependency of their own — like this one.
-- The wait for diagnostics is 2.5 s for TypeScript and Python. Rust waits 6 s because
-  rust-analyzer's errors come from `cargo check` after the save: measured 2–4 s on a one-file crate
-  from a cold server, and longer on a real one. On a large crate the first edit of a session can
-  still come back `✅ rust: no diagnostics`; asking for `lsp_diagnostics` on the file a moment later
+- The wait for diagnostics is 2.5 s for each server. A slow first edit of a session can still come
+  back `✅ typescript: no diagnostics`; asking for `lsp_diagnostics` on the file a moment later
   returns what arrived late.
-- Root markers are `tsconfig.json`/`jsconfig.json`/`package.json`/`.git`, the usual Python project
-  files plus `.git`, and `Cargo.toml`/`rust-project.json`. `.git` is there so a stray script in a
-  repo still gets a server. Rust has no `.git` fallback on purpose — rust-analyzer needs a Cargo
-  workspace — so a `.rs` file outside one gets `⚠️ rust: root markers not found (Cargo.toml,
-  rust-project.json)` instead of a server. `node_modules`, `dist`, `build`, `*.min.js`, virtualenvs
-  and `target` are excluded.
+- Root markers are `tsconfig.json`/`jsconfig.json`/`package.json`/`.git` and the usual Python
+  project files plus `.git`. `.git` is there so a stray script in a repo still gets a server.
+  `node_modules`, `dist`, `build`, `*.min.js` and virtualenvs are excluded. Another language is one
+  entry in this file, in the shape the `pi-lsp` README documents.
 ## Teleport
 
 Move a pi session between machines, the way Claude Code's teleport does: push it from one checkout,

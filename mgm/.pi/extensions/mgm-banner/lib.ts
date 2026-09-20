@@ -113,7 +113,7 @@ export function bannerLines(paint: Painter, input: BannerInput): string[] {
     "  " + paint("muted", identity.tagline + "   ·   ") + paint("dim", `mgm on pi v${version}`),
     "  " + providers,
     "  " + paint("text", "⇄ ") + paint("accent", where),
-    "  " + paint("dim", "─".repeat(w)) + " " + paint("dim", "/connect  /setup  /model  /help"),
+    "  " + paint("dim", "─".repeat(w)) + " " + paint("dim", "/connect  /setup  /model  /report  /help"),
     "",
   ];
 }

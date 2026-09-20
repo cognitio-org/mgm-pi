@@ -57,6 +57,7 @@ export function makeCtx(opts: { model?: FakeModel; models?: FakeModel[]; auth?: 
       setTitle: () => {},
       select: async (_title: string, options: string[]) => { const a = answers.shift(); if (a === undefined) return undefined; const hit = options.find((o) => o === a || o.startsWith(a)); if (!hit) throw new Error(`scripted answer "${a}" not among options: ${options.join(" | ")}`); return hit; },
       input: async (_title: string, _placeholder?: string) => answers.shift(),
+      editor: async (_title: string, _prefill?: string) => answers.shift(),
       confirm: async () => true,
     },
     modelRegistry: {

@@ -256,6 +256,18 @@ changes model, language or backend, `MGM_VOICE_MODEL` picks another default, `MG
 disables the seeding. Audio capture needs SoX (`brew install sox`) or ffmpeg; mgm and the installer
 say so when neither is found.
 
+## Reporting problems (`/report`)
+
+pi's own `/bug` uploads to the pi developers and is handled by the TUI before extensions see it,
+so mgm adds `/report [description]` (extension `mgm-report`). It collects what pi's report has
+(mgm and pi versions, OS, model, packages and extensions, the last provider error, recorded
+crashes), asks whether to include a transcript tail (last 40 messages, tool output clipped), redacts
+API keys and secret-looking tokens, writes a local copy under `.pi/bug-reports/`, and files a
+GitHub issue in `mgmonteleone/mgm-pi` assigned to Matthew via the `gh` CLI (collaborators only).
+After a failed model turn the agent points at `/report` once. `MGM_REPORT_REPO` /
+`MGM_REPORT_ASSIGNEE` override the target; if `gh` is not logged in the report stays local and the
+notice says where it is.
+
 ## Startup banner
 
 `.pi/extensions/mgm-banner/` replaces pi's header with block-letter MGM, the provider indicator

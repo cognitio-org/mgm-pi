@@ -21,3 +21,4 @@ mgm/.pi/web-search-cache/
 # stray pi agent dirs / credential stores
 pi-agent/
 **/.pi/auth.json
+mgm/.pi/bug-reports/

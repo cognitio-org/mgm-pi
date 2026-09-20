@@ -4,7 +4,9 @@
 .omc/
 node_modules/
 # pi agent runtime state (installed packages, sessions, caches, credentials)
-mgm/.pi/npm/
+mgm/.pi/npm/node_modules/
+mgm/pi/
+mgm/dist/
 mgm/.pi/sessions/
 mgm/.pi/mcp-cache.json
 mgm/.pi/models-store.json

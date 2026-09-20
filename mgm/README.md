@@ -146,6 +146,41 @@ via the router plus a second `mgm` launch). Thinking off by default keeps genera
 the wait is seconds rather than minutes. If a launch sits silent, check `lms ps --json` for
 `generating`/`processingPrompt` and wait or `lms unload --all`.
 
+## Releases and installing without Node
+
+Publishing a GitHub release tagged `vX.Y.Z` (semver; `v1.2.0-rc.1` style pre-releases allowed)
+runs `.github/workflows/release.yml`: validate the tag, run the tests, then build on four runners
+(darwin-arm64, darwin-x64, linux-x64, linux-arm64) and attach `mgm-<version>-<platform>.tar.gz`
+with a `.sha256` and `install.sh`. Every push to `main` touching `mgm/` runs `ci.yml` (tests plus
+an offline start of the agent).
+
+A bundle is **pi's official standalone binary** (a Bun-compiled executable, checksum-verified
+against pi's release) for the pi version pinned in `package.json`, plus this repo's `.pi/`
+extensions, settings and MCP config, the extension packages installed from `.pi/npm`'s lockfile
+with other platforms' native binaries removed, the launcher, docs and `.env.example`. Users need
+no Node. We never modify pi; everything mgm adds is extensions, so upgrading pi is a version bump.
+
+```bash
+# release (maintainer)
+gh release create v0.2.0 --title "mgm 0.2.0" --notes "..."          # → CI builds and attaches bundles
+scripts/package.sh 0.2.0 darwin-arm64                               # the same build, locally → dist/
+
+# install (user)
+curl -fsSL https://github.com/mgmonteleone/localllm/releases/latest/download/install.sh | GH_TOKEN=... bash
+cp ~/.mgm/current/.env.example ~/.mgm/current/.env   # add keys; kept across upgrades
+mgm
+```
+
+**Not in bundles:** `open-codebase-index`. Its single-file extension trips a `NameTooLong` in the
+module loader of pi's Bun-compiled binary (reproduced on pi 0.85.1 and 0.86.1); it loads fine in a
+source install, where pi runs under Node. `scripts/package.sh` drops it from the bundle's package
+list (`BUNDLE_EXCLUDE` to change), and its smoke test fails the build if any remaining extension
+fails to load. `install.sh` puts the bundle under `~/.mgm/<version>` with a `current` symlink and
+`mgm` in `~/.local/bin`. `GH_TOKEN` is needed while the repo is private. Windows is not built (the launcher
+is a shell script). Why not compile mgm ourselves with Bun or Node SEA: pi already is a compiled
+binary, and it must load extensions from a directory on disk, so a second compile step would add
+nothing.
+
 ## Tests
 
 ```bash

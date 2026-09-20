@@ -1,0 +1,14 @@
+{
+  "name": "pi-extensions",
+  "private": true,
+  "dependencies": {
+    "@codexstar/pi-listen": "^7.2.2",
+    "open-codebase-index": "^0.31.0",
+    "pi-lsp": "^0.1.7",
+    "pi-mcp-adapter": "^2.34.0",
+    "pi-memory": "^0.4.2",
+    "pi-powerline-footer": "^0.17.1",
+    "pi-subagents": "^0.69.0",
+    "pi-web-access": "^0.30.0"
+  }
+}

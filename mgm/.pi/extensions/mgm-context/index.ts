@@ -23,7 +23,7 @@ import {
   CATEGORY_LABELS, CATEGORY_ORDER, analysePayload, buildView, mermaidPie, pct, thousands, verdict,
   type Breakdown, type Category, type ContextView,
 } from "./lib.ts";
-import { htmlReport, legend, svgBar, svgDonut, table, type Slice } from "./report.ts";
+import { htmlReport, legend, markdownToHtml, svgBar, svgDonut, table, type Slice } from "./report.ts";
 
 /** Terminal theme colours per part, and hex for the HTML report. */
 const COLOURS: Record<Category | "free", { theme: string; hex: string }> = {
@@ -93,6 +93,15 @@ export function buildReport(view: ContextView, project: string): string {
   });
 }
 
+/** Chart colours, reused for any report the model asks for. */
+const CHART_COLOURS = ["#4f8ef7", "#8b5cf6", "#22c55e", "#f59e0b", "#0ea5e9", "#ef4444", "#a3a3a3", "#6b7280"];
+
+/** Where a report may be written. Reports never land in the project, so nothing is overwritten. */
+export function reportPath(slug: string, now = new Date()): string {
+  const safe = (slug || "report").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "report";
+  return join(reportDir(), `${safe}-${now.toISOString().replace(/[:.]/g, "-").slice(0, 19)}.html`);
+}
+
 export default function (pi: ExtensionAPI) {
   let latest: { breakdown: Breakdown; model?: string } | undefined;
 
@@ -116,6 +125,57 @@ export default function (pi: ExtensionAPI) {
       compactPercent: 0.85,
     });
   };
+
+  // A deliberately small schema: 142 tokens on every request, against ~1,900 output tokens each time
+  // a model would otherwise write a page by hand (measured, see README). Markdown is what models emit
+  // naturally, so they spend tokens on content while this code owns the chrome, the escaping and the
+  // charts. Opening the browser is opt-in so the agent cannot put windows in front of you unasked.
+  pi.registerTool({
+    name: "html_report",
+    label: "HTML report",
+    description: "Write a styled, self-contained HTML report (no scripts, no network) and return its path. Use it only when the user asked for a report, a page, or something to look at in a browser; answer in the terminal otherwise.",
+    promptSnippet: "html_report: turn content into a self-contained HTML page when the user asks for a report or something to view.",
+    parameters: {
+      type: "object",
+      required: ["title", "markdown"],
+      properties: {
+        title: { type: "string", description: "Short title, also used for the filename" },
+        markdown: { type: "string", description: "Body as Markdown: headings, paragraphs, lists, tables, fenced code, quotes" },
+        chart: {
+          type: "object",
+          description: "Optional single chart drawn as inline SVG",
+          properties: {
+            kind: { type: "string", enum: ["bar", "donut"] },
+            data: { type: "array", items: { type: "object", properties: { label: { type: "string" }, value: { type: "number" } } } },
+          },
+        },
+        open: { type: "boolean", description: "Open it in the browser (default false)" },
+      },
+    } as any,
+    execute: async (_id: string, params: any, _signal: unknown, _update: unknown, ctx: any) => {
+      const title = String(params?.title ?? "Report").slice(0, 120);
+      const body = markdownToHtml(String(params?.markdown ?? ""));
+      const data: { label: string; value: number }[] = Array.isArray(params?.chart?.data)
+        ? params.chart.data.filter((d: any) => d && typeof d.value === "number").map((d: any) => ({ label: String(d.label ?? ""), value: Number(d.value) }))
+        : [];
+      const slices: Slice[] = data.map((d, i) => ({ ...d, color: CHART_COLOURS[i % CHART_COLOURS.length] }));
+      const total = slices.reduce((sum, s) => sum + s.value, 0);
+      const chart = slices.length
+        ? (params.chart.kind === "donut"
+            ? `<div class="split">${svgDonut(slices)}${legend(slices, total)}</div>`
+            : `${svgBar(slices)}${legend(slices, total)}`)
+        : "";
+      const file = reportPath(title);
+      try {
+        mkdirSync(reportDir(), { recursive: true });
+        writeFileSync(file, htmlReport({ title, subtitle: ctx?.cwd, sections: [{ title: "", html: body + chart }] }));
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `Could not write the report: ${e?.message ?? e}` }], isError: true };
+      }
+      const opened = params?.open === true ? await openInBrowser(file) : false;
+      return { content: [{ type: "text", text: `${opened ? "Wrote and opened" : "Wrote"} ${file}${opened ? "" : ". Tell the user the path, or call again with open: true if they want it in a browser."}` }] };
+    },
+  } as any);
 
   pi.registerCommand("context", {
     description: "What is in the context window: composition, biggest tool schemas, what compaction would reclaim (`export` writes an HTML report)",

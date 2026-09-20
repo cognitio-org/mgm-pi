@@ -43,9 +43,90 @@ export function legend(slices: Slice[], total: number): string {
 }
 
 export function table(headers: string[], rows: (string | number)[][]): string {
-  const head = headers.map((h, i) => `<th${i ? ' class="num"' : ""}>${escapeHtml(h)}</th>`).join("");
-  const body = rows.map((r) => `<tr>${r.map((cell, i) => `<td${i ? ' class="num"' : ""}>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("");
+  return tableHtml(headers.map(escapeHtml), rows.map((r) => r.map((c) => escapeHtml(c))));
+}
+
+/** Same layout, for cells that are already HTML (Markdown tables, whose cells carry inline markup). */
+function tableHtml(headers: string[], rows: string[][]): string {
+  const head = headers.map((h, i) => `<th${i ? ' class="num"' : ""}>${h}</th>`).join("");
+  const body = rows.map((r) => `<tr>${r.map((cell, i) => `<td${i ? ' class="num"' : ""}>${cell}</td>`).join("")}</tr>`).join("");
   return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+/**
+ * Markdown → HTML for the subset a report needs: headings, paragraphs, lists, tables, fenced code,
+ * blockquotes, inline code, bold, italic and links. Everything is escaped before any markup is added,
+ * so content from a file, a command or a model cannot introduce elements of its own — the reason this
+ * exists rather than pulling in a renderer whose escaping we would have to audit.
+ */
+export function markdownToHtml(source: string): string {
+  const lines = String(source ?? "").replace(/\r\n?/g, "\n").split("\n");
+  const out: string[] = [];
+  let list: "ul" | "ol" | undefined;
+  let para: string[] = [];
+  let quote: string[] = [];
+  let code: { lang: string; body: string[] } | undefined;
+
+  const inline = (text: string) =>
+    escapeHtml(text)
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>")
+      .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" rel="noreferrer noopener">$1</a>');
+  const flushParagraph = () => { if (para.length) { out.push(`<p>${inline(para.join(" "))}</p>`); para = []; } };
+  const flushList = () => { if (list) { out.push(`</${list}>`); list = undefined; } };
+  const flushQuote = () => { if (quote.length) { out.push(`<blockquote>${inline(quote.join(" "))}</blockquote>`); quote = []; } };
+  const flushAll = () => { flushParagraph(); flushList(); flushQuote(); };
+
+  const isTableRow = (l: string) => /^\s*\|.*\|\s*$/.test(l);
+  const cells = (l: string) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (code) {
+      if (/^```/.test(line.trim())) { out.push(`<pre><code>${escapeHtml(code.body.join("\n"))}</code></pre>`); code = undefined; }
+      else code.body.push(line);
+      continue;
+    }
+    const fence = line.trim().match(/^```(\w*)/);
+    if (fence) { flushAll(); code = { lang: fence[1], body: [] }; continue; }
+
+    const heading = line.match(/^(#{1,4})\s+(.*)$/);
+    if (heading) { flushAll(); const level = Math.min(4, heading[1].length + 1); out.push(`<h${level}>${inline(heading[2])}</h${level}>`); continue; }
+
+    // a table needs a header row, a divider, then body rows
+    if (isTableRow(line) && isTableRow(lines[i + 1] ?? "") && /^[\s|:-]+$/.test(lines[i + 1])) {
+      flushAll();
+      const headers = cells(line);
+      const rows: string[][] = [];
+      i += 2;
+      while (i < lines.length && isTableRow(lines[i])) rows.push(cells(lines[i++]));
+      i--;
+      out.push(tableHtml(headers.map(inline), rows.map((r) => r.map(inline))));   // cells carry inline markup
+      continue;
+    }
+
+    const bullet = line.match(/^\s*[-*+]\s+(.*)$/);
+    const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    if (bullet || numbered) {
+      flushParagraph(); flushQuote();
+      const kind = bullet ? "ul" : "ol";
+      if (list !== kind) { flushList(); out.push(`<${kind}>`); list = kind; }
+      out.push(`<li>${inline((bullet ?? numbered)![1])}</li>`);
+      continue;
+    }
+
+    const quoted = line.match(/^\s*>\s?(.*)$/);
+    if (quoted) { flushParagraph(); flushList(); quote.push(quoted[1]); continue; }
+
+    if (!line.trim()) { flushAll(); continue; }
+    if (/^\s*(---+|\*\*\*+)\s*$/.test(line)) { flushAll(); out.push("<hr>"); continue; }
+    flushList(); flushQuote();
+    para.push(line.trim());
+  }
+  if (code) out.push(`<pre><code>${escapeHtml(code.body.join("\n"))}</code></pre>`);
+  flushAll();
+  return out.join("\n");
 }
 
 const STYLE = `
@@ -71,6 +152,14 @@ details { margin-top: 2rem; }
 summary { cursor: pointer; color: var(--muted); }
 pre { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: .9rem; overflow-x: auto; font-size: .85rem; }
 footer { color: var(--muted); font-size: .82rem; margin-top: 3rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+blockquote { margin: 1rem 0; padding: .1rem 1rem; border-left: 3px solid var(--line); color: var(--muted); }
+code { background: var(--panel); border-radius: 3px; padding: .1rem .3rem; font-size: .88em; }
+pre code { background: none; padding: 0; }
+h3 { font-size: .98rem; margin: 1.6rem 0 .5rem; }
+h4 { font-size: .9rem; margin: 1.3rem 0 .4rem; color: var(--muted); }
+li { margin: .2rem 0; }
+hr { border: none; border-top: 1px solid var(--line); margin: 1.6rem 0; }
+a { color: #4f8ef7; }
 `;
 
 /** One document: no scripts, no fonts, no network. */

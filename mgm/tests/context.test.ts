@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { analysePayload, buildView, reconcile, estimateTokens, verdict, mermaidPie, CATEGORY_ORDER } from "../.pi/extensions/mgm-context/lib.ts";
-import { htmlReport, svgBar, svgDonut, escapeHtml, table } from "../.pi/extensions/mgm-context/report.ts";
+import { htmlReport, markdownToHtml, svgBar, svgDonut, escapeHtml, table } from "../.pi/extensions/mgm-context/report.ts";
 import { makePi, makeCtx } from "./harness.ts";
 
 const payload = {
@@ -197,5 +197,111 @@ describe("/context command", async () => {
     await pi.commands.get("context")!.handler("nope", ctx);
     assert.equal(ctx.notices.at(-1)!.type, "error");
     assert.match(ctx.notices.at(-1)!.msg, /Try: export, off/);
+  });
+});
+
+describe("markdown for reports", () => {
+  test("the subset a report needs renders, and nothing else is invented", () => {
+    const html = markdownToHtml([
+      "# Heading", "", "A paragraph with **bold**, *italic*, `code` and a [link](https://example.com).", "",
+      "- one", "- two", "", "1. first", "2. second", "",
+      "| col | num |", "|---|---:|", "| a | 1 |", "| b | 2 |", "",
+      "> quoted", "", "```bash", "echo hi", "```", "", "---",
+    ].join("\n"));
+    for (const tag of ["<h2>Heading</h2>", "<strong>bold</strong>", "<em>italic</em>", "<code>code</code>", '<a href="https://example.com"', "<ul>", "<li>one</li>", "<ol>", "<li>first</li>", "<table>", "<blockquote>quoted</blockquote>", "<pre><code>echo hi</code></pre>", "<hr>"]) {
+      assert.ok(html.includes(tag), tag);
+    }
+    assert.ok(!html.includes("<script"), "no element can come from the source text");
+    // a model writing a table will use code spans in cells; they must render, not show backticks
+    const withCode = markdownToHtml("| model | price |\n|---|---|\n| `gpt-5.4-nano` | **0.20** |");
+    assert.match(withCode, /<td><code>gpt-5\.4-nano<\/code><\/td>/);
+    assert.match(withCode, /<strong>0\.20<\/strong>/);
+    assert.ok(!withCode.includes("`"), "no stray backticks");
+  });
+
+  test("content is escaped before any markup is added, so a report cannot carry an injection", () => {
+    assert.match(markdownToHtml("<script>alert(1)</script>"), /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+    assert.match(markdownToHtml("| a |\n|---|\n| <img src=x onerror=1> |"), /&lt;img src=x onerror=1&gt;/);
+    assert.match(markdownToHtml("```\n</code></pre><script>x</script>\n```"), /&lt;\/code&gt;&lt;\/pre&gt;/);
+    assert.match(markdownToHtml("[click](javascript:alert(1))"), /\[click\]/, "only http(s) links become anchors");
+  });
+
+  test("odd input does not throw or lose text", () => {
+    assert.equal(markdownToHtml(""), "");
+    assert.equal(markdownToHtml(undefined as any), "");
+    assert.match(markdownToHtml("| broken | table"), /<p>\| broken \| table<\/p>/, "a table needs its divider row, else it stays text");
+    assert.match(markdownToHtml("```\nunclosed fence"), /<pre><code>unclosed fence<\/code><\/pre>/);
+  });
+});
+
+describe("html_report tool", async () => {
+  const mod = await import("../.pi/extensions/mgm-context/index.ts");
+  const tool = async () => {
+    const tools = new Map<string, any>();
+    const pi = makePi();
+    (pi as any).registerTool = (t: any) => tools.set(t.name, t);
+    await mod.default(pi as any);
+    return tools.get("html_report")!;
+  };
+  const run = (t: any, params: any) => t.execute("id", params, undefined, undefined, { cwd: "/proj" });
+  const text = (r: any) => r.content.map((c: any) => c.text).join("");
+
+  test("its schema is small on purpose: it is charged on every request", async () => {
+    const t = await tool();
+    const size = Math.ceil(JSON.stringify({ name: t.name, description: t.description, parameters: t.parameters }).length / 4);
+    assert.ok(size < 260, `schema is ${size} tokens, which is the per-request tax`);
+    assert.match(t.description, /only when the user asked/i, "the description discourages unasked-for pages");
+  });
+
+  test("it writes a self-contained page into the reports directory and returns the path", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgm-tool-"));
+    process.env.MGM_REPORT_DIR = dir;
+    try {
+      const t = await tool();
+      const out = text(await run(t, { title: "Release check", markdown: "## Findings\n\n- all four platforms built\n" }));
+      assert.match(out, /^Wrote /);
+      const file = out.replace(/^Wrote /, "").split(".html")[0] + ".html";
+      assert.match(file, /release-check-\d{4}-\d{2}-\d{2}T/, "filename comes from the title plus a timestamp");
+      const html = readFileSync(file, "utf8");
+      assert.match(html, /<title>Release check<\/title>/);
+      assert.match(html, /<li>all four platforms built<\/li>/);
+      assert.ok(!/<script/i.test(html) && !/https?:\/\/(?!www\.w3)/.test(html.replace(/xmlns="[^"]*"/g, "")), "no scripts, no network");
+    } finally { delete process.env.MGM_REPORT_DIR; }
+  });
+
+  test("a chart becomes inline SVG with a legend; bad rows are dropped, not fatal", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgm-tool-"));
+    process.env.MGM_REPORT_DIR = dir;
+    try {
+      const t = await tool();
+      const out = text(await run(t, { title: "Spend", markdown: "By model.", chart: { kind: "donut", data: [{ label: "nano", value: 3 }, { label: "sonnet", value: 1 }, { label: "junk" }, null] } }));
+      const html = readFileSync(out.replace(/^Wrote /, "").split(".html")[0] + ".html", "utf8");
+      assert.match(html, /stroke-dasharray/, "a donut");
+      assert.match(html, /nano/);
+      assert.ok(!html.includes("junk"), "a row without a number is dropped");
+    } finally { delete process.env.MGM_REPORT_DIR; }
+  });
+
+  test("it does not open a browser unless asked, and says so", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgm-tool-"));
+    process.env.MGM_REPORT_DIR = dir;
+    process.env.MGM_NO_BROWSER = "1";   // even with open:true, the environment wins
+    try {
+      const t = await tool();
+      assert.match(text(await run(t, { title: "a", markdown: "b" })), /call again with open: true/);
+      assert.match(text(await run(t, { title: "a", markdown: "b", open: true })), /^Wrote /, "MGM_NO_BROWSER keeps it closed");
+    } finally { delete process.env.MGM_REPORT_DIR; delete process.env.MGM_NO_BROWSER; }
+  });
+
+  test("a title cannot escape the reports directory", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgm-tool-"));
+    process.env.MGM_REPORT_DIR = dir;
+    try {
+      const t = await tool();
+      const out = text(await run(t, { title: "../../etc/passwd", markdown: "x" }));
+      const file = out.replace(/^Wrote /, "").split(".html")[0] + ".html";
+      assert.ok(file.startsWith(dir), `stayed in the reports directory: ${file}`);
+      assert.ok(!file.includes(".."), "no traversal survives the slug");
+    } finally { delete process.env.MGM_REPORT_DIR; }
   });
 });

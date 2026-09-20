@@ -97,6 +97,13 @@ cp ~/.mgm/current/.env.example ~/.mgm/current/.env   # add keys; kept across upg
 mgm
 ```
 
+**State that is yours, not a version's.** A bundle lives in `~/.mgm/mgm-<version>-<platform>`, so
+`PI_CODING_AGENT_DIR` moves on every upgrade. Session history, credentials, trust decisions and caches
+therefore live in `~/.mgm/state` and are symlinked into the bundle, which is what makes
+`mgm --session <id>` keep working after an upgrade: pi only searches the current agent dir, so before
+this they looked deleted. The installer gathers state left inside older bundles once.
+`MGM_STATE` moves the directory.
+
 ### Staying up to date
 
 An installed bundle checks GitHub for a newer release once a day (extension `mgm-update`, cached in
@@ -234,6 +241,14 @@ inline SVG (a proportional bar and a donut), a legend, the largest tool schemas,
 source in a fold for pasting into a document. No scripts, no fonts, no network, so it still works
 offline and can be mailed to someone. Reports go to `~/.mgm/reports` (`MGM_REPORT_DIR` to move them,
 `MGM_NO_BROWSER=1` to write without opening).
+
+The model can make pages too: the `html_report` tool takes a title and Markdown (plus optional bar or
+donut data) and returns a path. Its schema costs 142 tokens on every request, against roughly 1,900
+output tokens each time a model would otherwise hand-write a page, so it pays for itself in any
+session that produces a report and is deliberately small. It writes only into the reports directory,
+never opens a browser unless asked, and escapes everything, so file contents and model text cannot
+introduce markup. Its description tells the model to use it only when you asked for something to look
+at, because a tool for making web pages invites web pages nobody wanted.
 
 The report builder is deliberately generic — `htmlReport`, `svgBar`, `svgDonut`, `legend`, `table`
 from `.pi/extensions/mgm-context/report.ts` — so any extension can turn what it knows into a page you

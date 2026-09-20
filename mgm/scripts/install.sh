@@ -46,6 +46,39 @@ if [[ -n "$keep_env" ]]; then
   printf '%s\n' "$keep_env" > "$HOME_DIR/current/.env"
   printf '%s\n' "$shipped" | grep -E '^[A-Z0-9_]+=' | while IFS= read -r line; do k=${line%%=*}; grep -q "^$k=." "$HOME_DIR/current/.env" || printf '%s\n' "$line" >> "$HOME_DIR/current/.env"; done
 fi
+# State that belongs to you, not to a version: sessions, credentials, trust decisions and caches. A
+# bundle lives in a versioned directory, so PI_CODING_AGENT_DIR moves on every upgrade and anything
+# written inside it would be stranded there — session history most painfully, since `--session <id>`
+# only looks in the current agent dir. Keep it in $HOME_DIR/state and link it into the bundle, so an
+# upgrade changes nothing but the code. Existing state is gathered from older bundles once.
+STATE="${MGM_STATE:-$HOME_DIR/state}"
+mkdir -p "$STATE/sessions"
+for old_dir in "$HOME_DIR"/mgm-*-"$platform"; do
+  [[ -d "$old_dir/.pi/sessions" && ! -L "$old_dir/.pi/sessions" ]] || continue
+  for project in "$old_dir/.pi/sessions"/*; do
+    [[ -d "$project" ]] || continue
+    target="$STATE/sessions/$(basename "$project")"; mkdir -p "$target"
+    for f in "$project"/*.jsonl; do [[ -f "$f" ]] && [[ ! -f "$target/$(basename "$f")" ]] && cp "$f" "$target/"; done
+  done
+done
+for name in sessions bug-reports; do
+  mkdir -p "$STATE/$name"
+  rm -rf "$HOME_DIR/current/.pi/$name"
+  ln -sfn "$STATE/$name" "$HOME_DIR/current/.pi/$name"
+done
+for name in auth.json trust.json models-store.json mcp-cache.json; do
+  if [[ ! -f "$STATE/$name" ]]; then
+    for old_dir in "$HOME_DIR"/mgm-*-"$platform"; do
+      [[ -f "$old_dir/.pi/$name" && ! -L "$old_dir/.pi/$name" ]] && cp "$old_dir/.pi/$name" "$STATE/$name" && break
+    done
+  fi
+  [[ -f "$STATE/$name" ]] || continue
+  rm -f "$HOME_DIR/current/.pi/$name"
+  ln -sf "$STATE/$name" "$HOME_DIR/current/.pi/$name"
+done
+sessions=$(find "$STATE/sessions" -name "*.jsonl" 2>/dev/null | wc -l | tr -d ' ')
+echo "state: $STATE (${sessions} sessions carried over, shared by every version)"
+
 ln -sf "$HOME_DIR/current/bin/mgm" "$BIN_DIR/mgm"
 echo "installed: $HOME_DIR/current  →  $BIN_DIR/mgm"
 if ! command -v rec >/dev/null 2>&1 && ! command -v ffmpeg >/dev/null 2>&1 && ! command -v arecord >/dev/null 2>&1; then

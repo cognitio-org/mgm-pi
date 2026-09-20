@@ -146,6 +146,15 @@ above) rather than left as a known-error exception. The pass counts above are fr
    container env vars at all. I left `secrets.ts` alone (out of this story's scope — it's E2.5,
    still a placeholder per its own doc comment) and noted the mismatch in `deploy/README.md`
    rather than silently "fixing" it in a way that might conflict with E2.5's actual design.
+6. **`POST /api/hooks/ngrok` has no replay protection** (security review #2,
+   `docs/reports/security-review-pr15.md`). `verifyNgrokSignature` (`routes/hooks.ts`) is a
+   correct constant-time HMAC-SHA256 check but validates only that a `(body, ngrok-signature)`
+   pair was produced with the shared secret at some point, not that this specific delivery is
+   fresh — a captured valid request can be replayed indefinitely to toggle `laptopOnline` state.
+   Deliberately deferred: the real ngrok event-destination envelope (timestamp/nonce field) isn't
+   confirmed yet (this module's own comment flags it), and the blast radius is low — a status
+   flag, not a privileged action. Once the real envelope is confirmed, add a timestamp-skew check
+   (±5 min) plus a short-TTL seen-signature cache to `verifyNgrokSignature`.
 
 ## gcloud commands I was least sure about
 

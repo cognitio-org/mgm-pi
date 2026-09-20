@@ -6,7 +6,16 @@
 import type { FastifyInstance } from "fastify";
 import type { RouteContext } from "./context.ts";
 
+// Security review #3 (docs/reports/security-review-pr15.md): a manual refresh triggers up to 4
+// outbound probes (ngrok, laptop tunnel, LiteLLM, Cloud Run Admin API) with no rate limit, so any
+// IAP-authenticated domain user could hammer this route to amplify calls against those third
+// parties and the Cloud Run Admin API's own quota. A short global cooldown bounds call volume
+// without needing a real per-caller rate limiter for what's otherwise a convenience button.
+const REFRESH_COOLDOWN_MS = 10_000;
+
 export async function registerProviderRoutes(app: FastifyInstance, ctx: RouteContext): Promise<void> {
+  let lastRefreshAt = 0;
+
   app.get("/api/providers", async () => {
     return { providers: await ctx.providerStatus.getCurrent() };
   });
@@ -17,7 +26,12 @@ export async function registerProviderRoutes(app: FastifyInstance, ctx: RouteCon
     ctx.sse.publish("providers", { type: "status", data: { providers } });
   });
 
-  app.post("/api/providers/refresh", async () => {
+  app.post("/api/providers/refresh", async (req, reply) => {
+    const now = Date.now();
+    if (now - lastRefreshAt < REFRESH_COOLDOWN_MS) {
+      return reply.code(429).send({ error: "refresh already in progress; try again shortly" });
+    }
+    lastRefreshAt = now;
     return { providers: await ctx.providerStatus.pollOnce() };
   });
 }

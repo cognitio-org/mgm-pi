@@ -418,6 +418,22 @@ describe("provider status routes", () => {
     await app.fastify.close();
   });
 
+  // Security review #3 (docs/reports/security-review-pr15.md): no rate limit meant any
+  // IAP-authenticated caller could hammer this route into repeated outbound probes (ngrok,
+  // laptop, LiteLLM, Cloud Run Admin API). A second call within the cooldown window is rejected.
+  test("POST /api/providers/refresh returns 429 on a second call within the cooldown window", async () => {
+    const app = await buildTestApp();
+    const first = await app.fastify.inject({ method: "POST", url: "/api/providers/refresh" });
+    assert.equal(first.statusCode, 200);
+
+    const second = await app.fastify.inject({ method: "POST", url: "/api/providers/refresh" });
+    assert.equal(second.statusCode, 429);
+    assert.ok(second.json().error);
+
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
   test("the ngrok webhook's laptop transition is visible through GET /api/providers", async () => {
     // TUNNEL_DOMAIN_LMSTUDIO intentionally left unset: noteLaptopTransition (called from the
     // webhook) sets the "laptop" row directly from the event, without probing the tunnel itself,

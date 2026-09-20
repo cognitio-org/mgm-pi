@@ -1,0 +1,90 @@
+outfitter/packages/agentd/src/link.ts
+  s_2209f22f830d7f::t_1dfc27aeb8fdd5 239
+  s_2209f22f830d7f::t_07a0e1c2e7f850 40-42
+outfitter/packages/provider-local/src/local-docker.ts
+  s_2209f22f830d7f::t_12607c66b75de8 3
+  s_2209f22f830d7f::t_6e7b4ee6d2c020 39-40
+outfitter/packages/api/src/store/types.ts
+  s_2209f22f830d7f::t_ced433d7adcd05 74-78
+outfitter/docs/protocol.md
+  s_2209f22f830d7f::t_40bbd59fd4ced5 69
+  s_2209f22f830d7f::t_46274e4187a140 23-37,45
+outfitter/docs/reports/security-review-pr1.md
+  s_2209f22f830d7f::t_c36ceb905f2796 401-402
+  s_2209f22f830d7f::t_0e24b9a31f6090 294-337
+  s_2209f22f830d7f::t_102da716618ad1 266
+outfitter/packages/agentd/src/main.ts
+  s_2209f22f830d7f::t_0cdb22c02fdf4c 49
+  s_2209f22f830d7f::t_fabaa939991176 68
+  s_2209f22f830d7f::t_7c540a23c12f9e 3
+outfitter/packages/agentd/test/link.test.ts
+  s_2209f22f830d7f::t_e8bd58d7730645 77
+  s_2209f22f830d7f::t_c82851c8eb64ec 97
+outfitter/packages/api/src/agentlink.ts
+  s_2209f22f830d7f::t_0527b37a0e1a12 480-523
+  s_2209f22f830d7f::t_864780226729e6 8
+  s_2209f22f830d7f::t_920afcfef18d05 208-220,256-266
+  s_2209f22f830d7f::t_3b5992fb73a12d 344-347
+outfitter/packages/provider-local/src/types.ts
+  s_2209f22f830d7f::t_5e5c70a9fcce19 8-12
+  s_2209f22f830d7f::t_a8db8dab97d494 18
+outfitter/deploy/agent-job.sh
+  s_2209f22f830d7f::t_d198b90ef5f8f9 55
+outfitter/packages/api/src/runs.ts
+  s_2209f22f830d7f::t_8f8bfd3ebc372c 7
+  s_2209f22f830d7f::t_74a170d69365f7 43-50,55,65
+outfitter/packages/api/test/runs.test.ts
+  s_2209f22f830d7f::t_ce52e908dec683 1-4,8
+  s_2209f22f830d7f::t_14d6baa95c13c7 29-71
+outfitter/packages/api/src/providers/cloudrun.ts
+  s_2209f22f830d7f::t_b2f1b8a70d82be 41
+outfitter/packages/api/test/agentlink.test.ts
+  s_2209f22f830d7f::t_8a7a3dec6640c7 411,414
+  s_2209f22f830d7f::t_156c60259112f3 339,348
+  s_2209f22f830d7f::t_2689d008b86191 554,557,573,576
+  s_2209f22f830d7f::t_f7ebdf1fa7c855 529,532
+  s_2209f22f830d7f::t_49388c47f2ca39 476,478
+  s_2209f22f830d7f::t_ddfc5524a7fb66 27-29,41-43
+  s_2209f22f830d7f::t_7262b5cb0e07e4 71
+  s_2209f22f830d7f::t_2800aab2e5a050 237
+  s_2209f22f830d7f::t_93f6eb4364ac2e 188,202-236,238-263
+  s_2209f22f830d7f::t_75b767d0f4fbc5 75-83,87,103-115
+  s_2209f22f830d7f::t_d1fbf6f79e72a0 324
+  s_2209f22f830d7f::t_7ebdb4b2bba4be 285,288
+  s_2209f22f830d7f::t_60ed458b0c4504 396
+  s_2209f22f830d7f::t_471ff231c0543b 155,172
+  s_2209f22f830d7f::t_dc10f804abb4f3 267,270
+  s_2209f22f830d7f::t_a353474236b937 440
+  s_2209f22f830d7f::t_9b35c71824c8f9 119,121,124
+  s_25c805ebe232f3::t_b518ff35508580 264
+outfitter/packages/provider-local/src/in-process.ts
+  s_2209f22f830d7f::t_9a8563dd8893ee 34
+outfitter/packages/agentd/src/protocol.ts
+  s_2209f22f830d7f::t_6243483354b34c 40-43
+outfitter/packages/provider-local/test/in-process.test.ts
+  s_2209f22f830d7f::t_7caa40e6c35045 24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "896c4950d3bc6c22ea5f398f2e8375158b122b35",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

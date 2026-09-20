@@ -1,7 +1,10 @@
 // POST /api/hooks/ngrok: the optional push path for the E2.8 laptop model preflight (EPIC.md
 // "Optional push path"). An ngrok event subscription can deliver `agent_session_start.v0` /
 // `agent_session_stop.v0` for the laptop's tunnel agent; on stop we flip LaptopProbe to offline
-// immediately instead of waiting out its 60s cache, on start back to online.
+// immediately instead of waiting out its 60s cache, on start back to online. The same event also
+// feeds the E2.10 provider status service (ProviderStatusService.noteLaptopTransition) so the
+// "laptop" row and its history update immediately too, instead of waiting for the next 5-minute
+// poll -- both consumers read off this one signal.
 //
 // Caveat (see docs/reports/api.md "deviations"): ngrok's Event Destinations API
 // (https://ngrok.com/docs/api/resources/event-destinations/) only documents kinesis/firehose/
@@ -66,8 +69,10 @@ export async function registerHookRoutes(app: FastifyInstance, ctx: RouteContext
       const eventType = payload.event_type_id ?? payload.type;
       if (eventType === "agent_session_stop.v0") {
         ctx.laptopProbe.setOnline(false);
+        await ctx.providerStatus.noteLaptopTransition(false);
       } else if (eventType === "agent_session_start.v0") {
         ctx.laptopProbe.setOnline(true);
+        await ctx.providerStatus.noteLaptopTransition(true);
       }
       return reply.code(204).send();
     });

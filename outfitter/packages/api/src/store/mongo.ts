@@ -20,6 +20,8 @@ import type {
   EnvironmentsCollection,
   User,
   UsersCollection,
+  ProviderRecord,
+  ProvidersCollection,
 } from "./types.ts";
 
 // Typed as RunState[], not inferred as string[]: used in a Mongo `$in` filter against Run.state,
@@ -253,6 +255,30 @@ class MongoUsers implements UsersCollection {
   }
 }
 
+class MongoProviders implements ProvidersCollection {
+  private readonly col: MongoCollection<ProviderRecord & { _id: string }>;
+
+  constructor(col: MongoCollection<ProviderRecord & { _id: string }>) {
+    this.col = col;
+  }
+
+  async findById(id: string): Promise<ProviderRecord | null> {
+    return stripId<ProviderRecord>(await this.col.findOne({ _id: id }));
+  }
+
+  async list(): Promise<ProviderRecord[]> {
+    const rows = await this.col.find({}).sort({ _id: 1 }).toArray();
+    return rows.map((r) => stripIdStrict<ProviderRecord>(r));
+  }
+
+  async upsert(record: ProviderRecord): Promise<void> {
+    // $set (not replaceOne) so TypeScript's WithoutId<T> replacement typing (which excludes _id)
+    // doesn't need a cast here; upsert:true still gives whole-record-replace semantics in practice
+    // since every field on ProviderRecord is set every time.
+    await this.col.updateOne({ _id: record.id }, { $set: record }, { upsert: true });
+  }
+}
+
 function isDuplicateKeyError(err: unknown): boolean {
   return typeof err === "object" && err !== null && "code" in err && (err as { code?: number }).code === 11000;
 }
@@ -264,6 +290,7 @@ export class MongoStore implements Store {
   readonly gurus: GurusCollection;
   readonly environments: EnvironmentsCollection;
   readonly users: UsersCollection;
+  readonly providers: ProvidersCollection;
   private readonly client: MongoClient;
 
   private constructor(client: MongoClient, db: Db) {
@@ -274,6 +301,7 @@ export class MongoStore implements Store {
     this.gurus = new MongoGurus(db.collection("gurus"));
     this.environments = new MongoEnvironments(db.collection("environments"));
     this.users = new MongoUsers(db.collection("users"));
+    this.providers = new MongoProviders(db.collection("providers"));
   }
 
   /** `dbName` wins over the database in the URI; the stored URI has none, so the default keeps

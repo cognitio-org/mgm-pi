@@ -18,6 +18,8 @@ import type {
   EnvironmentsCollection,
   User,
   UsersCollection,
+  ProviderRecord,
+  ProvidersCollection,
 } from "./types.ts";
 
 function clone<T>(value: T): T {
@@ -201,6 +203,23 @@ class MemoryUsers implements UsersCollection {
   }
 }
 
+class MemoryProviders implements ProvidersCollection {
+  private readonly rows = new Map<string, ProviderRecord>();
+
+  async findById(id: string): Promise<ProviderRecord | null> {
+    const row = this.rows.get(id);
+    return row ? clone(row) : null;
+  }
+
+  async list(): Promise<ProviderRecord[]> {
+    return [...this.rows.values()].map(clone).sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  async upsert(record: ProviderRecord): Promise<void> {
+    this.rows.set(record.id, clone(record));
+  }
+}
+
 export class MemoryStore implements Store {
   readonly sessions = new MemorySessions();
   readonly entries = new MemoryEntries();
@@ -208,6 +227,7 @@ export class MemoryStore implements Store {
   readonly gurus = new MemoryGurus();
   readonly environments = new MemoryEnvironments();
   readonly users = new MemoryUsers();
+  readonly providers = new MemoryProviders();
 
   async close(): Promise<void> {
     // nothing to release

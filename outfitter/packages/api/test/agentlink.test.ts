@@ -636,6 +636,7 @@ describe("run.spec build validates secrets", () => {
   test("closes with WS code 4412 and marks the run failed when a repo session's githubToken secret is missing (devMode off)", async (t) => {
     const emptyGithubBroker: SecretsBroker = {
       secretsForRun: async () => ({ githubToken: "", litellmKey: "some-key" }),
+      defaultLitellmKey: async () => "some-key",
     };
     // devMode off: this is the production path, where a missing token really would make agentd
     // clone with no credentials. In dev mode the same missing-token check is skipped (see the
@@ -671,6 +672,7 @@ describe("run.spec build validates secrets", () => {
   test("a missing githubToken does not fail a repo session in dev mode (anonymous clone)", async () => {
     const emptyGithubBroker: SecretsBroker = {
       secretsForRun: async () => ({ githubToken: "", litellmKey: "some-key" }),
+      defaultLitellmKey: async () => "some-key",
     };
     // buildTestApp defaults to OUTFITTER_DEV=1 (devMode on): a missing secret means "no secrets
     // available", not "fail the run" -- the clone just runs anonymously.
@@ -692,6 +694,7 @@ describe("run.spec build validates secrets", () => {
   test("an empty githubToken does not fail a repo-less session", async () => {
     const emptyGithubBroker: SecretsBroker = {
       secretsForRun: async () => ({ githubToken: "", litellmKey: "some-key" }),
+      defaultLitellmKey: async () => "some-key",
     };
     const app = await buildTestApp({}, { secretsBroker: emptyGithubBroker });
     const { session, runId, runToken } = await makeRunningSession(app, { repo: null, branch: undefined });

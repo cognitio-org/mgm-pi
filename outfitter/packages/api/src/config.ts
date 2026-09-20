@@ -64,6 +64,20 @@ export interface Config {
    * are separate Cloud Run services (see agentlink.ts's poller and docs/protocol.md "Two
    * origins"). Default 1500ms. */
   downQueuePollMs: number;
+  /** NGROK_API_KEY: bearer token for the ngrok API (GET /endpoints, /tunnels), used by the E2.10
+   * provider status service to reconcile which tunnels are online. Empty means the ngrok probe
+   * reports "unknown"/"not configured" rather than failing. */
+  ngrokApiKey: string;
+  /** LITELLM_BASE_URL: the LiteLLM proxy's OpenAI-compatible base URL (a trailing /v1 is stripped
+   * before appending management endpoints like /model/info). Same var name as mgm's .env.example. */
+  litellmBaseUrl: string;
+  /** LITELLM_ADMIN_KEY: key used by the provider status service to call LiteLLM's management
+   * endpoints (/health, /model/info, /key/info). Falls back to SecretsBroker.defaultLitellmKey()
+   * (the same default key runs get) when unset. */
+  litellmAdminKey: string;
+  /** PROVIDER_POLL_MS: how often the E2.10 provider status service reconciles every probe. Default
+   * 5 minutes. Only the "web" role runs this poller (see server.ts). */
+  providerPollMs: number;
 }
 
 const OUTFITTER_ROLES: readonly OutfitterRole[] = ["all", "web", "link"];
@@ -121,5 +135,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     provisioningGraceMs: envInt("PROVISIONING_GRACE_MS", 10 * 60_000),
     stopGraceMs: envInt("STOP_GRACE_MS", 60_000),
     downQueuePollMs: envInt("DOWN_QUEUE_POLL_MS", 1500),
+    ngrokApiKey: env.NGROK_API_KEY ?? "",
+    litellmBaseUrl: env.LITELLM_BASE_URL ?? "https://litellm.augment-code.support/v1",
+    litellmAdminKey: env.LITELLM_ADMIN_KEY ?? "",
+    providerPollMs: envInt("PROVIDER_POLL_MS", 5 * 60_000),
   };
 }

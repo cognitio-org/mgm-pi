@@ -211,18 +211,34 @@ research on Sonnet; review on Opus).
   instantly and steers running sessions off the local model (`set_model` over RPC) when it stops.
   Polling `GET https://api.ngrok.com/tunnels` (online tunnels only, needs an ngrok API key in Secret
   Manager) is the fallback if event destinations are not available on the Hobbyist plan.
-- **E2.10 Provider status service**: one place that knows whether every model and tool provider is
-  usable right now, feeding both the preflight (E2.8) and the dashboard (E3.6). Sources: ngrok
-  `agent_session_start/stop.v0` webhooks (all agent sessions on the account, so new tunnels appear
-  automatically) plus `GET https://api.ngrok.com/tunnels` and `/endpoints` polled every 5 min as the
-  reconciler; LM Studio `/api/v0/models` through each tunnel (which models are downloaded and which
-  are loaded, context length, quantisation); LiteLLM `/health` per model group, `/model/info` for
-  prices and limits, `/key/info` and `/team/info` for spend against budget (reuse the parsing in
-  `mgm/.pi/extensions/connect/lib.ts`); OpenRouter `/api/v1/key` for credits; Cloud Run Job quota and
-  currently running executions. Stored in a `providers` collection as the current state plus a
-  bounded history (last 7 days of transitions) so the dashboard can show uptime. Exposed as
-  `GET /api/providers` and an SSE stream; each transition is a `custom` entry on any running session
-  that depends on that provider.
+- **E2.10 Provider status service** (done, `docs/reports/providers-status.md`): one place that
+  knows whether every model and tool provider is usable right now, feeding both the preflight
+  (E2.8) and the dashboard (E3.6). `src/providers-status.ts`'s `ProviderStatusService` owns four
+  probes -- ngrok (`GET /endpoints` with `NGROK_API_KEY`, one row per online endpoint), laptop
+  (reuses the same `LaptopProbe` instance the E2.8 preflight already probes, so no extra network
+  round trip beyond its own 60s cache, plus `/api/v0/models` through the tunnel for loaded models
+  and context length), LiteLLM (`/health/liveliness`, `/model/info` -- `parseModelInfo` copied
+  from `mgm/.pi/extensions/connect/lib.ts` per the story's instruction, not imported -- and
+  `/key/info` for spend against budget, keyed by `LITELLM_ADMIN_KEY` or
+  `SecretsBroker.defaultLitellmKey()`), and Cloud Run (`CloudRunProvider.countRunningExecutions`,
+  new `listExecutions` call, only when `SANDBOX_PROVIDER=cloudrun`). Every probe times out at 3s
+  and never throws (Promise.allSettled is a backstop on top of each probe's own try/catch); a
+  missing credential or an inapplicable probe (Cloud Run when the provider isn't cloudrun) is
+  `"unknown"` with a `detail`, not a poll failure. State lives in a new `providers` Mongo
+  collection (memory + Mongo `Store` implementations) as the current row plus a 7-day-bounded
+  history of status transitions. `GET /api/providers`, `GET /api/providers/stream` (SSE, pushes on
+  transition only), `POST /api/providers/refresh`; the poller (`PROVIDER_POLL_MS`, default 5 min)
+  runs only in the "web" role, with a non-blocking first pass at startup; the "link" role still
+  gets a `ProviderStatusService` instance so `POST /api/hooks/ngrok` (`routes/hooks.ts`) can call
+  `noteLaptopTransition` and update the "laptop" row immediately, same HMAC verification as
+  before. Deviations from the story sketch above (scoped down to what E2.8/E3.6 actually need,
+  confirm before building further): no OpenRouter probe or `/team/info` (no OpenRouter/team
+  usage in this codebase yet); one summary LiteLLM row rather than one per model group (the
+  per-model breakdown lives in the row's `meta.models`); no automatic `custom` transcript entry on
+  running sessions (E2.10's own scope is the status service and its routes, not steering running
+  sessions -- E2.8's existing `set_model` RPC path is the natural place to wire that in later,
+  left as a follow-up since it touches agentlink.ts's live-session logic rather than this story's
+  files).
 - **E2.12 Image smoke in CI** (done, `.github/workflows/outfitter-ci.yml`): the repo's CI only ran
   on `mgm/**`, so no Outfitter PR had run its tests in CI at all, and image or deploy-env errors
   only surfaced when Cloud Run rejected a revision. The workflow now runs every suite and builds

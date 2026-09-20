@@ -62,7 +62,15 @@ IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}/outfitter-api:${TAG}"
 
 # existing_secrets() is defined in env.sh (sourced above); the secret list is identical for both
 # roles -- see README.md's Secret Manager section for what each role actually reads.
-SECRETS="$(existing_secrets MONGODB_URI=outfitter-mongodb-uri:latest GITHUB_PAT=outfitter-github-pat:latest LITELLM_ADMIN_KEY=outfitter-litellm-admin:latest LOCAL_TUNNEL_TOKEN=outfitter-local-tunnel-token:latest)"
+#
+# E2.10 provider status service (src/providers-status.ts, src/config.ts) adds three env vars beyond
+# what was already here: NGROK_API_KEY (secret, below -- ngrok's /endpoints reconciler poll; the
+# ngrok webhook itself keeps using NGROK_WEBHOOK_SECRET, unrelated), LITELLM_BASE_URL (plain, in
+# ENV_VARS below -- same var name/default as mgm's .env.example), and PROVIDER_POLL_MS (plain, ENV_VARS,
+# default 5 minutes). LITELLM_ADMIN_KEY was already mounted here (it predates E2.10) and is now also
+# read by the provider status service's LiteLLM probe, falling back to the default guru LiteLLM key
+# (outfitter-litellm-key-default, secrets.ts's SecretsBroker.defaultLitellmKey) when unset.
+SECRETS="$(existing_secrets MONGODB_URI=outfitter-mongodb-uri:latest GITHUB_PAT=outfitter-github-pat:latest LITELLM_ADMIN_KEY=outfitter-litellm-admin:latest LOCAL_TUNNEL_TOKEN=outfitter-local-tunnel-token:latest NGROK_API_KEY=outfitter-ngrok-api-key:latest)"
 
 echo "== Building ${IMAGE} with Cloud Build (packages/api/Dockerfile, context outfitter/; reused if the other role already built this commit) =="
 gcloud builds submit "${SOURCE_DIR}" \
@@ -100,7 +108,7 @@ fi
 # SANDBOX_PROVIDER and CLOUDRUN_JOB go to BOTH roles: the provider is constructed at boot (config
 # validation), even though only the web role ever wakes a run. Without them the API defaults to the
 # in-process dev provider and refuses to start (the link revision 00005 failure).
-ENV_VARS="OUTFITTER_ROLE=${ROLE},OUTFITTER_ORIGIN=${ORIGIN},AGENT_SA_EMAIL=${AGENT_SA_EMAIL},GCP_PROJECT=${PROJECT},GCP_REGION=${REGION},TUNNEL_DOMAIN_LMSTUDIO=${TUNNEL_DOMAIN_LMSTUDIO},SANDBOX_PROVIDER=cloudrun,CLOUDRUN_JOB=${CLOUDRUN_JOB},IDLE_STOP_SECONDS=${IDLE_STOP_SECONDS:-1800}"
+ENV_VARS="OUTFITTER_ROLE=${ROLE},OUTFITTER_ORIGIN=${ORIGIN},AGENT_SA_EMAIL=${AGENT_SA_EMAIL},GCP_PROJECT=${PROJECT},GCP_REGION=${REGION},TUNNEL_DOMAIN_LMSTUDIO=${TUNNEL_DOMAIN_LMSTUDIO},SANDBOX_PROVIDER=cloudrun,CLOUDRUN_JOB=${CLOUDRUN_JOB},IDLE_STOP_SECONDS=${IDLE_STOP_SECONDS:-1800},LITELLM_BASE_URL=${LITELLM_BASE_URL:-https://litellm.augment-code.support/v1},PROVIDER_POLL_MS=${PROVIDER_POLL_MS:-300000}"
 if [[ "${ROLE}" == "web" ]]; then
   # Needed both for IAP_AUDIENCE (below) and for the run.invoker binding further down.
   PROJECT_NUMBER="$(gcloud projects describe "${PROJECT}" --format='value(projectNumber)')"

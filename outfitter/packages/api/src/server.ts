@@ -13,6 +13,8 @@ import { RunManager } from "./runs.ts";
 import { AgentLink } from "./agentlink.ts";
 import { SseHub } from "./sse.ts";
 import { LaptopProbe } from "./laptop.ts";
+import { ProviderStatusService } from "./providers-status.ts";
+import { CloudRunProvider } from "./providers/cloudrun.ts";
 import { registerRoutes } from "./routes/index.ts";
 
 export interface BuildAppOptions {
@@ -28,8 +30,9 @@ export interface App {
   agentLink: AgentLink;
   sse: SseHub;
   laptopProbe: LaptopProbe;
-  /** Stops the run reconciler interval and (role link/all) the down-queue poller; call from tests
-   * and from main.ts on shutdown. */
+  providerStatus: ProviderStatusService;
+  /** Stops the run reconciler interval, (role link/all) the down-queue poller, and (role web/all)
+   * the provider status poller; call from tests and from main.ts on shutdown. */
   stopBackgroundTasks: () => void;
 }
 
@@ -55,6 +58,22 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   });
   const agentLink = new AgentLink(store, config, secretsBroker, sse, laptopProbe);
 
+  // Cloud Run job capacity probe (E2.10): only meaningful when the configured SandboxProvider
+  // actually is a CloudRunProvider. Importing the class here is safe even for other providers --
+  // it only lazily imports @google-cloud/run inside its own methods, never at module load.
+  const cloudRunCount =
+    config.sandboxProvider === "cloudrun" && provider instanceof CloudRunProvider
+      ? () => (provider as CloudRunProvider).countRunningExecutions()
+      : undefined;
+  const providerStatus = new ProviderStatusService({
+    store,
+    sse,
+    laptopProbe,
+    config,
+    litellmKey: async () => config.litellmAdminKey || secretsBroker.defaultLitellmKey(),
+    cloudRunCount,
+  });
+
   // IAP guards the browser routes only (role "web"/"all"). It must never sit in front of role
   // "link": IAP is enforced service-wide by Cloud Run, so it would block agentd's WebSocket (its
   // token's audience is this service's own origin, not IAP's client id) and the unauthenticated
@@ -74,7 +93,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     });
   }
 
-  await registerRoutes(fastify, { store, config, runs, agentLink, sse, laptopProbe });
+  await registerRoutes(fastify, { store, config, runs, agentLink, sse, laptopProbe, providerStatus });
   // The down-queue poller only makes sense where AgentLink sockets actually live (role "link" or
   // "all", same condition as registering /agent/ws itself) — see agentLink.startDownQueuePoller's
   // doc comment. The web role never holds a socket for any run, so it's never started there.
@@ -85,10 +104,22 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   }
 
   const stopRunReconciler = runs.startReconciler();
+
+  // The provider status poller only makes sense where browsers actually read it from (role "web"
+  // or "all"); the "link" role still gets a providerStatus instance (routes/hooks.ts's webhook
+  // needs it to feed an immediate laptop transition) but never starts its own poll loop against
+  // the shared store. The first pass runs fire-and-forget so it never blocks fastify.listen().
+  let stopProviderPoller: (() => void) | undefined;
+  if (config.role !== "link") {
+    providerStatus.pollOnce().catch((err) => fastify.log.error({ err }, "initial provider poll failed"));
+    stopProviderPoller = providerStatus.startPolling(config.providerPollMs);
+  }
+
   const stopBackgroundTasks = () => {
     stopRunReconciler();
     stopDownQueuePoller?.();
+    stopProviderPoller?.();
   };
 
-  return { fastify, runs, agentLink, sse, laptopProbe, stopBackgroundTasks };
+  return { fastify, runs, agentLink, sse, laptopProbe, providerStatus, stopBackgroundTasks };
 }

@@ -271,6 +271,7 @@ describe("agentlink up-frame ordering", () => {
       gurus: inner.gurus,
       environments: inner.environments,
       users: inner.users,
+      providers: inner.providers,
       close: () => inner.close(),
     };
 

@@ -135,6 +135,43 @@ export interface User {
   lastSeenAt?: string;
 }
 
+export type ProviderKind = "ngrok" | "laptop" | "litellm" | "cloudrun";
+
+/** "up"/"degraded"/"down" are real probe outcomes; "unknown" is a missing credential or an
+ * inapplicable probe (e.g. cloudrun kind when SANDBOX_PROVIDER isn't cloudrun) -- never a crash,
+ * per E2.10's "a probe must never throw" rule (see src/providers-status.ts). */
+export type ProviderHealth = "up" | "degraded" | "down" | "unknown";
+
+export interface ProviderTransition {
+  status: ProviderHealth;
+  at: string;
+}
+
+/** One row of current provider state, as returned by GET /api/providers (E2.10/E3.6). */
+export interface ProviderRow {
+  id: string;
+  kind: ProviderKind;
+  name: string;
+  status: ProviderHealth;
+  detail?: string;
+  checkedAt: string;
+  meta?: Record<string, unknown>;
+}
+
+/** Stored form: the current row plus a bounded (last 7 days) history of status transitions, for
+ * the E3.6 dashboard's uptime sparkline. */
+export interface ProviderRecord extends ProviderRow {
+  history: ProviderTransition[];
+}
+
+export interface ProvidersCollection {
+  findById(id: string): Promise<ProviderRecord | null>;
+  list(): Promise<ProviderRecord[]>;
+  /** Replaces the stored record wholesale. The service (not the store) computes `history`, since
+   * there's exactly one writer (the poller) and no concurrent-update race to resolve here. */
+  upsert(record: ProviderRecord): Promise<void>;
+}
+
 export interface SessionListFilter {
   status?: string;
   guruId?: string;
@@ -198,5 +235,6 @@ export interface Store {
   gurus: GurusCollection;
   environments: EnvironmentsCollection;
   users: UsersCollection;
+  providers: ProvidersCollection;
   close(): Promise<void>;
 }

@@ -24,3 +24,5 @@ jobs:
           printf 'LITELLM_AGENT_KEY=test\nOPENROUTER_API_KEY=test\n' > .env
           MGM_NO_DISCOVERY=1 MGM_SKIP_LMS=1 ./bin/mgm --list-models | tee models.txt
           grep -qE '^lmstudio' models.txt && grep -qE '^litellm' models.txt && grep -qE '^openrouter' models.txt
+          mkdir -p /tmp/linkbin && ln -sf "$PWD/bin/mgm" /tmp/linkbin/mgm
+          (cd /tmp && MGM_NO_DISCOVERY=1 MGM_SKIP_LMS=1 /tmp/linkbin/mgm --list-models | grep -qE '^litellm')   # via symlink, as install.sh links it

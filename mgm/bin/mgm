@@ -6,7 +6,10 @@
 # Config (extensions, packages, settings, sessions) lives in ~/localllm/mgm/.pi;
 # secrets come from ~/localllm/.env and are exported so packages (pi-mcp-adapter) can use ${VAR}.
 set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Resolve symlinks (install.sh links ~/.local/bin/mgm here) so ROOT is the real bundle directory.
+SRC="${BASH_SOURCE[0]}"
+while [[ -L "$SRC" ]]; do DIR="$(cd -P "$(dirname "$SRC")" && pwd)"; SRC="$(readlink "$SRC")"; [[ "$SRC" != /* ]] && SRC="$DIR/$SRC"; done
+ROOT="$(cd -P "$(dirname "$SRC")/.." && pwd)"
 # Secrets: ~/localllm/.env in a source checkout, ./.env in a release bundle (copy .env.example).
 if [[ -f "$ROOT/../.env" ]]; then set -a; source "$ROOT/../.env"; set +a; fi
 if [[ -f "$ROOT/.env" ]]; then set -a; source "$ROOT/.env"; set +a; fi

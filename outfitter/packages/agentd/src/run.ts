@@ -450,6 +450,9 @@ export class RunController {
     try {
       await mkdir(resolve(path, ".."), { recursive: true });
       const handle = await openFile(path, "a", 0o660);
+      // The mode passed to open() is subject to root's umask (022 in the image), which strips the
+      // group write bit and leaves the agent user unable to append. Set it explicitly.
+      await handle.chmod(0o660);
       await handle.close();
       if (this.deps.runAsUser) await chown(path, 0, this.deps.runAsUser.gid);
     } catch (err: any) {

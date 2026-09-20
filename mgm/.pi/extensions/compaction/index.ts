@@ -14,6 +14,11 @@
  *     pi's reserve threshold or an overflow error, because LM Studio silently truncates the prompt
  *     on overflow and pi never sees an error to recover from.
  *
+ *  Pinned content — the first user message, extension-injected custom messages and /pin text — is
+ *  carried verbatim in a <pinned-context> block ahead of the model-written summary; the model never
+ *  sees or rewrites it. The system prompt and tool schemas live outside the message list entirely.
+ *
+ *  /pin [text]          keep text verbatim across compactions
  *  /compaction          show budgets, summarizer, pruning stats
  *  /compaction now      compact immediately
  *  MGM_COMPACTION=off   disable everything; MGM_COMPACTION_LOG=<file> appends a JSON line per event
@@ -24,7 +29,7 @@ import { convertToLlm, serializeConversation, estimateTokens, findCutPoint } fro
 import { uuidv7 } from "@earendil-works/pi-ai";
 import {
   type Msg, budgets, estimateText, maskOldToolResults, chunkMessages, summaryPrompt, shortenPrompt,
-  wordBudget, pickSummarizer, statusText, SUMMARY_SYSTEM_PROMPT,
+  wordBudget, pickSummarizer, statusText, SUMMARY_SYSTEM_PROMPT, collectPins, composeSummary, stripPinned,
 } from "./lib.ts";
 
 const OFF = process.env.MGM_COMPACTION === "off";
@@ -95,8 +100,9 @@ export default function (pi: ExtensionAPI) {
       return { text: out, cut: res.stopReason === "length" };
     };
 
+    const pins = collectPins(branchEntries as any[], cut.firstKeptEntryIndex);
     try {
-      let running = preparation.previousSummary;
+      let running = stripPinned(preparation.previousSummary);
       for (let i = 0; i < chunks.length; i++) {
         if (signal.aborted) return;
         const text = serializeConversation(convertToLlm(chunks[i] as any));
@@ -107,7 +113,7 @@ export default function (pi: ExtensionAPI) {
         log({ event: "chunk_done", chunk: i + 1, of: chunks.length, inputTokens: estimateText(text), summaryTokens: estimateText(r.text), cut: r.cut });
       }
       compacting = false;
-      return { compaction: { summary: running!, firstKeptEntryId: firstKept.id, tokensBefore: preparation.tokensBefore, usage, details: { summarizer: `${summarizer.provider}/${summarizer.id}`, chunks: chunks.length, keepRecentTokens: bud.keepRecentTokens, masked: lastMasked } } };
+      return { compaction: { summary: composeSummary(pins, running!), firstKeptEntryId: firstKept.id, tokensBefore: preparation.tokensBefore, usage, details: { summarizer: `${summarizer.provider}/${summarizer.id}`, chunks: chunks.length, keepRecentTokens: bud.keepRecentTokens, masked: lastMasked, pins: pins.map((p) => p.label) } } };
     } catch (e: any) {
       if (signal.aborted) return;
       log({ event: "compact_error", error: String(e?.message ?? e) });
@@ -141,6 +147,21 @@ export default function (pi: ExtensionAPI) {
   pi.on("agent_end", async (_ev, ctx) => { if (process.env.MGM_COMPACTION_DEBUG) { const u = ctx.getContextUsage?.(); log({ event: "overhead", tokens: u?.tokens, percent: u?.percent, window: b(ctx).contextWindow }); } });
   pi.on("session_start", async (_ev, ctx) => refreshStatus(ctx));
   pi.on("model_select", async (_ev, ctx) => refreshStatus(ctx));
+
+  pi.registerCommand("pin", {
+    description: "Keep text verbatim across compactions: /pin <text>, or /pin alone to pin your last message",
+    handler: async (args, ctx) => {
+      let text = args.trim();
+      if (!text) {
+        const last = [...ctx.sessionManager.getEntries()].reverse().find((e: any) => e.type === "message" && e.message?.role === "user") as any;
+        const c = last?.message?.content;
+        text = typeof c === "string" ? c : Array.isArray(c) ? c.filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n") : "";
+      }
+      if (!text) { ctx.ui.notify("Nothing to pin", "warning"); return; }
+      pi.appendEntry("mgm-pin", { text });
+      ctx.ui.notify(`Pinned (${text.length} chars); it will be carried verbatim through every compaction`, "info");
+    },
+  });
 
   pi.registerCommand("compaction", {
     description: "Show compaction budgets for the current model, or `/compaction now` to compact",

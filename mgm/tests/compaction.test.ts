@@ -142,3 +142,37 @@ describe("status", () => {
     assert.equal(statusText(null, 0, true), "◔ ctx ?");
   });
 });
+
+describe("pinned content", async () => {
+  const { collectPins, pinnedBlock, composeSummary, stripPinned } = await import("../.pi/extensions/compaction/lib.ts");
+  const entries = [
+    { type: "message", message: { role: "user", content: [{ type: "text", text: "Refactor the auth module" }] } },
+    { type: "message", message: { role: "assistant", content: [{ type: "text", text: "ok" }] } },
+    { type: "custom_message", customType: "pi-memory", content: "remember: use pnpm" },
+    { type: "custom", customType: "mgm-pin", data: { text: "API base is https://x/v1" } },
+    { type: "custom_message", customType: "compaction", content: "old summary" },
+    { type: "message", message: { role: "user", content: "later question" } },
+    { type: "custom", customType: "mgm-pin", data: { text: "in kept tail, not collected" } },
+  ];
+  test("collects the original request, extension messages and pins before the kept tail", () => {
+    const pins = collectPins(entries, 5);
+    assert.deepEqual(pins, [
+      { label: "original request", text: "Refactor the auth module" },
+      { label: "pi-memory", text: "remember: use pnpm" },
+      { label: "pinned", text: "API base is https://x/v1" },
+    ]);
+    assert.equal(collectPins([], 0).length, 0);
+    assert.match(collectPins([{ type: "message", message: { role: "user", content: "x".repeat(5000) } }], 1)[0].text, /…\[truncated\]$/);
+  });
+  test("compose and strip round-trip so the model never sees the block", () => {
+    const pins = collectPins(entries, 5);
+    const full = composeSummary(pins, "## Goal\nrefactor");
+    assert.ok(full.startsWith("<pinned-context>\n[original request]\nRefactor the auth module"));
+    assert.ok(full.endsWith("</pinned-context>\n\n## Goal\nrefactor"));
+    assert.equal(stripPinned(full), "## Goal\nrefactor");
+    assert.equal(stripPinned("plain"), "plain");
+    assert.equal(stripPinned(undefined), undefined);
+    assert.equal(stripPinned(pinnedBlock(pins)), undefined, "block-only summary strips to nothing");
+    assert.equal(composeSummary([], "s"), "s");
+  });
+});

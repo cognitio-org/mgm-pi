@@ -160,3 +160,45 @@ export function statusText(percent: number | null | undefined, masked: number, s
   const pruned = masked ? ` · ${masked} pruned` : "";
   return `${small ? "◔" : "◕"} ctx ${pct}${pruned}`;
 }
+
+// ---------- pinned content: survives compaction verbatim, outside the model-written summary ----------
+export type Pin = { label: string; text: string };
+const PIN_OPEN = "<pinned-context>", PIN_CLOSE = "</pinned-context>";
+
+const textOf = (content: unknown): string =>
+  typeof content === "string" ? content : Array.isArray(content) ? content.filter((b: any) => b?.type === "text").map((b: any) => b.text ?? "").join("\n") : "";
+
+/**
+ * What to carry verbatim across a compaction, given the branch entries and the index where kept
+ * messages start: the first user message on the branch (the original request), extension-injected
+ * custom messages that would otherwise vanish, and anything the user pinned with /pin.
+ */
+export function collectPins(entries: any[], firstKeptIndex: number, maxChars = 4_000): Pin[] {
+  const pins: Pin[] = [];
+  const first = entries.find((e) => e?.type === "message" && e.message?.role === "user");
+  if (first) pins.push({ label: "original request", text: textOf(first.message.content) });
+  for (const e of entries.slice(0, firstKeptIndex)) {
+    if (e?.type === "custom_message" && e.customType !== "compaction") pins.push({ label: e.customType, text: textOf(e.content) });
+    else if (e?.type === "custom" && e.customType === "mgm-pin" && e.data?.text) pins.push({ label: "pinned", text: String(e.data.text) });
+  }
+  return pins.filter((p) => p.text.trim()).map((p) => ({ label: p.label, text: p.text.length > maxChars ? p.text.slice(0, maxChars) + "\n…[truncated]" : p.text }));
+}
+
+export function pinnedBlock(pins: Pin[]): string {
+  if (!pins.length) return "";
+  return `${PIN_OPEN}\n${pins.map((p) => `[${p.label}]\n${p.text}`).join("\n\n")}\n${PIN_CLOSE}`;
+}
+
+/** Final summary text = pinned block + model summary; the model never sees or rewrites the block. */
+export function composeSummary(pins: Pin[], modelSummary: string): string {
+  const block = pinnedBlock(pins);
+  return block ? `${block}\n\n${modelSummary}` : modelSummary;
+}
+
+/** Strip a pinned block from a previous summary before handing it back to the model. */
+export function stripPinned(summary: string | undefined): string | undefined {
+  if (!summary) return summary;
+  const a = summary.indexOf(PIN_OPEN), b = summary.indexOf(PIN_CLOSE);
+  if (a < 0 || b < 0) return summary;
+  return (summary.slice(0, a) + summary.slice(b + PIN_CLOSE.length)).trim() || undefined;
+}

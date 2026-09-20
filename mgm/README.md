@@ -100,6 +100,14 @@ and lockfiles by up to 40%. `.pi/extensions/compaction/` addresses this in layer
 | Chunked summary | history folded into the summary in chunks ≤ 30% of the summarizer's window, summary capped at 5% of the working window (1k–3k), "shorten" retry instead of discard on length | `session_before_compact` |
 | Cloud summarizer | `MGM_SUMMARY_MODEL` (default `litellm/claude-haiku-4-5`) writes the summary when it has credentials; otherwise the working model does | same |
 
+**What is never touched.** The system prompt and tool schemas live outside the message list, so
+neither masking nor compaction can see them. Masking only rewrites the text of `toolResult`
+messages and keeps call ids, so call/result pairs stay valid. **Pinned content** survives every
+compaction verbatim in a `<pinned-context>` block placed ahead of the model-written summary (the
+model never sees or rewrites it): the first user message of the session, extension-injected custom
+messages (e.g. pi-memory notes) that pi's default compaction would drop, and anything you mark with
+`/pin <text>` or `/pin` (pins your last message).
+
 `.pi/settings.json` sets `compaction.keepRecentTokens: 6000` / `reserveTokens: 8192` only so pi's own
 preparation succeeds on small windows; the extension re-derives the real budgets from the model.
 `/compaction` shows them; `/compaction now` compacts; `MGM_COMPACTION=off` disables the extension;

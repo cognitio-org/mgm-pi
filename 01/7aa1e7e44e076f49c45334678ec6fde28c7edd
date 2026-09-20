@@ -1,0 +1,22 @@
+outfitter/packages/web/test/session-stream.test.ts
+  s_2209f22f830d7f::t_8641174b36d663 1-33
+outfitter/packages/web/src/hooks/useSessionStream.ts
+  s_2209f22f830d7f::t_90b768d9a7db29 46
+  s_2209f22f830d7f::t_ecd15d2bcbfd50 12-25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "017aa1e7e44e076f49c45334678ec6fde28c7edd",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

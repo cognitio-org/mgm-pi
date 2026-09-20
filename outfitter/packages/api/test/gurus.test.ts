@@ -8,7 +8,18 @@ import assert from "node:assert/strict";
 import { buildTestApp } from "./helpers.ts";
 
 describe("POST /api/gurus: guru.env denylist", () => {
-  for (const key of ["NODE_OPTIONS", "LD_PRELOAD", "LD_LIBRARY_PATH", "PATH", "HOME", "GIT_CONFIG_COUNT", "GIT_SSH_COMMAND"]) {
+  for (const key of [
+    "NODE_OPTIONS",
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "PATH",
+    "HOME",
+    "GIT_CONFIG_COUNT",
+    "GIT_SSH_COMMAND",
+    "LITELLM_BASE_URL",
+    "LITELLM_API_KEY",
+    "LITELLM_AGENT_KEY",
+  ]) {
     test(`rejects guru.env.${key} with 400`, async () => {
       const app = await buildTestApp();
       const res = await app.fastify.inject({

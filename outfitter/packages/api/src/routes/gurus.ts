@@ -12,7 +12,25 @@ type GuruInput = Omit<Guru, "id" | "createdAt" | "updatedAt"> & { id?: string };
 // expected. NODE_OPTIONS/LD_PRELOAD/LD_LIBRARY_PATH can load arbitrary code into pi, PATH can shadow
 // git/gh with a malicious binary, GIT_* can hijack agentd's own per-invocation auth-header env vars
 // (see agentd/src/git.ts), HOME can redirect where pi/git read config/credentials from.
-const DENYLISTED_GURU_ENV_KEYS = new Set(["NODE_OPTIONS", "LD_PRELOAD", "LD_LIBRARY_PATH", "PATH", "HOME"]);
+// LITELLM_BASE_URL/LITELLM_API_KEY/LITELLM_AGENT_KEY (finding #1, docs/reports/security-review-pr15.md):
+// outfitter-spend.ts's LiteLLM probes read these straight from process.env with no validation. A
+// guru-supplied LITELLM_BASE_URL previously survived into the pi child's env (secretEnv only pinned
+// the key, not the base URL) and would have made the sandbox send the *real* per-run LiteLLM key as
+// a Bearer token to an attacker-controlled host -- credential exfiltration + SSRF. This denylist is
+// the actual fix; run.ts also now pins LITELLM_BASE_URL server-side as belt-and-suspenders. Note:
+// the pre-existing mgm connect extension (mgm/.pi/extensions/connect) has the same
+// LITELLM_BASE_URL-to-Bearer-key exposure pattern, but it isn't guru-configurable, so it isn't a
+// vector through this route -- flagged for awareness, not fixed here.
+const DENYLISTED_GURU_ENV_KEYS = new Set([
+  "NODE_OPTIONS",
+  "LD_PRELOAD",
+  "LD_LIBRARY_PATH",
+  "PATH",
+  "HOME",
+  "LITELLM_BASE_URL",
+  "LITELLM_API_KEY",
+  "LITELLM_AGENT_KEY",
+]);
 
 function denylistedGuruEnvKeys(env: Record<string, string> | undefined): string[] {
   if (!env) return [];

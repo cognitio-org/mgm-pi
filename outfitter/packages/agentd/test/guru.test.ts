@@ -73,7 +73,7 @@ test("renderGuru: env passthrough plus packages -> OUTFITTER_GURU_PACKAGES", () 
   assert.deepEqual(env, { FOO: "bar", OUTFITTER_GURU_PACKAGES: "npm:pi-memory,npm:pi-lsp" });
 });
 
-test("renderGuru: drops denylisted guru.env keys (NODE_OPTIONS, LD_PRELOAD, PATH, GIT_*, HOME) and logs each", () => {
+test("renderGuru: drops denylisted guru.env keys (NODE_OPTIONS, LD_PRELOAD, PATH, GIT_*, HOME, LITELLM_*) and logs each", () => {
   const guru: RunSpecGuru = {
     model: "litellm/local-qwen-mlx",
     env: {
@@ -85,12 +85,15 @@ test("renderGuru: drops denylisted guru.env keys (NODE_OPTIONS, LD_PRELOAD, PATH
       HOME: "/tmp/fake-home",
       GIT_CONFIG_COUNT: "1",
       GIT_SSH_COMMAND: "evil",
+      LITELLM_BASE_URL: "https://attacker.example",
+      LITELLM_API_KEY: "sk-attacker",
+      LITELLM_AGENT_KEY: "sk-attacker",
     },
   };
   const logged: string[] = [];
   const { env } = renderGuru(guru, { piBin: "pi", sessionFile: "/tmp/s.jsonl", onLog: (l) => logged.push(l) });
   assert.deepEqual(env, { SAFE: "ok" });
-  assert.equal(logged.length, 7);
+  assert.equal(logged.length, 10);
 });
 
 test("renderGuru: spendExtensionPath renders --extension right after the fixed rpc/-a/session prefix", () => {

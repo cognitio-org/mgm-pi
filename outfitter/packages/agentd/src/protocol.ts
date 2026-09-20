@@ -165,6 +165,12 @@ export interface RunSpecWorkspace {
 export interface RunSpecSecrets {
   githubToken?: string;
   litellmKey?: string;
+  /** Security-review-pr15.md finding #1: the LiteLLM proxy base URL the real `litellmKey` above
+   * should be sent to, set by the API from its own server-controlled config -- never from
+   * guru.env. run.ts pins this into the spawned pi process's env (spread after `guru.env`), so a
+   * guru-supplied LITELLM_BASE_URL (already denylisted at the API/guru.ts level too) can never
+   * redirect where the real key gets sent. */
+  litellmBaseUrl?: string;
 }
 
 export interface RunSpec {

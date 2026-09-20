@@ -1,8 +1,13 @@
 // Identity for the two callers the API trusts: browsers (behind IAP) and agentd (a Google ID token).
 //
 // Browsers: IAP puts a signed JWT in x-goog-iap-jwt-assertion. We verify it against IAP's own
-// rotating public keys (getIapPublicKeys) with audience = IAP_AUDIENCE (the IAP resource's OAuth
-// client id, per https://cloud.google.com/iap/docs/signed-headers-howto).
+// rotating public keys (getIapPublicKeys) with audience = IAP_AUDIENCE. Despite the "OAuth client
+// id" wording in some IAP docs (which applies to IAP fronted by an external HTTPS load balancer),
+// IAP enabled directly *on* a Cloud Run service (our case, deploy/api.sh's `--iap` flag) signs the
+// JWT's `aud` claim as the resource path `/projects/PROJECT_NUMBER/locations/REGION/services/
+// SERVICE_NAME` — see the JWT payload claims table ("aud (Audience)" row, "Cloud Run") at
+// https://cloud.google.com/iap/docs/signed-headers-howto. deploy/api.sh computes this value from
+// `gcloud projects describe` and sets it as IAP_AUDIENCE automatically.
 //
 // agentd: presents `Authorization: Bearer <google id token>` minted for the outfitter-agent
 // service account by the Cloud Run Job's metadata server, audience = OUTFITTER_ORIGIN. We verify

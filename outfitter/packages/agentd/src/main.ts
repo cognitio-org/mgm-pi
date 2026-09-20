@@ -78,6 +78,22 @@ async function main(): Promise<void> {
     void controller.handleSigterm();
   });
 
+  // See link.ts's TERMINAL_CLOSE_CODES doc: the first real Cloud Run execution hit 4404 ("run not
+  // found") and reconnected twice a second forever because no close code was ever treated as
+  // terminal. 4404/4409 mean the run is already done server-side (exit 0, nothing to do); 4400/4401
+  // mean agentd itself is misconfigured (exit 1).
+  link.onTerminal((code, reason) => {
+    console.error(`[agentd] link closed with terminal code ${code}: ${reason || "(no reason given)"}`);
+    process.exit(code === 4404 || code === 4409 ? 0 : 1);
+  });
+
+  // A misconfigured job (bad URL, api never provisions the run, ...) would otherwise reconnect
+  // quietly until it hits its own much longer (e.g. 24h) timeout. Give up loudly well before that.
+  link.onUnspecTimeout(() => {
+    console.error("[agentd] no run.spec received within the retry window; giving up");
+    process.exit(1);
+  });
+
   link.connect();
 }
 

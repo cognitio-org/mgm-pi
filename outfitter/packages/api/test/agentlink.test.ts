@@ -2,6 +2,8 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { buildTestApp, seedGuru } from "./helpers.ts";
 import type { Session } from "../src/store/types.ts";
+import type { SecretsBroker } from "../src/secrets.ts";
+import { MemoryStore } from "../src/store/memory.ts";
 
 // injectWS's connect promise can resolve *after* the server has already written its first frame
 // (run.spec is sent proactively, not in reply to a client message), so a `message` listener
@@ -358,6 +360,86 @@ describe("agentd <-> api WebSocket", () => {
 
     agent2.send({ t: "bye", reason: "stop" });
     await agent2.nextClose();
+    app.stopReconciler();
+    await app.fastify.close();
+  });
+});
+
+// outfitter-api (web role) and outfitter-link (link role) are separate Cloud Run services sharing
+// one Atlas store; AgentLink keeps sockets in memory per-process, so a down-message posted by one
+// process for a run whose socket lives in another only reaches that run via the store. This
+// simulates that split with two AgentLink instances (two buildTestApp apps) sharing one store.
+describe("down-message queue poller (cross-process delivery)", () => {
+  test("a message enqueued by one AgentLink instance is delivered by another instance that owns the socket, after a poll tick", async () => {
+    const store = new MemoryStore();
+    const owner = await buildTestApp({}, { store });
+    const sender = await buildTestApp({}, { store });
+
+    const { runId } = await makeRunningSession(owner);
+    const agent = await openAgentSocket(owner, runId);
+    await agent.nextMessage(); // run.spec
+
+    // Mirrors what a real "status: idle" frame would do: the poller only drains a run it
+    // considers ready (running/idle), same as a direct send().
+    await store.runs.update(runId, { state: "idle" });
+
+    // The sender process has no socket for this run at all: send() must enqueue in the shared
+    // store rather than throw or silently drop the message.
+    assert.equal(sender.agentLink.hasSocket(runId), false);
+    await sender.agentLink.send(runId, { t: "prompt", text: "cross-process" });
+    const queued = await store.runs.findById(runId);
+    assert.equal(queued?.pending.length, 1);
+
+    // Trigger the owner process's poll pass directly (deterministic; see pollDownQueuesOnce's
+    // doc comment) rather than racing its real interval timer. It delivers the queued message
+    // over the socket it actually holds.
+    await owner.agentLink.pollDownQueuesOnce();
+    const delivered = await agent.nextMessage();
+    assert.deepEqual(delivered, { t: "prompt", text: "cross-process" });
+
+    const afterPoll = await store.runs.findById(runId);
+    assert.equal(afterPoll?.pending.length, 0);
+
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    owner.stopReconciler();
+    sender.stopReconciler();
+    await owner.fastify.close();
+    await sender.fastify.close();
+  });
+});
+
+describe("run.spec build validates secrets", () => {
+  test("closes with WS code 1011 when a repo session's githubToken secret is missing", async () => {
+    const emptyGithubBroker: SecretsBroker = {
+      secretsForRun: async () => ({ githubToken: "", litellmKey: "some-key" }),
+    };
+    const app = await buildTestApp({}, { secretsBroker: emptyGithubBroker });
+    const { runId } = await makeRunningSession(app); // default fixture has repo: "o/r"
+
+    const agent = await openAgentSocket(app, runId);
+    const close = await agent.nextClose();
+    assert.equal(close.code, 1011);
+    assert.match(close.reason, /missing github token/);
+
+    app.stopReconciler();
+    await app.fastify.close();
+  });
+
+  test("an empty githubToken does not fail a repo-less session", async () => {
+    const emptyGithubBroker: SecretsBroker = {
+      secretsForRun: async () => ({ githubToken: "", litellmKey: "some-key" }),
+    };
+    const app = await buildTestApp({}, { secretsBroker: emptyGithubBroker });
+    const { runId } = await makeRunningSession(app, { repo: null, branch: undefined });
+
+    const agent = await openAgentSocket(app, runId);
+    const spec = await agent.nextMessage();
+    assert.equal(spec.t, "run.spec");
+    assert.equal(spec.secrets.githubToken, "");
+
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
     app.stopReconciler();
     await app.fastify.close();
   });

@@ -62,8 +62,7 @@ same Atlas store. See `docs/protocol.md` "Two origins".
 
    **b. Per-run, fetched dynamically by `GcpSecretsBroker.secretsForRun` (`src/secrets.ts`) — NOT
    mounted as container env vars, and NOT covered by `api.sh`.** Each session and each guru needs
-   its own secret, named by id, created before that session/guru's first run (or the run's
-   `agentlink.ts` connection fails when `buildRunSpec` calls the broker):
+   its own secret, named by id, ideally created before that session/guru's first run:
 
    ```bash
    # one per session, id from `session.id` (e.g. POST /api/sessions's response):
@@ -72,7 +71,22 @@ same Atlas store. See `docs/protocol.md` "Two origins".
    # one per guru, id from `guru.id`:
    printf '%s' "<that guru's LiteLLM virtual key>" \
      | gcloud secrets create "outfitter-litellm-key-<guruId>" --project=outfitter-509211 --data-file=-
+   # optional: a shared fallback used by any guru whose own outfitter-litellm-key-<guruId> secret
+   # doesn't exist yet (e.g. a newly created guru). Not required, but recommended so a fresh guru's
+   # first run doesn't wake up with an empty LiteLLM key.
+   printf '%s' "<a LiteLLM virtual key usable by any guru>" \
+     | gcloud secrets create "outfitter-litellm-key-default" --project=outfitter-509211 --data-file=-
    ```
+
+   Since the first real deploy, a *missing* (b) secret is no longer a hard failure at connection
+   time: `GcpSecretsBroker` resolves a not-found secret to `""` (logging a warning) instead of
+   throwing, and `outfitter-litellm-key-<guruId>` falls back to `outfitter-litellm-key-default`
+   before giving up. The only place this is still fatal is `outfitter-github-token-<sessionId>`
+   for a session that actually has a repo (`session.repo` set) — `agentlink.ts`'s `buildRunSpec`
+   checks for that specific case and closes the agentd connection with WS code 1011 and a
+   `missing github token secret for session <id>` reason, since agentd cloning with no credentials
+   would otherwise fail confusingly deep inside the sandbox instead. A repo-less session, or a
+   guru whose key resolves via the default fallback, is unaffected either way.
 
    `outfitter-api`'s `secretmanager.secretAccessor` role from `baseline.sh` is project-wide, so no
    per-secret IAM binding is needed for either group. (a)/(b) diverging like this is a known gap,
@@ -84,8 +98,11 @@ same Atlas store. See `docs/protocol.md` "Two origins".
 4. **`./api.sh`** — builds `packages/api` with Cloud Build and deploys it to Cloud Run **as the
    `web` role** (`OUTFITTER_ROLE=web`) with IAP enabled directly on the service, IAP access
    restricted to `domain:mgmonteleone.com`, and the four (a) secrets above mounted as env vars.
-   Prints the service URL. The (b) secrets are created per session/guru as needed, not by this
-   script.
+   Also sets `IAP_AUDIENCE` automatically, from `gcloud projects describe`'s project number, to
+   `/projects/<projectNumber>/locations/<region>/services/outfitter-api` — the `aud` claim IAP
+   signs into `x-goog-iap-jwt-assertion` for a service with IAP enabled directly on Cloud Run (see
+   `src/auth.ts` and `api.sh`'s own header comment for the doc citation). Prints the service URL.
+   The (b) secrets are created per session/guru as needed, not by this script.
 5. **`./link.sh`** — deploys the *same* `packages/api` image a second time, **as the `link` role**
    (`OUTFITTER_ROLE=link`), to its own Cloud Run service `outfitter-link`, `--allow-unauthenticated`
    (no IAP — it authenticates `/agent/ws` and `/api/hooks/*` itself). Mounts the same four (a)

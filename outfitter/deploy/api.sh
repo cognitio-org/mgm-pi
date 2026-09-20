@@ -11,16 +11,18 @@
 #
 # Docs consulted (also see docs/reports/api.md "gcloud commands you were least sure about"):
 # - Enabling IAP directly on a Cloud Run service (the --iap flag) and granting the IAP service
-#   agent run.invoker: https://cloud.google.com/run/docs/securing/identity-aware-proxy-cloud-run
-#   That page's own example gcloud command is `gcloud run deploy ... --no-allow-unauthenticated
-#   --iap` (no `beta` component); some gcloud versions still gate --iap behind
-#   `gcloud beta run deploy` / `gcloud beta run services update --iap` -- if this script's `gcloud
-#   run deploy --iap` errors with "unrecognized arguments: --iap", rerun with `gcloud beta` instead.
+#   agent run.invoker: https://cloud.google.com/run/docs/securing/identity-aware-proxy-cloud-run.
+#   `gcloud run deploy --iap` worked as-is (no `gcloud beta` needed).
 # - Domain-level IAP access via `gcloud iap web add-iam-policy-binding`: same page; its own example
 #   only shows `--member=user:...`. `domain:mgmonteleone.com` is the standard IAM member syntax
 #   used everywhere else in gcloud, but this exact command with a domain member is unconfirmed by
 #   the doc text itself -- verify the binding actually took (`gcloud iap web get-iam-policy`)
 #   before relying on it to gate real access.
+# - IAP_AUDIENCE: the `aud` claim IAP signs into x-goog-iap-jwt-assertion for a service with IAP
+#   enabled directly on Cloud Run is `/projects/PROJECT_NUMBER/locations/REGION/services/SERVICE`
+#   (JWT payload claims table, "aud (Audience)" row, "Cloud Run") —
+#   https://cloud.google.com/iap/docs/signed-headers-howto. See src/auth.ts for where it's
+#   verified. Computed below from `gcloud projects describe`, not hand-set.
 set -euo pipefail
 # shellcheck source=env.sh
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
@@ -37,6 +39,11 @@ TUNNEL_DOMAIN_LMSTUDIO="${TUNNEL_DOMAIN_LMSTUDIO:?set TUNNEL_DOMAIN_LMSTUDIO (se
 
 API_SA_EMAIL="outfitter-api@${PROJECT}.iam.gserviceaccount.com"
 AGENT_SA_EMAIL="outfitter-agent@${PROJECT}.iam.gserviceaccount.com"
+
+# Needed both for IAP_AUDIENCE (below) and for the run.invoker binding further down.
+PROJECT_NUMBER="$(gcloud projects describe "${PROJECT}" --format='value(projectNumber)')"
+# See the "IAP_AUDIENCE" doc comment above.
+IAP_AUDIENCE="/projects/${PROJECT_NUMBER}/locations/${REGION}/services/${SERVICE}"
 
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # outfitter/, the workspace root
 TAG="$(git -C "${SOURCE_DIR}" rev-parse --short HEAD 2>/dev/null || date +%s)"
@@ -102,10 +109,9 @@ gcloud run deploy "${SERVICE}" \
   --no-allow-unauthenticated \
   --iap \
   --set-secrets="${SECRETS}" \
-  --set-env-vars="OUTFITTER_ROLE=web,OUTFITTER_ORIGIN=${ORIGIN},AGENT_SA_EMAIL=${AGENT_SA_EMAIL},CLOUDRUN_JOB=${CLOUDRUN_JOB},GCP_PROJECT=${PROJECT},GCP_REGION=${REGION},TUNNEL_DOMAIN_LMSTUDIO=${TUNNEL_DOMAIN_LMSTUDIO}"
+  --set-env-vars="OUTFITTER_ROLE=web,OUTFITTER_ORIGIN=${ORIGIN},AGENT_SA_EMAIL=${AGENT_SA_EMAIL},CLOUDRUN_JOB=${CLOUDRUN_JOB},GCP_PROJECT=${PROJECT},GCP_REGION=${REGION},TUNNEL_DOMAIN_LMSTUDIO=${TUNNEL_DOMAIN_LMSTUDIO},IAP_AUDIENCE=${IAP_AUDIENCE}"
 
 echo "== Granting the IAP service agent roles/run.invoker on ${SERVICE} =="
-PROJECT_NUMBER="$(gcloud projects describe "${PROJECT}" --format='value(projectNumber)')"
 gcloud run services add-iam-policy-binding "${SERVICE}" \
   --project="${PROJECT}" \
   --region="${REGION}" \

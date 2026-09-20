@@ -31,7 +31,7 @@ class FakeWebSocket extends EventEmitter {
 
   close(): void {
     this.readyState = FakeWebSocket.CLOSED;
-    this.emit("close");
+    this.emit("close", 1000, Buffer.from(""));
   }
 
   // test helpers
@@ -44,9 +44,10 @@ class FakeWebSocket extends EventEmitter {
     this.emit("message", Buffer.from(JSON.stringify(obj)));
   }
 
-  triggerClose(): void {
+  /** `code`/`reason` match what real `ws` passes to a 'close' listener. */
+  triggerClose(code = 1006, reason = ""): void {
     this.readyState = FakeWebSocket.CLOSED;
-    this.emit("close");
+    this.emit("close", code, Buffer.from(reason));
   }
 }
 
@@ -267,4 +268,154 @@ test("Link: the connection-age timer does not fire again after close() (no leake
   link.close();
   await new Promise((r) => setTimeout(r, 60));
   assert.equal(FakeWebSocket.instances.length, 1);
+});
+
+// --- terminal close codes (4400/4401/4404/4409) -----------------------------------------------
+
+for (const code of [4400, 4401, 4404, 4409]) {
+  test(`Link: close code ${code} is terminal -- stops reconnecting and fires onTerminal`, async (t) => {
+    const link = makeLink();
+    t.after(() => link.close());
+    const ws = await connectAndGetInstance(link);
+    ws.triggerOpen();
+
+    const seen: Array<[number, string]> = [];
+    link.onTerminal((c, reason) => seen.push([c, reason]));
+
+    ws.triggerClose(code, "run not found");
+    await new Promise((r) => setTimeout(r, 50));
+
+    assert.deepEqual(seen, [[code, "run not found"]]);
+    assert.equal(FakeWebSocket.instances.length, 1); // no reconnect attempt
+  });
+}
+
+test("Link: close code 1011 (server internal error) keeps reconnecting, not terminal", async (t) => {
+  const link = makeLink();
+  t.after(() => link.close());
+  const ws1 = await connectAndGetInstance(link);
+  ws1.triggerOpen();
+
+  const seen: Array<[number, string]> = [];
+  link.onTerminal((c, reason) => seen.push([c, reason]));
+
+  ws1.triggerClose(1011, "internal error");
+  await waitFor(() => FakeWebSocket.instances.length === 2);
+
+  assert.deepEqual(seen, []);
+});
+
+test("Link: an unrecognized close code also keeps reconnecting", async (t) => {
+  const link = makeLink();
+  t.after(() => link.close());
+  const ws1 = await connectAndGetInstance(link);
+  ws1.triggerOpen();
+  ws1.triggerClose(1005, "");
+  await waitFor(() => FakeWebSocket.instances.length === 2);
+});
+
+// --- backoff only resets once a connection is stable, or acked ---------------------------------
+
+test("Link: attempt/backoff is NOT reset just by 'open' -- a server that closes immediately keeps growing backoff up to the cap", async (t) => {
+  const link = makeLink({ backoffBaseMs: 5, backoffMaxMs: 30, stableAfterMs: 10_000 });
+  t.after(() => link.close());
+
+  // Flap three times: open then immediately close, never staying open long enough to be "stable"
+  // and never sending an ack/run.spec. Reconnects happen automatically via scheduleReconnect --
+  // never call connect() again here, or it would open a new socket immediately and bypass backoff.
+  let ws = await connectAndGetInstance(link, 1);
+  ws.triggerOpen();
+  ws.triggerClose(1006, "");
+  await waitFor(() => FakeWebSocket.instances.length === 2);
+  ws = FakeWebSocket.instances[1];
+  ws.triggerOpen();
+  ws.triggerClose(1006, "");
+  await waitFor(() => FakeWebSocket.instances.length === 3);
+  ws = FakeWebSocket.instances[2];
+  ws.triggerOpen();
+  const before = Date.now();
+  ws.triggerClose(1006, "");
+  await waitFor(() => FakeWebSocket.instances.length === 4);
+  const elapsed = Date.now() - before;
+  // attempt has grown to 2 by the third close (0 -> 1 -> 2), so the 4th reconnect waits
+  // min(30, 5 * 2**2) = 20ms, not the base 5ms it would be if 'open' had reset attempt each time.
+  assert.ok(elapsed >= 15, `expected backoff to have grown past the base delay, got ${elapsed}ms`);
+});
+
+test("Link: backoff resets once a connection stays open for stableAfterMs", async (t) => {
+  const link = makeLink({ backoffBaseMs: 5, backoffMaxMs: 30, stableAfterMs: 20 });
+  t.after(() => link.close());
+
+  let ws = await connectAndGetInstance(link, 1);
+  ws.triggerOpen();
+  ws.triggerClose(1006, ""); // attempt -> 1, no stability reached
+  await waitFor(() => FakeWebSocket.instances.length === 2);
+  ws = FakeWebSocket.instances[1];
+  ws.triggerOpen();
+  // Stay open long enough to become "stable" this time.
+  await new Promise((r) => setTimeout(r, 30));
+  const before = Date.now();
+  ws.triggerClose(1006, "");
+  await waitFor(() => FakeWebSocket.instances.length === 3);
+  const elapsed = Date.now() - before;
+  // attempt was reset to 0 by the stability timer, so this reconnect uses the base delay (~5ms),
+  // not a grown backoff.
+  assert.ok(elapsed < 20, `expected backoff to have reset to the base delay, got ${elapsed}ms`);
+});
+
+test("Link: backoff resets immediately once an ack or run.spec arrives, without waiting for stableAfterMs", async (t) => {
+  const link = makeLink({ backoffBaseMs: 5, backoffMaxMs: 30, stableAfterMs: 10_000 });
+  t.after(() => link.close());
+
+  let ws = await connectAndGetInstance(link, 1);
+  ws.triggerOpen();
+  ws.triggerClose(1006, ""); // attempt -> 1
+  await waitFor(() => FakeWebSocket.instances.length === 2);
+  ws = FakeWebSocket.instances[1];
+  ws.triggerOpen();
+  ws.triggerMessage({ t: "ack", seq: 0 }); // real progress -- reset attempt right away
+  const before = Date.now();
+  ws.triggerClose(1006, "");
+  await waitFor(() => FakeWebSocket.instances.length === 3);
+  const elapsed = Date.now() - before;
+  assert.ok(elapsed < 20, `expected an ack to reset backoff immediately, got ${elapsed}ms`);
+});
+
+// --- maxUnspecMs: give up if run.spec never arrives ---------------------------------------------
+
+test("Link: onUnspecTimeout fires once if run.spec never arrives within maxUnspecMs", async (t) => {
+  const link = makeLink({ maxUnspecMs: 20, backoffBaseMs: 5, backoffMaxMs: 10 });
+  t.after(() => link.close());
+
+  let fired = 0;
+  link.onUnspecTimeout(() => fired++);
+
+  const ws = await connectAndGetInstance(link);
+  ws.triggerOpen(); // opens fine, but never sends run.spec
+
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(fired, 1);
+});
+
+test("Link: onUnspecTimeout does not fire once run.spec has arrived", async (t) => {
+  const link = makeLink({ maxUnspecMs: 20, backoffBaseMs: 5, backoffMaxMs: 10 });
+  t.after(() => link.close());
+
+  let fired = 0;
+  link.onUnspecTimeout(() => fired++);
+
+  const ws = await connectAndGetInstance(link);
+  ws.triggerOpen();
+  ws.triggerMessage({
+    t: "run.spec",
+    session: { id: "s1", name: "n", cwd: "/workspace" },
+    guru: { model: "m" },
+    snapshot: {},
+    secrets: {},
+    idleStopSeconds: 60,
+    checkpointEvery: 5,
+  });
+
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(fired, 0);
 });

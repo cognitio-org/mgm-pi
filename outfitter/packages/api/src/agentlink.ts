@@ -18,6 +18,11 @@ import { resolveRunModel } from "./laptop.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
+/** Thrown by buildRunSpec when a repo session has no usable GitHub token secret; handleConnection
+ * catches it specifically to close the socket with a clear 1011 reason instead of the generic
+ * "internal error" other buildRunSpec failures get. */
+export class MissingGithubTokenError extends Error {}
+
 interface PendingRequest {
   runId: string;
   resolve: (frame: UpFrame) => void;
@@ -103,6 +108,41 @@ export class AgentLink {
   }
 
   /**
+   * Starts the down-message queue poller: every `intervalMs` (config.downQueuePollMs), for each
+   * run whose socket lives in *this* process and whose state is running/idle, drains anything
+   * queued in the store and sends it. Needed because outfitter-api (web role) and outfitter-link
+   * (link role) are separate Cloud Run services sharing one Atlas store: a message posted by the
+   * web role for a run whose socket is on a link instance only reaches the store
+   * (`enqueueDownMessage`, in `send` below), and would otherwise sit there until that run's next
+   * `hello`/first-ready `status` frame. `drainDownMessages` is an atomic pop (MongoStore:
+   * findOneAndUpdate; MemoryStore: single-threaded swap), so two processes racing to drain the
+   * same run's queue never double-deliver. Only meant for the "link" (or "all") role — the web
+   * role never holds agentd sockets, so server.ts doesn't start this there.
+   */
+  startDownQueuePoller(intervalMs = this.config.downQueuePollMs): () => void {
+    const timer = setInterval(() => {
+      this.pollDownQueuesOnce().catch(() => {
+        // transient store hiccup; next tick retries
+      });
+    }, intervalMs);
+    timer.unref?.();
+    return () => clearInterval(timer);
+  }
+
+  /** One poll pass, run by startDownQueuePoller's interval. Public so tests can trigger a drain
+   * deterministically instead of racing a real timer (an unref'd interval with nothing else
+   * keeping the event loop alive may never actually fire in a short-lived test process). */
+  async pollDownQueuesOnce(): Promise<void> {
+    for (const [runId, socket] of this.sockets) {
+      if (socket.readyState !== socket.OPEN) continue;
+      const run = await this.store.runs.findById(runId);
+      if (!run || !isReadyState(run.state)) continue;
+      const pending = await this.store.runs.drainDownMessages(runId);
+      for (const message of pending) socket.send(JSON.stringify(message));
+    }
+  }
+
+  /**
    * Sends a down-message now if the run has a live socket *and* agentd has already reported it
    * running/idle, else queues it in the store for delivery once that happens (the "hello" and
    * "status" handlers below both drain the queue when the run becomes ready). A run that is still
@@ -178,7 +218,16 @@ export class AgentLink {
       });
     });
 
-    const spec = await this.buildRunSpec(runId, session, guru);
+    let spec: RunSpecMessage;
+    try {
+      spec = await this.buildRunSpec(runId, session, guru);
+    } catch (err) {
+      if (err instanceof MissingGithubTokenError) {
+        request.log.warn(err, "run.spec build failed: missing github token secret");
+        return closeQuietly(socket, 1011, err.message);
+      }
+      throw err;
+    }
     socket.send(JSON.stringify(spec));
   }
 
@@ -200,6 +249,17 @@ export class AgentLink {
     });
 
     const secrets = await this.secretsBroker.secretsForRun(session, guru);
+    // GcpSecretsBroker (secrets.ts) resolves a missing `outfitter-github-token-<sessionId>` secret
+    // to "" rather than throwing, so a session with no repo (which needs no GitHub token at all)
+    // is never blocked by it. A *repo* session with an empty token would otherwise agentd-clone
+    // with no credentials and fail confusingly deep inside the sandbox; fail fast here instead,
+    // with a reason the agentd/operator can act on.
+    if (session.repo && !secrets.githubToken) {
+      // Close reasons are capped at 123 UTF-8 bytes by the WebSocket protocol; keep this short
+      // even for a long (e.g. UUID) session id. The full secret name is in the server log line
+      // above instead.
+      throw new MissingGithubTokenError(`missing github token secret for session ${session.id}`);
+    }
     return {
       t: "run.spec",
       session: { id: session.id, name: session.name ?? session.id, cwd: "/workspace" },

@@ -28,7 +28,8 @@ export interface App {
   agentLink: AgentLink;
   sse: SseHub;
   laptopProbe: LaptopProbe;
-  /** Stops the run reconciler interval; call from tests and from main.ts on shutdown. */
+  /** Stops the run reconciler interval and (role link/all) the down-queue poller; call from tests
+   * and from main.ts on shutdown. */
   stopReconciler: () => void;
 }
 
@@ -74,9 +75,20 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   }
 
   await registerRoutes(fastify, { store, config, runs, agentLink, sse, laptopProbe });
-  if (config.role !== "web") agentLink.register(fastify);
+  // The down-queue poller only makes sense where AgentLink sockets actually live (role "link" or
+  // "all", same condition as registering /agent/ws itself) — see agentLink.startDownQueuePoller's
+  // doc comment. The web role never holds a socket for any run, so it's never started there.
+  let stopDownQueuePoller: (() => void) | undefined;
+  if (config.role !== "web") {
+    agentLink.register(fastify);
+    stopDownQueuePoller = agentLink.startDownQueuePoller();
+  }
 
-  const stopReconciler = runs.startReconciler();
+  const stopRunReconciler = runs.startReconciler();
+  const stopReconciler = () => {
+    stopRunReconciler();
+    stopDownQueuePoller?.();
+  };
 
   return { fastify, runs, agentLink, sse, laptopProbe, stopReconciler };
 }

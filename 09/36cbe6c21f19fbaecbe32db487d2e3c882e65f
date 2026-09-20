@@ -1,0 +1,32 @@
+outfitter/packages/api/src/routes/gurus.ts
+  s_2209f22f830d7f::t_26b3467200af21 15-33
+outfitter/packages/api/src/agentlink.ts
+  s_2209f22f830d7f::t_f1ded73617fec7 60-63
+  s_2209f22f830d7f::t_762740da830092 403
+outfitter/packages/agentd/src/run.ts
+  s_2209f22f830d7f::t_43f3e44d6774ab 386-390
+outfitter/packages/agentd/src/protocol.ts
+  s_2209f22f830d7f::t_c53f1d93430b4a 168-173
+outfitter/packages/agentd/src/guru.ts
+  s_2209f22f830d7f::t_109a5a0e5f1eb3 38-55
+outfitter/packages/api/test/gurus.test.ts
+  s_2209f22f830d7f::t_573d8be35f59d1 11-22
+outfitter/packages/agentd/test/guru.test.ts
+  s_2209f22f830d7f::t_5946bf6ffdfb20 76,88-90,96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "0936cbe6c21f19fbaecbe32db487d2e3c882e65f",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

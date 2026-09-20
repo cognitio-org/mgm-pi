@@ -1,0 +1,25 @@
+mgm/tests/extensions.test.ts
+  s_25c805ebe232f3::t_b670859a729d6b 8,214-215,220-283,285-289
+  s_25c805ebe232f3::t_f065ebf5ff7d72 216-219,284
+  s_25c805ebe232f3::t_856891eda009c9 290
+mgm/.pi/extensions/connect/index.ts
+  s_25c805ebe232f3::t_b670859a729d6b 60,65,72,97,144-145
+mgm/tests/harness.ts
+  s_25c805ebe232f3::t_b670859a729d6b 79-92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "702fc0b32b17edecb079ee7483e2e3416621ee05",
+  "prompts": {},
+  "sessions": {
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -3,6 +3,7 @@
 #   mgm                      interactive, in the current repo
 #   mgm -p "prompt"          non-interactive
 #   mgm --model litellm/claude-sonnet-5:high
+#   mgm --teleport <id>      pull a session pushed from another machine (see /teleport), then open it
 # Config (extensions, packages, settings, sessions) lives in <bundle or checkout>/.pi;
 # secrets come from ~/localllm/.env and are exported so packages (pi-mcp-adapter) can use ${VAR}.
 set -euo pipefail
@@ -46,6 +47,17 @@ case "${1:-}" in
         || { echo "mgm: could not download the installer — log in with 'gh auth login' or set GH_TOKEN" >&2; exit 1; }
     fi
     MGM_HOME="$(cd -P "$ROOT/.." && pwd)" MGM_VERSION="${2:-}" bash "$tmp/install.sh"; exit $? ;;
+  --teleport)
+    # pi has no "run a slash command at startup" flag, so the pull happens here, headlessly, before
+    # pi starts: .pi/extensions/teleport/cli.ts fetches the session from the store, checks out the
+    # matching repo branch, imports it for this cwd and prints the session file; pi opens that.
+    # (cli.ts uses its own process.cwd(), which node resolves symlinks in the same way pi does.)
+    id="${2:-}"
+    if [[ -z "$id" || "$id" == -* ]]; then echo "Usage: mgm --teleport <session-id> [pi args...]" >&2; exit 1; fi
+    shift 2
+    session_path="$(node "$ROOT/.pi/extensions/teleport/cli.ts" "$id")"
+    if [[ -x "$ROOT/pi/pi" ]]; then PI="$ROOT/pi/pi"; else PI="$ROOT/node_modules/.bin/pi"; fi
+    exec "$PI" -a --session "$session_path" "$@" ;;
 esac
 
 # Make sure the local model is resident so pi does not stall on LM Studio's just-in-time reload.

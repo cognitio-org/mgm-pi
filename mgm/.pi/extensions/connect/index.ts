@@ -23,9 +23,26 @@ import {
   sessionEstimate, money, footerStatus, budgetRows, renderPanel,
 } from "./lib.ts";
 
+/** The .env that /setup writes: next to the agent dir (bundle root or the mgm/ checkout). */
+export function envFilePath(): string {
+  const agentDir = process.env.PI_CODING_AGENT_DIR;
+  return agentDir ? join(agentDir, "..", ".env") : join(homedir(), "localllm", ".env");
+}
+export function upsertEnv(text: string, values: Record<string, string | undefined>): string {
+  const lines = text ? text.split("\n") : [];
+  const seen = new Set<string>();
+  const out = lines.map((line) => {
+    const m = line.match(/^\s*(?:export\s+)?([A-Z0-9_]+)\s*=/);
+    if (m && m[1] in values) { seen.add(m[1]); return values[m[1]] === undefined ? line : `${m[1]}=${values[m[1]]}`; }
+    return line;
+  });
+  for (const [k, v] of Object.entries(values)) if (!seen.has(k) && v !== undefined) out.push(`${k}=${v}`);
+  return out.join("\n").replace(/\n*$/, "\n");
+}
+
 function loadEnv(cwd: string): Record<string, string> {
   let out: Record<string, string> = {};
-  for (const f of [join(homedir(), "localllm", ".env"), join(cwd, "..", ".env"), join(cwd, ".env")]) {
+  for (const f of [join(homedir(), "localllm", ".env"), envFilePath(), join(cwd, "..", ".env"), join(cwd, ".env")]) {
     if (existsSync(f)) out = { ...out, ...parseEnvText(readFileSync(f, "utf8")) };
   }
   return { ...out, ...(process.env as Record<string, string>) };
@@ -68,18 +85,62 @@ function saveDefault(provider: string, model: string) {
 }
 
 export default async function (pi: ExtensionAPI) {
-  const env = loadEnv(process.cwd());
   const litellmMeta = new Map<string, ModelMeta>();
   const lmstudioMeta = new Map<string, LmStudioMeta>();
-  const defs = backends(env, litellmMeta, lmstudioMeta);
+  let defs: Backend[] = [];
   const models = new Map<string, string[]>();
 
-  await Promise.all(defs.map(async (b) => {
-    const ids = await discover(b, litellmMeta, lmstudioMeta);
-    models.set(b.id, ids);
-    pi.registerProvider(b.id, { name: b.label, baseUrl: b.baseUrl, apiKey: b.apiKey, api: "openai-completions", models: ids.map(b.model) as any });
-  }));
+  async function registerAll(envOverride?: Record<string, string>) {
+    const env = { ...loadEnv(process.cwd()), ...(envOverride ?? {}) };
+    litellmMeta.clear(); lmstudioMeta.clear();
+    defs = backends(env, litellmMeta, lmstudioMeta);
+    await Promise.all(defs.map(async (b) => {
+      const ids = await discover(b, litellmMeta, lmstudioMeta);
+      models.set(b.id, ids);
+      pi.registerProvider(b.id, { name: b.label, baseUrl: b.baseUrl, apiKey: b.apiKey, api: "openai-completions", models: ids.map(b.model) as any });
+    }));
+  }
+  await registerAll();
   const byId = (id: string) => defs.find((d) => d.id === id);
+
+  // ---------- /setup: first-run wizard, writes .env and re-registers providers live ----------
+  pi.registerCommand("setup", {
+    description: "Configure your name, local model server, LiteLLM router and OpenRouter (writes .env)",
+    handler: async (_args, ctx) => {
+      if (!ctx.hasUI) { ctx.ui.notify(`Edit ${envFilePath()} (see .env.example); /setup needs the interactive UI`, "warning"); return; }
+      const cur = loadEnv(process.cwd());
+      const ask = async (title: string, current: string | undefined, placeholder?: string) => { const v = await ctx.ui.input(current ? `${title}  (current: ${current})` : title, placeholder ?? current ?? ""); return v === undefined ? undefined : v.trim(); };
+      const values: Record<string, string | undefined> = {};
+      const name = await ask("Your name (shown in the banner)", cur.MGM_USER, cur.MGM_USER || process.env.USER); if (name === undefined) return; if (name) values.MGM_USER = name;
+
+      const useLocal = await ctx.ui.select("Local model server (LM Studio or any OpenAI-compatible server)", ["Yes, configure it", "No local model on this machine"]);
+      if (useLocal === undefined) return;
+      if (useLocal.startsWith("Yes")) {
+        const url = await ask("Local server URL", cur.LMSTUDIO_BASE_URL || "http://localhost:1234/v1"); if (url === undefined) return; values.LMSTUDIO_BASE_URL = url;
+        const native = await getJson(`${rootUrl(url)}/api/v0/models`, "lm-studio");
+        const listed = native ? [...parseLmStudioModels(native).entries()].map(([id, m]) => `${id}${m.loaded ? "  (loaded)" : ""}`) : ((await getJson(`${url}/models`, "lm-studio"))?.data ?? []).map((m: any) => String(m.id));
+        let model: string | undefined;
+        if (listed.length) { const pick = await ctx.ui.select("Default local model", [...listed, "type another id"]); if (pick === undefined) return; model = pick === "type another id" ? undefined : pick.split("  ")[0]; }
+        if (!model) { model = await ask("Local model id", cur.LMSTUDIO_MODEL); if (model === undefined) return; }
+        if (model) values.LMSTUDIO_MODEL = model;
+        if (!listed.length) ctx.ui.notify(`Could not reach ${url}; saved anyway. Start the server and run /setup again to pick a model.`, "warning");
+      }
+      const llUrl = await ask("LiteLLM router URL", cur.LITELLM_BASE_URL || "https://litellm.augment-code.support/v1"); if (llUrl === undefined) return; values.LITELLM_BASE_URL = llUrl;
+      const llKey = await ask("LiteLLM key for this agent (ask Matthew for one; leave blank to skip)", cur.LITELLM_AGENT_KEY ? "sk-…" + cur.LITELLM_AGENT_KEY.slice(-4) : undefined, ""); if (llKey === undefined) return; if (llKey && !llKey.startsWith("sk-…")) values.LITELLM_AGENT_KEY = llKey;
+      const orKey = await ask("OpenRouter API key (openrouter.ai/keys; blank to skip)", cur.OPENROUTER_API_KEY ? "sk-or-…" + cur.OPENROUTER_API_KEY.slice(-4) : undefined, ""); if (orKey === undefined) return; if (orKey && !orKey.startsWith("sk-or-…")) values.OPENROUTER_API_KEY = orKey;
+
+      const file = envFilePath();
+      let text = ""; try { text = readFileSync(file, "utf8"); } catch {}
+      writeFileSync(file, upsertEnv(text, values));
+      for (const [k, v] of Object.entries(values)) if (v !== undefined) process.env[k] = v;
+      await registerAll();
+      const ok = defs.filter((d) => d.apiKey).map((d) => d.id);
+      ctx.ui.notify(`Saved ${file}. Connections ready: ${ok.join(", ") || "none"}. Use /connect to pick a model.`, "info");
+    },
+  });
+  pi.on("session_start", async (_ev, ctx) => {
+    if (ctx.hasUI && !defs.some((d) => d.id !== "lmstudio" && d.apiKey) && !(models.get("lmstudio") ?? []).length) ctx.ui.notify("No model connections configured yet. Run /setup.", "warning");
+  });
 
   // ---------- /connect ----------
   async function connect(ctx: ExtensionCommandContext, backendId?: string, modelId?: string) {

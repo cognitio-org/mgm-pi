@@ -9,6 +9,20 @@ with a `/connect` command that switches between three backends:
 | `litellm` | Cloud router `litellm.augment-code.support` | discovered live, scoped to the agent key's team |
 | `openrouter` | openrouter.ai | curated list, override with `OPENROUTER_MODELS` |
 
+## Quick start for a new user
+
+1. Install a release (see *Releases and installing without Node*), or clone and `npm install` here.
+2. Run `mgm` from any project directory. The first time, type `/setup`: it asks your name, your
+   local model server (LM Studio by default: it lists the models the server offers and you pick
+   one), the shared LiteLLM router key (ask Matthew), and your own OpenRouter key. It writes `.env`
+   next to the install and connects immediately, no restart.
+3. `/connect` picks a backend and model at any time; `/model` is pi's own picker; `/budget` shows
+   what a session costs on the router.
+
+The banner shows your block letters: **MGM** for Matthew, **TEJ** for Matej (recognised from
+`MGM_USER`, git email, GitHub login or OS user), initials for anyone else, with an entrance
+animation for recognised users (`MGM_NO_ANIMATION=1` skips it).
+
 ## Run (from any repo)
 
 ```bash
@@ -38,7 +52,8 @@ Non-interactive: `npx pi -a -p --model lmstudio/qwen/qwen3.6-35b-a3b "prompt"` (
 
 ## Secrets
 
-Read from `~/localllm/.env` (shared with the rest of the localllm project), then `./.env`:
+`/setup` writes them; or edit by hand (`.env.example` documents every key). Read from
+`~/localllm/.env` (a source checkout), then the `.env` next to the agent dir (a release bundle):
 
 - `LITELLM_AGENT_KEY` — the agent's own LiteLLM virtual key (its team decides which models and MCP servers appear). Falls back to `LITELLM_API_KEY` if unset.
 - `OPENROUTER_API_KEY` — from openrouter.ai
@@ -166,7 +181,7 @@ gh release create v0.2.0 --title "mgm 0.2.0" --notes "..."          # → CI bui
 scripts/package.sh 0.2.0 darwin-arm64                               # the same build, locally → dist/
 
 # install (user)
-curl -fsSL https://github.com/mgmonteleone/localllm/releases/latest/download/install.sh | GH_TOKEN=... bash
+curl -fsSL https://github.com/mgmonteleone/mgm-pi/releases/latest/download/install.sh | GH_TOKEN=... bash
 cp ~/.mgm/current/.env.example ~/.mgm/current/.env   # add keys; kept across upgrades
 mgm
 ```

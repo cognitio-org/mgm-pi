@@ -189,25 +189,64 @@ describe("connect extension", async () => {
     assert.equal(local.statuses.get("budget"), undefined, "no budget status off LiteLLM");
     assert.equal(local.statuses.get("connect"), "⇄ lmstudio/qwen/qwen3.6-35b-a3b");
   });
+
+  test("/setup writes .env next to the agent dir and re-registers providers with the new keys", async () => {
+    const ctx = ctxWith();
+    // name, local server yes, unreachable URL (→ typed model id), litellm url, litellm key, openrouter key
+    ctx.answers.push("Matej", "Yes, configure it", "http://127.0.0.1:9/v1", "my-local-model", "https://litellm.augment-code.support/v1", "sk-new-key", "sk-or-new");
+    await pi.commands.get("setup")!.handler("", ctx);
+    const env = store.env();
+    for (const line of ["MGM_USER=Matej", "LMSTUDIO_BASE_URL=http://127.0.0.1:9/v1", "LMSTUDIO_MODEL=my-local-model", "LITELLM_AGENT_KEY=sk-new-key", "OPENROUTER_API_KEY=sk-or-new"]) assert.ok(env.includes(line + "\n"), line);
+    assert.ok(ctx.notices.some((n) => n.type === "warning" && n.msg.includes("Could not reach")));
+    assert.match(ctx.notices.at(-1)!.msg, /Connections ready: lmstudio, litellm, openrouter/);
+    const litellm = pi.providers.filter((p) => p.name === "litellm").at(-1)!;
+    assert.equal(litellm.config.apiKey, "sk-new-key", "providers re-registered live");
+    assert.equal(pi.providers.filter((p) => p.name === "lmstudio").at(-1)!.config.models[0].id, "my-local-model");
+    // second run keeps existing keys when left blank and updates only the name
+    ctx.answers.push("Matej Monteleone", "No local model on this machine", "https://litellm.augment-code.support/v1", "", "");
+    await pi.commands.get("setup")!.handler("", ctx);
+    const env2 = store.env();
+    assert.ok(env2.includes("MGM_USER=Matej Monteleone\n") && env2.includes("LITELLM_AGENT_KEY=sk-new-key\n") && env2.includes("OPENROUTER_API_KEY=sk-or-new\n"));
+    assert.equal((env2.match(/^MGM_USER=/gm) ?? []).length, 1, "keys are updated in place, not duplicated");
+    process.env.LITELLM_AGENT_KEY = "sk-test"; delete process.env.OPENROUTER_API_KEY; delete process.env.MGM_USER; delete process.env.LMSTUDIO_MODEL; delete process.env.LMSTUDIO_BASE_URL;
+  });
+
+  test("non-UI /setup points at the env file", async () => {
+    const ctx = ctxWith({ hasUI: false });
+    await pi.commands.get("setup")!.handler("", ctx);
+    assert.match(ctx.notices.at(-1)!.msg, /Edit .*\.env/);
+  });
 });
 
 describe("mgm banner extension", async () => {
   const mod = await import("../.pi/extensions/mgm-banner/index.ts");
-  test("installs a width-safe header on session start and can restore the built-in one", async () => {
+  test("detects the user, installs an animated width-safe header, and can restore the built-in one", async () => {
+    process.env.MGM_USER = "matej";
+    assert.deepEqual([mod.detectIdentity().letters, mod.detectIdentity().known], ["TEJ", true]);
     const pi = makePi(); mod.default(pi as any);
     const ctx = makeCtx({ model: { provider: "litellm", id: "claude-sonnet-5", contextWindow: 1, maxTokens: 1 } });
     await pi.emit("session_start", {}, ctx);
     assert.ok(ctx.header, "header factory installed");
     const ESC = String.fromCharCode(27);
     const theme = { fg: (_c: string, t: string) => `${ESC}[1m${t}${ESC}[0m` };
-    for (const width of [40, 47, 80, 140]) {
-      const lines = ctx.header({}, theme).render(width);
-      for (const l of lines) assert.ok(visibleWidth(l) <= width, `width ${width}: ${visibleWidth(l)}`);
-      if (width >= 64) assert.ok(lines.some((l: string) => l.includes("██")), "block letters on wide terminals");
-      else assert.ok(lines.some((l: string) => l.includes("▌MGM▐")), "compact form on narrow terminals");
-      assert.ok(lines.some((l: string) => l.includes("● litellm")));
-    }
+    let renders = 0; const tui = { requestRender: () => { renders++; } };
+    const comp = ctx.header(tui, theme);
+    const first = comp.render(120);
+    assert.ok(!first.join("").includes("█"), "frame 0 of the entrance animation shows no letters yet");
+    await new Promise((r) => setTimeout(r, 45 * 30));
+    assert.ok(renders >= 15, `animation requested re-renders (${renders})`);
+    const done = comp.render(120);
+    assert.ok(done.some((l: string) => l.includes("welcome back, Matej")) && done.join("").includes("█"));
+    for (const width of [40, 47, 80, 140]) for (const l of comp.render(width)) assert.ok(visibleWidth(l) <= width, `width ${width}`);
+    comp.dispose?.();
     await pi.commands.get("builtin-header")!.handler("", ctx);
     assert.equal(ctx.header, undefined);
+  });
+  test("MGM_NO_ANIMATION renders the finished banner immediately", async () => {
+    process.env.MGM_NO_ANIMATION = "1"; process.env.MGM_USER = "mgm";
+    const pi = makePi(); mod.default(pi as any);
+    const ctx = makeCtx({}); await pi.emit("session_start", {}, ctx);
+    assert.ok(ctx.header({ requestRender() {} }, { fg: (_c: string, t: string) => t }).render(120).join("").includes("█"));
+    delete process.env.MGM_NO_ANIMATION;
   });
 });

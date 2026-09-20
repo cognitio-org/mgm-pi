@@ -1,5 +1,5 @@
 /** Fake pi ExtensionAPI and extension context for driving the entry points without pi. */
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -24,10 +24,11 @@ export function makePi() {
 }
 
 export function tmpAgentDir(settings: any = {}) {
-  const dir = mkdtempSync(join(tmpdir(), "mgm-test-"));
+  const root = mkdtempSync(join(tmpdir(), "mgm-test-"));
+  const dir = join(root, ".pi"); mkdirSync(dir);
   writeFileSync(join(dir, "settings.json"), JSON.stringify(settings, null, 2));
   process.env.PI_CODING_AGENT_DIR = dir;
-  return { dir, read: () => JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")), exists: () => existsSync(join(dir, "settings.json")) };
+  return { dir, root, read: () => JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")), exists: () => existsSync(join(dir, "settings.json")), env: () => (existsSync(join(root, ".env")) ? readFileSync(join(root, ".env"), "utf8") : "") };
 }
 
 export type FakeModel = { provider: string; id: string; contextWindow: number; maxTokens: number; cost?: any; reasoning?: boolean };

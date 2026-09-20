@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Install or update the mgm agent from a GitHub release bundle.
-#   curl -fsSL https://github.com/mgmonteleone/localllm/releases/latest/download/install.sh | bash
+#   curl -fsSL https://github.com/mgmonteleone/mgm-pi/releases/latest/download/install.sh | bash
 #   MGM_VERSION=0.2.0 ... | bash          # a specific release
 #   MGM_HOME=~/tools/mgm ... | bash        # install location (default ~/.mgm)
 # Needs curl and tar; for a private repo either the gh CLI (logged in) or GH_TOKEN plus python3. Puts `mgm` on PATH via ~/.local/bin.
 set -euo pipefail
-REPO="mgmonteleone/localllm"; HOME_DIR="${MGM_HOME:-$HOME/.mgm}"; BIN_DIR="${MGM_BIN:-$HOME/.local/bin}"
+REPO="mgmonteleone/mgm-pi"; HOME_DIR="${MGM_HOME:-$HOME/.mgm}"; BIN_DIR="${MGM_BIN:-$HOME/.local/bin}"
 os=$(uname -s | tr '[:upper:]' '[:lower:]'); arch=$(uname -m | sed 's/x86_64/x64/; s/aarch64/arm64/')
 case "$os-$arch" in darwin-arm64|darwin-x64|linux-x64|linux-arm64) platform="$os-$arch" ;; *) echo "unsupported platform $os-$arch" >&2; exit 1 ;; esac
 auth=(); [[ -n "${GH_TOKEN:-}" ]] && auth=(-H "Authorization: Bearer $GH_TOKEN")

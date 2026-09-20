@@ -9,7 +9,7 @@
     "start": "node src/main.ts",
     "typecheck": "tsc -p tsconfig.json",
     "pretest": "npm run typecheck",
-    "test": "node --test test/"
+    "test": "node --test 'test/*.test.ts'"
   },
   "dependencies": {
     "@fastify/static": "^10.1.4",

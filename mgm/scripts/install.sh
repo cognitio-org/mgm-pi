@@ -43,5 +43,8 @@ ln -sfn "$HOME_DIR/$name" "$HOME_DIR/current"
 [[ -n "$keep_env" ]] && printf '%s\n' "$keep_env" > "$HOME_DIR/current/.env"
 ln -sf "$HOME_DIR/current/bin/mgm" "$BIN_DIR/mgm"
 echo "installed: $HOME_DIR/current  →  $BIN_DIR/mgm"
+if ! command -v rec >/dev/null 2>&1 && ! command -v ffmpeg >/dev/null 2>&1 && ! command -v arecord >/dev/null 2>&1; then
+  case "$os" in darwin) echo "voice input needs an audio capture tool: brew install sox" ;; linux) echo "voice input needs an audio capture tool: sudo apt install sox" ;; esac
+fi
 [[ -f "$HOME_DIR/current/.env" ]] || echo "next: cp $HOME_DIR/current/.env.example $HOME_DIR/current/.env and add your keys"
 case ":$PATH:" in *":$BIN_DIR:"*) ;; *) echo "add $BIN_DIR to your PATH" ;; esac

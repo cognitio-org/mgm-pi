@@ -221,6 +221,18 @@ temporary agent dir for settings persistence. `tests/resolve-pi.mjs` lets plain 
 nested `pi-ai` / `pi-tui` packages the way pi does for extensions. `MGM_NO_DISCOVERY=1` skips the
 network model discovery (used by the tests; also handy offline).
 
+## Voice input (pi-listen)
+
+Hold **ctrl+shift+v** and talk; release to transcribe into the prompt. pi-listen ships in the
+bundle, but on its own it defaults to Deepgram (cloud, API key) and reads its config from the
+user's global `~/.pi/agent/settings.json`. `.pi/extensions/mgm-voice/` seeds a fully local setup
+there the first time mgm starts, if nothing is configured yet: backend `local`, model
+`parakeet-v3` (pi-listen's recommended offline model, ~670 MB, downloaded on first use with a
+progress bar), language from your locale. It never overrides an existing choice; `/voice-settings`
+changes model, language or backend, `MGM_VOICE_MODEL` picks another default, `MGM_VOICE=off`
+disables the seeding. Audio capture needs SoX (`brew install sox`) or ffmpeg; mgm and the installer
+say so when neither is found.
+
 ## Startup banner
 
 `.pi/extensions/mgm-banner/` replaces pi's header with block-letter MGM, the provider indicator

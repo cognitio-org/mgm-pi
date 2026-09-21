@@ -22,6 +22,8 @@ import type {
   UsersCollection,
   ProviderRecord,
   ProvidersCollection,
+  ApiToken,
+  TokensCollection,
 } from "./types.ts";
 
 // Typed as RunState[], not inferred as string[]: used in a Mongo `$in` filter against Run.state,
@@ -279,6 +281,47 @@ class MongoProviders implements ProvidersCollection {
   }
 }
 
+class MongoTokens implements TokensCollection {
+  private readonly col: MongoCollection<ApiToken & { _id: string }>;
+
+  constructor(col: MongoCollection<ApiToken & { _id: string }>) {
+    this.col = col;
+  }
+
+  async insert(token: ApiToken): Promise<void> {
+    await this.col.insertOne({ ...token, _id: token.id });
+  }
+
+  async findById(id: string): Promise<ApiToken | null> {
+    return stripId<ApiToken>(await this.col.findOne({ _id: id }));
+  }
+
+  async findByHash(hash: string): Promise<ApiToken | null> {
+    return stripId<ApiToken>(await this.col.findOne({ hash }));
+  }
+
+  async listActiveForOwner(ownerEmail: string): Promise<ApiToken[]> {
+    const rows = await this.col
+      .find({ ownerEmail, revokedAt: { $exists: false } })
+      .sort({ createdAt: -1 })
+      .toArray();
+    return rows.map((r) => stripIdStrict<ApiToken>(r));
+  }
+
+  async countActiveForOwner(ownerEmail: string): Promise<number> {
+    return this.col.countDocuments({ ownerEmail, revokedAt: { $exists: false } });
+  }
+
+  async update(id: string, patch: Partial<ApiToken>): Promise<ApiToken | null> {
+    const result = await this.col.findOneAndUpdate(
+      { _id: id },
+      { $set: patch },
+      { returnDocument: "after" },
+    );
+    return stripId<ApiToken>(result);
+  }
+}
+
 function isDuplicateKeyError(err: unknown): boolean {
   return typeof err === "object" && err !== null && "code" in err && (err as { code?: number }).code === 11000;
 }
@@ -291,6 +334,7 @@ export class MongoStore implements Store {
   readonly environments: EnvironmentsCollection;
   readonly users: UsersCollection;
   readonly providers: ProvidersCollection;
+  readonly tokens: TokensCollection;
   private readonly client: MongoClient;
 
   private constructor(client: MongoClient, db: Db) {
@@ -302,6 +346,7 @@ export class MongoStore implements Store {
     this.environments = new MongoEnvironments(db.collection("environments"));
     this.users = new MongoUsers(db.collection("users"));
     this.providers = new MongoProviders(db.collection("providers"));
+    this.tokens = new MongoTokens(db.collection("tokens"));
   }
 
   /** `dbName` wins over the database in the URI; the stored URI has none, so the default keeps
@@ -321,6 +366,8 @@ export class MongoStore implements Store {
       db.collection("entries").createIndex({ sessionId: 1, seq: 1 }),
       db.collection("sessions").createIndex({ updatedAt: -1 }),
       db.collection("runs").createIndex({ sessionId: 1, state: 1 }),
+      db.collection("tokens").createIndex({ hash: 1 }, { unique: true }),
+      db.collection("tokens").createIndex({ ownerEmail: 1 }),
     ]);
   }
 

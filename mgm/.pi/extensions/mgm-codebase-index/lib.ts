@@ -66,8 +66,23 @@ export type IndexStatus = {
   mode?: string;           // hybrid | semantic
   model?: string;          // what the stored vectors were built with
   incompatible?: string;   // set when the store no longer matches the configured provider/model
+  running: boolean;        // a run is in progress right now
+  progress?: Progress;
   raw: string;
 };
+
+/** What the indexer reports while it works: "Auto-index progress: embedding 83% (128/478 files, 352/394 chunks)". */
+export type Progress = { phase: string; percent: number; files?: { done: number; total: number }; chunks?: { done: number; total: number } };
+
+export function parseProgress(text: string): Progress | undefined {
+  const m = text.match(/Auto-index progress:\s*(\w[\w -]*?)\s+(\d+)%\s*(?:\(([^)]*)\))?/);
+  if (!m) return undefined;
+  const counts = (label: string) => {
+    const c = (m[3] ?? "").match(new RegExp(`(\\d+)\\s*\\/\\s*(\\d+)\\s+${label}`));
+    return c ? { done: Number(c[1]), total: Number(c[2]) } : undefined;
+  };
+  return { phase: m[1].trim(), percent: Number(m[2]), files: counts("files"), chunks: counts("chunks") };
+}
 
 /** index_status prints human-readable lines; read the few facts a panel needs, keep the rest as raw. */
 export function parseStatus(text: string): IndexStatus {
@@ -75,12 +90,15 @@ export function parseStatus(text: string): IndexStatus {
   // The count is printed with thousands separators once an index is any size at all.
   const chunks = line(/Indexed chunks[^:]*:\s*([\d,]+)/)?.replace(/,/g, "");
   const compatibility = line(/Compatibility:\s*(.+)/);
+  const autoIndex = line(/Auto-index:\s*(.+)/);
   return {
+    running: /state:\s*(indexing|embedding|scanning|parsing)/i.test(autoIndex ?? "") || /state:\s*(indexing|embedding)/i.test(text),
+    progress: parseProgress(text),
     indexed: !/is not indexed/i.test(text) && Number(chunks ?? 0) > 0,
     chunks: chunks === undefined || chunks === "" ? undefined : Number(chunks),
     branch: line(/Current branch:\s*(.+)/),
     location: line(/Location:\s*(.+)/),
-    autoIndex: line(/Auto-index:\s*(.+)/),
+    autoIndex,
     mode: line(/Indexing mode:\s*(.+)/),
     model: line(/^Model:\s*(.+)$/m),
     incompatible: compatibility && !/is compatible/i.test(compatibility) ? compatibility : undefined,
@@ -172,9 +190,16 @@ const label = (text: string): Seg => [text.padEnd(9), "muted"];   // one column,
 export function panelRows(d: PanelData): Seg[][] {
   const s = d.status;
   const rows: Seg[][] = [];
-  rows.push(s.indexed
-    ? [label("index"), [`${s.chunks?.toLocaleString("en-US")} chunks`, "success"], [`  branch ${s.branch ?? "—"}${s.mode ? ` · ${s.mode}` : ""}`, "dim"]]
-    : [label("index"), ["not indexed", "warning"], ["  ask the agent to index this repo", "dim"]]);
+  if (s.running) {
+    const p = s.progress;
+    const percent = progressPercent(p);
+    rows.push([label("indexing"), [`${miniBar(percent)} `, "accent"], [`${percent}% `, "text"], [p?.phase ?? "working", "muted"]]);
+    if (p?.files) rows.push([label(""), [`${p.files.done}/${p.files.total} files`, "dim"], [p.chunks ? `  ${p.chunks.done}/${p.chunks.total} chunks` : "", "dim"]]);
+  } else {
+    rows.push(s.indexed
+      ? [label("index"), [`${s.chunks?.toLocaleString("en-US")} chunks`, "success"], [`  branch ${s.branch ?? "—"}${s.mode ? ` · ${s.mode}` : ""}`, "dim"]]
+      : [label("index"), ["not indexed", "warning"], ["  ask the agent to index this repo", "dim"]]);
+  }
   rows.push([label("project"), [d.project, "text"]]);
   if (s.location) rows.push([label("store"), [s.location, "dim"]]);
   const e = d.embeddings;
@@ -198,10 +223,32 @@ export function panelRows(d: PanelData): Seg[][] {
   return rows;
 }
 
-/** One-line status-bar entry. */
+/** One-line status-bar entry: progress while a run is going, the size of the index otherwise. */
 export function indexStatusLine(s: IndexStatus): string {
+  if (s.running) {
+    const p = s.progress;
+    if (!p) return "⌕ indexing…";
+    const files = p.files ? ` · ${p.files.done}/${p.files.total} files` : "";
+    return `⌕ ${p.phase} ${progressPercent(p)}%${files}`;
+  }
   return s.indexed ? `⌕ ${s.chunks} chunks` : "⌕ no index";
 }
+
+/**
+ * The indexer's own percentage is per batch, so it jumps backwards (83% then 72%). The file count is
+ * monotonic, so use it when it is there and keep the reported number only as a fallback.
+ */
+export function progressPercent(p: Progress | undefined): number {
+  if (!p) return 0;
+  if (p.files && p.files.total > 0) return Math.min(100, Math.round((p.files.done / p.files.total) * 100));
+  return Math.max(0, Math.min(100, p.percent));
+}
+
+/** A short inline bar, for the panel's progress row. */
+export const miniBar = (percent: number, width = 24) => {
+  const filled = Math.max(0, Math.min(width, Math.round((percent / 100) * width)));
+  return "█".repeat(filled) + "░".repeat(width - filled);
+};
 
 // ---------- actions ----------
 export type Action = { label: string; tool?: string; params?: Record<string, unknown>; kind?: "refresh" | "close" | "kb-add" | "kb-remove" | "settings" | "kb-hidden" | "kb-docs" };

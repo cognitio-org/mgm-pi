@@ -142,6 +142,12 @@ the model to reach for those before grepping, is copied into `.pi/skills/` by `s
 (pi installs a package's skills only for packages it manages, and this one is loaded by
 `.pi/extensions/mgm-codebase-index`).
 
+**While a run is going you can see it.** Indexing a large repository takes minutes, and the package
+reports progress only when asked, so a run the model started used to look like nothing happening.
+The status bar now ticks `⌕ embedding 27% · 128/478 files` and the panel shows a bar, whether the run
+came from the picker or from the model calling the tool itself. The indexer's own percentage is per
+batch and jumps backwards, so the bar is driven by the file count, which only goes up.
+
 `/index` is mgm's own panel over it: the chunk count and branch, where the store is, the embedding
 model with whether the server answers and has it resident, the search settings and indexing flags,
 which config file is in effect, the knowledge bases and the tool count. The picker under it runs the

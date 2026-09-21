@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { docsKnowledgeBaseUpdate, embeddingBlock, embeddingChoiceLabel, embeddingProblem, parseEmbeddingChoice, isPiDocsPath, piDocsCandidates, hiddenSourceDirs, loadPlan, defaultConfig, embeddingBaseUrl, shouldSeed, parseStatus, resultText, configView, panelRows, indexStatusLine, actions, SUBCOMMANDS, FIELDS, getAt, setAt, applyEdit, fieldRow, invalidatesIndex, configFromView, maskSecret, rerankerProblem, rerankerBlock, routerFromEnv, refreshRouterKey, DEFAULT_EMBEDDING_MODEL, DEFAULT_DIMENSIONS } from "../.pi/extensions/mgm-codebase-index/lib.ts";
+import { miniBar, parseProgress, progressPercent, docsKnowledgeBaseUpdate, embeddingBlock, embeddingChoiceLabel, embeddingProblem, parseEmbeddingChoice, isPiDocsPath, piDocsCandidates, hiddenSourceDirs, loadPlan, defaultConfig, embeddingBaseUrl, shouldSeed, parseStatus, resultText, configView, panelRows, indexStatusLine, actions, SUBCOMMANDS, FIELDS, getAt, setAt, applyEdit, fieldRow, invalidatesIndex, configFromView, maskSecret, rerankerProblem, rerankerBlock, routerFromEnv, refreshRouterKey, DEFAULT_EMBEDDING_MODEL, DEFAULT_DIMENSIONS } from "../.pi/extensions/mgm-codebase-index/lib.ts";
 import { makePi, makeCtx, stubFetch } from "./harness.ts";
 
 const STATUS_INDEXED = `Auto-index: disabled (state: idle)
@@ -282,6 +282,70 @@ describe("/index command", async () => {
     const ctx = makeCtx({ hasUI: false }); (ctx as any).cwd = "/proj";
     await pi.commands.get("index")!.handler("", ctx);
     assert.match(ctx.notices.at(-1)!.msg, /index_status failed: engine down/);
+  });
+});
+
+describe("progress while indexing", () => {
+  const LIVE = `Auto-index: enabled (state: indexing)
+Auto-index source: manual
+Auto-index progress: embedding 83% (128/478 files, 352/394 chunks)
+Auto-index started: 2026-09-21T00:14:22.592Z
+Indexed chunks (all branches): 1,200`;
+
+  test("the phase, percentage and counts are read from what the indexer reports", () => {
+    const s = parseStatus(LIVE);
+    assert.equal(s.running, true);
+    assert.deepEqual(s.progress, { phase: "embedding", percent: 83, files: { done: 128, total: 478 }, chunks: { done: 352, total: 394 } });
+    const idle = parseStatus(STATUS_INDEXED);
+    assert.equal(idle.running, false);
+    assert.equal(idle.progress, undefined);
+    assert.deepEqual(parseProgress("Auto-index progress: scanning 4%"), { phase: "scanning", percent: 4, files: undefined, chunks: undefined }, "counts are optional early in a run");
+    assert.equal(parseProgress("nothing like progress here"), undefined);
+  });
+
+  test("the status line shows progress while running and the size when idle", () => {
+    // the indexer's own number is per batch and jumps backwards, so the file count drives the bar
+    assert.equal(indexStatusLine(parseStatus(LIVE)), "⌕ embedding 27% · 128/478 files");
+    assert.equal(progressPercent({ phase: "embedding", percent: 83, files: { done: 128, total: 478 } }), 27);
+    assert.equal(progressPercent({ phase: "scanning", percent: 40 }), 40, "no file counts yet: use what it says");
+    assert.equal(progressPercent({ phase: "x", percent: 50, files: { done: 0, total: 0 } }), 50);
+    assert.equal(progressPercent(undefined), 0);
+    assert.equal(indexStatusLine(parseStatus(STATUS_INDEXED)), "⌕ 1615 chunks");
+    assert.equal(indexStatusLine({ running: true, indexed: false, raw: "" } as any), "⌕ indexing…", "a run with no numbers yet still says something");
+  });
+
+  test("the panel replaces the index line with a bar while a run is in flight", () => {
+    const flat = (rows: any[][]) => rows.map((r) => r.map(([t]: any) => t).join("")).join("\n");
+    const out = flat(panelRows({ status: parseStatus(LIVE), config: configView([], {}), project: "/p" }));
+    assert.match(out, /indexing +█+░+ 27% embedding/);
+    assert.match(out, /128\/478 files {2}352\/394 chunks/);
+    assert.ok(!out.includes("not indexed"));
+    assert.equal(miniBar(0, 10), "░░░░░░░░░░");
+    assert.equal(miniBar(100, 10), "██████████");
+    assert.equal(miniBar(50, 10), "█████░░░░░");
+  });
+
+  test("a run started by the model, not by the panel, still updates the status line", async () => {
+    const mod = await import("../.pi/extensions/mgm-codebase-index/index.ts");
+    const dir = mkdtempSync(join(tmpdir(), "mgm-idx-prog-"));
+    process.env.MGM_INDEX_CONFIG = join(dir, "config.json");
+    const registered = new Map<string, any>();
+    const pi = makePi();
+    (pi as any).registerTool = (t: any) => registered.set(t.name, t);
+    let phase = "indexing";
+    const pkg = async (p: any) => {
+      p.registerTool({ name: "index_status", label: "s", description: "", parameters: {}, execute: async () => ({ content: [{ type: "text", text: phase === "indexing" ? LIVE : STATUS_INDEXED }] }) });
+      p.registerTool({ name: "index_codebase", label: "i", description: "", parameters: {}, execute: async () => { await new Promise((r) => setTimeout(r, 900)); phase = "done"; return { content: [{ type: "text", text: "Indexed" }] }; } });
+      p.registerTool({ name: "knowledge_base_list", label: "k", description: "", parameters: {}, execute: async () => ({ content: [{ type: "text", text: "" }] }) });
+    };
+    await mod.default(pi as any, { plan: { kind: "prebundled", entry: "fake" }, load: async () => ({ default: pkg }) });
+    const ctx: any = makeCtx({ hasUI: true }); ctx.cwd = dir;
+    try {
+      // the model calls the tool it was given; our wrapper must notice
+      await registered.get("index_codebase")!.execute("model-call", {}, undefined, undefined, ctx);
+      const seen = ctx.statuses.get("index");
+      assert.equal(seen, "⌕ 1615 chunks", "the final state is pushed when the run ends");
+    } finally { delete process.env.MGM_INDEX_CONFIG; }
   });
 });
 

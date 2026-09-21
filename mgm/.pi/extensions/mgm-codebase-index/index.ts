@@ -146,9 +146,62 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
   // The package registers tools and no commands. Keep a handle on each tool as it is registered so
   // /index can drive the same code the model does, instead of reimplementing any of it.
   const tools = new Map<string, any>();
+  /** Set while an index run is in flight, so the status line and panel can show progress. */
+  let watching: { stop: () => void } | undefined;
+
+  /**
+   * Indexing a large repository takes minutes and the package reports progress only when asked, so a
+   * run the model started looked like nothing happening at all. Wrap the tool: while it runs, poll
+   * index_status and push progress into the status line and the panel, whoever called it.
+   */
+  function watchProgress(ctx: any) {
+    if (watching || !ctx?.ui?.setStatus) return;
+    let stopped = false;
+    const tick = async () => {
+      if (stopped) return;
+      try {
+        const status = parseStatus(resultText(await tools.get("index_status")?.execute("mgm-progress", {}, undefined, undefined, ctx)));
+        if (!stopped) { ctx.ui.setStatus("index", indexStatusLine(status)); if (panelOpen) showPanelStatus(ctx, status); }
+      } catch {}
+      if (!stopped) timer = setTimeout(tick, 2000);
+    };
+    let timer = setTimeout(tick, 400);
+    watching = { stop: () => { stopped = true; clearTimeout(timer); watching = undefined; } };
+  }
+
+  let panelOpen = false;
+  /** Re-render just the progress line of an open panel, without re-reading everything else. */
+  function showPanelStatus(ctx: any, status: IndexStatus) {
+    if (!lastPanel) return;
+    lastPanel = { ...lastPanel, status };
+    const data = lastPanel;
+    ctx.ui.setWidget("codebase-index", (_tui: any, theme: any) => ({
+      render: (width: number) => renderPanel(panelRows(data), width, (c: string, t: string) => theme.fg(c as any, t), " codebase index ").map((l: string) => truncateToWidth(l, width)),
+      invalidate() {},
+    }), { placement: "aboveEditor" });
+  }
+  let lastPanel: PanelData | undefined;
+
   const withCapture = new Proxy(pi, {
     get(target, prop, recv) {
-      if (prop === "registerTool") return (tool: any) => { tools.set(tool.name, tool); return (target as any).registerTool(tool); };
+      if (prop === "registerTool") return (tool: any) => {
+        const wrapped = tool.name === "index_codebase"
+          ? { ...tool, execute: async (id: string, params: any, signal: any, update: any, ctx: any) => {
+              watchProgress(ctx);
+              try { return await tool.execute(id, params, signal, update, ctx); }
+              finally {
+                watching?.stop();
+                try {
+                  const status = parseStatus(resultText(await tools.get("index_status")?.execute("mgm-done", {}, undefined, undefined, ctx)));
+                  ctx?.ui?.setStatus?.("index", indexStatusLine(status));
+                  if (panelOpen) showPanelStatus(ctx, status);
+                } catch {}
+              }
+            } }
+          : tool;
+        tools.set(tool.name, wrapped);
+        return (target as any).registerTool(wrapped);
+      };
       const value = Reflect.get(target, prop, recv);
       return typeof value === "function" ? value.bind(target) : value;
     },
@@ -195,6 +248,8 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
   }
 
   function showPanel(ctx: ExtensionCommandContext, data: PanelData) {
+    panelOpen = true;
+    lastPanel = data;
     const rows = panelRows(data);
     ctx.ui.setWidget("codebase-index", (_tui, theme) => ({
       render: (width: number) => renderPanel(rows, width, (c, t) => theme.fg(c as any, t), " codebase index ").map((l) => truncateToWidth(l, width)),
@@ -374,7 +429,7 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
       const sub = args.trim().toLowerCase();
       const known = SUBCOMMANDS[sub];
       if (!known) { ctx.ui.notify(`Unknown /index option "${sub}". Try: ${Object.keys(SUBCOMMANDS).filter(Boolean).join(", ")}`, "error"); return; }
-      if (known.kind === "off") { ctx.ui.setWidget("codebase-index", undefined); ctx.ui.setStatus("index", undefined); return; }
+      if (known.kind === "off") { panelOpen = false; ctx.ui.setWidget("codebase-index", undefined); ctx.ui.setStatus("index", undefined); return; }
       if (known.tool) {
         ctx.ui.setStatus("index", `⌕ ${sub}…`);
         const text = await run(known.tool, known.params ?? {}, ctx);
@@ -392,7 +447,7 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
         const pick = await ctx.ui.select("Codebase index", list.map((a) => a.label));
         if (pick === undefined) return;                       // Escape leaves the panel up
         const action = list[list.map((a) => a.label).indexOf(pick)];
-        if (action.kind === "close") { ctx.ui.setWidget("codebase-index", undefined); return; }
+        if (action.kind === "close") { panelOpen = false; ctx.ui.setWidget("codebase-index", undefined); return; }
         if (action.kind === "settings") await editSettings(ctx, data);
         if (action.kind === "kb-docs") {
           // A bundle path carries its version, so an upgrade leaves the old entry pointing at nothing:

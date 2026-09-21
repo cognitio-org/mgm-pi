@@ -2,6 +2,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { loadConfig } from "../src/config.ts";
 import { identityFromRequest, verifyAgentToken, bearerFromHeader } from "../src/auth.ts";
+import { MemoryStore } from "../src/store/memory.ts";
 
 const devConfig = loadConfig({
   OUTFITTER_DEV: "1",
@@ -11,7 +12,7 @@ const devConfig = loadConfig({
 
 describe("identityFromRequest (dev mode)", () => {
   test("always returns dev@localhost, no header needed", async () => {
-    const identity = await identityFromRequest({ headers: {} }, devConfig);
+    const identity = await identityFromRequest({ headers: {} }, devConfig, new MemoryStore());
     assert.equal(identity.email, "dev@localhost");
   });
 });

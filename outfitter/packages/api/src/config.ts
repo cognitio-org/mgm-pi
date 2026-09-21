@@ -78,6 +78,12 @@ export interface Config {
   /** PROVIDER_POLL_MS: how often the E2.10 provider status service reconciles every probe. Default
    * 5 minutes. Only the "web" role runs this poller (see server.ts). */
   providerPollMs: number;
+  /** OUTFITTER_LINK_ORIGIN: the "link" role's own origin (e.g. https://outfitter-link-xyz.run.app),
+   * surfaced on GET /api/me so the web UI's Tokens page can print the exact OUTFITTER_API value a
+   * laptop needs. Not knowable from inside the "web" process itself (it's a different Cloud Run
+   * service) so it's a separate env var, set once the link role's own URL is known (see
+   * deploy/service.sh). Empty by default -- the UI then says "ask your operator for the link URL". */
+  linkOrigin: string;
 }
 
 const OUTFITTER_ROLES: readonly OutfitterRole[] = ["all", "web", "link"];
@@ -139,5 +145,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     litellmBaseUrl: env.LITELLM_BASE_URL ?? "https://litellm.augment-code.support/v1",
     litellmAdminKey: env.LITELLM_ADMIN_KEY ?? "",
     providerPollMs: envInt("PROVIDER_POLL_MS", 5 * 60_000),
+    linkOrigin: env.OUTFITTER_LINK_ORIGIN ?? "",
   };
 }

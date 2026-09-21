@@ -135,6 +135,39 @@ export interface User {
   lastSeenAt?: string;
 }
 
+/** Personal API token (E4.1b): the only auth the "link" role (no IAP) accepts, and also accepted
+ * on "web"/"all" alongside IAP. Plaintext is `outf_` + 32 random bytes (base64url), generated once
+ * at creation time and never stored or logged -- only `hash` (sha256 hex of the plaintext) and
+ * `prefix` (the plaintext's first 8 chars, for display) persist. See src/tokens.ts. */
+export interface ApiToken {
+  id: string;
+  /** The signed-in email that created this token (req.identity.email at creation time); routes
+   * only let a caller list/revoke their own tokens. */
+  ownerEmail: string;
+  name: string;
+  prefix: string;
+  hash: string;
+  createdAt: string;
+  /** Updated at most once per minute per token (src/auth.ts's identityFromApiToken), so a busy
+   * teleport session doesn't hammer the store with a write per request. */
+  lastUsedAt?: string;
+  /** Set (never cleared) when the owner revokes the token; a revoked token's hash still resolves
+   * to a row so the auth check can tell "revoked" apart from "never existed" internally, but both
+   * cases return the same generic 401 to the caller. */
+  revokedAt?: string;
+}
+
+export interface TokensCollection {
+  insert(token: ApiToken): Promise<void>;
+  findById(id: string): Promise<ApiToken | null>;
+  findByHash(hash: string): Promise<ApiToken | null>;
+  /** Non-revoked tokens for an owner, newest first -- GET /api/me/tokens. */
+  listActiveForOwner(ownerEmail: string): Promise<ApiToken[]>;
+  /** Non-revoked token count for an owner -- enforces the 10-active-tokens cap. */
+  countActiveForOwner(ownerEmail: string): Promise<number>;
+  update(id: string, patch: Partial<ApiToken>): Promise<ApiToken | null>;
+}
+
 export type ProviderKind = "ngrok" | "laptop" | "litellm" | "cloudrun";
 
 /** "up"/"degraded"/"down" are real probe outcomes; "unknown" is a missing credential or an
@@ -236,5 +269,6 @@ export interface Store {
   environments: EnvironmentsCollection;
   users: UsersCollection;
   providers: ProvidersCollection;
+  tokens: TokensCollection;
   close(): Promise<void>;
 }

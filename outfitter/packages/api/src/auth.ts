@@ -1,4 +1,6 @@
-// Identity for the two callers the API trusts: browsers (behind IAP) and agentd (a Google ID token).
+// Identity for the callers the API trusts: browsers (behind IAP, or a personal API token),
+// agentd (a Google ID token), and the "link" role's teleport routes (a personal API token only --
+// that role has no IAP session at all).
 //
 // Browsers: IAP puts a signed JWT in x-goog-iap-jwt-assertion. We verify it against IAP's own
 // rotating public keys (getIapPublicKeys) with audience = IAP_AUDIENCE. Despite the "OAuth client
@@ -9,18 +11,39 @@
 // https://cloud.google.com/iap/docs/signed-headers-howto. deploy/api.sh computes this value from
 // `gcloud projects describe` and sets it as IAP_AUDIENCE automatically.
 //
+// Personal API tokens (E4.1b, src/tokens.ts, store/types.ts's ApiToken): an `outf_...` bearer
+// token, verified by sha256 lookup against the tokens store. This is the *only* credential the
+// "link" role's /api/* routes accept (see identityFromLinkRequest) -- that role has no IAP session
+// to read, and per the E4.1 design decision (EPIC.md, docs/reports/critic-review-pr15.md finding
+// #1) IAP's Google-managed OAuth client can never be used for programmatic access, so there is no
+// IAP-based alternative for a laptop client. The "web"/"all" role accepts either an IAP session or
+// an `outf_` token (identityFromRequest), so the same personal token also works against a
+// single-process dev/"all" deployment.
+//
 // agentd: presents `Authorization: Bearer <google id token>` minted for the outfitter-agent
 // service account by the Cloud Run Job's metadata server, audience = OUTFITTER_ORIGIN. We verify
 // with verifyIdToken and require the token's email to match AGENT_SA_EMAIL.
 //
-// OUTFITTER_DEV=1 replaces both checks with fixed dev values so the stack runs with no GCP project.
+// OUTFITTER_DEV=1 replaces the IAP/agentd checks with fixed dev values so the stack runs with no
+// GCP project; personal API tokens are verified the same way in dev and prod (identityFromRequest
+// only takes the devMode shortcut when no `outf_` bearer is present, and identityFromLinkRequest
+// never takes it at all -- OUTFITTER_TOKEN is meant to behave identically everywhere).
 
 import { OAuth2Client } from "google-auth-library";
 import type { Config } from "./config.ts";
+import type { Store } from "./store/types.ts";
+import { TOKEN_PREFIX, hashToken } from "./tokens.ts";
 
 export interface Identity {
   email: string;
 }
+
+/** A store carrying just the tokens collection -- all identityFromApiToken needs. */
+type TokenStore = Pick<Store, "tokens">;
+
+/** lastUsedAt is only rewritten this often per token (see identityFromApiToken), so a busy
+ * teleport session doesn't turn every request into a store write. */
+const LAST_USED_THROTTLE_MS = 60_000;
 
 export interface RequestLike {
   headers: Record<string, string | string[] | undefined>;
@@ -33,9 +56,42 @@ function headerString(req: RequestLike, name: string): string | undefined {
 
 const IAP_ISSUERS = ["https://cloud.google.com/iap"];
 
-/** Verifies the IAP-signed identity header and returns the caller's email. Throws on failure. */
-export async function identityFromRequest(req: RequestLike, config: Config): Promise<Identity> {
+/** Resolves an `outf_...` bearer token to its owner's identity via sha256 lookup against the
+ * tokens store. Never reveals whether a rejected token was unknown vs. revoked -- both throw the
+ * same generic message, since telling them apart would confirm to a guesser that they'd found a
+ * once-valid token. Updates lastUsedAt at most once per LAST_USED_THROTTLE_MS, best-effort (a
+ * failed update never fails the auth check itself). */
+export async function identityFromApiToken(bearer: string, store: TokenStore): Promise<Identity> {
+  const record = await store.tokens.findByHash(hashToken(bearer));
+  if (!record || record.revokedAt) throw new Error("invalid or revoked API token");
+
+  const now = Date.now();
+  const lastUsed = record.lastUsedAt ? Date.parse(record.lastUsedAt) : Number.NaN;
+  if (!Number.isFinite(lastUsed) || now - lastUsed >= LAST_USED_THROTTLE_MS) {
+    try {
+      await store.tokens.update(record.id, { lastUsedAt: new Date(now).toISOString() });
+    } catch {
+      // best-effort; a failed lastUsedAt write must never block auth.
+    }
+  }
+  return { email: record.ownerEmail };
+}
+
+/** The "link" role's only /api/* credential (see the module doc comment above): a personal API
+ * token, unconditionally -- no IAP, no dev-mode shortcut. */
+export async function identityFromLinkRequest(req: RequestLike, store: TokenStore): Promise<Identity> {
+  const bearer = bearerFromHeader(req);
+  if (!bearer) throw new Error("missing bearer token");
+  return identityFromApiToken(bearer, store);
+}
+
+/** Verifies the caller's identity for the "web"/"all" roles: an `outf_` personal API token when
+ * present, an IAP-signed header otherwise. Throws on failure. */
+export async function identityFromRequest(req: RequestLike, config: Config, store: TokenStore): Promise<Identity> {
   if (config.devMode) return { email: "dev@localhost" };
+
+  const bearer = bearerFromHeader(req);
+  if (bearer?.startsWith(TOKEN_PREFIX)) return identityFromApiToken(bearer, store);
 
   const jwt = headerString(req, "x-goog-iap-jwt-assertion");
   if (!jwt) throw new Error("missing x-goog-iap-jwt-assertion header");

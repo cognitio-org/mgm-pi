@@ -1,59 +1,39 @@
 /**
  * `Store` implementation (see ./lib.ts) backed by the Outfitter cloud API instead of a local git
  * clone. Selected by MGM_TELEPORT_STORE=outfitter (see ./store-factory.ts); the target is
- * OUTFITTER_API (e.g. https://outfitter-api-hqt4zwr5za-uc.a.run.app).
+ * OUTFITTER_API -- the Outfitter **link** service's origin (e.g.
+ * https://outfitter-link-hqt4zwr5za-uc.a.run.app), not the browser-facing IAP-fronted `outfitter-api`
+ * service. The link service has no IAP session at all (see
+ * ../../../../outfitter/docs/protocol.md's "Two origins") and instead accepts exactly one
+ * credential: a personal API token.
  *
- * Auth, two modes (see ../../../../outfitter/packages/api/src/auth.ts for what the API accepts):
- *   - OUTFITTER_TOKEN: sent as `Authorization: Bearer <token>`. Only meaningful against the API
- *     running with OUTFITTER_DEV=1 today -- dev mode accepts any (or no) bearer and identifies the
- *     caller as dev@localhost; there is no server-side personal-token verification yet. This is the
- *     only mode confirmed to work end-to-end.
- *   - OUTFITTER_IAP_CLIENT_ID: NOT YET SUPPORTED against a real deployed API -- verified NOT
- *     working on 2026-09-21 (critic review, outfitter/docs/reports/critic-review-pr15.md, and
- *     outfitter/EPIC.md's E4.1 entry). The code mints a Google identity token for this audience by
- *     shelling out to `gcloud auth print-identity-token --audiences=<id>` (the currently active
- *     gcloud account -- never hardcoded here) and sends it the same way, `Authorization: Bearer`,
- *     on the theory that IAP would verify that header itself the same way it verifies browser
- *     traffic. It doesn't: `gcloud auth print-identity-token` can't mint a token audienced to
- *     Google's IAP OAuth client for a user account, and the deployed service uses IAP's
- *     Google-managed OAuth client, whose credentials aren't available for programmatic access at
- *     all -- every call in this mode gets a 401. Left in place (harmless to try, and the code may
- *     still be useful once a real auth path -- e.g. a custom IAP OAuth brand, or personal API
- *     tokens on the link service -- is decided), but don't rely on it. Neither token is ever
- *     written to disk by this module.
+ * Auth: OUTFITTER_TOKEN, sent as `Authorization: Bearer <token>` (E4.1b, see
+ * ../../../../outfitter/packages/api/src/auth.ts's identityFromLinkRequest /
+ * identityFromApiToken). Create a token on the Outfitter web UI's Tokens page (`/tokens`); it
+ * shows the exact `export OUTFITTER_API=...` / `export OUTFITTER_TOKEN=...` /
+ * `export MGM_TELEPORT_STORE=outfitter` lines to copy into your shell. The token is never written
+ * to disk by this module.
+ *
+ * An earlier version of this store also tried an `OUTFITTER_IAP_CLIENT_ID` mode (minting a Google
+ * identity token via `gcloud auth print-identity-token` and sending it the same way, on the theory
+ * that IAP would verify it like browser traffic). That was verified NOT working against a real
+ * deployed API on 2026-09-21 (critic review, outfitter/docs/reports/critic-review-pr15.md):
+ * `gcloud auth print-identity-token` cannot mint a token audienced to Google's IAP OAuth client for
+ * a user account, and IAP enabled directly on a Cloud Run service uses that Google-managed OAuth
+ * client, whose credentials are never available for programmatic access at all. Personal API
+ * tokens on a separate, non-IAP "link" service (E4.1b) are the fix, not a workaround: the IAP mode
+ * has been removed entirely rather than left in as dead code.
  *
  * Before get() returns a session with an active cloud run, it stops the run (POST .../stop) and
  * polls GET /api/sessions/:id until the run is no longer active, so the exported transcript is
  * complete. --force (opts.force) skips this and pulls whatever has been persisted so far.
  */
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import type { Manifest, SessionRef, Store, Warn } from "./lib.ts";
-
-const execFileAsync = promisify(execFile);
 
 // Run states the API considers "active" -- mirrors ACTIVE_RUN_STATES / memory.ts's findActiveForSession.
 const ACTIVE_RUN_STATES = new Set(["queued", "provisioning", "running", "idle", "stopping"]);
 
 export type FetchFn = typeof fetch;
-/** Runs `gcloud auth print-identity-token --audiences=<audience>` and returns the trimmed token.
- * Injectable so tests never shell out to a real gcloud. */
-export type GcloudTokenFn = (audience: string) => Promise<string>;
-
-async function defaultGcloudIdentityToken(audience: string): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync("gcloud", ["auth", "print-identity-token", `--audiences=${audience}`]);
-    const token = stdout.trim();
-    if (!token) throw new Error("gcloud printed an empty token");
-    return token;
-  } catch (err: any) {
-    const detail = err?.stderr ? String(err.stderr).trim() : err?.message ?? String(err);
-    throw new Error(
-      `teleport: could not get a Google identity token for OUTFITTER_IAP_CLIENT_ID (gcloud auth print-identity-token failed): ${detail}. ` +
-        `Sign in with 'gcloud auth login' as your mgmonteleone.com account, or set OUTFITTER_TOKEN instead.`,
-    );
-  }
-}
 
 type SessionSummary = {
   id: string;
@@ -69,15 +49,11 @@ type SessionSummary = {
 };
 
 export type OutfitterStoreOptions = {
-  /** Base URL of the Outfitter API. Defaults to OUTFITTER_API. */
+  /** Base URL of the Outfitter link service. Defaults to OUTFITTER_API. */
   apiBase?: string;
   /** Personal bearer token. Defaults to OUTFITTER_TOKEN. */
   token?: string;
-  /** IAP audience (resource path or OAuth client id) to mint an identity token for. Defaults to
-   * OUTFITTER_IAP_CLIENT_ID. Only used when `token` is not set. */
-  iapClientId?: string;
   fetchFn?: FetchFn;
-  getGcloudIdentityToken?: GcloudTokenFn;
   warn?: Warn;
   /** How long get() waits for an active run to stop before giving up. Default 90s. */
   stopTimeoutMs?: number;
@@ -92,25 +68,26 @@ export type OutfitterStoreOptions = {
 
 export class OutfitterStore implements Store {
   private apiBase: string;
-  private token?: string;
-  private iapClientId?: string;
+  private token: string;
   private fetchFn: FetchFn;
-  private getGcloudIdentityToken: GcloudTokenFn;
   private warn: Warn;
   private stopTimeoutMs: number;
   private pollIntervalMs: number;
   private sleep: (ms: number) => Promise<void>;
   private now: () => number;
-  private cachedIapToken?: string;
 
   constructor(opts: OutfitterStoreOptions = {}) {
     const apiBase = opts.apiBase ?? process.env.OUTFITTER_API;
-    if (!apiBase) throw new Error("teleport: MGM_TELEPORT_STORE=outfitter requires OUTFITTER_API (the Outfitter API base URL) to be set.");
+    if (!apiBase) throw new Error("teleport: MGM_TELEPORT_STORE=outfitter requires OUTFITTER_API (the Outfitter link service's origin) to be set.");
     this.apiBase = apiBase.replace(/\/+$/, "");
-    this.token = opts.token ?? process.env.OUTFITTER_TOKEN;
-    this.iapClientId = opts.iapClientId ?? process.env.OUTFITTER_IAP_CLIENT_ID;
+    const token = opts.token ?? process.env.OUTFITTER_TOKEN;
+    if (!token) {
+      throw new Error(
+        "teleport: MGM_TELEPORT_STORE=outfitter requires OUTFITTER_TOKEN (a personal API token -- create one on the Outfitter web UI's Tokens page).",
+      );
+    }
+    this.token = token;
     this.fetchFn = opts.fetchFn ?? fetch;
-    this.getGcloudIdentityToken = opts.getGcloudIdentityToken ?? defaultGcloudIdentityToken;
     this.warn = opts.warn ?? (() => {});
     this.stopTimeoutMs = opts.stopTimeoutMs ?? 90_000;
     this.pollIntervalMs = opts.pollIntervalMs ?? 2_000;
@@ -126,33 +103,17 @@ export class OutfitterStore implements Store {
     }
   }
 
-  private async authHeader(): Promise<string> {
-    if (this.token) return `Bearer ${this.token}`;
-    if (this.iapClientId) {
-      if (!this.cachedIapToken) this.cachedIapToken = await this.getGcloudIdentityToken(this.iapClientId);
-      return `Bearer ${this.cachedIapToken}`;
-    }
-    throw new Error(
-      "teleport: no Outfitter auth configured -- set OUTFITTER_TOKEN (dev mode) or OUTFITTER_IAP_CLIENT_ID (real deployments, uses 'gcloud auth print-identity-token').",
-    );
+  private authHeader(): string {
+    return `Bearer ${this.token}`;
   }
 
   private async request(method: string, path: string, body?: string): Promise<Response> {
-    const headers: Record<string, string> = { Authorization: await this.authHeader() };
+    const headers: Record<string, string> = { Authorization: this.authHeader() };
     if (body !== undefined) headers["Content-Type"] = "application/x-ndjson";
     const res = await this.fetchFn(`${this.apiBase}${path}`, { method, headers, body });
     if (res.status === 401) {
-      // 401 from a fresh identity token means the token itself is bad or its audience is wrong;
-      // re-minting on retry would just fail the same way, but clear the cache so a later manual
-      // retry after re-auth does mint a fresh one instead of reusing the stale cached token.
-      this.cachedIapToken = undefined;
       throw new Error(
-        this.token
-          ? "teleport: Outfitter API returned 401 Unauthorized. Check OUTFITTER_TOKEN -- this only works against an API running with OUTFITTER_DEV=1."
-          : "teleport: Outfitter API returned 401 Unauthorized. OUTFITTER_IAP_CLIENT_ID mode is not yet supported against a real deployed API " +
-              "(verified NOT working on 2026-09-21 -- see outfitter/docs/reports/critic-review-pr15.md and outfitter/EPIC.md's E4.1 entry: " +
-              "gcloud cannot mint an identity token audienced to IAP's Google-managed OAuth client for a user account). " +
-              "Re-authenticating with 'gcloud auth login' will not fix this. Use OUTFITTER_TOKEN against a dev-mode (OUTFITTER_DEV=1) API instead.",
+        "teleport: Outfitter API returned 401 Unauthorized. OUTFITTER_TOKEN was rejected; create a new token on the Outfitter Tokens page.",
       );
     }
     if (res.status === 403) {
@@ -200,7 +161,7 @@ export class OutfitterStore implements Store {
     if (session.runState !== "stopping") {
       const stopRes = await this.fetchFn(`${this.apiBase}/api/sessions/${id}/stop`, {
         method: "POST",
-        headers: { Authorization: await this.authHeader() },
+        headers: { Authorization: this.authHeader() },
       });
       if (stopRes.status === 404) return; // "no active run" -- already stopped between our check and this call
       if (!stopRes.ok) {

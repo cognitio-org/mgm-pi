@@ -422,32 +422,38 @@ is also running with the same model loaded).
 
 ### Outfitter store
 
-Set `MGM_TELEPORT_STORE=outfitter` to talk to the Outfitter cloud API instead of a local git clone
-(`OUTFITTER_API` must point at it, e.g. `https://outfitter-api-hqt4zwr5za-uc.a.run.app`). This is the
-"cloud → laptop" half of teleport: `list`/`/teleport list` shows every session on that Outfitter
-deployment, and `pull`/`mgm --teleport <id>` fetches one down. Pushing (`put`) works too --
+Set `MGM_TELEPORT_STORE=outfitter` to talk to the Outfitter cloud API instead of a local git clone.
+`OUTFITTER_API` must point at the Outfitter **link** service (e.g.
+`https://outfitter-link-hqt4zwr5za-uc.a.run.app`), not the browser-facing `outfitter-api` service --
+the link service has no IAP session at all and is the one that accepts personal API tokens (see
+"Auth" below and `outfitter/docs/protocol.md`'s "Two origins"). This is the "cloud → laptop" half of
+teleport: `list`/`/teleport list` shows every session on that Outfitter deployment, and
+`pull`/`mgm --teleport <id>` fetches one down. Pushing (`put`) works too --
 `PUT /api/sessions/:id/import` creates the session server-side if it doesn't already exist there, so
 pushing a laptop-only session id is fine.
 
-**Auth**, in priority order:
+**Auth: `OUTFITTER_TOKEN`, the only mode.** Sent as `Authorization: Bearer <token>`. Create a
+personal API token on the Outfitter web UI's Tokens page (`/tokens`); it shows the exact three
+lines to set:
 
-- `OUTFITTER_TOKEN` -- sent as `Authorization: Bearer <token>`. This works today against an API
-  running with `OUTFITTER_DEV=1` (dev mode identifies every caller as `dev@localhost` regardless of
-  what's in the header); there is no server-side personal-token verification yet. This is the only
-  mode confirmed to work.
-- `OUTFITTER_IAP_CLIENT_ID` -- **not yet supported against the real deployed API.** The store shells
-  out to `gcloud auth print-identity-token --audiences=<OUTFITTER_IAP_CLIENT_ID>` and sends the
-  result as `Authorization: Bearer`, but this was verified NOT working on 2026-09-21 (critic review,
-  `outfitter/docs/reports/critic-review-pr15.md`): `gcloud auth print-identity-token` cannot mint a
-  token audienced to Google's IAP OAuth client for a user account, and the deployed service uses IAP's
-  Google-managed OAuth client, whose credentials aren't available for programmatic access at all --
-  every call in this mode gets a 401. Auth design for this path is an open decision (personal API
-  tokens on the link service is the leading option); don't rely on `OUTFITTER_IAP_CLIENT_ID` until
-  that's resolved. Neither token is ever written to disk.
+```
+export OUTFITTER_API=<link service origin>
+export OUTFITTER_TOKEN=<token>
+export MGM_TELEPORT_STORE=outfitter
+```
 
-A 401 from the API usually means `OUTFITTER_IAP_CLIENT_ID` mode was used against a real deployment
-(see above, not yet supported) -- use `OUTFITTER_TOKEN` against a dev-mode (`OUTFITTER_DEV=1`) API
-instead. A 403 means that account isn't allowed to use this Outfitter deployment at all.
+Neither the token nor anything derived from it is ever written to disk by this module. A 401 from
+the API means `OUTFITTER_TOKEN` was rejected (unknown or revoked) -- create a new token on the
+Tokens page. A 403 means that account isn't allowed to use this Outfitter deployment at all.
+
+An earlier version of this store also tried an `OUTFITTER_IAP_CLIENT_ID` mode (minting a Google
+identity token via `gcloud auth print-identity-token` and sending it the way IAP verifies browser
+traffic). That was verified NOT working against a real deployed API on 2026-09-21 (critic review,
+`outfitter/docs/reports/critic-review-pr15.md`): `gcloud auth print-identity-token` cannot mint a
+token audienced to Google's IAP OAuth client for a user account, and IAP enabled directly on a
+Cloud Run service uses that Google-managed OAuth client, whose credentials are never available for
+programmatic access at all. It has been removed entirely, replaced by personal API tokens on a
+separate, non-IAP link service (E4.1b) -- not left in as a fallback.
 
 **Stop-before-pull.** `pull`/`mgm --teleport <id>` first checks whether the session has an active
 cloud run (queued/provisioning/running/idle/stopping); if it does, it calls `POST

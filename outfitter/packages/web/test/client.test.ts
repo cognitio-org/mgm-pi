@@ -101,4 +101,48 @@ describe("api client", () => {
     expect(init.headers["Content-Type"]).toBe("application/json");
     expect(JSON.parse(init.body)).toEqual({ text: "hello", behavior: "steer" });
   });
+
+  it("me() surfaces linkOrigin from the API response", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ email: "dev@localhost", linkOrigin: "https://outfitter-link.run.app" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.me()).resolves.toEqual({ email: "dev@localhost", linkOrigin: "https://outfitter-link.run.app" });
+  });
+
+  it("createToken POSTs the name and returns the plaintext token plus record", async () => {
+    const record = { id: "t1", ownerEmail: "dev@localhost", name: "laptop", prefix: "outf_ab1", createdAt: "now" };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ token: "outf_abc123", record }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await api.createToken("laptop");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/me/tokens");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ name: "laptop" });
+    expect(result).toEqual({ token: "outf_abc123", record });
+  });
+
+  it("listTokens GETs /api/me/tokens", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.listTokens();
+
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/me/tokens");
+  });
+
+  it("revokeToken DELETEs /api/me/tokens/:id", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ record: { id: "t1", revokedAt: "now" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.revokeToken("t1");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/me/tokens/t1");
+    expect(init.method).toBe("DELETE");
+  });
 });

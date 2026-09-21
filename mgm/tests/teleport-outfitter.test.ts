@@ -21,56 +21,32 @@ function fakeFetch(handler: (method: string, path: string, init: any) => { statu
   return { fn, calls };
 }
 
-describe("OutfitterStore auth header selection", () => {
-  test("OUTFITTER_TOKEN wins and is sent as Authorization: Bearer", async () => {
+describe("OutfitterStore construction", () => {
+  test("requires OUTFITTER_API", () => {
+    assert.throws(() => new OutfitterStore({ token: "t" }), /OUTFITTER_API/);
+  });
+
+  test("requires OUTFITTER_TOKEN -- IAP identity-token mode has been removed", () => {
+    assert.throws(() => new OutfitterStore({ apiBase: "https://api.example.com" }), /OUTFITTER_TOKEN/);
+  });
+});
+
+describe("OutfitterStore auth header", () => {
+  test("OUTFITTER_TOKEN is sent as Authorization: Bearer", async () => {
     const { fn, calls } = fakeFetch(() => ({ status: 200, body: [] }));
     const store = new OutfitterStore({ apiBase: "https://api.example.com", token: "tok-123", fetchFn: fn });
     await store.list();
     assert.equal(calls[0].headers.Authorization, "Bearer tok-123");
   });
 
-  test("falls back to a gcloud identity token for the IAP audience when no token is set", async () => {
-    const { fn, calls } = fakeFetch(() => ({ status: 200, body: [] }));
-    let requestedAudience: string | undefined;
-    const store = new OutfitterStore({
-      apiBase: "https://api.example.com",
-      iapClientId: "iap-client-id",
-      fetchFn: fn,
-      getGcloudIdentityToken: async (audience) => {
-        requestedAudience = audience;
-        return "id-token-xyz";
-      },
-    });
-    await store.list();
-    assert.equal(requestedAudience, "iap-client-id");
-    assert.equal(calls[0].headers.Authorization, "Bearer id-token-xyz");
-  });
-
-  test("throws an actionable error when neither OUTFITTER_TOKEN nor OUTFITTER_IAP_CLIENT_ID is set", async () => {
-    const { fn } = fakeFetch(() => ({ status: 200, body: [] }));
-    const store = new OutfitterStore({ apiBase: "https://api.example.com", fetchFn: fn });
-    await assert.rejects(() => store.list(), /OUTFITTER_TOKEN|OUTFITTER_IAP_CLIENT_ID/);
-  });
-
   // Docs honesty fix (critic review #1, docs/reports/critic-review-pr15.md): IAP identity-token
-  // mode doesn't work against a real deployed API, so a 401 while using OUTFITTER_TOKEN should
-  // point at OUTFITTER_TOKEN/OUTFITTER_DEV, not send the caller in circles re-running `gcloud auth
-  // login` (that was never the actual problem for token auth).
-  test("a 401 response with OUTFITTER_TOKEN points at OUTFITTER_TOKEN/OUTFITTER_DEV, not gcloud", async () => {
+  // mode never worked against a real deployed API and has been removed entirely, replaced by
+  // personal API tokens on the link service (E4.1b). A 401 now always points at OUTFITTER_TOKEN
+  // and the Tokens page, never at gcloud.
+  test("a 401 response points at OUTFITTER_TOKEN and the Outfitter Tokens page", async () => {
     const { fn } = fakeFetch(() => ({ status: 401, body: { error: "unauthorized" } }));
     const store = new OutfitterStore({ apiBase: "https://api.example.com", token: "bad", fetchFn: fn });
-    await assert.rejects(() => store.list(), /OUTFITTER_TOKEN.*OUTFITTER_DEV/s);
-  });
-
-  test("a 401 response with OUTFITTER_IAP_CLIENT_ID says IAP mode is not yet supported, not a gcloud auth login hint", async () => {
-    const { fn } = fakeFetch(() => ({ status: 401, body: { error: "unauthorized" } }));
-    const store = new OutfitterStore({
-      apiBase: "https://api.example.com",
-      iapClientId: "iap-client-id",
-      fetchFn: fn,
-      getGcloudIdentityToken: async () => "id-token-xyz",
-    });
-    await assert.rejects(() => store.list(), /not yet supported.*OUTFITTER_TOKEN/s);
+    await assert.rejects(() => store.list(), /OUTFITTER_TOKEN was rejected; create a new token on the Outfitter Tokens page/);
   });
 });
 

@@ -357,23 +357,34 @@ research on Sonnet; review on Opus).
 
 ### E4 Teleport, both directions
 
-- **E4.1 `OutfitterStore`** — done for dev-token auth; IAP identity-token mode verified NOT working
-  on 2026-09-21: gcloud cannot mint audience-specific identity tokens for user accounts, and IAP
-  returns 401 for gcloud's default identity token; the OAuth-brand admin APIs are being shut down.
-  Auth design for the laptop path is an open decision (personal API tokens on the link service is
-  the leading option). `mgm/.pi/extensions/teleport/outfitter-store.ts` implements the same `Store`
-  interface as `GitStore` (`list`/`get`/`put`) against the Outfitter API (`OUTFITTER_API`), selected
-  by `MGM_TELEPORT_STORE=outfitter` via `mgm/.pi/extensions/teleport/store-factory.ts`. Auth:
-  `OUTFITTER_TOKEN` as `Authorization: Bearer` works today against `OUTFITTER_DEV=1` (no
-  server-side personal-token check yet). `OUTFITTER_IAP_CLIENT_ID` (a Google identity token minted
-  via `gcloud auth print-identity-token --audiences=<id>`, the active gcloud account, never
-  hardcoded) does not work against the real deployed API as configured -- see the correction above
-  (critic review #1, `docs/reports/critic-review-pr15.md`). Neither token touches disk. `list()`
-  maps `GET /api/sessions`; `get()` pulls `GET /api/sessions/:id/export.jsonl`; `put()` is
-  `PUT /api/sessions/:id/import`, which already creates the session server-side when the id doesn't
-  exist yet (no API change needed there either). Tests: `mgm/tests/teleport-outfitter.test.ts`
-  (fake fetch: list/get/put mapping, stop-then-poll flow, `--force`, timeout, auth header
-  selection) -- all against a fake fetch, never a real deployed API.
+- **E4.1 `OutfitterStore`** (done, `docs/reports/api-tokens.md`) — the IAP identity-token mode
+  flagged as broken above (verified NOT working 2026-09-21: gcloud cannot mint audience-specific
+  identity tokens for user accounts, and IAP's Google-managed OAuth client never accepts
+  programmatic access at all) has been **removed entirely**, replaced by personal API tokens
+  (E4.1b) on the non-IAP "link" service: `Authorization: Bearer outf_...`, verified by sha256 hash
+  lookup (`packages/api/src/tokens.ts`, `src/auth.ts`'s `identityFromApiToken`). The "link" role
+  now registers exactly the teleport subset of routes it needs
+  (`registerTeleportRoutes`/`registerMeRoute` in `routes/index.ts`) behind a token-only preHandler
+  (`identityFromLinkRequest`, no IAP, no dev-mode shortcut); the "web"/"all" role accepts either an
+  IAP session or a token (`identityFromRequest`) for the same routes plus token management
+  (`GET|POST /api/me/tokens`, `DELETE /api/me/tokens/:id`, capped at 10 active tokens/owner). The
+  web UI's `/tokens` page creates and revokes tokens and shows the plaintext once with the exact
+  `OUTFITTER_API`/`OUTFITTER_TOKEN`/`MGM_TELEPORT_STORE` lines (`OUTFITTER_API` = the link
+  service's own origin, surfaced on `GET /api/me` as `linkOrigin` from env `OUTFITTER_LINK_ORIGIN`).
+  `mgm/.pi/extensions/teleport/outfitter-store.ts` implements the same `Store` interface as
+  `GitStore` (`list`/`get`/`put`) against `OUTFITTER_API`, selected by
+  `MGM_TELEPORT_STORE=outfitter` via `mgm/.pi/extensions/teleport/store-factory.ts`;
+  `OUTFITTER_TOKEN` is now the *only* auth mode (constructing the store without it throws). Neither
+  the token nor anything derived from it touches disk. `list()` maps `GET /api/sessions`; `get()`
+  pulls `GET /api/sessions/:id/export.jsonl`; `put()` is `PUT /api/sessions/:id/import`, which
+  already creates the session server-side when the id doesn't exist yet. Tests: api
+  (`test/tokens.test.ts` — creation/list/revoke, the cap, link-role bearer auth incl. malformed and
+  revoked tokens, `lastUsedAt` throttling, teleport routes reachable on the link role; `test/
+  roles.test.ts` updated for the link role now serving a token-gated route set instead of 404),
+  web (`test/client.test.ts` — token client calls, `linkOrigin`), mgm
+  (`tests/teleport-outfitter.test.ts` — construction requires both env vars, the corrected 401
+  message, list/get/put mapping, stop-then-poll flow, `--force`, timeout) — all against fakes
+  (in-memory store / fake fetch), never a real deployed API end to end.
 - **E4.2 Cloud → laptop** — store half done, CLI verification not yet wired up. `OutfitterStore.get`
   does the "stop the cloud run first" part: if the session has an active run it calls `POST
   /api/sessions/:id/stop` and polls `GET /api/sessions/:id`'s new `runState` field (small API

@@ -134,6 +134,44 @@ it.
 Teleport uses `GET /api/sessions/:id/export.jsonl`, `PUT /api/sessions/:id/import` (body: JSONL,
 same id, refused while a run is `running`), and `GET /api/sessions` for the picker.
 
+## Personal API tokens (E4.1b)
+
+The "link" role has no IAP session (see "Two origins" above), so it needs its own credential for a
+laptop teleport client: a personal API token, format `outf_` + 32 random bytes (base64url),
+generated once and shown exactly once. Only its sha256 hash and an 8-char display prefix are ever
+stored (`packages/api/src/tokens.ts`, `store/types.ts`'s `ApiToken`) — the plaintext is never
+logged or persisted.
+
+- `GET|POST /api/me/tokens`, `DELETE /api/me/tokens/:id` — create/list/revoke, "web"/"all" role
+  only (needs an IAP- or already-token-identified caller). A cap of 10 active tokens per owner;
+  revoking is owner-scoped (a 404, not 403, for someone else's token id — doesn't confirm it
+  exists). The web UI's `/tokens` page is the intended way to create one: it shows the plaintext
+  once alongside the exact `OUTFITTER_API`/`OUTFITTER_TOKEN`/`MGM_TELEPORT_STORE` lines to set.
+- **Verification** (`src/auth.ts`'s `identityFromApiToken`): `Authorization: Bearer outf_...` →
+  sha256 hash → store lookup. Unknown and revoked tokens get the same generic 401 (never reveals
+  which). `lastUsedAt` is updated at most once a minute per token, best-effort.
+- **Where it's accepted**: the **"link" role accepts only this** — no IAP, no dev-mode shortcut
+  (`identityFromLinkRequest`), registering exactly the teleport subset of routes
+  (`registerTeleportRoutes`: `GET /api/sessions`, `GET /api/sessions/:id`,
+  `GET /api/sessions/:id/export.jsonl`, `PUT /api/sessions/:id/import`,
+  `POST /api/sessions/:id/stop`, `GET /api/me`) plus `POST /api/hooks/ngrok`. The **"web"/"all"
+  role accepts either an IAP session or an `outf_` token** (`identityFromRequest`) for every route
+  above, so a single-process dev/"all" deployment and the token-management routes both work the
+  same way; `OUTFITTER_DEV=1` still short-circuits to a fixed `dev@localhost` identity there
+  regardless of what's in the header, same as before this story.
+- `GET /api/me`'s response includes `linkOrigin` (env `OUTFITTER_LINK_ORIGIN`, "web"/"all" role
+  only) — the link service's own origin, so the Tokens page can print the exact `OUTFITTER_API`
+  value without the operator having to look it up. Empty by default; the page then says to ask the
+  operator for the link URL.
+
+This replaces an earlier `OUTFITTER_IAP_CLIENT_ID` mode in `mgm`'s `OutfitterStore` that tried to
+authenticate a laptop client the same way a browser does. That was verified NOT working against a
+real deployed API (`docs/reports/critic-review-pr15.md` finding #1): IAP enabled directly on a
+Cloud Run service uses Google's managed OAuth client, whose credentials are never available for
+programmatic access, so `gcloud auth print-identity-token` could never mint a token IAP would
+accept. Personal API tokens on the non-IAP "link" service are the fix; the IAP-token mode has been
+removed from `outfitter-store.ts` entirely, not left in as a fallback.
+
 ## Run state machine
 
 `queued → provisioning → running ⇄ idle → stopping → stopped | failed`. `idle` means pi is waiting

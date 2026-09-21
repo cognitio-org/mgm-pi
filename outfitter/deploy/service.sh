@@ -115,6 +115,16 @@ if [[ "${ROLE}" == "web" ]]; then
   # See the "IAP_AUDIENCE" doc comment above.
   IAP_AUDIENCE="/projects/${PROJECT_NUMBER}/locations/${REGION}/services/${SERVICE}"
   ENV_VARS="${ENV_VARS},IAP_AUDIENCE=${IAP_AUDIENCE}"
+  # OUTFITTER_LINK_ORIGIN (E4.1b, src/config.ts): the outfitter-link service's own URL, surfaced on
+  # GET /api/me so the web UI's Tokens page can print the exact OUTFITTER_API value a laptop needs
+  # (env.sh has no way to know it from inside this "web" deploy -- it's a different Cloud Run
+  # service). Chicken-and-egg on a brand-new project: deploy the "link" role once first (its own
+  # bootstrap deploy above learns its URL the same way OUTFITTER_ORIGIN does here), then re-run
+  # `./api.sh` with OUTFITTER_LINK_ORIGIN set (or exported in the shell) so it lands in this env
+  # list; omitted or empty, the Tokens page just tells the operator to ask for the link URL.
+  if [[ -n "${OUTFITTER_LINK_ORIGIN:-}" ]]; then
+    ENV_VARS="${ENV_VARS},OUTFITTER_LINK_ORIGIN=${OUTFITTER_LINK_ORIGIN}"
+  fi
   AUTH_FLAGS=(--no-allow-unauthenticated --iap)
 else
   AUTH_FLAGS=(--allow-unauthenticated)

@@ -41,10 +41,11 @@ jobs:
           docker logs api
           [ "$code" = "401" ] || { echo "link role did not come up (got '$code')"; exit 1; }
           # E4.1b: the link role now serves the teleport subset of /api/sessions behind personal API
-          # tokens, so an unauthenticated request is 401 (not 404); a browser-only route stays absent.
+          # tokens, so an unauthenticated request is 401 (not 404). The auth hook answers 401 for every
+          # /api/ path before routing, so "browser-only routes are absent" is proven with a valid token
+          # in packages/api/test/roles.test.ts rather than here.
           curl -s -o /dev/null -w '%{http_code}\n' http://localhost:18080/api/sessions | grep -qx 401
           curl -s -o /dev/null -w '%{http_code}\n' -H 'authorization: Bearer outf_not_a_real_token' http://localhost:18080/api/sessions | grep -qx 401
-          curl -s -o /dev/null -w '%{http_code}\n' http://localhost:18080/api/gurus | grep -qx 404
           docker rm -f api
       - name: Boot the control-plane image in the web role and exercise the SPA it now ships
         # Code review N6 (docs/reports/code-review-pr15.md): the images job only ever booted the

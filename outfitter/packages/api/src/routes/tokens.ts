@@ -31,6 +31,9 @@ export async function registerTokenRoutes(app: FastifyInstance, ctx: RouteContex
     const name = body?.name?.trim();
     if (!name) return reply.code(400).send({ error: "name is required" });
 
+    // Count-then-insert with no transaction: concurrent creates by the same owner can overshoot the
+    // cap (docs/reports/security-review-api-tokens.md #1). The cap is hygiene, not a security
+    // boundary -- every extra token is still owner-scoped and revocable -- so best-effort is enough.
     const activeCount = await ctx.store.tokens.countActiveForOwner(email);
     if (activeCount >= MAX_ACTIVE_TOKENS) {
       return reply.code(400).send({ error: `you already have ${MAX_ACTIVE_TOKENS} active tokens -- revoke one before creating another` });

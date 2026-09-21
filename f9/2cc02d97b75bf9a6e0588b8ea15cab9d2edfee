@@ -1,0 +1,21 @@
+outfitter/docs/reports/security-review-api-tokens.md
+  s_2209f22f830d7f::t_8d10009d467c54 1-258
+outfitter/packages/api/src/routes/tokens.ts
+  s_2209f22f830d7f::t_28a344f780105f 34-36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "f92cc02d97b75bf9a6e0588b8ea15cab9d2edfee",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -362,6 +362,21 @@ research on Sonnet; review on Opus).
   Follow-up (code review N3, `docs/reports/code-review-pr15.md`): `GET /api/providers/stream` is
   already fully implemented server-side (E2.10), but nothing in `packages/web` subscribes to it yet
   (`useProviders` polls once on mount) -- the web strip/dashboard should open it once E3.6 is built.
+- **E3.7 Gurus page** (done, `docs/reports/gurus-ui.md`): `/gurus` (nav link "Gurus", org-shared,
+  any signed-in user) lists gurus and lets a user create/edit/delete them, with a filterable
+  model/fallback-model picker fed by a new `GET /api/models` (LiteLLM `/model/info`, reusing
+  providers-status.ts's fetch/parse code, 5 min in-memory cache, plus `LOCAL_MODELS` marked
+  `local: true`, auto-router groups marked `auto: true`) and a `GET /api/gurus/meta` for the env
+  denylist and valid thinking levels. `DELETE /api/gurus/:id` 409s with a count if any session
+  still references the guru and 400s for the `default` guru (a reserved, not-yet-seeded id).
+- **E3.8 Session header: model/thinking/context** (done, `docs/reports/gurus-ui.md`): the session
+  page's header now shows the model, thinking level and a context-used percentage bar, derived
+  entirely from transcript entries the page already has (`packages/web/src/lib/session-header.ts`'s
+  `deriveSessionHeader`, a pure function with unit tests) -- zero protocol change. Model from the
+  newest of a `model_change` entry or an assistant message's own `provider`/`model`; thinking from
+  the newest `thinking_level_change`; context tokens from the newest (non-aborted/error) assistant
+  message's `usage`, mirroring pi's own `calculateContextTokens` (`totalTokens` or the
+  input+output+cacheRead+cacheWrite sum); the window comes from `GET /api/models`.
 
 ### E4 Teleport, both directions
 

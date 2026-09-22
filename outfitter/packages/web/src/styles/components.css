@@ -83,22 +83,37 @@ button:disabled,
 
 .panel-titlebar,
 .panel h2.panel-title,
+.panel h3.panel-title,
 h2.panel-title {
+  /* Window title bar: stripes across the full width, the title left-aligned on a solid label
+     that interrupts them (the owner's reference). Put the text in a <span class="panel-label">
+     so the stripes show above and below it; without the span the text sits on the stripes. */
+  display: flex;
+  align-items: center;
   margin: 0;
-  padding: 0.4rem 0.7rem;
+  padding: 0.3rem 0.5rem;
+  min-height: 1.9rem;
   font-family: var(--font-display);
   font-size: 0.95rem;
   font-weight: 400;
-  letter-spacing: 0.03em;
-  color: var(--accent-contrast);
+  line-height: 1.2;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text);
   background: repeating-linear-gradient(
     to bottom,
     var(--titlebar-stripe-a) 0px,
-    var(--titlebar-stripe-a) 3px,
-    var(--titlebar-stripe-b) 3px,
-    var(--titlebar-stripe-b) 6px
+    var(--titlebar-stripe-a) 2px,
+    var(--titlebar-stripe-b) 2px,
+    var(--titlebar-stripe-b) 5px
   );
   border-bottom: 1px solid var(--border);
+}
+
+.panel-label {
+  padding: 0.15rem 0.45rem;
+  background: var(--accent);
+  color: var(--title-label-text);
 }
 
 .panel-body {

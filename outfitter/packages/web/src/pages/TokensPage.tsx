@@ -82,7 +82,7 @@ export function TokensPage() {
 
       {justCreated && (
         <div className="dialog panel" style={{ maxWidth: "none", marginBottom: "1rem" }}>
-          <h3 className="panel-title">"{justCreated.record.name}" created</h3>
+          <h3 className="panel-title"><span className="panel-label">"{justCreated.record.name}" created</span></h3>
           <div className="panel-body">
           <p>Copy this token now — it will not be shown again.</p>
           <div className="form-row">

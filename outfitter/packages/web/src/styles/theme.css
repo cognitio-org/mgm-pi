@@ -43,6 +43,7 @@
   --link: #b3a8f0;
   --accent: #7869c4;
   --accent-contrast: #12103a;
+  --title-label-text: #ffffff; /* 4.55:1 on --accent */
   --ok: #5cff8a; /* phosphor green: live/running/cursor only */
   --ok-contrast: #06210f;
   --warn: #f4cf3c; /* C64 yellow */
@@ -70,6 +71,7 @@
     --link: #2a4b8d;
     --accent: #2a4b8d; /* GEOS "selection" blue */
     --accent-contrast: #fffdf8;
+    --title-label-text: #fffdf8; /* 8.3:1 on --accent */
     --ok: #2e6b3e;
     --ok-contrast: #eaf6ec;
     --warn: #8a5c10;
@@ -97,6 +99,7 @@
   --link: #b3a8f0;
   --accent: #7869c4;
   --accent-contrast: #12103a;
+  --title-label-text: #ffffff; /* 4.55:1 on --accent */
   --ok: #5cff8a;
   --ok-contrast: #06210f;
   --warn: #f4cf3c;
@@ -122,6 +125,7 @@
   --link: #2a4b8d;
   --accent: #2a4b8d;
   --accent-contrast: #fffdf8;
+    --title-label-text: #fffdf8; /* 8.3:1 on --accent */
   --ok: #2e6b3e;
   --ok-contrast: #eaf6ec;
   --warn: #8a5c10;

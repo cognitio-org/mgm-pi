@@ -100,7 +100,9 @@ export function SessionPage() {
       {error && <div className="error-banner">{error}</div>}
       <div className="session-header">
         <div>
-          <h2 style={{ margin: 0 }}>{session?.name ?? sessionId}</h2>
+          <h2 className="session-title" title={sessionId}>
+            {session?.name ?? `Session ${sessionId?.slice(0, 8) ?? ""}`}
+          </h2>
           <div className="session-meta">
             {session?.guruId} {session?.repo ? `· ${session.repo}${session.branch ? ` @ ${session.branch}` : ""}` : "· no repository"}
             {typeof cost === "number" ? ` · $${cost.toFixed(4)}` : ""}
@@ -150,7 +152,7 @@ export function SessionPage() {
       {pendingUiRequest && <UiRequestPanel request={pendingUiRequest} onRespond={handleUiResponse} />}
 
       <div className="panel">
-        <div className="panel-titlebar">Transcript</div>
+        <div className="panel-titlebar"><span className="panel-label">Transcript</span></div>
         <div className="transcript" ref={transcriptRef}>
           {views.length === 0 ? (
             <p className="empty-state">No entries yet. Send a message below to start the run.</p>

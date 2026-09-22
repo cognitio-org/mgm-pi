@@ -54,7 +54,7 @@ export function NewSessionDialog({ gurus, onClose, onCreated, initialGuruId }: P
     <div className="dialog-backdrop" onClick={onClose}>
       <div className="dialog panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="ns-title">
         <h2 id="ns-title" className="panel-title">
-          New session
+          <span className="panel-label">New session</span>
         </h2>
         <div className="panel-body">
         {error && <div className="error-banner">{error}</div>}

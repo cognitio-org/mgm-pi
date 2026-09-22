@@ -1,0 +1,265 @@
+outfitter/packages/api/src/providers-status.ts
+  s_2209f22f830d7f::t_867e71fa07d78b 73-74
+  s_2209f22f830d7f::t_5ad6be0fecf3cc 23-26
+  s_2209f22f830d7f::t_bc5a18d5f70869 72
+  s_2209f22f830d7f::t_6f243a10e2f650 54-56,65
+outfitter/packages/api/src/store/mongo.ts
+  s_2209f22f830d7f::t_8cab948c4d6c08 239-243
+outfitter/packages/api/src/store/types.ts
+  s_2209f22f830d7f::t_d39640ab5e0757 375-377
+outfitter/packages/api/src/routes/gurus.ts
+  s_2209f22f830d7f::t_d765560b37095b 24-29,40-69,72-90,96-105,113-114,128-129,134-154
+  s_2209f22f830d7f::t_13d14493240067 155
+outfitter/packages/api/src/models.ts
+  s_2209f22f830d7f::t_e588ea43f031db 94,98-100
+  s_2209f22f830d7f::t_982539c30ef871 1-93,95-97,101-139
+outfitter/packages/api/src/routes/context.ts
+  s_2209f22f830d7f::t_4f479e433f3842 8,25
+  s_2209f22f830d7f::t_6f243a10e2f650 9,26-28
+outfitter/packages/api/src/store/memory.ts
+  s_2209f22f830d7f::t_2523154c262c2e 192-195
+outfitter/packages/api/test/gurus.test.ts
+  s_2209f22f830d7f::t_d7641159cc5f1b 66-189
+  s_2209f22f830d7f::t_f646cc61c3cc49 8
+outfitter/packages/api/src/server.ts
+  s_2209f22f830d7f::t_1ab18904f131bf 76,82,85-90
+  s_2209f22f830d7f::t_ebe4fd8561a879 17
+  s_25c805ebe232f3::t_9eddab32f430de 91
+  s_2209f22f830d7f::t_6f243a10e2f650 10,27-29,46
+outfitter/packages/api/src/routes/index.ts
+  s_2209f22f830d7f::t_2c5ce70119dedf 25
+  s_2209f22f830d7f::t_232976e5a5e422 5
+  s_2209f22f830d7f::t_6f243a10e2f650 11,30
+outfitter/packages/api/test/models.test.ts
+  s_2209f22f830d7f::t_7c57e060acb792 1-139
+outfitter/packages/api/src/routes/models.ts
+  s_2209f22f830d7f::t_e62da5f7f25415 1-10
+outfitter/packages/web/test/session-header.test.ts
+  s_2209f22f830d7f::t_e16a67cbb4a870 1-95
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_2209f22f830d7f::t_e0ad0a5faeab92 321-327,329-331,333-338,340-343
+  s_2209f22f830d7f::t_9234bc934a0fbc 8
+  s_2209f22f830d7f::t_18e774d349cf04 248-250
+  s_2209f22f830d7f::t_8e04814d308693 42,122-127
+  s_2209f22f830d7f::t_2cdd406050ac07 328
+  s_d71e62cb6f304c::t_ccfa0c83e57676 128,351
+  s_2209f22f830d7f::t_baea1bfa2ddbe8 15,19,22-23,43
+  s_2209f22f830d7f::t_717ab558ee4f50 200-204,209-211,214-216
+  s_2209f22f830d7f::t_ce6f83c3cccc30 408,410,412-413,415,433
+  s_2209f22f830d7f::t_178d85db80a108 432
+  s_2209f22f830d7f::t_0d35aa45d430ab 394
+  s_2209f22f830d7f::t_6e65c23d75bcbe 409
+  s_2209f22f830d7f::t_e88e215d532e2b 296,298
+outfitter/packages/web/src/lib/session-header.ts
+  s_2209f22f830d7f::t_a206276869c462 1-104
+outfitter/packages/web/src/components/ModelPicker.tsx
+  s_2209f22f830d7f::t_c9b19df8e97b22 3
+  s_2209f22f830d7f::t_2d684b8a0535fd 1-2,4-32,34-75
+  s_2209f22f830d7f::t_a70293c9015e21 33
+outfitter/packages/web/test/client.test.ts
+  s_2209f22f830d7f::t_d0692d73c6722a 148-209
+  s_2209f22f830d7f::t_7bae6e03cbfb21 210-281
+outfitter/packages/web/src/api/client.ts
+  s_2209f22f830d7f::t_1ac8095a2a52fb 101-117
+  s_2209f22f830d7f::t_f0883982d04bd0 250-268
+  s_2209f22f830d7f::t_1026c7bf637fe8 269
+  s_2209f22f830d7f::t_347ec151967555 127-148
+  s_2209f22f830d7f::t_cb0fb2baebafde 204,208-228
+  s_2209f22f830d7f::t_ef6e96412b6c02 229
+outfitter/packages/web/src/components/NewSessionDialog.tsx
+  s_2209f22f830d7f::t_972828bcdd0f43 12-14,30
+  s_2209f22f830d7f::t_b8b9d6a14edaf7 52-62
+  s_2209f22f830d7f::t_cb4f78a08023a3 124
+  s_2209f22f830d7f::t_5956c459e1396e 4,6
+  s_2209f22f830d7f::t_301867cc17e9e2 73-74,76-77
+  s_2209f22f830d7f::t_f37bd6185212ee 120,123,128
+outfitter/packages/web/src/components/GuruForm.tsx
+  s_2209f22f830d7f::t_d531d3b9a33d43 1,4,7-57,60-70,72-73,74-88,90-98,100-102,111-196
+outfitter/packages/web/src/pages/GurusPage.tsx
+  s_2209f22f830d7f::t_0d25cf553eae41 1-2,5-6,9-20,22-26,27-32,34-44,45-48,50-55,60,62-64,66-69,71,74-85,94-106,108-136
+outfitter/packages/web/src/lib/model-filter.ts
+  s_2209f22f830d7f::t_bfb4d058e1c55d 1-14
+outfitter/packages/web/test/model-filter.test.ts
+  s_2209f22f830d7f::t_e9e26e62d5cc0a 1-33
+outfitter/docs/reports/gurus-ui.md
+  s_2209f22f830d7f::t_5129e094280403 1-131
+outfitter/EPIC.md
+  s_2209f22f830d7f::t_30214fbb3e4c85 388-402
+  s_2209f22f830d7f::t_dd41c14e5785c1 404-406
+  s_2209f22f830d7f::t_44293b8122814a 126
+  s_2209f22f830d7f::t_4a9915c5cdc8ed 340-358
+  s_2209f22f830d7f::t_f084c810144cad 403
+outfitter/packages/api/src/auth.ts
+  s_2209f22f830d7f::t_b506c150a0e741 33,40-51
+  s_2209f22f830d7f::t_be13c670756122 76-78,94,98-102,110-114,116,119-122,137,140-142,148,158-169
+outfitter/packages/api/src/routes/me.ts
+  s_2209f22f830d7f::t_140129c8826bc7 9-11,16
+outfitter/packages/api/test/auth.test.ts
+  s_2209f22f830d7f::t_5b99b49093c06e 4,6,19-79
+outfitter/packages/api/test/config.test.ts
+  s_2209f22f830d7f::t_6a36718d75ff9d 43-57
+outfitter/packages/api/src/config.ts
+  s_2209f22f830d7f::t_67a92da5acde83 135-145
+  s_2209f22f830d7f::t_37ca9bfb51f642 210
+  s_2209f22f830d7f::t_30c095c9c19a3f 87-94
+outfitter/packages/api/src/secrets.ts
+  s_2209f22f830d7f::t_6f243a10e2f650 134-326
+outfitter/packages/api/src/main.ts
+  s_2209f22f830d7f::t_6f243a10e2f650 4-11,23-25,27
+outfitter/packages/api/test/e2e.test.ts
+  s_2209f22f830d7f::t_6f243a10e2f650 24
+outfitter/packages/api/test/operator-test-endpoint.test.ts
+  s_2209f22f830d7f::t_6f243a10e2f650 1-120
+outfitter/packages/api/test/operator.test.ts
+  s_2209f22f830d7f::t_6f243a10e2f650 1-63,65-282
+outfitter/packages/api/test/helpers.ts
+  s_2209f22f830d7f::t_6f243a10e2f650 8,20-22,42-43
+outfitter/packages/api/src/routes/operator.ts
+  s_2209f22f830d7f::t_6f243a10e2f650 1-13,16-178,193
+outfitter/packages/api/src/operator.ts
+  s_2209f22f830d7f::t_6f243a10e2f650 1-100
+outfitter/deploy/baseline.sh
+  s_2209f22f830d7f::t_196a8d387c5f3f 160-161,164-165
+  s_2209f22f830d7f::t_76347c9431f5b3 80-117
+outfitter/deploy/README.md
+  s_2209f22f830d7f::t_bc46930b8533b4 112-117
+  s_2209f22f830d7f::t_92f4f6d90f9769 77-82
+outfitter/deploy/service.sh
+  s_2209f22f830d7f::t_9f10410732ebb6 182-189
+outfitter/packages/web/src/pages/SettingsPage.tsx
+  s_2209f22f830d7f::t_f31fa4671130d7 1,16-25,27-31,33-43,44-47,49-56,57-63,65-70,71-74,76-80,82-84,86-93,97,99-139,141-143,145-149,273-276,278-280,282-288,290-300,303-306,311,315,317-340,342-343,346-360,365-367
+outfitter/packages/web/src/App.tsx
+  s_2209f22f830d7f::t_abf8dc0ee0e1eb 3,49,54-60,78
+  s_2209f22f830d7f::t_939d7672f2de51 5-6,72-73,81-82,85
+  s_2209f22f830d7f::t_426073b8919e00 7
+outfitter/docs/reports/operators.md
+  s_2209f22f830d7f::t_5473e865867b1a 3
+outfitter/packages/web/src/styles/theme.css
+  s_2209f22f830d7f::t_b7e559cad7db33 1-45,47-73,75-101,103-127,129-145
+  s_2209f22f830d7f::t_6e65c23d75bcbe 46,74,102,128
+outfitter/packages/web/src/assets/logo-mark.svg
+  s_2209f22f830d7f::t_d536970a137734 1-12
+outfitter/packages/web/src/assets/logo.svg
+  s_2209f22f830d7f::t_caed2ceba29d5d 1-22
+outfitter/packages/web/src/components/ThemeToggle.tsx
+  s_2209f22f830d7f::t_5004db1092576c 1-32,37-48,51-53,55-56,58,60-62
+outfitter/packages/web/package.json
+  s_2209f22f830d7f::t_5668c1711b3338 16-18,30,34
+  s_2209f22f830d7f::t_aa22d506317adc 22-24
+outfitter/packages/web/src/styles/components.css
+  s_2209f22f830d7f::t_0a2938d3344a4a 389,395
+  s_2209f22f830d7f::t_f51b1a9a80e2bf 364-366,368,370-372,377-378
+  s_2209f22f830d7f::t_de1791227e3fbc 504
+  s_2209f22f830d7f::t_2a34da9d15c4ad 244-252
+  s_2209f22f830d7f::t_a43d0a73b39ca1 312,316-319,321-332,335-337,340-342,344-345
+  s_2209f22f830d7f::t_b67a20bcb6848e 1-85,87,93,96-98,103-105,109-112,119-243,253-294,399-503,505-506
+  s_2209f22f830d7f::t_1711f125658b93 295-311,313-315,320,333-334,338-339,343,346-363,367,369,373-376,379-388,390-394,396-398
+  s_2209f22f830d7f::t_e88e215d532e2b 91-92,94,99,102,106
+  s_2209f22f830d7f::t_aa22d506317adc 86
+  s_2209f22f830d7f::t_6e65c23d75bcbe 88-90,95,100-101,107-108,113-116
+  s_2209f22f830d7f::t_002358c66a7146 117-118
+outfitter/packages/web/src/styles/base.css
+  s_2209f22f830d7f::t_c40e2fabe07fac 82-97
+  s_2209f22f830d7f::t_4832da8b4980ea 1-81,98-109
+outfitter/packages/web/public/favicon.svg
+  s_2209f22f830d7f::t_7f507096580b73 1-13
+outfitter/packages/web/index.html
+  s_2209f22f830d7f::t_71278d1d84aa14 7,9,11-25
+outfitter/packages/web/src/style.css
+  s_2209f22f830d7f::t_ac49d38cb2f855 1-6
+outfitter/packages/web/src/styles/layout.css
+  s_2209f22f830d7f::t_a1434efac7e4a9 367-368
+  s_2209f22f830d7f::t_1aebb5b1021651 1-32,40-70,126-167,204-254,356-366,369-377,379-423,548-597
+  s_2209f22f830d7f::t_d9e4f1b268bc6c 71-77
+  s_2209f22f830d7f::t_2afebc175249d7 33-39
+outfitter/packages/web/src/components/Logo.tsx
+  s_2209f22f830d7f::t_71cd2e188ec2de 1-61
+outfitter/package-lock.json
+  s_2209f22f830d7f::t_9cf3265c8e5bcc 1168-1194,7739-7741
+  s_2209f22f830d7f::t_58f1a5713ac993 2158-2166,2178-2188,2195-2216,2254-2259,2285-2290,2571-2580,2738-2747,2765-2784,3301-3302,3310-3311,3393-3394,3514-3526,3574-3586,3798-3819,4372-4411,4425-4434,4509-4514,4533-4566,4576-4597,4837-4846,4873-4882,4905-4908,4910-4914,4916-4918,4921-4942,4945-4948,4951-4957,4959-4961,4964-4968,4970-4974,4976-4991,4994-4995,4998-5010,5013-5017,5019-5023,5025-5180,5215-5847,6030-6054,6238-6247,6319-6345,6417-6482,6758-6767,6847-6860,6899-6916,7105-7124,7154-7240,7291-7318,7679-7688,7745-7747
+outfitter/packages/web/src/components/Composer.tsx
+  s_2209f22f830d7f::t_00d13293f32268 137
+  s_2209f22f830d7f::t_6b382995fc00af 2
+  s_2209f22f830d7f::t_72cb0525b3c224 3
+  s_2209f22f830d7f::t_fe6f5d3ae8a685 85
+outfitter/packages/web/src/components/Working.tsx
+  s_2209f22f830d7f::t_1de77b6ba82adc 1-2,8-9,12-30,32-35
+  s_2209f22f830d7f::t_d99e61d6b4e43a 3-7,10-11,31
+outfitter/packages/web/src/pages/FleetPage.tsx
+  s_2209f22f830d7f::t_eb45482f80555d 8
+  s_2209f22f830d7f::t_83b87c489b6d04 115-124
+  s_2209f22f830d7f::t_98353c86c375e8 101,137
+  s_2209f22f830d7f::t_e3299ab1cbbc56 94,96,98-99
+outfitter/packages/web/src/components/UiRequestPanel.tsx
+  s_2209f22f830d7f::t_4e3ecabab77504 2-3,42
+  s_2209f22f830d7f::t_6f6470dd3a76cc 54,69,72,91
+outfitter/packages/web/src/components/SoundToggle.tsx
+  s_2209f22f830d7f::t_1de1e5f225e535 1-6,10-17,20-22,24-26,28,30-32
+outfitter/packages/web/test/floppy-sound.test.ts
+  s_2209f22f830d7f::t_eb17907af5459e 1-72
+outfitter/packages/web/src/pages/ProvidersPage.tsx
+  s_2209f22f830d7f::t_eb45482f80555d 2
+  s_2209f22f830d7f::t_98353c86c375e8 55
+outfitter/packages/web/src/lib/floppy-sound.ts
+  s_2209f22f830d7f::t_67da35b501a38f 1-231
+outfitter/packages/web/src/pages/TokensPage.tsx
+  s_2209f22f830d7f::t_98353c86c375e8 145,184
+  s_2209f22f830d7f::t_eb45482f80555d 3,6,58,136
+  s_2209f22f830d7f::t_dddd09fb30e37a 93,95,99-100,113,116,120,135,162,176
+  s_2209f22f830d7f::t_aa22d506317adc 94
+outfitter/packages/web/src/lib/entry-view.ts
+  s_2209f22f830d7f::t_d3e6820309ae98 71-73,76,81-83
+outfitter/packages/web/src/components/EntryItem.tsx
+  s_2209f22f830d7f::t_d3e6820309ae98 19-22
+  s_2209f22f830d7f::t_8c2a395b825b42 149
+  s_2209f22f830d7f::t_ae6deb70e82347 4,99,106,130
+outfitter/packages/web/test/entry-view.test.ts
+  s_2209f22f830d7f::t_d3e6820309ae98 24,26
+  s_2209f22f830d7f::t_28695d82700815 82-92
+outfitter/packages/api/test/static.test.ts
+  s_2209f22f830d7f::t_48832b7692c87d 1-18
+outfitter/packages/api/src/routes/static.ts
+  s_2209f22f830d7f::t_b84ceb1d10f14e 36-37
+  s_2209f22f830d7f::t_48832b7692c87d 11-26,32-35,38-39,46,50
+outfitter/packages/web/src/styles/pages.css
+  s_2209f22f830d7f::t_8c2a395b825b42 133-221
+  s_2209f22f830d7f::t_e88e215d532e2b 122-132
+outfitter/packages/web/test/markdown.test.tsx
+  s_2209f22f830d7f::t_8c2a395b825b42 1-21,28-54
+outfitter/packages/web/src/components/Markdown.tsx
+  s_2209f22f830d7f::t_ae6deb70e82347 2-3,6-9,15-21,30,33-58
+outfitter/docs/reports/easter-egg-research.md
+  s_2209f22f830d7f::t_30badda62d962c 1-333
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "e47d306997c3ddea256f2971876f9a34ce3d178b",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_d71e62cb6f304c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "598183a5-6865-48f8-80e7-37d24447f686",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

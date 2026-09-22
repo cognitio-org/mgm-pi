@@ -404,3 +404,55 @@ test('LOAD "KERNAL" then RUN prints the Kernal boot screen within 40 columns', a
   assert.ok(lines.every((l) => l.length <= 40), lines.join("\n"));
   assert.deepEqual(lines.slice(-3), ["", "READY.", ""]);
 });
+
+test("LOAD from a running program chains into the new one and keeps the variables", async () => {
+  const io = { load: (name) => (name === "X" ? { program: ["10 PRINT A;B$"] } : { error: "FILE NOT FOUND" }) };
+  const { m, screen } = machine({ io });
+  await m.enter('10 A=5:B$="KEPT":LOAD "X",8');
+  await m.enter("RUN");
+  assert.equal(rows(screen.text)[0], " 5 KEPT");
+  assert.deepEqual(m.listing(), ["10 PRINT A;B$"]);
+  // A LOAD typed at READY. still starts clean.
+  await m.enter("A=7");
+  await m.enter('LOAD "X",8');
+  screen.text = "";
+  await m.enter("RUN");
+  assert.equal(rows(screen.text)[0], " 0 ");
+});
+
+test("FOR ... STEP 0 loops forever, like the C64", async () => {
+  let yields = 0;
+  const { m, screen } = machine({ slice: 50, yield: (fn) => { yields++; setImmediate(fn); } });
+  await m.enter("10 FOR I=1 TO 5 STEP 0:NEXT");
+  await m.enter('20 PRINT "DONE"');
+  const done = m.enter("RUN");
+  while (yields < 20) await new Promise((r) => setImmediate(r));
+  assert.equal(m.running, true);
+  m.stop();
+  await done;
+  assert.ok(!screen.text.includes("DONE"));
+  assert.match(screen.text, /BREAK IN 10/);
+});
+
+test("an empty reply at the ?? prompt leaves the remaining variables alone", async () => {
+  const { out } = await run(
+    ["10 A=1:B=2:C=3", "20 INPUT A,B,C", "30 PRINT A;B;C", "RUN"],
+    { answers: ["9", ""] },
+  );
+  assert.ok(out.includes("?? "), out);
+  assert.ok(out.includes(" 9  2  3 "), out);
+});
+
+test("the directory's disk name lists in reverse video", async () => {
+  const writes = [];
+  const program = Basic.directory({ title: "KERNAL.ONE", id: "K1 2A", free: 640, files: [] });
+  const { m } = machine({
+    io: { write: (s, color, rvs) => writes.push([s, rvs]), load: () => ({ program, raw: true }) },
+  });
+  await m.enter('LOAD "$",8');
+  writes.length = 0;
+  await m.enter("LIST");
+  const reversed = writes.filter(([, rvs]) => rvs).map(([s]) => s).join("");
+  assert.equal(reversed, '"KERNAL.ONE      " K1 2A');
+  assert.ok(writes.some(([s, rvs]) => !rvs && s.includes("640 BLOCKS FREE.")));
+});

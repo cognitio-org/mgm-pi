@@ -163,9 +163,10 @@ IAP OAuth Admin API that `gcloud iap oauth-brands/oauth-clients` wrapped was shu
 3. **Clients** → Create client → *Web application*, name `outfitter-iap`. Save it, copy the client
    ID, then add the authorized redirect URI
    `https://iap.googleapis.com/v1/oauth/clientIds/<CLIENT_ID>:handleRedirect`.
-4. Store the client secret:
-   `printf '%s' '<CLIENT_SECRET>' | gcloud secrets create outfitter-iap-oauth-client-secret --data-file=- --project=outfitter-509211`
-   (`outfitter-api@` does not need access to it; only the deployer reads it).
+4. Download the client's JSON from the console and store its secret straight from the file, so
+   it never passes through your terminal or shell history:
+   `python3 -c 'import json,sys; sys.stdout.write(json.load(open(sys.argv[1]))["web"]["client_secret"])' ~/Downloads/client_secret_<CLIENT_ID>.json | gcloud secrets create outfitter-iap-oauth-client-secret --data-file=- --project=outfitter-509211`
+   (`outfitter-api@` does not need access to it; only the deployer reads it). Then delete the JSON.
 5. Redeploy with the client ID: `IAP_OAUTH_CLIENT_ID=<CLIENT_ID> ./api.sh`. This sets IAP's OAuth
    settings on `outfitter-api` and grants every `IAP_MEMBERS` entry `roles/iap.httpsResourceAccessor`.
    Export `IAP_OAUTH_CLIENT_ID` on every later `./api.sh` run too; the script leaves IAP's OAuth
@@ -200,8 +201,9 @@ missing mappings and prints the DNS records they need. The records in the `kerna
 provisions the certificates once DNS resolves (15 min to 24 h).
 
 `app.kernal.one` needs nothing from `outfitter-api`'s own config: IAP's audience is the service
-path, not the hostname, and `OUTFITTER_ORIGIN` only matters as the agent-token audience on the link
-role. IAP's OAuth redirect stays on `iap.googleapis.com`, so the OAuth client needs no new
+path, not the hostname, and the API never checks a request's host or Origin header. `OUTFITTER_ORIGIN`
+(the service's own run.app URL: the agent-token audience, and the base for links the UI prints) can
+stay as it is. IAP's OAuth redirect stays on `iap.googleapis.com`, so the OAuth client needs no new
 redirect URI. The landing page's CSP pins the hash of its inline theme script
 (`landing/security-headers.conf`); recompute it if that script changes.
 

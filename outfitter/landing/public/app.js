@@ -35,14 +35,28 @@
     showSound();
     if (on) Floppy.play("modem"); else Floppy.stop();
   });
-  // A dial-up handshake the first time a visitor touches the page, unless that touch is the
-  // sound button itself (muting has to stay silent). Any LOAD that follows cuts it off.
+  // A dial-up handshake the first time a visitor clicks or types, unless that is the sound button
+  // itself (muting has to stay silent). Only click and real typing count: a touchstart or
+  // pointerdown isn't a user activation for audio, and Tab, Esc or a lone modifier is someone
+  // finding their way (maybe to the mute button). If the browser still refuses, try again next
+  // time. Any LOAD that follows cuts it off.
+  var greeting = false;
   function greet(ev) {
-    document.removeEventListener("pointerdown", greet, true);
-    document.removeEventListener("keydown", greet, true);
-    if (!sound.contains(ev.target) && Floppy.enabled()) Floppy.play("modem");
+    if (greeting) return;
+    if (ev.type === "keydown" &&
+        (ev.ctrlKey || ev.metaKey || ev.altKey || (ev.key.length !== 1 && ev.key !== "Enter"))) return;
+    function done() {
+      document.removeEventListener("click", greet, true);
+      document.removeEventListener("keydown", greet, true);
+    }
+    if (sound.contains(ev.target)) return done();
+    greeting = true;
+    Floppy.playGreeting().then(function (played) {
+      greeting = false;
+      if (played) done();
+    });
   }
-  document.addEventListener("pointerdown", greet, true);
+  document.addEventListener("click", greet, true);
   document.addEventListener("keydown", greet, true);
 
   function strobe(on) {
@@ -145,7 +159,7 @@
     m.print("\nSEARCHING FOR " + name);
     strobe(true);
     var clipMs = Floppy.play(big ? "launch" : "load");
-    return wait(searchMs).then(function () {
+    return driveDone(wait(searchMs).then(function () {
       if (!file && name !== "$") { strobe(false); return { error: "FILE NOT FOUND" }; }
       m.print("\nLOADING");
       return wait(Math.max(clipMs - searchMs, 400)).then(function () {
@@ -154,7 +168,7 @@
         autorun = launchable && !m.inProgram();
         return file ? { program: file.program } : { program: Basic.directory(disk()), raw: true };
       });
-    });
+    }));
   }
 
   function diskSave(name, device, sec, lines, m) {
@@ -164,14 +178,20 @@
     stopBtn.hidden = true;
     m.print("\nSAVING " + name);
     strobe(true);
-    return wait(Floppy.play("load")).then(function () {
+    return driveDone(wait(Floppy.play("load")).then(function () {
       strobe(false);
       // The disk's own files are a FILE EXISTS on the drive's error channel; BASIC says nothing.
       if (BUILTIN.some(function (f) { return f.name === name; })) return;
       var saved = savedFiles();
       saved[name] = lines;
       try { localStorage.setItem("kernalDisk", JSON.stringify(saved)); } catch (e) {}
-    });
+    }));
+  }
+
+  // RUN/STOP is hidden while the drive works (the machine ignores it then). Put it back when the
+  // drive is done, so a program that SAVEs or LOADs and carries on can still be stopped by touch.
+  function driveDone(p) {
+    return p.finally(function () { stopBtn.hidden = mode === "ready"; });
   }
 
   function sys(addr, m) {

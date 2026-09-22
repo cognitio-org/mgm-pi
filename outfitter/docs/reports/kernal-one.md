@@ -43,8 +43,8 @@ onto `outfitter-api`. Nothing in the service changes:
 
 - `IAP_AUDIENCE` is the service path (`/projects/<n>/locations/<region>/services/outfitter-api`),
   not the hostname, so the JWT check holds on any hostname.
-- `OUTFITTER_ORIGIN` matters only as the agent-token audience, which the link role verifies; the
-  web role can keep its run.app origin.
+- The API never checks a request's host or Origin header. `OUTFITTER_ORIGIN` (the run.app URL:
+  the agent-token audience, and the base for links the UI prints) keeps working as it is.
 - IAP's OAuth redirect always goes through `iap.googleapis.com`, so the OAuth client needs no new
   redirect URI.
 

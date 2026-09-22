@@ -43,6 +43,10 @@ CLOUDRUN_JOB="${CLOUDRUN_JOB:-outfitter-agent}"
 # `user:` for a single Google account (including @gmail.com). Anyone outside the mgmonteleone.com
 # org (serviam-it.hr, gmail) also needs IAP on a custom OAuth client -- see IAP_OAUTH_CLIENT_ID
 # below and README.md "IAP access for users outside the org".
+if [[ -n "${IAP_DOMAIN:-}" ]]; then
+  echo "error: IAP_DOMAIN is gone; use IAP_MEMBERS (e.g. IAP_MEMBERS=domain:${IAP_DOMAIN})" >&2
+  exit 1
+fi
 # A domain: member admits every account that domain's Workspace admin creates.
 IAP_MEMBERS="${IAP_MEMBERS:-domain:mgmonteleone.com,domain:serviam-it.hr,user:matija.turk@gmail.com}"
 IFS=',' read -ra IAP_MEMBER_LIST <<<"${IAP_MEMBERS}"
@@ -203,13 +207,15 @@ if [[ "${ROLE}" == "web" ]]; then
       echo "error: secret outfitter-iap-oauth-client-secret is empty; not touching IAP's OAuth settings" >&2
       exit 1
     fi
+    q="'"   # YAML single-quoted scalar: a literal ' is written as ''
+    IAP_OAUTH_CLIENT_SECRET_YAML="${IAP_OAUTH_CLIENT_SECRET//${q}/${q}${q}}"
     IAP_SETTINGS_FILE="$(mktemp)"   # 0600; holds the client secret only until gcloud has read it
     trap 'rm -f "${IAP_SETTINGS_FILE}"' EXIT INT TERM
     cat >"${IAP_SETTINGS_FILE}" <<YAML
 accessSettings:
   oauthSettings:
     clientId: ${IAP_OAUTH_CLIENT_ID}
-    clientSecret: '${IAP_OAUTH_CLIENT_SECRET}'
+    clientSecret: '${IAP_OAUTH_CLIENT_SECRET_YAML}'
 YAML
     gcloud iap settings set "${IAP_SETTINGS_FILE}" \
       --resource-type=cloud-run \

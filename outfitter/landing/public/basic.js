@@ -201,7 +201,7 @@
   // A disk directory as the program LOAD "$",8 puts in memory: the block count is the line
   // number, and the header line starts with RVS ON, which is why it lists in reverse video.
   function directory(disk) {
-    var lines = ['0 "' + (disk.title + "                ").slice(0, 16) + '" ' + disk.id];
+    var lines = ['0 \u0012"' + (disk.title + "                ").slice(0, 16) + '" ' + disk.id];
     disk.files.forEach(function (f) {
       var n = String(f.blocks);
       lines.push(n + " " + " ".repeat(Math.max(0, 4 - n.length)) +
@@ -277,9 +277,9 @@
       if (c === 13 || c === 10) {
         // A CR straight after a wrap would leave a blank row; the 40-column line already ended.
         if (this.wrapped) { this.wrapped = false; continue; }
+        if (this.rvs) this.setAttr(this.textColor, false);   // CR ends reverse video
         this.obuf += "\n";
         this.col = 0;
-        if (this.rvs) this.setAttr(this.textColor, false);
         continue;
       }
       if (c < 32 || (c >= 128 && c < 160)) { this.control(c); continue; }
@@ -358,15 +358,21 @@
   };
 
   // Replace the whole program from listing lines ("10 PRINT ..."). raw keeps the text as is
-  // instead of crunching it (a disk directory isn't BASIC, it only lists like it).
-  M.setProgram = function (lines, raw) {
+  // instead of crunching it (a disk directory isn't BASIC, it only lists like it). keepVars is
+  // LOAD from a running program: the C64 chains into the new one with the variables intact.
+  M.setProgram = function (lines, raw, keepVars) {
     this.prog = [];
     for (var i = 0; i < lines.length; i++) {
       var m = /^\s*(\d+) ?(.*)$/.exec(lines[i]);
       if (!m) continue;
       this.prog.push({ num: +m[1], toks: raw ? m[2].split("") : crunch(normalize(m[2])) });
     }
-    this.changed();
+    if (!keepVars) return this.changed();
+    this.lineIndex = null;
+    this.data = null;
+    this.dataIdx = 0;
+    this.cont = null;
+    this.stack = [];
   };
 
   M.listing = function () {
@@ -891,7 +897,7 @@
         self.col = 0;
         self.wrapped = false;
         line = normalize(line);
-        if (!line.trim() && from === 0) return;   // a bare Return leaves the variables alone
+        if (!line.trim()) return;   // a bare Return (at ? or ??) leaves the variables alone
         var r = splitInput(line), vals = [];
         for (var i = 0; i < r.items.length && from + i < refs.length; i++) {
           var ref = refs[from + i], v = r.items[i];
@@ -929,7 +935,7 @@
     return Promise.resolve(r).then(function (res) {
       if (res && res.error) throw err(res.error);
       if (verb === "SAVE") return;
-      if (res && res.program) self.setProgram(res.program, res.raw);
+      if (res && res.program) self.setProgram(res.program, res.raw, !direct);
       if (direct) return self.halt("");
       // LOAD from a running program chains: the new program starts at once, variables kept.
       if (!self.prog.length) { self.ready(); return DONE; }
@@ -1081,7 +1087,8 @@
       var f = this.stack[i];
       var v = check((this.vars.get(f.key) || 0) + f.step);
       this.vars.set(f.key, v);
-      if (f.step >= 0 ? v <= f.limit : v >= f.limit) {
+      // Done once past the limit in the step's direction; STEP 0 never gets there.
+      if (f.step > 0 ? v <= f.limit : f.step < 0 ? v >= f.limit : true) {
         this.pc = { line: f.pc.line, idx: f.pc.idx, pos: f.pc.pos };
         this.jumped = true;
         return;

@@ -31,6 +31,21 @@ window.Floppy = (function () {
     return LENGTH_MS[name] || 0;
   }
 
+  // The first-visit modem. Resolves false only when the browser refused to play (no user
+  // activation yet, e.g. a touch that became a scroll), so the page can try again on the next
+  // click or key; being cut off by a LOAD counts as played.
+  function playGreeting() {
+    if (!enabled()) return Promise.resolve(true);
+    stop();
+    try {
+      var a = clip("modem");
+      a.currentTime = 0;
+      var p = a.play();
+      if (!p || !p.then) return Promise.resolve(true);
+      return p.then(function () { return true; }, function (e) { return !(e && e.name === "NotAllowedError"); });
+    } catch (e) { return Promise.resolve(true); }
+  }
+
   function stop() {
     for (var k in clips) { try { clips[k].pause(); } catch (e) {} }
   }
@@ -47,5 +62,5 @@ window.Floppy = (function () {
     try { localStorage.setItem("kernalSound", on ? "on" : "off"); } catch (e) {}
   }
 
-  return { play: play, stop: stop, preload: preload, enabled: enabled, setEnabled: setEnabled };
+  return { play: play, playGreeting: playGreeting, stop: stop, preload: preload, enabled: enabled, setEnabled: setEnabled };
 })();

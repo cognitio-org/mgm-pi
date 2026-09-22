@@ -1,4 +1,5 @@
 import type { EntryView } from "../lib/entry-view.ts";
+import { Markdown } from "./Markdown.tsx";
 
 // Minimal, framework-free rendering of one EntryView. @earendil-works/pi-web-ui ships web
 // components built on mini-lit against pi-ai's Message shape directly rather than pi's persisted
@@ -33,21 +34,21 @@ export function EntryItem({ view }: { view: EntryView }) {
       return (
         <div className="entry user">
           <div className="entry-label">You</div>
-          {view.text}
+          <Markdown text={view.text} />
         </div>
       );
     case "assistant-text":
       return (
         <div className="entry assistant-text">
           <div className="entry-label">Assistant</div>
-          {view.text}
+          <Markdown text={view.text} />
         </div>
       );
     case "assistant-thinking":
       return (
         <div className="entry assistant-thinking">
           <div className="entry-label">Thinking</div>
-          {view.text}
+          <Markdown text={view.text} />
         </div>
       );
     case "tool-call":
@@ -71,7 +72,7 @@ export function EntryItem({ view }: { view: EntryView }) {
       return (
         <div className="entry system">
           <div className="entry-label">System</div>
-          {view.text}
+          <Markdown text={view.text} />
         </div>
       );
     case "model-change":
@@ -84,7 +85,7 @@ export function EntryItem({ view }: { view: EntryView }) {
       return (
         <div className="entry compaction">
           <div className="entry-label">Compacted</div>
-          {view.summary}
+          <Markdown text={view.summary} />
         </div>
       );
     case "custom":

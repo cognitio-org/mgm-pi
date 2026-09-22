@@ -167,9 +167,11 @@ As agreed, no approval prompts for everyday work, in the UI or headless. What re
 
 Settings `github.attribution.commit` and `github.attribution.pr`, each a string or empty:
 
-- default commit trailer: `Co-Authored-By: Kernal <noreply@kernal.invalid>` style, final address to be
-  decided;
+- default commit trailer: `Co-Authored-By: Kernal <noreply@kernal.invalid>`;
 - default PR footer: `Opened with Kernal`.
+
+Both are **on by default** and can be blanked in settings. The address is a reserved `.invalid`
+domain (RFC 2606), never a `users.noreply.github.com` one, which would credit an unrelated account.
 
 Added exactly once, checked before appending. Locally the author is whatever the person's git
 config says. In the cloud there is no identity today (gap 4), so phase 3 adds one: `run.spec.author
@@ -200,7 +202,8 @@ pi's environment and in agentd's own git calls. **Decided: "the bot, on behalf o
 2. **Install it if missing.** Download the official release for this platform from
    `github.com/cli/cli/releases` (the same four platforms Kernal ships), verify it against the
    release's `gh_<version>_checksums.txt`, and unpack `gh` into `~/.kernal/bin`. No admin rights, no
-   Homebrew. The launcher appends `~/.kernal/bin` to the **end** of `PATH` (it does not touch `PATH`
+   Homebrew (**decided**: downloaded on first use, not bundled, so releases stay small and we do
+   not ship and own someone else's binary). The launcher appends `~/.kernal/bin` to the **end** of `PATH` (it does not touch `PATH`
    today; this is a new line in `bin/kernal`), and Kernal's own calls use the resolved path
    directly. In a source checkout the binary goes in the git-ignored `kernal/.pi/bin`. Bundling `gh` in every release (about 40 MB per
    platform) is the alternative; downloading on first use keeps releases small. Decision below.
@@ -301,7 +304,8 @@ them with the run's GitHub credential and records them for audit.
 - **`wait_ci` polls** with short `checks` requests from the extension, with backoff, rather than
   holding one request open across a reconnect.
 - **Policy**: only the session's repository; pushes only to the session branch (v1) or branches
-  under a configured prefix (v2); merges only if the guru's config allows it.
+  under a configured prefix (v2). **Merging is off by default** and enabled per guru: a cloud run
+  can be started by an automation with nobody watching, and a person can always merge instead.
 
 **Credential scope and limits.** Today's credential is one fine-grained PAT with contents and
 pull-requests read/write. The tools also need issues (read/write), checks and actions (read, for
@@ -366,8 +370,17 @@ runs, so the image's `gh` package (about 38 MB) can go; `EPIC.md` is updated in 
 - Tools behave the same headless; only a `github.confirm` setting other than `none` changes that.
 - pi-subagents' foreground children do not load the parent's extensions; background children load
   the parent's ambient extensions. So the tools reach background subagents automatically, and
-  foreground roles such as `worker` and `reviewer` get them only if added to their tool lists. v1
-  adds nothing to agent files.
+  foreground roles such as `worker` and `reviewer` get them only when their definition says so.
+- **Decided: it is a per-agent setting, not a global one.** Each agent gets a GitHub tools choice,
+  `off`, `read` (status, diff, log, PR and issue reads) or `full`, written into the agent's own
+  `extensions` and `tools` fields, which pi-subagents already supports (`extensions` omitted, empty
+  or a list; `tools: "inherit"`). The `/admin` agent editor shows it as a three-way control next to
+  the existing tools picker, so an agent's access is visible where everything else about it is.
+  Ships with phase 2, defaulting to `off` for every shipped role until the tools have proven
+  themselves; `reviewer` is the first candidate for `read`.
+- **The same control exists for cloud gurus**, through `run.spec.guru.tools` / `excludeTools`, which
+  Outfitter already sends. The guru editor gets the same three-way choice, and the tool names stay
+  stable so a guru's list does not rot.
 
 ### Scope and edge cases
 
@@ -424,13 +437,7 @@ Each phase is its own PR with tests. Phases 1 and 2 are useful locally on their 
 
 ## Open questions
 
-1. **Bundle `gh` or download on first use?** Recommendation: download on first use, verified by
-   checksum; revisit if first-run downloads prove fragile.
-2. **Attribution text and address** for commits and PRs, and whether it is on by default.
-3. **Cloud identity before the GitHub App**: accept "everything appears as Matthew" for now, or do the
-   App (E2.5 phase 2) before phase 3?
-4. **Merges from the cloud**: allowed by default, or only when the guru's config says so?
-5. **Subagents**: give `worker` and `reviewer` the new tools in phase 2, or keep them on bash?
+None outstanding: all five were answered on 2026-09-22 and moved into "Decided" below.
 
 ## Decided
 
@@ -439,3 +446,12 @@ Each phase is its own PR with tests. Phases 1 and 2 are useful locally on their 
   with `Co-authored-by` and `On-behalf-of` trailers for the person; API actions carry an "on behalf
   of @login" footer.
 - **Git proxy**: build it in phase 3, after a spike, so plain `git` works in the cloud shell.
+- **`gh`**: downloaded on first use and checked against GitHub's published checksums, not bundled
+  in releases.
+- **Attribution**: the trailer and footer above, on by default, blankable in settings.
+- **Cloud identity**: the shared credential (everything appears as Matthew) is accepted for now,
+  while he is the only person using cloud runs. The tools say whose name they act under, and the
+  GitHub App is the fix when that changes.
+- **Merging from the cloud**: off by default, enabled per guru.
+- **Tool access for subagents and gurus**: a per-agent and per-guru choice of `off`, `read` or
+  `full`, edited where that agent or guru is edited; every shipped role starts at `off`.

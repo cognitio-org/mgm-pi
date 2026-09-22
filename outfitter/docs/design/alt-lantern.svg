@@ -1,0 +1,15 @@
+<svg width="32" height="32" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" role="img">
+  <title>Alternative: lantern</title>
+  <desc>Not picked -- a lantern fits "expedition" but its glow only means something in dark mode; it goes flat and generic in the light GEOS theme where nothing is meant to glow.</desc>
+  <g fill="currentColor">
+    <rect x="7" y="0" width="2" height="1" />
+    <rect x="6" y="1" width="4" height="1" />
+    <rect x="5" y="2" width="6" height="8" />
+    <rect x="4" y="3" width="1" height="6" />
+    <rect x="11" y="3" width="1" height="6" />
+    <rect x="6" y="10" width="4" height="1" />
+    <rect x="7" y="11" width="2" height="3" />
+    <rect x="6" y="14" width="4" height="1" />
+  </g>
+  <rect x="7" y="4" width="2" height="4" fill="#5cff8a" opacity="0.8" />
+</svg>

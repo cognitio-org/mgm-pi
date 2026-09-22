@@ -1,0 +1,21 @@
+outfitter/packages/web/src/components/MermaidEnlargeDialog.tsx
+  s_2209f22f830d7f::t_6d8f39b4cdbc75 32-36,39-41,44-60,63-82,136
+outfitter/packages/web/test/mermaid-enlarge-dialog.test.tsx
+  s_2209f22f830d7f::t_e1567a2eb3b651 1-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "a3f49a10e346045e113ce19c110c4201987ff57f",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

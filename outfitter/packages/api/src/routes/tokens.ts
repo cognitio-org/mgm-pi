@@ -7,15 +7,19 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { RouteContext } from "./context.ts";
 import type { ApiToken } from "../store/types.ts";
-import { generateToken, hashToken, tokenPrefix } from "../tokens.ts";
+import { generateToken, hashToken, tokenPrefix, tokenExpiresAt, TOKEN_TTL_MS } from "../tokens.ts";
 
 /** Cap on non-revoked tokens per owner (design decision, E4.1b). */
 const MAX_ACTIVE_TOKENS = 10;
 
-/** Never send `hash` to a browser -- it's the only secret-equivalent value we store. */
-function publicToken(token: ApiToken): Omit<ApiToken, "hash"> {
+/** Never send `hash` to a browser -- it's the only secret-equivalent value we store. `expiresAt`
+ * is filled in with tokenExpiresAt's fallback for a token minted before the field existed, and left
+ * out if the stored dates don't parse (such a token already fails auth -- see isTokenActive). */
+export function publicToken(token: ApiToken): Omit<ApiToken, "hash"> {
   const { hash: _hash, ...rest } = token;
-  return rest;
+  const expires = tokenExpiresAt(token);
+  if (!Number.isFinite(expires)) return rest;
+  return { ...rest, expiresAt: new Date(expires).toISOString() };
 }
 
 export async function registerTokenRoutes(app: FastifyInstance, ctx: RouteContext): Promise<void> {
@@ -40,7 +44,8 @@ export async function registerTokenRoutes(app: FastifyInstance, ctx: RouteContex
     }
 
     const plaintext = generateToken();
-    const now = new Date().toISOString();
+    const createdMs = Date.now();
+    const now = new Date(createdMs).toISOString();
     const record: ApiToken = {
       id: randomUUID(),
       ownerEmail: email,
@@ -48,6 +53,7 @@ export async function registerTokenRoutes(app: FastifyInstance, ctx: RouteContex
       prefix: tokenPrefix(plaintext),
       hash: hashToken(plaintext),
       createdAt: now,
+      expiresAt: new Date(createdMs + TOKEN_TTL_MS).toISOString(),
     };
     await ctx.store.tokens.insert(record);
     // The only point the plaintext ever exists outside the client's own memory -- never logged,

@@ -33,6 +33,10 @@ External audience:
 **Access model is unchanged:** outside users get the same org-shared access as any signed-in user
 (EPIC.md "Session visibility"). None are operators; that is still `OUTFITTER_OPERATORS` only.
 
+**Removing someone later** now has a route for the token half: `POST /api/operator/tokens/revoke`
+(Control Panel → Access), by email or `@domain`, plus a 90-day token expiry, so no Atlas edit is
+needed. See `deploy/README.md` Rollback → "IAP access".
+
 **Applied live** before the redeploy, with the same gcloud commands the script runs; verified with
 `gcloud iap settings get` / `get-iam-policy` and by the sign-in redirect carrying the new client ID.
 

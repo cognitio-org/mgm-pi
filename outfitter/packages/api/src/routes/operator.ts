@@ -11,6 +11,8 @@ import type { SecretKind } from "../operator.ts";
 import { managedSecretDefs, isManagedSecretName, managedSecretDef, guruLitellmKeySecretName } from "../operator.ts";
 import { requireOperator } from "../auth.ts";
 import { fetchJson, failedResponse } from "../providers-status.ts";
+import { normalizeOwnerMatch } from "../tokens.ts";
+import { publicToken } from "./tokens.ts";
 
 /** Longer than the 3s probes in providers-status.ts: a manual "test this value" click is a rare,
  * deliberate action (not a background poll), so operators.md gives it more room before timing out. */
@@ -173,5 +175,19 @@ export async function registerOperatorRoutes(app: FastifyInstance, ctx: RouteCon
     if (!value) return { ok: false, detail: "no value set" };
 
     return testSecretValue(def.kind, value, ctx.config.litellmBaseUrl, ctx.config.tunnelDomainLmstudio, fetch);
+  });
+
+  // Offboarding (deploy/README.md Rollback): removing someone from IAP doesn't touch their outf_
+  // tokens, which outfitter-link accepts without IAP. This revokes every active token for one
+  // email, or for a whole @domain, in one call. Returns what it revoked (never hashes) so the
+  // operator sees exactly whose access just ended.
+  app.post("/api/operator/tokens/revoke", { preHandler: requireOperator }, async (req, reply) => {
+    const match = normalizeOwnerMatch((req.body ?? {}) as { email?: unknown; domain?: unknown });
+    if ("error" in match) return reply.code(400).send({ error: match.error });
+
+    const revoked = await ctx.store.tokens.revokeAllForOwners(match, new Date().toISOString());
+    const owners = [...new Set(revoked.map((t) => t.ownerEmail))].sort();
+    req.log.info({ operator: req.identity!.email, match, count: revoked.length, owners }, "operator token revoke");
+    return { match, revoked: revoked.map(publicToken), owners };
   });
 }

@@ -1,7 +1,17 @@
 import { useEffect, useState } from "react";
-import { api, ApiError, type OperatorSettings, type OperatorSecretRow } from "../api/client.ts";
+import {
+  api,
+  ApiError,
+  type OperatorSettings,
+  type OperatorSecretRow,
+  type RevokeTokensResult,
+  type TokenOwnerMatch,
+} from "../api/client.ts";
 import { toApiErrorState } from "../lib/api-error.ts";
 import { SystemErrorDialog, type ApiErrorState } from "../components/SystemErrorDialog.tsx";
+import { SyntaxError } from "../components/SyntaxError.tsx";
+import { Working } from "../components/Working.tsx";
+import { withFloppySound } from "../lib/floppy-sound.ts";
 import { vocabSubtitle, vocabulary } from "../lib/vocabulary.ts";
 
 /** One managed secret's row: masked value, when it applies, and the Replace/Test/Disable controls
@@ -137,6 +147,129 @@ function SecretRowView({ row, onChanged }: { row: OperatorSecretRow; onChanged: 
   );
 }
 
+/** Mirrors the API's normalizeOwnerMatch (src/tokens.ts) closely enough to catch typos before the
+ * request; the server stays the authority and 400s anything this lets through. */
+function ownerMatchFrom(mode: "email" | "domain", raw: string): TokenOwnerMatch | { error: string } {
+  const value = raw.trim().toLowerCase();
+  if (!value) return { error: `${mode} cannot be empty.` };
+  if (mode === "email") {
+    return /^[^@\s]+@[^@\s]+$/.test(value) ? { email: value } : { error: "email must look like name@example.com." };
+  }
+  const domain = value.startsWith("@") ? value : `@${value}`;
+  return /^@[^@\s]+\.[^@\s]+$/.test(domain) ? { domain } : { error: "domain must look like @example.com." };
+}
+
+function describeMatch(match: TokenOwnerMatch): string {
+  return "email" in match ? match.email : `everyone at ${match.domain}`;
+}
+
+/** Offboarding (deploy/README.md Rollback): removing someone from IAP leaves their dongles working
+ * on the public link service, so this revokes every active one for an email or a whole @domain.
+ * Two clicks -- the first only asks, since there's no undo. */
+function RevokeDonglesPanel() {
+  const [mode, setMode] = useState<"email" | "domain">("email");
+  const [value, setValue] = useState("");
+  const [attempted, setAttempted] = useState(false);
+  const [pending, setPending] = useState<TokenOwnerMatch | null>(null);
+  const [revoking, setRevoking] = useState(false);
+  const [result, setResult] = useState<RevokeTokensResult | null>(null);
+  const [apiError, setApiError] = useState<ApiErrorState | null>(null);
+
+  const parsed = ownerMatchFrom(mode, value);
+  const invalid = "error" in parsed ? parsed.error : null;
+
+  function ask(e: React.FormEvent) {
+    e.preventDefault();
+    setAttempted(true);
+    setResult(null);
+    if ("error" in parsed) return;
+    setPending(parsed);
+  }
+
+  async function confirm() {
+    if (!pending) return;
+    setRevoking(true);
+    try {
+      const res = await withFloppySound(api.revokeTokensForOwners(pending));
+      setResult(res);
+      setPending(null);
+      setValue("");
+      setAttempted(false);
+    } catch (err) {
+      setApiError(toApiErrorState(err, "Revoke failed"));
+    } finally {
+      setRevoking(false);
+    }
+  }
+
+  const many = vocabulary.token.many.toLowerCase();
+  const one = vocabulary.token.one.toLowerCase();
+
+  return (
+    <div className="panel">
+      <h3 className="panel-title"><span className="panel-label">Revoke {vocabulary.token.many}</span></h3>
+      <div className="panel-body">
+        <p className="session-meta">
+          Removing someone from IAP doesn't stop their {many}: the link service accepts them without IAP. Revoke
+          them here too. There is no undo; they can make new ones only if they can still reach this app.
+        </p>
+        {!pending ? (
+          <form onSubmit={ask} className="toolbar">
+            <select
+              value={mode}
+              onChange={(e) => {
+                setMode(e.target.value as "email" | "domain");
+                setAttempted(false);
+              }}
+              aria-label="Revoke by"
+            >
+              <option value="email">One email</option>
+              <option value="domain">Whole domain</option>
+            </select>
+            <div className="form-row" style={{ marginBottom: 0 }}>
+              <input
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                placeholder={mode === "email" ? "name@example.com" : "@example.com"}
+                aria-label={mode === "email" ? "Owner email" : "Owner domain"}
+                aria-invalid={attempted && !!invalid}
+                autoComplete="off"
+              />
+              {attempted && invalid && <SyntaxError>{invalid}</SyntaxError>}
+            </div>
+            <button type="submit" className="btn btn-danger">
+              Revoke {many}…
+            </button>
+          </form>
+        ) : (
+          <div role="alertdialog" aria-label={`Confirm revoking ${many}`}>
+            <p>
+              Revoke every active {one} for <strong>{describeMatch(pending)}</strong>? Their teleport stops working at
+              once.
+            </p>
+            <div className="toolbar">
+              <button type="button" className="btn btn-danger" onClick={confirm} disabled={revoking}>
+                {revoking ? <Working label="Revoking" /> : `Yes, revoke`}
+              </button>
+              <button type="button" className="btn" onClick={() => setPending(null)} disabled={revoking}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+        {result && (
+          <p className="note" role="status">
+            {result.revoked.length === 0
+              ? `No active ${many} for ${describeMatch(result.match)}.`
+              : `Revoked ${result.revoked.length} ${result.revoked.length === 1 ? one : many} for ${result.owners.join(", ")}.`}
+          </p>
+        )}
+        {apiError && <SystemErrorDialog error={apiError} onResume={() => setApiError(null)} />}
+      </div>
+    </div>
+  );
+}
+
 export function SettingsPage() {
   const [settings, setSettings] = useState<OperatorSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -226,6 +359,9 @@ export function SettingsPage() {
         </tbody>
       </table>
       </div>
+
+      <h3>Access</h3>
+      <RevokeDonglesPanel />
     </div>
   );
 }

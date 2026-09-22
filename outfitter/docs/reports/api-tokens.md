@@ -101,7 +101,9 @@ that the IAP mode is fully removed (not just flagged broken).
   this change didn't add) — an operator has to pass it explicitly after the link role's first
   deploy. Automating that lookup would remove one manual step.
 - No token expiry or rotation UI (revoke is manual, no "expires in N days"). Not requested by this
-  story's design; flagged for awareness only.
+  story's design; flagged for awareness only. *Later:* tokens now expire 90 days after creation
+  (`TOKEN_TTL_MS`, checked in `identityFromApiToken`), and operators can revoke every token for an
+  email or @domain via `POST /api/operator/tokens/revoke` (deploy/README.md Rollback).
 - `packages/web`'s `TokensPage` has no dedicated component test (the client-layer calls it makes
   are tested in `test/client.test.ts`, matching how `NewSessionDialog`/`FleetPage` etc. are — none
   of this package's pages have their own render tests today).

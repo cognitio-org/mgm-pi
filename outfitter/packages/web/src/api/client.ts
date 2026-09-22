@@ -80,6 +80,18 @@ export interface TokenRecord {
   createdAt: string;
   lastUsedAt?: string;
   revokedAt?: string;
+  /** When the token stops authenticating (90 days after creation). */
+  expiresAt?: string;
+}
+
+/** POST /api/operator/tokens/revoke's body: one owner's email, or every owner under an @domain. */
+export type TokenOwnerMatch = { email: string } | { domain: string };
+
+export interface RevokeTokensResult {
+  /** The match as the server normalized it (lowercased, domain with its leading "@"). */
+  match: TokenOwnerMatch;
+  revoked: TokenRecord[];
+  owners: string[];
 }
 
 export interface ModelRow {
@@ -209,6 +221,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify(value !== undefined ? { value } : {}),
     });
+  },
+
+  revokeTokensForOwners(match: TokenOwnerMatch): Promise<RevokeTokensResult> {
+    return request("/api/operator/tokens/revoke", { method: "POST", body: JSON.stringify(match) });
   },
 
   listTokens(): Promise<TokenRecord[]> {

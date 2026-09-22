@@ -78,6 +78,36 @@ describe("agentd <-> api WebSocket", () => {
     await app.fastify.close();
   });
 
+  test("bug 6 (docs/reports/cloud-fixes.md): only interactive extension_ui_request methods become Run.pendingUiRequest, not display-only ones", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    await agent.nextMessage(); // run.spec
+
+    // Display-only methods (protocol.md/rpc.md's "fire-and-forget" list): none of these are a
+    // question the run is waiting on, so none should ever land in Run.pendingUiRequest.
+    for (const method of ["setStatus", "setWidget", "notify", "setTitle", "set_editor_text"]) {
+      agent.send({ t: "event", seq: 1, event: { type: "extension_ui_request", id: `d-${method}`, method } });
+      assert.deepEqual(await agent.nextMessage(), { t: "ack", seq: 1 });
+      const run = await app.store.runs.findById(runId);
+      assert.equal(run?.pendingUiRequest, undefined, `${method} must not be stored as pendingUiRequest`);
+    }
+
+    // An interactive method must still be stored -- this is the one real question the UI needs to
+    // render (UiRequestPanel).
+    agent.send({ t: "event", seq: 2, event: { type: "extension_ui_request", id: "q1", method: "confirm", title: "Clear session?" } });
+    assert.deepEqual(await agent.nextMessage(), { t: "ack", seq: 2 });
+    const run = await app.store.runs.findById(runId);
+    assert.deepEqual(run?.pendingUiRequest, { type: "extension_ui_request", id: "q1", method: "confirm", title: "Clear session?" });
+
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
   test("closes the connection with a bad bearer token instead of sending run.spec", async () => {
     const app = await buildTestApp();
     const { runId } = await makeRunningSession(app);

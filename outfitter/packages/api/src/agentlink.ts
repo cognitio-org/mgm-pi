@@ -20,6 +20,14 @@ import { MAIL_LEASE_MS, MAIL_MAX_ATTEMPTS, type MailService } from "./mail.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
+/** Bug 6 (docs/reports/cloud-fixes.md): pi's rpc.md "Extension UI Protocol" section splits
+ * `extension_ui_request` into dialog methods (select/confirm/input/editor -- pi blocks for an
+ * `extension_ui_response`) and fire-and-forget display methods (notify/setStatus/setWidget/
+ * setTitle/set_editor_text -- no response expected). Only the former are ever worth storing as
+ * `Run.pendingUiRequest`; per protocol.md's own "not persisted except extension_ui_request" note,
+ * the persistence is meant for a question the run is actually waiting on. */
+const INTERACTIVE_UI_METHODS = new Set(["select", "confirm", "input", "editor"]);
+
 /** Thrown by buildRunSpec when a repo session has no usable GitHub token secret; handleConnection
  * catches it specifically to close the socket with the terminal 4412 code (docs/protocol.md) and
  * mark the run failed, instead of the generic "internal error" other buildRunSpec failures get. A
@@ -521,10 +529,17 @@ export class AgentLink {
       }
       case "event": {
         const seq = Number(frame.seq);
-        const event = frame.event as { type?: string; t?: string; [key: string]: unknown };
+        const event = frame.event as { type?: string; t?: string; method?: string; [key: string]: unknown };
         this.sse.publish(sessionId, { type: "event", data: event });
         const eventType = event.type ?? event.t;
-        if (eventType === "extension_ui_request") {
+        // Bug 6 (docs/reports/cloud-fixes.md): pi's rpc.md distinguishes dialog methods (select,
+        // confirm, input, editor -- block on an extension_ui_response) from fire-and-forget
+        // display methods (notify, setStatus, setWidget, setTitle, set_editor_text -- no response
+        // expected, "the client can display the information or ignore it"). Only the dialog
+        // methods are actually a question the run is waiting on; storing a display-only event here
+        // left Run.pendingUiRequest (and so the session's questions UI) showing a stale "pending"
+        // notify/setStatus/etc that no one was ever going to answer.
+        if (eventType === "extension_ui_request" && INTERACTIVE_UI_METHODS.has(String(event.method))) {
           await this.store.runs.update(runId, { pendingUiRequest: event, updatedAt: now });
         }
         await this.ack(runId, socket, seq, now);

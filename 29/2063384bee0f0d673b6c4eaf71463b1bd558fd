@@ -1,0 +1,23 @@
+outfitter/packages/web/src/App.tsx
+  s_2209f22f830d7f::t_720d79c5596076 72
+  s_2209f22f830d7f::t_c1a8a5971c6909 14-16
+  s_2209f22f830d7f::t_d0585e7594b9c9 29-32
+outfitter/packages/web/src/style.css
+  s_2209f22f830d7f::t_65372dca4bdb72 8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "292063384bee0f0d673b6c4eaf71463b1bd558fd",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -36,10 +36,16 @@
  *    workspace's objects through `objects/info/alternates` (object data only -- no config, hooks or
  *    attributes), and pushes to the clone URL run.spec gave agentd, not to whatever the
  *    workspace's `origin` now says.
- * `clone` (and the resume fetch/checkout) run as root before the workspace is chowned, as before.
+ * `clone` does only its network part as root (a `--no-checkout` clone and the session branch's
+ * fetch, before the workspace is handed over); the checkout itself runs as the workspace's user.
+ *
+ * Known remaining exposure: root's push still *parses* the workspace's pack and loose objects via
+ * alternates, so a git memory-safety bug in those parsers would be reachable. The follow-up is to
+ * have the agent-side bundle the new history and root import it with `transfer.fsckObjects`, which
+ * is the input path git hardens for untrusted data.
  */
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -66,13 +72,18 @@ export type ExecFn = (
   args: string[],
   cwd: string,
   env?: Record<string, string>,
-  as?: ExecAs,
+  opts?: ExecOptions,
 ) => Promise<ExecResult>;
 
-/** Linux uid/gid to run a child as (see GitOpsOptions.runAs). */
-export interface ExecAs {
-  uid: number;
-  gid: number;
+export interface ExecOptions {
+  /** Linux uid/gid to run the child as (see GitOpsOptions.runAs). */
+  uid?: number;
+  gid?: number;
+  /** Use `env` as the child's whole environment instead of an overlay on agentd's process.env
+   * (which carries RUN_TOKEN and friends). */
+  isolatedEnv?: boolean;
+  /** Kill the child after this long; it then reports a non-zero code. */
+  timeoutMs?: number;
 }
 
 export async function defaultExec(
@@ -80,13 +91,16 @@ export async function defaultExec(
   args: string[],
   cwd: string,
   env?: Record<string, string>,
-  as?: ExecAs,
+  opts: ExecOptions = {},
 ): Promise<ExecResult> {
   try {
     const { stdout, stderr } = await execFileAsync(cmd, args, {
       cwd,
-      env: env ? { ...process.env, ...env } : process.env,
-      ...(as ? { uid: as.uid, gid: as.gid } : {}),
+      env: opts.isolatedEnv ? env ?? {} : env ? { ...process.env, ...env } : process.env,
+      maxBuffer: 64 * 1024 * 1024,
+      ...(opts.uid !== undefined ? { uid: opts.uid } : {}),
+      ...(opts.gid !== undefined ? { gid: opts.gid } : {}),
+      ...(opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs, killSignal: "SIGKILL" as const } : {}),
     });
     return { stdout, stderr, code: 0 };
   } catch (err: any) {
@@ -127,8 +141,7 @@ export function authConfigEntries(remoteUrl: string, token: string | undefined):
     return [];
   }
   if (url.protocol !== "https:" || url.host !== "github.com") return [];
-  const basic = Buffer.from(`x-access-token:${token}`, "utf8").toString("base64");
-  return [["http.extraheader", `AUTHORIZATION: basic ${basic}`]];
+  return [["http.extraheader", `AUTHORIZATION: basic ${authHeaderSecret(token)}`]];
 }
 
 /** `authConfigEntries` alone, as `GIT_CONFIG_*` env vars. Returns `{}` when there's no auth to add. */
@@ -172,14 +185,15 @@ export interface CommitAuthor {
   login?: string;
 }
 
-/** run.spec's `author` with whitespace runs (line breaks included) collapsed to one space and git's
- * `<`/`>` delimiters stripped, so a stored name can't malform or add a trailer, or `undefined` when it's absent or either required field is blank -- an older
+/** run.spec's `author` with control characters (line breaks, NUL) and git's `<`/`>` delimiters
+ * blanked and whitespace collapsed, so a stored name can't malform or add a trailer (or, with a NUL,
+ * make every execFile/spawn that carries it throw), or `undefined` when it's absent or either required field is blank -- an older
  * api, or a session with no owner on record. */
 export function sanitizeAuthor(author: unknown): CommitAuthor | undefined {
   if (!author || typeof author !== "object") return undefined;
   const a = author as Record<string, unknown>;
   const clean = (v: unknown) =>
-    typeof v === "string" ? v.replace(/[<>]/g, "").replace(/\s+/g, " ").trim() : "";
+    typeof v === "string" ? v.replace(/[\x00-\x1f\x7f<>]/g, " ").replace(/\s+/g, " ").trim() : "";
   const name = clean(a.name);
   const email = clean(a.email);
   if (!name || !email) return undefined;
@@ -214,7 +228,14 @@ export function redactUrl(url: string): string {
  * `redactUrl`. */
 function redactToken(text: string, token: string | undefined): string {
   if (!token) return text;
-  return text.split(token).join("<redacted>");
+  for (const secret of [token, authHeaderSecret(token)]) text = text.split(secret).join("<redacted>");
+  return text;
+}
+
+/** The base64 credential authConfigEntries puts in the header -- what a trace of git's HTTP traffic
+ * would show instead of the raw token. Register it with the logger alongside the token. */
+export function authHeaderSecret(token: string): string {
+  return Buffer.from(`x-access-token:${token}`, "utf8").toString("base64");
 }
 
 export interface CloneSpec {
@@ -251,10 +272,26 @@ export interface GitOpsOptions {
    * root). Every local git command after the clone runs as this user, with its HOME, so git never
    * runs as root inside a repository the model controls (see module doc). Omitted when agentd isn't
    * root: everything runs as agentd's own user, as before. */
-  runAs?: ExecAs & { home: string };
+  runAs?: { uid: number; gid: number; home: string };
   /** Parent directory for the private push repository; defaults to os.tmpdir(). */
   pushRoot?: string;
+  /** Hands the freshly cloned (not yet checked out) repository to `runAs` -- main.ts's recursive
+   * chown. clone() calls it between the root-side network steps and the checkout, so root never
+   * checks out (parses .gitattributes, writes) a tree that may have been authored by an earlier
+   * session's agent. */
+  handOver?: (dir: string) => Promise<void>;
 }
+
+/** Local (workspace-user) git commands and pushes get killed after this long: the agent can make
+ * git block forever (a FIFO where an object should be), which would otherwise stall every later
+ * checkpoint, including the SIGTERM one. */
+const GIT_TIMEOUT_MS = 120_000;
+
+/** What local git sees of agentd's environment: just enough to run, never RUN_TOKEN and friends.
+ * GIT_CONFIG_GLOBAL/NOSYSTEM pass through so tests (and operators) can pin git's own config. */
+const LOCAL_ENV_PASSTHROUGH = ["PATH", "LANG", "LC_ALL", "TZ", "TMPDIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"];
+
+const SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
 /** The remote-tracking ref for a session branch. The clone is `--single-branch` on the base branch;
  * clone() adds the session branch to origin's fetch refspec and names it explicitly when fetching,
@@ -266,16 +303,27 @@ function trackingRef(branch: string): string {
 
 export function createGitOps(exec: ExecFn = defaultExec, options: GitOpsOptions = {}): GitOps {
   const runAs = options.runAs;
-  const localEnv: Record<string, string> = runAs ? { HOME: runAs.home } : {};
+  const localEnv: Record<string, string> = {};
+  for (const key of LOCAL_ENV_PASSTHROUGH) {
+    const value = process.env[key];
+    if (value !== undefined) localEnv[key] = value;
+  }
+  const home = runAs?.home ?? process.env.HOME;
+  if (home) localEnv.HOME = home;
   let pushRepo: Promise<string> | undefined;
   /** What agentd itself last saw on origin for each session branch -- from the clone's fetch or its
    * own last push. Kept here, root-side, rather than read back from the workspace's
    * (agent-writable) tracking ref; it decides both whether to push and the push's lease. */
   const remoteHead = new Map<string, string>();
 
-  /** A local git command in the workspace, as the workspace's own user. */
+  /** A local git command in the workspace, as the workspace's own user, with a minimal environment
+   * (whatever it runs -- a hook, fsmonitor -- is the agent's code). */
   async function run(cwd: string, args: string[], env: Record<string, string> = {}): Promise<ExecResult> {
-    return exec("git", args, cwd, { ...localEnv, ...env }, runAs && { uid: runAs.uid, gid: runAs.gid });
+    return exec("git", args, cwd, { ...localEnv, ...env }, {
+      ...(runAs ? { uid: runAs.uid, gid: runAs.gid } : {}),
+      isolatedEnv: true,
+      timeoutMs: GIT_TIMEOUT_MS,
+    });
   }
 
   /** agentd's private push repository: a root-owned (mode 0700, from mkdtemp) bare repo whose only
@@ -294,11 +342,13 @@ export function createGitOps(exec: ExecFn = defaultExec, options: GitOpsOptions 
     if (init.code !== 0) throw new Error(`git init --bare ${dir} failed: ${init.stderr.trim()}`);
     // Borrow the workspace's objects but nothing else: by default git lists an alternate's refs by
     // running `git for-each-ref` *inside* the (agent-owned) alternate repository, and would parse
-    // agent-written commit-graph / multi-pack-index files as acceleration data.
+    // agent-written commit-graph / multi-pack-index / bitmap files as acceleration data. (Pack and
+    // loose objects are still parsed as root -- see the follow-up noted in the module doc.)
     for (const [key, value] of [
       ["core.alternateRefsCommand", "true"],
       ["core.commitGraph", "false"],
       ["core.multiPackIndex", "false"],
+      ["pack.useBitmaps", "false"],
     ]) {
       const cfg = await exec("git", ["config", key, value], dir, { GIT_DIR: dir });
       if (cfg.code !== 0) throw new Error(`git config ${key} in ${dir} failed: ${cfg.stderr.trim()}`);
@@ -308,15 +358,17 @@ export function createGitOps(exec: ExecFn = defaultExec, options: GitOpsOptions 
 
   return {
     async clone(spec, dest) {
+      // Root does only the network part, into a repo nobody else can touch yet: clone without a
+      // checkout, map and fetch the session branch. The checkout -- parsing a tree an earlier
+      // session's agent may have written -- happens after handOver, as the workspace's own user.
       const authEnv = authHeaderEnv(spec.cloneUrl, spec.githubToken);
-      const cloneArgs = ["clone", "--branch", spec.baseBranch, "--single-branch", spec.cloneUrl, dest];
+      const cloneArgs = ["clone", "--no-checkout", "--branch", spec.baseBranch, "--single-branch", spec.cloneUrl, dest];
       const cloned = await exec("git", cloneArgs, process.cwd(), authEnv);
       if (cloned.code !== 0) {
         throw new Error(
           `git clone failed (${redactUrl(spec.cloneUrl)}): ${redactToken(cloned.stderr.trim(), spec.githubToken)}`,
         );
       }
-      // Still root, still before the caller chowns dest to the workspace user: agentd owns this repo.
       // Map the session branch in origin's fetch refspec too (the single-branch clone maps only the
       // base branch), so its tracking ref resolves as the upstream push() sets, and a plain
       // `git fetch` keeps it current.
@@ -332,23 +384,24 @@ export function createGitOps(exec: ExecFn = defaultExec, options: GitOpsOptions 
       // which a push whose checkpoint frame never arrived makes wrong, and starting over from the
       // base branch would then leave every later push non-fast-forward.
       const fetched = await exec("git", ["fetch", "origin", refspec], dest, authEnv);
+      let start: string;
       if (fetched.code === 0) {
-        const checked = await exec("git", ["checkout", "-B", spec.branch, trackingRef(spec.branch)], dest);
-        if (checked.code !== 0) {
-          throw new Error(`git checkout ${spec.branch} failed: ${checked.stderr.trim()}`);
-        }
-        const tip = await exec("git", ["rev-parse", "--verify", trackingRef(spec.branch)], dest);
-        if (tip.code === 0) remoteHead.set(spec.branch, tip.stdout.trim());
+        const tip = await exec("git", ["rev-parse", "--verify", `${trackingRef(spec.branch)}^{commit}`], dest);
+        if (tip.code !== 0) throw new Error(`git rev-parse ${trackingRef(spec.branch)} failed: ${tip.stderr.trim()}`);
+        remoteHead.set(spec.branch, tip.stdout.trim());
+        start = trackingRef(spec.branch);
       } else if (spec.createBranch) {
         // No such branch on origin yet (the clone itself just authenticated fine): a new session.
-        const created = await exec("git", ["checkout", "-b", spec.branch], dest);
-        if (created.code !== 0) {
-          throw new Error(`git checkout -b ${spec.branch} failed: ${created.stderr.trim()}`);
-        }
+        start = `refs/remotes/origin/${spec.baseBranch}`;
       } else {
         throw new Error(
           `git fetch origin ${refspec} failed: ${redactToken(fetched.stderr.trim(), spec.githubToken)}`,
         );
+      }
+      await options.handOver?.(dest);
+      const checked = await run(dest, ["checkout", "--quiet", "-f", "-B", spec.branch, start]);
+      if (checked.code !== 0) {
+        throw new Error(`git checkout ${spec.branch} failed: ${checked.stderr.trim()}`);
       }
     },
 
@@ -380,12 +433,21 @@ export function createGitOps(exec: ExecFn = defaultExec, options: GitOpsOptions 
       const headRes = await run(cwd, ["rev-parse", "--verify", "HEAD^{commit}"]);
       if (headRes.code !== 0) throw new Error(`git rev-parse HEAD failed: ${headRes.stderr.trim()}`);
       const head = headRes.stdout.trim();
+      // Output of a process running agent-controlled code; it's about to go on root's argv.
+      if (!SHA_RE.test(head)) throw new Error(`git rev-parse HEAD returned something other than a commit id`);
       const known = remoteHead.get(branch);
       if (known === head) return { head, pushed: false };
 
+      // Root is about to read the workspace's object store: make sure it is one, not a symlink or
+      // gitfile pointing root's git at files the agent can't read itself.
+      const objects = resolve(cwd, ".git", "objects");
+      for (const path of [resolve(cwd, ".git"), objects]) {
+        const st = await lstat(path);
+        if (!st.isDirectory()) throw new Error(`${path} is not a plain directory; refusing to push from it`);
+      }
       const pushDir = await ensurePushRepo();
       await mkdir(join(pushDir, "objects", "info"), { recursive: true });
-      await writeFile(join(pushDir, "objects", "info", "alternates"), `${resolve(cwd, ".git", "objects")}\n`);
+      await writeFile(join(pushDir, "objects", "info", "alternates"), `${objects}\n`);
       // The exact commit read above, not HEAD: a mid-turn checkpoint can race the agent's next
       // commit, and the tracking ref recorded below must be what the remote actually has.
       // --force-with-lease against what agentd last saw there (empty: the branch must not exist yet):
@@ -396,6 +458,7 @@ export function createGitOps(exec: ExecFn = defaultExec, options: GitOpsOptions 
         ["push", "--quiet", `--force-with-lease=refs/heads/${branch}:${known ?? ""}`, remoteUrl, `${head}:refs/heads/${branch}`],
         pushDir,
         { GIT_DIR: pushDir, ...authHeaderEnv(remoteUrl, githubToken) },
+        { timeoutMs: GIT_TIMEOUT_MS },
       );
       if (push.code !== 0) {
         throw new Error(
@@ -419,14 +482,16 @@ export function createGitOps(exec: ExecFn = defaultExec, options: GitOpsOptions 
     async diff(cwd, base) {
       const committed = await run(cwd, ["diff", `${base}...HEAD`]);
       const working = await run(cwd, ["diff", "HEAD"]);
-      const untracked = await run(cwd, ["status", "--porcelain=v1"]);
+      // -z: unquoted paths, so names with spaces or odd bytes come through intact.
+      const untracked = await run(cwd, ["status", "--porcelain=v1", "-z"]);
       const untrackedFiles = untracked.stdout
-        .split("\n")
-        .filter((l) => l.startsWith("??"))
-        .map((l) => l.slice(3).trim());
+        .split("\0")
+        .filter((l) => l.startsWith("?? "))
+        .map((l) => l.slice(3));
       let untrackedDiff = "";
       for (const f of untrackedFiles) {
-        const d = await run(cwd, ["diff", "--no-index", "/dev/null", f]);
+        // `--`: an untracked file named like an option (`--output=...`) must stay a path.
+        const d = await run(cwd, ["diff", "--no-index", "--", "/dev/null", f]);
         // git diff --no-index exits 1 when there is a difference (expected here); only bail on real errors.
         if (d.code === 0 || d.code === 1) untrackedDiff += d.stdout;
       }

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,7 +11,7 @@ import {
   OUTFITTER_BOT_IDENTITY,
   redactUrl,
   sanitizeAuthor,
-  type ExecAs,
+  type ExecOptions,
   type ExecFn,
   type ExecResult,
 } from "../src/git.js";
@@ -106,11 +106,22 @@ test("GitOps.clone (createBranch: false): the fetch step is also authenticated v
   assert.ok(!(fetchCall!.env?.GIT_CONFIG_VALUE_0 ?? "").includes("super-secret-token") || true);
 });
 
-/** A stub exec for push(): HEAD is `state.head` (`deadbeef` to start), and `push` returns
+const SHA_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const SHA_B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+/** A throwaway directory with a real .git/objects, which push() checks before handing it to root. */
+const ws = fakeWorkspace;
+async function fakeWorkspace(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "agentd-git-ws-"));
+  await mkdir(join(dir, ".git", "objects"), { recursive: true });
+  return dir;
+}
+
+/** A stub exec for push(): HEAD is `state.head` (SHA_A to start), and `push` returns
  * `pushResult`. */
 function pushExec(opts: { pushResult?: ExecResult } = {}) {
-  const calls: { args: string[]; cwd: string; env?: Record<string, string>; as?: ExecAs }[] = [];
-  const state = { head: "deadbeef" };
+  const calls: { args: string[]; cwd: string; env?: Record<string, string>; as?: ExecOptions }[] = [];
+  const state = { head: SHA_A };
   const exec: ExecFn = async (_cmd, args, cwd, env, as) => {
     calls.push({ args, cwd, env, as });
     if (args[0] === "rev-parse") return ok(`${state.head}\n`);
@@ -130,8 +141,8 @@ test("GitOps.push: pushes the exact HEAD commit to run.spec's URL, authenticated
   const { exec, calls } = pushExec();
   const pushRoot = await mkdtemp(join(tmpdir(), "agentd-git-test-"));
   const gitOps = createGitOps(exec, { pushRoot });
-  const res = await gitOps.push("/tmp/dest", PUSH_SPEC);
-  assert.deepEqual(res, { head: "deadbeef", pushed: true });
+  const res = await gitOps.push(await ws(), PUSH_SPEC);
+  assert.deepEqual(res, { head: SHA_A, pushed: true });
 
   const pushCall = calls.find((c) => c.args[0] === "push");
   assert.ok(pushCall);
@@ -141,7 +152,7 @@ test("GitOps.push: pushes the exact HEAD commit to run.spec's URL, authenticated
     "--quiet",
     "--force-with-lease=refs/heads/outfitter/sess1:",
     "https://github.com/acme/repo.git",
-    "deadbeef:refs/heads/outfitter/sess1",
+    `${SHA_A}:refs/heads/outfitter/sess1`,
   ]);
   assert.ok(!calls.some((c) => c.args.includes("get-url")), "never reads the agent-writable origin URL");
   assert.ok(!pushCall!.args.includes("-c"));
@@ -152,28 +163,56 @@ test("GitOps.push: pushes the exact HEAD commit to run.spec's URL, authenticated
   assert.ok(pushCall!.cwd.startsWith(pushRoot));
   assert.equal(pushCall!.env?.GIT_DIR, pushCall!.cwd);
   // and the tracking ref + upstream are recorded afterwards
-  assert.ok(calls.some((c) => c.args.join(" ") === "update-ref refs/remotes/origin/outfitter/sess1 deadbeef"));
+  assert.ok(calls.some((c) => c.args.join(" ") === `update-ref refs/remotes/origin/outfitter/sess1 ${SHA_A}`));
   assert.ok(calls.some((c) => c.args.join(" ") === "config branch.outfitter/sess1.merge refs/heads/outfitter/sess1"));
 });
 
 test("GitOps.push: skips when HEAD is what agentd last pushed; otherwise leases against it", async () => {
   const { exec, calls, state } = pushExec();
   const gitOps = createGitOps(exec, { pushRoot: await mkdtemp(join(tmpdir(), "agentd-git-test-")) });
-  assert.deepEqual(await gitOps.push("/tmp/dest", PUSH_SPEC), { head: "deadbeef", pushed: true });
-  assert.deepEqual(await gitOps.push("/tmp/dest", PUSH_SPEC), { head: "deadbeef", pushed: false });
+  assert.deepEqual(await gitOps.push(await ws(), PUSH_SPEC), { head: SHA_A, pushed: true });
+  assert.deepEqual(await gitOps.push(await ws(), PUSH_SPEC), { head: SHA_A, pushed: false });
   assert.equal(calls.filter((c) => c.args[0] === "push").length, 1);
 
-  state.head = "cafebabe"; // a new commit, or an amend/rebase by the agent
-  assert.deepEqual(await gitOps.push("/tmp/dest", PUSH_SPEC), { head: "cafebabe", pushed: true });
+  state.head = SHA_B; // a new commit, or an amend/rebase by the agent
+  assert.deepEqual(await gitOps.push(await ws(), PUSH_SPEC), { head: SHA_B, pushed: true });
   const second = calls.filter((c) => c.args[0] === "push")[1];
-  assert.ok(second.args.includes("--force-with-lease=refs/heads/outfitter/sess1:deadbeef"));
+  assert.ok(second.args.includes(`--force-with-lease=refs/heads/outfitter/sess1:${SHA_A}`));
 });
 
 test("GitOps.push: the skip decision never reads the workspace's (agent-writable) tracking ref", async () => {
   const { exec, calls } = pushExec();
   const gitOps = createGitOps(exec, { pushRoot: await mkdtemp(join(tmpdir(), "agentd-git-test-")) });
-  await gitOps.push("/tmp/dest", PUSH_SPEC);
+  await gitOps.push(await ws(), PUSH_SPEC);
   assert.ok(!calls.some((c) => c.args[0] === "rev-parse" && c.args.some((a) => a.startsWith("refs/remotes/"))));
+});
+
+test("GitOps.push: refuses a symlinked .git/objects rather than letting root read where it points", async () => {
+  const { exec, calls } = pushExec();
+  const workspace = await mkdtemp(join(tmpdir(), "agentd-git-ws-"));
+  await mkdir(join(workspace, ".git"));
+  await symlink("/etc", join(workspace, ".git", "objects"));
+  const gitOps = createGitOps(exec, { pushRoot: await mkdtemp(join(tmpdir(), "agentd-git-test-")) });
+  await assert.rejects(gitOps.push(workspace, PUSH_SPEC), /not a plain directory/);
+  assert.ok(!calls.some((c) => c.args[0] === "push"));
+});
+
+test("GitOps.push: refuses a HEAD that isn't a commit id before it reaches root's argv", async () => {
+  const { exec, calls, state } = pushExec();
+  state.head = "--upload-pack=evil";
+  const gitOps = createGitOps(exec, { pushRoot: await mkdtemp(join(tmpdir(), "agentd-git-test-")) });
+  await assert.rejects(gitOps.push(await fakeWorkspace(), PUSH_SPEC), /commit id/);
+  assert.ok(!calls.some((c) => c.args[0] === "push"));
+});
+
+test("redaction covers the base64 header form of the token, not just the raw token", async () => {
+  const b64 = Buffer.from("x-access-token:super-secret-token", "utf8").toString("base64");
+  const { exec } = pushExec({ pushResult: { stdout: "", stderr: `> Authorization: basic ${b64}`, code: 1 } });
+  const gitOps = createGitOps(exec, { pushRoot: await mkdtemp(join(tmpdir(), "agentd-git-test-")) });
+  await assert.rejects(gitOps.push(await fakeWorkspace(), PUSH_SPEC), (err: Error) => {
+    assert.ok(!err.message.includes(b64), err.message);
+    return true;
+  });
 });
 
 test("GitOps with runAs: workspace git runs as that user with its HOME; only clone and the private-repo push run as agentd", async () => {
@@ -182,21 +221,24 @@ test("GitOps with runAs: workspace git runs as that user with its HOME; only clo
     runAs: { uid: 1000, gid: 1000, home: "/home/agent" },
     pushRoot: await mkdtemp(join(tmpdir(), "agentd-git-test-")),
   });
-  await gitOps.commitAll("/workspace", "checkpoint");
-  await gitOps.push("/workspace", PUSH_SPEC);
-  await gitOps.diff("/workspace", "main");
+  const workspace = await fakeWorkspace();
+  await gitOps.commitAll(workspace, "checkpoint");
+  await gitOps.push(workspace, PUSH_SPEC);
+  await gitOps.diff(workspace, "main");
   for (const c of calls) {
-    const inWorkspace = c.cwd === "/workspace";
+    const inWorkspace = c.cwd === workspace;
     if (inWorkspace) {
-      assert.deepEqual(c.as, { uid: 1000, gid: 1000 }, `git ${c.args.join(" ")} runs as the workspace user`);
+      assert.equal(c.as?.uid, 1000, `git ${c.args.join(" ")} runs as the workspace user`);
+      assert.equal(c.as?.gid, 1000);
+      assert.equal(c.as?.isolatedEnv, true, "with a minimal env, never agentd's process.env");
       assert.equal(c.env?.HOME, "/home/agent");
       assert.notEqual(c.env?.GIT_CONFIG_KEY_0, "http.extraheader", "the token never reaches workspace-user git");
     } else {
-      assert.equal(c.as, undefined, `git ${c.args.join(" ")} runs as agentd`);
+      assert.equal(c.as?.uid, undefined, `git ${c.args.join(" ")} runs as agentd`);
     }
   }
   const pushCall = calls.find((c) => c.args[0] === "push")!;
-  assert.notEqual(pushCall.cwd, "/workspace");
+  assert.notEqual(pushCall.cwd, workspace);
 });
 
 test("GitOps.push: a failing push's thrown error never contains the token, even if git stderr echoed it back", async () => {
@@ -207,7 +249,7 @@ test("GitOps.push: a failing push's thrown error never contains the token, even 
   });
   const gitOps = createGitOps(exec, { pushRoot: await mkdtemp(join(tmpdir(), "agentd-git-test-")) });
   await assert.rejects(
-    () => gitOps.push("/tmp/dest", PUSH_SPEC),
+    async () => gitOps.push(await ws(), PUSH_SPEC),
     (err: Error) => {
       assert.ok(!err.message.includes("super-secret-token"), err.message);
       assert.ok(err.message.includes("<redacted>"));

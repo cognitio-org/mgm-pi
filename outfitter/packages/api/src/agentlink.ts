@@ -86,18 +86,19 @@ export interface RunSpecMessage {
   checkpointEvery: string;
 }
 
-/** run.spec.author from the session owner's user record: its optional name/githubLogin/githubEmail
- * when an operator has set them, else the email's local part and the email itself. Undefined when
- * the session has no owner (sessions created before ownerEmail was recorded). */
+/** run.spec.author from the session owner's user record, or undefined -- the bot alone, no
+ * trailers. Only sent once the record has a `githubEmail`: the trailers land in commit messages on
+ * GitHub (public repos included) for good, and the fallback would otherwise be the person's
+ * sign-in (work) email. `name` falls back to the email's local part. */
 export function authorFor(ownerEmail: string | undefined, user: User | null): RunSpecMessage["author"] {
   // Mongo documents aren't schema-checked: treat anything but a non-blank string as unset.
   const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
-  const email = str(user?.email) ?? str(ownerEmail);
-  if (!email) return undefined;
+  const email = str(user?.githubEmail);
+  if (!ownerEmail || !email) return undefined;
   const login = str(user?.githubLogin);
   return {
-    name: str(user?.name) ?? email.split("@")[0],
-    email: str(user?.githubEmail) ?? email,
+    name: str(user?.name) ?? (str(user?.email) ?? ownerEmail).split("@")[0],
+    email,
     ...(login ? { login } : {}),
   };
 }

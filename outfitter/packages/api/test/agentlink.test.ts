@@ -280,15 +280,15 @@ describe("agentd <-> api WebSocket", () => {
     await app.fastify.close();
   });
 
-  test("run.spec carries author from the session owner's user record, and none without an owner", async () => {
+  test("run.spec carries no author without a githubEmail on the owner's record, or without an owner", async () => {
     const app = await buildTestApp();
     await app.store.users.upsertSeen("ada@example.com");
     const { session, runId, runToken } = await makeRunningSession(app, { ownerEmail: "ada@example.com" });
     const agent = await openAgentSocket(app, runId);
     sendHello(agent, runId, session.id, runToken);
     const spec = await agent.nextMessage();
-    // no name/githubLogin/githubEmail on record yet: the email's local part and the email itself
-    assert.deepEqual(spec.author, { name: "ada", email: "ada@example.com" });
+    // no githubEmail on record: no author, so the work email never lands in a commit trailer
+    assert.equal(spec.author, undefined);
     agent.send({ t: "bye", reason: "stop" });
     await agent.nextClose();
     app.stopBackgroundTasks();
@@ -752,13 +752,15 @@ describe("authorFor", () => {
     );
   });
 
-  test("falls back to the owner email when there's no user record yet, and to nothing without an owner", () => {
-    assert.deepEqual(authorFor("bob@example.com", null), { name: "bob", email: "bob@example.com" });
+  test("no author without a githubEmail (never the sign-in email), or without an owner", () => {
+    assert.equal(authorFor("bob@example.com", null), undefined);
+    assert.equal(authorFor("bob@example.com", { email: "bob@example.com", createdAt: "x", name: "Bob" }), undefined);
     assert.equal(authorFor(undefined, null), undefined);
     // a malformed stored record falls back instead of throwing
+    assert.equal(authorFor("eve@example.com", { email: "eve@example.com", createdAt: "x", githubEmail: 7 as any }), undefined);
     assert.deepEqual(
-      authorFor("eve@example.com", { email: "eve@example.com", createdAt: "x", name: 42 as any, githubEmail: "  " }),
-      { name: "eve", email: "eve@example.com" },
+      authorFor("eve@example.com", { email: "eve@example.com", createdAt: "x", name: 42 as any, githubEmail: "1+eve@users.noreply.github.com" }),
+      { name: "eve", email: "1+eve@users.noreply.github.com" },
     );
   });
 });

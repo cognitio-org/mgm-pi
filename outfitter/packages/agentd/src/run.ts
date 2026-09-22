@@ -7,7 +7,7 @@
 import { mkdir, readFile, open as openFile, chown } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { renderGuru } from "./guru.js";
-import { attributionTrailers, botIdentityEnv, sanitizeAuthor, type GitOps } from "./git.js";
+import { attributionTrailers, authHeaderSecret, botIdentityEnv, sanitizeAuthor, type GitOps } from "./git.js";
 import { spawnPi, SessionTailer, SpendTailer, validateSpendLine, type PiProcess, type SpendLogLine } from "./pi.js";
 import { importSession, writeSnapshotFile, emptySessionJsonl, lastKnownModelState } from "./session.js";
 import type { Logger } from "./logger.js";
@@ -354,6 +354,8 @@ export class RunController {
     // back (a failed clone, a raw fetch error). RUN_TOKEN itself is registered once at startup, in
     // main.ts, before this controller even exists.
     this.deps.logger?.addSecret(spec.secrets.githubToken);
+    // ...and the base64 form git carries in its auth header, in case a trace ever echoes it.
+    if (spec.secrets.githubToken) this.deps.logger?.addSecret(authHeaderSecret(spec.secrets.githubToken));
     this.deps.logger?.addSecret(spec.secrets.litellmKey);
 
     if (spec.repo) {

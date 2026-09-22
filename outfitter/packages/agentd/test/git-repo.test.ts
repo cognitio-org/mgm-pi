@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, writeFile, chmod, access } from "node:fs/promises";
+import { mkdtemp, writeFile, chmod, access, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createGitOps, OUTFITTER_BOT_IDENTITY } from "../src/git.js";
@@ -206,4 +206,31 @@ test("push never runs the workspace's hooks and never follows the workspace's or
   assert.equal(remoteSha(bare, "outfitter/s4"), res.head);
   assert.equal(remoteSha(decoy.bare, "outfitter/s4"), undefined);
   await assert.rejects(access(marker), "the workspace's pre-push hook must not run");
+});
+
+test("clone hands the repo over before the checkout: root never checks out the tree", async () => {
+  const { root, url } = await makeRemote("outfitter/s8");
+  const dest = join(root, "ws");
+  const seen: { handedOver: boolean; worktreeFiles: string[] }[] = [];
+  const gitOps = createGitOps(undefined, {
+    handOver: async (dir) => {
+      seen.push({ handedOver: true, worktreeFiles: (await readdir(dir)).filter((f) => f !== ".git") });
+    },
+  });
+  await gitOps.clone({ cloneUrl: url, baseBranch: "main", branch: "outfitter/s8", createBranch: false }, dest);
+  assert.deepEqual(seen, [{ handedOver: true, worktreeFiles: [] }], "nothing checked out before the handover");
+  assert.ok((await readdir(dest)).includes("work.txt"), "checked out afterwards");
+});
+
+test("diff: an untracked file named like an option stays a path", async () => {
+  const { root, url } = await makeRemote();
+  const dest = join(root, "ws");
+  const gitOps = createGitOps();
+  await gitOps.clone({ cloneUrl: url, baseBranch: "main", branch: "outfitter/s9", createBranch: true }, dest);
+  await writeFile(join(dest, "--output=pwned.txt"), "x\n");
+  await writeFile(join(dest, "with space.txt"), "y\n");
+  const patch = await gitOps.diff(dest, "main");
+  await assert.rejects(access(join(dest, "pwned.txt")), "git must not have parsed the name as --output");
+  assert.match(patch, /--output=pwned\.txt/);
+  assert.match(patch, /with space\.txt/);
 });

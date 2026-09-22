@@ -164,9 +164,10 @@ SSE subscribers, and acks.
 is applied, so the real `secrets.litellmKey` can never be sent to a guru-controlled host.
 
 `run.spec.author` is the session's person, for commit attribution (kernal/docs/git-github-spec.md,
-"Attribution"). The api fills it from the session owner's user record: `name` (else the email's local
-part), `email` (the user's `githubEmail`, ideally their GitHub noreply address, else their email) and
-`login` (`githubLogin`, when set). Every cloud commit is authored *and* committed by the Outfitter bot
+"Attribution"). The api fills it from the session owner's user record, and only when that record has
+a `githubEmail` (ideally the person's GitHub noreply address; never the sign-in email, which would
+end up in public commit messages): `name` (else the email's local part), `email` (= `githubEmail`)
+and `login` (`githubLogin`, when set). Those fields are operator-set for now. Every cloud commit is authored *and* committed by the Outfitter bot
 (`Outfitter <noreply@outfitter.invalid>`, pinned as `GIT_AUTHOR_*`/`GIT_COMMITTER_*` both in agentd's
 own commits and in pi's environment, after `guru.env`); agentd's checkpoint commits add
 `Co-authored-by: <name> <email>` and `On-behalf-of: <name> <email>` trailers, each at most once, and

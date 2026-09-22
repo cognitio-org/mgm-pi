@@ -238,7 +238,8 @@ export interface User {
   githubLogin?: string;
   /** The address `Co-authored-by` credits -- ideally the person's GitHub noreply address
    * (`<id>+<login>@users.noreply.github.com`), so GitHub links the commit to them without
-   * exposing their work email. Optional and operator-set for now; falls back to `email`. */
+   * exposing their work email. Optional and operator-set for now; without it run.spec carries no
+   * author, and cloud commits are the bot's alone. */
   githubEmail?: string;
 }
 

@@ -147,9 +147,9 @@ As agreed, no approval prompts for everyday work, in the UI or headless. What re
     automation may have nobody watching. Dialogs always carry a timeout (pi's dialog `timeout`
     option), and an Outfitter run with no attached viewer counts as headless.
   - Locally the setting lives in `settings.json`; in the cloud it comes from the guru's config.
-- **No shell interception.** Locally the agent can still run `git` and `gh` in bash; the tools are
-  simply the easier path. In the cloud the tools are the only path to the network, because the
-  agent's shell has no credentials (see "Cloud").
+- **No shell interception.** The agent can still run `git` and `gh` in bash; the tools are simply
+  the easier path. In the cloud, plain `git` reaches GitHub through the proxy (see "Cloud"); `gh`
+  does not, because the shell has no token, so GitHub API work there goes through the tools.
 
 ### Attribution
 
@@ -162,8 +162,10 @@ Settings `github.attribution.commit` and `github.attribution.pr`, each a string 
 Added exactly once, checked before appending. Locally the author is whatever the person's git
 config says. In the cloud there is no identity today (gap 4), so phase 3 adds one: `run.spec.author
 {name, email}` from the Outfitter user record, pinned as `GIT_AUTHOR_*` and `GIT_COMMITTER_*` in
-pi's environment and in agentd's own git calls. The author is the session's person; the committer is
-either the same person or an Outfitter bot identity (open question 6).
+pi's environment and in agentd's own git calls. **Decided:** the committer is an Outfitter bot
+identity (`GIT_COMMITTER_*`, one fixed name and noreply address), and the author is the session's
+person (`GIT_AUTHOR_*`), so GitHub shows who asked for the work and that Outfitter made the commit.
+Checkpoint commits made by agentd itself use the bot for both.
 
 ### Setup: installing `gh` and signing in (local)
 
@@ -231,13 +233,35 @@ Rule kept from Outfitter: **the GitHub token never enters the agent's process or
 - **The model can reach the socket too** (`nc -U` from bash runs as `agent`). So every rule is
   enforced in agentd and the API; the extension enforces nothing on its own.
 - Alternatives considered: the mailbox pattern cannot return results; the `rpc` frame points the
-  wrong way (API to pi); intercepting a dialog request would work over stdio but is a hack. A
-  third option is worth prototyping alongside: a localhost git smart-HTTP proxy in agentd that adds
-  the auth header and enforces ref policy, so plain `git fetch` and `git push` in bash would work
-  too. The spec does not depend on it.
+  wrong way (API to pi); intercepting a dialog request would work over stdio but is a hack.
 
-**Git transport (in agentd, as root).** Fetch and push use the per-session token as checkpoints do,
-plus `safe.directory=/workspace` in the same `GIT_CONFIG_*` environment (gap 3). Fetches use an
+**Git proxy: plain `git` works in the cloud shell too (decided).** agentd runs a git smart-HTTP
+proxy on `127.0.0.1`, so the agent's own `git fetch`, `git pull` and `git push` in bash work exactly
+as they do on a laptop, and the `git` tool uses the same path.
+- **How git finds it**: pi's environment gets a pinned `url.<proxy>/<owner>/<repo>.git.insteadOf
+  https://github.com/<owner>/<repo>.git` through `GIT_CONFIG_COUNT` variables, so `origin` keeps
+  its real URL in `.git/config`. agentd's `baseEnvForPi` currently strips every `GIT_CONFIG_*`
+  variable as a safety measure; it must strip only the auth header and allow this one. Git over
+  HTTP cannot use a Unix socket, hence localhost TCP.
+- **What it forwards**: only the smart-HTTP endpoints (`info/refs`, `git-upload-pack`,
+  `git-receive-pack`) of the session's repository, to github.com, adding the auth header on the way
+  out. Nothing else is proxied, and the token never appears in a response or a log.
+- **Ref policy on push**: it reads the ref-update commands at the start of a `receive-pack` request
+  and refuses the whole push, with a message git shows to the agent, if any ref is outside the
+  allowed set (the session branch in v1, the configured prefix in v2) or is a deletion. Force
+  pushes to the session branch are allowed, since it is the agent's own branch.
+- **Anyone in the container can use it**, including the model, which is the point; the policy above
+  is the boundary, as for the socket.
+- **Consequences**: the socket then carries only GitHub API operations; fetch and push leave it.
+  Checkpoints can push through the proxy too, so root no longer runs network git in the
+  `agent`-owned checkout, which removes the `safe.directory` problem for pushes (gap 3 still needs
+  fixing for the checkpoint's local commit, or checkpoints commit as `agent`).
+- **Prototype first** in phase 3: a spike with `git push` of a small and a large pack through the
+  proxy, a refused ref, and a dropped connection, before the socket's transport half is removed.
+
+**Git transport.** Through the proxy above. Until the proxy lands, or if the spike fails, agentd
+does fetch and push itself as root with the per-session token, as checkpoints do, plus
+`safe.directory=/workspace` in the same `GIT_CONFIG_*` environment (gap 3). Fetches use an
 explicit refspec (`+refs/heads/<b>:refs/remotes/origin/<b>`), because the clone is single-branch
 (gap 2). After any root git operation that writes to the tree or `.git`, agentd chowns back to
 `agent`. Root git operations are serialized with the periodic checkpoint through one lock in agentd.
@@ -369,7 +393,7 @@ runs, so the image's `gh` package (about 38 MB) can go; `EPIC.md` is updated in 
 | 0 | Sandbox git fixes: push the agent's own commits, the resume refspec, `safe.directory`, commit identity | Outfitter | nothing; worth doing now, because resuming a checkpointed session is broken today |
 | 1 | Shared git module (teleport moved onto it); `/github setup` and `kernal github`; `/admin` GitHub page; `git` tool; `/git`, `/commit`; prompt rules; attribution | Kernal | nothing |
 | 2 | `github_pr`, `github_issue`, `github_repo` (all actions), `/pr`, `/issues`, `wait_ci` | Kernal | 1 |
-| 3 | Broker backend; socket, frames, API executor, policy, idempotency, rate limits; session-page panel; EPIC.md update | Kernal and Outfitter | 0, 2 |
+| 3 | Git proxy (spike first); broker backend; socket, frames, API executor, policy, idempotency, rate limits; bot committer; session-page panel; EPIC.md update | Kernal and Outfitter | 0, 2 |
 | 4 | Cloud multi-branch; GitHub App identity; teleport carries the repository and offers commit and push; optional read-only MCP | Kernal and Outfitter | 3 |
 
 Each phase is its own PR with tests. Phases 1 and 2 are useful locally on their own.
@@ -383,6 +407,9 @@ Each phase is its own PR with tests. Phases 1 and 2 are useful locally on their 
    App (E2.5 phase 2) before phase 3?
 4. **Merges from the cloud**: allowed by default, or only when the guru's config says so?
 5. **Subagents**: give `worker` and `reviewer` the new tools in phase 2, or keep them on bash?
-6. **Cloud committer**: the session's person, or an Outfitter bot identity with the person as author?
-7. **Git proxy**: prototype the smart-HTTP proxy in phase 3, so plain `git` in the cloud shell works
-   too, or keep the tools as the only cloud path?
+
+## Decided
+
+- **Scope**: github.com over HTTPS only; no GitHub Enterprise, no SSH remotes.
+- **Cloud committer**: an Outfitter bot identity commits; the session's person is the author.
+- **Git proxy**: build it in phase 3, after a spike, so plain `git` works in the cloud shell.

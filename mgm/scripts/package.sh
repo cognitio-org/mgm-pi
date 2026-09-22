@@ -43,6 +43,9 @@ node -e '
   s.packages = (s.packages || []).filter((p) => !ex.some((e) => p === "npm:" + e || p.endsWith("/" + e)));
   fs.writeFileSync(process.argv[3], JSON.stringify(s, null, 2) + "\n");
 ' "$ROOT/.pi/settings.json" "$BUNDLE_EXCLUDE" "$STAGE/.pi/settings.json"
+# A pristine copy of what this release ships: the next upgrade compares the user's settings.json with
+# it to tell the user's own changes from this release's defaults (install.sh, connect/settings.ts).
+cp "$STAGE/.pi/settings.json" "$STAGE/.pi/settings.shipped.json"
 cp "$ROOT/.pi/npm/package.json" "$ROOT/.pi/npm/package-lock.json" "$STAGE/.pi/npm/"
 cp "$ROOT"/bin/* "$STAGE/bin/"; chmod +x "$STAGE"/bin/*
 cp "$ROOT/README.md" "$STAGE/"; cp -R "$ROOT/docs" "$STAGE/docs"
@@ -83,6 +86,9 @@ if [[ "$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/x64/; s/aarch64/arm64
 else
   echo "(cross-platform build: smoke test skipped)"
 fi
+# the smoke run may have written settings (pi records e.g. the changelog version); ship the pristine copy
+cp "$STAGE/.pi/settings.shipped.json" "$STAGE/.pi/settings.json"
+rm -rf "$STAGE/.pi/agents"
 rm -rf "${SMOKE_HOME:-/nonexistent}" "$STAGE/Library" "$STAGE/.pi/sessions" "$STAGE/.pi/trust.json" "$STAGE/.pi/auth.json" "$STAGE/.pi/models-store.json" "$STAGE/.pi/mcp-cache.json" "$STAGE/.pi/agent/trust"
 
 # 4b. shared keys shipped in the bundle's .env (private-repo distribution to family users).

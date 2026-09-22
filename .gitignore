@@ -8,6 +8,9 @@ mgm/.pi/npm/node_modules/
 mgm/pi/
 mgm/dist/
 mgm/.pi/sessions/
+# personal subagents (pi-subagents' user scope is $PI_CODING_AGENT_DIR/agents, which in a checkout is
+# inside the repo); a release bundle links the same directory to ~/.mgm/state/agents
+mgm/.pi/agents/
 mgm/.pi/mcp-cache.json
 mgm/.pi/models-store.json
 mgm/.pi/auth.json

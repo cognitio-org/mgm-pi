@@ -1,9 +1,9 @@
 /** /admin: the request guards, the server, and the whole extension driven over real HTTP. */
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, statSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, statSync, writeFileSync, existsSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { request } from "node:http";
 import { makePi, makeCtx, tmpAgentDir } from "./harness.ts";
 import { FIELDS, applyEmbeddingChoice, setReranking } from "../.pi/extensions/mgm-codebase-index/lib.ts";
@@ -430,11 +430,192 @@ describe("/admin end to end (real server, real extensions, fake pi)", async () =
     assert.ok(calls.includes("index_codebase"));
   });
 
-  test("subagents are shown read-only from the agent's settings", async () => {
-    const d = JSON.parse((await get("/subagents")).text);
-    assert.equal(d.subagents.defaultModel, "litellm/gemini-3.8-flash");
-    assert.equal(d.subagents.agentOverrides.worker.model, "litellm/claude-sonnet-5");
-    assert.equal((await post("/subagents", {})).status, 404, "no write endpoint yet");
+  // ---------- subagents: settings and agent definitions, through pi-subagents' own code ----------
+  const pkgDir = join(import.meta.dirname, "..", ".pi", "npm", "node_modules", "pi-subagents");
+  const noPkg = !existsSync(join(pkgDir, "src", "agents", "agents.js")) && "extension packages not installed (npm ci in .pi/npm)";
+  const project = join(home, "proj");
+  /** What the package itself resolves, independently of the admin: the ground truth for every write. */
+  const discover = async () => {
+    const m = await import(join(pkgDir, "src", "agents", "agents.js"));
+    m.clearAgentDiscoveryCache();
+    return new Map<string, any>(m.discoverAgents(project, "both", "litellm").agents.map((a: any) => [a.name, a]));
+  };
+  const agentBody = (over: Record<string, unknown> = {}) => ({
+    mode: "create", scope: "user", name: "helper", description: "Finds things fast", tools: ["read", "grep"], model: "litellm/claude-sonnet-5", thinking: "high",
+    prompt: "# Helper\n\nYou find things.\n\n```yaml\n---\nname: not-frontmatter\n---\n```\n\n- **Be brief**\n", ...over,
+  });
+
+  describe("subagents", { skip: noPkg }, () => {
+    let cwdBefore = "";
+    before(() => {
+      process.env.MGM_SUBAGENTS_PKG = pkgDir;
+      mkdirSync(join(project, ".pi"), { recursive: true });
+      cwdBefore = ctx.cwd; ctx.cwd = project;
+    });
+    after(() => { ctx.cwd = cwdBefore; });
+
+    test("lists every agent with its source, and the models from settings", async () => {
+      const r = await get("/subagents");
+      assert.equal(r.status, 200, r.text);
+      const d = JSON.parse(r.text);
+      assert.equal(d.settings.defaultModel, "litellm/gemini-3.8-flash");
+      assert.equal(d.settings.overrides.worker.model, "litellm/claude-sonnet-5");
+      const scout = d.agents.find((a: any) => a.name === "scout");
+      assert.deepEqual([scout.source, scout.editable, scout.active, scout.model, scout.modelFrom], ["builtin", false, true, "litellm/gemini-3.8-flash", "subagents default"]);
+      assert.equal(d.agents.find((a: any) => a.name === "worker").modelFrom, "override");
+      assert.equal(d.dirs.user, join(store.dir, "agents"), "pi-subagents' user scope: $PI_CODING_AGENT_DIR/agents");
+      assert.ok(d.tools.some((t: any) => t.name === "read" && t.from === "pi"));
+      assert.ok(d.tools.some((t: any) => t.name === "contact_supervisor"), "tools builtin agents name are offered too");
+    });
+
+    test("create: written by the package, and the package resolves exactly what was sent", async () => {
+      const r = await post("/subagents/agent", agentBody());
+      assert.equal(r.status, 200, r.text);
+      const d = JSON.parse(r.text);
+      assert.deepEqual([d.resolved.source, d.resolved.model, d.resolved.thinking, d.resolved.tools], ["user", "litellm/claude-sonnet-5", "high", ["read", "grep"]]);
+      const file = join(store.dir, "agents", "helper.md");
+      assert.equal(d.resolved.file, file);
+      const seen = (await discover()).get("helper");
+      assert.equal(seen.source, "user");
+      assert.equal(seen.description, "Finds things fast");
+      assert.match(seen.systemPrompt, /```yaml\n---\nname: not-frontmatter\n---\n```/, "a fence holding frontmatter-like text survives as prompt text");
+      const back = JSON.parse((await get("/subagents/agent?name=helper&source=user")).text);
+      assert.deepEqual(back.fields.tools, ["read", "grep"]);
+      assert.equal(back.fields.model, "litellm/claude-sonnet-5");
+      assert.equal(back.prompt.trim(), agentBody().prompt.trim(), "the prompt round-trips unchanged");
+    });
+
+    test("update and rename: the old file goes, the package sees the new one", async () => {
+      const r = await post("/subagents/agent", agentBody({ mode: "update", original: "helper", name: "finder", description: "Finds things, renamed", tools: null, model: "", thinking: "" }));
+      assert.equal(r.status, 200, r.text);
+      const seen = await discover();
+      assert.ok(!seen.has("helper"));
+      assert.equal(seen.get("finder").description, "Finds things, renamed");
+      assert.equal(seen.get("finder").tools, undefined, "default tools: no allowlist");
+      assert.equal(seen.get("finder").model, "litellm/gemini-3.8-flash", "no model of its own: the subagents default applies");
+      assert.ok(!existsSync(join(store.dir, "agents", "helper.md")));
+    });
+
+    test("a change the package would silently ignore is rolled back, not saved", async () => {
+      const before = readFileSync(join(store.dir, "agents", "finder.md"), "utf8");
+      const r = await post("/subagents/agent", agentBody({ mode: "update", original: "finder", name: "finder", description: ">" }));
+      assert.equal(r.status, 422, r.text);
+      assert.match(JSON.parse(r.text).error, /^Not saved: pi-subagents does not find a user agent named finder after saving/);
+      assert.equal(readFileSync(join(store.dir, "agents", "finder.md"), "utf8"), before, "the file is back as it was");
+    });
+
+    test("customise a builtin: an editable same-name copy that wins over the builtin", async () => {
+      const r = await post("/subagents/customise", { name: "scout", scope: "user" });
+      assert.equal(r.status, 200, r.text);
+      assert.equal(JSON.parse(r.text).resolved.source, "user");
+      assert.equal((await discover()).get("scout").filePath, join(store.dir, "agents", "scout.md"), "same-name user file overrides the builtin");
+      const edit = await get("/subagents/agent?name=scout&source=user");
+      const a = JSON.parse(edit.text);
+      assert.equal(a.row.editable, true);
+      const saved = await post("/subagents/agent", { mode: "update", scope: "user", original: "scout", ...a.fields, prompt: a.prompt + "\n\nAlways cite file paths.\n" });
+      assert.equal(saved.status, 200, saved.text);
+      assert.match((await discover()).get("scout").systemPrompt, /Always cite file paths\.$/);
+      assert.equal((await post("/subagents/customise", { name: "scout", scope: "user" })).status, 409, "only one copy per scope");
+      assert.equal((await post("/subagents/agent", { ...agentBody({ mode: "update", original: "scout", name: "scout" }), scope: "project" })).status, 404, "builtins are not edited in place");
+    });
+
+    test("delete: the file goes and the name falls back to the builtin", async () => {
+      const r = await post("/subagents/delete", { name: "scout", scope: "user" });
+      assert.equal(r.status, 200, r.text);
+      assert.equal(JSON.parse(r.text).resolved.source, "builtin");
+      assert.equal((await discover()).get("scout").source, "builtin");
+      assert.equal((await post("/subagents/delete", { name: "scout", scope: "user" })).status, 404, "a builtin cannot be deleted");
+    });
+
+    test("project scope writes into the project's .pi/agents and wins over user", async () => {
+      assert.equal((await post("/subagents/agent", agentBody({ name: "dup", scope: "user" }))).status, 200);
+      const r = await post("/subagents/agent", agentBody({ name: "dup", scope: "project", description: "project copy" }));
+      assert.equal(r.status, 200, r.text);
+      assert.equal((await discover()).get("dup").filePath, join(project, ".pi", "agents", "dup.md"));
+      const list = JSON.parse((await get("/subagents")).text).agents.filter((a: any) => a.name === "dup");
+      assert.deepEqual(list.map((a: any) => [a.source, a.active, a.shadowedBy ?? null]), [["project", true, null], ["user", false, "project"]]);
+    });
+
+    test("model settings: written to settings.json, and the package resolves them", async () => {
+      const r = await post("/subagents/settings", { defaultModel: "litellm/gemini-4-flash", overrides: { worker: { model: "litellm/claude-opus-5", thinking: "xhigh" }, oracle: { model: "" } } });
+      assert.equal(r.status, 200, r.text);
+      const s = store.read().subagents;
+      assert.equal(s.defaultModel, "litellm/gemini-4-flash");
+      assert.deepEqual(s.agentOverrides.worker, { model: "litellm/claude-opus-5", thinking: "xhigh" });
+      assert.ok(!("oracle" in (s.agentOverrides ?? {})), "an emptied override is removed");
+      const seen = await discover();
+      assert.equal(seen.get("worker").model, "litellm/claude-opus-5");
+      assert.equal(seen.get("scout").model, "litellm/gemini-4-flash");
+      assert.equal(store.read().defaultModel, "claude-sonnet-5", "the rest of settings.json is untouched");
+      const bad = await post("/subagents/settings", { defaultModel: "not a model", overrides: { worker: { thinking: "max" } } });
+      assert.equal(bad.status, 422);
+      assert.deepEqual(Object.keys(JSON.parse(bad.text).errors).sort(), ["defaultModel", "worker.thinking"]);
+    });
+
+    test("names become file names: a crafted name never writes outside the agents directory", async () => {
+      const crafted = ["../../evil", "../evil", "..", "a/b", "a\\b", "/tmp/evil", "evil.md", "Evil", "e\u0000vil", "%2e%2e%2fevil", " ", ""];
+      for (const name of crafted) {
+        for (const r of [
+          await post("/subagents/agent", agentBody({ name })),
+          await post("/subagents/agent", agentBody({ mode: "update", original: name, name: "ok-name" })),
+          await post("/subagents/customise", { name, scope: "user" }),
+          await post("/subagents/delete", { name, scope: "user" }),
+        ]) assert.ok(r.status === 400 || r.status === 422 || r.status === 404, `${JSON.stringify(name)} → ${r.status} ${r.text.slice(0, 120)}`);
+      }
+      for (const dir of [home, store.root, store.dir, dirname(home), "/tmp"]) assert.ok(!existsSync(join(dir, "evil.md")), `nothing written in ${dir}`);
+      assert.equal((await post("/subagents/agent", agentBody({ name: "../../evil" }))).status, 422);
+      assert.match(JSON.parse((await post("/subagents/agent", agentBody({ name: "../../evil" }))).text).errors.name, /slashes or dots/);
+    });
+
+    test("a symlink out of the agents directory is not editable and is never written through", async () => {
+      const outside = join(home, "outside.md");
+      writeFileSync(outside, "---\nname: sneaky\ndescription: lives elsewhere\n---\nhello\n");
+      symlinkSync(outside, join(store.dir, "agents", "sneaky.md"));
+      const row = JSON.parse((await get("/subagents")).text).agents.find((a: any) => a.name === "sneaky");
+      assert.equal(row.editable, false);
+      const r = await post("/subagents/agent", agentBody({ mode: "update", original: "sneaky", name: "sneaky", prompt: "overwritten" }));
+      assert.equal(r.status, 403, r.text);
+      assert.equal((await post("/subagents/delete", { name: "sneaky", scope: "user" })).status, 403);
+      assert.match(readFileSync(outside, "utf8"), /hello/);
+    });
+
+    test("an agent file holding a key is never sent to the page, and a key is never saved into one", async () => {
+      writeFileSync(join(store.dir, "agents", "leaky.md"), `---\nname: leaky\ndescription: has a key\n---\nUse ${ROUTER_KEY} for the router.\n`);
+      const list = await get("/subagents");
+      assert.equal(list.status, 200);
+      noKeys(list.text);
+      assert.equal(JSON.parse(list.text).agents.find((a: any) => a.name === "leaky").withheld, true);
+      const one = await get("/subagents/agent?name=leaky&source=user");
+      assert.equal(one.status, 200);
+      noKeys(one.text);
+      assert.equal(JSON.parse(one.text).withheld, true);
+      const r = await post("/subagents/agent", agentBody({ name: "keyed", prompt: "call it with sk-or-v1-fake-fake-fake-fake" }));
+      assert.equal(r.status, 422);
+      assert.match(JSON.parse(r.text).errors.prompt, /key/);
+      noKeys(r.text);
+      assert.ok(!existsSync(join(store.dir, "agents", "keyed.md")));
+    });
+
+    test("the preview is markdownToHtml: escaped first, so a prompt cannot inject markup", async () => {
+      const r = await post("/subagents/preview", { markdown: "## Title\n\n<script>alert(1)</script> **bold**" });
+      const html = JSON.parse(r.text).html;
+      assert.match(html, /<h3>Title<\/h3>/);
+      assert.match(html, /&lt;script&gt;/);
+      assert.match(html, /<strong>bold<\/strong>/);
+    });
+
+    test("every new write endpoint enforces the gate: token, origin, JSON", async () => {
+      for (const path of ["/subagents/agent", "/subagents/customise", "/subagents/delete", "/subagents/settings", "/subagents/preview"]) {
+        const body = JSON.stringify({ name: "x", scope: "user" });
+        const hit = (headers: Record<string, string>) => call(port, { method: "POST", path: `/api${path}`, body, headers: { "content-type": "application/json", ...headers } });
+        assert.equal((await hit({})).status, 401, `${path} without the token`);
+        assert.equal((await hit({ "x-mgm-admin-token": "wrong".repeat(9) })).status, 401);
+        assert.equal((await hit({ "x-mgm-admin-token": token, origin: "https://evil.example" })).status, 403, `${path} cross-origin`);
+        assert.equal((await hit({ "x-mgm-admin-token": token, "content-type": "text/plain" })).status, 415, `${path} as a simple request`);
+        assert.equal((await call(port, { method: "POST", path: `/api${path}`, body, headers: { "x-mgm-admin-token": token, "content-type": "application/json", host: "evil.example" } })).status, 403, `${path} rebinding`);
+      }
+      assert.equal((await call(port, { path: "/api/subagents/agent?name=finder&source=user" })).status, 401, "reads need the token too");
+    });
   });
 
   test("/admin status and a second /admin reuse the running server", async () => {

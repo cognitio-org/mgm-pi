@@ -129,6 +129,37 @@ that allows only same-origin script and style and no framing. Before a response 
 against every key-like value in the environment and withheld if one appears in full. The idle timer
 resets only on requests without `x-mgm-poll: 1`, so a forgotten tab does not keep it running.
 
+**Subagents** (`subagents.ts`). Discovery, parsing, validation and writes are pi-subagents' own code,
+imported from the installed package: `discoverAgents` / `discoverAgentsAll`, `parseFrontmatter`, and the
+`create` / `update` / `eject` / `delete` handlers its `subagent` tool runs. The admin adds its own rules
+around them: an agent name is a file name, so it must be the package's sanitised form (no slashes, no
+dots) and is refused, not rewritten; only files whose real path is inside the user or project agents
+directory are written (a symlink out of it is read-only); a file that holds a key, or looks like it
+does, is never sent to the page, and a prompt carrying one is refused. After every write the package
+re-discovers the agent and the result is compared with the request (file found, no diagnostic,
+description, model, thinking, tools and prompt read back); any difference undoes the write. The models
+(`subagents.defaultModel`, `agentOverrides.<name>.model/thinking`) are written to the agent's
+`settings.json` through `connect/settings.ts`, then checked the same way. The preview is
+`markdownToHtml` on the server, rebuilt in the page from a tag allowlist.
+
+User agents live in `$PI_CODING_AGENT_DIR/agents`, which a bundle links to `~/.mgm/state/agents` and a
+checkout git-ignores. mgm ships no agents; if it ever does, they belong in their own directory under
+`subagents.agentScanDirs` in the shipped settings, where the admin treats them as read-only.
+
+## Settings across an upgrade (`connect/settings.ts`, `scripts/install.sh`)
+
+Every writer (pi, `/connect`, `/compaction`, the admin) saves into the bundle's `settings.json`, and
+the bundle's own defaults live in the same file, so an upgrade can neither link it to state nor copy
+the old one over. `package.sh` ships a pristine `settings.shipped.json` in every bundle; `install.sh`
+reads the outgoing bundle's `settings.json` and shipped copy before replacing anything, then runs
+`settings-merge.ts` with the new bundle's pi binary (a Bun executable: `BUN_BE_BUN=1 pi/pi file.ts`;
+Node if the binary cannot) to do a three-way merge: a value the user changed wins, a value only the
+release changed follows the release, objects merge key by key, package lists keep the user's additions
+and removals. Bundles from before this had no shipped copy; for that one upgrade only the keys a user
+sets through mgm are carried (`LEGACY_USER_KEYS`). An install-time merge was chosen over a load-time
+overlay because pi reads `settings.json` before any extension runs and every writer, pi included,
+writes that one file: merging once at install needs no change to any writer and costs nothing at start.
+
 ## Startup banner
 
 `.pi/extensions/mgm-banner/` replaces pi's header with block-letter MGM, the provider indicator

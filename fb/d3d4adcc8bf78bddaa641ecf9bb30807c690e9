@@ -1,0 +1,21 @@
+outfitter/docs/reports/gurus-ui.md
+  s_2209f22f830d7f::t_5129e094280403 1-131
+outfitter/EPIC.md
+  s_2209f22f830d7f::t_30214fbb3e4c85 365-379
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "fbd3d4adcc8bf78bddaa641ecf9bb30807c690e9",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

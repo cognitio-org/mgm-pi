@@ -11,6 +11,32 @@ outfitter/packages/api/src/config.ts
   s_2209f22f830d7f::t_67a92da5acde83 129-139
   s_2209f22f830d7f::t_37ca9bfb51f642 168
   s_2209f22f830d7f::t_30c095c9c19a3f 87-94
+outfitter/packages/api/src/routes/index.ts
+  s_2209f22f830d7f::t_6f243a10e2f650 11,30
+outfitter/packages/api/src/secrets.ts
+  s_2209f22f830d7f::t_6f243a10e2f650 134-326
+outfitter/packages/api/src/main.ts
+  s_2209f22f830d7f::t_6f243a10e2f650 4-11,20-22,24
+outfitter/packages/api/test/e2e.test.ts
+  s_2209f22f830d7f::t_6f243a10e2f650 24,111,127
+outfitter/packages/api/src/providers-status.ts
+  s_2209f22f830d7f::t_bc5a18d5f70869 72
+  s_2209f22f830d7f::t_6f243a10e2f650 54-56,65
+outfitter/packages/api/test/operator-test-endpoint.test.ts
+  s_2209f22f830d7f::t_6f243a10e2f650 1-120
+outfitter/packages/api/test/operator.test.ts
+  s_2209f22f830d7f::t_6f243a10e2f650 1-281
+outfitter/packages/api/src/server.ts
+  s_2209f22f830d7f::t_bc5a18d5f70869 108
+  s_2209f22f830d7f::t_6f243a10e2f650 10,26-28,44
+outfitter/packages/api/test/helpers.ts
+  s_2209f22f830d7f::t_6f243a10e2f650 8,20-22,42-43
+outfitter/packages/api/src/routes/context.ts
+  s_2209f22f830d7f::t_6f243a10e2f650 9,21-23
+outfitter/packages/api/src/routes/operator.ts
+  s_2209f22f830d7f::t_6f243a10e2f650 1-177
+outfitter/packages/api/src/operator.ts
+  s_2209f22f830d7f::t_6f243a10e2f650 1-100
 ---
 {
   "schema_version": "authorship/3.0.0",

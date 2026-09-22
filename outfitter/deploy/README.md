@@ -122,7 +122,8 @@ so the commands below still work unchanged.
    "deviations" for the full writeup.
 4. **`./api.sh`** — builds `packages/api` with Cloud Build and deploys it to Cloud Run **as the
    `web` role** (`OUTFITTER_ROLE=web`) with IAP enabled directly on the service, IAP access
-   restricted to `domain:mgmonteleone.com`, and the four (a) secrets above mounted as env vars.
+   restricted to `IAP_MEMBERS` (default `domain:mgmonteleone.com,domain:serviam-it.hr,user:matija.turk@gmail.com`;
+   see "IAP access for users outside the org" below), and the four (a) secrets above mounted as env vars.
    Also sets `IAP_AUDIENCE` automatically, from `gcloud projects describe`'s project number, to
    `/projects/<projectNumber>/locations/<region>/services/outfitter-api` — the `aud` claim IAP
    signs into `x-goog-iap-jwt-assertion` for a service with IAP enabled directly on Cloud Run (see
@@ -145,6 +146,36 @@ Common env vars across all four scripts: `PROJECT` (default `outfitter-509211`),
 (default `us-central1`), `AR_REPO` (default `outfitter`). See each script's header for its other
 inputs and their defaults.
 
+## IAP access for users outside the org
+
+The project sits in the `mgmonteleone.com` organization. By default IAP uses a Google-managed OAuth
+client, and that client admits **org-internal users only**: an `@serviam-it.hr` or `@gmail.com`
+account can be in the IAP policy and still be refused at sign-in. To let them in, IAP needs a custom
+OAuth client with an External audience
+(https://cloud.google.com/iap/docs/custom-oauth-configuration). This is a one-time console setup; the
+IAP OAuth Admin API that `gcloud iap oauth-brands/oauth-clients` wrapped was shut down in March 2026.
+
+1. Console → Google Auth Platform (project `outfitter-509211`) → **Branding**: app name
+   `Outfitter`, support email `mgm@mgms.eu`.
+2. **Audience**: User type **External**. Either publish the app ("In production"; it only asks for
+   basic scopes, so Google won't require verification) or leave it in Testing and add
+   `matija.turk@gmail.com` and the serviam-it.hr users as test users.
+3. **Clients** → Create client → *Web application*, name `outfitter-iap`. Save it, copy the client
+   ID, then add the authorized redirect URI
+   `https://iap.googleapis.com/v1/oauth/clientIds/<CLIENT_ID>:handleRedirect`.
+4. Store the client secret:
+   `printf '%s' '<CLIENT_SECRET>' | gcloud secrets create outfitter-iap-oauth-client-secret --data-file=- --project=outfitter-509211`
+   (`outfitter-api@` does not need access to it; only the deployer reads it).
+5. Redeploy with the client ID: `IAP_OAUTH_CLIENT_ID=<CLIENT_ID> ./api.sh`. This sets IAP's OAuth
+   settings on `outfitter-api` and grants every `IAP_MEMBERS` entry `roles/iap.httpsResourceAccessor`.
+   Export `IAP_OAUTH_CLIENT_ID` on every later `./api.sh` run too; the script leaves IAP's OAuth
+   settings alone when it's unset, so skipping it won't undo the setup.
+6. Check with `gcloud iap web get-iam-policy --resource-type=cloud-run --service=outfitter-api --region=us-central1`
+   and `gcloud iap settings get ...`, then sign in from a private window as an outside user.
+
+Everyone who gets through IAP is a regular user. Per EPIC.md's session-visibility decision, they can
+see and steer every session. Operator rights still come only from `OUTFITTER_OPERATORS`.
+
 ## Rollback
 
 - **`outfitter-api`** and **`outfitter-link`** (both Cloud Run *services*, so each keeps prior
@@ -162,8 +193,9 @@ inputs and their defaults.
   pointed at a prior tag (`IMAGE=us-central1-docker.pkg.dev/outfitter-509211/outfitter/outfitter-agent:<old-tag> ./agent-job.sh`
   after commenting out the build step, or `gcloud run jobs update outfitter-agent --image=<prior image>`
   directly) — new executions pick up the change immediately; a Job has no live traffic to shift.
-- **IAP domain access**: remove it with
-  `gcloud iap web remove-iam-policy-binding --resource-type=cloud-run --service=outfitter-api --region=us-central1 --member=domain:mgmonteleone.com --role=roles/iap.httpsResourceAccessor`.
+- **IAP access**: `./api.sh` only ever *adds* members, so dropping one from `IAP_MEMBERS` doesn't
+  revoke it. Remove a member (e.g. `user:matija.turk@gmail.com`) with
+  `gcloud iap web remove-iam-policy-binding --resource-type=cloud-run --service=outfitter-api --region=us-central1 --member=<member> --role=roles/iap.httpsResourceAccessor`.
 - **Full teardown** (reverse of `baseline.sh`): delete both Cloud Run services (`outfitter-api`,
   `outfitter-link`) and the job (`outfitter-agent`), then the AR repo
   (`gcloud artifacts repositories delete outfitter --location=us-central1`), then the two

@@ -82,7 +82,8 @@ today behind one adapter so we can move to pi-server when it stabilises.
 - **ADC everywhere, no shared secrets between our components.** agentd authenticates to the API with
   the job's service-account identity token (audience = API URL). The API then hands the run its
   per-session GitHub token and LiteLLM key over that channel. Humans hit the API through IAP restricted
-  to the `mgmonteleone.com` domain; the API reads `x-goog-iap-jwt-assertion` for identity.
+  to `IAP_MEMBERS` (`mgmonteleone.com`, `serviam-it.hr`, and `matija.turk@gmail.com` as of 2026-09-22;
+  outside-org members need IAP's custom OAuth client, `deploy/README.md`); the API reads `x-goog-iap-jwt-assertion` for identity.
 - **Atlas tier by phase.** M0 (free) for phases 0–3 with a SCRAM user whose password is in Secret
   Manager; the connection is a single `MONGODB_URI` seam. Move to M10 and `MONGODB-OIDC` with
   `ENVIRONMENT:gcp` (Cloud Run supported, no key material) when uptime matters. Atlas org login via
@@ -121,7 +122,7 @@ Ten agent-hours a day is roughly $2/day of compute. Set a GCP budget alert at $2
 | Idle-stop | 30 min for human-driven sessions, 5 min for delegated worker sessions, plus wake-on-open in the UI. Revisit after measuring real wake times (E2.9). |
 | Laptop model in the cloud | Allowed, opt-in per guru or per session, never the default. Guarded by the preflight in E2.8. |
 | Vocabulary | Reusable agent configs are **Gurus** (not "Experts"). |
-| Session visibility | Org-shared: every signed-in mgmonteleone.com user can see and steer every session (as Cosmos treats shared sessions). `Session.ownerEmail` is recorded but not enforced; per-user privacy is a later, one-line check if ever wanted. |
+| Session visibility | Org-shared: every signed-in user IAP admits can see and steer every session (as Cosmos treats shared sessions). `Session.ownerEmail` is recorded but not enforced; per-user privacy is a later, one-line check if ever wanted. |
 | Operator role (2026-09-22, `docs/reports/operators.md`) | Operators are a config list (`OUTFITTER_OPERATORS`), currently `mgm@mgms.eu` and `matej@mgms.eu`. Operators manage Secret Manager keys and deploy-level settings via `/api/operator/*`. Any signed-in user can still create sessions and edit gurus -- the org-shared policy above is unchanged; operator is an additional capability, not a replacement for it. |
 
 

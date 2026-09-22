@@ -38,7 +38,16 @@ fi
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 AR_REPO="${AR_REPO:-outfitter}"
 CLOUDRUN_JOB="${CLOUDRUN_JOB:-outfitter-agent}"
-IAP_DOMAIN="${IAP_DOMAIN:-mgmonteleone.com}"
+# Who IAP lets through to the web role: comma-separated IAM members, each granted
+# roles/iap.httpsResourceAccessor. `domain:` works for any Google Workspace / Cloud Identity domain,
+# `user:` for a single Google account (including @gmail.com). Anyone outside the mgmonteleone.com
+# org (serviam-it.hr, gmail) also needs IAP on a custom OAuth client -- see IAP_OAUTH_CLIENT_ID
+# below and README.md "IAP access for users outside the org".
+IAP_MEMBERS="${IAP_MEMBERS:-domain:mgmonteleone.com,domain:serviam-it.hr,user:matija.turk@gmail.com}"
+# Custom OAuth client for IAP (External audience), created by hand in the console. Its secret lives
+# in Secret Manager as outfitter-iap-oauth-client-secret. Unset = leave IAP's OAuth settings alone
+# (the Google-managed client, which admits org-internal users only).
+IAP_OAUTH_CLIENT_ID="${IAP_OAUTH_CLIENT_ID:-}"
 
 if [[ "${ROLE}" == "web" ]]; then
   SERVICE="outfitter-api"
@@ -177,17 +186,41 @@ if [[ "${ROLE}" == "web" ]]; then
     --role="roles/run.invoker" \
     --quiet
 
-  echo "== Granting domain:${IAP_DOMAIN} roles/iap.httpsResourceAccessor on ${SERVICE} =="
-  gcloud iap web add-iam-policy-binding \
-    --resource-type=cloud-run \
-    --service="${SERVICE}" \
-    --region="${REGION}" \
-    --project="${PROJECT}" \
-    --member="domain:${IAP_DOMAIN}" \
-    --role="roles/iap.httpsResourceAccessor"
+  if [[ -n "${IAP_OAUTH_CLIENT_ID}" ]]; then
+    echo "== Pointing IAP on ${SERVICE} at custom OAuth client ${IAP_OAUTH_CLIENT_ID} =="
+    IAP_OAUTH_CLIENT_SECRET="$(gcloud secrets versions access latest --secret=outfitter-iap-oauth-client-secret --project="${PROJECT}")"
+    IAP_SETTINGS_FILE="$(mktemp)"
+    trap 'rm -f "${IAP_SETTINGS_FILE}"' EXIT
+    cat >"${IAP_SETTINGS_FILE}" <<YAML
+accessSettings:
+  oauthSettings:
+    clientId: ${IAP_OAUTH_CLIENT_ID}
+    clientSecret: ${IAP_OAUTH_CLIENT_SECRET}
+YAML
+    gcloud iap settings set "${IAP_SETTINGS_FILE}" \
+      --resource-type=cloud-run \
+      --service="${SERVICE}" \
+      --region="${REGION}" \
+      --project="${PROJECT}"
+  fi
+
+  IFS=',' read -ra IAP_MEMBER_LIST <<<"${IAP_MEMBERS}"
+  for member in "${IAP_MEMBER_LIST[@]}"; do
+    echo "== Granting ${member} roles/iap.httpsResourceAccessor on ${SERVICE} =="
+    gcloud iap web add-iam-policy-binding \
+      --resource-type=cloud-run \
+      --service="${SERVICE}" \
+      --region="${REGION}" \
+      --project="${PROJECT}" \
+      --member="${member}" \
+      --role="roles/iap.httpsResourceAccessor"
+  done
 
   echo "== Done: ${ORIGIN} =="
-  echo "Visiting it should now prompt Google sign-in and reject any account outside ${IAP_DOMAIN}."
+  echo "Visiting it should now prompt Google sign-in and reject anyone not in: ${IAP_MEMBERS}."
+  if [[ -z "${IAP_OAUTH_CLIENT_ID}" ]]; then
+    echo "Note: IAP_OAUTH_CLIENT_ID unset, so members outside the mgmonteleone.com org can't sign in yet."
+  fi
 else
   echo "== Done: ${ORIGIN} =="
   echo "Point agent-job.sh's OUTFITTER_API at this URL, not outfitter-api's. NGROK_WEBHOOK_SECRET"

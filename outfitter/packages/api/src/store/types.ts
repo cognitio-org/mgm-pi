@@ -76,6 +76,22 @@ export interface Run {
    * registering the socket -- see docs/reports/security-review-pr1.md finding #2. Only the hash is
    * ever stored; the plaintext token exists only in the provider launch env and the hello frame. */
   runTokenHash?: string;
+  // Bug 10 (docs/reports/cloud-fixes.md): set true the first time this run's `hello` passes the
+  // token AND protocol-version checks (agentlink.ts's handleConnection). Guards mail's chargeWake
+  // so a mail-driven wake's attempt is charged once this run proves it can actually speak the
+  // protocol -- not merely because a wake was started -- and only once per run even across
+  // reconnects. A run that never reaches a validated hello at all (Cloud Run scheduling failure,
+  // a version-skewed agentd refused with 4409, a crash before connecting) never sets this and so
+  // never counts against the mail's attempt budget.
+  protocolAcked?: boolean;
+  // Bug 10: set true only when RunManager.wake was called for a mail delivery (MailService.
+  // wakeForMail's `{ mailDriven: true }`) -- distinguishes "this run exists specifically to
+  // deliver mail" from any other reason a run might start (a browser Start/Wake button) that
+  // happens to also have deliverable mail queued for the session; only a mail-driven run's
+  // validated hello charges the mail's attempt (agentlink.ts's handleConnection), so mail delivery
+  // via a run someone else already started for an unrelated reason isn't double-charged against
+  // claimNext's own per-delivery attempt.
+  mailWakePending?: boolean;
   // Deviation from protocol.md: extension_ui_request events are "not persisted except
   // extension_ui_request" per the protocol, but it doesn't say where. Stored here so a browser
   // that reconnects (or opens the session fresh) still sees a question the run is waiting on;

@@ -362,6 +362,20 @@ export class AgentLink {
       );
     }
 
+    // Bug 10 (docs/reports/cloud-fixes.md): a run created specifically to deliver mail
+    // (Run.mailWakePending, set by MailService.wakeForMail) just proved -- token + protocol
+    // version both checked out -- that it can genuinely speak the protocol, so charge the
+    // mailbox attempt here, once per run (guarded by Run.protocolAcked so a reconnect on the
+    // same run doesn't charge again), instead of blindly at wake() time before any of that was
+    // known. A run started for some other reason (a browser Start/Wake button) that happens to
+    // also have deliverable mail is left alone here -- its mail still gets delivered and counted
+    // once, by deliverMail's own claimNext call below, not charged twice.
+    if (run.mailWakePending && !run.protocolAcked) {
+      const chargeNow = new Date().toISOString();
+      await this.store.mail.chargeWake(run.sessionId, chargeNow, MAIL_MAX_ATTEMPTS);
+      await this.store.runs.update(runId, { protocolAcked: true, updatedAt: chargeNow });
+    }
+
     this.sockets.set(runId, socket);
     socket.on("close", () => {
       if (this.sockets.get(runId) === socket) this.sockets.delete(runId);

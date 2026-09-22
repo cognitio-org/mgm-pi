@@ -154,16 +154,27 @@ export class MailService {
 
   /**
    * Starts a run for the session's deliverable mail. "active" when a run already exists (delivery
-   * then belongs to the socket side), "none" when there is nothing to deliver. Every wake it starts
-   * is charged as an attempt on that mail, so a session whose runs keep dying before they are ready
-   * stops being woken once the mail runs out of attempts. Throws if the wake itself fails.
+   * then belongs to the socket side), "none" when there is nothing to deliver. Throws if the wake
+   * itself fails.
+   *
+   * Bug 10 (docs/reports/cloud-fixes.md): this used to charge every deliverable mail of the
+   * session an attempt right here, on every wake, regardless of whether the resulting run ever
+   * connected at all -- a run that fails before it ever sends a valid `hello` (Cloud Run scheduling
+   * failure, an image pull failure, a version-skewed agentd refused with WS close 4409) still
+   * charged the full attempt, so a run of bad luck or a bad deploy burned through the whole attempt
+   * budget on deliveries that were never actually attempted, dead-lettering mail that was never at
+   * fault. The charge now happens in agentlink.ts's handleConnection, once per run, the moment that
+   * run's `hello` actually passes the token and protocol-version checks (Run.protocolAcked) -- i.e.
+   * once we know this run can genuinely speak the protocol, not merely that a wake was started for
+   * it. A session whose runs never reach that point is retried indefinitely rather than exhausting
+   * the mail's attempts (bounded by the same one-active-run-per-session invariant as any other
+   * wake, and by whatever caps the sandbox provider itself has on failed executions).
    */
   async wakeForMail(sessionId: string): Promise<"active" | "none" | "woken"> {
     if (await this.store.runs.findActiveForSession(sessionId)) return "active";
     const now = new Date().toISOString();
     if (!(await this.store.mail.hasDeliverable(sessionId, now, MAIL_MAX_ATTEMPTS))) return "none";
-    await this.store.mail.chargeWake(sessionId, now, MAIL_MAX_ATTEMPTS);
-    await this.runs.wake(sessionId);
+    await this.runs.wake(sessionId, { mailDriven: true });
     return "woken";
   }
 

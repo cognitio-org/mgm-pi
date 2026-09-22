@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { buildTestApp, seedGuru } from "./helpers.ts";
-import { openAgentSocket, makeRunningSession, sendHello, type SocketHandle } from "./agent-socket.ts";
+import { openAgentSocket, makeRunningSession, runTokenFor, sendHello, type SocketHandle } from "./agent-socket.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import type { Mail, Run, Session } from "../src/store/types.ts";
 import {
@@ -160,31 +160,76 @@ describe("wake", () => {
     await app.fastify.close();
   });
 
-  test("a session whose runs never become ready stops being woken when its mail runs out of attempts, and the sender gets a bounce", async () => {
+  test("bug 10 (docs/reports/cloud-fixes.md): a session whose runs never even connect (no hello ever validated) is retried indefinitely, not dead-lettered", async () => {
+    // This used to be "a session whose runs never become ready stops being woken when its mail
+    // runs out of attempts": chargeWake fired blindly at wake() time regardless of outcome, so a
+    // run that never even reached hello (a clone failure, a missing secret, a Cloud Run scheduling
+    // failure, a version-skewed agentd refused with 4409) still burned a full attempt -- meaning
+    // every one of a session's queued messages could go dead after just 6 failed wakes, none of
+    // which ever gave the mail a real delivery attempt. Now the attempt is charged once a run's
+    // hello actually validates (agentlink.ts's handleConnection, Run.protocolAcked) -- a run that
+    // never gets that far no longer costs the mail anything, so the session keeps being retried
+    // (bounded by other means: one-active-run-per-session, and whatever caps the sandbox provider
+    // itself puts on repeatedly failing executions) instead of losing its mail to a bad deploy.
     const app = await buildTestApp();
     await seedGuru(app.store);
     await insertSession(app, "sender");
     await insertSession(app, "broken");
     const woke: string[] = [];
     const realWake = app.runs.wake.bind(app.runs);
-    app.runs.wake = async (sessionId: string) => {
+    app.runs.wake = async (sessionId: string, opts?: { mailDriven?: boolean }) => {
       woke.push(sessionId);
-      return realWake(sessionId);
+      return realWake(sessionId, opts);
     };
 
     await app.mail.handleAgentSend("sender", sendEntryFor("broken", "e1") as any);
     for (let i = 0; i < MAIL_MAX_ATTEMPTS * 2; i++) {
-      await waitFor(async () => woke.length > i || !(await app.store.mail.hasDeliverable("broken", iso(0), MAIL_MAX_ATTEMPTS)), "a wake");
+      await waitFor(async () => woke.length > i, "a wake");
+      // The run never sends a hello at all (as if the sandbox failed before ever connecting) --
+      // just mark it failed directly, exactly as the reconciler would for a run that never sends
+      // a heartbeat.
       const run = await app.store.runs.findActiveForSession("broken");
       if (run) await app.store.runs.update(run.id, { state: "failed" } as Partial<Run>);
       await app.mail.sweep();
     }
 
     const brokenWakes = woke.filter((s) => s === "broken").length;
-    assert.equal(brokenWakes, MAIL_MAX_ATTEMPTS, "each wake is charged, so wakes stop at the attempt limit");
-    assert.equal((await app.store.mail.findById(mailIdFor("sender", "e1")))?.status, "dead");
-    const bounce = await app.store.mail.claimNext("sender", "r", iso(0), iso(60_000), MAIL_MAX_ATTEMPTS);
-    assert.match(bounce?.text ?? "", /^\[outfitter system\] Your message to session "broken" was not delivered after 6 attempts/);
+    assert.ok(brokenWakes >= MAIL_MAX_ATTEMPTS * 2, `expected at least ${MAIL_MAX_ATTEMPTS * 2} wakes with none of them charged, got ${brokenWakes}`);
+    const stored = await app.store.mail.findById(mailIdFor("sender", "e1"));
+    assert.equal(stored?.attempts, 0, "no run here ever validated a hello, so nothing charged its attempt");
+    assert.equal(stored?.status, "queued", "still queued, not dead -- a bad deploy shouldn't throw the message away");
+    await app.fastify.close();
+  });
+
+  test("bug 10: a session whose runs DO validate the protocol, but keep dying before acking, still stops being woken once attempts run out", async () => {
+    const app = await buildTestApp();
+    await seedGuru(app.store);
+    await insertSession(app, "sender2");
+    await insertSession(app, "flaky");
+    await app.mail.handleAgentSend("sender2", sendEntryFor("flaky", "e1") as any);
+
+    let cycles = 0;
+    for (let i = 0; i < MAIL_MAX_ATTEMPTS + 2; i++) {
+      const woken = await app.mail.wakeIfMail("flaky");
+      if (!woken) break; // attempts exhausted; wakeForMail itself stops trying
+      cycles++;
+      const run = await app.store.runs.findActiveForSession("flaky");
+      if (!run) throw new Error("expected an active run right after a successful wake");
+      const runToken = runTokenFor(app, run.id);
+      const agent = await openAgentSocket(app, run.id);
+      sendHello(agent, run.id, "flaky", runToken);
+      await agent.nextMessage(); // run.spec -- hello validated, so this charged the attempt
+      // Crash before acking anything (or sending bye at all) -- releaseRun never runs for this
+      // run, so the mail simply sits "delivered" until its lease expires; force it stale here
+      // instead of waiting out MAIL_LEASE_MS.
+      await app.store.runs.update(run.id, { state: "failed" } as Partial<Run>);
+      await app.store.mail.releaseRun(run.id);
+    }
+
+    assert.equal(cycles, MAIL_MAX_ATTEMPTS, "each validated-but-failed run is charged, so wakeForMail stops at the attempt limit");
+    await app.mail.sweep();
+    const stored = await app.store.mail.findById(mailIdFor("sender2", "e1"));
+    assert.equal(stored?.status, "dead", "a run that genuinely can speak the protocol but never acks still exhausts the budget");
     await app.fastify.close();
   });
 });

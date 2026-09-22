@@ -1,86 +1,169 @@
-// Pixel-art sprites for Floppy Rescue. The helicopter is drawn from primitive rects directly in
-// FloppyRescue.tsx (organic silhouette, rotor animation, tilt rotation -- easier to get right with
-// rects than a hand-typed character grid). Everything else here is a small character-grid "sprite"
-// via shared/pixelSprite.ts: a rack unit (tiled vertically to fill a rack's height, with rivets and
-// a vent -- plus a scorched/damaged palette once fire reaches it), a flame (four frames, three-tone
-// C64 orange/yellow/red flicker), a Floppy walker (two frames: legs mid-stride, a waving arm, and a
-// visible disk-shutter label so it reads as a little floppy-disk character, not a blob), a stray
-// debris chunk, and the glitch drone.
+// Pixel-art sprite data for Floppy Rescue (character grids + palettes, rendered by
+// shared/pixelSprite.ts at 1 logical px per character). Everything is original art: a stubby white
+// rescue chopper with a red belly stripe and passenger windows that light up green when it's
+// carrying Floppies; Floppy characters (3.5" disks with a metal shutter for a hat, a label for a
+// face, stick legs and waving arms, in five disk colours); server-rack cabinets with blinking LEDs
+// and a scorched variant whose vents glow orange; a pine tree; the glitch drone; falling burning
+// debris. Fire and smoke are procedural (see FloppyRescue.tsx) because they have to animate
+// continuously at any size.
 
 import type { Palette, Sprite } from "../shared/pixelSprite.ts";
+import { C } from "../shared/palette.ts";
 
-export const SPRITE_SCALE = 1;
-
-export const RACK_UNIT_SPRITE: Sprite = [
-  "RRRRRRRRRRRR",
-  "R.o......o.R",
-  "R..........R",
-  "R.===..===.R",
-  "R..........R",
-  "R.o......o.R",
-  "R....l..l..R",
-  "RRRRRRRRRRRR",
+// --- helicopter: 32x14 body (collision box is 26x14; the sprite overhangs 3px each side) --------
+export const HELI_BODY: Sprite = [
+  ".................KK.............",
+  "............KKKKKKKKKKKK........",
+  ".KK........KBBBBBBBBBBBBKK......",
+  ".KGK......KBBBBBBBBBBBBBBCK.....",
+  ".KGK.....KBBBDDBDDBDDBBBBCCK....",
+  ".KGGK...KBBBDDBDDBDDBBBBBCccK...",
+  ".KGGGKKKKBBBBBBBBBBBBBBBBCcCCK..",
+  ".KGGGGGGGBBBBBBBBBBBBBBBBCCCCCK.",
+  "..KKKKKKKRRRRRRRRRRRRRRRRRRRRRK.",
+  ".........KbbbbbbbbbbbbbbbbbbbbK.",
+  "..........KbbbbbbbbbbbbbbbbbbK..",
+  "...........KKKKKKKKKKKKKKKKKK...",
+  "..............G.......G......G..",
+  "..........GGGGGGGGGGGGGGGGGGGG..",
 ];
-export const RACK_PALETTE: Palette = { R: "#8b7cd8", o: "#3a3184", "=": "#241e5c", l: "#5cff8a" };
-// Once fire reaches a rack's cell: scorched frame, dark vents, and the status lights flip to a red
-// alarm instead of phosphor green.
-export const RACK_PALETTE_DAMAGED: Palette = { R: "#3a2e1a", o: "#241a10", "=": "#120d08", l: "#ff8a8a" };
+export const HELI_PALETTE: Palette = {
+  K: C.black,
+  B: C.paper,
+  b: C.lightGrey,
+  R: C.red,
+  G: C.grey,
+  C: C.cyan,
+  c: C.white,
+  D: C.blue,
+};
+/** Same chopper with Floppies at the passenger windows. */
+export const HELI_PALETTE_LOADED: Palette = { ...HELI_PALETTE, D: C.lightGreen };
+export const HELI_PALETTE_INVULN: Palette = { ...HELI_PALETTE, B: C.yellow, b: C.orange };
 
-export const FLAME_SPRITES: Sprite[] = [
-  ["..Y..", ".OOO.", ".OOO.", "RRRRR", "RRRRR", ".RRR.", "..R.."],
-  ["..Y..", "..Y..", ".OOO.", "OOOOO", "RRRRR", "RRRRR", ".RRR."],
-  [".Y...", "OO...", "OOO..", "RRRR.", "RRRRR", ".RRR.", "..R.."],
-  ["...Y.", "..OO.", ".OOO.", ".RRRR", "RRRRR", ".RRR.", "..R.."],
+/** Main rotor, drawn 2 rows above the body: long blade, foreshortened, mid -- a 3-frame spin. */
+export const ROTOR_FRAMES: Sprite[] = [
+  ["...GLLLLLLLLLLLLLLLLLLLLLLLLLLG.", "................KKKK............"],
+  [".........GLLLLLLLLLLLLLLG.......", "................KKKK............"],
+  [".....GGLLLLLLLLLLLLLLLLLLLGG....", "................KKKK............"],
 ];
-export const FLAME_PALETTE: Palette = { Y: "#f4cf3c", O: "#ff8a00", R: "#ff5a1f" };
+export const ROTOR_PALETTE: Palette = { L: C.lightGrey, G: C.grey, K: C.black };
 
-export const SMOKE_COLOR = "#4a3f6e";
-export const SPARK_COLOR = "#f4cf3c";
+/** Tail rotor (drawn at the fin), 2 frames. */
+export const TAIL_ROTOR_FRAMES: Sprite[] = [
+  ["L", "L", "L", "L", "L", "L", "L"],
+  [".", ".", "G", "L", "G", ".", "."],
+];
 
-export const FLOPPY_WALKER_SPRITES: Sprite[] = [
+// --- Floppy characters: 11x12, walk A / walk B / wave ---------------------------------------------
+const FLOPPY_TOP = [".KKKKKKKKK.", ".KCSSSSSCK.", ".KCSSsSSCK.", ".KCSSSSSCK.", ".KCCCCCCCK."];
+const FLOPPY_FACE = [".KWEWWWEWK.", ".KWWEEEWWK.", ".KKKKKKKKK."];
+export const FLOPPY_FRAMES: Sprite[] = [
+  [...FLOPPY_TOP, "LKWWWWWWWKL", ...FLOPPY_FACE, "...L...L...", "..L.....L..", ".KK.....KK."],
+  [...FLOPPY_TOP, "LKWWWWWWWKL", ...FLOPPY_FACE, "....L.L....", "....L.L....", "...KK.KK..."],
   [
-    "..FFFFF..",
-    ".F.....F.",
-    "F.......F.A",
-    "FFFFFFFFF",
-    "F.WWWWW.F",
-    "F.WWWWW.F",
-    "F.......F",
-    "FFFFFFFFF",
-    "F...O...F",
-    ".F.....F.",
-    "..FFFFF..",
-    "...L.L...",
-    "..L...L..",
-  ],
-  [
-    "..FFFFF..",
-    ".F.....F.",
-    "F.......F",
-    "FFFFFFFFF",
-    "F.WWWWW.F",
-    "F.WWWWW.F",
-    "F.......F",
-    "FFFFFFFFF",
-    "F...O...F",
-    ".F.....F.",
-    "..FFFFF..",
-    "..L...L..",
-    ".L.....L.",
+    ".KKKKKKKKK.",
+    "LKCSSSSSCK.",
+    "LKCSSsSSCK.",
+    "LKCSSSSSCK.",
+    ".KCCCCCCCK.",
+    ".KWWWWWWWKL",
+    ...FLOPPY_FACE,
+    "...L...L...",
+    "...L...L...",
+    "..KK...KK..",
   ],
 ];
-export const FLOPPY_PALETTE: Palette = { F: "#5cff8a", W: "#e4e0fb", O: "#241e5c", L: "#241e5c", A: "#f4cf3c" };
+const FLOPPY_BASE: Palette = { K: C.black, S: C.lightGrey, s: C.darkGrey, W: C.white, E: C.black, L: C.paper };
+/** Five disk colours so a crowd of Floppies reads as individuals. */
+export const FLOPPY_PALETTES: Palette[] = [C.lightGreen, C.cyan, C.yellow, C.lightRed, C.lightBlue].map((c) => ({
+  ...FLOPPY_BASE,
+  C: c,
+}));
 
-export const DEBRIS_SPRITE: Sprite = ["FF", "FF"];
-export const DEBRIS_PALETTE: Palette = { F: "#f4cf3c" };
-
-export const DRONE_SPRITE: Sprite = [
-  "...DD....",
-  "..DDDD...",
-  ".DDDDDD..",
-  "DDGGGGDD.",
-  ".DDDDDD..",
-  "..DDDD...",
-  "...DD....",
+// --- server rack cabinet: 12x24, four units with LEDs and vents -----------------------------------
+const RACK_UNIT = ["KGFFFFFFFFGK", "KGFaFbFFvvGK", "KGFFFFFFFFGK", "KGGGGGGGGGGK"];
+const RACK_UNIT_2 = ["KGFFFFFFFFGK", "KGFbFaFFvvGK", "KGFFFFFFFFGK", "KGGGGGGGGGGK"];
+export const RACK_SPRITE: Sprite = [
+  "KKKKKKKKKKKK",
+  "KGGGGGGGGGGK",
+  ...RACK_UNIT,
+  ...RACK_UNIT_2,
+  ...RACK_UNIT,
+  ...RACK_UNIT_2,
+  ...RACK_UNIT,
+  "KhGGGGGGGGhK",
+  "KKKKKKKKKKKK",
 ];
-export const DRONE_PALETTE: Palette = { D: "#ff8a8a", G: "#241e5c" };
+export const RACK_H = RACK_SPRITE.length;
+export const RACK_W = 12;
+export const RACK_PALETTES: Palette[] = [
+  { K: C.black, G: C.grey, F: C.darkGrey, v: C.black, h: C.lightGrey, a: C.lightGreen, b: C.darkGrey },
+  { K: C.black, G: C.grey, F: C.darkGrey, v: C.black, h: C.lightGrey, a: C.darkGrey, b: C.lightGreen },
+];
+/** Scorched: blackened frame, red alarm LEDs, fire glowing through the vents. */
+export const RACK_PALETTES_BURNING: Palette[] = [
+  { K: C.black, G: C.darkGrey, F: "#1c1414", v: C.orange, h: C.grey, a: C.lightRed, b: C.red },
+  { K: C.black, G: C.darkGrey, F: "#1c1414", v: C.yellow, h: C.grey, a: C.red, b: C.lightRed },
+];
+
+// --- scenery ---------------------------------------------------------------------------------------
+export const PINE_SPRITE: Sprite = [
+  "....K....",
+  "...KgK...",
+  "..KgGGK..",
+  "...KGK...",
+  "..KgGGK..",
+  ".KgGGGGK.",
+  "..KGGGK..",
+  ".KgGGGGK.",
+  "KgGGGGGGK",
+  "KKKKTKKKK",
+  "....T....",
+  "....T....",
+];
+export const PINE_PALETTE: Palette = { K: "#16301c", G: "#2e6b3e", g: C.green, T: C.brown };
+
+export const BUSH_SPRITE: Sprite = ["..KKK..", ".KgGGK.", "KgGGGGK", "KGGGGGK"];
+
+export const MOON_SPRITE: Sprite = [
+  "...WWWWW...",
+  ".WWWWWWWPW.",
+  ".WWPWWWWWW.",
+  "WWWWWWWWWWP",
+  "WWWWWWPWWWW",
+  "WWPPWWWWWWP",
+  "WWWWWWWWWPP",
+  "WWWWWWWWWPP",
+  ".WWWWWWWPP.",
+  ".WWWWWWPPP.",
+  "...PPPPP...",
+];
+export const MOON_PALETTE: Palette = { W: C.paper, P: C.lightBlue };
+
+// --- glitch drone (13x8) and its shots ------------------------------------------------------------
+const DRONE_BODY = [".KKKKKKKKKKK.", "KRRRRRRRRRRRK"];
+export const DRONE_FRAMES: Sprite[] = [
+  ["LLLLL...LLLLL", "..K.......K..", ...DRONE_BODY, "KRRWWWWWRRRRK", "KRRWEEWWRRRRK", ".KRRRRRRRRRK.", "..KK.....KK.."],
+  ["..LL.....LL..", "..K.......K..", ...DRONE_BODY, "KRRWWWWWRRRRK", "KRRWWEEWRRRRK", ".KRRRRRRRRRK.", "..KK.....KK.."],
+];
+export const DRONE_PALETTE: Palette = { K: C.black, R: C.lightRed, W: C.white, E: C.black, L: C.lightGrey };
+export const SHOT_FRAMES: Sprite[] = [
+  ["YWY", "WWW", "YWY"],
+  [".R.", "RYR", ".R."],
+];
+export const SHOT_PALETTE: Palette = { Y: C.yellow, W: C.white, R: C.lightRed };
+
+// --- falling burning debris: a metal chunk with a 2-frame flame trail above it --------------------
+export const DEBRIS_FRAMES: Sprite[] = [
+  ["..R..", ".ROR.", ".OYO.", "KGLGK", "GGKGG", ".KGK."],
+  [".R.R.", "..O..", ".OYO.", "KGLGK", "GGKGG", ".KGK."],
+];
+export const DEBRIS_PALETTE: Palette = { R: C.red, O: C.orange, Y: C.yellow, K: C.black, G: C.grey, L: C.lightGrey };
+
+/** Tiny HUD icons: a Floppy (onboard counter) and a chopper (lives). */
+export const ICON_FLOPPY: Sprite = ["KKK", "CSC", "WWW"];
+export const ICON_FLOPPY_ON: Palette = { K: C.black, C: C.lightGreen, S: C.lightGrey, W: C.white };
+export const ICON_FLOPPY_OFF: Palette = { K: C.darkGrey, C: C.ink, S: C.ink, W: C.darkGrey };
+export const ICON_HELI: Sprite = ["..KKKKK", "G.BBBCK", "GBBBBBK", "..G..G."];
+export const ICON_HELI_PALETTE: Palette = { K: C.lightGrey, B: C.paper, C: C.cyan, G: C.grey };

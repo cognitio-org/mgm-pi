@@ -4,27 +4,21 @@
 // No shared names, art, sound or level layout with Choplifter -- see
 // docs/reports/easter-egg-research.md for the design rationale.
 //
-// Self-contained: this component (plus engine.ts/sprites.ts/sound.ts) is the entire feature
-// surface, always loaded via a dynamic import (see EasterEggRoot.tsx) so it costs nothing in the
-// main bundle until triggered.
+// Self-contained: this component (plus engine.ts/render.ts/sprites.ts/sound.ts) is the entire
+// feature surface, always loaded via a dynamic import (see EasterEggRoot.tsx) so it costs nothing in
+// the main bundle until triggered.
 //
-// Rendering: a low-res (320x176) logical canvas scaled up by CSS (`image-rendering: pixelated`,
-// see .easter-canvas) so the world and sprites read as chunky, legible pixel art filling the frame
-// -- see engine.ts's header comment. The helicopter is drawn from primitive rects (organic
-// silhouette + rotor animation + tilt rotation are easier to get right this way than with a
-// hand-typed character grid); racks/flames/Floppies/debris/drone are small character-grid sprites
-// (sprites.ts). A compact HUD (score/level/onboard/fuel/lives) plus a distance minimap are drawn
-// directly onto the canvas, C64-style, in addition to the larger accessible HTML HUD below it.
+// Rendering: render.ts draws each frame onto a low-res logical canvas (viewW x 132) which CSS scales
+// up by an *integer* factor (shared/screen.ts) with `image-rendering: pixelated`, so every logical
+// pixel is an exact N x N block on screen. This component owns input, the fixed-step loop, sound
+// and the transient effects (particles, blasts, score pops, shake, flash).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   attractInput,
   CAPACITY,
   createInitialState,
-  FARM_PAD_W,
   GROUND_Y,
-  HOME_PAD_W,
-  playerTilt,
   step,
   togglePause,
   WORLD_H,
@@ -44,10 +38,15 @@ import {
   startRotor,
   stopRotor,
 } from "./sound.ts";
+import { drawRescue } from "./render.ts";
 import { readHighScore, writeHighScoreIfBetter } from "../shared/highscore.ts";
 import { usesReducedMotion } from "../shared/motion.ts";
 import { useFixedStepLoop } from "../shared/fixedStep.ts";
 import { readGamepadButtons, readGamepadDirection } from "../shared/gamepad.ts";
+import { usePixelScale } from "../shared/screen.ts";
+import { gameSeed, readQueryFlag } from "../shared/query.ts";
+import { C } from "../shared/palette.ts";
+import { spawnBlast, stepBlasts, type Blast } from "../shared/fx.ts";
 import {
   spawnExplosionParticles,
   spawnSparkle,
@@ -58,77 +57,29 @@ import {
   stepTextPopups,
   triggerFlash,
   triggerShake,
-  shakeOffset,
   type FlashState,
   type Particle,
   type ShakeState,
   type TextPopup,
 } from "../shared/particles.ts";
-import { drawSprite } from "../shared/pixelSprite.ts";
-import {
-  DEBRIS_PALETTE,
-  DEBRIS_SPRITE,
-  DRONE_PALETTE,
-  DRONE_SPRITE,
-  FLAME_PALETTE,
-  FLAME_SPRITES,
-  FLOPPY_PALETTE,
-  FLOPPY_WALKER_SPRITES,
-  RACK_PALETTE,
-  RACK_PALETTE_DAMAGED,
-  RACK_UNIT_SPRITE,
-  SMOKE_COLOR,
-  SPARK_COLOR,
-  SPRITE_SCALE,
-} from "./sprites.ts";
-
-/** A single drifting smoke puff -- continuous emission near a lit fire cell, not a one-off burst,
- * so it gets its own tiny local state/step (Particle's shared step assumes a downward-falling
- * gravity by default, wrong for smoke that should drift up and dissipate). */
-interface Smoke {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  lifeMs: number;
-  maxLifeMs: number;
-  size: number;
-}
-
-function stepSmoke(smoke: Smoke[], dtMs: number): Smoke[] {
-  const dt = dtMs / 1000;
-  const next: Smoke[] = [];
-  for (const s of smoke) {
-    const lifeMs = s.lifeMs - dtMs;
-    if (lifeMs <= 0) continue;
-    next.push({ ...s, x: s.x + s.vx * dt, y: s.y + s.vy * dt, vy: s.vy - 6 * dt, lifeMs });
-  }
-  return next;
-}
 
 interface FloppyRescueProps {
   onClose: () => void;
 }
 
-function readQueryFlag(name: string): boolean {
-  try {
-    return new URLSearchParams(window.location.search).get(name) === "1";
-  } catch {
-    return false;
-  }
-}
-
 export function FloppyRescue({ onClose }: FloppyRescueProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const stateRef = useRef<GameState>(createInitialState(Date.now() & 0xffffffff));
+  const stateRef = useRef<GameState>(createInitialState(gameSeed()));
   const inputRef = useRef<GameInput>({ up: false, down: false, left: false, right: false });
   const particlesRef = useRef<Particle[]>([]);
-  const smokeRef = useRef<Smoke[]>([]);
-  const smokeSpawnCooldownRef = useRef(0);
-  const sparkSpawnCooldownRef = useRef(0);
+  const blastsRef = useRef<Blast[]>([]);
   const popupsRef = useRef<TextPopup[]>([]);
   const flashRef = useRef<FlashState | null>(null);
   const shakeRef = useRef<ShakeState | null>(null);
+  const facingRef = useRef<1 | -1>(1);
+  // After a crash the engine respawns the chopper at home and cuts its camera back there; hold the
+  // *rendered* camera on the wreck for a moment first so the explosion is actually seen.
+  const crashHoldRef = useRef<{ cameraX: number; remainingMs: number } | null>(null);
   const lastPauseButtonRef = useRef(false);
   const wasAirborneRef = useRef(false);
   const [, forceRender] = useState(0);
@@ -141,6 +92,7 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
   // a headless browser (which reports a fine pointer even at phone viewport widths) can still be
   // screenshotted with them visible for review/documentation.
   const forceTouch = useMemo(() => readQueryFlag("touch"), []);
+  const { scale, viewW } = usePixelScale(WORLD_W, WORLD_H);
 
   const exit = useCallback(() => {
     stopRotor();
@@ -148,13 +100,17 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
     onClose();
   }, [onClose]);
 
-  function startGame() {
-    stateRef.current = createInitialState(Date.now() & 0xffffffff);
+  function resetEffects() {
     particlesRef.current = [];
-    smokeRef.current = [];
+    blastsRef.current = [];
     popupsRef.current = [];
     flashRef.current = null;
     shakeRef.current = null;
+  }
+
+  function startGame() {
+    stateRef.current = createInitialState(gameSeed());
+    resetEffects();
     setScreen("game");
   }
 
@@ -202,64 +158,57 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
   // stop the rotor hum on unmount no matter how the component goes away
   useEffect(() => () => stopRotor(), []);
 
-  function applyEvents(events: GameEvent[]) {
+  /** Turns engine events into juice: a debris-throwing blast + white hit-flash + shake on a crash,
+   * a small blast when a Floppy is lost to the fire, sparkles on boarding, sparkles and a "+N" pop
+   * on delivery. Under reduced motion: no shake, no screen flash, no flying debris -- the blast
+   * frames and pops stay (they're brief and don't move the scene). */
+  function applyEvents(events: GameEvent[], silent = false) {
     for (const ev of events) {
-      const x = ev.x ?? stateRef.current.playerX;
-      const y = ev.y ?? stateRef.current.playerY;
+      const x = (ev.x ?? stateRef.current.playerX) + 13;
+      const y = (ev.y ?? stateRef.current.playerY) + 7;
       if (ev.type === "boarded") {
-        playBoard();
-        if (!reducedMotion) particlesRef.current = particlesRef.current.concat(spawnSparkle(x, y, 6, "#5cff8a"));
+        if (!silent) playBoard();
+        particlesRef.current = particlesRef.current.concat(spawnSparkle(x, y + 4, reducedMotion ? 2 : 7, C.lightGreen));
       } else if (ev.type === "delivered") {
         const amount = (ev.count ?? 0) * 100 + (ev.count === CAPACITY ? 400 : 0);
-        if (ev.count === CAPACITY) playFullLoadBonus();
+        if (silent) {
+          // no sound on the title screen
+        } else if (ev.count === CAPACITY) playFullLoadBonus();
         else playDeliver();
-        popupsRef.current = popupsRef.current.concat(spawnTextPopup(x, y - 6, `+${amount}`, "#f4cf3c"));
-        if (!reducedMotion) particlesRef.current = particlesRef.current.concat(spawnSparkle(x, y, 10, "#f4cf3c"));
+        popupsRef.current = popupsRef.current.concat(spawnTextPopup(x, y - 16, `+${amount}`, C.yellow));
+        particlesRef.current = particlesRef.current.concat(spawnSparkle(x, y, reducedMotion ? 3 : 12, C.yellow));
       } else if (ev.type === "crash") {
-        playCrash();
-        flashRef.current = triggerFlash("#ff8a8a", reducedMotion ? 80 : 160);
+        if (!silent) playCrash();
+        blastsRef.current = blastsRef.current.concat(spawnBlast(x, y, reducedMotion ? 1 : 2));
         if (!reducedMotion) {
-          particlesRef.current = particlesRef.current.concat(spawnExplosionParticles(x, y, 16, "#ff8a8a"));
-          shakeRef.current = triggerShake(8);
+          flashRef.current = triggerFlash(C.white, 120);
+          particlesRef.current = particlesRef.current.concat(spawnExplosionParticles(x, y, 18, C.paper));
+          shakeRef.current = triggerShake(4);
         }
       } else if (ev.type === "floppyLost") {
-        playFloppyLost();
-        if (!reducedMotion) particlesRef.current = particlesRef.current.concat(spawnExplosionParticles(x, y, 5, "#ff5a1f"));
+        if (!silent) playFloppyLost();
+        const fx = ev.x ?? 0;
+        const fy = GROUND_Y - 7;
+        blastsRef.current = blastsRef.current.concat(spawnBlast(fx, fy, 1));
+        if (!reducedMotion) particlesRef.current = particlesRef.current.concat(spawnExplosionParticles(fx, fy, 6, C.lightGreen));
       }
     }
   }
 
-  /** Continuous smoke + spark emission from any fully-lit fire cell -- the burning farm is meant to
-   * be the visual focus of the level, so it keeps producing effects every frame it's lit rather than
-   * only reacting to discrete events. Cooldown-gated (not per-cell-per-frame) so it stays cheap even
-   * with several cells lit at once. Skipped under reduced motion (the flame sprite animation alone
-   * still reads as "on fire"). */
-  function spawnFireEffects(state: GameState, dtMs: number) {
-    if (reducedMotion) return;
-    const litCells = state.fireCells.filter((c) => c.intensity >= 0.5);
-    if (litCells.length === 0) return;
-    smokeSpawnCooldownRef.current -= dtMs;
-    if (smokeSpawnCooldownRef.current <= 0) {
-      const cell = litCells[Math.floor(Math.random() * litCells.length)]!;
-      smokeRef.current = smokeRef.current.concat({
-        x: cell.x + cell.w / 2 + (Math.random() - 0.5) * cell.w,
-        y: GROUND_Y - 24,
-        vx: (Math.random() - 0.5) * 6,
-        vy: -14 - Math.random() * 8,
-        lifeMs: 1400 + Math.random() * 600,
-        maxLifeMs: 2000,
-        size: 3 + Math.round(Math.random() * 2),
-      });
-      smokeSpawnCooldownRef.current = 260 + Math.random() * 200;
+  function stepEffects(dtMs: number, before: GameState, after: GameState) {
+    const hold = crashHoldRef.current;
+    if (hold) crashHoldRef.current = hold.remainingMs > dtMs ? { ...hold, remainingMs: hold.remainingMs - dtMs } : null;
+    if (after.events.some((e) => e.type === "crash") && after.status !== "gameover") {
+      crashHoldRef.current = { cameraX: before.cameraX, remainingMs: 800 };
     }
-    sparkSpawnCooldownRef.current -= dtMs;
-    if (sparkSpawnCooldownRef.current <= 0) {
-      const cell = litCells[Math.floor(Math.random() * litCells.length)]!;
-      particlesRef.current = particlesRef.current.concat(
-        spawnSparkle(cell.x + cell.w / 2, GROUND_Y - 20, 2, SPARK_COLOR),
-      );
-      sparkSpawnCooldownRef.current = 180 + Math.random() * 220;
-    }
+    particlesRef.current = stepParticles(particlesRef.current, dtMs, 160);
+    blastsRef.current = stepBlasts(blastsRef.current, dtMs);
+    popupsRef.current = stepTextPopups(popupsRef.current, dtMs);
+    shakeRef.current = stepShake(shakeRef.current, dtMs);
+    flashRef.current = stepFlash(flashRef.current, dtMs);
+    const vx = stateRef.current.playerVx;
+    if (vx > 4) facingRef.current = 1;
+    else if (vx < -4) facingRef.current = -1;
   }
 
   const loopActive = calmAcknowledged;
@@ -271,10 +220,9 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
         let after = step(before, botInput, dtMs);
         if (after.status === "gameover") after = createInitialState((Date.now() + before.t) & 0xffffffff);
         stateRef.current = after;
-        particlesRef.current = stepParticles(particlesRef.current, dtMs);
-        smokeRef.current = stepSmoke(smokeRef.current, dtMs);
-        popupsRef.current = stepTextPopups(popupsRef.current, dtMs);
-        spawnFireEffects(after, dtMs);
+        stepEffects(dtMs, before, after);
+        // the attract demo gets the same visual juice as real play, but stays silent
+        applyEvents(after.events, true);
         return;
       }
 
@@ -298,12 +246,7 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
       const before = stateRef.current;
       const after = step(before, merged, dtMs);
       stateRef.current = after;
-      particlesRef.current = stepParticles(particlesRef.current, dtMs);
-      smokeRef.current = stepSmoke(smokeRef.current, dtMs);
-      popupsRef.current = stepTextPopups(popupsRef.current, dtMs);
-      shakeRef.current = stepShake(shakeRef.current, dtMs);
-      flashRef.current = stepFlash(flashRef.current, dtMs);
-      spawnFireEffects(after, dtMs);
+      stepEffects(dtMs, before, after);
 
       if (after.status === "playing" || after.status === "levelIntro") {
         const airborne = after.playerY + 14 < GROUND_Y - 1;
@@ -322,20 +265,22 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
   );
 
   const onRender = useCallback(() => {
-    draw(
-      canvasRef.current,
-      stateRef.current,
-      particlesRef.current,
-      smokeRef.current,
-      popupsRef.current,
-      shakeRef.current,
-      flashRef.current,
+    drawRescue(canvasRef.current, {
+      state: stateRef.current,
+      viewW,
+      particles: particlesRef.current,
+      blasts: blastsRef.current,
+      popups: popupsRef.current,
+      shake: shakeRef.current,
+      flash: flashRef.current,
       reducedMotion,
       screen,
       highScore,
-    );
+      facing: facingRef.current,
+      cameraXOverride: crashHoldRef.current?.cameraX,
+    });
     forceRender((n) => (n + 1) % 1000000);
-  }, [reducedMotion, screen, highScore]);
+  }, [reducedMotion, screen, highScore, viewW]);
   useFixedStepLoop(onStep, onRender, loopActive);
 
   function restart() {
@@ -349,7 +294,7 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
 
   return (
     <div className="easter-overlay" role="dialog" aria-modal="true" aria-label="Floppy Rescue easter egg">
-      <div className="easter-frame">
+      <div className="easter-frame easter-frame-game">
         <div className="easter-titlebar">
           <span>** FLOPPY RESCUE **</span>
           <div className="easter-titlebar-actions">
@@ -390,11 +335,18 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
         ) : (
           <>
             <div className="easter-canvas-wrap">
-              <canvas ref={canvasRef} width={WORLD_W} height={WORLD_H} className="easter-canvas" aria-label="Game screen" />
+              <canvas
+                ref={canvasRef}
+                width={viewW}
+                height={WORLD_H}
+                className="easter-canvas"
+                style={{ width: viewW * scale, height: WORLD_H * scale }}
+                aria-label="Game screen"
+              />
               {screen === "title" && (
                 <div className="easter-title-overlay">
-                  <p className="easter-title-name">FLOPPY RESCUE</p>
-                  <p className="easter-title-sub">HI {highScore}</p>
+                  <p className="easter-title-name easter-sr-only">FLOPPY RESCUE</p>
+                  <p className="easter-title-sub easter-sr-only">HI {highScore}</p>
                   <button type="button" className="btn btn-primary" onClick={startGame}>
                     Press start
                   </button>
@@ -409,8 +361,10 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
                 </div>
               )}
             </div>
-            {screen === "game" && status !== "levelIntro" && (
-              <div className="easter-hud easter-hud-rescue">
+            {screen === "game" && (
+              // The score/fuel/lives HUD is drawn inside the canvas; this text copy is kept for
+              // screen readers only.
+              <div className="easter-hud easter-hud-rescue easter-sr-only">
                 <span>SCORE {Math.floor(s.score)}</span>
                 <span>HI {Math.floor(highScore)}</span>
                 <span>LV {s.level}</span>
@@ -418,7 +372,7 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
                   ON BOARD {s.onBoard}/{CAPACITY}
                 </span>
                 <span>FUEL {fuelPct}%</span>
-                <span>LIVES {"* ".repeat(Math.max(0, s.lives)).trim() || "-"}</span>
+                <span>LIVES {s.lives}</span>
               </div>
             )}
             {screen === "game" && status === "paused" && (
@@ -466,7 +420,7 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
                 </button>
               </div>
             )}
-            {screen === "game" && status !== "levelIntro" && (
+            {screen === "game" && (
               <p className="easter-help">Arrows/WASD fly, land gently to board/unload, P pauses, Escape exits.</p>
             )}
           </>
@@ -537,324 +491,4 @@ function VirtualStick({ inputRef }: { inputRef: React.MutableRefObject<GameInput
       <div className="easter-stick-knob" style={{ transform: `translate(${knob.x}px, ${knob.y}px)` }} />
     </div>
   );
-}
-
-// --- background: sky gradient + clouds/stars parallax + ground detail -----------------------------
-// Clouds/stars are a small repeating pattern (not per-level arrays) so they look right at any level
-// width: draw the pattern once per PERIOD-px tile, shifted by camera position * a parallax factor.
-const SKY_PATTERN_PERIOD = 140;
-const SKY_PATTERN: Array<{ dx: number; dy: number; w: number; h: number; kind: "cloud" | "star" }> = [
-  { dx: 14, dy: 18, w: 16, h: 5, kind: "cloud" },
-  { dx: 70, dy: 30, w: 12, h: 4, kind: "cloud" },
-  { dx: 40, dy: 8, w: 2, h: 2, kind: "star" },
-  { dx: 100, dy: 14, w: 2, h: 2, kind: "star" },
-  { dx: 118, dy: 44, w: 2, h: 2, kind: "star" },
-];
-
-function drawBackground(ctx: CanvasRenderingContext2D, cameraX: number, reducedMotion: boolean): void {
-  const grad = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
-  grad.addColorStop(0, "#1c1650");
-  grad.addColorStop(1, "#302870");
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, WORLD_W, GROUND_Y);
-
-  const parallax = reducedMotion ? 0 : cameraX * 0.25;
-  const startTile = Math.floor(parallax / SKY_PATTERN_PERIOD) - 1;
-  const endTile = Math.floor((parallax + WORLD_W) / SKY_PATTERN_PERIOD) + 1;
-  for (let tile = startTile; tile <= endTile; tile++) {
-    const tileX = tile * SKY_PATTERN_PERIOD - parallax;
-    for (const item of SKY_PATTERN) {
-      const x = tileX + item.dx;
-      const y = item.dy;
-      if (x + item.w < 0 || x > WORLD_W) continue;
-      ctx.fillStyle = item.kind === "cloud" ? "#3f3690" : "#8b7cd8";
-      ctx.fillRect(Math.round(x), y, item.w, item.h);
-      if (item.kind === "cloud") ctx.fillRect(Math.round(x) + 4, y - 2, item.w - 8, 3);
-    }
-  }
-
-  // ground band with a simple grass-tick texture that scrolls at full camera speed (drawn in the
-  // camera-translated block by the caller, this function only paints the sky).
-}
-
-function drawGround(ctx: CanvasRenderingContext2D, cameraX: number, levelW: number): void {
-  ctx.fillStyle = "#3a3184";
-  ctx.fillRect(0, GROUND_Y, WORLD_W, WORLD_H - GROUND_Y);
-  ctx.strokeStyle = "#8b7cd8";
-  ctx.beginPath();
-  ctx.moveTo(0, GROUND_Y);
-  ctx.lineTo(levelW, GROUND_Y);
-  ctx.stroke();
-  ctx.fillStyle = "#4a3fa0";
-  const start = Math.floor(cameraX / 8) * 8;
-  for (let x = start; x < cameraX + WORLD_W; x += 8) {
-    ctx.fillRect(x + 2, GROUND_Y + 3, 2, 2);
-  }
-}
-
-// --- Disk Box (home base): a small building, not just a strip -------------------------------------
-function drawDiskBox(ctx: CanvasRenderingContext2D, x: number, padW: number, carrying: boolean, t: number, reducedMotion: boolean): void {
-  const baseY = GROUND_Y;
-  const wallW = padW - 12;
-  const wallX = x + 6;
-  const wallH = 26;
-  const wallY = baseY - wallH;
-  // walls
-  ctx.fillStyle = "#3a3184";
-  ctx.fillRect(wallX, wallY, wallW, wallH);
-  // roof
-  ctx.fillStyle = "#8b7cd8";
-  ctx.beginPath();
-  ctx.moveTo(wallX - 4, wallY);
-  ctx.lineTo(wallX + wallW / 2, wallY - 12);
-  ctx.lineTo(wallX + wallW + 4, wallY);
-  ctx.closePath();
-  ctx.fill();
-  // door
-  ctx.fillStyle = "#241e5c";
-  ctx.fillRect(wallX + wallW / 2 - 4, baseY - 12, 8, 12);
-  // window
-  ctx.fillStyle = "#5cff8a";
-  ctx.fillRect(wallX + 4, wallY + 6, 5, 5);
-  ctx.fillRect(wallX + wallW - 9, wallY + 6, 5, 5);
-  // sign board on a post
-  ctx.fillStyle = "#241e5c";
-  ctx.fillRect(x + padW / 2 - 1, wallY - 20, 2, 8);
-  ctx.fillStyle = "#e4e0fb";
-  ctx.fillRect(x + padW / 2 - 20, wallY - 24, 40, 9);
-  ctx.fillStyle = "#241e5c";
-  ctx.font = "7px monospace";
-  ctx.textAlign = "center";
-  ctx.fillText("DISK BOX", x + padW / 2, wallY - 17);
-  ctx.textAlign = "left";
-  // landing light on the roof peak: blinks while the helicopter is carrying Floppies home, a steady
-  // dim glow otherwise -- a small "expect a delivery" signal, and free juice for the home base.
-  const lightOn = carrying && (reducedMotion || Math.floor(t / 260) % 2 === 0);
-  ctx.fillStyle = lightOn ? "#5cff8a" : "#2e6b3e";
-  ctx.fillRect(wallX + wallW / 2 - 1, wallY - 14, 3, 3);
-  // landing pad markings
-  ctx.fillStyle = "#5cff8a";
-  ctx.fillRect(x, baseY - 3, padW, 3);
-}
-
-function drawFarmSign(ctx: CanvasRenderingContext2D, x: number, padW: number, topY: number): void {
-  ctx.fillStyle = "#e4e0fb";
-  ctx.fillRect(x + padW / 2 - 26, topY - 10, 52, 9);
-  ctx.fillStyle = "#241e5c";
-  ctx.font = "7px monospace";
-  ctx.textAlign = "center";
-  ctx.fillText("SERVER FARM", x + padW / 2, topY - 3);
-  ctx.textAlign = "left";
-  ctx.fillStyle = "#8b7cd8";
-  ctx.fillRect(x, GROUND_Y - 3, padW, 3);
-}
-
-// --- in-canvas HUD + minimap -----------------------------------------------------------------------
-function drawHud(ctx: CanvasRenderingContext2D, state: GameState, highScore: number, fuelPct: number): void {
-  ctx.save();
-  ctx.font = "7px monospace";
-  ctx.textBaseline = "top";
-  const lines = [
-    `SCORE ${Math.floor(state.score)}  HI ${Math.floor(highScore)}`,
-    `LV ${state.level}  ON BOARD ${state.onBoard}/${CAPACITY}  LIVES ${state.lives}`,
-  ];
-  const boxW = 150;
-  const boxH = 18;
-  ctx.fillStyle = "rgba(36, 30, 92, 0.72)";
-  ctx.fillRect(2, 2, boxW, boxH);
-  ctx.fillStyle = "#e4e0fb";
-  lines.forEach((line, i) => ctx.fillText(line, 5, 4 + i * 8));
-
-  // fuel bar, drawn directly so its fill is always visibly correct (a real percentage-width bar,
-  // not a shared component whose contrast can drift against this canvas's own colour scheme).
-  const barX = 2;
-  const barY = boxH + 5;
-  const barW = 60;
-  const barH = 5;
-  ctx.fillStyle = "#241e5c";
-  ctx.fillRect(barX, barY, barW, barH);
-  const fillColor = fuelPct < 25 ? "#ff8a8a" : fuelPct < 50 ? "#f4cf3c" : "#5cff8a";
-  ctx.fillStyle = fillColor;
-  ctx.fillRect(barX, barY, Math.max(0, Math.round((barW * fuelPct) / 100)), barH);
-  ctx.strokeStyle = "#8b7cd8";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(barX + 0.5, barY + 0.5, barW - 1, barH - 1);
-  ctx.fillStyle = "#e4e0fb";
-  ctx.fillText(`FUEL ${fuelPct}%`, barX + barW + 4, barY - 1);
-
-  // distance minimap: a thin strip across the top-right showing progress along the level, with
-  // markers for home/farm and a dot for the player.
-  const mmX = WORLD_W - 96;
-  const mmY = 3;
-  const mmW = 92;
-  const mmH = 4;
-  ctx.fillStyle = "rgba(36, 30, 92, 0.72)";
-  ctx.fillRect(mmX - 3, mmY - 3, mmW + 6, mmH + 14);
-  ctx.strokeStyle = "#8b7cd8";
-  ctx.strokeRect(mmX + 0.5, mmY + 0.5, mmW - 1, mmH - 1);
-  const frac = (v: number) => Math.max(0, Math.min(1, v / state.levelW));
-  ctx.fillStyle = "#5cff8a";
-  ctx.fillRect(mmX + frac(state.homeX) * mmW - 1, mmY - 1, 2, mmH + 2);
-  ctx.fillStyle = "#ff8a8a";
-  ctx.fillRect(mmX + frac(state.farmX) * mmW - 1, mmY - 1, 2, mmH + 2);
-  ctx.fillStyle = "#e4e0fb";
-  ctx.fillRect(mmX + frac(state.playerX) * mmW - 1, mmY - 1, 2, mmH + 2);
-  ctx.font = "6px monospace";
-  ctx.fillStyle = "#a89fe0";
-  ctx.fillText("MAP", mmX, mmY + mmH + 2);
-  ctx.restore();
-}
-
-// --- player helicopter, drawn from primitive rects (see file header) -------------------------------
-function drawHeli(ctx: CanvasRenderingContext2D, x: number, y: number, tilt: number, invuln: boolean, rotorFrame: number): void {
-  ctx.save();
-  ctx.translate(x + 13, y + 9);
-  ctx.rotate(tilt);
-  const body = invuln ? "#f4cf3c" : "#5cff8a";
-  const dark = "#241e5c";
-  const light = "#e4e0fb";
-  ctx.fillStyle = dark;
-  ctx.fillRect(-13, -1, 12, 3); // tail boom
-  ctx.fillRect(-13, -4, 3, 8); // tail fin
-  ctx.fillStyle = body;
-  ctx.fillRect(-2, -5, 13, 11); // cabin
-  ctx.fillStyle = light;
-  ctx.fillRect(3, -3, 6, 5); // cockpit window
-  ctx.fillStyle = dark;
-  ctx.fillRect(-1, 5, 11, 1); // skid strut
-  ctx.fillRect(-1, 6, 3, 2);
-  ctx.fillRect(7, 6, 3, 2);
-  ctx.fillRect(3, -7, 2, 3); // rotor mast
-  ctx.fillStyle = light;
-  if (rotorFrame === 0) ctx.fillRect(-10, -8, 26, 2);
-  else ctx.fillRect(-2, -8, 10, 2);
-  ctx.restore();
-}
-
-function draw(
-  canvas: HTMLCanvasElement | null,
-  state: GameState,
-  particles: Particle[],
-  smoke: Smoke[],
-  popups: TextPopup[],
-  shake: ShakeState | null,
-  flash: FlashState | null,
-  reducedMotion: boolean,
-  screen: "title" | "game",
-  highScore: number,
-): void {
-  if (!canvas) return;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  ctx.imageSmoothingEnabled = false;
-
-  const camX = state.cameraX;
-  ctx.save();
-  const [sx, sy] = reducedMotion ? [0, 0] : shakeOffset(shake);
-  ctx.translate(sx, sy);
-
-  drawBackground(ctx, camX, reducedMotion);
-
-  ctx.save();
-  ctx.translate(-camX, 0);
-
-  drawGround(ctx, camX, state.levelW);
-  drawDiskBox(ctx, state.homeX, HOME_PAD_W, state.onBoard > 0, state.t, reducedMotion);
-
-  // farm: the visual focus of the level. Order matters for "the sign must stay readable": racks
-  // (scorched once fire reaches their cell) -> a warm ground glow near any lit cell -> flames ->
-  // smoke -> the sign LAST, always on top, in its own solid chip.
-  const cellAt = (x: number) => state.fireCells.find((c) => x >= c.x && x < c.x + c.w);
-  for (let x = state.farmX; x < state.farmX + FARM_PAD_W; x += 12) {
-    const cell = cellAt(x + 6);
-    const damaged = (cell?.intensity ?? 0) >= 0.6;
-    drawSprite(ctx, RACK_UNIT_SPRITE, damaged ? RACK_PALETTE_DAMAGED : RACK_PALETTE, x, GROUND_Y - 16, SPRITE_SCALE);
-  }
-  // warm ground glow near the fire: a handful of small, low-alpha bars directly under the lit
-  // cells (bounded to the farm pad width, not a wide gradient) -- simple and safe rather than a
-  // radial gradient, which read as a hard opaque block rather than a soft fade in practice.
-  for (const cell of state.fireCells) {
-    if (cell.intensity <= 0) continue;
-    ctx.globalAlpha = Math.min(0.3, cell.intensity * 0.32);
-    ctx.fillStyle = "#ff8a00";
-    ctx.fillRect(cell.x - 1, GROUND_Y - 2, cell.w + 2, 6);
-    ctx.globalAlpha = 1;
-  }
-  for (const cell of state.fireCells) {
-    if (cell.intensity <= 0) continue;
-    const frame = FLAME_SPRITES[Math.floor(state.t / 110) % FLAME_SPRITES.length]!;
-    const flicker = reducedMotion ? FLAME_SPRITES[0]! : frame;
-    ctx.globalAlpha = Math.min(1, cell.intensity + 0.15);
-    drawSprite(ctx, flicker, FLAME_PALETTE, cell.x + cell.w / 2 - 3, GROUND_Y - 24, SPRITE_SCALE);
-    ctx.globalAlpha = 1;
-  }
-  for (const s of smoke) {
-    const alpha = Math.max(0, (s.lifeMs / s.maxLifeMs) * 0.5);
-    ctx.globalAlpha = alpha;
-    ctx.fillStyle = SMOKE_COLOR;
-    ctx.fillRect(s.x - s.size / 2, s.y - s.size / 2, s.size, s.size);
-  }
-  ctx.globalAlpha = 1;
-  drawFarmSign(ctx, state.farmX, FARM_PAD_W, GROUND_Y - 16);
-
-  // floppy walkers waiting at the farm (2-frame walk/wave animation)
-  const floppyFrame = reducedMotion ? 0 : Math.floor(state.t / 220) % FLOPPY_WALKER_SPRITES.length;
-  for (const f of state.floppies) {
-    if (!f.alive || f.boarded) continue;
-    drawSprite(ctx, FLOPPY_WALKER_SPRITES[floppyFrame]!, FLOPPY_PALETTE, f.x - 5, f.y - 13, SPRITE_SCALE);
-  }
-
-  // debris
-  for (const d of state.debris) {
-    drawSprite(ctx, DEBRIS_SPRITE, DEBRIS_PALETTE, d.x - 2, d.y - 2, SPRITE_SCALE);
-  }
-
-  // drone + its bullets
-  if (state.drone) drawSprite(ctx, DRONE_SPRITE, DRONE_PALETTE, state.drone.x - 5, state.drone.y - 5, SPRITE_SCALE);
-  ctx.fillStyle = "#ff8a8a";
-  for (const b of state.droneBullets) ctx.fillRect(b.x - 2, b.y - 2, 4, 4);
-
-  // explosion/spark particles -- variable size so a burst reads as chunks/sparkles, not uniform dust
-  for (const p of particles) {
-    const alpha = Math.max(0, p.lifeMs / p.maxLifeMs);
-    ctx.globalAlpha = alpha;
-    ctx.fillStyle = p.color;
-    ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
-  }
-  ctx.globalAlpha = 1;
-
-  // player helicopter, tilted toward direction of travel, blinking while invulnerable
-  if (screen === "game" || screen === "title") {
-    const blinkOff = !reducedMotion && state.invulnMs > 0 && Math.floor(state.t / 90) % 2 === 0;
-    if (!blinkOff) {
-      const tilt = playerTilt(state.playerVx);
-      const rotorFrame = reducedMotion ? 0 : Math.floor(state.t / 55) % 2;
-      drawHeli(ctx, state.playerX, state.playerY, tilt, state.invulnMs > 0, rotorFrame);
-    }
-  }
-
-  // floating score pops ("+100")
-  ctx.font = "8px monospace";
-  ctx.textAlign = "center";
-  for (const p of popups) {
-    ctx.globalAlpha = Math.max(0, p.lifeMs / p.maxLifeMs);
-    ctx.fillStyle = p.color;
-    ctx.fillText(p.text, p.x, p.y);
-  }
-  ctx.globalAlpha = 1;
-  ctx.textAlign = "left";
-
-  ctx.restore(); // undo camera translate
-
-  // brief full-canvas damage flash, above the world but below the HUD chrome
-  if (flash) {
-    ctx.globalAlpha = (flash.remainingMs / flash.maxMs) * 0.35;
-    ctx.fillStyle = flash.color;
-    ctx.fillRect(0, 0, WORLD_W, WORLD_H);
-    ctx.globalAlpha = 1;
-  }
-
-  if (screen === "game") drawHud(ctx, state, highScore, Math.max(0, Math.min(100, Math.round(state.fuel))));
-
-  ctx.restore(); // undo shake translate
 }

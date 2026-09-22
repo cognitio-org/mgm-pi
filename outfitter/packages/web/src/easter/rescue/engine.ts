@@ -309,9 +309,11 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
   if (state.status === "gameover" || state.status === "paused") return state;
 
   if (state.status === "levelIntro") {
+    // events are per-step: don't carry the previous level's final events (levelComplete, the last
+    // floppyLost/delivered) through every frame of the intro card, or the renderer replays them
     const left = state.levelIntroMsLeft - dtMs;
-    if (left <= 0) return { ...state, status: "playing", levelIntroMsLeft: 0, t: state.t + dtMs };
-    return { ...state, levelIntroMsLeft: left, t: state.t + dtMs };
+    if (left <= 0) return { ...state, status: "playing", levelIntroMsLeft: 0, t: state.t + dtMs, events: [] };
+    return { ...state, levelIntroMsLeft: left, t: state.t + dtMs, events: [] };
   }
 
   const dt = Math.min(dtMs, 50) / 1000;
@@ -371,6 +373,9 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
         playerY: GROUND_Y - PLAYER_H,
         playerVx: 0,
         playerVy: 0,
+        // cut straight back home (a new life), rather than easing the camera across the level
+        // while the chopper already sits on the home pad with the Disk Box half off-screen
+        cameraX: 0,
         invulnMs: 1500,
         events,
       };
@@ -537,7 +542,7 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
     playerY: respawnY,
     playerVx: finalVx,
     playerVy: finalVy,
-    cameraX,
+    cameraX: crashed ? 0 : cameraX,
     fuel,
     lives,
     score,
@@ -569,23 +574,66 @@ export function playerTilt(vx: number): number {
  * look alive and legible behind the title card. */
 export function attractInput(state: GameState): GameInput {
   const stillToRescue = state.floppies.some((f) => f.alive && !f.boarded);
-  const wantsFarm = state.onBoard < CAPACITY && stillToRescue;
-  const targetX = wantsFarm ? state.farmX + FARM_PAD_W / 2 - PLAYER_W / 2 : state.homeX + HOME_PAD_W / 2 - PLAYER_W / 2;
+  // Land on the coolest stretch of the farm pad (nearest spot whose cells aren't close to fully
+  // lit), not blindly dead-centre -- otherwise the demo mostly shows the chopper crashing into the
+  // fire. No safe spot left: take whoever is aboard home.
+  const spot = safeFarmSpot(state);
+  const wantsFarm = state.onBoard < CAPACITY && stillToRescue && spot !== null;
+  const targetX = wantsFarm && spot !== null ? spot : state.homeX + HOME_PAD_W / 2 - PLAYER_W / 2;
   const dx = targetX - state.playerX;
-  const closeX = Math.abs(dx) < 18;
-  const left = dx < -5;
-  const right = dx > 5;
+  const closeX = Math.abs(dx) < (wantsFarm ? 8 : 18);
+  let left = dx < -5;
+  let right = dx > 5;
+  // sidestep a piece of falling debris that's about to reach us
+  const cx = state.playerX + PLAYER_W / 2;
+  // (look further ahead the faster we're flying toward it -- momentum carries us a long way)
+  const threat = state.debris.find((d) => {
+    const ahead = (d.x - cx) * Math.sign(state.playerVx || 1) > 0 ? Math.abs(state.playerVx) * 0.6 : 0;
+    return (
+      d.y < state.playerY + PLAYER_H + 4 &&
+      Math.abs(d.x - cx) < 20 + ahead &&
+      (state.playerY - d.y) / Math.max(1, d.vy) < 1.2
+    );
+  });
+  if (threat) {
+    right = threat.x < cx;
+    left = !right;
+  }
   const groundClearance = GROUND_Y - PLAYER_H - state.playerY;
+  const cruiseY = GROUND_Y - PLAYER_H - 44; // low enough to get down to the farm before the fire spreads
   let up = false;
   let down = false;
   if (!closeX) {
-    up = state.playerY > WORLD_H * 0.3; // cruise at altitude while travelling
-  } else if (groundClearance > 15) {
-    down = state.playerVy < LANDING_SAFE_VY * 0.6; // ease down without overshooting the safe speed
-  } else if (groundClearance < 3) {
-    up = state.playerVy > 12; // cushion the touchdown
+    up = state.playerY > cruiseY;
+    down = state.playerY < cruiseY - 8 && state.playerVy < 10;
+  } else if (groundClearance > 18) {
+    down = state.playerVy < LANDING_SAFE_VY * 0.85; // brisk descent, still under the safe speed
+  } else {
+    up = state.playerVy > 14; // cushion the touchdown
   }
   return { up, down, left, right };
+}
+
+/** Hottest fire cell under a chopper parked at x. */
+function padHeat(state: GameState, x: number): number {
+  let heat = 0;
+  for (const c of state.fireCells) if (x + PLAYER_W > c.x && x < c.x + c.w) heat = Math.max(heat, c.intensity);
+  return heat;
+}
+
+/** Nearest landing x on the farm pad whose cells are still below 0.8 intensity, or null. */
+function safeFarmSpot(state: GameState): number | null {
+  let best: number | null = null;
+  let bestD = Infinity;
+  for (let x = state.farmX; x <= state.farmX + FARM_PAD_W - PLAYER_W; x += 3) {
+    if (padHeat(state, x) >= 0.8) continue;
+    const d = Math.abs(x - state.playerX);
+    if (d < bestD) {
+      best = x;
+      bestD = d;
+    }
+  }
+  return best;
 }
 
 export { HOME_PAD_W, FARM_PAD_W };

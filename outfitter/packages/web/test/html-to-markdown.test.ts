@@ -146,6 +146,13 @@ describe("choosePaste", () => {
     expect(c.kind).toBe("html");
   });
 
+  it("literal brackets, tildes and tags in web text stay literal; link text and targets can't break out", () => {
+    expect(htmlToMarkdown("<p>[x](javascript:alert(1)) &lt;script&gt; ~~s~~ a &lt; b</p>")).toBe(
+      "\\[x](javascript:alert(1)) \\<script> \\~\\~s\\~\\~ a < b",
+    );
+    expect(htmlToMarkdown('<p><a href="https://e.x/a)b">a ] b [c</a></p>')).toBe("[a \\] b \\[c](https://e.x/a%29b)");
+  });
+
   it("a rectangular table copied from a web page keeps its links and code: the HTML wins over the TSV", () => {
     const html =
       '<table><thead><tr><th>Name</th><th>Docs</th></tr></thead><tbody>' +

@@ -416,6 +416,8 @@ function wrap(inner: string, marker: string): string {
   return m[1] + marker + m[2] + marker + m[3];
 }
 
+const URL_ESC: Record<string, string> = { "(": "%28", ")": "%29", "<": "%3C", ">": "%3E" };
+
 function renderInline(node: Node, ctx: Ctx): string {
   if (node.nodeType === 3) {
     const text = node.nodeValue ?? "";
@@ -450,8 +452,10 @@ function renderInline(node: Node, ctx: Ctx): string {
     const inner = inlineChildren(el, ctx);
     if (!inner.trim()) return "";
     if (!/^(https?:|mailto:)/i.test(href)) return inner;
-    const text = finishInline(inner, { cell: true });
-    const url = href.replace(/[()\s|]/g, (c) => encodeURIComponent(c));
+    // escapeInline already escaped "["; a bare "]" would close the link text early.
+    const text = finishInline(inner, { cell: true }).replace(/\]/g, "\\]");
+    // encodeURIComponent leaves ( and ) alone, and an unbalanced ")" would end the destination.
+    const url = href.replace(/[()\s|<>]/g, (c) => URL_ESC[c] ?? encodeURIComponent(c));
     if (text === href) return url;
     return `[${text}](${url})`;
   }
@@ -477,7 +481,9 @@ function renderInline(node: Node, ctx: Ctx): string {
 /** Escapes characters that would otherwise start Markdown syntax in plain web text. Intraword
  * underscores (snake_case) are left alone; GFM never treats them as emphasis. */
 function escapeInline(text: string, ctx: Ctx): string {
-  let s = text.replace(/([\\`*])/g, "\\$1").replace(/(^|[^A-Za-z0-9])_|_(?=[^A-Za-z0-9]|$)/g, (m) => m.replace("_", "\\_"));
+  // "[" (a link or image), "~" (strikethrough) and "<" before a tag-like character (raw HTML, an
+  // autolink) are escaped too: literal text on a web page must stay literal, never become syntax.
+  let s = text.replace(/([\\`*[~])/g, "\\$1").replace(/<(?=[A-Za-z/!?])/g, "\\<").replace(/(^|[^A-Za-z0-9])_|_(?=[^A-Za-z0-9]|$)/g, (m) => m.replace("_", "\\_"));
   if (ctx.cell) s = s.replace(/\|/g, "\\|");
   return s;
 }

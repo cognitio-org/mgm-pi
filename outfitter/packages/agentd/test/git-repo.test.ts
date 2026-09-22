@@ -234,3 +234,53 @@ test("diff: an untracked file named like an option stays a path", async () => {
   assert.match(patch, /--output=pwned\.txt/);
   assert.match(patch, /with space\.txt/);
 });
+
+test("push: root's repo only ever gets the bundled history, not the workspace's other objects", async () => {
+  const { root, url } = await makeRemote();
+  const dest = join(root, "ws");
+  const pushRoot = await mkdtemp(join(tmpdir(), "agentd-push-root-"));
+  const gitOps = createGitOps(undefined, { pushRoot });
+  await gitOps.clone({ cloneUrl: url, baseBranch: "main", branch: "outfitter/s10", createBranch: true }, dest);
+
+  // a commit the agent keeps on a side branch: never part of a checkpoint, never pushed
+  git(dest, "checkout", "--quiet", "-b", "agent-side");
+  await writeFile(join(dest, "secret.txt"), "not for the remote\n");
+  git(dest, "add", "-A");
+  git(dest, "commit", "--quiet", "-m", "side branch");
+  const sideSha = git(dest, "rev-parse", "HEAD");
+  git(dest, "checkout", "--quiet", "outfitter/s10");
+
+  await writeFile(join(dest, "f.txt"), "f\n");
+  await gitOps.commitAll(dest, "cp");
+  const res = await gitOps.push(dest, { remoteUrl: url, branch: "outfitter/s10" });
+  assert.equal(res.pushed, true);
+
+  const pushDir = (await readdir(pushRoot)).map((d) => join(pushRoot, d))[0];
+  assert.equal(git(pushDir, "config", "transfer.fsckObjects"), "true");
+  await assert.rejects(access(join(pushDir, "objects", "info", "alternates")), "no link into the workspace");
+  assert.equal(git(pushDir, "cat-file", "-e", `${res.head}^{commit}`), "", "the pushed commit is there");
+  assert.throws(() => git(pushDir, "cat-file", "-e", `${sideSha}^{commit}`), "the side branch never reached root");
+});
+
+test("push: an object the agent crafted to fail fsck is refused at import, not pushed", async () => {
+  const { root, url, bare } = await makeRemote();
+  const dest = join(root, "ws");
+  const gitOps = createGitOps(undefined, { pushRoot: root });
+  await gitOps.clone({ cloneUrl: url, baseBranch: "main", branch: "outfitter/s11", createBranch: true }, dest);
+
+  // A tree containing an entry named ".git" -- fsck's hasDotgit, an error (not a warning): the kind
+  // of object a hostile agent would use to attack whatever imports its history.
+  const pipe = (args: string[], input: string) =>
+    execFileSync("git", args, { cwd: dest, encoding: "utf8", input, env: { ...process.env, ...PERSON } }).trim();
+  const blob = pipe(["hash-object", "-w", "--stdin"], "x\n");
+  const tree = pipe(["mktree", "--missing"], `100644 blob ${blob}\t.git\n`);
+  const bad = pipe(["commit-tree", tree, "-p", "HEAD", "-m", "malformed"], "");
+  git(dest, "update-ref", "refs/heads/outfitter/s11", bad);
+
+  await assert.rejects(
+    gitOps.push(dest, { remoteUrl: url, branch: "outfitter/s11" }),
+    /fsck|hasDotgit/i,
+    "root's git must refuse the object instead of packing and pushing it",
+  );
+  assert.equal(remoteSha(bare, "outfitter/s11"), undefined, "nothing reached the remote");
+});

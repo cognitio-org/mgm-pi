@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, symlink } from "node:fs/promises";
+import { access, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -119,11 +119,18 @@ async function fakeWorkspace(): Promise<string> {
 
 /** A stub exec for push(): HEAD is `state.head` (SHA_A to start), and `push` returns
  * `pushResult`. */
-function pushExec(opts: { pushResult?: ExecResult } = {}) {
+function pushExec(opts: { pushResult?: ExecResult; hasCommit?: boolean; bundleAs?: "file" | "symlink" } = {}) {
   const calls: { args: string[]; cwd: string; env?: Record<string, string>; as?: ExecOptions }[] = [];
   const state = { head: SHA_A };
   const exec: ExecFn = async (_cmd, args, cwd, env, as) => {
     calls.push({ args, cwd, env, as });
+    // "does the push repo already have this commit?" -- false by default, so the bundle path runs
+    if (args[0] === "cat-file") return opts.hasCommit ? ok() : { stdout: "", stderr: "", code: 1 };
+    if (args[0] === "bundle") {
+      if (opts.bundleAs === "symlink") await symlink("/etc/passwd", args[2]);
+      else await writeFile(args[2], "a bundle");
+      return ok();
+    }
     if (args[0] === "rev-parse") return ok(`${state.head}\n`);
     if (args[0] === "push") return opts.pushResult ?? ok();
     return ok();
@@ -187,13 +194,39 @@ test("GitOps.push: the skip decision never reads the workspace's (agent-writable
   assert.ok(!calls.some((c) => c.args[0] === "rev-parse" && c.args.some((a) => a.startsWith("refs/remotes/"))));
 });
 
-test("GitOps.push: refuses a symlinked .git/objects rather than letting root read where it points", async () => {
+test("GitOps.push: hands the new history over as a bundle and never points root's git into the workspace", async () => {
   const { exec, calls } = pushExec();
-  const workspace = await mkdtemp(join(tmpdir(), "agentd-git-ws-"));
-  await mkdir(join(workspace, ".git"));
-  await symlink("/etc", join(workspace, ".git", "objects"));
+  const workspace = await fakeWorkspace();
   const gitOps = createGitOps(exec, { pushRoot: await mkdtemp(join(tmpdir(), "agentd-git-test-")) });
-  await assert.rejects(gitOps.push(workspace, PUSH_SPEC), /not a plain directory/);
+  await gitOps.push(workspace, PUSH_SPEC);
+
+  const bundlePath = join(workspace, ".git", "outfitter-push.bundle");
+  // written by the workspace's own user, imported by root, then cleaned up
+  const bundled = calls.find((c) => c.args[0] === "bundle")!;
+  assert.equal(bundled.cwd, workspace);
+  assert.equal(bundled.as?.uid, undefined); // no runAs in this test, but it goes through run()
+  assert.equal(bundled.as?.isolatedEnv, true);
+  const imported = calls.find((c) => c.args[0] === "fetch")!;
+  assert.deepEqual(imported.args, ["fetch", "--quiet", bundlePath, "+refs/outfitter/push:refs/outfitter/push"]);
+  assert.notEqual(imported.cwd, workspace);
+  await assert.rejects(access(bundlePath), "the bundle is removed after the push");
+  assert.ok(calls.some((c) => c.args.join(" ") === "update-ref -d refs/outfitter/push"));
+  // nothing links the push repo to the workspace's object store any more
+  await assert.rejects(access(join(imported.cwd, "objects", "info", "alternates")));
+});
+
+test("GitOps.push: skips the bundle when the push repo already has the commit (e.g. the base commit)", async () => {
+  const { exec, calls } = pushExec({ hasCommit: true });
+  const gitOps = createGitOps(exec, { pushRoot: await mkdtemp(join(tmpdir(), "agentd-git-test-")) });
+  assert.equal((await gitOps.push(await fakeWorkspace(), PUSH_SPEC)).pushed, true);
+  assert.ok(!calls.some((c) => c.args[0] === "bundle"));
+  assert.ok(calls.some((c) => c.args[0] === "push"));
+});
+
+test("GitOps.push: refuses a bundle that isn't a plain file", async () => {
+  const { exec, calls } = pushExec({ bundleAs: "symlink" });
+  const gitOps = createGitOps(exec, { pushRoot: await mkdtemp(join(tmpdir(), "agentd-git-test-")) });
+  await assert.rejects(gitOps.push(await fakeWorkspace(), PUSH_SPEC), /not a plain file/);
   assert.ok(!calls.some((c) => c.args[0] === "push"));
 });
 

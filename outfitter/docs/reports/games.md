@@ -19,6 +19,103 @@ still showed small flat sprites in a mostly empty, unevenly scaled window, so a 
 older sections below disagree with Art pass 3 (rendering details, scale, HUD placement, clip
 content), Art pass 3 is the current state.
 
+## Landing rework (after the owner's playtest)
+
+The owner couldn't land safely and couldn't tell what the game wanted. The cause was the landing
+rule: any touchdown faster than 23 px/s was a crash. Just letting go of "up" from cruise height
+reaches ~45 px/s, and falling from the top of the screen hits the 68 px/s cap, so the natural thing
+to do was always fatal. The art stayed as it was; the rules, landing aids, tutorial and title card
+changed.
+
+### Landing rules and tuned constants (`rescue/engine.ts`)
+
+| Constant | Value | Why |
+|---|---|---|
+| `LANDING_SAFE_VY` | **46 px/s** (was 23) | 2x the old value. Touchdown at or below this is a clean landing |
+| `CRASH_VY` | **72 px/s** | Between 46 and 72 is a **hard landing**: the chopper bounces (30% of the touchdown speed back up), the screen shakes, a "HARD LANDING" pop appears, and it costs `HARD_LANDING_FUEL_COST` = **10%** fuel. No life lost |
+| `MAX_FALL_VY` | **84 px/s** (was 68, shared with climb) | Falling had to be able to exceed `CRASH_VY`, or nothing could ever crash. Only a dive with ↓ held gets there |
+| `GROUND_EFFECT_H` / `_K` | **12 px**, **7 /s** | Within 12 px of the ground, descent is slowed by `K x vy x (1 - height/12)` px/s². At **40%** strength while ↓ is held, so a nervous tap of ↓ isn't fatal |
+| `FARM_ZONE_W` | **44 px** | A marked concrete strip right beside the building, out of the fire. Landing there boards Floppies just like landing on the farm pad (which still works); the Floppies run out to the chopper |
+
+Tuning was done by simulation (the TS engine runs directly in Node) of simple player strategies,
+dropped from a standstill at various heights. The numbers are the touchdown speed after the ground
+effect:
+
+| Height above ground | Let go of every key | Hold ↓ all the way |
+|---|---|---|
+| 10 px | safe | safe (43) |
+| 20 px | safe | hard (47) |
+| 30 px | safe | hard (58) |
+| 40 px | safe | hard (68) |
+| 60 px | safe | **crash** (79) |
+| 90 px (top of the screen) | safe (46) | **crash** (77) |
+
+So "let go of ↑" (what the tutorial teaches) is always safe from any height. Holding ↓ from low down
+costs fuel. Only a sustained dive from high up crashes.
+
+Other engine changes: debris now falls from the building (spawn range starts at the farm's edge), not
+onto the rescue zone; the attract autopilot flies to the zone and lands the way the tutorial teaches.
+Over 20 seeds it now delivers on level 1 in **20 of 20** runs (was 14 of 20 after Art pass 3, 0 of 20
+before it). `predictTouchdownVy()` shares the vertical-physics code with `step()`, so the gauge and
+the game can't disagree.
+
+### Landing aids (`rescue/render.ts`)
+
+- **Speed gauge** beside the chopper whenever it's descending within 44 px of the ground: a bar
+  filled to the *predicted* touchdown speed (if the keys held now stay held), with notches at 46 and
+  72, coloured green/amber/red, plus a SAFE / HARD / CRASH word on a black chip.
+- **Landing zone:** a dashed green box marching on the current target (the rescue zone while
+  Floppies are waiting and there's room aboard, the home pad while carrying), and a bobbing
+  "LAND HERE" chip with a down arrow. The chip hides once the chopper is over the target, so it never
+  covers the chopper; the dashed box and gauge stay. The rescue zone is also permanently marked (a
+  slab with green corners and an H), so it's findable without any prompt.
+- The SERVER FARM billboard moved left of the zone.
+
+### First-game tutorial (`rescue/tutorial.ts`)
+
+Six prompts inside the game frame that advance on what the player actually does:
+"Hold ↑ to lift off" → "Fly → to the burning farm" → "Ease off ↑ and land gently in the green zone"
+→ "Wait while Floppies climb aboard" → "Fly ← home and land on the pad to unload" → "Rescue them all
+before the fire spreads!". The last prompt shows for 4.5s after the first delivery. On touch devices
+(`pointer: coarse`, or `?touch=1`) the wording is "Hold LIFT…", "Drag the stick…", "Let go of
+LIFT…".
+
+- Out-of-order play still lands on the right prompt: the step function advances as far as the state
+  allows.
+- During the tutorial the engine's `tutorial` flag freezes the fire, stops fuel draining and stops
+  debris.
+- It runs once. Completion is stored in localStorage (`outfitterRescueTutorialDone`, try/catch). It
+  never runs in the `?demo=1` autopilot. A "How to play" button on the title card replays it.
+- Desktop shows the prompt pinned over the sky. On phones it sits under the canvas, because on a
+  264px-tall canvas it would cover the chopper.
+
+### Title card
+
+"The server farm is on fire. Fly your Floppies home." sits on a black chip above "Press start" and
+"How to play". The controls summary sits under the canvas: keyboard wording on desktop, touch
+wording on phones.
+
+### Verification
+
+- **Tests:** engine tests for the new rules are in `test/rescue-engine.test.ts`: safe, hard (bounce,
+  fuel, no life lost), crash, the band thresholds, ground effect with and without ↓, let-go-from-90px
+  is safe, a long dive crashes, zone boarding, the tutorial freeze. The tutorial chain is in the new
+  `test/rescue-tutorial.test.ts`. Result: **12 files, 130 tests** pass (was 11/120), and
+  `npm ci && npm test --workspace=@outfitter/web && npm run build` exits 0.
+- **Key-press playtest:** a Playwright script played the game from a fresh browser (so the tutorial
+  runs) using real key presses and a naive controller. Every run finished the tutorial with all six
+  Floppies home in 16-19s, with the gauge colours seen noted:
+  - "Let go of ↑ over the zone" (desktop, and phone with touch wording): SAFE only, 3 lives, fuel 100%.
+  - "Cruise high, then let go": SAFE only.
+  - "Hold ↓ on the approach": over two runs, hard landings (fuel 81%, 3 lives) in one and a crash
+    in the other (2 lives). That's the reckless case, as intended. The gauge showed HARD and CRASH
+    before touchdown.
+- **Chunks:** FloppyRescue **14.54 KB** gzip (was 12.47). Lazy total: 1.59 + 4.21 + 9.49 + 14.54 =
+  **29.83 KB**, under 60 KB. Main bundle unchanged at 145.22 KB.
+- **Clip:** `floppy-rescue.webm` was re-recorded (`?demo=1&seed=3708`). Frames every 3s show the zone
+  marker, SAFE gauges, a Floppy running out to the chopper parked in the zone, "LAND HERE" over the
+  Disk Box on the way home, the delivery and level 2.
+
 ## Art pass 3
 
 Two earlier passes reported "done" while the recorded frames still showed tiny sprites in empty
@@ -166,8 +263,12 @@ ratio after the owner's playtest found the helicopter still small at a normal la
 | `H_ACCEL` | 113 px/s² | lateral thrust |
 | `H_DRAG` | 2.4 /s | exponential damping on `vx` with no lateral input |
 | `V_DRAG` | 0.5 /s | mild damping on `vy` so hovering settles instead of oscillating |
-| `MAX_VX` / `MAX_VY` | 68 px/s | velocity caps |
-| `LANDING_SAFE_VY` | 23 px/s | touch down slower than this or it's a crash |
+| `MAX_VX` / `MAX_VY` | 68 px/s | horizontal and climb speed caps |
+| `MAX_FALL_VY` | 84 px/s | falling speed cap (landing rework; was the same 68 as `MAX_VY`) |
+| `LANDING_SAFE_VY` / `CRASH_VY` | 46 / 72 px/s | safe / hard / crash bands (landing rework; was one 23 px/s threshold) -- see "Landing rework" |
+| `GROUND_EFFECT_H` / `GROUND_EFFECT_K` | 12 px / 7 per s | automatic flare near the ground (40% while holding down) |
+| `HARD_LANDING_FUEL_COST` | 10% | the price of a hard landing (plus a 30% bounce) |
+| `FARM_ZONE_W` | 44 px | the marked rescue zone beside the burning building |
 | `CAMERA_LEAD` | 18 px | how far ahead of the player the camera looks, scaled by `vx/MAX_VX` |
 | `HOME_CAMERA_LOCK_PAD` | 30 px | while the player is within this of the home pad, the camera stays pinned at 0 (Disk Box + sign always fully in frame) instead of leading away |
 | fuel drain / refill | 3.0/s airborne, 34/s on home pad | route-planning tension: dry fuel kills lift (unaffected by any rescale -- percentage-based, not px) |
@@ -371,6 +472,12 @@ All in `docs/design/screenshots/games-*.png`, taken against a local `packages/ap
 - `games-dreadnought-mid-{desktop,mobile}-{dark,light}.png` -- mid-game action,
   `/ready?game=dreadnought&demo=1&seed=439`, 6s in.
 
+- `games-rescue-tutorial-desktop-dark.png`, `games-rescue-tutorial-mobile-dark.png` -- the
+  first-game tutorial at step 3 ("land gently in the green zone"), with the dashed landing zone,
+  LAND HERE marker and the green SAFE gauge (desktop); touch wording, prompt under the canvas
+  (phone). `games-rescue-hard-landing-desktop-dark.png` -- the amber HARD gauge on a diving approach.
+  These three come from the key-press playtest script (see "Landing rework").
+
 `?seed=N` (Art pass 3) fixes the RNG seed so these, and the clips, are reproducible. In both themes
 the canvas itself stays in the C64 palette (it's a "screen"); the window chrome around it follows
 the GEOS light / C64 dark theme.
@@ -445,13 +552,12 @@ ship).
   point the desk UI (owned by another workstream) can call once it's ready to add its own trigger
   surface (a hidden menu item, a `SYS 64738` command, etc.) beyond the existing Konami code and
   `/ready` route.
-- **The attract autopilots still die sometimes** (Art pass 3 made them much better, see above): about
-  70% of Floppy Rescue seeds crash at least once before the first delivery, and level-2 drone shots
-  get through. The demo respawns/resets and keeps going; `?seed=` picks a clean run for recordings.
-- **Level 1's fire outruns most rescues.** The whole pad is fully lit ~10-12s after play starts,
-  and the flight out takes ~5s, so even the improved autopilot saves nobody on many seeds. That's
-  game balance (`FIRE_GROW_PER_SEC`, the ignite threshold), which this art pass didn't touch; worth
-  a human playtest.
+- **Level-2 drone shots still hit the attract autopilot sometimes.** Since the landing rework it
+  delivers on level 1 in 20 of 20 seeds; on level 2 the drone takes it down now and then. The demo
+  respawns and keeps going.
+- **Fire balance past level 1** is untouched: the fire still spreads at the same rate. The rescue zone
+  beside the building takes the fire out of the landing itself, but Floppies standing in the building
+  can still burn before the chopper gets there on later levels. Worth a human playtest.
 - **A crashed chopper keeps its passengers.** On a crash the engine respawns the chopper at home
   with `onBoard` unchanged, so they're "delivered" (and scored) on the very next step. Pre-existing
   rule, left alone in an art pass; probably should zero `onBoard` (Floppies lost with the chopper).

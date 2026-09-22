@@ -448,6 +448,27 @@ table.data-table a {
   flex: 1;
 }
 
+/* SettingsPage.tsx: a set-secret's masked value ("set (…abcd)"), mirroring mgm-admin's
+   Connections page. */
+.chip {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.note {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+button.danger {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
 @media (max-width: 600px) {
   .app-main {
     padding: 0.6rem;

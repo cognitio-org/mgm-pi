@@ -207,4 +207,76 @@ describe("api client", () => {
 
     await expect(api.deleteGuru("g1")).rejects.toMatchObject(new ApiError(409, "guru is referenced by 2 sessions"));
   });
+
+  it("me() surfaces the operator flag", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ email: "operator@mgms.eu", operator: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.me()).resolves.toEqual({ email: "operator@mgms.eu", operator: true });
+  });
+
+  it("operatorSettings GETs /api/operator/settings", async () => {
+    const settings = {
+      litellmBaseUrl: "https://litellm.example.com/v1",
+      sandboxProvider: "cloudrun",
+      cloudRunJob: "outfitter-agent",
+      tunnelDomain: "mgm-lmstudio.ngrok.app",
+      operators: ["mgm@mgms.eu"],
+      secrets: [],
+    };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(settings));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.operatorSettings()).resolves.toEqual(settings);
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/operator/settings");
+  });
+
+  it("putOperatorSecret PUTs the value and URL-encodes the secret name", async () => {
+    const row = { id: "outfitter-github-pat", secretName: "outfitter-github-pat", label: "x", purpose: "y", set: true, appliesAt: "next deploy" };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(row));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await api.putOperatorSecret("outfitter-github-pat", "a-value");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/operator/secrets/outfitter-github-pat");
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(init.body)).toEqual({ value: "a-value" });
+    expect(result).toEqual(row);
+  });
+
+  it("disableOperatorSecret DELETEs /api/operator/secrets/:name", async () => {
+    const row = { id: "outfitter-github-pat", secretName: "outfitter-github-pat", label: "x", purpose: "y", set: false, appliesAt: "next deploy" };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(row));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.disableOperatorSecret("outfitter-github-pat");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/operator/secrets/outfitter-github-pat");
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("testOperatorSecret POSTs an explicit value when given", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.testOperatorSecret("outfitter-github-pat", "a-value");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/operator/secrets/outfitter-github-pat/test");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ value: "a-value" });
+  });
+
+  it("testOperatorSecret POSTs an empty body to test the stored value when no value is given", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: false, detail: "no value set" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.testOperatorSecret("outfitter-github-pat");
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({});
+  });
 });

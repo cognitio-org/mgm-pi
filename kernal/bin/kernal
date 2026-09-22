@@ -21,6 +21,122 @@ kenv() {
   fi
   return 1
 }
+# --- prune: begin (install.sh and bin/kernal carry byte-identical copies; tests/install.test.ts checks)
+# prune_versions ROOT PREFIX PLATFORM KEEP DRY SESSIONS [PREVIOUS] [ALSO_KEEP]
+# Removes old release bundles, ROOT/PREFIX-<semver>-PLATFORM, keeping KEEP of them: the one `current`
+# points to, then PREVIOUS (the bundle `current` pointed to before this install, the rollback target),
+# then the highest remaining versions by semver (0.1.10 > 0.1.9; a pre-release sorts below its
+# release; pre-release tags compare as plain strings). Names are unique per platform, so there is no
+# tie to break and modification times are never consulted. ALSO_KEEP (the bundle running this, for
+# `kernal prune`) is never removed and does not count. DRY=1 reports without removing anything.
+# Paranoid on purpose; any of these prunes NOTHING and says why (returning 1):
+#   - KEEP is not a whole number >= 1; ROOT or ROOT/current cannot be resolved; current is not a
+#     symlink to a correctly named bundle directly inside ROOT;
+#   - any entry named PREFIX-* that is not a real directory with exactly that name pattern (a symlink,
+#     a file, a stray name): something unexpected is in there and a human should look first.
+# Bundles for another platform (a correctly named PREFIX-<semver>-<other platform>) are left alone,
+# as is everything not named PREFIX-* (state/, .update-check.json, ...). A bundle is also kept when
+# it holds a real (not linked) .pi/sessions with a file that is not byte-identical under SESSIONS.
+# `rm -rf` does not follow symlinks inside what it removes, so a bundle's links into state/ go, state/
+# does not. bash 3.2 safe: no associative arrays, no mapfile, no empty-array expansions.
+_prune_semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'
+_prune_platforms="darwin-arm64 darwin-x64 linux-x64 linux-arm64"
+_prune_physical() { (cd -P -- "$1" 2>/dev/null && pwd); }   # the directory with every symlink resolved
+_prune_human() { awk -v k="$1" 'BEGIN { if (k >= 1048576) printf "%.1f GB", k / 1048576; else printf "%.0f MB", k / 1024 }'; }
+_prune_sessions_safe() {   # DIR SESSIONS: every file in DIR/.pi/sessions is byte-identical under SESSIONS
+  local dir="$1" sessions="$2" f rel ok=0
+  [[ -d "$dir/.pi/sessions" && ! -L "$dir/.pi/sessions" ]] || return 0
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    rel="${f#"$dir/.pi/sessions/"}"
+    if ! cmp -s -- "$f" "$sessions/$rel"; then echo "  $f is not in $sessions (byte-identical)"; ok=1; fi
+  done <<EOF
+$(find "$dir/.pi/sessions" -type f 2>/dev/null)
+EOF
+  return $ok
+}
+prune_versions() {
+  local root="$1" prefix="$2" platform="$3" keep="$4" dry="$5" sessions="$6" previous="${7:-}" also_keep="${8:-}"
+  local root_real cur_real cur e base rest ver p other rows="" maj min pat rank pre kept=0 kb freed=0 n=0 verb="removed"
+  [[ "$dry" == 1 ]] && verb="would remove"
+  case "$keep" in ''|*[!0-9]*|0*) echo "prune: KERNAL_KEEP_VERSIONS must be a whole number, 1 or more (got '$keep'); nothing removed"; return 1 ;; esac
+  root_real="$(_prune_physical "$root")"
+  [[ -n "$root_real" ]] || { echo "prune: cannot resolve $root; nothing removed"; return 1; }
+  [[ -L "$root/current" ]] || { echo "prune: $root/current is not a symlink; nothing removed"; return 1; }
+  cur_real="$(_prune_physical "$root/current")"
+  cur="${cur_real#"$root_real"/}"
+  if [[ -z "$cur_real" || "$cur_real" != "$root_real/"* || "$cur" == */* ]]; then
+    echo "prune: $root/current does not resolve to a bundle inside $root_real (${cur_real:-dangling}); nothing removed"; return 1
+  fi
+  ver="${cur#"$prefix"-}"; ver="${ver%-"$platform"}"
+  if [[ "$cur" != "$prefix-$ver-$platform" ]] || ! [[ "$ver" =~ $_prune_semver_re ]]; then
+    echo "prune: current points to $cur, not a $prefix-<version>-$platform bundle; nothing removed"; return 1
+  fi
+  # previous / also_keep only matter when they are one of this root's bundles; anything else is ignored
+  previous="${previous#"$root_real"/}"; also_keep="${also_keep#"$root_real"/}"
+  for e in "$root_real/$prefix"-*; do
+    [[ -e "$e" || -L "$e" ]] || continue    # the glob matched nothing
+    base="${e##*/}"
+    if [[ -L "$e" ]]; then echo "prune: $e is a symlink, not a bundle; nothing removed"; return 1; fi
+    if [[ ! -d "$e" ]]; then echo "prune: $e is not a directory; nothing removed"; return 1; fi
+    rest="${base#"$prefix"-}"; other=""
+    for p in $_prune_platforms; do
+      [[ "$rest" == *"-$p" ]] || continue
+      ver="${rest%-"$p"}"
+      [[ "$ver" =~ $_prune_semver_re ]] && other="$p"
+    done
+    if [[ -z "$other" ]]; then echo "prune: $e is not named $prefix-<version>-<platform>; nothing removed"; return 1; fi
+    [[ "$other" == "$platform" ]] || continue    # another platform's bundle: not ours to judge
+    ver="${rest%-"$platform"}"
+    if [[ "$(_prune_physical "$e")" != "$root_real/$base" ]]; then echo "prune: $e resolves outside $root_real; nothing removed"; return 1; fi
+    [[ "$ver" =~ $_prune_semver_re ]] || { echo "prune: cannot parse the version of $e; nothing removed"; return 1; }
+    maj="${BASH_REMATCH[1]}"; min="${BASH_REMATCH[2]}"; pat="${BASH_REMATCH[3]}"; pre="${BASH_REMATCH[4]}"
+    if [[ -z "$pre" ]]; then rank=1; pre="-"; else rank=0; fi
+    rows="$rows$maj $min $pat $rank $pre $base
+"
+  done
+  # Highest version first. Every field is space-free (enforced by the pattern), so sort is exact.
+  rows="$(printf '%s' "$rows" | sort -t ' ' -k1,1nr -k2,2nr -k3,3nr -k4,4nr -k5,5r -k6,6r)"
+  kept=1                                                   # current
+  if [[ -n "$previous" && "$previous" != "$cur" && -d "$root_real/$previous" && "$keep" -ge 2 ]]; then
+    case "
+$rows
+" in *" $previous
+"*) kept=2 ;; *) previous="" ;; esac
+  else
+    previous=""
+  fi
+  local keep_list="$cur${previous:+, $previous}" remove_list=""
+  while IFS=' ' read -r maj min pat rank pre base; do
+    [[ -n "${base:-}" ]] || continue
+    [[ "$base" == "$cur" || "$base" == "$previous" ]] && continue
+    if [[ -n "$also_keep" && "$base" == "$also_keep" ]]; then keep_list="$keep_list, $base (running)"; continue; fi
+    if [[ "$kept" -lt "$keep" ]]; then kept=$((kept + 1)); keep_list="$keep_list, $base"; continue; fi
+    remove_list="$remove_list$base
+"
+  done <<EOF
+$rows
+EOF
+  while IFS= read -r base; do
+    [[ -n "$base" ]] || continue
+    [[ "$base" != "$cur" && "$base" != "$previous" && "$base" != "$also_keep" ]] || continue   # belt and braces
+    e="$root_real/$base"
+    if ! _prune_sessions_safe "$e" "$sessions"; then echo "prune: kept $e: it holds sessions not copied to state (above)"; continue; fi
+    kb="$(du -sk "$e" 2>/dev/null | awk '{print $1}')"; kb="${kb:-0}"
+    if [[ "$dry" != 1 ]]; then
+      rm -rf -- "$e"
+      if [[ -e "$e" ]]; then echo "prune: could not fully remove $e; stopping"; return 1; fi
+    fi
+    echo "prune: $verb $e ($(_prune_human "$kb"))"
+    freed=$((freed + kb)); n=$((n + 1))
+  done <<EOF
+$remove_list
+EOF
+  if [[ "$n" -eq 0 ]]; then echo "prune: nothing to remove in $root_real (keeping $keep_list)"
+  else echo "prune: $verb $n old version(s), $(_prune_human "$freed"); kept $keep_list"; fi
+  return 0
+}
+# --- prune: end -------------------------------------------------------------------------------------
 # Resolve symlinks (install.sh links ~/.local/bin/kernal here) so ROOT is the real bundle directory.
 SRC="${BASH_SOURCE[0]}"
 while [[ -L "$SRC" ]]; do DIR="$(cd -P "$(dirname "$SRC")" && pwd)"; SRC="$(readlink "$SRC")"; [[ "$SRC" != /* ]] && SRC="$DIR/$SRC"; done
@@ -51,9 +167,155 @@ if [[ -x "$ROOT/pi/pi" ]]; then PI="$ROOT/pi/pi"; else PI="$ROOT/node_modules/.b
 #   kernal update --extensions         update the installed pi packages (pi's own updater)
 #   kernal update --extension <src>    update one package
 #   kernal update --models             refresh pi's model catalogs
+#   kernal prune [--dry-run]           remove old installed versions (keeps KERNAL_KEEP_VERSIONS, default 2)
+#   kernal prune --legacy [--yes]      list (and with --yes delete) the pre-rename ~/.mgm bundles
+# prune_legacy LEGACY PLATFORM SESSIONS NEW_ROOT YES: `kernal prune --legacy [--yes]`.
+# The pre-rename ~/.mgm: the 0.2.0 migration copied its state to ~/.kernal/state and left it in place
+# with a MOVED note. What is worth reclaiming there is its release bundles (mgm-<semver>-<platform>,
+# ~450 MB each); state/, MOVED, current and everything else stay. The bundles are not only code:
+# pre-0.1.12 ones hold real session files and every one holds an old .env, so this never runs on its
+# own (install.sh does not call it) and deletes only with --yes. Without --yes it lists exactly
+# what would go. With or without it, it refuses, removing nothing, unless:
+#   - LEGACY is a real directory carrying MOVED (the migration ran), and its `current` (if any) does
+#     not resolve to anything inside LEGACY;
+#   - every mgm-* entry is a real directory named exactly mgm-<semver>-<platform> (another
+#     platform's bundles are left alone);
+#   - every session file under LEGACY/**/.pi/sessions and LEGACY/state/sessions exists byte-identical
+#     in SESSIONS (~/.kernal/state/sessions);
+#   - if a bundle to be removed has a .env, the new install has one too.
+prune_legacy() {
+  local legacy="$1" platform="$2" sessions="$3" new_root="$4" yes="$5"
+  local legacy_real cur_real e base rest ver p other f rel sz bad=0 kb total=0 n=0 remove="" what count kept=""
+  if [[ ! -d "$legacy" || -L "$legacy" ]]; then echo "prune --legacy: no pre-rename install at $legacy; nothing to do"; return 0; fi
+  legacy_real="$(_prune_physical "$legacy")"
+  [[ -n "$legacy_real" ]] || { echo "prune --legacy: cannot resolve $legacy; nothing removed"; return 1; }
+  [[ -f "$legacy_real/MOVED" ]] || { echo "prune --legacy: $legacy has no MOVED note, so it was never migrated; run 'kernal update' first. Nothing removed."; return 1; }
+  [[ -d "$sessions" ]] || { echo "prune --legacy: $sessions does not exist, so nothing can be verified; nothing removed"; return 1; }
+  if [[ -e "$legacy_real/current" || -L "$legacy_real/current" ]]; then
+    cur_real="$(_prune_physical "$legacy_real/current")"
+    if [[ -z "$cur_real" || "$cur_real" == "$legacy_real/"* ]]; then
+      echo "prune --legacy: $legacy/current resolves to ${cur_real:-nothing}, not to the new install; nothing removed"; return 1
+    fi
+  fi
+  for e in "$legacy_real"/mgm-*; do
+    [[ -e "$e" || -L "$e" ]] || continue    # the glob matched nothing
+    base="${e##*/}"
+    if [[ -L "$e" || ! -d "$e" ]]; then echo "prune --legacy: $e is not a bundle directory; nothing removed"; return 1; fi
+    rest="${base#mgm-}"; other=""
+    for p in $_prune_platforms; do
+      [[ "$rest" == *"-$p" ]] || continue
+      ver="${rest%-"$p"}"
+      [[ "$ver" =~ $_prune_semver_re ]] && other="$p"
+    done
+    if [[ -z "$other" ]]; then echo "prune --legacy: $e is not named mgm-<version>-<platform>; nothing removed"; return 1; fi
+    [[ "$other" == "$platform" ]] || continue
+    if [[ "$(_prune_physical "$e")" != "$legacy_real/$base" ]]; then echo "prune --legacy: $e resolves outside $legacy_real; nothing removed"; return 1; fi
+    remove="$remove$base
+"
+  done
+  # Every session file, in every bundle (find does not follow the later bundles' links to state/)
+  # and in state/sessions, must be in the new state byte for byte.
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    case "$f" in
+      "$legacy_real/state/sessions/"*) rel="${f#"$legacy_real/state/sessions/"}" ;;
+      *) rel="${f#*/.pi/sessions/}" ;;
+    esac
+    cmp -s -- "$f" "$sessions/$rel" && continue
+    bad=$((bad + 1))
+    if [[ ! -f "$sessions/$rel" ]]; then echo "  missing from $sessions: $f"
+    else
+      sz="$(wc -c < "$f" | tr -d ' ')"
+      if head -c "$sz" "$sessions/$rel" | cmp -s - "$f"; then echo "  differs: $f (the copy at $sessions/$rel is a longer continuation of it)"
+      else echo "  differs: $f (from $sessions/$rel)"; fi
+    fi
+  done <<EOF
+$(find "$legacy_real" -path '*/.pi/sessions/*' -type f 2>/dev/null; if [[ -d "$legacy_real/state/sessions" ]]; then find "$legacy_real/state/sessions" -type f 2>/dev/null; fi)
+EOF
+  if [[ "$bad" -gt 0 ]]; then
+    echo "prune --legacy: $bad session file(s) above are not byte-identical in $sessions; nothing removed."
+    echo "  Keeping them loses nothing. Copy or remove those files yourself, then run this again."
+    return 1
+  fi
+  if [[ -z "$remove" ]]; then echo "prune --legacy: no mgm-<version>-$platform bundles in $legacy_real; nothing to do"; return 0; fi
+  while IFS= read -r base; do
+    [[ -n "$base" ]] || continue
+    if [[ -f "$legacy_real/$base/.env" && ! -f "$new_root/current/.env" ]]; then
+      echo "prune --legacy: $legacy_real/$base/.env holds keys and $new_root/current/.env does not exist; nothing removed"; return 1
+    fi
+  done <<EOF
+$remove
+EOF
+  if [[ "$yes" == 1 ]]; then echo "prune --legacy: deleting from $legacy_real:"; else echo "prune --legacy: would delete from $legacy_real (dry run):"; fi
+  while IFS= read -r base; do
+    [[ -n "$base" ]] || continue
+    e="$legacy_real/$base"
+    kb="$(du -sk "$e" 2>/dev/null | awk '{print $1}')"; kb="${kb:-0}"
+    what=""
+    for f in .env .pi/auth.json .pi/trust.json .pi/settings.json; do
+      if [[ -f "$e/$f" && ! -L "$e/$f" ]]; then what="$what, $f"; fi
+    done
+    if [[ -d "$e/.pi/sessions" && ! -L "$e/.pi/sessions" ]]; then
+      count="$(find "$e/.pi/sessions" -type f 2>/dev/null | wc -l | tr -d ' ')"
+      [[ "$count" == 0 ]] || what="$what, $count session file(s), verified identical in $sessions"
+    fi
+    echo "  $e  $(_prune_human "$kb")${what:+  (includes ${what#, })}"
+    if [[ "$yes" == 1 ]]; then
+      rm -rf -- "$e"
+      if [[ -e "$e" ]]; then echo "prune --legacy: could not fully remove $e; stopping"; return 1; fi
+    fi
+    total=$((total + kb)); n=$((n + 1))
+  done <<EOF
+$remove
+EOF
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    case "
+$remove" in *"
+$f
+"*) continue ;; esac
+    kept="$kept $f"
+  done <<EOF
+$(ls -A "$legacy_real")
+EOF
+  echo "  left in place:${kept:- (nothing else)}"
+  if [[ "$yes" == 1 ]]; then echo "prune --legacy: deleted $n bundle(s), freed $(_prune_human "$total")"
+  else echo "prune --legacy: $n bundle(s), $(_prune_human "$total"). Nothing was deleted; to delete exactly these: kernal prune --legacy --yes"; fi
+  return 0
+}
 REPO="mgmonteleone/mgm-pi"
 case "${1:-}" in
   version|--version) [[ -f "$ROOT/VERSION" ]] && cat "$ROOT/VERSION" || echo "kernal (source checkout at $ROOT)"; exit 0 ;;
+  prune)
+    # Removes old release bundles now, exactly as every upgrade does afterwards (keeps
+    # KERNAL_KEEP_VERSIONS, default 2: current and the newest other; never state/ or .env). It acts
+    # without a dry run by default because that is what `kernal update` does unprompted and what it
+    # removes is re-downloadable release code; --dry-run shows it first. --legacy is different: it
+    # is about the pre-rename ~/.mgm, whose bundles hold old sessions and keys, so it only ever lists
+    # unless given --yes (see prune_legacy above).
+    shift; dry=0; legacy=0; yes=0
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -n|--dry-run) dry=1 ;;
+        --legacy) legacy=1 ;;
+        -y|--yes) yes=1 ;;
+        *) echo "Usage: kernal prune [--dry-run]   |   kernal prune --legacy [--yes]" >&2; exit 2 ;;
+      esac
+      shift
+    done
+    [[ -f "$ROOT/VERSION" ]] || { echo "kernal: $ROOT is a source checkout; there are no installed versions to prune" >&2; exit 1; }
+    home_dir="$(cd -P "$ROOT/.." && pwd)"
+    state="$(kenv STATE || true)"; state="${state:-$home_dir/state}"
+    os=$(uname -s | tr '[:upper:]' '[:lower:]'); arch=$(uname -m | sed 's/x86_64/x64/; s/aarch64/arm64/')
+    if [[ "$legacy" == 1 ]]; then
+      prune_legacy "$HOME/.mgm" "$os-$arch" "$state/sessions" "$home_dir" "$yes" || exit 1
+      exit 0
+    fi
+    [[ "$yes" == 0 ]] || { echo "kernal: --yes is only for --legacy; 'kernal prune' removes old versions without asking (see --dry-run)" >&2; exit 2; }
+    keep="$(kenv KEEP_VERSIONS || true)"
+    prune_versions "$home_dir" kernal "$os-$arch" "${keep:-2}" "$dry" "$state/sessions" "" "$ROOT" || exit 1
+    [[ "$dry" == 0 ]] || echo "(dry run: nothing was removed)"
+    exit 0 ;;
   update|--update)
     # Package/catalog updates are pi's job; only the bundle itself is ours.
     case "${2:-}" in

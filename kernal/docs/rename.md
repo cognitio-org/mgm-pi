@@ -50,6 +50,9 @@ as a target, and:
    symlink to the new `~/.kernal/current`, and writes `~/.mgm/MOVED`, a text file explaining what
    happened and that the directory is safe to delete once you've confirmed `kernal version` and
    your sessions look right.
+   Its old release bundles are most of its size; `kernal prune --legacy` lists them and,
+   with `--yes`, deletes only them, after checking every session file in `~/.mgm` is byte-identical
+   in `~/.kernal/state/sessions` (README, *Staying up to date*).
 7. Installs `~/.local/bin/kernal` (the new launcher) and makes `~/.local/bin/mgm` a link to the same
    launcher. `mgm` is a permanent, silent alias, not a deprecated name: it is the owner's initials
    and years of muscle memory, and keeping it costs nothing. Both names behave identically and

@@ -125,6 +125,23 @@ Both run the release installer: the new bundle lands next to the old one under `
 moves to it, and the `.env` with your keys is carried over. Source checkouts are never nagged;
 `git pull` is the update there. `KERNAL_NO_UPDATE_CHECK=1` disables the automatic check.
 
+**Old versions are removed.** Each release is its own ~450 MB directory. Once an upgrade has
+succeeded, the installer keeps the new version and the one it replaced (so you can go back one step:
+`ln -sfn ~/.kernal/kernal-<old>-<platform> ~/.kernal/current`) and removes older ones.
+`KERNAL_KEEP_VERSIONS=3` keeps more. Only directories named exactly `kernal-<version>-<platform>` are
+ever removed, never `state/`, `.env` or anything else; versions are ordered by semver (0.1.10 is
+newer than 0.1.9); and if anything under `~/.kernal` looks unexpected (a stray `kernal-*` name, a
+symlink, a `current` that does not resolve) nothing is removed and the installer says why. To
+reclaim space without upgrading: `kernal prune` (`--dry-run` to see what would go first).
+
+**The pre-rename `~/.mgm`.** The 0.2.0 migration copied everything to `~/.kernal` and left `~/.mgm`
+alone, with its old release bundles (often several GB). Nothing removes it automatically: its bundles
+hold old sessions and keys. `kernal prune --legacy` lists exactly which bundles it would delete, and
+what each holds, and deletes nothing; `kernal prune --legacy --yes` deletes those bundles only
+(`state/`, `MOVED`, `current` and anything else stay). Either way it refuses unless the migration
+ran and every session file in `~/.mgm` is byte-identical in `~/.kernal/state/sessions`, and it names
+any that are not.
+
 **Extension packages** are a separate thing from the bundle. pi notices when one of the installed
 packages has a new version and says so at start-up; update them with `/update extensions` in the
 agent, or `kernal update --extensions` (also `--extension <name>` for one, `--models` to refresh pi's

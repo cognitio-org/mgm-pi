@@ -6,11 +6,11 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { updateSettings } from "../.pi/extensions/connect/settings.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -206,5 +206,336 @@ describe("updates in a release bundle", () => {
 
   test("kernal update --extensions says what updates packages in a bundle, instead of silently doing nothing", () => {
     assert.match(launcher, /they update with kernal itself\. Run: kernal update/);
+  });
+});
+
+/**
+ * Old versions are pruned. Every release is its own ~450 MB directory, and before this nothing ever
+ * removed one (a real ~/.mgm reached 5.4 GB over thirteen versions). These run the real install.sh
+ * and the real bin/kernal (copied into each bundle, so `kernal prune` runs from an install exactly as
+ * it would for a user) under macOS's /bin/bash 3.2, against throwaway roots only: HOME is a temp dir,
+ * so ~/.kernal and ~/.mgm here are never the real ones.
+ */
+describe("pruning old versions (real install.sh and bin/kernal, /bin/bash)", () => {
+  const os = execFileSync("uname", ["-s"], { encoding: "utf8" }).trim().toLowerCase();
+  const arch = execFileSync("uname", ["-m"], { encoding: "utf8" }).trim().replace("x86_64", "x64").replace("aarch64", "arm64");
+  const platform = `${os}-${arch}`;
+  const BASH = "/bin/bash"; // 3.2 on macOS: the shell a user's `curl | bash` actually gets
+  const launcher = readFileSync(join(root, "bin", "kernal"), "utf8");
+
+  /** A fresh HOME with its own ~/.kernal, and helpers bound to it. */
+  function sandbox() {
+    const work = realpathSync(mkdtempSync(join(tmpdir(), "kernal-prune-")));
+    const home = join(work, ".kernal");
+    const binDir = join(work, "bin");
+    const base = { PATH: `${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: work, KERNAL_HOME: home, KERNAL_BIN: binDir, GH_TOKEN: "", TMPDIR: tmpdir() };
+    const bundle = (version: string) => {
+      const name = `kernal-${version}-${platform}`;
+      const tgz = join(work, "build", `${name}.tar.gz`);
+      if (existsSync(tgz)) return tgz;
+      const stage = join(work, "build", name);
+      mkdirSync(join(stage, ".pi", "extensions"), { recursive: true });
+      mkdirSync(join(stage, "bin"), { recursive: true });
+      cpSync(join(root, ".pi", "extensions", "connect"), join(stage, ".pi", "extensions", "connect"), { recursive: true });
+      const s = JSON.stringify({ defaultProvider: "litellm", defaultModel: "gpt-5.4-nano" }, null, 2);
+      writeFileSync(join(stage, ".pi", "settings.json"), s);
+      writeFileSync(join(stage, ".pi", "settings.shipped.json"), s);
+      writeFileSync(join(stage, "bin", "kernal"), launcher, { mode: 0o755 });
+      writeFileSync(join(stage, "payload.bin"), Buffer.alloc(1024 * 1024, 1)); // something for du to count
+      writeFileSync(join(stage, "VERSION"), version + "\n");
+      execFileSync("tar", ["czf", tgz, "-C", join(work, "build"), name]);
+      return tgz;
+    };
+    const run = (args: string[], env: Record<string, string> = {}) => {
+      const r = spawnSync(BASH, args, { env: { ...base, ...env }, encoding: "utf8" });
+      return { status: r.status, out: `${r.stdout}${r.stderr}` };
+    };
+    const install = (version: string, env: Record<string, string> = {}) => {
+      const r = run([join(root, "scripts", "install.sh")], { KERNAL_VERSION: version, KERNAL_BUNDLE_FILE: bundle(version), ...env });
+      assert.equal(r.status, 0, r.out);
+      return r.out;
+    };
+    const kernal = (args: string[], env: Record<string, string> = {}) => run([join(binDir, "kernal"), ...args], env);
+    const versions = () => readdirSync(home).filter((n) => n.startsWith("kernal-")).sort();
+    const dir = (v: string) => `kernal-${v}-${platform}`;
+    const current = () => realpathSync(join(home, "current")).split("/").pop();
+    return { work, home, binDir, install, kernal, run, versions, dir, current };
+  }
+
+  test("an upgrade keeps exactly the new version and the one it replaced; state, .env and sessions are untouched", () => {
+    const b = sandbox();
+    b.install("0.1.0");
+    // a session written through the bundle's link, and the user's keys
+    const sess = join(b.home, "current", ".pi", "sessions", "proj");
+    mkdirSync(sess, { recursive: true });
+    writeFileSync(join(sess, "s1.jsonl"), '{"type":"session"}\n');
+    writeFileSync(join(b.home, "current", ".env"), "KERNAL_USER=Matthew\n");
+    b.install("0.1.1");
+    assert.deepEqual(b.versions(), [b.dir("0.1.0"), b.dir("0.1.1")], "two versions: nothing to prune yet");
+    b.install("0.1.2");
+    const out = b.install("0.1.3");
+    assert.deepEqual(b.versions(), [b.dir("0.1.2"), b.dir("0.1.3")], out);
+    assert.equal(b.current(), b.dir("0.1.3"));
+    assert.match(out, new RegExp(`prune: removed .*${b.dir("0.1.1")}`), out);
+    assert.match(out, new RegExp(`kept ${b.dir("0.1.3")}, ${b.dir("0.1.2")}`), out);
+    assert.equal(readFileSync(join(b.home, "state", "sessions", "proj", "s1.jsonl"), "utf8"), '{"type":"session"}\n', "rm -rf of a bundle removes its link to state, not state");
+    assert.ok(existsSync(join(b.home, "current", ".pi", "sessions", "proj", "s1.jsonl")), "and the new version still sees it");
+    assert.match(readFileSync(join(b.home, "current", ".env"), "utf8"), /KERNAL_USER=Matthew/);
+    assert.ok(existsSync(join(b.home, "state")) && existsSync(join(b.home, "current")));
+  });
+
+  test("versions are ordered by semver, not by name: 0.1.10 is newer than 0.1.9, a pre-release older than its release", () => {
+    const b = sandbox();
+    for (const v of ["0.1.9", "0.1.10", "0.1.2"]) b.install(v, { KERNAL_KEEP_VERSIONS: "10" });
+    // current 0.1.2 is replaced by 0.2.0; with room for three, the third is 0.1.10 (a name sort picks 0.1.9)
+    const out = b.install("0.2.0", { KERNAL_KEEP_VERSIONS: "3" });
+    assert.deepEqual(b.versions(), [b.dir("0.1.10"), b.dir("0.1.2"), b.dir("0.2.0")].sort(), out);
+    // kernal prune has no "replaced" version, so after current it keeps the highest: 0.2.0 > 0.2.0-rc.1 > 0.1.10
+    b.install("0.2.0-rc.1", { KERNAL_KEEP_VERSIONS: "10" });
+    b.install("0.2.1", { KERNAL_KEEP_VERSIONS: "10" });
+    let r = b.kernal(["prune"], { KERNAL_KEEP_VERSIONS: "3" });
+    assert.equal(r.status, 0, r.out);
+    assert.deepEqual(b.versions(), [b.dir("0.2.0"), b.dir("0.2.0-rc.1"), b.dir("0.2.1")], r.out);
+    r = b.kernal(["prune"]);
+    assert.deepEqual(b.versions(), [b.dir("0.2.0"), b.dir("0.2.1")], r.out);
+    r = b.kernal(["prune"], { KERNAL_KEEP_VERSIONS: "10" });
+    assert.match(r.out, /nothing to remove/, r.out);
+  });
+
+  test("a same-version reinstall keeps the version below it (the reinstalled one is not its own rollback)", () => {
+    const b = sandbox();
+    b.install("0.9.0"); b.install("1.0.0"); b.install("1.1.0");
+    assert.deepEqual(b.versions(), [b.dir("1.0.0"), b.dir("1.1.0")]);
+    const out = b.install("1.1.0");
+    assert.deepEqual(b.versions(), [b.dir("1.0.0"), b.dir("1.1.0")], out);
+    assert.equal(b.current(), b.dir("1.1.0"));
+    assert.match(out, /nothing to remove/, out);
+  });
+
+  test("a rollback install keeps the version rolled back from", () => {
+    const b = sandbox();
+    b.install("0.1.0"); b.install("0.2.0"); b.install("0.3.0");
+    const out = b.install("0.1.5");  // back down: 0.3.0 is what it replaced, so 0.3.0 stays, 0.2.0 goes
+    assert.deepEqual(b.versions(), [b.dir("0.1.5"), b.dir("0.3.0")], out);
+  });
+
+  test("anything that is not a bundle is left alone; anything that looks like one but is not stops the prune", () => {
+    const b = sandbox();
+    b.install("0.1.0"); b.install("0.1.1");
+    mkdirSync(join(b.home, "notes")); writeFileSync(join(b.home, "notes", "todo.txt"), "mine");
+    writeFileSync(join(b.home, ".update-check.json"), "{}");
+    const otherName = `kernal-0.0.1-${os === "darwin" ? "linux" : "darwin"}-x64`; // another platform's bundle
+    mkdirSync(join(b.home, otherName));
+    let out = b.install("0.1.2");
+    assert.deepEqual(b.versions(), [b.dir("0.1.1"), b.dir("0.1.2"), otherName].sort(), out);
+    assert.equal(readFileSync(join(b.home, "notes", "todo.txt"), "utf8"), "mine");
+    assert.ok(existsSync(join(b.home, ".update-check.json")));
+    // a stray, bundle-like name: a human should look before anything is removed
+    const stray = join(b.home, `${b.dir("0.1.1")}.bak`);
+    mkdirSync(stray);
+    out = b.install("0.1.3");
+    assert.match(out, /is not named kernal-<version>-<platform>; nothing removed/, out);
+    assert.match(out, /old versions were left in place; your install is fine/);
+    assert.ok(existsSync(join(b.home, b.dir("0.1.1"))) && existsSync(join(b.home, b.dir("0.1.2"))) && existsSync(stray), "nothing removed");
+    assert.equal(b.current(), b.dir("0.1.3"), "the install itself succeeded");
+  });
+
+  test("a symlink out of the root is never followed or removed, whether it is named like a bundle or inside one", () => {
+    const b = sandbox();
+    const outside = join(b.work, "elsewhere");
+    mkdirSync(outside); writeFileSync(join(outside, "precious.txt"), "keep me");
+    b.install("0.1.0");
+    symlinkSync(outside, join(b.home, b.dir("0.1.0"), "link-out"));   // inside a bundle that will go
+    b.install("0.1.1");
+    let out = b.install("0.1.2");
+    assert.ok(!existsSync(join(b.home, b.dir("0.1.0"))), out);
+    assert.equal(readFileSync(join(outside, "precious.txt"), "utf8"), "keep me", "rm -rf removed the link, not its target");
+    // a bundle-named symlink to a directory outside the root
+    const fake = join(b.work, "not-a-bundle");
+    mkdirSync(fake); writeFileSync(join(fake, "precious.txt"), "keep me too");
+    symlinkSync(fake, join(b.home, b.dir("0.0.9")));
+    out = b.install("0.1.3");
+    assert.match(out, /is a symlink, not a bundle; nothing removed/, out);
+    assert.ok(lstatSync(join(b.home, b.dir("0.0.9"))).isSymbolicLink());
+    assert.equal(readFileSync(join(fake, "precious.txt"), "utf8"), "keep me too");
+    assert.ok(existsSync(join(b.home, b.dir("0.1.1"))), "nothing else was removed either");
+  });
+
+  test("current is never removed, nor the running version, and if current cannot be resolved nothing is", () => {
+    const b = sandbox();
+    b.install("0.1.0"); b.install("0.1.1"); b.install("0.1.2");
+    const launcherOf = (v: string) => join(b.home, b.dir(v), "bin", "kernal");
+    // current -> 0.1.0 (a rollback); prune run from 0.1.2 with KEEP=1 keeps current and the one running
+    b.install("0.1.0", { KERNAL_KEEP_VERSIONS: "10" });
+    let r = b.run([launcherOf("0.1.2"), "prune"], { KERNAL_KEEP_VERSIONS: "1" });
+    assert.equal(r.status, 0, r.out);
+    assert.deepEqual(b.versions(), [b.dir("0.1.0"), b.dir("0.1.2")], r.out);
+    assert.match(r.out, /\(running\)/);
+    // a dangling current
+    rmSync(join(b.home, "current")); symlinkSync(join(b.home, "kernal-9.9.9-gone"), join(b.home, "current"));
+    r = b.run([launcherOf("0.1.2"), "prune"], { KERNAL_KEEP_VERSIONS: "1" });
+    assert.equal(r.status, 1);
+    assert.match(r.out, /does not resolve to a bundle .*nothing removed/, r.out);
+    // current pointing outside the root
+    rmSync(join(b.home, "current")); symlinkSync(b.work, join(b.home, "current"));
+    r = b.run([launcherOf("0.1.2"), "prune"], { KERNAL_KEEP_VERSIONS: "1" });
+    assert.match(r.out, /does not resolve to a bundle .*nothing removed/, r.out);
+    // current as a real directory rather than a link
+    rmSync(join(b.home, "current")); mkdirSync(join(b.home, "current"));
+    r = b.run([launcherOf("0.1.2"), "prune"], { KERNAL_KEEP_VERSIONS: "1" });
+    assert.match(r.out, /is not a symlink; nothing removed/, r.out);
+    assert.deepEqual(b.versions(), [b.dir("0.1.0"), b.dir("0.1.2")]);
+  });
+
+  test("an old bundle holding sessions that are not in state byte for byte is kept", () => {
+    const b = sandbox();
+    b.install("0.1.0"); b.install("0.1.1");
+    // a pre-state bundle with a real sessions directory, whose file state holds a different copy of
+    const old = join(b.home, b.dir("0.0.1"));
+    mkdirSync(join(old, ".pi", "sessions", "proj"), { recursive: true });
+    writeFileSync(join(old, ".pi", "sessions", "proj", "x.jsonl"), "old\n");
+    mkdirSync(join(b.home, "state", "sessions", "proj"), { recursive: true });
+    writeFileSync(join(b.home, "state", "sessions", "proj", "x.jsonl"), "old\nnewer\n");
+    const out = b.install("0.1.2");
+    assert.match(out, /kept .*0\.0\.1.*: it holds sessions not copied to state/, out);
+    assert.ok(existsSync(join(old, ".pi", "sessions", "proj", "x.jsonl")));
+    assert.ok(!existsSync(join(b.home, b.dir("0.1.0"))), "the others are still pruned");
+  });
+
+  test("KERNAL_KEEP_VERSIONS sets how many are kept; MGM_KEEP_VERSIONS still works; nonsense prunes nothing", () => {
+    const b = sandbox();
+    for (const v of ["1.0.0", "1.0.1", "1.0.2", "1.0.3"]) b.install(v, { KERNAL_KEEP_VERSIONS: "3" });
+    assert.deepEqual(b.versions(), ["1.0.1", "1.0.2", "1.0.3"].map(b.dir));
+    const legacy = b.install("1.0.4", { MGM_KEEP_VERSIONS: "1" });
+    assert.match(legacy, /MGM_KEEP_VERSIONS is now KERNAL_KEEP_VERSIONS/);
+    assert.deepEqual(b.versions(), [b.dir("1.0.4")], legacy);
+    b.install("1.0.5", { KERNAL_KEEP_VERSIONS: "10" });
+    for (const bad of ["0", "abc", "-1", "02"]) {
+      const out = b.install("1.0.6", { KERNAL_KEEP_VERSIONS: bad });
+      assert.match(out, /must be a whole number, 1 or more .*nothing removed/, `${bad}: ${out}`);
+    }
+    assert.deepEqual(b.versions(), ["1.0.4", "1.0.5", "1.0.6"].map(b.dir));
+  });
+
+  test("kernal prune: --dry-run shows what would go and removes nothing; then it removes it and says how much", () => {
+    const b = sandbox();
+    for (const v of ["2.0.0", "2.1.0", "2.2.0", "2.3.0"]) b.install(v, { KERNAL_KEEP_VERSIONS: "10" });
+    let r = b.kernal(["prune", "--dry-run"]);
+    assert.equal(r.status, 0, r.out);
+    assert.match(r.out, new RegExp(`would remove .*${b.dir("2.0.0")} \\(\\d+ MB\\)`), r.out);
+    assert.match(r.out, /would remove 2 old version\(s\)/);
+    assert.match(r.out, /dry run: nothing was removed/);
+    assert.equal(b.versions().length, 4);
+    r = b.kernal(["prune"]);
+    assert.equal(r.status, 0, r.out);
+    assert.match(r.out, /removed 2 old version\(s\), \d+ MB; kept /, r.out);
+    assert.deepEqual(b.versions(), [b.dir("2.2.0"), b.dir("2.3.0")]);
+    assert.equal(b.kernal(["prune", "--bogus"]).status, 2);
+    assert.equal(b.kernal(["prune", "--yes"]).status, 2, "--yes belongs to --legacy only");
+    const src = spawnSync(BASH, [join(root, "bin", "kernal"), "prune"], { env: { PATH: "/usr/bin:/bin", HOME: b.work }, encoding: "utf8" });
+    assert.equal(src.status, 1);
+    assert.match(src.stderr, /source checkout/);
+  });
+
+  test("the prune code in install.sh and bin/kernal is the same text", () => {
+    const block = (s: string) => s.slice(s.indexOf("# --- prune: begin"), s.indexOf("# --- prune: end"));
+    assert.ok(block(script).length > 1000);
+    assert.ok(block(launcher) === block(script), "the two copies of the prune block have drifted apart");
+    assert.ok(script.indexOf('previous_bundle="$(_prune_physical "$HOME_DIR/current"') < script.indexOf('rm -rf "$HOME_DIR/$name"'), "the rollback target is read before a reinstall deletes it");
+    assert.ok(script.indexOf('prune_versions "$HOME_DIR"') > script.indexOf('ln -s "$HOME_DIR/current/bin/kernal" "$BIN_DIR/mgm"'), "pruning runs only once the install is complete");
+  });
+
+  describe("kernal prune --legacy (the pre-rename ~/.mgm)", () => {
+    /** A migrated ~/.mgm: MOVED, current -> the new install, an old bundle with real sessions, a
+     *  later one whose sessions are a link into state/, state/sessions, reports/, and a .env in each. */
+    function legacySetup() {
+      const b = sandbox();
+      b.install("0.2.0");
+      writeFileSync(join(b.home, "current", ".env"), "KERNAL_USER=Matthew\n");
+      const mgm = join(b.work, ".mgm");
+      const early = join(mgm, `mgm-0.1.9-${platform}`), late = join(mgm, `mgm-0.1.18-${platform}`);
+      mkdirSync(join(early, ".pi", "sessions", "p1"), { recursive: true });
+      writeFileSync(join(early, ".pi", "sessions", "p1", "a.jsonl"), "a\n");
+      writeFileSync(join(early, ".pi", "auth.json"), "{}");
+      mkdirSync(join(mgm, "state", "sessions", "p2"), { recursive: true });
+      writeFileSync(join(mgm, "state", "sessions", "p2", "b.jsonl"), "b\n");
+      mkdirSync(join(late, ".pi"), { recursive: true });
+      symlinkSync(join(mgm, "state", "sessions"), join(late, ".pi", "sessions"));
+      for (const d of [early, late]) writeFileSync(join(d, ".env"), "MGM_USER=Matthew\n");
+      mkdirSync(join(mgm, "reports")); writeFileSync(join(mgm, "reports", "r.html"), "r");
+      writeFileSync(join(mgm, "MOVED"), "moved\n");
+      symlinkSync(join(b.home, "current"), join(mgm, "current"));
+      // what the migration copied
+      for (const [p, f, t] of [["p1", "a.jsonl", "a\n"], ["p2", "b.jsonl", "b\n"]]) {
+        mkdirSync(join(b.home, "state", "sessions", p), { recursive: true });
+        writeFileSync(join(b.home, "state", "sessions", p, f), t);
+      }
+      return { ...b, mgm, early, late };
+    }
+
+    test("lists exactly what would go and deletes nothing without --yes; with --yes deletes only the bundles", () => {
+      const b = legacySetup();
+      let r = b.kernal(["prune", "--legacy"]);
+      assert.equal(r.status, 0, r.out);
+      assert.match(r.out, /would delete .*\(dry run\)/);
+      assert.match(r.out, new RegExp(`${b.early}  .*includes \\.env, \\.pi/auth\\.json, 1 session file\\(s\\), verified identical`), r.out);
+      assert.match(r.out, new RegExp(`${b.late}  .*includes \\.env\\)`), r.out);
+      assert.match(r.out, /left in place: .*MOVED.*current.*reports.*state/, r.out);
+      assert.match(r.out, /Nothing was deleted; to delete exactly these: kernal prune --legacy --yes/);
+      assert.ok(existsSync(b.early) && existsSync(b.late));
+      r = b.kernal(["prune", "--legacy", "--yes"]);
+      assert.equal(r.status, 0, r.out);
+      assert.match(r.out, /deleted 2 bundle\(s\), freed/, r.out);
+      assert.ok(!existsSync(b.early) && !existsSync(b.late));
+      for (const kept of ["MOVED", "reports/r.html", "state/sessions/p2/b.jsonl"]) assert.ok(existsSync(join(b.mgm, kept)), kept);
+      assert.ok(lstatSync(join(b.mgm, "current")).isSymbolicLink());
+      assert.ok(existsSync(join(b.home, "current", "VERSION")), "the new install is untouched");
+      assert.deepEqual(b.versions(), [b.dir("0.2.0")]);
+    });
+
+    test("refuses, removing nothing, when a session is not byte-identical in ~/.kernal/state (even with --yes)", () => {
+      const b = legacySetup();
+      writeFileSync(join(b.home, "state", "sessions", "p1", "a.jsonl"), "a\nmore\n");  // continued after migrating
+      rmSync(join(b.home, "state", "sessions", "p2", "b.jsonl"));
+      const r = b.kernal(["prune", "--legacy", "--yes"]);
+      assert.equal(r.status, 1, r.out);
+      assert.match(r.out, /differs: .*a\.jsonl \(the copy at .* is a longer continuation of it\)/, r.out);
+      assert.match(r.out, /missing from .*b\.jsonl/, r.out);
+      assert.match(r.out, /2 session file\(s\) above are not byte-identical .*nothing removed/, r.out);
+      assert.ok(existsSync(b.early) && existsSync(b.late));
+    });
+
+    test("refuses when ~/.mgm was never migrated, when current still points into it, or it holds something unexpected", () => {
+      let b = legacySetup();
+      rmSync(join(b.mgm, "MOVED"));
+      let r = b.kernal(["prune", "--legacy", "--yes"]);
+      assert.equal(r.status, 1); assert.match(r.out, /never migrated/);
+      assert.ok(existsSync(b.early));
+
+      b = legacySetup();
+      rmSync(join(b.mgm, "current")); symlinkSync(b.late, join(b.mgm, "current"));
+      r = b.kernal(["prune", "--legacy", "--yes"]);
+      assert.equal(r.status, 1); assert.match(r.out, /not to the new install; nothing removed/, r.out);
+      assert.ok(existsSync(b.early) && existsSync(b.late));
+
+      b = legacySetup();
+      mkdirSync(join(b.mgm, "mgm-old-copy"));
+      r = b.kernal(["prune", "--legacy", "--yes"]);
+      assert.equal(r.status, 1); assert.match(r.out, /not named mgm-<version>-<platform>; nothing removed/, r.out);
+      assert.ok(existsSync(b.early) && existsSync(b.late));
+
+      b = legacySetup();
+      rmSync(join(b.home, "current", ".env"));
+      r = b.kernal(["prune", "--legacy", "--yes"]);
+      assert.equal(r.status, 1); assert.match(r.out, /holds keys and .* does not exist; nothing removed/, r.out);
+      assert.ok(existsSync(b.early) && existsSync(b.late));
+    });
+
+    test("install.sh never touches ~/.mgm's bundles", () => {
+      const b = legacySetup();
+      b.install("0.2.1"); b.install("0.2.2");
+      assert.ok(existsSync(b.early) && existsSync(b.late));
+      assert.ok(!script.includes("prune_legacy"), "only the explicit kernal prune --legacy does");
+    });
   });
 });

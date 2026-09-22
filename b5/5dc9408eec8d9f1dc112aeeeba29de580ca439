@@ -1,0 +1,40 @@
+outfitter/packages/web/src/easter/rescue/sound.ts
+  s_2209f22f830d7f::t_58f53a3fe8e785 1-148
+outfitter/packages/web/src/easter/rescue/engine.ts
+  s_2209f22f830d7f::t_aa03ef65bf9674 1-357,359-488,495-537,563
+  s_2209f22f830d7f::t_379e534e244b8d 358
+  s_2209f22f830d7f::t_95cfd2a0d06059 489-492
+  s_2209f22f830d7f::t_52a898cfe62b4b 538-562
+  s_2209f22f830d7f::t_395cc7dccfebf6 493-494
+outfitter/packages/web/test/rescue-engine.test.ts
+  s_2209f22f830d7f::t_1da5e568711e2a 163-165
+  s_2209f22f830d7f::t_f1d936fd008fcc 13
+  s_2209f22f830d7f::t_6a6c77bc575d8d 240-262
+  s_2209f22f830d7f::t_5b7b3c4c2baf5d 63-64,66-67
+  s_2209f22f830d7f::t_1a56f87b247768 91-92
+  s_2209f22f830d7f::t_6979f2a0ca38e4 121-128,130,143-150,152
+  s_2209f22f830d7f::t_8189cadba58414 3
+  s_2209f22f830d7f::t_275d2d2d54ff8a 129,151
+  s_2209f22f830d7f::t_3253e7677aa92b 1-2,4-12,14-62,65,68-90,93-120,131-142,153-162,166-239
+outfitter/packages/web/src/easter/rescue/sprites.ts
+  s_2209f22f830d7f::t_709dc137390397 18,21
+  s_2209f22f830d7f::t_a25e1bbc49b4fd 1-17,19-20,22-58
+outfitter/packages/web/src/easter/rescue/FloppyRescue.tsx
+  s_2209f22f830d7f::t_de7bd51bf52732 1-545
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "b55dc9408eec8d9f1dc112aeeeba29de580ca439",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

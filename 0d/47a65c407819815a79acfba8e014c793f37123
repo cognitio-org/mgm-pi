@@ -1,0 +1,65 @@
+outfitter/packages/web/src/easter/dreadnought/engine.ts
+  s_2209f22f830d7f::t_f2d9a959e27f0d 15-21,24-25,27-28,30-34,38,44
+  s_2209f22f830d7f::t_79e1fbe8be8e72 325
+  s_2209f22f830d7f::t_109f1e5ed10091 140
+  s_2209f22f830d7f::t_5604c74e2a4bc3 276,278
+  s_2209f22f830d7f::t_9fb864fed04f57 85,88-89
+  s_2209f22f830d7f::t_69f183f6a2ec9a 294-296
+outfitter/packages/web/test/dreadnought-engine.test.ts
+  s_2209f22f830d7f::t_70b3eaa69a1e1c 146
+outfitter/packages/web/src/easter/rescue/engine.ts
+  s_2209f22f830d7f::t_60099145839855 11-25,31,33-36,39-41,43-48,64-65,151-152,187,221,234-235,245-246,248-249,354,384-387,389-390,418,438,447,453,455-456,464,466,480,494,501,575-577,583,586
+outfitter/packages/web/src/easter/rescue/FloppyRescue.tsx
+  s_2209f22f830d7f::t_a40b51a72f388a 154-156
+  s_2209f22f830d7f::t_a89ad954aaa272 126-130
+  s_2209f22f830d7f::t_8f3c9fe641fc9b 302-303,305-306
+  s_2209f22f830d7f::t_7b61544d4e43b3 51-66,78,80-81,85-107
+  s_2209f22f830d7f::t_d2a755c8ec0797 596,630-634
+  s_2209f22f830d7f::t_852e962c401679 275-277
+  s_2209f22f830d7f::t_3f968c08d3dc20 325-336
+  s_2209f22f830d7f::t_a8774d2d825a53 230,738-739,741,762,764-767,769-771,782-785,788,791-798,804,817,822,836-846,849-855
+  s_2209f22f830d7f::t_6819ed285e4b4d 773-775,778-781
+  s_2209f22f830d7f::t_fc3b8011b387d5 229,232-261
+  s_2209f22f830d7f::t_956fe77a0d3741 207-213,216-217,220,222,225-228
+  s_25c805ebe232f3::t_ac899f611d0b3b 108,231,856
+outfitter/packages/web/src/easter/shared/particles.ts
+  s_2209f22f830d7f::t_54218a25747271 1-5,15-16,19-20,34-55,62-65,71,100-144
+outfitter/packages/web/src/easter/rescue/sprites.ts
+  s_2209f22f830d7f::t_fcf630a3c638e5 5-8,25-27,30-33,35-38,42-54,57-69,72
+outfitter/packages/web/src/easter/dreadnought/DreadnoughtRun.tsx
+  s_2209f22f830d7f::t_2eba4ed6d6724b 204,206
+  s_2209f22f830d7f::t_b006377872d344 382-388,395-411,419-450
+  s_2209f22f830d7f::t_112484f101d3e6 226-236
+  s_2209f22f830d7f::t_8d52dc0ad00b7c 31-46
+  s_2209f22f830d7f::t_e0c817189c73be 531,536,559-576
+  s_2209f22f830d7f::t_f3d01a1736feb9 102-103
+  s_2209f22f830d7f::t_22b6dcc1a085b9 181
+  s_2209f22f830d7f::t_bc5e6041163236 483,485
+  s_2209f22f830d7f::t_c61ea572329b7b 158-161,163
+  s_2209f22f830d7f::t_1c024819a4a914 81-82
+  s_2209f22f830d7f::t_997f39179dbe1b 577
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "0d47a65c407819815a79acfba8e014c793f37123",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

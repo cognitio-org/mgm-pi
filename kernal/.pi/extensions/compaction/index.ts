@@ -154,7 +154,8 @@ export default function (pi: ExtensionAPI) {
       ctx.compact({ onError: (err) => { compacting = false; if (/nothing to compact/i.test(err.message)) backoffUntilPercent = (u.percent ?? 0) + 10; } });
     }
   });
-  pi.on("turn_end", async (_ev, ctx) => refreshStatus(ctx));
+  // Observe only: since pi 0.87 a value returned from turn_end is an instruction to the agent loop.
+  pi.on("turn_end", async (_ev, ctx) => { refreshStatus(ctx); });
   pi.on("model_select", async (_ev, ctx) => refreshStatus(ctx));
 
   pi.registerCommand("pin", {

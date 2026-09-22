@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { redact, secretValues, transcriptTail, lastError, issueTitle, issueBody, issueUrlFrom, MAX_BODY_CHARS, type ReportMeta } from "../.pi/extensions/kernal-report/lib.ts";
 import { makePi, makeCtx } from "./harness.ts";
+import { VERSION as PI_VERSION } from "@earendil-works/pi-coding-agent";
 
 const meta = (extra: Partial<ReportMeta> = {}): ReportMeta => ({
   id: "r1", createdAt: "2026-09-20T12:00:00.000Z", reporter: "Matej", kernalVersion: "0.1.5", piVersion: "0.86.1", platform: "darwin 25.6.0 arm64", nodeVersion: "bun 1.3.0",
@@ -90,7 +91,7 @@ describe("report extension", async () => {
     assert.equal(sent.length, 1);
     assert.equal(sent[0].title, "[kernal 0.1.5] Voice stopped working (Matej)");
     const b = sent[0].body;
-    for (const s of ["| kernal | 0.1.5 |", "| pi | 0.86.1 |", "| model | litellm/gpt-5.4-nano |", "| packages | pi-web-access, npm:pi-memory |", "| extensions | connect, kernal-report |", "boom", "Missing Authentication header", "<details><summary>Transcript", "[user] tell me a poem"]) assert.ok(b.includes(s), s);
+    for (const s of ["| kernal | 0.1.5 |", `| pi | ${PI_VERSION} |`, "| model | litellm/gpt-5.4-nano |", "| packages | pi-web-access, npm:pi-memory |", "| extensions | connect, kernal-report |", "boom", "Missing Authentication header", "<details><summary>Transcript", "[user] tell me a poem"]) assert.ok(b.includes(s), s);
     assert.ok(!b.includes("sk-secretsecretsecret"), "secret from the transcript redacted");
     assert.match(ctx.notices.at(-1)!.msg, /Report sent to Matthew: https:\/\/github\.com\/mgmonteleone\/mgm-pi\/issues\/9/);
     assert.equal(pi.entries.at(-1)!.customType, "kernal.report"); assert.equal(pi.entries.at(-1)!.data.url, "https://github.com/mgmonteleone/mgm-pi/issues/9");

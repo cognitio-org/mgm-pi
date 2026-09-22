@@ -219,3 +219,10 @@ button.danger {
 /* Thinking stays visibly secondary. */
 .entry.assistant-thinking .md { font-style: italic; }
 .entry.assistant-thinking .md code, .entry.assistant-thinking .md pre { font-style: normal; }
+
+/* Shown while a code-split page loads (App.tsx Suspense). */
+.page-loading {
+  display: flex;
+  justify-content: center;
+  padding: 3rem 1rem;
+}

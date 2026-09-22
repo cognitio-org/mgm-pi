@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { api } from "./api/client.ts";
 import { ProviderStrip } from "./components/ProviderStrip.tsx";
@@ -7,13 +7,11 @@ import { ThemeToggle } from "./components/ThemeToggle.tsx";
 import { SoundToggle } from "./components/SoundToggle.tsx";
 import { DeskPage } from "./pages/DeskPage.tsx";
 import { FleetPage } from "./pages/FleetPage.tsx";
-import { SessionPage } from "./pages/SessionPage.tsx";
 import { ProvidersPage } from "./pages/ProvidersPage.tsx";
 import { TokensPage } from "./pages/TokensPage.tsx";
-import { GurusPage } from "./pages/GurusPage.tsx";
-import { SettingsPage } from "./pages/SettingsPage.tsx";
 import { vocabulary } from "./lib/vocabulary.ts";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
+import { Working } from "./components/Working.tsx";
 import { UnhandledRejectionBanner } from "./components/UnhandledRejectionBanner.tsx";
 import { NotFoundError } from "./components/NotFoundError.tsx";
 import { DeviceNotPresent } from "./components/DeviceNotPresent.tsx";
@@ -25,6 +23,14 @@ function PanicTest(): never {
   throw new Error("Manually triggered via /panic-test (dev-only route).");
 }
 
+
+// Code-split: the heavier pages (markdown rendering, the tour animation, the forms) load when
+// first opened, so the desk and the Disk Box stay small (review of round five).
+const SessionPage = lazy(() => import("./pages/SessionPage.tsx").then((m) => ({ default: m.SessionPage })));
+const GurusPage = lazy(() => import("./pages/GurusPage.tsx").then((m) => ({ default: m.GurusPage })));
+const SettingsPage = lazy(() => import("./pages/SettingsPage.tsx").then((m) => ({ default: m.SettingsPage })));
+const ManualPage = lazy(() => import("./pages/ManualPage.tsx").then((m) => ({ default: m.ManualPage })));
+
 const PANIC_TEST_ENABLED = Boolean(import.meta.env.DEV || import.meta.env.OUTFITTER_DEV);
 
 const NAV_ITEMS: Array<{ to: string; end?: boolean; label: string; hint: string; operatorOnly?: boolean }> = [
@@ -35,7 +41,6 @@ const NAV_ITEMS: Array<{ to: string; end?: boolean; label: string; hint: string;
   { to: "/tokens", label: vocabulary.token.many, hint: vocabulary.token.hint },
   { to: "/settings", label: vocabulary.settings.one, hint: `${vocabulary.settings.hint} — ${vocabulary.operator.hint}`, operatorOnly: true },
 ];
-import { ManualPage } from "./pages/ManualPage.tsx";
 
 export function App() {
   // The Settings/Control Panel nav link only shows for an operator/Sysop (EPIC.md Decisions
@@ -124,6 +129,7 @@ export function App() {
 
       <main className="app-main">
         <ErrorBoundary>
+          <Suspense fallback={<div className="page-loading"><Working label="Loading" size="lg" /></div>}>
           <Routes>
             <Route path="/" element={<DeskPage />} />
             <Route path="/fleet" element={<FleetPage />} />
@@ -136,6 +142,7 @@ export function App() {
             <Route path="/manual" element={<ManualPage />} />
             <Route path="*" element={<NotFoundError subject="This page" />} />
           </Routes>
+          </Suspense>
         </ErrorBoundary>
       </main>
     </div>

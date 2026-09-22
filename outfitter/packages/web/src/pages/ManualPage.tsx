@@ -5,7 +5,6 @@
 import { useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { TourAnimation } from "../components/tour/TourAnimation.tsx";
-import { TourOffer } from "../components/tour/TourOffer.tsx";
 import { ERROR_MESSAGES, GLOSSARY_TERMS, TYPICAL_TASK_STEPS } from "../lib/glossary.ts";
 
 /** Supports the record-tour.mjs script's /manual?autoplay=1&chrome=0: autoplay starts the tour
@@ -31,7 +30,6 @@ export function ManualPage() {
 
   return (
     <div className="manual-page">
-      <TourOffer />
 
       <section className="tour-section">
         <TourAnimation autoplay={autoplay} />

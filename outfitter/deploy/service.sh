@@ -192,7 +192,20 @@ else
   AUTH_FLAGS=(--allow-unauthenticated)
 fi
 
-echo "== Deploying ${SERVICE} (OUTFITTER_ROLE=${ROLE}, OUTFITTER_ORIGIN=${ORIGIN}) =="
+# Request timeout: Cloud Run's default is 300s, which was silently capping BOTH roles' long-lived
+# connections -- the agentd WebSocket on "link" (agentd only reconnects proactively at 55 min, see
+# packages/agentd/src/link.ts's RECONNECT_AFTER_MS) and the browser's SSE stream on "web"
+# (GET /api/sessions/:id/stream, packages/api/src/routes/sessions.ts) were both getting cut every
+# 5 minutes (`link closed` code 1006, docs/reports/cloud-fixes.md). This was previously set to 20m
+# only on the one-off bootstrap deploy above, never on the real deploy below, so every real
+# deployment silently reverted to the 300s default. Both roles now get an explicit --timeout here:
+# "link" needs to comfortably exceed agentd's 55-minute proactive reconnect, so 3600s (1h). "web"
+# would be fine at 300s for plain REST calls, but the SSE stream is a long-held connection on this
+# same role -- EventSource auto-reconnects on a server-side cut, but a cut every 5 minutes still
+# means periodic reconnect churn and a brief gap in live updates, so "web" gets the same 3600s
+# rather than a "sane REST value" that would keep clipping the stream.
+DEPLOY_TIMEOUT="${DEPLOY_TIMEOUT:-3600}"
+echo "== Deploying ${SERVICE} (OUTFITTER_ROLE=${ROLE}, OUTFITTER_ORIGIN=${ORIGIN}, timeout=${DEPLOY_TIMEOUT}s) =="
 gcloud run deploy "${SERVICE}" \
   --project="${PROJECT}" \
   --region="${REGION}" \
@@ -200,6 +213,7 @@ gcloud run deploy "${SERVICE}" \
   --min-instances=0 \
   --cpu=0.5 \
   --memory=512Mi \
+  --timeout="${DEPLOY_TIMEOUT}" \
   --service-account="${API_SA_EMAIL}" \
   "${AUTH_FLAGS[@]}" \
   --set-secrets="${SECRETS}" \

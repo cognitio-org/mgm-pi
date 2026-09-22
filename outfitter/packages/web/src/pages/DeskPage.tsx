@@ -9,6 +9,8 @@ import { ProviderStrip } from "../components/ProviderStrip.tsx";
 import { SoundToggle } from "../components/SoundToggle.tsx";
 import { ThemeToggle } from "../components/ThemeToggle.tsx";
 import { TourOffer } from "../components/tour/TourOffer.tsx";
+import { openEasterEgg } from "../easter/openEasterEgg.tsx";
+import { createDoubleActivate } from "../easter/triggers.ts";
 import {
   ControlPanelIcon,
   DiskBoxIcon,
@@ -46,6 +48,20 @@ export function DeskPage() {
   const [focused, setFocused] = useState(0);
   const [now, setNow] = useState(() => new Date());
   const gridRef = useRef<HTMLDivElement | null>(null);
+
+  // The Trash keeps its single-click (open the stopped floppies); a double-click or double-tap
+  // opens KERNAL GAMES instead. The single action waits out the double-click window when opened by
+  // pointer; keyboard activation (Enter/Space, click with detail 0) runs it immediately.
+  const trashActivate = useMemo(
+    () =>
+      createDoubleActivate({
+        windowMs: 320,
+        onSingle: () => navigate("/fleet?runState=stopped"),
+        onDouble: () => void openEasterEgg(),
+      }),
+    [navigate],
+  );
+  useEffect(() => () => trashActivate.cancel(), [trashActivate]);
 
   useEffect(() => {
     Promise.all([api.sessions(), api.providers(), api.gurus(), api.me()])
@@ -174,6 +190,21 @@ export function DeskPage() {
               <li role="menuitem">
                 <button type="button" onClick={() => setShowManual(true)}>
                   About Outfitter
+                </button>
+              </li>
+              <li role="menuitem">
+                {/* The C64 reset command, as a GEOS menu item: opens KERNAL GAMES (lazy-loaded). */}
+                <button
+                  type="button"
+                  className="desk-menu-sys"
+                  title="KERNAL GAMES"
+                  aria-label="SYS 64738: open KERNAL GAMES"
+                  onClick={() => {
+                    setOpenMenu(null);
+                    void openEasterEgg();
+                  }}
+                >
+                  SYS 64738
                 </button>
               </li>
             </ul>
@@ -324,7 +355,7 @@ export function DeskPage() {
             className="desk-desktop-icon desk-desktop-icon-trash"
             onClick={(e) => {
               e.stopPropagation();
-              navigate("/fleet?runState=stopped");
+              trashActivate.activate(e.detail === 0);
             }}
             title={`${vocabulary.trash.one} — ${stoppedCount} stopped ${vocabulary.session.many.toLowerCase()}`}
           >

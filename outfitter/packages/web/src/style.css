@@ -8,5 +8,6 @@
 @import "./styles/desk.css";
 @import "./styles/errors.css";
 @import "./styles/mermaid.css";
+@import "./styles/markdown-editor.css";
 @import "./styles/tour.css";
 @import "./styles/mobile.css";

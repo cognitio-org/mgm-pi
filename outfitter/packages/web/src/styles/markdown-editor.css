@@ -1,0 +1,269 @@
+/* Composer Markdown editor (components/MarkdownEditor.tsx, docs/reports/markdown-composer.md).
+ *
+ * A transparent-text <textarea> over an aria-hidden <pre> mirror. The two must lay text out
+ * identically, so every property that affects glyph position is set on both, in one rule, here:
+ * font, size, line-height, letter/word spacing, tab size, padding, border width, wrapping. The
+ * mirror's spans only change colour, weight 500 (IBM Plex Mono ships it, same advance as 400) and
+ * decoration -- never anything that moves a glyph. */
+
+.md-editor-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.md-editor {
+  position: relative;
+  display: flex;
+}
+
+.md-editor[hidden] {
+  display: none;
+}
+
+.md-editor .md-editor-input,
+.md-editor-mirror {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.88rem;
+  font-weight: 400;
+  font-style: normal;
+  font-variant-ligatures: none;
+  font-kerning: none;
+  line-height: 1.45;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-indent: 0;
+  text-transform: none;
+  tab-size: 4;
+  padding: 0.42rem 0.65rem;
+  border: 1px solid transparent;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  text-align: start;
+  direction: ltr;
+}
+
+.md-editor .md-editor-input {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  width: 100%;
+  min-height: 3rem;
+  max-height: min(22rem, 45vh);
+  resize: none;
+  overflow-y: auto;
+  border-color: var(--border);
+  background: transparent;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  caret-color: var(--text);
+}
+
+.md-editor .md-editor-input::placeholder {
+  color: var(--text-dim);
+  -webkit-text-fill-color: var(--text-dim);
+  opacity: 1;
+}
+
+.md-editor .md-editor-input::selection {
+  background: color-mix(in srgb, var(--selection-bg) 45%, transparent);
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+.md-editor .md-editor-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.md-editor-mirror {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--text);
+  background: var(--bg-elevated);
+}
+
+/* One block per source line (MarkdownEditor's patchMirror). Each line lays out on its own, so a
+ * keystroke relayouts one line, not the whole draft. A line keeps its trailing "\n", which a block
+ * ends on without adding a line; an empty line is just that "\n", which still takes one line. */
+.md-editor-mirror > span {
+  display: block;
+}
+
+.md-editor.is-disabled .md-editor-mirror {
+  opacity: 0.6;
+}
+
+/* Tokens (lib/md-highlight.ts). */
+.mdh-mk,
+.mdh-hr,
+.mdh-tdelim,
+.mdh-url,
+.mdh-fence {
+  color: var(--md-mark);
+}
+.mdh-h {
+  color: var(--md-heading);
+  font-weight: 500;
+}
+.mdh-b {
+  color: var(--text);
+  font-weight: 500;
+}
+.mdh-i {
+  font-style: italic;
+}
+.mdh-s {
+  text-decoration: line-through;
+}
+.mdh-code,
+.mdh-pre {
+  color: var(--md-code);
+  background: var(--md-code-bg);
+}
+.mdh-lang {
+  color: var(--title-label-text);
+  background: var(--accent);
+}
+.mdh-link {
+  color: var(--md-link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.mdh-q {
+  color: var(--md-quote);
+}
+.mdh-li {
+  color: var(--md-list);
+  font-weight: 500;
+}
+.mdh-pipe {
+  color: var(--md-table);
+  font-weight: 500;
+}
+
+/* ---- toolbar ---- */
+
+.md-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.md-tool {
+  padding: 0.15rem 0.5rem;
+  min-width: 2rem;
+  font-size: 0.75rem;
+  box-shadow: 2px 2px 0 0 var(--border);
+}
+
+.md-tool-bold span {
+  font-weight: 700;
+}
+.md-tool-italic span {
+  font-style: italic;
+  font-family: Georgia, serif;
+}
+.md-tool-code span,
+.md-tool-codeBlock span {
+  font-family: var(--font-mono);
+}
+
+.md-tool-preview {
+  margin-left: auto;
+}
+
+.md-tool-preview[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+
+.md-tool:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* "Aa" only exists on phones (below). */
+.md-tools-toggle {
+  display: none;
+}
+
+.md-tools-toggle[aria-expanded="true"] {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+/* ---- preview ---- */
+
+.md-preview {
+  min-height: 3rem;
+  max-height: min(22rem, 45vh);
+  overflow-y: auto;
+  padding: 0.42rem 0.65rem;
+  border: 1px dashed var(--border);
+  background: var(--bg-elevated);
+}
+
+.md-preview .md {
+  white-space: normal;
+  font-family: var(--font-body);
+  line-height: 1.5;
+}
+
+.md-preview-empty {
+  margin: 0;
+  color: var(--text-dim);
+}
+
+.md-preview:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ---- phones ---- */
+
+@media (max-width: 700px) {
+  /* iOS zooms on focus below 16px; both layers change together or the caret drifts. */
+  .md-editor .md-editor-input,
+  .md-editor-mirror {
+    font-size: 16px;
+  }
+
+  .md-editor .md-editor-input,
+  .md-preview {
+    max-height: 38svh;
+  }
+
+  .md-tools-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    min-width: 44px;
+    padding: 0 0.5rem;
+    font-family: var(--font-body);
+    font-size: 0.85rem;
+    box-shadow: none;
+  }
+
+  .md-toolbar {
+    display: none;
+  }
+
+  .md-toolbar.open {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .md-tool {
+    flex: none;
+    box-shadow: none;
+  }
+}

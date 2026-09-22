@@ -28,6 +28,19 @@ export function envIsSet(name: string): boolean {
   return process.env[`KERNAL_${name}`] !== undefined || process.env[`MGM_${name}`] !== undefined;
 }
 
+/**
+ * True inside an Outfitter cloud sandbox. The one explicit signal is `KERNAL_SANDBOX=1`, set by
+ * outfitter/image/Dockerfile and nowhere else, so a laptop install never sees it. Extensions use it
+ * to skip start-up work that only makes sense on a laptop (probing a local model server, re-checking
+ * a key the control plane minted seconds ago, blocking start-up on footer data) so the first prompt
+ * is answered sooner; see outfitter/docs/reports/startup-trim.md. Nothing is inferred from the rest
+ * of the environment.
+ */
+export function inSandbox(): boolean {
+  const v = env("SANDBOX")?.trim().toLowerCase();
+  return v !== undefined && !["", "0", "false", "no", "off"].includes(v);
+}
+
 /** Test-only: clear the once-per-process warning memory between test cases. */
 export function _resetEnvFallbackWarnings(): void {
   warnedOnce.clear();

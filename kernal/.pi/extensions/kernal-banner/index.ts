@@ -21,9 +21,12 @@ export function detectIdentity(): Identity {
 }
 
 export default function (pi: ExtensionAPI) {
-  const identity = detectIdentity();
+  // Resolved on the first TUI session_start rather than at load: detecting it runs `git config`
+  // twice, and headless modes (RPC under Outfitter's agentd, print mode) never draw a banner.
+  let detected: Identity | undefined;
   pi.on("session_start", async (_e, ctx) => {
     if (ctx.mode !== "tui") return;
+    const identity = (detected ??= detectIdentity());
     ctx.ui.setTitle(`${identity.letters} · kernal`);
     const total = env("NO_ANIMATION") ? 0 : animationFrames(identity);
     let frame = total ? 0 : Infinity;

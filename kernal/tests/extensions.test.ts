@@ -330,6 +330,69 @@ describe("connect extension", async () => {
     } finally { restore(); }
   });
 
+  test("in a cloud sandbox (KERNAL_SANDBOX=1) start-up skips the local server and the key check, keeps model discovery, and does not wait on /key/info", async () => {
+    delete process.env.KERNAL_NO_DISCOVERY;
+    const calls: string[] = [];
+    let releaseKeyInfo!: () => void;
+    const keyInfoGate = new Promise<void>((r) => { releaseKeyInfo = r; });
+    const restore = stubFetch({
+      "localhost:1234": () => ({ data: [] }),
+      "/model/info": () => ({ data: [{ model_name: "claude-sonnet-5", model_info: { mode: "chat", max_input_tokens: 200000 } }] }),
+      "/v1/models": () => ({ data: [{ id: "claude-sonnet-5" }] }),
+      "/key/info": () => ({ info: { spend: 1, max_budget: 10 } }),
+    });
+    const stubbed = globalThis.fetch;
+    globalThis.fetch = (async (url: any, init?: any) => {
+      calls.push(String(url));
+      if (String(url).includes("/key/info")) await keyInfoGate;
+      return stubbed(url, init);
+    }) as any;
+    try {
+      process.env.KERNAL_SANDBOX = "1";
+      const p2 = makePi(); await mod.default(p2 as any);
+      assert.deepEqual(p2.providers.map((p) => p.name), ["litellm"], "no lmstudio backend in a sandbox");
+      assert.deepEqual(p2.providers[0].config.models.map((m: any) => m.id), ["claude-sonnet-5"], "models still discovered from /model/info");
+      assert.ok(!calls.some((u) => u.includes("localhost:1234")), `no local server probe: ${calls.join(", ")}`);
+      assert.ok(!calls.some((u) => u.endsWith("/v1/models")), `no separate key check: ${calls.join(", ")}`);
+      const ctx = makeCtx({ hasUI: true, model: { provider: "litellm", id: "claude-sonnet-5", contextWindow: 1, maxTokens: 1 } });
+      await p2.emit("session_start", {}, ctx);   // would hang here if it awaited the gated /key/info
+      assert.equal(ctx.statuses.get("connect"), "⇄ litellm/claude-sonnet-5");
+      releaseKeyInfo();
+      await new Promise((r) => setTimeout(r, 10));
+      assert.match(ctx.statuses.get("budget") ?? "", /key \$1\.00\/\$10\.00/, "footer filled in once /key/info answers");
+
+      // A guru that opts in to a tunnelled laptop model still gets the lmstudio backend.
+      process.env.LMSTUDIO_BASE_URL = "https://lmstudio.example.test/v1";
+      const p3 = makePi(); await mod.default(p3 as any);
+      assert.ok(p3.providers.some((p) => p.name === "lmstudio"), "explicit LMSTUDIO_BASE_URL keeps lmstudio");
+    } finally {
+      releaseKeyInfo(); globalThis.fetch = stubbed; restore();
+      delete process.env.KERNAL_SANDBOX; delete process.env.LMSTUDIO_BASE_URL; process.env.KERNAL_NO_DISCOVERY = "1";
+    }
+  });
+
+  test("on a laptop (no KERNAL_SANDBOX) start-up still checks the key, probes the local server and seeds the footer before returning", async () => {
+    delete process.env.KERNAL_NO_DISCOVERY; delete process.env.KERNAL_SANDBOX;
+    const calls: string[] = [];
+    const restore = stubFetch({
+      "/api/v0/models": () => ({ data: [] }),
+      "/model/info": () => ({ data: [{ model_name: "claude-sonnet-5", model_info: { mode: "chat" } }] }),
+      "/v1/models": () => ({ data: [{ id: "claude-sonnet-5" }] }),
+      "/key/info": () => ({ info: { spend: 1, max_budget: 10 } }),
+    });
+    const stubbed = globalThis.fetch;
+    globalThis.fetch = (async (url: any, init?: any) => { calls.push(String(url)); return stubbed(url, init); }) as any;
+    try {
+      const p2 = makePi(); await mod.default(p2 as any);
+      assert.deepEqual(p2.providers.map((p) => p.name).sort(), ["litellm", "lmstudio"]);
+      assert.ok(calls.some((u) => u.includes("localhost:1234")), "local server probed");
+      assert.ok(calls.some((u) => u.endsWith("litellm.augment-code.support/v1/models")), "key checked");
+      const ctx = makeCtx({ hasUI: true, model: { provider: "litellm", id: "claude-sonnet-5", contextWindow: 1, maxTokens: 1 } });
+      await p2.emit("session_start", {}, ctx);
+      assert.match(ctx.statuses.get("budget") ?? "", /key \$1\.00\/\$10\.00/, "footer seeded before session_start returns");
+    } finally { globalThis.fetch = stubbed; restore(); process.env.KERNAL_NO_DISCOVERY = "1"; }
+  });
+
   test("non-UI /setup points at the env file", async () => {
     const ctx = ctxWith({ hasUI: false });
     await pi.commands.get("setup")!.handler("", ctx);
@@ -367,5 +430,14 @@ describe("kernal banner extension", async () => {
     const ctx = makeCtx({}); await pi.emit("session_start", {}, ctx);
     assert.ok(ctx.header({ requestRender() {} }, { fg: (_c: string, t: string) => t }).render(120).join("").includes("█"));
     delete process.env.KERNAL_NO_ANIMATION;
+  });
+  test("headless sessions (RPC, as under Outfitter's agentd) set no title or header", async () => {
+    const pi = makePi(); mod.default(pi as any);
+    const titles: string[] = [];
+    const base = makeCtx({});
+    const ctx = { ...base, mode: "rpc", ui: { ...base.ui, setTitle: (t: string) => titles.push(t) } } as any;
+    await pi.emit("session_start", {}, ctx);
+    assert.deepEqual(titles, []);
+    assert.equal(base.header, undefined);
   });
 });

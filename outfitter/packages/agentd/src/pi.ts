@@ -68,17 +68,97 @@ export interface PiProcessOptions {
   onLog?: (line: string) => void;
 }
 
-/** agentd's own process env, minus the GIT_CONFIG_* variables git.ts's authHeaderEnv sets for a
- * single git child invocation. Those never actually land in agentd's own process.env (git.ts passes
- * them as a per-call overlay to execFile, not via process.env mutation), but this strips them
- * defensively anyway so pi's environment can never inherit the GitHub auth header even if that
- * invariant were ever broken -- see finding #1's "pi's environment never inherits GIT_CONFIG_* or
- * the token" requirement. */
-function baseEnvForPi(): Record<string, string> {
+// ---------- pi's inherited environment (allowlist) ----------
+
+/** Exact env var names pi may inherit from agentd's own process env. Locale/terminal/home basics
+ * plus PATH -- everything the model's shell tool needs to behave like a normal shell. HOME/USER/
+ * LOGNAME are normally overwritten by run.ts's `userEnv` (the `agent` user's own home) and are
+ * listed here only so a non-root agentd outside the sandbox image still gets sane values. */
+export const PI_ENV_ALLOWLIST: ReadonlySet<string> = new Set([
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "TERM",
+  "TZ",
+  "LANG",
+  "LANGUAGE",
+  // Passed through when set, as before -- but note the sandbox image deliberately does not set it:
+  // pi has to fall back to /tmp to find the jiti extension cache the image prewarms there
+  // (image/prewarm-extensions.sh, docs/reports/startup-trim.md).
+  "TMPDIR",
+]);
+
+/** Prefixes pi may inherit wholesale:
+ *  - `LC_*`   locale categories (LC_ALL, LC_CTYPE, ...).
+ *  - `PI_*`   pi's own configuration, set by the image (PI_CODING_AGENT_DIR, PI_OFFLINE,
+ *             PI_SKIP_VERSION_CHECK, PI_BIN, PI_RUN_AS_USER).
+ *  - `KERNAL_*` / `MGM_*` kernal's extensions (KERNAL_NO_CODEBASE_INDEX in the image;
+ *             KERNAL_SUBAGENTS_PKG/MGM_SUBAGENTS_PKG on a laptop -- MGM_* is kernal's permanent
+ *             legacy alias, see kernal/.pi/extensions).
+ *  - `LITELLM_*` the LiteLLM base URL and key. run.ts already hands pi the *per-run* key and base
+ *             URL explicitly (secretEnv), and the sandbox image/job sets no LITELLM_* of its own,
+ *             so this changes nothing in the cloud; it keeps local dev working, where agentd is
+ *             spawned with the developer's own env (provider-local/src/in-process.ts) and
+ *             outfitter-spend.ts falls back to LITELLM_API_KEY.
+ * Nothing here is a credential the sandbox is meant to withhold from the model. */
+export const PI_ENV_ALLOWED_PREFIXES: readonly string[] = ["LC_", "PI_", "KERNAL_", "MGM_", "LITELLM_"];
+
+/** Never handed to pi, whatever else says otherwise (an allowed prefix, or the passthrough escape
+ * hatch below). RUN_TOKEN + RUN_ID + OUTFITTER_API together are a complete takeover kit: with them
+ * the model can mint its own agent identity token from the GCE metadata server, open its own
+ * `wss://<api>/agent/ws?run=<id>` and receive the run.spec -- i.e. `secrets.githubToken` and
+ * `secrets.litellmKey` -- and displace agentd on the run's down-channel. OUTFITTER_DEV_TOKEN is the
+ * same for a dev deployment. NODE_OPTIONS would let anything that can set agentd's env inject code
+ * into the pi process (already denylisted for guru.env, see guru.ts). */
+export const PI_ENV_NEVER: ReadonlySet<string> = new Set([
+  "RUN_TOKEN",
+  "RUN_ID",
+  "OUTFITTER_API",
+  "OUTFITTER_DEV_TOKEN",
+  "NODE_OPTIONS",
+]);
+
+/** Operator escape hatch: a comma/whitespace-separated list of extra env var names to let through
+ * (e.g. `HTTPS_PROXY,NO_PROXY,NODE_EXTRA_CA_CERTS` behind a corporate proxy). Read from agentd's
+ * own env, which only the deployment sets -- never from the run.spec, and never from anything the
+ * model controls. PI_ENV_NEVER still applies. */
+export const PI_ENV_PASSTHROUGH_VAR = "OUTFITTER_PI_ENV_PASSTHROUGH";
+
+function parsePassthrough(raw: string | undefined): Set<string> {
+  if (!raw) return new Set();
+  return new Set(raw.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean));
+}
+
+/**
+ * The environment pi inherits from agentd, built from an explicit **allowlist** rather than by
+ * copying agentd's own env minus a few known-bad keys.
+ *
+ * pi runs as the unprivileged `agent` user precisely so the model -- which can run arbitrary shell
+ * commands through pi -- cannot reach agentd's credentials (finding #1,
+ * docs/reports/security-review-pr1.md). That split is worthless if agentd hands those credentials
+ * to pi in its environment, which is exactly what the previous GIT_CONFIG_*-only denylist did:
+ * RUN_TOKEN, RUN_ID and OUTFITTER_API (the Cloud Run Job's own per-execution env, see
+ * providers/cloudrun.ts) were all copied straight through, and `printenv` inside the sandbox was
+ * enough to take the run over and read its GitHub token. A denylist also fails open by
+ * construction: every new env var agentd gains is exposed to the model until someone remembers to
+ * add it. An allowlist fails closed.
+ *
+ * Everything pi genuinely needs *per run* -- the LiteLLM key and base URL, the session id, the
+ * spend file -- is passed explicitly by run.ts as the `env` overlay on top of this, not inherited.
+ */
+export function baseEnvForPi(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const passthrough = parsePassthrough(source[PI_ENV_PASSTHROUGH_VAR]);
   const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
+  for (const [key, value] of Object.entries(source)) {
     if (value === undefined) continue;
-    if (key === "GIT_CONFIG_COUNT" || /^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(key)) continue;
+    if (PI_ENV_NEVER.has(key)) continue;
+    const allowed =
+      PI_ENV_ALLOWLIST.has(key) ||
+      passthrough.has(key) ||
+      PI_ENV_ALLOWED_PREFIXES.some((prefix) => key.startsWith(prefix));
+    if (!allowed) continue;
     env[key] = value;
   }
   return env;

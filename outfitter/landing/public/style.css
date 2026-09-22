@@ -1,0 +1,420 @@
+/* kernal.one landing page. Same design system as the Outfitter web UI
+ * (outfitter/docs/design/README.md): dark = a Commodore 64 screen inside its lighter border,
+ * light = early Mac / GEOS paper. Square corners, hard offset shadows, no blur or gradients,
+ * phosphor green only for "live". Fonts are self-hosted (OFL-1.1, from @fontsource). */
+
+@font-face { font-family: "Silkscreen"; font-weight: 400; font-display: swap; src: url("/fonts/silkscreen-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Silkscreen"; font-weight: 700; font-display: swap; src: url("/fonts/silkscreen-latin-700-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-weight: 400; font-display: swap; src: url("/fonts/ibm-plex-sans-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-weight: 600; font-display: swap; src: url("/fonts/ibm-plex-sans-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Mono"; font-weight: 400; font-display: swap; src: url("/fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Mono"; font-weight: 500; font-display: swap; src: url("/fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2"); }
+
+:root {
+  color-scheme: dark;
+  --font-display: "Silkscreen", "Chicago", monospace;
+  --font-body: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --shadow-offset: 3px;
+
+  /* dark: C64 phosphor terminal (default) */
+  --frame: #8b7cd8;          /* the C64's lighter border around the screen */
+  --frame-alt: #5cff8a;      /* loading-stripe partner colour */
+  --bg: #302870;
+  --bg-elevated: #3a3184;
+  --bg-inset: #251f5c;
+  --border: #8b7cd8;
+  --text: #e4e0fb;
+  --text-dim: #a89fe0;
+  --link: #b3a8f0;
+  --accent: #7869c4;
+  --title-label-text: #ffffff;
+  --ok: #5cff8a;
+  --ok-contrast: #06210f;
+  --scanline-opacity: 0.05;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --frame: #e7ddc6;
+    --frame-alt: #2a4b8d;
+    --bg: #f1ebdd;
+    --bg-elevated: #fffdf8;
+    --bg-inset: #e7ddc6;
+    --border: #1a1712;
+    --text: #171512;
+    --text-dim: #5b5548;
+    --link: #2a4b8d;
+    --accent: #2a4b8d;
+    --title-label-text: #fffdf8;
+    --ok: #2e6b3e;
+    --ok-contrast: #eaf6ec;
+    --scanline-opacity: 0;
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --frame: #e7ddc6;
+  --frame-alt: #2a4b8d;
+  --bg: #f1ebdd;
+  --bg-elevated: #fffdf8;
+  --bg-inset: #e7ddc6;
+  --border: #1a1712;
+  --text: #171512;
+  --text-dim: #5b5548;
+  --link: #2a4b8d;
+  --accent: #2a4b8d;
+  --title-label-text: #fffdf8;
+  --ok: #2e6b3e;
+  --ok-contrast: #eaf6ec;
+  --scanline-opacity: 0;
+}
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; }
+
+body {
+  min-height: 100vh;
+  background: var(--frame);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Faint CRT scanlines, dark mode only. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+  background: repeating-linear-gradient(to bottom,
+    rgba(0, 0, 0, var(--scanline-opacity)) 0, rgba(0, 0, 0, var(--scanline-opacity)) 1px,
+    transparent 1px, transparent 3px);
+}
+
+::selection { background: var(--accent); color: var(--title-label-text); }
+
+a { color: var(--link); }
+
+:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
+
+/* ---------- the C64 border and screen ---------- */
+
+.border {
+  min-height: 100vh;
+  padding: clamp(16px, 4vw, 48px);
+  background: var(--frame);
+}
+
+/* Light mode: the GEOS desktop's 1-bit dither around the paper window. */
+:root[data-theme="light"] .border {
+  background-image: radial-gradient(#1a1712 1px, transparent 1px), radial-gradient(#1a1712 1px, transparent 1px);
+  background-size: 4px 4px;
+  background-position: 0 0, 2px 2px;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .border {
+    background-image: radial-gradient(#1a1712 1px, transparent 1px), radial-gradient(#1a1712 1px, transparent 1px);
+    background-size: 4px 4px;
+    background-position: 0 0, 2px 2px;
+  }
+}
+
+/* The cassette-loading flicker: horizontal bars stepping down the border, the way a C64's border
+ * strobes while a tape loads. Plays while LOAD is reading from the drive. */
+.border.loading {
+  background-image: repeating-linear-gradient(to bottom,
+    var(--frame) 0, var(--frame) 10px, var(--frame-alt) 10px, var(--frame-alt) 16px,
+    var(--accent) 16px, var(--accent) 22px);
+  background-size: 100% 44px;
+  animation: tape 0.5s steps(4) infinite;
+}
+
+@keyframes tape { to { background-position: 0 44px; } }
+
+.screen {
+  max-width: 980px;
+  color: var(--screen-text, var(--text));
+  margin: 0 auto;
+  padding: clamp(16px, 4vw, 40px);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-offset) var(--shadow-offset) 0 0 var(--border);
+}
+
+/* ---------- top bar ---------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.mark { color: var(--ok); flex: none; }
+.mark .cut { fill: var(--bg); }
+.mark .cursor-px { fill: var(--ok); animation: blink 1s steps(2, start) infinite; }
+
+.wordmark {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  letter-spacing: 0.12em;
+}
+
+.theme-toggle {
+  width: 2.25rem;
+  height: 2.25rem;
+  font-size: 1.1rem;
+  line-height: 1;
+  color: var(--text);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  box-shadow: 2px 2px 0 0 var(--border);
+  cursor: pointer;
+}
+.toggles { display: flex; gap: 0.6rem; }
+.theme-toggle[aria-pressed="true"] { background: var(--ok); color: var(--ok-contrast); }
+.theme-toggle:active { transform: translate(2px, 2px); box-shadow: none; }
+
+/* ---------- boot screen ---------- */
+
+.boot {
+  margin: 2rem 0 2.5rem;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: clamp(0.8rem, 2.6vw, 1.1rem);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--screen-text, var(--text));
+  container-type: inline-size;
+}
+.boot p { margin: 0; overflow-wrap: anywhere; }
+.boot-banner, .boot-mem { text-align: center; }
+.boot-mem { margin-bottom: 1.4em !important; }
+
+/* The command line. A real <input> sits invisibly over the line (so mobile keyboards, paste and
+ * screen readers all work); what you see is its echo plus the block cursor, C64 style. */
+/* The BASIC screen is 40 columns, like the C64's: the text shrinks on narrow screens so a row
+ * (0.64em per character with the letter-spacing) still fits, and PRINT output and the one-line
+ * maze wrap where the machine wraps them. Tighter leading lets the maze's diagonals join up. */
+.term-out, .term-line { font-size: min(1em, 3.8cqi); line-height: 1.3; }
+.term-out p { margin: 0; white-space: pre-wrap; }
+.term-prompt { white-space: pre-wrap; }
+/* Reverse video (CHR$(18)), e.g. the disk name in LOAD "$" listings. */
+.rvs { background: var(--screen-text, var(--text)); color: var(--bg); }
+.term-line {
+  position: relative;
+  min-height: 1.6em;
+  cursor: text;
+}
+.term-echo { white-space: pre-wrap; overflow-wrap: anywhere; }
+.term-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  font-size: 16px; /* keeps iOS from zooming on focus */
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+}
+.term-line:not(.focused) .cursor { opacity: 0.45; animation: none; }
+.term-line.busy .cursor { visibility: hidden; }
+.term-stop {
+  margin-top: 0.8em;
+  padding: 0.2em 0.6em;
+  font: inherit;
+  font-size: 0.85em;
+  color: var(--text);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  box-shadow: 2px 2px 0 0 var(--border);
+  cursor: pointer;
+}
+.term-stop[hidden] { display: none; }
+.term-stop:active { transform: translate(2px, 2px); box-shadow: none; }
+.term-hint {
+  margin-top: 1.2em !important;
+  font-family: var(--font-body);
+  font-weight: 400;
+  font-size: 0.88rem;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-dim);
+}
+kbd {
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+  padding: 0 0.3em;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.cursor {
+  display: inline-block;
+  width: 0.62em;
+  height: 1.05em;
+  margin-left: 0.1em;
+  vertical-align: text-bottom;
+  background: var(--ok);
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink { 50% { opacity: 0; } }
+
+/* After POKE 53281 picks a screen colour the theme's text can't be read on, app.js sets
+ * --screen-text (black or white) and this class; the dimmed and link-coloured text on the screen
+ * follows it. Panels keep their own background and the theme's text. */
+.poked-ink .brand, .poked-ink .tagline, .poked-ink .lede, .poked-ink .term-hint,
+.poked-ink .foot, .poked-ink .foot a { color: var(--screen-text); }
+.poked-ink kbd { color: var(--text); }   /* on its own --bg-inset chip */
+
+/* ---------- hero ---------- */
+
+h1, h2 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  line-height: 1.3;
+}
+
+h1 {
+  margin: 0 0 1rem;
+  font-size: clamp(1.6rem, 5.2vw, 2.9rem);
+}
+
+.tagline {
+  max-width: 44rem;
+  margin: 0 0 1rem;
+  font-family: var(--font-mono);
+  font-size: 1.05rem;
+  color: var(--link);
+}
+
+.lede {
+  max-width: 44rem;
+  margin: 0 0 1.75rem;
+  font-size: 1.08rem;
+  color: var(--text);
+}
+
+
+/* ---------- panels ---------- */
+
+.panels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 1.5rem;
+  margin: 3rem 0 2.5rem;
+}
+
+.panel {
+  color: var(--text);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-offset) var(--shadow-offset) 0 0 var(--border);
+}
+
+/* Striped window title bar with a solid label interrupting it (early Mac / GEOS). */
+.panel-title {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 0.3rem 0.5rem;
+  min-height: 1.9rem;
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+  background: repeating-linear-gradient(to bottom,
+    var(--accent) 0, var(--accent) 1px, var(--bg-inset) 1px, var(--bg-inset) 3px);
+}
+.panel-label {
+  padding: 0.15rem 0.45rem;
+  background: var(--accent);
+  color: var(--title-label-text);
+}
+
+.panel-body { padding: 1rem 1.1rem 1.2rem; }
+.panel-body p { margin: 0 0 0.9rem; }
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  padding: 0.05em 0.3em;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+}
+
+/* A C64 disk directory listing: block count on the left, description on the right. */
+.dir { list-style: none; margin: 0; padding: 0; }
+.dir li {
+  display: grid;
+  grid-template-columns: 7.5rem 1fr;
+  gap: 0.75rem;
+  padding: 0.45rem 0;
+  border-top: 1px dashed var(--border);
+}
+.blocks {
+  font-family: var(--font-display);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  padding-top: 0.2rem;
+  color: var(--text-dim);
+}
+
+@media (max-width: 420px) {
+  .dir li { grid-template-columns: 1fr; gap: 0.1rem; }
+}
+
+/* ---------- footer ---------- */
+
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.foot .ok { color: var(--ok); }
+.foot a { color: var(--text-dim); }
+
+/* ---------- motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  body::before { display: none; }
+  .cursor, .mark .cursor-px { animation: none; }
+  .border.loading { animation: none; }
+}

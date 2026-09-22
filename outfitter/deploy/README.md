@@ -176,6 +176,29 @@ IAP OAuth Admin API that `gcloud iap oauth-brands/oauth-clients` wrapped was shu
 Everyone who gets through IAP is a regular user. Per EPIC.md's session-visibility decision, they can
 see and steer every session. Operator rights still come only from `OUTFITTER_OPERATORS`.
 
+## kernal.one
+
+`kernal.one` (registered at Squarespace, DNS in Cloud DNS zone `kernal-one`, project
+`cognitio-flow`) fronts two things through Cloud Run domain mappings in `outfitter-509211`:
+
+| Host | Cloud Run service | What |
+|---|---|---|
+| `kernal.one` | `kernal-web` | landing page (`outfitter/landing/`), public |
+| `www.kernal.one` | `kernal-web` | 301 to `https://kernal.one` (nginx.conf) |
+| `app.kernal.one` | `outfitter-api` | the Outfitter web UI, behind IAP as before |
+
+`./landing.sh` builds and deploys the landing page; `./landing.sh --map-domains` also creates any
+missing mappings and prints the DNS records they need. The records in the `kernal-one` zone:
+`kernal.one` A `216.239.32.21 216.239.34.21 216.239.36.21 216.239.38.21` and AAAA
+`2001:4860:4802:{32,34,36,38}::15`; `www` and `app` CNAME `ghs.googlehosted.com.`. Google
+provisions the certificates once DNS resolves (15 min to 24 h).
+
+`app.kernal.one` needs nothing from `outfitter-api`'s own config: IAP's audience is the service
+path, not the hostname, and `OUTFITTER_ORIGIN` only matters as the agent-token audience on the link
+role. IAP's OAuth redirect stays on `iap.googleapis.com`, so the OAuth client needs no new
+redirect URI. The landing page's CSP pins the hash of its inline theme script
+(`landing/security-headers.conf`); recompute it if that script changes.
+
 ## Rollback
 
 - **`outfitter-api`** and **`outfitter-link`** (both Cloud Run *services*, so each keeps prior

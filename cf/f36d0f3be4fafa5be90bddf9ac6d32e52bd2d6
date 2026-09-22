@@ -1,0 +1,60 @@
+outfitter/packages/web/src/components/Composer.tsx
+  s_2209f22f830d7f::t_00d13293f32268 53
+  s_2209f22f830d7f::t_6b382995fc00af 2
+  s_2209f22f830d7f::t_72cb0525b3c224 3
+  s_2209f22f830d7f::t_d2c6d0d6e1a93c 52
+  s_2209f22f830d7f::t_9f94cf89e9176e 22
+  s_2209f22f830d7f::t_fe6f5d3ae8a685 35-36
+outfitter/packages/web/src/components/NewSessionDialog.tsx
+  s_2209f22f830d7f::t_b8b9d6a14edaf7 34-44
+  s_2209f22f830d7f::t_cb4f78a08023a3 106
+  s_2209f22f830d7f::t_5956c459e1396e 3-4
+  s_2209f22f830d7f::t_301867cc17e9e2 55-59
+  s_2209f22f830d7f::t_f37bd6185212ee 102,105,110
+outfitter/packages/web/src/components/Working.tsx
+  s_2209f22f830d7f::t_1de77b6ba82adc 1-2,8-9,12-30,32-35
+  s_2209f22f830d7f::t_d99e61d6b4e43a 3-7,10-11,31
+outfitter/packages/web/src/pages/FleetPage.tsx
+  s_2209f22f830d7f::t_eb45482f80555d 7,83
+  s_2209f22f830d7f::t_83b87c489b6d04 106-115
+  s_2209f22f830d7f::t_98353c86c375e8 92,128
+  s_2209f22f830d7f::t_e3299ab1cbbc56 75-76,85-90
+outfitter/packages/web/src/components/UiRequestPanel.tsx
+  s_2209f22f830d7f::t_4e3ecabab77504 2-3,42
+  s_2209f22f830d7f::t_6f6470dd3a76cc 54,69,72,91
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_2209f22f830d7f::t_baea1bfa2ddbe8 11-12,15-19,28
+  s_2209f22f830d7f::t_717ab558ee4f50 61-68,71-73
+  s_2209f22f830d7f::t_ce6f83c3cccc30 135-136,152-159,163
+  s_2209f22f830d7f::t_178d85db80a108 160-162
+  s_2209f22f830d7f::t_0d35aa45d430ab 138-139,141-145
+outfitter/packages/web/src/components/SoundToggle.tsx
+  s_2209f22f830d7f::t_1de1e5f225e535 1-29
+outfitter/packages/web/test/floppy-sound.test.ts
+  s_2209f22f830d7f::t_eb17907af5459e 1-72
+outfitter/packages/web/src/pages/ProvidersPage.tsx
+  s_2209f22f830d7f::t_eb45482f80555d 2,7
+  s_2209f22f830d7f::t_98353c86c375e8 13,38
+outfitter/packages/web/src/lib/floppy-sound.ts
+  s_2209f22f830d7f::t_67da35b501a38f 1-231
+outfitter/packages/web/src/pages/TokensPage.tsx
+  s_2209f22f830d7f::t_98353c86c375e8 132,161
+  s_2209f22f830d7f::t_eb45482f80555d 3-4,52,123,128
+  s_2209f22f830d7f::t_dddd09fb30e37a 84-86,90-91,104,107,111,122,148,153
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "cff36d0f3be4fafa5be90bddf9ac6d32e52bd2d6",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

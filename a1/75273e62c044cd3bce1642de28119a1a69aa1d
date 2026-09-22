@@ -1,0 +1,35 @@
+kernal/tests/install.test.ts
+  s_25c805ebe232f3::t_fd922409199dbc 178,190-191,193-206,209-210
+.github/dependabot.yml
+  s_25c805ebe232f3::t_fd922409199dbc 2-4,6,8-14,16-21
+kernal/scripts/package.sh
+  s_25c805ebe232f3::t_d55abc532e2dcf 72-73,75-76,78-95
+kernal/bin/kernal
+  s_25c805ebe232f3::t_d55abc532e2dcf 35,37,60-63,66-69
+kernal/README.md
+  s_25c805ebe232f3::t_08556c9128ed5f 141-147,150-151,153-154
+kernal/.pi/extensions/kernal-update/index.ts
+  s_25c805ebe232f3::t_d55abc532e2dcf 92-93,95-96
+kernal/tests/update.test.ts
+  s_25c805ebe232f3::t_e684d1f98adb49 87-88,90-92,94-100
+kernal/.pi/npm/.gitignore
+  s_25c805ebe232f3::t_fe7ebe90ef08f8 5
+kernal/.pi/npm/.npmrc
+  s_25c805ebe232f3::t_f9ba2366ffb61e 1-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "a175273e62c044cd3bce1642de28119a1a69aa1d",
+  "prompts": {},
+  "sessions": {
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

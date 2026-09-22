@@ -92,7 +92,7 @@ scripts/package.sh 0.2.0 darwin-arm64                               # the same b
 
 # install (user)
 # while the repo is private, download through a logged-in gh (the curl form needs a public repo):
-gh release download --repo mgmonteleone/mgm-pi --pattern install.sh --dir /tmp --clobber && bash /tmp/install.sh
+gh release download --repo cognitio-org/mgm-pi --pattern install.sh --dir /tmp --clobber && bash /tmp/install.sh
 cp ~/.kernal/current/.env.example ~/.kernal/current/.env   # add keys; kept across upgrades
 kernal
 ```
@@ -472,7 +472,7 @@ so kernal adds `/report [description]` (extension `kernal-report`). It collects 
 (kernal and pi versions, OS, model, packages and extensions, the last provider error, recorded
 crashes), asks whether to include a transcript tail (last 40 messages, tool output clipped), redacts
 API keys and secret-looking tokens, writes a local copy under `.pi/bug-reports/`, and files a
-GitHub issue in `mgmonteleone/mgm-pi` assigned to Matthew via the `gh` CLI (collaborators only).
+GitHub issue in `cognitio-org/mgm-pi` assigned to Matthew via the `gh` CLI (collaborators only).
 After a failed model turn the agent points at `/report` once. `KERNAL_REPORT_REPO` /
 `KERNAL_REPORT_ASSIGNEE` override the target; if `gh` is not logged in the report stays local and the
 notice says where it is.
@@ -637,7 +637,7 @@ and one real compaction fold on the default summarizer. It uses the cheapest cap
 headers; a run costs well under $0.01. It needs `LITELLM_AGENT_KEY` (and `KERNAL_LIVE=1`); in GitHub
 it reads the `LITELLM_CI_KEY` repository secret, runs as a gate in the release workflow and on
 demand from *Actions → kernal live tests*, and skips itself when the secret is absent. Set the secret
-with `gh secret set LITELLM_CI_KEY --repo mgmonteleone/mgm-pi`, ideally with a dedicated router key
+with `gh secret set LITELLM_CI_KEY --repo cognitio-org/mgm-pi`, ideally with a dedicated router key
 on a small budget.
 
 `tests/*.test.ts` cover the pure libraries; `tests/extensions.test.ts` drives the real entry points

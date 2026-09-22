@@ -28,7 +28,7 @@ set -euo pipefail
 
 # shellcheck source=env.sh
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
-GITHUB_REPO="${GITHUB_REPO:-mgmonteleone/mgm-pi}"
+GITHUB_REPO="${GITHUB_REPO:-cognitio-org/mgm-pi}"
 WORKFLOW="${GITHUB_REPO}/.github/workflows/outfitter-deploy.yml"
 # Numeric ids too, so the trust doesn't follow the name if the repo is renamed or re-registered.
 REPO_ID="$(gh api "repos/${GITHUB_REPO}" --jq .id)"

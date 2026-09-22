@@ -59,7 +59,7 @@ describe("report lib", () => {
     assert.ok(issueBody(undefined, meta(), "y".repeat(80_000)).length <= MAX_BODY_CHARS, "fits GitHub's limit");
   });
   test("issueUrlFrom picks the URL out of gh's output", () => {
-    assert.equal(issueUrlFrom("Creating issue in mgmonteleone/mgm-pi\n\nhttps://github.com/mgmonteleone/mgm-pi/issues/7\n"), "https://github.com/mgmonteleone/mgm-pi/issues/7");
+    assert.equal(issueUrlFrom("Creating issue in cognitio-org/mgm-pi\n\nhttps://github.com/cognitio-org/mgm-pi/issues/7\n"), "https://github.com/cognitio-org/mgm-pi/issues/7");
     assert.equal(issueUrlFrom("nothing"), undefined);
   });
 });
@@ -85,7 +85,7 @@ describe("report extension", async () => {
   test("/report gathers the environment, redacts secrets, files the issue and keeps a local copy", async () => {
     const dir = agentDir(); const sent: { title: string; body: string }[] = [];
     const pi = makePi();
-    mod.default(pi as any, { deliver: async (title, bodyFile) => { sent.push({ title, body: readFileSync(bodyFile, "utf8") }); return "https://github.com/mgmonteleone/mgm-pi/issues/9"; }, now: () => new Date("2026-09-20T12:00:00Z") });
+    mod.default(pi as any, { deliver: async (title, bodyFile) => { sent.push({ title, body: readFileSync(bodyFile, "utf8") }); return "https://github.com/cognitio-org/mgm-pi/issues/9"; }, now: () => new Date("2026-09-20T12:00:00Z") });
     const ctx = ctxFor(); ctx.answers.push("Voice stopped working", "Yes, include the transcript");
     await pi.commands.get("report")!.handler("", ctx);
     assert.equal(sent.length, 1);
@@ -93,8 +93,8 @@ describe("report extension", async () => {
     const b = sent[0].body;
     for (const s of ["| kernal | 0.1.5 |", `| pi | ${PI_VERSION} |`, "| model | litellm/gpt-5.4-nano |", "| packages | pi-web-access, npm:pi-memory |", "| extensions | connect, kernal-report |", "boom", "Missing Authentication header", "<details><summary>Transcript", "[user] tell me a poem"]) assert.ok(b.includes(s), s);
     assert.ok(!b.includes("sk-secretsecretsecret"), "secret from the transcript redacted");
-    assert.match(ctx.notices.at(-1)!.msg, /Report sent to Matthew: https:\/\/github\.com\/mgmonteleone\/mgm-pi\/issues\/9/);
-    assert.equal(pi.entries.at(-1)!.customType, "kernal.report"); assert.equal(pi.entries.at(-1)!.data.url, "https://github.com/mgmonteleone/mgm-pi/issues/9");
+    assert.match(ctx.notices.at(-1)!.msg, /Report sent to Matthew: https:\/\/github\.com\/cognitio-org\/mgm-pi\/issues\/9/);
+    assert.equal(pi.entries.at(-1)!.customType, "kernal.report"); assert.equal(pi.entries.at(-1)!.data.url, "https://github.com/cognitio-org/mgm-pi/issues/9");
     const local = readFileSync(ctx.notices.at(-1)!.msg.split("Local copy: ")[1].trim(), "utf8");
     assert.ok(local.startsWith("# [kernal 0.1.5] Voice stopped working (Matej)")); assert.ok(existsSync(join(dir, "bug-reports")));
     assert.equal(ctx.statuses.get("report"), undefined);
@@ -102,7 +102,7 @@ describe("report extension", async () => {
 
   test("/report with an inline description skips the editor; 'No' leaves the transcript out; cancel writes nothing", async () => {
     agentDir(); const sent: string[] = []; const pi = makePi();
-    mod.default(pi as any, { deliver: async (_t, f) => { sent.push(readFileSync(f, "utf8")); return "https://github.com/mgmonteleone/mgm-pi/issues/10"; } });
+    mod.default(pi as any, { deliver: async (_t, f) => { sent.push(readFileSync(f, "utf8")); return "https://github.com/cognitio-org/mgm-pi/issues/10"; } });
     const ctx = ctxFor(); ctx.answers.push("No");
     await pi.commands.get("report")!.handler("model keeps timing out", ctx);
     assert.ok(sent[0].includes("model keeps timing out") && sent[0].includes("_Transcript not included._") && !sent[0].includes("<details>"));

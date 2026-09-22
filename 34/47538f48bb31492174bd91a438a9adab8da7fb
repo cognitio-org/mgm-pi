@@ -1,0 +1,44 @@
+outfitter/packages/agentd/src/pi.ts
+  s_a437fa5c3fe299::t_54bdf969eba448 71-149,151,153-158
+outfitter/image/Dockerfile
+  s_a437fa5c3fe299::t_fb0070fbf0566e 200-213
+outfitter/packages/agentd/test/pi.test.ts
+  s_a437fa5c3fe299::t_bcfb2188fe693c 6,217-239,241-282,284-317,319-324,326-339,341-343
+  s_a437fa5c3fe299::t_ff0de14ff223e3 240,283,318,325,340
+outfitter/packages/api/test/agent-socket.ts
+  s_a437fa5c3fe299::t_4ef220e0337b41 42-44,73
+outfitter/docs/protocol.md
+  s_a437fa5c3fe299::t_7f13ab82cca81e 50,57-87
+  s_a437fa5c3fe299::t_b8ed172fd54e79 88
+outfitter/packages/agentd/src/main.ts
+  s_a437fa5c3fe299::t_2494dc73528489 55-64
+outfitter/packages/api/src/agentlink.ts
+  s_a437fa5c3fe299::t_976e60876e0644 590-592
+  s_a437fa5c3fe299::t_4589b3bb5945d8 131-134
+  s_a437fa5c3fe299::t_fddb6b536cc05b 370-406
+  s_a437fa5c3fe299::t_a910c49dfbc2db 507-517
+  s_a437fa5c3fe299::t_99e686076f58eb 407-422
+outfitter/packages/api/src/config.ts
+  s_a437fa5c3fe299::t_6454565300db17 106-112,133-134,216,223-225,229,234
+outfitter/docs/reports/security-review-pr41.md
+  s_a437fa5c3fe299::t_6489ef7d56416e 1-148
+outfitter/packages/api/test/agentlink.test.ts
+  s_a437fa5c3fe299::t_cc660f91cfecd6 10-19
+  s_a437fa5c3fe299::t_a19f922363ab79 723-808
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "3447538f48bb31492174bd91a438a9adab8da7fb",
+  "prompts": {},
+  "sessions": {
+    "s_a437fa5c3fe299": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "caa2a1a5-d70a-4605-a09d-4c18bbbf3b98",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

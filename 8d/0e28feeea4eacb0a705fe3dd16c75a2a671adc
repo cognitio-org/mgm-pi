@@ -1,0 +1,53 @@
+outfitter/packages/web/src/style.css
+  s_2209f22f830d7f::t_a01c288ca0706b 11
+outfitter/packages/web/src/styles/theme.css
+  s_2209f22f830d7f::t_71b5ff61a1087d 166-173
+  s_2209f22f830d7f::t_6ee21e3e5a52cf 95-102
+  s_2209f22f830d7f::t_b2af8700882763 58-66,131-139
+outfitter/packages/web/src/components/MarkdownEditor.tsx
+  s_2209f22f830d7f::t_c83f8e3d2bc424 3
+  s_2209f22f830d7f::t_39a084d1cdaa0d 67-86
+  s_2209f22f830d7f::t_c4bf476d509a2a 41-48,53-54,56
+  s_2209f22f830d7f::t_511106ef72317f 93-94,108
+  s_2209f22f830d7f::t_21a47111e1d0d1 1-2,4-40,49-52,55,57-66,87-92,96-107,109,112-114,121-298
+  s_2209f22f830d7f::t_90591be0263acd 95
+  s_2209f22f830d7f::t_632a0d00e00cb2 110-111,115-120
+outfitter/packages/web/src/styles/markdown-editor.css
+  s_2209f22f830d7f::t_933b40275c7ca3 90-96
+  s_2209f22f830d7f::t_48cd9703a7982a 1-89,97-269
+outfitter/packages/web/test/markdown-editor.test.tsx
+  s_2209f22f830d7f::t_1c938221a30958 24-26
+  s_2209f22f830d7f::t_68122f3e90d617 57,61-62
+  s_2209f22f830d7f::t_955a23d4f0b46e 1-23,27-56,58-60,63-150,153-162
+  s_2209f22f830d7f::t_2e68b2d64f3d3e 151-152
+outfitter/packages/web/src/components/Composer.tsx
+  s_2209f22f830d7f::t_59ac79588d104a 1,3,6
+  s_2209f22f830d7f::t_031b1adfdea7d5 95-104
+  s_2209f22f830d7f::t_2cd95e057b20b7 47-49
+  s_2209f22f830d7f::t_a41c1da3920f19 72-80
+  s_d71e62cb6f304c::t_befae1a3653a70 70-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "8d0e28feeea4eacb0a705fe3dd16c75a2a671adc",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_d71e62cb6f304c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "598183a5-6865-48f8-80e7-37d24447f686",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

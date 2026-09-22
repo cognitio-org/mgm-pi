@@ -89,6 +89,11 @@ export default function (pi: ExtensionAPI, deps: Partial<Deps> = {}) {
         ctx.ui.notify(notice ?? (latest ? `kernal ${installed ?? "(source checkout)"} is up to date (latest release ${latest}).` : "Could not reach GitHub (is the gh CLI logged in?)."), notice ? "info" : latest ? "info" : "warning");
         return;
       }
+      if (args.trim() === "extensions" && parseVersion(installed)) {
+        // A release pins its packages to what its release gate tested; pi skips pinned packages.
+        ctx.ui.notify(`In an installed release the packages are pinned to the versions Kernal ${installed} was tested with, and they update with Kernal itself. Run /update to get the latest release.`, "info");
+        return;
+      }
       if (args.trim() === "extensions") {
         // Package updates are pi's own updater; in a bundle they last until the next bundle upgrade
         // (which restores the release's pinned versions), so say so.

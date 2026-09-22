@@ -31,6 +31,10 @@ if [[ -f "$ROOT/../.env" ]]; then set -a; source "$ROOT/../.env"; set +a; found_
 if [[ -f "$ROOT/.env" ]]; then set -a; source "$ROOT/.env"; set +a; found_env=1; fi
 [[ $found_env == 1 ]] || echo "kernal: no .env yet — run /setup inside the agent to configure your connections" >&2
 export PI_CODING_AGENT_DIR="$ROOT/.pi"
+# A release bundle pins pi's version: it changes only with Kernal itself (`kernal update`), so pi's own
+# "New version available. Run pi update" notice is wrong advice here. A source checkout keeps it, as a
+# signal to whoever maintains Kernal that there is a newer pi to adopt.
+[[ -f "$ROOT/VERSION" ]] && export PI_SKIP_VERSION_CHECK=1
 # pi-lsp (and its siblings) look for their own agent dir under $PI_AGENT_DIR, defaulting to
 # ~/.pi/agent, which kernal does not use. Point it at the bundle so .pi/agent/lsp.json is read as the
 # user-owned (auto-trusted) config: a project-local .pi/lsp.json needs a trust prompt and is
@@ -53,7 +57,16 @@ case "${1:-}" in
   update|--update)
     # Package/catalog updates are pi's job; only the bundle itself is ours.
     case "${2:-}" in
-      --extensions|--models|--extension|--force)
+      --extensions|--extension)
+        # In a bundle the packages are pinned to what the release was tested with, and pi's updater
+        # skips pinned packages, so this would silently do nothing. Say what actually updates them.
+        if [[ -f "$ROOT/VERSION" ]]; then
+          echo "kernal: in an installed release the packages are pinned to the versions it was tested with;"
+          echo "        they update with kernal itself. Run: kernal update"
+          exit 0
+        fi
+        shift; exec "$PI" update "$@" -a ;;
+      --models|--force)
         shift; exec "$PI" update "$@" -a ;;
       --all|--self)
         echo "kernal: use 'kernal update' for the agent bundle and 'kernal update --extensions' for the packages" >&2; exit 2 ;;

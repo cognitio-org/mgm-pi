@@ -138,6 +138,20 @@ ships them. pi's updater rewrites the lockfile from the installed tree, which dr
 needs (it no longer records pi's own dependency tree); `npm ci` for all four release targets still
 resolves, and `scripts/package.sh` smoke-tests the result.
 
+
+**Nothing in an installed release asks you to run pi's own updater.** A release pins pi and every
+extension package to the versions its release gate tested: pi's version comes from the bundle, and
+each package is listed as `npm:<name>@<exact version>`. pi skips pinned packages in its startup
+*Package Updates Available* notice and in `pi update --extensions`, and the launcher sets
+`PI_SKIP_VERSION_CHECK=1` in a bundle, so pi's *New version available, run pi update* notice goes too.
+Both were wrong advice there: `pi` is not the command you run, and the bundle would ignore it anyway.
+In an installed release, pi and the packages update with Kernal itself, through `/update` or
+`kernal update`; `kernal update --extensions` says so rather than silently doing nothing.
+
+A source checkout keeps both notices, because there they are a maintainer's signal that a newer pi or
+package is out. `kernal update --extensions` there updates `.pi/npm` and its lockfile, which the next
+release then ships pinned. Dependabot (`.github/dependabot.yml`) opens weekly pull requests for pi
+and for the packages, so new versions arrive through CI and the live gate rather than as a notice.
 ## Codebase search (`open-codebase-index`)
 
 Semantic and keyword retrieval over the repo you are in. It is all model-facing: the package

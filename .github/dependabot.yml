@@ -1,0 +1,21 @@
+# Kernal pins pi and its extension packages per release, so new versions must arrive as pull requests
+# that CI tests, not as notices telling users to run pi's own updater (which a bundle ignores).
+version: 2
+updates:
+  # pi itself: kernal/package.json pins the version whose compiled binary every bundle downloads
+  - package-ecosystem: npm
+    directory: /kernal
+    schedule: { interval: weekly }
+    allow:
+      - dependency-name: "@earendil-works/pi-coding-agent"
+    labels: [dependencies, pi]
+    commit-message: { prefix: "pi" }
+  # the extension packages every bundle ships, pinned from this lockfile
+  - package-ecosystem: npm
+    directory: /kernal/.pi/npm
+    schedule: { interval: weekly }
+    groups:
+      pi-packages:
+        patterns: ["*"]
+    labels: [dependencies, packages]
+    commit-message: { prefix: "packages" }

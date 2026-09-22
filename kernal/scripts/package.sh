@@ -69,6 +69,30 @@ while IFS= read -r f; do
 done < <(find "$STAGE/.pi/npm/node_modules" \( -name "*.node" -o -name "*.dylib" -o -name "*.so" \))
 for e in ${BUNDLE_EXCLUDE//,/ }; do rm -rf "$STAGE/.pi/npm/node_modules/$e"; done
 
+# 4b. Pin every package to the exact version installed from the lockfile, in both the settings this
+# bundle runs with and its pristine shipped copy. A bundle's packages are part of the release: they
+# are what the release gate tested, and they change only with Kernal itself. pi skips pinned packages in
+# its startup "Package Updates Available" check and in `pi update --extensions`, so a bundle stops
+# telling users to run a command that is wrong for it. The repo's own settings stay unpinned, so a
+# source checkout still reports new package versions to whoever maintains Kernal.
+node -e '
+  const fs = require("fs"), path = require("path");
+  const [nm, ...files] = process.argv.slice(1);
+  const nameOf = (spec) => { const at = spec.lastIndexOf("@"); return at > 0 ? spec.slice(0, at) : spec; };
+  for (const file of files) {
+    const s = JSON.parse(fs.readFileSync(file, "utf8"));
+    s.packages = (s.packages || []).map((p) => {
+      if (typeof p !== "string" || !p.startsWith("npm:")) return p;
+      const name = nameOf(p.slice(4));
+      const manifest = path.join(nm, name, "package.json");
+      if (!fs.existsSync(manifest)) return p;   // not installed here (excluded): leave it as configured
+      return `npm:${name}@${JSON.parse(fs.readFileSync(manifest, "utf8")).version}`;
+    });
+    fs.writeFileSync(file, JSON.stringify(s, null, 2) + "\n");
+  }
+' "$STAGE/.pi/npm/node_modules" "$STAGE/.pi/settings.json" "$STAGE/.pi/settings.shipped.json"
+echo "pinned: $(node -p "require('$STAGE/.pi/settings.json').packages.filter(p => /@\d/.test(p)).length") packages to their installed versions"
+
 # 4c. Packages pi cannot load inside its compiled binary are pre-bundled into one CommonJS file.
 bash "$ROOT/scripts/prebundle.sh" "$STAGE/.pi/npm/node_modules"
 echo "packages: $(du -sh "$STAGE/.pi/npm/node_modules" | cut -f1) (excluded: ${BUNDLE_EXCLUDE:-none})"

@@ -83,15 +83,26 @@ describe("update extension", async () => {
     delete process.env.KERNAL_NO_UPDATE_CHECK;
   });
 
-  test("/update extensions forwards to pi's package updater and asks for a restart", async () => {
+  test("in an installed release, /update extensions explains that packages update with Kernal, and runs nothing", async () => {
+    // A release pins its packages to what its release gate tested, and pi's updater skips pinned
+    // packages, so running it would silently do nothing.
     const calls: string[][] = [];
-    const { pi, ctx } = await startWith("v0.1.3", "0.1.3", { run: async (args: string[], onLine: (l: string) => void) => { calls.push(args); onLine("updating pi-subagents"); return { code: 0, tail: "pi-subagents 0.4.0 → 0.4.1" }; } });
+    const { pi, ctx } = await startWith("v0.1.3", "0.1.3", { run: async (args: string[]) => { calls.push(args); return { code: 0, tail: "" }; } });
+    await pi.commands.get("update")!.handler("extensions", ctx);
+    assert.deepEqual(calls, [], "nothing is run");
+    assert.match(ctx.notices.at(-1)!.msg, /pinned to the versions Kernal 0\.1\.3 was tested with/);
+    assert.match(ctx.notices.at(-1)!.msg, /Run \/update/);
+  });
+
+  test("in a source checkout, /update extensions forwards to pi's package updater and asks for a restart", async () => {
+    const calls: string[][] = [];
+    const run = async (args: string[], onLine: (l: string) => void) => { calls.push(args); onLine("updating pi-subagents"); return { code: 0, tail: "pi-subagents 0.4.0 → 0.4.1" }; };
+    const { pi, ctx } = await startWith("v0.1.3", null, { run });
     await pi.commands.get("update")!.handler("extensions", ctx);
     assert.deepEqual(calls, [["update", "--extensions"]]);
     assert.match(ctx.notices.at(-1)!.msg, /Packages updated\. Restart kernal to load them\./);
     assert.ok(ctx.notices.at(-1)!.msg.includes("pi-subagents 0.4.0 → 0.4.1"));
     assert.equal(ctx.statuses.get("update"), "⬆ restart kernal");
-    // works on a source checkout too (packages are not tied to the bundle version)
     const r2 = await startWith("v0.1.3", null, { run: async () => ({ code: 1, tail: "npm ERR!" }) });
     await r2.pi.commands.get("update")!.handler("extensions", r2.ctx);
     assert.equal(r2.ctx.notices.at(-1)!.type, "error");

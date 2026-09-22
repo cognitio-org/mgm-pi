@@ -187,3 +187,24 @@ describe("the mgm name", () => {
   });
 });
 
+describe("updates in a release bundle", () => {
+  const pack = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "package.sh"), "utf8");
+  const launcher = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "bin", "kernal"), "utf8");
+
+  test("packages are pinned to their installed versions, in both the live and the shipped settings", () => {
+    // pi skips pinned packages in its startup "Package Updates Available" notice and in
+    // `pi update --extensions`, so a bundle stops advising a command that does nothing for it.
+    assert.match(pack, /npm:\$\{name\}@\$\{JSON\.parse\(fs\.readFileSync\(manifest/);
+    assert.match(pack, /"\$STAGE\/\.pi\/settings\.json" "\$STAGE\/\.pi\/settings\.shipped\.json"/, "the pristine copy is pinned too, or the next upgrade would see a difference");
+    const pinAt = pack.indexOf("4b. Pin every package"), installAt = pack.indexOf("npm ci --legacy-peer-deps");
+    assert.ok(installAt > 0 && pinAt > installAt, "pinning reads what npm ci installed, so it must come after it");
+  });
+
+  test("a bundle skips pi's own version check; a source checkout keeps it", () => {
+    assert.match(launcher, /\[\[ -f "\$ROOT\/VERSION" \]\] && export PI_SKIP_VERSION_CHECK=1/);
+  });
+
+  test("kernal update --extensions says what updates packages in a bundle, instead of silently doing nothing", () => {
+    assert.match(launcher, /they update with kernal itself\. Run: kernal update/);
+  });
+});

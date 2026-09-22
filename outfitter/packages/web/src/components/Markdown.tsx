@@ -1,9 +1,17 @@
+import { isValidElement } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { MermaidDiagram } from "./MermaidDiagram.tsx";
+import { codeChildrenToSource, fenceLanguage, isMermaidFence } from "../lib/mermaid-fence.ts";
 
 // Transcript text is model and tool output: untrusted. react-markdown never renders raw HTML (it
 // shows it as text), and its default urlTransform drops javascript:/data: links, so nothing in a
 // message can run script or restyle the page. GFM adds tables, task lists and strikethrough.
+//
+// A ```mermaid fence is the one exception to "code fences render as code": `code` routes it to
+// MermaidDiagram instead, and `pre` skips its usual <pre class="md-pre"> wrapper for that one
+// case so the diagram gets its own box rather than looking like a code block that contains a
+// diagram. See MermaidDiagram.tsx for the render pipeline and its security notes.
 
 const components: Components = {
   a: ({ href, children }) => (
@@ -11,9 +19,17 @@ const components: Components = {
       {children}
     </a>
   ),
-  pre: ({ children }) => <pre className="md-pre">{children}</pre>,
+  // `children` here is the element for the `code` override below (not yet rendered), so check
+  // its language class rather than its component type.
+  pre: ({ children }) =>
+    isValidElement<{ className?: string }>(children) && isMermaidFence(children.props.className) ? (
+      <>{children}</>
+    ) : (
+      <pre className="md-pre">{children}</pre>
+    ),
   code: ({ className, children }) => {
-    const lang = /language-([\w+#.-]+)/.exec(className ?? "")?.[1];
+    if (isMermaidFence(className)) return <MermaidDiagram source={codeChildrenToSource(children)} />;
+    const lang = fenceLanguage(className);
     // Fenced blocks carry a language-* class; inline code does not (react-markdown 10 no longer
     // passes an `inline` flag). A fence without a language is still inside <pre>, which styles it.
     return lang ? (

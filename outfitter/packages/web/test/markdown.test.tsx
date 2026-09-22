@@ -19,6 +19,12 @@ describe("Markdown", () => {
     expect(out).toContain('<pre class="md-pre"><code>plain');
   });
 
+  it("renders a mermaid fence as a diagram block, not wrapped in <pre class=\"md-pre\">", () => {
+    const out = html("```mermaid\nflowchart TD\nA-->B\n```");
+    expect(out).toContain('class="mermaid-block"');
+    expect(out).not.toContain("md-pre");
+  });
+
   it("renders headings, lists and GFM tables", () => {
     const out = html("## Title\n\n- a\n- b\n\n| k | v |\n|---|---|\n| 1 | 2 |");
     expect(out).toContain("<h2>Title</h2>");

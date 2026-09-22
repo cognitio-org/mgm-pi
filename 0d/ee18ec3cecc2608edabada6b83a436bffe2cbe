@@ -1,0 +1,36 @@
+outfitter/packages/web/src/pages/TokensPage.tsx
+  s_2209f22f830d7f::t_1f88dda3f7973f 84
+  s_2209f22f830d7f::t_bff431c9350355 9-13
+  s_2209f22f830d7f::t_8a4ef8e689c1c0 83
+outfitter/docs/design/README.md
+  s_2209f22f830d7f::t_062ed55fb9b753 202,204
+  s_2209f22f830d7f::t_e8821bf0020425 193
+outfitter/packages/web/src/pages/DeskPage.tsx
+  s_2209f22f830d7f::t_0af6fa60e60778 370-372
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_2209f22f830d7f::t_8568e2af4a706f 14
+  s_2209f22f830d7f::t_663cc17b9602bc 83
+  s_2209f22f830d7f::t_c34f7e1daaee63 169
+outfitter/packages/web/test/vocabulary.test.ts
+  s_2209f22f830d7f::t_727c80f54dd072 20-30
+outfitter/packages/web/src/lib/vocabulary.ts
+  s_2209f22f830d7f::t_84f8611a8ea728 27
+  s_2209f22f830d7f::t_9e9dd78df47902 33-37
+  s_2209f22f830d7f::t_a8ca862f171c11 62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "0dee18ec3cecc2608edabada6b83a436bffe2cbe",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

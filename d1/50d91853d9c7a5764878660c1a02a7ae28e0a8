@@ -1,0 +1,31 @@
+outfitter/packages/web/package.json
+  s_2209f22f830d7f::t_aa22d506317adc 20-22
+outfitter/packages/web/src/styles/pages.css
+  s_2209f22f830d7f::t_8c2a395b825b42 116-204
+  s_2209f22f830d7f::t_e88e215d532e2b 105-115
+outfitter/packages/web/src/components/EntryItem.tsx
+  s_2209f22f830d7f::t_8c2a395b825b42 88
+  s_2209f22f830d7f::t_ae6deb70e82347 2,37,44,51,75
+outfitter/packages/web/test/markdown.test.tsx
+  s_2209f22f830d7f::t_8c2a395b825b42 1-48
+outfitter/packages/web/src/components/Markdown.tsx
+  s_2209f22f830d7f::t_ae6deb70e82347 1-42
+outfitter/package-lock.json
+  s_2209f22f830d7f::t_58f1a5713ac993 1809-1817,1829-1861,1892-1897,1923-1928,2199-2208,2366-2375,2393-2432,2488-2497,2605-2617,2656-2668,2853-2874,3421-3460,3474-3483,3549-3554,3564-3597,3607-3628,3826-3835,3862-3871,3882-3885,3887-3891,3893-3895,3898-3919,3922-3925,3928-3934,3936-3938,3941-3945,3947-3951,3953-3968,3971-3972,3975-3987,3990-3994,3996-4000,4002-4790,4967-4991,5140-5149,5221-5247,5319-5384,5637-5646,5726-5739,5778-5795,5978-5997,6018-6104,6142-6169,6530-6539,6595-6597
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "d150d91853d9c7a5764878660c1a02a7ae28e0a8",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

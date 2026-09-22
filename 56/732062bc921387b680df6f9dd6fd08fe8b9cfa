@@ -1,0 +1,19 @@
+outfitter/packages/web/src/pages/DeskPage.tsx
+  s_2209f22f830d7f::t_efde8760679434 11,124,176,350-352,370-372,378,381-383
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "56732062bc921387b680df6f9dd6fd08fe8b9cfa",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

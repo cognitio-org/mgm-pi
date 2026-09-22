@@ -1,0 +1,27 @@
+outfitter/packages/web/src/components/SystemErrorDialog.tsx
+  s_2209f22f830d7f::t_cc5ea97cd7314b 2,25-53
+outfitter/packages/web/src/components/Composer.tsx
+  s_2209f22f830d7f::t_f0fc61b5883cab 18-20
+outfitter/packages/web/test/retro-errors.test.ts
+  s_2209f22f830d7f::t_cc5ea97cd7314b 7-9,98-128
+  s_2209f22f830d7f::t_a3fa9d51c5e8bd 15,18
+outfitter/packages/web/src/lib/retro-errors.ts
+  s_2209f22f830d7f::t_cc5ea97cd7314b 17,21-65
+  s_2209f22f830d7f::t_3231d54bcd3dc5 66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "d8079becde01c0d50c1c08bf0d009a766d641621",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

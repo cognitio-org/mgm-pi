@@ -1,0 +1,30 @@
+outfitter/deploy/baseline.sh
+  s_2209f22f830d7f::t_196a8d387c5f3f 160-161,164-165
+  s_2209f22f830d7f::t_76347c9431f5b3 80-117
+outfitter/EPIC.md
+  s_2209f22f830d7f::t_dd41c14e5785c1 401-403
+  s_2209f22f830d7f::t_44293b8122814a 125
+  s_2209f22f830d7f::t_4a9915c5cdc8ed 337-355
+  s_2209f22f830d7f::t_f084c810144cad 400
+outfitter/deploy/README.md
+  s_2209f22f830d7f::t_bc46930b8533b4 112-117
+  s_2209f22f830d7f::t_92f4f6d90f9769 77-82
+outfitter/deploy/service.sh
+  s_2209f22f830d7f::t_9f10410732ebb6 128-135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "75e2b3a70c2019332afb0e0c74498b56886bfcdb",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

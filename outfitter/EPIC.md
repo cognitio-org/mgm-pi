@@ -239,6 +239,14 @@ research on Sonnet; review on Opus).
   sessions -- E2.8's existing `set_model` RPC path is the natural place to wire that in later,
   left as a follow-up since it touches agentlink.ts's live-session logic rather than this story's
   files).
+  **Poll on read (2026-09-22).** The first deploy showed LiteLLM "down, health check HTTP 0" and the
+  laptop's model list unavailable, while both answered in under 0.5 s from a laptop. Cause: the
+  web role polled from a background timer, but Cloud Run's default request-based CPU allocation
+  (with scale-to-zero) throttles a container between requests, so a poll started at startup stalled
+  until its 3 s timeouts fired. There is no background poller now: `GET /api/providers` and the
+  stream's first snapshot re-poll when this instance's data is older than `PROVIDER_POLL_MS`, in
+  the request, single-flight. Always-allocated CPU would also fix it but costs money for no gain.
+  Failure details now name the cause (`timed out after 3000 ms`, `fetch failed`) instead of HTTP 0.
 - **E2.12 Image smoke in CI** (done, `.github/workflows/outfitter-ci.yml`): the repo's CI only ran
   on `mgm/**`, so no Outfitter PR had run its tests in CI at all, and image or deploy-env errors
   only surfaced when Cloud Run rejected a revision. The workflow now runs every suite and builds

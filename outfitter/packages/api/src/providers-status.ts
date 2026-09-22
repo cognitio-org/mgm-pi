@@ -52,6 +52,14 @@ interface JsonResponse {
   ok: boolean;
   status: number;
   json: unknown;
+  /** Set only when the request never produced a response (network error or timeout). */
+  error?: string;
+}
+
+/** A request that never got a response: say why, instead of reporting a meaningless HTTP 0. */
+function failedResponse(err: unknown, timeoutMs: number): JsonResponse {
+  const aborted = err instanceof Error && err.name === "AbortError";
+  return { ok: false, status: 0, json: undefined, error: aborted ? `timed out after ${timeoutMs} ms` : errMessage(err) };
 }
 
 /** GET with a bearer token, bounded by an AbortController timeout; never throws on a non-2xx or a
@@ -178,9 +186,10 @@ export async function probeLaptop(
       const res = await fetchJson(`https://${tunnelDomain}/api/v0/models`, headers, timeoutMs, fetchImpl);
       const models = res.ok ? parseLmStudioModels(res.json) : [];
       return [{ id: "laptop", kind: "laptop", name: "Laptop (LM Studio)", status: "up", checkedAt, meta: { models } }];
-    } catch {
+    } catch (err) {
       // Reachable per LaptopProbe but the extra model-list call failed; still "up", just no meta.
-      return [{ id: "laptop", kind: "laptop", name: "Laptop (LM Studio)", status: "up", checkedAt, detail: "model list unavailable" }];
+      const why = failedResponse(err, timeoutMs).error;
+      return [{ id: "laptop", kind: "laptop", name: "Laptop (LM Studio)", status: "up", checkedAt, detail: `model list unavailable: ${why}` }];
     }
   } catch (err) {
     return [{ id: "laptop", kind: "laptop", name: "Laptop (LM Studio)", status: "unknown", detail: errMessage(err), checkedAt: nowIso() }];
@@ -258,12 +267,12 @@ export async function probeLitellm(
 
   const root = baseUrl.replace(/\/v1\/?$/, "");
   const headers = { Authorization: `Bearer ${key}` };
-  const failed: JsonResponse = { ok: false, status: 0, json: undefined };
+  const failed = (err: unknown) => failedResponse(err, timeoutMs);
   try {
     const [health, modelInfo, keyInfo] = await Promise.all([
-      fetchJson(`${root}/health/liveliness`, headers, timeoutMs, fetchImpl).catch(() => failed),
-      fetchJson(`${root}/model/info`, headers, timeoutMs, fetchImpl).catch(() => failed),
-      fetchJson(`${root}/key/info`, headers, timeoutMs, fetchImpl).catch(() => failed),
+      fetchJson(`${root}/health/liveliness`, headers, timeoutMs, fetchImpl).catch(failed),
+      fetchJson(`${root}/model/info`, headers, timeoutMs, fetchImpl).catch(failed),
+      fetchJson(`${root}/key/info`, headers, timeoutMs, fetchImpl).catch(failed),
     ]);
 
     const status: ProviderHealth = health.ok ? "up" : "down";
@@ -276,7 +285,7 @@ export async function probeLitellm(
         kind: "litellm",
         name: "LiteLLM",
         status,
-        detail: health.ok ? undefined : `health check HTTP ${health.status}`,
+        detail: health.ok ? undefined : health.error ? `health check failed: ${health.error}` : `health check HTTP ${health.status}`,
         checkedAt,
         meta: { models: ids, modelCount: ids.length, key: key_ },
       },
@@ -342,6 +351,10 @@ export class ProviderStatusService {
   private readonly store: Store;
   private readonly sse: SseHub;
   private readonly probes: Array<() => Promise<ProviderRow[]>>;
+  /** When this instance last finished a poll (0 = never). Per instance on purpose: a new Cloud Run
+   * instance has no trustworthy in-memory view of how fresh the stored rows are, so it re-polls. */
+  private lastPollAt = 0;
+  private inFlight: Promise<ProviderRow[]> | undefined;
 
   constructor(deps: ProviderStatusServiceDeps) {
     this.store = deps.store;
@@ -367,6 +380,24 @@ export class ProviderStatusService {
    * and publishes to the "providers" SSE channel iff at least one row's status changed. Never
    * throws: Promise.allSettled is a backstop on top of every probe's own internal try/catch. */
   async pollOnce(): Promise<ProviderRow[]> {
+    // Single flight: concurrent readers (the page, its SSE snapshot, a manual refresh) share one poll.
+    this.inFlight ??= this.runPoll().finally(() => {
+      this.inFlight = undefined;
+    });
+    return this.inFlight;
+  }
+
+  /** Polls only when this instance hasn't finished a poll within `maxAgeMs`, then returns current
+   * rows. This is how the web role keeps provider status fresh: inside a request, where Cloud Run
+   * allocates CPU. A background timer does not work there -- with request-based CPU allocation and
+   * scale-to-zero, a poll started between requests stalls until its 3 s timeouts fire and every
+   * probe reports a false "down" (observed 2026-09-22 on outfitter-api-00007). */
+  async refreshIfStale(maxAgeMs: number): Promise<ProviderRow[]> {
+    if (Date.now() - this.lastPollAt < maxAgeMs) return this.getCurrent();
+    return this.pollOnce();
+  }
+
+  private async runPoll(): Promise<ProviderRow[]> {
     const nowMs = Date.now();
     const settled = await Promise.allSettled(this.probes.map((probe) => probe()));
     const rows = settled.flatMap((s) => (s.status === "fulfilled" ? s.value : []));
@@ -375,6 +406,7 @@ export class ProviderStatusService {
     if (changedFlags.some(Boolean)) {
       this.sse.publish(SSE_CHANNEL, { type: "status", data: { providers: current } });
     }
+    this.lastPollAt = Date.now();
     return current;
   }
 
@@ -395,15 +427,6 @@ export class ProviderStatusService {
     }
   }
 
-  /** Starts the 5-minute (PROVIDER_POLL_MS) poller; returns a stop function. Callers do an initial
-   * `pollOnce()` themselves first (see server.ts) so it doesn't block `listen()`. */
-  startPolling(intervalMs: number): () => void {
-    const timer = setInterval(() => {
-      this.pollOnce().catch((err) => console.error("[providers] poll failed", err));
-    }, intervalMs);
-    timer.unref?.();
-    return () => clearInterval(timer);
-  }
 
   private async reconcileRow(row: ProviderRow, nowMs: number): Promise<boolean> {
     const prior = await this.store.providers.findById(row.id);

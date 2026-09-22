@@ -105,20 +105,12 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
 
   const stopRunReconciler = runs.startReconciler();
 
-  // The provider status poller only makes sense where browsers actually read it from (role "web"
-  // or "all"); the "link" role still gets a providerStatus instance (routes/hooks.ts's webhook
-  // needs it to feed an immediate laptop transition) but never starts its own poll loop against
-  // the shared store. The first pass runs fire-and-forget so it never blocks fastify.listen().
-  let stopProviderPoller: (() => void) | undefined;
-  if (config.role !== "link") {
-    providerStatus.pollOnce().catch((err) => fastify.log.error({ err }, "initial provider poll failed"));
-    stopProviderPoller = providerStatus.startPolling(config.providerPollMs);
-  }
+  // No provider status poller: GET /api/providers refreshes on read when stale
+  // (ProviderStatusService.refreshIfStale), because Cloud Run only gives CPU during requests.
 
   const stopBackgroundTasks = () => {
     stopRunReconciler();
     stopDownQueuePoller?.();
-    stopProviderPoller?.();
   };
 
   return { fastify, runs, agentLink, sse, laptopProbe, providerStatus, stopBackgroundTasks };

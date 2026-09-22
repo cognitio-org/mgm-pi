@@ -16,13 +16,15 @@ const REFRESH_COOLDOWN_MS = 10_000;
 export async function registerProviderRoutes(app: FastifyInstance, ctx: RouteContext): Promise<void> {
   let lastRefreshAt = 0;
 
+  // Reads poll when this instance's view is older than PROVIDER_POLL_MS (see
+  // ProviderStatusService.refreshIfStale for why there is no background poller).
   app.get("/api/providers", async () => {
-    return { providers: await ctx.providerStatus.getCurrent() };
+    return { providers: await ctx.providerStatus.refreshIfStale(ctx.config.providerPollMs) };
   });
 
   app.get("/api/providers/stream", async (req, reply) => {
     ctx.sse.subscribe("providers", reply);
-    const providers = await ctx.providerStatus.getCurrent();
+    const providers = await ctx.providerStatus.refreshIfStale(ctx.config.providerPollMs);
     ctx.sse.publish("providers", { type: "status", data: { providers } });
   });
 

@@ -197,7 +197,7 @@ describe("probeLaptop", () => {
       throw new Error("network down");
     }));
     assert.equal(rows[0].status, "up");
-    assert.equal(rows[0].detail, "model list unavailable");
+    assert.equal(rows[0].detail, "model list unavailable: network down");
   });
 });
 
@@ -316,6 +316,56 @@ function buildService(store: MemoryStore, sse: SseHub, overrides: { cloudRunCoun
   });
 }
 
+describe("probe failure detail", () => {
+  test("a LiteLLM health check that times out says so instead of reporting HTTP 0", async () => {
+    const hang = fakeFetch((_url, init) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(Object.assign(new Error("This operation was aborted"), { name: "AbortError" })));
+    }));
+    const rows = await probeLitellm("https://litellm.example/v1", async () => "k", 20, hang);
+    assert.equal(rows[0].status, "down");
+    assert.equal(rows[0].detail, "health check failed: timed out after 20 ms");
+  });
+
+  test("a LiteLLM network error carries its message", async () => {
+    const rows = await probeLitellm("https://litellm.example/v1", async () => "k", 3000, fakeFetch(() => {
+      throw new TypeError("fetch failed");
+    }));
+    assert.equal(rows[0].detail, "health check failed: fetch failed");
+  });
+
+  test("a real non-2xx still reports its status code", async () => {
+    const rows = await probeLitellm("https://litellm.example/v1", async () => "k", 3000, fakeFetch(() => jsonResponse({}, 503)));
+    assert.equal(rows[0].detail, "health check HTTP 503");
+  });
+});
+
+describe("ProviderStatusService.refreshIfStale", () => {
+  test("polls on the first read, then serves stored rows until they are older than maxAge", async () => {
+    let calls = 0;
+    const service = buildService(new MemoryStore(), new SseHub(), { cloudRunCount: async () => { calls++; return 1; } });
+    const first = await service.refreshIfStale(60_000);
+    assert.equal(calls, 1);
+    assert.equal(first.find((r) => r.id === "cloudrun")?.status, "up");
+    await service.refreshIfStale(60_000);
+    assert.equal(calls, 1, "fresh data is served without re-probing");
+    await service.refreshIfStale(0);
+    assert.equal(calls, 2, "stale data triggers a poll");
+  });
+
+  test("concurrent reads share one in-flight poll", async () => {
+    let calls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const service = buildService(new MemoryStore(), new SseHub(), { cloudRunCount: async () => { calls++; await gate; return 1; } });
+    const a = service.refreshIfStale(60_000);
+    const b = service.refreshIfStale(60_000);
+    const c = service.pollOnce();
+    release();
+    await Promise.all([a, b, c]);
+    assert.equal(calls, 1);
+  });
+});
+
 describe("ProviderStatusService.pollOnce", () => {
   test("persists current rows and publishes on the providers SSE channel only when something transitioned", async () => {
     const store = new MemoryStore();
@@ -390,9 +440,8 @@ describe("ProviderStatusService.pollOnce", () => {
 // ---------- routes ----------
 
 describe("provider status routes", () => {
-  test("GET /api/providers returns the current rows", async () => {
+  test("GET /api/providers polls on the first read, with no background poller having run", async () => {
     const app = await buildTestApp();
-    await app.providerStatus.pollOnce();
 
     const res = await app.fastify.inject({ method: "GET", url: "/api/providers" });
     assert.equal(res.statusCode, 200);
@@ -439,6 +488,9 @@ describe("provider status routes", () => {
     // webhook) sets the "laptop" row directly from the event, without probing the tunnel itself,
     // so this doesn't need a real (or faked) tunnel domain configured.
     const app = await buildTestApp({ NGROK_WEBHOOK_SECRET: "s" });
+    // First read polls (nothing fresh yet); the webhook then updates the row, and the next read,
+    // still within PROVIDER_POLL_MS, serves the stored row instead of re-probing.
+    await app.fastify.inject({ method: "GET", url: "/api/providers" });
     const { createHmac } = await import("node:crypto");
     const body = JSON.stringify({ event_type_id: "agent_session_start.v0" });
     const signature = createHmac("sha256", "s").update(body, "utf8").digest("hex");

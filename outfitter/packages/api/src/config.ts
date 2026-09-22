@@ -75,8 +75,8 @@ export interface Config {
    * endpoints (/health, /model/info, /key/info). Falls back to SecretsBroker.defaultLitellmKey()
    * (the same default key runs get) when unset. */
   litellmAdminKey: string;
-  /** PROVIDER_POLL_MS: how often the E2.10 provider status service reconciles every probe. Default
-   * 5 minutes. Only the "web" role runs this poller (see server.ts). */
+  /** PROVIDER_POLL_MS: the maximum age of provider status before a read of GET /api/providers
+   * re-polls every probe (in the request; there is no background poller). Default 5 minutes. */
   providerPollMs: number;
   /** OUTFITTER_LINK_ORIGIN: the "link" role's own origin (e.g. https://outfitter-link-xyz.run.app),
    * surfaced on GET /api/me so the web UI's Tokens page can print the exact OUTFITTER_API value a

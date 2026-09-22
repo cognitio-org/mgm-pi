@@ -183,8 +183,8 @@ either the same person or an Outfitter bot identity (open question 6).
    workflow files and re-run checks.
 4. **Connect git**, after saying what it changes: `gh auth setup-git` writes a credential helper for
    `github.com` into the person's global `~/.gitconfig`, which can take over from the macOS
-   keychain helper. Setup shows that and asks first. Repositories with SSH remotes keep working as
-   they are; setup only helps HTTPS.
+   keychain helper. Setup shows that and asks first. HTTPS through the `gh` login is the one
+   supported way to reach GitHub; SSH remotes are out of scope.
 5. **Check**: account, scopes, and whether the current repository is reachable and writable.
 
 `GH_TOKEN` or `GITHUB_TOKEN` in the environment still wins, for people who prefer a token. Each
@@ -324,8 +324,8 @@ runs, so the image's `gh` package (about 38 MB) can go; `EPIC.md` is updated in 
 ### Scope and edge cases
 
 - **Platforms**: macOS (arm64, x64) and Linux (x64, arm64), as Kernal ships. Windows is out of scope.
-- **Hosts**: github.com only in v1. GitHub Enterprise needs `--hostname` in setup and a host-aware
-  auth header in agentd; both are small and left for later.
+- **Hosts and protocols**: github.com over HTTPS only. GitHub Enterprise and SSH remotes are out of
+  scope: setup, the tools and the cloud broker do not handle them.
 - **No remote, or a non-GitHub remote**: the `git` tool works fully; `github_*` report the missing
   capability.
 - **Forks**: PRs from a fork (push to the fork, open against upstream) and checking out a fork's PR

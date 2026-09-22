@@ -7,6 +7,8 @@
 import { lazy, Suspense, useState } from "react";
 import type { GameId } from "./shared/highscore.ts";
 import { GameMenu } from "./menu/GameMenu.tsx";
+// The games' styles ship in this lazy chunk too, not in the app's main CSS.
+import "../styles/easter.css";
 
 const FloppyRescueLazy = lazy(() => import("./rescue/FloppyRescue.tsx").then((m) => ({ default: m.FloppyRescue })));
 const DreadnoughtRunLazy = lazy(() =>

@@ -16,13 +16,21 @@ export type PasteChoice =
 // terminal, a plain <p> of text, a code editor's coloured <span>s) pastes as plain text.
 const STRUCTURE_RE = /<(h[1-6]|b|strong|em|i|a|ul|ol|li|table|pre|code|blockquote|hr|del|s)[\s>]/i;
 
+// Markers the spreadsheet apps write into their clipboard HTML: Google Sheets' origin tag, Excel's
+// Office namespace and ProgId, LibreOffice Calc's generator meta.
+const SPREADSHEET_HTML_RE = /google-sheets-html-origin|urn:schemas-microsoft-com:office:excel|ProgId"?\s+content="?Excel|name="?generator"?\s+content="?(LibreOffice|Microsoft Excel|Numbers)/i;
+const SPREADSHEET_HTML_MAX = 256 * 1024;
+
 export function choosePaste(plain: string, html: string, hasFiles: boolean, forcePlain = false): PasteChoice {
   if (forcePlain) return plain ? { kind: "native" } : { kind: "ignore" };
   if (!plain && !html) return hasFiles ? { kind: "ignore" } : { kind: "native" };
   // Spreadsheets (Sheets, Excel, Numbers) put tab-separated cells on text/plain. Their HTML is at
-  // best a <table> and at worst megabytes of Excel styling, so the TSV is the better source.
+  // best a <table> and at worst megabytes of Excel styling, so the TSV is the better source. A
+  // browser also writes a table selection from any web page as TSV, though, and there the HTML is
+  // the better source: it keeps links, code and bold in the cells. So the TSV only wins over HTML
+  // that came from a spreadsheet (or is too big to be worth parsing).
   const tsv = tsvToMarkdown(plain);
-  if (tsv && (!html || /<table[\s>]/i.test(html))) return { kind: "insert", text: tsv };
+  if (tsv && (!html || SPREADSHEET_HTML_RE.test(html) || html.length > SPREADSHEET_HTML_MAX)) return { kind: "insert", text: tsv };
   if (html && STRUCTURE_RE.test(html)) return { kind: "html", html, fallback: plain };
   return plain ? { kind: "native" } : { kind: "ignore" };
 }

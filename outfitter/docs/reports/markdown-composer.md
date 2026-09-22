@@ -102,7 +102,10 @@ instant but not undoable. The same path is used where `execCommand` doesn't exis
 
 1. Cmd/Ctrl+Shift+V was pressed: paste natively as plain text.
 2. The clipboard `text/plain` is **rectangular TSV** and there is no HTML, or the HTML is a
-   `<table>`: build a GFM table synchronously. Rectangular TSV means at least 2 rows and 2 columns,
+   spreadsheet's (Google Sheets' origin tag, Excel's Office namespace, a LibreOffice/Numbers
+   generator meta) or over 256 KB: build a GFM table synchronously. A table selected on a web page
+   is also TSV on `text/plain`, but its HTML goes to the converter (step 3) so links, code and bold
+   in the cells survive. Rectangular TSV means at least 2 rows and 2 columns,
    the same tab count on every row, and not every row starting with a tab, which rules out
    tab-indented code. Numeric columns are right-aligned. Excel's often-huge HTML is never parsed.
 3. The HTML contains structure (`h1–6 b strong em i a ul ol li table pre code blockquote hr del s`):

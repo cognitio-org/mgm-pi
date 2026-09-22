@@ -146,6 +146,22 @@ describe("choosePaste", () => {
     expect(c.kind).toBe("html");
   });
 
+  it("a rectangular table copied from a web page keeps its links and code: the HTML wins over the TSV", () => {
+    const html =
+      '<table><thead><tr><th>Name</th><th>Docs</th></tr></thead><tbody>' +
+      '<tr><td><code>foo()</code></td><td><a href="https://a.example/">docs</a></td></tr>' +
+      '<tr><td><strong>bar</strong></td><td><a href="https://b.example/">api</a></td></tr></tbody></table>';
+    const c = choosePaste("Name\tDocs\nfoo()\tdocs\nbar\tapi", html, false);
+    expect(c.kind).toBe("html");
+    const md = htmlToMarkdown((c as { html: string }).html);
+    expect(md).toContain("`foo()`");
+    expect(md).toContain("[docs](https://a.example/)");
+    expect(md).toContain("**bar**");
+    // Excel's HTML is recognised as a spreadsheet's, so its TSV still wins.
+    const excel = '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><body><table><tr><td>a</td><td>b</td></tr></table></body></html>';
+    expect(choosePaste("a\tb\nc\td", excel, false).kind).toBe("insert");
+  });
+
   it("tab-indented code and single tabbed lines are not tables", () => {
     expect(tsvToMarkdown("\tif (x) {\n\t\treturn 1;\n\t}")).toBeNull();
     expect(tsvToMarkdown("\ta\n\tb")).toBeNull();

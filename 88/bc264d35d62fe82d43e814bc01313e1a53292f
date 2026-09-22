@@ -1,0 +1,53 @@
+outfitter/packages/web/src/styles/easter.css
+  s_2209f22f830d7f::t_dee666df0c43bb 448-457
+  s_2209f22f830d7f::t_3c51ed9b8b8461 315-320
+  s_2209f22f830d7f::t_3fba97c7beea62 57-63,66-68,73-85,321
+  s_25c805ebe232f3::t_3f8ec7f3aaa62a 322
+outfitter/packages/web/src/easter/shared/fx.ts
+  s_2209f22f830d7f::t_c5074cc77235fc 1-162
+outfitter/packages/web/src/easter/shared/probe.ts
+  s_2209f22f830d7f::t_e0f0b34b239a23 1-32
+outfitter/packages/web/src/easter/shared/font.ts
+  s_2209f22f830d7f::t_3749bd3a93eced 1-90
+outfitter/packages/web/src/easter/shared/screen.ts
+  s_2209f22f830d7f::t_e2868b17c571a6 24-25,27
+  s_2209f22f830d7f::t_ebc5f2db7acb40 6
+  s_2209f22f830d7f::t_f9ac04ae20199c 1-5,7-23,26,28-50
+outfitter/packages/web/src/easter/shared/palette.ts
+  s_2209f22f830d7f::t_021cf03e28bffd 1-32
+outfitter/packages/web/src/easter/shared/pixelSprite.ts
+  s_2209f22f830d7f::t_2cd8d614cb443a 120-131
+  s_2209f22f830d7f::t_0850bddceb56d1 102-116,118-119,132-134
+  s_2209f22f830d7f::t_13404576083a58 2-9,14-25,33,36-93,96,98,101,117,135-143
+outfitter/packages/web/src/easter/shared/query.ts
+  s_2209f22f830d7f::t_cdd2a4c8167e4a 1-22
+outfitter/packages/web/src/easter/shared/particles.ts
+  s_2209f22f830d7f::t_e657f6a5c7c8bf 125
+  s_2209f22f830d7f::t_e1651c2d748d13 62-63,65-67
+  s_2209f22f830d7f::t_7b1b96e6706d75 15,17-21
+  s_2209f22f830d7f::t_310c43e210b7e8 24-26,31-33,38-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "88bc264d35d62fe82d43e814bc01313e1a53292f",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

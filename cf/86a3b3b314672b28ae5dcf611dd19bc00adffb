@@ -1,0 +1,28 @@
+outfitter/docs/reports/games.md
+  s_2209f22f830d7f::t_113b8c791fcd0c 219-222,225-226
+  s_2209f22f830d7f::t_6640cf87d19ce9 8,12-17
+  s_2209f22f830d7f::t_3fedea25124195 337,342-351
+  s_2209f22f830d7f::t_e2e1dd20194e32 51-53,57-60,63-67,69-71
+  s_2209f22f830d7f::t_77a968195b3b48 87-105
+  s_2209f22f830d7f::t_1deaadd695eebe 123-129,132-135
+  s_2209f22f830d7f::t_447a52ee21fc94 203
+  s_2209f22f830d7f::t_2d0761140d365d 275-281
+  s_2209f22f830d7f::t_bd8ef010a0a13b 310-316
+  s_2209f22f830d7f::t_059a1df47335c9 141-145,149-172
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "cf86a3b3b314672b28ae5dcf611dd19bc00adffb",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

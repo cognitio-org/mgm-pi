@@ -1,0 +1,24 @@
+outfitter/packages/web/src/styles/easter.css
+  s_2209f22f830d7f::t_b66c3b7d57a213 503-506
+  s_2209f22f830d7f::t_86d1fc4c99e2e7 344
+outfitter/packages/web/src/easter/rescue/render.ts
+  s_2209f22f830d7f::t_f362e631bde975 691
+outfitter/packages/web/src/easter/rescue/FloppyRescue.tsx
+  s_2209f22f830d7f::t_924eadf014872f 178-179
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "79cff09dcfb2417ab1138bd39858b6d9a6ed1c7b",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

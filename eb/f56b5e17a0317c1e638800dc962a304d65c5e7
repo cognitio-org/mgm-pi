@@ -1,0 +1,41 @@
+outfitter/packages/web/src/easter/dreadnought/DreadnoughtRun.tsx
+  s_2209f22f830d7f::t_87f958e27b270d 191
+  s_2209f22f830d7f::t_98b21387b346ef 6-10,25,30-33,56,59,71,80,82,134-136,140-147,149-150,152-159,164-169,182-183,205,225-232,236,238,249,292,295,300-301,310-311,314
+  s_2209f22f830d7f::t_89adba62634121 178
+  s_2209f22f830d7f::t_5a4a4907524bf4 170-171
+outfitter/packages/web/src/easter/dreadnought/render.ts
+  s_2209f22f830d7f::t_df64d789334a78 456-467
+  s_2209f22f830d7f::t_bd879c95b563d1 268-285,288-297,299-301,303-314,316-330,332-335,337
+  s_2209f22f830d7f::t_1ad2ef94f8a781 1-18,20-75,98-267,286-287,298,302,315,331,336,338-422,424-455,468-498,500-514,516-519,521-535,537-552,554,558-560
+  s_2209f22f830d7f::t_3570204154ffe0 520
+  s_2209f22f830d7f::t_bd4ef2f63670ab 515
+  s_2209f22f830d7f::t_2c81b20fb6e38e 553
+  s_2209f22f830d7f::t_e1cd97a723a415 499
+  s_2209f22f830d7f::t_70de4f1d15dac3 423
+  s_2209f22f830d7f::t_41e0b0c6decd27 76-97
+  s_2209f22f830d7f::t_5a98d6bc5af82d 536
+  s_2209f22f830d7f::t_d4d4ebd625e22b 19
+  s_2209f22f830d7f::t_6a2ea160dcd148 555-557
+outfitter/packages/web/src/easter/dreadnought/sprites.ts
+  s_2209f22f830d7f::t_ff61230cb91295 1-7,10,12,14-31,33-76,78-133,135-170,172-200,202-215,217,219-224,226,228-229
+outfitter/packages/web/src/easter/dreadnought/engine.ts
+  s_2209f22f830d7f::t_8b22f62bb3842a 366,368,373-376
+  s_2209f22f830d7f::t_29524d8954b683 364-365
+  s_2209f22f830d7f::t_70074881f19020 377-401
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "ebf56b5e17a0317c1e638800dc962a304d65c5e7",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

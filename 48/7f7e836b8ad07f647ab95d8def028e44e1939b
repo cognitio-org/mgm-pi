@@ -1,0 +1,77 @@
+outfitter/packages/web/src/easter/rescue/render.ts
+  s_2209f22f830d7f::t_0f50dcd01d137e 488
+  s_2209f22f830d7f::t_9acad13e1ac83a 546-549
+  s_2209f22f830d7f::t_5b8e8e91e1b22a 444
+  s_2209f22f830d7f::t_b418eae73f4bf4 197-198,208
+  s_2209f22f830d7f::t_b774026a638d3c 604
+  s_2209f22f830d7f::t_51232f4f38460c 66-67
+  s_2209f22f830d7f::t_6a0d5d3abf1482 430-431
+  s_2209f22f830d7f::t_77d8588940c178 732
+  s_2209f22f830d7f::t_2fc749cf11bb21 551-559
+  s_2209f22f830d7f::t_e022d444c36f70 677-678
+  s_2209f22f830d7f::t_e398b16759f050 18
+  s_2209f22f830d7f::t_ad22321d02a576 509-511
+  s_2209f22f830d7f::t_03cbe9570690c8 682
+  s_2209f22f830d7f::t_8c0f352e676ff0 126-129,134-141
+  s_2209f22f830d7f::t_d1ccfcd4c61da3 679-681
+  s_2209f22f830d7f::t_398d87673e73fa 1-17,19-65,68-125,130-133,142-196,199-207,209-228,236-374,378-429,433-443,445-487,489-508,512-545,550,560-565,568-597,601-603,605-617,623-660,662-676,683-690,696-707,714-715,721-731,733-745,750-752
+  s_2209f22f830d7f::t_fa68a5a7af5870 618-622
+  s_2209f22f830d7f::t_64b4660c4e87db 229-235
+  s_2209f22f830d7f::t_87b851a622e614 708-713,716-720
+  s_2209f22f830d7f::t_ad8429e41cc6b7 746-749
+  s_2209f22f830d7f::t_f93862146c6c89 691-695
+  s_2209f22f830d7f::t_c789f2738066d9 375-377
+  s_2209f22f830d7f::t_3b431b7248da5d 566-567
+  s_2209f22f830d7f::t_76f8b50f2a232e 432
+  s_2209f22f830d7f::t_69bbc8d62edf13 598-600
+  s_2209f22f830d7f::t_07e2f2285beb5a 661
+outfitter/packages/web/src/easter/rescue/sprites.ts
+  s_2209f22f830d7f::t_7173c61b82b4a8 1-8,11,13-28,30-42,44-48,50,52-56,58-63,65-74,77-108,110-142,144-148,150-169
+outfitter/packages/web/src/easter/rescue/FloppyRescue.tsx
+  s_2209f22f830d7f::t_91b47d87fc8e76 181
+  s_2209f22f830d7f::t_d87cd8b259bf91 80-82
+  s_2209f22f830d7f::t_9e4d839de99271 165,170,174-176
+  s_2209f22f830d7f::t_70a73594d037fc 72
+  s_2209f22f830d7f::t_9756616c0ef769 47
+  s_2209f22f830d7f::t_e103a28ab5127d 249
+  s_2209f22f830d7f::t_5b4eb34cb8c93c 112
+  s_2209f22f830d7f::t_4390ab869e8e50 198-202
+  s_2209f22f830d7f::t_db53c6159358fe 189-190
+  s_2209f22f830d7f::t_ab8464b0de13e8 223
+  s_2209f22f830d7f::t_a07040f9f8effa 7-9,11-14,41,46,48-49,75,79,95,103,105,109-111,113,161-164,167-168,171,178-179,182,184-186,191-193,204-211,268-275,279,281,283,297,338-345,348-349,364-367,375,423
+  s_2209f22f830d7f::t_e32c1829faf557 280
+  s_2209f22f830d7f::t_e5a0da2ad557f9 224-225
+outfitter/packages/web/src/easter/rescue/engine.ts
+  s_2209f22f830d7f::t_d456958b727d6b 376-378
+  s_2209f22f830d7f::t_eae815236c9d7b 545
+  s_2209f22f830d7f::t_7c8440b93d25ac 312-313,315-316
+  s_2209f22f830d7f::t_ae7d61204780c9 589-597
+  s_2209f22f830d7f::t_e3642f665cab92 585-588,598-601,603,607-612
+  s_2209f22f830d7f::t_dcabe36b057be7 577-582,584
+  s_2209f22f830d7f::t_57c23037c40d71 617-637
+  s_d71e62cb6f304c::t_1d8a6ab9a36895 638
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "487f7e836b8ad07f647ab95d8def028e44e1939b",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_d71e62cb6f304c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "598183a5-6865-48f8-80e7-37d24447f686",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

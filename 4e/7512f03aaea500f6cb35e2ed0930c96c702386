@@ -1,0 +1,68 @@
+outfitter/packages/web/src/easter/rescue/render.ts
+  s_2209f22f830d7f::t_413349eb337922 575-577,579-591
+  s_2209f22f830d7f::t_d707592a137cbd 659-739,741-754,757-758
+  s_2209f22f830d7f::t_05a25ff5df8540 740
+  s_2209f22f830d7f::t_1f87be8f3c0142 578
+  s_2209f22f830d7f::t_a9c50590a8a6b1 894
+  s_2209f22f830d7f::t_fb5ca15b14a39e 604-605
+  s_2209f22f830d7f::t_f02213c73ccc5b 889-893
+  s_2209f22f830d7f::t_5c084a5da54fde 12-30
+  s_2209f22f830d7f::t_0806d25fea0b1b 86-96,98
+  s_2209f22f830d7f::t_14bd37b18371a1 393,851,888
+  s_2209f22f830d7f::t_1cd05ffe5d496d 869-877
+  s_2209f22f830d7f::t_257e6c4ec54d4a 755-756
+outfitter/packages/web/test/rescue-tutorial.test.ts
+  s_2209f22f830d7f::t_9bd41a748028c3 1-76
+outfitter/packages/web/src/easter/rescue/engine.ts
+  s_2209f22f830d7f::t_85189511f4b1d6 40-54
+  s_2209f22f830d7f::t_a00c364cb3e030 179-180
+  s_2209f22f830d7f::t_56d174bbfe4cf5 263
+  s_2209f22f830d7f::t_9786a4dd6487ca 324-355
+  s_2209f22f830d7f::t_92df474d7d9260 511
+  s_2209f22f830d7f::t_f1274ad70b7b8c 541-543
+  s_2209f22f830d7f::t_8ec417f58f7c4c 691-694
+  s_2209f22f830d7f::t_bdcf800289080c 480-481,483,487
+  s_2209f22f830d7f::t_4f13ebf1437cc4 55
+  s_2209f22f830d7f::t_0766bc73756866 660-664,666
+  s_2209f22f830d7f::t_fde13037ef5267 455-462
+  s_2209f22f830d7f::t_2400affc67b73f 170-171,176-178
+  s_2209f22f830d7f::t_345901bf8a4083 513,517,524
+  s_2209f22f830d7f::t_fe0c5b2b265dd5 80-90
+  s_2209f22f830d7f::t_2468acbcbf395d 403-405
+  s_2209f22f830d7f::t_7014c4b159d911 422,424
+  s_2209f22f830d7f::t_c76e2e6b4a5af1 642
+  s_2209f22f830d7f::t_b0104a28f857e9 315,320-323,356-359
+  s_2209f22f830d7f::t_1b090c1e3bb512 416
+outfitter/packages/web/src/styles/easter.css
+  s_2209f22f830d7f::t_0f469a814098b6 355,379,392
+  s_2209f22f830d7f::t_6543cda4e7d354 550-558,560
+  s_2209f22f830d7f::t_4a630246ad8b35 350-354,356-378,380-391,393-396
+  s_2209f22f830d7f::t_658cdebd2e1fd9 559,561-566
+outfitter/packages/web/src/easter/rescue/tutorial.ts
+  s_2209f22f830d7f::t_e95e78dbd2b1cf 1-95
+outfitter/packages/web/src/easter/rescue/FloppyRescue.tsx
+  s_2209f22f830d7f::t_5217467d96f86f 430-437
+  s_2209f22f830d7f::t_260a2c1aed3832 407-421
+  s_2209f22f830d7f::t_2d140a3547f1de 41-49,93-96,108-115,129,132-135,194-201,212-217,247-249,261,288,294-305,336-337,345
+  s_2209f22f830d7f::t_2b8c3d3be6b044 498-501
+outfitter/packages/web/test/rescue-engine.test.ts
+  s_2209f22f830d7f::t_53a18447e01b25 110-167
+  s_2209f22f830d7f::t_1196c63e926c5c 250-271
+  s_2209f22f830d7f::t_398264545ddea8 11-17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "4e7512f03aaea500f6cb35e2ed0930c96c702386",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

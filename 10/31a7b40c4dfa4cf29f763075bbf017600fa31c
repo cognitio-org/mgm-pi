@@ -1,0 +1,57 @@
+.github/dependabot.yml
+  s_a437fa5c3fe299::t_b4fa3654293177 22-28
+outfitter/deploy/README.md
+  s_a437fa5c3fe299::t_8842ebd7fe8025 213,216-246,248
+outfitter/deploy/agent-job.sh
+  s_a437fa5c3fe299::t_6149c4f8744ad9 6-7,11,18-19
+outfitter/deploy/deploy-all.sh
+  s_a437fa5c3fe299::t_fe18658ef9f577 14-19,23,35-38,43,46,49,52-62
+outfitter/deploy/env.sh
+  s_a437fa5c3fe299::t_dc506e5b6263bb 119-159
+outfitter/deploy/landing.sh
+  s_a437fa5c3fe299::t_830cae4313464a 5,46,57
+outfitter/deploy/mailbox.sh
+  s_a437fa5c3fe299::t_9de2a045550e0d 24-26
+outfitter/deploy/service.sh
+  s_a437fa5c3fe299::t_65fec725c1a82d 110-114,117-128,131-132,151-163,198-201,203
+outfitter/docs/design/README.md
+  s_a437fa5c3fe299::t_21c2df224b4198 124-126,128,132-162
+outfitter/landing/Dockerfile
+  s_a437fa5c3fe299::t_83090259d34b37 2-4
+outfitter/landing/security-headers.conf
+  s_a437fa5c3fe299::t_a94c3e1f5bd2e5 5-8
+outfitter/landing/test/headers.test.mjs
+  s_a437fa5c3fe299::t_e4af010758046e 1-49
+outfitter/packages/api/src/auth.ts
+  s_a437fa5c3fe299::t_11819c78fa4f6b 34,152,181
+outfitter/packages/api/src/config.ts
+  s_a437fa5c3fe299::t_fb958eb19e21fe 28-32,140-142,152-158,201
+outfitter/packages/api/test/config.test.ts
+  s_a437fa5c3fe299::t_6087f789f9fda6 7,91-106
+outfitter/packages/web/public/sounds/CREDITS.md
+  s_a437fa5c3fe299::t_3522bad454568a 1-12
+outfitter/packages/web/src/components/tour/TourAnimation.tsx
+  s_a437fa5c3fe299::t_ec7787fe99e51c 55-60,95-98,103,171-176
+outfitter/packages/web/src/easter/dreadnought/sound.ts
+  s_a437fa5c3fe299::t_ae1c0e99efd82a 1-5
+outfitter/packages/web/src/lib/floppy-sound.ts
+  s_a437fa5c3fe299::t_df1a98f6df7943 2-3,5-20,23-40,57-84,96-99,102-103,106-113,116-119,147-184,187-209,211,213,218-248,250-256,258-263,265-277,280-294,296-339,342-348,352-353,355-364,366-371,373-395,405-409,412-414,417-424,426,428,430,434-435,438
+outfitter/packages/web/test/floppy-sound.test.ts
+  s_a437fa5c3fe299::t_80574aa1a9888e 1-17,19-45,52,61,63-73,76-134,136-137,143-145,148-153,157-158,161-215,217-266,269-393
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "1031a7b40c4dfa4cf29f763075bbf017600fa31c",
+  "prompts": {},
+  "sessions": {
+    "s_a437fa5c3fe299": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "caa2a1a5-d70a-4605-a09d-4c18bbbf3b98",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

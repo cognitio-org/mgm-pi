@@ -1,0 +1,43 @@
+outfitter/packages/web/src/styles/tour.css
+  s_2209f22f830d7f::t_3daadaf70fc059 333-426
+  s_2209f22f830d7f::t_997a2251e7b6e6 1-332,427-482
+outfitter/packages/web/test/glossary.test.ts
+  s_2209f22f830d7f::t_8b365805241780 1-63
+outfitter/packages/web/src/components/tour/scenes.tsx
+  s_2209f22f830d7f::t_e5b3e17d33c577 289
+  s_2209f22f830d7f::t_f71f7a003e392a 1-8,11-12,14-288,290-299
+  s_2209f22f830d7f::t_6d7bd93cdc8af6 9-10
+  s_2209f22f830d7f::t_ba4204b539ebd0 13
+outfitter/packages/web/src/components/tour/tour-timeline.ts
+  s_2209f22f830d7f::t_1e62ebaa7dcc50 1-140
+outfitter/packages/web/test/tour-timeline.test.ts
+  s_2209f22f830d7f::t_7f49cc43cbce85 1-113
+outfitter/packages/web/src/lib/glossary.ts
+  s_2209f22f830d7f::t_add9a36fc4cd49 1-225
+outfitter/packages/web/src/components/tour/TourOffer.tsx
+  s_2209f22f830d7f::t_f522d5916b7901 1-84
+outfitter/packages/web/src/style.css
+  s_2209f22f830d7f::t_ffa8c393ec816e 10
+outfitter/packages/web/src/pages/ManualPage.tsx
+  s_2209f22f830d7f::t_a28dd7958f7ede 1-143
+outfitter/packages/web/src/components/tour/TourAnimation.tsx
+  s_2209f22f830d7f::t_93a008148dfa3c 1-242
+outfitter/packages/web/src/App.tsx
+  s_2209f22f830d7f::t_da44113ea56a5c 38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "474093dcd79aa375df109fb91fd697c1110c5b06",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

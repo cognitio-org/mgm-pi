@@ -1,5 +1,6 @@
 import { useProviders } from "../hooks/useProviders.ts";
 import { Working } from "../components/Working.tsx";
+import { DeviceNotPresent } from "../components/DeviceNotPresent.tsx";
 import { vocabSubtitle, vocabulary } from "../lib/vocabulary.ts";
 
 export function ProvidersPage() {
@@ -37,7 +38,13 @@ export function ProvidersPage() {
                   <td data-label="Status">
                     <span className={`status-pill ${p.status}`}>{p.status}</span>
                   </td>
-                  <td data-label="Detail">{p.detail ?? "—"}</td>
+                  <td data-label="Detail">
+                    {p.status === "down" ? (
+                      <DeviceNotPresent reason={p.detail || "this peripheral isn't responding."} />
+                    ) : (
+                      (p.detail ?? "—")
+                    )}
+                  </td>
                   <td data-label="Checked">{p.checkedAt}</td>
                 </tr>
               ))}

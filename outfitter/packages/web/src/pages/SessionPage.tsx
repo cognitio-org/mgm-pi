@@ -1,15 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { api, ApiError, type ModelRow, type SessionDetail } from "../api/client.ts";
+import { api, type ModelRow, type SessionDetail } from "../api/client.ts";
 import { useSessionStream } from "../hooks/useSessionStream.ts";
+import { useProviders } from "../hooks/useProviders.ts";
 import { entriesToViews } from "../lib/entry-view.ts";
 import { groupThinkingBlocks } from "../lib/thinking.ts";
 import { deriveSessionHeader } from "../lib/session-header.ts";
+import { contextMeterMessage, deriveTransportStatusLine, type TransportOutcome } from "../lib/retro-errors.ts";
+import { toApiErrorState } from "../lib/api-error.ts";
 import { EntryItem } from "../components/EntryItem.tsx";
 import { Composer } from "../components/Composer.tsx";
 import { StatusPill } from "../components/StatusPill.tsx";
 import { UiRequestPanel } from "../components/UiRequestPanel.tsx";
 import { Working } from "../components/Working.tsx";
+import { NotFoundError } from "../components/NotFoundError.tsx";
+import { SystemErrorDialog, type ApiErrorState } from "../components/SystemErrorDialog.tsx";
+import { DeviceNotPresent } from "../components/DeviceNotPresent.tsx";
 import { withFloppySound } from "../lib/floppy-sound.ts";
 import { transport, transportLabel } from "../lib/vocabulary.ts";
 
@@ -20,24 +26,48 @@ const WORKING_STATES = new Set(["running", "queued", "provisioning"]);
 
 type PendingAction = "abort" | "stop" | "wake" | null;
 
+/** How long a just-finished BREAK/LOAD ERROR outcome stays on the status line before it reverts to
+ * READY. -- long enough to read, short enough that it doesn't linger past its relevance. */
+const OUTCOME_FLASH_MS = 3000;
+
 export function SessionPage() {
   const { id } = useParams<{ id: string }>();
   const sessionId = id ?? "";
   const [session, setSession] = useState<SessionDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [notFound, setNotFound] = useState(false);
+  const [apiError, setApiError] = useState<ApiErrorState | null>(null);
   const [copied, setCopied] = useState(false);
   const [copiedGuruId, setCopiedGuruId] = useState(false);
   const [models, setModels] = useState<ModelRow[]>([]);
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
+  const [transportOutcome, setTransportOutcome] = useState<TransportOutcome | null>(null);
   const { entries, runState, pendingUiRequest, costEstimate } = useSessionStream(sessionId);
+  const { providers } = useProviders();
   const transcriptRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
+  function flashOutcome(outcome: TransportOutcome) {
+    setTransportOutcome(outcome);
+    setTimeout(() => setTransportOutcome((current) => (current === outcome ? null : current)), OUTCOME_FLASH_MS);
+  }
+
+  function loadSession() {
     if (!sessionId) return;
     api
       .session(sessionId)
-      .then(setSession)
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load session"));
+      .then((s) => {
+        setSession(s);
+        setNotFound(false);
+      })
+      .catch((err) => {
+        const state = toApiErrorState(err, "Failed to load session");
+        if (state.status === 404) setNotFound(true);
+        else setApiError(state);
+      });
+  }
+
+  useEffect(() => {
+    loadSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
   // E3.8: GET /api/models' contextWindow is the only piece deriveSessionHeader can't get from the
@@ -66,6 +96,10 @@ export function SessionPage() {
     try {
       await withFloppySound(call());
       await reload();
+      if (action === "abort") flashOutcome("break");
+    } catch (err) {
+      if (action === "wake") flashOutcome("loadError");
+      setApiError(toApiErrorState(err, `Failed to ${action}`));
     } finally {
       setPendingAction(null);
     }
@@ -101,6 +135,8 @@ export function SessionPage() {
     }
   }
 
+  if (notFound) return <NotFoundError subject="This floppy" />;
+
   const views = groupThinkingBlocks(entriesToViews(entries));
   const active = runState ? RUNNING_STATES.has(runState) : false;
   const canWake = !active;
@@ -108,10 +144,30 @@ export function SessionPage() {
   const windowById = new Map(models.map((m) => [m.id, m.contextWindow]));
   const header = deriveSessionHeader(entries, (id) => windowById.get(id));
   const percent = header.context?.percent;
+  const oomMessage = typeof percent === "number" ? contextMeterMessage(percent) : null;
+  const statusLine = deriveTransportStatusLine(active, transportOutcome);
+
+  // A session's current model reads "provider/model" (deriveSessionHeader); if that provider's
+  // own Peripherals row reports "down", the run can't reach it -- surface the same
+  // ?DEVICE NOT PRESENT ERROR the Peripherals page shows for that row, right where the user is
+  // already looking, instead of a confusing generic run failure.
+  const modelProviderKind = header.model?.split("/")[0];
+  const modelProviderDown = modelProviderKind
+    ? providers.find((p) => p.kind === modelProviderKind)?.status === "down"
+    : false;
 
   return (
     <div className="session-view">
-      {error && <div className="error-banner">{error}</div>}
+      {apiError && (
+        <SystemErrorDialog
+          error={apiError}
+          onRestart={() => {
+            setApiError(null);
+            loadSession();
+          }}
+          onResume={() => setApiError(null)}
+        />
+      )}
       <div className="session-header">
         <div>
           <h2 className="session-title" title={sessionId}>
@@ -162,7 +218,22 @@ export function SessionPage() {
                 )}
               </span>
             ) : null}
+            {statusLine && (
+              <span className={`transport-status-line${statusLine === "READY." ? " ready" : ""}`}>
+                {" · "}
+                {statusLine}
+                {statusLine === "READY." && <span className="cursor-blink" aria-hidden="true" />}
+              </span>
+            )}
           </div>
+          {oomMessage && (
+            <p className="context-oom-note" role="alert">
+              {oomMessage}
+            </p>
+          )}
+          {modelProviderDown && (
+            <DeviceNotPresent reason={`the ${modelProviderKind} peripheral is down -- this run can't reach its model right now.`} />
+          )}
         </div>
         <div className="run-controls">
           <StatusPill state={runState} />
@@ -207,7 +278,7 @@ export function SessionPage() {
         </div>
       </div>
 
-      <Composer onSend={handleSend} />
+      <Composer onSend={handleSend} placeholderOverride={statusLine === "READY." ? "READY." : undefined} />
     </div>
   );
 }

@@ -6,6 +6,10 @@ import { isTouchDeviceHere } from "../lib/touch.ts";
 interface Props {
   onSend: (text: string, behavior?: "steer" | "followUp") => Promise<void>;
   disabled?: boolean;
+  /** Replaces the computed touch/no-touch placeholder -- SessionPage passes "READY." while idle
+   * (docs/reports/mobile-desk.md's retro status vocabulary), so the empty composer reads the same
+   * "nothing is running, go ahead" cue as the session header's blinking-cursor status line. */
+  placeholderOverride?: string;
 }
 
 type Behavior = "" | "steer" | "followUp";
@@ -21,7 +25,7 @@ const MODES: Array<{ value: Behavior; label: string; short: string }> = [
  * `prompt.behavior`). The mode picker is a `<select>` on desktop and a compact segmented control
  * on phones (styles/mobile.css toggles which one is visible) -- both drive the same `behavior`
  * state, so nothing about the send logic differs between them. */
-export function Composer({ onSend, disabled }: Props) {
+export function Composer({ onSend, disabled, placeholderOverride }: Props) {
   const [text, setText] = useState("");
   const [behavior, setBehavior] = useState<Behavior>("");
   const [sending, setSending] = useState(false);
@@ -46,7 +50,7 @@ export function Composer({ onSend, disabled }: Props) {
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder={touch ? "Message…" : "Message... (⌘/Ctrl+Enter to send)"}
+          placeholder={placeholderOverride ?? (touch ? "Message…" : "Message... (⌘/Ctrl+Enter to send)")}
           aria-label="Message"
           disabled={disabled || sending}
           onKeyDown={(e) => {

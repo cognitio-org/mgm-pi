@@ -202,3 +202,27 @@ the corresponding nav item, desk icon or button.
 | ⏏ Eject | Continue this floppy on your laptop with Kernal | "Open in terminal" / `kernal --teleport` (`mgm` still works as an alias) |
 | Send | Send a message | `sendMessage` (unchanged — the brief keeps this one as-is) |
 | Kernal | The coding agent that runs sessions, on your laptop or in a cloud Drive | laptop/cloud agent, formerly called "mgm" in the UI; the `mgm` command still works as an alias |
+
+## Retro error vocabulary
+
+Every failure gets a retro headline, a plain sentence, and a useful action -- never just a red
+banner (`src/lib/retro-errors.ts` for the pure headline/message/status mapping,
+`src/components/{ErrorBoundary,SystemErrorDialog,NotFoundError,DeviceNotPresent,SyntaxError}.tsx`
+for the rendering):
+
+| Headline | Where | Component |
+|---|---|---|
+| KERNAL PANIC | An unhandled render error anywhere under the routes | `ErrorBoundary.tsx`, full-screen, `role="alert"` |
+| Sorry, a system error occurred. | Any failed API call (replaces the old plain `.error-banner`) | `SystemErrorDialog.tsx`, an early-Mac bomb dialog; ID = HTTP status, body = the API's message, Restart retries / Resume dismisses |
+| ?FILE NOT FOUND ERROR | The 404 route, an unknown session id | `NotFoundError.tsx`, with a link back to the Desk |
+| ?DEVICE NOT PRESENT ERROR | A down Peripheral (row detail), a session whose model's provider is down, the browser offline | `DeviceNotPresent.tsx` |
+| ?SYNTAX ERROR | An invalid form field (the guru form's name, the token name) | `SyntaxError.tsx`, inline beside the field |
+| ?OUT OF MEMORY ERROR | The session context meter at 95%+ | inline note beside the meter |
+| READY. | The session header/composer idle line, with a blinking block cursor | `lib/retro-errors.ts`'s `deriveTransportStatusLine` |
+| BREAK | Flashed after Break (abort) succeeds | same |
+| LOAD ERROR | Flashed when Play (wake) fails | same |
+
+An unhandled *promise* rejection (never a render error, so `ErrorBoundary.tsx` can't see it) shows a
+small dismissable banner instead of the KERNAL PANIC screen (`UnhandledRejectionBanner.tsx`).
+`reduced-motion` stops every blink; both themes inherit the same `theme.css` tokens as everything
+else in this document.

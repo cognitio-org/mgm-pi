@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { api, type Guru, type SessionSummary, ApiError } from "../api/client.ts";
+import { api, type Guru, type SessionSummary } from "../api/client.ts";
 import { relativeTime } from "../lib/relative-time.ts";
+import { toApiErrorState } from "../lib/api-error.ts";
 import { StatusPill } from "../components/StatusPill.tsx";
 import { NewSessionDialog } from "../components/NewSessionDialog.tsx";
 import { Working } from "../components/Working.tsx";
+import { SystemErrorDialog, type ApiErrorState } from "../components/SystemErrorDialog.tsx";
 import { vocabSubtitle, vocabulary } from "../lib/vocabulary.ts";
 
 const RUN_STATES = ["queued", "provisioning", "running", "idle", "stopping", "stopped", "failed"];
@@ -22,13 +24,12 @@ export function FleetPage() {
   // filter (still a plain client-side filter change afterward, same as the dropdown).
   const [runStateFilter, setRunStateFilter] = useState(() => searchParams.get("runState") ?? "");
   const [guruFilter, setGuruFilter] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [apiError, setApiError] = useState<ApiErrorState | null>(null);
   const [loading, setLoading] = useState(true);
   const [showNewSession, setShowNewSession] = useState(false);
 
   async function load() {
     setLoading(true);
-    setError(null);
     try {
       const [sessionList, guruList] = await Promise.all([
         // Code review M1 (docs/reports/code-review-pr15.md): this dropdown offers run states
@@ -40,7 +41,7 @@ export function FleetPage() {
       setSessions(sessionList);
       setGurus(guruList);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to load fleet");
+      setApiError(toApiErrorState(err, "Failed to load fleet"));
     } finally {
       setLoading(false);
     }
@@ -85,7 +86,7 @@ export function FleetPage() {
         </button>
       </div>
 
-      {error && <div className="error-banner">{error}</div>}
+      {apiError && <SystemErrorDialog error={apiError} onRestart={load} onResume={() => setApiError(null)} />}
 
       {loading ? (
         <p className="empty-state"><Working label="Loading" size="lg" srOnly={false} /></p>

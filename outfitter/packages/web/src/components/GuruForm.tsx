@@ -1,6 +1,9 @@
 import { useState } from "react";
-import { api, ApiError, type Guru, type GuruMeta, type ModelRow } from "../api/client.ts";
+import { api, type Guru, type GuruMeta, type ModelRow } from "../api/client.ts";
+import { toApiErrorState } from "../lib/api-error.ts";
 import { ModelPicker } from "./ModelPicker.tsx";
+import { SystemErrorDialog, type ApiErrorState } from "./SystemErrorDialog.tsx";
+import { SyntaxError } from "./SyntaxError.tsx";
 
 interface EnvRow {
   key: string;
@@ -52,7 +55,8 @@ export function GuruForm({ guru, models, meta, onClose, onSaved }: Props) {
   const [excludeTools, setExcludeTools] = useState(listToText(guru?.excludeTools));
   const [envRows, setEnvRows] = useState<EnvRow[]>(envToRows(guru?.env).length > 0 ? envToRows(guru?.env) : [{ key: "", value: "" }]);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [submitAttempted, setSubmitAttempted] = useState(false);
+  const [apiError, setApiError] = useState<ApiErrorState | null>(null);
 
   function updateEnvRow(i: number, patch: Partial<EnvRow>) {
     setEnvRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
@@ -64,9 +68,9 @@ export function GuruForm({ guru, models, meta, onClose, onSaved }: Props) {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    setSubmitAttempted(true);
     if (!name.trim() || !model.trim()) return;
     setSubmitting(true);
-    setError(null);
     const payload = {
       name: name.trim(),
       model: model.trim(),
@@ -82,7 +86,7 @@ export function GuruForm({ guru, models, meta, onClose, onSaved }: Props) {
       const saved = guru ? await api.updateGuru(guru.id, payload) : await api.createGuru(payload);
       onSaved(saved);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to save guru");
+      setApiError(toApiErrorState(err, "Failed to save guru"));
     } finally {
       setSubmitting(false);
     }
@@ -92,11 +96,18 @@ export function GuruForm({ guru, models, meta, onClose, onSaved }: Props) {
     <div className="dialog-backdrop" onClick={onClose}>
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
         <h2>{guru ? `Edit ${guru.name}` : "New guru"}</h2>
-        {error && <div className="error-banner">{error}</div>}
+        {apiError && <SystemErrorDialog error={apiError} onResume={() => setApiError(null)} />}
         <form onSubmit={submit}>
           <div className="form-row">
             <label htmlFor="guru-name">Name</label>
-            <input id="guru-name" value={name} onChange={(e) => setName(e.target.value)} required />
+            <input
+              id="guru-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+              aria-invalid={submitAttempted && !name.trim()}
+            />
+            {submitAttempted && !name.trim() && <SyntaxError>name cannot be empty.</SyntaxError>}
           </div>
 
           <ModelPicker id="guru-model" label="Model" models={models} value={model} onChange={setModel} />

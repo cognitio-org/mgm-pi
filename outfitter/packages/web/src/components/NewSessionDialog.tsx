@@ -1,6 +1,8 @@
 import { useState } from "react";
-import { api, type Guru, ApiError } from "../api/client.ts";
+import { api, type Guru } from "../api/client.ts";
+import { toApiErrorState } from "../lib/api-error.ts";
 import { Working } from "./Working.tsx";
+import { SystemErrorDialog, type ApiErrorState } from "./SystemErrorDialog.tsx";
 import { withFloppySound } from "../lib/floppy-sound.ts";
 
 interface Props {
@@ -23,13 +25,12 @@ export function NewSessionDialog({ gurus, onClose, onCreated, initialGuruId }: P
   const [name, setName] = useState("");
   const [model, setModel] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [apiError, setApiError] = useState<ApiErrorState | null>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!guruId || !prompt.trim()) return;
     setSubmitting(true);
-    setError(null);
     try {
       const { session } = await withFloppySound(
         api.createSession({
@@ -44,7 +45,7 @@ export function NewSessionDialog({ gurus, onClose, onCreated, initialGuruId }: P
       );
       onCreated(session.id);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to create session");
+      setApiError(toApiErrorState(err, "Failed to create session"));
     } finally {
       setSubmitting(false);
     }
@@ -57,7 +58,7 @@ export function NewSessionDialog({ gurus, onClose, onCreated, initialGuruId }: P
           <span className="panel-label">New Floppy</span>
         </h2>
         <div className="panel-body">
-        {error && <div className="error-banner">{error}</div>}
+        {apiError && <SystemErrorDialog error={apiError} onResume={() => setApiError(null)} />}
         <form onSubmit={submit}>
           <div className="form-row">
             <label htmlFor="ns-guru">Tape</label>

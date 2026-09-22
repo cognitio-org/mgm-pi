@@ -1,0 +1,266 @@
+/* Retro error/status vocabulary (docs/reports/mobile-desk.md "Thinking, Kernal naming, error
+ * vocabulary"): a KERNAL PANIC crash screen, an early-Mac "Sorry, a system error occurred." bomb
+ * dialog, ?FILE NOT FOUND/?DEVICE NOT PRESENT/?SYNTAX ERROR/?OUT OF MEMORY ERROR, and the
+ * READY./BREAK/LOAD ERROR session status line. Every animated glyph here (the blinking cursor) is
+ * stopped under prefers-reduced-motion, same convention as components.css's status-pill/working. */
+
+/* ---------- KERNAL PANIC: full-screen crash boundary (ErrorBoundary.tsx) ---------- */
+
+.kernal-panic {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: var(--bg);
+  color: var(--text);
+  overflow-y: auto;
+}
+
+.kernal-panic-inner {
+  max-width: 640px;
+  width: 100%;
+}
+
+.kernal-panic-headline {
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--danger);
+  margin: 0 0 0.9rem;
+}
+
+.kernal-panic-message {
+  font-size: 1rem;
+  margin: 0 0 1rem;
+}
+
+.kernal-panic-details {
+  margin-bottom: 1.2rem;
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+  padding: 0.5rem 0.7rem;
+}
+
+.kernal-panic-details summary {
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+}
+
+.kernal-panic-details pre {
+  margin: 0.6rem 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.kernal-panic-actions {
+  margin-top: 0;
+  justify-content: flex-start;
+}
+
+/* ---------- the blinking block cursor (KERNAL PANIC headline, READY. status line) ---------- */
+
+.cursor-blink {
+  display: inline-block;
+  width: 0.55em;
+  height: 1em;
+  margin-left: 0.2em;
+  vertical-align: -0.15em;
+  background: currentColor;
+  animation: cursor-blink-step 1s steps(1, start) infinite;
+}
+
+@keyframes cursor-blink-step {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cursor-blink {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* ---------- "Sorry, a system error occurred." bomb dialog (SystemErrorDialog.tsx) ---------- */
+
+.bomb-backdrop {
+  z-index: 200;
+}
+
+.bomb-dialog {
+  max-width: 460px;
+}
+
+.bomb-dialog-body {
+  display: flex;
+  gap: 0.85rem;
+  align-items: flex-start;
+  padding: 1.1rem 1.25rem 0.5rem;
+}
+
+.bomb-dialog-body svg {
+  color: var(--danger);
+  margin-top: 0.1rem;
+}
+
+.bomb-title {
+  margin: 0 0 0.3rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.bomb-id {
+  margin: 0 0 0.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.bomb-message {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.bomb-actions {
+  padding: 0.75rem 1.25rem 1.1rem;
+  margin-top: 0;
+}
+
+/* ---------- ?FILE NOT FOUND ERROR (NotFoundError.tsx: the 404 route, unknown session ids) ------- */
+
+.retro-error-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.5rem;
+  padding: 3.5rem 1.5rem;
+  color: var(--text-dim);
+}
+
+.retro-error-page svg {
+  color: var(--danger);
+  margin-bottom: 0.4rem;
+}
+
+.retro-error-headline {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--danger);
+  margin: 0;
+}
+
+.retro-error-page a {
+  color: var(--link);
+}
+
+/* ---------- ?DEVICE NOT PRESENT ERROR (DeviceNotPresent.tsx) ---------- */
+
+.device-not-present {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  color: var(--danger);
+  font-size: 0.82rem;
+}
+
+.device-not-present svg {
+  flex: none;
+  margin-top: 0.1rem;
+}
+
+.device-not-present-banner {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  padding: 0.5rem 0.85rem;
+  background: color-mix(in srgb, var(--danger) 16%, var(--bg-elevated));
+  border-bottom: 1px solid var(--danger);
+}
+
+.app-offline-banner {
+  position: sticky;
+  top: 0;
+  z-index: 90;
+}
+
+/* ---------- ?SYNTAX ERROR (SyntaxError.tsx: inline form-field validation) ---------- */
+
+.syntax-error {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--danger);
+  font-size: 0.78rem;
+}
+
+[aria-invalid="true"] {
+  border-color: var(--danger) !important;
+}
+
+/* ---------- ?OUT OF MEMORY ERROR (the session context meter at 95%+) ---------- */
+
+.context-oom-note {
+  margin: 0.3rem 0 0;
+  color: var(--danger);
+  font-size: 0.78rem;
+}
+
+/* ---------- READY./BREAK/LOAD ERROR (the session header/composer idle status line) ---------- */
+
+.transport-status-line {
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.transport-status-line.ready {
+  color: var(--ok);
+}
+
+/* ---------- unhandled promise rejection: a non-fatal banner, not the KERNAL PANIC screen ------- */
+
+.unhandled-rejection-banner {
+  position: sticky;
+  top: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0.85rem;
+  background: color-mix(in srgb, var(--danger) 16%, var(--bg-elevated));
+  border-bottom: 1px solid var(--danger);
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
+.unhandled-rejection-banner button {
+  flex: none;
+  min-height: auto;
+  min-width: auto;
+  padding: 0.1rem 0.5rem;
+  box-shadow: none;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  background: transparent;
+}

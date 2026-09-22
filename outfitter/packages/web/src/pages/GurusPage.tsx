@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, ApiError, type Guru, type GuruMeta, type ModelRow } from "../api/client.ts";
+import { api, type Guru, type GuruMeta, type ModelRow } from "../api/client.ts";
+import { toApiErrorState } from "../lib/api-error.ts";
 import { GuruForm } from "../components/GuruForm.tsx";
 import { NewSessionDialog } from "../components/NewSessionDialog.tsx";
+import { SystemErrorDialog, type ApiErrorState } from "../components/SystemErrorDialog.tsx";
 import { vocabSubtitle, vocabulary } from "../lib/vocabulary.ts";
 
 /** E3.7: list gurus, create/edit, delete (with the guard the API enforces: no referencing
@@ -16,20 +18,19 @@ export function GurusPage() {
   const [models, setModels] = useState<ModelRow[]>([]);
   const [meta, setMeta] = useState<GuruMeta | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [apiError, setApiError] = useState<ApiErrorState | null>(null);
   const [editing, setEditing] = useState<Guru | "new" | null>(null);
   const [sessionFor, setSessionFor] = useState<Guru | null>(null);
 
   async function load() {
     setLoading(true);
-    setError(null);
     try {
       const [guruList, modelList, guruMeta] = await Promise.all([api.gurus(), api.models(), api.guruMeta()]);
       setGurus(guruList);
       setModels(modelList);
       setMeta(guruMeta);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to load gurus");
+      setApiError(toApiErrorState(err, "Failed to load gurus"));
     } finally {
       setLoading(false);
     }
@@ -41,12 +42,11 @@ export function GurusPage() {
 
   async function remove(guru: Guru) {
     if (!confirm(`Delete guru "${guru.name}"?`)) return;
-    setError(null);
     try {
       await api.deleteGuru(guru.id);
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to delete guru");
+      setApiError(toApiErrorState(err, "Failed to delete guru"));
     }
   }
 
@@ -62,7 +62,7 @@ export function GurusPage() {
         </button>
       </div>
 
-      {error && <div className="error-banner">{error}</div>}
+      {apiError && <SystemErrorDialog error={apiError} onRestart={load} onResume={() => setApiError(null)} />}
 
       {loading ? (
         <p className="empty-state">Loading...</p>

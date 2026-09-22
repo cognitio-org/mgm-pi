@@ -13,6 +13,19 @@ import { TokensPage } from "./pages/TokensPage.tsx";
 import { GurusPage } from "./pages/GurusPage.tsx";
 import { SettingsPage } from "./pages/SettingsPage.tsx";
 import { vocabulary } from "./lib/vocabulary.ts";
+import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
+import { UnhandledRejectionBanner } from "./components/UnhandledRejectionBanner.tsx";
+import { NotFoundError } from "./components/NotFoundError.tsx";
+import { DeviceNotPresent } from "./components/DeviceNotPresent.tsx";
+import { useOnlineStatus } from "./hooks/useOnlineStatus.ts";
+
+/** Throws on render, gated to dev builds only -- lets `/panic-test` drive a screenshot of the
+ * KERNAL PANIC screen without shipping a way for anyone else to trigger it. */
+function PanicTest(): never {
+  throw new Error("Manually triggered via /panic-test (dev-only route).");
+}
+
+const PANIC_TEST_ENABLED = Boolean(import.meta.env.DEV || import.meta.env.OUTFITTER_DEV);
 
 const NAV_ITEMS: Array<{ to: string; end?: boolean; label: string; hint: string; operatorOnly?: boolean }> = [
   { to: "/", end: true, label: vocabulary.desk.one, hint: "the Outfitter desktop" },
@@ -31,6 +44,7 @@ export function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
   const isDesk = location.pathname === "/";
+  const online = useOnlineStatus();
   useEffect(() => {
     api
       .me()
@@ -98,16 +112,29 @@ export function App() {
         </div>
       )}
 
+      {!online && (
+        <div className="app-offline-banner">
+          <DeviceNotPresent
+            reason="you're offline — changes won't reach Outfitter until the connection comes back."
+          />
+        </div>
+      )}
+      <UnhandledRejectionBanner />
+
       <main className="app-main">
-        <Routes>
-          <Route path="/" element={<DeskPage />} />
-          <Route path="/fleet" element={<FleetPage />} />
-          <Route path="/sessions/:id" element={<SessionPage />} />
-          <Route path="/gurus" element={<GurusPage />} />
-          <Route path="/providers" element={<ProvidersPage />} />
-          <Route path="/tokens" element={<TokensPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-        </Routes>
+        <ErrorBoundary>
+          <Routes>
+            <Route path="/" element={<DeskPage />} />
+            <Route path="/fleet" element={<FleetPage />} />
+            <Route path="/sessions/:id" element={<SessionPage />} />
+            <Route path="/gurus" element={<GurusPage />} />
+            <Route path="/providers" element={<ProvidersPage />} />
+            <Route path="/tokens" element={<TokensPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            {PANIC_TEST_ENABLED && <Route path="/panic-test" element={<PanicTest />} />}
+            <Route path="*" element={<NotFoundError subject="This page" />} />
+          </Routes>
+        </ErrorBoundary>
       </main>
     </div>
   );

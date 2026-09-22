@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, type OperatorSettings, type OperatorSecretRow } from "../api/client.ts";
+import { toApiErrorState } from "../lib/api-error.ts";
+import { SystemErrorDialog, type ApiErrorState } from "../components/SystemErrorDialog.tsx";
 import { vocabSubtitle, vocabulary } from "../lib/vocabulary.ts";
 
 /** One managed secret's row: masked value, when it applies, and the Replace/Test/Disable controls
@@ -11,13 +13,13 @@ function SecretRowView({ row, onChanged }: { row: OperatorSecretRow; onChanged: 
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; detail?: string } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [apiError, setApiError] = useState<ApiErrorState | null>(null);
 
   function startReplacing() {
     setReplacing(true);
     setValue("");
     setTestResult(null);
-    setError(null);
+    setApiError(null);
   }
 
   function cancelReplacing() {
@@ -29,12 +31,11 @@ function SecretRowView({ row, onChanged }: { row: OperatorSecretRow; onChanged: 
   async function testValue(explicitValue?: string) {
     setTesting(true);
     setTestResult(null);
-    setError(null);
     try {
       const result = await api.testOperatorSecret(row.secretName, explicitValue);
       setTestResult(result);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Test failed");
+      setApiError(toApiErrorState(err, "Test failed"));
     } finally {
       setTesting(false);
     }
@@ -43,7 +44,6 @@ function SecretRowView({ row, onChanged }: { row: OperatorSecretRow; onChanged: 
   async function save() {
     if (!value.trim()) return;
     setSaving(true);
-    setError(null);
     try {
       await api.putOperatorSecret(row.secretName, value);
       setValue(""); // never keep the value around once it's saved
@@ -51,19 +51,18 @@ function SecretRowView({ row, onChanged }: { row: OperatorSecretRow; onChanged: 
       setTestResult(null);
       onChanged();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Save failed");
+      setApiError(toApiErrorState(err, "Save failed"));
     } finally {
       setSaving(false);
     }
   }
 
   async function disable() {
-    setError(null);
     try {
       await api.disableOperatorSecret(row.secretName);
       onChanged();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Disable failed");
+      setApiError(toApiErrorState(err, "Disable failed"));
     }
   }
 
@@ -128,11 +127,11 @@ function SecretRowView({ row, onChanged }: { row: OperatorSecretRow; onChanged: 
           </div>
         )}
         {testResult && (
-          <div className={testResult.ok ? "note" : "error-banner"}>
+          <div className={testResult.ok ? "note" : "error-banner"} role={testResult.ok ? undefined : "alert"}>
             {testResult.ok ? "Connection OK" : `Failed${testResult.detail ? `: ${testResult.detail}` : ""}`}
           </div>
         )}
-        {error && <div className="error-banner">{error}</div>}
+        {apiError && <SystemErrorDialog error={apiError} onResume={() => setApiError(null)} />}
       </td>
     </tr>
   );
@@ -142,11 +141,11 @@ export function SettingsPage() {
   const [settings, setSettings] = useState<OperatorSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [pageError, setPageError] = useState<ApiErrorState | null>(null);
 
   async function load() {
     setLoading(true);
-    setError(null);
+    setPageError(null);
     try {
       const result = await api.operatorSettings();
       setSettings(result);
@@ -154,7 +153,7 @@ export function SettingsPage() {
       if (err instanceof ApiError && err.status === 403) {
         setForbidden(true);
       } else {
-        setError(err instanceof ApiError ? err.message : "Failed to load settings");
+        setPageError(toApiErrorState(err, "Failed to load settings"));
       }
     } finally {
       setLoading(false);
@@ -167,7 +166,7 @@ export function SettingsPage() {
 
   if (loading) return <p className="empty-state">Loading…</p>;
   if (forbidden) return <p className="empty-state">{vocabulary.operator.one} only.</p>;
-  if (error) return <div className="error-banner">{error}</div>;
+  if (pageError) return <SystemErrorDialog error={pageError} onRestart={load} onResume={() => setPageError(null)} />;
   if (!settings) return null;
 
   return (

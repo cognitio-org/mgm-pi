@@ -19,6 +19,34 @@ still showed small flat sprites in a mostly empty, unevenly scaled window, so a 
 older sections below disagree with Art pass 3 (rendering details, scale, HUD placement, clip
 content), Art pass 3 is the current state.
 
+## Triggers
+
+KERNAL GAMES (the menu with both cartridges) opens from four places. Every one ends in
+`openEasterEgg()` (`src/easter/openEasterEgg.tsx`), which dynamic-imports the menu and games, so
+nothing below adds game code to the main bundle.
+
+| Trigger | Where | Notes |
+|---|---|---|
+| **SYS 64738 menu item** | Desk menu bar (desktop): the logo menu at the far left (GEOS's "geos" menu), under "About Outfitter". Phones: the ☰ sheet, after the page links (the desk's own menu bar is hidden under 700px) | A real button in the menu, so it's reachable by Tab/Enter like the rest. `aria-label` "SYS 64738: open KERNAL GAMES" |
+| **Typing `SYS 64738` + Enter** | anywhere in the app, outside a form field (`useSysCommand.ts`, mounted in `App.tsx`) | Any case, spaces optional, Backspace edits, any other non-character key resets. Ignored with Ctrl/Cmd/Alt held, and ignored entirely in inputs, textareas, selects and contenteditable |
+| **Double-click / double-tap the Trash** | the desk's Trash icon | A single click still opens the stopped floppies (`/fleet?runState=stopped`): with a pointer it waits out a 320ms double-click window first; with the keyboard (Enter/Space) it runs immediately. A second click or tap inside the window opens the games instead and cancels the navigation. `touch-action: manipulation` so a double-tap isn't read as zoom |
+| **Konami code** (unchanged) and **`/ready`** | anywhere outside a form field / a hidden route | As before |
+
+The logic is pure and unit-tested in `test/easter-triggers.test.ts` (10 cases): the SYS matcher
+(cases, spacing, typos with Backspace, near-misses, reset, Shift), the form-field guard, and the
+Trash single/double/keyboard/cancel behaviour, with fake timers. A Playwright run against the built
+app (system Chrome) checked each one end to end:
+- the menu item opens KERNAL GAMES on desktop and phone, in dark and light;
+- typed `SYS 64738` opens it, but not when typed into an input;
+- a Trash double-click opens it and stays on the desk;
+- a single click, and keyboard Enter, still navigate to the stopped floppies;
+- a touch double-tap opens it.
+
+Screenshots: `games-trigger-desk-menu-desktop-{dark,light}.png` (1280x860, the logo menu open) and
+`games-trigger-menu-mobile-{dark,light}.png` (390x844, the ☰ sheet open). These came from the same
+Playwright script rather than the `playwright screenshot` CLI, because the menu has to be opened by
+a click first.
+
 ## Landing rework (after the owner's playtest)
 
 The owner couldn't land safely and couldn't tell what the game wanted. The cause was the landing
@@ -422,7 +450,16 @@ the full rationale.
 
 ## Chunk sizes
 
-After Art pass 3:
+After rebasing onto main (round five and later) and wiring the desk triggers, measured with
+`vite build` against main at `70973cd`, before and after:
+
+| Asset | origin/main | this branch | change |
+|---|---|---|---|
+| main JS `index-*.js` | 312.99 kB / **96.96 kB gzip** | 316.12 kB / **98.06 kB gzip** | +1.10 kB gzip: the Konami/SYS listeners, the trigger logic, the `/ready` route, the desk menu item and Trash double-click, and the few-line `openEasterEgg()` loader |
+| main CSS `index-*.css` | 40.56 kB / 8.40 kB gzip | 41.03 kB / 8.45 kB gzip | +0.05 kB: the menu item's style. `easter.css` moved into the lazy chunk (`EasterEggRoot-*.css`, 2.01 kB gzip), so the games' styles no longer ship in the main CSS |
+| lazy: EasterEggRoot / shared / DreadnoughtRun / FloppyRescue | -- | 1.59 + 4.21 + 9.49 + 14.54 kB gzip JS, + 2.01 kB CSS | loaded only when a trigger fires |
+
+Earlier, after Art pass 3:
 
 ```
 dist/assets/EasterEggRoot-*.js   3.50 kB  gzip:  1.59 kB   (menu + router shell)
@@ -434,21 +471,29 @@ dist/assets/FloppyRescue-*.js   33.13 kB  gzip: 12.47 kB
 (Vite names the shared chunk after one of its modules; it's the whole of `src/easter/shared/`.)
 Total lazy-loaded gzip: **27.75 kB**, under the 60 kB budget (up from ~17.2 kB before the pass: all
 art is still character grids, rules and palettes -- no images). The main bundle
-(`dist/assets/index-*.js`, 468.57 kB / 145.22 kB gzip) is unchanged -- none of `src/easter/`
-reaches it.
+at the time (468.57 kB / 145.22 kB gzip, before round five's code-splitting) was unchanged by
+the games -- none of the games' code reaches it.
 
 ## Tests
 
+After the rebase onto main and the trigger wiring, the whole monorepo:
+
 ```
-$ cd outfitter && npm ci && npm test --workspace=@outfitter/web && npm run build
-...
- Test Files  11 passed (11)
-      Tests  120 passed (120)
+$ cd outfitter && npm ci && npm test && npm run build
+web:     Test Files 22 passed (22), Tests 226 passed (226)
+api:     tests 242, pass 240, fail 0 (2 skipped)
+agentd:  tests 146, pass 146, fail 0
+provider-local: tests 2, pass 2
+build:   exit 0
 ```
 
-New/changed test files:
-- `test/rescue-engine.test.ts` -- 23 cases: physics (thrust/gravity/momentum/tilt), landing rules
-  (safe vs. crash), pickup/capacity, fire spread, scoring, level progression, attract-mode autopilot.
+Game test files:
+- `test/rescue-engine.test.ts` -- 30 cases: physics (thrust/gravity/momentum/tilt), landing rules
+  (safe / hard / crash bands, ground effect, dive), rescue zone, tutorial freeze, pickup/capacity,
+  fire spread, scoring, level progression, attract-mode autopilot.
+- `test/rescue-tutorial.test.ts` -- 3 cases: the tutorial chain, skipping ahead, touch wording.
+- `test/easter-triggers.test.ts` -- 10 cases: the SYS 64738 matcher, the form-field guard, the Trash
+  double-activate.
 - `test/dreadnought-engine.test.ts` (renamed from `easter-engine.test.ts`) -- 18 cases: the original
   14 plus drone spawn/sine-sweep, `GameEvent` emission, and `attractInput` determinism.
 - `test/easter-menu-nav.test.ts` -- 7 cases covering the menu's keyboard navigation logic.
@@ -544,14 +589,10 @@ ship).
   can say whether `THRUST_ACCEL`/`H_ACCEL` want to be a little snappier or floatier.
 - **Global/shared high scores** are out of scope per the brief (localStorage only); a natural next
   step if this becomes a permanent feature.
-- **`SYS 64738` / composer-triggered entry points**, per the original research report: still
-  deferred until the header/composer rework in flight lands with a stable place to add them.
+- **A composer-typed trigger** (typing `SYS 64738` *in* the session composer) is still not wired:
+  form fields are deliberately excluded from every trigger. See "Triggers" for what is wired.
 - **A second Dreadnought Run mini-boss / spread-shot turret variant** for even more late-run
   variety -- the brief only asked for "one more enemy type" (the drone), which is done.
-- **Desk trigger wiring**: `openEasterEgg(game?: "rescue" | "dreadnought")` is the stable entry
-  point the desk UI (owned by another workstream) can call once it's ready to add its own trigger
-  surface (a hidden menu item, a `SYS 64738` command, etc.) beyond the existing Konami code and
-  `/ready` route.
 - **Level-2 drone shots still hit the attract autopilot sometimes.** Since the landing rework it
   delivers on level 1 in 20 of 20 seeds; on level 2 the drone takes it down now and then. The demo
   respawns and keeps going.

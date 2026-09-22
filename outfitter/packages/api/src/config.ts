@@ -143,6 +143,26 @@ function envOperators(name: string, env: NodeJS.ProcessEnv): string[] {
     .filter(Boolean);
 }
 
+/** The origin a sandbox dials for its WebSocket (agentd's OUTFITTER_API). With separate roles the
+ * sockets live on the "link" service; the "web" service sits behind IAP, which turns a sandbox's
+ * handshake away before it reaches the app (a WebSocket close 1006, and nothing in the link logs:
+ * the first Floppy woken from the deployed web role on 2026-09-22 hit exactly this). Role "all"
+ * serves both, so its own origin is right. */
+export function sandboxOrigin(config: Pick<Config, "role" | "origin" | "linkOrigin">): string {
+  return config.role === "web" && config.linkOrigin ? config.linkOrigin : config.origin;
+}
+
+/** Startup check: a web role that wakes Cloud Run sandboxes cannot work without the link origin
+ * (see sandboxOrigin). Throws with the fix instead of failing silently at the first wake. */
+export function assertSandboxOrigin(config: Pick<Config, "role" | "linkOrigin" | "sandboxProvider">): void {
+  if (config.role === "web" && config.sandboxProvider === "cloudrun" && !config.linkOrigin) {
+    throw new Error(
+      "OUTFITTER_LINK_ORIGIN is required for OUTFITTER_ROLE=web with SANDBOX_PROVIDER=cloudrun: sandboxes " +
+        "connect to the link service, not to this IAP-protected service. deploy/service.sh sets it.",
+    );
+  }
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     mongodbUri: env.MONGODB_URI ?? "memory",

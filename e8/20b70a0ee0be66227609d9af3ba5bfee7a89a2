@@ -1,0 +1,19 @@
+outfitter/deploy/env.sh
+  s_2209f22f830d7f::t_4e5f0f626c1e0c 56-59,61-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "e820b70a0ee0be66227609d9af3ba5bfee7a89a2",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

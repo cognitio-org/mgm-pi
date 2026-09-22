@@ -80,7 +80,13 @@ describe("inSandbox()", () => {
   test("is false unless KERNAL_SANDBOX is set to something truthy (the Outfitter image sets it to 1)", () => {
     delete process.env.KERNAL_SANDBOX;
     assert.equal(inSandbox(), false, "a laptop never sets it");
-    for (const off of ["", "0", "false", "FALSE"]) { process.env.KERNAL_SANDBOX = off; assert.equal(inSandbox(), false, JSON.stringify(off)); }
+    for (const off of ["", "0", "false", "FALSE", "no", "off", " 0 "]) { process.env.KERNAL_SANDBOX = off; assert.equal(inSandbox(), false, JSON.stringify(off)); }
     for (const on of ["1", "true", "yes"]) { process.env.KERNAL_SANDBOX = on; assert.equal(inSandbox(), true, on); }
+  });
+  test("falls back to MGM_SANDBOX, and an explicit KERNAL_SANDBOX wins over it", () => {
+    process.env.MGM_SANDBOX = "1";
+    assert.equal(inSandbox(), true);
+    process.env.KERNAL_SANDBOX = "0";
+    assert.equal(inSandbox(), false);
   });
 });

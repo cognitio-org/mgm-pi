@@ -37,8 +37,8 @@ export function envIsSet(name: string): boolean {
  * of the environment.
  */
 export function inSandbox(): boolean {
-  const v = env("SANDBOX");
-  return v !== undefined && v !== "" && v !== "0" && v.toLowerCase() !== "false";
+  const v = env("SANDBOX")?.trim().toLowerCase();
+  return v !== undefined && !["", "0", "false", "no", "off"].includes(v);
 }
 
 /** Test-only: clear the once-per-process warning memory between test cases. */

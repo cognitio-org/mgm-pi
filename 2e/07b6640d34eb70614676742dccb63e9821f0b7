@@ -1,0 +1,23 @@
+kernal/bin/mgm
+  s_2209f22f830d7f::t_5ce783440db53d 1
+kernal/tests/install-migration.test.ts
+  s_2209f22f830d7f::t_51bc6afbe41107 37-38,131-137
+kernal/tests/install.test.ts
+  s_2209f22f830d7f::t_5f9f1cf9bdaf8c 178-189
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "2e07b6640d34eb70614676742dccb63e9821f0b7",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -1,0 +1,55 @@
+outfitter/packages/api/test/operator.test.ts
+  s_2209f22f830d7f::t_e9ff99d11282bc 99-101
+  s_2209f22f830d7f::t_1fb7cb393c0f58 59
+  s_2209f22f830d7f::t_34026362c23f8d 1-58,60-98,102-281
+outfitter/packages/api/src/secrets.ts
+  s_2209f22f830d7f::t_0e746a6a9c07df 134-326
+outfitter/packages/api/src/routes/index.ts
+  s_2209f22f830d7f::t_4f2d974a5ab743 28
+  s_2209f22f830d7f::t_c250e805993101 10
+outfitter/packages/api/src/server.ts
+  s_2209f22f830d7f::t_25682188f5ed10 10
+  s_2209f22f830d7f::t_6b97cc80fc2ab5 25-27
+  s_2209f22f830d7f::t_8dd9ee4ac6ab00 99
+  s_2209f22f830d7f::t_6020c0c5ea36a3 43
+outfitter/packages/api/test/operator-test-endpoint.test.ts
+  s_2209f22f830d7f::t_c96b468811556a 1-120
+outfitter/packages/api/test/e2e.test.ts
+  s_2209f22f830d7f::t_ea41830e71d837 127
+  s_2209f22f830d7f::t_754a77d1d7ce02 111
+  s_2209f22f830d7f::t_972acc35b152fd 24
+outfitter/packages/api/src/operator.ts
+  s_2209f22f830d7f::t_d702f34eccb05a 1-100
+outfitter/packages/api/src/routes/context.ts
+  s_2209f22f830d7f::t_70d000e3b68064 8,19-21
+outfitter/packages/api/test/helpers.ts
+  s_2209f22f830d7f::t_5196c8b498c738 8,20-22,42-43
+outfitter/packages/api/src/providers-status.ts
+  s_2209f22f830d7f::t_e78fe49b0540da 51-53
+  s_2209f22f830d7f::t_00a9b3482bb682 70
+  s_2209f22f830d7f::t_d18f513f10f3da 62
+outfitter/packages/api/src/main.ts
+  s_2209f22f830d7f::t_ef218ae628bcda 4-11,20-22,24
+outfitter/packages/api/src/routes/operator.ts
+  s_2209f22f830d7f::t_1ee9c803034ca3 100-102
+  s_2209f22f830d7f::t_533891ba5b4269 13
+  s_2209f22f830d7f::t_d4244d04a061eb 67
+  s_2209f22f830d7f::t_f8992829dcb6e4 1-12,14-46,50-66,68-99,103-177
+  s_2209f22f830d7f::t_15ad509da1875d 47-49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "0e7667f836dfec46891761fdef901c48ca93d663",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

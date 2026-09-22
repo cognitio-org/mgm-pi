@@ -5,6 +5,25 @@ import type { EntryView } from "../lib/entry-view.ts";
 // SessionEntry tree (parentId-linked, with model_change/compaction/custom/label entries mixed in);
 // adapting that -- and bridging its web-component custom elements into React -- was more than this
 // story's budget covers, so these are hand-written instead (see docs/reports/web-ui.md).
+
+// Design pass (docs/reports/design-pass.md): tool call/result bodies can be arbitrarily long
+// (file diffs, command output). Past this length they render inside a native <details> so the
+// transcript stays scannable -- collapsed by default, expandable with a click or Enter/Space,
+// with no extra JS needed for the accessibility behavior.
+const COLLAPSE_THRESHOLD = 400;
+
+function Collapsible({ text, summary }: { text: string; summary: string }) {
+  if (text.length <= COLLAPSE_THRESHOLD) return <pre>{text}</pre>;
+  return (
+    <details>
+      <summary>
+        {summary} ({text.length.toLocaleString()} chars, click to expand)
+      </summary>
+      <pre>{text}</pre>
+    </details>
+  );
+}
+
 export function EntryItem({ view }: { view: EntryView }) {
   switch (view.kind) {
     case "user":
@@ -32,7 +51,7 @@ export function EntryItem({ view }: { view: EntryView }) {
       return (
         <div className="entry tool-call">
           <div className="entry-label">Tool call: {view.toolName}</div>
-          <pre>{JSON.stringify(view.input, null, 2)}</pre>
+          <Collapsible text={JSON.stringify(view.input, null, 2)} summary="Input" />
         </div>
       );
     case "tool-result":
@@ -42,7 +61,7 @@ export function EntryItem({ view }: { view: EntryView }) {
             Tool result: {view.toolName}
             {view.isError ? " (error)" : ""}
           </div>
-          {view.text}
+          <Collapsible text={view.text} summary="Output" />
         </div>
       );
     case "system":

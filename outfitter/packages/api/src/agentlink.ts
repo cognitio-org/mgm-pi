@@ -28,6 +28,14 @@ const REQUEST_TIMEOUT_MS = 15_000;
  * the persistence is meant for a question the run is actually waiting on. */
 const INTERACTIVE_UI_METHODS = new Set(["select", "confirm", "input", "editor"]);
 
+/** Bug 9 (docs/reports/cloud-fixes.md): must match packages/agentd/src/protocol.ts's own
+ * WIRE_PROTOCOL_VERSION -- the two packages can't share a module, so both sides document the
+ * pairing and bump together. A sandbox whose `hello.protocolVersion` is older than this (including
+ * missing entirely, an agentd build that predates the field) is refused with WS close 4409 instead
+ * of being allowed to silently ignore frames it doesn't understand -- see this story's motivating
+ * incident: a web role on a newer build sent `mail` frames an older agentd ignored. */
+const API_PROTOCOL_VERSION = 1;
+
 /** Thrown by buildRunSpec when a repo session has no usable GitHub token secret; handleConnection
  * catches it specifically to close the socket with the terminal 4412 code (docs/protocol.md) and
  * mark the run failed, instead of the generic "internal error" other buildRunSpec failures get. A
@@ -336,6 +344,22 @@ export class AgentLink {
       request.log.warn({ runId }, "agentlink: closing connection, too many frames buffered before hello");
       buffer.stop();
       return closeQuietly(socket, 4400, "too many buffered frames");
+    }
+    // Bug 9 (docs/reports/cloud-fixes.md): fail loudly on version skew instead of the silent
+    // breakage a mismatched deploy caused before (an older agentd ignoring frames a newer web role
+    // sent). A missing protocolVersion (an agentd build that predates this field) counts as older.
+    const agentProtocolVersion = typeof hello.protocolVersion === "number" ? hello.protocolVersion : 0;
+    if (agentProtocolVersion < API_PROTOCOL_VERSION) {
+      request.log.warn(
+        { runId, agentProtocolVersion, apiProtocolVersion: API_PROTOCOL_VERSION },
+        "agentlink: closing connection, agentd protocol version is older than the API's -- redeploy the agent image",
+      );
+      buffer.stop();
+      return closeQuietly(
+        socket,
+        4409,
+        `agentd protocol v${agentProtocolVersion} is older than the API's v${API_PROTOCOL_VERSION} -- redeploy the outfitter-agent image`,
+      );
     }
 
     this.sockets.set(runId, socket);

@@ -205,7 +205,14 @@ fi
 # means periodic reconnect churn and a brief gap in live updates, so "web" gets the same 3600s
 # rather than a "sane REST value" that would keep clipping the stream.
 DEPLOY_TIMEOUT="${DEPLOY_TIMEOUT:-3600}"
-echo "== Deploying ${SERVICE} (OUTFITTER_ROLE=${ROLE}, OUTFITTER_ORIGIN=${ORIGIN}, timeout=${DEPLOY_TIMEOUT}s) =="
+
+# Bug 9 (docs/reports/cloud-fixes.md): refuse (or, with ALLOW_SKEW=1, warn) if the other role's
+# service or the agent Job is currently deployed at a different commit -- see env.sh's
+# check_deploy_skew. Skipped for the bootstrap deploy above (no secrets/real env yet either; it
+# exists purely to learn ORIGIN) since that revision never serves real traffic.
+check_deploy_skew "${TAG}" "${ROLE}"
+
+echo "== Deploying ${SERVICE} (OUTFITTER_ROLE=${ROLE}, OUTFITTER_ORIGIN=${ORIGIN}, timeout=${DEPLOY_TIMEOUT}s, build-commit=${TAG}) =="
 gcloud run deploy "${SERVICE}" \
   --project="${PROJECT}" \
   --region="${REGION}" \
@@ -215,6 +222,7 @@ gcloud run deploy "${SERVICE}" \
   --memory=512Mi \
   --timeout="${DEPLOY_TIMEOUT}" \
   --service-account="${API_SA_EMAIL}" \
+  --update-labels="build-commit=${TAG}" \
   "${AUTH_FLAGS[@]}" \
   --set-secrets="${SECRETS}" \
   --set-env-vars="${ENV_VARS}"

@@ -95,6 +95,9 @@ test("Link: sends hello with lastAckedSeq=0 on first open", async (t) => {
   assert.equal(hello.runId, "run1");
   assert.equal(hello.lastAckedSeq, 0);
   assert.equal(hello.runToken, "test-run-token");
+  // Bug 9 (docs/reports/cloud-fixes.md): the wire protocol version, so a version-skewed link can
+  // refuse the connection loudly instead of silently ignoring frames it doesn't understand.
+  assert.equal(typeof hello.protocolVersion, "number");
 });
 
 test("Link: sendSeq assigns monotonic seq and buffers until acked", async (t) => {

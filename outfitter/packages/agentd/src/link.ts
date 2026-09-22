@@ -15,7 +15,7 @@
  * bug -- a token that expired hours into a run would make every reconnect fail with 401 forever).
  */
 import WebSocket from "ws";
-import { isSeqUpMessage, type DownMessage, type UpMessage } from "./protocol.js";
+import { isSeqUpMessage, WIRE_PROTOCOL_VERSION, type DownMessage, type UpMessage } from "./protocol.js";
 
 /** Close codes the api sends to mean "don't bother reconnecting" -- observed in the first real Cloud
  * Run execution: the api accepted the token, upgraded, then immediately closed with 4404 because the
@@ -245,6 +245,7 @@ export class Link {
         piVersion: this.opts.piVersion,
         lastAckedSeq: this.lastAckedSeq,
         runToken: this.opts.runToken,
+        protocolVersion: WIRE_PROTOCOL_VERSION,
       };
       this.transmit(hello);
       // Resend everything still unacked, in original order, so the api can replay/dedupe past

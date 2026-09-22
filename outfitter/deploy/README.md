@@ -141,10 +141,26 @@ so the commands below still work unchanged.
 6. **`./agent-job.sh`** — builds `image/Dockerfile` (repo root context) with Cloud Build and
    deploys/updates the `outfitter-agent` Cloud Run Job. Needs `OUTFITTER_API` set to the URL
    `link.sh` printed (not `api.sh`'s — agentd only ever dials `outfitter-link`).
+7. **`./deploy-all.sh`** — runs `link.sh`, then `api.sh`, then `agent-job.sh`, all from one commit.
+   The version-skew guard below refuses a single-component deploy against a mismatched fleet, so
+   this is the normal way to ship a change touching more than one of the three.
 
-Common env vars across all four scripts: `PROJECT` (default `outfitter-509211`), `REGION`
-(default `us-central1`), `AR_REPO` (default `outfitter`). See each script's header for its other
-inputs and their defaults.
+**Version skew guard (bug 9, `docs/reports/cloud-fixes.md`)**: `service.sh` and `agent-job.sh` each
+label what they deploy `build-commit=<git short sha>` and, before deploying, compare that against
+the *other* two components' currently-deployed `build-commit` label (`env.sh`'s
+`check_deploy_skew`, `gcloud run services|jobs describe ... --format='value(metadata.labels.build-
+commit)'`). A mismatch refuses the deploy and prints which component(s) are stale; `ALLOW_SKEW=1`
+downgrades that to a warning for a deliberate partial rollout. Separately, agentd announces its
+wire protocol version in `hello` (`packages/agentd/src/protocol.ts`'s `WIRE_PROTOCOL_VERSION`); the
+link role refuses (WS close `4409`) a sandbox whose version is older than its own
+(`packages/api/src/agentlink.ts`'s `API_PROTOCOL_VERSION`) — so even a sandbox that was already
+running before a skewed deploy landed, or one started despite `ALLOW_SKEW=1`, fails loudly at
+connect time instead of silently ignoring frames it doesn't understand. See `docs/protocol.md`'s
+close-codes table and `hello` row.
+
+Common env vars across all scripts: `PROJECT` (default `outfitter-509211`), `REGION`
+(default `us-central1`), `AR_REPO` (default `outfitter`), `ALLOW_SKEW` (default unset — see above).
+See each script's header for its other inputs and their defaults.
 
 ## IAP access for users outside the org
 

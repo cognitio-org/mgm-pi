@@ -78,6 +78,48 @@ describe("agentd <-> api WebSocket", () => {
     await app.fastify.close();
   });
 
+  test("bug 9 (docs/reports/cloud-fixes.md): closes with 4409 when the agentd's hello.protocolVersion is older than the API's", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken, 0, 0); // protocolVersion 0 -- an old build
+    const close = await agent.nextClose();
+    assert.equal(close.code, 4409);
+    assert.match(close.reason, /protocol v0 is older than the API's v1/);
+
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("bug 9: a missing protocolVersion (a pre-field agentd build) is treated as version 0 and refused the same way", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+
+    const agent = await openAgentSocket(app, runId);
+    agent.send({ t: "hello", runId, sessionId: session.id, lastAckedSeq: 0, runToken }); // no protocolVersion at all
+    const close = await agent.nextClose();
+    assert.equal(close.code, 4409);
+
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("bug 9: a matching or newer protocolVersion connects normally", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken, 0, 1); // matches API_PROTOCOL_VERSION
+    const spec = await agent.nextMessage();
+    assert.equal(spec.t, "run.spec");
+
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
   test("bug 7 (docs/reports/cloud-fixes.md): a status frame's detail is persisted on the run, and not wiped by a later state-only frame", async () => {
     const app = await buildTestApp();
     const { session, runId, runToken } = await makeRunningSession(app);

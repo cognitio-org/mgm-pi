@@ -39,7 +39,11 @@ gcloud builds submit "${REPO_ROOT}" \
   --project="${PROJECT}" \
   --config="${CONFIG_FILE}"
 
-echo "== Deploying job ${JOB} =="
+# Bug 9 (docs/reports/cloud-fixes.md): same skew guard as service.sh -- refuse (or, with
+# ALLOW_SKEW=1, warn) if outfitter-api/outfitter-link are currently deployed at a different commit.
+check_deploy_skew "${TAG}" "job"
+
+echo "== Deploying job ${JOB} (build-commit=${TAG}) =="
 gcloud run jobs deploy "${JOB}" \
   --project="${PROJECT}" \
   --region="${REGION}" \
@@ -49,6 +53,7 @@ gcloud run jobs deploy "${JOB}" \
   --task-timeout=24h \
   --max-retries=0 \
   --service-account="${AGENT_SA_EMAIL}" \
+  --labels="build-commit=${TAG}" \
   --set-env-vars="OUTFITTER_API=${OUTFITTER_API}"
 
 echo "== Done: ${JOB} deployed with ${IMAGE} =="

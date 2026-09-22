@@ -40,8 +40,10 @@ COPY mgm/.pi/mcp.json ./.pi/mcp.json
 COPY mgm/.pi/extensions/ ./.pi/extensions/
 # Laptop-only mgm extensions stay out of the cloud image: mgm-voice (microphone; it also creates
 # ~/.pi/agent at load and was the first thing to trip on the agent user's HOME) and mgm-update
-# (checks GitHub releases at session start; a sandbox is replaced by redeploying the image).
-RUN rm -rf ./.pi/extensions/mgm-voice ./.pi/extensions/mgm-update
+# (checks GitHub releases at session start; a sandbox is replaced by redeploying the image), and
+# mgm-admin (/admin serves a local web page for editing this machine's keys, model and index
+# settings; in a sandbox nobody can open it, and a session's config comes from its guru instead).
+RUN rm -rf ./.pi/extensions/mgm-voice ./.pi/extensions/mgm-update ./.pi/extensions/mgm-admin
 
 # TUI/laptop-only packages (voice input, terminal footer, editor LSP) make no sense for a cloud
 # guru with no terminal, no editor and no microphone attached; drop them from the image's

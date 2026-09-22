@@ -161,11 +161,20 @@ Settings `github.attribution.commit` and `github.attribution.pr`, each a string 
 
 Added exactly once, checked before appending. Locally the author is whatever the person's git
 config says. In the cloud there is no identity today (gap 4), so phase 3 adds one: `run.spec.author
-{name, email}` from the Outfitter user record, pinned as `GIT_AUTHOR_*` and `GIT_COMMITTER_*` in
-pi's environment and in agentd's own git calls. **Decided:** the committer is an Outfitter bot
-identity (`GIT_COMMITTER_*`, one fixed name and noreply address), and the author is the session's
-person (`GIT_AUTHOR_*`), so GitHub shows who asked for the work and that Outfitter made the commit.
-Checkpoint commits made by agentd itself use the bot for both.
+{name, email, login}` from the Outfitter user record, pinned as `GIT_AUTHOR_*` and `GIT_COMMITTER_*` in
+pi's environment and in agentd's own git calls. **Decided: "the bot, on behalf of the person."**
+- The Outfitter bot is both author and committer (`GIT_AUTHOR_*` and `GIT_COMMITTER_*`: one fixed
+  name and noreply address; the GitHub App's bot identity once it exists).
+- Every cloud commit gets two trailers naming the session's person, appended exactly once:
+  `Co-authored-by: <name> <GitHub noreply address>`, which makes GitHub show the person's avatar
+  next to the bot's and count the commit for them, and `On-behalf-of: <name> <address>`, plain text
+  that states the relationship for anyone reading the log.
+- GitHub's own "on behalf of" label exists only for organizations (a verified-domain trailer), so
+  it is not used.
+- PRs, comments and reviews made through the API appear as the credential's identity and carry a
+  footer "Outfitter, on behalf of @<login>".
+- Checkpoint commits carry the same trailers. The person's name, noreply address and login come in
+  `run.spec.author`.
 
 ### Setup: installing `gh` and signing in (local)
 
@@ -411,5 +420,7 @@ Each phase is its own PR with tests. Phases 1 and 2 are useful locally on their 
 ## Decided
 
 - **Scope**: github.com over HTTPS only; no GitHub Enterprise, no SSH remotes.
-- **Cloud committer**: an Outfitter bot identity commits; the session's person is the author.
+- **Cloud commits**: the Outfitter bot, on behalf of the person: the bot as author and committer,
+  with `Co-authored-by` and `On-behalf-of` trailers for the person; API actions carry an "on behalf
+  of @login" footer.
 - **Git proxy**: build it in phase 3, after a spike, so plain `git` works in the cloud shell.

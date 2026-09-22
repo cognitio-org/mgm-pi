@@ -2,11 +2,13 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { mkdtempSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   GitStore, parseOwnerRepo, rewriteHeaderCwd, pickModelForHost, manifestFromGit, describeRef,
   isWorkingTreeDirty, needsPush, verifyOwnerRepo, findSessionFileForId, FALLBACK_MODEL,
   type ExecFn, type Manifest,
+  defaultStoreDir,
 } from "../.pi/extensions/teleport/lib.ts";
 
 describe("parseOwnerRepo", () => {
@@ -301,3 +303,22 @@ describe("GitStore", () => {
     assert.equal(index[0].id, "sess1");
   });
 });
+
+describe("defaultStoreDir (pre-rename store folder)", () => {
+  test("uses ~/.kernal-sessions on a fresh machine", () => {
+    const home = mkdtempSync(join(tmpdir(), "tp-home-"));
+    assert.equal(defaultStoreDir(home), join(home, ".kernal-sessions"));
+  });
+  test("keeps using an existing ~/.mgm-sessions when there is no ~/.kernal-sessions", () => {
+    const home = mkdtempSync(join(tmpdir(), "tp-home-"));
+    mkdirSync(join(home, ".mgm-sessions"));
+    assert.equal(defaultStoreDir(home), join(home, ".mgm-sessions"));
+  });
+  test("prefers ~/.kernal-sessions once it exists", () => {
+    const home = mkdtempSync(join(tmpdir(), "tp-home-"));
+    mkdirSync(join(home, ".mgm-sessions"));
+    mkdirSync(join(home, ".kernal-sessions"));
+    assert.equal(defaultStoreDir(home), join(home, ".kernal-sessions"));
+  });
+});
+

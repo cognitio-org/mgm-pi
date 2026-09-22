@@ -66,8 +66,17 @@ async function defaultExec(cmd: string, args: string[], cwd: string): Promise<Ex
   }
 }
 
+/** ~/.kernal-sessions, unless only the pre-rename ~/.mgm-sessions exists: that clone may carry a
+ * remote and history, and silently starting a fresh, unsynced store beside it would hide both. */
+export function defaultStoreDir(home: string = homedir()): string {
+  const current = join(home, ".kernal-sessions");
+  const legacy = join(home, ".mgm-sessions");
+  return !existsSync(current) && existsSync(legacy) ? legacy : current;
+}
+
 export type GitStoreOptions = {
-  /** Clone directory. Defaults to KERNAL_TELEPORT_STORE, then ~/.kernal-sessions. */
+  /** Clone directory. Defaults to KERNAL_TELEPORT_STORE, then ~/.kernal-sessions (or an existing
+   * pre-rename ~/.mgm-sessions; see defaultStoreDir). */
   dir?: string;
   /** This machine's identifier, stamped on manifests. Defaults to os.hostname(). */
   host?: string;
@@ -87,7 +96,7 @@ export class GitStore implements Store {
   private repoReady = false;
 
   constructor(opts: GitStoreOptions = {}) {
-    this.dir = opts.dir ?? env("TELEPORT_STORE") ?? join(homedir(), ".kernal-sessions");
+    this.dir = opts.dir ?? env("TELEPORT_STORE") ?? defaultStoreDir();
     this.host = opts.host ?? hostname();
     this.exec = opts.exec ?? defaultExec;
     this.warn = opts.warn ?? (() => {});

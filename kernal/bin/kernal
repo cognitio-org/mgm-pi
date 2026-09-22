@@ -283,7 +283,7 @@ EOF
   else echo "prune --legacy: $n bundle(s), $(_prune_human "$total"). Nothing was deleted; to delete exactly these: kernal prune --legacy --yes"; fi
   return 0
 }
-REPO="mgmonteleone/mgm-pi"
+REPO="cognitio-org/mgm-pi"
 case "${1:-}" in
   version|--version) [[ -f "$ROOT/VERSION" ]] && cat "$ROOT/VERSION" || echo "kernal (source checkout at $ROOT)"; exit 0 ;;
   prune)

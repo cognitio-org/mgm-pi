@@ -1,5 +1,5 @@
 /** Pure logic for /report (bug reports to Matthew as GitHub issues); tested without pi. */
-export const DEFAULT_REPO = "mgmonteleone/mgm-pi";
+export const DEFAULT_REPO = "cognitio-org/mgm-pi";
 export const DEFAULT_ASSIGNEE = "mgmonteleone";
 export const MAX_BODY_CHARS = 60_000;          // GitHub issue bodies cap at 65 536
 export const TRANSCRIPT_ENTRIES = 40;

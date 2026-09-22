@@ -124,9 +124,14 @@ clone`, and web links) to the new one after a rename, so this is safe to do at a
 need to happen before or alongside anything in this change. It was intentionally left undone here:
 renaming a GitHub repository is an owner-account setting, not a code change, and is out of scope for
 a PR. If done, update `REPO="mgmonteleone/mgm-pi"` in `bin/kernal`, `scripts/install.sh`,
-`.pi/extensions/kernal-update/lib.ts` and `.pi/extensions/kernal-report/lib.ts` (all currently
-correct as-is, since the repo slug has not changed) — and the CI workflow files that reference the
-repo by URL.
+`.pi/extensions/kernal-update/lib.ts` and `.pi/extensions/kernal-report/lib.ts` — and the CI
+workflow files that reference the repo by URL.
+
+**Update (2026-09-23):** the repository moved to the `cognitio-org` organisation, so the slug is now
+`cognitio-org/mgm-pi` and those four files (plus `outfitter/deploy/ci-setup.sh`, which pins the
+deploy workflow's identity federation to a repository slug) have been updated accordingly. The name
+itself is still `mgm-pi`; renaming it to match Kernal remains the optional, separate step described
+above.
 
 ## Version
 

@@ -4,7 +4,7 @@
  * the launcher's `kernal update`, which downloads the release installer and upgrades in place (keys in
  * .env are kept). Source checkouts (no VERSION file) are never nagged. Env:
  *   KERNAL_NO_UPDATE_CHECK=1   skip the automatic check (tests, CI)
- *   KERNAL_UPDATE_REPO         override the GitHub repo (default mgmonteleone/mgm-pi)
+ *   KERNAL_UPDATE_REPO         override the GitHub repo (default cognitio-org/mgm-pi)
  */
 import { execFile, spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";

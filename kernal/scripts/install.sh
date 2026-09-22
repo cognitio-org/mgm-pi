@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install or update the kernal agent from a GitHub release bundle.
-#   curl -fsSL https://github.com/mgmonteleone/mgm-pi/releases/latest/download/install.sh | bash
+#   curl -fsSL https://github.com/cognitio-org/mgm-pi/releases/latest/download/install.sh | bash
 #   KERNAL_VERSION=0.2.0 ... | bash          # a specific release
 #   KERNAL_HOME=~/tools/kernal ... | bash    # install location (default ~/.kernal)
 #   KERNAL_KEEP_VERSIONS=3 ... | bash        # versions kept after an upgrade (default 2: new + previous)
@@ -155,7 +155,7 @@ EOF
 }
 # --- prune: end -------------------------------------------------------------------------------------
 
-REPO="mgmonteleone/mgm-pi"
+REPO="cognitio-org/mgm-pi"
 LEGACY_DEFAULT_HOME="$HOME/.mgm"
 
 if [[ -n "${KERNAL_HOME:-}" ]]; then

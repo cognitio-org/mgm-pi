@@ -1,5 +1,5 @@
 /** Pure logic for the kernal update check; tested without pi. */
-export const REPO = "mgmonteleone/mgm-pi";
+export const REPO = "cognitio-org/mgm-pi";
 export const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 export type Semver = [number, number, number];

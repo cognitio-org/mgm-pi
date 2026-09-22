@@ -1,0 +1,73 @@
+outfitter/landing/tools/modem.py
+  s_b767cc53a6419e::t_f8bc506b5bab57 1-82
+outfitter/landing/public/app.js
+  s_b767cc53a6419e::t_ea7c7b5f306c94 93
+  s_b767cc53a6419e::t_4a7eae9a39e3a4 28-31
+  s_b767cc53a6419e::t_8401fcccc83e45 292-293
+  s_b767cc53a6419e::t_071c6781ead40d 1-3,17,36,38-46,50-92,94-190,193-196,201-229,231-232,235-248,262-264,266-291,294-299,301-322,327-328,337,343-345,347-348,350-351,353-355,358-368,372
+  s_b767cc53a6419e::t_b7864d79504db6 8,10,20-25,27,32-35,37,197-200,230,233-234,249-261,265,300,323-326,329-336,338-341,369-371
+  s_b767cc53a6419e::t_c6d7c922d36861 7,11,48-49,191-192,356,373
+  s_b767cc53a6419e::t_a94d0efeebffff 342,346,349,352,357
+  s_b767cc53a6419e::t_4e120ae4d4a2d9 4-6,9,12-16,18-19,26,47,374
+outfitter/landing/public/index.html
+  s_b767cc53a6419e::t_ca938f29264b44 102-103
+  s_b767cc53a6419e::t_bbe873c6fffde3 55,59,61-62,68,109
+  s_b767cc53a6419e::t_e2cb41cc488824 1-37,47-48,50-51,63-66,69-101,104-107,110-112
+  s_b767cc53a6419e::t_4c0443ee682c91 38-39,41-46,108
+  s_b767cc53a6419e::t_849ad734a83bfe 40,49,52-54,56-58,67
+  s_b767cc53a6419e::t_8b8a34aadaa093 60
+outfitter/deploy/landing.sh
+  s_b767cc53a6419e::t_b834ecf556f103 1-56
+outfitter/landing/test/basic.test.mjs
+  s_b767cc53a6419e::t_ea7e428ac883ac 1-5,7-155,157-228,230-277,279-388,406
+  s_b767cc53a6419e::t_6db8fdbc33151d 278
+  s_b767cc53a6419e::t_8401fcccc83e45 6,389-405
+  s_b767cc53a6419e::t_2c681daee64808 156,229
+outfitter/landing/public/basic.js
+  s_b767cc53a6419e::t_2c681daee64808 183,1130
+  s_b767cc53a6419e::t_6641366d62473d 1-182,184-1129,1131-1270
+outfitter/landing/public/floppy.js
+  s_b767cc53a6419e::t_6b78ebdd1bc37e 1-6,21,24,39
+  s_b767cc53a6419e::t_4a7eae9a39e3a4 23,43
+  s_b767cc53a6419e::t_a25d1aeb94b7b8 34-37,50
+  s_b767cc53a6419e::t_f77e391d439785 7,25,40-42,44-49,51
+  s_b767cc53a6419e::t_a142a47f1dce20 8-20,22,26-31,38
+  s_b767cc53a6419e::t_e174c807c68d96 32-33
+outfitter/deploy/README.md
+  s_b767cc53a6419e::t_b71706472c11f7 179-201
+outfitter/landing/public/sounds/CREDITS.md
+  s_b767cc53a6419e::t_f8bc506b5bab57 12-16
+  s_b767cc53a6419e::t_f688fa22a024b2 1-2
+  s_b767cc53a6419e::t_9471dbc47b057a 3-11
+outfitter/landing/public/favicon.svg
+  s_b767cc53a6419e::t_ad83f858e0046c 1-13
+outfitter/landing/public/style.css
+  s_b767cc53a6419e::t_199100df3c4e09 1-129,131-142,144-190,193-203,206-210,281-292,300-311,320-339,341-411,413-420
+  s_b767cc53a6419e::t_bbe873c6fffde3 143,204-205,213-216,218-220,241-253,293-297,299,340
+  s_b767cc53a6419e::t_8b8a34aadaa093 130
+  s_b767cc53a6419e::t_ca938f29264b44 211-212,217,221-240,254-280,312-319,412
+  s_b767cc53a6419e::t_4c0443ee682c91 191-192
+  s_b767cc53a6419e::t_d0bbeecf0a6b8b 298
+outfitter/landing/Dockerfile
+  s_b767cc53a6419e::t_59ad0362d9b5bc 1-6
+outfitter/landing/nginx.conf
+  s_b767cc53a6419e::t_064d1770604c90 1-23
+outfitter/landing/security-headers.conf
+  s_b767cc53a6419e::t_7a653e0a5af7c1 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "e5fa0bdb91146f8cd1cc412fb3ce11f1d4878bf6",
+  "prompts": {},
+  "sessions": {
+    "s_b767cc53a6419e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9a3de148-3f07-4a78-97f1-f0ed4c46bad8",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -4,6 +4,7 @@
 // <body> (not while typing in the composer, a text input, or a textarea), so it can never
 // interfere with real use of the app, and it ignores repeated keydown events from a held key.
 import { useEffect, useRef } from "react";
+import { isTypingTarget } from "./triggers.ts";
 
 const SEQUENCE = [
   "ArrowUp",
@@ -18,11 +19,6 @@ const SEQUENCE = [
   "a",
 ];
 
-function isTypingTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  const tag = target.tagName;
-  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
-}
 
 /** Calls onTriggered() once the Konami sequence is typed anywhere outside a form field. */
 export function useKonamiCode(onTriggered: () => void): void {

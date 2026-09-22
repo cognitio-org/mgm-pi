@@ -90,6 +90,17 @@
   color: var(--accent-contrast);
 }
 
+/* SYS 64738 (opens KERNAL GAMES) reads as a typed command, not a menu label */
+.desk-menu-list li button.desk-menu-sys {
+  font-family: var(--font-mono);
+  border-top: 1px dashed var(--border);
+}
+
+/* the Trash has a double-click/double-tap action: don't let the browser read it as double-tap zoom */
+.desk-desktop-icon-trash {
+  touch-action: manipulation;
+}
+
 .desk-menubar-spacer {
   margin-left: auto;
   display: flex;

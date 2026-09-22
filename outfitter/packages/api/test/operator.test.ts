@@ -1,0 +1,281 @@
+// Operator role and settings (EPIC.md Decisions table / operators.md): GET /api/me's operator
+// flag, requireOperator's 403 on every /api/operator/* route for a non-operator, GET /api/operator/
+// settings' secret list (masking, appliesAt), PUT/DELETE/test wiring against MemorySecretAdmin
+// (see helpers.ts's buildTestApp -- OUTFITTER_DEV=1 by default, so the dev identity is always an
+// operator; non-operator behaviour is exercised the same way tokens.test.ts fakes a caller
+// identity -- an outf_ token whose owner isn't on OUTFITTER_OPERATORS, with dev mode off).
+
+import { test, describe } from "node:test";
+import assert from "node:assert/strict";
+import { buildTestApp, seedGuru } from "./helpers.ts";
+import { MemoryStore } from "../src/store/memory.ts";
+import { MemorySecretAdmin } from "../src/secrets.ts";
+
+const OPERATOR_ENV = { OUTFITTER_DEV: "0", OUTFITTER_OPERATORS: "operator@mgms.eu" };
+
+/** Mints an outf_ token for `ownerEmail` via a throwaway dev-mode app sharing the same store, then
+ * returns the bearer header -- same trick tokens.test.ts uses to get a token for an arbitrary
+ * owner without a real IAP assertion. */
+async function bearerFor(store: MemoryStore, ownerEmail: string): Promise<{ authorization: string }> {
+  const dev = await buildTestApp({}, { store }); // OUTFITTER_DEV=1 by default -- owner is dev@localhost
+  const created = await dev.fastify.inject({ method: "POST", url: "/api/me/tokens", payload: { name: "t" } });
+  const id = created.json().record.id;
+  const token = created.json().token;
+  if (ownerEmail !== "dev@localhost") {
+    await store.tokens.update(id, { ownerEmail });
+  }
+  await dev.fastify.close();
+  return { authorization: `Bearer ${token}` };
+}
+
+describe("GET /api/me: operator flag", () => {
+  test("dev identity is always an operator", async () => {
+    const app = await buildTestApp();
+    const res = await app.fastify.inject({ method: "GET", url: "/api/me" });
+    assert.equal(res.json().operator, true);
+    await app.fastify.close();
+  });
+
+  test("a non-operator's own identity reports operator: false", async () => {
+    const store = new MemoryStore();
+    const auth = await bearerFor(store, "someone@mgms.eu");
+    const app = await buildTestApp(OPERATOR_ENV, { store });
+    const res = await app.fastify.inject({ method: "GET", url: "/api/me", headers: auth });
+    assert.equal(res.json().operator, false);
+    await app.fastify.close();
+  });
+
+  test("an operator's identity reports operator: true", async () => {
+    const store = new MemoryStore();
+    const auth = await bearerFor(store, "operator@mgms.eu");
+    const app = await buildTestApp(OPERATOR_ENV, { store });
+    const res = await app.fastify.inject({ method: "GET", url: "/api/me", headers: auth });
+    assert.equal(res.json().operator, true);
+    await app.fastify.close();
+  });
+});
+
+describe("requireOperator: 403 for a non-operator on every /api/operator/* route", () => {
+  const routes: Array<{ method: "GET" | "PUT" | "DELETE" | "POST"; url: string; payload?: Record<string, unknown> }> = [
+    { method: "GET", url: "/api/operator/settings" },
+    { method: "PUT", url: "/api/operator/secrets/outfitter-github-pat", payload: { value: "x".repeat(20) } },
+    { method: "DELETE", url: "/api/operator/secrets/outfitter-github-pat" },
+    { method: "POST", url: "/api/operator/secrets/outfitter-github-pat/test", payload: {} },
+  ];
+
+  for (const route of routes) {
+    test(`${route.method} ${route.url} -> 403 with a clear message`, async () => {
+      const store = new MemoryStore();
+      const auth = await bearerFor(store, "someone@mgms.eu");
+      const app = await buildTestApp(OPERATOR_ENV, { store });
+      const res = await app.fastify.inject({
+        method: route.method,
+        url: route.url,
+        headers: auth,
+        payload: route.payload,
+      });
+      assert.equal(res.statusCode, 403);
+      assert.equal(res.json().error, "operator role required");
+      await app.fastify.close();
+    });
+  }
+
+  test("link-role token identities are never operators, even when the owner is on OUTFITTER_OPERATORS -- but the link role doesn't register these routes anyway", async () => {
+    const store = new MemoryStore();
+    const auth = await bearerFor(store, "operator@mgms.eu");
+    const link = await buildTestApp({ ...OPERATOR_ENV, OUTFITTER_ROLE: "link" }, { store });
+    assert.equal(link.fastify.hasRoute({ method: "GET", url: "/api/operator/settings" }), false);
+    await link.fastify.close();
+  });
+});
+
+describe("GET /api/operator/settings", () => {
+  test("lists deployment values, the operator list, and one row per managed secret", async () => {
+    const app = await buildTestApp({ OUTFITTER_OPERATORS: "mgm@mgms.eu;matej@mgms.eu" });
+    await seedGuru(app.store, { id: "g1", name: "Guru One" });
+    const res = await app.fastify.inject({ method: "GET", url: "/api/operator/settings" });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(typeof body.litellmBaseUrl, "string");
+    assert.equal(typeof body.sandboxProvider, "string");
+    assert.equal(typeof body.cloudRunJob, "string");
+    assert.deepEqual(body.operators, ["mgm@mgms.eu", "matej@mgms.eu"]);
+    const names = body.secrets.map((s: { secretName: string }) => s.secretName);
+    assert.ok(names.includes("outfitter-litellm-key-default"));
+    assert.ok(names.includes("outfitter-github-pat"));
+    assert.ok(names.includes("outfitter-litellm-admin"));
+    assert.ok(names.includes("outfitter-ngrok-api-key"));
+    assert.ok(names.includes("outfitter-local-tunnel-token"));
+    assert.ok(names.includes("outfitter-litellm-key-g1"));
+    for (const row of body.secrets) {
+      assert.equal(row.set, false);
+      assert.equal(row.masked, undefined);
+      assert.ok(row.appliesAt === "next run" || row.appliesAt === "next deploy");
+    }
+    await app.fastify.close();
+  });
+
+  test("appliesAt matches the mount mechanism: run-time secrets are 'next run', mounted ones are 'next deploy'", async () => {
+    const app = await buildTestApp();
+    const res = await app.fastify.inject({ method: "GET", url: "/api/operator/settings" });
+    const bySecret = Object.fromEntries(res.json().secrets.map((s: { secretName: string; appliesAt: string }) => [s.secretName, s.appliesAt]));
+    assert.equal(bySecret["outfitter-litellm-key-default"], "next run");
+    assert.equal(bySecret["outfitter-github-pat"], "next deploy");
+    assert.equal(bySecret["outfitter-litellm-admin"], "next deploy");
+    assert.equal(bySecret["outfitter-ngrok-api-key"], "next deploy");
+    assert.equal(bySecret["outfitter-local-tunnel-token"], "next deploy");
+    await app.fastify.close();
+  });
+
+  test("masks a set secret's value, showing only the last 4 characters, only past 12 characters", async () => {
+    const secretAdmin = new MemorySecretAdmin();
+    await secretAdmin.addVersion("outfitter-github-pat", "short-key"); // 9 chars -- not masked, but marked set
+    await secretAdmin.addVersion("outfitter-litellm-admin", "a-very-long-litellm-admin-key-1234");
+    const app = await buildTestApp({}, { secretAdmin });
+    const res = await app.fastify.inject({ method: "GET", url: "/api/operator/settings" });
+    const bySecret = Object.fromEntries(
+      res.json().secrets.map((s: { secretName: string; set: boolean; masked?: string }) => [s.secretName, s]),
+    );
+    assert.equal(bySecret["outfitter-github-pat"].set, true);
+    assert.equal(bySecret["outfitter-github-pat"].masked, undefined); // too short to mask
+    assert.equal(bySecret["outfitter-litellm-admin"].set, true);
+    assert.equal(bySecret["outfitter-litellm-admin"].masked, "…1234");
+    await app.fastify.close();
+  });
+});
+
+describe("PUT /api/operator/secrets/:secretName", () => {
+  test("rejects a secret name that isn't managed", async () => {
+    const app = await buildTestApp();
+    const res = await app.fastify.inject({
+      method: "PUT",
+      url: "/api/operator/secrets/some-random-secret",
+      payload: { value: "a-value-thats-long-enough" },
+    });
+    assert.equal(res.statusCode, 400);
+    await app.fastify.close();
+  });
+
+  test("rejects a per-guru secret name for a guru that doesn't exist", async () => {
+    const app = await buildTestApp();
+    const res = await app.fastify.inject({
+      method: "PUT",
+      url: "/api/operator/secrets/outfitter-litellm-key-nope",
+      payload: { value: "a-value-thats-long-enough" },
+    });
+    assert.equal(res.statusCode, 400);
+    await app.fastify.close();
+  });
+
+  test("accepts a per-guru secret name for a guru that does exist", async () => {
+    const app = await buildTestApp();
+    await seedGuru(app.store, { id: "g1" });
+    const res = await app.fastify.inject({
+      method: "PUT",
+      url: "/api/operator/secrets/outfitter-litellm-key-g1",
+      payload: { value: "a-value-thats-long-enough" },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().set, true);
+    await app.fastify.close();
+  });
+
+  test("rejects an empty value", async () => {
+    const app = await buildTestApp();
+    const res = await app.fastify.inject({
+      method: "PUT",
+      url: "/api/operator/secrets/outfitter-github-pat",
+      payload: { value: "   " },
+    });
+    assert.equal(res.statusCode, 400);
+    await app.fastify.close();
+  });
+
+  test("rejects a value containing whitespace", async () => {
+    const app = await buildTestApp();
+    const res = await app.fastify.inject({
+      method: "PUT",
+      url: "/api/operator/secrets/outfitter-github-pat",
+      payload: { value: "has a space in it" },
+    });
+    assert.equal(res.statusCode, 400);
+    await app.fastify.close();
+  });
+
+  test("trims the value before storing, and the row reflects the new state", async () => {
+    const secretAdmin = new MemorySecretAdmin();
+    const app = await buildTestApp({}, { secretAdmin });
+    const res = await app.fastify.inject({
+      method: "PUT",
+      url: "/api/operator/secrets/outfitter-github-pat",
+      payload: { value: "  a-github-pat-value-1234  " },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().set, true);
+    assert.equal(await secretAdmin.accessLatest("outfitter-github-pat"), "a-github-pat-value-1234");
+    await app.fastify.close();
+  });
+});
+
+describe("DELETE /api/operator/secrets/:secretName", () => {
+  test("rejects a secret name that isn't managed", async () => {
+    const app = await buildTestApp();
+    const res = await app.fastify.inject({ method: "DELETE", url: "/api/operator/secrets/some-random-secret" });
+    assert.equal(res.statusCode, 400);
+    await app.fastify.close();
+  });
+
+  test("refuses to disable the default LiteLLM key when no guru has its own key", async () => {
+    const secretAdmin = new MemorySecretAdmin();
+    await secretAdmin.addVersion("outfitter-litellm-key-default", "a-default-key-1234");
+    const app = await buildTestApp({}, { secretAdmin });
+    await seedGuru(app.store, { id: "g1" }); // exists, but has no own key set
+    const res = await app.fastify.inject({ method: "DELETE", url: "/api/operator/secrets/outfitter-litellm-key-default" });
+    assert.equal(res.statusCode, 409);
+    assert.ok(res.json().error.length > 0);
+    // still enabled -- the refusal must not have disabled it anyway
+    assert.equal((await secretAdmin.info("outfitter-litellm-key-default")).set, true);
+    await app.fastify.close();
+  });
+
+  test("allows disabling the default key once at least one guru has its own", async () => {
+    const secretAdmin = new MemorySecretAdmin();
+    await secretAdmin.addVersion("outfitter-litellm-key-default", "a-default-key-1234");
+    await secretAdmin.addVersion("outfitter-litellm-key-g1", "a-guru-owned-key-1234");
+    const app = await buildTestApp({}, { secretAdmin });
+    await seedGuru(app.store, { id: "g1" });
+    const res = await app.fastify.inject({ method: "DELETE", url: "/api/operator/secrets/outfitter-litellm-key-default" });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().set, false);
+    await app.fastify.close();
+  });
+
+  test("disables (not destroys) a non-default managed secret", async () => {
+    const secretAdmin = new MemorySecretAdmin();
+    await secretAdmin.addVersion("outfitter-github-pat", "a-github-pat-value-1234");
+    const app = await buildTestApp({}, { secretAdmin });
+    const res = await app.fastify.inject({ method: "DELETE", url: "/api/operator/secrets/outfitter-github-pat" });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().set, false);
+    assert.equal(await secretAdmin.accessLatest("outfitter-github-pat"), undefined);
+    await app.fastify.close();
+  });
+});
+
+describe("POST /api/operator/secrets/:secretName/test", () => {
+  test("reports no value set when nothing is stored and none is given", async () => {
+    const app = await buildTestApp();
+    const res = await app.fastify.inject({ method: "POST", url: "/api/operator/secrets/outfitter-github-pat/test", payload: {} });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().ok, false);
+    assert.equal(res.json().detail, "no value set");
+    await app.fastify.close();
+  });
+
+  test("400s for an unmanaged secret name", async () => {
+    const app = await buildTestApp();
+    const res = await app.fastify.inject({ method: "POST", url: "/api/operator/secrets/some-random-secret/test", payload: {} });
+    assert.equal(res.statusCode, 400);
+    await app.fastify.close();
+  });
+});

@@ -1,0 +1,145 @@
+/* Outfitter theme tokens.
+ *
+ * Two deliberate looks, not one dark-mode-only default:
+ *  - light = early Macintosh / GEOS: warm paper, black hairline rules, a GEOS "selection blue"
+ *    accent, square corners, hard offset shadows instead of blur.
+ *  - dark  = Commodore 64 meets a phosphor terminal: a blue-violet C64 screen (never near-black),
+ *    light-blue-violet borders/text, phosphor green reserved for "live" states and the cursor,
+ *    C64 yellow for warnings, C64 red for failures.
+ *
+ * Dark is the default (prefers-color-scheme), overridable at either end by [data-theme] (see
+ * ThemeToggle.tsx). All pairs below are checked for WCAG AA in docs/design/README.md.
+ */
+
+/* Self-hosted fonts (no third-party network requests -- see @fontsource/* in package.json).
+ * Display/pixel face for the logo, headings and status pills only; humanist sans for body copy
+ * and UI chrome; monospace for the transcript and anything code-shaped. Latin subsets, two
+ * weights per family, to keep the added weight modest. */
+@import "@fontsource/silkscreen/latin-400.css";
+@import "@fontsource/silkscreen/latin-700.css";
+@import "@fontsource/ibm-plex-sans/latin-400.css";
+@import "@fontsource/ibm-plex-sans/latin-600.css";
+@import "@fontsource/ibm-plex-mono/latin-400.css";
+@import "@fontsource/ibm-plex-mono/latin-500.css";
+
+:root {
+  color-scheme: dark;
+
+  --font-display: "Silkscreen", "Chicago", monospace;
+  --font-body: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --radius: 0; /* square corners everywhere, in both themes */
+  --shadow-offset: 3px;
+
+  /* ---- dark: C64 phosphor terminal (default) ---- */
+  --bg: #302870;
+  --bg-elevated: #3a3184;
+  --bg-inset: #251f5c;
+  --border: #8b7cd8;
+  --border-strong: #b3a8f0;
+  --text: #e4e0fb;
+  --text-dim: #a89fe0;
+  --link: #b3a8f0;
+  --accent: #7869c4;
+  --accent-contrast: #12103a;
+  --title-label-text: #ffffff; /* 4.55:1 on --accent */
+  --ok: #5cff8a; /* phosphor green: live/running/cursor only */
+  --ok-contrast: #06210f;
+  --warn: #f4cf3c; /* C64 yellow */
+  --warn-contrast: #2a2103;
+  --danger: #ff8a8a; /* C64 red, brightened for AA on this bg */
+  --danger-contrast: #350a0a;
+  --titlebar-stripe-a: var(--accent);
+  --titlebar-stripe-b: var(--bg-inset);
+  --scanline-opacity: 0.05;
+  --selection-bg: var(--accent);
+  --selection-text: #ffffff;
+}
+
+/* Light mode: early Mac / GEOS paper */
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #f1ebdd;
+    --bg-elevated: #fffdf8;
+    --bg-inset: #e7ddc6;
+    --border: #1a1712;
+    --border-strong: #000000;
+    --text: #171512;
+    --text-dim: #5b5548;
+    --link: #2a4b8d;
+    --accent: #2a4b8d; /* GEOS "selection" blue */
+    --accent-contrast: #fffdf8;
+    --title-label-text: #fffdf8; /* 8.3:1 on --accent */
+    --ok: #2e6b3e;
+    --ok-contrast: #eaf6ec;
+    --warn: #8a5c10;
+    --warn-contrast: #fbf1de;
+    --danger: #b0242b;
+    --danger-contrast: #fdeceb;
+    --titlebar-stripe-a: var(--accent);
+    --titlebar-stripe-b: var(--bg-elevated);
+    --scanline-opacity: 0;
+    --selection-bg: var(--accent);
+    --selection-text: #fffdf8;
+  }
+}
+
+/* Manual overrides win over the OS preference either direction. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #302870;
+  --bg-elevated: #3a3184;
+  --bg-inset: #251f5c;
+  --border: #8b7cd8;
+  --border-strong: #b3a8f0;
+  --text: #e4e0fb;
+  --text-dim: #a89fe0;
+  --link: #b3a8f0;
+  --accent: #7869c4;
+  --accent-contrast: #12103a;
+  --title-label-text: #ffffff; /* 4.55:1 on --accent */
+  --ok: #5cff8a;
+  --ok-contrast: #06210f;
+  --warn: #f4cf3c;
+  --warn-contrast: #2a2103;
+  --danger: #ff8a8a;
+  --danger-contrast: #350a0a;
+  --titlebar-stripe-a: var(--accent);
+  --titlebar-stripe-b: var(--bg-inset);
+  --scanline-opacity: 0.05;
+  --selection-bg: var(--accent);
+  --selection-text: #ffffff;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f1ebdd;
+  --bg-elevated: #fffdf8;
+  --bg-inset: #e7ddc6;
+  --border: #1a1712;
+  --border-strong: #000000;
+  --text: #171512;
+  --text-dim: #5b5548;
+  --link: #2a4b8d;
+  --accent: #2a4b8d;
+  --accent-contrast: #fffdf8;
+    --title-label-text: #fffdf8; /* 8.3:1 on --accent */
+  --ok: #2e6b3e;
+  --ok-contrast: #eaf6ec;
+  --warn: #8a5c10;
+  --warn-contrast: #fbf1de;
+  --danger: #b0242b;
+  --danger-contrast: #fdeceb;
+  --titlebar-stripe-a: var(--accent);
+  --titlebar-stripe-b: var(--bg-elevated);
+  --scanline-opacity: 0;
+  --selection-bg: var(--accent);
+  --selection-text: #fffdf8;
+}
+
+::selection {
+  background: var(--selection-bg);
+  color: var(--selection-text);
+}

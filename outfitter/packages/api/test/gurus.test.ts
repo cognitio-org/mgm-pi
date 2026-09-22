@@ -5,7 +5,7 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { buildTestApp } from "./helpers.ts";
+import { buildTestApp, seedGuru } from "./helpers.ts";
 
 describe("POST /api/gurus: guru.env denylist", () => {
   for (const key of [
@@ -60,6 +60,130 @@ describe("PUT /api/gurus/:id: guru.env denylist", () => {
       payload: { env: { LD_PRELOAD: "/tmp/evil.so" } },
     });
     assert.equal(res.statusCode, 400);
+    await app.fastify.close();
+  });
+});
+
+describe("POST /api/gurus: model/fallbackModel/thinking validation", () => {
+  test("rejects a model with no provider prefix", async () => {
+    const app = await buildTestApp();
+    const res = await app.fastify.inject({
+      method: "POST",
+      url: "/api/gurus",
+      payload: { name: "bad-model", model: "gpt-5" },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.match(res.json().error, /provider\/id/);
+    await app.fastify.close();
+  });
+
+  test("rejects a fallbackModel with no provider prefix", async () => {
+    const app = await buildTestApp();
+    const res = await app.fastify.inject({
+      method: "POST",
+      url: "/api/gurus",
+      payload: { name: "bad-fallback", model: "litellm/claude-auto-llm", fallbackModel: "gpt-5" },
+    });
+    assert.equal(res.statusCode, 400);
+    await app.fastify.close();
+  });
+
+  test("rejects an unrecognized thinking level", async () => {
+    const app = await buildTestApp();
+    const res = await app.fastify.inject({
+      method: "POST",
+      url: "/api/gurus",
+      payload: { name: "bad-thinking", model: "litellm/claude-auto-llm", thinking: "ultra" },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.match(res.json().error, /off, minimal, low, medium, high, xhigh, max/);
+    await app.fastify.close();
+  });
+
+  test("accepts a valid model, fallbackModel and thinking level", async () => {
+    const app = await buildTestApp();
+    const res = await app.fastify.inject({
+      method: "POST",
+      url: "/api/gurus",
+      payload: {
+        name: "good-guru",
+        model: "litellm/claude-auto-llm",
+        fallbackModel: "litellm/claude-auto-llm",
+        thinking: "medium",
+      },
+    });
+    assert.equal(res.statusCode, 201);
+    await app.fastify.close();
+  });
+});
+
+describe("PUT /api/gurus/:id: model/thinking validation", () => {
+  test("rejects an update with an invalid thinking level", async () => {
+    const app = await buildTestApp();
+    const guru = await seedGuru(app.store);
+    const res = await app.fastify.inject({
+      method: "PUT",
+      url: `/api/gurus/${guru.id}`,
+      payload: { thinking: "nope" },
+    });
+    assert.equal(res.statusCode, 400);
+    await app.fastify.close();
+  });
+});
+
+describe("GET /api/gurus/meta", () => {
+  test("echoes the env denylist and thinking levels", async () => {
+    const app = await buildTestApp();
+    const res = await app.fastify.inject({ method: "GET", url: "/api/gurus/meta" });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.ok(body.envDenylist.includes("LITELLM_BASE_URL"));
+    assert.ok(body.envDenylist.includes("GIT_*"));
+    assert.deepEqual(body.thinkingLevels, ["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+    await app.fastify.close();
+  });
+});
+
+describe("DELETE /api/gurus/:id", () => {
+  test("404s for an unknown guru", async () => {
+    const app = await buildTestApp();
+    const res = await app.fastify.inject({ method: "DELETE", url: "/api/gurus/nope" });
+    assert.equal(res.statusCode, 404);
+    await app.fastify.close();
+  });
+
+  test("400s for the default guru", async () => {
+    const app = await buildTestApp();
+    await seedGuru(app.store, { id: "default" });
+    const res = await app.fastify.inject({ method: "DELETE", url: "/api/gurus/default" });
+    assert.equal(res.statusCode, 400);
+    await app.fastify.close();
+  });
+
+  test("409s with a count when a session references the guru", async () => {
+    const app = await buildTestApp();
+    const guru = await seedGuru(app.store);
+    await app.store.sessions.insert({
+      id: "s1",
+      guruId: guru.id,
+      repo: null,
+      status: "open",
+      cost: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    const res = await app.fastify.inject({ method: "DELETE", url: `/api/gurus/${guru.id}` });
+    assert.equal(res.statusCode, 409);
+    assert.equal(res.json().count, 1);
+    await app.fastify.close();
+  });
+
+  test("deletes a guru with no referencing sessions", async () => {
+    const app = await buildTestApp();
+    const guru = await seedGuru(app.store);
+    const res = await app.fastify.inject({ method: "DELETE", url: `/api/gurus/${guru.id}` });
+    assert.equal(res.statusCode, 204);
+    assert.equal(await app.store.gurus.findById(guru.id), null);
     await app.fastify.close();
   });
 });

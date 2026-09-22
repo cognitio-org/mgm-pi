@@ -161,6 +161,10 @@ class MemoryGurus implements GurusCollection {
     this.rows.set(id, next);
     return clone(next);
   }
+
+  async delete(id: string): Promise<boolean> {
+    return this.rows.delete(id);
+  }
 }
 
 class MemoryEnvironments implements EnvironmentsCollection {

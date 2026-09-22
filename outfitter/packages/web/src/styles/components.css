@@ -1,0 +1,506 @@
+/* Reusable component classes. Shared by the pages already in this package and meant for the
+ * Gurus/Settings pages landing alongside this branch -- see docs/design/README.md for usage
+ * notes. Existing class names (status-pill, data-table, empty-state, form-row, dialog, entry,
+ * ...) are kept and restyled in place; new classes are additive aliases or new patterns. */
+
+/* ---------- buttons ---------- */
+
+button,
+select,
+input,
+textarea {
+  font-family: var(--font-body);
+  font-size: 0.88rem;
+  color: var(--text);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.42rem 0.65rem;
+}
+
+textarea {
+  font-family: var(--font-mono);
+}
+
+button,
+.btn {
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-weight: 600;
+  box-shadow: var(--shadow-offset) var(--shadow-offset) 0 0 var(--border);
+  transition:
+    transform 0.08s ease,
+    box-shadow 0.08s ease;
+}
+
+button:hover,
+.btn:hover {
+  border-color: var(--accent);
+}
+
+button:active,
+.btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 0 var(--border);
+}
+
+button:disabled,
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+
+.btn-primary:hover {
+  border-color: var(--border-strong);
+}
+
+.btn-danger {
+  background: var(--bg-elevated);
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.btn-danger:hover {
+  background: var(--danger);
+  color: var(--danger-contrast);
+}
+
+/* ---------- panel: window chrome with a striped title bar ---------- */
+
+.panel {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-offset) var(--shadow-offset) 0 0 var(--border);
+}
+
+.panel-titlebar,
+.panel h2.panel-title,
+.panel h3.panel-title,
+h2.panel-title {
+  /* Window title bar: stripes across the full width, the title left-aligned on a solid label
+     that interrupts them (the owner's reference). Put the text in a <span class="panel-label">
+     so the stripes show above and below it; without the span the text sits on the stripes. */
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 0.3rem 0.5rem;
+  min-height: 1.9rem;
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 400;
+  line-height: 1.2;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text);
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--titlebar-stripe-a) 0px,
+    var(--titlebar-stripe-a) 2px,
+    var(--titlebar-stripe-b) 2px,
+    var(--titlebar-stripe-b) 5px
+  );
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-label {
+  padding: 0.15rem 0.45rem;
+  background: var(--accent);
+  color: var(--title-label-text);
+}
+
+.panel-body {
+  padding: 0.85rem;
+}
+
+/* ---------- status pills: colour + glyph, never colour alone ---------- */
+
+.status-pill,
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.12rem 0.55rem;
+  border-radius: 999px;
+  font-family: var(--font-display);
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.status-pill::before,
+.pill::before {
+  content: "\2022"; /* bullet glyph fallback for unrecognized states */
+  font-size: 0.9em;
+}
+
+.status-pill.running::before,
+.pill.running::before,
+.status-pill.up::before,
+.pill.up::before {
+  content: "\25B6"; /* running triangle */
+}
+
+.status-pill.queued::before,
+.pill.queued::before {
+  content: "\29D6"; /* hourglass-ish */
+}
+
+.status-pill.provisioning::before,
+.pill.provisioning::before {
+  content: "\21BB"; /* spinning arrow */
+}
+
+.status-pill.idle::before,
+.pill.idle::before {
+  content: "\23F8"; /* pause */
+}
+
+.status-pill.stopping::before,
+.pill.stopping::before {
+  content: "\25CF";
+}
+
+.status-pill.stopped::before,
+.pill.stopped::before,
+.status-pill.down::before,
+.pill.down::before {
+  content: "\25A0"; /* stop square */
+}
+
+.status-pill.failed::before,
+.pill.failed::before {
+  content: "\2717"; /* cross */
+}
+
+.status-pill.degraded::before,
+.pill.degraded::before {
+  content: "\26A0"; /* warning triangle */
+}
+
+.status-pill.running,
+.pill.running,
+.status-pill.up,
+.pill.up {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.status-pill.running::before,
+.pill.running::before {
+  animation: pill-blink 1.1s steps(2, start) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-pill.running::before,
+  .pill.running::before {
+    animation: none;
+  }
+}
+
+.status-pill.queued,
+.pill.queued,
+.status-pill.provisioning,
+.pill.provisioning,
+.status-pill.stopping,
+.pill.stopping,
+.status-pill.degraded,
+.pill.degraded {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.status-pill.idle,
+.pill.idle {
+  color: var(--text-dim);
+  border-color: var(--border);
+}
+
+.status-pill.stopped,
+.pill.stopped {
+  color: var(--text-dim);
+  border-color: var(--border);
+}
+
+.status-pill.failed,
+.pill.failed,
+.status-pill.down,
+.pill.down {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* ---------- tables ---------- */
+
+/* Wrap table.data-table/table.table in a .table-scroll div so an unavoidably wide table (many
+ * columns, long content) scrolls within itself instead of pushing the whole page horizontally --
+ * the "no horizontal page scroll at phone width" requirement is about the page, not the table. */
+.table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+table.data-table,
+table.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+table.data-table th,
+table.table th,
+table.data-table td,
+table.table td {
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+
+table.data-table th,
+table.table th {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border-strong);
+}
+
+table.data-table tbody tr:hover,
+table.table tbody tr:hover {
+  background: var(--bg-inset);
+}
+
+table.data-table tbody tr[data-clickable="true"],
+table.data-table tbody tr.clickable {
+  cursor: pointer;
+}
+
+table.data-table a,
+table.table a {
+  text-decoration: none;
+}
+
+/* ---------- working: retro busy indicator ---------- */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.working {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--ok);
+}
+
+/* Cassette-loading border stripe: alternating bars scrolling in steps, the way a C64 flashes its
+ * screen border while a tape loads. */
+.working-stripe {
+  display: inline-block;
+  flex: none;
+  width: 1.6rem;
+  height: 0.55rem;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--ok) 0,
+    var(--ok) 3px,
+    var(--accent) 3px,
+    var(--accent) 6px
+  );
+  background-size: 12px 100%;
+  border: 1px solid var(--border);
+  animation: working-scroll 0.6s steps(4, end) infinite;
+}
+
+.working-lg .working-stripe {
+  width: 3.4rem;
+  height: 0.75rem;
+}
+
+@keyframes working-scroll {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: -12px 0;
+  }
+}
+
+.working-label {
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.working-lg {
+  gap: 0.6rem;
+}
+
+.working-lg .working-label {
+  font-size: 0.85rem;
+}
+
+/* Animated ellipsis via a steps() width reveal (animating the `content` property directly isn't
+ * reliably supported across browsers) -- a fixed-text "...." span whose visible width is clipped
+ * and stepped open, so it reads as the dots appearing one at a time and looping. */
+.working-label::after {
+  content: "....";
+  display: inline-block;
+  width: 0;
+  overflow: hidden;
+  vertical-align: bottom;
+  animation: working-dots 1.2s steps(4, end) infinite;
+}
+
+@keyframes working-dots {
+  to {
+    width: 1.6em;
+  }
+}
+
+/* button/inline use: a Working mark to the left of the label already present in the button text */
+button .working,
+.btn .working {
+  margin-right: 0.35rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .working-stripe {
+    animation: none;
+  }
+  .working-label::after {
+    animation: none;
+    content: "\2026"; /* static ellipsis */
+    width: auto;
+  }
+}
+
+/* ---------- meter: horizontal bar for context/budget use ---------- */
+
+.meter {
+  position: relative;
+  height: 0.6rem;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  background: var(--ok);
+  transition: width 0.2s ease;
+}
+
+.meter.meter-warn .meter-fill {
+  background: var(--warn);
+}
+
+.meter.meter-danger .meter-fill {
+  background: var(--danger);
+}
+
+/* ---------- masked secrets ---------- */
+
+.masked {
+  font-family: var(--font-mono);
+  letter-spacing: 0.05em;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  padding: 0.1rem 0.4rem;
+}
+
+/* ---------- empty state ---------- */
+
+.empty-state {
+  color: var(--text-dim);
+  padding: 2.5rem 1rem;
+  text-align: center;
+  position: relative;
+}
+
+.empty-state.dither::after {
+  content: "";
+}
+
+/* ---------- forms ---------- */
+
+.form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 0.85rem;
+}
+
+.form-row label {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.form-row textarea {
+  resize: vertical;
+  min-height: 5rem;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.error-banner {
+  background: color-mix(in srgb, var(--danger) 16%, var(--bg-elevated));
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  padding: 0.55rem 0.75rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+}
+
+/* ---------- dialogs ---------- */
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 4vh 1rem;
+  overflow-y: auto;
+  z-index: 100;
+}
+
+.dialog {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  box-shadow: 6px 6px 0 0 var(--border);
+  padding: 0;
+  width: 100%;
+  max-width: 520px;
+}
+
+.dialog .panel-body {
+  padding: 1.1rem 1.25rem 1.25rem;
+}

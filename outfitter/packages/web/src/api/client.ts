@@ -82,6 +82,23 @@ export interface TokenRecord {
   revokedAt?: string;
 }
 
+export interface ModelRow {
+  id: string;
+  contextWindow?: number;
+  maxOutput?: number;
+  inputPerM?: number;
+  outputPerM?: number;
+  auto: boolean;
+  local?: boolean;
+}
+
+export interface GuruMeta {
+  envDenylist: string[];
+  thinkingLevels: string[];
+}
+
+export type GuruInput = Omit<Guru, "id" | "createdAt" | "updatedAt">;
+
 export interface ProviderRow {
   id: string;
   kind: string;
@@ -89,6 +106,28 @@ export interface ProviderRow {
   status: "up" | "degraded" | "down" | "unknown";
   detail?: string;
   checkedAt: string;
+}
+
+/** GET /api/operator/settings's per-secret row (EPIC.md Decisions table / operators.md). Never
+ * carries a full value -- `masked` is the last 4 characters, and only past 12 characters. */
+export interface OperatorSecretRow {
+  id: string;
+  secretName: string;
+  label: string;
+  purpose: string;
+  set: boolean;
+  masked?: string;
+  updatedAt?: string;
+  appliesAt: "next run" | "next deploy";
+}
+
+export interface OperatorSettings {
+  litellmBaseUrl: string;
+  sandboxProvider: string;
+  cloudRunJob: string;
+  tunnelDomain: string;
+  operators: string[];
+  secrets: OperatorSecretRow[];
 }
 
 export interface NewSessionInput {
@@ -146,8 +185,30 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  me(): Promise<{ email: string; linkOrigin?: string }> {
+  me(): Promise<{ email: string; operator?: boolean; linkOrigin?: string }> {
     return request("/api/me");
+  },
+
+  operatorSettings(): Promise<OperatorSettings> {
+    return request("/api/operator/settings");
+  },
+
+  putOperatorSecret(secretName: string, value: string): Promise<OperatorSecretRow> {
+    return request(`/api/operator/secrets/${encodeURIComponent(secretName)}`, {
+      method: "PUT",
+      body: JSON.stringify({ value }),
+    });
+  },
+
+  disableOperatorSecret(secretName: string): Promise<OperatorSecretRow> {
+    return request(`/api/operator/secrets/${encodeURIComponent(secretName)}`, { method: "DELETE" });
+  },
+
+  testOperatorSecret(secretName: string, value?: string): Promise<{ ok: boolean; detail?: string }> {
+    return request(`/api/operator/secrets/${encodeURIComponent(secretName)}/test`, {
+      method: "POST",
+      body: JSON.stringify(value !== undefined ? { value } : {}),
+    });
   },
 
   listTokens(): Promise<TokenRecord[]> {
@@ -164,6 +225,26 @@ export const api = {
 
   gurus(): Promise<Guru[]> {
     return request("/api/gurus");
+  },
+
+  guruMeta(): Promise<GuruMeta> {
+    return request("/api/gurus/meta");
+  },
+
+  createGuru(input: GuruInput): Promise<Guru> {
+    return request("/api/gurus", { method: "POST", body: JSON.stringify(input) });
+  },
+
+  updateGuru(id: string, patch: Partial<GuruInput>): Promise<Guru> {
+    return request(`/api/gurus/${id}`, { method: "PUT", body: JSON.stringify(patch) });
+  },
+
+  deleteGuru(id: string): Promise<void> {
+    return request(`/api/gurus/${id}`, { method: "DELETE" });
+  },
+
+  models(): Promise<ModelRow[]> {
+    return request<{ models: ModelRow[] }>("/api/models").then((body) => body.models);
   },
 
   /** Resolves to [] on a 404 -- the /api/providers endpoint is built by another workstream and may

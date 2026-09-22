@@ -1,0 +1,441 @@
+/* Mobile-first fixes for the owner's main targets: iPhone 14/14 Plus/14 Pro/14 Pro Max (390-430
+ * CSS px), Safari and Chrome (both WebKit on iOS). See docs/reports/mobile-desk.md part 1 for the
+ * full checklist this file addresses. Desktop keeps the existing header/table layout untouched;
+ * everything here is additive, scoped either to a dedicated class or a <=700px media query. */
+
+/* ---------- iOS-wide baseline: safe areas, tap targets, no accidental zoom/bounce ---------- */
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+button,
+.btn,
+a,
+[role="button"] {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* iOS Safari zooms the page on focus if a text input's computed font-size is under 16px. Every
+ * input/textarea/select already inherits 0.88rem (~14px) from components.css at the 15px base
+ * body font -- bump to 16px (1rem, since body is 15px this still reads visually the same weight)
+ * on narrow screens only, so desktop keeps its tighter density. */
+@media (max-width: 700px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+/* Composer.tsx renders both a <select> (desktop) and a segmented button group (phones) for the
+ * send mode, so CSS alone decides which one shows. Base/hidden state lives here, above every
+ * media query that might turn it on, so the max-width:700px override below wins on source order
+ * (both rules target the same single-class selector, so specificity is tied). */
+.composer-mode-buttons {
+  display: none;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+/* A comfortable minimum tap target everywhere, not just at phone width -- no hover-only
+ * affordances exist in this app (every hover state already has a focus-visible/tap equivalent). */
+button,
+.btn,
+.app-menu-button,
+.theme-toggle,
+input,
+select {
+  min-height: 44px;
+}
+
+/* ---------- compact top bar (<=700px): logo + title + one menu button ---------- */
+
+.app-menu-button {
+  display: none;
+  margin-left: 0.4rem;
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 0.3rem 0.6rem;
+}
+
+.app-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 200;
+}
+
+.app-menu-sheet {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-strong);
+  padding: 0.5rem 0.75rem calc(0.75rem + env(safe-area-inset-bottom));
+  padding-top: env(safe-area-inset-top);
+}
+
+.app-menu-sheet a {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  text-decoration: none;
+  color: var(--text-dim);
+  padding: 0.7rem 0.3rem;
+  border-bottom: 1px solid var(--border);
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
+.app-menu-sheet a.active {
+  color: var(--ok);
+}
+
+.app-menu-sheet-controls {
+  display: flex;
+  gap: 0.5rem;
+  padding-top: 0.6rem;
+}
+
+@media (max-width: 700px) {
+  .app-header {
+    padding-top: calc(0.5rem + env(safe-area-inset-top));
+    padding-left: calc(0.75rem + env(safe-area-inset-left));
+    padding-right: calc(0.75rem + env(safe-area-inset-right));
+  }
+
+  /* Specificity note: layout.css's ".app-header nav { display: flex }" (class + element,
+   * specificity 0,1,1) otherwise beats a bare ".app-nav-desktop" (0,1,0) -- qualify with the
+   * element to win. */
+  .app-header nav.app-nav-desktop {
+    display: none;
+  }
+
+  .app-menu-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .app-header-spacer {
+    gap: 0.4rem;
+  }
+
+  /* The sound/theme toggle text labels ("DARK"/"ON") make the compact header crowd and clip
+   * (the original bug report); the header keeps only the provider summary pill, moving sound and
+   * theme into the pull-down menu sheet instead (see App.tsx's menuOpen sheet). Both
+   * SoundToggle.tsx and ThemeToggle.tsx render with the shared .theme-toggle class. */
+  .app-header .theme-toggle {
+    display: none;
+  }
+}
+
+@media (min-width: 701px) {
+  .app-menu-backdrop,
+  .app-menu-sheet {
+    display: none;
+  }
+
+  /* The desk (/) shows its own GEOS-style menu bar (DeskPage.tsx, styles/desk.css) at desktop
+   * widths instead of this header -- rendering both stacked ~160px of duplicate chrome. Mobile
+   * keeps this header's compact bar on every route, desk included, since the desk's own bar
+   * collapses into the icon grid there. */
+  .app-header-desk {
+    display: none;
+  }
+}
+
+/* ---------- responsive tables: stacked cards under 700px ---------- */
+
+/* One reusable pattern for every data table (fleet, gurus, providers, tokens, settings secrets):
+ * each <td> carries a data-label attribute (the column header text) and the table drops its own
+ * header row, turning each <tr> into a card and each <td> into a labelled line inside it. */
+@media (max-width: 700px) {
+  .table-scroll {
+    overflow-x: visible;
+  }
+
+  table.data-table.stack,
+  table.table.stack {
+    width: 100%;
+  }
+
+  table.data-table.stack thead,
+  table.table.stack thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+
+  table.data-table.stack,
+  table.data-table.stack tbody,
+  table.data-table.stack tr,
+  table.data-table.stack td,
+  table.table.stack,
+  table.table.stack tbody,
+  table.table.stack tr,
+  table.table.stack td {
+    display: block;
+    width: 100%;
+  }
+
+  table.data-table.stack tr,
+  table.table.stack tr {
+    margin-bottom: 0.6rem;
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    box-shadow: var(--shadow-offset) var(--shadow-offset) 0 0 var(--border);
+    padding: 0.3rem 0.6rem;
+  }
+
+  table.data-table.stack td,
+  table.table.stack td {
+    border-bottom: 1px dashed var(--border);
+    padding: 0.45rem 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    text-align: right;
+  }
+
+  table.data-table.stack td:last-child,
+  table.table.stack td:last-child {
+    border-bottom: none;
+  }
+
+  table.data-table.stack td::before,
+  table.table.stack td::before {
+    content: attr(data-label);
+    font-family: var(--font-display);
+    font-size: 0.66rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    text-align: left;
+    flex: none;
+  }
+
+  /* A cell with no meaningful label (an actions column, e.g.) can opt out of the label prefix. */
+  table.data-table.stack td[data-label=""]::before,
+  table.table.stack td[data-label=""]::before {
+    content: none;
+  }
+
+  table.data-table.stack td[data-label=""],
+  table.table.stack td[data-label=""] {
+    justify-content: flex-start;
+  }
+
+  /* Row actions (New session / Edit / Delete, Replace / Test / Disable, ...) wrap onto one row of
+   * compact buttons instead of stacking three full-width buttons. */
+  table.data-table.stack .row-actions,
+  table.table.stack .row-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    justify-content: flex-end;
+    width: 100%;
+  }
+
+  table.data-table.stack .row-actions button,
+  table.table.stack .row-actions button {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 0.78rem;
+    padding: 0.4rem 0.5rem;
+  }
+}
+
+/* ---------- session page: composer sticks above the keyboard/home indicator ---------- */
+
+@media (max-width: 700px) {
+  .app-main {
+    padding: 0.65rem;
+  }
+
+  .session-view {
+    /* iOS Safari's dynamic toolbar changes 100vh mid-scroll; dvh/svh track the *actual* visible
+     * viewport instead, which is what a sticky composer needs to stay pinned correctly. */
+    min-height: 100svh;
+  }
+
+  .session-header {
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .session-title {
+    font-size: 1.05rem;
+  }
+
+  /* The repo/branch clause ellipsizes instead of wrapping the whole subline onto extra rows --
+   * a long "org/repo @ some-long-branch-name" was pushing the second header line taller than
+   * needed on a 390px screen. */
+  .session-repo-branch {
+    max-width: 65vw;
+  }
+
+  .run-controls {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 0.35rem;
+    width: 100%;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .run-controls button,
+  .run-controls .btn {
+    flex: 1 1 0;
+    min-width: 0;
+    font-size: 0.76rem;
+    padding: 0.45rem 0.4rem;
+    white-space: nowrap;
+  }
+
+  .transcript {
+    max-height: none;
+    overflow-y: visible;
+    padding: 0.6rem;
+  }
+
+  .composer {
+    position: sticky;
+    bottom: 0;
+    z-index: 15;
+    background: var(--bg-elevated);
+    border-top: 1px solid var(--border-strong);
+    padding: 0.5rem 0.6rem calc(0.5rem + env(safe-area-inset-bottom));
+    margin: 0 -0.65rem -0.65rem;
+    overscroll-behavior: contain;
+  }
+
+  /* The <select> truncates its own selected-option text below ~140px ("Send (queued i...") --
+   * swap it for a compact segmented control of short labels (Composer.tsx renders both; CSS
+   * picks one per breakpoint) rather than trying to shrink the select further. */
+  .composer-mode-select {
+    display: none;
+  }
+
+  .composer-mode-buttons {
+    display: flex;
+  }
+
+  /* Collapsed thinking row (EntryItem.tsx): the desktop <details> gives way to an icon+count chip
+   * that expands its body in place -- there's no room for a full-width preview line on a phone.
+   * The group wrapper drops its full-width dashed-box treatment here too, so a collapsed chip (a
+   * small icon button) doesn't sit inside an oversized empty rectangle -- it only regains that
+   * look once expanded. */
+  .entry.assistant-thinking-group {
+    width: fit-content;
+    max-width: 100%;
+    border: none;
+    background: none;
+    padding: 0;
+  }
+
+  .entry.assistant-thinking-group:has(.thinking-chip-body) {
+    width: auto;
+    border: 1px dashed var(--border);
+    background: var(--bg-inset);
+  }
+
+  .thinking-details {
+    display: none;
+  }
+
+  .thinking-chip {
+    display: inline-flex;
+    margin: 0;
+    border-style: dashed;
+  }
+
+  .thinking-chip[aria-expanded="true"] + .thinking-chip-body {
+    display: block;
+  }
+}
+
+/* ---------- composer mode: <select> on desktop, segmented control on phones ---------- */
+/* Base (hidden) state lives near the top of this file; the max-width:700px block above turns it
+ * on. This section is visual styling only. */
+
+.composer-mode-buttons button {
+  box-shadow: none;
+  border: none;
+  border-right: 1px solid var(--border);
+  background: var(--bg-elevated);
+  font-size: 0.78rem;
+  padding: 0.42rem 0.55rem;
+  border-radius: 0;
+}
+
+.composer-mode-buttons button:last-child {
+  border-right: none;
+}
+
+.composer-mode-buttons button.active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+/* ---------- dialogs: full-height sheets on mobile ---------- */
+
+/* A short alert (the bomb dialog) isn't a form sheet -- it opts out of the full-height/sticky-
+ * footer treatment below (:not(.bomb-dialog)) so its Restart/Resume buttons sit right under the
+ * message instead of pinned to the bottom of an otherwise-empty screen. */
+@media (max-width: 700px) {
+  .dialog-backdrop {
+    padding: 0;
+    align-items: stretch;
+  }
+
+  .dialog-backdrop:has(.bomb-dialog) {
+    padding: 4vh 1rem;
+    align-items: flex-start;
+  }
+
+  .dialog:not(.bomb-dialog) {
+    max-width: none;
+    width: 100%;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .dialog:not(.bomb-dialog) .panel-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .dialog:not(.bomb-dialog) form {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+  }
+
+  /* Pin the primary action within thumb reach at the bottom of the sheet. */
+  .dialog:not(.bomb-dialog) .form-actions {
+    margin-top: auto;
+    position: sticky;
+    bottom: 0;
+    background: var(--bg-elevated);
+    padding: 0.75rem 0;
+    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
+  }
+}
+
+/* ---------- landscape / iPad: sit between the two layouts, no fixed assumptions ---------- */
+
+@media (min-width: 701px) and (max-width: 1024px) {
+  .app-main {
+    max-width: 100%;
+    padding: 1rem;
+  }
+}

@@ -84,6 +84,14 @@ export interface Config {
    * service) so it's a separate env var, set once the link role's own URL is known (see
    * deploy/service.sh). Empty by default -- the UI then says "ask your operator for the link URL". */
   linkOrigin: string;
+  /** OUTFITTER_OPERATORS: emails allowed to manage secrets and deploy-level settings (the operator
+   * role, EPIC.md Decisions table). Separated by `;`, `,` or whitespace -- `;` is what
+   * deploy/service.sh actually uses, since `gcloud run deploy --set-env-vars` splits its value on
+   * commas, but the parser accepts any of the three so a locally-set env var in dev doesn't need to
+   * match that convention. Compared case-insensitively after trimming (auth.ts's isOperator).
+   * Empty by default: no one is an operator until this is set, except the dev identity (see
+   * auth.ts's identityFromRequest). */
+  operators: string[];
 }
 
 const OUTFITTER_ROLES: readonly OutfitterRole[] = ["all", "web", "link"];
@@ -118,6 +126,17 @@ function envList(name: string, fallback: string[], env: NodeJS.ProcessEnv): stri
   return items.length > 0 ? items : fallback;
 }
 
+/** OUTFITTER_OPERATORS parser: splits on `;`, `,` or any whitespace run (see Config.operators'
+ * doc comment for why more than one separator is accepted), trims each entry, drops empties. */
+function envOperators(name: string, env: NodeJS.ProcessEnv): string[] {
+  const raw = env[name];
+  if (!raw) return [];
+  return raw
+    .split(/[;,\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     mongodbUri: env.MONGODB_URI ?? "memory",
@@ -146,5 +165,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     litellmAdminKey: env.LITELLM_ADMIN_KEY ?? "",
     providerPollMs: envInt("PROVIDER_POLL_MS", 5 * 60_000),
     linkOrigin: env.OUTFITTER_LINK_ORIGIN ?? "",
+    operators: envOperators("OUTFITTER_OPERATORS", env),
   };
 }

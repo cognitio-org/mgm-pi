@@ -1,0 +1,482 @@
+/* Manual tour: the framed "monitor" animation, its controls, the storyboard fallback, and the
+ * first-visit TourOffer dialog. Imported once from src/style.css. Built entirely from the existing
+ * theme tokens (theme.css) and component classes (.panel, .btn, .dialog) so it never needs its own
+ * palette -- see docs/design/README.md. Motion is stepped, matching the rest of the theme; every
+ * animation here is disabled under prefers-reduced-motion (TourAnimation.tsx also swaps the whole
+ * component for a static storyboard in that case, this stylesheet just makes sure nothing here
+ * ever animates on its own). */
+
+.tour {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-bottom: 1.5rem;
+}
+
+.tour-monitor {
+  max-width: 560px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.tour-screen {
+  position: relative;
+  aspect-ratio: 320 / 180;
+  background: var(--bg);
+  overflow: hidden;
+  color: var(--text);
+}
+
+.tour-scene-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.tour-scanlines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0, 0, 0, 0.12) 2px 3px);
+  opacity: var(--scanline-opacity, 0.05);
+}
+
+.tour-caption {
+  text-align: center;
+  font-size: 0.9rem;
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.tour-caption strong {
+  font-family: var(--font-display);
+  letter-spacing: 0.02em;
+  margin-right: 0.4rem;
+}
+
+.tour-storyboard-note {
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.tour-controls {
+  display: flex;
+  justify-content: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.tour-progress {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  max-width: 560px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.tour-progress-seg {
+  flex: 1;
+  height: 8px;
+  padding: 0;
+  min-width: 12px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.tour-progress-seg:hover {
+  border-color: var(--accent);
+}
+
+.tour-progress-seg-done {
+  background: var(--accent);
+}
+
+.tour-progress-seg-active {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
+.tour-end-actions {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+/* ---------- scene animations (all stepped, no easing) ---------- */
+
+.tour-fade-in {
+  animation: tour-fade-in 0.5s steps(6, end) both;
+}
+
+.tour-fade-in-late {
+  animation: tour-fade-in 0.5s steps(6, end) 0.6s both;
+}
+
+@keyframes tour-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.tour-border-flicker {
+  animation: tour-flicker 0.5s steps(2, start) infinite;
+}
+
+@keyframes tour-flicker {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.tour-blink-a,
+.tour-blink-b,
+.tour-blink-c {
+  animation: tour-flicker 1.2s steps(2, start) infinite;
+}
+.tour-blink-b {
+  animation-delay: 0.2s;
+}
+.tour-blink-c {
+  animation-delay: 0.4s;
+}
+
+.tour-slide-up {
+  animation: tour-slide-up 0.6s steps(8, end) both;
+}
+
+@keyframes tour-slide-up {
+  from {
+    transform: translate(120px, 90px);
+    opacity: 0;
+  }
+  to {
+    transform: translate(120px, 40px);
+    opacity: 1;
+  }
+}
+
+.tour-eye-blink {
+  animation: tour-flicker 2.4s steps(2, start) infinite;
+}
+
+.tour-cursor-blink {
+  animation: tour-flicker 0.9s steps(2, start) infinite;
+}
+
+.tour-cassette-drop {
+  animation: tour-cassette-drop 0.7s steps(10, end) both;
+}
+
+@keyframes tour-cassette-drop {
+  from {
+    transform: translateY(-30px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.tour-floppy-slide {
+  animation: tour-floppy-slide 0.7s steps(10, end) both;
+}
+
+@keyframes tour-floppy-slide {
+  from {
+    transform: translateX(-90px);
+    opacity: 0.3;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.tour-disk-spin {
+  transform-origin: 105px 62px;
+  animation: tour-spin 1.2s steps(8, end) infinite;
+}
+
+.tour-disk-spin-slow {
+  animation: tour-spin 1.6s steps(8, end) infinite;
+}
+
+@keyframes tour-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.tour-drive-light {
+  animation: tour-flicker 0.5s steps(2, start) infinite;
+}
+
+.tour-output-scroll .tour-line-a,
+.tour-output-scroll .tour-line-b,
+.tour-output-scroll .tour-line-c {
+  animation: tour-line-grow 1.8s steps(6, end) infinite;
+  transform-box: fill-box;
+  transform-origin: left;
+}
+.tour-output-scroll .tour-line-b {
+  animation-delay: 0.3s;
+}
+.tour-output-scroll .tour-line-c {
+  animation-delay: 0.6s;
+}
+
+@keyframes tour-line-grow {
+  0% {
+    transform: scaleX(0);
+  }
+  40% {
+    transform: scaleX(1);
+  }
+  80% {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scaleX(1);
+    opacity: 0.3;
+  }
+}
+
+.tour-play-badge {
+  animation: tour-flicker 0.6s steps(2, start) infinite;
+}
+
+.tour-eject-fly {
+  animation: tour-eject-fly 1.4s steps(14, end) both;
+}
+
+@keyframes tour-eject-fly {
+  0% {
+    transform: translate(0, 0);
+  }
+  40% {
+    transform: translate(10px, -18px);
+  }
+  100% {
+    transform: translate(150px, 40px) scale(0.7);
+  }
+}
+
+.tour-scene-clip {
+  overflow: hidden;
+}
+
+.tour-pan-track {
+  animation: tour-pan 9s steps(30, end) infinite;
+}
+
+@keyframes tour-pan {
+  0%,
+  6% {
+    transform: translateX(0);
+  }
+  33%,
+  39% {
+    transform: translateX(-140px);
+  }
+  66%,
+  72% {
+    transform: translateX(-280px);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+.tour-modem-blink {
+  animation: tour-flicker 0.8s steps(2, start) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tour-fade-in,
+  .tour-fade-in-late,
+  .tour-border-flicker,
+  .tour-blink-a,
+  .tour-blink-b,
+  .tour-blink-c,
+  .tour-slide-up,
+  .tour-eye-blink,
+  .tour-cursor-blink,
+  .tour-cassette-drop,
+  .tour-floppy-slide,
+  .tour-disk-spin,
+  .tour-disk-spin-slow,
+  .tour-drive-light,
+  .tour-output-scroll .tour-line-a,
+  .tour-output-scroll .tour-line-b,
+  .tour-output-scroll .tour-line-c,
+  .tour-play-badge,
+  .tour-eject-fly,
+  .tour-pan-track,
+  .tour-modem-blink {
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+}
+
+/* ---------- Manual page layout ---------- */
+
+.manual-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.manual-page .panel-title {
+  border: 1px solid var(--border);
+  border-bottom: none;
+}
+
+.manual-page .panel {
+  border-top: none;
+}
+
+.manual-glossary-cards {
+  display: none;
+}
+
+.manual-glossary-card {
+  list-style: none;
+  border: 1px solid var(--border);
+  padding: 0.6rem 0.7rem;
+  margin-bottom: 0.6rem;
+}
+
+.manual-glossary-card:last-child {
+  margin-bottom: 0;
+}
+
+.manual-glossary-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.3rem;
+}
+
+.manual-glossary-card p {
+  margin: 0.2rem 0;
+  font-size: 0.85rem;
+}
+
+.manual-glossary-card-code {
+  color: var(--text-dim);
+}
+
+.manual-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.manual-steps li {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.manual-steps li p {
+  margin: 0.15rem 0 0;
+  color: var(--text-dim);
+  font-size: 0.88rem;
+}
+
+.manual-steps-index {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  font-family: var(--font-display);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border: 1px solid var(--border);
+}
+
+@media (max-width: 640px) {
+  .manual-glossary-table {
+    display: none;
+  }
+
+  .manual-glossary-cards {
+    display: block;
+    margin: 0;
+    padding: 0;
+  }
+}
+
+/* ---------- TourOffer: a small GEOS dialog offering the tour on first visit ---------- */
+
+.tour-offer .panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.tour-offer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+/* ---------- responsive: 390px phone width and up ---------- */
+
+@media (max-width: 480px) {
+  .tour-monitor {
+    max-width: 100%;
+  }
+
+  .tour-controls {
+    gap: 0.3rem;
+  }
+
+  .tour-controls .btn {
+    font-size: 0.78rem;
+    padding: 0.35rem 0.5rem;
+  }
+}
+
+/* ---------- chrome=0 recording mode (see scripts/record-tour.mjs): hide everything around the
+ * monitor so the capture is just the animation and its always-visible caption. Toggled by
+ * ManualPage.tsx adding this class to <body> when ?chrome=0 is present -- CSS-only so App.tsx
+ * doesn't need to change beyond the one /manual route line. */
+body.tour-chrome-off .app-header,
+body.tour-chrome-off .manual-page > *:not(.tour-section),
+body.tour-chrome-off .tour-controls,
+body.tour-chrome-off .tour-progress,
+body.tour-chrome-off .tour-end-actions {
+  display: none !important;
+}
+
+body.tour-chrome-off .app-main {
+  padding: 0;
+  max-width: none;
+}
+
+body.tour-chrome-off .tour {
+  margin: 0;
+  gap: 0.4rem;
+}
+
+body.tour-chrome-off .tour-monitor {
+  max-width: none;
+}

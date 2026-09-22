@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { Working } from "./Working.tsx";
+import { withFloppySound } from "../lib/floppy-sound.ts";
 
 // Shape from @earendil-works/pi-coding-agent's RpcExtensionUIRequest (modes/rpc/rpc-types.d.ts).
 // Only the interactive methods (select/confirm/input) need a response; notify/setStatus/setWidget/
@@ -37,7 +39,7 @@ export function UiRequestPanel({ request, onRespond }: Props) {
   async function respond(value: unknown) {
     setSending(true);
     try {
-      await onRespond(request.id, value);
+      await withFloppySound(onRespond(request.id, value));
     } finally {
       setSending(false);
     }
@@ -49,7 +51,7 @@ export function UiRequestPanel({ request, onRespond }: Props) {
         <strong>{request.title}</strong>
         <div className="composer-row" style={{ marginTop: "0.5rem", flexWrap: "wrap" }}>
           {request.options.map((opt) => (
-            <button key={opt} disabled={sending} onClick={() => respond(opt)}>
+            <button key={opt} className="btn" disabled={sending} onClick={() => respond(opt)}>
               {opt}
             </button>
           ))}
@@ -64,10 +66,10 @@ export function UiRequestPanel({ request, onRespond }: Props) {
         <strong>{request.title}</strong>
         <p>{request.message}</p>
         <div className="composer-row">
-          <button disabled={sending} onClick={() => respond(true)}>
+          <button className="btn btn-primary" disabled={sending} onClick={() => respond(true)}>
             Confirm
           </button>
-          <button disabled={sending} onClick={() => respond(false)}>
+          <button className="btn" disabled={sending} onClick={() => respond(false)}>
             Cancel
           </button>
         </div>
@@ -86,7 +88,7 @@ export function UiRequestPanel({ request, onRespond }: Props) {
             placeholder={typeof request.placeholder === "string" ? request.placeholder : undefined}
             disabled={sending}
           />
-          <button disabled={sending} onClick={() => respond(inputValue)}>
+          <button className="btn btn-primary" disabled={sending} onClick={() => respond(inputValue)}>
             Submit
           </button>
         </div>

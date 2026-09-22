@@ -1,11 +1,19 @@
 import { useEffect, useState } from "react";
-import { api, type TokenRecord, ApiError } from "../api/client.ts";
+import { api, type TokenRecord } from "../api/client.ts";
+import { Working } from "../components/Working.tsx";
+import { SystemErrorDialog, type ApiErrorState } from "../components/SystemErrorDialog.tsx";
+import { SyntaxError } from "../components/SyntaxError.tsx";
+import { withFloppySound } from "../lib/floppy-sound.ts";
+import { toApiErrorState } from "../lib/api-error.ts";
+import { vocabSubtitle, vocabulary } from "../lib/vocabulary.ts";
 
 function envLines(linkOrigin: string, token: string): string {
   const api = linkOrigin || "<ask your operator for the link URL>";
-  return [`export OUTFITTER_API=${api}`, `export OUTFITTER_TOKEN=${token}`, "export MGM_TELEPORT_STORE=outfitter"].join(
-    "\n",
-  );
+  return [
+    `export OUTFITTER_API=${api}`,
+    `export OUTFITTER_TOKEN=${token}`,
+    "export KERNAL_TELEPORT_STORE=outfitter",
+  ].join("\n");
 }
 
 function copyToClipboard(text: string) {
@@ -19,19 +27,19 @@ export function TokensPage() {
   const [linkOrigin, setLinkOrigin] = useState("");
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
+  const [createAttempted, setCreateAttempted] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [apiError, setApiError] = useState<ApiErrorState | null>(null);
   const [justCreated, setJustCreated] = useState<{ token: string; record: TokenRecord } | null>(null);
 
   async function load() {
     setLoading(true);
-    setError(null);
     try {
       const [list, me] = await Promise.all([api.listTokens(), api.me()]);
       setTokens(list);
       setLinkOrigin(me.linkOrigin ?? "");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to load tokens");
+      setApiError(toApiErrorState(err, "Failed to load tokens"));
     } finally {
       setLoading(false);
     }
@@ -43,49 +51,53 @@ export function TokensPage() {
 
   async function createToken(e: React.FormEvent) {
     e.preventDefault();
+    setCreateAttempted(true);
     if (!name.trim()) return;
     setCreating(true);
-    setError(null);
     try {
-      const result = await api.createToken(name.trim());
+      const result = await withFloppySound(api.createToken(name.trim()));
       setJustCreated(result);
       setName("");
+      setCreateAttempted(false);
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to create token");
+      setApiError(toApiErrorState(err, "Failed to create token"));
     } finally {
       setCreating(false);
     }
   }
 
   async function revoke(id: string) {
-    setError(null);
     try {
       await api.revokeToken(id);
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to revoke token");
+      setApiError(toApiErrorState(err, "Failed to revoke token"));
     }
   }
 
   return (
     <div>
-      <h2>Personal API tokens</h2>
+      <div className="page-heading">
+        <h2>{vocabulary.token.many}</h2>
+        <p className="page-subtitle">{vocabSubtitle("token")}</p>
+      </div>
       <p className="session-meta">
-        Used by <code>mgm --teleport</code> (and <code>/teleport</code>) to talk to the Outfitter link service from
-        your laptop. Each token acts as you; revoke it if it leaks.
+        Used by <code>kernal --teleport</code> (and <code>/teleport</code>) to talk to the Outfitter link service
+        from your laptop. Each token acts as you; revoke it if it leaks.
       </p>
 
-      {error && <div className="error-banner">{error}</div>}
+      {apiError && <SystemErrorDialog error={apiError} onRestart={load} onResume={() => setApiError(null)} />}
 
       {justCreated && (
-        <div className="dialog" style={{ maxWidth: "none", marginBottom: "1rem" }}>
-          <h3>"{justCreated.record.name}" created</h3>
+        <div className="dialog panel" style={{ maxWidth: "none", marginBottom: "1rem" }}>
+          <h3 className="panel-title"><span className="panel-label">"{justCreated.record.name}" created</span></h3>
+          <div className="panel-body">
           <p>Copy this token now — it will not be shown again.</p>
           <div className="form-row">
             <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-              <code style={{ wordBreak: "break-all" }}>{justCreated.token}</code>
-              <button type="button" onClick={() => copyToClipboard(justCreated.token)}>
+              <code className="masked" style={{ wordBreak: "break-all" }}>{justCreated.token}</code>
+              <button type="button" className="btn" onClick={() => copyToClipboard(justCreated.token)}>
                 Copy token
               </button>
             </div>
@@ -98,34 +110,40 @@ export function TokensPage() {
             </p>
           )}
           <div className="form-actions">
-            <button type="button" onClick={() => copyToClipboard(envLines(linkOrigin, justCreated.token))}>
+            <button type="button" className="btn" onClick={() => copyToClipboard(envLines(linkOrigin, justCreated.token))}>
               Copy env lines
             </button>
-            <button type="button" onClick={() => setJustCreated(null)}>
+            <button type="button" className="btn btn-primary" onClick={() => setJustCreated(null)}>
               Done
             </button>
+          </div>
           </div>
         </div>
       )}
 
-      <form onSubmit={createToken} className="toolbar">
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="laptop"
-          aria-label="Token name"
-        />
-        <button type="submit" disabled={creating || !name.trim()}>
-          {creating ? "Creating..." : "Create token"}
+      <form onSubmit={createToken} className="toolbar toolbar-with-error">
+        <div className="form-row" style={{ marginBottom: 0 }}>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="laptop"
+            aria-label="Token name"
+            aria-invalid={createAttempted && !name.trim()}
+          />
+          {createAttempted && !name.trim() && <SyntaxError>name cannot be empty.</SyntaxError>}
+        </div>
+        <button type="submit" className="btn btn-primary" disabled={creating || !name.trim()}>
+          {creating ? <Working label="Creating" /> : "Create token"}
         </button>
       </form>
 
       {loading ? (
-        <p className="empty-state">Loading...</p>
+        <p className="empty-state"><Working label="Loading" size="lg" srOnly={false} /></p>
       ) : tokens.length === 0 ? (
-        <p className="empty-state">No tokens yet.</p>
+        <p className="empty-state">No {vocabulary.token.many.toLowerCase()} yet.</p>
       ) : (
-        <table className="data-table">
+        <div className="table-scroll">
+        <table className="data-table stack">
           <thead>
             <tr>
               <th>Name</th>
@@ -138,14 +156,14 @@ export function TokensPage() {
           <tbody>
             {tokens.map((t) => (
               <tr key={t.id}>
-                <td>{t.name}</td>
-                <td>
-                  <code>{t.prefix}…</code>
+                <td data-label="Name">{t.name}</td>
+                <td data-label="Prefix">
+                  <code className="masked">{t.prefix}…</code>
                 </td>
-                <td>{new Date(t.createdAt).toLocaleString()}</td>
-                <td>{t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : "never"}</td>
-                <td>
-                  <button type="button" onClick={() => revoke(t.id)}>
+                <td data-label="Created">{new Date(t.createdAt).toLocaleString()}</td>
+                <td data-label="Last used">{t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : "never"}</td>
+                <td data-label="">
+                  <button type="button" className="btn btn-danger" onClick={() => revoke(t.id)}>
                     Revoke
                   </button>
                 </td>
@@ -153,6 +171,7 @@ export function TokensPage() {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );

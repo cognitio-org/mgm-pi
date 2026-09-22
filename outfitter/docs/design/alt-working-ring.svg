@@ -1,0 +1,14 @@
+<svg width="32" height="32" viewBox="-1 -1 8 6" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" role="img">
+  <title>Alternative busy indicator: 8-point pixel ring</title>
+  <desc>Not picked as the primary -- a chasing-light ring reads as a generic "spinner", the one shape this theme is explicitly trying not to reach for; the cassette stripe ties the wait state to the C64 tape-loading moment instead. Kept as a secondary/inline option.</desc>
+  <g fill="currentColor" opacity="0.9">
+    <rect x="3" y="0" width="1" height="1" />
+    <rect x="5" y="0.6" width="1" height="1" opacity="0.7" />
+    <rect x="6.4" y="2" width="1" height="1" opacity="0.5" />
+    <rect x="5" y="3.4" width="1" height="1" opacity="0.35" />
+    <rect x="3" y="4" width="1" height="1" opacity="0.25" />
+    <rect x="1" y="3.4" width="1" height="1" opacity="0.2" />
+    <rect x="-0.4" y="2" width="1" height="1" opacity="0.2" />
+    <rect x="1" y="0.6" width="1" height="1" opacity="0.2" />
+  </g>
+</svg>

@@ -1,0 +1,109 @@
+/* Reset, base elements, and the two ambient textures: a light-mode 1-bit dither and a dark-mode
+ * phosphor scanline. Both are decorative-only, low-contrast, and switched off under
+ * prefers-reduced-motion along with the blinking cursor (see components.css). */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Dark mode: a faint horizontal scanline wash over the whole app, like a CRT held at a slight
+ * angle. Subtle by design -- this is a tool people stare at all day, not a screensaver. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, var(--scanline-opacity)) 0px,
+    rgba(0, 0, 0, var(--scanline-opacity)) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::before {
+    display: none;
+  }
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  line-height: 1.35;
+}
+
+code,
+pre,
+kbd {
+  font-family: var(--font-mono);
+}
+
+a {
+  color: var(--link);
+}
+
+a:visited {
+  color: var(--link);
+}
+
+hr {
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+/* Visible keyboard focus everywhere -- never rely on a browser default that themes can hide. */
+:focus-visible {
+  outline: 2px solid var(--ok);
+  outline-offset: 2px;
+}
+
+@keyframes pill-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.logo-cursor {
+  animation: pill-blink 1s steps(2, start) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .logo-cursor {
+    animation: none;
+  }
+}
+
+/* A repeating 1-bit-style dither, used sparingly (header strip, empty states) per the brief. Two
+ * tones only, no gradients. */
+.dither {
+  background-image:
+    radial-gradient(var(--border) 1px, transparent 1px),
+    radial-gradient(var(--border) 1px, transparent 1px);
+  background-size: 4px 4px;
+  background-position:
+    0 0,
+    2px 2px;
+  opacity: 0.14;
+}

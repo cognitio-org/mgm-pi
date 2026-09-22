@@ -5,7 +5,7 @@ import { loadConfig } from "../src/config.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import type { Store, Guru } from "../src/store/types.ts";
 import { NoopProvider } from "../src/providers/noop.ts";
-import { MemorySecretsBroker, type SecretsBroker } from "../src/secrets.ts";
+import { MemorySecretsBroker, MemorySecretAdmin, type SecretsBroker, type SecretAdmin } from "../src/secrets.ts";
 import { buildApp, type App } from "../src/server.ts";
 
 export interface TestApp extends App {
@@ -17,6 +17,9 @@ export interface BuildTestAppOptions {
   /** Defaults to a MemorySecretsBroker; pass a stub to exercise agentlink.ts's handling of a
    * broker that returns empty/partial secrets. */
   secretsBroker?: SecretsBroker;
+  /** Defaults to a fresh MemorySecretAdmin; share one across two buildTestApp calls (like `store`
+   * below) to see writes from one role's app reflected in another's. */
+  secretAdmin?: SecretAdmin;
   /** Share a store across two buildTestApp calls, e.g. to simulate the web/link role split
    * against one Atlas-like store in a test. Defaults to a fresh MemoryStore. */
   store?: Store;
@@ -36,7 +39,8 @@ export async function buildTestApp(
   const store = opts.store ?? new MemoryStore();
   const provider = new NoopProvider();
   const secretsBroker = opts.secretsBroker ?? new MemorySecretsBroker();
-  const app = await buildApp({ store, config, provider, secretsBroker });
+  const secretAdmin = opts.secretAdmin ?? new MemorySecretAdmin();
+  const app = await buildApp({ store, config, provider, secretsBroker, secretAdmin });
   await app.fastify.ready();
   return { ...app, store, provider };
 }

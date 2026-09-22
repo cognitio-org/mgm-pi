@@ -40,4 +40,19 @@ describe("loadConfig", () => {
       /invalid SANDBOX_PROVIDER: "Cloudrun"/,
     );
   });
+
+  test("OUTFITTER_OPERATORS defaults to an empty list", () => {
+    const config = loadConfig({} as NodeJS.ProcessEnv);
+    assert.deepEqual(config.operators, []);
+  });
+
+  test("OUTFITTER_OPERATORS splits on ';' -- what deploy/service.sh actually uses, since gcloud's --set-env-vars splits on ','", () => {
+    const config = loadConfig({ OUTFITTER_OPERATORS: "mgm@mgms.eu;matej@mgms.eu" } as NodeJS.ProcessEnv);
+    assert.deepEqual(config.operators, ["mgm@mgms.eu", "matej@mgms.eu"]);
+  });
+
+  test("OUTFITTER_OPERATORS also accepts ',' and whitespace separators, trimming and dropping empties", () => {
+    const config = loadConfig({ OUTFITTER_OPERATORS: " a@x.com,  b@x.com \t c@x.com ;; d@x.com" } as NodeJS.ProcessEnv);
+    assert.deepEqual(config.operators, ["a@x.com", "b@x.com", "c@x.com", "d@x.com"]);
+  });
 });

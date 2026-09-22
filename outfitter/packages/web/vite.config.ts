@@ -6,6 +6,14 @@ import react from "@vitejs/plugin-react";
 // packages/api/src/routes/static.ts at "/", same origin, no proxy needed.
 export default defineConfig({
   plugins: [react()],
+  // OUTFITTER_DEV baked in at build time (not runtime -- Vite only exposes VITE_-prefixed env vars
+  // to import.meta.env by default) so App.tsx's dev-only /panic-test route (the KERNAL PANIC
+  // screen, for a screenshot) can gate on the same flag the API already uses, without adding a
+  // second env var to remember. A production build with OUTFITTER_DEV unset bakes in "" (falsy),
+  // same as never setting it.
+  define: {
+    "import.meta.env.OUTFITTER_DEV": JSON.stringify(process.env.OUTFITTER_DEV ?? ""),
+  },
   server: {
     proxy: {
       "/api": {

@@ -6,11 +6,13 @@ import type { RouteContext } from "./context.ts";
  * without touching a session; `linkOrigin` is only meaningful there conceptually but is returned
  * from every role so the web UI's Tokens page (which only ever talks to the "web"/"all" role) can
  * read it too -- it comes from OUTFITTER_LINK_ORIGIN (config.ts), set on the "web" role's own env
- * once the link service's URL is known (see deploy/service.sh). */
+ * once the link service's URL is known (see deploy/service.sh). `operator` (EPIC.md Decisions
+ * table) is what the web UI's App shell uses to decide whether to show the Settings nav link --
+ * always `false` on the "link" role, since identityFromLinkRequest never grants it (auth.ts). */
 export async function registerMeRoute(app: FastifyInstance, ctx: RouteContext): Promise<void> {
   app.get("/api/me", async (req) => {
     const email = req.identity!.email;
     await ctx.store.users.upsertSeen(email);
-    return { email, linkOrigin: ctx.config.linkOrigin || undefined };
+    return { email, operator: req.identity!.operator, linkOrigin: ctx.config.linkOrigin || undefined };
   });
 }

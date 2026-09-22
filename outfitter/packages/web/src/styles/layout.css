@@ -1,0 +1,472 @@
+/* App shell, header, and the fleet/session page layouts. */
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.app-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 1.1rem;
+  padding: 0.55rem 1rem;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+  background: var(--bg-elevated);
+}
+
+/* A thin dithered strip under the header -- the one sanctioned "sparingly" use beyond the header
+ * itself, standing in for a drop shadow without blurring anything. */
+.app-header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -3px;
+  height: 3px;
+  background-image: repeating-linear-gradient(to right, var(--border) 0 2px, transparent 2px 4px);
+  opacity: 0.6;
+}
+
+.logo-wordmark {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  letter-spacing: 0.06em;
+  color: var(--text);
+}
+
+.app-header nav {
+  display: flex;
+  gap: 1rem;
+}
+
+.app-header nav a {
+  text-decoration: none;
+  color: var(--text-dim);
+  font-family: var(--font-display);
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+  padding: 0.2rem 0.1rem;
+  border-bottom: 2px solid transparent;
+}
+
+.app-header nav a:hover {
+  color: var(--text);
+}
+
+.app-header nav a.active {
+  color: var(--text);
+  border-bottom-color: var(--ok);
+}
+
+.app-header-spacer {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.theme-toggle {
+  font-family: var(--font-display);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  padding: 0.3rem 0.55rem;
+}
+
+/* Compact icon-only variant (ThemeToggle/SoundToggle `compact` prop) -- used wherever a full
+ * "◐ DARK" / "♪ ON" text label would crowd a tight bar (the desktop header, the desk menu bar). */
+.icon-toggle {
+  padding: 0.3rem 0.5rem;
+  font-size: 0.95rem;
+  line-height: 1;
+  min-width: 44px;
+}
+
+.icon-toggle[aria-pressed="false"] {
+  opacity: 0.55;
+}
+
+/* ---------- provider/peripheral summary pill + hover/focus popover ---------- */
+/* Always a single "N/M up" pill (ProviderStrip.tsx) so the header holds to one row regardless of
+ * how many peripherals are configured -- a fixed-width row of individual pills is what made the
+ * desktop header wrap around ~1100-1200px. The full per-provider list is one hover or keyboard
+ * focus away instead of always taking up header width. */
+.provider-strip {
+  position: relative;
+  display: inline-flex;
+}
+
+.provider-strip-summary {
+  text-decoration: none;
+}
+
+.provider-strip-popover {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 0.35rem;
+  display: none;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.5rem;
+  min-width: 200px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-offset) var(--shadow-offset) 0 0 var(--border);
+  z-index: 50;
+}
+
+.provider-strip:hover .provider-strip-popover,
+.provider-strip:focus-within .provider-strip-popover {
+  display: flex;
+}
+
+.app-main {
+  flex: 1;
+  padding: 1.25rem;
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.toolbar {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+/* ---------- session view ---------- */
+
+.session-view {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.session-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.session-header h2 {
+  margin: 0;
+}
+
+.session-meta {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  font-family: var(--font-mono);
+}
+
+/* The guru-id/repo/branch line (session-subline): short id + copy affordance instead of a raw
+ * UUID, and the repo/branch clause ellipsizes instead of forcing the line (or the page) wide. */
+.session-subline {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.session-guru-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+/* Deliberate exception to the app's usual >=44px tap target: this is a small inline copy
+ * affordance sitting inside a dense metadata line, not a primary action -- 32px keeps it usable
+ * without forcing the whole subline to header-button height. */
+.copy-chip {
+  box-shadow: none;
+  border: 1px solid var(--border);
+  padding: 0.05rem 0.4rem;
+  min-height: 32px;
+  min-width: 32px;
+  font-size: 0.78rem;
+  line-height: 1;
+  background: var(--bg-elevated);
+}
+
+.session-repo-branch {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-controls {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  min-height: 200px;
+  max-height: 65vh;
+  overflow-y: auto;
+  padding: 0.85rem;
+}
+
+.entry {
+  padding: 0.55rem 0.75rem;
+  font-size: 0.88rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.entry .entry-label {
+  font-size: 0.68rem;
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  margin-bottom: 0.25rem;
+}
+
+.entry.user {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid var(--accent);
+  align-self: flex-end;
+  max-width: 85%;
+}
+
+.entry.assistant-text {
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.entry.assistant-thinking {
+  color: var(--text-dim);
+  font-style: italic;
+  border: 1px dashed var(--border);
+}
+
+/* Collapsed thinking row (EntryItem.tsx's ThinkingGroup / lib/thinking.ts) -- desktop <details> and
+ * mobile chip both live in the DOM; styles/mobile.css's <=700px query decides which one shows, the
+ * same dual-render pattern Composer.tsx's send-mode picker already uses. No layout-affecting
+ * animation on either: the summary/chip row is a fixed single line so new thinking streaming in
+ * doesn't reflow anything above the fold. */
+.entry.assistant-thinking-group {
+  padding: 0;
+  border: 1px dashed var(--border);
+  color: var(--text-dim);
+  background: var(--bg-inset);
+}
+
+.thinking-details > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  list-style: none;
+  cursor: pointer;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.8rem;
+}
+
+.thinking-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.thinking-details > summary::before {
+  content: "\25B8"; /* small right-pointing triangle, rotates open */
+  font-size: 0.7em;
+  color: var(--text-dim);
+  transition: transform 0.08s ease;
+  flex: none;
+}
+
+.thinking-details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.thinking-glyph {
+  flex: none;
+  color: var(--text-dim);
+}
+
+.thinking-summary-label {
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  flex: none;
+}
+
+.thinking-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-style: italic;
+  color: var(--text-dim);
+}
+
+.thinking-word-count {
+  flex: none;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+
+.thinking-details .thinking-body {
+  padding: 0 0.7rem 0.6rem 2.05rem;
+  font-style: italic;
+}
+
+.thinking-details .thinking-body .md {
+  font-style: normal;
+}
+
+.thinking-chip {
+  display: none; /* shown at <=700px, styles/mobile.css */
+  align-items: center;
+  gap: 0.3rem;
+  min-height: 32px;
+  padding: 0.3rem 0.55rem;
+  margin: 0.4rem;
+}
+
+.thinking-chip-count {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.thinking-chip-body {
+  display: none; /* shown at <=700px, styles/mobile.css */
+  padding: 0 0.7rem 0.6rem;
+  font-style: italic;
+}
+
+.thinking-chip-body .md {
+  font-style: normal;
+}
+
+.entry.tool-call,
+.entry.tool-result {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+}
+
+.entry.tool-call pre,
+.entry.tool-result pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.entry.tool-result.error {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.entry.system,
+.entry.model-change,
+.entry.compaction,
+.entry.custom,
+.entry.label,
+.entry.session-info,
+.entry.unknown {
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  font-family: var(--font-mono);
+}
+
+/* Long tool output: collapsible via <details>, used inside EntryItem's tool-call/tool-result
+ * bodies. Native <details>/<summary> keeps this keyboard- and screen-reader-accessible for free. */
+.entry details {
+  margin-top: 0.2rem;
+}
+
+.entry summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.entry summary:hover {
+  color: var(--text);
+}
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.composer-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.composer textarea {
+  flex: 1;
+  min-height: 3rem;
+}
+
+.ui-request {
+  border: 1px solid var(--ok);
+  padding: 0.8rem;
+  background: color-mix(in srgb, var(--ok) 10%, var(--bg-elevated));
+}
+
+.ui-request pre {
+  overflow-x: auto;
+  font-size: 0.78rem;
+}
+
+/* ---------- responsive: no horizontal scroll down to phone width ---------- */
+
+@media (max-width: 600px) {
+  .app-header {
+    padding: 0.5rem 0.75rem;
+    gap: 0.6rem;
+  }
+
+  .app-main {
+    padding: 0.65rem;
+  }
+
+  table.data-table,
+  table.table {
+    font-size: 0.78rem;
+  }
+
+  table.data-table th:nth-child(4),
+  table.data-table td:nth-child(4) {
+    display: none;
+  }
+
+  .dialog {
+    max-width: 100%;
+  }
+
+  .entry.user {
+    max-width: 100%;
+  }
+
+  .run-controls {
+    width: 100%;
+  }
+
+  .run-controls button,
+  .run-controls .btn {
+    flex: 1 1 auto;
+  }
+}

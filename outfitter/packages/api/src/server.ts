@@ -7,13 +7,14 @@ import fastifyWebsocket from "@fastify/websocket";
 import type { Store } from "./store/types.ts";
 import type { Config } from "./config.ts";
 import type { SandboxProvider } from "@outfitter/provider-local";
-import type { SecretsBroker } from "./secrets.ts";
+import type { SecretsBroker, SecretAdmin } from "./secrets.ts";
 import { identityFromRequest, identityFromLinkRequest } from "./auth.ts";
 import { RunManager } from "./runs.ts";
 import { AgentLink } from "./agentlink.ts";
 import { SseHub } from "./sse.ts";
 import { LaptopProbe } from "./laptop.ts";
 import { ProviderStatusService } from "./providers-status.ts";
+import { ModelsService } from "./models.ts";
 import { CloudRunProvider } from "./providers/cloudrun.ts";
 import { registerRoutes } from "./routes/index.ts";
 
@@ -22,6 +23,9 @@ export interface BuildAppOptions {
   config: Config;
   provider: SandboxProvider;
   secretsBroker: SecretsBroker;
+  /** Operator settings routes only (routes/operator.ts): Secret Manager admin access behind an
+   * interface, same shape as secretsBroker (see secrets.ts's "SecretAdmin" section). */
+  secretAdmin: SecretAdmin;
 }
 
 export interface App {
@@ -37,7 +41,7 @@ export interface App {
 }
 
 export async function buildApp(opts: BuildAppOptions): Promise<App> {
-  const { store, config, provider, secretsBroker } = opts;
+  const { store, config, provider, secretsBroker, secretAdmin } = opts;
   // forceCloseConnections: idle keep-alive/websocket sockets otherwise stall fastify.close() for
   // as long as they're open (observed in tests: ~30s before a lingering ws finally times out).
   const fastify = Fastify({ logger: true, forceCloseConnections: true });
@@ -65,13 +69,21 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     config.sandboxProvider === "cloudrun" && provider instanceof CloudRunProvider
       ? () => (provider as CloudRunProvider).countRunningExecutions()
       : undefined;
+  const litellmKey = async () => config.litellmAdminKey || secretsBroker.defaultLitellmKey();
   const providerStatus = new ProviderStatusService({
     store,
     sse,
     laptopProbe,
     config,
-    litellmKey: async () => config.litellmAdminKey || secretsBroker.defaultLitellmKey(),
+    litellmKey,
     cloudRunCount,
+  });
+  // E3.7: GET /api/models' backing service, sharing the same key resolver as the provider status
+  // service above so both agree on which key probes LiteLLM's /model/info.
+  const modelsService = new ModelsService({
+    litellmBaseUrl: config.litellmBaseUrl,
+    litellmKey,
+    localModels: config.localModels,
   });
 
   // Auth guards every /api/* route except /api/hooks/* (called by an external service with no IAP
@@ -93,7 +105,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     }
   });
 
-  await registerRoutes(fastify, { store, config, runs, agentLink, sse, laptopProbe, providerStatus });
+  await registerRoutes(fastify, { store, config, runs, agentLink, sse, laptopProbe, providerStatus, modelsService, secretAdmin });
   // The down-queue poller only makes sense where AgentLink sockets actually live (role "link" or
   // "all", same condition as registering /agent/ws itself) — see agentLink.startDownQueuePoller's
   // doc comment. The web role never holds a socket for any run, so it's never started there.

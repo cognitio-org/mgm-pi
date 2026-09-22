@@ -1,14 +1,23 @@
 import { useState } from "react";
-import { api, type Guru, ApiError } from "../api/client.ts";
+import { api, type Guru } from "../api/client.ts";
+import { toApiErrorState } from "../lib/api-error.ts";
+import { Working } from "./Working.tsx";
+import { SystemErrorDialog, type ApiErrorState } from "./SystemErrorDialog.tsx";
+import { withFloppySound } from "../lib/floppy-sound.ts";
 
 interface Props {
   gurus: Guru[];
   onClose: () => void;
   onCreated: (sessionId: string) => void;
+  /** Preselects the guru dropdown -- used by the Gurus page's "New session with this guru" button
+   * (EPIC.md E3.7). Falls back to the first guru, same as before, when omitted or not found. */
+  initialGuruId?: string;
 }
 
-export function NewSessionDialog({ gurus, onClose, onCreated }: Props) {
-  const [guruId, setGuruId] = useState(gurus[0]?.id ?? "");
+export function NewSessionDialog({ gurus, onClose, onCreated, initialGuruId }: Props) {
+  const [guruId, setGuruId] = useState(
+    (initialGuruId && gurus.some((g) => g.id === initialGuruId) ? initialGuruId : gurus[0]?.id) ?? "",
+  );
   const [repo, setRepo] = useState("");
   const [baseBranch, setBaseBranch] = useState("");
   const [branch, setBranch] = useState("");
@@ -16,26 +25,27 @@ export function NewSessionDialog({ gurus, onClose, onCreated }: Props) {
   const [name, setName] = useState("");
   const [model, setModel] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [apiError, setApiError] = useState<ApiErrorState | null>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!guruId || !prompt.trim()) return;
     setSubmitting(true);
-    setError(null);
     try {
-      const { session } = await api.createSession({
-        guruId,
-        prompt,
-        name: name.trim() || undefined,
-        repo: repo.trim() || undefined,
-        baseBranch: repo.trim() ? baseBranch.trim() || undefined : undefined,
-        branch: repo.trim() ? branch.trim() || undefined : undefined,
-        model: model.trim() || undefined,
-      });
+      const { session } = await withFloppySound(
+        api.createSession({
+          guruId,
+          prompt,
+          name: name.trim() || undefined,
+          repo: repo.trim() || undefined,
+          baseBranch: repo.trim() ? baseBranch.trim() || undefined : undefined,
+          branch: repo.trim() ? branch.trim() || undefined : undefined,
+          model: model.trim() || undefined,
+        }),
+      );
       onCreated(session.id);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to create session");
+      setApiError(toApiErrorState(err, "Failed to create session"));
     } finally {
       setSubmitting(false);
     }
@@ -43,14 +53,17 @@ export function NewSessionDialog({ gurus, onClose, onCreated }: Props) {
 
   return (
     <div className="dialog-backdrop" onClick={onClose}>
-      <div className="dialog" onClick={(e) => e.stopPropagation()}>
-        <h2>New session</h2>
-        {error && <div className="error-banner">{error}</div>}
+      <div className="dialog panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="ns-title">
+        <h2 id="ns-title" className="panel-title">
+          <span className="panel-label">New Floppy</span>
+        </h2>
+        <div className="panel-body">
+        {apiError && <SystemErrorDialog error={apiError} onResume={() => setApiError(null)} />}
         <form onSubmit={submit}>
           <div className="form-row">
-            <label htmlFor="ns-guru">Guru</label>
+            <label htmlFor="ns-guru">Tape</label>
             <select id="ns-guru" value={guruId} onChange={(e) => setGuruId(e.target.value)} required>
-              {gurus.length === 0 && <option value="">No gurus configured</option>}
+              {gurus.length === 0 && <option value="">No tapes configured</option>}
               {gurus.map((g) => (
                 <option key={g.id} value={g.id}>
                   {g.name}
@@ -87,14 +100,15 @@ export function NewSessionDialog({ gurus, onClose, onCreated }: Props) {
             <textarea id="ns-prompt" value={prompt} onChange={(e) => setPrompt(e.target.value)} required />
           </div>
           <div className="form-actions">
-            <button type="button" onClick={onClose} disabled={submitting}>
+            <button type="button" className="btn" onClick={onClose} disabled={submitting}>
               Cancel
             </button>
-            <button type="submit" disabled={submitting || !guruId || !prompt.trim()}>
-              {submitting ? "Starting..." : "Start session"}
+            <button type="submit" className="btn btn-primary" disabled={submitting || !guruId || !prompt.trim()}>
+              {submitting ? <Working label="Starting" /> : "Start session"}
             </button>
           </div>
         </form>
+        </div>
       </div>
     </div>
   );

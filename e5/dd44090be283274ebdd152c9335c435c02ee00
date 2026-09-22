@@ -1,0 +1,19 @@
+outfitter/deploy/wake-bench.mjs
+  s_2209f22f830d7f::t_c515e51b3f9571 23-26,67-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "e5dd44090be283274ebdd152c9335c435c02ee00",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

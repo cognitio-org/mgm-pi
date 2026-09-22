@@ -160,6 +160,7 @@ ENV PI_CODING_AGENT_DIR=/opt/kernal/.pi \
     PI_RUN_AS_USER=agent \
     OUTFITTER_SPEND_EXTENSION=/opt/outfitter/agentd/dist/pi-extension/outfitter-spend.js \
     OUTFITTER_SPEND_FILE=/run/outfitter/spend.jsonl \
+    OUTFITTER_MAIL_EXTENSION=/opt/outfitter/agentd/dist/pi-extension/outfitter-mail.js \
     KERNAL_NO_CODEBASE_INDEX=1
 
 # KERNAL_NO_CODEBASE_INDEX=1: kernal-codebase-index (kernal/.pi/extensions/kernal-codebase-index) loads

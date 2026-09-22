@@ -92,6 +92,12 @@ export interface Config {
    * Empty by default: no one is an operator until this is set, except the dev identity (see
    * auth.ts's identityFromRequest). */
   operators: string[];
+  /** CLOUD_TASKS_QUEUE: Cloud Tasks queue (in gcpProject/gcpRegion) that schedules a durable wake
+   * per posted mail (E5.5, src/mail.ts). Empty disables it; the inline wake and /tick still run. */
+  cloudTasksQueue: string;
+  /** TASKS_SA_EMAIL: service account Cloud Tasks and Cloud Scheduler mint OIDC tokens as when they
+   * call /api/hooks/tasks/wake and /api/hooks/tick; those hooks accept no other caller. */
+  tasksSaEmail: string;
 }
 
 const OUTFITTER_ROLES: readonly OutfitterRole[] = ["all", "web", "link"];
@@ -166,5 +172,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     providerPollMs: envInt("PROVIDER_POLL_MS", 5 * 60_000),
     linkOrigin: env.OUTFITTER_LINK_ORIGIN ?? "",
     operators: envOperators("OUTFITTER_OPERATORS", env),
+    cloudTasksQueue: env.CLOUD_TASKS_QUEUE ?? "",
+    tasksSaEmail: env.TASKS_SA_EMAIL ?? "",
   };
 }

@@ -277,6 +277,7 @@ describe("agentlink up-frame ordering", () => {
     let firstUpdateSeen = false;
     const delayingRuns: RunsCollection = {
       insert: (r) => inner.runs.insert(r),
+      insertIfNoActive: (r) => inner.runs.insertIfNoActive(r),
       findById: (id) => inner.runs.findById(id),
       findActiveForSession: (s) => inner.runs.findActiveForSession(s),
       async update(id, patch) {
@@ -295,6 +296,7 @@ describe("agentlink up-frame ordering", () => {
       sessions: inner.sessions,
       entries: inner.entries,
       runs: delayingRuns,
+      mail: inner.mail,
       gurus: inner.gurus,
       environments: inner.environments,
       users: inner.users,

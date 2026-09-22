@@ -22,8 +22,9 @@
 // and an attacker toggling laptopOnline.
 
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { RouteContext } from "./context.ts";
+import { verifyTasksToken, bearerFromHeader } from "../auth.ts";
 
 /** Constant-time HMAC-SHA256 verification of `ngrok-signature` (hex digest) over the raw body. */
 export function verifyNgrokSignature(rawBody: string, headerValue: string | undefined, secret: string): boolean {
@@ -77,4 +78,42 @@ export async function registerHookRoutes(app: FastifyInstance, ctx: RouteContext
       return reply.code(204).send();
     });
   });
+
+  // E5.5 durable wake: one Cloud Task per posted mail (src/mail.ts). A non-2xx makes Cloud Tasks
+  // retry with backoff, so a failed provisioning is retried without anyone holding the API open.
+  app.post("/api/hooks/tasks/wake", async (req, reply) => {
+    if (!(await tasksCallerOk(req, reply, ctx))) return;
+    const sessionId = (req.body as { sessionId?: unknown } | undefined)?.sessionId;
+    if (typeof sessionId !== "string" || !sessionId) return reply.code(400).send({ error: "sessionId is required" });
+    // 200 once any run exists: retrying a wake that already happened would only stack executions.
+    // A throw (provider failure) is a 500, which Cloud Tasks retries; each retry is charged as an
+    // attempt on the mail, so a persistently failing session stops being retried.
+    const result = await ctx.mail.wakeForMail(sessionId);
+    if (result === "active") await ctx.agentLink.deliverMailForSession(sessionId);
+    return { result };
+  });
+
+  // Cloud Scheduler tick: the in-process setInterval loops only run while a request keeps a
+  // min-instances-0 container alive, so this is what guarantees reconciliation and the mail sweep.
+  app.post("/api/hooks/tick", async (req, reply) => {
+    if (!(await tasksCallerOk(req, reply, ctx))) return;
+    await ctx.runs.reconcileOnce();
+    await ctx.runs.reconcileStoppingOnce();
+    const woken = await ctx.mail.sweep();
+    return { woken };
+  });
+}
+
+async function tasksCallerOk(
+  req: FastifyRequest,
+  reply: { code: (n: number) => { send: (body: unknown) => unknown } },
+  ctx: RouteContext,
+): Promise<boolean> {
+  try {
+    await verifyTasksToken(bearerFromHeader(req), ctx.config);
+    return true;
+  } catch {
+    reply.code(401).send({ error: "unauthorized" });
+    return false;
+  }
 }

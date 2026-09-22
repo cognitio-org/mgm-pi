@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { RouteContext } from "./context.ts";
 import type { Session, PiEntry } from "../store/types.ts";
+import { MAIL_MAX_TEXT } from "../mail.ts";
 
 const SESSION_VERSION = 3; // matches pi's CURRENT_SESSION_VERSION; keeps export.jsonl pi-compatible
 
@@ -181,6 +182,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     if (!body?.guruId || !body?.prompt) {
       return reply.code(400).send({ error: "guruId and prompt are required" });
     }
+    if (body.prompt.length > MAIL_MAX_TEXT) return reply.code(413).send({ error: `prompt is over ${MAIL_MAX_TEXT} characters` });
     const guru = await ctx.store.gurus.findById(body.guruId);
     if (!guru) return reply.code(400).send({ error: `unknown guruId: ${body.guruId}` });
 
@@ -205,9 +207,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     };
     await ctx.store.sessions.insert(session);
 
-    const run = await ctx.runs.wake(session.id);
-    await ctx.agentLink.send(run.id, { t: "prompt", text: body.prompt });
-
+    const run = await postUserMail(ctx, session.id, req.identity?.email, body.prompt);
     return reply.code(201).send({ session, run });
   });
 
@@ -233,11 +233,11 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     if (!session) return;
     const body = req.body as { text: string; behavior?: "steer" | "followUp" };
     if (!body?.text) return reply.code(400).send({ error: "text is required" });
+    if (body.text.length > MAIL_MAX_TEXT) return reply.code(413).send({ error: `text is over ${MAIL_MAX_TEXT} characters` });
 
-    let run = await ctx.store.runs.findActiveForSession(session.id);
-    if (!run) run = await ctx.runs.wake(session.id);
-    await ctx.agentLink.send(run.id, { t: "prompt", text: body.text, behavior: body.behavior });
-    return { run };
+    const run = await postUserMail(ctx, session.id, req.identity?.email, body.text, body.behavior);
+    // 202: stored, but no run could be started yet; it will be delivered when one is.
+    return reply.code(run ? 200 : 202).send({ run });
   });
 
   app.post("/api/sessions/:id/abort", async (req, reply) => {
@@ -283,6 +283,22 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     }
   });
 
+}
+
+/** Stores a browser message as mail (so a failed wake or a run that dies before it is ready can't
+ * lose it); MailService.post also makes the one inline wake attempt. Returns the session's run, or
+ * null when that wake failed -- the message is queued either way and Cloud Tasks / the /tick sweep
+ * keep trying, so the caller must not retry (it would enqueue the text twice). */
+async function postUserMail(
+  ctx: RouteContext,
+  sessionId: string,
+  email: string | undefined,
+  text: string,
+  behavior?: "steer" | "followUp",
+) {
+  await ctx.mail.post({ sessionId, from: { kind: "user", email }, text, behavior });
+  await ctx.agentLink.deliverMailForSession(sessionId);
+  return ctx.store.runs.findActiveForSession(sessionId);
 }
 
 async function getSessionOr404(

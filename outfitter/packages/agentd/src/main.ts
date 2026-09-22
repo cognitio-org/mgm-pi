@@ -103,6 +103,7 @@ async function main(): Promise<void> {
     logger,
     spendFile: process.env.OUTFITTER_SPEND_FILE,
     spendExtensionPath: process.env.OUTFITTER_SPEND_EXTENSION,
+    mailExtensionPath: process.env.OUTFITTER_MAIL_EXTENSION,
   });
 
   controller.onStateChange((state) => logger.info("state change", { state }));

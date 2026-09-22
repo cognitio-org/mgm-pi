@@ -102,6 +102,64 @@ export interface Run {
   updatedAt: string;
 }
 
+/** E5.5 mailbox: a message addressed to a session, not to a run, so it outlives a run that dies
+ * before it is ready. Delivered at least once: claimed with a lease, acked by agentd once pi has
+ * accepted it, re-claimable after the lease expires. */
+export type MailStatus = "queued" | "delivered" | "acked" | "dead";
+
+export interface MailSender {
+  kind: "user" | "session" | "system";
+  email?: string;
+  sessionId?: string;
+}
+
+export interface Mail {
+  /** Deterministic for agent sends (derived from the sender's session and entry id), so a replayed
+   * entry frame can't enqueue the same message twice. Also the Cloud Tasks task name. */
+  id: string;
+  /** Recipient session. */
+  sessionId: string;
+  from: MailSender;
+  /** The exact text handed to pi (any sender header already applied). */
+  text: string;
+  /** How pi should take it if the recipient is mid-turn; an idle recipient starts a turn either way. */
+  behavior: "followUp" | "steer";
+  status: MailStatus;
+  attempts: number;
+  deliveredRunId?: string;
+  lockedUntil?: string;
+  createdAt: string;
+  deliveredAt?: string;
+  ackedAt?: string;
+  /** Set when attempts ran out (MailService.sweep); the sender, if a session, gets a bounce. */
+  deadAt?: string;
+}
+
+export interface MailCollection {
+  /** false (no-op) if a mail with this id already exists. */
+  insertIfNew(mail: Mail): Promise<boolean>;
+  /** Atomically claims the oldest deliverable mail for a session (queued, or delivered with an
+   * expired lease, and under maxAttempts): marks it delivered to runId until leaseUntil. */
+  claimNext(sessionId: string, runId: string, nowIso: string, leaseUntilIso: string, maxAttempts: number): Promise<Mail | null>;
+  /** Marks a mail acked, only if it is currently delivered to runId: a run can't ack mail that was
+   * never handed to it. Idempotent; anything else is ignored. */
+  ack(id: string, runId: string, nowIso: string): Promise<void>;
+  /** Counts a mail-driven wake as an attempt on every deliverable mail of the session, so a session
+   * whose runs never become ready runs out of attempts instead of being woken forever. */
+  chargeWake(sessionId: string, nowIso: string, maxAttempts: number): Promise<void>;
+  /** Returns mail delivered to runId but not acked to the queue (the run has ended). */
+  releaseRun(runId: string): Promise<void>;
+  /** Marks mail that ran out of attempts dead and returns it (for bounces). */
+  expireExhausted(nowIso: string, maxAttempts: number): Promise<Mail[]>;
+  /** Mail a session has sent since the given time (the per-sender rate limit). */
+  countSentSince(fromSessionId: string, sinceIso: string): Promise<number>;
+  /** Whether one session holds deliverable mail. */
+  hasDeliverable(sessionId: string, nowIso: string, maxAttempts: number): Promise<boolean>;
+  /** Distinct sessions holding deliverable mail (the /tick sweep's input). */
+  sessionsWithDeliverable(nowIso: string, maxAttempts: number): Promise<string[]>;
+  findById(id: string): Promise<Mail | null>;
+}
+
 export interface Guru {
   id: string;
   name: string;
@@ -227,6 +285,10 @@ export interface EntriesCollection {
 
 export interface RunsCollection {
   insert(run: Run): Promise<void>;
+  /** Inserts `run` unless its session already has an active run, in which case that run is
+   * returned instead and nothing is inserted. Atomic across processes (Mongo: partial unique index
+   * on active runs per session), so two concurrent wakes can't both start a sandbox. */
+  insertIfNoActive(run: Run): Promise<{ run: Run; inserted: boolean }>;
   findById(id: string): Promise<Run | null>;
   /** The run currently occupying a session, if state is queued|provisioning|running|idle. */
   findActiveForSession(sessionId: string): Promise<Run | null>;
@@ -273,5 +335,6 @@ export interface Store {
   users: UsersCollection;
   providers: ProvidersCollection;
   tokens: TokensCollection;
+  mail: MailCollection;
   close(): Promise<void>;
 }

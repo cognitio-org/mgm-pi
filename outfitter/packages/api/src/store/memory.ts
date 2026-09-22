@@ -22,6 +22,8 @@ import type {
   ProvidersCollection,
   ApiToken,
   TokensCollection,
+  Mail,
+  MailCollection,
 } from "./types.ts";
 
 function clone<T>(value: T): T {
@@ -89,6 +91,16 @@ class MemoryRuns implements RunsCollection {
 
   async insert(run: Run): Promise<void> {
     this.rows.set(run.id, clone(run));
+  }
+
+  async insertIfNoActive(run: Run): Promise<{ run: Run; inserted: boolean }> {
+    // No await between the check and the set: that is what makes this atomic here.
+    const active = new Set(["queued", "provisioning", "running", "idle", "stopping"]);
+    for (const row of this.rows.values()) {
+      if (row.sessionId === run.sessionId && active.has(row.state)) return { run: clone(row), inserted: false };
+    }
+    this.rows.set(run.id, clone(run));
+    return { run: clone(run), inserted: true };
   }
 
   async findById(id: string): Promise<Run | null> {
@@ -265,6 +277,99 @@ class MemoryTokens implements TokensCollection {
   }
 }
 
+class MemoryMail implements MailCollection {
+  private readonly rows = new Map<string, Mail>();
+
+  async insertIfNew(mail: Mail): Promise<boolean> {
+    if (this.rows.has(mail.id)) return false;
+    this.rows.set(mail.id, clone(mail));
+    return true;
+  }
+
+  async claimNext(
+    sessionId: string,
+    runId: string,
+    nowIso: string,
+    leaseUntilIso: string,
+    maxAttempts: number,
+  ): Promise<Mail | null> {
+    const next = [...this.rows.values()]
+      .filter((m) => m.sessionId === sessionId && isDeliverable(m, nowIso, maxAttempts))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+    if (!next) return null;
+    Object.assign(next, {
+      status: "delivered",
+      deliveredRunId: runId,
+      deliveredAt: nowIso,
+      lockedUntil: leaseUntilIso,
+      attempts: next.attempts + 1,
+    });
+    return clone(next);
+  }
+
+  async ack(id: string, runId: string, nowIso: string): Promise<void> {
+    const row = this.rows.get(id);
+    if (!row || row.status !== "delivered" || row.deliveredRunId !== runId) return;
+    row.status = "acked";
+    row.ackedAt = nowIso;
+  }
+
+  async chargeWake(sessionId: string, nowIso: string, maxAttempts: number): Promise<void> {
+    for (const m of this.rows.values()) {
+      if (m.sessionId === sessionId && isDeliverable(m, nowIso, maxAttempts)) m.attempts += 1;
+    }
+  }
+
+  async releaseRun(runId: string): Promise<void> {
+    for (const m of this.rows.values()) {
+      if (m.status === "delivered" && m.deliveredRunId === runId) {
+        m.status = "queued";
+        delete m.lockedUntil;
+      }
+    }
+  }
+
+  async expireExhausted(nowIso: string, maxAttempts: number): Promise<Mail[]> {
+    const dead: Mail[] = [];
+    for (const m of this.rows.values()) {
+      const idle = m.status === "queued" || (m.status === "delivered" && (m.lockedUntil ?? "") < nowIso);
+      if (idle && m.attempts >= maxAttempts) {
+        m.status = "dead";
+        m.deadAt = nowIso;
+        dead.push(clone(m));
+      }
+    }
+    return dead;
+  }
+
+  async countSentSince(fromSessionId: string, sinceIso: string): Promise<number> {
+    let n = 0;
+    for (const m of this.rows.values()) if (m.from.sessionId === fromSessionId && m.createdAt >= sinceIso) n++;
+    return n;
+  }
+
+  async hasDeliverable(sessionId: string, nowIso: string, maxAttempts: number): Promise<boolean> {
+    for (const m of this.rows.values()) if (m.sessionId === sessionId && isDeliverable(m, nowIso, maxAttempts)) return true;
+    return false;
+  }
+
+  async sessionsWithDeliverable(nowIso: string, maxAttempts: number): Promise<string[]> {
+    const ids = new Set<string>();
+    for (const m of this.rows.values()) if (isDeliverable(m, nowIso, maxAttempts)) ids.add(m.sessionId);
+    return [...ids];
+  }
+
+  async findById(id: string): Promise<Mail | null> {
+    const row = this.rows.get(id);
+    return row ? clone(row) : null;
+  }
+}
+
+function isDeliverable(m: Mail, nowIso: string, maxAttempts: number): boolean {
+  if (m.attempts >= maxAttempts) return false;
+  return m.status === "queued" || (m.status === "delivered" && (m.lockedUntil ?? "") < nowIso);
+}
+
 export class MemoryStore implements Store {
   readonly sessions = new MemorySessions();
   readonly entries = new MemoryEntries();
@@ -274,6 +379,7 @@ export class MemoryStore implements Store {
   readonly users = new MemoryUsers();
   readonly providers = new MemoryProviders();
   readonly tokens = new MemoryTokens();
+  readonly mail = new MemoryMail();
 
   async close(): Promise<void> {
     // nothing to release

@@ -462,6 +462,59 @@ research on Sonnet; review on Opus).
   guru; refuse wake when exceeded, surface in UI.
 - **E5.4 Shared memory**: reuse `pi-memory` with its directory backed by a GCS bucket mounted read-write
   (Cloud Run GCS FUSE volume on the Job); org-wide notes that every run sees.
+- **E5.5 Agent mailbox** — built 2026-09-22 (protocol.md "Mailbox (E5.5)"; research and decisions
+  in `docs/reports/agent-messaging.md`). Peer-to-peer messaging between separate sessions, durable on
+  Mongo plus Cloud Tasks. Closes four gaps the old wake path had: `Run.pending` died with a run that
+  failed before ready; delivery was at-most-once; a `wake()` error lost the message; and two senders
+  could double-wake a session.
+  - `mail` collection, addressed to the session: claim with a 60 s lease, and `mail.ack` from agentd
+    once pi accepts the prompt (accepted only from the run the mail was delivered to).
+  - Re-claim after the lease, or at once on that run's `bye`. 6 attempts, and each mail-driven wake
+    counts too, so a session whose runs die before they are ready stops being woken. Exhausted mail
+    goes `dead` and bounces to its sender. TTL on acked and dead mail.
+  - The browser's first prompt and `POST /messages` use it too, not just agent sends. A failed wake
+    answers 202 rather than 500, so the browser doesn't resend.
+  - Insert first, then wake. `runs.insertIfNoActive` plus a partial unique index
+    `one_active_run_per_session` makes `wake()` atomic. The index is created non-fatally, so existing
+    duplicate active runs log a warning instead of failing boot.
+  - Wake durability: one named Cloud Task per mail → `POST /api/hooks/tasks/wake`. A Cloud Scheduler
+    `POST /api/hooks/tick` every 5 min runs the reconcilers and a mail sweep. Both are OIDC-verified
+    against `TASKS_SA_EMAIL`, and `deploy/mailbox.sh` sets them up. No change streams.
+  - Agent side: the `outfitter-mail` pi extension adds **`outfitter_send(to, text, urgent?)`** only.
+    A send is a pi `custom` entry that rides the existing entry stream, so it survives socket drops
+    and dedupes by entry id. Bad sends bounce back as system mail, and so does anything past 30 sends
+    per hour per session. **Default delivery is `follow_up`**; `urgent` maps to `steer`.
+  - The body reaches the recipient inside a nonce fence and is labelled as another agent's writing.
+    It is still a user-role message in an agent with its owner's repo and token; see the open
+    decisions below.
+  - Open decisions, not built:
+    - Whether a user's Stop should pause mail wakes. Today the `bye` after a stop doesn't re-wake,
+      but the `/tick` sweep will wake the session for held mail.
+    - Whether agent mail may use `steer` at all.
+    - Same-owner-only messaging, which needs E2.2's ownership model.
+  - Changed from the plan: no `outfitter_inbox` (mail is pushed into the conversation, so an inbox
+    would only repeat it). `outfitter_peers` is deferred to E5.2, because it needs a request/response
+    channel from pi to the API that delegation needs too. Until then, addresses come from the
+    prompt, from a received message's header, or from the delegation that created the child.
+  - Pub/Sub is not this layer: it is fan-out of events with no addressing, delay or per-message
+    dedupe. Its slot stays E7's socket replacement.
+  - Rollout: deploy agentd image and API together. A run on an older agentd ignores `mail` frames,
+    so its mail is retried up to 5 attempts and then stops.
+- **E5.6 Durable workflows** (multi-step, multi-agent: plan → fan out → gather → next; survives API
+  restarts; same store and transport as E5.5, additive not a rewrite). Hand-rolled on Mongo: no engine
+  runs on Mongo as its sole store (DBOS/Hatchet/pg-boss are Postgres; Restate/Inngest/Trigger.dev are
+  their own servers; LangGraph and Mastra only checkpoint), and Temporal stays rejected (§2). Revisit
+  Vercel Workflow DevKit + community `@workflow-worlds/mongodb` once its queueing and scale-to-zero
+  story is documented.
+  - `workflows` document `{type, version, status, cursor, steps:[{id, status, attempts, input, output,
+    idempotencyKey, runAt, lockedUntil}], fanout:{expected, done}}`. Every advance is
+    `findOneAndUpdate({_id, version})` + `$inc version`; losers re-read. Side effects keyed by
+    `idempotencyKey` (unique index) so a rerun after a crash is a no-op.
+  - A step that runs an agent is "E5.5 send + register a completion hook"; the child's `agent_end`
+    writes an `outbox` row in the same transaction as `$inc fanout.done`; the updater that observes
+    `done == expected` schedules the gather step. Multi-document transactions work on M0.
+  - One Cloud Task per step is the timer and retry; `/tick` sweeps orphaned fan-ins and stale leases.
+    Zero always-on compute; roughly 500–800 lines of TypeScript.
 
 ### E6 Triggers and PR workflows
 

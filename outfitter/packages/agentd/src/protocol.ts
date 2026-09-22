@@ -106,6 +106,13 @@ export interface UpBye {
   message?: string;
 }
 
+/** E5.5: pi accepted a `mail` down-message (its RPC `prompt` response came back success). The api
+ * then marks the mail acked; unacked mail is redelivered after its lease. */
+export interface UpMailAck {
+  t: "mail.ack";
+  id: string;
+}
+
 export type UpMessage =
   | UpHello
   | UpStatus
@@ -116,7 +123,8 @@ export type UpMessage =
   | UpHeartbeat
   | UpBye
   | UpDiffResult
-  | UpReadResult;
+  | UpReadResult
+  | UpMailAck;
 
 /** Up-messages that carry a `seq` and are subject to the buffer-until-ack contract. */
 export type SeqUpMessage = UpEntry | UpEvent;
@@ -252,6 +260,15 @@ export interface DownRead {
   path: string;
 }
 
+/** E5.5: a mailbox message for this session. Handed to pi as a `prompt` with `streamingBehavior`
+ * (starts a turn when idle, queues when busy) and acked with `mail.ack` once pi accepts it. */
+export interface DownMail {
+  t: "mail";
+  id: string;
+  text: string;
+  behavior?: PromptBehavior;
+}
+
 export interface DownStop {
   t: "stop";
   reason: string;
@@ -269,7 +286,8 @@ export type DownMessage =
   | DownCheckpoint
   | DownDiff
   | DownRead
-  | DownStop;
+  | DownStop
+  | DownMail;
 
 // ---------- replies to diff/read (sent up as `entry`-less custom up-frames) ----------
 // protocol.md does not give these a `t`; agentd sends them as ad-hoc up-frames named after the

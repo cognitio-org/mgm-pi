@@ -24,6 +24,8 @@ import type {
   ProvidersCollection,
   ApiToken,
   TokensCollection,
+  Mail,
+  MailCollection,
 } from "./types.ts";
 
 // Typed as RunState[], not inferred as string[]: used in a Mongo `$in` filter against Run.state,
@@ -127,6 +129,23 @@ class MongoRuns implements RunsCollection {
 
   async insert(run: Run): Promise<void> {
     await this.col.insertOne({ ...run, _id: run.id });
+  }
+
+  async insertIfNoActive(run: Run): Promise<{ run: Run; inserted: boolean }> {
+    // Relies on the partial unique index over active runs per session (ensureIndexes). The loser of
+    // a race gets a duplicate-key error and returns the winner; the retry covers the winner having
+    // already left the active states between our insert and our read.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await this.insert(run);
+        return { run, inserted: true };
+      } catch (err) {
+        if (!isDuplicateKeyError(err)) throw err;
+        const existing = await this.findActiveForSession(run.sessionId);
+        if (existing) return { run: existing, inserted: false };
+      }
+    }
+    throw new Error(`could not start or find an active run for session ${run.sessionId}`);
   }
 
   async findById(id: string): Promise<Run | null> {
@@ -327,6 +346,114 @@ class MongoTokens implements TokensCollection {
   }
 }
 
+const ACKED_MAIL_TTL_MS = 7 * 24 * 60 * 60_000;
+
+type MailDoc = Mail & { _id: string; expireAt?: Date };
+
+function deliverableFilter(nowIso: string, maxAttempts: number) {
+  return {
+    attempts: { $lt: maxAttempts },
+    $or: [{ status: "queued" as const }, { status: "delivered" as const, lockedUntil: { $lt: nowIso } }],
+  };
+}
+
+class MongoMail implements MailCollection {
+  private readonly col: MongoCollection<MailDoc>;
+
+  constructor(col: MongoCollection<MailDoc>) {
+    this.col = col;
+  }
+
+  async insertIfNew(mail: Mail): Promise<boolean> {
+    try {
+      await this.col.insertOne({ ...mail, _id: mail.id });
+      return true;
+    } catch (err) {
+      if (isDuplicateKeyError(err)) return false;
+      throw err;
+    }
+  }
+
+  async claimNext(
+    sessionId: string,
+    runId: string,
+    nowIso: string,
+    leaseUntilIso: string,
+    maxAttempts: number,
+  ): Promise<Mail | null> {
+    const result = await this.col.findOneAndUpdate(
+      { sessionId, ...deliverableFilter(nowIso, maxAttempts) },
+      {
+        $set: { status: "delivered", deliveredRunId: runId, deliveredAt: nowIso, lockedUntil: leaseUntilIso },
+        $inc: { attempts: 1 },
+      },
+      { sort: { createdAt: 1 }, returnDocument: "after" },
+    );
+    return stripMail(result);
+  }
+
+  async ack(id: string, runId: string, nowIso: string): Promise<void> {
+    // expireAt is Mongo-only: the TTL index needs a BSON date, and every other timestamp here is an
+    // ISO string shared with MemoryStore.
+    await this.col.updateOne(
+      { _id: id, status: "delivered", deliveredRunId: runId },
+      { $set: { status: "acked", ackedAt: nowIso, expireAt: new Date(Date.parse(nowIso) + ACKED_MAIL_TTL_MS) } },
+    );
+  }
+
+  async chargeWake(sessionId: string, nowIso: string, maxAttempts: number): Promise<void> {
+    await this.col.updateMany({ sessionId, ...deliverableFilter(nowIso, maxAttempts) }, { $inc: { attempts: 1 } });
+  }
+
+  async releaseRun(runId: string): Promise<void> {
+    await this.col.updateMany(
+      { status: "delivered", deliveredRunId: runId },
+      { $set: { status: "queued" }, $unset: { lockedUntil: "" } },
+    );
+  }
+
+  async expireExhausted(nowIso: string, maxAttempts: number): Promise<Mail[]> {
+    const idleExhausted = {
+      attempts: { $gte: maxAttempts },
+      $or: [{ status: "queued" as const }, { status: "delivered" as const, lockedUntil: { $lt: nowIso } }],
+    };
+    const dead: Mail[] = [];
+    // One findOneAndUpdate per mail so each is returned exactly once even with two sweeps racing.
+    for (;;) {
+      const doc = await this.col.findOneAndUpdate(
+        idleExhausted,
+        { $set: { status: "dead", deadAt: nowIso, expireAt: new Date(Date.parse(nowIso) + ACKED_MAIL_TTL_MS) } },
+        { returnDocument: "after" },
+      );
+      const mail = stripMail(doc);
+      if (!mail) return dead;
+      dead.push(mail);
+    }
+  }
+
+  async countSentSince(fromSessionId: string, sinceIso: string): Promise<number> {
+    return this.col.countDocuments({ "from.sessionId": fromSessionId, createdAt: { $gte: sinceIso } });
+  }
+
+  async hasDeliverable(sessionId: string, nowIso: string, maxAttempts: number): Promise<boolean> {
+    return (await this.col.countDocuments({ sessionId, ...deliverableFilter(nowIso, maxAttempts) }, { limit: 1 })) > 0;
+  }
+
+  async sessionsWithDeliverable(nowIso: string, maxAttempts: number): Promise<string[]> {
+    return this.col.distinct("sessionId", deliverableFilter(nowIso, maxAttempts));
+  }
+
+  async findById(id: string): Promise<Mail | null> {
+    return stripMail(await this.col.findOne({ _id: id }));
+  }
+}
+
+function stripMail(doc: MailDoc | null): Mail | null {
+  if (!doc) return null;
+  const { _id, expireAt, ...rest } = doc;
+  return rest;
+}
+
 function isDuplicateKeyError(err: unknown): boolean {
   return typeof err === "object" && err !== null && "code" in err && (err as { code?: number }).code === 11000;
 }
@@ -340,6 +467,7 @@ export class MongoStore implements Store {
   readonly users: UsersCollection;
   readonly providers: ProvidersCollection;
   readonly tokens: TokensCollection;
+  readonly mail: MailCollection;
   private readonly client: MongoClient;
 
   private constructor(client: MongoClient, db: Db) {
@@ -352,6 +480,7 @@ export class MongoStore implements Store {
     this.users = new MongoUsers(db.collection("users"));
     this.providers = new MongoProviders(db.collection("providers"));
     this.tokens = new MongoTokens(db.collection("tokens"));
+    this.mail = new MongoMail(db.collection("mail"));
   }
 
   /** `dbName` wins over the database in the URI; the stored URI has none, so the default keeps
@@ -373,7 +502,21 @@ export class MongoStore implements Store {
       db.collection("runs").createIndex({ sessionId: 1, state: 1 }),
       db.collection("tokens").createIndex({ hash: 1 }, { unique: true }),
       db.collection("tokens").createIndex({ ownerEmail: 1 }),
+      db.collection("mail").createIndex({ sessionId: 1, status: 1, createdAt: 1 }),
+      db.collection("mail").createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
+      db.collection("mail").createIndex({ "from.sessionId": 1, createdAt: 1 }),
     ]);
+    // Non-fatal: a deployment that already holds two active runs for one session (the race this
+    // index closes) would otherwise fail every boot. Until the duplicates are cleaned up,
+    // insertIfNoActive degrades to the old check-then-insert behaviour.
+    try {
+      await db.collection("runs").createIndex(
+        { sessionId: 1 },
+        { name: "one_active_run_per_session", unique: true, partialFilterExpression: { state: { $in: ACTIVE_RUN_STATES } } },
+      );
+    } catch (err) {
+      console.warn(`runs index one_active_run_per_session not created: ${err instanceof Error ? err.message : err}`);
+    }
   }
 
   async close(): Promise<void> {

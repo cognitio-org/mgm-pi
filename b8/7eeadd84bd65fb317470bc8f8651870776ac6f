@@ -1,0 +1,34 @@
+outfitter/packages/web/src/easter/EasterEggPage.tsx
+  s_2209f22f830d7f::t_2007934353b694 1-19
+outfitter/packages/web/src/easter/useKonamiCode.ts
+  s_2209f22f830d7f::t_8e0ff85d38a1c0 1-49
+outfitter/packages/web/src/styles/easter.css
+  s_2209f22f830d7f::t_7deb02bb8a7b55 1-156
+outfitter/packages/web/src/easter/openEasterEgg.tsx
+  s_2209f22f830d7f::t_6afad6f84f78e8 1-25,27-29,31-32
+  s_2209f22f830d7f::t_a5309d316dfcae 26,30
+outfitter/packages/web/src/easter/sound.ts
+  s_2209f22f830d7f::t_cb802b2da4c342 1-83
+outfitter/packages/web/src/easter/EasterEgg.tsx
+  s_2209f22f830d7f::t_b99b64cafe0351 1-296
+outfitter/packages/web/src/easter/engine.ts
+  s_2209f22f830d7f::t_987301d2ab3cd5 1-326
+outfitter/packages/web/test/easter-engine.test.ts
+  s_2209f22f830d7f::t_0654b3b8e56724 1-141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "b87eeadd84bd65fb317470bc8f8651870776ac6f",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

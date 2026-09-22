@@ -1,0 +1,58 @@
+outfitter/packages/web/src/easter/EasterEggRoot.tsx
+  s_2209f22f830d7f::t_6d332d62aad4d3 1-31,36-37,39-41
+  s_2209f22f830d7f::t_373ca65a691786 32-35,38
+outfitter/packages/web/test/easter-menu-nav.test.ts
+  s_2209f22f830d7f::t_bec39bde672340 1-40
+outfitter/packages/web/src/styles/easter.css
+  s_2209f22f830d7f::t_3d77f2ad2edb42 150-157,165-390
+outfitter/packages/web/src/easter/menu/menuNav.ts
+  s_2209f22f830d7f::t_7b3ec42bcc0c7a 1-28
+outfitter/packages/web/src/easter/EasterEggPage.tsx
+  s_2209f22f830d7f::t_d0886c1258b141 2-7,10-11,13-17,21-22,25
+outfitter/packages/web/src/easter/shared/fixedStep.ts
+  s_2209f22f830d7f::t_01f0ae2f8fcbce 1-69
+outfitter/packages/web/src/easter/dreadnought/sprites.ts
+  s_2209f22f830d7f::t_4737cf43a44151 1-65
+outfitter/packages/web/src/easter/dreadnought/sound.ts
+  s_2209f22f830d7f::t_35cca80752eca0 2
+  s_2209f22f830d7f::t_d6785fa071503e 1,3-83
+outfitter/packages/web/src/easter/shared/gamepad.ts
+  s_2209f22f830d7f::t_9190d795d69272 1-62
+outfitter/packages/web/src/easter/shared/highscore.ts
+  s_2209f22f830d7f::t_f267b2539f31ac 1-33
+outfitter/packages/web/src/easter/menu/GameMenu.tsx
+  s_2209f22f830d7f::t_d9e30fad39e7f0 1-110
+outfitter/packages/web/test/dreadnought-engine.test.ts
+  s_2209f22f830d7f::t_9a3a56813c9b4f 3-11
+  s_2209f22f830d7f::t_e9d4e393758942 23,32,38,46,54,57,61,64,70,73,78,86,88,91,93-96,98,102,106-110,112,115-121,124,127,129,132,141-190
+outfitter/packages/web/src/easter/shared/motion.ts
+  s_2209f22f830d7f::t_8e6bf39435be22 1-11
+outfitter/packages/web/src/easter/dreadnought/engine.ts
+  s_2209f22f830d7f::t_1bd549bea295f7 362-363
+  s_2209f22f830d7f::t_5830a84a2107a0 3-360
+outfitter/packages/web/src/easter/dreadnought/DreadnoughtRun.tsx
+  s_2209f22f830d7f::t_066cab8315ffc0 69,77,188
+  s_2209f22f830d7f::t_a2765ecc2ad276 2-67,72-73,80-186,189-442
+outfitter/packages/web/src/easter/openEasterEgg.tsx
+  s_2209f22f830d7f::t_1fa40398468d60 4-6,9,24-26,28,33
+outfitter/packages/web/src/easter/shared/pixelSprite.ts
+  s_2209f22f830d7f::t_08b51d553c061a 1-37
+outfitter/packages/web/src/easter/shared/particles.ts
+  s_2209f22f830d7f::t_1472a45978d223 1-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "5379a3a6c016bc3f82c812580b48c892ec60e8a6",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

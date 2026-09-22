@@ -20,6 +20,22 @@ import { MAIL_LEASE_MS, MAIL_MAX_ATTEMPTS, type MailService } from "./mail.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
+/** Bug 6 (docs/reports/cloud-fixes.md): pi's rpc.md "Extension UI Protocol" section splits
+ * `extension_ui_request` into dialog methods (select/confirm/input/editor -- pi blocks for an
+ * `extension_ui_response`) and fire-and-forget display methods (notify/setStatus/setWidget/
+ * setTitle/set_editor_text -- no response expected). Only the former are ever worth storing as
+ * `Run.pendingUiRequest`; per protocol.md's own "not persisted except extension_ui_request" note,
+ * the persistence is meant for a question the run is actually waiting on. */
+const INTERACTIVE_UI_METHODS = new Set(["select", "confirm", "input", "editor"]);
+
+/** Bug 9 (docs/reports/cloud-fixes.md): must match packages/agentd/src/protocol.ts's own
+ * WIRE_PROTOCOL_VERSION -- the two packages can't share a module, so both sides document the
+ * pairing and bump together. A sandbox whose `hello.protocolVersion` is older than this (including
+ * missing entirely, an agentd build that predates the field) is refused with WS close 4409 instead
+ * of being allowed to silently ignore frames it doesn't understand -- see this story's motivating
+ * incident: a web role on a newer build sent `mail` frames an older agentd ignored. */
+const API_PROTOCOL_VERSION = 1;
+
 /** Thrown by buildRunSpec when a repo session has no usable GitHub token secret; handleConnection
  * catches it specifically to close the socket with the terminal 4412 code (docs/protocol.md) and
  * mark the run failed, instead of the generic "internal error" other buildRunSpec failures get. A
@@ -329,6 +345,44 @@ export class AgentLink {
       buffer.stop();
       return closeQuietly(socket, 4400, "too many buffered frames");
     }
+    // Bug 9 (docs/reports/cloud-fixes.md): fail loudly on version skew instead of the silent
+    // breakage a mismatched deploy caused before (an older agentd ignoring frames a newer web role
+    // sent). A missing protocolVersion (an agentd build that predates this field) counts as older.
+    const agentProtocolVersion = typeof hello.protocolVersion === "number" ? hello.protocolVersion : 0;
+    if (agentProtocolVersion < API_PROTOCOL_VERSION) {
+      request.log.warn(
+        { runId, agentProtocolVersion, apiProtocolVersion: API_PROTOCOL_VERSION },
+        "agentlink: closing connection, agentd protocol version is older than the API's -- redeploy the agent image",
+      );
+      const reason = `agentd protocol v${agentProtocolVersion} is older than the API's v${API_PROTOCOL_VERSION} -- redeploy the outfitter-agent image`;
+      // 4409 is terminal for agentd (it exits), so nothing will ever move this run on: fail it now
+      // with the reason, as for 4412, instead of leaving it "provisioning" until the stale-run
+      // reconciler notices -- which also pins the session (no wake, no Retry) in the meantime.
+      await this.store.runs.update(runId, { state: "failed", reason, updatedAt: new Date().toISOString() });
+      buffer.stop();
+      return closeQuietly(socket, 4409, reason);
+    }
+
+    // Bug 10 (docs/reports/cloud-fixes.md): a run created specifically to deliver mail
+    // (Run.mailWakePending, set by MailService.wakeForMail) just proved -- token + protocol
+    // version both checked out -- that it can genuinely speak the protocol, so charge the
+    // mailbox attempt here, once per run (guarded by Run.protocolAcked so a reconnect on the
+    // same run doesn't charge again), instead of blindly at wake() time before any of that was
+    // known. A run started for some other reason (a browser Start/Wake button) that happens to
+    // also have deliverable mail is left alone here -- its mail still gets delivered and counted
+    // once, by deliverMail's own claimNext call below, not charged twice.
+    if (run.mailWakePending && !run.protocolAcked) {
+      const chargeNow = new Date().toISOString();
+      await this.store.mail.chargeWake(run.sessionId, chargeNow, MAIL_MAX_ATTEMPTS);
+      await this.store.runs.update(runId, { protocolAcked: true, updatedAt: chargeNow });
+    }
+    // Cloud-fixes 13: this run speaks the protocol, so the session's wakes weren't wasted (reset
+    // Mail.unvalidatedWakes), and whatever deploy mismatch parked mail as `held` -- for this
+    // session or any other -- is evidently fixed: return it all to the queue. This session's mail
+    // goes out over this socket below; other sessions' is woken by the next /tick sweep.
+    await this.store.mail.markValidated(run.sessionId);
+    const released = await this.store.mail.releaseHeld();
+    if (released.length > 0) request.log.info({ runId, sessions: released }, "agentlink: protocol validated, released held mail");
 
     this.sockets.set(runId, socket);
     socket.on("close", () => {
@@ -491,7 +545,16 @@ export class AgentLink {
         if (before && isTerminalState(before.state)) break;
         const state = mapStatusToRunState(String(frame.state), before?.state ?? "provisioning");
         const wasReady = !!before && isReadyState(before.state);
-        await this.store.runs.update(runId, { state, lastSeenAt: now, updatedAt: now });
+        // Bug 7 (docs/reports/cloud-fixes.md): a status frame's optional `detail` (protocol.md) now
+        // also carries agentd's "pi rejected <command>: <error>" notices (run.ts's
+        // sendStatusDetail) -- persist it on the run so it survives a reload / a split-role
+        // deployment where the browser's own subscriber isn't on this process (see sse.ts's
+        // SsePoller), not just the live in-process SSE push below. Only overwritten when a frame
+        // actually carries a new detail, so an ordinary state-only frame (the vast majority) right
+        // after a notice doesn't immediately wipe it before anyone sees it.
+        const patch: Partial<Run> = { state, lastSeenAt: now, updatedAt: now };
+        if (typeof frame.detail === "string") patch.statusDetail = frame.detail;
+        await this.store.runs.update(runId, patch);
         this.sse.publish(sessionId, { type: "status", data: frame });
         // First transition into running/idle/stopping: drain anything queued while provisioning
         // (in order).
@@ -521,10 +584,17 @@ export class AgentLink {
       }
       case "event": {
         const seq = Number(frame.seq);
-        const event = frame.event as { type?: string; t?: string; [key: string]: unknown };
+        const event = frame.event as { type?: string; t?: string; method?: string; [key: string]: unknown };
         this.sse.publish(sessionId, { type: "event", data: event });
         const eventType = event.type ?? event.t;
-        if (eventType === "extension_ui_request") {
+        // Bug 6 (docs/reports/cloud-fixes.md): pi's rpc.md distinguishes dialog methods (select,
+        // confirm, input, editor -- block on an extension_ui_response) from fire-and-forget
+        // display methods (notify, setStatus, setWidget, setTitle, set_editor_text -- no response
+        // expected, "the client can display the information or ignore it"). Only the dialog
+        // methods are actually a question the run is waiting on; storing a display-only event here
+        // left Run.pendingUiRequest (and so the session's questions UI) showing a stale "pending"
+        // notify/setStatus/etc that no one was ever going to answer.
+        if (eventType === "extension_ui_request" && INTERACTIVE_UI_METHODS.has(String(event.method))) {
           await this.store.runs.update(runId, { pendingUiRequest: event, updatedAt: now });
         }
         await this.ack(runId, socket, seq, now);

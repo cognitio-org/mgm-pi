@@ -803,6 +803,92 @@ test("RunController: pi is spawned with the run-as user's HOME and identity, nev
   assert.equal(spawnedEnv!.USER, "agent");
 });
 
+test("RunController: bug 8 (docs/reports/cloud-fixes.md) -- --model is omitted on restore when the snapshot's own last model+thinking already match the guru", async (t) => {
+  const workspace = await mkdtemp(join(tmpdir(), "outfitter-run-test-"));
+  const link = new FakeLink();
+  let spawnArgs: string[] | undefined;
+
+  const controller = new RunController({
+    link,
+    gitOps: fakeGitOps(),
+    workspace,
+    piBin: "unused-in-test",
+    agentdVersion: "test",
+    piVersion: "test",
+    heartbeatIntervalMs: 60_000,
+    spawnPi: (opts) => {
+      spawnArgs = opts.args;
+      return makeControllablePi();
+    },
+    importSession: async (_snapshotFile, _cwd, sessionId) => join(workspace, `${sessionId}.jsonl`),
+    writeSnapshotFile,
+    createTailer: () => ({ start() {}, stop() {}, poll: async () => {} }),
+    onLog: () => {},
+  });
+  t.after(() => controller.dispose());
+
+  const header = { type: "session", version: 3, id: "sess-restore", timestamp: "t", cwd: "/workspace" };
+  const modelChange = { type: "model_change", id: "e1", provider: "litellm", modelId: "claude-sonnet-5" };
+  const thinkingChange = { type: "thinking_level_change", id: "e2", thinkingLevel: "high" };
+  const restoredJsonl = [header, modelChange, thinkingChange].map((l) => JSON.stringify(l)).join("\n") + "\n";
+
+  link.deliver({
+    t: "run.spec",
+    session: { id: "sess-restore", name: "restore", cwd: "/workspace" },
+    guru: { model: "litellm/claude-sonnet-5", thinking: "high" }, // matches the snapshot exactly
+    snapshot: { jsonl: restoredJsonl },
+    secrets: {},
+    idleStopSeconds: 3600,
+    checkpointEvery: "turn",
+  });
+
+  await waitFor(() => spawnArgs !== undefined);
+  assert.ok(!spawnArgs!.includes("--model"), `expected no --model flag on an unchanged restore, got: ${spawnArgs!.join(" ")}`);
+});
+
+test("RunController: bug 8 -- --model is still passed on restore when the guru's model actually differs from the snapshot's last one", async (t) => {
+  const workspace = await mkdtemp(join(tmpdir(), "outfitter-run-test-"));
+  const link = new FakeLink();
+  let spawnArgs: string[] | undefined;
+
+  const controller = new RunController({
+    link,
+    gitOps: fakeGitOps(),
+    workspace,
+    piBin: "unused-in-test",
+    agentdVersion: "test",
+    piVersion: "test",
+    heartbeatIntervalMs: 60_000,
+    spawnPi: (opts) => {
+      spawnArgs = opts.args;
+      return makeControllablePi();
+    },
+    importSession: async (_snapshotFile, _cwd, sessionId) => join(workspace, `${sessionId}.jsonl`),
+    writeSnapshotFile,
+    createTailer: () => ({ start() {}, stop() {}, poll: async () => {} }),
+    onLog: () => {},
+  });
+  t.after(() => controller.dispose());
+
+  const header = { type: "session", version: 3, id: "sess-changed", timestamp: "t", cwd: "/workspace" };
+  const modelChange = { type: "model_change", id: "e1", provider: "litellm", modelId: "gpt-4o" };
+  const restoredJsonl = [header, modelChange].map((l) => JSON.stringify(l)).join("\n") + "\n";
+
+  link.deliver({
+    t: "run.spec",
+    session: { id: "sess-changed", name: "changed", cwd: "/workspace" },
+    guru: { model: "litellm/claude-sonnet-5" }, // a genuinely different model than the snapshot's
+    snapshot: { jsonl: restoredJsonl },
+    secrets: {},
+    idleStopSeconds: 3600,
+    checkpointEvery: "turn",
+  });
+
+  await waitFor(() => spawnArgs !== undefined);
+  assert.ok(spawnArgs!.includes("--model"), "a real model change must still pass --model");
+  assert.ok(spawnArgs!.includes("litellm/claude-sonnet-5"));
+});
+
 async function setupControllablePiRun(t: { after: (fn: () => void) => void }) {
   const workspace = await mkdtemp(join(tmpdir(), "outfitter-run-test-"));
   const link = new FakeLink();
@@ -868,6 +954,65 @@ test("RunController: steer mail passes its behavior through, and rejected mail s
   assert.equal((pi.sent[0] as any).streamingBehavior, "steer");
   pi.emit({ type: "response", id: "mail:m2", command: "prompt", success: false, error: "busy" });
   assert.ok(!link.sent.some((m) => m.t === "mail.ack"));
+});
+
+test("RunController: bug 7 (docs/reports/cloud-fixes.md) -- a rejected non-mail RPC response is logged and surfaced on status, not silently dropped", async (t) => {
+  const logged: Array<{ line: string }> = [];
+  const workspace = await mkdtemp(join(tmpdir(), "outfitter-run-test-"));
+  const link = new FakeLink();
+  let pi: ReturnType<typeof makeControllablePi> | undefined;
+  const controller = new RunController({
+    link,
+    gitOps: fakeGitOps(),
+    workspace,
+    piBin: "unused-in-test",
+    agentdVersion: "test",
+    piVersion: "test",
+    heartbeatIntervalMs: 60_000,
+    spawnPi: () => {
+      pi = makeControllablePi();
+      return pi;
+    },
+    importSession: async (_snapshotFile, _cwd, sessionId) => join(workspace, `${sessionId}.jsonl`),
+    writeSnapshotFile,
+    createTailer: () => ({ start() {}, stop() {}, poll: async () => {} }),
+    onLog: (line) => logged.push({ line }),
+  });
+  t.after(() => controller.dispose());
+  link.deliver({
+    t: "run.spec",
+    session: { id: "sess-rej", name: "rej", cwd: "/workspace" },
+    guru: { model: "fake/model" },
+    snapshot: { jsonl: emptySessionJsonl("sess-rej", "/workspace") },
+    secrets: {},
+    idleStopSeconds: 3600,
+    checkpointEvery: "turn",
+  });
+  await waitFor(() => pi !== undefined);
+
+  // No id at all -- this is exactly how agentd sends a user-driven prompt/steer/follow_up
+  // (dispatchToPi in run.ts), unlike a mail rpc id ("mail:<id>"). It used to vanish completely.
+  pi!.emit({ type: "response", command: "prompt", success: false, error: "model not found" });
+
+  assert.ok(
+    logged.some((l) => l.line.includes("prompt") && l.line.includes("model not found")),
+    `expected a WARN-worthy log line naming the command and error, got: ${JSON.stringify(logged)}`,
+  );
+  const statusFrames = link.sent.filter((m) => m.t === "status");
+  assert.ok(
+    statusFrames.some((f) => typeof (f as any).detail === "string" && (f as any).detail.includes("model not found")),
+    `expected a status frame with a detail naming the rejection, got: ${JSON.stringify(statusFrames)}`,
+  );
+
+  // The mail path is untouched: a mail response still uses its own "pi rejected mail <id>: ..."
+  // line (and only affects mail.ack/no-ack), not this generic "pi rejected <command>" one.
+  link.sent.length = 0;
+  logged.length = 0;
+  link.deliver({ t: "mail", id: "m9", text: "please review" });
+  await waitFor(() => pi!.sent.some((c) => (c as any).id === "mail:m9"));
+  pi!.emit({ type: "response", id: "mail:m9", command: "prompt", success: false, error: "busy" });
+  assert.ok(logged.some((l) => l.line.includes("pi rejected mail m9")), "mail keeps its own log line");
+  assert.ok(!logged.some((l) => l.line.startsWith("pi rejected prompt")), "and does not also produce the generic non-mail log line");
 });
 
 test("RunController: mail that arrives while the run is stopping is neither prompted nor acked", async (t) => {

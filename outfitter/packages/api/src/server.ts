@@ -11,7 +11,7 @@ import type { SecretsBroker, SecretAdmin } from "./secrets.ts";
 import { identityFromRequest, identityFromLinkRequest } from "./auth.ts";
 import { RunManager } from "./runs.ts";
 import { AgentLink } from "./agentlink.ts";
-import { SseHub } from "./sse.ts";
+import { SseHub, SsePoller } from "./sse.ts";
 import { LaptopProbe } from "./laptop.ts";
 import { ProviderStatusService } from "./providers-status.ts";
 import { ModelsService } from "./models.ts";
@@ -57,6 +57,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   );
 
   const sse = new SseHub();
+  const ssePoller = new SsePoller(sse, store);
   const runs = new RunManager(store, provider, config);
   const laptopProbe = new LaptopProbe({
     tunnelDomain: config.tunnelDomainLmstudio,
@@ -108,7 +109,19 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     }
   });
 
-  await registerRoutes(fastify, { store, config, runs, agentLink, sse, laptopProbe, providerStatus, modelsService, secretAdmin, mail });
+  await registerRoutes(fastify, {
+    store,
+    config,
+    runs,
+    agentLink,
+    sse,
+    ssePoller,
+    laptopProbe,
+    providerStatus,
+    modelsService,
+    secretAdmin,
+    mail,
+  });
   // The down-queue poller only makes sense where AgentLink sockets actually live (role "link" or
   // "all", same condition as registering /agent/ws itself) — see agentLink.startDownQueuePoller's
   // doc comment. The web role never holds a socket for any run, so it's never started there.
@@ -126,6 +139,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   const stopBackgroundTasks = () => {
     stopRunReconciler();
     stopDownQueuePoller?.();
+    ssePoller.stop();
   };
 
   return { fastify, runs, agentLink, sse, laptopProbe, providerStatus, mail, stopBackgroundTasks };

@@ -77,22 +77,35 @@ describe("transportStatusLine", () => {
   });
 });
 
-describe("deriveTransportStatusLine", () => {
-  it("shows READY. once nothing is running and no outcome is flashed", () => {
-    expect(deriveTransportStatusLine(false, null)).toBe("READY.");
+describe("deriveTransportStatusLine (bug 3: READY. shown when nothing is running)", () => {
+  it("shows READY. only for an idle live run", () => {
+    expect(deriveTransportStatusLine("idle", null)).toBe("READY.");
   });
 
-  it("shows nothing while a run is active and no outcome is flashed", () => {
-    expect(deriveTransportStatusLine(true, null)).toBeNull();
+  it("shows nothing while a run is actively working -- <Working> covers it", () => {
+    expect(deriveTransportStatusLine("running", null)).toBeNull();
+    expect(deriveTransportStatusLine("queued", null)).toBeNull();
+    expect(deriveTransportStatusLine("provisioning", null)).toBeNull();
+    expect(deriveTransportStatusLine("stopping", null)).toBeNull();
   });
 
-  it("prefers a flashed outcome over READY.", () => {
-    expect(deriveTransportStatusLine(false, "break")).toBe("BREAK");
-    expect(deriveTransportStatusLine(false, "loadError")).toBe("LOAD ERROR");
+  it("a cleanly stopped run reads 'stopped - press Play', not READY.", () => {
+    expect(deriveTransportStatusLine("stopped", null)).toBe("stopped · press Play");
   });
 
-  it("prefers a flashed outcome even while technically still active", () => {
-    expect(deriveTransportStatusLine(true, "loadError")).toBe("LOAD ERROR");
+  it("no run recorded at all also reads 'stopped - press Play'", () => {
+    expect(deriveTransportStatusLine(undefined, null)).toBe("stopped · press Play");
+  });
+
+  it("a failed run reads LOAD ERROR with its reason, in the UI's vocabulary", () => {
+    expect(deriveTransportStatusLine("failed", null)).toBe("LOAD ERROR");
+    expect(deriveTransportStatusLine("failed", null, "guru not found")).toBe("LOAD ERROR — Tape not found");
+  });
+
+  it("prefers a flashed outcome over any run-state line", () => {
+    expect(deriveTransportStatusLine("idle", "break")).toBe("BREAK");
+    expect(deriveTransportStatusLine("stopped", "loadError")).toBe("LOAD ERROR");
+    expect(deriveTransportStatusLine("running", "loadError")).toBe("LOAD ERROR");
   });
 });
 

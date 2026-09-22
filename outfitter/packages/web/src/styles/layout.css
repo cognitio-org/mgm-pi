@@ -375,6 +375,7 @@
 
 .entry.system,
 .entry.model-change,
+.entry.thinking-level-change,
 .entry.compaction,
 .entry.custom,
 .entry.label,
@@ -418,6 +419,130 @@
 .composer textarea {
   flex: 1;
   min-height: 3rem;
+}
+
+/* ---------- cloud-fixes 11/12: send status line + Enter-mode switch (composer's top row) ---------- */
+
+.composer-status-row {
+  align-items: center;
+  justify-content: space-between;
+  min-height: 1.6rem;
+}
+
+.composer-status {
+  flex: 1;
+  min-width: 0;
+}
+
+.send-status.working .working-label {
+  font-size: 0.7rem;
+}
+
+.send-status-error {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.2rem 0.5rem;
+  color: var(--danger);
+  font-size: 0.78rem;
+}
+
+.send-status-error strong {
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  font-weight: normal;
+  letter-spacing: 0.03em;
+}
+
+.send-status-detail {
+  color: var(--text-dim);
+}
+
+/* Keeps the app-wide 44px tap target (mobile.css); only the padding and type shrink. */
+.btn-small {
+  padding: 0.1rem 0.55rem;
+  font-size: 0.75rem;
+  box-shadow: 2px 2px 0 0 var(--border);
+}
+
+.enter-mode-toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.15rem 0.35rem;
+  border: 1px solid transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.enter-mode-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.enter-mode-toggle:active {
+  transform: none;
+  box-shadow: none;
+}
+
+.enter-mode-track {
+  position: relative;
+  display: inline-block;
+  width: 1.7rem;
+  height: 0.85rem;
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+}
+
+.enter-mode-thumb {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: calc(0.85rem - 4px);
+  height: calc(0.85rem - 4px);
+  background: var(--text-dim);
+}
+
+.enter-mode-toggle[aria-checked="true"] .enter-mode-track {
+  background: var(--accent);
+}
+
+.enter-mode-toggle[aria-checked="true"] .enter-mode-thumb {
+  left: calc(100% - 0.85rem + 3px);
+  background: var(--accent-contrast);
+}
+
+.entry.entry-optimistic {
+  opacity: 0.75;
+  border-style: dashed;
+}
+
+.entry.entry-failed {
+  opacity: 1;
+  border-color: var(--danger);
+}
+
+.entry-failed-note {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--danger);
+  font-size: 0.78rem;
+  white-space: normal;
+}
+
+/* cloud-fixes 13: mail held after a deploy mismatch */
+.mail-held-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.6rem;
+  margin: 0.3rem 0 0;
+  color: var(--warn, var(--danger));
+  font-size: 0.78rem;
 }
 
 .ui-request {

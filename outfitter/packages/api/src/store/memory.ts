@@ -82,6 +82,11 @@ class MemoryEntries implements EntriesCollection {
     return (idx === -1 ? list : list.slice(idx + 1)).map(clone);
   }
 
+  async listRecent(sessionId: string, limit: number): Promise<Entry[]> {
+    const list = this.bySession.get(sessionId) ?? []; // push order == insertion order
+    return list.slice(Math.max(0, list.length - limit)).map(clone);
+  }
+
   async maxSeq(sessionId: string): Promise<number> {
     const list = this.bySession.get(sessionId) ?? [];
     return list.reduce((max, e) => Math.max(max, e.seq), 0);
@@ -116,6 +121,15 @@ class MemoryRuns implements RunsCollection {
       if (row.sessionId === sessionId && active.has(row.state)) return clone(row);
     }
     return null;
+  }
+
+  async findLatestForSession(sessionId: string): Promise<Run | null> {
+    let latest: Run | undefined;
+    for (const row of this.rows.values()) {
+      if (row.sessionId !== sessionId) continue;
+      if (!latest || row.updatedAt > latest.updatedAt) latest = row;
+    }
+    return latest ? clone(latest) : null;
   }
 
   async update(id: string, patch: Partial<Run>): Promise<Run | null> {
@@ -339,6 +353,50 @@ class MemoryMail implements MailCollection {
         delete m.lockedUntil;
       }
     }
+  }
+
+  async noteWake(sessionId: string, nowIso: string, maxAttempts: number): Promise<void> {
+    for (const m of this.rows.values()) {
+      if (m.sessionId === sessionId && isDeliverable(m, nowIso, maxAttempts)) m.unvalidatedWakes = (m.unvalidatedWakes ?? 0) + 1;
+    }
+  }
+
+  async markValidated(sessionId: string): Promise<void> {
+    for (const m of this.rows.values()) {
+      if (m.sessionId === sessionId && m.status !== "held") delete m.unvalidatedWakes;
+    }
+  }
+
+  async holdIfStuck(sessionId: string, nowIso: string, maxAttempts: number, maxUnvalidatedWakes: number): Promise<number> {
+    const mine = [...this.rows.values()].filter((m) => m.sessionId === sessionId);
+    const deliverable = mine.filter((m) => isDeliverable(m, nowIso, maxAttempts));
+    const stuck = mine.some((m) => m.status === "held") || deliverable.some((m) => (m.unvalidatedWakes ?? 0) >= maxUnvalidatedWakes);
+    if (stuck) {
+      for (const m of deliverable) {
+        m.status = "held";
+        m.heldAt = nowIso;
+        delete m.lockedUntil;
+      }
+    }
+    return mine.filter((m) => m.status === "held").length;
+  }
+
+  async releaseHeld(sessionId?: string): Promise<string[]> {
+    const released = new Set<string>();
+    for (const m of this.rows.values()) {
+      if (m.status !== "held" || (sessionId && m.sessionId !== sessionId)) continue;
+      m.status = "queued";
+      delete m.heldAt;
+      delete m.unvalidatedWakes;
+      released.add(m.sessionId);
+    }
+    return [...released];
+  }
+
+  async countHeld(sessionId: string): Promise<number> {
+    let n = 0;
+    for (const m of this.rows.values()) if (m.sessionId === sessionId && m.status === "held") n++;
+    return n;
   }
 
   async expireExhausted(nowIso: string, maxAttempts: number): Promise<Mail[]> {

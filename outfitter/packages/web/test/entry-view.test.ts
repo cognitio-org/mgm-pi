@@ -59,6 +59,11 @@ describe("entryToViews", () => {
     expect(entryToViews(entry)).toEqual([{ kind: "model-change", id: "e4", provider: "anthropic", modelId: "claude" }]);
   });
 
+  it("bug 5b: maps a thinking_level_change entry instead of falling back to 'unknown'", () => {
+    const entry: PiEntry = { id: "e4b", parentId: "e4", type: "thinking_level_change", thinkingLevel: "high" };
+    expect(entryToViews(entry)).toEqual([{ kind: "thinking-level-change", id: "e4b", thinkingLevel: "high" }]);
+  });
+
   it("falls back to 'unknown' for an unrecognized entry type", () => {
     const entry: PiEntry = { id: "e5", parentId: null, type: "something_new" };
     expect(entryToViews(entry)).toEqual([{ kind: "unknown", id: "e5", entryType: "something_new" }]);

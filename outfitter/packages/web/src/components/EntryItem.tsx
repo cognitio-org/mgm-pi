@@ -136,6 +136,12 @@ export function EntryItem({ view, defaultThinkingExpanded }: { view: GroupedEntr
           Model changed to {view.provider}/{view.modelId}
         </div>
       );
+    case "thinking-level-change":
+      return (
+        <div className="entry thinking-level-change">
+          Thinking level changed to {view.thinkingLevel}
+        </div>
+      );
     case "compaction":
       return (
         <div className="entry compaction">

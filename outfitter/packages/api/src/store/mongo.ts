@@ -116,6 +116,13 @@ class MongoEntries implements EntriesCollection {
     return rows.map((r) => stripIdStrict<Entry>(r));
   }
 
+  async listRecent(sessionId: string, limit: number): Promise<Entry[]> {
+    // _id is the driver-generated ObjectId (time + counter), i.e. insertion order -- see
+    // EntriesCollection.listRecent for why seq can't be used here. Served by {sessionId, _id}.
+    const rows = await this.col.find({ sessionId }).sort({ _id: -1 }).limit(limit).toArray();
+    return rows.reverse().map((r) => stripIdStrict<Entry>(r));
+  }
+
   async maxSeq(sessionId: string): Promise<number> {
     const row = await this.col.find({ sessionId }).sort({ seq: -1 }).limit(1).next();
     return row?.seq ?? 0;
@@ -156,6 +163,11 @@ class MongoRuns implements RunsCollection {
 
   async findActiveForSession(sessionId: string): Promise<Run | null> {
     return stripId<Run>(await this.col.findOne({ sessionId, state: { $in: ACTIVE_RUN_STATES } }));
+  }
+
+  async findLatestForSession(sessionId: string): Promise<Run | null> {
+    const rows = await this.col.find({ sessionId }).sort({ updatedAt: -1 }).limit(1).toArray();
+    return stripId<Run>(rows[0] ?? null);
   }
 
   async update(id: string, patch: Partial<Run>): Promise<Run | null> {
@@ -456,6 +468,41 @@ class MongoMail implements MailCollection {
     );
   }
 
+  async noteWake(sessionId: string, nowIso: string, maxAttempts: number): Promise<void> {
+    await this.col.updateMany({ sessionId, ...deliverableFilter(nowIso, maxAttempts) }, { $inc: { unvalidatedWakes: 1 } });
+  }
+
+  async markValidated(sessionId: string): Promise<void> {
+    await this.col.updateMany(
+      { sessionId, status: { $ne: "held" as const }, unvalidatedWakes: { $exists: true } },
+      { $unset: { unvalidatedWakes: "" } },
+    );
+  }
+
+  async holdIfStuck(sessionId: string, nowIso: string, maxAttempts: number, maxUnvalidatedWakes: number): Promise<number> {
+    const deliverable = { sessionId, ...deliverableFilter(nowIso, maxAttempts) };
+    const alreadyHeld = (await this.col.countDocuments({ sessionId, status: "held" }, { limit: 1 })) > 0;
+    const stuck =
+      alreadyHeld ||
+      (await this.col.countDocuments({ ...deliverable, unvalidatedWakes: { $gte: maxUnvalidatedWakes } }, { limit: 1 })) > 0;
+    if (stuck) {
+      await this.col.updateMany(deliverable, { $set: { status: "held", heldAt: nowIso }, $unset: { lockedUntil: "" } });
+    }
+    return this.col.countDocuments({ sessionId, status: "held" });
+  }
+
+  async releaseHeld(sessionId?: string): Promise<string[]> {
+    const filter = { status: "held" as const, ...(sessionId ? { sessionId } : {}) };
+    const sessions = await this.col.distinct("sessionId", filter);
+    if (sessions.length === 0) return [];
+    await this.col.updateMany(filter, { $set: { status: "queued" }, $unset: { heldAt: "", unvalidatedWakes: "" } });
+    return sessions;
+  }
+
+  async countHeld(sessionId: string): Promise<number> {
+    return this.col.countDocuments({ sessionId, status: "held" });
+  }
+
   async expireExhausted(nowIso: string, maxAttempts: number): Promise<Mail[]> {
     const idleExhausted = {
       attempts: { $gte: maxAttempts },
@@ -542,6 +589,7 @@ export class MongoStore implements Store {
     await Promise.all([
       db.collection("entries").createIndex({ sessionId: 1, "entry.id": 1 }, { unique: true }),
       db.collection("entries").createIndex({ sessionId: 1, seq: 1 }),
+      db.collection("entries").createIndex({ sessionId: 1, _id: -1 }),
       db.collection("sessions").createIndex({ updatedAt: -1 }),
       db.collection("runs").createIndex({ sessionId: 1, state: 1 }),
       db.collection("tokens").createIndex({ hash: 1 }, { unique: true }),

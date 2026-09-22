@@ -28,8 +28,13 @@ export class RunManager {
     this.config = config;
   }
 
-  /** Creates a run for the session and asks the provider to start it, unless one is already active. */
-  async wake(sessionId: string): Promise<Run> {
+  /** Creates a run for the session and asks the provider to start it, unless one is already active.
+   * `mailDriven` (bug 10, docs/reports/cloud-fixes.md): set by MailService.wakeForMail so
+   * agentlink.ts's handleConnection knows this specific run exists to deliver mail and should
+   * charge the mail's attempt once (and only once) its hello actually validates -- see
+   * store/types.ts's Run.mailWakePending doc comment for why that's a separate flag from
+   * Run.protocolAcked. */
+  async wake(sessionId: string, opts: { mailDriven?: boolean } = {}): Promise<Run> {
     const existing = await this.store.runs.findActiveForSession(sessionId);
     if (existing) return existing;
 
@@ -42,6 +47,7 @@ export class RunManager {
       pending: [],
       createdAt: now,
       updatedAt: now,
+      ...(opts.mailDriven ? { mailWakePending: true } : {}),
     };
     const { run, inserted } = await this.store.runs.insertIfNoActive(candidate);
     if (!inserted) return run;

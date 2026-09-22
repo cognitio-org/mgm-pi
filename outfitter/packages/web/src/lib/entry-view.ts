@@ -16,6 +16,7 @@ export type EntryView =
   | { kind: "tool-result"; id: string; toolName: string; toolCallId: string; text: string; isError: boolean }
   | { kind: "system"; id: string; text: string }
   | { kind: "model-change"; id: string; provider: string; modelId: string }
+  | { kind: "thinking-level-change"; id: string; thinkingLevel: string }
   | { kind: "compaction"; id: string; summary: string }
   | { kind: "custom"; id: string; customType: string }
   | { kind: "label"; id: string; targetId: string; label?: string }
@@ -90,6 +91,12 @@ export function entryToViews(entry: PiEntry): EntryView[] {
     }
     case "model_change":
       return [{ kind: "model-change", id, provider: String(entry.provider ?? ""), modelId: String(entry.modelId ?? "") }];
+    // Bug 5b (docs/reports/cloud-fixes.md): pi's own thinking_level_change entry
+    // (docs/session-format.md: `{type:"thinking_level_change", thinkingLevel, ...}`) had no case
+    // here, so it fell through to "unknown" and rendered as "unrecognized entry:
+    // thinking_level_change" in the transcript -- a normal, expected entry, not an error.
+    case "thinking_level_change":
+      return [{ kind: "thinking-level-change", id, thinkingLevel: String(entry.thinkingLevel ?? "") }];
     case "compaction":
       return [{ kind: "compaction", id, summary: String(entry.summary ?? "") }];
     case "custom":

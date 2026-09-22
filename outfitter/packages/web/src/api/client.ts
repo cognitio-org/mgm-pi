@@ -45,6 +45,10 @@ export interface SessionDetail {
   leafId?: string;
   cost: number;
   checkpoint?: { branch?: string; head?: string; snapshotUrl?: string; workspaceUrl?: string };
+  /** Cloud-fixes 13: messages parked because this session's runs never validated the protocol. */
+  heldMail?: number;
+  /** "Deploy mismatch: messages held until the service is redeployed", when heldMail > 0. */
+  mailNotice?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -316,6 +320,11 @@ export const api = {
 
   wake(id: string): Promise<{ run: RunLike }> {
     return request(`/api/sessions/${id}/wake`, { method: "POST" });
+  },
+
+  /** Cloud-fixes 13: release this session's held mail and wake once. */
+  retryMail(id: string): Promise<{ released: boolean; result: string; heldMail: number }> {
+    return request(`/api/sessions/${id}/mail/retry`, { method: "POST" });
   },
 
   uiResponse(id: string, requestId: string, value: unknown): Promise<{ run: RunLike }> {

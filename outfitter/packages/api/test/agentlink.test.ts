@@ -78,6 +78,112 @@ describe("agentd <-> api WebSocket", () => {
     await app.fastify.close();
   });
 
+  test("bug 9 (docs/reports/cloud-fixes.md): closes with 4409 when the agentd's hello.protocolVersion is older than the API's", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken, 0, 0); // protocolVersion 0 -- an old build
+    const close = await agent.nextClose();
+    assert.equal(close.code, 4409);
+    assert.match(close.reason, /protocol v0 is older than the API's v1/);
+    // agentd exits on 4409, so the run must not be left "provisioning" pinning the session.
+    const run = await app.store.runs.findById(runId);
+    assert.equal(run?.state, "failed");
+    assert.match(run?.reason ?? "", /protocol v0 is older/);
+
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("bug 9: a missing protocolVersion (a pre-field agentd build) is treated as version 0 and refused the same way", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+
+    const agent = await openAgentSocket(app, runId);
+    agent.send({ t: "hello", runId, sessionId: session.id, lastAckedSeq: 0, runToken }); // no protocolVersion at all
+    const close = await agent.nextClose();
+    assert.equal(close.code, 4409);
+
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("bug 9: a matching or newer protocolVersion connects normally", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken, 0, 1); // matches API_PROTOCOL_VERSION
+    const spec = await agent.nextMessage();
+    assert.equal(spec.t, "run.spec");
+
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("bug 7 (docs/reports/cloud-fixes.md): a status frame's detail is persisted on the run, and not wiped by a later state-only frame", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    await agent.nextMessage(); // run.spec
+
+    // Frames on one connection are handled in arrival order (see stop.test.ts's serialization
+    // comment); an "entry" frame's ack is only sent once its own handling completes, so awaiting
+    // it after a "status" frame is a reliable way to know that status frame has been applied too.
+    agent.send({ t: "status", state: "idle", detail: "pi rejected prompt: model not found" });
+    agent.send({ t: "entry", seq: 1, entry: { id: "e1", parentId: null, type: "message" } });
+    assert.deepEqual(await agent.nextMessage(), { t: "ack", seq: 1 });
+    let run = await app.store.runs.findById(runId);
+    assert.equal(run?.statusDetail, "pi rejected prompt: model not found");
+
+    // An ordinary state-only status frame (the vast majority pi/agentd sends) must not clear it.
+    agent.send({ t: "status", state: "running" });
+    agent.send({ t: "entry", seq: 2, entry: { id: "e2", parentId: "e1", type: "message" } });
+    assert.deepEqual(await agent.nextMessage(), { t: "ack", seq: 2 });
+    run = await app.store.runs.findById(runId);
+    assert.equal(run?.statusDetail, "pi rejected prompt: model not found", "a state-only frame keeps the last detail");
+
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("bug 6 (docs/reports/cloud-fixes.md): only interactive extension_ui_request methods become Run.pendingUiRequest, not display-only ones", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    await agent.nextMessage(); // run.spec
+
+    // Display-only methods (protocol.md/rpc.md's "fire-and-forget" list): none of these are a
+    // question the run is waiting on, so none should ever land in Run.pendingUiRequest.
+    for (const method of ["setStatus", "setWidget", "notify", "setTitle", "set_editor_text"]) {
+      agent.send({ t: "event", seq: 1, event: { type: "extension_ui_request", id: `d-${method}`, method } });
+      assert.deepEqual(await agent.nextMessage(), { t: "ack", seq: 1 });
+      const run = await app.store.runs.findById(runId);
+      assert.equal(run?.pendingUiRequest, undefined, `${method} must not be stored as pendingUiRequest`);
+    }
+
+    // An interactive method must still be stored -- this is the one real question the UI needs to
+    // render (UiRequestPanel).
+    agent.send({ t: "event", seq: 2, event: { type: "extension_ui_request", id: "q1", method: "confirm", title: "Clear session?" } });
+    assert.deepEqual(await agent.nextMessage(), { t: "ack", seq: 2 });
+    const run = await app.store.runs.findById(runId);
+    assert.deepEqual(run?.pendingUiRequest, { type: "extension_ui_request", id: "q1", method: "confirm", title: "Clear session?" });
+
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
   test("closes the connection with a bad bearer token instead of sending run.spec", async () => {
     const app = await buildTestApp();
     const { runId } = await makeRunningSession(app);

@@ -223,6 +223,14 @@
   font-size: 0.78rem;
 }
 
+/* ---------- bug 7: a rejected pi RPC command surfaced on the run's status ---------- */
+
+.status-detail-note {
+  margin: 0.3rem 0 0;
+  color: var(--warn, var(--danger));
+  font-size: 0.78rem;
+}
+
 /* ---------- READY./BREAK/LOAD ERROR (the session header/composer idle status line) ---------- */
 
 .transport-status-line {

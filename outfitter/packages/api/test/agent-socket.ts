@@ -101,6 +101,11 @@ export async function makeRunningSession(
   return { session, runId: run.id, runToken: runTokenFor(app, run.id) };
 }
 
+/** Bug 9 (docs/reports/cloud-fixes.md): must match agentlink.ts's own API_PROTOCOL_VERSION. Tests
+ * that want to exercise version-skew refusal pass an explicit (older) protocolVersion to sendHello
+ * instead of relying on this default. */
+export const CURRENT_TEST_PROTOCOL_VERSION = 1;
+
 /** Sends the `hello` handshake every connection needs now (finding #2): the api waits for it,
  * checked against the run's token, before sending `run.spec` or handling anything else. */
 export function sendHello(
@@ -109,6 +114,7 @@ export function sendHello(
   sessionId: string,
   runToken: string,
   lastAckedSeq = 0,
+  protocolVersion: number = CURRENT_TEST_PROTOCOL_VERSION,
 ): void {
-  agent.send({ t: "hello", runId, sessionId, lastAckedSeq, runToken });
+  agent.send({ t: "hello", runId, sessionId, lastAckedSeq, runToken, protocolVersion });
 }

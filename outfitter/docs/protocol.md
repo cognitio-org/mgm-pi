@@ -45,7 +45,7 @@ treats them:
 | `4400` | missing run query param | terminal, exit 1 (misconfiguration) |
 | `4401` | unauthorized, or `hello.runToken` missing/incorrect for this run | terminal, exit 1 (misconfiguration) |
 | `4404` | run/session/guru not found | terminal, exit 0 (nothing left to do) |
-| `4409` | run is in a terminal state already | terminal, exit 0 (nothing left to do) |
+| `4409` | run is in a terminal state already, **or** (E5.7/bug 9, cloud-fixes.md) this agentd's `hello.protocolVersion` is older than the API's own (including a build that predates the field, treated as version 0) | terminal, exit 0 (nothing left to do) |
 | `4412` | run cannot start: missing secret (a repo session with no usable GitHub token) | terminal, exit 1; the API also marks the run `failed` with a reason before closing |
 | `1011` | internal error | transient, agentd keeps reconnecting with backoff |
 
@@ -67,7 +67,7 @@ Up (agentd → api):
 
 | t | fields | when |
 |---|---|---|
-| `hello` | `runId, sessionId, agentdVersion, piVersion, lastAckedSeq, runToken` | first frame after connect; `runToken` is `RUN_TOKEN` echoed back (see "Run token" above) |
+| `hello` | `runId, sessionId, agentdVersion, piVersion, lastAckedSeq, runToken, protocolVersion` | first frame after connect; `runToken` is `RUN_TOKEN` echoed back (see "Run token" above); `protocolVersion` is agentd's `WIRE_PROTOCOL_VERSION` (`packages/agentd/src/protocol.ts`) -- the api closes with `4409` when it's older than its own copy of the constant (`packages/api/src/agentlink.ts`'s `API_PROTOCOL_VERSION`), so a deploy that updates the API ahead of the agent image fails loudly instead of the agent silently ignoring frames it doesn't understand (bug 9, `docs/reports/cloud-fixes.md`) |
 | `status` | `state: "cloning"\|"restoring"\|"starting"\|"running"\|"idle"\|"checkpointing"\|"stopping", detail?` | on change; the api maps this to `Run.state` (`agentlink.ts`'s `mapStatusToRunState`): `running`/`idle` map straight across, `checkpointing` leaves the run's current state untouched (a mid-turn checkpoint push, not a state change), `stopping` maps to the `Run.state` of the same name, anything else (`cloning`/`restoring`/`starting`) maps to `provisioning`. A `status`/`heartbeat` frame that arrives after the run has already reached a terminal state (`bye` already processed) is ignored — `bye` is final. |
 | `entry` | `seq, entry` (a pi session entry exactly as pi writes it to JSONL: message, model_change, compaction, custom, ...) | whenever pi appends to the session file (agentd tails the file; this is the durable transcript) |
 | `event` | `seq, event` (a raw pi RPC event: agent_start, message_update, tool_execution_start/update/end, agent_end, extension_ui_request, ...) | streamed for live UI; not persisted except `extension_ui_request` |
@@ -108,10 +108,17 @@ Delivery is at least once:
   recipient's socket is local.
 - `mail.ack` marks it `acked` (TTL-deleted after 7 days), but only if it is currently delivered to
   the acking run. Mail that isn't acked before its lease expires is claimable again.
-- **Attempts:** 6 per mail. Each claim counts, and so does each wake started for the mail. So a
-  session whose runs die before they are ready (a clone failure, a missing secret) stops being
-  woken. The `/tick` sweep marks exhausted mail `dead` (TTL 7 days) and bounces agent sends back to
-  their sender.
+- **Attempts:** 6 per mail. Each claim counts. So does each run whose `hello` actually passes the
+  token and protocol-version checks (`Run.protocolAcked`, `agentlink.ts`'s `handleConnection`) --
+  charged once per run there, not at wake time (bug 10, `docs/reports/cloud-fixes.md`: charging on
+  every wake regardless of outcome meant a run that failed before ever connecting -- a clone
+  failure, a missing secret, a Cloud Run scheduling failure, a version-skewed agentd refused with
+  `4409` -- still burned a full attempt on a delivery that was never actually attempted, and could
+  dead-letter every one of a session's queued messages after just 6 such failed wakes). A session
+  whose runs never reach a validated `hello` at all is retried indefinitely rather than exhausting
+  the mail's attempts; one whose runs *do* connect but keep dying before they ack still stops being
+  woken once attempts run out, same as before. The `/tick` sweep marks exhausted mail `dead` (TTL
+  7 days) and bounces agent sends back to their sender.
 - On `bye`, mail delivered to that run but not acked goes back to `queued` straight away. Then the
   session is woken again if it holds deliverable mail (e.g. mail that arrived while it was
   stopping), *except* after `bye stop` (an explicit stop). The `/tick` sweep may still wake it

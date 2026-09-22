@@ -163,7 +163,9 @@ async function makeRunningSession(
 }
 
 function sendHello(agent: SocketHandle, runId: string, sessionId: string, runToken: string, lastAckedSeq = 0): void {
-  agent.send({ t: "hello", runId, sessionId, lastAckedSeq, runToken });
+  // protocolVersion must match agentlink.ts's API_PROTOCOL_VERSION (bug 9, docs/reports/cloud-fixes.md)
+  // or the connection is refused with 4409 before this test gets anywhere.
+  agent.send({ t: "hello", runId, sessionId, lastAckedSeq, runToken, protocolVersion: 1 });
 }
 
 describe("POST /api/sessions/:id/stop (graceful, process-independent)", () => {
@@ -280,6 +282,7 @@ describe("agentlink up-frame ordering", () => {
       insertIfNoActive: (r) => inner.runs.insertIfNoActive(r),
       findById: (id) => inner.runs.findById(id),
       findActiveForSession: (s) => inner.runs.findActiveForSession(s),
+      findLatestForSession: (s) => inner.runs.findLatestForSession(s),
       async update(id, patch) {
         if (!firstUpdateSeen) {
           firstUpdateSeen = true;

@@ -30,6 +30,17 @@ export type PiRpcCommand = Record<string, unknown> & { type: string };
 
 // ---------- up: agentd -> api ----------
 
+/** Bug 9 (docs/reports/cloud-fixes.md): the wire protocol version agentd announces in `hello`
+ * (UpHello.protocolVersion). Bump this whenever an up/down frame shape changes in a way an older
+ * link role couldn't handle, or an older agentd couldn't produce -- the API refuses (WS close
+ * 4409) an agentd whose protocolVersion is older than its own, so a deploy that updates the API
+ * ahead of the agent image/Job fails loudly (a stuck-in-provisioning run, an explicit close reason)
+ * instead of the silent breakage that motivated this (a web role sending `mail` frames an older
+ * agentd ignored, docs/reports/agent-messaging.md). Keep in sync with
+ * packages/api/src/agentlink.ts's own copy of this constant -- they can't share a module across
+ * packages, so both sides document the pairing. */
+export const WIRE_PROTOCOL_VERSION = 1;
+
 export interface UpHello {
   t: "hello";
   runId: string;
@@ -41,6 +52,10 @@ export interface UpHello {
    * finding #2). Proves the connecting process is the execution the api itself started for this
    * run, not just something holding a valid agent SA id token for some other run. */
   runToken: string;
+  /** Bug 9: this agentd build's wire protocol version (WIRE_PROTOCOL_VERSION above). Absent means
+   * an agentd build that predates this field -- treated as version 0, i.e. always old enough to
+   * refuse if the API's own version is bumped past 0. */
+  protocolVersion: number;
 }
 
 export interface UpStatus {

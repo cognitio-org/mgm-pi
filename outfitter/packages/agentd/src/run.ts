@@ -9,7 +9,7 @@ import { resolve, sep } from "node:path";
 import { renderGuru } from "./guru.js";
 import type { GitOps } from "./git.js";
 import { spawnPi, SessionTailer, SpendTailer, validateSpendLine, type PiProcess, type SpendLogLine } from "./pi.js";
-import { importSession, writeSnapshotFile, emptySessionJsonl } from "./session.js";
+import { importSession, writeSnapshotFile, emptySessionJsonl, lastKnownModelState } from "./session.js";
 import type { Logger } from "./logger.js";
 import type { RunAsUser } from "./run-as-user.js";
 import { validateSnapshotUrl, snapshotHostAllowlist, isDevMode } from "./snapshot-url.js";
@@ -243,6 +243,14 @@ export class RunController {
     for (const h of this.stateHandlers) h(state, detail);
   }
 
+  /** Bug 7: sends a `status` frame for the *current* state carrying only `detail`, without treating
+   * it as a state transition (no stateHandlers call) -- used to surface a one-off notice like a
+   * rejected RPC command onto the run without disturbing idle timers or anything else keyed on an
+   * actual state change. */
+  private sendStatusDetail(detail: string): void {
+    this.deps.link.send({ t: "status", state: this.state, detail });
+  }
+
   handleDown(msg: DownMessage): void {
     if (isPiTargetedDownMessage(msg)) {
       if (!this.pi) {
@@ -406,12 +414,22 @@ export class RunController {
     }
 
     this.setState("starting");
+    // Bug 8 (docs/reports/cloud-fixes.md): skip --model/--thinking when the restored session's own
+    // last-known model+thinking already match the guru's resolved ones -- see session.ts's
+    // lastKnownModelState doc comment for why passing them unconditionally caused a fresh, genuinely
+    // distinct-id model_change/thinking_level_change entry on every restore.
+    const restoredModelState = lastKnownModelState(jsonl);
+    const resolvedThinking = spec.guru.thinking ?? "off";
+    const skipModelArg =
+      restoredModelState.model === spec.guru.model &&
+      (restoredModelState.thinking ?? "off") === resolvedThinking;
     const rendered = renderGuru(spec.guru, {
       piBin: this.deps.piBin,
       sessionFile,
       onLog: this.onLog,
       spendExtensionPath: this.deps.spendFile ? this.deps.spendExtensionPath : undefined,
       mailExtensionPath: this.deps.mailExtensionPath,
+      skipModelArg,
     });
     const secretEnv: Record<string, string> = {};
     // Not a secret, but pinned here after guru.env like the rest so a guru can't spoof it; the
@@ -542,6 +560,21 @@ export class RunController {
         this.onLog(`pi rejected mail ${mailId}: ${String(event.error ?? "no reason given")}`);
       }
       return;
+    }
+    // Bug 7 (docs/reports/cloud-fixes.md): every other unsuccessful pi RPC `response` (prompt,
+    // steer, follow_up -- the mail case above already handles its own) used to vanish entirely:
+    // handlePiEvent forwarded it as a raw `event` frame (never persisted, not distinguishable from
+    // any other RPC ack in the UI) and nothing logged it. A refused prompt/steer/follow_up then
+    // looked exactly like one that was silently ignored, with no signal anywhere that pi ever saw
+    // and rejected it. Log it at WARN (command + error only -- never `msg.text`/the prompt itself,
+    // which this event never carries anyway) and surface it on the run's status so the web UI can
+    // show it (protocol.md's `status` frame already carries an optional `detail`).
+    if (event.type === "response" && event.success === false && event.command !== undefined) {
+      const command = String(event.command);
+      const errorMessage = String(event.error ?? "no reason given");
+      if (this.deps.logger) this.deps.logger.warn("pi rejected an RPC command", { command, error: errorMessage });
+      else this.onLog(`pi rejected ${command}: ${errorMessage}`);
+      this.sendStatusDetail(`pi rejected ${command}: ${errorMessage}`);
     }
     if (event.type === "agent_start") {
       this.markActivity();

@@ -352,6 +352,26 @@ describe("ProviderStatusService.refreshIfStale", () => {
     assert.equal(calls, 2, "stale data triggers a poll");
   });
 
+  test("a store failure mid-poll serves the stored rows instead of failing the read, and retries next time", async () => {
+    const store = new MemoryStore();
+    let calls = 0;
+    const service = buildService(store, new SseHub(), { cloudRunCount: async () => { calls++; return 1; } });
+    await service.pollOnce();
+    const upsert = store.providers.upsert.bind(store.providers);
+    store.providers.upsert = async () => { throw new Error("atlas failover"); };
+    const logged = console.error;
+    console.error = () => {};
+    try {
+      const rows = await service.refreshIfStale(0);
+      assert.equal(rows.find((r) => r.id === "cloudrun")?.status, "up", "last stored rows are served");
+    } finally {
+      console.error = logged;
+      store.providers.upsert = upsert;
+    }
+    await service.refreshIfStale(0);
+    assert.equal(calls, 3, "the failed poll did not count as fresh");
+  });
+
   test("concurrent reads share one in-flight poll", async () => {
     let calls = 0;
     let release!: () => void;

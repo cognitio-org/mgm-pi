@@ -394,7 +394,15 @@ export class ProviderStatusService {
    * probe reports a false "down" (observed 2026-09-22 on outfitter-api-00007). */
   async refreshIfStale(maxAgeMs: number): Promise<ProviderRow[]> {
     if (Date.now() - this.lastPollAt < maxAgeMs) return this.getCurrent();
-    return this.pollOnce();
+    try {
+      return await this.pollOnce();
+    } catch (err) {
+      // Probes never throw; this is the store failing mid-poll (e.g. an Atlas failover). Serve the
+      // last stored rows rather than failing the page. lastPollAt is untouched, so the next read
+      // retries the poll.
+      console.error("[providers] poll failed; serving stored rows", err);
+      return this.getCurrent();
+    }
   }
 
   private async runPoll(): Promise<ProviderRow[]> {

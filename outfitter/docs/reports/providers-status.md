@@ -18,21 +18,21 @@ individually-testable probe functions:
 Every probe is bounded by a 3s `AbortController` timeout on each fetch and wrapped in its own
 try/catch, so it resolves instead of throwing on any failure (missing credential, network error,
 non-2xx, malformed body). `ProviderStatusService.pollOnce()` adds `Promise.allSettled` as a
-backstop on top of that, so a bug in one probe can't wedge the poller.
+backstop on top of that, so a bug in one probe can't wedge a poll.
 
 **Store**: a new `ProvidersCollection` (`src/store/types.ts`), implemented for both `MemoryStore`
 and `MongoStore` (`_id: <row id>`, e.g. `"laptop"`, `"litellm"`, `"cloudrun"`, `"ngrok:<endpoint
 id>"`). Each stored `ProviderRecord` is the current row plus a `history: {status, at}[]` array,
 bounded to the last 7 days by `ProviderStatusService`'s own `reconcileRow` (the store doesn't
-compute history — there's exactly one writer, the poller, so no concurrent-update race to
-resolve). `GET /api/providers` strips `history` before returning current rows.
+compute history). Writers are polls (from any web instance) and the ngrok webhook; a race between
+two of them is last-write-wins on a status flag, which the next poll corrects). `GET /api/providers` strips `history` before returning current rows.
 
 **Routes** (`src/routes/providers.ts`, registered alongside sessions/gurus/environments, so
 browser-role only):
 - `GET /api/providers` → `{ providers: ProviderRow[] }`
 - `GET /api/providers/stream` → SSE on the `"providers"` channel, `status` event type (reusing
   `SseHub`'s existing union rather than widening it for one more channel), pushed **only when a
-  poll produced at least one status transition** — not on every 5-minute tick.
+  poll produced at least one status transition** — not on every poll.
 - `POST /api/providers/refresh` → forces `pollOnce()`, returns the resulting rows.
 
 **Webhook refactor** (`src/routes/hooks.ts`): `POST /api/hooks/ngrok` now calls both
@@ -42,12 +42,15 @@ just one more consumer of the already-verified event. `noteLaptopTransition` upd
 row directly from the event without re-probing anything, so the dashboard sees a laptop
 online/offline flip immediately instead of waiting up to 5 minutes for the next poll.
 
-**Poller** (`src/server.ts`): `ProviderStatusService.startPolling(config.providerPollMs)`
-(`PROVIDER_POLL_MS`, default 5 min) runs only when `config.role !== "link"` — mirroring how the
-down-queue poller is gated the opposite way. The "link" role still constructs a
-`ProviderStatusService` (needed for the webhook above) but never starts its own poll loop against
-the shared store. The first pass runs fire-and-forget (`.catch(...)`) before `startPolling`, so it
-never blocks `fastify.listen()`.
+**Polling on read** (updated 2026-09-22, PR #18): there is no background poller. The first
+version ran `startPolling(PROVIDER_POLL_MS)` plus a fire-and-forget pass at startup, and on Cloud
+Run every row came back as a false "down": the web role gets CPU only during requests and scales
+to zero, so a poll started between requests stalled until its 3 s timeouts fired.
+`GET /api/providers` and the stream's first snapshot now call `refreshIfStale(PROVIDER_POLL_MS)`,
+which polls inside the request when this instance's last completed poll is older than the interval.
+Polls are single-flight, so concurrent readers and `POST /refresh` share one. If the store fails
+mid-poll the read serves the last stored rows and the next read retries. The "link" role still
+constructs a `ProviderStatusService` for the webhook but never polls.
 
 **Cloud Run**: `CloudRunProvider.countRunningExecutions()` (`src/providers/cloudrun.ts`) is new —
 counts executions of the configured Job with no `completionTime` yet (still starting or running).

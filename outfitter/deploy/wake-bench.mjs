@@ -20,6 +20,10 @@ if (!sessionId || !api || !token) {
   process.exit(2);
 }
 const wakes = Number(wakesArg ?? 10);
+if (!Number.isInteger(wakes) || wakes < 1 || wakes > 100) {
+  console.error("wakes must be an integer from 1 to 100");
+  process.exit(2);
+}
 const prompt = promptArg ?? "Reply with exactly: ok";
 const POLL_MS = 500;
 const WAKE_TIMEOUT_MS = 10 * 60_000;
@@ -60,6 +64,9 @@ for (let i = 1; i <= wakes; i++) {
   const t0 = performance.now();
   const startedAt = new Date().toISOString();
   const posted = await call("POST", `/api/sessions/${sessionId}/messages`, { text: prompt });
+  // 404 is tolerated by call() for /stop (no active run); here it means a wrong session id, and
+  // waiting out WAKE_TIMEOUT_MS on every wake would hide that for over an hour.
+  if (posted.status !== 200 && posted.status !== 202) throw new Error(`POST messages: ${posted.status}`);
   const runId = posted.json?.run?.id;
   let upMs, answerMs;
   while (answerMs === undefined) {

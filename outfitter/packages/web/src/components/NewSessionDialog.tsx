@@ -5,10 +5,15 @@ interface Props {
   gurus: Guru[];
   onClose: () => void;
   onCreated: (sessionId: string) => void;
+  /** Preselects the guru dropdown -- used by the Gurus page's "New session with this guru" button
+   * (EPIC.md E3.7). Falls back to the first guru, same as before, when omitted or not found. */
+  initialGuruId?: string;
 }
 
-export function NewSessionDialog({ gurus, onClose, onCreated }: Props) {
-  const [guruId, setGuruId] = useState(gurus[0]?.id ?? "");
+export function NewSessionDialog({ gurus, onClose, onCreated, initialGuruId }: Props) {
+  const [guruId, setGuruId] = useState(
+    (initialGuruId && gurus.some((g) => g.id === initialGuruId) ? initialGuruId : gurus[0]?.id) ?? "",
+  );
   const [repo, setRepo] = useState("");
   const [baseBranch, setBaseBranch] = useState("");
   const [branch, setBranch] = useState("");

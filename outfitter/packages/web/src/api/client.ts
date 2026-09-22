@@ -82,6 +82,23 @@ export interface TokenRecord {
   revokedAt?: string;
 }
 
+export interface ModelRow {
+  id: string;
+  contextWindow?: number;
+  maxOutput?: number;
+  inputPerM?: number;
+  outputPerM?: number;
+  auto: boolean;
+  local?: boolean;
+}
+
+export interface GuruMeta {
+  envDenylist: string[];
+  thinkingLevels: string[];
+}
+
+export type GuruInput = Omit<Guru, "id" | "createdAt" | "updatedAt">;
+
 export interface ProviderRow {
   id: string;
   kind: string;
@@ -164,6 +181,26 @@ export const api = {
 
   gurus(): Promise<Guru[]> {
     return request("/api/gurus");
+  },
+
+  guruMeta(): Promise<GuruMeta> {
+    return request("/api/gurus/meta");
+  },
+
+  createGuru(input: GuruInput): Promise<Guru> {
+    return request("/api/gurus", { method: "POST", body: JSON.stringify(input) });
+  },
+
+  updateGuru(id: string, patch: Partial<GuruInput>): Promise<Guru> {
+    return request(`/api/gurus/${id}`, { method: "PUT", body: JSON.stringify(patch) });
+  },
+
+  deleteGuru(id: string): Promise<void> {
+    return request(`/api/gurus/${id}`, { method: "DELETE" });
+  },
+
+  models(): Promise<ModelRow[]> {
+    return request<{ models: ModelRow[] }>("/api/models").then((body) => body.models);
   },
 
   /** Resolves to [] on a 404 -- the /api/providers endpoint is built by another workstream and may

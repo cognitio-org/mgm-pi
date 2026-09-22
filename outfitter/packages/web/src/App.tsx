@@ -4,6 +4,7 @@ import { FleetPage } from "./pages/FleetPage.tsx";
 import { SessionPage } from "./pages/SessionPage.tsx";
 import { ProvidersPage } from "./pages/ProvidersPage.tsx";
 import { TokensPage } from "./pages/TokensPage.tsx";
+import { GurusPage } from "./pages/GurusPage.tsx";
 
 export function App() {
   return (
@@ -13,6 +14,9 @@ export function App() {
         <nav>
           <NavLink to="/" end className={({ isActive }) => (isActive ? "active" : "")}>
             Fleet
+          </NavLink>
+          <NavLink to="/gurus" className={({ isActive }) => (isActive ? "active" : "")}>
+            Gurus
           </NavLink>
           <NavLink to="/providers" className={({ isActive }) => (isActive ? "active" : "")}>
             Providers
@@ -27,6 +31,7 @@ export function App() {
         <Routes>
           <Route path="/" element={<FleetPage />} />
           <Route path="/sessions/:id" element={<SessionPage />} />
+          <Route path="/gurus" element={<GurusPage />} />
           <Route path="/providers" element={<ProvidersPage />} />
           <Route path="/tokens" element={<TokensPage />} />
         </Routes>

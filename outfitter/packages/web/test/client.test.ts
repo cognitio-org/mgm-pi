@@ -145,4 +145,66 @@ describe("api client", () => {
     expect(url).toBe("/api/me/tokens/t1");
     expect(init.method).toBe("DELETE");
   });
+
+  it("models() GETs /api/models and unwraps the models array", async () => {
+    const rows = [{ id: "litellm/claude-auto-llm", auto: true }];
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ models: rows }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.models()).resolves.toEqual(rows);
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/models");
+  });
+
+  it("guruMeta() GETs /api/gurus/meta", async () => {
+    const meta = { envDenylist: ["PATH"], thinkingLevels: ["off", "low"] };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(meta));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.guruMeta()).resolves.toEqual(meta);
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/gurus/meta");
+  });
+
+  it("createGuru POSTs the guru body to /api/gurus", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ id: "g1" }, 201));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.createGuru({ name: "test", model: "litellm/claude-auto-llm" });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/gurus");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ name: "test", model: "litellm/claude-auto-llm" });
+  });
+
+  it("updateGuru PUTs the patch to /api/gurus/:id", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ id: "g1", thinking: "high" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.updateGuru("g1", { thinking: "high" });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/gurus/g1");
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(init.body)).toEqual({ thinking: "high" });
+  });
+
+  it("deleteGuru DELETEs /api/gurus/:id", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.deleteGuru("g1");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/gurus/g1");
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("deleteGuru surfaces the API's 409 message (referenced by sessions)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ error: "guru is referenced by 2 sessions" }, 409));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.deleteGuru("g1")).rejects.toMatchObject(new ApiError(409, "guru is referenced by 2 sessions"));
+  });
 });

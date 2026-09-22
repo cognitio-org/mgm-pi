@@ -1,0 +1,185 @@
+import { useState } from "react";
+import { api, ApiError, type Guru, type GuruMeta, type ModelRow } from "../api/client.ts";
+import { ModelPicker } from "./ModelPicker.tsx";
+
+interface EnvRow {
+  key: string;
+  value: string;
+}
+
+interface Props {
+  guru?: Guru;
+  models: ModelRow[];
+  meta: GuruMeta | null;
+  onClose: () => void;
+  onSaved: (guru: Guru) => void;
+}
+
+function envToRows(env: Record<string, string> | undefined): EnvRow[] {
+  return Object.entries(env ?? {}).map(([key, value]) => ({ key, value }));
+}
+
+function rowsToEnv(rows: EnvRow[]): Record<string, string> | undefined {
+  const entries = rows.filter((r) => r.key.trim()).map((r) => [r.key.trim(), r.value] as const);
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+function listToText(list: string[] | undefined): string {
+  return (list ?? []).join(", ");
+}
+
+function textToList(text: string): string[] | undefined {
+  const items = text
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return items.length > 0 ? items : undefined;
+}
+
+/** Create/edit form for a guru (EPIC.md E3.7). Shared by GurusPage for both "New guru" and editing
+ * an existing row -- `guru` present means edit (PUT), absent means create (POST). Model/fallback
+ * pickers and the env denylist come from GET /api/models and GET /api/gurus/meta respectively
+ * (fetched once by GurusPage and passed down, so opening several forms in a session doesn't
+ * refetch either). */
+export function GuruForm({ guru, models, meta, onClose, onSaved }: Props) {
+  const [name, setName] = useState(guru?.name ?? "");
+  const [model, setModel] = useState(guru?.model ?? "");
+  const [fallbackModel, setFallbackModel] = useState(guru?.fallbackModel ?? "");
+  const [thinking, setThinking] = useState(guru?.thinking ?? "");
+  const [systemPrompt, setSystemPrompt] = useState(guru?.systemPrompt ?? "");
+  const [appendSystemPrompt, setAppendSystemPrompt] = useState(guru?.appendSystemPrompt ?? "");
+  const [tools, setTools] = useState(listToText(guru?.tools));
+  const [excludeTools, setExcludeTools] = useState(listToText(guru?.excludeTools));
+  const [envRows, setEnvRows] = useState<EnvRow[]>(envToRows(guru?.env).length > 0 ? envToRows(guru?.env) : [{ key: "", value: "" }]);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function updateEnvRow(i: number, patch: Partial<EnvRow>) {
+    setEnvRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  }
+
+  function removeEnvRow(i: number) {
+    setEnvRows((rows) => rows.filter((_, idx) => idx !== i));
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim() || !model.trim()) return;
+    setSubmitting(true);
+    setError(null);
+    const payload = {
+      name: name.trim(),
+      model: model.trim(),
+      fallbackModel: fallbackModel.trim() || undefined,
+      thinking: thinking || undefined,
+      systemPrompt: systemPrompt.trim() || undefined,
+      appendSystemPrompt: appendSystemPrompt.trim() || undefined,
+      tools: textToList(tools),
+      excludeTools: textToList(excludeTools),
+      env: rowsToEnv(envRows),
+    };
+    try {
+      const saved = guru ? await api.updateGuru(guru.id, payload) : await api.createGuru(payload);
+      onSaved(saved);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to save guru");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="dialog-backdrop" onClick={onClose}>
+      <div className="dialog" onClick={(e) => e.stopPropagation()}>
+        <h2>{guru ? `Edit ${guru.name}` : "New guru"}</h2>
+        {error && <div className="error-banner">{error}</div>}
+        <form onSubmit={submit}>
+          <div className="form-row">
+            <label htmlFor="guru-name">Name</label>
+            <input id="guru-name" value={name} onChange={(e) => setName(e.target.value)} required />
+          </div>
+
+          <ModelPicker id="guru-model" label="Model" models={models} value={model} onChange={setModel} />
+          <ModelPicker
+            id="guru-fallback-model"
+            label="Fallback model (optional)"
+            models={models}
+            value={fallbackModel}
+            onChange={setFallbackModel}
+            placeholder="used when the laptop model is offline"
+          />
+
+          <div className="form-row">
+            <label htmlFor="guru-thinking">Thinking level</label>
+            <select id="guru-thinking" value={thinking} onChange={(e) => setThinking(e.target.value)}>
+              <option value="">guru default</option>
+              {(meta?.thinkingLevels ?? []).map((level) => (
+                <option key={level} value={level}>
+                  {level}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="form-row">
+            <label htmlFor="guru-system-prompt">System prompt (optional, replaces the default)</label>
+            <textarea id="guru-system-prompt" value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} />
+          </div>
+          <div className="form-row">
+            <label htmlFor="guru-append-system-prompt">Append to system prompt (optional)</label>
+            <textarea id="guru-append-system-prompt" value={appendSystemPrompt} onChange={(e) => setAppendSystemPrompt(e.target.value)} />
+          </div>
+
+          <div className="form-row">
+            <label htmlFor="guru-tools">Tools (comma-separated, empty = all)</label>
+            <input id="guru-tools" value={tools} onChange={(e) => setTools(e.target.value)} placeholder="bash, read, edit" />
+          </div>
+          <div className="form-row">
+            <label htmlFor="guru-exclude-tools">Exclude tools (comma-separated)</label>
+            <input id="guru-exclude-tools" value={excludeTools} onChange={(e) => setExcludeTools(e.target.value)} />
+          </div>
+
+          <div className="form-row">
+            <label>Environment variables</label>
+            {envRows.map((row, i) => (
+              <div className="env-row" key={i}>
+                <input
+                  value={row.key}
+                  onChange={(e) => updateEnvRow(i, { key: e.target.value })}
+                  placeholder="KEY"
+                  aria-label="Env var name"
+                />
+                <input
+                  value={row.value}
+                  onChange={(e) => updateEnvRow(i, { value: e.target.value })}
+                  placeholder="value"
+                  aria-label="Env var value"
+                />
+                <button type="button" onClick={() => removeEnvRow(i)} aria-label="Remove env var">
+                  &times;
+                </button>
+              </div>
+            ))}
+            <button type="button" onClick={() => setEnvRows((rows) => [...rows, { key: "", value: "" }])}>
+              Add variable
+            </button>
+            {meta && (
+              <p className="session-meta">
+                Not allowed: {meta.envDenylist.join(", ")}
+              </p>
+            )}
+          </div>
+
+          <div className="form-actions">
+            <button type="button" onClick={onClose} disabled={submitting}>
+              Cancel
+            </button>
+            <button type="submit" disabled={submitting || !name.trim() || !model.trim()}>
+              {submitting ? "Saving..." : "Save guru"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}

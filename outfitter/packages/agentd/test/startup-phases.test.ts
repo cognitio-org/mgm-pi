@@ -42,6 +42,20 @@ test("StartupPhases: the probe is a get_state with agentd's own id; its response
   assert.equal(phases.observe({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "k" } }), false);
   assert.equal(phases.observe({ type: "agent_end" }), false);
   assert.deepEqual(lines, ["pi ready", "first prompt accepted", "first model token", "first answer done"]);
+  assert.equal(
+    phases.observe({ type: "response", id: STARTUP_PROBE_ID, command: "get_state", success: true }),
+    false,
+    "only the probe's one response is dropped; a later response with the same id is forwarded",
+  );
+});
+
+test("StartupPhases: a response is not dropped before any probe was sent, and a failed prompt's error is bounded", () => {
+  const lines: Array<Record<string, unknown>> = [];
+  const phases = new StartupPhases({ log: (_m, fields) => lines.push(fields) });
+  assert.equal(phases.observe({ type: "response", id: STARTUP_PROBE_ID, command: "get_state", success: true }), false);
+  phases.observe({ type: "response", command: "prompt", success: false, error: "x".repeat(5000) });
+  assert.equal(lines.length, 1);
+  assert.equal(String(lines[0].error).length, 300);
 });
 
 class FakeLink implements LinkPort {

@@ -19,6 +19,9 @@ import type { PiRpcCommand, PiRpcEvent } from "./protocol.js";
 
 export const STARTUP_PROBE_ID = "agentd:startup-probe";
 
+/** A failed first prompt's error text goes into its phase line; long provider errors are cut. */
+const MAX_ERROR_CHARS = 300;
+
 export interface StartupPhasesOptions {
   log: (message: string, fields: LogFields) => void;
   /** Monotonic milliseconds; injectable for tests. */
@@ -30,6 +33,8 @@ export class StartupPhases {
   private readonly origin: number;
   private last: number;
   private readonly seen = new Set<string>();
+  /** Set once the probe was sent and cleared by its one response, so only that response is dropped. */
+  private probePending = false;
 
   constructor(private readonly opts: StartupPhasesOptions) {
     this.now = opts.now ?? (() => performance.now());
@@ -48,18 +53,20 @@ export class StartupPhases {
 
   /** Sends the readiness probe (see the module doc). */
   probe(pi: { send(command: PiRpcCommand): void }): void {
+    this.probePending = true;
     pi.send({ id: STARTUP_PROBE_ID, type: "get_state" });
   }
 
   /** Marks the first-prompt milestones from pi's own events. Returns true only for the probe's
    * response, which the caller must drop rather than forward. */
   observe(event: PiRpcEvent): boolean {
-    if (event.type === "response" && event.id === STARTUP_PROBE_ID) {
+    if (this.probePending && event.type === "response" && event.id === STARTUP_PROBE_ID) {
+      this.probePending = false;
       this.mark("pi ready");
       return true;
     }
     if (event.type === "response" && event.command === "prompt") {
-      this.mark("first prompt accepted", event.success === false ? { error: String(event.error ?? "") } : {});
+      this.mark("first prompt accepted", event.success === false ? { error: String(event.error ?? "").slice(0, MAX_ERROR_CHARS) } : {});
     } else if (event.type === "message_update") {
       const delta = (event as { assistantMessageEvent?: { type?: unknown } }).assistantMessageEvent?.type;
       if (typeof delta === "string" && delta.endsWith("_delta")) this.mark("first model token");

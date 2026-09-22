@@ -133,10 +133,24 @@ fi
 # in-process dev provider and refuses to start (the link revision 00005 failure).
 ENV_VARS="OUTFITTER_ROLE=${ROLE},OUTFITTER_ORIGIN=${ORIGIN},AGENT_SA_EMAIL=${AGENT_SA_EMAIL},GCP_PROJECT=${PROJECT},GCP_REGION=${REGION},TUNNEL_DOMAIN_LMSTUDIO=${TUNNEL_DOMAIN_LMSTUDIO},SANDBOX_PROVIDER=cloudrun,CLOUDRUN_JOB=${CLOUDRUN_JOB},IDLE_STOP_SECONDS=${IDLE_STOP_SECONDS:-1800},LITELLM_BASE_URL=${LITELLM_BASE_URL:-https://litellm.augment-code.support/v1},PROVIDER_POLL_MS=${PROVIDER_POLL_MS:-300000}"
 # E5.5 (deploy/mailbox.sh): both roles need these -- web schedules wake tasks, link verifies the
-# OIDC token on /api/hooks/tasks/wake and /api/hooks/tick. Unset keeps the mailbox on its
-# inline-wake-only path.
-if [[ -n "${CLOUD_TASKS_QUEUE:-}" && -n "${TASKS_SA_EMAIL:-}" ]]; then
-  ENV_VARS="${ENV_VARS},CLOUD_TASKS_QUEUE=${CLOUD_TASKS_QUEUE},TASKS_SA_EMAIL=${TASKS_SA_EMAIL}"
+# OIDC token on /api/hooks/tasks/wake and /api/hooks/tick. Looked up from what mailbox.sh created
+# when not given, for the same reason as OUTFITTER_LINK_ORIGIN below: --set-env-vars replaces the
+# whole environment, so a plain re-run used to drop them (on 2026-09-22 the tick 401'd from 13:55
+# until they were restored). Absent infra keeps the mailbox on its inline-wake-only path.
+if [[ -z "${CLOUD_TASKS_QUEUE:-}" ]] && gcloud tasks queues describe outfitter-wake \
+    --project="${PROJECT}" --location="${REGION}" &>/dev/null; then
+  CLOUD_TASKS_QUEUE="outfitter-wake"
+fi
+if [[ -z "${TASKS_SA_EMAIL:-}" ]] && gcloud iam service-accounts describe \
+    "outfitter-tasks@${PROJECT}.iam.gserviceaccount.com" --project="${PROJECT}" &>/dev/null; then
+  TASKS_SA_EMAIL="outfitter-tasks@${PROJECT}.iam.gserviceaccount.com"
+fi
+if [[ -n "${TASKS_SA_EMAIL:-}" ]]; then
+  ENV_VARS="${ENV_VARS},TASKS_SA_EMAIL=${TASKS_SA_EMAIL}"
+  [[ -n "${CLOUD_TASKS_QUEUE:-}" ]] && ENV_VARS="${ENV_VARS},CLOUD_TASKS_QUEUE=${CLOUD_TASKS_QUEUE}"
+  echo "   mailbox: queue=${CLOUD_TASKS_QUEUE:-<none>} tasks SA=${TASKS_SA_EMAIL}"
+else
+  echo "   note: mailbox infra not found (run ./mailbox.sh); Cloud Tasks wakes and /api/hooks/* auth stay off" >&2
 fi
 if [[ "${ROLE}" == "web" ]]; then
   # Needed both for IAP_AUDIENCE (below) and for the run.invoker binding further down.

@@ -12,9 +12,8 @@
 # - Cloud Scheduler job `outfitter-tick`: POST <link>/api/hooks/tick every 5 minutes (reconcile
 #   runs, wake sessions holding undelivered mail). Within the free tier of three jobs.
 #
-# Then redeploy both services with the two env vars this prints, e.g.
-#   CLOUD_TASKS_QUEUE=outfitter-wake TASKS_SA_EMAIL=outfitter-tasks@... ./link.sh
-#   CLOUD_TASKS_QUEUE=outfitter-wake TASKS_SA_EMAIL=outfitter-tasks@... OUTFITTER_LINK_ORIGIN=... ./api.sh
+# Then redeploy both services (./link.sh, ./api.sh): service.sh finds this queue and service
+# account itself and sets CLOUD_TASKS_QUEUE / TASKS_SA_EMAIL.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
@@ -75,6 +74,4 @@ else
 fi
 
 echo
-echo "Done. Redeploy both roles with:"
-echo "  CLOUD_TASKS_QUEUE=${QUEUE} TASKS_SA_EMAIL=${TASKS_SA_EMAIL}"
-echo "(api.sh also needs OUTFITTER_LINK_ORIGIN=${LINK_ORIGIN} so tasks target the link role.)"
+echo "Done. Redeploy both roles (./link.sh, then ./api.sh); service.sh picks up ${QUEUE} and ${TASKS_SA_EMAIL} itself."

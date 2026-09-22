@@ -321,7 +321,7 @@ describe("/admin end to end (real server, real extensions, fake pi)", async () =
 
   const get = (path: string) => call(port, { path: `/api${path}`, headers: { "x-mgm-admin-token": token } });
   const post = (path: string, body: unknown) => call(port, { method: "POST", path: `/api${path}`, body: JSON.stringify(body), headers: { "x-mgm-admin-token": token, "content-type": "application/json", origin: `http://127.0.0.1:${port}` } });
-  const noKeys = (text: string) => { for (const k of [ROUTER_KEY, OR_KEY, "sk-or-v1-NEW-KEY-55556666"]) assert.ok(!text.includes(k), `response carries a key: ${text.slice(0, 200)}`); };
+  const noKeys = (text: string) => { for (const k of [ROUTER_KEY, OR_KEY, "sk-or-v1-fake-fake-fake-fake"]) assert.ok(!text.includes(k), `response carries a key: ${text.slice(0, 200)}`); };
 
   test("/admin starts the server, says where, and shows it in the status bar", () => {
     assert.ok(port > 0 && token.length >= 43);
@@ -358,15 +358,15 @@ describe("/admin end to end (real server, real extensions, fake pi)", async () =
 
   test("a good write goes through writeEnvValues into .env, re-registers providers, and is not echoed", async () => {
     const before = pi.providers.length;
-    const r = await post("/connections", { OPENROUTER_API_KEY: "Bearer sk-or-v1-NEW-KEY-55556666", LMSTUDIO_BASE_URL: "localhost:9999" });
+    const r = await post("/connections", { OPENROUTER_API_KEY: "Bearer sk-or-v1-fake-fake-fake-fake", LMSTUDIO_BASE_URL: "localhost:9999" });
     assert.equal(r.status, 200, r.text);
     noKeys(r.text);
     const env = store.env();
-    assert.match(env, /^OPENROUTER_API_KEY=sk-or-v1-NEW-KEY-55556666$/m, "cleanKey stripped the Bearer prefix");
+    assert.match(env, /^OPENROUTER_API_KEY=sk-or-v1-fake-fake-fake-fake$/m, "cleanKey stripped the Bearer prefix");
     assert.match(env, /^LMSTUDIO_BASE_URL=http:\/\/localhost:9999\/v1$/m, "normalizeBaseUrl added scheme and /v1");
-    assert.equal(process.env.OPENROUTER_API_KEY, "sk-or-v1-NEW-KEY-55556666", "live in this process");
+    assert.equal(process.env.OPENROUTER_API_KEY, "sk-or-v1-fake-fake-fake-fake", "live in this process");
     assert.ok(pi.providers.length > before, "providers registered again, as after /setup");
-    assert.equal(pi.providers.filter((p) => p.name === "openrouter").at(-1)!.config.apiKey, "sk-or-v1-NEW-KEY-55556666");
+    assert.equal(pi.providers.filter((p) => p.name === "openrouter").at(-1)!.config.apiKey, "sk-or-v1-fake-fake-fake-fake");
     assert.match(JSON.parse(r.text).message, /Saved 2 settings/);
   });
 

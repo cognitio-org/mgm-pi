@@ -1,6 +1,6 @@
 # Outfitter operator role and settings page
 
-EPIC.md E2.14 / E3.7. Adds an **operator** role (a fixed config list of emails) that can manage
+EPIC.md E2.14 / E3.9. Adds an **operator** role (a fixed config list of emails) that can manage
 Secret Manager secrets and see deploy-level settings, and a `/settings` web page for it. Any
 signed-in user still creates sessions and edits gurus — this is an additional capability, not a
 replacement for the existing org-shared policy.

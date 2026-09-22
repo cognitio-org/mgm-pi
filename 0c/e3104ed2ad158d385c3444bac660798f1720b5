@@ -1,0 +1,56 @@
+outfitter/packages/web/src/easter/rescue/engine.ts
+  s_2209f22f830d7f::t_f9690d0d5f90b4 10-19,23-29,32-34,36,42,52-53,168-171,173,207,220-221,231-232,234-235,370-372,435,437-438,446,448,462,474,478,547-551,557-559,564-565,567-568
+outfitter/packages/web/src/easter/rescue/sprites.ts
+  s_2209f22f830d7f::t_d5103f9a95652d 1-7,11,14-21,23,26-27,31-57
+  s_d71e62cb6f304c::t_00d9d8bf6ca9a3 58
+outfitter/packages/web/test/dreadnought-engine.test.ts
+  s_2209f22f830d7f::t_93093ac291c2d5 145
+  s_2209f22f830d7f::t_d71456cb5a9ef6 8,96,109,129,146,173
+outfitter/packages/web/src/easter/rescue/FloppyRescue.tsx
+  s_2209f22f830d7f::t_396defc70b78e2 10-17,60-61,93-96,210,226,228,238,310,345,432-462,465-470,476,478-616,626,638,643-644,646-648,650,653,656,660-661,664,669,673,675,691-692,697-699
+outfitter/packages/web/src/easter/dreadnought/engine.ts
+  s_2209f22f830d7f::t_039b1f8a57c6a6 135
+  s_2209f22f830d7f::t_3838e4d1e90203 236,238,240,248-251,257,259,261-262,271,273
+  s_2209f22f830d7f::t_d43df595750308 11-18,21-22,24-25,27-28,30-31,35,41
+outfitter/packages/web/src/easter/dreadnought/DreadnoughtRun.tsx
+  s_2209f22f830d7f::t_59ee5bc4782315 74
+  s_2209f22f830d7f::t_9207e66b0a94da 199,201
+  s_2209f22f830d7f::t_2e7c12bb7d643c 344-384,388-401
+  s_2209f22f830d7f::t_919ae04d213585 481-483
+  s_2209f22f830d7f::t_87ffb15983c2dd 411,425
+  s_2209f22f830d7f::t_7bdfdfc6797edf 303
+  s_2209f22f830d7f::t_1ba20da8290cca 402-403
+outfitter/packages/web/src/styles/easter.css
+  s_2209f22f830d7f::t_fdc677aeaa3b48 162-164,166
+  s_2209f22f830d7f::t_4bdaa9fb677086 411-481
+  s_2209f22f830d7f::t_b76b8c718f6187 303-304,311-323
+  s_2209f22f830d7f::t_108eb1cff6c108 61-64
+outfitter/packages/web/test/rescue-engine.test.ts
+  s_2209f22f830d7f::t_84b8f8bfeafecc 110
+  s_2209f22f830d7f::t_fe2992b74f6b5a 7,9,12-13
+  s_2209f22f830d7f::t_e9369baabe510b 96,100,128,150,189,198
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "0ce3104ed2ad158d385c3444bac660798f1720b5",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_d71e62cb6f304c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "598183a5-6865-48f8-80e7-37d24447f686",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

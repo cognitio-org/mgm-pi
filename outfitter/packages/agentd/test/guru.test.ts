@@ -75,6 +75,12 @@ test("renderGuru: bug 5a -- thinking:'off' reaches pi as an explicit :off suffix
   assert.ok(args.includes("litellm/claude-sonnet-5:off"), args.join(" "));
 });
 
+test("renderGuru: bug 8 -- skipModelArg omits --model entirely (restore whose model/thinking already match)", () => {
+  const guru: RunSpecGuru = { model: "litellm/claude-sonnet-5", thinking: "high" };
+  const { args } = renderGuru(guru, { piBin: "pi", sessionFile: "/tmp/s.jsonl", skipModelArg: true });
+  assert.ok(!args.includes("--model"), args.join(" "));
+});
+
 test("renderGuru: env passthrough plus packages -> OUTFITTER_GURU_PACKAGES", () => {
   const guru: RunSpecGuru = {
     model: "litellm/local-qwen-mlx",

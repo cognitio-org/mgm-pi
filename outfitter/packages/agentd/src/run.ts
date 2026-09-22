@@ -9,7 +9,7 @@ import { resolve, sep } from "node:path";
 import { renderGuru } from "./guru.js";
 import type { GitOps } from "./git.js";
 import { spawnPi, SessionTailer, SpendTailer, validateSpendLine, type PiProcess, type SpendLogLine } from "./pi.js";
-import { importSession, writeSnapshotFile, emptySessionJsonl } from "./session.js";
+import { importSession, writeSnapshotFile, emptySessionJsonl, lastKnownModelState } from "./session.js";
 import type { Logger } from "./logger.js";
 import type { RunAsUser } from "./run-as-user.js";
 import { validateSnapshotUrl, snapshotHostAllowlist, isDevMode } from "./snapshot-url.js";
@@ -414,12 +414,22 @@ export class RunController {
     }
 
     this.setState("starting");
+    // Bug 8 (docs/reports/cloud-fixes.md): skip --model/--thinking when the restored session's own
+    // last-known model+thinking already match the guru's resolved ones -- see session.ts's
+    // lastKnownModelState doc comment for why passing them unconditionally caused a fresh, genuinely
+    // distinct-id model_change/thinking_level_change entry on every restore.
+    const restoredModelState = lastKnownModelState(jsonl);
+    const resolvedThinking = spec.guru.thinking ?? "off";
+    const skipModelArg =
+      restoredModelState.model === spec.guru.model &&
+      (restoredModelState.thinking ?? "off") === resolvedThinking;
     const rendered = renderGuru(spec.guru, {
       piBin: this.deps.piBin,
       sessionFile,
       onLog: this.onLog,
       spendExtensionPath: this.deps.spendFile ? this.deps.spendExtensionPath : undefined,
       mailExtensionPath: this.deps.mailExtensionPath,
+      skipModelArg,
     });
     const secretEnv: Record<string, string> = {};
     // Not a secret, but pinned here after guru.env like the rest so a guru can't spoof it; the

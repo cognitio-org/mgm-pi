@@ -70,6 +70,55 @@ export function emptySessionJsonl(sessionId: string, cwd: string): string {
   return `${JSON.stringify(header)}\n`;
 }
 
+/** Bug 8 (docs/reports/cloud-fixes.md): "duplicate model_change/thinking_level_change entries on
+ * each restore". Cause: agentd's own entry ingestion is already idempotent by entry id (the API's
+ * unique `{sessionId, "entry.id"}` index, `insertIfNew` -- see store/mongo.ts/memory.ts), so a
+ * resent copy of a *previously seen* entry is already a no-op. The duplicates are not resends of
+ * the same entry id at all: every restore is a brand-new `pi --mode rpc` process, and run.ts always
+ * passed `--model`/the `:thinking` suffix unconditionally (guru.ts's renderGuru); pi treats an
+ * explicit `--model`/`--thinking` CLI flag as the user setting that value for this process and logs
+ * a fresh model_change/thinking_level_change entry (with a fresh id) even when it exactly matches
+ * what the restored session already ended with. So each restore appended a *new*, genuinely
+ * distinct-id entry restating the same model/thinking level -- no amount of "idempotent by id"
+ * ingestion can catch that, since the ids really do differ.
+ *
+ * Fix: before spawning pi, read the restored snapshot's own last model_change/thinking_level_change
+ * entries (this function) and skip passing `--model`/the thinking suffix when they already agree
+ * with the guru's resolved model/thinking (run.ts's begin()) -- pi then has no reason to assert
+ * them again, and a real change (laptop-preflight fallback, an edited Tape, a fresh session with no
+ * prior entries at all) still passes `--model` exactly as before. */
+export interface LastKnownModelState {
+  /** `provider/modelId`, from the last model_change entry, if any. */
+  model?: string;
+  /** From the last thinking_level_change entry, if any. */
+  thinking?: string;
+}
+
+/** Pure: scans a session JSONL snapshot's entries in file order and returns the last-seen model and
+ * thinking level, independently (a session may have changed one without the other). Malformed lines
+ * are skipped, not thrown -- this is a best-effort optimization, never load-bearing for correctness. */
+export function lastKnownModelState(jsonl: string): LastKnownModelState {
+  const result: LastKnownModelState = {};
+  for (const line of jsonl.split("\n")) {
+    if (!line.trim()) continue;
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (parsed.type === "model_change") {
+      const provider = parsed.provider;
+      const modelId = parsed.modelId;
+      if (typeof provider === "string" && typeof modelId === "string") result.model = `${provider}/${modelId}`;
+    } else if (parsed.type === "thinking_level_change") {
+      const level = parsed.thinkingLevel;
+      if (typeof level === "string") result.thinking = level;
+    }
+  }
+  return result;
+}
+
 /** Imports the snapshot at `snapshotFile` into the session store for `cwd`, forcing the same
  * `sessionId` so the run continues the same conversation. Returns the resulting session file path
  * that `pi --session <path>` should be pointed at. */

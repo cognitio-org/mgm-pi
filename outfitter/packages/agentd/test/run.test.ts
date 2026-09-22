@@ -803,6 +803,92 @@ test("RunController: pi is spawned with the run-as user's HOME and identity, nev
   assert.equal(spawnedEnv!.USER, "agent");
 });
 
+test("RunController: bug 8 (docs/reports/cloud-fixes.md) -- --model is omitted on restore when the snapshot's own last model+thinking already match the guru", async (t) => {
+  const workspace = await mkdtemp(join(tmpdir(), "outfitter-run-test-"));
+  const link = new FakeLink();
+  let spawnArgs: string[] | undefined;
+
+  const controller = new RunController({
+    link,
+    gitOps: fakeGitOps(),
+    workspace,
+    piBin: "unused-in-test",
+    agentdVersion: "test",
+    piVersion: "test",
+    heartbeatIntervalMs: 60_000,
+    spawnPi: (opts) => {
+      spawnArgs = opts.args;
+      return makeControllablePi();
+    },
+    importSession: async (_snapshotFile, _cwd, sessionId) => join(workspace, `${sessionId}.jsonl`),
+    writeSnapshotFile,
+    createTailer: () => ({ start() {}, stop() {}, poll: async () => {} }),
+    onLog: () => {},
+  });
+  t.after(() => controller.dispose());
+
+  const header = { type: "session", version: 3, id: "sess-restore", timestamp: "t", cwd: "/workspace" };
+  const modelChange = { type: "model_change", id: "e1", provider: "litellm", modelId: "claude-sonnet-5" };
+  const thinkingChange = { type: "thinking_level_change", id: "e2", thinkingLevel: "high" };
+  const restoredJsonl = [header, modelChange, thinkingChange].map((l) => JSON.stringify(l)).join("\n") + "\n";
+
+  link.deliver({
+    t: "run.spec",
+    session: { id: "sess-restore", name: "restore", cwd: "/workspace" },
+    guru: { model: "litellm/claude-sonnet-5", thinking: "high" }, // matches the snapshot exactly
+    snapshot: { jsonl: restoredJsonl },
+    secrets: {},
+    idleStopSeconds: 3600,
+    checkpointEvery: "turn",
+  });
+
+  await waitFor(() => spawnArgs !== undefined);
+  assert.ok(!spawnArgs!.includes("--model"), `expected no --model flag on an unchanged restore, got: ${spawnArgs!.join(" ")}`);
+});
+
+test("RunController: bug 8 -- --model is still passed on restore when the guru's model actually differs from the snapshot's last one", async (t) => {
+  const workspace = await mkdtemp(join(tmpdir(), "outfitter-run-test-"));
+  const link = new FakeLink();
+  let spawnArgs: string[] | undefined;
+
+  const controller = new RunController({
+    link,
+    gitOps: fakeGitOps(),
+    workspace,
+    piBin: "unused-in-test",
+    agentdVersion: "test",
+    piVersion: "test",
+    heartbeatIntervalMs: 60_000,
+    spawnPi: (opts) => {
+      spawnArgs = opts.args;
+      return makeControllablePi();
+    },
+    importSession: async (_snapshotFile, _cwd, sessionId) => join(workspace, `${sessionId}.jsonl`),
+    writeSnapshotFile,
+    createTailer: () => ({ start() {}, stop() {}, poll: async () => {} }),
+    onLog: () => {},
+  });
+  t.after(() => controller.dispose());
+
+  const header = { type: "session", version: 3, id: "sess-changed", timestamp: "t", cwd: "/workspace" };
+  const modelChange = { type: "model_change", id: "e1", provider: "litellm", modelId: "gpt-4o" };
+  const restoredJsonl = [header, modelChange].map((l) => JSON.stringify(l)).join("\n") + "\n";
+
+  link.deliver({
+    t: "run.spec",
+    session: { id: "sess-changed", name: "changed", cwd: "/workspace" },
+    guru: { model: "litellm/claude-sonnet-5" }, // a genuinely different model than the snapshot's
+    snapshot: { jsonl: restoredJsonl },
+    secrets: {},
+    idleStopSeconds: 3600,
+    checkpointEvery: "turn",
+  });
+
+  await waitFor(() => spawnArgs !== undefined);
+  assert.ok(spawnArgs!.includes("--model"), "a real model change must still pass --model");
+  assert.ok(spawnArgs!.includes("litellm/claude-sonnet-5"));
+});
+
 async function setupControllablePiRun(t: { after: (fn: () => void) => void }) {
   const workspace = await mkdtemp(join(tmpdir(), "outfitter-run-test-"));
   const link = new FakeLink();

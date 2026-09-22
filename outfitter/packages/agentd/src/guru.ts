@@ -31,6 +31,13 @@ export interface RenderOptions {
   /** E5.5: path to pi-extension/outfitter-mail.ts (or its built .js), which gives the model the
    * outfitter_send tool. Loaded the same way as the spend extension. */
   mailExtensionPath?: string;
+  /** Bug 8 (docs/reports/cloud-fixes.md): true when the restored session's own last-known model and
+   * thinking level (session.ts's lastKnownModelState) already match `guru.model`/`guru.thinking` --
+   * omit `--model` entirely rather than reassert an unchanged value, since pi logs a fresh
+   * model_change/thinking_level_change entry for any explicit `--model` flag regardless of whether
+   * it actually changes anything. Unset (or false) renders `--model` exactly as before -- the
+   * default for a brand-new session, or a genuine change. */
+  skipModelArg?: boolean;
 }
 
 /** guru.env keys that would let a guru author plant persistent code-exec or credential leakage into
@@ -87,7 +94,7 @@ export function renderGuru(guru: RunSpecGuru, opts: RenderOptions): RenderedPi {
   if (opts.spendExtensionPath) args.push("--extension", opts.spendExtensionPath);
   if (opts.mailExtensionPath) args.push("--extension", opts.mailExtensionPath);
 
-  args.push("--model", renderModelArg(guru.model, guru.thinking));
+  if (!opts.skipModelArg) args.push("--model", renderModelArg(guru.model, guru.thinking));
 
   if (guru.systemPrompt) args.push("--system-prompt", guru.systemPrompt);
   if (guru.appendSystemPrompt) args.push("--append-system-prompt", guru.appendSystemPrompt);

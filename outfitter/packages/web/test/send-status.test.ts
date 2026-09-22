@@ -90,6 +90,19 @@ describe("deriveSessionActivity", () => {
     expect(a.showOptimistic).toBe(false);
   });
 
+  it("an assistant entry that only calls tools is not the reply: still working", () => {
+    const p = notePendingRunState(pending({ acceptedAt: T0 }), "running")!;
+    const toolCall: PiEntry = {
+      id: "a1",
+      type: "message",
+      message: { role: "assistant", content: [{ type: "toolCall", id: "t1", name: "bash", arguments: {} }], stopReason: "toolUse" },
+    };
+    const entries = [...history, user("u1", "fix the bug"), toolCall];
+    const a = derive({ runState: "running", pending: p, entries });
+    expect(a.phase).toBe("working");
+    expect(a.label).toBe("Working…");
+  });
+
   it("idle after running: done, even before the reply entry lands", () => {
     let p = notePendingRunState(pending({ acceptedAt: T0 }), "running");
     p = notePendingRunState(p, "idle")!;

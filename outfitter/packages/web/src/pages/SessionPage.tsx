@@ -52,6 +52,14 @@ export function SessionPage() {
   const [lastProgressAt, setLastProgressAt] = useState(() => Date.now());
   const [now, setNow] = useState(() => Date.now());
 
+  // The route reuses this component when navigating from one session to another (App.tsx's
+  // /sessions/:id has no key), so a pending send must not follow the user into the next session:
+  // its baseline indexes the old session's entries and its optimistic row would show there.
+  useEffect(() => {
+    setPendingSend(null);
+    setLastProgressAt(Date.now());
+  }, [sessionId]);
+
   useEffect(() => {
     setLastProgressAt(Date.now());
   }, [entries.length]);

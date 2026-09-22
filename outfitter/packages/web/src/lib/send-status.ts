@@ -94,8 +94,14 @@ function userText(e: PiEntry): string | null {
     .join("\n");
 }
 
-function isAssistant(e: PiEntry): boolean {
-  return e.type === "message" && (e.message as { role?: string } | undefined)?.role === "assistant";
+/** An assistant entry that ends the turn. Not one that stopped to call tools (stopReason "toolUse")
+ * or is still streaming ("pending"): in a tool-using turn that is the *first* assistant entry, and
+ * the run keeps working for minutes after it -- counting it as the reply dropped the status line
+ * (and the work timeout) right at the start of the long part of the turn. */
+function isFinalAssistant(e: PiEntry): boolean {
+  if (e.type !== "message") return false;
+  const m = e.message as { role?: string; stopReason?: string } | undefined;
+  return m?.role === "assistant" && m.stopReason !== "toolUse" && m.stopReason !== "pending";
 }
 
 /** Index (into entries) of the stored entry that echoes the pending message, or -1: the first user
@@ -119,7 +125,7 @@ export function isAnswered(input: Pick<ActivityInput, "entries" | "runState">, p
   if (pending.acceptedAt === undefined || pending.error !== undefined) return false;
   const echo = findEcho(input.entries, pending);
   const from = echo >= 0 ? echo + 1 : pending.baseline;
-  for (let i = from; i < input.entries.length; i++) if (isAssistant(input.entries[i])) return true;
+  for (let i = from; i < input.entries.length; i++) if (isFinalAssistant(input.entries[i])) return true;
   return input.runState === "idle" && pending.sawRunning;
 }
 

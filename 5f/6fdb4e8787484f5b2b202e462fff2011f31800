@@ -31,6 +31,8 @@ outfitter/packages/api/src/store/memory.ts
   s_e60c198231e35c::t_9bd37b71a498a6 4
   s_e60c198231e35c::t_36142a8738006d 26,280-288
   s_2209f22f830d7f::t_4d7256b7e45de8 289
+outfitter/deploy/README.md
+  s_e60c198231e35c::t_7b26adf80b7be2 236-238
 ---
 {
   "schema_version": "authorship/3.0.0",

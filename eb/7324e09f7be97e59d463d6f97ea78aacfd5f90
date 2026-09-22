@@ -1,0 +1,38 @@
+outfitter/packages/web/src/style.css
+  s_2209f22f830d7f::t_f2b66ef3a57dd4 354-450
+outfitter/packages/web/test/session-header.test.ts
+  s_2209f22f830d7f::t_e16a67cbb4a870 1-95
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_2209f22f830d7f::t_e0ad0a5faeab92 101-107,109-123
+  s_2209f22f830d7f::t_9234bc934a0fbc 3,6
+  s_2209f22f830d7f::t_18e774d349cf04 87-89
+  s_2209f22f830d7f::t_8e04814d308693 20,32-37
+  s_2209f22f830d7f::t_2cdd406050ac07 108
+  s_d71e62cb6f304c::t_ccfa0c83e57676 38,124
+outfitter/packages/web/src/lib/session-header.ts
+  s_2209f22f830d7f::t_a206276869c462 1-104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "eb7324e09f7be97e59d463d6f97ea78aacfd5f90",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_d71e62cb6f304c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "598183a5-6865-48f8-80e7-37d24447f686",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -51,7 +51,19 @@ do it in one clear step instead of improvising shell commands.
   5. Teleporting laptop to cloud sends only the transcript: `OutfitterStore.put` drops the manifest
      and the import route creates the session with `repo: null`. A teleported-in cloud session has
      no clone.
-  Items 1 to 4 are Outfitter fixes in their own right; phase 3 below lists them as prerequisites.
+  Items 1 to 4 are Outfitter fixes in their own right, and are phase 0 below: [PR #41](https://github.com/mgmonteleone/mgm-pi/pull/41).
+  How it resolved them, which the rest of this spec follows:
+  - **No `safe.directory`.** It would let root's git run hooks, fsmonitor, filters or `insteadOf`
+    rules the agent planted in the checkout, with the token in its environment. Instead, local git
+    operations (checkpoint commits included) run as the `agent` user.
+  - **Pushes run as root from a private, root-owned bare repository** that borrows `/workspace`'s
+    objects through git alternates and pushes to the session's clone URL. Root never runs git
+    inside the agent's checkout.
+  - The clone adds the session branch to `remote.origin.fetch`, so `origin/<branch>` exists after a
+    resume and after pushes.
+  - Commit identity is "the bot, on behalf of the person" (see "Attribution"), with pi given
+    `OUTFITTER_AUTHOR_NAME`, `OUTFITTER_AUTHOR_EMAIL` and `OUTFITTER_AUTHOR_LOGIN` for the `git`
+    tool to use.
 - Research (four evaluations, 2026-09-22) found no pi package worth adopting whole. Borrowed ideas:
   - `@gotgenes/pi-github-tools`: wait for the CI run of an exact commit, then watch that run;
     a timeout is a normal result; only reads retry.
@@ -163,8 +175,10 @@ Added exactly once, checked before appending. Locally the author is whatever the
 config says. In the cloud there is no identity today (gap 4), so phase 3 adds one: `run.spec.author
 {name, email, login}` from the Outfitter user record, pinned as `GIT_AUTHOR_*` and `GIT_COMMITTER_*` in
 pi's environment and in agentd's own git calls. **Decided: "the bot, on behalf of the person."**
-- The Outfitter bot is both author and committer (`GIT_AUTHOR_*` and `GIT_COMMITTER_*`: one fixed
-  name and noreply address; the GitHub App's bot identity once it exists).
+- The Outfitter bot is both author and committer (`GIT_AUTHOR_*` and `GIT_COMMITTER_*`, pinned in
+  pi's environment): `Outfitter <noreply@outfitter.invalid>`, and the GitHub App's bot identity
+  once it exists. Not `outfitter@users.noreply.github.com`, which would credit commits to an
+  unrelated GitHub user named `outfitter`.
 - Every cloud commit gets two trailers naming the session's person, appended exactly once:
   `Co-authored-by: <name> <GitHub noreply address>`, which makes GitHub show the person's avatar
   next to the bot's and count the commit for them, and `On-behalf-of: <name> <address>`, plain text
@@ -174,7 +188,9 @@ pi's environment and in agentd's own git calls. **Decided: "the bot, on behalf o
 - PRs, comments and reviews made through the API appear as the credential's identity and carry a
   footer "Outfitter, on behalf of @<login>".
 - Checkpoint commits carry the same trailers. The person's name, noreply address and login come in
-  `run.spec.author`.
+  `run.spec.author`, and reach the `git` tool as `OUTFITTER_AUTHOR_NAME`, `_EMAIL` and `_LOGIN`,
+  so the agent's own commits get the trailers too. Without an author (an older API), commits are
+  the bot's alone, with no trailers.
 
 ### Setup: installing `gh` and signing in (local)
 
@@ -262,18 +278,17 @@ as they do on a laptop, and the `git` tool uses the same path.
 - **Anyone in the container can use it**, including the model, which is the point; the policy above
   is the boundary, as for the socket.
 - **Consequences**: the socket then carries only GitHub API operations; fetch and push leave it.
-  Checkpoints can push through the proxy too, so root no longer runs network git in the
-  `agent`-owned checkout, which removes the `safe.directory` problem for pushes (gap 3 still needs
-  fixing for the checkpoint's local commit, or checkpoints commit as `agent`).
+  Checkpoints can keep phase 0's root-owned bare-repository push, or move to the proxy; either way
+  root never runs git in the agent's checkout.
 - **Prototype first** in phase 3: a spike with `git push` of a small and a large pack through the
   proxy, a refused ref, and a dropped connection, before the socket's transport half is removed.
 
-**Git transport.** Through the proxy above. Until the proxy lands, or if the spike fails, agentd
-does fetch and push itself as root with the per-session token, as checkpoints do, plus
-`safe.directory=/workspace` in the same `GIT_CONFIG_*` environment (gap 3). Fetches use an
-explicit refspec (`+refs/heads/<b>:refs/remotes/origin/<b>`), because the clone is single-branch
-(gap 2). After any root git operation that writes to the tree or `.git`, agentd chowns back to
-`agent`. Root git operations are serialized with the periodic checkpoint through one lock in agentd.
+**Git transport.** Through the proxy above. Until the proxy lands, or if the spike fails, the tools'
+push goes through the same path as phase 0's checkpoint push (root-owned bare repository with
+alternates), and fetch through a root-side fetch into it, never git as root inside `/workspace`.
+Fetched refs reach `origin/<branch>` because phase 0 added the session branch to the fetch
+refspec. Network git operations are serialized with the periodic checkpoint through one lock in
+agentd.
 
 **GitHub API (in the API).** agentd forwards API requests as a new frame, `github.request {reqId,
 op, args, idempotencyKey}`, answered by `github.result {reqId, ok, data | error}`. The API runs
@@ -399,7 +414,7 @@ runs, so the image's `gh` package (about 38 MB) can go; `EPIC.md` is updated in 
 
 | Phase | Contents | Where | Depends on |
 |---|---|---|---|
-| 0 | Sandbox git fixes: push the agent's own commits, the resume refspec, `safe.directory`, commit identity | Outfitter | nothing; worth doing now, because resuming a checkpointed session is broken today |
+| 0 | Sandbox git fixes: push the agent's own commits, the resume refspec, ownership (local git as `agent`, pushes from a root-owned bare repository), commit identity. In [PR #41](https://github.com/mgmonteleone/mgm-pi/pull/41) | Outfitter | nothing |
 | 1 | Shared git module (teleport moved onto it); `/github setup` and `kernal github`; `/admin` GitHub page; `git` tool; `/git`, `/commit`; prompt rules; attribution | Kernal | nothing |
 | 2 | `github_pr`, `github_issue`, `github_repo` (all actions), `/pr`, `/issues`, `wait_ci` | Kernal | 1 |
 | 3 | Git proxy (spike first); broker backend; socket, frames, API executor, policy, idempotency, rate limits; bot committer; session-page panel; EPIC.md update | Kernal and Outfitter | 0, 2 |

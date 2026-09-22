@@ -158,6 +158,11 @@ class MongoRuns implements RunsCollection {
     return stripId<Run>(await this.col.findOne({ sessionId, state: { $in: ACTIVE_RUN_STATES } }));
   }
 
+  async findLatestForSession(sessionId: string): Promise<Run | null> {
+    const rows = await this.col.find({ sessionId }).sort({ updatedAt: -1 }).limit(1).toArray();
+    return stripId<Run>(rows[0] ?? null);
+  }
+
   async update(id: string, patch: Partial<Run>): Promise<Run | null> {
     const result = await this.col.findOneAndUpdate(
       { _id: id },

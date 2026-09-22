@@ -46,7 +46,7 @@ export function SessionPage() {
   const [models, setModels] = useState<ModelRow[]>([]);
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [transportOutcome, setTransportOutcome] = useState<TransportOutcome | null>(null);
-  const { entries, runState, pendingUiRequest, costEstimate } = useSessionStream(sessionId);
+  const { entries, runState, runStateReason, pendingUiRequest, costEstimate } = useSessionStream(sessionId);
   const { providers } = useProviders();
   const transcriptRef = useRef<HTMLDivElement | null>(null);
 
@@ -150,7 +150,7 @@ export function SessionPage() {
   const header = deriveSessionHeader(entries, (id) => windowById.get(id));
   const percent = header.context?.percent;
   const oomMessage = typeof percent === "number" ? contextMeterMessage(percent) : null;
-  const statusLine = deriveTransportStatusLine(active, transportOutcome);
+  const statusLine = deriveTransportStatusLine(runState, transportOutcome, runStateReason);
 
   // A session's current model reads "provider/model" (deriveSessionHeader); if that provider's
   // own Peripherals row reports "down", the run can't reach it -- surface the same

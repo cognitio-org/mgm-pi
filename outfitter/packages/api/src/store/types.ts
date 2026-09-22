@@ -305,6 +305,11 @@ export interface RunsCollection {
   findById(id: string): Promise<Run | null>;
   /** The run currently occupying a session, if state is queued|provisioning|running|idle. */
   findActiveForSession(sessionId: string): Promise<Run | null>;
+  /** The most recently updated run for a session regardless of state, including a terminal one
+   * (stopped/failed). Bug 3 (docs/reports/cloud-fixes.md): findActiveForSession alone can't tell a
+   * cleanly stopped run from a failed one once it's terminal -- both just look like "no active
+   * run" -- so the UI has nothing to distinguish READY. from "stopped" from "LOAD ERROR". */
+  findLatestForSession(sessionId: string): Promise<Run | null>;
   update(id: string, patch: Partial<Run>): Promise<Run | null>;
   /** Runs in an active state whose lastSeenAt is older than the cutoff (reconciler input). */
   listStale(cutoffIso: string): Promise<Run[]>;

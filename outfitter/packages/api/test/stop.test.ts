@@ -280,6 +280,7 @@ describe("agentlink up-frame ordering", () => {
       insertIfNoActive: (r) => inner.runs.insertIfNoActive(r),
       findById: (id) => inner.runs.findById(id),
       findActiveForSession: (s) => inner.runs.findActiveForSession(s),
+      findLatestForSession: (s) => inner.runs.findLatestForSession(s),
       async update(id, patch) {
         if (!firstUpdateSeen) {
           firstUpdateSeen = true;

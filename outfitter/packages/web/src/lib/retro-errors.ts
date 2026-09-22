@@ -104,12 +104,29 @@ export function transportStatusLine(outcome: TransportOutcome | "ready"): string
   }
 }
 
-/** Which status line (if any) the session header/composer should show right now: a just-finished
- * Break/failed-Play outcome wins while it's still flashed, otherwise "READY." once nothing is
- * running, otherwise null (the <Working> indicator is showing instead). Pure so the precedence
- * rule is unit-testable without a timer. */
-export function deriveTransportStatusLine(active: boolean, outcome: TransportOutcome | null): string | null {
+/** Run states that mean "the agent is doing something right now" -- the <Working> indicator (or a
+ * flashed outcome) covers these, so the header/composer status line is null while they're current. */
+const LIVE_RUN_STATES = new Set(["running", "queued", "provisioning", "stopping"]);
+
+/** Bug 3 (docs/reports/cloud-fixes.md): the header/composer used to show "READY." whenever no run
+ * was *active* (RUNNING_STATES), which also covers a stopped or a failed run -- so a failed run
+ * read exactly like an idle one waiting for input. Distinguish by the run's actual last-known
+ * state instead of a plain "is something active" boolean:
+ * - a just-finished flashed outcome (BREAK / LOAD ERROR from an abort/wake failure) always wins,
+ *   same precedence as before;
+ * - "idle" (a live run waiting on the user) is the only state that reads READY.;
+ * - "running"/"queued"/"provisioning"/"stopping" show nothing here -- <Working> is showing instead;
+ * - "failed" reads LOAD ERROR, with the run's own reason appended when there is one;
+ * - "stopped", or no run at all yet, reads a plain "stopped - press Play" line rather than READY.,
+ *   so a cleanly stopped floppy doesn't look like it's sitting there waiting for a reply. */
+export function deriveTransportStatusLine(runState: string | undefined, outcome: TransportOutcome | null, reason?: string): string | null {
   if (outcome) return transportStatusLine(outcome);
-  if (!active) return transportStatusLine("ready");
-  return null;
+  if (runState === "idle") return transportStatusLine("ready");
+  if (runState && LIVE_RUN_STATES.has(runState)) return null;
+  if (runState === "failed") {
+    const said = reason?.trim();
+    return said ? `LOAD ERROR — ${inVocabulary(said)}` : "LOAD ERROR";
+  }
+  // "stopped", or no run recorded at all (a brand-new session, or one whose run never persisted).
+  return "stopped · press Play";
 }

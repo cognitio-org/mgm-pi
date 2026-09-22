@@ -225,7 +225,12 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     reply.hijack(); // we own the raw response now; Fastify must not also try to send it
     ctx.sse.subscribe(session.id, reply);
     const run = await ctx.store.runs.findActiveForSession(session.id);
-    ctx.sse.publish(session.id, { type: "status", data: { t: "status", state: run?.state ?? "stopped" } });
+    // Bug 3 (docs/reports/cloud-fixes.md): a hardcoded "stopped" here used to hide the difference
+    // between a cleanly stopped run and a failed one (both have no *active* run) -- fall back to
+    // the most recent run's real terminal state (and its reason) so the header/composer can tell
+    // "stopped" from "LOAD ERROR" on first paint, before any live status frame arrives.
+    const latest = run ?? (await ctx.store.runs.findLatestForSession(session.id));
+    ctx.sse.publish(session.id, { type: "status", data: { t: "status", state: latest?.state ?? "stopped", reason: latest?.reason } });
     // Bug 2 (docs/reports/cloud-fixes.md): in a split web/link deployment, entries and status
     // changes land on the "link" role's process (the agentd WebSocket) while this subscriber is on
     // the "web" role's process -- AgentLink's in-process publish never reaches it. ssePoller polls

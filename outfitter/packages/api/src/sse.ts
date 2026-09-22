@@ -142,9 +142,13 @@ export class SsePoller {
     }
 
     const run = await this.store.runs.findActiveForSession(sessionId);
-    const state = run?.state ?? "stopped";
+    // Bug 3 (docs/reports/cloud-fixes.md): no *active* run doesn't mean "stopped" -- it could be
+    // "failed" too, and the two must read differently in the UI. Fall back to the most recent run
+    // (of any state) so a transition into "failed" is actually observed, not flattened to "stopped".
+    const terminal = run ?? (await this.store.runs.findLatestForSession(sessionId));
+    const state = terminal?.state ?? "stopped";
     if (state !== cursor.lastState) {
-      this.hub.publish(sessionId, { type: "status", data: { t: "status", state } });
+      this.hub.publish(sessionId, { type: "status", data: { t: "status", state, reason: run ? undefined : terminal?.reason } });
       cursor.lastState = state;
     }
     if (run && typeof run.costEstimate === "number" && run.costEstimate !== cursor.lastCostEstimate) {

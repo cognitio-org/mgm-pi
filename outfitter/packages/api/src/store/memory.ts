@@ -118,6 +118,15 @@ class MemoryRuns implements RunsCollection {
     return null;
   }
 
+  async findLatestForSession(sessionId: string): Promise<Run | null> {
+    let latest: Run | undefined;
+    for (const row of this.rows.values()) {
+      if (row.sessionId !== sessionId) continue;
+      if (!latest || row.updatedAt > latest.updatedAt) latest = row;
+    }
+    return latest ? clone(latest) : null;
+  }
+
   async update(id: string, patch: Partial<Run>): Promise<Run | null> {
     const row = this.rows.get(id);
     if (!row) return null;

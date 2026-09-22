@@ -1,0 +1,23 @@
+mgm/tests/teleport-outfitter.test.ts
+  s_2209f22f830d7f::t_aa4414689aedaa 24-26,29-30,32,34-39,43-46,49
+mgm/README.md
+  s_2209f22f830d7f::t_714938d8b07e2a 425-431,435-456
+mgm/.pi/extensions/teleport/outfitter-store.ts
+  s_2209f22f830d7f::t_2fa2a94b70ad2e 4-8,10-25,52,71,81,83-89,106-107,111,116,164
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "0425f2b1463b4df5c1751a73a739b025c2078e37",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

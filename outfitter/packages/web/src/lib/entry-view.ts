@@ -67,17 +67,19 @@ export function entryToViews(entry: PiEntry): EntryView[] {
           const blocks = Array.isArray(message.content) ? message.content : [];
           const views: EntryView[] = [];
           blocks.forEach((block, i) => {
-            const b = block as { type: string; text?: string; toolName?: string; toolCallId?: string; input?: unknown };
+            // pi's persisted content blocks (pi-ai's AssistantMessage content): text {text},
+            // thinking {thinking, thinkingSignature}, toolCall {id, name, arguments}.
+            const b = block as { type: string; text?: string; thinking?: string; id?: string; name?: string; arguments?: unknown };
             const blockId = `${id}#${i}`;
             if (b.type === "text") views.push({ kind: "assistant-text", id: blockId, text: b.text ?? "" });
-            else if (b.type === "thinking") views.push({ kind: "assistant-thinking", id: blockId, text: b.text ?? "" });
+            else if (b.type === "thinking") views.push({ kind: "assistant-thinking", id: blockId, text: b.thinking ?? "" });
             else if (b.type === "toolCall")
               views.push({
                 kind: "tool-call",
                 id: blockId,
-                toolName: b.toolName ?? "unknown",
-                toolCallId: b.toolCallId ?? blockId,
-                input: b.input,
+                toolName: b.name ?? "unknown",
+                toolCallId: b.id ?? blockId,
+                input: b.arguments ?? {},
               });
           });
           return views;

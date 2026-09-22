@@ -21,9 +21,9 @@ describe("entryToViews", () => {
       message: {
         role: "assistant",
         content: [
-          { type: "thinking", text: "hmm" },
+          { type: "thinking", thinking: "hmm", thinkingSignature: "sig" },
           { type: "text", text: "here you go" },
-          { type: "toolCall", toolCallId: "tc1", toolName: "bash", input: { command: "ls" } },
+          { type: "toolCall", id: "tc1", name: "bash", arguments: { command: "ls" } },
         ],
         timestamp: 2,
       },
@@ -73,5 +73,16 @@ describe("entryToViews", () => {
       { kind: "user", id: "e1", text: "hi" },
       { kind: "label", id: "e2", targetId: "e1", label: "starred" },
     ]);
+  });
+
+  it("a tool call with no arguments still maps (regression: the session page crashed on it)", () => {
+    const entry = {
+      type: "message",
+      id: "e9",
+      parentId: null,
+      timestamp: "2026-09-22T00:00:00.000Z",
+      message: { role: "assistant", content: [{ type: "toolCall", id: "tc9", name: "ls" }] },
+    } as unknown as PiEntry;
+    expect(entryToViews(entry)).toEqual([{ kind: "tool-call", id: "e9#0", toolName: "ls", toolCallId: "tc9", input: {} }]);
   });
 });

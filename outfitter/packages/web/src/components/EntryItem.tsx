@@ -12,7 +12,10 @@ import type { EntryView } from "../lib/entry-view.ts";
 // with no extra JS needed for the accessibility behavior.
 const COLLAPSE_THRESHOLD = 400;
 
-function Collapsible({ text, summary }: { text: string; summary: string }) {
+function Collapsible({ text: raw, summary }: { text: string | undefined; summary: string }) {
+  // JSON.stringify(undefined) is undefined, and a transcript from an older or foreign writer can
+  // omit fields: never let one odd entry blank the whole session page.
+  const text = raw ?? "";
   if (text.length <= COLLAPSE_THRESHOLD) return <pre>{text}</pre>;
   return (
     <details>

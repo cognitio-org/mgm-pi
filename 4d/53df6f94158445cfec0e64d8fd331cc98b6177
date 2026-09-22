@@ -1,0 +1,36 @@
+kernal/.pi/extensions/kernal-update/index.ts
+  s_a437fa5c3fe299::t_55e6cb8f1850e6 7
+outfitter/deploy/ci-setup.sh
+  s_a437fa5c3fe299::t_55e6cb8f1850e6 31
+kernal/bin/kernal
+  s_a437fa5c3fe299::t_55e6cb8f1850e6 286
+kernal/README.md
+  s_a437fa5c3fe299::t_55e6cb8f1850e6 95,475,640
+kernal/.pi/extensions/kernal-report/lib.ts
+  s_a437fa5c3fe299::t_55e6cb8f1850e6 2
+kernal/.pi/extensions/kernal-update/lib.ts
+  s_a437fa5c3fe299::t_55e6cb8f1850e6 2
+kernal/tests/report.test.ts
+  s_a437fa5c3fe299::t_f56f9ef135a5bd 96
+  s_a437fa5c3fe299::t_55e6cb8f1850e6 62,88,97,105
+kernal/scripts/install.sh
+  s_a437fa5c3fe299::t_55e6cb8f1850e6 3,158
+kernal/docs/rename.md
+  s_a437fa5c3fe299::t_541dcc7dcfb1e9 127-134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "4d53df6f94158445cfec0e64d8fd331cc98b6177",
+  "prompts": {},
+  "sessions": {
+    "s_a437fa5c3fe299": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "caa2a1a5-d70a-4605-a09d-4c18bbbf3b98",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -35,6 +35,7 @@ const NAV_ITEMS: Array<{ to: string; end?: boolean; label: string; hint: string;
   { to: "/tokens", label: vocabulary.token.many, hint: vocabulary.token.hint },
   { to: "/settings", label: vocabulary.settings.one, hint: `${vocabulary.settings.hint} — ${vocabulary.operator.hint}`, operatorOnly: true },
 ];
+import { ManualPage } from "./pages/ManualPage.tsx";
 
 export function App() {
   // The Settings/Control Panel nav link only shows for an operator/Sysop (EPIC.md Decisions
@@ -132,6 +133,7 @@ export function App() {
             <Route path="/tokens" element={<TokensPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             {PANIC_TEST_ENABLED && <Route path="/panic-test" element={<PanicTest />} />}
+            <Route path="/manual" element={<ManualPage />} />
             <Route path="*" element={<NotFoundError subject="This page" />} />
           </Routes>
         </ErrorBoundary>

@@ -1,0 +1,237 @@
+kernal/tests/banner.test.ts
+  s_2209f22f830d7f::t_d067c6ad52edff 3-25
+  s_2209f22f830d7f::t_bdf1eb27fa2305 36-74
+  s_2209f22f830d7f::t_e28f54e7864a7b 1-2,26-35,75-76
+kernal/docs/index-retrieval.md
+  s_2209f22f830d7f::t_1bc850cece1f06 1-61
+kernal/.pi/extensions/teleport/cli.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-77
+kernal/.pi/extensions/kernal-report/lib.ts
+  s_2209f22f830d7f::t_b7d7679c1e24a2 72,81,89
+  s_2209f22f830d7f::t_1bc850cece1f06 1-71,73-80,82-88,90-107
+kernal/tests/admin.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-638
+.env.example
+  s_2209f22f830d7f::t_4e5b2f611bfeb5 1,5-6
+kernal/tests/voice.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-68
+kernal/docs/summarizer-benchmark.md
+  s_2209f22f830d7f::t_1bc850cece1f06 1-21
+kernal/tests/extensions.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-371
+kernal/scripts/install.sh
+  s_2209f22f830d7f::t_f7e18c6e11aaeb 181-187,189-194
+  s_2209f22f830d7f::t_5c9f99a9dc4c3e 233-236,238-239,247
+  s_2209f22f830d7f::t_a3d6932847bf54 1-144,148,156,163-174,188,211,214-232,237,240-246,251
+  s_2209f22f830d7f::t_7554df8bbfa47d 155
+  s_2209f22f830d7f::t_903c7634198bbc 145-147,149-154,157-162,175-180,195-210,212-213,248-250,252-253
+kernal/.pi/extensions/kernal-admin/server.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-141
+kernal/scripts/package.sh
+  s_2209f22f830d7f::t_1bc850cece1f06 1-108
+kernal/.pi/extensions/connect/index.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-20,22-77,79-120,122-305,307-357
+  s_2209f22f830d7f::t_b2b55d88796abe 21,78,121,306
+kernal/tests/live.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-93
+kernal/docs/architecture.md
+  s_2209f22f830d7f::t_1bc850cece1f06 1-248
+kernal/.pi/extensions/kernal-voice/lib.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-41
+kernal/tests/harness.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-111
+kernal/.pi/extensions/kernal-admin/lib.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-158
+kernal/package.json
+  s_2209f22f830d7f::t_1bc850cece1f06 1-2,4-19
+  s_2209f22f830d7f::t_607cc1148a9ffe 3
+kernal/scratch/abfold.mjs
+  s_2209f22f830d7f::t_1bc850cece1f06 1-26
+kernal/.pi/extensions/compaction/index.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-29,31,33,35-36,40-41,44,46-47,49-51,54-149,151-189,191-241
+  s_2209f22f830d7f::t_534c985163e6e6 30,32,34,37-39,42-43,45,48,52-53
+  s_2209f22f830d7f::t_edb6f840b41a04 150,190
+kernal/.pi/extensions/teleport/store-factory.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-6,8-9,11-12
+  s_2209f22f830d7f::t_bcd938ca332ba9 7,10
+kernal/.pi/extensions/kernal-banner/index.ts
+  s_2209f22f830d7f::t_f67b0a85ca6ef2 2-28
+  s_2209f22f830d7f::t_1a43a3c00ab12d 43
+  s_2209f22f830d7f::t_de726ad07d0911 1
+  s_2209f22f830d7f::t_ac2902e4568a44 29-31,40-42
+  s_2209f22f830d7f::t_81ccffe1295054 44-46
+  s_80ab5d6d148e87::t_6b713bc197f567 32-39,47-50
+kernal/.pi/extensions/compaction/lib.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-181,184-265
+  s_2209f22f830d7f::t_9dc37a07a5a7ff 182-183
+kernal/.pi/extensions/kernal-context/index.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-21,23-41,43-45,47-211
+  s_2209f22f830d7f::t_057433017e3cc4 22,42,46
+kernal/.pi/extensions/teleport/index.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-263
+kernal/.pi/extensions/kernal-codebase-index/index.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-21,23-36,38-183,185-549
+  s_2209f22f830d7f::t_057433017e3cc4 22,37,184
+kernal/.pi/extensions/kernal-admin/app.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-1740
+kernal/tests/codebase-index.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-772
+kernal/tests/lsp.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-61
+kernal/tests/report.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-10,12-88,90-125
+  s_2209f22f830d7f::t_48ef09f953abb1 89
+  s_2209f22f830d7f::t_b7d7679c1e24a2 11
+kernal/.pi/extensions/kernal-update/lib.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-39
+kernal/tests/e2e.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-37
+.codebase-index/config.json
+  s_2209f22f830d7f::t_1bc850cece1f06 3-4
+kernal/tests/context.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-307
+kernal/.pi/extensions/connect/settings.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-138
+kernal/tests/install-migration.test.ts
+  s_2209f22f830d7f::t_ef7b7ae1e1e485 31-33
+  s_2209f22f830d7f::t_c37264e462f4cf 14
+  s_2209f22f830d7f::t_9f9748d6401345 1-13,15-30,34-121,126,128-146
+  s_2209f22f830d7f::t_b0dde478c268bd 122-125,127
+kernal/tests/compaction.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-212
+kernal/.pi/extensions/teleport/outfitter-store.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-222
+kernal/tests/env-compat.test.ts
+  s_2209f22f830d7f::t_22516680fedc1b 3-76
+  s_2209f22f830d7f::t_6d128bdfe08b0a 1-2
+kernal/docs/rename.md
+  s_2209f22f830d7f::t_de9373da49c175 1-135
+kernal/.pi/extensions/kernal-context/report.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-198
+kernal/.pi/extensions/kernal-update/index.ts
+  s_2209f22f830d7f::t_677b4de715cbab 15,24,32,75
+  s_2209f22f830d7f::t_1bc850cece1f06 1-14,16-23,25-31,33-74,76-117
+kernal/.pi/extensions/kernal-codebase-index/lib.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-494
+kernal/docs/index-questions.json
+  s_2209f22f830d7f::t_1bc850cece1f06 1-58
+kernal/tests/update.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-133
+kernal/.pi/mcp.json
+  s_2209f22f830d7f::t_1bc850cece1f06 1-26
+kernal/.pi/extensions/connect/lib.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-325
+kernal/scripts/index-eval.mjs
+  s_2209f22f830d7f::t_1bc850cece1f06 1-126
+kernal/tests/settings.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-124
+kernal/.pi/extensions/kernal-admin/subagents.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-26,28-48,50-398
+  s_2209f22f830d7f::t_057433017e3cc4 27,49
+kernal/.pi/extensions/teleport/lib.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-14,16-89,91-300
+  s_2209f22f830d7f::t_bcd938ca332ba9 15,90
+.gitignore
+  s_2209f22f830d7f::t_1bc850cece1f06 7-10,12-19,23,27
+kernal/.pi/extensions/kernal-report/index.ts
+  s_2209f22f830d7f::t_b7d7679c1e24a2 43,52
+  s_2209f22f830d7f::t_58a4a3eb537ccf 17,28,32,51,102
+  s_2209f22f830d7f::t_5bfadd9cd3d043 104
+  s_2209f22f830d7f::t_1bc850cece1f06 1-16,18-27,29-31,33-42,44-50,53-101,103,105-106
+kernal/.pi/extensions/_shared/env.ts
+  s_2209f22f830d7f::t_2bd1b01631ffcd 1-34
+kernal/README.md
+  s_2209f22f830d7f::t_1bc850cece1f06 1-605
+README.md
+  s_2209f22f830d7f::t_1bc850cece1f06 6,8,11,47
+kernal/.pi/extensions/kernal-admin/index.ts
+  s_2209f22f830d7f::t_057433017e3cc4 40,410
+  s_2209f22f830d7f::t_1bc850cece1f06 1-39,41-409,411-415
+kernal/tests/install.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-20,22-69,101-175
+  s_2209f22f830d7f::t_3ada679fa18a42 73-93,95-100
+  s_2209f22f830d7f::t_b2bd027728d3bd 94
+  s_2209f22f830d7f::t_ef9397808acddf 21
+  s_2209f22f830d7f::t_2c81716ddadb35 70-72
+kernal/bin/kernal
+  s_2209f22f830d7f::t_1bc850cece1f06 1-9,24-99,102-107
+  s_2209f22f830d7f::t_9f57c5eb050016 10-23
+  s_2209f22f830d7f::t_73d3cdb5c13c95 100-101
+kernal/scripts/prebundle.sh
+  s_2209f22f830d7f::t_1bc850cece1f06 1-22,25-37
+  s_2209f22f830d7f::t_5937559a690faa 23-24
+kernal/.pi/extensions/kernal-banner/lib.ts
+  s_2209f22f830d7f::t_b5e20e0dd2ee1a 49-64
+  s_2209f22f830d7f::t_d45ee1d5939351 1
+  s_2209f22f830d7f::t_99c521ead083b7 106-117
+  s_2209f22f830d7f::t_21185a955005fb 2-48,65-105,118-126
+kernal/.pi/extensions/kernal-voice/index.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-12,14-15,17-21,23-32,34,36-37,39-42
+  s_2209f22f830d7f::t_228a013515bf73 13,16,22,33,35,38
+kernal/.codebase-index/config.json
+  s_25c805ebe232f3::t_a0e922b2343ff8 1-8
+kernal/.gitignore
+  s_25c805ebe232f3::t_a4f9880db8720f 1-5
+kernal/.pi/agent/lsp.json
+  s_25c805ebe232f3::t_c93557269cb442 1-80
+kernal/.pi/extensions/connect/settings-merge.ts
+  s_25c805ebe232f3::t_d6214c2ea5f4b2 1-36
+kernal/.pi/extensions/kernal-context/lib.ts
+  s_25c805ebe232f3::t_c8749f2032f848 1-149
+kernal/.pi/npm/.gitignore
+  s_25c805ebe232f3::t_99bb9c6520a344 1-4
+kernal/.pi/npm/package-lock.json
+  s_25c805ebe232f3::t_65cfacfc25dad8 1-4390
+kernal/.pi/npm/package.json
+  s_25c805ebe232f3::t_015ca0e4ac0b47 1-14
+kernal/.pi/powerline-footer/inbox.jsonl
+  s_25c805ebe232f3::t_98ea3a90dadbb9 1
+kernal/.pi/settings.json
+  s_25c805ebe232f3::t_2bbdcec8c3411a 1-41
+kernal/docs/compaction-research.md
+  s_25c805ebe232f3::t_b469847cb29cd8 1-59
+kernal/package-lock.json
+  s_2209f22f830d7f::t_919acac68fb713 1-1916
+kernal/tests/connect.test.ts
+  s_25c805ebe232f3::t_95bdb6518f0fab 1-290
+kernal/tests/resolve-pi.mjs
+  s_25c805ebe232f3::t_7f5909079fdf73 1-12
+kernal/tests/subagents.test.ts
+  s_25c805ebe232f3::t_b92fac681ba9b5 1-46
+kernal/tests/teleport-outfitter.test.ts
+  s_25c805ebe232f3::t_e01111b796fccc 1-184
+kernal/tests/teleport.test.ts
+  s_25c805ebe232f3::t_9605a2a7ef60d5 1-303
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "f34dbb5c267a4704687e5c24d1078b79ed7a2a41",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_80ab5d6d148e87": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aa78223a4f2919015",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

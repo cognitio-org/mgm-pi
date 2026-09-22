@@ -6,21 +6,41 @@
 // pure string/DOM-parsing function (no mermaid import) so it can run and be tested without a real
 // mermaid render -- see test/mermaid-safety.test.ts.
 
-const UNSAFE_PATTERNS: RegExp[] = [
-  /<script[\s>]/i,
-  /<script$/i,
-  /\bon[a-z]+\s*=/i, // onclick=, onerror=, onload=, ... as an attribute
-  /javascript:/i,
-  /<foreignobject[\s>]/i,
-];
+const SVG_NS = "http://www.w3.org/2000/svg";
+const URL_ATTRS = new Set(["href", "xlink:href", "src", "action", "formaction"]);
 
-/** True if `svg` contains no script tags, event-handler attributes, javascript: URLs or
- * <foreignObject> (mermaid's own escape hatch for arbitrary HTML). Checked as a plain string scan
- * (cheap, works anywhere) rather than only a parsed-DOM walk, since a string that never reaches
- * the DOM parser as an element (e.g. inside an attribute value string) can't smuggle it in either
- * way -- but a substring match is deliberately the stricter, over-inclusive check. */
+/** True if `svg` contains no <script>, no <foreignObject> (mermaid's escape hatch for arbitrary
+ * HTML), no element outside the SVG namespace (HTML that broke out of the SVG), no on*= event
+ * handler attribute and no javascript:/vbscript: link.
+ *
+ * Checked on the parsed tree, with the *HTML* parser -- the same parser dangerouslySetInnerHTML
+ * will use, so there's no parser differential to hide in and character references such as
+ * `&#106;avascript:` are already decoded. (An earlier version regex-scanned the raw string: that
+ * missed entity-encoded URLs and rejected harmless diagrams whose label *text* merely read
+ * "once=1" or "javascript:".) */
 export function isSafeMermaidMarkup(svg: string): boolean {
-  return !UNSAFE_PATTERNS.some((re) => re.test(svg));
+  if (typeof DOMParser === "undefined") return false;
+  let doc: Document;
+  try {
+    doc = new DOMParser().parseFromString(`<!doctype html><body>${svg}`, "text/html");
+  } catch {
+    return false;
+  }
+  for (const el of Array.from(doc.body.querySelectorAll("*"))) {
+    if (el.namespaceURI !== SVG_NS) return false;
+    const tag = el.localName.toLowerCase();
+    if (tag === "script" || tag === "foreignobject") return false;
+    for (const attr of Array.from(el.attributes)) {
+      const name = attr.name.toLowerCase();
+      if (name.startsWith("on")) return false;
+      if (URL_ATTRS.has(name)) {
+        // Browsers ignore ASCII whitespace/control characters inside a URL scheme.
+        const value = attr.value.replace(/[\u0000-\u0020\u007f]/g, "").toLowerCase();
+        if (/^(javascript|vbscript):/.test(value)) return false;
+      }
+    }
+  }
+  return true;
 }
 
 /** True if `svg` parses as XML with a single root <svg> element and no parser error -- confirms

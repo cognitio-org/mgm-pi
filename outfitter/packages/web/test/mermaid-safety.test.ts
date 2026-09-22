@@ -52,6 +52,22 @@ describe("isSafeMermaidMarkup", () => {
     expect(isSafeMermaidMarkup(svg)).toBe(false);
   });
 
+  it("rejects an entity-encoded javascript: URL (the HTML parser decodes it before use)", () => {
+    const svg = `<svg><a href="&#106;avascript:alert(1)"><text>click</text></a></svg>`;
+    expect(isSafeMermaidMarkup(svg)).toBe(false);
+    expect(isSafeMermaidMarkup(`<svg><a xlink:href=" java\tscript:alert(1)"><text>x</text></a></svg>`)).toBe(false);
+  });
+
+  it("rejects HTML that breaks out of the SVG", () => {
+    expect(isSafeMermaidMarkup(`<svg><text>x</text></svg><img src="x">`)).toBe(false);
+  });
+
+  it("accepts a diagram whose label *text* merely mentions on*= or javascript:", () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg"><text>once=1, onload = x, see javascript: URLs</text></svg>`;
+    expect(isSafeMermaidMarkup(svg)).toBe(true);
+    expect(isSafeMermaidSvg(svg)).toBe(true);
+  });
+
   it("is case-insensitive", () => {
     expect(isSafeMermaidMarkup(`<svg><SCRIPT>evil()</SCRIPT></svg>`)).toBe(false);
     expect(isSafeMermaidMarkup(`<svg><a HREF="JAVASCRIPT:evil()">x</a></svg>`)).toBe(false);

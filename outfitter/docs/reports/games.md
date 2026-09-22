@@ -451,7 +451,7 @@ the full rationale.
 ## Chunk sizes
 
 After rebasing onto main (round five and later) and wiring the desk triggers, measured with
-`vite build` against main at `70973cd`, before and after:
+`vite build` against main at `d545d5c` (web unchanged since `70973cd`), before and after:
 
 | Asset | origin/main | this branch | change |
 |---|---|---|---|
@@ -481,7 +481,7 @@ After the rebase onto main and the trigger wiring, the whole monorepo:
 ```
 $ cd outfitter && npm ci && npm test && npm run build
 web:     Test Files 22 passed (22), Tests 226 passed (226)
-api:     tests 242, pass 240, fail 0 (2 skipped)
+api:     tests 245, pass 243, fail 0 (2 skipped)
 agentd:  tests 146, pass 146, fail 0
 provider-local: tests 2, pass 2
 build:   exit 0

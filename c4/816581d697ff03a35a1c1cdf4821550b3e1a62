@@ -1,0 +1,21 @@
+outfitter/docs/reports/sandbox-startup.md
+  s_2209f22f830d7f::t_cca949993e816b 1-187
+outfitter/docs/specs/gke-sandbox-provider.md
+  s_2209f22f830d7f::t_1d94703a1e8fc3 10,760
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "c4816581d697ff03a35a1c1cdf4821550b3e1a62",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

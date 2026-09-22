@@ -129,9 +129,21 @@ export function markdownToHtml(source: string): string {
   return out.join("\n");
 }
 
+/**
+ * The house palette: light and dark from the OS setting, one accent. Exported so every mgm page
+ * (reports, the /admin web app) shares one look; extend it there rather than inventing another.
+ */
+export const THEME = {
+  light: { fg: "#1a1a1a", muted: "#6b7280", bg: "#ffffff", panel: "#f6f7f9", line: "#e5e7eb" },
+  dark: { fg: "#e8e8e8", muted: "#9aa0a6", bg: "#131415", panel: "#1c1e20", line: "#2a2d30" },
+  accent: "#4f8ef7",
+  font: `ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif`,
+};
+const vars = (t: Record<string, string>) => Object.entries(t).map(([k, v]) => `--${k}: ${v};`).join(" ");
+
 const STYLE = `
-:root { color-scheme: light dark; --fg: #1a1a1a; --muted: #6b7280; --bg: #ffffff; --panel: #f6f7f9; --line: #e5e7eb; }
-@media (prefers-color-scheme: dark) { :root { --fg: #e8e8e8; --muted: #9aa0a6; --bg: #131415; --panel: #1c1e20; --line: #2a2d30; } }
+:root { color-scheme: light dark; ${vars(THEME.light)} }
+@media (prefers-color-scheme: dark) { :root { ${vars(THEME.dark)} } }
 * { box-sizing: border-box; }
 body { margin: 0; padding: 2.5rem 1.5rem 4rem; background: var(--bg); color: var(--fg);
   font: 15px/1.6 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif; }

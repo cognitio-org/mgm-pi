@@ -286,3 +286,40 @@ export function footerStatus(estimate: number, keySpend: number | undefined, key
   const key = keySpend == null ? "" : ` · key ${money(keySpend)}${keyMax ? `/${money(keyMax)}` : ""}${pct !== undefined ? ` (${pct})` : ""}`;
   return `◆ ${money(estimate)}${key}`;
 }
+
+// ---------- asking another extension for something ----------
+/**
+ * pi gives every extension the same event bus (`pi.events`), and that is the only channel between
+ * them: each extension's state lives in its own closure. These two helpers make a request/reply out
+ * of it, so /admin can ask `connect` to re-register its providers, or `mgm-codebase-index` for the
+ * index state, instead of keeping a second copy of either.
+ */
+export type Bus = { emit(channel: string, data: unknown): void; on(channel: string, handler: (data: unknown) => void): () => void };
+type Envelope = { request: any; claim: () => void; reply: (r: { ok: boolean; value?: unknown; error?: string }) => void };
+
+export function busServe(bus: Bus | undefined, channel: string, handler: (request: any) => unknown): () => void {
+  if (!bus?.on) return () => {};
+  return bus.on(channel, async (data) => {
+    const msg = data as Envelope;
+    if (!msg || typeof msg.reply !== "function") return;
+    msg.claim();   // synchronously, before any await, so the caller knows someone is answering
+    try { msg.reply({ ok: true, value: await handler(msg.request) }); }
+    catch (e: any) { msg.reply({ ok: false, error: String(e?.message ?? e) }); }
+  });
+}
+
+/** Resolves with the answer, or undefined when nobody serves the channel. Rejects with the handler's error. */
+export function busRequest<T = any>(bus: Bus | undefined, channel: string, request: unknown, timeoutMs = 60_000): Promise<T | undefined> {
+  return new Promise((resolve, reject) => {
+    if (!bus?.emit) return resolve(undefined);
+    let claimed = false, done = false;
+    const timer = setTimeout(() => { if (!done) { done = true; reject(new Error(`${channel} did not answer in ${Math.round(timeoutMs / 1000)}s`)); } }, timeoutMs);
+    const envelope: Envelope = {
+      request,
+      claim: () => { claimed = true; },
+      reply: (r) => { if (done) return; done = true; clearTimeout(timer); if (r.ok) resolve(r.value as T); else reject(new Error(r.error)); },
+    };
+    bus.emit(channel, envelope);
+    if (!claimed && !done) { done = true; clearTimeout(timer); resolve(undefined); }
+  });
+}

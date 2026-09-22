@@ -239,6 +239,45 @@ Loading this package at all needs a pre-bundling step, for reasons in
 One trap: running an installed bundle from inside this checkout loads both copies of the extensions
 and pi refuses the duplicate tools. Run the installed `mgm` anywhere else, or use `bin/mgm` here.
 
+## Web admin (`/admin`)
+
+`/admin` opens a local web page for the things that are awkward in a terminal: what the agent is
+running, the connections and keys, the model, the codebase index settings and the subagent models.
+It is served by the running agent itself, so it sees exactly what the session sees, and it goes away
+with it.
+
+- **Overview**: the model and provider in use, thinking level, how full the context window is, index
+  state, whether each backend is reachable, and the mgm and pi versions.
+- **Connections**: router URL and key, OpenRouter key, local server URL and default local model, your
+  name. Keys are only ever shown as `set (…1234)`; *Replace* takes a new one, *Remove* deletes it.
+  *Test connection* tries the values in the form before you save them and reports reachable,
+  unreachable or the provider's own refusal (`401: User not found.`). Saving writes the same `.env`
+  `/setup` writes and re-registers the providers at once, no restart (your name reaches the banner at
+  the next start).
+- **Model**: every model the connected backends offer, filterable. Picking one switches the session
+  and saves it as the default, like `/connect`.
+- **Codebase index**: status with *Update* and *Rebuild*, and every setting the `/index` dialog edits,
+  with the same validation: the embedding model picker over the local server and the router (picking
+  one sets endpoint, model, dimensions and, for the router, the key together), *Measure* for the
+  dimension count, search and indexing settings, and reranking on or off with a model from the
+  router. It says when a change needs a rebuild, and that the indexer reads its settings at start, so
+  saved changes reach search after a restart. When the repository has its own
+  `.codebase-index/config.json`, the fields it overrides say so.
+- **Subagents**: the `subagents` block of the agent's `settings.json`, read-only for now.
+
+`/admin index` (or `connections`, `model`, `subagents`) opens straight at that page, `/admin status`
+says where it is, `/admin stop` stops it.
+
+**Security.** The server listens on 127.0.0.1 only, on a port the system picks, and makes a new
+random token each time it starts. The token travels in the URL's `#fragment`, which browsers never
+send to a server, and the page sends it back in a header on every API call; a request without it is
+refused, as is any request whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>` (DNS
+rebinding) or whose `Origin` is another site. Writes must be JSON, which a cross-site form cannot
+send. Keys go into the page masked and never come back out; a response that would carry one in full
+is withheld. The server stops when mgm exits, on `/admin stop`, and after 15 minutes without use
+(`MGM_ADMIN_IDLE_MINUTES`; an open tab's background refresh does not count as use).
+`MGM_NO_BROWSER=1` prints the link instead of opening it.
+
 ## Context window (`/context`)
 
 What is actually in the window, measured from the request pi sends rather than guessed from the

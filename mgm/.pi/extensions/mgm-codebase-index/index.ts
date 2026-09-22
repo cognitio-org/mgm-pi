@@ -18,11 +18,11 @@ import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import { renderPanel } from "../connect/lib.ts";
+import { busServe, renderPanel } from "../connect/lib.ts";
 import {
   FIELDS, PACKAGE, SUBCOMMANDS, actions, applyEdit, configFromView, configView, defaultConfig, fieldRow, getAt, indexStatusLine,
-  docsKnowledgeBaseUpdate, embeddingBlock, embeddingChoiceLabel, embeddingProblem, hiddenSourceDirs, invalidatesIndex, loadPlan, maskSecret, panelRows, parseEmbeddingChoice, parseStatus, piDocsCandidates, refreshRouterKey, rerankerBlock, rerankerProblem, resultText, routerFromEnv, shouldSeed,
-  setAt,
+  applyEmbeddingChoice, docsKnowledgeBaseUpdate, embeddingChoiceLabel, embeddingProblem, hiddenSourceDirs, invalidatesIndex, loadPlan, maskSecret, panelRows, parseEmbeddingChoice, parseStatus, piDocsCandidates, refreshRouterKey, rerankerBlock, rerankerProblem, resultText, routerFromEnv, shouldSeed,
+  setReranking,
   type ConfigView, type EmbeddingChoice, type Embeddings, type Field, type IndexStatus, type LoadPlan, type PanelData,
 } from "./lib.ts";
 
@@ -34,7 +34,7 @@ const distDir = () => join(agentDir(), "npm", "node_modules", PACKAGE, "dist");
 /** Where this install keeps pi's documentation: a bundle's pi/docs, or the checkout's node_modules. */
 export const piDocsDir = () => piDocsCandidates(dirname(agentDir())).find((p) => existsSync(p));
 export const configPath = () => process.env.MGM_INDEX_CONFIG || join(homedir(), ".config", "codebase-index", "config.json");
-const read = (f: string) => { try { return existsSync(f) ? readFileSync(f, "utf8") : undefined; } catch { return undefined; } };
+export const read = (f: string) => { try { return existsSync(f) ? readFileSync(f, "utf8") : undefined; } catch { return undefined; } };
 
 /** Returns the path when it wrote one, else undefined. */
 export function seedConfig(): string | undefined {
@@ -47,8 +47,52 @@ export function seedConfig(): string | undefined {
   } catch { return undefined; }
 }
 
+/** The project's own config file, which overrides the user's for the keys it declares. */
+export const projectConfigPath = (cwd: string) => join(cwd, ".codebase-index", "config.json");
+
+/** The two layers the package merges, as configView reads them. */
+export function currentView(cwd: string): ConfigView {
+  const project = projectConfigPath(cwd);
+  return configView([
+    { file: project, scope: "project", text: read(project) },
+    { file: configPath(), scope: "user", text: read(configPath()) },
+  ], process.env);
+}
+
+/**
+ * Where edits go: always the user's file. A project file replaces whole top-level blocks (all of
+ * `search`, all of `customProvider`), so writing one field there would silently drop the user's
+ * other settings in that block. A project file is created only on purpose ("Copy these settings into
+ * this project"), and projectOverrides says which edited fields it shadows.
+ */
+export function settingsFile(_cwd: string): string {
+  return configPath();
+}
+
+/** Top-level blocks the project's own config declares, which win over the user's for this repo. */
+export function projectOverrides(cwd: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(read(projectConfigPath(cwd)) ?? "{}");
+    return parsed && typeof parsed === "object" ? Object.fromEntries(Object.entries(parsed).filter(([k]) => k !== "knowledgeBases")) : {};
+  } catch { return {}; }
+}
+
+/** Written 0600 when it holds a key: the package reads reranker.apiKey from this file, in plaintext. */
+export function writeConfig(file: string, config: Record<string, any>) {
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
+  if (config?.reranker?.apiKey || config?.customProvider?.apiKey) { try { chmodSync(file, 0o600); } catch {} }
+}
+
+/** The file's object, or (no file yet) what is in effect, so a first write starts from it. */
+export function readConfigObject(file: string, view: ConfigView): Record<string, any> {
+  const text = read(file);
+  if (text) { try { const parsed = JSON.parse(text); if (parsed && typeof parsed === "object") return parsed; } catch {} }
+  return configFromView(view);
+}
+
 /** Does the embedding server answer, and does it list the configured model? */
-async function probeEmbeddings(baseUrl: string | undefined, model: string | undefined): Promise<Embeddings | undefined> {
+export async function probeEmbeddings(baseUrl: string | undefined, model: string | undefined): Promise<Embeddings | undefined> {
   if (!baseUrl) return undefined;
   const root = baseUrl.replace(/\/v1\/?$/, "");
   try {
@@ -65,7 +109,7 @@ async function probeEmbeddings(baseUrl: string | undefined, model: string | unde
 }
 
 /** Embedding-capable models the server reports; LM Studio types them, plain OpenAI servers do not. */
-async function embeddingModels(baseUrl: string): Promise<string[]> {
+export async function embeddingModels(baseUrl: string): Promise<string[]> {
   const root = baseUrl.replace(/\/v1\/?$/, "");
   try {
     const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 3000);
@@ -81,7 +125,7 @@ async function embeddingModels(baseUrl: string): Promise<string[]> {
 }
 
 /** Embedding deployments the router advertises, with the vector size it declares when it does. */
-async function routerEmbeddingModels(baseUrl: string, apiKey: string): Promise<EmbeddingChoice[]> {
+export async function routerEmbeddingModels(baseUrl: string, apiKey: string): Promise<EmbeddingChoice[]> {
   try {
     const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 4000);
     const res = await fetch(`${baseUrl.replace(/\/v1\/?$/, "")}/model/info`, { headers: { authorization: `Bearer ${apiKey}` }, signal: ctl.signal });
@@ -99,7 +143,7 @@ async function routerEmbeddingModels(baseUrl: string, apiKey: string): Promise<E
 }
 
 /** Ask the server for one embedding and count it: the only reliable source for the dimension. */
-async function detectDimensions(baseUrl: string, model: string, apiKey = "lm-studio"): Promise<number | undefined> {
+export async function detectDimensions(baseUrl: string, model: string, apiKey = "lm-studio"): Promise<number | undefined> {
   try {
     const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 20_000);
     const res = await fetch(`${baseUrl}/embeddings`, {
@@ -115,7 +159,7 @@ async function detectDimensions(baseUrl: string, model: string, apiKey = "lm-stu
 }
 
 /** Rerank models a LiteLLM-style router advertises (mode "rerank"); empty for anything else. */
-async function rerankModels(baseUrl: string, apiKey: string): Promise<string[]> {
+export async function rerankModels(baseUrl: string, apiKey: string): Promise<string[]> {
   try {
     const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 4000);
     const res = await fetch(`${baseUrl.replace(/\/v1\/?$/, "")}/model/info`, { headers: { authorization: `Bearer ${apiKey}` }, signal: ctl.signal });
@@ -230,11 +274,7 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
 
   async function collect(ctx: ExtensionCommandContext): Promise<PanelData> {
     const s = await status(ctx);
-    const projectFile = join(ctx.cwd, ".codebase-index", "config.json");
-    const view = configView([
-      { file: projectFile, scope: "project", text: read(projectFile) },
-      { file: configPath(), scope: "user", text: read(configPath()) },
-    ], process.env);
+    const view = currentView(ctx.cwd);
     const [embeddings, basesText, tracked] = await Promise.all([probeEmbeddings(view.baseUrl, view.model), run("knowledge_base_list", {}, ctx), trackedFiles(ctx.cwd)]);
     const listed = basesText.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("/") || l.startsWith("~"));
     const knowledgeBases = listed.length ? listed : view.knowledgeBases;
@@ -268,26 +308,11 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
     return typed?.trim() || undefined;
   }
 
-  /** Read the file the settings live in (or the user's, creating it on first write). */
-  function settingsTarget(ctx: ExtensionCommandContext, view: ConfigView): string {
-    return view.file ?? configPath();
-  }
-  /** Written 0600 when it holds a key: the package reads reranker.apiKey from this file, in plaintext. */
-  function writeConfig(file: string, config: Record<string, any>) {
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
-    if (config?.reranker?.apiKey) { try { chmodSync(file, 0o600); } catch {} }
-  }
-  function readConfigObject(file: string, view: ConfigView): Record<string, any> {
-    const text = read(file);
-    if (text) { try { const parsed = JSON.parse(text); if (parsed && typeof parsed === "object") return parsed; } catch {} }
-    return configFromView(view);          // no file yet: start from what is in effect
-  }
 
   /** Field picker → edit → write → offer the rebuild that a changed embedding needs. */
   async function editSettings(ctx: ExtensionCommandContext, data: PanelData): Promise<boolean> {
     let view = data.config;
-    let file = settingsTarget(ctx, view);
+    let file = settingsFile(ctx.cwd);
     let config = readConfigObject(file, view);
     let touched = false;
     for (;;) {
@@ -308,12 +333,14 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
       if (field.path[0] === "reranker" && field.kind === "bool") {
         const answer = await ctx.ui.select(`${field.label} — ${field.help}`, ["on", "off"]);
         if (answer === undefined) continue;
-        if (answer === "off") { config = setAt(config, ["reranker", "enabled"], false); writeConfig(file, config); touched = true; ctx.ui.notify("Reranking off", "info"); continue; }
         const router = routerFromEnv(process.env);
-        if (!router.baseUrl || !router.apiKey) { ctx.ui.notify("Reranking runs on the LiteLLM router; run /setup to add its URL and key first.", "error"); continue; }
+        if (answer === "off") { config = setReranking(config, false, router).config!; writeConfig(file, config); touched = true; ctx.ui.notify("Reranking off", "info"); continue; }
+        if (!router.baseUrl || !router.apiKey) { ctx.ui.notify(setReranking(config, true, router).error!, "error"); continue; }
         const model = await pickRerankModel(ctx, router, String(getAt(config, ["reranker", "model"]) ?? ""));
         if (!model) continue;
-        config = { ...config, reranker: rerankerBlock(router, model) };
+        const on = setReranking(config, true, router, model);
+        if (on.error) { ctx.ui.notify(on.error, "error"); continue; }
+        config = on.config!;
         writeConfig(file, config);
         touched = true;
         ctx.ui.notify(`Reranking on with ${model}. Result snippets go to the router and its upstream provider, billed to the router key (${maskSecret(router.apiKey)}), which is stored in ${file} (owner-only).`, "warning");
@@ -352,14 +379,15 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
             raw = typed.trim();
           } else {
             const choice = parseEmbeddingChoice(answer, choices)!;
-            const block = embeddingBlock(choice, { localUrl, router });
-            let dimensions = block.customProvider.dimensions;
+            let dimensions = choice.dimensions;
             if (!dimensions) {
               ctx.ui.setStatus("index", "⌕ measuring embedding…");
-              dimensions = await detectDimensions(block.customProvider.baseUrl!, choice.id, choice.source === "router" ? router.apiKey : undefined);
-              if (!dimensions) { ctx.ui.notify(`${choice.id} did not answer an embeddings call, so its dimension count is unknown. Set it by hand if you know it.`, "error"); continue; }
+              dimensions = await detectDimensions(choice.source === "router" ? router.baseUrl! : localUrl, choice.id, choice.source === "router" ? router.apiKey : undefined);
             }
-            config = { ...config, ...block, customProvider: { ...block.customProvider, dimensions } };
+            const picked = applyEmbeddingChoice(config, choice, { localUrl, router }, dimensions);
+            if (picked.error) { ctx.ui.notify(picked.error, "error"); continue; }
+            config = picked.config!;
+            dimensions = config.customProvider.dimensions;
             writeConfig(file, config);
             touched = true;
             ctx.ui.notify(`Embeddings → ${choice.source === "router" ? "router" : "local server"} ${choice.id} at ${dimensions} dimensions  (saved to ${file})`, "info");
@@ -390,7 +418,7 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
         if (!router.baseUrl || !router.apiKey) { ctx.ui.notify("Reranking runs on the LiteLLM router; run /setup to add its URL and key first.", "error"); continue; }
         const model = await pickRerankModel(ctx, router, String(current ?? ""));
         if (!model) continue;
-        config = { ...config, reranker: rerankerBlock(router, model) };   // endpoint and key come from the environment
+        config = setReranking(config, true, router, model).config!;   // endpoint and key come from the environment
         writeConfig(file, config);
         touched = true;
         ctx.ui.notify(`Rerank model → ${model}  (saved to ${file})`, "info");
@@ -480,6 +508,25 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
         showPanel(ctx, data);
       }
     },
+  });
+
+  // /admin asks here for what only this closure knows: the index state and the tools that change it.
+  let rebuilding: Promise<unknown> | undefined;
+  busServe((pi as any).events, "mgm:index", async (req: { op: string; ctx?: any }) => {
+    const ctx = req?.ctx;
+    if (!ctx) throw new Error("no session yet");
+    if (req.op === "status") {
+      const [s, basesText] = await Promise.all([status(ctx), run("knowledge_base_list", {}, ctx)]);
+      const bases = basesText.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("/") || l.startsWith("~"));
+      return { status: s, knowledgeBases: bases, toolCount: tools.size, rebuilding: !!rebuilding };
+    }
+    if (req.op === "rebuild" || req.op === "update") {
+      if (rebuilding) return { started: false, already: true };
+      // Minutes on a large repo: start it and answer now; progress shows through status.
+      rebuilding = run("index_codebase", req.op === "rebuild" ? { force: true } : {}, ctx).finally(() => { rebuilding = undefined; });
+      return { started: true };
+    }
+    throw new Error(`unknown op ${req.op}`);
   });
 
   // Rotating the router key should not require a visit to the dialog.

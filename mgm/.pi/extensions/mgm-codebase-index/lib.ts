@@ -404,6 +404,27 @@ export function rerankerProblem(config: Record<string, any>, router: Router = { 
   return undefined;
 }
 
+/**
+ * Turn reranking on (with a model from the router) or off (keeping the model for next time). One
+ * place for the rule, so the /index dialog and the web admin cannot disagree about it.
+ */
+export function setReranking(config: Record<string, any>, enabled: boolean, router: Router, model?: string): { config?: Record<string, any>; error?: string } {
+  if (!enabled) return { config: setAt(config, ["reranker", "enabled"], false) };
+  if (!router.baseUrl || !router.apiKey) return { error: "Reranking runs on the LiteLLM router; run /setup to add its URL and key first." };
+  const chosen = (model ?? (config as any).reranker?.model ?? "").trim();
+  if (!chosen) return { error: "Pick a rerank model to turn reranking on." };
+  return { config: { ...config, reranker: rerankerBlock(router, chosen) } };
+}
+
+/** Apply a picked embedding model once its dimension count is known: endpoint, model, size, key. */
+export function applyEmbeddingChoice(config: Record<string, any>, choice: EmbeddingChoice, sources: { localUrl: string; router?: Router }, dimensions: number | undefined): { config?: Record<string, any>; error?: string } {
+  const block = embeddingBlock(choice, sources);
+  if (!block.customProvider.baseUrl) return { error: choice.source === "router" ? "The router URL is not set; add it under connections first." : "No local server URL is set." };
+  const size = block.customProvider.dimensions ?? dimensions;
+  if (!size || !Number.isInteger(size) || size < 8) return { error: `${choice.id} did not answer an embeddings call, so its dimension count is unknown. Set it by hand if you know it.` };
+  return { config: { ...config, ...block, customProvider: { ...block.customProvider, dimensions: size } } };
+}
+
 /** Keep a stored block in step with the environment, so rotating the router key just works. */
 export function refreshRouterKey(config: Record<string, any>, router: Router): Record<string, any> | undefined {
   const r = (config as any).reranker;

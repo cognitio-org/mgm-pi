@@ -20,7 +20,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import {
   type Backend, type ModelMeta, type LmStudioMeta, backends, parseEnvText, parseModelInfo, parseLmStudioModels, parseSpendHeaders, rootUrl, normalizeBaseUrl,
-  sessionEstimate, money, footerStatus, budgetRows, renderPanel, cleanKey, keyCheckUrl, authFailureText,
+  sessionEstimate, money, footerStatus, budgetRows, renderPanel, cleanKey, keyCheckUrl, authFailureText, busServe,
 } from "./lib.ts";
 
 /** The .env that /setup writes: next to the agent dir (bundle root or the mgm/ checkout). */
@@ -40,7 +40,17 @@ export function upsertEnv(text: string, values: Record<string, string | undefine
   return out.join("\n").replace(/\n*$/, "\n");
 }
 
-function loadEnv(cwd: string): Record<string, string> {
+/** Write values into the .env and the running process, as /setup does. Returns the file written. */
+export function writeEnvValues(values: Record<string, string | undefined>): string {
+  const file = envFilePath();
+  let text = ""; try { text = readFileSync(file, "utf8"); } catch {}
+  writeFileSync(file, upsertEnv(text, values));
+  for (const [k, v] of Object.entries(values)) if (v !== undefined) process.env[k] = v;
+  return file;
+}
+
+/** Every .env the agent reads, nearest last, with the process environment on top. */
+export function loadEnv(cwd: string): Record<string, string> {
   let out: Record<string, string> = {};
   for (const f of [join(homedir(), "localllm", ".env"), envFilePath(), join(cwd, "..", ".env"), join(cwd, ".env")]) {
     if (existsSync(f)) out = { ...out, ...parseEnvText(readFileSync(f, "utf8")) };
@@ -48,7 +58,7 @@ function loadEnv(cwd: string): Record<string, string> {
   return { ...out, ...(process.env as Record<string, string>) };
 }
 
-async function getJson(url: string, apiKey: string, timeoutMs = 4000): Promise<any | undefined> {
+export async function getJson(url: string, apiKey: string, timeoutMs = 4000): Promise<any | undefined> {
   try {
     const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), timeoutMs);
     const res = await fetch(url, { headers: { authorization: `Bearer ${apiKey}` }, signal: ctl.signal });
@@ -72,6 +82,38 @@ async function checkKey(b: Backend, timeoutMs = 5000): Promise<boolean> {
   } catch {}
   return true;   // unreachable / other errors: not the key's fault, register as usual
 }
+export type ConnectionTest = { state: "reachable" | "unreachable" | "rejected" | "not-configured"; detail: string; models?: number };
+
+/**
+ * Does this backend answer, and does it accept the key? The same endpoints start-up uses
+ * (keyCheckUrl), with the provider's own words when it refuses. Never echoes the key.
+ */
+export async function testConnection(b: Pick<Backend, "id" | "baseUrl" | "apiKey">, timeoutMs = 6000): Promise<ConnectionTest> {
+  if (b.id !== "lmstudio" && !b.apiKey) return { state: "not-configured", detail: "no key saved" };
+  const call = async (url: string, auth = true) => {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), timeoutMs);
+    try { return await fetch(url, { headers: auth ? { authorization: `Bearer ${b.apiKey}` } : {}, signal: ctl.signal }); }
+    finally { clearTimeout(t); }
+  };
+  try {
+    if (b.id === "lmstudio") {
+      const native = await call(`${rootUrl(b.baseUrl)}/api/v0/models`, false).catch(() => undefined);
+      const res = native?.ok ? native : await call(`${b.baseUrl}/models`, false);
+      if (!res.ok) return { state: "unreachable", detail: `HTTP ${res.status} from ${b.baseUrl}` };
+      const data = ((await res.json().catch(() => ({})))?.data ?? []) as any[];
+      return { state: "reachable", detail: `${data.length} model${data.length === 1 ? "" : "s"} on the server`, models: data.length };
+    }
+    const res = await call(keyCheckUrl(b as Backend)!);
+    if (res.status === 401 || res.status === 403) return { state: "rejected", detail: authFailureText(res.status, await res.text().catch(() => "")) };
+    if (!res.ok) return { state: "unreachable", detail: authFailureText(res.status, await res.text().catch(() => "")) };
+    const body = await res.json().catch(() => ({}));
+    const count = Array.isArray(body?.data) ? body.data.length : undefined;
+    return { state: "reachable", detail: count !== undefined ? `key accepted, ${count} models` : "key accepted", models: count };
+  } catch (e: any) {
+    return { state: "unreachable", detail: e?.name === "AbortError" ? `no answer from ${b.baseUrl} in ${Math.round(timeoutMs / 1000)}s` : `cannot reach ${b.baseUrl} (${e?.cause?.code ?? e?.message ?? e})` };
+  }
+}
+
 const keyHint = (id: string) => id === "openrouter" ? "OpenRouter keys start with sk-or-v1-; paste just the key, no \"Bearer\" or quotes." : "Ask Matthew to check the key.";
 async function discover(b: Backend, litellmMeta: Map<string, ModelMeta>, lmstudioMeta: Map<string, LmStudioMeta>): Promise<string[]> {
   if (!b.discover || process.env.MGM_NO_DISCOVERY) return b.fallback;   // MGM_NO_DISCOVERY: offline / tests
@@ -91,8 +133,8 @@ async function discover(b: Backend, litellmMeta: Map<string, ModelMeta>, lmstudi
 
 // Persist into the agent config dir (PI_CODING_AGENT_DIR when launched via bin/mgm, else
 // ~/.pi/agent), never into the repo pi happens to be running in.
-function settingsPath() { return join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "settings.json"); }
-function saveDefault(provider: string, model: string) {
+export function settingsPath() { return join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "settings.json"); }
+export function saveDefault(provider: string, model: string) {
   const p = settingsPath();
   let s: any = {};
   try { s = JSON.parse(readFileSync(p, "utf8")); } catch {}
@@ -106,10 +148,11 @@ export default async function (pi: ExtensionAPI) {
   const lmstudioMeta = new Map<string, LmStudioMeta>();
   let defs: Backend[] = [];
   const models = new Map<string, string[]>();
+  const registered = new Set<string>();   // backends whose provider is registered with pi right now
 
   async function registerAll(envOverride?: Record<string, string>) {
     const env = { ...loadEnv(process.cwd()), ...(envOverride ?? {}) };
-    litellmMeta.clear(); lmstudioMeta.clear(); reachable.clear(); keyRejected.clear();
+    litellmMeta.clear(); lmstudioMeta.clear(); reachable.clear(); keyRejected.clear(); registered.clear();
     defs = backends(env, litellmMeta, lmstudioMeta);
     await Promise.all(defs.map(async (b) => {
       // A cloud backend without a key is not registered at all: otherwise its models show up in
@@ -124,6 +167,7 @@ export default async function (pi: ExtensionAPI) {
       const ids = await discover(b, litellmMeta, lmstudioMeta);
       models.set(b.id, ids);
       pi.registerProvider(b.id, { name: b.label, baseUrl: b.baseUrl, apiKey: b.apiKey, api: "openai-completions", models: ids.map(b.model) as any });
+      registered.add(b.id);
     }));
   }
   await registerAll();
@@ -172,10 +216,7 @@ export default async function (pi: ExtensionAPI) {
         if (!listed.length) ctx.ui.notify(`Could not reach ${url}; saved anyway. Start the server and run /setup again to pick a model.`, "warning");
       }
 
-      const file = envFilePath();
-      let text = ""; try { text = readFileSync(file, "utf8"); } catch {}
-      writeFileSync(file, upsertEnv(text, values));
-      for (const [k, v] of Object.entries(values)) if (v !== undefined) process.env[k] = v;
+      const file = writeEnvValues(values);
       await registerAll();
       const ok = defs.filter((d) => d.apiKey && !keyRejected.has(d.id)).map((d) => d.id);
       ctx.ui.notify(`Saved ${file}. Connections ready: ${ok.join(", ") || "none"}. Use /connect to pick a model.`, "info");
@@ -204,16 +245,40 @@ export default async function (pi: ExtensionAPI) {
       modelId = ids.length === 1 ? ids[0] : await ctx.ui.select(`Model on ${b.id}`, ids);
       if (!modelId) return;
     }
-    const model = ctx.modelRegistry.find(b.id, modelId);
-    if (!model) { ctx.ui.notify(`Model "${modelId}" not found on ${b.id}. Known: ${ids.join(", ")}`, "error"); return; }
-    if (await pi.setModel(model)) {
-      saveDefault(b.id, modelId);
-      ctx.ui.setStatus("connect", `⇄ ${b.id}/${modelId}`);
-      ctx.ui.notify(`Connected to ${b.id} / ${modelId} (saved as default)`, "info");
-    } else {
-      ctx.ui.notify(`Could not switch to ${b.id}/${modelId}`, "error");
-    }
+    const problem = await selectModel(ctx, b.id, modelId);
+    if (problem) ctx.ui.notify(problem, "error");
+    else ctx.ui.notify(`Connected to ${b.id} / ${modelId} (saved as default)`, "info");
   }
+
+  /** Switch to a model and save it as the default. Returns why not, or undefined on success. */
+  async function selectModel(ctx: Pick<ExtensionCommandContext, "modelRegistry" | "ui">, backendId: string, modelId: string): Promise<string | undefined> {
+    const model = ctx.modelRegistry.find(backendId, modelId);
+    if (!model) return `Model "${modelId}" not found on ${backendId}. Known: ${(models.get(backendId) ?? []).join(", ")}`;
+    if (!(await pi.setModel(model))) return `Could not switch to ${backendId}/${modelId}`;
+    saveDefault(backendId, modelId);
+    ctx.ui.setStatus("connect", `⇄ ${backendId}/${modelId}`);
+    return undefined;
+  }
+
+  /** What the providers look like right now; keys stay here, only whether one is set leaves. */
+  const connectionState = () => defs.map((d) => ({
+    id: d.id, label: d.label, baseUrl: d.baseUrl, keyVar: d.keyVar,
+    hasKey: d.id === "lmstudio" || !!d.apiKey, registered: registered.has(d.id), answered: reachable.has(d.id),
+    rejected: keyRejected.get(d.id), models: models.get(d.id) ?? [],
+  }));
+
+  // /admin (and anything else) asks through the shared event bus rather than duplicating this state.
+  busServe((pi as any).events, "mgm:connect", async (req: { op: string; ctx?: any; provider?: string; model?: string }) => {
+    if (req?.op === "state") return connectionState();
+    if (req?.op === "reload") { await registerAll(); return connectionState(); }
+    if (req?.op === "select") {
+      if (!req.ctx) throw new Error("no session to switch the model in yet");
+      const problem = await selectModel(req.ctx, String(req.provider), String(req.model));
+      if (problem) throw new Error(problem);
+      return { provider: req.provider, model: req.model };
+    }
+    throw new Error(`unknown op ${req?.op}`);
+  });
 
   pi.registerCommand("connect", {
     description: "Connect to lmstudio | litellm | openrouter [model]",

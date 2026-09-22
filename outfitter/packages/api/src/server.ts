@@ -14,6 +14,7 @@ import { AgentLink } from "./agentlink.ts";
 import { SseHub } from "./sse.ts";
 import { LaptopProbe } from "./laptop.ts";
 import { ProviderStatusService } from "./providers-status.ts";
+import { ModelsService } from "./models.ts";
 import { CloudRunProvider } from "./providers/cloudrun.ts";
 import { registerRoutes } from "./routes/index.ts";
 
@@ -65,13 +66,21 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     config.sandboxProvider === "cloudrun" && provider instanceof CloudRunProvider
       ? () => (provider as CloudRunProvider).countRunningExecutions()
       : undefined;
+  const litellmKey = async () => config.litellmAdminKey || secretsBroker.defaultLitellmKey();
   const providerStatus = new ProviderStatusService({
     store,
     sse,
     laptopProbe,
     config,
-    litellmKey: async () => config.litellmAdminKey || secretsBroker.defaultLitellmKey(),
+    litellmKey,
     cloudRunCount,
+  });
+  // E3.7: GET /api/models' backing service, sharing the same key resolver as the provider status
+  // service above so both agree on which key probes LiteLLM's /model/info.
+  const modelsService = new ModelsService({
+    litellmBaseUrl: config.litellmBaseUrl,
+    litellmKey,
+    localModels: config.localModels,
   });
 
   // Auth guards every /api/* route except /api/hooks/* (called by an external service with no IAP
@@ -93,7 +102,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     }
   });
 
-  await registerRoutes(fastify, { store, config, runs, agentLink, sse, laptopProbe, providerStatus });
+  await registerRoutes(fastify, { store, config, runs, agentLink, sse, laptopProbe, providerStatus, modelsService });
   // The down-queue poller only makes sense where AgentLink sockets actually live (role "link" or
   // "all", same condition as registering /agent/ws itself) — see agentLink.startDownQueuePoller's
   // doc comment. The web role never holds a socket for any run, so it's never started there.

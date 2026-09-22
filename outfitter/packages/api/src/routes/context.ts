@@ -5,6 +5,7 @@ import type { AgentLink } from "../agentlink.ts";
 import type { SseHub } from "../sse.ts";
 import type { LaptopProbe } from "../laptop.ts";
 import type { ProviderStatusService } from "../providers-status.ts";
+import type { ModelsService } from "../models.ts";
 
 /** Dependencies every route module needs; built once in server.ts and threaded through. */
 export interface RouteContext {
@@ -15,4 +16,5 @@ export interface RouteContext {
   sse: SseHub;
   laptopProbe: LaptopProbe;
   providerStatus: ProviderStatusService;
+  modelsService: ModelsService;
 }

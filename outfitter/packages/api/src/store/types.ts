@@ -247,6 +247,9 @@ export interface GurusCollection {
   findById(id: string): Promise<Guru | null>;
   list(): Promise<Guru[]>;
   update(id: string, patch: Partial<Guru>): Promise<Guru | null>;
+  /** E3.7: DELETE /api/gurus/:id. Returns false if the guru didn't exist (routes/gurus.ts checks
+   * findById first and 404s before calling this, so false here would only mean a race). */
+  delete(id: string): Promise<boolean>;
 }
 
 export interface EnvironmentsCollection {

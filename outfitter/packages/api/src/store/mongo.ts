@@ -203,6 +203,11 @@ class MongoGurus implements GurusCollection {
     );
     return stripId<Guru>(result);
   }
+
+  async delete(id: string): Promise<boolean> {
+    const result = await this.col.deleteOne({ _id: id });
+    return (result.deletedCount ?? 0) > 0;
+  }
 }
 
 class MongoEnvironments implements EnvironmentsCollection {

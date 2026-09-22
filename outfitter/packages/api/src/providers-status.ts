@@ -20,7 +20,10 @@ import type { SseHub } from "./sse.ts";
 import type { LaptopProbe } from "./laptop.ts";
 import type { SandboxProviderName } from "./config.ts";
 
-const DEFAULT_TIMEOUT_MS = 3_000;
+/** Exported so other services that need a bounded, non-throwing GET against a management API (e.g.
+ * models.ts's LiteLLM /model/info fetch for GET /api/models) can reuse the same timeout/JSON
+ * handling instead of re-implementing it. */
+export const DEFAULT_TIMEOUT_MS = 3_000;
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 const SSE_CHANNEL = "providers";
 
@@ -64,8 +67,9 @@ function failedResponse(err: unknown, timeoutMs: number): JsonResponse {
 
 /** GET with a bearer token, bounded by an AbortController timeout; never throws on a non-2xx or a
  * non-JSON body -- callers read `.ok`/`.status` instead. Only a network failure or the timeout
- * itself rejects, which every probe below catches. */
-async function fetchJson(
+ * itself rejects, which every probe below catches. Exported for models.ts (GET /api/models) to
+ * reuse rather than re-implement (EPIC.md E3.7: "reuse the fetch/parse code in providers-status.ts"). */
+export async function fetchJson(
   url: string,
   headers: Record<string, string>,
   timeoutMs: number,

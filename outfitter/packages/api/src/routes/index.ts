@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { RouteContext } from "./context.ts";
 import { registerSessionRoutes, registerTeleportRoutes } from "./sessions.ts";
 import { registerGuruRoutes } from "./gurus.ts";
+import { registerModelRoutes } from "./models.ts";
 import { registerEnvironmentRoutes } from "./environments.ts";
 import { registerMeRoute } from "./me.ts";
 import { registerTokenRoutes } from "./tokens.ts";
@@ -20,6 +21,7 @@ export async function registerRoutes(app: FastifyInstance, ctx: RouteContext): P
   if (ctx.config.role !== "link") {
     await registerSessionRoutes(app, ctx);
     await registerGuruRoutes(app, ctx);
+    await registerModelRoutes(app, ctx);
     await registerEnvironmentRoutes(app, ctx);
     await registerMeRoute(app, ctx);
     await registerTokenRoutes(app, ctx);

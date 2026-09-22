@@ -1,0 +1,85 @@
+mgm/.pi/extensions/mgm-admin/index.ts
+  s_25c805ebe232f3::t_d4312251a5a854 253-256
+  s_25c805ebe232f3::t_50d94f1a043c1f 336
+  s_25c805ebe232f3::t_b85faf5cb2edf6 43-45
+  s_25c805ebe232f3::t_a96280d503aa19 33
+  s_25c805ebe232f3::t_2b0481cd164a1b 307
+  s_25c805ebe232f3::t_d4fd9c9558c64b 5
+  s_25c805ebe232f3::t_0e6f4dfe8eafaf 168
+  s_25c805ebe232f3::t_ef58f41340a941 321
+  s_25c805ebe232f3::t_2725c088049646 1-4,6-28,30-32,34-42,46-167,169-174,179-252,257-306,308-320,322-335,337-342
+  s_25c805ebe232f3::t_76a94476269702 29
+  s_25c805ebe232f3::t_667c69885df55b 175-178
+mgm/docs/architecture.md
+  s_25c805ebe232f3::t_75588cfc750012 98-131
+mgm/.pi/extensions/connect/lib.ts
+  s_25c805ebe232f3::t_3378bc9a352e47 289-325
+mgm/.pi/extensions/mgm-admin/server.ts
+  s_25c805ebe232f3::t_b38b491336f3c7 53-54,57-58
+  s_25c805ebe232f3::t_4e98459c3ac255 1-52,55-56,59-94,96-141
+  s_25c805ebe232f3::t_53e1be3a8b1bf2 95
+mgm/.pi/extensions/mgm-admin/app.ts
+  s_25c805ebe232f3::t_37271390b2b4ab 212-213
+  s_25c805ebe232f3::t_a1f0ee5b84c698 258
+  s_25c805ebe232f3::t_5fe15915dfef6c 386-388
+  s_25c805ebe232f3::t_e8dd047740c167 851-859
+  s_25c805ebe232f3::t_a4b20a7da9b3a2 174-177
+  s_25c805ebe232f3::t_aa52dcbdc7c197 827
+  s_25c805ebe232f3::t_ae1a0257b64d57 871
+  s_25c805ebe232f3::t_df4da0f82dd8e2 949
+  s_25c805ebe232f3::t_5c7d9f4fe00d1c 539
+  s_25c805ebe232f3::t_c9806f3a910bba 673,675
+  s_25c805ebe232f3::t_79e6637c052910 164
+  s_25c805ebe232f3::t_df07bff42dc2ab 240
+  s_25c805ebe232f3::t_2263a2cbc730d7 248
+  s_25c805ebe232f3::t_022fbc91fff373 814
+  s_25c805ebe232f3::t_70acb5348aaf29 281,283
+  s_25c805ebe232f3::t_06df1dd0b09a14 972,974
+  s_25c805ebe232f3::t_b1f6f5c0229a7e 438
+  s_25c805ebe232f3::t_8c14caf3f35fef 236
+  s_25c805ebe232f3::t_4ba54f028138d5 1-118,120-163,165-173,178-211,214-235,237-239,241-247,249-257,259-280,282,284-385,389-437,439-538,540-672,674,676-813,815-826,828-850,860-870,872-948,950,952-971,973,975-1025
+  s_25c805ebe232f3::t_077a04e4adfce9 951
+  s_25c805ebe232f3::t_63087ebac3bf6d 119
+mgm/README.md
+  s_25c805ebe232f3::t_08c13c25b05ca7 242-280
+mgm/.pi/extensions/connect/index.ts
+  s_25c805ebe232f3::t_03d1ac2e8f4c97 23,43-53,61,85-116,136-137,151,155,170,219,248-260,263-281
+  s_25c805ebe232f3::t_f3dcd7b1ce25f6 282
+mgm/.pi/extensions/mgm-codebase-index/index.ts
+  s_25c805ebe232f3::t_3e9fd8f26e46a2 21,24-25,37,50-62,67,78-93,95,112,128,146,162,277,315,337-338,341-343,382,385,387-390,421,513-529
+  s_25c805ebe232f3::t_f0f8b151c963bd 63-66,68-77
+  s_25c805ebe232f3::t_299007d2a55604 530-531
+mgm/.pi/extensions/mgm-codebase-index/lib.ts
+  s_25c805ebe232f3::t_600dda09d91f02 407-427
+mgm/.pi/extensions/mgm-context/report.ts
+  s_25c805ebe232f3::t_8fd85d211469aa 132-143,145-146
+mgm/.pi/extensions/mgm-admin/lib.ts
+  s_25c805ebe232f3::t_f0ece38b31c524 1-158
+mgm/tests/admin.test.ts
+  s_25c805ebe232f3::t_d16fa8798b76e1 9
+  s_25c805ebe232f3::t_7c03916aa2e3ac 445-448
+  s_25c805ebe232f3::t_6ca42181dc3483 134-157
+  s_25c805ebe232f3::t_1ea657f4a0ec32 20
+  s_25c805ebe232f3::t_e5e330c4d9e046 174-177
+  s_25c805ebe232f3::t_bf72307707153d 1-8,10-19,21-133,158-173,178-261,263,265-444,449-457
+  s_25c805ebe232f3::t_bf2a3fe1740b49 262,264
+mgm/tests/harness.ts
+  s_25c805ebe232f3::t_07367c0d725739 5
+  s_25c805ebe232f3::t_3155cba6ce101d 17-26,28-29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "2304e106c226c13b62b4e1b6e26d2b715f96ad01",
+  "prompts": {},
+  "sessions": {
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

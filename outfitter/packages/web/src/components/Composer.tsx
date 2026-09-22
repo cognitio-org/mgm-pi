@@ -1,8 +1,9 @@
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { Working } from "./Working.tsx";
+import { MarkdownEditor } from "./MarkdownEditor.tsx";
 import { withFloppySound } from "../lib/floppy-sound.ts";
 import { isTouchDeviceHere } from "../lib/touch.ts";
-import { composerKeyAction, loadEnterMode, saveEnterMode, type EnterMode } from "../lib/composer-keys.ts";
+import { loadEnterMode, saveEnterMode, type EnterMode } from "../lib/composer-keys.ts";
 
 interface Props {
   /** The page's own "Sending…" phase (deriveSessionActivity) -- shown on the Send button too. */
@@ -43,6 +44,9 @@ export function Composer({ onSend, disabled, sending, placeholderOverride, statu
   const [touch] = useState(() => isTouchDeviceHere());
   // Cloud-fixes 12: remembered per browser; defaults to "newline" on touch devices, "send" on desktop.
   const [enterMode, setEnterMode] = useState<EnterMode>(() => loadEnterMode());
+  // Phones: the formatting toolbar is folded behind one "Aa" button (styles/markdown-editor.css).
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const toolbarId = useId();
 
   function toggleEnterMode() {
     const next: EnterMode = enterMode === "send" ? "newline" : "send";
@@ -65,6 +69,17 @@ export function Composer({ onSend, disabled, sending, placeholderOverride, statu
         <div className="composer-status">{status}</div>
         <button
           type="button"
+          className="md-tools-toggle"
+          aria-expanded={toolsOpen}
+          aria-controls={toolbarId}
+          aria-label="Formatting tools"
+          title="Formatting tools"
+          onClick={() => setToolsOpen((o) => !o)}
+        >
+          <span aria-hidden="true">Aa</span>
+        </button>
+        <button
+          type="button"
           role="switch"
           aria-checked={enterMode === "send"}
           className="enter-mode-toggle"
@@ -77,33 +92,16 @@ export function Composer({ onSend, disabled, sending, placeholderOverride, statu
           <span className="enter-mode-label">{enterMode === "send" ? "Enter sends" : "Enter = new line"}</span>
         </button>
       </div>
-      <div className="composer-row">
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder={placeholderOverride ?? (touch ? "Message…" : `Message... (${sendKeyHint})`)}
-          aria-label="Message"
-          disabled={disabled}
-          onKeyDown={(e) => {
-            const action = composerKeyAction(
-              {
-                key: e.key,
-                shiftKey: e.shiftKey,
-                metaKey: e.metaKey,
-                ctrlKey: e.ctrlKey,
-                altKey: e.altKey,
-                isComposing: e.nativeEvent.isComposing,
-                keyCode: e.keyCode,
-              },
-              enterMode,
-            );
-            if (action === "send") {
-              e.preventDefault();
-              void send();
-            }
-          }}
-        />
-      </div>
+      <MarkdownEditor
+        value={text}
+        onChange={setText}
+        onSend={() => void send()}
+        enterMode={enterMode}
+        placeholder={placeholderOverride ?? (touch ? "Message…" : `Message... (${sendKeyHint})`)}
+        disabled={disabled}
+        toolsOpen={toolsOpen}
+        toolbarId={toolbarId}
+      />
       <div className="composer-row">
         <select
           className="composer-mode-select"

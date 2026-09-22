@@ -16,7 +16,7 @@ JOB="outfitter-agent"
 AGENT_SA_EMAIL="outfitter-agent@${PROJECT}.iam.gserviceaccount.com"
 OUTFITTER_API="${OUTFITTER_API:?set OUTFITTER_API to the outfitter-link service URL (link.sh prints it)}"
 
-# image/Dockerfile COPYs both mgm/ (the pi build) and outfitter/ (agentd), so the build context is
+# image/Dockerfile COPYs both kernal/ (the pi build) and outfitter/ (agentd), so the build context is
 # the repo root, one level above this outfitter/ checkout -- matching image/build.sh's own cd logic.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TAG="$(git -C "${REPO_ROOT}" rev-parse --short HEAD 2>/dev/null || date +%s)"

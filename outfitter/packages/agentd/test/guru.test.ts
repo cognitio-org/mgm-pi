@@ -21,7 +21,7 @@ test("renderModelArg: does not double-suffix an already-scoped model", () => {
 
 test("renderGuru: minimal guru produces the fixed rpc/-a/session prefix plus --model", () => {
   const guru: RunSpecGuru = { model: "litellm/local-qwen-mlx" };
-  const { args, env } = renderGuru(guru, { piBin: "/opt/mgm/node_modules/.bin/pi", sessionFile: "/tmp/s.jsonl" });
+  const { args, env } = renderGuru(guru, { piBin: "/opt/kernal/node_modules/.bin/pi", sessionFile: "/tmp/s.jsonl" });
   assert.deepEqual(args, [
     "--mode",
     "rpc",

@@ -1,0 +1,58 @@
+{
+  "comment": "Retrieval questions for this checkout, each with the file that actually answers it. Used by scripts/index-eval.mjs to score codebase_search configurations. Phrased the way someone asks a colleague, never using the identifier that would make grep trivial.",
+  "project": "/Users/kernal/localllm",
+  "questions": [
+    {
+      "q": "where does the code decide that a provider API key was rejected",
+      "file": "kernal/.pi/extensions/connect/index.ts"
+    },
+    {
+      "q": "how is the cheap model for summarising a conversation chosen",
+      "file": "kernal/.pi/extensions/compaction/lib.ts"
+    },
+    {
+      "q": "where are the block letters for the startup logo defined",
+      "file": "kernal/.pi/extensions/kernal-banner/lib.ts"
+    },
+    {
+      "q": "how are secrets stripped out of a problem report before it is filed",
+      "file": "kernal/.pi/extensions/kernal-report/lib.ts"
+    },
+    {
+      "q": "how often does the agent check whether a newer version was published",
+      "file": "kernal/.pi/extensions/kernal-update/lib.ts"
+    },
+    {
+      "q": "where do the voice defaults get written for the speech extension",
+      "file": "kernal/.pi/extensions/kernal-voice/lib.ts"
+    },
+    {
+      "q": "why is a package bundled into one commonjs file before shipping",
+      "file": "kernal/scripts/prebundle.sh",
+      "note": "shell scripts are chunked at function declarations only; the body is not in the corpus"
+    },
+    {
+      "q": "how does a release bundle get built for each platform",
+      "file": "kernal/scripts/package.sh",
+      "note": "shell scripts are chunked at function declarations only; the body is not in the corpus"
+    },
+    {
+      "q": "how does an installed copy upgrade itself while keeping the user's keys",
+      "file": "kernal/scripts/install.sh",
+      "note": "shell scripts are chunked at function declarations only; the body is not in the corpus"
+    },
+    {
+      "q": "how are old tool results hidden from the model when context runs short",
+      "file": "kernal/.pi/extensions/compaction/lib.ts"
+    },
+    {
+      "q": "where is the local model loaded before the agent starts",
+      "file": "kernal/bin/kernal",
+      "note": "extensionless file: the indexer only walks recognised extensions, so this can never be found. Kept as a coverage check."
+    },
+    {
+      "q": "how does a session get moved from one machine to another",
+      "file": "kernal/.pi/extensions/teleport/lib.ts"
+    }
+  ]
+}

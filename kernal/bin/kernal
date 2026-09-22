@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# kernal — the kernal coding agent (pi under the hood) with the ~/localllm/kernal config, from ANY directory.
+#   kernal                      interactive, in the current repo
+#   kernal -p "prompt"          non-interactive
+#   kernal --model litellm/claude-sonnet-5:high
+#   kernal --teleport <id>      pull a session pushed from another machine (see /teleport), then open it
+# Config (extensions, packages, settings, sessions) lives in <bundle or checkout>/.pi;
+# secrets come from ~/localllm/.env and are exported so packages (pi-mcp-adapter) can use ${VAR}.
+set -euo pipefail
+# kenv NAME: reads $KERNAL_<NAME>, falling back to the legacy $MGM_<NAME> (warns once per process
+# per old name to stderr). Every shell script in this repo that reads a renamed env var defines the
+# same small function; see .pi/extensions/_shared/env.ts for the TypeScript-side equivalent and
+# docs/rename.md for when the fallback goes away.
+_kenv_warned=""
+kenv() {
+  local name="$1" kv="KERNAL_$1" mv="MGM_$1"
+  if [[ -n "${!kv:-}" ]]; then printf '%s' "${!kv}"; return 0; fi
+  if [[ -n "${!mv:-}" ]]; then
+    case " $_kenv_warned " in *" $name "*) ;; *) _kenv_warned="$_kenv_warned $name"; echo "$mv is now $kv; the old name stops working in a later release." >&2 ;; esac
+    printf '%s' "${!mv}"; return 0
+  fi
+  return 1
+}
+# Resolve symlinks (install.sh links ~/.local/bin/kernal here) so ROOT is the real bundle directory.
+SRC="${BASH_SOURCE[0]}"
+while [[ -L "$SRC" ]]; do DIR="$(cd -P "$(dirname "$SRC")" && pwd)"; SRC="$(readlink "$SRC")"; [[ "$SRC" != /* ]] && SRC="$DIR/$SRC"; done
+ROOT="$(cd -P "$(dirname "$SRC")/.." && pwd)"
+# Secrets: ~/localllm/.env in a source checkout, ./.env in a release bundle (/setup writes it).
+found_env=0
+if [[ -f "$ROOT/../.env" ]]; then set -a; source "$ROOT/../.env"; set +a; found_env=1; fi
+if [[ -f "$ROOT/.env" ]]; then set -a; source "$ROOT/.env"; set +a; found_env=1; fi
+[[ $found_env == 1 ]] || echo "kernal: no .env yet — run /setup inside the agent to configure your connections" >&2
+export PI_CODING_AGENT_DIR="$ROOT/.pi"
+# pi-lsp (and its siblings) look for their own agent dir under $PI_AGENT_DIR, defaulting to
+# ~/.pi/agent, which kernal does not use. Point it at the bundle so .pi/agent/lsp.json is read as the
+# user-owned (auto-trusted) config: a project-local .pi/lsp.json needs a trust prompt and is
+# rejected outright in -p mode. One level below .pi/ so that running kernal inside this folder does
+# not also find it by walking up for a project-local .pi/lsp.json.
+export PI_AGENT_DIR="$ROOT/.pi/agent"
+
+# Release bundles ship pi's official standalone binary in ./pi; a source checkout uses the npm one.
+if [[ -x "$ROOT/pi/pi" ]]; then PI="$ROOT/pi/pi"; else PI="$ROOT/node_modules/.bin/pi"; fi
+
+# Maintenance:
+#   kernal version                     what is installed
+#   kernal update [x.y.z]              upgrade the kernal bundle itself (release bundles only)
+#   kernal update --extensions         update the installed pi packages (pi's own updater)
+#   kernal update --extension <src>    update one package
+#   kernal update --models             refresh pi's model catalogs
+REPO="mgmonteleone/mgm-pi"
+case "${1:-}" in
+  version|--version) [[ -f "$ROOT/VERSION" ]] && cat "$ROOT/VERSION" || echo "kernal (source checkout at $ROOT)"; exit 0 ;;
+  update|--update)
+    # Package/catalog updates are pi's job; only the bundle itself is ours.
+    case "${2:-}" in
+      --extensions|--models|--extension|--force)
+        shift; exec "$PI" update "$@" -a ;;
+      --all|--self)
+        echo "kernal: use 'kernal update' for the agent bundle and 'kernal update --extensions' for the packages" >&2; exit 2 ;;
+    esac
+    [[ -f "$ROOT/VERSION" ]] || { echo "kernal: $ROOT is a source checkout — update it with git pull" >&2; exit 1; }
+    tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+      gh release download ${2:+"v$2"} --repo "$REPO" --pattern install.sh --dir "$tmp" --clobber
+    else
+      curl -fsSL ${GH_TOKEN:+-H "Authorization: Bearer $GH_TOKEN"} -o "$tmp/install.sh" "https://github.com/$REPO/releases/${2:+download/v$2}${2:-latest/download}/install.sh" \
+        || { echo "kernal: could not download the installer — log in with 'gh auth login' or set GH_TOKEN" >&2; exit 1; }
+    fi
+    KERNAL_HOME="$(cd -P "$ROOT/.." && pwd)" KERNAL_VERSION="${2:-}" bash "$tmp/install.sh"; exit $? ;;
+  --teleport)
+    # pi has no "run a slash command at startup" flag, so the pull happens here, headlessly, before
+    # pi starts: .pi/extensions/teleport/cli.ts fetches the session from the store, checks out the
+    # matching repo branch, imports it for this cwd and prints the session file; pi opens that.
+    # (cli.ts uses its own process.cwd(), which node resolves symlinks in the same way pi does.)
+    id="${2:-}"
+    if [[ -z "$id" || "$id" == -* ]]; then echo "Usage: kernal --teleport <session-id> [--force] [pi args...]" >&2; exit 1; fi
+    shift 2
+    # --force (only meaningful for KERNAL_TELEPORT_STORE=outfitter: skip waiting for an active cloud
+    # run to stop) is consumed here, not passed on to pi. bash 3.2 (macOS default) treats an empty
+    # array as unbound under set -u, hence ${arr[@]+"${arr[@]}"} below (see scripts/install.sh).
+    force=()
+    rest=()
+    for a in "$@"; do
+      if [[ "$a" == "--force" ]]; then force=(--force); else rest+=("$a"); fi
+    done
+    set -- ${rest[@]+"${rest[@]}"}
+    session_path="$(node "$ROOT/.pi/extensions/teleport/cli.ts" "$id" ${force[@]+"${force[@]}"})"
+    if [[ -x "$ROOT/pi/pi" ]]; then PI="$ROOT/pi/pi"; else PI="$ROOT/node_modules/.bin/pi"; fi
+    exec "$PI" -a --session "$session_path" "$@" ;;
+esac
+
+# Make sure the local model is resident so pi does not stall on LM Studio's just-in-time reload.
+# The context length LM Studio serves cannot be forced from the CLI for MLX models (the flag is
+# ignored, Qwen 3.6 loads at 183k); pi budgets against the window the provider declares
+# (LMSTUDIO_CONTEXT, default 32768), which is deliberately the smaller of the two.
+# Only worth doing when the saved default backend is lmstudio (the router is the default now, and
+# loading a 20 GB model would otherwise delay every start); KERNAL_PRELOAD_LMS=1 forces it.
+LMS="${LMS:-$HOME/.lmstudio/bin/lms}"; MODEL="${LMSTUDIO_MODEL:-qwen/qwen3.6-35b-a3b}"
+default_provider="$(sed -n 's/^ *"defaultProvider": *"\([^"]*\)".*/\1/p' "$ROOT/.pi/settings.json" 2>/dev/null | head -1)"
+skip_lms="$(kenv SKIP_LMS || true)"; preload_lms="$(kenv PRELOAD_LMS || true)"
+if [[ "$skip_lms" != 1 && -x "$LMS" && ( "$default_provider" == lmstudio || "$preload_lms" == 1 ) ]]; then
+  if ! "$LMS" ps --json 2>/dev/null | grep -q "\"identifier\":\"$MODEL\""; then
+    echo "kernal: loading $MODEL in LM Studio…" >&2
+    timeout 180 "$LMS" load "$MODEL" --context-length "${LMSTUDIO_CONTEXT:-32768}" --ttl 86400 -y >/dev/null 2>&1 || echo "kernal: LM Studio load failed or timed out; continuing" >&2
+  fi
+fi
+exec "$PI" -a "$@"

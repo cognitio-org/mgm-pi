@@ -1,6 +1,6 @@
 # Outfitter — epic plan
 
-A self-hosted, low-cost "Cosmos-like" cloud agent system: a fleet of **mgm** agents (pi under the hood)
+A self-hosted, low-cost "Cosmos-like" cloud agent system: a fleet of **kernal** agents (pi under the hood)
 running in GCP sandboxes, a web UI to start, watch, steer and review them, and two-way **teleport**
 between a laptop terminal and the cloud.
 
@@ -31,7 +31,7 @@ today behind one adapter so we can move to pi-server when it stabilises.
 ## 2. Architecture
 
 ```
-  laptop (mgm CLI)                     GCP project outfitter-509211                     laptop
+  laptop (kernal CLI)                     GCP project outfitter-509211                     laptop
   /teleport push|pull  ──HTTPS──▶  ┌───────────────────────────────────────┐  ◀── LM Studio via ngrok
                                    │ outfitter-api  (Cloud Run service)     │      (local-qwen-mlx)
   browser ──IAP (Workspace)──────▶ │  REST + SSE for UI · WS ingress for   │
@@ -43,7 +43,7 @@ today behind one adapter so we can move to pi-server when it stabilises.
                                    ┌───────────────────────────────────────┐
                                    │ outfitter-agent (Cloud Run Job, one   │
                                    │ execution per run)                    │
-                                   │  agentd ⇄ pi --mode rpc (mgm image)   │
+                                   │  agentd ⇄ pi --mode rpc (kernal image)   │
                                    │  git clone/push · idle-stop · ckpt    │
                                    └───────────────────────────────────────┘
 ```
@@ -56,7 +56,7 @@ today behind one adapter so we can move to pi-server when it stabilises.
 | `outfitter-link` | Cloud Run service, min-instances 0, request-based billing, `--allow-unauthenticated` (`OUTFITTER_ROLE=link`) | WebSocket ingress from agentd (auth by the job service account's ID token, audience = this service's own origin); brokers per-session secrets over that socket; persists transcript entries to Atlas; `POST /api/hooks/ngrok` (HMAC-verified). Same image and store as `outfitter-api`, deployed a second time — IAP is service-wide, so it can't gate `outfitter-api`'s browser routes without also gating agentd's WebSocket and ngrok's unauthenticated webhook (see `docs/protocol.md` "Two origins") |
 | `outfitter-agent` image | Artifact Registry; executed as a Cloud Run Job (2 vCPU/4 GiB default, 1/2 for cheap gurus) | `agentd` dials the API, clones the repo at the branch, restores the session JSONL, runs `pi --mode rpc` with the guru's flags, forwards events up and prompts down, pushes checkpoints, stops itself after N idle minutes |
 | `outfitter-web` | static files served by the API | Fleet list, new session, transcript (pi-web-ui components), steer/queue, questions and approvals, diff tab, cost, teleport command |
-| mgm `teleport` extension | laptop | `Store` interface with `GitStore` (phase 1) and `OutfitterStore` (this epic) |
+| kernal `teleport` extension | laptop | `Store` interface with `GitStore` (phase 1) and `OutfitterStore` (this epic) |
 | Sandbox provider interface | library in the API | `local-docker` (dev), `cloudrun-job` (primary), later `gce-spot` and `cloudrun-workerpool` |
 
 ### Key decisions and why
@@ -91,7 +91,7 @@ today behind one adapter so we can move to pi-server when it stabilises.
 - **Guru = pi configuration.** An guru is stored as YAML (also committable to a repo under
   `.outfitter/gurus/`) and rendered to pi flags and files: `--system-prompt`/`--append-system-prompt`,
   `--model provider/id:thinking`, `--tools`, packages and skills in the run's `PI_CODING_AGENT_DIR`.
-  Delegation is an mgm extension tool `outfitter_delegate(guru, prompt)` that creates a child session
+  Delegation is a kernal extension tool `outfitter_delegate(guru, prompt)` that creates a child session
   and returns its result; the fleet view groups parent and children.
 - **Build vs reuse.** Reuse pi RPC, pi-web-ui for the transcript, the connect extension, LiteLLM,
   gh CLI. Steal designs from OpenHands (action server per sandbox), Vibe Kanban (worktree per agent
@@ -132,7 +132,7 @@ research on Sonnet; review on Opus).
 ### E0 Foundations (this week)
 
 - **E0.1 Repo layout** ⇄: `outfitter/` in this repo with `packages/api`, `packages/agentd`,
-  `packages/web`, `image/` (Dockerfile baking `mgm/`), `deploy/` (gcloud scripts, same style as
+  `packages/web`, `image/` (Dockerfile baking `kernal/`), `deploy/` (gcloud scripts, same style as
   litellm-config), `docs/`. Done when `npm test` runs in each package.
 - **E0.2 GCP baseline** (user approves before it runs): enable run, artifactregistry, secretmanager,
   iap, cloudscheduler, cloudbuild, pubsub; AR repo `outfitter`; service accounts `outfitter-api` and
@@ -146,12 +146,12 @@ research on Sonnet; review on Opus).
 - **E0.4 LiteLLM** ⇄: team `outfitter`, virtual key template per guru with budgets, model list.
   Done when `apply-teams.sh` includes it.
 - **E0.5 Teleport phase 1–2** (in progress, subagent): `Store` interface, `GitStore`, `/teleport
-  push|pull|list`, `mgm --teleport`. Done when the e2e test passes between two directories.
+  push|pull|list`, `kernal --teleport`. Done when the e2e test passes between two directories.
 
 ### E1 Sandbox image and agentd
 
-- **E1.1 Image** ⇄: `node:24-bookworm-slim` + git, ripgrep, gh, `mgm/` with packages preinstalled,
-  `PI_CODING_AGENT_DIR=/opt/mgm/.pi`, `PI_OFFLINE=1`, non-root user, `/workspace`. Done when
+- **E1.1 Image** ⇄: `node:24-bookworm-slim` + git, ripgrep, gh, `kernal/` with packages preinstalled,
+  `PI_CODING_AGENT_DIR=/opt/kernal/.pi`, `PI_OFFLINE=1`, non-root user, `/workspace`. Done when
   `docker run … pi --version` and `pi --mode rpc` respond.
 - **E1.2 agentd** ⇄: TypeScript, no framework. Reads `OUTFITTER_API`, `RUN_ID`; gets ID token from the
   metadata server (or a dev token locally); opens WebSocket; receives `run.spec` (repo, branch, guru,
@@ -218,7 +218,7 @@ research on Sonnet; review on Opus).
   (reuses the same `LaptopProbe` instance the E2.8 preflight already probes, so no extra network
   round trip beyond its own 60s cache, plus `/api/v0/models` through the tunnel for loaded models
   and context length), LiteLLM (`/health/liveliness`, `/model/info` -- `parseModelInfo` copied
-  from `mgm/.pi/extensions/connect/lib.ts` per the story's instruction, not imported -- and
+  from `kernal/.pi/extensions/connect/lib.ts` per the story's instruction, not imported -- and
   `/key/info` for spend against budget, keyed by `LITELLM_ADMIN_KEY` or
   `SecretsBroker.defaultLitellmKey()`), and Cloud Run (`CloudRunProvider.countRunningExecutions`,
   new `listExecutions` call, only when `SANDBOX_PROVIDER=cloudrun`). Every probe times out at 3s
@@ -248,7 +248,7 @@ research on Sonnet; review on Opus).
   the request, single-flight. Always-allocated CPU would also fix it but costs money for no gain.
   Failure details now name the cause (`timed out after 3000 ms`, `fetch failed`) instead of HTTP 0.
 - **E2.12 Image smoke in CI** (done, `.github/workflows/outfitter-ci.yml`): the repo's CI only ran
-  on `mgm/**`, so no Outfitter PR had run its tests in CI at all, and image or deploy-env errors
+  on `kernal/**`, so no Outfitter PR had run its tests in CI at all, and image or deploy-env errors
   only surfaced when Cloud Run rejected a revision. The workflow now runs every suite and builds
   both images, boots the API in the link role with the deploy script's environment, and starts pi
   in the sandbox image as the agent user checking that every extension loads.
@@ -263,13 +263,13 @@ research on Sonnet; review on Opus).
   Cloud Run scheduling, 97 s image pull and container start, 3.5 s agentd to run.spec, 13 s
   session restore, then pi's own extension loading about 15 s. Stop takes 1 to 2 s. Decisions
   from the data: IDLE_STOP_SECONDS=1800 for the deployed services (a 2 min wake is worth avoiding
-  far more often than 4 cents of idle); next levers are pi's startup (mgm extensions doing network
+  far more often than 4 cents of idle); next levers are pi's startup (kernal extensions doing network
   discovery at load) and the image pull, not the API.
 - **E1.5 Trim the agent image** (done, `docs/reports/image-trim.md`): multi-stage Dockerfile
-  (builder stages for mgm's deps and agentd's build never reach the runtime stage); `pi update`
+  (builder stages for kernal's deps and agentd's build never reach the runtime stage); `pi update`
   (silently failing the whole time -- every image shipped so far had **none** of settings.json's
   packages installed, a correctness bug this also fixes) replaced with `npm ci` against
-  `mgm/.pi/npm`'s committed lockfile; TUI/laptop-only packages (`pi-listen`, `pi-powerline-footer`,
+  `kernal/.pi/npm`'s committed lockfile; TUI/laptop-only packages (`pi-listen`, `pi-powerline-footer`,
   `pi-lsp`, and `open-codebase-index`, whose embeddings point at the laptop's LM Studio) dropped from
   an image-only `settings.json` derived from the real one
   (`image/render-settings.sh`); every platform's native binaries stripped except the build's own
@@ -318,7 +318,7 @@ research on Sonnet; review on Opus).
   fetches `/model/info` once at `session_start`, and when the requested group's price is
   zero/unknown but the resolved model (`x-litellm-model-name` header) is priced, computes that
   response's cost from the newest assistant message's token counts times the resolved model's price
-  plus `x-litellm-classifier-cost`, instead of the (zero) delta. mgm's `connect/lib.ts` gets the same
+  plus `x-litellm-classifier-cost`, instead of the (zero) delta. kernal's `connect/lib.ts` gets the same
   fix for the interactive `/budget` panel: an all-zero-priced id containing "auto" is priced as
   unknown-paid (`DEFAULT_PAID`) instead of free. (2) `Run.keySpendStart` used to pin from the first
   real spend frame, which already carries the *post-call* balance, so a one-call run's cost showed
@@ -326,7 +326,7 @@ research on Sonnet; review on Opus).
   appends a `{ baseline: true, keySpend }` line; agentd forwards it as a `spend` frame with no
   `usage`, and the API's existing "pin from the first frame seen" logic then baselines correctly.
   Both fixes degrade to the prior behaviour on any network failure (logged once to stderr, never
-  thrown). `npm test`: agentd 140/140, api 93/93, mgm 219/219.
+  thrown). `npm test`: agentd 140/140, api 93/93, kernal 219/219.
 - **E2.13 Graceful stop confirmed on Cloud Run** (done): `POST /sessions/:id/stop` from the web
   role while the link role holds the socket: `stopping` → `stopped` in 8 s, agentd checkpointed
   (workspace tarball skipped for the repo-less run), sent `bye`, and the Job execution ended
@@ -349,7 +349,7 @@ research on Sonnet; review on Opus).
 - **E3.3 Diff and files tabs**: `GET /sessions/:id/diff` (agentd runs `git diff base...HEAD` plus
   working tree) rendered with a diff component; file viewer via agentd `read`.
 - **E3.4 New session dialog** — done, `docs/reports/web-ui.md`. Guru dropdown, optional repository,
-  base branch, prompt; "run locally" hint that prints `mgm --teleport <id>`. Not built: repository
+  base branch, prompt; "run locally" hint that prints `kernal --teleport <id>`. Not built: repository
   picker from a configured list or GitHub search via the broker (a plain text field today).
 - **E3.5 Cost page**: per session, per guru, per day; LiteLLM key budget bars (reuse the budget
   panel logic from connect/lib.ts).
@@ -377,11 +377,11 @@ research on Sonnet; review on Opus).
   IAP session or a token (`identityFromRequest`) for the same routes plus token management
   (`GET|POST /api/me/tokens`, `DELETE /api/me/tokens/:id`, capped at 10 active tokens/owner). The
   web UI's `/tokens` page creates and revokes tokens and shows the plaintext once with the exact
-  `OUTFITTER_API`/`OUTFITTER_TOKEN`/`MGM_TELEPORT_STORE` lines (`OUTFITTER_API` = the link
+  `OUTFITTER_API`/`OUTFITTER_TOKEN`/`KERNAL_TELEPORT_STORE` lines (`OUTFITTER_API` = the link
   service's own origin, surfaced on `GET /api/me` as `linkOrigin` from env `OUTFITTER_LINK_ORIGIN`).
-  `mgm/.pi/extensions/teleport/outfitter-store.ts` implements the same `Store` interface as
+  `kernal/.pi/extensions/teleport/outfitter-store.ts` implements the same `Store` interface as
   `GitStore` (`list`/`get`/`put`) against `OUTFITTER_API`, selected by
-  `MGM_TELEPORT_STORE=outfitter` via `mgm/.pi/extensions/teleport/store-factory.ts`;
+  `KERNAL_TELEPORT_STORE=outfitter` via `kernal/.pi/extensions/teleport/store-factory.ts`;
   `OUTFITTER_TOKEN` is now the *only* auth mode (constructing the store without it throws). Neither
   the token nor anything derived from it touches disk. `list()` maps `GET /api/sessions`; `get()`
   pulls `GET /api/sessions/:id/export.jsonl`; `put()` is `PUT /api/sessions/:id/import`, which
@@ -389,7 +389,7 @@ research on Sonnet; review on Opus).
   (`test/tokens.test.ts` — creation/list/revoke, the cap, link-role bearer auth incl. malformed and
   revoked tokens, `lastUsedAt` throttling, teleport routes reachable on the link role; `test/
   roles.test.ts` updated for the link role now serving a token-gated route set instead of 404),
-  web (`test/client.test.ts` — token client calls, `linkOrigin`), mgm
+  web (`test/client.test.ts` — token client calls, `linkOrigin`), kernal
   (`tests/teleport-outfitter.test.ts` — construction requires both env vars, the corrected 401
   message, list/get/put mapping, stop-then-poll flow, `--force`, timeout) — all against fakes
   (in-memory store / fake fetch), never a real deployed API end to end.
@@ -398,8 +398,8 @@ research on Sonnet; review on Opus).
   /api/sessions/:id/stop` and polls `GET /api/sessions/:id`'s new `runState` field (small API
   addition, `outfitter/packages/api/src/routes/sessions.ts`, tested in
   `outfitter/packages/api/test/routes.test.ts`) until it's no longer active, 90s timeout, skippable
-  with `--force` (threaded through `mgm --teleport <id> --force` and `/teleport pull <id> --force`).
-  What `mgm --teleport <id>` does **not** yet do for an Outfitter-backed pull specifically: repo and
+  with `--force` (threaded through `kernal --teleport <id> --force` and `/teleport pull <id> --force`).
+  What `kernal --teleport <id>` does **not** yet do for an Outfitter-backed pull specifically: repo and
   clean-tree verification. That logic already exists in `cli.ts`/`index.ts` and runs unconditionally
   for any store whose manifest carries a `repo` section (same code path GitStore uses) -- it isn't
   Outfitter-specific, and OutfitterStore's `get()` does populate `manifest.repo` (from the session's
@@ -409,14 +409,14 @@ research on Sonnet; review on Opus).
   against a fake fetch so far).
 - **E4.3 Laptop → cloud** (the direction Claude Code lacks): `/teleport push --cloud [guru]` pushes
   the branch and transcript and asks the API to wake a run that continues the conversation.
-- **E4.4 Web "Open in terminal"**: copies the `mgm --teleport` command; and `/teleport` typed inside a
+- **E4.4 Web "Open in terminal"**: copies the `kernal --teleport` command; and `/teleport` typed inside a
   cloud session replies with it (pi command inside the sandbox).
 
 ### E5 Multi-agent
 
 - **E5.1 Gurus as YAML**: schema, validation, `outfitter gurus apply`, repo-local
   `.outfitter/gurus/*.yaml` discovered at run start.
-- **E5.2 Delegation tool**: mgm extension `outfitter_delegate` available only in cloud runs; creates a
+- **E5.2 Delegation tool**: kernal extension `outfitter_delegate` available only in cloud runs; creates a
   child session (same repo, worktree branch `outfitter/<child>`), waits, returns the child's final
   message and diff summary; parent transcript records a `custom` entry with the child id.
 - **E5.3 Fleet limits and budgets**: max concurrent runs per guru and globally; LiteLLM budget per

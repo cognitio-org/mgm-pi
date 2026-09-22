@@ -148,8 +148,8 @@ export interface LmStudioModelMeta {
   loaded: boolean;
 }
 
-/** Small pure parser mirroring mgm/.pi/extensions/connect/lib.ts's parseLmStudioModels (copied,
- * not imported -- this package doesn't depend on mgm). `loaded_context_length` is what the server
+/** Small pure parser mirroring kernal/.pi/extensions/connect/lib.ts's parseLmStudioModels (copied,
+ * not imported -- this package doesn't depend on kernal). `loaded_context_length` is what the server
  * will actually accept; `max_context_length` is the model's ceiling, used when nothing is loaded. */
 export function parseLmStudioModels(json: unknown): LmStudioModelMeta[] {
   const data = (json as { data?: Array<Record<string, unknown>> } | undefined)?.data ?? [];
@@ -206,9 +206,9 @@ export interface ModelMeta {
   reasoning?: boolean;
 }
 
-/** Copied (not imported) from mgm/.pi/extensions/connect/lib.ts's parseModelInfo -- a small pure
+/** Copied (not imported) from kernal/.pi/extensions/connect/lib.ts's parseModelInfo -- a small pure
  * function, per EPIC.md E2.10's "reuse the parsing" note, kept as a standalone copy so this
- * package doesn't depend on mgm. Parses LiteLLM's `GET /model/info` response. */
+ * package doesn't depend on kernal. Parses LiteLLM's `GET /model/info` response. */
 export function parseModelInfo(json: unknown): { ids: string[]; meta: Map<string, ModelMeta> } {
   const perM = (v: unknown) => (typeof v === "number" ? v * 1e6 : 0);
   const meta = new Map<string, ModelMeta>();
@@ -239,7 +239,7 @@ export interface KeyBudget {
 }
 
 /** LiteLLM's `GET /key/info` nests the useful fields under `info` in newer releases; older ones (and
- * mgm's own BudgetData) read them off the top level. Accept either. */
+ * kernal's own BudgetData) read them off the top level. Accept either. */
 export function parseKeyInfo(json: unknown): KeyBudget | undefined {
   const body = json as { info?: Record<string, unknown> } & Record<string, unknown>;
   const info = (body?.info ?? body) as { spend?: number; max_budget?: number | null } | undefined;

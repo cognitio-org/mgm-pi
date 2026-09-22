@@ -146,7 +146,7 @@ logged or persisted.
   only (needs an IAP- or already-token-identified caller). A cap of 10 active tokens per owner;
   revoking is owner-scoped (a 404, not 403, for someone else's token id — doesn't confirm it
   exists). The web UI's `/tokens` page is the intended way to create one: it shows the plaintext
-  once alongside the exact `OUTFITTER_API`/`OUTFITTER_TOKEN`/`MGM_TELEPORT_STORE` lines to set.
+  once alongside the exact `OUTFITTER_API`/`OUTFITTER_TOKEN`/`KERNAL_TELEPORT_STORE` lines to set.
 - **Verification** (`src/auth.ts`'s `identityFromApiToken`): `Authorization: Bearer outf_...` →
   sha256 hash → store lookup. Unknown and revoked tokens get the same generic 401 (never reveals
   which). `lastUsedAt` is updated at most once a minute per token, best-effort.
@@ -164,7 +164,7 @@ logged or persisted.
   value without the operator having to look it up. Empty by default; the page then says to ask the
   operator for the link URL.
 
-This replaces an earlier `OUTFITTER_IAP_CLIENT_ID` mode in `mgm`'s `OutfitterStore` that tried to
+This replaces an earlier `OUTFITTER_IAP_CLIENT_ID` mode in `kernal`'s `OutfitterStore` that tried to
 authenticate a laptop client the same way a browser does. That was verified NOT working against a
 real deployed API (`docs/reports/critic-review-pr15.md` finding #1): IAP enabled directly on a
 Cloud Run service uses Google's managed OAuth client, whose credentials are never available for

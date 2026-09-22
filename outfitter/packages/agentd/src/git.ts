@@ -34,14 +34,14 @@ export interface ExecResult {
   code: number;
 }
 
-/** Matches the shape used elsewhere in mgm (teleport's ExecFn): (cmd, args, cwd) => result, plus an
+/** Matches the shape used elsewhere in kernal (teleport's ExecFn): (cmd, args, cwd) => result, plus an
  * optional `env` overlay (merged on top of the parent process env) so auth material can travel via
  * environment variables instead of argv. Lets tests stub git entirely.
  *
- * This type (and defaultExec below) is deliberately duplicated in mgm/.pi/extensions/teleport/
+ * This type (and defaultExec below) is deliberately duplicated in kernal/.pi/extensions/teleport/
  * lib.ts rather than imported from here: agentd's release bundle ships as part of the outfitter
- * image, and mgm's teleport extension ships independently as part of the mgm CLI release, so the
- * mgm bundle must not gain a build-order dependency on the outfitter tree (see
+ * image, and kernal's teleport extension ships independently as part of the kernal CLI release, so the
+ * kernal bundle must not gain a build-order dependency on the outfitter tree (see
  * outfitter/docs/reports/maintainability-review-pr1.md for the tradeoff). */
 export type ExecFn = (cmd: string, args: string[], cwd: string, env?: Record<string, string>) => Promise<ExecResult>;
 

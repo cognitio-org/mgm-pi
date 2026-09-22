@@ -66,7 +66,7 @@ IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}/outfitter-api:${TAG}"
 # E2.10 provider status service (src/providers-status.ts, src/config.ts) adds three env vars beyond
 # what was already here: NGROK_API_KEY (secret, below -- ngrok's /endpoints reconciler poll; the
 # ngrok webhook itself keeps using NGROK_WEBHOOK_SECRET, unrelated), LITELLM_BASE_URL (plain, in
-# ENV_VARS below -- same var name/default as mgm's .env.example), and PROVIDER_POLL_MS (plain, ENV_VARS,
+# ENV_VARS below -- same var name/default as kernal's .env.example), and PROVIDER_POLL_MS (plain, ENV_VARS,
 # default 5 minutes). LITELLM_ADMIN_KEY was already mounted here (it predates E2.10) and is now also
 # read by the provider status service's LiteLLM probe, falling back to the default guru LiteLLM key
 # (outfitter-litellm-key-default, secrets.ts's SecretsBroker.defaultLitellmKey) when unset.

@@ -36,21 +36,21 @@ const TEST_TIMEOUT_MS = 30_000;
 /**
  * session.ts's `importSession` dynamically imports `@earendil-works/pi-coding-agent` at run time --
  * deliberately not an agentd dependency (module doc: "only present at runtime inside the sandbox
- * image, /opt/mgm/node_modules"). A real agentd process run outside that image (this test) needs it
- * resolvable some other way. mgm/ is a sibling checkout in this same repo with its own copy
- * (mgm/node_modules), so symlink it into outfitter/node_modules -- ordinary Node module resolution
+ * image, /opt/kernal/node_modules"). A real agentd process run outside that image (this test) needs it
+ * resolvable some other way. kernal/ is a sibling checkout in this same repo with its own copy
+ * (kernal/node_modules), so symlink it into outfitter/node_modules -- ordinary Node module resolution
  * then finds it the same way it would find any other node_modules dependency, with no source-level
- * coupling from agentd to mgm. Returns a skip message if mgm's copy isn't there to link from. */
+ * coupling from agentd to kernal. Returns a skip message if kernal's copy isn't there to link from. */
 function ensurePiCodingAgentResolvable(): string | undefined {
   const scope = join(outfitterRoot, "node_modules", "@earendil-works");
   const linkPath = join(scope, "pi-coding-agent");
   if (existsSync(linkPath)) return undefined;
 
-  const mgmCopy = join(outfitterRoot, "..", "mgm", "node_modules", "@earendil-works", "pi-coding-agent");
+  const mgmCopy = join(outfitterRoot, "..", "kernal", "node_modules", "@earendil-works", "pi-coding-agent");
   if (!existsSync(mgmCopy)) {
     return (
       `@earendil-works/pi-coding-agent is not resolvable from outfitter/ and ${mgmCopy} doesn't ` +
-      `exist either -- run "npm install" in mgm/ first`
+      `exist either -- run "npm install" in kernal/ first`
     );
   }
   mkdirSync(scope, { recursive: true });

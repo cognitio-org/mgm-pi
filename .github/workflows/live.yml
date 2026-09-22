@@ -1,4 +1,4 @@
-name: mgm live tests
+name: kernal live tests
 # Cheap integration tests against the real LiteLLM router (a few calls to gpt-5.4-nano, < $0.01).
 # Runs on demand here, and as a gate in the release workflow. Needs the LITELLM_CI_KEY repo secret;
 # without it the suite skips itself.
@@ -7,11 +7,11 @@ on:
 jobs:
   live:
     runs-on: ubuntu-24.04
-    defaults: { run: { working-directory: mgm } }
+    defaults: { run: { working-directory: kernal } }
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
-        with: { node-version: 24, cache: npm, cache-dependency-path: mgm/package-lock.json }
+        with: { node-version: 24, cache: npm, cache-dependency-path: kernal/package-lock.json }
       - run: npm ci
       - name: Live tests against the router
         env:

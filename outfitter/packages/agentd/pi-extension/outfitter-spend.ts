@@ -2,10 +2,10 @@
  * E2.11 / E2.11b: a pi extension loaded only under agentd (renderGuru adds `-e <this file>` when
  * RunControllerDeps.spendExtensionPath is set -- see ../src/guru.ts and ../src/run.ts), so a run's
  * cost is real even though agentd itself never sees the LiteLLM response headers pi's own HTTP
- * client received. mgm's own `connect` extension (mgm/.pi/extensions/connect) already does this same
+ * client received. kernal's own `connect` extension (kernal/.pi/extensions/connect) already does this same
  * parsing for the *interactive* TUI's `/budget` panel; this is a separate, minimal instance of the
- * same idea for the cloud run path, self-contained (no import from mgm/) so this package doesn't
- * depend on mgm's own layout inside the sandbox image.
+ * same idea for the cloud run path, self-contained (no import from kernal/) so this package doesn't
+ * depend on kernal's own layout inside the sandbox image.
  *
  * On every `after_provider_response` event whose headers are LiteLLM's (`x-litellm-call-id`
  * present), appends one JSON line to `OUTFITTER_SPEND_FILE`:
@@ -54,7 +54,7 @@ export interface SpendHeaders {
   classifierCost?: number;
 }
 
-/** Same contract as mgm/.pi/extensions/connect/lib.ts's parseSpendHeaders: only trust
+/** Same contract as kernal/.pi/extensions/connect/lib.ts's parseSpendHeaders: only trust
  * x-litellm-key-spend/-max-budget (per-call cost reads 0 on a streamed response); `litellm` is true
  * only when x-litellm-call-id is present at all, i.e. this response actually went through the
  * LiteLLM router. */
@@ -78,7 +78,7 @@ export function parseSpendHeaders(headers: Record<string, string> | undefined): 
 }
 
 /** Sums pi's own cost accounting (message.usage.cost.total) across every LiteLLM-served assistant
- * turn recorded so far -- the same field mgm's connect extension's sessionEstimate reads. */
+ * turn recorded so far -- the same field kernal's connect extension's sessionEstimate reads. */
 export function sessionCostTotal(entries: readonly unknown[], provider = "litellm"): number {
   let total = 0;
   for (const e of entries as any[]) {
@@ -89,7 +89,7 @@ export function sessionCostTotal(entries: readonly unknown[], provider = "litell
   return total;
 }
 
-/** Token counts pi records on an assistant message's `usage` (mgm/.pi/extensions/compaction's
+/** Token counts pi records on an assistant message's `usage` (kernal/.pi/extensions/compaction's
  * `addUsage`/fake-pi.ts's test fixtures use the same shape). */
 export interface UsageTokens {
   input?: number;
@@ -123,7 +123,7 @@ export interface ModelPrice {
 /** Parses LiteLLM's GET /model/info response into a per-token price map keyed by model_name (which
  * is either a concrete model id or, for an auto-router group, the group's own id -- both show up as
  * `model_name` entries; a routing group's entry just has every price at 0). Several deployments can
- * share a model_name; the first one wins, same as mgm's parseModelInfo. */
+ * share a model_name; the first one wins, same as kernal's parseModelInfo. */
 export function parseModelInfoPrices(json: any): Map<string, ModelPrice> {
   const map = new Map<string, ModelPrice>();
   for (const m of json?.data ?? []) {
@@ -205,14 +205,14 @@ export function buildSpendLogLine(
 
 /** Loosely typed on purpose: this file ships in packages/agentd (which does not depend on
  * @earendil-works/pi-coding-agent -- it only runs inside the sandbox image, where pi loads it
- * directly via `-e`, same as mgm's own extensions). See ../src/guru.ts's RenderOptions doc. */
+ * directly via `-e`, same as kernal's own extensions). See ../src/guru.ts's RenderOptions doc. */
 type PiExtensionApi = {
   on(event: "after_provider_response", handler: (ev: { headers?: Record<string, string> }, ctx: any) => void | Promise<void>): void;
   on(event: "session_start", handler: (ev: unknown, ctx: any) => void | Promise<void>): void;
 };
 
 /** Root LiteLLM URL (management endpoints live at the root, not under /v1) and the agent's key, same
- * env vars and default as mgm/.pi/extensions/connect/lib.ts's `backends()`/`rootUrl`. */
+ * env vars and default as kernal/.pi/extensions/connect/lib.ts's `backends()`/`rootUrl`. */
 function litellmRootUrl(): string {
   const base = (process.env.LITELLM_BASE_URL || "https://litellm.augment-code.support/v1").trim();
   return base.replace(/\/v1\/?$/, "");

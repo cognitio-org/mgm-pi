@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds the outfitter-agent sandbox image. Must run with the repo root as build context (the
-# Dockerfile COPYs both mgm/ and outfitter/), so this script cd's there regardless of cwd.
+# Dockerfile COPYs both kernal/ and outfitter/), so this script cd's there regardless of cwd.
 #
 # Targets linux/amd64 by default: Cloud Run Jobs (E1.1) run amd64, and at least one native
 # dependency (open-codebase-index's Rust addon) links against glibc's libmvec, which Debian only

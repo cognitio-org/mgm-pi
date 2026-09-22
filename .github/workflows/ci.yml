@@ -1,30 +1,30 @@
-name: mgm CI
+name: kernal CI
 on:
   push:
     branches: [main]
-    paths: ["mgm/**", ".github/workflows/ci.yml"]
+    paths: ["kernal/**", ".github/workflows/ci.yml"]
   pull_request:
-    paths: ["mgm/**", ".github/workflows/ci.yml"]
+    paths: ["kernal/**", ".github/workflows/ci.yml"]
 jobs:
   test:
     runs-on: ubuntu-24.04
-    defaults: { run: { working-directory: mgm } }
+    defaults: { run: { working-directory: kernal } }
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
-        with: { node-version: 24, cache: npm, cache-dependency-path: mgm/package-lock.json }
+        with: { node-version: 24, cache: npm, cache-dependency-path: kernal/package-lock.json }
       - run: npm ci
       # Before the tests: some of them run the extension packages' own code (subagent model
       # resolution), and a check that the lockfile installs belongs before anything depends on it.
       - name: Extension packages install from the lockfile
         run: npm ci --legacy-peer-deps --omit=dev --ignore-scripts --no-audit --no-fund
-        working-directory: mgm/.pi/npm
+        working-directory: kernal/.pi/npm
       - name: Unit and extension harness tests
         run: npm test
       - name: Offline smoke — the agent starts and lists its providers
         run: |
           printf 'LITELLM_AGENT_KEY=test\nOPENROUTER_API_KEY=test\n' > .env
-          MGM_NO_DISCOVERY=1 MGM_SKIP_LMS=1 ./bin/mgm --list-models | tee models.txt
+          KERNAL_NO_DISCOVERY=1 KERNAL_SKIP_LMS=1 ./bin/kernal --list-models | tee models.txt
           grep -qE '^lmstudio' models.txt && grep -qE '^litellm' models.txt && grep -qE '^openrouter' models.txt
-          mkdir -p /tmp/linkbin && ln -sf "$PWD/bin/mgm" /tmp/linkbin/mgm
-          (cd /tmp && MGM_NO_DISCOVERY=1 MGM_SKIP_LMS=1 /tmp/linkbin/mgm --list-models | grep -qE '^litellm')   # via symlink, as install.sh links it
+          mkdir -p /tmp/linkbin && ln -sf "$PWD/bin/kernal" /tmp/linkbin/kernal
+          (cd /tmp && KERNAL_NO_DISCOVERY=1 KERNAL_SKIP_LMS=1 /tmp/linkbin/kernal --list-models | grep -qE '^litellm')   # via symlink, as install.sh links it

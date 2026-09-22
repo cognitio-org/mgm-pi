@@ -17,7 +17,7 @@ const execFileAsync = promisify(execFile);
 
 const AGENTD_VERSION = "0.1.0";
 const DEFAULT_WORKSPACE = "/workspace";
-const DEFAULT_PI_BIN = "/opt/mgm/node_modules/.bin/pi";
+const DEFAULT_PI_BIN = "/opt/kernal/node_modules/.bin/pi";
 
 function requireEnv(name: string): string {
   const value = process.env[name];

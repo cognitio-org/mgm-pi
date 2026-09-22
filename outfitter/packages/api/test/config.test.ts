@@ -4,7 +4,7 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { assertSandboxOrigin, loadConfig } from "../src/config.ts";
+import { assertSandboxOrigin, loadConfig, mailboxWarning } from "../src/config.ts";
 
 describe("loadConfig", () => {
   test("defaults OUTFITTER_ROLE to \"all\" and SANDBOX_PROVIDER to \"inprocess\" when unset", () => {
@@ -70,3 +70,21 @@ describe("assertSandboxOrigin", () => {
   });
 });
 
+
+describe("mailboxWarning", () => {
+  const cfg = (env: Record<string, string>) => loadConfig({ SANDBOX_PROVIDER: "cloudrun", ...env } as NodeJS.ProcessEnv);
+  const full = { CLOUD_TASKS_QUEUE: "outfitter-wake", TASKS_SA_EMAIL: "tasks@p.iam.gserviceaccount.com" };
+
+  test("a deployed link role without TASKS_SA_EMAIL is warned that its hooks will reject everything", () => {
+    assert.match(mailboxWarning(cfg({ OUTFITTER_ROLE: "link" })) ?? "", /hooks\/tick .* reject every call/);
+  });
+  test("a deployed web role without the queue is warned that wakes won't be retried", () => {
+    assert.match(mailboxWarning(cfg({ OUTFITTER_ROLE: "web", TASKS_SA_EMAIL: full.TASKS_SA_EMAIL })) ?? "", /won't be retried/);
+  });
+  test("quiet when configured, in dev mode, and for non-Cloud Run providers", () => {
+    assert.equal(mailboxWarning(cfg({ OUTFITTER_ROLE: "link", ...full })), undefined);
+    assert.equal(mailboxWarning(cfg({ OUTFITTER_ROLE: "web", ...full })), undefined);
+    assert.equal(mailboxWarning(cfg({ OUTFITTER_ROLE: "link", OUTFITTER_DEV: "1" })), undefined);
+    assert.equal(mailboxWarning(loadConfig({ OUTFITTER_ROLE: "link" } as NodeJS.ProcessEnv)), undefined);
+  });
+});

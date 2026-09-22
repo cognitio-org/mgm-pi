@@ -238,9 +238,10 @@ export interface GitOps {
   /** Stages and commits everything as agentd's own checkpoint commit: the Outfitter bot is both
    * author and committer, and each of `trailers` is appended unless the message already has it. */
   commitAll(cwd: string, message: string, trailers?: string[]): Promise<{ committed: boolean }>;
-  /** Pushes HEAD to `spec.branch` when it differs from the last known remote state of that branch
-   * (or the remote branch isn't known yet), whoever made the commits -- agentd's own checkpoint
-   * commit or the agent itself. `pushed` is false when there was nothing to send. */
+  /** Pushes HEAD to `spec.branch` when it differs from what agentd last saw on origin for that branch
+   * (clone's fetch, or its own last push), whoever made the commits -- agentd's own checkpoint
+   * commit or the agent itself, amended or rebased included. `pushed` is false when there was
+   * nothing to send. */
   push(cwd: string, spec: PushSpec): Promise<{ head: string; pushed: boolean }>;
   diff(cwd: string, base: string): Promise<string>;
 }
@@ -267,6 +268,10 @@ export function createGitOps(exec: ExecFn = defaultExec, options: GitOpsOptions 
   const runAs = options.runAs;
   const localEnv: Record<string, string> = runAs ? { HOME: runAs.home } : {};
   let pushRepo: Promise<string> | undefined;
+  /** What agentd itself last saw on origin for each session branch -- from the clone's fetch or its
+   * own last push. Kept here, root-side, rather than read back from the workspace's
+   * (agent-writable) tracking ref; it decides both whether to push and the push's lease. */
+  const remoteHead = new Map<string, string>();
 
   /** A local git command in the workspace, as the workspace's own user. */
   async function run(cwd: string, args: string[], env: Record<string, string> = {}): Promise<ExecResult> {
@@ -276,17 +281,29 @@ export function createGitOps(exec: ExecFn = defaultExec, options: GitOpsOptions 
   /** agentd's private push repository: a root-owned (mode 0700, from mkdtemp) bare repo whose only
    * link to the workspace is the alternates file push() writes. Created once per GitOps. */
   function ensurePushRepo(): Promise<string> {
-    pushRepo ??= (async () => {
-      const dir = await mkdtemp(join(options.pushRoot ?? tmpdir(), "agentd-push-"));
-      const init = await exec("git", ["init", "--bare", "--quiet", dir], dir, {});
-      if (init.code !== 0) throw new Error(`git init --bare ${dir} failed: ${init.stderr.trim()}`);
-      // Borrow the workspace's objects but never its refs: by default git lists an alternate's refs
-      // by running `git for-each-ref` *inside* the (agent-owned) alternate repository.
-      const cfg = await exec("git", ["config", "core.alternateRefsCommand", "true"], dir, { GIT_DIR: dir });
-      if (cfg.code !== 0) throw new Error(`git config in ${dir} failed: ${cfg.stderr.trim()}`);
-      return dir;
-    })();
+    pushRepo ??= createPushRepo().catch((err) => {
+      pushRepo = undefined; // let the next checkpoint retry rather than failing forever
+      throw err;
+    });
     return pushRepo;
+  }
+
+  async function createPushRepo(): Promise<string> {
+    const dir = await mkdtemp(join(options.pushRoot ?? tmpdir(), "agentd-push-"));
+    const init = await exec("git", ["init", "--bare", "--quiet", dir], dir, {});
+    if (init.code !== 0) throw new Error(`git init --bare ${dir} failed: ${init.stderr.trim()}`);
+    // Borrow the workspace's objects but nothing else: by default git lists an alternate's refs by
+    // running `git for-each-ref` *inside* the (agent-owned) alternate repository, and would parse
+    // agent-written commit-graph / multi-pack-index files as acceleration data.
+    for (const [key, value] of [
+      ["core.alternateRefsCommand", "true"],
+      ["core.commitGraph", "false"],
+      ["core.multiPackIndex", "false"],
+    ]) {
+      const cfg = await exec("git", ["config", key, value], dir, { GIT_DIR: dir });
+      if (cfg.code !== 0) throw new Error(`git config ${key} in ${dir} failed: ${cfg.stderr.trim()}`);
+    }
+    return dir;
   }
 
   return {
@@ -308,25 +325,30 @@ export function createGitOps(exec: ExecFn = defaultExec, options: GitOpsOptions 
       if (mapped.code !== 0) {
         throw new Error(`git config --add remote.origin.fetch ${refspec} failed: ${mapped.stderr.trim()}`);
       }
-      if (spec.createBranch) {
+      // The explicit refspec, not just the branch name: `git fetch origin <branch>` on a
+      // single-branch clone lands in FETCH_HEAD alone and never creates origin/<branch> for the
+      // checkout below (which failed every resumed session before this). Fetched even when
+      // createBranch says the session is new: the api infers that from "no checkpoint recorded",
+      // which a push whose checkpoint frame never arrived makes wrong, and starting over from the
+      // base branch would then leave every later push non-fast-forward.
+      const fetched = await exec("git", ["fetch", "origin", refspec], dest, authEnv);
+      if (fetched.code === 0) {
+        const checked = await exec("git", ["checkout", "-B", spec.branch, trackingRef(spec.branch)], dest);
+        if (checked.code !== 0) {
+          throw new Error(`git checkout ${spec.branch} failed: ${checked.stderr.trim()}`);
+        }
+        const tip = await exec("git", ["rev-parse", "--verify", trackingRef(spec.branch)], dest);
+        if (tip.code === 0) remoteHead.set(spec.branch, tip.stdout.trim());
+      } else if (spec.createBranch) {
+        // No such branch on origin yet (the clone itself just authenticated fine): a new session.
         const created = await exec("git", ["checkout", "-b", spec.branch], dest);
         if (created.code !== 0) {
           throw new Error(`git checkout -b ${spec.branch} failed: ${created.stderr.trim()}`);
         }
       } else {
-        // The explicit refspec, not just the branch name: `git fetch origin <branch>` on a
-        // single-branch clone lands in FETCH_HEAD alone and never creates origin/<branch> for the
-        // checkout below (which failed every resumed session before this).
-        const fetched = await exec("git", ["fetch", "origin", refspec], dest, authEnv);
-        if (fetched.code !== 0) {
-          throw new Error(
-            `git fetch origin ${refspec} failed: ${redactToken(fetched.stderr.trim(), spec.githubToken)}`,
-          );
-        }
-        const checked = await exec("git", ["checkout", "-B", spec.branch, trackingRef(spec.branch)], dest);
-        if (checked.code !== 0) {
-          throw new Error(`git checkout ${spec.branch} failed: ${checked.stderr.trim()}`);
-        }
+        throw new Error(
+          `git fetch origin ${refspec} failed: ${redactToken(fetched.stderr.trim(), spec.githubToken)}`,
+        );
       }
     },
 
@@ -335,12 +357,18 @@ export function createGitOps(exec: ExecFn = defaultExec, options: GitOpsOptions 
       if (add.code !== 0) throw new Error(`git add -A failed: ${add.stderr.trim()}`);
       const status = await run(cwd, ["status", "--porcelain"]);
       if (status.stdout.trim().length === 0) return { committed: false };
-      // --no-verify: a checkpoint is a snapshot, and must not be blocked (or run) by hooks the agent
-      // installed. trailer.ifExists=doNothing: a `checkpoint` down-message whose text already
-      // carries one of the trailers doesn't get it twice.
+      // A checkpoint is a snapshot, and must not be blocked (or run) by anything the agent put in its
+      // repo config: no hooks at all (--no-verify alone still runs prepare-commit-msg), no signing.
+      // trailer.ifExists=addIfDifferent: a `checkpoint` down-message whose text already carries
+      // exactly one of the trailers doesn't get it twice, but another person's Co-authored-by
+      // doesn't suppress this one.
       const trailerArgs = trailers.flatMap((t) => ["--trailer", t]);
       const commit = await run(cwd, ["commit", "--no-verify", "-m", message, ...trailerArgs], {
-        ...gitConfigEnv([["trailer.ifexists", "doNothing"]]),
+        ...gitConfigEnv([
+          ["trailer.ifexists", "addIfDifferent"],
+          ["core.hooksPath", "/dev/null"],
+          ["commit.gpgsign", "false"],
+        ]),
         ...botIdentityEnv(),
       });
       if (commit.code !== 0) throw new Error(`git commit failed: ${commit.stderr.trim()}`);
@@ -352,17 +380,20 @@ export function createGitOps(exec: ExecFn = defaultExec, options: GitOpsOptions 
       const headRes = await run(cwd, ["rev-parse", "--verify", "HEAD^{commit}"]);
       if (headRes.code !== 0) throw new Error(`git rev-parse HEAD failed: ${headRes.stderr.trim()}`);
       const head = headRes.stdout.trim();
-      const known = await run(cwd, ["rev-parse", "--verify", "--quiet", `${trackingRef(branch)}^{commit}`]);
-      if (known.code === 0 && known.stdout.trim() === head) return { head, pushed: false };
+      const known = remoteHead.get(branch);
+      if (known === head) return { head, pushed: false };
 
       const pushDir = await ensurePushRepo();
       await mkdir(join(pushDir, "objects", "info"), { recursive: true });
       await writeFile(join(pushDir, "objects", "info", "alternates"), `${resolve(cwd, ".git", "objects")}\n`);
       // The exact commit read above, not HEAD: a mid-turn checkpoint can race the agent's next
       // commit, and the tracking ref recorded below must be what the remote actually has.
+      // --force-with-lease against what agentd last saw there (empty: the branch must not exist yet):
+      // the agent may amend or rebase its own session branch, which a plain push would reject as
+      // non-fast-forward on every checkpoint from then on, but anyone else's push to it still wins.
       const push = await exec(
         "git",
-        ["push", "--quiet", remoteUrl, `${head}:refs/heads/${branch}`],
+        ["push", "--quiet", `--force-with-lease=refs/heads/${branch}:${known ?? ""}`, remoteUrl, `${head}:refs/heads/${branch}`],
         pushDir,
         { GIT_DIR: pushDir, ...authHeaderEnv(remoteUrl, githubToken) },
       );
@@ -371,6 +402,7 @@ export function createGitOps(exec: ExecFn = defaultExec, options: GitOpsOptions 
           `git push ${redactUrl(remoteUrl)} ${head}:${branch} failed: ${redactToken(push.stderr.trim(), githubToken)}`,
         );
       }
+      remoteHead.set(branch, head);
       // A push to a URL (not to `origin`) moves no tracking ref by itself; record what the remote now
       // has, and the upstream `push -u` would have set, for the agent's own `git status`.
       for (const args of [

@@ -122,6 +122,66 @@ test("checkpoint commit: authored and committed by the Outfitter bot, trailers a
   await writeFile(join(dest, "b.txt"), "b\n");
   await gitOps.commitAll(dest, `cp two\n\n${trailers[0]}`, trailers);
   assert.equal(git(dest, "log", "-1", "--format=%(trailers:only)"), trailers.join("\n"));
+
+  // ...but someone else's Co-authored-by doesn't suppress the person's
+  await writeFile(join(dest, "c.txt"), "c\n");
+  const other = "Co-authored-by: Bob <bob@example.com>";
+  await gitOps.commitAll(dest, `cp three\n\n${other}`, trailers);
+  assert.equal(git(dest, "log", "-1", "--format=%(trailers:only)"), [other, ...trailers].join("\n"));
+});
+
+test("checkpoint commit: the agent's hooks and signing config can't block (or run during) it", async () => {
+  const { root, url } = await makeRemote();
+  const dest = join(root, "ws");
+  const gitOps = createGitOps();
+  await gitOps.clone({ cloneUrl: url, baseBranch: "main", branch: "outfitter/s5", createBranch: true }, dest);
+  const marker = join(root, "hook-ran");
+  for (const name of ["pre-commit", "prepare-commit-msg", "commit-msg", "post-commit"]) {
+    const hook = join(dest, ".git", "hooks", name);
+    await writeFile(hook, `#!/bin/sh\ntouch ${marker}\nexit 1\n`);
+    await chmod(hook, 0o755);
+  }
+  git(dest, "config", "commit.gpgsign", "true");
+  git(dest, "config", "gpg.program", "/nonexistent");
+  await writeFile(join(dest, "d.txt"), "d\n");
+  assert.deepEqual(await gitOps.commitAll(dest, "cp"), { committed: true });
+  await assert.rejects(access(marker));
+});
+
+test("an agent amend or rebase of its own branch still pushes (lease), and anyone else's push wins", async () => {
+  const { root, url, bare } = await makeRemote();
+  const dest = join(root, "ws");
+  const gitOps = createGitOps(undefined, { pushRoot: root });
+  await gitOps.clone({ cloneUrl: url, baseBranch: "main", branch: "outfitter/s6", createBranch: true }, dest);
+  await writeFile(join(dest, "e.txt"), "e\n");
+  await gitOps.commitAll(dest, "cp");
+  await gitOps.push(dest, { remoteUrl: url, branch: "outfitter/s6" });
+
+  git(dest, "commit", "--quiet", "--amend", "-m", "reworded by the agent");
+  const amended = await gitOps.push(dest, { remoteUrl: url, branch: "outfitter/s6" });
+  assert.equal(amended.pushed, true);
+  assert.equal(remoteSha(bare, "outfitter/s6"), amended.head);
+
+  // someone else pushes to the session branch: the lease refuses to clobber it
+  const other = join(root, "other");
+  git(root, "clone", "--quiet", "--branch", "outfitter/s6", url, other);
+  git(other, "commit", "--quiet", "--allow-empty", "-m", "a human's commit");
+  git(other, "push", "--quiet", "origin", "HEAD:refs/heads/outfitter/s6");
+  const humanHead = git(other, "rev-parse", "HEAD");
+  git(dest, "commit", "--quiet", "--allow-empty", "-m", "agent again");
+  await assert.rejects(gitOps.push(dest, { remoteUrl: url, branch: "outfitter/s6" }), /stale info|rejected/);
+  assert.equal(remoteSha(bare, "outfitter/s6"), humanHead);
+});
+
+test("clone with createBranch: true picks up a session branch that's already on origin", async () => {
+  // The api infers createBranch from "no checkpoint recorded"; a push whose checkpoint frame never
+  // arrived leaves the branch on origin anyway. Starting over from main would diverge from it.
+  const { root, url, bare } = await makeRemote("outfitter/s7");
+  const dest = join(root, "ws");
+  const gitOps = createGitOps(undefined, { pushRoot: root });
+  await gitOps.clone({ cloneUrl: url, baseBranch: "main", branch: "outfitter/s7", createBranch: true }, dest);
+  assert.equal(git(dest, "rev-parse", "HEAD"), remoteSha(bare, "outfitter/s7"));
+  assert.equal((await gitOps.push(dest, { remoteUrl: url, branch: "outfitter/s7" })).pushed, false);
 });
 
 test("push never runs the workspace's hooks and never follows the workspace's origin URL", async () => {

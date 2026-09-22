@@ -90,13 +90,14 @@ export interface RunSpecMessage {
  * when an operator has set them, else the email's local part and the email itself. Undefined when
  * the session has no owner (sessions created before ownerEmail was recorded). */
 export function authorFor(ownerEmail: string | undefined, user: User | null): RunSpecMessage["author"] {
-  const email = user?.email ?? ownerEmail;
+  // Mongo documents aren't schema-checked: treat anything but a non-blank string as unset.
+  const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+  const email = str(user?.email) ?? str(ownerEmail);
   if (!email) return undefined;
-  const name = user?.name?.trim() || email.split("@")[0];
-  const login = user?.githubLogin?.trim();
+  const login = str(user?.githubLogin);
   return {
-    name,
-    email: user?.githubEmail?.trim() || email,
+    name: str(user?.name) ?? email.split("@")[0],
+    email: str(user?.githubEmail) ?? email,
     ...(login ? { login } : {}),
   };
 }

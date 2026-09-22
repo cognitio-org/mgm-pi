@@ -732,7 +732,22 @@ export class RunController {
     }
   }
 
+  /** Never rejects: a failed checkpoint (a rejected push, a git error) is logged and the run carries
+   * on -- checkpoints are fired with `void` from down-messages and awaited on every stop path, so a
+   * throw here would crash agentd with an unhandled rejection or skip `bye`. No `checkpoint` frame
+   * is sent for a failure: the api replaces session.checkpoint wholesale with each one. The next
+   * checkpoint retries from scratch. */
   private async checkpointNow(message?: string): Promise<void> {
+    try {
+      await this.checkpointOnce(message);
+    } catch (err: any) {
+      const detail = String(err?.message ?? err);
+      if (this.deps.logger) this.deps.logger.error("checkpoint failed", { error: detail });
+      else this.onLog(`checkpoint failed: ${detail}`);
+    }
+  }
+
+  private async checkpointOnce(message?: string): Promise<void> {
     if (!this.spec) return;
     await this.tailer?.poll();
 

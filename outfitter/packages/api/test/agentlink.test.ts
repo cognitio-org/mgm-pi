@@ -755,5 +755,10 @@ describe("authorFor", () => {
   test("falls back to the owner email when there's no user record yet, and to nothing without an owner", () => {
     assert.deepEqual(authorFor("bob@example.com", null), { name: "bob", email: "bob@example.com" });
     assert.equal(authorFor(undefined, null), undefined);
+    // a malformed stored record falls back instead of throwing
+    assert.deepEqual(
+      authorFor("eve@example.com", { email: "eve@example.com", createdAt: "x", name: 42 as any, githubEmail: "  " }),
+      { name: "eve", email: "eve@example.com" },
+    );
   });
 });

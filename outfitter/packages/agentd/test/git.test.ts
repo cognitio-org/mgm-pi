@@ -106,20 +106,18 @@ test("GitOps.clone (createBranch: false): the fetch step is also authenticated v
   assert.ok(!(fetchCall!.env?.GIT_CONFIG_VALUE_0 ?? "").includes("super-secret-token") || true);
 });
 
-/** A stub exec for push(): HEAD is `deadbeef`, the remote-tracking ref for the session branch is
- * `tracking` (missing when undefined), and `push` returns `pushResult`. */
-function pushExec(opts: { tracking?: string; pushResult?: ExecResult } = {}) {
+/** A stub exec for push(): HEAD is `state.head` (`deadbeef` to start), and `push` returns
+ * `pushResult`. */
+function pushExec(opts: { pushResult?: ExecResult } = {}) {
   const calls: { args: string[]; cwd: string; env?: Record<string, string>; as?: ExecAs }[] = [];
+  const state = { head: "deadbeef" };
   const exec: ExecFn = async (_cmd, args, cwd, env, as) => {
     calls.push({ args, cwd, env, as });
-    if (args[0] === "rev-parse" && args.includes("HEAD^{commit}")) return ok("deadbeef\n");
-    if (args[0] === "rev-parse") {
-      return opts.tracking ? ok(`${opts.tracking}\n`) : { stdout: "", stderr: "", code: 1 };
-    }
+    if (args[0] === "rev-parse") return ok(`${state.head}\n`);
     if (args[0] === "push") return opts.pushResult ?? ok();
     return ok();
   };
-  return { exec, calls };
+  return { exec, calls, state };
 }
 
 const PUSH_SPEC = {
@@ -137,7 +135,14 @@ test("GitOps.push: pushes the exact HEAD commit to run.spec's URL, authenticated
 
   const pushCall = calls.find((c) => c.args[0] === "push");
   assert.ok(pushCall);
-  assert.deepEqual(pushCall!.args, ["push", "--quiet", "https://github.com/acme/repo.git", "deadbeef:refs/heads/outfitter/sess1"]);
+  // nothing seen on origin yet: the lease says the branch must not exist
+  assert.deepEqual(pushCall!.args, [
+    "push",
+    "--quiet",
+    "--force-with-lease=refs/heads/outfitter/sess1:",
+    "https://github.com/acme/repo.git",
+    "deadbeef:refs/heads/outfitter/sess1",
+  ]);
   assert.ok(!calls.some((c) => c.args.includes("get-url")), "never reads the agent-writable origin URL");
   assert.ok(!pushCall!.args.includes("-c"));
   assert.ok(!pushCall!.args.join(" ").includes("super-secret-token"));
@@ -151,18 +156,24 @@ test("GitOps.push: pushes the exact HEAD commit to run.spec's URL, authenticated
   assert.ok(calls.some((c) => c.args.join(" ") === "config branch.outfitter/sess1.merge refs/heads/outfitter/sess1"));
 });
 
-test("GitOps.push: skips the push (pushed: false) when origin's session branch already has HEAD", async () => {
-  const { exec, calls } = pushExec({ tracking: "deadbeef" });
-  const gitOps = createGitOps(exec, { pushRoot: await mkdtemp(join(tmpdir(), "agentd-git-test-")) });
-  assert.deepEqual(await gitOps.push("/tmp/dest", PUSH_SPEC), { head: "deadbeef", pushed: false });
-  assert.ok(!calls.some((c) => c.args[0] === "push"));
-});
-
-test("GitOps.push: pushes when origin's session branch is behind HEAD", async () => {
-  const { exec, calls } = pushExec({ tracking: "cafebabe" });
+test("GitOps.push: skips when HEAD is what agentd last pushed; otherwise leases against it", async () => {
+  const { exec, calls, state } = pushExec();
   const gitOps = createGitOps(exec, { pushRoot: await mkdtemp(join(tmpdir(), "agentd-git-test-")) });
   assert.deepEqual(await gitOps.push("/tmp/dest", PUSH_SPEC), { head: "deadbeef", pushed: true });
-  assert.ok(calls.some((c) => c.args[0] === "push"));
+  assert.deepEqual(await gitOps.push("/tmp/dest", PUSH_SPEC), { head: "deadbeef", pushed: false });
+  assert.equal(calls.filter((c) => c.args[0] === "push").length, 1);
+
+  state.head = "cafebabe"; // a new commit, or an amend/rebase by the agent
+  assert.deepEqual(await gitOps.push("/tmp/dest", PUSH_SPEC), { head: "cafebabe", pushed: true });
+  const second = calls.filter((c) => c.args[0] === "push")[1];
+  assert.ok(second.args.includes("--force-with-lease=refs/heads/outfitter/sess1:deadbeef"));
+});
+
+test("GitOps.push: the skip decision never reads the workspace's (agent-writable) tracking ref", async () => {
+  const { exec, calls } = pushExec();
+  const gitOps = createGitOps(exec, { pushRoot: await mkdtemp(join(tmpdir(), "agentd-git-test-")) });
+  await gitOps.push("/tmp/dest", PUSH_SPEC);
+  assert.ok(!calls.some((c) => c.args[0] === "rev-parse" && c.args.some((a) => a.startsWith("refs/remotes/"))));
 });
 
 test("GitOps with runAs: workspace git runs as that user with its HOME; only clone and the private-repo push run as agentd", async () => {
@@ -222,9 +233,11 @@ test("GitOps.commitAll: commits as the Outfitter bot (author and committer) with
   assert.equal(commit.env?.GIT_AUTHOR_EMAIL, OUTFITTER_BOT_IDENTITY.email);
   assert.equal(commit.env?.GIT_COMMITTER_NAME, OUTFITTER_BOT_IDENTITY.name);
   assert.equal(commit.env?.GIT_COMMITTER_EMAIL, OUTFITTER_BOT_IDENTITY.email);
-  assert.equal(commit.env?.GIT_CONFIG_COUNT, "1");
-  assert.equal(commit.env?.GIT_CONFIG_KEY_0, "trailer.ifexists");
-  assert.equal(commit.env?.GIT_CONFIG_VALUE_0, "doNothing");
+  assert.deepEqual(
+    [0, 1, 2].map((i) => `${commit.env?.[`GIT_CONFIG_KEY_${i}`]}=${commit.env?.[`GIT_CONFIG_VALUE_${i}`]}`),
+    ["trailer.ifexists=addIfDifferent", "core.hooksPath=/dev/null", "commit.gpgsign=false"],
+  );
+  assert.equal(commit.env?.GIT_CONFIG_COUNT, "3");
 });
 
 test("gitConfigEnv: one correctly-counted GIT_CONFIG_* set, in order; {} for no entries", () => {

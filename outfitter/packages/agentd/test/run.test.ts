@@ -1123,3 +1123,23 @@ test("RunController: pi's env pins the bot as git author and committer, plus the
   // and never the token or its header
   assert.ok(!Object.keys(env).some((k) => k.startsWith("GIT_CONFIG_")));
 });
+
+test("RunController: a failed checkpoint (e.g. a rejected push) is logged, not thrown, and the run carries on", async (t) => {
+  const logs: string[] = [];
+  const { controller, link, gitOps, states, spec } = await setupController({}, { onLog: (l) => logs.push(l) });
+  t.after(() => controller.dispose());
+  link.deliver(spec);
+  await waitFor(() => states.includes("idle"));
+
+  gitOps.push = async () => {
+    throw new Error("git push failed: ! [rejected] (stale info)");
+  };
+  link.deliver({ t: "checkpoint" });
+  await waitFor(() => logs.some((l) => l.startsWith("checkpoint failed:")));
+  await waitFor(() => states.at(-1) === "idle");
+  assert.ok(!link.sent.some((m) => m.t === "checkpoint"), "no checkpoint frame for a failed checkpoint");
+
+  // and a stop still says goodbye
+  link.deliver({ t: "stop", reason: "done" });
+  await waitFor(() => link.sent.some((m) => m.t === "bye"));
+});

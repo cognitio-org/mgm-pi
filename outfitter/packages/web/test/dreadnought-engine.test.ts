@@ -143,7 +143,7 @@ describe("Dreadnought Run engine", () => {
 
   it("drones only spawn past the unlock distance and sine-sweep vertically", () => {
     let s = { ...createInitialState(11), lives: 9999 }; // isolate spawn timing from random collision luck
-    for (let i = 0; i < 1000 && s.distance < 360; i++) s = step(s, NO_INPUT, 16);
+    for (let i = 0; i < 1000 && s.distance < 270; i++) s = step(s, NO_INPUT, 16);
     expect(s.obstacles.some((o) => o.kind === "drone")).toBe(false);
     for (let i = 0; i < 20000 && !s.obstacles.some((o) => o.kind === "drone"); i++) s = step(s, NO_INPUT, 16);
     const drone = s.obstacles.find((o) => o.kind === "drone");

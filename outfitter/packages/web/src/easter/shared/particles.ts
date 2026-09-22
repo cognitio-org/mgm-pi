@@ -1,8 +1,8 @@
-// Tiny explosion-particle + screen-shake system shared by both games' renderers. Deliberately kept
-// out of the pure engines (engine.ts in each game folder): particles are a rendering flourish, not
-// game logic, and giving them their own tiny mutable-array update loop keeps the tested engines
-// free of anything non-deterministic-looking. `prefers-reduced-motion` calmer mode is handled by
-// the caller: pass a smaller `count` and skip spawnShake entirely.
+// Tiny particle + screen-shake + floating-text system shared by both games' renderers.
+// Deliberately kept out of the pure engines (engine.ts in each game folder): all of this is a
+// rendering flourish, not game logic, and giving it its own tiny mutable-array update loop keeps
+// the tested engines free of anything non-deterministic-looking. `prefers-reduced-motion` calmer
+// mode is handled by the caller: pass a smaller `count`/shorter life and skip spawnShake entirely.
 
 export interface Particle {
   x: number;
@@ -12,8 +12,12 @@ export interface Particle {
   lifeMs: number;
   maxLifeMs: number;
   color: string;
+  /** Rendered size in px (a few varied sizes reads as "debris chunks" rather than uniform dust). */
+  size: number;
 }
 
+/** A burst of explosion debris: falls under gravity, varied size/speed so it reads as chunks
+ * tumbling outward rather than a uniform ring of dots. */
 export function spawnExplosionParticles(x: number, y: number, count: number, color: string): Particle[] {
   const particles: Particle[] = [];
   for (let i = 0; i < count; i++) {
@@ -27,20 +31,44 @@ export function spawnExplosionParticles(x: number, y: number, count: number, col
       lifeMs: 260 + Math.random() * 220,
       maxLifeMs: 480,
       color,
+      size: 2 + Math.round(Math.random() * 2),
+    });
+  }
+  return particles;
+}
+
+/** A small, bright, upward-biased burst for a pickup/board/score event -- no gravity pull (or very
+ * little), short life, reads as a sparkle rather than debris. */
+export function spawnSparkle(x: number, y: number, count: number, color: string): Particle[] {
+  const particles: Particle[] = [];
+  for (let i = 0; i < count; i++) {
+    const angle = -Math.PI / 2 + (Math.random() - 0.5) * 2.4; // mostly upward, some spread
+    const speed = 20 + Math.random() * 40;
+    particles.push({
+      x,
+      y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      lifeMs: 220 + Math.random() * 160,
+      maxLifeMs: 380,
+      color,
+      size: 1 + Math.round(Math.random()),
     });
   }
   return particles;
 }
 
 /** Advances particles by dtMs and drops dead ones. Mutates nothing -- returns a new array, same
- * spirit as the pure engines even though this one lives outside them. */
-export function stepParticles(particles: Particle[], dtMs: number): Particle[] {
+ * spirit as the pure engines even though this one lives outside them. `gravity` (px/s^2, default
+ * 220) lets callers opt debris-style particles into falling and sparkles/smoke into floating (pass
+ * a small or negative value). */
+export function stepParticles(particles: Particle[], dtMs: number, gravity = 220): Particle[] {
   const dt = dtMs / 1000;
   const next: Particle[] = [];
   for (const p of particles) {
     const lifeMs = p.lifeMs - dtMs;
     if (lifeMs <= 0) continue;
-    next.push({ ...p, x: p.x + p.vx * dt, y: p.y + p.vy * dt, vy: p.vy + 220 * dt, lifeMs });
+    next.push({ ...p, x: p.x + p.vx * dt, y: p.y + p.vy * dt, vy: p.vy + gravity * dt, lifeMs });
   }
   return next;
 }
@@ -68,4 +96,49 @@ export function shakeOffset(shake: ShakeState | null): [number, number] {
   const decay = shake.remainingMs / 220;
   const amt = shake.magnitude * decay;
   return [(Math.random() * 2 - 1) * amt, (Math.random() * 2 - 1) * amt];
+}
+
+// --- floating score-pop text ("+100"), and a short "hit flash" timer ------------------------------
+
+export interface TextPopup {
+  x: number;
+  y: number;
+  text: string;
+  color: string;
+  lifeMs: number;
+  maxLifeMs: number;
+}
+
+export function spawnTextPopup(x: number, y: number, text: string, color = "#f4cf3c"): TextPopup {
+  return { x, y, text, color, lifeMs: 700, maxLifeMs: 700 };
+}
+
+export function stepTextPopups(popups: TextPopup[], dtMs: number): TextPopup[] {
+  const dt = dtMs / 1000;
+  const next: TextPopup[] = [];
+  for (const p of popups) {
+    const lifeMs = p.lifeMs - dtMs;
+    if (lifeMs <= 0) continue;
+    next.push({ ...p, y: p.y - 16 * dt, lifeMs });
+  }
+  return next;
+}
+
+/** A brief full-canvas damage flash: draw a translucent overlay while remainingMs > 0, fading out
+ * linearly. Reduced-motion callers should skip triggering it (or use a much shorter duration). */
+export interface FlashState {
+  remainingMs: number;
+  maxMs: number;
+  color: string;
+}
+
+export function triggerFlash(color = "#ff8a8a", durationMs = 140): FlashState {
+  return { remainingMs: durationMs, maxMs: durationMs, color };
+}
+
+export function stepFlash(flash: FlashState | null, dtMs: number): FlashState | null {
+  if (!flash) return null;
+  const remainingMs = flash.remainingMs - dtMs;
+  if (remainingMs <= 0) return null;
+  return { ...flash, remainingMs };
 }

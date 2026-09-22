@@ -8,32 +8,44 @@
 // Everything here is a pure function of (state, input, dtMs) plus an explicit rng counter baked
 // into the state -- same seed + same input sequence always produces the same run.
 //
-// World resolution: a low-res "C64-style" logical canvas, 320x176, rendered by FloppyRescue.tsx at
-// an integer CSS scale with `image-rendering: pixelated` so it reads as chunky pixel art blown up
-// to fill the frame, rather than a large canvas with tiny sprites lost in empty space.
+// World resolution: a low-res "C64-style" logical canvas, rendered by FloppyRescue.tsx at an
+// integer CSS scale with `image-rendering: pixelated` so it reads as chunky pixel art blown up to
+// fill the frame. WORLD_W/H were shrunk a second time (from an original 320x176 pass) after a
+// design review found the helicopter and Floppies still small at a normal laptop window --
+// 240x176 -> 240x132 puts the (unchanged, still-26px) helicopter at roughly 8/9ths of the display
+// width it was before per screen pixel, without changing sprite art. Every px/s and px/s^2 physics
+// constant below was rescaled by the same 0.75 ratio the world shrank by (240/320), so flight
+// *feel* (time to climb, to cross the level, to land) is unchanged -- only pixel-size constants
+// (PLAYER_W/H, sprite dimensions) were deliberately left alone, since making sprites relatively
+// bigger without shrinking them is the whole point. Time/score/percentage-based constants (fuel
+// rates, cooldowns, fire intensity, points) needed no change at all.
 
-export const WORLD_W = 320;
-export const WORLD_H = 176;
-export const GROUND_Y = 150;
+export const WORLD_W = 240;
+export const WORLD_H = 132;
+export const GROUND_Y = 112;
 export const PLAYER_W = 26;
 export const PLAYER_H = 14;
 export const CAPACITY = 8;
 
 // --- flight-feel tuning constants -------------------------------------------------------------
-// Hand-tuned for "thrust, gravity, momentum, gentle-landing-required" per the brief, at the 320x176
-// logical resolution above. Numbers are logical-px/s or logical-px/s^2. Documented in
+// Hand-tuned for "thrust, gravity, momentum, gentle-landing-required" per the brief. Documented in
 // docs/reports/games.md.
-const GRAVITY = 95; // px/s^2, constant downward pull
-const THRUST_ACCEL = 210; // px/s^2 from holding "up" -- comfortably beats gravity so climbing feels responsive
-const DOWN_ACCEL = 60; // px/s^2 extra from holding "down", gravity does most of the descent work
-const H_ACCEL = 150; // px/s^2 lateral thrust
+const GRAVITY = 71; // px/s^2, constant downward pull
+const THRUST_ACCEL = 158; // px/s^2 from holding "up" -- comfortably beats gravity so climbing feels responsive
+const DOWN_ACCEL = 45; // px/s^2 extra from holding "down", gravity does most of the descent work
+const H_ACCEL = 113; // px/s^2 lateral thrust
 const H_DRAG = 2.4; // 1/s exponential damping on vx when no lateral input (keeps it from feeling icy)
 const V_DRAG = 0.5; // 1/s mild damping on vy so hovering settles instead of oscillating forever
-const MAX_VX = 90; // px/s
-const MAX_VY = 90; // px/s
-export const LANDING_SAFE_VY = 30; // px/s -- touch down slower than this or it's a crash
+const MAX_VX = 68; // px/s
+const MAX_VY = 68; // px/s
+export const LANDING_SAFE_VY = 23; // px/s -- touch down slower than this or it's a crash
 const TILT_MAX = 0.5; // radians, cosmetic lean toward direction of travel
-const CAMERA_LEAD = 24; // px, how far ahead of the player the camera looks in its direction of travel
+const CAMERA_LEAD = 18; // px, how far ahead of the player the camera looks in its direction of travel
+// While the player is still within this many px of the home pad's right edge, the camera stays
+// pinned at 0 instead of leading/following -- keeps the Disk Box and its sign fully in frame at the
+// start (and whenever the player is still basically parked at home) instead of drifting the sign
+// off the left edge the moment thrust ramps up.
+const HOME_CAMERA_LOCK_PAD = 30;
 
 const FUEL_MAX = 100;
 const FUEL_DRAIN_PER_SEC = 3.0; // while airborne
@@ -49,8 +61,8 @@ const FIRE_IGNITE_THRESHOLD = 0.55; // a burning neighbour above this can ignite
 const FIRE_SPREAD_STARTER = 0.05; // intensity a freshly-ignited neighbour starts at
 
 const LEVEL_INTRO_MS = 2200;
-const HOME_PAD_W = 64;
-const FARM_PAD_W = 84;
+const HOME_PAD_W = 48;
+const FARM_PAD_W = 63;
 
 export type GameStatus = "playing" | "paused" | "gameover" | "levelIntro";
 
@@ -136,6 +148,8 @@ export interface GameState {
 export interface GameEvent {
   type: "boarded" | "delivered" | "crash" | "floppyLost" | "levelComplete";
   count?: number;
+  x?: number;
+  y?: number;
 }
 
 /** mulberry32 -- same construction as src/lib/floppy-sound.ts's makeRng, reimplemented as a pure
@@ -170,7 +184,7 @@ function rectsOverlap(
 // takeoff -> farm -> board -> home -> unload loop in well under the ~20s a title screen gets
 // watched for, instead of the trip alone eating the whole demo window.
 function levelWidth(level: number): number {
-  return 480 + (level - 1) * 140;
+  return 360 + (level - 1) * 105;
 }
 
 function floppyCountForLevel(level: number): number {
@@ -204,7 +218,7 @@ function makeFloppies(rngState: number, count: number, farmX: number): [Floppy[]
   for (let i = 0; i < count; i++) {
     const [r, next] = nextRandom(rs);
     rs = next;
-    floppies.push({ x: farmX + 6 + (i % 4) * 16 + r * 4, y: GROUND_Y - 6, alive: true, boarded: false });
+    floppies.push({ x: farmX + 5 + (i % 4) * 12 + r * 3, y: GROUND_Y - 7, alive: true, boarded: false });
   }
   return [floppies, rs];
 }
@@ -217,8 +231,8 @@ export function createLevelState(
   carryOver?: { score: number; lives: number; fuel: number; onBoard: number },
 ): GameState {
   const levelW = levelWidth(level);
-  const homeX = 20;
-  const farmX = levelW - FARM_PAD_W - 20;
+  const homeX = 15;
+  const farmX = levelW - FARM_PAD_W - 15;
   let rs = seed >>> 0;
   const [fireCells, rs2] = makeFireCells(rs, farmX);
   rs = rs2;
@@ -228,11 +242,11 @@ export function createLevelState(
   const drone: Drone | null =
     level >= 2
       ? {
-          x: farmX - 45,
-          y: GROUND_Y - 64,
+          x: farmX - 34,
+          y: GROUND_Y - 48,
           dir: 1,
-          patrolMinX: farmX - 95,
-          patrolMaxX: farmX + FARM_PAD_W + 14,
+          patrolMinX: farmX - 71,
+          patrolMaxX: farmX + FARM_PAD_W + 11,
           fireCooldownMs: 1500,
         }
       : null;
@@ -337,7 +351,7 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
     if (vy > LANDING_SAFE_VY) {
       // crash landing: lose a life, respawn on the home pad
       const lives = state.lives - 1;
-      events.push({ type: "crash" });
+      events.push({ type: "crash", x: playerX, y: GROUND_Y - PLAYER_H });
       if (lives <= 0) {
         return {
           ...state,
@@ -367,9 +381,13 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
   if (playerY <= 0) vy = Math.max(0, vy); // ceiling: stop upward velocity so gravity can resume immediately
   playerY = clamp(playerY, 0, GROUND_Y - PLAYER_H);
 
-  // --- camera: follows the player with a lead in its direction of travel, clamped to level bounds ---
+  // --- camera: pinned at 0 while the player is still near the home pad (keeps the Disk Box and its
+  // sign fully in frame at the start), otherwise follows the player with a lead in its direction of
+  // travel, clamped to level bounds ---
+  const nearHome = playerX < state.homeX + HOME_PAD_W + HOME_CAMERA_LOCK_PAD;
   const lead = clamp(vx / MAX_VX, -1, 1) * CAMERA_LEAD;
-  const targetCamera = clamp(playerX + PLAYER_W / 2 - WORLD_W / 2 + lead, 0, Math.max(0, state.levelW - WORLD_W));
+  const maxCamera = Math.max(0, state.levelW - WORLD_W);
+  const targetCamera = nearHome ? 0 : clamp(playerX + PLAYER_W / 2 - WORLD_W / 2 + lead, 0, maxCamera);
   const cameraX = state.cameraX + (targetCamera - state.cameraX) * Math.min(1, dt * 4);
 
   // --- fuel ---
@@ -397,7 +415,7 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
     if (!f.alive || f.boarded) return f;
     const burningHere = fireCells.some((c) => c.intensity >= 1 && f.x >= c.x && f.x < c.x + c.w);
     if (burningHere) {
-      events.push({ type: "floppyLost" });
+      events.push({ type: "floppyLost", x: f.x, y: f.y });
       return { ...f, alive: false };
     }
     return f;
@@ -417,7 +435,7 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
       boarded += 1;
     }
   }
-  if (boarded > 0) events.push({ type: "boarded", count: boarded });
+  if (boarded > 0) events.push({ type: "boarded", count: boarded, x: playerX, y: playerY });
 
   // --- delivery (landed at home with a load) ---
   let score = state.score;
@@ -426,16 +444,16 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
     const delivered = onBoard;
     score += delivered * SCORE_PER_FLOPPY + (delivered === CAPACITY ? FULL_LOAD_BONUS : 0);
     deliveredThisLevel += delivered;
-    events.push({ type: "delivered", count: delivered });
+    events.push({ type: "delivered", count: delivered, x: playerX, y: playerY });
     onBoard = 0;
   }
 
   // --- debris hazard ---
   let debrisSpawnCooldownMs = state.debrisSpawnCooldownMs - dtMs;
-  const debris = state.debris.map((d) => ({ ...d, y: d.y + d.vy * dt })).filter((d) => d.y < GROUND_Y + 20);
+  const debris = state.debris.map((d) => ({ ...d, y: d.y + d.vy * dt })).filter((d) => d.y < GROUND_Y + 15);
   if (debrisSpawnCooldownMs <= 0) {
-    const spawnX = state.farmX - 50 + rand() * (FARM_PAD_W + 100);
-    debris.push({ x: clamp(spawnX, 0, state.levelW), y: -6, vy: 42 + state.level * 5 });
+    const spawnX = state.farmX - 38 + rand() * (FARM_PAD_W + 75);
+    debris.push({ x: clamp(spawnX, 0, state.levelW), y: -5, vy: 32 + state.level * 4 });
     debrisSpawnCooldownMs = Math.max(700, 2400 - state.level * 180);
   }
 
@@ -443,9 +461,9 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
   let drone = state.drone;
   const droneBullets = state.droneBullets
     .map((b) => ({ ...b, x: b.x + b.vx * dt, y: b.y + b.vy * dt }))
-    .filter((b) => b.y < GROUND_Y + 20 && b.y > -20);
+    .filter((b) => b.y < GROUND_Y + 15 && b.y > -15);
   if (drone) {
-    let dx = drone.x + drone.dir * 36 * dt;
+    let dx = drone.x + drone.dir * 27 * dt;
     let dir = drone.dir;
     if (dx >= drone.patrolMaxX) {
       dx = drone.patrolMaxX;
@@ -459,7 +477,7 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
       const dxToPlayer = playerX - dx;
       const dyToPlayer = playerY - drone.y;
       const dist = Math.max(1, Math.hypot(dxToPlayer, dyToPlayer));
-      const speed = 75;
+      const speed = 56;
       droneBullets.push({ x: dx, y: drone.y, vx: (dxToPlayer / dist) * speed, vy: (dyToPlayer / dist) * speed });
       fireCooldownMs = Math.max(900, 1900 - state.level * 100);
     }
@@ -473,14 +491,14 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
   if (invulnMs === 0) {
     const hitDebris = debris.some((d) => rectsOverlap(playerX, playerY, PLAYER_W, PLAYER_H, d.x - 3, d.y - 3, 6, 6));
     const hitFire = fireCells.some(
-      (c) => c.intensity >= 1 && playerY + PLAYER_H >= GROUND_Y - 8 && playerX + PLAYER_W > c.x && playerX < c.x + c.w,
+      (c) => c.intensity >= 1 && playerY + PLAYER_H >= GROUND_Y - 6 && playerX + PLAYER_W > c.x && playerX < c.x + c.w,
     );
     const hitBulletIdx = droneBullets.findIndex((b) => rectsOverlap(playerX, playerY, PLAYER_W, PLAYER_H, b.x - 3, b.y - 3, 6, 6));
     if (hitDebris || hitFire || hitBulletIdx >= 0) {
       crashed = true;
       lives -= 1;
       invulnMs = 1500;
-      events.push({ type: "crash" });
+      events.push({ type: "crash", x: playerX, y: playerY });
       if (hitBulletIdx >= 0) droneBullets.splice(hitBulletIdx, 1);
     }
   }
@@ -554,18 +572,18 @@ export function attractInput(state: GameState): GameInput {
   const wantsFarm = state.onBoard < CAPACITY && stillToRescue;
   const targetX = wantsFarm ? state.farmX + FARM_PAD_W / 2 - PLAYER_W / 2 : state.homeX + HOME_PAD_W / 2 - PLAYER_W / 2;
   const dx = targetX - state.playerX;
-  const closeX = Math.abs(dx) < 24;
-  const left = dx < -6;
-  const right = dx > 6;
+  const closeX = Math.abs(dx) < 18;
+  const left = dx < -5;
+  const right = dx > 5;
   const groundClearance = GROUND_Y - PLAYER_H - state.playerY;
   let up = false;
   let down = false;
   if (!closeX) {
     up = state.playerY > WORLD_H * 0.3; // cruise at altitude while travelling
-  } else if (groundClearance > 20) {
+  } else if (groundClearance > 15) {
     down = state.playerVy < LANDING_SAFE_VY * 0.6; // ease down without overshooting the safe speed
   } else if (groundClearance < 3) {
-    up = state.playerVy > 15; // cushion the touchdown
+    up = state.playerVy > 12; // cushion the touchdown
   }
   return { up, down, left, right };
 }

@@ -12,33 +12,36 @@
 // `image-rendering: pixelated`, so the ship/turrets/racks read as chunky, legible pixel art filling
 // the frame instead of tiny specks lost in a big empty canvas. Sprite pixel sizes below (PLAYER_W/H,
 // obstacle w/h) are kept close to their original absolute sizes -- shrinking the world instead of
-// the sprites is what makes them read as proportionally larger on screen.
-export const WORLD_W = 320;
-export const WORLD_H = 176;
-export const PLAYER_X = 36;
+// the sprites is what makes them read as proportionally larger on screen. WORLD_W/H were shrunk a
+// second time (from an original 320x176 pass, itself already a shrink from 800x440) after a design
+// review found the ship still small at a normal laptop window; every px/s and px/s^2 constant below
+// is rescaled by the same 0.75 ratio (240/320) so flight feel is unchanged.
+export const WORLD_W = 240;
+export const WORLD_H = 132;
+export const PLAYER_X = 27;
 export const PLAYER_W = 26;
 export const PLAYER_H = 14;
-export const PLAYER_MIN_Y = 10;
-export const PLAYER_MAX_Y = WORLD_H - 10 - PLAYER_H;
+export const PLAYER_MIN_Y = 8;
+export const PLAYER_MAX_Y = WORLD_H - 8 - PLAYER_H;
 
-const PLAYER_ACCEL = 360; // px/s^2
-const PLAYER_MAX_VY = 104; // px/s
+const PLAYER_ACCEL = 270; // px/s^2
+const PLAYER_MAX_VY = 78; // px/s
 const PLAYER_DRAG = 6; // 1/s, exponential damping when no thrust input
-const BASE_SCROLL_SPEED = 68; // px/s
-const MAX_SCROLL_SPEED = 168;
-const SCROLL_SPEED_PER_DISTANCE = 0.02; // px/s gained per world-px travelled
-const BULLET_SPEED = 248;
-const ENEMY_BULLET_SPEED = 104;
+const BASE_SCROLL_SPEED = 51; // px/s
+const MAX_SCROLL_SPEED = 126;
+const SCROLL_SPEED_PER_DISTANCE = 0.02; // px/s gained per world-px travelled (dimensionless ratio, unaffected by the rescale)
+const BULLET_SPEED = 186;
+const ENEMY_BULLET_SPEED = 78;
 const SHOOT_COOLDOWN_MS = 180;
 const TURRET_FIRE_COOLDOWN_MS = 1400;
 const DRONE_FIRE_COOLDOWN_MS = 1000;
-const DRONE_AMPLITUDE = 24; // px, vertical sine sweep
+const DRONE_AMPLITUDE = 18; // px, vertical sine sweep
 const DRONE_ANGULAR_FREQ = 0.0022; // rad/ms
 const INVULN_MS = 1200;
 const START_LIVES = 3;
 // Distance travelled before drones start appearing -- keeps the first stretch of a run to just
 // racks + turrets so the third obstacle type reads as an escalation, not noise from second one.
-const DRONE_UNLOCK_DISTANCE = 360;
+const DRONE_UNLOCK_DISTANCE = 270;
 
 export type Kind = "rack" | "turret" | "drone";
 
@@ -79,9 +82,11 @@ export interface GameInput {
 /** Emitted this step for the renderer to spawn a one-off visual (explosion particles, screen
  * shake) -- not carried forward in state, since it's consumed immediately by the caller. */
 export interface GameEvent {
-  type: "obstacleDestroyed" | "playerHit";
+  type: "obstacleDestroyed" | "playerHit" | "pickupCollected";
   x: number;
   y: number;
+  /** Score awarded by this event, for a renderer-drawn "+N" pop. Omitted for playerHit. */
+  score?: number;
 }
 
 export interface GameState {
@@ -132,7 +137,7 @@ export function createInitialState(seed: number): GameState {
     obstacles: [],
     pickups: [],
     shootCooldownMs: 0,
-    nextSpawnAtDistance: 104,
+    nextSpawnAtDistance: 78,
     invulnMs: 0,
     lastHit: null,
     events: [],
@@ -268,9 +273,9 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
       });
     }
     if (rand() < 0.4) {
-      pickups.push({ x: WORLD_W + 24 + rand() * 16, y: PLAYER_MIN_Y + rand() * (WORLD_H - PLAYER_MIN_Y * 2), taken: false });
+      pickups.push({ x: WORLD_W + 18 + rand() * 12, y: PLAYER_MIN_Y + rand() * (WORLD_H - PLAYER_MIN_Y * 2), taken: false });
     }
-    nextSpawnAtDistance = distance + 52 + rand() * 36;
+    nextSpawnAtDistance = distance + 39 + rand() * 27;
   }
 
   // --- collisions: player bullets vs obstacles ---
@@ -286,8 +291,9 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
       bullets.splice(hitBulletIdx, 1);
       hp -= 1;
       if (hp <= 0) {
-        score += o.kind === "drone" ? 200 : 150;
-        events.push({ type: "obstacleDestroyed", x: o.x, y: o.y });
+        const gained = o.kind === "drone" ? 200 : 150;
+        score += gained;
+        events.push({ type: "obstacleDestroyed", x: o.x, y: o.y, score: gained });
         continue; // destroyed, drop it
       }
     }
@@ -316,6 +322,7 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
   for (const p of pickups) {
     if (rectsOverlap(PLAYER_X, playerY, PLAYER_W, PLAYER_H, p.x - 6, p.y - 6, 12, 12)) {
       score += 50;
+      events.push({ type: "pickupCollected", x: p.x, y: p.y, score: 50 });
       continue;
     }
     remainingPickups.push(p);

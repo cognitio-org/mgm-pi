@@ -28,7 +28,22 @@ import { readHighScore, writeHighScoreIfBetter } from "../shared/highscore.ts";
 import { usesReducedMotion } from "../shared/motion.ts";
 import { useFixedStepLoop } from "../shared/fixedStep.ts";
 import { readGamepadButtons, readGamepadDirection } from "../shared/gamepad.ts";
-import { spawnExplosionParticles, stepParticles, stepShake, triggerShake, shakeOffset, type Particle, type ShakeState } from "../shared/particles.ts";
+import {
+  spawnExplosionParticles,
+  spawnSparkle,
+  spawnTextPopup,
+  stepFlash,
+  stepParticles,
+  stepShake,
+  stepTextPopups,
+  triggerFlash,
+  triggerShake,
+  shakeOffset,
+  type FlashState,
+  type Particle,
+  type ShakeState,
+  type TextPopup,
+} from "../shared/particles.ts";
 import { drawSprite } from "../shared/pixelSprite.ts";
 import {
   DRONE_PALETTE,
@@ -63,6 +78,8 @@ export function DreadnoughtRun({ onClose }: DreadnoughtRunProps) {
   const stateRef = useRef<GameState>(createInitialState(Date.now() & 0xffffffff));
   const inputRef = useRef<GameInput>({ up: false, down: false, firing: false });
   const particlesRef = useRef<Particle[]>([]);
+  const popupsRef = useRef<TextPopup[]>([]);
+  const flashRef = useRef<FlashState | null>(null);
   const shakeRef = useRef<ShakeState | null>(null);
   const lastPauseButtonRef = useRef(false);
   const [, forceRender] = useState(0);
@@ -82,6 +99,8 @@ export function DreadnoughtRun({ onClose }: DreadnoughtRunProps) {
   function startGame() {
     stateRef.current = createInitialState(Date.now() & 0xffffffff);
     particlesRef.current = [];
+    popupsRef.current = [];
+    flashRef.current = null;
     shakeRef.current = null;
     setScreen("game");
   }
@@ -136,7 +155,12 @@ export function DreadnoughtRun({ onClose }: DreadnoughtRunProps) {
       if (ev.type === "obstacleDestroyed") {
         if (!reducedMotion) particlesRef.current = particlesRef.current.concat(spawnExplosionParticles(ev.x, ev.y, 10, "#f4cf3c"));
         if (!reducedMotion) shakeRef.current = triggerShake(4);
+        if (ev.score) popupsRef.current = popupsRef.current.concat(spawnTextPopup(ev.x, ev.y - 6, `+${ev.score}`, "#f4cf3c"));
+      } else if (ev.type === "pickupCollected") {
+        if (!reducedMotion) particlesRef.current = particlesRef.current.concat(spawnSparkle(ev.x, ev.y, 8, "#5cff8a"));
+        if (ev.score) popupsRef.current = popupsRef.current.concat(spawnTextPopup(ev.x, ev.y - 6, `+${ev.score}`, "#5cff8a"));
       } else if (ev.type === "playerHit") {
+        flashRef.current = triggerFlash("#ff8a8a", reducedMotion ? 80 : 160);
         if (!reducedMotion) particlesRef.current = particlesRef.current.concat(spawnExplosionParticles(ev.x, ev.y, 14, "#ff8a8a"));
         if (!reducedMotion) shakeRef.current = triggerShake(7);
       }
@@ -154,6 +178,7 @@ export function DreadnoughtRun({ onClose }: DreadnoughtRunProps) {
         if (after.status === "gameover") after = createInitialState((Date.now() + before.t) & 0xffffffff);
         stateRef.current = after;
         particlesRef.current = stepParticles(particlesRef.current, dtMs);
+        popupsRef.current = stepTextPopups(popupsRef.current, dtMs);
         return;
       }
       const gp = readGamepadDirection();
@@ -176,7 +201,9 @@ export function DreadnoughtRun({ onClose }: DreadnoughtRunProps) {
       const after = step(before, merged, dtMs);
       stateRef.current = after;
       particlesRef.current = stepParticles(particlesRef.current, dtMs);
+      popupsRef.current = stepTextPopups(popupsRef.current, dtMs);
       shakeRef.current = stepShake(shakeRef.current, dtMs);
+      flashRef.current = stepFlash(flashRef.current, dtMs);
 
       if (after.status === "playing") {
         if (after.bullets.length > before.bullets.length) playLaser();
@@ -196,7 +223,17 @@ export function DreadnoughtRun({ onClose }: DreadnoughtRunProps) {
     [screen, reducedMotion, autoDemo],
   );
   const onRender = useCallback(() => {
-    draw(canvasRef.current, stateRef.current, particlesRef.current, shakeRef.current, reducedMotion, screen, highScore);
+    draw(
+      canvasRef.current,
+      stateRef.current,
+      particlesRef.current,
+      popupsRef.current,
+      shakeRef.current,
+      flashRef.current,
+      reducedMotion,
+      screen,
+      highScore,
+    );
     forceRender((n) => (n + 1) % 1000000);
   }, [reducedMotion, screen, highScore]);
   useFixedStepLoop(onStep, onRender, loopActive);
@@ -342,37 +379,75 @@ export function DreadnoughtRun({ onClose }: DreadnoughtRunProps) {
 }
 
 // The dreadnought's actual hull, not a bare grid: three depth layers scrolling at different
-// fractions of world speed. Farthest = distant tower silhouettes along the horizon; mid = hull
-// panelling with rivets and vent slits; nearest = a runway-light stripe along the top/bottom edges,
-// like guide lighting skimmed at speed. Tower heights are a deterministic hash of their tile index
-// (no RNG/state needed) so the same stretch of hull always looks the same.
+// fractions of world speed, so distance reads as travelling along a ship instead of past a
+// repeating texture. Farthest = tower silhouettes along the horizon, with an occasional bigger
+// "bridge tower" (lit windows, an antenna mast) standing out from the regular ones; mid = hull
+// panelling with rivets, vent slits and hatches, plus an occasional big "hangar door" (a large
+// recessed dark panel with a seam) instead of a plain panel; nearest = a runway-light stripe along
+// the top/bottom edges, like guide lighting skimmed at speed. All positions are a deterministic
+// hash of their tile index (no RNG/state needed) so the same stretch of hull always looks the same.
 function drawHull(ctx: CanvasRenderingContext2D, distance: number, reducedMotion: boolean): void {
   const spacing1 = 70;
   const offset1 = reducedMotion ? 0 : distance * 0.12 % spacing1;
-  ctx.fillStyle = "#2c2566";
   for (let x = -offset1 - spacing1; x < WORLD_W + spacing1; x += spacing1) {
     const i = Math.round((x + offset1) / spacing1);
-    const h = 24 + ((Math.abs(i * 2654435761) >>> 0) % 34);
     const rx = Math.round(x);
-    ctx.fillRect(rx, WORLD_H - h, 12, h);
-    ctx.fillRect(rx + 4, WORLD_H - h - 5, 4, 5); // antenna cap
+    if (i % 4 === 0) {
+      // bridge tower: taller, with a row of lit windows and an antenna mast
+      const h = 46;
+      ctx.fillStyle = "#241e5c";
+      ctx.fillRect(rx, WORLD_H - h, 16, h);
+      ctx.fillStyle = "#2c2566";
+      ctx.fillRect(rx + 2, WORLD_H - h + 4, 12, 10);
+      ctx.fillStyle = "#5cff8a";
+      for (let wx = 0; wx < 3; wx++) ctx.fillRect(rx + 3 + wx * 4, WORLD_H - h + 7, 2, 2);
+      ctx.fillStyle = "#8b7cd8";
+      ctx.fillRect(rx + 6, WORLD_H - h - 6, 4, 6);
+    } else {
+      const h = 24 + ((Math.abs(i * 2654435761) >>> 0) % 34);
+      ctx.fillStyle = "#2c2566";
+      ctx.fillRect(rx, WORLD_H - h, 12, h);
+      ctx.fillRect(rx + 4, WORLD_H - h - 5, 4, 5); // antenna cap
+    }
   }
 
   const spacing2 = 36;
   const offset2 = reducedMotion ? 0 : distance * 0.4 % spacing2;
-  ctx.strokeStyle = "#3f3690";
   ctx.lineWidth = 1;
   for (let x = -offset2; x < WORLD_W; x += spacing2) {
     const rx = Math.round(x);
-    ctx.beginPath();
-    ctx.moveTo(rx, 0);
-    ctx.lineTo(rx, WORLD_H);
-    ctx.stroke();
-    ctx.fillStyle = "#3f3690";
-    ctx.fillRect(rx + 6, 14, 2, 2); // rivet
-    ctx.fillRect(rx + 6, WORLD_H - 20, 2, 2);
-    ctx.fillStyle = "#1c1650";
-    ctx.fillRect(rx + 14, WORLD_H / 2 - 2, 10, 3); // vent slit
+    const j = Math.round((x + offset2) / spacing2);
+    if (j % 6 === 0) {
+      // hangar door: a big recessed dark panel with a centre seam and a corner hatch light
+      const w = spacing2 - 4;
+      ctx.fillStyle = "#1c1650";
+      ctx.fillRect(rx, 18, w, WORLD_H - 40);
+      ctx.strokeStyle = "#3f3690";
+      ctx.beginPath();
+      ctx.moveTo(rx + w / 2, 18);
+      ctx.lineTo(rx + w / 2, WORLD_H - 22);
+      ctx.stroke();
+      ctx.fillStyle = "#f4cf3c";
+      ctx.fillRect(rx + 3, 21, 2, 2);
+    } else {
+      ctx.strokeStyle = "#3f3690";
+      ctx.beginPath();
+      ctx.moveTo(rx, 0);
+      ctx.lineTo(rx, WORLD_H);
+      ctx.stroke();
+      ctx.fillStyle = "#3f3690";
+      ctx.fillRect(rx + 6, 14, 2, 2); // rivet
+      ctx.fillRect(rx + 6, WORLD_H - 20, 2, 2);
+      ctx.fillStyle = "#1c1650";
+      ctx.fillRect(rx + 14, WORLD_H / 2 - 2, 10, 3); // vent slit
+      if (j % 2 === 0) {
+        // hatch: a small recessed panel with its own outline
+        ctx.fillStyle = "#241e5c";
+        ctx.fillRect(rx + 20, WORLD_H / 2 + 14, 6, 6);
+        ctx.strokeStyle = "#3f3690";
+        ctx.strokeRect(rx + 20.5, WORLD_H / 2 + 14.5, 5, 5);
+      }
+    }
   }
 
   const spacing3 = 16;
@@ -405,7 +480,9 @@ function draw(
   canvas: HTMLCanvasElement | null,
   state: GameState,
   particles: Particle[],
+  popups: TextPopup[],
   shake: ShakeState | null,
+  flash: FlashState | null,
   reducedMotion: boolean,
   screen: "title" | "game",
   highScore: number,
@@ -451,12 +528,12 @@ function draw(
   ctx.fillStyle = "#ff8a8a";
   for (const b of state.enemyBullets) ctx.fillRect(b.x - 3, b.y - 1.5, 6, 3);
 
-  // explosion particles
+  // explosion/spark particles -- variable size so a burst reads as chunks/sparkles, not uniform dust
   for (const p of particles) {
     const alpha = Math.max(0, p.lifeMs / p.maxLifeMs);
     ctx.globalAlpha = alpha;
     ctx.fillStyle = p.color;
-    ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
+    ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
   }
   ctx.globalAlpha = 1;
 
@@ -478,6 +555,25 @@ function draw(
   ctx.lineTo(WORLD_W, PLAYER_MAX_Y + PLAYER_H + 4);
   ctx.stroke();
   ctx.setLineDash([]);
+
+  // floating score pops ("+150")
+  ctx.font = "8px monospace";
+  ctx.textAlign = "center";
+  for (const p of popups) {
+    ctx.globalAlpha = Math.max(0, p.lifeMs / p.maxLifeMs);
+    ctx.fillStyle = p.color;
+    ctx.fillText(p.text, p.x, p.y);
+  }
+  ctx.globalAlpha = 1;
+  ctx.textAlign = "left";
+
+  // brief full-canvas damage flash
+  if (flash) {
+    ctx.globalAlpha = (flash.remainingMs / flash.maxMs) * 0.35;
+    ctx.fillStyle = flash.color;
+    ctx.fillRect(-8, -8, WORLD_W + 16, WORLD_H + 16);
+    ctx.globalAlpha = 1;
+  }
 
   if (screen === "game") drawHud(ctx, state, highScore);
 

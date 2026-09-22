@@ -29,15 +29,57 @@ export function MermaidEnlargeDialog({ svg, onClose }: { svg: string; onClose: (
   const dragStart = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
   const pinchStart = useRef<{ distance: number; scale: number } | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  // Latest onClose without re-running the focus effect below (the parent passes a fresh arrow
+  // every render, which would otherwise bounce focus to the opener and back on each re-render).
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
+    // Modal: focus the close button, keep Tab inside the dialog, and hand focus back to whatever
+    // opened it (the Enlarge button) on close.
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     closeRef.current?.focus();
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== "Tab" || !dialogRef.current) return;
+      const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>("button:not([disabled])"));
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey && (active === first || !dialogRef.current.contains(active))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !dialogRef.current.contains(active))) {
+        e.preventDefault();
+        first.focus();
+      }
     }
     document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      opener?.focus();
+    };
+  }, []);
+
+  // Wheel zoom needs a non-passive listener: React registers onWheel as passive, so
+  // preventDefault() there is ignored -- the page behind scrolls, and a trackpad pinch
+  // (ctrl+wheel) zooms the whole browser page instead of the diagram.
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    function onWheel(e: WheelEvent) {
+      e.preventDefault();
+      const factor = Math.exp(-e.deltaY * 0.0015);
+      setTransform((t) => ({ ...t, scale: clampScale(t.scale * factor) }));
+    }
+    surface.addEventListener("wheel", onWheel, { passive: false });
+    return () => surface.removeEventListener("wheel", onWheel);
+  }, []);
 
   function pointerDistance(): number {
     const pts = [...pointers.current.values()];
@@ -84,12 +126,6 @@ export function MermaidEnlargeDialog({ svg, onClose }: { svg: string; onClose: (
     }
   }
 
-  function onWheel(e: React.WheelEvent<HTMLDivElement>) {
-    e.preventDefault();
-    const factor = Math.exp(-e.deltaY * 0.0015);
-    setTransform((t) => ({ ...t, scale: clampScale(t.scale * factor) }));
-  }
-
   function resetView() {
     setTransform({ scale: 1, x: 0, y: 0 });
   }
@@ -97,6 +133,7 @@ export function MermaidEnlargeDialog({ svg, onClose }: { svg: string; onClose: (
   return (
     <div className="dialog-backdrop mermaid-enlarge-backdrop" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="dialog panel mermaid-enlarge-dialog"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
@@ -119,7 +156,6 @@ export function MermaidEnlargeDialog({ svg, onClose }: { svg: string; onClose: (
           onPointerUp={endPointer}
           onPointerCancel={endPointer}
           onPointerLeave={endPointer}
-          onWheel={onWheel}
         >
           <div
             className="mermaid-enlarge-canvas"

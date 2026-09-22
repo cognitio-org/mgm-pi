@@ -25,6 +25,11 @@ export interface Config {
   devToken: string;
   /** Origin of this API, e.g. https://outfitter-api-xyz.run.app. Also the agentd token audience. */
   origin: string;
+  /** OUTFITTER_ORIGIN_ALIASES: other origins this service also answers on (e.g. its run.app URL
+   * once OUTFITTER_ORIGIN is a custom domain), accepted as token audiences alongside `origin` so a
+   * hostname change doesn't strand a running sandbox or a queued Cloud Task minted for the old one.
+   * Separated like OUTFITTER_OPERATORS (`;` in deploy/service.sh). See tokenAudiences. */
+  originAliases: string[];
   /** OUTFITTER_ROLE: which routes this process registers. See OutfitterRole. */
   role: OutfitterRole;
   /** Service account email agentd authenticates as (audience-verified in verifyAgentToken). */
@@ -132,8 +137,9 @@ function envList(name: string, fallback: string[], env: NodeJS.ProcessEnv): stri
   return items.length > 0 ? items : fallback;
 }
 
-/** OUTFITTER_OPERATORS parser: splits on `;`, `,` or any whitespace run (see Config.operators'
- * doc comment for why more than one separator is accepted), trims each entry, drops empties. */
+/** OUTFITTER_OPERATORS / OUTFITTER_ORIGIN_ALIASES parser: splits on `;`, `,` or any whitespace run
+ * (see Config.operators' doc comment for why more than one separator is accepted), trims each
+ * entry, drops empties. */
 function envOperators(name: string, env: NodeJS.ProcessEnv): string[] {
   const raw = env[name];
   if (!raw) return [];
@@ -141,6 +147,13 @@ function envOperators(name: string, env: NodeJS.ProcessEnv): string[] {
     .split(/[;,\s]+/)
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+/** Audiences an incoming Google ID token (agentd, Cloud Tasks, Cloud Scheduler) may carry: this
+ * service's origin plus its aliases, de-duplicated, no trailing slashes. */
+export function tokenAudiences(config: Pick<Config, "origin" | "originAliases">): string[] {
+  const strip = (o: string) => o.replace(/\/+$/, "");
+  return [...new Set([config.origin, ...config.originAliases].map(strip).filter(Boolean))];
 }
 
 /** The origin a sandbox dials for its WebSocket (agentd's OUTFITTER_API). With separate roles the
@@ -185,6 +198,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     devMode: env.OUTFITTER_DEV === "1",
     devToken: env.OUTFITTER_DEV_TOKEN ?? "dev-agent-token",
     origin: env.OUTFITTER_ORIGIN ?? "http://localhost:8080",
+    originAliases: envOperators("OUTFITTER_ORIGIN_ALIASES", env),
     role: envRole(env),
     agentSaEmail: env.AGENT_SA_EMAIL ?? "",
     iapAudience: env.IAP_AUDIENCE ?? "",

@@ -19,3 +19,10 @@ updates:
         patterns: ["*"]
     labels: [dependencies, packages]
     commit-message: { prefix: "packages" }
+  # the kernal.one landing page's nginx base image, pinned by digest (outfitter/landing/Dockerfile):
+  # without this the pin would never pick up nginx/Alpine security fixes
+  - package-ecosystem: docker
+    directory: /outfitter/landing
+    schedule: { interval: weekly }
+    labels: [dependencies, landing]
+    commit-message: { prefix: "landing" }

@@ -107,11 +107,29 @@ gcloud builds submit "${SOURCE_DIR}" \
 # UI prints. Cloud Run only hands out that URL once the service exists, so a brand-new service gets
 # one bootstrap deploy first (unauthenticated, no IAP, no secrets) purely to learn it. Every later
 # run just reads the existing service's URL and skips straight to the real deploy below.
+DEPLOYED_ORIGIN="$(deployed_origin "${SERVICE}")"
+if ! PUBLIC_ORIGIN="$(public_origin "${SERVICE}")"; then
+  echo "error: could not work out ${SERVICE}'s public origin; set OUTFITTER_ORIGIN to deploy anyway" >&2
+  exit 1
+fi
 ORIGIN="${OUTFITTER_ORIGIN:-}"
 if [[ -z "${ORIGIN}" ]]; then
-  ORIGIN="$(public_origin "${SERVICE}")"   # env.sh: custom domain once mapped, else run.app
+  # OUTFITTER_ORIGIN is a token audience on the link role, so it only ever changes on purpose: keep
+  # what's deployed unless ALLOW_ORIGIN_CHANGE=1 (then take the Ready custom domain, env.sh
+  # public_origin). A brand-new service has nothing deployed and takes public_origin directly.
+  if [[ -z "${DEPLOYED_ORIGIN}" || "${DEPLOYED_ORIGIN}" == "${PUBLIC_ORIGIN}" ]]; then
+    ORIGIN="${PUBLIC_ORIGIN}"
+  elif [[ "${ALLOW_ORIGIN_CHANGE:-}" == 1 ]]; then
+    echo "   origin: changing ${DEPLOYED_ORIGIN} -> ${PUBLIC_ORIGIN} (ALLOW_ORIGIN_CHANGE=1)"
+    ORIGIN="${PUBLIC_ORIGIN}"
+  else
+    echo "   origin: keeping ${DEPLOYED_ORIGIN}; ${PUBLIC_ORIGIN} is available (re-run with ALLOW_ORIGIN_CHANGE=1 to switch, README.md \"kernal.one\")"
+    ORIGIN="${DEPLOYED_ORIGIN}"
+  fi
 fi
 if [[ -z "${ORIGIN}" ]]; then
+  # Deliberately status.url, not public_origin: a service that does not exist yet cannot have a
+  # Ready domain mapping, so its first origin is always its run.app URL.
   echo "== Bootstrap deploy (no prior revision, no OUTFITTER_ORIGIN given) to learn the service URL =="
   gcloud run deploy "${SERVICE}" \
     --project="${PROJECT}" \
@@ -130,7 +148,19 @@ fi
 # SANDBOX_PROVIDER and CLOUDRUN_JOB go to BOTH roles: the provider is constructed at boot (config
 # validation), even though only the web role ever wakes a run. Without them the API defaults to the
 # in-process dev provider and refuses to start (the link revision 00005 failure).
-ENV_VARS="OUTFITTER_ROLE=${ROLE},OUTFITTER_ORIGIN=${ORIGIN},AGENT_SA_EMAIL=${AGENT_SA_EMAIL},GCP_PROJECT=${PROJECT},GCP_REGION=${REGION},TUNNEL_DOMAIN_LMSTUDIO=${TUNNEL_DOMAIN_LMSTUDIO},SANDBOX_PROVIDER=cloudrun,CLOUDRUN_JOB=${CLOUDRUN_JOB},IDLE_STOP_SECONDS=${IDLE_STOP_SECONDS:-1800},LITELLM_BASE_URL=${LITELLM_BASE_URL:-https://litellm.augment-code.support/v1},PROVIDER_POLL_MS=${PROVIDER_POLL_MS:-300000}"
+# Every other origin this service answers on (its run.app URL, a custom domain, the origin it had
+# before) is also accepted as a token audience (config.ts tokenAudiences), so an origin change
+# doesn't strand running sandboxes or queued Cloud Tasks minted for the old one. ';'-separated:
+# --set-env-vars splits on commas.
+RUN_APP_URL="$(gcloud run services describe "${SERVICE}" --project="${PROJECT}" --region="${REGION}" \
+  --format='value(status.url)' 2>/dev/null || true)"
+ORIGIN_ALIASES=""
+for alias in "${RUN_APP_URL}" "${DEPLOYED_ORIGIN}" "${PUBLIC_ORIGIN}"; do
+  if [[ -n "${alias}" && "${alias}" != "${ORIGIN}" && ";${ORIGIN_ALIASES};" != *";${alias};"* ]]; then
+    ORIGIN_ALIASES="${ORIGIN_ALIASES:+${ORIGIN_ALIASES};}${alias}"
+  fi
+done
+ENV_VARS="OUTFITTER_ROLE=${ROLE},OUTFITTER_ORIGIN=${ORIGIN},OUTFITTER_ORIGIN_ALIASES=${ORIGIN_ALIASES},AGENT_SA_EMAIL=${AGENT_SA_EMAIL},GCP_PROJECT=${PROJECT},GCP_REGION=${REGION},TUNNEL_DOMAIN_LMSTUDIO=${TUNNEL_DOMAIN_LMSTUDIO},SANDBOX_PROVIDER=cloudrun,CLOUDRUN_JOB=${CLOUDRUN_JOB},IDLE_STOP_SECONDS=${IDLE_STOP_SECONDS:-1800},LITELLM_BASE_URL=${LITELLM_BASE_URL:-https://litellm.augment-code.support/v1},PROVIDER_POLL_MS=${PROVIDER_POLL_MS:-300000}"
 # E5.5 (deploy/mailbox.sh): both roles need these -- web schedules wake tasks, link verifies the
 # OIDC token on /api/hooks/tasks/wake and /api/hooks/tick. Looked up from what mailbox.sh created
 # when not given, for the same reason as OUTFITTER_LINK_ORIGIN below: --set-env-vars replaces the

@@ -118,14 +118,28 @@ check_deploy_skew() {
 }
 
 # A Cloud Run service's public origin: https://<its custom domain> when a domain mapping routes to
-# it and is Ready (certificate issued), otherwise its run.app URL; empty if the service doesn't
-# exist. service.sh uses it to pick each service's own OUTFITTER_ORIGIN at deploy time. A mapping
-# that isn't Ready yet is ignored, so a hostname switch only happens once HTTPS works.
+# it and its Ready condition is True (certificate issued), otherwise its run.app URL; empty if the
+# service doesn't exist. Exits non-zero if the mapping lookup itself fails, so a transient gcloud
+# error can never quietly pass for "no mapping" (callers must check). A mapping that isn't Ready
+# is ignored, so a hostname can only be picked once HTTPS works.
 public_origin() {
-  local service="$1" domain
-  domain="$(gcloud beta run domain-mappings list --project="${PROJECT}" --region="${REGION}" \
-    --filter="spec.routeName=${service} AND status.conditions[0].type=Ready AND status.conditions[0].status=True" \
-    --format='value(metadata.name)' --sort-by=metadata.name 2>/dev/null | head -n1)"
+  local service="$1" json domain
+  json="$(gcloud beta run domain-mappings list --project="${PROJECT}" --region="${REGION}" --format=json)" || {
+    echo "error: could not list domain mappings (gcloud beta installed and logged in?)" >&2
+    return 1
+  }
+  # Pick the Ready condition by type, not by position; first matching domain in name order.
+  domain="$(printf '%s' "${json}" | python3 -c '
+import json, sys
+service = sys.argv[1]
+ready = sorted(
+    m["metadata"]["name"] for m in json.load(sys.stdin)
+    if m.get("spec", {}).get("routeName") == service
+    and any(c.get("type") == "Ready" and c.get("status") == "True"
+            for c in m.get("status", {}).get("conditions", []))
+)
+print(ready[0] if ready else "")
+' "${service}")" || return 1
   if [[ -n "${domain}" ]]; then
     printf 'https://%s' "${domain}"
   else

@@ -4,7 +4,7 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { assertSandboxOrigin, loadConfig, mailboxWarning } from "../src/config.ts";
+import { assertSandboxOrigin, loadConfig, mailboxWarning, tokenAudiences } from "../src/config.ts";
 
 describe("loadConfig", () => {
   test("defaults OUTFITTER_ROLE to \"all\" and SANDBOX_PROVIDER to \"inprocess\" when unset", () => {
@@ -86,5 +86,21 @@ describe("mailboxWarning", () => {
     assert.equal(mailboxWarning(cfg({ OUTFITTER_ROLE: "web", ...full })), undefined);
     assert.equal(mailboxWarning(cfg({ OUTFITTER_ROLE: "link", OUTFITTER_DEV: "1" })), undefined);
     assert.equal(mailboxWarning(loadConfig({ OUTFITTER_ROLE: "link" } as NodeJS.ProcessEnv)), undefined);
+  });
+});
+
+describe("tokenAudiences (OUTFITTER_ORIGIN_ALIASES)", () => {
+  test("is just the origin when no aliases are set", () => {
+    const config = loadConfig({ OUTFITTER_ORIGIN: "https://link.kernal.one" } as NodeJS.ProcessEnv);
+    assert.deepEqual(config.originAliases, []);
+    assert.deepEqual(tokenAudiences(config), ["https://link.kernal.one"]);
+  });
+
+  test("adds the aliases, split like OUTFITTER_OPERATORS, de-duplicated and without trailing slashes", () => {
+    const config = loadConfig({
+      OUTFITTER_ORIGIN: "https://link.kernal.one",
+      OUTFITTER_ORIGIN_ALIASES: "https://outfitter-link-abc-uc.a.run.app/; https://link.kernal.one , ",
+    } as NodeJS.ProcessEnv);
+    assert.deepEqual(tokenAudiences(config), ["https://link.kernal.one", "https://outfitter-link-abc-uc.a.run.app"]);
   });
 });

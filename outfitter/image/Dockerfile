@@ -222,7 +222,8 @@ ENV PI_CODING_AGENT_DIR=/opt/kernal/.pi \
 # instead of re-running Babel over ~100 of them on every start (prewarm-extensions.sh,
 # docs/reports/startup-trim.md: the largest single item in pi's start-up). Must stay after every
 # COPY/RUN that changes anything under /opt/kernal or the pi-extension files, and nothing may set
-# TMPDIR for pi, or the cache is never found. Adds ~3 MB.
+# TMPDIR for pi, or the cache is never found. Adds ~3 MB for /tmp/jiti, plus ~19 MB for the V8
+# compile cache pi's CLI writes to /tmp/node-compile-cache (it calls module.enableCompileCache()).
 COPY outfitter/image/prewarm-extensions.sh /tmp/prewarm-extensions.sh
 RUN runuser -u agent -- bash /tmp/prewarm-extensions.sh "$PI_BIN" \
       --extension "$OUTFITTER_SPEND_EXTENSION" --extension "$OUTFITTER_MAIL_EXTENSION" \

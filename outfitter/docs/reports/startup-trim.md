@@ -158,6 +158,14 @@ the spawn and then to `unknown`.
 
 Not measured: Docker wasn't running and the image wasn't built. Expected change: +3.3 MB (the
 prewarmed `/tmp/jiti`, 106 files) and −64 KB (`kernal-codebase-index`), so about 681 → 684 MB.
+
+Review note: the prewarm also leaves pi's own V8 compile cache in the image. pi's CLI calls
+`module.enableCompileCache()` at start, so the prewarm run writes `/tmp/node-compile-cache` (about
+19 MB on a laptop run of `prewarm-extensions.sh`) next to `/tmp/jiti`, plus empty
+`/tmp/pi-subagents-uid-<uid>` directories. The image therefore grows by about 22 MB, not 3 MB, and
+the compile cache described under "What's left" as not adopted is in fact baked in as a side
+effect. To keep it out, have `prewarm-extensions.sh` remove `$TMPDIR/node-compile-cache` after pi
+exits; whether it helps a cold 1-vCPU wake is still unmeasured.
 Negligible next to the pull. Check with `docker image ls outfitter-agent:trim` after
 `docker build -f outfitter/image/Dockerfile -t outfitter-agent:trim .`.
 

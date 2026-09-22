@@ -1,0 +1,29 @@
+outfitter/image/render-mcp.test.sh
+  s_2209f22f830d7f::t_7faa2f75e200d3 1-43
+outfitter/image/render-mcp.sh
+  s_2209f22f830d7f::t_905c6df4c6d036 1-25
+outfitter/image/prewarm-extensions.sh
+  s_2209f22f830d7f::t_7ea344cdefbe8c 1-13,16-24,34-35,38-56
+  s_2209f22f830d7f::t_8154de4a6ba006 25-33,36-37
+  s_2209f22f830d7f::t_2812c9d7d078bb 14-15
+outfitter/image/Dockerfile
+  s_2209f22f830d7f::t_ba1b2afee1e8b4 219-230
+  s_2209f22f830d7f::t_1391dcbf2041e7 39-45,51-55
+  s_2209f22f830d7f::t_3ed68b4b10d186 173-175,177-189
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "6b634475c2de8111a6ddd8c9823e3a4f4ba1291b",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

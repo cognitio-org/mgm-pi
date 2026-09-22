@@ -53,9 +53,25 @@ existing_secrets() {
 # first deploy after adding this guard still warns rather than silently skipping the check).
 current_build_commit() {
   local kind="$1" name="$2"
-  gcloud run "${kind}" describe "${name}" \
+  # Read the whole label map ("k=v;k=v") and pick build-commit out in shell, rather than projecting
+  # metadata.labels.build-commit: gcloud's projection grammar isn't documented to accept a hyphen in a key.
+  local labels
+  labels="$(gcloud run "${kind}" describe "${name}" \
     --project="${PROJECT}" --region="${REGION}" \
-    --format='value(metadata.labels.build-commit)' 2>/dev/null || true
+    --format='value(metadata.labels)' 2>/dev/null || true)"
+  build_commit_from_labels "${labels}"
+}
+
+# build_commit_from_labels "<k=v;k=v...>": prints the build-commit value, or "" if absent.
+build_commit_from_labels() {
+  local pair
+  local IFS=';'
+  for pair in $1; do
+    if [[ "${pair}" == build-commit=* ]]; then
+      printf '%s' "${pair#build-commit=}"
+      return 0
+    fi
+  done
 }
 
 # check_deploy_skew <this_commit> <this_component>: this_component is one of "web", "link", "job" --

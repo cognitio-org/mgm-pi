@@ -8,6 +8,7 @@ import { NewSessionDialog } from "../components/NewSessionDialog.tsx";
 import { ProviderStrip } from "../components/ProviderStrip.tsx";
 import { SoundToggle } from "../components/SoundToggle.tsx";
 import { ThemeToggle } from "../components/ThemeToggle.tsx";
+import { TourOffer } from "../components/tour/TourOffer.tsx";
 import {
   ControlPanelIcon,
   DiskBoxIcon,
@@ -120,7 +121,7 @@ export function DeskPage() {
       label: vocabulary.help.one,
       hint: vocabulary.help.hint,
       icon: (size) => <ManualIcon size={size} />,
-      onOpen: () => setShowManual(true),
+      onOpen: () => navigate("/manual"),
     });
     return list;
   }, [operator, navigate]);
@@ -172,7 +173,7 @@ export function DeskPage() {
             <ul className="desk-menu-list" role="menu">
               <li role="menuitem">
                 <button type="button" onClick={() => setShowManual(true)}>
-                  {vocabulary.help.one}: About Outfitter
+                  About Outfitter
                 </button>
               </li>
             </ul>
@@ -346,6 +347,9 @@ export function DeskPage() {
         />
       )}
 
+      {/* First visit only (remembered in localStorage): offer the 75-second tour on the Manual page. */}
+      <TourOffer tourPath="/manual?autoplay=1" />
+
       {showManual && (
         <div className="dialog-backdrop" onClick={() => setShowManual(false)}>
           <div
@@ -363,16 +367,19 @@ export function DeskPage() {
             <div className="panel-body desk-manual">
               <Logo size={28} />
               <p>
-                Outfitter equips a fleet of cloud coding agents (Tapes) the way an outfitter equips an
-                expedition. This is the Desk &mdash; open a Tape to start a new Floppy, or the Disk Box to see
-                every floppy you've run.
+                Outfitter equips a fleet of cloud coding agents the way an outfitter equips an expedition.
+                This is the Desk: start a New Floppy from one of your Tapes, or open the Disk Box to see every
+                floppy you've run.
               </p>
               <p>
                 {vocabulary.kernal.one} loads your floppies and runs your tapes; Outfitter is where they live.
               </p>
               <div className="form-actions">
-                <button type="button" className="btn btn-primary" onClick={() => setShowManual(false)}>
+                <button type="button" className="btn" onClick={() => setShowManual(false)}>
                   Close
+                </button>
+                <button type="button" className="btn btn-primary" onClick={() => navigate("/manual")}>
+                  Open the {vocabulary.help.one}
                 </button>
               </div>
             </div>

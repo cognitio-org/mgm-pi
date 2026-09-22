@@ -177,12 +177,16 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
 
       const gp = readGamepadDirection();
       const gpButtons = readGamepadButtons();
-      const merged: GameInput = {
-        up: inputRef.current.up || gp.up || gpButtons.fire,
-        down: inputRef.current.down || gp.down,
-        left: inputRef.current.left || gp.left,
-        right: inputRef.current.right || gp.right,
-      };
+      // ?demo=1 keeps the attract-mode autopilot flying past the title screen too, so a headless
+      // screenshot/video of "mid-game" shows real rescue action instead of an unpiloted helicopter.
+      const merged: GameInput = autoDemo
+        ? attractInput(stateRef.current)
+        : {
+            up: inputRef.current.up || gp.up || gpButtons.fire,
+            down: inputRef.current.down || gp.down,
+            left: inputRef.current.left || gp.left,
+            right: inputRef.current.right || gp.right,
+          };
       if (gpButtons.pause && !lastPauseButtonRef.current) {
         stateRef.current = togglePause(stateRef.current);
       }
@@ -207,7 +211,7 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
         setHighScore(writeHighScoreIfBetter("rescue", after.score));
       }
     },
-    [screen, reducedMotion],
+    [screen, reducedMotion, autoDemo],
   );
 
   const onRender = useCallback(() => {

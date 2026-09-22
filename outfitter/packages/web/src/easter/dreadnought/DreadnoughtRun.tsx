@@ -157,11 +157,15 @@ export function DreadnoughtRun({ onClose }: DreadnoughtRunProps) {
       }
       const gp = readGamepadDirection();
       const gpButtons = readGamepadButtons();
-      const merged: GameInput = {
-        up: inputRef.current.up || gp.up,
-        down: inputRef.current.down || gp.down,
-        firing: inputRef.current.firing || gpButtons.fire,
-      };
+      // ?demo=1 keeps the attract-mode autopilot flying even past the title screen, so a headless
+      // screenshot/video of "mid-game" shows real action instead of an idle, unpiloted ship.
+      const merged: GameInput = autoDemo
+        ? attractInput(stateRef.current.t)
+        : {
+            up: inputRef.current.up || gp.up,
+            down: inputRef.current.down || gp.down,
+            firing: inputRef.current.firing || gpButtons.fire,
+          };
       if (gpButtons.pause && !lastPauseButtonRef.current) {
         stateRef.current = togglePause(stateRef.current);
       }
@@ -188,7 +192,7 @@ export function DreadnoughtRun({ onClose }: DreadnoughtRunProps) {
         setHighScore(writeHighScoreIfBetter("dreadnought", after.score));
       }
     },
-    [screen, reducedMotion],
+    [screen, reducedMotion, autoDemo],
   );
   const onRender = useCallback(() => {
     draw(canvasRef.current, stateRef.current, particlesRef.current, shakeRef.current, reducedMotion, screen);

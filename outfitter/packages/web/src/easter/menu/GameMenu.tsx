@@ -67,42 +67,38 @@ export function GameMenu({ onSelect, onClose }: GameMenuProps) {
   }
 
   return (
-    <div
-      className="easter-menu"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Kernal Games"
-      onKeyDown={onKeyDown}
-    >
-      <div className="easter-titlebar">
-        <span>** KERNAL GAMES **</span>
-        <button type="button" className="easter-close" onClick={onClose} aria-label="Close (Escape)">
-          X
-        </button>
-      </div>
-      <div className="easter-menu-body">
-        <p className="easter-menu-hint">Pick a cartridge. Arrows/Tab to move, Enter to load, Esc to close.</p>
-        <div className="easter-cart-row">
-          {CARTRIDGES.map((cart, i) => (
-            <button
-              key={cart.id}
-              type="button"
-              ref={(el) => {
-                tileRefs.current[i] = el;
-              }}
-              className={`easter-cart${i === focusIndex ? " focused" : ""}`}
-              onFocus={() => setFocusIndex(i)}
-              onClick={() => onSelect(cart.id)}
-              aria-label={`${cart.title}, high score ${scores[i]}`}
-            >
-              <span className="easter-cart-glyph" aria-hidden="true">
-                {cart.glyph}
-              </span>
-              <span className="easter-cart-title">{cart.title}</span>
-              <span className="easter-cart-tagline">{cart.tagline}</span>
-              <span className="easter-cart-score">HI {scores[i]}</span>
-            </button>
-          ))}
+    <div className="easter-overlay" role="presentation">
+      <div className="easter-frame easter-menu" role="dialog" aria-modal="true" aria-label="Kernal Games" onKeyDown={onKeyDown}>
+        <div className="easter-titlebar">
+          <span>** KERNAL GAMES **</span>
+          <button type="button" className="easter-close" onClick={onClose} aria-label="Close (Escape)">
+            X
+          </button>
+        </div>
+        <div className="easter-menu-body">
+          <p className="easter-menu-hint">Pick a cartridge. Arrows/Tab to move, Enter to load, Esc to close.</p>
+          <div className="easter-cart-row">
+            {CARTRIDGES.map((cart, i) => (
+              <button
+                key={cart.id}
+                type="button"
+                ref={(el) => {
+                  tileRefs.current[i] = el;
+                }}
+                className={`easter-cart${i === focusIndex ? " focused" : ""}`}
+                onFocus={() => setFocusIndex(i)}
+                onClick={() => onSelect(cart.id)}
+                aria-label={`${cart.title}, high score ${scores[i]}`}
+              >
+                <span className="easter-cart-glyph" aria-hidden="true">
+                  {cart.glyph}
+                </span>
+                <span className="easter-cart-title">{cart.title}</span>
+                <span className="easter-cart-tagline">{cart.tagline}</span>
+                <span className="easter-cart-score">HI {scores[i]}</span>
+              </button>
+            ))}
+          </div>
         </div>
       </div>
     </div>

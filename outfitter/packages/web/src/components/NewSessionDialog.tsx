@@ -54,15 +54,15 @@ export function NewSessionDialog({ gurus, onClose, onCreated, initialGuruId }: P
     <div className="dialog-backdrop" onClick={onClose}>
       <div className="dialog panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="ns-title">
         <h2 id="ns-title" className="panel-title">
-          <span className="panel-label">New session</span>
+          <span className="panel-label">New Floppy</span>
         </h2>
         <div className="panel-body">
         {error && <div className="error-banner">{error}</div>}
         <form onSubmit={submit}>
           <div className="form-row">
-            <label htmlFor="ns-guru">Guru</label>
+            <label htmlFor="ns-guru">Tape</label>
             <select id="ns-guru" value={guruId} onChange={(e) => setGuruId(e.target.value)} required>
-              {gurus.length === 0 && <option value="">No gurus configured</option>}
+              {gurus.length === 0 && <option value="">No tapes configured</option>}
               {gurus.map((g) => (
                 <option key={g.id} value={g.id}>
                   {g.name}

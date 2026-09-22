@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type TokenRecord, ApiError } from "../api/client.ts";
 import { Working } from "../components/Working.tsx";
 import { withFloppySound } from "../lib/floppy-sound.ts";
+import { vocabSubtitle, vocabulary } from "../lib/vocabulary.ts";
 
 function envLines(linkOrigin: string, token: string): string {
   const api = linkOrigin || "<ask your operator for the link URL>";
@@ -72,7 +73,10 @@ export function TokensPage() {
 
   return (
     <div>
-      <h2>Personal API tokens</h2>
+      <div className="page-heading">
+        <h2>{vocabulary.token.many}</h2>
+        <p className="page-subtitle">{vocabSubtitle("token")}</p>
+      </div>
       <p className="session-meta">
         Used by <code>mgm --teleport</code> (and <code>/teleport</code>) to talk to the Outfitter link service from
         your laptop. Each token acts as you; revoke it if it leaks.
@@ -125,12 +129,12 @@ export function TokensPage() {
       </form>
 
       {loading ? (
-        <p className="empty-state"><Working label="Loading tokens" size="lg" srOnly={false} /></p>
+        <p className="empty-state"><Working label="Loading" size="lg" srOnly={false} /></p>
       ) : tokens.length === 0 ? (
-        <p className="empty-state">No tokens yet.</p>
+        <p className="empty-state">No {vocabulary.token.many.toLowerCase()} yet.</p>
       ) : (
         <div className="table-scroll">
-        <table className="data-table">
+        <table className="data-table stack">
           <thead>
             <tr>
               <th>Name</th>
@@ -143,13 +147,13 @@ export function TokensPage() {
           <tbody>
             {tokens.map((t) => (
               <tr key={t.id}>
-                <td>{t.name}</td>
-                <td>
+                <td data-label="Name">{t.name}</td>
+                <td data-label="Prefix">
                   <code className="masked">{t.prefix}…</code>
                 </td>
-                <td>{new Date(t.createdAt).toLocaleString()}</td>
-                <td>{t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : "never"}</td>
-                <td>
+                <td data-label="Created">{new Date(t.createdAt).toLocaleString()}</td>
+                <td data-label="Last used">{t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : "never"}</td>
+                <td data-label="">
                   <button type="button" className="btn btn-danger" onClick={() => revoke(t.id)}>
                     Revoke
                   </button>

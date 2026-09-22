@@ -5,6 +5,23 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* Page heading + retro-vocabulary subtitle ("Tapes · reusable agent configurations: ..."),
+ * used by every top-level page -- see src/lib/vocabulary.ts's vocabSubtitle(). */
+.page-heading {
+  margin-bottom: 1rem;
+}
+
+.page-heading h2 {
+  margin: 0 0 0.15rem;
+}
+
+.page-subtitle {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  font-family: var(--font-mono);
+}
+
 /* Session header: model/thinking/context (E3.8) */
 
 .session-model-info {

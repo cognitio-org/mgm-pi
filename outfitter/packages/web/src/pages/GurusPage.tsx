@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api, ApiError, type Guru, type GuruMeta, type ModelRow } from "../api/client.ts";
 import { GuruForm } from "../components/GuruForm.tsx";
 import { NewSessionDialog } from "../components/NewSessionDialog.tsx";
+import { vocabSubtitle, vocabulary } from "../lib/vocabulary.ts";
 
 /** E3.7: list gurus, create/edit, delete (with the guard the API enforces: no referencing
  * sessions, and the `default` guru is never deletable), and "New session with this guru" which
@@ -52,9 +53,12 @@ export function GurusPage() {
   return (
     <div>
       <div className="toolbar">
-        <h2 style={{ margin: 0 }}>Gurus</h2>
+        <div className="page-heading" style={{ marginBottom: 0 }}>
+          <h2 style={{ margin: 0 }}>{vocabulary.guru.many}</h2>
+          <p className="page-subtitle">{vocabSubtitle("guru")}</p>
+        </div>
         <button style={{ marginLeft: "auto" }} onClick={() => setEditing("new")}>
-          New guru
+          New {vocabulary.guru.one}
         </button>
       </div>
 
@@ -63,9 +67,10 @@ export function GurusPage() {
       {loading ? (
         <p className="empty-state">Loading...</p>
       ) : gurus.length === 0 ? (
-        <p className="empty-state">No gurus yet.</p>
+        <p className="empty-state">No {vocabulary.guru.many.toLowerCase()} yet.</p>
       ) : (
-        <table className="data-table">
+        <div className="table-scroll">
+        <table className="data-table stack">
           <thead>
             <tr>
               <th>Name</th>
@@ -78,14 +83,14 @@ export function GurusPage() {
           <tbody>
             {gurus.map((g) => (
               <tr key={g.id}>
-                <td>{g.name}</td>
-                <td className="mono">{g.model}</td>
-                <td>{g.thinking ?? "—"}</td>
-                <td>{new Date(g.updatedAt).toLocaleString()}</td>
-                <td>
-                  <div className="toolbar" style={{ margin: 0 }}>
-                    <button type="button" onClick={() => setSessionFor(g)}>
-                      New session
+                <td data-label="Name">{g.name}</td>
+                <td className="mono" data-label="Model">{g.model}</td>
+                <td data-label="Thinking">{g.thinking ?? "—"}</td>
+                <td data-label="Updated">{new Date(g.updatedAt).toLocaleString()}</td>
+                <td data-label="">
+                  <div className="toolbar row-actions" style={{ margin: 0 }}>
+                    <button type="button" onClick={() => setSessionFor(g)} title={vocabulary.newSession.hint}>
+                      {vocabulary.newSession.one}
                     </button>
                     <button type="button" onClick={() => setEditing(g)}>
                       Edit
@@ -99,6 +104,7 @@ export function GurusPage() {
             ))}
           </tbody>
         </table>
+        </div>
       )}
 
       {editing && (

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, type OperatorSettings, type OperatorSecretRow } from "../api/client.ts";
+import { vocabSubtitle, vocabulary } from "../lib/vocabulary.ts";
 
 /** One managed secret's row: masked value, when it applies, and the Replace/Test/Disable controls
  * (same "no value in URLs, clear the input after save" care as TokensPage.tsx). `replacing` opens
@@ -68,11 +69,11 @@ function SecretRowView({ row, onChanged }: { row: OperatorSecretRow; onChanged: 
 
   return (
     <tr>
-      <td>
+      <td data-label="Secret">
         <div>{row.label}</div>
         <div className="session-meta">{row.purpose}</div>
       </td>
-      <td>
+      <td data-label="Value">
         {row.set ? (
           <span className="chip" title="Only the last four characters are ever shown">
             {row.masked ? `set (${row.masked})` : "set"}
@@ -81,11 +82,11 @@ function SecretRowView({ row, onChanged }: { row: OperatorSecretRow; onChanged: 
           <span className="note">Not set</span>
         )}
       </td>
-      <td>{row.appliesAt}</td>
-      <td>{row.updatedAt ? new Date(row.updatedAt).toLocaleString() : "—"}</td>
-      <td>
+      <td data-label="Applies">{row.appliesAt}</td>
+      <td data-label="Updated">{row.updatedAt ? new Date(row.updatedAt).toLocaleString() : "—"}</td>
+      <td data-label="">
         {!replacing ? (
-          <div className="toolbar">
+          <div className="toolbar row-actions">
             <button type="button" onClick={startReplacing}>
               {row.set ? "Replace" : "Add"}
             </button>
@@ -165,15 +166,22 @@ export function SettingsPage() {
   }, []);
 
   if (loading) return <p className="empty-state">Loading…</p>;
-  if (forbidden) return <p className="empty-state">Operator role required</p>;
+  if (forbidden) return <p className="empty-state">{vocabulary.operator.one} only.</p>;
   if (error) return <div className="error-banner">{error}</div>;
   if (!settings) return null;
 
   return (
     <div>
-      <h2>Operator settings</h2>
+      <div className="page-heading">
+        <h2>{vocabulary.settings.one}</h2>
+        <p className="page-subtitle">{vocabSubtitle("settings", "one")} &middot; {vocabulary.operator.one} only</p>
+      </div>
 
+      {/* A natural two-column key/value list -- already narrow enough at any width, so it keeps
+          its plain <table> rendering rather than the stacked-card pattern (which is for tables
+          with a header row of column names, not this shape). */}
       <h3>Deployment</h3>
+      <div className="table-scroll">
       <table className="data-table">
         <tbody>
           <tr>
@@ -198,9 +206,11 @@ export function SettingsPage() {
           </tr>
         </tbody>
       </table>
+      </div>
 
       <h3>Secrets</h3>
-      <table className="data-table">
+      <div className="table-scroll">
+      <table className="data-table stack">
         <thead>
           <tr>
             <th>Secret</th>
@@ -216,6 +226,7 @@ export function SettingsPage() {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

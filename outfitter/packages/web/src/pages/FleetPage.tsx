@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, type Guru, type SessionSummary, ApiError } from "../api/client.ts";
 import { relativeTime } from "../lib/relative-time.ts";
 import { StatusPill } from "../components/StatusPill.tsx";
 import { NewSessionDialog } from "../components/NewSessionDialog.tsx";
 import { Working } from "../components/Working.tsx";
+import { vocabSubtitle, vocabulary } from "../lib/vocabulary.ts";
 
 const RUN_STATES = ["queued", "provisioning", "running", "idle", "stopping", "stopped", "failed"];
 
@@ -14,9 +15,12 @@ function formatCost(cost: number): string {
 
 export function FleetPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [gurus, setGurus] = useState<Guru[]>([]);
-  const [runStateFilter, setRunStateFilter] = useState("");
+  // The desk's Trash icon deep-links here as /fleet?runState=stopped -- honour it as the initial
+  // filter (still a plain client-side filter change afterward, same as the dropdown).
+  const [runStateFilter, setRunStateFilter] = useState(() => searchParams.get("runState") ?? "");
   const [guruFilter, setGuruFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -51,6 +55,10 @@ export function FleetPage() {
 
   return (
     <div>
+      <div className="page-heading">
+        <h2>{vocabulary.sessionList.one}</h2>
+        <p className="page-subtitle">{vocabSubtitle("sessionList")}</p>
+      </div>
       <div className="toolbar">
         <select
           value={runStateFilter}
@@ -72,30 +80,30 @@ export function FleetPage() {
             </option>
           ))}
         </select>
-        <button className="btn btn-primary" style={{ marginLeft: "auto" }} onClick={() => setShowNewSession(true)}>
-          + New session
+        <button className="btn btn-primary" style={{ marginLeft: "auto" }} onClick={() => setShowNewSession(true)} title={vocabulary.newSession.hint}>
+          + {vocabulary.newSession.one}
         </button>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
 
       {loading ? (
-        <p className="empty-state"><Working label="Loading fleet" size="lg" srOnly={false} /></p>
+        <p className="empty-state"><Working label="Loading" size="lg" srOnly={false} /></p>
       ) : sessions.length === 0 ? (
         <div className="empty-state dither">
-          <p>No sessions yet. Start one to see it here.</p>
+          <p>No floppies yet. Start one to see it here.</p>
           <button className="btn btn-primary" onClick={() => setShowNewSession(true)}>
-            + New session
+            + {vocabulary.newSession.one}
           </button>
         </div>
       ) : (
         <div className="table-scroll">
-        <table className="data-table">
+        <table className="data-table stack">
           <thead>
             <tr>
-              <th>Session</th>
+              <th>Floppy</th>
               <th>Status</th>
-              <th>Guru</th>
+              <th>Tape</th>
               <th>Repo / branch</th>
               <th>Cost</th>
               <th>Last activity</th>
@@ -113,14 +121,14 @@ export function FleetPage() {
                 role="link"
                 style={{ cursor: "pointer" }}
               >
-                <td>{s.name ?? s.id.slice(0, 8)}</td>
-                <td>
+                <td data-label="Floppy">{s.name ?? s.id.slice(0, 8)}</td>
+                <td data-label="Status">
                   <StatusPill state={s.runState} />
                 </td>
-                <td>{guruName(s.guru)}</td>
-                <td>{s.repo ? `${s.repo}${s.branch ? ` @ ${s.branch}` : ""}` : "—"}</td>
-                <td>{formatCost(s.cost)}</td>
-                <td>{relativeTime(s.updatedAt)}</td>
+                <td data-label="Tape">{guruName(s.guru)}</td>
+                <td data-label="Repo / branch">{s.repo ? `${s.repo}${s.branch ? ` @ ${s.branch}` : ""}` : "—"}</td>
+                <td data-label="Cost">{formatCost(s.cost)}</td>
+                <td data-label="Last activity">{relativeTime(s.updatedAt)}</td>
               </tr>
             ))}
           </tbody>

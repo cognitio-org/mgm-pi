@@ -10,6 +10,7 @@ import { StatusPill } from "../components/StatusPill.tsx";
 import { UiRequestPanel } from "../components/UiRequestPanel.tsx";
 import { Working } from "../components/Working.tsx";
 import { withFloppySound } from "../lib/floppy-sound.ts";
+import { transportLabel } from "../lib/vocabulary.ts";
 
 const RUNNING_STATES = new Set(["running", "idle", "stopping", "queued", "provisioning"]);
 // Subset of RUNNING_STATES that reads as "the agent is actively doing something right now" for
@@ -101,7 +102,7 @@ export function SessionPage() {
       <div className="session-header">
         <div>
           <h2 className="session-title" title={sessionId}>
-            {session?.name ?? `Session ${sessionId?.slice(0, 8) ?? ""}`}
+            {session?.name ?? `Floppy ${sessionId?.slice(0, 8) ?? ""}`}
           </h2>
           <div className="session-meta">
             {session?.guruId} {session?.repo ? `· ${session.repo}${session.branch ? ` @ ${session.branch}` : ""}` : "· no repository"}
@@ -134,17 +135,27 @@ export function SessionPage() {
         </div>
         <div className="run-controls">
           <StatusPill state={runState} />
-          <button className="btn" onClick={copyTeleport}>
-            {copied ? "Copied!" : "Open in terminal"}
+          <button className="btn" onClick={copyTeleport} title="Continue this floppy on your laptop with mgm">
+            {copied ? "Copied!" : transportLabel("eject")}
           </button>
-          <button className="btn btn-danger" onClick={handleAbort} disabled={!active || pendingAction !== null}>
-            {pendingAction === "abort" ? <Working label="Aborting" /> : "Abort"}
+          <button
+            className="btn btn-danger"
+            onClick={handleAbort}
+            disabled={!active || pendingAction !== null}
+            title="Interrupt the current turn, like the C64 RUN/STOP key"
+          >
+            {pendingAction === "abort" ? <Working label="Breaking" /> : transportLabel("abort")}
           </button>
-          <button className="btn btn-danger" onClick={handleStop} disabled={!active || pendingAction !== null}>
-            {pendingAction === "stop" ? <Working label="Stopping" /> : "Stop"}
+          <button className="btn btn-danger" onClick={handleStop} disabled={!active || pendingAction !== null} title="Stop this floppy's run">
+            {pendingAction === "stop" ? <Working label="Stopping" /> : transportLabel("stop")}
           </button>
-          <button className="btn btn-primary" onClick={handleWake} disabled={!canWake || pendingAction !== null}>
-            {pendingAction === "wake" ? <Working label="Waking" /> : "Wake"}
+          <button
+            className="btn btn-primary"
+            onClick={handleWake}
+            disabled={!canWake || pendingAction !== null}
+            title="Wake this floppy and start the run"
+          >
+            {pendingAction === "wake" ? <Working label="Waking" /> : transportLabel("wake")}
           </button>
         </div>
       </div>

@@ -1,14 +1,16 @@
 import { useProviders } from "../hooks/useProviders.ts";
+import { Working } from "../components/Working.tsx";
 
 export function ProvidersPage() {
   const { providers, loaded } = useProviders();
 
-  if (!loaded) return <p className="empty-state">Loading...</p>;
+  if (!loaded) return <p className="empty-state"><Working label="Checking providers" size="lg" srOnly={false} /></p>;
   if (providers.length === 0) {
     return <p className="empty-state">No providers reported (GET /api/providers is not available yet).</p>;
   }
 
   return (
+    <div className="table-scroll">
     <table className="data-table">
       <thead>
         <tr>
@@ -33,5 +35,6 @@ export function ProvidersPage() {
         ))}
       </tbody>
     </table>
+    </div>
   );
 }

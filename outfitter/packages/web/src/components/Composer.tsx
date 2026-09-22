@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { Working } from "./Working.tsx";
+import { withFloppySound } from "../lib/floppy-sound.ts";
 
 interface Props {
   onSend: (text: string, behavior?: "steer" | "followUp") => Promise<void>;
@@ -17,7 +19,7 @@ export function Composer({ onSend, disabled }: Props) {
     if (!text.trim()) return;
     setSending(true);
     try {
-      await onSend(text, behavior || undefined);
+      await withFloppySound(onSend(text, behavior || undefined));
       setText("");
     } finally {
       setSending(false);
@@ -30,7 +32,8 @@ export function Composer({ onSend, disabled }: Props) {
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="Message..."
+          placeholder="Message... (⌘/Ctrl+Enter to send)"
+          aria-label="Message"
           disabled={disabled || sending}
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -46,8 +49,8 @@ export function Composer({ onSend, disabled }: Props) {
           <option value="steer">Steer</option>
           <option value="followUp">Follow-up</option>
         </select>
-        <button onClick={send} disabled={disabled || sending || !text.trim()}>
-          {sending ? "Sending..." : "Send"}
+        <button className="btn btn-primary" onClick={send} disabled={disabled || sending || !text.trim()}>
+          {sending ? <Working label="Sending" /> : "Send"}
         </button>
       </div>
     </div>

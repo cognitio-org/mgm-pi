@@ -4,6 +4,7 @@ import { api, type Guru, type SessionSummary, ApiError } from "../api/client.ts"
 import { relativeTime } from "../lib/relative-time.ts";
 import { StatusPill } from "../components/StatusPill.tsx";
 import { NewSessionDialog } from "../components/NewSessionDialog.tsx";
+import { Working } from "../components/Working.tsx";
 
 const RUN_STATES = ["queued", "provisioning", "running", "idle", "stopping", "stopped", "failed"];
 
@@ -71,18 +72,24 @@ export function FleetPage() {
             </option>
           ))}
         </select>
-        <button style={{ marginLeft: "auto" }} onClick={() => setShowNewSession(true)}>
-          New session
+        <button className="btn btn-primary" style={{ marginLeft: "auto" }} onClick={() => setShowNewSession(true)}>
+          + New session
         </button>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
 
       {loading ? (
-        <p className="empty-state">Loading...</p>
+        <p className="empty-state"><Working label="Loading fleet" size="lg" srOnly={false} /></p>
       ) : sessions.length === 0 ? (
-        <p className="empty-state">No sessions yet.</p>
+        <div className="empty-state dither">
+          <p>No sessions yet. Start one to see it here.</p>
+          <button className="btn btn-primary" onClick={() => setShowNewSession(true)}>
+            + New session
+          </button>
+        </div>
       ) : (
+        <div className="table-scroll">
         <table className="data-table">
           <thead>
             <tr>
@@ -96,7 +103,16 @@ export function FleetPage() {
           </thead>
           <tbody>
             {sessions.map((s) => (
-              <tr key={s.id} onClick={() => navigate(`/sessions/${s.id}`)} style={{ cursor: "pointer" }}>
+              <tr
+                key={s.id}
+                onClick={() => navigate(`/sessions/${s.id}`)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") navigate(`/sessions/${s.id}`);
+                }}
+                tabIndex={0}
+                role="link"
+                style={{ cursor: "pointer" }}
+              >
                 <td>{s.name ?? s.id.slice(0, 8)}</td>
                 <td>
                   <StatusPill state={s.runState} />
@@ -109,6 +125,7 @@ export function FleetPage() {
             ))}
           </tbody>
         </table>
+        </div>
       )}
 
       {showNewSession && (

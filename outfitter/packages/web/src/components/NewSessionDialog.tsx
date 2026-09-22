@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { api, type Guru, ApiError } from "../api/client.ts";
+import { Working } from "./Working.tsx";
+import { withFloppySound } from "../lib/floppy-sound.ts";
 
 interface Props {
   gurus: Guru[];
@@ -29,15 +31,17 @@ export function NewSessionDialog({ gurus, onClose, onCreated, initialGuruId }: P
     setSubmitting(true);
     setError(null);
     try {
-      const { session } = await api.createSession({
-        guruId,
-        prompt,
-        name: name.trim() || undefined,
-        repo: repo.trim() || undefined,
-        baseBranch: repo.trim() ? baseBranch.trim() || undefined : undefined,
-        branch: repo.trim() ? branch.trim() || undefined : undefined,
-        model: model.trim() || undefined,
-      });
+      const { session } = await withFloppySound(
+        api.createSession({
+          guruId,
+          prompt,
+          name: name.trim() || undefined,
+          repo: repo.trim() || undefined,
+          baseBranch: repo.trim() ? baseBranch.trim() || undefined : undefined,
+          branch: repo.trim() ? branch.trim() || undefined : undefined,
+          model: model.trim() || undefined,
+        }),
+      );
       onCreated(session.id);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to create session");
@@ -48,8 +52,11 @@ export function NewSessionDialog({ gurus, onClose, onCreated, initialGuruId }: P
 
   return (
     <div className="dialog-backdrop" onClick={onClose}>
-      <div className="dialog" onClick={(e) => e.stopPropagation()}>
-        <h2>New session</h2>
+      <div className="dialog panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="ns-title">
+        <h2 id="ns-title" className="panel-title">
+          New session
+        </h2>
+        <div className="panel-body">
         {error && <div className="error-banner">{error}</div>}
         <form onSubmit={submit}>
           <div className="form-row">
@@ -92,14 +99,15 @@ export function NewSessionDialog({ gurus, onClose, onCreated, initialGuruId }: P
             <textarea id="ns-prompt" value={prompt} onChange={(e) => setPrompt(e.target.value)} required />
           </div>
           <div className="form-actions">
-            <button type="button" onClick={onClose} disabled={submitting}>
+            <button type="button" className="btn" onClick={onClose} disabled={submitting}>
               Cancel
             </button>
-            <button type="submit" disabled={submitting || !guruId || !prompt.trim()}>
-              {submitting ? "Starting..." : "Start session"}
+            <button type="submit" className="btn btn-primary" disabled={submitting || !guruId || !prompt.trim()}>
+              {submitting ? <Working label="Starting" /> : "Start session"}
             </button>
           </div>
         </form>
+        </div>
       </div>
     </div>
   );

@@ -8,8 +8,15 @@ import { EntryItem } from "../components/EntryItem.tsx";
 import { Composer } from "../components/Composer.tsx";
 import { StatusPill } from "../components/StatusPill.tsx";
 import { UiRequestPanel } from "../components/UiRequestPanel.tsx";
+import { Working } from "../components/Working.tsx";
+import { withFloppySound } from "../lib/floppy-sound.ts";
 
 const RUNNING_STATES = new Set(["running", "idle", "stopping", "queued", "provisioning"]);
+// Subset of RUNNING_STATES that reads as "the agent is actively doing something right now" for
+// the transcript's typing indicator -- "idle" (waiting on the user) and "stopping" don't count.
+const WORKING_STATES = new Set(["running", "queued", "provisioning"]);
+
+type PendingAction = "abort" | "stop" | "wake" | null;
 
 export function SessionPage() {
   const { id } = useParams<{ id: string }>();
@@ -18,6 +25,7 @@ export function SessionPage() {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [models, setModels] = useState<ModelRow[]>([]);
+  const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const { entries, runState, pendingUiRequest, costEstimate } = useSessionStream(sessionId);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
 
@@ -50,20 +58,19 @@ export function SessionPage() {
     await reload();
   }
 
-  async function handleAbort() {
-    await api.abort(sessionId);
-    await reload();
+  async function runAction(action: Exclude<PendingAction, null>, call: () => Promise<unknown>) {
+    setPendingAction(action);
+    try {
+      await withFloppySound(call());
+      await reload();
+    } finally {
+      setPendingAction(null);
+    }
   }
 
-  async function handleStop() {
-    await api.stop(sessionId);
-    await reload();
-  }
-
-  async function handleWake() {
-    await api.wake(sessionId);
-    await reload();
-  }
+  const handleAbort = () => runAction("abort", () => api.abort(sessionId));
+  const handleStop = () => runAction("stop", () => api.stop(sessionId));
+  const handleWake = () => runAction("wake", () => api.wake(sessionId));
 
   async function handleUiResponse(requestId: string, value: unknown) {
     await api.uiResponse(sessionId, requestId, value);
@@ -125,27 +132,35 @@ export function SessionPage() {
         </div>
         <div className="run-controls">
           <StatusPill state={runState} />
-          <button onClick={copyTeleport}>{copied ? "Copied!" : "Open in terminal"}</button>
-          <button onClick={handleAbort} disabled={!active}>
-            Abort
+          <button className="btn" onClick={copyTeleport}>
+            {copied ? "Copied!" : "Open in terminal"}
           </button>
-          <button onClick={handleStop} disabled={!active}>
-            Stop
+          <button className="btn btn-danger" onClick={handleAbort} disabled={!active || pendingAction !== null}>
+            {pendingAction === "abort" ? <Working label="Aborting" /> : "Abort"}
           </button>
-          <button onClick={handleWake} disabled={!canWake}>
-            Wake
+          <button className="btn btn-danger" onClick={handleStop} disabled={!active || pendingAction !== null}>
+            {pendingAction === "stop" ? <Working label="Stopping" /> : "Stop"}
+          </button>
+          <button className="btn btn-primary" onClick={handleWake} disabled={!canWake || pendingAction !== null}>
+            {pendingAction === "wake" ? <Working label="Waking" /> : "Wake"}
           </button>
         </div>
       </div>
 
       {pendingUiRequest && <UiRequestPanel request={pendingUiRequest} onRespond={handleUiResponse} />}
 
-      <div className="transcript" ref={transcriptRef}>
-        {views.length === 0 ? (
-          <p className="empty-state">No entries yet.</p>
-        ) : (
-          views.map((v) => <EntryItem key={v.id} view={v} />)
-        )}
+      <div className="panel">
+        <div className="panel-titlebar">Transcript</div>
+        <div className="transcript" ref={transcriptRef}>
+          {views.length === 0 ? (
+            <p className="empty-state">No entries yet. Send a message below to start the run.</p>
+          ) : (
+            views.map((v) => <EntryItem key={v.id} view={v} />)
+          )}
+          {runState && WORKING_STATES.has(runState) && (
+            <Working label="Guru is working" size="lg" className="transcript-working" />
+          )}
+        </div>
       </div>
 
       <Composer onSend={handleSend} />

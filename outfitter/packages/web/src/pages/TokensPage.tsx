@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type TokenRecord, ApiError } from "../api/client.ts";
+import { Working } from "../components/Working.tsx";
+import { withFloppySound } from "../lib/floppy-sound.ts";
 
 function envLines(linkOrigin: string, token: string): string {
   const api = linkOrigin || "<ask your operator for the link URL>";
@@ -47,7 +49,7 @@ export function TokensPage() {
     setCreating(true);
     setError(null);
     try {
-      const result = await api.createToken(name.trim());
+      const result = await withFloppySound(api.createToken(name.trim()));
       setJustCreated(result);
       setName("");
       await load();
@@ -79,13 +81,14 @@ export function TokensPage() {
       {error && <div className="error-banner">{error}</div>}
 
       {justCreated && (
-        <div className="dialog" style={{ maxWidth: "none", marginBottom: "1rem" }}>
-          <h3>"{justCreated.record.name}" created</h3>
+        <div className="dialog panel" style={{ maxWidth: "none", marginBottom: "1rem" }}>
+          <h3 className="panel-title">"{justCreated.record.name}" created</h3>
+          <div className="panel-body">
           <p>Copy this token now — it will not be shown again.</p>
           <div className="form-row">
             <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-              <code style={{ wordBreak: "break-all" }}>{justCreated.token}</code>
-              <button type="button" onClick={() => copyToClipboard(justCreated.token)}>
+              <code className="masked" style={{ wordBreak: "break-all" }}>{justCreated.token}</code>
+              <button type="button" className="btn" onClick={() => copyToClipboard(justCreated.token)}>
                 Copy token
               </button>
             </div>
@@ -98,12 +101,13 @@ export function TokensPage() {
             </p>
           )}
           <div className="form-actions">
-            <button type="button" onClick={() => copyToClipboard(envLines(linkOrigin, justCreated.token))}>
+            <button type="button" className="btn" onClick={() => copyToClipboard(envLines(linkOrigin, justCreated.token))}>
               Copy env lines
             </button>
-            <button type="button" onClick={() => setJustCreated(null)}>
+            <button type="button" className="btn btn-primary" onClick={() => setJustCreated(null)}>
               Done
             </button>
+          </div>
           </div>
         </div>
       )}
@@ -115,16 +119,17 @@ export function TokensPage() {
           placeholder="laptop"
           aria-label="Token name"
         />
-        <button type="submit" disabled={creating || !name.trim()}>
-          {creating ? "Creating..." : "Create token"}
+        <button type="submit" className="btn btn-primary" disabled={creating || !name.trim()}>
+          {creating ? <Working label="Creating" /> : "Create token"}
         </button>
       </form>
 
       {loading ? (
-        <p className="empty-state">Loading...</p>
+        <p className="empty-state"><Working label="Loading tokens" size="lg" srOnly={false} /></p>
       ) : tokens.length === 0 ? (
         <p className="empty-state">No tokens yet.</p>
       ) : (
+        <div className="table-scroll">
         <table className="data-table">
           <thead>
             <tr>
@@ -140,12 +145,12 @@ export function TokensPage() {
               <tr key={t.id}>
                 <td>{t.name}</td>
                 <td>
-                  <code>{t.prefix}…</code>
+                  <code className="masked">{t.prefix}…</code>
                 </td>
                 <td>{new Date(t.createdAt).toLocaleString()}</td>
                 <td>{t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : "never"}</td>
                 <td>
-                  <button type="button" onClick={() => revoke(t.id)}>
+                  <button type="button" className="btn btn-danger" onClick={() => revoke(t.id)}>
                     Revoke
                   </button>
                 </td>
@@ -153,6 +158,7 @@ export function TokensPage() {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );

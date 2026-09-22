@@ -275,6 +275,31 @@ can look at. Mermaid renders nowhere in a terminal; pi's own toolkit can display
 iTerm2, Ghostty, WezTerm and Warp, but rendering Mermaid to an image needs a headless browser, which
 is not worth a few hundred megabytes for a picture a good text layout beats.
 
+## Subagents (`pi-subagents`)
+
+Delegation to focused child sessions, which the model uses when your wording invites it: "use
+reviewer on this diff", "ask oracle whether this plan is wrong", "run reviewers for correctness,
+tests and cleanup in parallel". Nothing runs on its own. Built-in roles are `scout` (recon),
+`researcher`, `evidence-auditor`, `worker` (implements), `reviewer`, `oracle` (second opinion, never
+edits) and `delegate`. `/subagents-fleet` shows running work, `/subagents-doctor` checks the setup,
+`/subagents-guide <topic>` is the installed documentation.
+
+Children would inherit the chat model, the cheapest route on the router, so `.pi/settings.json` sets
+their models, by what each role is for:
+
+| role | model | why |
+|---|---|---|
+| scout, researcher, delegate, evidence-auditor | `litellm/gemini-3.8-flash` | fast, cheap, 1M context for reading a lot |
+| worker, reviewer | `litellm/claude-sonnet-5` | writing and judging code |
+| oracle | `litellm/claude-opus-5-high` | rare, and its whole value is judgement |
+
+Agents are Markdown with YAML frontmatter (`name`, `description`, `tools`, `model`, `thinking`,
+…), the same format as Claude Code's, but found in `.pi/agents/` (project) and `~/.pi/agent/agents/`
+(user) rather than `.claude/agents/`; `subagents.agentScanDirs` can add that directory as an extra
+root. A model set in settings under `subagents.agentOverrides.<name>.model` beats the agent file's
+frontmatter, which beats `subagents.defaultModel`, which beats the chat model. Foreground children
+do not load the parent's extensions, so a `researcher` needs web access granted to it explicitly.
+
 ## Language servers (`.pi/agent/lsp.json`)
 
 `pi-lsp` starts a language server after a `write` or `edit`, waits for its diagnostics and appends

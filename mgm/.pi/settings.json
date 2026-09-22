@@ -23,5 +23,19 @@
   "modelThinkingLevels": {
     "lmstudio/qwen/qwen3.6-35b-a3b": "off",
     "litellm/local-qwen-mlx": "off"
+  },
+  "subagents": {
+    "defaultModel": "litellm/gemini-3.8-flash",
+    "agentOverrides": {
+      "worker": {
+        "model": "litellm/claude-sonnet-5"
+      },
+      "reviewer": {
+        "model": "litellm/claude-sonnet-5"
+      },
+      "oracle": {
+        "model": "litellm/claude-opus-5-high"
+      }
+    }
   }
 }

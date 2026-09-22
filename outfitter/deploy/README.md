@@ -141,7 +141,8 @@ so the commands below still work unchanged.
 6. **`./agent-job.sh`** — builds `image/Dockerfile` (repo root context) with Cloud Build and
    deploys/updates the `outfitter-agent` Cloud Run Job. Needs `OUTFITTER_API` set to the URL
    `link.sh` printed (not `api.sh`'s — agentd only ever dials `outfitter-link`).
-7. **`./deploy-all.sh`** — runs `link.sh`, then `api.sh`, then `agent-job.sh`, all from one commit.
+7. **`./deploy-all.sh`** — runs `agent-job.sh`, then `link.sh`, then `api.sh`, all from one commit
+   (the Job first: a newer link refuses an older agentd with 4409).
    The version-skew guard below refuses a single-component deploy against a mismatched fleet, so
    this is the normal way to ship a change touching more than one of the three.
 

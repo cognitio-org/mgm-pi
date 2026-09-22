@@ -1,31 +1,50 @@
 #!/usr/bin/env bash
-# Bug 9 (docs/reports/cloud-fixes.md): deploys link, then web, then the agent Job, all from one
-# commit -- the version-skew guard in each of those scripts (env.sh's check_deploy_skew) means a
-# partial run here (e.g. link succeeds, web fails) leaves the fleet in a state the *next* deploy of
-# any single component will refuse to build on top of without ALLOW_SKEW=1, rather than silently
-# layering a new skew on top of the old one.
+# Bug 9 (docs/reports/cloud-fixes.md): deploys the agent Job, then link, then web, all from one
+# commit. Each of those scripts runs env.sh's check_deploy_skew, which refuses a single-component
+# deploy against components at another commit; this script is the sanctioned way to move all three
+# at once, so it tells the guard (DEPLOY_ALL_COMMIT) that the other components are about to follow.
+# Without that, step 1 of any real upgrade would see the other two still at the old commit and
+# refuse. A partial run (e.g. the Job and link succeed, web fails) can simply be re-run.
 #
-# Order matters: link.sh's bootstrap-deploy fallback for OUTFITTER_LINK_ORIGIN needs outfitter-link
-# to already exist before api.sh runs (see service.sh's "web" branch), and the agent Job should
-# roll last since it's what sandboxes actually run -- link/web changes are safe to be live slightly
-# ahead of it (they don't send anything an old agentd can't already ignore safely; it's the
-# opposite skew, an old web/link against a newer agentd, that this guard exists to catch).
+# Order matters:
+# - the Job first: the link role refuses (WS close 4409) any agentd older than its own
+#   API_PROTOCOL_VERSION, so a new link ahead of the new image would refuse every sandbox that
+#   (re)connects in between -- including running ones, which all reconnect when link redeploys.
+#   A newer agentd against an older link is harmless (the old link ignores hello.protocolVersion).
+# - link before web: service.sh's "web" branch reads outfitter-link's URL for OUTFITTER_LINK_ORIGIN.
 #
-#   PROJECT=outfitter-509211 REGION=us-central1 OUTFITTER_API=https://outfitter-link-xyz.run.app ./deploy-all.sh
+#   PROJECT=outfitter-509211 REGION=us-central1 ./deploy-all.sh
 #
-# OUTFITTER_API must already be set to (or guessable as) outfitter-link's URL for agent-job.sh --
-# on a brand-new project, deploy link.sh once by hand first to learn it (see agent-job.sh's own
-# usage comment), then re-run this script.
+# OUTFITTER_API (agent-job.sh) defaults to the deployed outfitter-link URL. On a brand-new project
+# deploy link.sh once by hand first, then run this.
 set -euo pipefail
-DIR="$(dirname "${BASH_SOURCE[0]}")"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=env.sh
+source "${DIR}/env.sh"
 
-echo "== deploy-all: 1/3 link =="
-"${DIR}/link.sh"
+DEPLOY_ALL_COMMIT="$(git -C "${DIR}" rev-parse --short HEAD)"
+export DEPLOY_ALL_COMMIT
+if [[ -n "$(git -C "${DIR}" status --porcelain 2>/dev/null)" ]]; then
+  echo "warning: uncommitted changes -- they will be deployed labelled build-commit=${DEPLOY_ALL_COMMIT}" >&2
+fi
 
-echo "== deploy-all: 2/3 web =="
-"${DIR}/api.sh"
+if [[ -z "${OUTFITTER_API:-}" ]]; then
+  OUTFITTER_API="$(gcloud run services describe outfitter-link --project="${PROJECT}" --region="${REGION}" \
+    --format='value(status.url)' 2>/dev/null || true)"
+fi
+if [[ -z "${OUTFITTER_API:-}" ]]; then
+  echo "error: outfitter-link not found; deploy it once with ./link.sh (or set OUTFITTER_API)" >&2
+  exit 1
+fi
+export OUTFITTER_API
 
-echo "== deploy-all: 3/3 agent Job =="
+echo "== deploy-all ${DEPLOY_ALL_COMMIT}: 1/3 agent Job =="
 "${DIR}/agent-job.sh"
 
-echo "== deploy-all: done, all three components deployed from the same commit =="
+echo "== deploy-all ${DEPLOY_ALL_COMMIT}: 2/3 link =="
+"${DIR}/link.sh"
+
+echo "== deploy-all ${DEPLOY_ALL_COMMIT}: 3/3 web =="
+"${DIR}/api.sh"
+
+echo "== deploy-all: done, all three components deployed from ${DEPLOY_ALL_COMMIT} =="

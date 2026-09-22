@@ -192,7 +192,7 @@ still passed (the model itself won't have matched yet either).
   components' currently-deployed `build-commit` (`gcloud run services|jobs describe
   --format='value(metadata.labels.build-commit)'`), refusing (or, with `ALLOW_SKEW=1`, warning) on
   a mismatch and printing which component(s) are stale.
-- `deploy/deploy-all.sh` (new): deploys link, then web, then the Job, from one commit.
+- `deploy/deploy-all.sh` (new): deploys the Job, then link, then web, from one commit (the Job first, since a newer link refuses an older agentd; it sets `DEPLOY_ALL_COMMIT` so the skew guard lets the not-yet-deployed components differ).
 - agentd announces its wire protocol version in `hello`
   (`packages/agentd/src/protocol.ts`'s `WIRE_PROTOCOL_VERSION`); `agentlink.ts` refuses (WS close
   `4409`, a reason string naming both versions) a sandbox whose version is older than the API's own

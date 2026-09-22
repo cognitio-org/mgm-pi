@@ -64,6 +64,11 @@ current_build_commit() {
 # which case it only warns.
 check_deploy_skew() {
   local this_commit="$1" this_component="$2"
+  # deploy-all.sh is moving all three components to this commit, one after another; the ones not yet
+  # deployed are expected to differ.
+  if [[ -n "${DEPLOY_ALL_COMMIT:-}" && "${DEPLOY_ALL_COMMIT}" == "${this_commit}" ]]; then
+    return 0
+  fi
   local web_commit link_commit job_commit
   web_commit="$(current_build_commit services outfitter-api)"
   link_commit="$(current_build_commit services outfitter-link)"

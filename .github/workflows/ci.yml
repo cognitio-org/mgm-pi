@@ -5,6 +5,14 @@ on:
     paths: ["kernal/**", ".github/workflows/ci.yml"]
   pull_request:
     paths: ["kernal/**", ".github/workflows/ci.yml"]
+# A PR branch that is pushed again (an amended commit, a rebase, one of several agent sessions
+# force-pushing) used to leave the previous run billing to completion: on a private repo those are
+# metered minutes spent on a commit nobody will look at again. Supersede them instead. Pushes to
+# main are never cancelled -- main's run is the one that says whether main is green.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-24.04

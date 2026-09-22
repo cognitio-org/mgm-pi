@@ -74,8 +74,8 @@ case, so no OpenRouter model is ever offered unless OpenRouter is actually conne
 ## Releases and installing without Node
 
 Publishing a GitHub release tagged `vX.Y.Z` (semver; `v1.2.0-rc.1` style pre-releases allowed)
-runs `.github/workflows/release.yml`: validate the tag, run the tests, then build on four runners
-(darwin-arm64, darwin-x64, linux-x64, linux-arm64) and attach `kernal-<version>-<platform>.tar.gz`
+runs `.github/workflows/release.yml`: validate the tag, run the tests, then build on three runners
+(darwin-arm64, linux-x64, linux-arm64) and attach `kernal-<version>-<platform>.tar.gz`
 with a `.sha256` and `install.sh`. Every push to `main` touching `kernal/` runs `ci.yml` (tests plus
 an offline start of the agent).
 

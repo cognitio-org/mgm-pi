@@ -173,3 +173,31 @@ Three alternative marks were drawn and rejected, kept in this directory:
   replaced by a static equivalent, never just hidden).
 - Status pills never rely on colour alone — each state has both a colour and a glyph
   (▶ running, ⧖ queued, ↻ provisioning, ⏸ idle, ● stopping, ■ stopped/down, ✗ failed, ⚠ degraded).
+
+## Vocabulary (retro labels)
+
+UI-only relabeling, defined once in `src/lib/vocabulary.ts` and used for nav, page titles/
+subtitles, desk icons, menus, empty states and buttons. Routes, API paths, data field names and
+code identifiers are unchanged — grep for `guruId`, `/api/gurus`, `sessionId`, etc. still finds the
+real names. Every page subtitle reads `"<label> · <hint>"`; the same hint is the `title` tooltip on
+the corresponding nav item, desk icon or button.
+
+| Label (UI) | Plain meaning | Code name |
+|---|---|---|
+| Tape / Tapes | Reusable agent configuration: model, prompt, tools | `guru` / `Guru` |
+| Floppy / Floppies | A conversation with an agent you can continue later | `session` / `Session` |
+| Disk Box | The session list (all floppies) | `/fleet` route, `SessionSummary[]` |
+| New Floppy | Start a new session | `NewSessionDialog` |
+| Drive / Drives | A cloud sandbox running an agent right now | running `Session`/`Run` (provisioning/running) |
+| Peripheral / Peripherals | Model and service providers, and their health | `provider` / `ProviderRow` |
+| Dongle / Dongles | Personal access token for mgm teleport | `token` / `TokenRecord` |
+| Control Panel | Keys and deployment settings | `/settings` route, `OperatorSettings` |
+| Sysop | Operator role: can change keys and deployment settings | `Identity.operator` |
+| Manual | Help / about | (no code equivalent — a dialog only) |
+| Trash | Stopped floppies | sessions with `runState` `stopped`/`failed` |
+| Desk | The Outfitter desktop (home page) | `/` route, `DeskPage.tsx` |
+| ▶ Play | Wake a floppy and start its run | `wake` |
+| ■ Stop | Stop a floppy's run | `stop` |
+| Break | Interrupt the current turn (like the C64 RUN/STOP key) | `abort` |
+| ⏏ Eject | Continue this floppy on your laptop with mgm | "Open in terminal" / `mgm --teleport` |
+| Send | Send a message | `sendMessage` (unchanged — the brief keeps this one as-is) |

@@ -1,0 +1,284 @@
+/* The GEOS-deskTop-styled entry page (/, DeskPage.tsx). Original artwork only -- no GEOS or
+ * Berkeley Softworks names, icons or assets, just the same period-accurate shape: a boxed menu
+ * bar, a striped-titlebar window with an icon grid, a dithered desktop, and desktop icons outside
+ * the window. Uses the same theme tokens as the rest of the app (theme.css) so it re-skins for
+ * free between the C64-phosphor and early-Mac looks. */
+
+.desk {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100dvh - 3.2rem);
+  margin: -1.25rem;
+  overflow: hidden;
+}
+
+/* ---------- menu bar ---------- */
+
+.desk-menubar {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.5rem;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-strong);
+  position: relative;
+  z-index: 20;
+}
+
+.desk-menu {
+  position: relative;
+}
+
+.desk-menu-trigger {
+  box-shadow: none;
+  border: 1px solid transparent;
+  background: transparent;
+  font-family: var(--font-display);
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+  padding: 0.3rem 0.6rem;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.desk-menu-trigger:hover,
+.desk-menu-trigger[aria-expanded="true"] {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.desk-menu-logo {
+  padding: 0.3rem 0.5rem;
+}
+
+.desk-menu-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin: 0;
+  padding: 0.2rem;
+  list-style: none;
+  min-width: 180px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-offset) var(--shadow-offset) 0 0 var(--border);
+  z-index: 30;
+}
+
+.desk-menu-list li button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  padding: 0.45rem 0.6rem;
+  min-height: 44px;
+}
+
+.desk-menu-list li button:hover,
+.desk-menu-list li button:focus-visible {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.desk-clock {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  border: 1px solid var(--border);
+  padding: 0.2rem 0.55rem;
+  background: var(--bg);
+}
+
+/* ---------- desktop surface: dithered background, window, desktop icons ---------- */
+
+.desk-surface {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 2.5rem 1.25rem;
+  background-image:
+    radial-gradient(var(--border) 1px, transparent 1px),
+    radial-gradient(var(--border) 1px, transparent 1px);
+  background-size: 4px 4px;
+  background-position: 0 0, 2px 2px;
+  background-color: var(--bg);
+}
+
+.desk-surface::before {
+  /* the dither above is the "wallpaper"; drop its opacity independently of any other .dither use */
+  content: none;
+}
+
+@media (prefers-color-scheme: light) {
+  .desk-surface {
+    opacity: 1;
+  }
+}
+
+.desk-window {
+  position: relative;
+  width: min(560px, 100%);
+  z-index: 5;
+}
+
+.desk-window-titlebar {
+  position: relative;
+  justify-content: flex-start;
+  gap: 0.5rem;
+}
+
+.desk-window-close {
+  width: 0.85rem;
+  height: 0.85rem;
+  border: 1px solid var(--text);
+  background: var(--bg-elevated);
+  flex: none;
+}
+
+.desk-statusbar {
+  padding: 0.4rem 0.65rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.desk-icon-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+  padding: 1.25rem;
+  background: var(--bg-elevated);
+}
+
+.desk-icon,
+.desk-desktop-icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  text-align: center;
+  border: 1px solid transparent;
+  box-shadow: none;
+  background: transparent;
+  padding: 0.5rem 0.3rem;
+  min-height: 44px;
+  min-width: 0;
+  color: var(--text);
+  touch-action: manipulation;
+}
+
+.desk-icon:hover,
+.desk-icon:focus-visible,
+.desk-desktop-icon:hover,
+.desk-desktop-icon:focus-visible {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+
+.desk-icon-label {
+  font-family: var(--font-display);
+  font-size: 0.66rem;
+  letter-spacing: 0.02em;
+  line-height: 1.3;
+  overflow-wrap: break-word;
+  max-width: 100%;
+}
+
+/* Folded page corner at the window's bottom-left. */
+.desk-window-corner {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0 0 16px 16px;
+  border-color: transparent transparent var(--bg) transparent;
+  filter: drop-shadow(-1px 1px 0 var(--border));
+}
+
+/* Desktop icons outside the window: Drive (top right) and Trash (bottom right). */
+.desk-desktop-icon {
+  position: absolute;
+  z-index: 4;
+  width: 5.5rem;
+}
+
+.desk-desktop-icon-drive {
+  top: 1rem;
+  right: 1.25rem;
+}
+
+.desk-desktop-icon-trash {
+  bottom: 1rem;
+  right: 1.25rem;
+}
+
+.desk-manual {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* ---------- phones: window fills the screen, icons wrap to 3 columns, desktop icons join the grid ---------- */
+
+@media (max-width: 700px) {
+  .desk {
+    margin: -0.65rem;
+    min-height: calc(100dvh - 6.5rem);
+  }
+
+  .desk-surface {
+    padding: 0.75rem;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .desk-window {
+    width: 100%;
+  }
+
+  .desk-icon-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding: 0.85rem 0.4rem;
+    gap: 0.25rem;
+  }
+
+  .desk-icon-label {
+    font-size: 0.58rem;
+  }
+
+    /* On phones the Drive/Trash icons join the icon grid's visual rhythm instead of floating over
+   * the window -- laid out as a matching 2-up row directly under it, same card styling. */
+  .desk-desktop-icons {
+    position: static;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+    padding: 0 1.25rem 1.25rem;
+    background: var(--bg-elevated);
+    width: 100%;
+  }
+
+  .desk-desktop-icon {
+    position: static;
+    width: auto;
+  }
+}
+
+@media (min-width: 701px) {
+  .desk-desktop-icons {
+    display: contents;
+  }
+}

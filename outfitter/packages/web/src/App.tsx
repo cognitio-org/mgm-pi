@@ -5,17 +5,30 @@ import { ProviderStrip } from "./components/ProviderStrip.tsx";
 import { Logo } from "./components/Logo.tsx";
 import { ThemeToggle } from "./components/ThemeToggle.tsx";
 import { SoundToggle } from "./components/SoundToggle.tsx";
+import { DeskPage } from "./pages/DeskPage.tsx";
 import { FleetPage } from "./pages/FleetPage.tsx";
 import { SessionPage } from "./pages/SessionPage.tsx";
 import { ProvidersPage } from "./pages/ProvidersPage.tsx";
 import { TokensPage } from "./pages/TokensPage.tsx";
 import { GurusPage } from "./pages/GurusPage.tsx";
 import { SettingsPage } from "./pages/SettingsPage.tsx";
+import { vocabulary } from "./lib/vocabulary.ts";
+
+const NAV_ITEMS: Array<{ to: string; end?: boolean; label: string; hint: string; operatorOnly?: boolean }> = [
+  { to: "/", end: true, label: vocabulary.desk.one, hint: "the Outfitter desktop" },
+  { to: "/fleet", label: vocabulary.sessionList.one, hint: vocabulary.sessionList.hint },
+  { to: "/gurus", label: vocabulary.guru.many, hint: vocabulary.guru.hint },
+  { to: "/providers", label: vocabulary.provider.many, hint: vocabulary.provider.hint },
+  { to: "/tokens", label: vocabulary.token.many, hint: vocabulary.token.hint },
+  { to: "/settings", label: vocabulary.settings.one, hint: `${vocabulary.settings.hint} — ${vocabulary.operator.hint}`, operatorOnly: true },
+];
 
 export function App() {
-  // The Settings nav link only shows for an operator (EPIC.md Decisions table); GET /api/me is
-  // the source of truth, so this fetches once on mount rather than guessing from any local state.
+  // The Settings/Control Panel nav link only shows for an operator/Sysop (EPIC.md Decisions
+  // table); GET /api/me is the source of truth, so this fetches once on mount rather than
+  // guessing from any local state.
   const [operator, setOperator] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => {
     api
       .me()
@@ -23,40 +36,65 @@ export function App() {
       .catch(() => setOperator(false));
   }, []);
 
+  const items = NAV_ITEMS.filter((item) => !item.operatorOnly || operator);
+
   return (
     <div className="app-shell">
       <header className="app-header">
-        <NavLink to="/" aria-label="Outfitter home" style={{ textDecoration: "none" }}>
+        <NavLink to="/" aria-label="Outfitter desk" style={{ textDecoration: "none" }} title={vocabulary.desk.hint}>
           <Logo />
         </NavLink>
-        <nav>
-          <NavLink to="/" end className={({ isActive }) => (isActive ? "active" : "")}>
-            Fleet
-          </NavLink>
-          <NavLink to="/gurus" className={({ isActive }) => (isActive ? "active" : "")}>
-            Gurus
-          </NavLink>
-          <NavLink to="/providers" className={({ isActive }) => (isActive ? "active" : "")}>
-            Providers
-          </NavLink>
-          <NavLink to="/tokens" className={({ isActive }) => (isActive ? "active" : "")}>
-            Tokens
-          </NavLink>
-          {operator && (
-            <NavLink to="/settings" className={({ isActive }) => (isActive ? "active" : "")}>
-              Settings
+        <nav className="app-nav-desktop">
+          {items.map((item) => (
+            <NavLink key={item.to} to={item.to} end={item.end} title={item.hint} className={({ isActive }) => (isActive ? "active" : "")}>
+              {item.label}
             </NavLink>
-          )}
+          ))}
         </nav>
         <div className="app-header-spacer">
           <ProviderStrip />
           <SoundToggle />
           <ThemeToggle />
         </div>
+        <button
+          type="button"
+          className="app-menu-button"
+          aria-label="Menu"
+          aria-expanded={menuOpen}
+          aria-haspopup="true"
+          onClick={() => setMenuOpen((v) => !v)}
+        >
+          {"☰"}
+        </button>
       </header>
+
+      {menuOpen && (
+        <div className="app-menu-backdrop" onClick={() => setMenuOpen(false)}>
+          <nav className="app-menu-sheet" onClick={(e) => e.stopPropagation()} aria-label="Navigation">
+            {items.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.end}
+                title={item.hint}
+                className={({ isActive }) => (isActive ? "active" : "")}
+                onClick={() => setMenuOpen(false)}
+              >
+                {item.label}
+              </NavLink>
+            ))}
+            <div className="app-menu-sheet-controls">
+              <SoundToggle />
+              <ThemeToggle />
+            </div>
+          </nav>
+        </div>
+      )}
+
       <main className="app-main">
         <Routes>
-          <Route path="/" element={<FleetPage />} />
+          <Route path="/" element={<DeskPage />} />
+          <Route path="/fleet" element={<FleetPage />} />
           <Route path="/sessions/:id" element={<SessionPage />} />
           <Route path="/gurus" element={<GurusPage />} />
           <Route path="/providers" element={<ProvidersPage />} />

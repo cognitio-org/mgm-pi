@@ -688,7 +688,7 @@ export function drawRescue(canvas: HTMLCanvasElement | null, f: RescueFrame): vo
   const sky = skyCanvas(viewW);
   if (sky) ctx.drawImage(sky, 0, 0);
   drawStars(ctx, viewW, camX, t);
-  drawSprite(ctx, MOON_SPRITE, MOON_PALETTE, Math.round(viewW * 0.62 - camX * 0.04), 14);
+  drawSprite(ctx, MOON_SPRITE, MOON_PALETTE, Math.round(viewW * 0.8 - camX * 0.04), 12);
 
   // firelight over the farm sits in the sky, behind the hills and town
   const glow = glowCanvas(reducedMotion ? 0 : Math.floor(t / 170) % 2);

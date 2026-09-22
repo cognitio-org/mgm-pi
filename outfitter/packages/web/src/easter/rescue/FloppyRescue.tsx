@@ -175,7 +175,8 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
           // no sound on the title screen
         } else if (ev.count === CAPACITY) playFullLoadBonus();
         else playDeliver();
-        popupsRef.current = popupsRef.current.concat(spawnTextPopup(x, y - 16, `+${amount}`, C.yellow));
+        // pop above the Disk Box roofline, clear of its white DISK BOX plate
+        popupsRef.current = popupsRef.current.concat(spawnTextPopup(x, y - 30, `+${amount}`, C.yellow));
         particlesRef.current = particlesRef.current.concat(spawnSparkle(x, y, reducedMotion ? 3 : 12, C.yellow));
       } else if (ev.type === "crash") {
         if (!silent) playCrash();

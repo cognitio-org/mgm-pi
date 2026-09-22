@@ -341,7 +341,7 @@
  * line to the bottom (instead of letting it fall wherever the centered flex stack happens to end)
  * and giving it its own solid chip keeps it legible instead of overlapping the scene behind it. */
 .easter-title-overlay .easter-help {
-  margin-top: auto;
+  margin-top: 0;
   padding: 0.4rem 0.7rem;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
@@ -499,6 +499,10 @@
   }
   .easter-title-sub {
     font-size: 1.1rem;
+  }
+  /* keyboard help is noise on a phone, and on a 264px-tall canvas it would hide the attract demo */
+  .easter-title-overlay .easter-help {
+    display: none;
   }
   .easter-title-overlay .btn,
   .easter-modal .btn {

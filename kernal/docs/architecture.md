@@ -241,8 +241,12 @@ body is not in the corpus, and extensionless files such as `bin/kernal` are neve
 module loader of pi's Bun-compiled binary (reproduced on pi 0.85.1 and 0.86.1); it loads fine in a
 source install, where pi runs under Node. `scripts/package.sh` drops it from the bundle's package
 list (`BUNDLE_EXCLUDE` to change), and its smoke test fails the build if any remaining extension
-fails to load. `install.sh` puts the bundle under `~/.kernal/<version>` with a `current` symlink and
-`kernal` in `~/.local/bin`. `GH_TOKEN` is needed while the repo is private. Windows is not built (the launcher
+fails to load. `install.sh` puts the bundle under `~/.kernal/kernal-<version>-<platform>` with a `current` symlink and
+`kernal` in `~/.local/bin`, and after a successful install removes older bundles, keeping
+`KERNAL_KEEP_VERSIONS` (default 2: the new one and the one it replaced). The pruning code is shared
+text between `install.sh` and `bin/kernal` (`kernal prune`), checked identical by
+`tests/install.test.ts`, because `install.sh` is downloaded and run on its own and cannot source a
+sibling. `GH_TOKEN` is needed while the repo is private. Windows is not built (the launcher
 is a shell script). Why not compile kernal ourselves with Bun or Node SEA: pi already is a compiled
 binary, and it must load extensions from a directory on disk, so a second compile step would add
 nothing.

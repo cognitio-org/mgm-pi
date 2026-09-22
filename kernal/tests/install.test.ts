@@ -175,3 +175,15 @@ describe("install.sh upgrade (real script, local bundles)", () => {
     assert.equal(settings().defaultModel, "claude-sonnet-5");
   });
 });
+
+describe("the mgm name", () => {
+  test("bin/mgm is a relative link to the kernal launcher, so source checkouts and bundles both carry it", () => {
+    const binDir = join(dirname(fileURLToPath(import.meta.url)), "..", "bin");
+    assert.equal(readlinkSync(join(binDir, "mgm")), "kernal");
+  });
+  test("package.sh copies every bin/* entry into the bundle", () => {
+    const pkg = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "package.sh"), "utf8");
+    assert.match(pkg, /cp "\$ROOT"\/bin\/\* "\$STAGE\/bin\/"/);
+  });
+});
+

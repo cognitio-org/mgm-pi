@@ -34,6 +34,8 @@ function buildFakeBundle(work: string, version: string): string {
   writeFileSync(join(stage, ".pi", "settings.json"), JSON.stringify({ defaultProvider: "litellm", defaultModel: "gpt-5.4-nano" }, null, 2));
   writeFileSync(join(stage, ".pi", "settings.shipped.json"), JSON.stringify({ defaultProvider: "litellm", defaultModel: "gpt-5.4-nano" }, null, 2));
   writeFileSync(join(stage, "bin", "kernal"), "#!/bin/sh\necho kernal-ran\n", { mode: 0o755 });
+  // Mirrors a real bundle: package.sh copies bin/*, which includes bin/mgm (a link to kernal).
+  symlinkSync("kernal", join(stage, "bin", "mgm"));
   writeFileSync(join(stage, "VERSION"), version + "\n");
   const tgz = join(work, "build", `${name}.tar.gz`);
   execFileSync("tar", ["czf", tgz, "-C", join(work, "build"), name]);
@@ -124,6 +126,13 @@ describe("install.sh migrates a legacy ~/.mgm install to ~/.kernal", () => {
     const stderr = execFileSync("bash", ["-c", `${JSON.stringify(join(binDir, "mgm"))} 2>&1 1>/dev/null`], { encoding: "utf8", env });
     assert.equal(stderr, "", "no notice: mgm is a supported name, not a deprecated one");
     assert.equal(realpathSync(join(binDir, "mgm")), realpathSync(join(binDir, "kernal")), "both names point at one launcher");
+  });
+
+  test("the old full path ~/.mgm/current/bin/mgm still runs the launcher after the migration", () => {
+    // Anything that called the legacy launcher by path (an alias, a script, another tool) keeps
+    // working: ~/.mgm/current now points at the new install, which ships bin/mgm.
+    const result = execFileSync(join(legacyHome, "current", "bin", "mgm"), { encoding: "utf8", env });
+    assert.equal(result.trim(), "kernal-ran");
   });
 
   test("~/.mgm is left in place with a MOVED marker; current now points at the new install", () => {

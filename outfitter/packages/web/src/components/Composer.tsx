@@ -15,7 +15,9 @@ interface Props {
 type Behavior = "" | "steer" | "followUp";
 
 const MODES: Array<{ value: Behavior; label: string; short: string }> = [
-  { value: "", label: "Send (queued if idle)", short: "Send" },
+  // Short label "Prompt", not "Send": on phones the segmented control sits beside the Send button,
+  // and two buttons both reading "Send" left it unclear which one sends.
+  { value: "", label: "Prompt (queued if idle)", short: "Prompt" },
   { value: "steer", label: "Steer", short: "Steer" },
   { value: "followUp", label: "Follow-up", short: "Follow-up" },
 ];

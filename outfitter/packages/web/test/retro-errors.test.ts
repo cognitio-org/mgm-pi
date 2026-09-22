@@ -4,15 +4,18 @@ import {
   contextMeterState,
   deriveTransportStatusLine,
   systemErrorContent,
+  apiErrorKind,
+  noticeContent,
+  inVocabulary,
   systemErrorId,
   transportStatusLine,
 } from "../src/lib/retro-errors.ts";
 
 describe("systemErrorContent", () => {
-  it("uses the fixed bomb-dialog headline and the API's message", () => {
+  it("uses the fixed bomb-dialog headline and the API's message, in the UI's vocabulary", () => {
     expect(systemErrorContent("guru not found")).toEqual({
       headline: "Sorry, a system error occurred.",
-      message: "guru not found",
+      message: "Tape not found",
     });
   });
 
@@ -92,3 +95,34 @@ describe("deriveTransportStatusLine", () => {
     expect(deriveTransportStatusLine(true, "loadError")).toBe("LOAD ERROR");
   });
 });
+
+describe("apiErrorKind: only real failures get the bomb", () => {
+  it("5xx, network errors and unknown statuses are system errors", () => {
+    expect(apiErrorKind(500)).toBe("system");
+    expect(apiErrorKind(503)).toBe("system");
+    expect(apiErrorKind(undefined)).toBe("system");
+  });
+  it("deliberate refusals and auth are calm notices", () => {
+    expect(apiErrorKind(400)).toBe("refused");
+    expect(apiErrorKind(409)).toBe("refused");
+    expect(apiErrorKind(422)).toBe("refused");
+    expect(apiErrorKind(401)).toBe("signedOut");
+    expect(apiErrorKind(403)).toBe("sysopOnly");
+    expect(apiErrorKind(404)).toBe("notFound");
+  });
+});
+
+describe("noticeContent and inVocabulary", () => {
+  it("translates the API's code names into the UI's words", () => {
+    expect(inVocabulary("guru is referenced by 2 sessions")).toBe("Tape is referenced by 2 floppies");
+    expect(inVocabulary("unknown guruId: x")).toBe("Unknown guruId: x");
+    expect(inVocabulary("Session not found")).toBe("Floppy not found");
+  });
+  it("a 409 reads as a plain refusal with the API's reason", () => {
+    expect(noticeContent("refused", "guru is referenced by 1 session")).toEqual({ headline: "Can't do that", message: "Tape is referenced by 1 floppy" });
+  });
+  it("404 keeps the retro headline", () => {
+    expect(noticeContent("notFound", undefined).headline).toBe("?FILE NOT FOUND ERROR");
+  });
+});
+

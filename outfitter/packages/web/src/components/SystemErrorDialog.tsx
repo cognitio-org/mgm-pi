@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { systemErrorContent, systemErrorId } from "../lib/retro-errors.ts";
+import { apiErrorKind, noticeContent, systemErrorContent, systemErrorId } from "../lib/retro-errors.ts";
 import { BombIcon } from "./ErrorIcons.tsx";
 
 export interface ApiErrorState {
@@ -22,6 +22,35 @@ interface Props {
  * never stuck looking at a bomb with no way out. */
 export function SystemErrorDialog({ error, onRestart, onResume }: Props) {
   const [restarting, setRestarting] = useState(false);
+  const kind = apiErrorKind(error.status);
+  if (kind !== "system") {
+    // A refusal, an expired sign-in, a Sysop-only action or a missing item: a calm GEOS alert with
+    // the reason and one way out, never the bomb (see apiErrorKind).
+    const notice = noticeContent(kind, error.message);
+    return (
+      <div className="dialog-backdrop">
+        <div className="dialog panel notice-dialog" role="alertdialog" aria-labelledby="notice-title" aria-describedby="notice-body">
+          <div className="panel-titlebar">
+            <span className="panel-label" id="notice-title">{notice.headline}</span>
+          </div>
+          <div className="panel-body">
+            <p id="notice-body">{notice.message}</p>
+            <div className="form-actions">
+              {kind === "signedOut" ? (
+                <button type="button" className="btn btn-primary" onClick={() => window.location.reload()}>
+                  Reload
+                </button>
+              ) : (
+                <button type="button" className="btn btn-primary" onClick={onResume} autoFocus>
+                  OK
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
   const content = systemErrorContent(error.message);
   const id = systemErrorId(error.status);
 

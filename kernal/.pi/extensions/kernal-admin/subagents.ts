@@ -25,6 +25,7 @@ import { pathToFileURL } from "node:url";
 import { readSettings, settingsPath, updateSettings } from "../connect/settings.ts";
 import { leaksSecret } from "./lib.ts";
 import { env } from "../_shared/env.ts";
+import { cliInfo, type CliInfo } from "../kernal-subagents/lib.ts";
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];
 /** pi's own tools; extension tools come from the running agent and from what agents already name. */
@@ -37,11 +38,15 @@ type AgentConfig = {
   name: string; description: string; source: Source; filePath: string; model?: string; thinking?: string | false;
   tools?: string[]; mcpDirectTools?: string[]; systemPrompt: string; systemPromptMode?: string; inheritProjectContext?: boolean; inheritSkills?: boolean;
   disabled?: boolean; override?: { fields?: string[] }; modelSource?: { type: string }; aliases?: string[];
+  runner?: { type: string; adapter?: string; command?: string }; acceptanceRole?: string; machine?: string;
 };
 type Pkg = {
   agents: { discoverAgents: Function; discoverAgentsAll: Function; clearAgentDiscoveryCache: Function };
   mgmt: { handleManagementAction: (action: string, params: any, ctx: any) => { content: { text: string }[]; isError?: boolean } };
   fm: { parseFrontmatter: (text: string) => { frontmatter: Record<string, string>; body: string }; parseFrontmatterList: (raw?: string) => string[] | undefined };
+  /** Whether a command-line agent's program is on PATH (the package's own check; it starts nothing). */
+  /** Undefined when a pi-subagents release moved the module: then "installed" is unknown, and nothing else breaks. */
+  cli?: { resolveExternalCliBinaryAvailability: (command: string, env: NodeJS.ProcessEnv) => { available: boolean; unavailableReason?: string } };
 };
 
 const agentDir = () => process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
@@ -55,8 +60,9 @@ export function loadPackage(): Promise<Pkg> {
   const mod = (f: string) => import(pathToFileURL(join(dir, "src", "agents", f)).href);
   const pkg = (async () => {
     if (!existsSync(join(dir, "src", "agents", "agents.js"))) throw new Error(`pi-subagents is not installed (${dir})`);
-    const [agents, mgmt, fm] = await Promise.all([mod("agents.js"), mod("agent-management.js"), mod("frontmatter.js")]);
-    return { agents, mgmt, fm } as Pkg;
+    const [agents, mgmt, fm, cli] = await Promise.all([mod("agents.js"), mod("agent-management.js"), mod("frontmatter.js"),
+      import(pathToFileURL(join(dir, "src", "runs", "shared", "external-cli-preflight.js")).href).catch(() => undefined)]);
+    return { agents, mgmt, fm, cli } as Pkg;
   })();
   loaded = { dir, pkg };
   pkg.catch(() => { if (loaded?.pkg === pkg) loaded = undefined; });
@@ -96,13 +102,29 @@ export const carriesSecret = (text: string, secrets: string[]) => leaksSecret(te
 
 export type AgentRow = {
   name: string; description: string; source: Source; file: string; editable: boolean; active: boolean; shadowedBy?: Source;
-  model?: string; modelFrom: "agent file" | "override" | "subagents default" | "parent"; thinking?: string; tools?: string[];
+  model?: string; modelFrom: "agent file" | "override" | "subagents default" | "parent" | "its own CLI"; thinking?: string; tools?: string[];
   aliases?: string[]; disabled?: boolean; withheld?: boolean;
+  /** Set for a command-line agent: it runs this program, which picks its own model, so model, thinking and tools are unset. */
+  cli?: Cli;
 };
+/** A command-line agent's program, and whether it is installed (on PATH; that is not proof it is logged in). */
+export type Cli = CliInfo & { installed: boolean; reason?: string; unknown?: boolean; machine?: string };
+
+function cliOf(pkg: Pkg, a: AgentConfig): Cli | undefined {
+  const info = cliInfo(a);
+  if (!info) return undefined;
+  // Placed on another machine (Herdr): it runs there over ssh, so this machine's PATH says nothing about it.
+  if (a.machine) return { ...info, installed: false, unknown: true, machine: a.machine, reason: `runs on ${a.machine}; not checked from here` };
+  if (!pkg.cli) return { ...info, installed: false, unknown: true, reason: "this pi-subagents version has no installed check" };
+  let found: { available: boolean; unavailableReason?: string } = { available: false };
+  try { found = pkg.cli.resolveExternalCliBinaryAvailability(info.command, process.env); } catch (e: any) { found = { available: false, unavailableReason: String(e?.message ?? e) }; }
+  return { ...info, installed: !!found.available, reason: found.available ? undefined : found.unavailableReason };
+}
 
 const SOURCE_RANK: Record<string, number> = { builtin: 0, package: 1, user: 2, project: 3, runtime: 4 };
 
 function modelFrom(a: AgentConfig): AgentRow["modelFrom"] {
+  if (cliInfo(a)) return "its own CLI";
   if (a.override?.fields?.includes("model")) return "override";
   if (a.modelSource?.type === "subagents.defaultModel") return "subagents default";
   return a.model ? "agent file" : "parent";
@@ -111,11 +133,12 @@ const toolsOf = (a: AgentConfig) => (a.tools || a.mcpDirectTools ? [...(a.tools 
 
 export type Dirs = { user: string; project: string | null };
 
-export type Snapshot = { rows: AgentRow[]; dirs: Dirs; diagnostics: { file: string; error: string }[]; effective: Map<string, AgentConfig>; all: any };
+export type Snapshot = { rows: AgentRow[]; dirs: Dirs; diagnostics: { file: string; error: string }[]; effective: Map<string, AgentConfig>; all: any; cli: (a: AgentConfig) => Cli | undefined };
 
 /** Every definition the package finds, which one wins for each name, and where each comes from. */
 export async function snapshot(cwd: string, provider: string | undefined, secrets: string[]): Promise<Snapshot> {
-  const { agents } = await loadPackage();
+  const pkg = await loadPackage();
+  const { agents } = pkg;
   agents.clearAgentDiscoveryCache();
   const all = agents.discoverAgentsAll(cwd, provider);
   const effectiveList: AgentConfig[] = agents.discoverAgents(cwd, "both", provider).agents;
@@ -135,27 +158,30 @@ export async function snapshot(cwd: string, provider: string | undefined, secret
     const shown = active ? win! : a;
     let withheld = false;
     try { withheld = carriesSecret(readFileSync(a.filePath, "utf8"), secrets); } catch {}
+    const cli = cliOf(pkg, shown);
     rows.push({
       name: a.name, description: withheld ? "" : shown.description, source: a.source, file: a.filePath,
       editable: (a.source === "user" && isInside(dirs.user, a.filePath)) || (a.source === "project" && isInside(dirs.project, a.filePath)),
       active, shadowedBy: !active && win ? win.source : undefined,
-      model: shown.model, modelFrom: modelFrom(shown), thinking: shown.thinking === false ? "off" : shown.thinking || undefined, tools: toolsOf(shown),
-      aliases: shown.aliases, disabled: !win || undefined, withheld: withheld || undefined,
+      model: cli ? undefined : shown.model, modelFrom: modelFrom(shown),
+      thinking: cli ? undefined : shown.thinking === false ? "off" : shown.thinking || undefined, tools: cli ? undefined : toolsOf(shown),
+      aliases: shown.aliases, disabled: !win || undefined, withheld: withheld || undefined, cli,
     });
   }
   rows.sort((x, y) => x.name.localeCompare(y.name) || SOURCE_RANK[y.source] - SOURCE_RANK[x.source]);
   const diagnostics = (all.agentDiagnostics ?? []).map((d: any) => ({ file: d.filePath, error: String(d.error) }));
-  return { rows, dirs, diagnostics, effective, all };
+  return { rows, dirs, diagnostics, effective, all, cli: (a: AgentConfig) => cliOf(pkg, a) };
 }
 
 /** What the page shows about how the package resolves one name now. */
 export function resolvedView(snap: Snapshot, name: string) {
   const a = snap.effective.get(name);
   if (!a) return { name, found: false as const };
+  const cli = snap.cli(a);
   return {
-    name, found: true as const, source: a.source, file: a.filePath, description: a.description, model: a.model, modelFrom: modelFrom(a),
-    thinking: a.thinking === false ? "off" : a.thinking || undefined, tools: toolsOf(a), promptChars: (a.systemPrompt ?? "").length,
-    systemPromptMode: a.systemPromptMode, inheritProjectContext: a.inheritProjectContext, inheritSkills: a.inheritSkills,
+    name, found: true as const, source: a.source, file: a.filePath, description: a.description, model: cli ? undefined : a.model, modelFrom: modelFrom(a),
+    thinking: cli ? undefined : a.thinking === false ? "off" : a.thinking || undefined, tools: cli ? undefined : toolsOf(a), promptChars: (a.systemPrompt ?? "").length,
+    systemPromptMode: a.systemPromptMode, inheritProjectContext: a.inheritProjectContext, inheritSkills: a.inheritSkills, cli,
   };
 }
 
@@ -366,6 +392,16 @@ export function modelSettings() {
  */
 export async function saveModelSettings(ctx: { cwd: string; model?: any }, body: ModelSettingsEdit, secrets: string[]) {
   const file = settingsPath();
+  // A command-line agent runs another tool with that tool's own model: an override would be saved and
+  // then silently never used, so it is refused. Clearing one (an empty value) is always allowed.
+  const before = await snapshot(ctx.cwd, ctx.model?.provider, secrets);
+  const refused: Record<string, string> = {};
+  for (const [name, o] of Object.entries(body.overrides ?? {})) {
+    const a = before.effective.get(name), cli = a && before.cli(a);
+    if (!cli) continue;
+    for (const k of ["model", "thinking"] as const) if (o?.[k]) refused[`${name}.${k}`] = `${name} runs the ${cli.tool} CLI, which uses its own ${k === "model" ? "model" : "settings"}; set it in ${cli.tool}`;
+  }
+  if (Object.keys(refused).length) throw new AgentError(422, "Not saved: command-line agents choose their own model", refused);
   const previous = existsSync(file) ? readFileSync(file, "utf8") : undefined;
   updateSettings((s: any) => {
     const sub = (s.subagents && typeof s.subagents === "object" ? s.subagents : (s.subagents = {}));

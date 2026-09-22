@@ -527,6 +527,61 @@ describe("/admin end to end (real server, real extensions, fake pi)", async () =
       assert.equal((await post("/subagents/delete", { name: "scout", scope: "user" })).status, 404, "a builtin cannot be deleted");
     });
 
+    describe("command-line agents (Claude Code, Codex, Cursor)", () => {
+      // A fake `claude` on PATH and no codex or cursor-agent: the installed check is the package's own PATH lookup.
+      const bin = mkdtempSync(join(tmpdir(), "kernal-cli-bin-"));
+      let pathBefore = "";
+      before(() => {
+        writeFileSync(join(bin, "claude"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+        pathBefore = process.env.PATH ?? "";
+        process.env.PATH = `${bin}:/usr/bin:/bin`;
+      });
+      after(() => { process.env.PATH = pathBefore; });
+
+      test("listed as the tool they run, with no router model, and whether the tool is installed", async () => {
+        const d = JSON.parse((await get("/subagents")).text);
+        const by = new Map<string, any>(d.agents.filter((a: any) => a.active).map((a: any) => [a.name, a]));
+        const cc = by.get("claude-code"), ccw = by.get("claude-code-writer"), cx = by.get("codex-exec");
+        assert.deepEqual([cc.cli.tool, cc.cli.command, cc.cli.installed, cc.cli.writes], ["Claude Code", "claude", true, false]);
+        assert.equal(ccw.cli.writes, true, "the writer profile is marked as changing files");
+        assert.deepEqual([cx.cli.tool, cx.cli.installed], ["Codex", false]);
+        assert.match(cx.cli.install, /npm install -g @openai\/codex/);
+        for (const a of [cc, ccw, cx]) {
+          assert.equal(a.model, undefined, `${a.name}: the router model pi-subagents attaches is not shown`);
+          assert.equal(a.modelFrom, "its own CLI");
+          assert.equal(a.thinking, undefined); assert.equal(a.tools, undefined);
+        }
+        assert.equal(by.get("scout").cli, undefined, "a normal agent is not a command-line agent");
+        const v = JSON.parse((await get("/subagents/agent?name=codex-exec&source=builtin")).text).resolved;
+        assert.deepEqual([v.cli.tool, v.model], ["Codex", undefined]);
+      });
+
+      test("a model or thinking override for one is refused, not saved and silently ignored", async () => {
+        const before = store.read();
+        const r = await post("/subagents/settings", { overrides: { "claude-code": { model: "litellm/claude-sonnet-5" }, "codex-exec": { thinking: "high" }, scout: { thinking: "low" } } });
+        assert.equal(r.status, 422, r.text);
+        assert.deepEqual(Object.keys(JSON.parse(r.text).errors).sort(), ["claude-code.model", "codex-exec.thinking"]);
+        assert.match(JSON.parse(r.text).errors["claude-code.model"], /runs the Claude Code CLI/);
+        assert.deepEqual(store.read(), before, "nothing was written, not even the valid scout change");
+        // One saved before this rule existed is never used; clearing it is always allowed.
+        writeFileSync(join(store.dir, "settings.json"), JSON.stringify({ ...before, subagents: { ...before.subagents, agentOverrides: { ...before.subagents.agentOverrides, "claude-code": { model: "litellm/claude-sonnet-5" } } } }));
+        assert.equal((await post("/subagents/settings", { overrides: { "claude-code": { model: "", thinking: "" } } })).status, 200);
+        assert.ok(!("claude-code" in (store.read().subagents.agentOverrides ?? {})));
+      });
+
+      test("a customised copy keeps running the tool, and saves its prompt through the editor", async () => {
+        assert.equal((await post("/subagents/customise", { name: "claude-code", scope: "user" })).status, 200);
+        const a = JSON.parse((await get("/subagents/agent?name=claude-code&source=user")).text);
+        assert.equal(a.row.cli.tool, "Claude Code");
+        const saved = await post("/subagents/agent", { mode: "update", scope: "user", original: "claude-code", ...a.fields, prompt: a.prompt + "\n\nCite file paths.\n" });
+        assert.equal(saved.status, 200, saved.text);
+        const seen = (await discover()).get("claude-code");
+        assert.deepEqual([seen.source, seen.runner?.type, seen.runner?.command], ["user", "external-cli", "claude"], "the runner survives the save");
+        assert.match(seen.systemPrompt, /Cite file paths\.$/);
+        assert.equal((await post("/subagents/delete", { name: "claude-code", scope: "user" })).status, 200);
+      });
+    });
+
     test("project scope writes into the project's .pi/agents and wins over user", async () => {
       assert.equal((await post("/subagents/agent", agentBody({ name: "dup", scope: "user" }))).status, 200);
       const r = await post("/subagents/agent", agentBody({ name: "dup", scope: "project", description: "project copy" }));

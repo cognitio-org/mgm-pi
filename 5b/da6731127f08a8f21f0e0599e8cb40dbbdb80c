@@ -1,0 +1,38 @@
+outfitter/packages/web/src/easter/triggers.ts
+  s_2209f22f830d7f::t_3c830f809d3188 1-9,13-93
+  s_2209f22f830d7f::t_6c7cd71a82ec8f 10-12
+outfitter/packages/web/src/App.tsx
+  s_2209f22f830d7f::t_b5bc93defed86c 127
+  s_2209f22f830d7f::t_a4a17478473131 21,68-69,123-126,128-134
+outfitter/packages/web/src/easter/useSysCommand.ts
+  s_2209f22f830d7f::t_9bc4b9ef005a82 1-20
+outfitter/packages/web/src/styles/desk.css
+  s_2209f22f830d7f::t_b5bc93defed86c 93-103
+outfitter/packages/web/src/pages/DeskPage.tsx
+  s_2209f22f830d7f::t_b5bc93defed86c 201
+  s_2209f22f830d7f::t_400ffe6eea7ae6 12-13,52-65,195-200,202-209,358
+outfitter/packages/web/src/styles/mobile.css
+  s_2209f22f830d7f::t_5273daf651cbc4 95-112
+outfitter/packages/web/test/easter-triggers.test.ts
+  s_2209f22f830d7f::t_db7b1d612fdc57 46
+  s_2209f22f830d7f::t_a90fa29562aa6e 48-51
+  s_2209f22f830d7f::t_6344bf1e97bf1c 1-45,47,52-115
+outfitter/packages/web/src/easter/useKonamiCode.ts
+  s_2209f22f830d7f::t_a4a17478473131 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "5bda6731127f08a8f21f0e0599e8cb40dbbdb80c",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

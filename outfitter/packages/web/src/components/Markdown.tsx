@@ -19,7 +19,14 @@ const components: Components = {
       {children}
     </a>
   ),
-  pre: ({ children }) => (isValidElement(children) && children.type === MermaidDiagram ? <>{children}</> : <pre className="md-pre">{children}</pre>),
+  // `children` here is the element for the `code` override below (not yet rendered), so check
+  // its language class rather than its component type.
+  pre: ({ children }) =>
+    isValidElement<{ className?: string }>(children) && isMermaidFence(children.props.className) ? (
+      <>{children}</>
+    ) : (
+      <pre className="md-pre">{children}</pre>
+    ),
   code: ({ className, children }) => {
     if (isMermaidFence(className)) return <MermaidDiagram source={codeChildrenToSource(children)} />;
     const lang = fenceLanguage(className);

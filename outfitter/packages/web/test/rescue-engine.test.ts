@@ -4,9 +4,13 @@ import {
   CAPACITY,
   createInitialState,
   createLevelState,
+  FARM_PAD_W,
   GROUND_Y,
+  HOME_PAD_W,
   LANDING_SAFE_VY,
   nextRandom,
+  PLAYER_H,
+  PLAYER_W,
   playerTilt,
   step,
   togglePause,
@@ -89,11 +93,11 @@ describe("Floppy Rescue engine: landing rules", () => {
   it("touching down gently (below LANDING_SAFE_VY) is a safe landing: no life lost", () => {
     let s = playingState(1);
     // already resting right at the ground, descending well under the safe threshold
-    s = { ...s, playerY: GROUND_Y - 16, playerVy: LANDING_SAFE_VY - 5 };
+    s = { ...s, playerY: GROUND_Y - PLAYER_H, playerVy: LANDING_SAFE_VY - 5 };
     const livesBefore = s.lives;
     for (let i = 0; i < 10; i++) s = step(s, NO_INPUT, 16);
     expect(s.lives).toBe(livesBefore);
-    expect(s.playerY + 16).toBeCloseTo(GROUND_Y, 0);
+    expect(s.playerY + PLAYER_H).toBeCloseTo(GROUND_Y, 0);
   });
 
   it("touching down too fast (above LANDING_SAFE_VY) is a crash: loses a life and respawns home", () => {
@@ -103,7 +107,7 @@ describe("Floppy Rescue engine: landing rules", () => {
     s = step(s, NO_INPUT, 16);
     expect(s.lives).toBe(livesBefore - 1);
     expect(s.events.some((e) => e.type === "crash")).toBe(true);
-    expect(s.playerX).toBeCloseTo(s.homeX + 80 - 15, 0);
+    expect(s.playerX).toBeCloseTo(s.homeX + HOME_PAD_W / 2 - PLAYER_W / 2, 0);
   });
 
   it("running out of lives from a crash ends the game", () => {
@@ -121,7 +125,7 @@ describe("Floppy Rescue engine: pickup and capacity", () => {
     s = {
       ...s,
       playerX: s.farmX + 40,
-      playerY: GROUND_Y - 16,
+      playerY: GROUND_Y - PLAYER_H,
       playerVy: 0,
       playerVx: 0,
       debrisSpawnCooldownMs: Number.MAX_SAFE_INTEGER, // isolate boarding from the debris hazard
@@ -143,7 +147,7 @@ describe("Floppy Rescue engine: pickup and capacity", () => {
     s = {
       ...s,
       playerX: s.farmX + 40,
-      playerY: GROUND_Y - 16,
+      playerY: GROUND_Y - PLAYER_H,
       playerVy: 0,
       playerVx: 0,
       debrisSpawnCooldownMs: Number.MAX_SAFE_INTEGER,
@@ -182,7 +186,7 @@ describe("Floppy Rescue engine: fire spread", () => {
 describe("Floppy Rescue engine: scoring", () => {
   it("delivering floppies at home awards score per floppy", () => {
     let s = playingState(1);
-    s = { ...s, onBoard: 3, playerX: s.homeX + 20, playerY: GROUND_Y - 16, playerVy: 0 };
+    s = { ...s, onBoard: 3, playerX: s.homeX + 20, playerY: GROUND_Y - PLAYER_H, playerVy: 0 };
     const scoreBefore = s.score;
     s = step(s, NO_INPUT, 16);
     expect(s.score).toBe(scoreBefore + 300);
@@ -191,7 +195,7 @@ describe("Floppy Rescue engine: scoring", () => {
 
   it("delivering a full load of CAPACITY awards a bonus on top", () => {
     let s = playingState(1);
-    s = { ...s, onBoard: CAPACITY, playerX: s.homeX + 20, playerY: GROUND_Y - 16, playerVy: 0 };
+    s = { ...s, onBoard: CAPACITY, playerX: s.homeX + 20, playerY: GROUND_Y - PLAYER_H, playerVy: 0 };
     const scoreBefore = s.score;
     s = step(s, NO_INPUT, 16);
     expect(s.score).toBe(scoreBefore + CAPACITY * 100 + 400);

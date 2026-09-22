@@ -1,47 +1,60 @@
-// Hand-drawn pixel-art sprites for Floppy Rescue, drawn with shared/pixelSprite.ts. The helicopter
-// is 15x9 at scale 2 -> 30x18 (close to PLAYER_W/H, drawn a hair taller for the rotor disc). A
-// little Floppy character is 5x7 at scale 2 -> 10x14. The rack unit tiles vertically like
-// Dreadnought's, and a fire overlay is drawn per-cell from its own tiny flame sprite blended by
-// intensity (see FloppyRescue.tsx).
+// Pixel-art sprites for Floppy Rescue. The helicopter is drawn from primitive rects directly in
+// FloppyRescue.tsx (organic silhouette, rotor animation, tilt rotation -- easier to get right with
+// rects than a hand-typed character grid). Everything else here is a small character-grid "sprite"
+// via shared/pixelSprite.ts: a rack unit (tiled vertically to fill a rack's height, with rivets and
+// a vent so it doesn't read as a flat block), a flame (two frames, flicker), a Floppy walker (two
+// frames: legs mid-stride, arm raised/lowered -- a little wave), a stray debris chunk, and the
+// glitch drone.
 
 import type { Palette, Sprite } from "../shared/pixelSprite.ts";
 
-export const SPRITE_SCALE = 2;
-
-// Facing right (flies left when tilted the other way -- FloppyRescue.tsx flips via ctx.scale(-1,1)).
-export const HELI_SPRITE: Sprite = [
-  ".......R.......",
-  "RRRRRRRRRRRRRRR",
-  ".......|.......",
-  "....CCCCCCC....",
-  "...CCCCCCCCC...",
-  "BBBCCCCCCCCC...",
-  "..B.........S..",
-  "..B.........S..",
-  "...............",
-];
-
-export const HELI_PALETTE: Palette = { R: "#8b7cd8", "|": "#8b7cd8", C: "#5cff8a", B: "#3a3184", S: "#3a3184" };
-export const HELI_PALETTE_INVULN: Palette = { R: "#f4cf3c", "|": "#f4cf3c", C: "#f4cf3c", B: "#3a3184", S: "#3a3184" };
-
-export const FLOPPY_WALKER_SPRITE: Sprite = ["FFFFF", "F...F", "FFFFF", ".GGG.", "F.G.F", ".GGG.", "F...F"];
-export const FLOPPY_WALKER_PALETTE: Palette = { F: "#5cff8a", G: "#241e5c" };
+export const SPRITE_SCALE = 1;
 
 export const RACK_UNIT_SPRITE: Sprite = [
-  "RRRRRRRRRRRR.",
-  "R.l.l.l.l.l.R",
-  "R...........R",
-  "R.l.l.l.l.l.R",
-  "R...........R",
-  "RRRRRRRRRRRR.",
+  "RRRRRRRRRRRR",
+  "R.o......o.R",
+  "R..........R",
+  "R.===..===.R",
+  "R..........R",
+  "R.o......o.R",
+  "R....l..l..R",
+  "RRRRRRRRRRRR",
 ];
-export const RACK_PALETTE: Palette = { R: "#8b7cd8", l: "#3a3184" };
+export const RACK_PALETTE: Palette = { R: "#8b7cd8", o: "#3a3184", "=": "#241e5c", l: "#5cff8a" };
 
 export const FLAME_SPRITES: Sprite[] = [
-  [".F.", "FFF", "FGF"],
-  [".G.", "FFF", "FGF"],
+  ["..F..", ".FFF.", "FFFFF", "FGGGF", ".GGG.", "..G.."],
+  ["..G..", ".FGF.", "FFFFF", "GFFFG", ".FFF.", "..F.."],
 ];
 export const FLAME_PALETTE: Palette = { F: "#ff8a8a", G: "#f4cf3c" };
+
+export const FLOPPY_WALKER_SPRITES: Sprite[] = [
+  [
+    ".FFFFF...",
+    "F.....F.A",
+    "FFFFFFF.A",
+    "F.WWW.F..",
+    "F.....F..",
+    ".FFFFF...",
+    "..L..L...",
+    "..L..L...",
+    ".L....L..",
+    ".........",
+  ],
+  [
+    ".FFFFF...",
+    "F.....F..",
+    "FFFFFFF..",
+    "F.WWW.F..",
+    "F.....F..",
+    ".FFFFF...",
+    "..L..L...",
+    ".L....L..",
+    "L......L.",
+    ".........",
+  ],
+];
+export const FLOPPY_PALETTE: Palette = { F: "#5cff8a", W: "#241e5c", L: "#241e5c", A: "#f4cf3c" };
 
 export const DEBRIS_SPRITE: Sprite = ["FF", "FF"];
 export const DEBRIS_PALETTE: Palette = { F: "#f4cf3c" };

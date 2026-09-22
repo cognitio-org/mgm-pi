@@ -5,6 +5,7 @@ import {
   nextRandom,
   PLAYER_MAX_Y,
   PLAYER_MIN_Y,
+  PLAYER_X,
   step,
   togglePause,
   type GameInput,
@@ -92,7 +93,7 @@ describe("Dreadnought Run engine", () => {
     // Force a rack directly on top of the player.
     s = {
       ...s,
-      obstacles: [{ x: 90, y: s.playerY, w: 26, h: 40, kind: "rack", hp: 1, fireCooldownMs: 0 }],
+      obstacles: [{ x: PLAYER_X, y: s.playerY, w: 26, h: 40, kind: "rack", hp: 1, fireCooldownMs: 0 }],
     };
     const before = s.lives;
     s = step(s, NO_INPUT, 16);
@@ -105,7 +106,7 @@ describe("Dreadnought Run engine", () => {
     let s = { ...createInitialState(1), lives: 1 };
     s = {
       ...s,
-      obstacles: [{ x: 90, y: s.playerY, w: 26, h: 40, kind: "rack", hp: 1, fireCooldownMs: 0 }],
+      obstacles: [{ x: PLAYER_X, y: s.playerY, w: 26, h: 40, kind: "rack", hp: 1, fireCooldownMs: 0 }],
     };
     s = step(s, NO_INPUT, 16);
     expect(s.status).toBe("gameover");
@@ -125,7 +126,7 @@ describe("Dreadnought Run engine", () => {
 
   it("collecting a pickup awards score and removes it", () => {
     let s = createInitialState(1);
-    s = { ...s, pickups: [{ x: 100, y: s.playerY + 5, taken: false }] };
+    s = { ...s, pickups: [{ x: PLAYER_X + 4, y: s.playerY + 5, taken: false }] };
     s = step(s, NO_INPUT, 16);
     expect(s.pickups.length).toBe(0);
     expect(s.score).toBe(50);
@@ -141,8 +142,8 @@ describe("Dreadnought Run engine", () => {
   });
 
   it("drones only spawn past the unlock distance and sine-sweep vertically", () => {
-    let s = createInitialState(11);
-    for (let i = 0; i < 1000 && s.distance < 900; i++) s = step(s, NO_INPUT, 16);
+    let s = { ...createInitialState(11), lives: 9999 }; // isolate spawn timing from random collision luck
+    for (let i = 0; i < 1000 && s.distance < 360; i++) s = step(s, NO_INPUT, 16);
     expect(s.obstacles.some((o) => o.kind === "drone")).toBe(false);
     for (let i = 0; i < 20000 && !s.obstacles.some((o) => o.kind === "drone"); i++) s = step(s, NO_INPUT, 16);
     const drone = s.obstacles.find((o) => o.kind === "drone");
@@ -169,7 +170,7 @@ describe("Dreadnought Run engine", () => {
     let s = createInitialState(3);
     s = {
       ...s,
-      obstacles: [{ x: 90, y: s.playerY, w: 26, h: 40, kind: "rack", hp: 1, fireCooldownMs: 0 }],
+      obstacles: [{ x: PLAYER_X, y: s.playerY, w: 26, h: 40, kind: "rack", hp: 1, fireCooldownMs: 0 }],
     };
     s = step(s, NO_INPUT, 16);
     expect(s.events.some((e) => e.type === "playerHit")).toBe(true);

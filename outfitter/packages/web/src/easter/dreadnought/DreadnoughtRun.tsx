@@ -71,6 +71,7 @@ export function DreadnoughtRun({ onClose }: DreadnoughtRunProps) {
   const [calmAcknowledged, setCalmAcknowledged] = useState(!reducedMotion);
   const [screen, setScreen] = useState<"title" | "game">("title");
   const autoDemo = useMemo(() => readQueryFlag("demo"), []);
+  const forceTouch = useMemo(() => readQueryFlag("touch"), []);
 
   const exit = useCallback(() => {
     const s = stateRef.current;
@@ -195,9 +196,9 @@ export function DreadnoughtRun({ onClose }: DreadnoughtRunProps) {
     [screen, reducedMotion, autoDemo],
   );
   const onRender = useCallback(() => {
-    draw(canvasRef.current, stateRef.current, particlesRef.current, shakeRef.current, reducedMotion, screen);
+    draw(canvasRef.current, stateRef.current, particlesRef.current, shakeRef.current, reducedMotion, screen, highScore);
     forceRender((n) => (n + 1) % 1000000);
-  }, [reducedMotion, screen]);
+  }, [reducedMotion, screen, highScore]);
   useFixedStepLoop(onStep, onRender, loopActive);
 
   function restart() {
@@ -299,7 +300,7 @@ export function DreadnoughtRun({ onClose }: DreadnoughtRunProps) {
               </div>
             )}
             {screen === "game" && (
-              <div className="easter-touch-controls" aria-hidden={false}>
+              <div className={`easter-touch-controls${forceTouch ? " force-show" : ""}`} aria-hidden={false}>
                 <button
                   type="button"
                   className="easter-touch-btn"
@@ -340,30 +341,64 @@ export function DreadnoughtRun({ onClose }: DreadnoughtRunProps) {
   );
 }
 
-function drawParallaxHull(ctx: CanvasRenderingContext2D, distance: number, reducedMotion: boolean): void {
-  // three depth layers of the dreadnought's hull, each scrolling at a different fraction of world
-  // speed so the backdrop reads with real depth instead of one flat scrolling grid.
-  const layers: Array<{ spacing: number; factor: number; color: string; dot: boolean }> = [
-    { spacing: 96, factor: 0.15, color: "#2c2566", dot: false },
-    { spacing: 56, factor: 0.4, color: "#332b70", dot: true },
-    { spacing: 40, factor: 1, color: "#3a3184", dot: false },
-  ];
-  for (const layer of layers) {
-    const offset = reducedMotion ? 0 : (distance * layer.factor) % layer.spacing;
-    ctx.strokeStyle = layer.color;
-    ctx.fillStyle = layer.color;
-    ctx.lineWidth = 1;
-    for (let x = -offset; x < WORLD_W; x += layer.spacing) {
-      if (layer.dot) {
-        for (let y = 20; y < WORLD_H; y += layer.spacing) ctx.fillRect(x, y, 3, 3);
-      } else {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, WORLD_H);
-        ctx.stroke();
-      }
-    }
+// The dreadnought's actual hull, not a bare grid: three depth layers scrolling at different
+// fractions of world speed. Farthest = distant tower silhouettes along the horizon; mid = hull
+// panelling with rivets and vent slits; nearest = a runway-light stripe along the top/bottom edges,
+// like guide lighting skimmed at speed. Tower heights are a deterministic hash of their tile index
+// (no RNG/state needed) so the same stretch of hull always looks the same.
+function drawHull(ctx: CanvasRenderingContext2D, distance: number, reducedMotion: boolean): void {
+  const spacing1 = 70;
+  const offset1 = reducedMotion ? 0 : distance * 0.12 % spacing1;
+  ctx.fillStyle = "#2c2566";
+  for (let x = -offset1 - spacing1; x < WORLD_W + spacing1; x += spacing1) {
+    const i = Math.round((x + offset1) / spacing1);
+    const h = 24 + ((Math.abs(i * 2654435761) >>> 0) % 34);
+    const rx = Math.round(x);
+    ctx.fillRect(rx, WORLD_H - h, 12, h);
+    ctx.fillRect(rx + 4, WORLD_H - h - 5, 4, 5); // antenna cap
   }
+
+  const spacing2 = 36;
+  const offset2 = reducedMotion ? 0 : distance * 0.4 % spacing2;
+  ctx.strokeStyle = "#3f3690";
+  ctx.lineWidth = 1;
+  for (let x = -offset2; x < WORLD_W; x += spacing2) {
+    const rx = Math.round(x);
+    ctx.beginPath();
+    ctx.moveTo(rx, 0);
+    ctx.lineTo(rx, WORLD_H);
+    ctx.stroke();
+    ctx.fillStyle = "#3f3690";
+    ctx.fillRect(rx + 6, 14, 2, 2); // rivet
+    ctx.fillRect(rx + 6, WORLD_H - 20, 2, 2);
+    ctx.fillStyle = "#1c1650";
+    ctx.fillRect(rx + 14, WORLD_H / 2 - 2, 10, 3); // vent slit
+  }
+
+  const spacing3 = 16;
+  const offset3 = reducedMotion ? 0 : distance % spacing3;
+  ctx.fillStyle = "#5a4fc0";
+  for (let x = -offset3; x < WORLD_W; x += spacing3) {
+    const rx = Math.round(x);
+    ctx.fillRect(rx, 6, 8, 2); // runway lighting, top
+    ctx.fillRect(rx, WORLD_H - 8, 8, 2); // runway lighting, bottom
+  }
+}
+
+// Compact C64-style HUD drawn directly onto the canvas -- inside the game frame, not only in the
+// HTML footer strip below it (that larger, accessible version stays too).
+function drawHud(ctx: CanvasRenderingContext2D, state: GameState, highScore: number): void {
+  ctx.save();
+  ctx.font = "7px monospace";
+  ctx.textBaseline = "top";
+  const boxW = 118;
+  const boxH = 18;
+  ctx.fillStyle = "rgba(36, 30, 92, 0.72)";
+  ctx.fillRect(2, 2, boxW, boxH);
+  ctx.fillStyle = "#e4e0fb";
+  ctx.fillText(`SCORE ${Math.floor(state.score)}  HI ${Math.floor(highScore)}`, 5, 4);
+  ctx.fillText(`LIVES ${state.lives}  DIST ${Math.floor(state.distance)}`, 5, 12);
+  ctx.restore();
 }
 
 function draw(
@@ -373,6 +408,7 @@ function draw(
   shake: ShakeState | null,
   reducedMotion: boolean,
   screen: "title" | "game",
+  highScore: number,
 ): void {
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
@@ -386,7 +422,7 @@ function draw(
   ctx.fillStyle = "#241e5c";
   ctx.fillRect(-8, -8, WORLD_W + 16, WORLD_H + 16);
 
-  drawParallaxHull(ctx, state.distance, reducedMotion);
+  drawHull(ctx, state.distance, reducedMotion);
 
   // obstacles, pixel-art sprites
   for (const o of state.obstacles) {
@@ -442,5 +478,8 @@ function draw(
   ctx.lineTo(WORLD_W, PLAYER_MAX_Y + PLAYER_H + 4);
   ctx.stroke();
   ctx.setLineDash([]);
+
+  if (screen === "game") drawHud(ctx, state, highScore);
+
   ctx.restore();
 }

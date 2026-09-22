@@ -7,13 +7,20 @@
 // Self-contained: this component (plus engine.ts/sprites.ts/sound.ts) is the entire feature
 // surface, always loaded via a dynamic import (see EasterEggRoot.tsx) so it costs nothing in the
 // main bundle until triggered.
+//
+// Rendering: a low-res (320x176) logical canvas scaled up by CSS (`image-rendering: pixelated`,
+// see .easter-canvas) so the world and sprites read as chunky, legible pixel art filling the frame
+// -- see engine.ts's header comment. The helicopter is drawn from primitive rects (organic
+// silhouette + rotor animation + tilt rotation are easier to get right this way than with a
+// hand-typed character grid); racks/flames/Floppies/debris/drone are small character-grid sprites
+// (sprites.ts). A compact HUD (score/level/onboard/fuel/lives) plus a distance minimap are drawn
+// directly onto the canvas, C64-style, in addition to the larger accessible HTML HUD below it.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   attractInput,
   CAPACITY,
   createInitialState,
-  createLevelState,
   FARM_PAD_W,
   GROUND_Y,
   HOME_PAD_W,
@@ -50,11 +57,8 @@ import {
   DRONE_SPRITE,
   FLAME_PALETTE,
   FLAME_SPRITES,
-  FLOPPY_WALKER_PALETTE,
-  FLOPPY_WALKER_SPRITE,
-  HELI_PALETTE,
-  HELI_PALETTE_INVULN,
-  HELI_SPRITE,
+  FLOPPY_PALETTE,
+  FLOPPY_WALKER_SPRITES,
   RACK_PALETTE,
   RACK_UNIT_SPRITE,
   SPRITE_SCALE,
@@ -86,6 +90,10 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
   const [calmAcknowledged, setCalmAcknowledged] = useState(!reducedMotion);
   const [screen, setScreen] = useState<"title" | "game">("title");
   const autoDemo = useMemo(() => readQueryFlag("demo"), []);
+  // ?touch=1 forces the on-screen touch controls on regardless of pointer/hover media features, so
+  // a headless browser (which reports a fine pointer even at phone viewport widths) can still be
+  // screenshotted with them visible for review/documentation.
+  const forceTouch = useMemo(() => readQueryFlag("touch"), []);
 
   const exit = useCallback(() => {
     stopRotor();
@@ -199,7 +207,7 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
       shakeRef.current = stepShake(shakeRef.current, dtMs);
 
       if (after.status === "playing" || after.status === "levelIntro") {
-        const airborne = after.playerY + 16 < GROUND_Y - 1;
+        const airborne = after.playerY + 14 < GROUND_Y - 1;
         if (airborne && !wasAirborneRef.current) startRotor();
         if (!airborne && wasAirborneRef.current && Math.abs(after.playerVy) < 1) playThud();
         wasAirborneRef.current = airborne;
@@ -215,9 +223,9 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
   );
 
   const onRender = useCallback(() => {
-    draw(canvasRef.current, stateRef.current, particlesRef.current, shakeRef.current, reducedMotion, screen);
+    draw(canvasRef.current, stateRef.current, particlesRef.current, shakeRef.current, reducedMotion, screen, highScore);
     forceRender((n) => (n + 1) % 1000000);
-  }, [reducedMotion, screen]);
+  }, [reducedMotion, screen, highScore]);
   useFixedStepLoop(onStep, onRender, loopActive);
 
   function restart() {
@@ -227,7 +235,7 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
 
   const s = stateRef.current;
   const status = s.status;
-  const fuelPct = Math.round(s.fuel);
+  const fuelPct = Math.max(0, Math.min(100, Math.round(s.fuel)));
 
   return (
     <div className="easter-overlay" role="dialog" aria-modal="true" aria-label="Floppy Rescue easter egg">
@@ -299,15 +307,7 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
                 <span>
                   ON BOARD {s.onBoard}/{CAPACITY}
                 </span>
-                <span className="easter-fuel">
-                  FUEL
-                  <span className="meter" aria-hidden="true">
-                    <span
-                      className={`meter-fill${fuelPct < 30 ? " meter-danger" : fuelPct < 55 ? " meter-warn" : ""}`}
-                      style={{ width: `${fuelPct}%` }}
-                    />
-                  </span>
-                </span>
+                <span>FUEL {fuelPct}%</span>
                 <span>LIVES {"* ".repeat(Math.max(0, s.lives)).trim() || "-"}</span>
               </div>
             )}
@@ -342,7 +342,7 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
               </div>
             )}
             {screen === "game" && status !== "levelIntro" && (
-              <div className="easter-touch-controls easter-touch-rescue" aria-hidden={false}>
+              <div className={`easter-touch-controls easter-touch-rescue${forceTouch ? " force-show" : ""}`} aria-hidden={false}>
                 <VirtualStick inputRef={inputRef} />
                 <button
                   type="button"
@@ -429,33 +429,191 @@ function VirtualStick({ inputRef }: { inputRef: React.MutableRefObject<GameInput
   );
 }
 
-function drawLandscape(ctx: CanvasRenderingContext2D, cameraX: number, reducedMotion: boolean): void {
-  ctx.fillStyle = "#241e5c";
-  ctx.fillRect(0, 0, WORLD_W, WORLD_H);
-  // distant hills (slow parallax) + ground strip
-  const layers: Array<{ factor: number; spacing: number; color: string; y: number; h: number }> = [
-    { factor: 0.2, spacing: 120, color: "#2c2566", y: WORLD_H - 140, h: 90 },
-    { factor: 0.5, spacing: 70, color: "#332b70", y: WORLD_H - 90, h: 40 },
-  ];
-  for (const layer of layers) {
-    const offset = reducedMotion ? 0 : (cameraX * layer.factor) % layer.spacing;
-    ctx.fillStyle = layer.color;
-    for (let x = -offset - layer.spacing; x < WORLD_W + layer.spacing; x += layer.spacing) {
-      ctx.beginPath();
-      ctx.moveTo(x, layer.y + layer.h);
-      ctx.lineTo(x + layer.spacing / 2, layer.y);
-      ctx.lineTo(x + layer.spacing, layer.y + layer.h);
-      ctx.closePath();
-      ctx.fill();
+// --- background: sky gradient + clouds/stars parallax + ground detail -----------------------------
+// Clouds/stars are a small repeating pattern (not per-level arrays) so they look right at any level
+// width: draw the pattern once per PERIOD-px tile, shifted by camera position * a parallax factor.
+const SKY_PATTERN_PERIOD = 140;
+const SKY_PATTERN: Array<{ dx: number; dy: number; w: number; h: number; kind: "cloud" | "star" }> = [
+  { dx: 14, dy: 18, w: 16, h: 5, kind: "cloud" },
+  { dx: 70, dy: 30, w: 12, h: 4, kind: "cloud" },
+  { dx: 40, dy: 8, w: 2, h: 2, kind: "star" },
+  { dx: 100, dy: 14, w: 2, h: 2, kind: "star" },
+  { dx: 118, dy: 44, w: 2, h: 2, kind: "star" },
+];
+
+function drawBackground(ctx: CanvasRenderingContext2D, cameraX: number, reducedMotion: boolean): void {
+  const grad = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+  grad.addColorStop(0, "#1c1650");
+  grad.addColorStop(1, "#302870");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, WORLD_W, GROUND_Y);
+
+  const parallax = reducedMotion ? 0 : cameraX * 0.25;
+  const startTile = Math.floor(parallax / SKY_PATTERN_PERIOD) - 1;
+  const endTile = Math.floor((parallax + WORLD_W) / SKY_PATTERN_PERIOD) + 1;
+  for (let tile = startTile; tile <= endTile; tile++) {
+    const tileX = tile * SKY_PATTERN_PERIOD - parallax;
+    for (const item of SKY_PATTERN) {
+      const x = tileX + item.dx;
+      const y = item.dy;
+      if (x + item.w < 0 || x > WORLD_W) continue;
+      ctx.fillStyle = item.kind === "cloud" ? "#3f3690" : "#8b7cd8";
+      ctx.fillRect(Math.round(x), y, item.w, item.h);
+      if (item.kind === "cloud") ctx.fillRect(Math.round(x) + 4, y - 2, item.w - 8, 3);
     }
   }
+
+  // ground band with a simple grass-tick texture that scrolls at full camera speed (drawn in the
+  // camera-translated block by the caller, this function only paints the sky).
+}
+
+function drawGround(ctx: CanvasRenderingContext2D, cameraX: number, levelW: number): void {
   ctx.fillStyle = "#3a3184";
   ctx.fillRect(0, GROUND_Y, WORLD_W, WORLD_H - GROUND_Y);
   ctx.strokeStyle = "#8b7cd8";
   ctx.beginPath();
   ctx.moveTo(0, GROUND_Y);
-  ctx.lineTo(WORLD_W, GROUND_Y);
+  ctx.lineTo(levelW, GROUND_Y);
   ctx.stroke();
+  ctx.fillStyle = "#4a3fa0";
+  const start = Math.floor(cameraX / 8) * 8;
+  for (let x = start; x < cameraX + WORLD_W; x += 8) {
+    ctx.fillRect(x + 2, GROUND_Y + 3, 2, 2);
+  }
+}
+
+// --- Disk Box (home base): a small building, not just a strip -------------------------------------
+function drawDiskBox(ctx: CanvasRenderingContext2D, x: number, padW: number): void {
+  const baseY = GROUND_Y;
+  const wallW = padW - 12;
+  const wallX = x + 6;
+  const wallH = 26;
+  const wallY = baseY - wallH;
+  // walls
+  ctx.fillStyle = "#3a3184";
+  ctx.fillRect(wallX, wallY, wallW, wallH);
+  // roof
+  ctx.fillStyle = "#8b7cd8";
+  ctx.beginPath();
+  ctx.moveTo(wallX - 4, wallY);
+  ctx.lineTo(wallX + wallW / 2, wallY - 12);
+  ctx.lineTo(wallX + wallW + 4, wallY);
+  ctx.closePath();
+  ctx.fill();
+  // door
+  ctx.fillStyle = "#241e5c";
+  ctx.fillRect(wallX + wallW / 2 - 4, baseY - 12, 8, 12);
+  // window
+  ctx.fillStyle = "#5cff8a";
+  ctx.fillRect(wallX + 4, wallY + 6, 5, 5);
+  ctx.fillRect(wallX + wallW - 9, wallY + 6, 5, 5);
+  // sign board on a post
+  ctx.fillStyle = "#241e5c";
+  ctx.fillRect(x + padW / 2 - 1, wallY - 20, 2, 8);
+  ctx.fillStyle = "#e4e0fb";
+  ctx.fillRect(x + padW / 2 - 20, wallY - 24, 40, 9);
+  ctx.fillStyle = "#241e5c";
+  ctx.font = "7px monospace";
+  ctx.textAlign = "center";
+  ctx.fillText("DISK BOX", x + padW / 2, wallY - 17);
+  ctx.textAlign = "left";
+  // landing pad markings
+  ctx.fillStyle = "#5cff8a";
+  ctx.fillRect(x, baseY - 3, padW, 3);
+}
+
+function drawFarmSign(ctx: CanvasRenderingContext2D, x: number, padW: number, topY: number): void {
+  ctx.fillStyle = "#e4e0fb";
+  ctx.fillRect(x + padW / 2 - 26, topY - 10, 52, 9);
+  ctx.fillStyle = "#241e5c";
+  ctx.font = "7px monospace";
+  ctx.textAlign = "center";
+  ctx.fillText("SERVER FARM", x + padW / 2, topY - 3);
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#8b7cd8";
+  ctx.fillRect(x, GROUND_Y - 3, padW, 3);
+}
+
+// --- in-canvas HUD + minimap -----------------------------------------------------------------------
+function drawHud(ctx: CanvasRenderingContext2D, state: GameState, highScore: number, fuelPct: number): void {
+  ctx.save();
+  ctx.font = "7px monospace";
+  ctx.textBaseline = "top";
+  const lines = [
+    `SCORE ${Math.floor(state.score)}  HI ${Math.floor(highScore)}`,
+    `LV ${state.level}  ON BOARD ${state.onBoard}/${CAPACITY}  LIVES ${state.lives}`,
+  ];
+  const boxW = 150;
+  const boxH = 18;
+  ctx.fillStyle = "rgba(36, 30, 92, 0.72)";
+  ctx.fillRect(2, 2, boxW, boxH);
+  ctx.fillStyle = "#e4e0fb";
+  lines.forEach((line, i) => ctx.fillText(line, 5, 4 + i * 8));
+
+  // fuel bar, drawn directly so its fill is always visibly correct (a real percentage-width bar,
+  // not a shared component whose contrast can drift against this canvas's own colour scheme).
+  const barX = 2;
+  const barY = boxH + 5;
+  const barW = 60;
+  const barH = 5;
+  ctx.fillStyle = "#241e5c";
+  ctx.fillRect(barX, barY, barW, barH);
+  const fillColor = fuelPct < 25 ? "#ff8a8a" : fuelPct < 50 ? "#f4cf3c" : "#5cff8a";
+  ctx.fillStyle = fillColor;
+  ctx.fillRect(barX, barY, Math.max(0, Math.round((barW * fuelPct) / 100)), barH);
+  ctx.strokeStyle = "#8b7cd8";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(barX + 0.5, barY + 0.5, barW - 1, barH - 1);
+  ctx.fillStyle = "#e4e0fb";
+  ctx.fillText(`FUEL ${fuelPct}%`, barX + barW + 4, barY - 1);
+
+  // distance minimap: a thin strip across the top-right showing progress along the level, with
+  // markers for home/farm and a dot for the player.
+  const mmX = WORLD_W - 96;
+  const mmY = 3;
+  const mmW = 92;
+  const mmH = 4;
+  ctx.fillStyle = "rgba(36, 30, 92, 0.72)";
+  ctx.fillRect(mmX - 3, mmY - 3, mmW + 6, mmH + 14);
+  ctx.strokeStyle = "#8b7cd8";
+  ctx.strokeRect(mmX + 0.5, mmY + 0.5, mmW - 1, mmH - 1);
+  const frac = (v: number) => Math.max(0, Math.min(1, v / state.levelW));
+  ctx.fillStyle = "#5cff8a";
+  ctx.fillRect(mmX + frac(state.homeX) * mmW - 1, mmY - 1, 2, mmH + 2);
+  ctx.fillStyle = "#ff8a8a";
+  ctx.fillRect(mmX + frac(state.farmX) * mmW - 1, mmY - 1, 2, mmH + 2);
+  ctx.fillStyle = "#e4e0fb";
+  ctx.fillRect(mmX + frac(state.playerX) * mmW - 1, mmY - 1, 2, mmH + 2);
+  ctx.font = "6px monospace";
+  ctx.fillStyle = "#a89fe0";
+  ctx.fillText("MAP", mmX, mmY + mmH + 2);
+  ctx.restore();
+}
+
+// --- player helicopter, drawn from primitive rects (see file header) -------------------------------
+function drawHeli(ctx: CanvasRenderingContext2D, x: number, y: number, tilt: number, invuln: boolean, rotorFrame: number): void {
+  ctx.save();
+  ctx.translate(x + 13, y + 9);
+  ctx.rotate(tilt);
+  const body = invuln ? "#f4cf3c" : "#5cff8a";
+  const dark = "#241e5c";
+  const light = "#e4e0fb";
+  ctx.fillStyle = dark;
+  ctx.fillRect(-13, -1, 12, 3); // tail boom
+  ctx.fillRect(-13, -4, 3, 8); // tail fin
+  ctx.fillStyle = body;
+  ctx.fillRect(-2, -5, 13, 11); // cabin
+  ctx.fillStyle = light;
+  ctx.fillRect(3, -3, 6, 5); // cockpit window
+  ctx.fillStyle = dark;
+  ctx.fillRect(-1, 5, 11, 1); // skid strut
+  ctx.fillRect(-1, 6, 3, 2);
+  ctx.fillRect(7, 6, 3, 2);
+  ctx.fillRect(3, -7, 2, 3); // rotor mast
+  ctx.fillStyle = light;
+  if (rotorFrame === 0) ctx.fillRect(-10, -8, 26, 2);
+  else ctx.fillRect(-2, -8, 10, 2);
+  ctx.restore();
 }
 
 function draw(
@@ -465,6 +623,7 @@ function draw(
   shake: ShakeState | null,
   reducedMotion: boolean,
   screen: "title" | "game",
+  highScore: number,
 ): void {
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
@@ -476,48 +635,44 @@ function draw(
   const [sx, sy] = reducedMotion ? [0, 0] : shakeOffset(shake);
   ctx.translate(sx, sy);
 
-  drawLandscape(ctx, camX, reducedMotion);
+  drawBackground(ctx, camX, reducedMotion);
 
   ctx.save();
   ctx.translate(-camX, 0);
 
-  // home pad (Disk Box)
-  ctx.fillStyle = "#5cff8a";
-  ctx.fillRect(state.homeX, GROUND_Y - 4, HOME_PAD_W, 4);
-  ctx.fillStyle = "#e4e0fb";
-  ctx.font = "10px monospace";
-  ctx.fillText("DISK BOX", state.homeX + 8, GROUND_Y - 10);
+  drawGround(ctx, camX, state.levelW);
+  drawDiskBox(ctx, state.homeX, HOME_PAD_W);
 
-  // farm pad + rack units + fire
-  ctx.fillStyle = "#8b7cd8";
-  ctx.fillRect(state.farmX, GROUND_Y - 4, FARM_PAD_W, 4);
-  for (let x = state.farmX; x < state.farmX + FARM_PAD_W; x += 26) {
-    drawSprite(ctx, RACK_UNIT_SPRITE, RACK_PALETTE, x, GROUND_Y - 60, SPRITE_SCALE);
+  // farm: rack "building" (racks tiled two rows tall so it reads as a structure) + sign + fire
+  for (let x = state.farmX; x < state.farmX + FARM_PAD_W; x += 12) {
+    drawSprite(ctx, RACK_UNIT_SPRITE, RACK_PALETTE, x, GROUND_Y - 16, SPRITE_SCALE);
   }
+  drawFarmSign(ctx, state.farmX, FARM_PAD_W, GROUND_Y - 16);
   for (const cell of state.fireCells) {
     if (cell.intensity <= 0) continue;
-    const frame = FLAME_SPRITES[Math.floor(state.t / 120) % FLAME_SPRITES.length]!;
+    const frame = FLAME_SPRITES[Math.floor(state.t / 140) % FLAME_SPRITES.length]!;
     const flicker = reducedMotion ? FLAME_SPRITES[0]! : frame;
     ctx.globalAlpha = Math.min(1, cell.intensity + 0.15);
-    drawSprite(ctx, flicker, FLAME_PALETTE, cell.x + cell.w / 2 - 6, GROUND_Y - 66, SPRITE_SCALE);
+    drawSprite(ctx, flicker, FLAME_PALETTE, cell.x + cell.w / 2 - 3, GROUND_Y - 22, SPRITE_SCALE);
     ctx.globalAlpha = 1;
   }
 
-  // floppy walkers waiting at the farm
+  // floppy walkers waiting at the farm (2-frame walk/wave animation)
+  const floppyFrame = reducedMotion ? 0 : Math.floor(state.t / 220) % FLOPPY_WALKER_SPRITES.length;
   for (const f of state.floppies) {
     if (!f.alive || f.boarded) continue;
-    drawSprite(ctx, FLOPPY_WALKER_SPRITE, FLOPPY_WALKER_PALETTE, f.x - 5, f.y - 14, SPRITE_SCALE);
+    drawSprite(ctx, FLOPPY_WALKER_SPRITES[floppyFrame]!, FLOPPY_PALETTE, f.x - 4, f.y - 10, SPRITE_SCALE);
   }
 
   // debris
   for (const d of state.debris) {
-    drawSprite(ctx, DEBRIS_SPRITE, DEBRIS_PALETTE, d.x - 4, d.y - 4, SPRITE_SCALE);
+    drawSprite(ctx, DEBRIS_SPRITE, DEBRIS_PALETTE, d.x - 2, d.y - 2, SPRITE_SCALE);
   }
 
   // drone + its bullets
-  if (state.drone) drawSprite(ctx, DRONE_SPRITE, DRONE_PALETTE, state.drone.x - 9, state.drone.y - 9, SPRITE_SCALE);
+  if (state.drone) drawSprite(ctx, DRONE_SPRITE, DRONE_PALETTE, state.drone.x - 5, state.drone.y - 5, SPRITE_SCALE);
   ctx.fillStyle = "#ff8a8a";
-  for (const b of state.droneBullets) ctx.fillRect(b.x - 3, b.y - 3, 6, 6);
+  for (const b of state.droneBullets) ctx.fillRect(b.x - 2, b.y - 2, 4, 4);
 
   // explosion particles
   for (const p of particles) {
@@ -533,17 +688,14 @@ function draw(
     const blinkOff = !reducedMotion && state.invulnMs > 0 && Math.floor(state.t / 90) % 2 === 0;
     if (!blinkOff) {
       const tilt = playerTilt(state.playerVx);
-      const cx = state.playerX + 15;
-      const cy = state.playerY + 9;
-      ctx.save();
-      ctx.translate(cx, cy);
-      ctx.rotate(tilt);
-      ctx.translate(-15, -9);
-      drawSprite(ctx, HELI_SPRITE, state.invulnMs > 0 ? HELI_PALETTE_INVULN : HELI_PALETTE, 0, 0, SPRITE_SCALE);
-      ctx.restore();
+      const rotorFrame = reducedMotion ? 0 : Math.floor(state.t / 55) % 2;
+      drawHeli(ctx, state.playerX, state.playerY, tilt, state.invulnMs > 0, rotorFrame);
     }
   }
 
   ctx.restore(); // undo camera translate
+
+  if (screen === "game") drawHud(ctx, state, highScore, Math.max(0, Math.min(100, Math.round(state.fuel))));
+
   ctx.restore(); // undo shake translate
 }

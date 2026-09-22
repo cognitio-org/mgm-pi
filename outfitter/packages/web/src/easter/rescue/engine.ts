@@ -7,33 +7,39 @@
 //
 // Everything here is a pure function of (state, input, dtMs) plus an explicit rng counter baked
 // into the state -- same seed + same input sequence always produces the same run.
+//
+// World resolution: a low-res "C64-style" logical canvas, 320x176, rendered by FloppyRescue.tsx at
+// an integer CSS scale with `image-rendering: pixelated` so it reads as chunky pixel art blown up
+// to fill the frame, rather than a large canvas with tiny sprites lost in empty space.
 
-export const WORLD_W = 800;
-export const WORLD_H = 440;
-export const GROUND_Y = WORLD_H - 60;
-export const PLAYER_W = 30;
-export const PLAYER_H = 16;
+export const WORLD_W = 320;
+export const WORLD_H = 176;
+export const GROUND_Y = 150;
+export const PLAYER_W = 26;
+export const PLAYER_H = 14;
 export const CAPACITY = 8;
 
 // --- flight-feel tuning constants -------------------------------------------------------------
-// Hand-tuned for "thrust, gravity, momentum, gentle-landing-required" per the brief. Numbers are
-// px/s or px/s^2 in world units (WORLD_H = 440px tall). Documented in docs/reports/games.md.
-const GRAVITY = 260; // px/s^2, constant downward pull
-const THRUST_ACCEL = 560; // px/s^2 from holding "up" -- comfortably beats gravity so climbing feels responsive
-const DOWN_ACCEL = 160; // px/s^2 extra from holding "down", gravity does most of the descent work
-const H_ACCEL = 420; // px/s^2 lateral thrust
+// Hand-tuned for "thrust, gravity, momentum, gentle-landing-required" per the brief, at the 320x176
+// logical resolution above. Numbers are logical-px/s or logical-px/s^2. Documented in
+// docs/reports/games.md.
+const GRAVITY = 95; // px/s^2, constant downward pull
+const THRUST_ACCEL = 210; // px/s^2 from holding "up" -- comfortably beats gravity so climbing feels responsive
+const DOWN_ACCEL = 60; // px/s^2 extra from holding "down", gravity does most of the descent work
+const H_ACCEL = 150; // px/s^2 lateral thrust
 const H_DRAG = 2.4; // 1/s exponential damping on vx when no lateral input (keeps it from feeling icy)
 const V_DRAG = 0.5; // 1/s mild damping on vy so hovering settles instead of oscillating forever
-const MAX_VX = 230; // px/s
-const MAX_VY = 230; // px/s
-export const LANDING_SAFE_VY = 78; // px/s -- touch down slower than this or it's a crash
+const MAX_VX = 90; // px/s
+const MAX_VY = 90; // px/s
+export const LANDING_SAFE_VY = 30; // px/s -- touch down slower than this or it's a crash
 const TILT_MAX = 0.5; // radians, cosmetic lean toward direction of travel
+const CAMERA_LEAD = 24; // px, how far ahead of the player the camera looks in its direction of travel
 
 const FUEL_MAX = 100;
 const FUEL_DRAIN_PER_SEC = 3.0; // while airborne
 const FUEL_REFILL_PER_SEC = 34; // while landed on the home pad
 
-const BOARD_INTERVAL_MS = 420; // one Floppy boards this often while landed at the farm with room
+const BOARD_INTERVAL_MS = 380; // one Floppy boards this often while landed at the farm with room
 const SCORE_PER_FLOPPY = 100;
 const FULL_LOAD_BONUS = 400; // delivering all CAPACITY at once
 
@@ -43,8 +49,8 @@ const FIRE_IGNITE_THRESHOLD = 0.55; // a burning neighbour above this can ignite
 const FIRE_SPREAD_STARTER = 0.05; // intensity a freshly-ignited neighbour starts at
 
 const LEVEL_INTRO_MS = 2200;
-const HOME_PAD_W = 160;
-const FARM_PAD_W = 220;
+const HOME_PAD_W = 64;
+const FARM_PAD_W = 84;
 
 export type GameStatus = "playing" | "paused" | "gameover" | "levelIntro";
 
@@ -159,8 +165,12 @@ function rectsOverlap(
   return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
 }
 
+// Level 1 is deliberately short -- besides being an easier first level, it's what lets the
+// attract-mode demo (a real autopiloted playthrough, see attractInput below) complete a full
+// takeoff -> farm -> board -> home -> unload loop in well under the ~20s a title screen gets
+// watched for, instead of the trip alone eating the whole demo window.
 function levelWidth(level: number): number {
-  return 1800 + (level - 1) * 260;
+  return 480 + (level - 1) * 140;
 }
 
 function floppyCountForLevel(level: number): number {
@@ -194,7 +204,7 @@ function makeFloppies(rngState: number, count: number, farmX: number): [Floppy[]
   for (let i = 0; i < count; i++) {
     const [r, next] = nextRandom(rs);
     rs = next;
-    floppies.push({ x: farmX + 20 + (i % 4) * 40 + r * 10, y: GROUND_Y - 10, alive: true, boarded: false });
+    floppies.push({ x: farmX + 6 + (i % 4) * 16 + r * 4, y: GROUND_Y - 6, alive: true, boarded: false });
   }
   return [floppies, rs];
 }
@@ -207,8 +217,8 @@ export function createLevelState(
   carryOver?: { score: number; lives: number; fuel: number; onBoard: number },
 ): GameState {
   const levelW = levelWidth(level);
-  const homeX = 60;
-  const farmX = levelW - FARM_PAD_W - 60;
+  const homeX = 20;
+  const farmX = levelW - FARM_PAD_W - 20;
   let rs = seed >>> 0;
   const [fireCells, rs2] = makeFireCells(rs, farmX);
   rs = rs2;
@@ -218,11 +228,11 @@ export function createLevelState(
   const drone: Drone | null =
     level >= 2
       ? {
-          x: farmX - 120,
-          y: GROUND_Y - 180,
+          x: farmX - 45,
+          y: GROUND_Y - 64,
           dir: 1,
-          patrolMinX: farmX - 260,
-          patrolMaxX: farmX + FARM_PAD_W + 40,
+          patrolMinX: farmX - 95,
+          patrolMaxX: farmX + FARM_PAD_W + 14,
           fireCooldownMs: 1500,
         }
       : null;
@@ -301,7 +311,6 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
     return v;
   };
 
-  const landedNow = isLanded(state.playerY, state.playerVy);
   const overHome = isOverPad(state.playerX, PLAYER_W, state.homeX, HOME_PAD_W);
   const overFarm = isOverPad(state.playerX, PLAYER_W, state.farmX, FARM_PAD_W);
   const hasFuel = state.fuel > 0;
@@ -358,8 +367,9 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
   if (playerY <= 0) vy = Math.max(0, vy); // ceiling: stop upward velocity so gravity can resume immediately
   playerY = clamp(playerY, 0, GROUND_Y - PLAYER_H);
 
-  // --- camera: follows the player, clamped to level bounds ---
-  const targetCamera = clamp(playerX + PLAYER_W / 2 - WORLD_W / 2, 0, Math.max(0, state.levelW - WORLD_W));
+  // --- camera: follows the player with a lead in its direction of travel, clamped to level bounds ---
+  const lead = clamp(vx / MAX_VX, -1, 1) * CAMERA_LEAD;
+  const targetCamera = clamp(playerX + PLAYER_W / 2 - WORLD_W / 2 + lead, 0, Math.max(0, state.levelW - WORLD_W));
   const cameraX = state.cameraX + (targetCamera - state.cameraX) * Math.min(1, dt * 4);
 
   // --- fuel ---
@@ -422,12 +432,10 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
 
   // --- debris hazard ---
   let debrisSpawnCooldownMs = state.debrisSpawnCooldownMs - dtMs;
-  const debris = state.debris
-    .map((d) => ({ ...d, y: d.y + d.vy * dt }))
-    .filter((d) => d.y < GROUND_Y + 40);
+  const debris = state.debris.map((d) => ({ ...d, y: d.y + d.vy * dt })).filter((d) => d.y < GROUND_Y + 20);
   if (debrisSpawnCooldownMs <= 0) {
-    const spawnX = state.farmX - 140 + rand() * (FARM_PAD_W + 280);
-    debris.push({ x: clamp(spawnX, 0, state.levelW), y: -10, vy: 110 + state.level * 12 });
+    const spawnX = state.farmX - 50 + rand() * (FARM_PAD_W + 100);
+    debris.push({ x: clamp(spawnX, 0, state.levelW), y: -6, vy: 42 + state.level * 5 });
     debrisSpawnCooldownMs = Math.max(700, 2400 - state.level * 180);
   }
 
@@ -435,9 +443,9 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
   let drone = state.drone;
   const droneBullets = state.droneBullets
     .map((b) => ({ ...b, x: b.x + b.vx * dt, y: b.y + b.vy * dt }))
-    .filter((b) => b.y < GROUND_Y + 40 && b.y > -40);
+    .filter((b) => b.y < GROUND_Y + 20 && b.y > -20);
   if (drone) {
-    let dx = drone.x + drone.dir * 90 * dt;
+    let dx = drone.x + drone.dir * 36 * dt;
     let dir = drone.dir;
     if (dx >= drone.patrolMaxX) {
       dx = drone.patrolMaxX;
@@ -451,7 +459,7 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
       const dxToPlayer = playerX - dx;
       const dyToPlayer = playerY - drone.y;
       const dist = Math.max(1, Math.hypot(dxToPlayer, dyToPlayer));
-      const speed = 200;
+      const speed = 75;
       droneBullets.push({ x: dx, y: drone.y, vx: (dxToPlayer / dist) * speed, vy: (dyToPlayer / dist) * speed });
       fireCooldownMs = Math.max(900, 1900 - state.level * 100);
     }
@@ -463,11 +471,11 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
   let invulnMs = Math.max(0, state.invulnMs - dtMs);
   let crashed = false;
   if (invulnMs === 0) {
-    const hitDebris = debris.some((d) => rectsOverlap(playerX, playerY, PLAYER_W, PLAYER_H, d.x - 5, d.y - 5, 10, 10));
+    const hitDebris = debris.some((d) => rectsOverlap(playerX, playerY, PLAYER_W, PLAYER_H, d.x - 3, d.y - 3, 6, 6));
     const hitFire = fireCells.some(
       (c) => c.intensity >= 1 && playerY + PLAYER_H >= GROUND_Y - 8 && playerX + PLAYER_W > c.x && playerX < c.x + c.w,
     );
-    const hitBulletIdx = droneBullets.findIndex((b) => rectsOverlap(playerX, playerY, PLAYER_W, PLAYER_H, b.x - 4, b.y - 4, 8, 8));
+    const hitBulletIdx = droneBullets.findIndex((b) => rectsOverlap(playerX, playerY, PLAYER_W, PLAYER_H, b.x - 3, b.y - 3, 6, 6));
     if (hitDebris || hitFire || hitBulletIdx >= 0) {
       crashed = true;
       lives -= 1;
@@ -536,26 +544,28 @@ export function playerTilt(vx: number): number {
 }
 
 /** Deterministic "bot" input for the title-screen attract-mode demo: shuttle between the home pad
- * and the farm pad, cruising at altitude in transit and easing down to land at each end. Pure
- * function of the current state (no RNG, no closures) so it's simple to reason about and cheap to
- * unit test; it isn't meant to play optimally, just to look alive behind the title card. */
+ * and the farm pad, cruising at altitude in transit and easing down to land at each end, thrusting
+ * hard enough to complete a full takeoff -> farm -> board -> home -> unload loop in well under 20s
+ * on level 1 (see levelWidth's comment). Pure function of the current state (no RNG, no closures)
+ * so it's simple to reason about and cheap to unit test; it isn't meant to play optimally, just to
+ * look alive and legible behind the title card. */
 export function attractInput(state: GameState): GameInput {
   const stillToRescue = state.floppies.some((f) => f.alive && !f.boarded);
   const wantsFarm = state.onBoard < CAPACITY && stillToRescue;
   const targetX = wantsFarm ? state.farmX + FARM_PAD_W / 2 - PLAYER_W / 2 : state.homeX + HOME_PAD_W / 2 - PLAYER_W / 2;
   const dx = targetX - state.playerX;
-  const closeX = Math.abs(dx) < 40;
-  const left = dx < -8;
-  const right = dx > 8;
+  const closeX = Math.abs(dx) < 24;
+  const left = dx < -6;
+  const right = dx > 6;
   const groundClearance = GROUND_Y - PLAYER_H - state.playerY;
   let up = false;
   let down = false;
   if (!closeX) {
-    up = state.playerY > WORLD_H * 0.35; // cruise at altitude while travelling
-  } else if (groundClearance > 30) {
+    up = state.playerY > WORLD_H * 0.3; // cruise at altitude while travelling
+  } else if (groundClearance > 20) {
     down = state.playerVy < LANDING_SAFE_VY * 0.6; // ease down without overshooting the safe speed
-  } else if (groundClearance < 4) {
-    up = state.playerVy > 20; // cushion the touchdown
+  } else if (groundClearance < 3) {
+    up = state.playerVy > 15; // cushion the touchdown
   }
   return { up, down, left, right };
 }

@@ -8,32 +8,37 @@
 // Everything here is a pure function of (state, input, dtMs) plus an explicit rng counter baked
 // into the state -- same seed + same input sequence always produces the same run.
 
-export const WORLD_W = 800;
-export const WORLD_H = 440;
-export const PLAYER_X = 90;
+// Low-res "C64-style" logical canvas, rendered by DreadnoughtRun.tsx at an integer CSS scale with
+// `image-rendering: pixelated`, so the ship/turrets/racks read as chunky, legible pixel art filling
+// the frame instead of tiny specks lost in a big empty canvas. Sprite pixel sizes below (PLAYER_W/H,
+// obstacle w/h) are kept close to their original absolute sizes -- shrinking the world instead of
+// the sprites is what makes them read as proportionally larger on screen.
+export const WORLD_W = 320;
+export const WORLD_H = 176;
+export const PLAYER_X = 36;
 export const PLAYER_W = 26;
 export const PLAYER_H = 14;
-export const PLAYER_MIN_Y = 24;
-export const PLAYER_MAX_Y = WORLD_H - 24 - PLAYER_H;
+export const PLAYER_MIN_Y = 10;
+export const PLAYER_MAX_Y = WORLD_H - 10 - PLAYER_H;
 
-const PLAYER_ACCEL = 900; // px/s^2
-const PLAYER_MAX_VY = 260; // px/s
+const PLAYER_ACCEL = 360; // px/s^2
+const PLAYER_MAX_VY = 104; // px/s
 const PLAYER_DRAG = 6; // 1/s, exponential damping when no thrust input
-const BASE_SCROLL_SPEED = 170; // px/s
-const MAX_SCROLL_SPEED = 420;
+const BASE_SCROLL_SPEED = 68; // px/s
+const MAX_SCROLL_SPEED = 168;
 const SCROLL_SPEED_PER_DISTANCE = 0.02; // px/s gained per world-px travelled
-const BULLET_SPEED = 620;
-const ENEMY_BULLET_SPEED = 260;
+const BULLET_SPEED = 248;
+const ENEMY_BULLET_SPEED = 104;
 const SHOOT_COOLDOWN_MS = 180;
 const TURRET_FIRE_COOLDOWN_MS = 1400;
 const DRONE_FIRE_COOLDOWN_MS = 1000;
-const DRONE_AMPLITUDE = 60; // px, vertical sine sweep
+const DRONE_AMPLITUDE = 24; // px, vertical sine sweep
 const DRONE_ANGULAR_FREQ = 0.0022; // rad/ms
 const INVULN_MS = 1200;
 const START_LIVES = 3;
 // Distance travelled before drones start appearing -- keeps the first stretch of a run to just
 // racks + turrets so the third obstacle type reads as an escalation, not noise from second one.
-const DRONE_UNLOCK_DISTANCE = 900;
+const DRONE_UNLOCK_DISTANCE = 360;
 
 export type Kind = "rack" | "turret" | "drone";
 
@@ -127,7 +132,7 @@ export function createInitialState(seed: number): GameState {
     obstacles: [],
     pickups: [],
     shootCooldownMs: 0,
-    nextSpawnAtDistance: 260,
+    nextSpawnAtDistance: 104,
     invulnMs: 0,
     lastHit: null,
     events: [],
@@ -228,11 +233,11 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
     const roll = rand();
     const droneUnlocked = distance >= DRONE_UNLOCK_DISTANCE;
     if (roll < 0.5) {
-      const h = 40 + Math.floor(rand() * 3) * 30;
+      const h = 18 + Math.floor(rand() * 3) * 14;
       obstacles.push({
-        x: WORLD_W + 20,
+        x: WORLD_W + 10,
         y: PLAYER_MIN_Y + rand() * (WORLD_H - PLAYER_MIN_Y * 2 - h),
-        w: 26,
+        w: 24,
         h,
         kind: "rack",
         hp: 1,
@@ -240,21 +245,21 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
       });
     } else if (!droneUnlocked || roll < 0.8) {
       obstacles.push({
-        x: WORLD_W + 20,
-        y: PLAYER_MIN_Y + rand() * (WORLD_H - PLAYER_MIN_Y * 2 - 20),
-        w: 20,
-        h: 20,
+        x: WORLD_W + 10,
+        y: PLAYER_MIN_Y + rand() * (WORLD_H - PLAYER_MIN_Y * 2 - 18),
+        w: 18,
+        h: 18,
         kind: "turret",
         hp: 2,
         fireCooldownMs: 400 + rand() * 800,
       });
     } else {
-      const baseY = PLAYER_MIN_Y + rand() * (WORLD_H - PLAYER_MIN_Y * 2 - 18);
+      const baseY = PLAYER_MIN_Y + rand() * (WORLD_H - PLAYER_MIN_Y * 2 - 16);
       obstacles.push({
-        x: WORLD_W + 20,
+        x: WORLD_W + 10,
         y: baseY,
-        w: 18,
-        h: 18,
+        w: 16,
+        h: 16,
         kind: "drone",
         hp: 1,
         fireCooldownMs: 300 + rand() * 500,
@@ -263,9 +268,9 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
       });
     }
     if (rand() < 0.4) {
-      pickups.push({ x: WORLD_W + 60 + rand() * 40, y: PLAYER_MIN_Y + rand() * (WORLD_H - PLAYER_MIN_Y * 2), taken: false });
+      pickups.push({ x: WORLD_W + 24 + rand() * 16, y: PLAYER_MIN_Y + rand() * (WORLD_H - PLAYER_MIN_Y * 2), taken: false });
     }
-    nextSpawnAtDistance = distance + 130 + rand() * 90;
+    nextSpawnAtDistance = distance + 52 + rand() * 36;
   }
 
   // --- collisions: player bullets vs obstacles ---

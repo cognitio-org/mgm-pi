@@ -1,0 +1,24 @@
+outfitter/packages/web/src/lib/entry-view.ts
+  s_2209f22f830d7f::t_d3e6820309ae98 70-72,75,80-82
+outfitter/packages/web/src/components/EntryItem.tsx
+  s_2209f22f830d7f::t_d3e6820309ae98 15-18
+outfitter/packages/web/test/entry-view.test.ts
+  s_2209f22f830d7f::t_d3e6820309ae98 24,26
+  s_2209f22f830d7f::t_28695d82700815 77-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "7170021363b34041262fa596d219fa0dd53a7a5b",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

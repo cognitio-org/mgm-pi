@@ -361,14 +361,44 @@ export function togglePause(state: GameState): GameState {
 /** Deterministic "bot" input for the title-screen attract-mode demo: a slow figure-eight-ish
  * weave with occasional firing, driven purely by elapsed time so the same seed always produces the
  * same demo run (no engine coupling needed beyond the timestamp already in GameState.t). Pure and
- * unit-testable on its own (see test/dreadnought-engine.test.ts). */
-export function attractInput(t: number): GameInput {
+ * unit-testable on its own (see test/dreadnought-engine.test.ts). Passing the current state as well
+ * adds a look-ahead (dodge racks and incoming shots, fire at turrets/drones in the lane). */
+export function attractInput(t: number, state?: GameState): GameInput {
   const wave = Math.sin(t * 0.0013);
-  return {
+  const base: GameInput = {
     up: wave > 0.25,
     down: wave < -0.25,
     firing: Math.sin(t * 0.006) > 0.2,
   };
+  if (!state) return base;
+  // With the state available (the title/demo screens pass it), the weave also looks ahead: shoot
+  // whatever shootable thing is in our lane, and steer around anything solid or incoming -- so the
+  // demo survives long enough to show the ship's whole length. Still a pure function.
+  const y = state.playerY;
+  const look = state.scrollSpeed * 1.5 + 30;
+  const blockers: Array<[number, number]> = [];
+  for (const o of state.obstacles) {
+    if (o.x + o.w > PLAYER_X - 4 && o.x < PLAYER_X + PLAYER_W + look) blockers.push([o.y, o.y + o.h]);
+  }
+  for (const b of state.enemyBullets) {
+    if (b.x > PLAYER_X - 6 && b.x < PLAYER_X + PLAYER_W + 60) blockers.push([b.y - 3, b.y + 3]);
+  }
+  const firing =
+    base.firing ||
+    state.obstacles.some((o) => o.kind !== "rack" && o.x > PLAYER_X && Math.abs(o.y + o.h / 2 - (y + PLAYER_H / 2)) < 10);
+  if (blockers.length === 0) return { ...base, firing };
+  // nearest altitude whose lane (with a margin) is clear of everything coming up
+  const clash = (cy: number) => blockers.filter(([a, b]) => a < cy + PLAYER_H + 5 && b > cy - 5).length;
+  let target = y;
+  let best = Infinity;
+  for (let cy = PLAYER_MIN_Y; cy <= PLAYER_MAX_Y; cy += 3) {
+    const score = clash(cy) * 1000 + Math.abs(cy - y);
+    if (score < best) {
+      best = score;
+      target = cy;
+    }
+  }
+  return { up: target < y - 2, down: target > y + 2, firing };
 }
 
 // High-score persistence now lives in ../shared/highscore.ts (one per-game localStorage key, read

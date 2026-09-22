@@ -8,7 +8,7 @@ import type { Store } from "./store/types.ts";
 import type { Config } from "./config.ts";
 import type { SandboxProvider } from "@outfitter/provider-local";
 import type { SecretsBroker } from "./secrets.ts";
-import { identityFromRequest } from "./auth.ts";
+import { identityFromRequest, identityFromLinkRequest } from "./auth.ts";
 import { RunManager } from "./runs.ts";
 import { AgentLink } from "./agentlink.ts";
 import { SseHub } from "./sse.ts";
@@ -74,24 +74,24 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     cloudRunCount,
   });
 
-  // IAP guards the browser routes only (role "web"/"all"). It must never sit in front of role
-  // "link": IAP is enforced service-wide by Cloud Run, so it would block agentd's WebSocket (its
-  // token's audience is this service's own origin, not IAP's client id) and the unauthenticated
-  // ngrok webhook before either reached the app. Those two carry their own per-request auth
-  // instead (verifyAgentToken / HMAC in routes/hooks.ts) — see config.ts's OutfitterRole doc.
-  if (config.role !== "link") {
-    fastify.addHook("preHandler", async (req, reply) => {
-      // /api/hooks/* (currently just POST /api/hooks/ngrok) is called by an external service with
-      // no IAP session and no agentd identity token; it authenticates itself via its own HMAC
-      // signature instead (routes/hooks.ts), so it's carved out of the IAP check here.
-      if (!req.url.startsWith("/api/") || req.url.startsWith("/api/hooks/")) return;
-      try {
-        req.identity = await identityFromRequest(req, config);
-      } catch (err) {
-        reply.code(401).send({ error: err instanceof Error ? err.message : "unauthorized" });
-      }
-    });
-  }
+  // Auth guards every /api/* route except /api/hooks/* (called by an external service with no IAP
+  // session and no agentd identity token; it authenticates itself via its own HMAC signature
+  // instead, routes/hooks.ts) and never sits in front of /agent/ws (agentd's own token, verified
+  // separately in agentlink.ts) — see config.ts's OutfitterRole doc.
+  //
+  // "web"/"all": IAP session or a personal API token (identityFromRequest). "link": a personal API
+  // token only (identityFromLinkRequest) — that role is never behind IAP (IAP is enforced
+  // service-wide by Cloud Run, so it would also block agentd's WebSocket and the ngrok webhook),
+  // and personal tokens (E4.1b) are the only credential a laptop teleport client can present here.
+  fastify.addHook("preHandler", async (req, reply) => {
+    if (!req.url.startsWith("/api/") || req.url.startsWith("/api/hooks/")) return;
+    try {
+      req.identity =
+        config.role === "link" ? await identityFromLinkRequest(req, store) : await identityFromRequest(req, config, store);
+    } catch (err) {
+      reply.code(401).send({ error: err instanceof Error ? err.message : "unauthorized" });
+    }
+  });
 
   await registerRoutes(fastify, { store, config, runs, agentLink, sse, laptopProbe, providerStatus });
   // The down-queue poller only makes sense where AgentLink sockets actually live (role "link" or

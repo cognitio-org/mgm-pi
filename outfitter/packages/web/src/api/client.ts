@@ -72,6 +72,16 @@ export interface Guru {
   updatedAt: string;
 }
 
+export interface TokenRecord {
+  id: string;
+  ownerEmail: string;
+  name: string;
+  prefix: string;
+  createdAt: string;
+  lastUsedAt?: string;
+  revokedAt?: string;
+}
+
 export interface ProviderRow {
   id: string;
   kind: string;
@@ -136,8 +146,20 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  me(): Promise<{ email: string }> {
+  me(): Promise<{ email: string; linkOrigin?: string }> {
     return request("/api/me");
+  },
+
+  listTokens(): Promise<TokenRecord[]> {
+    return request("/api/me/tokens");
+  },
+
+  createToken(name: string): Promise<{ token: string; record: TokenRecord }> {
+    return request("/api/me/tokens", { method: "POST", body: JSON.stringify({ name }) });
+  },
+
+  revokeToken(id: string): Promise<{ record: TokenRecord }> {
+    return request(`/api/me/tokens/${id}`, { method: "DELETE" });
   },
 
   gurus(): Promise<Guru[]> {

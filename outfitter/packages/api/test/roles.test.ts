@@ -22,11 +22,24 @@ describe("OUTFITTER_ROLE=web", () => {
 });
 
 describe("OUTFITTER_ROLE=link", () => {
-  test("does not register /api/sessions", async () => {
+  // E4.1b: the link role now registers exactly the teleport subset of session routes
+  // (registerTeleportRoutes), gated by a personal-API-token preHandler instead of IAP -- see
+  // tokens.test.ts for the token-auth specifics.
+  test("registers the teleport session routes, but rejects a request with no bearer token", async () => {
     const app = await buildTestApp({ OUTFITTER_ROLE: "link" });
 
     const res = await app.fastify.inject({ method: "GET", url: "/api/sessions" });
-    assert.equal(res.statusCode, 404);
+    assert.equal(res.statusCode, 401);
+
+    await app.fastify.close();
+  });
+
+  test("does not register web-only routes like POST /api/sessions or /api/gurus", async () => {
+    const app = await buildTestApp({ OUTFITTER_ROLE: "link" });
+
+    assert.equal(app.fastify.hasRoute({ method: "POST", url: "/api/sessions" }), false);
+    assert.equal(app.fastify.hasRoute({ method: "GET", url: "/api/gurus" }), false);
+    assert.equal(app.fastify.hasRoute({ method: "GET", url: "/api/sessions/:id/entries" }), false);
 
     await app.fastify.close();
   });

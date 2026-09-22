@@ -20,6 +20,8 @@ import type {
   UsersCollection,
   ProviderRecord,
   ProvidersCollection,
+  ApiToken,
+  TokensCollection,
 } from "./types.ts";
 
 function clone<T>(value: T): T {
@@ -220,6 +222,45 @@ class MemoryProviders implements ProvidersCollection {
   }
 }
 
+class MemoryTokens implements TokensCollection {
+  private readonly rows = new Map<string, ApiToken>();
+
+  async insert(token: ApiToken): Promise<void> {
+    this.rows.set(token.id, clone(token));
+  }
+
+  async findById(id: string): Promise<ApiToken | null> {
+    const row = this.rows.get(id);
+    return row ? clone(row) : null;
+  }
+
+  async findByHash(hash: string): Promise<ApiToken | null> {
+    for (const row of this.rows.values()) {
+      if (row.hash === hash) return clone(row);
+    }
+    return null;
+  }
+
+  async listActiveForOwner(ownerEmail: string): Promise<ApiToken[]> {
+    return [...this.rows.values()]
+      .filter((t) => t.ownerEmail === ownerEmail && !t.revokedAt)
+      .map(clone)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async countActiveForOwner(ownerEmail: string): Promise<number> {
+    return (await this.listActiveForOwner(ownerEmail)).length;
+  }
+
+  async update(id: string, patch: Partial<ApiToken>): Promise<ApiToken | null> {
+    const row = this.rows.get(id);
+    if (!row) return null;
+    const next = { ...row, ...patch };
+    this.rows.set(id, next);
+    return clone(next);
+  }
+}
+
 export class MemoryStore implements Store {
   readonly sessions = new MemorySessions();
   readonly entries = new MemoryEntries();
@@ -228,6 +269,7 @@ export class MemoryStore implements Store {
   readonly environments = new MemoryEnvironments();
   readonly users = new MemoryUsers();
   readonly providers = new MemoryProviders();
+  readonly tokens = new MemoryTokens();
 
   async close(): Promise<void> {
     // nothing to release

@@ -48,51 +48,12 @@ function headerLine(session: Session): string {
   return JSON.stringify(header);
 }
 
-export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteContext): Promise<void> {
-  app.post("/api/sessions", async (req, reply) => {
-    const body = req.body as {
-      guruId: string;
-      repo?: string;
-      baseBranch?: string;
-      branch?: string;
-      prompt: string;
-      name?: string;
-      /** Per-session model override; see src/laptop.ts's E2.8 preflight for how this is resolved. */
-      model?: string;
-    };
-    if (!body?.guruId || !body?.prompt) {
-      return reply.code(400).send({ error: "guruId and prompt are required" });
-    }
-    const guru = await ctx.store.gurus.findById(body.guruId);
-    if (!guru) return reply.code(400).send({ error: `unknown guruId: ${body.guruId}` });
-
-    const now = new Date().toISOString();
-    const session: Session = {
-      id: randomUUID(),
-      name: body.name,
-      // Recorded but not yet enforced -- see Session.ownerEmail's doc comment and EPIC.md's E2.2
-      // note (finding #5, docs/reports/security-review-pr1.md).
-      ownerEmail: req.identity?.email,
-      guruId: body.guruId,
-      // repo omitted = non-coding session (protocol.md): no clone, no branch.
-      repo: body.repo ?? null,
-      baseBranch: body.repo ? body.baseBranch : undefined,
-      branch: body.repo ? (body.branch ?? `outfitter/${randomUUID().slice(0, 8)}`) : undefined,
-      prompt: body.prompt,
-      modelOverride: body.model,
-      status: "open",
-      cost: 0,
-      createdAt: now,
-      updatedAt: now,
-    };
-    await ctx.store.sessions.insert(session);
-
-    const run = await ctx.runs.wake(session.id);
-    await ctx.agentLink.send(run.id, { t: "prompt", text: body.prompt });
-
-    return reply.code(201).send({ session, run });
-  });
-
+/** The subset of session routes the "link" role registers for teleport (docs/protocol.md "browser
+ * <-> api"): list/get/export/import/stop, nothing that needs a live agentd socket beyond `stop`
+ * (which only enqueues a down-message through the store either way — see the route's own comment).
+ * registerSessionRoutes (the "web"/"all" role) calls this first, then adds the rest, so neither
+ * role duplicates the handler logic. */
+export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteContext): Promise<void> {
   app.get("/api/sessions", async (req) => {
     // Code review M1 (docs/reports/code-review-pr15.md): `status` here is Session.status
     // ("open"/"closed"), while `runState` (queued/provisioning/running/idle/stopping/stopped/
@@ -113,44 +74,6 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     // request; GET /api/sessions already computes the same thing per-row via summarize().
     const run = await ctx.store.runs.findActiveForSession(session.id);
     return { ...session, runState: run?.state };
-  });
-
-  app.get("/api/sessions/:id/entries", async (req, reply) => {
-    const session = await getSessionOr404(ctx, req, reply);
-    if (!session) return;
-    const { after } = req.query as { after?: string };
-    const entries = await ctx.store.entries.listForSession(session.id, after);
-    return entries.map((e) => e.entry);
-  });
-
-  app.get("/api/sessions/:id/stream", async (req, reply) => {
-    const session = await getSessionOr404(ctx, req, reply);
-    if (!session) return;
-    reply.hijack(); // we own the raw response now; Fastify must not also try to send it
-    ctx.sse.subscribe(session.id, reply);
-    const run = await ctx.store.runs.findActiveForSession(session.id);
-    ctx.sse.publish(session.id, { type: "status", data: { t: "status", state: run?.state ?? "stopped" } });
-  });
-
-  app.post("/api/sessions/:id/messages", async (req, reply) => {
-    const session = await getSessionOr404(ctx, req, reply);
-    if (!session) return;
-    const body = req.body as { text: string; behavior?: "steer" | "followUp" };
-    if (!body?.text) return reply.code(400).send({ error: "text is required" });
-
-    let run = await ctx.store.runs.findActiveForSession(session.id);
-    if (!run) run = await ctx.runs.wake(session.id);
-    await ctx.agentLink.send(run.id, { t: "prompt", text: body.text, behavior: body.behavior });
-    return { run };
-  });
-
-  app.post("/api/sessions/:id/abort", async (req, reply) => {
-    const session = await getSessionOr404(ctx, req, reply);
-    if (!session) return;
-    const run = await ctx.store.runs.findActiveForSession(session.id);
-    if (!run) return reply.code(404).send({ error: "no active run" });
-    await ctx.agentLink.send(run.id, { t: "abort" });
-    return { run };
   });
 
   app.post("/api/sessions/:id/stop", async (req, reply) => {
@@ -189,40 +112,6 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     await ctx.agentLink.send(run.id, { t: "stop", reason: "user" });
     const stopping = await ctx.store.runs.update(run.id, { state: "stopping", updatedAt: new Date().toISOString() });
     return { run: stopping };
-  });
-
-  app.post("/api/sessions/:id/wake", async (req, reply) => {
-    const session = await getSessionOr404(ctx, req, reply);
-    if (!session) return;
-    const run = await ctx.runs.wake(session.id);
-    return { run };
-  });
-
-  app.post("/api/sessions/:id/ui-response", async (req, reply) => {
-    const session = await getSessionOr404(ctx, req, reply);
-    if (!session) return;
-    const body = req.body as { id: string; value: unknown };
-    if (!body?.id) return reply.code(400).send({ error: "id is required" });
-    const run = await ctx.store.runs.findActiveForSession(session.id);
-    if (!run) return reply.code(404).send({ error: "no active run" });
-    await ctx.agentLink.send(run.id, { t: "ui_response", id: body.id, value: body.value });
-    await ctx.store.runs.update(run.id, { pendingUiRequest: undefined, updatedAt: new Date().toISOString() });
-    return { run };
-  });
-
-  app.get("/api/sessions/:id/diff", async (req, reply) => {
-    const session = await getSessionOr404(ctx, req, reply);
-    if (!session) return;
-    const run = await ctx.store.runs.findActiveForSession(session.id);
-    if (!run || !ctx.agentLink.hasSocket(run.id)) {
-      return reply.code(409).send({ error: "no live run to diff" });
-    }
-    try {
-      const result = await ctx.agentLink.request(run.id, { t: "diff" });
-      return { base: result.base, patch: result.patch };
-    } catch (err) {
-      return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
-    }
   });
 
   app.get("/api/sessions/:id/export.jsonl", async (req, reply) => {
@@ -273,6 +162,127 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
 
     return { id, imported: lines.length - 1 };
   });
+}
+
+export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteContext): Promise<void> {
+  await registerTeleportRoutes(app, ctx);
+
+  app.post("/api/sessions", async (req, reply) => {
+    const body = req.body as {
+      guruId: string;
+      repo?: string;
+      baseBranch?: string;
+      branch?: string;
+      prompt: string;
+      name?: string;
+      /** Per-session model override; see src/laptop.ts's E2.8 preflight for how this is resolved. */
+      model?: string;
+    };
+    if (!body?.guruId || !body?.prompt) {
+      return reply.code(400).send({ error: "guruId and prompt are required" });
+    }
+    const guru = await ctx.store.gurus.findById(body.guruId);
+    if (!guru) return reply.code(400).send({ error: `unknown guruId: ${body.guruId}` });
+
+    const now = new Date().toISOString();
+    const session: Session = {
+      id: randomUUID(),
+      name: body.name,
+      // Recorded but not yet enforced -- see Session.ownerEmail's doc comment and EPIC.md's E2.2
+      // note (finding #5, docs/reports/security-review-pr1.md).
+      ownerEmail: req.identity?.email,
+      guruId: body.guruId,
+      // repo omitted = non-coding session (protocol.md): no clone, no branch.
+      repo: body.repo ?? null,
+      baseBranch: body.repo ? body.baseBranch : undefined,
+      branch: body.repo ? (body.branch ?? `outfitter/${randomUUID().slice(0, 8)}`) : undefined,
+      prompt: body.prompt,
+      modelOverride: body.model,
+      status: "open",
+      cost: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await ctx.store.sessions.insert(session);
+
+    const run = await ctx.runs.wake(session.id);
+    await ctx.agentLink.send(run.id, { t: "prompt", text: body.prompt });
+
+    return reply.code(201).send({ session, run });
+  });
+
+  app.get("/api/sessions/:id/entries", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const { after } = req.query as { after?: string };
+    const entries = await ctx.store.entries.listForSession(session.id, after);
+    return entries.map((e) => e.entry);
+  });
+
+  app.get("/api/sessions/:id/stream", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    reply.hijack(); // we own the raw response now; Fastify must not also try to send it
+    ctx.sse.subscribe(session.id, reply);
+    const run = await ctx.store.runs.findActiveForSession(session.id);
+    ctx.sse.publish(session.id, { type: "status", data: { t: "status", state: run?.state ?? "stopped" } });
+  });
+
+  app.post("/api/sessions/:id/messages", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const body = req.body as { text: string; behavior?: "steer" | "followUp" };
+    if (!body?.text) return reply.code(400).send({ error: "text is required" });
+
+    let run = await ctx.store.runs.findActiveForSession(session.id);
+    if (!run) run = await ctx.runs.wake(session.id);
+    await ctx.agentLink.send(run.id, { t: "prompt", text: body.text, behavior: body.behavior });
+    return { run };
+  });
+
+  app.post("/api/sessions/:id/abort", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const run = await ctx.store.runs.findActiveForSession(session.id);
+    if (!run) return reply.code(404).send({ error: "no active run" });
+    await ctx.agentLink.send(run.id, { t: "abort" });
+    return { run };
+  });
+
+  app.post("/api/sessions/:id/wake", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const run = await ctx.runs.wake(session.id);
+    return { run };
+  });
+
+  app.post("/api/sessions/:id/ui-response", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const body = req.body as { id: string; value: unknown };
+    if (!body?.id) return reply.code(400).send({ error: "id is required" });
+    const run = await ctx.store.runs.findActiveForSession(session.id);
+    if (!run) return reply.code(404).send({ error: "no active run" });
+    await ctx.agentLink.send(run.id, { t: "ui_response", id: body.id, value: body.value });
+    await ctx.store.runs.update(run.id, { pendingUiRequest: undefined, updatedAt: new Date().toISOString() });
+    return { run };
+  });
+
+  app.get("/api/sessions/:id/diff", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const run = await ctx.store.runs.findActiveForSession(session.id);
+    if (!run || !ctx.agentLink.hasSocket(run.id)) {
+      return reply.code(409).send({ error: "no live run to diff" });
+    }
+    try {
+      const result = await ctx.agentLink.request(run.id, { t: "diff" });
+      return { base: result.base, patch: result.patch };
+    } catch (err) {
+      return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
 }
 
 async function getSessionOr404(

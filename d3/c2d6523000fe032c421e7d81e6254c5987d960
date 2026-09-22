@@ -1,0 +1,21 @@
+kernal/.pi/extensions/teleport/lib.ts
+  s_2209f22f830d7f::t_61c4f366fbe5fb 69-76,78-79,99
+kernal/tests/teleport.test.ts
+  s_2209f22f830d7f::t_788da417a7bb8b 5,11,306-324
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "d3c2d6523000fe032c421e7d81e6254c5987d960",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

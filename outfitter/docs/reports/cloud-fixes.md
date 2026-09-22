@@ -1,8 +1,9 @@
 # Cloud reliability and UX fixes (2026-09-22)
 
-A batch of ten bugs found in the first real cloud use of Outfitter, fixed one commit per item.
-Each item below: cause, fix, test, anything left open. `npm test` and `npm run build` pass across
-`packages/agentd`, `packages/api`, `packages/web` after all ten.
+A batch of ten bugs found in the first real cloud use of Outfitter, fixed one commit per item, plus
+three follow-ups (11-13). Each item below: cause, fix, test, anything left open. `npm ci`,
+`npm test` and `npm run build` pass across `packages/agentd`, `packages/api`, `packages/web` after
+all thirteen.
 
 ## 1. Five-minute WebSocket/SSE drops
 
@@ -238,8 +239,112 @@ failed directly, as the stale-run reconciler would) is retried indefinitely and 
 `queued` with `attempts: 0`; a session whose runs *do* validate the protocol but keep dying before
 acking still exhausts its 6 attempts and goes `dead`, over a real WebSocket handshake per cycle.
 
-**Left open**: a session whose runs never validate a hello is now retried *indefinitely* (bounded
-only by one-active-run-per-session and whatever the sandbox provider itself does about repeatedly
-failing executions) -- intentional per the story ("a bad deploy shouldn't throw the message away"),
-but worth a dashboard/alert eventually so an operator notices a session stuck in that state rather
-than relying on someone reading logs.
+**Left open**: this left a session whose runs never validate a hello retried *indefinitely*, one
+Cloud Run Job execution per wake. Item 13 bounds it.
+
+## 11. No sign the system is working after Send
+
+**Cause**: the owner's most visible complaint: "We also need to show some sort of indicator that the
+system is working". After Send, `Composer` awaited the POST and then nothing changed until a reply
+entry arrived. A cold start (waking a drive) takes about a minute, so the page looked broken. The
+only busy signal was a `Working` row at the bottom of the transcript, which is off screen on a
+phone. The run pill, the Play/Stop buttons and the header status line each read `runState` on
+their own, so for the second or so between an accepted send and the first status frame they could
+disagree ("stopped · press Play" beside a message that was already waking a drive).
+
+**Fix**: `packages/web/src/lib/send-status.ts` has a pure `deriveSessionActivity(input)`. It takes
+the run state, the entries, the pending send, `now` and the time of the last progress (an entry or
+a state change), and returns one `phase` plus everything derived from it:
+
+- phases: `sending` (the POST is in flight) -> `waking` ("Waking a drive, about a minute": accepted
+  with no live run, or queued/provisioning) -> `working` (running, or idle while the mail is being
+  delivered) -> `none` (the reply entry arrived, or the run went back to idle *after running*);
+- timeouts: `wakeTimeout` after 3 min without a live run, or when a run fails before it ever ran
+  (`?DEVICE NOT PRESENT ERROR`). `workTimeout` after 2 min with no entry and no state change, or
+  when a run fails mid-turn (`LOAD ERROR`). `sendFailed` when the POST fails;
+- `pillState`, `canWake`, `canStop`, `canAbort`, `composerDisabled`, `showOptimistic`. The pill,
+  Break/Stop/Play and the composer read only these, and the header's READY./stopped line is
+  suppressed while a phase is active, so none of them can disagree.
+
+`SessionPage` keeps the pending send client-side (text, baseline entry count, state at send time,
+whether it has seen a change and seen `running`). It shows the message at once as a dashed
+optimistic "You" row. The row goes away when a user entry after the baseline arrives, matched by
+text first, else the first user entry. So there is no duplicate. On a failed POST the row turns red
+with Retry. The status line is the existing `Working` cassette, rendered in the composer's top row,
+which is sticky on phones. So it's visible at 390x844 without scrolling. The old transcript-bottom
+`Working` row is gone to avoid two live regions. Retry re-wakes on `wakeTimeout` (it also releases
+held mail, see 13) and re-sends on `sendFailed`/`workTimeout`. A stale `idle`/`failed` from before
+the send can't end or fail the wait, because that needs a state change after the send.
+
+**Test**: `packages/web/test/send-status.test.ts` (17): send accepted, provisioning, running with
+echo reconciliation, an older identical message not counted as the echo, reply arrived, idle after
+running, a fresh run's idle-before-mail not counted as done, stale idle, failed send, wake timeout,
+fail-before-running vs mid-turn, work timeout reset by progress, reload mid-wait (no pending send),
+and control agreement across states. Screenshots at 390x844 and 1280x860, dark:
+`docs/design/screenshots/cloud-fixes-{sending,waking,working,wake-timeout,work-timeout}-{390,1280}.png`.
+They were taken against a local server on :8131, with the session's API routes stubbed by Playwright
+and the clock fast-forwarded for the timeouts.
+
+**Left open**: Retry on a `workTimeout` re-sends the message. If the turn was merely slow and not
+lost, the agent gets the prompt twice. A reload mid-wait loses the optimistic row and the
+`sending`/failed states (the pending send isn't persisted), but waking/working are still derived
+from the run state alone.
+
+## 12. Enter-mode toggle
+
+**Fix**: a small labelled switch in the composer's top row (`role="switch"`, a real button, so it
+works from the keyboard; it keeps the app's 44px tap target): "Enter sends" or "Enter = new line".
+`packages/web/src/lib/composer-keys.ts`'s pure `composerKeyAction(eventLike, mode)` returns
+`send`, `newline` or `ignore`:
+
+- send mode: Enter sends, Shift+Enter is a newline;
+- new-line mode: Enter is a newline, Shift+Enter sends;
+- Cmd/Ctrl+Enter always sends. Alt+Enter is a newline;
+- it never acts during IME composition (`isComposing` or keyCode 229).
+
+The choice persists in localStorage under `outfitter.composer.enterMode`, with reads and writes
+wrapped in try/catch. It defaults to new-line on touch (coarse-pointer) devices and send on
+desktop. The desktop placeholder states the current key binding.
+
+**Test**: `packages/web/test/composer-keys.test.ts` (10): both modes, Cmd/Ctrl, IME, other keys,
+defaults, saved-choice precedence, throwing storage. Screenshots:
+`docs/design/screenshots/cloud-fixes-enter-toggle-{390,1280}.png`.
+
+**Left open**: nothing.
+
+## 13. Bounded mail retry for runs that never validate
+
+**Cause**: item 10 stopped charging attempts to runs that never validate a hello. That left such a
+session woken forever, one Cloud Run Job execution per wake. This is a real cost risk on a
+$25/month budget when a deploy mismatch makes every agentd get refused with 4409.
+
+**Fix**: `Mail.unvalidatedWakes` counts the mail-driven wakes started for a mail since a run of its
+session last validated the protocol. `MailService.wakeForMail` increments it before each wake
+(`noteWake`). `agentlink.ts` clears it on a validated hello (`markValidated`). After
+`MAIL_MAX_UNVALIDATED_WAKES` (3), `holdIfStuck` parks the session's deliverable mail in a new
+`held` status. It is not deliverable, doesn't count as dead (`expireExhausted` skips it) and isn't
+charged. A session that already has held mail holds new mail at once, so each new message doesn't
+buy three more doomed executions. Release:
+
+- **automatic**: any run that validates the protocol calls `releaseHeld()` for *every* session,
+  because a validated hello is the evidence the redeploy landed. That session's mail goes straight
+  out over its socket; other sessions' mail is woken by the next `/tick` sweep;
+- **Retry**: `POST /api/sessions/:id/mail/retry` releases that session's held mail with a fresh
+  budget and wakes once.
+
+`GET /api/sessions/:id` returns `heldMail` and, when it is non-zero, `mailNotice`: "Deploy mismatch:
+messages held until the service is redeployed". The web shows this under the session header with a
+Retry button and refreshes it on every run-state change. The Cloud Tasks wake hook returns
+`{result: "held"}` (200), so Cloud Tasks stops retrying too.
+
+**Test**: `packages/api/test/mail.test.ts`, which replaces item 10's "retried indefinitely" case.
+It covers: exactly 3 wakes, then held (attempts 0, not dead, not woken again, notice on GET); new
+mail to a held session is held without a wake; a validated hello releases held mail for its own
+session (delivered over the socket) and another session (queued, fresh budget, woken by the
+sweep); a validated run resets the count; and the Retry route. Item 10's "validates but never acks
+-> dead after 6" case still passes unchanged.
+
+**Left open**: releasing on *any* validated hello is deliberately broad. A single healthy session
+releases everyone's held mail, and a still-broken session then spends up to three more wakes
+before holding again. That's bounded, but it isn't zero. There is no alert yet when mail is held;
+the session notice and an `info` log line are the only signals.

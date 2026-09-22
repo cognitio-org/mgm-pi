@@ -25,6 +25,7 @@ export function SessionPage() {
   const [session, setSession] = useState<SessionDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copiedGuruId, setCopiedGuruId] = useState(false);
   const [models, setModels] = useState<ModelRow[]>([]);
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const { entries, runState, pendingUiRequest, costEstimate } = useSessionStream(sessionId);
@@ -88,6 +89,17 @@ export function SessionPage() {
     }
   }
 
+  async function copyGuruId() {
+    if (!session?.guruId) return;
+    try {
+      await navigator.clipboard.writeText(session.guruId);
+      setCopiedGuruId(true);
+      setTimeout(() => setCopiedGuruId(false), 2000);
+    } catch {
+      // clipboard access denied -- nothing more we can do from here
+    }
+  }
+
   const views = entriesToViews(entries);
   const active = runState ? RUNNING_STATES.has(runState) : false;
   const canWake = !active;
@@ -104,8 +116,26 @@ export function SessionPage() {
           <h2 className="session-title" title={sessionId}>
             {session?.name ?? `Floppy ${sessionId?.slice(0, 8) ?? ""}`}
           </h2>
-          <div className="session-meta">
-            {session?.guruId} {session?.repo ? `· ${session.repo}${session.branch ? ` @ ${session.branch}` : ""}` : "· no repository"}
+          <div className="session-meta session-subline">
+            {session?.guruId && (
+              <span className="session-guru-id">
+                <span className="mono" title={session.guruId}>
+                  {session.guruId.slice(0, 8)}
+                </span>
+                <button
+                  type="button"
+                  className="copy-chip"
+                  onClick={copyGuruId}
+                  aria-label="Copy full tape id"
+                  title="Copy full tape id"
+                >
+                  {copiedGuruId ? "✓" : "⧉"}
+                </button>
+              </span>
+            )}
+            <span className="session-repo-branch" title={session?.repo ? `${session.repo}${session.branch ? ` @ ${session.branch}` : ""}` : undefined}>
+              {session?.repo ? `· ${session.repo}${session.branch ? ` @ ${session.branch}` : ""}` : "· no repository"}
+            </span>
             {typeof cost === "number" ? ` · $${cost.toFixed(4)}` : ""}
           </div>
           <div className="session-meta session-model-info">

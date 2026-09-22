@@ -5,6 +5,9 @@ import { deriveDeskStatus, moveGridFocus, stoppedSessionCount, type GridKey } fr
 import { vocabulary } from "../lib/vocabulary.ts";
 import { Logo, LogoMark } from "../components/Logo.tsx";
 import { NewSessionDialog } from "../components/NewSessionDialog.tsx";
+import { ProviderStrip } from "../components/ProviderStrip.tsx";
+import { SoundToggle } from "../components/SoundToggle.tsx";
+import { ThemeToggle } from "../components/ThemeToggle.tsx";
 import {
   ControlPanelIcon,
   DiskBoxIcon,
@@ -180,21 +183,50 @@ export function DeskPage() {
             type="button"
             className="desk-menu-trigger"
             aria-haspopup="menu"
-            aria-expanded={openMenu === "go"}
+            aria-expanded={openMenu === "session"}
             onClick={(e) => {
               e.stopPropagation();
-              openMenuOrToggle("go");
+              openMenuOrToggle("session");
             }}
           >
-            Go
+            Session
           </button>
-          {openMenu === "go" && (
+          {openMenu === "session" && (
             <ul className="desk-menu-list" role="menu">
+              <li role="menuitem">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpenMenu(null);
+                    setShowNewSession(true);
+                  }}
+                >
+                  {vocabulary.newSession.one}
+                </button>
+              </li>
               <li role="menuitem">
                 <button type="button" onClick={() => navigate("/fleet")}>
                   {vocabulary.sessionList.one}
                 </button>
               </li>
+            </ul>
+          )}
+        </div>
+        <div className="desk-menu">
+          <button
+            type="button"
+            className="desk-menu-trigger"
+            aria-haspopup="menu"
+            aria-expanded={openMenu === "view"}
+            onClick={(e) => {
+              e.stopPropagation();
+              openMenuOrToggle("view");
+            }}
+          >
+            View
+          </button>
+          {openMenu === "view" && (
+            <ul className="desk-menu-list" role="menu">
               <li role="menuitem">
                 <button type="button" onClick={() => navigate("/gurus")}>
                   {vocabulary.guru.many}
@@ -210,8 +242,20 @@ export function DeskPage() {
                   {vocabulary.token.many}
                 </button>
               </li>
+              {operator && (
+                <li role="menuitem">
+                  <button type="button" onClick={() => navigate("/settings")}>
+                    {vocabulary.settings.one}
+                  </button>
+                </li>
+              )}
             </ul>
           )}
+        </div>
+        <div className="desk-menubar-spacer">
+          <ProviderStrip />
+          <SoundToggle compact />
+          <ThemeToggle compact />
         </div>
         <div className="desk-clock" aria-label="Current time">
           {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}

@@ -75,6 +75,54 @@
   padding: 0.3rem 0.55rem;
 }
 
+/* Compact icon-only variant (ThemeToggle/SoundToggle `compact` prop) -- used wherever a full
+ * "◐ DARK" / "♪ ON" text label would crowd a tight bar (the desktop header, the desk menu bar). */
+.icon-toggle {
+  padding: 0.3rem 0.5rem;
+  font-size: 0.95rem;
+  line-height: 1;
+  min-width: 44px;
+}
+
+.icon-toggle[aria-pressed="false"] {
+  opacity: 0.55;
+}
+
+/* ---------- provider/peripheral summary pill + hover/focus popover ---------- */
+/* Always a single "N/M up" pill (ProviderStrip.tsx) so the header holds to one row regardless of
+ * how many peripherals are configured -- a fixed-width row of individual pills is what made the
+ * desktop header wrap around ~1100-1200px. The full per-provider list is one hover or keyboard
+ * focus away instead of always taking up header width. */
+.provider-strip {
+  position: relative;
+  display: inline-flex;
+}
+
+.provider-strip-summary {
+  text-decoration: none;
+}
+
+.provider-strip-popover {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 0.35rem;
+  display: none;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.5rem;
+  min-width: 200px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-offset) var(--shadow-offset) 0 0 var(--border);
+  z-index: 50;
+}
+
+.provider-strip:hover .provider-strip-popover,
+.provider-strip:focus-within .provider-strip-popover {
+  display: flex;
+}
+
 .app-main {
   flex: 1;
   padding: 1.25rem;
@@ -115,6 +163,42 @@
   color: var(--text-dim);
   font-size: 0.85rem;
   font-family: var(--font-mono);
+}
+
+/* The guru-id/repo/branch line (session-subline): short id + copy affordance instead of a raw
+ * UUID, and the repo/branch clause ellipsizes instead of forcing the line (or the page) wide. */
+.session-subline {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.session-guru-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+/* Deliberate exception to the app's usual >=44px tap target: this is a small inline copy
+ * affordance sitting inside a dense metadata line, not a primary action -- 32px keeps it usable
+ * without forcing the whole subline to header-button height. */
+.copy-chip {
+  box-shadow: none;
+  border: 1px solid var(--border);
+  padding: 0.05rem 0.4rem;
+  min-height: 32px;
+  min-width: 32px;
+  font-size: 0.78rem;
+  line-height: 1;
+  background: var(--bg-elevated);
+}
+
+.session-repo-branch {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .run-controls {

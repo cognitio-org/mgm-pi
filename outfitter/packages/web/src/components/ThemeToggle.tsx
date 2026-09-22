@@ -30,8 +30,10 @@ function systemTheme(): Theme {
 }
 
 /** Manual dark/light override on top of prefers-color-scheme, persisted to localStorage. Sets
- * `data-theme` on the root element, which theme.css's `:root[data-theme=...]` rules key off. */
-export function ThemeToggle() {
+ * `data-theme` on the root element, which theme.css's `:root[data-theme=...]` rules key off.
+ * `compact` drops the text label for tight spaces (the desktop header, the desk menu bar) --
+ * the glyph plus `title`/`aria-label` carry the meaning, same as any other icon button. */
+export function ThemeToggle({ compact }: { compact?: boolean } = {}) {
   const [theme, setTheme] = useState<Theme>(() => readStored() ?? systemTheme());
 
   useEffect(() => {
@@ -44,15 +46,17 @@ export function ThemeToggle() {
     writeStored(next);
   }
 
+  const label = theme === "dark" ? "Dark (C64 phosphor)" : "Light (GEOS paper)";
+
   return (
     <button
       type="button"
-      className="theme-toggle"
+      className={`theme-toggle${compact ? " icon-toggle" : ""}`}
       onClick={toggle}
       aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-      title={theme === "dark" ? "Dark (C64 phosphor)" : "Light (GEOS paper)"}
+      title={label}
     >
-      {theme === "dark" ? "◐ DARK" : "◑ LIGHT"}
+      {compact ? (theme === "dark" ? "◐" : "◑") : theme === "dark" ? "◐ DARK" : "◑ LIGHT"}
     </button>
   );
 }

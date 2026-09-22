@@ -29,6 +29,16 @@ a,
   }
 }
 
+/* Composer.tsx renders both a <select> (desktop) and a segmented button group (phones) for the
+ * send mode, so CSS alone decides which one shows. Base/hidden state lives here, above every
+ * media query that might turn it on, so the max-width:700px override below wins on source order
+ * (both rules target the same single-class selector, so specificity is tied). */
+.composer-mode-buttons {
+  display: none;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
 /* A comfortable minimum tap target everywhere, not just at phone width -- no hover-only
  * affordances exist in this app (every hover state already has a focus-visible/tap equivalent). */
 button,
@@ -88,13 +98,6 @@ select {
   padding-top: 0.6rem;
 }
 
-/* Provider strip: full row of pills on desktop; a single "N/M up" summary pill on mobile,
- * coloured by the worst status present (see ProviderStrip.tsx's worstStatus). */
-.provider-strip-summary {
-  display: none;
-  text-decoration: none;
-}
-
 @media (max-width: 700px) {
   .app-header {
     padding-top: calc(0.5rem + env(safe-area-inset-top));
@@ -115,14 +118,6 @@ select {
     justify-content: center;
   }
 
-  .provider-strip-full {
-    display: none;
-  }
-
-  .provider-strip-summary {
-    display: inline-flex;
-  }
-
   .app-header-spacer {
     gap: 0.4rem;
   }
@@ -139,6 +134,14 @@ select {
 @media (min-width: 701px) {
   .app-menu-backdrop,
   .app-menu-sheet {
+    display: none;
+  }
+
+  /* The desk (/) shows its own GEOS-style menu bar (DeskPage.tsx, styles/desk.css) at desktop
+   * widths instead of this header -- rendering both stacked ~160px of duplicate chrome. Mobile
+   * keeps this header's compact bar on every route, desk included, since the desk's own bar
+   * collapses into the icon grid there. */
+  .app-header-desk {
     display: none;
   }
 }
@@ -269,6 +272,13 @@ select {
     font-size: 1.05rem;
   }
 
+  /* The repo/branch clause ellipsizes instead of wrapping the whole subline onto extra rows --
+   * a long "org/repo @ some-long-branch-name" was pushing the second header line taller than
+   * needed on a 390px screen. */
+  .session-repo-branch {
+    max-width: 65vw;
+  }
+
   .run-controls {
     display: flex;
     flex-wrap: nowrap;
@@ -304,10 +314,39 @@ select {
     overscroll-behavior: contain;
   }
 
-  .composer-row select {
-    flex: none;
-    max-width: 40%;
+  /* The <select> truncates its own selected-option text below ~140px ("Send (queued i...") --
+   * swap it for a compact segmented control of short labels (Composer.tsx renders both; CSS
+   * picks one per breakpoint) rather than trying to shrink the select further. */
+  .composer-mode-select {
+    display: none;
   }
+
+  .composer-mode-buttons {
+    display: flex;
+  }
+}
+
+/* ---------- composer mode: <select> on desktop, segmented control on phones ---------- */
+/* Base (hidden) state lives near the top of this file; the max-width:700px block above turns it
+ * on. This section is visual styling only. */
+
+.composer-mode-buttons button {
+  box-shadow: none;
+  border: none;
+  border-right: 1px solid var(--border);
+  background: var(--bg-elevated);
+  font-size: 0.78rem;
+  padding: 0.42rem 0.55rem;
+  border-radius: 0;
+}
+
+.composer-mode-buttons button:last-child {
+  border-right: none;
+}
+
+.composer-mode-buttons button.active {
+  background: var(--accent);
+  color: var(--accent-contrast);
 }
 
 /* ---------- dialogs: full-height sheets on mobile ---------- */

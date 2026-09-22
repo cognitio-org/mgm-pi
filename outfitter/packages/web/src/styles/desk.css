@@ -8,7 +8,11 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  min-height: calc(100dvh - 3.2rem);
+  /* Desktop widths: the desk's own menu bar (below) replaces the app header entirely (see
+   * App.tsx's `.app-header-desk`, hidden at >=701px), so .desk owns the full viewport height --
+   * no header height to subtract. Mobile subtracts the app header's compact-bar height instead
+   * (see the max-width:700px override), since that header still renders there. */
+  min-height: 100dvh;
   margin: -1.25rem;
   overflow: hidden;
 }
@@ -86,8 +90,14 @@
   color: var(--accent-contrast);
 }
 
-.desk-clock {
+.desk-menubar-spacer {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.desk-clock {
   font-family: var(--font-mono);
   font-size: 0.8rem;
   border: 1px solid var(--border);
@@ -186,6 +196,12 @@
   border-color: var(--accent);
 }
 
+.desk-desktop-icon:hover .desk-icon-label,
+.desk-desktop-icon:focus-visible .desk-icon-label {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
 .desk-icon-label {
   font-family: var(--font-display);
   font-size: 0.66rem;
@@ -225,6 +241,16 @@
   right: 1.25rem;
 }
 
+/* Desktop icons sit directly on the dithered wallpaper, not the window's solid --bg-elevated
+ * surface -- their labels need their own solid backing (GEOS-style: background colour, 1px
+ * padding/border) to stay legible against the dither in both themes, rather than relying on text
+ * colour contrast against a patterned background alone. */
+.desk-desktop-icon .desk-icon-label {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  padding: 0.1rem 0.35rem;
+}
+
 .desk-manual {
   display: flex;
   flex-direction: column;
@@ -234,9 +260,16 @@
 /* ---------- phones: window fills the screen, icons wrap to 3 columns, desktop icons join the grid ---------- */
 
 @media (max-width: 700px) {
+  /* Mobile keeps the app header's compact bar (App.tsx) instead of this menu bar -- there's no
+   * room for both, and the desk's functions (Session/View menus, providers, theme/sound) are
+   * already reachable from the compact bar's pull-down sheet. */
+  .desk-menubar {
+    display: none;
+  }
+
   .desk {
     margin: -0.65rem;
-    min-height: calc(100dvh - 6.5rem);
+    min-height: calc(100dvh - 3.7rem);
   }
 
   .desk-surface {

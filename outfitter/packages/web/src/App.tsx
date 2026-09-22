@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { NavLink, Route, Routes } from "react-router-dom";
+import { NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { api } from "./api/client.ts";
 import { ProviderStrip } from "./components/ProviderStrip.tsx";
 import { Logo } from "./components/Logo.tsx";
@@ -29,6 +29,8 @@ export function App() {
   // guessing from any local state.
   const [operator, setOperator] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const location = useLocation();
+  const isDesk = location.pathname === "/";
   useEffect(() => {
     api
       .me()
@@ -40,7 +42,12 @@ export function App() {
 
   return (
     <div className="app-shell">
-      <header className="app-header">
+      {/* On the desk (/), the desk's own GEOS-style menu bar (DeskPage.tsx) replaces this header
+       * on desktop widths -- having both stacked ~160px of chrome duplicating the same nav was
+       * the original bug report. On phones this header's compact bar (logo + summary pill + menu
+       * button) still renders regardless of route, since the desk's menu bar collapses into the
+       * icon grid there and has no room for its own top bar too. */}
+      <header className={`app-header${isDesk ? " app-header-desk" : ""}`}>
         <NavLink to="/" aria-label="Outfitter desk" style={{ textDecoration: "none" }} title={vocabulary.desk.hint}>
           <Logo />
         </NavLink>
@@ -53,8 +60,8 @@ export function App() {
         </nav>
         <div className="app-header-spacer">
           <ProviderStrip />
-          <SoundToggle />
-          <ThemeToggle />
+          <SoundToggle compact />
+          <ThemeToggle compact />
         </div>
         <button
           type="button"

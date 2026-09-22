@@ -38,14 +38,15 @@ type AgentConfig = {
   name: string; description: string; source: Source; filePath: string; model?: string; thinking?: string | false;
   tools?: string[]; mcpDirectTools?: string[]; systemPrompt: string; systemPromptMode?: string; inheritProjectContext?: boolean; inheritSkills?: boolean;
   disabled?: boolean; override?: { fields?: string[] }; modelSource?: { type: string }; aliases?: string[];
-  runner?: { type: string; adapter?: string; command?: string }; acceptanceRole?: string;
+  runner?: { type: string; adapter?: string; command?: string }; acceptanceRole?: string; machine?: string;
 };
 type Pkg = {
   agents: { discoverAgents: Function; discoverAgentsAll: Function; clearAgentDiscoveryCache: Function };
   mgmt: { handleManagementAction: (action: string, params: any, ctx: any) => { content: { text: string }[]; isError?: boolean } };
   fm: { parseFrontmatter: (text: string) => { frontmatter: Record<string, string>; body: string }; parseFrontmatterList: (raw?: string) => string[] | undefined };
   /** Whether a command-line agent's program is on PATH (the package's own check; it starts nothing). */
-  cli: { resolveExternalCliBinaryAvailability: (command: string, env: NodeJS.ProcessEnv) => { available: boolean; unavailableReason?: string } };
+  /** Undefined when a pi-subagents release moved the module: then "installed" is unknown, and nothing else breaks. */
+  cli?: { resolveExternalCliBinaryAvailability: (command: string, env: NodeJS.ProcessEnv) => { available: boolean; unavailableReason?: string } };
 };
 
 const agentDir = () => process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
@@ -60,7 +61,7 @@ export function loadPackage(): Promise<Pkg> {
   const pkg = (async () => {
     if (!existsSync(join(dir, "src", "agents", "agents.js"))) throw new Error(`pi-subagents is not installed (${dir})`);
     const [agents, mgmt, fm, cli] = await Promise.all([mod("agents.js"), mod("agent-management.js"), mod("frontmatter.js"),
-      import(pathToFileURL(join(dir, "src", "runs", "shared", "external-cli-preflight.js")).href)]);
+      import(pathToFileURL(join(dir, "src", "runs", "shared", "external-cli-preflight.js")).href).catch(() => undefined)]);
     return { agents, mgmt, fm, cli } as Pkg;
   })();
   loaded = { dir, pkg };
@@ -107,11 +108,14 @@ export type AgentRow = {
   cli?: Cli;
 };
 /** A command-line agent's program, and whether it is installed (on PATH; that is not proof it is logged in). */
-export type Cli = CliInfo & { installed: boolean; reason?: string };
+export type Cli = CliInfo & { installed: boolean; reason?: string; unknown?: boolean; machine?: string };
 
 function cliOf(pkg: Pkg, a: AgentConfig): Cli | undefined {
   const info = cliInfo(a);
   if (!info) return undefined;
+  // Placed on another machine (Herdr): it runs there over ssh, so this machine's PATH says nothing about it.
+  if (a.machine) return { ...info, installed: false, unknown: true, machine: a.machine, reason: `runs on ${a.machine}; not checked from here` };
+  if (!pkg.cli) return { ...info, installed: false, unknown: true, reason: "this pi-subagents version has no installed check" };
   let found: { available: boolean; unavailableReason?: string } = { available: false };
   try { found = pkg.cli.resolveExternalCliBinaryAvailability(info.command, process.env); } catch (e: any) { found = { available: false, unavailableReason: String(e?.message ?? e) }; }
   return { ...info, installed: !!found.available, reason: found.available ? undefined : found.unavailableReason };

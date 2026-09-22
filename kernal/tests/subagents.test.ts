@@ -70,7 +70,7 @@ describe("command-line agents in the subagent tool's own output", () => {
       assert.equal(line(name), before, `${name} passes through unchanged`);
     }
     assert.equal(out.split("\n")[1], CLI_NOTE, "one note, right under the heading");
-    assert.equal(annotateSubagentText(out.replace(CLI_NOTE + "\n", "")).split(CLI_NOTE).length, 2, "and only one");
+    assert.equal(annotateSubagentText(out), out, "running it again changes nothing");
   });
 
   test("plain list and get are corrected too; text without command-line agents is returned as is", { skip }, async () => {
@@ -84,6 +84,36 @@ describe("command-line agents in the subagent tool's own output", () => {
     assert.equal(annotateSubagentText(scout), scout);
   });
 
+  test("edge cases: idempotent, excludes, a description holding field names, a prompt holding a Runner line", async () => {
+    const { annotateSubagentText } = await import("../.pi/extensions/kernal-subagents/lib.ts");
+    const plain = "Executable agents:\n- claude-code (builtin, external-cli:claude): Read-only";
+    assert.equal(annotateSubagentText(annotateSubagentText(plain)), annotateSubagentText(plain), "plain list: one suffix");
+    const cap = "Executable agents (capabilities):\n- mine (user, external-cli:codex ✓): Description: says; Model: x; Tools: y; Tools: read, bash; excludes: write, edit; Model: litellm/a; Thinking: high; Acceptance role: writer";
+    const line = annotateSubagentText(cap).split("\n").at(-1)!;
+    assert.equal(line, "- mine (user, external-cli:codex ✓): Description: says; Model: x; Tools: y; Tools: Codex's own, as its adapter allows; Model: Codex's own (set in Codex; Kernal's model settings do not apply); Acceptance role: writer");
+    const get = "Agent: docs (user)\nModel: litellm/a\nThinking: low\n\nSystem Prompt:\nRunner: external-cli claude\nexplains CLI agents";
+    assert.equal(annotateSubagentText(get), get, "a Runner line inside the prompt is prompt text");
+    const real = "Agent: cc (user)\nModel: litellm/a\nRunner: external-cli claude\n\nSystem Prompt:\nModel: keep this";
+    const once = annotateSubagentText(real);
+    assert.equal(annotateSubagentText(once), once, "get: one suffix");
+    assert.match(once, /System Prompt:\nModel: keep this$/, "the prompt is never edited");
+  });
+
+  test("models: the tool's own model for command-line agents, from the package's discovery", { skip }, async () => {
+    const { annotateSubagentText, discoverCliNames } = await import("../.pi/extensions/kernal-subagents/lib.ts");
+    const cli = await discoverCliNames(root);
+    assert.equal(cli?.get("codex-exec"), "codex");
+    assert.ok(!cli?.has("scout"));
+    const all = await run({ action: "models" });
+    const out = annotateSubagentText(all, cli);
+    assert.match(out, /\ncodex-exec\n  model:\n    Codex's own \(set in Codex; Kernal's model settings do not apply\)\n  source: the Codex CLI \(codex\)\n  thinking: Codex's own\n/);
+    assert.match(out, /\nscout\n  model:\n    litellm\//, "normal agents keep their model");
+    assert.equal(annotateSubagentText(out, cli), out);
+    const one = annotateSubagentText(await run({ action: "models", agent: "claude-code" }), cli);
+    assert.match(one, /Effective model:\n  Claude Code's own .*\nSource: the Claude Code CLI \(claude\)\nThinking: Claude Code's own/);
+    assert.equal(annotateSubagentText(await run({ action: "models" })), all, "without discovery, models output is left alone");
+  });
+
   test("the extension rewrites subagent list and get results only", async () => {
     const handlers: Function[] = [];
     const mod = await import("../.pi/extensions/kernal-subagents/index.ts");
@@ -95,6 +125,7 @@ describe("command-line agents in the subagent tool's own output", () => {
     assert.match(r.content[0].text, /runs the Claude Code CLI/);
     assert.equal(await handlers[0](ev({ toolName: "bash" })), undefined, "another tool");
     assert.equal(await handlers[0](ev({ input: { action: "run", agent: "claude-code" } })), undefined, "a run");
+    assert.equal(await handlers[0](r), undefined, "an already corrected result");
     assert.equal(await handlers[0](ev({ isError: true })), undefined, "an error");
     assert.equal(await handlers[0](ev({ content: [{ type: "text", text: "- scout (builtin): recon" }] })), undefined, "nothing to correct");
   });

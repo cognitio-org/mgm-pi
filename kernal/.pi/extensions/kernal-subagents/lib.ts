@@ -38,6 +38,7 @@ export function cliInfo(agent: { runner?: any; acceptanceRole?: string; name?: s
 }
 
 const ownModel = (tool: string) => `${tool}'s own (set in ${tool}; Kernal's model settings do not apply)`;
+const PLAIN_SUFFIX = (tool: string) => ` [runs the ${tool} CLI with its own login and model]`;
 
 /** One sentence the model reads before a list that holds command-line agents. */
 export const CLI_NOTE =
@@ -46,15 +47,34 @@ export const CLI_NOTE =
   "pi-subagents does not apply to them. ✓ means the program is installed; it does not prove it is logged in. " +
   "Their runs are asynchronous: start one, then check its status.";
 
+/** Name -> command for the command-line agents, for output that does not say which agents they are (`models`). */
+export type CliNames = Map<string, string>;
+
+/** A capabilities line, rewritten from the right so a description holding "; Model: " cannot be mistaken for the field. */
+function rewriteFields(rest: string, tool: string): string {
+  const m = rest.lastIndexOf("; Model: ");
+  if (m < 0) return rest;
+  const valueEnd = rest.indexOf(";", m + 2);
+  let after = valueEnd < 0 ? "" : rest.slice(valueEnd);
+  after = after.replace(/^; Thinking: [^;]*/, "");
+  let before = rest.slice(0, m);
+  const t = before.lastIndexOf("; Tools: ");   // Tools runs up to Model, including any "; excludes: ..."
+  if (t >= 0) before = `${before.slice(0, t)}; Tools: ${tool}'s own, as its adapter allows`;
+  return `${before}; Model: ${ownModel(tool)}${after}`;
+}
+
 /**
- * Corrects the `subagent` tool's list and get output for command-line agents: the model becomes the
- * tool's own, tools and thinking are the tool's, and a list gains one explanatory note. Lines for
- * normal agents, and any text this does not recognise, pass through unchanged.
+ * Corrects the `subagent` tool's list, get and models output for command-line agents: the model becomes
+ * the tool's own, tools and thinking are the tool's, and a list gains one explanatory note. Lines for
+ * normal agents, and any text this does not recognise, pass through unchanged. Running it twice changes
+ * nothing the second time. `cli` (name -> command) is needed only for `models`, whose text never says
+ * which agents run another tool.
  */
-export function annotateSubagentText(text: string): string {
-  if (typeof text !== "string" || !text.includes("external-cli")) return text;
+export function annotateSubagentText(text: string, cli?: CliNames): string {
+  if (typeof text !== "string" || text.includes(CLI_NOTE)) return text;
   const lines = text.split("\n");
-  let listed = false;
+  let listed = false, changed = false;
+
   // list: "- name (builtin, external-cli:claude ✓): ...; Tools: ...; Model: ...; Thinking: ...[; ...]"
   const LIST = /^(- [^\s(]+ \([^)]*?\bexternal-cli:([^\s),]+)[^)]*\):)(.*)$/;
   for (let i = 0; i < lines.length; i++) {
@@ -62,30 +82,81 @@ export function annotateSubagentText(text: string): string {
     if (!m) continue;
     listed = true;
     const tool = toolName(m[2]);
-    let rest = m[3];
-    if (/; Model: /.test(rest)) {
-      rest = rest
-        .replace(/; Tools: [^;]*/, `; Tools: ${tool}'s own, as its adapter allows`)
-        .replace(/; Model: [^;]*/, `; Model: ${ownModel(tool)}`)
-        .replace(/; Thinking: [^;]*/, "");
-    } else {
-      rest = `${rest} [runs the ${tool} CLI with its own login and model]`;
-    }
-    lines[i] = m[1] + rest;
+    const rest = m[3].includes("; Model: ") ? rewriteFields(m[3], tool) : m[3].endsWith(PLAIN_SUFFIX(tool)) ? m[3] : m[3] + PLAIN_SUFFIX(tool);
+    if (rest !== m[3]) { lines[i] = m[1] + rest; changed = true; }
   }
-  // get: a "Runner: external-cli <command>" line; its "Model:" line is the one to correct.
-  const runner = lines.findIndex((l) => /^Runner: external-cli \S+/.test(l));
-  if (runner >= 0) {
+
+  // get: the header, up to "System Prompt:", holds "Runner: external-cli <command>" and the Model line to correct.
+  const promptAt = lines.indexOf("System Prompt:");
+  const header = promptAt < 0 ? lines.length : promptAt;
+  const runner = lines.slice(0, header).findIndex((l) => /^Runner: external-cli \S+/.test(l));
+  if (runner >= 0 && !lines[runner].includes(" CLI: its own ")) {
     const tool = toolName(lines[runner].split(/\s+/)[2]);
-    for (let i = 0; i < lines.length && lines[i] !== "System Prompt:"; i++) {
+    for (let i = 0; i < header; i++) {
       if (/^Model: /.test(lines[i])) lines[i] = `Model: ${ownModel(tool)}`;
       if (/^Thinking: /.test(lines[i])) lines[i] = `Thinking: ${tool}'s own`;
     }
     lines[runner] = `${lines[runner]} (the ${tool} CLI: its own login, model and tools)`;
+    changed = true;
   }
+
+  // models: "Agent: <name>\nEffective model:\n  <model>\nSource: ...\nThinking: ..." for one agent, or
+  // "<name>\n  model:\n    <model>\n  source: ...\n  thinking: ..." per agent.
+  if (cli?.size && /^Subagent models?$/.test(lines[0] ?? "")) {
+    const one = /^Agent: (\S+)$/.exec(lines.find((l) => l.startsWith("Agent: ")) ?? "");
+    if (one && cli.has(one[1])) {
+      const tool = toolName(cli.get(one[1])!);
+      const at = lines.indexOf("Effective model:");
+      if (at >= 0 && lines[at + 1]?.startsWith("  ") && !lines[at + 1].includes("do not apply")) {
+        lines[at + 1] = `  ${ownModel(tool)}`;
+        for (let i = at + 2; i < lines.length && lines[i] !== "Current session model:"; i++) {
+          if (/^Source: /.test(lines[i])) lines[i] = `Source: the ${tool} CLI (${cli.get(one[1])})`;
+          if (/^Thinking: /.test(lines[i])) lines[i] = `Thinking: ${tool}'s own`;
+        }
+        changed = true;
+      }
+    } else if (!one) {
+      for (let i = 0; i < lines.length; i++) {
+        const cmd = cli.get(lines[i]);
+        if (!cmd || lines[i + 1] !== "  model:" || !lines[i + 2]?.startsWith("    ") || lines[i + 2].includes("do not apply")) continue;
+        const tool = toolName(cmd);
+        lines[i + 2] = `    ${ownModel(tool)}`;
+        for (let j = i + 3; j < lines.length && lines[j].startsWith("  "); j++) {
+          if (/^  source: /.test(lines[j])) lines[j] = `  source: the ${tool} CLI (${cmd})`;
+          if (/^  thinking: /.test(lines[j])) lines[j] = `  thinking: ${tool}'s own`;
+        }
+        changed = true;
+      }
+    }
+  }
+
   if (listed) {
     const head = lines.findIndex((l) => /^Executable agents/.test(l));
     lines.splice(head >= 0 ? head + 1 : 0, 0, CLI_NOTE);
+    changed = true;
   }
-  return lines.join("\n");
+  return changed ? lines.join("\n") : text;
+}
+
+/**
+ * The command-line agents pi-subagents resolves in `cwd`, from the package's own discovery (name and
+ * alias -> command). Undefined when the package cannot be loaded; callers then leave the text alone.
+ */
+export async function discoverCliNames(cwd: string): Promise<CliNames | undefined> {
+  try {
+    const { join } = await import("node:path");
+    const { homedir } = await import("node:os");
+    const { pathToFileURL } = await import("node:url");
+    const agentDir = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
+    const pkg = process.env.KERNAL_SUBAGENTS_PKG || process.env.MGM_SUBAGENTS_PKG || join(agentDir, "npm", "node_modules", "pi-subagents");
+    const agents = await import(pathToFileURL(join(pkg, "src", "agents", "agents.js")).href);
+    const names: CliNames = new Map();
+    for (const a of agents.discoverAgents(cwd, "both").agents ?? []) {
+      const info = cliInfo(a);
+      if (!info) continue;
+      names.set(a.name, info.command);
+      for (const alias of a.aliases ?? []) names.set(alias, info.command);
+    }
+    return names;
+  } catch { return undefined; }
 }

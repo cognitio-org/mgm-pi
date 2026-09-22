@@ -563,7 +563,10 @@ describe("/admin end to end (real server, real extensions, fake pi)", async () =
         assert.deepEqual(Object.keys(JSON.parse(r.text).errors).sort(), ["claude-code.model", "codex-exec.thinking"]);
         assert.match(JSON.parse(r.text).errors["claude-code.model"], /runs the Claude Code CLI/);
         assert.deepEqual(store.read(), before, "nothing was written, not even the valid scout change");
-        assert.equal((await post("/subagents/settings", { overrides: { "claude-code": { model: "" } } })).status, 200, "clearing one is always allowed");
+        // One saved before this rule existed is never used; clearing it is always allowed.
+        writeFileSync(join(store.dir, "settings.json"), JSON.stringify({ ...before, subagents: { ...before.subagents, agentOverrides: { ...before.subagents.agentOverrides, "claude-code": { model: "litellm/claude-sonnet-5" } } } }));
+        assert.equal((await post("/subagents/settings", { overrides: { "claude-code": { model: "", thinking: "" } } })).status, 200);
+        assert.ok(!("claude-code" in (store.read().subagents.agentOverrides ?? {})));
       });
 
       test("a customised copy keeps running the tool, and saves its prompt through the editor", async () => {

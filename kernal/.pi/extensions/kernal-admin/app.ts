@@ -1185,6 +1185,7 @@ function renderSubagents(view) {
 
 // Command-line agents hand the task to another coding tool installed here (Claude Code, Codex, Cursor),
 // which answers with its own login, model and tools. One tile per tool: installed or not, and its agents.
+function cliState(c) { return c.unknown ? pill("off", c.machine ? "on " + c.machine : "not checked") : c.installed ? pill("ok", "installed") : pill("warn", "not installed"); }
 function cliCard(agents) {
   var byCmd = {}, order = [];
   agents.forEach(function (a) { if (!byCmd[a.cli.command]) { byCmd[a.cli.command] = []; order.push(a.cli.command); } byCmd[a.cli.command].push(a); });
@@ -1195,10 +1196,10 @@ function cliCard(agents) {
         el("span", { class: "tag" + (a.cli.writes ? " warn" : ""), title: a.cli.writes ? "May change files in the workspace" : "Analyses only; changes nothing", text: a.cli.writes ? "writes files" : "read-only" }));
     }));
     return el("div", { class: "cli-tool" },
-      el("div", { class: "top" }, el("h3", { text: c.tool }), c.installed ? pill("ok", "installed") : pill("warn", "not installed")),
-      el("div", { class: "note" }, "Runs ", el("code", { text: cmd }), c.installed ? ", with its own login and model." : ": it is not on this machine's PATH, so these agents cannot run yet."),
+      el("div", { class: "top" }, el("h3", { text: c.tool }), cliState(c)),
+      el("div", { class: "note" }, "Runs ", el("code", { text: cmd }), c.installed || c.unknown ? ", with its own login and model." + (c.unknown ? " " + c.reason + "." : "") : ": it is not on this machine's PATH, so these agents cannot run yet."),
       agentsList,
-      !c.installed && c.install ? el("div", {}, el("div", { class: "note", text: "Install it, then sign in once in a terminal:" }), el("pre", { class: "mono small", text: c.install })) : null,
+      !c.installed && !c.unknown && c.install ? el("div", {}, el("div", { class: "note", text: "Install it, then sign in once in a terminal:" }), el("pre", { class: "mono small", text: c.install })) : null,
       c.installed ? el("div", { class: "note", text: "Installed is not the same as signed in: if a run fails, run " + cmd + " once in a terminal and sign in." }) : null);
   });
   return card("Command-line agents",
@@ -1251,7 +1252,21 @@ function drawSubagents(view, d, m) {
         el("td", { class: "resolves" }, el("div", { class: "mono", text: a.model || "the parent's model" }), el("div", { class: "note", text: "from " + a.modelFrom + (a.thinking ? " · thinking " + a.thinking : "") })));
     })));
   var modelsCard = card("Models", "Which model each agent runs on. An override beats the agent file's own model and the default.", null, [el("div", { class: "rows" }, defRow), el("div", { class: "table-wrap" }, mtable),
-    cliActive.length ? el("p", { class: "note where" }, icon("info", 13), " Command-line agents are not listed here: " + cliActive.map(function (a) { return a.name; }).join(", ") + " run another tool, which picks its own model.") : null]);
+    cliActive.length ? el("p", { class: "note where" }, icon("info", 13), " Command-line agents are not listed here: " + cliActive.map(function (a) { return a.name; }).join(", ") + " run another tool, which picks its own model.") : null,
+    staleCliOverrides()]);
+  // An override saved for a command-line agent (before this page refused them) is never used; offer to remove it.
+  function staleCliOverrides() {
+    var stale = cliActive.filter(function (a) { var o = d.settings.overrides[a.name]; return o && (o.model || o.thinking); });
+    if (!stale.length) return null;
+    var btn = el("button", { class: "btn sm", type: "button" }, "Remove them");
+    btn.addEventListener("click", function () {
+      var body = { overrides: {} };
+      stale.forEach(function (a) { body.overrides[a.name] = { model: "", thinking: "" }; });
+      btn.disabled = true;
+      api("POST", "/subagents/settings", body).then(function () { toast("Removed the unused overrides", "ok"); show(); }, function (e) { btn.disabled = false; toast(e.message, "error"); });
+    });
+    return el("div", { class: "callout warn" }, icon("alert"), el("div", { class: "t" }, "Settings hold overrides for " + stale.map(function (a) { return a.name; }).join(", ") + ", which run another tool and never use them. ", btn));
+  }
 
   // ---- agents ----
   var q = el("input", { type: "search", placeholder: "Filter by name, description or source", "aria-label": "Filter agents", autocomplete: "off" });
@@ -1274,7 +1289,7 @@ function drawSubagents(view, d, m) {
       el("td", {}, srcTag(a.source), status),
       a.cli
         ? el("td", {}, el("div", { class: "small" }, el("span", { class: "tag cli", title: "Runs the " + a.cli.tool + " CLI, which uses its own login and model", text: a.cli.tool + "'s own" })),
-            el("div", { class: "note", text: "runs " + a.cli.command + (a.cli.installed ? "" : " · not installed") }))
+            el("div", { class: "note", text: "runs " + a.cli.command + (a.cli.unknown ? " · " + (a.cli.machine ? "on " + a.cli.machine : "not checked") : a.cli.installed ? "" : " · not installed") }))
         : el("td", {}, el("div", { class: "mono small", text: a.model || "parent's model" }), el("div", { class: "note", text: a.tools ? a.tools.length + " tools" : "default tools" })),
       actions);
     tbody.appendChild(tr);
@@ -1509,8 +1524,8 @@ function drawEditor(view, r, list, models, a) {
     kv(extraKeys.map(function (k) { return [k, el("span", { class: "mono", text: a.extra[k] })]; }))) : null;
   var cli = row && row.cli;
   var cliRow = cli ? frow("f-agent-cli", "Runs", "Model, thinking and tools come from this tool, not from Kernal.",
-    el("div", {}, el("span", { class: "tag cli", text: cli.tool + " CLI" }), " ", el("code", { text: cli.command }), " ", cli.installed ? pill("ok", "installed") : pill("warn", "not installed"), " ", el("span", { class: "tag" + (cli.writes ? " warn" : ""), text: cli.writes ? "writes files" : "read-only" })),
-    el("div", { class: "note" }, "The description and the prompt below are what this page changes: the prompt is sent to " + cli.tool + " with every task." + (!cli.installed && cli.install ? " Install it with: " : ""), !cli.installed && cli.install ? el("code", { text: cli.install }) : null)) : null;
+    el("div", {}, el("span", { class: "tag cli", text: cli.tool + " CLI" }), " ", el("code", { text: cli.command }), " ", cliState(cli), " ", el("span", { class: "tag" + (cli.writes ? " warn" : ""), text: cli.writes ? "writes files" : "read-only" })),
+    el("div", { class: "note" }, "The description and the prompt are the parts you can change: the prompt is sent to " + cli.tool + " with every task." + (!cli.installed && !cli.unknown && cli.install ? " Install it with: " : ""), !cli.installed && !cli.unknown && cli.install ? el("code", { text: cli.install }) : null)) : null;
   add(view, card("Definition", cli ? "The frontmatter: this agent runs the " + cli.tool + " CLI." : "The frontmatter: how pi-subagents runs this agent.", null,
     [el("div", { class: "rows" }, cli ? [nameRow, scopeRow, descRow, cliRow] : [nameRow, scopeRow, descRow, modelRow, thRow, toolsRow]), adv, extra]));
 
@@ -1670,7 +1685,7 @@ function drawEditor(view, r, list, models, a) {
     var other = row && v.file !== row.file;
     add(resolvedBox, card("What pi-subagents resolves", other ? "A delegation to " + v.name + " does not get this file: the " + v.source + " agent of the same name wins." : note || "Read back from the package: this is exactly what a delegation to " + v.name + " gets.", pill(other ? "warn" : "ok", other ? v.source + " copy wins" : "this file wins"), kv([
       ["File", el("span", { class: "mono", text: v.file })],
-      v.cli ? ["Runs", el("span", {}, el("span", { text: "the " + v.cli.tool + " CLI (" }), el("code", { text: v.cli.command }), el("span", { text: "), " + (v.cli.installed ? "installed" : "not installed") }))] : null,
+      v.cli ? ["Runs", el("span", {}, el("span", { text: "the " + v.cli.tool + " CLI (" }), el("code", { text: v.cli.command }), el("span", { text: "), " + (v.cli.unknown ? v.cli.reason : v.cli.installed ? "installed" : "not installed") }))] : null,
       ["Model", v.cli ? v.cli.tool + "'s own: set in " + v.cli.tool + "; Kernal's model settings do not apply" : el("span", {}, el("span", { class: "mono", text: v.model || "the parent's model" }), el("span", { class: "note", text: "  from " + v.modelFrom }))],
       v.cli ? null : ["Thinking", v.thinking || "not set"],
       ["Tools", v.cli ? v.cli.tool + "'s own, as its adapter allows" : v.tools ? el("span", { class: "mono", text: v.tools.join(", ") }) : "default tools"],
@@ -1716,8 +1731,10 @@ function drawEditor(view, r, list, models, a) {
     var problems = 0;
     var np = nameProblemUI(v.name); nameRow.setError(np); if (np) problems++;
     descRow.setError(v.description ? null : "a description is required"); if (!v.description) problems++;
-    if (v.tools && !v.tools.length) { toolsRow.setError("pick at least one tool, or use the default tools"); problems++; } else toolsRow.setError(null);
-    if (v.model && !/^[A-Za-z0-9._-]+\/[^\s,]+$/.test(v.model)) { modelRow.setError("a provider/model id, e.g. litellm/claude-sonnet-5"); problems++; }
+    if (!cli) {   // a command-line agent's model, thinking and tools are not on the page, so they are not checked here
+      if (v.tools && !v.tools.length) { toolsRow.setError("pick at least one tool, or use the default tools"); problems++; } else toolsRow.setError(null);
+      if (v.model && !/^[A-Za-z0-9._-]+\/[^\s,]+$/.test(v.model)) { modelRow.setError("a provider/model id, e.g. litellm/claude-sonnet-5"); problems++; }
+    }
     if (problems) { toast("Nothing saved: fix the highlighted fields", "error"); var inv = view.querySelector("[aria-invalid=true]"); if (inv) inv.focus(); return; }
     var body = { mode: isNew ? "create" : "update", scope: isNew ? scope : row.source, name: v.name, description: v.description, tools: v.tools, model: v.model, thinking: v.thinking, prompt: v.prompt };
     if (!isNew) body.original = row.name;
@@ -1735,8 +1752,14 @@ function drawEditor(view, r, list, models, a) {
       saveBtn.replaceChildren(isNew ? "Create agent" : "Save"); changed();
       var errs2 = e.data && e.data.errors;
       if (errs2) {
-        for (var k in errs2) { if (k === "prompt") { promptErr.hidden = false; clear(promptErr); add(promptErr, [icon("alert", 14), el("span", { text: errs2[k] })]); } else if (errs[k]) errs[k].setError(errs2[k]); }
-        toast("Nothing saved: fix the highlighted fields", "error");
+        var unseen = [];
+        for (var k in errs2) {
+          if (k === "prompt") { promptErr.hidden = false; clear(promptErr); add(promptErr, [icon("alert", 14), el("span", { text: errs2[k] })]); }
+          else if (errs[k] && !(cli && (k === "model" || k === "thinking" || k === "tools"))) errs[k].setError(errs2[k]);
+          else unseen.push(k + ": " + errs2[k]);
+        }
+        if (unseen.length) add(resolvedBox, callout("error", "Not saved. The file has fields this page does not show; fix them in " + row.file + ". " + unseen.join("; ")));
+        toast(unseen.length ? "Nothing saved: see the message above" : "Nothing saved: fix the highlighted fields", "error");
       } else { toast(e.message, "error"); add(resolvedBox, callout("error", e.message)); }
     });
   }

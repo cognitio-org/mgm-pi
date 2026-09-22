@@ -1,0 +1,38 @@
+outfitter/deploy/mailbox.sh
+  s_b767cc53a6419e::t_c8d909dedbf388 24-26
+outfitter/deploy/service.sh
+  s_b767cc53a6419e::t_5f4c59edcbfd3d 112
+  s_b767cc53a6419e::t_c8d909dedbf388 168-171,173
+outfitter/landing/Dockerfile
+  s_b767cc53a6419e::t_7eab03871e6e82 2-4
+outfitter/deploy/env.sh
+  s_b767cc53a6419e::t_5f4c59edcbfd3d 119-121,124-134,145
+  s_b767cc53a6419e::t_c8d909dedbf388 122-123,135-144
+outfitter/deploy/README.md
+  s_b767cc53a6419e::t_2c21c16ce26905 213,216-227,229
+outfitter/deploy/agent-job.sh
+  s_b767cc53a6419e::t_2561c83af64a33 6-7,11,18
+  s_b767cc53a6419e::t_38b382b0254207 19
+outfitter/landing/security-headers.conf
+  s_b767cc53a6419e::t_544b40f8ebcbda 8
+  s_b767cc53a6419e::t_7eab03871e6e82 5-7
+outfitter/deploy/landing.sh
+  s_b767cc53a6419e::t_4e7c4db4f4cd65 5
+  s_b767cc53a6419e::t_47248da0cbe61c 46,57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "caee5b2bc5316c6d87e9c2098cc4031c072736db",
+  "prompts": {},
+  "sessions": {
+    "s_b767cc53a6419e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9a3de148-3f07-4a78-97f1-f0ed4c46bad8",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

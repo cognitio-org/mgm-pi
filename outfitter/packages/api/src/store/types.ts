@@ -127,7 +127,7 @@ export interface Run {
 /** E5.5 mailbox: a message addressed to a session, not to a run, so it outlives a run that dies
  * before it is ready. Delivered at least once: claimed with a lease, acked by agentd once pi has
  * accepted it, re-claimable after the lease expires. */
-export type MailStatus = "queued" | "delivered" | "acked" | "dead";
+export type MailStatus = "queued" | "delivered" | "acked" | "dead" | "held";
 
 export interface MailSender {
   kind: "user" | "session" | "system";
@@ -155,6 +155,11 @@ export interface Mail {
   ackedAt?: string;
   /** Set when attempts ran out (MailService.sweep); the sender, if a session, gets a bounce. */
   deadAt?: string;
+  /** Cloud-fixes 13: mail-driven wakes started for this mail since a run of its session last
+   * validated the protocol. Reaching MAIL_MAX_UNVALIDATED_WAKES parks the mail as `held`. */
+  unvalidatedWakes?: number;
+  /** When the mail was parked as `held` (a deploy mismatch: runs start but never validate). */
+  heldAt?: string;
 }
 
 export interface MailCollection {
@@ -171,6 +176,19 @@ export interface MailCollection {
   chargeWake(sessionId: string, nowIso: string, maxAttempts: number): Promise<void>;
   /** Returns mail delivered to runId but not acked to the queue (the run has ended). */
   releaseRun(runId: string): Promise<void>;
+  /** Cloud-fixes 13: counts a mail-driven wake against every deliverable mail of the session
+   * (Mail.unvalidatedWakes). Cleared by markValidated once a run of the session validates. */
+  noteWake(sessionId: string, nowIso: string, maxAttempts: number): Promise<void>;
+  /** A run of the session validated the protocol: its wakes were not wasted, so reset the count. */
+  markValidated(sessionId: string): Promise<void>;
+  /** Parks the session's deliverable mail as `held` when the session already has held mail, or any
+   * of it has reached maxUnvalidatedWakes. Returns how many of the session's mail are held after. */
+  holdIfStuck(sessionId: string, nowIso: string, maxAttempts: number, maxUnvalidatedWakes: number): Promise<number>;
+  /** Returns held mail (of one session, or of every session) to `queued` with a fresh wake count.
+   * Returns the sessions that had mail released. */
+  releaseHeld(sessionId?: string): Promise<string[]>;
+  /** How many of a session's mail are held. */
+  countHeld(sessionId: string): Promise<number>;
   /** Marks mail that ran out of attempts dead and returns it (for bounces). */
   expireExhausted(nowIso: string, maxAttempts: number): Promise<Mail[]>;
   /** Mail a session has sent since the given time (the per-sender rate limit). */

@@ -375,6 +375,13 @@ export class AgentLink {
       await this.store.mail.chargeWake(run.sessionId, chargeNow, MAIL_MAX_ATTEMPTS);
       await this.store.runs.update(runId, { protocolAcked: true, updatedAt: chargeNow });
     }
+    // Cloud-fixes 13: this run speaks the protocol, so the session's wakes weren't wasted (reset
+    // Mail.unvalidatedWakes), and whatever deploy mismatch parked mail as `held` -- for this
+    // session or any other -- is evidently fixed: return it all to the queue. This session's mail
+    // goes out over this socket below; other sessions' is woken by the next /tick sweep.
+    await this.store.mail.markValidated(run.sessionId);
+    const released = await this.store.mail.releaseHeld();
+    if (released.length > 0) request.log.info({ runId, sessions: released }, "agentlink: protocol validated, released held mail");
 
     this.sockets.set(runId, socket);
     socket.on("close", () => {

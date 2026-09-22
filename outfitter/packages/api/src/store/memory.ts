@@ -350,6 +350,50 @@ class MemoryMail implements MailCollection {
     }
   }
 
+  async noteWake(sessionId: string, nowIso: string, maxAttempts: number): Promise<void> {
+    for (const m of this.rows.values()) {
+      if (m.sessionId === sessionId && isDeliverable(m, nowIso, maxAttempts)) m.unvalidatedWakes = (m.unvalidatedWakes ?? 0) + 1;
+    }
+  }
+
+  async markValidated(sessionId: string): Promise<void> {
+    for (const m of this.rows.values()) {
+      if (m.sessionId === sessionId && m.status !== "held") delete m.unvalidatedWakes;
+    }
+  }
+
+  async holdIfStuck(sessionId: string, nowIso: string, maxAttempts: number, maxUnvalidatedWakes: number): Promise<number> {
+    const mine = [...this.rows.values()].filter((m) => m.sessionId === sessionId);
+    const deliverable = mine.filter((m) => isDeliverable(m, nowIso, maxAttempts));
+    const stuck = mine.some((m) => m.status === "held") || deliverable.some((m) => (m.unvalidatedWakes ?? 0) >= maxUnvalidatedWakes);
+    if (stuck) {
+      for (const m of deliverable) {
+        m.status = "held";
+        m.heldAt = nowIso;
+        delete m.lockedUntil;
+      }
+    }
+    return mine.filter((m) => m.status === "held").length;
+  }
+
+  async releaseHeld(sessionId?: string): Promise<string[]> {
+    const released = new Set<string>();
+    for (const m of this.rows.values()) {
+      if (m.status !== "held" || (sessionId && m.sessionId !== sessionId)) continue;
+      m.status = "queued";
+      delete m.heldAt;
+      delete m.unvalidatedWakes;
+      released.add(m.sessionId);
+    }
+    return [...released];
+  }
+
+  async countHeld(sessionId: string): Promise<number> {
+    let n = 0;
+    for (const m of this.rows.values()) if (m.sessionId === sessionId && m.status === "held") n++;
+    return n;
+  }
+
   async expireExhausted(nowIso: string, maxAttempts: number): Promise<Mail[]> {
     const dead: Mail[] = [];
     for (const m of this.rows.values()) {

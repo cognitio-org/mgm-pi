@@ -10,6 +10,12 @@ import type { RunManager } from "./runs.ts";
 export const MAIL_LEASE_MS = 60_000;
 /** Claims and mail-driven wakes both count: room for a wake plus a delivery, three times over. */
 export const MAIL_MAX_ATTEMPTS = 6;
+/** Cloud-fixes 13: mail-driven wakes whose runs never validate the protocol before the mail is
+ * parked as `held`. Each wake starts a Cloud Run Job execution, so a deploy mismatch that keeps
+ * refusing agentd must not be retried forever. */
+export const MAIL_MAX_UNVALIDATED_WAKES = 3;
+/** Shown on a session with held mail (GET /api/sessions/:id `mailNotice`, and the web). */
+export const MAIL_HELD_NOTICE = "Deploy mismatch: messages held until the service is redeployed";
 export const MAIL_MAX_TEXT = 32_000;
 export const MAIL_MAX_TO = 64;
 /** Per sending session. Bounds what a looping or prompt-injected agent can spend waking others. */
@@ -166,16 +172,34 @@ export class MailService {
    * fault. The charge now happens in agentlink.ts's handleConnection, once per run, the moment that
    * run's `hello` actually passes the token and protocol-version checks (Run.protocolAcked) -- i.e.
    * once we know this run can genuinely speak the protocol, not merely that a wake was started for
-   * it. A session whose runs never reach that point is retried indefinitely rather than exhausting
-   * the mail's attempts (bounded by the same one-active-run-per-session invariant as any other
-   * wake, and by whatever caps the sandbox provider itself has on failed executions).
+   * it.
+   *
+   * Cloud-fixes 13: a session whose runs never reach that point is no longer retried forever --
+   * every wake here counts against the mail (Mail.unvalidatedWakes, reset whenever a run of the
+   * session validates), and after MAIL_MAX_UNVALIDATED_WAKES the mail is parked as `held` (not
+   * dead: nothing is thrown away) until a run validates the protocol again or the user presses
+   * Retry (releaseHeld). A session that already has held mail holds new mail too, so each new
+   * message doesn't buy three more doomed Cloud Run executions.
    */
-  async wakeForMail(sessionId: string): Promise<"active" | "none" | "woken"> {
+  async wakeForMail(sessionId: string): Promise<"active" | "none" | "woken" | "held"> {
     if (await this.store.runs.findActiveForSession(sessionId)) return "active";
     const now = new Date().toISOString();
     if (!(await this.store.mail.hasDeliverable(sessionId, now, MAIL_MAX_ATTEMPTS))) return "none";
+    const held = await this.store.mail.holdIfStuck(sessionId, now, MAIL_MAX_ATTEMPTS, MAIL_MAX_UNVALIDATED_WAKES);
+    if (held > 0) {
+      this.log(`mail: holding ${held} message(s) for session ${sessionId}: its runs never validated the protocol`);
+      return "held";
+    }
+    await this.store.mail.noteWake(sessionId, now, MAIL_MAX_ATTEMPTS);
     await this.runs.wake(sessionId, { mailDriven: true });
     return "woken";
+  }
+
+  /** The user pressed Retry on the "Deploy mismatch" notice: return the session's held mail to the
+   * queue with a fresh wake budget and try one wake. */
+  async retryHeld(sessionId: string): Promise<{ released: boolean; result: "active" | "none" | "woken" | "held" }> {
+    const released = (await this.store.mail.releaseHeld(sessionId)).length > 0;
+    return { released, result: await this.wakeForMail(sessionId) };
   }
 
   /** wakeForMail that logs instead of throwing; true if it started a run. */

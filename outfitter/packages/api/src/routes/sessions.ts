@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { RouteContext } from "./context.ts";
 import type { Session, PiEntry } from "../store/types.ts";
-import { MAIL_MAX_TEXT } from "../mail.ts";
+import { MAIL_HELD_NOTICE, MAIL_MAX_TEXT } from "../mail.ts";
 
 const SESSION_VERSION = 3; // matches pi's CURRENT_SESSION_VERSION; keeps export.jsonl pi-compatible
 
@@ -74,7 +74,9 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
     // teleport extension's OutfitterStore poll "has the active run stopped yet?" without a second
     // request; GET /api/sessions already computes the same thing per-row via summarize().
     const run = await ctx.store.runs.findActiveForSession(session.id);
-    return { ...session, runState: run?.state };
+    // Cloud-fixes 13: mail parked because this session's runs never validated the protocol.
+    const heldMail = await ctx.store.mail.countHeld(session.id);
+    return { ...session, runState: run?.state, heldMail, ...(heldMail > 0 ? { mailNotice: MAIL_HELD_NOTICE } : {}) };
   });
 
   app.post("/api/sessions/:id/stop", async (req, reply) => {
@@ -250,6 +252,17 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     const run = await postUserMail(ctx, session.id, req.identity?.email, body.text, body.behavior);
     // 202: stored, but no run could be started yet; it will be delivered when one is.
     return reply.code(run ? 200 : 202).send({ run });
+  });
+
+  // Cloud-fixes 13: the web's Retry on the "Deploy mismatch" notice -- release this session's held
+  // mail with a fresh wake budget and wake once.
+  app.post("/api/sessions/:id/mail/retry", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const { released, result } = await ctx.mail.retryHeld(session.id);
+    if (result === "active") await ctx.agentLink.deliverMailForSession(session.id);
+    const heldMail = await ctx.store.mail.countHeld(session.id);
+    return { released, result, heldMail };
   });
 
   app.post("/api/sessions/:id/abort", async (req, reply) => {

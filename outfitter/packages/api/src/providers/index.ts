@@ -40,7 +40,6 @@ export async function createProvider(config: Config): Promise<SandboxProvider> {
         project: config.gcpProject,
         region: config.gcpRegion,
         job: config.cloudRunJob,
-        apiOrigin: config.origin,
       });
     }
     default:

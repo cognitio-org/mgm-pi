@@ -1,0 +1,31 @@
+outfitter/deploy/service.sh
+  s_b767cc53a6419e::t_110947d766fd9f 131-137,139-144
+outfitter/packages/api/src/config.ts
+  s_b767cc53a6419e::t_1c1aca1f3311a4 146-165
+outfitter/packages/api/src/main.ts
+  s_b767cc53a6419e::t_be4598fc578385 1,15
+outfitter/packages/api/src/runs.ts
+  s_b767cc53a6419e::t_b8bdb6a15445dd 11,60
+outfitter/packages/api/test/cloudrun.test.ts
+  s_b767cc53a6419e::t_a917fe55da4115 19
+outfitter/packages/api/test/config.test.ts
+  s_b767cc53a6419e::t_48d46589d1c185 7,59-72
+outfitter/packages/api/test/runs.test.ts
+  s_b767cc53a6419e::t_f637fb1b9b4328 29-45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "4aef14c9b3020057a364a3b4d568e9327f748922",
+  "prompts": {},
+  "sessions": {
+    "s_b767cc53a6419e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9a3de148-3f07-4a78-97f1-f0ed4c46bad8",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

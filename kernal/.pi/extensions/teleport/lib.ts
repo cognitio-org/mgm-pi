@@ -224,15 +224,12 @@ export function parseOwnerRepo(remoteUrl: string): string | undefined {
   return undefined;
 }
 
-/** True when `git status --porcelain` produced any output. */
-export const isWorkingTreeDirty = (porcelain: string): boolean => porcelain.trim().length > 0;
-
-/** From `git status --porcelain=v2 --branch` output: true if the branch has no upstream, or is ahead of it. */
-export function needsPush(branchStatus: string): boolean {
-  if (!/^# branch\.upstream /m.test(branchStatus)) return true;
-  const ab = branchStatus.match(/^# branch\.ab \+(\d+) -(\d+)/m);
-  return ab ? Number(ab[1]) > 0 : false;
-}
+/**
+ * "Is the tree dirty" and "does this branch need pushing" live in the shared git module, so
+ * teleport and kernal-github cannot drift apart on what those mean (kernal/docs/git-github-spec.md).
+ * Re-exported under teleport's own names, which its command code and its CLI already use.
+ */
+export { dirtyFromPorcelain as isWorkingTreeDirty, needsPushFromBranchStatus as needsPush } from "../_shared/git.ts";
 
 /** Checks that the manifest's origin repo matches the current checkout's, Claude-Code-teleport style. */
 export function verifyOwnerRepo(localOwnerRepo: string | undefined, expectedOwnerRepo: string): string | undefined {

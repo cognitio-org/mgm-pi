@@ -17,6 +17,17 @@ describe("vocabulary", () => {
   it("vocabSubtitle can use the singular form", () => {
     expect(vocabSubtitle("session", "one")).toBe("Floppy · a conversation with an agent you can continue later");
   });
+
+  it("names the laptop/cloud agent Kernal, not mgm", () => {
+    expect(vocabulary.kernal.one).toBe("Kernal");
+    expect(vocabulary.kernal.hint).toContain("laptop");
+  });
+
+  it("eject and token hints reference Kernal, not mgm", () => {
+    expect(transport.eject.hint).toContain("Kernal");
+    expect(transport.eject.hint.toLowerCase()).not.toContain("mgm");
+    expect(vocabulary.token.hint).toContain("Kernal");
+  });
 });
 
 describe("transportLabel", () => {

@@ -11,7 +11,7 @@ import { StatusPill } from "../components/StatusPill.tsx";
 import { UiRequestPanel } from "../components/UiRequestPanel.tsx";
 import { Working } from "../components/Working.tsx";
 import { withFloppySound } from "../lib/floppy-sound.ts";
-import { transportLabel } from "../lib/vocabulary.ts";
+import { transport, transportLabel } from "../lib/vocabulary.ts";
 
 const RUNNING_STATES = new Set(["running", "idle", "stopping", "queued", "provisioning"]);
 // Subset of RUNNING_STATES that reads as "the agent is actively doing something right now" for
@@ -80,7 +80,7 @@ export function SessionPage() {
   }
 
   async function copyTeleport() {
-    const cmd = `mgm --teleport ${sessionId}`;
+    const cmd = `kernal --teleport ${sessionId}`;
     try {
       await navigator.clipboard.writeText(cmd);
       setCopied(true);
@@ -166,7 +166,7 @@ export function SessionPage() {
         </div>
         <div className="run-controls">
           <StatusPill state={runState} />
-          <button className="btn" onClick={copyTeleport} title="Continue this floppy on your laptop with mgm">
+          <button className="btn" onClick={copyTeleport} title={transport.eject.hint}>
             {copied ? "Copied!" : transportLabel("eject")}
           </button>
           <button

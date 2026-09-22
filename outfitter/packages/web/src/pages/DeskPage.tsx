@@ -367,6 +367,9 @@ export function DeskPage() {
                 expedition. This is the Desk &mdash; open a Tape to start a new Floppy, or the Disk Box to see
                 every floppy you've run.
               </p>
+              <p>
+                {vocabulary.kernal.one} loads your floppies and runs your tapes; Outfitter is where they live.
+              </p>
               <div className="form-actions">
                 <button type="button" className="btn btn-primary" onClick={() => setShowManual(false)}>
                   Close

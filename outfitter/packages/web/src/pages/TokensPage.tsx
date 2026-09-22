@@ -6,9 +6,11 @@ import { vocabSubtitle, vocabulary } from "../lib/vocabulary.ts";
 
 function envLines(linkOrigin: string, token: string): string {
   const api = linkOrigin || "<ask your operator for the link URL>";
-  return [`export OUTFITTER_API=${api}`, `export OUTFITTER_TOKEN=${token}`, "export MGM_TELEPORT_STORE=outfitter"].join(
-    "\n",
-  );
+  return [
+    `export OUTFITTER_API=${api}`,
+    `export OUTFITTER_TOKEN=${token}`,
+    "export KERNAL_TELEPORT_STORE=outfitter",
+  ].join("\n");
 }
 
 function copyToClipboard(text: string) {
@@ -78,8 +80,8 @@ export function TokensPage() {
         <p className="page-subtitle">{vocabSubtitle("token")}</p>
       </div>
       <p className="session-meta">
-        Used by <code>mgm --teleport</code> (and <code>/teleport</code>) to talk to the Outfitter link service from
-        your laptop. Each token acts as you; revoke it if it leaks.
+        Used by <code>kernal --teleport</code> (and <code>/teleport</code>) to talk to the Outfitter link service
+        from your laptop. Each token acts as you; revoke it if it leaks.
       </p>
 
       {error && <div className="error-banner">{error}</div>}

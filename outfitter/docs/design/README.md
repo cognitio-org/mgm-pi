@@ -190,7 +190,7 @@ the corresponding nav item, desk icon or button.
 | New Floppy | Start a new session | `NewSessionDialog` |
 | Drive / Drives | A cloud sandbox running an agent right now | running `Session`/`Run` (provisioning/running) |
 | Peripheral / Peripherals | Model and service providers, and their health | `provider` / `ProviderRow` |
-| Dongle / Dongles | Personal access token for mgm teleport | `token` / `TokenRecord` |
+| Dongle / Dongles | Personal access token for Kernal teleport | `token` / `TokenRecord` |
 | Control Panel | Keys and deployment settings | `/settings` route, `OperatorSettings` |
 | Sysop | Operator role: can change keys and deployment settings | `Identity.operator` |
 | Manual | Help / about | (no code equivalent — a dialog only) |
@@ -199,5 +199,6 @@ the corresponding nav item, desk icon or button.
 | ▶ Play | Wake a floppy and start its run | `wake` |
 | ■ Stop | Stop a floppy's run | `stop` |
 | Break | Interrupt the current turn (like the C64 RUN/STOP key) | `abort` |
-| ⏏ Eject | Continue this floppy on your laptop with mgm | "Open in terminal" / `mgm --teleport` |
+| ⏏ Eject | Continue this floppy on your laptop with Kernal | "Open in terminal" / `kernal --teleport` (`mgm` still works as an alias) |
 | Send | Send a message | `sendMessage` (unchanged — the brief keeps this one as-is) |
+| Kernal | The coding agent that runs sessions, on your laptop or in a cloud Drive | laptop/cloud agent, formerly called "mgm" in the UI; the `mgm` command still works as an alias |

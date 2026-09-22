@@ -24,12 +24,17 @@ export const vocabulary = {
   newSession: { one: "New Floppy", many: "New Floppies", hint: "start a new conversation with a tape" },
   drive: { one: "Drive", many: "Drives", hint: "cloud sandboxes running agents right now" },
   provider: { one: "Peripheral", many: "Peripherals", hint: "model and service providers, and their health" },
-  token: { one: "Dongle", many: "Dongles", hint: "personal access tokens for mgm teleport" },
+  token: { one: "Dongle", many: "Dongles", hint: "personal access tokens for Kernal teleport" },
   settings: { one: "Control Panel", many: "Control Panel", hint: "keys and deployment settings" },
   operator: { one: "Sysop", many: "Sysops", hint: "can change keys and deployment settings" },
   help: { one: "Manual", many: "Manual", hint: "what Outfitter is" },
   trash: { one: "Trash", many: "Trash", hint: "stopped floppies" },
   desk: { one: "Desk", many: "Desk", hint: "the Outfitter desktop" },
+  kernal: {
+    one: "Kernal",
+    many: "Kernal",
+    hint: "the coding agent that runs sessions, on your laptop or in a cloud Drive",
+  },
 } as const satisfies Record<string, VocabEntry>;
 
 export type VocabKey = keyof typeof vocabulary;
@@ -54,7 +59,7 @@ export const transport = {
   eject: {
     glyph: "⏏",
     word: "Eject",
-    hint: "continue this floppy on your laptop with mgm",
+    hint: "continue this floppy on your laptop with Kernal",
   },
 } as const;
 

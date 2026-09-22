@@ -52,6 +52,7 @@ import { usesReducedMotion } from "../shared/motion.ts";
 import { useFixedStepLoop } from "../shared/fixedStep.ts";
 import { readGamepadButtons, readGamepadDirection } from "../shared/gamepad.ts";
 import { usePixelScale } from "../shared/screen.ts";
+import { useModalFocus } from "../shared/modalFocus.ts";
 import { gameSeed, readQueryFlag } from "../shared/query.ts";
 import { C } from "../shared/palette.ts";
 import { spawnBlast, stepBlasts, type Blast } from "../shared/fx.ts";
@@ -77,6 +78,7 @@ interface FloppyRescueProps {
 
 export function FloppyRescue({ onClose }: FloppyRescueProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const overlayRef = useRef<HTMLDivElement | null>(null);
   const stateRef = useRef<GameState>(createInitialState(gameSeed()));
   const inputRef = useRef<GameInput>({ up: false, down: false, left: false, right: false });
   const particlesRef = useRef<Particle[]>([]);
@@ -339,6 +341,11 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
     forceRender((n) => (n + 1) % 1000000);
   }, [reducedMotion, screen, highScore, viewW]);
   useFixedStepLoop(onStep, onRender, loopActive);
+  // Trap Tab inside the dialog and hand focus back to whatever opened it (Trash icon, "SYS
+  // 64738" menu item, ...) on close -- this overlay is mounted outside the React app tree (see
+  // openEasterEgg.tsx), so nothing else does this, and the window-level arrow/WASD listeners
+  // above would otherwise happily fire while focus sits in a background text field.
+  useModalFocus(overlayRef, true);
 
   function restart() {
     stopRotor();
@@ -350,7 +357,7 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
   const fuelPct = Math.max(0, Math.min(100, Math.round(s.fuel)));
 
   return (
-    <div className="easter-overlay" role="dialog" aria-modal="true" aria-label="Floppy Rescue easter egg">
+    <div ref={overlayRef} className="easter-overlay" role="dialog" aria-modal="true" aria-label="Floppy Rescue easter egg">
       <div className="easter-frame easter-frame-game">
         <div className="easter-titlebar">
           <span>** FLOPPY RESCUE **</span>

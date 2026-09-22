@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import type { GameId } from "../shared/highscore.ts";
 import { readHighScore } from "../shared/highscore.ts";
 import { handleMenuKey } from "./menuNav.ts";
+import { useRestoreFocus } from "../shared/modalFocus.ts";
 
 interface Cartridge {
   id: GameId;
@@ -39,6 +40,11 @@ export function GameMenu({ onSelect, onClose }: GameMenuProps) {
   const [focusIndex, setFocusIndex] = useState(0);
   const tileRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const [scores, setScores] = useState<[number, number]>([0, 0]);
+
+  // Hand focus back to whatever opened this menu (Trash icon, "SYS 64738" menu item, ...) once
+  // it closes -- this dialog is mounted outside the React app tree (see openEasterEgg.tsx), so
+  // nothing else does this for us.
+  useRestoreFocus(true);
 
   useEffect(() => {
     setScores([readHighScore("rescue"), readHighScore("dreadnought")]);

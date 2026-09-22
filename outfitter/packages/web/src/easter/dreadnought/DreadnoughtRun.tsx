@@ -28,6 +28,7 @@ import { usesReducedMotion } from "../shared/motion.ts";
 import { useFixedStepLoop } from "../shared/fixedStep.ts";
 import { readGamepadButtons, readGamepadDirection } from "../shared/gamepad.ts";
 import { usePixelScale } from "../shared/screen.ts";
+import { useModalFocus } from "../shared/modalFocus.ts";
 import { gameSeed, readQueryFlag } from "../shared/query.ts";
 import { C } from "../shared/palette.ts";
 import { spawnBlast, stepBlasts, type Blast } from "../shared/fx.ts";
@@ -53,6 +54,7 @@ interface DreadnoughtRunProps {
 
 export function DreadnoughtRun({ onClose }: DreadnoughtRunProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const overlayRef = useRef<HTMLDivElement | null>(null);
   const stateRef = useRef<GameState>(createInitialState(gameSeed()));
   const inputRef = useRef<GameInput>({ up: false, down: false, firing: false });
   const particlesRef = useRef<Particle[]>([]);
@@ -237,6 +239,9 @@ export function DreadnoughtRun({ onClose }: DreadnoughtRunProps) {
     forceRender((n) => (n + 1) % 1000000);
   }, [reducedMotion, screen, highScore, viewW]);
   useFixedStepLoop(onStep, onRender, loopActive);
+  // Trap Tab inside the dialog and hand focus back to whatever opened it on close -- see the
+  // matching comment in rescue/FloppyRescue.tsx.
+  useModalFocus(overlayRef, true);
 
   function restart() {
     startGame();
@@ -245,7 +250,7 @@ export function DreadnoughtRun({ onClose }: DreadnoughtRunProps) {
   const status = stateRef.current.status;
 
   return (
-    <div className="easter-overlay" role="dialog" aria-modal="true" aria-label="Dreadnought Run easter egg">
+    <div ref={overlayRef} className="easter-overlay" role="dialog" aria-modal="true" aria-label="Dreadnought Run easter egg">
       <div className="easter-frame easter-frame-game">
         <div className="easter-titlebar">
           <span>** DREADNOUGHT RUN **</span>

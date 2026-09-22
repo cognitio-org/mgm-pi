@@ -92,6 +92,24 @@ select {
   color: var(--ok);
 }
 
+/* A command rather than a page (SYS 64738 opens KERNAL GAMES): same row as the links. */
+.app-menu-sheet .app-menu-sheet-item {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  color: var(--text-dim);
+  padding: 0.7rem 0.3rem;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  box-shadow: none;
+  background: transparent;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+}
+
 .app-menu-sheet-controls {
   display: flex;
   gap: 0.5rem;

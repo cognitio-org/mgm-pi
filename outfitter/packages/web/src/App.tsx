@@ -16,6 +16,10 @@ import { UnhandledRejectionBanner } from "./components/UnhandledRejectionBanner.
 import { NotFoundError } from "./components/NotFoundError.tsx";
 import { DeviceNotPresent } from "./components/DeviceNotPresent.tsx";
 import { useOnlineStatus } from "./hooks/useOnlineStatus.ts";
+import { EasterEggPage } from "./easter/EasterEggPage.tsx";
+import { useKonamiCode } from "./easter/useKonamiCode.ts";
+import { useSysCommand } from "./easter/useSysCommand.ts";
+import { openEasterEgg } from "./easter/openEasterEgg.tsx";
 
 /** Throws on render, gated to dev builds only -- lets `/panic-test` drive a screenshot of the
  * KERNAL PANIC screen without shipping a way for anyone else to trigger it. */
@@ -57,6 +61,12 @@ export function App() {
       .then((me) => setOperator(!!me.operator))
       .catch(() => setOperator(false));
   }, []);
+
+  // Konami code, anywhere outside a form field -- see docs/easter for why this trigger was
+  // picked. openEasterEgg() dynamic-imports the whole game, so this costs nothing until typed.
+  useKonamiCode(openEasterEgg);
+  // ...and the C64 reset command, `SYS 64738` + Enter, also anywhere outside a form field.
+  useSysCommand(openEasterEgg);
 
   const items = NAV_ITEMS.filter((item) => !item.operatorOnly || operator);
 
@@ -110,6 +120,18 @@ export function App() {
                 {item.label}
               </NavLink>
             ))}
+            <button
+              type="button"
+              className="app-menu-sheet-item"
+              title="KERNAL GAMES"
+              aria-label="SYS 64738: open KERNAL GAMES"
+              onClick={() => {
+                setMenuOpen(false);
+                void openEasterEgg();
+              }}
+            >
+              SYS 64738
+            </button>
             <div className="app-menu-sheet-controls">
               <SoundToggle />
               <ThemeToggle />
@@ -140,6 +162,7 @@ export function App() {
             <Route path="/settings" element={<SettingsPage />} />
             {PANIC_TEST_ENABLED && <Route path="/panic-test" element={<PanicTest />} />}
             <Route path="/manual" element={<ManualPage />} />
+            <Route path="/ready" element={<EasterEggPage />} />
             <Route path="*" element={<NotFoundError subject="This page" />} />
           </Routes>
           </Suspense>

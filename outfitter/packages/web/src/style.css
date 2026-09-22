@@ -351,6 +351,103 @@ table.data-table a {
   font-size: 0.78rem;
 }
 
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Session header: model/thinking/context (E3.8) */
+
+.session-model-info {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.context-usage {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.meter {
+  display: inline-block;
+  width: 80px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.meter i {
+  display: block;
+  height: 100%;
+  background: var(--ok);
+  border-radius: inherit;
+}
+
+.meter.warn i {
+  background: var(--warn);
+}
+
+.meter.error i {
+  background: var(--danger);
+}
+
+/* Gurus page / guru form (E3.7) */
+
+.model-picker {
+  position: relative;
+}
+
+.model-picker-list {
+  position: absolute;
+  z-index: 10;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin: 0.15rem 0 0;
+  padding: 0.25rem;
+  list-style: none;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.model-picker-list li button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 0.3rem 0.4rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.model-picker-list li button:hover {
+  background: var(--bg);
+}
+
+.model-picker-meta {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
+.env-row {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.3rem;
+}
+
+.env-row input {
+  flex: 1;
+}
+
 @media (max-width: 600px) {
   .app-main {
     padding: 0.6rem;

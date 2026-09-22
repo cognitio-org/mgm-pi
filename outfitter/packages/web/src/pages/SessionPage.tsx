@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { api, ApiError, type SessionDetail } from "../api/client.ts";
+import { api, ApiError, type ModelRow, type SessionDetail } from "../api/client.ts";
 import { useSessionStream } from "../hooks/useSessionStream.ts";
 import { entriesToViews } from "../lib/entry-view.ts";
+import { deriveSessionHeader } from "../lib/session-header.ts";
 import { EntryItem } from "../components/EntryItem.tsx";
 import { Composer } from "../components/Composer.tsx";
 import { StatusPill } from "../components/StatusPill.tsx";
@@ -16,6 +17,7 @@ export function SessionPage() {
   const [session, setSession] = useState<SessionDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [models, setModels] = useState<ModelRow[]>([]);
   const { entries, runState, pendingUiRequest, costEstimate } = useSessionStream(sessionId);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
 
@@ -26,6 +28,13 @@ export function SessionPage() {
       .then(setSession)
       .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load session"));
   }, [sessionId]);
+
+  // E3.8: GET /api/models' contextWindow is the only piece deriveSessionHeader can't get from the
+  // transcript itself. Fetched once per page visit (ModelsService caches server-side for 5 min
+  // regardless), not on every entries change.
+  useEffect(() => {
+    api.models().then(setModels).catch(() => setModels([]));
+  }, []);
 
   useEffect(() => {
     transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight });
@@ -75,6 +84,9 @@ export function SessionPage() {
   const active = runState ? RUNNING_STATES.has(runState) : false;
   const canWake = !active;
   const cost = costEstimate ?? session?.cost;
+  const windowById = new Map(models.map((m) => [m.id, m.contextWindow]));
+  const header = deriveSessionHeader(entries, (id) => windowById.get(id));
+  const percent = header.context?.percent;
 
   return (
     <div className="session-view">
@@ -85,6 +97,30 @@ export function SessionPage() {
           <div className="session-meta">
             {session?.guruId} {session?.repo ? `· ${session.repo}${session.branch ? ` @ ${session.branch}` : ""}` : "· no repository"}
             {typeof cost === "number" ? ` · $${cost.toFixed(4)}` : ""}
+          </div>
+          <div className="session-meta session-model-info">
+            {header.model ? <span className="mono">{header.model}</span> : "model unknown yet"}
+            {header.thinking ? ` · thinking ${header.thinking}` : ""}
+            {header.context ? (
+              <span className="context-usage">
+                {" · "}
+                {header.context.window
+                  ? `${header.context.tokens.toLocaleString()} / ${header.context.window.toLocaleString()} tokens`
+                  : `${header.context.tokens.toLocaleString()} tokens`}
+                {typeof percent === "number" && (
+                  <span
+                    className={`meter${percent >= 80 ? " error" : percent >= 50 ? " warn" : ""}`}
+                    role="meter"
+                    aria-label="Context used"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(percent)}
+                  >
+                    <i style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
+                  </span>
+                )}
+              </span>
+            ) : null}
           </div>
         </div>
         <div className="run-controls">

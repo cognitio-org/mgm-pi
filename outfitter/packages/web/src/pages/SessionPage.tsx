@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { api, ApiError, type ModelRow, type SessionDetail } from "../api/client.ts";
 import { useSessionStream } from "../hooks/useSessionStream.ts";
 import { entriesToViews } from "../lib/entry-view.ts";
+import { groupThinkingBlocks } from "../lib/thinking.ts";
 import { deriveSessionHeader } from "../lib/session-header.ts";
 import { EntryItem } from "../components/EntryItem.tsx";
 import { Composer } from "../components/Composer.tsx";
@@ -100,7 +101,7 @@ export function SessionPage() {
     }
   }
 
-  const views = entriesToViews(entries);
+  const views = groupThinkingBlocks(entriesToViews(entries));
   const active = runState ? RUNNING_STATES.has(runState) : false;
   const canWake = !active;
   const cost = costEstimate ?? session?.cost;

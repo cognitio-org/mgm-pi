@@ -324,6 +324,20 @@ select {
   .composer-mode-buttons {
     display: flex;
   }
+
+  /* Collapsed thinking row (EntryItem.tsx): the desktop <details> gives way to an icon+count chip
+   * that expands its body in place -- there's no room for a full-width preview line on a phone. */
+  .thinking-details {
+    display: none;
+  }
+
+  .thinking-chip {
+    display: inline-flex;
+  }
+
+  .thinking-chip[aria-expanded="true"] + .thinking-chip-body {
+    display: block;
+  }
 }
 
 /* ---------- composer mode: <select> on desktop, segmented control on phones ---------- */

@@ -158,3 +158,20 @@ export function TrashIcon(props: IconProps) {
     </Grid>
   );
 }
+
+/** Thinking -- a small pixel thought bubble (a big cloud pixel plus two shrinking "trail" pixels
+ * leading toward where the speaker would be), used as the glyph on a collapsed thinking row's
+ * summary/chip (EntryItem.tsx). */
+export function ThinkingIcon(props: IconProps) {
+  return (
+    <Grid {...props}>
+      <rect x="5" y="2" width="8" height="6" />
+      <rect x="4" y="3" width="1" height="4" />
+      <rect x="13" y="3" width="1" height="4" />
+      <rect x="6" y="1" width="6" height="1" />
+      <rect x="6" y="8" width="6" height="1" />
+      <rect x="4" y="10" width="2" height="2" />
+      <rect x="2" y="13" width="1" height="1" />
+    </Grid>
+  );
+}

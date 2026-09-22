@@ -1,5 +1,8 @@
-import type { EntryView } from "../lib/entry-view.ts";
+import { useState } from "react";
+import type { GroupedEntry } from "../lib/thinking.ts";
+import { thinkingAccessibleLabel, thinkingPreview, thinkingWordLabel } from "../lib/thinking.ts";
 import { Markdown } from "./Markdown.tsx";
+import { ThinkingIcon } from "./DeskIcons.tsx";
 
 // Minimal, framework-free rendering of one EntryView. @earendil-works/pi-web-ui ships web
 // components built on mini-lit against pi-ai's Message shape directly rather than pi's persisted
@@ -28,8 +31,67 @@ function Collapsible({ text: raw, summary }: { text: string | undefined; summary
   );
 }
 
-export function EntryItem({ view }: { view: EntryView }) {
+// Design pass (docs/reports/mobile-desk.md "Thinking..."): thinking blocks are collapsed by
+// default -- a run of consecutive assistant-thinking views (see lib/thinking.ts's
+// groupThinkingBlocks) renders as one collapsed row: a pixel thought-bubble glyph, "Thinking" (or
+// "Thinking ×3" for a group of three), a one-line preview, and a word count. Desktop uses a native
+// <details>/<summary> (free disclosure semantics, no extra JS); phones (<=700px, styles/mobile.css)
+// collapse further to an icon+count chip that expands the same markdown body in place below it.
+// Both are rendered and CSS picks one per breakpoint (the same dual-render pattern Composer.tsx
+// and ProviderStrip.tsx already use), sharing one `expanded` boolean so there's no state to lose
+// switching viewport width mid-session.
+function ThinkingGroup({ blocks }: { blocks: { id: string; text: string }[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const combined = blocks.map((b) => b.text).join("\n\n");
+  const preview = thinkingPreview(blocks[0]?.text ?? "");
+  const label = blocks.length > 1 ? `Thinking ×${blocks.length}` : "Thinking";
+  const ariaLabel = thinkingAccessibleLabel(combined, expanded);
+
+  return (
+    <div className="entry assistant-thinking-group">
+      <details
+        className="thinking-details"
+        open={expanded}
+        onToggle={(e) => setExpanded(e.currentTarget.open)}
+      >
+        <summary aria-label={ariaLabel}>
+          <ThinkingIcon size={14} className="thinking-glyph" />
+          <span className="thinking-summary-label">{label}</span>
+          {!expanded && preview && <span className="thinking-preview">{preview}</span>}
+          <span className="thinking-word-count">{thinkingWordLabel(combined)}</span>
+        </summary>
+        <div className="thinking-body">
+          {blocks.map((b) => (
+            <Markdown key={b.id} text={b.text} />
+          ))}
+        </div>
+      </details>
+
+      <button
+        type="button"
+        className="thinking-chip"
+        aria-expanded={expanded}
+        aria-label={ariaLabel}
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <ThinkingIcon size={14} className="thinking-glyph" />
+        {blocks.length > 1 && <span className="thinking-chip-count">{"×"}{blocks.length}</span>}
+      </button>
+      {expanded && (
+        <div className="thinking-chip-body">
+          {blocks.map((b) => (
+            <Markdown key={b.id} text={b.text} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function EntryItem({ view }: { view: GroupedEntry }) {
   switch (view.kind) {
+    case "thinking-group":
+      return <ThinkingGroup blocks={view.blocks} />;
     case "user":
       return (
         <div className="entry user">
@@ -41,13 +103,6 @@ export function EntryItem({ view }: { view: EntryView }) {
       return (
         <div className="entry assistant-text">
           <div className="entry-label">Assistant</div>
-          <Markdown text={view.text} />
-        </div>
-      );
-    case "assistant-thinking":
-      return (
-        <div className="entry assistant-thinking">
-          <div className="entry-label">Thinking</div>
           <Markdown text={view.text} />
         </div>
       );

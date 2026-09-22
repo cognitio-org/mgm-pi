@@ -310,6 +310,10 @@ with it.
   preview and a token estimate. Every write goes through pi-subagents' own handlers, and afterwards
   the package re-discovers the agent; if what it resolves differs from what was saved, the change is
   rolled back and the reason shown.
+  A **Command-line agents** section shows the agents that run Claude Code, Codex or Cursor: one tile
+  per tool, installed or not (with the install command when it is not), and which of its agents are
+  read-only and which write files. Those agents are labelled with the tool's own model, and a model
+  or thinking override for one is refused, because the tool never receives it.
 
 `/admin index` (or `connections`, `model`, `subagents`) opens straight at that page, `/admin status`
 says where it is, `/admin stop` stops it.
@@ -385,6 +389,24 @@ Agents are Markdown with YAML frontmatter (`name`, `description`, `tools`, `mode
 root. A model set in settings under `subagents.agentOverrides.<name>.model` beats the agent file's
 frontmatter, which beats `subagents.defaultModel`, which beats the chat model. Foreground children
 do not load the parent's extensions, so a `researcher` needs web access granted to it explicitly.
+
+### Command-line agents: Claude Code, Codex and Cursor as subagents
+
+Six builtin agents do not run a model through Kernal at all. They hand the task, with the agent's
+prompt, to another coding tool installed on this machine and bring its answer back:
+
+| agent | runs | may change files |
+|---|---|---|
+| `claude-code`, `claude-code-writer` | Claude Code (`claude`) | only the `-writer` one |
+| `codex-exec`, `codex-exec-writer` | Codex (`codex`) | only the `-writer` one |
+| `cursor-agent`, `cursor-agent-writer` | Cursor (`cursor-agent`) | only the `-writer` one |
+
+Ask for one by name: "ask claude-code to review this diff", "have codex-exec-writer fix the failing
+test". The tool uses its own login, its own model and the tools its adapter allows, so Kernal's
+subagent models do not apply; sign in to the tool once in a terminal first. The runs are
+asynchronous: the agent starts one and checks on it. pi-subagents prints the router model next to
+these agents anyway, so the `kernal-subagents` extension corrects the `subagent` tool's list and
+detail output to say whose model runs them, and `/admin subagents` shows them in their own section.
 
 ## Language servers (`.pi/agent/lsp.json`)
 

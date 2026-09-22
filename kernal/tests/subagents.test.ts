@@ -44,3 +44,58 @@ describe("subagent models", () => {
     }
   });
 });
+
+describe("command-line agents in the subagent tool's own output", () => {
+  const mgmtModule = join(root, ".pi", "npm", "node_modules", "pi-subagents", "src", "agents", "agent-management.js");
+  const skip = !existsSync(mgmtModule) && "extension packages not installed (npm ci in .pi/npm)";
+  const run = async (params: any) => {
+    process.env.PI_CODING_AGENT_DIR = join(root, ".pi");
+    const m = await import("../.pi/npm/node_modules/pi-subagents/src/agents/agent-management.js");
+    const ctx = { cwd: root, model: { provider: "litellm" }, modelRegistry: { getAvailable: () => [] } };
+    return m.handleManagementAction(params.action, params, ctx).content[0].text as string;
+  };
+
+  test("list: the router model is replaced with the tool's own, other agents are untouched", { skip }, async () => {
+    const { annotateSubagentText, CLI_NOTE } = await import("../.pi/extensions/kernal-subagents/lib.ts");
+    const raw = await run({ action: "list", capabilities: true });
+    assert.match(raw, /- claude-code \(builtin, external-cli:claude[^)]*\):.*Model: litellm\//, "the package still prints the router model (if not, this fix can go)");
+    const out = annotateSubagentText(raw);
+    const line = (name: string) => out.split("\n").find((l) => l.startsWith(`- ${name} (`))!;
+    assert.match(line("claude-code"), /Model: Claude Code's own \(set in Claude Code; Kernal's model settings do not apply\)/);
+    assert.match(line("codex-exec-writer"), /Tools: Codex's own, as its adapter allows; Model: Codex's own/);
+    assert.match(line("codex-exec-writer"), /Acceptance role: writer$/, "fields after the model are kept");
+    assert.doesNotMatch(line("cursor-agent"), /litellm\/|Thinking:/);
+    for (const name of ["scout", "worker", "oracle"]) {
+      const before = raw.split("\n").find((l) => l.startsWith(`- ${name} (`));
+      assert.equal(line(name), before, `${name} passes through unchanged`);
+    }
+    assert.equal(out.split("\n")[1], CLI_NOTE, "one note, right under the heading");
+    assert.equal(annotateSubagentText(out.replace(CLI_NOTE + "\n", "")).split(CLI_NOTE).length, 2, "and only one");
+  });
+
+  test("plain list and get are corrected too; text without command-line agents is returned as is", { skip }, async () => {
+    const { annotateSubagentText } = await import("../.pi/extensions/kernal-subagents/lib.ts");
+    const list = annotateSubagentText(await run({ action: "list" }));
+    assert.match(list, /- cursor-agent \(builtin, external-cli:cursor-agent\): .* \[runs the Cursor CLI with its own login and model\]/);
+    const get = annotateSubagentText(await run({ action: "get", agent: "claude-code-writer" }));
+    assert.match(get, /^Model: Claude Code's own/m);
+    assert.match(get, /^Runner: external-cli claude \(the Claude Code CLI: its own login, model and tools\)$/m);
+    const scout = await run({ action: "get", agent: "scout" });
+    assert.equal(annotateSubagentText(scout), scout);
+  });
+
+  test("the extension rewrites subagent list and get results only", async () => {
+    const handlers: Function[] = [];
+    const mod = await import("../.pi/extensions/kernal-subagents/index.ts");
+    mod.default({ on: (ev: string, h: Function) => { if (ev === "tool_result") handlers.push(h); } } as any);
+    assert.equal(handlers.length, 1);
+    const text = "Executable agents:\nBuiltin agents\n- claude-code (builtin, external-cli:claude): Read-only";
+    const ev = (over: any) => ({ toolName: "subagent", input: { action: "list" }, content: [{ type: "text", text }], isError: false, ...over });
+    const r = await handlers[0](ev({}));
+    assert.match(r.content[0].text, /runs the Claude Code CLI/);
+    assert.equal(await handlers[0](ev({ toolName: "bash" })), undefined, "another tool");
+    assert.equal(await handlers[0](ev({ input: { action: "run", agent: "claude-code" } })), undefined, "a run");
+    assert.equal(await handlers[0](ev({ isError: true })), undefined, "an error");
+    assert.equal(await handlers[0](ev({ content: [{ type: "text", text: "- scout (builtin): recon" }] })), undefined, "nothing to correct");
+  });
+});

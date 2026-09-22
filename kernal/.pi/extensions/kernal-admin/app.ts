@@ -251,6 +251,15 @@ pre { background: var(--panel); border: 1px solid var(--line); border-radius: va
 .tag.src-project { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
 .tag.src-package { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
 .tag.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.tag.cli { background: var(--accent-soft); color: var(--accent-ink); border-color: transparent; }
+.cli-tools { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.cli-tool { border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.cli-tool .top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cli-tool h3 { margin: 0; font-size: 15px; }
+.cli-tool ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.cli-tool li { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.cli-tool li a { overflow-wrap: anywhere; }
+.cli-tool pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .table-wrap { overflow-x: auto; margin: 0 -2px; }
 .a-name { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-weight: 600; font-size: 13px; }
 .a-name > span:first-child { white-space: nowrap; }
@@ -1174,6 +1183,30 @@ function renderSubagents(view) {
     .then(function (res) { drawSubagents(view, res[0], res[1]); }, function (e) { failed(view, e); });
 }
 
+// Command-line agents hand the task to another coding tool installed here (Claude Code, Codex, Cursor),
+// which answers with its own login, model and tools. One tile per tool: installed or not, and its agents.
+function cliCard(agents) {
+  var byCmd = {}, order = [];
+  agents.forEach(function (a) { if (!byCmd[a.cli.command]) { byCmd[a.cli.command] = []; order.push(a.cli.command); } byCmd[a.cli.command].push(a); });
+  var tiles = order.map(function (cmd) {
+    var list = byCmd[cmd], c = list[0].cli;
+    var agentsList = el("ul", {}, list.map(function (a) {
+      return el("li", {}, el("a", { href: agentHref(a.editable ? "edit" : "view", a.source, a.name), class: "mono small", text: a.name }),
+        el("span", { class: "tag" + (a.cli.writes ? " warn" : ""), title: a.cli.writes ? "May change files in the workspace" : "Analyses only; changes nothing", text: a.cli.writes ? "writes files" : "read-only" }));
+    }));
+    return el("div", { class: "cli-tool" },
+      el("div", { class: "top" }, el("h3", { text: c.tool }), c.installed ? pill("ok", "installed") : pill("warn", "not installed")),
+      el("div", { class: "note" }, "Runs ", el("code", { text: cmd }), c.installed ? ", with its own login and model." : ": it is not on this machine's PATH, so these agents cannot run yet."),
+      agentsList,
+      !c.installed && c.install ? el("div", {}, el("div", { class: "note", text: "Install it, then sign in once in a terminal:" }), el("pre", { class: "mono small", text: c.install })) : null,
+      c.installed ? el("div", { class: "note", text: "Installed is not the same as signed in: if a run fails, run " + cmd + " once in a terminal and sign in." }) : null);
+  });
+  return card("Command-line agents",
+    "These agents hand the task to another coding tool on this machine and bring its answer back. That tool uses its own login, model and tools, so Kernal's model settings do not apply to them. Ask for one by name, for example \"ask claude-code to review this diff\". They run in the background.",
+    el("span", { class: "tag cli", text: order.length + " tool" + (order.length === 1 ? "" : "s") }),
+    el("div", { class: "cli-tools" }, tiles));
+}
+
 function whereAgentsLive(d) {
   var where = d.dirs.userReal || d.dirs.user;
   var text = d.checkout
@@ -1198,7 +1231,8 @@ function drawSubagents(view, d, m) {
   var defRowPicker = modelPicker({ value: d.settings.defaultModel, providers: providers, none: "Not set: the parent's model", label: "Default model", onChange: function (v) { fs.set("defaultModel", v); defRow.setError(null); } });
   var defRow = frow("f-sub-default", "Default model", "For every agent without a model of its own or an override below", defRowPicker.el, el("div", { class: "note", title: d.settings.file }, "Saved as ", el("code", { text: "subagents.defaultModel" }), " in the agent's settings.json, which upgrades carry forward."));
   fs.track("defaultModel", d.settings.defaultModel || "", defRow);
-  var active = d.agents.filter(function (a) { return a.active; });
+  var active = d.agents.filter(function (a) { return a.active && !a.cli; });
+  var cliActive = d.agents.filter(function (a) { return a.active && a.cli; });
   var cellErr = {};
   var mtable = el("table", { class: "t models" },
     el("thead", {}, el("tr", {}, el("th", { text: "Agent" }), el("th", { text: "Model override" }), el("th", { text: "Thinking override" }), el("th", { text: "Resolves to" }))),
@@ -1216,7 +1250,8 @@ function drawSubagents(view, d, m) {
         mcell, tcell,
         el("td", { class: "resolves" }, el("div", { class: "mono", text: a.model || "the parent's model" }), el("div", { class: "note", text: "from " + a.modelFrom + (a.thinking ? " · thinking " + a.thinking : "") })));
     })));
-  var modelsCard = card("Models", "Which model each agent runs on. An override beats the agent file's own model and the default.", null, [el("div", { class: "rows" }, defRow), el("div", { class: "table-wrap" }, mtable)]);
+  var modelsCard = card("Models", "Which model each agent runs on. An override beats the agent file's own model and the default.", null, [el("div", { class: "rows" }, defRow), el("div", { class: "table-wrap" }, mtable),
+    cliActive.length ? el("p", { class: "note where" }, icon("info", 13), " Command-line agents are not listed here: " + cliActive.map(function (a) { return a.name; }).join(", ") + " run another tool, which picks its own model.") : null]);
 
   // ---- agents ----
   var q = el("input", { type: "search", placeholder: "Filter by name, description or source", "aria-label": "Filter agents", autocomplete: "off" });
@@ -1237,7 +1272,10 @@ function drawSubagents(view, d, m) {
     var tr = el("tr", { class: a.active ? null : "shadowed", "data-q": (a.name + " " + a.description + " " + a.source).toLowerCase() },
       el("td", {}, el("div", { class: "a-name" }, el("span", { text: a.name })), el("div", { class: "a-desc", text: a.withheld ? "Not shown: this file contains a key." : a.description })),
       el("td", {}, srcTag(a.source), status),
-      el("td", {}, el("div", { class: "mono small", text: a.model || "parent's model" }), el("div", { class: "note", text: a.tools ? a.tools.length + " tools" : "default tools" })),
+      a.cli
+        ? el("td", {}, el("div", { class: "small" }, el("span", { class: "tag cli", title: "Runs the " + a.cli.tool + " CLI, which uses its own login and model", text: a.cli.tool + "'s own" })),
+            el("div", { class: "note", text: "runs " + a.cli.command + (a.cli.installed ? "" : " · not installed") }))
+        : el("td", {}, el("div", { class: "mono small", text: a.model || "parent's model" }), el("div", { class: "note", text: a.tools ? a.tools.length + " tools" : "default tools" })),
       actions);
     tbody.appendChild(tr);
   });
@@ -1248,6 +1286,7 @@ function drawSubagents(view, d, m) {
     [el("div", { class: "toolbar" }, q), el("div", { class: "table-wrap" }, el("table", { class: "t agents" },
       el("thead", {}, el("tr", {}, el("th", { text: "Agent" }), el("th", { text: "Source" }), el("th", { text: "Model" }), el("th", { class: "act", text: "" }))), tbody)),
       whereAgentsLive(d)]));
+  if (cliActive.length) add(view, cliCard(cliActive));
   add(view, modelsCard);
   fs.bar.classList.add("autohide");   // shows only while the model settings have unsaved changes
   add(view, fs.bar);
@@ -1468,8 +1507,12 @@ function drawEditor(view, r, list, models, a) {
   var extra = extraKeys.length ? el("div", { class: "extra" }, el("div", { class: "lab-t", text: "Other fields in this file" }),
     el("p", { class: "note", text: "Kept exactly as they are when you save. Edit the file to change them." }),
     kv(extraKeys.map(function (k) { return [k, el("span", { class: "mono", text: a.extra[k] })]; }))) : null;
-  add(view, card("Definition", "The frontmatter: how pi-subagents runs this agent.", null,
-    [el("div", { class: "rows" }, nameRow, scopeRow, descRow, modelRow, thRow, toolsRow), adv, extra]));
+  var cli = row && row.cli;
+  var cliRow = cli ? frow("f-agent-cli", "Runs", "Model, thinking and tools come from this tool, not from Kernal.",
+    el("div", {}, el("span", { class: "tag cli", text: cli.tool + " CLI" }), " ", el("code", { text: cli.command }), " ", cli.installed ? pill("ok", "installed") : pill("warn", "not installed"), " ", el("span", { class: "tag" + (cli.writes ? " warn" : ""), text: cli.writes ? "writes files" : "read-only" })),
+    el("div", { class: "note" }, "The description and the prompt below are what this page changes: the prompt is sent to " + cli.tool + " with every task." + (!cli.installed && cli.install ? " Install it with: " : ""), !cli.installed && cli.install ? el("code", { text: cli.install }) : null)) : null;
+  add(view, card("Definition", cli ? "The frontmatter: this agent runs the " + cli.tool + " CLI." : "The frontmatter: how pi-subagents runs this agent.", null,
+    [el("div", { class: "rows" }, cli ? [nameRow, scopeRow, descRow, cliRow] : [nameRow, scopeRow, descRow, modelRow, thRow, toolsRow]), adv, extra]));
 
   // ---- prompt: a Markdown editor with toolbar, shortcuts and a live preview ----
   var ta = el("textarea", { class: "md-input", spellcheck: "true", "aria-label": "System prompt, Markdown", readonly: !editable, id: "f-agent-prompt" });
@@ -1627,9 +1670,10 @@ function drawEditor(view, r, list, models, a) {
     var other = row && v.file !== row.file;
     add(resolvedBox, card("What pi-subagents resolves", other ? "A delegation to " + v.name + " does not get this file: the " + v.source + " agent of the same name wins." : note || "Read back from the package: this is exactly what a delegation to " + v.name + " gets.", pill(other ? "warn" : "ok", other ? v.source + " copy wins" : "this file wins"), kv([
       ["File", el("span", { class: "mono", text: v.file })],
-      ["Model", el("span", {}, el("span", { class: "mono", text: v.model || "the parent's model" }), el("span", { class: "note", text: "  from " + v.modelFrom }))],
-      ["Thinking", v.thinking || "not set"],
-      ["Tools", v.tools ? el("span", { class: "mono", text: v.tools.join(", ") }) : "default tools"],
+      v.cli ? ["Runs", el("span", {}, el("span", { text: "the " + v.cli.tool + " CLI (" }), el("code", { text: v.cli.command }), el("span", { text: "), " + (v.cli.installed ? "installed" : "not installed") }))] : null,
+      ["Model", v.cli ? v.cli.tool + "'s own: set in " + v.cli.tool + "; Kernal's model settings do not apply" : el("span", {}, el("span", { class: "mono", text: v.model || "the parent's model" }), el("span", { class: "note", text: "  from " + v.modelFrom }))],
+      v.cli ? null : ["Thinking", v.thinking || "not set"],
+      ["Tools", v.cli ? v.cli.tool + "'s own, as its adapter allows" : v.tools ? el("span", { class: "mono", text: v.tools.join(", ") }) : "default tools"],
       ["Description", v.description],
       ["Prompt", fmt(v.promptChars) + " characters, " + (v.systemPromptMode || "replace") + " mode"]
     ])));

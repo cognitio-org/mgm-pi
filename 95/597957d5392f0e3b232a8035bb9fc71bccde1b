@@ -1,0 +1,44 @@
+outfitter/packages/web/src/components/DeskIcons.tsx
+  s_2209f22f830d7f::t_ecb71ebbcc5736 7-8,14
+  s_2209f22f830d7f::t_4b3712ade37591 1-6,9-13,15-160
+outfitter/packages/web/src/styles/desk.css
+  s_2209f22f830d7f::t_40efd53c7f6e0d 175
+  s_2209f22f830d7f::t_3d40fddfae47ef 245,254-259
+  s_2209f22f830d7f::t_81b4881ca72727 194-195
+  s_2209f22f830d7f::t_96d4e567d5696c 262-264,271-276,281-282
+  s_2209f22f830d7f::t_8705bcf721283f 157,253,267
+  s_2209f22f830d7f::t_d553935e32a5b5 1-156,158-174,176-193,196-244,246-252,260-261,265-266,268-270,277-280,283-284
+outfitter/docs/design/README.md
+  s_2209f22f830d7f::t_e199ba962fd96d 176-203
+outfitter/packages/web/src/lib/desk.ts
+  s_2209f22f830d7f::t_e04c31624f7a1f 1-87
+outfitter/packages/web/src/style.css
+  s_2209f22f830d7f::t_e4c286a69314a0 8-9
+outfitter/packages/web/src/pages/DeskPage.tsx
+  s_2209f22f830d7f::t_77ce5293b74b96 26
+  s_2209f22f830d7f::t_da4b09d53f329a 261-275,277-292
+  s_2209f22f830d7f::t_ea3e9cb0e72c85 2-25,27-260,276,293-337
+  s_2209f22f830d7f::t_528f41e6605411 1
+outfitter/packages/web/test/desk.test.ts
+  s_2209f22f830d7f::t_82502f71afce39 89
+  s_2209f22f830d7f::t_ee81b0221c0f0f 1-88,90-110
+outfitter/packages/web/src/App.tsx
+  s_2209f22f830d7f::t_9d543f4ee18045 67
+  s_2209f22f830d7f::t_91b7c69a08ef4e 8,15-24,27-29,31,39-40,44,47-50,52,59-66,68,70-93,96-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "95597957d5392f0e3b232a8035bb9fc71bccde1b",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

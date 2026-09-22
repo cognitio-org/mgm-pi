@@ -25,6 +25,7 @@ outfitter/docs/reports/security-review-pr41.md
 outfitter/packages/api/test/agentlink.test.ts
   s_a437fa5c3fe299::t_cc660f91cfecd6 11-20
   s_a437fa5c3fe299::t_a19f922363ab79 750,778-862
+  s_a437fa5c3fe299::t_6cfbfccccbd06b 777
 ---
 {
   "schema_version": "authorship/3.0.0",

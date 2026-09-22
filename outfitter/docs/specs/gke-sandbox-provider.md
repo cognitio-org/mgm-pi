@@ -7,8 +7,7 @@ Anything not checked against a primary source is marked **UNVERIFIED** and is on
 
 Background: `docs/reports/sandbox-startup.md` found that Cloud Run Jobs cannot keep a warm
 instance (no min-instances, no image streaming), and that GKE Autopilot with GKE Agent Sandbox
-is the only option that can get wake time down to seconds within the $25/month budget. (That
-report is on branch `claude/pi-agent-teleport-84d05f` and has not been merged yet.) This spec
+is the only option that can get wake time down to seconds within the $25/month budget. This spec
 adds GKE as a **second** provider, chosen by configuration. The Cloud Run provider stays as it
 is and remains the fallback.
 
@@ -758,7 +757,7 @@ adds a protocol version to `hello` and changes `agentd/src/run.ts` and `link.ts`
 | **PR2: GkeProvider behind the flag, cold mode** [independent] | `providers/gke.ts`; `test/gke.test.ts`; contract adapter; registry entry; `/api/hooks/warm-pool` handler; `deploy/gke/*.yaml` checked in (not applied) | api | unit and contract tests green. Against the spike's cluster with `SANDBOX_PROVIDER=gke GKE_LAUNCH_MODE=cold`: wake, `running`, prompt answered, idle-stop, claim GC'd within the TTL. `/stop` during provisioning and during running both leave no claim. The reconciler fails a stale GKE run and deletes its claim |
 | **PR3: infra scripts** [independent] | `deploy/gke-*.sh`; `deploy/build-agent-image.sh` extraction; README section; teardown | deploy | each script runs twice with no changes on the second run; `gke-teardown.sh` leaves no cluster, bindings or scheduler jobs; `shellcheck` clean; `agent-job.sh` output is unchanged |
 | **PR4: warm assignment in agentd** [rebase: cloud-fixes] | `agentd/src/assignment.ts`; `agentd/src/main.ts` uses it; tests; image rebuild. **No** `hello` or frame changes | agentd, image | Cloud Run, docker and inprocess behave identically (env path). On GKE with `GKE_LAUNCH_MODE=warm` and `replicas: 1`, T_hello p50 is at most 3 s over 10 wakes. A warm pod that is never claimed stays up without exiting or dialling out. The token is absent from all logs (checked in Cloud Logging) |
-| **PR5: benchmark and default switch** [independent; needs PR2-PR4 deployed] | `scripts/wake-bench.mjs`; the `hello accepted` log line; `docs/reports/wake-bench.md` with the three-way matrix; `GET /api/operator/runs?active=1`; `gke-switch.sh --check`; scheduler enabled; EPIC.md E7 updated; `deploy/README.md` default flipped | api, scripts, docs | GKE meets the §1 targets, or the PR records why not. The first week's billing is within 30 % of §3.7. The switch is done with `gke-switch.sh gke`, in-flight Cloud Run runs stop cleanly afterwards, and the reverse switch is tested once |
+| **PR5: benchmark and default switch** [independent; needs PR2-PR4 deployed] | `deploy/wake-bench.mjs` (added by the startup-trim PR; extend it); the `hello accepted` log line; `docs/reports/wake-bench.md` with the three-way matrix; `GET /api/operator/runs?active=1`; `gke-switch.sh --check`; scheduler enabled; EPIC.md E7 updated; `deploy/README.md` default flipped | api, scripts, docs | GKE meets the §1 targets, or the PR records why not. The first week's billing is within 30 % of §3.7. The switch is done with `gke-switch.sh gke`, in-flight Cloud Run runs stop cleanly afterwards, and the reverse switch is tested once |
 | PR6 (optional): per-Tape provider [independent] | `Guru.sandboxProvider?`; validation in `routes/gurus.ts`; a select on the Tape form | api, web | a Tape pinned to `cloudrun` wakes on Cloud Run while the default is `gke` |
 | v2 (not scheduled): pod snapshots | §3.8 | agentd and link protocol [rebase: cloud-fixes or its successor] | separate spec |
 

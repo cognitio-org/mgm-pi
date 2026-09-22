@@ -150,6 +150,7 @@ export function TokensPage() {
               <th>Prefix</th>
               <th>Created</th>
               <th>Last used</th>
+              <th>Expires</th>
               <th></th>
             </tr>
           </thead>
@@ -162,6 +163,15 @@ export function TokensPage() {
                 </td>
                 <td data-label="Created">{new Date(t.createdAt).toLocaleString()}</td>
                 <td data-label="Last used">{t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : "never"}</td>
+                <td data-label="Expires">
+                  {!t.expiresAt ? (
+                    "—"
+                  ) : Date.parse(t.expiresAt) <= Date.now() ? (
+                    <span className="status-pill stopped">expired</span>
+                  ) : (
+                    new Date(t.expiresAt).toLocaleDateString()
+                  )}
+                </td>
                 <td data-label="">
                   <button type="button" className="btn btn-danger" onClick={() => revoke(t.id)}>
                     Revoke

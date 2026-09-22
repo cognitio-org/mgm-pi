@@ -24,6 +24,7 @@ import type {
   ProvidersCollection,
   ApiToken,
   TokensCollection,
+  TokenOwnerMatch,
   Mail,
   MailCollection,
 } from "./types.ts";
@@ -344,6 +345,29 @@ class MongoTokens implements TokensCollection {
     );
     return stripId<ApiToken>(result);
   }
+
+  /** Two steps, no transaction: updateMany stamps this call's `revokedAt` on every matching active
+   * token, then a find on that exact stamp reads back what it revoked. A token another caller
+   * revokes in between keeps its own timestamp and isn't reported here, which is the point. */
+  async revokeAllForOwners(match: TokenOwnerMatch, revokedAt: string): Promise<ApiToken[]> {
+    const owner = ownerEmailFilter(match);
+    await this.col.updateMany({ ownerEmail: owner, revokedAt: { $exists: false } }, { $set: { revokedAt } });
+    const rows = await this.col.find({ ownerEmail: owner, revokedAt }).toArray();
+    return rows.map((r) => stripIdStrict<ApiToken>(r));
+  }
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Case-insensitive, anchored ownerEmail match for a normalized TokenOwnerMatch -- the Mongo
+ * equivalent of tokens.ts's ownerMatches. A regex can't use the ownerEmail index, which is fine for
+ * a rare operator action over a small collection. */
+export function ownerEmailFilter(match: TokenOwnerMatch): RegExp {
+  return "email" in match
+    ? new RegExp(`^${escapeRegex(match.email)}$`, "i")
+    : new RegExp(`${escapeRegex(match.domain)}$`, "i");
 }
 
 const ACKED_MAIL_TTL_MS = 7 * 24 * 60 * 60_000;

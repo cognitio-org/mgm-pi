@@ -61,6 +61,7 @@ describe("requireOperator: 403 for a non-operator on every /api/operator/* route
     { method: "PUT", url: "/api/operator/secrets/outfitter-github-pat", payload: { value: "x".repeat(20) } },
     { method: "DELETE", url: "/api/operator/secrets/outfitter-github-pat" },
     { method: "POST", url: "/api/operator/secrets/outfitter-github-pat/test", payload: {} },
+    { method: "POST", url: "/api/operator/tokens/revoke", payload: { domain: "@mgms.eu" } },
   ];
 
   for (const route of routes) {

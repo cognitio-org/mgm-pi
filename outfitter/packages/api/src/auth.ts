@@ -33,7 +33,7 @@ import { OAuth2Client } from "google-auth-library";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { Config } from "./config.ts";
 import type { Store } from "./store/types.ts";
-import { TOKEN_PREFIX, hashToken } from "./tokens.ts";
+import { TOKEN_PREFIX, hashToken, tokenExpiresAt } from "./tokens.ts";
 
 export interface Identity {
   email: string;
@@ -70,17 +70,19 @@ function headerString(req: RequestLike, name: string): string | undefined {
 const IAP_ISSUERS = ["https://cloud.google.com/iap"];
 
 /** Resolves an `outf_...` bearer token to its owner's identity via sha256 lookup against the
- * tokens store. Never reveals whether a rejected token was unknown vs. revoked -- both throw the
- * same generic message, since telling them apart would confirm to a guesser that they'd found a
- * once-valid token. Updates lastUsedAt at most once per LAST_USED_THROTTLE_MS, best-effort (a
+ * tokens store. Never reveals whether a rejected token was unknown, revoked or expired (see
+ * tokens.ts's tokenExpiresAt) -- all throw the same generic message, since telling them apart
+ * would confirm to a guesser that they'd found a once-valid token. Updates lastUsedAt at most once per LAST_USED_THROTTLE_MS, best-effort (a
  * failed update never fails the auth check itself). Always `operator: false` here -- a token's
  * owner only becomes an operator through identityFromRequest's OUTFITTER_OPERATORS check, never
  * on the "link" role (see identityFromLinkRequest). */
 export async function identityFromApiToken(bearer: string, store: TokenStore): Promise<Identity> {
   const record = await store.tokens.findByHash(hashToken(bearer));
-  if (!record || record.revokedAt) throw new Error("invalid or revoked API token");
-
   const now = Date.now();
+  if (!record || record.revokedAt || now >= tokenExpiresAt(record)) {
+    throw new Error("invalid or revoked API token");
+  }
+
   const lastUsed = record.lastUsedAt ? Date.parse(record.lastUsedAt) : Number.NaN;
   if (!Number.isFinite(lastUsed) || now - lastUsed >= LAST_USED_THROTTLE_MS) {
     try {

@@ -228,11 +228,15 @@ redirect URI. The landing page's CSP pins the hash of its inline theme script
   revoke it. Removing someone takes two steps:
   1. Remove the member (e.g. `user:matija.turk@gmail.com`) with
      `gcloud iap web remove-iam-policy-binding --resource-type=cloud-run --service=outfitter-api --region=us-central1 --member=<member> --role=roles/iap.httpsResourceAccessor`.
-  2. Revoke their `outf_` API tokens. Those tokens don't expire, and `outfitter-link` (public,
-     authenticated only by the token) accepts them for session list/export/import/stop without
-     going through IAP. There's no admin route for this yet; in the Atlas `tokens` collection, set
-     `revokedAt` to the current ISO timestamp on every row whose `ownerEmail` is that person (or
-     whose domain it is, for a `domain:` member).
+  2. Revoke their `outf_` API tokens. `outfitter-link` (public, authenticated only by the token)
+     accepts them for session list/get/export/import/stop without going through IAP, so step 1
+     alone doesn't cut off teleport. As an operator, open **Control Panel → Access → Revoke
+     Dongles** in the web UI, or call `POST /api/operator/tokens/revoke` on `outfitter-api` with
+     `{"email": "name@example.com"}` for a `user:` member or `{"domain": "@example.com"}` for a
+     `domain:` member. It returns the tokens it revoked and their owners; a repeat returns none.
+     Domains match exactly (not subdomains), and shared mail providers such as `@gmail.com` are
+     refused: revoke those users by email. Tokens also expire on their own 90 days after creation
+     (`TOKEN_TTL_MS` in `packages/api/src/tokens.ts`), so this is the fast path, not the only one.
 - **Full teardown** (reverse of `baseline.sh`): delete both Cloud Run services (`outfitter-api`,
   `outfitter-link`) and the job (`outfitter-agent`), then the AR repo
   (`gcloud artifacts repositories delete outfitter --location=us-central1`), then the two

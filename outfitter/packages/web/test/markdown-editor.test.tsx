@@ -74,12 +74,12 @@ describe("MarkdownEditor", () => {
     expect(aa.getAttribute("aria-expanded")).toBe("true");
   });
 
-  it("toolbar Bold wraps the selection; Cmd+I and Ctrl+E use the same edits", () => {
+  it("toolbar Bold wraps the selection; Ctrl+I and Ctrl+E use the same edits (jsdom is not a Mac)", () => {
     type("make this bold", 10, 14);
     act(() => button(/^Bold/).click());
     expect(ta().value).toBe("make this **bold**");
     type("x y", 2, 3);
-    const ev = key({ key: "i", metaKey: true });
+    const ev = key({ key: "i", ctrlKey: true });
     expect(ev.defaultPrevented).toBe(true);
     expect(ta().value).toBe("x *y*");
     type("run ls", 4, 6);

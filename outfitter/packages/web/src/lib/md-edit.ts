@@ -144,9 +144,18 @@ export function formatEdit(action: FormatAction, value: string, sel: Selection):
   }
 }
 
+/** Which modifier makes a shortcut: Cmd on Apple platforms, Ctrl elsewhere. On a Mac, Ctrl+B/E/K
+ * are the system's Emacs-style text keys (back one character, end of line, delete to end of line)
+ * and must keep working, so there only Cmd counts. "either" is for tests and unknown platforms. */
+export type ShortcutModifier = "meta" | "ctrl" | "either";
+
 /** Cmd/Ctrl shortcuts: B bold, I italic, E inline code, K link, Shift+K code block. */
-export function shortcutAction(e: { key: string; metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean; altKey?: boolean }): FormatAction | null {
-  if (!(e.metaKey || e.ctrlKey) || e.altKey) return null;
+export function shortcutAction(
+  e: { key: string; metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean; altKey?: boolean },
+  mod: ShortcutModifier = "either",
+): FormatAction | null {
+  const down = mod === "meta" ? e.metaKey && !e.ctrlKey : mod === "ctrl" ? e.ctrlKey && !e.metaKey : e.metaKey || e.ctrlKey;
+  if (!down || e.altKey) return null;
   const k = e.key.toLowerCase();
   if (e.shiftKey) return k === "k" ? "codeBlock" : null;
   return k === "b" ? "bold" : k === "i" ? "italic" : k === "e" ? "code" : k === "k" ? "link" : null;

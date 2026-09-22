@@ -26,17 +26,20 @@ interface Props {
   toolbarId: string;
 }
 
-const TOOLS: Array<{ action: FormatAction; label: string; keys: string; aria: string; glyph: string }> = [
-  { action: "bold", label: "Bold", keys: "Mod+B", aria: "Meta+B Control+B", glyph: "B" },
-  { action: "italic", label: "Italic", keys: "Mod+I", aria: "Meta+I Control+I", glyph: "I" },
-  { action: "code", label: "Inline code", keys: "Mod+E", aria: "Meta+E Control+E", glyph: "`c`" },
-  { action: "codeBlock", label: "Code block", keys: "Mod+Shift+K", aria: "Meta+Shift+K Control+Shift+K", glyph: "```" },
-  { action: "link", label: "Link", keys: "Mod+K", aria: "Meta+K Control+K", glyph: "Link" },
-  { action: "list", label: "Bulleted list", keys: "", aria: "", glyph: "• List" },
+const TOOLS: Array<{ action: FormatAction; label: string; keys: string; glyph: string }> = [
+  { action: "bold", label: "Bold", keys: "Mod+B", glyph: "B" },
+  { action: "italic", label: "Italic", keys: "Mod+I", glyph: "I" },
+  { action: "code", label: "Inline code", keys: "Mod+E", glyph: "`c`" },
+  { action: "codeBlock", label: "Code block", keys: "Mod+Shift+K", glyph: "```" },
+  { action: "link", label: "Link", keys: "Mod+K", glyph: "Link" },
+  { action: "list", label: "Bulleted list", keys: "", glyph: "• List" },
 ];
 
 const MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+// Cmd on Apple platforms, where Ctrl+B/E/K are the system's text-editing keys; Ctrl elsewhere.
+const MOD = MAC ? "meta" : "ctrl";
 const modName = (keys: string) => keys.replace("Mod", MAC ? "⌘" : "Ctrl");
+const ariaKeys = (keys: string) => keys.replace("Mod", MAC ? "Meta" : "Control");
 
 // Chrome's insertText is quadratic in the number of lines inserted: 100 lines take ~10 ms, 400
 // take ~100 ms, a 700-line (20 KB) paste takes ~3 s. Above this many lines the edit is applied
@@ -153,7 +156,7 @@ export function MarkdownEditor({ value, onChange, onSend, enterMode, placeholder
       plainPaste.current = true;
       return;
     }
-    const shortcut = shortcutAction(e);
+    const shortcut = shortcutAction(e, MOD);
     if (shortcut) {
       e.preventDefault();
       format(shortcut);
@@ -252,7 +255,7 @@ export function MarkdownEditor({ value, onChange, onSend, enterMode, placeholder
             type="button"
             className={`md-tool md-tool-${t.action}`}
             aria-label={t.keys ? `${t.label} (${modName(t.keys)})` : t.label}
-            aria-keyshortcuts={t.aria || undefined}
+            aria-keyshortcuts={t.keys ? ariaKeys(t.keys) : undefined}
             title={t.keys ? `${t.label} (${modName(t.keys)})` : t.label}
             disabled={disabled || preview}
             // Keep focus (and the selection) in the textarea, and the phone keyboard up.

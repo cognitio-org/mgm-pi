@@ -17,7 +17,7 @@ status slot (cloud-fixes §11) work as before.
 | --- | --- |
 | Highlighting | Headings, bold, italic, strikethrough, inline code, fenced code with a language label, links, autolinks and bare URLs, lists and task items, blockquotes, pipe tables (pipes, delimiter row, cell content) and horizontal rules. It uses theme colours, and every pair passes AA in both themes (below). |
 | Toolbar | Bold, Italic, Inline code, Code block, Link, Bulleted list, and a Preview toggle. On phones (≤ 700 px) it is folded behind one **Aa** button in the composer's top row. |
-| Shortcuts | Cmd/Ctrl+B, Cmd/Ctrl+I, Cmd/Ctrl+E (inline code), Cmd/Ctrl+K (link), Cmd/Ctrl+Shift+K (code block). |
+| Shortcuts | Cmd+B, Cmd+I, Cmd+E (inline code), Cmd+K (link), Cmd+Shift+K (code block) on Apple platforms; Ctrl+ the same keys elsewhere. On a Mac, Ctrl+B/E/K stay the system's Emacs-style text keys. |
 | Tab | Inside a fenced code block, Tab indents (2 spaces, or every selected line) and Shift+Tab outdents. Everywhere else Tab moves focus as normal. |
 | Enter in a list | Continues the list: `- ` → `- `, `9. ` → `10. `, `- [x] ` → `- [ ] `, and `> - ` keeps the quote. Enter on an empty item ends the list. This only happens when the Enter-mode switch makes the key a newline: Shift+Enter in "Enter sends" mode, or Enter in "Enter = new line" mode. |
 | Preview | Renders the draft with the transcript's own `Markdown` component (react-markdown + remark-gfm, Mermaid included). The button has `aria-pressed`. The textarea stays mounted but hidden, so the draft and its undo history survive the round trip. |

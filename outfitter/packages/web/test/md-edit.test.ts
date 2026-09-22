@@ -63,6 +63,15 @@ describe("formatEdit", () => {
 });
 
 describe("shortcutAction", () => {
+  it("uses only Cmd on a Mac, so Ctrl+B/E/K stay the system's text-editing keys, and only Ctrl elsewhere", () => {
+    expect(shortcutAction({ key: "b", metaKey: true }, "meta")).toBe("bold");
+    expect(shortcutAction({ key: "e", ctrlKey: true }, "meta")).toBeNull();
+    expect(shortcutAction({ key: "k", ctrlKey: true }, "meta")).toBeNull();
+    expect(shortcutAction({ key: "b", ctrlKey: true }, "meta")).toBeNull();
+    expect(shortcutAction({ key: "k", ctrlKey: true }, "ctrl")).toBe("link");
+    expect(shortcutAction({ key: "k", metaKey: true }, "ctrl")).toBeNull();
+  });
+
   it("maps Cmd/Ctrl+B/I/E/K and Cmd/Ctrl+Shift+K", () => {
     expect(shortcutAction({ key: "b", metaKey: true })).toBe("bold");
     expect(shortcutAction({ key: "i", ctrlKey: true })).toBe("italic");

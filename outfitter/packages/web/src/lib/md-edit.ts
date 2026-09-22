@@ -217,9 +217,13 @@ export function continueList(value: string, sel: Selection): TextEdit | null {
   if (!m || pos - ls < m[0].length) return null;
   if (inCodeBlock(value, pos)) return null;
   if (line.slice(m[0].length).trim() === "" && pos === le) {
-    // Empty item: end the list, keeping any quote prefix.
+    // Empty item: end the list, keeping any quote prefix. The edit takes in the newline before the
+    // line and puts it back: WebKit's insertText("") over a whole last line deletes the line break
+    // with it, which left the caret back on the previous item.
     const keep = m[1]!;
-    return { from: ls, to: le, insert: keep, selStart: ls + keep.length, selEnd: ls + keep.length };
+    const from = ls > 0 ? ls - 1 : ls;
+    const insert = (ls > 0 ? "\n" : "") + keep;
+    return { from, to: le, insert, selStart: from + insert.length, selEnd: from + insert.length };
   }
   const marker = m[3] ? `${Number(m[3]) + 1}${m[4]}` : m[2]!;
   const insert = "\n" + m[1]! + marker + m[5]! + (m[6] ? "[ ] " : "");

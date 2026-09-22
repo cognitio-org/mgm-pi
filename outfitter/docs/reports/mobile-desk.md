@@ -305,3 +305,191 @@ two of those three items).
 - `outfitter/docs/design/README.md` (vocabulary table)
 - `outfitter/docs/design/screenshots/*.png` (25 files, 3 re-taken plus a new
   `desk-1280x720-dark.png`)
+
+## 5. Thinking, Kernal naming, error vocabulary
+
+A follow-up pass finishing the three items flagged (and explicitly declined out-of-band) in part 4
+above, this time as this task's own direct assignment rather than an unverifiable inter-agent
+message.
+
+**Thinking blocks collapsed by default.** `src/lib/thinking.ts` (`thinkingPreview`,
+`thinkingWordCount`/`thinkingWordLabel`, `thinkingAccessibleLabel`, `groupThinkingBlocks`) is a
+pure module: `groupThinkingBlocks` walks a session's `EntryView[]` and folds every run of
+consecutive `assistant-thinking` views into one `thinking-group` item, keyed off its first block's
+id so a still-in-progress run (one more thinking block streamed in) keeps a stable React key and no
+layout jump. `EntryItem.tsx`'s new `ThinkingGroup` renders both shapes and lets CSS pick one per
+breakpoint (the same dual-render pattern `Composer.tsx`'s send-mode picker already uses): desktop
+(`>700px`) gets a native `<details>/<summary>` — a pixel thought-bubble glyph (`ThinkingIcon`,
+added to `DeskIcons.tsx`), "Thinking" (or "Thinking ×3" for a group), a single-line ~80-char
+preview, and a word count; phones (`<=700px`) collapse further to an icon(+count) chip that expands
+the same markdown body in place below it. Both share one `expanded` boolean and a
+`thinkingAccessibleLabel` ("Show/Hide thinking, 142 words") used as the `<summary>`'s and chip's
+`aria-label`. `SessionPage.tsx` calls `groupThinkingBlocks` before rendering; a `?expandThinking=1`
+query param (read via `useSearchParams`) defaults every group open, added only to drive the
+expanded-state screenshot below. 18 new vitest tests in `test/thinking.test.ts` cover the preview
+truncation, word counting/pluralization, and every grouping edge case (a lone block, a run of three,
+a run split by a tool call, an all-thinking transcript, a trailing run with no following message,
+and id stability as a run grows).
+
+**Kernal naming.** The laptop/cloud agent formerly called "mgm" in the UI is now **Kernal**
+(command `kernal`; `mgm` still works as an alias, mentioned in the vocabulary README table but
+deliberately not repeated in any UI string, since the brief only asked for the rename itself).
+Updated: the Eject button's tooltip and the copied `kernal --teleport <id>` command
+(`SessionPage.tsx`), the Dongles page's env lines (`export KERNAL_TELEPORT_STORE=outfitter`,
+`TokensPage.tsx` — `OUTFITTER_API`/`OUTFITTER_TOKEN` unchanged), the vocabulary module's `token`
+hint and `transport.eject` hint, a new `kernal` entry in `vocabulary.ts` (hint: "the coding agent
+that runs sessions, on your laptop or in a cloud Drive"), and the Manual/About dialog, which now
+also reads "Kernal loads your floppies and runs your tapes; Outfitter is where they live."
+`git grep -ni mgm -- outfitter/packages/web/src` now matches exactly one code comment about an
+unrelated internal tool's name (`styles/pages.css`'s note about `mgm-admin`'s Connections page) —
+no user-facing hits. Two new assertions in `test/vocabulary.test.ts` pin this down.
+
+**Retro error and status vocabulary.** Every failure now gets a retro headline, a plain sentence,
+and a useful action instead of a plain red `.error-banner` (`lib/retro-errors.ts`'s pure
+headline/message/status mapping; see `docs/design/README.md`'s new "Retro error vocabulary" table
+for the full list):
+
+- **KERNAL PANIC** (`ErrorBoundary.tsx`): a class-component error boundary now wraps the routes in
+  `App.tsx` (there wasn't one before — the bug report this exists for). A full-screen C64-style
+  crash screen: `<h1>KERNAL PANIC</h1>` with a blinking block cursor, "Something in this page
+  crashed. Your sessions are safe.", the error in a collapsed `<details>`, and Reload/Back to the
+  desk/Copy details buttons. An unhandled *promise* rejection is a separate concern — error
+  boundaries only see render-phase errors — so `UnhandledRejectionBanner.tsx` listens for
+  `window.unhandledrejection` globally and shows a small dismissable banner instead, never the full
+  panic screen.
+- **"Sorry, a system error occurred."** (`SystemErrorDialog.tsx`): an early-Mac bomb dialog with an
+  original pixel-art bomb icon (`ErrorIcons.tsx`), ID = the HTTP status (or "ERR" for a thrown
+  non-`ApiError`), body = the API's own message, Restart (retries the action) and Resume (dismiss).
+  Replaces every page's plain `.error-banner` for a failed API call — `FleetPage`, `GurusPage`,
+  `GuruForm`, `NewSessionDialog`, `SettingsPage`, `TokensPage`, `SessionPage` all now hold an
+  `ApiErrorState | null` (via `lib/api-error.ts`'s `toApiErrorState`, normalizing whatever a `catch`
+  hands you) instead of a plain error string.
+- **?FILE NOT FOUND ERROR** (`NotFoundError.tsx`): the catch-all `*` route in `App.tsx`, and
+  `SessionPage`'s own session-id fetch (a 404 there sets `notFound`, short-circuiting to this
+  component instead of the bomb dialog) — both with a link back to the Desk. (No route currently
+  fetches "a guru by id" on its own — guru editing always starts from an already-fetched row in
+  `GurusPage` — so there's no separate "unknown guru id" surface to wire this into yet; flagging
+  this gap rather than guessing at a route that doesn't exist.)
+- **?DEVICE NOT PRESENT ERROR** (`DeviceNotPresent.tsx`): a down row's Detail cell on
+  `ProvidersPage`; a `SessionPage` banner when the session's current model's provider (parsed from
+  `header.model`'s `"provider/model"`) is reported down by `useProviders()`; and a sticky
+  `App.tsx` banner while `useOnlineStatus()` (a `navigator.onLine` + `online`/`offline` listener
+  hook) reports the browser itself offline.
+- **?SYNTAX ERROR** (`SyntaxError.tsx`): inline beside the guru form's Name field and the Dongles
+  page's token-name input, shown once a submit is attempted with an empty/whitespace-only value
+  (`submitAttempted`/`createAttempted` state, `aria-invalid` on the input).
+- **?OUT OF MEMORY ERROR**: `contextMeterMessage(percent)` adds this note under the session header's
+  context meter once usage crosses 95%.
+- **READY. / BREAK / LOAD ERROR**: `deriveTransportStatusLine(active, outcome)` picks the session
+  header's status line (and, for "READY.", the composer's empty placeholder via a new
+  `placeholderOverride` prop) — "READY." with a blinking block cursor once nothing is running, a
+  3-second flash of "BREAK" after Break (abort) succeeds, "LOAD ERROR" after Play (wake) fails.
+
+Accessible throughout: `role="alert"` on every error surface, real headings (`<h1>`/`<h2>`, not
+styled `<div>`s), `.cursor-blink`'s step animation stops under `prefers-reduced-motion`, and every
+token comes from the existing `theme.css` custom properties so both themes are covered for free —
+no new colours were introduced. New tests: `test/retro-errors.test.ts` (15, the pure
+headline/message/status/context-meter/transport-line mapping), `test/error-boundary.test.tsx` (4,
+mounted via `createRoot`/`act` since `react-dom/server`'s `renderToStaticMarkup` doesn't run
+`getDerivedStateFromError` the way a real browser render does — confirmed the hard way when the
+first version of this test failed with the raw thrown error instead of the panic screen),
+`test/api-error.test.ts` (2).
+
+**A dev-only `/panic-test` route** (`App.tsx`) throws on render so the panic screen can be
+screenshotted; it's gated on `import.meta.env.DEV || import.meta.env.OUTFITTER_DEV`, with
+`OUTFITTER_DEV` baked in at build time from the process env via a new `define` in
+`vite.config.ts` (`src/vite-env.d.ts` extends `ImportMetaEnv` so this typechecks). Verified the gate
+actually holds, not just assumed from the code: a production build with `OUTFITTER_DEV` unset was
+screenshotted at `/panic-test` and correctly fell through to the ?FILE NOT FOUND ERROR 404 page —
+the minified bundle still contains the literal string `/panic-test` (Rollup didn't fully strip the
+dead branch), but no `<Route>` for it is ever registered, so it isn't reachable.
+
+### Screenshots (this pass)
+
+20 new files, `docs/design/screenshots/`, same `npx playwright@1.57.0 screenshot -b chromium
+--channel=chrome` method as before, at both 1280x860 and 390x844, both themes, against a freshly
+seeded dev server (two Tapes, one Floppy with an imported synthetic transcript: a user message, a
+92-word thinking block, a tool call/result pair, two consecutive thinking blocks — grouped into one
+"Thinking ×2" row — another tool call/result pair, an assistant message with a markdown table and a
+fenced code block, a follow-up user message, a 7-word thinking block, and a closing assistant
+message):
+
+- `session-thinking-collapsed-{1280,390}-{dark,light}.png` — the transcript with thinking rows
+  collapsed by default (the desktop `<details>` and the mobile chip, including the grouped "×2"
+  row)
+- `session-thinking-expanded-{1280,390}-{dark,light}.png` — the same session with
+  `?expandThinking=1`, showing the full markdown body of an expanded thinking row
+- `panic-{1280,390}-{dark,light}.png` — the KERNAL PANIC screen via the dev-only `/panic-test` route
+- `general-error-{1280,390}-{dark,light}.png` — the bomb dialog, triggered by a real 409 (deleting
+  a guru a session still references) via a small Playwright script (the CLI screenshot tool can't
+  click; `npm install playwright@1.57.0` into a scratch directory, then a script that clicks
+  Delete/confirms the native `confirm()` dialog/waits for `.bomb-dialog`)
+- `notfound-{1280,390}-{dark,light}.png` — ?FILE NOT FOUND ERROR for an unmatched route
+
+All twenty were opened and reviewed by eye, not just assumed correct from the CSS. Two real bugs
+were caught this way and fixed (see the "web: fix mobile thinking-chip sizing and bomb dialog
+full-height sheet" commit):
+
+1. **Mobile thinking-chip oversized wrapper.** A collapsed chip (a small icon+count button) sat
+   inside a full-width, mostly-empty dashed rectangle, because the group `<div>`'s dashed
+   border/background applied at the outer-entry level regardless of which variant (details vs.
+   chip) was actually visible. Fixed by letting the wrapper shrink to fit its content
+   (`width: fit-content`) when collapsed on mobile, regaining the dashed-box treatment only once
+   expanded (`:has(.thinking-chip-body)`).
+2. **Bomb dialog inherited the mobile full-height sheet.** `styles/mobile.css`'s `<=700px` rule
+   stretches every `.dialog` to `100dvh` with its `.form-actions` pinned to the bottom — right for
+   New Floppy/the guru form, wrong for a short alert: Restart/Resume ended up stranded at the
+   bottom of an otherwise-empty screen. Scoped that whole block to `.dialog:not(.bomb-dialog)`
+   instead, so the bomb dialog stays a compact alert near the top on phones.
+
+Every screenshot file is well under the ~300 KB budget (largest is ~98 KB, most are 15-100 KB).
+
+### Verification (this pass)
+
+- `cd outfitter && npm ci && npm test --workspace=@outfitter/web` — 15 files, 134 tests pass (41 new
+  across this pass: 18 `thinking.test.ts`, 15 `retro-errors.test.ts`, 4 `error-boundary.test.tsx`,
+  2 `api-error.test.ts`, 2 new assertions in `vocabulary.test.ts`).
+- `npm run build` (root) — agentd, provider-local, and web all build clean; web's
+  `tsc --noEmit && vite build` succeeds with no OUTFITTER_DEV set (494.9 kB / 151.6 kB gz JS,
+  34.4 kB / 7.2 kB gz CSS).
+- Ran the app locally the same way as part 1-4 (`MONGODB_URI=memory OUTFITTER_DEV=1
+  SANDBOX_PROVIDER=inprocess AGENTD_MAIN=.../agentd/dist/src/main.js OUTFITTER_ROLE=all PORT=8099
+  OUTFITTER_ORIGIN=http://localhost:8099`), rebuilding `packages/web` (with `OUTFITTER_DEV=1` for
+  the screenshot pass, so `/panic-test` exists) and restarting the API after every change — hit the
+  same stale-build trap the earlier pass's report warned about (a `pkill` that didn't match the
+  actual process command line left the old server bound to the port, silently serving the previous
+  build's asset hashes and 404ing the new ones; found by checking `lsof -i :8099` and the server's
+  own log instead of assuming the restart worked). Seeded two Tapes and one Floppy via
+  `POST /api/gurus` / `POST /api/sessions`, imported the synthetic thinking-heavy transcript via
+  `PUT /api/sessions/:id/import`. Exercised the collapsed/expanded thinking rows, the KERNAL PANIC
+  screen, the bomb dialog (both from a real 409 and by eye), and the 404 page by hand in the Claude
+  Browser tool before switching to Playwright for the file-saved screenshot set; also confirmed via
+  the Browser tool's `read_page`/console/network tools that a production build (no `OUTFITTER_DEV`)
+  correctly hides `/panic-test` behind the 404 page rather than the panic screen.
+- Server stopped at the end (`lsof -ti :8099 | xargs kill -9`); confirmed the port is free
+  (`lsof -i :8099` empty).
+
+### Files (this pass)
+
+- `outfitter/packages/web/src/lib/{thinking,retro-errors,api-error}.ts`,
+  `test/{thinking,retro-errors,api-error}.test.ts`, `test/error-boundary.test.tsx`
+- `outfitter/packages/web/src/components/{ErrorBoundary,SystemErrorDialog,NotFoundError,
+  DeviceNotPresent,SyntaxError,ErrorIcons,UnhandledRejectionBanner}.tsx`
+- `outfitter/packages/web/src/hooks/useOnlineStatus.ts`
+- `outfitter/packages/web/src/components/EntryItem.tsx` (`ThinkingGroup`), `DeskIcons.tsx`
+  (`ThinkingIcon`)
+- `outfitter/packages/web/src/pages/SessionPage.tsx` (grouping, `?expandThinking=1`, READY./BREAK/
+  LOAD ERROR, the context-meter OOM note, the model-unreachable banner, Kernal teleport command),
+  `TokensPage.tsx` (Kernal env line), `DeskPage.tsx` (Manual dialog copy)
+- `outfitter/packages/web/src/pages/{FleetPage,GurusPage,ProvidersPage,SettingsPage}.tsx`,
+  `src/components/{GuruForm,NewSessionDialog,Composer}.tsx` (bomb dialog wiring,
+  `placeholderOverride`)
+- `outfitter/packages/web/src/lib/vocabulary.ts` (`kernal` entry, Kernal hints),
+  `test/vocabulary.test.ts`
+- `outfitter/packages/web/src/App.tsx` (error boundary, offline/unhandled-rejection banners, the
+  catch-all 404 route, the dev-only `/panic-test` route)
+- `outfitter/packages/web/src/styles/{errors.css,mobile.css,layout.css}`,
+  `outfitter/packages/web/src/style.css` (import order)
+- `outfitter/packages/web/vite.config.ts`, `src/vite-env.d.ts` (`OUTFITTER_DEV` build-time define)
+- `outfitter/docs/design/README.md` (Kernal vocabulary row, the retro error vocabulary table)
+- `outfitter/docs/design/screenshots/*.png` (20 new files)

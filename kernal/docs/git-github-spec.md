@@ -31,9 +31,27 @@ do it in one clear step instead of improvising shell commands.
   checkpoint commits and pushes, passing the token to each git child through `GIT_CONFIG_*`
   environment variables; pi and every command the model runs are the unprivileged `agent` user and
   cannot read it (outfitter `docs/protocol.md`, "Two Linux users"; `docs/reports/security-review-pr1.md`
-  finding #1). The clone is `--single-branch` on the session branch. The image already has `gh`
-  installed "for E6", unused. So in the cloud, `gh` inside the agent cannot simply work, and it
-  should not be made to by handing the model a token.
+  finding #1). The image already has `gh` installed "for E6", unused, and E6 plans `gh pr create`
+  from runs (EPIC.md). So in the cloud, `gh` inside the agent cannot simply work, and it should not
+  be made to by handing the model a token.
+- **Today's sandbox git has gaps this work depends on** (found while reviewing this spec, all in
+  `outfitter/packages/agentd`):
+  1. The checkpoint pushes only when agentd's own `commitAll` found something dirty
+     (`run.ts`, `if (committed)`). Commits the agent makes itself are never pushed.
+  2. The clone is `--single-branch` on the *base* branch; resuming a session then runs
+     `git fetch origin <branch>` and `checkout -B <branch> origin/<branch>` (`git.ts`). With a
+     single-branch refspec that fetch never creates `origin/<branch>`, so resuming any session that
+     has checkpointed fails.
+  3. After cloning, agentd hands `/workspace` to `agent` and later runs `git` as root inside it.
+     Git refuses a repository owned by another user ("dubious ownership") and nothing sets
+     `safe.directory`.
+  4. Nothing sets a commit identity (`user.name`, `user.email`, `GIT_AUTHOR_*`), and `run.spec`
+     carries no user identity, so `git commit` in the sandbox likely fails with "Author identity
+     unknown".
+  5. Teleporting laptop to cloud sends only the transcript: `OutfitterStore.put` drops the manifest
+     and the import route creates the session with `repo: null`. A teleported-in cloud session has
+     no clone.
+  Items 1 to 4 are Outfitter fixes in their own right; phase 3 below lists them as prerequisites.
 - Research (four evaluations, 2026-09-22) found no pi package worth adopting whole. Borrowed ideas:
   - `@gotgenes/pi-github-tools`: wait for the CI run of an exact commit, then watch that run;
     a timeout is a normal result; only reads retry.
@@ -122,11 +140,16 @@ As agreed, no approval prompts for everyday work, in the UI or headless. What re
   only when the person asked in this conversation; never force-push, skip hooks or change git
   config; stage by name; never commit secrets; never revert changes you did not make.
 - **One setting**, `github.confirm`: `none` (default), `merge` (ask before merge and approve), or
-  `writes` (ask before anything that changes GitHub or pushes). With a UI it opens an editable
-  preview (the `pi-git-me` pattern); headless, a confirm-required action is refused with a message
-  that names the setting. The default never blocks `kernal -p`.
-- **No shell interception.** The agent can still run `git` and `gh` in bash; the tools are simply
-  the easier path.
+  `writes` (ask before anything that changes GitHub or pushes). With a person present it opens an
+  editable preview (the `pi-git-me` pattern); otherwise a confirm-required action is refused with a
+  message that names the setting. The default never blocks `kernal -p`.
+  - "A person present" is not `ctx.hasUI`: that is also true in RPC mode, where an Outfitter
+    automation may have nobody watching. Dialogs always carry a timeout (pi's dialog `timeout`
+    option), and an Outfitter run with no attached viewer counts as headless.
+  - Locally the setting lives in `settings.json`; in the cloud it comes from the guru's config.
+- **No shell interception.** Locally the agent can still run `git` and `gh` in bash; the tools are
+  simply the easier path. In the cloud the tools are the only path to the network, because the
+  agent's shell has no credentials (see "Cloud").
 
 ### Attribution
 
@@ -136,35 +159,44 @@ Settings `github.attribution.commit` and `github.attribution.pr`, each a string 
   decided;
 - default PR footer: `Opened with Kernal`.
 
-Added exactly once, checked before appending. In the cloud the commit author is the session's human
-owner (their name and GitHub noreply address from the Outfitter user record), not the token owner.
+Added exactly once, checked before appending. Locally the author is whatever the person's git
+config says. In the cloud there is no identity today (gap 4), so phase 3 adds one: `run.spec.author
+{name, email}` from the Outfitter user record, pinned as `GIT_AUTHOR_*` and `GIT_COMMITTER_*` in
+pi's environment and in agentd's own git calls. The author is the session's person; the committer is
+either the same person or an Outfitter bot identity (open question 6).
 
 ### Setup: installing `gh` and signing in (local)
 
 `/github` with no arguments shows status; `/github setup` does whatever is missing, in order:
 
-1. **Find `gh`**: on `PATH`, then `~/.kernal/bin/gh`.
+1. **Find `gh`**: on `PATH` first (a person's newer system `gh` wins), then `~/.kernal/bin/gh`.
 2. **Install it if missing.** Download the official release for this platform from
    `github.com/cli/cli/releases` (the same four platforms Kernal ships), verify it against the
-   release's `gh_<version>_checksums.txt`, and unpack `gh` into `~/.kernal/bin`. No admin rights, no Homebrew. The
-   launcher already controls `PATH`, so `~/.kernal/bin` goes first. In a source checkout the binary
-   goes in the git-ignored `kernal/.pi/bin`. Bundling `gh` in every release (about 40 MB per
+   release's `gh_<version>_checksums.txt`, and unpack `gh` into `~/.kernal/bin`. No admin rights, no
+   Homebrew. The launcher appends `~/.kernal/bin` to the **end** of `PATH` (it does not touch `PATH`
+   today; this is a new line in `bin/kernal`), and Kernal's own calls use the resolved path
+   directly. In a source checkout the binary goes in the git-ignored `kernal/.pi/bin`. Bundling `gh` in every release (about 40 MB per
    platform) is the alternative; downloading on first use keeps releases small. Decision below.
 3. **Sign in**: `gh auth login --web --git-protocol https --hostname github.com`, which shows a
    one-time code and opens the browser (or prints the URL on a machine without one). `gh` always
    asks for `repo`, `read:org` and `gist`; setup adds `--scopes workflow` so the agent can edit
    workflow files and re-run checks.
-4. **Connect git**: `gh auth setup-git`, so `git push` over HTTPS uses the same login. No SSH keys.
+4. **Connect git**, after saying what it changes: `gh auth setup-git` writes a credential helper for
+   `github.com` into the person's global `~/.gitconfig`, which can take over from the macOS
+   keychain helper. Setup shows that and asks first. Repositories with SSH remotes keep working as
+   they are; setup only helps HTTPS.
 5. **Check**: account, scopes, and whether the current repository is reachable and writable.
 
 `GH_TOKEN` or `GITHUB_TOKEN` in the environment still wins, for people who prefer a token. Each
-person uses their own account; nothing is issued by Matthew. `kernal setup` (the terminal
-command) offers the same step, and the first-run setup mentions it once.
+person uses their own account; nothing is issued by Matthew. A new `kernal github` launcher
+subcommand runs the same setup from a terminal (today's subcommands are `version`, `prune`, `update`
+and `--teleport`), and the in-agent `/setup` mentions it once.
 
 `/admin` gets a **GitHub** page: signed-in account and avatar, scopes, git connected or not, the
 current repository with its default branch and your permission there, and buttons for Install `gh`,
-Sign in, Sign out and Re-check. In the cloud it shows the broker's identity and the session's repo
-instead, read-only.
+Sign in, Sign out and Re-check. `/admin` is not in the cloud image, so the cloud equivalent (the
+credential in use, the session's repo, what the broker permits) belongs on the Outfitter web UI's
+session page.
 
 ### The person's commands
 
@@ -183,46 +215,98 @@ so the same logic serves both.
 
 Rule kept from Outfitter: **the GitHub token never enters the agent's process or its shell.**
 
-- **Working-tree operations run locally as `agent`**: status, diff, log, commit, branch create and
-  switch, stash. They need no credentials. Commits made by the agent are ordinary commits; agentd's
-  checkpoint then only commits leftovers and pushes (today it already commits "all" if anything is
-  dirty, then pushes).
-- **Network and API operations go to the broker**: fetch, pull, push, and every `github_*` action.
-  The extension sends a request over a Unix socket that agentd serves at `$OUTFITTER_GITHUB_SOCKET`
-  (mode `0660`, group `agent`). agentd:
-  - does git network operations itself as root with the per-session token (as for checkpoints);
-  - forwards GitHub API requests up the existing link as a new frame, `github.request {reqId, op,
-    args}`, answered by `github.result {reqId, ok, data | error}`. The API executes them with the
-    run's GitHub credential (today the fine-grained PAT; the E2.5 GitHub App installation token
-    later) and records them for audit.
-  - enforces a small policy: only the session's repository; pushes only to the session branch (v1)
-    or branches under a configured prefix (v2); merges only if the guru's config allows it.
-- **Branches in v1**: one working branch per session, the one agentd cloned or created. `branch
-  create` and `switch` return "this cloud session works on `<branch>`" rather than breaking the
-  checkpoint push, which targets `spec.repo.branch`. v2 lets agentd push whichever branch is checked
-  out, reported in the `checkpoint` frame.
-- **Identity**: API actions appear as the credential's owner. With a PAT that is Matthew, so a PR
-  opened from the cloud cannot then be approved by Matthew (GitHub forbids approving your own PR),
-  and anything Matej's cloud session does appears as Matthew. The GitHub App (E2.5 phase 2) fixes
-  this: actions appear as the app, and user-to-server tokens can later make them appear as the
-  person. Until then the tools say who they will act as.
-- **Why agentd plus the API, not agentd alone**: the API already holds the credential and will mint
-  App tokens; routing through it gives one audit log and one policy, and E6 (webhooks, PR Fixer and
-  Reviewer gurus) needs the same broker anyway. The image's unused `gh` package can then be dropped
-  (about 38 MB).
-- Outfitter changes needed (owned by the Outfitter work, specified here so the interface is agreed):
-  the socket in agentd, the two frames in `docs/protocol.md`, the API's executor and policy, and a
-  protocol version bump.
+**Split of work.**
+- **Working-tree operations run locally as `agent`**: status, diff, log, commit, branch, stash, and
+  the merge or rebase half of `pull`. They need no credentials, and conflicts and file ownership
+  stay with the agent's user.
+- **Only transport and the GitHub API go to the broker**: fetching refs, pushing, and every
+  `github_*` action.
+
+**Transport: a socket served by agentd.** The extension talks to a Unix socket at
+`$OUTFITTER_GITHUB_SOCKET` under `/run/outfitter` (already `0750 root:agent`). Requirements:
+- agentd must `chown 0:agent` and `chmod 0660` the socket after `listen()`; root's umask would
+  otherwise leave it unusable (the same trap as the spend file).
+- `OUTFITTER_GITHUB_SOCKET` is pinned in pi's environment after the guru's own env, like
+  `OUTFITTER_SESSION_ID`, so a guru cannot point it elsewhere.
+- **The model can reach the socket too** (`nc -U` from bash runs as `agent`). So every rule is
+  enforced in agentd and the API; the extension enforces nothing on its own.
+- Alternatives considered: the mailbox pattern cannot return results; the `rpc` frame points the
+  wrong way (API to pi); intercepting a dialog request would work over stdio but is a hack. A
+  third option is worth prototyping alongside: a localhost git smart-HTTP proxy in agentd that adds
+  the auth header and enforces ref policy, so plain `git fetch` and `git push` in bash would work
+  too. The spec does not depend on it.
+
+**Git transport (in agentd, as root).** Fetch and push use the per-session token as checkpoints do,
+plus `safe.directory=/workspace` in the same `GIT_CONFIG_*` environment (gap 3). Fetches use an
+explicit refspec (`+refs/heads/<b>:refs/remotes/origin/<b>`), because the clone is single-branch
+(gap 2). After any root git operation that writes to the tree or `.git`, agentd chowns back to
+`agent`. Root git operations are serialized with the periodic checkpoint through one lock in agentd.
+
+**GitHub API (in the API).** agentd forwards API requests as a new frame, `github.request {reqId,
+op, args, idempotencyKey}`, answered by `github.result {reqId, ok, data | error}`. The API runs
+them with the run's GitHub credential and records them for audit.
+- **A closed list of operations**, one per tool action, implemented in the API with Octokit (REST
+  plus GraphQL for review threads and linked branches). No arbitrary `gh api` passthrough.
+- **Reliability.** Requests are not replayed like `entry` frames. Each has a timeout; the extension
+  retries reads only. Writes carry an idempotency key, and the API remembers recent keys, so a
+  retry after a dropped link cannot post a comment twice.
+- **`wait_ci` polls** with short `checks` requests from the extension, with backoff, rather than
+  holding one request open across a reconnect.
+- **Policy**: only the session's repository; pushes only to the session branch (v1) or branches
+  under a configured prefix (v2); merges only if the guru's config allows it.
+
+**Credential scope and limits.** Today's credential is one fine-grained PAT with contents and
+pull-requests read/write. The tools also need issues (read/write), checks and actions (read, for
+`wait_ci` and log tails) and, for `github_issue start`, metadata. Every session shares its rate
+limit (5,000 requests an hour). So:
+- the backend reports "not permitted" per operation when a permission is missing;
+- the API tracks the remaining budget from response headers and backs off, and `wait_ci` polls
+  slowly (every 20 s, longer when the budget is low).
+
+**Checkpoints and the agent's own commits.**
+- Checkpoints must push when `HEAD` differs from the remote, not only when agentd committed
+  something itself (gap 1).
+- agentd's `git add -A` must not sweep up work the agent staged by name. Checkpoints wait while a
+  `git` tool call is running, and a checkpoint that finds staged changes commits exactly the index
+  first, then leftovers separately.
+
+**Branches.** v1 has one working branch per session. `branch create` and `switch`, `github_issue
+start` and `github_pr checkout` return "this cloud session works on `<branch>`" (declared as
+missing capabilities). v2 lets agentd push whichever branch is checked out, reported in the
+`checkpoint` frame. Both rely on the refspec fix.
+
+**Identity.** API actions appear as the credential's owner. With a PAT that is Matthew:
+- a PR opened from the cloud cannot then be approved by Matthew, because GitHub forbids approving
+  your own PR;
+- anything Matej's cloud session does appears as Matthew.
+
+The GitHub App (E2.5 phase 2 and E6) fixes this: actions appear as the app, and user-to-server
+tokens can later make them appear as the person. Until then the tools say who they will act as.
+
+**Why agentd plus the API, not agentd alone.** The API already holds the credential and will mint
+App tokens. Routing through it gives one audit log and one policy, and E6 (webhooks, PR Fixer and
+Reviewer gurus) needs the same executor. That replaces E6's plan of running `gh pr create` inside
+runs, so the image's `gh` package (about 38 MB) can go; `EPIC.md` is updated in the phase 3 PR.
+
+**Outfitter changes** (owned by the Outfitter work, specified here so the interface is agreed):
+- the prerequisite fixes for gaps 1 to 4;
+- `run.spec.author`;
+- the socket and its lock in agentd;
+- the two frames in `docs/protocol.md`, with a protocol version bump;
+- the API's executor, policy, idempotency and rate-limit handling;
+- the session page's GitHub panel.
 
 ### Teleport
 
 - Teleport's git checks (clean tree, branch pushed, same repository) move into the shared git module
   so both extensions agree on what "clean" and "pushed" mean; teleport's tests keep passing
   unchanged.
-- **Laptop to cloud**: before a push, `/teleport` can offer to commit and push through the new tools
-  instead of refusing with "commit or stash first". The cloud side then clones that branch.
+- **Laptop to cloud does not carry a repository today** (gap 5). Phase 4 makes the import carry the
+  manifest's repository, branch and base, and start the cloud session on that branch with
+  `createBranch` off. That depends on the refspec fix (gap 2). Once it exists, `/teleport` can
+  offer to commit and push through the new tools instead of refusing with "commit or stash first".
 - **Cloud to laptop**: the local side fetches the session branch (`outfitter/<session>` refs
-  included) with the person's own login, and checks it out, as teleport does today.
+  included) with the person's own login and checks it out, as teleport does today.
 - `git status` shows teleport-relevant facts: "branch not pushed", "session branch is 3 commits
   ahead of your checkout".
 
@@ -232,8 +316,26 @@ Rule kept from Outfitter: **the GitHub token never enters the agent's process or
   `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0` for read operations, a timeout (30 s default,
   longer for `wait_ci` and network operations), and output caps. Nothing can hang `kernal -p`.
 - Tools behave the same headless; only a `github.confirm` setting other than `none` changes that.
-- pi-subagents children do not load the parent's extensions. The `worker` and `reviewer` roles get
-  the tools only if we add them to those agents' tool lists; v1 leaves subagents on bash.
+- pi-subagents' foreground children do not load the parent's extensions; background children load
+  the parent's ambient extensions. So the tools reach background subagents automatically, and
+  foreground roles such as `worker` and `reviewer` get them only if added to their tool lists. v1
+  adds nothing to agent files.
+
+### Scope and edge cases
+
+- **Platforms**: macOS (arm64, x64) and Linux (x64, arm64), as Kernal ships. Windows is out of scope.
+- **Hosts**: github.com only in v1. GitHub Enterprise needs `--hostname` in setup and a host-aware
+  auth header in agentd; both are small and left for later.
+- **No remote, or a non-GitHub remote**: the `git` tool works fully; `github_*` report the missing
+  capability.
+- **Forks**: PRs from a fork (push to the fork, open against upstream) and checking out a fork's PR
+  are supported locally through `gh`'s own fork handling; in the cloud they are out of scope for v1.
+- **Also handled**: draft PRs (`create` takes `draft`), several PR templates
+  (`.github/PULL_REQUEST_TEMPLATE/`, the agent picks one and says which), detached HEAD and an empty
+  repository (reported by `status`, with the next step), submodules (reported, never updated
+  silently). Git LFS works through git itself; nothing extra.
+- **`gh api`**: inline review comments, thread replies, resolving threads and linked branches go
+  through `gh api` (GraphQL for the last two), so the fake-`gh` tests cover `gh api` calls too.
 
 ### Relation to existing features
 
@@ -252,21 +354,25 @@ Rule kept from Outfitter: **the GitHub token never enters the agent's process or
   pull with conflicts, push with upstream.
 - A fake `gh` on `PATH` that records its arguments and replays canned JSON, for every `github_*`
   action and for setup (missing `gh`, signed out, signed in, missing scopes).
-- A fake broker socket for the cloud backend, including policy refusals.
+- A fake broker socket for the cloud backend, including policy refusals, a dropped link during a
+  write (no duplicate), and permission errors.
+- In the Outfitter image, as root on an `agent`-owned checkout: fetch, push and checkpoint after the
+  agent's own commit (covers gaps 1 to 4).
 - A test that the four tools' definitions stay under the prompt budget.
-- A live test (opt-in, like the existing live suite) against a scratch repository: open a PR, comment,
-  wait for a trivial check, close it.
+- A live test (opt-in, like the existing live suite) against a scratch repository: open a PR,
+  comment, wait for a trivial check, close it.
 
 ## Delivery
 
-| Phase | Contents | Where |
-|---|---|---|
-| 1 | Shared git module (teleport moved onto it); `/github setup` with install and sign-in; `/admin` GitHub page; `git` tool; `/git`, `/commit`; prompt rules; attribution | Kernal |
-| 2 | `github_pr` and `github_issue` (all actions), `github_repo`, `/pr`, `/issues`, `wait_ci` | Kernal |
-| 3 | Broker backend; Outfitter socket, frames, API executor and policy | Kernal + Outfitter |
-| 4 | Cloud multi-branch; GitHub App identity; teleport offers commit-and-push; optional read-only MCP | Kernal + Outfitter |
+| Phase | Contents | Where | Depends on |
+|---|---|---|---|
+| 0 | Sandbox git fixes: push the agent's own commits, the resume refspec, `safe.directory`, commit identity | Outfitter | nothing; worth doing now, because resuming a checkpointed session is broken today |
+| 1 | Shared git module (teleport moved onto it); `/github setup` and `kernal github`; `/admin` GitHub page; `git` tool; `/git`, `/commit`; prompt rules; attribution | Kernal | nothing |
+| 2 | `github_pr`, `github_issue`, `github_repo` (all actions), `/pr`, `/issues`, `wait_ci` | Kernal | 1 |
+| 3 | Broker backend; socket, frames, API executor, policy, idempotency, rate limits; session-page panel; EPIC.md update | Kernal and Outfitter | 0, 2 |
+| 4 | Cloud multi-branch; GitHub App identity; teleport carries the repository and offers commit and push; optional read-only MCP | Kernal and Outfitter | 3 |
 
-Each phase is its own PR with tests; phases 1 and 2 are useful locally on their own.
+Each phase is its own PR with tests. Phases 1 and 2 are useful locally on their own.
 
 ## Open questions
 
@@ -277,3 +383,6 @@ Each phase is its own PR with tests; phases 1 and 2 are useful locally on their 
    App (E2.5 phase 2) before phase 3?
 4. **Merges from the cloud**: allowed by default, or only when the guru's config says so?
 5. **Subagents**: give `worker` and `reviewer` the new tools in phase 2, or keep them on bash?
+6. **Cloud committer**: the session's person, or an Outfitter bot identity with the person as author?
+7. **Git proxy**: prototype the smart-HTTP proxy in phase 3, so plain `git` in the cloud shell works
+   too, or keep the tools as the only cloud path?

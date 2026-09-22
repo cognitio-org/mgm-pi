@@ -1,0 +1,39 @@
+.gitignore
+  s_e60c198231e35c::t_6b7b01f3c1d599 31-33
+outfitter/.gcloudignore
+  s_e60c198231e35c::t_6b7b01f3c1d599 7-8
+outfitter/deploy/agent-job.sh
+  s_e60c198231e35c::t_75428b339c61d1 32
+outfitter/deploy/release.sh
+  s_e60c198231e35c::t_75428b339c61d1 32,75
+outfitter/deploy/env.sh
+  s_e60c198231e35c::t_75428b339c61d1 135-155
+outfitter/deploy/ci-setup.sh
+  s_e60c198231e35c::t_738c5439047cd5 8-9,104,121-123,125-127,129,140-143
+outfitter/deploy/service.sh
+  s_e60c198231e35c::t_75428b339c61d1 62
+outfitter/deploy/README.md
+  s_e60c198231e35c::t_493748ce273e47 61-64,71,97-98,296-298
+.gcloudignore
+  s_e60c198231e35c::t_6b7b01f3c1d599 1-9
+.github/workflows/outfitter-deploy.yml
+  s_e60c198231e35c::t_e73289be3b57b5 8-12,15,31,43,49,70,72-73
+outfitter/deploy/tag-release.sh
+  s_e60c198231e35c::t_493748ce273e47 7,61-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "c17c2760e79e365b4b3288211b6ee37e200aa912",
+  "prompts": {},
+  "sessions": {
+    "s_e60c198231e35c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "08aeabd8-483e-47c5-a371-a550240c5d37",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

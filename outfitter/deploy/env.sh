@@ -116,3 +116,30 @@ check_deploy_skew() {
   echo "   refusing to deploy a known-skewed fleet; set ALLOW_SKEW=1 to override." >&2
   exit 1
 }
+
+# A Cloud Run service's public origin: https://<its custom domain> when a domain mapping routes to
+# it and is Ready (certificate issued), otherwise its run.app URL; empty if the service doesn't
+# exist. service.sh uses it to pick each service's own OUTFITTER_ORIGIN at deploy time. A mapping
+# that isn't Ready yet is ignored, so a hostname switch only happens once HTTPS works.
+public_origin() {
+  local service="$1" domain
+  domain="$(gcloud beta run domain-mappings list --project="${PROJECT}" --region="${REGION}" \
+    --filter="spec.routeName=${service} AND status.conditions[0].type=Ready AND status.conditions[0].status=True" \
+    --format='value(metadata.name)' --sort-by=metadata.name 2>/dev/null | head -n1)"
+  if [[ -n "${domain}" ]]; then
+    printf 'https://%s' "${domain}"
+  else
+    gcloud run services describe "${service}" --project="${PROJECT}" --region="${REGION}" \
+      --format='value(status.url)' 2>/dev/null || true
+  fi
+}
+
+# The origin a deployed service actually verifies token audiences against: its OUTFITTER_ORIGIN env
+# var. Anything that mints tokens *for* outfitter-link (the web role's OUTFITTER_LINK_ORIGIN, the
+# Scheduler tick in mailbox.sh) reads it from here instead of recomputing it, so the two sides can't
+# disagree even if a domain mapping turns Ready between deploys. Empty if not deployed.
+deployed_origin() {
+  gcloud run services describe "$1" --project="${PROJECT}" --region="${REGION}" \
+    --format='value(spec.template.spec.containers[0].env.filter(name=OUTFITTER_ORIGIN).extract(value).flatten())' \
+    2>/dev/null || true
+}

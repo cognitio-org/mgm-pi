@@ -210,11 +210,23 @@ IAP binding is only half of it.
 | `kernal.one` | `kernal-web` | landing page (`outfitter/landing/`), public |
 | `www.kernal.one` | `kernal-web` | 301 to `https://kernal.one` (nginx.conf) |
 | `app.kernal.one` | `outfitter-api` | the Outfitter web UI, behind IAP as before |
+| `link.kernal.one` | `outfitter-link` | what sandboxes and laptops dial (`/agent/ws`, teleport, hooks) |
 
 `./landing.sh` builds and deploys the landing page; `./landing.sh --map-domains` also creates any
-missing mappings and prints the DNS records they need. The records in the `kernal-one` zone:
+missing mappings and prints the DNS records they need.
+
+Each service's `OUTFITTER_ORIGIN` follows its custom domain automatically: `service.sh` uses
+`https://<domain>` once a mapping to that service is Ready, else its run.app URL (`env.sh`
+`public_origin`). For the link service that origin is a token audience, so everything that mints
+tokens for it reads link's *deployed* `OUTFITTER_ORIGIN` (`deployed_origin`): the web role's
+`OUTFITTER_LINK_ORIGIN`, the Scheduler tick (`mailbox.sh`) and the agent job's default
+`OUTFITTER_API`. When link's hostname changes, redeploy in this order, with no runs in flight
+(a running sandbox holds a token for the old audience and loses its connection):
+`./link.sh`, then `./api.sh`, then `./mailbox.sh`, then `./agent-job.sh`. Laptops keep working on
+the old run.app URL (their `outf_` tokens aren't audience-bound) but should switch `OUTFITTER_API`
+to the new one shown on the Tokens page. The records in the `kernal-one` zone:
 `kernal.one` A `216.239.32.21 216.239.34.21 216.239.36.21 216.239.38.21` and AAAA
-`2001:4860:4802:{32,34,36,38}::15`; `www` and `app` CNAME `ghs.googlehosted.com.`. Google
+`2001:4860:4802:{32,34,36,38}::15`; `www`, `app` and `link` CNAME `ghs.googlehosted.com.`. Google
 provisions the certificates once DNS resolves (15 min to 24 h).
 
 `app.kernal.one` needs nothing from `outfitter-api`'s own config: IAP's audience is the service

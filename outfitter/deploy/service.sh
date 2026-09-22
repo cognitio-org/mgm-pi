@@ -109,8 +109,7 @@ gcloud builds submit "${SOURCE_DIR}" \
 # run just reads the existing service's URL and skips straight to the real deploy below.
 ORIGIN="${OUTFITTER_ORIGIN:-}"
 if [[ -z "${ORIGIN}" ]]; then
-  ORIGIN="$(gcloud run services describe "${SERVICE}" --project="${PROJECT}" --region="${REGION}" \
-    --format='value(status.url)' 2>/dev/null || true)"
+  ORIGIN="$(public_origin "${SERVICE}")"   # env.sh: custom domain once mapped, else run.app
 fi
 if [[ -z "${ORIGIN}" ]]; then
   echo "== Bootstrap deploy (no prior revision, no OUTFITTER_ORIGIN given) to learn the service URL =="
@@ -166,12 +165,12 @@ if [[ "${ROLE}" == "web" ]]; then
   # `./api.sh` with OUTFITTER_LINK_ORIGIN set (or exported in the shell) so it lands in this env
   # list; omitted or empty, the Tokens page just tells the operator to ask for the link URL.
   # Required, not cosmetic: every sandbox this service wakes is told to dial this origin (config.ts
-  # sandboxOrigin), and the API refuses to start without it. Looked up from the deployed link
-  # service (status.url, the same URL its own OUTFITTER_ORIGIN uses, so token audiences match) when not given, so a re-run of this script can never drop it (--set-env-vars replaces
-  # the whole environment).
+  # sandboxOrigin), and the API refuses to start without it. Read from the deployed link service's
+  # own OUTFITTER_ORIGIN (env.sh deployed_origin) when not given, so the audience sandboxes mint
+  # tokens for is exactly the one link verifies, and a re-run can never drop it (--set-env-vars
+  # replaces the whole environment). Deploy link before web when its hostname changes.
   if [[ -z "${OUTFITTER_LINK_ORIGIN:-}" ]]; then
-    OUTFITTER_LINK_ORIGIN="$(gcloud run services describe outfitter-link --project="${PROJECT}" --region="${REGION}" \
-      --format='value(status.url)' 2>/dev/null || true)"
+    OUTFITTER_LINK_ORIGIN="$(deployed_origin outfitter-link)"
   fi
   if [[ -z "${OUTFITTER_LINK_ORIGIN:-}" ]]; then
     echo "error: could not find the outfitter-link service's URL; deploy it first (./link.sh) or set OUTFITTER_LINK_ORIGIN" >&2

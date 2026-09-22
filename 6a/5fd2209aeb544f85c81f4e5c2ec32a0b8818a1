@@ -1,0 +1,24 @@
+outfitter/docs/reports/review-round-five.md
+  s_2209f22f830d7f::t_4feebceccdee69 1-225
+outfitter/packages/web/src/App.tsx
+  s_2209f22f830d7f::t_ca0faae5b47a64 26-33,132,145
+  s_2209f22f830d7f::t_408200034571e1 1,14
+outfitter/packages/web/src/styles/pages.css
+  s_2209f22f830d7f::t_408200034571e1 222-228
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "6a5fd2209aeb544f85c81f4e5c2ec32a0b8818a1",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

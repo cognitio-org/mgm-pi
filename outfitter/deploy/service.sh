@@ -43,7 +43,17 @@ CLOUDRUN_JOB="${CLOUDRUN_JOB:-outfitter-agent}"
 # `user:` for a single Google account (including @gmail.com). Anyone outside the mgmonteleone.com
 # org (serviam-it.hr, gmail) also needs IAP on a custom OAuth client -- see IAP_OAUTH_CLIENT_ID
 # below and README.md "IAP access for users outside the org".
+# A domain: member admits every account that domain's Workspace admin creates.
 IAP_MEMBERS="${IAP_MEMBERS:-domain:mgmonteleone.com,domain:serviam-it.hr,user:matija.turk@gmail.com}"
+IFS=',' read -ra IAP_MEMBER_LIST <<<"${IAP_MEMBERS}"
+for member in "${IAP_MEMBER_LIST[@]}"; do
+  # Only named principals: a typo'd or pasted allUsers/allAuthenticatedUsers would open the app to
+  # every Google account, since the custom OAuth client accepts accounts outside the org.
+  if [[ ! "${member}" =~ ^(user|group|domain):[^[:space:]]+$ ]]; then
+    echo "error: IAP_MEMBERS entry '${member}' is not user:, group: or domain:" >&2
+    exit 1
+  fi
+done
 # Custom OAuth client for IAP (External audience), created by hand in the console. Its secret lives
 # in Secret Manager as outfitter-iap-oauth-client-secret. Unset = leave IAP's OAuth settings alone
 # (the Google-managed client, which admits org-internal users only).
@@ -189,22 +199,25 @@ if [[ "${ROLE}" == "web" ]]; then
   if [[ -n "${IAP_OAUTH_CLIENT_ID}" ]]; then
     echo "== Pointing IAP on ${SERVICE} at custom OAuth client ${IAP_OAUTH_CLIENT_ID} =="
     IAP_OAUTH_CLIENT_SECRET="$(gcloud secrets versions access latest --secret=outfitter-iap-oauth-client-secret --project="${PROJECT}")"
-    IAP_SETTINGS_FILE="$(mktemp)"
-    trap 'rm -f "${IAP_SETTINGS_FILE}"' EXIT
+    if [[ -z "${IAP_OAUTH_CLIENT_SECRET}" ]]; then
+      echo "error: secret outfitter-iap-oauth-client-secret is empty; not touching IAP's OAuth settings" >&2
+      exit 1
+    fi
+    IAP_SETTINGS_FILE="$(mktemp)"   # 0600; holds the client secret only until gcloud has read it
+    trap 'rm -f "${IAP_SETTINGS_FILE}"' EXIT INT TERM
     cat >"${IAP_SETTINGS_FILE}" <<YAML
 accessSettings:
   oauthSettings:
     clientId: ${IAP_OAUTH_CLIENT_ID}
-    clientSecret: ${IAP_OAUTH_CLIENT_SECRET}
+    clientSecret: '${IAP_OAUTH_CLIENT_SECRET}'
 YAML
     gcloud iap settings set "${IAP_SETTINGS_FILE}" \
       --resource-type=cloud-run \
       --service="${SERVICE}" \
       --region="${REGION}" \
-      --project="${PROJECT}"
+      --project="${PROJECT}" >/dev/null
   fi
 
-  IFS=',' read -ra IAP_MEMBER_LIST <<<"${IAP_MEMBERS}"
   for member in "${IAP_MEMBER_LIST[@]}"; do
     echo "== Granting ${member} roles/iap.httpsResourceAccessor on ${SERVICE} =="
     gcloud iap web add-iam-policy-binding \

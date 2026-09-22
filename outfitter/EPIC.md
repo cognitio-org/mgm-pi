@@ -124,6 +124,8 @@ Ten agent-hours a day is roughly $2/day of compute. Set a GCP budget alert at $2
 | Vocabulary | Reusable agent configs are **Gurus** (not "Experts"). |
 | Session visibility | Org-shared: every signed-in user IAP admits can see and steer every session (as Cosmos treats shared sessions). `Session.ownerEmail` is recorded but not enforced; per-user privacy is a later, one-line check if ever wanted. |
 | Operator role (2026-09-22, `docs/reports/operators.md`) | Operators are a config list (`OUTFITTER_OPERATORS`), currently `mgm@mgms.eu` and `matej@mgms.eu`. Operators manage Secret Manager keys and deploy-level settings via `/api/operator/*`. Any signed-in user can still create sessions and edit gurus -- the org-shared policy above is unchanged; operator is an additional capability, not a replacement for it. |
+| Outside users (2026-09-22, `docs/reports/kernal-one.md`) | IAP admits `mgmonteleone.com`, `serviam-it.hr` and `user:matija.turk@gmail.com` (`IAP_MEMBERS`). Users outside the org need IAP on a custom External OAuth client (`IAP_OAUTH_CLIENT_ID`, secret `outfitter-iap-oauth-client-secret`), because the Google-managed client admits org-internal users only. They get the same org-shared access as everyone else; none are operators. |
+| kernal.one (2026-09-22, `docs/reports/kernal-one.md`) | `app.kernal.one` is the Outfitter web UI (Cloud Run domain mapping onto `outfitter-api`, IAP unchanged); `kernal.one` is a public C64-style landing page (`landing/`, Cloud Run `kernal-web`); DNS in Cloud DNS zone `kernal-one` (project `cognitio-flow`). Cloud Run domain mappings rather than a global load balancer, so idle cost stays at zero. |
 
 
 ## 3. Epics and stories

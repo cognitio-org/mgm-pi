@@ -174,7 +174,13 @@ IAP OAuth Admin API that `gcloud iap oauth-brands/oauth-clients` wrapped was shu
    and `gcloud iap settings get ...`, then sign in from a private window as an outside user.
 
 Everyone who gets through IAP is a regular user. Per EPIC.md's session-visibility decision, they can
-see and steer every session. Operator rights still come only from `OUTFITTER_OPERATORS`.
+see and steer every session, which means directing agents that run with the fleet's GitHub and
+LiteLLM credentials. Operator rights still come only from `OUTFITTER_OPERATORS`.
+
+A `domain:` member (`domain:serviam-it.hr`) admits every account that domain's Google Workspace
+admin creates, now and later, including its secondary domains; use `user:` entries instead when
+access should stay with named people. To remove someone later, see Rollback → "IAP access": the
+IAP binding is only half of it.
 
 ## kernal.one
 
@@ -217,8 +223,14 @@ redirect URI. The landing page's CSP pins the hash of its inline theme script
   after commenting out the build step, or `gcloud run jobs update outfitter-agent --image=<prior image>`
   directly) — new executions pick up the change immediately; a Job has no live traffic to shift.
 - **IAP access**: `./api.sh` only ever *adds* members, so dropping one from `IAP_MEMBERS` doesn't
-  revoke it. Remove a member (e.g. `user:matija.turk@gmail.com`) with
-  `gcloud iap web remove-iam-policy-binding --resource-type=cloud-run --service=outfitter-api --region=us-central1 --member=<member> --role=roles/iap.httpsResourceAccessor`.
+  revoke it. Removing someone takes two steps:
+  1. Remove the member (e.g. `user:matija.turk@gmail.com`) with
+     `gcloud iap web remove-iam-policy-binding --resource-type=cloud-run --service=outfitter-api --region=us-central1 --member=<member> --role=roles/iap.httpsResourceAccessor`.
+  2. Revoke their `outf_` API tokens. Those tokens don't expire, and `outfitter-link` (public,
+     authenticated only by the token) accepts them for session list/export/import/stop without
+     going through IAP. There's no admin route for this yet; in the Atlas `tokens` collection, set
+     `revokedAt` to the current ISO timestamp on every row whose `ownerEmail` is that person (or
+     whose domain it is, for a `domain:` member).
 - **Full teardown** (reverse of `baseline.sh`): delete both Cloud Run services (`outfitter-api`,
   `outfitter-link`) and the job (`outfitter-agent`), then the AR repo
   (`gcloud artifacts repositories delete outfitter --location=us-central1`), then the two

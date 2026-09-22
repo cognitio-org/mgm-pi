@@ -34,10 +34,12 @@ outfitter/packages/agentd/src/protocol.ts
 outfitter/packages/api/test/e2e.test.ts
   s_719d861e1a31b6::t_43be6430b17bb7 253-254
   s_719d861e1a31b6::t_7505740e779539 14,27,78-118,120-135,137-155,160-162,206,210-252,255-261
+  s_719d861e1a31b6::t_34134036234d16 119,136
 outfitter/deploy/service.sh
   s_719d861e1a31b6::t_3479f36aa70b23 112-117
 outfitter/packages/api/src/server.ts
   s_719d861e1a31b6::t_4c45fff18f163d 20,39,65-66,131-144
+  s_719d861e1a31b6::t_34134036234d16 111
 outfitter/packages/web/src/api/client.ts
   s_719d861e1a31b6::t_9174e9e7bf8c33 283-284,288-289
 outfitter/packages/api/test/mail.test.ts

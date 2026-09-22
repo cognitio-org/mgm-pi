@@ -12,7 +12,8 @@ IAP would reject both before they reached the app. So `packages/api`'s image run
 services, picking its routes by env var `OUTFITTER_ROLE` (`src/config.ts`): `outfitter-api`
 (`OUTFITTER_ROLE=web`, IAP on) serves everything under "browser ⇄ api (REST)" below; `outfitter-link`
 (`OUTFITTER_ROLE=link`, `--allow-unauthenticated`) serves only `GET /agent/ws` and
-`POST /api/hooks/ngrok`, each authenticating its own requests as described in their own sections.
+`POST /api/hooks/*` (ngrok, and the mailbox's `tasks/wake` and `tick`), each authenticating its own
+requests as described in their own sections.
 Both roles share one Atlas store. `OUTFITTER_ROLE=all` (the default) runs both on one process, for
 local dev where there's no IAP anyway. See `deploy/README.md` and `deploy/link.sh`.
 
@@ -74,6 +75,7 @@ Up (agentd → api):
 | `checkpoint` | `branch?, head?, pushed?: boolean, snapshotUrl?, workspaceUrl?` | after each git push / JSONL upload; repo-less runs upload a workspace tarball (`workspaceUrl`) instead of pushing |
 | `heartbeat` | `idleSeconds, memMb` | every 15 s |
 | `bye` | `reason: "idle"\|"stop"\|"sigterm"\|"error", message?` | last frame |
+| `mail.ack` | `id` | pi accepted a `mail` down-message (its RPC `prompt` response came back `success: true`); the API marks the mail acked |
 
 Down (api → agentd):
 
@@ -90,6 +92,59 @@ Down (api → agentd):
 | `diff` | `reqId` | agentd replies `diff.result {reqId, base, patch}`; without a repo it replies with the list of changed files in /workspace since the last checkpoint |
 | `read` | `reqId, path` | agentd replies `read.result {reqId, content|error}` |
 | `stop` | `reason` | checkpoint, then `bye`, exit 0 |
+| `mail` | `id, text, behavior?: "followUp"\|"steer"` | E5.5 mailbox message: pi RPC `prompt` with rpc id `mail:<id>` and `streamingBehavior: behavior ?? "followUp"` (starts a turn when idle, queues when busy); agentd sends `mail.ack` once pi accepts it, and re-acks without re-prompting if the same id is redelivered |
+
+### Mailbox (E5.5)
+
+Every message for a session's agent — the browser's first prompt, `POST /messages`, and agent
+sends — is stored in the `mail` collection before anything else happens, addressed to the
+*session*, not a run. So a failed wake, or a run that dies before it is ready, can't lose it.
+Delivery is at least once:
+
+- A run receives mail only while `running` or `idle` (never `stopping`: a follow-up accepted by a
+  draining run would start a turn the stop cuts off). The link role claims mail oldest-first with an
+  atomic `findOneAndUpdate` that sets `delivered` plus a 60 s lease, then sends a `mail` frame. It
+  does this when a run becomes ready, from the down-queue poller, and right after a post whose
+  recipient's socket is local.
+- `mail.ack` marks it `acked` (TTL-deleted after 7 days), but only if it is currently delivered to
+  the acking run. Mail that isn't acked before its lease expires is claimable again.
+- **Attempts:** 6 per mail. Each claim counts, and so does each wake started for the mail. So a
+  session whose runs die before they are ready (a clone failure, a missing secret) stops being
+  woken. The `/tick` sweep marks exhausted mail `dead` (TTL 7 days) and bounces agent sends back to
+  their sender.
+- On `bye`, mail delivered to that run but not acked goes back to `queued` straight away. Then the
+  session is woken again if it holds deliverable mail (e.g. mail that arrived while it was
+  stopping), *except* after `bye stop` (an explicit stop). The `/tick` sweep may still wake it
+  later.
+- agentd drops (doesn't ack) mail that arrives while it is stopping, because pi is about to be
+  killed. It forgets an in-flight mail if pi hasn't answered within 30 s.
+- Delivery to one run is serialized in the link process, so mail goes out in claim order
+  (`createdAt`; ties between the web and link roles are unordered).
+
+**Agent sends.** The `outfitter-mail` pi extension (`packages/agentd/pi-extension/`) gives the model
+`outfitter_send {to, text, urgent?}`, which appends a pi `custom` entry
+`{customType: "outfitter.mail", data: {to, text, urgent}}`. It reaches the API as an ordinary
+`entry` frame (seq/ack replay included). The API turns it into mail for `to`, with id
+`sha256(sender session, entry id)` so a replayed frame is a no-op. The recipient sees it as a
+user-role message: a one-line note naming the sender and saying the content is another agent's
+writing, not instructions (`[outfitter mail from session "<name>" (<id>). … Reply with outfitter_send
+to "<id>".]`), then the body between `<<<mail-<nonce>` and `mail-<nonce>>>>`. The nonce is 12
+random hex characters per message, so a body can't forge the closing fence, a second header, or
+an `[outfitter system]` notice. `urgent` becomes `steer`. The send bounces back to the sender as an
+`[outfitter system]` mail instead when:
+- the recipient session doesn't exist, or is the sender itself;
+- `to` is longer than 64 characters, or the text is empty or longer than 32,000 characters;
+- the sender has already sent 30 messages in the last hour.
+
+agentd sets `OUTFITTER_SESSION_ID` in pi's env (after `guru.env`, so a guru can't spoof it) so the
+tool can tell the model its own address. Browser text over 32,000 characters gets a 413.
+
+**Wake durability.** A post stores the mail, then schedules one Cloud Task named after the mail id
+(env `CLOUD_TASKS_QUEUE`, targeting `POST <link>/api/hooks/tasks/wake`), then tries one inline wake
+(in the background for agent sends, so a slow Cloud Run start doesn't stall the sender's frames).
+Only the insert can fail the post; a browser post whose wake failed gets 202 with `run: null`, and
+must not be resent. `RunManager.wake` is atomic per session (Mongo: partial unique
+index `one_active_run_per_session`), so concurrent senders can't start two sandboxes.
 
 Ordering: `seq` is monotonically increasing per run for both `entry` and `event`. The API persists
 `entry` frames to Atlas (`entries` collection, unique `{sessionId, entry.id}`), fans `event` frames to
@@ -115,7 +170,7 @@ it.
 - `GET /api/sessions/:id` → metadata + `leafId`
 - `GET /api/sessions/:id/entries?after=<entryId>` → pi entries in tree order
 - `GET /api/sessions/:id/stream` → SSE: `event: entry|event|status|spend|checkpoint`, `data: <json>`
-- `POST /api/sessions/:id/messages` `{text, behavior?}` → wakes a run if none is running
+- `POST /api/sessions/:id/messages` `{text, behavior?}` → stores the text as mail (see "Mailbox"), wakes a run if none is running, returns `{run}`; `behavior` defaults to `followUp`. If the wake fails it returns **202 `{run: null}`**: the mail is queued for Cloud Tasks and `/tick`, so the client must not resend. Text over 32,000 characters is a 413. `POST /api/sessions` behaves the same way for its `prompt` (201 with `run: null` if the first wake failed)
 - `POST /api/sessions/:id/abort` · `/stop` (graceful for a `running`/`idle` run: enqueues a `stop`
   down-message through the store and sets `stopping` — see "Run state machine" above; cancels via
   the provider directly for a `queued`/`provisioning` run, which has no live agent to ask) · `/wake`
@@ -130,6 +185,15 @@ it.
   present neither, so this one route is carved out of that check and instead verifies an
   HMAC-SHA256 signature (env `NGROK_WEBHOOK_SECRET`) over the raw request body in the
   `ngrok-signature` header; an unset secret or bad/missing signature is a 401 with no side effect.
+
+- `POST /api/hooks/tasks/wake` `{sessionId}` and `POST /api/hooks/tick` `{}` (link role; not
+  IAP-gated): called by Cloud Tasks and Cloud Scheduler with a Google OIDC token whose audience is
+  this service's origin and whose email is env `TASKS_SA_EMAIL`; anything else is a 401 (dev mode:
+  the agent dev token). `tasks/wake` wakes the session if it still holds deliverable mail and answers
+  `{result: "woken"|"active"|"none"}` (200 once any run exists, so retries don't stack executions; a
+  provider failure is a 500 that Cloud Tasks retries, each retry charged as an attempt). `tick` runs the stale-run and stuck-stopping reconcilers and wakes every
+  session with deliverable mail and no active run — the in-process `setInterval` loops only run while
+  a request keeps a min-instances-0 container alive. Set up by `deploy/mailbox.sh`.
 
 Teleport uses `GET /api/sessions/:id/export.jsonl`, `PUT /api/sessions/:id/import` (body: JSONL,
 same id, refused while a run is `running`), and `GET /api/sessions` for the picker.

@@ -33,7 +33,7 @@ export class RunManager {
     if (existing) return existing;
 
     const now = new Date().toISOString();
-    const run: Run = {
+    const candidate: Run = {
       id: randomUUID(),
       sessionId,
       state: "queued",
@@ -42,7 +42,8 @@ export class RunManager {
       createdAt: now,
       updatedAt: now,
     };
-    await this.store.runs.insert(run);
+    const { run, inserted } = await this.store.runs.insertIfNoActive(candidate);
+    if (!inserted) return run;
 
     // Finding #2 (docs/reports/security-review-pr1.md): every sandbox execution shares one agent
     // SA identity, so a valid agent id token alone doesn't prove the caller is *this* run's own

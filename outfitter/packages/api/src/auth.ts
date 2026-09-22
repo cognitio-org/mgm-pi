@@ -167,6 +167,21 @@ export async function requireOperator(req: FastifyRequest, reply: FastifyReply):
   }
 }
 
+/** Verifies a Google-signed OIDC token from Cloud Tasks or Cloud Scheduler (audience = this
+ * service's origin, email = TASKS_SA_EMAIL). Dev mode accepts the agent dev token instead. */
+export async function verifyTasksToken(bearer: string | undefined, config: Config): Promise<void> {
+  if (!bearer) throw new Error("missing bearer token");
+  if (config.devMode) {
+    if (bearer !== config.devToken) throw new Error("dev token mismatch");
+    return;
+  }
+  if (!config.tasksSaEmail) throw new Error("TASKS_SA_EMAIL is not configured");
+  const ticket = await new OAuth2Client().verifyIdToken({ idToken: bearer, audience: config.origin });
+  const payload = ticket.getPayload();
+  if (payload?.email_verified === false) throw new Error("tasks token email is not verified");
+  if (payload?.email !== config.tasksSaEmail) throw new Error("tasks token email does not match TASKS_SA_EMAIL");
+}
+
 /** Parses `Authorization: Bearer <token>`, returning undefined if absent or malformed. */
 export function bearerFromHeader(req: RequestLike): string | undefined {
   const header = headerString(req, "authorization");

@@ -17,6 +17,7 @@ import { ProviderStatusService } from "./providers-status.ts";
 import { ModelsService } from "./models.ts";
 import { CloudRunProvider } from "./providers/cloudrun.ts";
 import { registerRoutes } from "./routes/index.ts";
+import { MailService, CloudTasksWakeScheduler, NoopWakeScheduler, type WakeScheduler } from "./mail.ts";
 
 export interface BuildAppOptions {
   store: Store;
@@ -35,6 +36,7 @@ export interface App {
   sse: SseHub;
   laptopProbe: LaptopProbe;
   providerStatus: ProviderStatusService;
+  mail: MailService;
   /** Stops the run reconciler interval, (role link/all) the down-queue poller, and (role web/all)
    * the provider status poller; call from tests and from main.ts on shutdown. */
   stopBackgroundTasks: () => void;
@@ -60,7 +62,8 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     tunnelDomain: config.tunnelDomainLmstudio,
     token: config.localTunnelToken,
   });
-  const agentLink = new AgentLink(store, config, secretsBroker, sse, laptopProbe);
+  const mail = new MailService(store, runs, wakeSchedulerFor(config), (msg, err) => fastify.log.warn({ err }, msg));
+  const agentLink = new AgentLink(store, config, secretsBroker, sse, laptopProbe, mail);
 
   // Cloud Run job capacity probe (E2.10): only meaningful when the configured SandboxProvider
   // actually is a CloudRunProvider. Importing the class here is safe even for other providers --
@@ -105,7 +108,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     }
   });
 
-  await registerRoutes(fastify, { store, config, runs, agentLink, sse, laptopProbe, providerStatus, modelsService, secretAdmin });
+  await registerRoutes(fastify, { store, config, runs, agentLink, sse, laptopProbe, providerStatus, modelsService, secretAdmin, mail });
   // The down-queue poller only makes sense where AgentLink sockets actually live (role "link" or
   // "all", same condition as registering /agent/ws itself) — see agentLink.startDownQueuePoller's
   // doc comment. The web role never holds a socket for any run, so it's never started there.
@@ -125,5 +128,18 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     stopDownQueuePoller?.();
   };
 
-  return { fastify, runs, agentLink, sse, laptopProbe, providerStatus, stopBackgroundTasks };
+  return { fastify, runs, agentLink, sse, laptopProbe, providerStatus, mail, stopBackgroundTasks };
+}
+
+/** Cloud Tasks targets the link role: the web role sits behind IAP, which would reject the task's
+ * OIDC token. Role "all" (dev) has no separate link origin and targets itself. */
+function wakeSchedulerFor(config: Config): WakeScheduler {
+  if (!config.cloudTasksQueue || !config.gcpProject || !config.tasksSaEmail) return new NoopWakeScheduler();
+  return new CloudTasksWakeScheduler({
+    project: config.gcpProject,
+    region: config.gcpRegion,
+    queue: config.cloudTasksQueue,
+    targetUrl: `${config.linkOrigin || config.origin}/api/hooks/tasks/wake`,
+    serviceAccountEmail: config.tasksSaEmail,
+  });
 }

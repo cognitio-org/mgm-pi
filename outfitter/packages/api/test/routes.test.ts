@@ -118,8 +118,8 @@ describe("GET /api/sessions?runState=", () => {
   });
 });
 
-describe("down-messages queue when no agentd socket is connected", () => {
-  test("the initial prompt and a follow-up message both land in run.pending", async () => {
+describe("browser messages go through the mailbox", () => {
+  test("the initial prompt and a follow-up message are both stored as queued mail for the session", async () => {
     const app = await buildTestApp();
     await seedGuru(app.store);
 
@@ -128,12 +128,9 @@ describe("down-messages queue when no agentd socket is connected", () => {
       url: "/api/sessions",
       payload: { guruId: "test-guru", repo: "o/r", prompt: "first" },
     });
+    assert.equal(createRes.statusCode, 201);
     const { session, run } = createRes.json();
-
-    const afterCreate = await app.store.runs.findById(run.id);
-    assert.equal(afterCreate?.pending.length, 1);
-    assert.equal(afterCreate?.pending[0].t, "prompt");
-    assert.equal(afterCreate?.pending[0].text, "first");
+    assert.ok(run.id);
 
     const messageRes = await app.fastify.inject({
       method: "POST",
@@ -141,10 +138,15 @@ describe("down-messages queue when no agentd socket is connected", () => {
       payload: { text: "second" },
     });
     assert.equal(messageRes.statusCode, 200);
+    assert.equal(messageRes.json().run.id, run.id, "the second message reuses the active run");
 
-    const afterMessage = await app.store.runs.findById(run.id);
-    assert.equal(afterMessage?.pending.length, 2);
-    assert.equal(afterMessage?.pending[1].text, "second");
+    const now = new Date().toISOString();
+    const first = await app.store.mail.claimNext(session.id, run.id, now, now, 5);
+    const second = await app.store.mail.claimNext(session.id, run.id, now, now, 5);
+    assert.deepEqual([first?.text, second?.text], ["first", "second"]);
+    assert.equal(second?.behavior, "followUp");
+    assert.equal(second?.from.kind, "user");
+    assert.equal((await app.store.runs.findById(run.id))?.pending.length, 0);
 
     await app.fastify.close();
   });

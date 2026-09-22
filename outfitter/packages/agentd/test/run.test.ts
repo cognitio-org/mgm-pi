@@ -802,3 +802,81 @@ test("RunController: pi is spawned with the run-as user's HOME and identity, nev
   assert.equal(spawnedEnv!.HOME, "/home/agent");
   assert.equal(spawnedEnv!.USER, "agent");
 });
+
+async function setupControllablePiRun(t: { after: (fn: () => void) => void }) {
+  const workspace = await mkdtemp(join(tmpdir(), "outfitter-run-test-"));
+  const link = new FakeLink();
+  let pi: ReturnType<typeof makeControllablePi> | undefined;
+  let spawnEnv: Record<string, string> | undefined;
+  const controller = new RunController({
+    link,
+    gitOps: fakeGitOps(),
+    workspace,
+    piBin: "unused-in-test",
+    agentdVersion: "test",
+    piVersion: "test",
+    heartbeatIntervalMs: 60_000,
+    spawnPi: (opts) => {
+      spawnEnv = opts.env;
+      pi = makeControllablePi();
+      return pi;
+    },
+    importSession: async (_snapshotFile, _cwd, sessionId) => join(workspace, `${sessionId}.jsonl`),
+    writeSnapshotFile,
+    createTailer: () => ({ start() {}, stop() {}, poll: async () => {} }),
+    onLog: () => {},
+  });
+  t.after(() => controller.dispose());
+  const spec: DownRunSpec = {
+    t: "run.spec",
+    session: { id: "sess-mail", name: "mail", cwd: "/workspace" },
+    guru: { model: "fake/model", env: { OUTFITTER_SESSION_ID: "spoofed" } },
+    snapshot: { jsonl: emptySessionJsonl("sess-mail", "/workspace") },
+    secrets: {},
+    idleStopSeconds: 3600,
+    checkpointEvery: "turn",
+  };
+  return { link, spec, getPi: () => pi, getSpawnEnv: () => spawnEnv };
+}
+
+test("RunController: mail becomes a pi prompt with followUp by default, and is acked only once pi accepts it", async (t) => {
+  const { link, spec, getPi, getSpawnEnv } = await setupControllablePiRun(t);
+  link.deliver(spec);
+  link.deliver({ t: "mail", id: "m1", text: "please review" });
+  await waitFor(() => getPi()?.sent.length === 1);
+  const pi = getPi()!;
+  assert.deepEqual(pi.sent[0], { id: "mail:m1", type: "prompt", message: "please review", streamingBehavior: "followUp" });
+  assert.equal(getSpawnEnv()?.OUTFITTER_SESSION_ID, "sess-mail", "the real session id wins over guru.env");
+  assert.ok(!link.sent.some((m) => m.t === "mail.ack"), "no ack before pi responds");
+
+  pi.emit({ type: "response", id: "mail:m1", command: "prompt", success: true });
+  assert.deepEqual(link.sent.filter((m) => m.t === "mail.ack"), [{ t: "mail.ack", id: "m1" }]);
+
+  link.deliver({ t: "mail", id: "m1", text: "please review" });
+  assert.equal(pi.sent.length, 1, "a redelivery of accepted mail is not prompted again");
+  assert.equal(link.sent.filter((m) => m.t === "mail.ack").length, 2, "but it is re-acked");
+});
+
+test("RunController: steer mail passes its behavior through, and rejected mail stays unacked", async (t) => {
+  const { link, spec, getPi } = await setupControllablePiRun(t);
+  link.deliver(spec);
+  await waitFor(() => getPi() !== undefined);
+  const pi = getPi()!;
+  link.deliver({ t: "mail", id: "m2", text: "stop", behavior: "steer" });
+  link.deliver({ t: "mail", id: "m2", text: "stop", behavior: "steer" });
+  assert.equal(pi.sent.length, 1, "a duplicate while the first is in flight is dropped");
+  assert.equal((pi.sent[0] as any).streamingBehavior, "steer");
+  pi.emit({ type: "response", id: "mail:m2", command: "prompt", success: false, error: "busy" });
+  assert.ok(!link.sent.some((m) => m.t === "mail.ack"));
+});
+
+test("RunController: mail that arrives while the run is stopping is neither prompted nor acked", async (t) => {
+  const { link, spec, getPi } = await setupControllablePiRun(t);
+  link.deliver(spec);
+  await waitFor(() => getPi() !== undefined);
+  const pi = getPi()!;
+  link.deliver({ t: "stop", reason: "test" });
+  link.deliver({ t: "mail", id: "m3", text: "too late" });
+  assert.ok(!pi.sent.some((c) => (c as any).id === "mail:m3"), "pi is about to be killed; the prompt would be lost");
+  assert.ok(!link.sent.some((m) => m.t === "mail.ack"), "unacked, so the api re-queues it on bye");
+});

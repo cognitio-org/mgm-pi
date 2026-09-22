@@ -59,9 +59,26 @@ function appendFakeEntry(): void {
   appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`);
 }
 
+/** "SEND <sessionId> <text>" makes this fake pi do what the outfitter-mail extension's
+ * outfitter_send does: append an outfitter.mail custom entry (see the api's e2e mail test). */
+function appendSendEntry(message: string): void {
+  const match = /^SEND (\S+) ([\s\S]+)$/.exec(message);
+  if (!sessionFile || !match) return;
+  const entry = {
+    type: "custom",
+    id: randomBytes(4).toString("hex"),
+    parentId: null,
+    timestamp: new Date().toISOString(),
+    customType: "outfitter.mail",
+    data: { to: match[1], text: match[2], urgent: false },
+  };
+  appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`);
+}
+
 function handle(cmd: any): void {
   if (cmd.type === "prompt") {
     emit({ id: cmd.id, type: "response", command: "prompt", success: true });
+    if (typeof cmd.message === "string") appendSendEntry(cmd.message);
     emit({ type: "agent_start" });
     emit({
       type: "message_update",

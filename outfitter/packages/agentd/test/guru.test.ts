@@ -128,3 +128,14 @@ test("renderGuru: empty tools/excludeTools arrays render no flags", () => {
   assert.ok(!args.includes("--tools"));
   assert.ok(!args.includes("--exclude-tools"));
 });
+
+test("renderGuru: mailExtensionPath renders its own --extension after the spend one", () => {
+  const guru: RunSpecGuru = { model: "m/x" };
+  const { args } = renderGuru(guru, {
+    piBin: "pi",
+    sessionFile: "/tmp/s.jsonl",
+    spendExtensionPath: "/x/outfitter-spend.js",
+    mailExtensionPath: "/x/outfitter-mail.js",
+  });
+  assert.deepEqual(args.slice(5, 9), ["--extension", "/x/outfitter-spend.js", "--extension", "/x/outfitter-mail.js"]);
+});

@@ -28,6 +28,9 @@ export interface RenderOptions {
    * agentd (OUTFITTER_SPEND_FILE) without every non-agentd pi run picking it up. Omitted outside
    * agentd (interactive/local pi never sets this). */
   spendExtensionPath?: string;
+  /** E5.5: path to pi-extension/outfitter-mail.ts (or its built .js), which gives the model the
+   * outfitter_send tool. Loaded the same way as the spend extension. */
+  mailExtensionPath?: string;
 }
 
 /** guru.env keys that would let a guru author plant persistent code-exec or credential leakage into
@@ -72,6 +75,7 @@ export function renderGuru(guru: RunSpecGuru, opts: RenderOptions): RenderedPi {
   const args: string[] = ["--mode", "rpc", "-a", "--session", opts.sessionFile];
 
   if (opts.spendExtensionPath) args.push("--extension", opts.spendExtensionPath);
+  if (opts.mailExtensionPath) args.push("--extension", opts.mailExtensionPath);
 
   args.push("--model", renderModelArg(guru.model, guru.thinking));
 

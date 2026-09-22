@@ -280,11 +280,13 @@ export const api = {
     return request(`/api/sessions/${id}/entries${qs}`);
   },
 
-  createSession(input: NewSessionInput): Promise<{ session: SessionDetail; run: RunLike }> {
+  /** `run` is null when the session was stored but its first wake failed; it starts later on its own. */
+  createSession(input: NewSessionInput): Promise<{ session: SessionDetail; run: RunLike | null }> {
     return request("/api/sessions", { method: "POST", body: JSON.stringify(input) });
   },
 
-  sendMessage(id: string, text: string, behavior?: "steer" | "followUp"): Promise<{ run: RunLike }> {
+  /** 202 with `run: null` means the message is queued but no run could start yet; don't resend it. */
+  sendMessage(id: string, text: string, behavior?: "steer" | "followUp"): Promise<{ run: RunLike | null }> {
     return request(`/api/sessions/${id}/messages`, { method: "POST", body: JSON.stringify({ text, behavior }) });
   },
 

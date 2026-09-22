@@ -24,6 +24,7 @@ import type {
   ByeReason,
   DownAbort,
   DownFollowUp,
+  DownMail,
   DownMessage,
   DownPrompt,
   DownRpc,
@@ -38,7 +39,7 @@ import type {
 
 /** Down-messages that target the pi process directly. Queued (see `pendingPiMessages`) while `pi`
  * hasn't been spawned yet -- e.g. a prompt that arrives during `cloning`/`restoring`/`starting`. */
-type PiTargetedDownMessage = DownPrompt | DownSteer | DownFollowUp | DownAbort | DownUiResponse | DownRpc;
+type PiTargetedDownMessage = DownPrompt | DownSteer | DownFollowUp | DownAbort | DownUiResponse | DownRpc | DownMail;
 
 function isPiTargetedDownMessage(msg: DownMessage): msg is PiTargetedDownMessage {
   return (
@@ -47,7 +48,8 @@ function isPiTargetedDownMessage(msg: DownMessage): msg is PiTargetedDownMessage
     msg.t === "follow_up" ||
     msg.t === "abort" ||
     msg.t === "ui_response" ||
-    msg.t === "rpc"
+    msg.t === "rpc" ||
+    msg.t === "mail"
   );
 }
 
@@ -101,6 +103,8 @@ export interface RunControllerDeps {
   /** E2.11: path to pi-extension/outfitter-spend.ts (or its built .js), passed to renderGuru so it
    * adds `-e <path>` -- see guru.ts's RenderOptions doc. */
   spendExtensionPath?: string;
+  /** E5.5 (OUTFITTER_MAIL_EXTENSION): path to pi-extension/outfitter-mail.ts (or its built .js). */
+  mailExtensionPath?: string;
   createSpendTailer?: SpendTailerFactory;
   /** E1.6: structured JSON logging (logger.ts). Optional so existing tests (and any caller that only
    * wants the plain `onLog` string sink) keep working unchanged. When present, pi's own stderr goes
@@ -128,6 +132,8 @@ export interface RunControllerDeps {
 }
 
 export type StateChangeHandler = (state: RunState, detail?: string) => void;
+
+const MAIL_RESPONSE_TIMEOUT_MS = 30_000;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -192,6 +198,11 @@ export class RunController {
    * `checkpoint()`, so it isn't lost -- `checkpoint()` would otherwise blindly restore whatever
    * state preceded it, even if that's now stale (see `checkpoint()`). */
   private stateAfterCheckpoint: RunState | undefined;
+  /** E5.5: pi RPC request id -> mail id, for mail handed to pi whose `response` hasn't come back. */
+  private readonly mailInFlight = new Map<string, string>();
+  /** Mail pi has already accepted this run. A redelivery (the ack was lost, the lease expired) is
+   * re-acked without prompting pi a second time. */
+  private readonly mailAccepted = new Set<string>();
   private readonly now: () => number;
   private readonly onExit: (code: number) => void;
   private readonly onLog: (line: string) => void;
@@ -297,7 +308,27 @@ export class RunController {
       case "rpc":
         this.pi?.send(msg.command);
         return;
+      case "mail":
+        this.dispatchMail(msg);
+        return;
     }
+  }
+
+  private dispatchMail(msg: DownMail): void {
+    if (this.mailAccepted.has(msg.id)) {
+      this.deps.link.send({ t: "mail.ack", id: msg.id });
+      return;
+    }
+    // A stop is checkpointing and about to kill pi: a prompt accepted now would be acked but its
+    // turn never run. Leave it unacked; the api re-queues it when this run's `bye` arrives.
+    if (this.stopping) return;
+    const rpcId = `mail:${msg.id}`;
+    if (this.mailInFlight.has(rpcId)) return;
+    this.markActivity();
+    this.mailInFlight.set(rpcId, msg.id);
+    // If pi never answers, forget it so a redelivery after the lease can try again.
+    setTimeout(() => this.mailInFlight.delete(rpcId), MAIL_RESPONSE_TIMEOUT_MS).unref?.();
+    this.pi?.send({ id: rpcId, type: "prompt", message: msg.text, streamingBehavior: msg.behavior ?? "followUp" });
   }
 
   private fail(err: unknown): void {
@@ -380,8 +411,12 @@ export class RunController {
       sessionFile,
       onLog: this.onLog,
       spendExtensionPath: this.deps.spendFile ? this.deps.spendExtensionPath : undefined,
+      mailExtensionPath: this.deps.mailExtensionPath,
     });
     const secretEnv: Record<string, string> = {};
+    // Not a secret, but pinned here after guru.env like the rest so a guru can't spoof it; the
+    // outfitter-mail extension tells the model its own address with it.
+    secretEnv.OUTFITTER_SESSION_ID = spec.session.id;
     if (spec.secrets.litellmKey) secretEnv.LITELLM_AGENT_KEY = spec.secrets.litellmKey;
     // Security-review-pr15.md finding #1: pin the LiteLLM base URL from the server-controlled
     // spec, spread after `rendered.env` (guru.env), so a guru-supplied LITELLM_BASE_URL can never
@@ -496,6 +531,18 @@ export class RunController {
 
   private handlePiEvent(event: PiRpcEvent): void {
     this.deps.link.sendSeq((seq) => ({ t: "event", seq, event }));
+    if (event.type === "response" && typeof event.id === "string" && this.mailInFlight.has(event.id)) {
+      const mailId = this.mailInFlight.get(event.id)!;
+      this.mailInFlight.delete(event.id);
+      if (event.success === true) {
+        this.mailAccepted.add(mailId);
+        this.deps.link.send({ t: "mail.ack", id: mailId });
+      } else {
+        // Left unacked on purpose: the api redelivers after the lease, up to its attempt limit.
+        this.onLog(`pi rejected mail ${mailId}: ${String(event.error ?? "no reason given")}`);
+      }
+      return;
+    }
     if (event.type === "agent_start") {
       this.markActivity();
       this.clearIdleTimer();

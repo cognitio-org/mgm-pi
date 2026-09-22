@@ -16,6 +16,7 @@ import { verifyAgentToken, bearerFromHeader } from "./auth.ts";
 import type { LaptopProbe } from "./laptop.ts";
 import { resolveRunModel } from "./laptop.ts";
 import { validateSnapshotUrl, snapshotHostAllowlist } from "./snapshot-url.ts";
+import { MAIL_LEASE_MS, MAIL_MAX_ATTEMPTS, type MailService } from "./mail.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
@@ -103,21 +104,37 @@ function isTerminalState(state: Run["state"]): boolean {
   return state === "stopped" || state === "failed";
 }
 
+/** Mail goes only to a run whose pi is up and not draining: a follow-up accepted by a `stopping`
+ * run would start a turn that the stop then cuts off, after agentd had already acked it. */
+function acceptsMail(state: Run["state"]): boolean {
+  return state === "running" || state === "idle";
+}
+
 export class AgentLink {
   private readonly sockets = new Map<string, WebSocket>();
   private readonly pendingRequests = new Map<string, PendingRequest>();
+  private readonly deliveries = new Map<string, Promise<void>>();
   private readonly store: Store;
   private readonly config: Config;
   private readonly secretsBroker: SecretsBroker;
   private readonly sse: SseHub;
   private readonly laptopProbe: LaptopProbe;
+  private readonly mail: MailService;
 
-  constructor(store: Store, config: Config, secretsBroker: SecretsBroker, sse: SseHub, laptopProbe: LaptopProbe) {
+  constructor(
+    store: Store,
+    config: Config,
+    secretsBroker: SecretsBroker,
+    sse: SseHub,
+    laptopProbe: LaptopProbe,
+    mail: MailService,
+  ) {
     this.store = store;
     this.config = config;
     this.secretsBroker = secretsBroker;
     this.sse = sse;
     this.laptopProbe = laptopProbe;
+    this.mail = mail;
   }
 
   register(app: FastifyInstance): void {
@@ -166,6 +183,50 @@ export class AgentLink {
       if (!run || !isReadyState(run.state)) continue;
       const pending = await this.store.runs.drainDownMessages(runId);
       for (const message of pending) socket.send(JSON.stringify(message));
+      if (acceptsMail(run.state)) await this.deliverMail(runId, run.sessionId, socket);
+    }
+  }
+
+  /** Delivers a session's deliverable mail now if its active run's socket lives in this process;
+   * otherwise the owning link instance's poller picks it up on its next tick. */
+  async deliverMailForSession(sessionId: string): Promise<void> {
+    const run = await this.store.runs.findActiveForSession(sessionId);
+    if (!run || !acceptsMail(run.state)) return;
+    const socket = this.sockets.get(run.id);
+    if (!socket || socket.readyState !== socket.OPEN) return;
+    await this.deliverMail(run.id, sessionId, socket);
+  }
+
+  /** One delivery loop per run at a time (the poller, a status frame and a post can all trigger
+   * one), so mail goes out in claim order. Sockets only live in this process, so an in-process chain
+   * is enough; each caller still sees its own loop's error. */
+  private deliverMail(runId: string, sessionId: string, socket: WebSocket): Promise<void> {
+    const previous = this.deliveries.get(runId) ?? Promise.resolve();
+    const next = previous.catch(() => {}).then(() => this.deliverMailNow(runId, sessionId, socket));
+    this.deliveries.set(runId, next);
+    const clear = () => {
+      if (this.deliveries.get(runId) === next) this.deliveries.delete(runId);
+    };
+    next.then(clear, clear);
+    return next;
+  }
+
+  /** Claims mail one message at a time (oldest first) under a lease and sends each as a `mail`
+   * frame. The claim is atomic, so two processes delivering to the same run never double-send;
+   * anything agentd doesn't ack before the lease expires becomes claimable again. */
+  private async deliverMailNow(runId: string, sessionId: string, socket: WebSocket): Promise<void> {
+    for (;;) {
+      if (socket.readyState !== socket.OPEN) return;
+      const now = Date.now();
+      const mail = await this.store.mail.claimNext(
+        sessionId,
+        runId,
+        new Date(now).toISOString(),
+        new Date(now + MAIL_LEASE_MS).toISOString(),
+        MAIL_MAX_ATTEMPTS,
+      );
+      if (!mail) return;
+      socket.send(JSON.stringify({ t: "mail", id: mail.id, text: mail.text, behavior: mail.behavior }));
     }
   }
 
@@ -311,6 +372,7 @@ export class AgentLink {
       const pending = await this.store.runs.drainDownMessages(runId);
       for (const message of pending) socket.send(JSON.stringify(message));
     }
+    if (updated && acceptsMail(updated.state)) await this.deliverMail(runId, session.id, socket);
 
     // Replay, in order, any further frames that arrived (and got buffered) while we were still
     // verifying the token / looking up the run / building run.spec -- before switching over to the
@@ -437,6 +499,9 @@ export class AgentLink {
           const pending = await this.store.runs.drainDownMessages(runId);
           for (const message of pending) socket.send(JSON.stringify(message));
         }
+        if (!(before && acceptsMail(before.state)) && acceptsMail(state)) {
+          await this.deliverMail(runId, sessionId, socket);
+        }
         break;
       }
       case "entry": {
@@ -447,6 +512,10 @@ export class AgentLink {
           await this.store.sessions.update(sessionId, { leafId: entry.id, updatedAt: now });
           this.sse.publish(sessionId, { type: "entry", data: entry });
         }
+        // Not gated on `inserted`: the mail id is derived from the entry id, so a replay is a no-op,
+        // and a send that threw on the first delivery (entry stored, no ack) is retried on replay.
+        const recipient = await this.mail.handleAgentSend(sessionId, entry);
+        if (recipient) await this.deliverMailForSession(recipient);
         await this.ack(runId, socket, seq, now);
         break;
       }
@@ -545,6 +614,10 @@ export class AgentLink {
         }
         break;
       }
+      case "mail.ack": {
+        if (typeof frame.id === "string") await this.store.mail.ack(frame.id, runId, now);
+        break;
+      }
       case "bye": {
         const reason = String(frame.reason ?? "stop");
         await this.store.runs.update(runId, {
@@ -555,6 +628,11 @@ export class AgentLink {
         });
         this.sockets.delete(runId);
         closeQuietly(socket, 1000, reason);
+        // Mail this run was handed but never acked goes back to the queue now rather than after its
+        // lease. Then start the next run for it, and for mail held back while this run was stopping
+        // -- except after an explicit stop, which the /tick sweep may still override later.
+        await this.store.mail.releaseRun(runId);
+        if (reason !== "stop") await this.mail.wakeIfMail(sessionId);
         break;
       }
       default:

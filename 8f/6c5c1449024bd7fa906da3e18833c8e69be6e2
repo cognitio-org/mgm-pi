@@ -1,0 +1,35 @@
+outfitter/packages/web/src/easter/dreadnought/DreadnoughtRun.tsx
+  s_719d861e1a31b6::t_84e3dc3da5ac26 31,57,242-244,253
+outfitter/packages/web/src/easter/menu/GameMenu.tsx
+  s_2209f22f830d7f::t_04c9ecde3846e3 10,44-48
+outfitter/packages/web/src/easter/rescue/FloppyRescue.tsx
+  s_2209f22f830d7f::t_2e3ced9a1c80c2 55,81,344-348,360
+outfitter/packages/web/src/easter/shared/modalFocus.ts
+  s_2209f22f830d7f::t_e65a05a73b2418 1-83
+outfitter/packages/web/test/easter-modal-focus.test.ts
+  s_2209f22f830d7f::t_50a399bbb55639 1-121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "8f6c5c1449024bd7fa906da3e18833c8e69be6e2",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_719d861e1a31b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "da8235fb-f66b-41bb-a1c8-3e1a4371dbaf",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

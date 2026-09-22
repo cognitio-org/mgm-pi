@@ -2,7 +2,7 @@
 # Deploys the kernal.one landing page (outfitter/landing/) to Cloud Run as `kernal-web`: static
 # files behind nginx, public (--allow-unauthenticated), scaled to zero when nobody's looking.
 #   ./landing.sh                 build + deploy
-#   ./landing.sh --map-domains   also create the kernal.one / www.kernal.one / app.kernal.one
+#   ./landing.sh --map-domains   also create the kernal.one / www / app / link.kernal.one
 #                                domain mappings (once; needs kernal.one verified for ACCOUNT)
 # README.md "kernal.one" has the DNS records the mappings need.
 set -euo pipefail
@@ -43,7 +43,7 @@ if [[ "${MAP_DOMAINS}" == 1 ]]; then
   # Cloud Run domain mappings (Preview, available in us-central1): free, Google-managed certs.
   # app.kernal.one fronts outfitter-api (the IAP-protected web role) with no config change there:
   # IAP_AUDIENCE is the service path, and the API never checks the request's host or Origin.
-  for pair in kernal.one=kernal-web www.kernal.one=kernal-web app.kernal.one=outfitter-api; do
+  for pair in kernal.one=kernal-web www.kernal.one=kernal-web app.kernal.one=outfitter-api link.kernal.one=outfitter-link; do
     domain="${pair%%=*}"; svc="${pair#*=}"
     if gcloud beta run domain-mappings describe --domain="${domain}" --region="${REGION}" --project="${PROJECT}" &>/dev/null; then
       echo "== ${domain} already mapped =="
@@ -54,7 +54,7 @@ if [[ "${MAP_DOMAINS}" == 1 ]]; then
     fi
   done
   echo "== DNS records these mappings need (Cloud DNS zone kernal-one, project cognitio-flow) =="
-  for domain in kernal.one www.kernal.one app.kernal.one; do
+  for domain in kernal.one www.kernal.one app.kernal.one link.kernal.one; do
     gcloud beta run domain-mappings describe --domain="${domain}" --region="${REGION}" --project="${PROJECT}" \
       --flatten=status.resourceRecords \
       --format="table[no-heading](status.resourceRecords.name.yesno(no=@),status.resourceRecords.type,status.resourceRecords.rrdata)"

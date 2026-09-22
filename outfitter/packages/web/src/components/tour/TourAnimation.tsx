@@ -52,6 +52,12 @@ export function TourAnimation({ autoplay = false }: TourAnimationProps) {
   const rafRef = useRef<number | null>(null);
   const lastTickRef = useRef<number | null>(null);
   const soundStoppedForSceneRef = useRef<string | null>(null);
+  // Set by any click/tap/keypress inside the tour. The drives-scene sound only plays after that,
+  // so an autoplaying tour (/manual?autoplay=1) never makes noise on its own.
+  const userInteractedRef = useRef(false);
+  const markInteracted = useCallback(() => {
+    userInteractedRef.current = true;
+  }, []);
 
   // --- storyboard (reduced-motion / step) mode state ---
   const [stepIndex, setStepIndex] = useState(0);
@@ -86,12 +92,15 @@ export function TourAnimation({ autoplay = false }: TourAnimationProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, reducedMotion, elapsed >= total]);
 
-  // Short floppy-sound burst when the "drives" scene comes on screen, only if the user has already
-  // turned sound on in the header -- never autoplay audio otherwise (floppy-sound.ts's own rule).
+  // Short floppy-sound burst when the "drives" scene comes on screen, only if the user has turned
+  // sound on in the header AND has interacted with the tour (pressed Play, Next, a scene tab, ...):
+  // floppy-sound.ts only plays for something the user just started, so an autoplaying tour the user
+  // hasn't touched stays silent.
   useEffect(() => {
     if (reducedMotion || !playing) return undefined;
     if (at.scene.id !== "drives") return undefined;
     if (soundStoppedForSceneRef.current === "drives") return undefined;
+    if (!userInteractedRef.current) return undefined;
     if (!isSoundEnabled()) return undefined;
     soundStoppedForSceneRef.current = "drives";
     const stop = playFloppyAfterDelay();
@@ -159,7 +168,12 @@ export function TourAnimation({ autoplay = false }: TourAnimationProps) {
   const finished = reducedMotion ? stepIndex === TOUR_SCENES.length - 1 : at.done;
 
   return (
-    <div className="tour" data-testid="tour-animation">
+    <div
+      className="tour"
+      data-testid="tour-animation"
+      onPointerDownCapture={markInteracted}
+      onKeyDownCapture={markInteracted}
+    >
       <div className="tour-monitor panel">
         <div className="panel-titlebar">
           <span className="panel-label">MANUAL.PRG</span>

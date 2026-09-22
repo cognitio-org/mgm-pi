@@ -21,8 +21,9 @@ QUEUE="${QUEUE:-outfitter-wake}"
 TASKS_SA="outfitter-tasks"
 TASKS_SA_EMAIL="${TASKS_SA}@${PROJECT}.iam.gserviceaccount.com"
 API_SA_EMAIL="outfitter-api@${PROJECT}.iam.gserviceaccount.com"
-LINK_ORIGIN="$(gcloud run services describe outfitter-link --project="${PROJECT}" --region="${REGION}" \
-  --format='value(status.url)')"
+# The tick's OIDC audience must be exactly the origin outfitter-link verifies against (its own
+# OUTFITTER_ORIGIN), so re-run this after link's hostname changes (e.g. to link.kernal.one).
+LINK_ORIGIN="$(deployed_origin outfitter-link)"
 if [[ -z "${LINK_ORIGIN}" ]]; then
   echo "mailbox: outfitter-link is not deployed yet; run ./link.sh first." >&2
   exit 1

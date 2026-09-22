@@ -210,11 +210,42 @@ IAP binding is only half of it.
 | `kernal.one` | `kernal-web` | landing page (`outfitter/landing/`), public |
 | `www.kernal.one` | `kernal-web` | 301 to `https://kernal.one` (nginx.conf) |
 | `app.kernal.one` | `outfitter-api` | the Outfitter web UI, behind IAP as before |
+| `link.kernal.one` | `outfitter-link` | what sandboxes and laptops dial (`/agent/ws`, teleport, hooks) |
 
 `./landing.sh` builds and deploys the landing page; `./landing.sh --map-domains` also creates any
-missing mappings and prints the DNS records they need. The records in the `kernal-one` zone:
+missing mappings and prints the DNS records they need.
+
+Each service's `OUTFITTER_ORIGIN` (for the link role, the token audience sandboxes and Cloud
+Tasks mint for) changes only on purpose:
+
+- `service.sh` keeps the deployed `OUTFITTER_ORIGIN` unless `ALLOW_ORIGIN_CHANGE=1` is set, and
+  then takes the service's custom domain once its mapping is Ready (`env.sh` `public_origin`; a
+  failed lookup aborts the deploy rather than falling back to run.app). Without the flag it says
+  which origin is available.
+- Every deploy also sets `OUTFITTER_ORIGIN_ALIASES` to the service's other origins (run.app URL,
+  custom domain, the origin it had before), and link accepts tokens for any of them
+  (`config.ts` `tokenAudiences`). So running sandboxes and queued Cloud Tasks minted for the old
+  origin keep working through a change, and the order below only matters for tidiness.
+- Everything that mints tokens *for* link reads link's deployed `OUTFITTER_ORIGIN`
+  (`deployed_origin`): the web role's `OUTFITTER_LINK_ORIGIN`, the Scheduler tick (`mailbox.sh`)
+  and the agent job's default `OUTFITTER_API`.
+
+Switching link to `link.kernal.one`, once its mapping is Ready:
+
+1. Check WebSockets through the mapping: a `curl --http1.1` upgrade request to
+   `https://link.kernal.one/agent/ws` should get `101 Switching Protocols`, as run.app does.
+2. `ALLOW_ORIGIN_CHANGE=1 ./deploy-all.sh` (job, link, web, then the mailbox tick). One-off
+   scripts work too, in that order, but `check_deploy_skew` refuses a single component whose
+   commit differs from the others unless `ALLOW_SKEW=1`.
+3. Wake a session and check its sandbox connects. Laptops keep working on the old run.app URL
+   (their `outf_` tokens aren't audience-bound) but should switch `OUTFITTER_API` to the new one
+   shown on the Tokens page.
+
+`kernal.one` sends `Strict-Transport-Security` with `includeSubDomains` (no `preload`): browsers that
+have visited it will insist on HTTPS for every `*.kernal.one` host for a year, so never put a
+plain-HTTP service under the domain. The records in the `kernal-one` zone:
 `kernal.one` A `216.239.32.21 216.239.34.21 216.239.36.21 216.239.38.21` and AAAA
-`2001:4860:4802:{32,34,36,38}::15`; `www` and `app` CNAME `ghs.googlehosted.com.`. Google
+`2001:4860:4802:{32,34,36,38}::15`; `www`, `app` and `link` CNAME `ghs.googlehosted.com.`. Google
 provisions the certificates once DNS resolves (15 min to 24 h).
 
 `app.kernal.one` needs nothing from `outfitter-api`'s own config: IAP's audience is the service

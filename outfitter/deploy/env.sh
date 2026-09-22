@@ -116,3 +116,44 @@ check_deploy_skew() {
   echo "   refusing to deploy a known-skewed fleet; set ALLOW_SKEW=1 to override." >&2
   exit 1
 }
+
+# A Cloud Run service's public origin: https://<its custom domain> when a domain mapping routes to
+# it and its Ready condition is True (certificate issued), otherwise its run.app URL; empty if the
+# service doesn't exist. Exits non-zero if the mapping lookup itself fails, so a transient gcloud
+# error can never quietly pass for "no mapping" (callers must check). A mapping that isn't Ready
+# is ignored, so a hostname can only be picked once HTTPS works.
+public_origin() {
+  local service="$1" json domain
+  json="$(gcloud beta run domain-mappings list --project="${PROJECT}" --region="${REGION}" --format=json)" || {
+    echo "error: could not list domain mappings (gcloud beta installed and logged in?)" >&2
+    return 1
+  }
+  # Pick the Ready condition by type, not by position; first matching domain in name order.
+  domain="$(printf '%s' "${json}" | python3 -c '
+import json, sys
+service = sys.argv[1]
+ready = sorted(
+    m["metadata"]["name"] for m in json.load(sys.stdin)
+    if m.get("spec", {}).get("routeName") == service
+    and any(c.get("type") == "Ready" and c.get("status") == "True"
+            for c in m.get("status", {}).get("conditions", []))
+)
+print(ready[0] if ready else "")
+' "${service}")" || return 1
+  if [[ -n "${domain}" ]]; then
+    printf 'https://%s' "${domain}"
+  else
+    gcloud run services describe "${service}" --project="${PROJECT}" --region="${REGION}" \
+      --format='value(status.url)' 2>/dev/null || true
+  fi
+}
+
+# The origin a deployed service actually verifies token audiences against: its OUTFITTER_ORIGIN env
+# var. Anything that mints tokens *for* outfitter-link (the web role's OUTFITTER_LINK_ORIGIN, the
+# Scheduler tick in mailbox.sh) reads it from here instead of recomputing it, so the two sides can't
+# disagree even if a domain mapping turns Ready between deploys. Empty if not deployed.
+deployed_origin() {
+  gcloud run services describe "$1" --project="${PROJECT}" --region="${REGION}" \
+    --format='value(spec.template.spec.containers[0].env.filter(name=OUTFITTER_ORIGIN).extract(value).flatten())' \
+    2>/dev/null || true
+}

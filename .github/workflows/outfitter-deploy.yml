@@ -1,0 +1,86 @@
+name: Outfitter deploy
+# Production deploys for Outfitter (outfitter/deploy/README.md "Deploying"). Pushing a release tag
+# `outfitter-v*` (outfitter/deploy/tag-release.sh) tests that commit, then runs
+# outfitter/deploy/release.sh on it: all three components move to that commit, the Job first, and
+# the run refuses a commit that isn't on main or would roll production back. Merging to main only
+# runs CI ("Outfitter CI").
+#
+# Run workflow (from main) redeploys an existing release tag or main commit: rollbacks
+# (`rollback` ticked) and re-runs of a release that failed halfway.
+#
+# Idle until outfitter/deploy/ci-setup.sh has set the GCP_WIF_PROVIDER and GCP_DEPLOY_SA repository
+# variables. GCP trusts only this file, at an outfitter-v* tag or on main (ci-setup.sh's provider
+# condition).
+on:
+  push:
+    tags: ["outfitter-v*"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Release tag (outfitter-v...) or main commit to deploy"
+        required: true
+      rollback:
+        description: "Allow deploying a commit older than production (ROLLBACK=1)"
+        type: boolean
+        default: false
+      force_all:
+        description: "Redeploy components already at that commit (FORCE_ALL=1)"
+        type: boolean
+        default: false
+
+# One deploy at a time, never cancelled midway. A newer run waiting here replaces an older waiting
+# one, so production only ever moves forward.
+concurrency:
+  group: outfitter-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # CI only runs when outfitter/ or kernal/ change, so a tagged commit may never have been tested on
+  # its own: test exactly what is about to ship.
+  test:
+    if: vars.GCP_WIF_PROVIDER != ''
+    runs-on: ubuntu-24.04
+    defaults: { run: { working-directory: outfitter } }
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/setup-node@v5
+        with: { node-version: 24, cache: npm, cache-dependency-path: outfitter/package-lock.json }
+      - run: npm ci
+      - run: npm test
+      - name: Deploy scripts lint and guard tests
+        run: |
+          shellcheck -x -S warning deploy/*.sh
+          bash deploy/test/guards.test.sh
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          # env.sh public_origin lists domain mappings with `gcloud beta run domain-mappings`.
+          install_components: beta
+      - name: Release
+        working-directory: outfitter/deploy
+        env:
+          ROLLBACK: ${{ inputs.rollback && '1' || '' }}
+          FORCE_ALL: ${{ inputs.force_all && '1' || '' }}
+        run: ./release.sh

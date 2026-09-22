@@ -7,10 +7,14 @@
 # (`outfitter-link`) serves only `/agent/ws` and `/api/hooks/*`, `--allow-unauthenticated`, each
 # authenticating its own requests.
 #
-# NOT RUN DIRECTLY -- api.sh and link.sh are the two-line wrappers you actually run:
-#   PROJECT=outfitter-509211 REGION=us-central1 ./api.sh
-#   PROJECT=outfitter-509211 REGION=us-central1 ./link.sh
-# ./service.sh web|link works too, for anyone reading this script directly.
+# Routine deploys go through release.sh (GitHub Actions runs it on every green main; see
+# README.md "Deploying"), which calls link.sh and api.sh -- the two-line wrappers around this:
+#   ./link.sh && ./api.sh
+# This script only builds and rolls out a revision. Who can reach the services (IAP, its OAuth
+# client and members, the public link role's invoker binding) is access.sh's job, run by hand when
+# access changes, so a routine deploy can never widen or narrow access, and the CI deployer never
+# needs IAP or IAM-admin rights. The one exception is a brand-new service (the bootstrap below),
+# which is created with its access flags so the web role is never briefly public.
 #
 # Docs consulted (also see docs/reports/api.md "gcloud commands you were least sure about"):
 # - Enabling IAP directly on a Cloud Run service (the --iap flag) and granting the IAP service
@@ -38,49 +42,24 @@ fi
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 AR_REPO="${AR_REPO:-outfitter}"
 CLOUDRUN_JOB="${CLOUDRUN_JOB:-outfitter-agent}"
-# Who IAP lets through to the web role: comma-separated IAM members, each granted
-# roles/iap.httpsResourceAccessor. `domain:` works for any Google Workspace / Cloud Identity domain,
-# `user:` for a single Google account (including @gmail.com). Anyone outside the mgmonteleone.com
-# org (serviam-it.hr, gmail) also needs IAP on a custom OAuth client -- see IAP_OAUTH_CLIENT_ID
-# below and README.md "IAP access for users outside the org".
-if [[ -n "${IAP_DOMAIN:-}" ]]; then
-  echo "error: IAP_DOMAIN is gone; use IAP_MEMBERS (e.g. IAP_MEMBERS=domain:${IAP_DOMAIN})" >&2
-  exit 1
-fi
-# A domain: member admits every account that domain's Workspace admin creates.
-IAP_MEMBERS="${IAP_MEMBERS:-domain:mgmonteleone.com,domain:serviam-it.hr,user:matija.turk@gmail.com}"
-IFS=',' read -ra IAP_MEMBER_LIST <<<"${IAP_MEMBERS}"
-for member in "${IAP_MEMBER_LIST[@]}"; do
-  # Only named principals: a typo'd or pasted allUsers/allAuthenticatedUsers would open the app to
-  # every Google account, since the custom OAuth client accepts accounts outside the org.
-  if [[ ! "${member}" =~ ^(user|group|domain):[^[:space:]]+$ ]]; then
-    echo "error: IAP_MEMBERS entry '${member}' is not user:, group: or domain:" >&2
-    exit 1
-  fi
-done
-# Custom OAuth client for IAP (External audience), created by hand in the console. Its secret lives
-# in Secret Manager as outfitter-iap-oauth-client-secret. Unset = leave IAP's OAuth settings alone
-# (the Google-managed client, which admits org-internal users only).
-IAP_OAUTH_CLIENT_ID="${IAP_OAUTH_CLIENT_ID:-}"
-
 if [[ "${ROLE}" == "web" ]]; then
   SERVICE="outfitter-api"
 else
   SERVICE="outfitter-link"
 fi
 
-# The laptop tunnel domain lives in ~/localllm/.env (same value tunnel.sh uses); read it from there
-# unless overridden, so the preflight probes the real endpoint.
-if [[ -z "${TUNNEL_DOMAIN_LMSTUDIO:-}" && -f "${HOME}/localllm/.env" ]]; then
-  TUNNEL_DOMAIN_LMSTUDIO="$(grep -E '^TUNNEL_DOMAIN_LMSTUDIO=' "${HOME}/localllm/.env" | cut -d= -f2- | tr -d '"'"'"'"' )"
-fi
-TUNNEL_DOMAIN_LMSTUDIO="${TUNNEL_DOMAIN_LMSTUDIO:?set TUNNEL_DOMAIN_LMSTUDIO (see ~/localllm/.env)}"
+# TUNNEL_DOMAIN_LMSTUDIO, LITELLM_BASE_URL, PROVIDER_POLL_MS, IDLE_STOP_SECONDS and
+# OUTFITTER_OPERATORS come from config.env (via env.sh), so every deploy sets the same values.
 
 API_SA_EMAIL="outfitter-api@${PROJECT}.iam.gserviceaccount.com"
 AGENT_SA_EMAIL="outfitter-agent@${PROJECT}.iam.gserviceaccount.com"
 
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # outfitter/, the workspace root
-TAG="$(git -C "${SOURCE_DIR}" rev-parse --short HEAD 2>/dev/null || date +%s)"
+deploy_guard outfitter
+CURRENT_IMAGE="$(deployed_image service "${SERVICE}")"
+regression_guard "${CURRENT_IMAGE}"
+# The tag is the commit the image was built from: regression_guard and release.sh read it back.
+TAG="$(git -C "${SOURCE_DIR}" rev-parse --short HEAD)"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}/outfitter-api:${TAG}"
 
 # existing_secrets() is defined in env.sh (sourced above); the secret list is identical for both
@@ -95,12 +74,14 @@ IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}/outfitter-api:${TAG}"
 # (outfitter-litellm-key-default, secrets.ts's SecretsBroker.defaultLitellmKey) when unset.
 SECRETS="$(existing_secrets MONGODB_URI=outfitter-mongodb-uri:latest GITHUB_PAT=outfitter-github-pat:latest LITELLM_ADMIN_KEY=outfitter-litellm-admin:latest LOCAL_TUNNEL_TOKEN=outfitter-local-tunnel-token:latest NGROK_API_KEY=outfitter-ngrok-api-key:latest)"
 
-echo "== Building ${IMAGE} with Cloud Build (packages/api/Dockerfile, context outfitter/; reused if the other role already built this commit) =="
-gcloud builds submit "${SOURCE_DIR}" \
-  --project="${PROJECT}" \
-  --config="${SOURCE_DIR}/deploy/cloudbuild-api.yaml" \
-  --substitutions="_IMAGE=${IMAGE}" \
-  --timeout=20m
+# Both roles run the same image, so whichever deploys second reuses the first one's build.
+if image_exists "${IMAGE}"; then
+  echo "== Reusing ${IMAGE} (already built for this commit) =="
+else
+  echo "== Building ${IMAGE} with Cloud Build (packages/api/Dockerfile, context outfitter/) =="
+  build_submit "${SOURCE_DIR}" "${SOURCE_DIR}/deploy/cloudbuild-api.yaml" \
+    --substitutions="_IMAGE=${IMAGE}" --timeout=20m
+fi
 
 # OUTFITTER_ORIGIN is this service's own URL: agentd's token audience (auth.ts verifyAgentToken,
 # per-service, not shared between outfitter-api and outfitter-link) and the base for any links the
@@ -127,9 +108,18 @@ if [[ -z "${ORIGIN}" ]]; then
     ORIGIN="${DEPLOYED_ORIGIN}"
   fi
 fi
+BOOTSTRAPPED=""
 if [[ -z "${ORIGIN}" ]]; then
   # Deliberately status.url, not public_origin: a service that does not exist yet cannot have a
   # Ready domain mapping, so its first origin is always its run.app URL.
+  if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    deploy_fail "${SERVICE} doesn't exist yet; creating a service (and its access) is a one-time step for the owner: ./link.sh or ./api.sh by hand, then ./access.sh"
+  fi
+  BOOTSTRAPPED=1
+  # The web role is created behind IAP from its very first revision (unreachable until access.sh
+  # grants the IAP service agent run.invoker); only the link role is public.
+  BOOTSTRAP_AUTH=(--allow-unauthenticated)
+  [[ "${ROLE}" == "web" ]] && BOOTSTRAP_AUTH=(--no-allow-unauthenticated --iap)
   echo "== Bootstrap deploy (no prior revision, no OUTFITTER_ORIGIN given) to learn the service URL =="
   gcloud run deploy "${SERVICE}" \
     --project="${PROJECT}" \
@@ -139,7 +129,7 @@ if [[ -z "${ORIGIN}" ]]; then
     --cpu=0.5 \
     --memory=512Mi \
     --service-account="${API_SA_EMAIL}" \
-    --allow-unauthenticated
+    "${BOOTSTRAP_AUTH[@]}"
   ORIGIN="$(gcloud run services describe "${SERVICE}" --project="${PROJECT}" --region="${REGION}" \
     --format='value(status.url)')"
 fi
@@ -153,25 +143,25 @@ fi
 # doesn't strand running sandboxes or queued Cloud Tasks minted for the old one. ';'-separated:
 # --set-env-vars splits on commas.
 RUN_APP_URL="$(gcloud run services describe "${SERVICE}" --project="${PROJECT}" --region="${REGION}" \
-  --format='value(status.url)' 2>/dev/null || true)"
+  --format='value(status.url)')"
 ORIGIN_ALIASES=""
 for alias in "${RUN_APP_URL}" "${DEPLOYED_ORIGIN}" "${PUBLIC_ORIGIN}"; do
   if [[ -n "${alias}" && "${alias}" != "${ORIGIN}" && ";${ORIGIN_ALIASES};" != *";${alias};"* ]]; then
     ORIGIN_ALIASES="${ORIGIN_ALIASES:+${ORIGIN_ALIASES};}${alias}"
   fi
 done
-ENV_VARS="OUTFITTER_ROLE=${ROLE},OUTFITTER_ORIGIN=${ORIGIN},OUTFITTER_ORIGIN_ALIASES=${ORIGIN_ALIASES},AGENT_SA_EMAIL=${AGENT_SA_EMAIL},GCP_PROJECT=${PROJECT},GCP_REGION=${REGION},TUNNEL_DOMAIN_LMSTUDIO=${TUNNEL_DOMAIN_LMSTUDIO},SANDBOX_PROVIDER=cloudrun,CLOUDRUN_JOB=${CLOUDRUN_JOB},IDLE_STOP_SECONDS=${IDLE_STOP_SECONDS:-1800},LITELLM_BASE_URL=${LITELLM_BASE_URL:-https://litellm.augment-code.support/v1},PROVIDER_POLL_MS=${PROVIDER_POLL_MS:-300000}"
+ENV_VARS="OUTFITTER_ROLE=${ROLE},OUTFITTER_ORIGIN=${ORIGIN},OUTFITTER_ORIGIN_ALIASES=${ORIGIN_ALIASES},AGENT_SA_EMAIL=${AGENT_SA_EMAIL},GCP_PROJECT=${PROJECT},GCP_REGION=${REGION},TUNNEL_DOMAIN_LMSTUDIO=${TUNNEL_DOMAIN_LMSTUDIO},SANDBOX_PROVIDER=cloudrun,CLOUDRUN_JOB=${CLOUDRUN_JOB},IDLE_STOP_SECONDS=${IDLE_STOP_SECONDS},LITELLM_BASE_URL=${LITELLM_BASE_URL},PROVIDER_POLL_MS=${PROVIDER_POLL_MS}"
 # E5.5 (deploy/mailbox.sh): both roles need these -- web schedules wake tasks, link verifies the
 # OIDC token on /api/hooks/tasks/wake and /api/hooks/tick. Looked up from what mailbox.sh created
 # when not given, for the same reason as OUTFITTER_LINK_ORIGIN below: --set-env-vars replaces the
 # whole environment, so a plain re-run used to drop them (on 2026-09-22 the tick 401'd from 13:55
 # until they were restored). Absent infra keeps the mailbox on its inline-wake-only path.
-if [[ -z "${CLOUD_TASKS_QUEUE:-}" ]] && gcloud tasks queues describe outfitter-wake \
-    --project="${PROJECT}" --location="${REGION}" &>/dev/null; then
+if [[ -z "${CLOUD_TASKS_QUEUE:-}" ]] && gcloud_exists tasks queues describe outfitter-wake \
+    --project="${PROJECT}" --location="${REGION}"; then
   CLOUD_TASKS_QUEUE="outfitter-wake"
 fi
-if [[ -z "${TASKS_SA_EMAIL:-}" ]] && gcloud iam service-accounts describe \
-    "outfitter-tasks@${PROJECT}.iam.gserviceaccount.com" --project="${PROJECT}" &>/dev/null; then
+if [[ -z "${TASKS_SA_EMAIL:-}" ]] && gcloud_exists iam service-accounts describe \
+    "outfitter-tasks@${PROJECT}.iam.gserviceaccount.com" --project="${PROJECT}"; then
   TASKS_SA_EMAIL="outfitter-tasks@${PROJECT}.iam.gserviceaccount.com"
 fi
 if [[ -n "${TASKS_SA_EMAIL:-}" ]]; then
@@ -215,10 +205,7 @@ if [[ "${ROLE}" == "web" ]]; then
   # accepts ',' and whitespace for a locally-set env var, but this script must use ';'. Defaults to
   # the two current operators (see the same Decisions table entry); override by exporting
   # OUTFITTER_OPERATORS before running this script.
-  ENV_VARS="${ENV_VARS},OUTFITTER_OPERATORS=${OUTFITTER_OPERATORS:-mgm@mgms.eu;matej@mgms.eu}"
-  AUTH_FLAGS=(--no-allow-unauthenticated --iap)
-else
-  AUTH_FLAGS=(--allow-unauthenticated)
+  ENV_VARS="${ENV_VARS},OUTFITTER_OPERATORS=${OUTFITTER_OPERATORS}"
 fi
 
 # Request timeout: Cloud Run's default is 300s, which was silently capping BOTH roles' long-lived
@@ -234,6 +221,14 @@ fi
 # means periodic reconnect churn and a brief gap in live updates, so "web" gets the same 3600s
 # rather than a "sane REST value" that would keep clipping the stream.
 DEPLOY_TIMEOUT="${DEPLOY_TIMEOUT:-3600}"
+
+# No access flags here: gcloud leaves --iap and the invoker binding alone when they're absent, so an
+# existing service keeps what access.sh (or the bootstrap above) set.
+
+# Again, right before rolling out: the build above can take many minutes, and a newer revision may
+# have gone out meanwhile (from CI, or someone else's hand run).
+CURRENT_IMAGE="$(deployed_image service "${SERVICE}")"
+regression_guard "${CURRENT_IMAGE}"
 
 # Bug 9 (docs/reports/cloud-fixes.md): refuse (or, with ALLOW_SKEW=1, warn) if the other role's
 # service or the agent Job is currently deployed at a different commit -- see env.sh's
@@ -252,62 +247,10 @@ gcloud run deploy "${SERVICE}" \
   --timeout="${DEPLOY_TIMEOUT}" \
   --service-account="${API_SA_EMAIL}" \
   --update-labels="build-commit=${TAG}" \
-  "${AUTH_FLAGS[@]}" \
   --set-secrets="${SECRETS}" \
   --set-env-vars="${ENV_VARS}"
 
-if [[ "${ROLE}" == "web" ]]; then
-  echo "== Granting the IAP service agent roles/run.invoker on ${SERVICE} =="
-  gcloud run services add-iam-policy-binding "${SERVICE}" \
-    --project="${PROJECT}" \
-    --region="${REGION}" \
-    --member="serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-iap.iam.gserviceaccount.com" \
-    --role="roles/run.invoker" \
-    --quiet
-
-  if [[ -n "${IAP_OAUTH_CLIENT_ID}" ]]; then
-    echo "== Pointing IAP on ${SERVICE} at custom OAuth client ${IAP_OAUTH_CLIENT_ID} =="
-    IAP_OAUTH_CLIENT_SECRET="$(gcloud secrets versions access latest --secret=outfitter-iap-oauth-client-secret --project="${PROJECT}")"
-    if [[ -z "${IAP_OAUTH_CLIENT_SECRET}" ]]; then
-      echo "error: secret outfitter-iap-oauth-client-secret is empty; not touching IAP's OAuth settings" >&2
-      exit 1
-    fi
-    q="'"   # YAML single-quoted scalar: a literal ' is written as ''
-    IAP_OAUTH_CLIENT_SECRET_YAML="${IAP_OAUTH_CLIENT_SECRET//${q}/${q}${q}}"
-    IAP_SETTINGS_FILE="$(mktemp)"   # 0600; holds the client secret only until gcloud has read it
-    trap 'rm -f "${IAP_SETTINGS_FILE}"' EXIT INT TERM
-    cat >"${IAP_SETTINGS_FILE}" <<YAML
-accessSettings:
-  oauthSettings:
-    clientId: ${IAP_OAUTH_CLIENT_ID}
-    clientSecret: '${IAP_OAUTH_CLIENT_SECRET_YAML}'
-YAML
-    gcloud iap settings set "${IAP_SETTINGS_FILE}" \
-      --resource-type=cloud-run \
-      --service="${SERVICE}" \
-      --region="${REGION}" \
-      --project="${PROJECT}" >/dev/null
-  fi
-
-  for member in "${IAP_MEMBER_LIST[@]}"; do
-    echo "== Granting ${member} roles/iap.httpsResourceAccessor on ${SERVICE} =="
-    gcloud iap web add-iam-policy-binding \
-      --resource-type=cloud-run \
-      --service="${SERVICE}" \
-      --region="${REGION}" \
-      --project="${PROJECT}" \
-      --member="${member}" \
-      --role="roles/iap.httpsResourceAccessor"
-  done
-
-  echo "== Done: ${ORIGIN} =="
-  echo "Visiting it should now prompt Google sign-in and reject anyone not in: ${IAP_MEMBERS}."
-  if [[ -z "${IAP_OAUTH_CLIENT_ID}" ]]; then
-    echo "Note: IAP_OAUTH_CLIENT_ID unset, so members outside the mgmonteleone.com org can't sign in yet."
-  fi
-else
-  echo "== Done: ${ORIGIN} =="
-  echo "Point agent-job.sh's OUTFITTER_API at this URL, not outfitter-api's. NGROK_WEBHOOK_SECRET"
-  echo "still needs setting here too (same caveat as README.md's Secret Manager section) before"
-  echo "POST /api/hooks/ngrok works."
+if [[ -n "${BOOTSTRAPPED}" ]]; then
+  echo "== New service: run ./access.sh next to set up IAP and its members =="
 fi
+echo "== Done: ${SERVICE} ${ORIGIN} now runs ${TAG} =="

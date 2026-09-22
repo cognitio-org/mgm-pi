@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# One-time setup so GitHub Actions can deploy Outfitter (.github/workflows/outfitter-deploy.yml)
+# without a stored key: Workload Identity Federation from GitHub's OIDC tokens to a dedicated
+# `outfitter-deployer` service account. Run by hand, as a project owner, then it's done. Idempotent.
+#   ./ci-setup.sh
+#
+# Trust is pinned to exactly one workflow file of this repo, run from an `outfitter-v*` release tag
+# or from main (the provider's attribute condition): a PR branch, a fork, or any other workflow in
+# the repo gets no GCP token. A tag can point at any commit, including one whose workflow skips
+# release.sh's main-only check, so this also creates a tag ruleset: only repository admins can
+# create, move or delete `outfitter-v*` tags. That makes cutting a release exactly as privileged as
+# administering the repo.
+#
+# The deployer can build images (as outfitter-builder, created here with only push and log rights --
+# never the default build account, which is project Editor), roll out revisions of the existing
+# services and job, and read what service.sh looks up. It has no IAM-policy rights (no run.admin, no
+# IAM or IAP admin), so it can't add invokers or IAP members; access.sh stays a human step.
+#
+# Be clear about what that does NOT make it: run.developer includes run.services.update, which can
+# flip --no-iap on a service, and deploying as outfitter-api means shipping code that runs with
+# that account's secret access. So a stolen deployer token is roughly as powerful as a malicious
+# merge to main. release.sh checks IAP is still on after every deploy; the real boundary is who can
+# merge to main and edit this workflow file.
+#
+# Docs: https://github.com/google-github-actions/auth#preferred-direct-workload-identity-federation
+# and https://cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines
+set -euo pipefail
+
+# shellcheck source=env.sh
+source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
+GITHUB_REPO="${GITHUB_REPO:-mgmonteleone/mgm-pi}"
+WORKFLOW="${GITHUB_REPO}/.github/workflows/outfitter-deploy.yml"
+# Numeric ids too, so the trust doesn't follow the name if the repo is renamed or re-registered.
+REPO_ID="$(gh api "repos/${GITHUB_REPO}" --jq .id)"
+OWNER_ID="$(gh api "repos/${GITHUB_REPO}" --jq .owner.id)"
+POOL="github"
+PROVIDER="outfitter-deploy"
+SA_NAME="outfitter-deployer"
+SA_EMAIL="${SA_NAME}@${PROJECT}.iam.gserviceaccount.com"
+BUILDER_NAME="outfitter-builder"
+BUILDER_EMAIL="${BUILDER_NAME}@${PROJECT}.iam.gserviceaccount.com"
+PROJECT_NUMBER="$(gcloud projects describe "${PROJECT}" --format='value(projectNumber)')"
+BUILD_BUCKET="${PROJECT}_cloudbuild"
+
+ensure_sa() {
+  if ! gcloud_exists iam service-accounts describe "$1@${PROJECT}.iam.gserviceaccount.com" --project="${PROJECT}"; then
+    gcloud iam service-accounts create "$1" --project="${PROJECT}" --display-name="$2"
+  fi
+}
+
+echo "== APIs for token exchange =="
+gcloud services enable iamcredentials.googleapis.com sts.googleapis.com --project="${PROJECT}"
+
+echo "== Service accounts =="
+ensure_sa "${SA_NAME}" "Outfitter deploys from GitHub Actions (release.sh)"
+ensure_sa "${BUILDER_NAME}" "Outfitter image builds (Cloud Build)"
+
+echo "== ${BUILDER_EMAIL}: read build sources, push to the outfitter repo, write build logs =="
+gcloud artifacts repositories add-iam-policy-binding outfitter --location="${REGION}" --project="${PROJECT}" \
+  --member="serviceAccount:${BUILDER_EMAIL}" --role=roles/artifactregistry.writer --quiet >/dev/null
+gcloud storage buckets add-iam-policy-binding "gs://${BUILD_BUCKET}" \
+  --member="serviceAccount:${BUILDER_EMAIL}" --role=roles/storage.objectViewer --quiet >/dev/null
+gcloud projects add-iam-policy-binding "${PROJECT}" --member="serviceAccount:${BUILDER_EMAIL}" \
+  --role=roles/logging.logWriter --condition=None --quiet >/dev/null
+
+echo "== ${SA_EMAIL}: project roles =="
+# run.developer: deploy revisions and jobs, no IAM policy changes. The rest are read-only lookups
+# the scripts make (domain mappings for env.sh public_origin, which run.developer can't list;
+# secrets metadata; the mailbox queue, tick and service account; the project number), streaming
+# Cloud Build logs, and using the project as quota project (env.sh sets
+# CLOUDSDK_BILLING_QUOTA_PROJECT).
+for role in roles/run.developer roles/run.viewer roles/cloudbuild.builds.editor roles/logging.viewer \
+    roles/serviceusage.serviceUsageConsumer roles/secretmanager.viewer roles/cloudtasks.viewer \
+    roles/cloudscheduler.viewer roles/iam.serviceAccountViewer roles/browser; do
+  gcloud projects add-iam-policy-binding "${PROJECT}" --member="serviceAccount:${SA_EMAIL}" \
+    --role="${role}" --condition=None --quiet >/dev/null
+  echo "   ${role}"
+done
+
+echo "== ${SA_EMAIL}: read the outfitter repo (image-exists checks) =="
+gcloud artifacts repositories add-iam-policy-binding outfitter --location="${REGION}" --project="${PROJECT}" \
+  --member="serviceAccount:${SA_EMAIL}" --role=roles/artifactregistry.reader --quiet >/dev/null
+
+echo "== ${SA_EMAIL}: upload build sources to gs://${BUILD_BUCKET} =="
+for role in roles/storage.objectCreator roles/storage.objectViewer roles/storage.legacyBucketReader; do
+  gcloud storage buckets add-iam-policy-binding "gs://${BUILD_BUCKET}" \
+    --member="serviceAccount:${SA_EMAIL}" --role="${role}" --quiet >/dev/null
+done
+
+echo "== ${SA_EMAIL}: act as the two runtime accounts and the builder (never the default build account) =="
+for sa in "outfitter-api@${PROJECT}.iam.gserviceaccount.com" "outfitter-agent@${PROJECT}.iam.gserviceaccount.com" "${BUILDER_EMAIL}"; do
+  gcloud iam service-accounts add-iam-policy-binding "${sa}" --project="${PROJECT}" \
+    --member="serviceAccount:${SA_EMAIL}" --role=roles/iam.serviceAccountUser --quiet >/dev/null
+  echo "   ${sa}"
+done
+
+echo "== Workload identity pool '${POOL}' and provider '${PROVIDER}' =="
+if ! gcloud_exists iam workload-identity-pools describe "${POOL}" --location=global --project="${PROJECT}"; then
+  gcloud iam workload-identity-pools create "${POOL}" --location=global --project="${PROJECT}" \
+    --display-name="GitHub Actions"
+fi
+PROVIDER_FLAGS=(
+  --location=global --project="${PROJECT}" --workload-identity-pool="${POOL}"
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.job_workflow_ref=assertion.job_workflow_ref"
+  --attribute-condition="assertion.repository_id == '${REPO_ID}' && assertion.repository_owner_id == '${OWNER_ID}' && assertion.repository == '${GITHUB_REPO}' && (assertion.job_workflow_ref == '${WORKFLOW}@refs/heads/main' || assertion.job_workflow_ref.startsWith('${WORKFLOW}@refs/tags/outfitter-v'))"
+)
+if gcloud_exists iam workload-identity-pools providers describe "${PROVIDER}" --location=global \
+    --workload-identity-pool="${POOL}" --project="${PROJECT}"; then
+  gcloud iam workload-identity-pools providers update-oidc "${PROVIDER}" "${PROVIDER_FLAGS[@]}" >/dev/null
+else
+  gcloud iam workload-identity-pools providers create-oidc "${PROVIDER}" "${PROVIDER_FLAGS[@]}" \
+    --issuer-uri="https://token.actions.githubusercontent.com"
+fi
+
+echo "== Let that workflow impersonate ${SA_EMAIL} =="
+gcloud iam service-accounts add-iam-policy-binding "${SA_EMAIL}" --project="${PROJECT}" \
+  --role=roles/iam.workloadIdentityUser \
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL}/attribute.repository/${GITHUB_REPO}" \
+  --quiet >/dev/null
+
+echo "== Tag ruleset: only admins create, move or delete outfitter-v* tags =="
+RULESET_NAME="outfitter release tags"
+if gh api "repos/${GITHUB_REPO}/rulesets" --jq '.[].name' | grep -qxF "${RULESET_NAME}"; then
+  echo "   already exists"
+else
+  # actor_id 5 = the repository admin role.
+  gh api -X POST "repos/${GITHUB_REPO}/rulesets" --input - >/dev/null <<JSON
+{
+  "name": "${RULESET_NAME}",
+  "target": "tag",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["refs/tags/outfitter-v*"], "exclude": [] } },
+  "rules": [ { "type": "creation" }, { "type": "update" }, { "type": "deletion" } ],
+  "bypass_actors": [ { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" } ]
+}
+JSON
+  echo "   created"
+fi
+
+WIF_PROVIDER="projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL}/providers/${PROVIDER}"
+echo "== GitHub repository variables (the workflow stays idle until these exist) =="
+gh variable set GCP_WIF_PROVIDER --repo "${GITHUB_REPO}" --body "${WIF_PROVIDER}"
+gh variable set GCP_DEPLOY_SA --repo "${GITHUB_REPO}" --body "${SA_EMAIL}"
+echo "== Done. Pushing a release tag now deploys: ./tag-release.sh =="

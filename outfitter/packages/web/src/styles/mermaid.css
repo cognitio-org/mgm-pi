@@ -1,0 +1,133 @@
+/* Mermaid diagrams in transcript markdown (components/MermaidDiagram.tsx, MermaidEnlargeDialog.tsx).
+ * Themed via mermaid's own themeVariables (lib/mermaid-theme.ts), not CSS -- this file only
+ * covers the surrounding chrome: the box, toolbar, loading/error states and the enlarge dialog. */
+
+.mermaid-block {
+  margin: 0 0 0.6rem;
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+  box-shadow: 2px 2px 0 0 var(--border);
+}
+
+.mermaid-toolbar {
+  display: flex;
+  gap: 0.35rem;
+  padding: 0.35rem 0.45rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.mermaid-toolbar-btn {
+  font-size: 0.72rem;
+  padding: 0.25rem 0.5rem;
+  box-shadow: none;
+}
+
+.mermaid-canvas {
+  max-height: 340px;
+  overflow: auto;
+  padding: 0.65rem;
+  /* Wide diagrams scroll horizontally within the box instead of overflowing the page (required
+   * down to 390px); tall ones are capped and clipped -- Enlarge is the way to see the rest. */
+}
+
+.mermaid-canvas svg {
+  display: block;
+  max-width: none;
+  height: auto;
+}
+
+.mermaid-source {
+  margin: 0;
+  border: none;
+  box-shadow: none;
+}
+
+.mermaid-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 96px;
+  padding: 0.75rem;
+}
+
+.mermaid-error {
+  padding: 0.1rem;
+}
+
+.mermaid-error-note {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.78rem;
+  color: var(--danger);
+}
+
+.mermaid-error-badge {
+  font-family: var(--font-display);
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  padding: 0.1rem 0.4rem;
+  background: var(--danger);
+  color: var(--bg);
+}
+
+.mermaid-error-details summary {
+  cursor: pointer;
+  color: var(--text-dim);
+}
+.mermaid-error-details pre {
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  color: var(--text-dim);
+}
+
+/* ---------- enlarge dialog ---------- */
+
+.mermaid-enlarge-dialog {
+  max-width: 96vw;
+  width: 96vw;
+  height: 90vh;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+.mermaid-enlarge-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.mermaid-enlarge-surface {
+  flex: 1;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+  background: var(--bg-inset);
+}
+
+.mermaid-enlarge-canvas {
+  width: fit-content;
+  height: fit-content;
+  transform-origin: 0 0;
+  padding: 2rem;
+}
+
+.mermaid-enlarge-canvas svg {
+  display: block;
+  max-width: none;
+}
+
+@media (max-width: 700px) {
+  .mermaid-enlarge-dialog {
+    width: 100vw;
+    height: 100vh;
+    max-width: 100vw;
+    max-height: 100vh;
+  }
+}

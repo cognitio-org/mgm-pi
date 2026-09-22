@@ -8,7 +8,7 @@ import { RunController, type LinkPort, type RunControllerDeps } from "../src/run
 import { spawnPi, SessionTailer } from "../src/pi.js";
 import { writeSnapshotFile, emptySessionJsonl } from "../src/session.js";
 import type { DownMessage, DownRunSpec, PiRpcCommand, PiRpcEvent, RunState, UpMessage } from "../src/protocol.js";
-import type { GitOps, CloneSpec } from "../src/git.js";
+import { OUTFITTER_BOT_IDENTITY, type GitOps, type CloneSpec, type PushSpec } from "../src/git.js";
 import type { PiProcess } from "../src/pi.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -44,32 +44,48 @@ class FakeLink implements LinkPort {
   }
 }
 
-function fakeGitOps(): GitOps & { clones: CloneSpec[]; commits: string[]; pushes: number } {
+function fakeGitOps(): GitOps & {
+  clones: CloneSpec[];
+  commits: string[];
+  trailers: string[][];
+  pushSpecs: PushSpec[];
+  pushes: number;
+  /** What the next commitAll reports (true: agentd found dirty files and committed them). */
+  committed: boolean;
+  /** What the next push reports (true: HEAD differed from the remote session branch). */
+  ahead: boolean;
+} {
   const clones: CloneSpec[] = [];
   const commits: string[] = [];
+  const trailers: string[][] = [];
+  const pushSpecs: PushSpec[] = [];
   let pushes = 0;
   return {
     clones,
     commits,
+    trailers,
+    pushSpecs,
+    committed: true,
+    ahead: true,
     get pushes() {
       return pushes;
     },
     async clone(spec) {
       clones.push(spec);
     },
-    async commitAll(_cwd, message) {
+    async commitAll(_cwd, message, t = []) {
       commits.push(message);
-      return { committed: true };
+      trailers.push(t);
+      return { committed: this.committed };
     },
-    async push(_cwd, _branch) {
+    async push(_cwd, spec) {
+      pushSpecs.push(spec);
+      if (!this.ahead) return { head: `deadbeef${pushes}`, pushed: false };
       pushes++;
-      return { head: `deadbeef${pushes}` };
+      return { head: `deadbeef${pushes}`, pushed: true };
     },
     async diff() {
       return "diff --git a/x b/x";
-    },
-    async headSha() {
-      return "deadbeef0";
     },
   };
 }
@@ -206,6 +222,67 @@ test("RunController: explicit checkpoint commits, pushes, and reports the new he
   assert.equal(cp.branch, "outfitter/sess1");
 
   await waitFor(() => states.at(-1) === "idle");
+});
+
+test("RunController: a checkpoint pushes commits the agent made itself, even with nothing left for agentd to commit", async (t) => {
+  const { controller, link, gitOps, states, spec } = await setupController();
+  t.after(() => controller.dispose());
+  link.deliver(spec);
+  await waitFor(() => states.includes("idle"));
+
+  gitOps.committed = false; // clean tree: the agent already committed its own work
+  gitOps.ahead = true; // ...which the remote session branch doesn't have yet
+  link.deliver({ t: "checkpoint" });
+  await waitFor(() => link.sent.some((m) => m.t === "checkpoint"));
+
+  assert.equal(gitOps.pushes, 1);
+  const cp = link.sent.find((m) => m.t === "checkpoint") as any;
+  assert.equal(cp.pushed, true);
+  assert.equal(cp.head, "deadbeef1");
+  // pushed to run.spec's own clone URL, never to what the workspace's origin says
+  assert.deepEqual(gitOps.pushSpecs.at(-1), {
+    remoteUrl: "file:///dev/null",
+    branch: "outfitter/sess1",
+    githubToken: undefined,
+  });
+});
+
+test("RunController: a checkpoint with nothing new reports pushed: false", async (t) => {
+  const { controller, link, gitOps, states, spec } = await setupController();
+  t.after(() => controller.dispose());
+  link.deliver(spec);
+  await waitFor(() => states.includes("idle"));
+
+  gitOps.committed = false;
+  gitOps.ahead = false;
+  link.deliver({ t: "checkpoint" });
+  await waitFor(() => link.sent.some((m) => m.t === "checkpoint"));
+
+  assert.equal(gitOps.pushes, 0);
+  const cp = link.sent.find((m) => m.t === "checkpoint") as any;
+  assert.equal(cp.pushed, false);
+  assert.equal(cp.head, "deadbeef0");
+});
+
+test("RunController: checkpoint commits carry the author's attribution trailers; none without run.spec.author", async (t) => {
+  const withAuthor = await setupController({ author: { name: "Ada Lovelace", email: "ada@users.noreply.github.com", login: "ada" } });
+  t.after(() => withAuthor.controller.dispose());
+  withAuthor.link.deliver(withAuthor.spec);
+  await waitFor(() => withAuthor.states.includes("idle"));
+  withAuthor.link.deliver({ t: "checkpoint" });
+  await waitFor(() => withAuthor.link.sent.some((m) => m.t === "checkpoint"));
+  assert.deepEqual(withAuthor.gitOps.trailers.at(-1), [
+    "Co-authored-by: Ada Lovelace <ada@users.noreply.github.com>",
+    "On-behalf-of: Ada Lovelace <ada@users.noreply.github.com>",
+  ]);
+
+  const without = await setupController();
+  t.after(() => without.controller.dispose());
+  without.link.deliver(without.spec);
+  await waitFor(() => without.states.includes("idle"));
+  without.link.deliver({ t: "checkpoint" });
+  await waitFor(() => without.link.sent.some((m) => m.t === "checkpoint"));
+  assert.deepEqual(without.gitOps.trailers.at(-1), []);
 });
 
 test("RunController: diff and read down-messages get replies", async (t) => {
@@ -518,13 +595,11 @@ test("RunController: an agent_settled arriving mid-checkpoint resolves to idle a
       return { committed: false };
     },
     async push() {
-      throw new Error("push should not be called when nothing was committed");
+      // nothing committed and nothing new from the agent either: HEAD already on the remote
+      return { head: "deadbeef", pushed: false };
     },
     async diff() {
       return "";
-    },
-    async headSha() {
-      return "deadbeef";
     },
   };
 
@@ -933,6 +1008,9 @@ test("RunController: mail becomes a pi prompt with followUp by default, and is a
   const pi = getPi()!;
   assert.deepEqual(pi.sent[0], { id: "mail:m1", type: "prompt", message: "please review", streamingBehavior: "followUp" });
   assert.equal(getSpawnEnv()?.OUTFITTER_SESSION_ID, "sess-mail", "the real session id wins over guru.env");
+  // no run.spec.author: the bot identity alone, and no OUTFITTER_AUTHOR_*
+  assert.equal(getSpawnEnv()?.GIT_AUTHOR_EMAIL, OUTFITTER_BOT_IDENTITY.email);
+  assert.equal(getSpawnEnv()?.OUTFITTER_AUTHOR_EMAIL, undefined);
   assert.ok(!link.sent.some((m) => m.t === "mail.ack"), "no ack before pi responds");
 
   pi.emit({ type: "response", id: "mail:m1", command: "prompt", success: true });
@@ -1024,4 +1102,44 @@ test("RunController: mail that arrives while the run is stopping is neither prom
   link.deliver({ t: "mail", id: "m3", text: "too late" });
   assert.ok(!pi.sent.some((c) => (c as any).id === "mail:m3"), "pi is about to be killed; the prompt would be lost");
   assert.ok(!link.sent.some((m) => m.t === "mail.ack"), "unacked, so the api re-queues it on bye");
+});
+
+test("RunController: pi's env pins the bot as git author and committer, plus the session's person as OUTFITTER_AUTHOR_*", async (t) => {
+  const { link, spec, getPi, getSpawnEnv } = await setupControllablePiRun(t);
+  link.deliver({
+    ...spec,
+    author: { name: "Ada\nLovelace", email: "ada@users.noreply.github.com", login: "@ada" },
+    guru: { model: "fake/model", env: { GIT_AUTHOR_NAME: "spoofed", GIT_COMMITTER_EMAIL: "spoofed@example.com" } },
+  });
+  await waitFor(() => getPi() !== undefined);
+  const env = getSpawnEnv()!;
+  assert.equal(env.GIT_AUTHOR_NAME, OUTFITTER_BOT_IDENTITY.name, "guru.env can't override the pinned identity");
+  assert.equal(env.GIT_AUTHOR_EMAIL, OUTFITTER_BOT_IDENTITY.email);
+  assert.equal(env.GIT_COMMITTER_NAME, OUTFITTER_BOT_IDENTITY.name);
+  assert.equal(env.GIT_COMMITTER_EMAIL, OUTFITTER_BOT_IDENTITY.email);
+  assert.equal(env.OUTFITTER_AUTHOR_NAME, "Ada Lovelace");
+  assert.equal(env.OUTFITTER_AUTHOR_EMAIL, "ada@users.noreply.github.com");
+  assert.equal(env.OUTFITTER_AUTHOR_LOGIN, "ada");
+  // and never the token or its header
+  assert.ok(!Object.keys(env).some((k) => k.startsWith("GIT_CONFIG_")));
+});
+
+test("RunController: a failed checkpoint (e.g. a rejected push) is logged, not thrown, and the run carries on", async (t) => {
+  const logs: string[] = [];
+  const { controller, link, gitOps, states, spec } = await setupController({}, { onLog: (l) => logs.push(l) });
+  t.after(() => controller.dispose());
+  link.deliver(spec);
+  await waitFor(() => states.includes("idle"));
+
+  gitOps.push = async () => {
+    throw new Error("git push failed: ! [rejected] (stale info)");
+  };
+  link.deliver({ t: "checkpoint" });
+  await waitFor(() => logs.some((l) => l.startsWith("checkpoint failed:")));
+  await waitFor(() => states.at(-1) === "idle");
+  assert.ok(!link.sent.some((m) => m.t === "checkpoint"), "no checkpoint frame for a failed checkpoint");
+
+  // and a stop still says goodbye
+  link.deliver({ t: "stop", reason: "done" });
+  await waitFor(() => link.sent.some((m) => m.t === "bye"));
 });

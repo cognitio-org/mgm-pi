@@ -1,0 +1,39 @@
+outfitter/packages/api/src/agentlink.ts
+  s_2209f22f830d7f::t_d63d706578e036 378-384
+outfitter/packages/api/src/mail.ts
+  s_d71e62cb6f304c::t_0dbb9d060dd89b 13-18,175-182,184,188-193,198-204
+outfitter/packages/api/src/routes/sessions.ts
+  s_2209f22f830d7f::t_2e149fb1f70be2 7,77-79,257-267
+outfitter/packages/api/src/store/memory.ts
+  s_d71e62cb6f304c::t_3fab46c684f6ce 353-396
+outfitter/packages/api/src/store/mongo.ts
+  s_d71e62cb6f304c::t_b0975b64784550 464-498
+outfitter/packages/api/src/store/types.ts
+  s_d71e62cb6f304c::t_3e7987aaab6ec2 130,158-162,179-191
+outfitter/packages/api/test/mail.test.ts
+  s_2209f22f830d7f::t_5060e4cc1f2986 10,12,165-168,181-182,188,190-259
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "3123f88656c05af9569f2ed89878aef771b33965",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_d71e62cb6f304c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "598183a5-6865-48f8-80e7-37d24447f686",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

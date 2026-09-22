@@ -207,9 +207,12 @@ test("GitOps.push: hands the new history over as a bundle and never points root'
   assert.equal(bundled.as?.uid, undefined); // no runAs in this test, but it goes through run()
   assert.equal(bundled.as?.isolatedEnv, true);
   const imported = calls.find((c) => c.args[0] === "fetch")!;
-  assert.deepEqual(imported.args, ["fetch", "--quiet", bundlePath, "+refs/outfitter/push:refs/outfitter/push"]);
+  const handover = join(imported.cwd, "outfitter-push.bundle");
+  // root imports its own copy, made with O_NOFOLLOW, never the path inside the agent's .git
+  assert.deepEqual(imported.args, ["fetch", "--quiet", handover, "+refs/outfitter/push:refs/outfitter/push"]);
   assert.notEqual(imported.cwd, workspace);
-  await assert.rejects(access(bundlePath), "the bundle is removed after the push");
+  await assert.rejects(access(bundlePath), "the agent-side bundle is removed after the push");
+  await assert.rejects(access(handover), "so is root's copy");
   assert.ok(calls.some((c) => c.args.join(" ") === "update-ref -d refs/outfitter/push"));
   // nothing links the push repo to the workspace's object store any more
   await assert.rejects(access(join(imported.cwd, "objects", "info", "alternates")));
@@ -223,7 +226,7 @@ test("GitOps.push: skips the bundle when the push repo already has the commit (e
   assert.ok(calls.some((c) => c.args[0] === "push"));
 });
 
-test("GitOps.push: refuses a bundle that isn't a plain file", async () => {
+test("GitOps.push: refuses a bundle path the agent swapped for a symlink", async () => {
   const { exec, calls } = pushExec({ bundleAs: "symlink" });
   const gitOps = createGitOps(exec, { pushRoot: await mkdtemp(join(tmpdir(), "agentd-git-test-")) });
   await assert.rejects(gitOps.push(await fakeWorkspace(), PUSH_SPEC), /not a plain file/);
@@ -390,4 +393,31 @@ test("GitOps.clone: file:// URLs (local smoke tests) get no auth env and clone w
 
 test("redactUrl: still strips userinfo for logging (defense in depth / other callers)", () => {
   assert.equal(redactUrl("https://x-access-token:secret@github.com/acme/repo.git"), "https://github.com/acme/repo.git");
+});
+
+test("GitOps.push: a bundle that needs objects the agent pruned falls back to a self-contained one", async () => {
+  const calls: { args: string[] }[] = [];
+  let firstBundle = true;
+  const exec: ExecFn = async (_cmd, args, _cwd, _env) => {
+    calls.push({ args });
+    if (args[0] === "cat-file") return { stdout: "", stderr: "", code: 1 };
+    if (args[0] === "bundle") {
+      // the first attempt excludes what the push repo has; that object is gone from the workspace
+      if (firstBundle && args.includes("--not")) {
+        firstBundle = false;
+        return { stdout: "", stderr: "fatal: bad revision", code: 128 };
+      }
+      await writeFile(args[2], "a bundle");
+      return ok();
+    }
+    if (args[0] === "for-each-ref") return ok(`${SHA_B}\n`);
+    if (args[0] === "rev-parse") return ok(`${SHA_A}\n`);
+    return ok();
+  };
+  const gitOps = createGitOps(exec, { pushRoot: await mkdtemp(join(tmpdir(), "agentd-git-test-")) });
+  assert.equal((await gitOps.push(await fakeWorkspace(), PUSH_SPEC)).pushed, true);
+  const bundles = calls.filter((c) => c.args[0] === "bundle");
+  assert.equal(bundles.length, 2);
+  assert.ok(bundles[0].args.includes("--not"));
+  assert.ok(!bundles[1].args.includes("--not"), "the retry asks for the whole history");
 });

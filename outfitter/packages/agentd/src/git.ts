@@ -45,7 +45,9 @@
  * for untrusted data, the same one a fetch from an untrusted remote goes through.
  */
 import { execFile } from "node:child_process";
-import { lstat, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, open, rm } from "node:fs/promises";
+import { constants, createWriteStream } from "node:fs";
+import { pipeline } from "node:stream/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -298,6 +300,27 @@ const SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 const PUSH_REF = "refs/outfitter/push";
 const BUNDLE_NAME = "outfitter-push.bundle";
 
+/** Copies `from` to `to` without ever following a symlink at `from`, and refusing anything that
+ * isn't a regular file. `from` lives in the agent-owned workspace, so a path check followed by a
+ * separate open (git's) is a race the agent can win; this opens once and copies from that handle. */
+async function copyNoFollow(from: string, to: string): Promise<void> {
+  let src;
+  try {
+    src = await open(from, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (err: any) {
+    // ELOOP: the path was a symlink at open time.
+    if (err?.code === "ELOOP") throw new Error(`${from} is not a plain file; refusing to push from it`);
+    throw err;
+  }
+  const st = await src.stat();
+  if (!st.isFile()) {
+    await src.close();
+    throw new Error(`${from} is not a plain file; refusing to push from it`);
+  }
+  // Both streams close their handles when the pipeline ends.
+  await pipeline(src.createReadStream(), createWriteStream(to, { mode: 0o600 }));
+}
+
 /** The remote-tracking ref for a session branch. The clone is `--single-branch` on the base branch;
  * clone() adds the session branch to origin's fetch refspec and names it explicitly when fetching,
  * and push() moves it itself after a successful push (push only updates tracking refs for the
@@ -470,18 +493,26 @@ export function createGitOps(exec: ExecFn = defaultExec, options: GitOpsOptions 
       const present = await exec("git", ["cat-file", "-e", `${head}^{commit}`], pushDir, { GIT_DIR: pushDir });
       if (present.code !== 0) {
         const bundle = resolve(cwd, ".git", BUNDLE_NAME);
-        const exclude = await excludesFor(pushDir, known);
         const staged = await run(cwd, ["update-ref", PUSH_REF, head]);
         if (staged.code !== 0) throw new Error(`git update-ref ${PUSH_REF} failed: ${staged.stderr.trim()}`);
+        const handover = join(pushDir, BUNDLE_NAME);
         try {
-          const bundled = await run(cwd, ["bundle", "create", bundle, PUSH_REF, ...exclude]);
+          // `--not` what the push repo already has, so the bundle is just this session's new commits.
+          // If any of those objects is missing from the workspace (the agent can prune its own
+          // repo), fall back to a self-contained bundle rather than failing every later checkpoint.
+          let bundled = await run(cwd, ["bundle", "create", bundle, PUSH_REF, ...(await excludesFor(pushDir, known))]);
+          if (bundled.code !== 0) {
+            await rm(bundle, { force: true });
+            bundled = await run(cwd, ["bundle", "create", bundle, PUSH_REF]);
+          }
           if (bundled.code !== 0) throw new Error(`git bundle create failed: ${bundled.stderr.trim()}`);
-          // A plain file, not a symlink or fifo pointing root's git somewhere else.
-          const st = await lstat(bundle);
-          if (!st.isFile()) throw new Error(`${bundle} is not a plain file; refusing to push from it`);
+          // Copy it into the push repo before root's git ever opens it, refusing to follow a symlink
+          // (O_NOFOLLOW): the file itself sits in the agent's .git, so the path it names could be
+          // swapped between any check and git's own open.
+          await copyNoFollow(bundle, handover);
           const imported = await exec(
             "git",
-            ["fetch", "--quiet", bundle, `+${PUSH_REF}:${PUSH_REF}`],
+            ["fetch", "--quiet", handover, `+${PUSH_REF}:${PUSH_REF}`],
             pushDir,
             { GIT_DIR: pushDir },
             { timeoutMs: GIT_TIMEOUT_MS },
@@ -489,6 +520,7 @@ export function createGitOps(exec: ExecFn = defaultExec, options: GitOpsOptions 
           if (imported.code !== 0) throw new Error(`importing the agent's bundle failed: ${imported.stderr.trim()}`);
         } finally {
           await rm(bundle, { force: true });
+          await rm(handover, { force: true });
           await run(cwd, ["update-ref", "-d", PUSH_REF]);
         }
         // What was imported must be the commit the checkpoint decided to push, whatever the bundle said.

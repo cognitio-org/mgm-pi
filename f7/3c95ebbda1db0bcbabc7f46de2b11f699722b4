@@ -1,0 +1,300 @@
+outfitter/packages/api/test/e2e.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 39-41,43,49,53
+kernal/.pi/extensions/kernal-codebase-index/lib.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-494
+kernal/.codebase-index/config.json
+  s_25c805ebe232f3::t_a0e922b2343ff8 1-8
+kernal/tests/install.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-20,22-38,42-71,103-177
+  s_2209f22f830d7f::t_b2bd027728d3bd 96
+  s_2209f22f830d7f::t_3ada679fa18a42 75-95,97-102
+  s_2209f22f830d7f::t_2c81716ddadb35 72-74
+  s_2209f22f830d7f::t_3198d3f2df3560 39-41
+  s_2209f22f830d7f::t_ef9397808acddf 21
+kernal/.pi/extensions/kernal-update/lib.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-39
+outfitter/packages/api/test/providers-status.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 49
+kernal/tests/banner.test.ts
+  s_2209f22f830d7f::t_e28f54e7864a7b 1-2,26-35,75-76
+  s_2209f22f830d7f::t_bdf1eb27fa2305 36-74
+  s_2209f22f830d7f::t_d067c6ad52edff 3-25
+outfitter/docs/reports/kernal-rename.md
+  s_2209f22f830d7f::t_011e07aa9c4ef0 1-172
+kernal/.pi/extensions/kernal-admin/subagents.ts
+  s_2209f22f830d7f::t_057433017e3cc4 27,49
+  s_2209f22f830d7f::t_1bc850cece1f06 1-26,28-48,50-398
+kernal/.pi/npm/package-lock.json
+  s_25c805ebe232f3::t_65cfacfc25dad8 1-4390
+kernal/.pi/extensions/kernal-admin/lib.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-158
+kernal/tests/report.test.ts
+  s_2209f22f830d7f::t_48ef09f953abb1 89
+  s_2209f22f830d7f::t_1bc850cece1f06 1-10,12-88,90-125
+  s_2209f22f830d7f::t_b7d7679c1e24a2 11
+kernal/scripts/package.sh
+  s_2209f22f830d7f::t_1bc850cece1f06 1-108
+.gitignore
+  s_2209f22f830d7f::t_1bc850cece1f06 7-10,12-19,23,27
+kernal/tests/lsp.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-61
+outfitter/EPIC.md
+  s_2209f22f830d7f::t_1bc850cece1f06 3,34,46,59,135,149,153-154,221,251,266,269,272,321,329,352,380,382,384,392,401-402,412,419
+  s_2209f22f830d7f::t_5bfadd9cd3d043 94
+outfitter/packages/api/src/routes/gurus.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 21
+kernal/.pi/extensions/compaction/lib.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-181,184-265
+  s_2209f22f830d7f::t_9dc37a07a5a7ff 182-183
+kernal/tests/codebase-index.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-772
+kernal/.pi/extensions/kernal-admin/server.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-141
+kernal/docs/rename.md
+  s_2209f22f830d7f::t_de9373da49c175 1-70,74-137
+  s_2209f22f830d7f::t_b2fc5372d71c06 71-73
+.github/workflows/outfitter-ci.yml
+  s_2209f22f830d7f::t_1bc850cece1f06 5,7,81-82,84-86
+kernal/.pi/extensions/_shared/env.ts
+  s_2209f22f830d7f::t_2bd1b01631ffcd 1-34
+kernal/.pi/extensions/kernal-admin/index.ts
+  s_2209f22f830d7f::t_057433017e3cc4 40,410
+  s_2209f22f830d7f::t_1bc850cece1f06 1-39,41-409,411-415
+kernal/tests/settings.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-124
+kernal/tests/context.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-307
+outfitter/deploy/service.sh
+  s_2209f22f830d7f::t_1bc850cece1f06 69
+kernal/docs/architecture.md
+  s_2209f22f830d7f::t_1bc850cece1f06 1-248
+kernal/package.json
+  s_2209f22f830d7f::t_1bc850cece1f06 1-2,4-19
+  s_2209f22f830d7f::t_607cc1148a9ffe 3
+kernal/.pi/extensions/kernal-report/index.ts
+  s_2209f22f830d7f::t_b7d7679c1e24a2 43,52
+  s_2209f22f830d7f::t_1bc850cece1f06 1-16,18-27,29-31,33-42,44-50,53-101,103,105-106
+  s_2209f22f830d7f::t_58a4a3eb537ccf 17,28,32,51,102
+  s_2209f22f830d7f::t_5bfadd9cd3d043 104
+kernal/.pi/extensions/kernal-admin/app.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-1740
+outfitter/deploy/agent-job.sh
+  s_2209f22f830d7f::t_1bc850cece1f06 19
+kernal/.pi/extensions/teleport/cli.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-77
+kernal/.pi/extensions/kernal-context/report.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-198
+.codebase-index/config.json
+  s_2209f22f830d7f::t_1bc850cece1f06 3-4
+.github/workflows/release.yml
+  s_2209f22f830d7f::t_1bc850cece1f06 1,4-5,25,29,33,39,43,62,75,83
+kernal/tests/harness.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-111
+kernal/tests/compaction.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-212
+kernal/docs/index-retrieval.md
+  s_2209f22f830d7f::t_1bc850cece1f06 1-61
+kernal/.gitignore
+  s_25c805ebe232f3::t_a4f9880db8720f 1-5
+kernal/.pi/extensions/kernal-update/index.ts
+  s_2209f22f830d7f::t_677b4de715cbab 15,24,32,75
+  s_2209f22f830d7f::t_1bc850cece1f06 1-14,16-23,25-31,33-74,76-117
+kernal/tests/connect.test.ts
+  s_25c805ebe232f3::t_95bdb6518f0fab 1-290
+outfitter/deploy/README.md
+  s_2209f22f830d7f::t_1bc850cece1f06 73
+kernal/tests/live.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-93
+kernal/tests/voice.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-68
+kernal/tests/env-compat.test.ts
+  s_2209f22f830d7f::t_22516680fedc1b 3-76
+  s_2209f22f830d7f::t_6d128bdfe08b0a 1-2
+kernal/README.md
+  s_2209f22f830d7f::t_1bc850cece1f06 1-605
+outfitter/image/build.sh
+  s_2209f22f830d7f::t_1bc850cece1f06 3
+kernal/package-lock.json
+  s_2209f22f830d7f::t_919acac68fb713 1-1916
+outfitter/packages/agentd/src/session.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 5-7
+outfitter/README.md
+  s_2209f22f830d7f::t_1bc850cece1f06 3,16,65,74-75
+outfitter/image/render-settings.sh
+  s_2209f22f830d7f::t_1bc850cece1f06 2,5-6,14
+outfitter/docs/reports/review-kernal-rename.md
+  s_2209f22f830d7f::t_448aa72dc66b68 1-197
+kernal/.pi/extensions/kernal-context/index.ts
+  s_2209f22f830d7f::t_057433017e3cc4 22,42,46
+  s_2209f22f830d7f::t_1bc850cece1f06 1-21,23-41,43-45,47-211
+outfitter/docs/protocol.md
+  s_2209f22f830d7f::t_1bc850cece1f06 149,167
+kernal/.pi/extensions/kernal-voice/index.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-12,14-15,17-21,23-32,34,36-37,39-42
+  s_2209f22f830d7f::t_228a013515bf73 13,16,22,33,35,38
+kernal/docs/summarizer-benchmark.md
+  s_2209f22f830d7f::t_1bc850cece1f06 1-21
+kernal/scripts/install.sh
+  s_2209f22f830d7f::t_5c9f99a9dc4c3e 246-249,251-252,260
+  s_2209f22f830d7f::t_f7e18c6e11aaeb 194-200,202-207
+  s_2209f22f830d7f::t_a3d6932847bf54 1-98,114-136,138-153,155-157,161,169,176-187,201,224,227-245,250,253-259,264
+  s_2209f22f830d7f::t_7554df8bbfa47d 168
+  s_2209f22f830d7f::t_903c7634198bbc 158-160,162-167,170-175,188-193,208-223,225-226,261-263,265-266
+  s_2209f22f830d7f::t_5846a65eb375d0 99-113,137,154
+kernal/tests/e2e.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-37
+kernal/.pi/npm/.gitignore
+  s_25c805ebe232f3::t_99bb9c6520a344 1-4
+kernal/tests/subagents.test.ts
+  s_25c805ebe232f3::t_b92fac681ba9b5 1-46
+outfitter/packages/agentd/src/main.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 20
+kernal/.pi/extensions/kernal-banner/index.ts
+  s_80ab5d6d148e87::t_6b713bc197f567 32-39,47-50
+  s_2209f22f830d7f::t_f67b0a85ca6ef2 2-28
+  s_2209f22f830d7f::t_81ccffe1295054 44-46
+  s_2209f22f830d7f::t_de726ad07d0911 1
+  s_2209f22f830d7f::t_1a43a3c00ab12d 43
+  s_2209f22f830d7f::t_ac2902e4568a44 29-31,40-42
+kernal/.pi/extensions/connect/settings.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-138
+outfitter/packages/api/src/config.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 41,72
+kernal/.pi/extensions/kernal-banner/lib.ts
+  s_2209f22f830d7f::t_d45ee1d5939351 1
+  s_2209f22f830d7f::t_b5e20e0dd2ee1a 49-64
+  s_2209f22f830d7f::t_99c521ead083b7 106-117
+  s_2209f22f830d7f::t_21185a955005fb 2-48,65-105,118-126
+kernal/.pi/mcp.json
+  s_2209f22f830d7f::t_1bc850cece1f06 1-26
+kernal/tests/resolve-pi.mjs
+  s_25c805ebe232f3::t_7f5909079fdf73 1-12
+kernal/scripts/index-eval.mjs
+  s_2209f22f830d7f::t_1bc850cece1f06 1-126
+kernal/.pi/extensions/kernal-context/lib.ts
+  s_25c805ebe232f3::t_c8749f2032f848 1-149
+kernal/.pi/extensions/connect/lib.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-325
+.env.example
+  s_2209f22f830d7f::t_4e5b2f611bfeb5 1,5-6
+kernal/scripts/prebundle.sh
+  s_2209f22f830d7f::t_5937559a690faa 23-24
+  s_2209f22f830d7f::t_1bc850cece1f06 1-22,25-37
+kernal/.pi/npm/package.json
+  s_25c805ebe232f3::t_015ca0e4ac0b47 1-14
+kernal/docs/index-questions.json
+  s_2209f22f830d7f::t_1bc850cece1f06 1-58
+kernal/bin/kernal
+  s_2209f22f830d7f::t_73d3cdb5c13c95 100-101
+  s_2209f22f830d7f::t_9f57c5eb050016 10-23
+  s_2209f22f830d7f::t_1bc850cece1f06 1-9,24-99,102-107
+kernal/.pi/extensions/connect/settings-merge.ts
+  s_25c805ebe232f3::t_d6214c2ea5f4b2 1-36
+kernal/.pi/extensions/kernal-codebase-index/index.ts
+  s_2209f22f830d7f::t_057433017e3cc4 22,37,184
+  s_2209f22f830d7f::t_1bc850cece1f06 1-21,23-36,38-183,185-549
+kernal/.pi/extensions/compaction/index.ts
+  s_2209f22f830d7f::t_534c985163e6e6 30,32,34,37-39,42-43,45,48,52-53
+  s_2209f22f830d7f::t_edb6f840b41a04 150,190
+  s_2209f22f830d7f::t_1bc850cece1f06 1-29,31,33,35-36,40-41,44,46-47,49-51,54-149,151-189,191-241
+kernal/.pi/extensions/teleport/index.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-263
+kernal/.pi/extensions/teleport/outfitter-store.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-222
+kernal/.pi/extensions/kernal-report/lib.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-71,73-80,82-88,90-107
+  s_2209f22f830d7f::t_b7d7679c1e24a2 72,81,89
+README.md
+  s_2209f22f830d7f::t_1bc850cece1f06 6,8,11,47
+outfitter/packages/api/README.md
+  s_2209f22f830d7f::t_1bc850cece1f06 64
+kernal/.pi/extensions/connect/index.ts
+  s_2209f22f830d7f::t_b2b55d88796abe 21,78,121,306
+  s_2209f22f830d7f::t_1bc850cece1f06 1-20,22-77,79-120,122-305,307-357
+outfitter/packages/api/src/providers-status.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 151-152,209,211,242
+outfitter/packages/agentd/src/guru.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 6
+kernal/tests/admin.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-638
+kernal/docs/compaction-research.md
+  s_25c805ebe232f3::t_b469847cb29cd8 1-59
+kernal/.pi/powerline-footer/inbox.jsonl
+  s_25c805ebe232f3::t_98ea3a90dadbb9 1
+kernal/.pi/extensions/teleport/lib.ts
+  s_2209f22f830d7f::t_bcd938ca332ba9 15,90
+  s_2209f22f830d7f::t_1bc850cece1f06 1-14,16-89,91-300
+outfitter/image/Dockerfile
+  s_2209f22f830d7f::t_1bc850cece1f06 1-2,9-10,17,25-27,31,34-36,38-42,44,46,50,52,54,56,58-59,61,68,76,79-82,128,132,135,139,155,158,163,165,171,174
+kernal/.pi/settings.json
+  s_25c805ebe232f3::t_2bbdcec8c3411a 1-41
+outfitter/packages/agentd/pi-extension/outfitter-spend.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 5,7-8,57,81,92,126,208,215
+.github/workflows/ci.yml
+  s_2209f22f830d7f::t_1bc850cece1f06 1,5,7,11,15,21,27,29-30
+kernal/tests/teleport.test.ts
+  s_25c805ebe232f3::t_9605a2a7ef60d5 1-303
+outfitter/packages/api/src/laptop.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 14
+kernal/.pi/extensions/kernal-voice/lib.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-41
+kernal/tests/extensions.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-371
+kernal/tests/update.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 1-133
+outfitter/packages/api/src/routes/sessions.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 72
+kernal/tests/install-migration.test.ts
+  s_2209f22f830d7f::t_c37264e462f4cf 14
+  s_2209f22f830d7f::t_b0dde478c268bd 122-125,127
+  s_2209f22f830d7f::t_3a72f2ce4a5479 147-180
+  s_2209f22f830d7f::t_9f9748d6401345 1-13,15-30,34-121,126,128-146
+  s_2209f22f830d7f::t_ef7b7ae1e1e485 31-33
+outfitter/packages/agentd/test/guru.test.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 24
+kernal/.pi/agent/lsp.json
+  s_25c805ebe232f3::t_c93557269cb442 1-80
+kernal/tests/teleport-outfitter.test.ts
+  s_25c805ebe232f3::t_e01111b796fccc 1-184
+.github/workflows/live.yml
+  s_2209f22f830d7f::t_1bc850cece1f06 1,10,14
+kernal/scratch/abfold.mjs
+  s_2209f22f830d7f::t_1bc850cece1f06 1-26
+outfitter/packages/agentd/src/git.ts
+  s_2209f22f830d7f::t_1bc850cece1f06 37,41,43-44
+kernal/.pi/extensions/teleport/store-factory.ts
+  s_2209f22f830d7f::t_bcd938ca332ba9 7,10
+  s_2209f22f830d7f::t_1bc850cece1f06 1-6,8-9,11-12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "f73c95ebbda1db0bcbabc7f46de2b11f699722b4",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_80ab5d6d148e87": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aa78223a4f2919015",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

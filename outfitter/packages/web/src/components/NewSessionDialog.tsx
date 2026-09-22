@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, type Guru } from "../api/client.ts";
 import { toApiErrorState } from "../lib/api-error.ts";
 import { Working } from "./Working.tsx";
@@ -14,10 +14,27 @@ interface Props {
   initialGuruId?: string;
 }
 
+/** Bug 4 (docs/reports/cloud-fixes.md): the dialog used to pick `guruId` once, from `useState`'s
+ * initializer -- if it opened before `gurus` had loaded (gurus=[]), guruId stayed "" forever. The
+ * <select> has no empty option once gurus arrives, so the browser silently shows its first
+ * <option> while React's own state (and the Start button's `disabled={!guruId}`) never catches up.
+ * Pure so "stay valid as gurus loads" is testable without mounting the dialog: keeps `current` when
+ * it's still a real guru (don't clobber a deliberate pick), otherwise re-derives from
+ * `initialGuruId` or the first guru, exactly like the original one-shot initializer did. */
+export function resolveGuruId(current: string, gurus: Guru[], initialGuruId?: string): string {
+  if (gurus.some((g) => g.id === current)) return current;
+  if (initialGuruId && gurus.some((g) => g.id === initialGuruId)) return initialGuruId;
+  return gurus[0]?.id ?? "";
+}
+
 export function NewSessionDialog({ gurus, onClose, onCreated, initialGuruId }: Props) {
-  const [guruId, setGuruId] = useState(
-    (initialGuruId && gurus.some((g) => g.id === initialGuruId) ? initialGuruId : gurus[0]?.id) ?? "",
-  );
+  const [guruId, setGuruId] = useState(() => resolveGuruId("", gurus, initialGuruId));
+
+  // Keeps guruId valid as `gurus` finishes loading (or changes) after the dialog is already open --
+  // see resolveGuruId's doc comment above.
+  useEffect(() => {
+    setGuruId((current) => resolveGuruId(current, gurus, initialGuruId));
+  }, [gurus, initialGuruId]);
   const [repo, setRepo] = useState("");
   const [baseBranch, setBaseBranch] = useState("");
   const [branch, setBranch] = useState("");

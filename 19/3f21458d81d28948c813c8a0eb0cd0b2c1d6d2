@@ -1,0 +1,37 @@
+outfitter/landing/public/app.js
+  s_b767cc53a6419e::t_0721e635983c73 38-43,45-57,59,162,171,181,188-194
+outfitter/docs/reports/kernal-one.md
+  s_b767cc53a6419e::t_8d78badd754471 46-47
+outfitter/landing/test/basic.test.mjs
+  s_b767cc53a6419e::t_a4e18112d8136d 407-458
+outfitter/deploy/README.md
+  s_b767cc53a6419e::t_a9ccee628508e6 166-169
+  s_b767cc53a6419e::t_8926f48e7425ec 206
+  s_b767cc53a6419e::t_7c4138568560f4 204-205
+outfitter/deploy/landing.sh
+  s_b767cc53a6419e::t_7c4138568560f4 10-16,42,44-45,56,59-60
+outfitter/deploy/service.sh
+  s_b767cc53a6419e::t_7c4138568560f4 46-49
+  s_b767cc53a6419e::t_8ed61c9c0cf1b3 210-211,218
+outfitter/landing/public/basic.js
+  s_b767cc53a6419e::t_0721e635983c73 204,361-363,370-375,900,938,1090-1091
+  s_b767cc53a6419e::t_b690c33e14cdda 280
+outfitter/landing/public/floppy.js
+  s_b767cc53a6419e::t_0721e635983c73 34-48,65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "193f21458d81d28948c813c8a0eb0cd0b2c1d6d2",
+  "prompts": {},
+  "sessions": {
+    "s_b767cc53a6419e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9a3de148-3f07-4a78-97f1-f0ed4c46bad8",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -50,15 +50,10 @@ as a target, and:
    symlink to the new `~/.kernal/current`, and writes `~/.mgm/MOVED`, a text file explaining what
    happened and that the directory is safe to delete once you've confirmed `kernal version` and
    your sessions look right.
-7. Installs `~/.local/bin/kernal` (the new launcher) and replaces `~/.local/bin/mgm` with a tiny
-   shim:
-   ```bash
-   #!/usr/bin/env bash
-   echo "mgm is now kernal; this alias will be removed in a later release." >&2
-   exec kernal "$@"
-   ```
-   So an old alias, a script, or muscle memory that still types `mgm` keeps working — it just prints
-   a one-line heads-up to stderr and hands off to `kernal`.
+7. Installs `~/.local/bin/kernal` (the new launcher) and makes `~/.local/bin/mgm` a link to the same
+   launcher. `mgm` is a permanent, silent alias, not a deprecated name: it is the owner's initials
+   and years of muscle memory, and keeping it costs nothing. Both names behave identically and
+   follow every upgrade.
 
 **Idempotent.** Running `install.sh` a second time (e.g. `mgm update` run twice, or `kernal update`
 after the migration already happened) is a no-op for the migration step: it checks for
@@ -113,9 +108,8 @@ Once both machines have been on kernal for a while and nothing is logging the "i
 warning anymore, delete: `.pi/extensions/_shared/env.ts`'s `MGM_` branch (or the whole fallback,
 replacing `env("X")` calls with plain `process.env.KERNAL_X`), the `kenv` functions' `mv`/legacy
 branches in `bin/kernal` and `scripts/install.sh`, the `s.mgm` fallback in
-`.pi/extensions/compaction/index.ts`, and the `mgm-pin` branch in `compaction/lib.ts`. Leave the
-`~/.local/bin/mgm` shim and the `MGM_HOME`-migration logic in `install.sh` alone for longer — they
-cost nothing to keep and only run for someone still on a pre-0.2.0 install.
+`.pi/extensions/compaction/index.ts`, and the `mgm-pin` branch in `compaction/lib.ts`. The `~/.local/bin/mgm` alias is permanent. Leave the `MGM_HOME`-migration logic in `install.sh` alone for
+longer too: it costs nothing to keep and only runs for someone still on a pre-0.2.0 install.
 
 ## What the owner needs to do
 

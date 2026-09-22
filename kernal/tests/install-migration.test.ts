@@ -11,7 +11,7 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, lstatSync, symlinkSync, writeFileSync, statSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, lstatSync, symlinkSync, writeFileSync, statSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -118,14 +118,12 @@ describe("install.sh migrates a legacy ~/.mgm install to ~/.kernal", () => {
     assert.equal(result.trim(), "kernal-ran");
   });
 
-  test("~/.local/bin/mgm prints the deprecation notice once and execs kernal", () => {
-    // `exec kernal "$@"` resolves `kernal` on PATH, exactly like a real shell alias/PATH lookup —
-    // so binDir (where install.sh also put `kernal`) must be on PATH for this to work for real.
-    const withBinOnPath = { ...env, PATH: `${binDir}:${env.PATH}` };
-    const result = execFileSync(join(binDir, "mgm"), { encoding: "utf8", env: withBinOnPath });
-    assert.equal(result.trim(), "kernal-ran", "execs the new kernal launcher");
-    const stderr = execFileSync("bash", ["-c", `${JSON.stringify(join(binDir, "mgm"))} 2>&1 1>/dev/null`], { encoding: "utf8", env: withBinOnPath });
-    assert.match(stderr, /mgm is now kernal/);
+  test("~/.local/bin/mgm is a permanent, silent alias for the same launcher", () => {
+    const result = execFileSync(join(binDir, "mgm"), { encoding: "utf8", env });
+    assert.equal(result.trim(), "kernal-ran", "runs the kernal launcher");
+    const stderr = execFileSync("bash", ["-c", `${JSON.stringify(join(binDir, "mgm"))} 2>&1 1>/dev/null`], { encoding: "utf8", env });
+    assert.equal(stderr, "", "no notice: mgm is a supported name, not a deprecated one");
+    assert.equal(realpathSync(join(binDir, "mgm")), realpathSync(join(binDir, "kernal")), "both names point at one launcher");
   });
 
   test("~/.mgm is left in place with a MOVED marker; current now points at the new install", () => {

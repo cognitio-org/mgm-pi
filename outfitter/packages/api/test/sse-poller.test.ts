@@ -128,3 +128,31 @@ describe("SsePoller (bug 2: split web/link deployment)", () => {
     poller.stop();
   });
 });
+
+describe("SsePoller entry window (review fix)", () => {
+  test("publishes a later run's entries even though agentd's seq restarted below the last one seen", async () => {
+    const store = new MemoryStore();
+    const webHub = new SseHub();
+    const poller = new SsePoller(webHub, store, 5);
+    await seedSession(store, "s4");
+    const { reply, frames } = fakeSubscriber();
+    webHub.subscribe("s4", reply);
+    poller.watch("s4");
+
+    // Run 1: entries interleaved with many events, so its last entry carries a high seq.
+    await store.entries.insertIfNew("s4", 3, { id: "a", type: "message" });
+    await store.entries.insertIfNew("s4", 900, { id: "b", type: "message" });
+    await poller.pollOne("s4");
+    frames.length = 0;
+
+    // Run 2: a fresh agentd, seq restarted; its first new entry has seq 7.
+    await store.entries.insertIfNew("s4", 7, { id: "c", type: "message" });
+    await poller.pollOne("s4");
+    await poller.pollOne("s4");
+
+    const entryFrames = frames.filter((f) => f.startsWith("event: entry"));
+    assert.equal(entryFrames.length, 1, "the new entry is published exactly once");
+    assert.ok(entryFrames[0].includes('"id":"c"'));
+    poller.stop();
+  });
+});

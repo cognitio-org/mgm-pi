@@ -82,6 +82,11 @@ class MemoryEntries implements EntriesCollection {
     return (idx === -1 ? list : list.slice(idx + 1)).map(clone);
   }
 
+  async listRecent(sessionId: string, limit: number): Promise<Entry[]> {
+    const list = this.bySession.get(sessionId) ?? []; // push order == insertion order
+    return list.slice(Math.max(0, list.length - limit)).map(clone);
+  }
+
   async maxSeq(sessionId: string): Promise<number> {
     const list = this.bySession.get(sessionId) ?? [];
     return list.reduce((max, e) => Math.max(max, e.seq), 0);

@@ -50,10 +50,23 @@ export class SseHub {
     for (const reply of set) reply.raw.write(frame);
   }
 
+  /** Writes an SSE comment line to every subscriber: keeps idle streams from being cut by a proxy
+   * that times out a silent connection (EventSource ignores comments). */
+  keepalive(): void {
+    for (const set of this.subscribers.values()) for (const reply of set) reply.raw.write(": keepalive\n\n");
+  }
+
   subscriberCount(channel: string): number {
     return this.subscribers.get(channel)?.size ?? 0;
   }
 }
+
+/** Entries fetched per poll. Far more than a session writes in one interval (entries are whole
+ * messages/tool results, not token deltas); a bulk import can exceed it, and the overflow is then
+ * only seen on the next page load. */
+const SSE_RECENT_WINDOW = 100;
+/** How often idle SSE streams get a comment line. */
+const SSE_KEEPALIVE_MS = 25_000;
 
 /** Bug 2 (docs/reports/cloud-fixes.md): AgentLink.publish (agentlink.ts) writes straight into an
  * SseHub instance, which is a plain in-process Map -- fine for role "all" (one process), but in a
@@ -88,7 +101,8 @@ export class SsePoller {
   private readonly cursors = new Map<
     string,
     {
-      lastEntryId?: string;
+      /** Ids in the last polled recent-entries window (already published or already known). */
+      seenEntryIds?: Set<string>;
       lastState?: string;
       lastCostEstimate?: number;
       lastUiRequestKey?: string;
@@ -96,6 +110,10 @@ export class SsePoller {
     }
   >();
   private timer?: ReturnType<typeof setInterval>;
+  /** A pollAll still running when the next tick fires is not overlapped by a second one: two
+   * concurrent polls would read the same cursor and publish the same frames twice. */
+  private polling = false;
+  private lastKeepaliveAt = Date.now();
   private readonly hub: SseHub;
   private readonly store: Pick<Store, "entries" | "runs">;
   private readonly intervalMs: number;
@@ -111,7 +129,17 @@ export class SsePoller {
     if (!this.cursors.has(sessionId)) this.cursors.set(sessionId, {});
     if (!this.timer) {
       this.timer = setInterval(() => {
-        this.pollAll().catch(() => {});
+        if (this.polling) return;
+        this.polling = true;
+        this.pollAll()
+          .catch(() => {})
+          .finally(() => {
+            this.polling = false;
+          });
+        if (Date.now() - this.lastKeepaliveAt >= SSE_KEEPALIVE_MS) {
+          this.lastKeepaliveAt = Date.now();
+          this.hub.keepalive();
+        }
       }, this.intervalMs);
       this.timer.unref?.();
     }
@@ -141,11 +169,18 @@ export class SsePoller {
   async pollOne(sessionId: string): Promise<void> {
     const cursor = this.cursors.get(sessionId) ?? {};
 
-    const entries = await this.store.entries.listForSession(sessionId, cursor.lastEntryId);
-    for (const e of entries) {
+    // Not a seq cursor: agentd's seq restarts at 1 in every run and is shared with `event` frames,
+    // so a second run's new entries carry lower seqs than the first run's last entry and a
+    // `seq > last` cursor would skip them. Instead: the most recently inserted entries, minus the
+    // ones already seen in the previous window. The first poll publishes the whole window, which
+    // covers entries written between the browser's GET .../entries and this subscription (the
+    // browser dedupes by id).
+    const recent = await this.store.entries.listRecent(sessionId, SSE_RECENT_WINDOW);
+    for (const e of recent) {
+      if (cursor.seenEntryIds?.has(e.entry.id)) continue;
       this.hub.publish(sessionId, { type: "entry", data: e.entry });
-      cursor.lastEntryId = e.entry.id;
     }
+    cursor.seenEntryIds = new Set(recent.map((e) => e.entry.id));
 
     const run = await this.store.runs.findActiveForSession(sessionId);
     // Bug 3 (docs/reports/cloud-fixes.md): no *active* run doesn't mean "stopped" -- it could be

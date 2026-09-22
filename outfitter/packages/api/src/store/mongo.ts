@@ -116,6 +116,13 @@ class MongoEntries implements EntriesCollection {
     return rows.map((r) => stripIdStrict<Entry>(r));
   }
 
+  async listRecent(sessionId: string, limit: number): Promise<Entry[]> {
+    // _id is the driver-generated ObjectId (time + counter), i.e. insertion order -- see
+    // EntriesCollection.listRecent for why seq can't be used here. Served by {sessionId, _id}.
+    const rows = await this.col.find({ sessionId }).sort({ _id: -1 }).limit(limit).toArray();
+    return rows.reverse().map((r) => stripIdStrict<Entry>(r));
+  }
+
   async maxSeq(sessionId: string): Promise<number> {
     const row = await this.col.find({ sessionId }).sort({ seq: -1 }).limit(1).next();
     return row?.seq ?? 0;
@@ -582,6 +589,7 @@ export class MongoStore implements Store {
     await Promise.all([
       db.collection("entries").createIndex({ sessionId: 1, "entry.id": 1 }, { unique: true }),
       db.collection("entries").createIndex({ sessionId: 1, seq: 1 }),
+      db.collection("entries").createIndex({ sessionId: 1, _id: -1 }),
       db.collection("sessions").createIndex({ updatedAt: -1 }),
       db.collection("runs").createIndex({ sessionId: 1, state: 1 }),
       db.collection("tokens").createIndex({ hash: 1 }, { unique: true }),

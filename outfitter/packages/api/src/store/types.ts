@@ -333,6 +333,11 @@ export interface EntriesCollection {
   insertIfNew(sessionId: string, seq: number, entry: PiEntry, blobRef?: string): Promise<boolean>;
   /** Entries in tree order (by seq), optionally after a given entry id. */
   listForSession(sessionId: string, afterEntryId?: string): Promise<Entry[]>;
+  /** The `limit` most recently *inserted* entries of a session, oldest first. Insertion order, not
+   * seq: agentd's seq restarts at 1 in every run and is shared with (far more numerous) `event`
+   * frames, so a later run's new entries routinely carry a lower seq than an earlier run's last
+   * one. SsePoller uses this as its cursor-free "what's new" window. */
+  listRecent(sessionId: string, limit: number): Promise<Entry[]>;
   maxSeq(sessionId: string): Promise<number>;
 }
 

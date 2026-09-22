@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { api, type ModelRow, type SessionDetail } from "../api/client.ts";
 import { useSessionStream } from "../hooks/useSessionStream.ts";
 import { useProviders } from "../hooks/useProviders.ts";
@@ -33,6 +33,11 @@ const OUTCOME_FLASH_MS = 3000;
 export function SessionPage() {
   const { id } = useParams<{ id: string }>();
   const sessionId = id ?? "";
+  // ?expandThinking=1 defaults every collapsed thinking row open -- used only to drive a
+  // screenshot of the expanded state (docs/reports/mobile-desk.md); not otherwise surfaced in the
+  // UI.
+  const [searchParams] = useSearchParams();
+  const defaultThinkingExpanded = searchParams.get("expandThinking") === "1";
   const [session, setSession] = useState<SessionDetail | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [apiError, setApiError] = useState<ApiErrorState | null>(null);
@@ -270,7 +275,7 @@ export function SessionPage() {
           {views.length === 0 ? (
             <p className="empty-state">No entries yet. Send a message below to start the run.</p>
           ) : (
-            views.map((v) => <EntryItem key={v.id} view={v} />)
+            views.map((v) => <EntryItem key={v.id} view={v} defaultThinkingExpanded={defaultThinkingExpanded} />)
           )}
           {runState && WORKING_STATES.has(runState) && (
             <Working label="Guru is working" size="lg" className="transcript-working" />

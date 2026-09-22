@@ -40,8 +40,8 @@ function Collapsible({ text: raw, summary }: { text: string | undefined; summary
 // Both are rendered and CSS picks one per breakpoint (the same dual-render pattern Composer.tsx
 // and ProviderStrip.tsx already use), sharing one `expanded` boolean so there's no state to lose
 // switching viewport width mid-session.
-function ThinkingGroup({ blocks }: { blocks: { id: string; text: string }[] }) {
-  const [expanded, setExpanded] = useState(false);
+function ThinkingGroup({ blocks, defaultExpanded }: { blocks: { id: string; text: string }[]; defaultExpanded?: boolean }) {
+  const [expanded, setExpanded] = useState(defaultExpanded ?? false);
   const combined = blocks.map((b) => b.text).join("\n\n");
   const preview = thinkingPreview(blocks[0]?.text ?? "");
   const label = blocks.length > 1 ? `Thinking ×${blocks.length}` : "Thinking";
@@ -88,10 +88,10 @@ function ThinkingGroup({ blocks }: { blocks: { id: string; text: string }[] }) {
   );
 }
 
-export function EntryItem({ view }: { view: GroupedEntry }) {
+export function EntryItem({ view, defaultThinkingExpanded }: { view: GroupedEntry; defaultThinkingExpanded?: boolean }) {
   switch (view.kind) {
     case "thinking-group":
-      return <ThinkingGroup blocks={view.blocks} />;
+      return <ThinkingGroup blocks={view.blocks} defaultExpanded={defaultThinkingExpanded} />;
     case "user":
       return (
         <div className="entry user">

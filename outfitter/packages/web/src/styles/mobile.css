@@ -326,13 +326,32 @@ select {
   }
 
   /* Collapsed thinking row (EntryItem.tsx): the desktop <details> gives way to an icon+count chip
-   * that expands its body in place -- there's no room for a full-width preview line on a phone. */
+   * that expands its body in place -- there's no room for a full-width preview line on a phone.
+   * The group wrapper drops its full-width dashed-box treatment here too, so a collapsed chip (a
+   * small icon button) doesn't sit inside an oversized empty rectangle -- it only regains that
+   * look once expanded. */
+  .entry.assistant-thinking-group {
+    width: fit-content;
+    max-width: 100%;
+    border: none;
+    background: none;
+    padding: 0;
+  }
+
+  .entry.assistant-thinking-group:has(.thinking-chip-body) {
+    width: auto;
+    border: 1px dashed var(--border);
+    background: var(--bg-inset);
+  }
+
   .thinking-details {
     display: none;
   }
 
   .thinking-chip {
     display: inline-flex;
+    margin: 0;
+    border-style: dashed;
   }
 
   .thinking-chip[aria-expanded="true"] + .thinking-chip-body {
@@ -365,13 +384,21 @@ select {
 
 /* ---------- dialogs: full-height sheets on mobile ---------- */
 
+/* A short alert (the bomb dialog) isn't a form sheet -- it opts out of the full-height/sticky-
+ * footer treatment below (:not(.bomb-dialog)) so its Restart/Resume buttons sit right under the
+ * message instead of pinned to the bottom of an otherwise-empty screen. */
 @media (max-width: 700px) {
   .dialog-backdrop {
     padding: 0;
     align-items: stretch;
   }
 
-  .dialog {
+  .dialog-backdrop:has(.bomb-dialog) {
+    padding: 4vh 1rem;
+    align-items: flex-start;
+  }
+
+  .dialog:not(.bomb-dialog) {
     max-width: none;
     width: 100%;
     min-height: 100dvh;
@@ -379,7 +406,7 @@ select {
     flex-direction: column;
   }
 
-  .dialog .panel-body {
+  .dialog:not(.bomb-dialog) .panel-body {
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -387,14 +414,14 @@ select {
     padding-bottom: env(safe-area-inset-bottom);
   }
 
-  .dialog form {
+  .dialog:not(.bomb-dialog) form {
     display: flex;
     flex-direction: column;
     flex: 1;
   }
 
   /* Pin the primary action within thumb reach at the bottom of the sheet. */
-  .dialog .form-actions {
+  .dialog:not(.bomb-dialog) .form-actions {
     margin-top: auto;
     position: sticky;
     bottom: 0;

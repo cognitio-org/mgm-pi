@@ -1,0 +1,21 @@
+.github/workflows/outfitter-ci.yml
+  s_2209f22f830d7f::t_0c0952a6dc5208 85
+outfitter/image/Dockerfile
+  s_2209f22f830d7f::t_0c0952a6dc5208 43-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "27f4d745b0301cf2a3ea4765ceb41e0cae5f017c",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

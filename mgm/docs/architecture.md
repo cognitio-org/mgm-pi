@@ -95,6 +95,40 @@ LLM summaries on SWE-bench at half the cost; Claude Code, OpenCode and OpenHands
 output before summarizing; Aider and Cursor summarize with a cheaper model. Survey with sources:
 `docs/compaction-research.md`.
 
+## The web admin (`.pi/extensions/mgm-admin/`)
+
+`/admin` starts a `node:http` server inside the agent (works under pi's Bun-compiled binary too) and
+opens a single-page app served from it: `app.ts` holds the HTML shell, the stylesheet and the script
+as strings (no framework, no build step, nothing fetched from the network), `server.ts` the server
+and its request gate, `lib.ts` the pure rules, `index.ts` the command and the API routes.
+
+**One source of truth.** The admin never reimplements a setting. Each extension keeps its state in
+its own closure, and pi gives extensions exactly one channel between them, the shared event bus
+(`pi.events`). `connect/lib.ts` turns it into request/reply (`busServe`, `busRequest`), and two
+extensions answer on it:
+
+| Channel | Served by | Ops |
+|---|---|---|
+| `mgm:connect` | `connect` | `state` (backends, models, key rejections), `reload` (the same `registerAll` `/setup` runs), `select` (the same switch-and-save `/connect` runs) |
+| `mgm:index` | `mgm-codebase-index` | `status` (its `index_status` and `knowledge_base_list` tools), `update` / `rebuild` (`index_codebase`, started and left running) |
+
+Everything else is plain imports of the owners' exported functions: `writeEnvValues` (the `.env`
+write `/setup` now uses too), `loadEnv`, `testConnection`, `normalizeBaseUrl`, `cleanKey`; and for the
+index `FIELDS`, `applyEdit`, `setReranking`, `applyEmbeddingChoice` (both now also used by the `/index`
+dialog), `writeConfig` (0600 when the file holds a key), the model and dimension probes. Settings are
+written to the user's index config, as the dialog does: a project config replaces whole top-level
+blocks, so writing one field there would drop the user's other settings in that block. The page marks
+the fields a project config overrides instead. The look is `mgm-context/report.ts`'s `THEME`.
+
+**The request gate** (`server.ts`, in this order): `Host` must be `127.0.0.1:<port>` or
+`localhost:<port>`; `Origin`, when present, must be the server itself, and `Sec-Fetch-Site` must not
+be cross-site; the static shell is served without a token (it holds no data); every `/api/` request
+needs the per-start token in `x-mgm-admin-token` (a header, never a cookie or query string, compared
+in constant time); writes must be `application/json` and under 64 KB. Every response carries a CSP
+that allows only same-origin script and style and no framing. Before a response leaves, it is checked
+against every key-like value in the environment and withheld if one appears in full. The idle timer
+resets only on requests without `x-mgm-poll: 1`, so a forgotten tab does not keep it running.
+
 ## Startup banner
 
 `.pi/extensions/mgm-banner/` replaces pi's header with block-letter MGM, the provider indicator

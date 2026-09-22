@@ -2,6 +2,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { EventEmitter } from "node:events";
 
 export type Handler = (ev: any, ctx: any) => Promise<any> | any;
 
@@ -13,7 +14,19 @@ export function makePi() {
   const unregistered: string[] = [];
   const entries: any[] = [];
   const setModelCalls: any[] = [];
+  // pi's shared event bus (core/event-bus.ts): an EventEmitter whose handlers are async-wrapped.
+  const emitter = new EventEmitter();
+  const events = {
+    emit: (channel: string, data: unknown) => { emitter.emit(channel, data); },
+    on: (channel: string, handler: (data: unknown) => unknown) => {
+      const safe = async (data: unknown) => { try { await handler(data); } catch (e) { console.error(e); } };
+      emitter.on(channel, safe);
+      return () => { emitter.off(channel, safe); };
+    },
+  };
   const pi = {
+    events,
+    getThinkingLevel: () => "off",
     on(ev: string, h: Handler) { handlers.set(ev, [...(handlers.get(ev) ?? []), h]); },
     registerCommand(name: string, def: any) { commands.set(name, def); },
     registerProvider(name: string, config: any) { providers.push({ name, config }); },

@@ -8,7 +8,6 @@ export interface CloudRunProviderConfig {
   project: string;
   region: string;
   job: string;
-  apiOrigin: string;
 }
 
 /** google.cloud.run.v2.Execution fields this provider actually reads (see status() below for the

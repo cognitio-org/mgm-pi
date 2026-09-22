@@ -8,6 +8,7 @@
 // `stopping` (agentd never got, or never acted on, the graceful `stop` down-message) past
 // config.stopGraceMs.
 
+import { sandboxOrigin } from "./config.ts";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import type { Store, Run } from "./store/types.ts";
 import type { SandboxProvider } from "@outfitter/provider-local";
@@ -56,7 +57,7 @@ export class RunManager {
     try {
       const { handle } = await this.provider.start({
         runId: run.id,
-        apiOrigin: this.config.origin,
+        apiOrigin: sandboxOrigin(this.config),
         runToken,
         // devToken is the SANDBOX_PROVIDER=inprocess/docker auth bypass (see @outfitter/
         // provider-local's RunLaunch doc); cloudrun ignores it, and the sandbox authenticates

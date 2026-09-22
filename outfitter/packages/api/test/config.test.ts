@@ -4,7 +4,7 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { loadConfig } from "../src/config.ts";
+import { assertSandboxOrigin, loadConfig } from "../src/config.ts";
 
 describe("loadConfig", () => {
   test("defaults OUTFITTER_ROLE to \"all\" and SANDBOX_PROVIDER to \"inprocess\" when unset", () => {
@@ -56,3 +56,17 @@ describe("loadConfig", () => {
     assert.deepEqual(config.operators, ["a@x.com", "b@x.com", "c@x.com", "d@x.com"]);
   });
 });
+
+describe("assertSandboxOrigin", () => {
+  test("a web role waking Cloud Run sandboxes without OUTFITTER_LINK_ORIGIN refuses to start", () => {
+    const config = loadConfig({ OUTFITTER_ROLE: "web", SANDBOX_PROVIDER: "cloudrun" } as NodeJS.ProcessEnv);
+    assert.throws(() => assertSandboxOrigin(config), /OUTFITTER_LINK_ORIGIN is required/);
+  });
+  test("passes with the link origin set, and for the other roles and providers", () => {
+    assertSandboxOrigin(loadConfig({ OUTFITTER_ROLE: "web", SANDBOX_PROVIDER: "cloudrun", OUTFITTER_LINK_ORIGIN: "https://link.example" } as NodeJS.ProcessEnv));
+    assertSandboxOrigin(loadConfig({ OUTFITTER_ROLE: "link", SANDBOX_PROVIDER: "cloudrun" } as NodeJS.ProcessEnv));
+    assertSandboxOrigin(loadConfig({ SANDBOX_PROVIDER: "cloudrun" } as NodeJS.ProcessEnv));
+    assertSandboxOrigin(loadConfig({ OUTFITTER_ROLE: "web" } as NodeJS.ProcessEnv));
+  });
+});
+

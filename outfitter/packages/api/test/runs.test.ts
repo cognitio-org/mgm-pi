@@ -26,6 +26,23 @@ function makeRun(overrides: Partial<Run> = {}): Run {
   };
 }
 
+describe("RunManager.wake: which origin a sandbox dials", () => {
+  // 2026-09-22: the deployed web role woke a Floppy and passed its own IAP-protected origin; the
+  // sandbox's WebSocket was turned away by IAP (close 1006) and never reached the link service.
+  test("the web role hands sandboxes the link service's origin", async () => {
+    const provider = new NoopProvider();
+    const config = loadConfig({ OUTFITTER_ROLE: "web", OUTFITTER_ORIGIN: "https://web.example", OUTFITTER_LINK_ORIGIN: "https://link.example" } as NodeJS.ProcessEnv);
+    await new RunManager(new MemoryStore(), provider, config).wake("s1");
+    assert.equal(provider.startCalls[0].apiOrigin, "https://link.example");
+  });
+  test("role all (one service holds both) keeps its own origin", async () => {
+    const provider = new NoopProvider();
+    const config = loadConfig({ OUTFITTER_ORIGIN: "https://all.example", OUTFITTER_LINK_ORIGIN: "https://link.example" } as NodeJS.ProcessEnv);
+    await new RunManager(new MemoryStore(), provider, config).wake("s1");
+    assert.equal(provider.startCalls[0].apiOrigin, "https://all.example");
+  });
+});
+
 describe("RunManager.wake", () => {
   test("generates a per-run token, hands the plaintext to the provider, and stores only its hash", async () => {
     const store = new MemoryStore();

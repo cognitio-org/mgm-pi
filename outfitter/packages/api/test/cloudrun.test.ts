@@ -16,7 +16,7 @@ const EXECUTION_NAME = "projects/p/locations/r/jobs/outfitter-agent/executions/o
 const OPERATION_NAME = "projects/p/locations/r/jobs/outfitter-agent/operations/op-12345";
 
 function baseConfig() {
-  return { project: "p", region: "r", job: "outfitter-agent", apiOrigin: "https://api.example" };
+  return { project: "p", region: "r", job: "outfitter-agent" };
 }
 
 describe("CloudRunProvider", () => {

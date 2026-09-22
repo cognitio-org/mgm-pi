@@ -128,9 +128,20 @@ if [[ "${ROLE}" == "web" ]]; then
   # bootstrap deploy above learns its URL the same way OUTFITTER_ORIGIN does here), then re-run
   # `./api.sh` with OUTFITTER_LINK_ORIGIN set (or exported in the shell) so it lands in this env
   # list; omitted or empty, the Tokens page just tells the operator to ask for the link URL.
-  if [[ -n "${OUTFITTER_LINK_ORIGIN:-}" ]]; then
-    ENV_VARS="${ENV_VARS},OUTFITTER_LINK_ORIGIN=${OUTFITTER_LINK_ORIGIN}"
+  # Required, not cosmetic: every sandbox this service wakes is told to dial this origin (config.ts
+  # sandboxOrigin), and the API refuses to start without it. Looked up from the deployed link
+  # service (status.url, the same URL its own OUTFITTER_ORIGIN uses, so token audiences match) when not given, so a re-run of this script can never drop it (--set-env-vars replaces
+  # the whole environment).
+  if [[ -z "${OUTFITTER_LINK_ORIGIN:-}" ]]; then
+    OUTFITTER_LINK_ORIGIN="$(gcloud run services describe outfitter-link --project="${PROJECT}" --region="${REGION}" \
+      --format='value(status.url)' 2>/dev/null || true)"
   fi
+  if [[ -z "${OUTFITTER_LINK_ORIGIN:-}" ]]; then
+    echo "error: could not find the outfitter-link service's URL; deploy it first (./link.sh) or set OUTFITTER_LINK_ORIGIN" >&2
+    exit 1
+  fi
+  echo "   link origin: ${OUTFITTER_LINK_ORIGIN}"
+  ENV_VARS="${ENV_VARS},OUTFITTER_LINK_ORIGIN=${OUTFITTER_LINK_ORIGIN}"
   # OUTFITTER_OPERATORS (EPIC.md Decisions table, src/config.ts): emails allowed to manage secrets
   # and deploy-level settings via /api/operator/* (src/auth.ts's requireOperator). Separated by
   # ';' here, not ',' -- `gcloud run deploy --set-env-vars` splits its whole value on commas, so a

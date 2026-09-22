@@ -2,11 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   LAUNCH_READING_END_S,
   LAUNCH_READING_START_S,
+  clipRetryDelayMs,
   isSoundEnabled,
   makeRng,
   maxDurationMs,
   playFloppyAfterDelay,
   readingLoopPoints,
+  resetFloppyEngineForTests,
   scheduleSeekBursts,
   setSoundEnabled,
   spinDownMs,
@@ -32,6 +34,7 @@ function createMemoryStorage(): Storage {
 
 beforeEach(() => {
   vi.stubGlobal("localStorage", createMemoryStorage());
+  resetFloppyEngineForTests();
 });
 
 afterEach(() => {
@@ -163,5 +166,230 @@ describe("scheduleSeekBursts", () => {
   it("schedules nothing for a wait too short to reach the loop", () => {
     expect(scheduleSeekBursts(1, 5000)).toEqual([]);
     expect(scheduleSeekBursts(1, 0)).toEqual([]);
+  });
+});
+
+describe("clipRetryDelayMs", () => {
+  it("backs off after failed clip loads, doubling up to a cap", () => {
+    expect(clipRetryDelayMs(0)).toBe(0);
+    expect(clipRetryDelayMs(1)).toBe(15_000);
+    expect(clipRetryDelayMs(2)).toBe(30_000);
+    expect(clipRetryDelayMs(3)).toBe(60_000);
+    expect(clipRetryDelayMs(20)).toBe(300_000);
+  });
+});
+
+// --- the shared engine, against a fake Web Audio + fetch -----------------------------------------
+
+interface FakeSource {
+  buffer: { duration: number } | null;
+  loop: boolean;
+  start: ReturnType<typeof vi.fn>;
+  stop: ReturnType<typeof vi.fn>;
+  connect: () => void;
+}
+
+function installFakeAudio(opts: { failFetches?: number } = {}) {
+  const sources: FakeSource[] = [];
+  const contexts: FakeContext[] = [];
+  const gainParam = () => ({
+    value: 1,
+    setValueAtTime() {},
+    linearRampToValueAtTime() {},
+    cancelScheduledValues() {},
+  });
+  class FakeContext {
+    state: "running" | "suspended" = "running";
+    currentTime = 0;
+    destination = {};
+    resume = vi.fn(async () => {
+      this.state = "running";
+    });
+    suspend = vi.fn(async () => {
+      this.state = "suspended";
+    });
+    constructor() {
+      contexts.push(this);
+    }
+    createGain() {
+      return { gain: gainParam(), connect() {} };
+    }
+    createBufferSource(): FakeSource {
+      const src: FakeSource = { buffer: null, loop: false, start: vi.fn(), stop: vi.fn(), connect() {} };
+      sources.push(src);
+      return src;
+    }
+    decodeAudioData(data: ArrayBuffer) {
+      // launch.mp3 is served as 2 bytes, load.mp3 as 1 (see fetch below).
+      return Promise.resolve({ duration: data.byteLength === 2 ? 4.7 : 1.32 });
+    }
+  }
+  let failures = opts.failFetches ?? 0;
+  const fetchMock = vi.fn(async (url: string) => {
+    if (failures > 0) {
+      failures--;
+      return { ok: false, status: 503, arrayBuffer: async () => new ArrayBuffer(0) };
+    }
+    return { ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(url.includes("launch") ? 2 : 1) };
+  });
+  vi.stubGlobal("AudioContext", FakeContext);
+  vi.stubGlobal("fetch", fetchMock);
+  /** Reading loops (one per playback) that haven't been told to stop. */
+  const playing = () => sources.filter((s) => s.loop && s.stop.mock.calls.length === 0).length;
+  const playbacks = () => sources.filter((s) => s.loop).length;
+  return { sources, contexts, fetchMock, playing, playbacks };
+}
+
+/** Let the fetch/decode promise chain run. */
+async function settle() {
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+}
+
+async function advance(ms: number) {
+  await vi.advanceTimersByTimeAsync(ms);
+  await settle();
+}
+
+describe("shared floppy engine", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  it("plays after the start delay and fades when the wait settles", async () => {
+    const audio = installFakeAudio();
+    const stop = playFloppyAfterDelay();
+    await advance(startDelayMs() - 10);
+    expect(audio.playing()).toBe(0);
+    await advance(20);
+    expect(audio.playing()).toBe(1);
+    stop();
+    expect(audio.playing()).toBe(0);
+  });
+
+  it("a short wait B settling doesn't cut off a long wait A, and B joins A's playback", async () => {
+    const audio = installFakeAudio();
+    const stopA = playFloppyAfterDelay();
+    await advance(startDelayMs() + 10);
+    expect(audio.playing()).toBe(1);
+
+    const stopB = playFloppyAfterDelay();
+    await advance(startDelayMs() + 10);
+    expect(audio.playbacks()).toBe(1); // B joined; no second playback
+    expect(audio.playing()).toBe(1);
+    stopB();
+    stopB(); // idempotent: mustn't release A's hold too
+    expect(audio.playing()).toBe(1);
+
+    await advance(5_000);
+    expect(audio.playing()).toBe(1);
+    stopA();
+    expect(audio.playing()).toBe(0);
+    expect(audio.playbacks()).toBe(1);
+  });
+
+  it("B stopping before its own start delay leaves A playing", async () => {
+    const audio = installFakeAudio();
+    const stopA = playFloppyAfterDelay();
+    await advance(startDelayMs() + 10);
+    const stopB = playFloppyAfterDelay();
+    await advance(100);
+    stopB();
+    await advance(1_000);
+    expect(audio.playing()).toBe(1);
+    stopA();
+    expect(audio.playing()).toBe(0);
+  });
+
+  it("A settling while B is still in its delay: A fades, B starts its own playback later", async () => {
+    const audio = installFakeAudio();
+    const stopA = playFloppyAfterDelay();
+    await advance(startDelayMs() + 10);
+    const stopB = playFloppyAfterDelay();
+    await advance(100);
+    stopA();
+    expect(audio.playing()).toBe(0);
+    await advance(startDelayMs());
+    expect(audio.playing()).toBe(1);
+    expect(audio.playbacks()).toBe(2);
+    stopB();
+    expect(audio.playing()).toBe(0);
+  });
+
+  it("caps each playback at maxDurationMs from when the sound started", async () => {
+    const audio = installFakeAudio();
+    const stopA = playFloppyAfterDelay();
+    await advance(startDelayMs());
+    expect(audio.playing()).toBe(1);
+    await advance(maxDurationMs() - 50);
+    expect(audio.playing()).toBe(1);
+    await advance(100);
+    expect(audio.playing()).toBe(0);
+    // A is still waiting but has had its 20 s. A new wait passing its delay starts a fresh
+    // playback with its own cap, and B settling ends it even though A is still pending.
+    const stopB = playFloppyAfterDelay();
+    await advance(startDelayMs() + 10);
+    expect(audio.playing()).toBe(1);
+    expect(audio.playbacks()).toBe(2);
+    stopB();
+    expect(audio.playing()).toBe(0);
+    stopA();
+    expect(audio.playbacks()).toBe(2);
+  });
+
+  it("suspends the AudioContext after the last spin-down and resumes it for the next wait", async () => {
+    const audio = installFakeAudio();
+    const stopA = playFloppyAfterDelay();
+    await advance(startDelayMs() + 10);
+    const ctx = audio.contexts[0];
+    stopA();
+    expect(ctx.suspend).not.toHaveBeenCalled(); // still fading
+    await advance(spinDownMs() + 200);
+    expect(ctx.suspend).toHaveBeenCalledTimes(1);
+    expect(ctx.state).toBe("suspended");
+
+    const stopB = playFloppyAfterDelay();
+    expect(ctx.resume).toHaveBeenCalled();
+    await advance(startDelayMs() + 10);
+    expect(audio.playing()).toBe(1);
+    expect(audio.contexts).toHaveLength(1);
+    stopB();
+  });
+
+  it("doesn't suspend while another wait is still pending", async () => {
+    const audio = installFakeAudio();
+    const stopA = playFloppyAfterDelay();
+    await advance(startDelayMs() + 10);
+    const stopB = playFloppyAfterDelay(); // still in its delay when A settles
+    stopA();
+    stopB();
+    const stopC = playFloppyAfterDelay();
+    await advance(spinDownMs() + 200);
+    expect(audio.contexts[0].suspend).not.toHaveBeenCalled();
+    stopC();
+    await advance(spinDownMs() + 200);
+    expect(audio.contexts[0].suspend).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a failed clip load after a backoff instead of staying silent all session", async () => {
+    const audio = installFakeAudio({ failFetches: 1 });
+    let stop = playFloppyAfterDelay();
+    await advance(startDelayMs() + 10);
+    expect(audio.playing()).toBe(0);
+    stop();
+    const fetchesAfterFailure = audio.fetchMock.mock.calls.length;
+
+    // Inside the backoff: silent, and no refetch.
+    stop = playFloppyAfterDelay();
+    await advance(startDelayMs() + 10);
+    expect(audio.playing()).toBe(0);
+    expect(audio.fetchMock.mock.calls.length).toBe(fetchesAfterFailure);
+    stop();
+
+    await advance(clipRetryDelayMs(1));
+    stop = playFloppyAfterDelay();
+    await advance(startDelayMs() + 10);
+    expect(audio.fetchMock.mock.calls.length).toBeGreaterThan(fetchesAfterFailure);
+    expect(audio.playing()).toBe(1);
+    stop();
   });
 });

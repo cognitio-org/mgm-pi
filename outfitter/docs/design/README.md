@@ -130,22 +130,31 @@ control in the header (`components/SoundToggle.tsx`, persisted to `localStorage`
 It only ever plays for a wait the user just started (composer send, session create, wake/stop/
 abort, token create, UI-request responses) via `withFloppySound(promise)`, which wraps the call:
 after `startDelayMs()` (300ms, so instant responses stay silent) it plays `launch.mp3` from the
-start, seek then reading. If the wait outlasts the clip, the reading section (~2.45s to ~4.4s, both
-quiet points so the seam doesn't click) loops seamlessly through an `AudioBufferSourceNode`'s
+start, seek then reading. If the wait outlasts the clip, the reading section (~2.32s to ~4.47s,
+both quiet points so the seam doesn't click, chosen to stay quiet whether or not the decoder trims
+the MP3 encoder delay of ~46ms) loops seamlessly through an `AudioBufferSourceNode`'s
 `loopStart`/`loopEnd`, and every 2.5 to 6s a `load.mp3` seek burst is laid over it with the reading
 ducked underneath, so a long wait sounds like a drive stepping between tracks rather than one
 two-second loop. When the promise settles it fades out over `spinDownMs()` (250ms), and it's
-hard-capped at `maxDurationMs()` (20s) regardless of how long the call takes. It is never wired to
-background polling or SSE updates, so playback always follows a user gesture (and never trips
-browser autoplay blocking).
+hard-capped at `maxDurationMs()` (20s, counted from when the sound actually starts) regardless of
+how long the call takes. Overlapping waits share one playback, reference-counted: it keeps going
+while at least one of them is pending and fades only when the last settles, so a quick wait
+finishing can't cut off a long one. It is never wired to background polling or SSE updates, so
+playback always follows a user gesture (and never trips browser autoplay blocking). The one
+non-request use is the Manual's tour (`components/tour/TourAnimation.tsx`), which plays a ~1.4s
+burst when its "drives" scene appears, and only once the user has clicked or pressed a key inside
+the tour, so `/manual?autoplay=1` stays silent until someone interacts with it.
 
 The clips are fetched and decoded (`decodeAudioData`) lazily, on the first wait that has sound on,
-never at page load, and cached with one shared `AudioContext`. Everything fails silent: no Web
-Audio, a blocked context, or a failed fetch or decode just means no sound.
+never at page load, and cached with one shared `AudioContext`, which is suspended once nothing is
+waiting and the spin-down has finished (and resumed on the next wait). Everything fails silent: no
+Web Audio, a blocked context, or a failed fetch or decode just means no sound; a failed load is
+retried on a later wait after a backoff (`clipRetryDelayMs`: 15s, doubling, up to 5 minutes).
 
 The pure parts (timing constants, the preference, the loop points `readingLoopPoints`, and the
-seeded seek-burst schedule `scheduleSeekBursts`) are tested in `test/floppy-sound.test.ts`; the
-audio graph itself is checked by ear.
+seeded seek-burst schedule `scheduleSeekBursts`) are tested in `test/floppy-sound.test.ts`, along
+with the refcounting, cap, suspend and retry behaviour against a fake `AudioContext`; the sound
+itself is checked by ear.
 
 **Credits.** Excerpts from two freesound_community recordings on Pixabay, "Floppy drive on old PC"
 (item 52014) and "Reading floppy disc 2" (item 35303), under the

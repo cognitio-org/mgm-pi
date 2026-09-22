@@ -1,7 +1,8 @@
-// Tiny Web Audio blips for the easter egg -- laser, explosion, pickup, hit, game-over. Same
-// approach as src/lib/floppy-sound.ts (synthesized square/noise, no audio files) and gated by the
-// same persisted app-wide sound preference (isSoundEnabled), so the game never makes noise unless
-// the user has turned the header's floppy-sound toggle on. One AudioContext, created lazily and
+// Tiny Web Audio blips for the easter egg -- laser, explosion, pickup, hit, game-over. Synthesized
+// square/noise, no audio files (unlike src/lib/floppy-sound.ts, which plays recorded drive clips
+// from public/sounds/), and gated by the same persisted app-wide sound preference
+// (isSoundEnabled), so the game never makes noise unless the user has turned the header's
+// floppy-sound toggle on. One AudioContext, created lazily and
 // reused; every call is wrapped so a browser without Web Audio (or a suspended/blocked context)
 // fails silently instead of throwing.
 

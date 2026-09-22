@@ -5,12 +5,16 @@ report still holds for licensing rationale and trigger choice (Konami code + `/r
 covers what changed and what was added: a "KERNAL GAMES" launcher menu, a full Floppy Rescue
 (Choplifter-inspired) game, and a polish pass on Dreadnought Run.
 
-**Two build passes.** The first pass (commits `af8ed88`..`58da1ea`) got the menu, both games'
+**Three build passes.** The first pass (commits `af8ed88`..`58da1ea`) got the menu, both games'
 logic, and a visual style in place, but a design review of the resulting screenshots/clip found the
 action read as "specks in an empty window" -- legible logic, illegible presentation. A second pass
 (commits `0ce3104`, `ec3d88d`) rescaled both games to a proper low-res pixel-art resolution and
-rebuilt the scenery, HUD and attract-mode pacing around that; see "Resolution and scale rework"
-below. Everything in this report describes the current (second-pass) state.
+rebuilt the scenery, HUD and attract-mode pacing around that. A third pass, after the owner (and his
+son) played both, shrank the world again for a still-bigger helicopter/ship, made the burning farm
+and the ship's hull read as the visual focus they're meant to be, fixed a Disk Box camera/sign issue,
+and added "juice" (hit-flash, sparkles, score pops, varied-size debris) to both games; see
+"Resolution and scale rework" and the per-game sections below. Everything in this report describes
+the current (third-pass) state.
 
 ## What's there
 
@@ -44,25 +48,27 @@ land to unload for score.
 landing rules, pickup/capacity, fire spread, scoring, level progression, attract-mode autopilot).
 Tuning constants, documented inline and here for reference:
 
-World resolution is 320x176 logical px (see "Resolution and scale rework" below); constants are in
-those units.
+World resolution is 240x132 logical px (see "Resolution and scale rework" below); constants are in
+those units. This is the *second* rescale -- an original 320x176 pass shrank further by another 0.75x
+ratio after the owner's playtest found the helicopter still small at a normal laptop window.
 
 | Constant | Value | What it does |
 |---|---|---|
-| `GRAVITY` | 95 px/s² | constant downward pull |
-| `THRUST_ACCEL` | 210 px/s² | "up" input; comfortably beats gravity so climbing feels responsive |
-| `DOWN_ACCEL` | 60 px/s² | "down" input; gravity does most of the descent work |
-| `H_ACCEL` | 150 px/s² | lateral thrust |
+| `GRAVITY` | 71 px/s² | constant downward pull |
+| `THRUST_ACCEL` | 158 px/s² | "up" input; comfortably beats gravity so climbing feels responsive |
+| `DOWN_ACCEL` | 45 px/s² | "down" input; gravity does most of the descent work |
+| `H_ACCEL` | 113 px/s² | lateral thrust |
 | `H_DRAG` | 2.4 /s | exponential damping on `vx` with no lateral input |
 | `V_DRAG` | 0.5 /s | mild damping on `vy` so hovering settles instead of oscillating |
-| `MAX_VX` / `MAX_VY` | 90 px/s | velocity caps |
-| `LANDING_SAFE_VY` | 30 px/s | touch down slower than this or it's a crash |
-| `CAMERA_LEAD` | 24 px | how far ahead of the player the camera looks, scaled by `vx/MAX_VX` |
-| fuel drain / refill | 3.0/s airborne, 34/s on home pad | route-planning tension: dry fuel kills lift (unaffected by the resolution rescale -- percentage-based, not px) |
+| `MAX_VX` / `MAX_VY` | 68 px/s | velocity caps |
+| `LANDING_SAFE_VY` | 23 px/s | touch down slower than this or it's a crash |
+| `CAMERA_LEAD` | 18 px | how far ahead of the player the camera looks, scaled by `vx/MAX_VX` |
+| `HOME_CAMERA_LOCK_PAD` | 30 px | while the player is within this of the home pad, the camera stays pinned at 0 (Disk Box + sign always fully in frame) instead of leading away |
+| fuel drain / refill | 3.0/s airborne, 34/s on home pad | route-planning tension: dry fuel kills lift (unaffected by any rescale -- percentage-based, not px) |
 | `BOARD_INTERVAL_MS` | 380 | one Floppy boards per interval, landed at the farm, under capacity |
-| scoring | 100/Floppy, +400 full-load (8) bonus | unaffected by the rescale |
-| fire | grows 0.16/s, ignites a neighbour past 0.55 intensity | a fully-lit cell kills any Floppy standing in it (0..1 intensity units, unaffected by the rescale) |
-| level 1 width | 480 px (`levelWidth()`, `+140`/level after) | short on purpose -- see attract-mode pacing below |
+| scoring | 100/Floppy, +400 full-load (8) bonus | unaffected by any rescale |
+| fire | grows 0.16/s, ignites a neighbour past 0.55 intensity | a fully-lit cell kills any Floppy standing in it and flips its rack to a scorched palette (0..1 intensity units, unaffected by any rescale) |
+| level 1 width | 360 px (`levelWidth()`, `+105`/level after) | short on purpose -- see attract-mode pacing below |
 
 These were hand-picked for "thrust, gravity, momentum, tilt, gentle-landing-required" without a
 human playtester in the loop (this was built end-to-end by an agent); they pass every physics/
@@ -78,16 +84,25 @@ level can't soft-lock even if fire wipes out the whole pool before you reach it.
 **Rendering** (`FloppyRescue.tsx` + `sprites.ts`): the helicopter is drawn from primitive rects
 (organic silhouette, 2-frame rotor spin, tilt rotation -- easier to get right this way than a
 hand-typed character grid); racks (tiled into a two-row "building"), flame frames, Floppy walkers
-(2-frame walk/wave), debris and the drone are small character-grid sprites. The Disk Box is an
-actual building (walls, roof, door, two windows, a sign on a post) sitting on its pad, not a green
-strip; the server farm has its own "SERVER FARM" sign. Background is a gradient sky with a
-repeating parallax pattern of clouds/stars, and a textured ground band that scrolls with the
-camera. A compact C64-style HUD (score/level/onboard/fuel/lives, plus a distance minimap with
-home/farm/player markers) is drawn directly onto the canvas -- inside the game frame, not only in
-the larger accessible HTML HUD below the canvas, which stays too. The camera leads the helicopter
-in its direction of travel instead of just centering on it. A title screen runs a pure, unit-tested
-`attractInput()` autopilot flying a full demo loop behind it (see pacing below); level intro cards
-("LEVEL 2: THE SERVER FARM IS SPREADING"); a "READY." game over screen with a blinking cursor;
+(2-frame walk/wave, with a distinct disk-shutter label so they read as little floppy-disk
+characters), debris and the drone are small character-grid sprites. The Disk Box is an actual
+building (walls, roof, door, two windows, a sign on a post) sitting on its pad, not a green strip,
+with a landing light on the roof peak that blinks while the helicopter is carrying Floppies home
+(steady dim otherwise); the camera stays pinned at distance 0 while the player is near the pad
+(`HOME_CAMERA_LOCK_PAD`), so the building and its sign are always fully in frame instead of
+scrolling off the moment thrust ramps up. The server farm -- the level's visual focus -- has its own
+"SERVER FARM" sign (drawn last, always on top and legible), four-frame three-tone
+(orange/yellow/red) flame animation, continuous smoke puffs drifting up off any fully-lit cell,
+periodic sparks, a warm glow at the base of the fire, and racks that flip to a scorched palette once
+their cell is mostly lit. Background is a gradient sky with a repeating parallax pattern of
+clouds/stars, and a textured ground band that scrolls with the camera. A compact C64-style HUD
+(score/level/onboard/fuel/lives, plus a distance minimap with home/farm/player markers) is drawn
+directly onto the canvas -- inside the game frame, not only in the larger accessible HTML HUD below
+the canvas, which stays too. The camera leads the helicopter in its direction of travel instead of
+just centering on it. A title screen runs a pure, unit-tested `attractInput()` autopilot flying a
+full demo loop behind it (see pacing below); level intro cards ("LEVEL 2: THE SERVER FARM IS
+SPREADING"); a "READY." game over screen with a blinking cursor; floating "+N" score pops and a
+brief hit-flash on crashes (`shared/particles.ts`, skipped/shortened under `prefers-reduced-motion`);
 rotor-chop/board/deliver/crash/floppy-lost Web Audio synthesis (`sound.ts`, same approach as
 `src/lib/floppy-sound.ts`) gated by the app's sound toggle.
 
@@ -105,40 +120,56 @@ collisions, pickups) and replaced the placeholder triangle-and-grid rendering:
   **new enemy type**, a "drone" that sine-sweeps vertically and fires on its own cooldown, unlocked
   past 360px of distance so the first stretch of a run stays just racks + turrets.
 - The hull is now an actual hull, not a bare grid: `drawHull()` layers distant tower silhouettes
-  along the horizon (heights from a deterministic hash of their tile index, not RNG/state), mid-depth
-  panelling with rivets and vent slits, and a runway-light stripe along the top/bottom edges, each
-  scrolling at a different fraction of world speed for real parallax depth.
+  along the horizon (heights from a deterministic hash of their tile index, not RNG/state) -- with
+  an occasional taller "bridge tower" (lit windows, an antenna mast) standing out from the regular
+  ones -- mid-depth panelling with rivets, vent slits and hatches -- with an occasional big "hangar
+  door" (a large recessed dark panel with a seam and a hatch light) among the regular panels -- and a
+  runway-light stripe along the top/bottom edges, each layer scrolling at a different fraction of
+  world speed for real parallax depth. Both "big feature" placements are a deterministic index
+  modulo, same technique as the tower-height hash, so a given stretch of hull always looks the same.
 - A compact C64-style HUD (score/HI/lives/distance) is drawn directly onto the canvas, same
   treatment as Floppy Rescue's, alongside the existing larger HTML HUD.
-- Explosion particles + a small screen shake on kills/hits (`shared/particles.ts`), skipped under
-  `prefers-reduced-motion`.
+- Explosion particles (varied size, so a burst reads as chunks rather than uniform dust) + a small
+  screen shake on kills/hits, a sparkle + floating "+N" score pop when a turret/drone/pickup is
+  destroyed/collected, and a brief hit-flash when the ship is hit (`shared/particles.ts`), all
+  skipped or shortened under `prefers-reduced-motion`.
 - A title/attract screen driven by a pure `attractInput(t)` autopilot (a slow figure-eight weave
   with occasional firing).
 - A pause button next to the close box, alongside the existing `P` key.
 - Gamepad API support (same shared helper as Floppy Rescue).
 
-`engine.ts` now emits typed `GameEvent`s (`obstacleDestroyed`, `playerHit`) so the renderer reacts
-to hits/kills directly instead of re-deriving them from before/after diffs.
+`engine.ts` emits typed `GameEvent`s (`obstacleDestroyed`, `playerHit`, and now `pickupCollected` --
+added in the third pass so a collected Floppy pickup can drive a sparkle + score pop the same way a
+destroyed obstacle does; both carry an optional `score` field so the renderer never has to re-derive
+the popup text) so the renderer reacts to hits/kills/pickups directly instead of re-deriving them
+from before/after diffs.
 
 ## Resolution and scale rework
 
-The first pass simulated and rendered both games at 800x440 canvas px. That's not "low-res" in any
-meaningful sense for a ~30px-wide sprite -- a 26px-wide helicopter or ship occupies about 3.25% of
-the canvas width, which reads as a speck once the canvas is displayed at frame size. The fix wasn't
-bigger sprites; it was a smaller world. Both engines' `WORLD_W`/`WORLD_H` are now 320x176 (the same
-1.818 aspect ratio as before, so `.easter-canvas`'s CSS didn't need to change shape, just its
-`aspect-ratio` value), and `.easter-canvas` still scales that canvas up to fill the frame via the
-`image-rendering: pixelated` it already had -- so the same hand-drawn sprites, kept at close to
-their original absolute pixel sizes (a 26px ship is now ~8% of a 320px-wide world instead of
-3.25% of an 800px-wide one), read as legible chunky pixel art instead of getting lost.
+**Pass one.** The original prototype simulated and rendered both games at 800x440 canvas px --
+not "low-res" in any meaningful sense for a ~30px-wide sprite (a 26px-wide helicopter or ship
+occupied about 3.25% of the canvas width, a speck once displayed at frame size). The fix wasn't
+bigger sprites; it was a smaller world: both engines' `WORLD_W`/`WORLD_H` went to 320x176 (same
+1.818 aspect ratio, so `.easter-canvas`'s CSS only needed a new `aspect-ratio` value, not a new
+shape), with sprite pixel sizes left close to their originals so they became a bigger fraction of
+the smaller world.
 
-Everything expressed in px/s or px/s² (gravity, thrust, drag caps, scroll speed, bullet speed,
-spawn-margin distances, pad widths, ...) was rescaled by the same ratio the world shrank by, so the
-*time* to cross the screen, land, etc. is unchanged -- only pixel-size constants like `PLAYER_W`/
-`PLAYER_H` and sprite dimensions were deliberately left close to their original values. Anything
-score-, percentage- or time-based (fuel rates, cooldowns in ms, fire intensity 0..1, points) needed
-no change at all. `docs/reports/games.md`'s tuning tables above list the current (rescaled) numbers;
-see each `engine.ts`'s header comment for the full rationale.
+**Pass two.** After playing both games, the owner found the helicopter still small at a normal
+laptop window and asked for it to read at ~48 screen px wide at 1280x860 and ~36px at 390x844. Same
+technique, applied again: `WORLD_W`/`WORLD_H` shrank a further 0.75x to 240x132 (still the same
+aspect ratio), sprite pixel sizes stayed put, and the Floppy walker sprite grew slightly (9x10 ->
+9x13, with a clearer label/shutter and a write-protect-hole detail) so it reads as "a little
+character," not just a green square, at the new scale. The helicopter now measures roughly 85px wide
+at 1280x860 and ~40px at 390x844 in practice -- comfortably past both targets.
+
+In both passes, everything expressed in px/s or px/s² (gravity, thrust, drag caps, scroll speed,
+bullet speed, spawn-margin distances, pad widths, ...) was rescaled by the same ratio the world
+shrank by, so the *time* to cross the screen, land, etc. is unchanged between passes -- only
+pixel-size constants like `PLAYER_W`/`PLAYER_H` and sprite dimensions were deliberately left alone
+(that's the whole point: shrink the world, not the sprites). Anything score-, percentage- or
+time-based (fuel rates, cooldowns in ms, fire intensity 0..1, points) needed no change in either
+pass. The tuning tables above list the current numbers; see each `engine.ts`'s header comment for
+the full rationale.
 
 ## Shared infrastructure (`src/easter/shared/`)
 
@@ -169,7 +200,7 @@ see each `engine.ts`'s header comment for the full rationale.
   highlight instead of a blink.
 - **Both themes**: everything reuses `theme.css` tokens via the existing `.easter-*` classes (see
   screenshots below in both GEOS light and C64 dark).
-- **390×844 and 1280×860**: `.easter-canvas` is `width:100%; height:auto; aspect-ratio:320/176`, so
+- **390×844 and 1280×860**: `.easter-canvas` is `width:100%; height:auto; aspect-ratio:240/132`, so
   the frame scales to fit a phone-width viewport without distorting the pixel art; verified in the
   mobile screenshots below. Below 480px wide, a media query drops `.easter-frame`'s width cap (it
   now uses the full viewport width) and sizes up the titlebar, in-frame HUD, help text, buttons and
@@ -185,14 +216,14 @@ see each `engine.ts`'s header comment for the full rationale.
 ## Chunk sizes
 
 ```
-dist/assets/pixelSprite-*.js     2.47 kB  gzip:  1.14 kB   (shared sprite renderer)
-dist/assets/EasterEggRoot-*.js   3.50 kB  gzip:  1.59 kB   (menu + router shell)
-dist/assets/DreadnoughtRun-*.js 13.52 kB  gzip:  5.17 kB
-dist/assets/FloppyRescue-*.js   20.65 kB  gzip:  7.90 kB
+dist/assets/pixelSprite-*.js     3.18 kB  gzip:  1.33 kB   (shared sprite renderer)
+dist/assets/EasterEggRoot-*.js   3.50 kB  gzip:  1.60 kB   (menu + router shell)
+dist/assets/DreadnoughtRun-*.js 14.98 kB  gzip:  5.57 kB
+dist/assets/FloppyRescue-*.js   23.31 kB  gzip:  8.72 kB
 ```
 
-Total lazy-loaded gzip: **15.80 kB**, well under the ~60 kB budget (up from 14.66 kB before the
-hull/background/HUD additions in this pass, still comfortably inside it). The main bundle
+Total lazy-loaded gzip: **~17.2 kB**, well under the ~60 kB budget (up from 15.80 kB before the
+fire/hull/juice additions in this pass, still comfortably inside it). The main bundle
 (`dist/assets/index-*.js`, 468.57 kB / 145.22 kB gzip) is unchanged in shape from before this work
 -- none of `src/easter/` reaches it.
 
@@ -241,12 +272,13 @@ normally hides touch controls on desktop would hide them here too.
 of each game's title-screen attract mode (Playwright `recordVideo`, system Chrome via
 `channel: "chrome"`, 1280×860, no browser download; `playwright` was installed with `--no-save` for
 the one-off recording script and removed afterward -- it's not a project dependency). Both were
-reviewed frame-by-frame before committing: `ffmpeg -i <file>.webm -vf "fps=1/3" frame%02d.png`,
-then each frame read and checked for legible, non-static action. Floppy Rescue's clip shows a full
-takeoff -> cross to the farm -> land/board -> fly home -> land/unload loop completing inside the
-recording (level 1 is deliberately short -- `levelWidth(1) = 480` -- specifically so this fits well
-under 20s); Dreadnought Run's shows continuous dodging/firing with racks, turrets and a drone
-visible throughout.
+re-recorded after the third pass and reviewed frame-by-frame before committing:
+`ffmpeg -i <file>.webm -vf "fps=1/3" frame%02d.png`, then each frame read and checked for legible,
+non-static action at the new scale. Floppy Rescue's clip shows a full takeoff -> cross to the farm ->
+land/board -> fly home -> land/unload loop completing inside the recording (level 1 is deliberately
+short -- `levelWidth(1) = 360` at the current resolution -- specifically so this fits well under
+20s); Dreadnought Run's shows continuous dodging/firing with racks, turrets, a drone, and the hull's
+bridge-tower/hangar-door features visible throughout.
 
 ## What broke and got fixed along the way
 
@@ -275,6 +307,13 @@ visible throughout.
   the sign, both text unreadable. Fixed by giving the title name/subtitle/help line their own solid
   background chips and anchoring help to the bottom of the overlay instead of wherever the centered
   stack ended.
+- **Design review, round 3: the ground glow rendered as an opaque block, not a fade.** The first
+  attempt at "a warm glow on the ground near the fire" used a `createRadialGradient`; in a real
+  screenshot it showed up as a hard-edged, fully saturated orange rectangle covering a large swath of
+  the ground band, not the soft fade the gradient stops (`rgba(255,138,0,alpha)` -> `rgba(255,138,0,0)`)
+  were supposed to produce. Rather than debug the gradient further, replaced it with a handful of
+  small, fixed-low-alpha bars directly under each lit fire cell, bounded to that cell's own width --
+  simpler, safer, and verified correct by re-screenshotting.
 
 ## What's left
 
@@ -295,8 +334,18 @@ visible throughout.
   bullet at the wrong moment) -- the demo just respawns/resets and keeps going, which still reads
   fine on camera (see the reviewed clips), but a slightly more conservative autopilot could avoid it
   entirely if that ever looks distracting in a longer recording.
-- **Mobile canvas height** is inherently width-bound by the games' fixed 320:176 (landscape)
+- **Mobile canvas height** is inherently width-bound by the games' fixed 240:132 (landscape)
   aspect ratio -- the chrome around it (HUD, touch controls, buttons) now fills the rest of the
   screen, but the canvas itself can't also grow to fill height without either cropping the visible
   world or stretching the pixel art. Worth a deliberate design call later if a taller in-game view on
   phones becomes a priority (e.g. a narrower logical resolution used only below some viewport width).
+- **Dreadnought Run's background tower and hangar-door layers can visually merge** when their
+  independent periods (70px and 36px) happen to line up at a similar x -- both are dark, so the
+  result reads as one larger superstructure section rather than two distinct features. Not a
+  rendering bug (each draws correctly on its own) and it still looks like plausible ship structure,
+  but a human pass could offset the two layers' phase so "big feature" placements never coincide.
+- **Multiple simultaneous `floppyLost` events** (several Floppies burning in the same couple of
+  frames, e.g. once a cell reaches full intensity while a cluster is standing in it) can compound
+  into a busier-than-intended particle burst, since each one independently spawns its own small
+  explosion. Reads as "the fire is chaotic," which fits the brief, but worth revisiting if a human
+  playtester finds it too busy.

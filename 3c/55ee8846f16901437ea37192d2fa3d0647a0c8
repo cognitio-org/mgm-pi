@@ -1,0 +1,31 @@
+outfitter/docs/reports/manual-tour.md
+  s_2209f22f830d7f::t_dfa1025ccac8d7 1-161
+outfitter/packages/web/package.json
+  s_2209f22f830d7f::t_ca3e9ca238619b 12-13
+  s_2209f22f830d7f::t_fc757d2596cb9d 30
+outfitter/packages/web/scripts/record-tour.mjs
+  s_2209f22f830d7f::t_ba11ed4071dbce 1-63,67,73,75-127
+  s_2209f22f830d7f::t_c9190b7a862c7d 68-72,74
+  s_2209f22f830d7f::t_65340b4590e409 128-144
+  s_2209f22f830d7f::t_e580d78bb5f597 64-66
+outfitter/docs/glossary.md
+  s_2209f22f830d7f::t_411ed0c26432af 1-67
+outfitter/package-lock.json
+  s_2209f22f830d7f::t_2501ee883cfafd 5095-5107,6617
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "3c55ee8846f16901437ea37192d2fa3d0647a0c8",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

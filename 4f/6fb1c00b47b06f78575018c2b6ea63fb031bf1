@@ -1,0 +1,25 @@
+outfitter/packages/web/src/components/Composer.tsx
+  s_2209f22f830d7f::t_306f247f5b8251 1,5,8-11,14-16,38,44-51,54-57,60-61,64-79,84,86,88-100,102,112,129,136
+outfitter/packages/web/src/lib/composer-keys.ts
+  s_2209f22f830d7f::t_9224e3ec46c735 1-69
+outfitter/packages/web/src/styles/layout.css
+  s_2209f22f830d7f::t_de24b1234c0749 424-547
+outfitter/packages/web/test/composer-keys.test.ts
+  s_2209f22f830d7f::t_05de395514f202 1-79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "4f6fb1c00b47b06f78575018c2b6ea63fb031bf1",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

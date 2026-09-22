@@ -354,12 +354,13 @@ export class AgentLink {
         { runId, agentProtocolVersion, apiProtocolVersion: API_PROTOCOL_VERSION },
         "agentlink: closing connection, agentd protocol version is older than the API's -- redeploy the agent image",
       );
+      const reason = `agentd protocol v${agentProtocolVersion} is older than the API's v${API_PROTOCOL_VERSION} -- redeploy the outfitter-agent image`;
+      // 4409 is terminal for agentd (it exits), so nothing will ever move this run on: fail it now
+      // with the reason, as for 4412, instead of leaving it "provisioning" until the stale-run
+      // reconciler notices -- which also pins the session (no wake, no Retry) in the meantime.
+      await this.store.runs.update(runId, { state: "failed", reason, updatedAt: new Date().toISOString() });
       buffer.stop();
-      return closeQuietly(
-        socket,
-        4409,
-        `agentd protocol v${agentProtocolVersion} is older than the API's v${API_PROTOCOL_VERSION} -- redeploy the outfitter-agent image`,
-      );
+      return closeQuietly(socket, 4409, reason);
     }
 
     // Bug 10 (docs/reports/cloud-fixes.md): a run created specifically to deliver mail

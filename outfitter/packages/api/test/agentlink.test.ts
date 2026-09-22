@@ -87,6 +87,10 @@ describe("agentd <-> api WebSocket", () => {
     const close = await agent.nextClose();
     assert.equal(close.code, 4409);
     assert.match(close.reason, /protocol v0 is older than the API's v1/);
+    // agentd exits on 4409, so the run must not be left "provisioning" pinning the session.
+    const run = await app.store.runs.findById(runId);
+    assert.equal(run?.state, "failed");
+    assert.match(run?.reason ?? "", /protocol v0 is older/);
 
     app.stopBackgroundTasks();
     await app.fastify.close();

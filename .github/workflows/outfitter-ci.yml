@@ -82,6 +82,7 @@ jobs:
             out=$(su agent -s /bin/sh -c "cd /tmp && HOME=$home /opt/mgm/node_modules/.bin/pi --help" 2>&1) || { echo "$out"; exit 1; }
             ! echo "$out" | grep -qi "failed to load extension"
             ! test -e /opt/mgm/.pi/extensions/mgm-voice
+            ! test -e /opt/mgm/.pi/extensions/mgm-admin
             ! test -e /opt/mgm/.pi/npm/node_modules/open-codebase-index
           '
       - name: agentd refuses to start without its run identity (and says so in structured JSON)

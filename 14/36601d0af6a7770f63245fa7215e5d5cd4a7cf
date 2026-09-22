@@ -1,0 +1,33 @@
+outfitter/docs/design/alt-working-wristwatch.svg
+  s_2209f22f830d7f::t_325387f9baa928 1-17
+outfitter/docs/design/alt-working-ring.svg
+  s_2209f22f830d7f::t_62791f9242506c 1-14
+outfitter/docs/design/alt-working-hourglass.svg
+  s_2209f22f830d7f::t_42a66b0d2140df 1-15
+outfitter/docs/design/alt-compass.svg
+  s_2209f22f830d7f::t_be5d0d42896fed 1-17
+outfitter/docs/design/alt-lantern.svg
+  s_2209f22f830d7f::t_e1922583430630 1-15
+outfitter/docs/reports/design-pass.md
+  s_2209f22f830d7f::t_70a4a61db55594 1-167
+outfitter/docs/design/alt-mule.svg
+  s_2209f22f830d7f::t_abe2746d1fa284 1-13
+outfitter/docs/design/README.md
+  s_2209f22f830d7f::t_81cbbd643a0d00 1-175
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "1436601d0af6a7770f63245fa7215e5d5cd4a7cf",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

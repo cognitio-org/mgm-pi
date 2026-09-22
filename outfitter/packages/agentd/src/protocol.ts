@@ -185,6 +185,16 @@ export interface RunSpecWorkspace {
   snapshotUrl?: string;
 }
 
+/** The session's person (git-github-spec.md, "Attribution"): the Outfitter bot authors and commits
+ * every cloud commit, and these fields fill its `Co-authored-by`/`On-behalf-of` trailers. Absent from
+ * older apis, or when the session has no owner on record: the bot alone, no trailers. */
+export interface RunSpecAuthor {
+  name: string;
+  /** The address to credit: the person's GitHub noreply address when the api knows it. */
+  email: string;
+  login?: string;
+}
+
 export interface RunSpecSecrets {
   githubToken?: string;
   litellmKey?: string;
@@ -206,6 +216,7 @@ export interface RunSpec {
   guru: RunSpecGuru;
   snapshot: RunSpecSnapshot;
   secrets: RunSpecSecrets;
+  author?: RunSpecAuthor;
   idleStopSeconds: number;
   checkpointEvery: string;
 }
@@ -218,6 +229,7 @@ export interface DownRunSpec {
   guru: RunSpecGuru;
   snapshot: RunSpecSnapshot;
   secrets: RunSpecSecrets;
+  author?: RunSpecAuthor;
   idleStopSeconds: number;
   checkpointEvery: string;
 }

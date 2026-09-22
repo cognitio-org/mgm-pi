@@ -1,0 +1,9 @@
+
+Name	Height[14][15]	Floors	Image	City	Country	Year	Comments	Ref
+m	ft
+1	Burj Khalifa	828	2,717	163 (+ 2 below ground)		Dubai	 United Arab Emirates	2010	Tallest building in the world since 2009	[16]
+2	Merdeka Maybank Tower	678.9	2,227	118 (+ 5 below ground)		Kuala Lumpur	 Malaysia	2024	Tallest building in Southeast Asia	[17]
+3	Shanghai Tower	632	2,073	128 (+ 5 below ground)		Shanghai	 China	2015	Tallest building in East Asia, tallest twisted building in the world; second tallest by floor count; contains the highest luxury hotel in the world. Tallest building in China.	[18]
+4	Mecca Royal Clock Tower	601	1,972	120 (+ 3 below ground)		Mecca	 Saudi Arabia	2012	Tallest building in Saudi Arabia, tallest clock tower and contains the highest museum in the world	[19]
+5	Ping An Finance Centre	599.1	1,966	115 (+ 5 below ground)		Shenzhen	 China	2017	Tallest all-office building in the world; tallest in Guangdong Province	[20]
+6	Lotte World Tower	554.5	1,819	123 (+ 6 below ground)		Seoul	 South Korea	2017	Tallest building in South Korea and the OECD	[21]

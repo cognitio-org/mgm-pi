@@ -1,0 +1,44 @@
+outfitter/packages/agentd/src/main.ts
+  s_2209f22f830d7f::t_4005d54b65bd6a 96
+  s_2209f22f830d7f::t_86cc717789b6d8 128-131
+  s_2209f22f830d7f::t_f0b3c26f607057 13-14
+outfitter/packages/agentd/src/session.ts
+  s_2209f22f830d7f::t_b9a006e3b1e520 33,39,45-63
+outfitter/packages/agentd/test/pi-version.test.ts
+  s_2209f22f830d7f::t_f493ee982ceb5a 1-34
+outfitter/packages/agentd/test/startup-phases.test.ts
+  s_2209f22f830d7f::t_65dc9384f5a37c 160-173
+  s_2209f22f830d7f::t_0a38d608c1b39d 10
+  s_2209f22f830d7f::t_8415212231d81d 1-9,11-159,174-179
+outfitter/packages/agentd/src/pi-version.ts
+  s_2209f22f830d7f::t_2116a5ead8508f 1-49
+outfitter/packages/agentd/src/run.ts
+  s_2209f22f830d7f::t_09cd5027556cdc 550
+  s_2209f22f830d7f::t_d993045dec91dd 417
+  s_2209f22f830d7f::t_eec90f0353fddd 474
+  s_2209f22f830d7f::t_e5dc6944c9e7aa 349-353
+  s_2209f22f830d7f::t_cb605d27ba0c51 378
+  s_2209f22f830d7f::t_5bb3c76b21d7fb 13
+  s_2209f22f830d7f::t_bb775d1df006dc 390
+  s_2209f22f830d7f::t_790be0b9b30a20 473
+  s_2209f22f830d7f::t_f915e98f3a4774 211-212
+  s_2209f22f830d7f::t_1791a2b31142b9 133-136
+outfitter/packages/agentd/src/startup-phases.ts
+  s_2209f22f830d7f::t_f56588a8ff0ac8 1-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "2a38c0a2031909a4a265606d0892251569f7737c",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

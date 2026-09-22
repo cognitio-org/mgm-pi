@@ -28,6 +28,7 @@ import {
   type GitInfo, type Manifest, type SessionRef,
 } from "./lib.ts";
 import { createStore } from "./store-factory.ts";
+import { inSandbox } from "../_shared/env.ts";
 
 // Persist into the agent config dir (PI_CODING_AGENT_DIR when launched via bin/kernal, else
 // ~/.pi/agent), same convention as ../connect/index.ts.
@@ -58,7 +59,10 @@ export default function (pi: ExtensionAPI) {
       // Keep the previous cache; list()/pull() surface the real error to the user.
     }
   };
-  void refreshCache();
+  // The cache only feeds /teleport's tab completions in the TUI. A cloud sandbox has no TUI, and the
+  // prefetch (git init of ~/.kernal-sessions, then git remote/pull) competed with pi's own start-up
+  // for the sandbox's single vCPU, so it is skipped there; the commands still list on demand.
+  if (!inSandbox()) void refreshCache();
 
   async function gitInfo(cwd: string): Promise<GitInfo | undefined> {
     const [remote, branch, head] = await Promise.all([

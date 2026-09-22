@@ -36,14 +36,23 @@ WORKDIR /opt/kernal
 COPY kernal/package.json kernal/package-lock.json ./
 RUN npm ci --omit=dev
 COPY kernal/bin/ ./bin/
-COPY kernal/.pi/mcp.json ./.pi/mcp.json
+# MCP servers that sign in by interactive OAuth (google_admin, augment_admin) are dropped from the
+# image's mcp.json: nobody can complete a browser sign-in in a sandbox and there is no keychain, so
+# they failed on every start after two network probes, and pi-mcp-adapter holds the first prompt
+# until its start-up connections settle (render-mcp.sh, docs/reports/startup-trim.md).
+COPY kernal/.pi/mcp.json /tmp/mcp.full.json
+COPY outfitter/image/render-mcp.sh /tmp/render-mcp.sh
+RUN mkdir -p ./.pi && bash /tmp/render-mcp.sh /tmp/mcp.full.json /opt/kernal/.pi/mcp.json
 COPY kernal/.pi/extensions/ ./.pi/extensions/
 # Laptop-only kernal extensions stay out of the cloud image: kernal-voice (microphone; it also creates
 # ~/.pi/agent at load and was the first thing to trip on the agent user's HOME) and kernal-update
 # (checks GitHub releases at session start; a sandbox is replaced by redeploying the image), and
 # kernal-admin (/admin serves a local web page for editing this machine's keys, model and index
-# settings; in a sandbox nobody can open it, and a session's config comes from its guru instead).
-RUN rm -rf ./.pi/extensions/kernal-voice ./.pi/extensions/kernal-update ./.pi/extensions/kernal-admin
+# settings; in a sandbox nobody can open it, and a session's config comes from its guru instead),
+# and kernal-codebase-index (drives open-codebase-index, which this image does not install -- see
+# the npm uninstall below -- so it could only ever return early; it still cost a module load).
+RUN rm -rf ./.pi/extensions/kernal-voice ./.pi/extensions/kernal-update ./.pi/extensions/kernal-admin \
+           ./.pi/extensions/kernal-codebase-index
 
 # TUI/laptop-only packages (voice input, terminal footer, editor LSP) make no sense for a cloud
 # guru with no terminal, no editor and no microphone attached; drop them from the image's
@@ -161,13 +170,23 @@ ENV PI_CODING_AGENT_DIR=/opt/kernal/.pi \
     OUTFITTER_SPEND_EXTENSION=/opt/outfitter/agentd/dist/pi-extension/outfitter-spend.js \
     OUTFITTER_SPEND_FILE=/run/outfitter/spend.jsonl \
     OUTFITTER_MAIL_EXTENSION=/opt/outfitter/agentd/dist/pi-extension/outfitter-mail.js \
-    KERNAL_NO_CODEBASE_INDEX=1
+    KERNAL_NO_CODEBASE_INDEX=1 \
+    KERNAL_SANDBOX=1 \
+    PI_TIMING=1
 
-# KERNAL_NO_CODEBASE_INDEX=1: kernal-codebase-index (kernal/.pi/extensions/kernal-codebase-index) loads
-# open-codebase-index from .pi/npm if present and returns silently if not -- this image already
-# drops open-codebase-index on purpose (section 7, docs/reports/image-trim.md), so the probe would
-# always be a no-op anyway. Setting the flag makes that explicit and skips the probe entirely
-# instead of relying on the loader's own fallback.
+# KERNAL_SANDBOX=1 is the one explicit "running in a cloud sandbox" signal (kernal's
+# _shared/env.ts inSandbox()), set here and nowhere else so a laptop never sees it. With it kernal's
+# extensions skip laptop-only start-up work: connect does not probe a local LM Studio or re-check the
+# per-run LiteLLM key and fills its footer after pi is ready instead of before; teleport does not
+# prefetch its git session store; see docs/reports/startup-trim.md.
+#
+# PI_TIMING=1 makes pi print its own start-up timings (each extension's import and factory time)
+# to stderr once per start; agentd logs pi's stderr at DEBUG, so every wake's breakdown lands in
+# Cloud Logging next to agentd's own `phase` lines. It costs one stderr write.
+#
+# KERNAL_NO_CODEBASE_INDEX=1: kept for older images' sake; the kernal-codebase-index extension itself
+# is no longer copied in (kernal-builder stage above), since open-codebase-index is dropped on
+# purpose (section 7, docs/reports/image-trim.md).
 #
 # kernal-report (kernal/.pi/extensions/kernal-report) is left in: at startup it only calls
 # pi.registerCommand/pi.on, no network or `gh` call happens until a human actually runs /report
@@ -197,6 +216,33 @@ ENV PI_CODING_AGENT_DIR=/opt/kernal/.pi \
 # /proc/<pid>/environ (kernel-restricted to uid 0) actually root-only; agentd chowns whatever git
 # writes into /workspace back to `agent` afterward (run.ts's chownWorkspace) so pi never has to run
 # as root to use its own working tree. WORKDIR is deliberately not switched to the `agent` user here.
+#
+# Not closed by that split (finding #1, docs/reports/security-review-pr41.md): the GCE metadata
+# server at 169.254.169.254 authenticates by network position, not by uid, so the `agent` user can
+# still fetch the sandbox service account's identity token. Since agentd no longer leaks RUN_TOKEN/
+# RUN_ID/OUTFITTER_API into pi's environment (pi.ts's baseEnvForPi), that token has no run to be
+# used against -- but the reachability itself is worth removing where the platform allows it. The
+# kernel can do it per-uid:
+#
+#   iptables -A OUTPUT -d 169.254.169.254 -m owner --uid-owner agent -j REJECT
+#
+# root (agentd, which needs the metadata server for getIdToken) keeps its access; everything the
+# model runs loses it. Not applied here because a Cloud Run Jobs task container has no NET_ADMIN to
+# install the rule with -- it belongs to a provider that can hold that capability (the GKE Agent
+# Sandbox provider spec, docs/specs) or to a platform-level egress policy.
+
+# Pre-compile every extension pi loads into jiti's file cache (/tmp/jiti), as `agent`, from the same
+# paths and with the same --extension flags agentd uses, so a woken sandbox reads compiled modules
+# instead of re-running Babel over ~100 of them on every start (prewarm-extensions.sh,
+# docs/reports/startup-trim.md: the largest single item in pi's start-up). Must stay after every
+# COPY/RUN that changes anything under /opt/kernal or the pi-extension files, and nothing may set
+# TMPDIR for pi, or the cache is never found. Adds ~3 MB for /tmp/jiti, plus ~19 MB for the V8
+# compile cache pi's CLI writes to /tmp/node-compile-cache (it calls module.enableCompileCache()).
+COPY outfitter/image/prewarm-extensions.sh /tmp/prewarm-extensions.sh
+RUN runuser -u agent -- bash /tmp/prewarm-extensions.sh "$PI_BIN" \
+      --extension "$OUTFITTER_SPEND_EXTENSION" --extension "$OUTFITTER_MAIL_EXTENSION" \
+  && rm /tmp/prewarm-extensions.sh
+
 WORKDIR /workspace
 
 ENTRYPOINT ["node", "/opt/outfitter/agentd/dist/src/main.js"]

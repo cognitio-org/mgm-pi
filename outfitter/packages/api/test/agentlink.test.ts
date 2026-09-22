@@ -4,8 +4,19 @@ import { OAuth2Client } from "google-auth-library";
 import { buildTestApp, seedGuru } from "./helpers.ts";
 import { makeQueue, openAgentSocket, runTokenFor, makeRunningSession, sendHello, type SocketHandle } from "./agent-socket.ts";
 import type { Session } from "../src/store/types.ts";
+import { authorFor } from "../src/agentlink.ts";
 import type { SecretsBroker } from "../src/secrets.ts";
 import { MemoryStore } from "../src/store/memory.ts";
+
+/** Polls until `predicate` holds -- used where the assertion depends on the server having processed
+ * a socket close (there is no event to await for that from the client side). */
+async function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) throw new Error("waitFor: timed out");
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
 
 
 describe("agentd <-> api WebSocket", () => {
@@ -277,6 +288,32 @@ describe("agentd <-> api WebSocket", () => {
     await agent.nextClose(); // leaving this socket open makes fastify.close() hang (see closeQuietly)
     app.stopBackgroundTasks();
     await app.fastify.close();
+  });
+
+  test("run.spec carries no author without a githubEmail on the owner's record, or without an owner", async () => {
+    const app = await buildTestApp();
+    await app.store.users.upsertSeen("ada@example.com");
+    const { session, runId, runToken } = await makeRunningSession(app, { ownerEmail: "ada@example.com" });
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    const spec = await agent.nextMessage();
+    // no githubEmail on record: no author, so the work email never lands in a commit trailer
+    assert.equal(spec.author, undefined);
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+
+    const app2 = await buildTestApp();
+    const second = await makeRunningSession(app2);
+    const agent2 = await openAgentSocket(app2, second.runId);
+    sendHello(agent2, second.runId, second.session.id, second.runToken);
+    const spec2 = await agent2.nextMessage();
+    assert.equal(spec2.author, undefined);
+    agent2.send({ t: "bye", reason: "stop" });
+    await agent2.nextClose();
+    app2.stopBackgroundTasks();
+    await app2.fastify.close();
   });
 
   test("a checkpoint frame with only workspaceUrl stores just that field", async () => {
@@ -706,6 +743,119 @@ describe("run.spec build validates secrets", () => {
 
     agent.send({ t: "bye", reason: "stop" });
     await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+});
+
+describe("authorFor", () => {
+  test("prefers the user record's name, githubLogin and githubEmail when an operator set them", () => {
+    assert.deepEqual(
+      authorFor("ada@example.com", {
+        email: "ada@example.com",
+        createdAt: "2026-01-01T00:00:00Z",
+        name: " Ada Lovelace ",
+        githubLogin: "ada",
+        githubEmail: "123+ada@users.noreply.github.com",
+      }),
+      { name: "Ada Lovelace", email: "123+ada@users.noreply.github.com", login: "ada" },
+    );
+  });
+
+  test("no author without a githubEmail (never the sign-in email), or without an owner", () => {
+    assert.equal(authorFor("bob@example.com", null), undefined);
+    assert.equal(authorFor("bob@example.com", { email: "bob@example.com", createdAt: "x", name: "Bob" }), undefined);
+    assert.equal(authorFor(undefined, null), undefined);
+    // a malformed stored record falls back instead of throwing
+    assert.equal(authorFor("eve@example.com", { email: "eve@example.com", createdAt: "x", githubEmail: 7 as any }), undefined);
+    assert.deepEqual(
+      authorFor("eve@example.com", { email: "eve@example.com", createdAt: "x", name: 42 as any, githubEmail: "1+eve@users.noreply.github.com" }),
+      { name: "eve", email: "1+eve@users.noreply.github.com" },
+    );
+  });
+});
+
+// Finding #1 (docs/reports/security-review-pr41.md): the run token proved the caller was this run's
+// sandbox, but nothing stopped a *second* caller holding it from being handed its own run.spec --
+// GitHub token, LiteLLM key -- and displacing agentd on the run's down-channel. A run now has one
+// live agent connection at a time.
+describe("one live agent connection per run", () => {
+  test("refuses a second connection while the first is live, and never sends it run.spec", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+
+    const agentd = await openAgentSocket(app, runId);
+    sendHello(agentd, runId, session.id, runToken);
+    assert.equal((await agentd.nextMessage()).t, "run.spec");
+
+    // The model's shell, with a leaked RUN_TOKEN and a valid agent identity token of its own.
+    const impostor = await openAgentSocket(app, runId);
+    sendHello(impostor, runId, session.id, runToken);
+    const close = await impostor.nextClose();
+    assert.equal(close.code, 4429);
+    assert.equal(impostor.messageCount(), 0, "the second connection must never be handed run.spec");
+
+    // ...and agentd's own connection is untouched: still registered, still acked.
+    assert.equal(app.agentLink.hasSocket(runId), true);
+    agentd.send({ t: "entry", seq: 1, entry: { type: "message", id: "e1", parentId: "s1", timestamp: "t", message: { role: "user", content: "hi" } } });
+    const ack = await agentd.nextMessage();
+    assert.equal(ack.t, "ack");
+    assert.equal(ack.seq, 1);
+
+    agentd.send({ t: "bye", reason: "stop" });
+    await agentd.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("agentd's own reconnect still gets run.spec once its previous socket has closed", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+
+    const first = await openAgentSocket(app, runId);
+    sendHello(first, runId, session.id, runToken);
+    assert.equal((await first.nextMessage()).t, "run.spec");
+
+    // What link.ts's 55-minute rotation (and any dropped connection) does: close, then reconnect.
+    first.close();
+    await first.nextClose();
+    await waitFor(() => app.agentLink.hasSocket(runId) === false);
+
+    const reconnected = await openAgentSocket(app, runId);
+    sendHello(reconnected, runId, session.id, runToken, 1);
+    const spec = await reconnected.nextMessage();
+    assert.equal(spec.t, "run.spec");
+    assert.equal(app.agentLink.hasSocket(runId), true);
+
+    reconnected.send({ t: "bye", reason: "stop" });
+    await reconnected.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("a socket silent past AGENT_SOCKET_GRACE_MS is treated as half-open and replaced", async () => {
+    // Grace 0: every incumbent counts as silent, which is how a real half-open socket (peer gone,
+    // no close frame, still OPEN here) looks after four missed heartbeats. Without this path a
+    // partitioned sandbox's reconnect would be refused until TCP noticed, wedging the run.
+    const app = await buildTestApp({ AGENT_SOCKET_GRACE_MS: "0" });
+    const { session, runId, runToken } = await makeRunningSession(app);
+
+    const stale = await openAgentSocket(app, runId);
+    sendHello(stale, runId, session.id, runToken);
+    assert.equal((await stale.nextMessage()).t, "run.spec");
+
+    const replacement = await openAgentSocket(app, runId);
+    sendHello(replacement, runId, session.id, runToken);
+    assert.equal((await replacement.nextMessage()).t, "run.spec");
+
+    // The displaced socket is closed with a *non-terminal* code: a live agentd that lost the race
+    // must reconnect, not exit (link.ts's TERMINAL_CLOSE_CODES).
+    const close = await stale.nextClose();
+    assert.equal(close.code, 1001);
+    assert.equal(app.agentLink.hasSocket(runId), true);
+
+    replacement.send({ t: "bye", reason: "stop" });
+    await replacement.nextClose();
     app.stopBackgroundTasks();
     await app.fastify.close();
   });

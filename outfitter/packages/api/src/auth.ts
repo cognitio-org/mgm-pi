@@ -31,7 +31,7 @@
 
 import { OAuth2Client } from "google-auth-library";
 import type { FastifyReply, FastifyRequest } from "fastify";
-import type { Config } from "./config.ts";
+import { tokenAudiences, type Config } from "./config.ts";
 import type { Store } from "./store/types.ts";
 import { TOKEN_PREFIX, hashToken, isTokenActive } from "./tokens.ts";
 
@@ -149,7 +149,7 @@ export async function verifyAgentToken(bearer: string | undefined, config: Confi
   }
 
   const client = new OAuth2Client();
-  const ticket = await client.verifyIdToken({ idToken: bearer, audience: config.origin });
+  const ticket = await client.verifyIdToken({ idToken: bearer, audience: tokenAudiences(config) });
   const payload = ticket.getPayload();
   if (!payload?.email) throw new Error("agent id token has no email claim");
   // Finding #7 (docs/reports/security-review-pr1.md): same defense-in-depth as identityFromRequest.
@@ -178,7 +178,7 @@ export async function verifyTasksToken(bearer: string | undefined, config: Confi
     return;
   }
   if (!config.tasksSaEmail) throw new Error("TASKS_SA_EMAIL is not configured");
-  const ticket = await new OAuth2Client().verifyIdToken({ idToken: bearer, audience: config.origin });
+  const ticket = await new OAuth2Client().verifyIdToken({ idToken: bearer, audience: tokenAudiences(config) });
   const payload = ticket.getPayload();
   if (payload?.email_verified === false) throw new Error("tasks token email is not verified");
   if (payload?.email !== config.tasksSaEmail) throw new Error("tasks token email does not match TASKS_SA_EMAIL");

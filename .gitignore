@@ -28,3 +28,6 @@ kernal/.pi/bug-reports/
 # codebase index state (rebuilt on demand)
 .codebase-index/index/
 **/.opencode/
+
+# google-github-actions/auth credential config (outfitter-deploy.yml)
+gha-creds-*.json

@@ -644,7 +644,10 @@ on a small budget.
 through a fake pi and context (`tests/harness.ts`): scripted dialog answers, stubbed summarizer,
 temporary agent dir for settings persistence. `tests/resolve-pi.mjs` lets plain Node resolve pi's
 nested `pi-ai` / `pi-tui` packages the way pi does for extensions. `KERNAL_NO_DISCOVERY=1` skips the
-network model discovery (used by the tests; also handy offline).
+network model discovery (used by the tests; also handy offline). `KERNAL_SANDBOX=1` is set only by
+Outfitter's cloud sandbox image: it skips the local-server probe and the key re-check at start-up,
+fills the budget footer after pi is ready rather than before, and skips teleport's store prefetch
+(see `outfitter/docs/reports/startup-trim.md`). Never set it on a laptop.
 
 ## Where the rest is
 

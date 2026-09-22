@@ -4,16 +4,14 @@
  * auth token, opens the link to the api, and lets RunController drive the state machine once
  * `run.spec` arrives. See outfitter/docs/protocol.md.
  */
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { getIdToken } from "./auth.js";
 import { createGitOps } from "./git.js";
 import { Link } from "./link.js";
 import { RunController } from "./run.js";
 import { resolveRunAsUser, chownRecursive } from "./run-as-user.js";
 import { createLogger } from "./logger.js";
-
-const execFileAsync = promisify(execFile);
+import { getPiVersion } from "./pi-version.js";
+import { preloadSessionManager } from "./session.js";
 
 const AGENTD_VERSION = "0.1.0";
 const DEFAULT_WORKSPACE = "/workspace";
@@ -35,15 +33,6 @@ export function buildWsUrl(apiOrigin: string, runId: string): string {
   return url.toString();
 }
 
-async function getPiVersion(piBin: string): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync(piBin, ["--version"], { timeout: 5000 });
-    return stdout.trim() || "unknown";
-  } catch {
-    return "unknown";
-  }
-}
-
 async function main(): Promise<void> {
   const apiOrigin = requireEnv("OUTFITTER_API");
   const runId = requireEnv("RUN_ID");
@@ -51,6 +40,16 @@ async function main(): Promise<void> {
   const devToken = process.env.OUTFITTER_DEV_TOKEN;
   const workspace = process.env.WORKSPACE ?? DEFAULT_WORKSPACE;
   const piBin = process.env.PI_BIN ?? DEFAULT_PI_BIN;
+
+  // Both are read exactly once, here, and held in these consts for the rest of the process: drop
+  // them from process.env immediately so nothing agentd spawns can inherit them by accident. pi's
+  // own environment is already built from an allowlist that excludes them (pi.ts's baseEnvForPi),
+  // but every *other* child agentd spawns -- `git`, `pi --version`, anything a future code path
+  // adds -- inherits process.env wholesale (git.ts's execFile), and RUN_TOKEN in the environment of
+  // a process the model can see is a full run takeover (see PI_ENV_NEVER's doc comment). Deleting
+  // it at the source means no future spawn site has to remember.
+  delete process.env.RUN_TOKEN;
+  delete process.env.OUTFITTER_DEV_TOKEN;
 
   // Startup phases are timed: the first cloud sessions showed ~3 minutes between Cloud Run's start
   // time and agentd's first log line, and nothing here should take more than seconds.
@@ -89,7 +88,14 @@ async function main(): Promise<void> {
 
   const controller = new RunController({
     link,
-    gitOps: createGitOps(),
+    // Local git (the checkout included) runs as the same user as pi, never as root inside the
+    // agent-owned workspace; root only clones, fetches and pushes (git.ts's module doc).
+    gitOps: createGitOps(
+      undefined,
+      runAsUser
+        ? { runAs: runAsUser, handOver: (dir: string) => chownRecursive(dir, runAsUser.uid, runAsUser.gid) }
+        : {},
+    ),
     workspace,
     piBin,
     agentdVersion: AGENTD_VERSION,
@@ -104,6 +110,7 @@ async function main(): Promise<void> {
     spendFile: process.env.OUTFITTER_SPEND_FILE,
     spendExtensionPath: process.env.OUTFITTER_SPEND_EXTENSION,
     mailExtensionPath: process.env.OUTFITTER_MAIL_EXTENSION,
+    startupPhases: true,
   });
 
   controller.onStateChange((state) => logger.info("state change", { state }));
@@ -135,6 +142,10 @@ async function main(): Promise<void> {
 
   phase("connecting to the link");
   link.connect();
+  // Loading pi's package for the session import takes seconds on a cold sandbox. Started once the
+  // connect is under way, it fills the network wait for the ID token, the handshake and run.spec
+  // instead of sitting between run.spec and spawning pi (docs/reports/startup-trim.md).
+  preloadSessionManager();
 }
 
 main().catch((err) => {

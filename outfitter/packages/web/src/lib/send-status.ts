@@ -30,6 +30,9 @@ export interface PendingSend {
   error?: string;
   /** entries.length when Send was pressed -- only entries after this can be the echo or reply. */
   baseline: number;
+  /** Earlier sends not yet stored when this one was pressed (a quick second message). Their user
+   * entries arrive first, after the same baseline, so the echo search skips that many. */
+  skipUsers?: number;
   /** The run state when Send was pressed. */
   runStateAtSend?: string;
   /** Some run state other than runStateAtSend has been seen since -- so a "failed"/"stopped" now
@@ -107,16 +110,33 @@ function isFinalAssistant(e: PiEntry): boolean {
 /** Index (into entries) of the stored entry that echoes the pending message, or -1: the first user
  * entry after the baseline with the same text, else the first user entry after it at all (pi may
  * normalise whitespace). */
-export function findEcho(entries: PiEntry[], pending: Pick<PendingSend, "text" | "baseline">): number {
+export function findEcho(entries: PiEntry[], pending: Pick<PendingSend, "text" | "baseline" | "skipUsers">): number {
   const want = pending.text.trim();
+  let skip = pending.skipUsers ?? 0;
   let firstUser = -1;
   for (let i = pending.baseline; i < entries.length; i++) {
     const t = userText(entries[i]);
     if (t === null) continue;
+    if (skip > 0) {
+      skip--;
+      continue;
+    }
     if (t.trim() === want) return i;
     if (firstUser < 0) firstUser = i;
   }
   return firstUser;
+}
+
+/** The baseline/skip for a new send, given the send still pending (if any): a quick second message
+ * inherits the earlier send's baseline and skips its not-yet-stored echo. */
+export function nextSendAnchor(
+  entries: PiEntry[],
+  previous: PendingSend | null,
+): Pick<PendingSend, "baseline" | "skipUsers"> {
+  if (previous && previous.error === undefined && findEcho(entries, previous) < 0) {
+    return { baseline: previous.baseline, skipUsers: (previous.skipUsers ?? 0) + 1 };
+  }
+  return { baseline: entries.length, skipUsers: 0 };
 }
 
 /** Whether the pending message is finished with: its reply arrived, or the run went back to idle

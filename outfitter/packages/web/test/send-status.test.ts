@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { PiEntry } from "../src/api/client.ts";
 import {
   deriveSessionActivity,
+  findEcho,
+  nextSendAnchor,
   notePendingRunState,
   WAKE_TIMEOUT_MS,
   WORK_TIMEOUT_MS,
@@ -186,5 +188,39 @@ describe("notePendingRunState", () => {
     const p = notePendingRunState(pending({ acceptedAt: T0, runStateAtSend: "idle" }), "running")!;
     expect(p.sawChange).toBe(true);
     expect(p.sawRunning).toBe(true);
+  });
+});
+
+describe("quick second send", () => {
+  const first = pending({ text: "first message", acceptedAt: T0 });
+
+  it("inherits the first send's baseline and skips its echo while that echo hasn't arrived", () => {
+    expect(nextSendAnchor(history, first)).toEqual({ baseline: history.length, skipUsers: 1 });
+  });
+
+  it("starts fresh once the first send's echo is stored", () => {
+    const stored = [...history, user("u1", "first message")];
+    expect(nextSendAnchor(stored, first)).toEqual({ baseline: stored.length, skipUsers: 0 });
+  });
+
+  it("starts fresh after a failed send (it was never stored)", () => {
+    expect(nextSendAnchor(history, { ...first, error: "boom" })).toEqual({ baseline: history.length, skipUsers: 0 });
+  });
+
+  it("does not take the first message's echo (or its reply) for the second's", () => {
+    const second = pending({ text: "second message", acceptedAt: T0, ...nextSendAnchor(history, first) });
+    const onlyFirstStored = [...history, user("u1", "first message"), assistant("a1", "reply to first")];
+    expect(findEcho(onlyFirstStored, second)).toBe(-1);
+    const bothStored = [...onlyFirstStored, user("u2", "second message")];
+    expect(findEcho(bothStored, second)).toBe(bothStored.length - 1);
+  });
+
+  it("matches the second echo even when the two texts are identical", () => {
+    const again = pending({ text: "same", acceptedAt: T0 });
+    const second = pending({ text: "same", acceptedAt: T0, ...nextSendAnchor(history, again) });
+    const oneStored = [...history, user("u1", "same")];
+    expect(findEcho(oneStored, second)).toBe(-1);
+    const twoStored = [...oneStored, user("u2", "same")];
+    expect(findEcho(twoStored, second)).toBe(twoStored.length - 1);
   });
 });

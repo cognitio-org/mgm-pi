@@ -18,7 +18,7 @@ import { SystemErrorDialog, type ApiErrorState } from "../components/SystemError
 import { DeviceNotPresent } from "../components/DeviceNotPresent.tsx";
 import { withFloppySound } from "../lib/floppy-sound.ts";
 import { transport, transportLabel } from "../lib/vocabulary.ts";
-import { deriveSessionActivity, notePendingRunState, type PendingSend } from "../lib/send-status.ts";
+import { deriveSessionActivity, nextSendAnchor, notePendingRunState, type PendingSend } from "../lib/send-status.ts";
 
 type PendingAction = "abort" | "stop" | "wake" | null;
 
@@ -144,7 +144,7 @@ export function SessionPage() {
       text,
       behavior,
       sentAt,
-      baseline: entries.length,
+      ...nextSendAnchor(entries, pendingSend),
       runStateAtSend: runState,
       sawChange: false,
       sawRunning: false,

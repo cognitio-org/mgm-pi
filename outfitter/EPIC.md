@@ -337,6 +337,10 @@ research on Sonnet; review on Opus).
   `Completed` with `succeededCount=1` rather than cancelled. Round two closes here.
 - **E2.7 Deploy** ⇄: `deploy/api.sh` builds with Cloud Build, deploys, enables IAP with the domain
   principal. Done when the URL prompts for Google login and rejects a non-domain account.
+  *Automated 2026-09-22:* pushing an `outfitter-v*` tag (`deploy/tag-release.sh`) deploys through
+  `.github/workflows/outfitter-deploy.yml` → `deploy/release.sh` (tests, then all three components
+  from one commit, Job first; one run at a time; main-only and no-rollback guards; smoke checks);
+  merging to main only runs CI. Access moved to `deploy/access.sh`. See `deploy/README.md` "Deploying".
 - **E2.14 Operator role and settings API** (done, `docs/reports/operators.md`): `OUTFITTER_OPERATORS`
   (config.ts) names the operator emails (Decisions table above); `Identity.operator` is computed
   once, in `identityFromRequest` (auth.ts), for the "web"/"all" role only -- link-role token

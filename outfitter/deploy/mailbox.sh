@@ -63,15 +63,17 @@ TICK_ARGS=(
   --schedule="*/5 * * * *"
   --uri="${LINK_ORIGIN}/api/hooks/tick"
   --http-method=POST
-  --headers="Content-Type=application/json"
   --message-body="{}"
   --oidc-service-account-email="${TASKS_SA_EMAIL}"
   --oidc-token-audience="${LINK_ORIGIN}"
 )
 if gcloud scheduler jobs describe outfitter-tick --project="${PROJECT}" --location="${REGION}" &>/dev/null; then
-  gcloud scheduler jobs update http outfitter-tick "${TICK_ARGS[@]}"
+  # create takes --headers, update only --update-headers (it rejects --headers outright).
+  gcloud scheduler jobs update http outfitter-tick "${TICK_ARGS[@]}" \
+    --update-headers="Content-Type=application/json"
 else
-  gcloud scheduler jobs create http outfitter-tick "${TICK_ARGS[@]}"
+  gcloud scheduler jobs create http outfitter-tick "${TICK_ARGS[@]}" \
+    --headers="Content-Type=application/json"
 fi
 
 echo

@@ -39,13 +39,15 @@
  * `clone` does only its network part as root (a `--no-checkout` clone and the session branch's
  * fetch, before the workspace is handed over); the checkout itself runs as the workspace's user.
  *
- * Known remaining exposure: root's push still *parses* the workspace's pack and loose objects via
- * alternates, so a git memory-safety bug in those parsers would be reachable. The follow-up is to
- * have the agent-side bundle the new history and root import it with `transfer.fsckObjects`, which
- * is the input path git hardens for untrusted data.
+ * The push repository never reads anything out of /workspace directly. It is seeded from the
+ * pristine clone while that is still root's own, and each push takes the session's new commits as a
+ * *bundle* the agent side writes, imported with `transfer.fsckObjects` -- the input path git hardens
+ * for untrusted data, the same one a fetch from an untrusted remote goes through.
  */
 import { execFile } from "node:child_process";
-import { lstat, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, open, rm } from "node:fs/promises";
+import { constants, createWriteStream } from "node:fs";
+import { pipeline } from "node:stream/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -293,6 +295,32 @@ const LOCAL_ENV_PASSTHROUGH = ["PATH", "LANG", "LC_ALL", "TZ", "TMPDIR", "GIT_CO
 
 const SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
+/** Where the agent side stages the commit to push, and the bundle it hands to root. Both live in
+ * the workspace's own .git (the agent owns it) and are removed again after each push. */
+const PUSH_REF = "refs/outfitter/push";
+const BUNDLE_NAME = "outfitter-push.bundle";
+
+/** Copies `from` to `to` without ever following a symlink at `from`, and refusing anything that
+ * isn't a regular file. `from` lives in the agent-owned workspace, so a path check followed by a
+ * separate open (git's) is a race the agent can win; this opens once and copies from that handle. */
+async function copyNoFollow(from: string, to: string): Promise<void> {
+  let src;
+  try {
+    src = await open(from, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (err: any) {
+    // ELOOP: the path was a symlink at open time.
+    if (err?.code === "ELOOP") throw new Error(`${from} is not a plain file; refusing to push from it`);
+    throw err;
+  }
+  const st = await src.stat();
+  if (!st.isFile()) {
+    await src.close();
+    throw new Error(`${from} is not a plain file; refusing to push from it`);
+  }
+  // Both streams close their handles when the pipeline ends.
+  await pipeline(src.createReadStream(), createWriteStream(to, { mode: 0o600 }));
+}
+
 /** The remote-tracking ref for a session branch. The clone is `--single-branch` on the base branch;
  * clone() adds the session branch to origin's fetch refspec and names it explicitly when fetching,
  * and push() moves it itself after a successful push (push only updates tracking refs for the
@@ -326,6 +354,21 @@ export function createGitOps(exec: ExecFn = defaultExec, options: GitOpsOptions 
     });
   }
 
+  /** What the push repository already has, as `--not` arguments for the agent's bundle: the base
+   * branch it was seeded with at clone time, plus whatever was last pushed. Keeps each bundle to the
+   * session's new commits instead of the whole history. */
+  async function excludesFor(pushDir: string, known: string | undefined): Promise<string[]> {
+    const tips = await exec("git", ["for-each-ref", "--format=%(objectname)", "refs/remotes/origin/"], pushDir, {
+      GIT_DIR: pushDir,
+    });
+    const shas = new Set<string>();
+    if (tips.code === 0) {
+      for (const sha of tips.stdout.split("\n").map((l) => l.trim())) if (SHA_RE.test(sha)) shas.add(sha);
+    }
+    if (known) shas.add(known);
+    return [...shas].flatMap((sha) => ["--not", sha]);
+  }
+
   /** agentd's private push repository: a root-owned (mode 0700, from mkdtemp) bare repo whose only
    * link to the workspace is the alternates file push() writes. Created once per GitOps. */
   function ensurePushRepo(): Promise<string> {
@@ -340,19 +383,10 @@ export function createGitOps(exec: ExecFn = defaultExec, options: GitOpsOptions 
     const dir = await mkdtemp(join(options.pushRoot ?? tmpdir(), "agentd-push-"));
     const init = await exec("git", ["init", "--bare", "--quiet", dir], dir, {});
     if (init.code !== 0) throw new Error(`git init --bare ${dir} failed: ${init.stderr.trim()}`);
-    // Borrow the workspace's objects but nothing else: by default git lists an alternate's refs by
-    // running `git for-each-ref` *inside* the (agent-owned) alternate repository, and would parse
-    // agent-written commit-graph / multi-pack-index / bitmap files as acceleration data. (Pack and
-    // loose objects are still parsed as root -- see the follow-up noted in the module doc.)
-    for (const [key, value] of [
-      ["core.alternateRefsCommand", "true"],
-      ["core.commitGraph", "false"],
-      ["core.multiPackIndex", "false"],
-      ["pack.useBitmaps", "false"],
-    ]) {
-      const cfg = await exec("git", ["config", key, value], dir, { GIT_DIR: dir });
-      if (cfg.code !== 0) throw new Error(`git config ${key} in ${dir} failed: ${cfg.stderr.trim()}`);
-    }
+    // Everything the agent's repository could feed this one arrives as a bundle, imported with
+    // transfer.fsckObjects (see push); nothing here ever points into /workspace.
+    const cfg = await exec("git", ["config", "transfer.fsckObjects", "true"], dir, { GIT_DIR: dir });
+    if (cfg.code !== 0) throw new Error(`git config transfer.fsckObjects in ${dir} failed: ${cfg.stderr.trim()}`);
     return dir;
   }
 
@@ -398,6 +432,18 @@ export function createGitOps(exec: ExecFn = defaultExec, options: GitOpsOptions 
           `git fetch origin ${refspec} failed: ${redactToken(fetched.stderr.trim(), spec.githubToken)}`,
         );
       }
+      // Seed the push repository from this clone while it is still agentd's own: these objects came
+      // straight from GitHub, so root can read them safely, and every later push then only has to
+      // carry the session's own new commits.
+      const pushDir = await ensurePushRepo();
+      const seeded = await exec(
+        "git",
+        ["fetch", "--quiet", dest, "+refs/remotes/origin/*:refs/remotes/origin/*"],
+        pushDir,
+        { GIT_DIR: pushDir },
+      );
+      if (seeded.code !== 0) throw new Error(`seeding the push repository failed: ${seeded.stderr.trim()}`);
+
       await options.handOver?.(dest);
       const checked = await run(dest, ["checkout", "--quiet", "-f", "-B", spec.branch, start]);
       if (checked.code !== 0) {
@@ -438,16 +484,54 @@ export function createGitOps(exec: ExecFn = defaultExec, options: GitOpsOptions 
       const known = remoteHead.get(branch);
       if (known === head) return { head, pushed: false };
 
-      // Root is about to read the workspace's object store: make sure it is one, not a symlink or
-      // gitfile pointing root's git at files the agent can't read itself.
-      const objects = resolve(cwd, ".git", "objects");
-      for (const path of [resolve(cwd, ".git"), objects]) {
-        const st = await lstat(path);
-        if (!st.isDirectory()) throw new Error(`${path} is not a plain directory; refusing to push from it`);
-      }
       const pushDir = await ensurePushRepo();
-      await mkdir(join(pushDir, "objects", "info"), { recursive: true });
-      await writeFile(join(pushDir, "objects", "info", "alternates"), `${objects}\n`);
+      // The agent side hands over exactly the new history, as a bundle: root never opens the
+      // workspace's own object store (its packs, loose objects, alternates chain or graph files),
+      // only this one file, and only through git's fsck-checked import path.
+      // Already here (the base commit the seed brought in, or something a previous push imported)?
+      // Then there is nothing for the agent side to hand over.
+      const present = await exec("git", ["cat-file", "-e", `${head}^{commit}`], pushDir, { GIT_DIR: pushDir });
+      if (present.code !== 0) {
+        const bundle = resolve(cwd, ".git", BUNDLE_NAME);
+        const staged = await run(cwd, ["update-ref", PUSH_REF, head]);
+        if (staged.code !== 0) throw new Error(`git update-ref ${PUSH_REF} failed: ${staged.stderr.trim()}`);
+        const handover = join(pushDir, BUNDLE_NAME);
+        try {
+          // `--not` what the push repo already has, so the bundle is just this session's new commits.
+          // If any of those objects is missing from the workspace (the agent can prune its own
+          // repo), fall back to a self-contained bundle rather than failing every later checkpoint.
+          let bundled = await run(cwd, ["bundle", "create", bundle, PUSH_REF, ...(await excludesFor(pushDir, known))]);
+          if (bundled.code !== 0) {
+            await rm(bundle, { force: true });
+            bundled = await run(cwd, ["bundle", "create", bundle, PUSH_REF]);
+          }
+          if (bundled.code !== 0) throw new Error(`git bundle create failed: ${bundled.stderr.trim()}`);
+          // Copy it into the push repo before root's git ever opens it, refusing to follow a symlink
+          // (O_NOFOLLOW): the file itself sits in the agent's .git, so the path it names could be
+          // swapped between any check and git's own open.
+          await copyNoFollow(bundle, handover);
+          const imported = await exec(
+            "git",
+            ["fetch", "--quiet", handover, `+${PUSH_REF}:${PUSH_REF}`],
+            pushDir,
+            { GIT_DIR: pushDir },
+            { timeoutMs: GIT_TIMEOUT_MS },
+          );
+          if (imported.code !== 0) throw new Error(`importing the agent's bundle failed: ${imported.stderr.trim()}`);
+        } finally {
+          await rm(bundle, { force: true });
+          await rm(handover, { force: true });
+          await run(cwd, ["update-ref", "-d", PUSH_REF]);
+        }
+        // What was imported must be the commit the checkpoint decided to push, whatever the bundle said.
+        const importedHead = await exec("git", ["rev-parse", "--verify", `${PUSH_REF}^{commit}`], pushDir, {
+          GIT_DIR: pushDir,
+        });
+        if (importedHead.code !== 0 || importedHead.stdout.trim() !== head) {
+          throw new Error(`the agent's bundle did not contain ${head}`);
+        }
+      }
+
       // The exact commit read above, not HEAD: a mid-turn checkpoint can race the agent's next
       // commit, and the tracking ref recorded below must be what the remote actually has.
       // --force-with-lease against what agentd last saw there (empty: the branch must not exist yet):

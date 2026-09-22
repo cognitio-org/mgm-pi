@@ -12,26 +12,36 @@ export interface Particle {
   lifeMs: number;
   maxLifeMs: number;
   color: string;
-  /** Rendered size in px (a few varied sizes reads as "debris chunks" rather than uniform dust). */
+  /** Rendered size in px for plain dot particles. */
   size: number;
+  /** "chunk" = a tumbling debris sprite, "star" = a 3-frame sparkle, omitted = a plain dot (see
+   * shared/fx.ts's drawParticles). */
+  kind?: "chunk" | "star";
+  /** Which debris sprite a chunk uses. */
+  variant?: number;
 }
 
-/** A burst of explosion debris: falls under gravity, varied size/speed so it reads as chunks
- * tumbling outward rather than a uniform ring of dots. */
+/** A burst of explosion debris: every other particle is a tumbling metal chunk sprite (tinted
+ * `color` on its lit edge), the rest hot 1-2px sparks, thrown mostly upward so gravity arcs them
+ * back down -- reads as wreckage flying apart, not a uniform ring of dots. */
 export function spawnExplosionParticles(x: number, y: number, count: number, color: string): Particle[] {
   const particles: Particle[] = [];
   for (let i = 0; i < count; i++) {
     const angle = (Math.PI * 2 * i) / count + Math.random() * 0.6;
-    const speed = 40 + Math.random() * 120;
+    const chunk = i % 2 === 0;
+    const speed = chunk ? 30 + Math.random() * 50 : 50 + Math.random() * 70;
+    const life = chunk ? 700 + Math.random() * 400 : 300 + Math.random() * 250;
     particles.push({
       x,
       y,
       vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed,
-      lifeMs: 260 + Math.random() * 220,
-      maxLifeMs: 480,
-      color,
-      size: 2 + Math.round(Math.random() * 2),
+      vy: Math.sin(angle) * speed - (chunk ? 45 : 20),
+      lifeMs: life,
+      maxLifeMs: life,
+      color: chunk ? color : i % 3 === 0 ? "#fff6cf" : "#f4cf3c",
+      size: 1 + (i % 3 === 1 ? 1 : 0),
+      kind: chunk ? "chunk" : undefined,
+      variant: i,
     });
   }
   return particles;
@@ -49,10 +59,12 @@ export function spawnSparkle(x: number, y: number, count: number, color: string)
       y,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
-      lifeMs: 220 + Math.random() * 160,
-      maxLifeMs: 380,
+      lifeMs: 380 + Math.random() * 200,
+      maxLifeMs: 580,
       color,
-      size: 1 + Math.round(Math.random()),
+      size: 1,
+      // a few proper 4-point twinkles among the plain glints
+      kind: i % 3 === 0 ? "star" : undefined,
     });
   }
   return particles;
@@ -110,7 +122,7 @@ export interface TextPopup {
 }
 
 export function spawnTextPopup(x: number, y: number, text: string, color = "#f4cf3c"): TextPopup {
-  return { x, y, text, color, lifeMs: 700, maxLifeMs: 700 };
+  return { x, y, text, color, lifeMs: 900, maxLifeMs: 900 };
 }
 
 export function stepTextPopups(popups: TextPopup[], dtMs: number): TextPopup[] {

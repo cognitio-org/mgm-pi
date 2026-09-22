@@ -54,18 +54,35 @@
   cursor: pointer;
 }
 
+/* A game window shrink-wraps its canvas, so the playfield *is* the window instead of a strip inside
+ * a fixed-width box. */
+.easter-frame-game {
+  width: fit-content;
+  max-width: 100%;
+}
+
 .easter-canvas {
   display: block;
-  width: 100%;
-  height: auto;
-  /* Low-res logical canvas (320x176, see each game's engine.ts) scaled up by the browser --
-   * `pixelated` keeps that scale-up crisp and chunky instead of blurring it, which is what makes
-   * the small hand-drawn sprites read as legible pixel art filling the frame. */
-  aspect-ratio: 320 / 176;
+  /* Low-res logical canvas (viewW x 132, see shared/screen.ts). Its CSS width/height are set inline
+   * to an exact integer multiple of the logical size, and `pixelated` keeps that scale-up crisp:
+   * every logical pixel is an N x N block of screen pixels, never an uneven blur. */
   image-rendering: pixelated;
   background: #241e5c;
   border-top: 2px solid var(--border);
   border-bottom: 2px solid var(--border);
+  box-sizing: content-box;
+}
+
+.easter-sr-only {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .easter-hud {
@@ -291,9 +308,16 @@
   gap: 0.7rem;
   padding: 1rem;
   text-align: center;
-  background: color-mix(in srgb, var(--bg) 55%, transparent);
   font-family: var(--font-display);
   color: var(--text);
+}
+
+/* The title logo is drawn in-canvas (bitmap font) over the running attract demo; the HTML overlay
+ * only carries the start button + help, anchored low so the demo stays fully visible. */
+.easter-title-overlay {
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.6rem;
 }
 
 .easter-title-name {
@@ -420,6 +444,16 @@
   }
   .easter-frame {
     width: 100%;
+  }
+  /* game windows go full-bleed on a phone: the canvas spans the whole screen width (the integer
+   * scale in shared/screen.ts assumes no side padding/borders at this width) */
+  .easter-overlay:has(.easter-frame-game) {
+    padding: 0;
+  }
+  .easter-frame-game {
+    border-left-width: 0;
+    border-right-width: 0;
+    box-shadow: none;
   }
   .easter-titlebar {
     font-size: 1rem;

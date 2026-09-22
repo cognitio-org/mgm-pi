@@ -52,11 +52,14 @@ const UNDOABLE_MAX_LINES = 150;
 function applyEdit(ta: HTMLTextAreaElement, e: TextEdit): void {
   ta.focus();
   ta.setSelectionRange(e.from, e.to);
+  // execCommand edits whatever has focus. If the textarea couldn't take it (disabled, hidden),
+  // don't let the text land in some other field.
+  const focused = document.activeElement === ta;
   let done = false;
   let lines = 0;
   for (let k = e.insert.indexOf("\n"); k !== -1 && lines <= UNDOABLE_MAX_LINES; k = e.insert.indexOf("\n", k + 1)) lines++;
   try {
-    done = lines <= UNDOABLE_MAX_LINES && document.execCommand("insertText", false, e.insert);
+    done = focused && lines <= UNDOABLE_MAX_LINES && document.execCommand("insertText", false, e.insert);
   } catch {
     done = false;
   }
@@ -87,6 +90,24 @@ function patchMirror(pre: HTMLPreElement, prev: string[], next: string[]): void 
   else pre.insertAdjacentHTML("beforeend", html);
 }
 
+/** Auto-grows the textarea up to its CSS max-height (then it scrolls), gives the mirror the same
+ * scrollbar gutter, and syncs the scroll position. `skipIfFull`: once the box is at its max and the
+ * draft isn't shrinking, skip the height:auto round trip (a forced reflow of the whole draft). */
+function fitBox(ta: HTMLTextAreaElement, pre: HTMLPreElement, skipIfFull: boolean): void {
+  const cs = getComputedStyle(ta);
+  const borders = parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
+  const max = parseFloat(cs.maxHeight) || Infinity;
+  if (!(skipIfFull && ta.offsetHeight >= max)) {
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(ta.scrollHeight + borders, max)}px`;
+  }
+  // A visible scrollbar narrows the textarea's text box; narrow the mirror's to match.
+  const scrollbar = ta.offsetWidth - ta.clientWidth - parseFloat(cs.borderLeftWidth) - parseFloat(cs.borderRightWidth);
+  pre.style.paddingRight = scrollbar > 0 ? `calc(${cs.paddingRight} + ${scrollbar}px)` : "";
+  pre.scrollTop = ta.scrollTop;
+  pre.scrollLeft = ta.scrollLeft;
+}
+
 export function MarkdownEditor({ value, onChange, onSend, enterMode, placeholder, disabled, toolsOpen, toolbarId }: Props) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const mirrorRef = useRef<HTMLPreElement>(null);
@@ -110,22 +131,9 @@ export function MarkdownEditor({ value, onChange, onSend, enterMode, placeholder
       const t0 = performance.now();
       patchMirror(pre, shown.current, (shown.current = highlightLines(ta.value)));
       slow.current = performance.now() - t0 > 12;
-      // Auto-grow up to the CSS max-height, then scroll. Once the box is at its max and the draft
-      // isn't shrinking, skip the height:auto round trip (a forced reflow of the whole draft).
-      const cs = getComputedStyle(ta);
-      const borders = parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
-      const max = parseFloat(cs.maxHeight) || Infinity;
-      const full = ta.offsetHeight >= max && ta.value.length >= shownLength.current;
+      const full = ta.value.length >= shownLength.current;
       shownLength.current = ta.value.length;
-      if (!full) {
-        ta.style.height = "auto";
-        ta.style.height = `${Math.min(ta.scrollHeight + borders, max)}px`;
-      }
-      // A visible scrollbar narrows the textarea's text box; narrow the mirror's to match.
-      const scrollbar = ta.offsetWidth - ta.clientWidth - parseFloat(cs.borderLeftWidth) - parseFloat(cs.borderRightWidth);
-      pre.style.paddingRight = scrollbar > 0 ? `calc(${cs.paddingRight} + ${scrollbar}px)` : "";
-      pre.scrollTop = ta.scrollTop;
-      pre.scrollLeft = ta.scrollLeft;
+      fitBox(ta, pre, full);
     };
     cancelAnimationFrame(raf.current);
     if (slow.current) raf.current = requestAnimationFrame(render);
@@ -133,6 +141,28 @@ export function MarkdownEditor({ value, onChange, onSend, enterMode, placeholder
   }, [value, preview]);
 
   useLayoutEffect(() => () => cancelAnimationFrame(raf.current), []);
+
+  // A width change (rotating a phone, resizing a window, the web font arriving) rewraps the text:
+  // re-fit the height and the scrollbar gutter, which otherwise only update on the next keystroke.
+  useLayoutEffect(() => {
+    const ta = taRef.current;
+    const pre = mirrorRef.current;
+    if (!ta || !pre || typeof ResizeObserver === "undefined") return;
+    let width = ta.offsetWidth;
+    let frame = 0;
+    const ro = new ResizeObserver(() => {
+      if (ta.offsetWidth === width || !ta.offsetWidth) return;
+      width = ta.offsetWidth;
+      // Next frame: resizing the observed box inside its own callback is a ResizeObserver loop.
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => fitBox(ta, pre, false));
+    });
+    ro.observe(ta);
+    return () => {
+      ro.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, []);
 
   function syncScroll() {
     const ta = taRef.current;
@@ -212,6 +242,8 @@ export function MarkdownEditor({ value, onChange, onSend, enterMode, placeholder
     const from = ta.selectionStart;
     const to = ta.selectionEnd;
     const insert = (text: string) => {
+      // The composer went away while the converter loaded (the page changed session).
+      if (!ta.isConnected) return;
       // If the draft changed while the converter loaded, paste at the caret as it is now.
       const [a, b] = ta.value === before ? [from, to] : [ta.selectionStart, ta.selectionEnd];
       applyEdit(ta, { from: a, to: b, insert: text, selStart: a + text.length, selEnd: a + text.length });

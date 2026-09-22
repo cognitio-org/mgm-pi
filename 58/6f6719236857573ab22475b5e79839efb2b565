@@ -1,0 +1,110 @@
+outfitter/docs/protocol.md
+  s_719d861e1a31b6::t_e118148985b750 15-16,78,95-108,123-127,141-142,147,189-191,195-196
+  s_719d861e1a31b6::t_9174e9e7bf8c33 109-122,128-140,143-146,173,192-194
+  s_719d861e1a31b6::t_464dd21c17d668 197
+outfitter/packages/agentd/test/guru.test.ts
+  s_719d861e1a31b6::t_1abf33a98ff72c 131-141
+outfitter/packages/api/src/store/types.ts
+  s_719d861e1a31b6::t_b6cb92db764349 288-291
+  s_719d861e1a31b6::t_3c2ec18614d2ce 105-107,109-133,136-143,158-162
+  s_719d861e1a31b6::t_097d33a4f8876e 156-157
+  s_719d861e1a31b6::t_5997fd529cc3b7 108,134-135,144-155
+  s_719d861e1a31b6::t_424a84b8a5ce04 338
+outfitter/image/Dockerfile
+  s_719d861e1a31b6::t_e3c1739e775ab9 163
+outfitter/packages/agentd/test/fake-pi.ts
+  s_719d861e1a31b6::t_e82629b43af08e 62-77,81
+outfitter/packages/api/src/auth.ts
+  s_719d861e1a31b6::t_4c45fff18f163d 170-184
+outfitter/packages/api/test/agent-socket.ts
+  s_719d861e1a31b6::t_29d444714ca22f 1-114
+outfitter/docs/reports/agent-messaging.md
+  s_719d861e1a31b6::t_60f813f344662a 1-136
+outfitter/packages/api/test/agentlink.test.ts
+  s_719d861e1a31b6::t_29d444714ca22f 5
+outfitter/packages/agentd/src/main.ts
+  s_719d861e1a31b6::t_c0bab806992666 106
+outfitter/packages/agentd/test/run.test.ts
+  s_719d861e1a31b6::t_c5919418e0ddc7 872-882
+  s_719d861e1a31b6::t_1abf33a98ff72c 805-871
+outfitter/packages/api/src/runs.ts
+  s_719d861e1a31b6::t_2cb2e807d71a0e 36,45-46
+outfitter/packages/agentd/src/protocol.ts
+  s_719d861e1a31b6::t_c0bab806992666 109-115,126-127,263-271,289-290
+outfitter/packages/api/test/e2e.test.ts
+  s_719d861e1a31b6::t_43be6430b17bb7 253-254
+  s_719d861e1a31b6::t_7505740e779539 14,27,78-118,120-135,137-155,160-162,206,210-252,255-261
+outfitter/deploy/service.sh
+  s_719d861e1a31b6::t_3479f36aa70b23 112-117
+outfitter/packages/api/src/server.ts
+  s_719d861e1a31b6::t_4c45fff18f163d 20,39,65-66,131-144
+outfitter/packages/web/src/api/client.ts
+  s_719d861e1a31b6::t_9174e9e7bf8c33 283-284,288-289
+outfitter/packages/api/test/mail.test.ts
+  s_719d861e1a31b6::t_22cee15d7e3fc2 1-6,16-32,45-66,70-86,90-117,119-122,124,126-129,134-153,157,159,188-228,230-237,239-243,277-300,306-337,339-341,373,384-420
+  s_719d861e1a31b6::t_aae1ad4fc0fb96 67-69
+  s_719d861e1a31b6::t_43be6430b17bb7 7-15,33-44,87-89,118,123,125,130-133,154-156,158,160-187,229,238,244-276,301-305,338,342-372,374-383
+outfitter/packages/agentd/pi-extension/outfitter-mail.ts
+  s_719d861e1a31b6::t_9eb68b01188c0b 1-41,44-80
+  s_719d861e1a31b6::t_a674c1f0713cb5 42-43
+outfitter/packages/api/src/store/memory.ts
+  s_719d861e1a31b6::t_5039668d2e5979 25-26,96,103-105,280-309,311,313-314,349-350,356-372,382
+  s_719d861e1a31b6::t_ebd6bd77d38c4f 97-102
+  s_719d861e1a31b6::t_5997fd529cc3b7 310,312,315-348
+  s_719d861e1a31b6::t_097d33a4f8876e 351-355
+outfitter/packages/api/src/agentlink.ts
+  s_719d861e1a31b6::t_274efe55812a3c 19,107-112,122-131,137,186-199,214-216,218-229,375,502-504,515-518,617
+  s_719d861e1a31b6::t_b6fd261ac8760c 116,200-213,217,618-620,631-635
+outfitter/deploy/mailbox.sh
+  s_719d861e1a31b6::t_fb7dcf394d9947 1-10,12-50,57-80
+  s_719d861e1a31b6::t_9174e9e7bf8c33 11,51-56
+outfitter/EPIC.md
+  s_719d861e1a31b6::t_9174e9e7bf8c33 470-476,485-494
+  s_719d861e1a31b6::t_c1054d7139078a 499,503-517
+  s_719d861e1a31b6::t_642f7b5b497882 465-469,477-484,495-498,500-502
+outfitter/packages/api/src/store/mongo.ts
+  s_719d861e1a31b6::t_097d33a4f8876e 438-441
+  s_719d861e1a31b6::t_65be81fb6a7ce5 27-28,134-150,349-394,396-398,400-403,442-456,470,483,505-506,509-519
+  s_719d861e1a31b6::t_5997fd529cc3b7 395,399,404-437,507
+outfitter/packages/agentd/test/outfitter-mail.test.ts
+  s_719d861e1a31b6::t_1abf33a98ff72c 1-39
+outfitter/packages/api/src/mail.ts
+  s_719d861e1a31b6::t_7109209b57d9c9 1-5,7-10,13,17-130,133,135-148,152-154,171,178-179,183,194,197-202,206-208,212-217,219-221,225-226,236-239,250-252,256,273
+  s_719d861e1a31b6::t_94831f2bf85e79 6,11-12,14-16,131-132,134,149-151,155-170,172-177,180-182,184-193,195-196,203-205,209-211,218,222-224,227-235,240-249,253-255,257-272
+outfitter/packages/api/src/routes/sessions.ts
+  s_719d861e1a31b6::t_d4ff6552f2be6c 210,238,292-300
+  s_719d861e1a31b6::t_b6fd261ac8760c 7,185,236,239-240,288-291,301
+  s_719d861e1a31b6::t_14b2fc42bcfa64 302-303
+outfitter/packages/api/src/routes/hooks.ts
+  s_719d861e1a31b6::t_b6fd261ac8760c 88-93
+  s_719d861e1a31b6::t_7c23d72461b750 25,27,81-87,94-118
+outfitter/packages/api/src/config.ts
+  s_719d861e1a31b6::t_4c45fff18f163d 95-100,175-176
+outfitter/packages/api/test/stop.test.ts
+  s_719d861e1a31b6::t_ae746933fc71c7 280,299
+outfitter/packages/api/test/routes.test.ts
+  s_719d861e1a31b6::t_e9c737b8dc1dd3 121-122,131,133,141,143-149
+outfitter/packages/agentd/src/guru.ts
+  s_719d861e1a31b6::t_c0bab806992666 31-33,78
+outfitter/packages/api/src/routes/context.ts
+  s_719d861e1a31b6::t_4c45fff18f163d 10,25
+outfitter/packages/agentd/src/run.ts
+  s_719d861e1a31b6::t_c0bab806992666 27,42,51-52,106-107,201-205,311-313,317-321,325-328,331-333,414,417-419,534-545
+  s_719d861e1a31b6::t_a674c1f0713cb5 136-137,322-324,329-330
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "586f6719236857573ab22475b5e79839efb2b565",
+  "prompts": {},
+  "sessions": {
+    "s_719d861e1a31b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "da8235fb-f66b-41bb-a1c8-3e1a4371dbaf",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -30,12 +30,25 @@
 // never takes it at all -- OUTFITTER_TOKEN is meant to behave identically everywhere).
 
 import { OAuth2Client } from "google-auth-library";
+import type { FastifyReply, FastifyRequest } from "fastify";
 import type { Config } from "./config.ts";
 import type { Store } from "./store/types.ts";
 import { TOKEN_PREFIX, hashToken } from "./tokens.ts";
 
 export interface Identity {
   email: string;
+  /** Operator role (EPIC.md Decisions table): allowed to manage secrets and deploy-level settings
+   * via /api/operator/*. Computed once, here, wherever an Identity is built for the "web"/"all"
+   * role (identityFromRequest) -- never on the "link" role: a link-role token identity is always
+   * `operator: false`, even when its owner is on OUTFITTER_OPERATORS, because that role only ever
+   * serves teleport (see identityFromLinkRequest below). */
+  operator: boolean;
+}
+
+/** True when `email` (trimmed, case-insensitive) is in `operators`. */
+export function isOperator(email: string, operators: readonly string[]): boolean {
+  const needle = email.trim().toLowerCase();
+  return operators.some((op) => op.trim().toLowerCase() === needle);
 }
 
 /** A store carrying just the tokens collection -- all identityFromApiToken needs. */
@@ -60,7 +73,9 @@ const IAP_ISSUERS = ["https://cloud.google.com/iap"];
  * tokens store. Never reveals whether a rejected token was unknown vs. revoked -- both throw the
  * same generic message, since telling them apart would confirm to a guesser that they'd found a
  * once-valid token. Updates lastUsedAt at most once per LAST_USED_THROTTLE_MS, best-effort (a
- * failed update never fails the auth check itself). */
+ * failed update never fails the auth check itself). Always `operator: false` here -- a token's
+ * owner only becomes an operator through identityFromRequest's OUTFITTER_OPERATORS check, never
+ * on the "link" role (see identityFromLinkRequest). */
 export async function identityFromApiToken(bearer: string, store: TokenStore): Promise<Identity> {
   const record = await store.tokens.findByHash(hashToken(bearer));
   if (!record || record.revokedAt) throw new Error("invalid or revoked API token");
@@ -74,11 +89,15 @@ export async function identityFromApiToken(bearer: string, store: TokenStore): P
       // best-effort; a failed lastUsedAt write must never block auth.
     }
   }
-  return { email: record.ownerEmail };
+  return { email: record.ownerEmail, operator: false };
 }
 
 /** The "link" role's only /api/* credential (see the module doc comment above): a personal API
- * token, unconditionally -- no IAP, no dev-mode shortcut. */
+ * token, unconditionally -- no IAP, no dev-mode shortcut. Deliberately never grants the operator
+ * role (EPIC.md Decisions table): the link role only ever serves teleport routes, which have no
+ * /api/operator/* route registered anyway (routes/index.ts), so there's nothing an operator flag
+ * would unlock here -- but a token owner who happens to be on OUTFITTER_OPERATORS must not read as
+ * an operator through this path regardless. */
 export async function identityFromLinkRequest(req: RequestLike, store: TokenStore): Promise<Identity> {
   const bearer = bearerFromHeader(req);
   if (!bearer) throw new Error("missing bearer token");
@@ -86,12 +105,19 @@ export async function identityFromLinkRequest(req: RequestLike, store: TokenStor
 }
 
 /** Verifies the caller's identity for the "web"/"all" roles: an `outf_` personal API token when
- * present, an IAP-signed header otherwise. Throws on failure. */
+ * present, an IAP-signed header otherwise. Throws on failure. The operator flag (EPIC.md Decisions
+ * table) is computed exactly here, for every path this function returns through -- dev mode,
+ * token and IAP alike -- so there is one place that decides who is an operator. Dev mode
+ * (`OUTFITTER_DEV=1`, identity `dev@localhost`) always counts as an operator, so local development
+ * doesn't need OUTFITTER_OPERATORS set at all. */
 export async function identityFromRequest(req: RequestLike, config: Config, store: TokenStore): Promise<Identity> {
-  if (config.devMode) return { email: "dev@localhost" };
+  if (config.devMode) return { email: "dev@localhost", operator: true };
 
   const bearer = bearerFromHeader(req);
-  if (bearer?.startsWith(TOKEN_PREFIX)) return identityFromApiToken(bearer, store);
+  if (bearer?.startsWith(TOKEN_PREFIX)) {
+    const identity = await identityFromApiToken(bearer, store);
+    return { email: identity.email, operator: isOperator(identity.email, config.operators) };
+  }
 
   const jwt = headerString(req, "x-goog-iap-jwt-assertion");
   if (!jwt) throw new Error("missing x-goog-iap-jwt-assertion header");
@@ -106,16 +132,18 @@ export async function identityFromRequest(req: RequestLike, config: Config, stor
   // already validates signature/issuer/audience/expiry; this only matters if a token ever carried an
   // explicit `email_verified: false` (missing/undefined is fine -- most tokens don't set the claim).
   if (payload.email_verified === false) throw new Error("IAP assertion email is not verified");
-  return { email: payload.email };
+  return { email: payload.email, operator: isOperator(payload.email, config.operators) };
 }
 
-/** Verifies agentd's bearer token and returns its identity. Throws on failure. */
+/** Verifies agentd's bearer token and returns its identity. Throws on failure. agentd identities
+ * are never operators -- the concept doesn't apply to the agent service account -- so this always
+ * returns `operator: false`. */
 export async function verifyAgentToken(bearer: string | undefined, config: Config): Promise<Identity> {
   if (!bearer) throw new Error("missing bearer token");
 
   if (config.devMode) {
     if (bearer !== config.devToken) throw new Error("dev token mismatch");
-    return { email: config.agentSaEmail || "agent@dev.local" };
+    return { email: config.agentSaEmail || "agent@dev.local", operator: false };
   }
 
   const client = new OAuth2Client();
@@ -125,7 +153,18 @@ export async function verifyAgentToken(bearer: string | undefined, config: Confi
   // Finding #7 (docs/reports/security-review-pr1.md): same defense-in-depth as identityFromRequest.
   if (payload.email_verified === false) throw new Error("agent id token email is not verified");
   if (payload.email !== config.agentSaEmail) throw new Error("agent id token email does not match AGENT_SA_EMAIL");
-  return { email: payload.email };
+  return { email: payload.email, operator: false };
+}
+
+/** Fastify preHandler guarding every /api/operator/* route (routes/operator.ts): 403 unless the
+ * auth preHandler (server.ts) already resolved an operator identity for this request. Runs after
+ * that preHandler in the route's own `preHandler` array, so `req.identity` is always set by the
+ * time this runs on a route that has it registered at all (see docs/protocol.md for the auth
+ * preHandler ordering). */
+export async function requireOperator(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  if (!req.identity?.operator) {
+    reply.code(403).send({ error: "operator role required" });
+  }
 }
 
 /** Parses `Authorization: Bearer <token>`, returning undefined if absent or malformed. */

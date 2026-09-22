@@ -1,0 +1,156 @@
+/* Dreadnought Run easter egg -- isolated styles, only ever loaded alongside src/easter/EasterEgg.tsx
+ * (dynamic import), so this file costs nothing until the game is triggered. Reuses the app's
+ * theme tokens (theme.css) so it re-themes for free between GEOS light and C64 dark, but the
+ * in-game canvas itself is always drawn in the C64 dark palette (a "screen", not themed chrome) --
+ * the frame/border/HUD around it follows the active theme like any other panel. */
+
+.easter-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: color-mix(in srgb, var(--bg) 60%, #000 40%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.easter-frame {
+  position: relative;
+  width: min(100%, 860px);
+  border: 3px solid var(--border-strong, var(--border));
+  background: var(--bg-elevated);
+  box-shadow: 6px 6px 0 var(--border-strong, var(--border));
+  display: flex;
+  flex-direction: column;
+}
+
+.easter-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0.6rem;
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  letter-spacing: 0.03em;
+  background: repeating-linear-gradient(90deg, var(--accent, var(--link)) 0 6px, transparent 6px 12px);
+  color: var(--bg-elevated);
+}
+
+.easter-titlebar span {
+  background: var(--accent, var(--link));
+  padding: 0.1rem 0.4rem;
+}
+
+.easter-close {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  border: 2px solid var(--border-strong, var(--border));
+  background: var(--bg-elevated);
+  color: var(--text);
+  width: 1.6rem;
+  height: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.easter-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 800 / 440;
+  image-rendering: pixelated;
+  background: #241e5c;
+  border-top: 2px solid var(--border);
+  border-bottom: 2px solid var(--border);
+}
+
+.easter-hud {
+  display: flex;
+  gap: 1.2rem;
+  padding: 0.4rem 0.7rem;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--text);
+  background: var(--bg-elevated);
+}
+
+.easter-help {
+  margin: 0;
+  padding: 0.3rem 0.7rem 0.6rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.easter-modal {
+  position: absolute;
+  inset: 0;
+  top: 2.4rem;
+  bottom: auto;
+  margin: auto;
+  height: fit-content;
+  width: fit-content;
+  min-width: 220px;
+  padding: 1rem 1.5rem;
+  border: 2px solid var(--border-strong, var(--border));
+  background: var(--bg-elevated);
+  text-align: center;
+  font-family: var(--font-display);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  align-items: center;
+  box-shadow: 4px 4px 0 var(--border-strong, var(--border));
+}
+
+.easter-calm-notice {
+  padding: 1rem 1.2rem;
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.easter-calm-actions {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.easter-touch-controls {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: center;
+  padding: 0 0.7rem 0.6rem;
+}
+
+.easter-touch-btn {
+  flex: 1;
+  max-width: 140px;
+  padding: 0.9rem 0.5rem;
+  font-family: var(--font-display);
+  font-size: 0.8rem;
+  border: 2px solid var(--border-strong, var(--border));
+  background: var(--bg-elevated);
+  color: var(--text);
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+}
+
+.easter-touch-fire {
+  background: var(--ok);
+  color: var(--bg);
+  border-color: var(--border-strong, var(--border));
+}
+
+/* Touch controls are meaningful on any touch device, but stay out of the way of a mouse+keyboard
+ * desktop session where they'd just be visual clutter over the keyboard hint. */
+@media (hover: hover) and (pointer: fine) {
+  .easter-touch-controls {
+    display: none;
+  }
+}

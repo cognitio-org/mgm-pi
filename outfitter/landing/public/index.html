@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kernal</title>
+<meta name="description" content="Kernal is a coding agent for your laptop. Outfitter runs a fleet of them in the cloud.">
+<meta name="theme-color" content="#302870" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f1ebdd" media="(prefers-color-scheme: light)">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/silkscreen-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/style.css">
+<script>
+  // Apply a saved theme before first paint. Storage can be missing or blocked; the OS preference
+  // is the fallback either way.
+  try {
+    var t = localStorage.getItem("kernalTheme");
+    if (t === "dark" || t === "light") document.documentElement.dataset.theme = t;
+  } catch (e) {}
+</script>
+</head>
+<body>
+<div class="border" id="border">
+  <main class="screen">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Kernal home">
+        <svg class="mark" viewBox="0 0 16 16" width="28" height="28" shape-rendering="crispEdges" aria-hidden="true">
+          <g fill="currentColor">
+            <rect x="5" y="0" width="2" height="5"/><rect x="9" y="0" width="2" height="5"/>
+            <rect x="4" y="3" width="8" height="2"/><rect x="3" y="4" width="10" height="11"/>
+          </g>
+          <rect x="7" y="6" width="2" height="2" class="cut"/>
+          <rect x="5" y="9" width="6" height="5" class="cut" opacity="0.55"/>
+          <rect class="cursor-px" x="12" y="12" width="2" height="3"/>
+        </svg>
+        <span class="wordmark">KERNAL</span>
+      </a>
+      <div class="toggles">
+        <button type="button" class="theme-toggle" id="sound-toggle" aria-pressed="false"
+          aria-label="Floppy drive sound" title="Floppy drive sound">
+          <span aria-hidden="true">&#9834;</span>
+        </button>
+        <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Switch colour theme">
+          <span aria-hidden="true">&#9680;</span>
+        </button>
+      </div>
+    </header>
+
+    <section class="boot" id="term" aria-label="Commodore 64 style command line">
+      <p class="boot-banner">**** KERNAL.ONE AGENT BASIC V2 ****</p>
+      <p class="boot-mem">64K RAM SYSTEM&nbsp; 38911 TOKENS FREE</p>
+      <div class="term-out" id="term-out" role="log" aria-live="polite"><p>READY.</p></div>
+      <form class="term-line" id="term-form" autocomplete="off">
+        <label class="sr-only" for="term-input">Command (try LOAD "OUTFITTER",8,1)</label>
+        <span class="term-prompt" id="term-prompt"></span><span class="term-echo" id="term-echo" aria-hidden="true"></span><span class="cursor" aria-hidden="true"></span>
+        <input id="term-input" class="term-input" type="text" spellcheck="false" autocapitalize="characters"
+          autocorrect="off" enterkeyhint="go" maxlength="80">
+      </form>
+      <button type="button" class="term-stop" id="term-stop" hidden>RUN/STOP</button>
+      <p class="term-hint">Type <kbd>LOAD "OUTFITTER",8,1</kbd> and press Return to open Outfitter
+        (Google sign-in, invitation only). Or try <kbd>LOAD "$",8</kbd>, <kbd>LIST</kbd>, <kbd>HELP</kbd>.
+        It's a working Commodore BASIC V2, so write a program; <kbd>Esc</kbd> is RUN/STOP.</p>
+    </section>
+
+    <section class="hero">
+      <h1>Coding agents,<br>outfitted for the expedition.</h1>
+      <p class="tagline">For those of us who need to watch our tokens, and still want to build cool stuff.</p>
+      <p class="lede">Kernal is a coding agent that runs in your terminal, or straight off a floppy. Outfitter is where a fleet of
+        them lives in the cloud: they work on their own, sleep when idle, and hand a session back
+        to your laptop whenever you want it.</p>
+    </section>
+
+    <section class="panels">
+      <article class="panel">
+        <h2 class="panel-title"><span class="panel-label">Kernal</span></h2>
+        <div class="panel-body">
+          <p>The agent on your machine. One command, three backends, switched with
+            <code>/connect</code>:</p>
+          <ul class="dir">
+            <li><span class="blocks">LOCAL</span> <span>Models on your own hardware through LM Studio (MLX).</span></li>
+            <li><span class="blocks">ROUTER</span> <span>The shared LiteLLM router, with spend tracked per key.</span></li>
+            <li><span class="blocks">OPENROUTER</span> <span>Anything else, on your own key.</span></li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="panel">
+        <h2 class="panel-title"><span class="panel-label">Outfitter</span></h2>
+        <div class="panel-body">
+          <p>The fleet in the cloud. Each agent, a <em>Guru</em>, gets its own sandbox and repo
+            checkout.</p>
+          <ul class="dir">
+            <li><span class="blocks">WAKE</span> <span>Sandboxes start on demand and stop when idle, so a quiet fleet costs close to nothing.</span></li>
+            <li><span class="blocks">STEER</span> <span>Watch and steer every session live from the browser.</span></li>
+            <li><span class="blocks">TELEPORT</span> <span>Pull a session down to your laptop and send it back up.</span></li>
+          </ul>
+        </div>
+      </article>
+    </section>
+
+    <footer class="foot">
+      <span>KERNAL.ONE</span>
+      <a href="https://app.kernal.one">APP.KERNAL.ONE</a>
+      <span class="ok">READY.</span>
+    </footer>
+  </main>
+</div>
+<script src="/floppy.js" defer></script>
+<script src="/basic.js" defer></script>
+<script src="/app.js" defer></script>
+</body>
+</html>

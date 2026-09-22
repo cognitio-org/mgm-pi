@@ -38,7 +38,30 @@ fi
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 AR_REPO="${AR_REPO:-outfitter}"
 CLOUDRUN_JOB="${CLOUDRUN_JOB:-outfitter-agent}"
-IAP_DOMAIN="${IAP_DOMAIN:-mgmonteleone.com}"
+# Who IAP lets through to the web role: comma-separated IAM members, each granted
+# roles/iap.httpsResourceAccessor. `domain:` works for any Google Workspace / Cloud Identity domain,
+# `user:` for a single Google account (including @gmail.com). Anyone outside the mgmonteleone.com
+# org (serviam-it.hr, gmail) also needs IAP on a custom OAuth client -- see IAP_OAUTH_CLIENT_ID
+# below and README.md "IAP access for users outside the org".
+if [[ -n "${IAP_DOMAIN:-}" ]]; then
+  echo "error: IAP_DOMAIN is gone; use IAP_MEMBERS (e.g. IAP_MEMBERS=domain:${IAP_DOMAIN})" >&2
+  exit 1
+fi
+# A domain: member admits every account that domain's Workspace admin creates.
+IAP_MEMBERS="${IAP_MEMBERS:-domain:mgmonteleone.com,domain:serviam-it.hr,user:matija.turk@gmail.com}"
+IFS=',' read -ra IAP_MEMBER_LIST <<<"${IAP_MEMBERS}"
+for member in "${IAP_MEMBER_LIST[@]}"; do
+  # Only named principals: a typo'd or pasted allUsers/allAuthenticatedUsers would open the app to
+  # every Google account, since the custom OAuth client accepts accounts outside the org.
+  if [[ ! "${member}" =~ ^(user|group|domain):[^[:space:]]+$ ]]; then
+    echo "error: IAP_MEMBERS entry '${member}' is not user:, group: or domain:" >&2
+    exit 1
+  fi
+done
+# Custom OAuth client for IAP (External audience), created by hand in the console. Its secret lives
+# in Secret Manager as outfitter-iap-oauth-client-secret. Unset = leave IAP's OAuth settings alone
+# (the Google-managed client, which admits org-internal users only).
+IAP_OAUTH_CLIENT_ID="${IAP_OAUTH_CLIENT_ID:-}"
 
 if [[ "${ROLE}" == "web" ]]; then
   SERVICE="outfitter-api"
@@ -191,17 +214,46 @@ if [[ "${ROLE}" == "web" ]]; then
     --role="roles/run.invoker" \
     --quiet
 
-  echo "== Granting domain:${IAP_DOMAIN} roles/iap.httpsResourceAccessor on ${SERVICE} =="
-  gcloud iap web add-iam-policy-binding \
-    --resource-type=cloud-run \
-    --service="${SERVICE}" \
-    --region="${REGION}" \
-    --project="${PROJECT}" \
-    --member="domain:${IAP_DOMAIN}" \
-    --role="roles/iap.httpsResourceAccessor"
+  if [[ -n "${IAP_OAUTH_CLIENT_ID}" ]]; then
+    echo "== Pointing IAP on ${SERVICE} at custom OAuth client ${IAP_OAUTH_CLIENT_ID} =="
+    IAP_OAUTH_CLIENT_SECRET="$(gcloud secrets versions access latest --secret=outfitter-iap-oauth-client-secret --project="${PROJECT}")"
+    if [[ -z "${IAP_OAUTH_CLIENT_SECRET}" ]]; then
+      echo "error: secret outfitter-iap-oauth-client-secret is empty; not touching IAP's OAuth settings" >&2
+      exit 1
+    fi
+    q="'"   # YAML single-quoted scalar: a literal ' is written as ''
+    IAP_OAUTH_CLIENT_SECRET_YAML="${IAP_OAUTH_CLIENT_SECRET//${q}/${q}${q}}"
+    IAP_SETTINGS_FILE="$(mktemp)"   # 0600; holds the client secret only until gcloud has read it
+    trap 'rm -f "${IAP_SETTINGS_FILE}"' EXIT INT TERM
+    cat >"${IAP_SETTINGS_FILE}" <<YAML
+accessSettings:
+  oauthSettings:
+    clientId: ${IAP_OAUTH_CLIENT_ID}
+    clientSecret: '${IAP_OAUTH_CLIENT_SECRET_YAML}'
+YAML
+    gcloud iap settings set "${IAP_SETTINGS_FILE}" \
+      --resource-type=cloud-run \
+      --service="${SERVICE}" \
+      --region="${REGION}" \
+      --project="${PROJECT}" >/dev/null
+  fi
+
+  for member in "${IAP_MEMBER_LIST[@]}"; do
+    echo "== Granting ${member} roles/iap.httpsResourceAccessor on ${SERVICE} =="
+    gcloud iap web add-iam-policy-binding \
+      --resource-type=cloud-run \
+      --service="${SERVICE}" \
+      --region="${REGION}" \
+      --project="${PROJECT}" \
+      --member="${member}" \
+      --role="roles/iap.httpsResourceAccessor"
+  done
 
   echo "== Done: ${ORIGIN} =="
-  echo "Visiting it should now prompt Google sign-in and reject any account outside ${IAP_DOMAIN}."
+  echo "Visiting it should now prompt Google sign-in and reject anyone not in: ${IAP_MEMBERS}."
+  if [[ -z "${IAP_OAUTH_CLIENT_ID}" ]]; then
+    echo "Note: IAP_OAUTH_CLIENT_ID unset, so members outside the mgmonteleone.com org can't sign in yet."
+  fi
 else
   echo "== Done: ${ORIGIN} =="
   echo "Point agent-job.sh's OUTFITTER_API at this URL, not outfitter-api's. NGROK_WEBHOOK_SECRET"

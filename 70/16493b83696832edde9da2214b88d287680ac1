@@ -1,0 +1,25 @@
+outfitter/packages/web/src/easter/rescue/FloppyRescue.tsx
+  s_2209f22f830d7f::t_9748c151a702a8 214
+  s_2209f22f830d7f::t_3065cd3878ed20 180-189
+outfitter/packages/web/src/easter/dreadnought/DreadnoughtRun.tsx
+  s_2209f22f830d7f::t_116728716699ba 160-168
+  s_2209f22f830d7f::t_9748c151a702a8 195
+outfitter/packages/web/src/easter/menu/GameMenu.tsx
+  s_2209f22f830d7f::t_e1af8aabe6ffbf 70-101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "7016493b83696832edde9da2214b88d287680ac1",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

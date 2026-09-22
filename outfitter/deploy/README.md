@@ -70,7 +70,7 @@ so the commands below still work unchanged.
    ```
 
    Two more E2.10 config vars are plain (non-secret) env vars, not Secret Manager entries —
-   `LITELLM_BASE_URL` (default `https://litellm.augment-code.support/v1`, same var name as mgm's
+   `LITELLM_BASE_URL` (default `https://litellm.augment-code.support/v1`, same var name as kernal's
    `.env.example`) and `PROVIDER_POLL_MS` (default 300000 = 5 minutes). `service.sh` sets both in
    `ENV_VARS` with those same defaults; override by exporting them before running it.
 

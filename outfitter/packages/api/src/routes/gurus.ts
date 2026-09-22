@@ -18,7 +18,7 @@ type GuruInput = Omit<Guru, "id" | "createdAt" | "updatedAt"> & { id?: string };
 // the key, not the base URL) and would have made the sandbox send the *real* per-run LiteLLM key as
 // a Bearer token to an attacker-controlled host -- credential exfiltration + SSRF. This denylist is
 // the actual fix; run.ts also now pins LITELLM_BASE_URL server-side as belt-and-suspenders. Note:
-// the pre-existing mgm connect extension (mgm/.pi/extensions/connect) has the same
+// the pre-existing kernal connect extension (kernal/.pi/extensions/connect) has the same
 // LITELLM_BASE_URL-to-Bearer-key exposure pattern, but it isn't guru-configurable, so it isn't a
 // vector through this route -- flagged for awareness, not fixed here.
 const DENYLISTED_GURU_ENV_KEYS = new Set([

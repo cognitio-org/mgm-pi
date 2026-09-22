@@ -1,6 +1,6 @@
 # Outfitter
 
-Self-hosted cloud agent fleet: `agentd` runs `pi` (the mgm coding agent) inside a sandbox and talks
+Self-hosted cloud agent fleet: `agentd` runs `pi` (the kernal coding agent) inside a sandbox and talks
 to an `outfitter-api` control plane over WebSocket. See `EPIC.md` for the full plan and
 `docs/protocol.md` for the wire contract this package implements.
 
@@ -13,7 +13,7 @@ outfitter/
     protocol.md               agentd <-> api wire contract (the source of truth)
     reports/agentd.md          build/test/e2e report for the agentd side (E1.1-E1.3)
   image/
-    Dockerfile                 the outfitter-agent sandbox image (mgm + agentd)
+    Dockerfile                 the outfitter-agent sandbox image (kernal + agentd)
     build.sh                   docker build wrapper (repo root as context)
   packages/
     agentd/                    TypeScript daemon: dials the api, clones/restores a workspace,
@@ -62,7 +62,7 @@ OUTFITTER_API=http://localhost:8787 \
 RUN_ID=dev-run-1 \
 OUTFITTER_DEV_TOKEN=dev-token \
 WORKSPACE=/tmp/outfitter-dev-workspace \
-PI_BIN=/path/to/mgm/node_modules/.bin/pi \
+PI_BIN=/path/to/kernal/node_modules/.bin/pi \
 PI_CODING_AGENT_DIR=/path/to/a/pi/config/dir \
 node packages/agentd/dist/src/main.js
 ```
@@ -71,8 +71,8 @@ node packages/agentd/dist/src/main.js
 its first `idle` status -- sends the JSON file's `prompt` field down as a `prompt` message, so a whole
 turn runs without touching a real outfitter-api. See `docs/reports/agentd.md` for a captured run.
 
-`PI_CODING_AGENT_DIR` needs a `settings.json` and an `extensions/connect` (mgm's LiteLLM/LM Studio
-provider extension) to resolve `litellm/...` model ids; point it at a real mgm `.pi/` directory, or a
+`PI_CODING_AGENT_DIR` needs a `settings.json` and an `extensions/connect` (kernal's LiteLLM/LM Studio
+provider extension) to resolve `litellm/...` model ids; point it at a real kernal `.pi/` directory, or a
 trimmed copy of one.
 
 Host testing has one gap: `run.spec.session.cwd` is always the literal string `"/workspace"` (that's

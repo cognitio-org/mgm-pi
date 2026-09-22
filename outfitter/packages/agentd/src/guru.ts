@@ -3,7 +3,7 @@
  * is fully unit-testable; see test/guru.test.ts.
  *
  * Deviation from protocol.md: `guru.packages` has no pi CLI equivalent (pi only reads `packages`
- * from .pi/settings.json at startup, see mgm/.pi/settings.json). v0 renders it into the
+ * from .pi/settings.json at startup, see kernal/.pi/settings.json). v0 renders it into the
  * `OUTFITTER_GURU_PACKAGES` env var (comma-joined) so a future settings-patch step can pick it up,
  * but does not otherwise act on it. The image's baked .pi/settings.json packages list is what
  * actually loads. Flagged in the final report for the api side to match.

@@ -3,12 +3,12 @@
 Local LLM setup for this MacBook Pro (M4 Pro, 48 GB unified memory), plus the wiring that
 exposes it to the cloud LiteLLM router.
 
-## The mgm agent
+## The kernal agent
 
-The coding agent built on top of this setup lives in [`mgm/`](mgm/README.md): pi with mgm's
+The coding agent built on top of this setup lives in [`kernal/`](kernal/README.md): pi with kernal's
 extensions (connections to LM Studio / the LiteLLM router / OpenRouter, budget tracking,
 compaction tuned for local models, voice input, per-user banner) and a release pipeline that ships
-self-contained bundles (`mgm/README.md` → *Releases*). Run it from any repo with `mgm`.
+self-contained bundles (`kernal/README.md` → *Releases*). Run it from any repo with `kernal`.
 
 ## Stack
 
@@ -44,7 +44,7 @@ node chat.mjs openrouter "..."
 
 Q4 ≈ 0.6 GB per billion params plus context. Keep ~10 GB for macOS; ~35 GB is the comfortable
 ceiling, and never keep two 30B-class models loaded at once (the machine swaps). MLX ignores
-`--context-length` (this model always serves 183K); mgm declares a 128K window to the agent
+`--context-length` (this model always serves 183K); kernal declares a 128K window to the agent
 (`LMSTUDIO_CONTEXT`) so budgets stay honest without touching the server.
 
 Candidates: `qwen/qwen3.6-27b` coding variant (dense, stronger at code, slower), `gemma-4` 27B/31B,

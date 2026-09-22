@@ -2,9 +2,9 @@
  * Snapshot restore: write the run.spec snapshot JSONL to a temp file, then import it into the agent
  * dir's session store for /workspace under the same session id, using
  * `SessionManager.forkFrom(sourcePath, targetCwd, sessionDir, { id })` from
- * `@earendil-works/pi-coding-agent` -- the same pattern mgm's own teleport extension uses
- * (mgm/.pi/extensions/teleport/cli.ts). That package is only present at runtime inside the sandbox
- * image (/opt/mgm/node_modules), not a dependency of agentd itself, so it is loaded with a dynamic
+ * `@earendil-works/pi-coding-agent` -- the same pattern kernal's own teleport extension uses
+ * (kernal/.pi/extensions/teleport/cli.ts). That package is only present at runtime inside the sandbox
+ * image (/opt/kernal/node_modules), not a dependency of agentd itself, so it is loaded with a dynamic
  * `import()` at call time; unit tests inject a stub via `ForkFromFn`.
  */
 import { writeFile, mkdtemp } from "node:fs/promises";

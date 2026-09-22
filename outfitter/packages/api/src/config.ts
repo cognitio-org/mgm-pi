@@ -38,7 +38,7 @@ export interface Config {
   gcpRegion: string;
   /** Seconds of no user activity before a run checkpoints and stops itself. */
   idleStopSeconds: number;
-  /** Domain the laptop's LM Studio is tunneled on (ngrok), e.g. mgm-lmstudio.ngrok.app. */
+  /** Domain the laptop's LM Studio is tunneled on (ngrok), e.g. kernal-lmstudio.ngrok.app. */
   tunnelDomainLmstudio: string;
   /** Bearer token tunnel.sh's traffic policy requires on requests to the laptop tunnel. */
   localTunnelToken: string;
@@ -69,7 +69,7 @@ export interface Config {
    * reports "unknown"/"not configured" rather than failing. */
   ngrokApiKey: string;
   /** LITELLM_BASE_URL: the LiteLLM proxy's OpenAI-compatible base URL (a trailing /v1 is stripped
-   * before appending management endpoints like /model/info). Same var name as mgm's .env.example. */
+   * before appending management endpoints like /model/info). Same var name as kernal's .env.example. */
   litellmBaseUrl: string;
   /** LITELLM_ADMIN_KEY: key used by the provider status service to call LiteLLM's management
    * endpoints (/health, /model/info, /key/info). Falls back to SecretsBroker.defaultLitellmKey()

@@ -11,7 +11,7 @@ const DEFAULT_TIMEOUT_MS = 3_000;
 const DEFAULT_CACHE_MS = 60_000;
 
 export interface LaptopProbeConfig {
-  /** Domain the laptop's LM Studio is tunneled on, e.g. mgm-lmstudio.ngrok.app (no scheme). */
+  /** Domain the laptop's LM Studio is tunneled on, e.g. kernal-lmstudio.ngrok.app (no scheme). */
   tunnelDomain: string;
   /** Bearer token tunnel.sh's traffic policy requires. */
   token: string;

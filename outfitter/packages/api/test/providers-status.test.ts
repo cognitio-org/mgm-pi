@@ -46,7 +46,7 @@ describe("parseNgrokEndpoints", () => {
   });
 });
 
-describe("parseModelInfo (copied from mgm connect/lib.ts)", () => {
+describe("parseModelInfo (copied from kernal connect/lib.ts)", () => {
   test("skips non-chat modes and dedupes by model_name, converting per-token costs to per-million", () => {
     const { ids, meta } = parseModelInfo({
       data: [

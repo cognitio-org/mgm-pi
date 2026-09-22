@@ -4,27 +4,27 @@
 .omc/
 node_modules/
 # pi agent runtime state (installed packages, sessions, caches, credentials)
-mgm/.pi/npm/node_modules/
-mgm/pi/
-mgm/dist/
-mgm/.pi/sessions/
+kernal/.pi/npm/node_modules/
+kernal/pi/
+kernal/dist/
+kernal/.pi/sessions/
 # personal subagents (pi-subagents' user scope is $PI_CODING_AGENT_DIR/agents, which in a checkout is
-# inside the repo); a release bundle links the same directory to ~/.mgm/state/agents
-mgm/.pi/agents/
-mgm/.pi/mcp-cache.json
-mgm/.pi/models-store.json
-mgm/.pi/auth.json
-mgm/.pi/trust.json
-mgm/.pi/pi-tui-crash.log
-mgm/.pi/bin/
+# inside the repo); a release bundle links the same directory to ~/.kernal/state/agents
+kernal/.pi/agents/
+kernal/.pi/mcp-cache.json
+kernal/.pi/models-store.json
+kernal/.pi/auth.json
+kernal/.pi/trust.json
+kernal/.pi/pi-tui-crash.log
+kernal/.pi/bin/
 # code index data (keep the config)
 .codebase-index/*
 !.codebase-index/config.json
-mgm/.pi/web-search-cache/
+kernal/.pi/web-search-cache/
 # stray pi agent dirs / credential stores
 pi-agent/
 **/.pi/auth.json
-mgm/.pi/bug-reports/
+kernal/.pi/bug-reports/
 # codebase index state (rebuilt on demand)
 .codebase-index/index/
 **/.opencode/

@@ -61,7 +61,7 @@ step, no test framework dependency. Every test builds an app with `MemoryStore` 
 | `GCP_PROJECT` | `""` | `providers/cloudrun.ts`, `secrets.ts` |
 | `GCP_REGION` | `us-central1` | `providers/cloudrun.ts` |
 | `IDLE_STOP_SECONDS` | `600` | `agentlink.ts` — sent to agentd as `run.spec.idleStopSeconds` |
-| `TUNNEL_DOMAIN_LMSTUDIO` | `""` | `laptop.ts` — laptop LM Studio's ngrok domain, e.g. `mgm-lmstudio.ngrok.app` (see `~/localllm/tunnel.sh`) |
+| `TUNNEL_DOMAIN_LMSTUDIO` | `""` | `laptop.ts` — laptop LM Studio's ngrok domain, e.g. `kernal-lmstudio.ngrok.app` (see `~/localllm/tunnel.sh`) |
 | `LOCAL_TUNNEL_TOKEN` | `""` | `laptop.ts` — bearer token the tunnel's traffic policy requires |
 | `LOCAL_MODELS` | `litellm/local-qwen-mlx` | `laptop.ts` — comma-separated model ids that require the laptop preflight before use |
 | `DEFAULT_CLOUD_MODEL` | `litellm/claude-auto-llm` | `laptop.ts` — fallback when a guru has no `fallbackModel` of its own |

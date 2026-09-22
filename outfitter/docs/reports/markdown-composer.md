@@ -195,13 +195,13 @@ paste. The CSS is global, as all of this app's CSS is.
 
 ## Tests and fixtures
 
-`npm test` in `packages/web` runs 370 tests. 56 of them are new:
+`npm test` in `packages/web` runs 389 tests. 59 of them are new:
 
 | File | Tests | Covers |
 | --- | --- | --- |
 | `test/md-highlight.test.ts` | 16 | Exact round-trip; each construct; snake_case, escapes and code spans; unclosed fences; per-line output; escaping; 20 KB speed; linear pathological lines. |
-| `test/md-edit.test.ts` | 14 | Toggles; spaces kept outside markers; code block, link and list; the shortcut map; list continuation (bullets, numbers, tasks, quotes, splitting, ending); inCodeBlock; indent/outdent. |
-| `test/html-to-markdown.test.ts` | 16 | The fixtures below; escaping; unsafe links; long fences; `<br>`; task lists; colspan; `choosePaste` rules (TSV, ragged TSV, tab-indented code, native Markdown, VS Code HTML, Shift paste, files). |
+| `test/md-edit.test.ts` | 15 | Toggles; spaces kept outside markers; code block, link and list; the shortcut map (Cmd only on Apple platforms, Ctrl elsewhere); list continuation (bullets, numbers, tasks, quotes, splitting, ending); inCodeBlock; indent/outdent. |
+| `test/html-to-markdown.test.ts` | 18 | The fixtures below; escaping (including literal `[`, `~`, `<` and link breakout); unsafe links; long fences; `<br>`; task lists; colspan; `choosePaste` rules (TSV, a web-page table's HTML winning over its TSV, ragged TSV, tab-indented code, native Markdown, VS Code HTML, Shift paste, files). |
 | `test/markdown-editor.test.tsx` | 10 | The Composer in jsdom: label and mirror; toolbar labels, `aria-expanded` and `aria-controls`; toolbar and shortcut edits; list continuation in both Enter modes, with Send still working; Tab only in code; Preview and `aria-pressed`; async HTML paste; TSV paste; Markdown and files left alone; Cmd+Shift+V. |
 
 Fixtures are in `packages/web/test/fixtures/paste/`:

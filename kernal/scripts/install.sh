@@ -168,7 +168,14 @@ fi
 BIN_DIR="$(kenv BIN || true)"; BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
 
 os=$(uname -s | tr '[:upper:]' '[:lower:]'); arch=$(uname -m | sed 's/x86_64/x64/; s/aarch64/arm64/')
-case "$os-$arch" in darwin-arm64|darwin-x64|linux-x64|linux-arm64) platform="$os-$arch" ;; *) echo "unsupported platform $os-$arch" >&2; exit 1 ;; esac
+case "$os-$arch" in
+  darwin-arm64|linux-x64|linux-arm64) platform="$os-$arch" ;;
+  # No darwin-x64 bundle is published: nobody here runs an Intel Mac, and a macOS runner bills at
+  # ten times a Linux one (release.yml). scripts/package.sh still builds the platform if that ever
+  # changes -- add the matrix entry back and this case with it.
+  darwin-x64) echo "kernal ships for Apple Silicon Macs only; this is an Intel Mac (darwin-x64)." >&2; exit 1 ;;
+  *) echo "unsupported platform $os-$arch" >&2; exit 1 ;;
+esac
 auth=(); [[ -n "${GH_TOKEN:-}" ]] && auth=(-H "Authorization: Bearer $GH_TOKEN")
 # note: bash 3.2 (macOS default) treats an empty array as unbound under set -u, hence ${auth[@]+"${auth[@]}"} below
 have_gh() { command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; }

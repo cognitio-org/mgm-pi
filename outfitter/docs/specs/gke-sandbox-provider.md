@@ -727,7 +727,7 @@ map NOT_FOUND to `exited`. The second is the better behaviour; do it in PR1 with
 
 ### 6.3 End-to-end wake benchmark (comparable to E2.9)
 
-`outfitter/scripts/wake-bench.mjs` (new; E2.9's original script was never committed to the repo).
+`outfitter/deploy/wake-bench.mjs` (added by the startup-trim PR; extend it with a provider label).
 - Input: `OUTFITTER_API` (the web origin) and `OUTFITTER_TOKEN` (a personal API token,
   `protocol.md:201-216`); `--session <id>` (an existing repo-less session) or `--create`; `--n 10`;
   `--label cloudrun|gke-warm|gke-cold`.

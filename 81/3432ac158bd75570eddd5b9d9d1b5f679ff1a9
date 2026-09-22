@@ -1,0 +1,61 @@
+mgm/.pi/extensions/connect/settings.ts
+  s_25c805ebe232f3::t_98cf32f7edc82e 1-138
+mgm/scripts/package.sh
+  s_25c805ebe232f3::t_656690dec31794 46-48,89-91
+.gitignore
+  s_25c805ebe232f3::t_e07b4655d154ad 11-13
+mgm/.pi/extensions/mgm-admin/app.ts
+  s_25c805ebe232f3::t_df4098be660517 399
+  s_25c805ebe232f3::t_4f19f1fbe17d34 260-261,1219,1251-1252
+  s_25c805ebe232f3::t_fb57a06ca2ded6 1114,1116-1167,1169-1171,1173-1198,1200-1218,1220-1250,1253-1326,1328-1350,1353-1355,1357-1374,1376-1621,1623-1626,1629-1686,1688-1729
+  s_25c805ebe232f3::t_70a3a27d4df03e 256,265-266,1199
+  s_25c805ebe232f3::t_9d57d24f6464d9 288,368
+  s_25c805ebe232f3::t_9b8d2822d66777 8-11,249-255,257-259,262-264,267-287,290-308,310-363
+  s_25c805ebe232f3::t_05dd597969495a 289,309,1351-1352,1622,1687
+  s_25c805ebe232f3::t_6f8381660129aa 1356,1375
+  s_25c805ebe232f3::t_a79eb832b66771 442-448,505,526-527,531
+  s_25c805ebe232f3::t_8eb77a52d6227f 1627-1628
+  s_25c805ebe232f3::t_f3a4f554ace692 364
+mgm/docs/architecture.md
+  s_25c805ebe232f3::t_61870df14353d2 132-162
+mgm/tests/settings.test.ts
+  s_25c805ebe232f3::t_05d9d1ace33327 1-124
+mgm/tests/install.test.ts
+  s_25c805ebe232f3::t_02758007c9d541 9-10,13-14,16-17,22,52-143
+mgm/.pi/extensions/mgm-admin/subagents.ts
+  s_25c805ebe232f3::t_3f6f7853d0fb2f 1-233,236-274,281-397
+  s_25c805ebe232f3::t_7b36426d97ffc6 234-235
+  s_25c805ebe232f3::t_938fcd7071b42e 275-280
+mgm/.pi/extensions/connect/settings-merge.ts
+  s_25c805ebe232f3::t_dc63f3e8ac0b86 1-36
+mgm/scripts/install.sh
+  s_25c805ebe232f3::t_6beae1a9e9d40d 6-7,17,27-32,49-54,78-88,103-118
+mgm/.pi/extensions/mgm-admin/index.ts
+  s_25c805ebe232f3::t_ad1e1f06ec605a 32-33,35-36
+  s_25c805ebe232f3::t_883b2aa05e3a79 73-83
+  s_25c805ebe232f3::t_32fde896188732 289,291-316,318-349
+  s_25c805ebe232f3::t_31932a72cb0b32 34,317
+  s_25c805ebe232f3::t_5795e9cce80932 18
+mgm/tests/admin.test.ts
+  s_25c805ebe232f3::t_dd978e43e337fa 4,6,433-618
+mgm/README.md
+  s_25c805ebe232f3::t_61870df14353d2 104-112,273-281,351-353
+mgm/.pi/extensions/connect/index.ts
+  s_25c805ebe232f3::t_330d5b20eee020 25,136-138,140
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "813432ac158bd75570eddd5b9d9d1b5f679ff1a9",
+  "prompts": {},
+  "sessions": {
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

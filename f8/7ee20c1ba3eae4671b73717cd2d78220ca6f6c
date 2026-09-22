@@ -1,0 +1,19 @@
+outfitter/deploy/mailbox.sh
+  s_b767cc53a6419e::t_657ca02f860729 71-73,75-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "f87ee20c1ba3eae4671b73717cd2d78220ca6f6c",
+  "prompts": {},
+  "sessions": {
+    "s_b767cc53a6419e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9a3de148-3f07-4a78-97f1-f0ed4c46bad8",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

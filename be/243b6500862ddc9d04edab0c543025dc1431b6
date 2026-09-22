@@ -1,0 +1,36 @@
+outfitter/packages/web/test/mermaid-theme.test.ts
+  s_2209f22f830d7f::t_eacb655e7e99f7 1-29
+outfitter/packages/web/test/useDebouncedValue.test.tsx
+  s_2209f22f830d7f::t_9c1d308ef8db03 55,65,70
+  s_2209f22f830d7f::t_8b5cda0e8aaab8 1-16,20-26,28-36,39,52-54,63,66-69,71-79,83-87,89,91-99
+  s_2209f22f830d7f::t_12e0ea7fa9fc85 17-19
+  s_2209f22f830d7f::t_f746f9d4e968f1 57,64
+  s_2209f22f830d7f::t_e50371c77bd329 41-44,47-49
+  s_2209f22f830d7f::t_9446bad6b2fb4d 82,88
+  s_2209f22f830d7f::t_ff574f9467b000 27,37-38,40,45-46,50-51,56,58-62,80-81,90
+outfitter/packages/web/test/mermaid-diagram.test.tsx
+  s_2209f22f830d7f::t_eae37ca59ae7e5 1-52,54-65,71-72,88-139
+  s_2209f22f830d7f::t_7332910cca2fa2 73-76
+  s_2209f22f830d7f::t_76d19d792a40bf 53,66-70
+  s_2209f22f830d7f::t_0e5bb5e2b87136 77-87
+outfitter/packages/web/test/mermaid-fence.test.ts
+  s_2209f22f830d7f::t_b50826388f2650 1-43
+outfitter/packages/web/test/mermaid-safety.test.ts
+  s_2209f22f830d7f::t_29f8802f38dad7 1-79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "be243b6500862ddc9d04edab0c543025dc1431b6",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

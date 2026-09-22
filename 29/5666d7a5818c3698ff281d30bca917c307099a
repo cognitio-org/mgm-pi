@@ -1,0 +1,19 @@
+outfitter/docs/reports/mermaid.md
+  s_d71e62cb6f304c::t_afa1f5038bdfb4 51-57,62-68,106,110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "295666d7a5818c3698ff281d30bca917c307099a",
+  "prompts": {},
+  "sessions": {
+    "s_d71e62cb6f304c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "598183a5-6865-48f8-80e7-37d24447f686",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

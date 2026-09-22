@@ -2,7 +2,7 @@
  *  and the once-per-process warning. */
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { env, envIsSet, _resetEnvFallbackWarnings } from "../.pi/extensions/_shared/env.ts";
+import { env, envIsSet, inSandbox, _resetEnvFallbackWarnings } from "../.pi/extensions/_shared/env.ts";
 
 let originalError: typeof console.error;
 let errors: string[];
@@ -72,5 +72,15 @@ describe("env()", () => {
     process.env.MGM_FOO = "";
     assert.equal(env("FOO"), "");
     assert.equal(envIsSet("FOO"), true);
+  });
+});
+
+describe("inSandbox()", () => {
+  afterEach(() => { delete process.env.KERNAL_SANDBOX; delete process.env.MGM_SANDBOX; });
+  test("is false unless KERNAL_SANDBOX is set to something truthy (the Outfitter image sets it to 1)", () => {
+    delete process.env.KERNAL_SANDBOX;
+    assert.equal(inSandbox(), false, "a laptop never sets it");
+    for (const off of ["", "0", "false", "FALSE"]) { process.env.KERNAL_SANDBOX = off; assert.equal(inSandbox(), false, JSON.stringify(off)); }
+    for (const on of ["1", "true", "yes"]) { process.env.KERNAL_SANDBOX = on; assert.equal(inSandbox(), true, on); }
   });
 });

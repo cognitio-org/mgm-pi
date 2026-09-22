@@ -1,0 +1,19 @@
+outfitter/packages/web/src/lib/md-edit.ts
+  s_2209f22f830d7f::t_27e92cde005aa5 220-222,224-226
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "5599a5a6e639c599f4a63e4497c57f128681b442",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

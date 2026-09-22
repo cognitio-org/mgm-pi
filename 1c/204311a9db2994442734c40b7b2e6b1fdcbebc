@@ -1,0 +1,19 @@
+outfitter/docs/reports/markdown-composer.md
+  s_2209f22f830d7f::t_0f183890aec2c1 1-255
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "1c204311a9db2994442734c40b7b2e6b1fdcbebc",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

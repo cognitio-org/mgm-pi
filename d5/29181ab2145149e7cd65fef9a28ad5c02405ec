@@ -1,0 +1,21 @@
+outfitter/packages/web/src/lib/html-to-markdown.ts
+  s_d71e62cb6f304c::t_2907d79cafaeb9 419-420,455-458,484-486
+outfitter/packages/web/test/html-to-markdown.test.ts
+  s_d71e62cb6f304c::t_5d11ef8cdcdb14 149-155
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "d529181ab2145149e7cd65fef9a28ad5c02405ec",
+  "prompts": {},
+  "sessions": {
+    "s_d71e62cb6f304c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "598183a5-6865-48f8-80e7-37d24447f686",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

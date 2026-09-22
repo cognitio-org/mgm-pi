@@ -1,0 +1,23 @@
+outfitter/packages/agentd/src/git.ts
+  s_948fdca0d0c6f1::t_127311494d8e8e 48,50,303-306,308,310,312-313,317,319,322-323,498,500-507,509-512,515,523
+  s_948fdca0d0c6f1::t_96d1b741a4b285 49,307,309,311,314-316,318,320-321
+outfitter/packages/agentd/test/git.test.ts
+  s_948fdca0d0c6f1::t_e03cd7a469f9fa 210-212,214-215,229,397-422
+  s_948fdca0d0c6f1::t_2b689cb52715bf 423
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "5f4989fd22a9fdbb9413b2d0bf6d21ff3d0c47c3",
+  "prompts": {},
+  "sessions": {
+    "s_948fdca0d0c6f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "913313fa-a17d-40df-81d2-892eab8604d3",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

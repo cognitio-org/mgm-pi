@@ -1,0 +1,25 @@
+.github/workflows/outfitter-ci.yml
+  s_a437fa5c3fe299::t_349672e46eea1c 8-15
+kernal/scripts/install.sh
+  s_a437fa5c3fe299::t_a75f5c787ed4c3 171-178
+kernal/README.md
+  s_a437fa5c3fe299::t_a75f5c787ed4c3 77-78
+.github/workflows/ci.yml
+  s_a437fa5c3fe299::t_349672e46eea1c 8-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "fe358276538e573302b3cb87e771ad87b5a60e6c",
+  "prompts": {},
+  "sessions": {
+    "s_a437fa5c3fe299": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "caa2a1a5-d70a-4605-a09d-4c18bbbf3b98",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

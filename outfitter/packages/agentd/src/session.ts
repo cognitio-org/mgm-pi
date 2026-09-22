@@ -30,21 +30,37 @@ export interface ImportSessionOptions {
   sessionDir?: string;
 }
 
-let cachedForkFrom: ForkFromFn | undefined;
+let forkFromPromise: Promise<ForkFromFn> | undefined;
 
 // Not a dependency of agentd itself (only present at runtime inside the sandbox image, see
 // image/Dockerfile); built from a non-literal specifier so tsc does not try to resolve it.
 const PI_CODING_AGENT_PACKAGE = "@earendil-works/pi-coding-agent";
 
-async function loadForkFrom(): Promise<ForkFromFn> {
-  if (cachedForkFrom) return cachedForkFrom;
+async function importForkFrom(): Promise<ForkFromFn> {
   const mod: any = await import(PI_CODING_AGENT_PACKAGE);
   const SessionManager = mod.SessionManager ?? mod.default?.SessionManager;
   if (!SessionManager?.forkFrom) {
     throw new Error("session: @earendil-works/pi-coding-agent does not export SessionManager.forkFrom");
   }
-  cachedForkFrom = SessionManager.forkFrom.bind(SessionManager);
-  return cachedForkFrom!;
+  return SessionManager.forkFrom.bind(SessionManager);
+}
+
+/** One shared import; a failed one is forgotten so the next call (importSession's) retries and
+ * surfaces the error where it matters. */
+function loadForkFrom(): Promise<ForkFromFn> {
+  forkFromPromise ??= importForkFrom().catch((err) => {
+    forkFromPromise = undefined;
+    throw err;
+  });
+  return forkFromPromise;
+}
+
+/** Starts loading pi's package in the background (docs/reports/startup-trim.md). The import pulls in
+ * all of pi-coding-agent -- seconds of module loading on a cold 1-vCPU sandbox -- and used to sit on
+ * the critical path between `run.spec` and spawning pi. main.ts calls this at boot so it overlaps the
+ * wait for the link and `run.spec` instead. Never throws; importSession reports any failure. */
+export function preloadSessionManager(): void {
+  loadForkFrom().catch(() => {});
 }
 
 /** Writes `jsonl` to a fresh temp file and returns its path. */

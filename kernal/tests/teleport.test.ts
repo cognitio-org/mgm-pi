@@ -2,7 +2,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { mkdtempSync, mkdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import {
   GitStore, parseOwnerRepo, rewriteHeaderCwd, pickModelForHost, manifestFromGit, describeRef,
@@ -319,6 +319,27 @@ describe("defaultStoreDir (pre-rename store folder)", () => {
     mkdirSync(join(home, ".mgm-sessions"));
     mkdirSync(join(home, ".kernal-sessions"));
     assert.equal(defaultStoreDir(home), join(home, ".kernal-sessions"));
+  });
+});
+
+describe("teleport extension start-up", () => {
+  const load = async (sandbox: boolean) => {
+    const store = join(mkdtempSync(join(tmpdir(), "tp-start-")), "store");
+    process.env.KERNAL_TELEPORT_STORE = store;
+    if (sandbox) process.env.KERNAL_SANDBOX = "1"; else delete process.env.KERNAL_SANDBOX;
+    try {
+      const { default: teleport } = await import("../.pi/extensions/teleport/index.ts");
+      const { makePi } = await import("./harness.ts");
+      teleport(makePi() as any);
+      await new Promise((r) => setTimeout(r, 1500));   // let a background git init finish if one started
+      return existsSync(join(store, ".git"));
+    } finally { delete process.env.KERNAL_TELEPORT_STORE; delete process.env.KERNAL_SANDBOX; }
+  };
+  test("on a laptop the session list is prefetched at load (the store repo gets initialised)", async () => {
+    assert.equal(await load(false), true);
+  });
+  test("in a cloud sandbox (KERNAL_SANDBOX=1) nothing touches git at load", async () => {
+    assert.equal(await load(true), false);
   });
 });
 

@@ -9,7 +9,7 @@ import { randomUUID, createHash, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { WebSocket } from "@fastify/websocket";
 import type { Config } from "./config.ts";
-import type { Store, Run, Session, Guru, PiEntry, DownMessage } from "./store/types.ts";
+import type { Store, Run, Session, Guru, PiEntry, DownMessage, User } from "./store/types.ts";
 import type { SecretsBroker } from "./secrets.ts";
 import type { SseHub } from "./sse.ts";
 import { verifyAgentToken, bearerFromHeader } from "./auth.ts";
@@ -78,8 +78,29 @@ export interface RunSpecMessage {
   // security-review-pr15.md finding #1: agentd pins it into the pi child's env after guru.env so a
   // guru-supplied LITELLM_BASE_URL can't redirect where the real litellmKey gets sent.
   secrets: { githubToken: string; litellmKey: string; litellmBaseUrl: string };
+  /** The session's person, credited on cloud commits (the Outfitter bot authors and commits them;
+   * agentd adds `Co-authored-by`/`On-behalf-of` trailers from this). Omitted when the session has
+   * no owner on record; agentd then commits as the bot alone. See docs/protocol.md. */
+  author?: { name: string; email: string; login?: string };
   idleStopSeconds: number;
   checkpointEvery: string;
+}
+
+/** run.spec.author from the session owner's user record, or undefined -- the bot alone, no
+ * trailers. Only sent once the record has a `githubEmail`: the trailers land in commit messages on
+ * GitHub (public repos included) for good, and the fallback would otherwise be the person's
+ * sign-in (work) email. `name` falls back to the email's local part. */
+export function authorFor(ownerEmail: string | undefined, user: User | null): RunSpecMessage["author"] {
+  // Mongo documents aren't schema-checked: treat anything but a non-blank string as unset.
+  const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+  const email = str(user?.githubEmail);
+  if (!ownerEmail || !email) return undefined;
+  const login = str(user?.githubLogin);
+  return {
+    name: str(user?.name) ?? (str(user?.email) ?? ownerEmail).split("@")[0],
+    email,
+    ...(login ? { login } : {}),
+  };
 }
 
 // protocol.md leaves the clone URL format implicit; session.repo is stored either as a full URL
@@ -490,6 +511,8 @@ export class AgentLink {
       // above instead.
       throw new MissingGithubTokenError(`missing github token secret for session ${session.id}`);
     }
+    const owner = session.ownerEmail ? await this.store.users.findByEmail(session.ownerEmail) : null;
+    const author = authorFor(session.ownerEmail, owner);
     return {
       t: "run.spec",
       session: { id: session.id, name: session.name ?? session.id, cwd: "/workspace" },
@@ -517,6 +540,7 @@ export class AgentLink {
       },
       snapshot: { url: session.checkpoint?.snapshotUrl },
       secrets: { ...secrets, litellmBaseUrl: this.config.litellmBaseUrl },
+      ...(author ? { author } : {}),
       idleStopSeconds: this.config.idleStopSeconds,
       // Deviation from protocol.md (checkpointEvery isn't specced further, and agentd's
       // protocol.ts types it as a string rather than a number): checkpoint after every turn.

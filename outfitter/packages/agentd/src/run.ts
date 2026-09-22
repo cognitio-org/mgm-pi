@@ -7,9 +7,10 @@
 import { mkdir, readFile, open as openFile, chown } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { renderGuru } from "./guru.js";
-import type { GitOps } from "./git.js";
+import { attributionTrailers, authHeaderSecret, botIdentityEnv, sanitizeAuthor, type GitOps } from "./git.js";
 import { spawnPi, SessionTailer, SpendTailer, validateSpendLine, type PiProcess, type SpendLogLine } from "./pi.js";
 import { importSession, writeSnapshotFile, emptySessionJsonl, lastKnownModelState } from "./session.js";
+import { StartupPhases } from "./startup-phases.js";
 import type { Logger } from "./logger.js";
 import type { RunAsUser } from "./run-as-user.js";
 import { validateSnapshotUrl, snapshotHostAllowlist, isDevMode } from "./snapshot-url.js";
@@ -123,12 +124,17 @@ export interface RunControllerDeps {
    * -- and therefore /proc/<pid>/environ visibility -- with agentd's own git child. `undefined` when
    * agentd isn't root (nothing to drop; see run-as-user.ts). */
   runAsUser?: RunAsUser;
-  /** Recursively chowns a path to `runAsUser`'s uid/gid. Called after `git clone` and after every
-   * push (see checkpointNow) because those run as agentd's own (root) user for the auth env vars to
-   * stay root-only-readable, which would otherwise leave every file git writes/touches in
-   * /workspace owned by root instead of the `agent` user pi actually runs as. No-op when
-   * `runAsUser` is undefined. */
+  /** Recursively chowns a path to `runAsUser`'s uid/gid. Called after `git clone` because the clone
+   * runs as agentd's own (root) user for the auth env vars to stay root-only-readable, which would
+   * otherwise leave /workspace owned by root instead of the `agent` user pi actually runs as. Later
+   * git work (checkpoint commits, diff) runs as that user itself, and push runs as root from a
+   * private repository outside /workspace (git.ts's module doc), so nothing needs chowning after a
+   * checkpoint. No-op when `runAsUser` is undefined. */
   chownWorkspace?: (path: string) => Promise<void>;
+  /** Start-up timing (startup-phases.ts): when set, `phase` lines are logged through `logger` from
+   * `run.spec` to the first answer, and pi is sent one readiness probe right after it is spawned.
+   * main.ts turns it on; tests leave it off so pi sees only the commands they send. */
+  startupPhases?: boolean;
 }
 
 export type StateChangeHandler = (state: RunState, detail?: string) => void;
@@ -203,6 +209,8 @@ export class RunController {
   /** Mail pi has already accepted this run. A redelivery (the ack was lost, the lease expired) is
    * re-acked without prompting pi a second time. */
   private readonly mailAccepted = new Set<string>();
+  /** Start-up phase timing; only set when deps.startupPhases is on (startup-phases.ts). */
+  private startup: StartupPhases | undefined;
   private readonly now: () => number;
   private readonly onExit: (code: number) => void;
   private readonly onLog: (line: string) => void;
@@ -347,12 +355,19 @@ export class RunController {
   }
 
   private async begin(spec: DownRunSpec): Promise<void> {
+    if (this.deps.startupPhases && this.deps.logger) {
+      const logger = this.deps.logger;
+      this.startup = new StartupPhases({ log: (message, fields) => logger.info(message, fields) });
+      this.startup.mark("run.spec received");
+    }
     this.spec = spec;
     this.deps.link.setSessionId?.(spec.session.id);
     // E1.6: register the run's own secrets before anything else can log a line that might echo one
     // back (a failed clone, a raw fetch error). RUN_TOKEN itself is registered once at startup, in
     // main.ts, before this controller even exists.
     this.deps.logger?.addSecret(spec.secrets.githubToken);
+    // ...and the base64 form git carries in its auth header, in case a trace ever echoes it.
+    if (spec.secrets.githubToken) this.deps.logger?.addSecret(authHeaderSecret(spec.secrets.githubToken));
     this.deps.logger?.addSecret(spec.secrets.litellmKey);
 
     if (spec.repo) {
@@ -371,6 +386,7 @@ export class RunController {
       // RunControllerDeps.chownWorkspace's doc comment. Hand the clone back to the user pi is about
       // to run as before pi (or the model's shell) ever touches it.
       await this.deps.chownWorkspace?.(this.deps.workspace);
+      this.startup?.mark("repo cloned");
       this.setState("restoring");
     } else {
       // Non-coding session: no repo to clone. Start with an empty /workspace, optionally restored
@@ -382,6 +398,7 @@ export class RunController {
         await restoreWorkspaceFn(spec.workspace.snapshotUrl, this.deps.workspace, {
           fetchFn: this.deps.fetchFn,
         });
+        this.startup?.mark("workspace restored");
       }
     }
 
@@ -408,6 +425,7 @@ export class RunController {
     // appends to this file and creates siblings in its directory, so hand both over now. Without
     // this the first round-two session died with EACCES on its first write.
     await this.deps.chownWorkspace?.(resolve(sessionFile, ".."));
+    this.startup?.mark("session import done");
 
     if (!spec.repo) {
       this.workspaceBaseline = await snapshotWorkspaceFiles(this.deps.workspace);
@@ -435,6 +453,16 @@ export class RunController {
     // Not a secret, but pinned here after guru.env like the rest so a guru can't spoof it; the
     // outfitter-mail extension tells the model its own address with it.
     secretEnv.OUTFITTER_SESSION_ID = spec.session.id;
+    // Same for commit identity: the agent's own commits are made by the Outfitter bot (author and
+    // committer; git-github-spec.md, "Attribution"), and the session's person rides along as
+    // OUTFITTER_AUTHOR_* for tooling that appends the attribution trailers. No token here.
+    Object.assign(secretEnv, botIdentityEnv());
+    const author = sanitizeAuthor(spec.author);
+    if (author) {
+      secretEnv.OUTFITTER_AUTHOR_NAME = author.name;
+      secretEnv.OUTFITTER_AUTHOR_EMAIL = author.email;
+      if (author.login) secretEnv.OUTFITTER_AUTHOR_LOGIN = author.login;
+    }
     if (spec.secrets.litellmKey) secretEnv.LITELLM_AGENT_KEY = spec.secrets.litellmKey;
     // Security-review-pr15.md finding #1: pin the LiteLLM base URL from the server-controlled
     // spec, spread after `rendered.env` (guru.env), so a guru-supplied LITELLM_BASE_URL can never
@@ -473,6 +501,8 @@ export class RunController {
       else this.onLog(`pi stderr: ${chunk}`);
     });
     this.pi.onExit((code, signal) => this.handlePiExit(code, signal));
+    this.startup?.mark("pi spawned");
+    this.startup?.probe(this.pi);
 
     // Flush anything that arrived (prompt/steer/follow_up/abort/ui_response/rpc) while pi was still
     // being spawned, in the order it was received.
@@ -548,6 +578,7 @@ export class RunController {
   }
 
   private handlePiEvent(event: PiRpcEvent): void {
+    if (this.startup?.observe(event)) return; // agentd's own readiness probe, not the api's business
     this.deps.link.sendSeq((seq) => ({ t: "event", seq, event }));
     if (event.type === "response" && typeof event.id === "string" && this.mailInFlight.has(event.id)) {
       const mailId = this.mailInFlight.get(event.id)!;
@@ -721,7 +752,22 @@ export class RunController {
     }
   }
 
+  /** Never rejects: a failed checkpoint (a rejected push, a git error) is logged and the run carries
+   * on -- checkpoints are fired with `void` from down-messages and awaited on every stop path, so a
+   * throw here would crash agentd with an unhandled rejection or skip `bye`. No `checkpoint` frame
+   * is sent for a failure: the api replaces session.checkpoint wholesale with each one. The next
+   * checkpoint retries from scratch. */
   private async checkpointNow(message?: string): Promise<void> {
+    try {
+      await this.checkpointOnce(message);
+    } catch (err: any) {
+      const detail = String(err?.message ?? err);
+      if (this.deps.logger) this.deps.logger.error("checkpoint failed", { error: detail });
+      else this.onLog(`checkpoint failed: ${detail}`);
+    }
+  }
+
+  private async checkpointOnce(message?: string): Promise<void> {
     if (!this.spec) return;
     await this.tailer?.poll();
 
@@ -740,24 +786,20 @@ export class RunController {
       return;
     }
 
-    const { committed } = await this.deps.gitOps.commitAll(
+    // Both run the workspace's git as the workspace's own user (git.ts's GitOpsOptions.runAs), so
+    // unlike the clone there is nothing root-owned to chown back afterwards.
+    await this.deps.gitOps.commitAll(
       this.deps.workspace,
       message ?? `outfitter checkpoint ${new Date().toISOString()}`,
+      attributionTrailers(sanitizeAuthor(this.spec.author)),
     );
-    let head = await this.deps.gitOps.headSha(this.deps.workspace);
-    let pushed = false;
-    if (committed) {
-      const res = await this.deps.gitOps.push(
-        this.deps.workspace,
-        this.spec.repo.branch,
-        this.spec.secrets.githubToken,
-      );
-      head = res.head;
-      pushed = true;
-      // git commit/push ran as agentd's own (root) user; hand any new/changed files back to the
-      // unprivileged user pi runs as (see chownWorkspace's doc comment on RunControllerDeps).
-      await this.deps.chownWorkspace?.(this.deps.workspace);
-    }
+    // Push whenever HEAD differs from what origin has for the session branch -- including commits
+    // the agent made itself, for which commitAll finds nothing left to commit.
+    const { head, pushed } = await this.deps.gitOps.push(this.deps.workspace, {
+      remoteUrl: this.spec.repo.cloneUrl,
+      branch: this.spec.repo.branch,
+      githubToken: this.spec.secrets.githubToken,
+    });
     this.deps.link.send({ t: "checkpoint", branch: this.spec.repo.branch, head, pushed });
   }
 

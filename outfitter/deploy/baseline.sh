@@ -77,6 +77,44 @@ for role in roles/run.developer roles/secretmanager.secretAccessor roles/logging
     --quiet >/dev/null
 done
 
+# Operator settings API (routes/operator.ts, src/secrets.ts's GcpSecretAdmin): create a secret the
+# first time an operator sets it, add a new version on every Replace, disable all enabled versions
+# on Disable, and list/access versions to show the masked value and "next run"/"next deploy" state.
+# secretmanager.secretAccessor (above) only covers reading the *latest* version, not any of that.
+# No predefined role is both broad enough and this narrow: roles/secretmanager.secretVersionAdder
+# can add versions but can't create a secret or disable a version, and
+# roles/secretmanager.admin also grants IAM policy changes and secret deletion the API never
+# needs. A project-scoped custom role with exactly the permissions used gets both -- create once,
+# update in place on re-run (gcloud iam roles create/update is not itself idempotent the way
+# add-iam-policy-binding is, hence the describe-first check).
+SECRET_ADMIN_ROLE_ID="outfitterSecretAdmin"
+SECRET_ADMIN_PERMISSIONS="secretmanager.secrets.create,secretmanager.secrets.get,secretmanager.versions.add,secretmanager.versions.disable,secretmanager.versions.list"
+echo "-- Custom IAM role '${SECRET_ADMIN_ROLE_ID}' (create/get secrets, add/disable/list versions -- operator settings API) --"
+if gcloud iam roles describe "${SECRET_ADMIN_ROLE_ID}" --project="${PROJECT}" &>/dev/null; then
+  gcloud iam roles update "${SECRET_ADMIN_ROLE_ID}" \
+    --project="${PROJECT}" \
+    --title="Outfitter Secret Admin" \
+    --description="Create secrets and add/disable/list versions for the Outfitter operator settings API (routes/operator.ts). Narrower than roles/secretmanager.admin: no secret deletion, no IAM policy changes." \
+    --permissions="${SECRET_ADMIN_PERMISSIONS}" \
+    --stage=GA \
+    --quiet >/dev/null
+else
+  gcloud iam roles create "${SECRET_ADMIN_ROLE_ID}" \
+    --project="${PROJECT}" \
+    --title="Outfitter Secret Admin" \
+    --description="Create secrets and add/disable/list versions for the Outfitter operator settings API (routes/operator.ts). Narrower than roles/secretmanager.admin: no secret deletion, no IAM policy changes." \
+    --permissions="${SECRET_ADMIN_PERMISSIONS}" \
+    --stage=GA \
+    --quiet >/dev/null
+fi
+
+echo "-- IAM role for ${API_SA_EMAIL}: projects/${PROJECT}/roles/${SECRET_ADMIN_ROLE_ID} --"
+gcloud projects add-iam-policy-binding "${PROJECT}" \
+  --member="serviceAccount:${API_SA_EMAIL}" \
+  --role="projects/${PROJECT}/roles/${SECRET_ADMIN_ROLE_ID}" \
+  --condition=None \
+  --quiet >/dev/null
+
 # Scoped to the outfitter-agent resource, not project-wide: the API only needs to impersonate this
 # one service account to start Cloud Run Job executions as it (RunManager.wake -> CloudRunProvider).
 echo "-- IAM role for ${API_SA_EMAIL} on ${AGENT_SA_EMAIL}: iam.serviceAccountUser --"
@@ -119,7 +157,10 @@ cat <<SUMMARY
 API service account:   ${API_SA_EMAIL}
 Agent service account: ${AGENT_SA_EMAIL}
 AR repo:                ${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}
+Custom role:            projects/${PROJECT}/roles/${SECRET_ADMIN_ROLE_ID} (bound to ${API_SA_EMAIL},
+                        for the operator settings API -- see docs/reports/operators.md)
 
 Next: create the Atlas cluster and the four Secret Manager secrets by hand (see README.md), then
-run api.sh and agent-job.sh.
+run api.sh and agent-job.sh. Set OUTFITTER_OPERATORS before running api.sh if the default operator
+list (mgm@mgms.eu;matej@mgms.eu) isn't right for this deployment.
 SUMMARY

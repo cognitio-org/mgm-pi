@@ -125,6 +125,14 @@ if [[ "${ROLE}" == "web" ]]; then
   if [[ -n "${OUTFITTER_LINK_ORIGIN:-}" ]]; then
     ENV_VARS="${ENV_VARS},OUTFITTER_LINK_ORIGIN=${OUTFITTER_LINK_ORIGIN}"
   fi
+  # OUTFITTER_OPERATORS (EPIC.md Decisions table, src/config.ts): emails allowed to manage secrets
+  # and deploy-level settings via /api/operator/* (src/auth.ts's requireOperator). Separated by
+  # ';' here, not ',' -- `gcloud run deploy --set-env-vars` splits its whole value on commas, so a
+  # comma-separated operator list would be sliced into separate env vars; config.ts's parser also
+  # accepts ',' and whitespace for a locally-set env var, but this script must use ';'. Defaults to
+  # the two current operators (see the same Decisions table entry); override by exporting
+  # OUTFITTER_OPERATORS before running this script.
+  ENV_VARS="${ENV_VARS},OUTFITTER_OPERATORS=${OUTFITTER_OPERATORS:-mgm@mgms.eu;matej@mgms.eu}"
   AUTH_FLAGS=(--no-allow-unauthenticated --iap)
 else
   AUTH_FLAGS=(--allow-unauthenticated)

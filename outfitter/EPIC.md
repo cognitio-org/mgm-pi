@@ -122,6 +122,7 @@ Ten agent-hours a day is roughly $2/day of compute. Set a GCP budget alert at $2
 | Laptop model in the cloud | Allowed, opt-in per guru or per session, never the default. Guarded by the preflight in E2.8. |
 | Vocabulary | Reusable agent configs are **Gurus** (not "Experts"). |
 | Session visibility | Org-shared: every signed-in mgmonteleone.com user can see and steer every session (as Cosmos treats shared sessions). `Session.ownerEmail` is recorded but not enforced; per-user privacy is a later, one-line check if ever wanted. |
+| Operator role (2026-09-22, `docs/reports/operators.md`) | Operators are a config list (`OUTFITTER_OPERATORS`), currently `mgm@mgms.eu` and `matej@mgms.eu`. Operators manage Secret Manager keys and deploy-level settings via `/api/operator/*`. Any signed-in user can still create sessions and edit gurus -- the org-shared policy above is unchanged; operator is an additional capability, not a replacement for it. |
 
 
 ## 3. Epics and stories
@@ -333,6 +334,25 @@ research on Sonnet; review on Opus).
   `Completed` with `succeededCount=1` rather than cancelled. Round two closes here.
 - **E2.7 Deploy** ⇄: `deploy/api.sh` builds with Cloud Build, deploys, enables IAP with the domain
   principal. Done when the URL prompts for Google login and rejects a non-domain account.
+- **E2.14 Operator role and settings API** (done, `docs/reports/operators.md`): `OUTFITTER_OPERATORS`
+  (config.ts) names the operator emails (Decisions table above); `Identity.operator` is computed
+  once, in `identityFromRequest` (auth.ts), for the "web"/"all" role only -- link-role token
+  identities are always `operator: false`, and `GET /api/me` returns the flag so the web UI's App
+  shell can show the Settings nav link. `requireOperator` (auth.ts) is a Fastify preHandler 403ing
+  `{error:"operator role required"}`; every `/api/operator/*` route (routes/operator.ts, "web"/"all"
+  only) uses it. `GET /api/operator/settings` lists the deployment values (LiteLLM base URL,
+  sandbox provider/job, tunnel domain, the operator list) and one row per managed secret (the
+  static list plus one `outfitter-litellm-key-<guruId>` per existing guru) -- never a full value,
+  only `masked` (last 4 characters, only past 12) and `set`/`updatedAt`/`appliesAt` ("next run" for
+  a secret read live via `SecretsBroker` at run start, "next deploy" for one mounted as a container
+  env var). `PUT`/`DELETE .../secrets/:name` and `POST .../secrets/:name/test` round out the API;
+  `secrets.ts` gained a `SecretAdmin` interface (`GcpSecretAdmin` over the Secret Manager REST API,
+  `MemorySecretAdmin` for tests) alongside the existing `SecretsBroker`. `deploy/baseline.sh` grants
+  the API service account a new project-scoped custom role (`outfitterSecretAdmin`: create/get
+  secrets, add/disable/list versions) instead of `roles/secretmanager.admin`, which is broader than
+  needed (secret deletion, IAM policy changes). Web: a `/settings` page (operators only; a
+  non-operator opening it directly sees "Operator role required") with the Replace/Test/Disable
+  flow from mgm-admin's Connections page, adapted to this codebase's own components.
 
 ### E3 Web UI
 
@@ -377,6 +397,10 @@ research on Sonnet; review on Opus).
   the newest `thinking_level_change`; context tokens from the newest (non-aborted/error) assistant
   message's `usage`, mirroring pi's own `calculateContextTokens` (`totalTokens` or the
   input+output+cacheRead+cacheWrite sum); the window comes from `GET /api/models`.
+- **E3.9 Operator settings page** (done, `docs/reports/operators.md`, E2.14): `/settings`, nav link
+  shown only when `GET /api/me`'s `operator` flag is true. Read-only deployment values plus a
+  secrets table (masked value, when a change applies, Replace/Test/Disable), following the same
+  "no value in URLs, clear the input after save" care as `pages/TokensPage.tsx`.
 
 ### E4 Teleport, both directions
 

@@ -74,6 +74,12 @@ so the commands below still work unchanged.
    `.env.example`) and `PROVIDER_POLL_MS` (default 300000 = 5 minutes). `service.sh` sets both in
    `ENV_VARS` with those same defaults; override by exporting them before running it.
 
+   A third, `OUTFITTER_OPERATORS` (E2.14/E3.7, `docs/reports/operators.md`), is web-role-only:
+   emails allowed to manage secrets and deploy-level settings via `/api/operator/*`, separated by
+   `;` (not `,` — `gcloud run deploy --set-env-vars` splits its whole value on commas). `service.sh`
+   defaults it to `mgm@mgms.eu;matej@mgms.eu`; export `OUTFITTER_OPERATORS` before running `./api.sh`
+   to change it.
+
    **b. Per-run, fetched dynamically by `GcpSecretsBroker.secretsForRun` (`src/secrets.ts`) — NOT
    mounted as container env vars, and NOT covered by `api.sh`.** Each session and each guru needs
    its own secret, named by id, ideally created before that session/guru's first run:
@@ -103,7 +109,12 @@ so the commands below still work unchanged.
    guru whose key resolves via the default fallback, is unaffected either way.
 
    `outfitter-api`'s `secretmanager.secretAccessor` role from `baseline.sh` is project-wide, so no
-   per-secret IAM binding is needed for either group. (a)/(b) diverging like this is a known gap,
+   per-secret IAM binding is needed for either group. `baseline.sh` also grants `outfitter-api` a
+   project-scoped custom role, `projects/<PROJECT>/roles/outfitterSecretAdmin` (create/get secrets,
+   add/disable/list versions — narrower than `roles/secretmanager.admin`): the operator settings API
+   (`/api/operator/*`, E2.14) needs to create a secret the first time an operator sets it, add a new
+   version on Replace, and disable all enabled versions on Disable, none of which
+   `secretmanager.secretAccessor` covers. (a)/(b) diverging like this is a known gap,
    not the intended end state — EPIC.md's E2.5 "GitHub auth for runs" / "Atlas" decisions describe
    phase 1 as exactly this per-session PAT model, with a GitHub App replacing it in a later phase;
    `LITELLM_ADMIN_KEY` (a) has no consumer today because nothing in this story needed an

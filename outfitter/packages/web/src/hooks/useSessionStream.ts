@@ -8,6 +8,10 @@ export interface StreamState {
   /** Bug 3 (docs/reports/cloud-fixes.md): the failed run's own reason, when runState is "failed" --
    * carried by the status frame's `reason` field so LOAD ERROR can say why. */
   runStateReason?: string;
+  /** Bug 7 (docs/reports/cloud-fixes.md): the status frame's optional `detail` -- agentd now uses
+   * it to surface a pi RPC command (prompt/steer/follow_up) that pi rejected, which used to vanish
+   * silently. */
+  statusDetail?: string;
   pendingUiRequest: RawUiRequest | null;
   costEstimate?: number;
 }
@@ -32,6 +36,7 @@ export function useSessionStream(sessionId: string): StreamState {
   const [entries, setEntries] = useState<PiEntry[]>([]);
   const [runState, setRunState] = useState<string | undefined>(undefined);
   const [runStateReason, setRunStateReason] = useState<string | undefined>(undefined);
+  const [statusDetail, setStatusDetail] = useState<string | undefined>(undefined);
   const [pendingUiRequest, setPendingUiRequest] = useState<StreamState["pendingUiRequest"]>(null);
   const [costEstimate, setCostEstimate] = useState<number | undefined>(undefined);
   const entryIds = useRef<Set<string>>(new Set());
@@ -42,6 +47,7 @@ export function useSessionStream(sessionId: string): StreamState {
     setEntries([]);
     setRunState(undefined);
     setRunStateReason(undefined);
+    setStatusDetail(undefined);
     setPendingUiRequest(null);
     setCostEstimate(undefined);
 
@@ -54,9 +60,10 @@ export function useSessionStream(sessionId: string): StreamState {
     const source = new EventSource(api.streamUrl(sessionId));
 
     source.addEventListener("status", (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as { state?: string; reason?: string };
+      const data = JSON.parse((ev as MessageEvent).data) as { state?: string; reason?: string; detail?: string };
       if (data.state) setRunState(data.state);
       setRunStateReason(data.reason);
+      if (data.detail) setStatusDetail(data.detail);
     });
 
     source.addEventListener("entry", (ev) => {
@@ -85,5 +92,5 @@ export function useSessionStream(sessionId: string): StreamState {
     };
   }, [sessionId]);
 
-  return { entries, runState, runStateReason, pendingUiRequest, costEstimate };
+  return { entries, runState, runStateReason, statusDetail, pendingUiRequest, costEstimate };
 }

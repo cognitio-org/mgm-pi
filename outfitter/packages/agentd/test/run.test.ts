@@ -870,6 +870,65 @@ test("RunController: steer mail passes its behavior through, and rejected mail s
   assert.ok(!link.sent.some((m) => m.t === "mail.ack"));
 });
 
+test("RunController: bug 7 (docs/reports/cloud-fixes.md) -- a rejected non-mail RPC response is logged and surfaced on status, not silently dropped", async (t) => {
+  const logged: Array<{ line: string }> = [];
+  const workspace = await mkdtemp(join(tmpdir(), "outfitter-run-test-"));
+  const link = new FakeLink();
+  let pi: ReturnType<typeof makeControllablePi> | undefined;
+  const controller = new RunController({
+    link,
+    gitOps: fakeGitOps(),
+    workspace,
+    piBin: "unused-in-test",
+    agentdVersion: "test",
+    piVersion: "test",
+    heartbeatIntervalMs: 60_000,
+    spawnPi: () => {
+      pi = makeControllablePi();
+      return pi;
+    },
+    importSession: async (_snapshotFile, _cwd, sessionId) => join(workspace, `${sessionId}.jsonl`),
+    writeSnapshotFile,
+    createTailer: () => ({ start() {}, stop() {}, poll: async () => {} }),
+    onLog: (line) => logged.push({ line }),
+  });
+  t.after(() => controller.dispose());
+  link.deliver({
+    t: "run.spec",
+    session: { id: "sess-rej", name: "rej", cwd: "/workspace" },
+    guru: { model: "fake/model" },
+    snapshot: { jsonl: emptySessionJsonl("sess-rej", "/workspace") },
+    secrets: {},
+    idleStopSeconds: 3600,
+    checkpointEvery: "turn",
+  });
+  await waitFor(() => pi !== undefined);
+
+  // No id at all -- this is exactly how agentd sends a user-driven prompt/steer/follow_up
+  // (dispatchToPi in run.ts), unlike a mail rpc id ("mail:<id>"). It used to vanish completely.
+  pi!.emit({ type: "response", command: "prompt", success: false, error: "model not found" });
+
+  assert.ok(
+    logged.some((l) => l.line.includes("prompt") && l.line.includes("model not found")),
+    `expected a WARN-worthy log line naming the command and error, got: ${JSON.stringify(logged)}`,
+  );
+  const statusFrames = link.sent.filter((m) => m.t === "status");
+  assert.ok(
+    statusFrames.some((f) => typeof (f as any).detail === "string" && (f as any).detail.includes("model not found")),
+    `expected a status frame with a detail naming the rejection, got: ${JSON.stringify(statusFrames)}`,
+  );
+
+  // The mail path is untouched: a mail response still uses its own "pi rejected mail <id>: ..."
+  // line (and only affects mail.ack/no-ack), not this generic "pi rejected <command>" one.
+  link.sent.length = 0;
+  logged.length = 0;
+  link.deliver({ t: "mail", id: "m9", text: "please review" });
+  await waitFor(() => pi!.sent.some((c) => (c as any).id === "mail:m9"));
+  pi!.emit({ type: "response", id: "mail:m9", command: "prompt", success: false, error: "busy" });
+  assert.ok(logged.some((l) => l.line.includes("pi rejected mail m9")), "mail keeps its own log line");
+  assert.ok(!logged.some((l) => l.line.startsWith("pi rejected prompt")), "and does not also produce the generic non-mail log line");
+});
+
 test("RunController: mail that arrives while the run is stopping is neither prompted nor acked", async (t) => {
   const { link, spec, getPi } = await setupControllablePiRun(t);
   link.deliver(spec);

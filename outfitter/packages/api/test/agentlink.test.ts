@@ -78,6 +78,36 @@ describe("agentd <-> api WebSocket", () => {
     await app.fastify.close();
   });
 
+  test("bug 7 (docs/reports/cloud-fixes.md): a status frame's detail is persisted on the run, and not wiped by a later state-only frame", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    await agent.nextMessage(); // run.spec
+
+    // Frames on one connection are handled in arrival order (see stop.test.ts's serialization
+    // comment); an "entry" frame's ack is only sent once its own handling completes, so awaiting
+    // it after a "status" frame is a reliable way to know that status frame has been applied too.
+    agent.send({ t: "status", state: "idle", detail: "pi rejected prompt: model not found" });
+    agent.send({ t: "entry", seq: 1, entry: { id: "e1", parentId: null, type: "message" } });
+    assert.deepEqual(await agent.nextMessage(), { t: "ack", seq: 1 });
+    let run = await app.store.runs.findById(runId);
+    assert.equal(run?.statusDetail, "pi rejected prompt: model not found");
+
+    // An ordinary state-only status frame (the vast majority pi/agentd sends) must not clear it.
+    agent.send({ t: "status", state: "running" });
+    agent.send({ t: "entry", seq: 2, entry: { id: "e2", parentId: "e1", type: "message" } });
+    assert.deepEqual(await agent.nextMessage(), { t: "ack", seq: 2 });
+    run = await app.store.runs.findById(runId);
+    assert.equal(run?.statusDetail, "pi rejected prompt: model not found", "a state-only frame keeps the last detail");
+
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
   test("bug 6 (docs/reports/cloud-fixes.md): only interactive extension_ui_request methods become Run.pendingUiRequest, not display-only ones", async () => {
     const app = await buildTestApp();
     const { session, runId, runToken } = await makeRunningSession(app);

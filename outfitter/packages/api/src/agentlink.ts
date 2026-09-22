@@ -499,7 +499,16 @@ export class AgentLink {
         if (before && isTerminalState(before.state)) break;
         const state = mapStatusToRunState(String(frame.state), before?.state ?? "provisioning");
         const wasReady = !!before && isReadyState(before.state);
-        await this.store.runs.update(runId, { state, lastSeenAt: now, updatedAt: now });
+        // Bug 7 (docs/reports/cloud-fixes.md): a status frame's optional `detail` (protocol.md) now
+        // also carries agentd's "pi rejected <command>: <error>" notices (run.ts's
+        // sendStatusDetail) -- persist it on the run so it survives a reload / a split-role
+        // deployment where the browser's own subscriber isn't on this process (see sse.ts's
+        // SsePoller), not just the live in-process SSE push below. Only overwritten when a frame
+        // actually carries a new detail, so an ordinary state-only frame (the vast majority) right
+        // after a notice doesn't immediately wipe it before anyone sees it.
+        const patch: Partial<Run> = { state, lastSeenAt: now, updatedAt: now };
+        if (typeof frame.detail === "string") patch.statusDetail = frame.detail;
+        await this.store.runs.update(runId, patch);
         this.sse.publish(sessionId, { type: "status", data: frame });
         // First transition into running/idle/stopping: drain anything queued while provisioning
         // (in order).

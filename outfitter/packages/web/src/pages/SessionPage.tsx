@@ -46,7 +46,7 @@ export function SessionPage() {
   const [models, setModels] = useState<ModelRow[]>([]);
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [transportOutcome, setTransportOutcome] = useState<TransportOutcome | null>(null);
-  const { entries, runState, runStateReason, pendingUiRequest, costEstimate } = useSessionStream(sessionId);
+  const { entries, runState, runStateReason, statusDetail, pendingUiRequest, costEstimate } = useSessionStream(sessionId);
   const { providers } = useProviders();
   const transcriptRef = useRef<HTMLDivElement | null>(null);
 
@@ -238,6 +238,13 @@ export function SessionPage() {
           )}
           {modelProviderDown && (
             <DeviceNotPresent reason={`the ${modelProviderKind} peripheral is down -- this run can't reach its model right now.`} />
+          )}
+          {/* Bug 7 (docs/reports/cloud-fixes.md): a rejected pi RPC (prompt/steer/follow_up) used to
+           * vanish silently; agentd now surfaces it via the run's status detail. */}
+          {statusDetail && (
+            <p className="status-detail-note" role="alert">
+              {statusDetail}
+            </p>
           )}
         </div>
         <div className="run-controls">

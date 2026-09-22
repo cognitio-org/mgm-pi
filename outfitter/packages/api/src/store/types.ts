@@ -81,6 +81,12 @@ export interface Run {
   // that reconnects (or opens the session fresh) still sees a question the run is waiting on;
   // cleared when a ui_response down-message is sent for this run.
   pendingUiRequest?: unknown;
+  // Bug 7 (docs/reports/cloud-fixes.md): the most recent `status` frame's `detail` field
+  // (protocol.md), which agentd now also uses to surface a rejected pi RPC response ("pi rejected
+  // prompt: <error>") -- prompt/steer/follow_up used to vanish silently when pi's own `response`
+  // frame came back `success: false`. Not cleared by an ordinary state-only status frame (see
+  // agentlink.ts's "status" case), so it survives until the next notice replaces it.
+  statusDetail?: string;
   // Not in protocol.md: set when E2.8's laptop-model preflight (src/laptop.ts) swaps a guru's or
   // session's `litellm/local-qwen-mlx`-style model for the guru's fallbackModel because the laptop
   // tunnel probed offline. Surfaced so the UI can show "running on X instead of Y".

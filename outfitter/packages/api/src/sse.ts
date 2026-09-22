@@ -87,7 +87,13 @@ export class SseHub {
 export class SsePoller {
   private readonly cursors = new Map<
     string,
-    { lastEntryId?: string; lastState?: string; lastCostEstimate?: number; lastUiRequestKey?: string }
+    {
+      lastEntryId?: string;
+      lastState?: string;
+      lastCostEstimate?: number;
+      lastUiRequestKey?: string;
+      lastStatusDetail?: string;
+    }
   >();
   private timer?: ReturnType<typeof setInterval>;
   private readonly hub: SseHub;
@@ -147,9 +153,14 @@ export class SsePoller {
     // (of any state) so a transition into "failed" is actually observed, not flattened to "stopped".
     const terminal = run ?? (await this.store.runs.findLatestForSession(sessionId));
     const state = terminal?.state ?? "stopped";
-    if (state !== cursor.lastState) {
-      this.hub.publish(sessionId, { type: "status", data: { t: "status", state, reason: run ? undefined : terminal?.reason } });
+    const detail = terminal?.statusDetail;
+    if (state !== cursor.lastState || (detail !== undefined && detail !== cursor.lastStatusDetail)) {
+      this.hub.publish(sessionId, {
+        type: "status",
+        data: { t: "status", state, reason: run ? undefined : terminal?.reason, detail },
+      });
       cursor.lastState = state;
+      if (detail !== undefined) cursor.lastStatusDetail = detail;
     }
     if (run && typeof run.costEstimate === "number" && run.costEstimate !== cursor.lastCostEstimate) {
       this.hub.publish(sessionId, { type: "spend", data: { t: "spend", estimate: run.costEstimate } });

@@ -243,6 +243,14 @@ export class RunController {
     for (const h of this.stateHandlers) h(state, detail);
   }
 
+  /** Bug 7: sends a `status` frame for the *current* state carrying only `detail`, without treating
+   * it as a state transition (no stateHandlers call) -- used to surface a one-off notice like a
+   * rejected RPC command onto the run without disturbing idle timers or anything else keyed on an
+   * actual state change. */
+  private sendStatusDetail(detail: string): void {
+    this.deps.link.send({ t: "status", state: this.state, detail });
+  }
+
   handleDown(msg: DownMessage): void {
     if (isPiTargetedDownMessage(msg)) {
       if (!this.pi) {
@@ -542,6 +550,21 @@ export class RunController {
         this.onLog(`pi rejected mail ${mailId}: ${String(event.error ?? "no reason given")}`);
       }
       return;
+    }
+    // Bug 7 (docs/reports/cloud-fixes.md): every other unsuccessful pi RPC `response` (prompt,
+    // steer, follow_up -- the mail case above already handles its own) used to vanish entirely:
+    // handlePiEvent forwarded it as a raw `event` frame (never persisted, not distinguishable from
+    // any other RPC ack in the UI) and nothing logged it. A refused prompt/steer/follow_up then
+    // looked exactly like one that was silently ignored, with no signal anywhere that pi ever saw
+    // and rejected it. Log it at WARN (command + error only -- never `msg.text`/the prompt itself,
+    // which this event never carries anyway) and surface it on the run's status so the web UI can
+    // show it (protocol.md's `status` frame already carries an optional `detail`).
+    if (event.type === "response" && event.success === false && event.command !== undefined) {
+      const command = String(event.command);
+      const errorMessage = String(event.error ?? "no reason given");
+      if (this.deps.logger) this.deps.logger.warn("pi rejected an RPC command", { command, error: errorMessage });
+      else this.onLog(`pi rejected ${command}: ${errorMessage}`);
+      this.sendStatusDetail(`pi rejected ${command}: ${errorMessage}`);
     }
     if (event.type === "agent_start") {
       this.markActivity();

@@ -1,0 +1,33 @@
+outfitter/packages/api/src/routes/sessions.ts
+  s_2209f22f830d7f::t_d41c8af44e226c 229-235
+outfitter/packages/api/src/sse.ts
+  s_2209f22f830d7f::t_f07128bd12cafb 6
+  s_2209f22f830d7f::t_eb03c55c263fb1 57-92,96,102-163
+  s_2209f22f830d7f::t_2ff3c55554c025 93-95,97-101
+outfitter/packages/api/src/server.ts
+  s_2209f22f830d7f::t_b056457a803a6c 142
+  s_2209f22f830d7f::t_a477abe61d4d7e 14
+  s_2209f22f830d7f::t_ae588ae4da9014 60
+  s_2209f22f830d7f::t_ac94ab889efe9d 112-124
+outfitter/packages/api/test/sse-poller.test.ts
+  s_2209f22f830d7f::t_605e2d73817d91 1-130
+outfitter/packages/api/src/routes/context.ts
+  s_2209f22f830d7f::t_af07ea23aba2a6 5
+  s_2209f22f830d7f::t_45c0f722b18262 19-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "6e4d150483f81a3cca916bd26496d66e72f48098",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

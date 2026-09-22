@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  attractInput,
   createInitialState,
   nextRandom,
   PLAYER_MAX_Y,
@@ -7,7 +8,7 @@ import {
   step,
   togglePause,
   type GameInput,
-} from "../src/easter/engine.ts";
+} from "../src/easter/dreadnought/engine.ts";
 
 const NO_INPUT: GameInput = { up: false, down: false, firing: false };
 
@@ -137,5 +138,54 @@ describe("Dreadnought Run engine", () => {
     expect(togglePause(paused).status).toBe("playing");
     const over = { ...playing, status: "gameover" as const };
     expect(togglePause(over).status).toBe("gameover");
+  });
+
+  it("drones only spawn past the unlock distance and sine-sweep vertically", () => {
+    let s = createInitialState(11);
+    for (let i = 0; i < 1000 && s.distance < 900; i++) s = step(s, NO_INPUT, 16);
+    expect(s.obstacles.some((o) => o.kind === "drone")).toBe(false);
+    for (let i = 0; i < 20000 && !s.obstacles.some((o) => o.kind === "drone"); i++) s = step(s, NO_INPUT, 16);
+    const drone = s.obstacles.find((o) => o.kind === "drone");
+    expect(drone).toBeDefined();
+    expect(drone?.baseY).toBeGreaterThanOrEqual(PLAYER_MIN_Y);
+    const y1 = s.obstacles.find((o) => o.kind === "drone")?.y;
+    for (let i = 0; i < 50; i++) s = step(s, NO_INPUT, 16);
+    const y2 = s.obstacles.find((o) => o.kind === "drone")?.y;
+    expect(y1).not.toBe(y2); // it moved -- sine sweep in effect
+  });
+
+  it("a bullet destroying an obstacle emits an obstacleDestroyed event", () => {
+    let s = createInitialState(1);
+    s = {
+      ...s,
+      bullets: [{ x: 200, y: 100, vx: 620 }],
+      obstacles: [{ x: 200, y: 98, w: 20, h: 20, kind: "turret", hp: 1, fireCooldownMs: 9999 }],
+    };
+    s = step(s, NO_INPUT, 16);
+    expect(s.events.some((e) => e.type === "obstacleDestroyed")).toBe(true);
+  });
+
+  it("getting hit emits a playerHit event", () => {
+    let s = createInitialState(3);
+    s = {
+      ...s,
+      obstacles: [{ x: 90, y: s.playerY, w: 26, h: 40, kind: "rack", hp: 1, fireCooldownMs: 0 }],
+    };
+    s = step(s, NO_INPUT, 16);
+    expect(s.events.some((e) => e.type === "playerHit")).toBe(true);
+  });
+
+  it("attractInput is a pure, deterministic function of elapsed time", () => {
+    expect(attractInput(1000)).toEqual(attractInput(1000));
+    // over a full cycle it should both thrust up and down at some point
+    let sawUp = false;
+    let sawDown = false;
+    for (let t = 0; t < 5000; t += 50) {
+      const input = attractInput(t);
+      if (input.up) sawUp = true;
+      if (input.down) sawDown = true;
+    }
+    expect(sawUp).toBe(true);
+    expect(sawDown).toBe(true);
   });
 });

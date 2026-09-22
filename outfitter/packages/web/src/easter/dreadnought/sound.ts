@@ -5,7 +5,7 @@
 // reused; every call is wrapped so a browser without Web Audio (or a suspended/blocked context)
 // fails silently instead of throwing.
 
-import { isSoundEnabled } from "../lib/floppy-sound.ts";
+import { isSoundEnabled } from "../../lib/floppy-sound.ts";
 
 let ctx: AudioContext | null = null;
 

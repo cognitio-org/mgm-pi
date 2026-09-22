@@ -1,8 +1,9 @@
 // Pure game-logic engine for the "Dreadnought Run" easter egg -- a horizontal scrolling shooter
 // inspired by (not a copy of) Uridium: a small ship skims over a giant data-center "dreadnought",
-// dodging server racks, shooting turrets, and grabbing stray Floppies for score. No canvas/DOM
-// code lives here so it can be unit tested deterministically (see test/easter-engine.test.ts);
-// EasterEgg.tsx drives this with a requestAnimationFrame loop and does all drawing.
+// dodging server racks, shooting turrets and drones, and grabbing stray Floppies for score. No
+// canvas/DOM code lives here so it can be unit tested deterministically (see
+// test/dreadnought-engine.test.ts); DreadnoughtRun.tsx drives this with a fixed-timestep loop and
+// does all drawing (pixel-art sprites, parallax hull layers, particles, screen shake).
 //
 // Everything here is a pure function of (state, input, dtMs) plus an explicit rng counter baked
 // into the state -- same seed + same input sequence always produces the same run.
@@ -25,10 +26,16 @@ const BULLET_SPEED = 620;
 const ENEMY_BULLET_SPEED = 260;
 const SHOOT_COOLDOWN_MS = 180;
 const TURRET_FIRE_COOLDOWN_MS = 1400;
+const DRONE_FIRE_COOLDOWN_MS = 1000;
+const DRONE_AMPLITUDE = 60; // px, vertical sine sweep
+const DRONE_ANGULAR_FREQ = 0.0022; // rad/ms
 const INVULN_MS = 1200;
 const START_LIVES = 3;
+// Distance travelled before drones start appearing -- keeps the first stretch of a run to just
+// racks + turrets so the third obstacle type reads as an escalation, not noise from second one.
+const DRONE_UNLOCK_DISTANCE = 900;
 
-export type Kind = "rack" | "turret";
+export type Kind = "rack" | "turret" | "drone";
 
 export interface Bullet {
   x: number;
@@ -44,6 +51,10 @@ export interface Obstacle {
   kind: Kind;
   hp: number;
   fireCooldownMs: number;
+  /** Drones only: sine-wave motion phase parameters, baked in at spawn so movement is a pure
+   * function of elapsed time (no per-frame RNG needed). */
+  baseY?: number;
+  phase?: number;
 }
 
 export interface Pickup {
@@ -58,6 +69,14 @@ export interface GameInput {
   up: boolean;
   down: boolean;
   firing: boolean;
+}
+
+/** Emitted this step for the renderer to spawn a one-off visual (explosion particles, screen
+ * shake) -- not carried forward in state, since it's consumed immediately by the caller. */
+export interface GameEvent {
+  type: "obstacleDestroyed" | "playerHit";
+  x: number;
+  y: number;
 }
 
 export interface GameState {
@@ -77,7 +96,8 @@ export interface GameState {
   shootCooldownMs: number;
   nextSpawnAtDistance: number;
   invulnMs: number;
-  lastHit: "rack" | "turret" | "enemyBullet" | null;
+  lastHit: Kind | "enemyBullet" | null;
+  events: GameEvent[];
 }
 
 /** mulberry32, same construction as src/lib/floppy-sound.ts's makeRng -- small, fast, seedable,
@@ -110,6 +130,7 @@ export function createInitialState(seed: number): GameState {
     nextSpawnAtDistance: 260,
     invulnMs: 0,
     lastHit: null,
+    events: [],
   };
 }
 
@@ -135,6 +156,8 @@ function rectsOverlap(
 export function step(state: GameState, input: GameInput, dtMs: number): GameState {
   if (state.status !== "playing") return state;
   const dt = Math.min(dtMs, 50) / 1000; // clamp huge deltas (tab switch, devtools pause)
+  const t = state.t + dtMs;
+  const events: GameEvent[] = [];
 
   let rngState = state.rngState;
   const rand = (): number => {
@@ -171,20 +194,24 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
     .map((b) => ({ ...b, x: b.x + b.vx * dt }))
     .filter((b) => b.x > -20 && b.x < WORLD_W + 20);
 
-  // --- obstacles: scroll left, turrets fire ---
+  // --- obstacles: scroll left, drones sine-sweep, turrets/drones fire ---
   const obstacles: Obstacle[] = [];
   for (const o of state.obstacles) {
     const nx = o.x - scrollSpeed * dt;
     if (nx + o.w < -40) continue; // scrolled off, drop it
+    let ny = o.y;
+    if (o.kind === "drone" && o.baseY !== undefined && o.phase !== undefined) {
+      ny = clamp(o.baseY + Math.sin(t * DRONE_ANGULAR_FREQ + o.phase) * DRONE_AMPLITUDE, PLAYER_MIN_Y, PLAYER_MAX_Y);
+    }
     let fireCooldownMs = o.fireCooldownMs;
-    if (o.kind === "turret" && o.hp > 0) {
+    if ((o.kind === "turret" || o.kind === "drone") && o.hp > 0) {
       fireCooldownMs -= dtMs;
       if (fireCooldownMs <= 0 && nx < WORLD_W) {
-        enemyBullets.push({ x: nx, y: o.y + o.h / 2, vx: -ENEMY_BULLET_SPEED });
-        fireCooldownMs = TURRET_FIRE_COOLDOWN_MS;
+        enemyBullets.push({ x: nx, y: ny + o.h / 2, vx: -ENEMY_BULLET_SPEED });
+        fireCooldownMs = o.kind === "drone" ? DRONE_FIRE_COOLDOWN_MS : TURRET_FIRE_COOLDOWN_MS;
       }
     }
-    obstacles.push({ ...o, x: nx, fireCooldownMs });
+    obstacles.push({ ...o, x: nx, y: ny, fireCooldownMs });
   }
 
   // --- pickups: scroll left ---
@@ -199,7 +226,8 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
   let nextSpawnAtDistance = state.nextSpawnAtDistance;
   if (distance >= nextSpawnAtDistance) {
     const roll = rand();
-    if (roll < 0.55) {
+    const droneUnlocked = distance >= DRONE_UNLOCK_DISTANCE;
+    if (roll < 0.5) {
       const h = 40 + Math.floor(rand() * 3) * 30;
       obstacles.push({
         x: WORLD_W + 20,
@@ -210,7 +238,7 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
         hp: 1,
         fireCooldownMs: 0,
       });
-    } else {
+    } else if (!droneUnlocked || roll < 0.8) {
       obstacles.push({
         x: WORLD_W + 20,
         y: PLAYER_MIN_Y + rand() * (WORLD_H - PLAYER_MIN_Y * 2 - 20),
@@ -219,6 +247,19 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
         kind: "turret",
         hp: 2,
         fireCooldownMs: 400 + rand() * 800,
+      });
+    } else {
+      const baseY = PLAYER_MIN_Y + rand() * (WORLD_H - PLAYER_MIN_Y * 2 - 18);
+      obstacles.push({
+        x: WORLD_W + 20,
+        y: baseY,
+        w: 18,
+        h: 18,
+        kind: "drone",
+        hp: 1,
+        fireCooldownMs: 300 + rand() * 500,
+        baseY,
+        phase: rand() * Math.PI * 2,
       });
     }
     if (rand() < 0.4) {
@@ -233,14 +274,15 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
   for (const o of obstacles) {
     let hp = o.hp;
     let hitBulletIdx = -1;
-    if (o.kind === "turret" && hp > 0) {
+    if (o.kind !== "rack" && hp > 0) {
       hitBulletIdx = bullets.findIndex((b) => rectsOverlap(b.x - 3, b.y - 3, 6, 6, o.x, o.y, o.w, o.h));
     }
     if (hitBulletIdx >= 0) {
       bullets.splice(hitBulletIdx, 1);
       hp -= 1;
       if (hp <= 0) {
-        score += 150;
+        score += o.kind === "drone" ? 200 : 150;
+        events.push({ type: "obstacleDestroyed", x: o.x, y: o.y });
         continue; // destroyed, drop it
       }
     }
@@ -259,6 +301,7 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
       lives -= 1;
       invulnMs = INVULN_MS;
       lastHit = hitObstacle ? hitObstacle.kind : "enemyBullet";
+      events.push({ type: "playerHit", x: px, y: playerY });
       if (hitBulletIdx >= 0) enemyBullets.splice(hitBulletIdx, 1);
     }
   }
@@ -277,7 +320,7 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
 
   return {
     status,
-    t: state.t + dtMs,
+    t,
     rngState,
     playerY,
     playerVy: vy,
@@ -293,6 +336,7 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
     nextSpawnAtDistance,
     invulnMs,
     lastHit,
+    events,
   };
 }
 
@@ -302,25 +346,18 @@ export function togglePause(state: GameState): GameState {
   return state;
 }
 
-const HIGH_SCORE_KEY = "outfitterEasterHighScore";
-
-export function readHighScore(): number {
-  try {
-    const raw = localStorage.getItem(HIGH_SCORE_KEY);
-    const n = raw ? Number.parseInt(raw, 10) : 0;
-    return Number.isFinite(n) && n >= 0 ? n : 0;
-  } catch {
-    return 0;
-  }
+/** Deterministic "bot" input for the title-screen attract-mode demo: a slow figure-eight-ish
+ * weave with occasional firing, driven purely by elapsed time so the same seed always produces the
+ * same demo run (no engine coupling needed beyond the timestamp already in GameState.t). Pure and
+ * unit-testable on its own (see test/dreadnought-engine.test.ts). */
+export function attractInput(t: number): GameInput {
+  const wave = Math.sin(t * 0.0013);
+  return {
+    up: wave > 0.25,
+    down: wave < -0.25,
+    firing: Math.sin(t * 0.006) > 0.2,
+  };
 }
 
-export function writeHighScoreIfBetter(score: number): number {
-  const current = readHighScore();
-  if (score <= current) return current;
-  try {
-    localStorage.setItem(HIGH_SCORE_KEY, String(Math.floor(score)));
-  } catch {
-    // best-effort only, matches floppy-sound.ts / ThemeToggle.tsx convention
-  }
-  return score;
-}
+// High-score persistence now lives in ../shared/highscore.ts (one per-game localStorage key, read
+// by the menu too) -- DreadnoughtRun.tsx imports readHighScore/writeHighScoreIfBetter from there.

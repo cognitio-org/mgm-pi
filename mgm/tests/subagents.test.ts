@@ -5,7 +5,7 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,7 +25,8 @@ describe("subagent models", () => {
     assert.notEqual(settings.subagents.defaultModel, chat);
   });
 
-  test("the package resolves each built-in role to the intended model", async () => {
+  const agentsModule = join(root, ".pi", "npm", "node_modules", "pi-subagents", "src", "agents", "agents.js");
+  test("the package resolves each built-in role to the intended model", { skip: !existsSync(agentsModule) && "extension packages not installed (npm ci in .pi/npm)" }, async () => {
     process.env.PI_CODING_AGENT_DIR = join(root, ".pi");
     const { discoverAgents } = await import("../.pi/npm/node_modules/pi-subagents/src/agents/agents.js");
     const found: any = discoverAgents(root, "both", "litellm");

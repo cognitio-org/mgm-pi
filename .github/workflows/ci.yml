@@ -14,11 +14,13 @@ jobs:
       - uses: actions/setup-node@v5
         with: { node-version: 24, cache: npm, cache-dependency-path: mgm/package-lock.json }
       - run: npm ci
-      - name: Unit and extension harness tests
-        run: npm test
+      # Before the tests: some of them run the extension packages' own code (subagent model
+      # resolution), and a check that the lockfile installs belongs before anything depends on it.
       - name: Extension packages install from the lockfile
         run: npm ci --legacy-peer-deps --omit=dev --ignore-scripts --no-audit --no-fund
         working-directory: mgm/.pi/npm
+      - name: Unit and extension harness tests
+        run: npm test
       - name: Offline smoke — the agent starts and lists its providers
         run: |
           printf 'LITELLM_AGENT_KEY=test\nOPENROUTER_API_KEY=test\n' > .env

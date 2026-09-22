@@ -28,6 +28,9 @@ jobs:
       - uses: actions/setup-node@v5
         with: { node-version: 24, cache: npm, cache-dependency-path: mgm/package-lock.json }
       - run: npm ci
+      - name: Extension packages install from the lockfile
+        run: npm ci --legacy-peer-deps --omit=dev --ignore-scripts --no-audit --no-fund
+        working-directory: mgm/.pi/npm
       - run: npm test
   live:
     # Real calls to the router (< $0.01). Skips itself when the LITELLM_CI_KEY secret is absent.

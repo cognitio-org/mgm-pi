@@ -1,0 +1,60 @@
+outfitter/packages/api/src/auth.ts
+  s_e60c198231e35c::t_e57d6d0323dd3d 73,82-85
+  s_e60c198231e35c::t_d3c05d3dc83862 36,74-75
+outfitter/packages/web/src/pages/TokensPage.tsx
+  s_e60c198231e35c::t_259084bef961a4 153,166-169,171-174
+  s_e60c198231e35c::t_da653c74affbe6 170
+outfitter/packages/api/src/routes/operator.ts
+  s_e60c198231e35c::t_d3c05d3dc83862 14-15,179-191
+  s_e60c198231e35c::t_672af36d569b8e 192
+outfitter/packages/web/src/api/client.ts
+  s_e60c198231e35c::t_259084bef961a4 83-94,226-227
+  s_e60c198231e35c::t_ce23dddf691171 228-229
+outfitter/packages/api/test/token-revoke.test.ts
+  s_e60c198231e35c::t_99d3a0a53e2d7e 1-266
+outfitter/packages/api/src/store/mongo.ts
+  s_e60c198231e35c::t_36142a8738006d 27,348-370
+outfitter/packages/api/src/routes/tokens.ts
+  s_e60c198231e35c::t_259084bef961a4 10,15-16,19
+  s_e60c198231e35c::t_e57d6d0323dd3d 17,44-45,53
+outfitter/packages/api/src/store/types.ts
+  s_e60c198231e35c::t_bd26e7471ee62a 216-219,222-226,236-238
+outfitter/packages/web/src/pages/SettingsPage.tsx
+  s_e60c198231e35c::t_5ea3169b94fd5b 2-9,12-14,150-272,362-364
+outfitter/deploy/README.md
+  s_e60c198231e35c::t_66e1b32da510df 165-176
+outfitter/docs/reports/api-tokens.md
+  s_e60c198231e35c::t_9a67fcb00a3da8 104-106
+outfitter/packages/api/src/tokens.ts
+  s_e60c198231e35c::t_36142a8738006d 7,11-14,31-62
+outfitter/packages/api/test/operator.test.ts
+  s_e60c198231e35c::t_bcd5614e7ff32b 64
+outfitter/packages/api/src/store/memory.ts
+  s_e60c198231e35c::t_9bd37b71a498a6 4
+  s_e60c198231e35c::t_36142a8738006d 26,280-288
+  s_2209f22f830d7f::t_4d7256b7e45de8 289
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "a1ba6290571341c6aef16d441f23453c0416653d",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_e60c198231e35c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "08aeabd8-483e-47c5-a371-a550240c5d37",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

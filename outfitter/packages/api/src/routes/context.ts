@@ -2,7 +2,7 @@ import type { Store } from "../store/types.ts";
 import type { Config } from "../config.ts";
 import type { RunManager } from "../runs.ts";
 import type { AgentLink } from "../agentlink.ts";
-import type { SseHub } from "../sse.ts";
+import type { SseHub, SsePoller } from "../sse.ts";
 import type { LaptopProbe } from "../laptop.ts";
 import type { ProviderStatusService } from "../providers-status.ts";
 import type { ModelsService } from "../models.ts";
@@ -16,6 +16,10 @@ export interface RouteContext {
   runs: RunManager;
   agentLink: AgentLink;
   sse: SseHub;
+  /** Bug 2 (docs/reports/cloud-fixes.md): keeps GET /api/sessions/:id/stream live in a split
+   * web/link deployment by polling the shared store instead of relying only on AgentLink's
+   * in-process publish (see sse.ts's SsePoller doc comment). */
+  ssePoller: SsePoller;
   laptopProbe: LaptopProbe;
   providerStatus: ProviderStatusService;
   modelsService: ModelsService;

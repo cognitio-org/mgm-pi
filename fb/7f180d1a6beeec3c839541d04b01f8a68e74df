@@ -1,0 +1,40 @@
+outfitter/packages/agentd/test/git-repo.test.ts
+  s_948fdca0d0c6f1::t_4d21a494f02c7d 10,210-236
+outfitter/docs/protocol.md
+  s_948fdca0d0c6f1::t_548ec2b4f593fc 167-170
+outfitter/packages/agentd/src/git.ts
+  s_948fdca0d0c6f1::t_3d180f09e70ec7 39-45,48,361-363,365,387,389-392,395,401-405,436-437,441-447,450,461,485-486,488-490,493-494
+  s_948fdca0d0c6f1::t_87ec7fd1a83e1d 275
+  s_948fdca0d0c6f1::t_1eec8de93fcd05 75,78-86,94,99-103,144,188-190,196,231-238,278-282,285-295,306-312,319-320,322-326,345-346,351
+outfitter/packages/agentd/src/run.ts
+  s_948fdca0d0c6f1::t_548ec2b4f593fc 10,357-358
+outfitter/packages/agentd/src/main.ts
+  s_948fdca0d0c6f1::t_548ec2b4f593fc 92-99
+outfitter/packages/api/src/agentlink.ts
+  s_948fdca0d0c6f1::t_548ec2b4f593fc 89-92,96-97,100-101
+outfitter/packages/api/src/store/types.ts
+  s_948fdca0d0c6f1::t_548ec2b4f593fc 241-242
+outfitter/packages/agentd/test/git.test.ts
+  s_948fdca0d0c6f1::t_fc3b10c64b61d7 3,109-112,114-119,124,145,155,166,177,180
+  s_948fdca0d0c6f1::t_3acfc9faf00a98 252
+  s_948fdca0d0c6f1::t_87ec7fd1a83e1d 14,123,231-233,237
+  s_948fdca0d0c6f1::t_09f4e636363d66 113,120,144,173-174,178,186,190-217,224-227,229,241
+outfitter/packages/api/test/agentlink.test.ts
+  s_948fdca0d0c6f1::t_548ec2b4f593fc 283,290-291,755-757,760,762-763
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "fb7f180d1a6beeec3c839541d04b01f8a68e74df",
+  "prompts": {},
+  "sessions": {
+    "s_948fdca0d0c6f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "913313fa-a17d-40df-81d2-892eab8604d3",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

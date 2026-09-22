@@ -37,8 +37,22 @@ const H_ACCEL = 113; // px/s^2 lateral thrust
 const H_DRAG = 2.4; // 1/s exponential damping on vx when no lateral input (keeps it from feeling icy)
 const V_DRAG = 0.5; // 1/s mild damping on vy so hovering settles instead of oscillating forever
 const MAX_VX = 68; // px/s
-const MAX_VY = 68; // px/s
-export const LANDING_SAFE_VY = 23; // px/s -- touch down slower than this or it's a crash
+const MAX_VY = 68; // px/s, climb speed cap
+// --- landing (playtest round: the old single 23 px/s threshold was unlandable for a human) --------
+// Three bands by touchdown speed: <= LANDING_SAFE_VY is a clean landing; up to CRASH_VY is a HARD
+// landing (bounce, shake, fuel penalty, no life lost); only above CRASH_VY -- a dive with "down"
+// held -- is a crash. See docs/reports/games.md ("Landing rework") for how these were tuned.
+export const LANDING_SAFE_VY = 46; // px/s
+export const CRASH_VY = 72; // px/s
+export const MAX_FALL_VY = 84; // px/s, falling speed cap (above CRASH_VY, so a dive can still crash)
+export const HARD_LANDING_FUEL_COST = 10; // fuel % lost on a hard landing
+const HARD_LANDING_BOUNCE = 0.3; // fraction of touchdown speed returned upward on a hard landing
+// Ground effect: within GROUND_EFFECT_H px of the ground, while the player isn't holding "down", the
+// rotor wash pushes back up in proportion to descent speed and closeness -- a gentle automatic flare,
+// so simply letting go of "up" over the landing zone settles the chopper instead of slamming it.
+export const GROUND_EFFECT_H = 12; // px
+export const GROUND_EFFECT_K = 7; // 1/s at the ground: upward accel = K * vy * (1 - height/H)
+const GROUND_EFFECT_DIVE_FACTOR = 0.4; // share of the cushion left while "down" is held
 const TILT_MAX = 0.5; // radians, cosmetic lean toward direction of travel
 const CAMERA_LEAD = 18; // px, how far ahead of the player the camera looks in its direction of travel
 // While the player is still within this many px of the home pad's right edge, the camera stays
@@ -63,6 +77,17 @@ const FIRE_SPREAD_STARTER = 0.05; // intensity a freshly-ignited neighbour start
 const LEVEL_INTRO_MS = 2200;
 const HOME_PAD_W = 48;
 const FARM_PAD_W = 63;
+// The rescue zone: a marked strip of level ground right beside the burning building (left of it,
+// out of the fire). Landing here boards Floppies exactly like landing on the farm pad -- they run
+// out to the chopper -- and it's wider than the chopper by a comfortable margin, so a player doesn't
+// have to thread a landing between flames.
+export const FARM_ZONE_W = 44;
+const FARM_ZONE_GAP = 2;
+
+/** Left edge of the rescue landing zone beside the farm. */
+export function farmZoneX(state: { farmX: number }): number {
+  return state.farmX - FARM_ZONE_GAP - FARM_ZONE_W;
+}
 
 export type GameStatus = "playing" | "paused" | "gameover" | "levelIntro";
 
@@ -142,11 +167,17 @@ export interface GameState {
   lastEventMs: number;
   boardCooldownMs: number;
   debrisSpawnCooldownMs: number;
+  /** First-game tutorial: the fire doesn't grow or spread, fuel doesn't drain, no debris falls. */
+  tutorial: boolean;
   events: GameEvent[];
 }
 
 export interface GameEvent {
-  type: "boarded" | "delivered" | "crash" | "floppyLost" | "levelComplete";
+  type: "boarded" | "delivered" | "crash" | "floppyLost" | "levelComplete" | "hardLanding";
+  /** hardLanding: the touchdown speed in px/s. */
+  speed?: number;
+  /** boarded: where the Floppy was standing (the renderer shows it running to the chopper). */
+  fromX?: number;
   count?: number;
   x?: number;
   y?: number;
@@ -229,6 +260,7 @@ export function createLevelState(
   seed: number,
   level: number,
   carryOver?: { score: number; lives: number; fuel: number; onBoard: number },
+  opts: { tutorial?: boolean } = {},
 ): GameState {
   const levelW = levelWidth(level);
   const homeX = 15;
@@ -280,12 +312,51 @@ export function createLevelState(
     lastEventMs: 0,
     boardCooldownMs: 0,
     debrisSpawnCooldownMs: 2200,
+    tutorial: opts.tutorial ?? false,
     events: [],
   };
 }
 
-export function createInitialState(seed: number): GameState {
-  return createLevelState(seed, 1);
+export function createInitialState(seed: number, opts: { tutorial?: boolean } = {}): GameState {
+  return createLevelState(seed, 1, undefined, opts);
+}
+
+/** One step of vertical velocity: gravity, thrust, drag, the ground-effect cushion, the caps.
+ * `height` is the gap between the skids and the ground. Shared by step() and the landing predictor. */
+function verticalAccel(vy: number, height: number, input: { up: boolean; down: boolean }, hasFuel: boolean, dt: number): number {
+  vy += GRAVITY * dt;
+  if (hasFuel && input.up) vy -= THRUST_ACCEL * dt;
+  if (hasFuel && input.down) vy += DOWN_ACCEL * dt;
+  vy *= Math.max(0, 1 - V_DRAG * dt);
+  // ground effect: an automatic flare near the ground -- still 40% of it while "down" is held, so
+  // a nervous tap of down isn't instantly fatal, but a full-speed dive still arrives above CRASH_VY
+  const h = Math.max(0, height);
+  if (vy > 0 && h < GROUND_EFFECT_H) {
+    const k = input.down ? GROUND_EFFECT_K * GROUND_EFFECT_DIVE_FACTOR : GROUND_EFFECT_K;
+    vy -= k * vy * (1 - h / GROUND_EFFECT_H) * dt;
+  }
+  return clamp(vy, -MAX_VY, MAX_FALL_VY);
+}
+
+/** The speed the chopper would touch down at if the player kept `input` held (up/down only) from
+ * here -- what the landing gauge shows. Null if it wouldn't reach the ground within 3s. */
+export function predictTouchdownVy(state: GameState, input: { up: boolean; down: boolean }): number | null {
+  let vy = state.playerVy;
+  let height = GROUND_Y - (state.playerY + PLAYER_H);
+  const dt = 1 / 60;
+  for (let i = 0; i < 180; i++) {
+    vy = verticalAccel(vy, height, input, state.fuel > 0, dt);
+    height -= vy * dt;
+    if (height <= 0) return vy;
+  }
+  return null;
+}
+
+/** Which band a touchdown at `vy` px/s falls in (used by the renderer's vertical-speed gauge). */
+export function landingBand(vy: number): "safe" | "hard" | "crash" {
+  if (vy <= LANDING_SAFE_VY) return "safe";
+  if (vy <= CRASH_VY) return "hard";
+  return "crash";
 }
 
 function isOverPad(x: number, w: number, padX: number, padW: number): boolean {
@@ -329,6 +400,9 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
 
   const overHome = isOverPad(state.playerX, PLAYER_W, state.homeX, HOME_PAD_W);
   const overFarm = isOverPad(state.playerX, PLAYER_W, state.farmX, FARM_PAD_W);
+  // "over the zone" = the chopper's centre is within it (it's a marked strip, generous on purpose)
+  const zoneX = farmZoneX(state);
+  const overFarmZone = state.playerX + PLAYER_W / 2 >= zoneX && state.playerX + PLAYER_W / 2 <= zoneX + FARM_ZONE_W;
   const hasFuel = state.fuel > 0;
 
   // --- player physics: thrust, gravity, momentum, lateral drag ---
@@ -339,18 +413,15 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
   else vx *= Math.max(0, 1 - H_DRAG * dt);
   vx = clamp(vx, -MAX_VX, MAX_VX);
 
-  vy += GRAVITY * dt;
-  if (hasFuel && input.up) vy -= THRUST_ACCEL * dt;
-  if (hasFuel && input.down) vy += DOWN_ACCEL * dt;
-  vy *= Math.max(0, 1 - V_DRAG * dt);
-  vy = clamp(vy, -MAX_VY, MAX_VY);
+  vy = verticalAccel(vy, GROUND_Y - (state.playerY + PLAYER_H), input, hasFuel, dt);
 
   let playerX = clamp(state.playerX + vx * dt, 0, state.levelW - PLAYER_W);
   if (playerX === 0 || playerX === state.levelW - PLAYER_W) vx = 0;
   let playerY = state.playerY + vy * dt;
   const willTouchGround = playerY + PLAYER_H >= GROUND_Y;
+  let hardLandingFuel = 0;
   if (willTouchGround) {
-    if (vy > LANDING_SAFE_VY) {
+    if (vy > CRASH_VY) {
       // crash landing: lose a life, respawn on the home pad
       const lives = state.lives - 1;
       events.push({ type: "crash", x: playerX, y: GROUND_Y - PLAYER_H });
@@ -381,7 +452,14 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
       };
     }
     playerY = GROUND_Y - PLAYER_H;
-    vy = 0;
+    if (vy > LANDING_SAFE_VY) {
+      // hard landing: bounce back up, cost some fuel, keep the life
+      events.push({ type: "hardLanding", speed: vy, x: playerX, y: playerY });
+      hardLandingFuel = HARD_LANDING_FUEL_COST;
+      vy = -vy * HARD_LANDING_BOUNCE;
+    } else {
+      vy = 0;
+    }
   }
   if (playerY <= 0) vy = Math.max(0, vy); // ceiling: stop upward velocity so gravity can resume immediately
   playerY = clamp(playerY, 0, GROUND_Y - PLAYER_H);
@@ -399,13 +477,14 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
   const landedAtHome = isLanded(playerY, vy) && overHome;
   let fuel = state.fuel;
   if (landedAtHome) fuel = clamp(fuel + FUEL_REFILL_PER_SEC * dt, 0, FUEL_MAX);
-  else fuel = clamp(fuel - FUEL_DRAIN_PER_SEC * dt, 0, FUEL_MAX);
+  else if (!state.tutorial) fuel = clamp(fuel - FUEL_DRAIN_PER_SEC * dt, 0, FUEL_MAX);
+  fuel = clamp(fuel - hardLandingFuel, 0, FUEL_MAX);
 
-  // --- fire spread ---
+  // --- fire spread (frozen during the tutorial) ---
   const fireCells = state.fireCells.map((c) => ({ ...c }));
   for (let i = 0; i < fireCells.length; i++) {
     const cell = fireCells[i]!;
-    if (cell.intensity <= 0) continue;
+    if (cell.intensity <= 0 || state.tutorial) continue;
     cell.intensity = Math.min(1, cell.intensity + FIRE_GROW_PER_SEC * dt);
     if (cell.intensity >= FIRE_IGNITE_THRESHOLD) {
       const left = fireCells[i - 1];
@@ -429,18 +508,20 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
   // --- boarding (landed at farm, capacity available, floppies waiting) ---
   let onBoard = state.onBoard;
   let boardCooldownMs = Math.max(0, state.boardCooldownMs - dtMs);
-  const landedAtFarm = isLanded(playerY, vy) && overFarm;
+  const landedAtFarm = isLanded(playerY, vy) && (overFarm || overFarmZone);
   let boarded = 0;
+  let boardedFromX: number | undefined;
   if (landedAtFarm && onBoard < CAPACITY && boardCooldownMs === 0) {
     const idx = floppies.findIndex((f) => f.alive && !f.boarded);
     if (idx >= 0) {
+      boardedFromX = floppies[idx]!.x;
       floppies[idx] = { ...floppies[idx]!, boarded: true };
       onBoard += 1;
       boardCooldownMs = BOARD_INTERVAL_MS;
       boarded += 1;
     }
   }
-  if (boarded > 0) events.push({ type: "boarded", count: boarded, x: playerX, y: playerY });
+  if (boarded > 0) events.push({ type: "boarded", count: boarded, x: playerX, y: playerY, fromX: boardedFromX });
 
   // --- delivery (landed at home with a load) ---
   let score = state.score;
@@ -457,8 +538,9 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
   let debrisSpawnCooldownMs = state.debrisSpawnCooldownMs - dtMs;
   const debris = state.debris.map((d) => ({ ...d, y: d.y + d.vy * dt })).filter((d) => d.y < GROUND_Y + 15);
   if (debrisSpawnCooldownMs <= 0) {
-    const spawnX = state.farmX - 38 + rand() * (FARM_PAD_W + 75);
-    debris.push({ x: clamp(spawnX, 0, state.levelW), y: -5, vy: 32 + state.level * 4 });
+    // debris comes off the burning building (and just past it), not onto the rescue zone beside it
+    const spawnX = state.farmX - 4 + rand() * (FARM_PAD_W + 40);
+    if (!state.tutorial) debris.push({ x: clamp(spawnX, 0, state.levelW), y: -5, vy: 32 + state.level * 4 });
     debrisSpawnCooldownMs = Math.max(700, 2400 - state.level * 180);
   }
 
@@ -557,6 +639,7 @@ export function step(state: GameState, input: GameInput, dtMs: number): GameStat
     lastEventMs: events.length > 0 ? t : state.lastEventMs,
     boardCooldownMs,
     debrisSpawnCooldownMs,
+    tutorial: state.tutorial,
     events,
   };
 }
@@ -574,14 +657,13 @@ export function playerTilt(vx: number): number {
  * look alive and legible behind the title card. */
 export function attractInput(state: GameState): GameInput {
   const stillToRescue = state.floppies.some((f) => f.alive && !f.boarded);
-  // Land on the coolest stretch of the farm pad (nearest spot whose cells aren't close to fully
-  // lit), not blindly dead-centre -- otherwise the demo mostly shows the chopper crashing into the
-  // fire. No safe spot left: take whoever is aboard home.
-  const spot = safeFarmSpot(state);
-  const wantsFarm = state.onBoard < CAPACITY && stillToRescue && spot !== null;
-  const targetX = wantsFarm && spot !== null ? spot : state.homeX + HOME_PAD_W / 2 - PLAYER_W / 2;
+  // Land in the marked rescue zone beside the farm (out of the fire), then take them home.
+  const wantsFarm = state.onBoard < CAPACITY && stillToRescue;
+  const targetX = wantsFarm
+    ? farmZoneX(state) + FARM_ZONE_W / 2 - PLAYER_W / 2
+    : state.homeX + HOME_PAD_W / 2 - PLAYER_W / 2;
   const dx = targetX - state.playerX;
-  const closeX = Math.abs(dx) < (wantsFarm ? 8 : 18);
+  const closeX = Math.abs(dx) < 10;
   let left = dx < -5;
   let right = dx > 5;
   // sidestep a piece of falling debris that's about to reach us
@@ -606,34 +688,12 @@ export function attractInput(state: GameState): GameInput {
   if (!closeX) {
     up = state.playerY > cruiseY;
     down = state.playerY < cruiseY - 8 && state.playerVy < 10;
-  } else if (groundClearance > 18) {
-    down = state.playerVy < LANDING_SAFE_VY * 0.85; // brisk descent, still under the safe speed
-  } else {
-    up = state.playerVy > 14; // cushion the touchdown
+  } else if (groundClearance > GROUND_EFFECT_H) {
+    // the technique the tutorial teaches: ease off "up", tapping it to keep the descent moderate,
+    // then let the ground effect flare the last few px
+    up = state.playerVy > LANDING_SAFE_VY * 0.7;
   }
   return { up, down, left, right };
-}
-
-/** Hottest fire cell under a chopper parked at x. */
-function padHeat(state: GameState, x: number): number {
-  let heat = 0;
-  for (const c of state.fireCells) if (x + PLAYER_W > c.x && x < c.x + c.w) heat = Math.max(heat, c.intensity);
-  return heat;
-}
-
-/** Nearest landing x on the farm pad whose cells are still below 0.8 intensity, or null. */
-function safeFarmSpot(state: GameState): number | null {
-  let best: number | null = null;
-  let bestD = Infinity;
-  for (let x = state.farmX; x <= state.farmX + FARM_PAD_W - PLAYER_W; x += 3) {
-    if (padHeat(state, x) >= 0.8) continue;
-    const d = Math.abs(x - state.playerX);
-    if (d < bestD) {
-      best = x;
-      bestD = d;
-    }
-  }
-  return best;
 }
 
 export { HOME_PAD_W, FARM_PAD_W };

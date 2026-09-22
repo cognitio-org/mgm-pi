@@ -38,7 +38,15 @@ import {
   startRotor,
   stopRotor,
 } from "./sound.ts";
-import { drawRescue } from "./render.ts";
+import { drawRescue, RUNNER_MS, type Runner } from "./render.ts";
+import {
+  markTutorialSeen,
+  nextTutorialStep,
+  tutorialIndex,
+  tutorialPrompt,
+  tutorialSeen,
+  type TutorialStep,
+} from "./tutorial.ts";
 import { readHighScore, writeHighScoreIfBetter } from "../shared/highscore.ts";
 import { usesReducedMotion } from "../shared/motion.ts";
 import { useFixedStepLoop } from "../shared/fixedStep.ts";
@@ -82,6 +90,10 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
   const crashHoldRef = useRef<{ cameraX: number; remainingMs: number } | null>(null);
   const lastPauseButtonRef = useRef(false);
   const wasAirborneRef = useRef(false);
+  const heldRef = useRef<{ up: boolean; down: boolean }>({ up: false, down: false });
+  const runnersRef = useRef<Runner[]>([]);
+  // first-game tutorial: current prompt + how long the final prompt has been up (null = no tutorial)
+  const tutorialRef = useRef<{ step: TutorialStep; finishMs: number } | null>(null);
   const [, forceRender] = useState(0);
   const [highScore, setHighScore] = useState(() => readHighScore("rescue"));
   const reducedMotion = useMemo(() => usesReducedMotion(), []);
@@ -93,6 +105,14 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
   // screenshotted with them visible for review/documentation.
   const forceTouch = useMemo(() => readQueryFlag("touch"), []);
   const { scale, viewW } = usePixelScale(WORLD_W, WORLD_H);
+  const touchWording = useMemo(() => {
+    if (forceTouch) return true;
+    try {
+      return window.matchMedia("(pointer: coarse)").matches;
+    } catch {
+      return false;
+    }
+  }, [forceTouch]);
 
   const exit = useCallback(() => {
     stopRotor();
@@ -106,10 +126,13 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
     popupsRef.current = [];
     flashRef.current = null;
     shakeRef.current = null;
+    runnersRef.current = [];
   }
 
-  function startGame() {
-    stateRef.current = createInitialState(gameSeed());
+  /** `tutorial` defaults to "first game on this browser" (never in the ?demo=1 autopilot). */
+  function startGame(tutorial: boolean = !autoDemo && !tutorialSeen()) {
+    stateRef.current = createInitialState(gameSeed(), { tutorial });
+    tutorialRef.current = tutorial ? { step: "lift", finishMs: 0 } : null;
     resetEffects();
     setScreen("game");
   }
@@ -168,6 +191,14 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
       const y = (ev.y ?? stateRef.current.playerY) + 7;
       if (ev.type === "boarded") {
         if (!silent) playBoard();
+        if (ev.fromX !== undefined) {
+          runnersRef.current = runnersRef.current.concat({
+            fromX: ev.fromX,
+            toX: x,
+            ageMs: 0,
+            color: stateRef.current.onBoard - 1,
+          });
+        }
         particlesRef.current = particlesRef.current.concat(spawnSparkle(x, y + 4, reducedMotion ? 2 : 7, C.lightGreen));
       } else if (ev.type === "delivered") {
         const amount = (ev.count ?? 0) * 100 + (ev.count === CAPACITY ? 400 : 0);
@@ -178,6 +209,12 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
         // pop above the Disk Box roofline, clear of its white DISK BOX plate
         popupsRef.current = popupsRef.current.concat(spawnTextPopup(x, y - 30, `+${amount}`, C.yellow));
         particlesRef.current = particlesRef.current.concat(spawnSparkle(x, y, reducedMotion ? 3 : 12, C.yellow));
+      } else if (ev.type === "hardLanding") {
+        // bumpy but survivable: a thud, a jolt, dust off the skids and a warning pop
+        if (!silent) playThud();
+        popupsRef.current = popupsRef.current.concat(spawnTextPopup(x, y - 18, "HARD LANDING", C.orange));
+        particlesRef.current = particlesRef.current.concat(spawnSparkle(x, GROUND_Y - 1, reducedMotion ? 2 : 8, C.lightGrey));
+        if (!reducedMotion) shakeRef.current = triggerShake(3);
       } else if (ev.type === "crash") {
         if (!silent) playCrash();
         blastsRef.current = blastsRef.current.concat(spawnBlast(x, y, reducedMotion ? 1 : 2));
@@ -207,6 +244,9 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
     popupsRef.current = stepTextPopups(popupsRef.current, dtMs);
     shakeRef.current = stepShake(shakeRef.current, dtMs);
     flashRef.current = stepFlash(flashRef.current, dtMs);
+    runnersRef.current = runnersRef.current
+      .map((r) => ({ ...r, ageMs: r.ageMs + dtMs }))
+      .filter((r) => r.ageMs < RUNNER_MS);
     const vx = stateRef.current.playerVx;
     if (vx > 4) facingRef.current = 1;
     else if (vx < -4) facingRef.current = -1;
@@ -218,6 +258,7 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
       if (screen === "title") {
         const before = stateRef.current;
         const botInput = attractInput(before);
+        heldRef.current = { up: botInput.up, down: botInput.down };
         let after = step(before, botInput, dtMs);
         if (after.status === "gameover") after = createInitialState((Date.now() + before.t) & 0xffffffff);
         stateRef.current = after;
@@ -244,10 +285,23 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
       }
       lastPauseButtonRef.current = gpButtons.pause;
 
+      heldRef.current = { up: merged.up, down: merged.down };
       const before = stateRef.current;
       const after = step(before, merged, dtMs);
       stateRef.current = after;
       stepEffects(dtMs, before, after);
+
+      const tut = tutorialRef.current;
+      if (tut && after.status !== "paused") {
+        const finishMs = tut.step === "finish" ? tut.finishMs + dtMs : 0;
+        const next = nextTutorialStep(tut.step, after, after.events, finishMs);
+        if (next === "done") {
+          markTutorialSeen();
+          tutorialRef.current = null;
+        } else {
+          tutorialRef.current = { step: next, finishMs: next === "finish" ? finishMs : 0 };
+        }
+      }
 
       if (after.status === "playing" || after.status === "levelIntro") {
         const airborne = after.playerY + 14 < GROUND_Y - 1;
@@ -279,6 +333,8 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
       highScore,
       facing: facingRef.current,
       cameraXOverride: crashHoldRef.current?.cameraX,
+      held: heldRef.current,
+      runners: runnersRef.current,
     });
     forceRender((n) => (n + 1) % 1000000);
   }, [reducedMotion, screen, highScore, viewW]);
@@ -286,7 +342,7 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
 
   function restart() {
     stopRotor();
-    startGame();
+    startGame(false);
   }
 
   const s = stateRef.current;
@@ -348,12 +404,21 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
                 <div className="easter-title-overlay">
                   <p className="easter-title-name easter-sr-only">FLOPPY RESCUE</p>
                   <p className="easter-title-sub easter-sr-only">HI {highScore}</p>
-                  <button type="button" className="btn btn-primary" onClick={startGame}>
-                    Press start
-                  </button>
-                  <p className="easter-help">
-                    Arrows/WASD fly, land gently to board/unload, P pauses, Escape exits. Gamepad supported.
-                  </p>
+                  <p className="easter-story">The server farm is on fire. Fly your Floppies home.</p>
+                  <div className="easter-title-actions">
+                    <button type="button" className="btn btn-primary" onClick={() => startGame()}>
+                      Press start
+                    </button>
+                    <button type="button" className="btn" onClick={() => startGame(true)}>
+                      How to play
+                    </button>
+                  </div>
+                </div>
+              )}
+              {screen === "game" && tutorialRef.current && tutorialPrompt(tutorialRef.current.step, touchWording) && (
+                <div className="easter-tutorial" role="status" aria-live="polite">
+                  <span className="easter-tutorial-step">{tutorialIndex(tutorialRef.current.step)}/6</span>
+                  {tutorialPrompt(tutorialRef.current.step, touchWording)}
                 </div>
               )}
               {screen === "game" && status === "levelIntro" && (
@@ -362,6 +427,14 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
                 </div>
               )}
             </div>
+            {screen === "title" && (
+              // controls summary under the canvas (not over it), so the attract demo stays visible
+              <p className="easter-help easter-help-controls">
+                {touchWording
+                  ? "Hold LIFT to climb, drag the stick to fly. Land gently beside the farm, then on the home pad."
+                  : "↑ lift, ← → fly, let go of ↑ to land gently beside the farm, then on the home pad. P pauses, Esc exits."}
+              </p>
+            )}
             {screen === "game" && (
               // The score/fuel/lives HUD is drawn inside the canvas; this text copy is kept for
               // screen readers only.
@@ -422,7 +495,10 @@ export function FloppyRescue({ onClose }: FloppyRescueProps) {
               </div>
             )}
             {screen === "game" && (
-              <p className="easter-help">Arrows/WASD fly, land gently to board/unload, P pauses, Escape exits.</p>
+              <p className="easter-help">
+                Arrows/WASD fly. Land in the green zone beside the farm, then on the home pad. Watch the
+                gauge: green is safe. P pauses, Escape exits.
+              </p>
             )}
           </>
         )}

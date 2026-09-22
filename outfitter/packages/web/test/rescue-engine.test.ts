@@ -8,6 +8,13 @@ import {
   GROUND_Y,
   HOME_PAD_W,
   LANDING_SAFE_VY,
+  CRASH_VY,
+  MAX_FALL_VY,
+  HARD_LANDING_FUEL_COST,
+  GROUND_EFFECT_H,
+  landingBand,
+  farmZoneX,
+  FARM_ZONE_W,
   nextRandom,
   PLAYER_H,
   PLAYER_W,
@@ -100,7 +107,64 @@ describe("Floppy Rescue engine: landing rules", () => {
     expect(s.playerY + PLAYER_H).toBeCloseTo(GROUND_Y, 0);
   });
 
-  it("touching down too fast (above LANDING_SAFE_VY) is a crash: loses a life and respawns home", () => {
+  it("touching down between LANDING_SAFE_VY and CRASH_VY is a hard landing: bounce, fuel cost, no life lost", () => {
+    let s = playingState(1);
+    const vy = (LANDING_SAFE_VY + CRASH_VY) / 2;
+    s = { ...s, playerX: 150, playerY: GROUND_Y - PLAYER_H - 0.2, playerVy: vy, fuel: 80 };
+    const livesBefore = s.lives;
+    s = step(s, { ...NO_INPUT, down: true }, 16);
+    const ev = s.events.find((e) => e.type === "hardLanding");
+    expect(ev).toBeDefined();
+    expect(ev!.speed!).toBeGreaterThan(LANDING_SAFE_VY);
+    expect(s.events.some((e) => e.type === "crash")).toBe(false);
+    expect(s.lives).toBe(livesBefore);
+    expect(s.playerVy).toBeLessThan(0); // bounced
+    expect(s.fuel).toBeLessThanOrEqual(80 - HARD_LANDING_FUEL_COST + 0.1);
+  });
+
+  it("the bands are safe <= LANDING_SAFE_VY < hard <= CRASH_VY < crash, and a dive can still exceed CRASH_VY", () => {
+    expect(landingBand(LANDING_SAFE_VY)).toBe("safe");
+    expect(landingBand(LANDING_SAFE_VY + 1)).toBe("hard");
+    expect(landingBand(CRASH_VY)).toBe("hard");
+    expect(landingBand(CRASH_VY + 1)).toBe("crash");
+    expect(LANDING_SAFE_VY).toBeGreaterThanOrEqual(40); // forgiving: ~2x the original 23 px/s
+    expect(MAX_FALL_VY).toBeGreaterThan(CRASH_VY);
+  });
+
+  it("letting go of every key from high up settles safely thanks to the ground effect", () => {
+    let s = playingState(1);
+    s = { ...s, playerX: 150, playerY: GROUND_Y - PLAYER_H - 90, playerVy: 0 };
+    for (let i = 0; i < 600 && !(s.playerY + PLAYER_H >= GROUND_Y - 0.5 && s.playerVy === 0); i++) {
+      s = step(s, NO_INPUT, 1000 / 60);
+      expect(s.events.some((e) => e.type === "crash" || e.type === "hardLanding")).toBe(false);
+    }
+    expect(s.playerY + PLAYER_H).toBeCloseTo(GROUND_Y, 0);
+  });
+
+  it("ground effect: within GROUND_EFFECT_H of the ground, descent is slowed (less so while diving)", () => {
+    const base = playingState(1);
+    const at = (height: number, down: boolean) =>
+      step({ ...base, playerX: 150, playerY: GROUND_Y - PLAYER_H - height, playerVy: 40 }, { ...NO_INPUT, down }, 16)
+        .playerVy;
+    const high = at(GROUND_EFFECT_H + 20, false);
+    const low = at(2, false);
+    const lowDiving = at(2, true);
+    expect(low).toBeLessThan(high - 2);
+    expect(lowDiving).toBeGreaterThan(low);
+  });
+
+  it("holding down in a long dive is still a crash", () => {
+    let s = playingState(1);
+    s = { ...s, playerX: 150, playerY: GROUND_Y - PLAYER_H - 70, playerVy: 30 };
+    let crashed = false;
+    for (let i = 0; i < 300 && !crashed; i++) {
+      s = step(s, { ...NO_INPUT, down: true }, 1000 / 60);
+      crashed = s.events.some((e) => e.type === "crash");
+    }
+    expect(crashed).toBe(true);
+  });
+
+  it("touching down too fast (above CRASH_VY) is a crash: loses a life and respawns home", () => {
     let s = playingState(1);
     s = { ...s, playerY: GROUND_Y - 5, playerVy: LANDING_SAFE_VY + 200, playerX: 900 };
     const livesBefore = s.lives;
@@ -180,6 +244,28 @@ describe("Floppy Rescue engine: fire spread", () => {
     s = step(s, NO_INPUT, 16);
     expect(s.floppies[0]!.alive).toBe(false);
     expect(s.events.some((e) => e.type === "floppyLost")).toBe(true);
+  });
+});
+
+describe("Floppy Rescue engine: rescue zone and tutorial", () => {
+  it("landing in the marked zone beside the farm boards Floppies like the farm pad does", () => {
+    let s = playingState(3);
+    const x = farmZoneX(s) + FARM_ZONE_W / 2 - PLAYER_W / 2;
+    s = { ...s, playerX: x, playerY: GROUND_Y - PLAYER_H, playerVy: 0, onBoard: 0 };
+    for (let i = 0; i < 30; i++) s = step(s, NO_INPUT, 50);
+    expect(s.onBoard).toBeGreaterThan(0);
+    expect(farmZoneX(s) + FARM_ZONE_W).toBeLessThanOrEqual(s.farmX); // the zone is beside, not in, the fire
+  });
+
+  it("during the tutorial the fire doesn't grow or spread and fuel doesn't drain", () => {
+    let s = createLevelState(5, 1, undefined, { tutorial: true });
+    while (s.status === "levelIntro") s = step(s, NO_INPUT, 100);
+    s = { ...s, floppies: [], playerY: 40, fuel: 70 };
+    const before = s.fireCells.map((c) => c.intensity);
+    for (let i = 0; i < 100; i++) s = step(s, { ...NO_INPUT, up: s.playerY > 40 }, 50);
+    expect(s.fireCells.map((c) => c.intensity)).toEqual(before);
+    expect(s.fuel).toBeCloseTo(70, 5);
+    expect(s.debris.length).toBe(0);
   });
 });
 

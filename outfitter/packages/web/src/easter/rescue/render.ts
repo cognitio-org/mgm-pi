@@ -9,7 +9,25 @@
 // (wall, racks, roof fire, smoke, sparks, sign) -> Floppies -> ground fires -> hazards -> particles
 // -> helicopter -> score pops -> HUD.
 
-import { CAPACITY, FARM_PAD_W, GROUND_Y, HOME_PAD_W, playerTilt, WORLD_H, WORLD_W, type GameState } from "./engine.ts";
+import {
+  CAPACITY,
+  CRASH_VY,
+  FARM_PAD_W,
+  FARM_ZONE_W,
+  farmZoneX,
+  GROUND_Y,
+  HOME_PAD_W,
+  landingBand,
+  LANDING_SAFE_VY,
+  MAX_FALL_VY,
+  PLAYER_H,
+  PLAYER_W,
+  playerTilt,
+  predictTouchdownVy,
+  WORLD_H,
+  WORLD_W,
+  type GameState,
+} from "./engine.ts";
 import { C } from "../shared/palette.ts";
 import { drawText, drawTextChip, textWidth } from "../shared/font.ts";
 import { drawSprite, drawSpriteSheared, flashPalette, hash2, type Palette } from "../shared/pixelSprite.ts";
@@ -65,7 +83,19 @@ export interface RescueFrame {
   facing: 1 | -1;
   /** Engine-space camera to show instead of state.cameraX (held on a crash site briefly). */
   cameraXOverride?: number;
+  /** Vertical keys currently held, for the landing gauge's touchdown prediction. */
+  held: { up: boolean; down: boolean };
+  /** Floppies running from the farm to the chopper as they board. */
+  runners: Runner[];
 }
+
+export interface Runner {
+  fromX: number;
+  toX: number;
+  ageMs: number;
+  color: number;
+}
+export const RUNNER_MS = 420;
 
 const BAYER4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 function bayer(x: number, y: number): number {
@@ -360,7 +390,7 @@ function drawProps(ctx: CanvasRenderingContext2D, state: GameState, camX: number
     const wx = s * SLOT + (h % 7);
     if (wx < 0 || wx > state.levelW - 8) continue;
     if (wx > state.homeX - 16 && wx < state.homeX + HOME_PAD_W + 12) continue;
-    if (wx > state.farmX - 70 && wx < state.farmX + FARM_PAD_W + 10) continue;
+    if (wx > state.farmX - 110 && wx < state.farmX + FARM_PAD_W + 10) continue;
     const kind = (h >> 8) % 10;
     if (kind < 5) drawSprite(ctx, PINE_SPRITE, PINE_PALETTE, wx - 4, GROUND_Y - 12);
     else if (kind < 7) drawSprite(ctx, BUSH_SPRITE, PINE_PALETTE, wx - 3, GROUND_Y - 4);
@@ -542,6 +572,23 @@ function drawFarm(ctx: CanvasRenderingContext2D, state: GameState, t: number, re
   ctx.fillStyle = C.yellow;
   for (let x = fx + 1; x < fx + W - 2; x += 6) ctx.fillRect(x, GROUND_Y - 3, 3, 1);
 
+  // the rescue zone beside the building: a flat concrete slab with green corner marks and a
+  // painted H -- always visible, so "where do I land?" has an answer before any prompt appears
+  const zx = Math.round(farmZoneX(state));
+  probeW("farmZone", zx, GROUND_Y - 4, FARM_ZONE_W, 4);
+  ctx.fillStyle = C.black;
+  ctx.fillRect(zx - 1, GROUND_Y - 4, FARM_ZONE_W + 2, 5);
+  ctx.fillStyle = C.grey;
+  ctx.fillRect(zx, GROUND_Y - 3, FARM_ZONE_W, 3);
+  ctx.fillStyle = C.lightGrey;
+  ctx.fillRect(zx, GROUND_Y - 3, FARM_ZONE_W, 1);
+  ctx.fillStyle = C.lightGreen;
+  ctx.fillRect(zx, GROUND_Y - 3, 4, 1);
+  ctx.fillRect(zx + FARM_ZONE_W - 4, GROUND_Y - 3, 4, 1);
+  ctx.fillRect(zx + FARM_ZONE_W / 2 - 3, GROUND_Y - 2, 1, 2);
+  ctx.fillRect(zx + FARM_ZONE_W / 2 + 2, GROUND_Y - 2, 1, 2);
+  ctx.fillRect(zx + FARM_ZONE_W / 2 - 2, GROUND_Y - 2, 4, 1);
+
   // embers/sparks thrown up out of the roof fire
   if (!reducedMotion) {
     drawSparks(ctx, fx - 2, W + 4, wallTop - 6, t);
@@ -554,8 +601,8 @@ function drawFarm(ctx: CanvasRenderingContext2D, state: GameState, t: number, re
  * foreground layer (after the chopper) so nothing -- flames, smoke, the chopper climbing out --
  * ever covers its lettering. */
 function drawFarmSign(ctx: CanvasRenderingContext2D, state: GameState, t: number, reducedMotion: boolean): void {
-  const fx = Math.round(state.farmX);
-  const sx = fx - 62;
+  // left of the rescue zone, so the billboard never stands in the landing strip
+  const sx = Math.round(farmZoneX(state)) - 52;
   const sy = GROUND_Y - 40;
   ctx.fillStyle = C.black;
   ctx.fillRect(sx + 5, sy + 10, 3, GROUND_Y - sy - 10);
@@ -607,6 +654,106 @@ function drawHeli(ctx: CanvasRenderingContext2D, state: GameState, facing: 1 | -
   const tailDy = Math.round((tailCol - 16) * slope);
   const tail = TAIL_ROTOR_FRAMES[reducedMotion ? 0 : Math.floor(t / 60) % 2]!;
   drawSprite(ctx, tail, ROTOR_PALETTE, x + tailCol, py + 1 + tailDy);
+}
+
+// --- landing aids -------------------------------------------------------------------------------------
+interface LandingTarget {
+  x: number;
+  w: number;
+  /** Where the LAND HERE arrow points from (clear of the building behind the target). */
+  arrowY: number;
+}
+
+/** Where the player should land next, or null when they're already parked there / nothing to do:
+ * the rescue zone while Floppies are waiting and there's room aboard, else the home pad while
+ * carrying. */
+function landingTarget(state: GameState): LandingTarget | null {
+  if (state.status !== "playing") return null;
+  const landed = state.playerY + PLAYER_H >= GROUND_Y - 1;
+  const cx = state.playerX + PLAYER_W / 2;
+  const waiting = state.floppies.some((fl) => fl.alive && !fl.boarded);
+  let tgt: LandingTarget | null = null;
+  if (state.onBoard < CAPACITY && waiting) tgt = { x: farmZoneX(state), w: FARM_ZONE_W, arrowY: GROUND_Y - 34 };
+  else if (state.onBoard > 0) tgt = { x: state.homeX, w: HOME_PAD_W, arrowY: GROUND_Y - 62 };
+  if (tgt && landed && cx >= tgt.x && cx <= tgt.x + tgt.w) return null;
+  return tgt;
+}
+
+/** A dashed green box standing on the target, marching unless reduced motion. */
+function drawLandingZone(ctx: CanvasRenderingContext2D, z: LandingTarget, t: number, reducedMotion: boolean): void {
+  const x0 = Math.round(z.x);
+  const top = GROUND_Y - 20;
+  const march = reducedMotion ? 0 : Math.floor(t / 120) % 4;
+  ctx.fillStyle = C.lightGreen;
+  for (let x = x0; x < x0 + z.w; x++) {
+    if ((x - x0 + march) % 4 < 2) {
+      ctx.fillRect(x, top, 1, 1);
+      ctx.fillRect(x, GROUND_Y - 5, 1, 1);
+    }
+  }
+  for (let y = top; y < GROUND_Y - 4; y++) {
+    if ((y - top + march) % 4 < 2) {
+      ctx.fillRect(x0, y, 1, 1);
+      ctx.fillRect(x0 + z.w - 1, y, 1, 1);
+    }
+  }
+}
+
+function drawLandHereArrow(ctx: CanvasRenderingContext2D, z: LandingTarget, t: number, reducedMotion: boolean): void {
+  const cx = Math.round(z.x + z.w / 2);
+  const bob = reducedMotion ? 0 : Math.floor(t / 180) % 4 < 2 ? 0 : 2;
+  const y = z.arrowY + bob;
+  const label = "LAND HERE";
+  const lw = textWidth(label) + 4;
+  drawTextChip(ctx, label, cx - Math.floor(lw / 2), y - 12, C.black, C.lightGreen, C.black);
+  // a chunky down arrow under the chip
+  ctx.fillStyle = C.black;
+  ctx.fillRect(cx - 4, y - 1, 9, 5);
+  ctx.fillRect(cx - 2, y + 4, 5, 3);
+  ctx.fillStyle = C.lightGreen;
+  ctx.fillRect(cx - 3, y, 7, 1);
+  ctx.fillRect(cx - 2, y + 1, 5, 1);
+  ctx.fillRect(cx - 1, y + 2, 3, 2);
+  ctx.fillRect(cx, y + 4, 1, 2);
+}
+
+const BAND_COLOR = { safe: C.lightGreen, hard: C.yellow, crash: C.lightRed } as const;
+const BAND_LABEL = { safe: "SAFE", hard: "HARD", crash: "CRASH" } as const;
+
+/** Vertical-speed gauge beside the chopper while it descends near the ground: a bar filling with
+ * the *predicted* touchdown speed (if the keys held now stay held), green/amber/red by landing band,
+ * with notches at the safe and crash thresholds, and a one-word verdict. */
+function drawSpeedGauge(
+  ctx: CanvasRenderingContext2D,
+  state: GameState,
+  held: { up: boolean; down: boolean },
+  camX: number,
+  viewW: number,
+): void {
+  if (state.status !== "playing") return;
+  const height = GROUND_Y - (state.playerY + PLAYER_H);
+  if (height > 44 || height < 0.5 || state.playerVy < 3) return;
+  const v = predictTouchdownVy(state, held);
+  if (v === null) return;
+  const band = landingBand(v);
+  const color = BAND_COLOR[band];
+  if (probeActive()) probe(`gauge:${band}`, 0, 0, 0, 0);
+  const barH = 20;
+  // right of the chopper, or left of it when that would run off screen
+  let gx = Math.round(state.playerX + 33);
+  if (gx + 22 - camX > viewW) gx = Math.round(state.playerX - 25);
+  const gy = Math.round(state.playerY - 6);
+  ctx.fillStyle = C.black;
+  ctx.fillRect(gx - 1, gy - 1, 6, barH + 2);
+  ctx.fillStyle = C.ink;
+  ctx.fillRect(gx, gy, 4, barH);
+  const fill = Math.round(Math.min(1, v / MAX_FALL_VY) * barH);
+  ctx.fillStyle = color;
+  ctx.fillRect(gx, gy, 4, fill);
+  ctx.fillStyle = C.white;
+  for (const th of [LANDING_SAFE_VY, CRASH_VY]) ctx.fillRect(gx + 4, gy + Math.round((th / MAX_FALL_VY) * barH), 2, 1);
+  // verdict on its own black chip, so it reads over flames and lit windows too
+  drawTextChip(ctx, BAND_LABEL[band], gx + 7, gy + fill - 4, color, C.black);
 }
 
 // --- HUD ----------------------------------------------------------------------------------------------
@@ -701,7 +848,7 @@ export function drawRescue(canvas: HTMLCanvasElement | null, f: RescueFrame): vo
   drawGround(ctx, viewW, camX);
   drawProps(ctx, state, camX, viewW, t);
   drawDiskBox(ctx, state, t, reducedMotion);
-  if (state.farmX - 90 < camX + viewW) drawFarm(ctx, state, t, reducedMotion);
+  if (state.farmX - 110 < camX + viewW) drawFarm(ctx, state, t, reducedMotion);
 
   // Floppies waiting at the farm: walk in place, or wave when the chopper is down at the farm
   const heliAtFarm = state.playerY + 14 >= GROUND_Y - 1 && Math.abs(state.playerX + 13 - (state.farmX + FARM_PAD_W / 2)) < 40;
@@ -719,6 +866,15 @@ export function drawRescue(canvas: HTMLCanvasElement | null, f: RescueFrame): vo
     probeW("floppy", fxp, fyp, 11, 12);
   }
   drawCellFires(ctx, state, t, reducedMotion);
+  // boarding Floppies run from the farm out to the chopper
+  for (const r of f.runners) {
+    const k = Math.min(1, r.ageMs / RUNNER_MS);
+    const x = Math.round(r.fromX + (r.toX - r.fromX) * k) - 5;
+    const frame = reducedMotion ? 0 : Math.floor(r.ageMs / 90) % 2;
+    drawSprite(ctx, FLOPPY_FRAMES[frame]!, FLOPPY_PALETTES[r.color % FLOPPY_PALETTES.length]!, x, GROUND_Y - 12, 1, r.toX < r.fromX);
+  }
+  const target = landingTarget(state);
+  if (target) drawLandingZone(ctx, target, t, reducedMotion);
 
   for (const d of state.debris) drawSprite(ctx, DEBRIS_FRAMES[Math.floor(t / 90) % 2]!, DEBRIS_PALETTE, d.x - 2, d.y - 4);
   if (state.drone) {
@@ -729,7 +885,13 @@ export function drawRescue(canvas: HTMLCanvasElement | null, f: RescueFrame): vo
   drawParticles(ctx, f.particles);
   drawBlasts(ctx, f.blasts);
   drawHeli(ctx, state, f.facing, reducedMotion);
-  if (state.farmX - 90 < camX + viewW) drawFarmSign(ctx, state, t, reducedMotion);
+  if (state.farmX - 110 < camX + viewW) drawFarmSign(ctx, state, t, reducedMotion);
+  // the LAND HERE chip guides from a distance; once the chopper is over the zone it would only get
+  // in the way of the chopper itself, so it gives way to the dashed box + speed gauge
+  if (target && Math.abs(state.playerX + PLAYER_W / 2 - (target.x + target.w / 2)) > target.w / 2 + 20) {
+    drawLandHereArrow(ctx, target, t, reducedMotion);
+  }
+  drawSpeedGauge(ctx, state, f.held, camX, viewW);
   drawPopups(ctx, f.popups);
   ctx.restore();
 

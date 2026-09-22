@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   parseEnvText, parseModelInfo, parseLmStudioModels, backends, normalizeBaseUrl, rootUrl, parseSpendHeaders, sessionEstimate,
   money, pctText, price, fit, bar, budgetRows, renderPanel, footerStatus, plainLen, QWEN_THINKING_MAP, DEFAULT_OPENROUTER_MODELS,
-  cleanKey, keyCheckUrl, authFailureText,
+  cleanKey, keyCheckUrl, authFailureText, FREE, DEFAULT_PAID,
 } from "../.pi/extensions/connect/lib.ts";
 
 const id = (_c: string, t: string) => t;   // identity painter
@@ -82,6 +82,34 @@ describe("backends", () => {
     assert.equal(unknown.cost.input, 3);
     const local = ll.model("local-qwen-mlx");
     assert.equal(local.cost.output, 0, "local route is free even if router had a price");
+  });
+
+  // E2.11b: /model/info prices an auto-router group (claude-auto-llm, gemini-auto-llm, *-agentic,
+  // *-affinity) at 0 for every field, since its underlying model is only picked per call. Showing
+  // that as free in /budget is wrong -- it should fall back to DEFAULT_PAID (unknown-paid) instead.
+  test("an all-zero-priced auto-router group is treated as unknown-paid, not free", () => {
+    const meta = new Map([
+      ["claude-auto-llm", { cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 200_000 }],
+      ["claude-auto-agentic", { cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }],
+      ["gemini-auto-llm", { cost: FREE, contextWindow: 1_000_000 }],
+    ]);
+    const ll = backends({}, meta).find((b) => b.id === "litellm")!;
+    for (const id of ["claude-auto-llm", "claude-auto-agentic", "gemini-auto-llm"]) {
+      const m = ll.model(id);
+      assert.deepEqual(m.cost, DEFAULT_PAID, `${id} should be priced as unknown-paid, not free`);
+    }
+  });
+
+  test("an all-zero-priced non-auto model group is left free (only 'auto' ids get the DEFAULT_PAID fallback)", () => {
+    const meta = new Map([["claude-sonnet-5-preview", { cost: FREE }]]);
+    const ll = backends({}, meta).find((b) => b.id === "litellm")!;
+    assert.deepEqual(ll.model("claude-sonnet-5-preview").cost, FREE);
+  });
+
+  test("a genuinely-priced auto-router group (once LiteLLM prices it) keeps its real price", () => {
+    const meta = new Map([["claude-auto-llm", { cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 } }]]);
+    const ll = backends({}, meta).find((b) => b.id === "litellm")!;
+    assert.equal(ll.model("claude-auto-llm").cost.input, 2);
   });
 
   test("lmstudio discovery filter drops embedding models", () => {

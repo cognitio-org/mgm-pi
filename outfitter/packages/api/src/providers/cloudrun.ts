@@ -39,6 +39,9 @@ interface JobsClientLike {
 interface ExecutionsClientLike {
   cancelExecution(request: { name: string }): Promise<unknown>;
   getExecution(request: { name: string }): Promise<[ExecutionLike]>;
+  /** Used by countRunningExecutions (E2.10 provider status: Cloud Run job capacity probe). Optional
+   * so existing status()/stop()-only test stubs don't need to grow a method they never call. */
+  listExecutions?(request: { parent: string }): Promise<[ExecutionLike[]]>;
 }
 
 /** Test-injectable client factories; production code lets these default to the lazy real ones. */
@@ -153,5 +156,16 @@ export class CloudRunProvider implements SandboxProvider {
     if (execution.completionTime) return "exited";
     if ((execution.runningCount ?? 0) > 0) return "running";
     return "starting";
+  }
+
+  /** E2.10 provider status: how many executions of this Job are currently active (no
+   * completionTime yet -- still starting or running), regardless of which run started them. Used
+   * to show sandbox capacity on the providers dashboard (E3.6), not by any per-run status() path. */
+  async countRunningExecutions(): Promise<number> {
+    const client = await this.deps.executionsClient();
+    if (!client.listExecutions) throw new Error("cloud run: executions client has no listExecutions");
+    const parent = `projects/${this.config.project}/locations/${this.config.region}/jobs/${this.config.job}`;
+    const [executions] = await client.listExecutions({ parent });
+    return executions.filter((e) => !e.completionTime).length;
   }
 }

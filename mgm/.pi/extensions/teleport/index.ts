@@ -23,10 +23,11 @@ import { join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
-  GitStore, parseOwnerRepo, pickModelForHost, manifestFromGit, describeRef,
+  parseOwnerRepo, pickModelForHost, manifestFromGit, describeRef,
   isWorkingTreeDirty, needsPush, verifyOwnerRepo,
   type GitInfo, type Manifest, type SessionRef,
 } from "./lib.ts";
+import { createStore } from "./store-factory.ts";
 
 // Persist into the agent config dir (PI_CODING_AGENT_DIR when launched via bin/mgm, else
 // ~/.pi/agent), same convention as ../connect/index.ts.
@@ -48,7 +49,7 @@ function autoPushEnabled(ctx: ExtensionContext): boolean {
 }
 
 export default function (pi: ExtensionAPI) {
-  const store = new GitStore({ warn: (msg) => console.error(msg) });
+  const store = createStore((msg) => console.error(msg));
   let cachedRefs: SessionRef[] = [];
   const refreshCache = async () => {
     try {
@@ -123,10 +124,10 @@ export default function (pi: ExtensionAPI) {
   }
 
   // ---------- pull ----------
-  async function pull(ctx: ExtensionCommandContext, id: string | undefined) {
+  async function pull(ctx: ExtensionCommandContext, id: string | undefined, opts: { force?: boolean } = {}) {
     if (!id) {
       if (!ctx.hasUI) {
-        ctx.ui.notify("Usage: /teleport pull <id>", "error");
+        ctx.ui.notify("Usage: /teleport pull <id> [--force]", "error");
         return;
       }
       await interactivePick(ctx);
@@ -135,7 +136,7 @@ export default function (pi: ExtensionAPI) {
 
     let got: { file: string; manifest: Manifest };
     try {
-      got = await store.get(id);
+      got = await store.get(id, opts);
     } catch (err: any) {
       ctx.ui.notify(`teleport: no session "${id}" in the store: ${err?.message ?? err}`, "error");
       return;
@@ -222,7 +223,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   pi.registerCommand("teleport", {
-    description: "Move this session to/from another machine: list | push [name] | pull [id]",
+    description: "Move this session to/from another machine: list | push [name] | pull [id] [--force]",
     getArgumentCompletions: (prefix) => {
       const [first, ...rest] = prefix.split(/\s+/);
       if (rest.length === 0) {
@@ -239,7 +240,11 @@ export default function (pi: ExtensionAPI) {
       if (!sub) return interactivePick(ctx);
       if (sub === "list") return listCmd(ctx);
       if (sub === "push") return push(ctx, rest.join(" ") || undefined);
-      if (sub === "pull") return pull(ctx, rest[0]);
+      if (sub === "pull") {
+        const force = rest.includes("--force");
+        const id = rest.find((a) => a !== "--force");
+        return pull(ctx, id, { force });
+      }
       ctx.ui.notify(`Unknown /teleport subcommand "${sub}". Use list, push, or pull.`, "error");
     },
   });

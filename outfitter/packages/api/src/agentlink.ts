@@ -57,7 +57,10 @@ export interface RunSpecMessage {
     env?: Record<string, string>;
   };
   snapshot: { url?: string; jsonl?: string };
-  secrets: { githubToken: string; litellmKey: string };
+  // litellmBaseUrl is server-controlled (config.litellmBaseUrl), never guru-editable -- see
+  // security-review-pr15.md finding #1: agentd pins it into the pi child's env after guru.env so a
+  // guru-supplied LITELLM_BASE_URL can't redirect where the real litellmKey gets sent.
+  secrets: { githubToken: string; litellmKey: string; litellmBaseUrl: string };
   idleStopSeconds: number;
   checkpointEvery: string;
 }
@@ -397,7 +400,7 @@ export class AgentLink {
         env: guru.env,
       },
       snapshot: { url: session.checkpoint?.snapshotUrl },
-      secrets,
+      secrets: { ...secrets, litellmBaseUrl: this.config.litellmBaseUrl },
       idleStopSeconds: this.config.idleStopSeconds,
       // Deviation from protocol.md (checkpointEvery isn't specced further, and agentd's
       // protocol.ts types it as a string rather than a number): checkpoint after every turn.

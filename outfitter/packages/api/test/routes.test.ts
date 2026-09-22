@@ -55,6 +55,69 @@ describe("POST /api/sessions", () => {
   });
 });
 
+describe("GET /api/sessions/:id", () => {
+  test("includes runState from the active run, undefined once there is none", async () => {
+    const app = await buildTestApp();
+    await seedGuru(app.store);
+
+    const createRes = await app.fastify.inject({
+      method: "POST",
+      url: "/api/sessions",
+      payload: { guruId: "test-guru", repo: "o/r", prompt: "hello" },
+    });
+    const { session } = createRes.json();
+
+    const getRes = await app.fastify.inject({ method: "GET", url: `/api/sessions/${session.id}` });
+    assert.equal(getRes.statusCode, 200);
+    assert.equal(getRes.json().runState, "provisioning");
+    // Still the full Session shape underneath (used by teleport's OutfitterStore to build a manifest).
+    assert.equal(getRes.json().id, session.id);
+    assert.equal(getRes.json().repo, "o/r");
+
+    await app.fastify.inject({ method: "POST", url: `/api/sessions/${session.id}/abort` });
+    const afterAbortRun = await app.store.runs.findActiveForSession(session.id);
+    await app.store.runs.update(afterAbortRun!.id, { state: "stopped" });
+
+    const getAfter = await app.fastify.inject({ method: "GET", url: `/api/sessions/${session.id}` });
+    assert.equal(getAfter.json().runState, undefined);
+
+    await app.fastify.close();
+  });
+});
+
+describe("GET /api/sessions?runState=", () => {
+  // Code review M1 (docs/reports/code-review-pr15.md): `runState` filters on the computed
+  // per-run state (queued/provisioning/running/...), distinct from `status` (open/closed) which
+  // the store filters on directly.
+  test("filters post-hoc on the computed runState, not Session.status", async () => {
+    const app = await buildTestApp();
+    await seedGuru(app.store);
+
+    const createRes = await app.fastify.inject({
+      method: "POST",
+      url: "/api/sessions",
+      payload: { guruId: "test-guru", repo: "o/r", prompt: "hello" },
+    });
+    const { session } = createRes.json();
+
+    const provisioning = await app.fastify.inject({ method: "GET", url: "/api/sessions?runState=provisioning" });
+    assert.equal(provisioning.statusCode, 200);
+    const provisioningIds = provisioning.json().map((s: { id: string }) => s.id);
+    assert.ok(provisioningIds.includes(session.id));
+
+    const running = await app.fastify.inject({ method: "GET", url: "/api/sessions?runState=running" });
+    assert.equal(running.statusCode, 200);
+    assert.deepEqual(running.json(), []);
+
+    // status ("open"/"closed") still works unfiltered by runState.
+    const all = await app.fastify.inject({ method: "GET", url: "/api/sessions" });
+    assert.equal(all.statusCode, 200);
+    assert.ok(all.json().some((s: { id: string }) => s.id === session.id));
+
+    await app.fastify.close();
+  });
+});
+
 describe("down-messages queue when no agentd socket is connected", () => {
   test("the initial prompt and a follow-up message both land in run.pending", async () => {
     const app = await buildTestApp();

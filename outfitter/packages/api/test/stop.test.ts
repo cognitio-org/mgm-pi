@@ -217,6 +217,33 @@ describe("POST /api/sessions/:id/stop (graceful, process-independent)", () => {
     await sender.fastify.close();
   });
 
+  test("code review M2: a second /stop while already stopping is a no-op, not a force-cancel", async () => {
+    const app = await buildTestApp();
+    await seedGuru(app.store);
+    const createRes = await app.fastify.inject({
+      method: "POST",
+      url: "/api/sessions",
+      payload: { guruId: "test-guru", repo: "o/r", prompt: "hi" },
+    });
+    const { session, run } = createRes.json();
+
+    // Simulate a first /stop already having put the run into "stopping" (mid-drain, e.g. a
+    // checkpoint push in flight) without going through the route again.
+    await app.store.runs.update(run.id, { state: "stopping", updatedAt: new Date().toISOString() });
+
+    const res = await app.fastify.inject({ method: "POST", url: `/api/sessions/${session.id}/stop` });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().run.state, "stopping");
+    // The old collapsed branch would have taken this as "no live agent, cancel directly" and
+    // force-killed the run via the provider -- assert that never happens.
+    assert.equal(app.provider.stopCalls.length, 0);
+
+    const stored = await app.store.runs.findById(run.id);
+    assert.equal(stored?.state, "stopping");
+
+    await app.fastify.close();
+  });
+
   test("cancels via the provider directly for a queued/provisioning run (no live agent to ask gracefully)", async () => {
     const app = await buildTestApp();
     await seedGuru(app.store);
@@ -271,6 +298,7 @@ describe("agentlink up-frame ordering", () => {
       gurus: inner.gurus,
       environments: inner.environments,
       users: inner.users,
+      providers: inner.providers,
       close: () => inner.close(),
     };
 

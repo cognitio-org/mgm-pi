@@ -348,8 +348,10 @@ notice says where it is.
 
 Move a pi session between machines, the way Claude Code's teleport does: push it from one checkout,
 pull it into another. `.pi/extensions/teleport/lib.ts` defines a small `Store` interface
-(`list`/`get`/`put`) and a `GitStore` implementation on top of it, so the store can later be swapped
-for a cloud API ("Outfitter") without touching the commands in `.pi/extensions/teleport/index.ts`.
+(`list`/`get`/`put`) and a `GitStore` implementation on top of it. `.pi/extensions/teleport/
+outfitter-store.ts` implements the same interface against the Outfitter cloud API instead;
+`store-factory.ts` picks between them (see "Outfitter store" below), and neither `index.ts` (the pi
+extension) nor `cli.ts` (`mgm --teleport`) know which one they're talking to.
 
 **What gets pushed.** `/teleport push` sends the *entire* session transcript -- every prompt, tool
 call and tool result, which can include file contents, command output and anything pasted into the
@@ -417,6 +419,42 @@ etc. — each machine needs its own), MCP OAuth tokens sitting in the macOS keyc
 <server>` again on the new machine), and anything that only exists in that machine's LM Studio
 (local-only model weights, `lmstudio/...` sessions won't have a usable model there unless LM Studio
 is also running with the same model loaded).
+
+### Outfitter store
+
+Set `MGM_TELEPORT_STORE=outfitter` to talk to the Outfitter cloud API instead of a local git clone
+(`OUTFITTER_API` must point at it, e.g. `https://outfitter-api-hqt4zwr5za-uc.a.run.app`). This is the
+"cloud → laptop" half of teleport: `list`/`/teleport list` shows every session on that Outfitter
+deployment, and `pull`/`mgm --teleport <id>` fetches one down. Pushing (`put`) works too --
+`PUT /api/sessions/:id/import` creates the session server-side if it doesn't already exist there, so
+pushing a laptop-only session id is fine.
+
+**Auth**, in priority order:
+
+- `OUTFITTER_TOKEN` -- sent as `Authorization: Bearer <token>`. This works today against an API
+  running with `OUTFITTER_DEV=1` (dev mode identifies every caller as `dev@localhost` regardless of
+  what's in the header); there is no server-side personal-token verification yet. This is the only
+  mode confirmed to work.
+- `OUTFITTER_IAP_CLIENT_ID` -- **not yet supported against the real deployed API.** The store shells
+  out to `gcloud auth print-identity-token --audiences=<OUTFITTER_IAP_CLIENT_ID>` and sends the
+  result as `Authorization: Bearer`, but this was verified NOT working on 2026-09-21 (critic review,
+  `outfitter/docs/reports/critic-review-pr15.md`): `gcloud auth print-identity-token` cannot mint a
+  token audienced to Google's IAP OAuth client for a user account, and the deployed service uses IAP's
+  Google-managed OAuth client, whose credentials aren't available for programmatic access at all --
+  every call in this mode gets a 401. Auth design for this path is an open decision (personal API
+  tokens on the link service is the leading option); don't rely on `OUTFITTER_IAP_CLIENT_ID` until
+  that's resolved. Neither token is ever written to disk.
+
+A 401 from the API usually means `OUTFITTER_IAP_CLIENT_ID` mode was used against a real deployment
+(see above, not yet supported) -- use `OUTFITTER_TOKEN` against a dev-mode (`OUTFITTER_DEV=1`) API
+instead. A 403 means that account isn't allowed to use this Outfitter deployment at all.
+
+**Stop-before-pull.** `pull`/`mgm --teleport <id>` first checks whether the session has an active
+cloud run (queued/provisioning/running/idle/stopping); if it does, it calls `POST
+/api/sessions/:id/stop` and polls `GET /api/sessions/:id` (its `runState` field) until the run is no
+longer active, so the exported transcript is complete, up to a 90s timeout with a clear error. Pass
+`--force` (`mgm --teleport <id> --force` or `/teleport pull <id> --force`) to skip the wait and pull
+whatever has been persisted so far -- the transcript tail may then be missing.
 
 ### Headless: `mgm --teleport <id>`
 

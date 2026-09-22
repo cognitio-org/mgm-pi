@@ -211,18 +211,34 @@ research on Sonnet; review on Opus).
   instantly and steers running sessions off the local model (`set_model` over RPC) when it stops.
   Polling `GET https://api.ngrok.com/tunnels` (online tunnels only, needs an ngrok API key in Secret
   Manager) is the fallback if event destinations are not available on the Hobbyist plan.
-- **E2.10 Provider status service**: one place that knows whether every model and tool provider is
-  usable right now, feeding both the preflight (E2.8) and the dashboard (E3.6). Sources: ngrok
-  `agent_session_start/stop.v0` webhooks (all agent sessions on the account, so new tunnels appear
-  automatically) plus `GET https://api.ngrok.com/tunnels` and `/endpoints` polled every 5 min as the
-  reconciler; LM Studio `/api/v0/models` through each tunnel (which models are downloaded and which
-  are loaded, context length, quantisation); LiteLLM `/health` per model group, `/model/info` for
-  prices and limits, `/key/info` and `/team/info` for spend against budget (reuse the parsing in
-  `mgm/.pi/extensions/connect/lib.ts`); OpenRouter `/api/v1/key` for credits; Cloud Run Job quota and
-  currently running executions. Stored in a `providers` collection as the current state plus a
-  bounded history (last 7 days of transitions) so the dashboard can show uptime. Exposed as
-  `GET /api/providers` and an SSE stream; each transition is a `custom` entry on any running session
-  that depends on that provider.
+- **E2.10 Provider status service** (done, `docs/reports/providers-status.md`): one place that
+  knows whether every model and tool provider is usable right now, feeding both the preflight
+  (E2.8) and the dashboard (E3.6). `src/providers-status.ts`'s `ProviderStatusService` owns four
+  probes -- ngrok (`GET /endpoints` with `NGROK_API_KEY`, one row per online endpoint), laptop
+  (reuses the same `LaptopProbe` instance the E2.8 preflight already probes, so no extra network
+  round trip beyond its own 60s cache, plus `/api/v0/models` through the tunnel for loaded models
+  and context length), LiteLLM (`/health/liveliness`, `/model/info` -- `parseModelInfo` copied
+  from `mgm/.pi/extensions/connect/lib.ts` per the story's instruction, not imported -- and
+  `/key/info` for spend against budget, keyed by `LITELLM_ADMIN_KEY` or
+  `SecretsBroker.defaultLitellmKey()`), and Cloud Run (`CloudRunProvider.countRunningExecutions`,
+  new `listExecutions` call, only when `SANDBOX_PROVIDER=cloudrun`). Every probe times out at 3s
+  and never throws (Promise.allSettled is a backstop on top of each probe's own try/catch); a
+  missing credential or an inapplicable probe (Cloud Run when the provider isn't cloudrun) is
+  `"unknown"` with a `detail`, not a poll failure. State lives in a new `providers` Mongo
+  collection (memory + Mongo `Store` implementations) as the current row plus a 7-day-bounded
+  history of status transitions. `GET /api/providers`, `GET /api/providers/stream` (SSE, pushes on
+  transition only), `POST /api/providers/refresh`; the poller (`PROVIDER_POLL_MS`, default 5 min)
+  runs only in the "web" role, with a non-blocking first pass at startup; the "link" role still
+  gets a `ProviderStatusService` instance so `POST /api/hooks/ngrok` (`routes/hooks.ts`) can call
+  `noteLaptopTransition` and update the "laptop" row immediately, same HMAC verification as
+  before. Deviations from the story sketch above (scoped down to what E2.8/E3.6 actually need,
+  confirm before building further): no OpenRouter probe or `/team/info` (no OpenRouter/team
+  usage in this codebase yet); one summary LiteLLM row rather than one per model group (the
+  per-model breakdown lives in the row's `meta.models`); no automatic `custom` transcript entry on
+  running sessions (E2.10's own scope is the status service and its routes, not steering running
+  sessions -- E2.8's existing `set_model` RPC path is the natural place to wire that in later,
+  left as a follow-up since it touches agentlink.ts's live-session logic rather than this story's
+  files).
 - **E2.12 Image smoke in CI** (done, `.github/workflows/outfitter-ci.yml`): the repo's CI only ran
   on `mgm/**`, so no Outfitter PR had run its tests in CI at all, and image or deploy-env errors
   only surfaced when Cloud Run rejected a revision. The workflow now runs every suite and builds
@@ -283,20 +299,50 @@ research on Sonnet; review on Opus).
   even for a route with no LiteLLM headers at all. `image/Dockerfile` still needs to `COPY` the new
   `pi-extension/` directory and set `OUTFITTER_SPEND_EXTENSION`/wire a real `spendFile` path -- left
   to the image/build-scripts workstream (see the report's "Follow-up").
+  **Confirmed on Cloud Run 2026-09-21** (image `b8de53b`, repo-less session, guru `default` on
+  `litellm/claude-auto-llm`): spend frames arrive, `keySpendStart` pins to the key's real balance,
+  and the second call moved `Run.cost` by ~$0.007. The two accounting defects that run exposed
+  (one-call runs showing $0; auto-router gurus estimated at $0) are fixed in E2.11b below.
+- **E2.11b Auto-router pricing and first-call baseline** (done, `docs/reports/spend-fix.md`): two
+  defects verified against the live LiteLLM router. (1) `/model/info` prices an auto-router group
+  (`claude-auto-llm`, `gemini-auto-llm`, `*-agentic`, `*-affinity`) at $0 since its model is picked
+  per call, so pi's own per-message cost estimate was $0 for those gurus -- `outfitter-spend.ts` now
+  fetches `/model/info` once at `session_start`, and when the requested group's price is
+  zero/unknown but the resolved model (`x-litellm-model-name` header) is priced, computes that
+  response's cost from the newest assistant message's token counts times the resolved model's price
+  plus `x-litellm-classifier-cost`, instead of the (zero) delta. mgm's `connect/lib.ts` gets the same
+  fix for the interactive `/budget` panel: an all-zero-priced id containing "auto" is priced as
+  unknown-paid (`DEFAULT_PAID`) instead of free. (2) `Run.keySpendStart` used to pin from the first
+  real spend frame, which already carries the *post-call* balance, so a one-call run's cost showed
+  $0 -- the extension now probes `GET /key/info` at `session_start`, before any provider call, and
+  appends a `{ baseline: true, keySpend }` line; agentd forwards it as a `spend` frame with no
+  `usage`, and the API's existing "pin from the first frame seen" logic then baselines correctly.
+  Both fixes degrade to the prior behaviour on any network failure (logged once to stderr, never
+  thrown). `npm test`: agentd 140/140, api 93/93, mgm 219/219.
+- **E2.13 Graceful stop confirmed on Cloud Run** (done): `POST /sessions/:id/stop` from the web
+  role while the link role holds the socket: `stopping` → `stopped` in 8 s, agentd checkpointed
+  (workspace tarball skipped for the repo-less run), sent `bye`, and the Job execution ended
+  `Completed` with `succeededCount=1` rather than cancelled. Round two closes here.
 - **E2.7 Deploy** ⇄: `deploy/api.sh` builds with Cloud Build, deploys, enables IAP with the domain
   principal. Done when the URL prompts for Google login and rejects a non-domain account.
 
 ### E3 Web UI
 
-- **E3.1 Shell** ⇄: Vite + React, served from the API. Fleet list with status, guru, repo/branch,
-  cost, last activity; filters; parent/child grouping.
-- **E3.2 Session view**: transcript with `@earendil-works/pi-web-ui` message components fed from SSE;
-  composer with send/steer/follow-up (queued while running, like Cosmos and pi's queue); abort; stop
-  and wake; questions and permission prompts rendered from `extension_ui_request`.
+- **E3.1 Shell** ⇄ — done, `docs/reports/web-ui.md`. Vite + React, served from the API. Fleet list
+  with status, guru, repo/branch, cost, last activity, and filters (status/guru; run-state filtering
+  fixed in the PR #15 review pass, `docs/reports/review-fixes-api.md`). Not built: parent/child
+  grouping.
+- **E3.2 Session view** — done, `docs/reports/web-ui.md`. Transcript fed from SSE, composer with
+  send/steer/follow-up, abort, stop and wake, questions and permission prompts rendered from
+  `extension_ui_request`. Deviation from the sketch below: renders via a lightweight custom
+  `EntryItem` component, not `@earendil-works/pi-web-ui` (that package wasn't pulled in) -- see
+  `web-ui.md`'s "pi-web-ui" decision. Not built: markdown rendering of message text (rendered as
+  plain text/`<pre>` today).
 - **E3.3 Diff and files tabs**: `GET /sessions/:id/diff` (agentd runs `git diff base...HEAD` plus
   working tree) rendered with a diff component; file viewer via agentd `read`.
-- **E3.4 New session dialog**: guru, optional repository (from a configured list or GitHub search
-  via the broker; "no repository" for non-coding work), base branch, prompt; "run locally" hint that prints `mgm --teleport <id>`.
+- **E3.4 New session dialog** — done, `docs/reports/web-ui.md`. Guru dropdown, optional repository,
+  base branch, prompt; "run locally" hint that prints `mgm --teleport <id>`. Not built: repository
+  picker from a configured list or GitHub search via the broker (a plain text field today).
 - **E3.5 Cost page**: per session, per guru, per day; LiteLLM key budget bars (reuse the budget
   panel logic from connect/lib.ts).
 - **E3.6 Providers dashboard**: a status page (also the landing page's header strip) listing every
@@ -305,15 +351,43 @@ research on Sonnet; review on Opus).
   and budget bars, OpenRouter credits, and sandbox capacity (running jobs versus limit). Live via SSE,
   with a 7-day uptime sparkline per endpoint and a "wake laptop model" hint when a guru wants it and
   it is offline. Designed to grow: providers are rows in a table keyed by kind, not hard-coded panels.
+  Follow-up (code review N3, `docs/reports/code-review-pr15.md`): `GET /api/providers/stream` is
+  already fully implemented server-side (E2.10), but nothing in `packages/web` subscribes to it yet
+  (`useProviders` polls once on mount) -- the web strip/dashboard should open it once E3.6 is built.
 
 ### E4 Teleport, both directions
 
-- **E4.1 `OutfitterStore`** in the mgm teleport extension: `list/get/put` against the API using the
-  user's Google identity (gcloud ADC user token with the IAP client audience, or a personal API token
-  issued by the API). Selected by `MGM_TELEPORT_STORE=outfitter`.
-- **E4.2 Cloud → laptop**: `mgm --teleport <id>` verifies repo and clean tree, fetches the session
-  branch, imports the transcript with the same id, remaps the model. The cloud run is stopped first
-  (the API refuses pull while a run is `running` unless `--force`).
+- **E4.1 `OutfitterStore`** — done for dev-token auth; IAP identity-token mode verified NOT working
+  on 2026-09-21: gcloud cannot mint audience-specific identity tokens for user accounts, and IAP
+  returns 401 for gcloud's default identity token; the OAuth-brand admin APIs are being shut down.
+  Auth design for the laptop path is an open decision (personal API tokens on the link service is
+  the leading option). `mgm/.pi/extensions/teleport/outfitter-store.ts` implements the same `Store`
+  interface as `GitStore` (`list`/`get`/`put`) against the Outfitter API (`OUTFITTER_API`), selected
+  by `MGM_TELEPORT_STORE=outfitter` via `mgm/.pi/extensions/teleport/store-factory.ts`. Auth:
+  `OUTFITTER_TOKEN` as `Authorization: Bearer` works today against `OUTFITTER_DEV=1` (no
+  server-side personal-token check yet). `OUTFITTER_IAP_CLIENT_ID` (a Google identity token minted
+  via `gcloud auth print-identity-token --audiences=<id>`, the active gcloud account, never
+  hardcoded) does not work against the real deployed API as configured -- see the correction above
+  (critic review #1, `docs/reports/critic-review-pr15.md`). Neither token touches disk. `list()`
+  maps `GET /api/sessions`; `get()` pulls `GET /api/sessions/:id/export.jsonl`; `put()` is
+  `PUT /api/sessions/:id/import`, which already creates the session server-side when the id doesn't
+  exist yet (no API change needed there either). Tests: `mgm/tests/teleport-outfitter.test.ts`
+  (fake fetch: list/get/put mapping, stop-then-poll flow, `--force`, timeout, auth header
+  selection) -- all against a fake fetch, never a real deployed API.
+- **E4.2 Cloud → laptop** — store half done, CLI verification not yet wired up. `OutfitterStore.get`
+  does the "stop the cloud run first" part: if the session has an active run it calls `POST
+  /api/sessions/:id/stop` and polls `GET /api/sessions/:id`'s new `runState` field (small API
+  addition, `outfitter/packages/api/src/routes/sessions.ts`, tested in
+  `outfitter/packages/api/test/routes.test.ts`) until it's no longer active, 90s timeout, skippable
+  with `--force` (threaded through `mgm --teleport <id> --force` and `/teleport pull <id> --force`).
+  What `mgm --teleport <id>` does **not** yet do for an Outfitter-backed pull specifically: repo and
+  clean-tree verification. That logic already exists in `cli.ts`/`index.ts` and runs unconditionally
+  for any store whose manifest carries a `repo` section (same code path GitStore uses) -- it isn't
+  Outfitter-specific, and OutfitterStore's `get()` does populate `manifest.repo` (from the session's
+  `repo`/`branch`/`checkpoint.head`) when the cloud session has a repo, so the existing check does
+  cover it. What's still open is model remap fidelity beyond what `pickModelForHost` already does
+  (unchanged, reused as-is) and end-to-end testing against a real deployed API (only unit-tested
+  against a fake fetch so far).
 - **E4.3 Laptop → cloud** (the direction Claude Code lacks): `/teleport push --cloud [guru]` pushes
   the branch and transcript and asks the API to wake a run that continues the conversation.
 - **E4.4 Web "Open in terminal"**: copies the `mgm --teleport` command; and `/teleport` typed inside a

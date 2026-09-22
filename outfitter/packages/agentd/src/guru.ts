@@ -35,10 +35,24 @@ export interface RenderOptions {
  * NODE_OPTIONS/LD_PRELOAD/LD_LIBRARY_PATH can load arbitrary code into the pi process, PATH can
  * shadow `git`/`gh`/etc with a malicious binary, GIT_* can hijack the auth-header env vars git.ts
  * sets per-invocation (see git.ts's module doc), and HOME can redirect where pi/git read config and
- * credentials from. The API's POST/PUT /api/gurus routes reject these keys outright (belt and
- * suspenders); this list is agentd's own last line of defense in case a guru predating that check,
- * or written directly into the store, still has one set. */
-const DENYLISTED_GURU_ENV_KEYS = new Set(["NODE_OPTIONS", "LD_PRELOAD", "LD_LIBRARY_PATH", "PATH", "HOME"]);
+ * credentials from. LITELLM_BASE_URL/LITELLM_API_KEY/LITELLM_AGENT_KEY (finding #1,
+ * docs/reports/security-review-pr15.md): outfitter-spend.ts sends the real per-run LiteLLM key as a
+ * Bearer token to whatever LITELLM_BASE_URL is set, so a guru-controlled base URL is a credential
+ * exfiltration + SSRF primitive. The API's POST/PUT /api/gurus routes reject these keys outright
+ * (belt and suspenders); this list is agentd's own last line of defense in case a guru predating
+ * that check, or written directly into the store, still has one set. run.ts also pins
+ * LITELLM_BASE_URL itself in secretEnv, spread after this rendered env, so even a future denylist
+ * gap here can't redirect the outbound call. */
+const DENYLISTED_GURU_ENV_KEYS = new Set([
+  "NODE_OPTIONS",
+  "LD_PRELOAD",
+  "LD_LIBRARY_PATH",
+  "PATH",
+  "HOME",
+  "LITELLM_BASE_URL",
+  "LITELLM_API_KEY",
+  "LITELLM_AGENT_KEY",
+]);
 
 function isDenylistedGuruEnvKey(key: string): boolean {
   return DENYLISTED_GURU_ENV_KEYS.has(key) || key.startsWith("GIT_");

@@ -75,6 +75,12 @@ export interface UpSpend {
    * independent of LiteLLM's key-spend headers. Lets the API set Run.costEstimate even for a guru
    * whose model group/route never returns x-litellm-key-spend at all. */
   estimate?: number;
+  /** E2.11b: true only on the one frame built from the outfitter-spend extension's session_start
+   * baseline line -- `keySpend` there is the LiteLLM key's balance *before* this run's first
+   * provider call (from GET /key/info), sent ahead of any real call so the API's "pin
+   * keySpendStart from the first frame seen" logic baselines from the true pre-call balance
+   * instead of under-reporting the first call's cost. */
+  baseline?: boolean;
 }
 
 export interface UpCheckpoint {
@@ -159,6 +165,12 @@ export interface RunSpecWorkspace {
 export interface RunSpecSecrets {
   githubToken?: string;
   litellmKey?: string;
+  /** Security-review-pr15.md finding #1: the LiteLLM proxy base URL the real `litellmKey` above
+   * should be sent to, set by the API from its own server-controlled config -- never from
+   * guru.env. run.ts pins this into the spawned pi process's env (spread after `guru.env`), so a
+   * guru-supplied LITELLM_BASE_URL (already denylisted at the API/guru.ts level too) can never
+   * redirect where the real key gets sent. */
+  litellmBaseUrl?: string;
 }
 
 export interface RunSpec {

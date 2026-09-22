@@ -94,15 +94,25 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
   });
 
   app.get("/api/sessions", async (req) => {
-    const query = req.query as { status?: string; guru?: string };
+    // Code review M1 (docs/reports/code-review-pr15.md): `status` here is Session.status
+    // ("open"/"closed"), while `runState` (queued/provisioning/running/idle/stopping/stopped/
+    // failed) only exists per-run, computed by summarize() below -- it isn't a store-level filter.
+    // Filter on it post-hoc, after summarizing, rather than pretending the store can push it down.
+    const query = req.query as { status?: string; guru?: string; runState?: string };
     const sessions = await ctx.store.sessions.list({ status: query.status, guruId: query.guru });
-    return Promise.all(sessions.map((s) => summarize(ctx, s)));
+    const summaries = await Promise.all(sessions.map((s) => summarize(ctx, s)));
+    if (!query.runState) return summaries;
+    return summaries.filter((s) => s.runState === query.runState);
   });
 
   app.get("/api/sessions/:id", async (req, reply) => {
     const session = await getSessionOr404(ctx, req, reply);
     if (!session) return;
-    return session;
+    // runState (not on Session itself -- see store/types.ts's Run) lets a caller like the mgm
+    // teleport extension's OutfitterStore poll "has the active run stopped yet?" without a second
+    // request; GET /api/sessions already computes the same thing per-row via summarize().
+    const run = await ctx.store.runs.findActiveForSession(session.id);
+    return { ...session, runState: run?.state };
   });
 
   app.get("/api/sessions/:id/entries", async (req, reply) => {
@@ -148,6 +158,16 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     if (!session) return;
     const run = await ctx.store.runs.findActiveForSession(session.id);
     if (!run) return reply.code(404).send({ error: "no active run" });
+
+    // Code review M2 (docs/reports/code-review-pr15.md): branch explicitly on all three cases
+    // instead of collapsing "not running/idle" into "cancel directly" -- that used to also catch
+    // an already-`stopping` run and force-kill it via the provider mid-checkpoint/mid-drain, which
+    // is exactly what the `stopping` grace period exists to avoid. A second `/stop` call while
+    // already stopping is a no-op: return the current run and let the existing grace-period /
+    // RunManager.reconcileStoppingOnce path finish it.
+    if (run.state === "stopping") {
+      return { run };
+    }
 
     if (run.state !== "running" && run.state !== "idle") {
       // No live agent yet (queued/provisioning) to ask gracefully -- cancel the provider execution

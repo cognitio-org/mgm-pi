@@ -495,6 +495,41 @@ describe("agentd <-> api WebSocket", () => {
     app.stopBackgroundTasks();
     await app.fastify.close();
   });
+
+  // E2.11b: a run that makes exactly one LiteLLM call used to under-report its cost as 0, because
+  // `keySpendStart` was pinned from the *same* frame that reported the post-call balance (delta
+  // against itself is always 0). The outfitter-spend extension now sends a `baseline: true` frame
+  // from session_start, before any provider call, with the key's balance *before* that call --
+  // when it's the first frame this run sees, `keySpendStart` pins from the true pre-call balance
+  // and the single real spend frame afterward reports the call's actual cost.
+  test("a baseline spend frame arriving before the run's one real call means a one-call run's cost is no longer 0", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    await agent.nextMessage(); // run.spec
+
+    // session_start's /key/info probe: the key's balance before this run's one call.
+    agent.send({ t: "spend", baseline: true, keySpend: 10 });
+    await new Promise((resolve) => setImmediate(resolve));
+    let run = await app.store.runs.findById(runId);
+    assert.equal(run?.keySpendStart, 10);
+    assert.equal(run?.cost, 0);
+
+    // The run's one and only provider call: key balance rose from 10 to 10.05.
+    agent.send({ t: "spend", keySpend: 10.05, keyMax: 20, modelGroup: "claude-auto-llm", callId: "call-1" });
+    await new Promise((resolve) => setImmediate(resolve));
+    run = await app.store.runs.findById(runId);
+    const stored = await app.store.sessions.findById(session.id);
+    assert.ok(run?.cost !== undefined && Math.abs(run.cost - 0.05) < 1e-9, `expected ~0.05, got ${run?.cost}`);
+    assert.ok(stored?.cost !== undefined && Math.abs(stored.cost - 0.05) < 1e-9);
+
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
 });
 
 // outfitter-api (web role) and outfitter-link (link role) are separate Cloud Run services sharing
@@ -601,6 +636,7 @@ describe("run.spec build validates secrets", () => {
   test("closes with WS code 4412 and marks the run failed when a repo session's githubToken secret is missing (devMode off)", async (t) => {
     const emptyGithubBroker: SecretsBroker = {
       secretsForRun: async () => ({ githubToken: "", litellmKey: "some-key" }),
+      defaultLitellmKey: async () => "some-key",
     };
     // devMode off: this is the production path, where a missing token really would make agentd
     // clone with no credentials. In dev mode the same missing-token check is skipped (see the
@@ -636,6 +672,7 @@ describe("run.spec build validates secrets", () => {
   test("a missing githubToken does not fail a repo session in dev mode (anonymous clone)", async () => {
     const emptyGithubBroker: SecretsBroker = {
       secretsForRun: async () => ({ githubToken: "", litellmKey: "some-key" }),
+      defaultLitellmKey: async () => "some-key",
     };
     // buildTestApp defaults to OUTFITTER_DEV=1 (devMode on): a missing secret means "no secrets
     // available", not "fail the run" -- the clone just runs anonymously.
@@ -657,6 +694,7 @@ describe("run.spec build validates secrets", () => {
   test("an empty githubToken does not fail a repo-less session", async () => {
     const emptyGithubBroker: SecretsBroker = {
       secretsForRun: async () => ({ githubToken: "", litellmKey: "some-key" }),
+      defaultLitellmKey: async () => "some-key",
     };
     const app = await buildTestApp({}, { secretsBroker: emptyGithubBroker });
     const { session, runId, runToken } = await makeRunningSession(app, { repo: null, branch: undefined });

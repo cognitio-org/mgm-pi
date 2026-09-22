@@ -59,9 +59,18 @@ case "${1:-}" in
     # matching repo branch, imports it for this cwd and prints the session file; pi opens that.
     # (cli.ts uses its own process.cwd(), which node resolves symlinks in the same way pi does.)
     id="${2:-}"
-    if [[ -z "$id" || "$id" == -* ]]; then echo "Usage: mgm --teleport <session-id> [pi args...]" >&2; exit 1; fi
+    if [[ -z "$id" || "$id" == -* ]]; then echo "Usage: mgm --teleport <session-id> [--force] [pi args...]" >&2; exit 1; fi
     shift 2
-    session_path="$(node "$ROOT/.pi/extensions/teleport/cli.ts" "$id")"
+    # --force (only meaningful for MGM_TELEPORT_STORE=outfitter: skip waiting for an active cloud
+    # run to stop) is consumed here, not passed on to pi. bash 3.2 (macOS default) treats an empty
+    # array as unbound under set -u, hence ${arr[@]+"${arr[@]}"} below (see scripts/install.sh).
+    force=()
+    rest=()
+    for a in "$@"; do
+      if [[ "$a" == "--force" ]]; then force=(--force); else rest+=("$a"); fi
+    done
+    set -- ${rest[@]+"${rest[@]}"}
+    session_path="$(node "$ROOT/.pi/extensions/teleport/cli.ts" "$id" ${force[@]+"${force[@]}"})"
     if [[ -x "$ROOT/pi/pi" ]]; then PI="$ROOT/pi/pi"; else PI="$ROOT/node_modules/.bin/pi"; fi
     exec "$PI" -a --session "$session_path" "$@" ;;
 esac

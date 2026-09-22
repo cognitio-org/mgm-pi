@@ -188,13 +188,21 @@ export function spawnPi(opts: PiProcessOptions): PiProcess {
  * provider response (pi-extension/outfitter-spend.ts). `usage` is pi's own per-message cost estimate
  * for that one response (not a running total); RunController accumulates it into the run's
  * `costEstimate`. keySpend/keyMax are absent when the response carried no (or an incomplete) LiteLLM
- * spend header, e.g. a key with no budget cap set. */
+ * spend header, e.g. a key with no budget cap set.
+ *
+ * E2.11b: `baseline: true` marks the one line the extension appends at `session_start`, before any
+ * provider call -- `keySpend` there is the LiteLLM key's balance *before* this run's first call, read
+ * from `GET /key/info`, and `usage` is always absent on it. `RunController.handleSpendLine` forwards
+ * it as a `spend` frame the same as any other line; the API's spend handler already pins
+ * `keySpendStart` from the first frame it sees for a run, so a baseline line arriving first fixes the
+ * "first call under-reports cost" bug without any special-casing there. */
 export interface SpendLogLine {
   keySpend?: number;
   keyMax?: number;
   modelGroup?: string;
   callId?: string;
   usage?: number;
+  baseline?: boolean;
 }
 
 const SPEND_STRING_FIELD_MAX_LENGTH = 200;
@@ -221,6 +229,7 @@ export function validateSpendLine(value: unknown): SpendLogLine | undefined {
   if (v.keyMax !== undefined && !finiteNonNegative(v.keyMax)) return undefined;
   if (v.modelGroup !== undefined && !shortString(v.modelGroup)) return undefined;
   if (v.callId !== undefined && !shortString(v.callId)) return undefined;
+  if (v.baseline !== undefined && typeof v.baseline !== "boolean") return undefined;
 
   return {
     usage: v.usage as number | undefined,
@@ -228,6 +237,7 @@ export function validateSpendLine(value: unknown): SpendLogLine | undefined {
     keyMax: v.keyMax as number | undefined,
     modelGroup: v.modelGroup as string | undefined,
     callId: v.callId as string | undefined,
+    baseline: v.baseline as boolean | undefined,
   };
 }
 

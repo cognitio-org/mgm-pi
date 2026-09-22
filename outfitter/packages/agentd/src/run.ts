@@ -383,6 +383,11 @@ export class RunController {
     });
     const secretEnv: Record<string, string> = {};
     if (spec.secrets.litellmKey) secretEnv.LITELLM_AGENT_KEY = spec.secrets.litellmKey;
+    // Security-review-pr15.md finding #1: pin the LiteLLM base URL from the server-controlled
+    // spec, spread after `rendered.env` (guru.env), so a guru-supplied LITELLM_BASE_URL can never
+    // redirect where outfitter-spend.ts sends the real per-run key -- belt and suspenders on top of
+    // the guru.env denylist in guru.ts/routes/gurus.ts.
+    if (spec.secrets.litellmBaseUrl) secretEnv.LITELLM_BASE_URL = spec.secrets.litellmBaseUrl;
     // E2.11: only set when this run actually wants spend frames (deps.spendFile configured) --
     // otherwise the outfitter-spend extension isn't loaded at all (spendExtensionPath above), so the
     // env var would just be unused.
@@ -485,6 +490,7 @@ export class RunController {
       modelGroup: line.modelGroup,
       callId: line.callId,
       estimate: this.costEstimate,
+      baseline: line.baseline,
     });
   }
 

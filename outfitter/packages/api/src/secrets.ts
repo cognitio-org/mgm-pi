@@ -11,6 +11,10 @@ export interface RunSecrets {
 
 export interface SecretsBroker {
   secretsForRun(session: Session, guru: Guru): Promise<RunSecrets>;
+  /** A LiteLLM key usable for calls with no specific run/guru behind them, e.g. the E2.10 provider
+   * status service's LiteLLM probe when config.litellmAdminKey isn't set. Falls back to the same
+   * default key a guru with no key of its own would get. */
+  defaultLitellmKey(): Promise<string>;
 }
 
 /** Dev broker: reads fixed values from env so local runs work with no Secret Manager. Defaults to
@@ -33,6 +37,10 @@ export class MemorySecretsBroker implements SecretsBroker {
 
   async secretsForRun(): Promise<RunSecrets> {
     return { githubToken: this.githubToken, litellmKey: this.litellmKey };
+  }
+
+  async defaultLitellmKey(): Promise<string> {
+    return this.litellmKey;
   }
 }
 
@@ -75,6 +83,10 @@ export class GcpSecretsBroker implements SecretsBroker {
   private async litellmKeyForGuru(guruId: string): Promise<string> {
     const key = await this.accessSecretOrEmpty(`outfitter-litellm-key-${guruId}`);
     if (key) return key;
+    return this.defaultLitellmKey();
+  }
+
+  async defaultLitellmKey(): Promise<string> {
     return this.accessSecretOrEmpty("outfitter-litellm-key-default");
   }
 

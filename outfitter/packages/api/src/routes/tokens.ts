@@ -13,10 +13,13 @@ import { generateToken, hashToken, tokenPrefix, tokenExpiresAt, TOKEN_TTL_MS } f
 const MAX_ACTIVE_TOKENS = 10;
 
 /** Never send `hash` to a browser -- it's the only secret-equivalent value we store. `expiresAt`
- * is always filled in, with tokenExpiresAt's fallback for a token minted before the field existed. */
+ * is filled in with tokenExpiresAt's fallback for a token minted before the field existed, and left
+ * out if the stored dates don't parse (such a token already fails auth -- see isTokenActive). */
 export function publicToken(token: ApiToken): Omit<ApiToken, "hash"> {
   const { hash: _hash, ...rest } = token;
-  return { ...rest, expiresAt: new Date(tokenExpiresAt(token)).toISOString() };
+  const expires = tokenExpiresAt(token);
+  if (!Number.isFinite(expires)) return rest;
+  return { ...rest, expiresAt: new Date(expires).toISOString() };
 }
 
 export async function registerTokenRoutes(app: FastifyInstance, ctx: RouteContext): Promise<void> {

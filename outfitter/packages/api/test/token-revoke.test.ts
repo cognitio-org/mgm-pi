@@ -70,6 +70,9 @@ describe("normalizeOwnerMatch", () => {
       { domain: "localhost" },
       { domain: "a@b.c" },
       { email: 42 },
+      { domain: "@gmail.com" },
+      { domain: "serviam-іt.hr" }, // Cyrillic і
+      { email: "a\u200b@b.c" },
     ]) {
       assert.ok("error" in normalizeOwnerMatch(input), JSON.stringify(input));
     }
@@ -133,6 +136,9 @@ describe("MongoTokens owner filter matches the memory store's", () => {
     "c@notserviam-it.hr",
     "c@serviam-itXhr",
     "c@mail.serviam-it.hr",
+    " alice@mgms.eu ",
+    "alice@mgms.eu\n",
+    "c@serviam-it.hr\n",
   ];
   const matches = [
     { email: "alice@mgms.eu" },
@@ -262,5 +268,36 @@ describe("token expiry", () => {
     );
     await assert.rejects(identityFromApiToken(old, store), /invalid or revoked API token/);
     assert.equal((await identityFromApiToken(recent, store)).email, "alice@mgms.eu");
+  });
+
+  test("an unparsable expiry fails closed", async () => {
+    const store = new MemoryStore();
+    const plaintext = "outf_bad_date";
+    await store.tokens.insert(tokenRow("alice@mgms.eu", { hash: hashToken(plaintext), expiresAt: "not a date" }));
+    await assert.rejects(identityFromApiToken(plaintext, store), /invalid or revoked API token/);
+  });
+
+  test("expired tokens neither list, count toward the cap, nor show up in a revoke", async () => {
+    const store = new MemoryStore();
+    const past = new Date(Date.now() - 1000).toISOString();
+    for (let i = 0; i < 10; i++) {
+      await store.tokens.insert(tokenRow("dev@localhost", { expiresAt: past }));
+    }
+    assert.deepEqual(await store.tokens.listActiveForOwner("dev@localhost"), []);
+    assert.equal(await store.tokens.countActiveForOwner("dev@localhost"), 0);
+
+    const app = await buildTestApp({}, { store });
+    const created = await app.fastify.inject({ method: "POST", url: "/api/me/tokens", payload: { name: "fresh" } });
+    assert.equal(created.statusCode, 201);
+    const revoked = await store.tokens.revokeAllForOwners({ email: "dev@localhost" }, new Date().toISOString());
+    assert.deepEqual(revoked.map((t) => t.name), ["fresh"]);
+    await app.fastify.close();
+  });
+
+  test("publicToken leaves out expiresAt when the stored dates don't parse", async () => {
+    const { publicToken } = await import("../src/routes/tokens.ts");
+    const out = publicToken(tokenRow("a@b.c", { createdAt: "garbage" }));
+    assert.equal(out.expiresAt, undefined);
+    assert.equal((out as { hash?: string }).hash, undefined);
   });
 });

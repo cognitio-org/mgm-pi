@@ -228,13 +228,14 @@ export interface TokensCollection {
   insert(token: ApiToken): Promise<void>;
   findById(id: string): Promise<ApiToken | null>;
   findByHash(hash: string): Promise<ApiToken | null>;
-  /** Non-revoked tokens for an owner, newest first -- GET /api/me/tokens. */
+  /** Active (not revoked, not expired -- tokens.ts's isTokenActive) tokens for an owner, newest
+   * first -- GET /api/me/tokens. An expired token is dead weight, so it neither shows nor counts. */
   listActiveForOwner(ownerEmail: string): Promise<ApiToken[]>;
-  /** Non-revoked token count for an owner -- enforces the 10-active-tokens cap. */
+  /** Active token count for an owner -- enforces the 10-active-tokens cap. */
   countActiveForOwner(ownerEmail: string): Promise<number>;
   update(id: string, patch: Partial<ApiToken>): Promise<ApiToken | null>;
-  /** Sets `revokedAt` on every not-yet-revoked token whose owner matches, and returns exactly the
-   * tokens this call revoked (already-revoked ones are left alone, so a repeat is a no-op). */
+  /** Sets `revokedAt` on every active token whose owner matches, and returns the tokens it revoked
+   * (already-revoked and expired ones are left alone, so a repeat is a no-op). */
   revokeAllForOwners(match: TokenOwnerMatch, revokedAt: string): Promise<ApiToken[]>;
 }
 

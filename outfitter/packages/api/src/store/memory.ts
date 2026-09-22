@@ -1,7 +1,7 @@
 // Map-based Store used for MONGODB_URI=memory (dev and tests). Same interface as MongoStore so
 // routes, runs.ts and agentlink.ts are exercised identically either way.
 
-import { ownerMatches } from "../tokens.ts";
+import { isTokenActive, ownerMatches } from "../tokens.ts";
 import type {
   Store,
   Session,
@@ -261,7 +261,7 @@ class MemoryTokens implements TokensCollection {
 
   async listActiveForOwner(ownerEmail: string): Promise<ApiToken[]> {
     return [...this.rows.values()]
-      .filter((t) => t.ownerEmail === ownerEmail && !t.revokedAt)
+      .filter((t) => t.ownerEmail === ownerEmail && isTokenActive(t))
       .map(clone)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
@@ -281,7 +281,7 @@ class MemoryTokens implements TokensCollection {
   async revokeAllForOwners(match: TokenOwnerMatch, revokedAt: string): Promise<ApiToken[]> {
     const revoked: ApiToken[] = [];
     for (const row of this.rows.values()) {
-      if (row.revokedAt || !ownerMatches(row.ownerEmail, match)) continue;
+      if (!isTokenActive(row) || !ownerMatches(row.ownerEmail, match)) continue;
       row.revokedAt = revokedAt;
       revoked.push(clone(row));
     }

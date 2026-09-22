@@ -36,13 +36,37 @@ export function tokenExpiresAt(token: Pick<ApiToken, "createdAt" | "expiresAt">)
   return Date.parse(token.createdAt) + TOKEN_TTL_MS;
 }
 
+/** Whether `token` still authenticates: not revoked and not past tokenExpiresAt. `!(now < …)`
+ * rather than `now >= …` so an unparsable date (NaN) counts as expired, never as live. */
+export function isTokenActive(token: Pick<ApiToken, "revokedAt" | "createdAt" | "expiresAt">, now = Date.now()): boolean {
+  return !token.revokedAt && now < tokenExpiresAt(token);
+}
+
+/** Consumer mail providers: a domain revoke there would hit every unrelated user who signed in
+ * with one (IAP admits individual gmail.com addresses, for example). Revoke those by email. */
+const SHARED_MAIL_DOMAINS = new Set([
+  "@gmail.com",
+  "@googlemail.com",
+  "@outlook.com",
+  "@hotmail.com",
+  "@live.com",
+  "@yahoo.com",
+  "@icloud.com",
+  "@me.com",
+  "@proton.me",
+  "@protonmail.com",
+]);
+
 /** Lowercases and trims a TokenOwnerMatch, and validates its shape: an email needs one "@" with
  * text on both sides, a domain is `@example.com` (a leading "@" is added if missing) with no other
- * "@" and at least one dot. Returns an error string instead of throwing so the route can 400. */
+ * "@" and at least one dot. ASCII only, so a look-alike character pasted into the operator's input
+ * is refused rather than silently matching nothing. A domain matches that domain exactly, not its
+ * subdomains. Returns an error string instead of throwing so the route can 400. */
 export function normalizeOwnerMatch(input: { email?: unknown; domain?: unknown }): TokenOwnerMatch | { error: string } {
   const email = typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
   const rawDomain = typeof input.domain === "string" ? input.domain.trim().toLowerCase() : "";
   if (email && rawDomain) return { error: "give either email or domain, not both" };
+  if (/[^\x21-\x7e]/.test(email + rawDomain)) return { error: "email or domain must be plain ASCII" };
   if (email) {
     if (!/^[^@\s]+@[^@\s]+$/.test(email)) return { error: "email must look like name@example.com" };
     return { email };
@@ -50,6 +74,7 @@ export function normalizeOwnerMatch(input: { email?: unknown; domain?: unknown }
   if (rawDomain) {
     const domain = rawDomain.startsWith("@") ? rawDomain : `@${rawDomain}`;
     if (!/^@[^@\s]+\.[^@\s]+$/.test(domain)) return { error: "domain must look like @example.com" };
+    if (SHARED_MAIL_DOMAINS.has(domain)) return { error: `${domain} is a shared mail provider -- revoke by email instead` };
     return { domain };
   }
   return { error: "email or domain is required" };

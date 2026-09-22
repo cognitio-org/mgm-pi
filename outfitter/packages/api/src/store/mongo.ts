@@ -1,7 +1,7 @@
 // Mongo-backed Store. Connects lazily (connectMongoStore) so importing this module never dials
 // out; only MONGODB_URI values other than "memory" reach it (see index.ts).
 
-import { MongoClient, type Collection as MongoCollection, type Db } from "mongodb";
+import { MongoClient, type Collection as MongoCollection, type Db, type Filter } from "mongodb";
 import type {
   Store,
   Session,
@@ -28,6 +28,7 @@ import type {
   Mail,
   MailCollection,
 } from "./types.ts";
+import { TOKEN_TTL_MS } from "../tokens.ts";
 
 // Typed as RunState[], not inferred as string[]: used in a Mongo `$in` filter against Run.state,
 // which the mongodb driver's Filter<T> types as a union of the literal RunState strings.
@@ -327,14 +328,14 @@ class MongoTokens implements TokensCollection {
 
   async listActiveForOwner(ownerEmail: string): Promise<ApiToken[]> {
     const rows = await this.col
-      .find({ ownerEmail, revokedAt: { $exists: false } })
+      .find({ ownerEmail, ...activeTokenFilter(Date.now()) })
       .sort({ createdAt: -1 })
       .toArray();
     return rows.map((r) => stripIdStrict<ApiToken>(r));
   }
 
   async countActiveForOwner(ownerEmail: string): Promise<number> {
-    return this.col.countDocuments({ ownerEmail, revokedAt: { $exists: false } });
+    return this.col.countDocuments({ ownerEmail, ...activeTokenFilter(Date.now()) });
   }
 
   async update(id: string, patch: Partial<ApiToken>): Promise<ApiToken | null> {
@@ -348,13 +349,30 @@ class MongoTokens implements TokensCollection {
 
   /** Two steps, no transaction: updateMany stamps this call's `revokedAt` on every matching active
    * token, then a find on that exact stamp reads back what it revoked. A token another caller
-   * revokes in between keeps its own timestamp and isn't reported here, which is the point. */
+   * revokes in between keeps its own timestamp and isn't reported here -- unless two overlapping
+   * revokes land in the same millisecond, when each may also list the other's. Accepted: it only
+   * over-reports, and every listed token is revoked either way. */
   async revokeAllForOwners(match: TokenOwnerMatch, revokedAt: string): Promise<ApiToken[]> {
     const owner = ownerEmailFilter(match);
-    await this.col.updateMany({ ownerEmail: owner, revokedAt: { $exists: false } }, { $set: { revokedAt } });
+    await this.col.updateMany({ ownerEmail: owner, ...activeTokenFilter(Date.now()) }, { $set: { revokedAt } });
     const rows = await this.col.find({ ownerEmail: owner, revokedAt }).toArray();
     return rows.map((r) => stripIdStrict<ApiToken>(r));
   }
+}
+
+/** Mongo form of tokens.ts's isTokenActive. `null` matches a missing field as well as an explicit
+ * null, and ISO-8601 strings in the same format compare correctly as strings. A token minted
+ * before expiresAt existed is live while its createdAt is within TOKEN_TTL_MS. */
+function activeTokenFilter(nowMs: number): Filter<ApiToken & { _id: string }> {
+  // The cast is for `null`: the driver types an optional field's condition as string | undefined,
+  // but Mongo's own `field: null` is the one filter that matches both absent and null.
+  return {
+    revokedAt: null,
+    $or: [
+      { expiresAt: { $gt: new Date(nowMs).toISOString() } },
+      { expiresAt: null, createdAt: { $gt: new Date(nowMs - TOKEN_TTL_MS).toISOString() } },
+    ],
+  } as unknown as Filter<ApiToken & { _id: string }>;
 }
 
 function escapeRegex(s: string): string {
@@ -362,12 +380,14 @@ function escapeRegex(s: string): string {
 }
 
 /** Case-insensitive, anchored ownerEmail match for a normalized TokenOwnerMatch -- the Mongo
- * equivalent of tokens.ts's ownerMatches. A regex can't use the ownerEmail index, which is fine for
- * a rare operator action over a small collection. */
+ * equivalent of tokens.ts's ownerMatches, which trims the stored email first; the `\s*` on each end
+ * does the same here (and also absorbs the trailing newline PCRE's `$` would otherwise let through
+ * on its own). A regex can't use the ownerEmail index, which is fine for a rare operator action
+ * over a small collection. */
 export function ownerEmailFilter(match: TokenOwnerMatch): RegExp {
   return "email" in match
-    ? new RegExp(`^${escapeRegex(match.email)}$`, "i")
-    : new RegExp(`${escapeRegex(match.domain)}$`, "i");
+    ? new RegExp(`^\\s*${escapeRegex(match.email)}\\s*$`, "i")
+    : new RegExp(`${escapeRegex(match.domain)}\\s*$`, "i");
 }
 
 const ACKED_MAIL_TTL_MS = 7 * 24 * 60 * 60_000;

@@ -33,7 +33,7 @@ import { OAuth2Client } from "google-auth-library";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { Config } from "./config.ts";
 import type { Store } from "./store/types.ts";
-import { TOKEN_PREFIX, hashToken, tokenExpiresAt } from "./tokens.ts";
+import { TOKEN_PREFIX, hashToken, isTokenActive } from "./tokens.ts";
 
 export interface Identity {
   email: string;
@@ -79,7 +79,7 @@ const IAP_ISSUERS = ["https://cloud.google.com/iap"];
 export async function identityFromApiToken(bearer: string, store: TokenStore): Promise<Identity> {
   const record = await store.tokens.findByHash(hashToken(bearer));
   const now = Date.now();
-  if (!record || record.revokedAt || now >= tokenExpiresAt(record)) {
+  if (!record || !isTokenActive(record, now)) {
     throw new Error("invalid or revoked API token");
   }
 

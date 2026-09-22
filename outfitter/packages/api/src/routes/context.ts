@@ -6,6 +6,7 @@ import type { SseHub } from "../sse.ts";
 import type { LaptopProbe } from "../laptop.ts";
 import type { ProviderStatusService } from "../providers-status.ts";
 import type { ModelsService } from "../models.ts";
+import type { SecretAdmin } from "../secrets.ts";
 
 /** Dependencies every route module needs; built once in server.ts and threaded through. */
 export interface RouteContext {
@@ -17,4 +18,7 @@ export interface RouteContext {
   laptopProbe: LaptopProbe;
   providerStatus: ProviderStatusService;
   modelsService: ModelsService;
+  /** Operator settings routes only (routes/operator.ts): Secret Manager access behind an
+   * interface, so tests run against MemorySecretAdmin with no GCP. */
+  secretAdmin: SecretAdmin;
 }

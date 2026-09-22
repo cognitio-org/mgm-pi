@@ -51,7 +51,9 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   }
 }
 
-interface JsonResponse {
+/** Exported for reuse by routes/operator.ts's secret test endpoint, per operators.md's "reuse
+ * fetchJson-style code ... rather than copy" instruction. */
+export interface JsonResponse {
   ok: boolean;
   status: number;
   json: unknown;
@@ -60,14 +62,14 @@ interface JsonResponse {
 }
 
 /** A request that never got a response: say why, instead of reporting a meaningless HTTP 0. */
-function failedResponse(err: unknown, timeoutMs: number): JsonResponse {
+export function failedResponse(err: unknown, timeoutMs: number): JsonResponse {
   const aborted = err instanceof Error && err.name === "AbortError";
   return { ok: false, status: 0, json: undefined, error: aborted ? `timed out after ${timeoutMs} ms` : errMessage(err) };
 }
 
 /** GET with a bearer token, bounded by an AbortController timeout; never throws on a non-2xx or a
  * non-JSON body -- callers read `.ok`/`.status` instead. Only a network failure or the timeout
- * itself rejects, which every probe below catches. Exported for models.ts (GET /api/models) to
+ * itself rejects, which every probe below catches. Exported for models.ts (GET /api/models) and operator.ts (secret tests) to
  * reuse rather than re-implement (EPIC.md E3.7: "reuse the fetch/parse code in providers-status.ts"). */
 export async function fetchJson(
   url: string,

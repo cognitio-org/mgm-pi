@@ -21,7 +21,7 @@ import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import { InProcessProvider } from "@outfitter/provider-local";
 import { loadConfig } from "../src/config.ts";
 import { MemoryStore } from "../src/store/memory.ts";
-import { MemorySecretsBroker } from "../src/secrets.ts";
+import { MemorySecretsBroker, MemorySecretAdmin } from "../src/secrets.ts";
 import { buildApp } from "../src/server.ts";
 import { seedGuru } from "./helpers.ts";
 
@@ -108,6 +108,7 @@ test(
 
     const store = new MemoryStore();
     const secretsBroker = new MemorySecretsBroker();
+    const secretAdmin = new MemorySecretAdmin();
 
     const workspace = mkdtempSync(join(tmpdir(), "outfitter-e2e-workspace-"));
     let spawnedChild: ChildProcess | undefined;
@@ -123,7 +124,7 @@ test(
       spawnFn: capturingSpawn,
     });
 
-    const app = await buildApp({ store, config, provider, secretsBroker });
+    const app = await buildApp({ store, config, provider, secretsBroker, secretAdmin });
     // A real listening socket, not fastify.inject(): the whole point is a real child process
     // dialing a real WebSocket back to this server (docs/protocol.md "agentd <-> api").
     await app.fastify.listen({ port: 0, host: "127.0.0.1" });

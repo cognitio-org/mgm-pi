@@ -131,3 +131,196 @@ function isSecretNotFoundError(err: unknown): boolean {
   const status = e.response?.status ?? e.code ?? e.status;
   return status === 404 || status === "404" || status === 5;
 }
+
+// ---------- SecretAdmin (operator settings: routes/operator.ts) ----------
+//
+// A second, smaller interface alongside SecretsBroker: that one hands a *run* the one secret it
+// needs (read-only, scoped to a session/guru); this one is what the operator settings page uses to
+// see and change the managed secrets themselves (list state, add a version, disable all enabled
+// versions, read a value back for masking/testing). Kept separate rather than folded into
+// SecretsBroker because the two have very different callers (agentlink.ts's run startup vs. an
+// operator-only route) and different trust levels (broker: any run; admin: requireOperator only).
+
+/** What GET /api/operator/settings shows for one managed secret's current state. Never the full
+ * value -- `masked` is the value's last 4 characters (only when the value is over 12 characters
+ * long, per the operators.md design), everything else is metadata. */
+export interface SecretVersionInfo {
+  set: boolean;
+  masked?: string;
+  /** Create time of the latest enabled version, if Secret Manager reports one. */
+  updatedAt?: string;
+}
+
+export interface SecretAdmin {
+  info(secretName: string): Promise<SecretVersionInfo>;
+  /** Adds a new enabled version, creating the secret (automatic replication) first if it doesn't
+   * exist yet. `value` is the caller's responsibility to validate/trim -- this just stores it. */
+  addVersion(secretName: string, value: string): Promise<void>;
+  /** Disables every currently-enabled version (does not destroy anything, so it's recoverable from
+   * the console). A no-op if the secret doesn't exist or has no enabled versions. */
+  disableAllEnabled(secretName: string): Promise<void>;
+  /** The latest enabled version's plaintext, or undefined if the secret doesn't exist / has no
+   * enabled version. Used for masking and as the "test the stored value" fallback when
+   * POST /api/operator/secrets/:name/test is called with no explicit value. */
+  accessLatest(secretName: string): Promise<string | undefined>;
+}
+
+/** Only the last 4 characters, and only past a length where a partial reveal isn't itself most of
+ * the secret (operators.md's design choice, mirrored from mgm-admin's Connections page). */
+function maskTail(value: string): string | undefined {
+  return value.length > 12 ? `…${value.slice(-4)}` : undefined;
+}
+
+/** Secret Manager REST version resource names end in `.../versions/<N>`; N is what every
+ * version-scoped call (access/disable) needs. */
+function versionNumber(name: string): number {
+  const match = /\/versions\/(\d+)$/.exec(name);
+  return match ? Number.parseInt(match[1], 10) : 0;
+}
+
+interface SecretManagerVersion {
+  name: string;
+  state: string;
+  createTime?: string;
+}
+
+/** Production SecretAdmin: Secret Manager over ADC via the REST API, same approach as
+ * GcpSecretsBroker above (no @google-cloud/secret-manager dependency needed). */
+export class GcpSecretAdmin implements SecretAdmin {
+  private readonly project: string;
+  private authClientPromise: ReturnType<GcpSecretAdmin["buildAuthClient"]> | undefined;
+
+  constructor(project: string) {
+    this.project = project;
+  }
+
+  async info(secretName: string): Promise<SecretVersionInfo> {
+    const versions = await this.listEnabledVersionsDesc(secretName);
+    const latest = versions[0];
+    if (!latest) return { set: false };
+    const value = await this.accessVersion(secretName, versionNumber(latest.name));
+    return { set: true, masked: maskTail(value), updatedAt: latest.createTime };
+  }
+
+  async addVersion(secretName: string, value: string): Promise<void> {
+    const client = await this.getAuthClient();
+    await this.ensureSecretExists(client, secretName);
+    await client.request({
+      url: `${this.secretUrl(secretName)}:addVersion`,
+      method: "POST",
+      data: { payload: { data: Buffer.from(value, "utf8").toString("base64") } },
+    });
+  }
+
+  async disableAllEnabled(secretName: string): Promise<void> {
+    const client = await this.getAuthClient();
+    const versions = await this.listEnabledVersionsDesc(secretName);
+    for (const version of versions) {
+      await client.request({
+        url: `${this.secretUrl(secretName)}/versions/${versionNumber(version.name)}:disable`,
+        method: "POST",
+      });
+    }
+  }
+
+  async accessLatest(secretName: string): Promise<string | undefined> {
+    const versions = await this.listEnabledVersionsDesc(secretName);
+    const latest = versions[0];
+    if (!latest) return undefined;
+    return this.accessVersion(secretName, versionNumber(latest.name));
+  }
+
+  private secretUrl(secretName: string): string {
+    return `https://secretmanager.googleapis.com/v1/projects/${this.project}/secrets/${secretName}`;
+  }
+
+  /** Enabled versions, newest first. Empty (not thrown) when the secret doesn't exist at all. */
+  private async listEnabledVersionsDesc(secretName: string): Promise<SecretManagerVersion[]> {
+    const client = await this.getAuthClient();
+    try {
+      const res = await client.request<{ versions?: SecretManagerVersion[] }>({
+        url: `${this.secretUrl(secretName)}/versions`,
+      });
+      return (res.data.versions ?? [])
+        .filter((v) => v.state === "ENABLED")
+        .sort((a, b) => versionNumber(b.name) - versionNumber(a.name));
+    } catch (err) {
+      if (isSecretNotFoundError(err)) return [];
+      throw err;
+    }
+  }
+
+  private async accessVersion(secretName: string, version: number): Promise<string> {
+    const client = await this.getAuthClient();
+    const res = await client.request<{ payload: { data: string } }>({
+      url: `${this.secretUrl(secretName)}/versions/${version}:access`,
+    });
+    return Buffer.from(res.data.payload.data, "base64").toString("utf8");
+  }
+
+  private async ensureSecretExists(client: Awaited<ReturnType<GcpSecretAdmin["buildAuthClient"]>>, secretName: string): Promise<void> {
+    try {
+      await client.request({ url: this.secretUrl(secretName) });
+      return; // already exists
+    } catch (err) {
+      if (!isSecretNotFoundError(err)) throw err;
+    }
+    await client.request({
+      url: `https://secretmanager.googleapis.com/v1/projects/${this.project}/secrets`,
+      method: "POST",
+      params: { secretId: secretName },
+      data: { replication: { automatic: {} } },
+    });
+  }
+
+  private getAuthClient() {
+    if (!this.authClientPromise) this.authClientPromise = this.buildAuthClient();
+    return this.authClientPromise;
+  }
+
+  private async buildAuthClient() {
+    const { GoogleAuth } = await import("google-auth-library");
+    const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
+    return auth.getClient();
+  }
+}
+
+interface MemorySecretVersion {
+  value: string;
+  enabled: boolean;
+  createdAt: string;
+}
+
+/** Dev/test SecretAdmin: an in-memory map, so operator-settings tests never touch GCP. Versions
+ * are appended in order (last = newest), mirroring Secret Manager's own numbering. */
+export class MemorySecretAdmin implements SecretAdmin {
+  private readonly secrets = new Map<string, MemorySecretVersion[]>();
+
+  async info(secretName: string): Promise<SecretVersionInfo> {
+    const latest = this.latestEnabled(secretName);
+    if (!latest) return { set: false };
+    return { set: true, masked: maskTail(latest.value), updatedAt: latest.createdAt };
+  }
+
+  async addVersion(secretName: string, value: string): Promise<void> {
+    const versions = this.secrets.get(secretName) ?? [];
+    versions.push({ value, enabled: true, createdAt: new Date().toISOString() });
+    this.secrets.set(secretName, versions);
+  }
+
+  async disableAllEnabled(secretName: string): Promise<void> {
+    for (const version of this.secrets.get(secretName) ?? []) version.enabled = false;
+  }
+
+  async accessLatest(secretName: string): Promise<string | undefined> {
+    return this.latestEnabled(secretName)?.value;
+  }
+
+  private latestEnabled(secretName: string): MemorySecretVersion | undefined {
+    const versions = this.secrets.get(secretName) ?? [];
+    for (let i = versions.length - 1; i >= 0; i--) {
+      if (versions[i].enabled) return versions[i];
+    }
+    return undefined;
+  }
+}

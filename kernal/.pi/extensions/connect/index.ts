@@ -18,7 +18,7 @@ import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import { env } from "../_shared/env.ts";
+import { env, inSandbox } from "../_shared/env.ts";
 import {
   type Backend, type ModelMeta, type LmStudioMeta, backends, parseEnvText, parseModelInfo, parseLmStudioModels, parseSpendHeaders, rootUrl, normalizeBaseUrl,
   sessionEstimate, money, footerStatus, budgetRows, renderPanel, cleanKey, keyCheckUrl, authFailureText, busServe,
@@ -75,7 +75,9 @@ const keyRejected = new Map<string, string>();   // backend id → why the provi
 /** Verify a key against the backend's cheapest authenticated endpoint; only a definite 401/403 counts. */
 async function checkKey(b: Backend, timeoutMs = 5000): Promise<boolean> {
   const url = keyCheckUrl(b);
-  if (!url || env("NO_DISCOVERY")) return true;
+  // In a cloud sandbox the key was minted by the control plane for this run seconds ago; a bad one
+  // still shows up as a 401 on the first prompt, so the extra round trip only delays start-up.
+  if (!url || env("NO_DISCOVERY") || inSandbox()) return true;
   try {
     const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), timeoutMs);
     const res = await fetch(url, { headers: { authorization: `Bearer ${b.apiKey}` }, signal: ctl.signal });
@@ -151,7 +153,10 @@ export default async function (pi: ExtensionAPI) {
   async function registerAll(envOverride?: Record<string, string>) {
     const env = { ...loadEnv(process.cwd()), ...(envOverride ?? {}) };
     litellmMeta.clear(); lmstudioMeta.clear(); reachable.clear(); keyRejected.clear(); registered.clear();
-    defs = backends(env, litellmMeta, lmstudioMeta);
+    // A cloud sandbox has no local model server: there the lmstudio backend is kept only when
+    // LMSTUDIO_BASE_URL was set on purpose (a guru opting in to a tunnelled laptop model), and is
+    // never probed on localhost by default.
+    defs = backends(env, litellmMeta, lmstudioMeta).filter((b) => !(b.id === "lmstudio" && inSandbox() && !env.LMSTUDIO_BASE_URL));
     await Promise.all(defs.map(async (b) => {
       // A cloud backend without a key is not registered at all: otherwise its models show up in
       // pi's own /model picker and every request fails with a bare 401 from the provider.
@@ -342,10 +347,16 @@ export default async function (pi: ExtensionAPI) {
     },
   });
 
-  pi.on("session_start", async (_ev, ctx) => {
+  const seedKeySpend = async (ctx: any) => {
     const key = (await litellmGet("/key/info"))?.info;
     if (key) { if (key.max_budget != null) keyMax = key.max_budget; if (key.spend != null) { spend.keySpend = key.spend; spend.keySpendStart ??= key.spend; } }
     budgetStatus(ctx);
+  };
+  pi.on("session_start", async (_ev, ctx) => {
+    // pi answers no RPC command until every session_start handler has returned, and this lookup only
+    // feeds the footer, so a sandbox fills it in behind the first prompt instead of ahead of it.
+    if (inSandbox()) void seedKeySpend(ctx).catch(() => {});
+    else await seedKeySpend(ctx);
     const m = ctx.model;
     if (m && defs.some((d) => d.id === m.provider)) ctx.ui.setStatus("connect", `⇄ ${m.provider}/${m.id}`);
   });

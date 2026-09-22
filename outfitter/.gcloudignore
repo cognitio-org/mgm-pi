@@ -4,3 +4,5 @@ node_modules/
 **/dist/
 .omc/
 docs/reports/
+# google-github-actions/auth credential config (outfitter-deploy.yml)
+gha-creds-*.json

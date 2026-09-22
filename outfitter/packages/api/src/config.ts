@@ -103,6 +103,13 @@ export interface Config {
   /** TASKS_SA_EMAIL: service account Cloud Tasks and Cloud Scheduler mint OIDC tokens as when they
    * call /api/hooks/tasks/wake and /api/hooks/tick; those hooks accept no other caller. */
   tasksSaEmail: string;
+  /** AGENT_SOCKET_GRACE_MS: how long an agent socket that has sent nothing counts as still live
+   * when a *second* connection arrives for the same run (agentlink.ts's single-live-connection
+   * rule). agentd heartbeats every 15s while pi is up, so the default 60s is four missed
+   * heartbeats; below that a newcomer is refused (4429), above it the silent socket is treated as
+   * a dead half-open connection and replaced. 0 disables the rule (every valid hello takes the run
+   * over, the pre-fix behaviour) -- tests use that to exercise the replacement path. */
+  agentSocketGraceMs: number;
 }
 
 const OUTFITTER_ROLES: readonly OutfitterRole[] = ["all", "web", "link"];
@@ -123,8 +130,8 @@ function envRole(env: NodeJS.ProcessEnv): OutfitterRole {
   return envEnum("OUTFITTER_ROLE", OUTFITTER_ROLES, "all", env);
 }
 
-function envInt(name: string, fallback: number): number {
-  const raw = process.env[name];
+function envInt(name: string, fallback: number, env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env[name];
   if (!raw) return fallback;
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) ? n : fallback;
@@ -206,23 +213,24 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     cloudRunJob: env.CLOUDRUN_JOB ?? "outfitter-agent",
     gcpProject: env.GCP_PROJECT ?? "",
     gcpRegion: env.GCP_REGION ?? "us-central1",
-    idleStopSeconds: envInt("IDLE_STOP_SECONDS", 600),
+    idleStopSeconds: envInt("IDLE_STOP_SECONDS", 600, env),
     tunnelDomainLmstudio: env.TUNNEL_DOMAIN_LMSTUDIO ?? "",
     localTunnelToken: env.LOCAL_TUNNEL_TOKEN ?? "",
     mongodbDb: env.MONGODB_DB ?? "outfitter",
     localModels: envList("LOCAL_MODELS", ["litellm/local-qwen-mlx"], env),
     defaultCloudModel: env.DEFAULT_CLOUD_MODEL ?? "litellm/claude-auto-llm",
     ngrokWebhookSecret: env.NGROK_WEBHOOK_SECRET ?? "",
-    provisioningGraceMs: envInt("PROVISIONING_GRACE_MS", 10 * 60_000),
-    stopGraceMs: envInt("STOP_GRACE_MS", 60_000),
-    downQueuePollMs: envInt("DOWN_QUEUE_POLL_MS", 1500),
+    provisioningGraceMs: envInt("PROVISIONING_GRACE_MS", 10 * 60_000, env),
+    stopGraceMs: envInt("STOP_GRACE_MS", 60_000, env),
+    downQueuePollMs: envInt("DOWN_QUEUE_POLL_MS", 1500, env),
     ngrokApiKey: env.NGROK_API_KEY ?? "",
     litellmBaseUrl: env.LITELLM_BASE_URL ?? "https://litellm.augment-code.support/v1",
     litellmAdminKey: env.LITELLM_ADMIN_KEY ?? "",
-    providerPollMs: envInt("PROVIDER_POLL_MS", 5 * 60_000),
+    providerPollMs: envInt("PROVIDER_POLL_MS", 5 * 60_000, env),
     linkOrigin: env.OUTFITTER_LINK_ORIGIN ?? "",
     operators: envOperators("OUTFITTER_OPERATORS", env),
     cloudTasksQueue: env.CLOUD_TASKS_QUEUE ?? "",
     tasksSaEmail: env.TASKS_SA_EMAIL ?? "",
+    agentSocketGraceMs: envInt("AGENT_SOCKET_GRACE_MS", 60_000, env),
   };
 }

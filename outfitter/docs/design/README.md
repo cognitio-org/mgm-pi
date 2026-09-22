@@ -121,27 +121,36 @@ a `<Working>` while the call is in flight, so double-submits can't happen.
 
 ## Optional floppy-drive sound
 
-`src/lib/floppy-sound.ts` synthesizes a motor hum plus irregular head-seek clicks with the Web
-Audio API — no audio files, no sampled recordings. **Off by default**; toggle it with the speaker
+`src/lib/floppy-sound.ts` plays real floppy-drive recordings, the same two clips the kernal.one
+landing page uses, served from `public/sounds/`: `launch.mp3` (~4.7s: a head seek, then the drive
+reading) and `load.mp3` (~1.35s: a pair of seeks). **Off by default**; toggle it with the speaker
 control in the header (`components/SoundToggle.tsx`, persisted to `localStorage` under
-`outfitterSound`, wrapped in try/catch). It sounds like a low, slightly detuned engine hum with a
-scatter of short square-wave "ticks" layered on top, fading up over ~150ms and spinning down over
-~250ms — closer to a 1541 than a hard drive.
+`outfitterSound`, wrapped in try/catch).
 
 It only ever plays for a wait the user just started (composer send, session create, wake/stop/
 abort, token create, UI-request responses) via `withFloppySound(promise)`, which wraps the call:
-starts after `startDelayMs()` (300ms, so instant responses stay silent), loops while the promise is
-pending, stops with the spin-down fade when it settles, and is hard-capped at `maxDurationMs()`
-(20s) regardless of how long the underlying call takes. It is never wired to background polling or
-SSE updates, so playback always follows a user gesture (this also means it never trips browser
-autoplay blocking). One shared `AudioContext` is created lazily on first use and reused; every
-method is wrapped so a browser without Web Audio, or a blocked/suspended context, fails silently
-instead of throwing.
+after `startDelayMs()` (300ms, so instant responses stay silent) it plays `launch.mp3` from the
+start, seek then reading. If the wait outlasts the clip, the reading section (~2.45s to ~4.4s, both
+quiet points so the seam doesn't click) loops seamlessly through an `AudioBufferSourceNode`'s
+`loopStart`/`loopEnd`, and every 2.5 to 6s a `load.mp3` seek burst is laid over it with the reading
+ducked underneath, so a long wait sounds like a drive stepping between tracks rather than one
+two-second loop. When the promise settles it fades out over `spinDownMs()` (250ms), and it's
+hard-capped at `maxDurationMs()` (20s) regardless of how long the call takes. It is never wired to
+background polling or SSE updates, so playback always follows a user gesture (and never trips
+browser autoplay blocking).
 
-The scheduling is pure and seeded (`makeRng` — mulberry32 — and `scheduleSeekClicks`), tested in
-`test/floppy-sound.test.ts`; the audio graph itself (oscillators, gain envelopes) is not unit
-tested since there's no meaningful assertion to make on it — it was verified by ear during this
-pass (see `docs/reports/design-pass.md`).
+The clips are fetched and decoded (`decodeAudioData`) lazily, on the first wait that has sound on,
+never at page load, and cached with one shared `AudioContext`. Everything fails silent: no Web
+Audio, a blocked context, or a failed fetch or decode just means no sound.
+
+The pure parts (timing constants, the preference, the loop points `readingLoopPoints`, and the
+seeded seek-burst schedule `scheduleSeekBursts`) are tested in `test/floppy-sound.test.ts`; the
+audio graph itself is checked by ear.
+
+**Credits.** Excerpts from two freesound_community recordings on Pixabay, "Floppy drive on old PC"
+(item 52014) and "Reading floppy disc 2" (item 35303), under the
+[Pixabay Content License](https://pixabay.com/service/license-summary/). Details of the excerpts
+are in `public/sounds/CREDITS.md`.
 
 ## Logo
 

@@ -1,16 +1,32 @@
 // Optional floppy-drive sound for user-initiated waits (send, create, wake/stop/abort, refresh,
-// token create). Synthesized with the Web Audio API -- a low detuned motor hum plus irregular
-// head-seek clicks, 1541/early-Mac flavoured -- rather than a sampled recording, to avoid
-// licensing and bundle weight. Off by default; see SoundToggle.tsx for the header control and
-// isSoundEnabled/setSoundEnabled below for the persisted preference.
+// token create). Plays real drive recordings -- the same two clips the kernal.one landing page
+// uses (public/sounds/, credits in public/sounds/CREDITS.md):
 //
-// This module is split into pure, seed-driven scheduling functions (tested in
-// test/floppy-sound.test.ts) and a small stateful audio engine that consumes them (not unit
-// tested -- there is no meaningful assertion to make on an AudioContext graph; it's exercised
-// manually, see docs/reports/design-pass.md).
+//   launch.mp3 (~4.7 s): a head seek (0 - ~2.4 s), then the drive reading (~2.45 - ~4.4 s), then a
+//              short tail.
+//   load.mp3   (~1.35 s): a pair of head seeks.
+//
+// A wait plays launch.mp3 from the start (seek, then reading). If the wait outlasts it, the reading
+// section loops seamlessly (AudioBufferSourceNode loopStart/loopEnd), and every few seconds a
+// load.mp3 seek burst is laid over it with the reading ducked underneath, so a long wait sounds
+// like a drive stepping between tracks rather than one two-second loop. Off by default; see
+// SoundToggle.tsx for the header control and isSoundEnabled/setSoundEnabled below.
+//
+// The clips are fetched and decoded lazily on the first wait that plays sound (never at page load)
+// and cached. Everything fails silent: no Web Audio, a failed fetch or a failed decode just means
+// no sound. The timing and loop-point math is pure and tested in test/floppy-sound.test.ts; the
+// audio graph itself is exercised by ear.
 
 const STORAGE_KEY = "outfitterSound";
-export const DEFAULT_VOLUME = 0.12;
+export const DEFAULT_VOLUME = 0.45;
+
+/** Where the reading portion of launch.mp3 starts and ends (seconds): after the initial seek, and
+ * before the tail fades out. Found from the clip's RMS envelope. */
+export const LAUNCH_READING_START_S = 2.45;
+export const LAUNCH_READING_END_S = 4.4;
+
+/** Level the reading loop drops to while a seek burst plays over it. */
+export const DUCK_LEVEL = 0.3;
 
 /** How long a wait must run before the sound starts, so instant responses stay silent. */
 export function startDelayMs(): number {
@@ -27,8 +43,27 @@ export function spinDownMs(): number {
   return 250;
 }
 
-/** mulberry32 -- a small, fast, seedable PRNG. Deterministic for a given seed, which is what
- * makes scheduleSeekClicks testable without mocking Math.random. */
+export interface LoopPoints {
+  loopStart: number;
+  loopEnd: number;
+}
+
+/** Loop points (seconds) over the reading section of launch.mp3, clamped to the decoded buffer's
+ * actual duration (decoders may trim or pad a few ms). Null when the buffer is too short to hold a
+ * usable loop, in which case the clip just plays once. */
+export function readingLoopPoints(
+  bufferDuration: number,
+  start = LAUNCH_READING_START_S,
+  end = LAUNCH_READING_END_S,
+): LoopPoints | null {
+  if (!(bufferDuration > 0)) return null;
+  const loopEnd = Math.min(end, bufferDuration);
+  const loopStart = Math.max(0, Math.min(start, loopEnd));
+  if (loopEnd - loopStart < 0.5) return null;
+  return { loopStart, loopEnd };
+}
+
+/** mulberry32 -- a small, fast, seedable PRNG, so scheduleSeekBursts is testable. */
 export function makeRng(seed: number): () => number {
   let a = seed >>> 0;
   return function rng() {
@@ -40,22 +75,30 @@ export function makeRng(seed: number): () => number {
   };
 }
 
-export interface SeekClickOptions {
+export interface SeekBurstOptions {
+  /** No burst before this offset (ms from playback start): let launch.mp3's own seek and first
+   * pass of reading play untouched. */
+  firstAfterMs?: number;
   minGapMs?: number;
   maxGapMs?: number;
+  /** Length of one burst (load.mp3); a burst that wouldn't finish before `untilMs` is dropped. */
+  burstMs?: number;
 }
 
-/** Irregular click offsets (ms from playback start) across `durationMs`, standing in for a drive
- * head seeking back and forth while "reading". Same seed -> same schedule. */
-export function scheduleSeekClicks(seed: number, durationMs: number, opts: SeekClickOptions = {}): number[] {
-  const minGapMs = opts.minGapMs ?? 70;
-  const maxGapMs = opts.maxGapMs ?? 220;
+/** Offsets (ms from playback start) at which to lay a load.mp3 seek burst over the reading loop,
+ * up to `untilMs`. Irregular gaps, measured from the end of the previous burst. Same seed -> same
+ * schedule. */
+export function scheduleSeekBursts(seed: number, untilMs: number, opts: SeekBurstOptions = {}): number[] {
+  const firstAfterMs = opts.firstAfterMs ?? LAUNCH_READING_END_S * 1000;
+  const minGapMs = opts.minGapMs ?? 2500;
+  const maxGapMs = opts.maxGapMs ?? 6000;
+  const burstMs = opts.burstMs ?? 1350;
   const rng = makeRng(seed);
   const times: number[] = [];
-  let t = 0;
-  while (t < durationMs) {
-    t += minGapMs + rng() * (maxGapMs - minGapMs);
-    if (t < durationMs) times.push(Math.round(t));
+  let t = firstAfterMs + rng() * (maxGapMs - minGapMs);
+  while (t + burstMs <= untilMs) {
+    times.push(Math.round(t));
+    t += burstMs + minGapMs + rng() * (maxGapMs - minGapMs);
   }
   return times;
 }
@@ -83,110 +126,179 @@ interface StartOptions {
 
 type AudioContextCtor = typeof AudioContext;
 
+interface Clips {
+  launch: AudioBuffer;
+  load: AudioBuffer | null;
+}
+
+function clipUrl(name: string): string {
+  const base = (import.meta.env?.BASE_URL as string | undefined) ?? "/";
+  return `${base.endsWith("/") ? base : `${base}/`}sounds/${name}.mp3`;
+}
+
+async function decodeClip(ctx: AudioContext, name: string): Promise<AudioBuffer> {
+  const res = await fetch(clipUrl(name));
+  if (!res.ok) throw new Error(`${name}: HTTP ${res.status}`);
+  const data = await res.arrayBuffer();
+  // Promise form of decodeAudioData, with the callback form as a fallback for old Safari.
+  return await new Promise<AudioBuffer>((resolve, reject) => {
+    const p = ctx.decodeAudioData(data, resolve, reject) as Promise<AudioBuffer> | undefined;
+    if (p && typeof p.then === "function") p.then(resolve, reject);
+  });
+}
+
 class FloppyEngine {
   private ctx: AudioContext | null = null;
+  private clips: Promise<Clips | null> | null = null;
   private master: GainNode | null = null;
-  private hum: OscillatorNode | null = null;
-  private vibrato: OscillatorNode | null = null;
-  private clickTimers: number[] = [];
+  private sources: AudioBufferSourceNode[] = [];
   private capTimer: number | null = null;
+  /** Bumped by every start/stop, so a start still waiting on decoding can tell it's stale. */
+  private generation = 0;
   private active = false;
 
-  private ensureContext(): AudioContext | null {
-    if (this.ctx) return this.ctx;
-    if (typeof window === "undefined") return null;
+  /** Creates (or resumes) the shared context. Called synchronously from the user's gesture where
+   * possible, so the browser lets it run. */
+  prepare(): AudioContext | null {
+    if (!this.ctx) {
+      if (typeof window === "undefined") return null;
+      try {
+        const Ctor: AudioContextCtor | undefined =
+          window.AudioContext ?? (window as unknown as { webkitAudioContext?: AudioContextCtor }).webkitAudioContext;
+        if (!Ctor) return null;
+        this.ctx = new Ctor();
+      } catch {
+        this.ctx = null;
+        return null;
+      }
+    }
     try {
-      const Ctor: AudioContextCtor | undefined =
-        window.AudioContext ?? (window as unknown as { webkitAudioContext?: AudioContextCtor }).webkitAudioContext;
-      if (!Ctor) return null;
-      this.ctx = new Ctor();
+      if (this.ctx.state === "suspended") void this.ctx.resume().catch(() => {});
     } catch {
-      this.ctx = null;
+      // ignore
     }
     return this.ctx;
   }
 
-  start(opts: StartOptions = {}): void {
-    if (this.active) return;
-    const ctx = this.ensureContext();
-    if (!ctx) return;
-    this.active = true;
-    const volume = opts.volume ?? DEFAULT_VOLUME;
-    const seed = opts.seed ?? (Date.now() & 0xffffffff);
-
-    const master = ctx.createGain();
-    master.gain.value = 0;
-    master.connect(ctx.destination);
-    master.gain.linearRampToValueAtTime(volume, ctx.currentTime + 0.15);
-    this.master = master;
-
-    const hum = ctx.createOscillator();
-    hum.type = "sawtooth";
-    hum.frequency.value = 110;
-    const humGain = ctx.createGain();
-    humGain.gain.value = 0.5;
-    const vibrato = ctx.createOscillator();
-    vibrato.frequency.value = 5.5;
-    const vibratoGain = ctx.createGain();
-    vibratoGain.gain.value = 4;
-    vibrato.connect(vibratoGain);
-    vibratoGain.connect(hum.frequency);
-    hum.connect(humGain);
-    humGain.connect(master);
-    hum.start();
-    vibrato.start();
-    this.hum = hum;
-    this.vibrato = vibrato;
-
-    const cap = maxDurationMs();
-    for (const t of scheduleSeekClicks(seed, cap)) {
-      this.clickTimers.push(window.setTimeout(() => this.click(volume), t));
+  /** Fetches and decodes the clips once; a failure is cached as null (silence), not retried. */
+  private loadClips(ctx: AudioContext): Promise<Clips | null> {
+    if (!this.clips) {
+      this.clips = (async () => {
+        try {
+          const [launch, load] = await Promise.all([
+            decodeClip(ctx, "launch"),
+            decodeClip(ctx, "load").catch(() => null),
+          ]);
+          return { launch, load };
+        } catch {
+          return null;
+        }
+      })();
     }
-    this.capTimer = window.setTimeout(() => this.stop(), cap);
+    return this.clips;
   }
 
-  private click(volume: number): void {
-    const ctx = this.ctx;
-    if (!ctx || !this.master) return;
-    const osc = ctx.createOscillator();
-    osc.type = "square";
-    osc.frequency.value = 180 + Math.random() * 260;
-    const g = ctx.createGain();
+  /** Kick off decoding without playing (e.g. at the start of a wait, during the silent delay). */
+  warm(): void {
+    const ctx = this.prepare();
+    if (ctx) void this.loadClips(ctx);
+  }
+
+  start(opts: StartOptions = {}): void {
+    if (this.active) return;
+    const ctx = this.prepare();
+    if (!ctx) return;
+    this.active = true;
+    const gen = ++this.generation;
+    const startedAt = Date.now();
+    const cap = maxDurationMs();
+    this.capTimer = window.setTimeout(() => this.stop(), cap);
+    void this.loadClips(ctx).then((clips) => {
+      if (!clips || !this.active || gen !== this.generation) return;
+      try {
+        this.play(ctx, clips, opts, Math.max(0, cap - (Date.now() - startedAt)));
+      } catch {
+        // playback failed -- stay silent
+      }
+    });
+  }
+
+  private play(ctx: AudioContext, clips: Clips, opts: StartOptions, remainingMs: number): void {
+    if (remainingMs <= 0) return;
+    const volume = opts.volume ?? DEFAULT_VOLUME;
+    const seed = opts.seed ?? (Date.now() & 0xffffffff);
     const now = ctx.currentTime;
-    g.gain.setValueAtTime(0, now);
-    g.gain.linearRampToValueAtTime(volume * 1.4, now + 0.003);
-    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.03);
-    osc.connect(g);
-    g.connect(this.master);
-    osc.start(now);
-    osc.stop(now + 0.04);
+
+    const master = ctx.createGain();
+    master.gain.setValueAtTime(0, now);
+    master.gain.linearRampToValueAtTime(volume, now + 0.03);
+    master.connect(ctx.destination);
+    this.master = master;
+
+    const readingGain = ctx.createGain();
+    readingGain.gain.setValueAtTime(1, now);
+    readingGain.connect(master);
+
+    const reading = ctx.createBufferSource();
+    reading.buffer = clips.launch;
+    const loop = readingLoopPoints(clips.launch.duration);
+    if (loop) {
+      reading.loop = true;
+      reading.loopStart = loop.loopStart;
+      reading.loopEnd = loop.loopEnd;
+    }
+    reading.connect(readingGain);
+    reading.start(now);
+    this.sources.push(reading);
+
+    if (!loop || !clips.load) return;
+    const burstMs = clips.load.duration * 1000;
+    for (const offsetMs of scheduleSeekBursts(seed, remainingMs, { burstMs })) {
+      const at = now + offsetMs / 1000;
+      const end = at + clips.load.duration;
+      readingGain.gain.setValueAtTime(1, at);
+      readingGain.gain.linearRampToValueAtTime(DUCK_LEVEL, at + 0.05);
+      readingGain.gain.setValueAtTime(DUCK_LEVEL, end - 0.05);
+      readingGain.gain.linearRampToValueAtTime(1, end);
+      const seek = ctx.createBufferSource();
+      seek.buffer = clips.load;
+      seek.connect(master);
+      seek.start(at);
+      this.sources.push(seek);
+    }
   }
 
   stop(): void {
+    this.generation++;
     if (!this.active) return;
     this.active = false;
-    for (const id of this.clickTimers) window.clearTimeout(id);
-    this.clickTimers = [];
     if (this.capTimer !== null) window.clearTimeout(this.capTimer);
     this.capTimer = null;
 
     const ctx = this.ctx;
     const fade = spinDownMs() / 1000;
-    if (ctx && this.master) {
+    let stopAt = 0;
+    if (ctx) {
       const now = ctx.currentTime;
-      this.master.gain.cancelScheduledValues(now);
-      this.master.gain.setValueAtTime(this.master.gain.value, now);
-      this.master.gain.linearRampToValueAtTime(0, now + fade);
+      stopAt = now + fade + 0.02;
+      if (this.master) {
+        try {
+          this.master.gain.cancelScheduledValues(now);
+          this.master.gain.setValueAtTime(this.master.gain.value, now);
+          this.master.gain.linearRampToValueAtTime(0, now + fade);
+        } catch {
+          // ignore
+        }
+      }
     }
-    const stopAt = ctx ? ctx.currentTime + fade + 0.02 : 0;
-    try {
-      this.hum?.stop(stopAt);
-      this.vibrato?.stop(stopAt);
-    } catch {
-      // already stopped -- ignore
+    for (const src of this.sources) {
+      try {
+        src.stop(stopAt);
+      } catch {
+        // never started or already stopped -- ignore
+      }
     }
-    this.hum = null;
-    this.vibrato = null;
+    this.sources = [];
     this.master = null;
   }
 }
@@ -199,14 +311,20 @@ function getEngine(): FloppyEngine {
 
 /** Schedules playback to begin after startDelayMs() (so fast actions stay silent) and returns a
  * function that stops it -- call that when the action settles, whether or not it had actually
- * started playing yet. Never throws if Web Audio is unavailable. */
+ * started playing yet. Creates/resumes the audio context and starts decoding right away (call it
+ * from the user's gesture). Never throws if Web Audio is unavailable. */
 export function playFloppyAfterDelay(opts: StartOptions = {}): () => void {
   if (typeof window === "undefined") return () => {};
+  try {
+    getEngine().warm();
+  } catch {
+    // ignore
+  }
   const timer = window.setTimeout(() => {
     try {
       getEngine().start(opts);
     } catch {
-      // synthesis failed (unsupported browser, blocked context, ...) -- fail silent
+      // unsupported browser, blocked context, ... -- fail silent
     }
   }, startDelayMs());
   return () => {

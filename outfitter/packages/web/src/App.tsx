@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
 import { api } from "./api/client.ts";
 import { ProviderStrip } from "./components/ProviderStrip.tsx";
+import { Logo } from "./components/Logo.tsx";
+import { ThemeToggle } from "./components/ThemeToggle.tsx";
+import { SoundToggle } from "./components/SoundToggle.tsx";
 import { FleetPage } from "./pages/FleetPage.tsx";
 import { SessionPage } from "./pages/SessionPage.tsx";
 import { ProvidersPage } from "./pages/ProvidersPage.tsx";
@@ -23,7 +26,9 @@ export function App() {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <strong>Outfitter</strong>
+        <NavLink to="/" aria-label="Outfitter home" style={{ textDecoration: "none" }}>
+          <Logo />
+        </NavLink>
         <nav>
           <NavLink to="/" end className={({ isActive }) => (isActive ? "active" : "")}>
             Fleet
@@ -43,7 +48,11 @@ export function App() {
             </NavLink>
           )}
         </nav>
-        <ProviderStrip />
+        <div className="app-header-spacer">
+          <ProviderStrip />
+          <SoundToggle />
+          <ThemeToggle />
+        </div>
       </header>
       <main className="app-main">
         <Routes>

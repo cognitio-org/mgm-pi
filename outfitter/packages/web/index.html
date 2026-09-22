@@ -4,8 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#302870" />
     <title>Outfitter</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="stylesheet" href="/src/style.css" />
+    <script>
+      // Applied before first paint so a stored theme choice doesn't flash the OS-preferred one on
+      // load. Kept inline and tiny on purpose -- ThemeToggle.tsx owns the real logic and keeps
+      // this in sync on every toggle.
+      (function () {
+        try {
+          var stored = localStorage.getItem("outfitterTheme");
+          if (stored === "dark" || stored === "light") {
+            document.documentElement.setAttribute("data-theme", stored);
+          }
+        } catch (e) {
+          // localStorage unavailable -- prefers-color-scheme still applies via CSS.
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

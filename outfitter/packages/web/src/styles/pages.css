@@ -1,0 +1,104 @@
+/* Page-specific styles for the Gurus page, Settings page and session header (E3.7-E3.9).
+ * Shared building blocks (.panel, .btn, .pill, .meter, .masked, ...) live in components.css. */
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Session header: model/thinking/context (E3.8) */
+
+.session-model-info {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.context-usage {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* The context bar uses the shared .meter from styles/components.css; inline in the header it
+   needs a fixed width. */
+.context-meter {
+  display: inline-block;
+  width: 80px;
+  vertical-align: middle;
+}
+
+/* Gurus page / guru form (E3.7) */
+
+.model-picker {
+  position: relative;
+}
+
+.model-picker-list {
+  position: absolute;
+  z-index: 10;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin: 0.15rem 0 0;
+  padding: 0.25rem;
+  list-style: none;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.model-picker-list li button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 0.3rem 0.4rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.model-picker-list li button:hover {
+  background: var(--bg);
+}
+
+.model-picker-meta {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
+.env-row {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.3rem;
+}
+
+.env-row input {
+  flex: 1;
+}
+
+/* SettingsPage.tsx: a set-secret's masked value ("set (…abcd)"), mirroring mgm-admin's
+   Connections page. */
+.chip {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.note {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+button.danger {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+

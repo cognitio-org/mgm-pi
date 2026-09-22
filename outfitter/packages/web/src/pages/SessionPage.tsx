@@ -109,14 +109,14 @@ export function SessionPage() {
                   : `${header.context.tokens.toLocaleString()} tokens`}
                 {typeof percent === "number" && (
                   <span
-                    className={`meter${percent >= 80 ? " error" : percent >= 50 ? " warn" : ""}`}
+                    className={`meter context-meter${percent >= 80 ? " meter-danger" : percent >= 50 ? " meter-warn" : ""}`}
                     role="meter"
                     aria-label="Context used"
                     aria-valuemin={0}
                     aria-valuemax={100}
                     aria-valuenow={Math.round(percent)}
                   >
-                    <i style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
+                    <span className="meter-fill" style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
                   </span>
                 )}
               </span>

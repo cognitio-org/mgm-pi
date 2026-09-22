@@ -4,7 +4,7 @@
 # tests that commit and runs release.sh on it. The tag's message lists the Outfitter-facing
 # commits since the previous release, so `git show <tag>` is the changelog and rolling back means
 # redeploying the previous tag (README.md "Rollback").
-#   ./tag-release.sh              # tag origin/main's head
+#   ./tag-release.sh              # tag origin/main's head (repository admins only: tag ruleset)
 #   ./tag-release.sh <commit>     # tag an earlier commit on main
 #   DRY_RUN=1 ./tag-release.sh    # print the tag and its message, create nothing
 #
@@ -58,5 +58,10 @@ if [[ "${DRY_RUN:-}" == 1 ]]; then
   exit 0
 fi
 git tag -a "${TAG}" -m "${MESSAGE}" "${TARGET}"
-git push --quiet origin "refs/tags/${TAG}"
+if ! git push --quiet origin "refs/tags/${TAG}"; then
+  # Don't leave a local-only tag behind: the next run would number and diff from it.
+  git tag -d "${TAG}" >/dev/null
+  echo "tag-release: push refused (only repository admins can create outfitter-v* tags); nothing released." >&2
+  exit 1
+fi
 echo "== Pushed ${TAG}. Watch it deploy: gh run watch \$(gh run list --workflow 'Outfitter deploy' --limit 1 --json databaseId -q '.[0].databaseId')"

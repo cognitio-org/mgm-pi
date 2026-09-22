@@ -58,16 +58,17 @@ tagged commit may never have been tested alone) and then runs **`release.sh`** o
   Releases are Kernal's (`vX.Y.Z`), and `kernal update` and `install.sh` read `releases/latest`,
   so an Outfitter Release marked "latest" would break every Kernal install.
 - Only repository admins can create, move or delete `outfitter-v*` tags (a tag ruleset
-  `ci-setup.sh` creates). That matters: a tag can point at any commit, including a branch commit
-  whose own workflow skips `release.sh`'s main-only check, and GCP trusts the workflow at any
-  `outfitter-v*` tag.
+  `ci-setup.sh` creates, or it refuses to switch the workflow on). That matters: a tag can point at
+  any commit, including a branch commit whose own workflow skips `release.sh`'s main-only check,
+  and GCP trusts the workflow only when it runs from an `outfitter-v*` tag -- never from `main` or
+  a branch, so a collaborator with write access can't start a deploy of their own code either.
 - Non-secret settings live in **`config.env`**, checked in, so every deploy sets the same
   environment. `--set-env-vars` replaces a service's whole environment, so a value that only
   existed in one person's shell used to vanish on the next deploy from anywhere else. Change a
   value there, merge it, and release.
 - GitHub gets no stored key: Workload Identity Federation to the `outfitter-deployer` service
   account, trusted only for this workflow file of this repository (pinned by name and numeric id),
-  run from an `outfitter-v*` tag or from `main`. Images build as `outfitter-builder` (push and log
+  run from an `outfitter-v*` tag. Images build as `outfitter-builder` (push and log
   rights only), never as the default build account, which is project Editor. The deployer can't
   change IAM policy, so it can't add invokers or IAP members. It is not harmless, though: it could
   switch IAP off, or ship code that runs as `outfitter-api` with its secret access, so a stolen
@@ -93,8 +94,8 @@ MANUAL=1 ./release.sh
 Overrides, for emergencies: `ROLLBACK=1` deploys an older `main` commit on purpose (see Rollback),
 `ALLOW_OFF_MAIN=1` skips the checkout checks entirely, `FORCE_ALL=1` redeploys components already
 at the commit, `ALLOW_SKEW=1` lets a single-component script deploy against a mixed fleet. The
-workflow's **Run workflow** button (run it from `main`) takes a release tag or `main` commit,
-`rollback` and `force_all`.
+workflow's **Run workflow** button redeploys a release: choose its `outfitter-v*` tag under "Use
+workflow from" (runs from anything else are refused), with `rollback` and `force_all`.
 
 `landing.sh` (`kernal-web`, the kernal.one page) is not part of this yet; it still deploys by hand.
 
@@ -325,9 +326,9 @@ redirect URI. The landing page's CSP pins the hash of its inline theme script
 
 ## Rollback
 
-- **Preferred: redeploy the previous release.** Actions → "Outfitter deploy" → Run workflow (from
-  `main`), with `ref` set to the previous `outfitter-v*` tag and `rollback` ticked (or
-  `ROLLBACK=1 ./release.sh` from a checkout of that tag). The next release rolls forward again. This only reaches commits
+- **Preferred: redeploy the previous release.** Actions → "Outfitter deploy" → Run workflow, "Use
+  workflow from" the previous `outfitter-v*` tag, `rollback` ticked (or `ROLLBACK=1 ./release.sh`
+  from a checkout of that tag). The next release rolls forward again. This only reaches commits
   from after the deploy pipeline merged: older commits have no `release.sh`, and their `service.sh`
   still changes IAP, which the deployer can't. Go further back by shifting traffic (below).
 - **Faster, services only: shift traffic.** `outfitter-api` and **`outfitter-link`** (both Cloud Run *services*, so each keeps prior

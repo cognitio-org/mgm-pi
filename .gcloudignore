@@ -1,0 +1,9 @@
+# Cloud Build uploads from the repo root (outfitter/deploy/agent-job.sh). Without this file gcloud
+# would derive one from .gitignore; this keeps that and adds what must never be uploaded.
+.gcloudignore
+.git
+.gitignore
+#!include:.gitignore
+# google-github-actions/auth's credential config, written into the workspace in
+# .github/workflows/outfitter-deploy.yml.
+gha-creds-*.json

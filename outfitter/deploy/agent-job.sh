@@ -26,7 +26,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 deploy_guard kernal outfitter
 CURRENT_IMAGE="$(deployed_image job "${JOB}")"
 regression_guard "${CURRENT_IMAGE}"
-TAG="$(git -C "${REPO_ROOT}" rev-parse --short HEAD)"
+TAG="$(commit_tag)"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}/outfitter-agent:${TAG}"
 
 # `gcloud builds submit --tag` can't point at a Dockerfile outside the source root, and ours lives

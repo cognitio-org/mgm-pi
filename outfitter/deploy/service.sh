@@ -59,7 +59,7 @@ deploy_guard outfitter
 CURRENT_IMAGE="$(deployed_image service "${SERVICE}")"
 regression_guard "${CURRENT_IMAGE}"
 # The tag is the commit the image was built from: regression_guard and release.sh read it back.
-TAG="$(git -C "${SOURCE_DIR}" rev-parse --short HEAD)"
+TAG="$(commit_tag)"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}/outfitter-api:${TAG}"
 
 # existing_secrets() is defined in env.sh (sourced above); the secret list is identical for both

@@ -132,6 +132,27 @@ regression_guard() {
   fi
 }
 
+# commit_tag -- this checkout's commit as image tag and build-commit label. A fixed 12 characters,
+# not `--short`: that grows with the clone's object count, so a laptop and an Actions checkout could
+# label the same commit differently and never see each other's deploys as "already there".
+commit_tag() {
+  git -C "${DEPLOY_DIR}" rev-parse --short=12 HEAD
+}
+
+# component_live_at <services|jobs> <name> <commit> -- whether that component really runs <commit>:
+# its image is tagged with it and, for a service, the revision carrying it became ready. The
+# build-commit label alone isn't enough: `gcloud run deploy` sets it even when the new revision then
+# fails to start, and release.sh would skip that service on a re-run.
+component_live_at() {
+  local kind="$1" name="$2" commit="$3" image ready created
+  image="$(deployed_image "${kind%s}" "${name}")"
+  [[ "${image##*:}" == "${commit}" ]] || return 1
+  [[ "${kind}" == jobs ]] && return 0
+  ready="$(gcloud run services describe "${name}" --project="${PROJECT}" --region="${REGION}" --format='value(status.latestReadyRevisionName)')"
+  created="$(gcloud run services describe "${name}" --project="${PROJECT}" --region="${REGION}" --format='value(status.latestCreatedRevisionName)')"
+  [[ -n "${ready}" && "${ready}" == "${created}" ]]
+}
+
 image_exists() {
   gcloud artifacts docker images describe "$1" --project="${PROJECT}" &>/dev/null
 }

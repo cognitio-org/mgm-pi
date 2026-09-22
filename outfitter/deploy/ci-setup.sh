@@ -5,8 +5,8 @@
 #   ./ci-setup.sh
 #
 # Trust is pinned to exactly one workflow file of this repo, run from an `outfitter-v*` release tag
-# or from main (the provider's attribute condition): a PR branch, a fork, or any other workflow in
-# the repo gets no GCP token. A tag can point at any commit, including one whose workflow skips
+# (the provider's attribute condition): main, a PR branch, a fork, or any other workflow in the
+# repo gets no GCP token. A tag can point at any commit, including one whose workflow skips
 # release.sh's main-only check, so this also creates a tag ruleset: only repository admins can
 # create, move or delete `outfitter-v*` tags. That makes cutting a release exactly as privileged as
 # administering the repo.
@@ -102,7 +102,7 @@ fi
 PROVIDER_FLAGS=(
   --location=global --project="${PROJECT}" --workload-identity-pool="${POOL}"
   --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.job_workflow_ref=assertion.job_workflow_ref"
-  --attribute-condition="assertion.repository_id == '${REPO_ID}' && assertion.repository_owner_id == '${OWNER_ID}' && assertion.repository == '${GITHUB_REPO}' && (assertion.job_workflow_ref == '${WORKFLOW}@refs/heads/main' || assertion.job_workflow_ref.startsWith('${WORKFLOW}@refs/tags/outfitter-v'))"
+  --attribute-condition="assertion.repository_id == '${REPO_ID}' && assertion.repository_owner_id == '${OWNER_ID}' && assertion.repository == '${GITHUB_REPO}' && assertion.job_workflow_ref.startsWith('${WORKFLOW}@refs/tags/outfitter-v')"
 )
 if gcloud_exists iam workload-identity-pools providers describe "${PROVIDER}" --location=global \
     --workload-identity-pool="${POOL}" --project="${PROJECT}"; then
@@ -119,12 +119,15 @@ gcloud iam service-accounts add-iam-policy-binding "${SA_EMAIL}" --project="${PR
   --quiet >/dev/null
 
 echo "== Tag ruleset: only admins create, move or delete outfitter-v* tags =="
+# Without it any collaborator with write access could tag their own commit and deploy it, so this
+# script stops here -- before the repository variables that switch the workflow on -- if the
+# ruleset can't be created or isn't active (rulesets on a private repo can need a paid plan).
 RULESET_NAME="outfitter release tags"
-if gh api "repos/${GITHUB_REPO}/rulesets" --jq '.[].name' | grep -qxF "${RULESET_NAME}"; then
-  echo "   already exists"
-else
+RULESET_ENFORCEMENT="$(gh api "repos/${GITHUB_REPO}/rulesets" \
+  --jq ".[] | select(.name == \"${RULESET_NAME}\") | .enforcement")"
+if [[ -z "${RULESET_ENFORCEMENT}" ]]; then
   # actor_id 5 = the repository admin role.
-  gh api -X POST "repos/${GITHUB_REPO}/rulesets" --input - >/dev/null <<JSON
+  gh api -X POST "repos/${GITHUB_REPO}/rulesets" --input - >/dev/null <<JSON || deploy_fail "couldn't create the tag ruleset (see above); the deploy workflow stays off"
 {
   "name": "${RULESET_NAME}",
   "target": "tag",
@@ -135,6 +138,10 @@ else
 }
 JSON
   echo "   created"
+elif [[ "${RULESET_ENFORCEMENT}" != active ]]; then
+  deploy_fail "ruleset '${RULESET_NAME}' exists but is '${RULESET_ENFORCEMENT}', not active; fix it in the repo settings, then re-run"
+else
+  echo "   already active"
 fi
 
 WIF_PROVIDER="projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL}/providers/${PROVIDER}"

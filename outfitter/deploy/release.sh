@@ -30,7 +30,7 @@ deploy_guard kernal outfitter
 if [[ -z "${GITHUB_ACTIONS:-}" && "${DRY_RUN:-}" != 1 && "${MANUAL:-}" != 1 && "${ROLLBACK:-}" != 1 ]]; then
   deploy_fail "pushing a release tag deploys (./tag-release.sh). To deploy by hand anyway -- the workflow is down, or ci-setup.sh hasn't run yet -- use MANUAL=1 ./release.sh; DRY_RUN=1 shows the plan."
 fi
-HEAD_SHORT="$(git -C "${ROOT}" rev-parse --short HEAD)"
+HEAD_SHORT="$(commit_tag)"
 # Tells check_deploy_skew that the components not yet moved are about to follow.
 export DEPLOY_ALL_COMMIT="${HEAD_SHORT}"
 echo "== Release ${HEAD_SHORT}: $(git -C "${ROOT}" log -1 --format=%s HEAD) =="
@@ -73,7 +73,7 @@ step() {
   local kind="$1" name="$2" current
   shift 2
   current="$(current_build_commit "${kind}" "${name}")"
-  if [[ "${current}" == "${HEAD_SHORT}" && "${FORCE_ALL:-}" != 1 ]]; then
+  if [[ "${FORCE_ALL:-}" != 1 ]] && component_live_at "${kind}" "${name}" "${HEAD_SHORT}"; then
     echo "== ${name}: already at ${HEAD_SHORT}; skipping =="
   elif [[ "${DRY_RUN:-}" == 1 ]]; then
     echo "== DRY_RUN: would deploy ${name} (${current:-unlabelled} -> ${HEAD_SHORT}) =="

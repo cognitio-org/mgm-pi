@@ -5,20 +5,19 @@ name: Outfitter deploy
 # the run refuses a commit that isn't on main or would roll production back. Merging to main only
 # runs CI ("Outfitter CI").
 #
-# Run workflow (from main) redeploys an existing release tag or main commit: rollbacks
-# (`rollback` ticked) and re-runs of a release that failed halfway.
+# Run workflow redeploys an existing release: pick the outfitter-v* tag under "Use workflow from"
+# (rollbacks: the previous tag with `rollback` ticked; or a re-run of a release that failed
+# halfway). Runs from anything but an outfitter-v* tag are refused: only admins can create those
+# tags (ci-setup.sh's ruleset), and GCP trusts this workflow only at one (its provider condition),
+# so every deploy is code an admin tagged, with that tag's own copy of this file.
 #
 # Idle until outfitter/deploy/ci-setup.sh has set the GCP_WIF_PROVIDER and GCP_DEPLOY_SA repository
-# variables. GCP trusts only this file, at an outfitter-v* tag or on main (ci-setup.sh's provider
-# condition).
+# variables.
 on:
   push:
     tags: ["outfitter-v*"]
   workflow_dispatch:
     inputs:
-      ref:
-        description: "Release tag (outfitter-v...) or main commit to deploy"
-        required: true
       rollback:
         description: "Allow deploying a commit older than production (ROLLBACK=1)"
         type: boolean
@@ -29,7 +28,7 @@ on:
         default: false
 
 # One deploy at a time, never cancelled midway. A newer run waiting here replaces an older waiting
-# one, so production only ever moves forward.
+# one (a manual re-run included), so re-run anything that got replaced.
 concurrency:
   group: outfitter-deploy
   cancel-in-progress: false
@@ -41,13 +40,13 @@ jobs:
   # CI only runs when outfitter/ or kernal/ change, so a tagged commit may never have been tested on
   # its own: test exactly what is about to ship.
   test:
-    if: vars.GCP_WIF_PROVIDER != ''
+    if: vars.GCP_WIF_PROVIDER != '' && startsWith(github.ref, 'refs/tags/outfitter-v')
     runs-on: ubuntu-24.04
     defaults: { run: { working-directory: outfitter } }
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.ref || github.sha }}
+          ref: ${{ github.sha }}
       - uses: actions/setup-node@v5
         with: { node-version: 24, cache: npm, cache-dependency-path: outfitter/package-lock.json }
       - run: npm ci
@@ -68,8 +67,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.ref || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
+      # Writes gha-creds-*.json into the workspace: kept out of every Cloud Build upload by the
+      # repo root's .gcloudignore and outfitter/.gcloudignore.
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}

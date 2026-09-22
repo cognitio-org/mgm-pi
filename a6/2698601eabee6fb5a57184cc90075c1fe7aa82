@@ -1,0 +1,64 @@
+outfitter/packages/web/src/styles/mobile.css
+  s_2209f22f830d7f::t_fc83b4afb3ab0b 330-331
+  s_2209f22f830d7f::t_7256bc1e95fae2 275-281
+  s_2209f22f830d7f::t_bd3f448267c27d 317-321,323-329,332-349
+  s_2209f22f830d7f::t_0e3c4a3e0d0462 139-146
+  s_2209f22f830d7f::t_0cb2c31d74bf73 32-41
+outfitter/packages/web/src/styles/layout.css
+  s_2209f22f830d7f::t_e4b69462e33769 168-182,186-189,192-203
+  s_2209f22f830d7f::t_a11607a2fa120a 91-125
+  s_2209f22f830d7f::t_f36224cbf6b8d2 78-90
+  s_2209f22f830d7f::t_fa178233eec9ca 183-185,190-191
+outfitter/docs/reports/mobile-desk.md
+  s_2209f22f830d7f::t_c3e49591ec09a4 239-241,243
+  s_2209f22f830d7f::t_f00e76553c7c20 260,273-281
+  s_2209f22f830d7f::t_bec12e4dd35400 294-295,297,299-301,303-304,306-307
+  s_2209f22f830d7f::t_ad56cb7b1c6795 158-211,219-220,226-235
+outfitter/packages/web/src/components/Composer.tsx
+  s_2209f22f830d7f::t_fecee07bf242e3 4,11-18,21-23,26,28-30,49,61-72,74-88
+outfitter/packages/web/test/touch.test.ts
+  s_2209f22f830d7f::t_0de0d59b2ec7a3 1-32
+outfitter/packages/web/src/components/ThemeToggle.tsx
+  s_2209f22f830d7f::t_c6309b18f51625 33-36,49-50,54,57,59
+outfitter/packages/web/src/pages/DeskPage.tsx
+  s_2209f22f830d7f::t_bcb3c515e6dd9c 186,189,192,194,196-206,212-229,245-251,255-259
+  s_2209f22f830d7f::t_02606913ba3739 8-10
+outfitter/packages/web/src/components/ProviderStrip.tsx
+  s_2209f22f830d7f::t_fb7c7a01d185f7 16-22,31,35,39-46
+outfitter/packages/web/src/lib/touch.ts
+  s_2209f22f830d7f::t_be2163aa915139 1-28
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_2209f22f830d7f::t_e18e25699e7b60 28
+  s_2209f22f830d7f::t_b3b5068f1f8fb9 92-102
+  s_2209f22f830d7f::t_70d5def6b451c0 119-138
+outfitter/packages/web/src/components/SoundToggle.tsx
+  s_2209f22f830d7f::t_05ea03c99f13cf 7-9,18-19,23,27
+  s_2209f22f830d7f::t_0c388aecb22db6 29
+outfitter/packages/web/src/App.tsx
+  s_2209f22f830d7f::t_313d6a7fa32f0c 63-64
+  s_2209f22f830d7f::t_07d2ae28770137 32-33,45-49
+  s_2209f22f830d7f::t_173626a7eec0ff 2
+  s_2209f22f830d7f::t_a486ebefa37fad 50
+outfitter/packages/web/src/styles/desk.css
+  s_2209f22f830d7f::t_454aee52fe8318 263-269,272
+  s_2209f22f830d7f::t_0150a329325d73 199-204
+  s_2209f22f830d7f::t_b68d284933f938 93,95-100
+  s_2209f22f830d7f::t_0e438ca91de69e 244-253
+  s_2209f22f830d7f::t_d1331d27db5197 11-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "a62698601eabee6fb5a57184cc90075c1fe7aa82",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

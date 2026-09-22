@@ -163,6 +163,22 @@ export function assertSandboxOrigin(config: Pick<Config, "role" | "linkOrigin" |
   }
 }
 
+/** Startup check for E5.5: returns a warning when this role's half of the mailbox is off in a real
+ * deployment. Not fatal (mail is still stored and delivered inline), but without TASKS_SA_EMAIL the
+ * link role 401s every Cloud Scheduler tick and Cloud Task, which is easy to miss. */
+export function mailboxWarning(
+  config: Pick<Config, "role" | "devMode" | "sandboxProvider" | "cloudTasksQueue" | "tasksSaEmail">,
+): string | undefined {
+  if (config.devMode || config.sandboxProvider !== "cloudrun") return undefined;
+  if (config.role !== "web" && !config.tasksSaEmail) {
+    return "TASKS_SA_EMAIL is unset: /api/hooks/tick and /api/hooks/tasks/wake will reject every call (deploy/service.sh sets it once deploy/mailbox.sh has run)";
+  }
+  if (config.role !== "link" && !(config.cloudTasksQueue && config.tasksSaEmail)) {
+    return "CLOUD_TASKS_QUEUE/TASKS_SA_EMAIL unset: mail wakes won't be retried by Cloud Tasks (deploy/service.sh sets them once deploy/mailbox.sh has run)";
+  }
+  return undefined;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     mongodbUri: env.MONGODB_URI ?? "memory",

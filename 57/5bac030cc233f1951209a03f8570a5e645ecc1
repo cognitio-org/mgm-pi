@@ -1,0 +1,25 @@
+outfitter/deploy/README.md
+  s_2209f22f830d7f::t_7f748716755b47 144-145
+outfitter/deploy/deploy-all.sh
+  s_2209f22f830d7f::t_6b1dc2866b70af 2-7,9-14,16,18-19,21-23,25-29,31-39,41,44-50
+outfitter/deploy/env.sh
+  s_2209f22f830d7f::t_31924f68968c4d 67-71
+outfitter/docs/reports/cloud-fixes.md
+  s_2209f22f830d7f::t_ea0820d67ae71b 195
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "575bac030cc233f1951209a03f8570a5e645ecc1",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

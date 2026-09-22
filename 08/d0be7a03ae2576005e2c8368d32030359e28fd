@@ -1,0 +1,56 @@
+outfitter/packages/web/test/fixtures/paste/excel.txt
+  s_2209f22f830d7f::t_2d5e664f966ca5 1-3
+outfitter/packages/web/test/fixtures/paste/google-sheets.html
+  s_2209f22f830d7f::t_56324eeb3c784e 1
+outfitter/packages/web/src/lib/html-to-markdown.ts
+  s_2209f22f830d7f::t_23bfb91cfdcf9a 440
+  s_2209f22f830d7f::t_248a898a84a15d 5-10
+  s_2209f22f830d7f::t_63036d889250e3 105-106,110
+  s_2209f22f830d7f::t_8b74452b23f35b 436-438
+  s_2209f22f830d7f::t_016b815c493b0f 487
+  s_2209f22f830d7f::t_a4380f12466237 1-4,11-62,64,67,69,71-74,81-104,107-109,112-116,120-210,215-285,289-319,323-344,347-349,354-435,439,441-453,455-486,488
+  s_2209f22f830d7f::t_d46fac86d3faa6 63,65-66,68,70,75-80
+  s_2209f22f830d7f::t_e7d30049434a45 211-214
+  s_2209f22f830d7f::t_eb1f3bff17bcfd 286-288
+  s_2209f22f830d7f::t_7e1c852c3ba3b0 320-322
+  s_2209f22f830d7f::t_3b9b06fe6ac9ed 454
+  s_2209f22f830d7f::t_258227531b11cd 345-346,350-353
+  s_2209f22f830d7f::t_bf4c2a88fdc2e7 117-119
+  s_2209f22f830d7f::t_3ba328db3e77f4 111
+outfitter/packages/web/test/fixtures/paste/word.html
+  s_2209f22f830d7f::t_0d695d072ff89a 1-107
+outfitter/packages/web/test/html-to-markdown.test.ts
+  s_2209f22f830d7f::t_d64ffd0402a321 1-167
+outfitter/packages/web/test/fixtures/paste/confluence.html
+  s_2209f22f830d7f::t_5d86e14de559b5 1-2
+outfitter/packages/web/test/fixtures/paste/wikipedia-table.txt
+  s_2209f22f830d7f::t_59043c6e012956 1-9
+outfitter/packages/web/test/fixtures/paste/google-sheets.txt
+  s_2209f22f830d7f::t_2d5e664f966ca5 1-3
+outfitter/packages/web/test/fixtures/paste/google-docs.html
+  s_2209f22f830d7f::t_503a3b81e46a4c 1
+outfitter/packages/web/test/fixtures/paste/github-readme.html
+  s_2209f22f830d7f::t_59043c6e012956 1-10
+outfitter/packages/web/src/lib/paste-choice.ts
+  s_2209f22f830d7f::t_ba03e6f87e1d14 1-34,38-44,47-56
+  s_2209f22f830d7f::t_d91dd2adbdd008 45-46
+  s_2209f22f830d7f::t_f728f9bd08a1b0 35-37
+outfitter/packages/web/test/fixtures/paste/wikipedia-table.html
+  s_2209f22f830d7f::t_59043c6e012956 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "08d0be7a03ae2576005e2c8368d32030359e28fd",
+  "prompts": {},
+  "sessions": {
+    "s_2209f22f830d7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35a2d2ad-0d97-475b-b379-d300c218cb16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -15,7 +15,7 @@
  * mgm-codebase-index (FIELDS, applyEdit, setReranking, applyEmbeddingChoice, writeConfig), and the
  * index state by asking that extension over the bus. Security notes are in server.ts.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { VERSION as PI_VERSION } from "@earendil-works/pi-coding-agent";
@@ -29,6 +29,11 @@ import {
   configPath, currentView, detectDimensions, embeddingModels, probeEmbeddings, projectConfigPath, projectOverrides, read, readConfigObject, rerankModels, routerEmbeddingModels, settingsFile, writeConfig,
 } from "../mgm-codebase-index/index.ts";
 import { openInBrowser } from "../mgm-context/index.ts";
+import { markdownToHtml } from "../mgm-context/report.ts";
+import {
+  AgentError, MAX_PROMPT, PI_TOOLS, THINKING_LEVELS, customiseAgent, deleteAgent, modelSettings, readAgent, resolvedView, saveAgent, saveModelSettings, snapshot, validateEdit, validateModelSettings,
+  type AgentEdit, type Snapshot,
+} from "./subagents.ts";
 import { APP_CSS, APP_JS, FAVICON, INDEX_HTML } from "./app.ts";
 import { backendPill, connectionsView, fieldById, idleMs, indexFields, leaksSecret, redactSecrets, secretValues, validateConnections, type ConnectionEdit } from "./lib.ts";
 import { startAdminServer, type AdminServer, type Api, type ApiResult } from "./server.ts";
@@ -64,6 +69,17 @@ export function createApi(d: ApiDeps): Api {
     const ctx = d.ctx();
     if (!ctx) return undefined;
     return busRequest<IndexState>(bus, "mgm:index", { op: "status", ctx }, 20_000).catch(() => undefined);
+  };
+  const secrets = () => secretValues({ ...loadEnv(process.cwd()), ...process.env });
+  /** provider/id of every model the connected providers list now. */
+  const liveModels = async () => new Set((await connections()).filter((b) => b.registered).flatMap((b) => b.models.map((m) => `${b.id}/${m}`)));
+  const modelWarnings = (asked: unknown[], live: Set<string>) => live.size ? asked.filter((m): m is string => typeof m === "string" && !!m && !live.has(m)).map((m) => `${m} is not listed by any connected provider right now; saved anyway`) : [];
+  /** Agent writes need the session's model registry (the package warns about unknown models with it). */
+  const agentWrite = async (f: (ctx: ExtensionContext) => Promise<any>): Promise<ApiResult> => {
+    const ctx = d.ctx();
+    if (!ctx) return fail(409, { error: "no session yet" });
+    try { return { body: await f(ctx) }; }
+    catch (e: any) { return e instanceof AgentError ? fail(e.status, { error: e.message, errors: e.errors }) : fail(500, { error: String(e?.message ?? e).slice(0, 300) }); }
   };
   const shortName = (id: string) => ({ lmstudio: "Local server", litellm: "Router", openrouter: "OpenRouter" } as Record<string, string>)[id] ?? id;
 
@@ -270,11 +286,67 @@ export function createApi(d: ApiDeps): Api {
       return { body: r };
     },
 
-    // ---------- subagents (read-only) ----------
+    // ---------- subagents: models (settings) and agent definitions (pi-subagents' own code) ----------
     "GET /subagents": async () => {
-      const file = settingsPath();
-      const s = readJson(file)?.subagents;
-      return { body: { file, subagents: s && typeof s === "object" && !Array.isArray(s) ? s : null } };
+      const ctx = d.ctx();
+      let snap: Snapshot;
+      try { snap = await snapshot(cwd(), ctx?.model?.provider, secrets()); }
+      catch (e: any) { return { body: { settings: modelSettings(), unavailable: String(e?.message ?? e) } }; }
+      // Tool names for the editor: pi's own, the running agent's (extensions included), and any an agent already names.
+      const tools = new Map<string, string>();
+      for (const t of PI_TOOLS) tools.set(t, "pi");
+      for (const t of safe(() => d.pi.getAllTools()) ?? []) if (!tools.has(t.name)) tools.set(t.name, "loaded");
+      for (const r of snap.rows) for (const t of r.tools ?? []) if (!tools.has(t)) tools.set(t, "named by an agent");
+      const userDir = snap.dirs.user;
+      const linked = safe(() => lstatSync(userDir).isSymbolicLink()) ?? false;
+      return { body: {
+        settings: modelSettings(), agents: snap.rows, diagnostics: snap.diagnostics, thinkingLevels: THINKING_LEVELS,
+        tools: [...tools].map(([name, from]) => ({ name, from })),
+        dirs: { user: userDir, userReal: linked ? safe(() => realpathSync(userDir)) : undefined, project: snap.dirs.project },
+        checkout: !existsSync(join(dirname(agentDir()), "VERSION")),
+      } };
+    },
+
+    "GET /subagents/agent": async (_b, q) => {
+      const ctx = d.ctx();
+      const snap = await snapshot(cwd(), ctx?.model?.provider, secrets());
+      const a = await readAgent(snap, q.get("name") ?? "", q.get("source") ?? "", secrets());
+      if (!a) return fail(404, { error: "no such agent" });
+      if (a.withheld) return { body: { row: { ...a.row, description: "" }, withheld: true } };
+      const override = modelSettings().overrides[a.row.name];
+      return { body: { ...a, override: override ? { model: override.model, thinking: override.thinking } : undefined, resolved: resolvedView(snap, a.row.name) } };
+    },
+
+    "POST /subagents/agent": async (body: AgentEdit) => {
+      const errors = validateEdit(body, secrets());
+      if (Object.keys(errors).length) return fail(422, { error: "some fields need fixing", errors });
+      return agentWrite(async (ctx) => {
+        const r = await saveAgent(ctx, body, secrets());
+        return { ...r, warnings: [...r.warnings, ...modelWarnings([body.model], await liveModels())] };
+      });
+    },
+
+    "POST /subagents/customise": async (body: { name?: string; scope?: string }) =>
+      agentWrite((ctx) => customiseAgent(ctx, String(body.name ?? ""), body.scope === "project" ? "project" : "user", secrets())),
+
+    "POST /subagents/delete": async (body: { name?: string; scope?: string }) => {
+      if (body.scope !== "user" && body.scope !== "project") return fail(400, { error: "scope is user or project" });
+      return agentWrite((ctx) => deleteAgent(ctx, String(body.name ?? ""), body.scope as "user" | "project", secrets()));
+    },
+
+    "POST /subagents/settings": async (body: any) => {
+      const errors = validateModelSettings(body);
+      if (Object.keys(errors).length) return fail(422, { error: "some fields need fixing", errors });
+      try {
+        const { snap, file } = await saveModelSettings({ cwd: cwd(), model: d.ctx()?.model }, body, secrets());
+        const asked = [body.defaultModel, ...Object.values<any>(body.overrides ?? {}).map((o) => o?.model)];
+        return { body: { message: `Saved to ${file}. Subagents started from now on use these models.`, file, settings: modelSettings(), agents: snap.rows, warnings: modelWarnings(asked, await liveModels()) } };
+      } catch (e: any) { return e instanceof AgentError ? fail(e.status, { error: e.message, errors: e.errors }) : fail(500, { error: String(e?.message ?? e) }); }
+    },
+
+    "POST /subagents/preview": async (body: { markdown?: unknown }) => {
+      if (typeof body.markdown !== "string" || body.markdown.length > MAX_PROMPT) return fail(400, { error: "markdown is text up to the prompt limit" });
+      return { body: { html: markdownToHtml(body.markdown) } };
     },
 
     "POST /stop": async () => { setTimeout(() => d.stop(), 50); return { body: { stopping: true } }; },

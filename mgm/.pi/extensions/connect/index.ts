@@ -22,6 +22,7 @@ import {
   type Backend, type ModelMeta, type LmStudioMeta, backends, parseEnvText, parseModelInfo, parseLmStudioModels, parseSpendHeaders, rootUrl, normalizeBaseUrl,
   sessionEstimate, money, footerStatus, budgetRows, renderPanel, cleanKey, keyCheckUrl, authFailureText, busServe,
 } from "./lib.ts";
+import { settingsPath, updateSettings } from "./settings.ts";
 
 /** The .env that /setup writes: next to the agent dir (bundle root or the mgm/ checkout). */
 export function envFilePath(): string {
@@ -132,15 +133,11 @@ async function discover(b: Backend, litellmMeta: Map<string, ModelMeta>, lmstudi
 }
 
 // Persist into the agent config dir (PI_CODING_AGENT_DIR when launched via bin/mgm, else
-// ~/.pi/agent), never into the repo pi happens to be running in.
-export function settingsPath() { return join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "settings.json"); }
+// ~/.pi/agent), never into the repo pi happens to be running in. An upgrade carries the choice
+// forward (settings.ts: the installer merges the user's changes over the new release's defaults).
+export { settingsPath };
 export function saveDefault(provider: string, model: string) {
-  const p = settingsPath();
-  let s: any = {};
-  try { s = JSON.parse(readFileSync(p, "utf8")); } catch {}
-  s.defaultProvider = provider; s.defaultModel = model;
-  mkdirSync(dirname(p), { recursive: true });
-  writeFileSync(p, JSON.stringify(s, null, 2) + "\n");
+  updateSettings((s) => { s.defaultProvider = provider; s.defaultModel = model; });
 }
 
 export default async function (pi: ExtensionAPI) {

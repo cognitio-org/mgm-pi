@@ -5,8 +5,10 @@
  * an app shell: left navigation, cards, status pills, light and dark from the OS setting.
  *
  * The script builds the DOM with textContent only (never innerHTML with data), so nothing the server
- * returns — a model id, a provider's error text — can become markup. It is written without template
- * literals so it can live inside this file as a String.raw.
+ * returns — a model id, a provider's error text — can become markup. The one piece of HTML it shows is
+ * the agent editor's preview, rendered by markdownToHtml (which escapes before it adds markup) and
+ * rebuilt here from an allowlist of tags. It is written without template literals (a backtick is
+ * String.fromCharCode(96)) so it can live inside this file as a String.raw.
  */
 import { THEME } from "../mgm-context/report.ts";
 
@@ -244,10 +246,126 @@ pre { background: var(--panel); border: 1px solid var(--line); border-radius: va
 .gone p { color: var(--muted); }
 .skel { background: linear-gradient(90deg, var(--panel), var(--hover), var(--panel)); border-radius: 6px; height: 14px; margin: 10px 0; }
 
+/* ---------- subagents ---------- */
+.tag.src-user { background: var(--accent-soft); color: var(--accent-ink); border-color: transparent; }
+.tag.src-project { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.tag.src-package { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.tag.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.table-wrap { overflow-x: auto; margin: 0 -2px; }
+.a-name { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-weight: 600; font-size: 13px; }
+.a-name > span:first-child { white-space: nowrap; }
+.a-desc { color: var(--muted); font-size: 12.5px; margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 60ch; }
+.small { font-size: 12.5px; }
+table.agents td { vertical-align: middle; }
+table.agents td .mono.small { white-space: nowrap; }
+.savebar.autohide:not(.dirty) { display: none; }
+table.agents tr.shadowed td { opacity: .7; }
+table.agents th.act, table.agents td.act { text-align: right; white-space: nowrap; }
+td.act > * + * { margin-left: 6px; }
+table.models td { vertical-align: middle; padding-top: 6px; padding-bottom: 6px; padding-right: 10px; }
+table.models td:first-child { white-space: nowrap; }
+table.models select { height: 30px; font-size: 13px; }
+table.models td:nth-child(2) { min-width: 220px; }
+table.models td:nth-child(3) { min-width: 130px; }
+table.models td.resolves { min-width: 190px; }
+table.models td.resolves .mono { font-size: 12.5px; }
+.changed > .picker select, td.changed select { border-color: color-mix(in srgb, var(--accent) 65%, var(--field-line)); }
+select[aria-invalid=true] { border-color: var(--err); }
+.picker { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+select.mono-sel { font-family: var(--mono); font-size: 13px; }
+p.where { margin: 14px 0 0; display: flex; gap: 6px; align-items: flex-start; }
+p.where svg { margin-top: 2px; }
+details.menu { position: relative; display: inline-block; vertical-align: middle; }
+details.menu > summary { list-style: none; }
+details.menu > summary::-webkit-details-marker { display: none; }
+.menu-pop { position: absolute; right: 0; top: calc(100% + 4px); z-index: 8; background: var(--card); border: 1px solid var(--line); border-radius: var(--r-sm); box-shadow: 0 8px 24px rgba(16, 24, 40, .16); padding: 4px; min-width: 250px; display: flex; flex-direction: column; text-align: left; white-space: normal; }
+.menu-pop button { text-align: left; background: transparent; border: 0; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
+.menu-pop button:hover, .menu-pop button:focus-visible { background: var(--hover); }
+.menu-pop small { display: block; color: var(--muted); font-size: 12px; }
+.crumb { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 13px; font-weight: 550; margin-bottom: 6px; }
+.crumb:hover { color: var(--accent-ink); text-decoration: none; }
+.head h1 { overflow-wrap: anywhere; }
+.head > div:first-child { flex: 1 1 320px; min-width: 0; }
+.head p.meta .mono { overflow-wrap: anywhere; }
+.head p.meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; max-width: none; }
+.seg { display: inline-flex; align-self: flex-start; border: 1px solid var(--field-line); border-radius: var(--r-sm); overflow: hidden; background: var(--field); }
+.seg button { border: 0; background: transparent; padding: 0 12px; height: 32px; cursor: pointer; font-weight: 560; color: var(--muted); }
+.seg button:hover { color: var(--fg); }
+.seg button[aria-pressed=true] { background: var(--sel); color: var(--accent-ink); }
+.seg button + button { border-left: 1px solid var(--field-line); }
+.seg.sm button { height: 26px; padding: 0 10px; font-size: 12.5px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 26px; align-items: center; }
+.chip-t { display: inline-flex; align-items: center; gap: 2px; font-family: var(--mono); font-size: 12.5px; background: var(--accent-soft); color: var(--accent-ink); border-radius: 6px; padding: 2px 3px 2px 8px; }
+.chip-t button { border: 0; background: transparent; color: inherit; cursor: pointer; width: 20px; height: 20px; border-radius: 4px; font-size: 14px; line-height: 1; }
+.chip-t button:hover { background: rgba(79, 142, 247, .22); }
+.tool-pick { border: 1px solid var(--field-line); border-radius: var(--r-sm); background: var(--field); }
+.tool-pick .tp-chips { padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.tool-pick .tp-head { display: flex; gap: 8px; padding: 8px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.tool-pick .tp-head > input { flex: 1 1 160px; }
+.tool-pick .tp-add { flex: 1 1 260px; flex-wrap: nowrap; }
+.tool-grid { max-height: 230px; overflow: auto; padding: 2px 8px 8px; }
+.tool-grid h4 { margin: 10px 4px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 650; }
+.tool-grid .opts { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0 8px; }
+.row-f label.tool-opt, .tool-opt { display: flex; font-weight: 450; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; cursor: pointer; font-family: var(--mono); font-size: 12.5px; min-width: 0; }
+.tool-opt span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-opt:hover { background: var(--hover); }
+.tool-opt input { accent-color: var(--accent); margin: 0; }
+details.adv { border-top: 1px solid var(--line); margin-top: 4px; }
+details.adv > summary { cursor: pointer; padding: 12px 0; font-weight: 560; color: var(--muted); }
+details.adv > summary:hover { color: var(--fg); }
+.extra { border-top: 1px solid var(--line); padding-top: 12px; }
+.extra .lab-t { font-weight: 560; }
+
+/* the Markdown editor */
+.md { border: 1px solid var(--field-line); border-radius: var(--r); overflow: hidden; background: var(--field); margin-top: 6px; }
+.md:focus-within { border-color: var(--accent); box-shadow: var(--ring); }
+.md-toolbar { display: flex; align-items: center; gap: 2px; padding: 5px 8px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+.md-toolbar .tb { height: 28px; min-width: 30px; padding: 0 7px; border: 0; background: transparent; border-radius: 6px; cursor: pointer; font-weight: 650; color: var(--muted); font-size: 12.5px; }
+.md-toolbar .tb:hover { background: var(--hover); color: var(--fg); }
+.md-toolbar .tb.b { font-weight: 800; }
+.md-toolbar .tb.i { font-style: italic; font-family: Georgia, serif; font-size: 14px; }
+.md-toolbar .tb.mono { font-family: var(--mono); font-weight: 600; }
+.md-toolbar .sep { width: 1px; height: 18px; background: var(--line); margin: 0 5px; }
+.md-toolbar .grow { flex: 1; }
+.md-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.md-body.write { grid-template-columns: minmax(0, 1fr); }
+.md-body.write .md-preview { display: none; }
+.md-body.preview { grid-template-columns: minmax(0, 1fr); }
+.md-body.preview .md-input { display: none; }
+.md-input { display: block; width: 100%; height: 62vh; min-height: 380px; resize: vertical; border: 0; outline: none; margin: 0; padding: 14px 16px; font: 13px/1.65 var(--mono); background: transparent; tab-size: 2; }
+.md-input:focus { box-shadow: none; }
+.md-input[readonly] { color: var(--muted); }
+.md-preview { border-left: 1px solid var(--line); padding: 4px 22px 18px; overflow: auto; height: 62vh; min-height: 380px; background: var(--card); font-size: 14px; line-height: 1.6; }
+.md-preview:focus-visible { box-shadow: inset var(--ring); }
+.md-body.preview .md-preview { border-left: 0; }
+.md-preview h1, .md-preview h2, .md-preview h3, .md-preview h4, .md-preview h5 { margin: 18px 0 6px; line-height: 1.3; letter-spacing: -.01em; }
+.md-preview h2 { font-size: 19px; } .md-preview h3 { font-size: 16px; } .md-preview h4 { font-size: 14.5px; } .md-preview h5 { font-size: 13.5px; }
+.md-preview p { margin: 8px 0; }
+.md-preview ul, .md-preview ol { margin: 6px 0; padding-left: 22px; }
+.md-preview li { margin: 2px 0; }
+.md-preview code { font-family: var(--mono); font-size: 12.5px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+.md-preview pre { margin: 10px 0; }
+.md-preview pre code { background: none; border: 0; padding: 0; }
+.md-preview blockquote { margin: 8px 0; padding: 2px 12px; border-left: 3px solid var(--line); color: var(--muted); }
+.md-preview table { border-collapse: collapse; margin: 10px 0; font-size: 13px; }
+.md-preview th, .md-preview td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; }
+.md-preview hr { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
+.md-foot { display: flex; gap: 14px; justify-content: space-between; align-items: center; padding: 6px 12px; border-top: 1px solid var(--line); background: var(--panel); color: var(--muted); font-size: 12px; flex-wrap: wrap; }
+kbd { font: 11px/1.5 var(--mono); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; background: var(--card); color: var(--fg); }
+@media (max-width: 1000px) {
+  .md-body { grid-template-columns: minmax(0, 1fr); }
+  .md-preview { border-left: 0; border-top: 1px solid var(--line); height: auto; max-height: 50vh; }
+  .md-input { height: 50vh; }
+}
+@media (max-width: 760px) {
+  table.agents td:nth-child(3), table.agents th:nth-child(3) { display: none; }
+  .md-foot .keys { display: none; }
+}
+
 /* ---------- narrow ---------- */
 @media (max-width: 1240px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 760px) {
-  .shell { grid-template-columns: 1fr; }
+  .shell { grid-template-columns: minmax(0, 1fr); }
   .side { position: sticky; top: 0; height: auto; flex-direction: row; align-items: center; padding: 8px 10px; border-right: none; border-bottom: 1px solid var(--line); z-index: 6; gap: 8px; }
   .brand { padding: 0 4px; }
   .brand-text { display: none; }
@@ -278,7 +396,7 @@ var token = "";
   var m = location.hash.match(/[#&]t=([A-Za-z0-9_-]{20,})/);
   if (m) {
     token = m[1];
-    var start = location.hash.match(/[#&]p=([a-z]+)/);
+    var start = location.hash.match(/[#&]p=([a-z][a-z0-9\/.-]*)/);   // a page, or a deep link such as subagents/edit/user/name
     try { sessionStorage.setItem(TOKEN_KEY, token); } catch (e) {}
     history.replaceState(null, "", location.pathname + "#/" + (start ? start[1] : "overview"));
   } else {
@@ -321,7 +439,13 @@ var ICONS = {
   alert: '<circle cx="10" cy="10" r="8"/><path d="M10 6v5M10 14h.01"/>',
   info: '<circle cx="10" cy="10" r="8"/><path d="M10 9v5M10 6h.01"/>',
   check: '<path d="M4 10.5l4 4 8-9"/>',
-  refresh: '<path d="M16.5 9.5a6.5 6.5 0 1 1-2-4.7M16.5 2.5v4h-4"/>'
+  refresh: '<path d="M16.5 9.5a6.5 6.5 0 1 1-2-4.7M16.5 2.5v4h-4"/>',
+  plus: '<path d="M10 4v12M4 10h12"/>',
+  back: '<path d="M12 4l-6 6 6 6"/>',
+  edit: '<path d="M13.5 3.5l3 3L7 16H4v-3z"/>',
+  copy: '<rect x="7" y="7" width="10" height="10" rx="2"/><path d="M13 7V4.5A1.5 1.5 0 0 0 11.5 3h-7A1.5 1.5 0 0 0 3 4.5v7A1.5 1.5 0 0 0 4.5 13H7"/>',
+  trash: '<path d="M3.5 5.5h13M8 5.5V3.5h4v2M5.5 5.5l.8 11h7.4l.8-11"/>',
+  eye: '<path d="M1.5 10s3-6 8.5-6 8.5 6 8.5 6-3 6-8.5 6-8.5-6-8.5-6z"/><circle cx="10" cy="10" r="2.5"/>'
 };
 function icon(name, size) {
   var s = size || 16;
@@ -378,6 +502,7 @@ var PAGES = [
 var dirty = null;   // a function returning the number of unsaved changes on the current page
 var cleanup = [];
 var current = "";
+var currentHash = "";   // the full route, so sub-pages (an agent in the editor) are guarded too
 
 function route() { var m = location.hash.match(/^#\/([a-z]+)/); var id = m ? m[1] : "overview"; return PAGES.some(function (p) { return p.id === id; }) ? id : "overview"; }
 function buildNav() {
@@ -398,12 +523,12 @@ function markNav() {
 }
 function show() {
   var next = route();
-  if (dirty && dirty() > 0 && next !== current) {
-    if (!confirm("You have unsaved changes on this page. Leave without saving?")) { history.replaceState(null, "", "#/" + current); return; }
+  if (dirty && dirty() > 0 && location.hash !== currentHash) {
+    if (!confirm("You have unsaved changes on this page. Leave without saving?")) { history.replaceState(null, "", currentHash || "#/" + current); return; }
   }
   cleanup.forEach(function (f) { try { f(); } catch (e) {} });
   cleanup = []; dirty = null;
-  current = next; markNav();
+  current = next; currentHash = location.hash; markNav();
   var view = clear(document.getElementById("view"));
   view.setAttribute("aria-busy", "true");
   var page = PAGES.filter(function (p) { return p.id === current; })[0];
@@ -986,32 +1111,622 @@ function drawIndex(view, d) {
 }
 
 // =====================================================================================
-// Subagents (read-only for now)
+// Subagents: the models they run on, and the agent definitions (Markdown files)
 // =====================================================================================
+var BT = String.fromCharCode(96);   // a backtick: this script lives inside a template string
+var MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+var MOD = MAC ? "⌘" : "Ctrl+";
+var ALT = MAC ? "⌥" : "Alt+";
+var SHIFT = MAC ? "⇧" : "Shift+";
+var SOURCE_HELP = {
+  builtin: "Ships with pi-subagents. Read-only: the file is inside the package and is replaced when it updates.",
+  "package": "Comes from an installed pi package. Read-only for the same reason.",
+  user: "Yours, for every project.",
+  project: "This project's own, in its .pi/agents directory.",
+  runtime: "Registered at runtime by an extension."
+};
+var subagentFlash = null;   // one-shot message for the next render (after a save navigates)
+
+function srcTag(s) { return el("span", { class: "tag src-" + s, title: SOURCE_HELP[s] || "", text: s }); }
+function agentHref(kind, source, name) { return "#/subagents/" + kind + "/" + encodeURIComponent(source) + "/" + encodeURIComponent(name); }
+function subRoute() {
+  var m = location.hash.match(/^#\/subagents\/(edit|view)\/([a-z]+)\/([a-z0-9.-]+)$/);
+  if (m) return { kind: m[1], source: m[2], name: decodeURIComponent(m[3]) };
+  return /^#\/subagents\/new$/.test(location.hash) ? { kind: "new" } : null;
+}
+function go(hash) { dirty = null; if (location.hash === hash) show(); else location.hash = hash; }
+
+/** A model picker: the connected providers' live models, a "not set" choice, and a free-form id. */
+function modelPicker(o) {
+  var sel = el("select", { class: "mono-sel", "aria-label": o.label || "Model" });
+  var other = el("input", { type: "text", class: "mono", placeholder: "provider/model-id", hidden: true, autocomplete: "off", spellcheck: "false", "aria-label": (o.label || "Model") + " id" });
+  sel.appendChild(el("option", { value: "", text: o.none }));
+  var known = {};
+  var groups = (o.providers || []).filter(function (p) { return p.registered && p.models && p.models.length; });
+  if (o.value && !groups.some(function (p) { return p.models.some(function (id) { return p.id + "/" + id === o.value; }); })) {
+    sel.appendChild(el("option", { value: o.value, text: o.value + "  (not listed by a connected provider now)" })); known[o.value] = true;
+  }
+  groups.forEach(function (p) {
+    sel.appendChild(el("optgroup", { label: p.label || p.id }, p.models.map(function (id) { var v = p.id + "/" + id; known[v] = true; return el("option", { value: v, text: v }); })));
+  });
+  sel.appendChild(el("option", { value: "__other", text: "Another id…" }));
+  sel.value = o.value || "";
+  if (!groups.length) sel.title = "No provider is connected, so there is no live list; type an id with “Another id”.";
+  function get() { return sel.value === "__other" ? other.value.trim() : sel.value; }
+  sel.addEventListener("change", function () { other.hidden = sel.value !== "__other"; if (!other.hidden) other.focus(); if (o.onChange) o.onChange(get()); });
+  other.addEventListener("input", function () { if (o.onChange) o.onChange(get()); });
+  if (o.disabled) { sel.disabled = true; other.disabled = true; }
+  return { el: el("div", { class: "picker" }, sel, other), select: sel, get: get };
+}
+function thinkingSelect(value, none, levels, label) {
+  var s = el("select", { "aria-label": label || "Thinking" }, el("option", { value: "", text: none }), levels.map(function (l) { return el("option", { value: l, text: l }); }));
+  if (value && levels.indexOf(value) === -1) s.insertBefore(el("option", { value: value, text: value + " (not a pi level)" }), s.children[1]);
+  s.value = value || "";
+  return s;
+}
+
 function renderSubagents(view) {
-  add(view, head("Subagents", "The models pi-subagents uses for delegated work."));
+  var r = subRoute();
+  if (r) { renderAgentEditor(view, r); return; }
+  add(view, head("Subagents", "Agents the main agent delegates to, and the models they run on."));
   loading(view);
-  api("GET", "/subagents").then(function (d) {
-    clear(view);
-    add(view, head("Subagents", "The models pi-subagents uses for delegated work. Read-only here for now: edit the subagents block of the settings file to change them."));
-    var s = d.subagents;
-    if (!s) { add(view, card("Not configured", null, pill("off", "defaults"), el("p", { class: "note", text: "No subagents block in " + d.file + ", so each subagent uses pi-subagents' own defaults (the parent's model)." }))); view.setAttribute("aria-busy", "false"); return; }
-    var other = {}; for (var k in s) if (k !== "defaultModel" && k !== "agentOverrides") other[k] = s[k];
-    add(view, card("Default", null, null, kv([
-      ["Default model", el("span", { class: "mono", text: s.defaultModel || "the parent's model" })],
-      ["Settings file", el("span", { class: "mono", text: d.file })]
-    ])));
-    var ov = s.agentOverrides || {};
-    var names = Object.keys(ov).sort();
-    var table = el("table", { class: "t" }, el("thead", {}, el("tr", {}, el("th", { text: "Agent" }), el("th", { text: "Model" }), el("th", { text: "Other settings" }))),
-      el("tbody", {}, names.map(function (n) {
-        var o = ov[n] || {}; var rest = {}; for (var k2 in o) if (k2 !== "model") rest[k2] = o[k2];
-        return el("tr", {}, el("td", { text: n }), el("td", { class: "mono", text: o.model || "default" }), el("td", { class: "mono note", text: Object.keys(rest).length ? JSON.stringify(rest) : "" }));
-      })));
-    add(view, card("Per-agent overrides", names.length ? null : "None: every agent uses the default.", el("span", { class: "tag", text: names.length + " agents" }), names.length ? table : el("div")));
-    if (Object.keys(other).length) add(view, card("Other settings", null, null, el("pre", { text: JSON.stringify(other, null, 2) })));
+  Promise.all([api("GET", "/subagents"), api("GET", "/models").catch(function () { return { providers: [] }; })])
+    .then(function (res) { drawSubagents(view, res[0], res[1]); }, function (e) { failed(view, e); });
+}
+
+function whereAgentsLive(d) {
+  var where = d.dirs.userReal || d.dirs.user;
+  var text = d.checkout
+    ? "Your agents are saved in " + d.dirs.user + ". This is a source checkout, and that directory is git-ignored, so they are never committed."
+    : "Your agents are saved in " + where + ", outside the versioned install, so they survive upgrades.";
+  return el("p", { class: "note where" }, icon("info", 13), " " + text);
+}
+
+function drawSubagents(view, d, m) {
+  clear(view);
+  var flash = subagentFlash; subagentFlash = null;
+  add(view, head("Subagents", "Agents the main agent delegates to, and the models they run on. Everything here is read and written through pi-subagents itself.",
+    el("a", { class: "btn primary", href: "#/subagents/new" }, icon("plus", 14), "New agent")));
+  if (flash) add(view, callout(flash.kind || "info", flash.text));
+  if (d.unavailable) { add(view, callout("error", "pi-subagents could not be loaded: " + d.unavailable)); view.setAttribute("aria-busy", "false"); return; }
+  (d.diagnostics || []).forEach(function (x) { add(view, callout("error", "pi-subagents skips " + x.file + ": " + x.error)); });
+  var providers = m.providers || [];
+  var levels = d.thinkingLevels || [];
+  var fs = formState(saveModels, function () { drawSubagents(view, d, m); });
+
+  // ---- models ----
+  var defRowPicker = modelPicker({ value: d.settings.defaultModel, providers: providers, none: "Not set: the parent's model", label: "Default model", onChange: function (v) { fs.set("defaultModel", v); defRow.setError(null); } });
+  var defRow = frow("f-sub-default", "Default model", "For every agent without a model of its own or an override below", defRowPicker.el, el("div", { class: "note", title: d.settings.file }, "Saved as ", el("code", { text: "subagents.defaultModel" }), " in the agent's settings.json, which upgrades carry forward."));
+  fs.track("defaultModel", d.settings.defaultModel || "", defRow);
+  var active = d.agents.filter(function (a) { return a.active; });
+  var cellErr = {};
+  var mtable = el("table", { class: "t models" },
+    el("thead", {}, el("tr", {}, el("th", { text: "Agent" }), el("th", { text: "Model override" }), el("th", { text: "Thinking override" }), el("th", { text: "Resolves to" }))),
+    el("tbody", {}, active.map(function (a) {
+      var ov = d.settings.overrides[a.name] || {};
+      var mk = "o:" + a.name + ":model", tk = "o:" + a.name + ":thinking";
+      var mp = modelPicker({ value: ov.model || "", providers: providers, none: "No override", label: a.name + " model", onChange: function (v) { fs.set(mk, v); mp.select.removeAttribute("aria-invalid"); } });
+      var th = thinkingSelect(ov.thinking || "", "No override", levels, a.name + " thinking");
+      th.addEventListener("change", function () { fs.set(tk, th.value); th.removeAttribute("aria-invalid"); });
+      var mcell = el("td", {}, mp.el), tcell = el("td", {}, th);
+      fs.track(mk, ov.model || "", mcell); fs.track(tk, ov.thinking || "", tcell);
+      cellErr[a.name + ".model"] = mp.select; cellErr[a.name + ".thinking"] = th;
+      return el("tr", {},
+        el("td", {}, el("div", { class: "a-name" }, el("span", { text: a.name }), srcTag(a.source))),
+        mcell, tcell,
+        el("td", { class: "resolves" }, el("div", { class: "mono", text: a.model || "the parent's model" }), el("div", { class: "note", text: "from " + a.modelFrom + (a.thinking ? " · thinking " + a.thinking : "") })));
+    })));
+  var modelsCard = card("Models", "Which model each agent runs on. An override beats the agent file's own model and the default.", null, [el("div", { class: "rows" }, defRow), el("div", { class: "table-wrap" }, mtable)]);
+
+  // ---- agents ----
+  var q = el("input", { type: "search", placeholder: "Filter by name, description or source", "aria-label": "Filter agents", autocomplete: "off" });
+  var tbody = el("tbody");
+  d.agents.forEach(function (a) {
+    var actions = el("td", { class: "act" });
+    if (a.withheld) add(actions, el("span", { class: "tag warn", title: "This file contains something that looks like a key, so it is not shown here. Edit it by hand and remove the key.", text: "contains a key" }));
+    else if (a.editable) {
+      add(actions, el("a", { class: "btn sm", href: agentHref("edit", a.source, a.name) }, icon("edit", 13), "Edit"));
+      var del = el("button", { class: "btn sm ghost danger", type: "button", title: "Delete " + a.file }, icon("trash", 13), "Delete");
+      del.addEventListener("click", function () { deleteAgentUI(a, function () { show(); }); });
+      add(actions, del);
+    } else {
+      add(actions, el("a", { class: "btn sm", href: agentHref("view", a.source, a.name) }, icon("eye", 13), "View"));
+      if (a.source === "builtin" || a.source === "package") add(actions, customiseMenu(a, d));
+    }
+    var status = a.active ? null : a.shadowedBy ? el("div", { class: "note", text: "overridden by the " + a.shadowedBy + " copy" }) : el("div", { class: "note", text: "disabled" });
+    var tr = el("tr", { class: a.active ? null : "shadowed", "data-q": (a.name + " " + a.description + " " + a.source).toLowerCase() },
+      el("td", {}, el("div", { class: "a-name" }, el("span", { text: a.name })), el("div", { class: "a-desc", text: a.withheld ? "Not shown: this file contains a key." : a.description })),
+      el("td", {}, srcTag(a.source), status),
+      el("td", {}, el("div", { class: "mono small", text: a.model || "parent's model" }), el("div", { class: "note", text: a.tools ? a.tools.length + " tools" : "default tools" })),
+      actions);
+    tbody.appendChild(tr);
+  });
+  q.addEventListener("input", function () { var v = q.value.trim().toLowerCase(); Array.prototype.forEach.call(tbody.children, function (tr) { tr.hidden = v && tr.getAttribute("data-q").indexOf(v) === -1; }); });
+  var counts = {}; d.agents.forEach(function (a) { counts[a.source] = (counts[a.source] || 0) + 1; });
+  var summary = Object.keys(counts).map(function (k) { return counts[k] + " " + k; }).join(" · ");
+  add(view, card("Agents", "Same-name agents override by priority: project, then user, then package, then builtin.", el("span", { class: "tag", text: summary }),
+    [el("div", { class: "toolbar" }, q), el("div", { class: "table-wrap" }, el("table", { class: "t agents" },
+      el("thead", {}, el("tr", {}, el("th", { text: "Agent" }), el("th", { text: "Source" }), el("th", { text: "Model" }), el("th", { class: "act", text: "" }))), tbody)),
+      whereAgentsLive(d)]));
+  add(view, modelsCard);
+  fs.bar.classList.add("autohide");   // shows only while the model settings have unsaved changes
+  add(view, fs.bar);
+  view.setAttribute("aria-busy", "false");
+
+  function saveModels(changes) {
+    var body = { overrides: {} };
+    for (var k in changes) {
+      if (k === "defaultModel") { body.defaultModel = changes[k]; continue; }
+      var parts = k.split(":"); (body.overrides[parts[1]] = body.overrides[parts[1]] || {})[parts[2]] = changes[k];
+    }
+    defRow.setError(null);
+    return api("POST", "/subagents/settings", body).then(function (res) {
+      toast(res.message, "ok");
+      (res.warnings || []).forEach(function (w) { toast(w, "warn"); });
+      d.settings = res.settings; d.agents = res.agents;
+      drawSubagents(view, d, m);
+      return true;
+    }, function (e) {
+      var errs = e.data && e.data.errors;
+      if (errs) { for (var f in errs) { if (f === "defaultModel") defRow.setError(errs[f]); else if (cellErr[f]) { cellErr[f].setAttribute("aria-invalid", "true"); cellErr[f].title = errs[f]; } } toast("Nothing saved: " + Object.keys(errs).map(function (f) { return f + ": " + errs[f]; }).join("; "), "error"); }
+      else toast(e.message, "error");
+      return false;
+    });
+  }
+}
+
+function customiseMenu(a, d) {
+  var pop = el("div", { class: "menu-pop", role: "menu" });
+  var menu = el("details", { class: "menu" }, el("summary", { class: "btn sm", "aria-haspopup": "menu" }, icon("copy", 13), "Customise"), pop);
+  [["user", "For me", "An editable copy in your agents, for every project"], ["project", "For this project", "An editable copy in this project's .pi/agents"]].forEach(function (x) {
+    var b = el("button", { type: "button", role: "menuitem" }, el("strong", { text: x[1] }), el("small", { text: x[2] }));
+    b.addEventListener("click", function () {
+      menu.open = false;
+      api("POST", "/subagents/customise", { name: a.name, scope: x[0] }).then(function (r) {
+        subagentFlash = { kind: "info", text: "Customised: " + r.message + " pi-subagents now resolves " + a.name + " to this " + r.resolved.source + " copy." };
+        go(agentHref("edit", x[0], a.name));
+      }, function (e) { toast(e.message, "error"); });
+    });
+    pop.appendChild(b);
+  });
+  var close = function (e) { if (!menu.contains(e.target)) menu.open = false; };
+  document.addEventListener("click", close);
+  cleanup.push(function () { document.removeEventListener("click", close); });
+  return menu;
+}
+
+function deleteAgentUI(a, done) {
+  if (!confirm("Delete the " + a.source + " agent " + a.name + "?\n\n" + a.file + "\n\nThis removes the file.")) return;
+  api("POST", "/subagents/delete", { name: a.name, scope: a.source }).then(function (r) {
+    var now = r.resolved && r.resolved.found ? " " + a.name + " now resolves to the " + r.resolved.source + " agent." : " No agent named " + a.name + " is left.";
+    toast("Deleted " + a.file + "." + now, "ok");
+    done();
+  }, function (e) { toast(e.message, "error"); });
+}
+
+// ---------- the editor ----------
+function renderAgentEditor(view, r) {
+  add(view, head(r.kind === "new" ? "New agent" : r.name, "Loading…"));
+  loading(view);
+  var reqs = [api("GET", "/subagents"), api("GET", "/models").catch(function () { return { providers: [] }; })];
+  if (r.kind !== "new") reqs.push(api("GET", "/subagents/agent?name=" + encodeURIComponent(r.name) + "&source=" + encodeURIComponent(r.source)));
+  Promise.all(reqs).then(function (res) { drawEditor(view, r, res[0], res[1], res[2]); }, function (e) { failed(view, e); });
+}
+
+function drawEditor(view, r, list, models, a) {
+  clear(view);
+  var isNew = r.kind === "new";
+  var editable = isNew || (r.kind === "edit" && a && a.row.editable);
+  var providers = models.providers || [];
+  var levels = list.thinkingLevels || [];
+  var flash = subagentFlash; subagentFlash = null;
+  var crumb = el("a", { class: "crumb", href: "#/subagents" }, icon("back", 13), "Subagents");
+
+  if (a && a.withheld) {
+    add(view, [crumb, head(r.name, null), callout("warn", "This file contains something that looks like a key, so the admin does not show or edit it. Agent prompts are sent to model providers: open " + a.row.file + " in an editor and remove the key.")]);
     view.setAttribute("aria-busy", "false");
-  }, function (e) { failed(view, e); });
+    return;
+  }
+  var f = isNew ? { name: "", description: "", tools: ["read", "grep", "find", "ls"], model: "", thinking: "", systemPromptMode: "", inheritProjectContext: undefined, inheritSkills: undefined } : a.fields;
+  var prompt = isNew ? "You are a focused subagent.\n\n## Task\n\nDescribe what this agent does and how it should report back.\n\n## Rules\n\n- Stay within the task you are given.\n- Report file paths and evidence for every claim.\n" : a.prompt;
+  var row = a ? a.row : null;
+
+  // ---- header ----
+  var actions = [];
+  if (!isNew && editable) {
+    var del = el("button", { class: "btn ghost danger", type: "button" }, icon("trash", 14), "Delete");
+    del.addEventListener("click", function () { deleteAgentUI(row, function () { go("#/subagents"); }); });
+    actions.push(del);
+  }
+  if (!isNew && !editable && (row.source === "builtin" || row.source === "package")) actions.push(customiseMenu(row, list));
+  var sub = isNew ? "A Markdown file: the settings below become its frontmatter, the prompt its body." : null;
+  var title = el("div", { class: "head" }, el("div", {}, crumb,
+    el("h1", {}, isNew ? "New agent" : r.name),
+    isNew ? el("p", { text: sub }) : el("p", { class: "meta" }, srcTag(row.source), " ", el("span", { class: "mono small", text: row.file }), row.active ? null : el("span", { class: "tag warn", text: row.shadowedBy ? "overridden by the " + row.shadowedBy + " copy" : "disabled" }))),
+    actions.length ? el("div", { class: "actions" }, actions) : null);
+  add(view, title);
+  if (flash) add(view, callout(flash.kind || "info", flash.text));
+  if (!editable) add(view, callout("info", (SOURCE_HELP[row.source] || "Read-only here.") + (row.source === "builtin" || row.source === "package" ? " Customise makes an editable copy with the same name, which pi-subagents then uses instead." : " It lives outside your agents directory; edit it where it is.")));
+
+  var resolvedBox = el("div", { id: "resolved" });
+  add(view, resolvedBox);
+  var errs = {};   // field -> frow, for server validation messages
+  // ---- definition (frontmatter) ----
+  var nameIn = el("input", { type: "text", class: "mono", value: f.name, placeholder: "e.g. test-writer", autocomplete: "off", spellcheck: "false", maxlength: "64", disabled: !editable });
+  var nameRow = frow("f-agent-name", "Name", isNew ? "Lower-case letters, digits and hyphens. It is also the file name." : editable ? "Renaming renames the file." : "Also the file name.", nameIn);
+  nameIn.addEventListener("input", function () { nameIn.value = nameIn.value.toLowerCase(); nameRow.setError(nameProblemUI(nameIn.value)); changed(); });
+  errs.name = nameRow; errs.original = nameRow;
+
+  var scope = isNew ? "user" : row.source;
+  var scopeRow = null;
+  if (isNew) {
+    var segU = el("button", { type: "button", "aria-pressed": "true" }, "You");
+    var segP = el("button", { type: "button", "aria-pressed": "false" }, "This project");
+    var scopeNote = el("div", { class: "note" });
+    var paintScope = function () { segU.setAttribute("aria-pressed", String(scope === "user")); segP.setAttribute("aria-pressed", String(scope === "project")); scopeNote.textContent = scope === "user" ? "Saved in " + (list.dirs.userReal || list.dirs.user) + ", for every project." : "Saved in " + (list.dirs.project || "this project's .pi/agents") + "; wins over a user agent of the same name here."; };
+    segU.addEventListener("click", function () { scope = "user"; paintScope(); changed(); });
+    segP.addEventListener("click", function () { scope = "project"; paintScope(); changed(); });
+    paintScope();
+    scopeRow = frow("f-agent-scope", "Where", "Who can use it.", el("div", { class: "seg", role: "group", "aria-label": "Where" }, segU, segP), scopeNote);
+    errs.scope = scopeRow;
+  }
+
+  var descIn = el("input", { type: "text", value: f.description, placeholder: "What it does, in one line: the parent agent reads this to decide when to delegate", maxlength: "500", disabled: !editable });
+  var descRow = frow("f-agent-desc", "Description", editable ? "Required. One line." : "How the parent agent decides when to delegate.", descIn);
+  descIn.addEventListener("input", function () { descRow.setError(descIn.value.trim() ? null : "a description is required"); changed(); });
+  errs.description = descRow;
+
+  var defaultModel = list.settings.defaultModel;
+  var mp = modelPicker({ value: f.model, providers: providers, none: "Not set: " + (defaultModel ? "the subagents default, " + defaultModel : "the parent's model"), label: "Model", disabled: !editable, onChange: function () { modelRow.setError(null); changed(); } });
+  var ov = a && a.override;
+  var modelRow = frow("f-agent-model", "Model", "The agent file's own model.", mp.el, ov && ov.model ? el("div", { class: "note" }, icon("info", 13), " The Models settings override this for " + r.name + ": ", el("code", { text: ov.model }), ".") : null);
+  errs.model = modelRow;
+
+  var thSel = thinkingSelect(f.thinking, "Not set", levels, "Thinking");
+  thSel.disabled = !editable;
+  thSel.addEventListener("change", changed);
+  var thRow = frow("f-agent-thinking", "Thinking", "How hard the model reasons before answering.", thSel, ov && ov.thinking ? el("div", { class: "note" }, icon("info", 13), " Overridden in settings: ", el("code", { text: ov.thinking }), ".") : null);
+  errs.thinking = thRow;
+
+  // tools: default set, or an allowlist picked from real tool names
+  var chosen = (f.tools || []).slice();
+  var toolsMode = f.tools === null ? "default" : "only";
+  var known = {}; (list.tools || []).forEach(function (t) { known[t.name] = t.from; });
+  chosen.forEach(function (t) { if (!known[t]) known[t] = "in this file"; });
+  var tmDefault = el("button", { type: "button" }, "Default tools");
+  var tmOnly = el("button", { type: "button" }, "Only these");
+  var seg = el("div", { class: "seg", role: "group", "aria-label": "Tools" }, tmDefault, tmOnly);
+  var chips = el("div", { class: "chips", "aria-live": "polite" });
+  var filterIn = el("input", { type: "search", placeholder: "Filter tools", "aria-label": "Filter tools", autocomplete: "off" });
+  var otherIn = el("input", { type: "text", class: "mono", placeholder: "mcp:server/tool or another name", "aria-label": "Add a tool by name", autocomplete: "off", spellcheck: "false" });
+  var otherBtn = el("button", { type: "button", class: "btn sm" }, "Add");
+  var grid = el("div", { class: "tool-grid" });
+  var picker = el("div", { class: "tool-pick" }, el("div", { class: "tp-chips" }, chips), el("div", { class: "tp-head" }, filterIn, el("div", { class: "inline tp-add" }, otherIn, otherBtn)), grid);
+  var toolsHelp = el("div", { class: "note" });
+  var toolsRow = frow("f-agent-tools", "Tools", "What the agent may call.", el("div", { class: "ctl" }, seg, toolsHelp, picker));
+  errs.tools = toolsRow;
+  var GROUPS = [["pi", "pi"], ["loaded", "Loaded in this agent"], ["named by an agent", "Named by other agents"], ["in this file", "In this file"]];
+  function paintTools() {
+    tmDefault.setAttribute("aria-pressed", String(toolsMode === "default")); tmOnly.setAttribute("aria-pressed", String(toolsMode === "only"));
+    picker.hidden = toolsMode === "default";
+    toolsHelp.textContent = toolsMode === "default" ? "No allowlist: the agent gets pi's standard tools (and, run in the background, the parent's extension tools)." : chosen.length + " selected. The agent can call only these.";
+    clear(chips);
+    if (!chosen.length) chips.appendChild(el("span", { class: "note", text: "None selected yet." }));
+    chosen.forEach(function (t) {
+      var x = el("button", { type: "button", "aria-label": "Remove " + t, disabled: !editable, text: "×" });
+      x.addEventListener("click", function () { chosen = chosen.filter(function (c) { return c !== t; }); paintTools(); changed(); });
+      chips.appendChild(el("span", { class: "chip-t" }, t, editable ? x : null));
+    });
+    clear(grid);
+    var v = filterIn.value.trim().toLowerCase();
+    GROUPS.forEach(function (g) {
+      var names = Object.keys(known).filter(function (n) { return known[n] === g[0] && (!v || n.toLowerCase().indexOf(v) !== -1); }).sort();
+      if (!names.length) return;
+      grid.appendChild(el("h4", { text: g[1] }));
+      grid.appendChild(el("div", { class: "opts" }, names.map(function (n) {
+        var cb = el("input", { type: "checkbox", checked: chosen.indexOf(n) !== -1, disabled: !editable });
+        cb.addEventListener("change", function () { if (cb.checked) { if (chosen.indexOf(n) === -1) chosen.push(n); } else chosen = chosen.filter(function (c) { return c !== n; }); paintTools(); changed(); });
+        return el("label", { class: "tool-opt" }, cb, el("span", { text: n }));
+      })));
+    });
+  }
+  tmDefault.addEventListener("click", function () { if (!editable) return; toolsMode = "default"; toolsRow.setError(null); paintTools(); changed(); });
+  tmOnly.addEventListener("click", function () { if (!editable) return; toolsMode = "only"; paintTools(); changed(); });
+  filterIn.addEventListener("input", paintTools);
+  function addOther() {
+    var t = otherIn.value.trim();
+    if (!t) return;
+    if (!/^(mcp:)?[A-Za-z0-9_.\/-]+$/.test(t)) { toolsRow.setError("not a tool name: " + t); return; }
+    if (chosen.indexOf(t) === -1) chosen.push(t);
+    if (!known[t]) known[t] = "in this file";
+    otherIn.value = ""; toolsRow.setError(null); paintTools(); changed();
+  }
+  otherBtn.addEventListener("click", addOther);
+  otherIn.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); addOther(); } });
+  if (!editable) { otherIn.disabled = true; otherBtn.disabled = true; }
+  paintTools();
+
+  // advanced: how the prompt is assembled
+  var modeSel = el("select", { disabled: !editable }, el("option", { value: "", text: "Not set (replace)" }), el("option", { value: "replace", text: "replace: this prompt only" }), el("option", { value: "append", text: "append: after pi's own prompt" }));
+  modeSel.value = f.systemPromptMode || "";
+  function triSelect(v) {
+    var s = el("select", { disabled: !editable });
+    if (v === undefined) s.appendChild(el("option", { value: "", text: "Not set (the package default)" }));
+    s.appendChild(el("option", { value: "true", text: "On" })); s.appendChild(el("option", { value: "false", text: "Off" }));
+    s.value = v === undefined ? "" : String(v);
+    s.addEventListener("change", changed);
+    return s;
+  }
+  var ctxSel = triSelect(f.inheritProjectContext), skillSel = triSelect(f.inheritSkills);
+  modeSel.addEventListener("change", changed);
+  var adv = el("details", { class: "adv" }, el("summary", {}, "Prompt assembly and context"),
+    el("div", { class: "rows" },
+      frow("f-agent-mode", "System prompt", "Replace pi's base prompt, or add to it.", modeSel),
+      frow("f-agent-ctx", "Project instructions", "Keep AGENTS.md / CLAUDE.md from the repository.", ctxSel),
+      frow("f-agent-skills", "Skills catalog", "Let the agent see the discovered skills.", skillSel)));
+  var extraKeys = a ? Object.keys(a.extra || {}) : [];
+  var extra = extraKeys.length ? el("div", { class: "extra" }, el("div", { class: "lab-t", text: "Other fields in this file" }),
+    el("p", { class: "note", text: "Kept exactly as they are when you save. Edit the file to change them." }),
+    kv(extraKeys.map(function (k) { return [k, el("span", { class: "mono", text: a.extra[k] })]; }))) : null;
+  add(view, card("Definition", "The frontmatter: how pi-subagents runs this agent.", null,
+    [el("div", { class: "rows" }, nameRow, scopeRow, descRow, modelRow, thRow, toolsRow), adv, extra]));
+
+  // ---- prompt: a Markdown editor with toolbar, shortcuts and a live preview ----
+  var ta = el("textarea", { class: "md-input", spellcheck: "true", "aria-label": "System prompt, Markdown", readonly: !editable, id: "f-agent-prompt" });
+  ta.value = prompt;
+  var preview = el("div", { class: "md-preview", "aria-label": "Preview", tabindex: "0" });
+  var body = el("div", { class: "md-body" }, ta, preview);
+  var stats = el("span", {});
+  var promptErr = el("div", { class: "err", hidden: true, role: "alert" });
+  var tb = el("div", { class: "md-toolbar", role: "toolbar", "aria-label": "Formatting" });
+  function tool(label, title, fn, cls) { var b = el("button", { type: "button", class: "tb" + (cls ? " " + cls : ""), title: title, "aria-label": title, text: label }); b.addEventListener("mousedown", function (e) { e.preventDefault(); }); b.addEventListener("click", function () { fn(); ta.focus(); }); return b; }
+  var viewMode = "split";
+  var vm = {};
+  var modeSeg = el("div", { class: "seg sm", role: "group", "aria-label": "Layout" }, ["split", "write", "preview"].map(function (k) {
+    var b = el("button", { type: "button", "aria-pressed": String(k === viewMode) }, k === "split" ? "Split" : k === "write" ? "Write" : "Preview");
+    b.addEventListener("click", function () { viewMode = k; body.className = "md-body" + (k === "split" ? "" : " " + k); for (var j in vm) vm[j].setAttribute("aria-pressed", String(j === k)); if (k !== "write") renderPreview(); });
+    vm[k] = b; return b;
+  }));
+  if (editable) add(tb, [
+    tool("H1", "Heading 1 (" + MOD + ALT + "1)", function () { heading(1); }),
+    tool("H2", "Heading 2 (" + MOD + ALT + "2)", function () { heading(2); }),
+    tool("H3", "Heading 3 (" + MOD + ALT + "3)", function () { heading(3); }),
+    el("span", { class: "sep" }),
+    tool("B", "Bold (" + MOD + "B)", function () { wrap("**"); }, "b"),
+    tool("I", "Italic (" + MOD + "I)", function () { wrap("*"); }, "i"),
+    el("span", { class: "sep" }),
+    tool("• List", "Bulleted list (" + MOD + SHIFT + "8)", function () { listify(false); }),
+    tool("1. List", "Numbered list (" + MOD + SHIFT + "7)", function () { listify(true); }),
+    tool("“", "Quote", function () { prefixLines("> "); }),
+    el("span", { class: "sep" }),
+    tool(BT + "code" + BT, "Inline code (" + MOD + "E)", function () { wrap(BT); }, "mono"),
+    tool("{ }", "Code block (" + MOD + ALT + "C)", codeBlock, "mono"),
+    tool("Link", "Link (" + MOD + "K)", link),
+    el("span", { class: "grow" }), modeSeg]);
+  else add(tb, [el("span", { class: "note", text: "Read-only" }), el("span", { class: "grow" }), modeSeg]);
+  var md = el("div", { class: "md" }, tb, body, el("div", { class: "md-foot" }, stats, el("span", { class: "keys" }, editable ? [el("kbd", { text: MOD + "S" }), " save · ", el("kbd", { text: "Enter" }), " continues a list · ", el("kbd", { text: "Tab" }), " indents it"] : null)));
+  add(view, card("Prompt", "The body of the file: the agent's system prompt, in Markdown. What you type is saved as it is.", null, [md, promptErr]));
+
+  function sel() { return { s: ta.selectionStart, e: ta.selectionEnd, v: ta.value }; }
+  /** Replace a range and keep the browser's undo stack (execCommand is the only way that does). */
+  function replace(start, end, text, selStart, selEnd) {
+    ta.focus(); ta.setSelectionRange(start, end);
+    var ok = false; try { ok = document.execCommand("insertText", false, text); } catch (e) {}
+    if (!ok || ta.value.slice(start, start + text.length) !== text) ta.setRangeText(text, start, end, "end");
+    ta.setSelectionRange(selStart === undefined ? start + text.length : selStart, selEnd === undefined ? (selStart === undefined ? start + text.length : selStart) : selEnd);
+    onInput();
+  }
+  function wrap(mark) {
+    var c = sel(), inner = c.v.slice(c.s, c.e), n = mark.length;
+    if (c.v.slice(c.s - n, c.s) === mark && c.v.slice(c.e, c.e + n) === mark) { replace(c.s - n, c.e + n, inner, c.s - n, c.e - n); return; }
+    if (inner.length > 2 * n && inner.slice(0, n) === mark && inner.slice(-n) === mark) { replace(c.s, c.e, inner.slice(n, -n), c.s, c.e - 2 * n); return; }
+    var text = inner || (mark === BT ? "code" : "text");
+    replace(c.s, c.e, mark + text + mark, c.s + n, c.s + n + text.length);
+  }
+  function lineRange() { var c = sel(); var a0 = c.v.lastIndexOf("\n", c.s - 1) + 1; var b0 = c.v.indexOf("\n", c.e > c.s && c.v[c.e - 1] === "\n" ? c.e - 1 : c.e); if (b0 === -1) b0 = c.v.length; return { a: a0, b: b0, text: c.v.slice(a0, b0) }; }
+  function prefixLines(p) {
+    var r = lineRange(), lines = r.text.split("\n");
+    var all = lines.every(function (l) { return l.indexOf(p) === 0; });
+    var out = lines.map(function (l) { return all ? l.slice(p.length) : p + l; }).join("\n");
+    replace(r.a, r.b, out, r.a, r.a + out.length);
+  }
+  function listify(numbered) {
+    var r = lineRange(), lines = r.text.split("\n");
+    var re = numbered ? /^(\s*)\d+[.)]\s+/ : /^(\s*)[-*+]\s+/;
+    var all = lines.every(function (l) { return re.test(l); });
+    var i = 0;
+    var out = lines.map(function (l) {
+      if (all) return l.replace(re, "$1");
+      var bare = l.replace(/^(\s*)([-*+]|\d+[.)])\s+/, "$1");
+      var ind = bare.match(/^\s*/)[0];
+      return ind + (numbered ? (++i) + ". " : "- ") + bare.slice(ind.length);
+    }).join("\n");
+    replace(r.a, r.b, out, r.a, r.a + out.length);
+  }
+  function heading(level) {
+    var r = lineRange(), first = r.text.split("\n")[0];
+    var m = first.match(/^(#{1,6})\s+/);
+    var bare = first.replace(/^#{1,6}\s+/, "");
+    var next = m && m[1].length === level ? bare : new Array(level + 1).join("#") + " " + bare;
+    var end = r.a + first.length;
+    replace(r.a, end, next, r.a + next.length);
+  }
+  function codeBlock() {
+    var c = sel(), fence = BT + BT + BT;
+    var inner = c.v.slice(c.s, c.e) || "code";
+    var before = c.s > 0 && c.v[c.s - 1] !== "\n" ? "\n" : "";
+    var text = before + fence + "\n" + inner.replace(/\n$/, "") + "\n" + fence + "\n";
+    var at = c.s + before.length + fence.length + 1;
+    replace(c.s, c.e, text, at, at + inner.replace(/\n$/, "").length);
+  }
+  function link() {
+    var c = sel(), label = c.v.slice(c.s, c.e) || "text", url = "https://";
+    var text = "[" + label + "](" + url + ")";
+    var at = c.s + label.length + 3;
+    replace(c.s, c.e, text, at, at + url.length);
+  }
+  ta.addEventListener("keydown", function (e) {
+    if (!editable) return;
+    var mod = e.metaKey || e.ctrlKey;
+    var k = (e.key || "").toLowerCase();
+    if (mod && !e.shiftKey && !e.altKey && k === "b") { e.preventDefault(); wrap("**"); return; }
+    if (mod && !e.shiftKey && !e.altKey && k === "i") { e.preventDefault(); wrap("*"); return; }
+    if (mod && !e.shiftKey && !e.altKey && k === "e") { e.preventDefault(); wrap(BT); return; }
+    if (mod && !e.shiftKey && !e.altKey && k === "k") { e.preventDefault(); link(); return; }
+    if (mod && e.altKey && /^Digit[1-3]$/.test(e.code)) { e.preventDefault(); heading(Number(e.code.slice(5))); return; }
+    if (mod && e.altKey && e.code === "KeyC") { e.preventDefault(); codeBlock(); return; }
+    if (mod && e.shiftKey && e.code === "Digit8") { e.preventDefault(); listify(false); return; }
+    if (mod && e.shiftKey && e.code === "Digit7") { e.preventDefault(); listify(true); return; }
+    var c = sel(), ls = c.v.lastIndexOf("\n", c.s - 1) + 1, line = c.v.slice(ls, c.s);
+    var item = line.match(/^(\s*)([-*+]|\d+[.)])(\s+)(.*)$/);
+    if (e.key === "Enter" && !mod && !e.shiftKey && !e.altKey && c.s === c.e && item && !e.isComposing) {
+      e.preventDefault();
+      if (!item[4].trim()) { replace(ls, c.s, "", ls); return; }   // Enter on an empty item ends the list
+      var marker = /\d/.test(item[2]) ? (parseInt(item[2], 10) + 1) + item[2].slice(-1) : item[2];
+      var ins = "\n" + item[1] + marker + item[3];
+      replace(c.s, c.e, ins, c.s + ins.length);
+      return;
+    }
+    if (e.key === "Tab" && !mod && !e.altKey && item) {
+      e.preventDefault();
+      if (e.shiftKey) { if (/^ {1,2}/.test(line)) { var cut = line.match(/^ {1,2}/)[0].length; replace(ls, ls + cut, "", c.s - cut); } }
+      else replace(ls, ls, "  ", c.s + 2);
+    }
+  });
+  var previewTimer = null, previewSeq = 0;
+  function renderPreview() {
+    if (viewMode === "write") return;
+    var mine = ++previewSeq;
+    api("POST", "/subagents/preview", { markdown: ta.value }).then(function (res) {
+      if (mine !== previewSeq) return;
+      preview.replaceChildren.apply(preview, safeHtml(res.html));
+      if (!ta.value.trim()) preview.replaceChildren(el("p", { class: "note", text: "Nothing to preview yet." }));
+    }, function (e) { if (mine === previewSeq) preview.replaceChildren(el("p", { class: "note", text: e.status === 500 ? "Preview withheld: the prompt contains something that looks like a key." : "Preview unavailable: " + e.message })); });
+  }
+  function paintStats() {
+    var v = ta.value, tokens = Math.ceil(v.length / 4), lines = v ? v.split("\n").length : 0;
+    stats.textContent = "≈ " + fmt(tokens) + " tokens · " + fmt(lines) + " lines · " + fmt(v.length) + " characters";
+    stats.title = "Approximate: characters ÷ 4, the estimate pi itself uses. The prompt is sent on every call this agent makes.";
+  }
+  function onInput() {
+    paintStats(); changed();
+    promptErr.hidden = true;
+    clearTimeout(previewTimer); previewTimer = setTimeout(renderPreview, 180);
+  }
+  ta.addEventListener("input", onInput);
+  // keep the preview roughly at the same place as the text
+  ta.addEventListener("scroll", function () { var max = ta.scrollHeight - ta.clientHeight; if (max > 0) preview.scrollTop = (ta.scrollTop / max) * (preview.scrollHeight - preview.clientHeight); });
+  paintStats(); renderPreview();
+  cleanup.push(function () { clearTimeout(previewTimer); previewSeq++; });
+
+  // ---- what pi-subagents resolves (filled in below; shown first, it is the point of the page) ----
+  function paintResolved(v, note) {
+    clear(resolvedBox);
+    if (!v) return;
+    if (!v.found) { add(resolvedBox, card("What pi-subagents resolves", null, null, el("p", { class: "note", text: "No agent named " + v.name + " is resolved: it is disabled, or it was removed." }))); return; }
+    var other = row && v.file !== row.file;
+    add(resolvedBox, card("What pi-subagents resolves", other ? "A delegation to " + v.name + " does not get this file: the " + v.source + " agent of the same name wins." : note || "Read back from the package: this is exactly what a delegation to " + v.name + " gets.", pill(other ? "warn" : "ok", other ? v.source + " copy wins" : "this file wins"), kv([
+      ["File", el("span", { class: "mono", text: v.file })],
+      ["Model", el("span", {}, el("span", { class: "mono", text: v.model || "the parent's model" }), el("span", { class: "note", text: "  from " + v.modelFrom }))],
+      ["Thinking", v.thinking || "not set"],
+      ["Tools", v.tools ? el("span", { class: "mono", text: v.tools.join(", ") }) : "default tools"],
+      ["Description", v.description],
+      ["Prompt", fmt(v.promptChars) + " characters, " + (v.systemPromptMode || "replace") + " mode"]
+    ])));
+  }
+  if (a) paintResolved(a.resolved);
+
+  // ---- state, dirty tracking, save ----
+  function collect() {
+    return {
+      name: nameIn.value.trim(), scope: scope, description: descIn.value.trim(), model: mp.get(), thinking: thSel.value,
+      tools: toolsMode === "default" ? null : chosen.slice(), systemPromptMode: modeSel.value,
+      inheritProjectContext: ctxSel.value === "" ? undefined : ctxSel.value === "true", inheritSkills: skillSel.value === "" ? undefined : skillSel.value === "true",
+      prompt: ta.value
+    };
+  }
+  var initial = JSON.stringify(collect());
+  var saveBtn = el("button", { class: "btn primary", type: "button" }, isNew ? "Create agent" : "Save");
+  var discardBtn = el("button", { class: "btn ghost", type: "button" }, "Discard");
+  var stateText = el("span", {});
+  var bar = el("div", { class: "savebar", role: "region", "aria-label": "Save changes" }, el("div", { class: "state" }, el("span", { class: "d", "aria-hidden": "true" }), stateText), discardBtn, saveBtn);
+  function isDirty() { return JSON.stringify(collect()) !== initial ? 1 : 0; }
+  function changed() {
+    var n = isDirty();
+    bar.classList.toggle("dirty", !!n);
+    stateText.textContent = n ? (isNew ? "Not created yet" : "Unsaved changes") : isNew ? "Fill in the fields to create it" : "Saved";
+    saveBtn.disabled = !n && !isNew; discardBtn.disabled = !n;
+    var a2 = document.getElementById("nav-subagents"), dot = a2 && a2.querySelector(".dot");
+    if (n && a2 && !dot) a2.appendChild(el("span", { class: "dot", "aria-label": "unsaved changes" }));
+    if (!n && dot) dot.remove();
+  }
+  if (editable) { add(view, bar); dirty = isDirty; changed(); }
+  discardBtn.addEventListener("click", function () { if (confirm("Discard your changes?")) { dirty = null; show(); } });
+  function onKey(e) { if ((e.metaKey || e.ctrlKey) && (e.key || "").toLowerCase() === "s") { e.preventDefault(); if (editable && !saveBtn.disabled) save(); } }
+  document.addEventListener("keydown", onKey);
+  cleanup.push(function () { document.removeEventListener("keydown", onKey); var dd = document.querySelector("#nav-subagents .dot"); if (dd) dd.remove(); });
+  saveBtn.addEventListener("click", save);
+
+  function save() {
+    var v = collect();
+    var problems = 0;
+    var np = nameProblemUI(v.name); nameRow.setError(np); if (np) problems++;
+    descRow.setError(v.description ? null : "a description is required"); if (!v.description) problems++;
+    if (v.tools && !v.tools.length) { toolsRow.setError("pick at least one tool, or use the default tools"); problems++; } else toolsRow.setError(null);
+    if (v.model && !/^[A-Za-z0-9._-]+\/[^\s,]+$/.test(v.model)) { modelRow.setError("a provider/model id, e.g. litellm/claude-sonnet-5"); problems++; }
+    if (problems) { toast("Nothing saved: fix the highlighted fields", "error"); var inv = view.querySelector("[aria-invalid=true]"); if (inv) inv.focus(); return; }
+    var body = { mode: isNew ? "create" : "update", scope: isNew ? scope : row.source, name: v.name, description: v.description, tools: v.tools, model: v.model, thinking: v.thinking, prompt: v.prompt };
+    if (!isNew) body.original = row.name;
+    if (v.systemPromptMode) body.systemPromptMode = v.systemPromptMode;
+    if (v.inheritProjectContext !== undefined) body.inheritProjectContext = v.inheritProjectContext;
+    if (v.inheritSkills !== undefined) body.inheritSkills = v.inheritSkills;
+    saveBtn.disabled = true; saveBtn.replaceChildren(spinner(), "Saving");
+    api("POST", "/subagents/agent", body).then(function (res) {
+      (res.warnings || []).forEach(function (w) { toast(w, "warn"); });
+      toast(isNew ? "Created " + v.name : "Saved " + v.name, "ok");
+      subagentFlash = { kind: "info", text: "Saved and checked: pi-subagents re-discovered " + v.name + " and resolves it to this " + res.resolved.source + " file, with the settings you chose." };
+      initial = JSON.stringify(collect());
+      go(agentHref("edit", body.scope, v.name));
+    }, function (e) {
+      saveBtn.replaceChildren(isNew ? "Create agent" : "Save"); changed();
+      var errs2 = e.data && e.data.errors;
+      if (errs2) {
+        for (var k in errs2) { if (k === "prompt") { promptErr.hidden = false; clear(promptErr); add(promptErr, [icon("alert", 14), el("span", { text: errs2[k] })]); } else if (errs[k]) errs[k].setError(errs2[k]); }
+        toast("Nothing saved: fix the highlighted fields", "error");
+      } else { toast(e.message, "error"); add(resolvedBox, callout("error", e.message)); }
+    });
+  }
+  view.setAttribute("aria-busy", "false");
+  if (isNew) nameIn.focus();
+}
+
+function nameProblemUI(n) {
+  if (!n) return "a name is required";
+  if (/[\/\\]/.test(n) || n.indexOf("..") !== -1) return "no slashes or dots: the name becomes the file name";
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(n)) return "lower-case letters, digits and hyphens, starting with a letter or digit";
+  return null;
+}
+
+/**
+ * The preview's HTML comes from the server's markdownToHtml, which escapes everything before adding
+ * markup. It is still parsed inertly and rebuilt from an allowlist here, so nothing but these tags
+ * and a checked href can reach the page.
+ */
+var PREVIEW_TAGS = { P: 1, H1: 1, H2: 1, H3: 1, H4: 1, H5: 1, UL: 1, OL: 1, LI: 1, PRE: 1, CODE: 1, STRONG: 1, EM: 1, A: 1, BLOCKQUOTE: 1, HR: 1, TABLE: 1, THEAD: 1, TBODY: 1, TR: 1, TH: 1, TD: 1, BR: 1 };
+function safeHtml(html) {
+  var doc = new DOMParser().parseFromString("<body>" + html + "</body>", "text/html");
+  function copy(node) {
+    if (node.nodeType === 3) return document.createTextNode(node.nodeValue);
+    if (node.nodeType !== 1) return null;
+    var kids = Array.prototype.map.call(node.childNodes, copy).filter(Boolean);
+    if (!PREVIEW_TAGS[node.tagName]) return kids.length ? el("span", {}, kids) : null;
+    var out = document.createElement(node.tagName.toLowerCase());
+    if (node.tagName === "A") { var h = node.getAttribute("href") || ""; if (/^https?:\/\//i.test(h)) { out.setAttribute("href", h); out.setAttribute("rel", "noreferrer noopener"); out.setAttribute("target", "_blank"); } }
+    if ((node.tagName === "TH" || node.tagName === "TD") && node.getAttribute("class") === "num") out.className = "num";
+    kids.forEach(function (k) { out.appendChild(k); });
+    return out;
+  }
+  return Array.prototype.map.call(doc.body.childNodes, copy).filter(Boolean);
 }
 
 // ---------- start ----------

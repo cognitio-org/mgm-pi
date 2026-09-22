@@ -101,8 +101,15 @@ mgm
 `PI_CODING_AGENT_DIR` moves on every upgrade. Session history, credentials, trust decisions and caches
 therefore live in `~/.mgm/state` and are symlinked into the bundle, which is what makes
 `mgm --session <id>` keep working after an upgrade: pi only searches the current agent dir, so before
-this they looked deleted. The installer gathers state left inside older bundles once.
-`MGM_STATE` moves the directory.
+this they looked deleted. Your own subagents (`.pi/agents`) live there too. The installer gathers state
+left inside older bundles once. `MGM_STATE` moves the directory.
+
+**Settings survive an upgrade.** `settings.json` is both the release's defaults and where your choices
+are saved (default model, subagent models, `/settings`, installed packages), so it is neither linked
+nor copied forward whole. Each bundle ships a pristine `settings.shipped.json`; on upgrade the installer
+compares your `settings.json` with the old one to find what *you* changed, and applies only that over
+the new release's settings. A default model you chose stays chosen; a default the release changed and
+you never touched arrives. Your previous file is kept as `~/.mgm/state/settings.previous.json`.
 
 ### Staying up to date
 
@@ -263,7 +270,15 @@ with it.
   router. It says when a change needs a rebuild, and that the indexer reads its settings at start, so
   saved changes reach search after a restart. When the repository has its own
   `.codebase-index/config.json`, the fields it overrides say so.
-- **Subagents**: the `subagents` block of the agent's `settings.json`, read-only for now.
+- **Subagents**: every agent pi-subagents finds, with its source (builtin, package, user, project)
+  and the model it resolves to; the default subagent model and per-agent model and thinking overrides,
+  picked from the live model list. Builtin and package agents are read-only; **Customise** makes an
+  editable same-name copy that wins over them. User and project agents can be created, edited and
+  deleted in an editor that keeps the file Markdown: the frontmatter as form fields (tools as a
+  multi-select of real tool names), the prompt in a monospace editor with a toolbar, shortcuts, a live
+  preview and a token estimate. Every write goes through pi-subagents' own handlers, and afterwards
+  the package re-discovers the agent; if what it resolves differs from what was saved, the change is
+  rolled back and the reason shown.
 
 `/admin index` (or `connections`, `model`, `subagents`) opens straight at that page, `/admin status`
 says where it is, `/admin stop` stops it.
@@ -333,8 +348,9 @@ their models, by what each role is for:
 | oracle | `litellm/claude-opus-5-high` | rare, and its whole value is judgement |
 
 Agents are Markdown with YAML frontmatter (`name`, `description`, `tools`, `model`, `thinking`,
-…), the same format as Claude Code's, but found in `.pi/agents/` (project) and `~/.pi/agent/agents/`
-(user) rather than `.claude/agents/`; `subagents.agentScanDirs` can add that directory as an extra
+…), the same format as Claude Code's, but found in `.pi/agents/` (project) and
+`$PI_CODING_AGENT_DIR/agents/` (user: `~/.mgm/state/agents` for an install, the git-ignored
+`mgm/.pi/agents` in a checkout) rather than `.claude/agents/`; `/admin subagents` edits them; `subagents.agentScanDirs` can add that directory as an extra
 root. A model set in settings under `subagents.agentOverrides.<name>.model` beats the agent file's
 frontmatter, which beats `subagents.defaultModel`, which beats the chat model. Foreground children
 do not load the parent's extensions, so a `researcher` needs web access granted to it explicitly.

@@ -48,13 +48,24 @@ for the rest of markdown rendering). Three independent layers:
    alone does **not** stop mermaid from wrapping flowchart node/edge labels in
    `<foreignObject><div>...</div></foreignObject>` for HTML-based text sizing -- that's still "raw
    HTML inside the SVG" as far as this boundary is concerned, so it's turned off outright and
-   mermaid always emits plain SVG `<text>`.
+   mermaid always emits plain SVG `<text>`. A diagram can carry its own config
+   (`%%{init: {...}}%%` or `config:` front matter), and mermaid only protects the keys in its
+   `secure` list from it -- by default not `themeCSS` (arbitrary page CSS, e.g. a
+   `cursor:url(https://attacker/...)` beacon) or `htmlLabels`. So `secure` is extended with
+   `htmlLabels`, `theme`, `themeVariables`, `themeCSS`, `fontFamily`, `altFontFamily` and
+   `darkMode`. `suppressErrorRendering: true` stops mermaid leaving its "Syntax error" graphic in a
+   temp `<div>` at the end of `<body>` after every failed parse.
 2. **Render call**: `mermaid.render(id, text)` returns an SVG string (never used with
    `startOnLoad`/auto-DOM-injection). The result is checked with `isSvgRoot` (parses it and
    confirms a single `<svg>` root, no parser error) before anything else happens to it.
 3. **Independent re-check**: `lib/mermaid-safety.ts`'s `isSafeMermaidSvg` combines `isSvgRoot` with
-   a second, mermaid-independent string scan (`isSafeMermaidMarkup`) for `<script`, `on[a-z]+=`,
-   `javascript:`, and `<foreignObject` (defense in depth even though config already disables it).
+   a second, mermaid-independent check (`isSafeMermaidMarkup`) that parses the string with the
+   HTML parser (the one `dangerouslySetInnerHTML` uses, so entity-encoded `&#106;avascript:` is
+   decoded) and rejects `<script>`, `<foreignObject>`, any element outside the SVG namespace,
+   `on*` attributes, and `javascript:`/`vbscript:` URLs in `href`/`xlink:href`/`src`. (It began
+   as a raw-string regex scan, which missed entity-encoded URLs and rejected harmless diagrams
+   whose label text read e.g. "once=1".) `journey` diagrams always use `<foreignObject>` in
+   mermaid 12 and so always fall back to showing their source.
    Only if both checks pass does the SVG string reach `dangerouslySetInnerHTML`; otherwise the
    block renders as an error ("Rendered diagram failed a security check and was not displayed.")
    with the source shown as plain text, same as a parse failure.
@@ -92,11 +103,11 @@ existing `<Working label="Drawing diagram…" size="lg" srOnly={false} />` indic
 Verified with `npm run build` (`packages/web`):
 
 - `SessionPage-*.js` (the lazy page chunk `EntryItem`/`Markdown`/`MermaidDiagram` live in):
-  **182.5 kB / 56.1 kB gzip** -- confirmed by grep that it contains only the dynamic-`import()`
+  **183.9 kB** (origin/main: 173.9 kB) -- confirmed by grep that it contains only the dynamic-`import()`
   filename pointer to mermaid's own chunk, plus this project's own `MermaidDiagram` code (one
   occurrence of the literal `"securityLevel"` from our config object); it does not contain
   mermaid's `"securityLevel"` string five times over the way `mermaid.core-*.js` does.
-- `index-*.js` (the main/eager bundle): **313.0 kB / 97.0 kB gzip** -- no mermaid reference at all.
+- `index-*.js` (the main/eager bundle): **313.0 kB** (origin/main: 313.0 kB, +21 bytes) -- no mermaid reference at all.
 - `mermaid.core-*.js` (mermaid's own runtime, lazy-loaded on first mermaid block): **682.4 kB /
   166.3 kB gzip**.
 - mermaid itself further code-splits per diagram type (`flowDiagram-*.js` 64 kB, `sequenceDiagram-

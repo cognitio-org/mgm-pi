@@ -1,0 +1,19 @@
+kernal/docs/git-github-spec.md
+  s_25c805ebe232f3::t_a4908d2e611122 34-54,143-152,162-166,172,175-178,184-187,191-193,197-199,218-297,304-307,309,319-338,357-360,362-363,367-373,375,386-388
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "4b7aaae8553643ad3933a93ffd435a40a2913c71",
+  "prompts": {},
+  "sessions": {
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

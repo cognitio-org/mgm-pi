@@ -49,6 +49,32 @@ async function ensureMermaidConfigured(tokens: ThemeTokens): Promise<typeof impo
       // that's still "rendering raw HTML inside the SVG" as far as this transcript's trust
       // boundary is concerned, so turn it off outright and always use plain SVG <text>.
       htmlLabels: false,
+      // A diagram can carry its own config (`%%{init: {...}}%%` directives or `config:` front
+      // matter). mermaid already refuses to let those touch the keys in its default `secure`
+      // list (securityLevel etc.), but everything else is fair game -- including `themeCSS`,
+      // which injects arbitrary CSS into the page (e.g. `cursor:url(https://attacker/...)`, a
+      // request that leaks the viewer's IP) and `htmlLabels`, which would switch <foreignObject>
+      // HTML labels back on. Lock those, and the theme, down too.
+      secure: [
+        "secure",
+        "securityLevel",
+        "startOnLoad",
+        "maxTextSize",
+        "suppressErrorRendering",
+        "maxEdges",
+        "htmlLabels",
+        "theme",
+        "themeVariables",
+        "themeCSS",
+        "fontFamily",
+        "altFontFamily",
+        "darkMode",
+      ],
+      // Without this, a parse error makes mermaid draw its "Syntax error" bomb graphic into a
+      // temp <div> appended to <body> and then throw *before* removing it -- so every failed
+      // (e.g. mid-stream, half-written) diagram left a stray error graphic at the bottom of the
+      // page. We show our own error fallback instead.
+      suppressErrorRendering: true,
       theme: "base",
       themeVariables: buildMermaidThemeVariables(tokens),
       fontFamily: tokens.fontMono,
@@ -64,7 +90,12 @@ function useThemeTokens(): ThemeTokens {
   const [tokens, setTokens] = useState<ThemeTokens>(() => readThemeTokensFromDocument() ?? DEFAULT_THEME_TOKENS);
 
   useEffect(() => {
-    const refresh = () => setTokens(readThemeTokensFromDocument() ?? DEFAULT_THEME_TOKENS);
+    // Keep the previous object when nothing actually changed, so a no-op attribute mutation (or
+    // the initial sync below) doesn't re-render every diagram on the page.
+    const refresh = () => {
+      const next = readThemeTokensFromDocument() ?? DEFAULT_THEME_TOKENS;
+      setTokens((prev) => (tokensKey(prev) === tokensKey(next) ? prev : next));
+    };
     refresh();
 
     const mo = new MutationObserver(refresh);
@@ -132,7 +163,10 @@ export function MermaidDiagram({ source }: { source: string }) {
       try {
         const mod = await ensureMermaidConfigured(themeTokens);
         if (generation !== generationRef.current) return;
-        const { svg: rendered } = await mod.default.render(diagramId, debouncedSource);
+        // A fresh id per render: mermaid.render(id) first deletes any element already in the
+        // document with that id, which would otherwise be the SVG we're currently showing (or
+        // its copy in the Enlarge dialog), yanked out from under React.
+        const { svg: rendered } = await mod.default.render(`${diagramId}-${generation}`, debouncedSource);
         if (generation !== generationRef.current) return;
         if (!isSafeMermaidSvg(rendered)) {
           setStatus("error");

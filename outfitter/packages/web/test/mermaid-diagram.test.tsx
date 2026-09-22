@@ -74,6 +74,13 @@ describe("MermaidDiagram", () => {
     // otherwise-legitimate diagrams (flowcharts especially) would trip the "no HTML in the SVG"
     // security gate in lib/mermaid-safety.ts.
     expect(config.htmlLabels).toBe(false);
+    // A diagram's own %%{init}%% directive / front matter must not be able to re-enable HTML
+    // labels or inject page CSS (themeCSS), and a parse error must not leave mermaid's error
+    // graphic stranded in <body>.
+    for (const key of ["securityLevel", "htmlLabels", "themeCSS", "fontFamily", "themeVariables"]) {
+      expect(config.secure).toContain(key);
+    }
+    expect(config.suppressErrorRendering).toBe(true);
     unmount();
   });
 
@@ -104,6 +111,17 @@ describe("MermaidDiagram", () => {
 
     expect(renderMock).toHaveBeenCalledTimes(1);
     expect(renderMock.mock.calls[0][1]).toBe("flowchart TD\nA-->B");
+    unmount();
+  });
+
+  it("uses a fresh render id per render, so mermaid never deletes the SVG currently on screen", async () => {
+    renderMock.mockResolvedValue({ svg: `<svg xmlns="http://www.w3.org/2000/svg"><text>ok</text></svg>` });
+    const { rerender, unmount } = mount(<MermaidDiagram source="flowchart TD\nA-->B id-1" />);
+    await flushDebounceAndRender();
+    rerender(<MermaidDiagram source="flowchart TD\nA-->C id-1" />);
+    await flushDebounceAndRender();
+    expect(renderMock).toHaveBeenCalledTimes(2);
+    expect(renderMock.mock.calls[0][0]).not.toBe(renderMock.mock.calls[1][0]);
     unmount();
   });
 

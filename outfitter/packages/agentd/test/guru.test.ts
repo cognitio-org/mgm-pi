@@ -7,8 +7,14 @@ test("renderModelArg: no thinking level returns the bare model", () => {
   assert.equal(renderModelArg("litellm/local-qwen-mlx"), "litellm/local-qwen-mlx");
 });
 
-test("renderModelArg: 'off' thinking level is not appended", () => {
-  assert.equal(renderModelArg("litellm/local-qwen-mlx", "off"), "litellm/local-qwen-mlx");
+test("renderModelArg: bug 5a -- 'off' is a real thinking level and is appended like any other, not silently dropped", () => {
+  // Dropping it used to leave pi with no explicit level at all, so it fell back to its own startup
+  // default (medium) instead of actually turning thinking off -- docs/reports/cloud-fixes.md.
+  assert.equal(renderModelArg("litellm/local-qwen-mlx", "off"), "litellm/local-qwen-mlx:off");
+});
+
+test("renderModelArg: no thinking argument at all (guru.thinking unset) still renders the bare model", () => {
+  assert.equal(renderModelArg("litellm/local-qwen-mlx", undefined), "litellm/local-qwen-mlx");
 });
 
 test("renderModelArg: appends :<thinking>", () => {
@@ -61,6 +67,12 @@ test("renderGuru: system prompts, tools, and thinking level all render", () => {
     "--exclude-tools",
     "write",
   ]);
+});
+
+test("renderGuru: bug 5a -- thinking:'off' reaches pi as an explicit :off suffix", () => {
+  const guru: RunSpecGuru = { model: "litellm/claude-sonnet-5", thinking: "off" };
+  const { args } = renderGuru(guru, { piBin: "pi", sessionFile: "/tmp/s.jsonl" });
+  assert.ok(args.includes("litellm/claude-sonnet-5:off"), args.join(" "));
 });
 
 test("renderGuru: env passthrough plus packages -> OUTFITTER_GURU_PACKAGES", () => {

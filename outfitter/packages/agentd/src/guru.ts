@@ -61,10 +61,20 @@ function isDenylistedGuruEnvKey(key: string): boolean {
   return DENYLISTED_GURU_ENV_KEYS.has(key) || key.startsWith("GIT_");
 }
 
-/** `provider/id` (+ optional `:thinking`) pi model pattern, per rpc.md's `--model` flag. */
+/** `provider/id` (+ optional `:thinking`) pi model pattern, per pi 0.87's docs/usage.md: `--model
+ * <pattern>` "supports `provider/id` and optional `:<thinking>`", where `<thinking>` is one of
+ * `off, minimal, low, medium, high, xhigh, max` -- `off` is a real, explicit level in that list,
+ * not the absence of one. Bug 5a (docs/reports/cloud-fixes.md): this used to special-case "off" as
+ * "append nothing", so a Tape configured with `thinking: "off"` never told pi anything at all --
+ * pi then fell back to its own startup default (`defaultThinkingLevel` in .pi/settings.json,
+ * "medium" in this image), which is exactly the "header says thinking medium" symptom. `off` now
+ * renders `:off` like every other level; only a genuinely *unset* guru.thinking renders nothing,
+ * leaving pi's own default in place (the guru simply didn't ask for a level). */
 export function renderModelArg(model: string, thinking?: string): string {
-  if (!thinking || thinking === "off") return model;
-  // Avoid double-suffixing if the caller already embedded a thinking level in the model string.
+  if (!thinking) return model;
+  // Avoid double-suffixing if the caller already embedded a thinking level in the model string
+  // (also protects a colon-bearing model id with no thinking suffix at all, e.g. a Bedrock
+  // inference-profile ARN).
   if (model.includes(":")) return model;
   return `${model}:${thinking}`;
 }

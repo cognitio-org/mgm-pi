@@ -4,16 +4,14 @@
  * auth token, opens the link to the api, and lets RunController drive the state machine once
  * `run.spec` arrives. See outfitter/docs/protocol.md.
  */
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { getIdToken } from "./auth.js";
 import { createGitOps } from "./git.js";
 import { Link } from "./link.js";
 import { RunController } from "./run.js";
 import { resolveRunAsUser, chownRecursive } from "./run-as-user.js";
 import { createLogger } from "./logger.js";
-
-const execFileAsync = promisify(execFile);
+import { getPiVersion } from "./pi-version.js";
+import { preloadSessionManager } from "./session.js";
 
 const AGENTD_VERSION = "0.1.0";
 const DEFAULT_WORKSPACE = "/workspace";
@@ -33,15 +31,6 @@ export function buildWsUrl(apiOrigin: string, runId: string): string {
   url.pathname = "/agent/ws";
   url.search = `?run=${encodeURIComponent(runId)}`;
   return url.toString();
-}
-
-async function getPiVersion(piBin: string): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync(piBin, ["--version"], { timeout: 5000 });
-    return stdout.trim() || "unknown";
-  } catch {
-    return "unknown";
-  }
 }
 
 async function main(): Promise<void> {
@@ -104,6 +93,7 @@ async function main(): Promise<void> {
     spendFile: process.env.OUTFITTER_SPEND_FILE,
     spendExtensionPath: process.env.OUTFITTER_SPEND_EXTENSION,
     mailExtensionPath: process.env.OUTFITTER_MAIL_EXTENSION,
+    startupPhases: true,
   });
 
   controller.onStateChange((state) => logger.info("state change", { state }));
@@ -135,6 +125,10 @@ async function main(): Promise<void> {
 
   phase("connecting to the link");
   link.connect();
+  // Loading pi's package for the session import takes seconds on a cold sandbox. Started once the
+  // connect is under way, it fills the network wait for the ID token, the handshake and run.spec
+  // instead of sitting between run.spec and spawning pi (docs/reports/startup-trim.md).
+  preloadSessionManager();
 }
 
 main().catch((err) => {

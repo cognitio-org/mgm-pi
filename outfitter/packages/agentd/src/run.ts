@@ -10,6 +10,7 @@ import { renderGuru } from "./guru.js";
 import type { GitOps } from "./git.js";
 import { spawnPi, SessionTailer, SpendTailer, validateSpendLine, type PiProcess, type SpendLogLine } from "./pi.js";
 import { importSession, writeSnapshotFile, emptySessionJsonl, lastKnownModelState } from "./session.js";
+import { StartupPhases } from "./startup-phases.js";
 import type { Logger } from "./logger.js";
 import type { RunAsUser } from "./run-as-user.js";
 import { validateSnapshotUrl, snapshotHostAllowlist, isDevMode } from "./snapshot-url.js";
@@ -129,6 +130,10 @@ export interface RunControllerDeps {
    * /workspace owned by root instead of the `agent` user pi actually runs as. No-op when
    * `runAsUser` is undefined. */
   chownWorkspace?: (path: string) => Promise<void>;
+  /** Start-up timing (startup-phases.ts): when set, `phase` lines are logged through `logger` from
+   * `run.spec` to the first answer, and pi is sent one readiness probe right after it is spawned.
+   * main.ts turns it on; tests leave it off so pi sees only the commands they send. */
+  startupPhases?: boolean;
 }
 
 export type StateChangeHandler = (state: RunState, detail?: string) => void;
@@ -203,6 +208,8 @@ export class RunController {
   /** Mail pi has already accepted this run. A redelivery (the ack was lost, the lease expired) is
    * re-acked without prompting pi a second time. */
   private readonly mailAccepted = new Set<string>();
+  /** Start-up phase timing; only set when deps.startupPhases is on (startup-phases.ts). */
+  private startup: StartupPhases | undefined;
   private readonly now: () => number;
   private readonly onExit: (code: number) => void;
   private readonly onLog: (line: string) => void;
@@ -347,6 +354,11 @@ export class RunController {
   }
 
   private async begin(spec: DownRunSpec): Promise<void> {
+    if (this.deps.startupPhases && this.deps.logger) {
+      const logger = this.deps.logger;
+      this.startup = new StartupPhases({ log: (message, fields) => logger.info(message, fields) });
+      this.startup.mark("run.spec received");
+    }
     this.spec = spec;
     this.deps.link.setSessionId?.(spec.session.id);
     // E1.6: register the run's own secrets before anything else can log a line that might echo one
@@ -371,6 +383,7 @@ export class RunController {
       // RunControllerDeps.chownWorkspace's doc comment. Hand the clone back to the user pi is about
       // to run as before pi (or the model's shell) ever touches it.
       await this.deps.chownWorkspace?.(this.deps.workspace);
+      this.startup?.mark("repo cloned");
       this.setState("restoring");
     } else {
       // Non-coding session: no repo to clone. Start with an empty /workspace, optionally restored
@@ -382,6 +395,7 @@ export class RunController {
         await restoreWorkspaceFn(spec.workspace.snapshotUrl, this.deps.workspace, {
           fetchFn: this.deps.fetchFn,
         });
+        this.startup?.mark("workspace restored");
       }
     }
 
@@ -408,6 +422,7 @@ export class RunController {
     // appends to this file and creates siblings in its directory, so hand both over now. Without
     // this the first round-two session died with EACCES on its first write.
     await this.deps.chownWorkspace?.(resolve(sessionFile, ".."));
+    this.startup?.mark("session import done");
 
     if (!spec.repo) {
       this.workspaceBaseline = await snapshotWorkspaceFiles(this.deps.workspace);
@@ -473,6 +488,8 @@ export class RunController {
       else this.onLog(`pi stderr: ${chunk}`);
     });
     this.pi.onExit((code, signal) => this.handlePiExit(code, signal));
+    this.startup?.mark("pi spawned");
+    this.startup?.probe(this.pi);
 
     // Flush anything that arrived (prompt/steer/follow_up/abort/ui_response/rpc) while pi was still
     // being spawned, in the order it was received.
@@ -548,6 +565,7 @@ export class RunController {
   }
 
   private handlePiEvent(event: PiRpcEvent): void {
+    if (this.startup?.observe(event)) return; // agentd's own readiness probe, not the api's business
     this.deps.link.sendSeq((seq) => ({ t: "event", seq, event }));
     if (event.type === "response" && typeof event.id === "string" && this.mailInFlight.has(event.id)) {
       const mailId = this.mailInFlight.get(event.id)!;

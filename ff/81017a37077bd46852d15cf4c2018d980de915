@@ -1,0 +1,27 @@
+outfitter/deploy/service.sh
+  s_719d861e1a31b6::t_1d7a4f9a1a5fb5 113-130
+outfitter/deploy/mailbox.sh
+  s_719d861e1a31b6::t_1d7a4f9a1a5fb5 15-16,77
+outfitter/packages/api/src/main.ts
+  s_719d861e1a31b6::t_1d7a4f9a1a5fb5 1,16-17
+outfitter/packages/api/test/config.test.ts
+  s_719d861e1a31b6::t_661539acc4566b 7,73-90
+outfitter/packages/api/src/config.ts
+  s_719d861e1a31b6::t_1d7a4f9a1a5fb5 166-181
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "ff81017a37077bd46852d15cf4c2018d980de915",
+  "prompts": {},
+  "sessions": {
+    "s_719d861e1a31b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "da8235fb-f66b-41bb-a1c8-3e1a4371dbaf",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

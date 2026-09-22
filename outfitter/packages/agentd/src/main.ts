@@ -89,7 +89,8 @@ async function main(): Promise<void> {
 
   const controller = new RunController({
     link,
-    gitOps: createGitOps(),
+    // Local git runs as the same user as pi, never as root inside the agent-owned workspace (git.ts).
+    gitOps: createGitOps(undefined, runAsUser ? { runAs: runAsUser } : {}),
     workspace,
     piBin,
     agentdVersion: AGENTD_VERSION,

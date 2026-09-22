@@ -231,6 +231,15 @@ export interface User {
   email: string;
   createdAt: string;
   lastSeenAt?: string;
+  /** Display name for commit attribution (run.spec.author.name). Optional and operator-set for now
+   * (no UI writes it); agentlink.ts falls back to the email's local part. */
+  name?: string;
+  /** GitHub login, for run.spec.author.login. Optional and operator-set for now. */
+  githubLogin?: string;
+  /** The address `Co-authored-by` credits -- ideally the person's GitHub noreply address
+   * (`<id>+<login>@users.noreply.github.com`), so GitHub links the commit to them without
+   * exposing their work email. Optional and operator-set for now; falls back to `email`. */
+  githubEmail?: string;
 }
 
 /** Personal API token (E4.1b): the only auth the "link" role (no IAP) accepts, and also accepted

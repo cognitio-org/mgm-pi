@@ -7,7 +7,7 @@
 import { mkdir, readFile, open as openFile, chown } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { renderGuru } from "./guru.js";
-import type { GitOps } from "./git.js";
+import { attributionTrailers, botIdentityEnv, sanitizeAuthor, type GitOps } from "./git.js";
 import { spawnPi, SessionTailer, SpendTailer, validateSpendLine, type PiProcess, type SpendLogLine } from "./pi.js";
 import { importSession, writeSnapshotFile, emptySessionJsonl, lastKnownModelState } from "./session.js";
 import type { Logger } from "./logger.js";
@@ -123,11 +123,12 @@ export interface RunControllerDeps {
    * -- and therefore /proc/<pid>/environ visibility -- with agentd's own git child. `undefined` when
    * agentd isn't root (nothing to drop; see run-as-user.ts). */
   runAsUser?: RunAsUser;
-  /** Recursively chowns a path to `runAsUser`'s uid/gid. Called after `git clone` and after every
-   * push (see checkpointNow) because those run as agentd's own (root) user for the auth env vars to
-   * stay root-only-readable, which would otherwise leave every file git writes/touches in
-   * /workspace owned by root instead of the `agent` user pi actually runs as. No-op when
-   * `runAsUser` is undefined. */
+  /** Recursively chowns a path to `runAsUser`'s uid/gid. Called after `git clone` because the clone
+   * runs as agentd's own (root) user for the auth env vars to stay root-only-readable, which would
+   * otherwise leave /workspace owned by root instead of the `agent` user pi actually runs as. Later
+   * git work (checkpoint commits, diff) runs as that user itself, and push runs as root from a
+   * private repository outside /workspace (git.ts's module doc), so nothing needs chowning after a
+   * checkpoint. No-op when `runAsUser` is undefined. */
   chownWorkspace?: (path: string) => Promise<void>;
 }
 
@@ -435,6 +436,16 @@ export class RunController {
     // Not a secret, but pinned here after guru.env like the rest so a guru can't spoof it; the
     // outfitter-mail extension tells the model its own address with it.
     secretEnv.OUTFITTER_SESSION_ID = spec.session.id;
+    // Same for commit identity: the agent's own commits are made by the Outfitter bot (author and
+    // committer; git-github-spec.md, "Attribution"), and the session's person rides along as
+    // OUTFITTER_AUTHOR_* for tooling that appends the attribution trailers. No token here.
+    Object.assign(secretEnv, botIdentityEnv());
+    const author = sanitizeAuthor(spec.author);
+    if (author) {
+      secretEnv.OUTFITTER_AUTHOR_NAME = author.name;
+      secretEnv.OUTFITTER_AUTHOR_EMAIL = author.email;
+      if (author.login) secretEnv.OUTFITTER_AUTHOR_LOGIN = author.login;
+    }
     if (spec.secrets.litellmKey) secretEnv.LITELLM_AGENT_KEY = spec.secrets.litellmKey;
     // Security-review-pr15.md finding #1: pin the LiteLLM base URL from the server-controlled
     // spec, spread after `rendered.env` (guru.env), so a guru-supplied LITELLM_BASE_URL can never
@@ -740,24 +751,20 @@ export class RunController {
       return;
     }
 
-    const { committed } = await this.deps.gitOps.commitAll(
+    // Both run the workspace's git as the workspace's own user (git.ts's GitOpsOptions.runAs), so
+    // unlike the clone there is nothing root-owned to chown back afterwards.
+    await this.deps.gitOps.commitAll(
       this.deps.workspace,
       message ?? `outfitter checkpoint ${new Date().toISOString()}`,
+      attributionTrailers(sanitizeAuthor(this.spec.author)),
     );
-    let head = await this.deps.gitOps.headSha(this.deps.workspace);
-    let pushed = false;
-    if (committed) {
-      const res = await this.deps.gitOps.push(
-        this.deps.workspace,
-        this.spec.repo.branch,
-        this.spec.secrets.githubToken,
-      );
-      head = res.head;
-      pushed = true;
-      // git commit/push ran as agentd's own (root) user; hand any new/changed files back to the
-      // unprivileged user pi runs as (see chownWorkspace's doc comment on RunControllerDeps).
-      await this.deps.chownWorkspace?.(this.deps.workspace);
-    }
+    // Push whenever HEAD differs from what origin has for the session branch -- including commits
+    // the agent made itself, for which commitAll finds nothing left to commit.
+    const { head, pushed } = await this.deps.gitOps.push(this.deps.workspace, {
+      remoteUrl: this.spec.repo.cloneUrl,
+      branch: this.spec.repo.branch,
+      githubToken: this.spec.secrets.githubToken,
+    });
     this.deps.link.send({ t: "checkpoint", branch: this.spec.repo.branch, head, pushed });
   }
 

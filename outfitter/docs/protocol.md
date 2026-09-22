@@ -72,7 +72,7 @@ Up (agentd → api):
 | `entry` | `seq, entry` (a pi session entry exactly as pi writes it to JSONL: message, model_change, compaction, custom, ...) | whenever pi appends to the session file (agentd tails the file; this is the durable transcript) |
 | `event` | `seq, event` (a raw pi RPC event: agent_start, message_update, tool_execution_start/update/end, agent_end, extension_ui_request, ...) | streamed for live UI; not persisted except `extension_ui_request` |
 | `spend` | `keySpend?, keyMax?, modelGroup?, callId?, estimate?, baseline?` | `keySpend`/`keyMax`/`modelGroup`/`callId` from LiteLLM's `x-litellm-key-spend`/`-max-budget`/`-model-group`/`-call-id` response headers (relayed by the `outfitter-spend` pi extension's `after_provider_response` hook, `packages/agentd/pi-extension/outfitter-spend.ts`, loaded only under agentd -- see E2.11); absent fields mean the response carried no LiteLLM headers at all (non-LiteLLM route) or an incomplete set (e.g. no budget cap, so no `-max-budget`). `estimate` is pi's own cumulative cost estimate for the run so far (agentd's running sum of the extension's own per-response `usage` estimates, `packages/agentd/src/pi.ts`'s `SpendTailer`), independent of LiteLLM's headers -- it is what lets `Run.costEstimate` be real even for a guru whose route never returns spend headers. For an auto-router model group (`claude-auto-llm`, `gemini-auto-llm`, `*-agentic`, `*-affinity`, whose `/model/info` price is all zero because the underlying model is only picked per call), the extension's per-response `usage` estimate is instead computed from the newest assistant message's token counts times the *resolved* model's price (from `x-litellm-model-name`, fetched via `/model/info` at `session_start`) plus `x-litellm-classifier-cost`, rather than pi's own (zero) per-message cost estimate -- see E2.11b. `baseline: true` marks exactly one frame per run, sent from the extension's `session_start` handler before any provider call: `keySpend` on it is the LiteLLM key's balance read from `GET /key/info` *before* this run's first call (rather than a post-call balance from a response header), so the api's "pin `Run.keySpendStart` from the first spend frame seen" logic (`agentlink.ts`) baselines correctly and a one-call run's `cost` is no longer under-reported as 0. If `GET /key/info` fails, no baseline frame is sent and the prior first-response-frame-pins-baseline behaviour applies. |
-| `checkpoint` | `branch?, head?, pushed?: boolean, snapshotUrl?, workspaceUrl?` | after each git push / JSONL upload; repo-less runs upload a workspace tarball (`workspaceUrl`) instead of pushing |
+| `checkpoint` | `branch?, head?, pushed?: boolean, snapshotUrl?, workspaceUrl?` | after each checkpoint; repo-less runs upload a workspace tarball (`workspaceUrl`) instead of pushing. For a repo run agentd commits any uncommitted changes, then pushes whenever `head` differs from what origin last had for `branch` (or the branch isn't on origin yet) — including commits the agent made itself. `pushed` says whether this checkpoint sent anything; `head` is the session branch's commit either way |
 | `heartbeat` | `idleSeconds, memMb` | every 15 s |
 | `bye` | `reason: "idle"\|"stop"\|"sigterm"\|"error", message?` | last frame |
 | `mail.ack` | `id` | pi accepted a `mail` down-message (its RPC `prompt` response came back `success: true`); the API marks the mail acked |
@@ -81,7 +81,7 @@ Down (api → agentd):
 
 | t | fields | effect |
 |---|---|---|
-| `run.spec` | `session {id, name, cwd:"/workspace"}, repo? {cloneUrl, branch, baseBranch, createBranch} (absent for non-coding sessions: agentd starts with an empty /workspace, or restores `workspace.snapshotUrl`), workspace? {snapshotUrl?}, guru {systemPrompt?, appendSystemPrompt?, model, thinking, tools?, excludeTools?, packages?, env?}, snapshot {url?, jsonl?}, secrets {githubToken, litellmKey, litellmBaseUrl?}, idleStopSeconds, checkpointEvery` | start the run |
+| `run.spec` | `session {id, name, cwd:"/workspace"}, repo? {cloneUrl, branch, baseBranch, createBranch} (absent for non-coding sessions: agentd starts with an empty /workspace, or restores `workspace.snapshotUrl`), workspace? {snapshotUrl?}, guru {systemPrompt?, appendSystemPrompt?, model, thinking, tools?, excludeTools?, packages?, env?}, snapshot {url?, jsonl?}, secrets {githubToken, litellmKey, litellmBaseUrl?}, author? {name, email, login?}, idleStopSeconds, checkpointEvery` | start the run |
 | `ack` | `seq` | agentd may drop buffered frames ≤ seq |
 | `prompt` | `text, images?, behavior?: "steer"\|"followUp"` | pi RPC `prompt` (with `streamingBehavior` if pi is busy) |
 | `steer` / `follow_up` | `text` | pi RPC same name |
@@ -162,6 +162,16 @@ SSE subscribers, and acks.
 `LITELLM_API_KEY` / `LITELLM_AGENT_KEY` at all — denylisted in both `routes/gurus.ts` and agentd's
 `guru.ts`). agentd pins it into the spawned pi process's `LITELLM_BASE_URL` env var after `guru.env`
 is applied, so the real `secrets.litellmKey` can never be sent to a guru-controlled host.
+
+`run.spec.author` is the session's person, for commit attribution (kernal/docs/git-github-spec.md,
+"Attribution"). The api fills it from the session owner's user record: `name` (else the email's local
+part), `email` (the user's `githubEmail`, ideally their GitHub noreply address, else their email) and
+`login` (`githubLogin`, when set). Every cloud commit is authored *and* committed by the Outfitter bot
+(`Outfitter <noreply@outfitter.invalid>`, pinned as `GIT_AUTHOR_*`/`GIT_COMMITTER_*` both in agentd's
+own commits and in pi's environment, after `guru.env`); agentd's checkpoint commits add
+`Co-authored-by: <name> <email>` and `On-behalf-of: <name> <email>` trailers, each at most once, and
+pi gets the person as `OUTFITTER_AUTHOR_NAME`/`_EMAIL`/`_LOGIN` for tooling that does the same.
+`author` is optional: an older api, or a session with no owner, gets the bot alone and no trailers.
 
 `run.spec.guru.model` is the *resolved* model, not necessarily the guru's own `model` field: the
 E2.8 laptop preflight (`src/laptop.ts`) substitutes the guru's (or session's) `fallbackModel` (env

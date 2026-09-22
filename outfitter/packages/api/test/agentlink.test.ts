@@ -4,6 +4,7 @@ import { OAuth2Client } from "google-auth-library";
 import { buildTestApp, seedGuru } from "./helpers.ts";
 import { makeQueue, openAgentSocket, runTokenFor, makeRunningSession, sendHello, type SocketHandle } from "./agent-socket.ts";
 import type { Session } from "../src/store/types.ts";
+import { authorFor } from "../src/agentlink.ts";
 import type { SecretsBroker } from "../src/secrets.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 
@@ -277,6 +278,32 @@ describe("agentd <-> api WebSocket", () => {
     await agent.nextClose(); // leaving this socket open makes fastify.close() hang (see closeQuietly)
     app.stopBackgroundTasks();
     await app.fastify.close();
+  });
+
+  test("run.spec carries author from the session owner's user record, and none without an owner", async () => {
+    const app = await buildTestApp();
+    await app.store.users.upsertSeen("ada@example.com");
+    const { session, runId, runToken } = await makeRunningSession(app, { ownerEmail: "ada@example.com" });
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    const spec = await agent.nextMessage();
+    // no name/githubLogin/githubEmail on record yet: the email's local part and the email itself
+    assert.deepEqual(spec.author, { name: "ada", email: "ada@example.com" });
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+
+    const app2 = await buildTestApp();
+    const second = await makeRunningSession(app2);
+    const agent2 = await openAgentSocket(app2, second.runId);
+    sendHello(agent2, second.runId, second.session.id, second.runToken);
+    const spec2 = await agent2.nextMessage();
+    assert.equal(spec2.author, undefined);
+    agent2.send({ t: "bye", reason: "stop" });
+    await agent2.nextClose();
+    app2.stopBackgroundTasks();
+    await app2.fastify.close();
   });
 
   test("a checkpoint frame with only workspaceUrl stores just that field", async () => {
@@ -708,5 +735,25 @@ describe("run.spec build validates secrets", () => {
     await agent.nextClose();
     app.stopBackgroundTasks();
     await app.fastify.close();
+  });
+});
+
+describe("authorFor", () => {
+  test("prefers the user record's name, githubLogin and githubEmail when an operator set them", () => {
+    assert.deepEqual(
+      authorFor("ada@example.com", {
+        email: "ada@example.com",
+        createdAt: "2026-01-01T00:00:00Z",
+        name: " Ada Lovelace ",
+        githubLogin: "ada",
+        githubEmail: "123+ada@users.noreply.github.com",
+      }),
+      { name: "Ada Lovelace", email: "123+ada@users.noreply.github.com", login: "ada" },
+    );
+  });
+
+  test("falls back to the owner email when there's no user record yet, and to nothing without an owner", () => {
+    assert.deepEqual(authorFor("bob@example.com", null), { name: "bob", email: "bob@example.com" });
+    assert.equal(authorFor(undefined, null), undefined);
   });
 });

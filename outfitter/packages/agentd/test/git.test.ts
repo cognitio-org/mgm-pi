@@ -1,6 +1,20 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { authHeaderEnv, createGitOps, redactUrl, type ExecFn, type ExecResult } from "../src/git.js";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  attributionTrailers,
+  authHeaderEnv,
+  createGitOps,
+  gitConfigEnv,
+  OUTFITTER_BOT_IDENTITY,
+  redactUrl,
+  sanitizeAuthor,
+  type ExecAs,
+  type ExecFn,
+  type ExecResult,
+} from "../src/git.js";
 
 function ok(stdout = ""): ExecResult {
   return { stdout, stderr: "", code: 0 };
@@ -92,48 +106,148 @@ test("GitOps.clone (createBranch: false): the fetch step is also authenticated v
   assert.ok(!(fetchCall!.env?.GIT_CONFIG_VALUE_0 ?? "").includes("super-secret-token") || true);
 });
 
-test("GitOps.push: reads the plain origin URL, authenticates via env, and pushes to 'origin' (never a token-bearing URL or argv)", async () => {
-  const calls: { args: string[]; env?: Record<string, string> }[] = [];
-  const exec: ExecFn = async (_cmd, args, _cwd, env) => {
-    calls.push({ args, env });
-    if (args.includes("get-url")) return ok("https://github.com/acme/repo.git\n");
-    if (args.includes("rev-parse")) return ok("deadbeef\n");
+/** A stub exec for push(): HEAD is `deadbeef`, the remote-tracking ref for the session branch is
+ * `tracking` (missing when undefined), and `push` returns `pushResult`. */
+function pushExec(opts: { tracking?: string; pushResult?: ExecResult } = {}) {
+  const calls: { args: string[]; cwd: string; env?: Record<string, string>; as?: ExecAs }[] = [];
+  const exec: ExecFn = async (_cmd, args, cwd, env, as) => {
+    calls.push({ args, cwd, env, as });
+    if (args[0] === "rev-parse" && args.includes("HEAD^{commit}")) return ok("deadbeef\n");
+    if (args[0] === "rev-parse") {
+      return opts.tracking ? ok(`${opts.tracking}\n`) : { stdout: "", stderr: "", code: 1 };
+    }
+    if (args[0] === "push") return opts.pushResult ?? ok();
     return ok();
   };
-  const gitOps = createGitOps(exec);
-  const { head } = await gitOps.push("/tmp/dest", "outfitter/sess1", "super-secret-token");
-  assert.equal(head, "deadbeef");
+  return { exec, calls };
+}
 
-  const pushCall = calls.find((c) => c.args.includes("push"));
+const PUSH_SPEC = {
+  remoteUrl: "https://github.com/acme/repo.git",
+  branch: "outfitter/sess1",
+  githubToken: "super-secret-token",
+};
+
+test("GitOps.push: pushes the exact HEAD commit to run.spec's URL, authenticated via env, never via argv, a token-bearing URL, or the workspace's origin", async () => {
+  const { exec, calls } = pushExec();
+  const pushRoot = await mkdtemp(join(tmpdir(), "agentd-git-test-"));
+  const gitOps = createGitOps(exec, { pushRoot });
+  const res = await gitOps.push("/tmp/dest", PUSH_SPEC);
+  assert.deepEqual(res, { head: "deadbeef", pushed: true });
+
+  const pushCall = calls.find((c) => c.args[0] === "push");
   assert.ok(pushCall);
-  assert.ok(pushCall!.args.includes("origin"));
-  assert.ok(!pushCall!.args.some((a) => a.startsWith("https://") && a.includes("@")));
-  assert.ok(!pushCall!.args.some((a) => a.startsWith("http.extraheader=")));
+  assert.deepEqual(pushCall!.args, ["push", "--quiet", "https://github.com/acme/repo.git", "deadbeef:refs/heads/outfitter/sess1"]);
+  assert.ok(!calls.some((c) => c.args.includes("get-url")), "never reads the agent-writable origin URL");
   assert.ok(!pushCall!.args.includes("-c"));
-  assert.equal(pushCall!.env?.GIT_CONFIG_KEY_0, "http.extraheader");
   assert.ok(!pushCall!.args.join(" ").includes("super-secret-token"));
+  assert.equal(pushCall!.env?.GIT_CONFIG_KEY_0, "http.extraheader");
   assert.ok(!(pushCall!.env?.GIT_CONFIG_VALUE_0 ?? "").includes("super-secret-token"));
+  // from agentd's private push repository, not from inside the workspace
+  assert.ok(pushCall!.cwd.startsWith(pushRoot));
+  assert.equal(pushCall!.env?.GIT_DIR, pushCall!.cwd);
+  // and the tracking ref + upstream are recorded afterwards
+  assert.ok(calls.some((c) => c.args.join(" ") === "update-ref refs/remotes/origin/outfitter/sess1 deadbeef"));
+  assert.ok(calls.some((c) => c.args.join(" ") === "config branch.outfitter/sess1.merge refs/heads/outfitter/sess1"));
+});
+
+test("GitOps.push: skips the push (pushed: false) when origin's session branch already has HEAD", async () => {
+  const { exec, calls } = pushExec({ tracking: "deadbeef" });
+  const gitOps = createGitOps(exec, { pushRoot: await mkdtemp(join(tmpdir(), "agentd-git-test-")) });
+  assert.deepEqual(await gitOps.push("/tmp/dest", PUSH_SPEC), { head: "deadbeef", pushed: false });
+  assert.ok(!calls.some((c) => c.args[0] === "push"));
+});
+
+test("GitOps.push: pushes when origin's session branch is behind HEAD", async () => {
+  const { exec, calls } = pushExec({ tracking: "cafebabe" });
+  const gitOps = createGitOps(exec, { pushRoot: await mkdtemp(join(tmpdir(), "agentd-git-test-")) });
+  assert.deepEqual(await gitOps.push("/tmp/dest", PUSH_SPEC), { head: "deadbeef", pushed: true });
+  assert.ok(calls.some((c) => c.args[0] === "push"));
+});
+
+test("GitOps with runAs: workspace git runs as that user with its HOME; only clone and the private-repo push run as agentd", async () => {
+  const { exec, calls } = pushExec();
+  const gitOps = createGitOps(exec, {
+    runAs: { uid: 1000, gid: 1000, home: "/home/agent" },
+    pushRoot: await mkdtemp(join(tmpdir(), "agentd-git-test-")),
+  });
+  await gitOps.commitAll("/workspace", "checkpoint");
+  await gitOps.push("/workspace", PUSH_SPEC);
+  await gitOps.diff("/workspace", "main");
+  for (const c of calls) {
+    const inWorkspace = c.cwd === "/workspace";
+    if (inWorkspace) {
+      assert.deepEqual(c.as, { uid: 1000, gid: 1000 }, `git ${c.args.join(" ")} runs as the workspace user`);
+      assert.equal(c.env?.HOME, "/home/agent");
+      assert.notEqual(c.env?.GIT_CONFIG_KEY_0, "http.extraheader", "the token never reaches workspace-user git");
+    } else {
+      assert.equal(c.as, undefined, `git ${c.args.join(" ")} runs as agentd`);
+    }
+  }
+  const pushCall = calls.find((c) => c.args[0] === "push")!;
+  assert.notEqual(pushCall.cwd, "/workspace");
 });
 
 test("GitOps.push: a failing push's thrown error never contains the token, even if git stderr echoed it back", async () => {
-  const exec: ExecFn = async (_cmd, args) => {
-    if (args.includes("get-url")) return ok("https://github.com/acme/repo.git\n");
-    if (args.includes("push")) {
-      // Worst case: git (or a proxy in front of it) echoes the invocation, including our header,
-      // back on stderr. redactToken must still keep it out of the thrown message.
-      return { stdout: "", stderr: "remote: permission denied for super-secret-token", code: 1 };
-    }
-    return ok();
-  };
-  const gitOps = createGitOps(exec);
+  // Worst case: git (or a proxy in front of it) echoes the invocation, including our header, back on
+  // stderr. redactToken must still keep it out of the thrown message.
+  const { exec } = pushExec({
+    pushResult: { stdout: "", stderr: "remote: permission denied for super-secret-token", code: 1 },
+  });
+  const gitOps = createGitOps(exec, { pushRoot: await mkdtemp(join(tmpdir(), "agentd-git-test-")) });
   await assert.rejects(
-    () => gitOps.push("/tmp/dest", "outfitter/sess1", "super-secret-token"),
+    () => gitOps.push("/tmp/dest", PUSH_SPEC),
     (err: Error) => {
       assert.ok(!err.message.includes("super-secret-token"), err.message);
       assert.ok(err.message.includes("<redacted>"));
       return true;
     },
   );
+});
+
+test("GitOps.commitAll: commits as the Outfitter bot (author and committer) with --no-verify and the given trailers", async () => {
+  const calls: { args: string[]; env?: Record<string, string> }[] = [];
+  const exec: ExecFn = async (_cmd, args, _cwd, env) => {
+    calls.push({ args, env });
+    if (args[0] === "status") return ok(" M file.txt\n");
+    return ok();
+  };
+  await createGitOps(exec).commitAll("/tmp/dest", "checkpoint", ["Co-authored-by: A <a@x>", "On-behalf-of: A <a@x>"]);
+  const commit = calls.find((c) => c.args[0] === "commit")!;
+  assert.deepEqual(commit.args, [
+    "commit", "--no-verify", "-m", "checkpoint",
+    "--trailer", "Co-authored-by: A <a@x>", "--trailer", "On-behalf-of: A <a@x>",
+  ]);
+  assert.equal(commit.env?.GIT_AUTHOR_NAME, OUTFITTER_BOT_IDENTITY.name);
+  assert.equal(commit.env?.GIT_AUTHOR_EMAIL, OUTFITTER_BOT_IDENTITY.email);
+  assert.equal(commit.env?.GIT_COMMITTER_NAME, OUTFITTER_BOT_IDENTITY.name);
+  assert.equal(commit.env?.GIT_COMMITTER_EMAIL, OUTFITTER_BOT_IDENTITY.email);
+  assert.equal(commit.env?.GIT_CONFIG_COUNT, "1");
+  assert.equal(commit.env?.GIT_CONFIG_KEY_0, "trailer.ifexists");
+  assert.equal(commit.env?.GIT_CONFIG_VALUE_0, "doNothing");
+});
+
+test("gitConfigEnv: one correctly-counted GIT_CONFIG_* set, in order; {} for no entries", () => {
+  assert.deepEqual(gitConfigEnv([]), {});
+  assert.deepEqual(gitConfigEnv([["a.b", "1"], ["c.d", "2"]]), {
+    GIT_CONFIG_COUNT: "2",
+    GIT_CONFIG_KEY_0: "a.b",
+    GIT_CONFIG_VALUE_0: "1",
+    GIT_CONFIG_KEY_1: "c.d",
+    GIT_CONFIG_VALUE_1: "2",
+  });
+});
+
+test("sanitizeAuthor / attributionTrailers: absent or blank author -> no trailers; delimiters and line breaks can't forge one", () => {
+  assert.equal(sanitizeAuthor(undefined), undefined);
+  assert.equal(sanitizeAuthor({ name: " ", email: "a@x" }), undefined);
+  assert.equal(sanitizeAuthor({ name: "A", email: 42 }), undefined);
+  assert.deepEqual(attributionTrailers(undefined), []);
+  const forged = sanitizeAuthor({ name: "Eve <eve@x>\nSigned-off-by: Mallory", email: "eve@x", login: "@eve" });
+  assert.deepEqual(forged, { name: "Eve eve@x Signed-off-by: Mallory", email: "eve@x", login: "eve" });
+  const trailers = attributionTrailers(forged);
+  assert.equal(trailers.length, 2);
+  assert.ok(trailers.every((t) => !t.includes("\n")));
 });
 
 test("GitOps.clone: a failing clone's thrown error never contains the token", async () => {

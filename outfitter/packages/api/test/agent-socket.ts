@@ -39,6 +39,9 @@ export interface SocketHandle {
   // Number of messages already received and not yet consumed via nextMessage() -- used to assert
   // "no run.spec was ever sent" without racing a nextMessage() call that would hang forever.
   messageCount: () => number;
+  // Closes from the client side, the way a sandbox losing its socket (or agentd's own 55-minute
+  // rotation) does -- as opposed to sending `bye`, which also ends the *run*.
+  close: () => void;
 }
 
 export async function openAgentSocket(
@@ -67,6 +70,7 @@ export async function openAgentSocket(
       return close;
     },
     messageCount: messages.count,
+    close: () => ws.close(),
   };
 }
 

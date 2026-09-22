@@ -47,11 +47,44 @@ treats them:
 | `4404` | run/session/guru not found | terminal, exit 0 (nothing left to do) |
 | `4409` | run is in a terminal state already, **or** (E5.7/bug 9, cloud-fixes.md) this agentd's `hello.protocolVersion` is older than the API's own (including a build that predates the field, treated as version 0) | terminal, exit 0 (nothing left to do) |
 | `4412` | run cannot start: missing secret (a repo session with no usable GitHub token) | terminal, exit 1; the API also marks the run `failed` with a reason before closing |
+| `4429` | the run already has a live agent connection (see "One live agent connection per run" below) | transient, agentd keeps reconnecting with backoff |
 | `1011` | internal error | transient, agentd keeps reconnecting with backoff |
 
 Any other code is treated as transient too. `4412` exists specifically so a run stuck without a
 clonable secret fails fast instead of agentd retrying for up to ten minutes (`maxUnspecMs`) with the
 run sitting in `provisioning`.
+
+**One live agent connection per run.** The run token above is a bearer credential: anything holding
+it could, until this was fixed, open its own `/agent/ws?run=<id>`, be handed its own `run.spec`
+(which carries `secrets.githubToken` and `secrets.litellmKey`) and *replace* agentd in the API's
+socket map, taking over the run's down-channel -- and the sandbox handed that token to the model's
+own shell in pi's environment (finding #1, `docs/reports/security-review-pr41.md`). A run now
+accepts one live agent connection at a time: a second `hello` for a run whose socket is open and was
+heard from within `AGENT_SOCKET_GRACE_MS` (default 60s -- four of agentd's 15s heartbeats) is closed
+with `4429` before any side effect, and is never sent `run.spec`. agentd's own reconnects are
+unaffected, because it only reconnects after its previous socket has closed (`link.ts`; the
+55-minute rotation calls `close()` and waits for the `close` event). A socket that is still OPEN but
+silent past the grace window is treated as a dead half-open connection -- a partitioned sandbox, a
+killed instance -- and is replaced by the newcomer (closed with `1001`, which is non-terminal, so a
+live agentd that lost the race reconnects instead of exiting) rather than leaving the run wedged
+until TCP notices. That window is not a hole a live sandbox can slip through: it only opens once
+agentd has stopped heartbeating, which means pi -- the process the model lives in -- is not running.
+Note the check is per-process, so it cannot see a socket held by another `outfitter-link` instance;
+it is defense in depth behind the real fix, which is that pi's environment never contains
+`RUN_TOKEN` at all (`packages/agentd/src/pi.ts`'s `baseEnvForPi`).
+
+**pi's environment is an allowlist.** agentd's own env holds the run's takeover kit (`RUN_TOKEN`,
+`RUN_ID`, `OUTFITTER_API`, set per execution by `providers/cloudrun.ts`). `spawnPi` builds the child
+environment from an explicit allowlist -- `PATH`/`HOME`/`USER`/`LOGNAME`/`SHELL`/`TERM`/`TZ`/`LANG`/
+`LANGUAGE`/`TMPDIR`, plus the `LC_*`, `PI_*`, `KERNAL_*`, `MGM_*` and `LITELLM_*` prefixes -- rather
+than copying agentd's env minus a denylist, so a new env var agentd gains is withheld from the model
+by default instead of leaked by default. Everything pi needs *per run* (the LiteLLM key and base
+URL, the session id, the spend file) is passed explicitly by `run.ts` on top of that. An operator
+who needs more through (e.g. `HTTPS_PROXY`) sets `OUTFITTER_PI_ENV_PASSTHROUGH` on agentd, which can
+add names but can never re-add `RUN_TOKEN`, `RUN_ID`, `OUTFITTER_API`, `OUTFITTER_DEV_TOKEN` or
+`NODE_OPTIONS`. main.ts also deletes `RUN_TOKEN`/`OUTFITTER_DEV_TOKEN` from its own `process.env`
+right after reading them, so no other child agentd spawns (`git`, `pi --version`) inherits them
+either.
 
 **Two Linux users inside the sandbox.** `image/Dockerfile`'s entrypoint (agentd) runs as root; `git`
 therefore also runs as root, so the `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0`/`GIT_CONFIG_VALUE_0` env

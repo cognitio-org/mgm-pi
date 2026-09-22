@@ -216,6 +216,20 @@ ENV PI_CODING_AGENT_DIR=/opt/kernal/.pi \
 # /proc/<pid>/environ (kernel-restricted to uid 0) actually root-only; agentd chowns whatever git
 # writes into /workspace back to `agent` afterward (run.ts's chownWorkspace) so pi never has to run
 # as root to use its own working tree. WORKDIR is deliberately not switched to the `agent` user here.
+#
+# Not closed by that split (finding #1, docs/reports/security-review-pr41.md): the GCE metadata
+# server at 169.254.169.254 authenticates by network position, not by uid, so the `agent` user can
+# still fetch the sandbox service account's identity token. Since agentd no longer leaks RUN_TOKEN/
+# RUN_ID/OUTFITTER_API into pi's environment (pi.ts's baseEnvForPi), that token has no run to be
+# used against -- but the reachability itself is worth removing where the platform allows it. The
+# kernel can do it per-uid:
+#
+#   iptables -A OUTPUT -d 169.254.169.254 -m owner --uid-owner agent -j REJECT
+#
+# root (agentd, which needs the metadata server for getIdToken) keeps its access; everything the
+# model runs loses it. Not applied here because a Cloud Run Jobs task container has no NET_ADMIN to
+# install the rule with -- it belongs to a provider that can hold that capability (the GKE Agent
+# Sandbox provider spec, docs/specs) or to a platform-level egress policy.
 
 # Pre-compile every extension pi loads into jiti's file cache (/tmp/jiti), as `agent`, from the same
 # paths and with the same --extension flags agentd uses, so a woken sandbox reads compiled modules

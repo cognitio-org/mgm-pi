@@ -149,6 +149,10 @@ function acceptsMail(state: Run["state"]): boolean {
 
 export class AgentLink {
   private readonly sockets = new Map<string, WebSocket>();
+  /** Last time each live agent socket was heard from (its `hello`, then every up-frame). Feeds the
+   * single-live-connection rule in handleConnection; a WeakMap so a closed socket's entry goes with
+   * the socket itself. */
+  private readonly socketSeenAt = new WeakMap<WebSocket, number>();
   private readonly pendingRequests = new Map<string, PendingRequest>();
   private readonly deliveries = new Map<string, Promise<void>>();
   private readonly store: Store;
@@ -384,6 +388,59 @@ export class AgentLink {
       return closeQuietly(socket, 4409, reason);
     }
 
+    // Finding #1 (docs/reports/security-review-pr41.md): a valid run token is no longer enough on
+    // its own -- a run gets *one* live agent connection at a time. Before this, any second hello
+    // carrying the token was handed a fresh run.spec (GitHub token + LiteLLM key) and silently
+    // replaced agentd in `this.sockets`, taking over the run's down-channel. agentd's own
+    // reconnects are unaffected: it only ever reconnects after its previous socket has closed
+    // (link.ts -- the 55-minute rotation calls ws.close() and waits for the 'close' event), and a
+    // closed socket is gone from the map by then.
+    //
+    // The incumbent still counts as live only while it is OPEN *and* was heard from within
+    // config.agentSocketGraceMs (default 60s = four of agentd's 15s heartbeats, which start as
+    // soon as pi does -- run.ts). A socket silent past that is a dead half-open connection the api
+    // was never told about (a partitioned sandbox, a killed instance), so the newcomer replaces it
+    // rather than leaving the run wedged until TCP notices. That grace window is not a hole a live
+    // sandbox can slip through: it only opens when agentd has stopped heartbeating, which means pi
+    // -- the process the model lives in -- is not running.
+    //
+    // Scope: `sockets` is per-process, so this cannot see a socket held by another link instance
+    // (the roles run as separate Cloud Run services, see startDownQueuePoller). The real isolation
+    // fix is that the model never sees RUN_TOKEN at all (agentd's pi.ts env allowlist); this is
+    // defense in depth for a token that leaks some other way.
+    const incumbent = this.sockets.get(runId);
+    if (incumbent && incumbent !== socket && this.incumbentIsLive(incumbent)) {
+      request.log.warn(
+        { runId },
+        "agentlink: refusing a second agent connection for a run that already has a live one",
+      );
+      buffer.stop();
+      return closeQuietly(socket, 4429, "run already has a live agent connection");
+    }
+    if (incumbent && incumbent !== socket) {
+      request.log.info({ runId }, "agentlink: replacing a presumed-dead agent connection");
+      if (this.sockets.get(runId) === incumbent) this.sockets.delete(runId);
+      // 1001 (going away), not a 44xx: if this socket turns out to be a live agentd after all, it
+      // must reconnect rather than treat the close as terminal and exit (link.ts's
+      // TERMINAL_CLOSE_CODES).
+      closeQuietly(incumbent, 1001, "replaced by a newer agent connection");
+    }
+    // Claimed synchronously, in the same event-loop turn as the check above and before any further
+    // await: two connections racing here (say an impostor timed against agentd's own first connect)
+    // must not both see an empty slot and both be handed run.spec.
+    this.sockets.set(runId, socket);
+    this.socketSeenAt.set(socket, Date.now());
+    socket.on("close", () => {
+      if (this.sockets.get(runId) === socket) this.sockets.delete(runId);
+      // any in-flight diff/read request on this run's connection can never be answered now
+      for (const [reqId, pending] of this.pendingRequests) {
+        if (pending.runId !== runId) continue;
+        clearTimeout(pending.timer);
+        pending.reject(new Error("agent connection closed"));
+        this.pendingRequests.delete(reqId);
+      }
+    });
+
     // Bug 10 (docs/reports/cloud-fixes.md): a run created specifically to deliver mail
     // (Run.mailWakePending, set by MailService.wakeForMail) just proved -- token + protocol
     // version both checked out -- that it can genuinely speak the protocol, so charge the
@@ -404,18 +461,6 @@ export class AgentLink {
     await this.store.mail.markValidated(run.sessionId);
     const released = await this.store.mail.releaseHeld();
     if (released.length > 0) request.log.info({ runId, sessions: released }, "agentlink: protocol validated, released held mail");
-
-    this.sockets.set(runId, socket);
-    socket.on("close", () => {
-      if (this.sockets.get(runId) === socket) this.sockets.delete(runId);
-      // any in-flight diff/read request on this run's connection can never be answered now
-      for (const [reqId, pending] of this.pendingRequests) {
-        if (pending.runId !== runId) continue;
-        clearTimeout(pending.timer);
-        pending.reject(new Error("agent connection closed"));
-        this.pendingRequests.delete(reqId);
-      }
-    });
 
     let spec: RunSpecMessage;
     try {
@@ -478,6 +523,17 @@ export class AgentLink {
         }),
       );
     });
+  }
+
+  /** Whether the run's current agent socket should still be treated as the one live connection when
+   * a second one shows up (see handleConnection). OPEN is necessary but not sufficient: a socket
+   * whose peer vanished without a close frame stays OPEN here indefinitely, so it also has to have
+   * been heard from within the grace window. `agentSocketGraceMs: 0` disables the rule entirely. */
+  private incumbentIsLive(socket: WebSocket): boolean {
+    if (socket.readyState !== socket.OPEN) return false;
+    const seenAt = this.socketSeenAt.get(socket);
+    if (seenAt === undefined) return false;
+    return Date.now() - seenAt < this.config.agentSocketGraceMs;
   }
 
   private async buildRunSpec(runId: string, session: Session, guru: Guru): Promise<RunSpecMessage> {
@@ -555,6 +611,9 @@ export class AgentLink {
     } catch {
       return; // malformed frame, ignore rather than kill the connection
     }
+    // Any frame from the run's registered socket is proof it's alive -- see incumbentIsLive. Only
+    // the registered one counts, so a connection being torn down can't keep itself "live".
+    if (this.sockets.get(runId) === socket) this.socketSeenAt.set(socket, Date.now());
     const now = new Date().toISOString();
 
     switch (frame.t) {

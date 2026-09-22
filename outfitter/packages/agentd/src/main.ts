@@ -41,6 +41,16 @@ async function main(): Promise<void> {
   const workspace = process.env.WORKSPACE ?? DEFAULT_WORKSPACE;
   const piBin = process.env.PI_BIN ?? DEFAULT_PI_BIN;
 
+  // Both are read exactly once, here, and held in these consts for the rest of the process: drop
+  // them from process.env immediately so nothing agentd spawns can inherit them by accident. pi's
+  // own environment is already built from an allowlist that excludes them (pi.ts's baseEnvForPi),
+  // but every *other* child agentd spawns -- `git`, `pi --version`, anything a future code path
+  // adds -- inherits process.env wholesale (git.ts's execFile), and RUN_TOKEN in the environment of
+  // a process the model can see is a full run takeover (see PI_ENV_NEVER's doc comment). Deleting
+  // it at the source means no future spawn site has to remember.
+  delete process.env.RUN_TOKEN;
+  delete process.env.OUTFITTER_DEV_TOKEN;
+
   // Startup phases are timed: the first cloud sessions showed ~3 minutes between Cloud Run's start
   // time and agentd's first log line, and nothing here should take more than seconds.
   const bootStart = Date.now();

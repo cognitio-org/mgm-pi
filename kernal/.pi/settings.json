@@ -10,7 +10,7 @@
     "npm:pi-lsp",
     "npm:@codexstar/pi-listen"
   ],
-  "lastChangelogVersion": "0.86.1",
+  "lastChangelogVersion": "0.87.0",
   "theme": "dark",
   "powerline": {
     "preset": "default",

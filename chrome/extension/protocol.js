@@ -66,3 +66,25 @@ export function pageReply(message, version, id) {
   if (!parsed.ok) return { ok: false, error: "rejected" };
   return { ok: true, version, id };
 }
+
+// outf_ + 32 random bytes, base64url, no padding. Same shape as packages/api generateToken.
+const DONGLE = /^outf_[A-Za-z0-9_-]{43}$/;
+
+/** True when `value` is outf_ followed by 43 base64url characters. */
+export function isDongle(value) {
+  return typeof value === "string" && DONGLE.test(value);
+}
+
+/** `url.origin` for an http(s) URL with no username or password; null otherwise. */
+export function linkOrigin(value) {
+  if (typeof value !== "string") return null;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  if (url.username !== "" || url.password !== "") return null;
+  return url.origin;
+}

@@ -3,11 +3,10 @@
 // into the page: the password field holds only what the user is typing. A saved Dongle is reported
 // as "saved", not echoed back.
 
+import { isDongle, linkOrigin } from "./protocol.js";
+
 const TOKEN_KEY = "OUTFITTER_TOKEN";
 const ORIGIN_KEY = "OUTFITTER_API";
-
-// outf_ + 32 random bytes, base64url, no padding. Same shape as packages/api generateToken.
-const DONGLE = /^outf_[A-Za-z0-9_-]{43}$/;
 
 const tokenInput = document.querySelector("#token");
 const originInput = document.querySelector("#origin");
@@ -17,22 +16,6 @@ const form = document.querySelector("#settings");
 const removeButton = document.querySelector("#remove");
 
 let dongleSaved = false;
-
-function isDongle(value) {
-  return DONGLE.test(value);
-}
-
-function linkOrigin(value) {
-  let url;
-  try {
-    url = new URL(value);
-  } catch {
-    return null;
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-  if (url.username !== "" || url.password !== "") return null;
-  return url.origin;
-}
 
 function saySaved() {
   tokenState.textContent = dongleSaved ? "A Dongle is saved." : "";
@@ -56,7 +39,7 @@ form.addEventListener("submit", async (event) => {
   const typed = tokenInput.value.trim();
   const originText = originInput.value.trim();
   if (typed !== "" && !isDongle(typed)) {
-    status.textContent = "Dongle must start with outf_.";
+    status.textContent = "Dongle must be outf_ followed by 43 base64url characters.";
     return;
   }
   const origin = originText === "" ? "" : linkOrigin(originText);
@@ -65,18 +48,17 @@ form.addEventListener("submit", async (event) => {
     return;
   }
   try {
+    const writes = {};
+    if (typed !== "") writes[TOKEN_KEY] = typed;
+    if (originText !== "") writes[ORIGIN_KEY] = origin;
+    if (Object.keys(writes).length > 0) await chrome.storage.local.set(writes);
+    if (originText === "") await chrome.storage.local.remove(ORIGIN_KEY);
+    // Clear the password field only after every storage call has succeeded.
     if (typed !== "") {
-      await chrome.storage.local.set({ [TOKEN_KEY]: typed });
       dongleSaved = true;
       tokenInput.value = "";
     }
-    if (originText === "") {
-      await chrome.storage.local.remove(ORIGIN_KEY);
-      originInput.value = "";
-    } else {
-      await chrome.storage.local.set({ [ORIGIN_KEY]: origin });
-      originInput.value = origin;
-    }
+    originInput.value = origin;
     saySaved();
     status.textContent = "Saved.";
   } catch {

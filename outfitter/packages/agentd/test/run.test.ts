@@ -1143,3 +1143,34 @@ test("RunController: a failed checkpoint (e.g. a rejected push) is logged, not t
   link.deliver({ t: "stop", reason: "done" });
   await waitFor(() => link.sent.some((m) => m.t === "bye"));
 });
+
+test("RunController: browser.capture.entry is emitted once through sendSeq", async (t) => {
+  const workspace = await mkdtemp(join(tmpdir(), "outfitter-run-test-"));
+  const link = new FakeLink();
+  const controller = new RunController({
+    link,
+    gitOps: fakeGitOps(),
+    workspace,
+    piBin: "unused-in-test",
+    agentdVersion: "test",
+    piVersion: "test",
+    onLog: () => {},
+  });
+  t.after(() => controller.dispose());
+  const entry = {
+    type: "custom" as const,
+    id: "browser-capture:req-1",
+    customType: "outfitter.browser.capture",
+    data: { captureId: "cap-1", title: "Docs", url: "https://example.test", requesterEmail: "a@b.c" },
+  };
+  link.deliver({ t: "browser.capture.entry", entry });
+  const frames = link.sent.filter((m) => m.t === "entry");
+  assert.equal(frames.length, 1);
+  const frame = frames[0];
+  assert.equal(frame.t, "entry");
+  if (frame.t === "entry") {
+    assert.equal(frame.seq, 1);
+    assert.equal(frame.entry.id, entry.id);
+    assert.equal(frame.entry, entry);
+  }
+});

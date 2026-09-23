@@ -6,11 +6,12 @@
 // and both are code-split the same way. `?game=rescue` or `?game=dreadnought` (and `?demo=1`, read
 // by each game's own attract-mode logic) let screenshots/tests jump straight past the menu.
 
-import { lazy, Suspense } from "react";
+import { Suspense } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import type { GameId } from "./shared/highscore.ts";
+import { lazyRoute } from "../lib/chunk-reload.ts";
 
-const EasterEggRootLazy = lazy(() => import("./EasterEggRoot.tsx").then((m) => ({ default: m.EasterEggRoot })));
+const EasterEggRootLazy = lazyRoute(() => import("./EasterEggRoot.tsx").then((m) => ({ default: m.EasterEggRoot })));
 
 function parseGame(raw: string | null): GameId | undefined {
   return raw === "rescue" || raw === "dreadnought" ? raw : undefined;

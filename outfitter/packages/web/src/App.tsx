@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { api } from "./api/client.ts";
 import { ProviderStrip } from "./components/ProviderStrip.tsx";
@@ -10,6 +10,7 @@ import { FleetPage } from "./pages/FleetPage.tsx";
 import { ProvidersPage } from "./pages/ProvidersPage.tsx";
 import { TokensPage } from "./pages/TokensPage.tsx";
 import { vocabulary } from "./lib/vocabulary.ts";
+import { lazyRoute } from "./lib/chunk-reload.ts";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { Working } from "./components/Working.tsx";
 import { UnhandledRejectionBanner } from "./components/UnhandledRejectionBanner.tsx";
@@ -31,10 +32,10 @@ function PanicTest(): never {
 
 // Code-split: the heavier pages (markdown rendering, the tour animation, the forms) load when
 // first opened, so the desk and the Disk Box stay small (review of round five).
-const SessionPage = lazy(() => import("./pages/SessionPage.tsx").then((m) => ({ default: m.SessionPage })));
-const GurusPage = lazy(() => import("./pages/GurusPage.tsx").then((m) => ({ default: m.GurusPage })));
-const SettingsPage = lazy(() => import("./pages/SettingsPage.tsx").then((m) => ({ default: m.SettingsPage })));
-const ManualPage = lazy(() => import("./pages/ManualPage.tsx").then((m) => ({ default: m.ManualPage })));
+const SessionPage = lazyRoute(() => import("./pages/SessionPage.tsx").then((m) => ({ default: m.SessionPage })));
+const GurusPage = lazyRoute(() => import("./pages/GurusPage.tsx").then((m) => ({ default: m.GurusPage })));
+const SettingsPage = lazyRoute(() => import("./pages/SettingsPage.tsx").then((m) => ({ default: m.SettingsPage })));
+const ManualPage = lazyRoute(() => import("./pages/ManualPage.tsx").then((m) => ({ default: m.ManualPage })));
 
 const PANIC_TEST_ENABLED = Boolean(import.meta.env.DEV || import.meta.env.OUTFITTER_DEV);
 

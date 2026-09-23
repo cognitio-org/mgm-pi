@@ -40,8 +40,8 @@ export interface Identity {
   /** Operator role (EPIC.md Decisions table): allowed to manage secrets and deploy-level settings
    * via /api/operator/*. Computed once, here, wherever an Identity is built for the "web"/"all"
    * role (identityFromRequest) -- never on the "link" role: a link-role token identity is always
-   * `operator: false`, even when its owner is on OUTFITTER_OPERATORS, because that role only ever
-   * serves teleport (see identityFromLinkRequest below). */
+   * `operator: false`, even when its owner is on OUTFITTER_OPERATORS, because that role does not
+   * register /api/operator/* (see identityFromLinkRequest below). */
   operator: boolean;
 }
 
@@ -96,9 +96,9 @@ export async function identityFromApiToken(bearer: string, store: TokenStore): P
 
 /** The "link" role's only /api/* credential (see the module doc comment above): a personal API
  * token, unconditionally -- no IAP, no dev-mode shortcut. Deliberately never grants the operator
- * role (EPIC.md Decisions table): the link role only ever serves teleport routes, which have no
- * /api/operator/* route registered anyway (routes/index.ts), so there's nothing an operator flag
- * would unlock here -- but a token owner who happens to be on OUTFITTER_OPERATORS must not read as
+ * role (EPIC.md Decisions table): the link role does not register /api/operator/* (routes/index.ts),
+ * so there's nothing an operator flag would unlock here -- but a token owner who happens to be on
+ * OUTFITTER_OPERATORS must not read as
  * an operator through this path regardless. */
 export async function identityFromLinkRequest(req: RequestLike, store: TokenStore): Promise<Identity> {
   const bearer = bearerFromHeader(req);

@@ -1,13 +1,27 @@
-<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
-  <title>Outfitter</title>
-  <rect width="16" height="16" fill="#302870" />
-  <g fill="#e4e0fb">
-    <rect x="5" y="0" width="2" height="5" />
-    <rect x="9" y="0" width="2" height="5" />
-    <rect x="4" y="3" width="8" height="2" />
-    <rect x="3" y="4" width="10" height="11" />
-  </g>
-  <rect x="7" y="6" width="2" height="2" fill="#302870" />
-  <rect x="5" y="9" width="6" height="5" fill="#302870" opacity="0.55" />
-  <rect x="12" y="12" width="2" height="3" fill="#5cff8a" />
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges">
+  <title>Kernal</title>
+  <style>
+    .tile { fill: #302870; }
+    .pack { fill: #f4efe4; }
+    .cut { fill: #302870; }
+    .cursor { fill: #5cff8a; }
+    @media (prefers-color-scheme: dark) {
+      .tile { fill: #f1ebdd; }
+      .pack { fill: #302870; }
+      .cut { fill: #f1ebdd; }
+      .cursor { fill: #1f8a4c; }
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      .cursor { animation: blink 1.2s steps(1) infinite; }
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+  </style>
+  <rect class="tile" width="16" height="16"/>
+  <rect class="pack" x="5" y="0" width="2" height="5"/>
+  <rect class="pack" x="9" y="0" width="2" height="5"/>
+  <rect class="pack" x="4" y="3" width="8" height="2"/>
+  <rect class="pack" x="3" y="4" width="10" height="11"/>
+  <rect class="cut" x="7" y="6" width="2" height="2"/>
+  <rect class="cut" x="5" y="9" width="6" height="5"/>
+  <rect class="cursor" x="12" y="12" width="2" height="3"/>
 </svg>

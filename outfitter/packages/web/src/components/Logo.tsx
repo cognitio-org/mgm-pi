@@ -7,8 +7,8 @@
 // cursor pixel gets its own class so it can pick up the phosphor-green "live" colour and respect
 // prefers-reduced-motion (see styles/base.css's .logo-cursor). Static duplicates of this mark
 // live at src/assets/logo-mark.svg and src/assets/logo.svg (mark + wordmark) for use outside
-// React (README, design docs); public/favicon.svg is a self-coloured variant of the same pixels
-// since a favicon has no ancestor to inherit currentColor from.
+// React (README, design docs). The tab icon is landing/tools/favicon.py, written into both
+// public/ folders: an SVG that follows the color scheme and blinks, plus ico and apple-touch.
 
 interface LogoProps {
   variant?: "mark" | "full";

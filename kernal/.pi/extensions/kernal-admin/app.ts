@@ -251,6 +251,9 @@ pre { background: var(--panel); border: 1px solid var(--line); border-radius: va
 .tag.src-project { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
 .tag.src-package { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
 .tag.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.cmdline { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+.cmdline code { background: var(--panel); padding: 5px 8px; border-radius: 6px; overflow-wrap: anywhere; }
+.note.warnnote { color: var(--warn); }
 .tag.cli { background: var(--accent-soft); color: var(--accent-ink); border-color: transparent; }
 .cli-tools { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
 .cli-tool { border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: grid; gap: 10px; align-content: start; min-width: 0; }
@@ -443,6 +446,8 @@ var ICONS = {
   connections: '<path d="M7 13l-2 2a2.8 2.8 0 0 1-4-4l3-3a2.8 2.8 0 0 1 4 0M13 7l2-2a2.8 2.8 0 0 1 4 4l-3 3a2.8 2.8 0 0 1-4 0M7.5 12.5l5-5"/>',
   model: '<rect x="5" y="5" width="10" height="10" rx="2"/><path d="M8 1.5v3M12 1.5v3M8 15.5v3M12 15.5v3M1.5 8h3M1.5 12h3M15.5 8h3M15.5 12h3"/>',
   index: '<circle cx="8.5" cy="8.5" r="5.5"/><path d="M13 13l5 5M6 8.5h5M8.5 6v5"/>',
+  github: '<path d="M10 1.8a8.2 8.2 0 0 0-2.6 16c.4.1.6-.2.6-.4v-1.5c-2.3.5-2.8-1.1-2.8-1.1-.4-1-.9-1.2-.9-1.2-.8-.5 0-.5 0-.5.9.1 1.3.9 1.3.9.7 1.3 2 .9 2.5.7.1-.6.3-.9.5-1.1-1.8-.2-3.8-.9-3.8-4.1 0-.9.3-1.7.9-2.2-.1-.3-.4-1.1.1-2.3 0 0 .7-.2 2.3.9a7.8 7.8 0 0 1 4.2 0c1.6-1.1 2.3-.9 2.3-.9.5 1.2.2 2 .1 2.3.6.5.9 1.3.9 2.2 0 3.2-2 3.9-3.8 4.1.3.3.6.8.6 1.6v2.4c0 .2.1.5.6.4A8.2 8.2 0 0 0 10 1.8z"/>',
+  key: '<circle cx="6.5" cy="10" r="3.5"/><path d="M10 10h8M15.5 10v3M18 10v2.5"/>',
   subagents: '<circle cx="10" cy="4.5" r="2.5"/><circle cx="4" cy="15.5" r="2.5"/><circle cx="16" cy="15.5" r="2.5"/><path d="M10 7v3M10 10l-5 3.5M10 10l5 3.5"/>',
   power: '<path d="M10 2v7M5.5 4.8a7 7 0 1 0 9 0"/>',
   alert: '<circle cx="10" cy="10" r="8"/><path d="M10 6v5M10 14h.01"/>',
@@ -506,7 +511,8 @@ var PAGES = [
   { id: "connections", label: "Connections", icon: "connections", render: renderConnections },
   { id: "model", label: "Model", icon: "model", render: renderModel },
   { id: "index", label: "Codebase index", short: "Index", icon: "index", render: renderIndex },
-  { id: "subagents", label: "Subagents", icon: "subagents", render: renderSubagents }
+  { id: "subagents", label: "Subagents", icon: "subagents", render: renderSubagents },
+  { id: "github", label: "GitHub", icon: "github", render: renderGithub }
 ];
 var dirty = null;   // a function returning the number of unsaved changes on the current page
 var cleanup = [];
@@ -543,6 +549,12 @@ function show() {
   var page = PAGES.filter(function (p) { return p.id === current; })[0];
   document.title = page.label + " · kernal admin";
   page.render(view);
+}
+// Same page, new data: Re-check and a finished install stay on this hash, so show() would
+// drop unsaved edits without asking. Ask first, the same question as leaving the page.
+function reload() {
+  if (dirty && dirty() > 0 && !confirm("You have unsaved changes on this page. Leave without saving?")) return;
+  show();
 }
 window.addEventListener("hashchange", show);
 window.addEventListener("beforeunload", function (e) { if (dirty && dirty() > 0) { e.preventDefault(); e.returnValue = ""; } });
@@ -1172,6 +1184,123 @@ function thinkingSelect(value, none, levels, label) {
   if (value && levels.indexOf(value) === -1) s.insertBefore(el("option", { value: value, text: value + " (not a pi level)" }), s.children[1]);
   s.value = value || "";
   return s;
+}
+
+// ---------- GitHub: the CLI, the sign-in, this repository, and the attribution ----------
+function renderGithub(view) {
+  add(view, head("GitHub", "The GitHub CLI kernal uses, who it signs in as, and what that means for this repository."));
+  loading(view);
+  api("GET", "/github").then(function (d) { drawGithub(view, d); }, function (e) { failed(view, e); });
+}
+
+/** A command to run in a terminal, with a button that copies it. */
+function copyLine(text) {
+  var btn = el("button", { class: "btn sm ghost", type: "button", title: "Copy" }, icon("copy", 13), "Copy");
+  btn.addEventListener("click", function () {
+    var done = function () { btn.replaceChildren(icon("check", 13), document.createTextNode("Copied")); setTimeout(function () { btn.replaceChildren(icon("copy", 13), document.createTextNode("Copy")); }, 1500); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () {});
+    else { var ta = el("textarea", { value: text }); document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); done(); } catch (e) {} ta.remove(); }
+  });
+  return el("div", { class: "cmdline" }, el("code", { text: text }), btn);
+}
+
+function drawGithub(view, d) {
+  clear(view);
+  add(view, head("GitHub", "The GitHub CLI kernal uses, who it signs in as, and what that means for this repository."));
+
+  // ---- the CLI and the sign-in ----
+  var rows = [];
+  var cliPill = d.cli ? pill("ok", "gh " + d.cli.version) : pill("warn", "not installed");
+  rows.push(frow("f-gh-cli", "GitHub CLI", d.cli ? (d.cli.managed ? "Installed by kernal." : "Found on your PATH.") : "kernal installs it into its own bin directory: no admin rights, and the download is checked against its published checksum.",
+    el("div", {}, cliPill, d.cli ? el("span", { class: "mono small", text: "  " + d.cli.path }) : null),
+    d.cli ? null : (function () {
+      var btn = el("button", { class: "btn primary", type: "button" }, icon("plus", 14), "Install gh");
+      btn.addEventListener("click", function () {
+        btn.disabled = true; btn.replaceChildren(spinner(), document.createTextNode("Installing"));
+        api("POST", "/github/install", {}).then(function (r) { toast(r.message, "ok"); reload(); }, function (e) { btn.disabled = false; btn.replaceChildren(icon("plus", 14), document.createTextNode("Install gh")); toast(e.message, "error"); });
+      });
+      return el("div", { class: "ctl" }, btn, el("div", { class: "note", text: "into " + d.binDir }));
+    })()));
+
+  if (d.cli) {
+    var a = d.auth || {};
+    var who = a.signedIn
+      ? el("div", {}, pill("ok", "signed in"), el("span", { class: "mono small", text: "  " + (a.login || "account unknown") }), a.fromEnv ? el("span", { class: "tag", text: "token from the environment" }) : null)
+      : el("div", {}, pill("warn", "not signed in"));
+    var scopes = a.signedIn && a.scopes && a.scopes.length ? el("div", { class: "note", text: "scopes: " + a.scopes.join(", ") }) : null;
+    var missing = a.missingScopes && a.missingScopes.length
+      ? el("div", { class: "note warnnote" }, icon("alert", 13), " missing scopes: " + a.missingScopes.join(", ") + ". Sign in again with the command below to add them.")
+      : null;
+    rows.push(frow("f-gh-auth", "Account", a.signedIn ? "kernal never sees this token: gh keeps it, and git borrows it." : "Sign in once in a terminal. kernal cannot do it for you: gh asks its own questions, and pi cannot hand over the terminal.",
+      who, el("div", {}, scopes, missing, a.signedIn && !a.missingScopes.length ? null : copyLine(d.commands.login))));
+
+    rows.push(frow("f-gh-git", "git over https", "So git push uses the same login, with no SSH keys.",
+      a.gitConfigured ? pill("ok", "connected") : pill("warn", "not connected"),
+      a.gitConfigured ? null : el("div", {}, el("div", { class: "note", text: "This writes a credential helper for github.com into your global git config, which may take over from the macOS keychain helper." }), copyLine(d.commands.setupGit))));
+  }
+
+  var refresh = el("button", { class: "btn sm", type: "button" }, icon("refresh", 13), "Re-check");
+  refresh.addEventListener("click", function () { reload(); });
+  add(view, card("The GitHub CLI", "kernal works with GitHub through the gh CLI, signed in as you.", refresh, el("div", { class: "rows" }, rows)));
+
+  // ---- this repository ----
+  var repoBody;
+  if (d.notARepo) repoBody = el("p", { class: "note", text: d.notARepo + " is not inside a git repository." });
+  else if (!d.repo) repoBody = el("p", { class: "note", text: "This checkout has no origin remote, so the GitHub tools have nothing to talk to. The git tool still works." });
+  else {
+    var pairs = [
+      ["Repository", el("span", {}, el("span", { class: "mono", text: d.repo.owner + "/" + d.repo.repo }), d.repo.ssh ? el("span", { class: "tag warn", text: "SSH remote" }) : null)],
+      ["Branch", el("span", {}, el("span", { class: "mono", text: d.repo.branch || "(detached)" }), el("span", { class: "note", text: "  " + (d.repo.upstream ? (d.repo.ahead || d.repo.behind ? d.repo.ahead + " ahead, " + d.repo.behind + " behind " + d.repo.upstream : "up to date with " + d.repo.upstream) : "not pushed yet") }))],
+      ["Working tree", d.repo.clean ? pill("ok", "clean") : pill("warn", "uncommitted changes")],
+    ];
+    if (d.pr) {
+      pairs.push(["Pull request", el("div", {},
+        el("a", { href: d.pr.url, target: "_blank", rel: "noreferrer", text: "#" + d.pr.number + " " + d.pr.title }),
+        el("div", { class: "note", text: [d.pr.isDraft ? "draft" : String(d.pr.state).toLowerCase(), d.pr.reviewDecision ? String(d.pr.reviewDecision).toLowerCase().replace(/_/g, " ") : null, d.pr.unresolvedThreads ? d.pr.unresolvedThreads + " unresolved thread(s)" : null, checksText(d.pr.checks)].filter(Boolean).join(" · ") }))]);
+    } else if (d.prUnavailable) pairs.push(["Pull request", el("span", { class: "note", text: d.prUnavailable })]);
+    else if (d.repo.github) pairs.push(["Pull request", el("span", { class: "note", text: "none for this branch" })]);
+    repoBody = kv(pairs);
+    if (d.repo.ssh) repoBody = el("div", {}, repoBody, el("p", { class: "note" }, icon("info", 13), " kernal's GitHub tools need an https remote; SSH remotes are out of scope."));
+  }
+  add(view, card("This repository", "What /git reports, and what the tools will act on.", null, repoBody));
+
+  // ---- attribution ----
+  var fs = formState(saveAttribution, function () { show(); });
+  var commitIn = el("input", { type: "text", value: d.attribution.commit, placeholder: "empty: no trailer", maxlength: "200" });
+  var prIn = el("input", { type: "text", value: d.attribution.pr, placeholder: "empty: no footer", maxlength: "200" });
+  var commitRow = frow("f-attr-commit", "Commit trailer", "Added once to every commit kernal makes. Empty turns it off.", commitIn,
+    el("div", { class: "note", text: "A reserved .invalid address on purpose: a users.noreply.github.com one would credit whichever GitHub account owns that name." }));
+  var prRow = frow("f-attr-pr", "Pull request footer", "Added to pull requests kernal opens. Empty turns it off.", prIn);
+  commitIn.addEventListener("input", function () { fs.set("commit", commitIn.value); });
+  prIn.addEventListener("input", function () { fs.set("pr", prIn.value); });
+  fs.track("commit", d.attribution.commit, commitRow);
+  fs.track("pr", d.attribution.pr, prRow);
+  add(view, card("Attribution", "How kernal signs the work it does here.", null, el("div", { class: "rows" }, commitRow, prRow)));
+  fs.bar.classList.add("autohide");
+  add(view, fs.bar);
+  view.setAttribute("aria-busy", "false");
+
+  function saveAttribution(changes) {
+    return api("POST", "/github/attribution", changes).then(function (r) {
+      toast(r.message, "ok");
+      // What the settings file now holds becomes the baseline, so the unsaved-changes bar clears.
+      fs.track("commit", r.attribution.commit, commitRow);
+      fs.track("pr", r.attribution.pr, prRow);
+      commitIn.value = r.attribution.commit; prIn.value = r.attribution.pr;
+      return true;
+    }, function (e) {
+      if (e.data && e.data.errors) { if (e.data.errors.commit) commitRow.setError(e.data.errors.commit); if (e.data.errors.pr) prRow.setError(e.data.errors.pr); }
+      toast(e.message, "error");
+      throw e;
+    });
+  }
+}
+
+function checksText(c) {
+  if (!c) return null;
+  if (c.failed) return "checks: " + c.failed + " failing, " + c.passed + " passed";
+  if (c.pending) return "checks: " + c.pending + " running, " + c.passed + " passed";
+  return "checks: all " + c.total + " passed";
 }
 
 function renderSubagents(view) {

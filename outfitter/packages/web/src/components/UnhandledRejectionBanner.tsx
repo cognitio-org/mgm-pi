@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { isStaleChunkError, reloadForStaleChunk } from "../lib/chunk-reload.ts";
 
 function reasonMessage(reason: unknown): string {
   if (reason instanceof Error) return reason.message;
@@ -16,6 +17,12 @@ export function UnhandledRejectionBanner() {
 
   useEffect(() => {
     function handler(event: PromiseRejectionEvent) {
+      // Same missing-chunk failure as the route error boundary, from a dynamic import nothing
+      // awaited (the easter egg, a diagram). Reload instead of pinning a banner over the desk.
+      if (isStaleChunkError(event.reason) && reloadForStaleChunk()) {
+        event.preventDefault();
+        return;
+      }
       setMessage(reasonMessage(event.reason));
     }
     window.addEventListener("unhandledrejection", handler);

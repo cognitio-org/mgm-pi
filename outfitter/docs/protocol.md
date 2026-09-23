@@ -54,6 +54,19 @@ Any other code is treated as transient too. `4412` exists specifically so a run 
 clonable secret fails fast instead of agentd retrying for up to ten minutes (`maxUnspecMs`) with the
 run sitting in `provisioning`.
 
+**Every refusal explains itself.** agentd is closed on, so nothing it reports ever reaches the
+browser for these: the API writes the reason onto the run itself instead, via
+`AgentLink.refuse` — `Run.statusDetail` (a full sentence with a remedy, which the session page
+renders as its own note and the Drives list shows under a failed floppy's pill) plus, for a code
+agentd treats as terminal, `state: failed` and the short close reason in `Run.reason`. Which
+refusals may write there is not a detail: a refusal decided *before* `hello.runToken` has been
+checked is decided on an unproven caller's word — a valid agent identity token only proves the caller
+is some execution of the shared agent job (`docs/reports/security-review-pr1.md` finding #2) — so
+`4401`, along with `4400`'s missing-param case, persists nothing, and a sandbox that genuinely never
+connects is failed by the stale-run reconciler (`packages/api/src/runs.ts`) on the API's own
+evidence. `4409`'s already-terminal case and `4429` write nothing either: the first would overwrite
+how the run really ended, and the second means the run is healthy.
+
 **One live agent connection per run.** The run token above is a bearer credential: anything holding
 it could, until this was fixed, open its own `/agent/ws?run=<id>`, be handed its own `run.spec`
 (which carries `secrets.githubToken` and `secrets.litellmKey`) and *replace* agentd in the API's

@@ -3,7 +3,7 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { RouteContext } from "./context.ts";
-import type { Session, PiEntry } from "../store/types.ts";
+import type { Session, PiEntry, Run } from "../store/types.ts";
 import { MAIL_HELD_NOTICE, MAIL_MAX_TEXT } from "../mail.ts";
 
 const SESSION_VERSION = 3; // matches pi's CURRENT_SESSION_VERSION; keeps export.jsonl pi-compatible
@@ -13,6 +13,11 @@ interface SessionSummary {
   name?: string;
   status: Session["status"];
   runState?: string;
+  /** Why the last run ended badly, for a `runState` of "failed" only -- its statusDetail (the
+   * human-readable note agentlink.ts's refuse() and runs.ts's reconciler write) falling back to its
+   * shorter `reason`. Lets the Drives list say why a floppy failed instead of only colouring the
+   * pill; the session page gets the same text over SSE (sse.ts). */
+  runStateReason?: string;
   guru: string;
   repo: string | null;
   branch?: string;
@@ -21,13 +26,36 @@ interface SessionSummary {
   updatedAt: string;
 }
 
+/** The run whose state a session row (or GET /api/sessions/:id) reports: the active one, or -- when
+ * there is none -- the most recent, so a run that ended reads as what actually happened to it.
+ *
+ * `runState` used to be the active run's state alone, i.e. undefined for every session whose run had
+ * ended. The Drives list (packages/web FleetPage) renders that as the "stopped" pill, so a session
+ * whose run the api refused looked exactly like one someone had cleanly stopped; the desk's Trash
+ * count (lib/desk.ts's stoppedSessionCount, which already tests for "stopped" and "failed") could
+ * never count anything; and `?runState=failed` -- an option in the list's own filter -- could never
+ * match. sse.ts's pollOne already resolves the session page's header this way, and consumers that
+ * care about liveness test against their own active-state set rather than undefined-ness (kernal's
+ * teleport OutfitterStore, lib/desk.ts, lib/send-status.ts). */
+async function reportableRun(ctx: RouteContext, sessionId: string): Promise<Run | null> {
+  const active = await ctx.store.runs.findActiveForSession(sessionId);
+  return active ?? (await ctx.store.runs.findLatestForSession(sessionId));
+}
+
+/** A failed run's own explanation, preferring the full note over the short close/reconcile reason. */
+function runStateReason(run: Run | null): string | undefined {
+  if (run?.state !== "failed") return undefined;
+  return run.statusDetail ?? run.reason;
+}
+
 async function summarize(ctx: RouteContext, session: Session): Promise<SessionSummary> {
-  const run = await ctx.store.runs.findActiveForSession(session.id);
+  const run = await reportableRun(ctx, session.id);
   return {
     id: session.id,
     name: session.name,
     status: session.status,
     runState: run?.state,
+    runStateReason: runStateReason(run),
     guru: session.guruId,
     repo: session.repo,
     branch: session.branch,
@@ -72,11 +100,18 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
     if (!session) return;
     // runState (not on Session itself -- see store/types.ts's Run) lets a caller like the kernal
     // teleport extension's OutfitterStore poll "has the active run stopped yet?" without a second
-    // request; GET /api/sessions already computes the same thing per-row via summarize().
-    const run = await ctx.store.runs.findActiveForSession(session.id);
+    // request; GET /api/sessions already computes the same thing per-row via summarize(), and both
+    // resolve it the same way (reportableRun) so the list and the detail never disagree.
+    const run = await reportableRun(ctx, session.id);
     // Cloud-fixes 13: mail parked because this session's runs never validated the protocol.
     const heldMail = await ctx.store.mail.countHeld(session.id);
-    return { ...session, runState: run?.state, heldMail, ...(heldMail > 0 ? { mailNotice: MAIL_HELD_NOTICE } : {}) };
+    return {
+      ...session,
+      runState: run?.state,
+      runStateReason: runStateReason(run),
+      heldMail,
+      ...(heldMail > 0 ? { mailNotice: MAIL_HELD_NOTICE } : {}),
+    };
   });
 
   app.post("/api/sessions/:id/stop", async (req, reply) => {

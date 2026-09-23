@@ -1,0 +1,32 @@
+outfitter/docs/protocol.md
+  h_69b863911ebf05 143,346-353
+outfitter/packages/agentd/src/protocol.ts
+  h_69b863911ebf05 304-310,324-325
+outfitter/packages/agentd/src/run.ts
+  h_69b863911ebf05 5,294-297
+outfitter/packages/agentd/test/run.test.ts
+  h_69b863911ebf05 1146-1176
+outfitter/packages/api/src/agentlink.ts
+  h_69b863911ebf05 311-332
+outfitter/packages/api/src/routes/browser.ts
+  h_69b863911ebf05 28,63-67,71,83-86,147-149
+outfitter/packages/api/src/store/memory.ts
+  h_69b863911ebf05 86-91,457-471,476,506-517,519-520,535-543,645-650
+outfitter/packages/api/src/store/mongo.ts
+  h_69b863911ebf05 114-118,594-605,609,611,614,618,639,643-666,673-674,676,678-679,686-710,829-831
+outfitter/packages/api/src/store/types.ts
+  h_69b863911ebf05 58-60,351-352,462-468
+outfitter/packages/api/test/browser.test.ts
+  h_69b863911ebf05 8,13,55-73,427-632
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "57921d730eafdd38c3ad7a475cc71bb1bac3fe9d",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

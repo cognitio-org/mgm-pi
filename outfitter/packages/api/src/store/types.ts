@@ -404,6 +404,78 @@ export interface UsersCollection {
   findByEmail(email: string): Promise<User | null>;
 }
 
+/** One shared browser tab per session (chrome companion, docs/specs/chrome-companion.md §9.2).
+ * Replaced only by the same ownerEmail; a different email is a conflict. */
+export interface BrowserShare {
+  sessionId: string;
+  tabTitle: string;
+  tabUrl: string;
+  ownerEmail: string;
+  createdAt: string;
+}
+
+export type BrowserRequestStatus = "pending" | "done" | "skipped";
+
+/** A capture ask. requesterEmail is the authenticated caller who created it, never a body field. */
+export interface BrowserRequest {
+  id: string;
+  sessionId: string;
+  requesterEmail: string;
+  status: BrowserRequestStatus;
+  /** Set when a capture is stored and the request is marked done. */
+  captureId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** How many browserCaptures a session keeps. Older ones are deleted in the same insert. */
+export const BROWSER_CAPTURES_PER_SESSION = 20;
+
+/** Jpeg bytes for one fulfilled capture request. `id` is the captureId returned to clients. */
+export interface BrowserCapture {
+  id: string;
+  sessionId: string;
+  requestId: string;
+  ownerEmail: string;
+  requesterEmail: string;
+  title: string;
+  url: string;
+  bytes: Buffer;
+  createdAt: string;
+}
+
+export interface BrowserSharesCollection {
+  findBySession(sessionId: string): Promise<BrowserShare | null>;
+  /** Inserts, or replaces tabTitle/tabUrl/createdAt when ownerEmail matches.
+   * `conflict` is the share already stored when a different email owns it. */
+  put(share: BrowserShare): Promise<{ conflict: false; share: BrowserShare } | { conflict: true; share: BrowserShare }>;
+  /** Deletes the share and marks this session's pending requests skipped. */
+  deleteIfOwner(sessionId: string, ownerEmail: string, nowIso: string): Promise<"deleted" | "missing" | "forbidden">;
+}
+
+export interface BrowserRequestsCollection {
+  insert(request: BrowserRequest): Promise<void>;
+  findById(sessionId: string, id: string): Promise<BrowserRequest | null>;
+  /** Oldest pending first. */
+  listPending(sessionId: string): Promise<BrowserRequest[]>;
+  /** Pending or already-skipped becomes skipped. A done request is left done. */
+  markSkipped(sessionId: string, id: string, nowIso: string): Promise<BrowserRequest | null>;
+}
+
+export type BrowserCaptureSave =
+  | { ok: true; capture: BrowserCapture; inserted: boolean }
+  | { ok: false; reason: "missing" | "not_pending" };
+
+export interface BrowserCapturesCollection {
+  /** Stores `capture` and marks its request done, or returns the capture already stored for
+   * that requestId (inserted: false). Trims the session to BROWSER_CAPTURES_PER_SESSION in the
+   * same call. `not_pending` means the request is missing a done capture and is not pending
+   * (skipped, or done with the bytes already gone). */
+  save(capture: BrowserCapture, nowIso: string): Promise<BrowserCaptureSave>;
+  findById(sessionId: string, id: string): Promise<BrowserCapture | null>;
+  findByRequestId(sessionId: string, requestId: string): Promise<BrowserCapture | null>;
+}
+
 export interface Store {
   sessions: SessionsCollection;
   entries: EntriesCollection;
@@ -414,5 +486,8 @@ export interface Store {
   providers: ProvidersCollection;
   tokens: TokensCollection;
   mail: MailCollection;
+  browserShares: BrowserSharesCollection;
+  browserRequests: BrowserRequestsCollection;
+  browserCaptures: BrowserCapturesCollection;
   close(): Promise<void>;
 }

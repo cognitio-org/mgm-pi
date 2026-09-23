@@ -1,7 +1,7 @@
 // Mongo-backed Store. Connects lazily (connectMongoStore) so importing this module never dials
 // out; only MONGODB_URI values other than "memory" reach it (see index.ts).
 
-import { MongoClient, type Collection as MongoCollection, type Db, type Filter } from "mongodb";
+import { Binary, MongoClient, type Collection as MongoCollection, type Db, type Filter } from "mongodb";
 import type {
   Store,
   Session,
@@ -27,7 +27,15 @@ import type {
   TokenOwnerMatch,
   Mail,
   MailCollection,
+  BrowserShare,
+  BrowserSharesCollection,
+  BrowserRequest,
+  BrowserRequestsCollection,
+  BrowserCapture,
+  BrowserCapturesCollection,
+  BrowserCaptureSave,
 } from "./types.ts";
+import { BROWSER_CAPTURES_PER_SESSION } from "./types.ts";
 import { TOKEN_TTL_MS } from "../tokens.ts";
 
 // Typed as RunState[], not inferred as string[]: used in a Mongo `$in` filter against Run.state,
@@ -561,6 +569,176 @@ function isDuplicateKeyError(err: unknown): boolean {
   return typeof err === "object" && err !== null && "code" in err && (err as { code?: number }).code === 11000;
 }
 
+type BrowserShareDoc = BrowserShare & { _id: string };
+type BrowserRequestDoc = BrowserRequest & { _id: string };
+type BrowserCaptureDoc = BrowserCapture & { _id: string };
+
+function toBuffer(value: unknown): Buffer {
+  if (Buffer.isBuffer(value)) return value;
+  if (value instanceof Binary) return Buffer.from(value.value());
+  if (value instanceof Uint8Array) return Buffer.from(value);
+  return Buffer.alloc(0);
+}
+
+function stripCapture(doc: BrowserCaptureDoc | null): BrowserCapture | null {
+  const row = stripId<BrowserCapture>(doc);
+  if (!row) return null;
+  return { ...row, bytes: toBuffer(row.bytes) };
+}
+
+class MongoBrowserShares implements BrowserSharesCollection {
+  private readonly shares: MongoCollection<BrowserShareDoc>;
+  private readonly requests: MongoCollection<BrowserRequestDoc>;
+
+  constructor(shares: MongoCollection<BrowserShareDoc>, requests: MongoCollection<BrowserRequestDoc>) {
+    this.shares = shares;
+    this.requests = requests;
+  }
+
+  async findBySession(sessionId: string): Promise<BrowserShare | null> {
+    return stripId<BrowserShare>(await this.shares.findOne({ _id: sessionId }));
+  }
+
+  async put(share: BrowserShare): Promise<{ conflict: false; share: BrowserShare } | { conflict: true; share: BrowserShare }> {
+    try {
+      await this.shares.insertOne({ ...share, _id: share.sessionId });
+      return { conflict: false, share };
+    } catch (err) {
+      if (!isDuplicateKeyError(err)) throw err;
+    }
+    const existing = await this.findBySession(share.sessionId);
+    if (!existing) {
+      await this.shares.insertOne({ ...share, _id: share.sessionId });
+      return { conflict: false, share };
+    }
+    if (existing.ownerEmail !== share.ownerEmail) return { conflict: true, share: existing };
+    const updated = await this.shares.findOneAndUpdate(
+      { _id: share.sessionId, ownerEmail: share.ownerEmail },
+      { $set: { tabTitle: share.tabTitle, tabUrl: share.tabUrl, createdAt: share.createdAt } },
+      { returnDocument: "after" },
+    );
+    return { conflict: false, share: stripId<BrowserShare>(updated) ?? share };
+  }
+
+  async deleteIfOwner(sessionId: string, ownerEmail: string, nowIso: string): Promise<"deleted" | "missing" | "forbidden"> {
+    const deleted = await this.shares.findOneAndDelete({ _id: sessionId, ownerEmail });
+    if (!deleted) {
+      const still = await this.shares.findOne({ _id: sessionId });
+      return still ? "forbidden" : "missing";
+    }
+    // A share inserted after the delete belongs to someone else. Only skip requests that
+    // predate it; with no replacement, every pending request was for the share just removed.
+    const replacement = await this.shares.findOne({ _id: sessionId });
+    const filter: Filter<BrowserRequestDoc> = replacement
+      ? { sessionId, status: "pending", createdAt: { $lt: replacement.createdAt } }
+      : { sessionId, status: "pending" };
+    await this.requests.updateMany(filter, { $set: { status: "skipped", updatedAt: nowIso } });
+    return "deleted";
+  }
+}
+
+class MongoBrowserRequests implements BrowserRequestsCollection {
+  private readonly col: MongoCollection<BrowserRequestDoc>;
+
+  constructor(col: MongoCollection<BrowserRequestDoc>) {
+    this.col = col;
+  }
+
+  async insert(request: BrowserRequest): Promise<void> {
+    await this.col.insertOne({ ...request, _id: request.id });
+  }
+
+  async findById(sessionId: string, id: string): Promise<BrowserRequest | null> {
+    return stripId<BrowserRequest>(await this.col.findOne({ _id: id, sessionId }));
+  }
+
+  async listPending(sessionId: string): Promise<BrowserRequest[]> {
+    const rows = await this.col.find({ sessionId, status: "pending" }).sort({ createdAt: 1, _id: 1 }).toArray();
+    return rows.map((row) => stripIdStrict<BrowserRequest>(row));
+  }
+
+  async markSkipped(sessionId: string, id: string, nowIso: string): Promise<BrowserRequest | null> {
+    const updated = await this.col.findOneAndUpdate(
+      { _id: id, sessionId, status: { $ne: "done" } },
+      { $set: { status: "skipped", updatedAt: nowIso } },
+      { returnDocument: "after" },
+    );
+    if (updated) return stripId<BrowserRequest>(updated);
+    return this.findById(sessionId, id);
+  }
+}
+
+class MongoBrowserCaptures implements BrowserCapturesCollection {
+  private readonly captures: MongoCollection<BrowserCaptureDoc>;
+  private readonly requests: MongoCollection<BrowserRequestDoc>;
+
+  constructor(captures: MongoCollection<BrowserCaptureDoc>, requests: MongoCollection<BrowserRequestDoc>) {
+    this.captures = captures;
+    this.requests = requests;
+  }
+
+  async save(capture: BrowserCapture, nowIso: string): Promise<BrowserCaptureSave> {
+    const request = await this.requests.findOne({ _id: capture.requestId, sessionId: capture.sessionId });
+    if (!request) return { ok: false, reason: "missing" };
+    const existing = await this.captures.findOne({ sessionId: capture.sessionId, requestId: capture.requestId });
+    if (existing) {
+      if (request.status === "skipped") {
+        await this.captures.deleteOne({ _id: existing._id });
+        return { ok: false, reason: "not_pending" };
+      }
+      if (request.status === "pending") {
+        await this.requests.updateOne(
+          { _id: request._id, status: "pending" },
+          { $set: { status: "done", captureId: existing._id, updatedAt: nowIso } },
+        );
+      }
+      return { ok: true, capture: stripCapture(existing)!, inserted: false };
+    }
+    if (request.status !== "pending") return { ok: false, reason: "not_pending" };
+    try {
+      await this.captures.insertOne({ ...capture, _id: capture.id });
+    } catch (err) {
+      if (!isDuplicateKeyError(err)) throw err;
+      const winner = await this.captures.findOne({ sessionId: capture.sessionId, requestId: capture.requestId });
+      if (!winner) throw err;
+      return { ok: true, capture: stripCapture(winner)!, inserted: false };
+    }
+    await this.trim(capture.sessionId);
+    const marked = await this.requests.updateOne(
+      { _id: capture.requestId, sessionId: capture.sessionId, status: "pending" },
+      { $set: { status: "done", captureId: capture.id, updatedAt: nowIso } },
+    );
+    if (marked.matchedCount === 0) {
+      const again = await this.requests.findOne({ _id: capture.requestId, sessionId: capture.sessionId });
+      if (again?.status === "done" && again.captureId === capture.id) {
+        return { ok: true, capture: { ...capture, bytes: Buffer.from(capture.bytes) }, inserted: true };
+      }
+      await this.captures.deleteOne({ _id: capture.id });
+      return { ok: false, reason: "not_pending" };
+    }
+    return { ok: true, capture: { ...capture, bytes: Buffer.from(capture.bytes) }, inserted: true };
+  }
+
+  async findById(sessionId: string, id: string): Promise<BrowserCapture | null> {
+    return stripCapture(await this.captures.findOne({ _id: id, sessionId }));
+  }
+
+  async findByRequestId(sessionId: string, requestId: string): Promise<BrowserCapture | null> {
+    return stripCapture(await this.captures.findOne({ sessionId, requestId }));
+  }
+
+  private async trim(sessionId: string): Promise<void> {
+    const stale = await this.captures
+      .find({ sessionId })
+      .sort({ createdAt: -1, _id: -1 })
+      .skip(BROWSER_CAPTURES_PER_SESSION)
+      .project<{ _id: string }>({ _id: 1 })
+      .toArray();
+    if (stale.length === 0) return;
+    await this.captures.deleteMany({ _id: { $in: stale.map((row) => row._id) } });
+  }
+}
+
 export class MongoStore implements Store {
   readonly sessions: SessionsCollection;
   readonly entries: EntriesCollection;
@@ -571,6 +749,9 @@ export class MongoStore implements Store {
   readonly providers: ProvidersCollection;
   readonly tokens: TokensCollection;
   readonly mail: MailCollection;
+  readonly browserShares: BrowserSharesCollection;
+  readonly browserRequests: BrowserRequestsCollection;
+  readonly browserCaptures: BrowserCapturesCollection;
   private readonly client: MongoClient;
 
   private constructor(client: MongoClient, db: Db) {
@@ -584,6 +765,10 @@ export class MongoStore implements Store {
     this.providers = new MongoProviders(db.collection("providers"));
     this.tokens = new MongoTokens(db.collection("tokens"));
     this.mail = new MongoMail(db.collection("mail"));
+    const requestCol = db.collection<BrowserRequestDoc>("browserRequests");
+    this.browserShares = new MongoBrowserShares(db.collection<BrowserShareDoc>("browserShares"), requestCol);
+    this.browserRequests = new MongoBrowserRequests(requestCol);
+    this.browserCaptures = new MongoBrowserCaptures(db.collection<BrowserCaptureDoc>("browserCaptures"), requestCol);
   }
 
   /** `dbName` wins over the database in the URI; the stored URI has none, so the default keeps
@@ -609,6 +794,9 @@ export class MongoStore implements Store {
       db.collection("mail").createIndex({ sessionId: 1, status: 1, createdAt: 1 }),
       db.collection("mail").createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
       db.collection("mail").createIndex({ "from.sessionId": 1, createdAt: 1 }),
+      db.collection("browserRequests").createIndex({ sessionId: 1, status: 1, createdAt: 1 }),
+      db.collection("browserCaptures").createIndex({ sessionId: 1, requestId: 1 }, { unique: true }),
+      db.collection("browserCaptures").createIndex({ sessionId: 1, createdAt: -1 }),
     ]);
     // Non-fatal: a deployment that already holds two active runs for one session (the race this
     // index closes) would otherwise fail every boot. Until the duplicates are cleaned up,

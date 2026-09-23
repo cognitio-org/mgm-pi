@@ -105,10 +105,17 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
     const run = await reportableRun(ctx, session.id);
     // Cloud-fixes 13: mail parked because this session's runs never validated the protocol.
     const heldMail = await ctx.store.mail.countHeld(session.id);
+    // The side panel reads the approval from here. Same run as runState (reportableRun, which is
+    // what the list's summarize() uses) but only while that run is active — sse.ts publishes
+    // pendingUiRequest from findActiveForSession and drops it once the run is terminal. null, not
+    // omitted, when there is nothing to answer.
+    const pendingUiRequest =
+      run && run.state !== "stopped" && run.state !== "failed" ? (run.pendingUiRequest ?? null) : null;
     return {
       ...session,
       runState: run?.state,
       runStateReason: runStateReason(run),
+      pendingUiRequest,
       heldMail,
       ...(heldMail > 0 ? { mailNotice: MAIL_HELD_NOTICE } : {}),
     };
@@ -202,8 +209,54 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
   });
 }
 
+/** Session routes the side panel calls on the link role as well as web (chrome companion §9.1).
+ * Not part of registerTeleportRoutes: teleport doesn't steer or answer approvals. */
+export async function registerPanelRoutes(app: FastifyInstance, ctx: RouteContext): Promise<void> {
+  app.get("/api/sessions/:id/entries", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const { after } = req.query as { after?: string };
+    const entries = await ctx.store.entries.listForSession(session.id, after);
+    return entries.map((e) => e.entry);
+  });
+
+  app.post("/api/sessions/:id/messages", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const body = req.body as { text: string; behavior?: "steer" | "followUp" };
+    if (!body?.text) return reply.code(400).send({ error: "text is required" });
+    if (body.text.length > MAIL_MAX_TEXT) return reply.code(413).send({ error: `text is over ${MAIL_MAX_TEXT} characters` });
+
+    const run = await postUserMail(ctx, session.id, req.identity?.email, body.text, body.behavior);
+    // 202: stored, but no run could be started yet; it will be delivered when one is.
+    return reply.code(run ? 200 : 202).send({ run });
+  });
+
+  app.post("/api/sessions/:id/abort", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const run = await ctx.store.runs.findActiveForSession(session.id);
+    if (!run) return reply.code(404).send({ error: "no active run" });
+    await ctx.agentLink.send(run.id, { t: "abort" });
+    return { run };
+  });
+
+  app.post("/api/sessions/:id/ui-response", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const body = req.body as { id: string; value: unknown };
+    if (!body?.id) return reply.code(400).send({ error: "id is required" });
+    const run = await ctx.store.runs.findActiveForSession(session.id);
+    if (!run) return reply.code(404).send({ error: "no active run" });
+    await ctx.agentLink.send(run.id, { t: "ui_response", id: body.id, value: body.value });
+    await ctx.store.runs.update(run.id, { pendingUiRequest: undefined, updatedAt: new Date().toISOString() });
+    return { run };
+  });
+}
+
 export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteContext): Promise<void> {
   await registerTeleportRoutes(app, ctx);
+  await registerPanelRoutes(app, ctx);
 
   app.post("/api/sessions", async (req, reply) => {
     const body = req.body as {
@@ -248,14 +301,6 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     return reply.code(201).send({ session, run });
   });
 
-  app.get("/api/sessions/:id/entries", async (req, reply) => {
-    const session = await getSessionOr404(ctx, req, reply);
-    if (!session) return;
-    const { after } = req.query as { after?: string };
-    const entries = await ctx.store.entries.listForSession(session.id, after);
-    return entries.map((e) => e.entry);
-  });
-
   app.get("/api/sessions/:id/stream", async (req, reply) => {
     const session = await getSessionOr404(ctx, req, reply);
     if (!session) return;
@@ -277,18 +322,6 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     reply.raw.on("close", () => ctx.ssePoller.unwatch(session.id));
   });
 
-  app.post("/api/sessions/:id/messages", async (req, reply) => {
-    const session = await getSessionOr404(ctx, req, reply);
-    if (!session) return;
-    const body = req.body as { text: string; behavior?: "steer" | "followUp" };
-    if (!body?.text) return reply.code(400).send({ error: "text is required" });
-    if (body.text.length > MAIL_MAX_TEXT) return reply.code(413).send({ error: `text is over ${MAIL_MAX_TEXT} characters` });
-
-    const run = await postUserMail(ctx, session.id, req.identity?.email, body.text, body.behavior);
-    // 202: stored, but no run could be started yet; it will be delivered when one is.
-    return reply.code(run ? 200 : 202).send({ run });
-  });
-
   // Cloud-fixes 13: the web's Retry on the "Deploy mismatch" notice -- release this session's held
   // mail with a fresh wake budget and wake once.
   app.post("/api/sessions/:id/mail/retry", async (req, reply) => {
@@ -300,31 +333,10 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     return { released, result, heldMail };
   });
 
-  app.post("/api/sessions/:id/abort", async (req, reply) => {
-    const session = await getSessionOr404(ctx, req, reply);
-    if (!session) return;
-    const run = await ctx.store.runs.findActiveForSession(session.id);
-    if (!run) return reply.code(404).send({ error: "no active run" });
-    await ctx.agentLink.send(run.id, { t: "abort" });
-    return { run };
-  });
-
   app.post("/api/sessions/:id/wake", async (req, reply) => {
     const session = await getSessionOr404(ctx, req, reply);
     if (!session) return;
     const run = await ctx.runs.wake(session.id);
-    return { run };
-  });
-
-  app.post("/api/sessions/:id/ui-response", async (req, reply) => {
-    const session = await getSessionOr404(ctx, req, reply);
-    if (!session) return;
-    const body = req.body as { id: string; value: unknown };
-    if (!body?.id) return reply.code(400).send({ error: "id is required" });
-    const run = await ctx.store.runs.findActiveForSession(session.id);
-    if (!run) return reply.code(404).send({ error: "no active run" });
-    await ctx.agentLink.send(run.id, { t: "ui_response", id: body.id, value: body.value });
-    await ctx.store.runs.update(run.id, { pendingUiRequest: undefined, updatedAt: new Date().toISOString() });
     return { run };
   });
 
@@ -361,7 +373,7 @@ async function postUserMail(
   return ctx.store.runs.findActiveForSession(sessionId);
 }
 
-async function getSessionOr404(
+export async function getSessionOr404(
   ctx: RouteContext,
   req: FastifyRequest,
   reply: { code: (n: number) => { send: (body: unknown) => unknown } },

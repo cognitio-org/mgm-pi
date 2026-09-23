@@ -1,0 +1,254 @@
+// Browser companion routes (docs/specs/chrome-companion.md §9.2). Registered on the link role
+// and on web/all. Identity is req.identity (bearer token or IAP); an email in the body is ignored.
+
+import { randomUUID } from "node:crypto";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { RouteContext } from "./context.ts";
+import type { BrowserCapture, BrowserRequest, PiEntry } from "../store/types.ts";
+import { getSessionOr404 } from "./sessions.ts";
+
+/** Decoded jpeg cap. Larger uploads are 413; the extension recompresses to fit. */
+export const BROWSER_CAPTURE_MAX_BYTES = 350_000;
+
+const CAPTURE_ENTRY_TYPE = "outfitter.browser.capture";
+
+function callerEmail(req: FastifyRequest, reply: FastifyReply): string | undefined {
+  const email = req.identity?.email;
+  if (!email) {
+    reply.code(401).send({ error: "unauthorized" });
+    return undefined;
+  }
+  return email;
+}
+
+function asRecord(body: unknown): Record<string, unknown> {
+  return body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+}
+
+/** Entry id is the request id, so insertIfNew makes a second upload of the same request a no-op. */
+function captureEntryId(requestId: string): string {
+  return `browser-capture:${requestId}`;
+}
+
+function requestView(request: BrowserRequest): {
+  id: string;
+  requesterEmail: string;
+  status: BrowserRequest["status"];
+  captureId: string | null;
+  createdAt: string;
+} {
+  return {
+    id: request.id,
+    requesterEmail: request.requesterEmail,
+    status: request.status,
+    captureId: request.captureId ?? null,
+    createdAt: request.createdAt,
+  };
+}
+
+function decodeJpeg(input: string): { ok: true; bytes: Buffer } | { ok: false; status: 400 | 413; error: string } {
+  const cleaned = input.replace(/\s/g, "");
+  if (cleaned.length === 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(cleaned)) {
+    return { ok: false, status: 400, error: "jpegBase64 must be base64" };
+  }
+  const bytes = Buffer.from(cleaned, "base64");
+  if (bytes.length === 0) return { ok: false, status: 400, error: "jpegBase64 is empty" };
+  if (bytes.length > BROWSER_CAPTURE_MAX_BYTES) {
+    return { ok: false, status: 413, error: `jpeg is over ${BROWSER_CAPTURE_MAX_BYTES} bytes` };
+  }
+  return { ok: true, bytes };
+}
+
+async function appendCaptureEntry(ctx: RouteContext, capture: BrowserCapture): Promise<void> {
+  const session = await ctx.store.sessions.findById(capture.sessionId);
+  const now = new Date().toISOString();
+  const entry: PiEntry = {
+    id: captureEntryId(capture.requestId),
+    parentId: session?.leafId ?? null,
+    type: "custom",
+    customType: CAPTURE_ENTRY_TYPE,
+    timestamp: now,
+    data: {
+      captureId: capture.id,
+      title: capture.title,
+      url: capture.url,
+      requesterEmail: capture.requesterEmail,
+    },
+  };
+  const seq = (await ctx.store.entries.maxSeq(capture.sessionId)) + 1;
+  const inserted = await ctx.store.entries.insertIfNew(capture.sessionId, seq, entry);
+  if (inserted) await ctx.store.sessions.update(capture.sessionId, { leafId: entry.id, updatedAt: now });
+}
+
+export async function registerBrowserRoutes(app: FastifyInstance, ctx: RouteContext): Promise<void> {
+  app.put("/api/sessions/:id/browser/share", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const email = callerEmail(req, reply);
+    if (!email) return;
+    const body = asRecord(req.body);
+    if (typeof body.tabTitle !== "string" || typeof body.tabUrl !== "string") {
+      return reply.code(400).send({ error: "tabTitle and tabUrl are required" });
+    }
+    const now = new Date().toISOString();
+    const result = await ctx.store.browserShares.put({
+      sessionId: session.id,
+      tabTitle: body.tabTitle,
+      tabUrl: body.tabUrl,
+      ownerEmail: email,
+      createdAt: now,
+    });
+    if (result.conflict) return reply.code(409).send({ error: "browser share is owned by someone else" });
+    return result.share;
+  });
+
+  app.delete("/api/sessions/:id/browser/share", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const email = callerEmail(req, reply);
+    if (!email) return;
+    const result = await ctx.store.browserShares.deleteIfOwner(session.id, email, new Date().toISOString());
+    if (result === "missing") return reply.code(404).send({ error: "no browser share" });
+    if (result === "forbidden") return reply.code(403).send({ error: "not the share owner" });
+    return { ok: true };
+  });
+
+  app.get("/api/sessions/:id/browser/share", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const share = await ctx.store.browserShares.findBySession(session.id);
+    if (!share) return reply.code(404).send({ error: "no browser share" });
+    return { tabTitle: share.tabTitle, tabUrl: share.tabUrl, ownerEmail: share.ownerEmail, createdAt: share.createdAt };
+  });
+
+  app.post("/api/sessions/:id/browser/requests", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const email = callerEmail(req, reply);
+    if (!email) return;
+    const share = await ctx.store.browserShares.findBySession(session.id);
+    if (!share) return reply.code(409).send({ error: "no browser share" });
+    const now = new Date().toISOString();
+    const request: BrowserRequest = {
+      id: randomUUID(),
+      sessionId: session.id,
+      requesterEmail: email,
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+    };
+    await ctx.store.browserRequests.insert(request);
+    return reply.code(201).send({ id: request.id, requesterEmail: request.requesterEmail, status: request.status });
+  });
+
+  app.get("/api/sessions/:id/browser/requests", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const email = callerEmail(req, reply);
+    if (!email) return;
+    const share = await ctx.store.browserShares.findBySession(session.id);
+    // 404, not 403, so a non-owner cannot tell a queue from no share at all.
+    if (!share || share.ownerEmail !== email) return reply.code(404).send({ error: "not found" });
+    const { status } = req.query as { status?: string };
+    if (status !== undefined && status !== "pending") return reply.code(400).send({ error: "status must be pending" });
+    const pending = await ctx.store.browserRequests.listPending(session.id);
+    return pending.map((row) => ({ id: row.id, requesterEmail: row.requesterEmail, status: row.status, createdAt: row.createdAt }));
+  });
+
+  app.get("/api/sessions/:id/browser/requests/:requestId", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const email = callerEmail(req, reply);
+    if (!email) return;
+    const { requestId } = req.params as { requestId: string };
+    const request = await ctx.store.browserRequests.findById(session.id, requestId);
+    if (!request) return reply.code(404).send({ error: "not found" });
+    const share = await ctx.store.browserShares.findBySession(session.id);
+    const owner = share?.ownerEmail === email;
+    if (request.requesterEmail !== email && !owner) return reply.code(404).send({ error: "not found" });
+    return requestView(request);
+  });
+
+  app.post("/api/sessions/:id/browser/requests/:requestId/revoke", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const email = callerEmail(req, reply);
+    if (!email) return;
+    const share = await ctx.store.browserShares.findBySession(session.id);
+    if (!share) return reply.code(404).send({ error: "no browser share" });
+    if (share.ownerEmail !== email) return reply.code(403).send({ error: "not the share owner" });
+    const { requestId } = req.params as { requestId: string };
+    const request = await ctx.store.browserRequests.markSkipped(session.id, requestId, new Date().toISOString());
+    if (!request) return reply.code(404).send({ error: "not found" });
+    return requestView(request);
+  });
+
+  app.post("/api/sessions/:id/browser/captures", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const email = callerEmail(req, reply);
+    if (!email) return;
+    const share = await ctx.store.browserShares.findBySession(session.id);
+    if (!share) return reply.code(404).send({ error: "no browser share" });
+    if (share.ownerEmail !== email) return reply.code(403).send({ error: "not the share owner" });
+    const body = asRecord(req.body);
+    if (typeof body.requestId !== "string" || body.requestId.length === 0) {
+      return reply.code(400).send({ error: "requestId is required" });
+    }
+    if (typeof body.title !== "string" || typeof body.url !== "string") {
+      return reply.code(400).send({ error: "title and url are required" });
+    }
+    const request = await ctx.store.browserRequests.findById(session.id, body.requestId);
+    if (!request) return reply.code(404).send({ error: "request not found" });
+
+    // A finished request already has its capture. Return that id and do not write another entry,
+    // even when this body carries a different title or a second jpeg. Keyed by requestId.
+    if (request.status === "done") {
+      const existing = request.captureId
+        ? await ctx.store.browserCaptures.findById(session.id, request.captureId)
+        : await ctx.store.browserCaptures.findByRequestId(session.id, request.id);
+      if (!existing) return reply.code(409).send({ error: "request is not pending" });
+      await appendCaptureEntry(ctx, existing);
+      return { captureId: existing.id };
+    }
+    if (request.status !== "pending") return reply.code(409).send({ error: "request is not pending" });
+    if (typeof body.jpegBase64 !== "string") return reply.code(400).send({ error: "jpegBase64 is required" });
+    const decoded = decodeJpeg(body.jpegBase64);
+    if (!decoded.ok) return reply.code(decoded.status).send({ error: decoded.error });
+
+    const now = new Date().toISOString();
+    const capture: BrowserCapture = {
+      id: randomUUID(),
+      sessionId: session.id,
+      requestId: request.id,
+      ownerEmail: email,
+      requesterEmail: request.requesterEmail,
+      title: body.title,
+      url: body.url,
+      bytes: decoded.bytes,
+      createdAt: now,
+    };
+    const saved = await ctx.store.browserCaptures.save(capture, now);
+    if (!saved.ok) {
+      if (saved.reason === "missing") return reply.code(404).send({ error: "request not found" });
+      const done = await ctx.store.browserCaptures.findByRequestId(session.id, request.id);
+      if (done) {
+        await appendCaptureEntry(ctx, done);
+        return { captureId: done.id };
+      }
+      return reply.code(409).send({ error: "request is not pending" });
+    }
+    await appendCaptureEntry(ctx, saved.capture);
+    return { captureId: saved.capture.id };
+  });
+
+  app.get("/api/sessions/:id/browser/captures/:captureId", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const { captureId } = req.params as { captureId: string };
+    const capture = await ctx.store.browserCaptures.findById(session.id, captureId);
+    if (!capture) return reply.code(404).send({ error: "capture not found" });
+    // image/jpeg plus nosniff: the bytes must not be sniffed and rendered as HTML.
+    return reply.header("Content-Type", "image/jpeg").header("X-Content-Type-Options", "nosniff").send(capture.bytes);
+  });
+}

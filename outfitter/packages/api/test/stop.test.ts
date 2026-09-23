@@ -305,6 +305,9 @@ describe("agentlink up-frame ordering", () => {
       users: inner.users,
       providers: inner.providers,
       tokens: inner.tokens,
+      browserShares: inner.browserShares,
+      browserRequests: inner.browserRequests,
+      browserCaptures: inner.browserCaptures,
       close: () => inner.close(),
     };
 

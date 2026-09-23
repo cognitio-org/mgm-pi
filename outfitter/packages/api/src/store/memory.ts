@@ -26,7 +26,15 @@ import type {
   TokenOwnerMatch,
   Mail,
   MailCollection,
+  BrowserShare,
+  BrowserSharesCollection,
+  BrowserRequest,
+  BrowserRequestsCollection,
+  BrowserCapture,
+  BrowserCapturesCollection,
+  BrowserCaptureSave,
 } from "./types.ts";
+import { BROWSER_CAPTURES_PER_SESSION } from "./types.ts";
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -440,6 +448,152 @@ function isDeliverable(m: Mail, nowIso: string, maxAttempts: number): boolean {
   return m.status === "queued" || (m.status === "delivered" && (m.lockedUntil ?? "") < nowIso);
 }
 
+interface BrowserTables {
+  shares: Map<string, BrowserShare>;
+  requests: Map<string, BrowserRequest>;
+  captures: Map<string, BrowserCapture>;
+}
+
+function copyCapture(capture: BrowserCapture): BrowserCapture {
+  // structuredClone turns a Buffer into a Uint8Array; keep a real Buffer so the jpeg route
+  // can send the stored bytes without a type surprise.
+  return { ...capture, bytes: Buffer.from(capture.bytes) };
+}
+
+class MemoryBrowserShares implements BrowserSharesCollection {
+  private readonly tables: BrowserTables;
+
+  constructor(tables: BrowserTables) {
+    this.tables = tables;
+  }
+
+  async findBySession(sessionId: string): Promise<BrowserShare | null> {
+    const row = this.tables.shares.get(sessionId);
+    return row ? clone(row) : null;
+  }
+
+  async put(share: BrowserShare): Promise<{ conflict: false; share: BrowserShare } | { conflict: true; share: BrowserShare }> {
+    const existing = this.tables.shares.get(share.sessionId);
+    if (existing && existing.ownerEmail !== share.ownerEmail) return { conflict: true, share: clone(existing) };
+    const next = clone(share);
+    this.tables.shares.set(share.sessionId, next);
+    return { conflict: false, share: clone(next) };
+  }
+
+  async deleteIfOwner(sessionId: string, ownerEmail: string, nowIso: string): Promise<"deleted" | "missing" | "forbidden"> {
+    const existing = this.tables.shares.get(sessionId);
+    if (!existing) return "missing";
+    if (existing.ownerEmail !== ownerEmail) return "forbidden";
+    // Synchronous with the delete: a request created for a replacement share cannot land
+    // until this function returns to the event loop.
+    this.tables.shares.delete(sessionId);
+    for (const row of this.tables.requests.values()) {
+      if (row.sessionId === sessionId && row.status === "pending") {
+        row.status = "skipped";
+        row.updatedAt = nowIso;
+      }
+    }
+    return "deleted";
+  }
+}
+
+class MemoryBrowserRequests implements BrowserRequestsCollection {
+  private readonly tables: BrowserTables;
+
+  constructor(tables: BrowserTables) {
+    this.tables = tables;
+  }
+
+  async insert(request: BrowserRequest): Promise<void> {
+    this.tables.requests.set(request.id, clone(request));
+  }
+
+  async findById(sessionId: string, id: string): Promise<BrowserRequest | null> {
+    const row = this.tables.requests.get(id);
+    if (!row || row.sessionId !== sessionId) return null;
+    return clone(row);
+  }
+
+  async listPending(sessionId: string): Promise<BrowserRequest[]> {
+    return [...this.tables.requests.values()]
+      .filter((row) => row.sessionId === sessionId && row.status === "pending")
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+      .map(clone);
+  }
+
+  async markSkipped(sessionId: string, id: string, nowIso: string): Promise<BrowserRequest | null> {
+    const row = this.tables.requests.get(id);
+    if (!row || row.sessionId !== sessionId) return null;
+    if (row.status !== "done") {
+      row.status = "skipped";
+      row.updatedAt = nowIso;
+    }
+    return clone(row);
+  }
+}
+
+class MemoryBrowserCaptures implements BrowserCapturesCollection {
+  private readonly tables: BrowserTables;
+
+  constructor(tables: BrowserTables) {
+    this.tables = tables;
+  }
+
+  async save(capture: BrowserCapture, nowIso: string): Promise<BrowserCaptureSave> {
+    const request = this.tables.requests.get(capture.requestId);
+    if (!request || request.sessionId !== capture.sessionId) return { ok: false, reason: "missing" };
+    const existing = this.findStored(capture.sessionId, capture.requestId);
+    if (existing) {
+      if (request.status === "skipped") {
+        this.tables.captures.delete(existing.id);
+        return { ok: false, reason: "not_pending" };
+      }
+      if (request.status === "pending") {
+        request.status = "done";
+        request.captureId = existing.id;
+        request.updatedAt = nowIso;
+      }
+      return { ok: true, capture: copyCapture(existing), inserted: false };
+    }
+    if (request.status !== "pending") return { ok: false, reason: "not_pending" };
+    this.tables.captures.set(capture.id, copyCapture(capture));
+    this.trim(capture.sessionId);
+    request.status = "done";
+    request.captureId = capture.id;
+    request.updatedAt = nowIso;
+    const stored = this.tables.captures.get(capture.id);
+    // Trim keeps the newest BROWSER_CAPTURES_PER_SESSION, and this insert is the newest, so the
+    // row is still there. If it is not, the cap was zero and the write was dropped.
+    if (!stored) return { ok: false, reason: "not_pending" };
+    return { ok: true, capture: copyCapture(stored), inserted: true };
+  }
+
+  async findById(sessionId: string, id: string): Promise<BrowserCapture | null> {
+    const row = this.tables.captures.get(id);
+    if (!row || row.sessionId !== sessionId) return null;
+    return copyCapture(row);
+  }
+
+  async findByRequestId(sessionId: string, requestId: string): Promise<BrowserCapture | null> {
+    const row = this.findStored(sessionId, requestId);
+    return row ? copyCapture(row) : null;
+  }
+
+  private findStored(sessionId: string, requestId: string): BrowserCapture | undefined {
+    for (const row of this.tables.captures.values()) {
+      if (row.sessionId === sessionId && row.requestId === requestId) return row;
+    }
+    return undefined;
+  }
+
+  private trim(sessionId: string): void {
+    const mine = [...this.tables.captures.values()]
+      .filter((row) => row.sessionId === sessionId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+    for (const old of mine.slice(BROWSER_CAPTURES_PER_SESSION)) this.tables.captures.delete(old.id);
+  }
+}
+
 export class MemoryStore implements Store {
   readonly sessions = new MemorySessions();
   readonly entries = new MemoryEntries();
@@ -450,6 +604,16 @@ export class MemoryStore implements Store {
   readonly providers = new MemoryProviders();
   readonly tokens = new MemoryTokens();
   readonly mail = new MemoryMail();
+  readonly browserShares: BrowserSharesCollection;
+  readonly browserRequests: BrowserRequestsCollection;
+  readonly browserCaptures: BrowserCapturesCollection;
+
+  constructor() {
+    const tables: BrowserTables = { shares: new Map(), requests: new Map(), captures: new Map() };
+    this.browserShares = new MemoryBrowserShares(tables);
+    this.browserRequests = new MemoryBrowserRequests(tables);
+    this.browserCaptures = new MemoryBrowserCaptures(tables);
+  }
 
   async close(): Promise<void> {
     // nothing to release

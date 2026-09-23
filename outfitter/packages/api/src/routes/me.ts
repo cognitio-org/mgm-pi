@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { greetingName } from "../greeting.ts";
 import type { RouteContext } from "./context.ts";
 
 /** GET /api/me: the caller's identity, established by the auth preHandler in server.ts. Also
@@ -12,7 +13,15 @@ import type { RouteContext } from "./context.ts";
 export async function registerMeRoute(app: FastifyInstance, ctx: RouteContext): Promise<void> {
   app.get("/api/me", async (req) => {
     const email = req.identity!.email;
-    await ctx.store.users.upsertSeen(email);
-    return { email, operator: req.identity!.operator, linkOrigin: ctx.config.linkOrigin || undefined };
+    const user = await ctx.store.users.upsertSeen(email);
+    const name = greetingName(user);
+    return {
+      email,
+      operator: req.identity!.operator,
+      linkOrigin: ctx.config.linkOrigin || undefined,
+      // Omitted when there is nothing safe to greet with. The web UI copies it into a cookie the
+      // kernal.one landing page can read; see landing/public/welcome.js.
+      ...(name ? { name } : {}),
+    };
   });
 }

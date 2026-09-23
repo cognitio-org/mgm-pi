@@ -203,7 +203,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  me(): Promise<{ email: string; operator?: boolean; linkOrigin?: string }> {
+  me(): Promise<{ email: string; operator?: boolean; linkOrigin?: string; name?: string }> {
     return request("/api/me");
   },
 

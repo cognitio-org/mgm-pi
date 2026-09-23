@@ -193,10 +193,12 @@ export async function readAgent(snap: Snapshot, name: string, source: string, se
   const text = readFileSync(row.file, "utf8");
   if (carriesSecret(text, secrets)) return { row, withheld: true as const };
   const { frontmatter, body } = fm.parseFrontmatter(text);
-  const known = ["name", "description", "tools", "model", "thinking", "systemPromptMode", "inheritProjectContext", "inheritSkills"];
+  const known = ["name", "description", "tools", "model", "thinking", "systemPromptMode", "inheritProjectContext", "inheritSkills", "githubTools"];
   const extra: Record<string, string> = {};
   for (const [k, v] of Object.entries(frontmatter)) if (!known.includes(k)) extra[k] = v;
   const bool = (v: string | undefined) => (v === undefined ? undefined : v.trim() === "true");
+  // Missing, or anything other than the three choices, is off. Shipped roles omit the key.
+  const githubTools: GithubTools = frontmatter.githubTools === "read" || frontmatter.githubTools === "full" ? frontmatter.githubTools : "off";
   return {
     row, withheld: false as const,
     fields: {
@@ -204,6 +206,7 @@ export async function readAgent(snap: Snapshot, name: string, source: string, se
       tools: frontmatter.tools === undefined ? null : fm.parseFrontmatterList(frontmatter.tools) ?? [],
       model: frontmatter.model ?? "", thinking: frontmatter.thinking ?? "",
       systemPromptMode: frontmatter.systemPromptMode ?? "", inheritProjectContext: bool(frontmatter.inheritProjectContext), inheritSkills: bool(frontmatter.inheritSkills),
+      githubTools,
     },
     extra, prompt: body.replace(/^\n+/, ""),
   };
@@ -211,10 +214,14 @@ export async function readAgent(snap: Snapshot, name: string, source: string, se
 
 // ---------- writes ----------
 
+/** This agent's GitHub tools. Stored only as frontmatter `githubTools`; missing means off. */
+export type GithubTools = "off" | "read" | "full";
+
 export type AgentEdit = {
   mode: "create" | "update"; scope: Scope; name: string; original?: string;
   description: string; tools: string[] | null; model: string; thinking: string;
   systemPromptMode?: string; inheritProjectContext?: boolean; inheritSkills?: boolean; prompt: string;
+  githubTools?: GithubTools;
 };
 
 const MODEL_RE = /^[A-Za-z0-9._-]+\/[^\s,]+$/;
@@ -234,6 +241,7 @@ export function validateEdit(e: any, secrets: string[]): Record<string, string> 
     if (!Array.isArray(e.tools) || !e.tools.every((t: unknown) => typeof t === "string")) errors.tools = "a list of tool names";
     else { const bad = e.tools.filter((t: string) => !TOOL_RE.test(t)); if (bad.length) errors.tools = `not a tool name: ${bad.slice(0, 3).join(", ")}`; else if (!e.tools.length) errors.tools = "pick at least one tool, or use the default tools"; }
   }
+  if (e?.githubTools !== undefined && e.githubTools !== "off" && e.githubTools !== "read" && e.githubTools !== "full") errors.githubTools = "off, read, or full";
   if (typeof e?.model !== "string" || (e.model && !MODEL_RE.test(e.model.trim()))) errors.model = "a provider/model id, e.g. litellm/claude-sonnet-5";
   if (typeof e?.thinking !== "string" || (e.thinking && !THINKING_LEVELS.includes(e.thinking))) errors.thinking = `one of ${THINKING_LEVELS.join(", ")}`;
   if (e?.systemPromptMode !== undefined && e.systemPromptMode !== "" && e.systemPromptMode !== "replace" && e.systemPromptMode !== "append") errors.systemPromptMode = "replace or append";
@@ -329,7 +337,31 @@ export async function saveAgent(ctx: { cwd: string; modelRegistry: any; model?: 
     (await loadPackage()).agents.clearAgentDiscoveryCache();
     throw new AgentError(422, `Not saved: ${problems.join("; ")}.`);
   }
+  // pi-subagents only rewrites a frontmatter key it already knows. githubTools is ours, so it is
+  // stamped after the package's write, once that write has been checked. One field, not a second store.
+  if (saved && e.githubTools) {
+    try { stampGithubTools(saved.file, e.githubTools); }
+    catch (err) {
+      try {
+        if (!undo || saved.file !== undo.file) unlinkSync(saved.file);
+        if (undo) writeFileSync(undo.file, undo.content);
+      } catch {}
+      (await loadPackage()).agents.clearAgentDiscoveryCache();
+      throw new AgentError(500, err instanceof Error ? err.message : String(err));
+    }
+  }
   return { message, resolved: resolvedView(after, e.name), row: saved, warnings: message.split("\n").filter((l) => /^(Warning|Note):/.test(l)) };
+}
+
+/** Put `githubTools` on the agent's frontmatter without touching the prompt or any other key. */
+function stampGithubTools(file: string, value: GithubTools) {
+  const text = readFileSync(file, "utf8");
+  const end = text.startsWith("---\n") ? text.indexOf("\n---", 3) : -1;
+  if (end < 0) throw new AgentError(500, "the agent file has no frontmatter to record GitHub access in");
+  let block = text.slice(4, end);
+  const line = `githubTools: ${value}`;
+  block = /^githubTools:/m.test(block) ? block.replace(/^githubTools:[^\n]*$/gm, line) : `${block}\n${line}`;
+  writeFileSync(file, `---\n${block}${text.slice(end)}`);
 }
 
 /** Customise a builtin or package agent: the package's eject, a same-name copy in user or project scope. */

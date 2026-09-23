@@ -1,0 +1,24 @@
+chrome/README.md
+  h_69b863911ebf05 3,7,20-22,39
+chrome/extension/background.js
+  h_69b863911ebf05 4,6,18-71,340-341,397-1152
+chrome/extension/manifest.json
+  h_69b863911ebf05 7-8
+chrome/extension/share.js
+  h_69b863911ebf05 1-364
+chrome/test/protocol.test.js
+  h_69b863911ebf05 151-159,161
+chrome/test/share.test.js
+  h_69b863911ebf05 1-278
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "4ce424c657b92d57e757874ac87ff3e5929c3440",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

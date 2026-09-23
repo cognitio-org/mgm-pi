@@ -1,0 +1,20 @@
+outfitter/docs/reports/operators.md
+  h_69b863911ebf05 52-54,78-84,88
+outfitter/packages/api/src/operator.ts
+  h_69b863911ebf05 7,27-28,37-43,79-84
+outfitter/packages/api/src/routes/operator.ts
+  h_69b863911ebf05 11-18,168-187
+outfitter/packages/api/test/operator.test.ts
+  h_69b863911ebf05 13,20-35,123,142,154,164-165,171-181,287-332,346-358
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "e128f117ee811ee98a53a0f78f93bbb5f7c05ba8",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

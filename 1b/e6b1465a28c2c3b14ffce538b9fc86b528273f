@@ -1,0 +1,18 @@
+chrome/extension/background.js
+  h_69b863911ebf05 12,26
+chrome/extension/protocol.js
+  h_69b863911ebf05 29-30
+chrome/test/protocol.test.js
+  h_69b863911ebf05 48,106-108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "1be6b1465a28c2c3b14ffce538b9fc86b528273f",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

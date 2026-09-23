@@ -315,10 +315,10 @@ with it.
   branch and pull request. An Install button fetches `gh`; the sign-in and `setup-git` commands are
   shown with a copy button, because kernal cannot answer gh's questions for you. The commit trailer
   and pull request footer are edited here.
-  A **Command-line agents** section shows the agents that run Claude Code, Codex or Cursor: one tile
-  per tool, installed or not (with the install command when it is not), and which of its agents are
-  read-only and which write files. Those agents are labelled with the tool's own model, and a model
-  or thinking override for one is refused, because the tool never receives it.
+- **Command-line agents**: the agents that run Claude Code, Codex or Cursor. One tile per tool,
+  installed or not (with the install command when it is not), and which of its agents are read-only
+  and which write files. Those agents are labelled with the tool's own model, and a model or
+  thinking override for one is refused, because the tool never receives it.
 
 `/admin index` (or `connections`, `model`, `subagents`, `github`) opens straight at that page, `/admin status`
 says where it is, `/admin stop` stops it.

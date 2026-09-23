@@ -1,0 +1,28 @@
+outfitter/packages/api/test/mongo-tokens.test.ts
+  s_e60c198231e35c::t_c9a20f3d6669f5 1-5,9-13,16-24,26-44,46-47,49-50,59,61-65,67-199
+  s_e60c198231e35c::t_113a59a4a2c041 6-8,14-15,25,45,48,51-58,60,66
+outfitter/packages/api/package.json
+  s_e60c198231e35c::t_c65db8ae2e0639 25
+outfitter/packages/api/Dockerfile
+  s_e60c198231e35c::t_10896d7196c771 20-23
+.github/workflows/outfitter-ci.yml
+  s_e60c198231e35c::t_10896d7196c771 24-30
+outfitter/package-lock.json
+  s_e60c198231e35c::t_871f3d78737efb 2458-2467,2504-2518,2538-2622,2740-2752,2912-2918,3846-3855,3884-3890,4039-4056,4071-4105,4905-4917,4965-4990,6011-6130,6156-6168,6289-6327,6378-6387,6404-6410,6468-6480,7141-7152,7239-7251,7285-7304,7452-7458,7991-8003,8046
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "6e47ebd36166eb1c7baddd78aaedaf6c40a1825b",
+  "prompts": {},
+  "sessions": {
+    "s_e60c198231e35c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "08aeabd8-483e-47c5-a371-a550240c5d37",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

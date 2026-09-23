@@ -164,17 +164,39 @@ describe("MongoTokens against a real MongoDB", () => {
     assert.equal((await tokens.findById(wouldMatchIfRegex.id))!.revokedAt, undefined);
   });
 
-  test("the Mongo store and the memory store agree on the same rows", async () => {
+  test("overlapping revokes sharing a timestamp each report only what they revoked", async () => {
+    // The read-back used to match on `revokedAt` alone, so a later revoke whose match overlapped an
+    // earlier one in the same millisecond -- one owner, then their whole domain -- reported the
+    // earlier call's tokens as its own. Everything is revoked either way; the result was the lie.
     const tag = randomUUID().slice(0, 8);
-    const owner = `parity-${tag}@mgms.eu`;
+    const domain = `@${tag}.example.com`;
+    const alice = tokenRow(`alice${domain}`);
+    const bob = tokenRow(`bob${domain}`);
+    await tokens.insert(alice);
+    await tokens.insert(bob);
+
+    const sameMoment = iso(0);
+    const byEmail = await tokens.revokeAllForOwners({ email: alice.ownerEmail }, sameMoment);
+    const byDomain = await tokens.revokeAllForOwners({ domain }, sameMoment);
+    assert.deepEqual(byEmail.map((t) => t.id), [alice.id]);
+    assert.deepEqual(byDomain.map((t) => t.id), [bob.id], "only what this call revoked");
+    assert.equal((await tokens.findById(alice.id))!.revokedAt, sameMoment, "both are revoked either way");
+  });
+
+  test("the Mongo store and the memory store agree on the same rows", async () => {
+    // Its own domain, so this test's revokes can't touch rows the other tests left in the shared
+    // scratch database -- and so both stores can be compared whole, not filtered down to our ids.
+    const tag = randomUUID().slice(0, 8);
+    const domain = `@${tag}.example.com`;
+    const owner = `parity${domain}`;
     const rows = [
       tokenRow(owner),
-      tokenRow(`PARITY-${tag}@MGMS.EU`),
+      tokenRow(`PARITY@${tag.toUpperCase()}.EXAMPLE.COM`),
       tokenRow(owner, { revokedAt: iso(-1000) }),
       tokenRow(owner, { expiresAt: iso(-1000) }),
       tokenRow(owner, { createdAt: iso(-TOKEN_TTL_MS - 1000), expiresAt: undefined }),
-      tokenRow(`other-${tag}@mgms.eu`),
-      tokenRow(`sub-${tag}@mail.mgms.eu`),
+      tokenRow(`other${domain}`),
+      tokenRow(`sub@mail.${tag}.example.com`),
     ];
     const memory = new MemoryStore();
     for (const row of rows) {
@@ -182,18 +204,16 @@ describe("MongoTokens against a real MongoDB", () => {
       await memory.tokens.insert(row);
     }
 
-    for (const match of [{ email: owner }, { domain: "@mgms.eu" }] as TokenOwnerMatch[]) {
+    for (const owners of [{ email: owner }, { domain }] as TokenOwnerMatch[]) {
       const at = iso(0);
-      const fromMongo = await tokens.revokeAllForOwners(match, at);
-      const fromMemory = await memory.tokens.revokeAllForOwners(match, at);
-      // Both stores hold rows this test didn't create only in Mongo's case (the shared scratch db),
-      // so compare within this test's own ids.
-      const mine = new Set(rows.map((r) => r.id));
-      assert.deepEqual(
-        fromMongo.map((t) => t.id).filter((id) => mine.has(id)).sort(),
-        fromMemory.map((t) => t.id).sort(),
-        JSON.stringify(match),
-      );
+      const fromMongo = await tokens.revokeAllForOwners(owners, at);
+      const fromMemory = await memory.tokens.revokeAllForOwners(owners, at);
+      assert.deepEqual(fromMongo.map((t) => t.id).sort(), fromMemory.map((t) => t.id).sort(), JSON.stringify(owners));
     }
+    // Both stores also agree on what is left active afterwards.
+    assert.deepEqual(
+      (await tokens.listActiveForOwner(owner)).map((t) => t.id),
+      (await memory.tokens.listActiveForOwner(owner)).map((t) => t.id),
+    );
   });
 });

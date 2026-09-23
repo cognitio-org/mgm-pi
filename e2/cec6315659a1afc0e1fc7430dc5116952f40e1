@@ -1,0 +1,34 @@
+outfitter/docs/protocol.md
+  h_69b863911ebf05 14-17,235,283,286-288,306-348
+outfitter/packages/api/src/auth.ts
+  h_69b863911ebf05 43-44,99-101
+outfitter/packages/api/src/routes/browser.ts
+  h_69b863911ebf05 1-254
+outfitter/packages/api/src/routes/index.ts
+  h_69b863911ebf05 3-4,18-23,36-37,39,42
+outfitter/packages/api/src/routes/sessions.ts
+  h_69b863911ebf05 108-113,118,212-256,259,376
+outfitter/packages/api/src/store/memory.ts
+  h_69b863911ebf05 29-35,37,451-596,607-616
+outfitter/packages/api/src/store/mongo.ts
+  h_69b863911ebf05 4,30-36,38,572-741,752-754,768-771,797-799
+outfitter/packages/api/src/store/types.ts
+  h_69b863911ebf05 407-478,489-491
+outfitter/packages/api/test/browser.test.ts
+  h_69b863911ebf05 1-407
+outfitter/packages/api/test/roles.test.ts
+  h_69b863911ebf05 25-27,37,42-45
+outfitter/packages/api/test/stop.test.ts
+  h_69b863911ebf05 308-310
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "e2cec6315659a1afc0e1fc7430dc5116952f40e1",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

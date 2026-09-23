@@ -25,7 +25,7 @@ function asRecord(body: unknown): Record<string, unknown> {
   return body && typeof body === "object" ? (body as Record<string, unknown>) : {};
 }
 
-/** Entry id is the request id, so insertIfNew makes a second upload of the same request a no-op. */
+/** Entry id is the request id, so a second upload of the same request is one transcript entry. */
 function captureEntryId(requestId: string): string {
   return `browser-capture:${requestId}`;
 }
@@ -60,10 +60,15 @@ function decodeJpeg(input: string): { ok: true; bytes: Buffer } | { ok: false; s
 }
 
 async function appendCaptureEntry(ctx: RouteContext, capture: BrowserCapture): Promise<void> {
+  const entryId = captureEntryId(capture.requestId);
+  // A retried upload must not send another down-frame. agentd would assign a new seq for the
+  // same entry, and the transcript must keep one row per requestId.
+  if (await ctx.store.entries.findByEntryId(capture.sessionId, entryId)) return;
+
   const session = await ctx.store.sessions.findById(capture.sessionId);
   const now = new Date().toISOString();
   const entry: PiEntry = {
-    id: captureEntryId(capture.requestId),
+    id: entryId,
     parentId: session?.leafId ?? null,
     type: "custom",
     customType: CAPTURE_ENTRY_TYPE,
@@ -75,6 +80,10 @@ async function appendCaptureEntry(ctx: RouteContext, capture: BrowserCapture): P
       requesterEmail: capture.requesterEmail,
     },
   };
+  // While agentd is connected or provisioning it owns the seq. Leaf id moves when that
+  // up-frame is stored, not here — a live run is about to write the real leaf.
+  if (await ctx.agentLink.sendCaptureEntry(capture.sessionId, entry)) return;
+
   const seq = (await ctx.store.entries.maxSeq(capture.sessionId)) + 1;
   const inserted = await ctx.store.entries.insertIfNew(capture.sessionId, seq, entry);
   if (inserted) await ctx.store.sessions.update(capture.sessionId, { leafId: entry.id, updatedAt: now });
@@ -126,8 +135,6 @@ export async function registerBrowserRoutes(app: FastifyInstance, ctx: RouteCont
     if (!session) return;
     const email = callerEmail(req, reply);
     if (!email) return;
-    const share = await ctx.store.browserShares.findBySession(session.id);
-    if (!share) return reply.code(409).send({ error: "no browser share" });
     const now = new Date().toISOString();
     const request: BrowserRequest = {
       id: randomUUID(),
@@ -137,8 +144,9 @@ export async function registerBrowserRoutes(app: FastifyInstance, ctx: RouteCont
       createdAt: now,
       updatedAt: now,
     };
-    await ctx.store.browserRequests.insert(request);
-    return reply.code(201).send({ id: request.id, requesterEmail: request.requesterEmail, status: request.status });
+    const saved = await ctx.store.browserRequests.insertPendingIfShared(session.id, request);
+    if (saved === "no_share") return reply.code(409).send({ error: "no browser share" });
+    return reply.code(201).send({ id: saved.id, requesterEmail: saved.requesterEmail, status: saved.status });
   });
 
   app.get("/api/sessions/:id/browser/requests", async (req, reply) => {

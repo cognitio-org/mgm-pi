@@ -111,6 +111,11 @@ class MongoEntries implements EntriesCollection {
     }
   }
 
+  async findByEntryId(sessionId: string, entryId: string): Promise<Entry | null> {
+    const row = await this.col.findOne({ sessionId, "entry.id": entryId });
+    return row ? stripIdStrict<Entry>(row) : null;
+  }
+
   async listForSession(sessionId: string, afterEntryId?: string): Promise<Entry[]> {
     let afterSeq = -1;
     if (afterEntryId) {
@@ -586,17 +591,31 @@ function stripCapture(doc: BrowserCaptureDoc | null): BrowserCapture | null {
   return { ...row, bytes: toBuffer(row.bytes) };
 }
 
+/** Drops `_id` and the internal `_rev` bump insertPendingIfShared uses to conflict with revoke. */
+function shareView(doc: (BrowserShareDoc & { _rev?: number }) | null): BrowserShare | null {
+  if (!doc) return null;
+  return {
+    sessionId: doc.sessionId,
+    tabTitle: doc.tabTitle,
+    tabUrl: doc.tabUrl,
+    ownerEmail: doc.ownerEmail,
+    createdAt: doc.createdAt,
+  };
+}
+
 class MongoBrowserShares implements BrowserSharesCollection {
   private readonly shares: MongoCollection<BrowserShareDoc>;
   private readonly requests: MongoCollection<BrowserRequestDoc>;
+  private readonly client: MongoClient;
 
-  constructor(shares: MongoCollection<BrowserShareDoc>, requests: MongoCollection<BrowserRequestDoc>) {
+  constructor(shares: MongoCollection<BrowserShareDoc>, requests: MongoCollection<BrowserRequestDoc>, client: MongoClient) {
     this.shares = shares;
     this.requests = requests;
+    this.client = client;
   }
 
   async findBySession(sessionId: string): Promise<BrowserShare | null> {
-    return stripId<BrowserShare>(await this.shares.findOne({ _id: sessionId }));
+    return shareView(await this.shares.findOne({ _id: sessionId }));
   }
 
   async put(share: BrowserShare): Promise<{ conflict: false; share: BrowserShare } | { conflict: true; share: BrowserShare }> {
@@ -617,35 +636,76 @@ class MongoBrowserShares implements BrowserSharesCollection {
       { $set: { tabTitle: share.tabTitle, tabUrl: share.tabUrl, createdAt: share.createdAt } },
       { returnDocument: "after" },
     );
-    return { conflict: false, share: stripId<BrowserShare>(updated) ?? share };
+    return { conflict: false, share: shareView(updated) ?? share };
   }
 
   async deleteIfOwner(sessionId: string, ownerEmail: string, nowIso: string): Promise<"deleted" | "missing" | "forbidden"> {
-    const deleted = await this.shares.findOneAndDelete({ _id: sessionId, ownerEmail });
-    if (!deleted) {
-      const still = await this.shares.findOne({ _id: sessionId });
-      return still ? "forbidden" : "missing";
+    // One transaction with the share-document delete and the pending-request skip. insertPendingIfShared
+    // writes that same share document, so the two cannot commit an insert against a share this deleted.
+    const tx = this.client.startSession();
+    try {
+      let outcome: "deleted" | "missing" | "forbidden" = "missing";
+      await tx.withTransaction(async () => {
+        const deleted = await this.shares.findOneAndDelete({ _id: sessionId, ownerEmail }, { session: tx });
+        if (!deleted) {
+          const still = await this.shares.findOne({ _id: sessionId }, { session: tx });
+          outcome = still ? "forbidden" : "missing";
+          return;
+        }
+        // A share inserted after the delete belongs to someone else. Only skip requests that
+        // predate it; with no replacement, every pending request was for the share just removed.
+        const replacement = await this.shares.findOne({ _id: sessionId }, { session: tx });
+        const filter: Filter<BrowserRequestDoc> = replacement
+          ? { sessionId, status: "pending", createdAt: { $lt: replacement.createdAt } }
+          : { sessionId, status: "pending" };
+        await this.requests.updateMany(filter, { $set: { status: "skipped", updatedAt: nowIso } }, { session: tx });
+        outcome = "deleted";
+      });
+      return outcome;
+    } finally {
+      await tx.endSession();
     }
-    // A share inserted after the delete belongs to someone else. Only skip requests that
-    // predate it; with no replacement, every pending request was for the share just removed.
-    const replacement = await this.shares.findOne({ _id: sessionId });
-    const filter: Filter<BrowserRequestDoc> = replacement
-      ? { sessionId, status: "pending", createdAt: { $lt: replacement.createdAt } }
-      : { sessionId, status: "pending" };
-    await this.requests.updateMany(filter, { $set: { status: "skipped", updatedAt: nowIso } });
-    return "deleted";
   }
 }
 
 class MongoBrowserRequests implements BrowserRequestsCollection {
   private readonly col: MongoCollection<BrowserRequestDoc>;
+  private readonly shares: MongoCollection<BrowserShareDoc>;
+  private readonly client: MongoClient;
 
-  constructor(col: MongoCollection<BrowserRequestDoc>) {
+  constructor(col: MongoCollection<BrowserRequestDoc>, shares: MongoCollection<BrowserShareDoc>, client: MongoClient) {
     this.col = col;
+    this.shares = shares;
+    this.client = client;
   }
 
   async insert(request: BrowserRequest): Promise<void> {
     await this.col.insertOne({ ...request, _id: request.id });
+  }
+
+  async insertPendingIfShared(sessionId: string, request: BrowserRequest): Promise<BrowserRequest | "no_share"> {
+    // `$inc` on the share document is the write that conflicts with deleteIfOwner's delete of that
+    // same document. A transaction that only read the share could still commit after the revoke.
+    const tx = this.client.startSession();
+    try {
+      let outcome: BrowserRequest | "no_share" = "no_share";
+      await tx.withTransaction(async () => {
+        const share = await this.shares.findOneAndUpdate(
+          { _id: sessionId },
+          { $inc: { _rev: 1 } },
+          { session: tx, returnDocument: "after" },
+        );
+        if (!share) {
+          outcome = "no_share";
+          return;
+        }
+        await this.col.insertOne({ ...request, _id: request.id }, { session: tx });
+        outcome = request;
+      });
+      return outcome;
+    } finally {
+      await tx.endSession();
+    }
   }
 
   async findById(sessionId: string, id: string): Promise<BrowserRequest | null> {
@@ -766,8 +826,9 @@ export class MongoStore implements Store {
     this.tokens = new MongoTokens(db.collection("tokens"));
     this.mail = new MongoMail(db.collection("mail"));
     const requestCol = db.collection<BrowserRequestDoc>("browserRequests");
-    this.browserShares = new MongoBrowserShares(db.collection<BrowserShareDoc>("browserShares"), requestCol);
-    this.browserRequests = new MongoBrowserRequests(requestCol);
+    const shareCol = db.collection<BrowserShareDoc>("browserShares");
+    this.browserShares = new MongoBrowserShares(shareCol, requestCol, client);
+    this.browserRequests = new MongoBrowserRequests(requestCol, shareCol, client);
     this.browserCaptures = new MongoBrowserCaptures(db.collection<BrowserCaptureDoc>("browserCaptures"), requestCol);
   }
 

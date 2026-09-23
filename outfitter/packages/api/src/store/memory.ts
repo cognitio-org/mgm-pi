@@ -83,6 +83,12 @@ class MemoryEntries implements EntriesCollection {
     return true;
   }
 
+  async findByEntryId(sessionId: string, entryId: string): Promise<Entry | null> {
+    const list = this.bySession.get(sessionId) ?? [];
+    const found = list.find((row) => row.entry.id === entryId);
+    return found ? clone(found) : null;
+  }
+
   async listForSession(sessionId: string, afterEntryId?: string): Promise<Entry[]> {
     const list = (this.bySession.get(sessionId) ?? []).slice().sort((a, b) => a.seq - b.seq);
     if (!afterEntryId) return list.map(clone);
@@ -448,10 +454,26 @@ function isDeliverable(m: Mail, nowIso: string, maxAttempts: number): boolean {
   return m.status === "queued" || (m.status === "delivered" && (m.lockedUntil ?? "") < nowIso);
 }
 
+/** Chains critical sections. The function passed to `run` must not await: `deleteIfOwner` and
+ * `insertPendingIfShared` share this so a revoke and a pending insert cannot interleave. */
+class ShareSection {
+  private tail: Promise<void> = Promise.resolve();
+
+  run<T>(fn: () => T): Promise<T> {
+    const run = this.tail.then(() => fn());
+    this.tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+}
+
 interface BrowserTables {
   shares: Map<string, BrowserShare>;
   requests: Map<string, BrowserRequest>;
   captures: Map<string, BrowserCapture>;
+  shareSection: ShareSection;
 }
 
 function copyCapture(capture: BrowserCapture): BrowserCapture {
@@ -481,19 +503,21 @@ class MemoryBrowserShares implements BrowserSharesCollection {
   }
 
   async deleteIfOwner(sessionId: string, ownerEmail: string, nowIso: string): Promise<"deleted" | "missing" | "forbidden"> {
-    const existing = this.tables.shares.get(sessionId);
-    if (!existing) return "missing";
-    if (existing.ownerEmail !== ownerEmail) return "forbidden";
-    // Synchronous with the delete: a request created for a replacement share cannot land
-    // until this function returns to the event loop.
-    this.tables.shares.delete(sessionId);
-    for (const row of this.tables.requests.values()) {
-      if (row.sessionId === sessionId && row.status === "pending") {
-        row.status = "skipped";
-        row.updatedAt = nowIso;
+    // Same section as insertPendingIfShared. No await inside: a revoke that has finished
+    // is visible to the next insert, and an insert that has finished is skipped here.
+    return this.tables.shareSection.run(() => {
+      const existing = this.tables.shares.get(sessionId);
+      if (!existing) return "missing";
+      if (existing.ownerEmail !== ownerEmail) return "forbidden";
+      this.tables.shares.delete(sessionId);
+      for (const row of this.tables.requests.values()) {
+        if (row.sessionId === sessionId && row.status === "pending") {
+          row.status = "skipped";
+          row.updatedAt = nowIso;
+        }
       }
-    }
-    return "deleted";
+      return "deleted";
+    });
   }
 }
 
@@ -506,6 +530,15 @@ class MemoryBrowserRequests implements BrowserRequestsCollection {
 
   async insert(request: BrowserRequest): Promise<void> {
     this.tables.requests.set(request.id, clone(request));
+  }
+
+  async insertPendingIfShared(sessionId: string, request: BrowserRequest): Promise<BrowserRequest | "no_share"> {
+    return this.tables.shareSection.run(() => {
+      if (!this.tables.shares.get(sessionId)) return "no_share";
+      const row = clone(request);
+      this.tables.requests.set(request.id, row);
+      return clone(row);
+    });
   }
 
   async findById(sessionId: string, id: string): Promise<BrowserRequest | null> {
@@ -609,7 +642,12 @@ export class MemoryStore implements Store {
   readonly browserCaptures: BrowserCapturesCollection;
 
   constructor() {
-    const tables: BrowserTables = { shares: new Map(), requests: new Map(), captures: new Map() };
+    const tables: BrowserTables = {
+      shares: new Map(),
+      requests: new Map(),
+      captures: new Map(),
+      shareSection: new ShareSection(),
+    };
     this.browserShares = new MemoryBrowserShares(tables);
     this.browserRequests = new MemoryBrowserRequests(tables);
     this.browserCaptures = new MemoryBrowserCaptures(tables);

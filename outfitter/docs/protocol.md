@@ -140,6 +140,7 @@ Down (api → agentd):
 | `read` | `reqId, path` | agentd replies `read.result {reqId, content|error}` |
 | `stop` | `reason` | checkpoint, then `bye`, exit 0 |
 | `mail` | `id, text, behavior?: "followUp"\|"steer"` | E5.5 mailbox message: pi RPC `prompt` with rpc id `mail:<id>` and `streamingBehavior: behavior ?? "followUp"` (starts a turn when idle, queues when busy); agentd sends `mail.ack` once pi accepts it, and re-acks without re-prompting if the same id is redelivered |
+| `browser.capture.entry` | `entry` (a pi custom entry, `customType: "outfitter.browser.capture"`, id `browser-capture:<requestId>`, data `{captureId, title, url, requesterEmail}`) | agentd emits one ordinary `entry` up-frame through the same seq counter as every other `entry`/`event`. The api sends this while the run is connected or provisioning (queued on the down-frame queue until the run is ready, same as `prompt`) and does not allocate that seq itself. A second frame for an entry id already stored is not sent |
 
 ### Mailbox (E5.5)
 
@@ -342,9 +343,14 @@ Decoded jpeg over 350,000 bytes is `413`. Bytes live in `browserCaptures`
 capture `id`). The insert keeps the last 20 captures per session and deletes older ones in that
 same write. On success the request is marked `done` and stores `captureId`. The API also appends
 one pi custom entry `outfitter.browser.capture` with `{captureId, title, url, requesterEmail}`,
-keyed by `requestId` (`entry.id` is `browser-capture:<requestId>`), through `entries.insertIfNew`.
-Uploading the same `requestId` again returns the original `captureId` and does not insert a second
-entry.
+keyed by `requestId` (`entry.id` is `browser-capture:<requestId>`). While a run for the session is
+connected or still provisioning, that entry goes to agentd as a `browser.capture.entry` down-frame
+and agentd assigns the seq; the api inserts it itself with `maxSeq+1` only when no run is connected
+and none is provisioning. Uploading the same `requestId` again returns the original `captureId`
+and, once that entry is stored, does not send the down-frame or insert a second entry. `POST
+/browser/requests` inserts the pending row in the same store operation that reads the share
+(`insertPendingIfShared`); a revoke that has already deleted the share cannot leave a new pending
+request behind.
 
 ## Run state machine
 

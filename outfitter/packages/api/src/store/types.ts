@@ -55,7 +55,9 @@ export interface Entry {
 }
 
 export interface DownMessage {
-  t: "prompt" | "steer" | "follow_up" | "abort" | "ui_response" | "rpc" | "checkpoint" | "stop";
+  t: "prompt" | "steer" | "follow_up" | "abort" | "ui_response" | "rpc" | "checkpoint" | "stop" | "browser.capture.entry";
+  /** Set on `browser.capture.entry`: the pi custom entry agentd must emit with its own seq. */
+  entry?: PiEntry;
   [key: string]: unknown;
 }
 
@@ -346,6 +348,8 @@ export interface SessionsCollection {
 export interface EntriesCollection {
   /** Idempotent on entry.id within a session; returns false (no-op) if it already existed. */
   insertIfNew(sessionId: string, seq: number, entry: PiEntry, blobRef?: string): Promise<boolean>;
+  /** The row whose `entry.id` is `entryId`, if this session has one. */
+  findByEntryId(sessionId: string, entryId: string): Promise<Entry | null>;
   /** Entries in tree order (by seq), optionally after a given entry id. */
   listForSession(sessionId: string, afterEntryId?: string): Promise<Entry[]>;
   /** The `limit` most recently *inserted* entries of a session, oldest first. Insertion order, not
@@ -455,6 +459,13 @@ export interface BrowserSharesCollection {
 
 export interface BrowserRequestsCollection {
   insert(request: BrowserRequest): Promise<void>;
+  /**
+   * Inserts `request` only when `sessionId` still has a share. The share read and the insert
+   * commit together with `BrowserSharesCollection.deleteIfOwner`, so a revoke that has finished
+   * cannot be followed by a new pending row, and a row this call has finished inserting is
+   * skipped by a revoke that runs after it. `"no_share"` inserts nothing.
+   */
+  insertPendingIfShared(sessionId: string, request: BrowserRequest): Promise<BrowserRequest | "no_share">;
   findById(sessionId: string, id: string): Promise<BrowserRequest | null>;
   /** Oldest pending first. */
   listPending(sessionId: string): Promise<BrowserRequest[]>;

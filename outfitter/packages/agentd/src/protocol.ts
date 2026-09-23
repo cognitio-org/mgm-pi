@@ -301,6 +301,13 @@ export interface DownStop {
   reason: string;
 }
 
+/** A browser capture the api already built as a pi custom entry. agentd assigns the seq by
+ * emitting a normal `entry` up-frame; it does not keep a second counter. */
+export interface DownBrowserCaptureEntry {
+  t: "browser.capture.entry";
+  entry: PiSessionEntry;
+}
+
 export type DownMessage =
   | DownRunSpec
   | DownAck
@@ -314,7 +321,8 @@ export type DownMessage =
   | DownDiff
   | DownRead
   | DownStop
-  | DownMail;
+  | DownMail
+  | DownBrowserCaptureEntry;
 
 // ---------- replies to diff/read (sent up as `entry`-less custom up-frames) ----------
 // protocol.md does not give these a `t`; agentd sends them as ad-hoc up-frames named after the

@@ -309,6 +309,28 @@ export class AgentLink {
   }
 
   /**
+   * Hands a browser-capture transcript entry to the session's agentd (`browser.capture.entry`),
+   * which emits it as a normal `entry` up-frame so the seq comes from agentd's counter.
+   * A ready local socket gets the frame now; otherwise it is queued like any other down-frame
+   * (drained on the first ready status, a reconnect hello, or the down-queue poller).
+   * Returns false only when no run is connected and none is provisioning — nothing else is
+   * allocating seqs, and the caller may insert with maxSeq+1. Does not touch leafId.
+   */
+  async sendCaptureEntry(sessionId: string, entry: PiEntry): Promise<boolean> {
+    const run = await this.store.runs.findActiveForSession(sessionId);
+    if (!run) return false;
+    const agentOwnsSeq =
+      this.hasSocket(run.id) ||
+      run.state === "provisioning" ||
+      run.state === "running" ||
+      run.state === "idle" ||
+      run.state === "stopping";
+    if (!agentOwnsSeq) return false;
+    await this.send(run.id, { t: "browser.capture.entry", entry });
+    return true;
+  }
+
+  /**
    * Sends a request down-message (diff) and waits for the matching `<t>.result` up frame,
    * correlated by reqId. Requires a live socket: there is nothing to diff on a stopped sandbox.
    */

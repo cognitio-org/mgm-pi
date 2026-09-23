@@ -1,0 +1,27 @@
+outfitter/packages/agentd/pi-extension/outfitter-browser.ts
+  s_51d31561486323::t_d7350fe6be8c72 1-104
+outfitter/packages/agentd/src/browser-capture.ts
+  s_51d31561486323::t_a2ffc98477d24f 1-321
+  s_51d31561486323::t_55b0f35986df8a 322-324
+outfitter/packages/agentd/test/browser-capture.test.ts
+  s_51d31561486323::t_d1cbbd66916513 1-192
+outfitter/packages/api/test/browser-capture-tool.test.ts
+  s_51d31561486323::t_e0cfb112a7222c 1-321
+  s_51d31561486323::t_e974ca423b8c6b 322-324
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "e3844e3394735d8db8a3c7d09b89392ba937a990",
+  "prompts": {},
+  "sessions": {
+    "s_51d31561486323": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a0cf46-b52c-7332-9005-fc6db9325c8a",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

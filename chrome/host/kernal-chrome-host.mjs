@@ -1,22 +1,40 @@
 #!/usr/bin/env node
 // Chrome starts this process for com.kernal.chrome. stdout is reserved for
 // native-messaging frames; logs go to stderr. The unix socket is how Kernal
-// talks to the host. Capture is refused until a tab is actually shared.
+// talks to the host. Stdin is the extension: it announces shares and answers
+// capture. The socket only lists those shares and asks for a capture.
 //
 // Each connectNative() starts a process. Only the one that bound the socket
 // unlinks it, and only while that socket is still the inode it bound.
 
-import { chmodSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { createConnection, createServer } from "node:net";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { encodeNativeMessage, socketPathFrom, NativeFrameDecoder, replyToLine, replyToMessage } from "./protocol.js";
+import {
+  applyExtensionMessage,
+  captureJpegPath,
+  decideSocketLine,
+  encodeNativeMessage,
+  ERR_CAPTURE_FAILED,
+  ERR_CAPTURE_TIMEOUT,
+  ERR_NOT_CONNECTED,
+  jpegBytes,
+  NativeFrameDecoder,
+  socketPathFrom,
+} from "./protocol.js";
+
+const CAPTURE_TIMEOUT_MS = 15000;
 
 const sockPath = socketPathFrom(fileURLToPath(import.meta.url));
 const sockets = new Set();
 let shuttingDown = false;
 let owns = null;
 let reclaimed = false;
+let shares = [];
+let extensionConnected = true;
+let staleCapture = false;
+const waiters = [];
 
 mkdirSync(dirname(sockPath), { recursive: true });
 
@@ -32,13 +50,122 @@ function unlinkOwned() {
   owns = null;
 }
 
+function writeLine(socket, message) {
+  if (!socket || socket.destroyed) return;
+  socket.write(`${JSON.stringify(message)}\n`);
+}
+
+function broadcast(message) {
+  if (!message) return;
+  const waiting = new Set(waiters.map((waiter) => waiter.socket).filter(Boolean));
+  const line = `${JSON.stringify(message)}\n`;
+  for (const socket of sockets) {
+    if (socket.destroyed || waiting.has(socket)) continue;
+    socket.write(line);
+  }
+}
+
+function writeJpeg(tabId, bytes) {
+  const path = captureJpegPath(dirname(sockPath), tabId);
+  if (!path) return null;
+  const tmp = `${path}.tmp`;
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(tmp, bytes, { mode: 0o600 });
+    chmodSync(tmp, 0o600);
+    renameSync(tmp, path);
+    chmodSync(path, 0o600);
+    return path;
+  } catch {
+    try { unlinkSync(tmp); } catch { /* nothing was written */ }
+    return null;
+  }
+}
+
+function dropWaiter(waiter) {
+  if (waiter.timer) clearTimeout(waiter.timer);
+  const index = waiters.indexOf(waiter);
+  if (index !== -1) waiters.splice(index, 1);
+}
+
+function pump() {
+  if (shuttingDown || staleCapture || !extensionConnected) return;
+  const head = waiters[0];
+  if (!head || head.sent) return;
+  head.sent = true;
+  head.timer = setTimeout(() => {
+    if (shuttingDown || !waiters.includes(head)) return;
+    dropWaiter(head);
+    staleCapture = true;
+    writeLine(head.socket, { t: "error", error: ERR_CAPTURE_TIMEOUT });
+  }, CAPTURE_TIMEOUT_MS);
+  try {
+    process.stdout.write(encodeNativeMessage({ t: "capture", tabId: head.tabId }));
+  } catch {
+    dropWaiter(head);
+    writeLine(head.socket, { t: "error", error: ERR_NOT_CONNECTED });
+    pump();
+  }
+}
+
+function enqueueCapture(socket, tabId) {
+  if (!extensionConnected || shuttingDown) {
+    writeLine(socket, { t: "error", error: ERR_NOT_CONNECTED });
+    return;
+  }
+  waiters.push({ tabId, socket, sent: false, timer: null });
+  pump();
+}
+
+function settleCapture(capture) {
+  if (staleCapture) {
+    staleCapture = false;
+    pump();
+    return;
+  }
+  const head = waiters[0];
+  if (!head || !head.sent) return;
+  dropWaiter(head);
+  if (capture.kind === "error") {
+    writeLine(head.socket, { t: "error", error: capture.error });
+    pump();
+    return;
+  }
+  if (capture.tabId !== head.tabId) {
+    writeLine(head.socket, { t: "error", error: ERR_CAPTURE_FAILED });
+    pump();
+    return;
+  }
+  const bytes = jpegBytes(capture.jpegBase64);
+  const path = bytes ? writeJpeg(capture.tabId, bytes) : null;
+  if (!path) writeLine(head.socket, { t: "error", error: ERR_CAPTURE_FAILED });
+  else writeLine(head.socket, { t: "captured", tabId: capture.tabId, title: capture.title, url: capture.url, path });
+  pump();
+}
+
 function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
-  for (const socket of sockets) socket.destroy();
-  server.close();
-  unlinkOwned();
-  process.exit(0);
+  extensionConnected = false;
+  const pending = waiters.splice(0);
+  let left = 0;
+  const finish = () => {
+    if (left > 0) return;
+    for (const socket of sockets) socket.destroy();
+    server.close();
+    unlinkOwned();
+    process.exit(0);
+  };
+  for (const waiter of pending) {
+    if (waiter.timer) clearTimeout(waiter.timer);
+    if (!waiter.socket || waiter.socket.destroyed) continue;
+    left += 1;
+    waiter.socket.write(`${JSON.stringify({ t: "error", error: ERR_NOT_CONNECTED })}\n`, () => {
+      left -= 1;
+      finish();
+    });
+  }
+  finish();
 }
 
 // "live" if anything accepts the path. A refused or missing socket is stale.
@@ -78,12 +205,28 @@ const server = createServer((socket) => {
     while ((nl = buf.indexOf("\n")) >= 0) {
       const line = buf.slice(0, nl);
       buf = buf.slice(nl + 1);
-      const reply = replyToLine(line);
-      if (reply) socket.write(`${JSON.stringify(reply)}\n`);
+      const decision = decideSocketLine(line, { shares, extensionConnected });
+      if (!decision) continue;
+      if (decision.forward) {
+        enqueueCapture(socket, decision.forward.tabId);
+        continue;
+      }
+      writeLine(socket, decision.reply);
     }
   });
-  socket.on("close", () => sockets.delete(socket));
-  socket.on("error", () => sockets.delete(socket));
+  const drop = () => {
+    sockets.delete(socket);
+    const index = waiters.findIndex((waiter) => waiter.socket === socket);
+    if (index < 0) return;
+    const waiter = waiters[index];
+    if (index === 0 && waiter.sent) {
+      waiter.socket = null;
+      return;
+    }
+    dropWaiter(waiter);
+  };
+  socket.on("close", drop);
+  socket.on("error", drop);
 });
 
 let mask = process.umask(0o177);
@@ -141,10 +284,10 @@ process.stdin.on("data", (chunk) => {
     return;
   }
   for (const message of messages) {
-    // Only the messages this slice already speaks. Anything else would be a
-    // guess at the extension protocol, which is a later change.
-    if (!message || typeof message !== "object" || (message.t !== "list" && message.t !== "capture")) continue;
-    process.stdout.write(encodeNativeMessage(replyToMessage(message)));
+    const applied = applyExtensionMessage(shares, message);
+    shares = applied.shares;
+    broadcast(applied.broadcast);
+    if (applied.capture) settleCapture(applied.capture);
   }
 });
 process.stdin.on("end", shutdown);

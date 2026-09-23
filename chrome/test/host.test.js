@@ -2,13 +2,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import net from "node:net";
 import {
+  applyExtensionMessage,
+  captureJpegPath,
+  decideSocketMessage,
   encodeNativeMessage,
+  jpegBytes,
   kernalHomeFrom,
   kernalSocketPath,
   kernalStateDir,
@@ -17,6 +21,10 @@ import {
   replyToMessage,
   socketPathFrom,
 } from "../host/protocol.js";
+
+const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+const JPEG_B64 = JPEG.toString("base64");
+const SHARE = { t: "share", tabId: 4, title: "Spec", url: "https://example.com/a", sessionId: "floppy-1" };
 
 const host = fileURLToPath(new URL("../host/kernal-chrome-host.mjs", import.meta.url));
 
@@ -54,6 +62,52 @@ test("list is an empty share list and capture is refused", () => {
   assert.equal(replyToLine("\n"), null);
   assert.deepEqual(replyToLine('{"t":"list"}\n'), { t: "shares", shares: [] });
   assert.deepEqual(replyToLine("not json"), { t: "error", error: "invalid json" });
+});
+
+test("a share is remembered from the extension, and a socket cannot invent one", () => {
+  const shared = applyExtensionMessage([], SHARE);
+  assert.deepEqual(shared.shares, [{ tabId: 4, title: "Spec", url: "https://example.com/a", sessionId: "floppy-1" }]);
+  assert.deepEqual(shared.broadcast, { t: "share", tabId: 4, title: "Spec", url: "https://example.com/a", sessionId: "floppy-1" });
+  const again = applyExtensionMessage(shared.shares, { ...SHARE, title: "Renamed" });
+  assert.equal(again.shares.length, 1);
+  assert.equal(again.shares[0].title, "Renamed");
+  const dropped = applyExtensionMessage(again.shares, { t: "unshare", tabId: 4 });
+  assert.deepEqual(dropped.shares, []);
+  assert.deepEqual(dropped.broadcast, { t: "unshare", tabId: 4 });
+  assert.equal(applyExtensionMessage(dropped.shares, { t: "unshare", tabId: 4 }).broadcast, null);
+  assert.deepEqual(applyExtensionMessage(shared.shares, { t: "list" }).shares, shared.shares);
+  assert.equal(applyExtensionMessage([], { t: "share", tabId: 4, title: "x", url: "https://e", sessionId: "../x" }).shares.length, 0);
+
+  const state = { shares: shared.shares, extensionConnected: true };
+  assert.deepEqual(decideSocketMessage({ t: "list" }, state).reply.shares, shared.shares);
+  assert.deepEqual(decideSocketMessage({ t: "capture", tabId: 9 }, state), { reply: { t: "error", error: "tab is not shared" } });
+  assert.deepEqual(decideSocketMessage({ t: "capture", tabId: 4 }, state), { forward: { t: "capture", tabId: 4 } });
+  assert.deepEqual(decideSocketMessage({ t: "capture", tabId: 4 }, { shares: shared.shares, extensionConnected: false }), {
+    reply: { t: "error", error: "not connected" },
+  });
+  assert.deepEqual(decideSocketMessage({ t: "share", tabId: 1, title: "x", url: "https://e", sessionId: "abc" }), {
+    reply: { t: "error", error: "rejected" },
+  });
+  assert.equal(replyToMessage({ t: "capture", tabId: 4 }, state), null);
+});
+
+test("jpeg bytes are the decoded image, one file per tab under the kernal home", () => {
+  assert.deepEqual(jpegBytes(JPEG_B64), JPEG);
+  assert.equal(jpegBytes("aaaa"), null);
+  assert.equal(jpegBytes(""), null);
+  assert.equal(captureJpegPath("/home/person/.kernal", 4), "/home/person/.kernal/chrome/captures/4.jpg");
+  assert.equal(captureJpegPath("/home/person/.kernal", -1), null);
+  const bad = applyExtensionMessage([], { t: "captured", tabId: 4, title: "Spec", url: "https://example.com/a", jpegBase64: "aaaa" });
+  assert.equal(bad.capture.kind, "jpeg");
+  assert.equal(jpegBytes(bad.capture.jpegBase64), null);
+  assert.deepEqual(applyExtensionMessage([], { t: "error", error: "not_shared" }).capture, {
+    kind: "error",
+    error: "tab is not shared",
+  });
+  assert.deepEqual(applyExtensionMessage([], { t: "error", error: "permission_denied" }).capture, {
+    kind: "error",
+    error: "permission_denied",
+  });
 });
 
 test("the socket lives under an install root, or ~/.kernal when this file is the repo copy", () => {
@@ -184,7 +238,18 @@ async function stop(proc) {
   if (proc.exitCode === null) proc.kill("SIGKILL");
 }
 
-test("the host socket lists no shares, refuses capture, and speaks native frames", async () => {
+async function listedShares(sockPath, ready) {
+  let last;
+  for (let i = 0; i < 25; i++) {
+    const raw = await sendLine(sockPath, '{"t":"list"}\n');
+    last = JSON.parse(raw.trim().split("\n")[0]);
+    if (ready(last)) return last;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return last;
+}
+
+test("the host socket lists no shares and refuses capture without asking Chrome", async () => {
   const dir = mkdtempSync(join(tmpdir(), "kernal-chrome-host-"));
   const sockPath = join(dir, "chrome.sock");
   const proc = spawn(process.execPath, [host], {
@@ -197,24 +262,117 @@ test("the host socket lists no shares, refuses capture, and speaks native frames
     const listed = await sendLine(sockPath, '{"t":"list"}\n');
     assert.equal(listed.trim().split("\n").length, 1);
     assert.deepEqual(JSON.parse(listed), { t: "shares", shares: [] });
+    let stdout = Buffer.alloc(0);
+    proc.stdout.on("data", (chunk) => { stdout = Buffer.concat([stdout, chunk]); });
     assert.deepEqual(JSON.parse(await sendLine(sockPath, '{"t":"capture","tabId":7}\n')), {
       t: "error",
       error: "tab is not shared",
     });
-
-    const frame = readFrame(proc);
-    const body = Buffer.from(JSON.stringify({ t: "capture", tabId: 7 }));
-    const header = Buffer.alloc(4);
-    header.writeUInt32LE(body.length, 0);
-    proc.stdin.write(header.subarray(0, 2));
-    proc.stdin.write(Buffer.concat([header.subarray(2), body]));
-    assert.deepEqual(await frame, { t: "error", error: "tab is not shared" });
-
-    const listedFrame = readFrame(proc);
-    proc.stdin.write(encodeNativeMessage({ t: "list" }));
-    assert.deepEqual(await listedFrame, { t: "shares", shares: [] });
+    assert.equal(stdout.length, 0, "an unshared tab is refused without asking Chrome");
+    assert.deepEqual(JSON.parse(await sendLine(sockPath, '{"t":"share","tabId":1,"title":"x","url":"https://e","sessionId":"abc"}\n')), {
+      t: "error",
+      error: "rejected",
+    });
 
     proc.stdin.end();
+    const [code] = await once(proc, "exit");
+    assert.equal(code, 0);
+    assert.equal(existsSync(sockPath), false);
+  } finally {
+    await stop(proc);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a shared tab is captured through the extension into one jpeg per tab", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "kernal-chrome-host-"));
+  const sockPath = join(dir, "chrome.sock");
+  const proc = spawn(process.execPath, [host], {
+    env: { ...process.env, KERNAL_HOME: dir },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const share = (tabId, title) => proc.stdin.write(encodeNativeMessage({
+    t: "share", tabId, title, url: `https://example.com/${tabId}`, sessionId: `floppy-${tabId}`,
+  }));
+  try {
+    await waitFor(proc, proc.stderr, "listening");
+    share(4, "Spec");
+    const listed = await listedShares(sockPath, (msg) => msg.t === "shares" && msg.shares.length === 1);
+    assert.deepEqual(listed.shares, [{ tabId: 4, title: "Spec", url: "https://example.com/4", sessionId: "floppy-4" }]);
+
+    const badFrame = readFrame(proc);
+    const badReply = sendLine(sockPath, '{"t":"capture","tabId":4}\n');
+    assert.deepEqual(await badFrame, { t: "capture", tabId: 4 });
+    proc.stdin.write(encodeNativeMessage({ t: "captured", tabId: 4, title: "Spec", url: "https://example.com/4", jpegBase64: "aaaa" }));
+    assert.deepEqual(JSON.parse(await badReply), { t: "error", error: "capture failed" });
+    assert.equal(existsSync(join(dir, "chrome", "captures")), false);
+
+    const deniedFrame = readFrame(proc);
+    const deniedReply = sendLine(sockPath, '{"t":"capture","tabId":4}\n');
+    assert.deepEqual(await deniedFrame, { t: "capture", tabId: 4 });
+    proc.stdin.write(encodeNativeMessage({ t: "error", error: "permission_denied" }));
+    assert.deepEqual(JSON.parse(await deniedReply), { t: "error", error: "permission_denied" });
+
+    const frame = readFrame(proc);
+    const replyPromise = sendLine(sockPath, '{"t":"capture","tabId":4}\n');
+    assert.deepEqual(await frame, { t: "capture", tabId: 4 });
+    proc.stdin.write(encodeNativeMessage({
+      t: "captured", tabId: 4, title: "Spec", url: "https://example.com/4", jpegBase64: JPEG_B64,
+    }));
+    const reply = JSON.parse(await replyPromise);
+    const path = join(dir, "chrome", "captures", "4.jpg");
+    assert.deepEqual(reply, { t: "captured", tabId: 4, title: "Spec", url: "https://example.com/4", path });
+    assert.equal(statSync(path).mode & 0o777, 0o600);
+    assert.deepEqual(readFileSync(path), JPEG);
+
+    const again = readFrame(proc);
+    const againReply = sendLine(sockPath, '{"t":"capture","tabId":4}\n');
+    await again;
+    proc.stdin.write(encodeNativeMessage({
+      t: "captured", tabId: 4, title: "Spec", url: "https://example.com/4", jpegBase64: JPEG_B64,
+    }));
+    assert.equal(JSON.parse(await againReply).path, path);
+    assert.deepEqual(readdirSync(join(dir, "chrome", "captures")).filter((name) => name.endsWith(".jpg")), ["4.jpg"]);
+
+    share(8, "Other");
+    await listedShares(sockPath, (msg) => msg.shares.some((share) => share.tabId === 8));
+    const other = readFrame(proc);
+    const otherReply = sendLine(sockPath, '{"t":"capture","tabId":8}\n');
+    await other;
+    proc.stdin.write(encodeNativeMessage({
+      t: "captured", tabId: 8, title: "Other", url: "https://example.com/8", jpegBase64: JPEG_B64,
+    }));
+    assert.equal(JSON.parse(await otherReply).path, join(dir, "chrome", "captures", "8.jpg"));
+
+    proc.stdin.write(encodeNativeMessage({ t: "unshare", tabId: 4 }));
+    const after = await listedShares(sockPath, (msg) => !msg.shares.some((share) => share.tabId === 4));
+    assert.equal(after.shares.some((share) => share.tabId === 8), true);
+    assert.deepEqual(JSON.parse(await sendLine(sockPath, '{"t":"capture","tabId":4}\n')), {
+      t: "error",
+      error: "tab is not shared",
+    });
+  } finally {
+    await stop(proc);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("ending the extension connection fails an in-flight capture and unlinks the socket", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "kernal-chrome-host-"));
+  const sockPath = join(dir, "chrome.sock");
+  const proc = spawn(process.execPath, [host], {
+    env: { ...process.env, KERNAL_HOME: dir },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  try {
+    await waitFor(proc, proc.stderr, "listening");
+    proc.stdin.write(encodeNativeMessage(SHARE));
+    await listedShares(sockPath, (msg) => msg.shares.length === 1);
+    const frame = readFrame(proc);
+    const replyPromise = sendLine(sockPath, '{"t":"capture","tabId":4}\n');
+    assert.deepEqual(await frame, { t: "capture", tabId: 4 });
+    proc.stdin.end();
+    assert.deepEqual(JSON.parse(await replyPromise), { t: "error", error: "not connected" });
     const [code] = await once(proc, "exit");
     assert.equal(code, 0);
     assert.equal(existsSync(sockPath), false);

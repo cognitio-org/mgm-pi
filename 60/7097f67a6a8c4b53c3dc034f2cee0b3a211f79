@@ -1,0 +1,24 @@
+outfitter/EPIC.md
+  h_69b863911ebf05 171
+outfitter/deploy/README.md
+  h_69b863911ebf05 106-112
+outfitter/deploy/baseline.sh
+  h_69b863911ebf05 68-73
+outfitter/deploy/ci-setup.sh
+  h_69b863911ebf05 57-59,96-97
+outfitter/deploy/landing.sh
+  h_69b863911ebf05 27-29,64
+outfitter/docs/reports/sandbox-git.md
+  h_69b863911ebf05 66-69,103,107-111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "607097f67a6a8c4b53c3dc034f2cee0b3a211f79",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

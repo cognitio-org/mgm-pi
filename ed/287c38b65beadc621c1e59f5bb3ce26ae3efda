@@ -1,0 +1,26 @@
+chrome/host/protocol.js
+  s_42c7ec2a8c77fe::t_f6121822b6d00d 1-87
+chrome/test/host.test.js
+  s_42c7ec2a8c77fe::t_34d4b974f19438 1-182
+  s_42c7ec2a8c77fe::t_e46351d6213e9b 183
+chrome/host/package.json
+  s_42c7ec2a8c77fe::t_90cb76da1ea813 1
+chrome/host/kernal-chrome-host.mjs
+  s_42c7ec2a8c77fe::t_bb81359ecf8281 1-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "ed287c38b65beadc621c1e59f5bb3ce26ae3efda",
+  "prompts": {},
+  "sessions": {
+    "s_42c7ec2a8c77fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a0cea8-f192-7120-91fa-15a592fb9620",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

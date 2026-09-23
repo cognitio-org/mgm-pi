@@ -205,8 +205,10 @@ a { color: var(--link); }
   container-type: inline-size;
 }
 .boot p { margin: 0; overflow-wrap: anywhere; }
-.boot-banner, .boot-mem { text-align: center; }
+.boot-banner, .boot-mem, .boot-welcome { text-align: center; }
 .boot-mem { margin-bottom: 1.4em !important; }
+.boot:has(#welcome:not([hidden])) .boot-mem { margin-bottom: 0.35em !important; }
+.boot-welcome { margin-bottom: 1.4em; }
 
 /* The command line. A real <input> sits invisibly over the line (so mobile keyboards, paste and
  * screen readers all work); what you see is its echo plus the block cursor, C64 style. */

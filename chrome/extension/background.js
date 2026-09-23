@@ -5,6 +5,19 @@
 
 import { isDongle, linkOrigin, originAllowed, parsePageMessage, pageReply } from "./protocol.js";
 import {
+  LINK_KEY,
+  NOTIFIED_UI_KEY,
+  PAGE_ORIGIN_KEY,
+  PANEL_SESSION_KEY,
+  POLL_MS,
+  apiPath,
+  approvalNotificationId,
+  approvalView,
+  linkUrl,
+  notificationCopy,
+  shouldNotifyApproval,
+} from "./panel-model.js";
+import {
   adjacencyMove,
   groupColor,
   groupTitle,
@@ -1282,3 +1295,122 @@ chrome.tabs.onAttached.addListener((tabId, info) => {
 });
 
 enqueueShare(() => bootShare()).catch(() => {});
+// Side panel. The toolbar icon opens it. Approval notices while it is closed are not alarms:
+// the share slice owns chrome.alarms. This block runs on panel close, startup, and tab
+// activity, and it remembers the request id so a later wake does not notify twice.
+
+if (chrome.sidePanel && typeof chrome.sidePanel.setPanelBehavior === "function") {
+  const pending = chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+  if (pending && typeof pending.catch === "function") pending.catch(() => {});
+}
+
+chrome.runtime.onConnectExternal.addListener((port) => {
+  const paired = port.sender?.origin;
+  if (!originAllowed(paired)) return;
+  chrome.storage.local.set({ [PAGE_ORIGIN_KEY]: paired }).catch(() => {});
+});
+
+async function sidePanelOpen() {
+  if (!chrome.runtime.getContexts) return false;
+  try {
+    const contexts = await chrome.runtime.getContexts({ contextTypes: ["SIDE_PANEL"] });
+    return Array.isArray(contexts) && contexts.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function checkClosedPanelApproval() {
+  if (await sidePanelOpen()) return;
+  const stored = await chrome.storage.local.get([PANEL_SESSION_KEY, NOTIFIED_UI_KEY, TOKEN_KEY, LINK_KEY]);
+  const sessionId = stored[PANEL_SESSION_KEY];
+  const token = stored[TOKEN_KEY];
+  const origin = stored[LINK_KEY];
+  if (!isDongle(token) || linkOrigin(origin) === null) return;
+  const href = linkUrl(origin, apiPath("session", sessionId));
+  if (!href) return;
+  const body = await readPending(href, token);
+  const view = approvalView(body && body.pendingUiRequest);
+  if (!view || !shouldNotifyApproval(false, view.id, stored[NOTIFIED_UI_KEY])) return;
+  if (await sidePanelOpen()) return;
+  const id = approvalNotificationId(view.id);
+  if (!id || !chrome.notifications) return;
+  const copy = notificationCopy(body.name, view.title);
+  await chrome.notifications.create(id, {
+    type: "basic",
+    iconUrl: chrome.runtime.getURL("icon.png"),
+    title: copy.title,
+    message: copy.message,
+  });
+  await chrome.storage.local.set({ [NOTIFIED_UI_KEY]: view.id });
+}
+
+async function readPending(href, token) {
+  const res = await fetch(href, {
+    headers: { Authorization: `Bearer ${token}` },
+    credentials: "omit",
+    cache: "no-store",
+    redirect: "error",
+  });
+  if (!res.ok) return null;
+  const body = await res.json();
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  return body;
+}
+
+let approvalRunning = false;
+let approvalLast = 0;
+let approvalTimer = null;
+
+function wakeApprovalCheck(force) {
+  if (!force) {
+    const wait = POLL_MS - (Date.now() - approvalLast);
+    if (wait > 0) {
+      if (approvalTimer !== null) return;
+      approvalTimer = setTimeout(() => {
+        approvalTimer = null;
+        wakeApprovalCheck(true);
+      }, wait);
+      return;
+    }
+  }
+  if (approvalTimer !== null) {
+    clearTimeout(approvalTimer);
+    approvalTimer = null;
+  }
+  approvalLast = Date.now();
+  if (approvalRunning) return;
+  approvalRunning = true;
+  checkClosedPanelApproval()
+    .catch(() => {})
+    .finally(() => {
+      approvalRunning = false;
+    });
+}
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== "kernal-panel") return;
+  port.onDisconnect.addListener(() => wakeApprovalCheck(true));
+});
+
+if (chrome.notifications && typeof chrome.notifications.onClicked?.addListener === "function") {
+  chrome.notifications.onClicked.addListener((id) => {
+    if (typeof id !== "string" || !id.startsWith("approval:")) return;
+    chrome.windows.getLastFocused({ windowTypes: ["normal"] }).then((win) => {
+      if (!win || typeof win.id !== "number" || !chrome.sidePanel) return;
+      chrome.sidePanel.open({ windowId: win.id }).catch(() => {});
+    }).catch(() => {});
+  });
+}
+
+chrome.tabs.onActivated.addListener(() => wakeApprovalCheck(false));
+chrome.tabs.onUpdated.addListener(() => wakeApprovalCheck(false));
+chrome.runtime.onStartup.addListener(() => wakeApprovalCheck(true));
+chrome.runtime.onInstalled.addListener(() => wakeApprovalCheck(true));
+
+chrome.runtime.onMessageExternal.addListener((_message, sender) => {
+  if (!originAllowed(sender?.origin)) return;
+  wakeApprovalCheck(false);
+});
+
+wakeApprovalCheck(true);

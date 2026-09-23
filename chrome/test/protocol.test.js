@@ -152,11 +152,13 @@ test("the manifest key is the pinned extension id", () => {
     "storage",
     "tabs",
     "tabGroups",
+    "sidePanel",
     "notifications",
     "contextMenus",
     "alarms",
     "nativeMessaging",
   ]);
+  assert.equal(manifest.side_panel.default_path, "panel.html");
   assert.equal(manifest.host_permissions, undefined);
   assert.deepEqual(manifest.optional_host_permissions, ["http://*/*", "https://*/*"]);
   assert.equal(JSON.stringify(manifest).includes("<all_urls>"), false);

@@ -434,7 +434,10 @@ export interface BrowserShare {
   createdAt: string;
 }
 
-export type BrowserRequestStatus = "pending" | "done" | "skipped";
+export type BrowserRequestStatus = "pending" | "done" | "skipped" | "failed";
+
+/** Chrome outcomes the extension reports after its retry. Not a transcript row. */
+export type BrowserCaptureFailure = "permission_denied" | "tab_gone" | "too_large";
 
 /** A capture ask. requesterEmail is the authenticated caller who created it, never a body field. */
 export interface BrowserRequest {
@@ -444,6 +447,8 @@ export interface BrowserRequest {
   status: BrowserRequestStatus;
   /** Set when a capture is stored and the request is marked done. */
   captureId?: string;
+  /** Set when the extension reports a terminal capture error and the request is `failed`. */
+  error?: BrowserCaptureFailure;
   createdAt: string;
   updatedAt: string;
 }
@@ -490,8 +495,19 @@ export interface BrowserRequestsCollection {
   findById(sessionId: string, id: string): Promise<BrowserRequest | null>;
   /** Oldest pending first. */
   listPending(sessionId: string): Promise<BrowserRequest[]>;
-  /** Pending or already-skipped becomes skipped. A done request is left done. */
+  /** Pending or already-skipped becomes skipped. A done or failed request is left as it is. */
   markSkipped(sessionId: string, id: string, nowIso: string): Promise<BrowserRequest | null>;
+  /**
+   * Pending becomes `failed` with `error`. `transitioned` is true only for that change, so a
+   * repeat report of the same requestId does not send a second result or insert a row.
+   * A done or skipped request is returned unchanged (`transitioned` false).
+   */
+  markFailed(
+    sessionId: string,
+    id: string,
+    error: BrowserCaptureFailure,
+    nowIso: string,
+  ): Promise<{ request: BrowserRequest; transitioned: boolean } | null>;
 }
 
 export type BrowserCaptureSave =

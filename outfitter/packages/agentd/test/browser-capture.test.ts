@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, stat } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  CAPTURE_PATH_REFUSED,
   CaptureListener,
   captureDownloadError,
   peerUidFromProcNet,
@@ -189,4 +190,74 @@ test("the tool returns the other capture errors as text", async () => {
   } finally {
     await listener.stop();
   }
+});
+
+async function captureBody(workspace: string, captureId: string): Promise<{ error?: string; path?: string }> {
+  const listener = new CaptureListener({
+    workspace,
+    waitMs: 500,
+    download: async () => JPEG,
+    sendRequest: (requestId) => {
+      listener.deliver({
+        t: "browser.capture.result",
+        requestId,
+        captureId,
+        title: "Docs",
+        url: "https://example.test/docs",
+      });
+    },
+  });
+  await listener.start();
+  try {
+    const res = await fetch(`http://127.0.0.1:${listener.port}/browser/capture`, {
+      headers: { "x-outfitter-browser-token": listener.token },
+    });
+    assert.equal(res.status, 200);
+    return (await res.json()) as { error?: string; path?: string };
+  } finally {
+    await listener.stop();
+  }
+}
+
+test("a symlink .outfitter or captures is refused and the link target is not modified", async () => {
+  const root = await mkdtemp(join(tmpdir(), "outfitter-capture-link-"));
+  const workspace = join(root, "workspace");
+  const outside = join(root, "outside");
+  await mkdir(workspace);
+  await mkdir(outside);
+  const keep = join(outside, "keep");
+  await writeFile(keep, "keep");
+  const outsideBefore = await lstat(outside);
+  const keepBefore = await lstat(keep);
+  await symlink(outside, join(workspace, ".outfitter"));
+
+  const linkedOutfitter = await captureBody(workspace, "capoutfitter");
+  assert.equal(linkedOutfitter.error, CAPTURE_PATH_REFUSED);
+  assert.equal(linkedOutfitter.path, undefined);
+  assert.deepEqual(await readdir(outside), ["keep"]);
+  assert.equal(await readFile(keep, "utf8"), "keep");
+  assert.equal((await lstat(outside)).mode, outsideBefore.mode);
+  assert.equal((await lstat(keep)).mtimeMs, keepBefore.mtimeMs);
+
+  await rm(join(workspace, ".outfitter"));
+  await mkdir(join(workspace, ".outfitter"));
+  await symlink(outside, join(workspace, ".outfitter", "captures"));
+  const linkedCaptures = await captureBody(workspace, "capcaptures");
+  assert.equal(linkedCaptures.error, CAPTURE_PATH_REFUSED);
+  assert.deepEqual(await readdir(outside), ["keep"]);
+  assert.equal(await readFile(keep, "utf8"), "keep");
+  assert.equal((await lstat(outside)).mode, outsideBefore.mode);
+  assert.equal((await lstat(keep)).mtimeMs, keepBefore.mtimeMs);
+  assert.equal((await lstat(join(workspace, ".outfitter", "captures"))).isSymbolicLink(), true);
+
+  await rm(join(workspace, ".outfitter", "captures"));
+  await mkdir(join(workspace, ".outfitter", "captures"));
+  const planted = join(workspace, ".outfitter", "captures", "capfile.jpg");
+  await symlink(keep, planted);
+  const replaced = await captureBody(workspace, "capfile");
+  assert.equal(replaced.error, undefined);
+  assert.equal(replaced.path, planted);
+  assert.equal(await readFile(keep, "utf8"), "keep");
+  assert.equal((await lstat(planted)).isSymbolicLink(), false);
+  assert.equal((await lstat(planted)).isFile(), true);
 });

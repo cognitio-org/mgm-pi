@@ -11,9 +11,11 @@
  * One HTTP call is one tool call: this process mints `requestId` once, sends
  * `browser.capture.request`, and waits up to 90s for `browser.capture.result`.
  */
+import { spawn } from "node:child_process";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { constants, type Stats } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { chmod, chown, mkdir, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, unlink, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 
 /** How long agentd waits for the extension to upload or the owner to revoke. */
@@ -143,6 +145,221 @@ function loopbackAddress(address: string | undefined): boolean {
 export function captureFilePath(workspace: string, captureId: string): string | undefined {
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(captureId)) return undefined;
   return join(workspace, ".outfitter", "captures", `${captureId}.jpg`);
+}
+
+/** Tool text when `.outfitter` or `captures` is a symlink or is not owned by the expected user.
+ * The link target is left untouched. */
+export const CAPTURE_PATH_REFUSED = "capture path refused";
+
+const DIR_MODE = 0o700;
+const FILE_MODE = 0o600;
+/** Open fails if the final component is a symlink (ELOOP or ENOTDIR). Not a path walk. */
+const DIR_FLAGS = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
+const FILE_FLAGS = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW;
+
+class CapturePathRefused extends Error {
+  constructor(message = CAPTURE_PATH_REFUSED) {
+    super(message);
+    this.name = "CapturePathRefused";
+  }
+}
+
+interface CaptureOwner {
+  uid: number;
+  gid: number;
+}
+
+type ChildKind = "missing" | "link" | "dir" | "other";
+
+interface ChildInfo {
+  kind: ChildKind;
+  uid?: number;
+  gid?: number;
+}
+
+/** One path component. Never joined onto a parent the sandbox can swap for a symlink. */
+function assertComponent(name: string): string {
+  if (name === "" || name === "." || name === ".." || name.includes("/") || name.includes("\0")) {
+    throw new CapturePathRefused();
+  }
+  return name;
+}
+
+/** Process uid, or the agent uid after chown. A directory owned by anyone else is refused. */
+function uidAllowed(uid: number | undefined, chownTo: CaptureOwner | undefined): boolean {
+  if (uid === undefined) return false;
+  const self = typeof process.getuid === "function" ? process.getuid() : undefined;
+  if (self !== undefined && uid === self) return true;
+  return chownTo !== undefined && uid === chownTo.uid;
+}
+
+function procChild(parentFd: number, name: string): string {
+  return `/proc/self/fd/${parentFd}/${assertComponent(name)}`;
+}
+
+/** Node has no mkdirat/openat. On Linux the directory fd is `/proc/self/fd/N`, which is
+ * mkdirat/openat. Elsewhere python's `dir_fd` is the same call. The sandbox user can replace
+ * a path component; the fd cannot. */
+const DIRFD_PY = `
+import os, stat, sys
+parent = 3
+name = sys.argv[1]
+op = sys.argv[2]
+if name in ("", ".", "..") or "/" in name or "\\0" in name:
+    sys.exit(2)
+nofollow = getattr(os, "O_NOFOLLOW", 0)
+
+def show():
+    try:
+        st = os.lstat(name, dir_fd=parent)
+    except FileNotFoundError:
+        print("missing")
+        return
+    if stat.S_ISLNK(st.st_mode):
+        print("link")
+    elif stat.S_ISDIR(st.st_mode):
+        print("dir %s %s" % (st.st_uid, st.st_gid))
+    else:
+        print("other %s %s" % (st.st_uid, st.st_gid))
+
+def chown(fd):
+    if len(sys.argv) < 6:
+        return
+    try:
+        os.fchown(fd, int(sys.argv[4]), int(sys.argv[5]))
+    except PermissionError:
+        pass
+
+if op == "lstat":
+    show()
+elif op == "mkdir":
+    mode = int(sys.argv[3])
+    try:
+        os.mkdir(name, mode, dir_fd=parent)
+    except FileExistsError:
+        pass
+    fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | nofollow, dir_fd=parent)
+    os.fchmod(fd, mode)
+    chown(fd)
+    st = os.fstat(fd)
+    os.close(fd)
+    if not stat.S_ISDIR(st.st_mode):
+        sys.exit(3)
+elif op == "unlink":
+    try:
+        os.unlink(name, dir_fd=parent)
+    except FileNotFoundError:
+        pass
+elif op == "write":
+    mode = int(sys.argv[3])
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow
+    fd = os.open(name, flags, mode, dir_fd=parent)
+    data = sys.stdin.buffer.read()
+    while data:
+        n = os.write(fd, data)
+        data = data[n:]
+    os.fchmod(fd, mode)
+    chown(fd)
+    st = os.fstat(fd)
+    os.close(fd)
+    if not stat.S_ISREG(st.st_mode):
+        sys.exit(3)
+else:
+    sys.exit(2)
+`;
+
+function pythonDirFd(parentFd: number, args: string[], input?: Buffer): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("python3", ["-c", DIRFD_PY, ...args], {
+      stdio: ["pipe", "pipe", "pipe", parentFd],
+    });
+    const out: Buffer[] = [];
+    const errOut: Buffer[] = [];
+    let settled = false;
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn();
+    };
+    child.stdout?.on("data", (chunk: Buffer) => out.push(chunk));
+    child.stderr?.on("data", (chunk: Buffer) => errOut.push(chunk));
+    const timer = setTimeout(() => {
+      child.kill();
+      finish(() => reject(new CapturePathRefused("python dirfd timed out")));
+    }, 10_000);
+    child.on("error", (err) => finish(() => reject(err)));
+    child.on("close", (code) => {
+      finish(() => {
+        if (code !== 0) {
+          reject(new Error(Buffer.concat(errOut).toString("utf8") || `python dirfd exited ${code}`));
+          return;
+        }
+        resolve(Buffer.concat(out).toString("utf8"));
+      });
+    });
+    child.stdin?.end(input ?? Buffer.alloc(0));
+  });
+}
+
+function parseChild(stdout: string): ChildInfo {
+  const line = stdout.trim();
+  if (line === "missing") return { kind: "missing" };
+  if (line === "link") return { kind: "link" };
+  const dir = /^dir (\d+) (\d+)$/.exec(line);
+  if (dir) return { kind: "dir", uid: Number(dir[1]), gid: Number(dir[2]) };
+  const other = /^other (\d+) (\d+)$/.exec(line);
+  if (other) return { kind: "other", uid: Number(other[1]), gid: Number(other[2]) };
+  throw new CapturePathRefused();
+}
+
+function infoFromStat(st: Stats): ChildInfo {
+  if (st.isSymbolicLink()) return { kind: "link" };
+  if (st.isDirectory()) return { kind: "dir", uid: st.uid, gid: st.gid };
+  return { kind: "other", uid: st.uid, gid: st.gid };
+}
+
+async function childInfo(parent: FileHandle, name: string): Promise<ChildInfo> {
+  const component = assertComponent(name);
+  if (process.platform === "linux") {
+    try {
+      return infoFromStat(await lstat(procChild(parent.fd, component)));
+    } catch (err: any) {
+      if (err?.code === "ENOENT") return { kind: "missing" };
+      if (err?.code === "ELOOP" || err?.code === "ENOTDIR") return { kind: "link" };
+      throw err;
+    }
+  }
+  return parseChild(await pythonDirFd(parent.fd, [component, "lstat"]));
+}
+
+async function openNoFollow(path: string): Promise<FileHandle> {
+  try {
+    const handle = await open(path, DIR_FLAGS);
+    const st = await handle.stat();
+    if (!st.isDirectory()) {
+      await handle.close();
+      throw new CapturePathRefused();
+    }
+    return handle;
+  } catch (err) {
+    if (err instanceof CapturePathRefused) throw err;
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ELOOP" || code === "ENOTDIR" || code === "ENOENT" || code === "EPERM" || code === "ENOTSUP") {
+      throw new CapturePathRefused();
+    }
+    throw err;
+  }
+}
+
+async function chownHandle(handle: FileHandle, chownTo: CaptureOwner | undefined, log: (line: string) => void): Promise<void> {
+  if (!chownTo) return;
+  try {
+    await handle.chown(chownTo.uid, chownTo.gid);
+  } catch (err: any) {
+    // Outside the image agentd isn't root. The file stays mode 0600 owned by this user.
+    log(`browser capture chown skipped: ${err?.message ?? err}`);
+  }
 }
 
 export class CaptureListener {
@@ -291,24 +508,176 @@ export class CaptureListener {
       return { error: "timeout" };
     }
     if (bytes.length === 0 || bytes.length > BROWSER_CAPTURE_MAX_BYTES) return { error: "too_large" };
-    const dir = join(this.opts.workspace, ".outfitter", "captures");
-    const parent = join(this.opts.workspace, ".outfitter");
-    await mkdir(dir, { recursive: true });
-    await chmod(parent, 0o700);
-    await chmod(dir, 0o700);
-    await writeFile(path, bytes, { mode: 0o600, flag: "w" });
-    await chmod(path, 0o600);
-    if (this.opts.chownTo) {
-      try {
-        await chown(parent, this.opts.chownTo.uid, this.opts.chownTo.gid);
-        await chown(dir, this.opts.chownTo.uid, this.opts.chownTo.gid);
-        await chown(path, this.opts.chownTo.uid, this.opts.chownTo.gid);
-      } catch (err: any) {
-        // Outside the image agentd isn't root. The file is still mode 0600 owned by this user.
-        this.onLog(`browser capture chown skipped: ${err?.message ?? err}`);
+    try {
+      await this.writeCapture(frame.captureId, bytes);
+    } catch (err) {
+      if (err instanceof CapturePathRefused) {
+        this.onLog(`browser capture path refused: ${err.message}`);
+        return { error: CAPTURE_PATH_REFUSED };
       }
+      throw err;
     }
     return { title: frame.title, url: frame.url, path };
+  }
+
+  /**
+   * `.outfitter` and `captures` are created through the parent directory fd (O_NOFOLLOW / mkdirat).
+   * A symlink the sandbox user planted is refused. chmod and the jpeg write use that fd too, so
+   * they cannot follow the link.
+   */
+  private async writeCapture(captureId: string, bytes: Buffer): Promise<void> {
+    const fileName = `${assertComponent(captureId)}.jpg`;
+    const workspace = await openNoFollow(this.opts.workspace);
+    try {
+      const outfitter = await this.ensureDir(workspace, this.opts.workspace, ".outfitter");
+      try {
+        const captures = await this.ensureDir(outfitter, join(this.opts.workspace, ".outfitter"), "captures");
+        try {
+          await this.writeJpeg(captures, fileName, bytes);
+        } finally {
+          await captures.close();
+        }
+      } finally {
+        await outfitter.close();
+      }
+    } finally {
+      await workspace.close();
+    }
+  }
+
+  private async ensureDir(parent: FileHandle, parentPath: string, name: string): Promise<FileHandle> {
+    const info = await childInfo(parent, name);
+    if (info.kind === "link" || info.kind === "other" || (info.kind === "dir" && !uidAllowed(info.uid, this.opts.chownTo))) {
+      throw new CapturePathRefused();
+    }
+    if (info.kind === "missing") await this.makeChildDir(parent, name);
+    const child = await this.openChildDir(parent, parentPath, name);
+    try {
+      const st = await child.stat();
+      if (!st.isDirectory() || !uidAllowed(st.uid, this.opts.chownTo)) throw new CapturePathRefused();
+      await child.chmod(DIR_MODE);
+      await chownHandle(child, this.opts.chownTo, this.onLog);
+      return child;
+    } catch (err) {
+      await child.close();
+      throw err;
+    }
+  }
+
+  private async makeChildDir(parent: FileHandle, name: string): Promise<void> {
+    const component = assertComponent(name);
+    if (process.platform === "linux") {
+      const path = procChild(parent.fd, component);
+      try {
+        await mkdir(path, { mode: DIR_MODE });
+      } catch (err: any) {
+        if (err?.code !== "EEXIST") throw err;
+      }
+      const child = await this.openProc(path);
+      try {
+        const st = await child.stat();
+        if (!st.isDirectory()) throw new CapturePathRefused();
+        await child.chmod(DIR_MODE);
+        await chownHandle(child, this.opts.chownTo, this.onLog);
+      } finally {
+        await child.close();
+      }
+      return;
+    }
+    const args = [component, "mkdir", String(DIR_MODE)];
+    if (this.opts.chownTo) args.push(String(this.opts.chownTo.uid), String(this.opts.chownTo.gid));
+    try {
+      await pythonDirFd(parent.fd, args);
+    } catch (err: any) {
+      this.onLog(`browser capture mkdir refused: ${err?.message ?? err}`);
+      throw new CapturePathRefused();
+    }
+  }
+
+  private async openChildDir(parent: FileHandle, parentPath: string, name: string): Promise<FileHandle> {
+    const component = assertComponent(name);
+    try {
+      if (process.platform === "linux") return await this.openProc(procChild(parent.fd, component));
+      return await openNoFollow(join(parentPath, component));
+    } catch (err) {
+      if (err instanceof CapturePathRefused) throw err;
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ELOOP" || code === "ENOTDIR" || code === "ENOENT" || code === "EEXIST") throw new CapturePathRefused();
+      throw err;
+    }
+  }
+
+  private async openProc(path: string): Promise<FileHandle> {
+    let handle: FileHandle;
+    try {
+      handle = await open(path, DIR_FLAGS);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ELOOP" || code === "ENOTDIR" || code === "ENOENT" || code === "EEXIST") throw new CapturePathRefused();
+      throw err;
+    }
+    const st = await handle.stat();
+    if (!st.isDirectory()) {
+      await handle.close();
+      throw new CapturePathRefused();
+    }
+    return handle;
+  }
+
+  /** Removes a file or symlink in `dir`. unlink does not follow a final symlink, so the target stays. */
+  private async unlinkChild(dir: FileHandle, name: string): Promise<void> {
+    const component = assertComponent(name);
+    if (process.platform === "linux") {
+      try {
+        await unlink(procChild(dir.fd, component));
+      } catch (err: any) {
+        if (err?.code !== "ENOENT") throw err;
+      }
+      return;
+    }
+    try {
+      await pythonDirFd(dir.fd, [component, "unlink"]);
+    } catch (err: any) {
+      this.onLog(`browser capture unlink refused: ${err?.message ?? err}`);
+      throw new CapturePathRefused();
+    }
+  }
+
+  /** O_EXCL|O_NOFOLLOW: the jpeg is a regular file this process created, or the call fails. */
+  private async writeJpeg(dir: FileHandle, name: string, bytes: Buffer): Promise<void> {
+    const info = await childInfo(dir, name);
+    // A directory in the jpeg's place is left alone. A file or symlink is removed (the symlink
+    // itself, not its target) so this call can create a regular file.
+    if (info.kind === "dir") throw new CapturePathRefused();
+    if (info.kind !== "missing") await this.unlinkChild(dir, name);
+    const component = assertComponent(name);
+    if (process.platform !== "linux") {
+      const args = [component, "write", String(FILE_MODE)];
+      if (this.opts.chownTo) args.push(String(this.opts.chownTo.uid), String(this.opts.chownTo.gid));
+      try {
+        await pythonDirFd(dir.fd, args, bytes);
+      } catch (err: any) {
+        this.onLog(`browser capture write refused: ${err?.message ?? err}`);
+        throw new CapturePathRefused();
+      }
+      return;
+    }
+    let handle: FileHandle;
+    try {
+      handle = await open(procChild(dir.fd, component), FILE_FLAGS, FILE_MODE);
+    } catch (err: any) {
+      if (err?.code === "EEXIST" || err?.code === "ELOOP" || err?.code === "ENOTDIR") throw new CapturePathRefused();
+      throw err;
+    }
+    try {
+      await handle.writeFile(bytes);
+      await handle.chmod(FILE_MODE);
+      const st = await handle.stat();
+      if (!st.isFile()) throw new CapturePathRefused();
+      await chownHandle(handle, this.opts.chownTo, this.onLog);
+    } finally {
+      await handle.close();
+    }
   }
 
   private refuse(res: ServerResponse): void {

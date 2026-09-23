@@ -4,11 +4,20 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { RouteContext } from "./context.ts";
-import type { BrowserCapture, BrowserRequest, PiEntry } from "../store/types.ts";
+import type { BrowserCapture, BrowserCaptureFailure, BrowserRequest, PiEntry } from "../store/types.ts";
 import { getSessionOr404 } from "./sessions.ts";
 
 /** Decoded jpeg cap. Larger uploads are 413; the extension recompresses to fit. */
 export const BROWSER_CAPTURE_MAX_BYTES = 350_000;
+
+/** Terminal Chrome outcomes. A report of anything else does not finish the request. */
+const CAPTURE_FAILURES: readonly BrowserCaptureFailure[] = ["permission_denied", "tab_gone", "too_large"];
+
+function captureFailure(value: unknown): BrowserCaptureFailure | undefined {
+  return typeof value === "string" && (CAPTURE_FAILURES as readonly string[]).includes(value)
+    ? (value as BrowserCaptureFailure)
+    : undefined;
+}
 
 const CAPTURE_ENTRY_TYPE = "outfitter.browser.capture";
 
@@ -42,6 +51,7 @@ function requestView(request: BrowserRequest): {
     requesterEmail: request.requesterEmail,
     status: request.status,
     captureId: request.captureId ?? null,
+    ...(request.error ? { error: request.error } : {}),
     createdAt: request.createdAt,
   };
 }
@@ -206,6 +216,37 @@ export async function registerBrowserRoutes(app: FastifyInstance, ctx: RouteCont
       });
     }
     return requestView(request);
+  });
+
+  // The extension reports permission_denied, tab_gone, or too_large after its one retry.
+  // Same result frame as a successful upload, and still no transcript seq — browser.capture.entry
+  // is the only path that allocates one. A repeat of this requestId does not send it again.
+  app.post("/api/sessions/:id/browser/requests/:requestId/fail", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const email = callerEmail(req, reply);
+    if (!email) return;
+    const share = await ctx.store.browserShares.findBySession(session.id);
+    if (!share) return reply.code(404).send({ error: "no browser share" });
+    if (share.ownerEmail !== email) return reply.code(403).send({ error: "not the share owner" });
+    const failure = captureFailure(asRecord(req.body).error);
+    if (!failure) {
+      return reply.code(400).send({ error: "error must be permission_denied, tab_gone, or too_large" });
+    }
+    const { requestId } = req.params as { requestId: string };
+    const marked = await ctx.store.browserRequests.markFailed(session.id, requestId, failure, new Date().toISOString());
+    if (!marked) return reply.code(404).send({ error: "not found" });
+    if (marked.request.status === "done" || marked.request.status === "skipped") {
+      return reply.code(409).send({ error: "request is not pending" });
+    }
+    if (marked.transitioned && marked.request.error) {
+      await ctx.agentLink.sendCaptureResult(session.id, {
+        t: "browser.capture.result",
+        requestId: marked.request.id,
+        error: marked.request.error,
+      });
+    }
+    return requestView(marked.request);
   });
 
   app.post("/api/sessions/:id/browser/captures", async (req, reply) => {

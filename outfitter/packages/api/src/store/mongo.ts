@@ -32,6 +32,7 @@ import type {
   BrowserRequest,
   BrowserRequestsCollection,
   BrowserCapture,
+  BrowserCaptureFailure,
   BrowserCapturesCollection,
   BrowserCaptureSave,
 } from "./types.ts";
@@ -745,12 +746,38 @@ class MongoBrowserRequests implements BrowserRequestsCollection {
 
   async markSkipped(sessionId: string, id: string, nowIso: string): Promise<BrowserRequest | null> {
     const updated = await this.col.findOneAndUpdate(
-      { _id: id, sessionId, status: { $ne: "done" } },
+      { _id: id, sessionId, status: "pending" },
       { $set: { status: "skipped", updatedAt: nowIso } },
       { returnDocument: "after" },
     );
     if (updated) return stripId<BrowserRequest>(updated);
-    return this.findById(sessionId, id);
+    const existing = await this.findById(sessionId, id);
+    if (existing?.status === "skipped") {
+      await this.col.updateOne({ _id: id, sessionId, status: "skipped" }, { $set: { updatedAt: nowIso } });
+      return { ...existing, updatedAt: nowIso };
+    }
+    return existing;
+  }
+
+  async markFailed(
+    sessionId: string,
+    id: string,
+    error: BrowserCaptureFailure,
+    nowIso: string,
+  ): Promise<{ request: BrowserRequest; transitioned: boolean } | null> {
+    const updated = await this.col.findOneAndUpdate(
+      { _id: id, sessionId, status: "pending" },
+      { $set: { status: "failed", error, updatedAt: nowIso } },
+      { returnDocument: "after" },
+    );
+    if (updated) {
+      const request = stripId<BrowserRequest>(updated);
+      if (!request) return null;
+      return { request, transitioned: true };
+    }
+    const existing = await this.findById(sessionId, id);
+    if (!existing) return null;
+    return { request: existing, transitioned: false };
   }
 }
 

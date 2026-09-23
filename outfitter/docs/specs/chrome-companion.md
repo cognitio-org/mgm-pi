@@ -186,6 +186,7 @@ One share per session. Creating a share replaces the previous one for that sessi
 | `GET /api/sessions/:id/browser/requests?status=pending` | Share owner | Pending requests for the extension to act on. Other callers get `404` (do not reveal the queue). |
 | `GET /api/sessions/:id/browser/requests/:requestId` | The requester or the share owner | Status, so a waiting tool can poll. |
 | `POST /api/sessions/:id/browser/requests/:requestId/revoke` | Share owner | If not yet `done`, mark `skipped` and drop an in-progress upload. |
+| `POST /api/sessions/:id/browser/requests/:requestId/fail` | Share owner | `{error}` is `permission_denied`, `tab_gone`, or `too_large`. A pending request becomes `failed` and the API sends `{t:"browser.capture.result", requestId, error}`. A repeat does not insert a row or send the frame again. |
 | `POST /api/sessions/:id/browser/captures` | Share owner | `{requestId, title, url, jpegBase64}`. |
 | `GET /api/sessions/:id/browser/captures/:captureId` | Any authenticated caller | `image/jpeg` bytes. |
 
@@ -221,7 +222,7 @@ Tests live next to the existing API tests and cover: owner-only upload, other-em
 4. Recompress under the byte cap.
 5. If Revoke arrived before the upload returned, do not upload. Call the revoke route if the local revoke has not already.
 6. `POST` the capture.
-7. On failure, leave the request pending and surface the error in the panel. Do not retry forever. One automatic retry is enough; the agent's wait has its own deadline.
+7. On `permission_denied`, `tab_gone`, or `too_large`, retry once, then `POST` the fail route so the Drive hears the error, and surface it in the panel. Other failures leave the request pending. Do not retry forever.
 
 The context menu and the panel button are the only ways to create a share. The session page cannot.
 
@@ -272,7 +273,7 @@ Blocking path:
 5. On success, agentd `GET`s the jpeg and writes `/workspace/.outfitter/captures/<captureId>.jpg` (directory mode `0700`, file mode `0600`).
 6. The tool returns title, url, and that path, with the same image-block rule as §12.
 
-Errors the model can read, as text, not exceptions: `no_share`, `skipped` (owner revoked before upload), `timeout`, `permission_denied`, `tab_gone`, `too_large`.
+Errors the model can read, as text, not exceptions: `no_share`, `skipped` (owner revoked before upload), `timeout`, `permission_denied`, `tab_gone`, `too_large`. The extension reports those last three on the fail route after one retry; the API forwards the error immediately instead of leaving the request pending until the 90s wait.
 
 A retried tool call with the same in-flight request must not create a second request row. agentd generates `requestId` once per tool call and the API treats a repeat of that id as the same row.
 

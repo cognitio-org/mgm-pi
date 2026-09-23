@@ -363,7 +363,7 @@ export class AgentLink {
 
   /** `{t:"browser.capture.request"}` from the Drive. One row per requestId. `no_share` and a
    * repeat of an already-finished id are answered immediately; a new pending row waits for the
-   * upload or a revoke to send `browser.capture.result`. */
+   * upload, a revoke, or a capture-failure report to send `browser.capture.result`. */
   private async handleBrowserCaptureRequest(sessionId: string, frame: UpFrame): Promise<void> {
     const requestId = frame.requestId;
     if (typeof requestId !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(requestId)) return;
@@ -383,6 +383,10 @@ export class AgentLink {
     }
     if (saved.status === "skipped") {
       await this.sendCaptureResult(sessionId, { t: "browser.capture.result", requestId, error: "skipped" });
+      return;
+    }
+    if (saved.status === "failed" && saved.error) {
+      await this.sendCaptureResult(sessionId, { t: "browser.capture.result", requestId, error: saved.error });
       return;
     }
     if (saved.status !== "done") return;

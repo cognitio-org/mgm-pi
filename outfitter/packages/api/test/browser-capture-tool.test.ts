@@ -214,6 +214,96 @@ test("a revoke while the Drive is waiting yields skipped", async () => {
   }
 });
 
+test("a reported tab_gone makes a waiting capture return tab_gone instead of hanging", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "outfitter-drive-gone-"));
+  const { app, sessionId, agent } = await linkDrive();
+  const owner = { authorization: `Bearer ${await mint(app.store, "owner@example.com")}` };
+  const base = `/api/sessions/${sessionId}/browser`;
+  assert.equal(
+    (await app.fastify.inject({
+      method: "PUT",
+      url: `${base}/share`,
+      headers: owner,
+      payload: { tabTitle: "Docs", tabUrl: "https://example.test/docs" },
+    })).statusCode,
+    200,
+  );
+  const results: Array<{ requestId?: string; error?: string }> = [];
+  let requestId = "";
+  let uploadError: unknown;
+  const listener = new CaptureListener({
+    workspace,
+    waitMs: 4_000,
+    download: async () => {
+      throw new Error("tab_gone must not download a jpeg");
+    },
+    sendRequest: (id) => {
+      requestId = id;
+      agent.send({ t: "browser.capture.request", requestId: id });
+      void (async () => {
+        try {
+          await waitFor(async () => (await app.store.browserRequests.findById(sessionId, id))?.status === "pending");
+          const reported = await app.fastify.inject({
+            method: "POST",
+            url: `${base}/requests/${id}/fail`,
+            headers: owner,
+            payload: { error: "tab_gone" },
+          });
+          if (reported.statusCode !== 200) uploadError = new Error(`fail ${reported.statusCode} ${reported.body}`);
+        } catch (err) {
+          uploadError = err;
+        }
+      })();
+    },
+  });
+  await listener.start();
+  void (async () => {
+    for (;;) {
+      const frame = await agent.nextMessage();
+      if (frame.t === "browser.capture.result") {
+        results.push(frame);
+        listener.deliver(frame);
+      }
+    }
+  })();
+  try {
+    let tool: { execute: (id: string, params: object) => Promise<{ content: Array<{ type: string; text?: string }> }> } | undefined;
+    outfitterBrowser(
+      { registerTool: (registered) => { tool = registered as typeof tool; } },
+      { OUTFITTER_BROWSER_PORT: String(listener.port), OUTFITTER_BROWSER_TOKEN: listener.token },
+    );
+    const result = await tool!.execute("call-1", {});
+    assert.equal(uploadError, undefined);
+    assert.equal(result.content[0].text, "tab_gone");
+    assert.equal(result.content.length, 1);
+    assert.equal(results.length, 1);
+    assert.equal(results[0].error, "tab_gone");
+    assert.equal(results[0].requestId, requestId);
+    const row = await app.store.browserRequests.findById(sessionId, requestId);
+    assert.equal(row?.status, "failed");
+    assert.equal(row?.error, "tab_gone");
+    assert.equal((await app.store.browserRequests.listPending(sessionId)).length, 0);
+    assert.equal(await app.store.entries.findByEntryId(sessionId, `browser-capture:${requestId}`), null);
+
+    const again = await app.fastify.inject({
+      method: "POST",
+      url: `${base}/requests/${requestId}/fail`,
+      headers: owner,
+      payload: { error: "permission_denied" },
+    });
+    assert.equal(again.statusCode, 200);
+    assert.equal(again.json().status, "failed");
+    assert.equal(again.json().error, "tab_gone");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(results.length, 1);
+    assert.equal((await app.store.browserRequests.listPending(sessionId)).length, 0);
+    assert.equal(await app.store.entries.findByEntryId(sessionId, `browser-capture:${requestId}`), null);
+  } finally {
+    await listener.stop();
+    await closeDrive(app, agent);
+  }
+});
+
 test("no share answers no_share, and the same requestId is one row", async () => {
   const { app, sessionId, agent } = await linkDrive();
   const owner = { authorization: `Bearer ${await mint(app.store, "owner@example.com")}` };

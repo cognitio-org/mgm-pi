@@ -31,6 +31,7 @@ import type {
   BrowserRequest,
   BrowserRequestsCollection,
   BrowserCapture,
+  BrowserCaptureFailure,
   BrowserCapturesCollection,
   BrowserCaptureSave,
 } from "./types.ts";
@@ -567,11 +568,28 @@ class MemoryBrowserRequests implements BrowserRequestsCollection {
   async markSkipped(sessionId: string, id: string, nowIso: string): Promise<BrowserRequest | null> {
     const row = this.tables.requests.get(id);
     if (!row || row.sessionId !== sessionId) return null;
-    if (row.status !== "done") {
+    if (row.status === "pending") {
       row.status = "skipped";
+      row.updatedAt = nowIso;
+    } else if (row.status === "skipped") {
       row.updatedAt = nowIso;
     }
     return clone(row);
+  }
+
+  async markFailed(
+    sessionId: string,
+    id: string,
+    error: BrowserCaptureFailure,
+    nowIso: string,
+  ): Promise<{ request: BrowserRequest; transitioned: boolean } | null> {
+    const row = this.tables.requests.get(id);
+    if (!row || row.sessionId !== sessionId) return null;
+    if (row.status !== "pending") return { request: clone(row), transitioned: false };
+    row.status = "failed";
+    row.error = error;
+    row.updatedAt = nowIso;
+    return { request: clone(row), transitioned: true };
   }
 }
 

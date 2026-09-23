@@ -89,6 +89,7 @@ describe("browser companion on the link role", () => {
       "/api/sessions/:id/abort",
       "/api/sessions/:id/browser/requests",
       "/api/sessions/:id/browser/requests/:requestId/revoke",
+      "/api/sessions/:id/browser/requests/:requestId/fail",
       "/api/sessions/:id/browser/captures",
     ]) {
       assert.equal(has("POST", url), true, `POST ${url}`);

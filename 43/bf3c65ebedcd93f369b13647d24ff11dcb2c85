@@ -1,0 +1,24 @@
+outfitter/packages/api/test/mongo-tokens.test.ts
+  s_e60c198231e35c::t_4c44bf82c94ec4 167-170,172-174,179-183
+  s_e60c198231e35c::t_4d3e4f1d936bf6 171,175-178,184-185
+  s_e60c198231e35c::t_a0a190c28a48cb 187-188,190-191,194,198-199,207,209-211,213-217
+outfitter/packages/api/src/store/mongo.ts
+  s_e60c198231e35c::t_d68f59f3d8c8d1 362-365,368-376,396-399
+  s_e60c198231e35c::t_77465e4be923aa 400-401
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "43bf3c65ebedcd93f369b13647d24ff11dcb2c85",
+  "prompts": {},
+  "sessions": {
+    "s_e60c198231e35c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "08aeabd8-483e-47c5-a371-a550240c5d37",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

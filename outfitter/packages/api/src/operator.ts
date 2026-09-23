@@ -4,6 +4,7 @@
 // its own module (not routes/operator.ts) so the definitions are easy to find and reuse from tests.
 
 import type { Guru } from "./store/types.ts";
+import { GITHUB_TOKEN_DEFAULT_SECRET } from "./secrets.ts";
 
 /** When a change to this secret takes effect: "next run" for a secret read live via SecretsBroker
  * at run start (never mounted as container env), "next deploy" for one mounted as a container env
@@ -23,7 +24,8 @@ export interface ManagedSecretDef {
 
 /** Secret names that exist independently of the current guru list (EPIC.md E2.5 / README.md's
  * Secret Manager section, group (a): mounted as container env vars, read once at boot -- and
- * outfitter-litellm-key-default from group (b), read live per run). */
+ * outfitter-litellm-key-default and outfitter-github-token-default from group (b), read live
+ * per run). */
 const STATIC_SECRETS: ManagedSecretDef[] = [
   {
     secretName: "outfitter-litellm-key-default",
@@ -31,6 +33,13 @@ const STATIC_SECRETS: ManagedSecretDef[] = [
     purpose: "Used for every run's LiteLLM key unless its guru has its own key.",
     appliesAt: "next run",
     kind: "litellm",
+  },
+  {
+    secretName: GITHUB_TOKEN_DEFAULT_SECRET,
+    label: "Default GitHub token",
+    purpose: "Used for a repo session's GitHub token unless that session has its own.",
+    appliesAt: "next run",
+    kind: "github",
   },
   {
     secretName: "outfitter-github-pat",
@@ -65,6 +74,12 @@ const STATIC_SECRETS: ManagedSecretDef[] = [
 /** Name of the per-guru LiteLLM key secret (README.md group (b)). */
 export function guruLitellmKeySecretName(guruId: string): string {
   return `outfitter-litellm-key-${guruId}`;
+}
+
+/** Name of a session's own GitHub token. Not operator-managed; the delete guard for the
+ * shared default reads it to see who would be left with nothing. */
+export function sessionGithubTokenSecretName(sessionId: string): string {
+  return `outfitter-github-token-${sessionId}`;
 }
 
 const GURU_KEY_PREFIX = "outfitter-litellm-key-";

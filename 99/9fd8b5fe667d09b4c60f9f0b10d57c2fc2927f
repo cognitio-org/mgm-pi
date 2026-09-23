@@ -1,0 +1,22 @@
+kernal/.pi/extensions/teleport/index.ts
+  h_69b863911ebf05 68,72,75-76
+kernal/.pi/extensions/teleport/lib.ts
+  h_69b863911ebf05 36,258,268
+kernal/.pi/extensions/teleport/outfitter-store.ts
+  h_69b863911ebf05 230
+outfitter/packages/api/src/routes/sessions.ts
+  h_69b863911ebf05 93-99,111,114-116,235-237
+outfitter/packages/api/test/routes.test.ts
+  h_69b863911ebf05 330-375
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "999fd8b5fe667d09b4c60f9f0b10d57c2fc2927f",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

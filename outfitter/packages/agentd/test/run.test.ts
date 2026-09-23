@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import net from "node:net";
 import { mkdtemp, copyFile, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -986,6 +987,8 @@ async function setupControllablePiRun(t: { after: (fn: () => void) => void }) {
     writeSnapshotFile,
     createTailer: () => ({ start() {}, stop() {}, poll: async () => {} }),
     onLog: () => {},
+    // Default onExit is process.exit, which aborts this file when a test delivers `stop`.
+    onExit: () => {},
   });
   t.after(() => controller.dispose());
   const spec: DownRunSpec = {
@@ -1173,4 +1176,60 @@ test("RunController: browser.capture.entry is emitted once through sendSeq", asy
     assert.equal(frame.entry.id, entry.id);
     assert.equal(frame.entry, entry);
   }
+});
+
+function portOpen(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ port, host: "127.0.0.1" });
+    const done = (open: boolean) => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(open);
+    };
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+  });
+}
+
+test("RunController: a GitHub repo and token pin insteadOf on pi and do not put the token in its env", async (t) => {
+  const token = "ghp_test_TOKEN_89_do_not_leak";
+  const { link, getPi, getSpawnEnv } = await setupControllablePiRun(t);
+  link.deliver({
+    t: "run.spec",
+    session: { id: "sess-proxy", name: "proxy", cwd: "/workspace" },
+    repo: {
+      cloneUrl: "https://github.com/acme/widget.git",
+      branch: "outfitter/sess1",
+      baseBranch: "main",
+      createBranch: true,
+    },
+    guru: {
+      model: "fake/model",
+      env: {
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "http.extraheader",
+        GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${token}`,
+      },
+    },
+    snapshot: { jsonl: emptySessionJsonl("sess-proxy", "/workspace") },
+    secrets: { githubToken: token },
+    idleStopSeconds: 3600,
+    checkpointEvery: "turn",
+  });
+  await waitFor(() => getPi() !== undefined);
+  const env = getSpawnEnv()!;
+  assert.equal(env.GIT_CONFIG_COUNT, "1");
+  assert.equal(env.GIT_CONFIG_VALUE_0, "https://github.com/acme/widget.git");
+  assert.match(env.GIT_CONFIG_KEY_0!, /^url\.http:\/\/127\.0\.0\.1:\d+\/acme\/widget\.git\.insteadOf$/);
+  assert.equal(env.GIT_CONFIG_KEY_1, undefined);
+  const blob = JSON.stringify(env);
+  assert.ok(!blob.includes(token));
+  assert.ok(!blob.toLowerCase().includes("extraheader"));
+  assert.ok(!blob.toLowerCase().includes("authorization"));
+  const proxyUrl = env.GIT_CONFIG_KEY_0!.slice("url.".length, -".insteadOf".length);
+  const port = Number(new URL(proxyUrl).port);
+  assert.equal(await portOpen(port), true);
+  link.deliver({ t: "stop", reason: "done" });
+  await waitFor(() => link.sent.some((m) => m.t === "bye"));
+  assert.equal(await portOpen(port), false);
 });

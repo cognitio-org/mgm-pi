@@ -1,0 +1,22 @@
+kernal/tests/github-confirm.test.ts
+  s_e3759c4b776500::t_9630b203687ad3 1-116
+  s_e3759c4b776500::t_3fed3d9454876d 117-119
+kernal/.pi/extensions/kernal-github/confirm.ts
+  s_e3759c4b776500::t_6f963f68a2b7a5 1-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "6181f460486bd2983ffb130dec553eaa84667c4a",
+  "prompts": {},
+  "sessions": {
+    "s_e3759c4b776500": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a0cedb-b828-7b32-9f44-6b8d656c1983",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -1,0 +1,34 @@
+chrome/README.md
+  h_69b863911ebf05 3,7,22-27,41
+chrome/extension/background.js
+  h_69b863911ebf05 5-19,354-473
+chrome/extension/manifest.json
+  h_69b863911ebf05 7-8,13-22
+chrome/extension/options.html
+  h_69b863911ebf05 27
+chrome/extension/options.js
+  h_69b863911ebf05 50-54,67
+chrome/extension/panel-model.js
+  h_69b863911ebf05 1-312
+chrome/extension/panel.html
+  h_69b863911ebf05 1-72
+chrome/extension/panel.js
+  h_69b863911ebf05 1-486
+chrome/package.json
+  h_69b863911ebf05 6
+chrome/test/panel.test.js
+  h_69b863911ebf05 1-210
+chrome/test/protocol.test.js
+  h_69b863911ebf05 151-153
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "841665dc824616f7fb4fc1d3bcdd426113c1b7ec",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

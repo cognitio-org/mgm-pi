@@ -8,6 +8,7 @@ import { mkdir, readFile, open as openFile, chown } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { renderGuru } from "./guru.js";
 import { attributionTrailers, authHeaderSecret, botIdentityEnv, sanitizeAuthor, type GitOps } from "./git.js";
+import { githubRepoHttps, gitProxyInsteadOfEnv, parseGithubCloneUrl, startGitProxy, type GitProxy } from "./git-proxy.js";
 import { spawnPi, SessionTailer, SpendTailer, validateSpendLine, type PiProcess, type SpendLogLine } from "./pi.js";
 import { importSession, writeSnapshotFile, emptySessionJsonl, lastKnownModelState } from "./session.js";
 import { StartupPhases } from "./startup-phases.js";
@@ -211,6 +212,8 @@ export class RunController {
   private readonly mailAccepted = new Set<string>();
   /** Start-up phase timing; only set when deps.startupPhases is on (startup-phases.ts). */
   private startup: StartupPhases | undefined;
+  /** Localhost git smart-HTTP proxy for this run, if it has a GitHub repo and token. */
+  private gitProxy: GitProxy | undefined;
   private readonly now: () => number;
   private readonly onExit: (code: number) => void;
   private readonly onLog: (line: string) => void;
@@ -243,6 +246,7 @@ export class RunController {
     this.tailer?.stop();
     this.spendTailer?.stop();
     this.pi?.kill();
+    void this.stopGitProxy();
   }
 
   private setState(state: RunState, detail?: string): void {
@@ -480,6 +484,10 @@ export class RunController {
       secretEnv.OUTFITTER_SPEND_FILE = this.deps.spendFile;
       await this.ensureSpendFile(this.deps.spendFile);
     }
+    // Pin the git proxy insteadOf here, after guru.env. The token stays out of this env;
+    // baseEnvForPi is unchanged and still drops inherited GIT_CONFIG_* (allowlisting those
+    // is what used to leak the GitHub token into the model's shell).
+    const gitProxyEnv = await this.startGitProxy(spec);
     // pi runs as the unprivileged agent user but would otherwise inherit root's HOME from agentd's
     // environment; the first extension to touch ~/.pi then dies with EACCES on /root (every run of
     // the first benchmark). Point the child at that user's own home.
@@ -490,7 +498,7 @@ export class RunController {
     this.pi = spawnFn({
       piBin: this.deps.piBin,
       args: rendered.args,
-      env: { ...rendered.env, ...secretEnv, ...userEnv },
+      env: { ...rendered.env, ...secretEnv, ...gitProxyEnv, ...userEnv },
       cwd: this.deps.workspace,
       uid: this.deps.runAsUser?.uid,
       gid: this.deps.runAsUser?.gid,
@@ -531,6 +539,35 @@ export class RunController {
 
     this.enterIdle();
     this.startHeartbeat();
+  }
+
+  /** v1 allow-list is the session branch (`refs/heads/<branch>` unless it is already a full ref). */
+  private async startGitProxy(spec: DownRunSpec): Promise<Record<string, string>> {
+    const token = spec.secrets.githubToken;
+    if (!spec.repo || !token) return {};
+    const parsed = parseGithubCloneUrl(spec.repo.cloneUrl);
+    if (!parsed) return {};
+    const branch = spec.repo.branch;
+    const allowed = branch.startsWith("refs/") ? [branch] : [`refs/heads/${branch}`];
+    this.gitProxy = await startGitProxy({
+      owner: parsed.owner,
+      repo: parsed.repo,
+      token,
+      allowedRefs: allowed,
+      log: (line) => this.onLog(line),
+    });
+    return gitProxyInsteadOfEnv(this.gitProxy.url, githubRepoHttps(parsed.owner, parsed.repo));
+  }
+
+  private async stopGitProxy(): Promise<void> {
+    const proxy = this.gitProxy;
+    this.gitProxy = undefined;
+    if (!proxy) return;
+    try {
+      await proxy.close();
+    } catch (err) {
+      this.onLog(`git proxy stop failed: ${err instanceof Error ? err.name : "Error"}`);
+    }
   }
 
   /** E2.11: the spend file lives in a root-owned 0750 directory in the image (/run/outfitter, see
@@ -648,6 +685,7 @@ export class RunController {
    * before the caller exits the process -- see Link.sendAndFlush's doc comment for why a plain
    * `send()` right before `process.exit()` can silently drop it. */
   private async bye(reason: ByeReason, message?: string): Promise<void> {
+    await this.stopGitProxy();
     const msg = { t: "bye" as const, reason, message };
     if (this.deps.link.sendAndFlush) {
       await Promise.race([this.deps.link.sendAndFlush(msg), delay(1000)]);

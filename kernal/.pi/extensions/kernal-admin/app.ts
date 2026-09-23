@@ -1629,6 +1629,28 @@ function drawEditor(view, r, list, models, a) {
   if (!editable) { otherIn.disabled = true; otherBtn.disabled = true; }
   paintTools();
 
+  // GitHub access is this agent's own frontmatter (githubTools), not a second list of tool names.
+  // Missing on the file is off, which is how every shipped role starts.
+  var ghMode = f.githubTools === "read" || f.githubTools === "full" ? f.githubTools : "off";
+  var ghOff = el("button", { type: "button" }, "Off");
+  var ghRead = el("button", { type: "button" }, "Read");
+  var ghFull = el("button", { type: "button" }, "Full");
+  var ghSeg = el("div", { class: "seg", role: "group", "aria-label": "GitHub access" }, ghOff, ghRead, ghFull);
+  var ghHelp = el("div", { class: "note" });
+  var ghRow = frow("f-agent-github", "GitHub", "This agent's GitHub tools. Off until it is given access.", el("div", { class: "ctl" }, ghSeg, ghHelp));
+  errs.githubTools = ghRow;
+  function paintGh() {
+    ghOff.setAttribute("aria-pressed", String(ghMode === "off"));
+    ghRead.setAttribute("aria-pressed", String(ghMode === "read"));
+    ghFull.setAttribute("aria-pressed", String(ghMode === "full"));
+    ghHelp.textContent = ghMode === "off" ? "git and the GitHub tools are excluded for this agent." : ghMode === "read" ? "Those tools stay available. Only status, diff, log, and pull-request and issue reads run." : "Reads, writes, merges, and pushes.";
+  }
+  function pickGh(mode) { return function () { if (!editable) return; ghMode = mode; ghRow.setError(null); paintGh(); changed(); }; }
+  ghOff.addEventListener("click", pickGh("off"));
+  ghRead.addEventListener("click", pickGh("read"));
+  ghFull.addEventListener("click", pickGh("full"));
+  paintGh();
+
   // advanced: how the prompt is assembled
   var modeSel = el("select", { disabled: !editable }, el("option", { value: "", text: "Not set (replace)" }), el("option", { value: "replace", text: "replace: this prompt only" }), el("option", { value: "append", text: "append: after pi's own prompt" }));
   modeSel.value = f.systemPromptMode || "";
@@ -1656,7 +1678,7 @@ function drawEditor(view, r, list, models, a) {
     el("div", {}, el("span", { class: "tag cli", text: cli.tool + " CLI" }), " ", el("code", { text: cli.command }), " ", cliState(cli), " ", el("span", { class: "tag" + (cli.writes ? " warn" : ""), text: cli.writes ? "writes files" : "read-only" })),
     el("div", { class: "note" }, "The description and the prompt are the parts you can change: the prompt is sent to " + cli.tool + " with every task." + (!cli.installed && !cli.unknown && cli.install ? " Install it with: " : ""), !cli.installed && !cli.unknown && cli.install ? el("code", { text: cli.install }) : null)) : null;
   add(view, card("Definition", cli ? "The frontmatter: this agent runs the " + cli.tool + " CLI." : "The frontmatter: how pi-subagents runs this agent.", null,
-    [el("div", { class: "rows" }, cli ? [nameRow, scopeRow, descRow, cliRow] : [nameRow, scopeRow, descRow, modelRow, thRow, toolsRow]), adv, extra]));
+    [el("div", { class: "rows" }, cli ? [nameRow, scopeRow, descRow, cliRow] : [nameRow, scopeRow, descRow, modelRow, thRow, toolsRow, ghRow]), adv, extra]));
 
   // ---- prompt: a Markdown editor with toolbar, shortcuts and a live preview ----
   var ta = el("textarea", { class: "md-input", spellcheck: "true", "aria-label": "System prompt, Markdown", readonly: !editable, id: "f-agent-prompt" });
@@ -1828,7 +1850,7 @@ function drawEditor(view, r, list, models, a) {
   function collect() {
     return {
       name: nameIn.value.trim(), scope: scope, description: descIn.value.trim(), model: mp.get(), thinking: thSel.value,
-      tools: toolsMode === "default" ? null : chosen.slice(), systemPromptMode: modeSel.value,
+      tools: toolsMode === "default" ? null : chosen.slice(), githubTools: ghMode, systemPromptMode: modeSel.value,
       inheritProjectContext: ctxSel.value === "" ? undefined : ctxSel.value === "true", inheritSkills: skillSel.value === "" ? undefined : skillSel.value === "true",
       prompt: ta.value
     };
@@ -1865,7 +1887,7 @@ function drawEditor(view, r, list, models, a) {
       if (v.model && !/^[A-Za-z0-9._-]+\/[^\s,]+$/.test(v.model)) { modelRow.setError("a provider/model id, e.g. litellm/claude-sonnet-5"); problems++; }
     }
     if (problems) { toast("Nothing saved: fix the highlighted fields", "error"); var inv = view.querySelector("[aria-invalid=true]"); if (inv) inv.focus(); return; }
-    var body = { mode: isNew ? "create" : "update", scope: isNew ? scope : row.source, name: v.name, description: v.description, tools: v.tools, model: v.model, thinking: v.thinking, prompt: v.prompt };
+    var body = { mode: isNew ? "create" : "update", scope: isNew ? scope : row.source, name: v.name, description: v.description, tools: v.tools, githubTools: v.githubTools, model: v.model, thinking: v.thinking, prompt: v.prompt };
     if (!isNew) body.original = row.name;
     if (v.systemPromptMode) body.systemPromptMode = v.systemPromptMode;
     if (v.inheritProjectContext !== undefined) body.inheritProjectContext = v.inheritProjectContext;

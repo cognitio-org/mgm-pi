@@ -571,6 +571,60 @@ describe("the tool definition itself", () => {
     }
   });
 
+  test("a read agent cannot push, and a child with no agent file is not unrestricted", async () => {
+    const repo = temp(newRepo());
+    const agentRoot = temp(mkdtempSync(join(tmpdir(), "kernal-agents-")));
+    mkdirSync(join(agentRoot, "agents"), { recursive: true });
+    const agent = join(agentRoot, "agents", "helper.md");
+    writeFileSync(agent, "---\nname: helper\ndescription: Helps\ngithubTools: read\n---\n\nHelp.\n");
+    const prevChild = process.env.PI_SUBAGENT_CHILD;
+    const prevDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_SUBAGENT_CHILD = "1";
+    process.env.PI_CODING_AGENT_DIR = agentRoot;
+    const { tools } = await register();
+    const gitTool = tools[0];
+    const text = (res: any) => res.content[0].text as string;
+    const ctx = { cwd: repo, getSystemPrompt: () => `<active_agent name="helper"/>\n\nHelp.` };
+    try {
+      const pushed = await gitTool.execute("1", { action: "push" }, undefined, undefined, ctx);
+      assert.equal(pushed.isError, true);
+      assert.match(text(pushed), /GitHub access is read/);
+
+      const status = await gitTool.execute("2", { action: "status" }, undefined, undefined, ctx);
+      assert.ok(!status.isError, text(status));
+      assert.doesNotMatch(text(status), /GitHub access/);
+      assert.match(text(status), /"branch": "main"/);
+
+      writeFileSync(agent, "---\nname: helper\ngithubTools: full\n---\n\nHelp.\n");
+      const full = await gitTool.execute("3", { action: "push" }, undefined, undefined, ctx);
+      assert.doesNotMatch(text(full), /GitHub access is/);
+
+      delete process.env.PI_SUBAGENT_CHILD;
+      const parent = await gitTool.execute("4", { action: "push" }, undefined, undefined, { cwd: repo });
+      assert.doesNotMatch(text(parent), /GitHub access is/);
+
+      process.env.PI_SUBAGENT_CHILD = "1";
+      const missing = await gitTool.execute("5", { action: "status" }, undefined, undefined, {
+        cwd: repo,
+        getSystemPrompt: () => `<active_agent name="nobody"/>\n`,
+      });
+      assert.equal(missing.isError, true);
+      assert.match(text(missing), /GitHub access is off/);
+
+      mkdirSync(join(repo, ".pi", "agents"), { recursive: true });
+      writeFileSync(join(repo, ".pi", "agents", "helper.md"), "---\nname: helper\ngithubTools: off\n---\n\nNo.\n");
+      const project = await gitTool.execute("6", { action: "status" }, undefined, undefined, ctx);
+      assert.match(text(project), /GitHub access is off/);
+
+      delete process.env.PI_SUBAGENT_CHILD;
+      const explicit = await gitTool.execute("7", { action: "push" }, undefined, undefined, { cwd: repo, githubTools: "read" });
+      assert.match(text(explicit), /GitHub access is read/);
+    } finally {
+      if (prevChild === undefined) delete process.env.PI_SUBAGENT_CHILD; else process.env.PI_SUBAGENT_CHILD = prevChild;
+      if (prevDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = prevDir;
+    }
+  });
+
   test("/commit in a clean tree says so, and never starts a turn", async () => {
     const repo = temp(newRepo());
     const { commands } = await register();

@@ -13,16 +13,96 @@
  * The shell still works; this is the easier path, not a fence (kernal/docs/git-github-spec.md).
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, parse, resolve } from "node:path";
 import { readSettings } from "../connect/settings.ts";
 import * as git from "../_shared/git.ts";
 import { attributionFrom, renderStatus, repoStatus, runAction } from "./lib.ts";
 import { githubToolsAllows, type GithubToolsMode } from "./confirm.ts";
 import { authState, findGh, installGh, kernalBin, loginCommand, missingScopes, setupGitCommand } from "./gh.ts";
 
-/** The running agent's `githubTools`, when the host put it on the tool context. The parent session has none. */
-function agentGithubTools(ctx: any): GithubToolsMode | undefined {
-  const raw = ctx?.githubTools ?? ctx?.agent?.githubTools;
+const AGENT_NAME = /^[a-z0-9][a-z0-9-]*$/;
+const ACTIVE_AGENT = /<active_agent\s+name="([^"]*)"\s*\/>/;
+
+function modeValue(raw: unknown): GithubToolsMode | undefined {
   return raw === "off" || raw === "read" || raw === "full" ? raw : undefined;
+}
+
+/** pi-subagents puts this at the start of the child prompt. The tool context never receives `githubTools`. */
+function activeAgent(prompt: string): { present: boolean; name?: string } {
+  const match = ACTIVE_AGENT.exec(prompt);
+  if (!match) return { present: false };
+  const name = match[1]?.trim() ?? "";
+  return AGENT_NAME.test(name) ? { present: true, name } : { present: true };
+}
+
+async function systemPromptOf(ctx: any): Promise<string> {
+  const parts: string[] = [];
+  if (typeof ctx?.getSystemPrompt === "function") {
+    try {
+      const value = await ctx.getSystemPrompt();
+      if (typeof value === "string") parts.push(value);
+    } catch { /* a missing prompt is not permission */ }
+  }
+  if (typeof ctx?.systemPrompt === "string") parts.push(ctx.systemPrompt);
+  if (typeof ctx?.appendSystemPrompt === "string") parts.push(ctx.appendSystemPrompt);
+  return parts.join("\n");
+}
+
+function agentDir(): string {
+  const configured = process.env.PI_CODING_AGENT_DIR;
+  const home = homedir();
+  if (!configured) return join(home, ".pi", "agent");
+  if (configured === "~") return home;
+  if (configured.startsWith("~/")) return join(home, configured.slice(2));
+  return configured;
+}
+
+/** Project `.pi/agents/<name>.md` wins, walking up from cwd as far as the git root. Then the user agent dir. */
+function agentFile(cwd: string, name: string): string | undefined {
+  const base = `${name}.md`;
+  let dir = resolve(cwd);
+  const stop = parse(dir).root;
+  for (;;) {
+    const project = join(dir, ".pi", "agents", base);
+    if (existsSync(project)) return project;
+    if (existsSync(join(dir, ".git")) || dir === stop) break;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  const user = join(agentDir(), "agents", base);
+  return existsSync(user) ? user : undefined;
+}
+
+/** `githubTools` in that file. A file with no usable value is off: missing means off for an agent. */
+function modeInFile(file: string): GithubToolsMode {
+  try {
+    const text = readFileSync(file, "utf8");
+    const end = text.startsWith("---\n") ? text.indexOf("\n---", 3) : -1;
+    if (end < 0) return "off";
+    const match = /^githubTools:[ \t]*["']?([^\s#"']+)["']?[ \t]*$/m.exec(text.slice(4, end));
+    return modeValue(match?.[1]) ?? "off";
+  } catch {
+    return "off";
+  }
+}
+
+/**
+ * The running agent's GitHub access. The parent session has none and stays unrestricted.
+ * A subagent (`PI_SUBAGENT_CHILD`, or an `<active_agent>` tag) is never treated as unrestricted
+ * just because the tool context omitted the field: the mode is read from the agent file, and a
+ * child we cannot resolve is off.
+ */
+async function agentGithubTools(ctx: any): Promise<GithubToolsMode | undefined> {
+  const explicit = modeValue(ctx?.githubTools ?? ctx?.agent?.githubTools);
+  if (explicit) return explicit;
+  const tagged = activeAgent(await systemPromptOf(ctx));
+  const child = process.env.PI_SUBAGENT_CHILD === "1" || tagged.present;
+  if (!child) return undefined;
+  const file = tagged.name ? agentFile(ctx?.cwd ?? process.cwd(), tagged.name) : undefined;
+  return file ? modeInFile(file) : "off";
 }
 
 /** Found once per session, then reused; `/github setup` refreshes it after an install. */
@@ -80,7 +160,7 @@ export default function (pi: ExtensionAPI) {
     } as any,
     execute: async (_id: string, params: any, _signal: unknown, _update: unknown, ctx: any) => {
       const action = String(params?.action ?? "");
-      const mode = agentGithubTools(ctx);
+      const mode = await agentGithubTools(ctx);
       if (mode && !githubToolsAllows(mode, "git", action, params)) {
         return { content: [{ type: "text", text: `Refused: this agent's GitHub access is ${mode}.` }], isError: true };
       }

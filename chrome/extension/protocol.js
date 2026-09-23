@@ -26,26 +26,96 @@ export function originAllowed(origin) {
   return ALLOWED.some((allowed) => url.protocol === allowed.protocol && url.hostname === allowed.hostname);
 }
 
-/** Accepts exactly `{t:"ping"}`: a plain object with one own key `t` whose value is `"ping"`.
- * Everything else is rejected, including the rest of the page vocabulary. */
-export function parsePageMessage(message) {
-  if (message === null || typeof message !== "object" || Array.isArray(message)) {
-    return { ok: false, error: "rejected" };
+// Page vocabulary. Exact keys, not a walk over nested values: a title may say "tab", and a
+// message is rejected for carrying `tabId` because that key is not in the set for its type.
+const PAGE_KEYS = {
+  ping: ["t"],
+  poll: ["t"],
+  openPanel: ["t"],
+  place: ["t", "sessionId", "url", "title", "mode"],
+  split: ["t", "sessionId", "otherSessionId"],
+};
+
+const PLACEMENT_MODES = new Set(["own", "shared", "window"]);
+
+// Session ids are UUIDs (hyphens) or the unhyphenated ids the API already stores.
+const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+function plainObject(message) {
+  return message !== null && typeof message === "object" && !Array.isArray(message) && Object.getPrototypeOf(message) === Object.prototype;
+}
+
+function sameKeys(message, keys) {
+  const own = Object.keys(message);
+  if (own.length !== keys.length) return false;
+  for (const key of keys) if (!Object.hasOwn(message, key)) return false;
+  return true;
+}
+
+function isSessionId(value) {
+  return typeof value === "string" && SESSION_ID.test(value);
+}
+
+/** True when `value` is the Floppy's own session URL on an allowlisted origin, with no userinfo,
+ * query, or hash. The path is `/sessions/<sessionId>` and nothing else. */
+export function isSessionUrl(sessionId, value) {
+  if (!isSessionId(sessionId) || typeof value !== "string") return false;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
   }
-  if (Object.getPrototypeOf(message) !== Object.prototype) {
-    return { ok: false, error: "rejected" };
-  }
-  if (Object.keys(message).length === 1 && Object.hasOwn(message, "t") && message.t === "ping") {
-    return { ok: true, t: "ping" };
-  }
+  if (url.username !== "" || url.password !== "") return false;
+  if (url.search !== "" || url.hash !== "") return false;
+  if (url.pathname !== `/sessions/${sessionId}`) return false;
+  return originAllowed(url.origin);
+}
+
+function isTitle(value) {
+  return typeof value === "string" && value.length <= 2000;
+}
+
+function reject() {
   return { ok: false, error: "rejected" };
 }
 
-/** Reply for a page message. A ping becomes `{ok:true, version, id}`. Anything else is a fixed
- * rejection that does not echo the payload. */
+/** Typed allowlist of page messages. Anything else is rejected, including `closeTab`, `capture`,
+ * and any message that carries a `tabId` from the page. Place and split do not include a tab id. */
+export function parsePageMessage(message) {
+  if (!plainObject(message)) return reject();
+  // Direct field check, not a recursive walk: only an own `tabId` is forbidden by name.
+  if (Object.hasOwn(message, "tabId")) return reject();
+  const type = message.t;
+  const keys = PAGE_KEYS[type];
+  if (!keys || !sameKeys(message, keys)) return reject();
+  if (type === "ping" || type === "poll" || type === "openPanel") return { ok: true, t: type };
+  if (type === "place") {
+    if (!isSessionId(message.sessionId)) return reject();
+    if (!isSessionUrl(message.sessionId, message.url)) return reject();
+    if (!isTitle(message.title)) return reject();
+    if (!PLACEMENT_MODES.has(message.mode)) return reject();
+    return {
+      ok: true,
+      t: "place",
+      sessionId: message.sessionId,
+      href: message.url,
+      title: message.title,
+      mode: message.mode,
+    };
+  }
+  if (!isSessionId(message.sessionId) || !isSessionId(message.otherSessionId)) return reject();
+  if (message.sessionId === message.otherSessionId) return reject();
+  return { ok: true, t: "split", sessionId: message.sessionId, otherSessionId: message.otherSessionId };
+}
+
+/** Synchronous ping reply: `{ok:true, version, id}`. A message the allowlist rejected is
+ * `{ok:false, error:"rejected"}` and does not echo the payload. Other accepted messages are
+ * acted on by the service worker; this helper returns null for them. */
 export function pageReply(message, version, id) {
   const parsed = parsePageMessage(message);
   if (!parsed.ok) return { ok: false, error: "rejected" };
+  if (parsed.t !== "ping") return null;
   return { ok: true, version, id };
 }
 

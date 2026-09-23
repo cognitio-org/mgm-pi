@@ -26,25 +26,8 @@ export function originAllowed(origin) {
   return ALLOWED.some((allowed) => url.protocol === allowed.protocol && url.hostname === allowed.hostname);
 }
 
-function isTabKey(key) {
-  const lowered = key.toLowerCase();
-  return lowered === "tabid" || lowered === "tab_id" || lowered === "tab";
-}
-
-// The page must not name a tab. A tab id anywhere in the payload is a reject, including a
-// ping that grew one. Depth is capped so a hostile object cannot recurse forever.
-function carriesTabId(value, depth) {
-  if (depth > 6 || value === null || typeof value !== "object") return false;
-  if (Array.isArray(value)) return value.some((item) => carriesTabId(item, depth + 1));
-  for (const key of Object.keys(value)) {
-    if (isTabKey(key)) return true;
-    if (carriesTabId(value[key], depth + 1)) return true;
-  }
-  return false;
-}
-
-/** Accepts exactly `{t:"ping"}`. Everything else is rejected, including the rest of the
- * page vocabulary (place, split, poll, openPanel) and any message that carries a tab id. */
+/** Accepts exactly `{t:"ping"}`: a plain object with one own key `t` whose value is `"ping"`.
+ * Everything else is rejected, including the rest of the page vocabulary. */
 export function parsePageMessage(message) {
   if (message === null || typeof message !== "object" || Array.isArray(message)) {
     return { ok: false, error: "rejected" };
@@ -52,7 +35,6 @@ export function parsePageMessage(message) {
   if (Object.getPrototypeOf(message) !== Object.prototype) {
     return { ok: false, error: "rejected" };
   }
-  if (carriesTabId(message, 0)) return { ok: false, error: "rejected" };
   if (Object.keys(message).length === 1 && Object.hasOwn(message, "t") && message.t === "ping") {
     return { ok: true, t: "ping" };
   }

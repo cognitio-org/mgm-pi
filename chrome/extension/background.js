@@ -3,18 +3,13 @@
 
 import { originAllowed, pageReply } from "./protocol.js";
 
-function senderOrigin(sender) {
-  if (!sender || typeof sender.origin !== "string") return undefined;
-  return sender.origin;
-}
-
 function reply(message) {
   const manifest = chrome.runtime.getManifest();
   return pageReply(message, manifest.version, chrome.runtime.id);
 }
 
 chrome.runtime.onConnectExternal.addListener((port) => {
-  if (!originAllowed(senderOrigin(port.sender))) {
+  if (!originAllowed(port.sender?.origin)) {
     port.disconnect();
     return;
   }
@@ -28,6 +23,6 @@ chrome.runtime.onConnectExternal.addListener((port) => {
 });
 
 chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
-  if (!originAllowed(senderOrigin(sender))) return;
+  if (!originAllowed(sender?.origin)) return;
   sendResponse(reply(message));
 });

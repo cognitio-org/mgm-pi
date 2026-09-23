@@ -45,7 +45,7 @@ test("a missing origin fails", () => {
   assert.equal(originAllowed(0), false);
 });
 
-test("only ping is accepted, and a message that carries a tab id is rejected", () => {
+test("only a plain object whose single key is t: ping is accepted", () => {
   assert.deepEqual(parsePageMessage({ t: "ping" }), { ok: true, t: "ping" });
   const rejected = [
     { t: "place", sessionId: "s", url: "https://app.kernal.one/sessions/s", title: "F", mode: "own" },
@@ -103,7 +103,9 @@ test("the service worker does not consult sender.url", () => {
   const source = read("../extension/background.js").replace(/\/\/.*$/gm, "");
   assert.doesNotMatch(source, /sender\.url/);
   assert.doesNotMatch(source, /\.url\b/);
-  assert.match(source, /senderOrigin/);
+  assert.match(source, /originAllowed\(port\.sender\?\.origin\)/);
+  assert.match(source, /originAllowed\(sender\?\.origin\)/);
+  assert.doesNotMatch(source, /senderOrigin/);
 });
 
 test("the options page does not log or copy a saved Dongle into the page", () => {

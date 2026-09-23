@@ -27,12 +27,16 @@ async function ghNow(force = false) {
   return ghCache;
 }
 
+/**
+ * pi appends these to the shared Guidelines section, where they sit among rules about every other
+ * tool, so each one names git itself rather than relying on the reader knowing what it is about.
+ */
 const GUIDELINES = [
-  "Use the git tool for git work: it reports the whole repository state in one call, and it keeps commit messages, pushes and pulls predictable.",
-  "Commit and push only when the user asked for it. Never rewrite published history, never force-push (forceWithLease is for your own branch, after the user asks), and never change git config.",
-  "Stage the files you mean by name rather than committing everything, and never commit credentials or a .env file.",
-  "Never skip hooks. If a hook refuses a commit, fix what it reports and make a new commit: the commit did not happen, so there is nothing to amend.",
-  "Never revert or discard changes you did not make, and never reset a branch the user has not asked you to reset.",
+  "git: use the git tool rather than running git in bash; it reports the whole repository state in one call and keeps commit messages, pushes and pulls predictable.",
+  "git: commit and push only when the user asked for it, never rewrite published history, never force-push (forceWithLease is for your own branch, and only when asked), and never change git config.",
+  "git: stage the files you mean by name rather than committing everything, and never commit credentials or a .env file.",
+  "git: never skip hooks. If a hook refuses a commit, fix what it reports and make a new commit: the commit did not happen, so there is nothing to amend.",
+  "git: never revert or discard changes you did not make, and never reset a branch the user has not asked you to reset.",
 ];
 
 export default function (pi: ExtensionAPI) {
@@ -51,8 +55,9 @@ export default function (pi: ExtensionAPI) {
       properties: {
         action: { type: "string", enum: ["status", "diff", "log", "commit", "push", "pull", "branch", "stash"], description: "What to do" },
         message: { type: "string", description: "commit: the message. A subject line, then a blank line, then why the change was made." },
-        paths: { type: "array", items: { type: "string" }, description: "commit: the files to stage. diff: limit to these paths." },
+        paths: { type: "array", items: { type: "string" }, description: "commit: the files to stage, relative to the repository root. diff: limit to these paths." },
         all: { type: "boolean", description: "commit: stage every change, including untracked files. Prefer naming paths." },
+        tracked: { type: "boolean", description: "commit: stage the tracked files that changed, and nothing untracked." },
         amend: { type: "boolean", description: "commit: amend the previous commit. Only for a commit that was never pushed." },
         staged: { type: "boolean", description: "diff: show what is staged instead of what is not." },
         stat: { type: "boolean", description: "diff: summarise as a file list with counts." },
@@ -93,15 +98,19 @@ export default function (pi: ExtensionAPI) {
       if (st.clean) { ctx.ui.notify("Nothing to commit: the working tree is clean.", "info"); return; }
       const message = args.trim();
       if (!message) {
-        return {
-          prompt:
-            "Commit the current changes. First run the git tool with action \"status\", then action \"diff\" to see what changed. " +
-            "Stage the files that belong together by name and write a message that says what changed and why. " +
-            "If the changes are unrelated, make more than one commit. Do not push.",
-        };
+        // A command handler's return value is discarded by pi, so the turn is started explicitly.
+        await ctx.sendUserMessage(
+          "Commit the current changes. First run the git tool with action \"status\", then action \"diff\" to see what changed. " +
+          "Stage the files that belong together by name and write a message that says what changed and why. " +
+          "If the changes are unrelated, make more than one commit. Do not push.",
+        );
+        return;
       }
-      const res = await runAction("commit", { message, all: true }, { cwd, settings: settings(), gh: await ghNow() });
-      ctx.ui.notify(res.text, res.isError ? "error" : "info");
+      // Tracked changes only: `all` would sweep in every untracked file, which is how a stray .env
+      // or a scratch file ends up in a commit.
+      const res = await runAction("commit", { message, tracked: true }, { cwd, settings: settings(), gh: await ghNow() });
+      const skipped = st.untracked.length ? `\n${st.untracked.length} untracked file(s) were not committed; name them with the git tool to include them.` : "";
+      ctx.ui.notify(res.text + (res.isError ? "" : skipped), res.isError ? "error" : "info");
     },
   });
 

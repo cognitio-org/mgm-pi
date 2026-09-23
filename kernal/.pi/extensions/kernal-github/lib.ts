@@ -44,15 +44,42 @@ export function rollup(nodes: any[] | undefined): PrSummary["checks"] {
   return { passed, failed, pending, total: nodes.length };
 }
 
-/** The pull request for `branch`, when there is one and `gh` can see it. */
-export async function prFor(cwd: string, branch: string, ghc: Ghe): Promise<{ pr?: PrSummary; unavailable?: string }> {
+/** `gh pr view --json` fields: exactly what gh offers. `reviewThreads` is NOT one of them (gh
+ * refuses the whole call with "Unknown JSON field"), so unresolved threads come from the GraphQL
+ * query below instead. */
+const PR_FIELDS = "number,title,url,state,isDraft,reviewDecision,statusCheckRollup";
+
+/** Unresolved review threads, which `gh pr view` cannot report. Best effort: a failure just omits them. */
+export async function unresolvedThreads(cwd: string, prNumber: number, owner: string, repo: string, ghc: NonNullable<Ghe>): Promise<number | undefined> {
+  const query = `query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100){nodes{isResolved}}}}}`;
+  const data = await ghJson<any>(
+    ghc.path,
+    ["api", "graphql", "-f", `query=${query}`, "-F", `owner=${owner}`, "-F", `repo=${repo}`, "-F", `pr=${prNumber}`],
+    { cwd, timeoutMs: 30_000 }, ghc.exec ?? execCommand,
+  );
+  const nodes = data?.data?.repository?.pullRequest?.reviewThreads?.nodes;
+  return Array.isArray(nodes) ? nodes.filter((t: any) => t?.isResolved === false).length : undefined;
+}
+
+/**
+ * The pull request for `branch`. Three different answers, which callers must not confuse: a pull
+ * request, no pull request (gh says so), or "could not look it up" (no gh, signed out, offline,
+ * rate-limited), which is what `unavailable` carries.
+ */
+export async function prFor(cwd: string, branch: string, ghc: Ghe, repo?: { owner: string; repo: string }): Promise<{ pr?: PrSummary; unavailable?: string }> {
   if (!ghc) return { unavailable: "the GitHub CLI is not installed; run /github setup" };
-  const fields = "number,title,url,state,isDraft,reviewDecision,statusCheckRollup,reviewThreads";
-  const data = await ghJson<any>(ghc.path, ["pr", "view", branch, "--json", fields], { cwd, timeoutMs: 30_000 }, ghc.exec ?? execCommand);
+  const res = await gh(ghc.path, ["pr", "view", branch, "--json", PR_FIELDS], { cwd, timeoutMs: 30_000 }, ghc.exec ?? execCommand);
+  if (!res.ok) {
+    const detail = (res.stderr || res.stdout).trim();
+    // gh's own way of saying there is none; everything else is a lookup that failed.
+    if (/no pull requests? found|no open pull requests|could not resolve to a PullRequest/i.test(detail)) return {};
+    const first = detail.split("\n").find((l) => l.trim()) ?? `gh exited ${res.code}`;
+    return { unavailable: `the pull request could not be looked up: ${first.trim()}` };
+  }
+  let data: any;
+  try { data = JSON.parse(res.stdout); } catch { return { unavailable: "gh returned something that is not JSON" }; }
   if (!data || typeof data.number !== "number") return {};
-  const threads = Array.isArray(data.reviewThreads?.nodes ?? data.reviewThreads)
-    ? (data.reviewThreads.nodes ?? data.reviewThreads).filter((t: any) => t && t.isResolved === false).length
-    : undefined;
+  const threads = repo ? await unresolvedThreads(cwd, data.number, repo.owner, repo.repo, ghc) : undefined;
   return {
     pr: {
       number: data.number,
@@ -79,7 +106,7 @@ export async function repoStatus(cwd: string, ghc: Ghe, opts: { pr?: boolean } =
       : undefined,
   };
   if (opts.pr !== false && s.branch && out.repo?.github) {
-    const { pr, unavailable } = await prFor(s.root, s.branch, ghc);
+    const { pr, unavailable } = await prFor(s.root, s.branch, ghc, out.repo ? { owner: out.repo.owner, repo: out.repo.repo } : undefined);
     out.pr = pr;
     out.prUnavailable = unavailable;
   }
@@ -243,18 +270,20 @@ export async function runAction(action: string, params: any, deps: ToolDeps): Pr
       const message = typeof params?.message === "string" ? params.message.trim() : "";
       if (!message) return fail("A commit message is required.");
       const paths = toPaths(params?.paths);
-      if (!paths?.length && params?.all !== true) return fail("Name the paths to stage, or pass all: true to commit everything that changed.");
-      const res = await git.commit(root!, { message, paths, all: params?.all === true, trailers: commitTrailers(deps.settings, deps.env), amend: params?.amend === true });
+      if (!paths?.length && params?.all !== true && params?.tracked !== true) return fail("Name the paths to stage (relative to the repository root), or pass all: true to commit everything that changed.");
+      const res = await git.commit(root!, { message, paths, all: params?.all === true, tracked: params?.tracked === true, trailers: commitTrailers(deps.settings, deps.env), amend: params?.amend === true });
       if (!res.ok) {
         if (res.reason === "nothing-to-commit") return fail("Nothing to commit: no changes are staged.");
         if (res.reason === "hook-failed") return fail(`A commit hook refused the commit. Fix what it reports, then commit again (do not amend: the commit was never made).\n\n${res.detail}`);
         if (res.reason === "identity") return fail("Git has no commit identity here. Set user.name and user.email, then commit again.");
         if (res.reason === "conflicted") return fail(`Resolve the conflicts first: ${res.detail}`);
+        if (/did not match any files/i.test(res.detail)) return fail(`${res.detail}\n(paths are relative to the repository root, ${root})`);
         return fail(res.detail);
       }
       const after = await git.status(root!);
       const left = after && !after.clean ? ` ${after.staged.length + after.unstaged.length + after.untracked.length} file(s) still uncommitted.` : "";
-      return { text: `Committed ${res.sha.slice(0, 12)} ${res.subject}.${left}${res.hookOutput ? `\n\nHook output:\n${res.hookOutput}` : ""}` };
+      const changed = res.hookChanged?.length ? `\n\nA hook rewrote ${res.hookChanged.join(", ")} while committing; those changes are not in this commit.` : "";
+      return { text: `Committed ${res.sha.slice(0, 12)} ${res.subject}.${left}${changed}${res.hookOutput ? `\n\nHook output:\n${res.hookOutput}` : ""}` };
     }
     case "push": {
       const res = await git.push(root!, { forceWithLease: params?.forceWithLease === true });

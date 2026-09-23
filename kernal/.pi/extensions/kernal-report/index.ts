@@ -7,6 +7,7 @@
  * Matthew. Env: KERNAL_REPORT_REPO, KERNAL_REPORT_ASSIGNEE, KERNAL_REPORT_OFF=1 (no error hint).
  */
 import { execFile } from "node:child_process";
+import { ghPath } from "../kernal-github/gh.ts";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir, platform, arch, release } from "node:os";
@@ -30,7 +31,8 @@ const repo = () => env("REPORT_REPO") || DEFAULT_REPO;
 function ghCreate(title: string, bodyFile: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const args = ["issue", "create", "--repo", repo(), "--title", title, "--body-file", bodyFile, "--label", "bug", "--assignee", env("REPORT_ASSIGNEE") || DEFAULT_ASSIGNEE];
-    execFile("gh", args, { timeout: 30_000, encoding: "utf8" }, (err, stdout, stderr) => {
+    // `ghPath()`, not a bare "gh": /github setup may have installed one in kernal's own bin.
+    execFile(ghPath(), args, { timeout: 30_000, encoding: "utf8" }, (err, stdout, stderr) => {
       if (err) return reject(new Error((stderr || err.message).trim().split("\n").slice(-3).join(" ")));
       const url = issueUrlFrom(stdout);
       url ? resolve(url) : reject(new Error(`gh gave no issue URL: ${stdout.trim()}`));

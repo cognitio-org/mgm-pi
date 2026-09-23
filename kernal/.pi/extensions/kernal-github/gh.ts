@@ -21,7 +21,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { accessSync, constants, existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { env } from "../_shared/env.ts";
@@ -39,6 +39,10 @@ export const execCommand: Exec = (cmd, args, opts) =>
         resolve({ stdout: stdout ?? "", stderr: stderr ?? "", code: typeof err?.code === "number" ? err.code : err ? 1 : 0 });
       },
     );
+    // git (and gh) may exit before reading stdin -- `git status` never reads it at all -- and the
+    // write then fails with EPIPE, which would otherwise become an unhandled error on the socket
+    // rather than a result. Seen on Linux in CI, not on macOS: the race goes the other way there.
+    child.stdin?.on("error", () => {});
     child.stdin?.end(opts.stdin ?? "");
   });
 
@@ -49,6 +53,22 @@ export function kernalBin(): string {
   // A release bundle has a VERSION file next to .pi; a source checkout does not.
   if (agentDir && !existsSync(join(dirname(agentDir), "VERSION"))) return join(agentDir, "bin");
   return join(home, "bin");
+}
+
+/**
+ * The `gh` to run, decided without starting a process: whatever is on PATH, unless the only one is
+ * the copy kernal installed. Used by the callers that cannot await a lookup (kernal-update's daily
+ * check, /report); `findGh` is the thorough version.
+ */
+export function ghPath(): string {
+  // Same precedence as findGh: PATH first (a gh the person installed themselves wins), then the
+  // copy kernal installed. Checked without starting a process, so callers on a hot path can use it.
+  for (const dir of (process.env.PATH ?? "").split(":")) {
+    if (!dir) continue;
+    try { accessSync(join(dir, "gh"), constants.X_OK); return "gh"; } catch { /* not here */ }
+  }
+  const managed = join(kernalBin(), "gh");
+  return existsSync(managed) ? managed : "gh";
 }
 
 /** PATH first, so a newer `gh` the person installed themselves wins, then kernal's own copy. */
@@ -152,9 +172,17 @@ export type InstallResult = { ok: true; path: string; version: string } | { ok: 
 export async function installGh(deps: InstallDeps = {}): Promise<InstallResult> {
   const platform = currentPlatform();
   if (!platform) return { ok: false, detail: `kernal has no gh build for ${process.platform}/${process.arch}` };
-  const fetchJson = deps.fetchJson ?? (async (url) => (await fetch(url, { headers: { accept: "application/vnd.github+json", "user-agent": "kernal" } })).json());
-  const fetchText = deps.fetchText ?? (async (url) => (await fetch(url, { headers: { "user-agent": "kernal" } })).text());
-  const fetchBinary = deps.fetchBinary ?? (async (url) => Buffer.from(await (await fetch(url, { headers: { "user-agent": "kernal" } })).arrayBuffer()));
+  // Node's fetch has no timeout of its own, so a stalled connection would hang /github setup for
+  // the life of the session -- the one thing this module promises cannot happen. A non-2xx response
+  // is reported as itself, rather than being hashed and misreported as a tampered download.
+  const get = async (url: string, timeoutMs: number, headers: Record<string, string> = {}) => {
+    const res = await fetch(url, { headers: { "user-agent": "kernal", ...headers }, signal: AbortSignal.timeout(timeoutMs), redirect: "follow" });
+    if (!res.ok) throw new Error(`${url} returned ${res.status} ${res.statusText}`);
+    return res;
+  };
+  const fetchJson = deps.fetchJson ?? (async (url) => (await get(url, 30_000, { accept: "application/vnd.github+json" })).json());
+  const fetchText = deps.fetchText ?? (async (url) => (await get(url, 30_000)).text());
+  const fetchBinary = deps.fetchBinary ?? (async (url) => Buffer.from(await (await get(url, 300_000)).arrayBuffer()));
   const exec = deps.exec ?? execCommand;
   const binDir = deps.binDir ?? kernalBin();
 

@@ -19,7 +19,7 @@
  */
 import { execFile } from "node:child_process";
 
-export type GitResult = { stdout: string; stderr: string; code: number; timedOut?: boolean };
+export type GitResult = { stdout: string; stderr: string; code: number; timedOut?: boolean; tooMuchOutput?: boolean };
 
 export type GitRunOptions = {
   cwd: string;
@@ -51,14 +51,24 @@ export function runGit(args: string[], opts: GitRunOptions): Promise<GitResult> 
       { cwd: opts.cwd, env, timeout: opts.timeoutMs ?? 30_000, killSignal: "SIGKILL", maxBuffer: MAX_OUTPUT, encoding: "utf8" },
       (err: any, stdout: string, stderr: string) => {
         if (err && (err.code === "ENOENT" || err.code === "EACCES")) return reject(new Error("git is not installed, or not on PATH"));
+        // A killed child and a full output buffer both arrive as ordinary errors; a caller that
+        // cannot tell them from "git said no" reports the wrong thing (a timed-out status becomes
+        // "not a git repository"), so they are named here.
+        const tooMuchOutput = err?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" || undefined;
+        const timedOut = (!tooMuchOutput && (err?.killed === true || err?.signal === "SIGKILL")) || undefined;
         resolve({
           stdout: stdout ?? "",
           stderr: stderr ?? "",
           code: typeof err?.code === "number" ? err.code : err ? 1 : 0,
-          timedOut: err?.killed === true || err?.signal === "SIGKILL" || undefined,
+          timedOut,
+          tooMuchOutput,
         });
       },
     );
+    // git (and gh) may exit before reading stdin -- `git status` never reads it at all -- and the
+    // write then fails with EPIPE, which would otherwise become an unhandled error on the socket
+    // rather than a result. Seen on Linux in CI, not on macOS: the race goes the other way there.
+    child.stdin?.on("error", () => {});
     child.stdin?.end(opts.stdin ?? "");
   });
 }
@@ -135,7 +145,12 @@ export async function status(cwd: string): Promise<Status | undefined> {
   const root = await repoRoot(cwd);
   if (!root) return undefined;
   const res = await runGit(["status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"], { cwd: root, read: true });
-  if (res.code !== 0) return undefined;
+  if (res.code !== 0) {
+    // A timeout or an oversized status is not "no repository": say so instead of vanishing.
+    if (res.timedOut) throw new Error(`git status timed out in ${root} (a hook, a filter or a slow filesystem)`);
+    if (res.tooMuchOutput) throw new Error(`git status produced more output than kernal will read in ${root}`);
+    return undefined;
+  }
   const out: Status = { root, ahead: 0, behind: 0, staged: [], unstaged: [], untracked: [], conflicted: [], stashes: 0, clean: true };
 
   // Records are NUL-separated; a rename record is followed by its second path as its own record.
@@ -205,9 +220,18 @@ export async function isPushed(cwd: string): Promise<boolean> {
 
 // ---------- writing ----------
 
-export type CommitInput = { message: string; all?: boolean; paths?: string[]; trailers?: string[]; amend?: boolean };
+export type CommitInput = {
+  message: string;
+  /** Stage every change, untracked files included. */
+  all?: boolean;
+  /** Stage the tracked files that changed, and nothing untracked (what `git commit -a` does). */
+  tracked?: boolean;
+  paths?: string[];
+  trailers?: string[];
+  amend?: boolean;
+};
 export type CommitOutcome =
-  | { ok: true; sha: string; subject: string; hookOutput?: string }
+  | { ok: true; sha: string; subject: string; hookOutput?: string; hookChanged?: string[] }
   | { ok: false; reason: "nothing-to-commit" | "hook-failed" | "identity" | "conflicted" | "error"; detail: string; hookOutput?: string };
 
 /**
@@ -223,12 +247,15 @@ export async function commit(cwd: string, input: CommitInput): Promise<CommitOut
   if (input.paths?.length) {
     const add = await runGit(["add", "--", ...input.paths], { cwd: root });
     if (add.code !== 0) return { ok: false, reason: "error", detail: add.stderr.trim() || "git add failed" };
-  } else if (input.all) {
-    const add = await runGit(["add", "-A"], { cwd: root });
+  } else if (input.all || input.tracked) {
+    const add = await runGit(input.all ? ["add", "-A"] : ["add", "--update"], { cwd: root });
     if (add.code !== 0) return { ok: false, reason: "error", detail: add.stderr.trim() || "git add failed" };
   }
   const staged = await gitValue(["diff", "--cached", "--name-only"], { cwd: root });
   if (!input.amend && !staged) return { ok: false, reason: "nothing-to-commit", detail: "nothing is staged" };
+  // What is still unstaged at the moment of the commit: anything unstaged afterwards that is not in
+  // here was written by a hook, not by whoever asked for the commit.
+  const atCommit = new Set(((await status(root))?.unstaged ?? []).map((f) => f.path));
 
   const message = withTrailers(input.message, input.trailers ?? []);
   const args = ["commit", "-F", "-", ...(input.amend ? ["--amend"] : [])];
@@ -237,15 +264,26 @@ export async function commit(cwd: string, input: CommitInput): Promise<CommitOut
   if (res.code !== 0) {
     const detail = (res.stderr + res.stdout).trim();
     if (/Author identity unknown|Please tell me who you are/i.test(detail)) return { ok: false, reason: "identity", detail };
-    // git does not announce that a hook refused: a pre-commit hook's own output is all the caller
-    // sees, and the exit code is the hook's. So ask whether this repository has a commit hook at
-    // all, rather than looking for a word git never prints.
-    if (await hasCommitHook(root)) return { ok: false, reason: "hook-failed", detail, hookOutput: detail };
+    // git does not announce that a hook refused: the hook's own output is all the caller sees, and
+    // the exit status is the hook's. But git's own failures (a locked index, an unwritable ref)
+    // exit 128 and start with `fatal:` or `error:`, so those are ruled out first -- otherwise every
+    // failure in a repository that merely has hooks would be reported as a lint error to go and fix.
+    const gitsOwn = res.code === 128 || /^(fatal|error):/m.test(detail);
+    if (!gitsOwn && (await hasCommitHook(root))) return { ok: false, reason: "hook-failed", detail, hookOutput: detail };
     return { ok: false, reason: "error", detail };
   }
   const sha = (await gitValue(["rev-parse", "HEAD"], { cwd: root })) ?? "";
   const subject = (await gitValue(["log", "-1", "--format=%s"], { cwd: root })) ?? "";
-  return { ok: true, sha, subject, hookOutput: res.stdout.trim() || undefined };
+  // A formatting hook may rewrite files while the commit succeeds; those end up unstaged, so the
+  // caller can be told rather than leaving the model to wonder why the tree is dirty again.
+  const after = await status(root);
+  const hookChanged = (after?.unstaged ?? []).map((f) => f.path).filter((p) => !atCommit.has(p));
+  // git's own commit summary is not a hook speaking; only a hook's own words are worth repeating.
+  const GIT_SUMMARY = /^\[[^\]]+ [0-9a-f]{7,}\]|^ \d+ files? changed|^ (create|delete|rename|copy|mode change|rewrite) /;
+  const hookText = (await hasCommitHook(root))
+    ? res.stdout.split("\n").filter((l) => l.trim() && !GIT_SUMMARY.test(l)).join("\n").trim()
+    : "";
+  return { ok: true, sha, subject, hookOutput: hookText || undefined, hookChanged: hookChanged.length ? hookChanged : undefined };
 }
 
 /** Whether this repository has an executable pre-commit or commit-msg hook (honouring core.hooksPath). */
@@ -341,6 +379,21 @@ export async function pull(cwd: string, opts: { rebase?: boolean } = {}): Promis
   return { ok: true, changed: now !== head, summary: (res.stdout + res.stderr).trim() };
 }
 
+/**
+ * A branch name or start point that git will accept as a ref and never read as an option.
+ * `git switch` and `git branch` do not take `--end-of-options` (switch rejects the ref after it,
+ * and branch reads a bare `--` as a name), so a caller-supplied ref is checked here instead: no
+ * leading dash, and git's own `check-ref-format` rules for the rest.
+ */
+export function refNameProblem(name: string): string | undefined {
+  if (!name.trim()) return "a branch name is required";
+  if (name.startsWith("-")) return `a branch name cannot start with "-" (${name})`;
+  if (name.length > 255) return "that branch name is too long";
+  if (/[\x00-\x20\x7f~^:?*\[\\]/.test(name) || name.includes("..") || name.includes("@{") || name.endsWith(".lock") || name.endsWith("/") || name.startsWith("/"))
+    return `git will not accept "${name}" as a branch name`;
+  return undefined;
+}
+
 export type BranchInfo = { name: string; current: boolean; upstream?: string; lastCommit?: string };
 
 export async function branches(cwd: string): Promise<BranchInfo[]> {
@@ -357,6 +410,8 @@ export type BranchOutcome = { ok: true; branch: string; created: boolean } | { o
 /** Creates (optionally from `from`) and switches, or just switches. */
 export async function switchBranch(cwd: string, name: string, opts: { create?: boolean; from?: string } = {}): Promise<BranchOutcome> {
   const root = (await repoRoot(cwd)) ?? cwd;
+  const bad = refNameProblem(name) ?? (opts.from ? refNameProblem(opts.from) : undefined);
+  if (bad) return { ok: false, detail: bad };
   const args = opts.create ? ["switch", "--create", name, ...(opts.from ? [opts.from] : [])] : ["switch", name];
   const res = await runGit(args, { cwd: root });
   if (res.code !== 0) return { ok: false, detail: (res.stderr + res.stdout).trim() };
@@ -365,13 +420,16 @@ export async function switchBranch(cwd: string, name: string, opts: { create?: b
 
 /** Branches already merged into `into`, never the current one and never the default branch. */
 export async function mergedBranches(cwd: string, into: string): Promise<string[]> {
+  if (refNameProblem(into)) return [];
   const out = await gitValue(["branch", "--format=%(refname:short)", "--merged", into], { cwd });
   const current = (await status(cwd))?.branch;
   return (out ?? "").split("\n").map((b) => b.trim()).filter((b) => b && b !== into && b !== current);
 }
 
 export async function deleteBranch(cwd: string, name: string): Promise<{ ok: boolean; detail: string }> {
-  const res = await runGit(["branch", "--delete", "--", name], { cwd });
+  const bad = refNameProblem(name);
+  if (bad) return { ok: false, detail: bad };
+  const res = await runGit(["branch", "--delete", name], { cwd });
   return { ok: res.code === 0, detail: (res.stderr + res.stdout).trim() };
 }
 
@@ -390,7 +448,9 @@ export type LogEntry = { sha: string; subject: string; author: string; relative:
 
 export async function log(cwd: string, opts: { limit?: number; range?: string } = {}): Promise<LogEntry[]> {
   const args = ["log", `-${opts.limit ?? 10}`, "--format=%H%x00%s%x00%an%x00%ar"];
-  if (opts.range) args.push(opts.range);
+  // `--end-of-options` first: a range is caller-supplied text, and without it a value like
+  // `--output=<path>` is an option to git, which would happily write a file from a read.
+  if (opts.range) args.push("--end-of-options", opts.range);
   const out = await gitValue(args, { cwd });
   if (!out) return [];
   return out.split("\n").filter(Boolean).map((line) => {

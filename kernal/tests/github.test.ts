@@ -9,7 +9,7 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -149,10 +149,45 @@ describe("the shared git module", () => {
     assert.match((res as any).detail, /lint failed/);
     assert.equal(run(repo, "log", "-1", "--format=%s"), "first", "no commit was made");
 
-    // A failure with no hook in the repository is an ordinary error, not a hook refusal.
-    const plainFail = await git.commit(repo, { message: "try", paths: ["does-not-exist.txt"] });
-    assert.equal(plainFail.ok, false);
-    assert.equal((plainFail as any).reason, "error");
+  });
+
+  test("commit: git's own failures are not blamed on a hook, even in a repo that has hooks", async () => {
+    const repo = temp(newRepo());
+    const hooks = join(repo, ".git", "hooks");
+    mkdirSync(hooks, { recursive: true });
+    writeFileSync(join(hooks, "pre-commit"), "#!/bin/sh\nexit 0\n");
+    chmodSync(join(hooks, "pre-commit"), 0o755);
+    writeFileSync(join(repo, "a.txt"), "a\n");
+    run(repo, "add", "a.txt");
+    // A locked index is git's own fatal, not a hook saying no: the model must not be sent hunting
+    // for a lint error that does not exist.
+    writeFileSync(join(repo, ".git", "index.lock"), "");
+    const res = await git.commit(repo, { message: "try" });
+    assert.equal(res.ok, false);
+    assert.equal((res as any).reason, "error", (res as any).detail);
+    rmSync(join(repo, ".git", "index.lock"));
+
+    // And an ordinary commit does not report git's own "[main abc] subject" summary as hook output.
+    const good = await git.commit(repo, { message: "real commit" });
+    assert.equal(good.ok, true);
+    assert.equal((good as any).hookOutput, undefined);
+  });
+
+  test("commit: a hook that rewrites files is reported, and tracked staging leaves untracked files alone", async () => {
+    const repo = temp(newRepo());
+    const hooks = join(repo, ".git", "hooks");
+    mkdirSync(hooks, { recursive: true });
+    writeFileSync(join(hooks, "post-commit"), "#!/bin/sh\nprintf 'formatted\\n' >> tracked.txt\n");
+    chmodSync(join(hooks, "post-commit"), 0o755);
+    writeFileSync(join(repo, "tracked.txt"), "one\n");
+    run(repo, "add", "tracked.txt"); run(repo, "commit", "--quiet", "-m", "add tracked");
+    writeFileSync(join(repo, "tracked.txt"), "two\n");
+    writeFileSync(join(repo, "scratch.txt"), "junk\n");
+    const res = await git.commit(repo, { message: "change tracked", tracked: true });
+    assert.equal(res.ok, true);
+    assert.deepEqual((res as any).hookChanged, ["tracked.txt"], "the hook's own rewrite is named");
+    const after = (await git.status(repo))!;
+    assert.deepEqual(after.untracked, ["scratch.txt"], "tracked staging never sweeps an untracked file in");
   });
 
   test("withTrailers: appends to an existing trailer block, and never duplicates", () => {
@@ -229,6 +264,16 @@ describe("the shared git module", () => {
     assert.deepEqual(git.parseRemote("git@github.com:o/r.git"), { host: "github.com", owner: "o", repo: "r", ssh: true });
     assert.deepEqual(git.parseRemote("ssh://git@github.com/o/r"), { host: "github.com", owner: "o", repo: "r", ssh: true });
     assert.equal(git.parseRemote("not a url"), undefined);
+  });
+
+  test("runGit: a command that never reads stdin does not fail with EPIPE", async () => {
+    const repo = temp(newRepo());
+    // `git status` exits without reading stdin; on Linux the write loses that race and the socket
+    // raises EPIPE. Run it enough times to catch the race rather than one lucky ordering.
+    for (let i = 0; i < 25; i++) {
+      const r = await git.runGit(["status", "--porcelain"], { cwd: repo, stdin: "x".repeat(4096) });
+      assert.equal(r.code, 0);
+    }
   });
 
   test("runGit: a non-zero exit is a result, and a missing repository is not an exception", async () => {
@@ -378,6 +423,57 @@ describe("the git tool's actions", () => {
     assert.match(res.text, /not inside a git repository/);
   });
 
+  test("log: a range can never become an option, however it is spelled", async () => {
+    const repo = temp(newRepo());
+    const target = join(repo, "not-written-by-git.txt");
+    writeFileSync(target, "original\n");
+    const res = await runAction("log", { range: `--output=${target}` }, { cwd: repo, settings, gh: noGh });
+    assert.equal(readFileSync(target, "utf8"), "original\n", "git must not have written this file");
+    assert.match(res.text, /No commits\.|must come before/);
+
+    for (const name of ["--discard-changes", "-D", "--force"]) {
+      const branch = await runAction("branch", { op: "create", name }, { cwd: repo, settings, gh: noGh });
+      assert.equal(branch.isError, true, `${name} was refused`);
+      assert.match(branch.text, /cannot start with/);
+    }
+    const from = await runAction("branch", { op: "create", name: "ok", from: "--discard-changes" }, { cwd: repo, settings, gh: noGh });
+    assert.equal(from.isError, true);
+  });
+
+  test("the pull request lookup: a real gh invocation, no PR, and a lookup that failed", async () => {
+    const repo = temp(newRepo());
+    run(repo, "remote", "add", "origin", "https://github.com/o/r.git");
+    const calls: string[][] = [];
+    const fake = (reply: { code: number; stdout?: string; stderr?: string }, graph = "{}"): any => ({
+      path: "gh",
+      exec: async (_cmd: string, args: string[]) => {
+        calls.push(args);
+        if (args[0] === "api") return { stdout: graph, stderr: "", code: 0 };
+        return { stdout: reply.stdout ?? "", stderr: reply.stderr ?? "", code: reply.code };
+      },
+    });
+
+    const pr = { number: 48, title: "Phase 1", url: "https://github.com/o/r/pull/48", state: "OPEN", isDraft: false, reviewDecision: "APPROVED", statusCheckRollup: [{ conclusion: "SUCCESS" }] };
+    const threads = JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes: [{ isResolved: false }, { isResolved: true }] } } } } });
+    const found = await repoStatus(repo, fake({ code: 0, stdout: JSON.stringify(pr) }, threads));
+    assert.equal(found?.pr?.number, 48);
+    assert.equal(found?.pr?.unresolvedThreads, 1);
+    assert.equal(found?.prUnavailable, undefined);
+    // The fields really are gh's: reviewThreads is not one, and asking for it fails the whole call.
+    const fields = calls[0][calls[0].indexOf("--json") + 1];
+    assert.doesNotMatch(fields, /reviewThreads/);
+    assert.match(fields, /^number,title,url,state,isDraft,reviewDecision,statusCheckRollup$/);
+
+    const none = await repoStatus(repo, fake({ code: 1, stderr: "no pull requests found for branch \"main\"" }));
+    assert.equal(none?.pr, undefined);
+    assert.equal(none?.prUnavailable, undefined, "gh saying there is none is not a failure");
+
+    const broken = await repoStatus(repo, fake({ code: 4, stderr: "gh: To get started with GitHub CLI, please run: gh auth login" }));
+    assert.equal(broken?.pr, undefined);
+    assert.match(String(broken?.prUnavailable), /could not be looked up: gh: To get started/);
+    assert.match(statusForModel(broken!), /pullRequestLookup/);
+  });
+
   test("attribution: settings replace the default, an empty string turns it off, cloud trailers ride along", () => {
     assert.equal(attributionFrom({}).commit, "Co-Authored-By: Kernal <noreply@kernal.invalid>");
     assert.equal(attributionFrom({ github: { attribution: { commit: "" } } }).commit, "");
@@ -424,5 +520,67 @@ describe("what a person sees", () => {
     const st = (await repoStatus(repo, undefined, { pr: false }))!;
     assert.equal(st.repo?.github, false);
     assert.match(renderStatus(st), /this remote is SSH/);
+  });
+});
+
+describe("the tool definition itself", () => {
+  /** Registers the extension against a fake pi and hands back what it registered. */
+  async function register() {
+    const tools: any[] = [];
+    const commands = new Map<string, any>();
+    const mod = await import("../.pi/extensions/kernal-github/index.ts");
+    mod.default({
+      registerTool: (t: any) => { tools.push(t); },
+      registerCommand: (name: string, c: any) => { commands.set(name, c); },
+      on: () => {},
+      exec: async () => ({ stdout: "", stderr: "", code: 0 }),
+    } as any);
+    return { tools, commands };
+  }
+
+  test("the git tool stays inside the prompt budget, and says what it is for", async () => {
+    const { tools } = await register();
+    assert.equal(tools.length, 1);
+    const git = tools[0];
+    assert.equal(git.name, "git");
+    // Every request carries this, so it is measured rather than trusted. The spec's budget is 2,500
+    // tokens for all of phase 2's four tools; one tool gets a quarter of it.
+    const size = JSON.stringify({ name: git.name, description: git.description, parameters: git.parameters }).length;
+    const tokens = Math.ceil(size / 4);
+    assert.ok(tokens < 625, `the git tool's definition is ~${tokens} tokens, over its share of the budget`);
+    assert.ok(git.promptSnippet.length < 200);
+    // Guidelines are appended to a shared section, so each one has to name the tool it is about.
+    for (const line of git.promptGuidelines) assert.match(line, /\bgit\b/i, line);
+  });
+
+  test("the commands are registered with handlers", async () => {
+    const { commands } = await register();
+    assert.deepEqual([...commands.keys()].sort(), ["commit", "git", "github"]);
+    for (const [name, c] of commands) {
+      assert.equal(typeof c.handler, "function", name);
+      assert.ok(c.description.length > 10, name);
+    }
+  });
+
+  test("/commit in a clean tree says so, and never starts a turn", async () => {
+    const repo = temp(newRepo());
+    const { commands } = await register();
+    const notices: string[] = [];
+    let turns = 0;
+    await commands.get("commit").handler("", {
+      cwd: repo,
+      ui: { notify: (m: string) => notices.push(m) },
+      sendUserMessage: async () => { turns++; },
+    });
+    assert.equal(turns, 0);
+    assert.match(notices.join(" "), /working tree is clean/);
+
+    writeFileSync(join(repo, "x.txt"), "x\n");
+    await commands.get("commit").handler("", {
+      cwd: repo,
+      ui: { notify: (m: string) => notices.push(m) },
+      sendUserMessage: async () => { turns++; },
+    });
+    assert.equal(turns, 1, "with changes and no message, the agent is asked to do it");
   });
 });

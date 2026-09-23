@@ -32,7 +32,8 @@ function writeCache(c: CheckCache) { try { writeFileSync(cachePath(), JSON.strin
 const repo = () => env("UPDATE_REPO") || REPO;
 async function ghLatest(): Promise<string | undefined> {
   return new Promise((resolve) => {
-    execFile("gh", ["release", "view", "--repo", repo(), "--json", "tagName"], { timeout: 8000, encoding: "utf8" }, (err, out) => resolve(err ? undefined : tagFromGh(out)));
+    // `ghPath()`, not a bare "gh": /github setup may have installed one in kernal's own bin.
+    execFile(ghPath(), ["release", "view", "--repo", repo(), "--json", "tagName"], { timeout: 8000, encoding: "utf8" }, (err, out) => resolve(err ? undefined : tagFromGh(out)));
   });
 }
 async function apiLatest(): Promise<string | undefined> {

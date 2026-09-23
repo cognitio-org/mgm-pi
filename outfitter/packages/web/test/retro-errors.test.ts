@@ -6,6 +6,7 @@ import {
   systemErrorContent,
   apiErrorKind,
   noticeContent,
+  runStateNote,
   inVocabulary,
   systemErrorId,
   transportStatusLine,
@@ -139,3 +140,26 @@ describe("noticeContent and inVocabulary", () => {
   });
 });
 
+
+// The note the api writes when it refuses a run's agent connection (api agentlink.ts's refuse()) or
+// gives up on its sandbox (runs.ts's reconciler). Before, the session page showed a provisioning
+// spinner and the Disk Box list a bare pill, with the reason only in Cloud Logging.
+describe("runStateNote", () => {
+  it("shows a refusal in the UI's own words, since the api writes it in the api's", () => {
+    expect(runStateNote("this session's guru (t1) no longer exists, so the api can't build its run spec.")).toBe(
+      "This floppy's tape (t1) no longer exists, so the api can't build its run spec.",
+    );
+  });
+  it("keeps a note that needs no translation, capitalised as a sentence", () => {
+    expect(runStateNote("no GitHub token is stored for this session, so its sandbox can't clone the repo.")).toBe(
+      "No GitHub token is stored for this floppy, so its sandbox can't clone the repo.",
+    );
+  });
+  it("is null when there is nothing to say, so a caller can render it conditionally", () => {
+    expect(runStateNote(undefined)).toBeNull();
+    expect(runStateNote("   ")).toBeNull();
+  });
+  it("passes an agentd-authored detail (bug 7) through unchanged", () => {
+    expect(runStateNote("pi rejected prompt: model not found")).toBe("Pi rejected prompt: model not found");
+  });
+});

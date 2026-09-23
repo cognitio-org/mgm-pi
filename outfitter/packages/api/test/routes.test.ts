@@ -56,7 +56,7 @@ describe("POST /api/sessions", () => {
 });
 
 describe("GET /api/sessions/:id", () => {
-  test("includes runState from the active run, undefined once there is none", async () => {
+  test("includes runState from the active run, falling back to the latest run once none is active", async () => {
     const app = await buildTestApp();
     await seedGuru(app.store);
 
@@ -78,8 +78,48 @@ describe("GET /api/sessions/:id", () => {
     const afterAbortRun = await app.store.runs.findActiveForSession(session.id);
     await app.store.runs.update(afterAbortRun!.id, { state: "stopped" });
 
+    // Not undefined any more: the run that just ended is what this session's state actually is, and
+    // reporting nothing made a run the api refused indistinguishable from a clean stop -- see
+    // routes/sessions.ts's reportableRun. Consumers that care about liveness (kernal's teleport
+    // OutfitterStore, packages/web's desk and send-status) test against their own active-state set.
     const getAfter = await app.fastify.inject({ method: "GET", url: `/api/sessions/${session.id}` });
-    assert.equal(getAfter.json().runState, undefined);
+    assert.equal(getAfter.json().runState, "stopped");
+    assert.equal(getAfter.json().runStateReason, undefined, "only a failed run explains itself");
+
+    await app.fastify.close();
+  });
+
+  test("a failed run reports its state and its statusDetail, for the Drives list and the pill", async () => {
+    // The incident this came from (agentlink.ts's refuse()): a run the api refused used to leave the
+    // session's runState undefined, which the Disk Box list renders as the "stopped" pill -- and
+    // `?runState=failed`, an option in that list's own filter, could never match anything.
+    const app = await buildTestApp();
+    await seedGuru(app.store);
+
+    const createRes = await app.fastify.inject({
+      method: "POST",
+      url: "/api/sessions",
+      payload: { guruId: "test-guru", repo: "o/r", prompt: "hello" },
+    });
+    const { session } = createRes.json();
+    const run = await app.store.runs.findActiveForSession(session.id);
+    await app.store.runs.update(run!.id, {
+      state: "failed",
+      reason: "missing github token secret for session " + session.id,
+      statusDetail: "no GitHub token is stored for this session, so its sandbox can't clone the repo.",
+    });
+
+    const detail = await app.fastify.inject({ method: "GET", url: `/api/sessions/${session.id}` });
+    assert.equal(detail.json().runState, "failed");
+    assert.match(detail.json().runStateReason, /no GitHub token is stored/);
+
+    const failed = await app.fastify.inject({ method: "GET", url: "/api/sessions?runState=failed" });
+    const rows = failed.json() as Array<{ id: string; runState?: string; runStateReason?: string }>;
+    const row = rows.find((s) => s.id === session.id);
+    assert.ok(row, "the list's own failed filter has to be able to match a failed run");
+    assert.equal(row!.runState, "failed");
+    // The full note, not the 123-byte-capped close reason, so the list row reads like a sentence.
+    assert.match(row!.runStateReason ?? "", /no GitHub token is stored/);
 
     await app.fastify.close();
   });

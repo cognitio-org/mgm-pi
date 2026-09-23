@@ -1,0 +1,36 @@
+chrome/README.md
+  h_69b863911ebf05 3,7,20,35,38
+chrome/extension/background.js
+  h_69b863911ebf05 1,3,5-15,17-281,289,291-293,299-325
+chrome/extension/manifest.json
+  h_69b863911ebf05 7
+chrome/extension/placement.js
+  h_69b863911ebf05 1-71
+chrome/extension/protocol.js
+  h_69b863911ebf05 29-67,69-79,83-114,118
+chrome/package.json
+  h_69b863911ebf05 6
+chrome/test/placement.test.js
+  h_69b863911ebf05 1-84
+chrome/test/protocol.test.js
+  h_69b863911ebf05 5,48-62,64-89,94-97,100-106,117,121-126,130-131,151,165-178
+outfitter/packages/web/src/hooks/useChromeCompanion.ts
+  h_69b863911ebf05 1-188
+outfitter/packages/web/src/lib/chrome-companion.ts
+  h_69b863911ebf05 1-66
+outfitter/packages/web/src/pages/SessionPage.tsx
+  h_69b863911ebf05 28,61-63,73-96,316,416-470
+outfitter/packages/web/test/chrome-companion.test.ts
+  h_69b863911ebf05 1-51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "a38e5e77140ef73e503c7397e32e7a7bf098347e",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

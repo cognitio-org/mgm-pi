@@ -1,0 +1,16 @@
+outfitter/packages/web/src/lib/chunk-reload.ts
+  h_69b863911ebf05 9-10,47-55,60-62,66,121-124,126,132-134,138-139
+outfitter/packages/web/test/chunk-reload.test.ts
+  h_69b863911ebf05 35,59-71,123,132,136,149-154
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "d47c40b053566037808dc38798dd6ae258654b67",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

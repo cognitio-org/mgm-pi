@@ -1,6 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { api } from "../api/client.ts";
 import type { GroupedEntry } from "../lib/thinking.ts";
 import { thinkingAccessibleLabel, thinkingPreview, thinkingWordLabel } from "../lib/thinking.ts";
+import { BROWSER_CAPTURE_TYPE } from "../lib/entry-view.ts";
+import { apiErrorKind, noticeContent, systemErrorContent } from "../lib/retro-errors.ts";
+import { toApiErrorState } from "../lib/api-error.ts";
+import type { ApiErrorState } from "./SystemErrorDialog.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { ThinkingIcon } from "./DeskIcons.tsx";
 
@@ -88,7 +93,88 @@ function ThinkingGroup({ blocks, defaultExpanded }: { blocks: { id: string; text
   );
 }
 
-export function EntryItem({ view, defaultThinkingExpanded }: { view: GroupedEntry; defaultThinkingExpanded?: boolean }) {
+function captureErrorCopy(error: ApiErrorState): { headline: string; message: string } {
+  const kind = apiErrorKind(error.status);
+  return kind === "system" ? systemErrorContent(error.message) : noticeContent(kind, error.message);
+}
+
+// An <img src> would send same-origin cookies but not the dev bearer. Fetch the jpeg the same
+// way as every other API call, then show the bytes, so a failed load never leaves a broken image.
+function BrowserCapture({
+  sessionId,
+  captureId,
+  title,
+  url,
+}: {
+  sessionId: string;
+  captureId: string;
+  title: string;
+  url: string;
+}) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [error, setError] = useState<ApiErrorState | null>(null);
+
+  useEffect(() => {
+    if (!sessionId || !captureId) {
+      setSrc(null);
+      setError({ message: "Failed to load capture" });
+      return;
+    }
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    setSrc(null);
+    setError(null);
+    api
+      .browserCapture(sessionId, captureId)
+      .then((blob) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setSrc(objectUrl);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setError(toApiErrorState(err, "Failed to load capture"));
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [sessionId, captureId]);
+
+  const failure = error ? captureErrorCopy(error) : null;
+  return (
+    <div className="entry custom">
+      {src && !error ? (
+        <img
+          src={src}
+          alt={title || "Browser capture"}
+          onError={() => {
+            setSrc(null);
+            setError((prev) => prev ?? { message: "Failed to load capture" });
+          }}
+        />
+      ) : null}
+      {failure ? (
+        <span className="entry-failed-note">
+          {failure.headline}
+          {failure.message ? ` — ${failure.message}` : ""}
+        </span>
+      ) : null}
+      <div>{title}</div>
+      <div>{url}</div>
+    </div>
+  );
+}
+
+export function EntryItem({
+  view,
+  sessionId,
+  defaultThinkingExpanded,
+}: {
+  view: GroupedEntry;
+  sessionId?: string;
+  defaultThinkingExpanded?: boolean;
+}) {
   switch (view.kind) {
     case "thinking-group":
       return <ThinkingGroup blocks={view.blocks} defaultExpanded={defaultThinkingExpanded} />;
@@ -150,6 +236,16 @@ export function EntryItem({ view, defaultThinkingExpanded }: { view: GroupedEntr
         </div>
       );
     case "custom":
+      if (view.customType === BROWSER_CAPTURE_TYPE) {
+        return (
+          <BrowserCapture
+            sessionId={sessionId ?? ""}
+            captureId={view.captureId ?? ""}
+            title={view.title ?? ""}
+            url={view.url ?? ""}
+          />
+        );
+      }
       return <div className="entry custom">custom: {view.customType}</div>;
     case "label":
       return <div className="entry label">label: {view.label ?? "(removed)"}</div>;

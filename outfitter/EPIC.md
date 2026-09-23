@@ -541,6 +541,13 @@ research on Sonnet; review on Opus).
     dedupe. Its slot stays E7's socket replacement.
   - Rollout: deploy agentd image and API together. A run on an older agentd ignores `mail` frames,
     so its mail is retried up to 5 attempts and then stops.
+  - **Misdiagnosis trap**: a *repo* session whose GitHub token secret is missing or of the wrong
+    kind fails after its `hello` has already validated (4412 from `buildRunSpec`), so every wake
+    charges the mail an attempt and the message dead-letters after 6 — it looks like the mailbox
+    dropping messages when the real cause is the secret. The token must be a GitHub PAT
+    (fine-grained: resource owner = the org, repo selected, Contents read+write), **not** an
+    Outfitter `outf_` dongle; per-session `outfitter-github-token-<sessionId>` secrets are made by
+    hand until E1.7's shared default (#53) is deployed. See `docs/reports/sandbox-git.md`.
   - **Verified live 2026-09-23**: two repo-less sessions on `litellm/gpt-5-nano` via app.kernal.one.
     B's `outfitter_send` woke sleeping A, A replied with `outfitter_send`, B received it; the nonce
     fence and the "another agent wrote this" header rendered as intended on both sides. ~$0.003,

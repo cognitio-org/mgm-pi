@@ -444,16 +444,24 @@ terminal state; a second test sends `bye` then a `status` frame right behind it 
 
 ## Every repo session needed a hand-minted PAT before its first run
 
-**Observed:** as of 2026-09-23 the `outfitter-509211` project had no `outfitter-github-token-*`
-secrets at all — not one. `GcpSecretsBroker.secretsForRun` read only
-`outfitter-github-token-<sessionId>`, so every repo session resolved an empty `githubToken`, and
-`agentlink.ts`'s `buildRunSpec` correctly refused it with the terminal `4412`. Creating a repo
-session through the UI therefore could not work end to end: the session is created by the person
-using the UI, but the secret its first run needs can only be created out-of-band by an operator
-who knows the session id that POST just minted. The gap isn't the fatal check (an empty token
-really would fail deep inside the sandbox); it's that there was no floor under it, unlike gurus,
-whose LiteLLM keys have had an `outfitter-litellm-key-default` fallback since the "api:
-cross-process down-messages, secret-not-found handling" gap above.
+**Observed:** on 2026-09-23 the `outfitter-509211` project held exactly one
+`outfitter-github-token-*` secret — `outfitter-github-token-2cc9494a-…`, hand-minted at 00:37 UTC
+for a single session and revised four times over the following nine hours, evidently while its PAT
+scopes were being worked out. Every *other* repo session had nothing.
+`GcpSecretsBroker.secretsForRun` read only `outfitter-github-token-<sessionId>`, so those sessions
+resolved an empty `githubToken` and `agentlink.ts`'s `buildRunSpec` correctly refused them with the
+terminal `4412`.
+
+Creating a repo session through the UI therefore could not work end to end, and the one secret that
+did exist shows why rather than contradicting it: the session is created by the person using the
+UI, but the secret its first run needs can only be created out-of-band, by an operator, against a
+session id that does not exist until `POST /api/sessions` has already returned. Every repo session
+needs that dance before its first run, and gets it wrong a few times on the way.
+
+The gap isn't the fatal check — an empty token really would fail deep inside the sandbox, and
+`buildRunSpec` is right to refuse early. It's that there was no floor under it, unlike gurus, whose
+LiteLLM keys have had an `outfitter-litellm-key-default` fallback since the "api: cross-process
+down-messages, secret-not-found handling" gap above.
 
 **Fix (`packages/api/src/secrets.ts`):** `secretsForRun`'s GitHub token lookup now mirrors
 `litellmKeyForGuru` — `githubTokenForSession` reads `outfitter-github-token-<sessionId>` first and
@@ -498,3 +506,10 @@ the shared secret, but does still get a per-session token when one exists.
 
 **Files touched:** `packages/api/src/secrets.ts`, `packages/api/src/agentlink.ts` (comment only),
 `packages/api/test/secrets.test.ts`, `deploy/README.md`.
+
+**Secret created:** `outfitter-github-token-default` was created by hand on 2026-09-23 at 10:00 UTC
+(version 1, enabled) — by the operator, not by this change; nothing in this repo writes a secret
+value. `outfitter-api` already holds a project-wide `roles/secretmanager.secretAccessor` from
+`baseline.sh`, so no per-secret IAM binding was needed, and none was added. The fallback therefore
+takes effect for repo sessions as soon as an API carrying this code is deployed (an `outfitter-v*`
+tag, per the deploy convention); the running service still resolves only the per-session name.

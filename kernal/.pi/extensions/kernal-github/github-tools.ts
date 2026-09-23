@@ -409,11 +409,64 @@ function jsonStdout(data: any): string {
   return JSON.stringify(data ?? null);
 }
 
-/** An array, or that array under `key`, which is what `gh --json` printed. */
+/**
+ * The API returns the normalized pull (`sha`, `author` as a login, `jobs`). The parsers below
+ * still read `gh pr view --json` (`headRefOid`, `author.login`, `statusCheckRollup`). A payload
+ * that is already gh-shaped is left alone.
+ */
+function asGhPull(data: any): any {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return data;
+  if (data.headRefOid || data.statusCheckRollup || data.isDraft !== undefined) return data;
+  const brokerShaped = data.sha !== undefined || data.draft !== undefined || typeof data.author === "string" || Array.isArray(data.jobs) || data.head !== undefined;
+  if (!brokerShaped) return data;
+  const jobs = Array.isArray(data.jobs) ? data.jobs : [];
+  return {
+    number: data.number,
+    title: data.title,
+    url: data.url,
+    state: data.state,
+    isDraft: data.draft === true,
+    baseRefName: data.base,
+    headRefOid: data.sha,
+    headRefName: data.head,
+    reviewDecision: data.review,
+    author: typeof data.author === "string" ? { login: data.author } : data.author,
+    body: data.body,
+    statusCheckRollup: jobs.map((job: any) => ({
+      name: job?.name,
+      conclusion: job?.state,
+      detailsUrl: job?.url,
+      status: "COMPLETED",
+    })),
+  };
+}
+
+/** Repo view from the API is `{ repo, defaultBranch, permission }`. `gh repo view --json` is not. */
+function asGhRepo(data: any): any {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return data;
+  if (data.nameWithOwner || data.defaultBranchRef || data.viewerPermission) return data;
+  if (typeof data.repo !== "string" && data.defaultBranch === undefined && data.permission === undefined) return data;
+  return {
+    nameWithOwner: data.repo,
+    url: data.url,
+    defaultBranchRef: typeof data.defaultBranch === "string" ? { name: data.defaultBranch } : undefined,
+    viewerPermission: data.permission ?? null,
+  };
+}
+
+function ghPullStdout(data: any): string {
+  return JSON.stringify(asGhPull(data) ?? null);
+}
+
+function ghRepoStdout(data: any): string {
+  return JSON.stringify(asGhRepo(data) ?? null);
+}
+
+/** An array, or that array under `key` (or `items`, the earlier envelope). Pull rows are gh-shaped. */
 function listStdout(data: any, key: string): string {
-  if (Array.isArray(data)) return JSON.stringify(data);
-  if (Array.isArray(data?.[key])) return JSON.stringify(data[key]);
-  return JSON.stringify(data ?? null);
+  const rows = Array.isArray(data) ? data : Array.isArray(data?.[key]) ? data[key] : Array.isArray(data?.items) ? data.items : undefined;
+  if (!rows) return JSON.stringify(data ?? null);
+  return JSON.stringify(key === "pullRequests" ? rows.map(asGhPull) : rows);
 }
 
 function checksStdout(data: any): string {
@@ -428,7 +481,7 @@ function checksStdout(data: any): string {
   const rest = { ...data };
   delete rest.rateLimit;
   delete rest.log;
-  return JSON.stringify(rest);
+  return JSON.stringify(asGhPull(rest));
 }
 
 function replyStdout(data: any): string {
@@ -462,7 +515,7 @@ function mapBroker(argv: string[], stdin: string | undefined, env?: NodeJS.Proce
   if (cmd === "pr" && sub === "view") {
     const fields = new Set((option(argv, "--json") ?? "").split(",").map((s) => s.trim()).filter(Boolean));
     const op = fields.has("statusCheckRollup") && !fields.has("title") ? "github_pr.checks" : "github_pr.view";
-    return { op, args: whichArgs(argv[2] ?? ""), stdout: op === "github_pr.checks" ? checksStdout : jsonStdout };
+    return { op, args: whichArgs(argv[2] ?? ""), stdout: op === "github_pr.checks" ? checksStdout : ghPullStdout };
   }
   if (cmd === "pr" && sub === "list") {
     const args: Record<string, unknown> = {};
@@ -583,7 +636,7 @@ function mapBroker(argv: string[], stdin: string | undefined, env?: NodeJS.Proce
     return { op: "github_issue.reopen", args: { number: Number(argv[2]) }, stdout: () => "" };
   }
 
-  if (cmd === "repo" && sub === "view") return { op: "github_repo.view", args: {}, stdout: jsonStdout };
+  if (cmd === "repo" && sub === "view") return { op: "github_repo.view", args: {}, stdout: ghRepoStdout };
   if (cmd === "search" && (sub === "issues" || sub === "prs")) {
     const type = sub === "prs" ? "pullRequests" : "issues";
     const args: Record<string, unknown> = { query: argv[2] ?? "", type };

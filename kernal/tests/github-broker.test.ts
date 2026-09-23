@@ -131,6 +131,55 @@ describe("github broker", { concurrency: 1 }, () => {
     }
   });
 
+  test("an API-shaped pull, list, repo, and checks read as the local tools", async () => {
+    const dir = repo();
+    const trap = ghTrap();
+    const apiPull = {
+      number: 7, title: "Add tools", url: "https://github.com/o/r/pull/7", state: "OPEN",
+      draft: false, base: "main", sha: SHA_A, review: "REVIEW_REQUIRED", author: "ada", head: "feature",
+      checks: { passed: 1, failed: 0, pending: 0, total: 1 },
+      jobs: [{ name: "test", state: "SUCCESS", url: "https://github.com/o/r/actions/runs/1" }],
+      rateLimit: { remaining: 50, reset: 1 },
+    };
+    const server = await serve((req, socket) => {
+      if (req.op === "github_pr.list") reply(socket, req, { ok: true, data: { items: [apiPull] } });
+      else if (req.op === "github_pr.checks") reply(socket, req, { ok: true, data: apiPull });
+      else if (req.op === "github_repo.view") reply(socket, req, { ok: true, data: { repo: "o/r", url: "https://github.com/o/r", defaultBranch: "main", permission: "WRITE" } });
+      else if (req.op === "github_repo.releases") reply(socket, req, { ok: true, data: { releases: [{ tagName: "v1", name: "One", isDraft: false, isPrerelease: false }] } });
+      else reply(socket, req, { ok: true, data: apiPull });
+    });
+    try {
+      const view = await executeGithub("github_pr", { action: "view", number: 7 }, cloud(dir, server.path, { gh: trap.gh }));
+      assert.equal(view.isError, undefined, view.text);
+      assert.equal(view.data.sha, SHA_A);
+      assert.equal(view.data.author, "ada");
+      assert.equal(view.data.checks.passed, 1);
+      assert.equal(view.data.head, "feature");
+
+      const list = await executeGithub("github_pr", { action: "list" }, cloud(dir, server.path, { gh: trap.gh }));
+      assert.equal(list.isError, undefined, list.text);
+      assert.equal(list.data[0].number, 7);
+      assert.equal(list.data[0].sha, SHA_A);
+      assert.equal(list.data[0].author, "ada");
+
+      const repoView = await executeGithub("github_repo", { action: "view" }, cloud(dir, server.path, { gh: trap.gh }));
+      assert.equal(repoView.isError, undefined, repoView.text);
+      assert.equal(repoView.data.repo, "o/r");
+      assert.equal(repoView.data.defaultBranch, "main");
+      assert.equal(repoView.data.permission, "WRITE");
+
+      const releases = await executeGithub("github_repo", { action: "releases" }, cloud(dir, server.path, { gh: trap.gh }));
+      assert.equal(releases.isError, undefined, releases.text);
+      assert.equal(releases.data[0].tagName, "v1");
+
+      const waited = await executeGithub("github_pr", { action: "wait_ci", number: 7, timeout: 0 }, cloud(dir, server.path, { gh: trap.gh, intervalMs: 0, now: () => 0 }));
+      assert.equal(waited.data.result, "pass", waited.text);
+      assert.equal(trap.calls.length, 0);
+    } finally {
+      await server.close();
+    }
+  });
+
   test("a write sends one idempotencyKey and the same body the local path would", async () => {
     const dir = repo();
     const localGh = ghOf(() => ({ stdout: "https://github.com/o/r/pull/9\n" }));

@@ -1,0 +1,20 @@
+outfitter/EPIC.md
+  s_719d861e1a31b6::t_27dd3e4c8c40ef 465-501
+  s_719d861e1a31b6::t_df76321029f927 544-549
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "12597c3a27c4130e2b1ade69ac7cd3b628f6bcec",
+  "prompts": {},
+  "sessions": {
+    "s_719d861e1a31b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "da8235fb-f66b-41bb-a1c8-3e1a4371dbaf",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

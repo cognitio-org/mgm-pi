@@ -1,0 +1,24 @@
+outfitter/landing/public/favicon.svg
+  h_69b863911ebf05 1-26
+outfitter/landing/public/index.html
+  h_69b863911ebf05 10,12
+outfitter/landing/tools/favicon.py
+  h_69b863911ebf05 1-145
+outfitter/packages/web/index.html
+  h_69b863911ebf05 9-11
+outfitter/packages/web/public/favicon.svg
+  h_69b863911ebf05 1-26
+outfitter/packages/web/src/components/Logo.tsx
+  h_69b863911ebf05 10-11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "2bce72d852ca13553a99109dcb9d539fac69919e",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

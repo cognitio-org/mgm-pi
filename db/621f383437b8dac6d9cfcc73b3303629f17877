@@ -1,0 +1,14 @@
+kernal/README.md
+  h_69b863911ebf05 318-321
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "db621f383437b8dac6d9cfcc73b3303629f17877",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

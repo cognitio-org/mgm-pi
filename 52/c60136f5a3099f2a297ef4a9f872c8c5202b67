@@ -1,0 +1,16 @@
+docs/handoff-2026-09-23.md
+  h_69b863911ebf05 9-19,25
+kernal/docs/git-github-phase1.md
+  h_69b863911ebf05 8-10,45-49,53-54,57-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "52c60136f5a3099f2a297ef4a9f872c8c5202b67",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

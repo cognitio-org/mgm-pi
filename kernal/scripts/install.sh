@@ -8,6 +8,8 @@
 #                                             # install a locally built bundle (no download; tests use this)
 # Needs curl and tar; for a private repo either the gh CLI (logged in) or GH_TOKEN plus python3.
 # Puts `kernal` on PATH via ~/.local/bin.
+# When the bundle contains chrome/, also copies the companion onto stable paths
+# ($KERNAL_HOME/chrome, not the versioned bundle) and registers the native host.
 #
 # --- mgm -> kernal rename (docs/rename.md) ---
 # Every env var this script reads has a KERNAL_* name; the pre-rename MGM_* name still works as a
@@ -392,3 +394,145 @@ if ! command -v rec >/dev/null 2>&1 && ! command -v ffmpeg >/dev/null 2>&1 && ! 
 fi
 [[ -f "$HOME_DIR/current/.env" ]] || echo "next: cp $HOME_DIR/current/.env.example $HOME_DIR/current/.env and add your keys"
 case ":$PATH:" in *":$BIN_DIR:"*) ;; *) echo "add $BIN_DIR to your PATH" ;; esac
+
+# Point the installed host at an absolute interpreter. Chrome execs the manifest
+# path with a PATH that does not include Homebrew or nvm, so "#!/usr/bin/env node"
+# does not find Node. The repo copy keeps the env shebang; only this copy changes.
+rewrite_host_shebang() {
+  local file="$1" interp="$2" tmp="$1.tmp" line=""
+  {
+    printf '#!%s\n' "$interp"
+    IFS= read -r line || true
+    case "$line" in "#!"*) ;; *) printf '%s\n' "$line" ;; esac
+    cat
+  } < "$file" > "$tmp"
+  mv -f "$tmp" "$file"
+  chmod 755 "$file"
+}
+
+write_chrome_manifest() {
+  local dest="$1" host_path="$2" origin="$3" tmp="$1.tmp.$$"
+  mkdir -p "$(dirname "$dest")"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$tmp" "$host_path" "$origin" <<'PY'
+import json, sys
+dest, host_path, origin = sys.argv[1:4]
+with open(dest, "w") as fh:
+    json.dump({
+        "name": "com.kernal.chrome",
+        "description": "Kernal Chrome companion",
+        "path": host_path,
+        "type": "stdio",
+        "allowed_origins": [origin],
+    }, fh, indent=2)
+    fh.write("\n")
+PY
+  elif [[ -n "${node_bin:-}" ]]; then
+    CHROME_MANIFEST_OUT="$tmp" CHROME_HOST_PATH="$host_path" CHROME_ORIGIN="$origin" \
+      "$node_bin" -e 'const fs=require("fs"); fs.writeFileSync(process.env.CHROME_MANIFEST_OUT, JSON.stringify({name:"com.kernal.chrome",description:"Kernal Chrome companion",path:process.env.CHROME_HOST_PATH,type:"stdio",allowed_origins:[process.env.CHROME_ORIGIN]},null,2)+"\n")'
+  else
+    CHROME_MANIFEST_OUT="$tmp" CHROME_HOST_PATH="$host_path" CHROME_ORIGIN="$origin" \
+      BUN_BE_BUN=1 "$pi_bin" -e 'const fs=require("fs"); fs.writeFileSync(process.env.CHROME_MANIFEST_OUT, JSON.stringify({name:"com.kernal.chrome",description:"Kernal Chrome companion",path:process.env.CHROME_HOST_PATH,type:"stdio",allowed_origins:[process.env.CHROME_ORIGIN]},null,2)+"\n")'
+  fi
+  mv -f "$tmp" "$dest"
+}
+
+# Copy the companion out of the versioned bundle and, when something can actually
+# start the host, register it. A source checkout has Node. A release bundle does
+# not: package.sh says users need no Node, and the pi binary is Bun. Chrome execs
+# the manifest path directly. It will not set BUN_BE_BUN, and it will not see the
+# shell PATH this script has. The probes below are the check — a missing runtime
+# writes no manifest. KERNAL_CHROME_OPEN=0 skips opening the extensions page
+# (the install tests set it; they must not launch Chrome).
+install_chrome_companion() {
+  local src="$HOME_DIR/current/chrome"
+  [[ -d "$src/extension" && -d "$src/host" && -f "$src/extension-id" && -f "$src/host/kernal-chrome-host.mjs" ]] || return 0
+  local dest="$HOME_DIR/chrome" first=1
+  if [[ -d "$dest/extension" ]]; then first=0; fi
+  rm -rf "$dest/extension" "$dest/host"
+  mkdir -p "$dest"
+  cp -R "$src/extension" "$dest/extension"
+  cp -R "$src/host" "$dest/host"
+  cp "$src/extension-id" "$dest/extension-id"
+  local host_mjs="$dest/host/kernal-chrome-host.mjs"
+  local ext_id manifest_dir="" manifest="" runtime="" node_bin="" pi_bin="$HOME_DIR/current/pi/pi" out=""
+  ext_id=$(tr -d '[:space:]' < "$dest/extension-id")
+  case "$os" in
+    darwin) manifest_dir="$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts" ;;
+    linux) manifest_dir="$HOME/.config/google-chrome/NativeMessagingHosts" ;;
+  esac
+  if [[ -n "$manifest_dir" ]]; then manifest="$manifest_dir/com.kernal.chrome.json"; fi
+  local origin="chrome-extension://${ext_id}/"
+
+  # Real check: Node has to accept the host, not merely be on PATH. An absolute
+  # path with a space cannot be a shebang, so that Node is not usable here.
+  if command -v node >/dev/null 2>&1; then
+    node_bin=$(command -v node)
+    if [[ "$node_bin" == /* && "$node_bin" != *" "* ]] && "$node_bin" --check "$host_mjs" >/dev/null 2>&1; then
+      out=$("$node_bin" --input-type=module -e 'import("node:net").then(() => process.stdout.write("ok"))' 2>/dev/null || true)
+      if [[ "$out" == *ok* ]]; then runtime=node; fi
+    fi
+  fi
+  # pi without BUN_BE_BUN is the agent, not a runtime. The probe sets the variable.
+  # Chrome will not, so a passing probe still needs a launcher (below), never the
+  # .mjs whose shebang says node.
+  if [[ -z "$runtime" && -x "$pi_bin" ]]; then
+    out=$(BUN_BE_BUN=1 "$pi_bin" -e 'import("node:net").then(() => process.stdout.write("ok")).catch(() => process.exit(1))' 2>/dev/null || true)
+    if [[ "$out" == *ok* ]]; then runtime=bun; fi
+  fi
+
+  local manifest_path="" launcher="$dest/host/kernal-chrome-host"
+  if [[ "$runtime" == node && "$ext_id" =~ ^[a-p]{32}$ && -n "$manifest" ]]; then
+    rewrite_host_shebang "$host_mjs" "$node_bin"
+    rm -f "$launcher"
+    manifest_path="$host_mjs"
+  elif [[ "$runtime" == bun && "$ext_id" =~ ^[a-p]{32}$ && -n "$manifest" ]]; then
+    {
+      printf '%s\n' '#!/bin/sh'
+      printf 'export KERNAL_HOME=%q\n' "$HOME_DIR"
+      printf 'export BUN_BE_BUN=1\n'
+      printf 'exec %q %q\n' "$pi_bin" "$host_mjs"
+    } > "$launcher"
+    chmod 755 "$launcher" "$host_mjs"
+    manifest_path="$launcher"
+  fi
+
+  if [[ -z "$manifest_path" ]]; then
+    if [[ -n "$manifest" ]]; then rm -f "$manifest"; fi
+    echo "Chrome companion: native host not registered. No manifest was written, so nothing points at a missing runtime."
+    if [[ ! "$ext_id" =~ ^[a-p]{32}$ ]]; then
+      echo "Chrome companion: chrome/extension-id is not a 32-character Chrome extension id."
+    else
+      echo "Chrome companion: neither Node nor the bundled pi binary could start the host. A release bundle has no Node (see package.sh); pi is Bun and runs this script only with BUN_BE_BUN=1, which Chrome does not set. The check did not pass, so the host was not registered."
+    fi
+    echo "Chrome companion: extension files are at $dest/extension."
+  else
+    write_chrome_manifest "$manifest" "$manifest_path" "$origin"
+    echo "Chrome companion: native host registered ($manifest_path)"
+  fi
+
+  # Open the extensions page on first install. Do not write Chrome's preference
+  # files; Load unpacked stays a manual step, and this script must not claim the
+  # extension is loaded inside Chrome.
+  if [[ "$first" == 1 ]]; then
+    echo "Load the Kernal extension (this install does not load it inside Chrome):"
+    echo "  1. Open chrome://extensions"
+    echo "  2. Turn on Developer mode"
+    echo "  3. Choose Load unpacked and select $dest/extension"
+    if [[ "${KERNAL_CHROME_OPEN:-1}" != 0 ]]; then
+      case "$os" in
+        darwin) open -a "Google Chrome" "chrome://extensions" >/dev/null 2>&1 || true ;;
+        linux)
+          if command -v google-chrome >/dev/null 2>&1; then google-chrome "chrome://extensions" >/dev/null 2>&1 || true &
+          elif command -v google-chrome-stable >/dev/null 2>&1; then google-chrome-stable "chrome://extensions" >/dev/null 2>&1 || true &
+          elif command -v xdg-open >/dev/null 2>&1; then xdg-open "chrome://extensions" >/dev/null 2>&1 || true &
+          fi
+          ;;
+      esac
+    fi
+  else
+    echo "Reload the Kernal extension at chrome://extensions"
+    echo "An unpacked extension keeps running the old files until then."
+  fi
+}
+install_chrome_companion

@@ -6,11 +6,13 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import net from "node:net";
 import { updateSettings } from "../.pi/extensions/connect/settings.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -537,5 +539,181 @@ describe("pruning old versions (real install.sh and bin/kernal, /bin/bash)", () 
       assert.ok(existsSync(b.early) && existsSync(b.late));
       assert.ok(!script.includes("prune_legacy"), "only the explicit kernal prune --legacy does");
     });
+  });
+});
+
+describe("chrome companion install", () => {
+  const repo = join(root, "..");
+  const extId = readFileSync(join(repo, "chrome", "extension-id"), "utf8").trim();
+  const osName = execFileSync("uname", ["-s"], { encoding: "utf8" }).trim().toLowerCase();
+  const arch = execFileSync("uname", ["-m"], { encoding: "utf8" }).trim().replace("x86_64", "x64").replace("aarch64", "arm64");
+  const platform = `${osName}-${arch}`;
+  const nativeHostDir = (homeDir: string) => osName === "darwin"
+    ? join(homeDir, "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts")
+    : join(homeDir, ".config", "google-chrome", "NativeMessagingHosts");
+
+  // A node that fails --check, ahead of /usr/bin, so a machine with a system node
+  // still takes the "no Node" branch. install.sh needs the rest of /usr/bin.
+  function pathWithoutNode(work: string) {
+    const bin = join(work, "no-node");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "node"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    return `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`;
+  }
+
+  function sandbox(opts: { pi?: boolean; withNode?: boolean } = {}) {
+    const work = mkdtempSync(join(tmpdir(), "kernal-chrome-install-"));
+    const home = join(work, ".kernal");
+    const binDir = join(work, "bin");
+    const withNode = opts.withNode !== false;
+    const base: Record<string, string> = {
+      ...process.env,
+      PATH: withNode ? `${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin` : pathWithoutNode(work),
+      HOME: work,
+      KERNAL_HOME: home,
+      KERNAL_BIN: binDir,
+      GH_TOKEN: "",
+      KERNAL_CHROME_OPEN: "0",
+    };
+    delete base.KERNAL_BUNDLE_FILE;
+    delete base.MGM_BUNDLE_FILE;
+    const bundle = (version: string) => {
+      const name = `kernal-${version}-${platform}`;
+      const stage = join(work, "build", name);
+      mkdirSync(join(stage, ".pi"), { recursive: true });
+      mkdirSync(join(stage, "bin"), { recursive: true });
+      writeFileSync(join(stage, ".pi", "settings.json"), JSON.stringify({ defaultProvider: "litellm", defaultModel: "gpt-5.4-nano" }));
+      writeFileSync(join(stage, "bin", "kernal"), "#!/bin/sh\necho kernal\n", { mode: 0o755 });
+      cpSync(join(repo, "chrome", "extension"), join(stage, "chrome", "extension"), { recursive: true });
+      cpSync(join(repo, "chrome", "host"), join(stage, "chrome", "host"), { recursive: true });
+      cpSync(join(repo, "chrome", "extension-id"), join(stage, "chrome", "extension-id"));
+      if (opts.pi) {
+        const pi = join(stage, "pi", "pi");
+        mkdirSync(dirname(pi), { recursive: true });
+        writeFileSync(pi, "#!/bin/sh\nif [ \"$BUN_BE_BUN\" != 1 ]; then exit 1; fi\nif [ \"$1\" = -e ]; then printf ok; exit 0; fi\nexit 1\n", { mode: 0o755 });
+      }
+      const tgz = join(work, "build", `${name}.tar.gz`);
+      execFileSync("tar", ["czf", tgz, "-C", join(work, "build"), name]);
+      return tgz;
+    };
+    const install = (version: string) => {
+      const r = spawnSync("bash", [join(root, "scripts", "install.sh")], {
+        env: { ...base, KERNAL_VERSION: version, KERNAL_BUNDLE_FILE: bundle(version) },
+        encoding: "utf8",
+      });
+      return { status: r.status, out: `${r.stdout}${r.stderr}` };
+    };
+    return { work, home, install };
+  }
+
+  async function stop(proc: ReturnType<typeof spawn>) {
+    if (proc.exitCode !== null) return;
+    proc.kill("SIGTERM");
+    await Promise.race([once(proc, "exit"), new Promise((resolve) => setTimeout(resolve, 1000))]);
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+  }
+
+  test("package.sh ships the companion inside the bundle", () => {
+    const pkg = readFileSync(join(root, "scripts", "package.sh"), "utf8");
+    assert.match(pkg, /CHROME_SRC=.*chrome/);
+    assert.match(pkg, /chrome\/extension/);
+    assert.match(pkg, /chrome\/host/);
+    assert.match(pkg, /extension-id/);
+  });
+
+  test("a second install overwrites the one host manifest; path and extension id stay correct", async () => {
+    const b = sandbox();
+    const manifestPath = join(nativeHostDir(b.work), "com.kernal.chrome.json");
+    const hostMjs = join(b.home, "chrome", "host", "kernal-chrome-host.mjs");
+    const first = b.install("9.9.0");
+    assert.equal(first.status, 0, first.out);
+    assert.match(first.out, /does not load it inside Chrome/);
+    assert.match(first.out, /Choose Load unpacked/);
+    assert.match(first.out, new RegExp(join(b.home, "chrome", "extension").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.doesNotMatch(first.out, /Reload the Kernal extension/);
+    assert.doesNotMatch(first.out, /extension is loaded/);
+    assert.equal(lstatSync(join(b.home, "chrome", "extension")).isSymbolicLink(), false);
+    assert.equal(readFileSync(join(b.home, "chrome", "extension", "manifest.json"), "utf8"), readFileSync(join(repo, "chrome", "extension", "manifest.json"), "utf8"));
+    const shebang = readFileSync(hostMjs, "utf8").split("\n")[0];
+    assert.match(shebang, /^#!\//);
+    assert.doesNotMatch(shebang, /env/);
+    assert.ok(existsSync(shebang.slice(2)), shebang);
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    assert.equal(manifest.name, "com.kernal.chrome");
+    assert.equal(manifest.type, "stdio");
+    assert.equal(manifest.path, hostMjs);
+    assert.deepEqual(manifest.allowed_origins, [`chrome-extension://${extId}/`]);
+    assert.equal(manifest.path.includes(`kernal-9.9.0-${platform}`), false);
+    assert.deepEqual(readdirSync(nativeHostDir(b.work)), ["com.kernal.chrome.json"]);
+
+    const proc = spawn(hostMjs, [], { env: { HOME: b.work, PATH: "/usr/bin:/bin", KERNAL_HOME: b.home }, stdio: ["pipe", "pipe", "pipe"] });
+    try {
+      let err = "";
+      const ready = new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(err)), 4000);
+        proc.stderr.on("data", (c) => {
+          err += c.toString();
+          if (err.includes("listening")) { clearTimeout(timer); resolve(); }
+        });
+        proc.on("exit", (code) => { clearTimeout(timer); reject(new Error(`exit ${code}: ${err}`)); });
+      });
+      await ready;
+      assert.equal(statSync(join(b.home, "chrome.sock")).mode & 0o777, 0o600);
+      const listed = await new Promise<string>((resolve, reject) => {
+        const socket = net.connect(join(b.home, "chrome.sock"));
+        let buf = "";
+        const timer = setTimeout(() => reject(new Error(buf)), 4000);
+        socket.on("data", (c) => { buf += c.toString(); if (buf.includes("\n")) { clearTimeout(timer); socket.end(); resolve(buf); } });
+        socket.on("error", reject);
+        socket.on("connect", () => socket.write('{"t":"list"}\n'));
+      });
+      assert.deepEqual(JSON.parse(listed), { t: "shares", shares: [] });
+    } finally {
+      await stop(proc);
+    }
+
+    writeFileSync(join(b.home, "chrome", "extension", "STALE.txt"), "old");
+    writeFileSync(manifestPath, JSON.stringify({ name: "com.kernal.chrome", path: "/tmp/wrong", type: "stdio", allowed_origins: ["chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/"] }));
+    const second = b.install("9.9.0");
+    assert.equal(second.status, 0, second.out);
+    assert.match(second.out, /Reload the Kernal extension at chrome:\/\/extensions/);
+    assert.match(second.out, /old files until then/);
+    assert.doesNotMatch(second.out, /Choose Load unpacked/);
+    assert.doesNotMatch(second.out, /extension is loaded/);
+    assert.equal(existsSync(join(b.home, "chrome", "extension", "STALE.txt")), false);
+    const again = JSON.parse(readFileSync(manifestPath, "utf8"));
+    assert.equal(again.path, hostMjs);
+    assert.deepEqual(again.allowed_origins, [`chrome-extension://${extId}/`]);
+    assert.deepEqual(readdirSync(nativeHostDir(b.work)), ["com.kernal.chrome.json"]);
+  });
+
+  test("with no runtime the extension is copied and no manifest is written", () => {
+    const b = sandbox({ withNode: false });
+    const out = b.install("9.9.2");
+    assert.equal(out.status, 0, out.out);
+    assert.match(out.out, /native host not registered/);
+    assert.match(out.out, /missing runtime/);
+    assert.match(out.out, /Choose Load unpacked/);
+    assert.doesNotMatch(out.out, /extension is loaded/);
+    assert.equal(existsSync(join(b.home, "chrome", "extension", "manifest.json")), true);
+    assert.equal(existsSync(join(nativeHostDir(b.work), "com.kernal.chrome.json")), false);
+  });
+
+  test("a bundle whose only runtime is pi registers a launcher, not a node shebang", () => {
+    const b = sandbox({ withNode: false, pi: true });
+    const out = b.install("9.9.1");
+    assert.equal(out.status, 0, out.out);
+    const manifest = JSON.parse(readFileSync(join(nativeHostDir(b.work), "com.kernal.chrome.json"), "utf8"));
+    const launcher = join(b.home, "chrome", "host", "kernal-chrome-host");
+    assert.equal(manifest.path, launcher);
+    assert.deepEqual(manifest.allowed_origins, [`chrome-extension://${extId}/`]);
+    assert.equal(manifest.path.includes(`kernal-9.9.1-${platform}`), false);
+    const text = readFileSync(launcher, "utf8");
+    assert.match(text, /BUN_BE_BUN=1/);
+    assert.match(text, /current\/pi\/pi/);
+    assert.match(text, /kernal-chrome-host\.mjs/);
+    assert.doesNotMatch(text, new RegExp(`kernal-9\\.9\\.1-${platform}`));
+    assert.match(readFileSync(join(b.home, "chrome", "host", "kernal-chrome-host.mjs"), "utf8"), /^#!\/usr\/bin\/env node\n/);
+    assert.deepEqual(readdirSync(nativeHostDir(b.work)), ["com.kernal.chrome.json"]);
   });
 });

@@ -363,6 +363,9 @@ case "${1:-}" in
       curl -fsSL ${GH_TOKEN:+-H "Authorization: Bearer $GH_TOKEN"} -o "$tmp/install.sh" "https://github.com/$REPO/releases/${2:+download/v$2}${2:-latest/download}/install.sh" \
         || { echo "kernal: could not download the installer — log in with 'gh auth login' or set GH_TOKEN" >&2; exit 1; }
     fi
+    # The downloaded install.sh copies chrome/extension and chrome/host onto stable
+    # paths ($KERNAL_HOME/chrome, not this versioned bundle) and refreshes the
+    # native-messaging manifest. An unpacked extension keeps the old files until reload.
     KERNAL_HOME="$(cd -P "$ROOT/.." && pwd)" KERNAL_VERSION="${2:-}" bash "$tmp/install.sh"; exit $? ;;
   --teleport)
     # pi has no "run a slash command at startup" flag, so the pull happens here, headlessly, before

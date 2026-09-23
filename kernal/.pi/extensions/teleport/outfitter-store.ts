@@ -219,7 +219,6 @@ export class OutfitterStore implements Store {
   }
 }
 
-/** `x-outfitter-base` only when the manifest repo already has a base; Manifest has none today, so it is omitted. */
 function repoHeaders(manifest: Manifest): Record<string, string> | undefined {
   const repo = manifest.repo;
   if (!repo) return undefined;
@@ -228,7 +227,6 @@ function repoHeaders(manifest: Manifest): Record<string, string> | undefined {
     "x-outfitter-branch": repo.branch,
     "x-outfitter-head": repo.head,
   };
-  const base = "base" in repo ? (repo as { base?: unknown }).base : undefined;
-  if (typeof base === "string" && base.length > 0) headers["x-outfitter-base"] = base;
+  if (repo.base) headers["x-outfitter-base"] = repo.base;
   return headers;
 }

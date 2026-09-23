@@ -327,4 +327,50 @@ describe("export.jsonl / import round trip", () => {
       await app.fastify.close();
     }
   });
+
+  test("import rejects a repo that is not owner/repo, including an ssh url", async () => {
+    const app = await buildTestApp();
+    const id = "session-ssh";
+    const header = JSON.stringify({ type: "session", version: 3, id, cwd: "/tmp" });
+    const res = await app.fastify.inject({
+      method: "PUT",
+      url: `/api/sessions/${id}/import`,
+      headers: {
+        "content-type": "application/x-ndjson",
+        "x-outfitter-repo": "git@github.com:acme/widgets",
+        "x-outfitter-branch": "feature",
+        "x-outfitter-base": "main",
+        "x-outfitter-head": "0123456789abcdef0123456789abcdef01234567",
+      },
+      payload: `${header}\n`,
+    });
+    assert.equal(res.statusCode, 400);
+    assert.equal(await app.store.sessions.findById(id), null);
+    await app.fastify.close();
+  });
+
+  test("a second import cannot retarget an existing repository", async () => {
+    const app = await buildTestApp();
+    const id = "session-bound";
+    const head = "0123456789abcdef0123456789abcdef01234567";
+    const header = JSON.stringify({ type: "session", version: 3, id, cwd: "/tmp" });
+    const headers = {
+      "content-type": "application/x-ndjson",
+      "x-outfitter-repo": "acme/widgets",
+      "x-outfitter-branch": "feature",
+      "x-outfitter-base": "main",
+      "x-outfitter-head": head,
+    };
+    const first = await app.fastify.inject({ method: "PUT", url: `/api/sessions/${id}/import`, headers, payload: `${header}\n` });
+    assert.equal(first.statusCode, 200);
+    const second = await app.fastify.inject({
+      method: "PUT",
+      url: `/api/sessions/${id}/import`,
+      headers: { ...headers, "x-outfitter-repo": "bob/other" },
+      payload: `${header}\n`,
+    });
+    assert.equal(second.statusCode, 409);
+    assert.equal((await app.store.sessions.findById(id))?.repo, "acme/widgets");
+    await app.fastify.close();
+  });
 });

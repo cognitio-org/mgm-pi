@@ -33,7 +33,7 @@ export type Manifest = {
   name?: string;
   host: string;
   cwd: string;
-  repo?: { remote: string; ownerRepo: string; branch: string; head: string };
+  repo?: { remote: string; ownerRepo: string; branch: string; head: string; base?: string };
   pushedAt: string; // ISO timestamp
 };
 
@@ -255,7 +255,7 @@ export function rewriteHeaderCwd(jsonl: string, newCwd: string): string {
   return JSON.stringify(header) + rest;
 }
 
-export type GitInfo = { remote: string; branch: string; head: string };
+export type GitInfo = { remote: string; branch: string; head: string; base?: string };
 
 /** Builds a push manifest from git info (all three fields present) or without a repo section. */
 export function manifestFromGit(params: { id: string; name?: string; host: string; cwd: string; git?: GitInfo; pushedAt?: string }): Manifest {
@@ -265,7 +265,7 @@ export function manifestFromGit(params: { id: string; name?: string; host: strin
   };
   if (params.git) {
     const ownerRepo = parseOwnerRepo(params.git.remote);
-    if (ownerRepo) manifest.repo = { remote: params.git.remote, ownerRepo, branch: params.git.branch, head: params.git.head };
+    if (ownerRepo) manifest.repo = { remote: params.git.remote, ownerRepo, branch: params.git.branch, head: params.git.head, ...(params.git.base ? { base: params.git.base } : {}) };
   }
   return manifest;
 }

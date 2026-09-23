@@ -65,13 +65,15 @@ export default function (pi: ExtensionAPI) {
   if (!inSandbox()) void refreshCache();
 
   async function gitInfo(cwd: string): Promise<GitInfo | undefined> {
-    const [remote, branch, head] = await Promise.all([
+    const [remote, branch, head, originHead] = await Promise.all([
       pi.exec("git", ["remote", "get-url", "origin"], { cwd }),
       pi.exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd }),
       pi.exec("git", ["rev-parse", "HEAD"], { cwd }),
+      pi.exec("git", ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], { cwd }),
     ]);
     if (remote.code !== 0 || branch.code !== 0 || head.code !== 0) return undefined;
-    return { remote: remote.stdout.trim(), branch: branch.stdout.trim(), head: head.stdout.trim() };
+    const base = originHead.code === 0 ? originHead.stdout.trim().replace(/^origin\//, "") : undefined;
+    return { remote: remote.stdout.trim(), branch: branch.stdout.trim(), head: head.stdout.trim(), ...(base ? { base } : {}) };
   }
 
   // ---------- push ----------

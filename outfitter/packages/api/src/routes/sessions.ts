@@ -90,6 +90,13 @@ function validTeleportBranch(value: string): boolean {
   return value.length > 0 && !value.startsWith("-") && !value.includes("..");
 }
 
+/** `owner/repo` only. `cloneUrlFor` turns that into https://github.com; anything else, including `git@`, would be cloned as written. */
+function validOwnerRepo(value: string): boolean {
+  const parts = value.split("/");
+  if (parts.length !== 2) return false;
+  return parts.every((part) => /^[A-Za-z0-9_.-]+$/.test(part) && !part.includes(".."));
+}
+
 /** Laptop-to-cloud repo from the teleport headers. No such headers → `patch: null` (repo stays null). */
 function teleportRepoPatch(req: FastifyRequest): { error: string } | { patch: Partial<Session> | null } {
   const repo = oneHeader(req, "x-outfitter-repo");
@@ -101,9 +108,12 @@ function teleportRepoPatch(req: FastifyRequest): { error: string } | { patch: Pa
   if (base === false) return { error: "invalid x-outfitter-base" };
   if (head === false) return { error: "invalid x-outfitter-head" };
   if (repo === undefined && branch === undefined && base === undefined && head === undefined) return { patch: null };
-  if (repo !== undefined && !/^[^/\s]+\/[^/\s]+$/.test(repo)) return { error: "invalid x-outfitter-repo" };
+  if (repo !== undefined && !validOwnerRepo(repo)) return { error: "invalid x-outfitter-repo" };
   if (branch !== undefined && !validTeleportBranch(branch)) return { error: "invalid x-outfitter-branch" };
   if (base !== undefined && !validTeleportBranch(base)) return { error: "invalid x-outfitter-base" };
+  if (repo !== undefined && (branch === undefined || base === undefined || head === undefined || !/^[0-9a-f]{40}$/i.test(head))) {
+    return { error: "x-outfitter-repo requires branch, base, and a 40-hex head" };
+  }
   const patch: Partial<Session> = {};
   if (repo !== undefined) patch.repo = repo;
   if (branch !== undefined) patch.branch = branch;
@@ -222,6 +232,9 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
     if (header.id !== id) return reply.code(400).send({ error: "header id does not match :id" });
 
     const existing = await ctx.store.sessions.findById(id);
+    if (existing?.repo && carried.patch?.repo && existing.repo !== carried.patch.repo) {
+      return reply.code(409).send({ error: "this session is already bound to a repository" });
+    }
     const now = new Date().toISOString();
     let session = existing;
     if (!session) {

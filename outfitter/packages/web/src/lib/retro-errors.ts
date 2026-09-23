@@ -70,6 +70,17 @@ export function systemErrorId(status: number | undefined): string {
   return typeof status === "number" ? String(status) : "ERR";
 }
 
+/** The plain-language note shown for a run that failed or stalled: the session page's own
+ * `.status-detail-note` (from the run's statusDetail, streamed over SSE) and the Drives list's
+ * failed row (from the summary's runStateReason) both render through this, so the same refusal reads
+ * the same in both places. Runs through inVocabulary because the api writes these in its own code
+ * names ("this session's guru no longer exists"), same as every other message it sends the UI.
+ * Returns null when there is nothing to say, so callers can `{runStateNote(x) && <.../>}`. */
+export function runStateNote(detail: string | undefined): string | null {
+  const said = detail?.trim();
+  return said ? inVocabulary(said) : null;
+}
+
 export type ContextMeterState = "ok" | "warn" | "danger" | "outOfMemory";
 
 /** Mirrors the session header's context meter thresholds (danger >=80%, warn >=50%), plus the new

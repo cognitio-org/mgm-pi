@@ -156,3 +156,80 @@ describe("SsePoller entry window (review fix)", () => {
     poller.stop();
   });
 });
+
+// A statusDetail belongs to one run: agentlink.ts's refuse() writes the api's reason for refusing a
+// run's agent there, and the session page renders it as its own note. Since a status event with no
+// `detail` deliberately leaves the last note standing (agentd sends state-only frames constantly)
+// and a fresh run has no detail of its own, a dead run's note used to stay pinned over its
+// successor -- press Play after a refused run and the old alert was still there.
+describe("SsePoller statusDetail belongs to one run", () => {
+  test("a failed run's note is published, then explicitly cleared when a new run appears", async () => {
+    const store = new MemoryStore();
+    const webHub = new SseHub();
+    const poller = new SsePoller(webHub, store, 5);
+    await seedSession(store, "s5");
+    const { reply, frames } = fakeSubscriber();
+    webHub.subscribe("s5", reply);
+    poller.watch("s5");
+
+    const now = new Date().toISOString();
+    await store.runs.insert({ id: "r5a", sessionId: "s5", state: "provisioning", lastAckedSeq: 0, pending: [], createdAt: now, updatedAt: now });
+    await poller.pollOne("s5");
+
+    // What refuse() writes for a repo session with no GitHub token secret.
+    await store.runs.update("r5a", {
+      state: "failed",
+      reason: "missing github token secret for session s5",
+      statusDetail: "no GitHub token is stored for this session, so its sandbox can't clone the repo.",
+      updatedAt: new Date().toISOString(),
+    });
+    frames.length = 0;
+    await poller.pollOne("s5");
+    const failedFrame = frames.filter((f) => f.startsWith("event: status")).at(-1) ?? "";
+    assert.ok(failedFrame.includes('"state":"failed"'));
+    assert.ok(failedFrame.includes("no GitHub token is stored"), "the note reaches the browser at all");
+    assert.ok(failedFrame.includes("missing github token secret"), "and so does the short reason the header uses");
+
+    // Press Play: a second run, with no statusDetail of its own.
+    const later = new Date(Date.now() + 1000).toISOString();
+    await store.runs.insert({ id: "r5b", sessionId: "s5", state: "provisioning", lastAckedSeq: 0, pending: [], createdAt: later, updatedAt: later });
+    frames.length = 0;
+    await poller.pollOne("s5");
+    const freshFrame = frames.filter((f) => f.startsWith("event: status")).at(-1) ?? "";
+    assert.ok(freshFrame.includes('"state":"provisioning"'));
+    assert.ok(
+      freshFrame.includes('"detail":null'),
+      "an explicit null is what tells the browser to drop the previous run's note (see useSessionStream)",
+    );
+    poller.stop();
+  });
+
+  test("a state-only poll of the same run does not re-send or clear its note", async () => {
+    const store = new MemoryStore();
+    const webHub = new SseHub();
+    const poller = new SsePoller(webHub, store, 5);
+    await seedSession(store, "s6");
+    const { reply, frames } = fakeSubscriber();
+    webHub.subscribe("s6", reply);
+    poller.watch("s6");
+
+    const now = new Date().toISOString();
+    await store.runs.insert({
+      id: "r6",
+      sessionId: "s6",
+      state: "provisioning",
+      statusDetail: "the api could not build this run's spec: secret manager unavailable. Retrying.",
+      lastAckedSeq: 0,
+      pending: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+    await poller.pollOne("s6");
+    frames.length = 0;
+    await poller.pollOne("s6");
+    await poller.pollOne("s6");
+
+    assert.equal(frames.filter((f) => f.startsWith("event: status")).length, 0, "nothing changed, so nothing is re-sent");
+    poller.stop();
+  });
+});

@@ -6,7 +6,13 @@ import { useProviders } from "../hooks/useProviders.ts";
 import { entriesToViews } from "../lib/entry-view.ts";
 import { groupThinkingBlocks } from "../lib/thinking.ts";
 import { deriveSessionHeader } from "../lib/session-header.ts";
-import { contextMeterMessage, deriveTransportStatusLine, transportStatusLine, type TransportOutcome } from "../lib/retro-errors.ts";
+import {
+  contextMeterMessage,
+  deriveTransportStatusLine,
+  runStateNote,
+  transportStatusLine,
+  type TransportOutcome,
+} from "../lib/retro-errors.ts";
 import { toApiErrorState } from "../lib/api-error.ts";
 import { EntryItem } from "../components/EntryItem.tsx";
 import { Composer } from "../components/Composer.tsx";
@@ -249,6 +255,11 @@ export function SessionPage() {
   const header = deriveSessionHeader(entries, (id) => windowById.get(id));
   const percent = header.context?.percent;
   const oomMessage = typeof percent === "number" ? contextMeterMessage(percent) : null;
+  // Bug 7 (docs/reports/cloud-fixes.md): a pi RPC command agentd's run rejected. Also the api's own
+  // reason when it refuses the run's agent connection (agentlink.ts's refuse()) or gives up on its
+  // sandbox (runs.ts's reconciler) -- for a run that never started, this note is the only thing a
+  // person gets, since the one-line statusLine above only has room for the short reason.
+  const detailNote = runStateNote(statusDetail);
   // Same source as the pill and buttons: while a send is in flight (or timed out) the composer's
   // status line speaks for the run, so the header must not also say READY. or "stopped · press Play".
   const statusLine =
@@ -357,11 +368,9 @@ export function SessionPage() {
           {modelProviderDown && (
             <DeviceNotPresent reason={`the ${modelProviderKind} peripheral is down -- this run can't reach its model right now.`} />
           )}
-          {/* Bug 7 (docs/reports/cloud-fixes.md): a rejected pi RPC (prompt/steer/follow_up) used to
-           * vanish silently; agentd now surfaces it via the run's status detail. */}
-          {statusDetail && (
+          {detailNote && (
             <p className="status-detail-note" role="alert">
-              {statusDetail}
+              {detailNote}
             </p>
           )}
           {session?.mailNotice && (

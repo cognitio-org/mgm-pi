@@ -63,9 +63,10 @@ one refusal stops the fleet as well.
 The release was finished by hand from the primary `main` checkout (`/Users/mgm/localllm`, not a
 worktree), as `mgm@mgms.eu`: `MANUAL=1 ./release.sh`. `outfitter-agent`, `outfitter-link`,
 `outfitter-api`, and `kernal-web` all came back with `build-commit` `ca451ae4466d`. The page is
-labelled now, so a later release that does not touch `landing/` skips it. The next change under
-`landing/` fails the workflow the same way until `kernal-web` runs as an account the deployer can
-act as (`deploy/README.md`).
+labelled now, so a later release that does not touch `landing/` skips it. The page's own
+account is `kernal-web@outfitter-509211.iam.gserviceaccount.com`, with no project roles.
+`landing.sh` deploys as that account, and `ci-setup.sh` lets `outfitter-deployer` act as it. The
+default Compute account stays project Editor and is no longer the page's runtime identity.
 
 ## The end-to-end check (done 2026-09-23)
 
@@ -99,15 +100,15 @@ A failure surfaces in the run's status detail rather than an indefinite spinner 
 
 ## Next actions, in order
 
-1. **`kernal-web`'s runtime account.** Give the landing page a service account `outfitter-deployer`
-   can act as, and pass it from `landing.sh`. Until then a `landing/` change blocks every release.
-2. **Matej's attribution**: `matej@mgms.eu` has no user record (he has never signed into Outfitter),
+1. **Matej's attribution**: `matej@mgms.eu` has no user record (he has never signed into Outfitter),
    so his commits get the bot alone. When he signs in, set `name`, `githubLogin` (`TEJ42000`) and
    `githubEmail` (`247988220+TEJ42000@users.noreply.github.com`) on his row. Matthew
    (`mgm@mgms.eu`) and Matija Turk (`matija.turk@gmail.com`, `johnny2211`) are already configured.
-3. **Clean up the test fixtures**: session `2cc9494a-96f8-4af3-88e2-a0a5a5d5f4af`, repo
-   `cognitio-org/testit`, and secret `outfitter-github-token-2cc9494a-…` (holds a real fine-grained
-   PAT scoped to that repo — revoke it on GitHub too).
+
+The test fixtures were settled rather than deleted. Session `2cc9494a-96f8-4af3-88e2-a0a5a5d5f4af`
+stays. `cognitio-org/testit` stays, with only `main` left (`outfitter/3b352e25` was deleted, so
+Play on that session will fail its fetch). Secret `outfitter-github-token-2cc9494a-…` was removed
+from Secret Manager. The fine-grained PAT was left active on purpose.
 
 ## Things that cost time, so the next person does not repeat them
 

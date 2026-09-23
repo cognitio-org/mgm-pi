@@ -54,6 +54,9 @@ gcloud services enable iamcredentials.googleapis.com sts.googleapis.com --projec
 echo "== Service accounts =="
 ensure_sa "${SA_NAME}" "Outfitter deploys from GitHub Actions (release.sh)"
 ensure_sa "${BUILDER_NAME}" "Outfitter image builds (Cloud Build)"
+# Runtime identity for the public landing page. No project roles (baseline.sh). The deployer has
+# to act as it, or a landing/ change stops the whole release on the default Compute account.
+ensure_sa "kernal-web" "kernal.one landing page (static, no project roles)"
 
 echo "== ${BUILDER_EMAIL}: read build sources, push to the outfitter repo, write build logs =="
 gcloud artifacts repositories add-iam-policy-binding outfitter --location="${REGION}" --project="${PROJECT}" \
@@ -90,8 +93,8 @@ for role in roles/storage.legacyBucketWriter roles/storage.objectViewer; do
     --member="serviceAccount:${SA_EMAIL}" --role="${role}" --quiet >/dev/null
 done
 
-echo "== ${SA_EMAIL}: act as the two runtime accounts and the builder (never the default build account) =="
-for sa in "outfitter-api@${PROJECT}.iam.gserviceaccount.com" "outfitter-agent@${PROJECT}.iam.gserviceaccount.com" "${BUILDER_EMAIL}"; do
+echo "== ${SA_EMAIL}: act as the runtime accounts and the builder (never the default Compute or build account) =="
+for sa in "outfitter-api@${PROJECT}.iam.gserviceaccount.com" "outfitter-agent@${PROJECT}.iam.gserviceaccount.com" "kernal-web@${PROJECT}.iam.gserviceaccount.com" "${BUILDER_EMAIL}"; do
   gcloud iam service-accounts add-iam-policy-binding "${sa}" --project="${PROJECT}" \
     --member="serviceAccount:${SA_EMAIL}" --role=roles/iam.serviceAccountUser --quiet >/dev/null
   echo "   ${sa}"

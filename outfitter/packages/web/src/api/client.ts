@@ -9,6 +9,8 @@ export interface SessionSummary {
   name?: string;
   status: "open" | "closed";
   runState?: string;
+  /** A failed run's own explanation (api routes/sessions.ts). Set only when runState is "failed". */
+  runStateReason?: string;
   guru: string;
   repo: string | null;
   branch?: string;

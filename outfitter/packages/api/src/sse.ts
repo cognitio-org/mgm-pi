@@ -107,6 +107,9 @@ export class SsePoller {
       lastCostEstimate?: number;
       lastUiRequestKey?: string;
       lastStatusDetail?: string;
+      /** Which run the fields above describe, so a note belonging to the previous run isn't left
+       * standing over a new one -- see the `detail` handling in pollOne. */
+      lastRunId?: string;
     }
   >();
   private timer?: ReturnType<typeof setInterval>;
@@ -189,12 +192,27 @@ export class SsePoller {
     const terminal = run ?? (await this.store.runs.findLatestForSession(sessionId));
     const state = terminal?.state ?? "stopped";
     const detail = terminal?.statusDetail;
-    if (state !== cursor.lastState || (detail !== undefined && detail !== cursor.lastStatusDetail)) {
+    // A status event with no `detail` means "nothing new to say" and deliberately leaves the last
+    // note standing (an ordinary state-only frame from agentd must not wipe it -- see the Run.
+    // statusDetail doc and useSessionStream), while a new run naturally starts with no statusDetail
+    // of its own. Together those two rules used to pin a dead run's note over its successor: press
+    // Play after a run the api refused and the old "no GitHub token" alert stayed on screen until a
+    // reload. So the first poll that observes a different run sends an explicit null, which the
+    // browser reads as "drop it".
+    const runChanged = terminal !== null && terminal.id !== cursor.lastRunId;
+    if (runChanged) cursor.lastStatusDetail = undefined;
+    if (state !== cursor.lastState || runChanged || (detail !== undefined && detail !== cursor.lastStatusDetail)) {
       this.hub.publish(sessionId, {
         type: "status",
-        data: { t: "status", state, reason: run ? undefined : terminal?.reason, detail },
+        data: {
+          t: "status",
+          state,
+          reason: run ? undefined : terminal?.reason,
+          detail: runChanged ? (detail ?? null) : detail,
+        },
       });
       cursor.lastState = state;
+      cursor.lastRunId = terminal?.id;
       if (detail !== undefined) cursor.lastStatusDetail = detail;
     }
     if (run && typeof run.costEstimate === "number" && run.costEstimate !== cursor.lastCostEstimate) {

@@ -359,15 +359,21 @@ class MongoTokens implements TokensCollection {
     return stripId<ApiToken>(result);
   }
 
-  /** Two steps, no transaction: updateMany stamps this call's `revokedAt` on every matching active
-   * token, then a find on that exact stamp reads back what it revoked. A token another caller
-   * revokes in between keeps its own timestamp and isn't reported here -- unless two overlapping
-   * revokes land in the same millisecond, when each may also list the other's. Accepted: it only
-   * over-reports, and every listed token is revoked either way. */
+  /** Three steps, no transaction: collect the active matching tokens' ids, stamp this call's
+   * `revokedAt` on them, then read those same ids back at that stamp. Anything another caller
+   * revoked in between keeps its own timestamp and is left out of the result, and a concurrent
+   * revoke can't have its tokens reported here even if it used the same millisecond. */
   async revokeAllForOwners(match: TokenOwnerMatch, revokedAt: string): Promise<ApiToken[]> {
     const owner = ownerEmailFilter(match);
-    await this.col.updateMany({ ownerEmail: owner, ...activeTokenFilter(Date.now()) }, { $set: { revokedAt } });
-    const rows = await this.col.find({ ownerEmail: owner, revokedAt }).toArray();
+    const ids = (await this.col.find({ ownerEmail: owner, ...activeTokenFilter(Date.now()) }, { projection: { _id: 1 } }).toArray())
+      .map((r) => r._id);
+    if (ids.length === 0) return [];
+    await this.col.updateMany({ _id: { $in: ids }, ...notRevokedFilter() }, { $set: { revokedAt } });
+    // Read back by the ids this call selected, not by `revokedAt` alone: two revokes landing in the
+    // same millisecond (two operators, or one call matching overlapping sets) would otherwise each
+    // report the other's tokens. A token another caller revoked in between keeps its own timestamp,
+    // so it drops out here -- which is the point.
+    const rows = await this.col.find({ _id: { $in: ids }, revokedAt }).toArray();
     return rows.map((r) => stripIdStrict<ApiToken>(r));
   }
 }
@@ -385,6 +391,12 @@ function activeTokenFilter(nowMs: number): Filter<ApiToken & { _id: string }> {
       { expiresAt: null, createdAt: { $gt: new Date(nowMs - TOKEN_TTL_MS).toISOString() } },
     ],
   } as unknown as Filter<ApiToken & { _id: string }>;
+}
+
+/** `revokedAt` absent or null -- the same "not revoked" test activeTokenFilter makes, for a filter
+ * that has already narrowed to specific ids. Cast for the same reason as activeTokenFilter. */
+function notRevokedFilter(): Filter<ApiToken & { _id: string }> {
+  return { revokedAt: null } as unknown as Filter<ApiToken & { _id: string }>;
 }
 
 function escapeRegex(s: string): string {

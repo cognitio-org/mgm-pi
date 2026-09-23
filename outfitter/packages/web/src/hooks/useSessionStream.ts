@@ -30,6 +30,14 @@ export function mergeEntries(current: PiEntry[], initial: PiEntry[]): PiEntry[] 
   return [...initial, ...streamedBeforeInitial];
 }
 
+/** Folds one status event's `detail` into the note currently on screen: `undefined` (the field was
+ * absent) keeps what is there, `null` clears it, a string replaces it. Exported as a pure function
+ * so the three-way rule is testable without a fake EventSource, same as mergeEntries. */
+export function nextStatusDetail(current: string | undefined, incoming: string | null | undefined): string | undefined {
+  if (incoming === undefined) return current;
+  return incoming ?? undefined;
+}
+
 /** Loads a session's entries, then keeps them (plus run state and pending UI requests) live via
  * GET /api/sessions/:id/stream (SSE: event: entry|event|status|spend|checkpoint -- protocol.md). */
 export function useSessionStream(sessionId: string): StreamState {
@@ -60,10 +68,14 @@ export function useSessionStream(sessionId: string): StreamState {
     const source = new EventSource(api.streamUrl(sessionId));
 
     source.addEventListener("status", (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as { state?: string; reason?: string; detail?: string };
+      const data = JSON.parse((ev as MessageEvent).data) as { state?: string; reason?: string; detail?: string | null };
       if (data.state) setRunState(data.state);
       setRunStateReason(data.reason);
-      if (data.detail) setStatusDetail(data.detail);
+      // Three cases, not two: absent means "nothing new to say" and the last note stands (agentd
+      // sends state-only status frames all the time), an explicit null means "this is a different
+      // run now, drop it" (sse.ts sends one on the first poll that sees a new run -- without it, a
+      // refused run's note stayed pinned over its replacement), and a string replaces it.
+      setStatusDetail((prev) => nextStatusDetail(prev, data.detail));
     });
 
     source.addEventListener("entry", (ev) => {

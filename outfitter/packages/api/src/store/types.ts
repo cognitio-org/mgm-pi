@@ -101,7 +101,12 @@ export interface Run {
   // (protocol.md), which agentd now also uses to surface a rejected pi RPC response ("pi rejected
   // prompt: <error>") -- prompt/steer/follow_up used to vanish silently when pi's own `response`
   // frame came back `success: false`. Not cleared by an ordinary state-only status frame (see
-  // agentlink.ts's "status" case), so it survives until the next notice replaces it.
+  // agentlink.ts's "status" case), so it survives until the next notice replaces it; sse.ts tells
+  // the browser to drop it when a *new* run is observed, since the note belongs to one run.
+  // Also written by the api itself, for a refusal agentd never gets to report: agentlink.ts's
+  // refuse() (a run.spec the api won't build, a version-skewed sandbox) and runs.ts's stale-run
+  // reconciler. Those cases are the only thing a person sees for a run that never started, so this
+  // holds a full sentence with a remedy, not the short `reason` that also goes on the wire.
   statusDetail?: string;
   // Not in protocol.md: set when E2.8's laptop-model preflight (src/laptop.ts) swaps a guru's or
   // session's `litellm/local-qwen-mlx`-style model for the guru's fallbackModel because the laptop

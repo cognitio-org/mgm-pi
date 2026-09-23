@@ -82,7 +82,10 @@ gcloud artifacts repositories add-iam-policy-binding outfitter --location="${REG
   --member="serviceAccount:${SA_EMAIL}" --role=roles/artifactregistry.reader --quiet >/dev/null
 
 echo "== ${SA_EMAIL}: upload build sources to gs://${BUILD_BUCKET} =="
-for role in roles/storage.objectCreator roles/storage.objectViewer roles/storage.legacyBucketReader; do
+# legacyBucketWriter, not objectCreator + legacyBucketReader: `gcloud builds submit` also lists and
+# replaces objects in the staging bucket, and the first CI release failed with "The user is
+# forbidden from accessing the bucket" until this was granted by hand.
+for role in roles/storage.legacyBucketWriter roles/storage.objectViewer; do
   gcloud storage buckets add-iam-policy-binding "gs://${BUILD_BUCKET}" \
     --member="serviceAccount:${SA_EMAIL}" --role="${role}" --quiet >/dev/null
 done

@@ -97,7 +97,11 @@ at the commit, `ALLOW_SKEW=1` lets a single-component script deploy against a mi
 workflow's **Run workflow** button redeploys a release: choose its `outfitter-v*` tag under "Use
 workflow from" (runs from anything else are refused), with `rollback` and `force_all`.
 
-`landing.sh` (`kernal-web`, the kernal.one page) is not part of this yet; it still deploys by hand.
+The kernal.one landing page (`kernal-web`) rides along: `release.sh` runs `landing.sh` when
+anything under `landing/` changed since the commit that page runs, and smoke-checks that it serves
+a 200. It is deliberately *not* part of the three-component one-commit rule (`check_deploy_skew`):
+it is static, talks to nothing and carries no protocol version, so it can sit at another commit
+safely. Its domain mappings (`./landing.sh --map-domains`) stay a one-time owner step.
 
 ## Order of operations
 
@@ -150,32 +154,66 @@ workflow from" (runs from anything else are refused), with `rollback` and `force
    reads it from `config.env` (`mgm@mgms.eu;matej@mgms.eu`); change it there.
 
    **b. Per-run, fetched dynamically by `GcpSecretsBroker.secretsForRun` (`src/secrets.ts`) — NOT
-   mounted as container env vars, and NOT covered by `api.sh`.** Each session and each guru needs
-   its own secret, named by id, ideally created before that session/guru's first run:
+   mounted as container env vars, and NOT covered by `api.sh`.** Each session and each guru can
+   have its own secret, named by id; each also has a shared `-default` fallback, so the two
+   `-default` secrets are the ones to create up front and the per-id ones are per session/guru as
+   they're needed:
 
    ```bash
-   # one per session, id from `session.id` (e.g. POST /api/sessions's response):
-   printf '%s' "<fine-grained GitHub PAT scoped to that session's repo>" \
-     | gcloud secrets create "outfitter-github-token-<sessionId>" --project=outfitter-509211 --data-file=-
-   # one per guru, id from `guru.id`:
-   printf '%s' "<that guru's LiteLLM virtual key>" \
-     | gcloud secrets create "outfitter-litellm-key-<guruId>" --project=outfitter-509211 --data-file=-
-   # optional: a shared fallback used by any guru whose own outfitter-litellm-key-<guruId> secret
-   # doesn't exist yet (e.g. a newly created guru). Not required, but recommended so a fresh guru's
-   # first run doesn't wake up with an empty LiteLLM key.
+   # the two shared fallbacks — create these once, before any session or guru exists:
+   printf '%s' "<a GitHub PAT covering the repos sessions may use>" \
+     | gcloud secrets create "outfitter-github-token-default" --project=outfitter-509211 --data-file=-
    printf '%s' "<a LiteLLM virtual key usable by any guru>" \
      | gcloud secrets create "outfitter-litellm-key-default" --project=outfitter-509211 --data-file=-
+
+   # optional, per session: overrides outfitter-github-token-default for that one session.
+   # id from `session.id` (e.g. POST /api/sessions's response):
+   printf '%s' "<fine-grained GitHub PAT scoped to that session's repo>" \
+     | gcloud secrets create "outfitter-github-token-<sessionId>" --project=outfitter-509211 --data-file=-
+   # optional, per guru: overrides outfitter-litellm-key-default for that one guru.
+   # id from `guru.id`:
+   printf '%s' "<that guru's LiteLLM virtual key>" \
+     | gcloud secrets create "outfitter-litellm-key-<guruId>" --project=outfitter-509211 --data-file=-
    ```
+
+   **Per-session vs. shared GitHub token.** The per-session secret wins whenever it exists, and it
+   is the tighter of the two: a fine-grained PAT scoped to the one repo that session works in (and
+   revocable on its own, without touching any other session) beats a single token that every repo
+   session can reach — if a sandbox leaks it, an org-wide token leaks every repo it covers. Mint a
+   per-session PAT for anything sensitive: a private or production repo, a session with push
+   rights somewhere that matters, a session run by someone who shouldn't reach the rest of the org.
+   `outfitter-github-token-default` exists so that *not* doing so is merely looser rather than
+   fatal — before it, creating a repo session through the UI was impossible until an operator
+   minted a PAT by hand, against a session id that only exists once the session has been created.
+   Scope the shared token as narrowly as it can be while still covering the repos sessions actually
+   use. Whichever one a run resolves, `secrets.ts` logs it
+   (`[secrets] session <id>: using <secretName>`), so a later clone or push failure can be traced
+   to the token it actually had.
+
+   Only a session with a repo (`session.repo` set) falls back to the shared token. `run.spec`
+   carries `secrets` for every run regardless, so an unconditional fallback would hand the org-wide
+   token to sandboxes with nothing to clone or push — more exposure, no capability. A repo-less
+   session that has an `outfitter-github-token-<sessionId>` secret of its own still gets it;
+   creating that secret is a deliberate grant.
 
    Since the first real deploy, a *missing* (b) secret is no longer a hard failure at connection
    time: `GcpSecretsBroker` resolves a not-found secret to `""` (logging a warning) instead of
-   throwing, and `outfitter-litellm-key-<guruId>` falls back to `outfitter-litellm-key-default`
-   before giving up. The only place this is still fatal is `outfitter-github-token-<sessionId>`
-   for a session that actually has a repo (`session.repo` set) — `agentlink.ts`'s `buildRunSpec`
-   checks for that specific case and closes the agentd connection with WS code 1011 and a
-   `missing github token secret for session <id>` reason, since agentd cloning with no credentials
-   would otherwise fail confusingly deep inside the sandbox instead. A repo-less session, or a
-   guru whose key resolves via the default fallback, is unaffected either way.
+   throwing, and each per-id secret falls back to its `-default` before giving up. The only place
+   this is still fatal is a GitHub token for a session that actually has a repo (`session.repo`
+   set) when **neither** `outfitter-github-token-<sessionId>` **nor**
+   `outfitter-github-token-default` exists — `agentlink.ts`'s `buildRunSpec` checks for that
+   specific case and closes the agentd connection with WS code `4412` (terminal for agentd — there
+   is nothing to retry) and a `missing github token secret for session <id>` reason, since agentd
+   cloning with no credentials would otherwise fail confusingly deep inside the sandbox instead. A
+   repo-less session, or a session/guru resolving via a `-default` fallback, is unaffected either
+   way.
+
+   You should not need Cloud Logging to find out that this happened: the run is marked `failed` and
+   carries a `statusDetail` saying no GitHub token is stored for the session and that an operator has
+   to create one, which the session page shows as a note and the Disk Box list shows under the
+   floppy's pill (`docs/protocol.md`, "Every refusal explains itself"). The secret's *name* stays in
+   the server log rather than going on a page — it is this section's `outfitter-github-token-` plus
+   the session id.
 
    `outfitter-api`'s `secretmanager.secretAccessor` role from `baseline.sh` is project-wide, so no
    per-secret IAM binding is needed for either group. `baseline.sh` also grants `outfitter-api` a
@@ -211,8 +249,9 @@ workflow from" (runs from anything else are refused), with `rollback` and `force
    deploys/updates the `outfitter-agent` Cloud Run Job, pointed at `outfitter-link`'s URL (looked
    up; agentd only ever dials `outfitter-link`, never `outfitter-api`).
 7. **`./access.sh`** — IAP on `outfitter-api` with its OAuth client and `IAP_MEMBERS`, the IAP
-   service agent's invoker binding, and the public invoker on `outfitter-link`. Re-run it whenever
-   `IAP_MEMBERS` or `IAP_OAUTH_CLIENT_ID` in `config.env` changes.
+   service agent's invoker binding, and the public invoker on `outfitter-link` and (once it
+   exists) `kernal-web`. Re-run it whenever `IAP_MEMBERS` or `IAP_OAUTH_CLIENT_ID` in `config.env`
+   changes, and after the landing page's first deploy.
 8. **`./ci-setup.sh`** — the GitHub Actions deployer (see "Deploying"). From then on, pushing a release tag deploys.
 
 **Version skew guard (bug 9, `docs/reports/cloud-fixes.md`)**: `service.sh` and `agent-job.sh` each

@@ -174,11 +174,21 @@ build_service_account() {
 # build_submit <source dir> <config file> [extra gcloud args...] -- gcloud builds submit as
 # build_service_account. The build configs set logging: CLOUD_LOGGING_ONLY: a user-chosen build
 # account requires it, and gcloud can only stream legacy bucket logs for project Viewers.
+#
+# --gcs-source-staging-dir is not cosmetic: left to its default, gcloud first *ensures* the
+# gs://<project>_cloudbuild bucket exists, and that path needs more than the deployer's
+# objectCreator/objectViewer/legacyBucketReader on it. It fails as "The user is forbidden from
+# accessing the bucket [<project>_cloudbuild] ... serviceusage.services.use", which sends you
+# looking at Service Usage and bucket IAM, neither of which is the problem. Naming the staging
+# directory skips that check and uploads straight to a bucket the deployer can already write
+# (verified 2026-09-23 impersonating outfitter-deployer: the same build fails by default and
+# succeeds with this flag, with no extra IAM).
 build_submit() {
   local src="$1" config="$2" sa
   shift 2
   sa="$(build_service_account)"
   gcloud builds submit "${src}" --project="${PROJECT}" --config="${config}" \
+    --gcs-source-staging-dir="gs://${PROJECT}_cloudbuild/source" \
     ${sa:+--service-account="${sa}"} "$@"
 }
 

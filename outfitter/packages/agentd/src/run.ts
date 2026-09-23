@@ -2,10 +2,12 @@
  * The run state machine from protocol.md: `cloning -> restoring -> starting -> running/idle ->
  * checkpointing -> stopping`. Wires together git, session import, the pi RPC process and the link,
  * and handles every down-message in protocol.md (`run.spec`, `ack`, `prompt`, `steer`, `follow_up`,
- * `abort`, `ui_response`, `rpc`, `checkpoint`, `diff`, `read`, `stop`, `browser.capture.entry`).
+ * `abort`, `ui_response`, `rpc`, `checkpoint`, `diff`, `read`, `stop`, `browser.capture.entry`,
+ * `browser.capture.result`).
  */
 import { mkdir, readFile, open as openFile, chown } from "node:fs/promises";
 import { resolve, sep } from "node:path";
+import { CaptureListener } from "./browser-capture.js";
 import { renderGuru } from "./guru.js";
 import { attributionTrailers, authHeaderSecret, botIdentityEnv, sanitizeAuthor, type GitOps } from "./git.js";
 import { githubRepoHttps, gitProxyInsteadOfEnv, parseGithubCloneUrl, startGitProxy, type GitProxy } from "./git-proxy.js";
@@ -107,6 +109,12 @@ export interface RunControllerDeps {
   spendExtensionPath?: string;
   /** E5.5 (OUTFITTER_MAIL_EXTENSION): path to pi-extension/outfitter-mail.ts (or its built .js). */
   mailExtensionPath?: string;
+  /** Chrome companion §13 (OUTFITTER_BROWSER_EXTENSION): path to pi-extension/outfitter-browser.ts.
+   * Set together with `downloadCapture`: the loopback listener starts only while the extension loads. */
+  browserExtensionPath?: string;
+  /** GET the capture jpeg with the run's API credential (the socket's bearer plus the run token).
+   * Not a user Dongle, and not passed into the sandbox. */
+  downloadCapture?: (sessionId: string, captureId: string) => Promise<Buffer>;
   createSpendTailer?: SpendTailerFactory;
   /** E1.6: structured JSON logging (logger.ts). Optional so existing tests (and any caller that only
    * wants the plain `onLog` string sink) keep working unchanged. When present, pi's own stderr goes
@@ -183,6 +191,8 @@ export class RunController {
   private tailer: { start(): void; stop(): void; poll(): Promise<void> } | undefined;
   /** E2.11: only set when deps.spendFile is configured. */
   private spendTailer: { start(): void; stop(): void; poll(): Promise<void> } | undefined;
+  /** Loopback listener for the Drive browser_capture tool. Only set when that extension is loaded. */
+  private captureListener: CaptureListener | undefined;
   /** E2.11: running sum of every outfitter-spend.ts log line's `usage` (pi's own per-message cost
    * estimate) seen so far this run -- sent as `spend.estimate` on every frame. */
   private costEstimate = 0;
@@ -247,6 +257,7 @@ export class RunController {
     this.spendTailer?.stop();
     this.pi?.kill();
     void this.stopGitProxy();
+    void this.stopCaptureListener();
   }
 
   private setState(state: RunState, detail?: string): void {
@@ -298,6 +309,10 @@ export class RunController {
       case "browser.capture.entry":
         // Same counter as pi's own entry/event frames. One up-frame per down-frame.
         this.deps.link.sendSeq((seq) => ({ t: "entry", seq, entry: msg.entry }));
+        return;
+      case "browser.capture.result":
+        // The tool is waiting on the loopback listener. No seq: the transcript row is the entry frame.
+        this.captureListener?.deliver(msg);
         return;
     }
   }
@@ -455,6 +470,7 @@ export class RunController {
       onLog: this.onLog,
       spendExtensionPath: this.deps.spendFile ? this.deps.spendExtensionPath : undefined,
       mailExtensionPath: this.deps.mailExtensionPath,
+      browserExtensionPath: this.deps.browserExtensionPath,
       skipModelArg,
     });
     const secretEnv: Record<string, string> = {};
@@ -488,6 +504,27 @@ export class RunController {
     // baseEnvForPi is unchanged and still drops inherited GIT_CONFIG_* (allowlisting those
     // is what used to leak the GitHub token into the model's shell).
     const gitProxyEnv = await this.startGitProxy(spec);
+    // The capture extension is loaded only with the listener. Port and token are pinned after
+    // guru.env, and OUTFITTER_TOKEN is never set: the jpeg download uses agentd's own credential.
+    if (this.deps.browserExtensionPath && this.deps.downloadCapture) {
+      const downloadCapture = this.deps.downloadCapture;
+      const listener = new CaptureListener({
+        workspace: this.deps.workspace,
+        peerUid: this.deps.runAsUser?.uid,
+        chownTo: this.deps.runAsUser
+          ? { uid: this.deps.runAsUser.uid, gid: this.deps.runAsUser.gid }
+          : undefined,
+        download: (captureId) => downloadCapture(spec.session.id, captureId),
+        sendRequest: (requestId) => this.deps.link.send({ t: "browser.capture.request", requestId }),
+        onLog: this.onLog,
+      });
+      this.captureListener = listener;
+      await listener.start();
+      if (listener.port === undefined) throw new Error("browser capture listener did not bind");
+      this.deps.logger?.addSecret(listener.token);
+      secretEnv.OUTFITTER_BROWSER_PORT = String(listener.port);
+      secretEnv.OUTFITTER_BROWSER_TOKEN = listener.token;
+    }
     // pi runs as the unprivileged agent user but would otherwise inherit root's HOME from agentd's
     // environment; the first extension to touch ~/.pi then dies with EACCES on /root (every run of
     // the first benchmark). Point the child at that user's own home.
@@ -684,8 +721,15 @@ export class RunController {
   /** Sends the final `bye` frame and waits (briefly, bounded) for the socket to actually flush it
    * before the caller exits the process -- see Link.sendAndFlush's doc comment for why a plain
    * `send()` right before `process.exit()` can silently drop it. */
+  private stopCaptureListener(): Promise<void> {
+    const listener = this.captureListener;
+    this.captureListener = undefined;
+    return listener ? listener.stop() : Promise.resolve();
+  }
+
   private async bye(reason: ByeReason, message?: string): Promise<void> {
     await this.stopGitProxy();
+    await this.stopCaptureListener();
     const msg = { t: "bye" as const, reason, message };
     if (this.deps.link.sendAndFlush) {
       await Promise.race([this.deps.link.sendAndFlush(msg), delay(1000)]);

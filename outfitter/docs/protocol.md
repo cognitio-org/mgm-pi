@@ -123,6 +123,7 @@ Up (agentd → api):
 | `heartbeat` | `idleSeconds, memMb` | every 15 s |
 | `bye` | `reason: "idle"\|"stop"\|"sigterm"\|"error", message?` | last frame |
 | `mail.ack` | `id` | pi accepted a `mail` down-message (its RPC `prompt` response came back `success: true`); the API marks the mail acked |
+| `browser.capture.request` | `requestId` | the Drive's `browser_capture` tool asked for the session's one shared tab. agentd mints `requestId` once per tool call. The api creates that browser-request row (`requesterEmail` is the session owner), or answers at once with `browser.capture.result` `error:"no_share"`. The same `requestId` does not create a second row |
 
 Down (api → agentd):
 
@@ -141,6 +142,7 @@ Down (api → agentd):
 | `stop` | `reason` | checkpoint, then `bye`, exit 0 |
 | `mail` | `id, text, behavior?: "followUp"\|"steer"` | E5.5 mailbox message: pi RPC `prompt` with rpc id `mail:<id>` and `streamingBehavior: behavior ?? "followUp"` (starts a turn when idle, queues when busy); agentd sends `mail.ack` once pi accepts it, and re-acks without re-prompting if the same id is redelivered |
 | `browser.capture.entry` | `entry` (a pi custom entry, `customType: "outfitter.browser.capture"`, id `browser-capture:<requestId>`, data `{captureId, title, url, requesterEmail}`) | agentd emits one ordinary `entry` up-frame through the same seq counter as every other `entry`/`event`. The api sends this while the run is connected or provisioning (queued on the down-frame queue until the run is ready, same as `prompt`) and does not allocate that seq itself. A second frame for an entry id already stored is not sent |
+| `browser.capture.result` | `requestId`, and either `captureId, title, url` or `error` (`no_share`, `skipped`, `permission_denied`, `tab_gone`, `too_large`) | answers the Drive's `browser.capture.request` (up table). Sent when the request is created with no share, when the owner uploads the jpeg (the request is already `done`; this frame does not allocate an entry seq — `browser.capture.entry` does), or when a pending request becomes `skipped`. A repeat upload of the same `requestId` does not send it again. agentd waits up to 90s and then tells the tool `timeout` |
 
 ### Mailbox (E5.5)
 
@@ -336,7 +338,7 @@ email gets `409`.
 | `GET /api/sessions/:id/browser/requests/:requestId` | requester or owner | `{id, requesterEmail, status, captureId, createdAt}`. Anyone else gets `404`. |
 | `POST /api/sessions/:id/browser/requests/:requestId/revoke` | owner | If not yet `done`, mark `skipped`. |
 | `POST /api/sessions/:id/browser/captures` | owner | `{requestId, title, url, jpegBase64}` → `{captureId}`. |
-| `GET /api/sessions/:id/browser/captures/:captureId` | any authenticated caller | `Content-Type: image/jpeg` bytes, `X-Content-Type-Options: nosniff`. |
+| `GET /api/sessions/:id/browser/captures/:captureId` | any authenticated caller, or the session's own sandbox | `Content-Type: image/jpeg` bytes, `X-Content-Type-Options: nosniff`. The Drive downloads with the socket credential: `Authorization: Bearer` the agent id token (dev: `OUTFITTER_DEV_TOKEN`) plus header `x-outfitter-run-token` (that run's `RUN_TOKEN`). That is not a user Dongle, and `OUTFITTER_TOKEN` is not put in the sandbox. A run token for a different session is refused. |
 
 Decoded jpeg over 350,000 bytes is `413`. Bytes live in `browserCaptures`
 (`{sessionId, requestId, ownerEmail, requesterEmail, title, url, bytes, createdAt}` plus the

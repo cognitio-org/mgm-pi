@@ -170,6 +170,7 @@ ENV PI_CODING_AGENT_DIR=/opt/kernal/.pi \
     OUTFITTER_SPEND_EXTENSION=/opt/outfitter/agentd/dist/pi-extension/outfitter-spend.js \
     OUTFITTER_SPEND_FILE=/run/outfitter/spend.jsonl \
     OUTFITTER_MAIL_EXTENSION=/opt/outfitter/agentd/dist/pi-extension/outfitter-mail.js \
+    OUTFITTER_BROWSER_EXTENSION=/opt/outfitter/agentd/dist/pi-extension/outfitter-browser.js \
     KERNAL_NO_CODEBASE_INDEX=1 \
     KERNAL_SANDBOX=1 \
     PI_TIMING=1
@@ -241,6 +242,7 @@ ENV PI_CODING_AGENT_DIR=/opt/kernal/.pi \
 COPY outfitter/image/prewarm-extensions.sh /tmp/prewarm-extensions.sh
 RUN runuser -u agent -- bash /tmp/prewarm-extensions.sh "$PI_BIN" \
       --extension "$OUTFITTER_SPEND_EXTENSION" --extension "$OUTFITTER_MAIL_EXTENSION" \
+      --extension "$OUTFITTER_BROWSER_EXTENSION" \
   && rm /tmp/prewarm-extensions.sh
 
 WORKDIR /workspace

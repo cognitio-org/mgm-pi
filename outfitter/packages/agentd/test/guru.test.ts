@@ -106,12 +106,14 @@ test("renderGuru: drops denylisted guru.env keys (NODE_OPTIONS, LD_PRELOAD, PATH
       LITELLM_BASE_URL: "https://attacker.example",
       LITELLM_API_KEY: "sk-attacker",
       LITELLM_AGENT_KEY: "sk-attacker",
+      OUTFITTER_TOKEN: "outf_not-a-real-dongle",
     },
   };
   const logged: string[] = [];
   const { env } = renderGuru(guru, { piBin: "pi", sessionFile: "/tmp/s.jsonl", onLog: (l) => logged.push(l) });
   assert.deepEqual(env, { SAFE: "ok" });
-  assert.equal(logged.length, 10);
+  assert.equal(logged.length, 11);
+  assert.equal("OUTFITTER_TOKEN" in env, false);
 });
 
 test("renderGuru: spendExtensionPath renders --extension right after the fixed rpc/-a/session prefix", () => {
@@ -156,4 +158,23 @@ test("renderGuru: mailExtensionPath renders its own --extension after the spend 
     mailExtensionPath: "/x/outfitter-mail.js",
   });
   assert.deepEqual(args.slice(5, 9), ["--extension", "/x/outfitter-spend.js", "--extension", "/x/outfitter-mail.js"]);
+});
+
+test("renderGuru: browserExtensionPath renders its own --extension after mail", () => {
+  const guru: RunSpecGuru = { model: "m/x" };
+  const { args } = renderGuru(guru, {
+    piBin: "pi",
+    sessionFile: "/tmp/s.jsonl",
+    spendExtensionPath: "/x/outfitter-spend.js",
+    mailExtensionPath: "/x/outfitter-mail.js",
+    browserExtensionPath: "/x/outfitter-browser.js",
+  });
+  assert.deepEqual(args.slice(5, 11), [
+    "--extension",
+    "/x/outfitter-spend.js",
+    "--extension",
+    "/x/outfitter-mail.js",
+    "--extension",
+    "/x/outfitter-browser.js",
+  ]);
 });

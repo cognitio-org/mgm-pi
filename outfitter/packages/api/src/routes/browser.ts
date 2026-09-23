@@ -117,8 +117,15 @@ export async function registerBrowserRoutes(app: FastifyInstance, ctx: RouteCont
     const email = callerEmail(req, reply);
     if (!email) return;
     const result = await ctx.store.browserShares.deleteIfOwner(session.id, email, new Date().toISOString());
-    if (result === "missing") return reply.code(404).send({ error: "no browser share" });
-    if (result === "forbidden") return reply.code(403).send({ error: "not the share owner" });
+    if (result.outcome === "missing") return reply.code(404).send({ error: "no browser share" });
+    if (result.outcome === "forbidden") return reply.code(403).send({ error: "not the share owner" });
+    for (const requestId of result.skippedIds) {
+      await ctx.agentLink.sendCaptureResult(session.id, {
+        t: "browser.capture.result",
+        requestId,
+        error: "skipped",
+      });
+    }
     return { ok: true };
   });
 
@@ -186,8 +193,18 @@ export async function registerBrowserRoutes(app: FastifyInstance, ctx: RouteCont
     if (!share) return reply.code(404).send({ error: "no browser share" });
     if (share.ownerEmail !== email) return reply.code(403).send({ error: "not the share owner" });
     const { requestId } = req.params as { requestId: string };
+    const before = await ctx.store.browserRequests.findById(session.id, requestId);
     const request = await ctx.store.browserRequests.markSkipped(session.id, requestId, new Date().toISOString());
     if (!request) return reply.code(404).send({ error: "not found" });
+    // Only the pending → skipped transition unblocks a Drive that is waiting. A done capture
+    // stays done, and a second revoke does not send another result.
+    if (before?.status === "pending" && request.status === "skipped") {
+      await ctx.agentLink.sendCaptureResult(session.id, {
+        t: "browser.capture.result",
+        requestId: request.id,
+        error: "skipped",
+      });
+    }
     return requestView(request);
   });
 
@@ -247,6 +264,17 @@ export async function registerBrowserRoutes(app: FastifyInstance, ctx: RouteCont
       return reply.code(409).send({ error: "request is not pending" });
     }
     await appendCaptureEntry(ctx, saved.capture);
+    // The entry frame above owns the transcript seq. This one only unblocks the waiting Drive,
+    // and only for the insert that marked the request done — a repeat upload stays quiet.
+    if (saved.inserted) {
+      await ctx.agentLink.sendCaptureResult(session.id, {
+        t: "browser.capture.result",
+        requestId: request.id,
+        captureId: saved.capture.id,
+        title: saved.capture.title,
+        url: saved.capture.url,
+      });
+    }
     return { captureId: saved.capture.id };
   });
 

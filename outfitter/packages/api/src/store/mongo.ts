@@ -639,13 +639,19 @@ class MongoBrowserShares implements BrowserSharesCollection {
     return { conflict: false, share: shareView(updated) ?? share };
   }
 
-  async deleteIfOwner(sessionId: string, ownerEmail: string, nowIso: string): Promise<"deleted" | "missing" | "forbidden"> {
+  async deleteIfOwner(
+    sessionId: string,
+    ownerEmail: string,
+    nowIso: string,
+  ): Promise<{ outcome: "deleted" | "missing" | "forbidden"; skippedIds: string[] }> {
     // One transaction with the share-document delete and the pending-request skip. insertPendingIfShared
     // writes that same share document, so the two cannot commit an insert against a share this deleted.
     const tx = this.client.startSession();
     try {
       let outcome: "deleted" | "missing" | "forbidden" = "missing";
+      let skippedIds: string[] = [];
       await tx.withTransaction(async () => {
+        skippedIds = [];
         const deleted = await this.shares.findOneAndDelete({ _id: sessionId, ownerEmail }, { session: tx });
         if (!deleted) {
           const still = await this.shares.findOne({ _id: sessionId }, { session: tx });
@@ -658,10 +664,19 @@ class MongoBrowserShares implements BrowserSharesCollection {
         const filter: Filter<BrowserRequestDoc> = replacement
           ? { sessionId, status: "pending", createdAt: { $lt: replacement.createdAt } }
           : { sessionId, status: "pending" };
-        await this.requests.updateMany(filter, { $set: { status: "skipped", updatedAt: nowIso } }, { session: tx });
+        const pending = await this.requests.find(filter, { session: tx }).toArray();
+        skippedIds = pending.map((row) => row._id);
+        if (skippedIds.length > 0) {
+          await this.requests.updateMany(
+            { _id: { $in: skippedIds } },
+            { $set: { status: "skipped", updatedAt: nowIso } },
+            { session: tx },
+          );
+        }
         outcome = "deleted";
       });
-      return outcome;
+      // skippedIds is emptied at the start of every attempt and filled only on delete.
+      return { outcome, skippedIds };
     } finally {
       await tx.endSession();
     }
@@ -686,10 +701,17 @@ class MongoBrowserRequests implements BrowserRequestsCollection {
   async insertPendingIfShared(sessionId: string, request: BrowserRequest): Promise<BrowserRequest | "no_share"> {
     // `$inc` on the share document is the write that conflicts with deleteIfOwner's delete of that
     // same document. A transaction that only read the share could still commit after the revoke.
+    // An id that already exists is that same row: a repeated requestId does not insert another and
+    // does not bump a skipped or done request back to pending.
     const tx = this.client.startSession();
     try {
       let outcome: BrowserRequest | "no_share" = "no_share";
       await tx.withTransaction(async () => {
+        const existing = await this.col.findOne({ _id: request.id }, { session: tx });
+        if (existing) {
+          outcome = existing.sessionId === sessionId ? (stripId(existing) ?? "no_share") : "no_share";
+          return;
+        }
         const share = await this.shares.findOneAndUpdate(
           { _id: sessionId },
           { $inc: { _rev: 1 } },
@@ -703,6 +725,10 @@ class MongoBrowserRequests implements BrowserRequestsCollection {
         outcome = request;
       });
       return outcome;
+    } catch (err) {
+      if (!isDuplicateKeyError(err)) throw err;
+      const existing = await this.findById(sessionId, request.id);
+      return existing ?? "no_share";
     } finally {
       await tx.endSession();
     }

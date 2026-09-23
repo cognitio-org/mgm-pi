@@ -448,7 +448,9 @@ describe("browser companion on the link role", () => {
     assert.notEqual(inserted, "no_share");
     assert.equal((await store.browserRequests.listPending(sessionId)).length, 1);
 
-    assert.equal(await store.browserShares.deleteIfOwner(sessionId, "owner@example.com", now), "deleted");
+    const removed = await store.browserShares.deleteIfOwner(sessionId, "owner@example.com", now);
+    assert.equal(removed.outcome, "deleted");
+    assert.deepEqual(removed.skippedIds, ["r1"]);
     assert.equal((await store.browserRequests.findById(sessionId, "r1"))?.status, "skipped");
     assert.equal((await store.browserRequests.listPending(sessionId)).length, 0);
 
@@ -560,6 +562,11 @@ describe("capture entry seq while a run is live", () => {
     assert.equal(frame.entry.customType, "outfitter.browser.capture");
     assert.equal(frame.entry.data.captureId, uploaded.json().captureId);
     assert.equal(frame.entry.data.requesterEmail, "owner@example.com");
+    const result = await agent.nextMessage();
+    assert.equal(result.t, "browser.capture.result");
+    assert.equal(result.requestId, requestId);
+    assert.equal(result.captureId, uploaded.json().captureId);
+    assert.equal(result.error, undefined);
 
     const agentSeq = 7;
     agent.send({ t: "entry", seq: agentSeq, entry: frame.entry });
@@ -613,13 +620,19 @@ describe("capture entry seq while a run is live", () => {
     assert.equal(agent.messageCount(), 0, "the frame stays queued until the run is ready");
     assert.equal(await store.entries.findByEntryId(session.id, `browser-capture:${requestId}`), null);
     const pending = (await store.runs.findById(runId))?.pending ?? [];
-    assert.equal(pending.length, 1);
+    assert.equal(pending.length, 2);
     assert.equal(pending[0].t, "browser.capture.entry");
+    assert.equal(pending[1].t, "browser.capture.result");
+    assert.equal(pending[1].requestId, requestId);
+    assert.equal(pending[1].captureId, uploaded.json().captureId);
 
     agent.send({ t: "status", state: "idle" });
     const frame = await agent.nextMessage();
     assert.equal(frame.t, "browser.capture.entry");
     assert.equal(frame.entry.id, `browser-capture:${requestId}`);
+    const result = await agent.nextMessage();
+    assert.equal(result.t, "browser.capture.result");
+    assert.equal(result.requestId, requestId);
     agent.send({ t: "entry", seq: 3, entry: frame.entry });
     assert.deepEqual(await agent.nextMessage(), { t: "ack", seq: 3 });
     assert.equal((await store.entries.findByEntryId(session.id, `browser-capture:${requestId}`))?.seq, 3);

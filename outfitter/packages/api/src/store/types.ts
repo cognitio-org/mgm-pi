@@ -55,9 +55,25 @@ export interface Entry {
 }
 
 export interface DownMessage {
-  t: "prompt" | "steer" | "follow_up" | "abort" | "ui_response" | "rpc" | "checkpoint" | "stop" | "browser.capture.entry";
+  t:
+    | "prompt"
+    | "steer"
+    | "follow_up"
+    | "abort"
+    | "ui_response"
+    | "rpc"
+    | "checkpoint"
+    | "stop"
+    | "browser.capture.entry"
+    | "browser.capture.result";
   /** Set on `browser.capture.entry`: the pi custom entry agentd must emit with its own seq. */
   entry?: PiEntry;
+  /** Set on `browser.capture.result`. Not a transcript seq. */
+  requestId?: string;
+  captureId?: string;
+  title?: string;
+  url?: string;
+  error?: string;
   [key: string]: unknown;
 }
 
@@ -453,8 +469,13 @@ export interface BrowserSharesCollection {
   /** Inserts, or replaces tabTitle/tabUrl/createdAt when ownerEmail matches.
    * `conflict` is the share already stored when a different email owns it. */
   put(share: BrowserShare): Promise<{ conflict: false; share: BrowserShare } | { conflict: true; share: BrowserShare }>;
-  /** Deletes the share and marks this session's pending requests skipped. */
-  deleteIfOwner(sessionId: string, ownerEmail: string, nowIso: string): Promise<"deleted" | "missing" | "forbidden">;
+  /** Deletes the share and marks this session's pending requests skipped.
+   * `skippedIds` are the requests that were pending and are now skipped (empty unless deleted). */
+  deleteIfOwner(
+    sessionId: string,
+    ownerEmail: string,
+    nowIso: string,
+  ): Promise<{ outcome: "deleted" | "missing" | "forbidden"; skippedIds: string[] }>;
 }
 
 export interface BrowserRequestsCollection {

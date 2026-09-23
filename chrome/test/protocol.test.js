@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { originAllowed, parsePageMessage, pageReply } from "../extension/protocol.js";
+import { originAllowed, parsePageMessage, pageReply, isDongle, linkOrigin } from "../extension/protocol.js";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -113,4 +113,21 @@ test("the options page does not log or copy a saved Dongle into the page", () =>
   assert.doesNotMatch(source, /console\./);
   assert.doesNotMatch(source, /innerHTML|outerHTML|insertAdjacentHTML|document\.write/);
   assert.doesNotMatch(source, /tokenInput\.value\s*=\s*[^"'\s]/);
+});
+
+test("a Dongle is outf_ plus 43 base64url characters", () => {
+  const body = "0123456789abcdefghijklmnopqrstuvwxyzABCDE-_";
+  assert.equal(body.length, 43);
+  assert.equal(isDongle(`outf_${body}`), true);
+  assert.equal(isDongle("outf_short"), false);
+  assert.equal(isDongle(`outf_${"a".repeat(42)}`), false);
+  assert.equal(isDongle(`token_${body}`), false);
+  assert.equal(isDongle(body), false);
+});
+
+test("linkOrigin returns the origin of an http(s) URL with no userinfo", () => {
+  assert.equal(linkOrigin("https://link.example.com/ignored"), "https://link.example.com");
+  assert.equal(linkOrigin("http://localhost:5173/path"), "http://localhost:5173");
+  assert.equal(linkOrigin("ftp://example.com"), null);
+  assert.equal(linkOrigin("http://user:pass@localhost"), null);
 });

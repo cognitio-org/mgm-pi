@@ -24,6 +24,9 @@ esac
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 AR_REPO="${AR_REPO:-outfitter}"
 SERVICE="kernal-web"
+# Its own account, with no project roles. The default Compute account is project Editor, and
+# outfitter-api can read secrets. ci-setup.sh grants the deployer actAs on this one.
+WEB_SA_EMAIL="kernal-web@${PROJECT}.iam.gserviceaccount.com"
 
 LANDING_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../landing" && pwd)"
 deploy_guard outfitter/landing outfitter/deploy
@@ -58,6 +61,7 @@ gcloud run deploy "${SERVICE}" \
   --cpu=1 \
   --memory=128Mi \
   --concurrency=200 \
+  --service-account="${WEB_SA_EMAIL}" \
   --update-labels="build-commit=${TAG}"
 
 if [[ "${MAP_DOMAINS}" == 1 ]]; then

@@ -65,6 +65,12 @@ create_service_account "${API_SA}" "Outfitter control-plane API"
 echo "-- Service account: ${AGENT_SA_EMAIL} --"
 create_service_account "${AGENT_SA}" "Outfitter agent sandbox (Cloud Run Job)"
 
+# The public landing page must not run as the default Compute account (project Editor) or as
+# outfitter-api (secrets and run.developer). No project roles: nginx only writes stdout, which the
+# Cloud Run service agent ships. ci-setup.sh lets outfitter-deployer act as this account.
+echo "-- Service account: kernal-web@${PROJECT}.iam.gserviceaccount.com (no project roles) --"
+create_service_account "kernal-web" "kernal.one landing page (static, no project roles)"
+
 # add-iam-policy-binding is itself idempotent (re-adding an existing binding is a no-op), so these
 # don't need their own existence checks.
 

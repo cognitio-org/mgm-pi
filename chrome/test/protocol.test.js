@@ -148,10 +148,18 @@ test("the manifest key is the pinned extension id", () => {
     "http://localhost/*",
     "http://127.0.0.1/*",
   ]);
-  assert.deepEqual(manifest.permissions, ["storage", "tabs", "tabGroups"]);
+  assert.deepEqual(manifest.permissions, [
+    "storage",
+    "tabs",
+    "tabGroups",
+    "notifications",
+    "contextMenus",
+    "alarms",
+    "nativeMessaging",
+  ]);
   assert.equal(manifest.host_permissions, undefined);
+  assert.deepEqual(manifest.optional_host_permissions, ["http://*/*", "https://*/*"]);
   assert.equal(JSON.stringify(manifest).includes("<all_urls>"), false);
-  assert.equal(JSON.stringify(manifest).includes("nativeMessaging"), false);
   assert.equal(JSON.stringify(manifest).includes("debugger"), false);
 });
 

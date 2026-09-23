@@ -371,6 +371,14 @@ describe("export.jsonl / import round trip", () => {
     });
     assert.equal(second.statusCode, 409);
     assert.equal((await app.store.sessions.findById(id))?.repo, "acme/widgets");
+    const branchOnly = await app.fastify.inject({
+      method: "PUT",
+      url: `/api/sessions/${id}/import`,
+      headers: { "content-type": "application/x-ndjson", "x-outfitter-branch": "main" },
+      payload: `${header}\n`,
+    });
+    assert.equal(branchOnly.statusCode, 400);
+    assert.equal((await app.store.sessions.findById(id))?.branch, "feature");
     await app.fastify.close();
   });
 });

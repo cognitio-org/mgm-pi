@@ -108,19 +108,14 @@ function teleportRepoPatch(req: FastifyRequest): { error: string } | { patch: Pa
   if (base === false) return { error: "invalid x-outfitter-base" };
   if (head === false) return { error: "invalid x-outfitter-head" };
   if (repo === undefined && branch === undefined && base === undefined && head === undefined) return { patch: null };
-  if (repo !== undefined && !validOwnerRepo(repo)) return { error: "invalid x-outfitter-repo" };
-  if (branch !== undefined && !validTeleportBranch(branch)) return { error: "invalid x-outfitter-branch" };
-  if (base !== undefined && !validTeleportBranch(base)) return { error: "invalid x-outfitter-base" };
-  if (repo !== undefined && (branch === undefined || base === undefined || head === undefined || !/^[0-9a-f]{40}$/i.test(head))) {
-    return { error: "x-outfitter-repo requires branch, base, and a 40-hex head" };
+  // Any one header means a carried repository. A branch alone must not retarget a session that already has one.
+  if (repo === undefined || branch === undefined || base === undefined || head === undefined || !/^[0-9a-f]{40}$/i.test(head ?? "")) {
+    return { error: "x-outfitter-repo, branch, base, and a 40-hex head are required together" };
   }
-  const patch: Partial<Session> = {};
-  if (repo !== undefined) patch.repo = repo;
-  if (branch !== undefined) patch.branch = branch;
-  if (base !== undefined) patch.baseBranch = base;
-  // Checkpoint is what makes the next run's createBranch false (`!session.checkpoint` in agentlink.ts).
-  if (head !== undefined && branch !== undefined && /^[0-9a-f]{40}$/i.test(head)) patch.checkpoint = { branch, head };
-  return { patch };
+  if (!validOwnerRepo(repo)) return { error: "invalid x-outfitter-repo" };
+  if (!validTeleportBranch(branch)) return { error: "invalid x-outfitter-branch" };
+  if (!validTeleportBranch(base)) return { error: "invalid x-outfitter-base" };
+  return { patch: { repo, branch, baseBranch: base, checkpoint: { branch, head } } };
 }
 
 /** The subset of session routes the "link" role registers for teleport (docs/protocol.md "browser

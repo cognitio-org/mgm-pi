@@ -24,7 +24,7 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@e
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   parseOwnerRepo, pickModelForHost, manifestFromGit, describeRef,
-  isWorkingTreeDirty, needsPush, verifyOwnerRepo,
+  isWorkingTreeDirty, needsOriginBranch, verifyOwnerRepo,
   type GitInfo, type Manifest, type SessionRef,
 } from "./lib.ts";
 import { createStore } from "./store-factory.ts";
@@ -100,7 +100,7 @@ export default function (pi: ExtensionAPI) {
 
     try {
       const branchStatus = await pi.exec("git", ["status", "--porcelain=v2", "--branch"], { cwd: ctx.cwd });
-      if (needsPush(branchStatus.stdout)) {
+      if (needsOriginBranch(branchStatus.stdout, git.branch)) {
         const pushRes = await pi.exec("git", ["push", "-u", "origin", git.branch], { cwd: ctx.cwd });
         if (pushRes.code !== 0) {
           ctx.ui.notify(`teleport push: git push failed: ${pushRes.stderr.trim()}`, "error");

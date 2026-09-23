@@ -49,7 +49,9 @@ interface SecretAdmin {
 
 `src/operator.ts` defines the managed secret list:
 
-- Static: `outfitter-litellm-key-default` (next run), `outfitter-github-pat` (next deploy),
+- Static: `outfitter-litellm-key-default` (next run), `outfitter-github-token-default` (next run —
+  read live by `GcpSecretsBroker` for a session with a repo, when `outfitter-github-token-<sessionId>`
+  is unset), `outfitter-github-pat` (next deploy),
   `outfitter-litellm-admin` (next deploy), `outfitter-ngrok-api-key` (next deploy),
   `outfitter-local-tunnel-token` (next deploy — mounted as `LOCAL_TUNNEL_TOKEN` by
   `deploy/service.sh`'s `--set-secrets`, read once at boot by `LaptopProbe`).
@@ -73,11 +75,17 @@ through `SecretsBroker`, "next deploy" for anything mounted as a container env v
   console, never destroyed). Refuses `outfitter-litellm-key-default` with 409 when **no** guru has
   its own key — every run would otherwise lose its key outright. (If at least one guru already has
   its own key, the delete proceeds; runs relying on the default fallback are a pre-existing
-  operational choice this doesn't newly protect against.)
+  operational choice this doesn't newly protect against.) Refuses `outfitter-github-token-default`
+  with 409 when **any** session with a repo has no `outfitter-github-token-<sessionId>` of its own.
+  That count (one `sessions.list()`, then `info()` per repo session) is the guard, not a warning:
+  the click is rare, and a warning would let the common case lose every clone. It is stricter than
+  the LiteLLM rule on purpose — one session's own PAT must not unlock breaking the rest. Repo-less
+  sessions are not counted; they never receive this fallback. A session created between the list
+  and the disable can still miss the token, the same race as the guru check.
 - `POST /api/operator/secrets/:secretName/test {value?}` — tests the given value, or the stored one
   when omitted, against the right provider, 5s timeout:
   - LiteLLM keys (`outfitter-litellm-key-*`, `outfitter-litellm-admin`) → `GET <root>/key/info`
-  - `outfitter-github-pat` → `GET https://api.github.com/user`
+  - GitHub tokens (`outfitter-github-pat`, `outfitter-github-token-default`) → `GET https://api.github.com/user`
   - `outfitter-ngrok-api-key` → `GET https://api.ngrok.com/endpoints`
     (`Authorization: Bearer`, `Ngrok-Version: 2`)
   - `outfitter-local-tunnel-token` → `GET https://<TUNNEL_DOMAIN_LMSTUDIO>/v1/models`

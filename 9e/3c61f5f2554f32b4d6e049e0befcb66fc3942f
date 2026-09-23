@@ -1,0 +1,19 @@
+outfitter/docs/reports/deploy-gaps.md
+  s_36f61c51e6ee83::t_6373d327769119 447-464,509-515
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "9e3c61f5f2554f32b4d6e049e0befcb66fc3942f",
+  "prompts": {},
+  "sessions": {
+    "s_36f61c51e6ee83": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ef997bb4-8860-446f-a432-4343a9dd9b73",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

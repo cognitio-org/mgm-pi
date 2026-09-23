@@ -1,0 +1,29 @@
+outfitter/docs/reports/deploy-gaps.md
+  s_36f61c51e6ee83::t_fc8f1864cf50e5 444-493
+outfitter/deploy/README.md
+  s_36f61c51e6ee83::t_d43691ffb98492 153-156,159-166,169-170,175-182
+outfitter/packages/api/src/agentlink.ts
+  s_36f61c51e6ee83::t_3340b485fe39db 664-672
+outfitter/packages/api/test/secrets.test.ts
+  s_36f61c51e6ee83::t_80ab489c4a7612 2-3,79-118
+  s_36f61c51e6ee83::t_75a9a0e70f8401 119
+outfitter/packages/api/src/secrets.ts
+  s_36f61c51e6ee83::t_76695a614f768b 47-52,61-65,83,89-109
+  s_36f61c51e6ee83::t_9b127450eddad4 110-111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "cf15d269bd5573b663c9691638466934dbdcbcd4",
+  "prompts": {},
+  "sessions": {
+    "s_36f61c51e6ee83": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ef997bb4-8860-446f-a432-4343a9dd9b73",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -1,0 +1,16 @@
+kernal/.pi/extensions/kernal-github/index.ts
+  h_69b863911ebf05 16-18,25-28,32-107,163
+kernal/tests/github.test.ts
+  h_69b863911ebf05 574-627
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "5ed8ed853375126d110b41189fb476a39825a0bc",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

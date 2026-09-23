@@ -11,9 +11,10 @@ audience is the service's own origin, not IAP's client id) or the unauthenticate
 IAP would reject both before they reached the app. So `packages/api`'s image runs as two Cloud Run
 services, picking its routes by env var `OUTFITTER_ROLE` (`src/config.ts`): `outfitter-api`
 (`OUTFITTER_ROLE=web`, IAP on) serves everything under "browser ⇄ api (REST)" below; `outfitter-link`
-(`OUTFITTER_ROLE=link`, `--allow-unauthenticated`) serves only `GET /agent/ws` and
-`POST /api/hooks/*` (ngrok, and the mailbox's `tasks/wake` and `tick`), each authenticating its own
-requests as described in their own sections.
+(`OUTFITTER_ROLE=link`, `--allow-unauthenticated`) serves `GET /agent/ws`, `POST /api/hooks/*`
+(ngrok, and the mailbox's `tasks/wake` and `tick`), the teleport routes (see "Personal API tokens"),
+and the browser companion (see "Browser companion"). Each authenticates its own requests as
+described in those sections.
 Both roles share one Atlas store. `OUTFITTER_ROLE=all` (the default) runs both on one process, for
 local dev where there's no IAP anyway. See `deploy/README.md` and `deploy/link.sh`.
 
@@ -139,6 +140,7 @@ Down (api → agentd):
 | `read` | `reqId, path` | agentd replies `read.result {reqId, content|error}` |
 | `stop` | `reason` | checkpoint, then `bye`, exit 0 |
 | `mail` | `id, text, behavior?: "followUp"\|"steer"` | E5.5 mailbox message: pi RPC `prompt` with rpc id `mail:<id>` and `streamingBehavior: behavior ?? "followUp"` (starts a turn when idle, queues when busy); agentd sends `mail.ack` once pi accepts it, and re-acks without re-prompting if the same id is redelivered |
+| `browser.capture.entry` | `entry` (a pi custom entry, `customType: "outfitter.browser.capture"`, id `browser-capture:<requestId>`, data `{captureId, title, url, requesterEmail}`) | agentd emits one ordinary `entry` up-frame through the same seq counter as every other `entry`/`event`. The api sends this while the run is connected or provisioning (queued on the down-frame queue until the run is ready, same as `prompt`) and does not allocate that seq itself. A second frame for an entry id already stored is not sent |
 
 ### Mailbox (E5.5)
 
@@ -231,7 +233,7 @@ it.
 
 - `POST /api/sessions` `{guruId, repo?, baseBranch?, branch?, prompt, name?, model?}` → `{session, run}` (`repo` omitted = non-coding session with a scratch workspace; `model` overrides the guru's own model for this session — see the laptop-preflight note above)
 - `GET /api/sessions?status=&guru=` → list with `{id, name, status, runState, guru, repo, branch, parentId?, cost, updatedAt}`
-- `GET /api/sessions/:id` → metadata + `leafId`
+- `GET /api/sessions/:id` → metadata + `leafId` + `runState` + `pendingUiRequest` (the active run's `Run.pendingUiRequest`, or `null` when there is none — a stopped or failed run does not keep a stale approval)
 - `GET /api/sessions/:id/entries?after=<entryId>` → pi entries in tree order
 - `GET /api/sessions/:id/stream` → SSE: `event: entry|event|status|spend|checkpoint`, `data: <json>`
 - `POST /api/sessions/:id/messages` `{text, behavior?}` → stores the text as mail (see "Mailbox"), wakes a run if none is running, returns `{run}`; `behavior` defaults to `followUp`. If the wake fails it returns **202 `{run: null}`**: the mail is queued for Cloud Tasks and `/tick`, so the client must not resend. Text over 32,000 characters is a 413. `POST /api/sessions` behaves the same way for its `prompt` (201 with `run: null` if the first wake failed)
@@ -279,10 +281,12 @@ logged or persisted.
   sha256 hash → store lookup. Unknown and revoked tokens get the same generic 401 (never reveals
   which). `lastUsedAt` is updated at most once a minute per token, best-effort.
 - **Where it's accepted**: the **"link" role accepts only this** — no IAP, no dev-mode shortcut
-  (`identityFromLinkRequest`), registering exactly the teleport subset of routes
+  (`identityFromLinkRequest`), registering the teleport subset of routes
   (`registerTeleportRoutes`: `GET /api/sessions`, `GET /api/sessions/:id`,
   `GET /api/sessions/:id/export.jsonl`, `PUT /api/sessions/:id/import`,
-  `POST /api/sessions/:id/stop`, `GET /api/me`) plus `POST /api/hooks/ngrok`. The **"web"/"all"
+  `POST /api/sessions/:id/stop`, `GET /api/me`), the side-panel session routes and browser
+  companion routes (see "Browser companion"), plus `POST /api/hooks/ngrok`. It does not register
+  guru, operator, or token-management routes. The **"web"/"all"
   role accepts either an IAP session or an `outf_` token** (`identityFromRequest`) for every route
   above, so a single-process dev/"all" deployment and the token-management routes both work the
   same way; `OUTFITTER_DEV=1` still short-circuits to a fixed `dev@localhost` identity there
@@ -299,6 +303,54 @@ Cloud Run service uses Google's managed OAuth client, whose credentials are neve
 programmatic access, so `gcloud auth print-identity-token` could never mint a token IAP would
 accept. Personal API tokens on the non-IAP "link" service are the fix; the IAP-token mode has been
 removed from `outfitter-store.ts` entirely, not left in as a fallback.
+
+## Browser companion
+
+The Chrome companion (`docs/specs/chrome-companion.md`) calls the **link** role with a Dongle
+(`Authorization: Bearer outf_...`), the same credential teleport uses. The web role accepts the
+same calls with IAP or that bearer. Identity is the token owner's email or the IAP email
+(`req.identity`). An email in the body is ignored.
+
+The link role also registers these existing session routes, unchanged, so the side panel can read
+the transcript, steer, answer an approval, and Break without going through IAP:
+
+- `GET /api/sessions/:id/entries`
+- `POST /api/sessions/:id/messages`
+- `POST /api/sessions/:id/ui-response`
+- `POST /api/sessions/:id/abort`
+
+`GET /api/sessions` and `GET /api/sessions/:id` were already on the link role. The detail payload
+includes `pendingUiRequest` from the active run (`null` when there is none). Guru, operator, and
+token-management routes stay off the link role.
+
+One share per session. `PUT` replaces it only when the caller is already the owner; a different
+email gets `409`.
+
+| Route | Who | Body / result |
+|---|---|---|
+| `PUT /api/sessions/:id/browser/share` | caller becomes, or already is, the owner | `{tabTitle, tabUrl}` stored with `ownerEmail` and `createdAt`. A different email already owning the share is `409`. |
+| `DELETE /api/sessions/:id/browser/share` | owner | Drops the share. Pending requests become `skipped`. |
+| `GET /api/sessions/:id/browser/share` | any authenticated caller | `{tabTitle, tabUrl, ownerEmail, createdAt}` or `404`. No image. |
+| `POST /api/sessions/:id/browser/requests` | any authenticated caller | `{id, requesterEmail, status:"pending"}`. `409` when the session has no share. `requesterEmail` is the caller. |
+| `GET /api/sessions/:id/browser/requests?status=pending` | owner | Pending requests. Anyone else gets `404` (the queue is not revealed). |
+| `GET /api/sessions/:id/browser/requests/:requestId` | requester or owner | `{id, requesterEmail, status, captureId, createdAt}`. Anyone else gets `404`. |
+| `POST /api/sessions/:id/browser/requests/:requestId/revoke` | owner | If not yet `done`, mark `skipped`. |
+| `POST /api/sessions/:id/browser/captures` | owner | `{requestId, title, url, jpegBase64}` → `{captureId}`. |
+| `GET /api/sessions/:id/browser/captures/:captureId` | any authenticated caller | `Content-Type: image/jpeg` bytes, `X-Content-Type-Options: nosniff`. |
+
+Decoded jpeg over 350,000 bytes is `413`. Bytes live in `browserCaptures`
+(`{sessionId, requestId, ownerEmail, requesterEmail, title, url, bytes, createdAt}` plus the
+capture `id`). The insert keeps the last 20 captures per session and deletes older ones in that
+same write. On success the request is marked `done` and stores `captureId`. The API also appends
+one pi custom entry `outfitter.browser.capture` with `{captureId, title, url, requesterEmail}`,
+keyed by `requestId` (`entry.id` is `browser-capture:<requestId>`). While a run for the session is
+connected or still provisioning, that entry goes to agentd as a `browser.capture.entry` down-frame
+and agentd assigns the seq; the api inserts it itself with `maxSeq+1` only when no run is connected
+and none is provisioning. Uploading the same `requestId` again returns the original `captureId`
+and, once that entry is stored, does not send the down-frame or insert a second entry. `POST
+/browser/requests` inserts the pending row in the same store operation that reads the share
+(`insertPendingIfShared`); a revoke that has already deleted the share cannot leave a new pending
+request behind.
 
 ## Run state machine
 

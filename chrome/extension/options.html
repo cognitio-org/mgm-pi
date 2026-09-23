@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Kernal options</title>
+  <style>
+    body {
+      font: 15px/1.45 ui-sans-serif, system-ui, sans-serif;
+      margin: 2rem;
+      max-width: 36rem;
+      color: #1a1a1a;
+    }
+    label { display: block; margin: 1rem 0 0.3rem; font-weight: 600; }
+    input {
+      width: 100%;
+      box-sizing: border-box;
+      font: inherit;
+      padding: 0.4rem 0.5rem;
+    }
+    button { font: inherit; margin: 1rem 0.5rem 0 0; padding: 0.35rem 0.8rem; }
+    p { min-height: 1.2em; }
+    .hint { color: #444; font-weight: 400; }
+  </style>
+</head>
+<body>
+  <h1>Kernal</h1>
+  <p class="hint">Paste the same two values the Tokens page prints. The Dongle stays in chrome.storage.local on this computer.</p>
+  <form id="settings">
+    <label for="token">OUTFITTER_TOKEN</label>
+    <input id="token" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="outf_…">
+    <p id="token-state" class="hint"></p>
+    <label for="origin">OUTFITTER_API</label>
+    <input id="origin" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="https://…">
+    <div>
+      <button type="submit">Save</button>
+      <button type="button" id="remove">Remove Dongle</button>
+    </div>
+    <p id="status" role="status"></p>
+  </form>
+  <p id="build" class="hint"></p>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

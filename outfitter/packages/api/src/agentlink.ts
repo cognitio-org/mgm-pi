@@ -661,12 +661,15 @@ export class AgentLink {
 
     const secrets = await this.secretsBroker.secretsForRun(session, guru);
     // GcpSecretsBroker (secrets.ts) resolves a missing `outfitter-github-token-<sessionId>` secret
-    // to "" rather than throwing, so a session with no repo (which needs no GitHub token at all)
-    // is never blocked by it. A *repo* session with an empty token would otherwise agentd-clone
-    // with no credentials and fail confusingly deep inside the sandbox; fail fast here instead,
-    // with a reason the agentd/operator can act on. Dev mode is exempt: it means "no secrets
-    // available" (MemorySecretsBroker defaults githubToken to ""), and a dev/test repo session
-    // should still be able to clone a public repo anonymously rather than being blocked here.
+    // to "" rather than throwing -- after first falling back to the shared
+    // `outfitter-github-token-default` -- so a session with no repo (which needs no GitHub token at
+    // all) is never blocked by it, and a repo session whose own token was never minted still gets
+    // one. Reaching here with an empty token therefore means *neither* secret exists. A repo
+    // session in that state would otherwise agentd-clone with no credentials and fail confusingly
+    // deep inside the sandbox; fail fast here instead, with a reason the agentd/operator can act
+    // on. Dev mode is exempt: it means "no secrets available" (MemorySecretsBroker defaults
+    // githubToken to ""), and a dev/test repo session should still be able to clone a public repo
+    // anonymously rather than being blocked here.
     if (session.repo && !secrets.githubToken && !this.config.devMode) {
       // Close reasons are capped at 123 UTF-8 bytes by the WebSocket protocol; keep this short
       // even for a long (e.g. UUID) session id. The full secret name is in the server log line

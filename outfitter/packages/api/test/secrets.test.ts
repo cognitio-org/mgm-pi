@@ -1,5 +1,6 @@
 // GcpSecretsBroker with a stubbed fetchSecret (no ADC/network): the "not found" -> "" fallback,
-// the outfitter-litellm-key-default fallback, and that non-404 errors still propagate.
+// the outfitter-litellm-key-default / outfitter-github-token-default fallbacks, and that non-404
+// errors still propagate.
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -73,6 +74,47 @@ describe("GcpSecretsBroker", () => {
     });
     const secrets = await broker.secretsForRun(testSession(), testGuru());
     assert.equal(secrets.githubToken, "gh-token");
+  });
+
+  test("falls back to outfitter-github-token-default when outfitter-github-token-<sessionId> is missing", async () => {
+    const requested: string[] = [];
+    const broker = new GcpSecretsBroker("proj", async (secretId) => {
+      requested.push(secretId);
+      if (secretId === "outfitter-github-token-default") return "shared-token";
+      throw notFoundError();
+    });
+    const secrets = await broker.secretsForRun(testSession(), testGuru());
+    assert.equal(secrets.githubToken, "shared-token");
+    assert.ok(requested.includes("outfitter-github-token-s1"));
+    assert.ok(requested.includes("outfitter-github-token-default"));
+  });
+
+  test("does not fall back to the shared token when the session's own token exists", async () => {
+    const requested: string[] = [];
+    const broker = new GcpSecretsBroker("proj", async (secretId) => {
+      requested.push(secretId);
+      if (secretId === "outfitter-github-token-s1") return "own-token";
+      if (secretId === "outfitter-github-token-default") return "shared-token";
+      throw notFoundError();
+    });
+    const secrets = await broker.secretsForRun(testSession(), testGuru());
+    assert.equal(secrets.githubToken, "own-token");
+    assert.ok(!requested.includes("outfitter-github-token-default"));
+  });
+
+  // Neither secret exists: still "" rather than a throw, because that's what agentlink.ts's
+  // buildRunSpec turns into the terminal MissingGithubTokenError for a *repo* session (and
+  // deliberately ignores for a repo-less one).
+  test("resolves to \"\" when neither the per-session nor the shared github token exists", async () => {
+    const requested: string[] = [];
+    const broker = new GcpSecretsBroker("proj", async (secretId) => {
+      requested.push(secretId);
+      throw notFoundError();
+    });
+    const secrets = await broker.secretsForRun(testSession(), testGuru());
+    assert.equal(secrets.githubToken, "");
+    assert.ok(requested.includes("outfitter-github-token-s1"));
+    assert.ok(requested.includes("outfitter-github-token-default"));
   });
 
   test("a non-404 error still propagates instead of resolving to \"\"", async () => {

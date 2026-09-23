@@ -44,6 +44,12 @@ export class MemorySecretsBroker implements SecretsBroker {
   }
 }
 
+/** The shared GitHub token any repo session falls back to when it has no
+ * `outfitter-github-token-<sessionId>` secret of its own, mirroring `outfitter-litellm-key-default`
+ * for guru LiteLLM keys. Deliberately org-wide and therefore looser than a per-session PAT: see
+ * `githubTokenForSession` and deploy/README.md (b). */
+export const GITHUB_TOKEN_DEFAULT_SECRET = "outfitter-github-token-default";
+
 /**
  * Production broker: reads Secret Manager over ADC via the Secret Manager REST API (no
  * @google-cloud/secret-manager dependency needed for one call). The shape of the secret names is
@@ -52,11 +58,11 @@ export class MemorySecretsBroker implements SecretsBroker {
  *
  * A missing secret is not itself an error here: `outfitter-github-token-<sessionId>` legitimately
  * doesn't exist for a repo-less session (and may not exist yet for a fresh repo session either),
- * and `outfitter-litellm-key-<guruId>` falls back to a shared `outfitter-litellm-key-default`
- * before giving up. Callers decide whether an empty value is fatal — agentlink.ts's buildRunSpec
- * does, for githubToken on a session that actually has a repo. accessSecretOrEmpty resolves any
- * other error (auth failure, network, malformed payload) by rethrowing, since those aren't a
- * "the secret doesn't exist" signal.
+ * and both per-id secrets fall back to a shared default — `outfitter-litellm-key-default` and
+ * `outfitter-github-token-default` — before giving up. Callers decide whether an empty value is
+ * fatal — agentlink.ts's buildRunSpec does, for githubToken on a session that actually has a repo.
+ * accessSecretOrEmpty resolves any other error (auth failure, network, malformed payload) by
+ * rethrowing, since those aren't a "the secret doesn't exist" signal.
  */
 export class GcpSecretsBroker implements SecretsBroker {
   private readonly project: string;
@@ -74,10 +80,33 @@ export class GcpSecretsBroker implements SecretsBroker {
 
   async secretsForRun(session: Session, guru: Guru): Promise<RunSecrets> {
     const [githubToken, litellmKey] = await Promise.all([
-      this.accessSecretOrEmpty(`outfitter-github-token-${session.id}`),
+      this.githubTokenForSession(session.id),
       this.litellmKeyForGuru(guru.id),
     ]);
     return { githubToken, litellmKey };
+  }
+
+  /** The session's own token if it has one, else the shared `outfitter-github-token-default`.
+   * The per-session secret stays the preferred form — a fine-grained PAT scoped to that one repo
+   * is a far smaller blast radius than one token every repo session can reach — but requiring it
+   * meant an operator had to mint a PAT by hand before a repo session's first run could get past
+   * buildRunSpec's fatal check, which is what the shared fallback exists to avoid. Logs which of
+   * the two a run ended up with, since "the token worked" and "the token I expected" are
+   * different questions when something later fails to clone or push. */
+  private async githubTokenForSession(sessionId: string): Promise<string> {
+    const perSession = `outfitter-github-token-${sessionId}`;
+    const own = await this.accessSecretOrEmpty(perSession);
+    if (own) {
+      console.log(`[secrets] session ${sessionId}: using ${perSession}`);
+      return own;
+    }
+    const shared = await this.accessSecretOrEmpty(GITHUB_TOKEN_DEFAULT_SECRET);
+    if (shared) {
+      console.log(
+        `[secrets] session ${sessionId}: ${perSession} not set; using ${GITHUB_TOKEN_DEFAULT_SECRET}`,
+      );
+    }
+    return shared;
   }
 
   private async litellmKeyForGuru(guruId: string): Promise<string> {

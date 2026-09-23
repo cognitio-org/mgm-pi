@@ -2,17 +2,19 @@
 
 Handoff for the sandbox's git behaviour — phase 0 of `kernal/docs/git-github-spec.md` plus what came
 out of running it against the real cloud. Written because the week's quota ran out mid-verification.
+Updated the same day, after the deploy and the end-to-end check.
 
 ## Status in one line
 
-Everything is merged; **`main` is ahead of the deployed image**, and the deploy is the only thing
-standing between the code and a working repo session.
+Deployed and checked. `outfitter-agent` runs `ca451ae4466d` (tag `outfitter-v2026.09.23.1`), which
+contains #55, and the end-to-end check on `cognitio-org/testit` passed.
 
 | | |
 |---|---|
-| Deployed image (Job `outfitter-agent`, label `build-commit`) | `4e5463c` — has #41 and #44, **not #55** |
-| `main` at handoff | `ca451ae` |
-| Repo sessions in the cloud | **Broken until #55 deploys** |
+| Deployed image (Job `outfitter-agent`, label `build-commit`) | `ca451ae4466d` — #41, #44, and #55 |
+| `main` when this was checked | `ca451ae` (`ca451ae4466d`) |
+| Release | `outfitter-v2026.09.23.1` |
+| Repo sessions in the cloud | Working, as of the check below |
 
 ## What merged
 
@@ -48,37 +50,64 @@ tree over before the checkout. **This predates the phase-0 work** — the old co
 command was `git checkout -b`, which fails identically, which is why no `outfitter-github-token-*`
 secret had ever existed in the project: no repo session ever got far enough to need one.
 
+## How the deploy went
+
+Pushing `outfitter-v2026.09.23.1` started Actions run `35853815936`. The test job passed. The deploy
+job then stopped on `kernal-web`, before the agent image moved: that service still runs as the
+project's default Compute service account
+(`97916961297-compute@developer.gserviceaccount.com`), and `outfitter-deployer` has no
+`iam.serviceaccounts.actAs` on it. `ci-setup.sh` grants actAs only on `outfitter-api`,
+`outfitter-agent`, and `outfitter-builder`. `release.sh` deploys the landing page first, so that
+one refusal stops the fleet as well.
+
+The release was finished by hand from the primary `main` checkout (`/Users/mgm/localllm`, not a
+worktree), as `mgm@mgms.eu`: `MANUAL=1 ./release.sh`. `outfitter-agent`, `outfitter-link`,
+`outfitter-api`, and `kernal-web` all came back with `build-commit` `ca451ae4466d`. The page is
+labelled now, so a later release that does not touch `landing/` skips it. The next change under
+`landing/` fails the workflow the same way until `kernal-web` runs as an account the deployer can
+act as (`deploy/README.md`).
+
+## The end-to-end check (done 2026-09-23)
+
+Session `2cc9494a-96f8-4af3-88e2-a0a5a5d5f4af` ("git e2e check") on `cognitio-org/testit`, branch
+`outfitter/3b352e25`, woken from the web UI at `app.kernal.one` after the image above was live.
+The prompt asked the agent to write `check.md` and commit it with the git tool (action `commit`),
+and not to push. The git tool is what appends the attribution trailers; a raw shell `git commit`
+would have kept the bot identity from `GIT_AUTHOR_*` / `GIT_COMMITTER_*` and omitted the trailers.
+
+1. The agent committed `a461e96ab2d74cf2bb2b54b2bb8f6d74aa9c209c` (`add check.md`). Stop
+   checkpointed. The session record now holds `checkpoint.branch` `outfitter/3b352e25` and
+   `checkpoint.head` that sha, and the branch is on GitHub at that commit, with `check.md`
+   containing `sandbox git check 2026-09-23`. The sandbox log shows `checkpointing`, then
+   `stopping`, then `exit(0)`, and no `checkpoint failed`.
+2. Author and committer on GitHub are `Outfitter <noreply@outfitter.invalid>`. The message also
+   carries `Co-Authored-By: Kernal <noreply@kernal.invalid>`, `Co-authored-by: Matthew Monteleone
+   <1931461+mgmonteleone@users.noreply.github.com>`, and `On-behalf-of` for the same person. GitHub
+   links the co-author to `mgmonteleone`.
+   https://github.com/cognitio-org/testit/commit/a461e96ab2d74cf2bb2b54b2bb8f6d74aa9c209c
+3. Stop, then Play. The resumed agent reported branch `outfitter/3b352e25`, HEAD
+   `a461e96ab2d74cf2bb2b54b2bb8f6d74aa9c209c`, and that first line of `check.md`. The session was
+   stopped again afterwards. The header read `STOPPED · PRESS PLAY`, with no status-detail note.
+
+**The page never showed `pushed: true`.** Agentd sends it on the checkpoint frame, and the link
+role publishes that frame on its own SSE hub (`agentlink.ts`). The browser is connected to the web
+role, whose `SsePoller` republishes entries, status, spend, and a pending UI request, and does not
+republish checkpoint. `session.checkpoint` stores `branch` and `head` only. The push is what
+created the branch: it was not on the repo before the stop, and it was at the agent's sha after.
+
+A failure surfaces in the run's status detail rather than an indefinite spinner (#54).
+
 ## Next actions, in order
 
-1. **Deploy `main`.** Nothing above about #55 is live until then.
-2. **Finish the end-to-end check** (below). It was blocked at the clone, which #55 fixes.
-3. **Matej's attribution**: `matej@mgms.eu` has no user record (he has never signed into Outfitter),
+1. **`kernal-web`'s runtime account.** Give the landing page a service account `outfitter-deployer`
+   can act as, and pass it from `landing.sh`. Until then a `landing/` change blocks every release.
+2. **Matej's attribution**: `matej@mgms.eu` has no user record (he has never signed into Outfitter),
    so his commits get the bot alone. When he signs in, set `name`, `githubLogin` (`TEJ42000`) and
    `githubEmail` (`247988220+TEJ42000@users.noreply.github.com`) on his row. Matthew
    (`mgm@mgms.eu`) and Matija Turk (`matija.turk@gmail.com`, `johnny2211`) are already configured.
-4. **Clean up the test fixtures** when done: session `2cc9494a-96f8-4af3-88e2-a0a5a5d5f4af`, repo
+3. **Clean up the test fixtures**: session `2cc9494a-96f8-4af3-88e2-a0a5a5d5f4af`, repo
    `cognitio-org/testit`, and secret `outfitter-github-token-2cc9494a-…` (holds a real fine-grained
    PAT scoped to that repo — revoke it on GitHub too).
-
-## The end-to-end check, to resume after the deploy
-
-Session `2cc9494a-96f8-4af3-88e2-a0a5a5d5f4af` ("git e2e check") on `cognitio-org/testit` is set up
-and its token secret is valid (GitHub returns 200 and `push: true`). Wake it from the UI and:
-
-1. The agent commits `check.md` itself, then checkpoint → the branch `outfitter/3b352e25` should
-   appear on GitHub at the agent's commit, and the frame should say `pushed: true`. That is bugs 1
-   and 3 together.
-2. On GitHub, the commit's committer should be `Outfitter <noreply@outfitter.invalid>` with
-   `Co-authored-by`/`On-behalf-of` naming the owner, and their avatar on it.
-3. Stop and resume the session → it should return on `outfitter/3b352e25` at the right commit. That
-   is the resume refspec, which failed for every resumed session before #41.
-
-A failure now surfaces in the run's status detail rather than an indefinite spinner (#54).
-
-**It also costs mail.** A repo session that fails this way fails *after* its `hello` has validated, so
-each wake charges the agent mailbox an attempt, and a queued message dead-letters after six. From the
-outside that looks like the mailbox dropping messages, so a session that will not clone is worth
-fixing before re-sending anything (see the E5.5 notes in `EPIC.md`, and `docs/reports/agent-messaging.md`).
 
 ## Things that cost time, so the next person does not repeat them
 
@@ -86,9 +115,10 @@ fixing before re-sending anything (see the E5.5 notes in `EPIC.md`, and `docs/re
   ended the test process the first time a test delivered `stop`, so **every test declared after it
   silently never ran** — three of them. Fixed in #44. If you append tests to `run.test.ts`, check
   they appear in the output.
-- **Per-session GitHub tokens.** Until #53's `outfitter-github-token-default` is deployed, every repo
-  session needs its own secret, created by hand, or it sits in `PROVISIONING`. The failure is now
-  explained in the UI (#54).
+- **Per-session GitHub tokens.** #53's `outfitter-github-token-default` shipped in
+  `outfitter-v2026.09.23.1`, so a repo session with no secret of its own falls back to that shared
+  token. A per-session secret still wins when it exists. Before that fallback, a missing secret
+  left the session in `PROVISIONING`; the refusal is explained in the UI (#54).
 - **Which token.** It must be a **GitHub** PAT, not an Outfitter `outf_` dongle; fine-grained tokens
   need resource owner = the org, the repo selected, and **Contents: read and write**. A stored value
   starting `outf` or of length 21 or 59 is one of the wrong ones we hit.
@@ -97,6 +127,12 @@ fixing before re-sending anything (see the E5.5 notes in `EPIC.md`, and `docs/re
 - **Verifying a deploy**: `gcloud run jobs describe outfitter-agent … --format='value(metadata.labels.build-commit)'`
   gives the commit actually running. Sandbox logs are `resource.type="cloud_run_job"` with
   `jsonPayload.message`; `value(...)` format strings that guess at `msg`/`error` print blanks.
+- **A repo session that fails after `hello` still costs mail.** Each wake charges the agent mailbox
+  an attempt, and a queued message dead-letters after six. From the outside that looks like the
+  mailbox dropping messages, so a session that will not clone is worth fixing before re-sending
+  anything (see the E5.5 notes in `EPIC.md`, and `docs/reports/agent-messaging.md`).
+- **`pushed` is not on the session page.** The checkpoint frame stays on the link role's SSE hub.
+  Confirm the push from `session.checkpoint.head` and from the branch on GitHub.
 
 ## Deliberate decisions worth not re-litigating
 

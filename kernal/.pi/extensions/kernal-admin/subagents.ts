@@ -26,6 +26,7 @@ import { readSettings, settingsPath, updateSettings } from "../connect/settings.
 import { leaksSecret } from "./lib.ts";
 import { env } from "../_shared/env.ts";
 import { cliInfo, type CliInfo } from "../kernal-subagents/lib.ts";
+import { excludeToolsFor } from "../kernal-github/confirm.ts";
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];
 /** pi's own tools; extension tools come from the running agent and from what agents already name. */
@@ -361,7 +362,19 @@ function stampGithubTools(file: string, value: GithubTools) {
   let block = text.slice(4, end);
   const line = `githubTools: ${value}`;
   block = /^githubTools:/m.test(block) ? block.replace(/^githubTools:[^\n]*$/gm, line) : `${block}\n${line}`;
+  block = stampExcludeTools(block, value);
   writeFileSync(file, `---\n${block}${text.slice(end)}`);
+}
+
+/** Off adds the GitHub tool names to `excludeTools`, which pi-subagents already applies.
+ *  Read and full take those names back off the list and leave every other denial in place. */
+function stampExcludeTools(block: string, mode: GithubTools): string {
+  const current = block.match(/^excludeTools:[^\n]*$/m);
+  const listed = current ? current[0].slice("excludeTools:".length).split(",").map((s) => s.trim()).filter(Boolean) : [];
+  const next = excludeToolsFor(mode, listed);
+  const line = next.length ? `excludeTools: ${next.join(", ")}` : "";
+  if (current) return line ? block.replace(/^excludeTools:[^\n]*$/m, line) : block.replace(/^excludeTools:[^\n]*\n?/m, "");
+  return line ? `${block}\n${line}` : block;
 }
 
 /** Customise a builtin or package agent: the package's eject, a same-name copy in user or project scope. */

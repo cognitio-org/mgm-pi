@@ -1643,7 +1643,7 @@ function drawEditor(view, r, list, models, a) {
     ghOff.setAttribute("aria-pressed", String(ghMode === "off"));
     ghRead.setAttribute("aria-pressed", String(ghMode === "read"));
     ghFull.setAttribute("aria-pressed", String(ghMode === "full"));
-    ghHelp.textContent = ghMode === "off" ? "No GitHub tools." : ghMode === "read" ? "Status, diff, log, and pull request and issue reads." : "Reads, plus anything that writes, merges, or pushes.";
+    ghHelp.textContent = ghMode === "off" ? "git and the GitHub tools are excluded for this agent." : ghMode === "read" ? "Those tools stay available. Only status, diff, log, and pull-request and issue reads run." : "Reads, writes, merges, and pushes.";
   }
   function pickGh(mode) { return function () { if (!editable) return; ghMode = mode; ghRow.setError(null); paintGh(); changed(); }; }
   ghOff.addEventListener("click", pickGh("off"));
@@ -1678,7 +1678,7 @@ function drawEditor(view, r, list, models, a) {
     el("div", {}, el("span", { class: "tag cli", text: cli.tool + " CLI" }), " ", el("code", { text: cli.command }), " ", cliState(cli), " ", el("span", { class: "tag" + (cli.writes ? " warn" : ""), text: cli.writes ? "writes files" : "read-only" })),
     el("div", { class: "note" }, "The description and the prompt are the parts you can change: the prompt is sent to " + cli.tool + " with every task." + (!cli.installed && !cli.unknown && cli.install ? " Install it with: " : ""), !cli.installed && !cli.unknown && cli.install ? el("code", { text: cli.install }) : null)) : null;
   add(view, card("Definition", cli ? "The frontmatter: this agent runs the " + cli.tool + " CLI." : "The frontmatter: how pi-subagents runs this agent.", null,
-    [el("div", { class: "rows" }, cli ? [nameRow, scopeRow, descRow, cliRow, ghRow] : [nameRow, scopeRow, descRow, modelRow, thRow, toolsRow, ghRow]), adv, extra]));
+    [el("div", { class: "rows" }, cli ? [nameRow, scopeRow, descRow, cliRow] : [nameRow, scopeRow, descRow, modelRow, thRow, toolsRow, ghRow]), adv, extra]));
 
   // ---- prompt: a Markdown editor with toolbar, shortcuts and a live preview ----
   var ta = el("textarea", { class: "md-input", spellcheck: "true", "aria-label": "System prompt, Markdown", readonly: !editable, id: "f-agent-prompt" });

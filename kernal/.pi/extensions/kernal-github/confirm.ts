@@ -17,7 +17,7 @@ export function githubConfirmFrom(settings: unknown): GithubConfirm {
 }
 
 const READ = new Set([
-  "github_pr:view", "github_pr:list", "github_pr:checks",
+  "github_pr:view", "github_pr:list", "github_pr:checks", "github_pr:wait_ci",
   "github_issue:list", "github_issue:view",
   "github_repo:view", "github_repo:search", "github_repo:releases",
   "git:status", "git:diff", "git:log",
@@ -35,8 +35,8 @@ function reviewClass(decision: unknown): "write" | "merge" {
 }
 
 /**
- * What a tool call is, for the gate. An action the table does not name is a write, so it cannot
- * slip through `merge`, which only stops merges and approving reviews.
+ * What a tool call is, for the gate. An action the table does not name is a write, so `writes`
+ * asks for it. `merge` still lets a write through: it only stops merges and approving reviews.
  */
 export function classifyGithub(tool: string, action: string, params?: { decision?: string }): GithubClass {
   const key = `${tool.trim().toLowerCase()}:${action.trim().toLowerCase()}`;
@@ -53,6 +53,24 @@ function needsConfirm(confirm: GithubConfirm, cls: GithubClass): boolean {
   if (cls === "read" || confirm === "none") return false;
   if (confirm === "merge") return cls === "merge";
   return cls === "write" || cls === "merge" || cls === "push";
+}
+
+/** Tool names pi-subagents can exclude. Off lists all of them; read and full list none. */
+export const GITHUB_TOOL_NAMES = ["git", "github_pr", "github_issue", "github_repo"] as const;
+
+export type GithubToolsMode = "off" | "read" | "full";
+
+/** Per-agent access. Off denies every GitHub tool. Read allows only the read class. Full allows all. */
+export function githubToolsAllows(mode: GithubToolsMode, tool: string, action: string, params?: { decision?: string }): boolean {
+  if (mode === "off") return false;
+  if (mode === "full") return true;
+  return classifyGithub(tool, action, params) === "read";
+}
+
+/** `excludeTools` after applying this agent's GitHub choice. Other denied tools are kept. */
+export function excludeToolsFor(mode: GithubToolsMode, existing: string[]): string[] {
+  const rest = existing.filter((name) => !(GITHUB_TOOL_NAMES as readonly string[]).includes(name));
+  return mode === "off" ? [...rest, ...GITHUB_TOOL_NAMES] : rest;
 }
 
 export async function gateGithub(opts: {

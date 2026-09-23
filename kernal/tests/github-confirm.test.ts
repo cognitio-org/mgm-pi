@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { classifyGithub, gateGithub, githubConfirmFrom, type GithubClass, type GithubConfirm } from "../.pi/extensions/kernal-github/confirm.ts";
+import { classifyGithub, excludeToolsFor, gateGithub, githubConfirmFrom, githubToolsAllows, type GithubClass, type GithubConfirm } from "../.pi/extensions/kernal-github/confirm.ts";
 import { readAgent, saveAgent, snapshot } from "../.pi/extensions/kernal-admin/subagents.ts";
 
 describe("githubConfirmFrom", () => {
@@ -26,7 +26,7 @@ describe("githubConfirmFrom", () => {
 
 describe("classifyGithub", () => {
   const read: [string, string][] = [
-    ["github_pr", "view"], ["github_pr", "list"], ["github_pr", "checks"],
+    ["github_pr", "view"], ["github_pr", "list"], ["github_pr", "checks"], ["github_pr", "wait_ci"],
     ["github_issue", "list"], ["github_issue", "view"],
     ["github_repo", "view"], ["github_repo", "search"], ["github_repo", "releases"],
     ["git", "status"], ["git", "diff"], ["git", "log"],
@@ -53,9 +53,22 @@ describe("classifyGithub", () => {
     assert.equal(classifyGithub("github_pr", "review", { decision: "Request Changes" }), "merge");
   });
 
-  test("an action the table does not name is a write", () => {
+  test("an action the table does not name is a write, and merge still allows it", async () => {
     assert.equal(classifyGithub("github_pr", "delete"), "write");
-    assert.equal(classifyGithub("git", "rebase"), "write");
+    const unnamed = await gateGithub({ confirm: "merge", cls: classifyGithub("github_pr", "delete"), personPresent: false });
+    assert.deepEqual(unnamed, { ok: true });
+  });
+
+  test("wait_ci is a read, and per-agent access follows off, read, and full", () => {
+    assert.equal(classifyGithub("github_pr", "wait_ci"), "read");
+    assert.equal(githubToolsAllows("off", "git", "status"), false);
+    assert.equal(githubToolsAllows("read", "git", "status"), true);
+    assert.equal(githubToolsAllows("read", "git", "push"), false);
+    assert.equal(githubToolsAllows("read", "github_pr", "wait_ci"), true);
+    assert.equal(githubToolsAllows("full", "git", "push"), true);
+    assert.deepEqual(excludeToolsFor("off", ["bash"]), ["bash", "git", "github_pr", "github_issue", "github_repo"]);
+    assert.deepEqual(excludeToolsFor("read", ["bash", "git"]), ["bash"]);
+    assert.deepEqual(excludeToolsFor("full", ["git", "bash"]), ["bash"]);
   });
 });
 
@@ -137,10 +150,14 @@ describe("per-agent githubTools", () => {
     const ctx = { cwd: root, modelRegistry: { getAvailable: () => [] } };
     try {
       await saveAgent(ctx, edit({ name: "quiet", githubTools: "off" }), []);
-      assert.match(readFileSync(join(root, "agent", "agents", "quiet.md"), "utf8"), /^githubTools: off$/m);
+      const quiet = readFileSync(join(root, "agent", "agents", "quiet.md"), "utf8");
+      assert.match(quiet, /^githubTools: off$/m);
+      assert.match(quiet, /^excludeTools:.*\bgit\b/m);
       await saveAgent(ctx, edit({ githubTools: "read" }), []);
       const file = join(root, "agent", "agents", "helper.md");
-      assert.match(readFileSync(file, "utf8"), /^githubTools: read$/m);
+      const helper = readFileSync(file, "utf8");
+      assert.match(helper, /^githubTools: read$/m);
+      assert.equal(/^excludeTools:.*\bgit\b/m.test(helper), false);
       const snap = await snapshot(root, undefined, []);
       const read = await readAgent(snap, "helper", "user", []);
       assert.equal(read && !read.withheld && read.fields.githubTools, "read");

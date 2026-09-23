@@ -16,7 +16,14 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readSettings } from "../connect/settings.ts";
 import * as git from "../_shared/git.ts";
 import { attributionFrom, renderStatus, repoStatus, runAction } from "./lib.ts";
+import { githubToolsAllows, type GithubToolsMode } from "./confirm.ts";
 import { authState, findGh, installGh, kernalBin, loginCommand, missingScopes, setupGitCommand } from "./gh.ts";
+
+/** The running agent's `githubTools`, when the host put it on the tool context. The parent session has none. */
+function agentGithubTools(ctx: any): GithubToolsMode | undefined {
+  const raw = ctx?.githubTools ?? ctx?.agent?.githubTools;
+  return raw === "off" || raw === "read" || raw === "full" ? raw : undefined;
+}
 
 /** Found once per session, then reused; `/github setup` refreshes it after an install. */
 let ghCache: { path: string; version: string; managed: boolean } | undefined;
@@ -73,6 +80,10 @@ export default function (pi: ExtensionAPI) {
     } as any,
     execute: async (_id: string, params: any, _signal: unknown, _update: unknown, ctx: any) => {
       const action = String(params?.action ?? "");
+      const mode = agentGithubTools(ctx);
+      if (mode && !githubToolsAllows(mode, "git", action, params)) {
+        return { content: [{ type: "text", text: `Refused: this agent's GitHub access is ${mode}.` }], isError: true };
+      }
       const res = await runAction(action, params ?? {}, { cwd: ctx?.cwd ?? process.cwd(), settings: settings(), gh: await ghNow() });
       return { content: [{ type: "text", text: res.text }], isError: res.isError };
     },

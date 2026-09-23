@@ -364,6 +364,56 @@ can look at. Mermaid renders nowhere in a terminal; pi's own toolkit can display
 iTerm2, Ghostty, WezTerm and Warp, but rendering Mermaid to an image needs a headless browser, which
 is not worth a few hundred megabytes for a picture a good text layout beats.
 
+## Git and GitHub (`kernal-github`)
+
+The agent gets one `git` tool, and you get three commands. The design, including the cloud and
+teleport halves still to come, is `docs/git-github-spec.md`; this is phase 1 of it.
+
+**`/github setup`** does the whole setup: it finds the GitHub CLI, installs it if it is missing, and
+tells you how to sign in.
+
+| Step | What happens |
+|---|---|
+| Find `gh` | `PATH` first, so your own install wins, then kernal's own copy |
+| Install it | The official release for this platform, checked against its published `gh_<version>_checksums.txt`, unpacked into `~/.kernal/bin` (a checkout: the git-ignored `.pi/bin`). No admin rights, no Homebrew, nothing bundled in releases |
+| Sign in | `gh auth login --web --git-protocol https --scopes workflow`, which you paste into a terminal: `gh`'s login is an interactive prompt and pi cannot hand the terminal to a child process. `GH_TOKEN` or `GITHUB_TOKEN` works instead |
+| Connect git | `gh auth setup-git`, shown before it runs, because it writes a credential helper for github.com into your global git config |
+
+`/github` on its own reports the account, the token's scopes, whether git uses that login, this
+repository, and the commit attribution. Both people use their own GitHub account; nothing is issued
+centrally. github.com over https only: SSH remotes and GitHub Enterprise are out of scope.
+
+**`/git`** is the one answer to "where am I?": branch and remote, what is ahead or behind, what
+changed, the last commit, and this branch's pull request with its review state, unresolved threads
+and checks. **`/commit [message]`** commits: with a message it commits everything that changed; with
+no message it asks the agent to read the diff, stage what belongs together and write the message.
+
+The **`git` tool** gives the model the same thing in one call (`status`), plus `diff`, `log`,
+`commit`, `push`, `pull`, `branch` and `stash`. It exists because the shell version of those is five
+commands and a guess at the output. What it guarantees:
+
+- a commit message goes in on stdin, so quotes, newlines and a leading dash survive intact;
+- staging is by name; `all: true` is a deliberate choice, not the default;
+- hooks are never skipped, and a hook that refuses a commit comes back with its output and the
+  advice to make a new commit rather than amend one that never happened;
+- a push sends the exact commit that was just read, as `<sha>:refs/heads/<branch>`, and sets the
+  upstream itself on a first push (git silently declines to do that for a commit id);
+- a push is never forced: `forceWithLease` is a separate choice and still refuses if someone else
+  pushed;
+- a rejected push and a conflicted pull come back as what happened and what to do next, never as a
+  half-finished state.
+
+The model also follows a short rule block: commit and push only when asked, never rewrite published
+history, never change git config, stage by name, never commit secrets, never revert work it did not
+do. The shell still works; the tool is the easier path, not a fence.
+
+**Attribution** is on by default: a `Co-Authored-By: Kernal <noreply@kernal.invalid>` trailer on
+commits, and "Opened with Kernal" on pull requests. Set `github.attribution.commit` or
+`github.attribution.pr` in `settings.json` to change the text, or to an empty string to turn it off.
+The address is a reserved `.invalid` domain: a `users.noreply.github.com` one would credit whichever
+GitHub account owns that name. In an Outfitter cloud run the commit is the Outfitter bot's, and the
+session's person is credited with `Co-authored-by` and `On-behalf-of` trailers.
+
 ## Subagents (`pi-subagents`)
 
 Delegation to focused child sessions, which the model uses when your wording invites it: "use

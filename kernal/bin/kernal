@@ -284,7 +284,29 @@ EOF
   return 0
 }
 REPO="cognitio-org/mgm-pi"
+
+# kernal's own bin directory (where /github setup installs the GitHub CLI) goes on PATH, LAST, so a
+# gh the user installed themselves still wins and nothing here shadows a system tool.
+KERNAL_OWN_BIN="${KERNAL_HOME:-$HOME/.kernal}/bin"
+[[ -f "$ROOT/VERSION" ]] || KERNAL_OWN_BIN="$ROOT/.pi/bin"     # a source checkout keeps it out of $HOME
+[[ -d "$KERNAL_OWN_BIN" ]] && export PATH="$PATH:$KERNAL_OWN_BIN"
+
 case "${1:-}" in
+  github)
+    # The same setup /github runs inside the agent, from a plain terminal.
+    if command -v gh >/dev/null 2>&1; then
+      echo "gh: $(command -v gh) ($(gh --version | head -1))"
+      gh auth status --hostname github.com 2>&1 | sed 's/^/  /'
+      echo
+      echo "If you are not signed in:"
+    else
+      echo "The GitHub CLI is not installed. Start kernal and run /github setup, which installs it into $KERNAL_OWN_BIN, or install it yourself."
+      echo
+      echo "Then sign in:"
+    fi
+    echo "  gh auth login --web --git-protocol https --hostname github.com --scopes workflow"
+    echo "  gh auth setup-git --hostname github.com     # so git push over https uses that login"
+    exit 0 ;;
   version|--version) [[ -f "$ROOT/VERSION" ]] && cat "$ROOT/VERSION" || echo "kernal (source checkout at $ROOT)"; exit 0 ;;
   prune)
     # Removes old release bundles now, exactly as every upgrade does afterwards (keeps

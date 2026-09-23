@@ -33,7 +33,7 @@ export type Manifest = {
   name?: string;
   host: string;
   cwd: string;
-  repo?: { remote: string; ownerRepo: string; branch: string; head: string };
+  repo?: { remote: string; ownerRepo: string; branch: string; head: string; base?: string };
   pushedAt: string; // ISO timestamp
 };
 
@@ -229,7 +229,16 @@ export function parseOwnerRepo(remoteUrl: string): string | undefined {
  * teleport and kernal-github cannot drift apart on what those mean (kernal/docs/git-github-spec.md).
  * Re-exported under teleport's own names, which its command code and its CLI already use.
  */
-export { dirtyFromPorcelain as isWorkingTreeDirty, needsPushFromBranchStatus as needsPush } from "../_shared/git.ts";
+import { dirtyFromPorcelain as isWorkingTreeDirty, needsPushFromBranchStatus as needsPush } from "../_shared/git.ts";
+export { isWorkingTreeDirty, needsPush };
+
+/** True unless this branch's upstream is `origin/<branch>` and the local tip is not ahead of it.
+ *  `checkout -b feature origin/main` has an upstream and nothing ahead, but `feature` was never pushed. */
+export function needsOriginBranch(branchStatus: string, branch: string): boolean {
+  const upstream = branchStatus.match(/^# branch\.upstream (.+)$/m)?.[1]?.trim();
+  if (upstream !== `origin/${branch}`) return true;
+  return needsPush(branchStatus);
+}
 
 /** Checks that the manifest's origin repo matches the current checkout's, Claude-Code-teleport style. */
 export function verifyOwnerRepo(localOwnerRepo: string | undefined, expectedOwnerRepo: string): string | undefined {
@@ -255,7 +264,7 @@ export function rewriteHeaderCwd(jsonl: string, newCwd: string): string {
   return JSON.stringify(header) + rest;
 }
 
-export type GitInfo = { remote: string; branch: string; head: string };
+export type GitInfo = { remote: string; branch: string; head: string; base?: string };
 
 /** Builds a push manifest from git info (all three fields present) or without a repo section. */
 export function manifestFromGit(params: { id: string; name?: string; host: string; cwd: string; git?: GitInfo; pushedAt?: string }): Manifest {
@@ -265,7 +274,7 @@ export function manifestFromGit(params: { id: string; name?: string; host: strin
   };
   if (params.git) {
     const ownerRepo = parseOwnerRepo(params.git.remote);
-    if (ownerRepo) manifest.repo = { remote: params.git.remote, ownerRepo, branch: params.git.branch, head: params.git.head };
+    if (ownerRepo) manifest.repo = { remote: params.git.remote, ownerRepo, branch: params.git.branch, head: params.git.head, ...(params.git.base ? { base: params.git.base } : {}) };
   }
   return manifest;
 }

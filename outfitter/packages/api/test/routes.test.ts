@@ -258,4 +258,127 @@ describe("export.jsonl / import round trip", () => {
 
     await app.fastify.close();
   });
+
+  test("import headers set repo, branch, base, and checkpoint", async () => {
+    const app = await buildTestApp();
+    const id = "session-teleport";
+    const head = "0123456789abcdef0123456789abcdef01234567";
+    const header = JSON.stringify({ type: "session", version: 3, id, cwd: "/tmp" });
+    const entry = JSON.stringify({ id: "e1", parentId: null, type: "message" });
+    const res = await app.fastify.inject({
+      method: "PUT",
+      url: `/api/sessions/${id}/import`,
+      headers: {
+        "content-type": "application/x-ndjson",
+        "x-outfitter-repo": "acme/widgets",
+        "x-outfitter-branch": "feature",
+        "x-outfitter-base": "develop",
+        "x-outfitter-head": head,
+      },
+      payload: `${header}\n${entry}\n`,
+    });
+    assert.equal(res.statusCode, 200);
+    const session = await app.store.sessions.findById(id);
+    assert.equal(session?.repo, "acme/widgets");
+    assert.equal(session?.branch, "feature");
+    assert.equal(session?.baseBranch, "develop");
+    assert.deepEqual(session?.checkpoint, { branch: "feature", head });
+    await app.fastify.close();
+  });
+
+  test("import without repo headers leaves repo null and sets no checkpoint", async () => {
+    const app = await buildTestApp();
+    const id = "session-plain";
+    const header = JSON.stringify({ type: "session", version: 3, id, cwd: "/tmp" });
+    const res = await app.fastify.inject({
+      method: "PUT",
+      url: `/api/sessions/${id}/import`,
+      headers: { "content-type": "application/x-ndjson" },
+      payload: `${header}\n`,
+    });
+    assert.equal(res.statusCode, 200);
+    const session = await app.store.sessions.findById(id);
+    assert.equal(session?.repo, null);
+    assert.equal(session?.branch, undefined);
+    assert.equal(session?.baseBranch, undefined);
+    assert.equal(session?.checkpoint, undefined);
+    await app.fastify.close();
+  });
+
+  test("import rejects a branch of .. or -x and does not import", async () => {
+    for (const branch of ["..", "-x"]) {
+      const app = await buildTestApp();
+      const id = `session-bad-${branch === ".." ? "dotdot" : "dash"}`;
+      const header = JSON.stringify({ type: "session", version: 3, id, cwd: "/tmp" });
+      const entry = JSON.stringify({ id: "e1", parentId: null, type: "message" });
+      const res = await app.fastify.inject({
+        method: "PUT",
+        url: `/api/sessions/${id}/import`,
+        headers: {
+          "content-type": "application/x-ndjson",
+          "x-outfitter-repo": "acme/widgets",
+          "x-outfitter-branch": branch,
+        },
+        payload: `${header}\n${entry}\n`,
+      });
+      assert.equal(res.statusCode, 400, branch);
+      assert.equal(await app.store.sessions.findById(id), null);
+      assert.deepEqual(await app.store.entries.listForSession(id), []);
+      await app.fastify.close();
+    }
+  });
+
+  test("import rejects a repo that is not owner/repo, including an ssh url", async () => {
+    const app = await buildTestApp();
+    const id = "session-ssh";
+    const header = JSON.stringify({ type: "session", version: 3, id, cwd: "/tmp" });
+    const res = await app.fastify.inject({
+      method: "PUT",
+      url: `/api/sessions/${id}/import`,
+      headers: {
+        "content-type": "application/x-ndjson",
+        "x-outfitter-repo": "git@github.com:acme/widgets",
+        "x-outfitter-branch": "feature",
+        "x-outfitter-base": "main",
+        "x-outfitter-head": "0123456789abcdef0123456789abcdef01234567",
+      },
+      payload: `${header}\n`,
+    });
+    assert.equal(res.statusCode, 400);
+    assert.equal(await app.store.sessions.findById(id), null);
+    await app.fastify.close();
+  });
+
+  test("a second import cannot retarget an existing repository", async () => {
+    const app = await buildTestApp();
+    const id = "session-bound";
+    const head = "0123456789abcdef0123456789abcdef01234567";
+    const header = JSON.stringify({ type: "session", version: 3, id, cwd: "/tmp" });
+    const headers = {
+      "content-type": "application/x-ndjson",
+      "x-outfitter-repo": "acme/widgets",
+      "x-outfitter-branch": "feature",
+      "x-outfitter-base": "main",
+      "x-outfitter-head": head,
+    };
+    const first = await app.fastify.inject({ method: "PUT", url: `/api/sessions/${id}/import`, headers, payload: `${header}\n` });
+    assert.equal(first.statusCode, 200);
+    const second = await app.fastify.inject({
+      method: "PUT",
+      url: `/api/sessions/${id}/import`,
+      headers: { ...headers, "x-outfitter-repo": "bob/other" },
+      payload: `${header}\n`,
+    });
+    assert.equal(second.statusCode, 409);
+    assert.equal((await app.store.sessions.findById(id))?.repo, "acme/widgets");
+    const branchOnly = await app.fastify.inject({
+      method: "PUT",
+      url: `/api/sessions/${id}/import`,
+      headers: { "content-type": "application/x-ndjson", "x-outfitter-branch": "main" },
+      payload: `${header}\n`,
+    });
+    assert.equal(branchOnly.statusCode, 400);
+    assert.equal((await app.store.sessions.findById(id))?.branch, "feature");
+    await app.fastify.close();
+  });
 });

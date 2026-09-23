@@ -107,8 +107,8 @@ export class OutfitterStore implements Store {
     return `Bearer ${this.token}`;
   }
 
-  private async request(method: string, path: string, body?: string): Promise<Response> {
-    const headers: Record<string, string> = { Authorization: this.authHeader() };
+  private async request(method: string, path: string, body?: string, extraHeaders?: Record<string, string>): Promise<Response> {
+    const headers: Record<string, string> = { ...extraHeaders, Authorization: this.authHeader() };
     if (body !== undefined) headers["Content-Type"] = "application/x-ndjson";
     const res = await this.fetchFn(`${this.apiBase}${path}`, { method, headers, body });
     if (res.status === 401) {
@@ -213,10 +213,20 @@ export class OutfitterStore implements Store {
     return { file, manifest };
   }
 
-  async put(id: string, jsonl: string, _manifest: Manifest): Promise<void> {
-    // The API derives everything it needs from the JSONL header (PUT /api/sessions/:id/import
-    // creates the session if it doesn't exist yet); the manifest is GitStore-local metadata that
-    // the Outfitter API has no use for.
-    await this.request("PUT", `/api/sessions/${id}/import`, jsonl);
+  async put(id: string, jsonl: string, manifest: Manifest): Promise<void> {
+    // Repo rides on headers so the JSONL body stays a pi transcript: x-outfitter-repo, x-outfitter-branch, x-outfitter-base, x-outfitter-head.
+    await this.request("PUT", `/api/sessions/${id}/import`, jsonl, repoHeaders(manifest));
   }
+}
+
+function repoHeaders(manifest: Manifest): Record<string, string> | undefined {
+  const repo = manifest.repo;
+  if (!repo) return undefined;
+  const headers: Record<string, string> = {
+    "x-outfitter-repo": repo.ownerRepo,
+    "x-outfitter-branch": repo.branch,
+    "x-outfitter-head": repo.head,
+  };
+  if (repo.base) headers["x-outfitter-base"] = repo.base;
+  return headers;
 }

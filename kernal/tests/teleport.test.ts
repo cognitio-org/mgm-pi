@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import {
   GitStore, parseOwnerRepo, rewriteHeaderCwd, pickModelForHost, manifestFromGit, describeRef,
-  isWorkingTreeDirty, needsPush, verifyOwnerRepo, findSessionFileForId, FALLBACK_MODEL,
+  isWorkingTreeDirty, needsPush, needsOriginBranch, verifyOwnerRepo, findSessionFileForId, FALLBACK_MODEL,
   type ExecFn, type Manifest,
   defaultStoreDir,
 } from "../.pi/extensions/teleport/lib.ts";
@@ -103,6 +103,9 @@ describe("needsPush", () => {
   });
   test("upstream with nothing ahead means no push needed", () => {
     assert.equal(needsPush("# branch.oid abc\n# branch.head main\n# branch.upstream origin/main\n# branch.ab +0 -0\n"), false);
+    const trackingMain = "# branch.oid abc\n# branch.head feature\n# branch.upstream origin/main\n# branch.ab +0 -0\n";
+    assert.equal(needsOriginBranch(trackingMain, "feature"), true, "upstream is origin/main, not origin/feature");
+    assert.equal(needsOriginBranch("# branch.oid abc\n# branch.head feature\n# branch.upstream origin/feature\n# branch.ab +0 -0\n", "feature"), false);
   });
 });
 

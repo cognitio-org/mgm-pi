@@ -77,6 +77,47 @@ function headerLine(session: Session): string {
   return JSON.stringify(header);
 }
 
+/** One header value. `undefined` is absent (including an empty value); `false` is a repeated header. */
+function oneHeader(req: FastifyRequest, name: string): string | undefined | false {
+  const raw = req.headers[name];
+  if (Array.isArray(raw)) return false;
+  if (raw === undefined || raw === "") return undefined;
+  return raw;
+}
+
+/** Not an option injection (`-x`) and not a `..` path segment. */
+function validTeleportBranch(value: string): boolean {
+  return value.length > 0 && !value.startsWith("-") && !value.includes("..");
+}
+
+/** `owner/repo` only. `cloneUrlFor` turns that into https://github.com; anything else, including `git@`, would be cloned as written. */
+function validOwnerRepo(value: string): boolean {
+  const parts = value.split("/");
+  if (parts.length !== 2) return false;
+  return parts.every((part) => /^[A-Za-z0-9_.-]+$/.test(part) && !part.includes(".."));
+}
+
+/** Laptop-to-cloud repo from the teleport headers. No such headers → `patch: null` (repo stays null). */
+function teleportRepoPatch(req: FastifyRequest): { error: string } | { patch: Partial<Session> | null } {
+  const repo = oneHeader(req, "x-outfitter-repo");
+  const branch = oneHeader(req, "x-outfitter-branch");
+  const base = oneHeader(req, "x-outfitter-base");
+  const head = oneHeader(req, "x-outfitter-head");
+  if (repo === false) return { error: "invalid x-outfitter-repo" };
+  if (branch === false) return { error: "invalid x-outfitter-branch" };
+  if (base === false) return { error: "invalid x-outfitter-base" };
+  if (head === false) return { error: "invalid x-outfitter-head" };
+  if (repo === undefined && branch === undefined && base === undefined && head === undefined) return { patch: null };
+  // Any one header means a carried repository. A branch alone must not retarget a session that already has one.
+  if (repo === undefined || branch === undefined || base === undefined || head === undefined || !/^[0-9a-f]{40}$/i.test(head ?? "")) {
+    return { error: "x-outfitter-repo, branch, base, and a 40-hex head are required together" };
+  }
+  if (!validOwnerRepo(repo)) return { error: "invalid x-outfitter-repo" };
+  if (!validTeleportBranch(branch)) return { error: "invalid x-outfitter-branch" };
+  if (!validTeleportBranch(base)) return { error: "invalid x-outfitter-base" };
+  return { patch: { repo, branch, baseBranch: base, checkpoint: { branch, head } } };
+}
+
 /** The subset of session routes the "link" role registers for teleport (docs/protocol.md "browser
  * <-> api"): list/get/export/import/stop, nothing that needs a live agentd socket beyond `stop`
  * (which only enqueues a down-message through the store either way — see the route's own comment).
@@ -173,6 +214,10 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
     const active = await ctx.store.runs.findActiveForSession(id);
     if (active) return reply.code(409).send({ error: "a run is active for this session" });
 
+    // Repo rides on headers so the JSONL body stays a pi transcript: x-outfitter-repo, x-outfitter-branch, x-outfitter-base, x-outfitter-head.
+    const carried = teleportRepoPatch(req);
+    if ("error" in carried) return reply.code(400).send({ error: carried.error });
+
     const body = typeof req.body === "string" ? req.body : String(req.body ?? "");
     const lines = body.split("\n").filter((l) => l.trim().length > 0);
     if (lines.length === 0) return reply.code(400).send({ error: "empty JSONL body" });
@@ -181,13 +226,20 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
     if (header.type !== "session") return reply.code(400).send({ error: "first line must be a session header" });
     if (header.id !== id) return reply.code(400).send({ error: "header id does not match :id" });
 
-    let session = await ctx.store.sessions.findById(id);
+    const existing = await ctx.store.sessions.findById(id);
+    if (existing?.repo && carried.patch?.repo && existing.repo !== carried.patch.repo) {
+      return reply.code(409).send({ error: "this session is already bound to a repository" });
+    }
     const now = new Date().toISOString();
+    let session = existing;
     if (!session) {
       session = {
         id,
         guruId: "",
-        repo: null,
+        repo: carried.patch?.repo ?? null,
+        branch: carried.patch?.branch,
+        baseBranch: carried.patch?.baseBranch,
+        checkpoint: carried.patch?.checkpoint,
         status: "open",
         cost: 0,
         createdAt: header.timestamp ?? now,
@@ -203,7 +255,7 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
       const inserted = await ctx.store.entries.insertIfNew(id, ++seq, entry);
       if (inserted) leafId = entry.id;
     }
-    await ctx.store.sessions.update(id, { leafId, updatedAt: now });
+    await ctx.store.sessions.update(id, { leafId, updatedAt: now, ...(existing && carried.patch ? carried.patch : {}) });
 
     return { id, imported: lines.length - 1 };
   });

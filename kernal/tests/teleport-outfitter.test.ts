@@ -1,6 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { OutfitterStore, type FetchFn } from "../.pi/extensions/teleport/outfitter-store.ts";
+import type { Manifest } from "../.pi/extensions/teleport/lib.ts";
 
 /** Builds a fake fetch that resolves canned responses per method+path, and records every call. */
 function fakeFetch(handler: (method: string, path: string, init: any) => { status: number; body?: unknown; text?: string }) {
@@ -172,13 +173,40 @@ describe("OutfitterStore.get", () => {
 
 describe("OutfitterStore.put", () => {
   test("PUT /api/sessions/:id/import with the raw jsonl body", async () => {
-    const { fn, calls } = fakeFetch((method, path) => {
+    const jsonl = '{"type":"session","id":"s1"}\n';
+    const { fn, calls } = fakeFetch((method, path, init) => {
       assert.equal(method, "PUT");
       assert.equal(path, "/api/sessions/s1/import");
+      assert.equal(init.body, jsonl);
       return { status: 200, body: { id: "s1", imported: 1 } };
     });
     const store = new OutfitterStore({ apiBase: "https://api.example.com", token: "t", fetchFn: fn });
-    await store.put("s1", '{"type":"session","id":"s1"}\n', { id: "s1", host: "h", cwd: "/x", pushedAt: "now" });
+    await store.put("s1", jsonl, { id: "s1", host: "h", cwd: "/x", pushedAt: "now" });
     assert.equal(calls.length, 1);
+    assert.equal(calls[0].headers["x-outfitter-repo"], undefined);
+    assert.equal(calls[0].headers["x-outfitter-branch"], undefined);
+    assert.equal(calls[0].headers["x-outfitter-base"], undefined);
+    assert.equal(calls[0].headers["x-outfitter-head"], undefined);
+  });
+
+  test("sends the manifest repo on headers, and base only when the manifest already has one", async () => {
+    const sha = "0123456789abcdef0123456789abcdef01234567";
+    const jsonl = '{"type":"session","id":"s1"}\n';
+    const repo = { remote: "https://github.com/acme/widgets.git", ownerRepo: "acme/widgets", branch: "feature", head: sha };
+    const { fn, calls } = fakeFetch((_method, _path, init) => {
+      assert.equal(init.body, jsonl);
+      return { status: 200, body: { id: "s1", imported: 0 } };
+    });
+    const store = new OutfitterStore({ apiBase: "https://api.example.com", token: "t", fetchFn: fn });
+    await store.put("s1", jsonl, { id: "s1", host: "h", cwd: "/x", pushedAt: "now", repo });
+    assert.equal(calls[0].headers["x-outfitter-repo"], "acme/widgets");
+    assert.equal(calls[0].headers["x-outfitter-branch"], "feature");
+    assert.equal(calls[0].headers["x-outfitter-head"], sha);
+    assert.equal(calls[0].headers["x-outfitter-base"], undefined);
+
+    const withBase = { id: "s1", host: "h", cwd: "/x", pushedAt: "now", repo: { ...repo, base: "develop" } } as Manifest;
+    await store.put("s1", jsonl, withBase);
+    assert.equal(calls[1].headers["x-outfitter-base"], "develop");
+    assert.equal(calls[1].headers["x-outfitter-repo"], "acme/widgets");
   });
 });

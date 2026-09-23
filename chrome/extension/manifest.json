@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Kernal",
+  "version": "0.1.0",
+  "description": "Connects this Chrome to a Kernal Floppy.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzA/I1Bl/dU4o6kGx6kC/oAoJCX9kbyu5t9NlC5aPsrbg4RSMsvuvfAmGdKnqVoLRmHFh8NRqyII5g/2YY8hfqJzYvvip1l30C2VhLVClX9rLZnNW85zj81OyOF0d8qnvMINf0kUajkvQDrzI6VqdvoJWEnokMIDXTgB5dkR/87v0FG0nNVwlrdAU4SC5TVuThfIJjUNqmSkXD97GA5jXD2SzV8uJPqGjdhYORCTq3Cc2GpNgHerNDnPcf3ZHx2V3NEtyeKQtCEPD8gc5ocJPCc8tGrUS9lI9iqO1vXKlqRsJCQo7Gmg261a4G1N+KDKfcTYp0v6Bz/5Cx/6QGsZW8wIDAQAB",
+  "permissions": ["storage"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "externally_connectable": {
+    "matches": [
+      "https://app.kernal.one/*",
+      "http://localhost/*",
+      "http://127.0.0.1/*"
+    ]
+  }
+}

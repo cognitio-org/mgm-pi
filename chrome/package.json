@@ -1,0 +1,5 @@
+{
+  "name": "kernal-chrome",
+  "private": true,
+  "type": "module"
+}

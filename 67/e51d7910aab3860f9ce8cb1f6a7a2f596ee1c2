@@ -1,0 +1,16 @@
+kernal/.pi/extensions/kernal-chrome/lib.ts
+  h_69b863911ebf05 9-10,183-199,201-205,207-209,211-219,221-248,251-252,256-296
+kernal/tests/chrome.test.ts
+  h_69b863911ebf05 162-215
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "67e51d7910aab3860f9ce8cb1f6a7a2f596ee1c2",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

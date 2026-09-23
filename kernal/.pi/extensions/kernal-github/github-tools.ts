@@ -3,8 +3,9 @@
  *
  * `gh` is invoked the same way as the rest of kernal-github: an argument array, a timeout, stdin
  * closed. Titles and bodies are arguments or stdin, never a shell string, so a quote or a `$()`
- * in a title is data. The cloud broker will later return the same results; this file is the local
- * half (kernal/docs/git-github-spec.md, "Agent tools").
+ * in a title is data. When OUTFITTER_GITHUB_SOCKET is set, `call` sends that invocation to the
+ * broker and turns the result back into the stdout the parsers below already understand, so the
+ * model sees the same text. Checkout and issue start are not sent (kernal/docs/git-github-spec.md).
  *
  * Merge is pinned to the head SHA last seen. `gh pr merge --match-head-commit` is the backstop,
  * but a local check comes first so a moved pull request is explained instead of attempted.
@@ -12,6 +13,7 @@
 import { readdir, readFile, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import * as git from "../_shared/git.ts";
+import { brokerCall, cloudSessionBranch, githubSocketPath } from "./broker.ts";
 import { gh as ghExec, type Exec, execCommand } from "./gh.ts";
 import { attributionFrom, checksLine, latestChecks, rollup } from "./lib.ts";
 
@@ -356,7 +358,265 @@ async function repoOf(cwd: string): Promise<RepoRef | { error: string }> {
   return { root, owner: rem.owner, repo: rem.repo, branch: st?.branch };
 }
 
+/** Set from a cloud `github_pr.checks` payload. wait_ci reads them; they are not shown to the model. */
+let brokerChecksRemaining: number | undefined;
+let brokerChecksLog: string | undefined;
+
+type BrokerMap =
+  | { op: string; args: Record<string, unknown>; stdout: (data: any) => string }
+  | { error: string };
+
+function option(argv: string[], name: string): string | undefined {
+  const i = argv.indexOf(name);
+  if (i < 0 || i + 1 >= argv.length) return undefined;
+  return argv[i + 1];
+}
+
+function options(argv: string[], name: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < argv.length - 1; i++) if (argv[i] === name) out.push(argv[i + 1]!);
+  return out;
+}
+
+function ghField(argv: string[], name: string): string | undefined {
+  const prefix = `${name}=`;
+  const hit = argv.find((arg) => arg.startsWith(prefix));
+  return hit?.slice(prefix.length);
+}
+
+function whichArgs(which: string): Record<string, unknown> {
+  return /^[1-9]\d*$/.test(which) ? { number: Number(which) } : { branch: which };
+}
+
+function limitArg(argv: string[]): number | undefined {
+  const n = Number(option(argv, "--limit"));
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+}
+
+function urlStdout(data: any): string {
+  const url = typeof data?.url === "string" ? data.url : typeof data === "string" ? data : "";
+  if (!url) return "";
+  return url.endsWith("\n") ? url : `${url}\n`;
+}
+
+function detailStdout(data: any): string {
+  const detail = typeof data?.detail === "string" ? data.detail : "";
+  if (!detail) return "";
+  return detail.endsWith("\n") ? detail : `${detail}\n`;
+}
+
+function jsonStdout(data: any): string {
+  return JSON.stringify(data ?? null);
+}
+
+/** An array, or that array under `key`, which is what `gh --json` printed. */
+function listStdout(data: any, key: string): string {
+  if (Array.isArray(data)) return JSON.stringify(data);
+  if (Array.isArray(data?.[key])) return JSON.stringify(data[key]);
+  return JSON.stringify(data ?? null);
+}
+
+function checksStdout(data: any): string {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    brokerChecksRemaining = undefined;
+    brokerChecksLog = undefined;
+    return JSON.stringify(data ?? null);
+  }
+  const remaining = data.rateLimit?.remaining;
+  brokerChecksRemaining = typeof remaining === "number" && Number.isFinite(remaining) ? remaining : undefined;
+  brokerChecksLog = typeof data.log === "string" ? data.log : undefined;
+  const rest = { ...data };
+  delete rest.rateLimit;
+  delete rest.log;
+  return JSON.stringify(rest);
+}
+
+function replyStdout(data: any): string {
+  if (data && (data.errors || data.data)) return JSON.stringify(data);
+  const url = typeof data?.url === "string" ? data.url : undefined;
+  return JSON.stringify({ data: { addPullRequestReviewThreadReply: { comment: { url } } } });
+}
+
+function resolveStdout(data: any): string {
+  if (data && (data.errors || data.data)) return JSON.stringify(data);
+  return JSON.stringify({ data: { resolveReviewThread: { thread: { isResolved: data?.resolved === true } } } });
+}
+
+function reviewApiStdout(data: any): string {
+  if (typeof data?.html_url === "string") return JSON.stringify(data);
+  const html = typeof data?.url === "string" ? data.url : undefined;
+  return JSON.stringify(html ? { html_url: html } : {});
+}
+
+/**
+ * The gh argv `call` was about to run, as one broker op. Checkout and `issue develop` are refused
+ * here and never written to the socket. `gh run` is not an op; wait_ci reads a log off the checks
+ * payload instead. Search does not forward `--repo`: the API's repo is the session's.
+ */
+function mapBroker(argv: string[], stdin: string | undefined, env?: NodeJS.ProcessEnv): BrokerMap {
+  const cmd = argv[0];
+  const sub = argv[1];
+  if ((cmd === "pr" && sub === "checkout") || (cmd === "issue" && sub === "develop")) return { error: cloudSessionBranch(env) };
+  if (cmd === "run") return { error: "the cloud broker does not fetch job logs as its own operation" };
+
+  if (cmd === "pr" && sub === "view") {
+    const fields = new Set((option(argv, "--json") ?? "").split(",").map((s) => s.trim()).filter(Boolean));
+    const op = fields.has("statusCheckRollup") && !fields.has("title") ? "github_pr.checks" : "github_pr.view";
+    return { op, args: whichArgs(argv[2] ?? ""), stdout: op === "github_pr.checks" ? checksStdout : jsonStdout };
+  }
+  if (cmd === "pr" && sub === "list") {
+    const args: Record<string, unknown> = {};
+    const state = option(argv, "--state");
+    if (state) args.state = state;
+    const limit = limitArg(argv);
+    if (limit) args.limit = limit;
+    return { op: "github_pr.list", args, stdout: (data) => listStdout(data, "pullRequests") };
+  }
+  if (cmd === "pr" && sub === "create") {
+    const args: Record<string, unknown> = { title: option(argv, "--title") ?? "", body: stdin ?? "" };
+    if (argv.includes("--draft")) args.draft = true;
+    const base = option(argv, "--base");
+    if (base) args.base = base;
+    return { op: "github_pr.create", args, stdout: urlStdout };
+  }
+  if (cmd === "pr" && sub === "edit") {
+    const args: Record<string, unknown> = { number: Number(argv[2]) };
+    const title = option(argv, "--title");
+    if (title) args.title = title;
+    if (argv.includes("--body-file")) args.body = stdin ?? "";
+    const base = option(argv, "--base");
+    if (base) args.base = base;
+    return { op: "github_pr.edit", args, stdout: urlStdout };
+  }
+  if (cmd === "pr" && sub === "comment") {
+    return { op: "github_pr.comment", args: { number: Number(argv[2]), body: stdin ?? "" }, stdout: urlStdout };
+  }
+  if (cmd === "pr" && sub === "review") {
+    const decision = argv.includes("--approve") ? "approve" : argv.includes("--request-changes") ? "request-changes" : "comment";
+    const args: Record<string, unknown> = { number: Number(argv[2]), decision };
+    if (argv.includes("--body-file")) args.body = stdin ?? "";
+    return { op: "github_pr.review", args, stdout: urlStdout };
+  }
+  if (cmd === "pr" && sub === "merge") {
+    const method = argv.includes("--squash") ? "squash" : argv.includes("--rebase") ? "rebase" : "merge";
+    const args: Record<string, unknown> = { number: Number(argv[2]), method };
+    const sha = option(argv, "--match-head-commit");
+    if (sha) args.sha = sha;
+    return { op: "github_pr.merge", args, stdout: detailStdout };
+  }
+
+  if (cmd === "api" && sub === "graphql") {
+    const query = ghField(argv, "query") ?? "";
+    const thread = ghField(argv, "id") ?? "";
+    if (query.includes("addPullRequestReviewThreadReply")) {
+      return { op: "github_pr.reply", args: { thread, body: ghField(argv, "body") ?? "" }, stdout: replyStdout };
+    }
+    if (query.includes("resolveReviewThread")) {
+      return { op: "github_pr.resolve", args: { thread }, stdout: resolveStdout };
+    }
+    return { error: "the cloud broker has no operation for that" };
+  }
+  if (cmd === "api" && argv[1] === "--method" && argv[2] === "POST" && /\/pulls\/\d+\/reviews$/.test(argv[3] ?? "")) {
+    let payload: any;
+    try { payload = JSON.parse(stdin ?? ""); } catch { return { error: "the review payload was not JSON" }; }
+    const number = Number(/\/pulls\/(\d+)\/reviews$/.exec(argv[3] ?? "")?.[1]);
+    const decision = payload?.event === "APPROVE" ? "approve" : payload?.event === "REQUEST_CHANGES" ? "request-changes" : "comment";
+    const args: Record<string, unknown> = {
+      number,
+      decision,
+      body: typeof payload?.body === "string" ? payload.body : "",
+      sha: payload?.commit_id,
+      comments: Array.isArray(payload?.comments) ? payload.comments : [],
+    };
+    return { op: "github_pr.review", args, stdout: reviewApiStdout };
+  }
+
+  if (cmd === "issue" && sub === "list") {
+    const args: Record<string, unknown> = {};
+    const state = option(argv, "--state");
+    if (state) args.state = state;
+    const limit = limitArg(argv);
+    if (limit) args.limit = limit;
+    const assignee = option(argv, "--assignee");
+    if (assignee) args.assignee = assignee;
+    return { op: "github_issue.list", args, stdout: (data) => listStdout(data, "issues") };
+  }
+  if (cmd === "issue" && sub === "view") {
+    return { op: "github_issue.view", args: { number: Number(argv[2]) }, stdout: jsonStdout };
+  }
+  if (cmd === "issue" && sub === "create") {
+    const args: Record<string, unknown> = { title: option(argv, "--title") ?? "" };
+    if (argv.includes("--body-file")) args.body = stdin ?? "";
+    const labels = options(argv, "--label");
+    const assignees = options(argv, "--assignee");
+    if (labels.length) args.labels = labels;
+    if (assignees.length) args.assignees = assignees;
+    return { op: "github_issue.create", args, stdout: urlStdout };
+  }
+  if (cmd === "issue" && sub === "comment") {
+    return { op: "github_issue.comment", args: { number: Number(argv[2]), body: stdin ?? "" }, stdout: urlStdout };
+  }
+  if (cmd === "issue" && sub === "edit") {
+    const args: Record<string, unknown> = { number: Number(argv[2]) };
+    const title = option(argv, "--title");
+    if (title) args.title = title;
+    if (argv.includes("--body-file")) args.body = stdin ?? "";
+    const addLabels = options(argv, "--add-label");
+    if (addLabels.length) args.addLabels = addLabels;
+    const removeLabels = options(argv, "--remove-label");
+    if (removeLabels.length) args.removeLabels = removeLabels;
+    const addAssignees = options(argv, "--add-assignee");
+    if (addAssignees.length) args.addAssignees = addAssignees;
+    const removeAssignees = options(argv, "--remove-assignee");
+    if (removeAssignees.length) args.removeAssignees = removeAssignees;
+    return { op: "github_issue.edit", args, stdout: () => "" };
+  }
+  if (cmd === "issue" && sub === "close") {
+    const args: Record<string, unknown> = { number: Number(argv[2]) };
+    const reason = option(argv, "--reason");
+    if (reason) args.reason = reason;
+    const comment = option(argv, "--comment");
+    if (comment) args.comment = comment;
+    return { op: "github_issue.close", args, stdout: () => "" };
+  }
+  if (cmd === "issue" && sub === "reopen") {
+    return { op: "github_issue.reopen", args: { number: Number(argv[2]) }, stdout: () => "" };
+  }
+
+  if (cmd === "repo" && sub === "view") return { op: "github_repo.view", args: {}, stdout: jsonStdout };
+  if (cmd === "search" && (sub === "issues" || sub === "prs")) {
+    const type = sub === "prs" ? "pullRequests" : "issues";
+    const args: Record<string, unknown> = { query: argv[2] ?? "", type };
+    const limit = limitArg(argv);
+    if (limit) args.limit = limit;
+    return { op: "github_repo.search", args, stdout: (data) => listStdout(data, type) };
+  }
+  if (cmd === "release" && sub === "list") {
+    const args: Record<string, unknown> = {};
+    const limit = limitArg(argv);
+    if (limit) args.limit = limit;
+    return { op: "github_repo.releases", args, stdout: (data) => listStdout(data, "releases") };
+  }
+  return { error: "the cloud broker has no operation for that" };
+}
+
+async function brokerGh(deps: GithubDeps, socketPath: string, argv: string[], opts: { timeoutMs?: number; stdin?: string }): Promise<GhOut> {
+  const mapped = mapBroker(argv, opts.stdin, deps.env);
+  if ("error" in mapped) return { ok: false, stdout: "", stderr: mapped.error, code: 1 };
+  const res = await brokerCall({
+    socketPath,
+    op: mapped.op,
+    args: mapped.args,
+    timeoutMs: opts.timeoutMs ?? 30_000,
+    signal: deps.signal,
+  });
+  if (!res.ok) return { ok: false, stdout: "", stderr: res.error, code: 1 };
+  return { ok: true, stdout: mapped.stdout(res.data), stderr: "", code: 0 };
+}
+
 async function call(deps: GithubDeps, cwd: string, args: string[], opts: { timeoutMs?: number; stdin?: string } = {}): Promise<GhOut> {
+  const socket = githubSocketPath(deps.env);
+  if (socket) return brokerGh(deps, socket, args, opts);
   if (!deps.gh) return { ok: false, stdout: "", stderr: "the GitHub CLI is not installed; run /github setup", code: 127 };
   // stdin is always ended by execCommand. Pass an empty string when there is no body so gh cannot wait for one.
   const res = await ghExec(deps.gh.path, args, { cwd, timeoutMs: opts.timeoutMs ?? 30_000, stdin: opts.stdin ?? "" }, deps.gh.exec ?? execCommand);
@@ -704,9 +964,18 @@ async function mergePr(params: any, deps: GithubDeps, repo: RepoRef): Promise<Gi
 const WAIT_CAP_S = 15 * 60;
 const WAIT_DEFAULT_S = 10 * 60;
 
+/** Cloud polls share one hourly budget. Under 100 left, wait three times as long; under 10, six. The production gap is 20s, so those are 60s and 120s. */
+function checksInterval(baseMs: number, remaining: number | undefined): number {
+  if (remaining === undefined || !Number.isFinite(remaining) || remaining >= 100) return baseMs;
+  if (remaining < 10) return baseMs * 6;
+  return baseMs * 3;
+}
+
 /**
- * Polls the checks for the commit we started on. One poll uses a 30s gh timeout; the whole wait
+ * Polls the checks for the commit we started on. One poll uses a 30s timeout; the whole wait
  * is capped, and a stuck clock still stops after a fixed number of polls, so this cannot hang.
+ * In the cloud each poll is its own github_pr.checks request. There is no github_pr.wait_ci op,
+ * and the socket is not held open between polls.
  */
 async function waitCi(params: any, deps: GithubDeps, repo: RepoRef): Promise<GithubResult> {
   const number = positiveInt(params.number);
@@ -726,6 +995,8 @@ async function waitCi(params: any, deps: GithubDeps, repo: RepoRef): Promise<Git
   let polls = 0;
   let last: any;
   let pin: string | undefined;
+  brokerChecksRemaining = undefined;
+  brokerChecksLog = undefined;
   while (polls < maxPolls) {
     if (deps.signal?.aborted) return fail("wait_ci was cancelled.");
     polls++;
@@ -755,12 +1026,19 @@ async function waitCi(params: any, deps: GithubDeps, repo: RepoRef): Promise<Git
     if (now() - start >= timeoutMs || polls >= maxPolls) break;
     const remaining = timeoutMs - (now() - start);
     if (remaining <= 0) break;
-    await sleep(Math.min(intervalMs, remaining));
+    const gap = githubSocketPath(deps.env) ? checksInterval(intervalMs, brokerChecksRemaining) : intervalMs;
+    await sleep(Math.min(gap, remaining));
   }
   return ok({ result: "timeout", ...(last ?? {}), waitedMs: now() - start });
 }
 
 async function failingLog(deps: GithubDeps, repo: RepoRef, sha: string | undefined, jobs: { name: string; state: string; url: string }[]): Promise<string | undefined> {
+  // No log socket op. A checks result may carry the tail; otherwise the fail result has none.
+  if (githubSocketPath(deps.env)) {
+    const log = brokerChecksLog;
+    brokerChecksLog = undefined;
+    return typeof log === "string" ? tail(log) : undefined;
+  }
   let runId: string | undefined;
   for (const job of jobs) {
     const m = /\/actions\/runs\/(\d+)/.exec(job.url);

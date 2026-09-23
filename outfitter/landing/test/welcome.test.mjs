@@ -9,6 +9,8 @@ test("a welcome cookie is the name and nothing else", () => {
   assert.equal(read("kernal_welcome=Matthew"), "Matthew");
   assert.equal(read("theme=dark; kernal_welcome=Anne-Marie; other=1"), "Anne-Marie");
   assert.equal(read("kernal_welcome=" + encodeURIComponent("José")), "José");
+  // Fullwidth M, the form the app stores after NFKC.
+  assert.equal(read("kernal_welcome=" + encodeURIComponent("\uFF2Datthew".normalize("NFKC"))), "Matthew");
 });
 
 test("a cookie that is not a name is ignored", () => {

@@ -20,7 +20,7 @@ import { EasterEggPage } from "./easter/EasterEggPage.tsx";
 import { useKonamiCode } from "./easter/useKonamiCode.ts";
 import { useSysCommand } from "./easter/useSysCommand.ts";
 import { openEasterEgg } from "./easter/openEasterEgg.tsx";
-import { welcomeCookieAssignment } from "./lib/welcome-cookie.ts";
+import { welcomeCookieAssignment, welcomeCookieClear } from "./lib/welcome-cookie.ts";
 
 /** Throws on render, gated to dev builds only -- lets `/panic-test` drive a screenshot of the
  * KERNAL PANIC screen without shipping a way for anyone else to trigger it. */
@@ -61,9 +61,9 @@ export function App() {
       .me()
       .then((me) => {
         setOperator(!!me.operator);
-        if (!me.name) return;
-        const assignment = welcomeCookieAssignment(me.name, window.location.hostname, window.location.protocol === "https:");
-        if (assignment) document.cookie = assignment;
+        const host = window.location.hostname;
+        const secure = window.location.protocol === "https:";
+        document.cookie = (me.name && welcomeCookieAssignment(me.name, host, secure)) || welcomeCookieClear(host, secure);
       })
       .catch(() => setOperator(false));
   }, []);

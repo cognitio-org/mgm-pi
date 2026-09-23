@@ -5,7 +5,8 @@
 const TOKEN = /^[\p{L}][\p{L}\p{M}'’.\-]{0,39}$/u;
 
 function firstToken(value: string | null | undefined): string | undefined {
-  const trimmed = value?.trim();
+  if (!value) return undefined;
+  const trimmed = value.normalize("NFKC").trim();
   if (!trimmed) return undefined;
   return trimmed.split(/\s+/)[0];
 }

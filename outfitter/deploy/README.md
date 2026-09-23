@@ -186,6 +186,12 @@ workflow from" (runs from anything else are refused), with `rollback` and `force
    (`[secrets] session <id>: using <secretName>`), so a later clone or push failure can be traced
    to the token it actually had.
 
+   Only a session with a repo (`session.repo` set) falls back to the shared token. `run.spec`
+   carries `secrets` for every run regardless, so an unconditional fallback would hand the org-wide
+   token to sandboxes with nothing to clone or push — more exposure, no capability. A repo-less
+   session that has an `outfitter-github-token-<sessionId>` secret of its own still gets it;
+   creating that secret is a deliberate grant.
+
    Since the first real deploy, a *missing* (b) secret is no longer a hard failure at connection
    time: `GcpSecretsBroker` resolves a not-found secret to `""` (logging a warning) instead of
    throwing, and each per-id secret falls back to its `-default` before giving up. The only place

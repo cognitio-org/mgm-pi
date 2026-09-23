@@ -46,8 +46,9 @@ export class MemorySecretsBroker implements SecretsBroker {
 
 /** The shared GitHub token any repo session falls back to when it has no
  * `outfitter-github-token-<sessionId>` secret of its own, mirroring `outfitter-litellm-key-default`
- * for guru LiteLLM keys. Deliberately org-wide and therefore looser than a per-session PAT: see
- * `githubTokenForSession` and deploy/README.md (b). */
+ * for guru LiteLLM keys. Deliberately org-wide and therefore looser than a per-session PAT, which
+ * is why only a session with a repo falls back to it: see `githubTokenForSession` and
+ * deploy/README.md (b). */
 export const GITHUB_TOKEN_DEFAULT_SECRET = "outfitter-github-token-default";
 
 /**
@@ -80,30 +81,40 @@ export class GcpSecretsBroker implements SecretsBroker {
 
   async secretsForRun(session: Session, guru: Guru): Promise<RunSecrets> {
     const [githubToken, litellmKey] = await Promise.all([
-      this.githubTokenForSession(session.id),
+      this.githubTokenForSession(session),
       this.litellmKeyForGuru(guru.id),
     ]);
     return { githubToken, litellmKey };
   }
 
-  /** The session's own token if it has one, else the shared `outfitter-github-token-default`.
-   * The per-session secret stays the preferred form — a fine-grained PAT scoped to that one repo
-   * is a far smaller blast radius than one token every repo session can reach — but requiring it
-   * meant an operator had to mint a PAT by hand before a repo session's first run could get past
-   * buildRunSpec's fatal check, which is what the shared fallback exists to avoid. Logs which of
-   * the two a run ended up with, since "the token worked" and "the token I expected" are
-   * different questions when something later fails to clone or push. */
-  private async githubTokenForSession(sessionId: string): Promise<string> {
-    const perSession = `outfitter-github-token-${sessionId}`;
+  /** The session's own token if it has one, else — for a session that actually has a repo — the
+   * shared `outfitter-github-token-default`.
+   *
+   * The per-session secret stays the preferred form: a fine-grained PAT scoped to that one repo is
+   * a far smaller blast radius than one token every repo session can reach. But requiring it meant
+   * an operator had to mint a PAT by hand, against a session id that only exists once the session
+   * has been created, before that session's first run could get past buildRunSpec's fatal check —
+   * which is what the shared fallback exists to avoid.
+   *
+   * The fallback is deliberately gated on `session.repo`. run.spec carries `secrets` for every
+   * run, repo or not (agentlink.ts), so falling back unconditionally would hand the org-wide token
+   * to sandboxes that provably have nothing to clone or push — strictly more exposure for no
+   * capability. A repo-less session with a token of its own still gets it, since creating that
+   * secret is a deliberate act; it just isn't given one it was never granted. Logs which of the
+   * two a run ended up with, because "the token worked" and "the token I expected" are different
+   * questions once something fails to clone or push. */
+  private async githubTokenForSession(session: Session): Promise<string> {
+    const perSession = `outfitter-github-token-${session.id}`;
     const own = await this.accessSecretOrEmpty(perSession);
     if (own) {
-      console.log(`[secrets] session ${sessionId}: using ${perSession}`);
+      console.log(`[secrets] session ${session.id}: using ${perSession}`);
       return own;
     }
+    if (!session.repo) return "";
     const shared = await this.accessSecretOrEmpty(GITHUB_TOKEN_DEFAULT_SECRET);
     if (shared) {
       console.log(
-        `[secrets] session ${sessionId}: ${perSession} not set; using ${GITHUB_TOKEN_DEFAULT_SECRET}`,
+        `[secrets] session ${session.id}: ${perSession} not set; using ${GITHUB_TOKEN_DEFAULT_SECRET}`,
       );
     }
     return shared;

@@ -4,7 +4,7 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { GcpSecretsBroker } from "../src/secrets.ts";
+import { GcpSecretsBroker, GITHUB_TOKEN_DEFAULT_SECRET } from "../src/secrets.ts";
 import type { Session, Guru } from "../src/store/types.ts";
 
 function testSession(overrides: Partial<Session> = {}): Session {
@@ -80,13 +80,13 @@ describe("GcpSecretsBroker", () => {
     const requested: string[] = [];
     const broker = new GcpSecretsBroker("proj", async (secretId) => {
       requested.push(secretId);
-      if (secretId === "outfitter-github-token-default") return "shared-token";
+      if (secretId === GITHUB_TOKEN_DEFAULT_SECRET) return "shared-token";
       throw notFoundError();
     });
     const secrets = await broker.secretsForRun(testSession(), testGuru());
     assert.equal(secrets.githubToken, "shared-token");
     assert.ok(requested.includes("outfitter-github-token-s1"));
-    assert.ok(requested.includes("outfitter-github-token-default"));
+    assert.ok(requested.includes(GITHUB_TOKEN_DEFAULT_SECRET));
   });
 
   test("does not fall back to the shared token when the session's own token exists", async () => {
@@ -114,7 +114,31 @@ describe("GcpSecretsBroker", () => {
     const secrets = await broker.secretsForRun(testSession(), testGuru());
     assert.equal(secrets.githubToken, "");
     assert.ok(requested.includes("outfitter-github-token-s1"));
-    assert.ok(requested.includes("outfitter-github-token-default"));
+    assert.ok(requested.includes(GITHUB_TOKEN_DEFAULT_SECRET));
+  });
+
+  // run.spec carries `secrets` for every run, repo or not, so an unconditional fallback would put
+  // the org-wide token in sandboxes that have nothing to clone or push.
+  test("a repo-less session does not fall back to the shared token", async () => {
+    const requested: string[] = [];
+    const broker = new GcpSecretsBroker("proj", async (secretId) => {
+      requested.push(secretId);
+      if (secretId === GITHUB_TOKEN_DEFAULT_SECRET) return "shared-token";
+      throw notFoundError();
+    });
+    const secrets = await broker.secretsForRun(testSession({ repo: undefined }), testGuru());
+    assert.equal(secrets.githubToken, "");
+    assert.ok(!requested.includes(GITHUB_TOKEN_DEFAULT_SECRET));
+  });
+
+  // ...but a token created for that session by hand is a deliberate grant, so it still flows.
+  test("a repo-less session still gets its own token when one exists", async () => {
+    const broker = new GcpSecretsBroker("proj", async (secretId) => {
+      if (secretId === "outfitter-github-token-s1") return "own-token";
+      throw notFoundError();
+    });
+    const secrets = await broker.secretsForRun(testSession({ repo: undefined }), testGuru());
+    assert.equal(secrets.githubToken, "own-token");
   });
 
   test("a non-404 error still propagates instead of resolving to \"\"", async () => {

@@ -463,6 +463,12 @@ token worked" and "the token I expected" are different questions once a clone or
 fallback is fetched only when the per-session secret is absent, so a session with its own token
 never pays for or touches the shared one.
 
+The fallback is also gated on `session.repo`. `run.spec` carries `secrets` for every run, repo or
+not, so falling back unconditionally would have handed the org-wide token to sandboxes that
+provably have nothing to clone or push — strictly more exposure for no capability. (Caught in this
+PR's own review pass, not in the first draft.) A repo-less session with a token of its own still
+gets it: creating that secret is a deliberate grant.
+
 The per-session secret remains the preferred form and is unchanged in precedence: a fine-grained
 PAT scoped to one repo, revocable on its own, is a much smaller blast radius than an org-wide
 token every repo session can reach. `outfitter-github-token-default` makes skipping it *looser*,
@@ -487,7 +493,8 @@ a separate change (route + `appliesAt` + tests).
 **Tests:** `packages/api/test/secrets.test.ts` — the shared fallback fires when the per-session
 secret is missing; the per-session token still wins when both exist (and the shared one isn't even
 fetched); neither existing still resolves to `""` (having attempted both) rather than throwing, so
-`buildRunSpec` keeps owning the repo-session-is-fatal decision.
+`buildRunSpec` keeps owning the repo-session-is-fatal decision; a repo-less session never reaches
+the shared secret, but does still get a per-session token when one exists.
 
 **Files touched:** `packages/api/src/secrets.ts`, `packages/api/src/agentlink.ts` (comment only),
 `packages/api/test/secrets.test.ts`, `deploy/README.md`.

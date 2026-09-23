@@ -100,10 +100,12 @@ landing_image="$(deployed_image service kernal-web)"
 if [[ -z "${landing_image}" ]]; then
   # Creating the service (and then its public invoker, access.sh) is a one-time owner step.
   echo "== kernal-web: not deployed; ./landing.sh creates it =="
+elif [[ "${FORCE_ALL:-}" == 1 ]]; then
+  step services kernal-web "${DEPLOY_DIR}/landing.sh"
 elif [[ -z "${landing_current}" ]]; then
   echo "== kernal-web: runs an unlabelled image; deploying once so releases can track it =="
   step services kernal-web "${DEPLOY_DIR}/landing.sh"
-elif component_live_at services kernal-web "${HEAD_SHORT}" && [[ "${FORCE_ALL:-}" != 1 ]]; then
+elif component_live_at services kernal-web "${HEAD_SHORT}"; then
   echo "== kernal-web: already at ${HEAD_SHORT}; skipping =="
 elif ! git -C "${ROOT}" cat-file -e "${landing_current}^{commit}" 2>/dev/null; then
   echo "   WARNING: kernal-web runs '${landing_current}', which isn't a commit here; deploying it to be sure" >&2

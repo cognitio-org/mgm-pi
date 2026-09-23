@@ -550,6 +550,12 @@ function show() {
   document.title = page.label + " · kernal admin";
   page.render(view);
 }
+// Same page, new data: Re-check and a finished install stay on this hash, so show() would
+// drop unsaved edits without asking. Ask first, the same question as leaving the page.
+function reload() {
+  if (dirty && dirty() > 0 && !confirm("You have unsaved changes on this page. Leave without saving?")) return;
+  show();
+}
 window.addEventListener("hashchange", show);
 window.addEventListener("beforeunload", function (e) { if (dirty && dirty() > 0) { e.preventDefault(); e.returnValue = ""; } });
 
@@ -1211,7 +1217,7 @@ function drawGithub(view, d) {
       var btn = el("button", { class: "btn primary", type: "button" }, icon("plus", 14), "Install gh");
       btn.addEventListener("click", function () {
         btn.disabled = true; btn.replaceChildren(spinner(), document.createTextNode("Installing"));
-        api("POST", "/github/install", {}).then(function (r) { toast(r.message, "ok"); show(); }, function (e) { btn.disabled = false; btn.replaceChildren(icon("plus", 14), document.createTextNode("Install gh")); toast(e.message, "error"); });
+        api("POST", "/github/install", {}).then(function (r) { toast(r.message, "ok"); reload(); }, function (e) { btn.disabled = false; btn.replaceChildren(icon("plus", 14), document.createTextNode("Install gh")); toast(e.message, "error"); });
       });
       return el("div", { class: "ctl" }, btn, el("div", { class: "note", text: "into " + d.binDir }));
     })()));
@@ -1234,7 +1240,7 @@ function drawGithub(view, d) {
   }
 
   var refresh = el("button", { class: "btn sm", type: "button" }, icon("refresh", 13), "Re-check");
-  refresh.addEventListener("click", function () { show(); });
+  refresh.addEventListener("click", function () { reload(); });
   add(view, card("The GitHub CLI", "kernal works with GitHub through the gh CLI, signed in as you.", refresh, el("div", { class: "rows" }, rows)));
 
   // ---- this repository ----

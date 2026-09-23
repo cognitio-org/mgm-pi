@@ -1,0 +1,8 @@
+{
+  "name": "kernal-chrome",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/protocol.test.js"
+  }
+}

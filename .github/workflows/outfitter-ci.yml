@@ -21,6 +21,13 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with: { node-version: 24, cache: npm, cache-dependency-path: outfitter/package-lock.json }
+      # packages/api's Mongo-backed tests start a real mongod (mongodb-memory-server). Cache the
+      # binary so only the first run on a new version downloads it.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/mongodb-binaries
+          key: mongodb-binaries-${{ runner.os }}-${{ hashFiles('outfitter/package-lock.json') }}
+          restore-keys: mongodb-binaries-${{ runner.os }}-
       - run: npm ci
       - name: Unit, integration and end-to-end tests (all workspaces)
         run: npm test

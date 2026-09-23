@@ -17,6 +17,10 @@ ARG NODE_IMAGE=node:24-bookworm-slim
 
 FROM ${NODE_IMAGE} AS builder
 WORKDIR /app
+# This stage installs devDependencies (it builds packages/web). One of them,
+# mongodb-memory-server (packages/api's Mongo-backed tests), downloads a ~76 MB mongod in its
+# postinstall; the image never runs tests, so skip it. The runtime stage below is --omit=dev.
+ENV MONGOMS_DISABLE_POSTINSTALL=1
 COPY package.json package-lock.json ./
 COPY packages/api/package.json packages/api/
 COPY packages/provider-local/package.json packages/provider-local/

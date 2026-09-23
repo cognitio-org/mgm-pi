@@ -441,3 +441,75 @@ terminal state; a second test sends `bye` then a `status` frame right behind it 
 
 **Test run:** `npm test` from `outfitter/` (all workspaces): `@outfitter/agentd` 123/123,
 `@outfitter/api` 92/92, `@outfitter/provider-local` 2/2 — all green.
+
+## Every repo session needed a hand-minted PAT before its first run
+
+**Observed:** on 2026-09-23 the `outfitter-509211` project held exactly one
+`outfitter-github-token-*` secret — `outfitter-github-token-2cc9494a-…`, hand-minted at 00:37 UTC
+for a single session and revised four times over the following nine hours, evidently while its PAT
+scopes were being worked out. Every *other* repo session had nothing.
+`GcpSecretsBroker.secretsForRun` read only `outfitter-github-token-<sessionId>`, so those sessions
+resolved an empty `githubToken` and `agentlink.ts`'s `buildRunSpec` correctly refused them with the
+terminal `4412`.
+
+Creating a repo session through the UI therefore could not work end to end, and the one secret that
+did exist shows why rather than contradicting it: the session is created by the person using the
+UI, but the secret its first run needs can only be created out-of-band, by an operator, against a
+session id that does not exist until `POST /api/sessions` has already returned. Every repo session
+needs that dance before its first run, and gets it wrong a few times on the way.
+
+The gap isn't the fatal check — an empty token really would fail deep inside the sandbox, and
+`buildRunSpec` is right to refuse early. It's that there was no floor under it, unlike gurus, whose
+LiteLLM keys have had an `outfitter-litellm-key-default` fallback since the "api: cross-process
+down-messages, secret-not-found handling" gap above.
+
+**Fix (`packages/api/src/secrets.ts`):** `secretsForRun`'s GitHub token lookup now mirrors
+`litellmKeyForGuru` — `githubTokenForSession` reads `outfitter-github-token-<sessionId>` first and
+falls back to a shared `outfitter-github-token-default` (exported as `GITHUB_TOKEN_DEFAULT_SECRET`)
+when the per-session secret doesn't exist. It logs which of the two a run resolved, since "the
+token worked" and "the token I expected" are different questions once a clone or push fails. The
+fallback is fetched only when the per-session secret is absent, so a session with its own token
+never pays for or touches the shared one.
+
+The fallback is also gated on `session.repo`. `run.spec` carries `secrets` for every run, repo or
+not, so falling back unconditionally would have handed the org-wide token to sandboxes that
+provably have nothing to clone or push — strictly more exposure for no capability. (Caught in this
+PR's own review pass, not in the first draft.) A repo-less session with a token of its own still
+gets it: creating that secret is a deliberate grant.
+
+The per-session secret remains the preferred form and is unchanged in precedence: a fine-grained
+PAT scoped to one repo, revocable on its own, is a much smaller blast radius than an org-wide
+token every repo session can reach. `outfitter-github-token-default` makes skipping it *looser*,
+not fatal — see `deploy/README.md` (b) for when to mint a per-session PAT anyway (private or
+production repos, push rights that matter, a session whose operator shouldn't reach the rest of
+the org).
+
+`buildRunSpec`'s fatal check is deliberately kept as-is: reaching it with an empty token now means
+*neither* secret exists, which is still a run that cannot clone. Its comment was updated to say so.
+
+**Docs:** `deploy/README.md` (b) now leads with the two `-default` secrets as the up-front ones and
+the per-id secrets as per-session/per-guru overrides, and has a "Per-session vs. shared GitHub
+token" paragraph on the tradeoff. It also corrects a stale close code in that section: the
+missing-token close is `4412`, not the `1011` it originally shipped as (fixed in "Six review
+findings from the previous two gaps' own fixes" above, but never corrected in the deploy doc).
+
+**Not done:** `outfitter-github-token-default` is not in `src/operator.ts`'s managed-secret list,
+so the E2.14 operator settings page can't set or rotate it — it's a `gcloud secrets` operation for
+now, like the per-session tokens. Worth adding alongside `outfitter-litellm-key-default`, but it's
+a separate change (route + `appliesAt` + tests).
+
+**Tests:** `packages/api/test/secrets.test.ts` — the shared fallback fires when the per-session
+secret is missing; the per-session token still wins when both exist (and the shared one isn't even
+fetched); neither existing still resolves to `""` (having attempted both) rather than throwing, so
+`buildRunSpec` keeps owning the repo-session-is-fatal decision; a repo-less session never reaches
+the shared secret, but does still get a per-session token when one exists.
+
+**Files touched:** `packages/api/src/secrets.ts`, `packages/api/src/agentlink.ts` (comment only),
+`packages/api/test/secrets.test.ts`, `deploy/README.md`.
+
+**Secret created:** `outfitter-github-token-default` was created by hand on 2026-09-23 at 10:00 UTC
+(version 1, enabled) — by the operator, not by this change; nothing in this repo writes a secret
+value. `outfitter-api` already holds a project-wide `roles/secretmanager.secretAccessor` from
+`baseline.sh`, so no per-secret IAM binding was needed, and none was added. The fallback therefore
+takes effect for repo sessions as soon as an API carrying this code is deployed (an `outfitter-v*`
+tag, per the deploy convention); the running service still resolves only the per-session name.

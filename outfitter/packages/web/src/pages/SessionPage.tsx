@@ -25,6 +25,7 @@ import { DeviceNotPresent } from "../components/DeviceNotPresent.tsx";
 import { withFloppySound } from "../lib/floppy-sound.ts";
 import { transport, transportLabel } from "../lib/vocabulary.ts";
 import { deriveSessionActivity, nextSendAnchor, notePendingRunState, type PendingSend } from "../lib/send-status.ts";
+import { useChromeCompanion } from "../hooks/useChromeCompanion.ts";
 
 type PendingAction = "abort" | "stop" | "wake" | null;
 
@@ -57,6 +58,9 @@ export function SessionPage() {
   // count from here. `now` ticks while something is in flight so a timeout can fire.
   const [lastProgressAt, setLastProgressAt] = useState(() => Date.now());
   const [now, setNow] = useState(() => Date.now());
+  const chromePlace = useChromeCompanion(sessionId);
+  const [splitTargets, setSplitTargets] = useState<{ id: string; name?: string }[]>([]);
+  const [splitTarget, setSplitTarget] = useState("");
 
   // The route reuses this component when navigating from one session to another (App.tsx's
   // /sessions/:id has no key), so a pending send must not follow the user into the next session:
@@ -65,6 +69,30 @@ export function SessionPage() {
     setPendingSend(null);
     setLastProgressAt(Date.now());
   }, [sessionId]);
+
+  useEffect(() => {
+    if (!chromePlace.ready || !chromePlace.split) return;
+    let cancelled = false;
+    api
+      .sessions()
+      .then((rows) => {
+        if (cancelled) return;
+        const others = rows
+          .filter((row) => row.id !== sessionId)
+          .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
+        setSplitTargets(others.map((row) => ({ id: row.id, name: row.name })));
+        setSplitTarget((current) => (others.some((row) => row.id === current) ? current : (others[0]?.id ?? "")));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSplitTargets([]);
+          setSplitTarget("");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [chromePlace.ready, chromePlace.split, sessionId]);
 
   useEffect(() => {
     setLastProgressAt(Date.now());
@@ -285,6 +313,7 @@ export function SessionPage() {
   // own Peripherals row reports "down", the run can't reach it -- surface the same
   // ?DEVICE NOT PRESENT ERROR the Peripherals page shows for that row, right where the user is
   // already looking, instead of a confusing generic run failure.
+  const floppyTitle = session?.name ?? `Floppy ${sessionId.slice(0, 8)}`;
   const modelProviderKind = header.model?.split("/")[0];
   const modelProviderDown = modelProviderKind
     ? providers.find((p) => p.kind === modelProviderKind)?.status === "down"
@@ -384,6 +413,61 @@ export function SessionPage() {
               </button>
             </p>
           )}
+          {chromePlace.ready && (
+            <div className="run-controls" aria-label="Chrome tab placement">
+              <button
+                type="button"
+                className="btn"
+                title="Open this Floppy in its own tab group"
+                onClick={() => chromePlace.place("own", floppyTitle)}
+              >
+                This Floppy's group
+              </button>
+              <button
+                type="button"
+                className="btn"
+                title="Open this Floppy in the shared Floppies group"
+                onClick={() => chromePlace.place("shared", floppyTitle)}
+              >
+                Floppies group
+              </button>
+              <button
+                type="button"
+                className="btn"
+                title="Open this Floppy in a new window"
+                onClick={() => chromePlace.place("window", floppyTitle)}
+              >
+                New window
+              </button>
+              {chromePlace.split && (
+                <>
+                  {splitTargets.length > 0 && (
+                    <select aria-label="Floppy to split beside" value={splitTarget} onChange={(event) => setSplitTarget(event.target.value)}>
+                      {splitTargets.map((row) => (
+                        <option key={row.id} value={row.id}>
+                          {row.name ?? `Floppy ${row.id.slice(0, 8)}`}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={!splitTarget}
+                    title="Split this Floppy beside another"
+                    onClick={() => chromePlace.splitWith(splitTarget)}
+                  >
+                    Split
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+          {chromePlace.note && (
+            <p className="status-detail-note" role="alert">
+              {chromePlace.note}
+            </p>
+          )}
         </div>
         <div className="run-controls">
           <StatusPill state={activity.pillState} />
@@ -420,7 +504,9 @@ export function SessionPage() {
           {views.length === 0 && !activity.showOptimistic ? (
             <p className="empty-state">No entries yet. Send a message below to start the run.</p>
           ) : (
-            views.map((v) => <EntryItem key={v.id} view={v} defaultThinkingExpanded={defaultThinkingExpanded} />)
+            views.map((v) => (
+              <EntryItem key={v.id} view={v} sessionId={sessionId} defaultThinkingExpanded={defaultThinkingExpanded} />
+            ))
           )}
           {activity.showOptimistic && pendingSend && (
             <div

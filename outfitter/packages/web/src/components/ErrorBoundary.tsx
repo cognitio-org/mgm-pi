@@ -1,4 +1,5 @@
 import { Component, useState, type ErrorInfo, type ReactNode } from "react";
+import { isStaleChunkError, reloadForStaleChunk } from "../lib/chunk-reload.ts";
 
 interface PanicProps {
   error: Error;
@@ -75,6 +76,9 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
+    // A deploy removed the chunk this tab is importing. Reload onto the new build instead of
+    // leaving the crash screen up. reloadForStaleChunk is false when that reload already failed.
+    if (isStaleChunkError(error) && reloadForStaleChunk()) return;
     // eslint-disable-next-line no-console -- last resort once the UI itself has crashed
     console.error("KERNAL PANIC:", error, info.componentStack);
   }

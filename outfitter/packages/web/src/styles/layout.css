@@ -386,6 +386,23 @@
   font-family: var(--font-mono);
 }
 
+/* Flex items default to min-width:auto, so a wide jpeg becomes the column's min
+ * content size and max-width:100% never shrinks it. */
+.session-view > .panel {
+  min-width: 0;
+}
+
+.entry.custom {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.entry.custom img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
 /* Long tool output: collapsible via <details>, used inside EntryItem's tool-call/tool-result
  * bodies. Native <details>/<summary> keeps this keyboard- and screen-reader-accessible for free. */
 .entry details {

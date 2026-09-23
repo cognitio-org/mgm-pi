@@ -527,6 +527,42 @@ describe("/admin end to end (real server, real extensions, fake pi)", async () =
       assert.equal((await post("/subagents/delete", { name: "scout", scope: "user" })).status, 404, "a builtin cannot be deleted");
     });
 
+    describe("the GitHub page", () => {
+      test("reports the CLI, the account and this repository, and never the token itself", async () => {
+        const r = await get("/github");
+        assert.equal(r.status, 200, r.text);
+        noKeys(r.text);
+        const d = JSON.parse(r.text);
+        // gh's own `auth status` output can name a token, so only the parsed facts are sent.
+        assert.equal(d.auth?.detail, undefined, "gh's raw output never reaches the page");
+        assert.match(d.commands.login, /^\S*gh auth login --web --git-protocol https --hostname github\.com --scopes workflow$/);
+        assert.match(d.commands.setupGit, /gh auth setup-git --hostname github\.com$/);
+        assert.ok(d.binDir.endsWith("/bin"));
+        assert.equal(d.attribution.commit, "Co-Authored-By: Kernal <noreply@kernal.invalid>", "the default, until settings say otherwise");
+        // This test's cwd is a temporary directory, not a checkout.
+        assert.ok(d.notARepo || d.repo, "either a repository or a plain directory, never nothing");
+      });
+
+      test("attribution saves to settings.json, and a key-shaped value is refused", async () => {
+        const ok = await post("/github/attribution", { commit: "Co-Authored-By: Someone <x@y.invalid>", pr: "" });
+        assert.equal(ok.status, 200, ok.text);
+        assert.deepEqual(store.read().github.attribution, { commit: "Co-Authored-By: Someone <x@y.invalid>", pr: "" });
+        assert.equal(JSON.parse((await get("/github")).text).attribution.commit, "Co-Authored-By: Someone <x@y.invalid>");
+
+        const leak = await post("/github/attribution", { commit: `token ${ROUTER_KEY}` });
+        assert.equal(leak.status, 422, leak.text);
+        assert.match(JSON.parse(leak.text).errors.commit, /holds a key/);
+        const long = await post("/github/attribution", { pr: "x".repeat(201) });
+        assert.equal(long.status, 422);
+        assert.deepEqual(store.read().github.attribution, { commit: "Co-Authored-By: Someone <x@y.invalid>", pr: "" }, "a refused edit changes nothing");
+      });
+
+      test("github is a real page, reachable by /admin github", () => {
+        assert.match(APP_JS, /id: "github", label: "GitHub"/);
+        assert.match(APP_JS, /function renderGithub\(/);
+      });
+    });
+
     describe("command-line agents (Claude Code, Codex, Cursor)", () => {
       // A fake `claude` on PATH and no codex or cursor-agent: the installed check is the package's own PATH lookup.
       const bin = mkdtempSync(join(tmpdir(), "kernal-cli-bin-"));

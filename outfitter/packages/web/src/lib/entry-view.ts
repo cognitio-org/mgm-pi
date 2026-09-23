@@ -18,10 +18,19 @@ export type EntryView =
   | { kind: "model-change"; id: string; provider: string; modelId: string }
   | { kind: "thinking-level-change"; id: string; thinkingLevel: string }
   | { kind: "compaction"; id: string; summary: string }
-  | { kind: "custom"; id: string; customType: string }
+  | { kind: "custom"; id: string; customType: string; captureId?: string; title?: string; url?: string }
   | { kind: "label"; id: string; targetId: string; label?: string }
   | { kind: "session-info"; id: string; name?: string }
   | { kind: "unknown"; id: string; entryType: string };
+
+/** pi customType for a browser capture (docs/specs/chrome-companion.md §14). */
+export const BROWSER_CAPTURE_TYPE = "outfitter.browser.capture";
+
+function textField(data: unknown, key: string): string {
+  if (!data || typeof data !== "object") return "";
+  const value = (data as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : "";
+}
 
 function textOf(content: unknown): string {
   if (typeof content === "string") return content;
@@ -99,8 +108,24 @@ export function entryToViews(entry: PiEntry): EntryView[] {
       return [{ kind: "thinking-level-change", id, thinkingLevel: String(entry.thinkingLevel ?? "") }];
     case "compaction":
       return [{ kind: "compaction", id, summary: String(entry.summary ?? "") }];
-    case "custom":
-      return [{ kind: "custom", id, customType: String(entry.customType ?? "") }];
+    case "custom": {
+      const customType = String(entry.customType ?? "");
+      // GroupedEntry is this view unchanged (thinking.ts). The jpeg route needs captureId;
+      // title and url are the text under the image.
+      if (customType === BROWSER_CAPTURE_TYPE) {
+        return [
+          {
+            kind: "custom",
+            id,
+            customType,
+            captureId: textField(entry.data, "captureId"),
+            title: textField(entry.data, "title"),
+            url: textField(entry.data, "url"),
+          },
+        ];
+      }
+      return [{ kind: "custom", id, customType }];
+    }
     case "custom_message":
       return [{ kind: "system", id, text: textOf(entry.content) }];
     case "label":

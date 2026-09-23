@@ -8,7 +8,14 @@ import type { FastifyInstance } from "fastify";
 import type { RouteContext } from "./context.ts";
 import type { Guru } from "../store/types.ts";
 import type { SecretKind } from "../operator.ts";
-import { managedSecretDefs, isManagedSecretName, managedSecretDef, guruLitellmKeySecretName } from "../operator.ts";
+import {
+  managedSecretDefs,
+  isManagedSecretName,
+  managedSecretDef,
+  guruLitellmKeySecretName,
+  sessionGithubTokenSecretName,
+} from "../operator.ts";
+import { GITHUB_TOKEN_DEFAULT_SECRET } from "../secrets.ts";
 import { requireOperator } from "../auth.ts";
 import { fetchJson, failedResponse } from "../providers-status.ts";
 import { normalizeOwnerMatch } from "../tokens.ts";
@@ -154,6 +161,26 @@ export async function registerOperatorRoutes(app: FastifyInstance, ctx: RouteCon
       if (!anyGuruHasOwnKey) {
         return reply.code(409).send({
           error: "no guru has its own LiteLLM key -- disabling the default key would leave every run with none",
+        });
+      }
+    }
+
+    // Count repo sessions rather than warn. The click is rare, so one list plus one info()
+    // per repo session is enough, and a warning would let the common case (a repo session
+    // with no token of its own) lose every clone. Stricter than the LiteLLM rule above on
+    // purpose: one session's own PAT must not permit breaking the rest. Repo-less sessions
+    // never receive this fallback (secrets.ts), so they are not counted. A session created
+    // between the list and the disable can still miss the token; that race matches the guru check.
+    if (secretName === GITHUB_TOKEN_DEFAULT_SECRET) {
+      const sessions = await ctx.store.sessions.list();
+      const repoSessions = sessions.filter((session) => session.repo);
+      const ownTokens = await Promise.all(
+        repoSessions.map((session) => ctx.secretAdmin.info(sessionGithubTokenSecretName(session.id))),
+      );
+      if (ownTokens.some((info) => !info.set)) {
+        return reply.code(409).send({
+          error:
+            "a repo session has no GitHub token of its own -- disabling the shared token would break it",
         });
       }
     }

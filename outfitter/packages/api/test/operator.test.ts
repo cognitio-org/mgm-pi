@@ -10,12 +10,29 @@ import assert from "node:assert/strict";
 import { buildTestApp, seedGuru } from "./helpers.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { MemorySecretAdmin } from "../src/secrets.ts";
+import type { Session, Store } from "../src/store/types.ts";
 
 const OPERATOR_ENV = { OUTFITTER_DEV: "0", OUTFITTER_OPERATORS: "operator@mgms.eu" };
 
 /** Mints an outf_ token for `ownerEmail` via a throwaway dev-mode app sharing the same store, then
  * returns the bearer header -- same trick tokens.test.ts uses to get a token for an arbitrary
  * owner without a real IAP assertion. */
+async function seedSession(store: Store, overrides: Partial<Session> = {}): Promise<Session> {
+  const now = new Date().toISOString();
+  const session: Session = {
+    id: "s1",
+    guruId: "test-guru",
+    repo: "o/r",
+    status: "open",
+    cost: 0,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+  await store.sessions.insert(session);
+  return session;
+}
+
 async function bearerFor(store: MemoryStore, ownerEmail: string): Promise<{ authorization: string }> {
   const dev = await buildTestApp({}, { store }); // OUTFITTER_DEV=1 by default -- owner is dev@localhost
   const created = await dev.fastify.inject({ method: "POST", url: "/api/me/tokens", payload: { name: "t" } });
@@ -103,6 +120,7 @@ describe("GET /api/operator/settings", () => {
     assert.deepEqual(body.operators, ["mgm@mgms.eu", "matej@mgms.eu"]);
     const names = body.secrets.map((s: { secretName: string }) => s.secretName);
     assert.ok(names.includes("outfitter-litellm-key-default"));
+    assert.ok(names.includes("outfitter-github-token-default"));
     assert.ok(names.includes("outfitter-github-pat"));
     assert.ok(names.includes("outfitter-litellm-admin"));
     assert.ok(names.includes("outfitter-ngrok-api-key"));
@@ -121,6 +139,7 @@ describe("GET /api/operator/settings", () => {
     const res = await app.fastify.inject({ method: "GET", url: "/api/operator/settings" });
     const bySecret = Object.fromEntries(res.json().secrets.map((s: { secretName: string; appliesAt: string }) => [s.secretName, s.appliesAt]));
     assert.equal(bySecret["outfitter-litellm-key-default"], "next run");
+    assert.equal(bySecret["outfitter-github-token-default"], "next run");
     assert.equal(bySecret["outfitter-github-pat"], "next deploy");
     assert.equal(bySecret["outfitter-litellm-admin"], "next deploy");
     assert.equal(bySecret["outfitter-ngrok-api-key"], "next deploy");
@@ -132,6 +151,7 @@ describe("GET /api/operator/settings", () => {
     const secretAdmin = new MemorySecretAdmin();
     await secretAdmin.addVersion("outfitter-github-pat", "short-key"); // 9 chars -- not masked, but marked set
     await secretAdmin.addVersion("outfitter-litellm-admin", "a-very-long-litellm-admin-key-1234");
+    await secretAdmin.addVersion("outfitter-github-token-default", "ghp_a-shared-token-value-9876");
     const app = await buildTestApp({}, { secretAdmin });
     const res = await app.fastify.inject({ method: "GET", url: "/api/operator/settings" });
     const bySecret = Object.fromEntries(
@@ -141,11 +161,24 @@ describe("GET /api/operator/settings", () => {
     assert.equal(bySecret["outfitter-github-pat"].masked, undefined); // too short to mask
     assert.equal(bySecret["outfitter-litellm-admin"].set, true);
     assert.equal(bySecret["outfitter-litellm-admin"].masked, "…1234");
+    assert.equal(bySecret["outfitter-github-token-default"].set, true);
+    assert.equal(bySecret["outfitter-github-token-default"].masked, "…9876");
     await app.fastify.close();
   });
 });
 
 describe("PUT /api/operator/secrets/:secretName", () => {
+  test("rejects a per-session GitHub token name -- only the shared default is operator-managed", async () => {
+    const app = await buildTestApp();
+    const res = await app.fastify.inject({
+      method: "PUT",
+      url: "/api/operator/secrets/outfitter-github-token-s1",
+      payload: { value: "a-value-thats-long-enough" },
+    });
+    assert.equal(res.statusCode, 400);
+    await app.fastify.close();
+  });
+
   test("rejects a secret name that isn't managed", async () => {
     const app = await buildTestApp();
     const res = await app.fastify.inject({
@@ -251,6 +284,52 @@ describe("DELETE /api/operator/secrets/:secretName", () => {
     await app.fastify.close();
   });
 
+  test("allows disabling the shared GitHub token when no repo session would lose it", async () => {
+    const secretAdmin = new MemorySecretAdmin();
+    await secretAdmin.addVersion("outfitter-github-token-default", "ghp_a-shared-token-value-9876");
+    const app = await buildTestApp({}, { secretAdmin });
+    await seedSession(app.store, { id: "plain", repo: null });
+    const res = await app.fastify.inject({
+      method: "DELETE",
+      url: "/api/operator/secrets/outfitter-github-token-default",
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().set, false);
+    await app.fastify.close();
+  });
+
+  test("refuses to disable the shared GitHub token while a repo session has none of its own", async () => {
+    const secretAdmin = new MemorySecretAdmin();
+    await secretAdmin.addVersion("outfitter-github-token-default", "ghp_a-shared-token-value-9876");
+    await secretAdmin.addVersion("outfitter-github-token-covered", "ghp_a-session-token-value-1111");
+    const app = await buildTestApp({}, { secretAdmin });
+    await seedSession(app.store, { id: "covered", repo: "o/r" });
+    await seedSession(app.store, { id: "bare", repo: "o/other" });
+    const res = await app.fastify.inject({
+      method: "DELETE",
+      url: "/api/operator/secrets/outfitter-github-token-default",
+    });
+    assert.equal(res.statusCode, 409);
+    assert.match(res.json().error, /repo session/);
+    assert.equal((await secretAdmin.info("outfitter-github-token-default")).set, true);
+    await app.fastify.close();
+  });
+
+  test("allows disabling the shared GitHub token once every repo session has its own", async () => {
+    const secretAdmin = new MemorySecretAdmin();
+    await secretAdmin.addVersion("outfitter-github-token-default", "ghp_a-shared-token-value-9876");
+    await secretAdmin.addVersion("outfitter-github-token-s1", "ghp_a-session-token-value-1111");
+    const app = await buildTestApp({}, { secretAdmin });
+    await seedSession(app.store, { id: "s1", repo: "o/r" });
+    const res = await app.fastify.inject({
+      method: "DELETE",
+      url: "/api/operator/secrets/outfitter-github-token-default",
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().set, false);
+    await app.fastify.close();
+  });
+
   test("disables (not destroys) a non-default managed secret", async () => {
     const secretAdmin = new MemorySecretAdmin();
     await secretAdmin.addVersion("outfitter-github-pat", "a-github-pat-value-1234");
@@ -264,6 +343,19 @@ describe("DELETE /api/operator/secrets/:secretName", () => {
 });
 
 describe("POST /api/operator/secrets/:secretName/test", () => {
+  test("accepts the shared GitHub token, which probes as a GitHub credential", async () => {
+    const app = await buildTestApp();
+    const res = await app.fastify.inject({
+      method: "POST",
+      url: "/api/operator/secrets/outfitter-github-token-default/test",
+      payload: {},
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().ok, false);
+    assert.equal(res.json().detail, "no value set");
+    await app.fastify.close();
+  });
+
   test("reports no value set when nothing is stored and none is given", async () => {
     const app = await buildTestApp();
     const res = await app.fastify.inject({ method: "POST", url: "/api/operator/secrets/outfitter-github-pat/test", payload: {} });

@@ -4,14 +4,15 @@
 // Dreadnought Run's code and vice versa -- openEasterEgg("rescue"|"dreadnought") also skips the
 // menu chunk entirely by starting straight in that game's state.
 
-import { lazy, Suspense, useState } from "react";
+import { Suspense, useState } from "react";
 import type { GameId } from "./shared/highscore.ts";
 import { GameMenu } from "./menu/GameMenu.tsx";
+import { lazyRoute } from "../lib/chunk-reload.ts";
 // The games' styles ship in this lazy chunk too, not in the app's main CSS.
 import "../styles/easter.css";
 
-const FloppyRescueLazy = lazy(() => import("./rescue/FloppyRescue.tsx").then((m) => ({ default: m.FloppyRescue })));
-const DreadnoughtRunLazy = lazy(() =>
+const FloppyRescueLazy = lazyRoute(() => import("./rescue/FloppyRescue.tsx").then((m) => ({ default: m.FloppyRescue })));
+const DreadnoughtRunLazy = lazyRoute(() =>
   import("./dreadnought/DreadnoughtRun.tsx").then((m) => ({ default: m.DreadnoughtRun })),
 );
 

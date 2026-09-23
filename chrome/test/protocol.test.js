@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { originAllowed, parsePageMessage, pageReply, isDongle, linkOrigin } from "../extension/protocol.js";
+import { originAllowed, parsePageMessage, pageReply, isSessionUrl, isDongle, linkOrigin } from "../extension/protocol.js";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -45,18 +45,65 @@ test("a missing origin fails", () => {
   assert.equal(originAllowed(0), false);
 });
 
-test("only a plain object whose single key is t: ping is accepted", () => {
+const session = "550e8400-e29b-41d4-a716-446655440000";
+const other = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
+
+function place(overrides = {}) {
+  return {
+    t: "place",
+    sessionId: session,
+    url: `https://app.kernal.one/sessions/${session}`,
+    title: "Floppy",
+    mode: "own",
+    ...overrides,
+  };
+}
+
+test("the page allowlist is ping, place, split, poll, and openPanel", () => {
   assert.deepEqual(parsePageMessage({ t: "ping" }), { ok: true, t: "ping" });
+  assert.deepEqual(parsePageMessage({ t: "poll" }), { ok: true, t: "poll" });
+  assert.deepEqual(parsePageMessage({ t: "openPanel" }), { ok: true, t: "openPanel" });
+  assert.deepEqual(parsePageMessage(place()), {
+    ok: true,
+    t: "place",
+    sessionId: session,
+    href: `https://app.kernal.one/sessions/${session}`,
+    title: "Floppy",
+    mode: "own",
+  });
+  for (const mode of ["shared", "window"]) {
+    assert.equal(parsePageMessage(place({ mode })).mode, mode);
+  }
+  assert.deepEqual(parsePageMessage({ t: "split", sessionId: session, otherSessionId: other }), {
+    ok: true,
+    t: "split",
+    sessionId: session,
+    otherSessionId: other,
+  });
+  // A title may contain the word tab. That is not a tab id, and it is not walked.
+  assert.equal(parsePageMessage(place({ title: "see the tab" })).title, "see the tab");
+  assert.equal(parsePageMessage(place({ url: `http://localhost:5173/sessions/${session}` })).ok, true);
+  assert.equal(parsePageMessage(place({ url: `http://127.0.0.1:8080/sessions/${session}` })).ok, true);
+});
+
+test("closeTab, capture, a tabId field, and anything outside the allowlist are rejected", () => {
   const rejected = [
-    { t: "place", sessionId: "s", url: "https://app.kernal.one/sessions/s", title: "F", mode: "own" },
-    { t: "split", sessionId: "a", otherSessionId: "b" },
-    { t: "poll" },
-    { t: "openPanel" },
     { t: "closeTab", tabId: 4 },
     { t: "capture", tabId: 4 },
     { t: "ping", tabId: 4 },
+    { t: "poll", tabId: 4 },
+    { t: "openPanel", tabId: 1 },
+    place({ tabId: 4 }),
+    { t: "split", sessionId: session, otherSessionId: other, tabId: 9 },
     { t: "ping", tab: { id: 4 } },
     { tabId: 4 },
+    { t: "place", sessionId: session, url: `https://app.kernal.one/sessions/${session}`, title: "F", mode: "nope" },
+    { t: "place", sessionId: session, url: "https://evil.com/sessions/" + session, title: "F", mode: "own" },
+    { t: "place", sessionId: session, url: `https://app.kernal.one/sessions/${session}/extra`, title: "F", mode: "own" },
+    { t: "place", sessionId: "../x", url: "https://app.kernal.one/sessions/../x", title: "F", mode: "own" },
+    { t: "split", sessionId: session, otherSessionId: session },
+    { t: "split", sessionId: session },
+    { t: "poll", sessionId: session },
     null,
     "ping",
     ["ping"],
@@ -67,12 +114,21 @@ test("only a plain object whose single key is t: ping is accepted", () => {
     const parsed = parsePageMessage(message);
     assert.equal(parsed.ok, false, JSON.stringify(message));
     assert.equal(parsed.error, "rejected");
+    assert.equal(JSON.stringify(parsed).includes("tabId"), false);
   }
+});
+
+test("a session url is the allowlisted origin plus /sessions/<id>", () => {
+  assert.equal(isSessionUrl(session, `https://app.kernal.one/sessions/${session}`), true);
+  assert.equal(isSessionUrl(session, `https://app.kernal.one/sessions/${session}?x=1`), false);
+  assert.equal(isSessionUrl(session, `https://not-kernal.one/sessions/${session}`), false);
 });
 
 test("a ping reply is ok, version, and id, and a rejection echoes nothing", () => {
   const id = "iodmmlkefenhggpbpcmhkajencapmcee";
   assert.deepEqual(pageReply({ t: "ping" }, "0.1.0", id), { ok: true, version: "0.1.0", id });
+  // poll is accepted by the allowlist; the ping helper does not turn it into a ping reply.
+  assert.equal(pageReply({ t: "poll" }, "0.1.0", id), null);
   const rejected = pageReply({ t: "capture", tabId: 9, token: "outf_secret" }, "0.1.0", id);
   assert.deepEqual(rejected, { ok: false, error: "rejected" });
   assert.equal(JSON.stringify(rejected).includes("9"), false);
@@ -92,7 +148,7 @@ test("the manifest key is the pinned extension id", () => {
     "http://localhost/*",
     "http://127.0.0.1/*",
   ]);
-  assert.deepEqual(manifest.permissions, ["storage"]);
+  assert.deepEqual(manifest.permissions, ["storage", "tabs", "tabGroups"]);
   assert.equal(manifest.host_permissions, undefined);
   assert.equal(JSON.stringify(manifest).includes("<all_urls>"), false);
   assert.equal(JSON.stringify(manifest).includes("nativeMessaging"), false);
@@ -106,6 +162,20 @@ test("the service worker does not consult sender.url", () => {
   assert.match(source, /originAllowed\(port\.sender\?\.origin\)/);
   assert.match(source, /originAllowed\(sender\?\.origin\)/);
   assert.doesNotMatch(source, /senderOrigin/);
+  // Split checks createSplit before it can open anything, and it never opens an OS window.
+  const splitAt = source.indexOf("async function performSplit");
+  const openAt = source.indexOf("async function performOpenPanel");
+  assert.ok(splitAt !== -1 && openAt > splitAt);
+  const splitFn = source.slice(splitAt, openAt);
+  assert.match(splitFn, /splitPlan\(/);
+  assert.doesNotMatch(splitFn, /windows\.create/);
+  assert.equal(source.includes("tabs.remove"), false);
+});
+
+test("the web package hardcodes chrome/extension-id", () => {
+  const id = read("../extension-id").trim();
+  const web = read("../../outfitter/packages/web/src/lib/chrome-companion.ts");
+  assert.match(web, new RegExp(`CHROME_EXTENSION_ID = "${id}"`));
 });
 
 test("the options page does not log or copy a saved Dongle into the page", () => {

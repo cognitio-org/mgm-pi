@@ -4,6 +4,7 @@
  * auth token, opens the link to the api, and lets RunController drive the state machine once
  * `run.spec` arrives. See outfitter/docs/protocol.md.
  */
+import { chown } from "node:fs/promises";
 import { getIdToken } from "./auth.js";
 import { createGitOps } from "./git.js";
 import { Link } from "./link.js";
@@ -93,7 +94,13 @@ async function main(): Promise<void> {
     gitOps: createGitOps(
       undefined,
       runAsUser
-        ? { runAs: runAsUser, handOver: (dir: string) => chownRecursive(dir, runAsUser.uid, runAsUser.gid) }
+        ? {
+            runAs: runAsUser,
+            // The image's /workspace belongs to `agent`; root needs it for the clone itself, and
+            // hands the whole tree back straight afterwards (git.ts's takeOver/handOver).
+            takeOver: (dir: string) => chown(dir, 0, 0).catch(() => {}),
+            handOver: (dir: string) => chownRecursive(dir, runAsUser.uid, runAsUser.gid),
+          }
         : {},
     ),
     workspace,

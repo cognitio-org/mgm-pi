@@ -1,0 +1,40 @@
+chrome/extension/background.js
+  h_69b863911ebf05 48,52,891-906,910-914,934,956
+chrome/extension/share.js
+  h_69b863911ebf05 56,59-61,193-201
+chrome/test/share.test.js
+  h_69b863911ebf05 13,16,303-307
+outfitter/docs/protocol.md
+  h_69b863911ebf05 145,340
+outfitter/docs/specs/chrome-companion.md
+  h_69b863911ebf05 189,225,276
+outfitter/packages/agentd/src/browser-capture.ts
+  h_69b863911ebf05 14,16,18,150-364,511-570,572,574,576-679
+outfitter/packages/agentd/test/browser-capture.test.ts
+  h_69b863911ebf05 3,7,194-263
+outfitter/packages/api/src/agentlink.ts
+  h_69b863911ebf05 366,388-391
+outfitter/packages/api/src/routes/browser.ts
+  h_69b863911ebf05 7,13-21,54,221-251
+outfitter/packages/api/src/store/memory.ts
+  h_69b863911ebf05 34,571,574-575,579-593
+outfitter/packages/api/src/store/mongo.ts
+  h_69b863911ebf05 35,749,754-780
+outfitter/packages/api/src/store/types.ts
+  h_69b863911ebf05 437-440,450-451,498,500-510
+outfitter/packages/api/test/browser-capture-tool.test.ts
+  h_69b863911ebf05 217-306
+outfitter/packages/api/test/browser.test.ts
+  h_69b863911ebf05 92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "11a813fe332c76511d96c064523df89dbd4a06ae",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -38,6 +38,8 @@
  *    workspace's `origin` now says.
  * `clone` does only its network part as root (a `--no-checkout` clone and the session branch's
  * fetch, before the workspace is handed over); the checkout itself runs as the workspace's user.
+ * Root owns the workspace directory for exactly that window (`takeOver`), because git refuses to
+ * discover a repository whose worktree belongs to another uid.
  *
  * The push repository never reads anything out of /workspace directly. It is seeded from the
  * pristine clone while that is still root's own, and each push takes the session's new commits as a
@@ -277,6 +279,13 @@ export interface GitOpsOptions {
   runAs?: { uid: number; gid: number; home: string };
   /** Parent directory for the private push repository; defaults to os.tmpdir(). */
   pushRoot?: string;
+  /** Takes the (empty) workspace directory for agentd itself before the clone -- main.ts's chown to
+   * root. The sandbox image creates /workspace owned by the `agent` user, and while `git clone` can
+   * still write there, every root git command *after* it has to discover an existing repository
+   * whose worktree belongs to another uid, which git >= 2.35.2 refuses ("not in a git directory"
+   * from `git config`). Owning the directory for the clone's duration keeps that path honest
+   * without `safe.directory`. */
+  takeOver?: (dir: string) => Promise<void>;
   /** Hands the freshly cloned (not yet checked out) repository to `runAs` -- main.ts's recursive
    * chown. clone() calls it between the root-side network steps and the checkout, so root never
    * checks out (parses .gitattributes, writes) a tree that may have been authored by an earlier
@@ -395,6 +404,9 @@ export function createGitOps(exec: ExecFn = defaultExec, options: GitOpsOptions 
       // Root does only the network part, into a repo nobody else can touch yet: clone without a
       // checkout, map and fetch the session branch. The checkout -- parsing a tree an earlier
       // session's agent may have written -- happens after handOver, as the workspace's own user.
+      // The image creates /workspace owned by the user pi runs as; root's post-clone git commands
+      // would then fail the ownership check (see GitOpsOptions.takeOver).
+      await options.takeOver?.(dest);
       const authEnv = authHeaderEnv(spec.cloneUrl, spec.githubToken);
       const cloneArgs = ["clone", "--no-checkout", "--branch", spec.baseBranch, "--single-branch", spec.cloneUrl, dest];
       const cloned = await exec("git", cloneArgs, process.cwd(), authEnv);

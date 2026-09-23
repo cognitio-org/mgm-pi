@@ -1,0 +1,9 @@
+# Builds the kernal.one landing image from landing/Dockerfile with outfitter/landing/ as the
+# context. Used by deploy/landing.sh:
+#   gcloud builds submit outfitter/landing/ --config=deploy/cloudbuild-landing.yaml --substitutions=_IMAGE=<image>
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-f", "Dockerfile", "-t", "${_IMAGE}", "."]
+images: ["${_IMAGE}"]
+options:
+  logging: CLOUD_LOGGING_ONLY

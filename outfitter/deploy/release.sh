@@ -9,6 +9,9 @@
 #   FORCE_ALL=1 ./release.sh      # redeploy components already at this commit too
 #   DRY_RUN=1 ./release.sh        # print what would deploy, change nothing
 #
+# The kernal.one landing page (kernal-web) rides along when landing/ changed: it's static, talks to
+# nothing and carries no protocol version, so it isn't part of the fleet's one-commit rule.
+#
 # Always all three, from one commit (docs/reports/cloud-fixes.md bug 9: env.sh's check_deploy_skew
 # refuses a fleet at mixed commits). A component whose build-commit label already equals this
 # commit is skipped, so a run that failed halfway can simply be re-run.
@@ -56,7 +59,10 @@ expect_status() {
 smoke() {
   local url
   url="$(gcloud run services describe "$1" --project="${PROJECT}" --region="${REGION}" --format='value(status.url)')"
-  if [[ "$1" == outfitter-link ]]; then
+  if [[ "$1" == kernal-web ]]; then
+    # Public static page: it must actually serve.
+    expect_status "${url}/" "$1 serves the landing page" 200
+  elif [[ "$1" == outfitter-link ]]; then
     # Public, but every /api/ route needs a token: 401 proves the auth hook is in front.
     expect_status "${url}/api/sessions" "$1 rejects an unauthenticated API call" 401
   else
@@ -85,6 +91,28 @@ step() {
   [[ "${kind}" == services ]] && smoke "${name}"
   return 0
 }
+
+# landing first: it shares nothing with the fleet, and a failure here shouldn't leave the three
+# components half-deployed.
+LANDING_PATHS=(outfitter/landing outfitter/deploy/landing.sh outfitter/deploy/cloudbuild-landing.yaml outfitter/deploy/env.sh)
+landing_current="$(current_build_commit services kernal-web)"
+landing_image="$(deployed_image service kernal-web)"
+if [[ -z "${landing_image}" ]]; then
+  # Creating the service (and then its public invoker, access.sh) is a one-time owner step.
+  echo "== kernal-web: not deployed; ./landing.sh creates it =="
+elif [[ -z "${landing_current}" ]]; then
+  echo "== kernal-web: runs an unlabelled image; deploying once so releases can track it =="
+  step services kernal-web "${DEPLOY_DIR}/landing.sh"
+elif component_live_at services kernal-web "${HEAD_SHORT}" && [[ "${FORCE_ALL:-}" != 1 ]]; then
+  echo "== kernal-web: already at ${HEAD_SHORT}; skipping =="
+elif ! git -C "${ROOT}" cat-file -e "${landing_current}^{commit}" 2>/dev/null; then
+  echo "   WARNING: kernal-web runs '${landing_current}', which isn't a commit here; deploying it to be sure" >&2
+  step services kernal-web "${DEPLOY_DIR}/landing.sh"
+elif git -C "${ROOT}" diff --quiet "${landing_current}" HEAD -- "${LANDING_PATHS[@]}"; then
+  echo "== kernal-web: runs ${landing_current}, no landing changes since; skipping =="
+else
+  step services kernal-web "${DEPLOY_DIR}/landing.sh"
+fi
 
 step jobs outfitter-agent "${DEPLOY_DIR}/agent-job.sh"
 step services outfitter-link "${DEPLOY_DIR}/service.sh" link

@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 # Deploys the kernal.one landing page (outfitter/landing/) to Cloud Run as `kernal-web`: static
-# files behind nginx, public (--allow-unauthenticated), scaled to zero when nobody's looking.
+# files behind nginx, public, scaled to zero when nobody's looking. release.sh runs this when
+# landing/ changed, so a release ships the page like everything else; by hand, from a clean
+# checkout of main:
 #   ./landing.sh                 build + deploy
 #   ./landing.sh --map-domains   also create the kernal.one / www / app / link.kernal.one
 #                                domain mappings (once; needs kernal.one verified for ACCOUNT)
-# README.md "kernal.one" has the DNS records the mappings need.
+# README.md "kernal.one" has the DNS records the mappings need. Being public is an access setting,
+# so access.sh owns it (the allUsers invoker), not this script -- see README.md "Deploying".
+#
+# Not part of the three-component fleet (env.sh check_deploy_skew): the page is static and talks to
+# nothing, so it carries no protocol version and can sit at a different commit safely.
 set -euo pipefail
 
 MAP_DOMAINS=0
@@ -20,13 +26,28 @@ AR_REPO="${AR_REPO:-outfitter}"
 SERVICE="kernal-web"
 
 LANDING_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../landing" && pwd)"
-TAG="$(git -C "${LANDING_DIR}" rev-parse --short HEAD 2>/dev/null || date +%s)-$(date +%s)"
+deploy_guard outfitter/landing outfitter/deploy
+CURRENT_IMAGE="$(deployed_image service "${SERVICE}")"
+regression_guard "${CURRENT_IMAGE}"
+# The tag is the commit the image was built from, like the other services (env.sh commit_tag), so
+# release.sh can tell what kernal-web runs and regression_guard can refuse a rollback.
+TAG="$(commit_tag)"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}/kernal-web:${TAG}"
 
-echo "== Building ${IMAGE} with Cloud Build (landing/Dockerfile) =="
-gcloud builds submit "${LANDING_DIR}" --project="${PROJECT}" --tag="${IMAGE}" --timeout=10m
+if image_exists "${IMAGE}"; then
+  echo "== Reusing ${IMAGE} (already built for this commit) =="
+else
+  echo "== Building ${IMAGE} with Cloud Build (landing/Dockerfile) =="
+  build_submit "${LANDING_DIR}" "$(dirname "${BASH_SOURCE[0]}")/cloudbuild-landing.yaml" \
+    --substitutions="_IMAGE=${IMAGE}" --timeout=10m
+fi
 
-echo "== Deploying ${SERVICE} =="
+# Again, right before rolling out: the build can take minutes, and a newer revision may have gone
+# out meanwhile.
+CURRENT_IMAGE="$(deployed_image service "${SERVICE}")"
+regression_guard "${CURRENT_IMAGE}"
+
+echo "== Deploying ${SERVICE} (build-commit=${TAG}) =="
 gcloud run deploy "${SERVICE}" \
   --project="${PROJECT}" \
   --region="${REGION}" \
@@ -37,7 +58,7 @@ gcloud run deploy "${SERVICE}" \
   --cpu=1 \
   --memory=128Mi \
   --concurrency=200 \
-  --allow-unauthenticated
+  --update-labels="build-commit=${TAG}"
 
 if [[ "${MAP_DOMAINS}" == 1 ]]; then
   # Cloud Run domain mappings (Preview, available in us-central1): free, Google-managed certs.

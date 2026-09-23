@@ -421,3 +421,30 @@ test("GitOps.push: a bundle that needs objects the agent pruned falls back to a 
   assert.ok(bundles[0].args.includes("--not"));
   assert.ok(!bundles[1].args.includes("--not"), "the retry asks for the whole history");
 });
+
+test("GitOps.clone: root takes the workspace directory before cloning and hands it over before the checkout", async () => {
+  // The sandbox image creates /workspace owned by the agent user. A clone still writes there, but
+  // every later root git command has to *discover* that repo, and git refuses a worktree owned by
+  // another uid ("not in a git directory" from `git config`) -- which broke every repo session.
+  const events: string[] = [];
+  const exec: ExecFn = async (_cmd, args) => {
+    events.push(`git ${args[0]}`);
+    return ok(`${"a".repeat(40)}\n`);
+  };
+  const gitOps = createGitOps(exec, {
+    pushRoot: await mkdtemp(join(tmpdir(), "agentd-git-test-")),
+    takeOver: async () => void events.push("takeOver"),
+    handOver: async () => void events.push("handOver"),
+  });
+  await gitOps.clone(
+    { cloneUrl: "https://github.com/acme/repo.git", baseBranch: "main", branch: "outfitter/s1", createBranch: true },
+    "/tmp/dest",
+  );
+  assert.equal(events[0], "takeOver", "the directory is agentd's before the clone");
+  assert.equal(events[1], "git clone");
+  const handOverAt = events.indexOf("handOver");
+  const checkoutAt = events.lastIndexOf("git checkout");
+  assert.ok(handOverAt > 1 && checkoutAt > handOverAt, "the checkout runs after the handover");
+  // every root git command sits between the takeOver and the handOver
+  assert.ok(events.slice(2, handOverAt).every((e) => e.startsWith("git ")));
+});

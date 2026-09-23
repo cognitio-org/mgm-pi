@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, type Guru, type SessionSummary } from "../api/client.ts";
 import { relativeTime } from "../lib/relative-time.ts";
 import { toApiErrorState } from "../lib/api-error.ts";
+import { runStateNote } from "../lib/retro-errors.ts";
 import { StatusPill } from "../components/StatusPill.tsx";
 import { NewSessionDialog } from "../components/NewSessionDialog.tsx";
 import { Working } from "../components/Working.tsx";
@@ -111,7 +112,12 @@ export function FleetPage() {
             </tr>
           </thead>
           <tbody>
-            {sessions.map((s) => (
+            {sessions.map((s) => {
+              // A refused run (api agentlink.ts's refuse()) reads as a bare "failed" pill otherwise
+              // -- its reason was only ever on the session page. No role="alert": these rows are a
+              // list being read, not something that just happened.
+              const note = runStateNote(s.runStateReason);
+              return (
               <tr
                 key={s.id}
                 onClick={() => navigate(`/sessions/${s.id}`)}
@@ -125,13 +131,15 @@ export function FleetPage() {
                 <td data-label="Floppy">{s.name ?? s.id.slice(0, 8)}</td>
                 <td data-label="Status">
                   <StatusPill state={s.runState} />
+                  {note && <span className="pill-reason">{note}</span>}
                 </td>
                 <td data-label="Tape">{guruName(s.guru)}</td>
                 <td data-label="Repo / branch">{s.repo ? `${s.repo}${s.branch ? ` @ ${s.branch}` : ""}` : "—"}</td>
                 <td data-label="Cost">{formatCost(s.cost)}</td>
                 <td data-label="Last activity">{relativeTime(s.updatedAt)}</td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
         </div>

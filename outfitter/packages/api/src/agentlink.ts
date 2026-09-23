@@ -38,11 +38,31 @@ const API_PROTOCOL_VERSION = 1;
 
 /** Thrown by buildRunSpec when a repo session has no usable GitHub token secret; handleConnection
  * catches it specifically to close the socket with the terminal 4412 code (docs/protocol.md) and
- * mark the run failed, instead of the generic "internal error" other buildRunSpec failures get. A
+ * mark the run failed, instead of the retryable 1011 other buildRunSpec failures get. A
  * 1011 here would make agentd (TERMINAL_CLOSE_CODES, link.ts) treat it as transient and retry for
  * up to ten minutes with the run stuck in provisioning -- this secret is never going to appear on
  * its own, so there is nothing to retry for. */
 export class MissingGithubTokenError extends Error {}
+
+/** The session page's note for a run refused because its GitHub token secret was never created.
+ * Longer and more actionable than the 123-byte-capped close reason: a per-session
+ * `outfitter-github-token-<sessionId>` is not operator-managed (src/operator.ts deliberately
+ * excludes it from isManagedSecretName), so the fix is out-of-band -- deploy/README.md group (b).
+ * The secret's own name stays in the server log, not in a page anyone with the link can read. */
+const MISSING_GITHUB_TOKEN_DETAIL =
+  "no GitHub token is stored for this session, so its sandbox can't clone the repo. " +
+  "An operator has to create the session's GitHub token secret before it can run.";
+
+/** What `refuse` writes onto the run so a refusal is visible in the browser rather than only in
+ * Cloud Logging. `detail` lands in Run.statusDetail -- the field the session page renders as its own
+ * note and the only one sse.ts forwards while a run is still in an active state; `fail` additionally
+ * moves the run to `failed` with the close reason, which is right only for a refusal agentd treats
+ * as terminal (link.ts's TERMINAL_CLOSE_CODES) and so will never come back from. */
+interface RefusalNotice {
+  runId: string;
+  detail: string;
+  fail: boolean;
+}
 
 interface PendingRequest {
   runId: string;
@@ -311,6 +331,8 @@ export class AgentLink {
 
   private async handleConnection(socket: WebSocket, request: FastifyRequest): Promise<void> {
     const runId = String((request.query as Record<string, unknown> | undefined)?.run ?? "");
+    // The one refusal that can't go through `refuse`: with no run id there is no run to write a
+    // notice onto, and no FrameBuffer yet either.
     if (!runId) return closeQuietly(socket, 4400, "missing run query param");
 
     // Bug fix: agentd sends `hello` immediately once the WS upgrade completes -- it doesn't wait
@@ -325,29 +347,46 @@ export class AgentLink {
     try {
       await verifyAgentToken(bearerFromHeader(request), this.config);
     } catch {
-      buffer.stop();
-      return closeQuietly(socket, 4401, "unauthorized");
+      // No notice: nothing has yet tied this caller to `runId` -- see refuse() on why an unproven
+      // caller never gets to write on a run.
+      request.log.warn({ runId }, "agentlink: closing connection, the agent bearer token did not verify");
+      return this.refuse(socket, buffer, 4401, "unauthorized");
     }
 
     const run = await this.store.runs.findById(runId);
     if (!run) {
-      buffer.stop();
-      return closeQuietly(socket, 4404, "run not found");
+      // Nothing to write a notice onto, by definition.
+      request.log.warn({ runId }, "agentlink: closing connection, no such run");
+      return this.refuse(socket, buffer, 4404, "run not found");
     }
     if (!["provisioning", "running", "idle", "stopping"].includes(run.state)) {
-      buffer.stop();
-      return closeQuietly(socket, 4409, `run is ${run.state}`);
+      // No notice on purpose: this run already holds the state and reason it really ended with
+      // (stopped by the user, failed by the reconciler), which the UI reads correctly -- a late
+      // connection for it must not overwrite that with "refused".
+      request.log.info({ runId, state: run.state }, "agentlink: closing connection, run is no longer connectable");
+      return this.refuse(socket, buffer, 4409, `run is ${run.state}`);
     }
 
+    // A missing session or guru is a fact about the run, not about whoever is calling (see
+    // refuse()): the run can never be built whoever asks, so it is safe -- and useful -- to say so
+    // before the run token has been checked.
     const session = await this.store.sessions.findById(run.sessionId);
     if (!session) {
-      buffer.stop();
-      return closeQuietly(socket, 4404, "session not found");
+      request.log.error({ runId, sessionId: run.sessionId }, "agentlink: run's session record is missing");
+      return this.refuse(socket, buffer, 4404, "session not found", {
+        runId,
+        detail: "this run's session record is missing from the store, so the api can't build its run spec. Start a new session.",
+        fail: true,
+      });
     }
     const guru = await this.store.gurus.findById(session.guruId);
     if (!guru) {
-      buffer.stop();
-      return closeQuietly(socket, 4404, "guru not found");
+      request.log.error({ runId, guruId: session.guruId }, "agentlink: session's guru record is missing");
+      return this.refuse(socket, buffer, 4404, "guru not found", {
+        runId,
+        detail: `this session's guru (${session.guruId}) no longer exists, so the api can't build its run spec. Point the session at a guru that does, or start a new one.`,
+        fail: true,
+      });
     }
 
     // Finding #2 (docs/reports/security-review-pr1.md): every Cloud Run Job execution for
@@ -362,13 +401,24 @@ export class AgentLink {
     const hello = await waitForHello(buffer);
     if (!hello || !runTokenMatches(hello.runToken, run.runTokenHash)) {
       request.log.warn({ runId }, "agentlink: closing connection with a missing or invalid run token");
-      buffer.stop();
-      return closeQuietly(socket, 4401, "unauthorized");
+      // Deliberately no notice, and the one case where that leaves a run without an explanation of
+      // its own: this is precisely the refusal an impostor triggers, so writing to the run here
+      // would be the cross-run failure primitive refuse() describes. A sandbox whose RUN_TOKEN is
+      // genuinely wrong never heartbeats either, so reconcileOnce (runs.ts) fails the run with "no
+      // heartbeat" and a note pointing at this log line -- later than a notice here, but on
+      // evidence the api gathered rather than on an unproven caller's word.
+      return this.refuse(socket, buffer, 4401, "unauthorized");
     }
+    // Past the run token: from here on this really is the run's own sandbox, so a refusal is safe to
+    // record against the run.
     if (buffer.overflowed) {
       request.log.warn({ runId }, "agentlink: closing connection, too many frames buffered before hello");
-      buffer.stop();
-      return closeQuietly(socket, 4400, "too many buffered frames");
+      return this.refuse(socket, buffer, 4400, "too many buffered frames", {
+        runId,
+        // 4400 is terminal for agentd (link.ts), so nothing will move this run on by itself.
+        detail: "this run's sandbox sent more frames than the api will buffer before its hello, so the api refused the connection.",
+        fail: true,
+      });
     }
     // Bug 9 (docs/reports/cloud-fixes.md): fail loudly on version skew instead of the silent
     // breakage a mismatched deploy caused before (an older agentd ignoring frames a newer web role
@@ -383,9 +433,13 @@ export class AgentLink {
       // 4409 is terminal for agentd (it exits), so nothing will ever move this run on: fail it now
       // with the reason, as for 4412, instead of leaving it "provisioning" until the stale-run
       // reconciler notices -- which also pins the session (no wake, no Retry) in the meantime.
-      await this.store.runs.update(runId, { state: "failed", reason, updatedAt: new Date().toISOString() });
-      buffer.stop();
-      return closeQuietly(socket, 4409, reason);
+      return this.refuse(socket, buffer, 4409, reason, {
+        runId,
+        detail:
+          `this run's sandbox speaks agent protocol v${agentProtocolVersion} but the api speaks ` +
+          `v${API_PROTOCOL_VERSION}. The outfitter-agent image needs redeploying before this session can run.`,
+        fail: true,
+      });
     }
 
     // Finding #1 (docs/reports/security-review-pr41.md): a valid run token is no longer enough on
@@ -414,8 +468,10 @@ export class AgentLink {
         { runId },
         "agentlink: refusing a second agent connection for a run that already has a live one",
       );
-      buffer.stop();
-      return closeQuietly(socket, 4429, "run already has a live agent connection");
+      // No notice: nothing is wrong with this run -- its own agent is connected and heartbeating.
+      // 4429 isn't terminal either, so a legitimate newcomer (the incumbent dying moments later)
+      // just reconnects.
+      return this.refuse(socket, buffer, 4429, "run already has a live agent connection");
     }
     if (incumbent && incumbent !== socket) {
       request.log.info({ runId }, "agentlink: replacing a presumed-dead agent connection");
@@ -468,16 +524,23 @@ export class AgentLink {
     } catch (err) {
       if (err instanceof MissingGithubTokenError) {
         request.log.warn(err, "run.spec build failed: missing github token secret");
-        const now = new Date().toISOString();
-        await this.store.runs.update(runId, {
-          state: "failed",
-          reason: err.message,
-          updatedAt: now,
+        return this.refuse(socket, buffer, 4412, err.message, {
+          runId,
+          detail: MISSING_GITHUB_TOKEN_DETAIL,
+          fail: true,
         });
-        this.sockets.delete(runId);
-        buffer.stop();
-        return closeQuietly(socket, 4412, err.message);
       }
+      // Any other failure (the secrets broker itself erroring, a store round-trip failing) is
+      // treated as transient: register()'s catch closes with 1011, which agentd retries (link.ts),
+      // so the run keeps its state and may yet start. It still has to say something -- before this,
+      // the run just sat in `provisioning` with the cause visible only in the server log, the same
+      // silence refuse() exists to end.
+      await this.store.runs
+        .update(runId, {
+          statusDetail: `the api could not build this run's spec: ${err instanceof Error ? err.message : String(err)}. Retrying.`,
+          updatedAt: new Date().toISOString(),
+        })
+        .catch(() => {});
       throw err;
     }
     socket.send(JSON.stringify(spec));
@@ -534,6 +597,49 @@ export class AgentLink {
     const seenAt = this.socketSeenAt.get(socket);
     if (seenAt === undefined) return false;
     return Date.now() - seenAt < this.config.agentSocketGraceMs;
+  }
+
+  /** Single exit for every api-side refusal in handleConnection: record why (somewhere the browser
+   * will actually see it), stop buffering frames, and close with the code docs/protocol.md assigns.
+   *
+   * The motivating incident (session 2cc9494a on cognitio-org/testit, 2026-09-23): a repo session
+   * whose `outfitter-github-token-<sessionId>` had never been created was refused here, its sandbox
+   * went away, and the run sat in `provisioning` forever. The only evidence anywhere was two Cloud
+   * Logging lines; the session page showed an indefinite spinner and the Drives list showed the
+   * session as plain "stopped".
+   *
+   * Not every refusal may write to the run, and the line is the run token. That token is the only
+   * thing that proves this socket belongs to this run at all -- a valid agent id token proves just
+   * that the caller is *some* execution of the shared agent job (security-review-pr1.md finding
+   * #2). So a refusal decided before the token check is decided on the caller's say-so, and
+   * persisting it would hand anyone holding an agent token a way to fail other people's runs; those
+   * paths pass no notice, and a sandbox that genuinely cannot present its run token is failed by
+   * the stale-run reconciler instead (runs.ts's reconcileOnce), on evidence the api gathered
+   * itself. The exception is a refusal that is a fact about the run rather than about the caller --
+   * its session or guru record is gone -- since such a run is unrunnable whoever asks. */
+  private async refuse(
+    socket: WebSocket,
+    buffer: FrameBuffer,
+    code: number,
+    reason: string,
+    notice?: RefusalNotice,
+  ): Promise<void> {
+    if (notice) {
+      // Best-effort: a store failure here must not turn a deliberate refusal into a rejected
+      // handleConnection, whose catch would close with a bare 1011 -- a code agentd retries
+      // (link.ts) instead of the terminal one it needs to see.
+      await this.store.runs
+        .update(notice.runId, {
+          statusDetail: notice.detail,
+          ...(notice.fail ? { state: "failed" as const, reason } : {}),
+          updatedAt: new Date().toISOString(),
+        })
+        .catch(() => {});
+      // Only ever this socket's own entry: a refused newcomer must not unregister the incumbent's.
+      if (notice.fail && this.sockets.get(notice.runId) === socket) this.sockets.delete(notice.runId);
+    }
+    buffer.stop();
+    closeQuietly(socket, code, reason);
   }
 
   private async buildRunSpec(runId: string, session: Session, guru: Guru): Promise<RunSpecMessage> {

@@ -172,10 +172,18 @@ workflow from" (runs from anything else are refused), with `rollback` and `force
    throwing, and `outfitter-litellm-key-<guruId>` falls back to `outfitter-litellm-key-default`
    before giving up. The only place this is still fatal is `outfitter-github-token-<sessionId>`
    for a session that actually has a repo (`session.repo` set) — `agentlink.ts`'s `buildRunSpec`
-   checks for that specific case and closes the agentd connection with WS code 1011 and a
-   `missing github token secret for session <id>` reason, since agentd cloning with no credentials
-   would otherwise fail confusingly deep inside the sandbox instead. A repo-less session, or a
-   guru whose key resolves via the default fallback, is unaffected either way.
+   checks for that specific case and closes the agentd connection with WS code `4412` (terminal for
+   agentd — there is nothing to retry) and a `missing github token secret for session <id>` reason,
+   since agentd cloning with no credentials would otherwise fail confusingly deep inside the sandbox
+   instead. A repo-less session, or a guru whose key resolves via the default fallback, is unaffected
+   either way.
+
+   You should not need Cloud Logging to find out that this happened: the run is marked `failed` and
+   carries a `statusDetail` saying no GitHub token is stored for the session and that an operator has
+   to create one, which the session page shows as a note and the Disk Box list shows under the
+   floppy's pill (`docs/protocol.md`, "Every refusal explains itself"). The secret's *name* stays in
+   the server log rather than going on a page — it is this section's `outfitter-github-token-` plus
+   the session id.
 
    `outfitter-api`'s `secretmanager.secretAccessor` role from `baseline.sh` is project-wide, so no
    per-secret IAM binding is needed for either group. `baseline.sh` also grants `outfitter-api` a

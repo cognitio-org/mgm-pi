@@ -6,9 +6,8 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from "react";
 
 const STORAGE_KEY = "outfitter:chunk-reload";
-/** Long enough for the reloaded page to import its chunks. Cleared after that so a later deploy
- * can reload again. Cleared from the new page, not the one that failed, so a still-missing file
- * cannot reload forever. */
+/** Drop the storage key this long after startup so a later document can reload for a new deploy.
+ * A document that was itself the recovery load still refuses, via an in-memory latch. */
 const CLEAR_AFTER_MS = 10_000;
 
 const STALE_CHUNK =
@@ -45,13 +44,26 @@ function browserStorage(): StorageLike | null {
   }
 }
 
+function storageHasKey(storage: StorageLike | null): boolean {
+  if (!storage) return false;
+  try {
+    return storage.getItem(STORAGE_KEY) != null;
+  } catch {
+    return false;
+  }
+}
+
 export function createChunkReload(deps: ChunkReloadDeps = {}): ChunkReload {
   const storage = deps.storage === undefined ? browserStorage() : deps.storage;
   const reload = deps.reload ?? (() => window.location.reload());
   let reloading = false;
+  // This document was opened by a chunk reload. A slow failure here must not reload again
+  // after clearChunkReload drops the key, or the tab reloads forever.
+  const recovering = storageHasKey(storage);
 
   function reloadForStaleChunk(): boolean {
     if (reloading) return true;
+    if (recovering) return false;
     if (!storage) return false;
     try {
       if (storage.getItem(STORAGE_KEY)) return false;
@@ -106,19 +118,25 @@ export function lazyRoute<T extends ComponentType<any>>(
   );
 }
 
+interface PreloadErrorEvent {
+  payload?: unknown;
+}
+
 interface ChunkReloadHost {
-  addEventListener(type: string, listener: () => void): void;
+  addEventListener(type: string, listener: (event: PreloadErrorEvent) => void): void;
   setTimeout(handler: () => void, timeout: number): unknown;
 }
 
 const installedHosts = new Set<ChunkReloadHost>();
 
-/** Vite wraps every production dynamic import and dispatches this when the chunk (or its CSS)
- * 404s. Installed once, before render. */
+/** Vite dispatches this for every failed dynamic import, including a module that threw while
+ * evaluating. Only a missing chunk should reload. The event stays uncancelled so the original
+ * rejection still reaches lazyRoute. */
 export function installChunkReload(host: ChunkReloadHost = window, controller: ChunkReload = shared): void {
   if (installedHosts.has(host)) return;
   installedHosts.add(host);
-  host.addEventListener("vite:preloadError", () => {
+  host.addEventListener("vite:preloadError", (event) => {
+    if (!isStaleChunkError(event.payload)) return;
     controller.reloadForStaleChunk();
   });
   host.setTimeout(() => controller.clearChunkReload(), CLEAR_AFTER_MS);

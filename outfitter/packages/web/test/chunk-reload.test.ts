@@ -32,7 +32,7 @@ describe("isStaleChunkError", () => {
 });
 
 describe("createChunkReload", () => {
-  it("reloads once per page, and a later page shows the error until the flag is cleared", () => {
+  it("reloads once, and the recovery document does not reload again after the flag is cleared", () => {
     const storage = memoryStorage();
     const reloads: number[] = [];
     const first = createChunkReload({
@@ -56,8 +56,19 @@ describe("createChunkReload", () => {
     expect(secondReloads).toEqual([]);
 
     second.clearChunkReload();
-    expect(second.reloadForStaleChunk()).toBe(true);
-    expect(secondReloads).toEqual([1]);
+    // Same document: clearing the key must not arm another reload.
+    expect(second.reloadForStaleChunk()).toBe(false);
+    expect(secondReloads).toEqual([]);
+
+    const thirdReloads: number[] = [];
+    const third = createChunkReload({
+      storage,
+      reload: () => {
+        thirdReloads.push(1);
+      },
+    });
+    expect(third.reloadForStaleChunk()).toBe(true);
+    expect(thirdReloads).toEqual([1]);
   });
 
   it("does not reload when the flag cannot be stored", () => {
@@ -109,7 +120,7 @@ describe("hangIfStaleChunk", () => {
 });
 
 describe("installChunkReload", () => {
-  it("reloads on vite:preloadError once, and again on a later page after the flag is cleared", () => {
+  it("reloads only for a missing chunk, once, and a later document can reload after the flag is cleared", () => {
     const storage = memoryStorage();
     const reloads: number[] = [];
     const chunk = createChunkReload({
@@ -118,11 +129,11 @@ describe("installChunkReload", () => {
         reloads.push(1);
       },
     });
-    let onPreload: (() => void) | undefined;
+    let onPreload: ((event: { payload?: unknown }) => void) | undefined;
     let onClear: (() => void) | undefined;
     let listeners = 0;
     const host = {
-      addEventListener(_type: string, listener: () => void) {
+      addEventListener(_type: string, listener: (event: { payload?: unknown }) => void) {
         listeners += 1;
         onPreload = listener;
       },
@@ -135,8 +146,12 @@ describe("installChunkReload", () => {
     installChunkReload(host, chunk);
     expect(listeners).toBe(1);
 
-    onPreload!();
-    onPreload!();
+    onPreload!({});
+    onPreload!({ payload: new Error("boom") });
+    expect(reloads).toEqual([]);
+
+    onPreload!({ payload: new TypeError(CHUNK) });
+    onPreload!({ payload: new TypeError(CHUNK) });
     expect(reloads).toEqual([1]);
 
     onClear!();

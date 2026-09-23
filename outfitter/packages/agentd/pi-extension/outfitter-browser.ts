@@ -1,8 +1,12 @@
 /**
- * Drive-only `browser_capture` tool (docs/specs/chrome-companion.md §13). Loaded the same way as
- * outfitter-mail.ts: agentd adds `--extension` only inside a Drive. The tool has no tab id — a
- * Floppy has one share — and it never sees OUTFITTER_TOKEN. It calls the loopback listener
- * agentd binds while this extension is loaded; agentd talks to the API.
+ * Drive-only `browser_capture` (docs/specs/chrome-companion.md, "Two tools, one name"). Loaded
+ * the same way as outfitter-mail.ts: agentd adds `--extension` only inside a Drive. No tab id.
+ * A Floppy has one share. The tool never sees OUTFITTER_TOKEN. It calls the loopback listener
+ * agentd binds while this extension is loaded; agentd talks to the link API, and the owner's
+ * Chrome takes the screenshot.
+ *
+ * kernal-chrome, on the laptop, registers a different tool with this same name. That one needs
+ * the local Chrome socket and must not be in this image. pi refuses to start if both load.
  *
  * pi 0.86 tool results (the ToolResultMessage content array in @earendil-works/pi-ai) are
  * `(TextContent | ImageContent)[]`, and ImageContent is `{ type: "image", data, mimeType }`

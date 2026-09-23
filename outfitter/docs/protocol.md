@@ -123,7 +123,7 @@ Up (agentd → api):
 | `heartbeat` | `idleSeconds, memMb` | every 15 s |
 | `bye` | `reason: "idle"\|"stop"\|"sigterm"\|"error", message?` | last frame |
 | `mail.ack` | `id` | pi accepted a `mail` down-message (its RPC `prompt` response came back `success: true`); the API marks the mail acked |
-| `browser.capture.request` | `requestId` | the Drive's `browser_capture` tool asked for the session's one shared tab. agentd mints `requestId` once per tool call. The api creates that browser-request row (`requesterEmail` is the session owner), or answers at once with `browser.capture.result` `error:"no_share"`. The same `requestId` does not create a second row |
+| `browser.capture.request` | `requestId` | the Drive's `browser_capture` tool (`outfitter-browser.ts`, no tab id) asked for the session's one shared tab. This is not the laptop tool of the same name in `kernal-chrome`, which is absent from the sandbox image. agentd mints `requestId` once per tool call. The api creates that browser-request row (`requesterEmail` is the session owner), or answers at once with `browser.capture.result` `error:"no_share"`. The same `requestId` does not create a second row |
 
 Down (api → agentd):
 

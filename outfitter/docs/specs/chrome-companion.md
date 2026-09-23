@@ -28,6 +28,17 @@ Two clients use the same extension:
 - **Local Kernal**, through the native host's unix socket, while `kernal` is running on the laptop.
 - **An Outfitter Drive**, through the link service. The extension holds a Dongle (a personal `outf_` API token) and polls the link origin. The sandbox never holds that token.
 
+Both clients expose a pi tool named `browser_capture`. They are not the same tool, and they must never be loaded in the same pi process.
+
+| | Laptop | Drive |
+|---|---|---|
+| Extension | `kernal/.pi/extensions/kernal-chrome/` | `outfitter/packages/agentd/pi-extension/outfitter-browser.ts` |
+| Tool | `browser_tabs`, then `browser_capture` with a tab id | `browser_capture` with no arguments |
+| How it reaches Chrome | Unix socket `<kernal-home>/chrome.sock`, the native host on this machine | agentd asks the link API; the owner's Chrome takes the screenshot |
+| In the sandbox image | Removed. A Drive has no Chrome, so the socket is never there | Loaded with `--extension`, the same way as `outfitter-mail.ts` |
+
+pi refuses to start if both are loaded, because the tool name collides. The sandbox Dockerfile deletes `kernal-chrome` along with the other laptop-only extensions (`kernal-voice`, `kernal-update`, `kernal-admin`, `kernal-codebase-index`). Do not rename one of them to paper over that. Do not copy `kernal-chrome` back into the image.
+
 The Outfitter page at `https://app.kernal.one` talks to the extension with `chrome.runtime.connect`. That channel is only for pairing, opening the side panel, and placing tabs. It cannot ask for a capture, read a tab the user did not share, or close a tab the extension did not open.
 
 ## 2. Non-goals (first cut)
@@ -251,7 +262,7 @@ An idle-stop countdown is not part of this cut.
 
 ## 12. Local Kernal tool
 
-New pi extension `kernal/.pi/extensions/kernal-chrome/`. It registers two tools. They speak to `~/.kernal/chrome.sock` and do nothing on the network.
+Pi extension `kernal/.pi/extensions/kernal-chrome/`. Laptop only. The sandbox image deletes this directory; see "Two tools, one name" above. It registers two tools. They speak to `<kernal-home>/chrome.sock` and do nothing on the network.
 
 - `browser_tabs` — the share list (title, url, tab id).
 - `browser_capture` — `{tabId}`. Returns text: title, url, and the workspace-relative path of the copied jpeg. Verify whether pi 0.86 tool results can carry an image content block (see `outfitter-mail.ts`, which only returns `{type:"text"}`). If a supported image block exists, attach the jpeg as well. If it does not, do not invent a content type. The text path is the contract.
@@ -260,7 +271,7 @@ Missing socket: the tool result says the Chrome companion is not running. Unknow
 
 ## 13. Cloud tool
 
-Loaded the same way as `outfitter-mail.ts`: agentd adds the extension only inside a Drive. The sandbox must not receive `OUTFITTER_TOKEN`.
+`outfitter/packages/agentd/pi-extension/outfitter-browser.ts`. This is the `browser_capture` a Drive runs. It is not `kernal-chrome`. Loaded the same way as `outfitter-mail.ts`: agentd adds the extension only inside a Drive. The sandbox must not receive `OUTFITTER_TOKEN`, and it must not contain `kernal-chrome`.
 
 `browser_capture` takes no tab id. The session has at most one share.
 

@@ -50,9 +50,15 @@ COPY kernal/.pi/extensions/ ./.pi/extensions/
 # kernal-admin (/admin serves a local web page for editing this machine's keys, model and index
 # settings; in a sandbox nobody can open it, and a session's config comes from its guru instead),
 # and kernal-codebase-index (drives open-codebase-index, which this image does not install -- see
-# the npm uninstall below -- so it could only ever return early; it still cost a module load).
+# the npm uninstall below -- so it could only ever return early; it still cost a module load),
+# and kernal-chrome. That extension talks to a unix socket the user's Chrome starts on the laptop
+# (<kernal-home>/chrome.sock). A Drive has no Chrome and no native host, so its tools can only
+# answer "not running". It also registers a tool named browser_capture, the same name as
+# outfitter-browser.js, which is the capture tool a Drive actually uses (it asks the link API,
+# and the user's Chrome takes the shot). pi refuses to start if both extensions are loaded.
+# Keep outfitter-browser. Delete kernal-chrome.
 RUN rm -rf ./.pi/extensions/kernal-voice ./.pi/extensions/kernal-update ./.pi/extensions/kernal-admin \
-           ./.pi/extensions/kernal-codebase-index
+           ./.pi/extensions/kernal-codebase-index ./.pi/extensions/kernal-chrome
 
 # TUI/laptop-only packages (voice input, terminal footer, editor LSP) make no sense for a cloud
 # guru with no terminal, no editor and no microphone attached; drop them from the image's

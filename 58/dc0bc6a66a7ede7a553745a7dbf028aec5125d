@@ -1,0 +1,20 @@
+outfitter/packages/agentd/src/git-proxy.ts
+  h_69b863911ebf05 1-706
+outfitter/packages/agentd/src/run.ts
+  h_69b863911ebf05 11,215-216,249,487-490,501,544-572,688
+outfitter/packages/agentd/test/git-proxy.test.ts
+  h_69b863911ebf05 1-401
+outfitter/packages/agentd/test/run.test.ts
+  h_69b863911ebf05 3,990-991,1180-1235
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "58dc0bc6a66a7ede7a553745a7dbf028aec5125d",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

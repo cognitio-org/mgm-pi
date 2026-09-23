@@ -339,8 +339,9 @@ export async function saveAgent(ctx: { cwd: string; modelRegistry: any; model?: 
     throw new AgentError(422, `Not saved: ${problems.join("; ")}.`);
   }
   // pi-subagents only rewrites a frontmatter key it already knows. githubTools is ours, so it is
-  // stamped after the package's write, once that write has been checked. One field, not a second store.
-  if (saved && e.githubTools) {
+  // stamped after the package's write, once that write has been checked. A command-line agent does
+  // not get these tools, and stamping excludeTools onto its file drops the user copy.
+  if (saved && e.githubTools && !saved.cli) {
     try { stampGithubTools(saved.file, e.githubTools); }
     catch (err) {
       try {

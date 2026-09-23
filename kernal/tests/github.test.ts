@@ -549,8 +549,8 @@ describe("the tool definition itself", () => {
 
   test("the git tool stays inside the prompt budget, and says what it is for", async () => {
     const { tools } = await register();
-    assert.equal(tools.length, 1);
-    const git = tools[0];
+    const git = tools.find((t) => t.name === "git");
+    assert.ok(git, "the git tool is still registered");
     assert.equal(git.name, "git");
     // Every request carries this, so it is measured rather than trusted. The spec's budget is 2,500
     // tokens for all of phase 2's four tools; one tool gets a quarter of it.
@@ -564,7 +564,7 @@ describe("the tool definition itself", () => {
 
   test("the commands are registered with handlers", async () => {
     const { commands } = await register();
-    assert.deepEqual([...commands.keys()].sort(), ["commit", "git", "github"]);
+    assert.deepEqual([...commands.keys()].sort(), ["commit", "git", "github", "issues", "pr"]);
     for (const [name, c] of commands) {
       assert.equal(typeof c.handler, "function", name);
       assert.ok(c.description.length > 10, name);

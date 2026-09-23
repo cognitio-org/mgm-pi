@@ -1,9 +1,10 @@
 /**
- * kernal-github (phase 1): git the agent and the person can actually use.
+ * kernal-github: git the agent and the person can actually use, and the GitHub tools beside it.
  *
- * Registers one `git` tool (status, diff, log, commit, push, pull, branch, stash), the rules the
- * model follows around it, and three commands: `/git` (where this repository stands, with its pull
- * request), `/commit` (review the diff and commit), `/github` (install the GitHub CLI and sign in).
+ * Registers the `git` tool (status, diff, log, commit, push, pull, branch, stash), `github_pr`,
+ * `github_issue` and `github_repo`, the rules the model follows around them, and the commands
+ * `/git`, `/commit`, `/github`, `/pr` and `/issues`. The GitHub tool bodies live in github-tools.ts;
+ * this file only wires them up.
  *
  * Why a tool at all, when the model has a shell: the shell answer to "where am I?" is five commands
  * and a guess at the output. `git status` here is one call that already knows the branch, what
@@ -21,6 +22,7 @@ import * as git from "../_shared/git.ts";
 import { attributionFrom, renderStatus, repoStatus, runAction } from "./lib.ts";
 import { githubToolsAllows, type GithubToolsMode } from "./confirm.ts";
 import { authState, findGh, installGh, kernalBin, loginCommand, missingScopes, setupGitCommand } from "./gh.ts";
+import { executeGithub, githubIssueTool, githubPrTool, githubRepoTool, handleIssuesCommand, handlePrCommand } from "./github-tools.ts";
 
 const AGENT_NAME = /^[a-z0-9][a-z0-9-]*$/;
 const ACTIVE_AGENT = /<active_agent\s+name="([^"]*)"\s*\/>/;
@@ -169,6 +171,19 @@ export default function (pi: ExtensionAPI) {
     },
   } as any);
 
+  // No confirm gate here. A follow-up reads githubToolClass and asks before write, merge and push.
+  for (const def of [githubPrTool, githubIssueTool, githubRepoTool]) {
+    pi.registerTool({
+      ...def,
+      execute: async (_id: string, params: any, signal: AbortSignal | undefined, update: any, ctx: any) => {
+        const res = await executeGithub(def.name, params ?? {}, {
+          cwd: ctx?.cwd ?? process.cwd(), settings: settings(), gh: await ghNow(), update, signal,
+        });
+        return { content: [{ type: "text", text: res.text }], isError: res.isError };
+      },
+    } as any);
+  }
+
   // ---------- /git ----------
   pi.registerCommand("git", {
     description: "Where this repository stands: branch, changes, what is pushed, and this branch's pull request",
@@ -251,6 +266,24 @@ export default function (pi: ExtensionAPI) {
       const attribution = attributionFrom(settings());
       lines.push("", `commit attribution: ${attribution.commit || "off"}`);
       ctx.ui.notify(lines.join("\n"), "info");
+    },
+  });
+
+  // ---------- /pr ----------
+  pi.registerCommand("pr", {
+    description: "This branch's pull request; /pr new asks to open one, /pr review <n> asks to review",
+    getArgumentCompletions: (prefix: string) =>
+      ["new", "review"].filter((o) => o.startsWith(prefix.trim())).map((o) => ({ value: o, label: o })),
+    handler: async (args: string, ctx: any) => {
+      await handlePrCommand(args, ctx, { cwd: ctx.cwd ?? process.cwd(), settings: settings(), gh: await ghNow() });
+    },
+  });
+
+  // ---------- /issues ----------
+  pi.registerCommand("issues", {
+    description: "Open issues assigned to you; /issues <n> views one, /issues <n> start checks out a branch for it",
+    handler: async (args: string, ctx: any) => {
+      await handleIssuesCommand(args, ctx, { cwd: ctx.cwd ?? process.cwd(), settings: settings(), gh: await ghNow() });
     },
   });
 }

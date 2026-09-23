@@ -75,6 +75,11 @@ and its token secret is valid (GitHub returns 200 and `push: true`). Wake it fro
 
 A failure now surfaces in the run's status detail rather than an indefinite spinner (#54).
 
+**It also costs mail.** A repo session that fails this way fails *after* its `hello` has validated, so
+each wake charges the agent mailbox an attempt, and a queued message dead-letters after six. From the
+outside that looks like the mailbox dropping messages, so a session that will not clone is worth
+fixing before re-sending anything (see the E5.5 notes in `EPIC.md`, and `docs/reports/agent-messaging.md`).
+
 ## Things that cost time, so the next person does not repeat them
 
 - **`RunController`'s default `onExit` is `process.exit`.** A test helper that did not override it

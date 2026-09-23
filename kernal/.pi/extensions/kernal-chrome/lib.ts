@@ -1,0 +1,240 @@
+/**
+ * Local Chrome companion socket. Kernal is the unix-socket client. Nothing here
+ * uses the network: a missing socket is "not running", not an HTTP call.
+ *
+ * pi 0.87 (the version kernal pins) types a tool result as (TextContent | ImageContent)[].
+ * ImageContent is { type: "image", data: base64, mimeType }, which is what the read tool returns.
+ */
+import { connect, type Socket } from "node:net";
+import { chmodSync, copyFileSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
+import { homedir } from "node:os";
+
+export const NOT_RUNNING = "The Chrome companion is not running.";
+export const NOT_SHARED = "That tab is not shared.";
+export const NOT_CONNECTED = "The Chrome extension is not connected.";
+export const NO_ANSWER = "The Chrome companion did not answer.";
+export const CAPTURE_DIR = "chrome-captures";
+
+const SOCKET_NAME = "chrome.sock";
+
+export type Share = { tabId: number; title: string; url: string; sessionId: string };
+export type HostMessage = { t?: string; error?: unknown; shares?: unknown; tabId?: unknown; title?: unknown; url?: unknown; path?: unknown };
+export type ToolText = { text: string; isError: boolean; image?: Buffer };
+
+export type CallOptions = {
+  env?: NodeJS.ProcessEnv;
+  home?: string;
+  readFile?: (file: string) => string;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+};
+
+/** Same home the host's socketPathFrom uses when Chrome did not leave an install record. */
+export function kernalHome(env: NodeJS.ProcessEnv, osHome: string): string {
+  if (typeof env.KERNAL_HOME === "string" && env.KERNAL_HOME !== "") return env.KERNAL_HOME;
+  const legacy = join(osHome, ".mgm");
+  if (typeof env.MGM_HOME === "string" && env.MGM_HOME !== "" && env.MGM_HOME !== legacy) return env.MGM_HOME;
+  return join(osHome, ".kernal");
+}
+
+/**
+ * The socket the host is listening on. The install record wins (`<home>/chrome/host/socket-path`,
+ * which install.sh writes as `<home>/chrome.sock`). Otherwise `<home>/chrome.sock`.
+ */
+export function chromeSocketPath(options: CallOptions = {}): string {
+  const env = options.env ?? process.env;
+  const osHome = options.home ?? homedir();
+  const readFile = options.readFile ?? ((file: string) => readFileSync(file, "utf8"));
+  const root = kernalHome(env, osHome);
+  try {
+    const line = String(readFile(join(root, "chrome", "host", "socket-path"))).trim();
+    if (line.startsWith("/") && basename(line) === SOCKET_NAME) return line;
+  } catch {
+    /* a checkout has no record; the socket is still <home>/chrome.sock */
+  }
+  return join(root, SOCKET_NAME);
+}
+
+export function parseTabId(value: unknown): number | null {
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0) return value;
+  if (typeof value === "string" && /^[0-9]+$/.test(value)) {
+    const n = Number(value);
+    if (Number.isSafeInteger(n) && n >= 0) return n;
+  }
+  return null;
+}
+
+function isShare(value: unknown): value is Share {
+  if (value === null || typeof value !== "object") return false;
+  const share = value as Share;
+  return Number.isInteger(share.tabId) && typeof share.title === "string" && typeof share.url === "string" && typeof share.sessionId === "string";
+}
+
+export function formatShareList(shares: Share[]): string {
+  if (shares.length === 0) return "No tabs are shared.";
+  return shares.map((share) => `tabId: ${share.tabId}\ntitle: ${share.title}\nurl: ${share.url}\nsessionId: ${share.sessionId}`).join("\n\n");
+}
+
+export function formatCapture(info: { title: string; url: string; path: string }): string {
+  return `title: ${info.title}\nurl: ${info.url}\npath: ${info.path}`;
+}
+
+export function mapHostError(error: unknown): string {
+  if (error === "tab is not shared" || error === "not_shared") return NOT_SHARED;
+  if (error === "not connected") return NOT_CONNECTED;
+  if (typeof error === "string" && error.length > 0 && error.length <= 200 && !error.includes("\n")) return error;
+  return "The Chrome companion could not capture that tab.";
+}
+
+export function thrownText(err: unknown): string {
+  const code = typeof err === "object" && err !== null && "code" in err ? String((err as { code?: unknown }).code) : "";
+  if (code === "ENOTRUNNING" || code === "ENOENT" || code === "ECONNREFUSED" || code === "ENOTSOCK") return NOT_RUNNING;
+  if (code === "ETIMEDOUT" || code === "ECLOSED" || code === "ABORT_ERR") return NO_ANSWER;
+  if (err instanceof Error && err.message === NOT_RUNNING) return NOT_RUNNING;
+  return NO_ANSWER;
+}
+
+/** pi image block. data is raw base64, not a data URL. */
+export function imageContent(bytes: Buffer): { type: "image"; data: string; mimeType: string } {
+  return { type: "image", data: bytes.toString("base64"), mimeType: "image/jpeg" };
+}
+
+export function requestHost(socketPath: string, payload: object, accept: (msg: HostMessage) => boolean, options: { timeoutMs: number; signal?: AbortSignal }): Promise<HostMessage> {
+  return new Promise((resolve, reject) => {
+    let socket: Socket | null = null;
+    let settled = false;
+    let connected = false;
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
+      fn();
+    };
+    const fail = (err: Error) => finish(() => {
+      socket?.destroy();
+      reject(err);
+    });
+    const succeed = (msg: HostMessage) => finish(() => {
+      socket?.end();
+      resolve(msg);
+    });
+    const timer = setTimeout(() => fail(Object.assign(new Error("timeout"), { code: "ETIMEDOUT" })), options.timeoutMs);
+    const onAbort = () => fail(Object.assign(new Error("aborted"), { code: "ABORT_ERR" }));
+    if (options.signal?.aborted) {
+      onAbort();
+      return;
+    }
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    let buf = "";
+    try {
+      socket = connect(socketPath);
+    } catch (err) {
+      fail(err instanceof Error ? err : new Error(String(err)));
+      return;
+    }
+    socket.on("connect", () => {
+      connected = true;
+      socket?.write(`${JSON.stringify(payload)}\n`);
+    });
+    socket.on("error", (err: NodeJS.ErrnoException) => {
+      if (!connected || err.code === "ENOENT" || err.code === "ECONNREFUSED" || err.code === "ENOTSOCK") {
+        fail(Object.assign(new Error(NOT_RUNNING), { code: "ENOTRUNNING" }));
+        return;
+      }
+      fail(err);
+    });
+    socket.on("data", (chunk) => {
+      buf += chunk.toString("utf8");
+      if (buf.length > 2 * 1024 * 1024) {
+        fail(new Error("rejected"));
+        return;
+      }
+      let nl = buf.indexOf("\n");
+      while (nl >= 0) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        nl = buf.indexOf("\n");
+        if (!line.trim()) continue;
+        let msg: HostMessage;
+        try {
+          msg = JSON.parse(line) as HostMessage;
+        } catch {
+          continue;
+        }
+        if (msg.t === "share" || msg.t === "unshare") continue;
+        if (accept(msg)) {
+          succeed(msg);
+          return;
+        }
+      }
+    });
+    socket.on("close", () => {
+      if (!settled) fail(Object.assign(new Error("closed"), { code: connected ? "ECLOSED" : "ENOTRUNNING" }));
+    });
+  });
+}
+
+export function captureFileOk(path: unknown, tabId: number): path is string {
+  return typeof path === "string" && isAbsolute(path) && basename(path) === `${tabId}.jpg`;
+}
+
+/** Copy the host jpeg into the session workspace. One file per tab. Symlinks are refused. */
+export function copyCapture(src: string, cwd: string, tabId: number): { rel: string; bytes: Buffer } | null {
+  if (!captureFileOk(src, tabId)) return null;
+  let st;
+  try {
+    st = lstatSync(src);
+  } catch {
+    return null;
+  }
+  if (!st.isFile() || st.isSymbolicLink()) return null;
+  const dest = join(cwd, CAPTURE_DIR, `${tabId}.jpg`);
+  try {
+    mkdirSync(dirname(dest), { recursive: true });
+    copyFileSync(src, dest);
+    chmodSync(dest, 0o600);
+    const rel = relative(cwd, dest);
+    if (!rel || rel.startsWith("..") || isAbsolute(rel)) return null;
+    return { rel, bytes: readFileSync(dest) };
+  } catch {
+    return null;
+  }
+}
+
+export async function browserTabs(options: CallOptions = {}): Promise<ToolText> {
+  try {
+    const msg = await requestHost(chromeSocketPath(options), { t: "list" }, (item) => item.t === "shares" || item.t === "error", {
+      timeoutMs: options.timeoutMs ?? 5000,
+      signal: options.signal,
+    });
+    if (msg.t === "error") return { text: mapHostError(msg.error), isError: true };
+    if (msg.t !== "shares" || !Array.isArray(msg.shares)) return { text: "The Chrome companion sent an unexpected reply.", isError: true };
+    return { text: formatShareList(msg.shares.filter(isShare)), isError: false };
+  } catch (err) {
+    return { text: thrownText(err), isError: true };
+  }
+}
+
+export async function browserCapture(tabIdValue: unknown, cwd: string, options: CallOptions = {}): Promise<ToolText> {
+  const tabId = parseTabId(tabIdValue);
+  if (tabId === null) return { text: NOT_SHARED, isError: true };
+  try {
+    const msg = await requestHost(chromeSocketPath(options), { t: "capture", tabId }, (item) => item.t === "captured" || item.t === "error", {
+      timeoutMs: options.timeoutMs ?? 20000,
+      signal: options.signal,
+    });
+    if (msg.t === "error") return { text: mapHostError(msg.error), isError: true };
+    if (msg.t !== "captured" || msg.tabId !== tabId || typeof msg.path !== "string") {
+      return { text: "The Chrome companion sent an unexpected reply.", isError: true };
+    }
+    const copied = copyCapture(msg.path, cwd, tabId);
+    if (!copied) return { text: "The Chrome companion did not return a capture file.", isError: true };
+    const title = typeof msg.title === "string" ? msg.title : "";
+    const url = typeof msg.url === "string" ? msg.url : "";
+    return { text: formatCapture({ title, url, path: copied.rel }), isError: false, image: copied.bytes };
+  } catch (err) {
+    return { text: thrownText(err), isError: true };
+  }
+}

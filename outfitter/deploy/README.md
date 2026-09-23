@@ -103,6 +103,16 @@ a 200. It is deliberately *not* part of the three-component one-commit rule (`ch
 it is static, talks to nothing and carries no protocol version, so it can sit at another commit
 safely. Its domain mappings (`./landing.sh --map-domains`) stay a one-time owner step.
 
+`landing.sh` does not set `--service-account`, so the service keeps running as whatever account
+created it. Today that is the project's default Compute service account, and `outfitter-deployer`
+cannot act as it (`ci-setup.sh` grants `roles/iam.serviceAccountUser` only on `outfitter-api`,
+`outfitter-agent`, and `outfitter-builder`). `release.sh` deploys the page *before* the fleet, so
+that refusal stops the whole release. It did, on `outfitter-v2026.09.23.1` (Actions run
+`35853815936`); the release was finished by hand as `mgm@mgms.eu`, which can act as that account,
+and the page is labelled `ca451ae4466d`. A later release that does not touch `landing/` skips it.
+The next `landing/` change needs the page moved onto an account the deployer can act as, or the
+workflow fails in the same place. See `docs/reports/sandbox-git.md`.
+
 ## Order of operations
 
 1. **`./baseline.sh`** — enables the required APIs, creates the `outfitter` Artifact Registry

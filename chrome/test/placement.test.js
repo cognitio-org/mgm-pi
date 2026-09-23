@@ -9,6 +9,7 @@ import {
   adjacencyMove,
   groupColor,
   groupTitle,
+  joinWindow,
   placeAction,
   splitAvailability,
   splitPlan,
@@ -56,6 +57,25 @@ test("a second place focuses when the session tab is still open", () => {
   assert.deepEqual(placeAction("own", record, true), { action: "focus", moveToShared: false });
   assert.deepEqual(placeAction("window", record, true), { action: "focus", moveToShared: false });
   assert.deepEqual(placeAction("shared", record, true), { action: "focus", moveToShared: true });
+});
+
+test("a dragged tab joins the operation window and a second place does not open another tab", () => {
+  const dragged = { windowId: 9 };
+  const home = { windowId: 3 };
+  assert.deepEqual(joinWindow("shared", dragged, 3), { open: false, windowId: 3, move: true });
+  assert.deepEqual(joinWindow("split", dragged, 3), { open: false, windowId: 3, move: true });
+  assert.deepEqual(joinWindow("shared", home, 3), { open: false, windowId: 3, move: false });
+  assert.deepEqual(joinWindow("split", home, 3), { open: false, windowId: 3, move: false });
+  assert.deepEqual(joinWindow("own", dragged, 3), { open: false, windowId: 9, move: false });
+  assert.deepEqual(joinWindow("window", dragged, 3), { open: false, windowId: 9, move: false });
+  assert.deepEqual(joinWindow("split", { windowId: 3.2 }, 3), { open: false, windowId: 3, move: true });
+  assert.deepEqual(joinWindow("split", dragged, 3.5), { open: false, windowId: null, move: true });
+  assert.deepEqual(joinWindow("shared", null, 3), { open: true, windowId: 3, move: false });
+  assert.deepEqual(joinWindow("split", null, 3), { open: true, windowId: 3, move: false });
+  const moved = { ...record, windowId: 9 };
+  assert.equal(placeAction("shared", moved, true).action, "focus");
+  assert.equal(placeAction("own", moved, true).action, "focus");
+  assert.equal(placeAction("window", moved, true).action, "focus");
 });
 
 test("a missing or dead tab opens one tab in the requested place", () => {

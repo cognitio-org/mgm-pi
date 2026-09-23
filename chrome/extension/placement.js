@@ -44,6 +44,23 @@ export function placeAction(mode, record, tabLive) {
   return { action: "open", mode };
 }
 
+/** Window a session tab must join before `tabs.group` or `createSplit`.
+ *
+ * `shared` and `split` require `targetWindowId`. Those calls reject a tab that
+ * sits in another window, so a tab the user dragged elsewhere moves into the
+ * target and still ends up beside the other Floppy. `own` and `window` keep
+ * the tab's real window. `open` is true only when `tab` is null: a live tab is
+ * focused or moved, never opened a second time. `tab` is the live `{windowId}`,
+ * or null when this session has no tab. */
+export function joinWindow(mode, tab, targetWindowId) {
+  const target = Number.isInteger(targetWindowId) ? targetWindowId : null;
+  if (tab == null) return { open: true, windowId: target, move: false };
+  const tabWindow = Number.isInteger(tab.windowId) ? tab.windowId : null;
+  if (mode !== "shared" && mode !== "split") return { open: false, windowId: tabWindow, move: false };
+  if (tabWindow !== null && tabWindow === target) return { open: false, windowId: target, move: false };
+  return { open: false, windowId: target, move: true };
+}
+
 /** Split requires createSplit to be a function. When it is not, the caller replies
  * `split_unavailable` and must not open a window, let alone two. */
 export function splitPlan(createSplitIsFunction) {

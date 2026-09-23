@@ -7,6 +7,7 @@ import {
   adjacencyMove,
   groupColor,
   groupTitle,
+  joinWindow,
   placeAction,
   splitAvailability,
   splitPlan,
@@ -151,12 +152,23 @@ async function ensureSharedGroup(windowId, tabIds) {
   return groupId;
 }
 
+/** `tabs.group` and `createSplit` reject a tab that is not in the target window. */
+async function joinRecordedTab(sessionId, tabId, mode, targetWindowId) {
+  const tab = await chrome.tabs.get(tabId);
+  const join = joinWindow(mode, tab, targetWindowId);
+  if (!join.move) return tabId;
+  await chrome.tabs.move(tabId, { windowId: join.windowId, index: -1 });
+  await remember(sessionId, tabId);
+  return tabId;
+}
+
 async function ensureSessionTab(sessionId, origin, windowId) {
   const record = await liveRecord(sessionId);
-  if (record) return record.tabId;
+  if (record) return joinRecordedTab(sessionId, record.tabId, "split", windowId);
   if (!originAllowed(origin)) throw new Error("place_failed");
   const href = `${origin}/sessions/${sessionId}`;
-  const tab = await chrome.tabs.create({ url: href, active: false, windowId });
+  const join = joinWindow("split", null, windowId);
+  const tab = await chrome.tabs.create({ url: href, active: false, windowId: join.windowId });
   if (!tab || typeof tab.id !== "number") throw new Error("place_failed");
   await remember(sessionId, tab.id);
   return tab.id;
@@ -178,6 +190,7 @@ async function performPlace(parsed) {
   if (decision.action === "focus") {
     if (decision.moveToShared) {
       const windowId = await currentWindowId();
+      await joinRecordedTab(parsed.sessionId, record.tabId, "shared", windowId);
       await ensureSharedGroup(windowId, [record.tabId]);
     }
     const tab = await remember(parsed.sessionId, record.tabId);

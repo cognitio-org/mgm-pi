@@ -20,7 +20,7 @@ import { dirname, join, parse, resolve } from "node:path";
 import { readSettings } from "../connect/settings.ts";
 import * as git from "../_shared/git.ts";
 import { attributionFrom, renderStatus, repoStatus, runAction } from "./lib.ts";
-import { githubToolsAllows, type GithubToolsMode } from "./confirm.ts";
+import { classifyGithub, gateGithub, githubConfirmFrom, githubToolsAllows, type GithubToolsMode } from "./confirm.ts";
 import { authState, findGh, installGh, kernalBin, loginCommand, missingScopes, setupGitCommand } from "./gh.ts";
 import { executeGithub, githubIssueTool, githubPrTool, githubRepoTool, handleIssuesCommand, handlePrCommand } from "./github-tools.ts";
 
@@ -128,8 +128,51 @@ const GUIDELINES = [
   "git: never revert or discard changes you did not make, and never reset a branch the user has not asked you to reset.",
 ];
 
+const CONFIRM_TIMEOUT_MS = 60_000;
+
+/** A person is at the terminal. RPC has a UI and may have nobody watching; a cloud run has no viewer yet. */
+function personHere(ctx: any): boolean {
+  if (process.env.OUTFITTER_SESSION_ID) return false;
+  return ctx?.mode === "tui";
+}
+
+function confirmPreview(tool: string, action: string, params: any): string {
+  const lines = [`${tool} ${action}`];
+  if (params?.decision) lines.push(String(params.decision));
+  if (params?.number) lines.push(`#${params.number}`);
+  const title = typeof params?.title === "string" ? params.title.trim() : "";
+  const message = typeof params?.message === "string" ? params.message.trim().split("\n")[0] : "";
+  const shown = (title || message).slice(0, 120);
+  if (shown) lines.push(shown);
+  return lines.join("\n");
+}
+
 export default function (pi: ExtensionAPI) {
   const settings = () => { try { return readSettings(); } catch { return {}; } };
+
+  /** Per-agent access first, then `github.confirm`. Undefined means the call may run. */
+  async function refuseGithub(ctx: any, tool: string, action: string, params: any): Promise<string | undefined> {
+    const mode = await agentGithubTools(ctx);
+    if (mode && !githubToolsAllows(mode, tool, action, params)) {
+      return `Refused: this agent's GitHub access is ${mode}.`;
+    }
+    const cls = classifyGithub(tool, action, params);
+    const gate = await gateGithub({
+      confirm: githubConfirmFrom(settings()),
+      cls,
+      personPresent: personHere(ctx),
+      ask: async () => {
+        const confirm = ctx?.ui?.confirm;
+        if (typeof confirm !== "function") return false;
+        try {
+          return await confirm.call(ctx.ui, `Allow this ${cls}?`, confirmPreview(tool, action, params), { timeout: CONFIRM_TIMEOUT_MS }) === true;
+        } catch {
+          return false;
+        }
+      },
+    });
+    return gate.ok ? undefined : gate.message;
+  }
 
   pi.registerTool({
     name: "git",
@@ -162,20 +205,20 @@ export default function (pi: ExtensionAPI) {
     } as any,
     execute: async (_id: string, params: any, _signal: unknown, _update: unknown, ctx: any) => {
       const action = String(params?.action ?? "");
-      const mode = await agentGithubTools(ctx);
-      if (mode && !githubToolsAllows(mode, "git", action, params)) {
-        return { content: [{ type: "text", text: `Refused: this agent's GitHub access is ${mode}.` }], isError: true };
-      }
+      const refusal = await refuseGithub(ctx, "git", action, params ?? {});
+      if (refusal) return { content: [{ type: "text", text: refusal }], isError: true };
       const res = await runAction(action, params ?? {}, { cwd: ctx?.cwd ?? process.cwd(), settings: settings(), gh: await ghNow() });
       return { content: [{ type: "text", text: res.text }], isError: res.isError };
     },
   } as any);
 
-  // No confirm gate here. A follow-up reads githubToolClass and asks before write, merge and push.
   for (const def of [githubPrTool, githubIssueTool, githubRepoTool]) {
     pi.registerTool({
       ...def,
       execute: async (_id: string, params: any, signal: AbortSignal | undefined, update: any, ctx: any) => {
+        const action = String(params?.action ?? "");
+        const refusal = await refuseGithub(ctx, def.name, action, params ?? {});
+        if (refusal) return { content: [{ type: "text", text: refusal }], isError: true };
         const res = await executeGithub(def.name, params ?? {}, {
           cwd: ctx?.cwd ?? process.cwd(), settings: settings(), gh: await ghNow(), update, signal,
         });

@@ -634,6 +634,69 @@ describe("the tool definition itself", () => {
     }
   });
 
+  test("github.confirm asks at the terminal, and a read agent cannot merge", async () => {
+    const repo = temp(newRepo());
+    const agentRoot = temp(mkdtempSync(join(tmpdir(), "kernal-confirm-")));
+    const prevDir = process.env.PI_CODING_AGENT_DIR;
+    const prevSession = process.env.OUTFITTER_SESSION_ID;
+    const prevChild = process.env.PI_SUBAGENT_CHILD;
+    process.env.PI_CODING_AGENT_DIR = agentRoot;
+    delete process.env.OUTFITTER_SESSION_ID;
+    delete process.env.PI_SUBAGENT_CHILD;
+    const writeConfirm = (confirm: string) => writeFileSync(join(agentRoot, "settings.json"), JSON.stringify({ github: { confirm } }));
+    writeConfirm("writes");
+    const { tools } = await register();
+    const gitTool = tools.find((t) => t.name === "git");
+    const pr = tools.find((t) => t.name === "github_pr");
+    const text = (res: any) => res.content[0].text as string;
+    try {
+      const readMerge = await pr.execute("1", { action: "merge", number: 1, method: "merge" }, undefined, undefined, { cwd: repo, githubTools: "read", mode: "tui" });
+      assert.match(text(readMerge), /GitHub access is read/);
+
+      const headless = await gitTool.execute("2", { action: "push" }, undefined, undefined, { cwd: repo, mode: "print" });
+      assert.equal(headless.isError, true);
+      assert.match(text(headless), /github\.confirm is "writes"/);
+
+      let asked = 0;
+      const declined = await gitTool.execute("3", { action: "push" }, undefined, undefined, {
+        cwd: repo, mode: "tui", ui: { confirm: async (title: string) => { asked++; assert.match(title, /push/); return false; } },
+      });
+      assert.equal(asked, 1);
+      assert.match(text(declined), /not confirmed/);
+
+      const status = await gitTool.execute("4", { action: "status" }, undefined, undefined, {
+        cwd: repo, mode: "tui", ui: { confirm: async () => { throw new Error("a read is not confirmed"); } },
+      });
+      assert.ok(!status.isError, text(status));
+
+      const waiting = await pr.execute("5", { action: "wait_ci", number: 1 }, undefined, undefined, {
+        cwd: repo, mode: "tui", ui: { confirm: async () => { throw new Error("wait_ci is a read"); } },
+      });
+      assert.doesNotMatch(text(waiting), /github\.confirm|not confirmed/);
+
+      process.env.OUTFITTER_SESSION_ID = "sess";
+      const cloud = await gitTool.execute("6", { action: "push" }, undefined, undefined, {
+        cwd: repo, mode: "tui", ui: { confirm: async () => true },
+      });
+      assert.match(text(cloud), /github\.confirm is "writes"/);
+      delete process.env.OUTFITTER_SESSION_ID;
+
+      writeConfirm("merge");
+      const merge = await pr.execute("7", { action: "merge", number: 1, method: "merge" }, undefined, undefined, { cwd: repo, mode: "rpc" });
+      assert.match(text(merge), /github\.confirm is "merge"/);
+      const comment = await pr.execute("8", { action: "comment", number: 1, body: "hi" }, undefined, undefined, { cwd: repo, mode: "rpc" });
+      assert.doesNotMatch(text(comment), /github\.confirm/);
+
+      writeConfirm("none");
+      const open = await gitTool.execute("9", { action: "push" }, undefined, undefined, { cwd: repo, mode: "print" });
+      assert.doesNotMatch(text(open), /github\.confirm/);
+    } finally {
+      if (prevDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = prevDir;
+      if (prevSession === undefined) delete process.env.OUTFITTER_SESSION_ID; else process.env.OUTFITTER_SESSION_ID = prevSession;
+      if (prevChild === undefined) delete process.env.PI_SUBAGENT_CHILD; else process.env.PI_SUBAGENT_CHILD = prevChild;
+    }
+  });
+
   test("/commit in a clean tree says so, and never starts a turn", async () => {
     const repo = temp(newRepo());
     const { commands } = await register();

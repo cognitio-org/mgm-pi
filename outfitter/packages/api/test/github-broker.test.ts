@@ -278,6 +278,13 @@ describe("github broker", () => {
     assert.equal(repo.data.permission, "WRITE");
     assert.deepEqual(repo.data.templates, []);
 
+    agent.send({ t: "github.request", reqId: "l1", op: "github_pr.list", args: {} });
+    const listed = await agent.nextMessage();
+    assert.equal(listed.ok, true);
+    assert.equal(listed.data.pullRequests[0].number, 7);
+    assert.equal(listed.data.pullRequests[0].sha, SHA);
+    assert.equal(listed.data.items, undefined);
+
     agent.send({ t: "bye", reason: "stop" });
     await agent.nextClose();
     app.stopBackgroundTasks();

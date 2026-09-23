@@ -555,7 +555,7 @@ export class GithubBroker {
     if (state === "closed") rows = rows.filter((row) => !row?.merged_at);
     rows = rows.slice(0, limit);
     for (const row of rows) this.rememberHead(ctx, Number(row?.number), row?.head?.sha);
-    return this.data(ctx, { items: rows.map((row) => normalizePull(row, undefined, undefined, [])) });
+    return this.data(ctx, { pullRequests: rows.map((row) => normalizePull(row, undefined, undefined, [])) });
   }
 
   private async createPr(ctx: Ctx, args: Record<string, unknown>): Promise<GithubOpResult> {
@@ -752,7 +752,7 @@ export class GithubBroker {
     });
     if (!res.ok) return { ok: false, error: res.error };
     const rows = (Array.isArray(res.data) ? res.data : []).filter((row) => !row?.pull_request).slice(0, limit);
-    return this.data(ctx, { items: rows.map(normalizeIssue) });
+    return this.data(ctx, { issues: rows.map(normalizeIssue) });
   }
 
   private async viewIssue(ctx: Ctx, args: Record<string, unknown>): Promise<GithubOpResult> {
@@ -912,7 +912,7 @@ export class GithubBroker {
     if (!res.ok) return { ok: false, error: res.error };
     const rows = Array.isArray(res.data) ? res.data : [];
     return this.data(ctx, {
-      items: rows.map((rel) => obj({
+      releases: rows.map((rel) => obj({
         tagName: String(rel?.tag_name ?? ""),
         name: String(rel?.name ?? rel?.tag_name ?? ""),
         publishedAt: rel?.published_at ? String(rel.published_at) : undefined,

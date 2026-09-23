@@ -37,9 +37,12 @@ import {
   sessionForMenuClick,
   sessionIdFromPortName,
   sessionSummaries,
+  shareAllowedAfterPermission,
   shareOwnerEmail,
   sharePath,
+  sharePermissionOrigins,
   shareRecord,
+  shareWhenTabGone,
   skipsNotification,
   tabCaptureBlock,
   tabPageUrl,
@@ -186,6 +189,60 @@ test("origin permission is that tab's http(s) origin and nothing broader", () =>
   assert.equal(originPermission("file:///tmp/a"), null);
   assert.equal(originPermission("https://user:pass@example.com/"), null);
   assert.equal(originPermission(""), null);
+});
+
+test("the origins we must request are the tab origin and the link origin", () => {
+  assert.deepEqual(
+    sharePermissionOrigins("https://docs.example/guide", "https://link.example.com"),
+    ["https://docs.example/*", "https://link.example.com/*"],
+  );
+  assert.deepEqual(
+    sharePermissionOrigins("https://link.example.com/already", "https://link.example.com"),
+    ["https://link.example.com/*"],
+  );
+  assert.deepEqual(sharePermissionOrigins("chrome://newtab/", "https://link.example.com"), [
+    "https://link.example.com/*",
+  ]);
+  assert.deepEqual(sharePermissionOrigins("https://docs.example/guide", ""), ["https://docs.example/*"]);
+  assert.deepEqual(shareAllowedAfterPermission({ linkGranted: false, tabGranted: true }), {
+    ok: false,
+    error: "link_permission_denied",
+  });
+  assert.deepEqual(shareAllowedAfterPermission({ linkGranted: true, tabGranted: false }), {
+    ok: true,
+    permission: "denied",
+  });
+  assert.deepEqual(shareAllowedAfterPermission({ linkGranted: true, tabGranted: true }), {
+    ok: true,
+    permission: "granted",
+  });
+  const options = read("../extension/options.js");
+  const submit = options.slice(options.indexOf('form.addEventListener("submit"'));
+  const requestAt = submit.indexOf("permissions.request");
+  const setAt = submit.indexOf("chrome.storage.local.set");
+  assert.ok(requestAt !== -1 && setAt !== -1 && requestAt < setAt);
+  assert.match(submit, /origins: \[linkPattern\]/);
+  const worker = read("../extension/background.js");
+  assert.match(worker, /sharePermissionOrigins\(/);
+  assert.match(worker, /shareAllowedAfterPermission\(/);
+});
+
+test("tab gone before record => do not keep a server share", () => {
+  assert.equal(shareWhenTabGone({ tabGone: true, putDone: false, recordStored: false }), "skip");
+  assert.equal(shareWhenTabGone({ tabGone: true, putDone: true, recordStored: false }), "delete_server_share");
+  assert.equal(shareWhenTabGone({ tabGone: true, putDone: true, recordStored: true }), "leave_for_on_removed");
+  assert.equal(shareWhenTabGone({ tabGone: false, putDone: true, recordStored: false }), "proceed");
+  const source = read("../extension/background.js");
+  const start = source.indexOf("async function commitShare");
+  const end = source.indexOf("async function revokeSessionNow");
+  assert.ok(start !== -1 && end > start);
+  const commit = source.slice(start, end);
+  assert.match(commit, /liveTab\(tabId\)/);
+  assert.match(commit, /delete_server_share/);
+  assert.match(commit, /dropUnrecordedServerShare\(/);
+  const putAt = commit.indexOf('method: "PUT"');
+  const writeAt = commit.indexOf("writeShares(next)");
+  assert.ok(putAt !== -1 && writeAt !== -1 && putAt < writeAt);
 });
 
 test("a missing or discarded tab is not captured", () => {

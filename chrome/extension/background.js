@@ -60,9 +60,12 @@ import {
   sessionIdFromPortName,
   sessionPath,
   sessionSummaries,
+  shareAllowedAfterPermission,
   shareOwnerEmail,
   sharePath,
+  sharePermissionOrigins,
   shareRecord,
+  shareWhenTabGone,
   skipsNotification,
   tabCaptureBlock,
   tabPageUrl,
@@ -401,6 +404,55 @@ chrome.tabs.onAttached.addListener((tabId, info) => {
 const TOKEN_KEY = "OUTFITTER_TOKEN";
 const ORIGIN_KEY = "OUTFITTER_API";
 
+let cachedLinkOrigin = null;
+let linkOriginKnown = false;
+let linkOriginEpoch = 0;
+
+function markLinkOrigin(value) {
+  cachedLinkOrigin = typeof value === "string" ? linkOrigin(value) : null;
+  linkOriginKnown = true;
+}
+
+// A save that lands while this read is in flight must not be overwritten by the stale result.
+const linkOriginReady = chrome.storage.local.get(ORIGIN_KEY).then(
+  (stored) => {
+    if (linkOriginEpoch === 0) markLinkOrigin(stored[ORIGIN_KEY]);
+  },
+  () => {
+    if (linkOriginEpoch === 0) linkOriginKnown = true;
+  },
+);
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !Object.hasOwn(changes, ORIGIN_KEY)) return;
+  linkOriginEpoch += 1;
+  markLinkOrigin(changes[ORIGIN_KEY].newValue);
+});
+
+function requestOrigins(origins) {
+  if (!Array.isArray(origins) || origins.length === 0) return Promise.resolve(false);
+  return chrome.permissions.request({ origins }).then((granted) => granted === true).catch(() => false);
+}
+
+function requestLinkOriginNow() {
+  if (linkOriginKnown) return requestOrigins(sharePermissionOrigins("", cachedLinkOrigin));
+  return linkOriginReady.then(() => requestOrigins(sharePermissionOrigins("", cachedLinkOrigin)));
+}
+
+function requestTabOriginNow(tab) {
+  return requestOrigins(sharePermissionOrigins(tab ? tabPageUrl(tab) : "", ""));
+}
+
+// Click turn. One prompt covers the tab origin and the cached link origin.
+// The cache is filled at startup; until then the tab origin is still requested in this turn.
+function beginSharePermission(tab) {
+  const tabUrl = tab ? tabPageUrl(tab) : "";
+  if (linkOriginKnown) return requestOrigins(sharePermissionOrigins(tabUrl, cachedLinkOrigin));
+  const tabNow = requestTabOriginNow(tab);
+  const linkLater = requestLinkOriginNow();
+  return Promise.all([tabNow, linkLater]).then(() => false);
+}
+
 let shareTail = Promise.resolve();
 const inflight = new Map();
 const notified = new Set();
@@ -571,6 +623,25 @@ async function getTab(tabId) {
     return await chrome.tabs.get(tabId);
   } catch {
     return null;
+  }
+}
+
+async function liveTab(tabId) {
+  if (closedTabs.has(tabId)) return null;
+  const tab = await getTab(tabId);
+  if (tab === null || closedTabs.has(tabId)) return null;
+  return tab;
+}
+
+async function linkOriginAccess() {
+  const auth = await linkAuth();
+  if (!auth) return "no_dongle";
+  const pattern = originPermission(auth.origin);
+  if (!pattern) return "no_dongle";
+  try {
+    return (await chrome.permissions.contains({ origins: [pattern] })) ? "granted" : "denied";
+  } catch {
+    return "denied";
   }
 }
 
@@ -875,25 +946,63 @@ async function pollShares(onlySessionId) {
   }
 }
 
-async function commitShare(sessionId, tab, permission) {
+async function dropUnrecordedServerShare(sessionId, previous, tabId) {
+  await linkFetch(sharePath(sessionId), { method: "DELETE" });
+  // DELETE clears the session. Put back a different tab that already has a local record.
+  if (!previous || previous.tabId === tabId) return;
+  const prev = await liveTab(previous.tabId);
+  if (!prev) return;
+  await linkFetch(sharePath(sessionId), {
+    method: "PUT",
+    body: {
+      tabTitle: typeof prev.title === "string" ? prev.title : "",
+      tabUrl: tabPageUrl(prev),
+    },
+  });
+}
+
+async function commitShare(sessionId, tab) {
+  const tabId = tab && Number.isInteger(tab.id) ? tab.id : null;
+  if (tabId === null) return { ok: false, error: "tab_gone" };
+  const access = await linkOriginAccess();
+  if (access === "no_dongle") return { ok: false, error: "no_dongle" };
+  const gate = shareAllowedAfterPermission({ linkGranted: access === "granted", tabGranted: false });
+  if (!gate.ok) return gate;
+
+  const map = await readShares();
+  const previous = map[sessionId] ?? null;
+  const live = await liveTab(tabId);
+  if (shareWhenTabGone({ tabGone: live === null, putDone: false, recordStored: false }) === "skip") {
+    return { ok: false, error: "tab_gone" };
+  }
   const record = shareRecord({
-    tabId: tab.id,
+    tabId: live.id,
     sessionId,
-    windowId: typeof tab.windowId === "number" ? tab.windowId : NaN,
+    windowId: typeof live.windowId === "number" ? live.windowId : NaN,
   });
   if (!record) return { ok: false, error: "share_failed" };
-  const title = typeof tab.title === "string" ? tab.title : "";
-  const url = tabPageUrl(tab);
-  const map = await readShares();
-  const previous = map[sessionId];
-  const next = upsertShare(map, record);
-  await writeShares(next);
+  const title = typeof live.title === "string" ? live.title : "";
+  const url = tabPageUrl(live);
   const put = await linkFetch(sharePath(sessionId), { method: "PUT", body: { tabTitle: title, tabUrl: url } });
   if (!put.ok) {
-    await writeShares(map);
     if (put.error === "no_dongle") return { ok: false, error: "no_dongle" };
     if (put.status === 409) return { ok: false, error: "share_conflict" };
     return { ok: false, error: "share_failed" };
+  }
+  const afterPut = await liveTab(tabId);
+  if (shareWhenTabGone({ tabGone: afterPut === null, putDone: true, recordStored: false }) === "delete_server_share") {
+    await dropUnrecordedServerShare(sessionId, previous, tabId);
+    return { ok: false, error: "tab_gone" };
+  }
+  const next = upsertShare(map, record);
+  try {
+    await writeShares(next);
+  } catch {
+    await dropUnrecordedServerShare(sessionId, previous, tabId);
+    return { ok: false, error: "share_failed" };
+  }
+  if (shareWhenTabGone({ tabGone: (await liveTab(tabId)) === null, putDone: true, recordStored: true }) === "leave_for_on_removed") {
+    return { ok: false, error: "tab_gone" };
   }
   await chrome.storage.local.set({ [LINKED_SESSION_KEY]: sessionId });
   if (previous && previous.tabId !== record.tabId && !tabStillShared(previous.tabId, next)) {
@@ -901,7 +1010,16 @@ async function commitShare(sessionId, tab, permission) {
   }
   postNative(nativeShareMessage({ tabId: record.tabId, title, url, sessionId }));
   await ensureAlarm(next);
-  return { ok: true, permission: permission === "granted" ? "granted" : "denied" };
+  const tabPattern = originPermission(url);
+  let tabGranted = false;
+  if (tabPattern) {
+    try {
+      tabGranted = await chrome.permissions.contains({ origins: [tabPattern] });
+    } catch {
+      tabGranted = false;
+    }
+  }
+  return shareAllowedAfterPermission({ linkGranted: true, tabGranted });
 }
 
 async function revokeSessionNow(sessionId) {
@@ -987,6 +1105,19 @@ async function showNeedFloppy() {
   }
 }
 
+async function showLinkPermissionDenied() {
+  try {
+    await chrome.notifications.create("link-permission", {
+      type: "basic",
+      iconUrl: chrome.runtime.getURL("icon.png"),
+      title: "Kernal",
+      message: "Chrome did not allow the link origin. The share was not saved.",
+    });
+  } catch {
+    // The click still did not store a share.
+  }
+}
+
 async function installMenu() {
   await chrome.contextMenus.removeAll();
   await chrome.contextMenus.create({
@@ -1066,18 +1197,19 @@ async function bootShare() {
 }
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
-  const pattern = originPermission(tabPageUrl(tab));
-  // Called in the click turn so the user gesture can grant this origin. Denial still shares.
-  const grant = pattern ? chrome.permissions.request({ origins: [pattern] }).catch(() => false) : Promise.resolve(false);
+  // Click turn: request the tab origin and the link origin while this gesture counts.
+  const grant = beginSharePermission(tab);
   enqueueShare(async () => {
-    const granted = await grant;
+    await grant;
     const sessionId = await resolveMenuSession(info.menuItemId);
     if (!sessionId) {
-      await showNeedFloppy();
+      if ((await linkOriginAccess()) === "denied") await showLinkPermissionDenied();
+      else await showNeedFloppy();
       return;
     }
     if (!tab || typeof tab.id !== "number") return;
-    await commitShare(sessionId, tab, granted ? "granted" : "denied");
+    const result = await commitShare(sessionId, tab);
+    if (result && result.error === "link_permission_denied") await showLinkPermissionDenied();
   }).catch(() => {});
 });
 
@@ -1097,24 +1229,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch(() => sendResponse({ ok: false, error: "share_failed" }));
     return true;
   }
+  // This message is the panel click. Request the link origin before tabs.query yields.
+  const linkGrant = requestLinkOriginNow();
   chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
     const active = Array.isArray(tabs) ? tabs[0] : undefined;
     if (!active || typeof active.id !== "number") {
       sendResponse({ ok: false, error: "tab_gone" });
       return;
     }
-    const pattern = originPermission(tabPageUrl(active));
-    const finish = (granted) => {
-      enqueueShare(() => commitShare(parsed.sessionId, active, granted ? "granted" : "denied"))
-        .then((result) => sendResponse(result))
-        .catch(() => sendResponse({ ok: false, error: "share_failed" }));
-    };
-    if (!pattern) {
-      finish(false);
-      return;
-    }
-    // Same click as the panel button. Request this origin before any network call.
-    chrome.permissions.request({ origins: [pattern] }, (granted) => finish(granted === true));
+    const tabGrant = requestTabOriginNow(active);
+    enqueueShare(async () => {
+      await linkGrant;
+      await tabGrant;
+      const result = await commitShare(parsed.sessionId, active);
+      if (result && result.error === "link_permission_denied") await showLinkPermissionDenied();
+      return result;
+    })
+      .then((result) => sendResponse(result))
+      .catch(() => sendResponse({ ok: false, error: "share_failed" }));
   });
   return true;
 });

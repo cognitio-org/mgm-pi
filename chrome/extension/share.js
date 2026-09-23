@@ -134,6 +134,39 @@ export function originPermission(url) {
   return `${parsed.origin}/*`;
 }
 
+/**
+ * Origins a share gesture must pass to permissions.request: the tab origin and the link origin.
+ * The tab origin is for captureVisibleTab. The link origin is for extension-worker fetch.
+ * The same origin is listed once. optional_host_permissions stays http and https wildcards,
+ * not <all_urls>, so either pattern can be granted on its own.
+ */
+export function sharePermissionOrigins(tabUrl, apiOrigin) {
+  const origins = [];
+  const tabPattern = originPermission(tabUrl);
+  const linkPattern = originPermission(typeof apiOrigin === "string" ? apiOrigin : "");
+  if (tabPattern) origins.push(tabPattern);
+  if (linkPattern && !origins.includes(linkPattern)) origins.push(linkPattern);
+  return origins;
+}
+
+/** Link-origin denial blocks the share. Tab-origin denial does not. */
+export function shareAllowedAfterPermission({ linkGranted, tabGranted }) {
+  if (linkGranted !== true) return { ok: false, error: "link_permission_denied" };
+  return { ok: true, permission: tabGranted === true ? "granted" : "denied" };
+}
+
+/**
+ * The tab closed before tabs.onRemoved could see a share record.
+ * Nothing has been PUT: do not PUT. PUT already happened: do not keep that server share.
+ * A stored record is left for onRemoved.
+ */
+export function shareWhenTabGone({ tabGone, putDone, recordStored }) {
+  if (tabGone !== true) return "proceed";
+  if (recordStored === true) return "leave_for_on_removed";
+  if (putDone === true) return "delete_server_share";
+  return "skip";
+}
+
 /** Missing or discarded: do not activate it and do not capture some other tab. */
 export function tabCaptureBlock(tab) {
   if (tab === null || typeof tab !== "object") return "tab_gone";

@@ -4,6 +4,7 @@
 // as "saved", not echoed back.
 
 import { isDongle, linkOrigin } from "./protocol.js";
+import { originPermission } from "./share.js";
 
 const TOKEN_KEY = "OUTFITTER_TOKEN";
 const ORIGIN_KEY = "OUTFITTER_API";
@@ -47,6 +48,12 @@ form.addEventListener("submit", async (event) => {
     status.textContent = "Link origin must be an http(s) URL.";
     return;
   }
+  const linkPattern = origin === "" ? null : originPermission(origin);
+  // This submit is the user gesture. Request the link origin before any await.
+  const grant =
+    linkPattern === null
+      ? Promise.resolve(true)
+      : chrome.permissions.request({ origins: [linkPattern] }).then((granted) => granted === true).catch(() => false);
   try {
     const writes = {};
     if (typed !== "") writes[TOKEN_KEY] = typed;
@@ -60,6 +67,11 @@ form.addEventListener("submit", async (event) => {
     }
     originInput.value = origin;
     saySaved();
+    const granted = await grant;
+    if (linkPattern !== null && granted !== true) {
+      status.textContent = "Chrome did not allow the link origin. A share cannot reach the Floppy until you allow it.";
+      return;
+    }
     status.textContent = "Saved.";
   } catch {
     status.textContent = "Could not save.";

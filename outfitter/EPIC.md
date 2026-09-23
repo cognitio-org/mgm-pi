@@ -462,9 +462,43 @@ research on Sonnet; review on Opus).
 
 - **E5.1 Gurus as YAML**: schema, validation, `outfitter gurus apply`, repo-local
   `.outfitter/gurus/*.yaml` discovered at run start.
-- **E5.2 Delegation tool**: kernal extension `outfitter_delegate` available only in cloud runs; creates a
-  child session (same repo, worktree branch `outfitter/<child>`), waits, returns the child's final
-  message and diff summary; parent transcript records a `custom` entry with the child id.
+- **E5.2 Delegation tool** — designed 2026-09-23, **not built**; the notes below are the handover, so
+  whoever picks it up doesn't re-derive them. Builds on E5.5's mailbox: no new transport is needed.
+  - **`outfitter_delegate(prompt, guru?, name?)`**, a kernal extension tool in cloud runs only. Like
+    `outfitter_send`, it is a pi `custom` entry (`outfitter.delegate`) riding the existing entry
+    stream, so it needs no request/response channel and dedupes by entry id. The API creates the
+    child session with `parentId` set (the field already exists and is surfaced in `GET
+    /api/sessions` and the JSONL header), the parent's guru unless another is named, and for a
+    coding session branch `outfitter/<child>` based on the parent's branch.
+  - **Asynchronous, deviating from this entry's original "waits, returns the child's final
+    message"** (decision 2026-09-23). The tool returns the child's id at once and the result arrives
+    as mail. Blocking would hold the parent's sandbox open — and billed — for the child's whole run,
+    against the scale-to-zero model, and would sit in one pi RPC call for possibly tens of minutes.
+  - **Completion, three layers** (all server-side except the optional tool; the signal E5.6 needs
+    for "a step finished, with its result", so build it here rather than twice):
+    1. The child's `agent_settled` event (pi: "no automatic retry, compaction retry, or queued
+       continuation remains") → mail the parent the child's final message plus a diff summary
+       (files changed from the child's still-live socket via `agentLink.request({t:"diff"})`,
+       falling back to the checkpoint's branch/head). **Do not** use run state `idle`: agentd
+       enters idle right after pi spawns, before any prompt (`run.ts`'s `begin`), so a fresh child
+       looks "done" within seconds.
+    2. The child's run reaching `failed`/`stopped` without having reported → mail the parent the
+       reason. Covers a mid-turn crash, a wake that never succeeds, `held` mail on a deploy
+       mismatch, and the 4409 version refusal.
+    3. A `deadlineAt` per delegation (start at 60 min), swept by the existing `/api/hooks/tick` →
+       mail the parent when nothing has been reported by then. Covers a settle lost to a dropped
+       socket or an API restart, and a child that asks a question instead of finishing (it stays
+       unsettled, so layer 1 never fires).
+    - Optional `outfitter_done(summary)` the child may call: better summaries when it does, layer 1
+      still correct when it doesn't. Correctness must not depend on the model remembering it.
+  - **`outfitter_peers()`** (deferred here from E5.5): answer from a relations snapshot carried in
+    `run.spec` (parent, children with name and status), refreshed at each wake — no new pi→API
+    channel. Stale within a long run, which is acceptable because ids also arrive in messages.
+  - **Limits**: depth cap (a child may delegate, a grandchild may not), a per-session child cap, and
+    a hop counter on mail — the security review's E5.5 ask, and what would stop two agents volleying
+    (the 2026-09-23 smoke test ended only because one side chose not to reply again). Fleet-wide
+    caps stay E5.3.
+  - **Deferred to E5.6**: retrying a failed child, partial-progress reporting, cancellation trees.
 - **E5.3 Fleet limits and budgets**: max concurrent runs per guru and globally; LiteLLM budget per
   guru; refuse wake when exceeded, surface in UI.
 - **E5.4 Shared memory**: reuse `pi-memory` with its directory backed by a GCS bucket mounted read-write
@@ -507,6 +541,12 @@ research on Sonnet; review on Opus).
     dedupe. Its slot stays E7's socket replacement.
   - Rollout: deploy agentd image and API together. A run on an older agentd ignores `mail` frames,
     so its mail is retried up to 5 attempts and then stops.
+  - **Verified live 2026-09-23**: two repo-less sessions on `litellm/gpt-5-nano` via app.kernal.one.
+    B's `outfitter_send` woke sleeping A, A replied with `outfitter_send`, B received it; the nonce
+    fence and the "another agent wrote this" header rendered as intended on both sides. ~$0.003,
+    cold start 2–3 min. Note for E5.2's hop limit: B then relayed the reply onward, and the exchange
+    stopped only because A chose not to answer again — nothing structural ends a volley except the
+    30-sends-per-hour cap.
 - **E5.6 Durable workflows** (multi-step, multi-agent: plan → fan out → gather → next; survives API
   restarts; same store and transport as E5.5, additive not a rewrite). Hand-rolled on Mongo: no engine
   runs on Mongo as its sole store (DBOS/Hatchet/pg-boss are Postgres; Restate/Inngest/Trigger.dev are

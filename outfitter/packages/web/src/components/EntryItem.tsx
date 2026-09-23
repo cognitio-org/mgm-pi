@@ -155,7 +155,7 @@ function BrowserCapture({
         />
       ) : null}
       {failure ? (
-        <span className="entry-failed-note" role="alert">
+        <span className="entry-failed-note">
           {failure.headline}
           {failure.message ? ` — ${failure.message}` : ""}
         </span>

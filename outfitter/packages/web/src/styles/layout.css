@@ -386,7 +386,17 @@
   font-family: var(--font-mono);
 }
 
-/* The capture jpeg uses the same custom entry; keep it inside the transcript column. */
+/* Flex items default to min-width:auto, so a wide jpeg becomes the column's min
+ * content size and max-width:100% never shrinks it. */
+.session-view > .panel {
+  min-width: 0;
+}
+
+.entry.custom {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .entry.custom img {
   display: block;
   max-width: 100%;

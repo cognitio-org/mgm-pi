@@ -1,0 +1,24 @@
+chrome/host/kernal-chrome-host.mjs
+  h_69b863911ebf05 4-5,10,14-27,34-37,53-145,149-168,208-214,217-229,287-290
+chrome/host/protocol.js
+  h_69b863911ebf05 5-6,48-79,81,83-94,98-99,103,105-149,151-192
+chrome/test/host.test.js
+  h_69b863911ebf05 5,11-13,15,25-28,67-112,241-252,265-266,271-314,317-335,337-345,347-373,375
+kernal/.pi/extensions/kernal-chrome/index.ts
+  h_69b863911ebf05 1-59
+kernal/.pi/extensions/kernal-chrome/lib.ts
+  h_69b863911ebf05 1-240
+kernal/tests/chrome.test.ts
+  h_69b863911ebf05 1-230
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "f948d1b98345ce95923390d9273b933cd66fff02",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

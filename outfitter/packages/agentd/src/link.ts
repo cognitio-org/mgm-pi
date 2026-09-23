@@ -79,6 +79,7 @@ export class Link {
   private attempt = 0;
   private closed = false;
   private handlers: LinkHandler[] = [];
+  private openHandlers: Array<() => void> = [];
   private terminalHandlers: TerminalHandler[] = [];
   private closeHandlers: CloseHandler[] = [];
   private unspecTimeoutHandlers: UnspecTimeoutHandler[] = [];
@@ -117,6 +118,11 @@ export class Link {
 
   onMessage(handler: LinkHandler): void {
     this.handlers.push(handler);
+  }
+
+  /** The WebSocket opened (initial connect and every reconnect), after `hello` is queued. */
+  onOpen(handler: () => void): void {
+    this.openHandlers.push(handler);
   }
 
   /** Invoked when the server closes the socket with a code in `TERMINAL_CLOSE_CODES` -- there's
@@ -168,8 +174,10 @@ export class Link {
     return seq;
   }
 
-  /** Sends a frame that carries no seq (status, spend, checkpoint, heartbeat, bye) -- not buffered,
-   * since replay-on-reconnect only applies to the seq-numbered entry/event stream. */
+  /** Sends a frame that carries no seq (status, spend, checkpoint, heartbeat, bye, github.request)
+   * -- not buffered, since replay-on-reconnect only applies to the seq-numbered entry/event stream.
+   * A dropped link does not resend `github.request`; the broker socket fails that reqId (a read
+   * may be sent once more by the socket, never by this buffer). */
   send(msg: UpMessage): void {
     this.transmit(msg);
   }
@@ -253,6 +261,7 @@ export class Link {
       for (const msg of this.pending) this.transmit(msg);
       this.armConnectionAgeTimer();
       this.armStableTimer();
+      for (const h of this.openHandlers) h();
     });
 
     ws.on("message", (data: WebSocket.RawData) => {

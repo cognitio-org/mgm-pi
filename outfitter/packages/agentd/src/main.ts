@@ -4,6 +4,7 @@
  * auth token, opens the link to the api, and lets RunController drive the state machine once
  * `run.spec` arrives. See outfitter/docs/protocol.md.
  */
+import { existsSync } from "node:fs";
 import { chown } from "node:fs/promises";
 import { getIdToken } from "./auth.js";
 import { BROWSER_CAPTURE_MAX_BYTES, captureDownloadError } from "./browser-capture.js";
@@ -18,6 +19,15 @@ import { preloadSessionManager } from "./session.js";
 const AGENTD_VERSION = "0.1.0";
 const DEFAULT_WORKSPACE = "/workspace";
 const DEFAULT_PI_BIN = "/opt/kernal/node_modules/.bin/pi";
+
+/** `$OUTFITTER_GITHUB_SOCKET`, or `/run/outfitter/github.sock` when the image created that
+ * directory. Local dev has neither the variable nor the directory: no broker socket. */
+function githubSocketPath(): string | undefined {
+  const configured = process.env.OUTFITTER_GITHUB_SOCKET;
+  if (configured) return configured;
+  if (existsSync("/run/outfitter")) return "/run/outfitter/github.sock";
+  return undefined;
+}
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -149,6 +159,7 @@ async function main(): Promise<void> {
       return bytes;
     },
     startupPhases: true,
+    githubSocketPath: githubSocketPath(),
   });
 
   controller.onStateChange((state) => logger.info("state change", { state }));

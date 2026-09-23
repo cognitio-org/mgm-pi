@@ -3,7 +3,7 @@
  * checkpointing -> stopping`. Wires together git, session import, the pi RPC process and the link,
  * and handles every down-message in protocol.md (`run.spec`, `ack`, `prompt`, `steer`, `follow_up`,
  * `abort`, `ui_response`, `rpc`, `checkpoint`, `diff`, `read`, `stop`, `browser.capture.entry`,
- * `browser.capture.result`).
+ * `browser.capture.result`, `github.result`).
  */
 import { mkdir, readFile, open as openFile, chown } from "node:fs/promises";
 import { resolve, sep } from "node:path";
@@ -11,6 +11,8 @@ import { CaptureListener } from "./browser-capture.js";
 import { renderGuru } from "./guru.js";
 import { attributionTrailers, authHeaderSecret, botIdentityEnv, sanitizeAuthor, type GitOps } from "./git.js";
 import { githubRepoHttps, gitProxyInsteadOfEnv, parseGithubCloneUrl, startGitProxy, type GitProxy } from "./git-proxy.js";
+import { listenGithubSocket, type GithubSocket } from "./github-socket.js";
+import { createAsyncLock } from "./lock.js";
 import { spawnPi, SessionTailer, SpendTailer, validateSpendLine, type PiProcess, type SpendLogLine } from "./pi.js";
 import { importSession, writeSnapshotFile, emptySessionJsonl, lastKnownModelState } from "./session.js";
 import { StartupPhases } from "./startup-phases.js";
@@ -66,6 +68,9 @@ export interface LinkPort {
   /** Optional: Link implements this to flush the final `bye` before the process exits (see
    * Link.sendAndFlush). Falls back to a plain `send` when a test double doesn't provide it. */
   sendAndFlush?(msg: UpMessage): Promise<void>;
+  /** The API WebSocket opened or dropped. The GitHub broker uses these; seq replay does not. */
+  onOpen?(handler: () => void): void;
+  onClose?(handler: () => void): void;
 }
 
 export type SpawnPiFn = typeof spawnPi;
@@ -144,6 +149,8 @@ export interface RunControllerDeps {
    * `run.spec` to the first answer, and pi is sent one readiness probe right after it is spawned.
    * main.ts turns it on; tests leave it off so pi sees only the commands they send. */
   startupPhases?: boolean;
+  /** Unix socket for GitHub API calls (`$OUTFITTER_GITHUB_SOCKET`). Unset: no socket, nothing pinned. */
+  githubSocketPath?: string;
 }
 
 export type StateChangeHandler = (state: RunState, detail?: string) => void;
@@ -152,6 +159,13 @@ const MAIL_RESPONSE_TIMEOUT_MS = 30_000;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function codeOf(err: unknown): string {
+  if (err && typeof err === "object" && "code" in err && typeof (err as { code?: unknown }).code === "string") {
+    return (err as { code: string }).code;
+  }
+  return "error";
 }
 
 /** Renders an untrusted, already-parsed spend-line value for a WARNING log without ever throwing
@@ -224,6 +238,12 @@ export class RunController {
   private startup: StartupPhases | undefined;
   /** Localhost git smart-HTTP proxy for this run, if it has a GitHub repo and token. */
   private gitProxy: GitProxy | undefined;
+  /** Broker socket for GitHub API calls. Network git does not use it. */
+  private githubSocket: GithubSocket | undefined;
+  /** True once the API link has opened, false after it drops, until the next open. */
+  private apiLinkUp = true;
+  /** Serializes git-proxy forwards with the phase-0 checkpoint push. */
+  private readonly networkGitLock = createAsyncLock();
   private readonly now: () => number;
   private readonly onExit: (code: number) => void;
   private readonly onLog: (line: string) => void;
@@ -237,6 +257,14 @@ export class RunController {
     this.heartbeatIntervalMs = deps.heartbeatIntervalMs ?? 15_000;
     this.sigtermBudgetMs = deps.sigtermBudgetMs ?? 8_000;
     this.deps.link.onMessage((msg) => this.handleDown(msg));
+    this.deps.link.onOpen?.(() => {
+      this.apiLinkUp = true;
+      this.githubSocket?.onLinkUp();
+    });
+    this.deps.link.onClose?.(() => {
+      this.apiLinkUp = false;
+      this.githubSocket?.onLinkDown();
+    });
   }
 
   onStateChange(handler: StateChangeHandler): void {
@@ -258,6 +286,7 @@ export class RunController {
     this.pi?.kill();
     void this.stopGitProxy();
     void this.stopCaptureListener();
+    void this.stopGithubSocket();
   }
 
   private setState(state: RunState, detail?: string): void {
@@ -313,6 +342,9 @@ export class RunController {
       case "browser.capture.result":
         // The tool is waiting on the loopback listener. No seq: the transcript row is the entry frame.
         this.captureListener?.deliver(msg);
+        return;
+      case "github.result":
+        this.githubSocket?.deliver(msg);
         return;
     }
   }
@@ -525,6 +557,12 @@ export class RunController {
       secretEnv.OUTFITTER_BROWSER_PORT = String(listener.port);
       secretEnv.OUTFITTER_BROWSER_TOKEN = listener.token;
     }
+    // Same pin as OUTFITTER_SESSION_ID: after guru.env, so a guru cannot point the broker
+    // socket somewhere else. The token is not part of this overlay.
+    if (this.deps.githubSocketPath) {
+      secretEnv.OUTFITTER_GITHUB_SOCKET = this.deps.githubSocketPath;
+      await this.startGithubSocket(this.deps.githubSocketPath);
+    }
     // pi runs as the unprivileged agent user but would otherwise inherit root's HOME from agentd's
     // environment; the first extension to touch ~/.pi then dies with EACCES on /root (every run of
     // the first benchmark). Point the child at that user's own home.
@@ -592,6 +630,7 @@ export class RunController {
       token,
       allowedRefs: allowed,
       log: (line) => this.onLog(line),
+      lock: this.networkGitLock,
     });
     return gitProxyInsteadOfEnv(this.gitProxy.url, githubRepoHttps(parsed.owner, parsed.repo));
   }
@@ -604,6 +643,38 @@ export class RunController {
       await proxy.close();
     } catch (err) {
       this.onLog(`git proxy stop failed: ${err instanceof Error ? err.name : "Error"}`);
+    }
+  }
+
+  private async startGithubSocket(path: string): Promise<void> {
+    try {
+      await listenGithubSocket({
+        path,
+        group: this.deps.runAsUser?.gid,
+        linkOpen: this.apiLinkUp,
+        log: (line) => this.onLog(line),
+        send: (msg) => this.deps.link.send(msg),
+        // Synchronous, before listen: a link drop while chmod is in flight still finds the broker.
+        // Connections are paused until after chmod, so nothing is read before that.
+        attach: (socket) => {
+          this.githubSocket = socket;
+          if (!this.apiLinkUp) socket.onLinkDown();
+        },
+      });
+    } catch (err) {
+      this.githubSocket = undefined;
+      this.onLog(`github socket listen failed: ${codeOf(err)}`);
+    }
+  }
+
+  private async stopGithubSocket(): Promise<void> {
+    const socket = this.githubSocket;
+    this.githubSocket = undefined;
+    if (!socket) return;
+    try {
+      await socket.close();
+    } catch (err) {
+      this.onLog(`github socket stop failed: ${codeOf(err)}`);
     }
   }
 
@@ -730,6 +801,7 @@ export class RunController {
   private async bye(reason: ByeReason, message?: string): Promise<void> {
     await this.stopGitProxy();
     await this.stopCaptureListener();
+    await this.stopGithubSocket();
     const msg = { t: "bye" as const, reason, message };
     if (this.deps.link.sendAndFlush) {
       await Promise.race([this.deps.link.sendAndFlush(msg), delay(1000)]);
@@ -881,11 +953,15 @@ export class RunController {
     );
     // Push whenever HEAD differs from what origin has for the session branch -- including commits
     // the agent made itself, for which commitAll finds nothing left to commit.
-    const { head, pushed } = await this.deps.gitOps.push(this.deps.workspace, {
-      remoteUrl: this.spec.repo.cloneUrl,
-      branch: this.spec.repo.branch,
-      githubToken: this.spec.secrets.githubToken,
-    });
+    // Phase-0 path (root-owned bare repo), not the broker socket. The same lock covers the git
+    // proxy's fetch/push forwards so those don't overlap this push.
+    const { head, pushed } = await this.networkGitLock(() =>
+      this.deps.gitOps.push(this.deps.workspace, {
+        remoteUrl: this.spec!.repo!.cloneUrl,
+        branch: this.spec!.repo!.branch,
+        githubToken: this.spec!.secrets.githubToken,
+      }),
+    );
     this.deps.link.send({ t: "checkpoint", branch: this.spec.repo.branch, head, pushed });
   }
 

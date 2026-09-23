@@ -97,7 +97,7 @@ test("Link: sends hello with lastAckedSeq=0 on first open", async (t) => {
   assert.equal(hello.runToken, "test-run-token");
   // Bug 9 (docs/reports/cloud-fixes.md): the wire protocol version, so a version-skewed link can
   // refuse the connection loudly instead of silently ignoring frames it doesn't understand.
-  assert.equal(typeof hello.protocolVersion, "number");
+  assert.equal(hello.protocolVersion, 2);
 });
 
 test("Link: sendSeq assigns monotonic seq and buffers until acked", async (t) => {
@@ -121,6 +121,35 @@ test("Link: sendSeq assigns monotonic seq and buffers until acked", async (t) =>
   assert.equal(link.getLastAckedSeq(), 1);
   assert.equal(received.length, 1);
   assert.equal(received[0].t, "ack");
+});
+
+test("Link: github.request is not replayed on reconnect", async (t) => {
+  const link = makeLink();
+  t.after(() => link.close());
+  const ws1 = await connectAndGetInstance(link);
+  ws1.triggerOpen();
+  ws1.sent.length = 0;
+  link.send({ t: "github.request", reqId: "r1", op: "issues.list", args: {} });
+  assert.equal(link.getPendingCount(), 0);
+  assert.equal(JSON.parse(ws1.sent[0]).t, "github.request");
+
+  ws1.triggerClose();
+  await waitFor(() => FakeWebSocket.instances.length === 2);
+  const ws2 = FakeWebSocket.instances[1]!;
+  ws2.triggerOpen();
+  assert.equal(ws2.sent.length, 1);
+  assert.equal(JSON.parse(ws2.sent[0]).t, "hello");
+});
+
+test("Link: onOpen fires when the socket opens, not before", async (t) => {
+  const link = makeLink();
+  t.after(() => link.close());
+  let opens = 0;
+  link.onOpen(() => opens++);
+  const ws = await connectAndGetInstance(link);
+  assert.equal(opens, 0);
+  ws.triggerOpen();
+  assert.equal(opens, 1);
 });
 
 test("Link: non-seq frames (heartbeat, status) are not buffered", async (t) => {

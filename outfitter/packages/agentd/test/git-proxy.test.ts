@@ -13,6 +13,7 @@ import {
   startGitProxy,
   type GitProxy,
 } from "../src/git-proxy.js";
+import { createAsyncLock } from "../src/lock.js";
 
 const TOKEN = "ghp_test_TOKEN_89_do_not_leak";
 const ALLOWED = "refs/heads/outfitter/sess1";
@@ -81,7 +82,7 @@ function refUpdates(body: Buffer): { oldOid: string; newOid: string; ref: string
   return updates;
 }
 
-function startFakeUpstream(opts: { dropReceive?: boolean } = {}): Promise<FakeUpstream> {
+function startFakeUpstream(opts: { dropReceive?: boolean; holdInfoRefs?: Promise<void> } = {}): Promise<FakeUpstream> {
   const seen: Seen[] = [];
   const refs = new Map<string, string>();
   const server = http.createServer((req, res) => {
@@ -109,15 +110,18 @@ function startFakeUpstream(opts: { dropReceive?: boolean } = {}): Promise<FakeUp
       });
       const pathname = url.split("?", 1)[0] ?? "";
       if (req.method === "GET" && pathname.endsWith("/info/refs")) {
-        const service = new URL(url, "http://127.0.0.1").searchParams.get("service") ?? "git-upload-pack";
-        const advertised = [...refs.entries()].map(([name, oid]) => ({ oid, name }));
-        const payload = advertise(service, advertised);
-        const type =
-          service === "git-receive-pack"
-            ? "application/x-git-receive-pack-advertisement"
-            : "application/x-git-upload-pack-advertisement";
-        res.writeHead(200, { "content-type": type, "cache-control": "no-cache", "content-length": payload.length });
-        res.end(payload);
+        void (async () => {
+          if (opts.holdInfoRefs) await opts.holdInfoRefs;
+          const service = new URL(url, "http://127.0.0.1").searchParams.get("service") ?? "git-upload-pack";
+          const advertised = [...refs.entries()].map(([name, oid]) => ({ oid, name }));
+          const payload = advertise(service, advertised);
+          const type =
+            service === "git-receive-pack"
+              ? "application/x-git-receive-pack-advertisement"
+              : "application/x-git-upload-pack-advertisement";
+          res.writeHead(200, { "content-type": type, "cache-control": "no-cache", "content-length": payload.length });
+          res.end(payload);
+        })();
         return;
       }
       if (req.method === "POST" && pathname.endsWith("/git-receive-pack")) {
@@ -268,6 +272,64 @@ async function withProxy(
     await rm(dir, { recursive: true, force: true });
   });
   return { proxy, upstream, dir, env };
+}
+
+test("upstream forwards share the caller's lock with each other", async (t) => {
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  t.after(() => release());
+  const upstream = await startFakeUpstream({ holdInfoRefs: gate });
+  let active = 0;
+  let max = 0;
+  let waiting = 0;
+  const lock = createAsyncLock();
+  const counting = <T>(fn: () => Promise<T>): Promise<T> => {
+    waiting++;
+    return lock(async () => {
+      waiting--;
+      active++;
+      max = Math.max(max, active);
+      try {
+        return await fn();
+      } finally {
+        active--;
+      }
+    });
+  };
+  const proxy = await startGitProxy({
+    owner: "acme",
+    repo: "widget",
+    token: TOKEN,
+    allowedRefs: [ALLOWED],
+    upstreamBase: upstream.base,
+    lock: counting,
+  });
+  t.after(async () => {
+    release();
+    await proxy.close();
+    await upstream.close();
+  });
+  const first = rawHttp(proxy.port, "GET", "/acme/widget.git/info/refs?service=git-upload-pack");
+  await waitFor(() => active === 1);
+  const second = rawHttp(proxy.port, "GET", "/acme/widget.git/info/refs?service=git-upload-pack");
+  await waitFor(() => waiting === 1);
+  assert.equal(max, 1);
+  assert.equal(active, 1);
+  release();
+  const [a, b] = await Promise.all([first, second]);
+  assert.equal(a.status, 200);
+  assert.equal(b.status, 200);
+  assert.equal(max, 1);
+});
+
+async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) throw new Error("waitFor: timed out");
+    await new Promise((r) => setTimeout(r, 5));
+  }
 }
 
 test("insteadOf env pins the proxy URL and not the token or an auth header", () => {

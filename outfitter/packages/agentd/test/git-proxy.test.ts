@@ -370,6 +370,29 @@ test("a ref outside the allow-list is refused and the push is not forwarded", as
   assertNoSecret(pushed.stdout + pushed.stderr, "refused push output");
 });
 
+test("a push certificate whose ref line is not its own pkt-line is refused and not forwarded", async (t) => {
+  const { proxy, upstream } = await withProxy(t);
+  const before = receivePacks(upstream.seen).length;
+  const oldOid = "0".repeat(40);
+  const newOid = "a".repeat(40);
+  const certificate = `certificate version 0.1\npusher cert-test <cert@example.com>\n${oldOid} ${newOid} ${ALLOWED}\n`;
+  const body = Buffer.concat([pkt(certificate), Buffer.from("0000")]);
+  const refused = await rawHttp(proxy.port, "POST", "/acme/widget.git/git-receive-pack", body, {
+    "content-type": "application/x-git-receive-pack-request",
+  });
+  assert.equal(refused.status, 200);
+  assert.match(refused.body.toString("utf8"), /refusing push: malformed receive-pack request/);
+  assert.equal(receivePacks(upstream.seen).length, before);
+  assertNoSecret(refused.body.toString("utf8"), "push-cert refusal");
+
+  const empty = await rawHttp(proxy.port, "POST", "/acme/widget.git/git-receive-pack", Buffer.from("0000"), {
+    "content-type": "application/x-git-receive-pack-request",
+  });
+  assert.equal(empty.status, 200);
+  assert.doesNotMatch(empty.body.toString("utf8"), /malformed/);
+  assert.equal(receivePacks(upstream.seen).length, before + 1);
+});
+
 test("a deletion is refused and nothing is forwarded", async (t) => {
   const { upstream, dir, env } = await withProxy(t);
   await initRepo(dir, env);

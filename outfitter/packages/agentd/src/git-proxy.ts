@@ -7,9 +7,11 @@
  * `http.extraheader`, and not by widening baseEnvForPi's allowlist (that hole
  * is how the token leaked before).
  *
- * A receive-pack is refused in full, before anything is forwarded, when any
- * ref-update command is a deletion or names a ref outside the caller's allow-list.
+ * A receive-pack is refused in full, before anything is forwarded, when the
+ * command section is not a list of standalone ref-update pkt-lines, or when any
+ * update is a deletion or names a ref outside the caller's allow-list.
  * Force-updates of an allowed ref are updates, not deletions, so they pass.
+ * A flush with no commands is not a command, and is forwarded.
  */
 import http from "node:http";
 import https from "node:https";
@@ -340,9 +342,10 @@ function parseRefUpdates(payloads: Buffer[]): RefUpdate[] | null {
     }
     updates.push({ oldOid, newOid, ref: match[3]!, capabilities: caps });
   }
-  if (updates.length === 0) return null;
-  // A command section that mixes ref updates with something else is not a push we can check.
+  // A certificate or any other non-ref pkt-line is not a push we can check, even when
+  // none of those lines parsed as a ref update. An empty section still forwards.
   if (sawOther) throw new Error("mixed receive-pack command");
+  if (updates.length === 0) return null;
   return updates;
 }
 

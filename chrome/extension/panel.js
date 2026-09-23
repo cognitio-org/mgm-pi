@@ -12,16 +12,19 @@ import {
   PLACEMENTS_KEY,
   SHARE_UNAVAILABLE,
   TOKEN_KEY,
+  actionSession,
   apiPath,
   approvalNotificationId,
   approvalView,
   capturingText,
+  committedSession,
   floppyUrl,
   linkUrl,
   nextShareStatus,
   openFloppyPlan,
   pageOriginForFloppy,
   placementRecord,
+  placementRememberMessage,
   pollDelay,
   publicError,
   sessionChoiceLabel,
@@ -52,6 +55,9 @@ let linkForPermission = "";
 let shareLine = SHARE_UNAVAILABLE;
 let timer = null;
 let running = false;
+let refreshAgain = false;
+let selectionEpoch = 0;
+let paintedSession = "";
 
 function holdPanelPort() {
   try {
@@ -65,7 +71,7 @@ function holdPanelPort() {
   }
 }
 
-function askWorker(message) {
+function askWorker(message, timeoutMs = 800) {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (value) => {
@@ -73,7 +79,7 @@ function askWorker(message) {
       settled = true;
       resolve(value);
     };
-    const timerId = setTimeout(() => finish(null), 800);
+    const timerId = setTimeout(() => finish(null), timeoutMs);
     try {
       chrome.runtime.sendMessage(message, (response) => {
         clearTimeout(timerId);
@@ -190,22 +196,31 @@ function answerButton(label, onClick) {
   return button;
 }
 
+function screenSession() {
+  return actionSession(paintedSession, selectedId());
+}
+
 async function sendAnswer(sessionId, id, value) {
+  if (screenSession() !== sessionId) {
+    status.textContent = "Choose a Floppy.";
+    return;
+  }
   const body = uiResponseBody(id, value);
   const path = apiPath("ui-response", sessionId);
   if (!body || !path) return;
   const result = await linkCall("POST", path, body);
   if (!note(result)) return;
   status.textContent = "Answered.";
-  renderApproval(null);
+  renderApproval(null, "");
   await refresh();
 }
 
-function renderApproval(view) {
-  if (!view) {
+function renderApproval(view, sessionId) {
+  if (!view || !sessionIdOk(sessionId)) {
     approval.hidden = true;
     approval.dataset.id = "";
     approval.dataset.method = "";
+    approval.dataset.session = "";
     approvalTitle.textContent = "";
     approvalMessage.textContent = "";
     approvalActions.replaceChildren();
@@ -217,11 +232,17 @@ function renderApproval(view) {
   approvalMessage.hidden = !view.message;
   const nid = approvalNotificationId(view.id);
   if (nid) chrome.notifications.clear(nid).catch(() => {});
-  if (approval.dataset.id === view.id && approval.dataset.method === view.method) return;
+  if (
+    approval.dataset.id === view.id &&
+    approval.dataset.method === view.method &&
+    approval.dataset.session === sessionId
+  ) {
+    return;
+  }
   approval.dataset.id = view.id;
   approval.dataset.method = view.method;
+  approval.dataset.session = sessionId;
   approvalActions.replaceChildren();
-  const sessionId = selectedId();
   if (view.unsupported) {
     const noteText = document.createElement("p");
     noteText.className = "hint";
@@ -254,9 +275,26 @@ function renderCapturing(response) {
   capturing.textContent = line || "";
 }
 
-async function refreshShare(sessionId, action) {
+function clearStrip() {
+  paintedSession = "";
+  state.textContent = "";
+  transcript.textContent = "";
+  renderApproval(null, "");
+  shareLine = SHARE_UNAVAILABLE;
+  shareStatus.textContent = shareLine;
+  renderCapturing(null);
+}
+
+function bumpSelection() {
+  selectionEpoch += 1;
+  steerInput.value = "";
+  clearStrip();
+}
+
+async function refreshShare(sessionId, action, epoch) {
   const message = shareMessage(action, sessionId);
   if (!message) {
+    if (epoch !== undefined && epoch !== selectionEpoch) return;
     shareLine = SHARE_UNAVAILABLE;
     shareStatus.textContent = shareLine;
     renderCapturing(null);
@@ -268,44 +306,55 @@ async function refreshShare(sessionId, action) {
   } catch {
     response = null;
   }
+  if (epoch !== undefined && epoch !== selectionEpoch) return;
   shareLine = nextShareStatus(shareLine, response, action);
   shareStatus.textContent = shareLine;
   renderCapturing(response && typeof response === "object" ? response : null);
 }
 
-async function tick() {
+async function tick(epoch) {
   const stored = await chrome.storage.local.get(PANEL_SESSION_KEY);
+  if (epoch !== selectionEpoch) return;
   const preferred = sessionIdOk(stored[PANEL_SESSION_KEY]) ? stored[PANEL_SESSION_KEY] : selectedId();
   const list = await linkCall("GET", apiPath("list"));
+  if (epoch !== selectionEpoch) return;
   if (!note(list)) {
-    state.textContent = "";
+    clearStrip();
     return;
   }
   const sessionId = renderSessions(list.body, preferred);
-  if (!sessionId) {
+  const show = committedSession(sessionId, selectedId(), epoch, selectionEpoch);
+  if (!show) {
+    if (epoch !== selectionEpoch) return;
     state.textContent = "Choose a Floppy.";
     transcript.textContent = "";
-    renderApproval(null);
+    renderApproval(null, "");
     shareStatus.textContent = SHARE_UNAVAILABLE;
     renderCapturing(null);
+    paintedSession = "";
     return;
   }
-  if (stored[PANEL_SESSION_KEY] !== sessionId) {
-    chrome.storage.local.set({ [PANEL_SESSION_KEY]: sessionId }).catch(() => {});
+  if (stored[PANEL_SESSION_KEY] !== show) {
+    chrome.storage.local.set({ [PANEL_SESSION_KEY]: show }).catch(() => {});
   }
-  const sessionPath = apiPath("session", sessionId);
-  const entriesPath = apiPath("entries", sessionId);
+  const sessionPath = apiPath("session", show);
+  const entriesPath = apiPath("entries", show);
   const [detail, entries] = await Promise.all([
     linkCall("GET", sessionPath),
     linkCall("GET", entriesPath),
-    refreshShare(sessionId, "status"),
+    refreshShare(show, "status", epoch),
   ]);
-  if (!note(detail)) return;
+  if (committedSession(show, selectedId(), epoch, selectionEpoch) !== show) return;
+  if (!note(detail)) {
+    if (paintedSession !== show) clearStrip();
+    return;
+  }
+  paintedSession = show;
   state.textContent = stateLine(detail.body);
   if (entries.ok) renderTranscript(entries.body);
   else transcript.textContent = entries.error || "Could not read the transcript.";
   const view = approvalView(detail.body && detail.body.pendingUiRequest);
-  renderApproval(view);
+  renderApproval(view, show);
   // Remember the id while it is on screen so closing the panel does not notify for it.
   // An id the panel never showed still notifies once, from the service worker.
   if (view && document.visibilityState === "visible") {
@@ -314,14 +363,22 @@ async function tick() {
 }
 
 function refresh() {
-  if (running) return Promise.resolve();
+  if (running) {
+    refreshAgain = true;
+    return Promise.resolve();
+  }
   running = true;
-  return tick()
+  const epoch = selectionEpoch;
+  return tick(epoch)
     .catch(() => {
-      status.textContent = "Could not refresh.";
+      if (epoch === selectionEpoch) status.textContent = "Could not refresh.";
     })
-    .finally(() => {
+    .finally(async () => {
       running = false;
+      if (refreshAgain) {
+        refreshAgain = false;
+        await refresh();
+      }
     });
 }
 
@@ -376,17 +433,18 @@ async function openFloppy() {
   }
   const tab = await chrome.tabs.create({ url: href, active: true });
   const rec = placementRecord(sessionId, tab);
-  if (!rec) return;
-  const next = {};
-  if (map && typeof map === "object" && !Array.isArray(map)) {
-    for (const [key, value] of Object.entries(map)) next[key] = value;
+  const message = rec ? placementRememberMessage(rec.sessionId, rec.tabId) : null;
+  // The worker queue owns the placements map. A panel write would replace it with a stale copy.
+  const saved = message ? await askWorker(message, 4000) : null;
+  if (!saved || saved.ok !== true) {
+    status.textContent = "Could not remember the Floppy.";
+    return;
   }
-  next[sessionId] = rec;
-  await chrome.storage.local.set({ [PLACEMENTS_KEY]: next });
   status.textContent = "";
 }
 
 floppySelect.addEventListener("change", () => {
+  bumpSelection();
   const sessionId = selectedId();
   const write = sessionId
     ? chrome.storage.local.set({ [PANEL_SESSION_KEY]: sessionId })
@@ -404,14 +462,14 @@ document.querySelector("#open").addEventListener("click", () => {
 
 steerForm.addEventListener("submit", (event) => {
   event.preventDefault();
+  const path = apiPath("messages", screenSession());
   const body = steerBody(steerInput.value);
-  const path = apiPath("messages", selectedId());
-  if (!body) {
-    status.textContent = "Write a follow-up first.";
-    return;
-  }
   if (!path) {
     status.textContent = "Choose a Floppy.";
+    return;
+  }
+  if (!body) {
+    status.textContent = "Write a follow-up first.";
     return;
   }
   linkCall("POST", path, body).then((result) => {
@@ -425,7 +483,7 @@ steerForm.addEventListener("submit", (event) => {
 });
 
 document.querySelector("#break").addEventListener("click", () => {
-  const path = apiPath("abort", selectedId());
+  const path = apiPath("abort", screenSession());
   if (!path) {
     status.textContent = "Choose a Floppy.";
     return;
@@ -440,7 +498,7 @@ document.querySelector("#break").addEventListener("click", () => {
 });
 
 document.querySelector("#share").addEventListener("click", () => {
-  const sessionId = selectedId();
+  const sessionId = screenSession();
   if (!sessionId) {
     status.textContent = "Choose a Floppy.";
     return;
@@ -451,7 +509,7 @@ document.querySelector("#share").addEventListener("click", () => {
 });
 
 document.querySelector("#revoke").addEventListener("click", () => {
-  const sessionId = selectedId();
+  const sessionId = screenSession();
   if (!sessionId) {
     status.textContent = "Choose a Floppy.";
     return;

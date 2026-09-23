@@ -287,6 +287,25 @@ export function capturingText(response) {
   return `Capturing for ${trimmed}`;
 }
 
+/** Session id a tick may paint. Empty when the selection moved or the dropdown no longer matches. */
+export function committedSession(fetchedId, dropdownId, startedEpoch, currentEpoch) {
+  if (startedEpoch !== currentEpoch) return "";
+  if (typeof fetchedId !== "string" || fetchedId === "" || fetchedId !== dropdownId) return "";
+  return sessionIdOk(fetchedId) ? fetchedId : "";
+}
+
+/** Session id an action may use. Empty unless the painted Floppy is still the dropdown. */
+export function actionSession(paintedId, dropdownId) {
+  if (typeof paintedId !== "string" || paintedId === "" || paintedId !== dropdownId) return "";
+  return sessionIdOk(paintedId) ? paintedId : "";
+}
+
+/** Internal message so the service worker records a tab on its placement queue. */
+export function placementRememberMessage(sessionId, tabId) {
+  if (!sessionIdOk(sessionId) || typeof tabId !== "number" || !Number.isInteger(tabId) || tabId < 0) return null;
+  return { t: "remember-placement", sessionId, tabId };
+}
+
 /** Focus the recorded tab, or open a new one. */
 export function openFloppyPlan(record, tabStillThere) {
   if (tabStillThere && record && typeof record === "object" && typeof record.tabId === "number") {

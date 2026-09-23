@@ -11,10 +11,12 @@ import {
   POLL_MS,
   SHARE_UNAVAILABLE,
   TOKEN_KEY,
+  actionSession,
   apiPath,
   approvalNotificationId,
   approvalView,
   capturingText,
+  committedSession,
   floppyUrl,
   linkUrl,
   nextShareStatus,
@@ -22,6 +24,7 @@ import {
   openFloppyPlan,
   pageOriginForFloppy,
   placementRecord,
+  placementRememberMessage,
   pollDelay,
   publicError,
   sessionChoiceLabel,
@@ -154,6 +157,33 @@ test("share messages are the two worker messages, and silence is not a throw", (
   assert.equal(capturingText({ capturing: "a@b.c" }), "Capturing for a@b.c");
   assert.equal(capturingText({}), null);
   assert.equal(capturingText(null), null);
+});
+
+test("a tick paints only the Floppy still selected, and actions use that same id", () => {
+  const other = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
+  assert.equal(committedSession(session, session, 3, 3), session);
+  assert.equal(committedSession(session, other, 3, 3), "");
+  assert.equal(committedSession(session, session, 3, 4), "");
+  assert.equal(committedSession("", "", 1, 1), "");
+  assert.equal(actionSession(session, session), session);
+  assert.equal(actionSession(session, other), "");
+  assert.equal(actionSession("", session), "");
+  assert.equal(actionSession(other, other), other);
+});
+
+test("Open Floppy records a tab on the worker queue and does not write the placements map", () => {
+  const js = read("../extension/panel.js");
+  const background = read("../extension/background.js");
+  assert.deepEqual(placementRememberMessage(session, 4), { t: "remember-placement", sessionId: session, tabId: 4 });
+  assert.equal(placementRememberMessage(session, -1), null);
+  assert.equal(placementRememberMessage(session, 1.5), null);
+  assert.equal(placementRememberMessage("../x", 4), null);
+  assert.match(js, /placementRememberMessage\(/);
+  assert.match(js, /committedSession\(/);
+  assert.match(js, /actionSession\(/);
+  assert.doesNotMatch(js, /\[PLACEMENTS_KEY\]:\s*next/);
+  assert.match(background, /remember-placement/);
+  assert.match(background, /enqueue\(\(\) => remember\(/);
 });
 
 test("Open Floppy focuses a live recorded tab and otherwise opens", () => {

@@ -15,6 +15,7 @@ import {
   approvalView,
   linkUrl,
   notificationCopy,
+  sessionIdOk,
   shouldNotifyApproval,
 } from "./panel-model.js";
 import {
@@ -1391,6 +1392,20 @@ function wakeApprovalCheck(force) {
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "kernal-panel") return;
   port.onDisconnect.addListener(() => wakeApprovalCheck(true));
+});
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (!message || typeof message !== "object" || Array.isArray(message) || message.t !== "remember-placement") return;
+  const sessionId = message.sessionId;
+  const tabId = message.tabId;
+  if (!sessionIdOk(sessionId) || typeof tabId !== "number" || !Number.isInteger(tabId) || tabId < 0) {
+    sendResponse({ ok: false });
+    return true;
+  }
+  enqueue(() => remember(sessionId, tabId))
+    .then(() => sendResponse({ ok: true }))
+    .catch(() => sendResponse({ ok: false }));
+  return true;
 });
 
 if (chrome.notifications && typeof chrome.notifications.onClicked?.addListener === "function") {

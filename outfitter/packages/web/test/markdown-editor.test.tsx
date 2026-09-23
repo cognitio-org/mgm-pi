@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 // The composer's Markdown editor wired end to end in jsdom: mirror, toolbar, shortcuts, list
 // continuation with both Enter modes, Tab in code blocks, preview and paste conversion.
 // (jsdom has no execCommand, so edits take the setRangeText fallback; real browsers were checked

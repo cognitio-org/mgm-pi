@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { isSafeMermaidMarkup, isSafeMermaidSvg, isSvgRoot } from "../src/lib/mermaid-safety.ts";
 

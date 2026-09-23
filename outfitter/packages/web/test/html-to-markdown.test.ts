@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 // Paste conversion (docs/reports/markdown-composer.md). Fixtures in test/fixtures/paste/:
 // - github-readme.html, wikipedia-table.html(+.txt): real clipboards, captured from Chrome's copy
 //   of github.com/mixmark-io/turndown's README and a wikitable on en.wikipedia.org (inline computed

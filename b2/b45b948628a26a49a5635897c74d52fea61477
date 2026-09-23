@@ -1,0 +1,18 @@
+chrome/extension/background.js
+  h_69b863911ebf05 10,155-164,167,170-171,193
+chrome/extension/placement.js
+  h_69b863911ebf05 47-63
+chrome/test/placement.test.js
+  h_69b863911ebf05 12,62-80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "b2b45b948628a26a49a5635897c74d52fea61477",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

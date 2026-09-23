@@ -1,9 +1,10 @@
 /**
- * kernal-github (phase 1): git the agent and the person can actually use.
+ * kernal-github: git the agent and the person can actually use, and the GitHub tools beside it.
  *
- * Registers one `git` tool (status, diff, log, commit, push, pull, branch, stash), the rules the
- * model follows around it, and three commands: `/git` (where this repository stands, with its pull
- * request), `/commit` (review the diff and commit), `/github` (install the GitHub CLI and sign in).
+ * Registers the `git` tool (status, diff, log, commit, push, pull, branch, stash), `github_pr`,
+ * `github_issue` and `github_repo`, the rules the model follows around them, and the commands
+ * `/git`, `/commit`, `/github`, `/pr` and `/issues`. The GitHub tool bodies live in github-tools.ts;
+ * this file only wires them up.
  *
  * Why a tool at all, when the model has a shell: the shell answer to "where am I?" is five commands
  * and a guess at the output. `git status` here is one call that already knows the branch, what
@@ -19,8 +20,9 @@ import { dirname, join, parse, resolve } from "node:path";
 import { readSettings } from "../connect/settings.ts";
 import * as git from "../_shared/git.ts";
 import { attributionFrom, renderStatus, repoStatus, runAction } from "./lib.ts";
-import { githubToolsAllows, type GithubToolsMode } from "./confirm.ts";
+import { classifyGithub, gateGithub, githubConfirmFrom, githubToolsAllows, type GithubToolsMode } from "./confirm.ts";
 import { authState, findGh, installGh, kernalBin, loginCommand, missingScopes, setupGitCommand } from "./gh.ts";
+import { executeGithub, githubIssueTool, githubPrTool, githubRepoTool, handleIssuesCommand, handlePrCommand } from "./github-tools.ts";
 
 const AGENT_NAME = /^[a-z0-9][a-z0-9-]*$/;
 const ACTIVE_AGENT = /<active_agent\s+name="([^"]*)"\s*\/>/;
@@ -126,8 +128,51 @@ const GUIDELINES = [
   "git: never revert or discard changes you did not make, and never reset a branch the user has not asked you to reset.",
 ];
 
+const CONFIRM_TIMEOUT_MS = 60_000;
+
+/** A person is at the terminal. RPC has a UI and may have nobody watching; a cloud run has no viewer yet. */
+function personHere(ctx: any): boolean {
+  if (process.env.OUTFITTER_SESSION_ID) return false;
+  return ctx?.mode === "tui";
+}
+
+function confirmPreview(tool: string, action: string, params: any): string {
+  const lines = [`${tool} ${action}`];
+  if (params?.decision) lines.push(String(params.decision));
+  if (params?.number) lines.push(`#${params.number}`);
+  const title = typeof params?.title === "string" ? params.title.trim() : "";
+  const message = typeof params?.message === "string" ? params.message.trim().split("\n")[0] : "";
+  const shown = (title || message).slice(0, 120);
+  if (shown) lines.push(shown);
+  return lines.join("\n");
+}
+
 export default function (pi: ExtensionAPI) {
   const settings = () => { try { return readSettings(); } catch { return {}; } };
+
+  /** Per-agent access first, then `github.confirm`. Undefined means the call may run. */
+  async function refuseGithub(ctx: any, tool: string, action: string, params: any): Promise<string | undefined> {
+    const mode = await agentGithubTools(ctx);
+    if (mode && !githubToolsAllows(mode, tool, action, params)) {
+      return `Refused: this agent's GitHub access is ${mode}.`;
+    }
+    const cls = classifyGithub(tool, action, params);
+    const gate = await gateGithub({
+      confirm: githubConfirmFrom(settings()),
+      cls,
+      personPresent: personHere(ctx),
+      ask: async () => {
+        const confirm = ctx?.ui?.confirm;
+        if (typeof confirm !== "function") return false;
+        try {
+          return await confirm.call(ctx.ui, `Allow this ${cls}?`, confirmPreview(tool, action, params), { timeout: CONFIRM_TIMEOUT_MS }) === true;
+        } catch {
+          return false;
+        }
+      },
+    });
+    return gate.ok ? undefined : gate.message;
+  }
 
   pi.registerTool({
     name: "git",
@@ -160,14 +205,27 @@ export default function (pi: ExtensionAPI) {
     } as any,
     execute: async (_id: string, params: any, _signal: unknown, _update: unknown, ctx: any) => {
       const action = String(params?.action ?? "");
-      const mode = await agentGithubTools(ctx);
-      if (mode && !githubToolsAllows(mode, "git", action, params)) {
-        return { content: [{ type: "text", text: `Refused: this agent's GitHub access is ${mode}.` }], isError: true };
-      }
+      const refusal = await refuseGithub(ctx, "git", action, params ?? {});
+      if (refusal) return { content: [{ type: "text", text: refusal }], isError: true };
       const res = await runAction(action, params ?? {}, { cwd: ctx?.cwd ?? process.cwd(), settings: settings(), gh: await ghNow() });
       return { content: [{ type: "text", text: res.text }], isError: res.isError };
     },
   } as any);
+
+  for (const def of [githubPrTool, githubIssueTool, githubRepoTool]) {
+    pi.registerTool({
+      ...def,
+      execute: async (_id: string, params: any, signal: AbortSignal | undefined, update: any, ctx: any) => {
+        const action = String(params?.action ?? "");
+        const refusal = await refuseGithub(ctx, def.name, action, params ?? {});
+        if (refusal) return { content: [{ type: "text", text: refusal }], isError: true };
+        const res = await executeGithub(def.name, params ?? {}, {
+          cwd: ctx?.cwd ?? process.cwd(), settings: settings(), gh: await ghNow(), update, signal,
+        });
+        return { content: [{ type: "text", text: res.text }], isError: res.isError };
+      },
+    } as any);
+  }
 
   // ---------- /git ----------
   pi.registerCommand("git", {
@@ -251,6 +309,24 @@ export default function (pi: ExtensionAPI) {
       const attribution = attributionFrom(settings());
       lines.push("", `commit attribution: ${attribution.commit || "off"}`);
       ctx.ui.notify(lines.join("\n"), "info");
+    },
+  });
+
+  // ---------- /pr ----------
+  pi.registerCommand("pr", {
+    description: "This branch's pull request; /pr new asks to open one, /pr review <n> asks to review",
+    getArgumentCompletions: (prefix: string) =>
+      ["new", "review"].filter((o) => o.startsWith(prefix.trim())).map((o) => ({ value: o, label: o })),
+    handler: async (args: string, ctx: any) => {
+      await handlePrCommand(args, ctx, { cwd: ctx.cwd ?? process.cwd(), settings: settings(), gh: await ghNow() });
+    },
+  });
+
+  // ---------- /issues ----------
+  pi.registerCommand("issues", {
+    description: "Open issues assigned to you; /issues <n> views one, /issues <n> start checks out a branch for it",
+    handler: async (args: string, ctx: any) => {
+      await handleIssuesCommand(args, ctx, { cwd: ctx.cwd ?? process.cwd(), settings: settings(), gh: await ghNow() });
     },
   });
 }

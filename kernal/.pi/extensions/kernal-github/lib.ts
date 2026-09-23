@@ -31,17 +31,47 @@ export type RepoStatus = {
 
 type Ghe = { path: string; exec?: Exec } | undefined;
 
-/** Check names in gh's rollup are a union; count them without caring which kind each is. */
+function checkStamp(node: any): number | undefined {
+  const raw = node?.completedAt ?? node?.startedAt ?? node?.createdAt;
+  if (typeof raw !== "string") return undefined;
+  const time = Date.parse(raw);
+  return Number.isFinite(time) ? time : undefined;
+}
+
+/**
+ * One row per check name. A superseded run sits beside the later run of the same name
+ * (`concurrency.cancel-in-progress`); only the later one counts. When both rows have a
+ * timestamp the later time wins, otherwise the later row in gh's list does.
+ */
+export function latestChecks(nodes: any[] | undefined): any[] {
+  if (!Array.isArray(nodes)) return [];
+  const best = new Map<string, { node: any; time?: number; index: number }>();
+  nodes.forEach((node, index) => {
+    const named = String(node?.name ?? node?.context ?? "").trim();
+    const key = named || `\0${index}`;
+    const time = checkStamp(node);
+    const prev = best.get(key);
+    const wins = !prev
+      || (time !== undefined && prev.time !== undefined
+        ? time > prev.time || (time === prev.time && index > prev.index)
+        : index > prev.index);
+    if (wins) best.set(key, { node, time, index });
+  });
+  return [...best.values()].sort((a, b) => a.index - b.index).map((row) => row.node);
+}
+
+/** Check names in gh's rollup are a union; count the latest run of each name. */
 export function rollup(nodes: any[] | undefined): PrSummary["checks"] {
-  if (!Array.isArray(nodes) || !nodes.length) return undefined;
+  const latest = latestChecks(nodes);
+  if (!latest.length) return undefined;
   let passed = 0, failed = 0, pending = 0;
-  for (const n of nodes) {
+  for (const n of latest) {
     const state = String(n?.conclusion ?? n?.state ?? n?.status ?? "").toUpperCase();
     if (["SUCCESS", "NEUTRAL", "SKIPPED"].includes(state)) passed++;
     else if (["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "ERROR", "STARTUP_FAILURE"].includes(state)) failed++;
     else pending++;
   }
-  return { passed, failed, pending, total: nodes.length };
+  return { passed, failed, pending, total: latest.length };
 }
 
 /** `gh pr view --json` fields: exactly what gh offers. `reviewThreads` is NOT one of them (gh

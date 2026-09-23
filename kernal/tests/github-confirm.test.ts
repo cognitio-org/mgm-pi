@@ -8,7 +8,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { classifyGithub, excludeToolsFor, gateGithub, githubConfirmFrom, githubToolsAllows, type GithubClass, type GithubConfirm } from "../.pi/extensions/kernal-github/confirm.ts";
-import { readAgent, saveAgent, snapshot } from "../.pi/extensions/kernal-admin/subagents.ts";
+import { readAgent, saveAgent, snapshot, stampExcludeTools } from "../.pi/extensions/kernal-admin/subagents.ts";
 
 describe("githubConfirmFrom", () => {
   test("missing or unknown is none", () => {
@@ -180,5 +180,26 @@ describe("per-agent githubTools", () => {
       if (prevDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = prevDir;
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  test("a block-list excludeTools keeps every denial that is not a GitHub tool", () => {
+    const block = "name: helper\nexcludeTools:\n  - bash\n  - git\ndescription: Helps\n";
+    const off = stampExcludeTools(block, "off");
+    assert.match(off, /^excludeTools: bash, git, github_pr, github_issue, github_repo$/m);
+    assert.equal(off.includes("\n  - "), false);
+    assert.match(off, /^description: Helps$/m);
+
+    const read = stampExcludeTools(block, "read");
+    assert.match(read, /^excludeTools: bash$/m);
+    assert.equal(/^excludeTools:.*\bgit\b/m.test(read), false);
+    assert.match(read, /^description: Helps$/m);
+
+    const cleared = stampExcludeTools("name: helper\nexcludeTools:\n  - git\n\ndescription: Helps\n", "full");
+    assert.equal(/^excludeTools:/m.test(cleared), false);
+    assert.match(cleared, /^description: Helps$/m);
+    assert.equal(cleared.includes("\n  - "), false);
+
+    const comma = stampExcludeTools("name: helper\nexcludeTools: bash, read\n", "full");
+    assert.match(comma, /^excludeTools: bash, read$/m);
   });
 });

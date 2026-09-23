@@ -367,15 +367,55 @@ function stampGithubTools(file: string, value: GithubTools) {
   writeFileSync(file, `---\n${block}${text.slice(end)}`);
 }
 
+/** A comma line (`a, b`) or a block list (`- a`), the same two shapes `parseFrontmatterList` accepts. */
+function frontmatterList(raw: string): string[] {
+  return raw.split("\n").flatMap((line) => {
+    const value = line.trim();
+    if (!value) return [];
+    const item = /^-\s+(.+)$/.exec(value);
+    return (item?.[1] ?? value).split(",");
+  }).map((value) => value.trim()).filter(Boolean);
+}
+
+/**
+ * Where `excludeTools` sits in a frontmatter block, including the indented lines of a block list.
+ * A single-line value does not swallow the next key.
+ */
+function excludeToolsSpan(lines: string[]): { start: number; end: number; listed: string[] } | undefined {
+  for (let i = 0; i < lines.length; i++) {
+    const match = /^excludeTools:[ \t]*(.*)$/.exec(lines[i] ?? "");
+    if (!match) continue;
+    const inline = match[1] ?? "";
+    let end = i + 1;
+    const block: string[] = [];
+    if (!inline.trim()) {
+      while (end < lines.length) {
+        const line = lines[end] ?? "";
+        if (line.trim() === "") {
+          const ahead = lines.slice(end + 1).find((next) => next.trim() !== "");
+          if (ahead === undefined || !/^[ \t]/.test(ahead)) break;
+        } else if (!/^[ \t]/.test(line)) break;
+        block.push(line);
+        end++;
+      }
+    }
+    return { start: i, end, listed: frontmatterList(inline.trim() ? inline : block.join("\n")) };
+  }
+  return undefined;
+}
+
 /** Off adds the GitHub tool names to `excludeTools`, which pi-subagents already applies.
- *  Read and full take those names back off the list and leave every other denial in place. */
-function stampExcludeTools(block: string, mode: GithubTools): string {
-  const current = block.match(/^excludeTools:[^\n]*$/m);
-  const listed = current ? current[0].slice("excludeTools:".length).split(",").map((s) => s.trim()).filter(Boolean) : [];
-  const next = excludeToolsFor(mode, listed);
+ *  Read and full take those names back off the list and leave every other denial in place.
+ *  A block list is rewritten whole, so its indented names are not left behind. */
+export function stampExcludeTools(block: string, mode: GithubTools): string {
+  const lines = block.split("\n");
+  const span = excludeToolsSpan(lines);
+  const next = excludeToolsFor(mode, span?.listed ?? []);
   const line = next.length ? `excludeTools: ${next.join(", ")}` : "";
-  if (current) return line ? block.replace(/^excludeTools:[^\n]*$/m, line) : block.replace(/^excludeTools:[^\n]*\n?/m, "");
-  return line ? `${block}\n${line}` : block;
+  if (!span) return line ? `${block.replace(/\n$/, "")}\n${line}` : block;
+  const replacement = line ? [line] : [];
+  lines.splice(span.start, span.end - span.start, ...replacement);
+  return lines.join("\n");
 }
 
 /** Customise a builtin or package agent: the package's eject, a same-name copy in user or project scope. */

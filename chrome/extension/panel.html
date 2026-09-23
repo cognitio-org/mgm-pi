@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Kernal</title>
+  <style>
+    body {
+      font: 14px/1.4 ui-sans-serif, system-ui, sans-serif;
+      margin: 0.9rem;
+      color: #1a1a1a;
+    }
+    h1 { font-size: 1.15rem; margin: 0 0 0.6rem; }
+    h2 { font-size: 0.95rem; margin: 1rem 0 0.3rem; }
+    label { display: block; margin: 0.6rem 0 0.25rem; font-weight: 600; }
+    input, select {
+      width: 100%;
+      box-sizing: border-box;
+      font: inherit;
+      padding: 0.35rem 0.45rem;
+    }
+    button { font: inherit; margin: 0.4rem 0.4rem 0 0; padding: 0.3rem 0.7rem; }
+    p { margin: 0.35rem 0; }
+    .hint { color: #444; font-weight: 400; }
+    #transcript {
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #f4f4f4;
+      padding: 0.45rem;
+      margin: 0;
+      min-height: 2.4em;
+      max-height: 12rem;
+      overflow: auto;
+    }
+    #approval { margin-top: 0.6rem; }
+    #approval-actions { display: flex; flex-wrap: wrap; align-items: center; }
+    #approval-actions input { flex: 1; min-width: 8rem; width: auto; }
+  </style>
+</head>
+<body>
+  <h1>Kernal</h1>
+  <p id="setup" class="hint"></p>
+  <p><button type="button" id="allow" hidden>Allow link origin</button></p>
+  <label for="floppy">Floppy</label>
+  <select id="floppy"></select>
+  <p id="state"></p>
+  <p><button type="button" id="open">Open Floppy</button></p>
+  <h2>Transcript</h2>
+  <pre id="transcript"></pre>
+  <form id="steer">
+    <label for="steer-text">Follow up</label>
+    <input id="steer-text" type="text" maxlength="32000" autocomplete="off" spellcheck="false" autocapitalize="off">
+    <button type="submit">Send</button>
+  </form>
+  <section id="approval" hidden>
+    <h2>Approval</h2>
+    <p id="approval-title"></p>
+    <p id="approval-message" class="hint"></p>
+    <div id="approval-actions"></div>
+  </section>
+  <p><button type="button" id="break">Break</button></p>
+  <h2>This tab</h2>
+  <p id="share-status" class="hint">Share is not available yet</p>
+  <p id="capturing" class="hint" hidden></p>
+  <p>
+    <button type="button" id="share">Share</button>
+    <button type="button" id="revoke">Revoke</button>
+  </p>
+  <p id="status" role="status"></p>
+  <p><button type="button" id="options">Options</button></p>
+  <script type="module" src="panel.js"></script>
+</body>
+</html>

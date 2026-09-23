@@ -168,6 +168,8 @@ research on Sonnet; review on Opus).
 - **E1.3 Local provider** ⇄: `docker run` with the same env, for development. Done when E1.2's test uses it.
 - **E1.4 Model remap on resume**: reuse `pickModelForHost` from the teleport extension.
 
+- **E1.7 Sandbox git** (merged, deploy outstanding, `docs/reports/sandbox-git.md`) — phase 0 of `kernal/docs/git-github-spec.md`: checkpoint pushes the agent's own commits, the resume refspec, no-`safe.directory` ownership handling, and bot-authored commits with the person in trailers (#41, #44, #55). `main` is ahead of the deployed image, so repo sessions stay broken until the next deploy; the report has the state, the next actions and the end-to-end check to resume.
+
 ### E2 Control plane API
 
 - **E2.1 Data model** ⇄ (Atlas): `sessions`, `entries`, `runs`, `gurus`, `environments`, `users`,

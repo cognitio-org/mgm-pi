@@ -454,6 +454,14 @@ install_chrome_companion() {
   cp -R "$src/extension" "$dest/extension"
   cp -R "$src/host" "$dest/host"
   cp "$src/extension-id" "$dest/extension-id"
+  # Chrome execs the host with a clean environment (no KERNAL_HOME, no KERNAL_STATE).
+  # The socket is <home>/chrome.sock, the path the running kernal opens — not $STATE,
+  # which may live outside the home, and not a guessed ~/.kernal. Keep the path as
+  # given: resolving symlinks (macOS /var -> /private/var) can exceed sockaddr_un's
+  # 104-byte limit, and bind() then fails with EINVAL.
+  local home_real="${HOME_DIR%/}"
+  if [[ "$home_real" != /* ]]; then home_real="$(cd "$HOME_DIR" && pwd)"; home_real="${home_real%/}"; fi
+  printf '%s\n' "$home_real/chrome.sock" > "$dest/host/socket-path"
   local host_mjs="$dest/host/kernal-chrome-host.mjs"
   local ext_id manifest_dir="" manifest="" runtime="" node_bin="" pi_bin="$HOME_DIR/current/pi/pi" out=""
   ext_id=$(tr -d '[:space:]' < "$dest/extension-id")

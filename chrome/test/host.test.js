@@ -10,9 +10,12 @@ import net from "node:net";
 import {
   encodeNativeMessage,
   kernalHomeFrom,
+  kernalSocketPath,
+  kernalStateDir,
   NativeFrameDecoder,
   replyToLine,
   replyToMessage,
+  socketPathFrom,
 } from "../host/protocol.js";
 
 const host = fileURLToPath(new URL("../host/kernal-chrome-host.mjs", import.meta.url));
@@ -56,14 +59,53 @@ test("list is an empty share list and capture is refused", () => {
 test("the socket lives under an install root, or ~/.kernal when this file is the repo copy", () => {
   const installed = "/tmp/example/.kernal/chrome/host/kernal-chrome-host.mjs";
   const exists = (p) => p === "/tmp/example/.kernal/state";
-  assert.equal(kernalHomeFrom(installed, { env: {}, home: "/home/person", exists }), "/tmp/example/.kernal");
+  const readFile = () => { throw new Error("ENOENT"); };
+  assert.equal(kernalHomeFrom(installed, { env: {}, home: "/home/person", exists, readFile }), "/tmp/example/.kernal");
   assert.equal(
-    kernalHomeFrom(installed, { env: { KERNAL_HOME: "/custom" }, home: "/home/person", exists }),
+    kernalHomeFrom(installed, { env: { KERNAL_HOME: "/custom" }, home: "/home/person", exists, readFile }),
     "/custom",
   );
   const repo = "/src/mgm-pi/chrome/host/kernal-chrome-host.mjs";
   const repoExists = (p) => p === "/src/mgm-pi/kernal" || p === "/src/mgm-pi/state";
-  assert.equal(kernalHomeFrom(repo, { env: {}, home: "/home/person", exists: repoExists }), "/home/person/.kernal");
+  assert.equal(kernalHomeFrom(repo, { env: {}, home: "/home/person", exists: repoExists, readFile }), "/home/person/.kernal");
+});
+
+test("a state dir outside the home still yields the socket path kernal opens", () => {
+  const hostFile = "/opt/kernal/chrome/host/kernal-chrome-host.mjs";
+  const record = "/opt/kernal/chrome/host/socket-path";
+  const state = "/var/kernal-state";
+  const envForKernal = { KERNAL_HOME: "/opt/kernal", KERNAL_STATE: state, MGM_STATE: "/legacy/state" };
+  const expected = kernalSocketPath(envForKernal, "/home/person");
+  assert.equal(expected, "/opt/kernal/chrome.sock");
+  assert.equal(kernalStateDir(envForKernal, "/home/person"), state);
+  assert.notEqual(expected, join(state, "chrome.sock"));
+  // Legacy default MGM_HOME is the install being migrated, not the target.
+  assert.equal(
+    kernalSocketPath({ MGM_HOME: "/home/person/.mgm", KERNAL_STATE: state }, "/home/person"),
+    "/home/person/.kernal/chrome.sock",
+  );
+  assert.equal(
+    kernalSocketPath({ MGM_HOME: "/custom/mgm", MGM_STATE: state }, "/home/person"),
+    "/custom/mgm/chrome.sock",
+  );
+
+  // Chrome's environment has neither variable. The install record is the path.
+  // A sibling kernal/ directory would otherwise look like the repo and fall back.
+  const exists = (p) => p === state || p === "/opt/kernal/kernal";
+  const readFile = (p) => {
+    if (p !== record) throw new Error(`unexpected read ${p}`);
+    return `${expected}\n`;
+  };
+  assert.equal(socketPathFrom(hostFile, { env: {}, home: "/home/person", exists, readFile }), expected);
+  assert.equal(
+    socketPathFrom(hostFile, { env: { KERNAL_HOME: "/somewhere/else" }, home: "/home/person", exists, readFile }),
+    expected,
+  );
+
+  // No record yet: <home>/state is absent, and that must not select ~/.kernal.
+  const readMissing = () => { throw new Error("ENOENT"); };
+  const noRepo = (p) => p === state;
+  assert.equal(socketPathFrom(hostFile, { env: {}, home: "/home/person", exists: noRepo, readFile: readMissing }), expected);
 });
 
 function waitFor(proc, stream, text) {
@@ -178,6 +220,66 @@ test("the host socket lists no shares, refuses capture, and speaks native frames
     assert.equal(existsSync(sockPath), false);
   } finally {
     await stop(proc);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("two hosts: shutting down the loser leaves the survivor accepting list", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "kernal-chrome-host-"));
+  const sockPath = join(dir, "chrome.sock");
+  const spawnHost = () => spawn(process.execPath, [host], {
+    env: { ...process.env, KERNAL_HOME: dir },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const first = spawnHost();
+  let second;
+  try {
+    await waitFor(first, first.stderr, "listening");
+    second = spawnHost();
+    await waitFor(second, second.stderr, "socket in use");
+    assert.equal(second.exitCode, null);
+    assert.deepEqual(JSON.parse(await sendLine(sockPath, '{"t":"list"}\n')), { t: "shares", shares: [] });
+
+    second.kill("SIGTERM");
+    const [loserCode] = await once(second, "exit");
+    assert.equal(loserCode, 0);
+    assert.equal(first.exitCode, null);
+    assert.deepEqual(JSON.parse(await sendLine(sockPath, '{"t":"list"}\n')), { t: "shares", shares: [] });
+  } finally {
+    await stop(first);
+    if (second) await stop(second);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a leftover socket with nobody listening is replaced", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "kernal-chrome-host-"));
+  const sockPath = join(dir, "chrome.sock");
+  // SIGKILL skips the close handler, so the socket file stays and nothing accepts it.
+  const holder = spawn(process.execPath, ["--input-type=module", "-e", `
+    import { createServer } from "node:net";
+    const server = createServer();
+    server.listen(process.env.SOCK, () => process.stdout.write("up\\n"));
+    setInterval(() => {}, 1000);
+  `], {
+    env: { ...process.env, SOCK: sockPath },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let proc;
+  try {
+    await waitFor(holder, holder.stdout, "up");
+    holder.kill("SIGKILL");
+    await once(holder, "exit");
+    assert.equal(existsSync(sockPath), true);
+    proc = spawn(process.execPath, [host], {
+      env: { ...process.env, KERNAL_HOME: dir },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    await waitFor(proc, proc.stderr, "listening");
+    assert.deepEqual(JSON.parse(await sendLine(sockPath, '{"t":"list"}\n')), { t: "shares", shares: [] });
+  } finally {
+    if (holder.exitCode === null) holder.kill("SIGKILL");
+    if (proc) await stop(proc);
     rmSync(dir, { recursive: true, force: true });
   }
 });

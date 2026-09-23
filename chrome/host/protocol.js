@@ -5,7 +5,7 @@
 // The socket is one JSON object per line. Share and capture are wired to the
 // extension later; until then the share list is empty and every capture is refused.
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -67,21 +67,72 @@ export function replyToLine(line) {
   }
 }
 
-/**
- * Where the host listens. KERNAL_HOME wins. An installed copy lives at
- * `<home>/chrome/host` next to `<home>/state` and not next to a `kernal/`
- * directory (that layout is the repo). Anything else falls back to ~/.kernal,
- * which is the path the spec names.
- */
-export function kernalHomeFrom(hostFile, options = {}) {
-  const env = options.env ?? process.env;
-  const home = options.home ?? homedir();
-  const exists = options.exists ?? existsSync;
+const SOCKET_NAME = "chrome.sock";
+// Written by install.sh next to the host. Chrome execs the host with a clean
+// environment, so KERNAL_HOME and KERNAL_STATE from the shell are not there.
+const SOCKET_RECORD = "socket-path";
+
+/** install.sh's HOME_DIR: KERNAL_HOME, else a non-default MGM_HOME, else none. */
+function explicitHome(env, osHome) {
   if (typeof env.KERNAL_HOME === "string" && env.KERNAL_HOME !== "") return env.KERNAL_HOME;
+  const legacy = join(osHome, ".mgm");
+  if (typeof env.MGM_HOME === "string" && env.MGM_HOME !== "" && env.MGM_HOME !== legacy) return env.MGM_HOME;
+  return null;
+}
+
+/**
+ * State directory the installer calls STATE. KERNAL_STATE, else MGM_STATE, else
+ * `<home>/state`. This may sit outside the home. It is not where the socket lives:
+ * a missing `<home>/state` is still a valid install.
+ */
+export function kernalStateDir(env, osHome) {
+  const home = explicitHome(env, osHome) ?? join(osHome, ".kernal");
+  if (typeof env.KERNAL_STATE === "string" && env.KERNAL_STATE !== "") return env.KERNAL_STATE;
+  if (typeof env.MGM_STATE === "string" && env.MGM_STATE !== "") return env.MGM_STATE;
+  return join(home, "state");
+}
+
+/** `<home>/chrome.sock` — the path the running kernal opens. STATE does not move it. */
+export function kernalSocketPath(env, osHome) {
+  const home = explicitHome(env, osHome) ?? join(osHome, ".kernal");
+  return join(home, SOCKET_NAME);
+}
+
+function recordedSocket(hostFile, readFile) {
+  let text;
+  try {
+    text = readFile(join(dirname(hostFile), SOCKET_RECORD), "utf8");
+  } catch {
+    return null;
+  }
+  const line = String(text).trim();
+  if (!line.startsWith("/") || basename(line) !== SOCKET_NAME) return null;
+  return line;
+}
+
+/**
+ * Where this host listens. The install record wins: it is the absolute socket
+ * path install.sh wrote from the same home kernal uses, and it does not depend
+ * on the shell environment or on `<home>/state` existing. Env and the on-disk
+ * layout are fallbacks for a checkout, which has no record. A repo tree has a
+ * `kernal/` directory beside `chrome/`; that is not an install, so it uses ~/.kernal.
+ */
+export function socketPathFrom(hostFile, options = {}) {
+  const env = options.env ?? process.env;
+  const osHome = options.home ?? homedir();
+  const exists = options.exists ?? existsSync;
+  const readFile = options.readFile ?? ((file) => readFileSync(file, "utf8"));
+  const recorded = recordedSocket(hostFile, readFile);
+  if (recorded) return recorded;
+  const fromEnv = explicitHome(env, osHome);
+  if (fromEnv) return join(fromEnv, SOCKET_NAME);
   const chromeDir = dirname(dirname(hostFile));
   const root = dirname(chromeDir);
-  if (basename(chromeDir) === "chrome" && exists(join(root, "state")) && !exists(join(root, "kernal"))) {
-    return root;
-  }
-  return join(home, ".kernal");
+  if (basename(chromeDir) === "chrome" && !exists(join(root, "kernal"))) return join(root, SOCKET_NAME);
+  return join(osHome, ".kernal", SOCKET_NAME);
+}
+
+/** Directory that contains the socket. */
+export function kernalHomeFrom(hostFile, options = {}) {
+  return dirname(socketPathFrom(hostFile, options));
 }

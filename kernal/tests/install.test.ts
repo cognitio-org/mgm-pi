@@ -561,7 +561,7 @@ describe("chrome companion install", () => {
     return `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`;
   }
 
-  function sandbox(opts: { pi?: boolean; withNode?: boolean } = {}) {
+  function sandbox(opts: { pi?: boolean; withNode?: boolean; env?: Record<string, string> } = {}) {
     const work = mkdtempSync(join(tmpdir(), "kernal-chrome-install-"));
     const home = join(work, ".kernal");
     const binDir = join(work, "bin");
@@ -577,6 +577,10 @@ describe("chrome companion install", () => {
     };
     delete base.KERNAL_BUNDLE_FILE;
     delete base.MGM_BUNDLE_FILE;
+    delete base.KERNAL_STATE;
+    delete base.MGM_STATE;
+    delete base.MGM_HOME;
+    Object.assign(base, opts.env ?? {});
     const bundle = (version: string) => {
       const name = `kernal-${version}-${platform}`;
       const stage = join(work, "build", name);
@@ -644,6 +648,10 @@ describe("chrome companion install", () => {
     assert.equal(manifest.path, hostMjs);
     assert.deepEqual(manifest.allowed_origins, [`chrome-extension://${extId}/`]);
     assert.equal(manifest.path.includes(`kernal-9.9.0-${platform}`), false);
+    assert.equal(
+      readFileSync(join(b.home, "chrome", "host", "socket-path"), "utf8").trim(),
+      join(b.home, "chrome.sock"),
+    );
     assert.deepEqual(readdirSync(nativeHostDir(b.work)), ["com.kernal.chrome.json"]);
 
     const proc = spawn(hostMjs, [], { env: { HOME: b.work, PATH: "/usr/bin:/bin", KERNAL_HOME: b.home }, stdio: ["pipe", "pipe", "pipe"] });
@@ -715,5 +723,50 @@ describe("chrome companion install", () => {
     assert.doesNotMatch(text, new RegExp(`kernal-9\\.9\\.1-${platform}`));
     assert.match(readFileSync(join(b.home, "chrome", "host", "kernal-chrome-host.mjs"), "utf8"), /^#!\/usr\/bin\/env node\n/);
     assert.deepEqual(readdirSync(nativeHostDir(b.work)), ["com.kernal.chrome.json"]);
+  });
+
+  test("a state dir outside the home still yields the socket kernal opens", async () => {
+    const state = join(mkdtempSync(join(tmpdir(), "kernal-state-")), "state");
+    const b = sandbox({ env: { KERNAL_STATE: state } });
+    const out = b.install("9.9.3");
+    assert.equal(out.status, 0, out.out);
+    const recorded = readFileSync(join(b.home, "chrome", "host", "socket-path"), "utf8").trim();
+    assert.equal(recorded, join(b.home, "chrome.sock"));
+    assert.notEqual(dirname(recorded), state);
+    // A sibling kernal/ directory is the repo sentinel. The record must still win,
+    // or the host falls back to ~/.kernal when Chrome passes no KERNAL_HOME.
+    mkdirSync(join(b.home, "kernal"));
+    const fakeHome = join(b.work, "chrome-user");
+    mkdirSync(fakeHome);
+    const hostMjs = join(b.home, "chrome", "host", "kernal-chrome-host.mjs");
+    const proc = spawn(hostMjs, [], {
+      env: { HOME: fakeHome, PATH: "/usr/bin:/bin:/usr/sbin:/sbin" },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    try {
+      let err = "";
+      const ready = new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(err)), 4000);
+        proc.stderr.on("data", (c) => {
+          err += c.toString();
+          if (err.includes("listening")) { clearTimeout(timer); resolve(); }
+        });
+        proc.on("exit", (code) => { clearTimeout(timer); reject(new Error(`exit ${code}: ${err}`)); });
+      });
+      await ready;
+      assert.equal(existsSync(join(fakeHome, ".kernal", "chrome.sock")), false);
+      assert.equal(existsSync(join(state, "chrome.sock")), false);
+      const listed = await new Promise<string>((resolve, reject) => {
+        const socket = net.connect(recorded);
+        let buf = "";
+        const timer = setTimeout(() => reject(new Error(buf)), 4000);
+        socket.on("data", (c) => { buf += c.toString(); if (buf.includes("\n")) { clearTimeout(timer); socket.end(); resolve(buf); } });
+        socket.on("error", reject);
+        socket.on("connect", () => socket.write('{"t":"list"}\n'));
+      });
+      assert.deepEqual(JSON.parse(listed), { t: "shares", shares: [] });
+    } finally {
+      await stop(proc);
+    }
   });
 });

@@ -5,8 +5,9 @@ What was decided, what is built, what is next, and the traps worth knowing. The 
 
 ## Open, needs a human
 
-1. **Nothing blocking in this scope.** Phase 1 is merged and the admin page is in review
-   ([#61](https://github.com/cognitio-org/mgm-pi/pull/61)).
+1. **Nothing left in phase 1.** It is merged, including the admin GitHub page
+   ([#61](https://github.com/cognitio-org/mgm-pi/pull/61)). Phases 2, 3 and 4 are tracked as GitHub
+   issues; see Next.
 2. **Sign-in is a paste, by design.** `gh auth login` asks its own questions and pi cannot hand a
    child process the terminal, so `/github setup` shows the command instead of running it. If that
    ever becomes worth automating, the route is a kernal OAuth app and GitHub's device flow, which
@@ -41,15 +42,21 @@ the cloud shell.
     model's git rules, and `/git`, `/commit`, `/github`. `gh` install with checksum verification.
   - teleport now shares the module's "dirty" and "needs pushing" definitions.
   - `kernal github` in the launcher, and kernal's own bin directory on `PATH` (last).
-- **The admin GitHub page** ([#61](https://github.com/cognitio-org/mgm-pi/pull/61), in review).
+- **The admin GitHub page** ([#61](https://github.com/cognitio-org/mgm-pi/pull/61), merged): the
+  `gh` kernal found, the signed-in account and scopes, whether git over https uses that login, this
+  repository's branch and pull request, and the attribution strings. Sign-in and `setup-git` are
+  copied commands, not buttons. The spec's mention of an avatar, a Sign out button, the default
+  branch and the person's permission on the repo was not built and is not open work.
 
 ## Next
 
+Tracked under [#86](https://github.com/cognitio-org/mgm-pi/issues/86).
+
 | Phase | What | Depends on |
 |---|---|---|
-| 2 | `github_pr`, `github_issue`, `github_repo`, `/pr`, `/issues`, waiting for CI | nothing |
-| 3 | The cloud broker: agentd socket, `github.request`/`github.result` frames, the API executor and its policy, and the git proxy | phase 0 (done) and phase 2 |
-| 4 | Cloud multi-branch, the GitHub App identity, teleport carrying the repository | phase 3 |
+| 2 | [#87](https://github.com/cognitio-org/mgm-pi/issues/87) the tools and `/pr`, `/issues`; [#88](https://github.com/cognitio-org/mgm-pi/issues/88) `github.confirm` and per-agent access | phase 1 (done) |
+| 3 | [#89](https://github.com/cognitio-org/mgm-pi/issues/89) the git proxy; [#90](https://github.com/cognitio-org/mgm-pi/issues/90) the broker; [#91](https://github.com/cognitio-org/mgm-pi/issues/91) the session-page panel | phase 0 (done) and phase 2 |
+| 4 | [#92](https://github.com/cognitio-org/mgm-pi/issues/92) multi-branch; [#93](https://github.com/cognitio-org/mgm-pi/issues/93) the GitHub App; [#94](https://github.com/cognitio-org/mgm-pi/issues/94) teleport carries the repository | phase 3 |
 
 Phase 3's proxy should be designed against the residual-risk section of
 `outfitter/docs/reports/sandbox-git.md`: the bundle-based push landed in

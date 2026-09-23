@@ -1,0 +1,19 @@
+outfitter/docs/reports/sandbox-git.md
+  s_948fdca0d0c6f1::t_9e50d2546a2fff 78-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "ff9cebaeda885e053aa1c2a529b436f10a7e2d74",
+  "prompts": {},
+  "sessions": {
+    "s_948fdca0d0c6f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "913313fa-a17d-40df-81d2-892eab8604d3",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

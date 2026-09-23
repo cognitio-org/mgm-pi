@@ -251,8 +251,8 @@ describe("phase 2 github tools", { concurrency: 1 }, () => {
     const dir = repo();
     const { calls, gh } = fake((args) => {
       if (args[0] === "api" && args[1] === "graphql") return { stdout: JSON.stringify({ data: { addPullRequestReviewThreadReply: { comment: { url: "https://github.com/o/r/pull/7#discussion_r1" } }, resolveReviewThread: { thread: { isResolved: true } } } }) };
-      if (args[0] === "api" && args.includes("--method")) return { stdout: JSON.stringify({ html_url: "https://github.com/o/r/pull/7#pullrequestreview-1" }) };
-      if (args[1] === "view") return { stdout: JSON.stringify({ headRefOid: SHA_A }) };
+      if (args[0] === "api" && args.includes("--method")) return { stdout: JSON.stringify({ html_url: "https://github.com/gh-owner/gh-repo/pull/7#pullrequestreview-1" }) };
+      if (args[1] === "view") return { stdout: JSON.stringify({ headRefOid: SHA_A, url: "https://github.com/gh-owner/gh-repo/pull/7" }) };
       return { stdout: "https://github.com/o/r/pull/7#issuecomment-1\n" };
     });
     const comment = await executeGithub("github_pr", { action: "review", number: 7, decision: "comment", body: "Looks fine" }, deps(dir, gh));
@@ -266,7 +266,7 @@ describe("phase 2 github tools", { concurrency: 1 }, () => {
     }, deps(dir, gh));
     assert.equal(approved.isError, undefined, approved.text);
     const api = calls.find((c) => c.args[0] === "api" && c.args.includes("--method"))!;
-    assert.deepEqual(api.args.slice(0, 4), ["api", "--method", "POST", "repos/o/r/pulls/7/reviews"]);
+    assert.deepEqual(api.args.slice(0, 4), ["api", "--method", "POST", "repos/gh-owner/gh-repo/pulls/7/reviews"]);
     const payload = JSON.parse(api.stdin ?? "{}");
     assert.equal(payload.event, "APPROVE");
     assert.equal(payload.commit_id, SHA_A);
@@ -355,15 +355,54 @@ describe("phase 2 github tools", { concurrency: 1 }, () => {
     assert.equal(res.data.to, SHA_B);
   });
 
+  test("wait_ci judges the latest run of a check, and tails that run", async () => {
+    const dir = repo();
+    const clock = { intervalMs: 1000, now: () => 0, sleep: async () => {} };
+    const green = fake((args) => {
+      if (args[0] === "run") return { stdout: "SHOULD_NOT_TAIL\n" };
+      return { stdout: pr({ statusCheckRollup: [
+        { name: "test", conclusion: "SUCCESS", status: "COMPLETED", completedAt: "2026-01-02T00:00:00Z", detailsUrl: "https://github.com/o/r/actions/runs/22/job/2" },
+        { name: "test", conclusion: "CANCELLED", status: "COMPLETED", completedAt: "2026-01-01T00:00:00Z", detailsUrl: "https://github.com/o/r/actions/runs/11/job/1" },
+      ] }) };
+    });
+    const passed = await executeGithub("github_pr", { action: "wait_ci", number: 7, timeout: 30 }, deps(dir, green.gh, clock));
+    assert.equal(passed.data.result, "pass");
+    assert.equal(passed.data.checks.failed, 0);
+    assert.equal(passed.data.checks.total, 1);
+    assert.equal(green.calls.some((c) => c.args[0] === "run"), false);
+
+    const red = fake((args) => {
+      if (args[0] === "run" && args[1] === "view") return { stdout: "CURRENT_FAILURE_TAIL\n" };
+      if (args[0] === "pr" && args[1] === "view") return { stdout: pr({ statusCheckRollup: [
+        { name: "test", conclusion: "CANCELLED", status: "COMPLETED", completedAt: "2026-01-01T00:00:00Z", detailsUrl: "https://github.com/o/r/actions/runs/11/job/1" },
+        { name: "test", conclusion: "FAILURE", status: "COMPLETED", completedAt: "2026-01-02T00:00:00Z", detailsUrl: "https://github.com/o/r/actions/runs/99/job/2" },
+      ] }) };
+      return { code: 2, stderr: JSON.stringify(args) };
+    });
+    const failed = await executeGithub("github_pr", { action: "wait_ci", number: 8, timeout: 30 }, deps(dir, red.gh, clock));
+    assert.equal(failed.data.result, "fail");
+    assert.deepEqual(failed.data.failed, ["test"]);
+    assert.match(failed.data.log, /CURRENT_FAILURE_TAIL/);
+    const tailed = red.calls.find((c) => c.args[0] === "run" && c.args[1] === "view");
+    assert.ok(tailed?.args.includes("99"));
+    assert.equal(tailed?.args.includes("11"), false);
+
+    const cancelled = fake(() => ({ stdout: pr({ statusCheckRollup: [
+      { name: "test", conclusion: "CANCELLED", status: "COMPLETED", completedAt: "2026-01-01T00:00:00Z", detailsUrl: "https://github.com/o/r/actions/runs/11/job/1" },
+    ] }) }));
+    const still = await executeGithub("github_pr", { action: "wait_ci", number: 10, timeout: 30 }, deps(dir, cancelled.gh, clock));
+    assert.equal(still.data.result, "fail");
+    assert.deepEqual(still.data.failed, ["test"]);
+  });
+
   test("issues: list, create, edit, close, reopen, and start switches to the linked branch", async () => {
     const dir = repo();
-    run(dir, "branch", "issue-4-start");
     const { calls, gh } = fake((args) => {
       if (args[1] === "list") return { stdout: JSON.stringify([{ number: 4, title: "Tools", url: "https://github.com/o/r/issues/4", state: "OPEN", labels: [{ name: "bug" }], assignees: [{ login: "ada" }] }]) };
       if (args[1] === "view") return { stdout: JSON.stringify({ number: 4, title: "Tools", body: "Body", url: "https://github.com/o/r/issues/4", state: "OPEN", labels: [], assignees: [] }) };
       if (args[1] === "create") return { stdout: "https://github.com/o/r/issues/8\n" };
-      if (args[1] === "develop") return { stdout: "https://github.com/o/r/tree/issue-4-start\n" };
-      if (args[0] === "api") return { stdout: JSON.stringify({ data: { repository: { issue: { linkedBranches: { nodes: [{ ref: { name: "issue-4-start" } }] } } } } }) };
+      if (args[1] === "develop") return { stdout: "https://github.com/o/r/tree/issue-4%2Fstart\nhttps://github.com/o/r/tree/older-branch\n" };
+      if (args[0] === "api") return { stdout: JSON.stringify({ data: { repository: { issue: { linkedBranches: { nodes: [{ ref: { name: "issue-4-start" } }, { ref: { name: "older-branch" } }] } } } } }) };
       return { stdout: "" };
     });
     const list = await executeGithub("github_issue", { action: "list", assignee: "@me" }, deps(dir, gh));
@@ -389,11 +428,12 @@ describe("phase 2 github tools", { concurrency: 1 }, () => {
     await executeGithub("github_issue", { action: "reopen", number: 4 }, deps(dir, gh));
     assert.ok(calls.some((c) => c.args[0] === "issue" && c.args[1] === "reopen"));
 
+    run(dir, "branch", "issue-4%2Fstart");
     const started = await executeGithub("github_issue", { action: "start", number: 4 }, deps(dir, gh));
     assert.equal(started.isError, undefined, started.text);
-    assert.equal(started.data.branch, "issue-4-start");
-    assert.equal(run(dir, "branch", "--show-current"), "issue-4-start");
-    assert.ok(calls.some((c) => c.args[0] === "api" && c.args.some((a) => a.includes("linkedBranches"))));
+    assert.equal(started.data.branch, "issue-4%2Fstart");
+    assert.equal(run(dir, "branch", "--show-current"), "issue-4%2Fstart");
+    assert.equal(calls.some((c) => c.args[0] === "api"), false, "start does not switch to some other linked branch");
   });
 
   test("repo view reports the default branch, permission and template; search and releases record argv", async () => {
@@ -401,13 +441,14 @@ describe("phase 2 github tools", { concurrency: 1 }, () => {
     mkdirSync(join(dir, ".github"));
     writeFileSync(join(dir, ".github", "pull_request_template.md"), "TEMPLATE\n");
     const { calls, gh } = fake((args) => {
-      if (args[0] === "repo") return { stdout: JSON.stringify({ nameWithOwner: "o/r", url: "https://github.com/o/r", defaultBranchRef: { name: "main" }, viewerPermission: "WRITE" }) };
+      if (args[0] === "repo") return { stdout: JSON.stringify({ nameWithOwner: "upstream/widget", url: "https://github.com/upstream/widget", defaultBranchRef: { name: "main" }, viewerPermission: "WRITE" }) };
       if (args[1] === "issues") return { stdout: JSON.stringify([{ number: 1, title: "I", state: "open", url: "u" }]) };
       if (args[1] === "prs") return { stdout: JSON.stringify([{ number: 2, title: "P", state: "open", url: "u" }]) };
       if (args[0] === "release") return { stdout: JSON.stringify([{ tagName: "v1", name: "v1", isDraft: false, isPrerelease: false, url: "u" }]) };
       return { code: 2, stderr: JSON.stringify(args) };
     });
     const view = await executeGithub("github_repo", { action: "view" }, deps(dir, gh));
+    assert.equal(view.data.repo, "upstream/widget");
     assert.equal(view.data.defaultBranch, "main");
     assert.equal(view.data.permission, "WRITE");
     assert.equal(view.data.templates[0].path, ".github/pull_request_template.md");
@@ -416,8 +457,9 @@ describe("phase 2 github tools", { concurrency: 1 }, () => {
     const found = await executeGithub("github_repo", { action: "search", query: "tools" }, deps(dir, gh));
     assert.equal(found.data.issues[0].number, 1);
     assert.equal(found.data.pullRequests[0].number, 2);
-    assert.ok(calls.some((c) => c.args[0] === "search" && c.args[1] === "issues" && c.args.includes("tools")));
-    assert.ok(calls.some((c) => c.args[0] === "search" && c.args[1] === "prs"));
+    assert.ok(calls.some((c) => c.args[0] === "search" && c.args[1] === "issues" && c.args.includes("tools") && c.args.includes("--repo") && c.args.includes("upstream/widget")));
+    assert.ok(calls.some((c) => c.args[0] === "search" && c.args[1] === "prs" && c.args.includes("upstream/widget")));
+    assert.equal(calls.some((c) => c.args[0] === "search" && c.args.includes("o/r")), false);
 
     const releases = await executeGithub("github_repo", { action: "releases" }, deps(dir, gh));
     assert.equal(releases.data[0].tagName, "v1");

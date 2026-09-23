@@ -13,7 +13,7 @@ import { readdir, readFile, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import * as git from "../_shared/git.ts";
 import { gh as ghExec, type Exec, execCommand } from "./gh.ts";
-import { attributionFrom, checksLine, rollup } from "./lib.ts";
+import { attributionFrom, checksLine, latestChecks, rollup } from "./lib.ts";
 
 export type GithubToolClass = "read" | "write" | "merge";
 
@@ -313,6 +313,24 @@ function ghDetail(res: GhOut): string {
   return clip(detail || `gh exited ${res.code}`, 2000);
 }
 
+/** `https://github.com/owner/repo/pull/N`, the repository `gh pr view` resolved. The path is not decoded. */
+function repoFromPullUrl(url: unknown): { owner: string; repo: string } | undefined {
+  if (typeof url !== "string") return undefined;
+  const match = /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/pull\/\d+/.exec(url);
+  if (!match) return undefined;
+  return { owner: match[1]!, repo: match[2]! };
+}
+
+/** The owner/repo `gh` itself will use, which is not always `origin` (a fork, or GH_REPO). */
+async function ghOwnerRepo(deps: GithubDeps, repo: RepoRef): Promise<{ owner: string; repo: string } | { error: string }> {
+  const res = await call(deps, repo.root, ["repo", "view", "--json", "nameWithOwner"]);
+  if (!res.ok) return { error: ghDetail(res) };
+  const name = jsonOr(res.stdout)?.nameWithOwner;
+  const match = typeof name === "string" ? /^([^/\s]+)\/([^/\s]+)$/.exec(name.trim()) : undefined;
+  if (!match) return { error: "gh did not name the repository." };
+  return { owner: match[1]!, repo: match[2]! };
+}
+
 async function repoOf(cwd: string): Promise<RepoRef | { error: string }> {
   const root = await git.repoRoot(cwd);
   if (!root) return { error: `${cwd} is not inside a git repository.` };
@@ -395,8 +413,7 @@ function jobState(node: any): string {
 }
 
 function jobsFrom(nodes: any): { name: string; state: string; url: string }[] {
-  if (!Array.isArray(nodes)) return [];
-  return nodes.map((n) => ({
+  return latestChecks(nodes).map((n) => ({
     name: String(n?.name ?? n?.context ?? "check"),
     state: jobState(n),
     url: String(n?.detailsUrl ?? n?.targetUrl ?? ""),
@@ -607,22 +624,27 @@ async function reviewPr(params: any, deps: GithubDeps, repo: RepoRef): Promise<G
     return ok({ number, decision, url: res.stdout.trim() || undefined });
   }
   // Inline comments are not flags on `gh pr review`; the reviews API takes them on the commit they refer to.
+  // That API also has to name an owner and a repo. `gh pr view` resolved which repository this
+  // pull request is; origin can be a different one (a fork, or GH_REPO).
+  const viewed = await call(deps, repo.root, ["pr", "view", String(number), "--json", "url,headRefOid"]);
+  if (!viewed.ok) return fail(ghDetail(viewed));
+  const viewedData = jsonOr(viewed.stdout);
+  const target = repoFromPullUrl(viewedData?.url);
+  if (!target) return fail("Could not read which repository this pull request is in.");
   let sha = typeof params.sha === "string" ? params.sha.trim().toLowerCase() : "";
   if (!/^[0-9a-f]{40}$/.test(sha)) {
-    const viewed = await call(deps, repo.root, ["pr", "view", String(number), "--json", "headRefOid"]);
-    if (!viewed.ok) return fail(ghDetail(viewed));
-    const head = jsonOr(viewed.stdout)?.headRefOid;
+    const head = viewedData?.headRefOid;
     if (typeof head !== "string") return fail("Could not read the pull request head, which inline comments have to name.");
     sha = head.toLowerCase();
-    remember(repo.owner, repo.repo, number, sha);
   }
+  remember(target.owner, target.repo, number, sha);
   const payload = {
     commit_id: sha,
     body: body.trim(),
     event: decision === "approve" ? "APPROVE" : decision === "request-changes" ? "REQUEST_CHANGES" : "COMMENT",
     comments: inline.map((c: any) => ({ path: c.path.trim(), line: c.line, side: c.side ?? "RIGHT", body: c.body })),
   };
-  const res = await call(deps, repo.root, ["api", "--method", "POST", `repos/${repo.owner}/${repo.repo}/pulls/${number}/reviews`, "--input", "-"], { timeoutMs: 60_000, stdin: JSON.stringify(payload) });
+  const res = await call(deps, repo.root, ["api", "--method", "POST", `repos/${target.owner}/${target.repo}/pulls/${number}/reviews`, "--input", "-"], { timeoutMs: 60_000, stdin: JSON.stringify(payload) });
   if (!res.ok) return fail(ghDetail(res));
   const data = jsonOr(res.stdout);
   return ok({ number, decision, sha, url: data?.html_url ? String(data.html_url) : undefined });
@@ -856,20 +878,10 @@ async function startIssue(params: any, deps: GithubDeps, repo: RepoRef): Promise
   if (!number) return fail("An issue number is required.");
   const developed = await call(deps, repo.root, ["issue", "develop", String(number), "--checkout"], { timeoutMs: 60_000 });
   if (!developed.ok) return fail(ghDetail(developed));
-  // `gh issue develop` prints a URL; the linked branch itself is a GraphQL field, which `gh api` can read.
-  const query = "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){issue(number:$number){linkedBranches(first:10){nodes{ref{name}}}}}}";
-  const linked = await call(deps, repo.root, ["api", "graphql", "-f", `query=${query}`, "-F", `owner=${repo.owner}`, "-F", `repo=${repo.repo}`, "-F", `number=${number}`]);
-  let branch = "";
-  if (linked.ok) {
-    const nodes = jsonOr(linked.stdout)?.data?.repository?.issue?.linkedBranches?.nodes;
-    if (Array.isArray(nodes)) {
-      for (const n of nodes) if (n?.ref?.name) branch = String(n.ref.name);
-    }
-  }
-  if (!branch) {
-    const url = /github\.com\/[^/\s]+\/[^/\s]+\/tree\/([^\s]+)/.exec(developed.stdout);
-    if (url) branch = decodeURIComponent(url[1]);
-  }
+  // develop prints `…/tree/<name>` and already checks that branch out. Other linked
+  // branches are not the one just created, and the name is not percent-encoded.
+  const url = /github\.com\/[^/\s]+\/[^/\s]+\/tree\/([^\s]+)/.exec(developed.stdout);
+  const branch = url?.[1];
   if (!branch) return fail(`gh issue develop ran, but the linked branch name did not come back.\n${clip(developed.stdout, 500)}`);
   const current = (await git.status(repo.root))?.branch;
   if (current !== branch) {
@@ -901,8 +913,12 @@ async function runRepo(action: string, params: any, deps: GithubDeps, repo: Repo
     const limit = String(limitOf(params.limit));
     const wantIssues = !/\bis:pr\b/.test(query) || /\bis:issue\b/.test(query);
     const wantPrs = !/\bis:issue\b/.test(query) || /\bis:pr\b/.test(query);
-    const issues = wantIssues ? await call(deps, repo.root, ["search", "issues", query, "--repo", `${repo.owner}/${repo.repo}`, "--limit", limit, "--json", "number,title,state,url"]) : undefined;
-    const prs = wantPrs ? await call(deps, repo.root, ["search", "prs", query, "--repo", `${repo.owner}/${repo.repo}`, "--limit", limit, "--json", "number,title,state,url"]) : undefined;
+    // `gh issue list` uses the repository gh resolved. Search has to name one, and origin is not that.
+    const resolved = await ghOwnerRepo(deps, repo);
+    if ("error" in resolved) return fail(resolved.error);
+    const repoArg = `${resolved.owner}/${resolved.repo}`;
+    const issues = wantIssues ? await call(deps, repo.root, ["search", "issues", query, "--repo", repoArg, "--limit", limit, "--json", "number,title,state,url"]) : undefined;
+    const prs = wantPrs ? await call(deps, repo.root, ["search", "prs", query, "--repo", repoArg, "--limit", limit, "--json", "number,title,state,url"]) : undefined;
     if (issues && !issues.ok) return fail(ghDetail(issues));
     if (prs && !prs.ok) return fail(ghDetail(prs));
     const parse = (res: GhOut | undefined) => (res ? jsonOr(res.stdout) ?? [] : []);

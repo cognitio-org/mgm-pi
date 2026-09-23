@@ -502,6 +502,15 @@ describe("what a person sees", () => {
     assert.equal(checksLine(rollup([{ conclusion: "FAILURE" }, { conclusion: "SUCCESS" }])), "checks: 1 failing, 1 passed");
     assert.equal(checksLine(rollup([{ status: "IN_PROGRESS" }, { conclusion: "SUCCESS" }])), "checks: 1 running, 1 passed");
     assert.equal(checksLine(rollup([])), undefined);
+    const superseded = rollup([
+      { name: "test", conclusion: "SUCCESS", completedAt: "2026-01-02T00:00:00Z" },
+      { name: "test", conclusion: "CANCELLED", completedAt: "2026-01-01T00:00:00Z" },
+    ]);
+    assert.equal(superseded?.failed, 0);
+    assert.equal(superseded?.passed, 1);
+    assert.equal(superseded?.total, 1);
+    const onlyCancelled = rollup([{ name: "test", conclusion: "CANCELLED", completedAt: "2026-01-01T00:00:00Z" }]);
+    assert.equal(onlyCancelled?.failed, 1);
   });
 
   test("renderStatus: a branch with changes and a pull request", async () => {

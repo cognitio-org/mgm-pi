@@ -27,7 +27,10 @@ export default defineConfig({
     emptyOutDir: true,
   },
   test: {
-    environment: "jsdom",
+    // Node by default: most of this suite is pure logic (tokenizers, key handling, game engines,
+    // status derivation) and spinning up a jsdom per file cost ~13s of a ~21s run. Files that need
+    // a DOM opt in with a `@vitest-environment jsdom` docblock on their first line.
+    environment: "node",
     // jsdom's Storage API needs a real (non-opaque) origin to back localStorage/sessionStorage;
     // the default "about:blank" leaves window.localStorage undefined.
     environmentOptions: {

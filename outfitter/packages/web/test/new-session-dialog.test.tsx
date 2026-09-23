@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 // Bug 4 (docs/reports/cloud-fixes.md): NewSessionDialog used to pick guruId once, from useState's
 // initializer -- opened before `gurus` had loaded, guruId stayed "" forever even once gurus arrived
 // and the <select> visually showed one, so Start stayed disabled.

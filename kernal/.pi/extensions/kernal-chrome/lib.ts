@@ -6,8 +6,8 @@
  * ImageContent is { type: "image", data: base64, mimeType }, which is what the read tool returns.
  */
 import { connect, type Socket } from "node:net";
-import { chmodSync, copyFileSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative } from "node:path";
+import { closeSync, constants, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, isAbsolute, join, relative } from "node:path";
 import { homedir } from "node:os";
 
 export const NOT_RUNNING = "The Chrome companion is not running.";
@@ -180,27 +180,118 @@ export function captureFileOk(path: unknown, tabId: number): path is string {
   return typeof path === "string" && isAbsolute(path) && basename(path) === `${tabId}.jpg`;
 }
 
-/** Copy the host jpeg into the session workspace. One file per tab. Symlinks are refused. */
+function errnoCode(err: unknown): string {
+  return typeof err === "object" && err !== null && "code" in err ? String((err as { code?: unknown }).code) : "";
+}
+
+function isRealDirectory(st: ReturnType<typeof lstatSync>): boolean {
+  return st.isDirectory() && !st.isSymbolicLink();
+}
+
+function isRealFile(st: ReturnType<typeof lstatSync>): boolean {
+  return st.isFile() && !st.isSymbolicLink();
+}
+
+const REAL_DIR = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
+
+/** Open a real directory. O_NOFOLLOW fails closed when the path is a symlink. */
+function openRealDirectory(dir: string): boolean {
+  let fd: number | null = null;
+  try {
+    const named = lstatSync(dir);
+    if (!isRealDirectory(named)) return false;
+    fd = openSync(dir, REAL_DIR);
+    const opened = fstatSync(fd);
+    return opened.isDirectory() && opened.dev === named.dev && opened.ino === named.ino;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== null) closeSync(fd);
+  }
+}
+
+/**
+ * chrome-captures must be a real directory. mkdir(2) does not follow a trailing symlink;
+ * a link that wins the race is rejected by lstat and never used as the destination.
+ */
+function ensureCaptureDir(parent: string): boolean {
+  const dir = join(parent, CAPTURE_DIR);
+  let existing: ReturnType<typeof lstatSync> | null = null;
+  try {
+    existing = lstatSync(dir);
+  } catch (err) {
+    if (errnoCode(err) !== "ENOENT") return false;
+  }
+  if (existing) return isRealDirectory(existing) && openRealDirectory(dir);
+  let parentFd: number | null = null;
+  try {
+    parentFd = openSync(parent, REAL_DIR);
+    try {
+      mkdirSync(dir);
+    } catch (err) {
+      if (errnoCode(err) !== "EEXIST") return false;
+    }
+    return openRealDirectory(dir);
+  } catch {
+    return false;
+  } finally {
+    if (parentFd !== null) closeSync(parentFd);
+  }
+}
+
+function readRealFile(path: string): Buffer | null {
+  let fd: number | null = null;
+  try {
+    if (!isRealFile(lstatSync(path))) return null;
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    if (!fstatSync(fd).isFile()) return null;
+    return readFileSync(fd);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) closeSync(fd);
+  }
+}
+
+/** Replace a regular file, or create one. A symlink (or anything else) is refused and not followed. */
+function writeRealFile(path: string, bytes: Buffer): boolean {
+  let existing: ReturnType<typeof lstatSync> | null = null;
+  try {
+    existing = lstatSync(path);
+  } catch (err) {
+    if (errnoCode(err) !== "ENOENT") return false;
+  }
+  if (existing && !isRealFile(existing)) return false;
+  const flags = existing
+    ? constants.O_WRONLY | constants.O_TRUNC | constants.O_NOFOLLOW
+    : constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW;
+  let fd: number | null = null;
+  try {
+    fd = openSync(path, flags, 0o600);
+    if (!fstatSync(fd).isFile()) return false;
+    writeFileSync(fd, bytes);
+    fchmodSync(fd, 0o600);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== null) closeSync(fd);
+  }
+}
+
+/** Copy the host jpeg into the session workspace. One file per tab. Source and destination symlinks are refused. */
 export function copyCapture(src: string, cwd: string, tabId: number): { rel: string; bytes: Buffer } | null {
   if (!captureFileOk(src, tabId)) return null;
-  let st;
-  try {
-    st = lstatSync(src);
-  } catch {
-    return null;
-  }
-  if (!st.isFile() || st.isSymbolicLink()) return null;
+  const bytes = readRealFile(src);
+  if (!bytes) return null;
   const dest = join(cwd, CAPTURE_DIR, `${tabId}.jpg`);
-  try {
-    mkdirSync(dirname(dest), { recursive: true });
-    copyFileSync(src, dest);
-    chmodSync(dest, 0o600);
-    const rel = relative(cwd, dest);
-    if (!rel || rel.startsWith("..") || isAbsolute(rel)) return null;
-    return { rel, bytes: readFileSync(dest) };
-  } catch {
-    return null;
-  }
+  const rel = relative(cwd, dest);
+  if (!rel || rel.startsWith("..") || isAbsolute(rel)) return null;
+  if (!ensureCaptureDir(cwd) || !openRealDirectory(join(cwd, CAPTURE_DIR))) return null;
+  if (!writeRealFile(dest, bytes)) return null;
+  const stored = readRealFile(dest);
+  if (!stored) return null;
+  return { rel, bytes: stored };
 }
 
 export async function browserTabs(options: CallOptions = {}): Promise<ToolText> {

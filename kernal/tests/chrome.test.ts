@@ -159,6 +159,60 @@ describe("browser tools over the socket", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test("a symlink destination is refused and the link target is not written", async () => {
+    const dir = temp();
+    const outside = join(dir, "outside");
+    mkdirSync(outside);
+    const target = join(outside, "4.jpg");
+    writeFileSync(target, "do-not-touch");
+    const jpeg = join(dir, "4.jpg");
+    writeFileSync(jpeg, JPEG);
+    const env = { KERNAL_HOME: dir };
+    const server = await listen(join(dir, "chrome.sock"), (line, socket) => {
+      const msg = JSON.parse(line) as { t: string; tabId?: number };
+      if (msg.t !== "capture" || msg.tabId !== 4) return;
+      socket.write(`${JSON.stringify({ t: "captured", tabId: 4, title: "Spec", url: "https://example.com/a", path: jpeg })}\n`);
+    });
+    const opts = { env, readFile: () => { throw new Error("ENOENT"); } };
+    try {
+      const cwdDir = join(dir, "dir-link");
+      mkdirSync(cwdDir);
+      const dirLink = join(cwdDir, "chrome-captures");
+      symlinkSync(outside, dirLink);
+      const viaDir = await browserCapture(4, cwdDir, opts);
+      assert.equal(viaDir.isError, true);
+      assert.equal(viaDir.image, undefined);
+      assert.equal(viaDir.text, "The Chrome companion did not return a capture file.");
+      assert.equal(lstatSync(dirLink).isSymbolicLink(), true);
+      assert.equal(readFileSync(target, "utf8"), "do-not-touch");
+
+      const cwdFile = join(dir, "file-link");
+      mkdirSync(join(cwdFile, "chrome-captures"), { recursive: true });
+      const fileLink = join(cwdFile, "chrome-captures", "4.jpg");
+      symlinkSync(target, fileLink);
+      const viaFile = await browserCapture(4, cwdFile, opts);
+      assert.equal(viaFile.isError, true);
+      assert.equal(viaFile.image, undefined);
+      assert.equal(viaFile.text, "The Chrome companion did not return a capture file.");
+      assert.equal(lstatSync(fileLink).isSymbolicLink(), true);
+      assert.equal(readFileSync(target, "utf8"), "do-not-touch");
+
+      const cwdOk = join(dir, "real");
+      const realDir = join(cwdOk, "chrome-captures");
+      mkdirSync(realDir, { recursive: true });
+      const real = join(realDir, "4.jpg");
+      writeFileSync(real, Buffer.from("old"), { mode: 0o644 });
+      const replaced = await browserCapture(4, cwdOk, opts);
+      assert.equal(replaced.isError, false);
+      assert.deepEqual(readFileSync(real), JPEG);
+      assert.equal(lstatSync(real).isSymbolicLink(), false);
+      assert.equal(lstatSync(real).mode & 0o777, 0o600);
+    } finally {
+      server.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("the tool definition itself", () => {

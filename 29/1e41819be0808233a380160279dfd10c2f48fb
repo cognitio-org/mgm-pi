@@ -1,0 +1,25 @@
+kernal/.pi/extensions/kernal-admin/app.ts
+  s_25c805ebe232f3::t_3a02c7f8d4743d 254-256,449-450,514-515,1183-1299
+kernal/.pi/extensions/kernal-admin/index.ts
+  s_25c805ebe232f3::t_927321140e9ed5 37-39,53,356-398
+kernal/README.md
+  s_25c805ebe232f3::t_689c70325de177 313-317,323
+kernal/tests/admin.test.ts
+  s_25c805ebe232f3::t_4389de364b24fd 530-565
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "291e41819be0808233a380160279dfd10c2f48fb",
+  "prompts": {},
+  "sessions": {
+    "s_25c805ebe232f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f961db08-89fd-42a6-98be-0d21942ae41b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

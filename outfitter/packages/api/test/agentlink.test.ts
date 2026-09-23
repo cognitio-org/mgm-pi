@@ -102,6 +102,8 @@ describe("agentd <-> api WebSocket", () => {
     const run = await app.store.runs.findById(runId);
     assert.equal(run?.state, "failed");
     assert.match(run?.reason ?? "", /protocol v0 is older/);
+    // The browser-visible half (see the 4412 test): a note that names the fix, not just the skew.
+    assert.match(run?.statusDetail ?? "", /outfitter-agent image needs redeploying/);
 
     app.stopBackgroundTasks();
     await app.fastify.close();
@@ -700,6 +702,11 @@ describe("run.spec build validates secrets", () => {
     const run = await app.store.runs.findById(runId);
     assert.equal(run?.state, "failed");
     assert.match(run?.reason ?? "", /missing github token/);
+    // ...and the reason has to be somewhere the browser actually shows it. `reason` only reaches the
+    // header's one-line "LOAD ERROR — ..."; statusDetail is the note the session page renders in
+    // full (sse.ts -> useSessionStream -> SessionPage), so it carries the remedy.
+    assert.match(run?.statusDetail ?? "", /no GitHub token is stored for this session/);
+    assert.match(run?.statusDetail ?? "", /An operator has to create/);
 
     app.stopBackgroundTasks();
     await app.fastify.close();
@@ -856,6 +863,136 @@ describe("one live agent connection per run", () => {
 
     replacement.send({ t: "bye", reason: "stop" });
     await replacement.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+});
+
+// The motivating incident (session 2cc9494a on cognitio-org/testit, 2026-09-23): the api refused the
+// sandbox's connection, agentd went away, and the run sat in `provisioning` with the reason visible
+// only in Cloud Logging. Every refusal that is a fact about the run now says so on the run itself --
+// and, just as importantly, every refusal that is only a fact about the *caller* still says nothing
+// there (see agentlink.ts's refuse(): a write on an unproven caller's word would be a way to fail
+// other people's runs).
+describe("api-side refusals explain themselves", () => {
+  test("a run whose session record is gone is failed with a note, not left provisioning", async () => {
+    const app = await buildTestApp();
+    await seedGuru(app.store);
+    const now = new Date().toISOString();
+    // A run pointing at a session that isn't there: what a deleted (or never-replicated) session
+    // leaves behind. Its agent is refused before the run token is even looked at, which is fine
+    // here -- whether the session exists doesn't depend on who is asking.
+    await app.store.runs.insert({
+      id: "orphan-run",
+      sessionId: "gone",
+      state: "provisioning",
+      lastAckedSeq: 0,
+      pending: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const agent = await openAgentSocket(app, "orphan-run");
+    sendHello(agent, "orphan-run", "gone", "irrelevant");
+    const close = await agent.nextClose();
+    assert.equal(close.code, 4404);
+    assert.equal(agent.messageCount(), 0, "a refused connection is never handed run.spec");
+
+    const run = await app.store.runs.findById("orphan-run");
+    assert.equal(run?.state, "failed");
+    assert.match(run?.statusDetail ?? "", /session record is missing/);
+
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("a session whose guru was deleted is failed with a note naming the guru", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+    await app.store.gurus.delete("test-guru");
+
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    const close = await agent.nextClose();
+    assert.equal(close.code, 4404);
+
+    const run = await app.store.runs.findById(runId);
+    assert.equal(run?.state, "failed");
+    assert.match(run?.statusDetail ?? "", /guru \(test-guru\) no longer exists/);
+
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("a buildRunSpec failure the api may yet recover from explains itself without failing the run", async () => {
+    // Not MissingGithubTokenError: a broker that is simply unavailable. register()'s catch closes
+    // with 1011, which agentd retries (link.ts), so the run keeps its state -- but it must not sit
+    // in `provisioning` with the cause visible only in the server log.
+    const brokenBroker: SecretsBroker = {
+      secretsForRun: async () => {
+        throw new Error("secret manager unavailable");
+      },
+      defaultLitellmKey: async () => "some-key",
+    };
+    const app = await buildTestApp({}, { secretsBroker: brokenBroker });
+    const { session, runId, runToken } = await makeRunningSession(app);
+
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    const close = await agent.nextClose();
+    assert.equal(close.code, 1011);
+    assert.equal(agent.messageCount(), 0);
+
+    const run = await app.store.runs.findById(runId);
+    assert.equal(run?.state, "provisioning", "a transient failure must stay retryable");
+    assert.match(run?.statusDetail ?? "", /could not build this run's spec: secret manager unavailable/);
+
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("a bad run token writes nothing on the run -- an unproven caller can't fail someone else's", async () => {
+    // Finding #2 (docs/reports/security-review-pr1.md): a valid agent id token only proves the
+    // caller is *some* execution of the shared agent job, so this refusal is a fact about the caller
+    // alone. Persisting it would hand any holder of an agent token a way to fail arbitrary runs;
+    // runs.ts's reconciler is what fails a run whose sandbox really never connected.
+    const app = await buildTestApp();
+    const { session, runId } = await makeRunningSession(app);
+
+    const impostor = await openAgentSocket(app, runId);
+    sendHello(impostor, runId, session.id, "not-the-run-token");
+    const close = await impostor.nextClose();
+    assert.equal(close.code, 4401);
+
+    const run = await app.store.runs.findById(runId);
+    assert.equal(run?.state, "provisioning");
+    assert.equal(run?.statusDetail, undefined);
+    assert.equal(run?.reason, undefined);
+
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("refusing a second live connection leaves the running run's own state and note alone", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+
+    const agentd = await openAgentSocket(app, runId);
+    sendHello(agentd, runId, session.id, runToken);
+    assert.equal((await agentd.nextMessage()).t, "run.spec");
+
+    const impostor = await openAgentSocket(app, runId);
+    sendHello(impostor, runId, session.id, runToken);
+    assert.equal((await impostor.nextClose()).code, 4429);
+
+    // Nothing is wrong with this run -- its own agent is connected -- so the refusal must not leave
+    // a note on it claiming otherwise.
+    const run = await app.store.runs.findById(runId);
+    assert.notEqual(run?.state, "failed");
+    assert.equal(run?.statusDetail, undefined);
+
+    agentd.send({ t: "bye", reason: "stop" });
+    await agentd.nextClose();
     app.stopBackgroundTasks();
     await app.fastify.close();
   });

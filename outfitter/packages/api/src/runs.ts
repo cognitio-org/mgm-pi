@@ -145,6 +145,16 @@ export class RunManager {
       await this.store.runs.update(run.id, {
         state: "failed",
         reason: "no heartbeat",
+        // "no heartbeat" is the whole of what the session page used to show for this ("LOAD ERROR
+        // — No heartbeat"), and it named neither a cause nor anything to do about it. statusDetail
+        // is the field the page renders in full (packages/web SessionPage, agentlink.ts's
+        // refuse()), so spend it on the three things that actually produce a silent sandbox --
+        // including a connection the api itself refused before it could prove which run it was
+        // (agentlink.ts's run-token check, which deliberately writes nothing on the run).
+        statusDetail:
+          "this run's sandbox stopped reporting to the api, so the api gave up on it. It may have " +
+          "failed to start, been refused when it tried to connect (the server log for this run id " +
+          "says why), or died mid-run. Press Play to start a new one.",
         updatedAt: new Date().toISOString(),
       });
     }

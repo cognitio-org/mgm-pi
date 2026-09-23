@@ -112,9 +112,26 @@ export async function authState(gh: string, exec: Exec = execCommand): Promise<A
     login,
     scopes,
     fromEnv: fromEnv || undefined,
-    gitConfigured: /gh auth git-credential/.test(git.stdout),
+    gitConfigured: githubComUsesGh(git.stdout),
     detail: text.trim(),
   };
+}
+
+/** True when a credential helper for github.com itself (or a global helper) runs `gh auth git-credential`.
+ *  A helper scoped to some other host, such as a GitHub Enterprise server, does not count. */
+export function githubComUsesGh(config: string): boolean {
+  for (const line of config.split("\n")) {
+    const m = /^(\S+)\s+(.*)$/.exec(line.trim());
+    if (!m || !/gh auth git-credential/.test(m[2])) continue;
+    if (m[1] === "credential.helper") return true;
+    if (/^credential\.https:\/\/github\.com(?:\/.*)?\.helper$/.test(m[1])) return true;
+  }
+  return false;
+}
+
+/** A single shell word. Paths with spaces or metacharacters stay one argument when pasted. */
+export function shellWord(word: string): string {
+  return /^[A-Za-z0-9_./@:+-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`;
 }
 
 /** Scopes the tools need that this token does not have. */
@@ -122,9 +139,9 @@ export const missingScopes = (scopes: string[] | undefined) =>
   scopes ? SCOPES_WANTED.filter((s) => !scopes.includes(s) && !(s === "read:org" && scopes.includes("admin:org"))) : [];
 
 /** The command a person runs in a terminal to sign in, with the scopes kernal's tools need. */
-export const loginCommand = (gh = "gh") => `${gh} auth login --web --git-protocol https --hostname github.com --scopes workflow`;
+export const loginCommand = (gh = "gh") => `${shellWord(gh)} auth login --web --git-protocol https --hostname github.com --scopes workflow`;
 /** The command that makes `git push` over https use the same login. */
-export const setupGitCommand = (gh = "gh") => `${gh} auth setup-git --hostname github.com`;
+export const setupGitCommand = (gh = "gh") => `${shellWord(gh)} auth setup-git --hostname github.com`;
 
 // ---------- installing ----------
 

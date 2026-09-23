@@ -322,6 +322,15 @@ describe("the GitHub CLI helper", () => {
     assert.equal(state.login, "octocat");
     assert.deepEqual(state.scopes, ["gist", "read:org", "repo", "workflow"]);
     assert.equal(state.gitConfigured, true);
+    const enterprise: ghlib.Exec = async (cmd, args) => {
+      if (cmd === "git") return { stdout: "credential.https://ghe.example.com.helper !/usr/bin/gh auth git-credential\n", stderr: "", code: 0 };
+      if (args[0] === "auth") return { stdout: "", stderr: status, code: 0 };
+      return { stdout: "", stderr: "", code: 1 };
+    };
+    assert.equal((await ghlib.authState("gh", enterprise)).gitConfigured, false, "a helper for another host is not github.com");
+    assert.equal(ghlib.githubComUsesGh("credential.helper !gh auth git-credential\n"), true);
+    assert.equal(ghlib.loginCommand("/Users/me/My Tools/gh"), "'/Users/me/My Tools/gh' auth login --web --git-protocol https --hostname github.com --scopes workflow");
+    assert.equal(ghlib.setupGitCommand("gh"), "gh auth setup-git --hostname github.com");
     assert.deepEqual(ghlib.missingScopes(state.scopes), []);
     assert.deepEqual(ghlib.missingScopes(["repo"]), ["read:org", "workflow"]);
 

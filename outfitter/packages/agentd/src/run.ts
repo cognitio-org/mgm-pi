@@ -2,7 +2,7 @@
  * The run state machine from protocol.md: `cloning -> restoring -> starting -> running/idle ->
  * checkpointing -> stopping`. Wires together git, session import, the pi RPC process and the link,
  * and handles every down-message in protocol.md (`run.spec`, `ack`, `prompt`, `steer`, `follow_up`,
- * `abort`, `ui_response`, `rpc`, `checkpoint`, `diff`, `read`, `stop`).
+ * `abort`, `ui_response`, `rpc`, `checkpoint`, `diff`, `read`, `stop`, `browser.capture.entry`).
  */
 import { mkdir, readFile, open as openFile, chown } from "node:fs/promises";
 import { resolve, sep } from "node:path";
@@ -290,6 +290,10 @@ export class RunController {
         return;
       case "stop":
         void this.handleStop(msg.reason);
+        return;
+      case "browser.capture.entry":
+        // Same counter as pi's own entry/event frames. One up-frame per down-frame.
+        this.deps.link.sendSeq((seq) => ({ t: "entry", seq, entry: msg.entry }));
         return;
     }
   }

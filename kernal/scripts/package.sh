@@ -53,6 +53,17 @@ cp "$ROOT/../.env.example" "$STAGE/.env.example" 2>/dev/null || cp "$ROOT/.env.e
 mkdir -p "$STAGE/.codebase-index"; cp "$ROOT/.codebase-index/config.json" "$STAGE/.codebase-index/config.json"
 echo "$VERSION" > "$STAGE/VERSION"; echo "pi $PI_VERSION" >> "$STAGE/VERSION"
 
+# Chrome companion. install.sh copies these out of the bundle onto stable paths
+# (~/.kernal/chrome). The versioned directory moves on every upgrade, so Chrome
+# must not load the extension from inside the bundle.
+CHROME_SRC="$ROOT/../chrome"
+[[ -d "$CHROME_SRC/extension" && -d "$CHROME_SRC/host" && -f "$CHROME_SRC/extension-id" ]] \
+  || { echo "chrome companion sources missing at $CHROME_SRC" >&2; exit 1; }
+mkdir -p "$STAGE/chrome"
+cp -R "$CHROME_SRC/extension" "$STAGE/chrome/extension"
+cp -R "$CHROME_SRC/host" "$STAGE/chrome/host"
+cp "$CHROME_SRC/extension-id" "$STAGE/chrome/extension-id"
+
 # 3. extension packages, exactly as locked. --legacy-peer-deps: the packages peer-depend on pi's own
 #    packages, which the pi binary provides at runtime (no copy needed). Then drop native binaries
 #    built for other platforms (open-codebase-index ships all six in one package, ~250 MB).

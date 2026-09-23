@@ -21,14 +21,16 @@ The service worker drops any sender whose `sender.origin` is not one of those si
 
 ## Install
 
-First install is Load unpacked. The installer that copies this extension into `~/.kernal` is a different change. Nothing here registers a native-messaging host.
+`kernal/scripts/install.sh` (which `kernal update` runs) copies this extension to `~/.kernal/chrome/extension` and the native host to `~/.kernal/chrome/host`. Those paths stay put when the versioned bundle moves. It registers `com.kernal.chrome` only after checking that Node, or the bundle's pi binary, can start the host. If neither can, it says so and does not write a manifest.
+
+Chrome still does not load the extension from the install. The installer prints the steps below and opens `chrome://extensions`. It does not edit Chrome's preferences, and it does not claim the extension is loaded.
 
 1. Open `chrome://extensions`.
 2. Turn on Developer mode.
-3. Choose Load unpacked and select the `chrome/extension` directory in this repo.
+3. Choose Load unpacked and select `~/.kernal/chrome/extension` (or `chrome/extension` in this repo, for a checkout).
 4. Open the extension's options. Paste `OUTFITTER_TOKEN` and `OUTFITTER_API` from the Tokens page.
 
-The id does not change between loads. `manifest.json` pins it with a public `key`, and `chrome/extension-id` is that id, one line. Reload the extension at `chrome://extensions` after a file change. An unpacked extension keeps running the old files until then.
+The id does not change between loads. `manifest.json` pins it with a public `key`, and `chrome/extension-id` is that id, one line. After an update, reload the extension at `chrome://extensions`. An unpacked extension keeps running the old files until then.
 
 ## Tests
 

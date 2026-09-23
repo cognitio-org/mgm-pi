@@ -504,7 +504,9 @@ export function SessionPage() {
           {views.length === 0 && !activity.showOptimistic ? (
             <p className="empty-state">No entries yet. Send a message below to start the run.</p>
           ) : (
-            views.map((v) => <EntryItem key={v.id} view={v} defaultThinkingExpanded={defaultThinkingExpanded} />)
+            views.map((v) => (
+              <EntryItem key={v.id} view={v} sessionId={sessionId} defaultThinkingExpanded={defaultThinkingExpanded} />
+            ))
           )}
           {activity.showOptimistic && pendingSend && (
             <div

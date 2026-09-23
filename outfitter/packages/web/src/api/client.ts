@@ -178,8 +178,8 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(path, {
+function authedInit(init: RequestInit = {}): RequestInit {
+  return {
     ...init,
     credentials: "same-origin",
     headers: {
@@ -187,19 +187,32 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       ...authHeaders(),
       ...(init.headers ?? {}),
     },
-  });
-  if (!res.ok) {
-    let message = res.statusText;
-    try {
-      const body = (await res.json()) as { error?: string };
-      if (body?.error) message = body.error;
-    } catch {
-      // non-JSON error body -- fall back to statusText
-    }
-    throw new ApiError(res.status, message);
+  };
+}
+
+async function errorMessage(res: Response): Promise<string> {
+  let message = res.statusText;
+  try {
+    const body = (await res.json()) as { error?: string };
+    if (body?.error) message = body.error;
+  } catch {
+    // non-JSON error body -- fall back to statusText
   }
+  return message;
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await fetch(path, authedInit(init));
+  if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
+}
+
+/** Jpeg bytes. Same cookies and dev bearer as request(); the body is not JSON. */
+async function requestBlob(path: string): Promise<Blob> {
+  const res = await fetch(path, authedInit());
+  if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
+  return res.blob();
 }
 
 export const api = {
@@ -342,5 +355,10 @@ export const api = {
 
   streamUrl(id: string): string {
     return `/api/sessions/${id}/stream`;
+  },
+
+  /** Transcript jpeg for one capture. Any authenticated caller (protocol.md). */
+  browserCapture(sessionId: string, captureId: string): Promise<Blob> {
+    return requestBlob(`/api/sessions/${sessionId}/browser/captures/${captureId}`);
   },
 };

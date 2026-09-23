@@ -386,6 +386,13 @@
   font-family: var(--font-mono);
 }
 
+/* The capture jpeg uses the same custom entry; keep it inside the transcript column. */
+.entry.custom img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
 /* Long tool output: collapsible via <details>, used inside EntryItem's tool-call/tool-result
  * bodies. Native <details>/<summary> keeps this keyboard- and screen-reader-accessible for free. */
 .entry details {

@@ -5,6 +5,7 @@
 # Idempotent.
 #   ./access.sh
 #
+# - kernal-web: public (the kernal.one landing page).
 # - outfitter-link: public (--allow-unauthenticated). It authenticates every request itself
 #   (agent tokens, personal API tokens, OIDC on the hooks); see docs/protocol.md "Two origins".
 # - outfitter-api: IAP on, no unauthenticated invoker, the IAP service agent allowed to invoke it,
@@ -25,6 +26,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 WEB_SERVICE="outfitter-api"
 LINK_SERVICE="outfitter-link"
+LANDING_SERVICE="kernal-web"
 
 IFS=',' read -ra IAP_MEMBER_LIST <<<"${IAP_MEMBERS}"
 for member in "${IAP_MEMBER_LIST[@]}"; do
@@ -47,6 +49,13 @@ has_public_invoker() {
 echo "== ${LINK_SERVICE}: allow unauthenticated invocation (it authenticates requests itself) =="
 gcloud run services add-iam-policy-binding "${LINK_SERVICE}" --project="${PROJECT}" --region="${REGION}" \
   --member=allUsers --role=roles/run.invoker --quiet >/dev/null
+
+# The kernal.one landing page is public by design; it exists only when landing.sh has run.
+if gcloud_exists run services describe "${LANDING_SERVICE}" --project="${PROJECT}" --region="${REGION}"; then
+  echo "== ${LANDING_SERVICE}: allow unauthenticated invocation (public landing page) =="
+  gcloud run services add-iam-policy-binding "${LANDING_SERVICE}" --project="${PROJECT}" --region="${REGION}" \
+    --member=allUsers --role=roles/run.invoker --quiet >/dev/null
+fi
 
 echo "== ${WEB_SERVICE}: IAP on, unauthenticated invocation off =="
 gcloud run services update "${WEB_SERVICE}" --project="${PROJECT}" --region="${REGION}" --iap --quiet >/dev/null

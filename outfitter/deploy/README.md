@@ -97,7 +97,11 @@ at the commit, `ALLOW_SKEW=1` lets a single-component script deploy against a mi
 workflow's **Run workflow** button redeploys a release: choose its `outfitter-v*` tag under "Use
 workflow from" (runs from anything else are refused), with `rollback` and `force_all`.
 
-`landing.sh` (`kernal-web`, the kernal.one page) is not part of this yet; it still deploys by hand.
+The kernal.one landing page (`kernal-web`) rides along: `release.sh` runs `landing.sh` when
+anything under `landing/` changed since the commit that page runs, and smoke-checks that it serves
+a 200. It is deliberately *not* part of the three-component one-commit rule (`check_deploy_skew`):
+it is static, talks to nothing and carries no protocol version, so it can sit at another commit
+safely. Its domain mappings (`./landing.sh --map-domains`) stay a one-time owner step.
 
 ## Order of operations
 
@@ -245,8 +249,9 @@ workflow from" (runs from anything else are refused), with `rollback` and `force
    deploys/updates the `outfitter-agent` Cloud Run Job, pointed at `outfitter-link`'s URL (looked
    up; agentd only ever dials `outfitter-link`, never `outfitter-api`).
 7. **`./access.sh`** — IAP on `outfitter-api` with its OAuth client and `IAP_MEMBERS`, the IAP
-   service agent's invoker binding, and the public invoker on `outfitter-link`. Re-run it whenever
-   `IAP_MEMBERS` or `IAP_OAUTH_CLIENT_ID` in `config.env` changes.
+   service agent's invoker binding, and the public invoker on `outfitter-link` and (once it
+   exists) `kernal-web`. Re-run it whenever `IAP_MEMBERS` or `IAP_OAUTH_CLIENT_ID` in `config.env`
+   changes, and after the landing page's first deploy.
 8. **`./ci-setup.sh`** — the GitHub Actions deployer (see "Deploying"). From then on, pushing a release tag deploys.
 
 **Version skew guard (bug 9, `docs/reports/cloud-fixes.md`)**: `service.sh` and `agent-job.sh` each

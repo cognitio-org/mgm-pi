@@ -1,0 +1,16 @@
+.github/workflows/chrome-ci.yml
+  h_69b863911ebf05 1-24
+chrome/package.json
+  h_69b863911ebf05 4-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "20c43298c8f7dcaca8b9cc0aa3f75631a07097f4",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

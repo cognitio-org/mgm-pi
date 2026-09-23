@@ -6,6 +6,7 @@ import { MemoryStore } from "../src/store/memory.ts";
 import type { Store, Guru } from "../src/store/types.ts";
 import { NoopProvider } from "../src/providers/noop.ts";
 import { MemorySecretsBroker, MemorySecretAdmin, type SecretsBroker, type SecretAdmin } from "../src/secrets.ts";
+import type { GithubBroker } from "../src/github-broker.ts";
 import { buildApp, type App } from "../src/server.ts";
 
 export interface TestApp extends App {
@@ -23,6 +24,8 @@ export interface BuildTestAppOptions {
   /** Share a store across two buildTestApp calls, e.g. to simulate the web/link role split
    * against one Atlas-like store in a test. Defaults to a fresh MemoryStore. */
   store?: Store;
+  /** GitHub broker handed to AgentLink. Defaults to one that talks to api.github.com. */
+  github?: GithubBroker;
 }
 
 export async function buildTestApp(
@@ -40,7 +43,7 @@ export async function buildTestApp(
   const provider = new NoopProvider();
   const secretsBroker = opts.secretsBroker ?? new MemorySecretsBroker();
   const secretAdmin = opts.secretAdmin ?? new MemorySecretAdmin();
-  const app = await buildApp({ store, config, provider, secretsBroker, secretAdmin });
+  const app = await buildApp({ store, config, provider, secretsBroker, secretAdmin, github: opts.github });
   await app.fastify.ready();
   return { ...app, store, provider };
 }

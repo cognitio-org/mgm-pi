@@ -143,9 +143,17 @@ export interface Run {
   // running total, not a delta to fold in) and it's populated even for a guru whose route never
   // returns LiteLLM spend headers at all (`cost`/`keySpendStart` would then stay unset).
   costEstimate?: number;
+  /** Recent github.request write results, keyed by idempotencyKey, so a retry does not post twice.
+   * Not a wire field. The broker caps this at the newest 100 keys. */
+  githubIdempotency?: Record<string, GithubIdempotencyRecord>;
   createdAt: string;
   updatedAt: string;
 }
+
+/** Stored result of one github.request write. Same shape the broker returns on the socket. */
+export type GithubIdempotencyRecord =
+  | { ok: true; data: Record<string, unknown> }
+  | { ok: false; error: string };
 
 /** E5.5 mailbox: a message addressed to a session, not to a run, so it outlives a run that dies
  * before it is ready. Delivered at least once: claimed with a lease, acked by agentd once pi has
@@ -236,6 +244,9 @@ export interface Guru {
   excludeTools?: string[];
   packages?: string[];
   env?: Record<string, string>;
+  /** When true, this guru's cloud runs may `github_pr.merge`. Absent or false refuses with
+   * "not permitted" — a cloud run can be started with nobody watching. */
+  mergeFromCloud?: boolean;
   createdAt: string;
   updatedAt: string;
 }

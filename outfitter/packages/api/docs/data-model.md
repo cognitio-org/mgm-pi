@@ -80,6 +80,7 @@ active run instead of creating a second one.
 | `providerHandle` | unknown | opaque `SandboxProvider` handle (Cloud Run execution name, child PID, ...) |
 | `pendingUiRequest` | unknown? | **not in protocol.md**: the last `extension_ui_request` event, so a browser that (re)opens the session still sees a question the run is waiting on; cleared on `ui_response` |
 | `modelFallback` | `{wanted, used}`? | **not in protocol.md**: set by the E2.8 laptop preflight (`src/laptop.ts`) when a laptop-only model was substituted for a cloud one, so the UI can show "running on X instead of Y" |
+| `githubIdempotency` | object? | **not on the wire**: last 100 `github.request` write results keyed by `idempotencyKey`, so a retry does not post twice (`src/github-broker.ts`) |
 | `createdAt`, `updatedAt` | ISO string | |
 
 Indexes: `{sessionId: 1, state: 1}` (`findActiveForSession`, the hot path on nearly every route).
@@ -104,6 +105,7 @@ Reusable agent configs (EPIC.md vocabulary: **Guru**, never "Expert").
 | `tools`, `excludeTools` | string[]? | |
 | `packages` | string[]? | pi packages/skills for the run's `PI_CODING_AGENT_DIR` |
 | `env` | object? | |
+| `mergeFromCloud` | boolean? | phase 3: when true, this guru's cloud runs may `github_pr.merge`. Absent or false refuses with "not permitted" |
 | `createdAt`, `updatedAt` | ISO string | |
 
 No indexes beyond `_id` — the guru list is small and read in full (`GET /api/gurus`).

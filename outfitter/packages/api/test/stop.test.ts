@@ -20,6 +20,7 @@ import { loadConfig } from "../src/config.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { NoopProvider } from "../src/providers/noop.ts";
 import { RunManager } from "../src/runs.ts";
+import { API_PROTOCOL_VERSION } from "../src/agentlink.ts";
 import { buildTestApp, seedGuru } from "./helpers.ts";
 import type { Session, Run, RunsCollection, DownMessage, Store } from "../src/store/types.ts";
 
@@ -165,7 +166,7 @@ async function makeRunningSession(
 function sendHello(agent: SocketHandle, runId: string, sessionId: string, runToken: string, lastAckedSeq = 0): void {
   // protocolVersion must match agentlink.ts's API_PROTOCOL_VERSION (bug 9, docs/reports/cloud-fixes.md)
   // or the connection is refused with 4409 before this test gets anywhere.
-  agent.send({ t: "hello", runId, sessionId, lastAckedSeq, runToken, protocolVersion: 1 });
+  agent.send({ t: "hello", runId, sessionId, lastAckedSeq, runToken, protocolVersion: API_PROTOCOL_VERSION });
 }
 
 describe("POST /api/sessions/:id/stop (graceful, process-independent)", () => {

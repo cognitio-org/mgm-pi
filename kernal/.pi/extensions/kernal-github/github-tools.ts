@@ -118,16 +118,26 @@ export async function prTemplates(root: string): Promise<PrTemplate[]> {
   return found;
 }
 
-/** Issues a branch name or a commit message actually names. A bare number in "phase2" is not one. */
+/** `#12` counts. `other-org/repo#12` belongs to that repository, so it does not. */
+function takeHashes(text: string, found: Set<number>) {
+  for (const match of text.matchAll(/#(\d+)\b/g)) {
+    const before = text.slice(0, match.index ?? 0);
+    if (/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(before)) continue;
+    found.add(Number(match[1]));
+  }
+}
+
+/** Issues a branch name or a commit message actually names. A date or a bare number in "phase2" is not one. */
 export function issuesNamed(branch: string | undefined, commitText: string): number[] {
   const found = new Set<number>();
   const take = (s: string, re: RegExp) => { for (const m of s.matchAll(re)) found.add(Number(m[1])); };
   if (branch) {
-    take(branch, /#(\d+)\b/g);
+    takeHashes(branch, found);
     take(branch, /(?:^|[/\-])issues?[/\-](\d+)\b/gi);
-    take(branch, /(?:^|\/)(\d+)(?:\/|-)/g);
+    // `87-tools` names an issue. `2024-09-23` is a date: the hyphen is followed by a digit.
+    take(branch, /(?:^|\/)(\d+)-[A-Za-z]/g);
   }
-  take(commitText, /#(\d+)\b/g);
+  takeHashes(commitText, found);
   return [...found].filter((n) => Number.isInteger(n) && n > 0).sort((a, b) => a - b);
 }
 
@@ -398,14 +408,25 @@ function commentFooter(deps: GithubDeps): string {
   return login && /^[A-Za-z0-9-]+$/.test(login) ? `Outfitter, on behalf of @${login}` : "";
 }
 
-async function commitMessages(root: string): Promise<string> {
-  // Only commits this branch adds. A range is placed after --end-of-options so it cannot be a flag.
-  const base = await git.gitValue(["merge-base", "HEAD", "origin/HEAD"], { cwd: root })
-    ?? await git.gitValue(["merge-base", "HEAD", "origin/main"], { cwd: root });
-  const args = base
-    ? ["log", "--end-of-options", `${base}..HEAD`, "--format=%s%n%b"]
-    : ["log", "-20", "--format=%s%n%b"];
-  return (await git.gitValue(args, { cwd: root })) ?? "";
+/** The commit `base` (or the default branch) and HEAD diverged at. Empty when that point cannot be named. */
+async function branchPoint(root: string, base?: string): Promise<string | undefined> {
+  const candidates: string[] = [];
+  if (base && !git.refNameProblem(base)) candidates.push(`origin/${base}`, base);
+  else if (!base) candidates.push("origin/HEAD", "origin/main", "main");
+  for (const name of candidates) {
+    const sha = await git.gitValue(["merge-base", "--end-of-options", "HEAD", name], { cwd: root });
+    if (sha && /^[0-9a-f]{7,64}$/i.test(sha)) return sha;
+  }
+  return undefined;
+}
+
+async function commitMessages(root: string, base?: string): Promise<string> {
+  // Only commits this branch adds on top of its base. No base means no commit text:
+  // the last 20 commits on HEAD would close issues the branch did not newly reference.
+  // Options stay in front of --end-of-options; after it, `--format` would be a path and the log would be empty.
+  const point = await branchPoint(root, base);
+  if (!point) return "";
+  return (await git.gitValue(["log", "--format=%s%n%b", "--end-of-options", `${point}..HEAD`], { cwd: root })) ?? "";
 }
 
 function jobState(node: any): string {
@@ -555,7 +576,7 @@ async function createPr(params: any, deps: GithubDeps, repo: RepoRef): Promise<G
       if (!template) return fail(`No pull request template matches "${wanted}".\n` + (templates.map((t) => t.path).join("\n") || "(none)"));
     } else template = templates[0];
   }
-  const named = issuesNamed(repo.branch, await commitMessages(repo.root));
+  const named = issuesNamed(repo.branch, await commitMessages(repo.root, base || undefined));
   const body = composePrBody({
     template: template?.body,
     body: explicit,

@@ -92,6 +92,8 @@ describe("phase 2 github tools", { concurrency: 1 }, () => {
     assert.deepEqual(issuesNamed("issue-87-tools", "Fix the parser\n\nFixes #12\n"), [12, 87]);
     assert.deepEqual(issuesNamed("feat/87-tools", ""), [87]);
     assert.deepEqual(issuesNamed("phase2", "nothing numeric"), []);
+    assert.deepEqual(issuesNamed("release/2024-09-23", "See other-org/repo#12\n\nFixes #8\n"), [8]);
+    assert.deepEqual(issuesNamed("feature", "acme/widget#4 mentions #4"), [4]);
 
     const body = composePrBody({
       template: "## Summary\n\n## Test plan\n\n- [ ]\n",
@@ -184,6 +186,21 @@ describe("phase 2 github tools", { concurrency: 1 }, () => {
     assert.match(call.stdin ?? "", /Opened with Kernal/);
     assert.match(call.stdin ?? "", /Outfitter, on behalf of @ada/);
     assert.equal(call.args.filter((a) => a === title).length, 1);
+  });
+
+  test("create closes issues the branch adds against its base, not older history", async () => {
+    const dir = repo();
+    run(dir, "commit", "--quiet", "--allow-empty", "-m", "Fixes #99");
+    run(dir, "switch", "--create", "develop");
+    run(dir, "commit", "--quiet", "--allow-empty", "-m", "Fixes #50");
+    run(dir, "switch", "--create", "feature");
+    run(dir, "commit", "--quiet", "--allow-empty", "-m", "Fixes #7");
+    const { calls, gh } = fake(() => ({ stdout: "https://github.com/o/r/pull/9\n" }));
+    const res = await executeGithub("github_pr", { action: "create", title: "T", base: "develop", body: "Already written" }, deps(dir, gh));
+    assert.equal(res.isError, undefined, res.text);
+    assert.deepEqual(res.data.closes, [7]);
+    assert.match(calls[0].stdin ?? "", /Closes #7/);
+    assert.doesNotMatch(calls[0].stdin ?? "", /Closes #50|Closes #99/);
   });
 
   test("create without a template writes a summary and a test plan", async () => {

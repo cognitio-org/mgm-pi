@@ -34,6 +34,9 @@ import {
   AgentError, MAX_PROMPT, PI_TOOLS, THINKING_LEVELS, customiseAgent, deleteAgent, modelSettings, readAgent, resolvedView, saveAgent, saveModelSettings, snapshot, validateEdit, validateModelSettings,
   type AgentEdit, type Snapshot,
 } from "./subagents.ts";
+import { authState, findGh, installGh, kernalBin, loginCommand, missingScopes, setupGitCommand } from "../kernal-github/gh.ts";
+import { attributionFrom, repoStatus } from "../kernal-github/lib.ts";
+import { readSettings, updateSettings } from "../connect/settings.ts";
 import { APP_CSS, APP_JS, FAVICON, INDEX_HTML } from "./app.ts";
 import { backendPill, connectionsView, fieldById, idleMs, indexFields, leaksSecret, redactSecrets, secretValues, validateConnections, type ConnectionEdit } from "./lib.ts";
 import { startAdminServer, type AdminServer, type Api, type ApiResult } from "./server.ts";
@@ -47,7 +50,7 @@ export const ASSETS = {
 };
 
 /** Pages `/admin <page>` can open directly. */
-const PAGES = ["overview", "connections", "model", "index", "subagents"];
+const PAGES = ["overview", "connections", "model", "index", "subagents", "github"];
 
 const agentDir = () => process.env.PI_CODING_AGENT_DIR || join(process.env.HOME ?? "", ".pi", "agent");
 const readJson = (f: string) => { try { return JSON.parse(readFileSync(f, "utf8")); } catch { return undefined; } };
@@ -348,6 +351,49 @@ export function createApi(d: ApiDeps): Api {
     "POST /subagents/preview": async (body: { markdown?: unknown }) => {
       if (typeof body.markdown !== "string" || body.markdown.length > MAX_PROMPT) return fail(400, { error: "markdown is text up to the prompt limit" });
       return { body: { html: markdownToHtml(body.markdown) } };
+    },
+
+    // ---------- github: the CLI, the sign-in, and what this repository looks like ----------
+    "GET /github": async () => {
+      const gh = await findGh();
+      const auth = gh ? await authState(gh.path) : undefined;
+      const st = await repoStatus(cwd(), gh).catch(() => undefined);
+      const name = gh?.managed ? gh.path : "gh";
+      return { body: {
+        cli: gh ? { path: gh.path, version: gh.version, managed: gh.managed } : undefined,
+        binDir: kernalBin(),
+        // `detail` is gh's own output: it can name a token, so it never reaches the page.
+        auth: auth ? { signedIn: auth.signedIn, login: auth.login, scopes: auth.scopes, fromEnv: auth.fromEnv, gitConfigured: auth.gitConfigured, missingScopes: missingScopes(auth.scopes) } : undefined,
+        commands: { login: loginCommand(name), setupGit: setupGitCommand(name) },
+        repo: st?.repo ? { ...st.repo, branch: st.git.branch, upstream: st.git.upstream, clean: st.git.clean, ahead: st.git.ahead, behind: st.git.behind } : undefined,
+        pr: st?.pr, prUnavailable: st?.prUnavailable,
+        notARepo: st ? undefined : cwd(),
+        attribution: attributionFrom(readSettings()),
+      } };
+    },
+
+    "POST /github/install": async () => {
+      const already = await findGh();
+      if (already && !already.managed) return { body: { message: `gh ${already.version} is already installed at ${already.path}.` } };
+      const res = await installGh();
+      if (!res.ok) return fail(502, { error: res.detail });
+      return { body: { message: `Installed gh ${res.version} in ${kernalBin()}.` } };
+    },
+
+    "POST /github/attribution": async (body: { commit?: unknown; pr?: unknown }) => {
+      const errors: Record<string, string> = {};
+      for (const k of ["commit", "pr"] as const) {
+        if (body[k] === undefined) continue;
+        if (typeof body[k] !== "string" || String(body[k]).length > 200) errors[k] = "text, up to 200 characters, or empty to turn it off";
+        else if (leaksSecret(String(body[k]), secrets())) errors[k] = "that looks like it holds a key";
+      }
+      if (Object.keys(errors).length) return fail(422, { error: "some fields need fixing", errors });
+      updateSettings((s: any) => {
+        const g = (s.github && typeof s.github === "object" ? s.github : (s.github = {}));
+        const a = (g.attribution && typeof g.attribution === "object" ? g.attribution : (g.attribution = {}));
+        for (const k of ["commit", "pr"] as const) if (body[k] !== undefined) a[k] = String(body[k]);
+      });
+      return { body: { message: "Saved. New commits and pull requests use this.", attribution: attributionFrom(readSettings()) } };
     },
 
     "POST /stop": async () => { setTimeout(() => d.stop(), 50); return { body: { stopping: true } }; },

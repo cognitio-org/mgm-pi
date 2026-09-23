@@ -310,12 +310,17 @@ with it.
   preview and a token estimate. Every write goes through pi-subagents' own handlers, and afterwards
   the package re-discovers the agent; if what it resolves differs from what was saved, the change is
   rolled back and the reason shown.
+- **GitHub**: the GitHub CLI kernal uses and where it came from, the account it is signed in as with
+  the token's scopes, whether `git push` over https uses that login, and this repository with its
+  branch and pull request. An Install button fetches `gh`; the sign-in and `setup-git` commands are
+  shown with a copy button, because kernal cannot answer gh's questions for you. The commit trailer
+  and pull request footer are edited here.
   A **Command-line agents** section shows the agents that run Claude Code, Codex or Cursor: one tile
   per tool, installed or not (with the install command when it is not), and which of its agents are
   read-only and which write files. Those agents are labelled with the tool's own model, and a model
   or thinking override for one is refused, because the tool never receives it.
 
-`/admin index` (or `connections`, `model`, `subagents`) opens straight at that page, `/admin status`
+`/admin index` (or `connections`, `model`, `subagents`, `github`) opens straight at that page, `/admin status`
 says where it is, `/admin stop` stops it.
 
 **Security.** The server listens on 127.0.0.1 only, on a port the system picks, and makes a new

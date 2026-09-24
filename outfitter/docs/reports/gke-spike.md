@@ -255,8 +255,8 @@ Grants, made by the owner on 2026-09-24:
 - The impersonation grant took 43 s to propagate.
 - PR2 is unblocked on S6. With S2 and S3 also passed, nothing gates PR2 now.
 - **Gap found after release (2026-09-24):** S6's token came from `gcloud ... --impersonate-service-account`,
-  which carries the `userinfo.email` scope. The deployed API's token, from Cloud Run's metadata
-  server with only `cloud-platform`, doesn't. GKE then authenticates the account by its numeric
+  which carries the `userinfo.email` scope. The deployed API's token didn't: Cloud Run's metadata
+  server mints exactly the scopes requested, and the provider asked for `cloud-platform` only. GKE then authenticates the account by its numeric
   unique ID, so the RoleBinding for `User: outfitter-api@...` never matched. The first warm-pool hook
   call got a 403: the GKE audit log shows `User "109876399607867997839" cannot patch ...
   sandboxwarmpools`. It would have broken every GKE wake at the switch. Fix: the provider requests

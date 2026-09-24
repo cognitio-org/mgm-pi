@@ -307,7 +307,7 @@ explicit go-ahead in the conversation (`gke-template.sh` is the one exception â€
    KSA's `workloadIdentityUser` are expected). Idempotent; safe to re-run (a GKE upgrade can restore
    the hardening binding this un-exempts). `DRY_RUN=1` first.
 3. **Re-run `./ci-setup.sh`** (owner-run), now that `GKE_CLUSTER` is set and the cluster exists: it
-   picks up the namespaced Role letting `outfitter-deployer` get/patch the SandboxTemplate and pool,
+   picks up the namespaced Role letting `outfitter-deployer` create/patch the SandboxTemplate and pool,
    manage the release-time warm-up claim, and read the `kube-dns` Service in `kube-system` â€” none of
    which it could apply before the cluster existed. Running `ci-setup.sh` before `gke-cluster.sh`
    only warns and skips that one block, so this step must come after both `gke-cluster.sh` and

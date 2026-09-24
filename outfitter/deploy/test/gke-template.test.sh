@@ -3,9 +3,9 @@
 # guards.test.sh) and fake gcloud/kubectl. No network, no GCP.
 #
 # The fake kubectl enforces exactly the RBAC ci-setup.sh grants outfitter-deployer for this
-# namespace (get/patch on sandboxtemplates and sandboxwarmpools; get/create/delete/list/watch on
-# sandboxclaims -- no patch, so a regression to `apply` on a claim is caught; get/list/watch on
-# sandboxes), denying anything else. That makes "the script only uses verbs it's actually granted"
+# namespace (get/create/patch on sandboxtemplates and sandboxwarmpools, create only for a missing
+# object; get/create/delete/list on sandboxclaims -- no patch, so a regression to `apply` on a claim
+# is caught; get/list/watch on sandboxes), denying anything else. That makes "the script only uses verbs it's actually granted"
 # part of what this test checks, not just an assumption.
 #   bash outfitter/deploy/test/gke-template.test.sh
 set -euo pipefail

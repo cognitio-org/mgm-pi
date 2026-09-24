@@ -104,21 +104,22 @@ metadata: { name: outfitter-deployer, namespace: ${GKE_NAMESPACE} }
 rules:
   - apiGroups: ["extensions.agents.x-k8s.io"]
     resources: ["sandboxtemplates"]
-    # create, not just get/patch: `kubectl apply --server-side` on an object that doesn't exist yet
-    # (the very first GKE release) is authorized against `create`, not only `patch` -- the apiserver
-    # checks create for a missing object even under a patch-shaped request. `create` can't be
+    # create, not just get/patch: "kubectl apply --server-side" on an object that doesn't exist yet
+    # (the very first GKE release) is authorized against create, not only patch -- the apiserver
+    # checks create for a missing object even under a patch-shaped request. create can't be
     # narrowed by resourceNames, so this covers any SandboxTemplate name in the namespace, not just
     # "outfitter-agent"; nothing else in this namespace creates one.
+    # (No backticks anywhere in this heredoc: it's unquoted, so bash would run them as commands.)
     verbs: ["get", "create", "patch"]
   - apiGroups: ["extensions.agents.x-k8s.io"]
     resources: ["sandboxwarmpools"]
-    # Same reasoning as sandboxtemplates above: the first release's `apply --server-side` needs
+    # Same reasoning as sandboxtemplates above: the first release's "apply --server-side" needs
     # create too.
     verbs: ["get", "create", "patch"]
   - apiGroups: ["extensions.agents.x-k8s.io"]
     resources: ["sandboxclaims"]
     # get/create/delete: the warm-up claim itself (kubectl create -f -, not apply -- this Role
-    # deliberately grants no patch on sandboxclaims; get is polled instead of `kubectl wait`, see
+    # deliberately grants no patch on sandboxclaims; get is polled instead of "kubectl wait", see
     # gke-template.sh). list: finding a stale warm-up claim left by an interrupted previous run,
     # by label, before creating a new one.
     verbs: ["get", "create", "delete", "list"]

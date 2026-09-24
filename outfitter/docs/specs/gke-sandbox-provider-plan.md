@@ -169,8 +169,8 @@ release, as §2 already says). Notes for whoever builds on this:
   deploy scripts have no Atlas access, so it checks for live `SandboxClaim`s in the namespace as the
   closest available proxy (every active gke run has exactly one) rather than the API's own run
   state. `GET /api/operator/runs?active=1` (PR5) is the authoritative check.
-- `ci-setup.sh`'s new namespaced Role/RoleBinding for `outfitter-deployer` (get/patch the
-  SandboxTemplate and pool, get/create/delete the warm-up claim) needs the cluster to already exist;
+- `ci-setup.sh`'s new namespaced Role/RoleBinding for `outfitter-deployer` (get/create/patch the
+  SandboxTemplate and pool, get/create/delete/list the warm-up claim, get/list/watch sandboxes) needs the cluster to already exist;
   run `gke-cluster.sh` first. Running `ci-setup.sh` before that just warns and skips that one block
   — re-run `ci-setup.sh` afterward.
 - `service.sh` reads `GKE_CLUSTER`/`GKE_LOCATION`/`GKE_NAMESPACE`/`GKE_WARM_POOL`/`GKE_LAUNCH_MODE`/

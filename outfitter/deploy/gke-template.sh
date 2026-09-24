@@ -105,7 +105,7 @@ kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" \
 # Image streaming needs one real pull of a brand-new tag before it's fast (docs/reports/
 # gke-spike.md S4: 28s the first time a tag is ever pulled, ~2s on every pull after). A throwaway
 # cold claim pays that cost here instead of on the first real wake. `create`, not `apply`: the
-# deployer's Role only grants create/get/delete/list/watch on sandboxclaims, not patch, and a
+# deployer's Role only grants create/get/delete/list on sandboxclaims, not patch, and a
 # one-off object that's never reapplied doesn't need server-side apply's merge semantics anyway.
 #
 # `app.kubernetes.io/managed-by: outfitter-release`, not `outfitter`: PR2's GkeProvider counts
@@ -118,17 +118,24 @@ kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" \
 # or leftover claim can never cause AlreadyExists. A create failure (quota, a rejected admission,
 # anything) just skips the rest of this section with a note.
 echo "== Warming ${IMAGE} with a throwaway cold claim =="
-STALE_WARMUPS="$(kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" \
-  get sandboxclaims -l app.kubernetes.io/managed-by=outfitter-release,outfitter.dev/warmup=true -o name 2>/dev/null || true)"
-for stale in ${STALE_WARMUPS}; do
-  kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" \
-    delete "${stale}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
-done
+# Every warm-up kubectl call carries --request-timeout: the loops below are bounded by count, but a
+# single call to a hung API server otherwise isn't, and this section must never hang the release.
+WARMUP_KUBECTL_TIMEOUT="--request-timeout=10s"
+sweep_warmup_claims() {
+  local stale claims
+  claims="$(kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" "${WARMUP_KUBECTL_TIMEOUT}" \
+    get sandboxclaims -l app.kubernetes.io/managed-by=outfitter-release,outfitter.dev/warmup=true -o name 2>/dev/null || true)"
+  for stale in ${claims}; do
+    kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" "${WARMUP_KUBECTL_TIMEOUT}" \
+      delete "${stale}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  done
+}
+sweep_warmup_claims
 
 WARMUP_CREATE_ERR="$(mktemp)"
 register_cleanup "${WARMUP_CREATE_ERR}"
 WARMUP_CLAIM=""
-if WARMUP_CLAIM="$(cat <<YAML | kubectl --kubeconfig="${KUBECONFIG}" create -f - -o jsonpath='{.metadata.name}' 2>"${WARMUP_CREATE_ERR}"
+if WARMUP_CLAIM="$(cat <<YAML | kubectl --kubeconfig="${KUBECONFIG}" "${WARMUP_KUBECTL_TIMEOUT}" create -f - -o jsonpath='{.metadata.name}' 2>"${WARMUP_CREATE_ERR}"
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxClaim
 metadata:
@@ -161,7 +168,7 @@ YAML
   WARMUP_POLL_INTERVAL_S="${WARMUP_POLL_INTERVAL_S:-2}"
   SANDBOX_NAME=""
   for _ in $(seq 1 30); do
-    SANDBOX_NAME="$(kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" \
+    SANDBOX_NAME="$(kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" "${WARMUP_KUBECTL_TIMEOUT}" \
       get sandboxclaim "${WARMUP_CLAIM}" -o jsonpath='{.status.sandbox.name}' 2>/dev/null || true)"
     [[ -n "${SANDBOX_NAME}" ]] && break
     sleep "${WARMUP_POLL_INTERVAL_S}"
@@ -176,11 +183,14 @@ YAML
   # Delete now, in the normal flow (not only via the register_cleanup_cmd trap above, which stays as
   # the crash-safety net for an interrupt mid-wait): the label right below must come strictly after
   # this in the script's own order.
-  kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" \
+  kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" "${WARMUP_KUBECTL_TIMEOUT}" \
     delete sandboxclaim "${WARMUP_CLAIM}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
 else
   echo "   note: couldn't create a warm-up claim (see below); skipping the warm-up entirely -- the next real wake pays the pull instead" >&2
   sed 's/^/   /' "${WARMUP_CREATE_ERR}" >&2
+  # The server may have created the claim even though kubectl reported failure (a connection
+  # dropped after the POST): sweep by label so it doesn't sit holding a sandbox until next release.
+  sweep_warmup_claims
 fi
 
 # Only now: a failure above must leave the template unlabelled, so a re-run of this script (release

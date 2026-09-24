@@ -31,6 +31,9 @@ export interface RenderOptions {
   /** E5.5: path to pi-extension/outfitter-mail.ts (or its built .js), which gives the model the
    * outfitter_send tool. Loaded the same way as the spend extension. */
   mailExtensionPath?: string;
+  /** Chrome companion §13: path to pi-extension/outfitter-browser.ts (or its built .js). The
+   * Drive-only `browser_capture` tool. Omitted outside a Drive, same as the mail extension. */
+  browserExtensionPath?: string;
   /** Bug 8 (docs/reports/cloud-fixes.md): true when the restored session's own last-known model and
    * thinking level (session.ts's lastKnownModelState) already match `guru.model`/`guru.thinking` --
    * omit `--model` entirely rather than reassert an unchanged value, since pi logs a fresh
@@ -62,6 +65,9 @@ const DENYLISTED_GURU_ENV_KEYS = new Set([
   "LITELLM_BASE_URL",
   "LITELLM_API_KEY",
   "LITELLM_AGENT_KEY",
+  // A user Dongle. The Drive capture tool must not be able to present one, and a guru must not
+  // be able to plant one in the sandbox either (chrome-companion.md §13).
+  "OUTFITTER_TOKEN",
 ]);
 
 function isDenylistedGuruEnvKey(key: string): boolean {
@@ -93,6 +99,7 @@ export function renderGuru(guru: RunSpecGuru, opts: RenderOptions): RenderedPi {
 
   if (opts.spendExtensionPath) args.push("--extension", opts.spendExtensionPath);
   if (opts.mailExtensionPath) args.push("--extension", opts.mailExtensionPath);
+  if (opts.browserExtensionPath) args.push("--extension", opts.browserExtensionPath);
 
   if (!opts.skipModelArg) args.push("--model", renderModelArg(guru.model, guru.thinking));
 

@@ -1,5 +1,11 @@
 /**
- * browser_tabs and browser_capture for a tab the user shared in Chrome.
+ * Laptop-only browser_tabs and browser_capture. The capture tool takes a tab id and talks to
+ * the Chrome native host on <kernal-home>/chrome.sock. It does not work in a Drive: there is
+ * no Chrome and no socket there.
+ *
+ * The Drive has its own tool, also named browser_capture, in outfitter-browser.ts. That one
+ * takes no tab id and goes through agentd to the link API. pi will not start if both
+ * extensions are loaded. The sandbox image deletes this directory; do not put it back.
  *
  * pi loads every `.pi/extensions/<name>/index.ts`. kernal-github is included the same way:
  * there is no extension allowlist in settings.json, and package.sh copies `.pi/extensions` whole.

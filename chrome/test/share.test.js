@@ -10,8 +10,10 @@ import {
   SHARE_MENU_TITLE,
   bytesToBase64,
   captureNotice,
+  captureResultError,
   captureTryAllowed,
   capturesPath,
+  failRequestPath,
   floppyMenuLabel,
   floppyNameOf,
   hostCaptureReply,
@@ -298,6 +300,11 @@ test("link routes are the browser share, pending queue, revoke, and capture path
   assert.equal(sharePath(session), `/api/sessions/${session}/browser/share`);
   assert.equal(pendingPath(session), `/api/sessions/${session}/browser/requests?status=pending`);
   assert.equal(revokeRequestPath(session, "req/1"), `/api/sessions/${session}/browser/requests/${encodeURIComponent("req/1")}/revoke`);
+  assert.equal(failRequestPath(session, "req/1"), `/api/sessions/${session}/browser/requests/${encodeURIComponent("req/1")}/fail`);
+  assert.equal(captureResultError("tab_gone"), "tab_gone");
+  assert.equal(captureResultError("permission_denied"), "permission_denied");
+  assert.equal(captureResultError("too_large"), "too_large");
+  assert.equal(captureResultError("upload_failed"), null);
   assert.equal(capturesPath(session), `/api/sessions/${session}/browser/captures`);
   assert.deepEqual(pendingRequests([{ id: "req-1", requesterEmail: "ada@kernal.one", status: "pending" }, { id: "req-2", status: "done" }]), [
     { id: "req-1", requesterEmail: "ada@kernal.one" },

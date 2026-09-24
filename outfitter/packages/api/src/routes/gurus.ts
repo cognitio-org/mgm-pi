@@ -35,6 +35,8 @@ export const DENYLISTED_GURU_ENV_KEYS = new Set([
   "LITELLM_BASE_URL",
   "LITELLM_API_KEY",
   "LITELLM_AGENT_KEY",
+  // A user Dongle must not be planted into a Drive. The capture tool does not use one.
+  "OUTFITTER_TOKEN",
 ]);
 
 /** guru.env keys denied by prefix rather than exact match -- see DENYLISTED_GURU_ENV_KEYS' doc. */

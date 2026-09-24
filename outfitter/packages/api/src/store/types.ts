@@ -55,9 +55,25 @@ export interface Entry {
 }
 
 export interface DownMessage {
-  t: "prompt" | "steer" | "follow_up" | "abort" | "ui_response" | "rpc" | "checkpoint" | "stop" | "browser.capture.entry";
+  t:
+    | "prompt"
+    | "steer"
+    | "follow_up"
+    | "abort"
+    | "ui_response"
+    | "rpc"
+    | "checkpoint"
+    | "stop"
+    | "browser.capture.entry"
+    | "browser.capture.result";
   /** Set on `browser.capture.entry`: the pi custom entry agentd must emit with its own seq. */
   entry?: PiEntry;
+  /** Set on `browser.capture.result`. Not a transcript seq. */
+  requestId?: string;
+  captureId?: string;
+  title?: string;
+  url?: string;
+  error?: string;
   [key: string]: unknown;
 }
 
@@ -418,7 +434,10 @@ export interface BrowserShare {
   createdAt: string;
 }
 
-export type BrowserRequestStatus = "pending" | "done" | "skipped";
+export type BrowserRequestStatus = "pending" | "done" | "skipped" | "failed";
+
+/** Chrome outcomes the extension reports after its retry. Not a transcript row. */
+export type BrowserCaptureFailure = "permission_denied" | "tab_gone" | "too_large";
 
 /** A capture ask. requesterEmail is the authenticated caller who created it, never a body field. */
 export interface BrowserRequest {
@@ -428,6 +447,8 @@ export interface BrowserRequest {
   status: BrowserRequestStatus;
   /** Set when a capture is stored and the request is marked done. */
   captureId?: string;
+  /** Set when the extension reports a terminal capture error and the request is `failed`. */
+  error?: BrowserCaptureFailure;
   createdAt: string;
   updatedAt: string;
 }
@@ -453,8 +474,13 @@ export interface BrowserSharesCollection {
   /** Inserts, or replaces tabTitle/tabUrl/createdAt when ownerEmail matches.
    * `conflict` is the share already stored when a different email owns it. */
   put(share: BrowserShare): Promise<{ conflict: false; share: BrowserShare } | { conflict: true; share: BrowserShare }>;
-  /** Deletes the share and marks this session's pending requests skipped. */
-  deleteIfOwner(sessionId: string, ownerEmail: string, nowIso: string): Promise<"deleted" | "missing" | "forbidden">;
+  /** Deletes the share and marks this session's pending requests skipped.
+   * `skippedIds` are the requests that were pending and are now skipped (empty unless deleted). */
+  deleteIfOwner(
+    sessionId: string,
+    ownerEmail: string,
+    nowIso: string,
+  ): Promise<{ outcome: "deleted" | "missing" | "forbidden"; skippedIds: string[] }>;
 }
 
 export interface BrowserRequestsCollection {
@@ -469,8 +495,19 @@ export interface BrowserRequestsCollection {
   findById(sessionId: string, id: string): Promise<BrowserRequest | null>;
   /** Oldest pending first. */
   listPending(sessionId: string): Promise<BrowserRequest[]>;
-  /** Pending or already-skipped becomes skipped. A done request is left done. */
+  /** Pending or already-skipped becomes skipped. A done or failed request is left as it is. */
   markSkipped(sessionId: string, id: string, nowIso: string): Promise<BrowserRequest | null>;
+  /**
+   * Pending becomes `failed` with `error`. `transitioned` is true only for that change, so a
+   * repeat report of the same requestId does not send a second result or insert a row.
+   * A done or skipped request is returned unchanged (`transitioned` false).
+   */
+  markFailed(
+    sessionId: string,
+    id: string,
+    error: BrowserCaptureFailure,
+    nowIso: string,
+  ): Promise<{ request: BrowserRequest; transitioned: boolean } | null>;
 }
 
 export type BrowserCaptureSave =

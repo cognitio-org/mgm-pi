@@ -50,9 +50,15 @@ COPY kernal/.pi/extensions/ ./.pi/extensions/
 # kernal-admin (/admin serves a local web page for editing this machine's keys, model and index
 # settings; in a sandbox nobody can open it, and a session's config comes from its guru instead),
 # and kernal-codebase-index (drives open-codebase-index, which this image does not install -- see
-# the npm uninstall below -- so it could only ever return early; it still cost a module load).
+# the npm uninstall below -- so it could only ever return early; it still cost a module load),
+# and kernal-chrome. That extension talks to a unix socket the user's Chrome starts on the laptop
+# (<kernal-home>/chrome.sock). A Drive has no Chrome and no native host, so its tools can only
+# answer "not running". It also registers a tool named browser_capture, the same name as
+# outfitter-browser.js, which is the capture tool a Drive actually uses (it asks the link API,
+# and the user's Chrome takes the shot). pi refuses to start if both extensions are loaded.
+# Keep outfitter-browser. Delete kernal-chrome.
 RUN rm -rf ./.pi/extensions/kernal-voice ./.pi/extensions/kernal-update ./.pi/extensions/kernal-admin \
-           ./.pi/extensions/kernal-codebase-index
+           ./.pi/extensions/kernal-codebase-index ./.pi/extensions/kernal-chrome
 
 # TUI/laptop-only packages (voice input, terminal footer, editor LSP) make no sense for a cloud
 # guru with no terminal, no editor and no microphone attached; drop them from the image's
@@ -170,6 +176,7 @@ ENV PI_CODING_AGENT_DIR=/opt/kernal/.pi \
     OUTFITTER_SPEND_EXTENSION=/opt/outfitter/agentd/dist/pi-extension/outfitter-spend.js \
     OUTFITTER_SPEND_FILE=/run/outfitter/spend.jsonl \
     OUTFITTER_MAIL_EXTENSION=/opt/outfitter/agentd/dist/pi-extension/outfitter-mail.js \
+    OUTFITTER_BROWSER_EXTENSION=/opt/outfitter/agentd/dist/pi-extension/outfitter-browser.js \
     KERNAL_NO_CODEBASE_INDEX=1 \
     KERNAL_SANDBOX=1 \
     PI_TIMING=1
@@ -241,6 +248,7 @@ ENV PI_CODING_AGENT_DIR=/opt/kernal/.pi \
 COPY outfitter/image/prewarm-extensions.sh /tmp/prewarm-extensions.sh
 RUN runuser -u agent -- bash /tmp/prewarm-extensions.sh "$PI_BIN" \
       --extension "$OUTFITTER_SPEND_EXTENSION" --extension "$OUTFITTER_MAIL_EXTENSION" \
+      --extension "$OUTFITTER_BROWSER_EXTENSION" \
   && rm /tmp/prewarm-extensions.sh
 
 WORKDIR /workspace

@@ -3,7 +3,7 @@
  *
  *   /teleport                interactive picker (pick a pushed session, then pull it)
  *   /teleport list           list sessions in the store
- *   /teleport push [name]    push the current session (requires a clean tree; same-repo pull later)
+ *   /teleport push [name]    push the current session (a dirty tree is committed first, when someone is here to agree)
  *   /teleport pull [id]      pull a session by id (prompts to pick one if id is omitted)
  *
  * Sessions move through a pluggable Store (see ./lib.ts): phase 1/2 ship GitStore, a local clone
@@ -29,6 +29,25 @@ import {
 } from "./lib.ts";
 import { createStore } from "./store-factory.ts";
 import { inSandbox } from "../_shared/env.ts";
+import { commit } from "../_shared/git.ts";
+
+const CONFIRM_TIMEOUT_MS = 60_000;
+const TELEPORT_COMMIT_MESSAGE = "Commit local changes before teleporting this session.";
+
+/** A quiet auto-push, a cloud run, and anything that is not the TUI have nobody to accept the offer. */
+function canOfferCommit(ctx: { mode?: string; ui?: { confirm?: unknown } }, quiet: boolean): boolean {
+  if (quiet || process.env.OUTFITTER_SESSION_ID) return false;
+  return ctx.mode === "tui" && typeof ctx.ui?.confirm === "function";
+}
+
+/** Porcelain for the confirm dialog. A cut list says how much was left out, because yes commits every change. */
+function commitPreview(porcelain: string): string {
+  const raw = porcelain.trim();
+  if (!raw) return "Uncommitted changes";
+  if (raw.length <= 500) return raw;
+  const hidden = raw.slice(500).split("\n").filter((line) => line.length > 0).length;
+  return `${raw.slice(0, 500)}\n… ${hidden} more ${hidden === 1 ? "line" : "lines"} not shown. Committing includes them.`;
+}
 
 // Persist into the agent config dir (PI_CODING_AGENT_DIR when launched via bin/kernal, else
 // ~/.pi/agent), same convention as ../connect/index.ts.
@@ -88,13 +107,58 @@ export default function (pi: ExtensionAPI) {
       if (!opts.quiet) ctx.ui.notify(`teleport push: ${ctx.cwd} is not a git repository.`, "error");
       return;
     }
-    if (isWorkingTreeDirty(status.stdout)) {
-      if (!opts.quiet) ctx.ui.notify("Commit or stash your changes before teleporting this session.", "error");
+    // An unborn branch has no HEAD commit yet, and --abbrev-ref reports HEAD for that and for a
+    // detached checkout. symbolic-ref names the branch only when one is checked out.
+    const [origin, symbolic] = await Promise.all([
+      pi.exec("git", ["remote", "get-url", "origin"], { cwd: ctx.cwd }),
+      pi.exec("git", ["symbolic-ref", "--short", "HEAD"], { cwd: ctx.cwd }),
+    ]);
+    if (origin.code !== 0) {
+      if (!opts.quiet) ctx.ui.notify("teleport push: this checkout has no origin remote.", "error");
       return;
+    }
+    if (symbolic.code !== 0) {
+      if (!opts.quiet) ctx.ui.notify("teleport push: HEAD is detached. Check out a branch before teleporting.", "error");
+      return;
+    }
+    let committedNow = false;
+    if (isWorkingTreeDirty(status.stdout)) {
+      const asker = ctx as { mode?: string; ui: { confirm?: (title: string, message: string, opts?: { timeout?: number }) => Promise<boolean | undefined> } };
+      if (!canOfferCommit(asker, opts.quiet === true)) {
+        if (!opts.quiet) ctx.ui.notify("Commit or stash your changes before teleporting this session.", "error");
+        return;
+      }
+      let yes = false;
+      try {
+        yes = await asker.ui.confirm!(
+          "Commit and push, then teleport?",
+          commitPreview(status.stdout),
+          { timeout: CONFIRM_TIMEOUT_MS },
+        ) === true;
+      } catch {
+        yes = false;
+      }
+      if (!yes) {
+        ctx.ui.notify("Teleport cancelled. The changes are still uncommitted.", "info");
+        return;
+      }
+      const committed = await commit(ctx.cwd, { all: true, message: TELEPORT_COMMIT_MESSAGE });
+      if (!committed.ok) {
+        ctx.ui.notify(`teleport push: could not commit: ${committed.detail}`, "error");
+        return;
+      }
+      committedNow = true;
     }
     const git = await gitInfo(ctx.cwd);
     if (!git) {
-      if (!opts.quiet) ctx.ui.notify(`teleport push: could not read the git remote/branch/head for ${ctx.cwd}.`, "error");
+      if (!opts.quiet) {
+        ctx.ui.notify(
+          committedNow
+            ? "teleport push: the commit was created, and the session was not pushed or stored."
+            : `teleport push: could not read the git remote/branch/head for ${ctx.cwd}.`,
+          "error",
+        );
+      }
       return;
     }
 
@@ -103,7 +167,8 @@ export default function (pi: ExtensionAPI) {
       if (needsOriginBranch(branchStatus.stdout, git.branch)) {
         const pushRes = await pi.exec("git", ["push", "-u", "origin", git.branch], { cwd: ctx.cwd });
         if (pushRes.code !== 0) {
-          ctx.ui.notify(`teleport push: git push failed: ${pushRes.stderr.trim()}`, "error");
+          const made = committedNow ? " The commit was created and the session was not stored." : "";
+          ctx.ui.notify(`teleport push: git push failed: ${pushRes.stderr.trim()}${made}`, "error");
           return;
         }
       }

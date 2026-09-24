@@ -580,8 +580,10 @@ teleported.
 
 ### Requirements, mirrored from Claude Code's teleport
 
-- **Clean tree.** `push` and `pull` both refuse (`commit or stash first`) if `git status --porcelain`
-  is non-empty in the target checkout.
+- **Clean tree.** `pull` refuses (`commit or stash first`) if `git status --porcelain` is non-empty.
+  `push` from the TUI offers to commit those changes through the shared git module and then push the
+  branch. Declining leaves the tree alone. A headless push, and `teleport.autoPush`, still refuse
+  without asking.
 - **Same repo.** If the manifest has a `repo` (i.e. the source checkout had a git remote), `pull`
   compares its `ownerRepo` (parsed from `https://…`, `git@host:owner/repo.git`, and `ssh://` remotes)
   against the current checkout's `origin`. A mismatch refuses and names both repos.

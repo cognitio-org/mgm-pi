@@ -164,6 +164,53 @@ describe("GET /api/sessions/:id", () => {
     assert.equal(res.json().allowExternalHtmlResources, false);
     await app.fastify.close();
   });
+
+  test("#147: htmlPreviewAccessByRun maps each run that recorded a value, and leaves out the rest", async () => {
+    const app = await buildTestApp();
+    await seedGuru(app.store);
+    const createRes = await app.fastify.inject({
+      method: "POST",
+      url: "/api/sessions",
+      payload: { guruId: "test-guru", repo: "o/r", prompt: "hello" },
+    });
+    const { session } = createRes.json();
+    const first = await app.store.runs.findActiveForSession(session.id);
+    const detail = () => app.fastify.inject({ method: "GET", url: `/api/sessions/${session.id}` });
+
+    assert.deepEqual((await detail()).json().htmlPreviewAccessByRun, {}, "no run.spec built yet");
+
+    await app.store.runs.update(first!.id, { allowExternalHtmlResources: false, state: "stopped" });
+    const now = new Date(Date.now() + 1000).toISOString();
+    await app.store.runs.insert({
+      id: "second-run",
+      sessionId: session.id,
+      state: "running",
+      lastAckedSeq: 0,
+      pending: [],
+      allowExternalHtmlResources: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const body = (await detail()).json();
+    assert.deepEqual(body.htmlPreviewAccessByRun, { [first!.id]: false, "second-run": true });
+    assert.equal(body.allowExternalHtmlResources, true, "the session-wide value still follows the reportable run");
+    await app.fastify.close();
+  });
+
+  test("#147: an entry the api wrote itself goes out without outfitterRunId", async () => {
+    const app = await buildTestApp();
+    await seedGuru(app.store);
+    const createRes = await app.fastify.inject({
+      method: "POST",
+      url: "/api/sessions",
+      payload: { guruId: "test-guru", repo: "o/r", prompt: "hello" },
+    });
+    const { session } = createRes.json();
+    await app.store.entries.insertIfNew(session.id, 1, { id: "capture", parentId: null, type: "custom" });
+    const res = await app.fastify.inject({ method: "GET", url: `/api/sessions/${session.id}/entries` });
+    assert.deepEqual(res.json(), [{ id: "capture", parentId: null, type: "custom" }]);
+    await app.fastify.close();
+  });
 });
 
 describe("GET /api/sessions?runState=", () => {

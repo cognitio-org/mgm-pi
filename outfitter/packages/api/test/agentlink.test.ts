@@ -89,6 +89,49 @@ describe("agentd <-> api WebSocket", () => {
     await app.fastify.close();
   });
 
+  test("#147: an agentd entry is stored with its run id and goes out with outfitterRunId, the entry itself unchanged", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+    const received: { type: string; data: any }[] = [];
+    const fakeReply = {
+      raw: {
+        writeHead: () => {},
+        flushHeaders: () => {},
+        write: (chunk: string) => {
+          const [eventLine, dataLine] = chunk.split("\n");
+          received.push({ type: eventLine.replace("event: ", ""), data: JSON.parse(dataLine.replace("data: ", "")) });
+        },
+        on: () => {},
+      },
+    };
+    app.sse.subscribe(session.id, fakeReply as any);
+
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    await agent.nextMessage(); // run.spec
+    const entry = { id: "e1", parentId: null, type: "message" };
+    agent.send({ t: "entry", seq: 1, entry });
+    assert.deepEqual(await agent.nextMessage(), { t: "ack", seq: 1 });
+
+    const [row] = await app.store.entries.listForSession(session.id);
+    assert.equal(row!.runId, runId);
+    assert.deepEqual(row!.entry, entry, "the pi entry is stored as agentd sent it");
+    const sse = received.find((r) => r.type === "entry");
+    assert.deepEqual(sse?.data, { ...entry, outfitterRunId: runId });
+
+    const listed = await app.fastify.inject({ method: "GET", url: `/api/sessions/${session.id}/entries` });
+    assert.deepEqual(listed.json(), [{ ...entry, outfitterRunId: runId }]);
+    // A pi session file must stay pi's: the export writes the stored entry, not the wire form.
+    const exported = await app.fastify.inject({ method: "GET", url: `/api/sessions/${session.id}/export.jsonl` });
+    assert.equal(exported.statusCode, 200);
+    assert.ok(!exported.body.includes("outfitterRunId"), exported.body);
+
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
   test("bug 9 (docs/reports/cloud-fixes.md): closes with 4409 when the agentd's hello.protocolVersion is older than the API's", async () => {
     const app = await buildTestApp();
     const { session, runId, runToken } = await makeRunningSession(app);

@@ -4,6 +4,7 @@
 
 import type { FastifyReply } from "fastify";
 import type { Store } from "./store/types.ts";
+import { entryForWire } from "./entry-wire.ts";
 
 export type SseEventType = "entry" | "event" | "status" | "spend" | "checkpoint";
 
@@ -181,7 +182,7 @@ export class SsePoller {
     const recent = await this.store.entries.listRecent(sessionId, SSE_RECENT_WINDOW);
     for (const e of recent) {
       if (cursor.seenEntryIds?.has(e.entry.id)) continue;
-      this.hub.publish(sessionId, { type: "entry", data: e.entry });
+      this.hub.publish(sessionId, { type: "entry", data: entryForWire(e) });
     }
     cursor.seenEntryIds = new Set(recent.map((e) => e.entry.id));
 

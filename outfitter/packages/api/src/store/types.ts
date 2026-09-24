@@ -54,6 +54,24 @@ export interface Entry {
   // TODO(follow-up story): blobs over 100 KB (tool output) are offloaded to GCS and this holds a
   // pointer instead of inline entry data. Not implemented yet; always undefined today.
   blobRef?: string;
+  /** #147: the run whose agentd sent this entry (agentlink.ts). Absent for entries the api writes
+   * itself (browser captures, session-route writes) and for every entry stored before the field. */
+  runId?: string;
+}
+
+/** Row fields besides the entry itself, for EntriesCollection.insertIfNew. */
+export interface EntryInsertOptions {
+  runId?: string;
+  blobRef?: string;
+}
+
+/** Only the fields that are set, so a store never writes `runId: undefined` (Mongo would keep a
+ * null). */
+export function entryInsertFields(opts: EntryInsertOptions): Pick<Entry, "runId" | "blobRef"> {
+  return {
+    ...(opts.runId ? { runId: opts.runId } : {}),
+    ...(opts.blobRef ? { blobRef: opts.blobRef } : {}),
+  };
 }
 
 export interface DownMessage {
@@ -412,7 +430,7 @@ export interface SessionsCollection {
 
 export interface EntriesCollection {
   /** Idempotent on entry.id within a session; returns false (no-op) if it already existed. */
-  insertIfNew(sessionId: string, seq: number, entry: PiEntry, blobRef?: string): Promise<boolean>;
+  insertIfNew(sessionId: string, seq: number, entry: PiEntry, opts?: EntryInsertOptions): Promise<boolean>;
   /** The row whose `entry.id` is `entryId`, if this session has one. */
   findByEntryId(sessionId: string, entryId: string): Promise<Entry | null>;
   /** Entries in tree order (by seq), optionally after a given entry id. */
@@ -439,6 +457,9 @@ export interface RunsCollection {
    * cleanly stopped run from a failed one once it's terminal -- both just look like "no active
    * run" -- so the UI has nothing to distinguish READY. from "stopped" from "LOAD ERROR". */
   findLatestForSession(sessionId: string): Promise<Run | null>;
+  /** Every run of a session, oldest first (by createdAt). #147: GET /api/sessions/:id's per-run
+   * HTML preview access. */
+  listForSession(sessionId: string): Promise<Run[]>;
   update(id: string, patch: Partial<Run>): Promise<Run | null>;
   /**
    * Insert `pending` at `githubIdempotency[key]` only when that key is absent.

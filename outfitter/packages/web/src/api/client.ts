@@ -49,6 +49,9 @@ export interface SessionDetail {
   checkpoint?: { branch?: string; head?: string; snapshotUrl?: string; workspaceUrl?: string };
   /** #132: whether the run's prompt allowed external CSS and JS; HTML previews start from it. */
   allowExternalHtmlResources?: boolean;
+  /** #147: each run's own value, by run id. An entry's `outfitterRunId` picks from it; an entry
+   * without one, or a run not listed, uses allowExternalHtmlResources. */
+  htmlPreviewAccessByRun?: Record<string, boolean>;
   /** Cloud-fixes 13: messages parked because this session's runs never validated the protocol. */
   heldMail?: number;
   /** "Deploy mismatch: messages held until the service is redeployed", when heldMail > 0. */
@@ -69,6 +72,8 @@ export interface PiEntry {
   id: string;
   parentId?: string | null;
   type: string;
+  /** #147: not pi's. The api adds it on the wire for an entry an agentd run sent (entry-wire.ts). */
+  outfitterRunId?: string;
   [key: string]: unknown;
 }
 

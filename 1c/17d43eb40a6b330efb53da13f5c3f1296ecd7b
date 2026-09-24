@@ -1,0 +1,20 @@
+kernal/.pi/extensions/kernal-github/broker.ts
+  h_69b863911ebf05 1-162
+kernal/.pi/extensions/kernal-github/github-tools.ts
+  h_69b863911ebf05 6-8,16,361-616,618-619,967-973,975,977-978,998-999,1029-1030,1036-1041
+kernal/.pi/extensions/kernal-github/lib.ts
+  h_69b863911ebf05 11,349-350
+kernal/tests/github-broker.test.ts
+  h_69b863911ebf05 1-348
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "1c17d43eb40a6b330efb53da13f5c3f1296ecd7b",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

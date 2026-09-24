@@ -11,6 +11,7 @@ import {
   KubeError,
   HttpKubeClient,
   resolveGkeEndpoint,
+  GKE_TOKEN_SCOPES,
   WARM_POOL_MAX_REPLICAS,
   WARM_POOL_MIN_REPLICAS,
   type KubeClientLike,
@@ -554,6 +555,17 @@ describe("warm-pool replica clamp constants", () => {
   test("min/max match the §5.3 guardrail (0..2)", () => {
     assert.equal(WARM_POOL_MIN_REPLICAS, 0);
     assert.equal(WARM_POOL_MAX_REPLICAS, 2);
+  });
+});
+
+describe("GKE access token scopes", () => {
+  // Without userinfo.email, GKE authenticates the service account by its numeric unique ID and the
+  // RoleBinding for `User: outfitter-api@...` never matches: every call is 403 (seen live 2026-09-24).
+  test("include userinfo.email, so RBAC sees the service account's email", () => {
+    assert.ok(GKE_TOKEN_SCOPES.includes("https://www.googleapis.com/auth/userinfo.email"));
+  });
+  test("include cloud-platform, for clusters.get and the DNS endpoint", () => {
+    assert.ok(GKE_TOKEN_SCOPES.includes("https://www.googleapis.com/auth/cloud-platform"));
   });
 });
 

@@ -24,6 +24,18 @@ import type {
 } from "@outfitter/provider-local";
 import type { GkeLaunchMode } from "../config.ts";
 
+/** OAuth scopes for the access token the API presents to the cluster's DNS endpoint. userinfo.email
+ * is required, not optional: without it GKE authenticates a Google service account by its numeric
+ * unique ID ("109876399607867997839"), not its email, so deploy/gke/rbac.yaml's RoleBinding for
+ * `User: outfitter-api@...` never matches and every call is 403 Forbidden. Seen live on 2026-09-24:
+ * Cloud Run's metadata server issues cloud-platform-only tokens, and the first warm-pool hook call
+ * was refused (GKE audit log: `User "109876399607867997839" cannot patch ... sandboxwarmpools`).
+ * Spike S6 missed it because gcloud's impersonated token carries the email scope by default. */
+export const GKE_TOKEN_SCOPES: readonly string[] = [
+  "https://www.googleapis.com/auth/cloud-platform",
+  "https://www.googleapis.com/auth/userinfo.email",
+];
+
 // ---------- CRD constants (kubernetes-sigs/agent-sandbox v1.0.3) ----------
 
 const EXTENSIONS_API = "extensions.agents.x-k8s.io/v1beta1";
@@ -314,7 +326,7 @@ export class GkeProvider implements SandboxProvider {
 
   private async buildKubeClient(): Promise<KubeClientLike> {
     const { GoogleAuth } = await import("google-auth-library");
-    const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
+    const auth = new GoogleAuth({ scopes: [...GKE_TOKEN_SCOPES] });
     const authClient = await auth.getClient();
     const getToken = async () => {
       const token = await authClient.getAccessToken();

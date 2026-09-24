@@ -359,6 +359,25 @@ export function SessionPage() {
             </span>
             {typeof cost === "number" ? ` · $${cost.toFixed(4)}` : ""}
           </div>
+          {session?.github && (
+            <p className="session-meta session-github">
+              GitHub
+              {" · "}
+              {session.github.repo
+                ? `${session.github.repo}${session.github.branch ? ` @ ${session.github.branch}` : ""}`
+                : "no repository"}
+              {" · "}
+              {session.github.credential === "session"
+                ? "session token"
+                : session.github.credential === "default"
+                  ? "shared token"
+                  : "no token"}
+              {session.github.onBehalfOf ? ` · on behalf of @${session.github.onBehalfOf}` : ""}
+              {" · "}
+              {session.github.merge ? "merge allowed" : "merge off"}
+              {session.github.repo ? " · this branch only" : ""}
+            </p>
+          )}
           <div className="session-meta session-model-info">
             {header.model ? <span className="mono">{header.model}</span> : "model unknown yet"}
             {header.thinking ? ` · thinking ${header.thinking}` : ""}

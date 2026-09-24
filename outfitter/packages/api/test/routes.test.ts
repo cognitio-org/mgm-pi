@@ -73,6 +73,10 @@ describe("GET /api/sessions/:id", () => {
     // Still the full Session shape underneath (used by teleport's OutfitterStore to build a manifest).
     assert.equal(getRes.json().id, session.id);
     assert.equal(getRes.json().repo, "o/r");
+    assert.equal(getRes.json().github.repo, "o/r");
+    assert.equal(getRes.json().github.credential, "none");
+    assert.equal(getRes.json().github.merge, false);
+    assert.equal(getRes.json().github.onBehalfOf, null);
 
     await app.fastify.inject({ method: "POST", url: `/api/sessions/${session.id}/abort` });
     const afterAbortRun = await app.store.runs.findActiveForSession(session.id);

@@ -26,6 +26,7 @@ import {
   checkpointWorkspaceTarball,
   type FileMtimes,
 } from "./workspace.js";
+import { runPlaywrightBeforeCheckpoint, type PlaywrightSpawn } from "./playwright-check.js";
 import type {
   ByeReason,
   DownAbort,
@@ -151,6 +152,8 @@ export interface RunControllerDeps {
   startupPhases?: boolean;
   /** Unix socket for GitHub API calls (`$OUTFITTER_GITHUB_SOCKET`). Unset: no socket, nothing pinned. */
   githubSocketPath?: string;
+  /** Injected by tests. Production uses playwright-check.ts's own spawn, which never throws. */
+  spawnPlaywright?: PlaywrightSpawn;
 }
 
 export type StateChangeHandler = (state: RunState, detail?: string) => void;
@@ -946,6 +949,20 @@ export class RunController {
   private async checkpointOnce(message?: string): Promise<void> {
     if (!this.spec) return;
     await this.tailer?.poll();
+
+    // Tape option, default off. Before the git push or the workspace snapshot. A missing spec
+    // or a browser that cannot start is an entry; this does not reject, so the checkpoint continues.
+    const playwrightEntry = await runPlaywrightBeforeCheckpoint({
+      enabled: this.spec.guru.playwrightBeforeCheckpoint === true,
+      workspace: this.deps.workspace,
+      spawn: this.deps.spawnPlaywright,
+      uid: this.deps.runAsUser?.uid,
+      gid: this.deps.runAsUser?.gid,
+      home: this.deps.runAsUser?.home,
+    });
+    if (playwrightEntry) {
+      this.deps.link.sendSeq((seq) => ({ t: "entry", seq, entry: playwrightEntry as any }));
+    }
 
     if (!this.spec.repo) {
       // Repo-less run: no git. Tar the workspace (if configured) and refresh the mtime baseline so

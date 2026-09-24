@@ -188,3 +188,70 @@ describe("DELETE /api/gurus/:id", () => {
     await app.fastify.close();
   });
 });
+
+describe("POST/PUT /api/gurus: playwrightBeforeCheckpoint", () => {
+  test("a guru without the flag does not gain it as true", async () => {
+    const app = await buildTestApp();
+    const created = await app.fastify.inject({
+      method: "POST",
+      url: "/api/gurus",
+      payload: { name: "plain", model: "litellm/claude-auto-llm" },
+    });
+    assert.equal(created.statusCode, 201);
+    assert.notEqual(created.json().playwrightBeforeCheckpoint, true);
+    assert.equal(created.json().playwrightBeforeCheckpoint, undefined);
+
+    const listed = await app.fastify.inject({ method: "GET", url: "/api/gurus" });
+    const row = (listed.json() as { id: string; playwrightBeforeCheckpoint?: boolean }[]).find(
+      (guru) => guru.id === created.json().id,
+    );
+    assert.notEqual(row?.playwrightBeforeCheckpoint, true);
+
+    const renamed = await app.fastify.inject({
+      method: "PUT",
+      url: `/api/gurus/${created.json().id}`,
+      payload: { name: "plain-renamed" },
+    });
+    assert.equal(renamed.statusCode, 200);
+    assert.notEqual(renamed.json().playwrightBeforeCheckpoint, true);
+    await app.fastify.close();
+  });
+
+  test("a guru with the flag set is returned as true", async () => {
+    const app = await buildTestApp();
+    const created = await app.fastify.inject({
+      method: "POST",
+      url: "/api/gurus",
+      payload: { name: "checked", model: "litellm/claude-auto-llm", playwrightBeforeCheckpoint: true },
+    });
+    assert.equal(created.statusCode, 201);
+    assert.equal(created.json().playwrightBeforeCheckpoint, true);
+
+    const listed = await app.fastify.inject({ method: "GET", url: "/api/gurus" });
+    const row = (listed.json() as { name: string; playwrightBeforeCheckpoint?: boolean }[]).find(
+      (guru) => guru.name === "checked",
+    );
+    assert.equal(row?.playwrightBeforeCheckpoint, true);
+
+    const guru = await seedGuru(app.store, { id: "other-guru" });
+    const updated = await app.fastify.inject({
+      method: "PUT",
+      url: `/api/gurus/${guru.id}`,
+      payload: { playwrightBeforeCheckpoint: true },
+    });
+    assert.equal(updated.statusCode, 200);
+    assert.equal(updated.json().playwrightBeforeCheckpoint, true);
+    await app.fastify.close();
+  });
+
+  test("rejects a non-boolean playwrightBeforeCheckpoint", async () => {
+    const app = await buildTestApp();
+    const res = await app.fastify.inject({
+      method: "POST",
+      url: "/api/gurus",
+      payload: { name: "bad-flag", model: "litellm/claude-auto-llm", playwrightBeforeCheckpoint: "yes" },
+    });
+    assert.equal(res.statusCode, 400);
+    await app.fastify.close();
+  });
+});

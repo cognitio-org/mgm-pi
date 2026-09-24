@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api/client.ts";
 import type { GroupedEntry } from "../lib/thinking.ts";
 import { thinkingAccessibleLabel, thinkingPreview, thinkingWordLabel } from "../lib/thinking.ts";
-import { BROWSER_CAPTURE_TYPE } from "../lib/entry-view.ts";
+import { BROWSER_CAPTURE_TYPE, PLAYWRIGHT_CHECK_TYPE } from "../lib/entry-view.ts";
 import { apiErrorKind, noticeContent, systemErrorContent } from "../lib/retro-errors.ts";
 import { toApiErrorState } from "../lib/api-error.ts";
 import type { ApiErrorState } from "./SystemErrorDialog.tsx";
@@ -244,6 +244,14 @@ export function EntryItem({
             title={view.title ?? ""}
             url={view.url ?? ""}
           />
+        );
+      }
+      if (view.customType === PLAYWRIGHT_CHECK_TYPE) {
+        return (
+          <div className="entry custom">
+            <div className="entry-label">Playwright</div>
+            <pre>{view.text ?? ""}</pre>
+          </div>
         );
       }
       return <div className="entry custom">custom: {view.customType}</div>;

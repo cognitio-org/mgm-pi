@@ -140,6 +140,24 @@ RUN apt-get update \
 
 RUN useradd --create-home --shell /usr/sbin/nologin agent
 
+# Playwright's Chromium for the optional Tape check before checkpoint
+# (guru.playwrightBeforeCheckpoint, default off). A fresh headless browser inside the Drive,
+# not the user's Chrome and not the companion extension. kernal-chrome stays deleted in the
+# builder stage above; this is a separate browser, used only when a guru turns the check on.
+# The test runner is installed under /opt/outfitter/playwright and the browser under
+# /opt/ms-playwright so a checkpoint does not download one. agentd shells out to the CLI.
+# If the binary is missing at runtime the check records that and the checkpoint still runs.
+# a+rX: agentd runs the browser as the unprivileged `agent` user, which must be able to
+# execute a root-installed tree (755 files already would, this covers anything installed 700).
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+    OUTFITTER_PLAYWRIGHT_CLI=/opt/outfitter/playwright/node_modules/.bin/playwright
+RUN mkdir -p /opt/outfitter/playwright \
+  && printf '%s\n' '{"name":"outfitter-playwright","private":true}' > /opt/outfitter/playwright/package.json \
+  && npm install --prefix /opt/outfitter/playwright playwright@1.57.0 --omit=dev --no-audit --no-fund --loglevel=error \
+  && /opt/outfitter/playwright/node_modules/.bin/playwright install --with-deps chromium \
+  && rm -rf /var/lib/apt/lists/* /root/.npm \
+  && chmod -R a+rX /opt/outfitter/playwright /opt/ms-playwright
+
 COPY --from=kernal-builder --chown=agent:agent /opt/kernal /opt/kernal
 COPY --from=agentd-builder --chown=agent:agent /opt/outfitter/agentd /opt/outfitter/agentd
 
@@ -177,6 +195,8 @@ ENV PI_CODING_AGENT_DIR=/opt/kernal/.pi \
     OUTFITTER_SPEND_FILE=/run/outfitter/spend.jsonl \
     OUTFITTER_MAIL_EXTENSION=/opt/outfitter/agentd/dist/pi-extension/outfitter-mail.js \
     OUTFITTER_BROWSER_EXTENSION=/opt/outfitter/agentd/dist/pi-extension/outfitter-browser.js \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+    OUTFITTER_PLAYWRIGHT_CLI=/opt/outfitter/playwright/node_modules/.bin/playwright \
     KERNAL_NO_CODEBASE_INDEX=1 \
     KERNAL_SANDBOX=1 \
     PI_TIMING=1

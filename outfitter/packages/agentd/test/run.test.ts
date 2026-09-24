@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import net from "node:net";
-import { mkdtemp, copyFile, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, copyFile, writeFile, readFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1298,4 +1298,84 @@ test("RunController: browser capture is loopback-only and does not put OUTFITTER
   const answered = await pending;
   assert.equal(answered.status, 200);
   assert.deepEqual(await answered.json(), { error: "no_share" });
+});
+
+function countingSpawn(result: { code: number | null; stdout?: string; stderr?: string; error?: string } = { code: 0 }) {
+  let calls = 0;
+  return {
+    calls: () => calls,
+    spawn: async () => {
+      calls += 1;
+      return { code: result.code, stdout: result.stdout ?? "", stderr: result.stderr ?? "", error: result.error };
+    },
+  };
+}
+
+async function plantPlaywrightSpec(workspace: string): Promise<void> {
+  await mkdir(join(workspace, "tests"), { recursive: true });
+  await writeFile(join(workspace, "playwright.config.ts"), "export default { testDir: 'tests' };\n");
+  await writeFile(join(workspace, "tests", "home.spec.ts"), "test('home', () => {});\n");
+}
+
+function playwrightEntry(link: FakeLink): { data?: { text?: string } } | undefined {
+  const frame = link.sent.find((m) => m.t === "entry" && (m as { entry?: { customType?: string } }).entry?.customType === "outfitter.playwright");
+  return frame && frame.t === "entry" ? (frame.entry as { data?: { text?: string } }) : undefined;
+}
+
+test("RunController: playwrightBeforeCheckpoint off does not spawn a browser", async (t) => {
+  const browser = countingSpawn({ code: 1, error: "should not spawn" });
+  const { controller, link, gitOps, states, spec, workspace } = await setupController(
+    { guru: { model: "fake/model" } },
+    { spawnPlaywright: browser.spawn },
+  );
+  t.after(() => controller.dispose());
+  await plantPlaywrightSpec(workspace);
+  link.deliver(spec);
+  await waitFor(() => states.includes("idle"));
+
+  link.deliver({ t: "checkpoint" });
+  await waitFor(() => link.sent.some((m) => m.t === "checkpoint"));
+  assert.equal(browser.calls(), 0);
+  assert.equal(gitOps.pushes, 1);
+  assert.equal(playwrightEntry(link), undefined);
+});
+
+test("RunController: playwrightBeforeCheckpoint on with no spec still checkpoints and says nothing to run", async (t) => {
+  const browser = countingSpawn();
+  const { controller, link, gitOps, states, spec } = await setupController(
+    { guru: { model: "fake/model", playwrightBeforeCheckpoint: true } },
+    { spawnPlaywright: browser.spawn },
+  );
+  t.after(() => controller.dispose());
+  link.deliver(spec);
+  await waitFor(() => states.includes("idle"));
+
+  link.deliver({ t: "checkpoint" });
+  await waitFor(() => link.sent.some((m) => m.t === "checkpoint"));
+  await waitFor(() => states.at(-1) === "idle");
+  assert.equal(browser.calls(), 0);
+  assert.equal(gitOps.pushes, 1);
+  const entry = playwrightEntry(link);
+  assert.match(entry?.data?.text ?? "", /nothing to run/);
+  const entryAt = link.sent.findIndex((m) => m.t === "entry" && (m as { entry?: { customType?: string } }).entry?.customType === "outfitter.playwright");
+  const checkpointAt = link.sent.findIndex((m) => m.t === "checkpoint");
+  assert.ok(entryAt !== -1 && entryAt < checkpointAt);
+});
+
+test("RunController: Chromium failing to start is an entry and the checkpoint continues", async (t) => {
+  const browser = countingSpawn({ code: null, error: "spawn ENOENT" });
+  const { controller, link, gitOps, states, spec, workspace } = await setupController(
+    { guru: { model: "fake/model", playwrightBeforeCheckpoint: true } },
+    { spawnPlaywright: browser.spawn },
+  );
+  t.after(() => controller.dispose());
+  await plantPlaywrightSpec(workspace);
+  link.deliver(spec);
+  await waitFor(() => states.includes("idle"));
+
+  link.deliver({ t: "checkpoint" });
+  await waitFor(() => link.sent.some((m) => m.t === "checkpoint"));
+  assert.equal(browser.calls(), 1);
+  assert.equal(gitOps.pushes, 1);
+  assert.match(playwrightEntry(link)?.data?.text ?? "", /Chromium could not start/);
 });

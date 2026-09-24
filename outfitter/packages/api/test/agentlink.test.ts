@@ -1012,4 +1012,43 @@ describe("api-side refusals explain themselves", () => {
     app.stopBackgroundTasks();
     await app.fastify.close();
   });
+
+  test("run.spec carries playwrightBeforeCheckpoint only when the guru set it true", async () => {
+    const on = await buildTestApp();
+    await seedGuru(on.store, { playwrightBeforeCheckpoint: true });
+    const now = new Date().toISOString();
+    const session: Session = {
+      id: "s-pw",
+      guruId: "test-guru",
+      repo: "o/r",
+      branch: "main",
+      status: "open",
+      cost: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await on.store.sessions.insert(session);
+    const run = await on.runs.wake(session.id);
+    const agent = await openAgentSocket(on, run.id);
+    sendHello(agent, run.id, session.id, runTokenFor(on, run.id));
+    const spec = await agent.nextMessage();
+    assert.equal(spec.t, "run.spec");
+    assert.equal(spec.guru.playwrightBeforeCheckpoint, true);
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    on.stopBackgroundTasks();
+    await on.fastify.close();
+
+    const off = await buildTestApp();
+    const { session: plain, runId, runToken } = await makeRunningSession(off);
+    const plainAgent = await openAgentSocket(off, runId);
+    sendHello(plainAgent, runId, plain.id, runToken);
+    const plainSpec = await plainAgent.nextMessage();
+    assert.equal(plainSpec.t, "run.spec");
+    assert.equal(plainSpec.guru.playwrightBeforeCheckpoint, undefined);
+    plainAgent.send({ t: "bye", reason: "stop" });
+    await plainAgent.nextClose();
+    off.stopBackgroundTasks();
+    await off.fastify.close();
+  });
 });

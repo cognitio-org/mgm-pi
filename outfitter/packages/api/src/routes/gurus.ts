@@ -79,7 +79,13 @@ function denylistedGuruEnvKeys(env: Record<string, string> | undefined): string[
 /** Shared POST/PUT validation beyond "name and model are required" (that check stays inline since
  * it differs between create and update). Returns an error message, or undefined if the input is
  * fine. Checks fields only when present, since PUT bodies are partial. */
-function validationError(body: { model?: string; fallbackModel?: string; thinking?: string; mergeFromCloud?: unknown }): string | undefined {
+function validationError(body: {
+  model?: string;
+  fallbackModel?: string;
+  thinking?: string;
+  mergeFromCloud?: unknown;
+  playwrightBeforeCheckpoint?: unknown;
+}): string | undefined {
   if (body.model !== undefined && !isValidModelRef(body.model)) {
     return `model must look like provider/id, got: ${body.model}`;
   }
@@ -91,6 +97,11 @@ function validationError(body: { model?: string; fallbackModel?: string; thinkin
   }
   if (body.mergeFromCloud !== undefined && typeof body.mergeFromCloud !== "boolean") {
     return "mergeFromCloud must be a boolean";
+  }
+  // Absent stays absent (existing gurus are off). Only a real boolean is stored; anything else
+  // would be easy to mistake for "on" later.
+  if (body.playwrightBeforeCheckpoint !== undefined && typeof body.playwrightBeforeCheckpoint !== "boolean") {
+    return "playwrightBeforeCheckpoint must be a boolean";
   }
   return undefined;
 }

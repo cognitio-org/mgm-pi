@@ -79,7 +79,7 @@ function denylistedGuruEnvKeys(env: Record<string, string> | undefined): string[
 /** Shared POST/PUT validation beyond "name and model are required" (that check stays inline since
  * it differs between create and update). Returns an error message, or undefined if the input is
  * fine. Checks fields only when present, since PUT bodies are partial. */
-function validationError(body: { model?: string; fallbackModel?: string; thinking?: string }): string | undefined {
+function validationError(body: { model?: string; fallbackModel?: string; thinking?: string; mergeFromCloud?: unknown }): string | undefined {
   if (body.model !== undefined && !isValidModelRef(body.model)) {
     return `model must look like provider/id, got: ${body.model}`;
   }
@@ -88,6 +88,9 @@ function validationError(body: { model?: string; fallbackModel?: string; thinkin
   }
   if (body.thinking !== undefined && body.thinking !== "" && !isValidThinkingLevel(body.thinking)) {
     return `thinking must be one of: ${THINKING_LEVELS.join(", ")}`;
+  }
+  if (body.mergeFromCloud !== undefined && typeof body.mergeFromCloud !== "boolean") {
+    return "mergeFromCloud must be a boolean";
   }
   return undefined;
 }

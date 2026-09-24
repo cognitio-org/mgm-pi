@@ -3,6 +3,7 @@
 
 import { buildTestApp, seedGuru } from "./helpers.ts";
 import type { Session } from "../src/store/types.ts";
+import { API_PROTOCOL_VERSION } from "../src/agentlink.ts";
 
 // injectWS's connect promise can resolve *after* the server has already written its first frame
 // (run.spec is sent proactively, not in reply to a client message), so a `message` listener
@@ -108,7 +109,7 @@ export async function makeRunningSession(
 /** Bug 9 (docs/reports/cloud-fixes.md): must match agentlink.ts's own API_PROTOCOL_VERSION. Tests
  * that want to exercise version-skew refusal pass an explicit (older) protocolVersion to sendHello
  * instead of relying on this default. */
-export const CURRENT_TEST_PROTOCOL_VERSION = 1;
+export const CURRENT_TEST_PROTOCOL_VERSION = API_PROTOCOL_VERSION;
 
 /** Sends the `hello` handshake every connection needs now (finding #2): the api waits for it,
  * checked against the run's token, before sending `run.spec` or handling anything else. */

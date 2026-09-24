@@ -11,6 +11,7 @@ import type {
   EntriesCollection,
   PiEntry,
   Run,
+  GithubIdempotencyRecord,
   RunsCollection,
   DownMessage,
   Guru,
@@ -153,6 +154,21 @@ class MemoryRuns implements RunsCollection {
     const next = { ...row, ...patch };
     this.rows.set(id, next);
     return clone(next);
+  }
+
+  async claimGithubIdempotency(id: string, key: string, pending: GithubIdempotencyRecord) {
+    const row = this.rows.get(id);
+    if (!row) return { status: "missing" as const };
+    const existing = row.githubIdempotency?.[key];
+    if (existing) return { status: "existing" as const, record: clone(existing) };
+    row.githubIdempotency = { ...row.githubIdempotency, [key]: pending };
+    return { status: "claimed" as const };
+  }
+
+  async finishGithubIdempotency(id: string, key: string, result: GithubIdempotencyRecord): Promise<void> {
+    const row = this.rows.get(id);
+    if (!row) return;
+    row.githubIdempotency = { ...row.githubIdempotency, [key]: result };
   }
 
   async listStale(cutoffIso: string): Promise<Run[]> {

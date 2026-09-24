@@ -18,6 +18,7 @@ import { ModelsService } from "./models.ts";
 import { CloudRunProvider } from "./providers/cloudrun.ts";
 import { registerRoutes } from "./routes/index.ts";
 import { MailService, CloudTasksWakeScheduler, NoopWakeScheduler, type WakeScheduler } from "./mail.ts";
+import type { GithubBroker } from "./github-broker.ts";
 
 export interface BuildAppOptions {
   store: Store;
@@ -27,6 +28,8 @@ export interface BuildAppOptions {
   /** Operator settings routes only (routes/operator.ts): Secret Manager admin access behind an
    * interface, same shape as secretsBroker (see secrets.ts's "SecretAdmin" section). */
   secretAdmin: SecretAdmin;
+  /** GitHub broker for github.request frames. Tests inject a fake transport; production omits this. */
+  github?: GithubBroker;
 }
 
 export interface App {
@@ -64,7 +67,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     token: config.localTunnelToken,
   });
   const mail = new MailService(store, runs, wakeSchedulerFor(config), (msg, err) => fastify.log.warn({ err }, msg));
-  const agentLink = new AgentLink(store, config, secretsBroker, sse, laptopProbe, mail);
+  const agentLink = new AgentLink(store, config, secretsBroker, sse, laptopProbe, mail, opts.github);
 
   // Cloud Run job capacity probe (E2.10): only meaningful when the configured SandboxProvider
   // actually is a CloudRunProvider. Importing the class here is safe even for other providers --

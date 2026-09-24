@@ -97,7 +97,7 @@ describe("agentd <-> api WebSocket", () => {
     sendHello(agent, runId, session.id, runToken, 0, 0); // protocolVersion 0 -- an old build
     const close = await agent.nextClose();
     assert.equal(close.code, 4409);
-    assert.match(close.reason, /protocol v0 is older than the API's v1/);
+    assert.match(close.reason, /protocol v0 is older than the API's v2/);
     // agentd exits on 4409, so the run must not be left "provisioning" pinning the session.
     const run = await app.store.runs.findById(runId);
     assert.equal(run?.state, "failed");
@@ -127,12 +127,28 @@ describe("agentd <-> api WebSocket", () => {
     const { session, runId, runToken } = await makeRunningSession(app);
 
     const agent = await openAgentSocket(app, runId);
-    sendHello(agent, runId, session.id, runToken, 0, 1); // matches API_PROTOCOL_VERSION
+    sendHello(agent, runId, session.id, runToken, 0, 2); // matches API_PROTOCOL_VERSION
     const spec = await agent.nextMessage();
     assert.equal(spec.t, "run.spec");
 
     agent.send({ t: "bye", reason: "stop" });
     await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("protocolVersion 1 is older than the API and is refused", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken, 0, 1);
+    const close = await agent.nextClose();
+    assert.equal(close.code, 4409);
+    assert.match(close.reason, /protocol v1 is older than the API's v2/);
+    const run = await app.store.runs.findById(runId);
+    assert.equal(run?.state, "failed");
+
     app.stopBackgroundTasks();
     await app.fastify.close();
   });

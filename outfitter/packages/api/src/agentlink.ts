@@ -17,6 +17,7 @@ import type { LaptopProbe } from "./laptop.ts";
 import { resolveRunModel } from "./laptop.ts";
 import { validateSnapshotUrl, snapshotHostAllowlist } from "./snapshot-url.ts";
 import { MAIL_LEASE_MS, MAIL_MAX_ATTEMPTS, type MailService } from "./mail.ts";
+import { GithubBroker } from "./github-broker.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
@@ -28,13 +29,12 @@ const REQUEST_TIMEOUT_MS = 15_000;
  * the persistence is meant for a question the run is actually waiting on. */
 const INTERACTIVE_UI_METHODS = new Set(["select", "confirm", "input", "editor"]);
 
-/** Bug 9 (docs/reports/cloud-fixes.md): must match packages/agentd/src/protocol.ts's own
- * WIRE_PROTOCOL_VERSION -- the two packages can't share a module, so both sides document the
- * pairing and bump together. A sandbox whose `hello.protocolVersion` is older than this (including
- * missing entirely, an agentd build that predates the field) is refused with WS close 4409 instead
- * of being allowed to silently ignore frames it doesn't understand -- see this story's motivating
- * incident: a web role on a newer build sent `mail` frames an older agentd ignored. */
-const API_PROTOCOL_VERSION = 1;
+/** Bug 9 (docs/reports/cloud-fixes.md): agentd's `hello.protocolVersion` is compared with this.
+ * The packages can't share a module. Version 2 adds `github.request` / `github.result`
+ * (docs/protocol.md). An agentd still speaking an older version — including one that omits the
+ * field, treated as 0 — is refused with WS close 4409 instead of silently ignoring frames it
+ * doesn't understand. agentd keeps the same number in `WIRE_PROTOCOL_VERSION`. */
+export const API_PROTOCOL_VERSION = 2;
 
 /** Thrown by buildRunSpec when a repo session has no usable GitHub token secret; handleConnection
  * catches it specifically to close the socket with the terminal 4412 code (docs/protocol.md) and
@@ -181,6 +181,7 @@ export class AgentLink {
   private readonly sse: SseHub;
   private readonly laptopProbe: LaptopProbe;
   private readonly mail: MailService;
+  private readonly github: GithubBroker;
 
   constructor(
     store: Store,
@@ -189,6 +190,7 @@ export class AgentLink {
     sse: SseHub,
     laptopProbe: LaptopProbe,
     mail: MailService,
+    github?: GithubBroker,
   ) {
     this.store = store;
     this.config = config;
@@ -196,6 +198,7 @@ export class AgentLink {
     this.sse = sse;
     this.laptopProbe = laptopProbe;
     this.mail = mail;
+    this.github = github ?? new GithubBroker(store, secretsBroker);
   }
 
   register(app: FastifyInstance): void {
@@ -977,6 +980,20 @@ export class AgentLink {
       }
       case "browser.capture.request": {
         await this.handleBrowserCaptureRequest(sessionId, frame);
+        break;
+      }
+      case "github.request": {
+        // Not seq/ack replayed, and not on this chain. A GitHub call can take longer than the
+        // stale-run window; heartbeats and bye have to keep moving while it runs.
+        const reqId = typeof frame.reqId === "string" ? frame.reqId : "";
+        void this.github.handle({
+          runId,
+          op: frame.op,
+          args: frame.args,
+          idempotencyKey: frame.idempotencyKey,
+        }).then((result) => {
+          if (socket.readyState === 1) socket.send(JSON.stringify({ t: "github.result", reqId, ...result }));
+        }).catch(() => {});
         break;
       }
       case "bye": {

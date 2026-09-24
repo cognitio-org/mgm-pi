@@ -25,6 +25,7 @@ case "$*" in
   "iam service-accounts get-iam-policy outfitter-agent@"*)
     [[ -n "${FAIL_SA_POLICY:-}" ]] && { echo "PERMISSION_DENIED" >&2; exit 1; }
     printf 'roles/iam.serviceAccountUser,serviceAccount:outfitter-deployer@outfitter-509211.iam.gserviceaccount.com\n'
+    printf 'roles/iam.serviceAccountUser,serviceAccount:outfitter-api@outfitter-509211.iam.gserviceaccount.com\n'
     printf 'roles/iam.workloadIdentityUser,serviceAccount:outfitter-509211.svc.id.goog[outfitter-sandboxes/outfitter-agent]\n'
     if [[ -n "${FAKE_EXTRA_SA_BINDING:-}" ]]; then printf '%s\n' "${FAKE_EXTRA_SA_BINDING}"; fi
     ;;
@@ -49,6 +50,7 @@ case "$*" in
   *"get sandboxtemplate outfitter-agent"*)
     [[ -n "${FAKE_TEMPLATE_MISSING:-}" ]] && { echo "Error from server (NotFound)" >&2; exit 1; }
     [[ -n "${FAKE_TEMPLATE_READ_FAILS:-}" ]] && { echo "Error from server (Forbidden): outfitter-deployer cannot get sandboxtemplates" >&2; exit 1; }
+    [[ -n "${FAKE_AUTH_PLUGIN_MISSING:-}" ]] && { echo 'Unable to connect to the server: getting credentials: exec: executable gke-gcloud-auth-plugin not found' >&2; exit 1; }
     printf '%s' "${FAKE_TEMPLATE_COMMIT:-}"
     ;;
 esac
@@ -60,7 +62,8 @@ export PATH="${WORK}/bin:${PATH}"
 export GCLOUD_CALLS="${WORK}/gcloud-calls" KUBECTL_CALLS="${WORK}/kubectl-calls"
 unset GITHUB_ACTIONS FAIL_GET_CREDENTIALS FAIL_IAM_POLICY FAKE_AGENT_EXTRA_ROLES FAKE_WEB_LABELS \
   FAKE_LINK_LABELS FAKE_JOB_LABELS FAKE_TEMPLATE_COMMIT FAKE_TEMPLATE_MISSING FAKE_TEMPLATE_READ_FAILS \
-  ALLOW_SKEW DEPLOY_ALL_COMMIT KUBECONFIG_OUTFITTER GKE_CLUSTER FAIL_SA_POLICY FAKE_EXTRA_SA_BINDING
+  ALLOW_SKEW DEPLOY_ALL_COMMIT KUBECONFIG_OUTFITTER GKE_CLUSTER FAIL_SA_POLICY FAKE_EXTRA_SA_BINDING \
+  FAKE_AUTH_PLUGIN_MISSING
 
 fails=0
 # run_expr <snippet> -- sources the real env.sh from its own directory, then runs the snippet.
@@ -126,6 +129,12 @@ GKE_CLUSTER=outfitter FAKE_TEMPLATE_READ_FAILS=1 KUBECONFIG_OUTFITTER="${WORK}/k
 GKE_CLUSTER=outfitter FAKE_TEMPLATE_MISSING=1 KUBECONFIG_OUTFITTER="${WORK}/kube/outfitter" \
   expect pass "current_build_commit_gke still reads a genuine NotFound as empty, not a failure" "^$" \
   "current_build_commit_gke"
+# Low (review round 2): kubectl's own "executable gke-gcloud-auth-plugin not found" error contains
+# the words "not found" too -- a loose regex would misread a broken kubectl setup as "the template
+# doesn't exist" instead of failing loudly.
+GKE_CLUSTER=outfitter FAKE_AUTH_PLUGIN_MISSING=1 KUBECONFIG_OUTFITTER="${WORK}/kube/outfitter" \
+  expect fail "current_build_commit_gke fails loudly on the auth-plugin-missing message, not NotFound" \
+  "could not read the GKE SandboxTemplate" "current_build_commit_gke"
 GKE_CLUSTER=outfitter FAIL_GET_CREDENTIALS=1 KUBECONFIG_OUTFITTER="${WORK}/kube/outfitter" \
   expect fail "current_build_commit_gke fails loudly when it can't even get a kubeconfig" \
   "could not obtain a kubeconfig" "current_build_commit_gke"
@@ -172,13 +181,31 @@ FAKE_AGENT_EXTRA_ROLES="roles/editor" expect fail "assert_agent_sa_logwriter_onl
 FAIL_IAM_POLICY=1 expect fail "assert_agent_sa_logwriter_only refuses loudly on a read error" \
   "could not read .*IAM policy" "assert_agent_sa_logwriter_only"
 
-expect pass "assert_agent_sa_no_unexpected_bindings passes with only the two expected bindings" "^ok$" \
+expect pass "assert_agent_sa_no_unexpected_bindings passes with only the three expected bindings" "^ok$" \
   "assert_agent_sa_no_unexpected_bindings && echo ok"
 FAKE_EXTRA_SA_BINDING="roles/iam.serviceAccountTokenCreator,user:someone@example.com" \
   expect fail "assert_agent_sa_no_unexpected_bindings refuses an unexpected binding" \
   "unexpected bindings.*roles/iam.serviceAccountTokenCreator" "assert_agent_sa_no_unexpected_bindings"
 FAIL_SA_POLICY=1 expect fail "assert_agent_sa_no_unexpected_bindings refuses loudly on a read error" \
   "could not read .*own IAM policy" "assert_agent_sa_no_unexpected_bindings"
+
+# Low (review round 2): a command-substitution subshell (e.g. check_deploy_skew's own
+# `template_commit="$(current_build_commit_gke)"`, which calls gke_kubeconfig -> register_cleanup)
+# inherits the EXIT trap and a *copy* of CLEANUP_PATHS/CLEANUP_CMDS. Without the BASH_SUBSHELL guard,
+# that subshell's own exit would delete every path registered so far -- including ones the top-level
+# script (still running) hasn't used yet.
+MARKER_FILE="${WORK}/subshell-marker"
+GKE_CLUSTER=outfitter GITHUB_ACTIONS=true KUBECONFIG_OUTFITTER="${WORK}/kube/outfitter" \
+  expect pass "a command-substitution subshell doesn't delete cleanup paths registered before it" \
+  "survived" \
+  "touch '${MARKER_FILE}'; register_cleanup '${MARKER_FILE}'; : \"\$(gke_kubeconfig)\"; if [[ -f '${MARKER_FILE}' ]]; then echo survived; else echo deleted; fi"
+if [[ -f "${MARKER_FILE}" ]]; then
+  echo "FAIL:   ... yet the marker was never cleaned up once the top-level process actually exited"
+  fails=$((fails + 1))
+  rm -f "${MARKER_FILE}"
+else
+  echo "ok:   ... and it WAS deleted once the top-level process actually exited"
+fi
 
 echo "${fails} failed"
 [[ "${fails}" -eq 0 ]]

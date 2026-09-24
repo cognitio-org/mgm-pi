@@ -64,6 +64,7 @@ jobs:
           bash deploy/test/gke-teardown.test.sh
           bash deploy/test/release-gke-off.test.sh
           bash deploy/test/service-env-gke-off.test.sh
+          bash deploy/test/gke-workflow-check.test.sh
 
   deploy:
     needs: test
@@ -87,15 +88,7 @@ jobs:
       - name: Check whether GKE is configured
         id: gke
         working-directory: outfitter/deploy
-        run: |
-          set -euo pipefail
-          # shellcheck disable=SC1091
-          source config.env
-          if [[ -n "${GKE_CLUSTER}" ]]; then
-            echo "components=beta,kubectl,gke-gcloud-auth-plugin" >>"${GITHUB_OUTPUT}"
-          else
-            echo "components=beta" >>"${GITHUB_OUTPUT}"
-          fi
+        run: ./gke-workflow-check.sh
       - uses: google-github-actions/setup-gcloud@v2
         with:
           # env.sh public_origin lists domain mappings with `gcloud beta run domain-mappings`.

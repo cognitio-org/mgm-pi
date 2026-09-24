@@ -85,7 +85,7 @@ register_cleanup "${CURRENT_REPLICAS_ERR}"
 if CURRENT_REPLICAS="$(kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" \
     get sandboxwarmpool "${GKE_WARM_POOL}" -o jsonpath='{.spec.replicas}' 2>"${CURRENT_REPLICAS_ERR}")"; then
   CURRENT_REPLICAS="${CURRENT_REPLICAS:-0}"
-elif grep -qiE 'NotFound|not found|does not exist' "${CURRENT_REPLICAS_ERR}"; then
+elif is_kubectl_notfound "$(cat "${CURRENT_REPLICAS_ERR}")"; then
   CURRENT_REPLICAS=0
 else
   cat "${CURRENT_REPLICAS_ERR}" >&2
@@ -107,52 +107,81 @@ kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" \
 # cold claim pays that cost here instead of on the first real wake. `create`, not `apply`: the
 # deployer's Role only grants create/get/delete/list/watch on sandboxclaims, not patch, and a
 # one-off object that's never reapplied doesn't need server-side apply's merge semantics anyway.
-# Deletion is a registered cleanup command, not a plain call at the end: an interrupt (or a failed
-# wait) must still remove it on exit, and a repeat of this same warmup name (RENDERED/TAG-scoped)
-# must never be left dangling.
-WARMUP_NAME="warmup-${TAG}"
-echo "== Warming ${IMAGE} with a throwaway cold claim (${WARMUP_NAME}) =="
-cat <<YAML | kubectl --kubeconfig="${KUBECONFIG}" create -f -
+#
+# `app.kubernetes.io/managed-by: outfitter-release`, not `outfitter`: PR2's GkeProvider counts
+# active sandboxes toward GKE_MAX_ACTIVE by listing claims labelled managed-by=outfitter
+# (packages/api/src/providers/gke.ts's countActive) -- this claim must not eat into that budget.
+#
+# Best-effort, entirely: this is a nice-to-have that must never fail the release. A stale claim from
+# an interrupted previous run (SIGKILL, or one still terminating) is cleaned up by label first, so
+# it can't collide; the new claim itself uses generateName (not a fixed name), so even a concurrent
+# or leftover claim can never cause AlreadyExists. A create failure (quota, a rejected admission,
+# anything) just skips the rest of this section with a note.
+echo "== Warming ${IMAGE} with a throwaway cold claim =="
+STALE_WARMUPS="$(kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" \
+  get sandboxclaims -l app.kubernetes.io/managed-by=outfitter-release,outfitter.dev/warmup=true -o name 2>/dev/null || true)"
+for stale in ${STALE_WARMUPS}; do
+  kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" \
+    delete "${stale}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+done
+
+WARMUP_CREATE_ERR="$(mktemp)"
+register_cleanup "${WARMUP_CREATE_ERR}"
+WARMUP_CLAIM=""
+if WARMUP_CLAIM="$(cat <<YAML | kubectl --kubeconfig="${KUBECONFIG}" create -f - -o jsonpath='{.metadata.name}' 2>"${WARMUP_CREATE_ERR}"
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxClaim
 metadata:
-  name: ${WARMUP_NAME}
+  generateName: warmup-
   namespace: ${GKE_NAMESPACE}
-  labels: { app.kubernetes.io/managed-by: outfitter, outfitter.dev/warmup: "true" }
+  labels: { app.kubernetes.io/managed-by: outfitter-release, outfitter.dev/warmup: "true" }
 spec:
   warmPoolRef: { name: ${GKE_WARM_POOL} }
   lifecycle: { shutdownPolicy: Delete, ttlSecondsAfterFinished: 60 }
   env:
-    - { name: RUN_ID, value: "${WARMUP_NAME}" }
+    - { name: RUN_ID, value: "warmup-${TAG}" }
     - { name: RUN_TOKEN, value: "warmup" }
     - { name: OUTFITTER_API, value: "${OUTFITTER_LINK_ORIGIN}" }
 YAML
-register_cleanup_cmd "kubectl --kubeconfig='${KUBECONFIG}' -n '${GKE_NAMESPACE}' delete sandboxclaim '${WARMUP_NAME}' --ignore-not-found --wait=false >/dev/null 2>&1"
+)" && [[ -n "${WARMUP_CLAIM}" ]]; then
+  echo "   created ${WARMUP_CLAIM}"
+  register_cleanup_cmd "kubectl --kubeconfig='${KUBECONFIG}' -n '${GKE_NAMESPACE}' delete sandboxclaim '${WARMUP_CLAIM}' --ignore-not-found --wait=false >/dev/null 2>&1"
 
-# Best-effort, bounded: a slow node/image pull here delays the release a little, never fails it --
-# the next real wake just pays whatever wasn't warmed. First wait for the controller to assign a
-# Sandbox, then for that Sandbox to actually report Ready (i.e. the image pulled and the container
-# started), not merely "a name was assigned". register_cleanup_cmd above deletes the claim
-# regardless of how this comes out.
-SANDBOX_NAME="$(kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" \
-  wait --for=jsonpath='{.status.sandbox.name}' "sandboxclaim/${WARMUP_NAME}" --timeout=60s \
-  --output=jsonpath='{.status.sandbox.name}' 2>/dev/null || true)"
-if [[ -z "${SANDBOX_NAME}" ]]; then
-  SANDBOX_NAME="$(kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" \
-    get sandboxclaim "${WARMUP_NAME}" -o jsonpath='{.status.sandbox.name}' 2>/dev/null || true)"
-fi
-if [[ -n "${SANDBOX_NAME}" ]]; then
+  # Bounded: a slow node/image pull here delays the release a little, never fails it -- the next
+  # real wake just pays whatever wasn't warmed. First wait for the controller to assign a Sandbox,
+  # then for that Sandbox to actually report Ready (image pulled, container started), not merely "a
+  # name was assigned". register_cleanup_cmd above deletes the claim regardless of how this comes out.
+  #
+  # A plain bounded poll over `kubectl get`, not `kubectl wait --for=jsonpath=... ` with no
+  # comparison value: that value-less form (wait for a field to merely exist/be non-empty, as
+  # opposed to `--for=jsonpath=...=value`) is a newer kubectl feature, and this script has no way to
+  # confirm which kubectl version `gcloud components install kubectl` puts on a given machine or CI
+  # runner. `get` alone is universally supported and needs only the `get` verb (already granted),
+  # not `list`/`watch` on sandboxclaims.
+  WARMUP_POLL_INTERVAL_S="${WARMUP_POLL_INTERVAL_S:-2}"
+  SANDBOX_NAME=""
+  for _ in $(seq 1 30); do
+    SANDBOX_NAME="$(kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" \
+      get sandboxclaim "${WARMUP_CLAIM}" -o jsonpath='{.status.sandbox.name}' 2>/dev/null || true)"
+    [[ -n "${SANDBOX_NAME}" ]] && break
+    sleep "${WARMUP_POLL_INTERVAL_S}"
+  done
+  if [[ -n "${SANDBOX_NAME}" ]]; then
+    kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" \
+      wait --for=condition=Ready "sandbox/${SANDBOX_NAME}" --timeout=120s \
+      || echo "   note: the warm-up Sandbox didn't report Ready within 120s; the next real wake pays whatever wasn't warmed" >&2
+  else
+    echo "   note: the warm-up claim never got a Sandbox assigned within 60s; the next real wake pays the pull instead" >&2
+  fi
+  # Delete now, in the normal flow (not only via the register_cleanup_cmd trap above, which stays as
+  # the crash-safety net for an interrupt mid-wait): the label right below must come strictly after
+  # this in the script's own order.
   kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" \
-    wait --for=condition=Ready "sandbox/${SANDBOX_NAME}" --timeout=120s \
-    || echo "   note: the warm-up Sandbox didn't report Ready within 120s; the next real wake pays whatever wasn't warmed" >&2
+    delete sandboxclaim "${WARMUP_CLAIM}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
 else
-  echo "   note: the warm-up claim never got a Sandbox assigned within 60s; the next real wake pays the pull instead" >&2
+  echo "   note: couldn't create a warm-up claim (see below); skipping the warm-up entirely -- the next real wake pays the pull instead" >&2
+  sed 's/^/   /' "${WARMUP_CREATE_ERR}" >&2
 fi
-# Delete now, in the normal flow (not only via the register_cleanup_cmd trap above, which stays as
-# the crash-safety net for an interrupt mid-wait): the label right below must come strictly after
-# this in the script's own order.
-kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" \
-  delete sandboxclaim "${WARMUP_NAME}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
 
 # Only now: a failure above must leave the template unlabelled, so a re-run of this script (release
 # retrying a failed step) doesn't see "already at this commit" and skip re-applying.

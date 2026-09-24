@@ -28,6 +28,7 @@ case "$*" in
     ;;
   "iam service-accounts get-iam-policy outfitter-agent@"*)
     printf 'roles/iam.serviceAccountUser,serviceAccount:outfitter-deployer@outfitter-509211.iam.gserviceaccount.com\n'
+    printf 'roles/iam.serviceAccountUser,serviceAccount:outfitter-api@outfitter-509211.iam.gserviceaccount.com\n'
     printf 'roles/iam.workloadIdentityUser,serviceAccount:outfitter-509211.svc.id.goog[outfitter-sandboxes/outfitter-agent]\n'
     ${FAKE_EXTRA_SA_BINDING:+printf '%s\n' "${FAKE_EXTRA_SA_BINDING}"}
     ;;
@@ -67,17 +68,6 @@ elif [[ "${f_arg}" == "-" ]]; then
   { printf '%s\n' "${body}"; echo "---"; } >>"${RENDERED_LOG}"
 fi
 
-verb=""
-case " $* " in
-  *" apply "*) verb=patch ;;   # server-side apply needs `patch` RBAC, not a verb of its own
-  *" create "*) verb=create ;;
-  *" patch "*) verb=patch ;;
-  *" delete "*) verb=delete ;;
-  *" label "*) verb=patch ;;   # kubectl label issues a patch
-  *" wait "*) verb=watch ;;
-  *" get "*) verb=get ;;
-esac
-
 resource=""
 case "$*" in
   *sandboxtemplate*) resource=sandboxtemplates ;;
@@ -94,16 +84,40 @@ if [[ -z "${resource}" && -n "${body}" ]]; then
   esac
 fi
 
+verb=""
+case " $* " in
+  *" apply "*)
+    # A real apiserver authorizes `apply --server-side` against `create` when the target object
+    # doesn't exist yet (the very first GKE release: neither the SandboxTemplate nor the pool has
+    # been applied before) and against `patch` once it does. FAKE_FIRST_RELEASE simulates "doesn't
+    # exist yet" for both, so a test can prove the Role's `create` verb is what makes that work.
+    if [[ -n "${FAKE_FIRST_RELEASE:-}" && ( "${resource}" == sandboxtemplates || "${resource}" == sandboxwarmpools ) ]]; then
+      verb=create
+    else
+      verb=patch
+    fi
+    ;;
+  *" create "*) verb=create ;;
+  *" patch "*) verb=patch ;;
+  *" delete "*) verb=delete ;;
+  *" label "*) verb=patch ;;   # kubectl label issues a patch
+  *" wait "*) verb=watch ;;
+  *" get "*) verb=get ;;
+esac
+
+deny() {
+  echo "Error from server (Forbidden): ${resource:-<unknown>} is forbidden: User \"outfitter-deployer\" cannot ${verb:-<unknown>} resource \"${resource:-<unknown>}\"" >&2
+  exit 1
+}
 case "${resource}:${verb}" in
   sandboxtemplates:get | sandboxtemplates:patch) ;;
+  sandboxtemplates:create) [[ -z "${FAKE_ROLE_NO_CREATE:-}" ]] || deny ;;
   sandboxwarmpools:get | sandboxwarmpools:patch) ;;
-  sandboxclaims:get | sandboxclaims:create | sandboxclaims:delete | sandboxclaims:list | sandboxclaims:watch) ;;
+  sandboxwarmpools:create) [[ -z "${FAKE_ROLE_NO_CREATE:-}" ]] || deny ;;
+  sandboxclaims:get | sandboxclaims:create | sandboxclaims:delete | sandboxclaims:list) ;;
   sandboxes:get | sandboxes:list | sandboxes:watch) ;;
   services:get) ;;
-  *)
-    echo "Error from server (Forbidden): ${resource:-<unknown>} is forbidden: User \"outfitter-deployer\" cannot ${verb:-<unknown>} resource \"${resource:-<unknown>}\"" >&2
-    exit 1
-    ;;
+  *) deny ;;
 esac
 
 # Glob patterns below check substrings without relying on their relative order in "$*" (a `case`
@@ -116,15 +130,21 @@ case "$*" in
     [[ -n "${FAKE_POOL_READ_FAILS:-}" ]] && { echo "Error from server (InternalError): etcd timeout" >&2; exit 1; }
     printf '%s' "${FAKE_CURRENT_REPLICAS:-0}"
     ;;
+  *"get sandboxclaims -l"*"warmup=true"*)
+    [[ -n "${FAKE_STALE_WARMUPS:-}" ]] && printf '%s\n' "${FAKE_STALE_WARMUPS}"
+    ;;
 esac
-if [[ "$*" == *"wait "* && "$*" == *"--output=jsonpath="* && "$*" == *"sandboxclaim/"* ]]; then
-  [[ -n "${FAKE_NO_SANDBOX_ASSIGNED:-}" ]] && exit 1
-  printf '%s' "${FAKE_SANDBOX_NAME:-warmup-sandbox-1}"
+if [[ "$*" == *"create -f -"* && "$*" == *"jsonpath={.metadata.name}"* ]]; then
+  if [[ -n "${FAKE_WARMUP_CREATE_FAILS:-}" ]]; then
+    echo "Error from server (Forbidden): quota exceeded" >&2
+    exit 1
+  fi
+  printf '%s' "${FAKE_WARMUP_NAME:-warmup-fakeabc123}"
   exit 0
 fi
 case "$*" in
   *"get sandboxclaim "*"jsonpath={.status.sandbox.name}"*)
-    printf '%s' "${FAKE_SANDBOX_NAME:-}"
+    [[ -n "${FAKE_NO_SANDBOX_ASSIGNED:-}" ]] || printf '%s' "${FAKE_SANDBOX_NAME:-warmup-sandbox-1}"
     ;;
   *"wait --for=condition=Ready sandbox/"*)
     [[ -n "${FAKE_SANDBOX_NOT_READY:-}" ]] && exit 1
@@ -154,7 +174,7 @@ TAG="$(git -C "${REPO}" rev-parse --short=12 HEAD)"
 export PATH="${WORK}/bin:${PATH}"
 export GCLOUD_CALLS="${WORK}/gcloud-calls" KUBECTL_CALLS="${WORK}/kubectl-calls" \
   RENDERED_LOG="${WORK}/rendered-log" GKE_CLUSTER=outfitter FAKE_LINK_ORIGIN=https://link.example.com \
-  KUBECONFIG_OUTFITTER="${WORK}/kube/outfitter"
+  KUBECONFIG_OUTFITTER="${WORK}/kube/outfitter" WARMUP_POLL_INTERVAL_S=0
 unset GITHUB_ACTIONS ROLLBACK ALLOW_OFF_MAIN ALLOW_SKEW DEPLOY_ALL_COMMIT
 
 fails=0
@@ -234,11 +254,26 @@ if grep -qE '\$\{[A-Z_][A-Z0-9_]*\}' "${RENDERED_LOG}"; then
 else
   echo "ok: no \${VAR} placeholder was left unrendered"
 fi
+# env_name_collides <text> -- true if <text> defines OUTFITTER_API/RUN_ID/RUN_TOKEN as a `name:`
+# key, in either YAML flow style (`{ name: OUTFITTER_API, value: ... }`, the comma or brace
+# immediately after) or block style (`- name: OUTFITTER_API` on its own line, nothing after but
+# whitespace).
+env_name_collides() {
+  grep -qE 'name: (OUTFITTER_API|RUN_ID|RUN_TOKEN)( ?[,}]|[[:space:]]*$)' <<<"$1"
+}
+# Low (review round 2): prove the check above actually catches block style, not only flow style --
+# a regex that only matched `name: X,`/`name: X}` would silently pass a block-style regression.
+if env_name_collides "$(printf '  env:\n    - name: OUTFITTER_API\n      value: x\n')"; then
+  echo "ok: env_name_collides also catches block-style YAML (- name: OUTFITTER_API on its own line)"
+else
+  echo "FAIL: env_name_collides missed a block-style '- name: OUTFITTER_API'"; fails=$((fails + 1))
+fi
+
 # RENDERED_LOG also holds the warm-up SandboxClaim's own piped body (which legitimately sets these
 # three as claim env) -- check only the first "---"-delimited section, the rendered
 # sandbox-template.yaml file itself.
 RENDERED_TEMPLATE_ONLY="$(awk '/^---$/{exit} {print}' "${RENDERED_LOG}")"
-if grep -qE 'name: (OUTFITTER_API|RUN_ID|RUN_TOKEN) ?[,}]' <<<"${RENDERED_TEMPLATE_ONLY}"; then
+if env_name_collides "${RENDERED_TEMPLATE_ONLY}"; then
   echo "FAIL: the rendered SandboxTemplate defines OUTFITTER_API/RUN_ID/RUN_TOKEN as a static env var -- a cold claim setting the same name is REJECTED by agent-sandbox's Allowed injection policy"
   fails=$((fails + 1))
 else
@@ -257,7 +292,7 @@ else
   echo "FAIL: expected 'kubectl create -f -' for the warm-up claim"; fails=$((fails + 1))
 fi
 
-if grep -q "delete sandboxclaim warmup-${TAG}" "${KUBECTL_CALLS}"; then
+if grep -q "delete sandboxclaim warmup-fakeabc123" "${KUBECTL_CALLS}"; then
   echo "ok: the warm-up claim was deleted"
 else
   echo "FAIL: expected the warm-up claim to be deleted"; fails=$((fails + 1))
@@ -267,13 +302,26 @@ fi
 # --ignore-not-found) once this whole test process exits, adding a second "delete" line later in
 # the same call log -- only the first (in-script) occurrence matters for ordering here.
 LABEL_LINE="$(grep -n "label sandboxtemplate outfitter-agent build-commit=${TAG}" "${KUBECTL_CALLS}" | head -1 | cut -d: -f1 || true)"
-DELETE_LINE="$(grep -n "delete sandboxclaim warmup-${TAG}" "${KUBECTL_CALLS}" | head -1 | cut -d: -f1 || true)"
+DELETE_LINE="$(grep -n "delete sandboxclaim warmup-fakeabc123" "${KUBECTL_CALLS}" | head -1 | cut -d: -f1 || true)"
 if [[ -n "${LABEL_LINE}" && -n "${DELETE_LINE}" && "${LABEL_LINE}" -gt "${DELETE_LINE}" ]]; then
   echo "ok: the build-commit label is applied LAST, after the pool patch and the warm-up"
 else
   echo "FAIL: expected the build-commit label (line ${LABEL_LINE:-?}) after the warm-up delete (line ${DELETE_LINE:-?})"
   fails=$((fails + 1))
 fi
+
+# HIGH (review round 2): a real apiserver authorizes `apply --server-side` on a not-yet-existing
+# object against `create`, not `patch` -- the very first GKE release applies a SandboxTemplate and
+# SandboxWarmPool that have never existed before. ci-setup.sh's Role must grant `create` on both, or
+# the first release fails outright.
+FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
+  FAKE_JOB_LABELS="build-commit=${TAG}" FAKE_FIRST_RELEASE=1 FAKE_POOL_MISSING=1 \
+  expect pass "the first release (neither object exists yet) succeeds: the Role grants create" \
+  "Done: SandboxTemplate/SandboxWarmPool at ${TAG}"
+
+FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
+  FAKE_JOB_LABELS="build-commit=${TAG}" FAKE_FIRST_RELEASE=1 FAKE_POOL_MISSING=1 FAKE_ROLE_NO_CREATE=1 \
+  expect fail "... and fails if the Role's create verb is removed" "Forbidden"
 
 FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
   FAKE_JOB_LABELS="build-commit=${TAG}" FAKE_POOL_MISSING=1 \
@@ -294,6 +342,29 @@ FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
   FAKE_JOB_LABELS="build-commit=${TAG}" FAKE_SANDBOX_NOT_READY=1 \
   expect pass "a Sandbox that never reports Ready still finishes (next real wake pays the pull)" \
   "didn't report Ready within 120s"
+
+# Medium (review round 2): a stale warm-up claim (left by an interrupted previous run) is cleaned up
+# by label before creating a new one, and a failed create (quota, AlreadyExists, anything) is
+# best-effort -- it must never fail the release.
+FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
+  FAKE_JOB_LABELS="build-commit=${TAG}" FAKE_STALE_WARMUPS="sandboxclaim/warmup-stale1" \
+  expect pass "a stale warm-up claim is deleted by label before creating a new one" \
+  "Done: SandboxTemplate/SandboxWarmPool at ${TAG}"
+if grep -q "delete sandboxclaim/warmup-stale1" "${KUBECTL_CALLS}"; then
+  echo "ok:   ... and the stale claim was deleted"
+else
+  echo "FAIL:   expected the stale claim (sandboxclaim/warmup-stale1) to be deleted"; fails=$((fails + 1))
+fi
+
+FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
+  FAKE_JOB_LABELS="build-commit=${TAG}" FAKE_WARMUP_CREATE_FAILS=1 \
+  expect pass "a failed warm-up claim create is best-effort and never fails the release" \
+  "couldn't create a warm-up claim"
+if grep -q "wait " "${KUBECTL_CALLS}"; then
+  echo "FAIL:   expected no wait calls after a failed create"; fails=$((fails + 1))
+else
+  echo "ok:   ... and no wait calls were made (nothing to wait on)"
+fi
 
 echo "${fails} failed"
 [[ "${fails}" -eq 0 ]]

@@ -94,8 +94,26 @@ if [[ "${CLUSTER_EXISTS}" == 1 ]]; then
   fi
 
   echo "== Scaling ${GKE_WARM_POOL} to 0 =="
-  run kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" \
-    patch sandboxwarmpool "${GKE_WARM_POOL}" --type=merge -p '{"spec":{"replicas":0}}'
+  if [[ "${DRY_RUN:-0}" == 1 ]]; then
+    run kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" \
+      patch sandboxwarmpool "${GKE_WARM_POOL}" --type=merge -p '{"spec":{"replicas":0}}'
+  else
+    # Idempotent: gke-cluster.sh and gke-iam.sh may have run with no release yet, so the pool may
+    # not exist at all -- that must read as "nothing to scale", same tolerance as gke-template.sh's
+    # replicas read, not a hard failure. Any other error still refuses loudly.
+    patch_err="$(mktemp)"
+    if kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" \
+        patch sandboxwarmpool "${GKE_WARM_POOL}" --type=merge -p '{"spec":{"replicas":0}}' 2>"${patch_err}"; then
+      rm -f "${patch_err}"
+    elif is_kubectl_notfound "$(cat "${patch_err}")"; then
+      rm -f "${patch_err}"
+      echo "   ${GKE_WARM_POOL}: doesn't exist yet (no release has run); nothing to scale"
+    else
+      cat "${patch_err}" >&2
+      rm -f "${patch_err}"
+      deploy_fail "could not scale ${GKE_WARM_POOL} to 0 (see above)"
+    fi
+  fi
 fi
 
 echo "== Deleting Scheduler jobs =="

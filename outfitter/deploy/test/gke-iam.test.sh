@@ -21,6 +21,7 @@ case "$*" in
   "iam service-accounts get-iam-policy outfitter-agent@"*)
     [[ -n "${FAIL_SA_POLICY:-}" ]] && { echo "PERMISSION_DENIED" >&2; exit 1; }
     printf 'roles/iam.serviceAccountUser,serviceAccount:outfitter-deployer@outfitter-509211.iam.gserviceaccount.com\n'
+    printf 'roles/iam.serviceAccountUser,serviceAccount:outfitter-api@outfitter-509211.iam.gserviceaccount.com\n'
     printf 'roles/iam.workloadIdentityUser,serviceAccount:outfitter-509211.svc.id.goog[outfitter-sandboxes/outfitter-agent]\n'
     if [[ -n "${FAKE_EXTRA_SA_BINDING:-}" ]]; then printf '%s\n' "${FAKE_EXTRA_SA_BINDING}"; fi
     ;;

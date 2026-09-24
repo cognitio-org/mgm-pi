@@ -331,6 +331,7 @@ deployed_origin() {
 # explicitly with --kubeconfig, matching gke-cluster.sh's own get-credentials.
 CLEANUP_PATHS=()
 CLEANUP_CMDS=()
+CLEANUP_TRAP_SET=""
 _deploy_cleanup() {
   local c p
   # Commands (e.g. deleting a release-time warm-up claim) before paths: an interrupt mid-wait must
@@ -345,15 +346,47 @@ _deploy_cleanup() {
 # register_cleanup <path> -- removed on exit. A script that also wants its own EXIT trap for
 # something else must register that cleanup here too (a second `trap ... EXIT` would replace this
 # one, dropping the kubeconfig/temp-file cleanup silently).
+#
+# `trap _deploy_cleanup EXIT` runs only ONCE per process, guarded by CLEANUP_TRAP_SET -- this is
+# deliberate, not an optimization. Every `$(...)`/`(...)` a script runs inherits both the trap
+# already set AND a *copy* of the arrays above (fork semantics), but bash (confirmed on 3.2, macOS's
+# default /bin/bash, where this actually bit us) does NOT act on an EXIT trap it merely inherited
+# unchanged when that subshell exits -- it only does so if something *re-runs* `trap ... EXIT` while
+# already inside that subshell. So calling register_cleanup a second time from inside a command
+# substitution (e.g. check_deploy_skew's `x="$(current_build_commit_gke)"`, which calls
+# gke_kubeconfig -> register_cleanup) must NOT call `trap` again, or that subshell starts treating
+# ITS OWN exit as "time to clean up" and deletes everything registered so far -- including paths the
+# top-level script (still running) hasn't used yet. $BASHPID would be the obvious alternative fix
+# but isn't available on bash 3.2 either (always empty there, silently useless). Skipping the
+# redundant `trap` call sidesteps needing any of that: the array append still happens (harmless if
+# it's inside a subshell -- that copy is discarded when the subshell exits, since subshells can't
+# write back to the parent's variables), and only the ORIGINAL process, the one that first called
+# register_cleanup, ever has a live trap to fire.
 register_cleanup() {
   CLEANUP_PATHS+=("$1")
-  trap _deploy_cleanup EXIT
+  if [[ -z "${CLEANUP_TRAP_SET}" ]]; then
+    CLEANUP_TRAP_SET=1
+    trap _deploy_cleanup EXIT
+  fi
 }
 # register_cleanup_cmd <command string> -- run on exit (eval'd; only ever called with this repo's
-# own fixed strings, never external input). Same trap-sharing caveat as register_cleanup.
+# own fixed strings, never external input). Same trap-sharing caveat, and the same "set the trap
+# only once" reasoning, as register_cleanup.
 register_cleanup_cmd() {
   CLEANUP_CMDS+=("$1")
-  trap _deploy_cleanup EXIT
+  if [[ -z "${CLEANUP_TRAP_SET}" ]]; then
+    CLEANUP_TRAP_SET=1
+    trap _deploy_cleanup EXIT
+  fi
+}
+
+# is_kubectl_notfound <error text> -- true only for kubectl's actual "the object doesn't exist" API
+# response ("Error from server (NotFound): ... \"name\" not found"), never for a broader "not
+# found"/"does not exist" match: kubectl itself fails with "exec: \"gke-gcloud-auth-plugin\":
+# executable file not found in $PATH" when the auth plugin isn't installed, and a looser regex would
+# misread that as "the resource doesn't exist" instead of failing loudly on a broken kubectl setup.
+is_kubectl_notfound() {
+  grep -qF 'Error from server (NotFound)' <<<"$1"
 }
 
 # gke_kubeconfig -- ensures a kubeconfig for GKE_CLUSTER exists and exports KUBECONFIG to it, then
@@ -413,7 +446,7 @@ current_build_commit_gke() {
     printf '%s' "${out}"
     return 0
   fi
-  if grep -qiE 'NotFound|not found|does not exist' "${err_file}"; then
+  if is_kubectl_notfound "$(cat "${err_file}")"; then
     rm -f "${err_file}"
     return 0
   fi
@@ -452,16 +485,22 @@ assert_agent_sa_logwriter_only() {
 
 # assert_agent_sa_no_unexpected_bindings -- the resource-level half of the same option-B guard: who
 # holds a role ON outfitter-agent@ itself (`iam service-accounts get-iam-policy`), as opposed to a
-# project role granted TO it (assert_agent_sa_logwriter_only, above). The two known, expected
-# bindings are outfitter-deployer's serviceAccountUser (ci-setup.sh, so it can deploy the Cloud Run
-# Job as this account) and the KSA's workloadIdentityUser (gke-iam.sh, so GKE sandboxes can
-# impersonate it). Anything else -- another principal granted serviceAccountUser/TokenCreator on it,
-# for instance -- could mint credentials as this account and is worth failing loudly over. Needs
+# project role granted TO it (assert_agent_sa_logwriter_only, above). Anything beyond the three known
+# bindings below -- another principal granted serviceAccountUser/TokenCreator on it, for instance --
+# could mint credentials as this account and is worth failing loudly over. Needs
 # roles/iam.serviceAccountViewer (already granted to outfitter-deployer, ci-setup.sh).
+#
+# Expected bindings and where each comes from:
+#   roles/iam.serviceAccountUser  outfitter-api@     baseline.sh    -- RunManager.wake impersonates
+#                                                                       it to start Cloud Run Job
+#                                                                       executions (CloudRunProvider)
+#   roles/iam.serviceAccountUser  outfitter-deployer@ ci-setup.sh   -- deploys the Job as this account
+#   roles/iam.workloadIdentityUser <the KSA>          gke-iam.sh    -- GKE sandboxes impersonate it
 assert_agent_sa_no_unexpected_bindings() {
   local agent_sa_email="outfitter-agent@${PROJECT}.iam.gserviceaccount.com"
   local expected_wi_member="serviceAccount:${PROJECT}.svc.id.goog[${GKE_NAMESPACE:-outfitter-sandboxes}/outfitter-agent]"
   local expected_deployer_member="serviceAccount:outfitter-deployer@${PROJECT}.iam.gserviceaccount.com"
+  local expected_api_member="serviceAccount:outfitter-api@${PROJECT}.iam.gserviceaccount.com"
   local rows role member unexpected=()
   rows="$(gcloud iam service-accounts get-iam-policy "${agent_sa_email}" --project="${PROJECT}" \
     --flatten="bindings[].members" --format="csv[no-heading](bindings.role,bindings.members)")" \
@@ -470,6 +509,7 @@ assert_agent_sa_no_unexpected_bindings() {
     [[ -z "${role}" ]] && continue
     case "${role}:${member}" in
       "roles/iam.serviceAccountUser:${expected_deployer_member}") continue ;;
+      "roles/iam.serviceAccountUser:${expected_api_member}") continue ;;
       "roles/iam.workloadIdentityUser:${expected_wi_member}") continue ;;
     esac
     unexpected+=("${role} -> ${member}")

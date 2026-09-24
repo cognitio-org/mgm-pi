@@ -228,6 +228,68 @@ low ones. Recorded here since they change behaviour §6a described:
 
 ---
 
+## 6c. Review round 2 fixes (2026-09-24)
+
+A focused re-review of round 1's own fixes found three more blockers -- two of them introduced by
+round 1 itself -- plus several medium/low issues. Fixed before merge; recorded here since some
+change round 1's own §6b description.
+
+- **Critical: the "Check whether GKE is configured" workflow step broke every release, GKE on or
+  off.** It ran `source config.env` under `set -euo pipefail`; `config.env`'s `GKE_LOCATION` line
+  referenced `${REGION}`, which only `env.sh` ever sets, so the step died on "REGION: unbound
+  variable" before `setup-gcloud` ever ran. Fixed two ways: `config.env`'s `GKE_LOCATION` now
+  defaults to `${REGION:-us-central1}` (safe to source standalone, no `env.sh`, under `set -u`), and
+  the workflow step no longer sources `config.env` at all -- it calls a new
+  **`deploy/gke-workflow-check.sh`**, which evaluates only the one `GKE_CLUSTER="${GKE_CLUSTER:-...}"`
+  line from `config.env` in isolation. `gke-workflow-check.test.sh` runs it under `env -i` (a
+  genuinely clean environment, no `PATH` beyond the bare minimum, no `REGION`) to prove this.
+- **High: `assert_agent_sa_no_unexpected_bindings` (round 1) would have refused on the real
+  project.** `baseline.sh` grants `outfitter-api@` `roles/iam.serviceAccountUser` on
+  `outfitter-agent@` (`CloudRunProvider` needs it to start Job executions as that account) -- a real,
+  permanent, pre-existing binding the guard didn't expect. Added to the expected set; the doc comment
+  now lists which script grants each of the three expected bindings.
+- **High: the deployer's Role couldn't create the SandboxTemplate or pool on the first GKE
+  release.** `kubectl apply --server-side` on an object that doesn't exist yet is authorized against
+  `create`, not only `patch` -- a real apiserver behaviour round 1 missed, and nothing pre-creates
+  either object. Added `create` to both (it can't be scoped by `resourceNames`, so this is
+  unavoidably namespace-wide for the resource type, not just the `outfitter-agent` object).
+  `gke-template.test.sh`'s fake now models "apply on a not-yet-existing object needs create"
+  (`FAKE_FIRST_RELEASE`) and proves both that the first release works and that removing `create`
+  breaks it (`FAKE_ROLE_NO_CREATE`).
+- **Medium fixes**: the warm-up `kubectl create` is now genuinely best-effort -- a stale claim from
+  an interrupted previous run is deleted by label first, and the new claim uses `generateName`
+  (never a fixed name), so a create failure (quota, a rejected admission, anything) can no longer
+  come from a name collision, and any other failure just skips the rest of the warm-up with a note
+  instead of failing the release. `gke-teardown.sh`'s pool-scale-to-0 step now tolerates the pool not
+  existing yet (cluster and `gke-iam.sh` done, no release yet), the same NotFound-only tolerance as
+  the replicas read.
+- **Low fixes**: `is_kubectl_notfound` (new, `env.sh`) replaces three separate `NotFound|not
+  found|does not exist` regexes with an exact match on kubectl's actual `Error from server
+  (NotFound)` prefix -- the looser regex matched kubectl's own `"gke-gcloud-auth-plugin" ... not
+  found` error too, which must fail loudly, not read as "the object doesn't exist".
+  `env_name_collides` (the round 1 blocking-fix test) now also catches block-style YAML
+  (`- name: OUTFITTER_API` on its own line), not only flow style. The warm-up claim's
+  `app.kubernetes.io/managed-by` label changed from `outfitter` to `outfitter-release`: PR2's
+  `GkeProvider.countActive()` (`packages/api/src/providers/gke.ts`) counts claims labelled
+  `managed-by=outfitter` toward `GKE_MAX_ACTIVE`, and the warm-up claim must not eat into that
+  budget (verified by reading `gke.ts`; not modified). `register_cleanup`/`register_cleanup_cmd` now
+  set the `EXIT` trap only once (guarded by `CLEANUP_TRAP_SET`), not on every call: bash (confirmed
+  on 3.2, macOS's default `/bin/bash`) does not act on an inherited-but-not-locally-reset `EXIT`
+  trap when a `$(...)` subshell exits, but calling `trap ... EXIT` *again* from inside one (which
+  every earlier `register_cleanup` call did) makes that subshell treat its own exit as "time to
+  clean up", deleting paths the top-level script had registered but not used yet --
+  `check_deploy_skew`'s own `current_build_commit_gke` call is exactly such a subshell.
+  `$BASHPID` was the obvious alternative and, like round 1's `$BASH_SUBSHELL` idea (tried and found
+  unreliable specifically inside a firing trap, empirically, on bash 3.2), doesn't need to be
+  reached for once the redundant `trap` call is removed. Finally, the SandboxTemplate/pool
+  first-pull warm-up no longer uses `kubectl wait --for=jsonpath=<path>` with no comparison value
+  (a newer kubectl feature this repo can't confirm the version of `gcloud components install
+  kubectl` puts on any given machine or CI runner); it polls `kubectl get` in a bounded loop
+  instead, needing only the `get` verb. `sandboxclaims`' `watch` verb was removed from the Role
+  since nothing calls `kubectl wait` on a claim anymore.
+
+---
+
 ## 6. Spec amendments to fold in
 
 PR1 edits `gke-sandbox-provider.md` to match: §5 rewritten for `config.env`, owner-run scripts and the

@@ -356,13 +356,18 @@ otherwise the next release's `gke-template.sh` step fails trying to reach a clus
 CI (`ci-setup.sh`, also owner-run) grants `outfitter-deployer` `container.clusterViewer` at the
 project level (`roles/browser`, already granted, covers the IAM-policy read the logWriter guard
 needs — no extra role for that), and — once `GKE_CLUSTER` is set and the cluster exists (step 3
-above) — a namespaced Role letting it `get`/`patch` the SandboxTemplate and pool,
-`get`/`create`/`delete`/`list`/`watch` the release-time warm-up claim (`create`, not `apply`: this
-Role deliberately grants no `patch` on claims) and `get`/`list`/`watch` its Sandbox, plus a
-`kube-system` Role letting it `get` the `kube-dns` Service only. The GitHub Actions deploy workflow
-installs `kubectl` and `gke-gcloud-auth-plugin` alongside `gcloud beta`, but only when `config.env`
-has `GKE_CLUSTER` set (a small step reads it before `setup-gcloud` runs), so `gke-template.sh` can
-get a kubeconfig (`gcloud container clusters get-credentials --dns-endpoint`, into a fresh temp file
+above) — a namespaced Role letting it `get`/`create`/`patch` the SandboxTemplate and pool (`create`
+too: the very first release applies to an object that doesn't exist yet, which a real apiserver
+authorizes against `create`, not `patch`), `get`/`create`/`delete`/`list` the release-time warm-up
+claim (`create`, not `apply`: this Role deliberately grants no `patch` on claims; `list` is for
+finding and deleting a stale one left by an interrupted previous run) and `get`/`list`/`watch` its
+Sandbox, plus a `kube-system` Role letting it `get` the `kube-dns` Service only. The GitHub Actions
+deploy workflow installs `kubectl` and `gke-gcloud-auth-plugin` alongside `gcloud beta`, but only
+when `config.env` has `GKE_CLUSTER` set (a small step, `gke-workflow-check.sh`, checks before
+`setup-gcloud` runs — it never `source`s `config.env` directly, since that references `${REGION}`,
+which only `env.sh` ever sets, and a bare CI step under `set -u` would abort before `setup-gcloud`
+ever ran otherwise), so `gke-template.sh` can get a kubeconfig (`gcloud container clusters
+get-credentials --dns-endpoint`, into a fresh temp file
 in CI, `~/.kube/outfitter` locally — never the shared `~/.kube/config`).
 
 ## IAP access for users outside the org

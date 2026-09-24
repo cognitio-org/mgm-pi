@@ -29,6 +29,10 @@ cat >"${WORK}/bin/kubectl" <<'SH'
 echo "$*" >>"${KUBECTL_CALLS}"
 case "$*" in
   *"get sandboxclaims -o name"*) [[ -n "${FAKE_CLAIMS:-}" ]] && printf '%s\n' "${FAKE_CLAIMS}" ;;
+  *"patch sandboxwarmpool"*)
+    [[ -n "${FAKE_POOL_MISSING:-}" ]] && { echo "Error from server (NotFound)" >&2; exit 1; }
+    [[ -n "${FAKE_POOL_PATCH_FAILS:-}" ]] && { echo "Error from server (InternalError): etcd timeout" >&2; exit 1; }
+    ;;
 esac
 exit 0
 SH
@@ -104,6 +108,15 @@ FAKE_UP_EXISTS_EXIT=1 FAKE_DOWN_EXISTS_EXIT=1 expect pass "scheduler jobs alread
 grep -q "scheduler jobs delete" "${GCLOUD_CALLS}" \
   && { echo "FAIL: shouldn't call delete on an absent scheduler job"; fails=$((fails + 1)); } \
   || echo "ok:   ... no delete call made"
+
+# Medium (review round 2): the cluster and gke-iam.sh may have run with no release yet, so the pool
+# may not exist at all. That must be idempotent (like the replicas read in gke-template.sh), not a
+# hard failure.
+FAKE_POOL_MISSING=1 expect pass "a missing warm pool (no release has run yet) is not a failure" \
+  "doesn't exist yet (no release has run); nothing to scale"
+
+FAKE_POOL_PATCH_FAILS=1 expect fail "a real pool-patch error (not NotFound) still refuses loudly" \
+  "could not scale outfitter-agent to 0"
 
 echo "${fails} failed"
 [[ "${fails}" -eq 0 ]]

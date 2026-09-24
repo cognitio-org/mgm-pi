@@ -95,7 +95,7 @@ done
 # this warns, then re-run ci-setup.sh.
 if [[ -n "${GKE_CLUSTER:-}" ]]; then
   GKE_NAMESPACE="${GKE_NAMESPACE:-outfitter-sandboxes}"
-  echo "== ${SA_EMAIL}: RBAC in ${GKE_NAMESPACE} (get/patch the SandboxTemplate and pool, create/get/list/watch/delete the release-time warm-up claim, get/list/watch its Sandbox) =="
+  echo "== ${SA_EMAIL}: RBAC in ${GKE_NAMESPACE} (get/create/patch the SandboxTemplate and pool, get/create/delete/list the release-time warm-up claim, get/list/watch its Sandbox) =="
   if gke_kubeconfig; then
     cat <<YAML | kubectl --kubeconfig="${KUBECONFIG}" apply --server-side -f -
 apiVersion: rbac.authorization.k8s.io/v1
@@ -104,15 +104,24 @@ metadata: { name: outfitter-deployer, namespace: ${GKE_NAMESPACE} }
 rules:
   - apiGroups: ["extensions.agents.x-k8s.io"]
     resources: ["sandboxtemplates"]
-    verbs: ["get", "patch"]
+    # create, not just get/patch: `kubectl apply --server-side` on an object that doesn't exist yet
+    # (the very first GKE release) is authorized against `create`, not only `patch` -- the apiserver
+    # checks create for a missing object even under a patch-shaped request. `create` can't be
+    # narrowed by resourceNames, so this covers any SandboxTemplate name in the namespace, not just
+    # "outfitter-agent"; nothing else in this namespace creates one.
+    verbs: ["get", "create", "patch"]
   - apiGroups: ["extensions.agents.x-k8s.io"]
     resources: ["sandboxwarmpools"]
-    verbs: ["get", "patch"]
+    # Same reasoning as sandboxtemplates above: the first release's `apply --server-side` needs
+    # create too.
+    verbs: ["get", "create", "patch"]
   - apiGroups: ["extensions.agents.x-k8s.io"]
     resources: ["sandboxclaims"]
     # get/create/delete: the warm-up claim itself (kubectl create -f -, not apply -- this Role
-    # deliberately grants no patch on sandboxclaims). list/watch: `kubectl wait` on it.
-    verbs: ["get", "create", "delete", "list", "watch"]
+    # deliberately grants no patch on sandboxclaims; get is polled instead of `kubectl wait`, see
+    # gke-template.sh). list: finding a stale warm-up claim left by an interrupted previous run,
+    # by label, before creating a new one.
+    verbs: ["get", "create", "delete", "list"]
   - apiGroups: ["agents.x-k8s.io"]
     resources: ["sandboxes"]
     # Read-only: waiting for the warm-up claim's assigned Sandbox to report Ready.

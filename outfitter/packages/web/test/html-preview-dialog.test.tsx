@@ -3,6 +3,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { HtmlPreviewDialog } from "../src/components/HtmlPreviewDialog.tsx";
+import { HtmlFence } from "../src/components/HtmlFence.tsx";
+import { HtmlPreviewAccessContext } from "../src/lib/html-preview-access.ts";
+import type { PreviewAccess } from "../src/lib/html-preview.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -117,6 +120,59 @@ describe("HtmlPreviewDialog", () => {
       expect(seen).toEqual(["Escape"]);
     } finally {
       document.removeEventListener("keydown", listener);
+    }
+  });
+
+  it("#132: starts from initialAccess, so an external run's page is not blank on opening", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => root!.render(<HtmlPreviewDialog source="<p>x</p>" initialAccess="external" onClose={vi.fn()} />));
+    const allow = container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(allow.checked).toBe(true);
+    const frame = container.querySelector("iframe")!;
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(frame.getAttribute("srcdoc")).toContain("script-src");
+  });
+});
+
+describe("HtmlFence: #132 preview access", () => {
+  function renderFence(access: PreviewAccess | null) {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const fence = <HtmlFence source="<p>x</p>" />;
+    act(() =>
+      root!.render(
+        access ? <HtmlPreviewAccessContext.Provider value={access}>{fence}</HtmlPreviewAccessContext.Provider> : fence,
+      ),
+    );
+  }
+  const button = (label: string) =>
+    Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === label)!;
+  const allowBox = () => container!.querySelector<HTMLInputElement>('.html-preview-allow input[type="checkbox"]');
+
+  it("is sealed with no provider", () => {
+    renderFence(null);
+    act(() => button("Render").click());
+    expect(allowBox()!.checked).toBe(false);
+  });
+
+  it("follows the provided access, and a second opening does not remember an override", () => {
+    for (const access of ["external", "sealed"] as const) {
+      renderFence(access);
+      const expected = access === "external";
+      act(() => button("Render").click());
+      expect(allowBox()!.checked).toBe(expected);
+      act(() => allowBox()!.click());
+      expect(allowBox()!.checked).toBe(!expected);
+      act(() => button("Close").click());
+      expect(allowBox()).toBeNull();
+      act(() => button("Render").click());
+      expect(allowBox()!.checked).toBe(expected);
+      act(() => root!.unmount());
+      root = null;
+      container!.remove();
     }
   });
 });

@@ -127,6 +127,43 @@ describe("GET /api/sessions/:id", () => {
 
     await app.fastify.close();
   });
+
+  test("#132: allowExternalHtmlResources is the run's copy once it has one, the Tape's until then", async () => {
+    const app = await buildTestApp();
+    await seedGuru(app.store, { allowExternalHtmlResources: true });
+    const createRes = await app.fastify.inject({
+      method: "POST",
+      url: "/api/sessions",
+      payload: { guruId: "test-guru", repo: "o/r", prompt: "hello" },
+    });
+    const { session } = createRes.json();
+    const detail = () => app.fastify.inject({ method: "GET", url: `/api/sessions/${session.id}` });
+
+    // No run.spec built yet, so nothing is recorded on the run: the next run gets the Tape's value.
+    assert.equal((await detail()).json().allowExternalHtmlResources, true);
+
+    // The run was started sealed; the Tape being on now must not change what it reports.
+    const run = await app.store.runs.findActiveForSession(session.id);
+    await app.store.runs.update(run!.id, { allowExternalHtmlResources: false });
+    assert.equal((await detail()).json().allowExternalHtmlResources, false);
+
+    await app.store.runs.update(run!.id, { state: "stopped" });
+    assert.equal((await detail()).json().allowExternalHtmlResources, false, "a stopped run still matches its prompt");
+    await app.fastify.close();
+  });
+
+  test("#132: allowExternalHtmlResources is false for a sealed Tape", async () => {
+    const app = await buildTestApp();
+    await seedGuru(app.store);
+    const createRes = await app.fastify.inject({
+      method: "POST",
+      url: "/api/sessions",
+      payload: { guruId: "test-guru", repo: "o/r", prompt: "hello" },
+    });
+    const res = await app.fastify.inject({ method: "GET", url: `/api/sessions/${createRes.json().session.id}` });
+    assert.equal(res.json().allowExternalHtmlResources, false);
+    await app.fastify.close();
+  });
 });
 
 describe("GET /api/sessions?runState=", () => {

@@ -8,6 +8,7 @@
  * but does not otherwise act on it. The image's baked .pi/settings.json packages list is what
  * actually loads. Flagged in the final report for the api side to match.
  */
+import { htmlPreviewPrompt } from "./html-preview-prompt.js";
 import type { RunSpecGuru } from "./protocol.js";
 
 export interface RenderedPi {
@@ -92,6 +93,15 @@ export function renderModelArg(model: string, thinking?: string): string {
   return `${model}:${thinking}`;
 }
 
+/** The single `--append-system-prompt` value (issue #132): the guru's own append text, a blank line,
+ * then the HTML preview paragraph `allowExternalHtmlResources` picks. Always present, so the model
+ * is always told which kind of HTML the preview will show; with no append text it is the paragraph
+ * alone. */
+export function renderAppendSystemPrompt(guru: RunSpecGuru): string {
+  const paragraph = htmlPreviewPrompt(guru.allowExternalHtmlResources);
+  return guru.appendSystemPrompt ? `${guru.appendSystemPrompt}\n\n${paragraph}` : paragraph;
+}
+
 /** Renders `guru` into the argv (excluding the pi binary path itself) and env agentd should spawn
  * `pi --mode rpc -a --session <file> ...` with. */
 export function renderGuru(guru: RunSpecGuru, opts: RenderOptions): RenderedPi {
@@ -104,7 +114,7 @@ export function renderGuru(guru: RunSpecGuru, opts: RenderOptions): RenderedPi {
   if (!opts.skipModelArg) args.push("--model", renderModelArg(guru.model, guru.thinking));
 
   if (guru.systemPrompt) args.push("--system-prompt", guru.systemPrompt);
-  if (guru.appendSystemPrompt) args.push("--append-system-prompt", guru.appendSystemPrompt);
+  args.push("--append-system-prompt", renderAppendSystemPrompt(guru));
   if (guru.tools && guru.tools.length > 0) args.push("--tools", guru.tools.join(","));
   if (guru.excludeTools && guru.excludeTools.length > 0) {
     args.push("--exclude-tools", guru.excludeTools.join(","));

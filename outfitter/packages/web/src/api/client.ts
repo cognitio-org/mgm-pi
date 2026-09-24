@@ -47,6 +47,8 @@ export interface SessionDetail {
   leafId?: string;
   cost: number;
   checkpoint?: { branch?: string; head?: string; snapshotUrl?: string; workspaceUrl?: string };
+  /** #132: whether the run's prompt allowed external CSS and JS; HTML previews start from it. */
+  allowExternalHtmlResources?: boolean;
   /** Cloud-fixes 13: messages parked because this session's runs never validated the protocol. */
   heldMail?: number;
   /** "Deploy mismatch: messages held until the service is redeployed", when heldMail > 0. */
@@ -84,6 +86,9 @@ export interface Guru {
   env?: Record<string, string>;
   /** Tape option, default off. When true, checkpoint runs a Playwright spec in the Drive. */
   playwrightBeforeCheckpoint?: boolean;
+  /** Tape option, default off (#132). Tells the agent external CSS and JS are allowed in HTML it
+   * writes, and HTML previews of its runs start with them allowed. */
+  allowExternalHtmlResources?: boolean;
   /** Branches under this prefix may be pushed besides the session branch. Absent means outfitter/. */
   branchPrefix?: string;
   createdAt: string;

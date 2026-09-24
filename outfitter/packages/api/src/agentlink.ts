@@ -96,6 +96,9 @@ export interface RunSpecMessage {
     env?: Record<string, string>;
     /** Copied from the guru only when it is exactly true. Absent means the check is off. */
     playwrightBeforeCheckpoint?: boolean;
+    /** The run's recorded value (Run.allowExternalHtmlResources), sent only when true. Absent means
+     * agentd appends the sealed HTML preview paragraph. */
+    allowExternalHtmlResources?: boolean;
   };
   snapshot: { url?: string; jsonl?: string };
   // litellmBaseUrl is server-controlled (config.litellmBaseUrl), never guru-editable -- see
@@ -736,7 +739,7 @@ export class AgentLink {
 
     let spec: RunSpecMessage;
     try {
-      spec = await this.buildRunSpec(runId, session, guru);
+      spec = await this.buildRunSpec(run, session, guru);
     } catch (err) {
       if (err instanceof MissingGithubTokenError) {
         request.log.warn(err, "run.spec build failed: missing github token secret");
@@ -858,7 +861,8 @@ export class AgentLink {
     closeQuietly(socket, code, reason);
   }
 
-  private async buildRunSpec(runId: string, session: Session, guru: Guru): Promise<RunSpecMessage> {
+  private async buildRunSpec(run: Run, session: Session, guru: Guru): Promise<RunSpecMessage> {
+    const runId = run.id;
     // E2.8 laptop model preflight (src/laptop.ts): swap a laptop-only model for the guru's cloud
     // fallback when the laptop tunnel probes offline, and record it on the run for the UI.
     const wanted = session.modelOverride ?? guru.model;
@@ -870,8 +874,13 @@ export class AgentLink {
       defaultCloudModel: this.config.defaultCloudModel,
       laptopOnline: online,
     });
+    // Issue #132: the first spec decides the HTML preview paragraph for the whole run (agentd acts on
+    // its first run.spec only), so a reconnect reuses what the run recorded rather than a Tape
+    // edited since.
+    const allowExternalHtmlResources = run.allowExternalHtmlResources ?? guru.allowExternalHtmlResources === true;
     await this.store.runs.update(runId, {
       modelFallback: resolved.fallback,
+      allowExternalHtmlResources,
       updatedAt: new Date().toISOString(),
     });
 
@@ -920,6 +929,7 @@ export class AgentLink {
         packages: guru.packages,
         env: guru.env,
         ...(guru.playwrightBeforeCheckpoint === true ? { playwrightBeforeCheckpoint: true } : {}),
+        ...(allowExternalHtmlResources ? { allowExternalHtmlResources: true } : {}),
       },
       snapshot: { url: session.checkpoint?.snapshotUrl },
       secrets: { ...secrets, litellmBaseUrl: this.config.litellmBaseUrl },

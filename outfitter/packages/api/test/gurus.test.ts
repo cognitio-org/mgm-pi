@@ -255,3 +255,70 @@ describe("POST/PUT /api/gurus: playwrightBeforeCheckpoint", () => {
     await app.fastify.close();
   });
 });
+
+describe("POST/PUT /api/gurus: allowExternalHtmlResources", () => {
+  test("absent stays absent, including after a PUT that omits it", async () => {
+    const app = await buildTestApp();
+    const created = await app.fastify.inject({
+      method: "POST",
+      url: "/api/gurus",
+      payload: { name: "sealed", model: "litellm/claude-auto-llm" },
+    });
+    assert.equal(created.statusCode, 201);
+    assert.equal(created.json().allowExternalHtmlResources, undefined);
+
+    const renamed = await app.fastify.inject({
+      method: "PUT",
+      url: `/api/gurus/${created.json().id}`,
+      payload: { name: "sealed-renamed" },
+    });
+    assert.equal(renamed.statusCode, 200);
+    assert.equal(renamed.json().allowExternalHtmlResources, undefined);
+    assert.equal((await app.store.gurus.findById(created.json().id))?.allowExternalHtmlResources, undefined);
+    await app.fastify.close();
+  });
+
+  test("true round-trips, and a later PUT that omits it leaves it alone", async () => {
+    const app = await buildTestApp();
+    const created = await app.fastify.inject({
+      method: "POST",
+      url: "/api/gurus",
+      payload: { name: "external", model: "litellm/claude-auto-llm", allowExternalHtmlResources: true },
+    });
+    assert.equal(created.statusCode, 201);
+    assert.equal(created.json().allowExternalHtmlResources, true);
+
+    const listed = await app.fastify.inject({ method: "GET", url: "/api/gurus" });
+    const row = (listed.json() as { name: string; allowExternalHtmlResources?: boolean }[]).find(
+      (guru) => guru.name === "external",
+    );
+    assert.equal(row?.allowExternalHtmlResources, true);
+
+    const renamed = await app.fastify.inject({
+      method: "PUT",
+      url: `/api/gurus/${created.json().id}`,
+      payload: { name: "external-renamed" },
+    });
+    assert.equal(renamed.json().allowExternalHtmlResources, true);
+
+    const turnedOff = await app.fastify.inject({
+      method: "PUT",
+      url: `/api/gurus/${created.json().id}`,
+      payload: { allowExternalHtmlResources: false },
+    });
+    assert.equal(turnedOff.statusCode, 200);
+    assert.equal(turnedOff.json().allowExternalHtmlResources, false);
+    await app.fastify.close();
+  });
+
+  test("rejects a non-boolean allowExternalHtmlResources", async () => {
+    const app = await buildTestApp();
+    const res = await app.fastify.inject({
+      method: "POST",
+      url: "/api/gurus",
+      payload: { name: "bad-flag", model: "litellm/claude-auto-llm", allowExternalHtmlResources: "yes" },
+    });
+    assert.equal(res.statusCode, 400);
+    await app.fastify.close();
+  });
+});

@@ -86,6 +86,7 @@ function validationError(body: {
   thinking?: string;
   mergeFromCloud?: unknown;
   playwrightBeforeCheckpoint?: unknown;
+  allowExternalHtmlResources?: unknown;
   branchPrefix?: unknown;
 }): string | undefined {
   if (body.model !== undefined && !isValidModelRef(body.model)) {
@@ -104,6 +105,9 @@ function validationError(body: {
   // would be easy to mistake for "on" later.
   if (body.playwrightBeforeCheckpoint !== undefined && typeof body.playwrightBeforeCheckpoint !== "boolean") {
     return "playwrightBeforeCheckpoint must be a boolean";
+  }
+  if (body.allowExternalHtmlResources !== undefined && typeof body.allowExternalHtmlResources !== "boolean") {
+    return "allowExternalHtmlResources must be a boolean";
   }
   if (body.branchPrefix !== undefined) {
     const parsed = parseBranchPrefix(body.branchPrefix);

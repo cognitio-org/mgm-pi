@@ -1,12 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import { previewSandbox, previewSrcDoc, type PreviewAccess } from "../lib/html-preview.ts";
 
-// Renders one HTML fence in a dialog. External CSS and JS are blocked until the person
-// checks the box in this dialog. Either way the frame is a unique origin: it cannot read
-// this page. The transcript itself keeps showing the source as code.
+// Renders one HTML fence in a dialog. It opens with `initialAccess` (the run's Tape setting,
+// #132; sealed when absent), and the checkbox overrides that for this opening only: the next
+// opening mounts a fresh dialog and starts from `initialAccess` again. Either way the frame is
+// a unique origin: it cannot read this page. The transcript itself keeps showing the source as
+// code.
 
-export function HtmlPreviewDialog({ source, onClose }: { source: string; onClose: () => void }) {
-  const [access, setAccess] = useState<PreviewAccess>("sealed");
+export function HtmlPreviewDialog({
+  source,
+  initialAccess = "sealed",
+  onClose,
+}: {
+  source: string;
+  initialAccess?: PreviewAccess;
+  onClose: () => void;
+}) {
+  const [access, setAccess] = useState<PreviewAccess>(initialAccess);
   const [expanded, setExpanded] = useState(false);
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);

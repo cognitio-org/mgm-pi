@@ -143,6 +143,11 @@ export interface Run {
   // session's `litellm/local-qwen-mlx`-style model for the guru's fallbackModel because the laptop
   // tunnel probed offline. Surfaced so the UI can show "running on X instead of Y".
   modelFallback?: { wanted: string; used: string };
+  // Issue #132: the guru's allowExternalHtmlResources as it was when this run's first run.spec was
+  // built, so the prompt pi was given and the preview a session opened later starts from agree.
+  // Written once (agentd only acts on its first run.spec) and reused by later specs on reconnect;
+  // a Tape changed mid-run applies to the next run. Absent until that first spec is built.
+  allowExternalHtmlResources?: boolean;
   // Not in protocol.md: `spend.keySpend` (agentlink.ts) is the LiteLLM *key's* cumulative spend,
   // not this run's own — the key is shared across every run/session using that guru. keySpendStart
   // is set to keySpend on the first spend frame this run sees; cost is then
@@ -275,6 +280,11 @@ export interface Guru {
   /** Tape option, default off. Absent on existing gurus. When true, agentd runs a Playwright spec
    * already in the workspace against a fresh headless Chromium before checkpoint. */
   playwrightBeforeCheckpoint?: boolean;
+  /** Tape option, default off (issue #132). Absent on existing gurus. Picks which HTML preview
+   * paragraph agentd appends to pi's system prompt, and the preview dialog's starting access
+   * (external when true, sealed otherwise). Copied onto each run as it starts (Run's field of the
+   * same name). */
+  allowExternalHtmlResources?: boolean;
   createdAt: string;
   updatedAt: string;
 }

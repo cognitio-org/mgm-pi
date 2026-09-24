@@ -667,6 +667,38 @@ Off by default. Set `teleport.autoPush: true` in `.pi/settings.json` to push aft
 (`agent_end`) when the tree is clean. It's silent about "not ready to push yet" (dirty tree, no repo,
 ephemeral `--no-session`) and only notifies on a real failure; it never blocks or throws.
 
+## HTML previews: what the model is told
+
+Outfitter's transcript can preview an ` ```html ` fence. By default that preview is sealed: inline CSS
+only, no remote stylesheets, scripts, images, or fonts. kernal tells the model which kind of page to
+write, so a page doesn't come out blank. Every turn, exactly one of these two paragraphs is appended to
+pi's system prompt (`.pi/extensions/kernal-html-preview`; the text lives in
+`.pi/extensions/_shared/html-preview-prompt.ts`).
+
+Off by default. Set `kernal.allowExternalHtmlResources: true` in `.pi/settings.json` to switch from the
+first paragraph to the second. It is read when kernal starts, so restart after changing it.
+
+Sealed (the default):
+
+> When you write HTML for the person to read in the transcript, put it in a ```html fence. Use only CSS
+> written inside the document. Do not link stylesheets, scripts, images, or fonts. The preview blocks
+> those until the person allows them. The preview cannot see this page or the session.
+
+External (`kernal.allowExternalHtmlResources: true`):
+
+> When you write HTML for the person to read in the transcript, put it in a ```html fence. External CSS
+> and JavaScript are allowed: you may link http and https stylesheets, scripts, images, and fonts. The
+> preview still cannot see this page or the session.
+
+The paragraph goes in after anything `--append-system-prompt`, `~/.pi/agent/APPEND_SYSTEM.md`, or a
+trusted project's `.pi/APPEND_SYSTEM.md` adds. kernal never reads or writes those files. For a plain pi
+that doesn't run this extension, pasting the external paragraph into `APPEND_SYSTEM.md` by hand gives
+the same instruction. If you paste it there and also turn the setting on, the model sees the paragraph
+twice, which does no harm.
+
+In an Outfitter Drive this extension is left out of the image. There, the Tape's **Allow external CSS
+and JS in HTML previews** option picks the paragraph, and agentd appends it.
+
 ## Known issue: startup stalls while LM Studio is mid-generation
 
 Deterministic repro: start any long generation against LM Studio, then launch kernal from any

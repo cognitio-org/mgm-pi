@@ -78,4 +78,45 @@ describe("HtmlPreviewDialog", () => {
     root = null;
     expect(document.activeElement).toBe(opener);
   });
+
+  it("handles Escape and Tab in capture so an earlier document listener does not see them", () => {
+    const seen: string[] = [];
+    function listener(e: Event) {
+      seen.push((e as KeyboardEvent).key);
+    }
+    document.addEventListener("keydown", listener);
+    try {
+      const { onClose } = open("<p>x</p>");
+      act(() => {
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      });
+      expect(seen).toEqual([]);
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      document.removeEventListener("keydown", listener);
+    }
+  });
+
+  it("does not take Escape when a later modal is open", () => {
+    const seen: string[] = [];
+    function listener(e: Event) {
+      seen.push((e as KeyboardEvent).key);
+    }
+    document.addEventListener("keydown", listener);
+    try {
+      const { onClose } = open("<p>x</p>");
+      const later = document.createElement("div");
+      later.setAttribute("role", "dialog");
+      later.setAttribute("aria-modal", "true");
+      document.body.appendChild(later);
+      act(() => {
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      });
+      expect(onClose).not.toHaveBeenCalled();
+      expect(seen).toEqual(["Escape"]);
+    } finally {
+      document.removeEventListener("keydown", listener);
+    }
+  });
 });

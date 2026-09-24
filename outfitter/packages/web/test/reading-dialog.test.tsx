@@ -102,6 +102,45 @@ describe("ReadingDialog", () => {
     root = null;
     expect(document.activeElement).toBe(opener);
   });
+
+  it("does not close on Escape while a nested dialog is open", () => {
+    const onClose = vi.fn();
+    mount(<ReadingDialog text={text} onClose={onClose} />);
+    const dialog = container!.querySelector('[role="dialog"]')!;
+    const close = Array.from(dialog.querySelectorAll("button")).find((b) => b.textContent === "Close")!;
+    const nested = document.createElement("div");
+    nested.setAttribute("role", "dialog");
+    nested.setAttribute("aria-modal", "true");
+    const inner = document.createElement("button");
+    nested.appendChild(inner);
+    dialog.appendChild(nested);
+    act(() => inner.focus());
+    key("Escape");
+    expect(onClose).not.toHaveBeenCalled();
+    key("Tab");
+    expect(document.activeElement).toBe(inner);
+
+    nested.remove();
+    const portaled = document.createElement("div");
+    portaled.setAttribute("role", "dialog");
+    portaled.setAttribute("aria-modal", "true");
+    document.body.appendChild(portaled);
+    act(() => close.focus());
+    key("Escape");
+    expect(onClose).not.toHaveBeenCalled();
+    key("Tab");
+    expect(document.activeElement).toBe(close);
+
+    portaled.remove();
+    const modal = document.createElement("div");
+    modal.setAttribute("aria-modal", "true");
+    const modalButton = document.createElement("button");
+    modal.appendChild(modalButton);
+    document.body.appendChild(modal);
+    act(() => modalButton.focus());
+    key("Escape");
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });
 
 describe("Markdown Read", () => {

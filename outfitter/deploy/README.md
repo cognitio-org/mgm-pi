@@ -294,7 +294,13 @@ explicit go-ahead in the conversation (`gke-template.sh` is the one exception �
    (`--enable-agent-sandbox --enable-dns-access`). Starts GKE billing (about $73/month, normally
    covered by the account's one free-tier credit — the script refuses if another cluster on the
    billing account is already using it, unless `--i-know`). `DRY_RUN=1` first.
-2. **`./gke-iam.sh`** — the `outfitter-sandboxes` namespace and its `outfitter-agent` KSA, the
+Steps 2 and 3 run with `GKE_CLUSTER=outfitter` exported in the shell, **before** `config.env`
+changes (each `config.env` line keeps a value already exported). The order matters: once
+`config.env` has `GKE_CLUSTER` set, *every* Outfitter release runs the template step (step 4) as
+`outfitter-deployer`, so the deployer's cluster access (step 3) must already exist, or any release in
+between fails.
+
+2. **`GKE_CLUSTER=outfitter ./gke-iam.sh`** — the `outfitter-sandboxes` namespace and its `outfitter-agent` KSA, the
    Workload Identity binding letting it impersonate the existing `outfitter-agent@` GSA,
    `roles/container.clusterViewer` on the project for `outfitter-api@`, its RBAC Role/RoleBinding in
    the namespace (`deploy/gke/rbac.yaml`), and the `sandbox-hardening-policy` exemption for that one
@@ -307,16 +313,14 @@ explicit go-ahead in the conversation (`gke-template.sh` is the one exception �
    `outfitter-deployer`'s `serviceAccountUser`, from `baseline.sh` and `ci-setup.sh`, and the KSA's
    `workloadIdentityUser`, from this script). Idempotent; safe to re-run (a GKE upgrade can restore
    the hardening binding this un-exempts). `DRY_RUN=1` first.
-3. **Set `GKE_CLUSTER` in `config.env` and merge** (leave `SANDBOX_PROVIDER=cloudrun` for now).
-   Merging only runs CI; nothing deploys until a release tag (README "Deploying").
-4. **Re-run `./ci-setup.sh`** (owner-run) from the updated `main`. `ci-setup.sh` reads `GKE_CLUSTER`
-   from `config.env`, which is why step 3 comes first. With it set and the cluster up, it applies the
-   namespaced Role letting `outfitter-deployer` create/patch the SandboxTemplate and pool, manage the
-   release-time warm-up claim, and read the `kube-dns` Service in `kube-system`. The first GKE release
-   (step 5) runs as the deployer in GitHub Actions and needs all of that. Before `gke-cluster.sh`, or
-   with `GKE_CLUSTER` empty, `ci-setup.sh` just warns and skips that block.
-5. **First release with `GKE_CLUSTER` set:** cut a release (`tag-release.sh`). From then on,
-   `release.sh` runs **`gke-template.sh`** as a step
+3. **`GKE_CLUSTER=outfitter ./ci-setup.sh`** (owner-run). With `GKE_CLUSTER` set and the cluster up,
+   it applies the namespaced Role letting `outfitter-deployer` create/patch the SandboxTemplate and
+   pool, manage the release-time warm-up claim, and read the `kube-dns` Service in `kube-system`. The
+   template step (step 4) runs as the deployer in GitHub Actions and needs all of that. With
+   `GKE_CLUSTER` empty, or before `gke-cluster.sh`, `ci-setup.sh` just warns and skips that block.
+4. **Set `GKE_CLUSTER` in `config.env`, merge, and cut a release** (`tag-release.sh`; leave
+   `SANDBOX_PROVIDER=cloudrun` for now). Merging alone only runs CI. From then on, every release runs
+   **`gke-template.sh`** as a step
    between the Job and the link deploy: it renders `deploy/gke/sandbox-template.yaml` and
    `warm-pool.yaml` (`envsubst`: the image tag from `commit_tag` and the cluster's own kube-dns
    Service IP, read live rather than hard-coded — `docs/reports/gke-spike.md` S3; the template
@@ -332,7 +336,7 @@ explicit go-ahead in the conversation (`gke-template.sh` is the one exception �
    template is refused `4409` by a newer link, terminally (S2), so it can never lag -- this applies to
    every deploy script, not only `gke-template.sh` itself, once `GKE_CLUSTER` is set. Skipped
    entirely (no kubectl call at all) while `GKE_CLUSTER` is empty.
-6. **`./gke-schedule.sh`** — Cloud Scheduler jobs `outfitter-warm-up`/`outfitter-warm-down`, calling
+5. **`./gke-schedule.sh`** (after step 4, so `config.env` has `GKE_CLUSTER`) — Cloud Scheduler jobs `outfitter-warm-up`/`outfitter-warm-down`, calling
    the link role's `POST /api/hooks/warm-pool {"replicas":N}` hook with an OIDC token as
    `outfitter-tasks` (same pattern as `mailbox.sh`'s `outfitter-tick`). Requires `mailbox.sh` and
    `link.sh` to have already run, and the hook itself to exist (`/api/hooks/warm-pool` ships with
@@ -340,8 +344,8 @@ explicit go-ahead in the conversation (`gke-template.sh` is the one exception �
    with it). Defaults (owner decision): weekdays 08:00 up / 20:00 down, `Europe/Zagreb`, 1 replica —
    override with `WARM_UP_CRON`/`WARM_DOWN_CRON`/`WARM_TZ`/`WARM_REPLICAS`. `release.sh`'s
    audience-drift check (above) now also covers these two jobs. `DRY_RUN=1` first.
-7. **Switching providers** is a `config.env` edit plus a release, nothing more: set
-   `SANDBOX_PROVIDER=gke` (with `GKE_CLUSTER` already set per step 3), merge, tag. Back to Cloud Run
+6. **Switching providers** is a `config.env` edit plus a release, nothing more: set
+   `SANDBOX_PROVIDER=gke` (with `GKE_CLUSTER` already set per step 4), merge, tag. Back to Cloud Run
    is the same edit in reverse; the GKE template, pool and schedule are left in place either way (in
    case of a quick switch back) until `gke-teardown.sh`.
 
@@ -357,8 +361,8 @@ otherwise the next release's `gke-template.sh` step fails trying to reach a clus
 
 CI (`ci-setup.sh`, also owner-run) grants `outfitter-deployer` `container.clusterViewer` at the
 project level (`roles/browser`, already granted, covers the IAM-policy read the logWriter guard
-needs — no extra role for that), and — once `GKE_CLUSTER` is set and the cluster exists (steps 3
-and 4 above) — a namespaced Role letting it `get`/`create`/`patch` the SandboxTemplate and pool (`create`
+needs — no extra role for that), and — once `GKE_CLUSTER` is set and the cluster exists (step 3
+above) — a namespaced Role letting it `get`/`create`/`patch` the SandboxTemplate and pool (`create`
 too: the very first release applies to an object that doesn't exist yet, which a real apiserver
 authorizes against `create`, not `patch`), `get`/`create`/`delete`/`list` the release-time warm-up
 claim (`create`, not `apply`: this Role deliberately grants no `patch` on claims; `list` is for

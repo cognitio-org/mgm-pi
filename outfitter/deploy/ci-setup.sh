@@ -75,29 +75,32 @@ echo "== ${SA_EMAIL}: project roles =="
 for role in roles/run.developer roles/run.viewer roles/cloudbuild.builds.editor roles/logging.viewer \
     roles/serviceusage.serviceUsageConsumer roles/secretmanager.viewer roles/cloudtasks.viewer \
     roles/cloudscheduler.viewer roles/iam.serviceAccountViewer roles/browser \
-    roles/container.clusterViewer roles/iam.securityReviewer; do
+    roles/container.clusterViewer; do
   gcloud projects add-iam-policy-binding "${PROJECT}" --member="serviceAccount:${SA_EMAIL}" \
     --role="${role}" --condition=None --quiet >/dev/null
   echo "   ${role}"
 done
 # container.clusterViewer: release.sh's gke-template.sh step reads the cluster's DNS endpoint and
 # kube-dns Service IP (container.clusters.connect/get) when GKE_CLUSTER is set (config.env).
-# iam.securityReviewer: assert_agent_sa_logwriter_only (env.sh), run on every release when GKE is
-# configured, needs resourcemanager.projects.getIamPolicy to check outfitter-agent@'s roles
-# (gke-sandbox-provider-plan.md §1 "option B" -- that account's permissions are the sandbox model's
-# permissions). Both are read-only/connect-only; neither lets the deployer change cluster state.
+# assert_agent_sa_logwriter_only (env.sh), run on every release when GKE is configured, needs
+# resourcemanager.projects.getIamPolicy to check outfitter-agent@'s roles (gke-sandbox-provider-
+# plan.md §1 "option B" -- that account's permissions are the sandbox model's permissions).
+# roles/browser above already includes that permission (verified 2026-09-24 against its included-
+# permissions list), so no separate role (e.g. iam.securityReviewer, which would also hand out
+# every OTHER principal's IAM-policy-read access project-wide) is needed for it.
 
 # container.clusterViewer only gets the deployer to the cluster's API server -- what it may do once
 # there is separate Kubernetes RBAC, same split as outfitter-api's own deploy/gke/rbac.yaml. Only
 # when GKE_CLUSTER is set (config.env) and the cluster already exists: run ./gke-cluster.sh first if
 # this warns, then re-run ci-setup.sh.
 if [[ -n "${GKE_CLUSTER:-}" ]]; then
-  echo "== ${SA_EMAIL}: RBAC in ${GKE_NAMESPACE:-outfitter-sandboxes} (get/patch the SandboxTemplate and pool, create/delete the release-time warm-up claim) =="
+  GKE_NAMESPACE="${GKE_NAMESPACE:-outfitter-sandboxes}"
+  echo "== ${SA_EMAIL}: RBAC in ${GKE_NAMESPACE} (get/patch the SandboxTemplate and pool, create/get/list/watch/delete the release-time warm-up claim, get/list/watch its Sandbox) =="
   if gke_kubeconfig; then
     cat <<YAML | kubectl --kubeconfig="${KUBECONFIG}" apply --server-side -f -
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
-metadata: { name: outfitter-deployer, namespace: ${GKE_NAMESPACE:-outfitter-sandboxes} }
+metadata: { name: outfitter-deployer, namespace: ${GKE_NAMESPACE} }
 rules:
   - apiGroups: ["extensions.agents.x-k8s.io"]
     resources: ["sandboxtemplates"]
@@ -107,13 +110,36 @@ rules:
     verbs: ["get", "patch"]
   - apiGroups: ["extensions.agents.x-k8s.io"]
     resources: ["sandboxclaims"]
-    verbs: ["get", "create", "delete"]
+    # get/create/delete: the warm-up claim itself (kubectl create -f -, not apply -- this Role
+    # deliberately grants no patch on sandboxclaims). list/watch: `kubectl wait` on it.
+    verbs: ["get", "create", "delete", "list", "watch"]
+  - apiGroups: ["agents.x-k8s.io"]
+    resources: ["sandboxes"]
+    # Read-only: waiting for the warm-up claim's assigned Sandbox to report Ready.
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
-metadata: { name: outfitter-deployer, namespace: ${GKE_NAMESPACE:-outfitter-sandboxes} }
+metadata: { name: outfitter-deployer, namespace: ${GKE_NAMESPACE} }
 subjects: [{ kind: User, name: ${SA_EMAIL}, apiGroup: rbac.authorization.k8s.io }]
 roleRef: { kind: Role, name: outfitter-deployer, apiGroup: rbac.authorization.k8s.io }
+YAML
+    echo "== ${SA_EMAIL}: RBAC in kube-system (get the kube-dns Service only) =="
+    cat <<YAML | kubectl --kubeconfig="${KUBECONFIG}" apply --server-side -f -
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: outfitter-deployer-kube-dns, namespace: kube-system }
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    resourceNames: ["kube-dns"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: outfitter-deployer-kube-dns, namespace: kube-system }
+subjects: [{ kind: User, name: ${SA_EMAIL}, apiGroup: rbac.authorization.k8s.io }]
+roleRef: { kind: Role, name: outfitter-deployer-kube-dns, apiGroup: rbac.authorization.k8s.io }
 YAML
   else
     echo "   GKE_CLUSTER is set but no cluster reachable yet; run ./gke-cluster.sh, then re-run ci-setup.sh" >&2

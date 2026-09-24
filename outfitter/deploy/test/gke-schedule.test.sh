@@ -17,8 +17,10 @@ case "$*" in
     ;;
   *"run services describe outfitter-link"*"OUTFITTER_ORIGIN"*) printf '%s\n' "${FAKE_LINK_ORIGIN:-}" ;;
   "run services describe"*) exit 0 ;;
-  "scheduler jobs describe outfitter-warm-up"*) exit "${FAKE_UP_EXISTS_EXIT:-1}" ;;
-  "scheduler jobs describe outfitter-warm-down"*) exit "${FAKE_DOWN_EXISTS_EXIT:-1}" ;;
+  "scheduler jobs describe outfitter-warm-up"*)
+    [[ "${FAKE_UP_EXISTS_EXIT:-1}" == 0 ]] || { echo "ERROR: NOT_FOUND" >&2; exit 1; } ;;
+  "scheduler jobs describe outfitter-warm-down"*)
+    [[ "${FAKE_DOWN_EXISTS_EXIT:-1}" == 0 ]] || { echo "ERROR: NOT_FOUND" >&2; exit 1; } ;;
   "services enable"*) : ;;
 esac
 exit 0
@@ -86,6 +88,18 @@ WARM_UP_CRON="0 7 * * 1-5" WARM_TZ=UTC WARM_REPLICAS=2 \
 grep -q -- "--message-body={\"replicas\":2}" "${GCLOUD_CALLS}" \
   && echo "ok:   WARM_REPLICAS=2 is used" \
   || { echo "FAIL:   expected replicas=2 with WARM_REPLICAS=2"; fails=$((fails + 1)); }
+
+# M5: DRY_RUN=1 must never call `services enable` or `scheduler jobs create/update` for real.
+DRY_RUN=1 expect pass "DRY_RUN=1 prints instead of enabling Cloud Scheduler" \
+  "DRY_RUN:.*services enable cloudscheduler"
+DRY_RUN=1 expect pass "DRY_RUN=1 prints instead of creating the jobs" \
+  "DRY_RUN:.*scheduler jobs create http outfitter-warm-up"
+if grep -qE 'services enable|scheduler jobs (create|update)' "${GCLOUD_CALLS}"; then
+  echo "FAIL: DRY_RUN=1 made a mutating call:"; grep -E 'services enable|scheduler jobs (create|update)' "${GCLOUD_CALLS}" | sed 's/^/    /'
+  fails=$((fails + 1))
+else
+  echo "ok: DRY_RUN=1 called nothing that mutates"
+fi
 
 echo "${fails} failed"
 [[ "${fails}" -eq 0 ]]

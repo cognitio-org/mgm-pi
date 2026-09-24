@@ -4,8 +4,14 @@
 # POST /api/hooks/warm-pool {"replicas":N} hook, authenticated exactly like mailbox.sh's
 # outfitter-tick (an OIDC token as outfitter-tasks, audience = link's own origin). One time, by
 # hand, after mailbox.sh (creates outfitter-tasks) and link.sh (deploys outfitter-link) have run:
+#   DRY_RUN=1 ./gke-schedule.sh
 #   PROJECT=outfitter-509211 REGION=us-central1 ./gke-schedule.sh
 # Idempotent: describes each job first, updates it if present.
+#
+# NOTE: the /api/hooks/warm-pool route itself ships with PR2 (#128), not this PR. Both jobs will
+# call it and get a 404 (or, once link starts routing but before that handler exists, whatever the
+# generic not-found response is) until #128 merges and outfitter-link is redeployed with it -- they
+# aren't harmful meanwhile, just ineffective.
 #
 # Defaults (owner decision, gke-sandbox-provider-plan.md §1): weekdays 08:00 up, 20:00 down,
 # Europe/Zagreb, 1 replica. Override with WARM_UP_CRON/WARM_DOWN_CRON/WARM_TZ/WARM_REPLICAS.
@@ -32,8 +38,18 @@ WARM_DOWN_CRON="${WARM_DOWN_CRON:-0 20 * * 1-5}"
 WARM_TZ="${WARM_TZ:-Europe/Zagreb}"
 WARM_REPLICAS="${WARM_REPLICAS:-1}"
 
+# run <cmd...> -- execute, or with DRY_RUN=1 print it instead (gke-cluster.sh's convention).
+# deploy/CLAUDE.md documents DRY_RUN=1 as safe for every owner-run GKE script, this one included.
+run() {
+  if [[ "${DRY_RUN:-0}" == 1 ]]; then
+    printf '   DRY_RUN:'; printf ' %q' "$@"; printf '\n'
+  else
+    "$@"
+  fi
+}
+
 echo "== Enabling Cloud Scheduler =="
-gcloud services enable cloudscheduler.googleapis.com --project="${PROJECT}"
+run gcloud services enable cloudscheduler.googleapis.com --project="${PROJECT}"
 
 # create_or_update <job name> <cron> <json body>
 create_or_update() {
@@ -47,13 +63,13 @@ create_or_update() {
     --oidc-service-account-email="${TASKS_SA_EMAIL}"
     --oidc-token-audience="${LINK_ORIGIN}"
   )
-  if gcloud scheduler jobs describe "${name}" --project="${PROJECT}" --location="${REGION}" &>/dev/null; then
+  if gcloud_exists scheduler jobs describe "${name}" --project="${PROJECT}" --location="${REGION}"; then
     # create takes --headers, update only --update-headers (it rejects --headers outright, same as
     # mailbox.sh's outfitter-tick).
-    gcloud scheduler jobs update http "${name}" "${args[@]}" \
+    run gcloud scheduler jobs update http "${name}" "${args[@]}" \
       --update-headers="Content-Type=application/json"
   else
-    gcloud scheduler jobs create http "${name}" "${args[@]}" \
+    run gcloud scheduler jobs create http "${name}" "${args[@]}" \
       --headers="Content-Type=application/json"
   fi
 }

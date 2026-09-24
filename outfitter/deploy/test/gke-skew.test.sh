@@ -22,6 +22,12 @@ case "$*" in
     [[ -n "${FAIL_IAM_POLICY:-}" ]] && { echo "PERMISSION_DENIED" >&2; exit 1; }
     [[ -n "${FAKE_AGENT_EXTRA_ROLES:-}" ]] && printf '%s\n' "${FAKE_AGENT_EXTRA_ROLES}"
     ;;
+  "iam service-accounts get-iam-policy outfitter-agent@"*)
+    [[ -n "${FAIL_SA_POLICY:-}" ]] && { echo "PERMISSION_DENIED" >&2; exit 1; }
+    printf 'roles/iam.serviceAccountUser,serviceAccount:outfitter-deployer@outfitter-509211.iam.gserviceaccount.com\n'
+    printf 'roles/iam.workloadIdentityUser,serviceAccount:outfitter-509211.svc.id.goog[outfitter-sandboxes/outfitter-agent]\n'
+    if [[ -n "${FAKE_EXTRA_SA_BINDING:-}" ]]; then printf '%s\n' "${FAKE_EXTRA_SA_BINDING}"; fi
+    ;;
   *"run services describe"*"--format=value(metadata.labels)"*)
     case "$*" in
       *outfitter-api*) printf '%s\n' "${FAKE_WEB_LABELS:-}" ;;
@@ -42,6 +48,7 @@ echo "$*" >>"${KUBECTL_CALLS}"
 case "$*" in
   *"get sandboxtemplate outfitter-agent"*)
     [[ -n "${FAKE_TEMPLATE_MISSING:-}" ]] && { echo "Error from server (NotFound)" >&2; exit 1; }
+    [[ -n "${FAKE_TEMPLATE_READ_FAILS:-}" ]] && { echo "Error from server (Forbidden): outfitter-deployer cannot get sandboxtemplates" >&2; exit 1; }
     printf '%s' "${FAKE_TEMPLATE_COMMIT:-}"
     ;;
 esac
@@ -52,8 +59,8 @@ chmod +x "${WORK}/bin/kubectl"
 export PATH="${WORK}/bin:${PATH}"
 export GCLOUD_CALLS="${WORK}/gcloud-calls" KUBECTL_CALLS="${WORK}/kubectl-calls"
 unset GITHUB_ACTIONS FAIL_GET_CREDENTIALS FAIL_IAM_POLICY FAKE_AGENT_EXTRA_ROLES FAKE_WEB_LABELS \
-  FAKE_LINK_LABELS FAKE_JOB_LABELS FAKE_TEMPLATE_COMMIT FAKE_TEMPLATE_MISSING ALLOW_SKEW \
-  DEPLOY_ALL_COMMIT KUBECONFIG_OUTFITTER GKE_CLUSTER
+  FAKE_LINK_LABELS FAKE_JOB_LABELS FAKE_TEMPLATE_COMMIT FAKE_TEMPLATE_MISSING FAKE_TEMPLATE_READ_FAILS \
+  ALLOW_SKEW DEPLOY_ALL_COMMIT KUBECONFIG_OUTFITTER GKE_CLUSTER FAIL_SA_POLICY FAKE_EXTRA_SA_BINDING
 
 fails=0
 # run_expr <snippet> -- sources the real env.sh from its own directory, then runs the snippet.
@@ -111,6 +118,18 @@ GKE_CLUSTER=outfitter FAKE_TEMPLATE_COMMIT=abc123def456 KUBECONFIG_OUTFITTER="${
   expect pass "current_build_commit_gke reads the SandboxTemplate's build-commit label" "^abc123def456$" \
   "current_build_commit_gke"
 
+# M7: a real lookup failure while GKE is ON must fail loudly, never silently read as "the template
+# doesn't exist" -- only a genuine NotFound (the template hasn't been applied yet) does that.
+GKE_CLUSTER=outfitter FAKE_TEMPLATE_READ_FAILS=1 KUBECONFIG_OUTFITTER="${WORK}/kube/outfitter" \
+  expect fail "current_build_commit_gke fails loudly on a non-NotFound kubectl error" \
+  "could not read the GKE SandboxTemplate" "current_build_commit_gke"
+GKE_CLUSTER=outfitter FAKE_TEMPLATE_MISSING=1 KUBECONFIG_OUTFITTER="${WORK}/kube/outfitter" \
+  expect pass "current_build_commit_gke still reads a genuine NotFound as empty, not a failure" "^$" \
+  "current_build_commit_gke"
+GKE_CLUSTER=outfitter FAIL_GET_CREDENTIALS=1 KUBECONFIG_OUTFITTER="${WORK}/kube/outfitter" \
+  expect fail "current_build_commit_gke fails loudly when it can't even get a kubeconfig" \
+  "could not obtain a kubeconfig" "current_build_commit_gke"
+
 : >"${KUBECTL_CALLS}"
 dry_run_stdout="$(GKE_CLUSTER=outfitter DRY_RUN=1 run_expr "current_build_commit_gke" 2>/dev/null)"
 if [[ -z "${dry_run_stdout}" ]]; then
@@ -152,6 +171,14 @@ FAKE_AGENT_EXTRA_ROLES="roles/editor" expect fail "assert_agent_sa_logwriter_onl
   "holds project role.*roles/editor" "assert_agent_sa_logwriter_only"
 FAIL_IAM_POLICY=1 expect fail "assert_agent_sa_logwriter_only refuses loudly on a read error" \
   "could not read .*IAM policy" "assert_agent_sa_logwriter_only"
+
+expect pass "assert_agent_sa_no_unexpected_bindings passes with only the two expected bindings" "^ok$" \
+  "assert_agent_sa_no_unexpected_bindings && echo ok"
+FAKE_EXTRA_SA_BINDING="roles/iam.serviceAccountTokenCreator,user:someone@example.com" \
+  expect fail "assert_agent_sa_no_unexpected_bindings refuses an unexpected binding" \
+  "unexpected bindings.*roles/iam.serviceAccountTokenCreator" "assert_agent_sa_no_unexpected_bindings"
+FAIL_SA_POLICY=1 expect fail "assert_agent_sa_no_unexpected_bindings refuses loudly on a read error" \
+  "could not read .*own IAM policy" "assert_agent_sa_no_unexpected_bindings"
 
 echo "${fails} failed"
 [[ "${fails}" -eq 0 ]]

@@ -151,16 +151,19 @@ check_scheduler_audience() {
   local job="$1"
   shift
   gcloud_exists scheduler jobs describe "${job}" --project="${PROJECT}" --location="${REGION}" || return 0
-  local audience link_origin_now
+  local audience link_origin_now display
   audience="$(gcloud scheduler jobs describe "${job}" --project="${PROJECT}" --location="${REGION}" \
     --format='value(httpTarget.oidcToken.audience)')"
   link_origin_now="$(deployed_origin outfitter-link)"
+  # A short, script-relative name in messages -- "$*" here would print DEPLOY_DIR's full absolute
+  # path, which is meaningless to whoever reads the log outside this checkout (CI's runner path).
+  display="./$(basename "$1")"
   if [[ "${audience}" == "${link_origin_now}" ]]; then
     echo "== ${job}: already targets ${link_origin_now} =="
   elif [[ "${DRY_RUN:-}" == 1 ]]; then
-    echo "== DRY_RUN: would re-run $* (${job} ${audience} -> ${link_origin_now}) =="
+    echo "== DRY_RUN: would re-run ${display} (${job} ${audience} -> ${link_origin_now}) =="
   elif [[ -n "${GITHUB_ACTIONS:-}" ]]; then
-    echo "::warning::${job} still targets ${audience}, link is now ${link_origin_now}: the owner should run $* (link accepts the old audience meanwhile)"
+    echo "::warning::${job} still targets ${audience}, link is now ${link_origin_now}: the owner should run ${display} (link accepts the old audience meanwhile)"
   else
     "$@"
   fi

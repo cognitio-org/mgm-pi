@@ -18,6 +18,12 @@ case "$*" in
     [[ -n "${FAIL_IAM_POLICY:-}" ]] && { echo "PERMISSION_DENIED" >&2; exit 1; }
     [[ -n "${FAKE_AGENT_EXTRA_ROLES:-}" ]] && printf '%s\n' "${FAKE_AGENT_EXTRA_ROLES}"
     ;;
+  "iam service-accounts get-iam-policy outfitter-agent@"*)
+    [[ -n "${FAIL_SA_POLICY:-}" ]] && { echo "PERMISSION_DENIED" >&2; exit 1; }
+    printf 'roles/iam.serviceAccountUser,serviceAccount:outfitter-deployer@outfitter-509211.iam.gserviceaccount.com\n'
+    printf 'roles/iam.workloadIdentityUser,serviceAccount:outfitter-509211.svc.id.goog[outfitter-sandboxes/outfitter-agent]\n'
+    if [[ -n "${FAKE_EXTRA_SA_BINDING:-}" ]]; then printf '%s\n' "${FAKE_EXTRA_SA_BINDING}"; fi
+    ;;
   "container clusters get-credentials"*)
     [[ -n "${FAIL_GET_CREDENTIALS:-}" ]] && { echo "ERROR: not found" >&2; exit 1; }
     : >"${KUBECONFIG}"
@@ -31,8 +37,9 @@ cat >"${WORK}/bin/kubectl" <<'SH'
 #!/usr/bin/env bash
 echo "$*" >>"${KUBECTL_CALLS}"
 case "$*" in
-  *"get validatingadmissionpolicybinding sandbox-hardening-binding"*)
-    printf '%s' "${FAKE_HARDENING_VALUES:-[outfitter-other]}"
+  *"get validatingadmissionpolicybinding sandbox-hardening-binding -o json"*)
+    printf '{"spec":{"matchResources":{"namespaceSelector":{"matchExpressions":[{"key":"kubernetes.io/metadata.name","operator":"NotIn","values":%s}]}}}}' \
+      "${FAKE_HARDENING_VALUES:-[\"outfitter-other\"]}"
     ;;
 esac
 exit 0
@@ -42,7 +49,8 @@ chmod +x "${WORK}/bin/kubectl"
 export PATH="${WORK}/bin:${PATH}"
 export GCLOUD_CALLS="${WORK}/gcloud-calls" KUBECTL_CALLS="${WORK}/kubectl-calls" \
   GKE_CLUSTER=outfitter KUBECONFIG_OUTFITTER="${WORK}/kube/outfitter"
-unset GITHUB_ACTIONS FAIL_IAM_POLICY FAKE_AGENT_EXTRA_ROLES FAIL_GET_CREDENTIALS FAKE_HARDENING_VALUES
+unset GITHUB_ACTIONS FAIL_IAM_POLICY FAKE_AGENT_EXTRA_ROLES FAIL_GET_CREDENTIALS FAKE_HARDENING_VALUES \
+  FAIL_SA_POLICY FAKE_EXTRA_SA_BINDING
 
 fails=0
 OUT=""
@@ -81,7 +89,15 @@ found="$(mutations_in_dry_run)"; [[ -z "${found}" ]] && echo "ok:   ... and neve
 FAIL_IAM_POLICY=1 expect fail "an IAM policy read error aborts instead of reading as no extra roles" \
   "could not read"
 
-expect pass "dry run: passes the guard, applies namespace, WI binding, clusterViewer, RBAC" \
+FAKE_EXTRA_SA_BINDING="roles/iam.serviceAccountTokenCreator,user:someone@example.com" \
+  expect fail "an unexpected binding on outfitter-agent@'s own IAM policy refuses" "unexpected bindings"
+found="$(mutations_in_dry_run)"; [[ -z "${found}" ]] && echo "ok:   ... and never reaches any mutation" \
+  || { echo "FAIL:   ... and never reaches any mutation (${found})"; fails=$((fails + 1)); }
+
+FAIL_SA_POLICY=1 expect fail "a service-account IAM policy read error aborts instead of reading as no unexpected bindings" \
+  "could not read"
+
+expect pass "dry run: passes both guards, applies namespace, WI binding, clusterViewer, RBAC" \
   "ok: logging.logWriter only"
 found="$(mutations_in_dry_run)"
 if [[ -z "${found}" ]]; then
@@ -96,7 +112,7 @@ expect pass "dry run mentions clusterViewer" "DRY_RUN:.*roles/container.clusterV
 expect pass "dry run mentions the RBAC apply" "DRY_RUN:.*kubectl.*apply.*rbac.yaml"
 expect pass "dry run doesn't touch the hardening binding" "DRY_RUN: would check.*sandbox-hardening-binding"
 
-DRY_RUN_OVERRIDE=0 FAKE_HARDENING_VALUES="[outfitter-other outfitter-sandboxes]" \
+DRY_RUN_OVERRIDE=0 FAKE_HARDENING_VALUES='["outfitter-other","outfitter-sandboxes"]' \
   expect pass "already-exempted namespace is not patched again" "already exempted"
 if grep -q 'patch validatingadmissionpolicybinding' "${KUBECTL_CALLS}"; then
   echo "FAIL:   ... yet it patched anyway"; fails=$((fails + 1))
@@ -104,7 +120,17 @@ else
   echo "ok:   ... and no patch call was made"
 fi
 
-DRY_RUN_OVERRIDE=0 FAKE_HARDENING_VALUES="[outfitter-other]" \
+# Exact list membership, not a substring/word match: "outfitter-sandboxes-other" must NOT count as
+# already exempting "outfitter-sandboxes".
+DRY_RUN_OVERRIDE=0 FAKE_HARDENING_VALUES='["outfitter-sandboxes-other"]' \
+  expect pass "a namespace that only shares a prefix is not mistaken for an exact match" ""
+if grep -q "patch validatingadmissionpolicybinding sandbox-hardening-binding --type=json --patch-file=.*hardening-exemption.json" "${KUBECTL_CALLS}"; then
+  echo "ok:   ... and it patches anyway (the prefix match doesn't count as exempted)"
+else
+  echo "FAIL:   ... expected a patch call (the existing entry only shares a prefix)"; fails=$((fails + 1))
+fi
+
+DRY_RUN_OVERRIDE=0 FAKE_HARDENING_VALUES='["outfitter-other"]' \
   expect pass "a missing exemption is patched" ""
 if grep -q "patch validatingadmissionpolicybinding sandbox-hardening-binding --type=json --patch-file=.*hardening-exemption.json" "${KUBECTL_CALLS}"; then
   echo "ok:   ... using the checked-in patch file"

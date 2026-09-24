@@ -330,8 +330,14 @@ deployed_origin() {
 # A file, never the shared ~/.kube/config: every kubectl call across these scripts pins it
 # explicitly with --kubeconfig, matching gke-cluster.sh's own get-credentials.
 CLEANUP_PATHS=()
+CLEANUP_CMDS=()
 _deploy_cleanup() {
-  local p
+  local c p
+  # Commands (e.g. deleting a release-time warm-up claim) before paths: an interrupt mid-wait must
+  # still delete the claim, whether or not a temp dir also needs removing.
+  for c in ${CLEANUP_CMDS[@]+"${CLEANUP_CMDS[@]}"}; do
+    eval "${c}" || true
+  done
   for p in ${CLEANUP_PATHS[@]+"${CLEANUP_PATHS[@]}"}; do
     rm -rf "${p}"
   done
@@ -341,6 +347,12 @@ _deploy_cleanup() {
 # one, dropping the kubeconfig/temp-file cleanup silently).
 register_cleanup() {
   CLEANUP_PATHS+=("$1")
+  trap _deploy_cleanup EXIT
+}
+# register_cleanup_cmd <command string> -- run on exit (eval'd; only ever called with this repo's
+# own fixed strings, never external input). Same trap-sharing caveat as register_cleanup.
+register_cleanup_cmd() {
+  CLEANUP_CMDS+=("$1")
   trap _deploy_cleanup EXIT
 }
 
@@ -381,12 +393,33 @@ gke_kubeconfig() {
 # template.sh sets it, mirroring current_build_commit for the three Cloud Run components), or "" if
 # GKE isn't configured, the template doesn't exist yet, or this is a dry run (no real kubeconfig to
 # read from -- see gke_kubeconfig). Used by check_deploy_skew.
+#
+# Unlike current_build_commit (which treats gcloud_exists's NOT_FOUND/permission split the same
+# way), a *lookup* failure here (a bad kubeconfig, Forbidden, a network error) must not read as "the
+# template doesn't exist" while GKE is on: that would make check_deploy_skew silently skip the one
+# check meant to catch a stale template, and gke-template.sh silently decide the template "already
+# matches" and skip re-applying it. So this fails loudly (deploy_fail) on anything other than a
+# real NotFound, mirroring gcloud_exists's own contract. GKE-off (GKE_CLUSTER empty) is unaffected:
+# the first line returns "" before touching kubectl at all.
 current_build_commit_gke() {
   [[ -z "${GKE_CLUSTER:-}" ]] && return 0
-  gke_kubeconfig || return 0
+  gke_kubeconfig || deploy_fail "could not obtain a kubeconfig for ${GKE_CLUSTER}"
   [[ "${DRY_RUN:-0}" == 1 ]] && return 0
-  kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE:-outfitter-sandboxes}" \
-    get sandboxtemplate outfitter-agent -o jsonpath='{.metadata.labels.build-commit}' 2>/dev/null || true
+  local out err_file
+  err_file="$(mktemp)"
+  if out="$(kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE:-outfitter-sandboxes}" \
+      get sandboxtemplate outfitter-agent -o jsonpath='{.metadata.labels.build-commit}' 2>"${err_file}")"; then
+    rm -f "${err_file}"
+    printf '%s' "${out}"
+    return 0
+  fi
+  if grep -qiE 'NotFound|not found|does not exist' "${err_file}"; then
+    rm -f "${err_file}"
+    return 0
+  fi
+  cat "${err_file}" >&2
+  rm -f "${err_file}"
+  deploy_fail "could not read the GKE SandboxTemplate's build-commit label (see above)"
 }
 
 # assert_agent_sa_logwriter_only -- owner decision "option B" (gke-sandbox-provider-plan.md §1): the
@@ -395,16 +428,53 @@ current_build_commit_gke() {
 # roles ARE the model's permissions inside a run. Fails loudly if it holds any project role beyond
 # roles/logging.logWriter (baseline.sh grants only that one). Read-only; called on every release
 # when GKE is configured (gke-template.sh) and stand-alone from gke-iam.sh. Needs
-# resourcemanager.projects.getIamPolicy -- ci-setup.sh grants outfitter-deployer
-# roles/iam.securityReviewer for exactly this.
+# resourcemanager.projects.getIamPolicy -- roles/browser (already granted to outfitter-deployer,
+# ci-setup.sh) includes it, so no separate role is needed.
+#
+# Scope: this checks only PROJECT-level bindings on the service account -- exactly what baseline.sh
+# and ci-setup.sh ever grant it. It does NOT see a role granted at the folder or organization level
+# (which would also apply to this account and isn't visible in `projects get-iam-policy`), nor a
+# custom role with a different id that happens to include a permission logging.logWriter doesn't
+# grant `roles/logging.logWriter` itself. assert_agent_sa_no_unexpected_bindings (below) narrows the
+# other half of the gap -- what's granted directly ON the service account resource -- but neither
+# reaches folder/org policy; there is no gcloud call from a project-scoped credential that does.
 assert_agent_sa_logwriter_only() {
   local agent_sa_email="outfitter-agent@${PROJECT}.iam.gserviceaccount.com" extra_roles
   extra_roles="$(gcloud projects get-iam-policy "${PROJECT}" \
     --flatten="bindings[].members" \
     --filter="bindings.members:serviceAccount:${agent_sa_email} AND NOT bindings.role:roles/logging.logWriter" \
     --format="value(bindings.role)")" \
-    || deploy_fail "could not read ${PROJECT}'s IAM policy (needs resourcemanager.projects.getIamPolicy; ci-setup.sh grants outfitter-deployer roles/iam.securityReviewer for this)"
+    || deploy_fail "could not read ${PROJECT}'s IAM policy (needs resourcemanager.projects.getIamPolicy; roles/browser includes it)"
   if [[ -n "${extra_roles}" ]]; then
     deploy_fail "${agent_sa_email} holds project role(s) beyond roles/logging.logWriter: $(tr '\n' ' ' <<<"${extra_roles}") -- with the metadata server reachable (option B), its permissions are the sandbox model's permissions; remove the extra role(s) before continuing"
+  fi
+}
+
+# assert_agent_sa_no_unexpected_bindings -- the resource-level half of the same option-B guard: who
+# holds a role ON outfitter-agent@ itself (`iam service-accounts get-iam-policy`), as opposed to a
+# project role granted TO it (assert_agent_sa_logwriter_only, above). The two known, expected
+# bindings are outfitter-deployer's serviceAccountUser (ci-setup.sh, so it can deploy the Cloud Run
+# Job as this account) and the KSA's workloadIdentityUser (gke-iam.sh, so GKE sandboxes can
+# impersonate it). Anything else -- another principal granted serviceAccountUser/TokenCreator on it,
+# for instance -- could mint credentials as this account and is worth failing loudly over. Needs
+# roles/iam.serviceAccountViewer (already granted to outfitter-deployer, ci-setup.sh).
+assert_agent_sa_no_unexpected_bindings() {
+  local agent_sa_email="outfitter-agent@${PROJECT}.iam.gserviceaccount.com"
+  local expected_wi_member="serviceAccount:${PROJECT}.svc.id.goog[${GKE_NAMESPACE:-outfitter-sandboxes}/outfitter-agent]"
+  local expected_deployer_member="serviceAccount:outfitter-deployer@${PROJECT}.iam.gserviceaccount.com"
+  local rows role member unexpected=()
+  rows="$(gcloud iam service-accounts get-iam-policy "${agent_sa_email}" --project="${PROJECT}" \
+    --flatten="bindings[].members" --format="csv[no-heading](bindings.role,bindings.members)")" \
+    || deploy_fail "could not read ${agent_sa_email}'s own IAM policy (needs roles/iam.serviceAccountViewer)"
+  while IFS=',' read -r role member; do
+    [[ -z "${role}" ]] && continue
+    case "${role}:${member}" in
+      "roles/iam.serviceAccountUser:${expected_deployer_member}") continue ;;
+      "roles/iam.workloadIdentityUser:${expected_wi_member}") continue ;;
+    esac
+    unexpected+=("${role} -> ${member}")
+  done <<<"${rows}"
+  if [[ "${#unexpected[@]}" -gt 0 ]]; then
+    deploy_fail "outfitter-agent@ has unexpected bindings on its own IAM policy: ${unexpected[*]} -- anyone who can mint credentials as this account can act with the sandbox model's permissions (option B); remove them or update this check's expected list if they're deliberate"
   fi
 }

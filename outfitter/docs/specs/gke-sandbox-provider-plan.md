@@ -161,9 +161,10 @@ release, as §2 already says). Notes for whoever builds on this:
   `release.sh` run. `gke_kubeconfig` never calls `get-credentials` under `DRY_RUN=1` (matching
   `gke-cluster.test.sh`'s convention), so `DRY_RUN=1 ./release.sh` never touches the cluster either.
 - `gke-template.sh`'s release-time warm-up (spike S4: a tag's first pull costs ~28s once) is a
-  throwaway cold claim; the script waits up to 120s for it to report a Sandbox, then deletes it
-  regardless of whether that wait succeeded — a slow first pull just means the next real wake pays
-  it instead, not a failed release.
+  throwaway cold claim, created with `kubectl create` (not `apply`: the deployer's Role grants no
+  `patch` on claims). The script waits up to 60s for a Sandbox to be assigned, then up to 120s more
+  for that Sandbox to report Ready, then deletes the claim regardless of how either wait came out —
+  a slow first pull just means the next real wake pays it instead, not a failed release.
 - `gke-teardown.sh`'s "no active runs" check has a real limitation, called out in its own header:
   deploy scripts have no Atlas access, so it checks for live `SandboxClaim`s in the namespace as the
   closest available proxy (every active gke run has exactly one) rather than the API's own run
@@ -177,9 +178,53 @@ release, as §2 already says). Notes for whoever builds on this:
   already deployed" the way `TASKS_SA_EMAIL` does: since these are all in `config.env` now (unlike
   the mailbox settings, which are discovered from GCP resources, not configured), a plain redeploy
   can't silently drop them the way §4.4's fallback was written to guard against.
-- The GitHub Actions deploy workflow installs `kubectl`/`gke-gcloud-auth-plugin` unconditionally
-  (harmless while `GKE_CLUSTER` is empty — nothing then calls `kubectl`) rather than branching the
-  workflow YAML on whether GKE is configured, since that isn't easily expressible there.
+- The GitHub Actions deploy workflow installs `kubectl`/`gke-gcloud-auth-plugin` only when
+  `config.env` has `GKE_CLUSTER` set (a small step reads it and sets a step output before
+  `setup-gcloud` runs).
+
+---
+
+## 6b. Review round 1 fixes (2026-09-24)
+
+PR3's first review round found three blocking issues (all fixed before merge) and several medium/
+low ones. Recorded here since they change behaviour §6a described:
+
+- **Blocking: the template must define no static `OUTFITTER_API`/`RUN_ID`/`RUN_TOKEN`.**
+  agent-sandbox v1.0.3's `Allowed` env-injection policy rejects a claim env var whose name the
+  template already defines (`Ready=False`, `EnvVarsInjectionRejected`) — every cold claim (PR2's
+  `GkeProvider`, and this PR's own warm-up claim) would have failed admission.
+  `deploy/gke/sandbox-template.yaml` now sets only `OUTFITTER_ASSIGNMENT_DIR`.
+  `gke-template.test.sh` asserts the rendered template's env and the claim's env names don't
+  intersect, and that no `${VAR}`-shaped placeholder survives rendering.
+- **Blocking: the deployer needs a `kube-system` Role to read the `kube-dns` Service.**
+  `container.clusterViewer` plus the `outfitter-sandboxes` Role never covered it; `ci-setup.sh` now
+  also applies a `kube-system` Role/RoleBinding scoped to `get` on `resourceNames: ["kube-dns"]`.
+- **Blocking: the warm-up claim needs `create` (or `patch`), and `list`/`watch` for `kubectl wait`.**
+  Server-side apply is a PATCH; the deployer's Role only had get/create/delete. `gke-template.sh` now
+  uses `kubectl create` for the claim, and the Role adds `list`/`watch` on sandboxclaims and
+  `get`/`list`/`watch` on sandboxes (for waiting on the assigned Sandbox's Ready condition, §6a's
+  warm-up note). `gke-template.test.sh`'s fake kubectl enforces exactly this Role's verbs per
+  resource, denying anything else, so a regression back to `apply` on a claim fails the test.
+- **Medium fixes**: the warm-up now waits for the Sandbox to report Ready (not just "a name was
+  assigned"), deleting the claim through both a normal call and a registered exit-trap (interrupt
+  safety); a pool-replica read error that isn't NotFound now refuses instead of falling back to 0;
+  the `build-commit` label is applied last, after the pool patch and the warm-up; `gke-teardown.sh`
+  fails loudly on a claims-list error instead of reading it as "no claims"; `gke-schedule.sh` has
+  real `DRY_RUN=1` support; `current_build_commit_gke` fails loudly on a real lookup error (not just
+  NotFound) whenever `GKE_CLUSTER` is set, matching `gcloud_exists`'s own contract, while GKE-off
+  behaviour is untouched.
+- **Low fixes**: dropped `roles/iam.securityReviewer` from `ci-setup.sh` (`roles/browser`, already
+  granted, includes `resourcemanager.projects.getIamPolicy`); added
+  `assert_agent_sa_no_unexpected_bindings` (checks who holds a role ON `outfitter-agent@` itself,
+  the resource-level half of the option-B guard — folder/org-level grants are still a documented,
+  unclosed gap); `gke-teardown.sh`'s IAM-binding removal now tolerates "already removed" for
+  re-runs; `gke-iam.sh`'s hardening-exemption check parses the binding as JSON for exact list
+  membership instead of `grep -w`; the GitHub Actions workflow installs `kubectl` only when GKE is
+  configured; `gke-template.sh` checks `image_exists` before rendering (a clear error for a
+  standalone run with nothing built yet); `gke-schedule.sh` uses `gcloud_exists` for its describe
+  check; `release.sh` prints a short `./mailbox.sh`/`./gke-schedule.sh` name instead of the
+  absolute path. Two new tests (`release-gke-off.test.sh`, `service-env-gke-off.test.sh`) prove
+  GKE-off `DRY_RUN=1 ./release.sh` and `service.sh`'s `--set-env-vars` are byte-for-byte unchanged.
 
 ---
 

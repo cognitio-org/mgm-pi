@@ -62,6 +62,8 @@ jobs:
           bash deploy/test/gke-template.test.sh
           bash deploy/test/gke-schedule.test.sh
           bash deploy/test/gke-teardown.test.sh
+          bash deploy/test/release-gke-off.test.sh
+          bash deploy/test/service-env-gke-off.test.sh
 
   deploy:
     needs: test
@@ -82,15 +84,26 @@ jobs:
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SA }}
+      - name: Check whether GKE is configured
+        id: gke
+        working-directory: outfitter/deploy
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source config.env
+          if [[ -n "${GKE_CLUSTER}" ]]; then
+            echo "components=beta,kubectl,gke-gcloud-auth-plugin" >>"${GITHUB_OUTPUT}"
+          else
+            echo "components=beta" >>"${GITHUB_OUTPUT}"
+          fi
       - uses: google-github-actions/setup-gcloud@v2
         with:
           # env.sh public_origin lists domain mappings with `gcloud beta run domain-mappings`.
-          # kubectl and gke-gcloud-auth-plugin: gke-template.sh (release.sh's step between the Job
-          # and link, only when GKE_CLUSTER is set in config.env) gets a kubeconfig via
+          # kubectl and gke-gcloud-auth-plugin only when config.env has GKE_CLUSTER set: gke-
+          # template.sh (release.sh's step between the Job and link) then gets a kubeconfig via
           # `gcloud container clusters get-credentials --dns-endpoint` into a temp file (env.sh's
-          # gke_kubeconfig) and applies the SandboxTemplate/SandboxWarmPool through it. Harmless
-          # while GKE_CLUSTER is empty (the default): nothing here calls kubectl.
-          install_components: beta,kubectl,gke-gcloud-auth-plugin
+          # gke_kubeconfig) and applies the SandboxTemplate/SandboxWarmPool through it.
+          install_components: ${{ steps.gke.outputs.components }}
       - name: Release
         working-directory: outfitter/deploy
         env:

@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # gke-template.sh against a throwaway git repo (deploy_guard needs one, same setup as
 # guards.test.sh) and fake gcloud/kubectl. No network, no GCP.
+#
+# The fake kubectl enforces exactly the RBAC ci-setup.sh grants outfitter-deployer for this
+# namespace (get/patch on sandboxtemplates and sandboxwarmpools; get/create/delete/list/watch on
+# sandboxclaims -- no patch, so a regression to `apply` on a claim is caught; get/list/watch on
+# sandboxes), denying anything else. That makes "the script only uses verbs it's actually granted"
+# part of what this test checks, not just an assumption.
 #   bash outfitter/deploy/test/gke-template.test.sh
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,8 +20,16 @@ cat >"${WORK}/bin/gcloud" <<'SH'
 echo "$*" >>"${GCLOUD_CALLS}"
 case "$*" in
   "auth list"*) echo "${CLOUDSDK_CORE_ACCOUNT}" ;;
+  "artifacts docker images describe"*)
+    [[ -n "${FAKE_IMAGE_MISSING:-}" ]] && exit 1
+    exit 0 ;;
   "projects get-iam-policy"*)
     [[ -n "${FAKE_AGENT_EXTRA_ROLES:-}" ]] && printf '%s\n' "${FAKE_AGENT_EXTRA_ROLES}"
+    ;;
+  "iam service-accounts get-iam-policy outfitter-agent@"*)
+    printf 'roles/iam.serviceAccountUser,serviceAccount:outfitter-deployer@outfitter-509211.iam.gserviceaccount.com\n'
+    printf 'roles/iam.workloadIdentityUser,serviceAccount:outfitter-509211.svc.id.goog[outfitter-sandboxes/outfitter-agent]\n'
+    ${FAKE_EXTRA_SA_BINDING:+printf '%s\n' "${FAKE_EXTRA_SA_BINDING}"}
     ;;
   "container clusters get-credentials"*) : >"${KUBECONFIG}" ;;
   *"run services describe outfitter-link"*"OUTFITTER_ORIGIN"*)
@@ -37,23 +51,84 @@ chmod +x "${WORK}/bin/gcloud"
 cat >"${WORK}/bin/kubectl" <<'SH'
 #!/usr/bin/env bash
 echo "$*" >>"${KUBECTL_CALLS}"
-prev="" f_arg=""
+
+# Capture -f content (file or stdin): for RENDERED_LOG (envsubst checks) and to identify the piped
+# object's kind, since a create/apply -f call names no resource type in its own arguments.
+prev="" f_arg="" body=""
 for a in "$@"; do
   [[ "${prev}" == "-f" ]] && f_arg="${a}"
   prev="${a}"
 done
 if [[ -n "${f_arg}" && "${f_arg}" != "-" && -f "${f_arg}" ]]; then
-  { cat "${f_arg}"; echo "---"; } >>"${RENDERED_LOG}"
+  body="$(cat "${f_arg}")"
+  { printf '%s\n' "${body}"; echo "---"; } >>"${RENDERED_LOG}"
 elif [[ "${f_arg}" == "-" ]]; then
-  { cat; echo "---"; } >>"${RENDERED_LOG}"
+  body="$(cat)"
+  { printf '%s\n' "${body}"; echo "---"; } >>"${RENDERED_LOG}"
 fi
+
+verb=""
+case " $* " in
+  *" apply "*) verb=patch ;;   # server-side apply needs `patch` RBAC, not a verb of its own
+  *" create "*) verb=create ;;
+  *" patch "*) verb=patch ;;
+  *" delete "*) verb=delete ;;
+  *" label "*) verb=patch ;;   # kubectl label issues a patch
+  *" wait "*) verb=watch ;;
+  *" get "*) verb=get ;;
+esac
+
+resource=""
+case "$*" in
+  *sandboxtemplate*) resource=sandboxtemplates ;;
+  *sandboxwarmpool*) resource=sandboxwarmpools ;;
+  *sandboxclaim*) resource=sandboxclaims ;;
+  *"get service"*) resource=services ;;
+  *" sandbox/"*) resource=sandboxes ;;
+esac
+if [[ -z "${resource}" && -n "${body}" ]]; then
+  case "${body}" in
+    *"kind: SandboxClaim"*) resource=sandboxclaims ;;
+    *"kind: SandboxTemplate"*) resource=sandboxtemplates ;;
+    *"kind: SandboxWarmPool"*) resource=sandboxwarmpools ;;
+  esac
+fi
+
+case "${resource}:${verb}" in
+  sandboxtemplates:get | sandboxtemplates:patch) ;;
+  sandboxwarmpools:get | sandboxwarmpools:patch) ;;
+  sandboxclaims:get | sandboxclaims:create | sandboxclaims:delete | sandboxclaims:list | sandboxclaims:watch) ;;
+  sandboxes:get | sandboxes:list | sandboxes:watch) ;;
+  services:get) ;;
+  *)
+    echo "Error from server (Forbidden): ${resource:-<unknown>} is forbidden: User \"outfitter-deployer\" cannot ${verb:-<unknown>} resource \"${resource:-<unknown>}\"" >&2
+    exit 1
+    ;;
+esac
+
+# Glob patterns below check substrings without relying on their relative order in "$*" (a `case`
+# pattern like *A*B* only matches when A appears before B, which the real argument order doesn't
+# always agree with) -- an [[ ]] with separate * tests instead.
 case "$*" in
   *"-n kube-system get service kube-dns"*) printf '%s' "${FAKE_KUBE_DNS_IP:-10.1.2.3}" ;;
   *"get sandboxwarmpool"*)
     [[ -n "${FAKE_POOL_MISSING:-}" ]] && { echo "Error from server (NotFound)" >&2; exit 1; }
+    [[ -n "${FAKE_POOL_READ_FAILS:-}" ]] && { echo "Error from server (InternalError): etcd timeout" >&2; exit 1; }
     printf '%s' "${FAKE_CURRENT_REPLICAS:-0}"
     ;;
-  *"wait --for="*"sandboxclaim/"*) [[ -n "${FAKE_WAIT_FAILS:-}" ]] && exit 1 ;;
+esac
+if [[ "$*" == *"wait "* && "$*" == *"--output=jsonpath="* && "$*" == *"sandboxclaim/"* ]]; then
+  [[ -n "${FAKE_NO_SANDBOX_ASSIGNED:-}" ]] && exit 1
+  printf '%s' "${FAKE_SANDBOX_NAME:-warmup-sandbox-1}"
+  exit 0
+fi
+case "$*" in
+  *"get sandboxclaim "*"jsonpath={.status.sandbox.name}"*)
+    printf '%s' "${FAKE_SANDBOX_NAME:-}"
+    ;;
+  *"wait --for=condition=Ready sandbox/"*)
+    [[ -n "${FAKE_SANDBOX_NOT_READY:-}" ]] && exit 1
+    ;;
 esac
 exit 0
 SH
@@ -111,6 +186,15 @@ expect() {
 expect pass "GKE off: nothing to do" "GKE_CLUSTER is empty" GKE_CLUSTER=
 
 FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
+  FAKE_JOB_LABELS="build-commit=${TAG}" FAKE_IMAGE_MISSING=1 \
+  expect fail "a standalone run with no built image refuses" "doesn't exist in Artifact Registry"
+
+FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
+  FAKE_JOB_LABELS="build-commit=${TAG}" \
+  expect fail "an unexpected binding on outfitter-agent@'s own IAM policy refuses" \
+  "unexpected bindings" FAKE_EXTRA_SA_BINDING="roles/iam.serviceAccountTokenCreator,user:someone@example.com"
+
+FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
   FAKE_JOB_LABELS="build-commit=${TAG}" \
   expect fail "outfitter-link not deployed refuses" "outfitter-link is not deployed" \
   FAKE_LINK_ORIGIN=
@@ -118,6 +202,16 @@ FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
 FAKE_WEB_LABELS="build-commit=old000000001" FAKE_LINK_LABELS="build-commit=${TAG}" \
   FAKE_JOB_LABELS="build-commit=${TAG}" \
   expect fail "a mismatched web deploy refuses (check_deploy_skew)" "outfitter-api (web) is at old000000001"
+
+FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
+  FAKE_JOB_LABELS="build-commit=${TAG}" \
+  expect fail "a pool-replica read error other than NotFound refuses, never falls back to 0" \
+  "could not read outfitter-agent's current replicas" FAKE_POOL_READ_FAILS=1
+if grep -q '"replicas":0' "${KUBECTL_CALLS}"; then
+  echo "FAIL:   a pool read error must never result in a replicas:0 patch"; fails=$((fails + 1))
+else
+  echo "ok:   ... and no replicas:0 patch was sent"
+fi
 
 FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
   FAKE_JOB_LABELS="build-commit=${TAG}" FAKE_CURRENT_REPLICAS=2 \
@@ -128,15 +222,28 @@ echo "== rendered content =="
 grep -q "image: us-central1-docker.pkg.dev/outfitter-509211/outfitter/outfitter-agent:${TAG}" "${RENDERED_LOG}" \
   && echo "ok: the image tag is this commit's TAG" \
   || { echo "FAIL: expected the rendered image to carry ${TAG}"; fails=$((fails + 1)); }
-grep -q 'value: "https://link.example.com"' "${RENDERED_LOG}" \
-  && echo "ok: OUTFITTER_LINK_ORIGIN was substituted" \
-  || { echo "FAIL: expected https://link.example.com in the rendered template"; fails=$((fails + 1)); }
 grep -q "cidr: 10.1.2.3/32" "${RENDERED_LOG}" \
   && echo "ok: the cluster's kube-dns Service IP was read live and substituted, not hard-coded" \
   || { echo "FAIL: expected 10.1.2.3/32 (kube-dns) in the rendered network policy"; fails=$((fails + 1)); }
 grep -q "namespace: outfitter-sandboxes" "${RENDERED_LOG}" \
   && echo "ok: GKE_NAMESPACE was substituted" \
   || { echo "FAIL: expected namespace: outfitter-sandboxes in the rendered YAML"; fails=$((fails + 1)); }
+if grep -qE '\$\{[A-Z_][A-Z0-9_]*\}' "${RENDERED_LOG}"; then
+  echo "FAIL: a template placeholder was left unrendered:"; grep -nE '\$\{[A-Z_][A-Z0-9_]*\}' "${RENDERED_LOG}" | sed 's/^/    /'
+  fails=$((fails + 1))
+else
+  echo "ok: no \${VAR} placeholder was left unrendered"
+fi
+# RENDERED_LOG also holds the warm-up SandboxClaim's own piped body (which legitimately sets these
+# three as claim env) -- check only the first "---"-delimited section, the rendered
+# sandbox-template.yaml file itself.
+RENDERED_TEMPLATE_ONLY="$(awk '/^---$/{exit} {print}' "${RENDERED_LOG}")"
+if grep -qE 'name: (OUTFITTER_API|RUN_ID|RUN_TOKEN) ?[,}]' <<<"${RENDERED_TEMPLATE_ONLY}"; then
+  echo "FAIL: the rendered SandboxTemplate defines OUTFITTER_API/RUN_ID/RUN_TOKEN as a static env var -- a cold claim setting the same name is REJECTED by agent-sandbox's Allowed injection policy"
+  fails=$((fails + 1))
+else
+  echo "ok: the rendered template's env names don't collide with the claim's (OUTFITTER_API/RUN_ID/RUN_TOKEN)"
+fi
 
 if grep -q '"replicas":2' "${KUBECTL_CALLS}"; then
   echo "ok: the pool's existing replicas (2) were preserved through the reapply"
@@ -144,16 +251,28 @@ else
   echo "FAIL: expected a patch restoring replicas to 2"; fails=$((fails + 1))
 fi
 
-if grep -q "label sandboxtemplate outfitter-agent build-commit=${TAG}" "${KUBECTL_CALLS}"; then
-  echo "ok: the template was labelled with this release's build-commit"
+if grep -q "create -f -" "${KUBECTL_CALLS}"; then
+  echo "ok: the warm-up claim is created with 'kubectl create', not 'apply' (the deployer's Role has no patch on sandboxclaims)"
 else
-  echo "FAIL: expected a build-commit label matching ${TAG}"; fails=$((fails + 1))
+  echo "FAIL: expected 'kubectl create -f -' for the warm-up claim"; fails=$((fails + 1))
 fi
 
 if grep -q "delete sandboxclaim warmup-${TAG}" "${KUBECTL_CALLS}"; then
-  echo "ok: the warm-up claim was deleted afterwards"
+  echo "ok: the warm-up claim was deleted"
 else
   echo "FAIL: expected the warm-up claim to be deleted"; fails=$((fails + 1))
+fi
+
+# head -1: the registered EXIT-trap cleanup also deletes the claim again (harmless,
+# --ignore-not-found) once this whole test process exits, adding a second "delete" line later in
+# the same call log -- only the first (in-script) occurrence matters for ordering here.
+LABEL_LINE="$(grep -n "label sandboxtemplate outfitter-agent build-commit=${TAG}" "${KUBECTL_CALLS}" | head -1 | cut -d: -f1 || true)"
+DELETE_LINE="$(grep -n "delete sandboxclaim warmup-${TAG}" "${KUBECTL_CALLS}" | head -1 | cut -d: -f1 || true)"
+if [[ -n "${LABEL_LINE}" && -n "${DELETE_LINE}" && "${LABEL_LINE}" -gt "${DELETE_LINE}" ]]; then
+  echo "ok: the build-commit label is applied LAST, after the pool patch and the warm-up"
+else
+  echo "FAIL: expected the build-commit label (line ${LABEL_LINE:-?}) after the warm-up delete (line ${DELETE_LINE:-?})"
+  fails=$((fails + 1))
 fi
 
 FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
@@ -167,9 +286,14 @@ else
 fi
 
 FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
-  FAKE_JOB_LABELS="build-commit=${TAG}" FAKE_WAIT_FAILS=1 \
-  expect pass "a warm-up claim that never reports Ready still finishes (next real wake pays the pull)" \
-  "didn't report a Sandbox within 120s"
+  FAKE_JOB_LABELS="build-commit=${TAG}" FAKE_NO_SANDBOX_ASSIGNED=1 \
+  expect pass "a warm-up claim that never gets a Sandbox assigned still finishes" \
+  "never got a Sandbox assigned within 60s"
+
+FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
+  FAKE_JOB_LABELS="build-commit=${TAG}" FAKE_SANDBOX_NOT_READY=1 \
+  expect pass "a Sandbox that never reports Ready still finishes (next real wake pays the pull)" \
+  "didn't report Ready within 120s"
 
 echo "${fails} failed"
 [[ "${fails}" -eq 0 ]]

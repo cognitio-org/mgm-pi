@@ -3,10 +3,16 @@
 # server-side; never apply this file directly (the placeholders are literal ${...} until then).
 #
 # ${IMAGE}                 outfitter-agent:$(commit_tag), same tag as the Cloud Run Job
-# ${OUTFITTER_LINK_ORIGIN} the deployed outfitter-link origin (agentd's OUTFITTER_API)
 # ${GKE_NAMESPACE}         deploy/config.env's GKE_NAMESPACE (default outfitter-sandboxes)
 # ${KUBE_DNS_SERVICE_IP}   this cluster's kube-dns Service ClusterIP, read live -- it is
 #                          cluster-specific (docs/reports/gke-spike.md S3), never hard-coded
+#
+# This template must define NEITHER OUTFITTER_API, RUN_ID NOR RUN_TOKEN as a static env var: a
+# cold SandboxClaim sets all three in spec.env (PR2's GkeProvider), and agent-sandbox v1.0.3's
+# `Allowed` injection policy REJECTS a claim env var whose name the template already defines
+# (Ready=False, reason EnvVarsInjectionRejected) -- every cold claim would fail admission. Warm mode
+# (PR4) never sets claim env either; it gets OUTFITTER_API from the outfitter.dev/api downward-API
+# file below, and agentd resolves RUN_ID/RUN_TOKEN the same way.
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxTemplate
 metadata:
@@ -61,8 +67,8 @@ spec:
         - name: agentd
           image: ${IMAGE}
           env:
-            - { name: OUTFITTER_API, value: "${OUTFITTER_LINK_ORIGIN}" }
-            # Read by PR4 agentd only; harmless while unset (today's agentd only reads env).
+            # Read by PR4 agentd only; harmless while unset (today's agentd only reads env). No
+            # OUTFITTER_API/RUN_ID/RUN_TOKEN here -- see the header note above.
             - { name: OUTFITTER_ASSIGNMENT_DIR, value: /etc/outfitter/assignment }
           # 1 vCPU / 2 GiB matches the Cloud Run job (agent-job.sh). Requests == limits: Autopilot
           # bills requests, and equal limits mean no burst surprises. Do NOT mount an emptyDir over

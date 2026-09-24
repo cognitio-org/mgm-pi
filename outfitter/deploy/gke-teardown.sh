@@ -11,6 +11,11 @@
 # script can check directly -- every active gke run has exactly one -- but it can't see a run whose
 # claim was already deleted (e.g. mid-stop) while the API hasn't yet reconciled it as stopped.
 # Check `GET /api/operator/runs?active=1` (PR5) yourself before --force if in doubt.
+#
+# Re-runnable: every step below tolerates "already gone"/"already removed", so a re-run after a
+# partial failure (or just running it twice) is safe. After a real teardown, empty GKE_CLUSTER in
+# config.env too (and merge) -- otherwise the next release's gke-template.sh step tries to apply a
+# template to a cluster that no longer exists and fails the whole release.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
@@ -37,6 +42,27 @@ run() {
   fi
 }
 
+# remove_binding_if_present <cmd...> -- like run(), but treats "the binding/member was never there"
+# as success rather than a failure, so a re-run (or running this twice by mistake) is safe. Any
+# other failure still fails loudly.
+remove_binding_if_present() {
+  if [[ "${DRY_RUN:-0}" == 1 ]]; then
+    printf '   DRY_RUN:'; printf ' %q' "$@"; printf '\n'
+    return 0
+  fi
+  local out
+  if out="$("$@" 2>&1)"; then
+    [[ -n "${out}" ]] && echo "${out}"
+    return 0
+  fi
+  if grep -qiE 'not found|does not exist|NOT_FOUND|no such' <<<"${out}"; then
+    echo "   already removed"
+    return 0
+  fi
+  echo "${out}" >&2
+  deploy_fail "$1 failed (see above)"
+}
+
 CLUSTER_EXISTS=0
 if gcloud_exists container clusters describe "${GKE_CLUSTER}" --location="${GKE_LOCATION}" --project="${PROJECT}"; then
   CLUSTER_EXISTS=1
@@ -47,7 +73,15 @@ if [[ "${CLUSTER_EXISTS}" == 1 ]]; then
 
   if [[ "${DRY_RUN:-0}" != 1 ]]; then
     echo "== Checking for live SandboxClaims in ${GKE_NAMESPACE} =="
-    claims="$(kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" get sandboxclaims -o name 2>/dev/null || true)"
+    claims_err="$(mktemp)"
+    if ! claims="$(kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" get sandboxclaims -o name 2>"${claims_err}")"; then
+      # A real lookup failure (Forbidden, a network error, ...) must never read as "no claims": that
+      # would delete the cluster out from under any active run without --force ever being given.
+      cat "${claims_err}" >&2
+      rm -f "${claims_err}"
+      deploy_fail "could not list SandboxClaims in ${GKE_NAMESPACE} (see above); refusing to guess whether any run is active"
+    fi
+    rm -f "${claims_err}"
     if [[ -n "${claims}" ]]; then
       echo "${claims}" >&2
       if [[ "${FORCE}" == 0 ]]; then
@@ -83,11 +117,11 @@ fi
 # RBAC (rbac.yaml) and the hardening exemption live in the cluster's own API objects, so they go
 # with it. Only the project-level bindings gke-iam.sh added need an explicit remove.
 echo "== Removing IAM bindings gke-iam.sh added =="
-run gcloud projects remove-iam-policy-binding "${PROJECT}" \
+remove_binding_if_present gcloud projects remove-iam-policy-binding "${PROJECT}" \
   --member="serviceAccount:${API_SA_EMAIL}" --role=roles/container.clusterViewer --condition=None --quiet
-run gcloud iam service-accounts remove-iam-policy-binding "${AGENT_SA_EMAIL}" \
+remove_binding_if_present gcloud iam service-accounts remove-iam-policy-binding "${AGENT_SA_EMAIL}" \
   --project="${PROJECT}" \
   --member="serviceAccount:${PROJECT}.svc.id.goog[${GKE_NAMESPACE}/outfitter-agent]" \
   --role=roles/iam.workloadIdentityUser --quiet
 
-echo "== Done =="
+echo "== Done. Empty GKE_CLUSTER in config.env (and merge) before the next release, or gke-template.sh fails trying to reach a cluster that no longer exists. =="

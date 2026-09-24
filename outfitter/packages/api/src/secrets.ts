@@ -3,14 +3,19 @@
 // authenticated WebSocket inside run.spec, never as job/container env.
 
 import type { Session, Guru } from "./store/types.ts";
+import { GithubAppTokens } from "./github-app.ts";
 
 export interface RunSecrets {
   githubToken: string;
   litellmKey: string;
+  /** Set when `githubToken` is a GitHub App installation token, so the run can be refreshed. */
+  githubTokenExpiresAt?: string;
 }
 
 export interface SecretsBroker {
   secretsForRun(session: Session, guru: Guru): Promise<RunSecrets>;
+  /** The credential a live run should switch to. A per-session PAT has no `expiresAt` and replaces an installation token. Undefined when nothing is configured. */
+  refreshGithubAppToken?(session: Session): Promise<{ token: string; expiresAt?: string } | undefined>;
   /** A LiteLLM key usable for calls with no specific run/guru behind them, e.g. the E2.10 provider
    * status service's LiteLLM probe when config.litellmAdminKey isn't set. Falls back to the same
    * default key a guru with no key of its own would get. */
@@ -68,56 +73,85 @@ export const GITHUB_TOKEN_DEFAULT_SECRET = "outfitter-github-token-default";
 export class GcpSecretsBroker implements SecretsBroker {
   private readonly project: string;
   private readonly fetchSecret: (secretId: string) => Promise<string>;
+  private readonly app: GithubAppTokens;
   /** Lazily built on first access and reused after that, instead of a fresh GoogleAuth client (and
    * its own ADC lookup) per secret fetch. */
   private authClientPromise: ReturnType<GcpSecretsBroker["buildAuthClient"]> | undefined;
 
   /** `fetchSecret` is injectable so tests can stub Secret Manager access without touching ADC or
    * the network; production code (main.ts) always omits it and gets accessSecretFromGcp. */
-  constructor(project: string, fetchSecret?: (secretId: string) => Promise<string>) {
+  constructor(project: string, fetchSecret?: (secretId: string) => Promise<string>, app?: GithubAppTokens) {
     this.project = project;
     this.fetchSecret = fetchSecret ?? ((secretId) => this.accessSecretFromGcp(secretId));
+    this.app = app ?? new GithubAppTokens(async (secretId) => {
+      try {
+        return (await this.fetchSecret(secretId)).trim();
+      } catch (err) {
+        if (isSecretNotFoundError(err)) return "";
+        // A blip reading an App secret must not fail a repo run that still has a PAT.
+        // Log the name only: Secret Manager errors can echo the request, never the key.
+        console.warn(`[secrets] ${secretId} unreadable: ${err instanceof Error ? err.name : "Error"}`);
+        return "";
+      }
+    });
   }
 
   async secretsForRun(session: Session, guru: Guru): Promise<RunSecrets> {
-    const [githubToken, litellmKey] = await Promise.all([
+    const [github, litellmKey] = await Promise.all([
       this.githubTokenForSession(session),
       this.litellmKeyForGuru(guru.id),
     ]);
-    return { githubToken, litellmKey };
+    return { githubToken: github.token, litellmKey, ...(github.expiresAt ? { githubTokenExpiresAt: github.expiresAt } : {}) };
   }
 
-  /** The session's own token if it has one, else — for a session that actually has a repo — the
-   * shared `outfitter-github-token-default`.
+  async refreshGithubAppToken(session: Session): Promise<{ token: string; expiresAt?: string } | undefined> {
+    const own = await this.accessSecretOrEmpty(`outfitter-github-token-${session.id}`);
+    if (own) return { token: own };
+    if (!session.repo) return undefined;
+    // A failed mint must not fall through to the shared PAT. That would replace the sandbox's
+    // installation token and cancel the retry. The shared PAT is only the initial-run fallback.
+    const minted = await this.app.mint(session.repo);
+    if (!minted) return undefined;
+    return { token: minted.token, expiresAt: minted.expiresAt };
+  }
+
+  /** Per-session PAT, then a GitHub App installation token, then the shared
+   * `outfitter-github-token-default`.
    *
    * The per-session secret stays the preferred form: a fine-grained PAT scoped to that one repo is
-   * a far smaller blast radius than one token every repo session can reach. But requiring it meant
-   * an operator had to mint a PAT by hand, against a session id that only exists once the session
-   * has been created, before that session's first run could get past buildRunSpec's fatal check —
-   * which is what the shared fallback exists to avoid.
+   * a far smaller blast radius than one token every repo session can reach. The App is the usual
+   * cloud identity once its id, private key, and installation id are set. The shared PAT remains
+   * so a run still starts before that App exists, or when GitHub refuses the mint — requiring a
+   * per-session PAT meant an operator had to mint one by hand, against a session id that only
+   * exists once the session has been created, before the first run could get past buildRunSpec.
    *
-   * The fallback is deliberately gated on `session.repo`. run.spec carries `secrets` for every
-   * run, repo or not (agentlink.ts), so falling back unconditionally would hand the org-wide token
-   * to sandboxes that provably have nothing to clone or push — strictly more exposure for no
-   * capability. A repo-less session with a token of its own still gets it, since creating that
-   * secret is a deliberate act; it just isn't given one it was never granted. Logs which of the
-   * two a run ended up with, because "the token worked" and "the token I expected" are different
-   * questions once something fails to clone or push. */
-  private async githubTokenForSession(session: Session): Promise<string> {
+   * The App and the shared PAT are gated on `session.repo`. run.spec carries `secrets` for every
+   * run, repo or not (agentlink.ts), so handing either credential to a sandbox with nothing to
+   * clone or push would be strictly more exposure for no capability. A repo-less session stops
+   * before the App for that reason. One with a token of its own still gets it, since creating
+   * that secret is a deliberate act. Logs which of the three a run ended up with, because "the
+   * token worked" and "the token I expected" are different questions once something fails to
+   * clone or push. */
+  private async githubTokenForSession(session: Session): Promise<{ token: string; expiresAt?: string }> {
     const perSession = `outfitter-github-token-${session.id}`;
     const own = await this.accessSecretOrEmpty(perSession);
     if (own) {
       console.log(`[secrets] session ${session.id}: using ${perSession}`);
-      return own;
+      return { token: own };
     }
-    if (!session.repo) return "";
+    if (!session.repo) return { token: "" };
+    const minted = await this.app.mint(session.repo);
+    if (minted) {
+      console.log(`[secrets] session ${session.id}: using a GitHub App installation token`);
+      return { token: minted.token, expiresAt: minted.expiresAt };
+    }
     const shared = await this.accessSecretOrEmpty(GITHUB_TOKEN_DEFAULT_SECRET);
     if (shared) {
       console.log(
         `[secrets] session ${session.id}: ${perSession} not set; using ${GITHUB_TOKEN_DEFAULT_SECRET}`,
       );
     }
-    return shared;
+    return { token: shared };
   }
 
   private async litellmKeyForGuru(guruId: string): Promise<string> {
@@ -164,7 +198,8 @@ export class GcpSecretsBroker implements SecretsBroker {
 
 /** True for a Secret Manager "no such secret/version" failure: a Gaxios HTTP 404, or (in case a
  * client surfaces it as a raw gRPC status instead) code 5 NOT_FOUND. Any other shape of error
- * (network, auth, 403) is treated as real and rethrown by the caller. */
+ * (network, auth, 403) is a real failure: `accessSecretOrEmpty` rethrows it, and the GitHub App
+ * reader logs the error name and returns "" so a run can still use its PAT. */
 function isSecretNotFoundError(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
   const e = err as { response?: { status?: number }; code?: number | string; status?: number };

@@ -6,10 +6,32 @@ import type { RouteContext } from "./context.ts";
 import type { Session, PiEntry, Run } from "../store/types.ts";
 import { MAIL_HELD_NOTICE, MAIL_MAX_TEXT } from "../mail.ts";
 import { GITHUB_TOKEN_DEFAULT_SECRET } from "../secrets.ts";
+import { GITHUB_APP_ID_SECRET, GITHUB_APP_INSTALLATION_SECRET, GITHUB_APP_KEY_SECRET, GITHUB_APP_SLUG_SECRET, githubAppSecretsUsable, githubRepoName } from "../github-app.ts";
 import { sessionGithubTokenSecretName } from "../operator.ts";
 import { entryForWire } from "../entry-wire.ts";
 
 const SESSION_VERSION = 3; // matches pi's CURRENT_SESSION_VERSION; keeps export.jsonl pi-compatible
+
+/** Same checks `GithubAppTokens.mint` uses before it calls GitHub. Existence of a secret version is not enough. */
+async function githubAppConfigured(ctx: RouteContext, repo: string): Promise<boolean> {
+  if (!githubRepoName(repo)) return false;
+  try {
+    const [appId, privateKey, installationId] = await Promise.all([
+      ctx.secretAdmin.accessLatest(GITHUB_APP_ID_SECRET),
+      ctx.secretAdmin.accessLatest(GITHUB_APP_KEY_SECRET),
+      ctx.secretAdmin.accessLatest(GITHUB_APP_INSTALLATION_SECRET),
+    ]);
+    return githubAppSecretsUsable(appId ?? "", privateKey ?? "", installationId ?? "");
+  } catch (err) {
+    console.warn(`[sessions] github app secrets unreadable: ${err instanceof Error ? err.name : "Error"}`);
+    return false;
+  }
+}
+
+async function githubAppSlug(ctx: RouteContext): Promise<string | null> {
+  const raw = (await ctx.secretAdmin.accessLatest(GITHUB_APP_SLUG_SECRET))?.trim() ?? "";
+  return /^[A-Za-z0-9-]+$/.test(raw) ? raw : null;
+}
 
 interface SessionSummary {
   id: string;
@@ -167,8 +189,10 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
     const owner = session.ownerEmail ? await ctx.store.users.findByEmail(session.ownerEmail) : null;
     const login = owner?.githubLogin?.replace(/^@/, "").trim() ?? "";
     const ownToken = await ctx.secretAdmin.info(sessionGithubTokenSecretName(session.id));
-    const sharedToken = ownToken.set || !session.repo ? { set: false } : await ctx.secretAdmin.info(GITHUB_TOKEN_DEFAULT_SECRET);
-    const credential = ownToken.set ? "session" : sharedToken.set ? "default" : "none";
+    const appConfigured = session.repo ? await githubAppConfigured(ctx, session.repo) : false;
+    const sharedToken = ownToken.set || !session.repo || appConfigured ? { set: false } : await ctx.secretAdmin.info(GITHUB_TOKEN_DEFAULT_SECRET);
+    const credential = ownToken.set ? "session" : appConfigured ? "app" : sharedToken.set ? "default" : "none";
+    const appSlug = credential === "app" ? await githubAppSlug(ctx) : null;
     return {
       ...session,
       runState: run?.state,
@@ -188,6 +212,7 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
         repo: session.repo ?? null,
         branch: session.branch ?? null,
         credential,
+        ...(appSlug ? { appSlug } : {}),
         merge: guru?.mergeFromCloud === true,
         onBehalfOf: /^[A-Za-z0-9-]+$/.test(login) ? login : null,
       },

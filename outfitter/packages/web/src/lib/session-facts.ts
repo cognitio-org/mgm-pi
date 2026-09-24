@@ -8,7 +8,7 @@ export interface GithubCluster {
   /** "owner/repo @ branch", or null when neither side has a repository. */
   repo: string | null;
   noRepository: boolean;
-  credential: "session token" | "shared token" | "no token";
+  credential: string;
   onBehalfOf: string | null;
   mergeLabel: "merge allowed" | "merge off";
   /** The broker is pinned to the floppy's branch. */
@@ -30,7 +30,16 @@ export function githubCluster(session: SessionRepoFields | null | undefined): Gi
   return {
     repo,
     noRepository: !repo,
-    credential: gh.credential === "session" ? "session token" : gh.credential === "default" ? "shared token" : "no token",
+    credential:
+      gh.credential === "session"
+        ? "session token"
+        : gh.credential === "default"
+          ? "shared token"
+          : gh.credential === "app"
+            ? gh.appSlug
+              ? `acting as ${gh.appSlug}[bot]`
+              : "acting as the GitHub App"
+            : "no token",
     onBehalfOf: gh.onBehalfOf,
     mergeLabel: gh.merge ? "merge allowed" : "merge off",
     branchOnly: Boolean(gh.repo),

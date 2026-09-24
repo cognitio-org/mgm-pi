@@ -1,6 +1,8 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { buildTestApp, seedGuru } from "./helpers.ts";
+import { GITHUB_APP_ID_SECRET, GITHUB_APP_INSTALLATION_SECRET, GITHUB_APP_KEY_SECRET, GITHUB_APP_SLUG_SECRET } from "../src/github-app.ts";
+import { GITHUB_TOKEN_DEFAULT_SECRET } from "../src/secrets.ts";
 
 describe("POST /api/sessions", () => {
   test("creates a session, wakes a queued->provisioning run, and calls the provider", async () => {
@@ -78,6 +80,17 @@ describe("GET /api/sessions/:id", () => {
     assert.equal(getRes.json().github.merge, false);
     assert.equal(getRes.json().github.onBehalfOf, null);
 
+    const pem = "-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----";
+    await app.secretAdmin.addVersion(GITHUB_APP_ID_SECRET, "42");
+    await app.secretAdmin.addVersion(GITHUB_APP_KEY_SECRET, pem);
+    await app.secretAdmin.addVersion(GITHUB_APP_INSTALLATION_SECRET, "7");
+    await app.secretAdmin.addVersion(GITHUB_APP_SLUG_SECRET, "outfitter");
+    const asApp = await app.fastify.inject({ method: "GET", url: `/api/sessions/${session.id}` });
+    assert.equal(asApp.json().github.credential, "app");
+    assert.equal(asApp.json().github.appSlug, "outfitter");
+    assert.equal(asApp.body.includes(pem), false);
+    assert.equal(asApp.body.includes("not-a-real-key"), false);
+
     await app.fastify.inject({ method: "POST", url: `/api/sessions/${session.id}/abort` });
     const afterAbortRun = await app.store.runs.findActiveForSession(session.id);
     await app.store.runs.update(afterAbortRun!.id, { state: "stopped" });
@@ -89,6 +102,53 @@ describe("GET /api/sessions/:id", () => {
     const getAfter = await app.fastify.inject({ method: "GET", url: `/api/sessions/${session.id}` });
     assert.equal(getAfter.json().runState, "stopped");
     assert.equal(getAfter.json().runStateReason, undefined, "only a failed run explains itself");
+
+    await app.fastify.close();
+  });
+
+  test("credential is app only when the App secrets and the repo are ones mint will accept", async () => {
+    const app = await buildTestApp();
+    await seedGuru(app.store);
+    const pem = "-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----";
+    await app.secretAdmin.addVersion(GITHUB_TOKEN_DEFAULT_SECRET, "ghp_shared_token_value_9876");
+    const createRes = await app.fastify.inject({
+      method: "POST",
+      url: "/api/sessions",
+      payload: { guruId: "test-guru", repo: "https://github.com/o/r.git", prompt: "hello" },
+    });
+    const { session } = createRes.json();
+    const get = async () => app.fastify.inject({ method: "GET", url: `/api/sessions/${session.id}` });
+
+    const before = await get();
+    assert.equal(before.json().github.credential, "default");
+
+    await app.secretAdmin.addVersion(GITHUB_APP_ID_SECRET, "nope");
+    await app.secretAdmin.addVersion(GITHUB_APP_KEY_SECRET, pem);
+    await app.secretAdmin.addVersion(GITHUB_APP_INSTALLATION_SECRET, "7");
+    const badId = await get();
+    assert.equal(badId.json().github.credential, "default");
+    assert.equal(badId.body.includes("not-a-real-key"), false);
+    assert.equal(badId.body.includes(pem), false);
+
+    await app.secretAdmin.addVersion(GITHUB_APP_ID_SECRET, "42");
+    await app.secretAdmin.addVersion(GITHUB_APP_SLUG_SECRET, "outfitter");
+    const asUrl = await get();
+    assert.equal(asUrl.json().github.credential, "app");
+    assert.equal(asUrl.json().github.appSlug, "outfitter");
+
+    await app.store.sessions.update(session.id, { repo: "o/r.git" });
+    const asShorthand = await get();
+    assert.equal(asShorthand.json().github.credential, "app");
+
+    await app.secretAdmin.addVersion(GITHUB_APP_KEY_SECRET, "not-a-pem");
+    const badKey = await get();
+    assert.equal(badKey.json().github.credential, "default");
+
+    await app.secretAdmin.addVersion(GITHUB_APP_KEY_SECRET, pem);
+    await app.store.sessions.update(session.id, { repo: "not a repo" });
+    const badRepo = await get();
+    assert.equal(badRepo.json().github.credential, "default");
+    assert.equal(badRepo.body.includes("not-a-real-key"), false);
 
     await app.fastify.close();
   });

@@ -190,6 +190,33 @@ the page and never moved the fleet, because `release.sh` deploys the page first.
    session can reach — if a sandbox leaks it, an org-wide token leaks every repo it covers. Mint a
    per-session PAT for anything sensitive: a private or production repo, a session with push
    rights somewhere that matters, a session run by someone who shouldn't reach the rest of the org.
+   **GitHub App.** When these three secrets are all set, a repo session with no
+   `outfitter-github-token-<sessionId>` of its own gets an installation token instead of
+   `outfitter-github-token-default`. The token is minted for that session's repo and expires in
+   about an hour; the API sends `github.credential` on each hello and again before it expires. The private key stays in
+   the API. Create one App on the `cognitio-org` account (the same App E6 webhooks will use),
+   install it on the repos cloud sessions touch, and store:
+
+   ```bash
+   printf '%s' "<numeric App id>" \
+     | gcloud secrets create outfitter-github-app-id --project=outfitter-509211 --data-file=-
+   printf '%s' "<PEM private key, including the BEGIN line>" \
+     | gcloud secrets create outfitter-github-app-private-key --project=outfitter-509211 --data-file=-
+   printf '%s' "<numeric installation id>" \
+     | gcloud secrets create outfitter-github-app-installation-id --project=outfitter-509211 --data-file=-
+   # optional, shown on the session page. Not a credential.
+   printf '%s' "<app slug>" \
+     | gcloud secrets create outfitter-github-app-slug --project=outfitter-509211 --data-file=-
+   ```
+
+   Permissions: Contents write, Pull requests write, Issues write, Checks read, Actions read,
+   Metadata read. No user-authorization callback in this slice. Until the three required secrets
+   exist, runs keep using the PAT path above. A per-session PAT still wins when it is set.
+
+   Store the private key with the gcloud command above. Operator settings does not list it: a PEM
+   contains newlines, and the Test button must not send that key to GitHub. The App id, installation
+   id, and slug are listed there; their Test button does not call GitHub.
+
    `outfitter-github-token-default` exists so that *not* doing so is merely looser rather than
    fatal — before it, creating a repo session through the UI was impossible until an operator
    minted a PAT by hand, against a session id that only exists once the session has been created.

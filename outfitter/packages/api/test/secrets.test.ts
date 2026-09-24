@@ -4,7 +4,9 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 import { GcpSecretsBroker, GITHUB_TOKEN_DEFAULT_SECRET } from "../src/secrets.ts";
+import { GITHUB_APP_ID_SECRET, GITHUB_APP_INSTALLATION_SECRET, GITHUB_APP_KEY_SECRET, GithubAppTokens } from "../src/github-app.ts";
 import type { Session, Guru } from "../src/store/types.ts";
 
 function testSession(overrides: Partial<Session> = {}): Session {
@@ -105,6 +107,101 @@ describe("GcpSecretsBroker", () => {
   // Neither secret exists: still "" rather than a throw, because that's what agentlink.ts's
   // buildRunSpec turns into the terminal MissingGithubTokenError for a *repo* session (and
   // deliberately ignores for a repo-less one).
+  test("a configured GitHub App is minted and the shared PAT is left unused", async () => {
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const pem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
+    const requested: string[] = [];
+    const fetchSecret = async (secretId: string) => {
+      requested.push(secretId);
+      if (secretId === GITHUB_APP_ID_SECRET) return "42";
+      if (secretId === GITHUB_APP_INSTALLATION_SECRET) return "7";
+      if (secretId === GITHUB_APP_KEY_SECRET) return pem;
+      if (secretId === GITHUB_TOKEN_DEFAULT_SECRET) return "shared-token";
+      throw notFoundError();
+    };
+    const app = new GithubAppTokens(
+      async (secretId) => {
+        try { return (await fetchSecret(secretId)).trim(); } catch { return ""; }
+      },
+      (async (url: string) => {
+        if (String(url).includes("/installation/repositories")) {
+          return new Response(JSON.stringify({ repositories: [{ full_name: "o/r" }] }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ token: "ghs_from_app", expires_at: "2026-09-24T06:00:00Z" }), { status: 201 });
+      }) as typeof fetch,
+    );
+    const broker = new GcpSecretsBroker("proj", fetchSecret, app);
+    const secrets = await broker.secretsForRun(testSession(), testGuru());
+    assert.equal(secrets.githubToken, "ghs_from_app");
+    assert.equal(secrets.githubTokenExpiresAt, "2026-09-24T06:00:00Z");
+    assert.ok(!requested.includes(GITHUB_TOKEN_DEFAULT_SECRET));
+    assert.equal(JSON.stringify(secrets).includes(pem), false);
+  });
+
+  test("a non-404 error reading the App id falls back to the shared PAT", async () => {
+    const broker = new GcpSecretsBroker("proj", async (secretId) => {
+      if (secretId === GITHUB_TOKEN_DEFAULT_SECRET) return "shared-token";
+      if (secretId === GITHUB_APP_ID_SECRET) {
+        const err = new Error("unavailable") as Error & { response: { status: number } };
+        err.response = { status: 503 };
+        throw err;
+      }
+      throw notFoundError();
+    });
+    const secrets = await broker.secretsForRun(testSession(), testGuru());
+    assert.equal(secrets.githubToken, "shared-token");
+    assert.equal(secrets.githubTokenExpiresAt, undefined);
+  });
+
+  test("an unusable App private key falls back to the shared PAT", async () => {
+    const broker = new GcpSecretsBroker("proj", async (secretId) => {
+      if (secretId === GITHUB_APP_ID_SECRET) return "42";
+      if (secretId === GITHUB_APP_INSTALLATION_SECRET) return "7";
+      if (secretId === GITHUB_APP_KEY_SECRET) return "-----BEGIN PRIVATE KEY-----\nnot-a-pem\n-----END PRIVATE KEY-----";
+      if (secretId === GITHUB_TOKEN_DEFAULT_SECRET) return "shared-token";
+      throw notFoundError();
+    });
+    const secrets = await broker.secretsForRun(testSession(), testGuru());
+    assert.equal(secrets.githubToken, "shared-token");
+    assert.equal(secrets.githubTokenExpiresAt, undefined);
+  });
+
+  test("a failed refresh does not replace the installation token with the shared PAT", async () => {
+    const broker = new GcpSecretsBroker("proj", async (secretId) => {
+      if (secretId === GITHUB_TOKEN_DEFAULT_SECRET) return "shared-token";
+      if (secretId === GITHUB_APP_ID_SECRET) return "42";
+      if (secretId === GITHUB_APP_INSTALLATION_SECRET) return "7";
+      if (secretId === GITHUB_APP_KEY_SECRET) return "-----BEGIN PRIVATE KEY-----\nnot-a-pem\n-----END PRIVATE KEY-----";
+      throw notFoundError();
+    });
+    assert.equal(await broker.refreshGithubAppToken(testSession()), undefined);
+    const secrets = await broker.secretsForRun(testSession(), testGuru());
+    assert.equal(secrets.githubToken, "shared-token");
+  });
+
+  test("a refresh after a per-session PAT is added returns that PAT and stops the App", async () => {
+    const broker = new GcpSecretsBroker("proj", async (secretId) => {
+      if (secretId === "outfitter-github-token-s1") return "own-token";
+      if (secretId === GITHUB_APP_ID_SECRET) return "42";
+      if (secretId === GITHUB_APP_INSTALLATION_SECRET) return "7";
+      if (secretId === GITHUB_APP_KEY_SECRET) return "-----BEGIN PRIVATE KEY-----\nnot-used\n-----END PRIVATE KEY-----";
+      throw notFoundError();
+    });
+    const next = await broker.refreshGithubAppToken(testSession());
+    assert.deepEqual(next, { token: "own-token" });
+  });
+
+  test("a session PAT wins over a configured GitHub App", async () => {
+    const broker = new GcpSecretsBroker("proj", async (secretId) => {
+      if (secretId === "outfitter-github-token-s1") return "own-token";
+      if (secretId === GITHUB_APP_ID_SECRET) return "42";
+      throw notFoundError();
+    });
+    const secrets = await broker.secretsForRun(testSession(), testGuru());
+    assert.equal(secrets.githubToken, "own-token");
+    assert.equal(secrets.githubTokenExpiresAt, undefined);
+  });
+
   test("resolves to \"\" when neither the per-session nor the shared github token exists", async () => {
     const requested: string[] = [];
     const broker = new GcpSecretsBroker("proj", async (secretId) => {

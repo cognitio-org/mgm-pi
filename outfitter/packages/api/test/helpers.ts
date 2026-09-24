@@ -10,10 +10,12 @@ import type { GithubBroker } from "../src/github-broker.ts";
 import { buildApp, type App } from "../src/server.ts";
 import type { SandboxProvider } from "@outfitter/provider-local";
 import { SandboxProviders } from "../src/providers/registry.ts";
+import type { GithubRefreshTiming } from "../src/agentlink.ts";
 
 export interface TestApp extends App {
   store: Store;
   provider: NoopProvider;
+  secretAdmin: SecretAdmin;
 }
 
 export interface BuildTestAppOptions {
@@ -32,6 +34,8 @@ export interface BuildTestAppOptions {
    * GkeProvider under "gke", for hooks.test.ts's warm-pool route) -- see registry.ts's
    * createProviders. Keyed by SandboxProviderName; the default provider is always NoopProvider. */
   extraProviders?: Partial<Record<SandboxProviderName, () => Promise<SandboxProvider>>>;
+  /** Shortens installation-token refresh waits. */
+  githubRefresh?: GithubRefreshTiming;
 }
 
 export async function buildTestApp(
@@ -53,9 +57,17 @@ export async function buildTestApp(
     [config.sandboxProvider]: async () => provider,
     ...opts.extraProviders,
   });
-  const app = await buildApp({ store, config, provider: providers, secretsBroker, secretAdmin, github: opts.github });
+  const app = await buildApp({
+    store,
+    config,
+    provider: providers,
+    secretsBroker,
+    secretAdmin,
+    github: opts.github,
+    githubRefresh: opts.githubRefresh,
+  });
   await app.fastify.ready();
-  return { ...app, store, provider };
+  return { ...app, store, provider, secretAdmin };
 }
 
 export async function seedGuru(store: Store, overrides: Partial<Guru> = {}): Promise<Guru> {

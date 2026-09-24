@@ -1179,3 +1179,311 @@ describe("api-side refusals explain themselves", () => {
     await app.fastify.close();
   });
 });
+
+describe("GitHub App installation-token refresh", () => {
+  const soon = (extraMs: number) => new Date(Date.now() + 5 * 60_000 + extraMs).toISOString();
+  const later = () => new Date(Date.now() + 60 * 60_000).toISOString();
+
+  function nextCredentialWithin(agent: SocketHandle, ms: number): Promise<{ t?: string; token?: string }> {
+    return Promise.race([
+      agent.nextCredential(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`no credential within ${ms}ms`)), ms)),
+    ]);
+  }
+
+  test("a superseded socket does not disarm the replacement's refresh", async () => {
+    const app = await buildTestApp(
+      { AGENT_SOCKET_GRACE_MS: "0" },
+      {
+        githubRefresh: { floorMs: 5, retryMs: 20, maxAttempts: 5 },
+        secretsBroker: {
+          async secretsForRun() {
+            return { githubToken: "ghs_original", litellmKey: "k", githubTokenExpiresAt: soon(200) };
+          },
+          async defaultLitellmKey() {
+            return "k";
+          },
+          async refreshGithubAppToken() {
+            return { token: "ghs_replacement", expiresAt: later() };
+          },
+        },
+      },
+    );
+    const { session, runId, runToken } = await makeRunningSession(app);
+    const stale = await openAgentSocket(app, runId);
+    sendHello(stale, runId, session.id, runToken);
+    assert.equal((await stale.nextMessage()).t, "run.spec");
+
+    const replacement = await openAgentSocket(app, runId);
+    sendHello(replacement, runId, session.id, runToken);
+    assert.equal((await replacement.nextMessage()).t, "run.spec");
+    // The real close of `stale` is ordered by the socket. Call the same handler with a socket that
+    // is not the one `buildRunSpec` just armed, which is the race when that close lands late.
+    (app.agentLink as unknown as { onAgentSocketClosed(runId: string, socket: object): void }).onAgentSocketClosed(runId, {});
+
+    assert.equal((await replacement.nextCredential()).token, "ghs_original");
+    const frame = await nextCredentialWithin(replacement, 1500);
+    assert.equal(frame.t, "github.credential");
+    assert.equal(frame.token, "ghs_replacement");
+    const stored = await app.store.runs.findById(runId);
+    assert.equal(JSON.stringify(stored?.pending).includes("ghs_replacement"), false);
+
+    const displaced = await stale.nextClose();
+    assert.equal(displaced.code, 1001);
+    replacement.send({ t: "bye", reason: "stop" });
+    await replacement.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("a credential that misses the open socket is not stored on the run", async () => {
+    let release: (token: { token: string; expiresAt: string } | undefined) => void = () => {};
+    let markStarted: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const app = await buildTestApp(
+      {},
+      {
+        githubRefresh: { floorMs: 5, retryMs: 30, maxAttempts: 2 },
+        secretsBroker: {
+          async secretsForRun() {
+            return { githubToken: "ghs_original", litellmKey: "k", githubTokenExpiresAt: soon(20) };
+          },
+          async defaultLitellmKey() {
+            return "k";
+          },
+          refreshGithubAppToken() {
+            markStarted();
+            return new Promise((resolve) => {
+              release = resolve;
+            });
+          },
+        },
+      },
+    );
+    const { session, runId, runToken } = await makeRunningSession(app);
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    assert.equal((await agent.nextMessage()).t, "run.spec");
+    await started;
+    agent.close();
+    await agent.nextClose();
+    await waitFor(() => app.agentLink.hasSocket(runId) === false);
+    release({ token: "ghs_replacement", expiresAt: later() });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    const stored = await app.store.runs.findById(runId);
+    assert.equal(JSON.stringify(stored).includes("ghs_replacement"), false);
+    assert.equal(JSON.stringify(stored?.pending).includes("github.credential"), false);
+    const abort = await app.fastify.inject({ method: "POST", url: `/api/sessions/${session.id}/abort` });
+    assert.equal(abort.body.includes("ghs_replacement"), false);
+
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("a failed refresh retries, and a PAT run is not refreshed", async () => {
+    let mints = 0;
+    const app = await buildTestApp(
+      {},
+      {
+        githubRefresh: { floorMs: 5, retryMs: 20, maxAttempts: 5 },
+        secretsBroker: {
+          async secretsForRun() {
+            return { githubToken: "ghs_original", litellmKey: "k", githubTokenExpiresAt: soon(20) };
+          },
+          async defaultLitellmKey() {
+            return "k";
+          },
+          async refreshGithubAppToken() {
+            mints += 1;
+            if (mints < 3) return undefined;
+            return { token: "ghs_replacement", expiresAt: later() };
+          },
+        },
+      },
+    );
+    const { session, runId, runToken } = await makeRunningSession(app);
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    assert.equal((await agent.nextMessage()).t, "run.spec");
+    assert.equal((await agent.nextCredential()).token, "ghs_original");
+    const frame = await nextCredentialWithin(agent, 1500);
+    assert.equal(frame.t, "github.credential");
+    assert.equal(frame.token, "ghs_replacement");
+    assert.equal(mints, 3);
+    const stored = await app.store.runs.findById(runId);
+    assert.equal(JSON.stringify(stored).includes("ghs_replacement"), false);
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+
+    let patMints = 0;
+    const pat = await buildTestApp(
+      {},
+      {
+        githubRefresh: { floorMs: 5, retryMs: 20, maxAttempts: 5 },
+        secretsBroker: {
+          async secretsForRun() {
+            return { githubToken: "ghp_session", litellmKey: "k" };
+          },
+          async defaultLitellmKey() {
+            return "k";
+          },
+          async refreshGithubAppToken() {
+            patMints += 1;
+            return { token: "ghs_should_not_replace", expiresAt: later() };
+          },
+        },
+      },
+    );
+    const second = await makeRunningSession(pat, { id: "s-pat" });
+    const patAgent = await openAgentSocket(pat, second.runId);
+    sendHello(patAgent, second.runId, second.session.id, second.runToken);
+    assert.equal((await patAgent.nextMessage()).t, "run.spec");
+    assert.equal((await patAgent.nextCredential()).token, "ghp_session");
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    assert.equal(patMints, 0);
+    assert.equal(patAgent.credentialCount(), 0);
+    assert.equal(patAgent.messageCount(), 0);
+    patAgent.send({ t: "bye", reason: "stop" });
+    await patAgent.nextClose();
+    pat.stopBackgroundTasks();
+    await pat.fastify.close();
+  });
+
+  test("refresh stops after the cap and leaves the current token in place", async () => {
+    let mints = 0;
+    const app = await buildTestApp(
+      {},
+      {
+        githubRefresh: { floorMs: 5, retryMs: 20, maxAttempts: 2 },
+        secretsBroker: {
+          async secretsForRun() {
+            return { githubToken: "ghs_original", litellmKey: "k", githubTokenExpiresAt: soon(15) };
+          },
+          async defaultLitellmKey() {
+            return "k";
+          },
+          async refreshGithubAppToken() {
+            mints += 1;
+            return undefined;
+          },
+        },
+      },
+    );
+    const { session, runId, runToken } = await makeRunningSession(app);
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    assert.equal((await agent.nextMessage()).t, "run.spec");
+    await waitFor(() => mints >= 3, 1500);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    assert.equal(mints, 3);
+    assert.equal(agent.messageCount(), 0);
+    const stored = await app.store.runs.findById(runId);
+    assert.equal(stored?.pending.length, 0);
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("a reconnect delivers the token the new hello resolved, because a second run.spec is ignored", async () => {
+    const tokens = ["ghs_first", "ghs_second"];
+    let n = 0;
+    const app = await buildTestApp(
+      {},
+      {
+        githubRefresh: { floorMs: 60_000, retryMs: 60_000, maxAttempts: 1 },
+        secretsBroker: {
+          async secretsForRun() {
+            const token = tokens[Math.min(n, tokens.length - 1)]!;
+            n += 1;
+            return { githubToken: token, litellmKey: "k", githubTokenExpiresAt: new Date(Date.now() + 60 * 60_000).toISOString() };
+          },
+          async defaultLitellmKey() {
+            return "k";
+          },
+          async refreshGithubAppToken() {
+            return { token: "ghs_from_refresh", expiresAt: new Date(Date.now() + 60 * 60_000).toISOString() };
+          },
+        },
+      },
+    );
+    const { session, runId, runToken } = await makeRunningSession(app);
+    const first = await openAgentSocket(app, runId);
+    sendHello(first, runId, session.id, runToken);
+    assert.equal((await first.nextMessage()).t, "run.spec");
+    assert.equal((await first.nextCredential()).token, "ghs_first");
+    first.close();
+    await first.nextClose();
+    await waitFor(() => app.agentLink.hasSocket(runId) === false);
+
+    const again = await openAgentSocket(app, runId);
+    sendHello(again, runId, session.id, runToken, 1);
+    assert.equal((await again.nextMessage()).t, "run.spec");
+    assert.equal((await again.nextCredential()).token, "ghs_second");
+    assert.equal(again.credentialCount(), 0);
+
+    again.send({ t: "bye", reason: "stop" });
+    await again.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("a mint that finishes after a new hello does not overwrite that hello's token", async () => {
+    let releaseRefresh: (token: { token: string; expiresAt: string } | undefined) => void = () => {};
+    let markRefresh: () => void = () => {};
+    const refreshStarted = new Promise<void>((resolve) => {
+      markRefresh = resolve;
+    });
+    let hellos = 0;
+    const app = await buildTestApp(
+      { AGENT_SOCKET_GRACE_MS: "0" },
+      {
+        githubRefresh: { floorMs: 5, retryMs: 60_000, maxAttempts: 2 },
+        secretsBroker: {
+          async secretsForRun() {
+            hellos += 1;
+            if (hellos === 1) {
+              return { githubToken: "ghs_first", litellmKey: "k", githubTokenExpiresAt: soon(15) };
+            }
+            return { githubToken: "ghs_second", litellmKey: "k", githubTokenExpiresAt: later() };
+          },
+          async defaultLitellmKey() {
+            return "k";
+          },
+          refreshGithubAppToken() {
+            markRefresh();
+            return new Promise((resolve) => {
+              releaseRefresh = resolve;
+            });
+          },
+        },
+      },
+    );
+    const { session, runId, runToken } = await makeRunningSession(app);
+    const first = await openAgentSocket(app, runId);
+    sendHello(first, runId, session.id, runToken);
+    assert.equal((await first.nextCredential()).token, "ghs_first");
+    await refreshStarted;
+
+    const again = await openAgentSocket(app, runId);
+    sendHello(again, runId, session.id, runToken, 1);
+    assert.equal((await again.nextCredential()).token, "ghs_second");
+    releaseRefresh({ token: "ghs_stale", expiresAt: later() });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assert.equal(again.credentialCount(), 0);
+    const stored = await app.store.runs.findById(runId);
+    assert.equal(JSON.stringify(stored).includes("ghs_stale"), false);
+
+    const displaced = await first.nextClose();
+    assert.equal(displaced.code, 1001);
+    again.send({ t: "bye", reason: "stop" });
+    await again.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+});

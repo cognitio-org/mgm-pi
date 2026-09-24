@@ -32,6 +32,9 @@ export function makeQueue<T>() {
 export interface SocketHandle {
   send: (frame: unknown) => void;
   nextMessage: () => Promise<any>;
+  /** `github.credential` frames, which nextMessage skips so older tests keep reading spec and acks. */
+  nextCredential: () => Promise<any>;
+  credentialCount: () => number;
   // Resolves once the socket has closed (either side initiated) *and* force-terminates it
   // afterwards. `ws` keeps a ~30s ref'd close timer alive until the underlying socket fully ends,
   // which the injectWS test transport doesn't always signal promptly; terminate() clears it so
@@ -51,13 +54,18 @@ export async function openAgentSocket(
   token = "test-agent-token",
 ): Promise<SocketHandle> {
   const messages = makeQueue<any>();
+  const credentials = makeQueue<any>();
   const closes = makeQueue<{ code: number; reason: string }>();
   const ws = await app.fastify.injectWS(
     `/agent/ws?run=${runId}`,
     { headers: { authorization: `Bearer ${token}` } } as any,
     {
       onInit(socket: any) {
-        socket.on("message", (data: Buffer) => messages.push(JSON.parse(data.toString())));
+        socket.on("message", (data: Buffer) => {
+          const frame = JSON.parse(data.toString());
+          if (frame?.t === "github.credential") credentials.push(frame);
+          else messages.push(frame);
+        });
         socket.on("close", (code: number, reason: Buffer) => closes.push({ code, reason: reason?.toString() ?? "" }));
       },
     } as any,
@@ -65,6 +73,8 @@ export async function openAgentSocket(
   return {
     send: (frame: unknown) => ws.send(JSON.stringify(frame)),
     nextMessage: messages.next,
+    nextCredential: credentials.next,
+    credentialCount: credentials.count,
     nextClose: async () => {
       const close = await closes.next();
       ws.terminate();

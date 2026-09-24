@@ -60,7 +60,9 @@ export interface SessionDetail {
   github?: {
     repo: string | null;
     branch: string | null;
-    credential: "session" | "default" | "none";
+    credential: "session" | "default" | "none" | "app";
+    /** The GitHub App slug when `credential` is `app` and the slug secret is a login-shaped name. */
+    appSlug?: string | null;
     merge: boolean;
     onBehalfOf: string | null;
   };

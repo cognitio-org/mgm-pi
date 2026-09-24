@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { Octokit } from "@octokit/rest";
 import type { SecretsBroker } from "./secrets.ts";
 import type { GithubIdempotencyRecord, GithubWriteProgress, Session, Store } from "./store/types.ts";
+import { parseSessionRepo } from "./session-repo.ts";
 
 const PENDING_MARK = "idempotency pending";
 const LOW_REMAINING = 10;
@@ -161,28 +162,6 @@ export function rateLimitFromHeaders(headers: Record<string, string>): RateLimit
   return { remaining, reset };
 }
 
-/** `owner/repo`, `https://github.com/owner/repo[.git]`, or `git@github.com:owner/repo.git`. */
-export function parseSessionRepo(repo: string): { owner: string; repo: string } | undefined {
-  const raw = repo.trim();
-  if (!raw) return undefined;
-  const ssh = /^git@github\.com:([^/\s]+)\/([^/\s]+?)(?:\.git)?$/.exec(raw);
-  if (ssh?.[1] && ssh[2]) return { owner: ssh[1], repo: ssh[2] };
-  if (raw.includes("://")) {
-    try {
-      const url = new URL(raw);
-      if (url.hostname !== "github.com" && url.hostname !== "www.github.com") return undefined;
-      const parts = url.pathname.replace(/^\/+/, "").replace(/\.git$/, "").split("/").filter(Boolean);
-      if (!parts[0] || !parts[1]) return undefined;
-      return { owner: decodeURIComponent(parts[0]), repo: decodeURIComponent(parts[1]) };
-    } catch {
-      return undefined;
-    }
-  }
-  const short = /^([^/\s]+)\/([^/\s]+?)(?:\.git)?$/.exec(raw);
-  if (!short?.[1] || !short[2]) return undefined;
-  return { owner: short[1], repo: short[2] };
-}
-
 export class GithubBroker {
   private readonly memory = new Map<string, Map<string, GithubIdempotencyRecord>>();
   private readonly inflight = new Map<string, Promise<GithubOpResult>>();
@@ -304,16 +283,20 @@ export class GithubBroker {
     return this.settle(runId, op, key, write, result);
   }
 
-  private async footerFor(session: Session): Promise<string> {
+  private async ownerLogin(session: Session): Promise<string> {
     if (!session.ownerEmail) return "";
     try {
       const user = await this.store.users.findByEmail(session.ownerEmail);
       const login = user?.githubLogin?.replace(/^@/, "").trim() ?? "";
-      if (!login || !/^[A-Za-z0-9-]+$/.test(login)) return "";
-      return `Outfitter, on behalf of @${login}`;
+      return /^[A-Za-z0-9][A-Za-z0-9-]*$/.test(login) ? login : "";
     } catch {
       return "";
     }
+  }
+
+  private async footerFor(session: Session): Promise<string> {
+    const login = await this.ownerLogin(session);
+    return login ? `Outfitter, on behalf of @${login}` : "";
   }
 
   private async settle(
@@ -772,10 +755,17 @@ export class GithubBroker {
     if (assigneeIn && !loginOk(assigneeIn)) return { ok: false, error: `"${assigneeIn}" is not a login.` };
     let assignee = assigneeIn;
     if (assignee === "@me") {
-      const me = await this.call(ctx, "GET /user", {});
-      if (!me.ok) return { ok: false, error: me.error };
-      assignee = String(me.data?.login ?? "");
-      if (!assignee) return { ok: false, error: "not permitted" };
+      // An installation token is the App, not a user: GET /user is 403 and would fail the whole list.
+      if (ctx.token.startsWith("ghs_")) {
+        const login = await this.ownerLogin(ctx.session);
+        if (!login) return { ok: false, error: "an installation token has no GitHub user; pass a login instead of @me" };
+        assignee = login;
+      } else {
+        const me = await this.call(ctx, "GET /user", {});
+        if (!me.ok) return { ok: false, error: me.error };
+        assignee = String(me.data?.login ?? "");
+        if (!assignee) return { ok: false, error: "not permitted" };
+      }
     }
     const limit = limitOf(args.limit);
     const res = await this.call(ctx, "GET /repos/{owner}/{repo}/issues", {

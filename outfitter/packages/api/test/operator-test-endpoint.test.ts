@@ -90,6 +90,17 @@ describe("testSecretValue: tunnel", () => {
   });
 });
 
+describe("testSecretValue: untested", () => {
+  test("does not call fetch or put the value in an Authorization header", async () => {
+    const fetchImpl = fakeFetch(() => {
+      throw new Error("fetch should not be called");
+    });
+    const pem = "-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----";
+    const result = await testSecretValue("untested", pem, "", "", fetchImpl);
+    assert.deepEqual(result, { ok: false, detail: "This secret is not probed." });
+  });
+});
+
 describe("testSecretValue: network failure / timeout", () => {
   test("not ok, with the failure reason as detail, when fetch itself rejects", async () => {
     const fetchImpl = (async () => {

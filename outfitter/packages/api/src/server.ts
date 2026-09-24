@@ -7,6 +7,7 @@ import fastifyWebsocket from "@fastify/websocket";
 import type { Store } from "./store/types.ts";
 import type { Config } from "./config.ts";
 import type { SandboxProvider } from "@outfitter/provider-local";
+import { SandboxProviders } from "./providers/registry.ts";
 import type { SecretsBroker, SecretAdmin } from "./secrets.ts";
 import { identityFromRequest, identityFromLinkRequest, verifyAgentToken, bearerFromHeader } from "./auth.ts";
 import { RunManager } from "./runs.ts";
@@ -22,7 +23,11 @@ import type { GithubBroker } from "./github-broker.ts";
 export interface BuildAppOptions {
   store: Store;
   config: Config;
-  provider: SandboxProvider;
+  /** The full registry in production (main.ts's createProviders(config)), so a run started under
+   * a since-abandoned SANDBOX_PROVIDER default can still be stopped/reconciled through its own
+   * provider. Tests may still pass a bare SandboxProvider (wrapped as the registry's sole,
+   * default entry -- same source-compat rule as RunManager's constructor, runs.ts). */
+  provider: SandboxProvider | SandboxProviders;
   secretsBroker: SecretsBroker;
   /** Operator settings routes only (routes/operator.ts): Secret Manager admin access behind an
    * interface, same shape as secretsBroker (see secrets.ts's "SecretAdmin" section). */
@@ -45,7 +50,9 @@ export interface App {
 }
 
 export async function buildApp(opts: BuildAppOptions): Promise<App> {
-  const { store, config, provider, secretsBroker, secretAdmin } = opts;
+  const { store, config, secretsBroker, secretAdmin } = opts;
+  const providers =
+    opts.provider instanceof SandboxProviders ? opts.provider : SandboxProviders.single(config.sandboxProvider, opts.provider);
   // forceCloseConnections: idle keep-alive/websocket sockets otherwise stall fastify.close() for
   // as long as they're open (observed in tests: ~30s before a lingering ws finally times out).
   const fastify = Fastify({ logger: true, forceCloseConnections: true });
@@ -60,7 +67,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
 
   const sse = new SseHub();
   const ssePoller = new SsePoller(sse, store);
-  const runs = new RunManager(store, provider, config);
+  const runs = new RunManager(store, providers, config);
   const laptopProbe = new LaptopProbe({
     tunnelDomain: config.tunnelDomainLmstudio,
     token: config.localTunnelToken,
@@ -69,9 +76,12 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   const agentLink = new AgentLink(store, config, secretsBroker, sse, laptopProbe, mail, opts.github);
 
   // Sandbox capacity probe (E2.10, gke-sandbox-provider.md §2.4 gap G3): duck-typed on the
-  // optional SandboxProvider.capacity() rather than `instanceof CloudRunProvider`, so a second
-  // cloud provider (gke) doesn't need its own special case here.
-  const sandboxCapacity = provider.capacity ? () => provider.capacity!() : undefined;
+  // *default* provider's optional capacity() rather than `instanceof CloudRunProvider`, so a
+  // second cloud provider (gke) doesn't need its own special case here. Resolved through the
+  // registry (not opts.provider directly), since production now hands buildApp the whole
+  // registry rather than one already-built provider.
+  const defaultProvider = await providers.get(providers.defaultName);
+  const sandboxCapacity = defaultProvider.capacity ? () => defaultProvider.capacity!() : undefined;
   const litellmKey = async () => config.litellmAdminKey || secretsBroker.defaultLitellmKey();
   const providerStatus = new ProviderStatusService({
     store,

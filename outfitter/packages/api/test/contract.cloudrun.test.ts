@@ -52,7 +52,14 @@ function makeCloudRunContract(): ContractInstance {
         },
         cancelExecution: async (request: { name: string }) => {
           const exec = executions.get(request.name);
-          if (exec) exec.completionTime = new Date().toISOString();
+          // C4 (stop is idempotent, including on an already-exited handle): a real Cloud Run
+          // cancelExecution most likely answers FAILED_PRECONDITION (code 9) once the execution
+          // has already reached a terminal phase, and NOT_FOUND (code 5) once it's been GC'd --
+          // reject with both here instead of silently no-op'ing, so C4 actually exercises
+          // CloudRunProvider.stop's swallow-and-treat-as-already-stopped path (cloudrun.ts).
+          if (!exec) throw Object.assign(new Error("execution not found"), { code: 5 });
+          if (exec.completionTime) throw Object.assign(new Error("execution already finished"), { code: 9 });
+          exec.completionTime = new Date().toISOString();
         },
         listExecutions: async () => [Array.from(executions.values())] as const,
       }),

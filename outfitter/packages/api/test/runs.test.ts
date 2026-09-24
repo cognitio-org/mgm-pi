@@ -11,6 +11,7 @@ import { MemoryStore } from "../src/store/memory.ts";
 import { NoopProvider } from "../src/providers/noop.ts";
 import { RunManager } from "../src/runs.ts";
 import type { Run } from "../src/store/types.ts";
+import type { SandboxProvider } from "@outfitter/provider-local";
 
 function makeRun(overrides: Partial<Run> = {}): Run {
   const now = new Date().toISOString();
@@ -83,6 +84,48 @@ describe("RunManager.wake", () => {
     const stored1 = await store.runs.findById(run1.id);
     const stored2 = await store.runs.findById(run2.id);
     assert.notEqual(stored1?.runTokenHash, stored2?.runTokenHash);
+  });
+
+  // Plan §5 item 6 / review finding #7 (PR #124): a start refusal (a future GKE_MAX_ACTIVE
+  // refusal is the motivating case, spec §2.4) must also set statusDetail, the #54 convention
+  // (store/types.ts's Run.statusDetail doc) for the few things a person sees for a run that never
+  // got as far as connecting.
+  test("a provider.start() refusal marks the run failed with reason and statusDetail set", async () => {
+    const store = new MemoryStore();
+    const provider: SandboxProvider = {
+      start: async () => {
+        throw new Error("gke: max active sandboxes (3) reached");
+      },
+      stop: async () => {},
+      status: async () => "unknown",
+    };
+    const config = loadConfig({} as NodeJS.ProcessEnv);
+    const runs = new RunManager(store, provider, config);
+
+    await assert.rejects(() => runs.wake("s1"), /max active sandboxes/);
+
+    const stored = await store.runs.findLatestForSession("s1");
+    assert.equal(stored?.state, "failed");
+    assert.equal(stored?.reason, "gke: max active sandboxes (3) reached");
+    assert.match(stored?.statusDetail ?? "", /failed to start.*max active sandboxes \(3\) reached\. Press Play to start a new one\./);
+  });
+
+  test("a start refusal whose message already ends in '.' doesn't produce a double full stop", async () => {
+    const store = new MemoryStore();
+    const provider: SandboxProvider = {
+      start: async () => {
+        throw new Error("cluster unreachable.");
+      },
+      stop: async () => {},
+      status: async () => "unknown",
+    };
+    const config = loadConfig({} as NodeJS.ProcessEnv);
+    const runs = new RunManager(store, provider, config);
+
+    await assert.rejects(() => runs.wake("s1"));
+
+    const stored = await store.runs.findLatestForSession("s1");
+    assert.equal(stored?.statusDetail, "this run's sandbox failed to start: cluster unreachable. Press Play to start a new one.");
   });
 });
 

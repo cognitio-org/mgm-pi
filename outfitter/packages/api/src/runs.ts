@@ -125,13 +125,16 @@ export class RunManager {
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      // A provider's error message occasionally already ends in its own "." (or "..." etc.); strip
+      // any trailing dots before appending ours so statusDetail doesn't read "...reached.. Press Play".
+      const messageForDetail = message.replace(/\.+$/, "");
       await this.store.runs.update(run.id, {
         state: "failed",
         reason: message,
         // #54's convention (store/types.ts's Run.statusDetail doc): a start refusal is one of the
         // few things a person sees for a run that never got as far as connecting, so it gets a
         // full sentence with a remedy, not just the short `reason` that also goes on the wire.
-        statusDetail: `this run's sandbox failed to start: ${message}. Press Play to start a new one.`,
+        statusDetail: `this run's sandbox failed to start: ${messageForDetail}. Press Play to start a new one.`,
         updatedAt: new Date().toISOString(),
       });
       throw err;

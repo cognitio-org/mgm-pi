@@ -140,9 +140,11 @@ describe("CloudRunProvider", () => {
   });
 
   // gke-sandbox-provider.md §6.2 C6, plan §5 item 3: a stale handle whose execution has since been
-  // garbage-collected must report "exited", not throw -- a throwing status() reads as "unknown" to
-  // the reconciler (runs.ts), which then never notices the run's sandbox is actually gone.
-  test("status() maps a NOT_FOUND getExecution error to 'exited' instead of throwing", async () => {
+  // garbage-collected must report "exited" or "unknown", and must not throw -- the contract itself
+  // (and any other direct status() caller), not reconcileOnce (runs.ts), which treats "unknown"
+  // and "exited" identically anyway (both fall through to stop()-then-mark-failed; only "starting"
+  // is special-cased there).
+  test("status() maps a NOT_FOUND (grpc code 5) getExecution error to 'exited' instead of throwing", async () => {
     const provider = new CloudRunProvider(baseConfig(), {
       executionsClient: async () => ({
         getExecution: async () => {
@@ -155,7 +157,20 @@ describe("CloudRunProvider", () => {
     assert.equal(await provider.status(EXECUTION_NAME), "exited");
   });
 
-  test("status() rethrows a non-NOT_FOUND getExecution error", async () => {
+  test("status() maps a Gaxios-style HTTP 404 (response.status, no grpc code) to 'exited' too", async () => {
+    const provider = new CloudRunProvider(baseConfig(), {
+      executionsClient: async () => ({
+        getExecution: async () => {
+          throw Object.assign(new Error("Not Found"), { response: { status: 404 } });
+        },
+        cancelExecution: async () => {},
+      }),
+    });
+
+    assert.equal(await provider.status(EXECUTION_NAME), "exited");
+  });
+
+  test("status() rethrows a non-NOT_FOUND getExecution error (permission denied)", async () => {
     const provider = new CloudRunProvider(baseConfig(), {
       executionsClient: async () => ({
         getExecution: async () => {
@@ -166,6 +181,65 @@ describe("CloudRunProvider", () => {
     });
 
     await assert.rejects(() => provider.status(EXECUTION_NAME), /permission denied/);
+  });
+
+  test("status() rethrows a network error (ECONNREFUSED) rather than treating it as not-found", async () => {
+    const provider = new CloudRunProvider(baseConfig(), {
+      executionsClient: async () => ({
+        getExecution: async () => {
+          throw Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+        },
+        cancelExecution: async () => {},
+      }),
+    });
+
+    await assert.rejects(() => provider.status(EXECUTION_NAME), /ECONNREFUSED/);
+  });
+
+  // gke-sandbox-provider.md §6.2 C4, plan §5 item 5: stop() must be idempotent, including on an
+  // execution that has already reached a terminal phase on its own -- Cloud Run most likely
+  // answers that cancelExecution call with FAILED_PRECONDITION, and a since-garbage-collected
+  // execution with NOT_FOUND. Both mean "already stopped", not a real failure.
+  test("stop() swallows NOT_FOUND (grpc code 5) from cancelExecution: already gone, not an error", async () => {
+    const cancelCalls: unknown[] = [];
+    const provider = new CloudRunProvider(baseConfig(), {
+      executionsClient: async () => ({
+        getExecution: async () => [{}],
+        cancelExecution: async (request: { name: string }) => {
+          cancelCalls.push(request);
+          throw Object.assign(new Error("execution not found"), { code: 5 });
+        },
+      }),
+    });
+
+    await assert.doesNotReject(() => provider.stop(EXECUTION_NAME));
+    assert.equal(cancelCalls.length, 1);
+  });
+
+  test("stop() swallows FAILED_PRECONDITION (grpc code 9) from cancelExecution: already finished, not an error", async () => {
+    const provider = new CloudRunProvider(baseConfig(), {
+      executionsClient: async () => ({
+        getExecution: async () => [{}],
+        cancelExecution: async () => {
+          throw Object.assign(new Error("execution already finished"), { code: 9 });
+        },
+      }),
+    });
+
+    await assert.doesNotReject(() => provider.stop(EXECUTION_NAME));
+  });
+
+  test("stop() rethrows a cancelExecution error that is neither NOT_FOUND nor FAILED_PRECONDITION", async () => {
+    const provider = new CloudRunProvider(baseConfig(), {
+      executionsClient: async () => ({
+        getExecution: async () => [{}],
+        cancelExecution: async () => {
+          throw Object.assign(new Error("permission denied"), { code: 7 });
+        },
+      }),
+    });
+
+    await assert.rejects(() => provider.stop(EXECUTION_NAME), /permission denied/);
   });
 
   test("capacity() counts non-completed executions via countRunningExecutions", async () => {

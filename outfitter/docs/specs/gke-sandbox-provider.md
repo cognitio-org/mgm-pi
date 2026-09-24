@@ -61,7 +61,7 @@ below point at PR1's actual code, not the pre-PR1 state this section originally 
 interface itself (RunLaunch/SandboxHandle/SandboxStatus) is unchanged; `SandboxProvider` gained the
 optional `capacity()` and `start()`'s return type, per §2.3.
 
-`outfitter/packages/provider-local/src/types.ts:1-53`:
+`outfitter/packages/provider-local/src/types.ts:1-57`:
 
 ```ts
 export interface RunLaunch {
@@ -88,13 +88,14 @@ Where it is used (post-PR1):
 
 | Site | Use |
 |---|---|
-| `packages/api/src/providers/registry.ts` | `SandboxProviders` (lazy, memoized per-name factories) and `createProviders(config)`; `providers/index.ts`'s `createProvider(config)` is now a thin wrapper around `createProviders(config).get(config.sandboxProvider)` |
+| `packages/api/src/providers/registry.ts` | `SandboxProviders` (lazy, memoized per-name factories) and `createProviders(config)`. `providers/index.ts`'s `createProvider(config)` is a thin wrapper around `createProviders(config).get(config.sandboxProvider)` (returns just the default provider), kept for anyone who only wants that; `main.ts` itself calls `createProviders(config)` directly and hands the *whole registry* to `buildApp`, not just the default |
+| `packages/api/src/main.ts`, `server.ts` (`BuildAppOptions.provider`, `buildApp`) | `main.ts` passes `createProviders(config)` (a `SandboxProviders`) as `provider`; `buildApp` accepts either that or a bare `SandboxProvider` (tests' source-compat path, wrapped via `SandboxProviders.single`) and passes the resolved registry straight to `RunManager`, so a run started under a since-abandoned default is still stoppable/reconcilable in production, not only in tests |
 | `packages/api/src/config.ts` (`SandboxProviderName`, `isCloudProvider`) | `SandboxProviderName = "inprocess" \| "docker" \| "cloudrun" \| "gke"`, validated by `envEnum` (default `inprocess`); `isCloudProvider(name)` is true for `cloudrun`/`gke` |
 | `packages/api/src/main.ts` | `assertGkeConfigured(config)` added alongside `assertSandboxOrigin` -- boot fails for `SANDBOX_PROVIDER=gke` with no `GKE_CLUSTER` |
 | `packages/api/src/runs.ts` (`RunManager.wake`, `providerNameFor`) | `wake` resolves the provider via the registry, stores `providerHandle` **and** `sandboxProvider` (which provider made the handle) |
 | `packages/api/src/runs.ts` (`stop`, `reconcileOnce`, `reconcileStoppingOnce`) | each resolves its run's provider via `providerNameFor(run, config.sandboxProvider)` through the registry; an unconfigured provider is logged once and skipped, the state change still applies |
 | `packages/api/src/store/types.ts` (`Run.sandboxProvider`) | records which `SandboxProvider` started the run; absent on legacy rows (`providerNameFor` infers `cloudrun` from a Cloud-Run-shaped `providerHandle`, else falls back to the deployment default) |
-| `packages/api/src/server.ts` (`buildApp`) | capacity is duck-typed on `provider.capacity` instead of `instanceof CloudRunProvider` |
+| `packages/api/src/server.ts` (`buildApp`) | capacity is resolved through the registry (`providers.get(providers.defaultName)`) and duck-typed on that provider's `.capacity` instead of `instanceof CloudRunProvider` |
 | `packages/api/src/providers-status.ts` (`probeSandbox`), `store/types.ts` (`ProviderKind`) | `probeSandbox(name, capacityFn)` replaces `probeCloudRun`; `ProviderKind` includes `"cloudrun"` and `"gke"` |
 | `packages/api/src/config.ts` (`assertSandboxOrigin`, `mailboxWarning`) | both now call `isCloudProvider(config.sandboxProvider)` instead of `=== "cloudrun"` |
 | `deploy/service.sh` (`ENV_VARS=...`), `deploy/config.env` (`SANDBOX_PROVIDER`) | both roles get `SANDBOX_PROVIDER=${SANDBOX_PROVIDER},CLOUDRUN_JOB=...`, read from `config.env` (default `cloudrun`) instead of hard-coded |
@@ -197,8 +198,13 @@ and `gkeCluster` are set. The old provider therefore stays reachable after a swi
 per-provider factory (`registry.ts`'s `buildInProcess`/`buildDocker`/`buildCloudRun`/`buildGke`)
 lazy-imports its own dependency (`@outfitter/provider-local`, `./cloudrun.ts`), so nothing is paid
 until a run on that provider needs it; `buildGke` is a stub in PR1 that throws until PR2 lands.
-`createProvider` (`providers/index.ts`) stays as a thin wrapper around the registry's default, so
-current callers and tests keep working.
+`createProvider` (`providers/index.ts`) stays as a thin wrapper around the registry's default for
+anyone who only wants that provider. **Production doesn't use it**: `main.ts` calls
+`createProviders(config)` directly and passes the whole registry to `buildApp`, which is what
+makes a run started under a since-abandoned default provider still stoppable/reconcilable outside
+of tests. `BuildAppOptions.provider` accepts either the registry or a bare `SandboxProvider`
+(wrapped via `SandboxProviders.single`), so tests that only ever built one provider (`server.ts`'s
+own test suite, `helpers.ts`'s `buildTestApp`) keep working unmodified.
 
 **Recording the provider on the run** (`store/types.ts`, `Run`):
 

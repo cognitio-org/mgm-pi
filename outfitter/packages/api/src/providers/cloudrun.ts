@@ -58,14 +58,29 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Normalizes an error's status/code across the shapes @google-cloud/run's client can throw: a
+ * Gaxios-style HTTP status (`response.status`), a raw gRPC status code (`code`), or a bare
+ * `status`. Returns undefined for anything else (network failure, a plain Error). */
+function errorStatus(err: unknown): number | string | undefined {
+  if (typeof err !== "object" || err === null) return undefined;
+  const e = err as { response?: { status?: number }; code?: number | string; status?: number };
+  return e.response?.status ?? e.code ?? e.status;
+}
+
 /** True for a "no such execution" failure: a Gaxios-style HTTP 404, or (a raw gRPC status
  * instead) code 5 NOT_FOUND -- same shape secrets.ts's isSecretNotFoundError checks for Secret
  * Manager. Any other shape (network, auth, permission) is a real error and is rethrown. */
 function isNotFoundError(err: unknown): boolean {
-  if (typeof err !== "object" || err === null) return false;
-  const e = err as { response?: { status?: number }; code?: number | string; status?: number };
-  const status = e.response?.status ?? e.code ?? e.status;
+  const status = errorStatus(err);
   return status === 404 || status === "404" || status === 5;
+}
+
+/** True for FAILED_PRECONDITION (gRPC code 9): Cloud Run's likely response to cancelling an
+ * execution that has already reached a terminal phase (succeeded/failed/cancelled) -- there's
+ * nothing left to cancel, so stop() treats this the same as NOT_FOUND ("already stopped"), not a
+ * real failure. */
+function isFailedPreconditionError(err: unknown): boolean {
+  return errorStatus(err) === 9;
 }
 
 export class CloudRunProvider implements SandboxProvider {
@@ -146,7 +161,16 @@ export class CloudRunProvider implements SandboxProvider {
   async stop(handle: SandboxHandle): Promise<void> {
     if (!handle) return;
     const client = await this.deps.executionsClient();
-    await client.cancelExecution({ name: handle });
+    try {
+      await client.cancelExecution({ name: handle });
+    } catch (err) {
+      // C4 (contract.ts): stop() must be idempotent, including on an execution that has already
+      // finished on its own -- Cloud Run most likely answers that cancelExecution call with
+      // FAILED_PRECONDITION (there's nothing left to cancel), and a since-garbage-collected
+      // execution with NOT_FOUND. Both mean "already stopped"; anything else is a real failure.
+      if (isNotFoundError(err) || isFailedPreconditionError(err)) return;
+      throw err;
+    }
   }
 
   async status(handle: SandboxHandle): Promise<SandboxStatus> {
@@ -157,9 +181,11 @@ export class CloudRunProvider implements SandboxProvider {
       [execution] = await client.getExecution({ name: handle });
     } catch (err) {
       // C6 (docs/specs/gke-sandbox-provider.md §6.2): a stale handle whose execution has since
-      // been garbage-collected must report "exited", not throw -- the reconciler (runs.ts) treats
-      // a throwing status() as "unknown" and leaves the run alone, so a real 404 here used to mean
-      // a dead run's sandbox was never noticed as gone.
+      // been garbage-collected must report "exited" or "unknown", and must not throw. This isn't
+      // about reconcileOnce (runs.ts) treating the two differently -- it only special-cases
+      // "starting" (to skip a run still provisioning); "unknown" and "exited" both fall through
+      // to the same stop()-then-mark-failed path there. It's the contract itself (and any other
+      // direct status() caller) that must not throw on a plain "doesn't exist any more".
       if (isNotFoundError(err)) return "exited";
       throw err;
     }

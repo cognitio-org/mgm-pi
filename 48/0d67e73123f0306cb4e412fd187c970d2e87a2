@@ -1,0 +1,40 @@
+outfitter/docs/protocol.md
+  h_69b863911ebf05 127,147-159
+outfitter/package-lock.json
+  h_69b863911ebf05 1365-1549,2841-2846,3123-3135,5002-5007,7776-7781,8255
+outfitter/packages/api/docs/data-model.md
+  h_69b863911ebf05 83,108
+outfitter/packages/api/package.json
+  h_69b863911ebf05 18
+outfitter/packages/api/src/agentlink.ts
+  h_69b863911ebf05 20,32-37,184,193,201,985-997
+outfitter/packages/api/src/github-broker.ts
+  h_69b863911ebf05 1-1294
+outfitter/packages/api/src/routes/gurus.ts
+  h_69b863911ebf05 82,92-94
+outfitter/packages/api/src/server.ts
+  h_69b863911ebf05 21,31-32,70
+outfitter/packages/api/src/store/types.ts
+  h_69b863911ebf05 146-148,153-157,247-249
+outfitter/packages/api/test/agent-socket.ts
+  h_69b863911ebf05 6,112
+outfitter/packages/api/test/agentlink.test.ts
+  h_69b863911ebf05 100,130,140-155
+outfitter/packages/api/test/github-broker.test.ts
+  h_69b863911ebf05 1-400
+outfitter/packages/api/test/helpers.ts
+  h_69b863911ebf05 9,27-28,46
+outfitter/packages/api/test/stop.test.ts
+  h_69b863911ebf05 23,169
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "480d67e73123f0306cb4e412fd187c970d2e87a2",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

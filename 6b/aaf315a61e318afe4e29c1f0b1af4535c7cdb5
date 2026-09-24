@@ -1,0 +1,14 @@
+kernal/.pi/extensions/kernal-update/index.ts
+  h_69b863911ebf05 15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "6baaf315a61e318afe4e29c1f0b1af4535c7cdb5",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

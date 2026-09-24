@@ -27,10 +27,12 @@ if (!sessionId) throw new Error("usage: node s2_wake.ts <session-id>");
 const config = loadConfig({ ...process.env, OUTFITTER_ORIGIN: LINK_ORIGIN });
 if (config.mongodbUri === "memory") throw new Error("MONGODB_URI is unset: this spike wakes a production session");
 
+// kubectl and its gcloud auth plugin get the environment minus MONGODB_URI: they don't need it.
+const { MONGODB_URI: _dropped, ...kubectlEnv } = process.env;
 const kubectl = (args: string[], input?: string) =>
   execFileSync("kubectl", [`--kubeconfig=${homedir()}/.kube/outfitter`, "-n", NS, ...args], {
     input,
-    env: { ...process.env, CLOUDSDK_ACTIVE_CONFIG_NAME: "outfitter" },
+    env: { ...kubectlEnv, CLOUDSDK_ACTIVE_CONFIG_NAME: "outfitter" },
     encoding: "utf8",
   });
 

@@ -8,22 +8,107 @@ import { useEffect, useRef, useState } from "react";
 // code handles a desktop trackpad-and-mouse and an iPhone's touchscreen): a single active pointer
 // pans, two active pointers pinch-zoom around their midpoint, and a wheel event zooms around the
 // cursor (mouse wheel, or a trackpad's synthetic wheel+ctrlKey pinch gesture).
+//
+// Fit measures that same SVG against the surface (getBoundingClientRect is in post-transform
+// pixels, so the current scale/translation is divided back out) and centers it with a little
+// padding. Reset stays the identity view. Download writes the sanitized string unchanged.
 
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 8;
 
-interface Transform {
+/** Surface-space margin Fit leaves around the diagram, in CSS pixels. */
+export const FIT_PADDING = 24;
+
+const DIAGRAM_FILENAME = "diagram.svg";
+
+export interface Transform {
   scale: number;
   x: number;
   y: number;
 }
 
+export interface FitSize {
+  width: number;
+  height: number;
+}
+
+/** Unscaled diagram box. `x`/`y` are its top-left in transform-local space (canvas origin). */
+export interface FitContent extends FitSize {
+  x?: number;
+  y?: number;
+}
+
+export interface FitRect extends FitSize {
+  left: number;
+  top: number;
+}
+
+const IDENTITY: Transform = { scale: 1, x: 0, y: 0 };
+
 function clampScale(scale: number): number {
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
 }
 
+/**
+ * Scale and translation that fits `content` inside `surface`, centered, with FIT_PADDING of
+ * margin on the tight axis. Scale may drop below the wheel-zoom floor so a large diagram is
+ * still fully visible; it will not grow past the zoom ceiling. A zero-sized box stays at identity.
+ */
+export function fitTransform(surface: FitSize, content: FitContent): Transform {
+  const offsetX = content.x ?? 0;
+  const offsetY = content.y ?? 0;
+  if (!(surface.width > 0) || !(surface.height > 0) || !(content.width > 0) || !(content.height > 0)) {
+    return { ...IDENTITY };
+  }
+  if (!Number.isFinite(offsetX) || !Number.isFinite(offsetY)) return { ...IDENTITY };
+  const pad = surface.width > FIT_PADDING * 2 && surface.height > FIT_PADDING * 2 ? FIT_PADDING : 0;
+  const availW = surface.width - pad * 2;
+  const availH = surface.height - pad * 2;
+  const scale = Math.min(MAX_SCALE, availW / content.width, availH / content.height);
+  if (!Number.isFinite(scale) || scale <= 0) return { ...IDENTITY };
+  return {
+    scale,
+    x: (surface.width - content.width * scale) / 2 - offsetX * scale,
+    y: (surface.height - content.height * scale) / 2 - offsetY * scale,
+  };
+}
+
+/**
+ * Unscaled size and origin of the svg, recovered from live rects. getBoundingClientRect includes
+ * the canvas transform, so the same diagram measured after a pan yields the same content box
+ * (and therefore the same fitTransform result).
+ */
+export function diagramContent(surface: FitRect, svg: FitRect, transform: Transform): FitContent {
+  const scale = transform.scale;
+  if (!(scale > 0) || !(svg.width > 0) || !(svg.height > 0)) return { width: 0, height: 0 };
+  const x = (svg.left - surface.left - transform.x) / scale;
+  const y = (svg.top - surface.top - transform.y) / scale;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return { width: 0, height: 0 };
+  return { width: svg.width / scale, height: svg.height / scale, x, y };
+}
+
+/** The sanitized SVG string, unchanged, as a downloadable image/svg+xml blob. */
+export function mermaidSvgBlob(svg: string): Blob {
+  return new Blob([svg], { type: "image/svg+xml" });
+}
+
+function downloadDiagram(svg: string) {
+  const blob = mermaidSvgBlob(svg);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = DIAGRAM_FILENAME;
+  document.body.appendChild(a);
+  try {
+    a.click();
+  } finally {
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+}
+
 export function MermaidEnlargeDialog({ svg, onClose }: { svg: string; onClose: () => void }) {
-  const [transform, setTransform] = useState<Transform>({ scale: 1, x: 0, y: 0 });
+  const [transform, setTransform] = useState<Transform>({ ...IDENTITY });
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const dragStart = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
@@ -127,7 +212,18 @@ export function MermaidEnlargeDialog({ svg, onClose }: { svg: string; onClose: (
   }
 
   function resetView() {
-    setTransform({ scale: 1, x: 0, y: 0 });
+    setTransform({ ...IDENTITY });
+  }
+
+  function fitView() {
+    const surface = surfaceRef.current;
+    const svgEl = surface?.querySelector("svg");
+    if (!surface || !svgEl) return;
+    const surfaceRect = surface.getBoundingClientRect();
+    const svgRect = svgEl.getBoundingClientRect();
+    setTransform((current) =>
+      fitTransform({ width: surfaceRect.width, height: surfaceRect.height }, diagramContent(surfaceRect, svgRect, current)),
+    );
   }
 
   return (
@@ -141,8 +237,14 @@ export function MermaidEnlargeDialog({ svg, onClose }: { svg: string; onClose: (
         aria-label="Diagram, enlarged"
       >
         <div className="mermaid-enlarge-toolbar">
+          <button type="button" className="btn mermaid-toolbar-btn" onClick={fitView}>
+            Fit
+          </button>
           <button type="button" className="btn mermaid-toolbar-btn" onClick={resetView}>
             Reset
+          </button>
+          <button type="button" className="btn mermaid-toolbar-btn" onClick={() => downloadDiagram(svg)}>
+            Download
           </button>
           <button type="button" className="btn mermaid-toolbar-btn" onClick={onClose} ref={closeRef} aria-label="Close">
             ✕ Close

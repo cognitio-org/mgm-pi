@@ -8,8 +8,10 @@
 
 import type { PiEntry } from "../api/client.ts";
 
+export type UserImage = { mimeType: string; data: string };
+
 export type EntryView =
-  | { kind: "user"; id: string; text: string }
+  | { kind: "user"; id: string; text: string; images?: UserImage[] }
   | { kind: "assistant-text"; id: string; text: string }
   | { kind: "assistant-thinking"; id: string; text: string }
   | { kind: "tool-call"; id: string; toolName: string; toolCallId: string; input: unknown }
@@ -46,6 +48,32 @@ function textOf(content: unknown): string {
   return "";
 }
 
+// pi image blocks are `{ type: "image", data, mimeType }` with raw base64 — no `data:` prefix.
+// Only user messages carry them; other roles stay text-only.
+function imagesOf(content: unknown): UserImage[] {
+  if (!Array.isArray(content)) return [];
+  const images: UserImage[] = [];
+  for (const block of content) {
+    if (typeof block !== "object" || block === null) continue;
+    const b = block as { type?: unknown; data?: unknown; mimeType?: unknown };
+    if (b.type !== "image" || typeof b.data !== "string" || typeof b.mimeType !== "string") continue;
+    images.push({ mimeType: b.mimeType, data: b.data });
+  }
+  return images;
+}
+
+/** `data` is raw base64, not a data URL. */
+export function imageSrc(image: UserImage): string {
+  return `data:${image.mimeType};base64,${image.data}`;
+}
+
+function userView(id: string, content: unknown): EntryView {
+  const text = textOf(content);
+  const images = imagesOf(content);
+  if (images.length === 0) return { kind: "user", id, text };
+  return { kind: "user", id, text, images };
+}
+
 /** Flattens one PiEntry into zero or more EntryView items, in the order they should render. */
 export function entryToViews(entry: PiEntry): EntryView[] {
   const id = entry.id;
@@ -62,7 +90,7 @@ export function entryToViews(entry: PiEntry): EntryView[] {
 
       switch (message.role) {
         case "user":
-          return [{ kind: "user", id, text: textOf(message.content) }];
+          return [userView(id, message.content)];
         case "system":
           return [{ kind: "system", id, text: textOf(message.content) }];
         case "toolResult":

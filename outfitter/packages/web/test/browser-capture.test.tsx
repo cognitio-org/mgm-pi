@@ -64,6 +64,13 @@ describe("browser capture transcript entry", () => {
   beforeEach(() => {
     vi.stubGlobal("localStorage", createMemoryStorage());
     localStorage.setItem("outfitterDevToken", "secret-token");
+    // jsdom's URL has no object-URL methods. Define them before spying.
+    if (typeof URL.createObjectURL !== "function") {
+      Object.defineProperty(URL, "createObjectURL", { configurable: true, writable: true, value: () => "blob:stub" });
+    }
+    if (typeof URL.revokeObjectURL !== "function") {
+      Object.defineProperty(URL, "revokeObjectURL", { configurable: true, writable: true, value: () => {} });
+    }
     vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:capture");
     vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
   });

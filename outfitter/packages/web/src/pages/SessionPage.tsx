@@ -4,6 +4,7 @@ import { api, type ModelRow, type SessionDetail } from "../api/client.ts";
 import { useSessionStream } from "../hooks/useSessionStream.ts";
 import { useProviders } from "../hooks/useProviders.ts";
 import { entriesToViews } from "../lib/entry-view.ts";
+import { groupBeats } from "../lib/beats.ts";
 import { groupThinkingBlocks } from "../lib/thinking.ts";
 import { deriveSessionHeader } from "../lib/session-header.ts";
 import {
@@ -15,6 +16,7 @@ import {
 } from "../lib/retro-errors.ts";
 import { toApiErrorState } from "../lib/api-error.ts";
 import { EntryItem } from "../components/EntryItem.tsx";
+import { BeatView, YouMark } from "../components/TranscriptRail.tsx";
 import { Composer } from "../components/Composer.tsx";
 import { StatusPill } from "../components/StatusPill.tsx";
 import { UiRequestPanel } from "../components/UiRequestPanel.tsx";
@@ -278,7 +280,7 @@ export function SessionPage() {
 
   if (notFound) return <NotFoundError subject="This floppy" />;
 
-  const views = groupThinkingBlocks(entriesToViews(entries));
+  const beats = groupBeats(groupThinkingBlocks(entriesToViews(entries)));
   const cost = costEstimate ?? session?.cost;
   const windowById = new Map(models.map((m) => [m.id, m.contextWindow]));
   const header = deriveSessionHeader(entries, (id) => windowById.get(id));
@@ -521,20 +523,27 @@ export function SessionPage() {
       <div className="panel">
         <div className="panel-titlebar"><span className="panel-label">Transcript</span></div>
         <div className="transcript" ref={transcriptRef}>
-          {views.length === 0 && !activity.showOptimistic ? (
+          {beats.length === 0 && !activity.showOptimistic ? (
             <p className="empty-state">No entries yet. Send a message below to start the run.</p>
           ) : (
-            views.map((v) => (
-              <EntryItem key={v.id} view={v} sessionId={sessionId} defaultThinkingExpanded={defaultThinkingExpanded} />
-            ))
+            beats.map((beat) =>
+              beat.kind === "passthrough" ? (
+                <EntryItem key={beat.id} view={beat.view} sessionId={sessionId} />
+              ) : (
+                <BeatView key={beat.id} beat={beat} defaultThinkingExpanded={defaultThinkingExpanded} />
+              ),
+            )
           )}
           {activity.showOptimistic && pendingSend && (
             <div
               className={`entry user entry-optimistic${pendingSend.error !== undefined ? " entry-failed" : ""}`}
               data-local-id={pendingSend.localId}
             >
-              <div className="entry-label">You{pendingSend.acceptedAt === undefined && pendingSend.error === undefined ? " · sending" : ""}</div>
+              <YouMark />
               {pendingSend.text}
+              {pendingSend.acceptedAt === undefined && pendingSend.error === undefined && (
+                <span className="entry-sending-note">Sending</span>
+              )}
               {pendingSend.error !== undefined && (
                 <span className="entry-failed-note" role="alert">
                   Not sent{pendingSend.error ? `: ${pendingSend.error}` : ""}.{" "}

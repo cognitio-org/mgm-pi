@@ -1,0 +1,195 @@
+// Groups a transcript (already passed through groupThinkingBlocks) into beats.
+// A tool call and the result that share a toolCallId are one rail item, including when an
+// assistant-text closed the run between them: the result fills the call in place and does not
+// start a second item. A call with no result anywhere in the list is running.
+
+import type { GroupedEntry, ThinkingBlock } from "./thinking.ts";
+
+export interface RailThinking {
+  kind: "thinking";
+  id: string;
+  blocks: ThinkingBlock[];
+}
+
+export interface RailTool {
+  kind: "tool";
+  id: string;
+  toolName: string;
+  toolCallId: string;
+  /** Present once a call has been seen. Omitted on an orphan result. */
+  input?: unknown;
+  /** Omitted while the call is still running. */
+  output?: string;
+  isError: boolean;
+  running: boolean;
+}
+
+export type RailItem = RailThinking | RailTool;
+
+type UserView = Extract<GroupedEntry, { kind: "user" }>;
+
+type PassView = Extract<
+  GroupedEntry,
+  {
+    kind:
+      | "system"
+      | "model-change"
+      | "thinking-level-change"
+      | "compaction"
+      | "custom"
+      | "label"
+      | "session-info"
+      | "unknown";
+  }
+>;
+
+export interface UserBeat {
+  kind: "user";
+  id: string;
+  /** The whole user view, so a later field (images) rides along without regrouping. */
+  view: UserView;
+}
+
+export interface PassThroughBeat {
+  kind: "passthrough";
+  id: string;
+  view: PassView;
+}
+
+export interface AssistantBeat {
+  kind: "assistant";
+  id: string;
+  prose: string;
+  rail: RailItem[];
+}
+
+export interface ToolsOnlyBeat {
+  kind: "tools-only";
+  id: string;
+  rail: RailItem[];
+}
+
+export type Beat = UserBeat | PassThroughBeat | AssistantBeat | ToolsOnlyBeat;
+
+export type RailGlyph =
+  | { kind: "single"; item: RailItem }
+  | { kind: "batch"; id: string; tools: RailTool[] };
+
+/** Finished non-error tools beyond this stay as one glyph. Thinking, errors, and running calls do not count. */
+const COLLAPSE_AT = 4;
+
+function isFinishedTool(item: RailItem): item is RailTool {
+  return item.kind === "tool" && !item.running && !item.isError;
+}
+
+export function collapseRail(items: RailItem[]): RailGlyph[] {
+  const finished = items.filter(isFinishedTool);
+  if (finished.length <= COLLAPSE_AT) return items.map((item) => ({ kind: "single", item }));
+
+  const batch: RailGlyph = { kind: "batch", id: finished[0]!.id, tools: finished };
+  const glyphs: RailGlyph[] = [];
+  let placed = false;
+  for (const item of items) {
+    if (isFinishedTool(item)) {
+      if (!placed) {
+        glyphs.push(batch);
+        placed = true;
+      }
+      continue;
+    }
+    glyphs.push({ kind: "single", item });
+  }
+  return glyphs;
+}
+
+export function groupBeats(views: GroupedEntry[]): Beat[] {
+  const beats: Beat[] = [];
+  let rail: RailItem[] = [];
+  // The unpaired half of a tool (a running call, or a result that arrived first).
+  const pending = new Map<string, RailTool>();
+
+  function flushTools() {
+    if (rail.length === 0) return;
+    beats.push({ kind: "tools-only", id: rail[0]!.id, rail });
+    rail = [];
+  }
+
+  for (const view of views) {
+    switch (view.kind) {
+      case "user":
+        flushTools();
+        beats.push({ kind: "user", id: view.id, view });
+        break;
+      case "system":
+      case "model-change":
+      case "thinking-level-change":
+      case "compaction":
+      case "custom":
+      case "label":
+      case "session-info":
+      case "unknown":
+        flushTools();
+        beats.push({ kind: "passthrough", id: view.id, view });
+        break;
+      case "thinking-group":
+        rail.push({ kind: "thinking", id: view.id, blocks: view.blocks });
+        break;
+      case "tool-call": {
+        const existing = pending.get(view.toolCallId);
+        if (existing && existing.output !== undefined && existing.input === undefined) {
+          existing.input = view.input;
+          existing.toolName = view.toolName || existing.toolName;
+          existing.running = false;
+          pending.delete(view.toolCallId);
+          break;
+        }
+        const item: RailTool = {
+          kind: "tool",
+          id: view.id,
+          toolName: view.toolName,
+          toolCallId: view.toolCallId,
+          input: view.input,
+          isError: false,
+          running: true,
+        };
+        rail.push(item);
+        pending.set(view.toolCallId, item);
+        break;
+      }
+      case "tool-result": {
+        const existing = pending.get(view.toolCallId);
+        if (existing && existing.running) {
+          existing.output = view.text;
+          existing.isError = view.isError;
+          existing.running = false;
+          if (!existing.toolName) existing.toolName = view.toolName;
+          pending.delete(view.toolCallId);
+          break;
+        }
+        const item: RailTool = {
+          kind: "tool",
+          id: view.id,
+          toolName: view.toolName,
+          toolCallId: view.toolCallId,
+          output: view.text,
+          isError: view.isError,
+          running: false,
+        };
+        rail.push(item);
+        pending.set(view.toolCallId, item);
+        break;
+      }
+      case "assistant-text":
+        beats.push({ kind: "assistant", id: rail[0]?.id ?? view.id, prose: view.text, rail });
+        rail = [];
+        break;
+      default: {
+        const unreachable: never = view;
+        throw new Error(`unexpected view ${(unreachable as { kind: string }).kind}`);
+      }
+    }
+  }
+
+  flushTools();
+  return beats;
+}

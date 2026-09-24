@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { entryToViews, entriesToViews } from "../src/lib/entry-view.ts";
+import { entryToViews, entriesToViews, imageSrc } from "../src/lib/entry-view.ts";
 import type { PiEntry } from "../src/api/client.ts";
 
 describe("entryToViews", () => {
@@ -78,6 +78,73 @@ describe("entryToViews", () => {
       { kind: "user", id: "e1", text: "hi" },
       { kind: "label", id: "e2", targetId: "e1", label: "starred" },
     ]);
+  });
+
+  it("keeps user text and adds images only when image blocks are present", () => {
+    const entry: PiEntry = {
+      id: "e-img",
+      parentId: null,
+      type: "message",
+      message: {
+        role: "user",
+        content: [
+          { type: "text", text: "see this" },
+          { type: "image", data: "AAAA", mimeType: "image/png" },
+          { type: "text", text: "and that" },
+          { type: "image", data: "BBBB", mimeType: "image/jpeg" },
+        ],
+        timestamp: 1,
+      },
+    };
+    expect(entryToViews(entry)).toEqual([
+      {
+        kind: "user",
+        id: "e-img",
+        text: "see this\nand that",
+        images: [
+          { mimeType: "image/png", data: "AAAA" },
+          { mimeType: "image/jpeg", data: "BBBB" },
+        ],
+      },
+    ]);
+    expect(imageSrc({ mimeType: "image/jpeg", data: "abc" })).toBe("data:image/jpeg;base64,abc");
+  });
+
+  it("omits images when a user message has no image blocks", () => {
+    const entry: PiEntry = {
+      id: "e-txt",
+      parentId: null,
+      type: "message",
+      message: {
+        role: "user",
+        content: [
+          { type: "text", text: "a" },
+          { type: "text", text: "b" },
+          { type: "image", data: 12, mimeType: "image/png" },
+        ],
+        timestamp: 1,
+      },
+    };
+    const [view] = entryToViews(entry);
+    expect(view).toEqual({ kind: "user", id: "e-txt", text: "a\nb" });
+    expect(view).not.toHaveProperty("images");
+  });
+
+  it("does not attach image blocks on assistant messages", () => {
+    const entry: PiEntry = {
+      id: "e-asst",
+      parentId: null,
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "text", text: "hi" },
+          { type: "image", data: "AAAA", mimeType: "image/png" },
+        ],
+        timestamp: 1,
+      },
+    };
+    expect(entryToViews(entry)).toEqual([{ kind: "assistant-text", id: "e-asst#0", text: "hi" }]);
   });
 
   it("a tool call with no arguments still maps (regression: the session page crashed on it)", () => {

@@ -282,9 +282,18 @@ above); the rest are in `config.env`. See each script's header for its other inp
 
 A second `SandboxProvider` (`docs/specs/gke-sandbox-provider.md`, `docs/specs/
 gke-sandbox-provider-plan.md`): GKE Autopilot with the Agent Sandbox add-on, gVisor-isolated, with
-an optional warm pool to cut wake time to seconds during active hours. **Off by default**
-(`config.env`'s `GKE_CLUSTER=""`) — the Cloud Run provider above is unaffected either way, and every
-routine deploy ships byte-identical env vars while it's off.
+an optional warm pool to cut wake time to seconds during active hours. **Set up since 2026-09-24**
+(`config.env`'s `GKE_CLUSTER` defaults to `outfitter`): every release keeps the SandboxTemplate on the
+release's image, but new runs still launch on Cloud Run until `SANDBOX_PROVIDER=gke` (step 6).
+`GKE_CLUSTER=` exported empty turns GKE off for one run; with it empty, a deploy ships byte-identical
+env vars to before GKE existed.
+
+**Laptop prerequisite for hand deploys:** with GKE set up, every deploy script run by hand (`api.sh`,
+`link.sh`, `agent-job.sh`, `service.sh`, `MANUAL=1 ./release.sh`) checks the SandboxTemplate's
+`build-commit` label for skew, so the laptop needs `kubectl` and the auth plugin:
+`gcloud components install kubectl gke-gcloud-auth-plugin`. Without them the skew check fails
+loudly. `GKE_CLUSTER= ./api.sh` skips it for one run. Tag deploys from GitHub Actions install both
+themselves.
 
 All of the scripts below are **owner-run**, on the same footing as `access.sh`/`ci-setup.sh`
 (`deploy/CLAUDE.md`): none of them run on their own, and an agent runs them only with the owner's

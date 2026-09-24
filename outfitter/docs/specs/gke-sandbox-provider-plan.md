@@ -240,7 +240,7 @@ change round 1's own §6b description.
   variable" before `setup-gcloud` ever ran. Fixed two ways: `config.env`'s `GKE_LOCATION` now
   defaults to `${REGION:-us-central1}` (safe to source standalone, no `env.sh`, under `set -u`), and
   the workflow step no longer sources `config.env` at all -- it calls a new
-  **`deploy/gke-workflow-check.sh`**, which evaluates only the one `GKE_CLUSTER="${GKE_CLUSTER:-...}"`
+  **`deploy/gke-workflow-check.sh`**, which evaluates only the one `GKE_CLUSTER="${GKE_CLUSTER-...}"`
   line from `config.env` in isolation. `gke-workflow-check.test.sh` runs it under `env -i` (a
   genuinely clean environment, no `PATH` beyond the bare minimum, no `REGION`) to prove this.
 - **High: `assert_agent_sa_no_unexpected_bindings` (round 1) would have refused on the real

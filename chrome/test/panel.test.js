@@ -35,6 +35,7 @@ import {
   pillClass,
   stateLine,
   steerBody,
+  transportCompletion,
   transportEnabled,
   transportLabel,
   transcriptLines,
@@ -99,6 +100,18 @@ test("Play is enabled when the run is stopped, and Stop and Break while it is li
   assert.equal(pillClass("nope"), "stopped");
   assert.equal(failureNote({ runState: "failed", runStateReason: "sandbox down" }), "sandbox down");
   assert.equal(failureNote(stopped), "");
+});
+
+test("a transport completion paints and writes status only for its own click", () => {
+  assert.deepEqual(transportCompletion(1, 2, 4, 4), { clearPending: false, paint: false, writeStatus: false });
+  const moved = transportCompletion(3, 3, 4, 5);
+  assert.equal(moved.paint, false);
+  assert.equal(moved.writeStatus, false);
+  assert.equal(moved.clearPending, true);
+  assert.deepEqual(transportCompletion(3, 3, 5, 5), { clearPending: true, paint: true, writeStatus: true });
+  const js = read("../extension/panel.js");
+  assert.match(js, /transportCompletion\(/);
+  assert.match(js, /transportGeneration \+= 1;\n  pendingTransport = "";/);
 });
 
 test("the poll runs every 2 seconds only while the document is visible", () => {

@@ -35,6 +35,7 @@ import {
   shareMessage,
   steerBody,
   transcriptLines,
+  transportCompletion,
   transportEnabled,
   transportLabel,
   uiResponseBody,
@@ -78,6 +79,7 @@ let selectionEpoch = 0;
 let paintedSession = "";
 let paintedDetail = null;
 let pendingTransport = "";
+let transportGeneration = 0;
 
 function holdPanelPort() {
   try {
@@ -400,6 +402,10 @@ function clearStrip() {
 
 function bumpSelection() {
   selectionEpoch += 1;
+  // Retire the click that was in flight so it cannot clear a later one, and so
+  // this Floppy follows transportEnabled for its own run.
+  transportGeneration += 1;
+  pendingTransport = "";
   steerInput.value = "";
   clearStrip();
 }
@@ -604,24 +610,26 @@ function runTransport(kind) {
     status.textContent = "Choose a Floppy.";
     return;
   }
+  const epoch = selectionEpoch;
+  const generation = ++transportGeneration;
   pendingTransport = kind;
   paintTransport(paintedDetail);
   const sent = kind === "play" ? "Play sent." : kind === "stop" ? "Stop sent." : "Break sent.";
   const failed = kind === "play" ? "Could not play." : kind === "stop" ? "Could not stop." : "Could not break.";
-  linkCall("POST", path).then((result) => {
-    pendingTransport = "";
-    if (!note(result)) {
+  const finish = (result) => {
+    const decision = transportCompletion(generation, transportGeneration, epoch, selectionEpoch);
+    if (decision.clearPending) pendingTransport = "";
+    if (!decision.paint || !decision.writeStatus) return;
+    if (!result || !note(result)) {
       paintTransport(paintedDetail);
+      if (!result) status.textContent = failed;
       return;
     }
     status.textContent = sent;
     paintTransport(paintedDetail);
     refresh();
-  }).catch(() => {
-    pendingTransport = "";
-    paintTransport(paintedDetail);
-    status.textContent = failed;
-  });
+  };
+  linkCall("POST", path).then(finish).catch(() => finish(null));
 }
 
 playButton.addEventListener("click", () => runTransport("play"));

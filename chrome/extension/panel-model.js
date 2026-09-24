@@ -107,6 +107,16 @@ export function stateLine(session) {
 const LIVE_RUN_STATES = new Set(["queued", "provisioning", "running", "idle", "stopping"]);
 const PILL_STATES = new Set(["queued", "provisioning", "running", "idle", "stopping", "stopped", "failed"]);
 
+/** A finished Play, Stop, or Break may paint and write status only while this
+ * click's generation and selection epoch are still current. The in-flight flag
+ * clears for that generation alone, so an older request cannot drop a later click. */
+export function transportCompletion(startedGeneration, currentGeneration, startedEpoch, currentEpoch) {
+  const sameGeneration = startedGeneration === currentGeneration;
+  const sameEpoch = startedEpoch === currentEpoch;
+  const apply = sameGeneration && sameEpoch;
+  return { clearPending: sameGeneration, paint: apply, writeStatus: apply };
+}
+
 /** Play is wake. Stop and Break apply while a run is live and not already stopping.
  * `pending` is "play", "stop", or "break" while that request is in flight. */
 export function transportEnabled(session, pending) {

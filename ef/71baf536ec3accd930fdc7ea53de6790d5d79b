@@ -1,0 +1,19 @@
+kernal/README.md
+  s_a09835d2e68958::t_3585573b8f5a7a 583-586
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "ef71baf536ec3accd930fdc7ea53de6790d5d79b",
+  "prompts": {},
+  "sessions": {
+    "s_a09835d2e68958": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a669d0f3e6e1ee5d8",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

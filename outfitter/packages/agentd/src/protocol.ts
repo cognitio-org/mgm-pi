@@ -376,6 +376,14 @@ export type DownGithubResult =
   | { t: "github.result"; reqId: string; ok: true; data: Record<string, unknown> }
   | { t: "github.result"; reqId: string; ok: false; error: string };
 
+/** A replacement GitHub credential for the git proxy and later checkpoint pushes.
+ * Installation tokens expire; the api sends this before they do. Not seq/ack replayed. */
+export interface DownGithubCredential {
+  t: "github.credential";
+  token: string;
+  expiresAt?: string;
+}
+
 /** The action asked for by `browser.action.request` finished or failed. No transcript seq.
  * Absent `error` means the extension ran it. `error` is `no_share`, `skipped`, `denied`,
  * `rejected`, `not_found`, `permission_denied`, `tab_gone`, `not_editable`, or `not_shared`. */
@@ -414,6 +422,7 @@ export type DownMessage =
   | DownBrowserCaptureEntry
   | DownBrowserCaptureResult
   | DownGithubResult
+  | DownGithubCredential
   | DownBrowserActionResult
   | DownBrowserInspectResult;
 

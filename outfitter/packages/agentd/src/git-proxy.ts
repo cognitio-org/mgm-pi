@@ -29,6 +29,8 @@ export interface GitProxy {
   /** `http://127.0.0.1:<port>/<owner>/<repo>.git` — no token in it. */
   readonly url: string;
   readonly port: number;
+  /** Replace the upstream credential. Later requests use it; earlier tokens stay redacted in logs. */
+  setToken(token: string): void;
   close(): Promise<void>;
 }
 
@@ -102,10 +104,11 @@ export async function startGitProxy(opts: GitProxyOptions): Promise<GitProxy> {
   const allowed = normalizeAllowed(opts.allowedRefs);
   const prefixes = normalizePrefixes(opts.allowedPrefixes);
   const upstreamBase = (opts.upstreamBase ?? "https://github.com").replace(/\/$/, "");
-  const needles = secretNeedles(opts.token);
+  const cred = { token: opts.token };
+  const heldTokens = new Set<string>([opts.token]);
   const log = (line: string) => {
     try {
-      opts.log?.(scrubText(line, needles));
+      opts.log?.(scrubText(line, needlesFor(heldTokens)));
     } catch {
       // a log sink must not take the run down, and must not be given the token to retry with
     }
@@ -116,11 +119,11 @@ export async function startGitProxy(opts: GitProxyOptions): Promise<GitProxy> {
     void handle(req, res, {
       owner: opts.owner,
       repo: opts.repo,
-      token: opts.token,
+      token: cred.token,
       allowed,
       prefixes,
       upstreamBase,
-      needles,
+      needles: needlesFor(heldTokens),
       log,
       lock: opts.lock,
     }).catch((err: unknown) => {
@@ -159,6 +162,11 @@ export async function startGitProxy(opts: GitProxyOptions): Promise<GitProxy> {
   return {
     url,
     port: addr.port,
+    setToken(token: string) {
+      if (!token || /[\r\n\0]/.test(token)) return;
+      heldTokens.add(token);
+      cred.token = token;
+    },
     close() {
       if (closed) return Promise.resolve();
       closed = true;
@@ -554,6 +562,12 @@ function sendText(res: ServerResponse, status: number, body: string): void {
 function errName(err: unknown): string {
   if (err instanceof Error) return err.name || "Error";
   return "Error";
+}
+
+function needlesFor(tokens: Iterable<string>): Buffer[] {
+  const out: Buffer[] = [];
+  for (const token of tokens) out.push(...secretNeedles(token));
+  return out;
 }
 
 function secretNeedles(token: string): Buffer[] {

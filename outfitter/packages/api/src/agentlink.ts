@@ -21,6 +21,7 @@ import { isBrowserActionKind, parseBrowserAction } from "./browser-action.ts";
 import { GithubBroker } from "./github-broker.ts";
 import { branchAllowed, branchPrefixOf } from "./branch-policy.ts";
 import { entryForWire } from "./entry-wire.ts";
+import { refreshDelayMs } from "./github-app.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
@@ -190,6 +191,8 @@ export class AgentLink {
   private readonly laptopProbe: LaptopProbe;
   private readonly mail: MailService;
   private readonly github: GithubBroker;
+  /** Installation-token refresh timers, one per run. Cleared when that run's socket closes. */
+  private readonly githubRefresh = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
     store: Store,
@@ -707,6 +710,9 @@ export class AgentLink {
     this.sockets.set(runId, socket);
     this.socketSeenAt.set(socket, Date.now());
     socket.on("close", () => {
+      const timer = this.githubRefresh.get(runId);
+      if (timer) clearTimeout(timer);
+      this.githubRefresh.delete(runId);
       if (this.sockets.get(runId) === socket) this.sockets.delete(runId);
       // any in-flight diff/read request on this run's connection can never be answered now
       for (const [reqId, pending] of this.pendingRequests) {
@@ -904,6 +910,7 @@ export class AgentLink {
     }
     const owner = session.ownerEmail ? await this.store.users.findByEmail(session.ownerEmail) : null;
     const author = authorFor(session.ownerEmail, owner);
+    this.scheduleGithubRefresh(runId, session.id, secrets.githubTokenExpiresAt);
     return {
       t: "run.spec",
       session: { id: session.id, name: session.name ?? session.id, cwd: "/workspace" },
@@ -933,13 +940,39 @@ export class AgentLink {
         ...(allowExternalHtmlResources ? { allowExternalHtmlResources: true } : {}),
       },
       snapshot: { url: session.checkpoint?.snapshotUrl },
-      secrets: { ...secrets, litellmBaseUrl: this.config.litellmBaseUrl },
+      secrets: { githubToken: secrets.githubToken, litellmKey: secrets.litellmKey, litellmBaseUrl: this.config.litellmBaseUrl },
       ...(author ? { author } : {}),
       idleStopSeconds: this.config.idleStopSeconds,
       // Deviation from protocol.md (checkpointEvery isn't specced further, and agentd's
       // protocol.ts types it as a string rather than a number): checkpoint after every turn.
       checkpointEvery: "turn",
     };
+  }
+
+  /** Asks agentd for a new installation token before the current one expires. No-op for a PAT. */
+  private scheduleGithubRefresh(runId: string, sessionId: string, expiresAt: string | undefined): void {
+    const existing = this.githubRefresh.get(runId);
+    if (existing) clearTimeout(existing);
+    this.githubRefresh.delete(runId);
+    if (!expiresAt) return;
+    const delay = refreshDelayMs(expiresAt, Date.now());
+    if (delay === undefined) return;
+    const timer = setTimeout(() => {
+      void this.refreshGithubCredential(runId, sessionId);
+    }, delay);
+    timer.unref?.();
+    this.githubRefresh.set(runId, timer);
+  }
+
+  private async refreshGithubCredential(runId: string, sessionId: string): Promise<void> {
+    this.githubRefresh.delete(runId);
+    const session = await this.store.sessions.findById(sessionId);
+    const refresh = this.secretsBroker.refreshGithubAppToken;
+    if (!session || !refresh) return;
+    const next = await refresh.call(this.secretsBroker, session);
+    if (!next) return;
+    await this.send(runId, { t: "github.credential", token: next.token, expiresAt: next.expiresAt });
+    this.scheduleGithubRefresh(runId, sessionId, next.expiresAt);
   }
 
   private async handleUpFrame(runId: string, sessionId: string, socket: WebSocket, raw: Buffer | string): Promise<void> {

@@ -225,6 +225,19 @@ test("RunController: explicit checkpoint commits, pushes, and reports the new he
   await waitFor(() => states.at(-1) === "idle");
 });
 
+test("RunController: github.credential replaces the token the next checkpoint pushes", async (t) => {
+  const { controller, link, gitOps, states, spec } = await setupController();
+  t.after(() => controller.dispose());
+  link.deliver(spec);
+  await waitFor(() => states.includes("idle"));
+
+  link.deliver({ t: "github.credential", token: "ghs_replacement_token" });
+  link.deliver({ t: "github.credential", token: "bad\ntoken" });
+  link.deliver({ t: "checkpoint" });
+  await waitFor(() => link.sent.some((m) => m.t === "checkpoint"));
+  assert.equal(gitOps.pushSpecs.at(-1)?.githubToken, "ghs_replacement_token");
+});
+
 test("RunController: a checkpoint pushes commits the agent made itself, even with nothing left for agentd to commit", async (t) => {
   const { controller, link, gitOps, states, spec } = await setupController();
   t.after(() => controller.dispose());

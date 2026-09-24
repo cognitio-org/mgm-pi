@@ -5,6 +5,7 @@
 
 import type { Guru } from "./store/types.ts";
 import { GITHUB_TOKEN_DEFAULT_SECRET } from "./secrets.ts";
+import { GITHUB_APP_ID_SECRET, GITHUB_APP_INSTALLATION_SECRET, GITHUB_APP_KEY_SECRET, GITHUB_APP_SLUG_SECRET } from "./github-app.ts";
 
 /** When a change to this secret takes effect: "next run" for a secret read live via SecretsBroker
  * at run start (never mounted as container env), "next deploy" for one mounted as a container env
@@ -37,7 +38,7 @@ const STATIC_SECRETS: ManagedSecretDef[] = [
   {
     secretName: GITHUB_TOKEN_DEFAULT_SECRET,
     label: "Default GitHub token",
-    purpose: "Used for a repo session's GitHub token unless that session has its own.",
+    purpose: "Fallback GitHub token when the session has none of its own and the GitHub App is not configured.",
     appliesAt: "next run",
     kind: "github",
   },
@@ -46,6 +47,34 @@ const STATIC_SECRETS: ManagedSecretDef[] = [
     label: "GitHub PAT",
     purpose: "Fine-grained PAT mounted into the API's environment as GITHUB_PAT.",
     appliesAt: "next deploy",
+    kind: "github",
+  },
+  {
+    secretName: GITHUB_APP_ID_SECRET,
+    label: "GitHub App id",
+    purpose: "Numeric App id. With the private key and installation id, repo sessions mint an installation token.",
+    appliesAt: "next run",
+    kind: "github",
+  },
+  {
+    secretName: GITHUB_APP_KEY_SECRET,
+    label: "GitHub App private key",
+    purpose: "PEM private key of the GitHub App, including the BEGIN line. Never sent to a sandbox.",
+    appliesAt: "next run",
+    kind: "github",
+  },
+  {
+    secretName: GITHUB_APP_INSTALLATION_SECRET,
+    label: "GitHub App installation id",
+    purpose: "Numeric installation id from the App's installation URL.",
+    appliesAt: "next run",
+    kind: "github",
+  },
+  {
+    secretName: GITHUB_APP_SLUG_SECRET,
+    label: "GitHub App slug",
+    purpose: "The App's URL slug, shown on the session page as who a cloud action appears as. Not a credential.",
+    appliesAt: "next run",
     kind: "github",
   },
   {

@@ -1,6 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { buildTestApp, seedGuru } from "./helpers.ts";
+import { GITHUB_APP_ID_SECRET, GITHUB_APP_INSTALLATION_SECRET, GITHUB_APP_KEY_SECRET, GITHUB_APP_SLUG_SECRET } from "../src/github-app.ts";
 
 describe("POST /api/sessions", () => {
   test("creates a session, wakes a queued->provisioning run, and calls the provider", async () => {
@@ -77,6 +78,17 @@ describe("GET /api/sessions/:id", () => {
     assert.equal(getRes.json().github.credential, "none");
     assert.equal(getRes.json().github.merge, false);
     assert.equal(getRes.json().github.onBehalfOf, null);
+
+    const pem = "-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----";
+    await app.secretAdmin.addVersion(GITHUB_APP_ID_SECRET, "42");
+    await app.secretAdmin.addVersion(GITHUB_APP_KEY_SECRET, pem);
+    await app.secretAdmin.addVersion(GITHUB_APP_INSTALLATION_SECRET, "7");
+    await app.secretAdmin.addVersion(GITHUB_APP_SLUG_SECRET, "outfitter");
+    const asApp = await app.fastify.inject({ method: "GET", url: `/api/sessions/${session.id}` });
+    assert.equal(asApp.json().github.credential, "app");
+    assert.equal(asApp.json().github.appSlug, "outfitter");
+    assert.equal(asApp.body.includes(pem), false);
+    assert.equal(asApp.body.includes("not-a-real-key"), false);
 
     await app.fastify.inject({ method: "POST", url: `/api/sessions/${session.id}/abort` });
     const afterAbortRun = await app.store.runs.findActiveForSession(session.id);

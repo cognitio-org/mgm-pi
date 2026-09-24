@@ -34,6 +34,19 @@ describe("githubCluster / looseRepoClause", () => {
     expect(looseRepoClause(session)).toBeNull();
   });
 
+  it("says who the GitHub App is when the session is acting as the App", () => {
+    const named = githubCluster({
+      repo: "acme/app",
+      github: { ...gh, credential: "app", appSlug: "kernal-one" },
+    });
+    expect(named?.credential).toBe("acting as kernal-one[bot]");
+    const unnamed = githubCluster({
+      repo: "acme/app",
+      github: { ...gh, credential: "app" },
+    });
+    expect(unnamed?.credential).toBe("acting as the GitHub App");
+  });
+
   it("keeps a checkout that differs from the broker target, because they are different facts", () => {
     const session = { repo: "acme/app", branch: "wip", github: { ...gh, repo: "acme/other", branch: "trunk", merge: true } };
     expect(githubCluster(session)?.repo).toBe("acme/other @ trunk");

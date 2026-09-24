@@ -14,6 +14,7 @@ import { SandboxProviders } from "../src/providers/registry.ts";
 export interface TestApp extends App {
   store: Store;
   provider: NoopProvider;
+  secretAdmin: SecretAdmin;
 }
 
 export interface BuildTestAppOptions {
@@ -55,7 +56,7 @@ export async function buildTestApp(
   });
   const app = await buildApp({ store, config, provider: providers, secretsBroker, secretAdmin, github: opts.github });
   await app.fastify.ready();
-  return { ...app, store, provider };
+  return { ...app, store, provider, secretAdmin };
 }
 
 export async function seedGuru(store: Store, overrides: Partial<Guru> = {}): Promise<Guru> {

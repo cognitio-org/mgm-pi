@@ -117,7 +117,7 @@ Ten agent-hours a day is roughly $2/day of compute. Set a GCP budget alert at $2
 | Topic | Decision |
 |---|---|
 | Default sandbox size | 1 vCPU / 2 GiB (~$0.08/h). Gurus that build or test override to 2 vCPU / 4 GiB. |
-| GitHub auth for runs | Fine-grained PAT in Secret Manager now (contents and pull-requests read/write on selected repos); GitHub App installation tokens in E6. |
+| GitHub auth for runs | A per-session fine-grained PAT wins. Otherwise, when the GitHub App secrets are set, the API mints an installation token for that repo (#93). The shared PAT remains the fallback. E6 webhooks use this same App. |
 | Atlas | M0 in GCP us-central1 (same region as Cloud Run). GCP Marketplace billing link deferred until leaving M0. |
 | Idle-stop | 30 min for human-driven sessions, 5 min for delegated worker sessions, plus wake-on-open in the UI. Revisit after measuring real wake times (E2.9). |
 | Laptop model in the cloud | Allowed, opt-in per guru or per session, never the default. Guarded by the preflight in E2.8. |
@@ -195,9 +195,10 @@ research on Sonnet; review on Opus).
 - **E2.4 WebSocket ingress for agentd**: verify the Google ID token (audience = API URL, email =
   agent SA); reconnect tolerant (Cloud Run 60 min cap: agentd reconnects at 55 min, API resumes from
   the last acked entry id).
-- **E2.5 Secrets broker**: per-session GitHub token (phase 2: GitHub App installation token minted per
-  run and repo; phase 1: fine-grained PAT from Secret Manager) and LiteLLM key; never in job env, only
-  over the authenticated socket.
+- **E2.5 Secrets broker**: per-session GitHub token. A session PAT wins. Otherwise the API mints a
+  GitHub App installation token for that repo when the App id, private key, and installation id are
+  in Secret Manager (#93); the shared fine-grained PAT is the fallback. LiteLLM key as before. Never
+  in job env, only over the authenticated socket. The private key stays in the API.
 - **E2.5b MCP OAuth for cloud runs**: non-coding sessions lean on MCP servers. Gateway servers
   (`ce_knowledge_base`, `headroom`) work with the LiteLLM key. `google_admin` and `augment_admin` use
   OAuth tokens that live in the laptop keychain today; in the cloud the broker holds the refresh

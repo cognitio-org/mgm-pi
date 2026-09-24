@@ -359,6 +359,9 @@ export class RunController {
       case "github.result":
         this.githubSocket?.deliver(msg);
         return;
+      case "github.credential":
+        this.replaceGithubToken(msg.token);
+        return;
       case "browser.action.result":
         // The action tool is waiting on its own loopback listener. No transcript row.
         this.actionListener?.deliver(msg);
@@ -368,6 +371,15 @@ export class RunController {
         this.inspectListener?.deliver(msg);
         return;
     }
+  }
+
+  /** Swap the run's GitHub token. The proxy and later checkpoint pushes read the new value. */
+  private replaceGithubToken(token: string): void {
+    if (!token || /[\r\n\0]/.test(token)) return;
+    this.deps.logger?.addSecret(token);
+    this.deps.logger?.addSecret(authHeaderSecret(token));
+    if (this.spec) this.spec.secrets.githubToken = token;
+    this.gitProxy?.setToken(token);
   }
 
   /** Sends a pi-targeted down-message to the (assumed running) pi process. Shared by `handleDown`

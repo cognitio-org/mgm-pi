@@ -87,7 +87,8 @@ export interface DownMessage {
     | "browser.capture.entry"
     | "browser.capture.result"
     | "browser.action.result"
-    | "browser.inspect.result";
+    | "browser.inspect.result"
+    | "github.credential";
   /** Set on `browser.capture.entry`: the pi custom entry agentd must emit with its own seq. */
   entry?: PiEntry;
   /** Set on `browser.capture.result`, `browser.action.result`, and `browser.inspect.result`. Not a transcript seq. */

@@ -3,14 +3,19 @@
 // authenticated WebSocket inside run.spec, never as job/container env.
 
 import type { Session, Guru } from "./store/types.ts";
+import { GithubAppTokens, type InstallationToken } from "./github-app.ts";
 
 export interface RunSecrets {
   githubToken: string;
   litellmKey: string;
+  /** Set when `githubToken` is a GitHub App installation token, so the run can be refreshed. */
+  githubTokenExpiresAt?: string;
 }
 
 export interface SecretsBroker {
   secretsForRun(session: Session, guru: Guru): Promise<RunSecrets>;
+  /** A fresh installation token for a run that is already using the App. Undefined when the App is not configured or GitHub refused the mint. */
+  refreshGithubAppToken?(session: Session): Promise<InstallationToken | undefined>;
   /** A LiteLLM key usable for calls with no specific run/guru behind them, e.g. the E2.10 provider
    * status service's LiteLLM probe when config.litellmAdminKey isn't set. Falls back to the same
    * default key a guru with no key of its own would get. */
@@ -68,23 +73,37 @@ export const GITHUB_TOKEN_DEFAULT_SECRET = "outfitter-github-token-default";
 export class GcpSecretsBroker implements SecretsBroker {
   private readonly project: string;
   private readonly fetchSecret: (secretId: string) => Promise<string>;
+  private readonly app: GithubAppTokens;
   /** Lazily built on first access and reused after that, instead of a fresh GoogleAuth client (and
    * its own ADC lookup) per secret fetch. */
   private authClientPromise: ReturnType<GcpSecretsBroker["buildAuthClient"]> | undefined;
 
   /** `fetchSecret` is injectable so tests can stub Secret Manager access without touching ADC or
    * the network; production code (main.ts) always omits it and gets accessSecretFromGcp. */
-  constructor(project: string, fetchSecret?: (secretId: string) => Promise<string>) {
+  constructor(project: string, fetchSecret?: (secretId: string) => Promise<string>, app?: GithubAppTokens) {
     this.project = project;
     this.fetchSecret = fetchSecret ?? ((secretId) => this.accessSecretFromGcp(secretId));
+    this.app = app ?? new GithubAppTokens(async (secretId) => {
+      try {
+        return (await this.fetchSecret(secretId)).trim();
+      } catch (err) {
+        if (isSecretNotFoundError(err)) return "";
+        throw err;
+      }
+    });
   }
 
   async secretsForRun(session: Session, guru: Guru): Promise<RunSecrets> {
-    const [githubToken, litellmKey] = await Promise.all([
+    const [github, litellmKey] = await Promise.all([
       this.githubTokenForSession(session),
       this.litellmKeyForGuru(guru.id),
     ]);
-    return { githubToken, litellmKey };
+    return { githubToken: github.token, litellmKey, ...(github.expiresAt ? { githubTokenExpiresAt: github.expiresAt } : {}) };
+  }
+
+  async refreshGithubAppToken(session: Session): Promise<InstallationToken | undefined> {
+    if (!session.repo) return undefined;
+    return this.app.mint(session.repo);
   }
 
   /** The session's own token if it has one, else — for a session that actually has a repo — the
@@ -103,21 +122,26 @@ export class GcpSecretsBroker implements SecretsBroker {
    * secret is a deliberate act; it just isn't given one it was never granted. Logs which of the
    * two a run ended up with, because "the token worked" and "the token I expected" are different
    * questions once something fails to clone or push. */
-  private async githubTokenForSession(session: Session): Promise<string> {
+  private async githubTokenForSession(session: Session): Promise<{ token: string; expiresAt?: string }> {
     const perSession = `outfitter-github-token-${session.id}`;
     const own = await this.accessSecretOrEmpty(perSession);
     if (own) {
       console.log(`[secrets] session ${session.id}: using ${perSession}`);
-      return own;
+      return { token: own };
     }
-    if (!session.repo) return "";
+    if (!session.repo) return { token: "" };
+    const minted = await this.app.mint(session.repo);
+    if (minted) {
+      console.log(`[secrets] session ${session.id}: using a GitHub App installation token`);
+      return { token: minted.token, expiresAt: minted.expiresAt };
+    }
     const shared = await this.accessSecretOrEmpty(GITHUB_TOKEN_DEFAULT_SECRET);
     if (shared) {
       console.log(
         `[secrets] session ${session.id}: ${perSession} not set; using ${GITHUB_TOKEN_DEFAULT_SECRET}`,
       );
     }
-    return shared;
+    return { token: shared };
   }
 
   private async litellmKeyForGuru(guruId: string): Promise<string> {

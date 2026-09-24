@@ -1,0 +1,45 @@
+outfitter/packages/api/src/github-app.ts
+  s_e0bc7d6e875242::t_1dafa41d87b54e 90
+  s_e0bc7d6e875242::t_4a48593b840fac 145-153
+  s_e0bc7d6e875242::t_53d023a10f3c95 33-37,42
+outfitter/packages/api/src/agentlink.ts
+  s_e0bc7d6e875242::t_e67731ea6f2ef1 825-831
+  s_e0bc7d6e875242::t_b456278c6af87b 969,971-972,974-975
+  s_e0bc7d6e875242::t_9f320e113a8e15 81-85
+outfitter/packages/api/test/secrets.test.ts
+  s_e0bc7d6e875242::t_b7694eb750a965 193,195-233
+  s_e0bc7d6e875242::t_284ca0c154cbaa 234-245
+  s_e0bc7d6e875242::t_b723c166c8bf25 192
+  s_e0bc7d6e875242::t_fd86a93a414ac5 194
+outfitter/packages/api/src/github-broker.ts
+  s_e0bc7d6e875242::t_70c3e37fa09fa8 274-276
+outfitter/deploy/README.md
+  s_e0bc7d6e875242::t_aa1d542b3889de 200-204
+outfitter/packages/api/test/github-app.test.ts
+  s_e0bc7d6e875242::t_b7c6f3100216cb 148-170
+outfitter/packages/api/test/agentlink.test.ts
+  s_e0bc7d6e875242::t_083bf6620b0636 1495
+  s_e0bc7d6e875242::t_8a1551e43c07dc 1546,1552-1556,1561-1581
+  s_e0bc7d6e875242::t_9604ea9fcd6269 1582-1583
+outfitter/packages/api/src/secrets.ts
+  s_e0bc7d6e875242::t_4518f53673d571 192-193
+  s_e0bc7d6e875242::t_b703968a7bbc70 94
+  s_e0bc7d6e875242::t_3f5e0f42f05b47 222
+  s_e0bc7d6e875242::t_a76c2432e6a7aa 230-248
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "af9a5956d9877ae247cb8e41dceb12079b91a262",
+  "prompts": {},
+  "sessions": {
+    "s_e0bc7d6e875242": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c37c9d46-795c-4cd1-835d-84b84570be9d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

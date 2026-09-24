@@ -278,6 +278,100 @@ Common env vars across all the scripts: `PROJECT` (default `outfitter-509211`), 
 (default `us-central1`), `AR_REPO` (default `outfitter`), `ALLOW_SKEW` (default unset — see
 above); the rest are in `config.env`. See each script's header for its other inputs.
 
+## GKE provider (optional)
+
+A second `SandboxProvider` (`docs/specs/gke-sandbox-provider.md`, `docs/specs/
+gke-sandbox-provider-plan.md`): GKE Autopilot with the Agent Sandbox add-on, gVisor-isolated, with
+an optional warm pool to cut wake time to seconds during active hours. **Off by default**
+(`config.env`'s `GKE_CLUSTER=""`) — the Cloud Run provider above is unaffected either way, and every
+routine deploy ships byte-identical env vars while it's off.
+
+All of the scripts below are **owner-run**, on the same footing as `access.sh`/`ci-setup.sh`
+(`deploy/CLAUDE.md`): none of them run on their own, and an agent runs them only with the owner's
+explicit go-ahead in the conversation (`gke-template.sh` is the one exception — see below). Order:
+
+1. **`./gke-cluster.sh`** — creates the Autopilot cluster `outfitter` with Agent Sandbox enabled
+   (`--enable-agent-sandbox --enable-dns-access`). Starts GKE billing (about $73/month, normally
+   covered by the account's one free-tier credit — the script refuses if another cluster on the
+   billing account is already using it, unless `--i-know`). `DRY_RUN=1` first.
+2. **`./gke-iam.sh`** — the `outfitter-sandboxes` namespace and its `outfitter-agent` KSA, the
+   Workload Identity binding letting it impersonate the existing `outfitter-agent@` GSA,
+   `roles/container.clusterViewer` on the project for `outfitter-api@`, its RBAC Role/RoleBinding in
+   the namespace (`deploy/gke/rbac.yaml`), and the `sandbox-hardening-policy` exemption for that one
+   namespace (`deploy/gke/hardening-exemption.json` — GKE's binding stays `Deny` everywhere else).
+   Also runs two guards: **logWriter-only** (refuses if `outfitter-agent@` holds any project IAM role
+   beyond `roles/logging.logWriter`, since the template keeps the metadata server reachable from
+   every sandbox — owner decision "option B", `docs/specs/gke-sandbox-provider-plan.md` §1 — that
+   account's permissions are the model's permissions) and **no unexpected binding** on
+   `outfitter-agent@`'s own IAM policy (only three are expected: `outfitter-api`'s and
+   `outfitter-deployer`'s `serviceAccountUser`, from `baseline.sh` and `ci-setup.sh`, and the KSA's
+   `workloadIdentityUser`, from this script). Idempotent; safe to re-run (a GKE upgrade can restore
+   the hardening binding this un-exempts). `DRY_RUN=1` first.
+3. **Set `GKE_CLUSTER` in `config.env` and merge** (leave `SANDBOX_PROVIDER=cloudrun` for now).
+   Merging only runs CI; nothing deploys until a release tag (README "Deploying").
+4. **Re-run `./ci-setup.sh`** (owner-run) from the updated `main`. `ci-setup.sh` reads `GKE_CLUSTER`
+   from `config.env`, which is why step 3 comes first. With it set and the cluster up, it applies the
+   namespaced Role letting `outfitter-deployer` create/patch the SandboxTemplate and pool, manage the
+   release-time warm-up claim, and read the `kube-dns` Service in `kube-system`. The first GKE release
+   (step 5) runs as the deployer in GitHub Actions and needs all of that. Before `gke-cluster.sh`, or
+   with `GKE_CLUSTER` empty, `ci-setup.sh` just warns and skips that block.
+5. **First release with `GKE_CLUSTER` set:** cut a release (`tag-release.sh`). From then on,
+   `release.sh` runs **`gke-template.sh`** as a step
+   between the Job and the link deploy: it renders `deploy/gke/sandbox-template.yaml` and
+   `warm-pool.yaml` (`envsubst`: the image tag from `commit_tag` and the cluster's own kube-dns
+   Service IP, read live rather than hard-coded — `docs/reports/gke-spike.md` S3; the template
+   itself carries no static `OUTFITTER_API`/`RUN_ID`/`RUN_TOKEN` env var, since a cold claim setting
+   the same name is rejected by agent-sandbox's `Allowed` injection policy), applies them
+   server-side, restores the warm pool's current `replicas` (so a template update never undoes what
+   the schedule below set), warms the new image with one throwaway cold claim -- `kubectl create`,
+   waiting (best-effort, bounded) for its Sandbox to report Ready, since image streaming needs one
+   real pull of a brand-new tag before it's fast (S4) -- and only then labels the template
+   `build-commit=<tag>`, last, so a failure earlier in this step never hides behind a label that
+   makes a retry think it's already done. It also re-runs both `gke-iam.sh` guards. `check_deploy_skew`
+   (the bug-9 skew guard) now also compares against the template's `build-commit` label: an older
+   template is refused `4409` by a newer link, terminally (S2), so it can never lag -- this applies to
+   every deploy script, not only `gke-template.sh` itself, once `GKE_CLUSTER` is set. Skipped
+   entirely (no kubectl call at all) while `GKE_CLUSTER` is empty.
+6. **`./gke-schedule.sh`** — Cloud Scheduler jobs `outfitter-warm-up`/`outfitter-warm-down`, calling
+   the link role's `POST /api/hooks/warm-pool {"replicas":N}` hook with an OIDC token as
+   `outfitter-tasks` (same pattern as `mailbox.sh`'s `outfitter-tick`). Requires `mailbox.sh` and
+   `link.sh` to have already run, and the hook itself to exist (`/api/hooks/warm-pool` ships with
+   PR2, #128 — the jobs are harmless but ineffective until it merges and outfitter-link redeploys
+   with it). Defaults (owner decision): weekdays 08:00 up / 20:00 down, `Europe/Zagreb`, 1 replica —
+   override with `WARM_UP_CRON`/`WARM_DOWN_CRON`/`WARM_TZ`/`WARM_REPLICAS`. `release.sh`'s
+   audience-drift check (above) now also covers these two jobs. `DRY_RUN=1` first.
+7. **Switching providers** is a `config.env` edit plus a release, nothing more: set
+   `SANDBOX_PROVIDER=gke` (with `GKE_CLUSTER` already set per step 3), merge, tag. Back to Cloud Run
+   is the same edit in reverse; the GKE template, pool and schedule are left in place either way (in
+   case of a quick switch back) until `gke-teardown.sh`.
+
+**`./gke-teardown.sh`** (owner-run, not part of the order above) reverses all of it: scales the warm
+pool to 0, deletes the two Scheduler jobs, deletes the cluster, and removes the project-level IAM
+bindings `gke-iam.sh` added (the namespace's own RBAC and hardening exemption go with the cluster).
+Refuses while any `SandboxClaim` exists in `outfitter-sandboxes` unless `--force` — the closest proxy
+these scripts can check directly for "an active gke run" without Atlas access (every active run has
+exactly one claim; a run whose claim was deleted moments before but isn't yet reconciled as stopped
+is the one case this can't see). Re-runnable (a missing binding/job/cluster reads as already done).
+`DRY_RUN=1` first. **After a real teardown, empty `GKE_CLUSTER` in `config.env` too (and merge)** —
+otherwise the next release's `gke-template.sh` step fails trying to reach a cluster that's gone.
+
+CI (`ci-setup.sh`, also owner-run) grants `outfitter-deployer` `container.clusterViewer` at the
+project level (`roles/browser`, already granted, covers the IAM-policy read the logWriter guard
+needs — no extra role for that), and — once `GKE_CLUSTER` is set and the cluster exists (steps 3
+and 4 above) — a namespaced Role letting it `get`/`create`/`patch` the SandboxTemplate and pool (`create`
+too: the very first release applies to an object that doesn't exist yet, which a real apiserver
+authorizes against `create`, not `patch`), `get`/`create`/`delete`/`list` the release-time warm-up
+claim (`create`, not `apply`: this Role deliberately grants no `patch` on claims; `list` is for
+finding and deleting a stale one left by an interrupted previous run) and `get`/`list`/`watch` its
+Sandbox, plus a `kube-system` Role letting it `get` the `kube-dns` Service only. The GitHub Actions
+deploy workflow installs `kubectl` and `gke-gcloud-auth-plugin` alongside `gcloud beta`, but only
+when `config.env` has `GKE_CLUSTER` set (a small step, `gke-workflow-check.sh`, checks before
+`setup-gcloud` runs — it never `source`s `config.env` directly, since that references `${REGION}`,
+which only `env.sh` ever sets, and a bare CI step under `set -u` would abort before `setup-gcloud`
+ever ran otherwise), so `gke-template.sh` can get a kubeconfig (`gcloud container clusters
+get-credentials --dns-endpoint`, into a fresh temp file
+in CI, `~/.kube/outfitter` locally — never the shared `~/.kube/config`).
+
 ## IAP access for users outside the org
 
 The project sits in the `mgmonteleone.com` organization. By default IAP uses a Google-managed OAuth

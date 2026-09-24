@@ -12,3 +12,9 @@
 - `tag-release.sh` (without DRY_RUN=1), `ROLLBACK=1`, `ALLOW_OFF_MAIN=1`, `ALLOW_SKEW=1`,
   `access.sh` and `ci-setup.sh` need the owner's explicit go-ahead in the conversation. Never create
   a GitHub Release for Outfitter: Releases here are Kernal's, and `kernal update` reads the latest.
+- GKE (README.md "GKE provider (optional)"): `gke-cluster.sh` (without `DRY_RUN=1`), `gke-iam.sh`
+  (without `DRY_RUN=1`), `gke-schedule.sh` and `gke-teardown.sh` (without `DRY_RUN=1`, and
+  `--force`) are owner-run, same footing as `access.sh`/`ci-setup.sh` -- they start GKE billing,
+  change project IAM, or delete the cluster. `DRY_RUN=1` against any of them, from a clean
+  checkout, is safe. `gke-template.sh` is different: it's a `release.sh` step, so it runs
+  automatically (never by hand from a session worktree) once `GKE_CLUSTER` is set in `config.env`.

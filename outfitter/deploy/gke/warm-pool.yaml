@@ -1,0 +1,20 @@
+# The outfitter-agent SandboxWarmPool (docs/specs/gke-sandbox-provider.md §3.4). Rendered by
+# deploy/gke-template.sh with envsubst and applied server-side; never apply this file directly.
+#
+# ${GKE_NAMESPACE}  deploy/config.env's GKE_NAMESPACE (default outfitter-sandboxes)
+# ${GKE_WARM_POOL}  deploy/config.env's GKE_WARM_POOL (default outfitter-agent)
+#
+# replicas starts at 0 here (cold-only) on a brand-new pool; deploy/gke-template.sh reads the
+# pool's *current* replicas before applying this file and patches it straight back afterwards, so a
+# routine template update never undoes what deploy/gke-schedule.sh's warm-up/warm-down hooks set.
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: ${GKE_WARM_POOL}
+  namespace: ${GKE_NAMESPACE}
+spec:
+  replicas: 0
+  sandboxTemplateRef: { name: outfitter-agent }
+  # Recreate (not OnReplenish): an image update should replace idle warm pods immediately, since an
+  # older-image warm pod can be refused 4409 by a newer link (docs/reports/gke-spike.md S2 attempt 1).
+  updateStrategy: { type: Recreate }

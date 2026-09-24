@@ -246,10 +246,11 @@ check_deploy_skew() {
   if [[ -n "${DEPLOY_ALL_COMMIT:-}" && "${DEPLOY_ALL_COMMIT}" == "${this_commit}" ]]; then
     return 0
   fi
-  local web_commit link_commit job_commit
+  local web_commit link_commit job_commit template_commit=""
   web_commit="$(current_build_commit services outfitter-api)"
   link_commit="$(current_build_commit services outfitter-link)"
   job_commit="$(current_build_commit jobs outfitter-agent)"
+  [[ -n "${GKE_CLUSTER:-}" ]] && template_commit="$(current_build_commit_gke)"
 
   local mismatches=()
   if [[ "${this_component}" != "web" && -n "${web_commit}" && "${web_commit}" != "${this_commit}" ]]; then
@@ -260,6 +261,10 @@ check_deploy_skew() {
   fi
   if [[ "${this_component}" != "job" && -n "${job_commit}" && "${job_commit}" != "${this_commit}" ]]; then
     mismatches+=("outfitter-agent (Job) is at ${job_commit}")
+  fi
+  if [[ "${this_component}" != "gke-template" && -n "${GKE_CLUSTER:-}" && -n "${template_commit}" \
+        && "${template_commit}" != "${this_commit}" ]]; then
+    mismatches+=("the GKE SandboxTemplate is at ${template_commit}")
   fi
 
   if [[ "${#mismatches[@]}" -eq 0 ]]; then
@@ -319,4 +324,197 @@ deployed_origin() {
   gcloud_exists run services describe "$1" --project="${PROJECT}" --region="${REGION}" || return 0
   gcloud run services describe "$1" --project="${PROJECT}" --region="${REGION}" \
     --format='value(spec.template.spec.containers[0].env.filter(name=OUTFITTER_ORIGIN).extract(value).flatten())'
+}
+
+# --- GKE (docs/specs/gke-sandbox-provider-plan.md; deploy/gke-*.sh) -----------------------------
+# A file, never the shared ~/.kube/config: every kubectl call across these scripts pins it
+# explicitly with --kubeconfig, matching gke-cluster.sh's own get-credentials.
+CLEANUP_PATHS=()
+CLEANUP_CMDS=()
+CLEANUP_TRAP_SET=""
+_deploy_cleanup() {
+  local c p
+  # Commands (e.g. deleting a release-time warm-up claim) before paths: an interrupt mid-wait must
+  # still delete the claim, whether or not a temp dir also needs removing.
+  for c in ${CLEANUP_CMDS[@]+"${CLEANUP_CMDS[@]}"}; do
+    eval "${c}" || true
+  done
+  for p in ${CLEANUP_PATHS[@]+"${CLEANUP_PATHS[@]}"}; do
+    rm -rf "${p}"
+  done
+}
+# register_cleanup <path> -- removed on exit. A script that also wants its own EXIT trap for
+# something else must register that cleanup here too (a second `trap ... EXIT` would replace this
+# one, dropping the kubeconfig/temp-file cleanup silently).
+#
+# `trap _deploy_cleanup EXIT` runs only ONCE per process, guarded by CLEANUP_TRAP_SET -- this is
+# deliberate, not an optimization. Every `$(...)`/`(...)` a script runs inherits both the trap
+# already set AND a *copy* of the arrays above (fork semantics), but bash (confirmed on 3.2, macOS's
+# default /bin/bash, where this actually bit us) does NOT act on an EXIT trap it merely inherited
+# unchanged when that subshell exits -- it only does so if something *re-runs* `trap ... EXIT` while
+# already inside that subshell. So calling register_cleanup a second time from inside a command
+# substitution (e.g. check_deploy_skew's `x="$(current_build_commit_gke)"`, which calls
+# gke_kubeconfig -> register_cleanup) must NOT call `trap` again, or that subshell starts treating
+# ITS OWN exit as "time to clean up" and deletes everything registered so far -- including paths the
+# top-level script (still running) hasn't used yet. $BASHPID would be the obvious alternative fix
+# but isn't available on bash 3.2 either (always empty there, silently useless). Skipping the
+# redundant `trap` call sidesteps needing any of that: the array append still happens (harmless if
+# it's inside a subshell -- that copy is discarded when the subshell exits, since subshells can't
+# write back to the parent's variables), and only the ORIGINAL process, the one that first called
+# register_cleanup, ever has a live trap to fire.
+register_cleanup() {
+  CLEANUP_PATHS+=("$1")
+  if [[ -z "${CLEANUP_TRAP_SET}" ]]; then
+    CLEANUP_TRAP_SET=1
+    trap _deploy_cleanup EXIT
+  fi
+}
+# register_cleanup_cmd <command string> -- run on exit (eval'd; only ever called with this repo's
+# own fixed strings, never external input). Same trap-sharing caveat, and the same "set the trap
+# only once" reasoning, as register_cleanup.
+register_cleanup_cmd() {
+  CLEANUP_CMDS+=("$1")
+  if [[ -z "${CLEANUP_TRAP_SET}" ]]; then
+    CLEANUP_TRAP_SET=1
+    trap _deploy_cleanup EXIT
+  fi
+}
+
+# is_kubectl_notfound <error text> -- true only for kubectl's actual "the object doesn't exist" API
+# response ("Error from server (NotFound): ... \"name\" not found"), never for a broader "not
+# found"/"does not exist" match: kubectl itself fails with "exec: \"gke-gcloud-auth-plugin\":
+# executable file not found in $PATH" when the auth plugin isn't installed, and a looser regex would
+# misread that as "the resource doesn't exist" instead of failing loudly on a broken kubectl setup.
+is_kubectl_notfound() {
+  grep -qF 'Error from server (NotFound)' <<<"$1"
+}
+
+# gke_kubeconfig -- ensures a kubeconfig for GKE_CLUSTER exists and exports KUBECONFIG to it, then
+# returns 0. Returns 1 (no kubeconfig touched) if GKE_CLUSTER is empty -- callers use that to skip
+# GKE-only work cleanly. Locally, a dedicated persistent file (KUBECONFIG_OUTFITTER, default
+# ~/.kube/outfitter, same as gke-cluster.sh); in GitHub Actions, a fresh temp file removed on exit
+# (register_cleanup), never a checked-out or repo-relative path. In a dry run this only prints the
+# command it would have run (gke-cluster.test.sh's convention: get-credentials never runs under
+# DRY_RUN=1), so callers must not depend on the file actually existing in that case.
+gke_kubeconfig() {
+  [[ -z "${GKE_CLUSTER:-}" ]] && return 1
+  local kubeconfig location="${GKE_LOCATION:-${REGION}}"
+  if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    kubeconfig="$(mktemp)"
+    register_cleanup "${kubeconfig}"
+  else
+    kubeconfig="${KUBECONFIG_OUTFITTER:-${HOME}/.kube/outfitter}"
+  fi
+  if [[ "${DRY_RUN:-0}" == 1 ]]; then
+    echo "   DRY_RUN: gcloud container clusters get-credentials ${GKE_CLUSTER} --location=${location} --project=${PROJECT} --dns-endpoint (KUBECONFIG=${kubeconfig})" >&2
+  else
+    mkdir -p "$(dirname "${kubeconfig}")"
+    # Explicit if/return, not `cmd || return 1`: this function is almost always itself called as
+    # `gke_kubeconfig || ...`, which suspends -e for everything evaluated while running it -- so a
+    # failing get-credentials must be caught here, or the unconditional `export` below would make
+    # the function return 0 regardless and every caller would proceed against a kubeconfig that was
+    # never actually written.
+    if ! KUBECONFIG="${kubeconfig}" gcloud container clusters get-credentials "${GKE_CLUSTER}" \
+        --location="${location}" --project="${PROJECT}" --dns-endpoint >&2; then
+      return 1
+    fi
+  fi
+  export KUBECONFIG="${kubeconfig}"
+}
+
+# current_build_commit_gke -- the outfitter-agent SandboxTemplate's build-commit label (gke-
+# template.sh sets it, mirroring current_build_commit for the three Cloud Run components), or "" if
+# GKE isn't configured, the template doesn't exist yet, or this is a dry run (no real kubeconfig to
+# read from -- see gke_kubeconfig). Used by check_deploy_skew.
+#
+# Unlike current_build_commit (which treats gcloud_exists's NOT_FOUND/permission split the same
+# way), a *lookup* failure here (a bad kubeconfig, Forbidden, a network error) must not read as "the
+# template doesn't exist" while GKE is on: that would make check_deploy_skew silently skip the one
+# check meant to catch a stale template, and gke-template.sh silently decide the template "already
+# matches" and skip re-applying it. So this fails loudly (deploy_fail) on anything other than a
+# real NotFound, mirroring gcloud_exists's own contract. GKE-off (GKE_CLUSTER empty) is unaffected:
+# the first line returns "" before touching kubectl at all.
+current_build_commit_gke() {
+  [[ -z "${GKE_CLUSTER:-}" ]] && return 0
+  gke_kubeconfig || deploy_fail "could not obtain a kubeconfig for ${GKE_CLUSTER}"
+  [[ "${DRY_RUN:-0}" == 1 ]] && return 0
+  local out err_file
+  err_file="$(mktemp)"
+  if out="$(kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE:-outfitter-sandboxes}" \
+      get sandboxtemplate outfitter-agent -o jsonpath='{.metadata.labels.build-commit}' 2>"${err_file}")"; then
+    rm -f "${err_file}"
+    printf '%s' "${out}"
+    return 0
+  fi
+  if is_kubectl_notfound "$(cat "${err_file}")"; then
+    rm -f "${err_file}"
+    return 0
+  fi
+  cat "${err_file}" >&2
+  rm -f "${err_file}"
+  deploy_fail "could not read the GKE SandboxTemplate's build-commit label (see above)"
+}
+
+# assert_agent_sa_logwriter_only -- owner decision "option B" (gke-sandbox-provider-plan.md §1): the
+# GKE template keeps the metadata server reachable from every sandbox (S7 found Autopilot's Warden
+# rejects the per-uid NET_ADMIN block Cloud Run's finding 3 wanted), so outfitter-agent@'s own IAM
+# roles ARE the model's permissions inside a run. Fails loudly if it holds any project role beyond
+# roles/logging.logWriter (baseline.sh grants only that one). Read-only; called on every release
+# when GKE is configured (gke-template.sh) and stand-alone from gke-iam.sh. Needs
+# resourcemanager.projects.getIamPolicy -- roles/browser (already granted to outfitter-deployer,
+# ci-setup.sh) includes it, so no separate role is needed.
+#
+# Scope: this checks only PROJECT-level bindings on the service account -- exactly what baseline.sh
+# and ci-setup.sh ever grant it. It does NOT see a role granted at the folder or organization level
+# (which would also apply to this account and isn't visible in `projects get-iam-policy`), nor a
+# custom role with a different id that happens to include a permission logging.logWriter doesn't
+# grant `roles/logging.logWriter` itself. assert_agent_sa_no_unexpected_bindings (below) narrows the
+# other half of the gap -- what's granted directly ON the service account resource -- but neither
+# reaches folder/org policy; there is no gcloud call from a project-scoped credential that does.
+assert_agent_sa_logwriter_only() {
+  local agent_sa_email="outfitter-agent@${PROJECT}.iam.gserviceaccount.com" extra_roles
+  extra_roles="$(gcloud projects get-iam-policy "${PROJECT}" \
+    --flatten="bindings[].members" \
+    --filter="bindings.members:serviceAccount:${agent_sa_email} AND NOT bindings.role:roles/logging.logWriter" \
+    --format="value(bindings.role)")" \
+    || deploy_fail "could not read ${PROJECT}'s IAM policy (needs resourcemanager.projects.getIamPolicy; roles/browser includes it)"
+  if [[ -n "${extra_roles}" ]]; then
+    deploy_fail "${agent_sa_email} holds project role(s) beyond roles/logging.logWriter: $(tr '\n' ' ' <<<"${extra_roles}") -- with the metadata server reachable (option B), its permissions are the sandbox model's permissions; remove the extra role(s) before continuing"
+  fi
+}
+
+# assert_agent_sa_no_unexpected_bindings -- the resource-level half of the same option-B guard: who
+# holds a role ON outfitter-agent@ itself (`iam service-accounts get-iam-policy`), as opposed to a
+# project role granted TO it (assert_agent_sa_logwriter_only, above). Anything beyond the three known
+# bindings below -- another principal granted serviceAccountUser/TokenCreator on it, for instance --
+# could mint credentials as this account and is worth failing loudly over. Needs
+# roles/iam.serviceAccountViewer (already granted to outfitter-deployer, ci-setup.sh).
+#
+# Expected bindings and where each comes from:
+#   roles/iam.serviceAccountUser  outfitter-api@     baseline.sh    -- RunManager.wake impersonates
+#                                                                       it to start Cloud Run Job
+#                                                                       executions (CloudRunProvider)
+#   roles/iam.serviceAccountUser  outfitter-deployer@ ci-setup.sh   -- deploys the Job as this account
+#   roles/iam.workloadIdentityUser <the KSA>          gke-iam.sh    -- GKE sandboxes impersonate it
+assert_agent_sa_no_unexpected_bindings() {
+  local agent_sa_email="outfitter-agent@${PROJECT}.iam.gserviceaccount.com"
+  local expected_wi_member="serviceAccount:${PROJECT}.svc.id.goog[${GKE_NAMESPACE:-outfitter-sandboxes}/outfitter-agent]"
+  local expected_deployer_member="serviceAccount:outfitter-deployer@${PROJECT}.iam.gserviceaccount.com"
+  local expected_api_member="serviceAccount:outfitter-api@${PROJECT}.iam.gserviceaccount.com"
+  local rows role member unexpected=()
+  rows="$(gcloud iam service-accounts get-iam-policy "${agent_sa_email}" --project="${PROJECT}" \
+    --flatten="bindings[].members" --format="csv[no-heading](bindings.role,bindings.members)")" \
+    || deploy_fail "could not read ${agent_sa_email}'s own IAM policy (needs roles/iam.serviceAccountViewer)"
+  while IFS=',' read -r role member; do
+    [[ -z "${role}" ]] && continue
+    case "${role}:${member}" in
+      "roles/iam.serviceAccountUser:${expected_deployer_member}") continue ;;
+      "roles/iam.serviceAccountUser:${expected_api_member}") continue ;;
+      "roles/iam.workloadIdentityUser:${expected_wi_member}") continue ;;
+    esac
+    unexpected+=("${role} -> ${member}")
+  done <<<"${rows}"
+  if [[ "${#unexpected[@]}" -gt 0 ]]; then
+    deploy_fail "outfitter-agent@ has unexpected bindings on its own IAM policy: ${unexpected[*]} -- anyone who can mint credentials as this account can act with the sandbox model's permissions (option B); remove them or update this check's expected list if they're deliberate"
+  fi
 }

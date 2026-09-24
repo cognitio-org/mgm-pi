@@ -330,11 +330,39 @@ export function hostError(error, id) {
   return message;
 }
 
+/** What the panel should say about the active tab for this Floppy.
+ * `originGranted` false means the recorded tab is this one and its http(s) origin was refused.
+ * A chrome:// or file:// tab has no host permission to ask for, so a matching record is shared. */
+export function shareStatusView({ record, activeTabId, tabTitle, originGranted }) {
+  const recorded =
+    record !== null &&
+    typeof record === "object" &&
+    Number.isInteger(record.tabId) &&
+    record.tabId === activeTabId;
+  if (!recorded) return { ok: true, status: "not-shared" };
+  if (originGranted === false) return { ok: true, status: "permission-denied" };
+  const title = typeof tabTitle === "string" ? tabTitle : "";
+  return { ok: true, status: "shared", tabTitle: title };
+}
+
+/** Email to show while a capture for this Floppy is in flight. Otherwise null. */
+export function capturingEmailFor(status, sessionId) {
+  if (!status || typeof status !== "object" || Array.isArray(status)) return null;
+  if (status.sessionId !== sessionId || status.phase !== "capturing") return null;
+  if (typeof status.requesterEmail !== "string") return null;
+  const email = status.requesterEmail.trim();
+  if (email === "" || email.includes(" ")) return null;
+  return email;
+}
+
 /** Panel → worker. Not a page-channel message. `panel-request` is an id the panel itself created. */
 export function panelMessage(message) {
   if (message === null || typeof message !== "object" || Array.isArray(message)) return null;
   if (message.t === "share-active" && isSessionId(message.sessionId)) {
     return { t: "share-active", sessionId: message.sessionId };
+  }
+  if (message.t === "share-status" && isSessionId(message.sessionId)) {
+    return { t: "share-status", sessionId: message.sessionId };
   }
   if (message.t === "revoke-share" && isSessionId(message.sessionId)) {
     return { t: "revoke-share", sessionId: message.sessionId };

@@ -1,0 +1,43 @@
+kernal/.pi/extensions/kernal-github/github-tools.ts
+  s_a09835d2e68958::t_a2f4b234a80461 8-10,18,843,1232-1252,1256-1264
+kernal/tests/github-broker.test.ts
+  s_a09835d2e68958::t_e34aee44b77165 236,239-242,248-251,255-262,264,267-270,273,276
+outfitter/docs/protocol.md
+  s_a09835d2e68958::t_1d3a53763db117 122,135
+outfitter/packages/agentd/src/branch-policy.ts
+  s_a09835d2e68958::t_05749952e0544f 1-38
+outfitter/packages/agentd/src/git-proxy.ts
+  s_a09835d2e68958::t_c7708e08fd7b65 41-46,103,121,180-188,194,265,279-284,288
+outfitter/packages/agentd/test/git-proxy.test.ts
+  s_a09835d2e68958::t_333077f457d0ae 255,264,459-487
+outfitter/packages/agentd/test/run.test.ts
+  s_a09835d2e68958::t_48a925903f9be1 251-280
+outfitter/packages/api/src/agentlink.ts
+  s_a09835d2e68958::t_a149fdc959c339 22,86,906,1046-1047,1049-1057,1084-1086
+outfitter/packages/api/src/branch-policy.ts
+  s_a09835d2e68958::t_0ea94d35a3ca13 1-49
+outfitter/packages/api/src/routes/gurus.ts
+  s_a09835d2e68958::t_77c66d8875ca1d 5,89,108-113
+outfitter/packages/api/test/agentlink.test.ts
+  s_a09835d2e68958::t_528e0f409af260 358-394
+outfitter/packages/web/src/api/client.ts
+  s_a09835d2e68958::t_9beb64888ef21a 87-88
+outfitter/packages/web/src/components/GuruForm.tsx
+  s_a09835d2e68958::t_3680f0ada02e2c 57,86,157-169
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "f5e0bd64a5ebb115f6ee264c1332e1faf4b001eb",
+  "prompts": {},
+  "sessions": {
+    "s_a09835d2e68958": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a669d0f3e6e1ee5d8",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

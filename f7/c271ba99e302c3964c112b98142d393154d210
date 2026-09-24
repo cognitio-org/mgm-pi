@@ -1,0 +1,14 @@
+chrome/test/host.test.js
+  h_69b863911ebf05 240,242-243,247-254,257-272,275-276,299
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "f7c271ba99e302c3964c112b98142d393154d210",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -1101,8 +1101,8 @@ async function runGated(tabId, confirm, allowOn, action) {
 
 async function replyAction(prompt, outcome) {
   if (prompt.source === "host") {
-    if (!outcome.ok) postNative(hostActionError(prompt.tabId, reportError(outcome.error)));
-    else postNative(hostActedMessage(prompt.tabId));
+    if (!outcome.ok) postNative(hostActionError(prompt.tabId, reportError(outcome.error), prompt.hostId));
+    else postNative(hostActedMessage(prompt.tabId, prompt.hostId));
     return;
   }
   const body = outcome.ok ? { ok: true } : { error: reportError(outcome.error) };
@@ -1123,7 +1123,7 @@ async function finishAction(prompt, confirm, allowOn) {
 
 async function cancelHostPrompt(prompt) {
   await dropPrompt(prompt.requestId);
-  postNative(hostActionError(prompt.tabId, "not_shared"));
+  postNative(hostActionError(prompt.tabId, "not_shared", prompt.hostId));
 }
 
 async function clearPromptsForSession(sessionId) {
@@ -1175,7 +1175,7 @@ async function onNativeAction(message) {
   const map = await readShares();
   const refused = hostCaptureReply(parsed.tabId, recordedTabIds(map));
   if (refused) {
-    postNative(hostActionError(parsed.tabId, "not_shared"));
+    postNative(hostActionError(parsed.tabId, "not_shared", parsed.id));
     return;
   }
   const share = Object.values(map).find((rec) => rec.tabId === parsed.tabId);
@@ -1189,6 +1189,7 @@ async function onNativeAction(message) {
     kind: parsed.kind,
     selector: parsed.selector,
     ...(parsed.kind === "type" ? { text: parsed.text } : {}),
+    ...(parsed.id != null ? { hostId: parsed.id } : {}),
   };
   if (sessionId && kindAllowed(await readAllow(), sessionId, parsed.kind)) {
     await finishAction(prompt, null, true);
@@ -1457,12 +1458,12 @@ async function onNativeCapture(message) {
   const map = await readShares();
   const refused = hostCaptureReply(parsed.tabId, recordedTabIds(map));
   if (refused) {
-    postNative(refused);
+    postNative(parsed.id != null ? { ...refused, id: parsed.id } : refused);
     return;
   }
   const shot = await captureForTab(parsed.tabId);
   if (!shot.ok) {
-    postNative(hostError(shot.error));
+    postNative(hostError(shot.error, parsed.id));
     return;
   }
   postNative(hostCapturedMessage({
@@ -1470,6 +1471,7 @@ async function onNativeCapture(message) {
     title: shot.title,
     url: shot.href,
     jpegBase64: shot.jpegBase64,
+    id: parsed.id,
   }));
 }
 

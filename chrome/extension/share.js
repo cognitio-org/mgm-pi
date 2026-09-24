@@ -295,11 +295,18 @@ export function nativeUnshareMessage(tabId) {
   return { t: "unshare", tabId };
 }
 
+function nativeRequestId(id) {
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
 /** Host → extension. Anything that is not `{t:"capture", tabId}` is ignored. */
 export function parseHostCapture(message) {
   if (message === null || typeof message !== "object" || Array.isArray(message)) return null;
   if (message.t !== "capture" || !Number.isInteger(message.tabId)) return null;
-  return { t: "capture", tabId: message.tabId };
+  const parsed = { t: "capture", tabId: message.tabId };
+  const id = nativeRequestId(message.id);
+  if (id != null) parsed.id = id;
+  return parsed;
 }
 
 /** Refuse a tab id this extension did not record. `null` means the capture may proceed. */
@@ -309,12 +316,18 @@ export function hostCaptureReply(tabId, recordedTabIds) {
   return null;
 }
 
-export function hostCapturedMessage({ tabId, title, url, jpegBase64 }) {
-  return { t: "captured", tabId, title, url, jpegBase64 };
+export function hostCapturedMessage({ tabId, title, url, jpegBase64, id }) {
+  const message = { t: "captured", tabId, title, url, jpegBase64 };
+  const carried = nativeRequestId(id);
+  if (carried != null) message.id = carried;
+  return message;
 }
 
-export function hostError(error) {
-  return { t: "error", error };
+export function hostError(error, id) {
+  const message = { t: "error", error };
+  const carried = nativeRequestId(id);
+  if (carried != null) message.id = carried;
+  return message;
 }
 
 /** Panel → worker. Not a page-channel message. `panel-request` is an id the panel itself created. */

@@ -148,6 +148,16 @@ export function requestIdFromNotice(notificationId) {
   return id.length > 0 && id.length <= 180 ? id : null;
 }
 
+function nativeRequestId(id) {
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function withNativeRequestId(message, id) {
+  const carried = nativeRequestId(id);
+  if (carried == null) return message;
+  return { ...message, id: carried };
+}
+
 /** Host → extension. A tab id this process did not share is not an action. */
 export function parseHostAction(message) {
   if (message === null || typeof message !== "object" || Array.isArray(message)) return null;
@@ -158,15 +168,15 @@ export function parseHostAction(message) {
       : { kind: message.kind, selector: message.selector },
   );
   if (!body) return null;
-  return { t: "action", tabId: message.tabId, ...body };
+  return withNativeRequestId({ t: "action", tabId: message.tabId, ...body }, message.id);
 }
 
-export function hostActedMessage(tabId) {
-  return { t: "acted", tabId };
+export function hostActedMessage(tabId, id) {
+  return withNativeRequestId({ t: "acted", tabId }, id);
 }
 
-export function hostActionError(tabId, error) {
-  return { t: "action-error", tabId, error };
+export function hostActionError(tabId, error, id) {
+  return withNativeRequestId({ t: "action-error", tabId, error }, id);
 }
 
 export function pendingActions(body) {
@@ -217,6 +227,7 @@ function promptRecord(requestId, prompt) {
   if (!SESSION_ID.test(prompt.sessionId ?? "") && prompt.source === "cloud") return null;
   if (prompt.source !== "cloud" && prompt.source !== "host") return null;
   if (!Number.isInteger(prompt.tabId) || prompt.tabId < 0) return null;
+  const hostId = prompt.source === "host" ? nativeRequestId(prompt.hostId) : null;
   return {
     requestId,
     sessionId: typeof prompt.sessionId === "string" ? prompt.sessionId : "",
@@ -224,6 +235,7 @@ function promptRecord(requestId, prompt) {
     source: prompt.source,
     tabId: prompt.tabId,
     ...body,
+    ...(hostId != null ? { hostId } : {}),
   };
 }
 

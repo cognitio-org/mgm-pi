@@ -162,10 +162,21 @@ export function captureErrorText(error) {
   return error;
 }
 
+function carriedId(message) {
+  return Number.isInteger(message.id) && message.id > 0 ? message.id : null;
+}
+
+function withCarriedId(value, message) {
+  const id = carriedId(message);
+  if (id == null) return value;
+  return { ...value, id };
+}
+
 /**
  * One native message from the extension. Shares are remembered and dropped here.
  * `broadcast` is an unsolicited line for socket clients. `capture` settles the
  * in-flight capture. List and capture from stdin are ignored: Kernal sends those.
+ * A positive `id` is the host's request id echoed by the extension.
  */
 export function applyExtensionMessage(shares, message) {
   const current = copyShares(shares);
@@ -186,43 +197,57 @@ export function applyExtensionMessage(shares, message) {
   }
   if (message.t === "captured") {
     if (!Number.isInteger(message.tabId) || message.tabId < 0) {
-      return { shares: current, broadcast: null, capture: { kind: "error", error: ERR_CAPTURE_FAILED } };
+      return {
+        shares: current,
+        broadcast: null,
+        capture: withCarriedId({ kind: "error", error: ERR_CAPTURE_FAILED }, message),
+      };
     }
     return {
       shares: current,
       broadcast: null,
-      capture: {
+      capture: withCarriedId({
         kind: "jpeg",
         tabId: message.tabId,
         title: typeof message.title === "string" ? message.title : "",
         url: typeof message.url === "string" ? message.url : "",
         jpegBase64: typeof message.jpegBase64 === "string" ? message.jpegBase64 : "",
-      },
+      }, message),
     };
   }
   if (message.t === "acted") {
     if (!Number.isInteger(message.tabId) || message.tabId < 0) {
-      return { shares: current, broadcast: null, capture: null, action: { kind: "error", tabId: -1, error: ERR_CAPTURE_FAILED } };
+      return {
+        shares: current,
+        broadcast: null,
+        capture: null,
+        action: withCarriedId({ kind: "error", tabId: -1, error: ERR_CAPTURE_FAILED }, message),
+      };
     }
-    return { shares: current, broadcast: null, capture: null, action: { kind: "done", tabId: message.tabId } };
+    return {
+      shares: current,
+      broadcast: null,
+      capture: null,
+      action: withCarriedId({ kind: "done", tabId: message.tabId }, message),
+    };
   }
   if (message.t === "action-error") {
     return {
       shares: current,
       broadcast: null,
       capture: null,
-      action: {
+      action: withCarriedId({
         kind: "error",
         tabId: Number.isInteger(message.tabId) ? message.tabId : -1,
         error: captureErrorText(message.error),
-      },
+      }, message),
     };
   }
   if (message.t === "error") {
     return {
       shares: current,
       broadcast: null,
-      capture: { kind: "error", error: captureErrorText(message.error) },
+      capture: withCarriedId({ kind: "error", error: captureErrorText(message.error) }, message),
     };
   }
   return keep;

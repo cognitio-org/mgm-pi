@@ -25,7 +25,8 @@ import {
 } from "./protocol.js";
 
 const CAPTURE_TIMEOUT_MS = 15000;
-const ACTION_TIMEOUT_MS = 90000;
+// Tests set KERNAL_CHROME_ACTION_TIMEOUT_MS. An unanswered confirm otherwise waits 90s.
+const ACTION_TIMEOUT_MS = readTimeoutMs(process.env.KERNAL_CHROME_ACTION_TIMEOUT_MS, 90000);
 
 const sockPath = socketPathFrom(fileURLToPath(import.meta.url));
 const sockets = new Set();
@@ -34,8 +35,17 @@ let owns = null;
 let reclaimed = false;
 let shares = [];
 let extensionConnected = true;
-let staleCapture = false;
+let nextId = 1;
+// The in-flight request a timeout already answered. A late reply with this id is
+// dropped. It does not stop the queue; disconnect clears it.
+let abandoned = null;
 const waiters = [];
+
+function readTimeoutMs(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 600000) return fallback;
+  return parsed;
+}
 
 mkdirSync(dirname(sockPath), { recursive: true });
 
@@ -89,26 +99,83 @@ function dropWaiter(waiter) {
   if (index !== -1) waiters.splice(index, 1);
 }
 
+function waiterKind(waiter) {
+  return waiter?.forward?.t === "action" ? "action" : "capture";
+}
+
+function carriedId(value) {
+  return Number.isInteger(value?.id) && value.id > 0 ? value.id : null;
+}
+
 function pump() {
-  if (shuttingDown || staleCapture || !extensionConnected) return;
+  if (shuttingDown || !extensionConnected) return;
   const head = waiters[0];
   if (!head || head.sent) return;
   head.sent = true;
+  head.id = nextId++;
   const timeoutMs = head.timeoutMs ?? CAPTURE_TIMEOUT_MS;
-  const timeoutError = head.forward?.t === "action" ? "action timed out" : ERR_CAPTURE_TIMEOUT;
+  const timeoutError = waiterKind(head) === "action" ? "action timed out" : ERR_CAPTURE_TIMEOUT;
   head.timer = setTimeout(() => {
     if (shuttingDown || !waiters.includes(head)) return;
-    dropWaiter(head);
-    staleCapture = true;
-    writeLine(head.socket, { t: "error", error: timeoutError });
+    abandonInFlight(head, timeoutError);
   }, timeoutMs);
+  let frame;
   try {
-    process.stdout.write(encodeNativeMessage(head.forward ?? { t: "capture", tabId: head.tabId }));
+    frame = encodeNativeMessage({ ...(head.forward ?? { t: "capture", tabId: head.tabId }), id: head.id });
   } catch {
     dropWaiter(head);
     writeLine(head.socket, { t: "error", error: ERR_NOT_CONNECTED });
     pump();
+    return;
   }
+  try {
+    process.stdout.write(frame);
+  } catch {
+    // The extension pipe is gone. Fail the queue now; a later stdin message
+    // means it reconnected and new requests can be served.
+    markExtensionDisconnected();
+  }
+}
+
+function markExtensionDisconnected() {
+  if (shuttingDown) return;
+  extensionConnected = false;
+  abandoned = null;
+  const pending = waiters.splice(0);
+  for (const waiter of pending) {
+    if (waiter.timer) clearTimeout(waiter.timer);
+    writeLine(waiter.socket, { t: "error", error: ERR_NOT_CONNECTED });
+  }
+}
+
+function abandonInFlight(waiter, error) {
+  abandoned = { id: waiter.id, kind: waiterKind(waiter), tabId: waiter.tabId };
+  dropWaiter(waiter);
+  writeLine(waiter.socket, { t: "error", error });
+  pump();
+}
+
+function replyFitsHead(kind, head, result) {
+  if (kind !== "action") return true;
+  return result.tabId === head.tabId;
+}
+
+// A reply whose id is the abandoned request is dropped, even when a new waiter
+// is already at the head. An id for that head is applied. An untagged reply is
+// the abandoned one only when it does not fit the head.
+function discardIfAbandoned(kind, result) {
+  if (!abandoned) return false;
+  const id = carriedId(result);
+  if (id !== null) {
+    if (id !== abandoned.id) return false;
+    abandoned = null;
+    return true;
+  }
+  if (abandoned.kind !== kind) return false;
+  const head = waiters[0];
+  if (head && head.sent && waiterKind(head) === kind && replyFitsHead(kind, head, result)) return false;
+  abandoned = null;
+  return true;
 }
 
 function enqueueCapture(socket, tabId) {
@@ -130,13 +197,11 @@ function enqueueAction(socket, forward) {
 }
 
 function settleAction(action) {
-  if (staleCapture) {
-    staleCapture = false;
-    pump();
-    return;
-  }
+  if (discardIfAbandoned("action", action)) return;
   const head = waiters[0];
-  if (!head || !head.sent || head.forward?.t !== "action") return;
+  if (!head || !head.sent || waiterKind(head) !== "action") return;
+  const id = carriedId(action);
+  if (id !== null && id !== head.id) return;
   if (action.tabId !== head.tabId) return;
   dropWaiter(head);
   if (action.kind === "error") writeLine(head.socket, { t: "error", error: action.error });
@@ -145,13 +210,11 @@ function settleAction(action) {
 }
 
 function settleCapture(capture) {
-  if (staleCapture) {
-    staleCapture = false;
-    pump();
-    return;
-  }
+  if (discardIfAbandoned("capture", capture)) return;
   const head = waiters[0];
-  if (!head || !head.sent) return;
+  if (!head || !head.sent || waiterKind(head) !== "capture") return;
+  const id = carriedId(capture);
+  if (id !== null && id !== head.id) return;
   dropWaiter(head);
   if (capture.kind === "error") {
     writeLine(head.socket, { t: "error", error: capture.error });
@@ -174,6 +237,9 @@ function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
   extensionConnected = false;
+  // Disconnect forgets the abandoned id and fails the queue. The next
+  // connectNative is a new process and can serve new requests.
+  abandoned = null;
   const pending = waiters.splice(0);
   let left = 0;
   const finish = () => {
@@ -304,6 +370,7 @@ server.on("error", (err) => {
 
 const decoder = new NativeFrameDecoder();
 process.stdin.on("data", (chunk) => {
+  if (!shuttingDown && !extensionConnected) extensionConnected = true;
   let messages;
   try {
     messages = decoder.push(chunk);

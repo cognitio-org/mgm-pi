@@ -1,0 +1,30 @@
+outfitter/packages/api/src/sse.ts
+  h_69b863911ebf05 226-231
+outfitter/packages/api/test/sse-poller.test.ts
+  h_69b863911ebf05 236-332
+outfitter/packages/web/src/hooks/useSessionStream.ts
+  h_69b863911ebf05 41-65,104,115-123
+outfitter/packages/web/src/lib/session-facts.ts
+  h_69b863911ebf05 41-42,46-49
+outfitter/packages/web/src/lib/session-lamp.ts
+  h_69b863911ebf05 4-8,23-24,36-37
+outfitter/packages/web/src/styles/layout.css
+  h_69b863911ebf05 307-311
+outfitter/packages/web/test/session-facts.test.ts
+  h_69b863911ebf05 45-60
+outfitter/packages/web/test/session-lamp.test.ts
+  h_69b863911ebf05 50-55
+outfitter/packages/web/test/session-stream.test.ts
+  h_69b863911ebf05 2,53-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "ad463f059d9837b796813e6ba7b93b2d8f170e3e",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

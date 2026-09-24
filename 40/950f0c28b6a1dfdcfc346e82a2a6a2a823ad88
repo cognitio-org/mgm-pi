@@ -1,0 +1,43 @@
+chrome/README.md
+  s_217e742e7da57c::t_e78da755c4b6bb 5,9
+chrome/test/host.test.js
+  s_363670d5ec8509::t_faf5c2c585ee49 14,103-105,518-571
+chrome/test/inspect.test.js
+  s_363670d5ec8509::t_bc81ea8ac42d42 1-138
+kernal/tests/chrome.test.ts
+  s_217e742e7da57c::t_b3dd025413d1ce 12,224,247-249,313-349
+outfitter/docs/protocol.md
+  s_217e742e7da57c::t_4bdd038497b108 129,148,150,367,374-375
+outfitter/docs/specs/chrome-companion.md
+  s_363670d5ec8509::t_042538a88d5daa 36,42,265,269-270,278,330-331
+outfitter/packages/agentd/test/browser-inspect.test.ts
+  s_363670d5ec8509::t_f4e6ad21029a3d 1-93
+outfitter/packages/agentd/test/run.test.ts
+  s_363670d5ec8509::t_307bec48ce765a 1272-1273,1292-1298
+outfitter/packages/api/test/browser-inspect.test.ts
+  s_363670d5ec8509::t_ca111a74a4a0ef 1-177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "40950f0c28b6a1dfdcfc346e82a2a6a2a823ad88",
+  "prompts": {},
+  "sessions": {
+    "s_217e742e7da57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4d8a38f8-9583-45df-9f1a-8e69160a3dfb",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_363670d5ec8509": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-af9a11b0b3d1e6ce8",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { REPO, checkDue, parseVersion, showVersion, tagFromGh, updateNotice, type CheckCache } from "./lib.ts";
+import { ghPath } from "../kernal-github/gh.ts";
 import { env } from "../_shared/env.ts";
 
 export type Deps = {

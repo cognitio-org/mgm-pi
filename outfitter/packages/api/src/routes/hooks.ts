@@ -25,6 +25,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { RouteContext } from "./context.ts";
 import { verifyTasksToken, bearerFromHeader } from "../auth.ts";
+import { GkeProvider, KubeError, WARM_POOL_MAX_REPLICAS, WARM_POOL_MIN_REPLICAS } from "../providers/gke.ts";
 
 /** Constant-time HMAC-SHA256 verification of `ngrok-signature` (hex digest) over the raw body. */
 export function verifyNgrokSignature(rawBody: string, headerValue: string | undefined, secret: string): boolean {
@@ -101,6 +102,45 @@ export async function registerHookRoutes(app: FastifyInstance, ctx: RouteContext
     await ctx.runs.reconcileStoppingOnce();
     const woken = await ctx.mail.sweep();
     return { woken };
+  });
+
+  // §5.3 guardrail 1 (gke-sandbox-provider.md): two Cloud Scheduler HTTP jobs (warm-up/warm-down)
+  // call this to resize the warm pool, authenticated exactly like /api/hooks/tick. Reuses the
+  // scheduler's existing SA and hook-auth code so the api stays the only thing that talks to the
+  // cluster. Clamped to 0..2 (guardrail 3): going higher needs a code change, not a schedule change.
+  app.post("/api/hooks/warm-pool", async (req, reply) => {
+    if (!(await tasksCallerOk(req, reply, ctx))) return;
+
+    const raw = (req.body as { replicas?: unknown } | undefined)?.replicas;
+    if (typeof raw !== "number" || !Number.isFinite(raw)) {
+      return reply.code(400).send({ error: "replicas must be a number" });
+    }
+    const replicas = Math.min(WARM_POOL_MAX_REPLICAS, Math.max(WARM_POOL_MIN_REPLICAS, Math.trunc(raw)));
+
+    let provider: Awaited<ReturnType<RouteContext["providers"]["get"]>>;
+    try {
+      provider = await ctx.providers.get("gke");
+    } catch {
+      return reply.code(404).send({ error: "SANDBOX_PROVIDER=gke is not configured here" });
+    }
+    if (!(provider instanceof GkeProvider)) {
+      // Should not happen (the registry only ever builds a GkeProvider for the "gke" name), but
+      // guard against a stub/test provider standing in without crashing the request.
+      return reply.code(404).send({ error: "SANDBOX_PROVIDER=gke is not configured here" });
+    }
+
+    try {
+      await provider.setWarmPoolReplicas(replicas);
+    } catch (err) {
+      if (err instanceof KubeError && err.status === 404) {
+        return reply.code(404).send({ error: "warm pool not found" });
+      }
+      if (err instanceof KubeError && err.status === 409) {
+        return reply.code(409).send({ error: "warm pool patch conflict" });
+      }
+      throw err;
+    }
+    return { replicas };
   });
 }
 

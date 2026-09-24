@@ -1,13 +1,15 @@
 // Shared test scaffolding: an app wired to MemoryStore + NoopProvider in dev mode, so route,
 // agentlink and auth tests never touch Mongo, a real provider, or GCP.
 
-import { loadConfig } from "../src/config.ts";
+import { loadConfig, type SandboxProviderName } from "../src/config.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import type { Store, Guru } from "../src/store/types.ts";
 import { NoopProvider } from "../src/providers/noop.ts";
 import { MemorySecretsBroker, MemorySecretAdmin, type SecretsBroker, type SecretAdmin } from "../src/secrets.ts";
 import type { GithubBroker } from "../src/github-broker.ts";
 import { buildApp, type App } from "../src/server.ts";
+import type { SandboxProvider } from "@outfitter/provider-local";
+import { SandboxProviders } from "../src/providers/registry.ts";
 
 export interface TestApp extends App {
   store: Store;
@@ -26,6 +28,10 @@ export interface BuildTestAppOptions {
   store?: Store;
   /** GitHub broker handed to AgentLink. Defaults to one that talks to api.github.com. */
   github?: GithubBroker;
+  /** Extra provider factories registered alongside the default NoopProvider (e.g. a stub
+   * GkeProvider under "gke", for hooks.test.ts's warm-pool route) -- see registry.ts's
+   * createProviders. Keyed by SandboxProviderName; the default provider is always NoopProvider. */
+  extraProviders?: Partial<Record<SandboxProviderName, () => Promise<SandboxProvider>>>;
 }
 
 export async function buildTestApp(
@@ -43,7 +49,11 @@ export async function buildTestApp(
   const provider = new NoopProvider();
   const secretsBroker = opts.secretsBroker ?? new MemorySecretsBroker();
   const secretAdmin = opts.secretAdmin ?? new MemorySecretAdmin();
-  const app = await buildApp({ store, config, provider, secretsBroker, secretAdmin, github: opts.github });
+  const providers = new SandboxProviders(config.sandboxProvider, {
+    [config.sandboxProvider]: async () => provider,
+    ...opts.extraProviders,
+  });
+  const app = await buildApp({ store, config, provider: providers, secretsBroker, secretAdmin, github: opts.github });
   await app.fastify.ready();
   return { ...app, store, provider };
 }

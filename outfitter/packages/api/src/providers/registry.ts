@@ -84,15 +84,18 @@ async function buildCloudRun(config: Config): Promise<SandboxProvider> {
   });
 }
 
-/** PR2 (gke-sandbox-provider-plan.md §3) adds the real GkeProvider; registering this factory now
- * (rather than leaving "gke" unregistered) means SANDBOX_PROVIDER=gke and a configured
- * GKE_CLUSTER already resolve through the registry today, and PR2 only has to replace this one
- * function's body. */
-async function buildGke(_config: Config): Promise<SandboxProvider> {
-  throw new Error(
-    "SANDBOX_PROVIDER=gke has no provider implementation yet " +
-      "(see docs/specs/gke-sandbox-provider-plan.md PR2)",
-  );
+async function buildGke(config: Config): Promise<SandboxProvider> {
+  const { GkeProvider } = await import("./gke.ts");
+  return new GkeProvider({
+    project: config.gcpProject,
+    location: config.gkeLocation,
+    cluster: config.gkeCluster,
+    namespace: config.gkeNamespace,
+    warmPool: config.gkeWarmPool,
+    endpoint: config.gkeEndpoint || undefined,
+    launchMode: config.gkeLaunchMode,
+    maxActive: config.gkeMaxActive,
+  });
 }
 
 function factoryFor(name: SandboxProviderName, config: Config): SandboxProviderFactory {

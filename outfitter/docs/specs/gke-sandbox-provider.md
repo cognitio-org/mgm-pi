@@ -197,7 +197,8 @@ config is present: `cloudrun` when `gcpProject` and `cloudRunJob` are set, `gke`
 and `gkeCluster` are set. The old provider therefore stays reachable after a switch. Each
 per-provider factory (`registry.ts`'s `buildInProcess`/`buildDocker`/`buildCloudRun`/`buildGke`)
 lazy-imports its own dependency (`@outfitter/provider-local`, `./cloudrun.ts`), so nothing is paid
-until a run on that provider needs it; `buildGke` is a stub in PR1 that throws until PR2 lands.
+until a run on that provider needs it; `buildGke` lazy-imports `./gke.ts` and builds the real
+`GkeProvider` (PR2; it was a stub in PR1 that threw until then).
 `createProvider` (`providers/index.ts`) stays as a thin wrapper around the registry's default for
 anyone who only wants that provider. **Production doesn't use it**: `main.ts` calls
 `createProviders(config)` directly and passes the whole registry to `buildApp`, which is what

@@ -1,0 +1,63 @@
+outfitter/packages/web/test/html-preview.test.ts
+  s_e726784254328b::t_fed84071f9bcd5 1,3,6-25,33,37,40-42,47,49,70-149
+  s_217e742e7da57c::t_6698743574cda6 150-151
+outfitter/packages/web/src/lib/html-preview.ts
+  s_e726784254328b::t_5eea0024f96175 9-16,20-21,28-33,40-46,49-50,53-110,112-131
+  s_e726784254328b::t_5acbe1bc17b95e 132-133
+outfitter/packages/web/src/components/MermaidEnlargeDialog.tsx
+  s_217e742e7da57c::t_358faf7b8db11b 96,101-104
+outfitter/packages/web/src/components/HtmlPreviewDialog.tsx
+  s_9fe849c7da4adf::t_a554d94fbd6d54 20-24,26,30-31,33,39,42,47-48,50
+outfitter/packages/web/src/components/ImageViewer.tsx
+  s_9fe849c7da4adf::t_18cd93824bae41 124-128,130,134-136,141,144,149-150,152
+outfitter/packages/web/src/components/ReadingDialog.tsx
+  s_50120f26757385::t_946ca5ae65be1f 7-20,32
+outfitter/packages/web/test/html-preview-dialog.test.tsx
+  s_9fe849c7da4adf::t_57a7cfb4a0aa62 81-121
+outfitter/packages/web/test/image-viewer.test.tsx
+  s_9fe849c7da4adf::t_669a5bb687753f 131-171
+outfitter/packages/web/test/mermaid-enlarge-dialog.test.tsx
+  s_50120f26757385::t_596cf3c7ab47c0 194-204,213-215,217-218
+outfitter/packages/web/test/reading-dialog.test.tsx
+  s_50120f26757385::t_4832e0d396336b 105-143
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "31face7f02e5cace910bd6066ee35ae19f497ded",
+  "prompts": {},
+  "sessions": {
+    "s_217e742e7da57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4d8a38f8-9583-45df-9f1a-8e69160a3dfb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_50120f26757385": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ac30156cab8530249",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_9fe849c7da4adf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a204fb9ecb439a10d",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_e726784254328b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a0d1b5-76e1-7c20-95f4-dbf69ae24aa3",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -246,7 +246,20 @@ describe("github broker", { concurrency: 1 }, () => {
       assert.equal(checkout.isError, true);
       assert.equal(checkout.text, sentence);
       assert.equal(run(dir, "branch", "--show-current"), "main");
-      run(dir, "branch", "outfitter/s1");
+
+      const origin = mkdtempSync(join(tmpdir(), "kernal-broker-origin-"));
+      trash.push(origin);
+      run(dir, "init", "--bare", "--quiet", origin);
+      run(dir, "config", `url.${origin}/.insteadOf`, "https://github.com/o/r.git");
+      run(dir, "push", "--quiet", "origin", "main");
+      run(dir, "checkout", "-b", "outfitter/s1");
+      writeFileSync(join(dir, "pr.txt"), "pr\n");
+      run(dir, "add", "pr.txt");
+      run(dir, "commit", "--quiet", "-m", "pr head");
+      const prHead = run(dir, "rev-parse", "HEAD");
+      run(dir, "push", "--quiet", "origin", "outfitter/s1");
+      run(dir, "checkout", "--quiet", "main");
+      run(dir, "branch", "-D", "outfitter/s1");
 
       const named = await executeGithub("github_pr", { action: "checkout", number: 8 }, cloud(dir, server.path, {
         gh: trap.gh,
@@ -254,12 +267,28 @@ describe("github broker", { concurrency: 1 }, () => {
       }));
       assert.equal(named.isError, undefined, named.text);
       assert.equal(named.data.branch, "outfitter/s1");
-      assert.equal(run(dir, "branch", "--show-current"), "outfitter/s1");
+      assert.equal(run(dir, "rev-parse", "HEAD"), prHead);
 
-      const started = await executeGithub("github_issue", { action: "start", number: 4 }, cloud(dir, server.path, { gh: trap.gh }));
+      run(dir, "checkout", "-b", "outfitter/issue-4");
+      writeFileSync(join(dir, "issue.txt"), "issue\n");
+      run(dir, "add", "issue.txt");
+      run(dir, "commit", "--quiet", "-m", "issue head");
+      const issueHead = run(dir, "rev-parse", "HEAD");
+      run(dir, "push", "--quiet", "origin", "outfitter/issue-4");
+      run(dir, "checkout", "--quiet", "main");
+      run(dir, "branch", "-D", "outfitter/issue-4");
+
+      const startEnv = { OUTFITTER_SESSION_BRANCH: "main" };
+      const started = await executeGithub("github_issue", { action: "start", number: 4 }, cloud(dir, server.path, { gh: trap.gh, env: startEnv }));
       assert.equal(started.isError, undefined, started.text);
       assert.equal(started.data.branch, "outfitter/issue-4");
-      assert.equal(run(dir, "branch", "--show-current"), "outfitter/issue-4");
+      assert.equal(run(dir, "rev-parse", "HEAD"), issueHead);
+      assert.equal(startEnv.OUTFITTER_SESSION_BRANCH, "main");
+      const back = await runAction("branch", { op: "switch", name: "main" }, {
+        cwd: dir, settings: {}, gh: undefined, env: { OUTFITTER_GITHUB_SOCKET: server.path, ...startEnv },
+      });
+      assert.equal(back.isError, undefined, back.text);
+      assert.equal(run(dir, "branch", "--show-current"), "main");
 
       const env = { OUTFITTER_GITHUB_SOCKET: server.path, OUTFITTER_SESSION_BRANCH: "outfitter/issue-4" };
       const created = await runAction("branch", { op: "create", name: "other" }, { cwd: dir, settings: {}, gh: undefined, env });

@@ -221,6 +221,8 @@ export class RunController {
    * estimate) seen so far this run -- sent as `spend.estimate` on every frame. */
   private costEstimate = 0;
   private spec: DownRunSpec | undefined;
+  /** Last branch this run actually published. A refused checkpoint repeats this, not the run-start branch. */
+  private publishedBranch: string | undefined;
   private stateHandlers: StateChangeHandler[] = [];
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
@@ -434,6 +436,7 @@ export class RunController {
       this.startup.mark("run.spec received");
     }
     this.spec = spec;
+    this.publishedBranch = spec.repo?.branch;
     this.deps.link.setSessionId?.(spec.session.id);
     // E1.6: register the run's own secrets before anything else can log a line that might echo one
     // back (a failed clone, a raw fetch error). RUN_TOKEN itself is registered once at startup, in
@@ -1037,6 +1040,19 @@ export class RunController {
       return;
     }
 
+    // Commit only on a branch this run may push. A detached HEAD or any other branch keeps its
+    // dirty tree, and the frame repeats the last branch this run published.
+    const sessionBranch = this.spec.repo.branch;
+    const prefix = normalizeBranchPrefix(this.spec.repo.branchPrefix) ?? DEFAULT_BRANCH_PREFIX;
+    const remembered = this.publishedBranch ?? sessionBranch;
+    const readBranch = () =>
+      this.deps.gitOps.headBranch ? this.deps.gitOps.headBranch(this.deps.workspace) : Promise.resolve(sessionBranch);
+    const checked = await readBranch();
+    const target = checked && branchAllowed(checked, sessionBranch, prefix) ? checked : null;
+    if (!target) {
+      this.deps.link.send({ t: "checkpoint", branch: remembered, pushed: false });
+      return;
+    }
     // Both run the workspace's git as the workspace's own user (git.ts's GitOpsOptions.runAs), so
     // unlike the clone there is nothing root-owned to chown back afterwards.
     await this.deps.gitOps.commitAll(
@@ -1044,15 +1060,8 @@ export class RunController {
       message ?? `outfitter checkpoint ${new Date().toISOString()}`,
       attributionTrailers(sanitizeAuthor(this.spec.author)),
     );
-    // Push HEAD when it is the session branch or under the guru prefix. A detached HEAD, or a
-    // branch outside that set, is not pushed onto the session branch.
-    const sessionBranch = this.spec.repo.branch;
-    const prefix = normalizeBranchPrefix(this.spec.repo.branchPrefix) ?? DEFAULT_BRANCH_PREFIX;
-    const checked = this.deps.gitOps.headBranch ? await this.deps.gitOps.headBranch(this.deps.workspace) : sessionBranch;
-    const target = checked && branchAllowed(checked, sessionBranch, prefix) ? checked : null;
-    if (!target) {
-      const head = this.deps.gitOps.tip ? await this.deps.gitOps.tip(this.deps.workspace, sessionBranch) : undefined;
-      this.deps.link.send({ t: "checkpoint", branch: sessionBranch, ...(head ? { head } : {}), pushed: false });
+    if ((await readBranch()) !== target) {
+      this.deps.link.send({ t: "checkpoint", branch: remembered, pushed: false });
       return;
     }
     // Phase-0 path (root-owned bare repo), not the broker socket. The same lock covers the git
@@ -1064,6 +1073,7 @@ export class RunController {
         githubToken: this.spec!.secrets.githubToken,
       }),
     );
+    this.publishedBranch = target;
     this.deps.link.send({ t: "checkpoint", branch: target, head, pushed });
   }
 

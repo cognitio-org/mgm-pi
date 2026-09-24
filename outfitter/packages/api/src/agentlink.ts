@@ -1051,10 +1051,16 @@ export class AgentLink {
         const reported = frame.branch !== undefined ? String(frame.branch) : undefined;
         const current = session?.branch;
         const prefix = branchPrefixOf(guru?.branchPrefix);
-        const accepted = reported !== undefined && current !== undefined && branchAllowed(reported, current, prefix);
-        if (reported !== undefined) checkpoint.branch = accepted ? reported : current;
-        if (frame.head !== undefined && (reported === undefined || accepted)) checkpoint.head = String(frame.head);
-        else if (!accepted && session?.checkpoint?.head) checkpoint.head = session.checkpoint.head;
+        const pushed = frame.pushed === true;
+        // A pushed:false frame must not walk session.branch back to an earlier allowed name.
+        const takeBranch =
+          reported !== undefined &&
+          current !== undefined &&
+          branchAllowed(reported, current, prefix) &&
+          (pushed || reported === current);
+        if (reported !== undefined && current !== undefined) checkpoint.branch = takeBranch ? reported : current;
+        if (takeBranch && pushed && frame.head !== undefined) checkpoint.head = String(frame.head);
+        else if (session?.checkpoint?.head) checkpoint.head = session.checkpoint.head;
         // Finding #3 (docs/reports/security-review-pr1.md): snapshotUrl/workspaceUrl round-trip
         // back out as run.spec.snapshot.url / run.spec.workspace.snapshotUrl on the *next* run and
         // get fetched there -- validate before persisting rather than storing whatever a
@@ -1082,7 +1088,7 @@ export class AgentLink {
           }
         }
         const sessionPatch: Partial<Session> = { checkpoint, updatedAt: now };
-        if (accepted && reported && reported !== current) sessionPatch.branch = reported;
+        if (takeBranch && reported && reported !== current) sessionPatch.branch = reported;
         await this.store.sessions.update(sessionId, sessionPatch);
         this.sse.publish(sessionId, { type: "checkpoint", data: frame });
         break;

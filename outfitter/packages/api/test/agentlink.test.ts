@@ -379,7 +379,7 @@ describe("agentd <-> api WebSocket", () => {
     assert.equal(moved?.checkpoint?.branch, "outfitter/issue-4");
     assert.equal(moved?.checkpoint?.head, next);
 
-    agent.send({ t: "checkpoint", branch: "main", head: "c".repeat(40), pushed: false });
+    agent.send({ t: "checkpoint", branch: "outfitter/s1", head: "c".repeat(40), pushed: false });
     await new Promise((resolve) => setTimeout(resolve, 30));
     const stayed = await app.store.sessions.findById(session.id);
     assert.equal(stayed?.branch, "outfitter/issue-4");

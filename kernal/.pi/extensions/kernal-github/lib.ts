@@ -8,7 +8,7 @@
  * output. That is `repoStatus`.
  */
 import * as git from "../_shared/git.ts";
-import { cloudBranchAllowed, cloudSessionBranch, githubSocketPath, rememberCloudBranch } from "./broker.ts";
+import { cloudBranchAllowed, cloudSessionBranch, githubSocketPath } from "./broker.ts";
 import { gh, ghJson, type Exec, execCommand } from "./gh.ts";
 
 export type PrSummary = {
@@ -349,7 +349,6 @@ export async function runAction(action: string, params: any, deps: ToolDeps): Pr
         if (githubSocketPath(deps.env) && !cloudBranchAllowed(name, deps.env)) return fail(cloudSessionBranch(deps.env));
         const res = await git.switchBranch(root!, name, { create: op === "create", from: typeof params?.from === "string" ? params.from : undefined });
         if (!res.ok) return fail(res.detail);
-        if (githubSocketPath(deps.env)) rememberCloudBranch(name, deps.env);
         return { text: res.created ? `Created and switched to ${name}.` : `Switched to ${name}.` };
       }
       if (op === "delete") {

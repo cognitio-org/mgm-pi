@@ -492,12 +492,35 @@ export function createGitOps(exec: ExecFn = defaultExec, options: GitOpsOptions 
 
     async push(cwd, spec) {
       const { remoteUrl, branch, githubToken } = spec;
-      const headRes = await run(cwd, ["rev-parse", "--verify", "HEAD^{commit}"]);
-      if (headRes.code !== 0) throw new Error(`git rev-parse HEAD failed: ${headRes.stderr.trim()}`);
+      // The branch tip, not HEAD: a checkpoint can race a switch, and publishing HEAD would
+      // write the other branch's commit onto this ref.
+      const headRes = await run(cwd, ["rev-parse", "--verify", `refs/heads/${branch}^{commit}`]);
+      if (headRes.code !== 0) throw new Error(`git rev-parse refs/heads/${branch} failed: ${headRes.stderr.trim()}`);
       const head = headRes.stdout.trim();
       // Output of a process running agent-controlled code; it's about to go on root's argv.
-      if (!SHA_RE.test(head)) throw new Error(`git rev-parse HEAD returned something other than a commit id`);
-      const known = remoteHead.get(branch);
+      if (!SHA_RE.test(head)) throw new Error(`git rev-parse refs/heads/${branch} returned something other than a commit id`);
+      let known = remoteHead.get(branch);
+      if (known === undefined) {
+        const pushDir = await ensurePushRepo();
+        const listed = await exec(
+          "git",
+          ["ls-remote", "--heads", remoteUrl, `refs/heads/${branch}`],
+          pushDir,
+          { GIT_DIR: pushDir, ...authHeaderEnv(remoteUrl, githubToken) },
+          { timeoutMs: GIT_TIMEOUT_MS },
+        );
+        if (listed.code !== 0) {
+          throw new Error(
+            `git ls-remote ${redactUrl(remoteUrl)} refs/heads/${branch} failed: ${redactToken(listed.stderr.trim(), githubToken)}`,
+          );
+        }
+        const sha = listed.stdout.trim().split(/\s+/)[0] ?? "";
+        if (sha) {
+          if (!SHA_RE.test(sha)) throw new Error(`git ls-remote returned something other than a commit id`);
+          remoteHead.set(branch, sha);
+          known = sha;
+        }
+      }
       if (known === head) return { head, pushed: false };
 
       const pushDir = await ensurePushRepo();

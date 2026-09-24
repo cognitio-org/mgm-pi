@@ -119,7 +119,7 @@ async function fakeWorkspace(): Promise<string> {
 
 /** A stub exec for push(): HEAD is `state.head` (SHA_A to start), and `push` returns
  * `pushResult`. */
-function pushExec(opts: { pushResult?: ExecResult; hasCommit?: boolean; bundleAs?: "file" | "symlink" } = {}) {
+function pushExec(opts: { pushResult?: ExecResult; hasCommit?: boolean; bundleAs?: "file" | "symlink"; remoteTip?: string } = {}) {
   const calls: { args: string[]; cwd: string; env?: Record<string, string>; as?: ExecOptions }[] = [];
   const state = { head: SHA_A };
   const exec: ExecFn = async (_cmd, args, cwd, env, as) => {
@@ -132,6 +132,7 @@ function pushExec(opts: { pushResult?: ExecResult; hasCommit?: boolean; bundleAs
       return ok();
     }
     if (args[0] === "rev-parse") return ok(`${state.head}\n`);
+    if (args[0] === "ls-remote") return ok(opts.remoteTip ? `${opts.remoteTip}\trefs/heads/x\n` : "");
     if (args[0] === "push") return opts.pushResult ?? ok();
     return ok();
   };
@@ -161,6 +162,7 @@ test("GitOps.push: pushes the exact HEAD commit to run.spec's URL, authenticated
     "https://github.com/acme/repo.git",
     `${SHA_A}:refs/heads/outfitter/sess1`,
   ]);
+  assert.ok(calls.some((c) => c.args[0] === "rev-parse" && c.args.includes("refs/heads/outfitter/sess1^{commit}")));
   assert.ok(!calls.some((c) => c.args.includes("get-url")), "never reads the agent-writable origin URL");
   assert.ok(!pushCall!.args.includes("-c"));
   assert.ok(!pushCall!.args.join(" ").includes("super-secret-token"));
@@ -172,6 +174,16 @@ test("GitOps.push: pushes the exact HEAD commit to run.spec's URL, authenticated
   // and the tracking ref + upstream are recorded afterwards
   assert.ok(calls.some((c) => c.args.join(" ") === `update-ref refs/remotes/origin/outfitter/sess1 ${SHA_A}`));
   assert.ok(calls.some((c) => c.args.join(" ") === "config branch.outfitter/sess1.merge refs/heads/outfitter/sess1"));
+});
+
+test("GitOps.push: a branch already on origin is leased against that tip", async () => {
+  const { exec, calls } = pushExec({ remoteTip: SHA_B });
+  const gitOps = createGitOps(exec, { pushRoot: await mkdtemp(join(tmpdir(), "agentd-git-test-")) });
+  const res = await gitOps.push(await ws(), { ...PUSH_SPEC, branch: "outfitter/issue-4" });
+  assert.equal(res.pushed, true);
+  const pushCall = calls.find((c) => c.args[0] === "push");
+  assert.ok(pushCall!.args.includes(`--force-with-lease=refs/heads/outfitter/issue-4:${SHA_B}`));
+  assert.ok(pushCall!.args.includes(`${SHA_A}:refs/heads/outfitter/issue-4`));
 });
 
 test("GitOps.push: skips when HEAD is what agentd last pushed; otherwise leases against it", async () => {

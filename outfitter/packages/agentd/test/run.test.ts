@@ -264,7 +264,6 @@ test("RunController: a checkpoint pushes an allowed checked-out branch and leave
 
   const stuck = fakeGitOps();
   stuck.headBranch = async () => "main";
-  stuck.tip = async () => "abc123";
   const refused = await setupController({}, { gitOps: stuck });
   t.after(() => refused.controller.dispose());
   refused.link.deliver(refused.spec);
@@ -274,8 +273,28 @@ test("RunController: a checkpoint pushes an allowed checked-out branch and leave
   const stayed = refused.link.sent.find((m) => m.t === "checkpoint") as any;
   assert.equal(stayed.branch, "outfitter/sess1");
   assert.equal(stayed.pushed, false);
-  assert.equal(stayed.head, "abc123");
+  assert.equal(stayed.head, undefined);
   assert.equal(stuck.pushes, 0);
+  assert.equal(stuck.commits.length, 0);
+
+  let where = "outfitter/issue-9";
+  const seq = fakeGitOps();
+  seq.headBranch = async () => where;
+  const two = await setupController({}, { gitOps: seq });
+  t.after(() => two.controller.dispose());
+  two.link.deliver(two.spec);
+  await waitFor(() => two.states.includes("idle"));
+  two.link.deliver({ t: "checkpoint" });
+  await waitFor(() => two.link.sent.some((m) => m.t === "checkpoint"));
+  where = "main";
+  two.link.deliver({ t: "checkpoint" });
+  await waitFor(() => two.link.sent.filter((m) => m.t === "checkpoint").length === 2);
+  const frames = two.link.sent.filter((m) => m.t === "checkpoint") as any[];
+  assert.equal(frames[0].branch, "outfitter/issue-9");
+  assert.equal(frames[0].pushed, true);
+  assert.equal(frames[1].branch, "outfitter/issue-9");
+  assert.equal(frames[1].pushed, false);
+  assert.equal(seq.pushes, 1);
 });
 
 test("RunController: a checkpoint with nothing new reports pushed: false", async (t) => {

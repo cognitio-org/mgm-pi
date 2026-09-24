@@ -104,7 +104,9 @@ export function parseRemote(url: string): { host: string; owner: string; repo: s
 
 /** `origin` by default, with owner/repo parsed and whether it is a github.com https remote. */
 export async function remote(cwd: string, name = "origin"): Promise<Remote | undefined> {
-  const url = await gitValue(["remote", "get-url", name], { cwd });
+  // The configured URL, not `remote get-url`: that command applies insteadOf, so a transport
+  // rewrite would hide that this remote is github.com and the tools would refuse it.
+  const url = await gitValue(["config", "--get", `remote.${name}.url`], { cwd });
   if (!url) return undefined;
   const parsed = parseRemote(url);
   return {

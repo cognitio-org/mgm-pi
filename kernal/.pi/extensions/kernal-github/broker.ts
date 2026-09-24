@@ -4,14 +4,9 @@
  * Request: {"t":"github.request","reqId","op","args","idempotencyKey"?}
  * Result:  {"t":"github.result","reqId","ok":true,"data"} or {"ok":false,"error"}
  *
- * `data` is what `gh` would have printed for that call (the `--json` value, or `{url}` / `{detail}` /
- * `{resolved}` for the commands that print text). github-tools turns it back into that stdout so the
- * model sees the same text as the local path. Reads omit idempotencyKey and are retried once if the
- * socket closes before a result. Writes send one stable key and are not retried.
- *
- * agentd does not pin the session branch into pi's environment (run.ts's overlay is the session id
- * and OUTFITTER_AUTHOR_*, not a branch). OUTFITTER_SESSION_BRANCH is used when a later agentd sets
- * it; otherwise the refusal says "the session branch".
+ * `data` is the executor's normalized object, or `{url}` / `{detail}` / `{resolved}` for the text
+ * commands. github-tools turns that into the text the model already sees. Reads omit idempotencyKey
+ * and are retried once if the socket closes. Writes send one stable key and are not retried.
  */
 import { randomUUID } from "node:crypto";
 import { connect } from "node:net";

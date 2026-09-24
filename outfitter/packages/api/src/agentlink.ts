@@ -33,7 +33,7 @@ const INTERACTIVE_UI_METHODS = new Set(["select", "confirm", "input", "editor"])
  * The packages can't share a module. Version 2 adds `github.request` / `github.result`
  * (docs/protocol.md). An agentd still speaking an older version — including one that omits the
  * field, treated as 0 — is refused with WS close 4409 instead of silently ignoring frames it
- * doesn't understand. agentd's own `WIRE_PROTOCOL_VERSION` is bumped in that package's change. */
+ * doesn't understand. agentd keeps the same number in `WIRE_PROTOCOL_VERSION`. */
 export const API_PROTOCOL_VERSION = 2;
 
 /** Thrown by buildRunSpec when a repo session has no usable GitHub token secret; handleConnection

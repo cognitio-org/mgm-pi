@@ -131,7 +131,7 @@ test("a Drive capture uploads through the API and the tool returns the jpeg path
     const env = { OUTFITTER_BROWSER_PORT: String(listener.port), OUTFITTER_BROWSER_TOKEN: listener.token };
     assert.equal("OUTFITTER_TOKEN" in env, false);
     let tool: { execute: (id: string, params: object) => Promise<{ content: Array<{ type: string; text?: string; data?: string; mimeType?: string }> }> } | undefined;
-    outfitterBrowser({ registerTool: (registered) => { tool = registered as typeof tool; } }, env);
+    outfitterBrowser({ registerTool: (registered) => { if (registered.name === "browser_capture") tool = registered as typeof tool; } }, env);
     const result = await tool!.execute("call-1", {});
     assert.equal(uploadError, undefined);
     const text = result.content[0].text ?? "";
@@ -200,7 +200,7 @@ test("a revoke while the Drive is waiting yields skipped", async () => {
   try {
     let tool: { execute: (id: string, params: object) => Promise<{ content: Array<{ type: string; text?: string }> }> } | undefined;
     outfitterBrowser(
-      { registerTool: (registered) => { tool = registered as typeof tool; } },
+      { registerTool: (registered) => { if (registered.name === "browser_capture") tool = registered as typeof tool; } },
       { OUTFITTER_BROWSER_PORT: String(listener.port), OUTFITTER_BROWSER_TOKEN: listener.token },
     );
     const result = await tool!.execute("call-1", {});
@@ -269,7 +269,7 @@ test("a reported tab_gone makes a waiting capture return tab_gone instead of han
   try {
     let tool: { execute: (id: string, params: object) => Promise<{ content: Array<{ type: string; text?: string }> }> } | undefined;
     outfitterBrowser(
-      { registerTool: (registered) => { tool = registered as typeof tool; } },
+      { registerTool: (registered) => { if (registered.name === "browser_capture") tool = registered as typeof tool; } },
       { OUTFITTER_BROWSER_PORT: String(listener.port), OUTFITTER_BROWSER_TOKEN: listener.token },
     );
     const result = await tool!.execute("call-1", {});
@@ -321,7 +321,7 @@ test("no share answers no_share, and the same requestId is one row", async () =>
   try {
     let tool: { execute: (id: string, params: object) => Promise<{ content: Array<{ type: string; text?: string }> }> } | undefined;
     outfitterBrowser(
-      { registerTool: (registered) => { tool = registered as typeof tool; } },
+      { registerTool: (registered) => { if (registered.name === "browser_capture") tool = registered as typeof tool; } },
       { OUTFITTER_BROWSER_PORT: String(listener.port), OUTFITTER_BROWSER_TOKEN: listener.token },
     );
     const missing = await tool!.execute("call-1", {});

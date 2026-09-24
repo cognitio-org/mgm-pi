@@ -148,6 +148,16 @@ export interface UpGithubRequest {
   idempotencyKey?: string;
 }
 
+/** The Drive `browser_action` tool asked to click or type in the session's one shared tab.
+ * `requestId` is minted once per tool call. The selector is CSS, not JavaScript. */
+export interface UpBrowserActionRequest {
+  t: "browser.action.request";
+  requestId: string;
+  kind: "click" | "type";
+  selector: string;
+  text?: string;
+}
+
 export type UpMessage =
   | UpHello
   | UpStatus
@@ -161,7 +171,8 @@ export type UpMessage =
   | UpReadResult
   | UpMailAck
   | UpBrowserCaptureRequest
-  | UpGithubRequest;
+  | UpGithubRequest
+  | UpBrowserActionRequest;
 
 /** Up-messages that carry a `seq` and are subject to the buffer-until-ack contract. */
 export type SeqUpMessage = UpEntry | UpEvent;
@@ -351,6 +362,15 @@ export type DownGithubResult =
   | { t: "github.result"; reqId: string; ok: true; data: Record<string, unknown> }
   | { t: "github.result"; reqId: string; ok: false; error: string };
 
+/** The action asked for by `browser.action.request` finished or failed. No transcript seq.
+ * Absent `error` means the extension ran it. `error` is `no_share`, `skipped`, `denied`,
+ * `rejected`, `not_found`, `permission_denied`, `tab_gone`, `not_editable`, or `not_shared`. */
+export interface DownBrowserActionResult {
+  t: "browser.action.result";
+  requestId: string;
+  error?: string;
+}
+
 export type DownMessage =
   | DownRunSpec
   | DownAck
@@ -367,7 +387,8 @@ export type DownMessage =
   | DownMail
   | DownBrowserCaptureEntry
   | DownBrowserCaptureResult
-  | DownGithubResult;
+  | DownGithubResult
+  | DownBrowserActionResult;
 
 // ---------- replies to diff/read (sent up as `entry`-less custom up-frames) ----------
 // protocol.md does not give these a `t`; agentd sends them as ad-hoc up-frames named after the

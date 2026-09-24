@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { RouteContext } from "./context.ts";
 import type { BrowserCapture, BrowserCaptureFailure, BrowserRequest, PiEntry } from "../store/types.ts";
+import { isBrowserActionKind, parseBrowserAction, parseBrowserActionResult } from "../browser-action.ts";
 import { getSessionOr404 } from "./sessions.ts";
 
 /** Decoded jpeg cap. Larger uploads are 413; the extension recompresses to fit. */
@@ -52,8 +53,38 @@ function requestView(request: BrowserRequest): {
     status: request.status,
     captureId: request.captureId ?? null,
     ...(request.error ? { error: request.error } : {}),
+    ...(isBrowserActionKind(request.kind) ? { kind: request.kind, selector: request.selector } : {}),
+    ...(request.kind === "type" ? { text: request.text ?? "" } : {}),
     createdAt: request.createdAt,
   };
+}
+
+function pendingView(request: BrowserRequest) {
+  return {
+    id: request.id,
+    requesterEmail: request.requesterEmail,
+    status: request.status,
+    createdAt: request.createdAt,
+    ...(isBrowserActionKind(request.kind) ? { kind: request.kind, selector: request.selector } : {}),
+    ...(request.kind === "type" ? { text: request.text ?? "" } : {}),
+  };
+}
+
+async function sendSkippedResult(ctx: RouteContext, sessionId: string, requestId: string): Promise<void> {
+  const request = await ctx.store.browserRequests.findById(sessionId, requestId);
+  if (isBrowserActionKind(request?.kind)) {
+    await ctx.agentLink.sendActionResult(sessionId, {
+      t: "browser.action.result",
+      requestId,
+      error: "skipped",
+    });
+    return;
+  }
+  await ctx.agentLink.sendCaptureResult(sessionId, {
+    t: "browser.capture.result",
+    requestId,
+    error: "skipped",
+  });
 }
 
 function decodeJpeg(input: string): { ok: true; bytes: Buffer } | { ok: false; status: 400 | 413; error: string } {
@@ -130,11 +161,7 @@ export async function registerBrowserRoutes(app: FastifyInstance, ctx: RouteCont
     if (result.outcome === "missing") return reply.code(404).send({ error: "no browser share" });
     if (result.outcome === "forbidden") return reply.code(403).send({ error: "not the share owner" });
     for (const requestId of result.skippedIds) {
-      await ctx.agentLink.sendCaptureResult(session.id, {
-        t: "browser.capture.result",
-        requestId,
-        error: "skipped",
-      });
+      await sendSkippedResult(ctx, session.id, requestId);
     }
     return { ok: true };
   });
@@ -177,7 +204,7 @@ export async function registerBrowserRoutes(app: FastifyInstance, ctx: RouteCont
     const { status } = req.query as { status?: string };
     if (status !== undefined && status !== "pending") return reply.code(400).send({ error: "status must be pending" });
     const pending = await ctx.store.browserRequests.listPending(session.id);
-    return pending.map((row) => ({ id: row.id, requesterEmail: row.requesterEmail, status: row.status, createdAt: row.createdAt }));
+    return pending.map(pendingView);
   });
 
   app.get("/api/sessions/:id/browser/requests/:requestId", async (req, reply) => {
@@ -209,11 +236,7 @@ export async function registerBrowserRoutes(app: FastifyInstance, ctx: RouteCont
     // Only the pending → skipped transition unblocks a Drive that is waiting. A done capture
     // stays done, and a second revoke does not send another result.
     if (before?.status === "pending" && request.status === "skipped") {
-      await ctx.agentLink.sendCaptureResult(session.id, {
-        t: "browser.capture.result",
-        requestId: request.id,
-        error: "skipped",
-      });
+      await sendSkippedResult(ctx, session.id, request.id);
     }
     return requestView(request);
   });
@@ -234,6 +257,10 @@ export async function registerBrowserRoutes(app: FastifyInstance, ctx: RouteCont
       return reply.code(400).send({ error: "error must be permission_denied, tab_gone, or too_large" });
     }
     const { requestId } = req.params as { requestId: string };
+    const existing = await ctx.store.browserRequests.findById(session.id, requestId);
+    if (existing && isBrowserActionKind(existing.kind)) {
+      return reply.code(409).send({ error: "request is not a capture" });
+    }
     const marked = await ctx.store.browserRequests.markFailed(session.id, requestId, failure, new Date().toISOString());
     if (!marked) return reply.code(404).send({ error: "not found" });
     if (marked.request.status === "done" || marked.request.status === "skipped") {
@@ -266,6 +293,7 @@ export async function registerBrowserRoutes(app: FastifyInstance, ctx: RouteCont
     }
     const request = await ctx.store.browserRequests.findById(session.id, body.requestId);
     if (!request) return reply.code(404).send({ error: "request not found" });
+    if (isBrowserActionKind(request.kind)) return reply.code(409).send({ error: "request is not a capture" });
 
     // A finished request already has its capture. Return that id and do not write another entry,
     // even when this body carries a different title or a second jpeg. Keyed by requestId.
@@ -327,5 +355,57 @@ export async function registerBrowserRoutes(app: FastifyInstance, ctx: RouteCont
     if (!capture) return reply.code(404).send({ error: "capture not found" });
     // image/jpeg plus nosniff: the bytes must not be sniffed and rendered as HTML.
     return reply.header("Content-Type", "image/jpeg").header("X-Content-Type-Options", "nosniff").send(capture.bytes);
+  });
+
+  // A click or a type. Same request row as a capture, distinguished by `kind`. Any authenticated
+  // caller may ask. Only the share owner runs it. 409 when the session has no share.
+  app.post("/api/sessions/:id/browser/actions", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const email = callerEmail(req, reply);
+    if (!email) return;
+    const action = parseBrowserAction(req.body);
+    if (!action) return reply.code(400).send({ error: "kind must be click or type, with a CSS selector" });
+    const now = new Date().toISOString();
+    const request: BrowserRequest = {
+      id: randomUUID(),
+      sessionId: session.id,
+      requesterEmail: email,
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+      kind: action.kind,
+      selector: action.selector,
+      ...(action.kind === "type" ? { text: action.text } : {}),
+    };
+    const saved = await ctx.store.browserRequests.insertPendingIfShared(session.id, request);
+    if (saved === "no_share") return reply.code(409).send({ error: "no browser share" });
+    return reply.code(201).send(requestView(saved));
+  });
+
+  // The extension reports the outcome after the user allows it, or after a deny. A deny does not
+  // mean the page was clicked: the extension has already refused to run. Owner only.
+  app.post("/api/sessions/:id/browser/actions/:requestId/result", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const email = callerEmail(req, reply);
+    if (!email) return;
+    const share = await ctx.store.browserShares.findBySession(session.id);
+    if (!share) return reply.code(404).send({ error: "no browser share" });
+    if (share.ownerEmail !== email) return reply.code(403).send({ error: "not the share owner" });
+    const outcome = parseBrowserActionResult(req.body);
+    if (!outcome) return reply.code(400).send({ error: "result must be {ok:true} or a known error" });
+    const { requestId } = req.params as { requestId: string };
+    const existing = await ctx.store.browserRequests.findById(session.id, requestId);
+    if (!existing || !isBrowserActionKind(existing.kind)) return reply.code(404).send({ error: "not found" });
+    const marked = await ctx.store.browserRequests.markActionResult(session.id, requestId, outcome, new Date().toISOString());
+    if (!marked) return reply.code(404).send({ error: "not found" });
+    if (!marked.transitioned) return reply.code(409).send({ error: "request is not pending" });
+    await ctx.agentLink.sendActionResult(session.id, {
+      t: "browser.action.result",
+      requestId: marked.request.id,
+      ...(outcome.ok ? {} : { error: outcome.error }),
+    });
+    return requestView(marked.request);
   });
 }

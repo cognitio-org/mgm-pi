@@ -30,6 +30,7 @@ import type {
   BrowserShare,
   BrowserSharesCollection,
   BrowserRequest,
+  BrowserActionResultError,
   BrowserRequestsCollection,
   BrowserCapture,
   BrowserCaptureFailure,
@@ -604,6 +605,27 @@ class MemoryBrowserRequests implements BrowserRequestsCollection {
     if (row.status !== "pending") return { request: clone(row), transitioned: false };
     row.status = "failed";
     row.error = error;
+    row.updatedAt = nowIso;
+    return { request: clone(row), transitioned: true };
+  }
+
+  async markActionResult(
+    sessionId: string,
+    id: string,
+    outcome: { ok: true } | { ok: false; error: BrowserActionResultError },
+    nowIso: string,
+  ): Promise<{ request: BrowserRequest; transitioned: boolean } | null> {
+    const row = this.tables.requests.get(id);
+    if (!row || row.sessionId !== sessionId) return null;
+    if (row.kind !== "click" && row.kind !== "type") return { request: clone(row), transitioned: false };
+    if (row.status !== "pending") return { request: clone(row), transitioned: false };
+    if (outcome.ok) {
+      row.status = "done";
+      delete row.error;
+    } else {
+      row.status = "failed";
+      row.error = outcome.error;
+    }
     row.updatedAt = nowIso;
     return { request: clone(row), transitioned: true };
   }

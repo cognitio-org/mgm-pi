@@ -65,10 +65,11 @@ export interface DownMessage {
     | "checkpoint"
     | "stop"
     | "browser.capture.entry"
-    | "browser.capture.result";
+    | "browser.capture.result"
+    | "browser.action.result";
   /** Set on `browser.capture.entry`: the pi custom entry agentd must emit with its own seq. */
   entry?: PiEntry;
-  /** Set on `browser.capture.result`. Not a transcript seq. */
+  /** Set on `browser.capture.result` and `browser.action.result`. Not a transcript seq. */
   requestId?: string;
   captureId?: string;
   title?: string;
@@ -463,7 +464,22 @@ export type BrowserRequestStatus = "pending" | "done" | "skipped" | "failed";
 /** Chrome outcomes the extension reports after its retry. Not a transcript row. */
 export type BrowserCaptureFailure = "permission_denied" | "tab_gone" | "too_large";
 
-/** A capture ask. requesterEmail is the authenticated caller who created it, never a body field. */
+export type BrowserActionKind = "click" | "type";
+
+/** Owner-reported action failures, plus `skipped` when the share is revoked before the action runs. */
+export type BrowserActionResultError =
+  | "denied"
+  | "not_found"
+  | "permission_denied"
+  | "tab_gone"
+  | "not_editable"
+  | "not_shared"
+  | "skipped"
+  | "rejected"
+  | "no_share";
+
+/** A capture ask, or a click/type ask. requesterEmail is the authenticated caller, never a body field.
+ * `kind` absent means capture. `click` and `type` carry a CSS selector, never JavaScript. */
 export interface BrowserRequest {
   id: string;
   sessionId: string;
@@ -471,8 +487,12 @@ export interface BrowserRequest {
   status: BrowserRequestStatus;
   /** Set when a capture is stored and the request is marked done. */
   captureId?: string;
-  /** Set when the extension reports a terminal capture error and the request is `failed`. */
-  error?: BrowserCaptureFailure;
+  /** Set when the extension reports a terminal error and the request is `failed`. */
+  error?: BrowserCaptureFailure | BrowserActionResultError;
+  kind?: BrowserActionKind;
+  selector?: string;
+  /** Set on `kind: "type"`. */
+  text?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -530,6 +550,16 @@ export interface BrowserRequestsCollection {
     sessionId: string,
     id: string,
     error: BrowserCaptureFailure,
+    nowIso: string,
+  ): Promise<{ request: BrowserRequest; transitioned: boolean } | null>;
+  /**
+   * A pending click or type becomes `done` or `failed`. `transitioned` is true only for that
+   * change. A capture row, or a request that is already finished, is returned unchanged.
+   */
+  markActionResult(
+    sessionId: string,
+    id: string,
+    outcome: { ok: true } | { ok: false; error: BrowserActionResultError },
     nowIso: string,
   ): Promise<{ request: BrowserRequest; transitioned: boolean } | null>;
 }

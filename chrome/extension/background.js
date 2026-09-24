@@ -88,6 +88,28 @@ import {
   tabStillShared,
   upsertShare,
 } from "./share.js";
+import {
+  ACTION_PROMPTS_KEY,
+  ALLOW_KEY,
+  actionNotice,
+  actionNoticeId,
+  actionPanelMessage,
+  actionPromptView,
+  actionResultPath,
+  clickSelector,
+  gateAction,
+  hostActionError,
+  hostActedMessage,
+  kindAllowed,
+  parseHostAction,
+  pendingActions,
+  readAllowMap,
+  readPromptMap,
+  requestIdFromNotice,
+  typeSelector,
+  withKindAllowed,
+  withoutSessionAllow,
+} from "./action.js";
 
 const PLACEMENTS_KEY = "placements";
 
@@ -616,7 +638,7 @@ function connectNativePort() {
   }
   nativePort = port;
   port.onMessage.addListener((message) => {
-    enqueueShare(() => onNativeCapture(message)).catch(() => {});
+    enqueueShare(() => onNativeMessage(message)).catch(() => {});
   });
   port.onDisconnect.addListener(() => {
     nativePort = null;
@@ -956,9 +978,240 @@ async function fulfillRequest(share, request, ctx) {
   await reportCaptureFailure(share.sessionId, request.id, again);
 }
 
+async function readAllow() {
+  const stored = await chrome.storage.local.get(ALLOW_KEY);
+  return readAllowMap(stored[ALLOW_KEY]);
+}
+
+async function writeAllow(map) {
+  await chrome.storage.local.set({ [ALLOW_KEY]: map });
+}
+
+async function readPrompts() {
+  const stored = await chrome.storage.local.get(ACTION_PROMPTS_KEY);
+  return readPromptMap(stored[ACTION_PROMPTS_KEY]);
+}
+
+async function writePrompts(map) {
+  await chrome.storage.local.set({ [ACTION_PROMPTS_KEY]: map });
+}
+
+const actionRunning = new Set();
+
+async function clearActionNotice(requestId) {
+  const id = actionNoticeId(requestId);
+  if (!id) return;
+  try {
+    await chrome.notifications.clear(id);
+  } catch {
+    // Already gone.
+  }
+}
+
+async function presentAction(prompt) {
+  if (await sidePanelOpen()) {
+    await clearActionNotice(prompt.requestId);
+    return;
+  }
+  const id = actionNoticeId(prompt.requestId);
+  if (!id) return;
+  const notice = actionNotice(prompt);
+  try {
+    await chrome.notifications.create(id, {
+      type: "basic",
+      iconUrl: chrome.runtime.getURL("icon.png"),
+      title: notice.title,
+      message: notice.message,
+      buttons: notice.buttons.map((title) => ({ title })),
+      requireInteraction: true,
+      priority: 2,
+    });
+  } catch {
+    // The panel can still allow it on the next tick.
+  }
+}
+
+async function savePrompt(prompt) {
+  const prompts = await readPrompts();
+  prompts[prompt.requestId] = prompt;
+  await writePrompts(prompts);
+}
+
+async function dropPrompt(requestId) {
+  const prompts = await readPrompts();
+  if (!prompts[requestId]) return null;
+  const prompt = prompts[requestId];
+  delete prompts[requestId];
+  await writePrompts(prompts);
+  await clearActionNotice(requestId);
+  return prompt;
+}
+
+function reportError(error) {
+  if (error === "waiting") return "denied";
+  if (
+    error === "denied" ||
+    error === "not_found" ||
+    error === "permission_denied" ||
+    error === "tab_gone" ||
+    error === "not_editable" ||
+    error === "not_shared"
+  ) {
+    return error;
+  }
+  return "not_found";
+}
+
+async function executeInTab(tabId, action) {
+  const prepared = await prepareTab(tabId);
+  if (!prepared.ok) return prepared;
+  const func = action.kind === "type" ? typeSelector : clickSelector;
+  const args = action.kind === "type" ? [action.selector, action.text ?? ""] : [action.selector];
+  try {
+    const injected = await chrome.scripting.executeScript({ target: { tabId }, func, args });
+    const result = Array.isArray(injected) ? injected[0]?.result : null;
+    if (!result || result.ok !== true) {
+      const error = result && typeof result.error === "string" ? result.error : "not_found";
+      return { ok: false, error: reportError(error) };
+    }
+    return { ok: true };
+  } catch {
+    const still = await getTab(tabId);
+    if (tabCaptureBlock(still)) return { ok: false, error: "tab_gone" };
+    return { ok: false, error: "permission_denied" };
+  }
+}
+
+/** The click happens only inside gateAction. A deny or an unknown tab never reaches executeInTab. */
+async function runGated(tabId, confirm, allowOn, action) {
+  const map = await readShares();
+  let ran = false;
+  const gated = gateAction({
+    tabId,
+    recordedTabIds: recordedTabIds(map),
+    confirm,
+    allowOn,
+    perform() {
+      ran = true;
+    },
+  });
+  if (!ran) return { ok: false, error: gated.error };
+  return executeInTab(tabId, action);
+}
+
+async function replyAction(prompt, outcome) {
+  if (prompt.source === "host") {
+    if (!outcome.ok) postNative(hostActionError(prompt.tabId, reportError(outcome.error), prompt.hostId));
+    else postNative(hostActedMessage(prompt.tabId, prompt.hostId));
+    return;
+  }
+  const body = outcome.ok ? { ok: true } : { error: reportError(outcome.error) };
+  await linkFetch(actionResultPath(prompt.sessionId, prompt.requestId), { method: "POST", body });
+}
+
+async function finishAction(prompt, confirm, allowOn) {
+  if (actionRunning.has(prompt.requestId)) return;
+  actionRunning.add(prompt.requestId);
+  try {
+    await dropPrompt(prompt.requestId);
+    const outcome = await runGated(prompt.tabId, confirm, allowOn, prompt);
+    await replyAction(prompt, outcome);
+  } finally {
+    actionRunning.delete(prompt.requestId);
+  }
+}
+
+async function cancelHostPrompt(prompt) {
+  await dropPrompt(prompt.requestId);
+  postNative(hostActionError(prompt.tabId, "not_shared", prompt.hostId));
+}
+
+async function clearPromptsForSession(sessionId) {
+  const prompts = await readPrompts();
+  for (const prompt of Object.values(prompts)) {
+    if (prompt.sessionId !== sessionId) continue;
+    if (prompt.source === "host") await cancelHostPrompt(prompt);
+    else await dropPrompt(prompt.requestId);
+  }
+}
+
+async function sweepActionPrompts(sessionId, actions) {
+  const pending = new Set(actions.map((action) => action.id));
+  const prompts = await readPrompts();
+  for (const prompt of Object.values(prompts)) {
+    if (prompt.sessionId !== sessionId || prompt.source !== "cloud") continue;
+    if (!pending.has(prompt.requestId)) await dropPrompt(prompt.requestId);
+  }
+}
+
+async function startCloudAction(share, request) {
+  if (actionRunning.has(request.id)) return;
+  const prompts = await readPrompts();
+  if (prompts[request.id]) {
+    await presentAction(prompts[request.id]);
+    return;
+  }
+  const prompt = {
+    requestId: request.id,
+    sessionId: share.sessionId,
+    requesterEmail: request.requesterEmail,
+    source: "cloud",
+    tabId: share.tabId,
+    kind: request.kind,
+    selector: request.selector,
+    ...(request.kind === "type" ? { text: request.text } : {}),
+  };
+  if (kindAllowed(await readAllow(), share.sessionId, request.kind)) {
+    await finishAction(prompt, null, true);
+    return;
+  }
+  await savePrompt(prompt);
+  await presentAction(prompt);
+}
+
+async function onNativeAction(message) {
+  const parsed = parseHostAction(message);
+  if (!parsed) return;
+  const map = await readShares();
+  const refused = hostCaptureReply(parsed.tabId, recordedTabIds(map));
+  if (refused) {
+    postNative(hostActionError(parsed.tabId, "not_shared", parsed.id));
+    return;
+  }
+  const share = Object.values(map).find((rec) => rec.tabId === parsed.tabId);
+  const sessionId = share ? share.sessionId : "";
+  const prompt = {
+    requestId: `host-${parsed.tabId}-${Date.now()}`,
+    sessionId,
+    requesterEmail: "this computer",
+    source: "host",
+    tabId: parsed.tabId,
+    kind: parsed.kind,
+    selector: parsed.selector,
+    ...(parsed.kind === "type" ? { text: parsed.text } : {}),
+    ...(parsed.id != null ? { hostId: parsed.id } : {}),
+  };
+  if (sessionId && kindAllowed(await readAllow(), sessionId, parsed.kind)) {
+    await finishAction(prompt, null, true);
+    return;
+  }
+  await savePrompt(prompt);
+  await presentAction(prompt);
+}
+
+async function decideAction(requestId, decision) {
+  const prompts = await readPrompts();
+  const prompt = prompts[requestId];
+  if (!prompt) return;
+  await finishAction(prompt, decision, false);
+}
+
 async function pollOne(share) {
   const listed = await linkFetch(pendingPath(share.sessionId));
   if (!listed.ok) return;
+  const actions = pendingActions(listed.body);
+  await sweepActionPrompts(share.sessionId, actions);
+  for (const action of actions) await startCloudAction(share, action);
   const requests = pendingRequests(listed.body);
   if (requests.length === 0) return;
   const [shareRes, sessionRes] = await Promise.all([
@@ -1043,6 +1296,7 @@ async function commitShare(sessionId, tab) {
     return { ok: false, error: "tab_gone" };
   }
   await chrome.storage.local.set({ [LINKED_SESSION_KEY]: sessionId });
+  await writeAllow(withoutSessionAllow(await readAllow(), sessionId));
   if (previous && previous.tabId !== record.tabId && !tabStillShared(previous.tabId, next)) {
     postNative(nativeUnshareMessage(previous.tabId));
   }
@@ -1070,6 +1324,8 @@ async function revokeSessionNow(sessionId) {
   if (removed && !tabStillShared(removed.tabId, next)) postNative(nativeUnshareMessage(removed.tabId));
   await ensureAlarm(next);
   await clearNoticesForSession(sessionId);
+  await clearPromptsForSession(sessionId);
+  await writeAllow(withoutSessionAllow(await readAllow(), sessionId));
   blockedSessions.delete(sessionId);
 }
 
@@ -1090,6 +1346,8 @@ async function revokeClosedTab(tabId) {
       if (job && job.tabId === tabId) await revokeInflight(rec.sessionId, job.requestId);
       await linkFetch(sharePath(rec.sessionId), { method: "DELETE" });
       await clearNoticesForSession(rec.sessionId);
+      await clearPromptsForSession(rec.sessionId);
+      await writeAllow(withoutSessionAllow(await readAllow(), rec.sessionId));
     }
     await writeShares(result.map);
     if (!tabStillShared(tabId, result.map)) postNative(nativeUnshareMessage(tabId));
@@ -1186,18 +1444,26 @@ async function refreshMenu() {
   }
 }
 
+async function onNativeMessage(message) {
+  if (message && message.t === "action") {
+    await onNativeAction(message);
+    return;
+  }
+  await onNativeCapture(message);
+}
+
 async function onNativeCapture(message) {
   const parsed = parseHostCapture(message);
   if (!parsed) return;
   const map = await readShares();
   const refused = hostCaptureReply(parsed.tabId, recordedTabIds(map));
   if (refused) {
-    postNative(refused);
+    postNative(parsed.id != null ? { ...refused, id: parsed.id } : refused);
     return;
   }
   const shot = await captureForTab(parsed.tabId);
   if (!shot.ok) {
-    postNative(hostError(shot.error));
+    postNative(hostError(shot.error, parsed.id));
     return;
   }
   postNative(hostCapturedMessage({
@@ -1205,6 +1471,7 @@ async function onNativeCapture(message) {
     title: shot.title,
     url: shot.href,
     jpegBase64: shot.jpegBase64,
+    id: parsed.id,
   }));
 }
 
@@ -1253,6 +1520,41 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (sender?.id !== chrome.runtime.id) return;
+  const action = actionPanelMessage(message);
+  if (action) {
+    if (action.t === "action-state") {
+      readPrompts()
+        .then(async (prompts) => {
+          const allow = await readAllow();
+          const prompt = Object.values(prompts).find((item) => item.sessionId === action.sessionId) ?? null;
+          sendResponse({
+            ok: true,
+            click: kindAllowed(allow, action.sessionId, "click"),
+            type: kindAllowed(allow, action.sessionId, "type"),
+            prompt: actionPromptView(prompt),
+          });
+        })
+        .catch(() => sendResponse({ ok: false }));
+      return true;
+    }
+    if (action.t === "action-decide") {
+      enqueueShare(() => decideAction(action.requestId, action.decision))
+        .then(() => sendResponse({ ok: true }))
+        .catch(() => sendResponse({ ok: false }));
+      return true;
+    }
+    enqueueShare(async () => {
+      await writeAllow(withKindAllowed(await readAllow(), action.sessionId, action.kind, action.on));
+      return readAllow();
+    })
+      .then((allow) => sendResponse({
+        ok: true,
+        click: kindAllowed(allow, action.sessionId, "click"),
+        type: kindAllowed(allow, action.sessionId, "type"),
+      }))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
   const parsed = panelMessage(message);
   if (!parsed) return;
   if (parsed.t === "panel-request") {
@@ -1290,6 +1592,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 chrome.notifications.onButtonClicked.addListener((notificationId, buttonIndex) => {
+  const actionRequestId = requestIdFromNotice(notificationId);
+  if (actionRequestId) {
+    const decision = buttonIndex === 0 ? "allow" : "deny";
+    enqueueShare(() => decideAction(actionRequestId, decision)).catch(() => {});
+    return;
+  }
   if (buttonIndex !== 0 || notificationId === "need-floppy") return;
   const sessionId = noticeSessions.get(notificationId);
   if (typeof sessionId === "string") haltSession(sessionId);

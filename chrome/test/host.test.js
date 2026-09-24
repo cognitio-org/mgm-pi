@@ -89,6 +89,16 @@ test("a share is remembered from the extension, and a socket cannot invent one",
     reply: { t: "error", error: "rejected" },
   });
   assert.equal(replyToMessage({ t: "capture", tabId: 4 }, state), null);
+  assert.deepEqual(decideSocketMessage({ t: "action", tabId: 9, kind: "click", selector: "#go" }, state), {
+    reply: { t: "error", error: "tab is not shared" },
+  });
+  assert.deepEqual(decideSocketMessage({ t: "action", tabId: 4, kind: "click", selector: "javascript:alert(1)" }, state), {
+    reply: { t: "error", error: "rejected" },
+  });
+  assert.deepEqual(decideSocketMessage({ t: "action", tabId: 4, kind: "click", selector: " #go " }, state), {
+    forward: { t: "action", tabId: 4, kind: "click", selector: "#go" },
+  });
+  assert.equal(decideSocketMessage({ t: "action", tabId: 4, kind: "type", selector: "#q", text: "hi" }, state).forward.text, "hi");
 });
 
 test("jpeg bytes are the decoded image, one file per tab under the kernal home", () => {
@@ -206,6 +216,19 @@ function readFrame(proc) {
   });
 }
 
+function holdLine(sockPath, payload) {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(sockPath);
+    let buf = "";
+    socket.on("error", reject);
+    socket.on("data", (chunk) => { buf += chunk.toString(); });
+    socket.on("connect", () => {
+      socket.write(payload);
+      resolve({ socket, text: () => buf });
+    });
+  });
+}
+
 function sendLine(sockPath, payload) {
   return new Promise((resolve, reject) => {
     const socket = net.connect(sockPath);
@@ -302,20 +325,20 @@ test("a shared tab is captured through the extension into one jpeg per tab", asy
 
     const badFrame = readFrame(proc);
     const badReply = sendLine(sockPath, '{"t":"capture","tabId":4}\n');
-    assert.deepEqual(await badFrame, { t: "capture", tabId: 4 });
+    assert.deepEqual(await badFrame, { t: "capture", tabId: 4, id: 1 });
     proc.stdin.write(encodeNativeMessage({ t: "captured", tabId: 4, title: "Spec", url: "https://example.com/4", jpegBase64: "aaaa" }));
     assert.deepEqual(JSON.parse(await badReply), { t: "error", error: "capture failed" });
     assert.equal(existsSync(join(dir, "chrome", "captures")), false);
 
     const deniedFrame = readFrame(proc);
     const deniedReply = sendLine(sockPath, '{"t":"capture","tabId":4}\n');
-    assert.deepEqual(await deniedFrame, { t: "capture", tabId: 4 });
+    assert.deepEqual(await deniedFrame, { t: "capture", tabId: 4, id: 2 });
     proc.stdin.write(encodeNativeMessage({ t: "error", error: "permission_denied" }));
     assert.deepEqual(JSON.parse(await deniedReply), { t: "error", error: "permission_denied" });
 
     const frame = readFrame(proc);
     const replyPromise = sendLine(sockPath, '{"t":"capture","tabId":4}\n');
-    assert.deepEqual(await frame, { t: "capture", tabId: 4 });
+    assert.deepEqual(await frame, { t: "capture", tabId: 4, id: 3 });
     proc.stdin.write(encodeNativeMessage({
       t: "captured", tabId: 4, title: "Spec", url: "https://example.com/4", jpegBase64: JPEG_B64,
     }));
@@ -370,7 +393,7 @@ test("ending the extension connection fails an in-flight capture and unlinks the
     await listedShares(sockPath, (msg) => msg.shares.length === 1);
     const frame = readFrame(proc);
     const replyPromise = sendLine(sockPath, '{"t":"capture","tabId":4}\n');
-    assert.deepEqual(await frame, { t: "capture", tabId: 4 });
+    assert.deepEqual(await frame, { t: "capture", tabId: 4, id: 1 });
     proc.stdin.end();
     assert.deepEqual(JSON.parse(await replyPromise), { t: "error", error: "not connected" });
     const [code] = await once(proc, "exit");
@@ -438,6 +461,53 @@ test("a leftover socket with nobody listening is replaced", async () => {
   } finally {
     if (holder.exitCode === null) holder.kill("SIGKILL");
     if (proc) await stop(proc);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("an unanswered action does not stall the next capture", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "kernal-chrome-host-"));
+  const sockPath = join(dir, "chrome.sock");
+  const proc = spawn(process.execPath, [host], {
+    env: { ...process.env, KERNAL_HOME: dir, KERNAL_CHROME_ACTION_TIMEOUT_MS: "100" },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let held;
+  try {
+    await waitFor(proc, proc.stderr, "listening");
+    proc.stdin.write(encodeNativeMessage(SHARE));
+    await listedShares(sockPath, (msg) => msg.shares.length === 1);
+
+    const actionFramePromise = readFrame(proc);
+    const actionReplyPromise = sendLine(sockPath, '{"t":"action","tabId":4,"kind":"click","selector":"#go"}\n');
+    const actionFrame = await actionFramePromise;
+    assert.deepEqual(actionFrame, { t: "action", tabId: 4, kind: "click", selector: "#go", id: 1 });
+    assert.deepEqual(JSON.parse(await actionReplyPromise), { t: "error", error: "action timed out" });
+
+    const captureFramePromise = readFrame(proc);
+    held = await holdLine(sockPath, '{"t":"capture","tabId":4}\n');
+    const captureFrame = await captureFramePromise;
+    assert.deepEqual(captureFrame, { t: "capture", tabId: 4, id: 2 });
+
+    proc.stdin.write(encodeNativeMessage({ t: "acted", tabId: 4, id: actionFrame.id }));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(held.text(), "");
+
+    proc.stdin.write(encodeNativeMessage({
+      t: "captured", tabId: 4, title: "Spec", url: "https://example.com/a", jpegBase64: JPEG_B64, id: captureFrame.id,
+    }));
+    const started = Date.now();
+    while (!held.text().includes("\n")) {
+      if (Date.now() - started > 4000) throw new Error(`socket timeout, got ${JSON.stringify(held.text())}`);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const reply = JSON.parse(held.text().trim().split("\n")[0]);
+    assert.equal(reply.t, "captured");
+    assert.equal(reply.tabId, 4);
+    assert.equal(reply.title, "Spec");
+  } finally {
+    if (held) held.socket.destroy();
+    await stop(proc);
     rmSync(dir, { recursive: true, force: true });
   }
 });

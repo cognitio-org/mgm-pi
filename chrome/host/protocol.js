@@ -3,7 +3,8 @@
 //
 // Chrome's frame is a 4-byte little-endian length, then that many JSON bytes.
 // The socket is one JSON object per line. Stdin is the extension (share,
-// unshare, captured, error). The socket is Kernal (list, capture).
+// unshare, captured, acted, action-error, error). The socket is Kernal
+// (list, capture, action). An action selector is CSS, not JavaScript.
 
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -68,6 +69,34 @@ export function tabIsShared(shares, tabId) {
   return Number.isInteger(tabId) && tabId >= 0 && copyShares(shares).some((share) => share.tabId === tabId);
 }
 
+/** Same limits as extension/action.js. A selector that is not CSS is rejected here. */
+function actionSelectorOk(selector) {
+  if (typeof selector !== "string") return false;
+  const trimmed = selector.trim();
+  if (trimmed.length === 0 || trimmed.length > 500) return false;
+  if (/[\u0000-\u001f\u007f<{}`;]/.test(trimmed)) return false;
+  if (/javascript\s*:/i.test(trimmed)) return false;
+  if (/eval\s*\(/i.test(trimmed) || /function\s*\(/i.test(trimmed)) return false;
+  if (trimmed.includes("=>")) return false;
+  if (/url\s*\(/i.test(trimmed) || /expression\s*\(/i.test(trimmed)) return false;
+  return true;
+}
+
+/** A socket action Kernal may ask for, or null when the body is not click/type plus a selector. */
+export function parseSocketAction(message) {
+  if (message === null || typeof message !== "object" || Array.isArray(message)) return null;
+  if (message.t !== "action" || !Number.isInteger(message.tabId) || message.tabId < 0) return null;
+  if (!actionSelectorOk(message.selector)) return null;
+  const selector = message.selector.trim();
+  if (message.kind === "click") {
+    if (message.text !== undefined) return null;
+    return { t: "action", tabId: message.tabId, kind: "click", selector };
+  }
+  if (message.kind !== "type") return null;
+  if (typeof message.text !== "string" || message.text.length > 8000 || message.text.includes("\u0000")) return null;
+  return { t: "action", tabId: message.tabId, kind: "type", selector, text: message.text };
+}
+
 /**
  * One socket message from Kernal.
  * `reply` is written back as a line. `forward` is a capture the host must send
@@ -85,6 +114,13 @@ export function decideSocketMessage(message, state = {}) {
     if (!tabIsShared(shares, message.tabId)) return { reply: { t: "error", error: ERR_NOT_SHARED } };
     if (!connected) return { reply: { t: "error", error: ERR_NOT_CONNECTED } };
     return { forward: { t: "capture", tabId: message.tabId } };
+  }
+  if (message.t === "action") {
+    const action = parseSocketAction(message);
+    if (!action) return { reply: { t: "error", error: ERR_REJECTED } };
+    if (!tabIsShared(shares, action.tabId)) return { reply: { t: "error", error: ERR_NOT_SHARED } };
+    if (!connected) return { reply: { t: "error", error: ERR_NOT_CONNECTED } };
+    return { forward: action };
   }
   return { reply: { t: "error", error: ERR_REJECTED } };
 }
@@ -126,10 +162,21 @@ export function captureErrorText(error) {
   return error;
 }
 
+function carriedId(message) {
+  return Number.isInteger(message.id) && message.id > 0 ? message.id : null;
+}
+
+function withCarriedId(value, message) {
+  const id = carriedId(message);
+  if (id == null) return value;
+  return { ...value, id };
+}
+
 /**
  * One native message from the extension. Shares are remembered and dropped here.
  * `broadcast` is an unsolicited line for socket clients. `capture` settles the
  * in-flight capture. List and capture from stdin are ignored: Kernal sends those.
+ * A positive `id` is the host's request id echoed by the extension.
  */
 export function applyExtensionMessage(shares, message) {
   const current = copyShares(shares);
@@ -150,25 +197,57 @@ export function applyExtensionMessage(shares, message) {
   }
   if (message.t === "captured") {
     if (!Number.isInteger(message.tabId) || message.tabId < 0) {
-      return { shares: current, broadcast: null, capture: { kind: "error", error: ERR_CAPTURE_FAILED } };
+      return {
+        shares: current,
+        broadcast: null,
+        capture: withCarriedId({ kind: "error", error: ERR_CAPTURE_FAILED }, message),
+      };
     }
     return {
       shares: current,
       broadcast: null,
-      capture: {
+      capture: withCarriedId({
         kind: "jpeg",
         tabId: message.tabId,
         title: typeof message.title === "string" ? message.title : "",
         url: typeof message.url === "string" ? message.url : "",
         jpegBase64: typeof message.jpegBase64 === "string" ? message.jpegBase64 : "",
-      },
+      }, message),
+    };
+  }
+  if (message.t === "acted") {
+    if (!Number.isInteger(message.tabId) || message.tabId < 0) {
+      return {
+        shares: current,
+        broadcast: null,
+        capture: null,
+        action: withCarriedId({ kind: "error", tabId: -1, error: ERR_CAPTURE_FAILED }, message),
+      };
+    }
+    return {
+      shares: current,
+      broadcast: null,
+      capture: null,
+      action: withCarriedId({ kind: "done", tabId: message.tabId }, message),
+    };
+  }
+  if (message.t === "action-error") {
+    return {
+      shares: current,
+      broadcast: null,
+      capture: null,
+      action: withCarriedId({
+        kind: "error",
+        tabId: Number.isInteger(message.tabId) ? message.tabId : -1,
+        error: captureErrorText(message.error),
+      }, message),
     };
   }
   if (message.t === "error") {
     return {
       shares: current,
       broadcast: null,
-      capture: { kind: "error", error: captureErrorText(message.error) },
+      capture: withCarriedId({ kind: "error", error: captureErrorText(message.error) }, message),
     };
   }
   return keep;

@@ -76,7 +76,7 @@ test("the capture listener binds loopback, refuses other callers, and writes the
     outfitterBrowser(
       {
         registerTool: (registered) => {
-          tool = registered;
+          if (registered.name === "browser_capture") tool = registered;
         },
       },
       { OUTFITTER_BROWSER_PORT: String(address), OUTFITTER_BROWSER_TOKEN: listener.token },
@@ -112,7 +112,7 @@ test("a capture error is text, and a different uid cannot open the listener", as
   try {
     let tool: any;
     outfitterBrowser(
-      { registerTool: (registered) => { tool = registered; } },
+      { registerTool: (registered) => { if (registered.name === "browser_capture") tool = registered; } },
       { OUTFITTER_BROWSER_PORT: String(listener.port), OUTFITTER_BROWSER_TOKEN: listener.token },
     );
     const skipped = await tool.execute("call-1", {});
@@ -155,7 +155,7 @@ test("the tool times out as text when the listener never answers", async () => {
   try {
     let tool: any;
     outfitterBrowser(
-      { registerTool: (registered) => { tool = registered; } },
+      { registerTool: (registered) => { if (registered.name === "browser_capture") tool = registered; } },
       { OUTFITTER_BROWSER_PORT: String(listener.port), OUTFITTER_BROWSER_TOKEN: listener.token },
     );
     const result = await tool.execute("call-1", {});
@@ -181,7 +181,7 @@ test("the tool returns the other capture errors as text", async () => {
   try {
     let tool: any;
     outfitterBrowser(
-      { registerTool: (registered) => { tool = registered; } },
+      { registerTool: (registered) => { if (registered.name === "browser_capture") tool = registered; } },
       { OUTFITTER_BROWSER_PORT: String(listener.port), OUTFITTER_BROWSER_TOKEN: listener.token },
     );
     assert.equal((await tool.execute("a", {})).content[0].text, "permission_denied");

@@ -165,6 +165,10 @@
   font-family: var(--font-mono);
 }
 
+.session-github {
+  margin: 0.2rem 0 0;
+}
+
 /* The guru-id/repo/branch line (session-subline): short id + copy affordance instead of a raw
  * UUID, and the repo/branch clause ellipsizes instead of forcing the line (or the page) wide. */
 .session-subline {

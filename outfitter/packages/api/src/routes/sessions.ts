@@ -5,6 +5,8 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { RouteContext } from "./context.ts";
 import type { Session, PiEntry, Run } from "../store/types.ts";
 import { MAIL_HELD_NOTICE, MAIL_MAX_TEXT } from "../mail.ts";
+import { GITHUB_TOKEN_DEFAULT_SECRET } from "../secrets.ts";
+import { sessionGithubTokenSecretName } from "../operator.ts";
 
 const SESSION_VERSION = 3; // matches pi's CURRENT_SESSION_VERSION; keeps export.jsonl pi-compatible
 
@@ -152,6 +154,12 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
     // omitted, when there is nothing to answer.
     const pendingUiRequest =
       run && run.state !== "stopped" && run.state !== "failed" ? (run.pendingUiRequest ?? null) : null;
+    const guru = await ctx.store.gurus.findById(session.guruId);
+    const owner = session.ownerEmail ? await ctx.store.users.findByEmail(session.ownerEmail) : null;
+    const login = owner?.githubLogin?.replace(/^@/, "").trim() ?? "";
+    const ownToken = await ctx.secretAdmin.info(sessionGithubTokenSecretName(session.id));
+    const sharedToken = ownToken.set || !session.repo ? { set: false } : await ctx.secretAdmin.info(GITHUB_TOKEN_DEFAULT_SECRET);
+    const credential = ownToken.set ? "session" : sharedToken.set ? "default" : "none";
     return {
       ...session,
       runState: run?.state,
@@ -159,6 +167,13 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
       pendingUiRequest,
       heldMail,
       ...(heldMail > 0 ? { mailNotice: MAIL_HELD_NOTICE } : {}),
+      github: {
+        repo: session.repo ?? null,
+        branch: session.branch ?? null,
+        credential,
+        merge: guru?.mergeFromCloud === true,
+        onBehalfOf: /^[A-Za-z0-9-]+$/.test(login) ? login : null,
+      },
     };
   });
 

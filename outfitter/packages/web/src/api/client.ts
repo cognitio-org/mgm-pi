@@ -51,6 +51,14 @@ export interface SessionDetail {
   heldMail?: number;
   /** "Deploy mismatch: messages held until the service is redeployed", when heldMail > 0. */
   mailNotice?: string;
+  /** Cloud GitHub broker state. Never includes a token. */
+  github?: {
+    repo: string | null;
+    branch: string | null;
+    credential: "session" | "default" | "none";
+    merge: boolean;
+    onBehalfOf: string | null;
+  };
   createdAt: string;
   updatedAt: string;
 }

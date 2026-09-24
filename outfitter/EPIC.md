@@ -529,7 +529,9 @@ research on Sonnet; review on Opus).
 
 - **E6.1 Scheduler**: Cloud Scheduler → `POST /automations/:id/fire` with OIDC. Three jobs are free.
 - **E6.2 GitHub webhooks**: HMAC-verified endpoint; events (PR opened, check failed, review comment)
-  matched to automations; PR Fixer and Reviewer gurus; `gh pr create` from runs.
+  matched to automations; PR Fixer and Reviewer gurus call the phase 3 GitHub executor
+  (`github.request` / `github.result`) instead of `gh pr create` inside a run. The image keeps
+  `gh` until every caller has moved.
 - **E6.3 Slack** (optional): incoming slash command to start a session, outgoing summary on finish.
 
 ### E7 Hardening and cost tuning

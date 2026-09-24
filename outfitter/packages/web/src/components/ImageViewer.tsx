@@ -121,27 +121,35 @@ export function ImageViewer({
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     closeRef.current?.focus();
     function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Escape" && e.key !== "Tab") return;
+      const own = dialogRef.current;
+      const modals = document.querySelectorAll('[aria-modal="true"]');
+      // A later modal is on top; let that dialog's listener handle the key.
+      if (own && modals.length > 0 && modals[modals.length - 1] !== own) return;
       if (e.key === "Escape") {
+        e.stopImmediatePropagation();
         onCloseRef.current();
         return;
       }
-      if (e.key !== "Tab" || !dialogRef.current) return;
-      const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>("button:not([disabled])"));
+      if (!own) return;
+      e.stopImmediatePropagation();
+      const focusable = Array.from(own.querySelectorAll<HTMLElement>("button:not([disabled])"));
       if (focusable.length === 0) return;
       const first = focusable[0]!;
       const last = focusable[focusable.length - 1]!;
       const active = document.activeElement;
-      if (e.shiftKey && (active === first || !dialogRef.current.contains(active))) {
+      if (e.shiftKey && (active === first || !own.contains(active))) {
         e.preventDefault();
         last.focus();
-      } else if (!e.shiftKey && (active === last || !dialogRef.current.contains(active))) {
+      } else if (!e.shiftKey && (active === last || !own.contains(active))) {
         e.preventDefault();
         first.focus();
       }
     }
-    document.addEventListener("keydown", onKeyDown);
+    // Capture so this dialog, not the reading dialog under it, handles Escape and Tab.
+    document.addEventListener("keydown", onKeyDown, true);
     return () => {
-      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("keydown", onKeyDown, true);
       opener?.focus();
     };
   }, []);

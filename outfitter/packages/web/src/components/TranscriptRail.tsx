@@ -247,9 +247,29 @@ export function TranscriptRail({
     if (!open || !anchor || !card) return;
     const place = () => placeCard(anchor, card);
     place();
+    // Same detailKey while a running body grows. Re-place on height, next frame so
+    // placeCard's width write is not a ResizeObserver loop.
+    let height = card.offsetHeight;
+    let frame = 0;
+    const ro =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => {
+            const next = card.offsetHeight;
+            if (next === height) return;
+            height = next;
+            cancelAnimationFrame(frame);
+            frame = requestAnimationFrame(() => {
+              place();
+              height = card.offsetHeight;
+            });
+          });
+    ro?.observe(card);
     window.addEventListener("resize", place);
     window.addEventListener("scroll", place, true);
     return () => {
+      ro?.disconnect();
+      cancelAnimationFrame(frame);
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
     };

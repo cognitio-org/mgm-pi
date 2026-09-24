@@ -191,6 +191,17 @@ describe("MermaidEnlargeDialog", () => {
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
       saved = { href: this.getAttribute("href"), download: this.download };
     });
+    // FileReader (used to read the blob below) needs real timers. Only hold the
+    // download's delayed revoke; forward every other timer.
+    const realSetTimeout = globalThis.setTimeout;
+    const revokeLater: Array<() => void> = [];
+    vi.spyOn(globalThis, "setTimeout").mockImplementation(((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+      if (timeout === 1000 && typeof handler === "function") {
+        revokeLater.push(() => handler(...(args as [])));
+        return 0 as unknown as ReturnType<typeof setTimeout>;
+      }
+      return realSetTimeout(handler, timeout, ...(args as []));
+    }) as typeof setTimeout);
     try {
       open();
       act(() => buttonNamed("Download").click());
@@ -199,8 +210,12 @@ describe("MermaidEnlargeDialog", () => {
       expect(blob.type).toBe("image/svg+xml");
       await expect(blobText(blob)).resolves.toBe(SVG);
       expect(saved).toEqual({ href: "blob:diagram", download: "diagram.svg" });
-      expect(revokeObjectURL).toHaveBeenCalledWith("blob:diagram");
+      // The object URL has to stay alive past click; revoke is only scheduled.
+      expect(revokeObjectURL).not.toHaveBeenCalled();
+      expect(revokeLater).toHaveLength(1);
       expect(document.body.querySelector("a[download]")).toBeNull();
+      revokeLater[0]!();
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:diagram");
     } finally {
       if (prevCreate) urlApi.createObjectURL = prevCreate;
       else delete urlApi.createObjectURL;

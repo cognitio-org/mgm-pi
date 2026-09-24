@@ -4,6 +4,20 @@ import { Markdown } from "./Markdown.tsx";
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])';
 
+// An HTML preview or image viewer opened from the prose is its own dialog. Escape and Tab
+// belong to that one; this listener is registered first and would otherwise close both.
+function keyBelongsToAnotherDialog(own: HTMLElement | null): boolean {
+  const active = document.activeElement;
+  if (active instanceof Element) {
+    const modal = active.closest('[aria-modal="true"]');
+    if (modal && modal !== own) return true;
+  }
+  for (const node of document.querySelectorAll('[role="dialog"]')) {
+    if (node !== own) return true;
+  }
+  return false;
+}
+
 export function ReadingDialog({ text, onClose }: { text: string; onClose: () => void }) {
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
@@ -15,6 +29,7 @@ export function ReadingDialog({ text, onClose }: { text: string; onClose: () => 
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     closeRef.current?.focus();
     function onKeyDown(e: KeyboardEvent) {
+      if ((e.key === "Escape" || e.key === "Tab") && keyBelongsToAnotherDialog(dialogRef.current)) return;
       if (e.key === "Escape") {
         onCloseRef.current();
         return;

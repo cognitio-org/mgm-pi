@@ -93,18 +93,15 @@ export function mermaidSvgBlob(svg: string): Blob {
 }
 
 function downloadDiagram(svg: string) {
-  const blob = mermaidSvgBlob(svg);
-  const url = URL.createObjectURL(blob);
+  const url = URL.createObjectURL(mermaidSvgBlob(svg));
   const a = document.createElement("a");
   a.href = url;
   a.download = DIAGRAM_FILENAME;
   document.body.appendChild(a);
-  try {
-    a.click();
-  } finally {
-    a.remove();
-    URL.revokeObjectURL(url);
-  }
+  a.click();
+  a.remove();
+  // Revoking in the same turn can cancel the save; the click only starts it.
+  setTimeout(() => URL.revokeObjectURL?.(url), 1000);
 }
 
 export function MermaidEnlargeDialog({ svg, onClose }: { svg: string; onClose: () => void }) {

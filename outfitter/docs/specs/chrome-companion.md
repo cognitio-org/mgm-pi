@@ -329,6 +329,8 @@ Filed as sub-issues and not part of the first cut:
 - **WebMCP** on the Outfitter web app: list, play, steer, break, stop, eject, read the transcript, running as the signed-in user.
 - **Playwright gate** inside the Drive: a Tape option that runs a Playwright spec against a fresh headless browser before checkpoint and attaches the report. This does not attach to the user's Chrome.
 
+`packages/web` registers seven WebMCP tools on the app shell after sign-in, for a Chrome agent that understands `document.modelContext`: `list_floppies`, `play`, `steer`, `break`, `stop`, `eject`, and `read_transcript`. Play starts a Floppy the signed-in user could start from New Floppy (`POST /api/sessions` with that form's fields). Steer sends follow-up text (`POST /messages` with behavior `steer`). Break aborts, Stop stops, and the transcript tool reads `GET /entries`. Eject returns the same `kernal --teleport <id>` command the Eject button copies. Every tool calls the page's existing API client with the page's credentials. None of them accept a token or call the link origin with a Dongle, and none of them are registered from the easter-egg games. The registration is replaced when the signed-in user changes. WebMCP is not on by default. Chrome exposes `document.modelContext` behind `chrome://flags/#enable-webmcp-testing` and an origin trial; if `registerTool` is missing the page does nothing and the UI is unchanged.
+
 ## 18. Issue map
 
 The epic's sub-issues are the slices. Dependencies:

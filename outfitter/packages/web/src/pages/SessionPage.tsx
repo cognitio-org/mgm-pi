@@ -26,6 +26,7 @@ import { withFloppySound } from "../lib/floppy-sound.ts";
 import { transport, transportLabel } from "../lib/vocabulary.ts";
 import { deriveSessionActivity, nextSendAnchor, notePendingRunState, type PendingSend } from "../lib/send-status.ts";
 import { useChromeCompanion } from "../hooks/useChromeCompanion.ts";
+import { teleportCommand } from "../lib/webmcp.ts";
 
 type PendingAction = "abort" | "stop" | "wake" | null;
 
@@ -254,7 +255,7 @@ export function SessionPage() {
   }
 
   async function copyTeleport() {
-    const cmd = `kernal --teleport ${sessionId}`;
+    const cmd = teleportCommand(sessionId);
     try {
       await navigator.clipboard.writeText(cmd);
       setCopied(true);

@@ -1,6 +1,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { NavLink, Route, Routes, useLocation } from "react-router-dom";
-import { api } from "./api/client.ts";
+import { api, ApiError } from "./api/client.ts";
+import { registerWebMcpTools } from "./lib/webmcp.ts";
 import { ProviderStrip } from "./components/ProviderStrip.tsx";
 import { Logo } from "./components/Logo.tsx";
 import { ThemeToggle } from "./components/ThemeToggle.tsx";
@@ -50,24 +51,48 @@ const NAV_ITEMS: Array<{ to: string; end?: boolean; label: string; hint: string;
 
 export function App() {
   // The Settings/Control Panel nav link only shows for an operator/Sysop (EPIC.md Decisions
-  // table); GET /api/me is the source of truth, so this fetches once on mount rather than
-  // guessing from any local state.
+  // table); GET /api/me is the source of truth. Refetch on focus so a changed signed-in user
+  // replaces the WebMCP tools (a transient error must not clear them; 401/403 does).
   const [operator, setOperator] = useState(false);
+  const [signedInEmail, setSignedInEmail] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
   const isDesk = location.pathname === "/";
   const online = useOnlineStatus();
   useEffect(() => {
-    api
-      .me()
-      .then((me) => {
-        setOperator(!!me.operator);
-        const host = window.location.hostname;
-        const secure = window.location.protocol === "https:";
-        document.cookie = (me.name && welcomeCookieAssignment(me.name, host, secure)) || welcomeCookieClear(host, secure);
-      })
-      .catch(() => setOperator(false));
+    let cancelled = false;
+    let request = 0;
+    function loadMe() {
+      const id = ++request;
+      api
+        .me()
+        .then((me) => {
+          if (cancelled || id !== request) return;
+          setOperator(!!me.operator);
+          setSignedInEmail(me.email || null);
+          const host = window.location.hostname;
+          const secure = window.location.protocol === "https:";
+          document.cookie = (me.name && welcomeCookieAssignment(me.name, host, secure)) || welcomeCookieClear(host, secure);
+        })
+        .catch((err) => {
+          if (cancelled || id !== request) return;
+          setOperator(false);
+          // A blip must not drop tools that were registered for a still-signed-in user.
+          // 401/403 means the page is no longer that user.
+          if (err instanceof ApiError && (err.status === 401 || err.status === 403)) setSignedInEmail(null);
+        });
+    }
+    loadMe();
+    window.addEventListener("focus", loadMe);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", loadMe);
+    };
   }, []);
+
+  // Fleet tools for this signed-in user. No-ops without document.modelContext.registerTool.
+  // A new email aborts the previous registration first (see registerWebMcpTools).
+  useEffect(() => registerWebMcpTools(signedInEmail), [signedInEmail]);
 
   // Konami code, anywhere outside a form field -- see docs/easter for why this trigger was
   // picked. openEasterEgg() dynamic-imports the whole game, so this costs nothing until typed.

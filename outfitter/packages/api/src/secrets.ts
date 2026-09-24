@@ -3,7 +3,17 @@
 // authenticated WebSocket inside run.spec, never as job/container env.
 
 import type { Session, Guru } from "./store/types.ts";
-import { GithubAppTokens, type MintFailure, type MintFailureContext } from "./github-app.ts";
+import {
+  BROKER_PERMISSIONS,
+  DRIVE_PERMISSIONS,
+  GITHUB_APP_ID_SECRET,
+  GITHUB_APP_INSTALLATION_SECRET,
+  GITHUB_APP_KEY_SECRET,
+  GITHUB_APP_SLUG_SECRET,
+  GithubAppTokens,
+  type MintFailure,
+  type MintFailureContext,
+} from "./github-app.ts";
 
 export interface RunSecrets {
   githubToken: string;
@@ -22,6 +32,12 @@ export interface RunSecrets {
 
 export interface SecretsBroker {
   secretsForRun(session: Session, guru: Guru): Promise<RunSecrets>;
+  /** GitHub credential for the API broker. A PAT is the same token the run gets. An App installation
+   * token is minted with BROKER_PERMISSIONS and is not the drive token. */
+  brokerGithubToken?(session: Session): Promise<{
+    token: string;
+    appFailure?: Exclude<MintFailure, "not-configured">;
+  }>;
   /** The credential a live run should switch to. A per-session PAT has no `expiresAt` and replaces an installation token. Undefined when nothing is configured. */
   refreshGithubAppToken?(session: Session): Promise<{ token: string; expiresAt?: string } | undefined>;
   /** A LiteLLM key usable for calls with no specific run/guru behind them, e.g. the E2.10 provider
@@ -50,6 +66,10 @@ export class MemorySecretsBroker implements SecretsBroker {
 
   async secretsForRun(): Promise<RunSecrets> {
     return { githubToken: this.githubToken, litellmKey: this.litellmKey };
+  }
+
+  async brokerGithubToken(): Promise<{ token: string }> {
+    return { token: this.githubToken };
   }
 
   async defaultLitellmKey(): Promise<string> {
@@ -107,7 +127,7 @@ export class GcpSecretsBroker implements SecretsBroker {
 
   async secretsForRun(session: Session, guru: Guru): Promise<RunSecrets> {
     const [github, litellmKey] = await Promise.all([
-      this.githubTokenForSession(session),
+      this.githubTokenForSession(session, DRIVE_PERMISSIONS),
       this.litellmKeyForGuru(guru.id),
     ]);
     return {
@@ -119,13 +139,22 @@ export class GcpSecretsBroker implements SecretsBroker {
     };
   }
 
+  async brokerGithubToken(session: Session): Promise<{
+    token: string;
+    appFailure?: Exclude<MintFailure, "not-configured">;
+  }> {
+    const cred = await this.githubTokenForSession(session, BROKER_PERMISSIONS);
+    return cred.appFailure ? { token: cred.token, appFailure: cred.appFailure } : { token: cred.token };
+  }
+
   async refreshGithubAppToken(session: Session): Promise<{ token: string; expiresAt?: string } | undefined> {
     const own = await this.accessSecretOrEmpty(`outfitter-github-token-${session.id}`);
     if (own) return { token: own };
     if (!session.repo) return undefined;
     // A failed mint must not fall through to the shared PAT. That would replace the sandbox's
     // installation token and cancel the retry. The shared PAT is only the initial-run fallback.
-    const minted = await this.app.mint(session.repo);
+    // Drive-scoped: this token is sent to agentd. No shared-PAT fallback.
+    const minted = await this.app.mint(session.repo, DRIVE_PERMISSIONS);
     if (!minted.ok) return undefined;
     return { token: minted.token, expiresAt: minted.expiresAt };
   }
@@ -151,9 +180,13 @@ export class GcpSecretsBroker implements SecretsBroker {
    * before the App for that reason. One with a token of its own still gets it, since creating
    * that secret is a deliberate act. Logs which of the three a run ended up with, because "the
    * token worked" and "the token I expected" are different questions once something fails to
-   * clone or push. */
+   * clone or push.
+   *
+   * `permissions` is `DRIVE_PERMISSIONS` for the token sent to agentd and `BROKER_PERMISSIONS`
+   * for the API process. A PAT is the same string either way; only an installation token splits. */
   private async githubTokenForSession(
     session: Session,
+    permissions: typeof DRIVE_PERMISSIONS | typeof BROKER_PERMISSIONS,
   ): Promise<{
     token: string;
     expiresAt?: string;
@@ -167,7 +200,7 @@ export class GcpSecretsBroker implements SecretsBroker {
       return { token: own };
     }
     if (!session.repo) return { token: "" };
-    const minted = await this.app.mint(session.repo);
+    const minted = await this.app.mint(session.repo, permissions);
     if (minted.ok) {
       console.log(`[secrets] session ${session.id}: using a GitHub App installation token`);
       return { token: minted.token, expiresAt: minted.expiresAt };
@@ -447,5 +480,62 @@ export class MemorySecretAdmin implements SecretAdmin {
       if (versions[i].enabled) return versions[i];
     }
     return undefined;
+  }
+}
+
+const APP_SECRET_NAMES = new Set<string>([
+  GITHUB_APP_ID_SECRET,
+  GITHUB_APP_KEY_SECRET,
+  GITHUB_APP_INSTALLATION_SECRET,
+  GITHUB_APP_SLUG_SECRET,
+]);
+
+const APP_SECRET_CACHE_TTL_MS = 60_000;
+
+interface CachedSecretAccess {
+  value: string | undefined;
+  readAt: number;
+}
+
+/** Short TTL for the four GitHub App secret names the session page reads on every GET.
+ * Other names always hit `inner` (per-session PATs and LiteLLM keys stay fresh). A throw is not
+ * stored. `addVersion` and `disableAllEnabled` drop that name first, so the next read sees the
+ * write. `info` stays live for the operator page. */
+export class AppSecretCache implements SecretAdmin {
+  private readonly inner: SecretAdmin;
+  private readonly now: () => number;
+  private readonly cache = new Map<string, CachedSecretAccess>();
+
+  constructor(inner: SecretAdmin, now: () => number = Date.now) {
+    this.inner = inner;
+    this.now = now;
+  }
+
+  info(secretName: string): Promise<SecretVersionInfo> {
+    return this.inner.info(secretName);
+  }
+
+  async addVersion(secretName: string, value: string): Promise<void> {
+    this.cache.delete(secretName);
+    await this.inner.addVersion(secretName, value);
+  }
+
+  async disableAllEnabled(secretName: string): Promise<void> {
+    this.cache.delete(secretName);
+    await this.inner.disableAllEnabled(secretName);
+  }
+
+  async accessLatest(secretName: string): Promise<string | undefined> {
+    if (!APP_SECRET_NAMES.has(secretName)) return this.inner.accessLatest(secretName);
+    const hit = this.cache.get(secretName);
+    if (hit && this.now() - hit.readAt < APP_SECRET_CACHE_TTL_MS) return hit.value;
+    try {
+      const value = await this.inner.accessLatest(secretName);
+      this.cache.set(secretName, { value, readAt: this.now() });
+      return value;
+    } catch (err) {
+      this.cache.delete(secretName);
+      throw err;
+    }
   }
 }

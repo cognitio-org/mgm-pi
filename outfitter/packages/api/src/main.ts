@@ -6,6 +6,7 @@ import {
   GcpSecretsBroker,
   MemorySecretAdmin,
   GcpSecretAdmin,
+  AppSecretCache,
   type SecretsBroker,
   type SecretAdmin,
 } from "./secrets.ts";
@@ -26,9 +27,9 @@ const providers = createProviders(config);
 const secretsBroker: SecretsBroker = config.devMode
   ? new MemorySecretsBroker()
   : new GcpSecretsBroker(config.gcpProject);
-const secretAdmin: SecretAdmin = config.devMode
-  ? new MemorySecretAdmin()
-  : new GcpSecretAdmin(config.gcpProject);
+const secretAdmin: SecretAdmin = new AppSecretCache(
+  config.devMode ? new MemorySecretAdmin() : new GcpSecretAdmin(config.gcpProject),
+);
 
 const app = await buildApp({ store, config, provider: providers, secretsBroker, secretAdmin });
 

@@ -331,6 +331,79 @@ export class AgentLink {
   }
 
   /**
+   * Tells the session's agentd how a `browser.capture.request` finished. No transcript seq —
+   * `sendCaptureEntry` is the entry path. Dropped when nothing is connected or provisioning,
+   * because there is no Drive waiting. A repeat of a finished request is the caller's choice;
+   * this just delivers the frame.
+   */
+  async sendCaptureResult(
+    sessionId: string,
+    frame: {
+      t: "browser.capture.result";
+      requestId: string;
+      captureId?: string;
+      title?: string;
+      url?: string;
+      error?: string;
+    },
+  ): Promise<void> {
+    const run = await this.store.runs.findActiveForSession(sessionId);
+    if (!run) return;
+    await this.send(run.id, frame);
+  }
+
+  /** The run's own sandbox may download a capture jpeg. The bearer is the agent id token
+   * (checked by the caller); this is the RUN_TOKEN half, bound to the active run for `sessionId`.
+   * A user Dongle is a different credential and does not come through here. */
+  async runMayDownloadCapture(sessionId: string, runToken: unknown): Promise<boolean> {
+    const run = await this.store.runs.findActiveForSession(sessionId);
+    if (!run) return false;
+    return runTokenMatches(runToken, run.runTokenHash);
+  }
+
+  /** `{t:"browser.capture.request"}` from the Drive. One row per requestId. `no_share` and a
+   * repeat of an already-finished id are answered immediately; a new pending row waits for the
+   * upload, a revoke, or a capture-failure report to send `browser.capture.result`. */
+  private async handleBrowserCaptureRequest(sessionId: string, frame: UpFrame): Promise<void> {
+    const requestId = frame.requestId;
+    if (typeof requestId !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(requestId)) return;
+    const now = new Date().toISOString();
+    const session = await this.store.sessions.findById(sessionId);
+    const saved = await this.store.browserRequests.insertPendingIfShared(sessionId, {
+      id: requestId,
+      sessionId,
+      requesterEmail: session?.ownerEmail?.trim() || "drive",
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+    });
+    if (saved === "no_share") {
+      await this.sendCaptureResult(sessionId, { t: "browser.capture.result", requestId, error: "no_share" });
+      return;
+    }
+    if (saved.status === "skipped") {
+      await this.sendCaptureResult(sessionId, { t: "browser.capture.result", requestId, error: "skipped" });
+      return;
+    }
+    if (saved.status === "failed" && saved.error) {
+      await this.sendCaptureResult(sessionId, { t: "browser.capture.result", requestId, error: saved.error });
+      return;
+    }
+    if (saved.status !== "done") return;
+    const capture = saved.captureId
+      ? await this.store.browserCaptures.findById(sessionId, saved.captureId)
+      : await this.store.browserCaptures.findByRequestId(sessionId, saved.id);
+    if (!capture) return;
+    await this.sendCaptureResult(sessionId, {
+      t: "browser.capture.result",
+      requestId,
+      captureId: capture.id,
+      title: capture.title,
+      url: capture.url,
+    });
+  }
+
+  /**
    * Sends a request down-message (diff) and waits for the matching `<t>.result` up frame,
    * correlated by reqId. Requires a live socket: there is nothing to diff on a stopped sandbox.
    */
@@ -900,6 +973,10 @@ export class AgentLink {
       }
       case "mail.ack": {
         if (typeof frame.id === "string") await this.store.mail.ack(frame.id, runId, now);
+        break;
+      }
+      case "browser.capture.request": {
+        await this.handleBrowserCaptureRequest(sessionId, frame);
         break;
       }
       case "bye": {

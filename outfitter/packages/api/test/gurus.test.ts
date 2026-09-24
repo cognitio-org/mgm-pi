@@ -19,6 +19,7 @@ describe("POST /api/gurus: guru.env denylist", () => {
     "LITELLM_BASE_URL",
     "LITELLM_API_KEY",
     "LITELLM_AGENT_KEY",
+    "OUTFITTER_TOKEN",
   ]) {
     test(`rejects guru.env.${key} with 400`, async () => {
       const app = await buildTestApp();

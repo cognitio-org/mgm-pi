@@ -28,6 +28,17 @@ Two clients use the same extension:
 - **Local Kernal**, through the native host's unix socket, while `kernal` is running on the laptop.
 - **An Outfitter Drive**, through the link service. The extension holds a Dongle (a personal `outf_` API token) and polls the link origin. The sandbox never holds that token.
 
+Both clients expose a pi tool named `browser_capture`. They are not the same tool, and they must never be loaded in the same pi process.
+
+| | Laptop | Drive |
+|---|---|---|
+| Extension | `kernal/.pi/extensions/kernal-chrome/` | `outfitter/packages/agentd/pi-extension/outfitter-browser.ts` |
+| Tool | `browser_tabs`, then `browser_capture` with a tab id | `browser_capture` with no arguments |
+| How it reaches Chrome | Unix socket `<kernal-home>/chrome.sock`, the native host on this machine | agentd asks the link API; the owner's Chrome takes the screenshot |
+| In the sandbox image | Removed. A Drive has no Chrome, so the socket is never there | Loaded with `--extension`, the same way as `outfitter-mail.ts` |
+
+pi refuses to start if both are loaded, because the tool name collides. The sandbox Dockerfile deletes `kernal-chrome` along with the other laptop-only extensions (`kernal-voice`, `kernal-update`, `kernal-admin`, `kernal-codebase-index`). Do not rename one of them to paper over that. Do not copy `kernal-chrome` back into the image.
+
 The Outfitter page at `https://app.kernal.one` talks to the extension with `chrome.runtime.connect`. That channel is only for pairing, opening the side panel, and placing tabs. It cannot ask for a capture, read a tab the user did not share, or close a tab the extension did not open.
 
 ## 2. Non-goals (first cut)
@@ -186,6 +197,7 @@ One share per session. Creating a share replaces the previous one for that sessi
 | `GET /api/sessions/:id/browser/requests?status=pending` | Share owner | Pending requests for the extension to act on. Other callers get `404` (do not reveal the queue). |
 | `GET /api/sessions/:id/browser/requests/:requestId` | The requester or the share owner | Status, so a waiting tool can poll. |
 | `POST /api/sessions/:id/browser/requests/:requestId/revoke` | Share owner | If not yet `done`, mark `skipped` and drop an in-progress upload. |
+| `POST /api/sessions/:id/browser/requests/:requestId/fail` | Share owner | `{error}` is `permission_denied`, `tab_gone`, or `too_large`. A pending request becomes `failed` and the API sends `{t:"browser.capture.result", requestId, error}`. A repeat does not insert a row or send the frame again. |
 | `POST /api/sessions/:id/browser/captures` | Share owner | `{requestId, title, url, jpegBase64}`. |
 | `GET /api/sessions/:id/browser/captures/:captureId` | Any authenticated caller | `image/jpeg` bytes. |
 
@@ -221,7 +233,7 @@ Tests live next to the existing API tests and cover: owner-only upload, other-em
 4. Recompress under the byte cap.
 5. If Revoke arrived before the upload returned, do not upload. Call the revoke route if the local revoke has not already.
 6. `POST` the capture.
-7. On failure, leave the request pending and surface the error in the panel. Do not retry forever. One automatic retry is enough; the agent's wait has its own deadline.
+7. On `permission_denied`, `tab_gone`, or `too_large`, retry once, then `POST` the fail route so the Drive hears the error, and surface it in the panel. Other failures leave the request pending. Do not retry forever.
 
 The context menu and the panel button are the only ways to create a share. The session page cannot.
 
@@ -250,7 +262,7 @@ An idle-stop countdown is not part of this cut.
 
 ## 12. Local Kernal tool
 
-New pi extension `kernal/.pi/extensions/kernal-chrome/`. It registers two tools. They speak to `~/.kernal/chrome.sock` and do nothing on the network.
+Pi extension `kernal/.pi/extensions/kernal-chrome/`. Laptop only. The sandbox image deletes this directory; see "Two tools, one name" above. It registers two tools. They speak to `<kernal-home>/chrome.sock` and do nothing on the network.
 
 - `browser_tabs` — the share list (title, url, tab id).
 - `browser_capture` — `{tabId}`. Returns text: title, url, and the workspace-relative path of the copied jpeg. Verify whether pi 0.86 tool results can carry an image content block (see `outfitter-mail.ts`, which only returns `{type:"text"}`). If a supported image block exists, attach the jpeg as well. If it does not, do not invent a content type. The text path is the contract.
@@ -259,7 +271,7 @@ Missing socket: the tool result says the Chrome companion is not running. Unknow
 
 ## 13. Cloud tool
 
-Loaded the same way as `outfitter-mail.ts`: agentd adds the extension only inside a Drive. The sandbox must not receive `OUTFITTER_TOKEN`.
+`outfitter/packages/agentd/pi-extension/outfitter-browser.ts`. This is the `browser_capture` a Drive runs. It is not `kernal-chrome`. Loaded the same way as `outfitter-mail.ts`: agentd adds the extension only inside a Drive. The sandbox must not receive `OUTFITTER_TOKEN`, and it must not contain `kernal-chrome`.
 
 `browser_capture` takes no tab id. The session has at most one share.
 
@@ -272,7 +284,7 @@ Blocking path:
 5. On success, agentd `GET`s the jpeg and writes `/workspace/.outfitter/captures/<captureId>.jpg` (directory mode `0700`, file mode `0600`).
 6. The tool returns title, url, and that path, with the same image-block rule as §12.
 
-Errors the model can read, as text, not exceptions: `no_share`, `skipped` (owner revoked before upload), `timeout`, `permission_denied`, `tab_gone`, `too_large`.
+Errors the model can read, as text, not exceptions: `no_share`, `skipped` (owner revoked before upload), `timeout`, `permission_denied`, `tab_gone`, `too_large`. The extension reports those last three on the fail route after one retry; the API forwards the error immediately instead of leaving the request pending until the 90s wait.
 
 A retried tool call with the same in-flight request must not create a second request row. agentd generates `requestId` once per tool call and the API treats a repeat of that id as the same row.
 

@@ -1233,3 +1233,69 @@ test("RunController: a GitHub repo and token pin insteadOf on pi and do not put 
   await waitFor(() => link.sent.some((m) => m.t === "bye"));
   assert.equal(await portOpen(port), false);
 });
+
+test("RunController: browser capture is loopback-only and does not put OUTFITTER_TOKEN in the sandbox", async (t) => {
+  const workspace = await mkdtemp(join(tmpdir(), "outfitter-run-test-"));
+  const link = new FakeLink();
+  let spawnEnv: Record<string, string> | undefined;
+  let spawnArgs: string[] | undefined;
+  const controller = new RunController({
+    link,
+    gitOps: fakeGitOps(),
+    workspace,
+    piBin: "unused-in-test",
+    agentdVersion: "test",
+    piVersion: "test",
+    heartbeatIntervalMs: 60_000,
+    browserExtensionPath: "/opt/outfitter/agentd/dist/pi-extension/outfitter-browser.js",
+    downloadCapture: async () => Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
+    spawnPi: (opts) => {
+      spawnEnv = opts.env;
+      spawnArgs = opts.args;
+      return makeControllablePi();
+    },
+    importSession: async (_snapshotFile, _cwd, sessionId) => join(workspace, `${sessionId}.jsonl`),
+    writeSnapshotFile,
+    createTailer: () => ({ start() {}, stop() {}, poll: async () => {} }),
+    onLog: () => {},
+  });
+  t.after(() => controller.dispose());
+  link.deliver({
+    t: "run.spec",
+    session: { id: "sess-cap", name: "cap", cwd: "/workspace" },
+    guru: {
+      model: "fake/model",
+      env: {
+        OUTFITTER_TOKEN: "outf_not-a-real-dongle",
+        OUTFITTER_BROWSER_PORT: "1",
+        OUTFITTER_BROWSER_TOKEN: "spoofed",
+      },
+    },
+    snapshot: { jsonl: emptySessionJsonl("sess-cap", "/workspace") },
+    secrets: {},
+    idleStopSeconds: 3600,
+    checkpointEvery: "turn",
+  });
+  await waitFor(() => spawnEnv !== undefined);
+  const env = spawnEnv!;
+  assert.equal(env.OUTFITTER_TOKEN, undefined);
+  assert.notEqual(env.OUTFITTER_BROWSER_PORT, "1");
+  assert.notEqual(env.OUTFITTER_BROWSER_TOKEN, "spoofed");
+  assert.match(env.OUTFITTER_BROWSER_PORT ?? "", /^[0-9]+$/);
+  assert.ok((env.OUTFITTER_BROWSER_TOKEN ?? "").length > 16);
+  assert.ok(spawnArgs!.includes("/opt/outfitter/agentd/dist/pi-extension/outfitter-browser.js"));
+
+  const refused = await fetch(`http://127.0.0.1:${env.OUTFITTER_BROWSER_PORT}/browser/capture`);
+  assert.equal(refused.status, 403);
+
+  const pending = fetch(`http://127.0.0.1:${env.OUTFITTER_BROWSER_PORT}/browser/capture`, {
+    headers: { "x-outfitter-browser-token": env.OUTFITTER_BROWSER_TOKEN ?? "" },
+  });
+  await waitFor(() => link.sent.some((m) => m.t === "browser.capture.request"));
+  const request = link.sent.find((m) => m.t === "browser.capture.request");
+  if (!request || request.t !== "browser.capture.request") throw new Error("no browser.capture.request frame");
+  link.deliver({ t: "browser.capture.result", requestId: request.requestId, error: "no_share" });
+  const answered = await pending;
+  assert.equal(answered.status, 200);
+  assert.deepEqual(await answered.json(), { error: "no_share" });
+});

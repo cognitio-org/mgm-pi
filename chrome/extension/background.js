@@ -45,9 +45,11 @@ import {
   SHARES_KEY,
   bytesToBase64,
   captureNotice,
+  captureResultError,
   captureTryAllowed,
   capturesPath,
   floppyMenuLabel,
+  failRequestPath,
   floppyNameOf,
   hostCaptureReply,
   hostCapturedMessage,
@@ -886,10 +888,30 @@ async function shootAndUpload(share, request, ctx) {
   }
 }
 
+async function reportCaptureFailure(sessionId, requestId, error) {
+  const reported = captureResultError(error);
+  if (!reported) return;
+  await linkFetch(failRequestPath(sessionId, requestId), {
+    method: "POST",
+    body: { error: reported },
+  });
+}
+
+async function storedTerminalError(requestId) {
+  const stored = await chrome.storage.local.get(CAPTURE_STATUS_KEY);
+  const status = stored[CAPTURE_STATUS_KEY];
+  if (!status || status.requestId !== requestId) return null;
+  return status.error;
+}
+
 async function fulfillRequest(share, request, ctx) {
   if (inflight.has(share.sessionId)) return;
   const prior = await failureCount(request.id);
-  if (!captureTryAllowed(prior)) return;
+  if (!captureTryAllowed(prior)) {
+    // The previous poll already gave up. Report again if that POST never landed.
+    await reportCaptureFailure(share.sessionId, request.id, await storedTerminalError(request.id));
+    return;
+  }
   const outcome = await shootAndUpload(share, request, ctx);
   if (outcome === "uploaded" || outcome === "revoked") {
     if (outcome === "uploaded") {
@@ -909,6 +931,7 @@ async function fulfillRequest(share, request, ctx) {
       requesterEmail: request.requesterEmail,
       error: outcome,
     });
+    await reportCaptureFailure(share.sessionId, request.id, outcome);
     return;
   }
   const again = await shootAndUpload(share, request, ctx);
@@ -930,6 +953,7 @@ async function fulfillRequest(share, request, ctx) {
     requesterEmail: request.requesterEmail,
     error: again,
   });
+  await reportCaptureFailure(share.sessionId, request.id, again);
 }
 
 async function pollOne(share) {

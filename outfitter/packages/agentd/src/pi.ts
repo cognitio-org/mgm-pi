@@ -118,6 +118,9 @@ export const PI_ENV_NEVER: ReadonlySet<string> = new Set([
   "OUTFITTER_API",
   "OUTFITTER_DEV_TOKEN",
   "NODE_OPTIONS",
+  // A user Dongle. The capture tool uses agentd's own socket credential, never this (chrome
+  // companion §13). An operator passthrough cannot put it back.
+  "OUTFITTER_TOKEN",
 ]);
 
 /** Operator escape hatch: a comma/whitespace-separated list of extra env var names to let through

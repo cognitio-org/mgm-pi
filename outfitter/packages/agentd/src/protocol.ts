@@ -128,6 +128,14 @@ export interface UpMailAck {
   id: string;
 }
 
+/** The Drive `browser_capture` tool asked for the session's one shared tab. `requestId` is minted
+ * once per tool call. The api creates that browser-request row, or answers `browser.capture.result`
+ * with `error: "no_share"`. A repeat of the same id is the same row. */
+export interface UpBrowserCaptureRequest {
+  t: "browser.capture.request";
+  requestId: string;
+}
+
 export type UpMessage =
   | UpHello
   | UpStatus
@@ -139,7 +147,8 @@ export type UpMessage =
   | UpBye
   | UpDiffResult
   | UpReadResult
-  | UpMailAck;
+  | UpMailAck
+  | UpBrowserCaptureRequest;
 
 /** Up-messages that carry a `seq` and are subject to the buffer-until-ack contract. */
 export type SeqUpMessage = UpEntry | UpEvent;
@@ -308,6 +317,18 @@ export interface DownBrowserCaptureEntry {
   entry: PiSessionEntry;
 }
 
+/** The capture asked for by `browser.capture.request` finished or failed. No seq: the transcript
+ * row is `browser.capture.entry`. `error` is `no_share`, `skipped`, `permission_denied`,
+ * `tab_gone`, or `too_large`. A success carries `captureId`, `title`, and `url`. */
+export interface DownBrowserCaptureResult {
+  t: "browser.capture.result";
+  requestId: string;
+  captureId?: string;
+  title?: string;
+  url?: string;
+  error?: string;
+}
+
 export type DownMessage =
   | DownRunSpec
   | DownAck
@@ -322,7 +343,8 @@ export type DownMessage =
   | DownRead
   | DownStop
   | DownMail
-  | DownBrowserCaptureEntry;
+  | DownBrowserCaptureEntry
+  | DownBrowserCaptureResult;
 
 // ---------- replies to diff/read (sent up as `entry`-less custom up-frames) ----------
 // protocol.md does not give these a `t`; agentd sends them as ad-hoc up-frames named after the

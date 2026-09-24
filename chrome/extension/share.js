@@ -53,8 +53,11 @@ export const JPEG_LADDER = [
   { quality: 25, scale: 0.25 },
 ];
 
-/** First try plus one automatic retry. Further failures stay pending and are not looped. */
+/** First try plus one automatic retry. A terminal error is then reported; other failures stay pending. */
 export const MAX_CAPTURE_TRIES = 2;
+
+/** Chrome outcomes the API turns into `browser.capture.result`. `upload_failed` is not one of them. */
+export const CAPTURE_RESULT_ERRORS = ["permission_denied", "tab_gone", "too_large"];
 
 export function isSessionId(value) {
   return typeof value === "string" && SESSION_ID.test(value);
@@ -185,6 +188,15 @@ export function pendingPath(sessionId) {
 
 export function revokeRequestPath(sessionId, requestId) {
   return `/api/sessions/${encodeURIComponent(sessionId)}/browser/requests/${encodeURIComponent(requestId)}/revoke`;
+}
+
+export function failRequestPath(sessionId, requestId) {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/browser/requests/${encodeURIComponent(requestId)}/fail`;
+}
+
+/** The error string to POST, or null when the request should stay pending. */
+export function captureResultError(error) {
+  return CAPTURE_RESULT_ERRORS.includes(error) ? error : null;
 }
 
 export function capturesPath(sessionId) {

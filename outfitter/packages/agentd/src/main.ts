@@ -6,6 +6,7 @@
  */
 import { chown } from "node:fs/promises";
 import { getIdToken } from "./auth.js";
+import { BROWSER_CAPTURE_MAX_BYTES, captureDownloadError } from "./browser-capture.js";
 import { createGitOps } from "./git.js";
 import { Link } from "./link.js";
 import { RunController } from "./run.js";
@@ -126,6 +127,27 @@ async function main(): Promise<void> {
     spendFile: process.env.OUTFITTER_SPEND_FILE,
     spendExtensionPath: process.env.OUTFITTER_SPEND_EXTENSION,
     mailExtensionPath: process.env.OUTFITTER_MAIL_EXTENSION,
+    browserExtensionPath: process.env.OUTFITTER_BROWSER_EXTENSION,
+    // The socket's credential: the same Google ID token (or OUTFITTER_DEV_TOKEN) plus RUN_TOKEN.
+    // Held here, not in pi's environment. A user Dongle is never added.
+    downloadCapture: async (sessionId, captureId) => {
+      const token = await getIdToken(apiOrigin, devToken);
+      const url = new URL(
+        `/api/sessions/${encodeURIComponent(sessionId)}/browser/captures/${encodeURIComponent(captureId)}`,
+        apiOrigin,
+      );
+      const res = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "x-outfitter-run-token": runToken,
+        },
+      });
+      if (res.status === 413) throw captureDownloadError("too_large");
+      if (!res.ok) throw captureDownloadError("timeout");
+      const bytes = Buffer.from(await res.arrayBuffer());
+      if (bytes.length === 0 || bytes.length > BROWSER_CAPTURE_MAX_BYTES) throw captureDownloadError("too_large");
+      return bytes;
+    },
     startupPhases: true,
   });
 

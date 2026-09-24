@@ -303,12 +303,14 @@ test("baseEnvForPi: the operator passthrough adds vars but can never re-add a se
     ...SANDBOX_PROCESS_ENV,
     HTTPS_PROXY: "http://proxy.internal:3128",
     NODE_EXTRA_CA_CERTS: "/etc/ssl/corp.pem",
-    [PI_ENV_PASSTHROUGH_VAR]: "HTTPS_PROXY, NODE_EXTRA_CA_CERTS, RUN_TOKEN, NODE_OPTIONS",
+    OUTFITTER_TOKEN: "outf_not-a-real-dongle",
+    [PI_ENV_PASSTHROUGH_VAR]: "HTTPS_PROXY, NODE_EXTRA_CA_CERTS, RUN_TOKEN, NODE_OPTIONS, OUTFITTER_TOKEN",
   });
   assert.equal(env.HTTPS_PROXY, "http://proxy.internal:3128");
   assert.equal(env.NODE_EXTRA_CA_CERTS, "/etc/ssl/corp.pem");
   assert.equal(env.RUN_TOKEN, undefined);
   assert.equal(env.NODE_OPTIONS, undefined);
+  assert.equal(env.OUTFITTER_TOKEN, undefined);
 });
 
 test("spawnPi: the child's env is the allowlist plus the caller's explicit overlay", () => {

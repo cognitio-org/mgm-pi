@@ -8,7 +8,7 @@ import type { Store } from "./store/types.ts";
 import type { Config } from "./config.ts";
 import type { SandboxProvider } from "@outfitter/provider-local";
 import type { SecretsBroker, SecretAdmin } from "./secrets.ts";
-import { identityFromRequest, identityFromLinkRequest } from "./auth.ts";
+import { identityFromRequest, identityFromLinkRequest, verifyAgentToken, bearerFromHeader } from "./auth.ts";
 import { RunManager } from "./runs.ts";
 import { AgentLink } from "./agentlink.ts";
 import { SseHub, SsePoller } from "./sse.ts";
@@ -101,6 +101,23 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   // and personal tokens (E4.1b) are the only credential a laptop teleport client can present here.
   fastify.addHook("preHandler", async (req, reply) => {
     if (!req.url.startsWith("/api/") || req.url.startsWith("/api/hooks/")) return;
+    // The Drive downloads a jpeg with the same credential as its socket (agent id token + run
+    // token), not a user Dongle. Any other caller, and a run token that isn't this session's,
+    // falls through to IAP / outf_ below.
+    const capture = agentCaptureTarget(req.method, req.url);
+    const runTokenHeader = req.headers["x-outfitter-run-token"];
+    const runToken = Array.isArray(runTokenHeader) ? runTokenHeader[0] : runTokenHeader;
+    if (capture && runToken) {
+      try {
+        await verifyAgentToken(bearerFromHeader(req), config);
+        if (await agentLink.runMayDownloadCapture(capture.sessionId, runToken)) {
+          req.identity = { email: config.agentSaEmail || "agent@dev.local", operator: false };
+          return;
+        }
+      } catch {
+        // Not an agent token. User auth below still applies.
+      }
+    }
     try {
       req.identity =
         config.role === "link" ? await identityFromLinkRequest(req, store) : await identityFromRequest(req, config, store);
@@ -143,6 +160,19 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   };
 
   return { fastify, runs, agentLink, sse, laptopProbe, providerStatus, mail, stopBackgroundTasks };
+}
+
+/** GET /api/sessions/:id/browser/captures/:captureId, or undefined. Query strings are ignored. */
+function agentCaptureTarget(method: string, url: string): { sessionId: string; captureId: string } | undefined {
+  if (method !== "GET") return undefined;
+  const path = url.split("?")[0] ?? "";
+  const match = path.match(/^\/api\/sessions\/([^/]+)\/browser\/captures\/([^/]+)$/);
+  if (!match) return undefined;
+  try {
+    return { sessionId: decodeURIComponent(match[1]), captureId: decodeURIComponent(match[2]) };
+  } catch {
+    return undefined;
+  }
 }
 
 /** Cloud Tasks targets the link role: the web role sits behind IAP, which would reject the task's

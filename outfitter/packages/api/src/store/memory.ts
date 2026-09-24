@@ -31,6 +31,7 @@ import type {
   BrowserRequest,
   BrowserRequestsCollection,
   BrowserCapture,
+  BrowserCaptureFailure,
   BrowserCapturesCollection,
   BrowserCaptureSave,
 } from "./types.ts";
@@ -502,21 +503,27 @@ class MemoryBrowserShares implements BrowserSharesCollection {
     return { conflict: false, share: clone(next) };
   }
 
-  async deleteIfOwner(sessionId: string, ownerEmail: string, nowIso: string): Promise<"deleted" | "missing" | "forbidden"> {
+  async deleteIfOwner(
+    sessionId: string,
+    ownerEmail: string,
+    nowIso: string,
+  ): Promise<{ outcome: "deleted" | "missing" | "forbidden"; skippedIds: string[] }> {
     // Same section as insertPendingIfShared. No await inside: a revoke that has finished
     // is visible to the next insert, and an insert that has finished is skipped here.
     return this.tables.shareSection.run(() => {
       const existing = this.tables.shares.get(sessionId);
-      if (!existing) return "missing";
-      if (existing.ownerEmail !== ownerEmail) return "forbidden";
+      if (!existing) return { outcome: "missing" as const, skippedIds: [] };
+      if (existing.ownerEmail !== ownerEmail) return { outcome: "forbidden" as const, skippedIds: [] };
       this.tables.shares.delete(sessionId);
+      const skippedIds: string[] = [];
       for (const row of this.tables.requests.values()) {
         if (row.sessionId === sessionId && row.status === "pending") {
           row.status = "skipped";
           row.updatedAt = nowIso;
+          skippedIds.push(row.id);
         }
       }
-      return "deleted";
+      return { outcome: "deleted" as const, skippedIds };
     });
   }
 }
@@ -534,6 +541,10 @@ class MemoryBrowserRequests implements BrowserRequestsCollection {
 
   async insertPendingIfShared(sessionId: string, request: BrowserRequest): Promise<BrowserRequest | "no_share"> {
     return this.tables.shareSection.run(() => {
+      // Same id is the same row, including after the share is gone. A repeat must not reset a
+      // skipped or done request back to pending, and must not insert a second row.
+      const existing = this.tables.requests.get(request.id);
+      if (existing) return existing.sessionId === sessionId ? clone(existing) : "no_share";
       if (!this.tables.shares.get(sessionId)) return "no_share";
       const row = clone(request);
       this.tables.requests.set(request.id, row);
@@ -557,11 +568,28 @@ class MemoryBrowserRequests implements BrowserRequestsCollection {
   async markSkipped(sessionId: string, id: string, nowIso: string): Promise<BrowserRequest | null> {
     const row = this.tables.requests.get(id);
     if (!row || row.sessionId !== sessionId) return null;
-    if (row.status !== "done") {
+    if (row.status === "pending") {
       row.status = "skipped";
+      row.updatedAt = nowIso;
+    } else if (row.status === "skipped") {
       row.updatedAt = nowIso;
     }
     return clone(row);
+  }
+
+  async markFailed(
+    sessionId: string,
+    id: string,
+    error: BrowserCaptureFailure,
+    nowIso: string,
+  ): Promise<{ request: BrowserRequest; transitioned: boolean } | null> {
+    const row = this.tables.requests.get(id);
+    if (!row || row.sessionId !== sessionId) return null;
+    if (row.status !== "pending") return { request: clone(row), transitioned: false };
+    row.status = "failed";
+    row.error = error;
+    row.updatedAt = nowIso;
+    return { request: clone(row), transitioned: true };
   }
 }
 

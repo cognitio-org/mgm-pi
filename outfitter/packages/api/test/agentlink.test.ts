@@ -355,6 +355,43 @@ describe("agentd <-> api WebSocket", () => {
     await app.fastify.close();
   });
 
+  test("an allowed checkpoint branch becomes the session branch", async () => {
+    const app = await buildTestApp();
+    const head = "a".repeat(40);
+    const next = "b".repeat(40);
+    const { session, runId, runToken } = await makeRunningSession(app, {
+      branch: "outfitter/s1",
+      checkpoint: { branch: "outfitter/s1", head },
+    });
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    const spec = await agent.nextMessage();
+    assert.equal(spec.repo.branchPrefix, "outfitter/");
+    assert.equal(spec.repo.branch, "outfitter/s1");
+
+    agent.send({ t: "checkpoint", branch: "outfitter/issue-4", head: next, pushed: true });
+    let moved = await app.store.sessions.findById(session.id);
+    for (let i = 0; i < 20 && moved?.branch !== "outfitter/issue-4"; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      moved = await app.store.sessions.findById(session.id);
+    }
+    assert.equal(moved?.branch, "outfitter/issue-4");
+    assert.equal(moved?.checkpoint?.branch, "outfitter/issue-4");
+    assert.equal(moved?.checkpoint?.head, next);
+
+    agent.send({ t: "checkpoint", branch: "outfitter/s1", head: "c".repeat(40), pushed: false });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const stayed = await app.store.sessions.findById(session.id);
+    assert.equal(stayed?.branch, "outfitter/issue-4");
+    assert.equal(stayed?.checkpoint?.branch, "outfitter/issue-4");
+    assert.equal(stayed?.checkpoint?.head, next);
+
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
   test("run.spec substitutes the guru's fallbackModel when the laptop preflight is offline (E2.8)", async () => {
     const app = await buildTestApp();
     await seedGuru(app.store, { model: "litellm/local-qwen-mlx", fallbackModel: "litellm/gpt-5-mini" });

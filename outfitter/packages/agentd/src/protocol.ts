@@ -202,6 +202,8 @@ export interface RunSpecRepo {
   branch: string;
   baseBranch: string;
   createBranch: boolean;
+  /** Branches under this prefix may be pushed in addition to `branch`. Default `outfitter/`. */
+  branchPrefix?: string;
 }
 
 export interface RunSpecGuru {

@@ -5,7 +5,9 @@
  * closed. Titles and bodies are arguments or stdin, never a shell string, so a quote or a `$()`
  * in a title is data. When OUTFITTER_GITHUB_SOCKET is set, `call` sends that invocation to the
  * broker and turns the result back into the stdout the parsers below already understand, so the
- * model sees the same text. Checkout and issue start are not sent (kernal/docs/git-github-spec.md).
+ * model sees the same text. A cloud checkout views the pull request, then switches only when that
+ * head is the session branch or under the branch prefix. A cloud issue start checks out
+ * `<prefix>issue-<n>` locally. `gh issue develop` is not sent.
  *
  * Merge is pinned to the head SHA last seen. `gh pr merge --match-head-commit` is the backstop,
  * but a local check comes first so a moved pull request is explained instead of attempted.
@@ -13,7 +15,7 @@
 import { readdir, readFile, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import * as git from "../_shared/git.ts";
-import { brokerCall, cloudSessionBranch, githubSocketPath } from "./broker.ts";
+import { brokerCall, cloudBranchAllowed, cloudBranchPrefix, cloudSessionBranch, githubSocketPath } from "./broker.ts";
 import { gh as ghExec, type Exec, execCommand } from "./gh.ts";
 import { attributionFrom, checksLine, latestChecks, rollup } from "./lib.ts";
 
@@ -838,6 +840,7 @@ async function runPr(action: string, params: any, deps: GithubDeps, repo: RepoRe
     }
     case "checkout": {
       if (!number) return fail("A pull request number is required.");
+      if (githubSocketPath(deps.env)) return checkoutCloud(number, deps, repo);
       const res = await call(deps, repo.root, ["pr", "checkout", String(number)], { timeoutMs: 60_000 });
       if (!res.ok) return fail(ghDetail(res));
       const st = await git.status(repo.root);
@@ -1226,9 +1229,61 @@ async function editIssue(params: any, deps: GithubDeps, repo: RepoRef): Promise<
   return ok({ number });
 }
 
+/** Fetch `refs/heads/<branch>` into `refs/remotes/origin/<branch>`. A missing remote ref is `present: false`. */
+async function fetchRemoteBranch(cwd: string, branch: string): Promise<{ ok: true; present: boolean } | { ok: false; detail: string }> {
+  const spec = `+refs/heads/${branch}:refs/remotes/origin/${branch}`;
+  const fetched = await git.runGit(["fetch", "origin", spec], { cwd, timeoutMs: 60_000 });
+  if (fetched.code === 0) return { ok: true, present: true };
+  const text = `${fetched.stderr}\n${fetched.stdout}`.toLowerCase();
+  if (text.includes("couldn't find remote ref") || text.includes("could not find remote ref")) return { ok: true, present: false };
+  return { ok: false, detail: (fetched.stderr || fetched.stdout).trim() || "Could not fetch that branch." };
+}
+
+/** Point the local branch at the remote-tracking ref just fetched, creating it when needed. */
+async function resetToOrigin(cwd: string, branch: string): Promise<{ ok: true } | { ok: false; detail: string }> {
+  const sw = await git.runGit(["switch", "--force", "-C", branch, `refs/remotes/origin/${branch}`], { cwd, timeoutMs: 60_000 });
+  if (sw.code !== 0) return { ok: false, detail: (sw.stderr || sw.stdout).trim() || `Could not switch to ${branch}.` };
+  return { ok: true };
+}
+
+async function checkoutCloud(number: number, deps: GithubDeps, repo: RepoRef): Promise<GithubResult> {
+  const viewed = await call(deps, repo.root, ["pr", "view", String(number), "--json", "headRefName,number"]);
+  if (!viewed.ok) return fail(ghDetail(viewed));
+  let head = "";
+  try {
+    head = String(JSON.parse(viewed.stdout)?.headRefName ?? "");
+  } catch {
+    head = "";
+  }
+  if (!head || !cloudBranchAllowed(head, deps.env)) return fail(cloudSessionBranch(deps.env));
+  const fetched = await fetchRemoteBranch(repo.root, head);
+  if (!fetched.ok) return fail(fetched.detail);
+  if (!fetched.present) return fail(`origin has no branch ${head}.`);
+  const sw = await resetToOrigin(repo.root, head);
+  if (!sw.ok) return fail(sw.detail);
+  return ok({ number, branch: head });
+}
+
 async function startIssue(params: any, deps: GithubDeps, repo: RepoRef): Promise<GithubResult> {
   const number = positiveInt(params.number);
   if (!number) return fail("An issue number is required.");
+  if (githubSocketPath(deps.env)) {
+    const branch = `${cloudBranchPrefix(deps.env)}issue-${number}`;
+    if (!cloudBranchAllowed(branch, deps.env)) return fail(cloudSessionBranch(deps.env));
+    const fetched = await fetchRemoteBranch(repo.root, branch);
+    if (!fetched.ok) return fail(fetched.detail);
+    if (fetched.present) {
+      const sw = await resetToOrigin(repo.root, branch);
+      if (!sw.ok) return fail(sw.detail);
+    } else {
+      const sw = await git.switchBranch(repo.root, branch, { create: true });
+      if (!sw.ok) {
+        const again = await git.switchBranch(repo.root, branch);
+        if (!again.ok) return fail(sw.detail);
+      }
+    }
+    return ok({ number, branch });
+  }
   const developed = await call(deps, repo.root, ["issue", "develop", String(number), "--checkout"], { timeoutMs: 60_000 });
   if (!developed.ok) return fail(ghDetail(developed));
   // develop prints `…/tree/<name>` and already checks that branch out. Other linked

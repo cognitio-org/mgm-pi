@@ -84,6 +84,8 @@ export interface Guru {
   env?: Record<string, string>;
   /** Tape option, default off. When true, checkpoint runs a Playwright spec in the Drive. */
   playwrightBeforeCheckpoint?: boolean;
+  /** Branches under this prefix may be pushed besides the session branch. Absent means outfitter/. */
+  branchPrefix?: string;
   createdAt: string;
   updatedAt: string;
 }

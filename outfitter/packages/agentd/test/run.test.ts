@@ -248,6 +248,55 @@ test("RunController: a checkpoint pushes commits the agent made itself, even wit
   });
 });
 
+test("RunController: a checkpoint pushes an allowed checked-out branch and leaves a disallowed one unpushed", async (t) => {
+  const moved = fakeGitOps();
+  moved.headBranch = async () => "outfitter/issue-4";
+  const allowed = await setupController({}, { gitOps: moved });
+  t.after(() => allowed.controller.dispose());
+  allowed.link.deliver(allowed.spec);
+  await waitFor(() => allowed.states.includes("idle"));
+  allowed.link.deliver({ t: "checkpoint" });
+  await waitFor(() => allowed.link.sent.some((m) => m.t === "checkpoint"));
+  const movedFrame = allowed.link.sent.find((m) => m.t === "checkpoint") as any;
+  assert.equal(movedFrame.branch, "outfitter/issue-4");
+  assert.equal(movedFrame.pushed, true);
+  assert.equal(moved.pushSpecs.at(-1)?.branch, "outfitter/issue-4");
+
+  const stuck = fakeGitOps();
+  stuck.headBranch = async () => "main";
+  const refused = await setupController({}, { gitOps: stuck });
+  t.after(() => refused.controller.dispose());
+  refused.link.deliver(refused.spec);
+  await waitFor(() => refused.states.includes("idle"));
+  refused.link.deliver({ t: "checkpoint" });
+  await waitFor(() => refused.link.sent.some((m) => m.t === "checkpoint"));
+  const stayed = refused.link.sent.find((m) => m.t === "checkpoint") as any;
+  assert.equal(stayed.branch, "outfitter/sess1");
+  assert.equal(stayed.pushed, false);
+  assert.equal(stayed.head, undefined);
+  assert.equal(stuck.pushes, 0);
+  assert.equal(stuck.commits.length, 0);
+
+  let where = "outfitter/issue-9";
+  const seq = fakeGitOps();
+  seq.headBranch = async () => where;
+  const two = await setupController({}, { gitOps: seq });
+  t.after(() => two.controller.dispose());
+  two.link.deliver(two.spec);
+  await waitFor(() => two.states.includes("idle"));
+  two.link.deliver({ t: "checkpoint" });
+  await waitFor(() => two.link.sent.some((m) => m.t === "checkpoint"));
+  where = "main";
+  two.link.deliver({ t: "checkpoint" });
+  await waitFor(() => two.link.sent.filter((m) => m.t === "checkpoint").length === 2);
+  const frames = two.link.sent.filter((m) => m.t === "checkpoint") as any[];
+  assert.equal(frames[0].branch, "outfitter/issue-9");
+  assert.equal(frames[0].pushed, true);
+  assert.equal(frames[1].branch, "outfitter/issue-9");
+  assert.equal(frames[1].pushed, false);
+  assert.equal(seq.pushes, 1);
+});
+
 test("RunController: a checkpoint with nothing new reports pushed: false", async (t) => {
   const { controller, link, gitOps, states, spec } = await setupController();
   t.after(() => controller.dispose());

@@ -7,6 +7,7 @@
  */
 import { mkdir, readFile, open as openFile, chown } from "node:fs/promises";
 import { resolve, sep } from "node:path";
+import { branchAllowed, DEFAULT_BRANCH_PREFIX, normalizeBranchPrefix } from "./branch-policy.js";
 import { ActionListener } from "./browser-action.js";
 import { CaptureListener } from "./browser-capture.js";
 import { InspectListener } from "./browser-inspect.js";
@@ -220,6 +221,8 @@ export class RunController {
    * estimate) seen so far this run -- sent as `spend.estimate` on every frame. */
   private costEstimate = 0;
   private spec: DownRunSpec | undefined;
+  /** Last branch this run actually published. A refused checkpoint repeats this, not the run-start branch. */
+  private publishedBranch: string | undefined;
   private stateHandlers: StateChangeHandler[] = [];
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
@@ -433,6 +436,7 @@ export class RunController {
       this.startup.mark("run.spec received");
     }
     this.spec = spec;
+    this.publishedBranch = spec.repo?.branch;
     this.deps.link.setSessionId?.(spec.session.id);
     // E1.6: register the run's own secrets before anything else can log a line that might echo one
     // back (a failed clone, a raw fetch error). RUN_TOKEN itself is registered once at startup, in
@@ -609,6 +613,10 @@ export class RunController {
       secretEnv.OUTFITTER_GITHUB_SOCKET = this.deps.githubSocketPath;
       await this.startGithubSocket(this.deps.githubSocketPath);
     }
+    if (this.spec.repo) {
+      secretEnv.OUTFITTER_SESSION_BRANCH = this.spec.repo.branch;
+      secretEnv.OUTFITTER_BRANCH_PREFIX = normalizeBranchPrefix(this.spec.repo.branchPrefix) ?? DEFAULT_BRANCH_PREFIX;
+    }
     // pi runs as the unprivileged agent user but would otherwise inherit root's HOME from agentd's
     // environment; the first extension to touch ~/.pi then dies with EACCES on /root (every run of
     // the first benchmark). Point the child at that user's own home.
@@ -670,11 +678,13 @@ export class RunController {
     if (!parsed) return {};
     const branch = spec.repo.branch;
     const allowed = branch.startsWith("refs/") ? [branch] : [`refs/heads/${branch}`];
+    const prefix = normalizeBranchPrefix(spec.repo.branchPrefix) ?? DEFAULT_BRANCH_PREFIX;
     this.gitProxy = await startGitProxy({
       owner: parsed.owner,
       repo: parsed.repo,
       token,
       allowedRefs: allowed,
+      allowedPrefixes: [prefix],
       log: (line) => this.onLog(line),
       lock: this.networkGitLock,
     });
@@ -1030,6 +1040,19 @@ export class RunController {
       return;
     }
 
+    // Commit only on a branch this run may push. A detached HEAD or any other branch keeps its
+    // dirty tree, and the frame repeats the last branch this run published.
+    const sessionBranch = this.spec.repo.branch;
+    const prefix = normalizeBranchPrefix(this.spec.repo.branchPrefix) ?? DEFAULT_BRANCH_PREFIX;
+    const remembered = this.publishedBranch ?? sessionBranch;
+    const readBranch = () =>
+      this.deps.gitOps.headBranch ? this.deps.gitOps.headBranch(this.deps.workspace) : Promise.resolve(sessionBranch);
+    const checked = await readBranch();
+    const target = checked && branchAllowed(checked, sessionBranch, prefix) ? checked : null;
+    if (!target) {
+      this.deps.link.send({ t: "checkpoint", branch: remembered, pushed: false });
+      return;
+    }
     // Both run the workspace's git as the workspace's own user (git.ts's GitOpsOptions.runAs), so
     // unlike the clone there is nothing root-owned to chown back afterwards.
     await this.deps.gitOps.commitAll(
@@ -1037,18 +1060,21 @@ export class RunController {
       message ?? `outfitter checkpoint ${new Date().toISOString()}`,
       attributionTrailers(sanitizeAuthor(this.spec.author)),
     );
-    // Push whenever HEAD differs from what origin has for the session branch -- including commits
-    // the agent made itself, for which commitAll finds nothing left to commit.
+    if ((await readBranch()) !== target) {
+      this.deps.link.send({ t: "checkpoint", branch: remembered, pushed: false });
+      return;
+    }
     // Phase-0 path (root-owned bare repo), not the broker socket. The same lock covers the git
     // proxy's fetch/push forwards so those don't overlap this push.
     const { head, pushed } = await this.withNetworkGit(() =>
       this.deps.gitOps.push(this.deps.workspace, {
         remoteUrl: this.spec!.repo!.cloneUrl,
-        branch: this.spec!.repo!.branch,
+        branch: target,
         githubToken: this.spec!.secrets.githubToken,
       }),
     );
-    this.deps.link.send({ t: "checkpoint", branch: this.spec.repo.branch, head, pushed });
+    this.publishedBranch = target;
+    this.deps.link.send({ t: "checkpoint", branch: target, head, pushed });
   }
 
   private async handleDiff(reqId: string): Promise<void> {

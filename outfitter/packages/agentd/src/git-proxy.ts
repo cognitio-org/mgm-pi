@@ -38,6 +38,12 @@ export interface GitProxyOptions {
   token: string;
   /** Ref names the client may update. A name without `refs/` means `refs/heads/<name>`. */
   allowedRefs: readonly string[];
+  /**
+   * Ref prefixes the client may also update, such as `refs/heads/outfitter/`.
+   * A value without `refs/` is treated as `refs/heads/<value>`. Force-updates of a
+   * matching ref stay allowed; deletions are still refused.
+   */
+  allowedPrefixes?: readonly string[];
   /** Origin only, no path. Default `https://github.com`. Tests point this at a fake. */
   upstreamBase?: string;
   log?: (line: string) => void;
@@ -94,6 +100,7 @@ export async function startGitProxy(opts: GitProxyOptions): Promise<GitProxy> {
     throw new Error("git proxy: refusing an empty or malformed token");
   }
   const allowed = normalizeAllowed(opts.allowedRefs);
+  const prefixes = normalizePrefixes(opts.allowedPrefixes);
   const upstreamBase = (opts.upstreamBase ?? "https://github.com").replace(/\/$/, "");
   const needles = secretNeedles(opts.token);
   const log = (line: string) => {
@@ -111,6 +118,7 @@ export async function startGitProxy(opts: GitProxyOptions): Promise<GitProxy> {
       repo: opts.repo,
       token: opts.token,
       allowed,
+      prefixes,
       upstreamBase,
       needles,
       log,
@@ -169,11 +177,21 @@ function normalizeAllowed(refs: readonly string[]): Set<string> {
   return out;
 }
 
+function normalizePrefixes(refs: readonly string[] | undefined): string[] {
+  const out: string[] = [];
+  for (const ref of refs ?? []) {
+    if (typeof ref !== "string" || ref.length === 0 || /[\s\0]/.test(ref)) continue;
+    out.push(ref.startsWith("refs/") ? ref : `refs/heads/${ref}`);
+  }
+  return out;
+}
+
 interface HandleCtx {
   owner: string;
   repo: string;
   token: string;
   allowed: Set<string>;
+  prefixes: readonly string[];
   upstreamBase: string;
   needles: Buffer[];
   log: (line: string) => void;
@@ -244,7 +262,7 @@ async function handleReceivePack(
     return;
   }
   if (section.updates) {
-    const reasons = refusalReasons(section.updates, ctx.allowed);
+    const reasons = refusalReasons(section.updates, ctx.allowed, ctx.prefixes);
     if (reasons.length > 0) {
       await reader.drain();
       ctx.log("git proxy receive-pack refused by ref policy");
@@ -258,11 +276,16 @@ async function handleReceivePack(
   await underLock(ctx, () => forward(req, res, upstream, ctx, body));
 }
 
-function refusalReasons(updates: RefUpdate[], allowed: Set<string>): string[] {
+function refAllowed(ref: string, allowed: Set<string>, prefixes: readonly string[]): boolean {
+  if (allowed.has(ref)) return true;
+  return prefixes.some((prefix) => prefix.length > 0 && ref.startsWith(prefix));
+}
+
+function refusalReasons(updates: RefUpdate[], allowed: Set<string>, prefixes: readonly string[]): string[] {
   const reasons: string[] = [];
   for (const update of updates) {
     if (isZeroOid(update.newOid)) reasons.push(`refusing to delete ${safeRef(update.ref)}`);
-    else if (!allowed.has(update.ref)) reasons.push(`${safeRef(update.ref)} is not an allowed ref`);
+    else if (!refAllowed(update.ref, allowed, prefixes)) reasons.push(`${safeRef(update.ref)} is not an allowed ref`);
   }
   return reasons;
 }

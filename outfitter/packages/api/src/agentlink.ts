@@ -19,6 +19,7 @@ import { validateSnapshotUrl, snapshotHostAllowlist } from "./snapshot-url.ts";
 import { MAIL_LEASE_MS, MAIL_MAX_ATTEMPTS, type MailService } from "./mail.ts";
 import { isBrowserActionKind, parseBrowserAction } from "./browser-action.ts";
 import { GithubBroker } from "./github-broker.ts";
+import { branchAllowed, branchPrefixOf } from "./branch-policy.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
@@ -82,7 +83,7 @@ export interface RunSpecMessage {
   session: { id: string; name: string; cwd: string };
   /** Absent for a repo-less session (Session.repo === null): agentd starts with an empty
    * /workspace, or restores `workspace.snapshotUrl`, instead of cloning. */
-  repo?: { cloneUrl: string; branch: string; baseBranch: string; createBranch: boolean };
+  repo?: { cloneUrl: string; branch: string; baseBranch: string; createBranch: boolean; branchPrefix?: string };
   workspace?: { snapshotUrl?: string };
   guru: {
     systemPrompt?: string;
@@ -902,6 +903,7 @@ export class AgentLink {
               cloneUrl: cloneUrlFor(session.repo),
               branch: session.branch ?? `outfitter/${session.id}`,
               baseBranch: session.baseBranch ?? "main",
+              branchPrefix: branchPrefixOf(guru.branchPrefix),
               // Deviation from protocol.md (createBranch isn't specced further): true only for a
               // session's first run, inferred from having no checkpoint yet.
               createBranch: !session.checkpoint,
@@ -1041,10 +1043,24 @@ export class AgentLink {
       }
       case "checkpoint": {
         // protocol.md: branch/head are for a repo session; a repo-less session sends
-        // workspaceUrl instead. Store whichever fields this frame actually carries.
+        // workspaceUrl instead. A reported branch replaces session.branch only when it is
+        // that branch or under the guru's prefix.
         const checkpoint: NonNullable<Session["checkpoint"]> = {};
-        if (frame.branch !== undefined) checkpoint.branch = String(frame.branch);
-        if (frame.head !== undefined) checkpoint.head = String(frame.head);
+        const session = await this.store.sessions.findById(sessionId);
+        const guru = session ? await this.store.gurus.findById(session.guruId) : null;
+        const reported = frame.branch !== undefined ? String(frame.branch) : undefined;
+        const current = session?.branch;
+        const prefix = branchPrefixOf(guru?.branchPrefix);
+        const pushed = frame.pushed === true;
+        // A pushed:false frame must not walk session.branch back to an earlier allowed name.
+        const takeBranch =
+          reported !== undefined &&
+          current !== undefined &&
+          branchAllowed(reported, current, prefix) &&
+          (pushed || reported === current);
+        if (reported !== undefined && current !== undefined) checkpoint.branch = takeBranch ? reported : current;
+        if (takeBranch && pushed && frame.head !== undefined) checkpoint.head = String(frame.head);
+        else if (session?.checkpoint?.head) checkpoint.head = session.checkpoint.head;
         // Finding #3 (docs/reports/security-review-pr1.md): snapshotUrl/workspaceUrl round-trip
         // back out as run.spec.snapshot.url / run.spec.workspace.snapshotUrl on the *next* run and
         // get fetched there -- validate before persisting rather than storing whatever a
@@ -1071,7 +1087,9 @@ export class AgentLink {
             // See snapshotUrl above.
           }
         }
-        await this.store.sessions.update(sessionId, { checkpoint, updatedAt: now });
+        const sessionPatch: Partial<Session> = { checkpoint, updatedAt: now };
+        if (takeBranch && reported && reported !== current) sessionPatch.branch = reported;
+        await this.store.sessions.update(sessionId, sessionPatch);
         this.sse.publish(sessionId, { type: "checkpoint", data: frame });
         break;
       }

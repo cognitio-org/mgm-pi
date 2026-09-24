@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { RouteContext } from "./context.ts";
 import type { Guru } from "../store/types.ts";
+import { parseBranchPrefix } from "../branch-policy.ts";
 
 type GuruInput = Omit<Guru, "id" | "createdAt" | "updatedAt"> & { id?: string };
 
@@ -85,6 +86,7 @@ function validationError(body: {
   thinking?: string;
   mergeFromCloud?: unknown;
   playwrightBeforeCheckpoint?: unknown;
+  branchPrefix?: unknown;
 }): string | undefined {
   if (body.model !== undefined && !isValidModelRef(body.model)) {
     return `model must look like provider/id, got: ${body.model}`;
@@ -102,6 +104,12 @@ function validationError(body: {
   // would be easy to mistake for "on" later.
   if (body.playwrightBeforeCheckpoint !== undefined && typeof body.playwrightBeforeCheckpoint !== "boolean") {
     return "playwrightBeforeCheckpoint must be a boolean";
+  }
+  if (body.branchPrefix !== undefined) {
+    const parsed = parseBranchPrefix(body.branchPrefix);
+    if (!parsed.ok) return "branchPrefix must be a branch name prefix such as outfitter/";
+    if (parsed.prefix) body.branchPrefix = parsed.prefix;
+    else delete body.branchPrefix;
   }
   return undefined;
 }

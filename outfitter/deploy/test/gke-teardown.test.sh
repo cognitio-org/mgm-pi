@@ -6,6 +6,10 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
+# Never touch the real home directory: env.sh's gke_kubeconfig defaults to ~/.kube/outfitter, and a
+# case that reaches it without KUBECONFIG_OUTFITTER once truncated a developer's real one (#152).
+export HOME="${WORK}/home"
+mkdir -p "${HOME}"
 
 mkdir -p "${WORK}/bin"
 cat >"${WORK}/bin/gcloud" <<'SH'

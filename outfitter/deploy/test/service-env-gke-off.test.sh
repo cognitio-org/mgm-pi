@@ -10,6 +10,10 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_SRC="$(cd "${HERE}/.." && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
+# Never touch the real home directory: env.sh's gke_kubeconfig defaults to ~/.kube/outfitter, and a
+# case that reaches it without KUBECONFIG_OUTFITTER once truncated a developer's real one (#152).
+export HOME="${WORK}/home"
+mkdir -p "${HOME}"
 
 # A throwaway repo with its own "origin" (deploy_guard's committed-main checks). commit_tag/
 # regression_guard need real git; the fake TAG below is deliberately not a real commit here, so

@@ -261,8 +261,19 @@ export class GithubBroker {
     if (op === "github_pr.merge" && guru.mergeFromCloud !== true) {
       return this.settle(runId, op, key, write, { ok: false, error: "not permitted" });
     }
-    const token = (await this.secrets.secretsForRun(session, guru)).githubToken.trim();
-    if (!token) return this.settle(runId, op, key, write, { ok: false, error: "not permitted" });
+    const secrets = await this.secrets.secretsForRun(session, guru);
+    const token = secrets.githubToken.trim();
+    if (!token) {
+      // #158: with the App configured, secretsForRun never falls back to the shared PAT, so this
+      // one request fails instead of being written as the PAT's user.
+      const error =
+        secrets.githubAppFailure === "unavailable"
+          ? "the GitHub App could not get a token just now; try again shortly"
+          : secrets.githubAppFailure === "not-installed"
+            ? "the Outfitter GitHub App is not installed on this repository"
+            : "not permitted";
+      return this.settle(runId, op, key, write, { ok: false, error });
+    }
 
     const ctx: Ctx = {
       runId,

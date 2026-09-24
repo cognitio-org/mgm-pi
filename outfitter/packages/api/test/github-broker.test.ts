@@ -456,6 +456,37 @@ describe("github broker", () => {
     assert.equal(built, 0);
   });
 
+  test("#158: an App mint failure fails that one request with a reason, and nothing is sent", async () => {
+    for (const [failure, error] of [
+      ["unavailable", "the GitHub App could not get a token just now; try again shortly"],
+      ["not-installed", "the Outfitter GitHub App is not installed on this repository"],
+    ] as const) {
+      const store = new MemoryStore();
+      const secrets = {
+        async secretsForRun() {
+          return { githubToken: "", litellmKey: "", githubAppFailure: failure };
+        },
+        async defaultLitellmKey() {
+          return "";
+        },
+      };
+      const now = new Date().toISOString();
+      await store.gurus.insert({ id: "g", name: "G", model: "p/m", createdAt: now, updatedAt: now });
+      await store.sessions.insert({
+        id: "s", guruId: "g", repo: "acme/widgets", branch: "feature", status: "open", cost: 0, createdAt: now, updatedAt: now,
+      });
+      await store.runs.insert({ id: "run", sessionId: "s", state: "running", lastAckedSeq: 0, pending: [], createdAt: now, updatedAt: now });
+      let built = 0;
+      const broker = new GithubBroker(store, secrets, () => {
+        built++;
+        return fakeGithub([]);
+      }, async () => {});
+      const result = await broker.handle({ runId: "run", op: "github_repo.view", args: {} });
+      assert.deepEqual(result, { ok: false, error }, failure);
+      assert.equal(built, 0, failure);
+    }
+  });
+
   test("rate-limit headers are read from either a plain object or a Headers instance", () => {
     assert.deepEqual(rateLimitFromHeaders(headerMap({ "X-RateLimit-Remaining": "12", "X-RateLimit-Reset": "99" })), { remaining: 12, reset: 99 });
     const headers = new Headers({ "X-RateLimit-Remaining": "3", "X-RateLimit-Reset": "50" });

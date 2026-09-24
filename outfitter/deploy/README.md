@@ -194,8 +194,12 @@ the page and never moved the fleet, because `release.sh` deploys the page first.
    `outfitter-github-token-<sessionId>` of its own gets an installation token instead of
    `outfitter-github-token-default`. The token is minted for that session's repo and expires in
    about an hour; the API sends `github.credential` on each hello and again before it expires. The private key stays in
-   the API. Create one App on the `cognitio-org` account (the same App E6 webhooks will use),
-   install it on the repos cloud sessions touch, and store:
+   the API. Once the App is configured, `outfitter-github-token-default` is no longer used (#158):
+   a session whose repo the App isn't installed on fails at start with "install the GitHub App on
+   <repo>", and a failed mint (GitHub or Secret Manager unreachable) is retried rather than
+   replaced by the shared PAT. A live run keeps its current token until a mint succeeds. Create one
+   App on the `cognitio-org` account (the same App E6 webhooks will use), install it on every repo
+   cloud sessions touch, and store:
 
    ```bash
    printf '%s' "<numeric App id>" \

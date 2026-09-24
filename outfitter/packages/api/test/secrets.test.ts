@@ -138,8 +138,10 @@ describe("GcpSecretsBroker", () => {
     assert.equal(JSON.stringify(secrets).includes(pem), false);
   });
 
-  test("a non-404 error reading the App id falls back to the shared PAT", async () => {
+  test("#158: a non-404 error reading an App secret is unavailable, not a reason to use the shared PAT", async () => {
+    const requested: string[] = [];
     const broker = new GcpSecretsBroker("proj", async (secretId) => {
+      requested.push(secretId);
       if (secretId === GITHUB_TOKEN_DEFAULT_SECRET) return "shared-token";
       if (secretId === GITHUB_APP_ID_SECRET) {
         const err = new Error("unavailable") as Error & { response: { status: number } };
@@ -149,11 +151,12 @@ describe("GcpSecretsBroker", () => {
       throw notFoundError();
     });
     const secrets = await broker.secretsForRun(testSession(), testGuru());
-    assert.equal(secrets.githubToken, "shared-token");
-    assert.equal(secrets.githubTokenExpiresAt, undefined);
+    assert.equal(secrets.githubToken, "");
+    assert.equal(secrets.githubAppFailure, "unavailable");
+    assert.ok(!requested.includes(GITHUB_TOKEN_DEFAULT_SECRET));
   });
 
-  test("an unusable App private key falls back to the shared PAT", async () => {
+  test("#158: an App key that won't sign is unavailable, not a reason to use the shared PAT", async () => {
     const broker = new GcpSecretsBroker("proj", async (secretId) => {
       if (secretId === GITHUB_APP_ID_SECRET) return "42";
       if (secretId === GITHUB_APP_INSTALLATION_SECRET) return "7";
@@ -162,11 +165,34 @@ describe("GcpSecretsBroker", () => {
       throw notFoundError();
     });
     const secrets = await broker.secretsForRun(testSession(), testGuru());
-    assert.equal(secrets.githubToken, "shared-token");
+    assert.equal(secrets.githubToken, "");
+    assert.equal(secrets.githubAppFailure, "unavailable");
     assert.equal(secrets.githubTokenExpiresAt, undefined);
   });
 
-  test("a failed refresh does not replace the installation token with the shared PAT", async () => {
+  test("#158: a repo the App isn't installed on gets no token and not-installed, never the shared PAT", async () => {
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const pem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
+    const requested: string[] = [];
+    const fetchSecret = async (secretId: string) => {
+      requested.push(secretId);
+      if (secretId === GITHUB_APP_ID_SECRET) return "42";
+      if (secretId === GITHUB_APP_INSTALLATION_SECRET) return "7";
+      if (secretId === GITHUB_APP_KEY_SECRET) return pem;
+      if (secretId === GITHUB_TOKEN_DEFAULT_SECRET) return "shared-token";
+      throw notFoundError();
+    };
+    const app = new GithubAppTokens(
+      async (secretId) => (await fetchSecret(secretId)).trim(),
+      (async () => new Response(JSON.stringify({ message: "not accessible" }), { status: 422 })) as typeof fetch,
+    );
+    const secrets = await new GcpSecretsBroker("proj", fetchSecret, app).secretsForRun(testSession(), testGuru());
+    assert.equal(secrets.githubToken, "");
+    assert.equal(secrets.githubAppFailure, "not-installed");
+    assert.ok(!requested.includes(GITHUB_TOKEN_DEFAULT_SECRET));
+  });
+
+  test("a failed refresh returns nothing, and secretsForRun doesn't hand out the shared PAT either", async () => {
     const broker = new GcpSecretsBroker("proj", async (secretId) => {
       if (secretId === GITHUB_TOKEN_DEFAULT_SECRET) return "shared-token";
       if (secretId === GITHUB_APP_ID_SECRET) return "42";
@@ -176,7 +202,8 @@ describe("GcpSecretsBroker", () => {
     });
     assert.equal(await broker.refreshGithubAppToken(testSession()), undefined);
     const secrets = await broker.secretsForRun(testSession(), testGuru());
-    assert.equal(secrets.githubToken, "shared-token");
+    assert.equal(secrets.githubToken, "");
+    assert.equal(secrets.githubAppFailure, "unavailable");
   });
 
   test("a refresh after a per-session PAT is added returns that PAT and stops the App", async () => {

@@ -47,7 +47,7 @@ treats them:
 | `4401` | unauthorized, or `hello.runToken` missing/incorrect for this run | terminal, exit 1 (misconfiguration) |
 | `4404` | run/session/guru not found | terminal, exit 0 (nothing left to do) |
 | `4409` | run is in a terminal state already, **or** (E5.7/bug 9, cloud-fixes.md) this agentd's `hello.protocolVersion` is older than the API's own (including a build that predates the field, treated as version 0) | terminal, exit 0 (nothing left to do) |
-| `4412` | run cannot start: missing secret (a repo session with no usable GitHub token) | terminal, exit 1; the API also marks the run `failed` with a reason before closing |
+| `4412` | run cannot start: missing secret (a repo session with no usable GitHub token, including a repo the configured GitHub App isn't installed on) | terminal, exit 1; the API also marks the run `failed` with a reason before closing. Not used for a transient App mint failure (#158): a first connect closes `1011` to retry, and a reconnect of a running run keeps its current token |
 | `4429` | the run already has a live agent connection (see "One live agent connection per run" below) | transient, agentd keeps reconnecting with backoff |
 | `1011` | internal error | transient, agentd keeps reconnecting with backoff |
 
@@ -174,7 +174,7 @@ Down (api → agentd):
 
 ### GitHub broker (phase 3)
 
-GitHub tool calls do not receive the token. `run.spec.secrets.githubToken` is still delivered for git. These two frames are why `API_PROTOCOL_VERSION` is 2: an agentd whose `hello.protocolVersion` is 1 (or missing) is refused with `4409` until that image is redeployed. agentd forwards a closed list of operations; the api runs them with the run's credential (a per-session PAT, else a GitHub App installation token when that App is configured, else `outfitter-github-token-default` when `session.repo` is set — the same resolution as `run.spec.secrets.githubToken`). The token is not logged. There is no `github_pr.wait_ci` and no arbitrary GitHub passthrough: waiting on CI is the agent polling `github_pr.checks`. GraphQL is used only to reply to a review thread and to resolve one.
+GitHub tool calls do not receive the token. `run.spec.secrets.githubToken` is still delivered for git. These two frames are why `API_PROTOCOL_VERSION` is 2: an agentd whose `hello.protocolVersion` is 1 (or missing) is refused with `4409` until that image is redeployed. agentd forwards a closed list of operations; the api runs them with the run's credential (a per-session PAT, else a GitHub App installation token when that App is configured, else — only when the App is not configured — `outfitter-github-token-default` when `session.repo` is set; the same resolution as `run.spec.secrets.githubToken`). With the App configured, a failed mint fails that one request with a reason instead of using the shared PAT (#158). The token is not logged. There is no `github_pr.wait_ci` and no arbitrary GitHub passthrough: waiting on CI is the agent polling `github_pr.checks`. GraphQL is used only to reply to a review thread and to resolve one.
 
 `args` is a JSON object. `owner`, `repo` and `head` on `args` are ignored. The api uses the session's repository (`session.repo`: an `owner/repo` shorthand or a `github.com` URL) and the session branch (`session.branch`, else `outfitter/<sessionId>`) as the pull request head.
 

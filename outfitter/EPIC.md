@@ -117,7 +117,7 @@ Ten agent-hours a day is roughly $2/day of compute. Set a GCP budget alert at $2
 | Topic | Decision |
 |---|---|
 | Default sandbox size | 1 vCPU / 2 GiB (~$0.08/h). Gurus that build or test override to 2 vCPU / 4 GiB. |
-| GitHub auth for runs | A per-session fine-grained PAT wins. Otherwise, when the GitHub App secrets are set, the API mints an installation token for that repo (#93). The shared PAT remains the fallback. E6 webhooks use this same App. |
+| GitHub auth for runs | A per-session fine-grained PAT wins. Otherwise, when the GitHub App secrets are set, the API mints an installation token for that repo (#93). The shared PAT applies only when the App is not configured: with it, a repo the App can't reach fails at start, and a failed mint is retried, never replaced by the shared PAT (#158). E6 webhooks use this same App. |
 | Atlas | M0 in GCP us-central1 (same region as Cloud Run). GCP Marketplace billing link deferred until leaving M0. |
 | Idle-stop | 30 min for human-driven sessions, 5 min for delegated worker sessions, plus wake-on-open in the UI. Revisit after measuring real wake times (E2.9). |
 | Laptop model in the cloud | Allowed, opt-in per guru or per session, never the default. Guarded by the preflight in E2.8. |

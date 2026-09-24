@@ -1,0 +1,58 @@
+chrome/extension/panel.css
+  s_e7ca51f3c0d043::t_04450033e4111e 1-44
+chrome/extension/outfitter.css
+  s_e7ca51f3c0d043::t_44e5bfe3370348 1-285
+  s_e7ca51f3c0d043::t_8c6440c95274af 286-288
+chrome/extension/options.html
+  s_e7ca51f3c0d043::t_af021eb6f502b3 6,8-10,14-35
+chrome/extension/panel.html
+  s_e7ca51f3c0d043::t_fe148903addd5d 6-7,10-99
+chrome/README.md
+  s_80c53fca640c19::t_daa4a89cfd080c 28
+chrome/extension/fonts/OFL-IBMPlexMono.txt
+  s_80c53fca640c19::t_4e264063521fa9 1-93
+chrome/extension/fonts/OFL-IBMPlexSans.txt
+  s_80c53fca640c19::t_de89a4a953a5b3 1-93
+chrome/extension/fonts/OFL-Silkscreen.txt
+  s_80c53fca640c19::t_98309c60c8f32b 1-93
+chrome/extension/panel-model.js
+  s_80c53fca640c19::t_8e08f5e2977565 57-58,107-145
+chrome/extension/panel.js
+  s_80c53fca640c19::t_9552f074164162 29-30,32,38-39,47-50,64,79-80,333,340,363-388,391,442,468,600-602,607-610,612-618,621-623,625-629
+chrome/test/panel.test.js
+  s_80c53fca640c19::t_149585c7a6b619 34-35,38-39,74-75,82-103
+outfitter/docs/protocol.md
+  s_80c53fca640c19::t_aef0429fb65d04 347,353-355
+outfitter/docs/specs/chrome-companion.md
+  s_80c53fca640c19::t_5b1a7a02fde206 184-186,249-250,257
+outfitter/packages/api/src/routes/sessions.ts
+  s_80c53fca640c19::t_ea562b2d974e0e 280-282,324-330
+outfitter/packages/api/test/browser.test.ts
+  s_80c53fca640c19::t_0677f9c67a6540 426-429
+outfitter/packages/api/test/roles.test.ts
+  s_80c53fca640c19::t_770d6692d4a534 46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "e31c558c1df5d47eb120fd00af7d625c2b18d8c6",
+  "prompts": {},
+  "sessions": {
+    "s_80c53fca640c19": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aa93f7550a0054940",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_e7ca51f3c0d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a0ce52-4986-7453-95bf-19d91b9dd59f",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

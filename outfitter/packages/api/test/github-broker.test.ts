@@ -128,6 +128,24 @@ async function socketApp(opts: { mergeFromCloud?: boolean } = {}) {
 }
 
 describe("github broker", () => {
+  test("an installation token does not call GET /user for assignee @me", async () => {
+    const store = new MemoryStore();
+    const secrets = new MemorySecretsBroker("ghs_installation", "");
+    const now = new Date().toISOString();
+    await store.gurus.insert({ id: "g", name: "G", model: "p/m", createdAt: now, updatedAt: now });
+    await store.sessions.insert({
+      id: "s", guruId: "g", repo: "acme/widgets", branch: "feature", status: "open", cost: 0, createdAt: now, updatedAt: now, ownerEmail: "ada@example.com",
+    });
+    const run: Run = { id: "run", sessionId: "s", state: "running", lastAckedSeq: 0, pending: [], createdAt: now, updatedAt: now };
+    await store.runs.insert(run);
+    const calls: Call[] = [];
+    const broker = new GithubBroker(store, secrets, () => fakeGithub(calls), async () => {});
+    const result = await broker.handle({ runId: "run", op: "github_issue.list", args: { assignee: "@me" } });
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.match(result.error, /pass a login instead of @me/);
+    assert.equal(calls.some((call) => call.route === "GET /user"), false);
+  });
+
   test("a write replay returns the same result and does not post twice", async () => {
     const { app, calls, session, runId, runToken } = await socketApp();
     const agent = await openAgentSocket(app, runId);

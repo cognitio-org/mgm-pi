@@ -11,6 +11,18 @@ export const GITHUB_APP_SLUG_SECRET = "outfitter-github-app-slug";
 
 const REFRESH_EARLY_MS = 5 * 60_000;
 const MIN_REFRESH_DELAY_MS = 30_000;
+const MINT_TIMEOUT_MS = 10_000;
+
+/** The run token asks only for what cloud git and the broker use. A later permission on this
+ * same App (E6) must not widen every sandbox token. */
+const RUN_PERMISSIONS = {
+  contents: "write",
+  pull_requests: "write",
+  issues: "write",
+  checks: "read",
+  actions: "read",
+  metadata: "read",
+} as const;
 
 export interface InstallationToken {
   token: string;
@@ -38,11 +50,17 @@ export function githubAppJwt(appId: string, privateKeyPem: string, nowSeconds: n
   return `${data}.${base64url(sig)}`;
 }
 
+/** Owner and repo from the forms `parseSessionRepo` accepts, limited to the characters GitHub allows in those names. */
+function sessionGithubRepo(sessionRepo: string): { owner: string; repo: string } | undefined {
+  const parsed = parseSessionRepo(sessionRepo);
+  if (!parsed) return undefined;
+  if (!/^[A-Za-z0-9_.-]+$/.test(parsed.owner) || !/^[A-Za-z0-9_.-]+$/.test(parsed.repo)) return undefined;
+  return parsed;
+}
+
 /** Repo name for the installation-token `repositories` field. Same stored forms as `parseSessionRepo`. */
 export function githubRepoName(sessionRepo: string): string | undefined {
-  const parsed = parseSessionRepo(sessionRepo);
-  if (!parsed || !/^[A-Za-z0-9_.-]+$/.test(parsed.repo)) return undefined;
-  return parsed.repo;
+  return sessionGithubRepo(sessionRepo)?.repo;
 }
 
 /** True when the three App secrets are values `mint` will actually try to sign with. */
@@ -90,8 +108,9 @@ export class GithubAppTokens {
   }
 
   private async mintOnce(ownerRepo: string): Promise<InstallationToken | undefined> {
-    const repo = githubRepoName(ownerRepo);
-    if (!repo) return undefined;
+    const parsed = sessionGithubRepo(ownerRepo);
+    if (!parsed) return undefined;
+    const { owner, repo } = parsed;
     let appId: string;
     let privateKey: string;
     let installationId: string;
@@ -108,7 +127,7 @@ export class GithubAppTokens {
     if (!githubAppSecretsUsable(appId, privateKey, installationId)) return undefined;
     appId = appId.trim();
     installationId = installationId.trim();
-    const key = `${installationId}:${repo}`;
+    const key = `${installationId}:${owner}/${repo}`;
     const hit = this.cache.get(key);
     if (hit && hit.expiresAtMs - this.now() > REFRESH_EARLY_MS) return { token: hit.token, expiresAt: hit.expiresAt };
     let jwt: string;
@@ -127,7 +146,8 @@ export class GithubAppTokens {
           Accept: "application/vnd.github+json",
           "User-Agent": "outfitter-api",
         },
-        body: JSON.stringify({ repositories: [repo] }),
+        body: JSON.stringify({ repositories: [repo], permissions: RUN_PERMISSIONS }),
+        signal: AbortSignal.timeout(MINT_TIMEOUT_MS),
       });
     } catch (err) {
       console.warn(`[github-app] installation token request failed: ${errorName(err)}`);
@@ -147,7 +167,41 @@ export class GithubAppTokens {
     if (typeof body.token !== "string" || !body.token || typeof body.expires_at !== "string") return undefined;
     const expiresAtMs = Date.parse(body.expires_at);
     if (!Number.isFinite(expiresAtMs)) return undefined;
+    // `repositories: [name]` is resolved on the installation's account. A session for fork/widget
+    // must not keep a token GitHub issued for cognitio-org/widget, or the PAT fallback never runs.
+    if (!(await this.tokenCoversRepo(body.token, owner, repo))) return undefined;
     this.cache.set(key, { token: body.token, expiresAtMs, expiresAt: body.expires_at });
     return { token: body.token, expiresAt: body.expires_at };
+  }
+
+  /** True when the token's repository list includes this owner/repo and not only a same-named repo. */
+  private async tokenCoversRepo(token: string, owner: string, repo: string): Promise<boolean> {
+    let res: Response;
+    try {
+      res = await this.fetchImpl("https://api.github.com/installation/repositories?per_page=100", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github+json",
+          "User-Agent": "outfitter-api",
+        },
+        signal: AbortSignal.timeout(MINT_TIMEOUT_MS),
+      });
+    } catch (err) {
+      console.warn(`[github-app] repository check failed: ${errorName(err)}`);
+      return false;
+    }
+    if (!res.ok) {
+      console.warn(`[github-app] repository check returned ${res.status}`);
+      return false;
+    }
+    let body: { repositories?: { full_name?: unknown }[] };
+    try {
+      body = (await res.json()) as { repositories?: { full_name?: unknown }[] };
+    } catch (err) {
+      console.warn(`[github-app] repository check was not json: ${errorName(err)}`);
+      return false;
+    }
+    const want = `${owner}/${repo}`;
+    return (body.repositories ?? []).some((row) => row.full_name === want);
   }
 }

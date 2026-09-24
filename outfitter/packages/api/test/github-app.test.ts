@@ -36,6 +36,9 @@ test("GithubAppTokens mints once per repo and a per-session PAT is not involved"
     },
     (async (url: string, init?: RequestInit) => {
       calls.push({ url, init });
+      if (url.includes("/installation/repositories")) {
+        return new Response(JSON.stringify({ repositories: [{ full_name: "cognitio-org/testit" }] }), { status: 200 });
+      }
       return new Response(JSON.stringify({ token: "ghs_minted", expires_at: "2026-09-24T06:00:00Z" }), { status: 201 });
     }) as typeof fetch,
     () => Date.parse("2026-09-24T04:00:00Z"),
@@ -44,13 +47,19 @@ test("GithubAppTokens mints once per repo and a per-session PAT is not involved"
   const second = await tokens.mint("cognitio-org/testit");
   assert.equal(first?.token, "ghs_minted");
   assert.equal(second?.token, "ghs_minted");
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, "https://api.github.com/app/installations/99/access_tokens");
-  const headers = calls[0].init?.headers as Record<string, string>;
+  const minted = calls.filter((call) => call.url.includes("/access_tokens"));
+  assert.equal(minted.length, 1);
+  assert.equal(minted[0].url, "https://api.github.com/app/installations/99/access_tokens");
+  const headers = minted[0].init?.headers as Record<string, string>;
   assert.equal(headers.Authorization.startsWith("Bearer "), true);
   assert.equal(headers.Authorization.includes(pem), false);
-  assert.deepEqual(JSON.parse(String(calls[0].init?.body)), { repositories: ["testit"] });
+  assert.ok(minted[0].init?.signal);
+  const body = JSON.parse(String(minted[0].init?.body));
+  assert.deepEqual(body.repositories, ["testit"]);
+  assert.equal(body.permissions.contents, "write");
+  assert.equal(body.permissions.metadata, "read");
   assert.equal(await tokens.mint("not a repo"), undefined);
+  assert.equal(await tokens.mint("fork/testit"), undefined);
 });
 
 test("GithubAppTokens returns undefined when the App secrets are absent", async () => {
@@ -66,7 +75,16 @@ test("GithubAppTokens mints the repo name from URL and .git forms", async () => 
       if (name.includes("private-key")) return pem;
       return "12345";
     },
-    (async (_url: string, init?: RequestInit) => {
+    (async (url: string, init?: RequestInit) => {
+      if (String(url).includes("/installation/repositories")) {
+        return new Response(JSON.stringify({
+          repositories: [
+            { full_name: "cognitio-org/testit" },
+            { full_name: "cognitio-org/other" },
+            { full_name: "cognitio-org/third" },
+          ],
+        }), { status: 200 });
+      }
       repos.push(JSON.parse(String(init?.body)).repositories[0]);
       return new Response(JSON.stringify({ token: "ghs_minted", expires_at: "2026-09-24T06:00:00Z" }), { status: 201 });
     }) as typeof fetch,

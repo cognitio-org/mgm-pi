@@ -781,6 +781,9 @@ export class AgentLink {
       throw err;
     }
     socket.send(JSON.stringify(spec));
+    // agentd applies run.spec once. A reconnect ignores the second one, including when this
+    // process is new and its mint cache is empty, so the token has to ride this frame too.
+    if (spec.secrets.githubToken) this.deliverGithubCredential(runId, spec.secrets.githubToken);
 
     // Existing hello behaviour, now run against the same frame the run-token check above already
     // consumed: record first contact and drain anything queued while this run was ready before this
@@ -1037,10 +1040,10 @@ export class AgentLink {
   }
 
   /** Sends the replacement on the open socket. Never `send()`: that queues the token onto `Run.pending`. */
-  private deliverGithubCredential(runId: string, token: string, expiresAt: string): boolean {
+  private deliverGithubCredential(runId: string, token: string, expiresAt?: string): boolean {
     const socket = this.sockets.get(runId);
     if (!socket || socket.readyState !== socket.OPEN) return false;
-    socket.send(JSON.stringify({ t: "github.credential", token, expiresAt }));
+    socket.send(JSON.stringify({ t: "github.credential", token, ...(expiresAt ? { expiresAt } : {}) }));
     return true;
   }
 

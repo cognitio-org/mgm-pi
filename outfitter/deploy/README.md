@@ -193,7 +193,7 @@ the page and never moved the fleet, because `release.sh` deploys the page first.
    **GitHub App.** When these three secrets are all set, a repo session with no
    `outfitter-github-token-<sessionId>` of its own gets an installation token instead of
    `outfitter-github-token-default`. The token is minted for that session's repo and expires in
-   about an hour; the API sends `github.credential` before it expires. The private key stays in
+   about an hour; the API sends `github.credential` on each hello and again before it expires. The private key stays in
    the API. Create one App on the `cognitio-org` account (the same App E6 webhooks will use),
    install it on the repos cloud sessions touch, and store:
 

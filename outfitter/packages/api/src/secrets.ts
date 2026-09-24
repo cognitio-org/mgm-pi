@@ -3,7 +3,7 @@
 // authenticated WebSocket inside run.spec, never as job/container env.
 
 import type { Session, Guru } from "./store/types.ts";
-import { GithubAppTokens, type InstallationToken } from "./github-app.ts";
+import { GithubAppTokens } from "./github-app.ts";
 
 export interface RunSecrets {
   githubToken: string;
@@ -14,8 +14,8 @@ export interface RunSecrets {
 
 export interface SecretsBroker {
   secretsForRun(session: Session, guru: Guru): Promise<RunSecrets>;
-  /** A fresh installation token for a run that is already using the App. Undefined when the App is not configured or GitHub refused the mint. */
-  refreshGithubAppToken?(session: Session): Promise<InstallationToken | undefined>;
+  /** The credential a live run should switch to. A per-session PAT has no `expiresAt` and replaces an installation token. Undefined when nothing is configured. */
+  refreshGithubAppToken?(session: Session): Promise<{ token: string; expiresAt?: string } | undefined>;
   /** A LiteLLM key usable for calls with no specific run/guru behind them, e.g. the E2.10 provider
    * status service's LiteLLM probe when config.litellmAdminKey isn't set. Falls back to the same
    * default key a guru with no key of its own would get. */
@@ -104,9 +104,10 @@ export class GcpSecretsBroker implements SecretsBroker {
     return { githubToken: github.token, litellmKey, ...(github.expiresAt ? { githubTokenExpiresAt: github.expiresAt } : {}) };
   }
 
-  async refreshGithubAppToken(session: Session): Promise<InstallationToken | undefined> {
-    if (!session.repo) return undefined;
-    return this.app.mint(session.repo);
+  async refreshGithubAppToken(session: Session): Promise<{ token: string; expiresAt?: string } | undefined> {
+    const next = await this.githubTokenForSession(session);
+    if (!next.token) return undefined;
+    return next;
   }
 
   /** Per-session PAT, then a GitHub App installation token, then the shared

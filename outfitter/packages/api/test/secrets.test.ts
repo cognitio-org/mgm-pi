@@ -123,7 +123,12 @@ describe("GcpSecretsBroker", () => {
       async (secretId) => {
         try { return (await fetchSecret(secretId)).trim(); } catch { return ""; }
       },
-      (async () => new Response(JSON.stringify({ token: "ghs_from_app", expires_at: "2026-09-24T06:00:00Z" }), { status: 201 })) as typeof fetch,
+      (async (url: string) => {
+        if (String(url).includes("/installation/repositories")) {
+          return new Response(JSON.stringify({ repositories: [{ full_name: "o/r" }] }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ token: "ghs_from_app", expires_at: "2026-09-24T06:00:00Z" }), { status: 201 });
+      }) as typeof fetch,
     );
     const broker = new GcpSecretsBroker("proj", fetchSecret, app);
     const secrets = await broker.secretsForRun(testSession(), testGuru());
@@ -159,6 +164,18 @@ describe("GcpSecretsBroker", () => {
     const secrets = await broker.secretsForRun(testSession(), testGuru());
     assert.equal(secrets.githubToken, "shared-token");
     assert.equal(secrets.githubTokenExpiresAt, undefined);
+  });
+
+  test("a refresh after a per-session PAT is added returns that PAT and stops the App", async () => {
+    const broker = new GcpSecretsBroker("proj", async (secretId) => {
+      if (secretId === "outfitter-github-token-s1") return "own-token";
+      if (secretId === GITHUB_APP_ID_SECRET) return "42";
+      if (secretId === GITHUB_APP_INSTALLATION_SECRET) return "7";
+      if (secretId === GITHUB_APP_KEY_SECRET) return "-----BEGIN PRIVATE KEY-----\nnot-used\n-----END PRIVATE KEY-----";
+      throw notFoundError();
+    });
+    const next = await broker.refreshGithubAppToken(testSession());
+    assert.deepEqual(next, { token: "own-token" });
   });
 
   test("a session PAT wins over a configured GitHub App", async () => {

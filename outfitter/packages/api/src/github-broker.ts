@@ -283,16 +283,20 @@ export class GithubBroker {
     return this.settle(runId, op, key, write, result);
   }
 
-  private async footerFor(session: Session): Promise<string> {
+  private async ownerLogin(session: Session): Promise<string> {
     if (!session.ownerEmail) return "";
     try {
       const user = await this.store.users.findByEmail(session.ownerEmail);
       const login = user?.githubLogin?.replace(/^@/, "").trim() ?? "";
-      if (!login || !/^[A-Za-z0-9-]+$/.test(login)) return "";
-      return `Outfitter, on behalf of @${login}`;
+      return /^[A-Za-z0-9][A-Za-z0-9-]*$/.test(login) ? login : "";
     } catch {
       return "";
     }
+  }
+
+  private async footerFor(session: Session): Promise<string> {
+    const login = await this.ownerLogin(session);
+    return login ? `Outfitter, on behalf of @${login}` : "";
   }
 
   private async settle(
@@ -751,10 +755,17 @@ export class GithubBroker {
     if (assigneeIn && !loginOk(assigneeIn)) return { ok: false, error: `"${assigneeIn}" is not a login.` };
     let assignee = assigneeIn;
     if (assignee === "@me") {
-      const me = await this.call(ctx, "GET /user", {});
-      if (!me.ok) return { ok: false, error: me.error };
-      assignee = String(me.data?.login ?? "");
-      if (!assignee) return { ok: false, error: "not permitted" };
+      // An installation token is the App, not a user: GET /user is 403 and would fail the whole list.
+      if (ctx.token.startsWith("ghs_")) {
+        const login = await this.ownerLogin(ctx.session);
+        if (!login) return { ok: false, error: "an installation token has no GitHub user; pass a login instead of @me" };
+        assignee = login;
+      } else {
+        const me = await this.call(ctx, "GET /user", {});
+        if (!me.ok) return { ok: false, error: me.error };
+        assignee = String(me.data?.login ?? "");
+        if (!assignee) return { ok: false, error: "not permitted" };
+      }
     }
     const limit = limitOf(args.limit);
     const res = await this.call(ctx, "GET /repos/{owner}/{repo}/issues", {

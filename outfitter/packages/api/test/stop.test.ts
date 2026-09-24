@@ -118,7 +118,11 @@ async function openAgentSocket(
     { headers: { authorization: `Bearer ${token}` } } as any,
     {
       onInit(socket: any) {
-        socket.on("message", (data: Buffer) => messages.push(JSON.parse(data.toString())));
+        socket.on("message", (data: Buffer) => {
+          const frame = JSON.parse(data.toString());
+          if (frame?.t === "github.credential") return;
+          messages.push(frame);
+        });
         socket.on("close", (code: number, reason: Buffer) => closes.push({ code, reason: reason?.toString() ?? "" }));
       },
     } as any,

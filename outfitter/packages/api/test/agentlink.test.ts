@@ -1184,10 +1184,10 @@ describe("GitHub App installation-token refresh", () => {
   const soon = (extraMs: number) => new Date(Date.now() + 5 * 60_000 + extraMs).toISOString();
   const later = () => new Date(Date.now() + 60 * 60_000).toISOString();
 
-  function nextWithin(agent: SocketHandle, ms: number): Promise<{ t?: string; token?: string }> {
+  function nextCredentialWithin(agent: SocketHandle, ms: number): Promise<{ t?: string; token?: string }> {
     return Promise.race([
-      agent.nextMessage(),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`no frame within ${ms}ms`)), ms)),
+      agent.nextCredential(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`no credential within ${ms}ms`)), ms)),
     ]);
   }
 
@@ -1221,7 +1221,8 @@ describe("GitHub App installation-token refresh", () => {
     // is not the one `buildRunSpec` just armed, which is the race when that close lands late.
     (app.agentLink as unknown as { onAgentSocketClosed(runId: string, socket: object): void }).onAgentSocketClosed(runId, {});
 
-    const frame = await nextWithin(replacement, 1500);
+    assert.equal((await replacement.nextCredential()).token, "ghs_original");
+    const frame = await nextCredentialWithin(replacement, 1500);
     assert.equal(frame.t, "github.credential");
     assert.equal(frame.token, "ghs_replacement");
     const stored = await app.store.runs.findById(runId);
@@ -1307,7 +1308,8 @@ describe("GitHub App installation-token refresh", () => {
     const agent = await openAgentSocket(app, runId);
     sendHello(agent, runId, session.id, runToken);
     assert.equal((await agent.nextMessage()).t, "run.spec");
-    const frame = await nextWithin(agent, 1500);
+    assert.equal((await agent.nextCredential()).token, "ghs_original");
+    const frame = await nextCredentialWithin(agent, 1500);
     assert.equal(frame.t, "github.credential");
     assert.equal(frame.token, "ghs_replacement");
     assert.equal(mints, 3);
@@ -1341,8 +1343,10 @@ describe("GitHub App installation-token refresh", () => {
     const patAgent = await openAgentSocket(pat, second.runId);
     sendHello(patAgent, second.runId, second.session.id, second.runToken);
     assert.equal((await patAgent.nextMessage()).t, "run.spec");
+    assert.equal((await patAgent.nextCredential()).token, "ghp_session");
     await new Promise((resolve) => setTimeout(resolve, 80));
     assert.equal(patMints, 0);
+    assert.equal(patAgent.credentialCount(), 0);
     assert.equal(patAgent.messageCount(), 0);
     patAgent.send({ t: "bye", reason: "stop" });
     await patAgent.nextClose();
@@ -1382,6 +1386,49 @@ describe("GitHub App installation-token refresh", () => {
     assert.equal(stored?.pending.length, 0);
     agent.send({ t: "bye", reason: "stop" });
     await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("a reconnect delivers the token the new hello resolved, because a second run.spec is ignored", async () => {
+    const tokens = ["ghs_first", "ghs_second"];
+    let n = 0;
+    const app = await buildTestApp(
+      {},
+      {
+        githubRefresh: { floorMs: 60_000, retryMs: 60_000, maxAttempts: 1 },
+        secretsBroker: {
+          async secretsForRun() {
+            const token = tokens[Math.min(n, tokens.length - 1)]!;
+            n += 1;
+            return { githubToken: token, litellmKey: "k", githubTokenExpiresAt: new Date(Date.now() + 60 * 60_000).toISOString() };
+          },
+          async defaultLitellmKey() {
+            return "k";
+          },
+          async refreshGithubAppToken() {
+            return { token: "ghs_from_refresh", expiresAt: new Date(Date.now() + 60 * 60_000).toISOString() };
+          },
+        },
+      },
+    );
+    const { session, runId, runToken } = await makeRunningSession(app);
+    const first = await openAgentSocket(app, runId);
+    sendHello(first, runId, session.id, runToken);
+    assert.equal((await first.nextMessage()).t, "run.spec");
+    assert.equal((await first.nextCredential()).token, "ghs_first");
+    first.close();
+    await first.nextClose();
+    await waitFor(() => app.agentLink.hasSocket(runId) === false);
+
+    const again = await openAgentSocket(app, runId);
+    sendHello(again, runId, session.id, runToken, 1);
+    assert.equal((await again.nextMessage()).t, "run.spec");
+    assert.equal((await again.nextCredential()).token, "ghs_second");
+    assert.equal(again.credentialCount(), 0);
+
+    again.send({ t: "bye", reason: "stop" });
+    await again.nextClose();
     app.stopBackgroundTasks();
     await app.fastify.close();
   });

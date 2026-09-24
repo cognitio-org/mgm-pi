@@ -1,0 +1,36 @@
+outfitter/docs/reports/gke-spike.md
+  s_217e742e7da57c::t_bd9faee2258a8d 113,116-122,126
+  s_217e742e7da57c::t_cd71ff52899550 131-133
+outfitter/deploy/gke/spike/s4-firstpull.jsonl
+  s_217e742e7da57c::t_6af18afc29018d 1-2
+outfitter/deploy/test/gke-cluster.test.sh
+  s_217e742e7da57c::t_d86ae78b88e32d 3-4,14,17-18,23-25,30,36-38,41,43,45,47-59,65-72,76,78-81,84,88-90,95-96
+outfitter/docs/specs/gke-sandbox-provider-plan.md
+  s_217e742e7da57c::t_5bff4e260d2182 103-105
+  s_217e742e7da57c::t_486de688a9e80a 152-155
+  s_217e742e7da57c::t_ffd460e29c50dc 51
+  s_217e742e7da57c::t_e0cfb53ba9ee04 75
+  s_217e742e7da57c::t_c57031c5748b46 23
+  s_217e742e7da57c::t_ae03317b59930f 109-110
+outfitter/deploy/gke-cluster.sh
+  s_217e742e7da57c::t_cc7c57052d59b4 78-88
+  s_217e742e7da57c::t_b754d6eb45ddb1 6-7
+  s_217e742e7da57c::t_9dfc37517e9fc3 173
+  s_217e742e7da57c::t_52b54121e0b00f 163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "6cd31f40574c0ae48cc560f0a4b280a3bd7a6757",
+  "prompts": {},
+  "sessions": {
+    "s_217e742e7da57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4d8a38f8-9583-45df-9f1a-8e69160a3dfb",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

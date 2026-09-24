@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 /**
- * Entry point. Reads env (OUTFITTER_API, RUN_ID, RUN_TOKEN, OUTFITTER_DEV_TOKEN, WORKSPACE, PI_BIN), gets an
- * auth token, opens the link to the api, and lets RunController drive the state machine once
- * `run.spec` arrives. See outfitter/docs/protocol.md.
+ * Entry point. Resolves the run assignment (OUTFITTER_API, RUN_ID, RUN_TOKEN -- from env, or, on a
+ * GKE warm pod, by waiting for it; see assignment.ts), gets an auth token, opens the link to the
+ * api, and lets RunController drive the state machine once `run.spec` arrives. Also reads
+ * OUTFITTER_DEV_TOKEN, WORKSPACE, PI_BIN. See outfitter/docs/protocol.md.
  */
 import { existsSync } from "node:fs";
 import { chown } from "node:fs/promises";
+import { resolveAssignment } from "./assignment.js";
 import { getIdToken } from "./auth.js";
 import { BROWSER_CAPTURE_MAX_BYTES, captureDownloadError } from "./browser-capture.js";
 import { createGitOps } from "./git.js";
@@ -29,12 +31,6 @@ function githubSocketPath(): string | undefined {
   return undefined;
 }
 
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`agentd: missing required env var ${name}`);
-  return value;
-}
-
 /** `https://api.example.com` -> `wss://api.example.com/agent/ws?run=<runId>` (and http -> ws for
  * local dev). */
 export function buildWsUrl(apiOrigin: string, runId: string): string {
@@ -46,51 +42,79 @@ export function buildWsUrl(apiOrigin: string, runId: string): string {
 }
 
 async function main(): Promise<void> {
-  const apiOrigin = requireEnv("OUTFITTER_API");
-  const runId = requireEnv("RUN_ID");
-  const runToken = requireEnv("RUN_TOKEN");
   const devToken = process.env.OUTFITTER_DEV_TOKEN;
   const workspace = process.env.WORKSPACE ?? DEFAULT_WORKSPACE;
   const piBin = process.env.PI_BIN ?? DEFAULT_PI_BIN;
 
-  // Both are read exactly once, here, and held in these consts for the rest of the process: drop
-  // them from process.env immediately so nothing agentd spawns can inherit them by accident. pi's
-  // own environment is already built from an allowlist that excludes them (pi.ts's baseEnvForPi),
-  // but every *other* child agentd spawns -- `git`, `pi --version`, anything a future code path
-  // adds -- inherits process.env wholesale (git.ts's execFile), and RUN_TOKEN in the environment of
-  // a process the model can see is a full run takeover (see PI_ENV_NEVER's doc comment). Deleting
-  // it at the source means no future spawn site has to remember.
-  delete process.env.RUN_TOKEN;
+  // Read exactly once, here, and held in `devToken` above for the rest of the process: drop it
+  // from process.env immediately so nothing agentd spawns can inherit it by accident. pi's own
+  // environment is already built from an allowlist that excludes it (pi.ts's baseEnvForPi), but
+  // every *other* child agentd spawns -- `git`, `pi --version`, anything a future code path adds --
+  // inherits process.env wholesale (git.ts's execFile). RUN_TOKEN gets the same treatment, inside
+  // `resolveAssignment` (assignment.ts), wherever it's actually read from -- env today, or, on a GKE
+  // warm pod, from a root-only downward-API file that was never in process.env to begin with.
   delete process.env.OUTFITTER_DEV_TOKEN;
 
   // Startup phases are timed: the first cloud sessions showed ~3 minutes between Cloud Run's start
-  // time and agentd's first log line, and nothing here should take more than seconds.
+  // time and agentd's first log line, and nothing here should take more than seconds. `runId` isn't
+  // known yet on a GKE warm pod (see below), so phase lines before the assignment resolves just omit
+  // it; `phaseRunId` is filled in once it is.
   const bootStart = Date.now();
-  const phase = (name: string) => console.log(JSON.stringify({ severity: "INFO", message: `startup: ${name}`, elapsedMs: Date.now() - bootStart, runId }));
+  let phaseRunId: string | undefined;
+  const phase = (name: string) => console.log(JSON.stringify({ severity: "INFO", message: `startup: ${name}`, elapsedMs: Date.now() - bootStart, runId: phaseRunId }));
   phase("main entered");
   const piVersion = await getPiVersion(piBin);
   phase(`pi version resolved (${piVersion})`);
-  const wsUrl = buildWsUrl(apiOrigin, runId);
 
   // E1.6: one structured JSON log line per event to stdout (human-readable when stdout is a TTY,
   // e.g. local dev) instead of plain-text console.error, which Cloud Run Jobs was not surfacing
-  // anywhere but the job's own audit entries -- see docs/reports/cost-and-logs.md. RUN_TOKEN and,
-  // once run.spec arrives, the per-run secrets (RunController.begin) are registered so they can
-  // never appear in a log line even if an error message or pi's own stderr happens to echo one back.
-  const logger = createLogger({ runId });
-  logger.addSecret(runToken);
+  // anywhere but the job's own audit entries -- see docs/reports/cost-and-logs.md. `devToken` is
+  // registered now; RUN_TOKEN and, once run.spec arrives, the per-run secrets (RunController.begin)
+  // are registered as soon as each is known, so none can ever appear in a log line even if an error
+  // message or pi's own stderr happens to echo one back.
+  let logger = createLogger();
   logger.addSecret(devToken);
   const onLog = (line: string) => logger.info(line);
 
   // Resolved once at startup: the uid/gid pi is spawned as (finding #1, run-as-user.ts). undefined
-  // when agentd isn't root (local dev outside the sandbox image) -- nothing to drop there.
+  // when agentd isn't root (local dev outside the sandbox image) -- nothing to drop there. Run-
+  // independent work: doesn't need the run assignment, so it happens before the wait below (PR4,
+  // gke-sandbox-provider-plan.md §3) rather than after -- a warm GKE pod pre-pays it while idle.
   const runAsUser = await resolveRunAsUser({ onLog });
+
+  // Loading pi's package for the session import takes seconds on a cold sandbox. Started here,
+  // before the (possibly long) wait for a warm pod's assignment, so it overlaps that wait instead of
+  // sitting between run.spec and spawning pi (docs/reports/startup-trim.md and PR4: a warm pod that
+  // waits idle to be claimed pre-pays this for free).
+  preloadSessionManager();
+
+  // Env first (Cloud Run, docker, inprocess, GKE cold claims): RUN_ID/RUN_TOKEN/OUTFITTER_API are
+  // already set, and this resolves immediately, exactly as before assignment.ts existed. On a GKE
+  // warm pod, RUN_ID isn't in env yet -- this waits (no default timeout) for a SandboxClaim's
+  // annotations to reach the pod's downward-API files (spec §3.5 Option B). Never logs the token;
+  // held in memory only (#45), never written to process.env.
+  phase("waiting for assignment");
+  const { runId, runToken, apiOrigin, waitedMs } = await resolveAssignment();
+  phaseRunId = runId;
+  logger = logger.child({ runId });
+  logger.addSecret(runToken);
+  phase(`assigned (waitedMs=${waitedMs})`);
+
+  const wsUrl = buildWsUrl(apiOrigin, runId);
 
   const link = new Link({
     url: wsUrl,
     // Called fresh on every (re)connect so a run that outlives one identity token's lifetime still
-    // authenticates -- see link.ts's module doc.
-    headers: async () => ({ Authorization: `Bearer ${await getIdToken(apiOrigin, devToken)}` }),
+    // authenticates -- see link.ts's module doc. Timed (#143): the spike's S2 report saw 9s pass
+    // between agentd logging "connecting to the link" and the request reaching the api, with nothing
+    // logged in between; the likeliest cost is this fetch's first Workload Identity token exchange on
+    // a fresh GKE node.
+    headers: async () => {
+      const tokenFetchStart = Date.now();
+      const token = await getIdToken(apiOrigin, devToken);
+      phase(`identity token fetched (${Date.now() - tokenFetchStart}ms)`);
+      return { Authorization: `Bearer ${token}` };
+    },
     runId,
     runToken,
     sessionId: "", // learned from run.spec; see Link.setSessionId
@@ -189,18 +213,20 @@ async function main(): Promise<void> {
     process.exit(1);
   });
 
+  // Timed (#143), paired with "connecting to the link" below: the delta between the two elapsedMs
+  // values is the full connect cost (identity token fetch, TCP/TLS, WS upgrade). Fires on every
+  // (re)connect, not just the first -- see link.ts's onOpen doc.
+  link.onOpen(() => phase("connected to the link"));
+
   phase("connecting to the link");
   link.connect();
-  // Loading pi's package for the session import takes seconds on a cold sandbox. Started once the
-  // connect is under way, it fills the network wait for the ID token, the handshake and run.spec
-  // instead of sitting between run.spec and spawning pi (docs/reports/startup-trim.md).
-  preloadSessionManager();
 }
 
 main().catch((err) => {
-  // Fallback logger: main() can throw before requireEnv/createLogger ever runs (e.g. a missing env
-  // var), so this can't rely on the `logger` declared inside main(). Still structured JSON on stdout,
-  // matching every other agentd log line, rather than a bare console.error string on stderr.
+  // Fallback logger: main() can throw before resolveAssignment/createLogger ever runs (e.g. a
+  // missing env var), so this can't rely on the `logger` declared inside main(). Still structured
+  // JSON on stdout, matching every other agentd log line, rather than a bare console.error string on
+  // stderr.
   createLogger().error(`agentd: fatal: ${err?.message ?? err}`);
   process.exit(1);
 });

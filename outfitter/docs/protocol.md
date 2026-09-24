@@ -100,6 +100,18 @@ add names but can never re-add `RUN_TOKEN`, `RUN_ID`, `OUTFITTER_API`, `OUTFITTE
 right after reading them, so no other child agentd spawns (`git`, `pi --version`) inherits them
 either.
 
+**Where the takeover kit comes from: env, or, on a GKE warm pod, a wait.** `packages/agentd/src/assignment.ts`'s
+`resolveAssignment` is what main.ts actually calls. On Cloud Run, docker, inprocess and a GKE *cold*
+claim, `RUN_ID` is already in env at boot and this returns immediately -- no behavior change from
+before this module existed. A GKE *warm* pod boots with none of the three in env: it was pulled
+from the warm pool before any run existed, so there is nothing to assign it yet
+(`docs/specs/gke-sandbox-provider.md` §3.5). `resolveAssignment` instead polls the read-only files
+under `OUTFITTER_ASSIGNMENT_DIR` (default `/etc/outfitter/assignment/{run-id,run-token,api}`,
+root-only 0400) until a `SandboxClaim`'s annotations -- the API's warm-mode `start()` -- reach them
+via the downward API, with no default timeout: an unclaimed warm pod stays idle, never dialling
+out, until the pool shrinks and deletes it. Same isolation rule either way: the resolved values are
+held in memory only and never written to `process.env`.
+
 **Two Linux users inside the sandbox.** `image/Dockerfile`'s entrypoint (agentd) runs as root; `git`
 therefore also runs as root, so the `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0`/`GIT_CONFIG_VALUE_0` env
 vars agentd's git.ts uses to authenticate a clone/fetch/push (instead of `-c ...` on argv, which is

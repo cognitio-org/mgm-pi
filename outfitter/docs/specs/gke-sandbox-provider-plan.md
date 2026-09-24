@@ -290,6 +290,63 @@ change round 1's own §6b description.
 
 ---
 
+## 6d. PR4 delivered (2026-09-24)
+
+Matches the §3 PR4 row and spec §3.5's Option B. Notes for whoever builds on this:
+
+- **`packages/agentd/src/assignment.ts`** (new) is what `main.ts` now calls instead of reading
+  `OUTFITTER_API`/`RUN_ID`/`RUN_TOKEN` from env directly. Env path (Cloud Run, docker, inprocess, a
+  GKE cold claim) is byte-for-byte the same checks in the same order, same error text, as before this
+  file existed -- the only behaviour change on that path is that `RUN_TOKEN` is deleted from the
+  `env` object `resolveAssignment` was given (was `process.env` directly; now the same object, just
+  one level of indirection).
+- **File path (GKE warm)**: when `RUN_ID` isn't in env and `OUTFITTER_ASSIGNMENT_DIR` is, it polls
+  (default 100 ms, injectable) `run-id`/`run-token`/`api` under that directory until **all three**
+  are non-empty, not just `run-id`/`run-token` -- gke.ts's warm mode sets all three annotations in one
+  `additionalPodMetadata.annotations` patch and the kubelet's downward-API refresh swaps the whole
+  volume atomically, so requiring all three avoids a false "missing OUTFITTER_API" from a read that
+  lands between `run-id`/`run-token` landing and `api` landing (caught by this PR's own
+  `packages/agentd/test/main.test.ts`, which reproduced the race with three separate `writeFile`
+  calls before the fix). No default deadline, per the spec and the plan's acceptance bar: an
+  unclaimed warm pod waits idle forever rather than dialling out or exiting.
+- **Preload before the wait**: `main.ts` now calls `preloadSessionManager()` (and
+  `resolveRunAsUser()`, which also doesn't need the run) *before* `resolveAssignment()`, not after
+  `link.connect()` as before -- a warm pod that waits idle to be claimed now pre-pays that work for
+  free instead of paying it only after a claim arrives. For the env path this is a no-op change
+  (resolution is immediate either way).
+- **#143 (id-token and connect timing)**: `main.ts`'s `headers()` provider passed to `Link` now
+  times each `getIdToken` call and logs `startup: identity token fetched (<ms>ms)`; `link.onOpen`
+  logs `startup: connected to the link`, paired with the existing `startup: connecting to the link`
+  so the delta between the two `elapsedMs` values is the full connect cost. **Deviation from the
+  issue's stretch goal**: warm-path ID-token prefetch (fetching it before the assignment arrives) was
+  not implemented -- the assignment is also what supplies `OUTFITTER_API` (the token's audience) on
+  the warm path, and adding a second, deployment-fixed way to know the link origin ahead of time
+  (e.g. a new `OUTFITTER_LINK_ORIGIN_HINT` env var) felt like a second source of truth for one value
+  for a startup-latency win that hasn't been measured on a warm pod yet (S2's 9s figure is from a
+  *cold* claim, where a fresh node's Workload Identity setup is plausibly a bigger factor than on an
+  already-running warm pod). Left as a follow-up once PR5's benchmark has warm-pod numbers to justify
+  it. The timing itself ships either way, so the next spike has the data.
+- **Tests**: `packages/agentd/test/assignment.test.ts` (unit; env path unchanged including exact
+  error text/order, file path waits/resolves/keeps-waiting-on-a-partial-write, a deadline option,
+  never touches `process.env`, real-fs sanity test with genuinely missing files) and
+  `packages/agentd/test/main.test.ts` (integration; spawns the real built `dist/src/main.js` against
+  a bare `ws` server standing in for the link -- no real api needed for what this PR touches --
+  covering both the env-path and warm-path shapes end to end: phase-line order, no dial-out while
+  unclaimed, and that neither `RUN_TOKEN` nor `OUTFITTER_DEV_TOKEN` ever appears in agentd's own
+  stdout). `main.test.ts` skips itself with a clear message if `packages/agentd` hasn't been built
+  yet, the same convention `packages/api/test/e2e.test.ts` uses for the same reason.
+- **Not touched**: `packages/api/src/providers/gke.ts` (owned by an in-flight auth fix elsewhere) and
+  `deploy/gke/sandbox-template.yaml` (already correct from PR3 -- confirmed the file names/paths
+  `assignment.ts` reads against it, no changes needed).
+- **Observation, not fixed here**: `link.ts`'s `open()` silently swallows a `headers()` rejection
+  (falls straight to `scheduleReconnect()` with no log line) -- pre-existing, not introduced by this
+  PR, found while writing `main.test.ts`'s warm-path test (a missing `OUTFITTER_DEV_TOKEN` in that
+  test's env made `getIdToken` reject with no visible symptom beyond "hello never arrives"). Worth a
+  log line in a future PR; out of scope here since it isn't part of #139/#143's ask and touching
+  `link.ts`'s reconnect path is easy to get wrong under the "cloud fixes" protocol-version work.
+
+---
+
 ## 6. Spec amendments to fold in
 
 PR1 edits `gke-sandbox-provider.md` to match: §5 rewritten for `config.env`, owner-run scripts and the

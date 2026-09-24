@@ -508,6 +508,17 @@ seconds. **UNVERIFIED** on Autopilot with gVisor. If S1 measures p90 above 2 s, 
 projected KSA token with `resourceNames`-restricted RBAC. It needs a token mounted in the pod and a
 fresh security review.
 
+**Verified and implemented (PR4, `gke-sandbox-provider-plan.md` §6d).** S1 passed (p90 well under 2s
+in-cluster; `docs/reports/gke-spike.md` S1), so PR4 shipped Option B as designed above, with one
+addition the design above didn't call out: `resolveAssignment` waits for `run-id`, `run-token` **and**
+`api` to all be non-empty (not just the first two) before returning, since the three annotations land
+in the pod's downward-API files together (one `additionalPodMetadata.annotations` patch, one atomic
+volume refresh) -- waiting on all three avoids a spurious "missing OUTFITTER_API" from a read caught
+between two refreshes. `packages/agentd/src/assignment.ts` is the actual implementation; its
+`resolveAssignment` signature matches the sketch above except it also accepts an injectable `sleep`
+and `deadlineMs` (both test-only knobs -- production never sets a deadline, matching "no timeout by
+default" above).
+
 ### 3.6 Networking, logs, workspace
 
 | Concern | Design | Parity with Cloud Run |

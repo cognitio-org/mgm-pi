@@ -1,0 +1,68 @@
+# Spike S1 (docs/reports/gke-spike.md): how fast does a claim's annotation reach a warm pod's
+# downward-API file under gVisor? Throwaway: everything lives in namespace outfitter-spike, which
+# the spike deletes afterwards.
+#   CLOUDSDK_ACTIVE_CONFIG_NAME=outfitter kubectl --kubeconfig ~/.kube/outfitter apply -f s1.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: outfitter-spike
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: s1-probe
+  namespace: outfitter-spike
+spec:
+  podTemplate:
+    metadata:
+      labels: { app: s1-probe }
+    spec:
+      # GKE's sandbox-core-policy admission rules (ValidatingAdmissionPolicy) require all four.
+      runtimeClassName: gvisor
+      automountServiceAccountToken: false
+      nodeSelector: { sandbox.gke.io/runtime: gvisor }
+      tolerations:
+        - { key: sandbox.gke.io/runtime, operator: Equal, value: gvisor, effect: NoSchedule }
+      restartPolicy: Never
+      containers:
+        - name: probe
+          image: busybox:1.36
+          # Print the file whenever it changes, polling every 50 ms. The log line's kubelet
+          # timestamp (kubectl logs --timestamps) is the moment the value became visible.
+          command:
+            - sh
+            - -c
+            - |
+              last="<unset>"   # not "", so the empty file's first state is logged too
+              while true; do
+                cur="$(cat /etc/outfitter/assignment/run-id 2>/dev/null)"
+                if [ "$cur" != "$last" ]; then echo "run-id=[$cur]"; last="$cur"; fi
+                sleep 0.05
+              done
+          # sandbox-hardening-policy (binding mode EnsureExists, Deny): drop ALL, add nothing,
+          # runAsNonRoot, and cpu+memory limits on every container.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: 250m, memory: 512Mi }
+          volumeMounts:
+            - { name: assignment, mountPath: /etc/outfitter/assignment, readOnly: true }
+      volumes:
+        - name: assignment
+          downwardAPI:
+            items:
+              - path: run-id
+                fieldRef: { fieldPath: "metadata.annotations['outfitter.dev/run-id']" }
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: s1-probe
+  namespace: outfitter-spike
+spec:
+  replicas: 1
+  sandboxTemplateRef: { name: s1-probe }

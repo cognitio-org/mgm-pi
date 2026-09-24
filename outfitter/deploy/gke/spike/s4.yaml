@@ -1,0 +1,52 @@
+# Spike S4 (docs/reports/gke-spike.md): cold start of the real outfitter-agent image with image
+# streaming, under gVisor. Spec §3.3's shape (1 vCPU / 2 GiB / 4 GiB ephemeral), the production tag,
+# the real entrypoint. No RUN_ID/RUN_TOKEN, so agentd starts, finds no run and exits: the timings
+# up to its first log line are what S4 measures. activeDeadlineSeconds caps a pod that doesn't exit.
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: s4-coldstart
+  namespace: outfitter-sandboxes
+spec:
+  networkPolicyManagement: Managed
+  networkPolicy:
+    ingress: []
+    egress:
+      - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16] } }]
+        ports: [{ protocol: TCP, port: 443 }, { protocol: TCP, port: 80 }]
+      - to: [{ ipBlock: { cidr: 169.254.169.254/32 } }]
+        ports: [{ protocol: TCP, port: 80 }]
+      - to:
+          - { namespaceSelector: {}, podSelector: { matchLabels: { k8s-app: kube-dns } } }
+          - { ipBlock: { cidr: 169.254.20.10/32 } }
+          - { ipBlock: { cidr: 34.118.224.10/32 } }
+        ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+  podTemplate:
+    metadata:
+      labels: { app: s4-coldstart }
+    spec:
+      runtimeClassName: gvisor
+      serviceAccountName: outfitter-agent
+      automountServiceAccountToken: false
+      nodeSelector: { sandbox.gke.io/runtime: gvisor }
+      tolerations:
+        - { key: sandbox.gke.io/runtime, operator: Equal, value: gvisor, effect: NoSchedule }
+      restartPolicy: Never
+      activeDeadlineSeconds: 180
+      containers:
+        - name: agentd
+          image: us-central1-docker.pkg.dev/outfitter-509211/outfitter/outfitter-agent:1e21c9f08eb9
+          env:
+            - { name: OUTFITTER_API, value: "https://link.kernal.one" }
+          resources:
+            requests: { cpu: "1", memory: 2Gi, ephemeral-storage: 4Gi }
+            limits: { cpu: "1", memory: 2Gi, ephemeral-storage: 4Gi }
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: s4-coldstart
+  namespace: outfitter-sandboxes
+spec:
+  replicas: 0
+  sandboxTemplateRef: { name: s4-coldstart }

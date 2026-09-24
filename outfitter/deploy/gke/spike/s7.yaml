@@ -1,0 +1,75 @@
+# Spike S7 (docs/reports/gke-spike.md): can a NET_ADMIN init container block uid 1000 (the image's
+# `agent`) from the metadata server under gVisor on Autopilot, while root keeps access?
+#
+# A plain Pod, not a SandboxTemplate: GKE's sandbox-core/sandbox-hardening admission policies match
+# only agents.x-k8s.io objects, so this tests Autopilot and gVisor alone. Whether the hardening
+# policy should admit the same init container in a template is a separate owner decision.
+# All containers share the pod's network namespace, so the init container's rules apply to them.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: s7-metadata-block
+  namespace: outfitter-spike
+spec:
+  runtimeClassName: gvisor
+  automountServiceAccountToken: false
+  nodeSelector: { sandbox.gke.io/runtime: gvisor }
+  tolerations:
+    - { key: sandbox.gke.io/runtime, operator: Equal, value: gvisor, effect: NoSchedule }
+  restartPolicy: Never
+  initContainers:
+    - name: block-metadata
+      image: alpine:3.20
+      command:
+        - sh
+        - -c
+        - |
+          set -e
+          apk add --no-cache iptables >/dev/null
+          for dst in 169.254.169.254 169.254.169.252; do
+            iptables -A OUTPUT -d "$dst" -m owner --uid-owner 1000 -j REJECT
+          done
+          iptables -S OUTPUT
+      securityContext:
+        runAsUser: 0
+        capabilities: { add: [NET_ADMIN], drop: [ALL] }
+      resources:
+        requests: { cpu: 250m, memory: 256Mi }
+        limits: { cpu: 250m, memory: 256Mi }
+  containers:
+    # Each prints one line per endpoint: OK <body> or BLOCKED <error>.
+    - name: as-agent
+      image: busybox:1.36
+      command: &probe
+        - sh
+        - -c
+        - |
+          sleep 2
+          for url in \
+            http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/email \
+            http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email \
+            http://169.254.169.252:988/computeMetadata/v1/instance/service-accounts/default/email; do
+            if out="$(wget -q -T 5 -O- --header 'Metadata-Flavor: Google' "$url" 2>&1)"; then
+              echo "uid=$(id -u) OK $url -> $out"
+            else
+              echo "uid=$(id -u) BLOCKED $url -> $out"
+            fi
+          done
+      securityContext:
+        runAsUser: 1000
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        capabilities: { drop: [ALL] }
+      resources:
+        requests: { cpu: 250m, memory: 256Mi }
+        limits: { cpu: 250m, memory: 256Mi }
+    - name: as-root
+      image: busybox:1.36
+      command: *probe
+      securityContext:
+        runAsUser: 0
+        allowPrivilegeEscalation: false
+        capabilities: { drop: [ALL] }
+      resources:
+        requests: { cpu: 250m, memory: 256Mi }
+        limits: { cpu: 250m, memory: 256Mi }

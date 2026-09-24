@@ -7,6 +7,7 @@ import type { Session, PiEntry, Run } from "../store/types.ts";
 import { MAIL_HELD_NOTICE, MAIL_MAX_TEXT } from "../mail.ts";
 import { GITHUB_TOKEN_DEFAULT_SECRET } from "../secrets.ts";
 import { sessionGithubTokenSecretName } from "../operator.ts";
+import { entryForWire } from "../entry-wire.ts";
 
 const SESSION_VERSION = 3; // matches pi's CURRENT_SESSION_VERSION; keeps export.jsonl pi-compatible
 
@@ -42,6 +43,14 @@ interface SessionSummary {
 async function reportableRun(ctx: RouteContext, sessionId: string): Promise<Run | null> {
   const active = await ctx.store.runs.findActiveForSession(sessionId);
   return active ?? (await ctx.store.runs.findLatestForSession(sessionId));
+}
+
+async function htmlPreviewAccessByRun(ctx: RouteContext, sessionId: string): Promise<Record<string, boolean>> {
+  const byRun: Record<string, boolean> = {};
+  for (const run of await ctx.store.runs.listForSession(sessionId)) {
+    if (run.allowExternalHtmlResources !== undefined) byRun[run.id] = run.allowExternalHtmlResources;
+  }
+  return byRun;
 }
 
 /** A failed run's own explanation, preferring the full note over the short close/reconcile reason. */
@@ -169,6 +178,10 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
       // preview matches the prompt that run was given; before any run has recorded one, the
       // Tape's current value, which is what the next run will get.
       allowExternalHtmlResources: run?.allowExternalHtmlResources ?? guru?.allowExternalHtmlResources === true,
+      // #147: each run's own value, keyed by run id, so an entry that carries `outfitterRunId`
+      // (entry-wire.ts) previews the way its run was told. Runs that never recorded one are left
+      // out; their entries use allowExternalHtmlResources above.
+      htmlPreviewAccessByRun: await htmlPreviewAccessByRun(ctx, session.id),
       heldMail,
       ...(heldMail > 0 ? { mailNotice: MAIL_HELD_NOTICE } : {}),
       github: {
@@ -290,7 +303,7 @@ export async function registerPanelRoutes(app: FastifyInstance, ctx: RouteContex
     if (!session) return;
     const { after } = req.query as { after?: string };
     const entries = await ctx.store.entries.listForSession(session.id, after);
-    return entries.map((e) => e.entry);
+    return entries.map(entryForWire);
   });
 
   app.post("/api/sessions/:id/messages", async (req, reply) => {

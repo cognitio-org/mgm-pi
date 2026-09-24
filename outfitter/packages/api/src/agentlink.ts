@@ -20,6 +20,7 @@ import { MAIL_LEASE_MS, MAIL_MAX_ATTEMPTS, type MailService } from "./mail.ts";
 import { isBrowserActionKind, parseBrowserAction } from "./browser-action.ts";
 import { GithubBroker } from "./github-broker.ts";
 import { branchAllowed, branchPrefixOf } from "./branch-policy.ts";
+import { entryForWire } from "./entry-wire.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
@@ -990,10 +991,10 @@ export class AgentLink {
       case "entry": {
         const seq = Number(frame.seq);
         const entry = frame.entry as PiEntry;
-        const inserted = await this.store.entries.insertIfNew(sessionId, seq, entry);
+        const inserted = await this.store.entries.insertIfNew(sessionId, seq, entry, { runId });
         if (inserted) {
           await this.store.sessions.update(sessionId, { leafId: entry.id, updatedAt: now });
-          this.sse.publish(sessionId, { type: "entry", data: entry });
+          this.sse.publish(sessionId, { type: "entry", data: entryForWire({ entry, runId }) });
         }
         // Not gated on `inserted`: the mail id is derived from the entry id, so a replay is a no-op,
         // and a send that threw on the first delivery (entry stored, no ack) is retried on replay.

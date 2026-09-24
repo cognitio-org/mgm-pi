@@ -39,7 +39,7 @@ import type {
   BrowserCapturesCollection,
   BrowserCaptureSave,
 } from "./types.ts";
-import { BROWSER_CAPTURES_PER_SESSION } from "./types.ts";
+import { BROWSER_CAPTURES_PER_SESSION, entryInsertFields, type EntryInsertOptions } from "./types.ts";
 import { TOKEN_TTL_MS } from "../tokens.ts";
 
 // Typed as RunState[], not inferred as string[]: used in a Mongo `$in` filter against Run.state,
@@ -104,9 +104,9 @@ class MongoEntries implements EntriesCollection {
     this.col = col;
   }
 
-  async insertIfNew(sessionId: string, seq: number, entry: PiEntry, blobRef?: string): Promise<boolean> {
+  async insertIfNew(sessionId: string, seq: number, entry: PiEntry, opts: EntryInsertOptions = {}): Promise<boolean> {
     try {
-      await this.col.insertOne({ sessionId, seq, entry, blobRef });
+      await this.col.insertOne({ sessionId, seq, entry, ...entryInsertFields(opts) });
       return true;
     } catch (err) {
       // duplicate key on the unique {sessionId, "entry.id"} index: already persisted, ignore.
@@ -185,6 +185,12 @@ class MongoRuns implements RunsCollection {
   async findLatestForSession(sessionId: string): Promise<Run | null> {
     const rows = await this.col.find({ sessionId }).sort({ updatedAt: -1 }).limit(1).toArray();
     return stripId<Run>(rows[0] ?? null);
+  }
+
+  async listForSession(sessionId: string): Promise<Run[]> {
+    // Served by the {sessionId, state} index's sessionId prefix.
+    const rows = await this.col.find({ sessionId }).sort({ createdAt: 1 }).toArray();
+    return rows.map((r) => stripIdStrict<Run>(r));
   }
 
   async update(id: string, patch: Partial<Run>): Promise<Run | null> {

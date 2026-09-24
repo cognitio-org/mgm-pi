@@ -38,7 +38,7 @@ import type {
   BrowserCapturesCollection,
   BrowserCaptureSave,
 } from "./types.ts";
-import { BROWSER_CAPTURES_PER_SESSION } from "./types.ts";
+import { BROWSER_CAPTURES_PER_SESSION, entryInsertFields, type EntryInsertOptions } from "./types.ts";
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -76,13 +76,13 @@ class MemoryEntries implements EntriesCollection {
   private readonly bySession = new Map<string, Entry[]>();
   private readonly seenIds = new Map<string, Set<string>>();
 
-  async insertIfNew(sessionId: string, seq: number, entry: PiEntry, blobRef?: string): Promise<boolean> {
+  async insertIfNew(sessionId: string, seq: number, entry: PiEntry, opts: EntryInsertOptions = {}): Promise<boolean> {
     const seen = this.seenIds.get(sessionId) ?? new Set<string>();
     if (seen.has(entry.id)) return false;
     seen.add(entry.id);
     this.seenIds.set(sessionId, seen);
     const list = this.bySession.get(sessionId) ?? [];
-    list.push(clone({ sessionId, seq, entry, blobRef }));
+    list.push(clone({ sessionId, seq, entry, ...entryInsertFields(opts) }));
     this.bySession.set(sessionId, list);
     return true;
   }
@@ -148,6 +148,13 @@ class MemoryRuns implements RunsCollection {
       if (!latest || row.updatedAt > latest.updatedAt) latest = row;
     }
     return latest ? clone(latest) : null;
+  }
+
+  async listForSession(sessionId: string): Promise<Run[]> {
+    return [...this.rows.values()]
+      .filter((row) => row.sessionId === sessionId)
+      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0))
+      .map(clone);
   }
 
   async update(id: string, patch: Partial<Run>): Promise<Run | null> {

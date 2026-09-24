@@ -59,6 +59,9 @@ export interface PassThroughBeat {
 export interface AssistantBeat {
   kind: "assistant";
   id: string;
+  /** The prose's own view id. `id` is the first rail item's when there is one, which may belong to
+   * an earlier entry; this one always names the entry the prose came from. */
+  proseId: string;
   prose: string;
   rail: RailItem[];
 }
@@ -180,7 +183,7 @@ export function groupBeats(views: GroupedEntry[]): Beat[] {
         break;
       }
       case "assistant-text":
-        beats.push({ kind: "assistant", id: rail[0]?.id ?? view.id, prose: view.text, rail });
+        beats.push({ kind: "assistant", id: rail[0]?.id ?? view.id, proseId: view.id, prose: view.text, rail });
         rail = [];
         break;
       default: {

@@ -44,6 +44,7 @@ writes it to its own JSONL file plus routing metadata.
 | `seq` | number | monotonically increasing per run (protocol.md); NOT the same as pi's own entry ordering, just insertion order into this collection |
 | `entry` | object | the pi entry verbatim: `{id, parentId, type, ...}` |
 | `blobRef` | string? | TODO, see "blobRef" below — always `undefined` today |
+| `runId` | string? | #147: the run whose agentd sent the entry (`agentlink.ts`). Absent for entries the api writes itself (browser captures, session-route writes) and for entries stored before the field. Sent to browsers as `outfitterRunId` next to the entry's own fields (`entry-wire.ts`); never written into `entry` |
 
 Indexes: `{sessionId: 1, "entry.id": 1}` **unique** (the idempotency key: `agentlink.ts`'s
 `insertIfNew` relies on the resulting duplicate-key error to detect a re-delivered `entry` frame

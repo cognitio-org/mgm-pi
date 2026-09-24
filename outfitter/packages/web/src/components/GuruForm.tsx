@@ -54,6 +54,7 @@ export function GuruForm({ guru, models, meta, onClose, onSaved }: Props) {
   const [tools, setTools] = useState(listToText(guru?.tools));
   const [excludeTools, setExcludeTools] = useState(listToText(guru?.excludeTools));
   const [playwrightBeforeCheckpoint, setPlaywrightBeforeCheckpoint] = useState(guru?.playwrightBeforeCheckpoint === true);
+  const [allowExternalHtmlResources, setAllowExternalHtmlResources] = useState(guru?.allowExternalHtmlResources === true);
   const [branchPrefix, setBranchPrefix] = useState(guru?.branchPrefix ?? "outfitter/");
   const [envRows, setEnvRows] = useState<EnvRow[]>(envToRows(guru?.env).length > 0 ? envToRows(guru?.env) : [{ key: "", value: "" }]);
   const [submitting, setSubmitting] = useState(false);
@@ -83,6 +84,7 @@ export function GuruForm({ guru, models, meta, onClose, onSaved }: Props) {
       tools: textToList(tools),
       excludeTools: textToList(excludeTools),
       playwrightBeforeCheckpoint,
+      allowExternalHtmlResources,
       branchPrefix: branchPrefix.trim() || undefined,
       env: rowsToEnv(envRows),
     };
@@ -143,6 +145,20 @@ export function GuruForm({ guru, models, meta, onClose, onSaved }: Props) {
           <div className="form-row">
             <label htmlFor="guru-append-system-prompt">Append to system prompt (optional)</label>
             <textarea id="guru-append-system-prompt" value={appendSystemPrompt} onChange={(e) => setAppendSystemPrompt(e.target.value)} />
+          </div>
+          <div className="form-row">
+            <label className="form-check">
+              <input
+                type="checkbox"
+                checked={allowExternalHtmlResources}
+                onChange={(e) => setAllowExternalHtmlResources(e.target.checked)}
+              />
+              Allow external CSS and JS in HTML previews
+            </label>
+            <p className="session-meta">
+              Off by default. Runs are told whether HTML they write may link external stylesheets and scripts, and
+              previews start that way. You can still change one preview in its dialog.
+            </p>
           </div>
 
           <div className="form-row">

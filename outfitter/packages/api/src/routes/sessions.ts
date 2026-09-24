@@ -165,6 +165,10 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
       runState: run?.state,
       runStateReason: runStateReason(run),
       pendingUiRequest,
+      // Issue #132: the HTML preview's starting access. The run's own copy, so an old session's
+      // preview matches the prompt that run was given; before any run has recorded one, the
+      // Tape's current value, which is what the next run will get.
+      allowExternalHtmlResources: run?.allowExternalHtmlResources ?? guru?.allowExternalHtmlResources === true,
       heldMail,
       ...(heldMail > 0 ? { mailNotice: MAIL_HELD_NOTICE } : {}),
       github: {

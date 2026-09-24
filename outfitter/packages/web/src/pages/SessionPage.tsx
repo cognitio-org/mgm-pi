@@ -33,6 +33,7 @@ import { transport, transportLabel } from "../lib/vocabulary.ts";
 import { deriveSessionActivity, nextSendAnchor, notePendingRunState, type PendingSend } from "../lib/send-status.ts";
 import { useChromeCompanion } from "../hooks/useChromeCompanion.ts";
 import { teleportCommand } from "../lib/webmcp.ts";
+import { HtmlPreviewAccessContext, previewAccessFor } from "../lib/html-preview-access.ts";
 
 type PendingAction = "abort" | "stop" | "wake" | null;
 
@@ -563,13 +564,17 @@ export function SessionPage() {
           {beats.length === 0 && !activity.showOptimistic ? (
             <p className="empty-state">No entries yet. Send a message below to start the run.</p>
           ) : (
-            beats.map((beat) =>
-              beat.kind === "passthrough" ? (
-                <EntryItem key={beat.id} view={beat.view} sessionId={sessionId} />
-              ) : (
-                <BeatView key={beat.id} beat={beat} defaultThinkingExpanded={defaultThinkingExpanded} />
-              ),
-            )
+            // #132: the agent's HTML previews start the way its run's prompt described. The
+            // Composer's own Markdown preview is outside this and stays sealed.
+            <HtmlPreviewAccessContext.Provider value={previewAccessFor(session?.allowExternalHtmlResources)}>
+              {beats.map((beat) =>
+                beat.kind === "passthrough" ? (
+                  <EntryItem key={beat.id} view={beat.view} sessionId={sessionId} />
+                ) : (
+                  <BeatView key={beat.id} beat={beat} defaultThinkingExpanded={defaultThinkingExpanded} />
+                ),
+              )}
+            </HtmlPreviewAccessContext.Provider>
           )}
           {activity.showOptimistic && pendingSend && (
             <div

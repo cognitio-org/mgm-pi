@@ -132,7 +132,7 @@ Down (api → agentd):
 
 | t | fields | effect |
 |---|---|---|
-| `run.spec` | `session {id, name, cwd:"/workspace"}, repo? {cloneUrl, branch, baseBranch, createBranch, branchPrefix?} (absent for non-coding sessions: agentd starts with an empty /workspace, or restores `workspace.snapshotUrl`), workspace? {snapshotUrl?}, guru {systemPrompt?, appendSystemPrompt?, model, thinking, tools?, excludeTools?, packages?, env?, playwrightBeforeCheckpoint?}, snapshot {url?, jsonl?}, secrets {githubToken, litellmKey, litellmBaseUrl?}, author? {name, email, login?}, idleStopSeconds, checkpointEvery` | start the run |
+| `run.spec` | `session {id, name, cwd:"/workspace"}, repo? {cloneUrl, branch, baseBranch, createBranch, branchPrefix?} (absent for non-coding sessions: agentd starts with an empty /workspace, or restores `workspace.snapshotUrl`), workspace? {snapshotUrl?}, guru {systemPrompt?, appendSystemPrompt?, model, thinking, tools?, excludeTools?, packages?, env?, playwrightBeforeCheckpoint?, allowExternalHtmlResources?}, snapshot {url?, jsonl?}, secrets {githubToken, litellmKey, litellmBaseUrl?}, author? {name, email, login?}, idleStopSeconds, checkpointEvery` | start the run |
 | `ack` | `seq` | agentd may drop buffered frames ≤ seq |
 | `prompt` | `text, images?, behavior?: "steer"\|"followUp"` | pi RPC `prompt` (with `streamingBehavior` if pi is busy) |
 | `steer` / `follow_up` | `text` | pi RPC same name |
@@ -261,11 +261,25 @@ short log, and `data.screenshotPath` when a screenshot was produced). No spec in
 `skipped` ("nothing to run") and does not fail the checkpoint. If Chromium cannot start, the entry
 says so (`unavailable`) and the checkpoint still continues.
 
+`run.spec.guru.allowExternalHtmlResources` (#132) is optional and sent only when true. The api
+decides it once per run, from the guru's field of the same name when the run's first `run.spec` is
+built, records it on the run, and sends the recorded value on any later `run.spec` for that run.
+agentd always appends exactly one HTML preview paragraph to pi's system prompt, inside the single
+`--append-system-prompt` argument after the guru's own `appendSystemPrompt` and a blank line: the
+external one (http and https stylesheets, scripts, images, and fonts may be linked) when true, the
+sealed one (inline CSS only) otherwise. The text lives in
+`kernal/.pi/extensions/_shared/html-preview-prompt.ts`, copied to agentd's `src/html-preview-prompt.ts`.
+It is never sent as `--system-prompt`, which would replace pi's own prompt. Because any
+`--append-system-prompt` stops pi looking for `APPEND_SYSTEM.md` itself, agentd finds that file the
+way pi does (the workspace's `.pi/APPEND_SYSTEM.md`, then `$PI_CODING_AGENT_DIR/APPEND_SYSTEM.md`) and,
+when the guru has no `appendSystemPrompt` of its own, passes its path as an earlier
+`--append-system-prompt`. A guru's own text replaces the file, as it did before.
+
 ## browser ⇄ api (REST)
 
 - `POST /api/sessions` `{guruId, repo?, baseBranch?, branch?, prompt, name?, model?}` → `{session, run}` (`repo` omitted = non-coding session with a scratch workspace; `model` overrides the guru's own model for this session — see the laptop-preflight note above)
 - `GET /api/sessions?status=&guru=` → list with `{id, name, status, runState, guru, repo, branch, parentId?, cost, updatedAt}`
-- `GET /api/sessions/:id` → metadata + `leafId` + `runState` + `pendingUiRequest` (the active run's `Run.pendingUiRequest`, or `null` when there is none — a stopped or failed run does not keep a stale approval)
+- `GET /api/sessions/:id` → metadata + `leafId` + `runState` + `pendingUiRequest` (the active run's `Run.pendingUiRequest`, or `null` when there is none — a stopped or failed run does not keep a stale approval) + `allowExternalHtmlResources` (#132: the HTML preview's starting access, from the same run as `runState`, which keeps it after stopping; the guru's current value when that run has not recorded one yet)
 - `GET /api/sessions/:id/entries?after=<entryId>` → pi entries in tree order
 - `GET /api/sessions/:id/stream` → SSE: `event: entry|event|status|spend|checkpoint`, `data: <json>`
 - `POST /api/sessions/:id/messages` `{text, behavior?}` → stores the text as mail (see "Mailbox"), wakes a run if none is running, returns `{run}`; `behavior` defaults to `followUp`. If the wake fails it returns **202 `{run: null}`**: the mail is queued for Cloud Tasks and `/tick`, so the client must not resend. Text over 32,000 characters is a 413. `POST /api/sessions` behaves the same way for its `prompt` (201 with `run: null` if the first wake failed)

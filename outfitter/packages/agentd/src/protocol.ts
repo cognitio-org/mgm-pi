@@ -218,6 +218,10 @@ export interface RunSpecGuru {
   /** Tape option, default off. When true, run a Playwright spec in the workspace against a fresh
    * headless Chromium before the checkpoint push or workspace snapshot. Absent means off. */
   playwrightBeforeCheckpoint?: boolean;
+  /** Tape option, default off (issue #132). Picks which HTML preview paragraph renderGuru appends
+   * to pi's system prompt: external CSS and JS allowed when true, sealed otherwise. Absent means
+   * off. */
+  allowExternalHtmlResources?: boolean;
 }
 
 export interface RunSpecSnapshot {

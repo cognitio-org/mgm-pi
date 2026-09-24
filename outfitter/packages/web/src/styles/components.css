@@ -462,6 +462,19 @@ button .working,
   min-height: 5rem;
 }
 
+.form-row label.form-check {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.form-check input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  padding: 0;
+  box-shadow: none;
+}
+
 .form-actions {
   display: flex;
   justify-content: flex-end;

@@ -1088,4 +1088,51 @@ describe("api-side refusals explain themselves", () => {
     off.stopBackgroundTasks();
     await off.fastify.close();
   });
+
+  test("#132: run.spec carries allowExternalHtmlResources only when true, and the run records it", async () => {
+    const on = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(on);
+    await on.store.gurus.update("test-guru", { allowExternalHtmlResources: true });
+    const agent = await openAgentSocket(on, runId);
+    sendHello(agent, runId, session.id, runToken);
+    const spec = await agent.nextMessage();
+    assert.equal(spec.t, "run.spec");
+    assert.equal(spec.guru.allowExternalHtmlResources, true);
+    assert.equal((await on.store.runs.findById(runId))?.allowExternalHtmlResources, true);
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    on.stopBackgroundTasks();
+    await on.fastify.close();
+
+    const off = await buildTestApp();
+    const plain = await makeRunningSession(off);
+    const plainAgent = await openAgentSocket(off, plain.runId);
+    sendHello(plainAgent, plain.runId, plain.session.id, plain.runToken);
+    const plainSpec = await plainAgent.nextMessage();
+    assert.equal(plainSpec.guru.allowExternalHtmlResources, undefined);
+    // Recorded as an explicit false, so a later spec for this run can't pick up a Tape edited since.
+    assert.equal((await off.store.runs.findById(plain.runId))?.allowExternalHtmlResources, false);
+    plainAgent.send({ t: "bye", reason: "stop" });
+    await plainAgent.nextClose();
+    off.stopBackgroundTasks();
+    await off.fastify.close();
+  });
+
+  test("#132: a run that already recorded the flag keeps it, whatever the Tape says now", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+    // As if an earlier connection of this run was given the external paragraph, then the Tape was
+    // switched off before agentd reconnected.
+    await app.store.runs.update(runId, { allowExternalHtmlResources: true });
+    await app.store.gurus.update("test-guru", { allowExternalHtmlResources: false });
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    const spec = await agent.nextMessage();
+    assert.equal(spec.guru.allowExternalHtmlResources, true);
+    assert.equal((await app.store.runs.findById(runId))?.allowExternalHtmlResources, true);
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
 });

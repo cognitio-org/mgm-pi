@@ -12,6 +12,7 @@ import { ActionListener } from "./browser-action.js";
 import { CaptureListener } from "./browser-capture.js";
 import { InspectListener } from "./browser-inspect.js";
 import { renderGuru } from "./guru.js";
+import { discoverAppendSystemPromptFile } from "./append-system.js";
 import { attributionTrailers, authHeaderSecret, botIdentityEnv, sanitizeAuthor, type GitOps } from "./git.js";
 import { githubRepoHttps, gitProxyInsteadOfEnv, parseGithubCloneUrl, startGitProxy, type GitProxy } from "./git-proxy.js";
 import { listenGithubSocket, type GithubSocket } from "./github-socket.js";
@@ -525,6 +526,7 @@ export class RunController {
       mailExtensionPath: this.deps.mailExtensionPath,
       browserExtensionPath: this.deps.browserExtensionPath,
       skipModelArg,
+      appendSystemPromptFile: discoverAppendSystemPromptFile(this.deps.workspace, process.env.PI_CODING_AGENT_DIR),
     });
     const secretEnv: Record<string, string> = {};
     // Not a secret, but pinned here after guru.env like the rest so a guru can't spoof it; the

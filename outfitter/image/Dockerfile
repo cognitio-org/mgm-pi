@@ -57,8 +57,12 @@ COPY kernal/.pi/extensions/ ./.pi/extensions/
 # outfitter-browser.js, which is the capture tool a Drive actually uses (it asks the link API,
 # and the user's Chrome takes the shot). pi refuses to start if both extensions are loaded.
 # Keep outfitter-browser. Delete kernal-chrome.
+# And kernal-html-preview (#132): it appends the HTML preview paragraph from the laptop's
+# settings.json. In a Drive agentd appends it from the Tape instead (renderGuru), so loading it here
+# could only add a second, possibly contradicting, paragraph. It also returns early under
+# KERNAL_SANDBOX=1, for an image built without this line.
 RUN rm -rf ./.pi/extensions/kernal-voice ./.pi/extensions/kernal-update ./.pi/extensions/kernal-admin \
-           ./.pi/extensions/kernal-codebase-index ./.pi/extensions/kernal-chrome
+           ./.pi/extensions/kernal-codebase-index ./.pi/extensions/kernal-chrome ./.pi/extensions/kernal-html-preview
 
 # TUI/laptop-only packages (voice input, terminal footer, editor LSP) make no sense for a cloud
 # guru with no terminal, no editor and no microphone attached; drop them from the image's

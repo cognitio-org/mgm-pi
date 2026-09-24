@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderGuru, renderModelArg } from "../src/guru.js";
+import { EXTERNAL_HTML_PREVIEW_PROMPT, SEALED_HTML_PREVIEW_PROMPT } from "../src/html-preview-prompt.js";
 import type { RunSpecGuru } from "../src/protocol.js";
 
 test("renderModelArg: no thinking level returns the bare model", () => {
@@ -36,6 +37,8 @@ test("renderGuru: minimal guru produces the fixed rpc/-a/session prefix plus --m
     "/tmp/s.jsonl",
     "--model",
     "litellm/local-qwen-mlx",
+    "--append-system-prompt",
+    SEALED_HTML_PREVIEW_PROMPT,
   ]);
   assert.deepEqual(env, {});
 });
@@ -61,12 +64,69 @@ test("renderGuru: system prompts, tools, and thinking level all render", () => {
     "--system-prompt",
     "You are terse.",
     "--append-system-prompt",
-    "Always cite files.",
+    `Always cite files.\n\n${SEALED_HTML_PREVIEW_PROMPT}`,
     "--tools",
     "read,grep,bash",
     "--exclude-tools",
     "write",
   ]);
+});
+
+function appendArgs(args: string[]): string[] {
+  return args.filter((_, i) => args[i - 1] === "--append-system-prompt");
+}
+
+test("renderGuru: #132 -- no allowExternalHtmlResources appends the sealed HTML paragraph, once", () => {
+  const { args } = renderGuru({ model: "m" }, { piBin: "pi", sessionFile: "/tmp/s.jsonl" });
+  assert.deepEqual(appendArgs(args), [SEALED_HTML_PREVIEW_PROMPT]);
+  const off = renderGuru({ model: "m", allowExternalHtmlResources: false }, { piBin: "pi", sessionFile: "/tmp/s.jsonl" });
+  assert.deepEqual(appendArgs(off.args), [SEALED_HTML_PREVIEW_PROMPT]);
+});
+
+test("renderGuru: #132 -- allowExternalHtmlResources:true appends the external HTML paragraph instead", () => {
+  const { args } = renderGuru(
+    { model: "m", allowExternalHtmlResources: true },
+    { piBin: "pi", sessionFile: "/tmp/s.jsonl" },
+  );
+  assert.deepEqual(appendArgs(args), [EXTERNAL_HTML_PREVIEW_PROMPT]);
+});
+
+test("renderGuru: #132 -- the guru's own append text stays in front of either paragraph, in one argument", () => {
+  for (const [allow, paragraph] of [
+    [false, SEALED_HTML_PREVIEW_PROMPT],
+    [true, EXTERNAL_HTML_PREVIEW_PROMPT],
+  ] as const) {
+    const { args } = renderGuru(
+      { model: "m", appendSystemPrompt: "Always cite files.", allowExternalHtmlResources: allow },
+      { piBin: "pi", sessionFile: "/tmp/s.jsonl" },
+    );
+    assert.deepEqual(appendArgs(args), [`Always cite files.\n\n${paragraph}`]);
+  }
+});
+
+test("renderGuru: #146 review -- a discovered APPEND_SYSTEM.md is still passed when the guru has no append text", () => {
+  // Any --append-system-prompt stops pi looking for the file itself, so agentd passes it first.
+  const { args } = renderGuru(
+    { model: "m" },
+    { piBin: "pi", sessionFile: "/tmp/s.jsonl", appendSystemPromptFile: "/workspace/.pi/APPEND_SYSTEM.md" },
+  );
+  assert.deepEqual(appendArgs(args), ["/workspace/.pi/APPEND_SYSTEM.md", SEALED_HTML_PREVIEW_PROMPT]);
+});
+
+test("renderGuru: #146 review -- a guru's own append text still replaces APPEND_SYSTEM.md, as before #132", () => {
+  const { args } = renderGuru(
+    { model: "m", appendSystemPrompt: "Always cite files." },
+    { piBin: "pi", sessionFile: "/tmp/s.jsonl", appendSystemPromptFile: "/workspace/.pi/APPEND_SYSTEM.md" },
+  );
+  assert.deepEqual(appendArgs(args), [`Always cite files.\n\n${SEALED_HTML_PREVIEW_PROMPT}`]);
+});
+
+test("renderGuru: #132 -- the paragraph never replaces --system-prompt", () => {
+  const { args } = renderGuru(
+    { model: "m", systemPrompt: "You are terse.", allowExternalHtmlResources: true },
+    { piBin: "pi", sessionFile: "/tmp/s.jsonl" },
+  );
+  assert.equal(args[args.indexOf("--system-prompt") + 1], "You are terse.");
 });
 
 test("renderGuru: bug 5a -- thinking:'off' reaches pi as an explicit :off suffix", () => {
@@ -133,6 +193,8 @@ test("renderGuru: spendExtensionPath renders --extension right after the fixed r
     "/opt/outfitter/agentd/pi-extension/outfitter-spend.js",
     "--model",
     "litellm/local-qwen-mlx",
+    "--append-system-prompt",
+    SEALED_HTML_PREVIEW_PROMPT,
   ]);
 });
 

@@ -1,0 +1,95 @@
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_e0bc7d6e875242::t_0833673598accd 32
+  s_e0bc7d6e875242::t_ef0a3399ae9011 530-540
+outfitter/packages/agentd/src/html-preview-prompt.ts
+  s_e0bc7d6e875242::t_0a1ba59b3fe32e 1-24
+outfitter/packages/api/test/routes.test.ts
+  s_e0bc7d6e875242::t_8a55899206b04b 130-166
+outfitter/packages/agentd/test/guru.test.ts
+  s_e0bc7d6e875242::t_27a06f31e6bd35 4
+  s_e0bc7d6e875242::t_34666e0504f1c0 67
+  s_e0bc7d6e875242::t_8869ec6ffa552a 75-114
+  s_e0bc7d6e875242::t_9cdd5323bc127d 40-41,179-180
+outfitter/packages/web/test/html-preview-dialog.test.tsx
+  s_e0bc7d6e875242::t_2d0fb6846d5282 125-177
+  s_e0bc7d6e875242::t_52c0e659762721 6-8
+outfitter/packages/api/test/agentlink.test.ts
+  s_e0bc7d6e875242::t_e6eb03dd412e65 1095
+  s_e0bc7d6e875242::t_bc3b7ec233d1ad 1091-1094,1096-1137
+kernal/tests/html-preview.test.ts
+  s_e0bc7d6e875242::t_c29f7691eb3b56 1-2,4-51,62-87
+  s_e0bc7d6e875242::t_8caf0681dc61ef 3
+  s_e0bc7d6e875242::t_3bf053d01a8eba 52-61
+outfitter/packages/api/test/gurus.test.ts
+  s_e0bc7d6e875242::t_1eccf57e901617 258-324
+kernal/.pi/extensions/_shared/html-preview-prompt.ts
+  s_e0bc7d6e875242::t_dd70acfd19c38d 1-25
+outfitter/packages/agentd/src/guru.ts
+  s_e0bc7d6e875242::t_17e5d44102887d 11,96-104,117
+outfitter/packages/web/src/api/client.ts
+  s_e0bc7d6e875242::t_a6b8544dea9e57 89-91
+  s_e0bc7d6e875242::t_2a0c89ee2f87ac 50-51
+outfitter/docs/protocol.md
+  s_e0bc7d6e875242::t_6826e703e1a9e4 135
+  s_e0bc7d6e875242::t_73d7324a7535e3 264-273
+  s_e0bc7d6e875242::t_15d7d2b8e17e83 278
+outfitter/packages/web/test/guru-form.test.tsx
+  s_e0bc7d6e875242::t_cb9a29be233b7c 1-58
+outfitter/packages/web/src/styles/components.css
+  s_e0bc7d6e875242::t_a6e849f5449370 465-477
+outfitter/packages/api/src/routes/sessions.ts
+  s_e0bc7d6e875242::t_dbe63b991b3762 168-171
+outfitter/packages/agentd/test/html-preview-prompt.test.ts
+  s_e0bc7d6e875242::t_810f0c73626ce3 1-19
+outfitter/packages/api/src/routes/gurus.ts
+  s_e0bc7d6e875242::t_e0208a5c7346eb 109-111
+  s_e0bc7d6e875242::t_85e9e645185578 89
+outfitter/packages/web/src/components/HtmlFence.tsx
+  s_e0bc7d6e875242::t_14cbc557f575fb 1,3,5-6,10,23
+outfitter/packages/agentd/src/protocol.ts
+  s_e0bc7d6e875242::t_17e5d44102887d 221-224
+outfitter/packages/api/src/store/types.ts
+  s_e0bc7d6e875242::t_7f66175bda9895 283-287
+  s_e0bc7d6e875242::t_c83cf6f05f70fc 146-150
+outfitter/packages/api/docs/data-model.md
+  s_e0bc7d6e875242::t_0c66b538ce5ba5 83
+  s_e0bc7d6e875242::t_54bf947bd695da 111
+outfitter/packages/web/src/components/GuruForm.tsx
+  s_e0bc7d6e875242::t_38bca2c106c001 57
+  s_e0bc7d6e875242::t_93a8e521984e43 87
+  s_e0bc7d6e875242::t_3bae5def36d1a7 149-162
+outfitter/image/Dockerfile
+  s_e0bc7d6e875242::t_3f27d1d1b898d6 60-63,65
+outfitter/packages/web/src/lib/html-preview-access.ts
+  s_e0bc7d6e875242::t_f5f09788c8bfaf 1-13
+outfitter/packages/web/src/components/HtmlPreviewDialog.tsx
+  s_e0bc7d6e875242::t_653aa812f082d2 4-8,10-19
+kernal/README.md
+  s_e0bc7d6e875242::t_f3011bca31685e 670-701
+outfitter/packages/api/src/agentlink.ts
+  s_e0bc7d6e875242::t_ac26212d774c90 877-880,883
+  s_e0bc7d6e875242::t_7d7d2619b52c4e 932
+  s_e0bc7d6e875242::t_e725e4692ad0e2 742
+  s_e0bc7d6e875242::t_c9af9c41775eff 99-101
+  s_e0bc7d6e875242::t_58ff3453a31da3 864-865
+kernal/.pi/extensions/kernal-html-preview/index.ts
+  s_e0bc7d6e875242::t_9d49e1f461b534 41-49
+  s_e0bc7d6e875242::t_468588389faba9 1-9,12-40,50-51
+  s_e0bc7d6e875242::t_7ccea939559660 10-11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "01bc5dd3e5d05d1eb3267439cde7cd10b9d04aa1",
+  "prompts": {},
+  "sessions": {
+    "s_e0bc7d6e875242": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c37c9d46-795c-4cd1-835d-84b84570be9d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

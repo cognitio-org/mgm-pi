@@ -247,6 +247,9 @@ export interface Guru {
   /** When true, this guru's cloud runs may `github_pr.merge`. Absent or false refuses with
    * "not permitted" — a cloud run can be started with nobody watching. */
   mergeFromCloud?: boolean;
+  /** Tape option, default off. Absent on existing gurus. When true, agentd runs a Playwright spec
+   * already in the workspace against a fresh headless Chromium before checkpoint. */
+  playwrightBeforeCheckpoint?: boolean;
   createdAt: string;
   updatedAt: string;
 }

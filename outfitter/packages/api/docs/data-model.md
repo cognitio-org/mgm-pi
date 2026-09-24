@@ -106,6 +106,7 @@ Reusable agent configs (EPIC.md vocabulary: **Guru**, never "Expert").
 | `packages` | string[]? | pi packages/skills for the run's `PI_CODING_AGENT_DIR` |
 | `env` | object? | |
 | `mergeFromCloud` | boolean? | phase 3: when true, this guru's cloud runs may `github_pr.merge`. Absent or false refuses with "not permitted" |
+| `playwrightBeforeCheckpoint` | boolean? | default off. When true, agentd runs a Playwright spec already in the workspace against a fresh headless Chromium before checkpoint. Absent on existing gurus (not stored as true). |
 | `createdAt`, `updatedAt` | ISO string | |
 
 No indexes beyond `_id` — the guru list is small and read in full (`GET /api/gurus`).

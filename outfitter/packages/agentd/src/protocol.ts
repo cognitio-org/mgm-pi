@@ -194,6 +194,9 @@ export interface RunSpecGuru {
   excludeTools?: string[];
   packages?: string[];
   env?: Record<string, string>;
+  /** Tape option, default off. When true, run a Playwright spec in the workspace against a fresh
+   * headless Chromium before the checkpoint push or workspace snapshot. Absent means off. */
+  playwrightBeforeCheckpoint?: boolean;
 }
 
 export interface RunSpecSnapshot {

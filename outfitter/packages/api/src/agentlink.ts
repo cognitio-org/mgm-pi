@@ -92,6 +92,8 @@ export interface RunSpecMessage {
     excludeTools?: string[];
     packages?: string[];
     env?: Record<string, string>;
+    /** Copied from the guru only when it is exactly true. Absent means the check is off. */
+    playwrightBeforeCheckpoint?: boolean;
   };
   snapshot: { url?: string; jsonl?: string };
   // litellmBaseUrl is server-controlled (config.litellmBaseUrl), never guru-editable -- see
@@ -800,6 +802,7 @@ export class AgentLink {
         excludeTools: guru.excludeTools,
         packages: guru.packages,
         env: guru.env,
+        ...(guru.playwrightBeforeCheckpoint === true ? { playwrightBeforeCheckpoint: true } : {}),
       },
       snapshot: { url: session.checkpoint?.snapshotUrl },
       secrets: { ...secrets, litellmBaseUrl: this.config.litellmBaseUrl },

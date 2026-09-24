@@ -130,7 +130,7 @@ Down (api → agentd):
 
 | t | fields | effect |
 |---|---|---|
-| `run.spec` | `session {id, name, cwd:"/workspace"}, repo? {cloneUrl, branch, baseBranch, createBranch} (absent for non-coding sessions: agentd starts with an empty /workspace, or restores `workspace.snapshotUrl`), workspace? {snapshotUrl?}, guru {systemPrompt?, appendSystemPrompt?, model, thinking, tools?, excludeTools?, packages?, env?}, snapshot {url?, jsonl?}, secrets {githubToken, litellmKey, litellmBaseUrl?}, author? {name, email, login?}, idleStopSeconds, checkpointEvery` | start the run |
+| `run.spec` | `session {id, name, cwd:"/workspace"}, repo? {cloneUrl, branch, baseBranch, createBranch} (absent for non-coding sessions: agentd starts with an empty /workspace, or restores `workspace.snapshotUrl`), workspace? {snapshotUrl?}, guru {systemPrompt?, appendSystemPrompt?, model, thinking, tools?, excludeTools?, packages?, env?, playwrightBeforeCheckpoint?}, snapshot {url?, jsonl?}, secrets {githubToken, litellmKey, litellmBaseUrl?}, author? {name, email, login?}, idleStopSeconds, checkpointEvery` | start the run |
 | `ack` | `seq` | agentd may drop buffered frames ≤ seq |
 | `prompt` | `text, images?, behavior?: "steer"\|"followUp"` | pi RPC `prompt` (with `streamingBehavior` if pi is busy) |
 | `steer` / `follow_up` | `text` | pi RPC same name |
@@ -244,6 +244,18 @@ E2.8 laptop preflight (`src/laptop.ts`) substitutes the guru's (or session's) `f
 `LOCAL_MODELS`) and the laptop tunnel probes offline. When that happens the substitution is also
 recorded on the run (`modelFallback: {wanted, used}`, not sent over this socket) so the UI can show
 it.
+
+`run.spec.guru.playwrightBeforeCheckpoint` is optional and defaults off. The api copies it from the
+guru record of the same name, and only when that value is exactly `true` — a guru saved without the
+field (every guru that existed before the field) stays off, and the field is omitted from `run.spec`
+rather than sent as false. When it is true, agentd, before the git push or the repo-less workspace
+snapshot, runs a Playwright spec already in the workspace against a fresh headless Chromium inside
+the Drive. That browser is not the user's Chrome and not the companion extension, and it does not
+load laptop cookies. The report is a pi `custom` entry `outfitter.playwright` (`data.status` is
+`pass`, `fail`, `skipped`, or `unavailable`; `data.text` is what the transcript shows: the result, a
+short log, and `data.screenshotPath` when a screenshot was produced). No spec in the repo is
+`skipped` ("nothing to run") and does not fail the checkpoint. If Chromium cannot start, the entry
+says so (`unavailable`) and the checkpoint still continues.
 
 ## browser ⇄ api (REST)
 

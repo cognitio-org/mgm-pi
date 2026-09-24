@@ -53,6 +53,7 @@ export function GuruForm({ guru, models, meta, onClose, onSaved }: Props) {
   const [appendSystemPrompt, setAppendSystemPrompt] = useState(guru?.appendSystemPrompt ?? "");
   const [tools, setTools] = useState(listToText(guru?.tools));
   const [excludeTools, setExcludeTools] = useState(listToText(guru?.excludeTools));
+  const [playwrightBeforeCheckpoint, setPlaywrightBeforeCheckpoint] = useState(guru?.playwrightBeforeCheckpoint === true);
   const [envRows, setEnvRows] = useState<EnvRow[]>(envToRows(guru?.env).length > 0 ? envToRows(guru?.env) : [{ key: "", value: "" }]);
   const [submitting, setSubmitting] = useState(false);
   const [submitAttempted, setSubmitAttempted] = useState(false);
@@ -80,6 +81,7 @@ export function GuruForm({ guru, models, meta, onClose, onSaved }: Props) {
       appendSystemPrompt: appendSystemPrompt.trim() || undefined,
       tools: textToList(tools),
       excludeTools: textToList(excludeTools),
+      playwrightBeforeCheckpoint,
       env: rowsToEnv(envRows),
     };
     try {
@@ -148,6 +150,22 @@ export function GuruForm({ guru, models, meta, onClose, onSaved }: Props) {
           <div className="form-row">
             <label htmlFor="guru-exclude-tools">Exclude tools (comma-separated)</label>
             <input id="guru-exclude-tools" value={excludeTools} onChange={(e) => setExcludeTools(e.target.value)} />
+          </div>
+
+          <div className="form-row">
+            <label htmlFor="guru-playwright">Playwright before checkpoint</label>
+            <select
+              id="guru-playwright"
+              value={playwrightBeforeCheckpoint ? "on" : "off"}
+              onChange={(e) => setPlaywrightBeforeCheckpoint(e.target.value === "on")}
+            >
+              <option value="off">off</option>
+              <option value="on">on</option>
+            </select>
+            <p className="session-meta">
+              Off by default. When on, checkpoint runs a Playwright spec already in the repo against a fresh headless
+              Chromium in the Drive, not your Chrome.
+            </p>
           </div>
 
           <div className="form-row">

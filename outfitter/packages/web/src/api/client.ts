@@ -74,6 +74,8 @@ export interface Guru {
   excludeTools?: string[];
   packages?: string[];
   env?: Record<string, string>;
+  /** Tape option, default off. When true, checkpoint runs a Playwright spec in the Drive. */
+  playwrightBeforeCheckpoint?: boolean;
   createdAt: string;
   updatedAt: string;
 }

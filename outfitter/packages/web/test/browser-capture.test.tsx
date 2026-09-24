@@ -139,4 +139,21 @@ describe("browser capture transcript entry", () => {
     expect(container.querySelector("img")).toBeNull();
     unmount();
   });
+
+  it("shows a Playwright check entry as text", () => {
+    const [view] = groupThinkingBlocks(
+      entryToViews({
+        id: "pw1",
+        type: "custom",
+        customType: "outfitter.playwright",
+        data: { status: "skipped", text: "Playwright: nothing to run\nNo Playwright spec in this workspace." },
+      }),
+    );
+    if (!view) throw new Error("expected a view");
+    const { container, unmount } = mount(<EntryItem view={view} sessionId="sess-1" />);
+    expect(container.textContent).toContain("Playwright");
+    expect(container.textContent).toContain("nothing to run");
+    expect(container.querySelector("img")).toBeNull();
+    unmount();
+  });
 });

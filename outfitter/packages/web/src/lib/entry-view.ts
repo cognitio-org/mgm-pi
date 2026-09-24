@@ -18,13 +18,16 @@ export type EntryView =
   | { kind: "model-change"; id: string; provider: string; modelId: string }
   | { kind: "thinking-level-change"; id: string; thinkingLevel: string }
   | { kind: "compaction"; id: string; summary: string }
-  | { kind: "custom"; id: string; customType: string; captureId?: string; title?: string; url?: string }
+  | { kind: "custom"; id: string; customType: string; captureId?: string; title?: string; url?: string; text?: string }
   | { kind: "label"; id: string; targetId: string; label?: string }
   | { kind: "session-info"; id: string; name?: string }
   | { kind: "unknown"; id: string; entryType: string };
 
 /** pi customType for a browser capture (docs/specs/chrome-companion.md §14). */
 export const BROWSER_CAPTURE_TYPE = "outfitter.browser.capture";
+
+/** pi customType for the optional Playwright check before checkpoint (docs/protocol.md). */
+export const PLAYWRIGHT_CHECK_TYPE = "outfitter.playwright";
 
 function textField(data: unknown, key: string): string {
   if (!data || typeof data !== "object") return "";
@@ -123,6 +126,9 @@ export function entryToViews(entry: PiEntry): EntryView[] {
             url: textField(entry.data, "url"),
           },
         ];
+      }
+      if (customType === PLAYWRIGHT_CHECK_TYPE) {
+        return [{ kind: "custom", id, customType, text: textField(entry.data, "text") }];
       }
       return [{ kind: "custom", id, customType }];
     }

@@ -2,7 +2,7 @@
 // shared secrets between our components" decision, these are only ever sent to agentd over the
 // authenticated WebSocket inside run.spec, never as job/container env.
 
-import type { Session, Guru } from "./store/types.ts";
+import type { GithubCredential, Session, Guru } from "./store/types.ts";
 import {
   BROKER_PERMISSIONS,
   DRIVE_PERMISSIONS,
@@ -28,6 +28,8 @@ export interface RunSecrets {
   /** #172: what the failed mint knew beyond its reason (the installation's account, the missing
    * permissions, GitHub's message), for the run's note. */
   githubAppFailureContext?: MintFailureContext;
+  /** Which credential `githubToken` is. `none` when the token is empty. */
+  githubCredential?: GithubCredential;
 }
 
 export interface SecretsBroker {
@@ -38,8 +40,8 @@ export interface SecretsBroker {
     token: string;
     appFailure?: Exclude<MintFailure, "not-configured">;
   }>;
-  /** The credential a live run should switch to. A per-session PAT has no `expiresAt` and replaces an installation token. Undefined when nothing is configured. */
-  refreshGithubAppToken?(session: Session): Promise<{ token: string; expiresAt?: string } | undefined>;
+  /** The credential a live run should switch to. A per-session PAT has no `expiresAt` and replaces an installation token. Undefined when nothing is configured. `credential` is set only when a token came back. */
+  refreshGithubAppToken?(session: Session): Promise<{ token: string; expiresAt?: string; credential?: Extract<GithubCredential, "app" | "session"> } | undefined>;
   /** A LiteLLM key usable for calls with no specific run/guru behind them, e.g. the E2.10 provider
    * status service's LiteLLM probe when config.litellmAdminKey isn't set. Falls back to the same
    * default key a guru with no key of its own would get. */
@@ -65,7 +67,11 @@ export class MemorySecretsBroker implements SecretsBroker {
   }
 
   async secretsForRun(): Promise<RunSecrets> {
-    return { githubToken: this.githubToken, litellmKey: this.litellmKey };
+    return {
+      githubToken: this.githubToken,
+      litellmKey: this.litellmKey,
+      githubCredential: this.githubToken ? "default" : "none",
+    };
   }
 
   async brokerGithubToken(): Promise<{ token: string }> {
@@ -136,6 +142,7 @@ export class GcpSecretsBroker implements SecretsBroker {
       ...(github.expiresAt ? { githubTokenExpiresAt: github.expiresAt } : {}),
       ...(github.appFailure ? { githubAppFailure: github.appFailure } : {}),
       ...(github.appFailureContext ? { githubAppFailureContext: github.appFailureContext } : {}),
+      githubCredential: github.credential,
     };
   }
 
@@ -147,16 +154,16 @@ export class GcpSecretsBroker implements SecretsBroker {
     return cred.appFailure ? { token: cred.token, appFailure: cred.appFailure } : { token: cred.token };
   }
 
-  async refreshGithubAppToken(session: Session): Promise<{ token: string; expiresAt?: string } | undefined> {
+  async refreshGithubAppToken(session: Session): Promise<{ token: string; expiresAt?: string; credential?: "app" | "session" } | undefined> {
     const own = await this.accessSecretOrEmpty(`outfitter-github-token-${session.id}`);
-    if (own) return { token: own };
+    if (own) return { token: own, credential: "session" };
     if (!session.repo) return undefined;
     // A failed mint must not fall through to the shared PAT. That would replace the sandbox's
     // installation token and cancel the retry. The shared PAT is only the initial-run fallback.
     // Drive-scoped: this token is sent to agentd. No shared-PAT fallback.
     const minted = await this.app.mint(session.repo, DRIVE_PERMISSIONS);
     if (!minted.ok) return undefined;
-    return { token: minted.token, expiresAt: minted.expiresAt };
+    return { token: minted.token, expiresAt: minted.expiresAt, credential: "app" };
   }
 
   /** Per-session PAT, then a GitHub App installation token, then (only when the App is not
@@ -192,23 +199,29 @@ export class GcpSecretsBroker implements SecretsBroker {
     expiresAt?: string;
     appFailure?: Exclude<MintFailure, "not-configured">;
     appFailureContext?: MintFailureContext;
+    credential: GithubCredential;
   }> {
     const perSession = `outfitter-github-token-${session.id}`;
     const own = await this.accessSecretOrEmpty(perSession);
     if (own) {
       console.log(`[secrets] session ${session.id}: using ${perSession}`);
-      return { token: own };
+      return { token: own, credential: "session" };
     }
-    if (!session.repo) return { token: "" };
+    if (!session.repo) return { token: "", credential: "none" };
     const minted = await this.app.mint(session.repo, permissions);
     if (minted.ok) {
       console.log(`[secrets] session ${session.id}: using a GitHub App installation token`);
-      return { token: minted.token, expiresAt: minted.expiresAt };
+      return { token: minted.token, expiresAt: minted.expiresAt, credential: "app" };
     }
     if (minted.reason !== "not-configured") {
       console.warn(`[secrets] session ${session.id}: GitHub App token ${minted.reason}; not using ${GITHUB_TOKEN_DEFAULT_SECRET}`);
       const { ok: _ok, reason, ...context } = minted;
-      return { token: "", appFailure: reason, ...(Object.keys(context).length > 0 ? { appFailureContext: context } : {}) };
+      return {
+        token: "",
+        appFailure: reason,
+        ...(Object.keys(context).length > 0 ? { appFailureContext: context } : {}),
+        credential: "none",
+      };
     }
     const shared = await this.accessSecretOrEmpty(GITHUB_TOKEN_DEFAULT_SECRET);
     if (shared) {
@@ -216,7 +229,7 @@ export class GcpSecretsBroker implements SecretsBroker {
         `[secrets] session ${session.id}: ${perSession} not set; using ${GITHUB_TOKEN_DEFAULT_SECRET}`,
       );
     }
-    return { token: shared };
+    return { token: shared, credential: shared ? "default" : "none" };
   }
 
   private async litellmKeyForGuru(guruId: string): Promise<string> {

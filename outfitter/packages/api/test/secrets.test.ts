@@ -40,7 +40,7 @@ describe("GcpSecretsBroker", () => {
       throw notFoundError();
     });
     const secrets = await broker.secretsForRun(testSession(), testGuru());
-    assert.deepEqual(secrets, { githubToken: "", litellmKey: "" });
+    assert.deepEqual(secrets, { githubToken: "", litellmKey: "", githubCredential: "none" });
   });
 
   test("falls back to outfitter-litellm-key-default when outfitter-litellm-key-<guruId> is missing", async () => {
@@ -76,6 +76,7 @@ describe("GcpSecretsBroker", () => {
     });
     const secrets = await broker.secretsForRun(testSession(), testGuru());
     assert.equal(secrets.githubToken, "gh-token");
+    assert.equal(secrets.githubCredential, "session");
   });
 
   test("falls back to outfitter-github-token-default when outfitter-github-token-<sessionId> is missing", async () => {
@@ -87,6 +88,7 @@ describe("GcpSecretsBroker", () => {
     });
     const secrets = await broker.secretsForRun(testSession(), testGuru());
     assert.equal(secrets.githubToken, "shared-token");
+    assert.equal(secrets.githubCredential, "default");
     assert.ok(requested.includes("outfitter-github-token-s1"));
     assert.ok(requested.includes(GITHUB_TOKEN_DEFAULT_SECRET));
   });
@@ -101,6 +103,7 @@ describe("GcpSecretsBroker", () => {
     });
     const secrets = await broker.secretsForRun(testSession(), testGuru());
     assert.equal(secrets.githubToken, "own-token");
+    assert.equal(secrets.githubCredential, "session");
     assert.ok(!requested.includes("outfitter-github-token-default"));
   });
 
@@ -134,8 +137,12 @@ describe("GcpSecretsBroker", () => {
     const secrets = await broker.secretsForRun(testSession(), testGuru());
     assert.equal(secrets.githubToken, "ghs_from_app");
     assert.equal(secrets.githubTokenExpiresAt, "2026-09-24T06:00:00Z");
+    assert.equal(secrets.githubCredential, "app");
     assert.ok(!requested.includes(GITHUB_TOKEN_DEFAULT_SECRET));
     assert.equal(JSON.stringify(secrets).includes(pem), false);
+    const refreshed = await broker.refreshGithubAppToken(testSession());
+    assert.equal(refreshed?.token, "ghs_from_app");
+    assert.equal(refreshed?.credential, "app");
   });
 
   test("#158: a non-404 error reading an App secret is unavailable, not a reason to use the shared PAT", async () => {
@@ -152,6 +159,7 @@ describe("GcpSecretsBroker", () => {
     });
     const secrets = await broker.secretsForRun(testSession(), testGuru());
     assert.equal(secrets.githubToken, "");
+    assert.equal(secrets.githubCredential, "none");
     assert.equal(secrets.githubAppFailure, "unavailable");
     assert.ok(!requested.includes(GITHUB_TOKEN_DEFAULT_SECRET));
   });
@@ -166,6 +174,7 @@ describe("GcpSecretsBroker", () => {
     });
     const secrets = await broker.secretsForRun(testSession(), testGuru());
     assert.equal(secrets.githubToken, "");
+    assert.equal(secrets.githubCredential, "none");
     assert.equal(secrets.githubAppFailure, "unavailable");
     assert.equal(secrets.githubTokenExpiresAt, undefined);
   });
@@ -194,6 +203,7 @@ describe("GcpSecretsBroker", () => {
     );
     const secrets = await new GcpSecretsBroker("proj", fetchSecret, app).secretsForRun(testSession(), testGuru());
     assert.equal(secrets.githubToken, "");
+    assert.equal(secrets.githubCredential, "none");
     assert.equal(secrets.githubAppFailure, "not-installed");
     // #172: what the mint learned rides along for the run's note.
     assert.deepEqual(secrets.githubAppFailureContext, { installationAccount: "cognitio-org" });
@@ -221,6 +231,7 @@ describe("GcpSecretsBroker", () => {
     });
     const secrets = await broker.secretsForRun(testSession(), testGuru());
     assert.equal(secrets.githubToken, "shared-token");
+    assert.equal(secrets.githubCredential, "default");
     assert.equal(secrets.githubAppFailure, undefined);
   });
 
@@ -236,6 +247,7 @@ describe("GcpSecretsBroker", () => {
     });
     const secrets = await broker.secretsForRun(testSession(), testGuru());
     assert.equal(secrets.githubToken, "");
+    assert.equal(secrets.githubCredential, "none");
     assert.equal(secrets.githubAppFailure, "unavailable");
   });
 
@@ -250,6 +262,7 @@ describe("GcpSecretsBroker", () => {
     });
     const secrets = await broker.secretsForRun(testSession(), testGuru());
     assert.equal(secrets.githubToken, "");
+    assert.equal(secrets.githubCredential, "none");
     assert.equal(secrets.githubAppFailure, "misconfigured");
     assert.ok(!requested.includes(GITHUB_TOKEN_DEFAULT_SECRET));
   });
@@ -265,6 +278,7 @@ describe("GcpSecretsBroker", () => {
     assert.equal(await broker.refreshGithubAppToken(testSession()), undefined);
     const secrets = await broker.secretsForRun(testSession(), testGuru());
     assert.equal(secrets.githubToken, "");
+    assert.equal(secrets.githubCredential, "none");
     assert.equal(secrets.githubAppFailure, "unavailable");
   });
 
@@ -277,7 +291,7 @@ describe("GcpSecretsBroker", () => {
       throw notFoundError();
     });
     const next = await broker.refreshGithubAppToken(testSession());
-    assert.deepEqual(next, { token: "own-token" });
+    assert.deepEqual(next, { token: "own-token", credential: "session" });
   });
 
   test("a session PAT wins over a configured GitHub App", async () => {
@@ -288,6 +302,7 @@ describe("GcpSecretsBroker", () => {
     });
     const secrets = await broker.secretsForRun(testSession(), testGuru());
     assert.equal(secrets.githubToken, "own-token");
+    assert.equal(secrets.githubCredential, "session");
     assert.equal(secrets.githubTokenExpiresAt, undefined);
   });
 
@@ -299,6 +314,7 @@ describe("GcpSecretsBroker", () => {
     });
     const secrets = await broker.secretsForRun(testSession(), testGuru());
     assert.equal(secrets.githubToken, "");
+    assert.equal(secrets.githubCredential, "none");
     assert.ok(requested.includes("outfitter-github-token-s1"));
     assert.ok(requested.includes(GITHUB_TOKEN_DEFAULT_SECRET));
   });
@@ -314,6 +330,7 @@ describe("GcpSecretsBroker", () => {
     });
     const secrets = await broker.secretsForRun(testSession({ repo: undefined }), testGuru());
     assert.equal(secrets.githubToken, "");
+    assert.equal(secrets.githubCredential, "none");
     assert.ok(!requested.includes(GITHUB_TOKEN_DEFAULT_SECRET));
   });
 
@@ -325,6 +342,7 @@ describe("GcpSecretsBroker", () => {
     });
     const secrets = await broker.secretsForRun(testSession({ repo: undefined }), testGuru());
     assert.equal(secrets.githubToken, "own-token");
+    assert.equal(secrets.githubCredential, "session");
   });
 
   test("a non-404 error still propagates instead of resolving to \"\"", async () => {

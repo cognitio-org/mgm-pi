@@ -3,7 +3,7 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { RouteContext } from "./context.ts";
-import type { Session, PiEntry, Run } from "../store/types.ts";
+import type { GithubCredential, Session, PiEntry, Run } from "../store/types.ts";
 import { mailHeldNotice, MAIL_MAX_TEXT } from "../mail.ts";
 import { GITHUB_TOKEN_DEFAULT_SECRET } from "../secrets.ts";
 import { GITHUB_APP_ID_SECRET, GITHUB_APP_INSTALLATION_SECRET, GITHUB_APP_KEY_SECRET, GITHUB_APP_SLUG_SECRET, githubAppSecretsUsable, githubRepoName } from "../github-app.ts";
@@ -31,8 +31,23 @@ async function githubAppConfigured(ctx: RouteContext, repo: string): Promise<boo
 }
 
 async function githubAppSlug(ctx: RouteContext): Promise<string | null> {
-  const raw = (await ctx.secretAdmin.accessLatest(GITHUB_APP_SLUG_SECRET))?.trim() ?? "";
-  return /^[A-Za-z0-9-]+$/.test(raw) ? raw : null;
+  // A transient read of this optional secret must not 500 the session page. Don't cache the
+  // failure: the next GET tries again. Log the error name only — Secret Manager errors can echo
+  // the request.
+  try {
+    const raw = (await ctx.secretAdmin.accessLatest(GITHUB_APP_SLUG_SECRET))?.trim() ?? "";
+    return /^[A-Za-z0-9-]+$/.test(raw) ? raw : null;
+  } catch (err) {
+    console.warn(`[sessions] github app slug unreadable: ${err instanceof Error ? err.name : "Error"}`);
+    return null;
+  }
+}
+
+/** The four values buildRunSpec records. Anything else (a document from before the field, or a
+ * value this process doesn't know) is treated as unrecorded. */
+function recordedGithubCredential(value: unknown): GithubCredential | undefined {
+  if (value === "app" || value === "session" || value === "default" || value === "none") return value;
+  return undefined;
 }
 
 interface SessionSummary {
@@ -192,7 +207,11 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
     const ownToken = await ctx.secretAdmin.info(sessionGithubTokenSecretName(session.id));
     const appConfigured = session.repo ? await githubAppConfigured(ctx, session.repo) : false;
     const sharedToken = ownToken.set || !session.repo || appConfigured ? { set: false } : await ctx.secretAdmin.info(GITHUB_TOKEN_DEFAULT_SECRET);
-    const credential = ownToken.set ? "session" : appConfigured ? "app" : sharedToken.set ? "default" : "none";
+    // #159: `recorded` is the credential this run was actually given. The configured-state guess
+    // is only for a session with no run yet, or a run that has not resolved secrets.
+    const recorded = recordedGithubCredential(run?.githubCredential);
+    const configured = ownToken.set ? "session" : appConfigured ? "app" : sharedToken.set ? "default" : "none";
+    const credential = recorded ?? configured;
     const appSlug = credential === "app" ? await githubAppSlug(ctx) : null;
     return {
       ...session,

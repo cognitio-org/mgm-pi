@@ -1130,6 +1130,9 @@ export class AgentLink {
     // so it still holds the token that spec (or a later github.credential) gave it.
     const reconnect = isReadyState(run.state);
     let keepCurrentGithubToken = false;
+    // Thrown after the credential is recorded, so a failed mint is stored as "none" and a store
+    // failure on that write can't replace this refusal.
+    let githubRefusal: Error | undefined;
     if (session.repo && !secrets.githubToken && !this.config.devMode) {
       const failure = secrets.githubAppFailure;
       if (reconnect && (failure === "unavailable" || failure === "misconfigured")) {
@@ -1139,20 +1142,33 @@ export class AgentLink {
         // from before the App was configured.
         keepCurrentGithubToken = true;
       } else if (failure === "unavailable") {
-        throw new GithubAppUnavailableError(
+        githubRefusal = new GithubAppUnavailableError(
           `the GitHub App could not mint a token for ${session.repo} just now; the run will retry`,
         );
       } else if (failure && isPermanentMintFailure(failure)) {
         // #172: terminal (4412), and handleConnection holds the session's mail with this note.
         const { reason, detail } = githubAppFailureNote(failure, session.repo, secrets.githubAppFailureContext);
-        throw new MissingGithubTokenError(`${reason} for session ${session.id}`, detail);
+        githubRefusal = new MissingGithubTokenError(`${reason} for session ${session.id}`, detail);
       } else {
         // Close reasons are capped at 123 UTF-8 bytes by the WebSocket protocol; keep this short
         // even for a long (e.g. UUID) session id. The full secret name is in the server log line
         // above instead.
-        throw new MissingGithubTokenError(`missing github token secret for session ${session.id}`);
+        githubRefusal = new MissingGithubTokenError(`missing github token secret for session ${session.id}`);
       }
     }
+    // #159: what this run was given. Skip when agentd keeps its current token — a transient mint
+    // failure must not flip the label to "none" while the sandbox still holds the previous one.
+    if (!keepCurrentGithubToken && secrets.githubCredential) {
+      await this.store.runs
+        .update(runId, {
+          githubCredential: secrets.githubCredential,
+          updatedAt: new Date().toISOString(),
+        })
+        .catch((err) => {
+          console.warn(`[agentlink] github credential not recorded: ${err instanceof Error ? err.name : "Error"}`);
+        });
+    }
+    if (githubRefusal) throw githubRefusal;
     const owner = session.ownerEmail ? await this.store.users.findByEmail(session.ownerEmail) : null;
     const author = authorFor(session.ownerEmail, owner);
     // The conversation so far, from the store (session-jsonl.ts): a woken session's pi picks up the
@@ -1286,6 +1302,15 @@ export class AgentLink {
       }
       this.githubRefreshAttempts.delete(runId);
       this.scheduleGithubRefresh(runId, sessionId, next.expiresAt);
+      // After the timer is armed, so this write can't delay or replace a newer hello's refresh.
+      // A failed refresh never reaches here and does not clear the credential the run already has.
+      if (next.credential && this.sockets.get(runId) === socket) {
+        await this.store.runs
+          .update(runId, { githubCredential: next.credential, updatedAt: new Date().toISOString() })
+          .catch((err) => {
+            console.warn(`[agentlink] github credential not recorded: ${err instanceof Error ? err.name : "Error"}`);
+          });
+      }
     } catch (err) {
       if (this.sockets.get(runId) !== socket) return;
       console.warn(`[agentlink] github credential refresh failed: ${githubRefreshError(err)}`);

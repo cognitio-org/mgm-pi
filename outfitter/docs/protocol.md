@@ -269,7 +269,11 @@ agentd always appends exactly one HTML preview paragraph to pi's system prompt, 
 external one (http and https stylesheets, scripts, images, and fonts may be linked) when true, the
 sealed one (inline CSS only) otherwise. The text lives in
 `kernal/.pi/extensions/_shared/html-preview-prompt.ts`, copied to agentd's `src/html-preview-prompt.ts`.
-It is never sent as `--system-prompt`, which would replace pi's own prompt.
+It is never sent as `--system-prompt`, which would replace pi's own prompt. Because any
+`--append-system-prompt` stops pi looking for `APPEND_SYSTEM.md` itself, agentd finds that file the
+way pi does (the workspace's `.pi/APPEND_SYSTEM.md`, then `$PI_CODING_AGENT_DIR/APPEND_SYSTEM.md`) and,
+when the guru has no `appendSystemPrompt` of its own, passes its path as an earlier
+`--append-system-prompt`. A guru's own text replaces the file, as it did before.
 
 ## browser ⇄ api (REST)
 

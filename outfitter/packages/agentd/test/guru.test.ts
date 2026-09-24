@@ -104,6 +104,23 @@ test("renderGuru: #132 -- the guru's own append text stays in front of either pa
   }
 });
 
+test("renderGuru: #146 review -- a discovered APPEND_SYSTEM.md is still passed when the guru has no append text", () => {
+  // Any --append-system-prompt stops pi looking for the file itself, so agentd passes it first.
+  const { args } = renderGuru(
+    { model: "m" },
+    { piBin: "pi", sessionFile: "/tmp/s.jsonl", appendSystemPromptFile: "/workspace/.pi/APPEND_SYSTEM.md" },
+  );
+  assert.deepEqual(appendArgs(args), ["/workspace/.pi/APPEND_SYSTEM.md", SEALED_HTML_PREVIEW_PROMPT]);
+});
+
+test("renderGuru: #146 review -- a guru's own append text still replaces APPEND_SYSTEM.md, as before #132", () => {
+  const { args } = renderGuru(
+    { model: "m", appendSystemPrompt: "Always cite files." },
+    { piBin: "pi", sessionFile: "/tmp/s.jsonl", appendSystemPromptFile: "/workspace/.pi/APPEND_SYSTEM.md" },
+  );
+  assert.deepEqual(appendArgs(args), [`Always cite files.\n\n${SEALED_HTML_PREVIEW_PROMPT}`]);
+});
+
 test("renderGuru: #132 -- the paragraph never replaces --system-prompt", () => {
   const { args } = renderGuru(
     { model: "m", systemPrompt: "You are terse.", allowExternalHtmlResources: true },

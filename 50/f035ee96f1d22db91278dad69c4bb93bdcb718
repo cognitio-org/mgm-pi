@@ -1,0 +1,24 @@
+chrome/extension/action.js
+  h_69b863911ebf05 151-160,171,174-175,178-179,230,238
+chrome/extension/background.js
+  h_69b863911ebf05 1104-1105,1126,1178,1192,1461,1466,1474
+chrome/extension/share.js
+  h_69b863911ebf05 298-301,306-309,319-323,326-330
+chrome/host/kernal-chrome-host.mjs
+  h_69b863911ebf05 28-29,38-41,44-49,102-109,111,115,117,120,122,124,129-147,151-180,200,202-204,213,215-217,240-242,373
+chrome/host/protocol.js
+  h_69b863911ebf05 165-174,179,200-204,209,215,220-225,227-232,239,243,250
+chrome/test/host.test.js
+  h_69b863911ebf05 219-231,328,335,341,396,467-513
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "50f035ee96f1d22db91278dad69c4bb93bdcb718",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

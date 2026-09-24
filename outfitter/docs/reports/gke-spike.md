@@ -110,20 +110,27 @@ and the spec §3.3 network policy. Set up first: the hardening exemption for the
 
 ## S4: cold start of the real image
 
-`deploy/gke/spike/s4.yaml` and `s4_measure.py`: 10 cold claims (pool `replicas: 0`) of the production
+`deploy/gke/spike/s4.yaml` and `s4_measure.py`: 11 cold claims (pool `replicas: 0`) of the production
 image `outfitter-agent:1e21c9f08eb9` in spec §3.3's shape (1 vCPU / 2 GiB / 4 GiB ephemeral), the real
 entrypoint, S3's network policy. With no `RUN_ID`, agentd logs `missing required env var RUN_ID` and
-exits 1, so "first log" marks Node and agentd loaded from the image. Raw results in `s4-results.jsonl`.
+exits 1, so "first log" marks Node and agentd loaded from the image. The 11 rounds ran as 1 + 9 + 1,
+with raw results in `s4-firstpull.jsonl` (copied from that run's terminal output, which went to the
+console rather than a file), `s4-results.jsonl` and `s4-freshnode.jsonl`.
+
+Times run from the laptop clock just before `kubectl create`, so every figure includes about 2 s of
+the laptop's `kubectl` start-up and auth-plugin round trip (S1 measured it: `create_s` p50 2.0 s),
+which the API's long-lived client doesn't pay. S4 doesn't record that split per round.
 
 | Case | Scheduled | Image pull | Container started | agentd's first log |
 |---|---|---|---|---|
-| New node, first pull of the tag ever (1 round) | 52 s | 28.4 s | **93 s** | 93.7 s |
+| New node, first pull of the tag ever (1 round, `s4-firstpull.jsonl`) | 52 s | 28.4 s | **93 s** | 93.7 s |
 | New node, tag already seen by GKE (1 round, `s4-freshnode.jsonl`) | 47.6 s | **1.9 s** (streamed) | **70.6 s** | 72.1 s |
 | Node up, image cached (9 rounds) | 2.0 s p50 | cached | **3.0 s p50** (3.3 s max) | 3.5 s p50 |
 
 - **The pass bar (p50 ≤ 20 s) is met whenever a sandbox node with the image is already running:**
-  3 s from claim to container, about ten times faster than the spec's cold target. The claim → scheduled
-  step alone is about 2 s.
+  3 s from the laptop's `kubectl create` to container start, about ten times faster than the spec's
+  cold target. About 2 s of that is `kubectl`'s own round trip (see above), so in the cluster, claim to
+  container is closer to 1 s.
 - **A new node plus a first pull is 93 s**, no better than Cloud Run's ~100 s. That is the first wake
   after the cluster has scaled its sandbox nodes to zero (outside warm hours, or after idling).
 - **Image streaming works from the second pull of a tag.** The very first pull ever took 28.4 s (a

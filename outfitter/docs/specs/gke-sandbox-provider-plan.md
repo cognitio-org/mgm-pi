@@ -20,7 +20,7 @@ Two more decisions followed the spike's admission findings (`docs/reports/gke-sp
 
 | Question | Decision | Consequence |
 |---|---|---|
-| GKE's `sandbox-hardening-policy` (drop ALL, no added caps, `runAsNonRoot`) rejects the image's root entrypoint, which the root/`agent` split from #45 needs | **Exempt only the sandbox namespace**: the binding's `matchResources` excludes `outfitter-sandboxes` and stays `Deny` everywhere else | The image is unchanged. The model still runs as `agent` with no capabilities under gVisor. PR3's `gke-iam.sh` re-applies the exemption idempotently, because a GKE upgrade could restore the binding |
+| GKE's `sandbox-hardening-policy` (drop ALL, no added caps, `runAsNonRoot`) rejects the image's root entrypoint, which the root/`agent` split from #45 needs | **Exempt only the sandbox namespace**: the binding's `matchResources` excludes `outfitter-sandboxes` and stays `Deny` everywhere else | The image is unchanged. The model still runs as `agent` with no capabilities under gVisor. PR3's `gke-iam.sh` re-applies the exemption on every run, because a GKE upgrade could restore the binding. `deploy/gke/hardening-exemption.json` appends, so the script must check the `NotIn` list first and patch only when the namespace is missing (`kubectl patch validatingadmissionpolicybinding sandbox-hardening-binding --type=json --patch-file=...`) |
 | The per-uid metadata block is impossible on Autopilot (Warden rejects `NET_ADMIN`). Should the model's shell reach the metadata server? | **B: keep it reachable, as on Cloud Run today, with a guard** | The spec's link authentication (Google ID token plus run token) stays. The template's network policy must allow the metadata server, which Agent Sandbox blocks by default. New guard: a check that fails if `outfitter-agent@` holds any role beyond `roles/logging.logWriter`, because that account's permissions are the model's permissions. #41 finding 3 stays open on both providers |
 
 Question 6 (release channel) is resolved without `rapid`: on 2026-09-24 `regular` defaulted to
@@ -48,7 +48,7 @@ These changes affect the plan:
 | **Release-tag deploys (#34)** and `deploy/CLAUDE.md` | Spec §5 is out of date. Settings go in `deploy/config.env`, not the caller's env. `service.sh:153` hard-codes `SANDBOX_PROVIDER=cloudrun`, so read it from `config.env` instead. Cluster, IAM and scheduler setup are **owner-run one-time scripts** (like `access.sh`). `gke-switch.sh` becomes "edit `config.env`, tag a release", not "rerun `api.sh`" |
 | **`agent-job.sh` builds by commit tag** (`TAG=$(commit_tag)`, `image_exists` reuse) | Spec §5.2's `build-agent-image.sh` extraction and `--image-from-job` aren't needed. The template uses `outfitter-agent:$(commit_tag)` |
 | **Token isolation (#45)**: pi and git must never see `RUN_TOKEN`/`RUN_ID`/`OUTFITTER_API` (`agentd/src/pi.ts:109-156`, `main.ts:52-53`) | Spec §3.5 Option B still fits (root-only 0400 files). `assignment.ts` must keep the values in memory, never write them to `process.env` (git children inherit it), and delete them from the environment on the env path |
-| **Security review of #41, finding 3 (open)**: block the `agent` uid from the metadata server (`docs/reports/security-review-pr41.md:125-148`) | Handed explicitly to this provider. Add an init container with `NET_ADMIN`: `iptables -A OUTPUT -d 169.254.169.254 -m owner --uid-owner agent -j REJECT` (also 169.254.169.252:988 on Dataplane V2). New spike item **S7** |
+| **Security review of #41, finding 3 (open)**: block the `agent` uid from the metadata server (`docs/reports/security-review-pr41.md:125-148`) | Handed explicitly to this provider, which was to add an init container with `NET_ADMIN` running `iptables ... -m owner --uid-owner agent -j REJECT`. **Superseded:** spike S7 found Autopilot rejects `NET_ADMIN`, and the owner chose option B (§1). The finding stays open |
 | **Startup trim (#37)**: jiti and compile caches baked into `/tmp` (`image/Dockerfile:234-244`); `wake-bench.mjs` exists | The template must **not** mount an `emptyDir` over `/tmp` or `/run/outfitter`, or set `TMPDIR`. PR5 extends `wake-bench.mjs` (it has positional args, JSON output and a hard-coded `cloud_run_job` log query) and doesn't write a new one |
 | **Failure details (#54)**: runs carry a user-facing `statusDetail` | A GKE start refusal (`GKE_MAX_ACTIVE`) sets `statusDetail`, not only `reason` |
 | Git proxy (#104), browser share (#81/#105) | No new ingress or egress. The proxy is loopback-only; capture arrives on the existing socket |
@@ -72,7 +72,7 @@ PR3 (template in release.sh, schedule, IAM) ────────────
 |---|---|---|
 | **PR0 spike** | spec §8.2 S0-S6 **plus S7** (§4 below). Writes `docs/reports/gke-spike.md` | owner runs `gke-cluster.sh` |
 | **PR1** | spec §7 PR1, **plus**: `SANDBOX_PROVIDER` read from `config.env`; the contract suite exported from `provider-local/src/testing/`; `statusDetail` on start refusals; the `gke` fields in `/api/operator/settings` (`routes/operator.ts:124-125`); an EPIC story; spec citations refreshed | nothing |
-| **PR2** | spec §7 PR2, **plus** the metadata-block init container in `deploy/gke/sandbox-template.yaml`, if S7 passes | PR1; S2, S3, S6 |
+| **PR2** | spec §7 PR2, **plus** the template's network policy with the DNS fix from S3, and the `logWriter`-only guard on `outfitter-agent@` (option B, §1) | PR1; S2, S6 (S3 passed) |
 | **PR3** | **Owner-run** `gke-cluster.sh` (drafted here), `gke-iam.sh`, `gke-schedule.sh` (modelled on `mailbox.sh`: `--update-headers`, OIDC audience = link's origin); **a `release.sh` step that applies the template and warm pool between the Job and link**; `check_deploy_skew` reads the template's `build-commit` label; the `ci-setup.sh` grants; `gke-teardown.sh`; guard tests in `deploy/test/` | can start with PR1; the `release.sh` step lands with or after PR2 |
 | **PR4** | spec §7 PR4. Its "[rebase: cloud-fixes]" dependency is resolved; the constraint becomes **keeping `WIRE_PROTOCOL_VERSION` in lockstep**. `assignment.ts` follows #45's in-memory rule. Run `preloadSessionManager()` before the assignment wait | S1; question 3 answered |
 | **PR5** | spec §7 PR5, **plus**: extend `wake-bench.mjs` (`--label`, `k8s_container` log query); add the `hello accepted` log line; the switch is a `config.env` change plus a release. **Then decide Cloud Run's future** (§1) | PR2-PR4 deployed |
@@ -100,12 +100,14 @@ on a branch; nothing here deploys.
 4. **S7 (new): metadata block under gVisor on Autopilot.** Does Autopilot admit an init container with
    `NET_ADMIN`? Does gVisor's netstack support `iptables -m owner --uid-owner`? Pass: as `agent`,
    `curl -H 'Metadata-Flavor: Google' http://169.254.169.254/...` is refused; as root, agentd still gets
-   its ID token. If either fails, record it in the report. The fallback is a platform egress policy,
-   and finding 3 stays open.
+   its ID token. If either fails, record it in the report. **Result (2026-09-24):** Autopilot's Warden
+   rejects `NET_ADMIN`, so the block is impossible here; the owner chose option B (§1), and finding 3
+   stays open.
 5. Write `docs/reports/gke-spike.md` with numbers for S0-S7 and a go/no-go per spec §8.2: S2, S3 and S6
    gate PR2; S1 gates PR4; S4 decides whether cold mode is good enough outside 08:00-20:00.
 6. **Keep the cluster** if the spike passes (it's the long-lived one). Otherwise delete it with
-   `gcloud container clusters delete outfitter --location us-central1` (or `gke-teardown.sh` once it exists).
+   `gcloud container clusters delete outfitter --location=us-central1 --project=outfitter-509211
+   --account=mgm@mgms.eu` (or `gke-teardown.sh` once it exists).
 
 ---
 
@@ -147,7 +149,9 @@ environment change for either service (`SANDBOX_PROVIDER` still resolves to `clo
 ## 6. Spec amendments to fold in
 
 PR1 edits `gke-sandbox-provider.md` to match: §5 rewritten for `config.env`, owner-run scripts and the
-`release.sh` template step; §5.2 without the image extraction; §3.3 with the metadata-block init
-container and the `/tmp` and `/run/outfitter` warnings; §3.5 with #45's in-memory rule; §6.2's suite
+`release.sh` template step; §5.2 without the image extraction; §3.3 with the admission rules
+from the spike (gVisor node selector and toleration, `automountServiceAccountToken: false`, the
+namespace's hardening exemption), the DNS egress fix, and the `/tmp` and `/run/outfitter` warnings;
+§4.2 with claims naming a warm pool, not a template; §3.5 with #45's in-memory rule; §6.2's suite
 location; §6.3 against the real `wake-bench.mjs`; §7 dependencies as in §3 above; §8.2 with S7; §9
 marked with the decisions in §1.

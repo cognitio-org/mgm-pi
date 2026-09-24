@@ -3,7 +3,8 @@
 # §5.1; plan in docs/specs/gke-sandbox-provider-plan.md). One time, by hand: never from release.sh or
 # GitHub Actions. An agent runs it only with the owner's explicit go-ahead in the conversation (it
 # starts GKE billing), as deploy/CLAUDE.md asks for tag-release.sh. Idempotent: an existing cluster
-# only gets Agent Sandbox switched on (a no-op when it already is).
+# only gets Agent Sandbox switched on and the maintenance window set again (both meant as no-ops when
+# already so; not yet confirmed against the live cluster).
 #   DRY_RUN=1 ./gke-cluster.sh     # read-only: prints the checks and the commands it would run
 #   ./gke-cluster.sh               # creates the cluster (billed; see the cost note below)
 #   ./gke-cluster.sh --i-know      # proceed even if another GKE cluster shares the billing account
@@ -28,7 +29,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 CLUSTER="${GKE_CLUSTER:-outfitter}"
 CHANNEL="${GKE_CHANNEL:-regular}"
 MIN_VERSION="1.36.3-gke.1767000"
-BILLING_ACCOUNT="${BILLING_ACCOUNT:-01DEC0-9358E1-C1FF0D}"
 KUBECONFIG_OUTFITTER="${KUBECONFIG_OUTFITTER:-${HOME}/.kube/outfitter}"
 # Outside the warm window (weekdays 08:00-20:00 Europe/Zagreb): 21:00-05:00 UTC daily. Autopilot
 # wants at least 48 h of maintenance availability per 32 days; 8 h a day is well over that.
@@ -73,6 +73,17 @@ elif [[ "${DRY_RUN:-0}" == 1 ]]; then
   deploy_fail "cloudbilling.googleapis.com is off in ${PROJECT}, so a dry run can't check the billing account; run without DRY_RUN (it enables it first), or: gcloud services enable cloudbilling.googleapis.com --project=${PROJECT}"
 else
   gcloud services enable cloudbilling.googleapis.com --project="${PROJECT}"
+fi
+
+# The account PROJECT is actually billed to, never an assumed one: checking a different account's
+# clusters would pass while the real account's credit is already used.
+billing_info="$(gcloud billing projects describe "${PROJECT}" --billing-project="${PROJECT}" \
+  --format='value(billingEnabled,billingAccountName)')" \
+  || deploy_fail "can't read ${PROJECT}'s billing account"
+read -r billing_enabled billing_account_name <<<"${billing_info}"
+BILLING_ACCOUNT="${billing_account_name#billingAccounts/}"
+if [[ "${billing_enabled}" != "True" || -z "${BILLING_ACCOUNT}" ]]; then
+  deploy_fail "${PROJECT} has no billing account enabled (${billing_info:-nothing returned})"
 fi
 
 echo "== billing account ${BILLING_ACCOUNT}: other GKE clusters (the free credit covers one) =="
@@ -149,7 +160,7 @@ else
   echo "== ${CLUSTER}: creating (Autopilot, ${REGION}, ${CHANNEL}, Agent Sandbox, DNS endpoint) =="
   # create-auto also writes a kubeconfig entry and makes it current: point it at our own file, or it
   # switches ~/.kube/config's current-context under every other open shell.
-  mkdir -p "$(dirname "${KUBECONFIG_OUTFITTER}")"
+  run mkdir -p "$(dirname "${KUBECONFIG_OUTFITTER}")"
   run env KUBECONFIG="${KUBECONFIG_OUTFITTER}" \
     gcloud beta container clusters create-auto "${CLUSTER}" --location="${REGION}" --project="${PROJECT}" \
     --release-channel="${CHANNEL}" \
@@ -159,7 +170,7 @@ else
 fi
 
 # create-auto has no maintenance-window flags, and update takes one kind of change per call, so the
-# window is its own step. Setting the same window again is a no-op, so this runs every time.
+# window is its own step, run every time (setting the same window again is meant to be a no-op).
 echo "== ${CLUSTER}: maintenance window ${MAINT_START:11:5}-${MAINT_END:11:5} UTC, ${MAINT_RECURRENCE} =="
 run gcloud container clusters update "${CLUSTER}" --location="${REGION}" --project="${PROJECT}" \
   --maintenance-window-start="${MAINT_START}" \

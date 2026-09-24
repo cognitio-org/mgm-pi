@@ -281,20 +281,52 @@ select {
     min-height: 100svh;
   }
 
-  .session-header {
-    flex-direction: column;
-    gap: 0.4rem;
+  /* The page itself scrolls on a phone (the composer sticks to the visual viewport), so the
+   * session title bar sticks under the app bar instead of inside the panel. */
+  .session-scroll {
+    overflow: visible;
+    flex: none;
+    box-shadow: none;
   }
 
-  .session-title {
-    font-size: 1.05rem;
+  .session-chrome {
+    top: var(--app-header-h, 0px);
+    z-index: 20;
   }
 
-  /* The repo/branch clause ellipsizes instead of wrapping the whole subline onto extra rows --
+  .session-titlebar {
+    flex-wrap: wrap;
+  }
+
+  .session-window-name {
+    max-width: 46vw;
+  }
+
+  .session-titlebar .run-controls {
+    flex: 1 0 100%;
+    margin-left: 0;
+    justify-content: flex-start;
+  }
+
+  /* The repo/branch clause ellipsizes instead of wrapping the whole status line onto extra rows --
    * a long "org/repo @ some-long-branch-name" was pushing the second header line taller than
    * needed on a 390px screen. */
   .session-repo-branch {
     max-width: 65vw;
+  }
+
+  /* One sideways line, not a stack of wrapped facts under the title bar. */
+  .session-statusbar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  .session-statusbar > * {
+    flex: 0 0 auto;
+  }
+
+  .session-model-info {
+    flex-wrap: nowrap;
   }
 
   .run-controls {
@@ -313,6 +345,15 @@ select {
     font-size: 0.76rem;
     padding: 0.45rem 0.4rem;
     white-space: nowrap;
+  }
+
+  /* The title bar holds every session button. Let them keep their labels and scroll sideways
+   * instead of shrinking "This Floppy's group" down to a few letters. */
+  .session-titlebar .run-controls button,
+  .session-titlebar .run-controls .btn,
+  .session-titlebar .run-controls select {
+    flex: 0 0 auto;
+    min-width: max-content;
   }
 
   .transcript {

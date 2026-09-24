@@ -7,7 +7,9 @@
 }
 
 .app-header {
-  position: relative;
+  position: sticky;
+  top: 0;
+  z-index: 40;
   display: flex;
   align-items: center;
   gap: 1.1rem;
@@ -144,7 +146,180 @@
 .session-view {
   display: flex;
   flex-direction: column;
-  gap: 0.85rem;
+  gap: 0.5rem;
+}
+
+/* On a desktop the conversation is the page: the window fills the space under the app bar and
+ * scrolls inside itself, so the title bar can stay put and shrink instead of scrolling away. */
+@media (min-width: 701px) {
+  .app-shell:has(.session-view) {
+    height: 100%;
+    max-height: 100%;
+    overflow: hidden;
+  }
+
+  .app-shell:has(.session-view) .app-main {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    padding-top: 0.6rem;
+    padding-bottom: 0.55rem;
+  }
+
+  .session-view {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .session-window {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .session-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .session-view > .composer,
+  .session-view > .ui-request {
+    flex-shrink: 0;
+  }
+
+  .transcript {
+    max-height: none;
+    overflow: visible;
+  }
+}
+
+/* Title bar of the session window. The name and the run pill live here; the old heading
+ * block above the transcript is gone. Once the conversation scrolls, the status line drops
+ * away and the bar goes flat and slightly transparent. */
+/* Sticky so a phone, which scrolls the page, keeps the bar. On a desktop the window
+ * itself does not scroll — the conversation pane under the bar does — so the bar
+ * simply stays put and never covers a line of the transcript. */
+.session-chrome {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  flex: none;
+  background: var(--bg-elevated);
+}
+
+.session-chrome.is-min {
+  background: color-mix(in srgb, var(--bg-elevated) 84%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.session-chrome.is-min .session-titlebar {
+  background-image: none;
+  background-color: transparent;
+}
+
+.session-chrome.is-min .session-statusbar {
+  display: none;
+}
+
+.session-titlebar {
+  gap: 0.45rem;
+  flex-wrap: nowrap;
+  padding-top: 0.2rem;
+  padding-bottom: 0.2rem;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+/* Body face, not the pixel title face: a session name (or a short id) was hard to read in
+ * uppercase Silkscreen. The chip still sits in the striped bar. */
+.session-window-name {
+  margin: 0;
+  max-width: min(18rem, 34vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+  line-height: 1.2;
+}
+
+.session-window-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex: none;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.session-transport-detail {
+  flex: 0 1 16rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-display);
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--danger);
+}
+
+.session-transport-detail.is-attention {
+  color: var(--warn);
+}
+
+.session-titlebar .run-controls {
+  margin-left: auto;
+  /* 0% basis so a long button row shrinks to the room that's left and scrolls,
+   * instead of painting past the window edge. justify-content: flex-end clips
+   * that overflow in a way you cannot scroll back from. */
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  overflow-x: auto;
+  text-transform: none;
+  letter-spacing: normal;
+  font-family: var(--font-body);
+}
+
+.session-titlebar .run-controls .btn {
+  flex: 0 0 auto;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+}
+
+/* Play, Stop, Break and Eject stay on screen; the tab-group buttons scroll after them. */
+.session-titlebar .session-transport {
+  order: -1;
+}
+
+.session-statusbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.7rem;
+  padding: 0.28rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
 }
 
 .session-header {
@@ -212,13 +387,13 @@
   align-items: center;
 }
 
+/* The conversation scrolls with the session window (desktop) or the page (phone), not
+ * inside a second 65vh box. A nested scroller was what let the title bar scroll away. */
 .transcript {
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
   min-height: 200px;
-  max-height: 65vh;
-  overflow-y: auto;
   padding: 1.15rem 0.85rem 0.85rem;
 }
 

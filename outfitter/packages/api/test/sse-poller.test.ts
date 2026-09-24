@@ -233,3 +233,100 @@ describe("SsePoller statusDetail belongs to one run", () => {
     poller.stop();
   });
 });
+
+// A pending question is published when it appears. When it then disappears (answered, or the run
+// left the active set) the browser has to be told: resetting lastUiRequestKey alone left the lamp
+// blue. A session that never had a question must not get that clear frame on its first poll.
+describe("SsePoller pending question clear", () => {
+  test("publishes one clear frame when an answered question disappears, and none when there never was one", async () => {
+    const store = new MemoryStore();
+    const webHub = new SseHub();
+    const poller = new SsePoller(webHub, store, 5);
+    await seedSession(store, "s7");
+    const { reply, frames } = fakeSubscriber();
+    webHub.subscribe("s7", reply);
+    poller.watch("s7");
+
+    const now = new Date().toISOString();
+    await store.runs.insert({
+      id: "r7",
+      sessionId: "s7",
+      state: "running",
+      lastAckedSeq: 0,
+      pending: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+    await poller.pollOne("s7");
+    assert.equal(
+      frames.filter((f) => f.startsWith("event: event")).length,
+      0,
+      "a session that never had a question must not get a clear frame",
+    );
+
+    const question = { type: "extension_ui_request", id: "q1", method: "confirm", title: "Ship it?" };
+    await store.runs.update("r7", { pendingUiRequest: question, updatedAt: now });
+    frames.length = 0;
+    await poller.pollOne("s7");
+    const questionFrames = frames.filter((f) => f.startsWith("event: event"));
+    assert.equal(questionFrames.length, 1);
+    assert.ok(questionFrames[0].includes('"id":"q1"'));
+    assert.ok(!questionFrames[0].includes('"cleared":true'));
+
+    // What POST /ui-response writes after the person answers.
+    await store.runs.update("r7", { pendingUiRequest: undefined, updatedAt: now });
+    frames.length = 0;
+    await poller.pollOne("s7");
+    await poller.pollOne("s7");
+    const clearFrames = frames.filter((f) => f.startsWith("event: event"));
+    assert.equal(clearFrames.length, 1, "the disappearance is published once");
+    assert.ok(clearFrames[0].includes('"type":"extension_ui_request"'));
+    assert.ok(clearFrames[0].includes('"cleared":true'));
+
+    await store.runs.update("r7", {
+      pendingUiRequest: { type: "extension_ui_request", id: "q2", method: "input" },
+      updatedAt: now,
+    });
+    frames.length = 0;
+    await poller.pollOne("s7");
+    const again = frames.filter((f) => f.startsWith("event: event"));
+    assert.equal(again.length, 1, "a later question is published again");
+    assert.ok(again[0].includes('"id":"q2"'));
+    poller.stop();
+  });
+
+  test("publishes one clear frame when the run stops with a question still stored", async () => {
+    const store = new MemoryStore();
+    const webHub = new SseHub();
+    const poller = new SsePoller(webHub, store, 5);
+    await seedSession(store, "s8");
+    const { reply, frames } = fakeSubscriber();
+    webHub.subscribe("s8", reply);
+    poller.watch("s8");
+
+    const now = new Date().toISOString();
+    await store.runs.insert({
+      id: "r8",
+      sessionId: "s8",
+      state: "running",
+      pendingUiRequest: { type: "extension_ui_request", id: "q1", method: "select" },
+      lastAckedSeq: 0,
+      pending: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+    await poller.pollOne("s8");
+    frames.length = 0;
+
+    // Stop does not have to wipe the field: the run is no longer active, so the question is gone.
+    await store.runs.update("r8", { state: "stopped", updatedAt: now });
+    await poller.pollOne("s8");
+    await poller.pollOne("s8");
+
+    const clearFrames = frames.filter((f) => f.startsWith("event: event") && f.includes('"cleared":true'));
+    assert.equal(clearFrames.length, 1, "leaving the active set publishes the clear once");
+    const statusFrames = frames.filter((f) => f.startsWith("event: status"));
+    assert.ok(statusFrames.some((f) => f.includes('"state":"stopped"')));
+    poller.stop();
+  });
+});

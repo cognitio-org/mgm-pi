@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mergeEntries, nextStatusDetail } from "../src/hooks/useSessionStream.ts";
+import { mergeEntries, nextPendingOnStatus, nextPendingUiRequest, nextStatusDetail } from "../src/hooks/useSessionStream.ts";
 import type { PiEntry } from "../src/api/client.ts";
 
 function entry(id: string): PiEntry {
@@ -48,5 +48,50 @@ describe("nextStatusDetail", () => {
   });
   it("is a no-op on an empty state", () => {
     expect(nextStatusDetail(undefined, undefined)).toBeUndefined();
+  });
+});
+
+// The session lamp stays blue ("Waiting for you") while pendingUiRequest is set. The direct SSE
+// path used to store every extension_ui_request that had an id, including display-only methods,
+// and nothing cleared it when the question was answered or the run stopped.
+const question = { type: "extension_ui_request", id: "q1", method: "confirm", title: "Ship it?" };
+
+describe("nextPendingUiRequest", () => {
+  it("keeps a dialog the run is blocked on", () => {
+    expect(nextPendingUiRequest(null, question)).toEqual(question);
+    for (const method of ["select", "confirm", "input", "editor"]) {
+      expect(nextPendingUiRequest(null, { type: "extension_ui_request", id: "q", method })).toMatchObject({ method });
+    }
+  });
+
+  it("does not stick a notify or setStatus, and leaves a real question in place", () => {
+    expect(nextPendingUiRequest(null, { type: "extension_ui_request", id: "n1", method: "notify", message: "saved" })).toBeNull();
+    expect(nextPendingUiRequest(null, { type: "extension_ui_request", id: "s1", method: "setStatus", text: "working" })).toBeNull();
+    expect(nextPendingUiRequest(question, { type: "extension_ui_request", id: "n1", method: "notify" })).toEqual(question);
+    expect(nextPendingUiRequest(question, { type: "extension_ui_request", id: "s1", method: "setStatus" })).toEqual(question);
+  });
+
+  it("clears on no id, or on the poller's cleared frame", () => {
+    expect(nextPendingUiRequest(question, { type: "extension_ui_request", method: "confirm" })).toBeNull();
+    expect(nextPendingUiRequest(question, { type: "extension_ui_request", cleared: true })).toBeNull();
+    expect(nextPendingUiRequest(question, { type: "extension_ui_request", id: "q1", method: "confirm", cleared: true })).toBeNull();
+  });
+
+  it("ignores events that are not a ui request", () => {
+    expect(nextPendingUiRequest(question, { type: "message_update" })).toEqual(question);
+  });
+});
+
+describe("nextPendingOnStatus", () => {
+  it("clears when the run is stopped or failed", () => {
+    expect(nextPendingOnStatus(question, "stopped")).toBeNull();
+    expect(nextPendingOnStatus(question, "failed")).toBeNull();
+  });
+
+  it("leaves the question while the run is still going", () => {
+    expect(nextPendingOnStatus(question, "running")).toBe(question);
+    expect(nextPendingOnStatus(question, "idle")).toBe(question);
+    expect(nextPendingOnStatus(question, "stopping")).toBe(question);
+    expect(nextPendingOnStatus(question, undefined)).toBe(question);
   });
 });

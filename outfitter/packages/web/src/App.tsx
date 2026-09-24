@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { api, ApiError } from "./api/client.ts";
 import { registerWebMcpTools } from "./lib/webmcp.ts";
@@ -101,6 +101,23 @@ export function App() {
   useSysCommand(openEasterEgg);
 
   const items = NAV_ITEMS.filter((item) => !item.operatorOnly || operator);
+  const headerRef = useRef<HTMLElement>(null);
+  // Session chrome sticks just under this bar on phones. The height changes with wrapping and
+  // the safe-area inset, so a fixed offset would leave a gap or cover the title.
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const apply = () => {
+      document.documentElement.style.setProperty("--app-header-h", `${Math.round(el.getBoundingClientRect().height)}px`);
+    };
+    apply();
+    const observer = new ResizeObserver(apply);
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      document.documentElement.style.removeProperty("--app-header-h");
+    };
+  }, []);
 
   return (
     <div className="app-shell">
@@ -109,7 +126,7 @@ export function App() {
        * the original bug report. On phones this header's compact bar (logo + summary pill + menu
        * button) still renders regardless of route, since the desk's menu bar collapses into the
        * icon grid there and has no room for its own top bar too. */}
-      <header className={`app-header${isDesk ? " app-header-desk" : ""}`}>
+      <header ref={headerRef} className={`app-header${isDesk ? " app-header-desk" : ""}`}>
         <NavLink to="/" aria-label="Outfitter desk" style={{ textDecoration: "none" }} title={vocabulary.desk.hint}>
           <Logo />
         </NavLink>

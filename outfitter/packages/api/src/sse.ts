@@ -223,8 +223,13 @@ export class SsePoller {
     if (uiKey && uiKey !== cursor.lastUiRequestKey) {
       this.hub.publish(sessionId, { type: "event", data: run?.pendingUiRequest });
       cursor.lastUiRequestKey = uiKey;
+    } else if (!uiKey && cursor.lastUiRequestKey) {
+      // The question was published and is now gone (answered, or the run left the active set).
+      // Resetting the cursor alone left the browser's lamp blue. One clear frame; a session that
+      // never had a question has no lastUiRequestKey, so its first poll sends nothing.
+      this.hub.publish(sessionId, { type: "event", data: { type: "extension_ui_request", cleared: true } });
+      cursor.lastUiRequestKey = undefined;
     }
-    if (!uiKey) cursor.lastUiRequestKey = undefined;
 
     this.cursors.set(sessionId, cursor);
   }

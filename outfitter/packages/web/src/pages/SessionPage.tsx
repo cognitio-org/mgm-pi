@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type UIEvent } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { api, type ModelRow, type SessionDetail } from "../api/client.ts";
 import { useSessionStream } from "../hooks/useSessionStream.ts";
@@ -14,11 +14,15 @@ import {
   transportStatusLine,
   type TransportOutcome,
 } from "../lib/retro-errors.ts";
+import { sessionLamp } from "../lib/session-lamp.ts";
+import { githubCluster, looseRepoClause } from "../lib/session-facts.ts";
 import { toApiErrorState } from "../lib/api-error.ts";
 import { EntryItem } from "../components/EntryItem.tsx";
 import { BeatView, YouMark } from "../components/TranscriptRail.tsx";
 import { Composer } from "../components/Composer.tsx";
 import { StatusPill } from "../components/StatusPill.tsx";
+import { GithubChip } from "../components/GithubChip.tsx";
+import { TransportDot } from "../components/TransportDot.tsx";
 import { UiRequestPanel } from "../components/UiRequestPanel.tsx";
 import { Working } from "../components/Working.tsx";
 import { NotFoundError } from "../components/NotFoundError.tsx";
@@ -54,7 +58,13 @@ export function SessionPage() {
   const [transportOutcome, setTransportOutcome] = useState<TransportOutcome | null>(null);
   const { entries, runState, runStateReason, statusDetail, pendingUiRequest, costEstimate } = useSessionStream(sessionId);
   const { providers } = useProviders();
-  const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  // The status line under the title bar hides once the person scrolls. The jump to the
+  // latest entry is not that scroll -- the facts stay up until they move.
+  const [compact, setCompact] = useState(false);
+  // Scroll position the page jumped to on its own. Events that only report that spot
+  // are not the person scrolling, so they must not tuck the status line away.
+  const landedAt = useRef<number | null>(null);
   // Cloud-fixes 11: the message just sent, until its stored entry and reply arrive.
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(null);
   // Last time the page saw progress (a new entry or run state change) -- the work/wake timeouts
@@ -71,6 +81,7 @@ export function SessionPage() {
   useEffect(() => {
     setPendingSend(null);
     setLastProgressAt(Date.now());
+    setCompact(false);
   }, [sessionId]);
 
   useEffect(() => {
@@ -164,8 +175,37 @@ export function SessionPage() {
   }, []);
 
   useEffect(() => {
-    transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight });
+    const title = session?.name ?? (sessionId ? `Floppy ${sessionId.slice(0, 8)}` : "Floppy");
+    const previous = document.title;
+    document.title = `${title} · Outfitter`;
+    return () => {
+      document.title = previous;
+    };
+  }, [session?.name, sessionId]);
+
+  // Follow the latest entry. Remember where that jump landed so its scroll event does
+  // not tuck the status line away before it has been seen.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || getComputedStyle(el).overflowY === "visible") return;
+    if (el.scrollHeight <= el.clientHeight + 16) {
+      landedAt.current = null;
+      return;
+    }
+    el.scrollTo({ top: el.scrollHeight });
+    landedAt.current = el.scrollTop;
   }, [entries.length, pendingSend?.localId]);
+
+  // Phones scroll the page, not the conversation panel, so the same shrink follows window scroll.
+  useEffect(() => {
+    const onScroll = () => {
+      if (!window.matchMedia("(max-width: 700px)").matches) return;
+      const top = window.scrollY;
+      setCompact((prev) => (top > 16 ? true : top < 4 ? false : prev));
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   async function reload() {
     const fresh = await api.session(sessionId);
@@ -293,12 +333,19 @@ export function SessionPage() {
   const detailNote = runStateNote(statusDetail);
   // Same source as the pill and buttons: while a send is in flight (or timed out) the composer's
   // status line speaks for the run, so the header must not also say READY. or "stopped · press Play".
+  // The composer keeps READY. as its empty prompt. The lamp beside the pill is the human state.
   const statusLine =
     activity.phase === "none"
       ? deriveTransportStatusLine(activity.pillState, transportOutcome, runStateReason)
       : transportOutcome
         ? transportStatusLine(transportOutcome)
         : null;
+  const lamp = sessionLamp({
+    runState: activity.pillState,
+    phase: activity.phase,
+    pendingQuestion: pendingUiRequest != null,
+    statusLine,
+  });
   const statusError = activity.errorHeadline;
   const composerStatus = statusError ? (
     <span className="send-status send-status-error" role="alert">
@@ -317,10 +364,19 @@ export function SessionPage() {
   // ?DEVICE NOT PRESENT ERROR the Peripherals page shows for that row, right where the user is
   // already looking, instead of a confusing generic run failure.
   const floppyTitle = session?.name ?? `Floppy ${sessionId.slice(0, 8)}`;
+  const cluster = githubCluster(session);
+  const looseRepo = looseRepoClause(session);
   const modelProviderKind = header.model?.split("/")[0];
   const modelProviderDown = modelProviderKind
     ? providers.find((p) => p.kind === modelProviderKind)?.status === "down"
     : false;
+
+  function onSessionScroll(event: UIEvent<HTMLDivElement>) {
+    const top = event.currentTarget.scrollTop;
+    if (landedAt.current !== null && Math.abs(top - landedAt.current) < 2) return;
+    landedAt.current = null;
+    setCompact((prev) => (top > 16 ? true : top < 4 ? false : prev));
+  }
 
   return (
     <div className="session-view">
@@ -334,12 +390,97 @@ export function SessionPage() {
           onResume={() => setApiError(null)}
         />
       )}
-      <div className="session-header">
-        <div>
-          <h2 className="session-title" title={sessionId}>
-            {session?.name ?? `Floppy ${sessionId?.slice(0, 8) ?? ""}`}
-          </h2>
-          <div className="session-meta session-subline">
+      <div className="panel session-window">
+        <div className={`session-chrome${compact ? " is-min" : ""}`}>
+          <div className="panel-titlebar session-titlebar">
+            <h2 className="panel-label session-window-name" title={floppyTitle}>
+              {floppyTitle}
+            </h2>
+            <span className="session-window-status">
+              <TransportDot tone={lamp.tone} label={lamp.detail === lamp.label ? undefined : lamp.label} />
+              <StatusPill state={activity.pillState} />
+            </span>
+            {lamp.detail && (
+              <span className={`session-transport-detail${lamp.detail === "BREAK" ? " is-attention" : ""}`} title={lamp.detail}>
+                {lamp.detail}
+              </span>
+            )}
+            <div className="run-controls">
+              {chromePlace.ready && (
+                <>
+                  <button
+                    type="button"
+                    className="btn"
+                    title="Open this Floppy in its own tab group"
+                    onClick={() => chromePlace.place("own", floppyTitle)}
+                  >
+                    This Floppy's group
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    title="Open this Floppy in the shared Floppies group"
+                    onClick={() => chromePlace.place("shared", floppyTitle)}
+                  >
+                    Floppies group
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    title="Open this Floppy in a new window"
+                    onClick={() => chromePlace.place("window", floppyTitle)}
+                  >
+                    New window
+                  </button>
+                  {chromePlace.split && (
+                    <>
+                      {splitTargets.length > 0 && (
+                        <select aria-label="Floppy to split beside" value={splitTarget} onChange={(event) => setSplitTarget(event.target.value)}>
+                          {splitTargets.map((row) => (
+                            <option key={row.id} value={row.id}>
+                              {row.name ?? `Floppy ${row.id.slice(0, 8)}`}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={!splitTarget}
+                        title="Split this Floppy beside another"
+                        onClick={() => chromePlace.splitWith(splitTarget)}
+                      >
+                        Split
+                      </button>
+                    </>
+                  )}
+                </>
+              )}
+              <button className="btn session-transport" onClick={copyTeleport} title={transport.eject.hint}>
+                {copied ? "Copied!" : transportLabel("eject")}
+              </button>
+              <button
+                className="btn btn-danger session-transport"
+                onClick={handleAbort}
+                disabled={!activity.canAbort}
+                title="Interrupt the current turn, like the C64 RUN/STOP key"
+              >
+                {pendingAction === "abort" ? <Working label="Breaking" /> : transportLabel("abort")}
+              </button>
+              <button className="btn btn-danger session-transport" onClick={handleStop} disabled={!activity.canStop} title="Stop this floppy's run">
+                {pendingAction === "stop" ? <Working label="Stopping" /> : transportLabel("stop")}
+              </button>
+              <button
+                className="btn btn-primary session-transport"
+                onClick={handleWake}
+                disabled={!activity.canWake}
+                title="Wake this floppy and start the run"
+              >
+                {pendingAction === "wake" ? <Working label="Waking" /> : transportLabel("wake")}
+              </button>
+            </div>
+          </div>
+          <div className="session-statusbar">
             {session?.guruId && (
               <span className="session-guru-id">
                 <span className="mono" title={session.guruId}>
@@ -356,60 +497,36 @@ export function SessionPage() {
                 </button>
               </span>
             )}
-            <span className="session-repo-branch" title={session?.repo ? `${session.repo}${session.branch ? ` @ ${session.branch}` : ""}` : undefined}>
-              {session?.repo ? `· ${session.repo}${session.branch ? ` @ ${session.branch}` : ""}` : "· no repository"}
-            </span>
-            {typeof cost === "number" ? ` · $${cost.toFixed(4)}` : ""}
-          </div>
-          {session?.github && (
-            <p className="session-meta session-github">
-              GitHub
-              {" · "}
-              {session.github.repo
-                ? `${session.github.repo}${session.github.branch ? ` @ ${session.github.branch}` : ""}`
-                : "no repository"}
-              {" · "}
-              {session.github.credential === "session"
-                ? "session token"
-                : session.github.credential === "default"
-                  ? "shared token"
-                  : "no token"}
-              {session.github.onBehalfOf ? ` · on behalf of @${session.github.onBehalfOf}` : ""}
-              {" · "}
-              {session.github.merge ? "merge allowed" : "merge off"}
-              {session.github.repo ? " · this branch only" : ""}
-            </p>
-          )}
-          <div className="session-meta session-model-info">
-            {header.model ? <span className="mono">{header.model}</span> : "model unknown yet"}
-            {header.thinking ? ` · thinking ${header.thinking}` : ""}
-            {header.context ? (
-              <span className="context-usage">
-                {" · "}
-                {header.context.window
-                  ? `${header.context.tokens.toLocaleString()} / ${header.context.window.toLocaleString()} tokens`
-                  : `${header.context.tokens.toLocaleString()} tokens`}
-                {typeof percent === "number" && (
-                  <span
-                    className={`meter context-meter${percent >= 80 ? " meter-danger" : percent >= 50 ? " meter-warn" : ""}`}
-                    role="meter"
-                    aria-label="Context used"
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={Math.round(percent)}
-                  >
-                    <span className="meter-fill" style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
-                  </span>
-                )}
-              </span>
-            ) : null}
-            {statusLine && (
-              <span className={`transport-status-line${statusLine === "READY." ? " ready" : ""}`}>
-                {" · "}
-                {statusLine}
-                {statusLine === "READY." && <span className="cursor-blink" aria-hidden="true" />}
+            {looseRepo && (
+              <span className="session-repo-branch" title={looseRepo}>
+                {looseRepo}
               </span>
             )}
+            {typeof cost === "number" && <span>${cost.toFixed(4)}</span>}
+            {cluster && <GithubChip cluster={cluster} />}
+            <span className="session-model-info">
+              {header.model ? <span className="mono">{header.model}</span> : "model unknown yet"}
+              {header.thinking ? <span>thinking {header.thinking}</span> : null}
+              {header.context ? (
+                <span className="context-usage">
+                  {header.context.window
+                    ? `${header.context.tokens.toLocaleString()} / ${header.context.window.toLocaleString()} tokens`
+                    : `${header.context.tokens.toLocaleString()} tokens`}
+                  {typeof percent === "number" && (
+                    <span
+                      className={`meter context-meter${percent >= 80 ? " meter-danger" : percent >= 50 ? " meter-warn" : ""}`}
+                      role="meter"
+                      aria-label="Context used"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={Math.round(percent)}
+                    >
+                      <span className="meter-fill" style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
+                    </span>
+                  )}
+                </span>
+              ) : null}
+            </span>
           </div>
           {oomMessage && (
             <p className="context-oom-note" role="alert">
@@ -435,94 +552,14 @@ export function SessionPage() {
               </button>
             </p>
           )}
-          {chromePlace.ready && (
-            <div className="run-controls" aria-label="Chrome tab placement">
-              <button
-                type="button"
-                className="btn"
-                title="Open this Floppy in its own tab group"
-                onClick={() => chromePlace.place("own", floppyTitle)}
-              >
-                This Floppy's group
-              </button>
-              <button
-                type="button"
-                className="btn"
-                title="Open this Floppy in the shared Floppies group"
-                onClick={() => chromePlace.place("shared", floppyTitle)}
-              >
-                Floppies group
-              </button>
-              <button
-                type="button"
-                className="btn"
-                title="Open this Floppy in a new window"
-                onClick={() => chromePlace.place("window", floppyTitle)}
-              >
-                New window
-              </button>
-              {chromePlace.split && (
-                <>
-                  {splitTargets.length > 0 && (
-                    <select aria-label="Floppy to split beside" value={splitTarget} onChange={(event) => setSplitTarget(event.target.value)}>
-                      {splitTargets.map((row) => (
-                        <option key={row.id} value={row.id}>
-                          {row.name ?? `Floppy ${row.id.slice(0, 8)}`}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                  <button
-                    type="button"
-                    className="btn"
-                    disabled={!splitTarget}
-                    title="Split this Floppy beside another"
-                    onClick={() => chromePlace.splitWith(splitTarget)}
-                  >
-                    Split
-                  </button>
-                </>
-              )}
-            </div>
-          )}
           {chromePlace.note && (
             <p className="status-detail-note" role="alert">
               {chromePlace.note}
             </p>
           )}
         </div>
-        <div className="run-controls">
-          <StatusPill state={activity.pillState} />
-          <button className="btn" onClick={copyTeleport} title={transport.eject.hint}>
-            {copied ? "Copied!" : transportLabel("eject")}
-          </button>
-          <button
-            className="btn btn-danger"
-            onClick={handleAbort}
-            disabled={!activity.canAbort}
-            title="Interrupt the current turn, like the C64 RUN/STOP key"
-          >
-            {pendingAction === "abort" ? <Working label="Breaking" /> : transportLabel("abort")}
-          </button>
-          <button className="btn btn-danger" onClick={handleStop} disabled={!activity.canStop} title="Stop this floppy's run">
-            {pendingAction === "stop" ? <Working label="Stopping" /> : transportLabel("stop")}
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={handleWake}
-            disabled={!activity.canWake}
-            title="Wake this floppy and start the run"
-          >
-            {pendingAction === "wake" ? <Working label="Waking" /> : transportLabel("wake")}
-          </button>
-        </div>
-      </div>
-
-      {pendingUiRequest && <UiRequestPanel request={pendingUiRequest} onRespond={handleUiResponse} />}
-
-      <div className="panel">
-        <div className="panel-titlebar"><span className="panel-label">Transcript</span></div>
-        <div className="transcript" ref={transcriptRef}>
+        <div className="session-scroll" ref={scrollRef} onScroll={onSessionScroll}>
+        <div className="transcript">
           {beats.length === 0 && !activity.showOptimistic ? (
             <p className="empty-state">No entries yet. Send a message below to start the run.</p>
           ) : (
@@ -555,7 +592,10 @@ export function SessionPage() {
             </div>
           )}
         </div>
+        </div>
       </div>
+
+      {pendingUiRequest && <UiRequestPanel request={pendingUiRequest} onRespond={handleUiResponse} />}
 
       <Composer
         // One composer per session: a draft (and its Preview state) never follows the user to

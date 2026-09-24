@@ -41,6 +41,33 @@ export function cloudSessionBranch(env?: NodeJS.ProcessEnv): string {
   return `this cloud session works on ${branch}`;
 }
 
+/** Absent or unusable means `outfitter/`, the prefix new session branches already use. */
+export function cloudBranchPrefix(env?: NodeJS.ProcessEnv): string {
+  const raw = (env ?? process.env).OUTFITTER_BRANCH_PREFIX?.trim() ?? "";
+  if (!raw || /[\s\0~^:?*\[\\\]]/.test(raw) || raw.includes("..") || raw.startsWith("-") || raw.startsWith("refs/")) {
+    return "outfitter/";
+  }
+  return raw.endsWith("/") ? raw : `${raw}/`;
+}
+
+function safeCloudBranch(branch: string): boolean {
+  return branch.length > 0 && branch.length <= 200 && !branch.startsWith("-") && !branch.startsWith("refs/") && !branch.includes("..") && !/[\s\0~^:?*\[\\\]]/.test(branch);
+}
+
+/** The recorded session branch, or any branch under the configured prefix. */
+export function cloudBranchAllowed(branch: string, env?: NodeJS.ProcessEnv): boolean {
+  if (!safeCloudBranch(branch)) return false;
+  const e = env ?? process.env;
+  const session = e.OUTFITTER_SESSION_BRANCH?.trim() ?? "";
+  if (session && branch === session) return true;
+  return branch.startsWith(cloudBranchPrefix(e));
+}
+
+/** The next refusal, and the next checkpoint, should name the branch just checked out. */
+export function rememberCloudBranch(branch: string, env?: NodeJS.ProcessEnv): void {
+  (env ?? process.env).OUTFITTER_SESSION_BRANCH = branch;
+}
+
 function errText(err: unknown): string {
   return err instanceof Error && err.message ? err.message : "the github broker request failed";
 }

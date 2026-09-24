@@ -5,7 +5,9 @@
  * closed. Titles and bodies are arguments or stdin, never a shell string, so a quote or a `$()`
  * in a title is data. When OUTFITTER_GITHUB_SOCKET is set, `call` sends that invocation to the
  * broker and turns the result back into the stdout the parsers below already understand, so the
- * model sees the same text. Checkout and issue start are not sent (kernal/docs/git-github-spec.md).
+ * model sees the same text. A cloud checkout views the pull request, then switches only when that
+ * head is the session branch or under the branch prefix. A cloud issue start checks out
+ * `<prefix>issue-<n>` locally. `gh issue develop` is not sent.
  *
  * Merge is pinned to the head SHA last seen. `gh pr merge --match-head-commit` is the backstop,
  * but a local check comes first so a moved pull request is explained instead of attempted.
@@ -13,7 +15,7 @@
 import { readdir, readFile, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import * as git from "../_shared/git.ts";
-import { brokerCall, cloudSessionBranch, githubSocketPath } from "./broker.ts";
+import { brokerCall, cloudBranchAllowed, cloudBranchPrefix, cloudSessionBranch, githubSocketPath, rememberCloudBranch } from "./broker.ts";
 import { gh as ghExec, type Exec, execCommand } from "./gh.ts";
 import { attributionFrom, checksLine, latestChecks, rollup } from "./lib.ts";
 
@@ -838,6 +840,7 @@ async function runPr(action: string, params: any, deps: GithubDeps, repo: RepoRe
     }
     case "checkout": {
       if (!number) return fail("A pull request number is required.");
+      if (githubSocketPath(deps.env)) return checkoutCloud(number, deps, repo);
       const res = await call(deps, repo.root, ["pr", "checkout", String(number)], { timeoutMs: 60_000 });
       if (!res.ok) return fail(ghDetail(res));
       const st = await git.status(repo.root);
@@ -1226,9 +1229,39 @@ async function editIssue(params: any, deps: GithubDeps, repo: RepoRef): Promise<
   return ok({ number });
 }
 
+async function checkoutCloud(number: number, deps: GithubDeps, repo: RepoRef): Promise<GithubResult> {
+  const viewed = await call(deps, repo.root, ["pr", "view", String(number), "--json", "headRefName,number"]);
+  if (!viewed.ok) return fail(ghDetail(viewed));
+  let head = "";
+  try {
+    head = String(JSON.parse(viewed.stdout)?.headRefName ?? "");
+  } catch {
+    head = "";
+  }
+  if (!head || !cloudBranchAllowed(head, deps.env)) return fail(cloudSessionBranch(deps.env));
+  let sw = await git.switchBranch(repo.root, head);
+  if (!sw.ok) {
+    const fetched = await git.runGit(["fetch", "origin", head], { cwd: repo.root, timeoutMs: 60_000 });
+    if (fetched.code !== 0) return fail((fetched.stderr || fetched.stdout).trim() || "Could not fetch that branch.");
+    sw = await git.switchBranch(repo.root, head, { create: true, from: `origin/${head}` });
+  }
+  if (!sw.ok) return fail(sw.detail);
+  rememberCloudBranch(head, deps.env);
+  return ok({ number, branch: head });
+}
+
 async function startIssue(params: any, deps: GithubDeps, repo: RepoRef): Promise<GithubResult> {
   const number = positiveInt(params.number);
   if (!number) return fail("An issue number is required.");
+  if (githubSocketPath(deps.env)) {
+    const branch = `${cloudBranchPrefix(deps.env)}issue-${number}`;
+    if (!cloudBranchAllowed(branch, deps.env)) return fail(cloudSessionBranch(deps.env));
+    let sw = await git.switchBranch(repo.root, branch);
+    if (!sw.ok) sw = await git.switchBranch(repo.root, branch, { create: true });
+    if (!sw.ok) return fail(sw.detail);
+    rememberCloudBranch(branch, deps.env);
+    return ok({ number, branch });
+  }
   const developed = await call(deps, repo.root, ["issue", "develop", String(number), "--checkout"], { timeoutMs: 60_000 });
   if (!developed.ok) return fail(ghDetail(developed));
   // develop prints `…/tree/<name>` and already checks that branch out. Other linked

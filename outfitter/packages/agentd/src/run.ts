@@ -7,6 +7,7 @@
  */
 import { mkdir, readFile, open as openFile, chown } from "node:fs/promises";
 import { resolve, sep } from "node:path";
+import { branchAllowed, DEFAULT_BRANCH_PREFIX, normalizeBranchPrefix } from "./branch-policy.js";
 import { ActionListener } from "./browser-action.js";
 import { CaptureListener } from "./browser-capture.js";
 import { InspectListener } from "./browser-inspect.js";
@@ -609,6 +610,10 @@ export class RunController {
       secretEnv.OUTFITTER_GITHUB_SOCKET = this.deps.githubSocketPath;
       await this.startGithubSocket(this.deps.githubSocketPath);
     }
+    if (this.spec.repo) {
+      secretEnv.OUTFITTER_SESSION_BRANCH = this.spec.repo.branch;
+      secretEnv.OUTFITTER_BRANCH_PREFIX = normalizeBranchPrefix(this.spec.repo.branchPrefix) ?? DEFAULT_BRANCH_PREFIX;
+    }
     // pi runs as the unprivileged agent user but would otherwise inherit root's HOME from agentd's
     // environment; the first extension to touch ~/.pi then dies with EACCES on /root (every run of
     // the first benchmark). Point the child at that user's own home.
@@ -670,11 +675,13 @@ export class RunController {
     if (!parsed) return {};
     const branch = spec.repo.branch;
     const allowed = branch.startsWith("refs/") ? [branch] : [`refs/heads/${branch}`];
+    const prefix = normalizeBranchPrefix(spec.repo.branchPrefix) ?? DEFAULT_BRANCH_PREFIX;
     this.gitProxy = await startGitProxy({
       owner: parsed.owner,
       repo: parsed.repo,
       token,
       allowedRefs: allowed,
+      allowedPrefixes: [prefix],
       log: (line) => this.onLog(line),
       lock: this.networkGitLock,
     });
@@ -1037,18 +1044,27 @@ export class RunController {
       message ?? `outfitter checkpoint ${new Date().toISOString()}`,
       attributionTrailers(sanitizeAuthor(this.spec.author)),
     );
-    // Push whenever HEAD differs from what origin has for the session branch -- including commits
-    // the agent made itself, for which commitAll finds nothing left to commit.
+    // Push HEAD when it is the session branch or under the guru prefix. A detached HEAD, or a
+    // branch outside that set, is not pushed onto the session branch.
+    const sessionBranch = this.spec.repo.branch;
+    const prefix = normalizeBranchPrefix(this.spec.repo.branchPrefix) ?? DEFAULT_BRANCH_PREFIX;
+    const checked = this.deps.gitOps.headBranch ? await this.deps.gitOps.headBranch(this.deps.workspace) : sessionBranch;
+    const target = checked && branchAllowed(checked, sessionBranch, prefix) ? checked : null;
+    if (!target) {
+      const head = this.deps.gitOps.tip ? await this.deps.gitOps.tip(this.deps.workspace, sessionBranch) : undefined;
+      this.deps.link.send({ t: "checkpoint", branch: sessionBranch, ...(head ? { head } : {}), pushed: false });
+      return;
+    }
     // Phase-0 path (root-owned bare repo), not the broker socket. The same lock covers the git
     // proxy's fetch/push forwards so those don't overlap this push.
     const { head, pushed } = await this.withNetworkGit(() =>
       this.deps.gitOps.push(this.deps.workspace, {
         remoteUrl: this.spec!.repo!.cloneUrl,
-        branch: this.spec!.repo!.branch,
+        branch: target,
         githubToken: this.spec!.secrets.githubToken,
       }),
     );
-    this.deps.link.send({ t: "checkpoint", branch: this.spec.repo.branch, head, pushed });
+    this.deps.link.send({ t: "checkpoint", branch: target, head, pushed });
   }
 
   private async handleDiff(reqId: string): Promise<void> {

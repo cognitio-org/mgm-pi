@@ -252,7 +252,7 @@ function assertNoSecret(text: string, where: string): void {
 
 async function withProxy(
   t: { after: (fn: () => void | Promise<void>) => void },
-  opts: { allowedRefs?: string[]; dropReceive?: boolean; log?: string[] } = {},
+  opts: { allowedRefs?: string[]; allowedPrefixes?: string[]; dropReceive?: boolean; log?: string[] } = {},
 ): Promise<{ proxy: GitProxy; upstream: FakeUpstream; dir: string; env: NodeJS.ProcessEnv }> {
   const upstream = await startFakeUpstream({ dropReceive: opts.dropReceive });
   const logs = opts.log;
@@ -261,6 +261,7 @@ async function withProxy(
     repo: "widget",
     token: TOKEN,
     allowedRefs: opts.allowedRefs ?? [ALLOWED],
+    allowedPrefixes: opts.allowedPrefixes,
     upstreamBase: upstream.base,
     log: logs ? (line) => logs.push(line) : undefined,
   });
@@ -453,6 +454,35 @@ test("a push certificate whose ref line is not its own pkt-line is refused and n
   assert.equal(empty.status, 200);
   assert.doesNotMatch(empty.body.toString("utf8"), /malformed/);
   assert.equal(receivePacks(upstream.seen).length, before + 1);
+});
+
+test("a branch under the configured prefix is forwarded, and main is not", async (t) => {
+  const { upstream, dir, env } = await withProxy(t, {
+    allowedRefs: ["refs/heads/feat/teleport"],
+    allowedPrefixes: ["outfitter/"],
+  });
+  await initRepo(dir, env);
+  await writeFile(join(dir, "readme.txt"), "hello\n");
+  assert.equal((await runGit(dir, env, ["add", "readme.txt"])).code, 0);
+  assert.equal((await runGit(dir, env, ["commit", "-m", "init"])).code, 0);
+
+  const prefixed = await runGit(dir, env, ["push", "origin", "HEAD:refs/heads/outfitter/issue-4"]);
+  assert.equal(prefixed.code, 0, prefixed.stderr);
+  assert.equal(receivePacks(upstream.seen).length, 1);
+
+  const session = await runGit(dir, env, ["push", "--force", "origin", "HEAD:refs/heads/feat/teleport"]);
+  assert.equal(session.code, 0, session.stderr);
+
+  const before = receivePacks(upstream.seen).length;
+  const main = await runGit(dir, env, ["push", "origin", "HEAD:refs/heads/main"]);
+  assert.notEqual(main.code, 0);
+  assert.match(main.stderr, /refs\/heads\/main is not an allowed ref/);
+  assert.equal(receivePacks(upstream.seen).length, before);
+
+  const deleted = await runGit(dir, env, ["push", "origin", ":refs/heads/outfitter/issue-4"]);
+  assert.notEqual(deleted.code, 0);
+  assert.match(deleted.stderr, /refusing to delete refs\/heads\/outfitter\/issue-4/);
+  assert.equal(receivePacks(upstream.seen).length, before);
 });
 
 test("a deletion is refused and nothing is forwarded", async (t) => {

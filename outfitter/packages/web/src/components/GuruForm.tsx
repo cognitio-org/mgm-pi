@@ -54,6 +54,7 @@ export function GuruForm({ guru, models, meta, onClose, onSaved }: Props) {
   const [tools, setTools] = useState(listToText(guru?.tools));
   const [excludeTools, setExcludeTools] = useState(listToText(guru?.excludeTools));
   const [playwrightBeforeCheckpoint, setPlaywrightBeforeCheckpoint] = useState(guru?.playwrightBeforeCheckpoint === true);
+  const [branchPrefix, setBranchPrefix] = useState(guru?.branchPrefix ?? "outfitter/");
   const [envRows, setEnvRows] = useState<EnvRow[]>(envToRows(guru?.env).length > 0 ? envToRows(guru?.env) : [{ key: "", value: "" }]);
   const [submitting, setSubmitting] = useState(false);
   const [submitAttempted, setSubmitAttempted] = useState(false);
@@ -82,6 +83,7 @@ export function GuruForm({ guru, models, meta, onClose, onSaved }: Props) {
       tools: textToList(tools),
       excludeTools: textToList(excludeTools),
       playwrightBeforeCheckpoint,
+      branchPrefix: branchPrefix.trim() || undefined,
       env: rowsToEnv(envRows),
     };
     try {
@@ -150,6 +152,19 @@ export function GuruForm({ guru, models, meta, onClose, onSaved }: Props) {
           <div className="form-row">
             <label htmlFor="guru-exclude-tools">Exclude tools (comma-separated)</label>
             <input id="guru-exclude-tools" value={excludeTools} onChange={(e) => setExcludeTools(e.target.value)} />
+          </div>
+
+          <div className="form-row">
+            <label htmlFor="guru-branch-prefix">Cloud branch prefix</label>
+            <input
+              id="guru-branch-prefix"
+              value={branchPrefix}
+              onChange={(e) => setBranchPrefix(e.target.value)}
+              placeholder="outfitter/"
+            />
+            <p className="session-meta">
+              A cloud run may push its session branch, and any branch under this prefix. The default is outfitter/.
+            </p>
           </div>
 
           <div className="form-row">

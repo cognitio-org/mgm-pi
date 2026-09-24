@@ -233,37 +233,47 @@ describe("github broker", { concurrency: 1 }, () => {
     }
   });
 
-  test("checkout, issue start, and branch create/switch are refused locally", async () => {
+  test("checkout, issue start, and branch create/switch follow the prefix", async () => {
     const dir = repo();
     const trap = ghTrap();
-    const server = await serve((req, socket) => reply(socket, req, { ok: false, error: "should not be called" }));
+    const server = await serve((req, socket) => {
+      const head = req.args.number === 8 ? "outfitter/s1" : "main";
+      reply(socket, req, { ok: true, data: { number: req.args.number, head } });
+    });
     const sentence = "this cloud session works on the session branch";
     try {
       const checkout = await executeGithub("github_pr", { action: "checkout", number: 7 }, cloud(dir, server.path, { gh: trap.gh }));
       assert.equal(checkout.isError, true);
       assert.equal(checkout.text, sentence);
-      const started = await executeGithub("github_issue", { action: "start", number: 4 }, cloud(dir, server.path, { gh: trap.gh }));
-      assert.equal(started.isError, true);
-      assert.equal(started.text, sentence);
-      const named = await executeGithub("github_pr", { action: "checkout", number: 7 }, cloud(dir, server.path, {
+      assert.equal(run(dir, "branch", "--show-current"), "main");
+      run(dir, "branch", "outfitter/s1");
+
+      const named = await executeGithub("github_pr", { action: "checkout", number: 8 }, cloud(dir, server.path, {
         gh: trap.gh,
         env: { OUTFITTER_SESSION_BRANCH: "outfitter/s1" },
       }));
-      assert.equal(named.text, "this cloud session works on outfitter/s1");
+      assert.equal(named.isError, undefined, named.text);
+      assert.equal(named.data.branch, "outfitter/s1");
+      assert.equal(run(dir, "branch", "--show-current"), "outfitter/s1");
 
-      const env = { OUTFITTER_GITHUB_SOCKET: server.path };
+      const started = await executeGithub("github_issue", { action: "start", number: 4 }, cloud(dir, server.path, { gh: trap.gh }));
+      assert.equal(started.isError, undefined, started.text);
+      assert.equal(started.data.branch, "outfitter/issue-4");
+      assert.equal(run(dir, "branch", "--show-current"), "outfitter/issue-4");
+
+      const env = { OUTFITTER_GITHUB_SOCKET: server.path, OUTFITTER_SESSION_BRANCH: "outfitter/issue-4" };
       const created = await runAction("branch", { op: "create", name: "other" }, { cwd: dir, settings: {}, gh: undefined, env });
       assert.equal(created.isError, true);
-      assert.equal(created.text, sentence);
-      const switched = await runAction("branch", { op: "switch", name: "other" }, { cwd: dir, settings: {}, gh: undefined, env });
-      assert.equal(switched.text, sentence);
+      assert.equal(created.text, "this cloud session works on outfitter/issue-4");
+      const extra = await runAction("branch", { op: "create", name: "outfitter/extra" }, { cwd: dir, settings: {}, gh: undefined, env });
+      assert.equal(extra.isError, undefined, extra.text);
+      assert.equal(run(dir, "branch", "--show-current"), "outfitter/extra");
       const listed = await runAction("branch", { op: "list" }, { cwd: dir, settings: {}, gh: undefined, env });
       assert.equal(listed.isError, undefined);
-      assert.match(listed.text, /\* main/);
+      assert.match(listed.text, /\* outfitter\/extra/);
 
-      assert.equal(run(dir, "branch", "--show-current"), "main");
       assert.equal(run(dir, "branch", "--list", "other"), "");
-      assert.equal(server.requests.length, 0);
+      assert.equal(server.requests.map((r) => r.op).every((op) => op === "github_pr.view"), true);
       assert.equal(trap.calls.length, 0);
     } finally {
       await server.close();

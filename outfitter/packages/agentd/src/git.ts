@@ -269,6 +269,10 @@ export interface GitOps {
    * nothing to send. */
   push(cwd: string, spec: PushSpec): Promise<{ head: string; pushed: boolean }>;
   diff(cwd: string, base: string): Promise<string>;
+  /** The checked-out branch, or null when HEAD is detached. Absent in tests that keep v1 push behavior. */
+  headBranch?(cwd: string): Promise<string | null>;
+  /** The commit at `refs/heads/<branch>`, or undefined when that branch is absent. */
+  tip?(cwd: string, branch: string): Promise<string | undefined>;
 }
 
 export interface GitOpsOptions {
@@ -573,6 +577,21 @@ export function createGitOps(exec: ExecFn = defaultExec, options: GitOpsOptions 
         if (res.code !== 0) throw new Error(`git ${args.join(" ")} failed: ${res.stderr.trim()}`);
       }
       return { head, pushed: true };
+    },
+
+    async headBranch(cwd) {
+      const res = await run(cwd, ["symbolic-ref", "--short", "HEAD"]);
+      if (res.code !== 0) return null;
+      const name = res.stdout.trim();
+      return name || null;
+    },
+
+    async tip(cwd, branch) {
+      if (!branch || /[\s\0]/.test(branch)) return undefined;
+      const res = await run(cwd, ["rev-parse", "--verify", `refs/heads/${branch}^{commit}`]);
+      if (res.code !== 0) return undefined;
+      const sha = res.stdout.trim();
+      return SHA_RE.test(sha) ? sha : undefined;
     },
 
     async diff(cwd, base) {

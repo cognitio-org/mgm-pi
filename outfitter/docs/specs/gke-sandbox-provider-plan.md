@@ -11,7 +11,7 @@ wins until the spec is amended (§6).
 
 | Spec §9 question | Decision | Consequence |
 |---|---|---|
-| 1. Warm hours | **Weekdays 08:00-20:00 `Europe/Zagreb`** | PR4 (warm assignment) is in v1. Warm cost about $14/month (spec §3.7) |
+| 1. Warm hours | **Weekdays 09:00-03:00 `Europe/Zagreb`** (up 09:00 Mon-Fri, down 03:00 Tue-Sat; was 08:00-20:00 until 2026-09-25) | PR4 (warm assignment) is in v1. Warm cost about $21/month (spec §3.7) |
 | 2. Spot for the warm pool | **On-demand for v1** | No mid-session preemption. Spot can be revisited once billing is known |
 | 4. Keep Cloud Run | **Decide after PR5** | Both providers stay configured through PR5. The registry (PR1) and the contract suite are required, not optional |
 | First step | **Spike and PR1 in parallel** | PR1 is code-only with no cloud spend. The spike waits for the owner to run `gke-cluster.sh` |

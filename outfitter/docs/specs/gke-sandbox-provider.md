@@ -564,7 +564,8 @@ confirmed (**UNVERIFIED**). One 1 vCPU / 2 GiB / 4 GiB-ephemeral pod costs about
 | Scenario (1 warm replica, 1 vCPU/2 GiB) | Warm hours/month | Warm cost | + active use (2 h/day, about 60 h) | Cluster fee | Total |
 |---|---|---|---|---|---|
 | Cold only (`replicas: 0`) | 0 | $0 | $3.3 | $0 (credit) | **$3.3** |
-| **Default: weekdays 08:00-20:00, owner's time zone** | about 260 | $14.3 | $3.3 | $0 | **$17.6** |
+| Weekdays 08:00-20:00, owner's time zone (default until 2026-09-25) | about 260 | $14.3 | $3.3 | $0 | $17.6 |
+| **Default: weekdays 09:00-03:00, owner's time zone** | about 390 | $21.5 | $3.3 | $0 | **$24.8** |
 | Weekdays 09:00-18:00 | about 195 | $10.7 | $3.3 | $0 | $14.0 |
 | Around the clock | 730 | $40.2 | $3.3 | $0 | **$43.5 (over budget)** |
 | Around the clock on Spot (roughly 60-70 % off, UNVERIFIED) | 730 | about $13 | $3.3 | $0 | about $16; warm or claimed pods may be preempted |
@@ -734,7 +735,7 @@ rebuild. After every image rebuild both scripts must run, or GKE keeps serving t
    `POST /api/hooks/warm-pool {replicas}`. It is authenticated exactly like `/api/hooks/tick` (an OIDC token
    as `TASKS_SA_EMAIL`, `protocol.md:189-196`). The API patches the pool's `spec.replicas` using its RBAC
    `patch`. This reuses the existing scheduler SA and hook-auth code, and keeps the API the only thing
-   that talks to the cluster. Defaults: `WARM_UP_CRON="0 8 * * 1-5"`, `WARM_DOWN_CRON="0 20 * * 1-5"`,
+   that talks to the cluster. Defaults: `WARM_UP_CRON="0 9 * * 1-5"`, `WARM_DOWN_CRON="0 3 * * 2-6"` (08:00/20:00 until 2026-09-25),
    `WARM_TZ="Europe/Zagreb"` (**owner to confirm**), `WARM_REPLICAS=1`.
 2. **Soft cap** `GKE_MAX_ACTIVE` (default 3), enforced in `start()` (count-then-create, no lock
    between the two -- see §4.2's note under `start(run)`; a cost guardrail, not admission control).

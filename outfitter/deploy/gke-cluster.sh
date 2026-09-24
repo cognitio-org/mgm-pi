@@ -30,10 +30,11 @@ CLUSTER="${GKE_CLUSTER:-outfitter}"
 CHANNEL="${GKE_CHANNEL:-regular}"
 MIN_VERSION="1.36.3-gke.1767000"
 KUBECONFIG_OUTFITTER="${KUBECONFIG_OUTFITTER:-${HOME}/.kube/outfitter}"
-# Outside the warm window (weekdays 08:00-20:00 Europe/Zagreb): 21:00-05:00 UTC daily. Autopilot
-# wants at least 48 h of maintenance availability per 32 days; 8 h a day is well over that.
-MAINT_START="2026-01-01T21:00:00Z"
-MAINT_END="2026-01-02T05:00:00Z"
+# Outside the warm window (09:00-03:00 Europe/Zagreb, weekdays): 02:00-07:00 UTC daily, which is
+# 03:00/04:00-08:00/09:00 Zagreb depending on DST, so it never overlaps warm hours. Autopilot
+# wants at least 48 h of maintenance availability per 32 days; 5 h a day is well over that.
+MAINT_START="2026-01-01T02:00:00Z"
+MAINT_END="2026-01-01T07:00:00Z"
 MAINT_RECURRENCE="FREQ=DAILY"
 
 I_KNOW=0

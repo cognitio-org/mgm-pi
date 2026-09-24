@@ -2,6 +2,7 @@
  * Types mirroring outfitter/docs/protocol.md exactly. This is the wire contract between agentd and
  * the api over the WebSocket link (`wss://<api>/agent/ws?run=<runId>`). Keep this file in lockstep
  * with protocol.md; if a shape here diverges from the doc, the doc wins and this file is the bug.
+ * `github.request` / `github.result` are not seq/ack replayed.
  */
 
 // ---------- shared ----------
@@ -38,8 +39,9 @@ export type PiRpcCommand = Record<string, unknown> & { type: string };
  * instead of the silent breakage that motivated this (a web role sending `mail` frames an older
  * agentd ignored, docs/reports/agent-messaging.md). Keep in sync with
  * packages/api/src/agentlink.ts's own copy of this constant -- they can't share a module across
- * packages, so both sides document the pairing. */
-export const WIRE_PROTOCOL_VERSION = 1;
+ * packages, so both sides document the pairing. Version 2 adds `github.request` /
+ * `github.result`, which are not seq/ack replayed. */
+export const WIRE_PROTOCOL_VERSION = 2;
 
 export interface UpHello {
   t: "hello";
@@ -136,6 +138,16 @@ export interface UpBrowserCaptureRequest {
   requestId: string;
 }
 
+/** GitHub API call from the broker socket, forwarded as an up frame. Not a seq frame —
+ * a dropped link does not replay it (a read may be sent once more by the socket, a write never). */
+export interface UpGithubRequest {
+  t: "github.request";
+  reqId: string;
+  op: string;
+  args: Record<string, unknown>;
+  idempotencyKey?: string;
+}
+
 export type UpMessage =
   | UpHello
   | UpStatus
@@ -148,7 +160,8 @@ export type UpMessage =
   | UpDiffResult
   | UpReadResult
   | UpMailAck
-  | UpBrowserCaptureRequest;
+  | UpBrowserCaptureRequest
+  | UpGithubRequest;
 
 /** Up-messages that carry a `seq` and are subject to the buffer-until-ack contract. */
 export type SeqUpMessage = UpEntry | UpEvent;
@@ -329,6 +342,12 @@ export interface DownBrowserCaptureResult {
   error?: string;
 }
 
+/** The API's answer to `github.request`. Not seq/ack'd. `error` is passed to the
+ * socket unchanged (including "not permitted"). */
+export type DownGithubResult =
+  | { t: "github.result"; reqId: string; ok: true; data: Record<string, unknown> }
+  | { t: "github.result"; reqId: string; ok: false; error: string };
+
 export type DownMessage =
   | DownRunSpec
   | DownAck
@@ -344,7 +363,8 @@ export type DownMessage =
   | DownStop
   | DownMail
   | DownBrowserCaptureEntry
-  | DownBrowserCaptureResult;
+  | DownBrowserCaptureResult
+  | DownGithubResult;
 
 // ---------- replies to diff/read (sent up as `entry`-less custom up-frames) ----------
 // protocol.md does not give these a `t`; agentd sends them as ad-hoc up-frames named after the

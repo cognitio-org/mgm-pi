@@ -20,6 +20,7 @@ import { Readable, Transform } from "node:stream";
 import { finished, pipeline } from "node:stream/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { authHeaderSecret, gitConfigEnv } from "./git.js";
+import type { AsyncLock } from "./lock.js";
 
 const MAX_COMMAND_SECTION = 1024 * 1024;
 const REDACTED = Buffer.from("[redacted]");
@@ -40,6 +41,8 @@ export interface GitProxyOptions {
   /** Origin only, no path. Default `https://github.com`. Tests point this at a fake. */
   upstreamBase?: string;
   log?: (line: string) => void;
+  /** Held for each upstream forward so a phase-0 checkpoint push cannot overlap a fetch or push. */
+  lock?: AsyncLock;
 }
 
 const NAME = /^[A-Za-z0-9_.-]+$/;
@@ -111,6 +114,7 @@ export async function startGitProxy(opts: GitProxyOptions): Promise<GitProxy> {
       upstreamBase,
       needles,
       log,
+      lock: opts.lock,
     }).catch((err: unknown) => {
       log(`git proxy: request failed (${errName(err)})`);
       if (!res.headersSent) sendText(res, 500, "git proxy: internal error\n");
@@ -173,6 +177,7 @@ interface HandleCtx {
   upstreamBase: string;
   needles: Buffer[];
   log: (line: string) => void;
+  lock?: AsyncLock;
 }
 
 async function handle(req: IncomingMessage, res: ServerResponse, ctx: HandleCtx): Promise<void> {
@@ -198,7 +203,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, ctx: HandleCtx)
       return;
     }
     const upstream = upstreamUrl(ctx, "/info/refs", `?service=${service}`);
-    await forward(req, res, upstream, ctx, undefined);
+    await underLock(ctx, () => forward(req, res, upstream, ctx, undefined));
     return;
   }
   if (req.method !== "POST" || route.search !== "") {
@@ -207,10 +212,14 @@ async function handle(req: IncomingMessage, res: ServerResponse, ctx: HandleCtx)
   }
   const suffix = route.kind === "upload" ? "/git-upload-pack" : "/git-receive-pack";
   if (route.kind === "upload") {
-    await forward(req, res, upstreamUrl(ctx, suffix, ""), ctx, req);
+    await underLock(ctx, () => forward(req, res, upstreamUrl(ctx, suffix, ""), ctx, req));
     return;
   }
   await handleReceivePack(req, res, ctx, upstreamUrl(ctx, suffix, ""));
+}
+
+function underLock(ctx: HandleCtx, fn: () => Promise<void>): Promise<void> {
+  return ctx.lock ? ctx.lock(fn) : fn();
 }
 
 function upstreamUrl(ctx: HandleCtx, suffix: string, search: string): string {
@@ -246,7 +255,7 @@ async function handleReceivePack(
     }
   }
   const body = reader.restPrefixed(section.raw);
-  await forward(req, res, upstream, ctx, body);
+  await underLock(ctx, () => forward(req, res, upstream, ctx, body));
 }
 
 function refusalReasons(updates: RefUpdate[], allowed: Set<string>): string[] {

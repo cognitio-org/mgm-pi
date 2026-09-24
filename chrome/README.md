@@ -25,7 +25,7 @@ Share comes from the context menu "Share this tab with the Floppy" or from the s
 
 ## Side panel
 
-The toolbar icon opens the side panel (`openPanelOnActionClick`). The panel is an extension page. It calls the link origin with the Dongle: the Floppy's name and run state, the last few transcript lines as plain text, a follow-up box (`behavior` `followUp`), the pending approval, and Break. Open Floppy focuses the tab this extension already recorded, or opens `https://app.kernal.one/sessions/<id>` (or the localhost origin the session page paired from). It does not open the link origin.
+The toolbar icon opens the side panel (`openPanelOnActionClick`). The panel is an extension page, styled with the Outfitter theme. It calls the link origin with the Dongle: the Floppy's name and run state, Play (`POST /wake`) and Stop (`POST /stop`), the last few transcript lines as plain text, a follow-up box (`behavior` `followUp`), the pending approval, and Break. Open Floppy focuses the tab this extension already recorded, or opens `https://app.kernal.one/sessions/<id>` (or the localhost origin the session page paired from). It does not open the link origin.
 
 The panel polls every 2 seconds while its document is visible and stops when it is hidden. Share and Revoke send `{t:"share-active", sessionId}` and `{t:"revoke-share", sessionId}` to the service worker. If that worker does not answer, the panel says "Share is not available yet". While the panel is closed and a Floppy is selected, a pending approval notifies once per request id. The notification click opens the panel. There is no idle-stop countdown.
 

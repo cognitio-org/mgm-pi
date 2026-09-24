@@ -54,6 +54,8 @@ export function apiPath(kind, sessionId) {
   if (kind === "messages") return `/api/sessions/${sessionId}/messages`;
   if (kind === "ui-response") return `/api/sessions/${sessionId}/ui-response`;
   if (kind === "abort") return `/api/sessions/${sessionId}/abort`;
+  if (kind === "wake") return `/api/sessions/${sessionId}/wake`;
+  if (kind === "stop") return `/api/sessions/${sessionId}/stop`;
   return null;
 }
 
@@ -100,6 +102,55 @@ export function stateLine(session) {
     return `${base} - ${clip(session.runStateReason, 160)}`;
   }
   return base;
+}
+
+const LIVE_RUN_STATES = new Set(["queued", "provisioning", "running", "idle", "stopping"]);
+const PILL_STATES = new Set(["queued", "provisioning", "running", "idle", "stopping", "stopped", "failed"]);
+
+/** A finished Play, Stop, or Break may paint and write status only while this
+ * click's generation and selection epoch are still current. The in-flight flag
+ * clears for that generation alone, so an older request cannot drop a later click. */
+export function transportCompletion(startedGeneration, currentGeneration, startedEpoch, currentEpoch) {
+  const sameGeneration = startedGeneration === currentGeneration;
+  const sameEpoch = startedEpoch === currentEpoch;
+  const apply = sameGeneration && sameEpoch;
+  return { clearPending: sameGeneration, paint: apply, writeStatus: apply };
+}
+
+/** Play is wake. Stop and Break apply while a run is live and not already stopping.
+ * `pending` is "play", "stop", or "break" while that request is in flight. */
+export function transportEnabled(session, pending) {
+  const runState =
+    session && typeof session === "object" && typeof session.runState === "string" ? session.runState.trim() : "";
+  const live = LIVE_RUN_STATES.has(runState);
+  const stopping = runState === "stopping";
+  const busy = pending === "play" || pending === "stop" || pending === "break";
+  const chosen = Boolean(session && typeof session === "object");
+  return {
+    play: chosen && !live && !busy,
+    stop: live && !stopping && !busy,
+    break: live && !stopping && !busy,
+  };
+}
+
+/** Status-pill class. An unknown or missing state uses the stopped square. */
+export function pillClass(runState) {
+  return typeof runState === "string" && PILL_STATES.has(runState) ? runState : "stopped";
+}
+
+/** Faces for the run buttons. Play is the session page's name for wake. */
+export function transportLabel(kind, pending) {
+  if (kind === "play") return pending === "play" ? "Waking" : "\u25B6 Play";
+  if (kind === "stop") return pending === "stop" ? "Stopping" : "\u25A0 Stop";
+  if (kind === "break") return pending === "break" ? "Breaking" : "Break";
+  return "";
+}
+
+/** Reason under the pill. Empty unless this run failed with one. */
+export function failureNote(session) {
+  if (!session || typeof session !== "object" || session.runState !== "failed") return "";
+  if (typeof session.runStateReason !== "string") return "";
+  return clip(session.runStateReason, 160);
 }
 
 export function sessionChoiceLabel(session) {

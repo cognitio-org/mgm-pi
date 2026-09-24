@@ -181,6 +181,9 @@ Register these existing handlers for `OUTFITTER_ROLE=link` as well as web. Do no
 - `POST /api/sessions/:id/messages`
 - `POST /api/sessions/:id/ui-response`
 - `POST /api/sessions/:id/abort`
+- `POST /api/sessions/:id/wake`
+
+`POST /api/sessions/:id/stop` is already on the teleport routes. Play calls `/wake`. Stop calls `/stop`.
 
 `GET /api/sessions` and `GET /api/sessions/:id` are already on the link role. Extend the detail payload with `pendingUiRequest` from the active run (`Run.pendingUiRequest` in `store/types.ts`) so the panel can show an approval without scraping entries. `null` when there is none.
 
@@ -243,12 +246,15 @@ The context menu and the panel button are the only ways to create a share. The s
 
 The panel is an extension page. It uses the Dongle from `chrome.storage.local` against the link origin. It does not iframe `app.kernal.one`.
 
+It uses the Outfitter theme (the same tokens as `packages/web`): the C64 screen when the system prefers dark, GEOS paper when it prefers light, Silkscreen titles, square corners, and hard offset shadows. The options page uses that theme too.
+
 While open it shows:
 
 - The linked Floppy's name and run state (`GET /api/sessions/:id`).
 - The last few transcript lines (`GET /entries`), plain text, newest at the bottom. This is a strip, not the full transcript. A "Open Floppy" control focuses the session tab.
 - A one-line steer box (`POST /messages`, `behavior` `followUp`).
 - The pending approval, when `pendingUiRequest` is set, with the same answers the web `UiRequestPanel` offers (`POST /ui-response`). Break calls `POST /abort`.
+- Play (`POST /wake`) and Stop (`POST /stop`), the same actions as the session page. Play is enabled when the Floppy has no live run. Stop and Break are enabled while a run is queued, provisioning, running, or idle. A run that is already stopping leaves both off. A request in flight disables all three.
 - Share status for the active tab: not shared, shared, or permission denied. Share and Revoke buttons.
 - A line when a capture is in progress: "Capturing for <email>".
 

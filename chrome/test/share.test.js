@@ -26,7 +26,9 @@ import {
   nativeShareMessage,
   nativeUnshareMessage,
   originPermission,
+  capturingEmailFor,
   panelMessage,
+  shareStatusView,
   parseHostCapture,
   pendingPath,
   pendingRequests,
@@ -259,11 +261,38 @@ test("poll uses the floppy port name and the page cannot name a share", () => {
   assert.equal(sessionIdFromPortName("floppy:../x"), null);
   assert.equal(sessionIdFromPortName("place"), null);
   assert.deepEqual(panelMessage({ t: "share-active", sessionId: session }), { t: "share-active", sessionId: session });
+  assert.deepEqual(panelMessage({ t: "share-status", sessionId: session }), { t: "share-status", sessionId: session });
+  assert.equal(panelMessage({ t: "share-status", sessionId: "../x" }), null);
   assert.deepEqual(panelMessage({ t: "revoke-share", sessionId: session }), { t: "revoke-share", sessionId: session });
   assert.deepEqual(panelMessage({ t: "panel-request", requestId: "req-1" }), { t: "panel-request", requestId: "req-1" });
   assert.equal(panelMessage({ t: "share-active" }), null);
   assert.equal(panelMessage({ t: "capture", tabId: 4 }), null);
   assert.equal(panelMessage({ t: "poll" }), null);
+});
+
+test("share status compares the active tab with this Floppy's record", () => {
+  const record = { tabId: 4, sessionId: session, windowId: 1 };
+  assert.deepEqual(shareStatusView({ record: null, activeTabId: 4, tabTitle: "Docs", originGranted: true }), {
+    ok: true,
+    status: "not-shared",
+  });
+  assert.deepEqual(shareStatusView({ record, activeTabId: 9, tabTitle: "Other", originGranted: true }), {
+    ok: true,
+    status: "not-shared",
+  });
+  assert.deepEqual(shareStatusView({ record, activeTabId: 4, tabTitle: "Docs", originGranted: true }), {
+    ok: true,
+    status: "shared",
+    tabTitle: "Docs",
+  });
+  assert.deepEqual(shareStatusView({ record, activeTabId: 4, tabTitle: "Docs", originGranted: false }), {
+    ok: true,
+    status: "permission-denied",
+  });
+  assert.equal(capturingEmailFor({ sessionId: session, phase: "capturing", requesterEmail: "a@b.co" }, session), "a@b.co");
+  assert.equal(capturingEmailFor({ sessionId: session, phase: "done", requesterEmail: "a@b.co" }, session), null);
+  assert.equal(capturingEmailFor({ sessionId: "other", phase: "capturing", requesterEmail: "a@b.co" }, session), null);
+  assert.equal(capturingEmailFor({ sessionId: session, phase: "capturing", requesterEmail: "not an email" }, session), null);
 });
 
 test("the context menu targets the named Floppy, else the only one", () => {

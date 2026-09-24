@@ -81,6 +81,8 @@ import {
   sharePath,
   sharePermissionOrigins,
   shareRecord,
+  shareStatusView,
+  capturingEmailFor,
   shareWhenTabGone,
   skipsNotification,
   tabCaptureBlock,
@@ -1891,6 +1893,35 @@ async function rememberRequest(requestId) {
   await chrome.storage.local.set({ [PANEL_REQUESTS_KEY]: rememberPanelRequest(ids, requestId) });
 }
 
+async function reportShareStatus(sessionId) {
+  const map = await readShares();
+  const record = map[sessionId] ?? null;
+  const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const active = Array.isArray(tabs) ? tabs[0] : undefined;
+  const activeTabId = active && Number.isInteger(active.id) ? active.id : null;
+  let originGranted = true;
+  if (record && active && record.tabId === activeTabId) {
+    const pattern = originPermission(tabPageUrl(active));
+    if (pattern) {
+      try {
+        originGranted = await chrome.permissions.contains({ origins: [pattern] });
+      } catch {
+        originGranted = false;
+      }
+    }
+  }
+  const view = shareStatusView({
+    record,
+    activeTabId,
+    tabTitle: active && typeof active.title === "string" ? active.title : "",
+    originGranted,
+  });
+  const stored = await chrome.storage.local.get(CAPTURE_STATUS_KEY);
+  const email = capturingEmailFor(stored[CAPTURE_STATUS_KEY], sessionId);
+  if (email) view.capturingEmail = email;
+  return view;
+}
+
 async function bootShare() {
   await refreshMenu();
   const map = await readShares();
@@ -1971,6 +2002,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   const parsed = panelMessage(message);
   if (!parsed) return;
+  if (parsed.t === "share-status") {
+    reportShareStatus(parsed.sessionId)
+      .then((view) => sendResponse(view))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
   if (parsed.t === "panel-request") {
     rememberRequest(parsed.requestId)
       .then(() => sendResponse({ ok: true }))

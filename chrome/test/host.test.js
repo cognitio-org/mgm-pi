@@ -237,17 +237,43 @@ function sendLine(sockPath, payload) {
   return new Promise((resolve, reject) => {
     const socket = net.connect(sockPath);
     let buf = "";
+    let settled = false;
     const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
       socket.destroy();
       reject(new Error(`socket timeout, got ${JSON.stringify(buf)}`));
     }, 4000);
-    socket.on("error", (err) => { clearTimeout(timer); reject(err); });
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      reject(err);
+    };
+    socket.on("error", fail);
     socket.on("data", (chunk) => {
       buf += chunk.toString();
-      if (buf.includes("\n")) {
+      let nl = buf.indexOf("\n");
+      while (nl >= 0) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        nl = buf.indexOf("\n");
+        if (!line.trim()) continue;
+        let msg;
+        try {
+          msg = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        // A share or unshare can land on this socket before the reply. It is not the reply.
+        if (msg && (msg.t === "share" || msg.t === "unshare")) continue;
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         socket.end();
-        resolve(buf);
+        resolve(`${line}\n`);
+        return;
       }
     });
     socket.on("connect", () => {
@@ -270,7 +296,7 @@ async function listedShares(sockPath, ready) {
   for (let i = 0; i < 25; i++) {
     const raw = await sendLine(sockPath, '{"t":"list"}\n');
     last = JSON.parse(raw.trim().split("\n")[0]);
-    if (ready(last)) return last;
+    if (last && Array.isArray(last.shares) && ready(last)) return last;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   return last;

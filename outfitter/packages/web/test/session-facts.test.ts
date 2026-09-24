@@ -42,6 +42,22 @@ describe("githubCluster / looseRepoClause", () => {
     expect(looseRepoClause(session)).toBe("acme/app @ wip");
   });
 
+  it("keeps a checkout on the same repo when its branch differs from the broker", () => {
+    const session = { repo: "acme/app", branch: "wip", github: { ...gh, repo: "acme/app", branch: "main" } };
+    expect(githubCluster(session)?.repo).toBe("acme/app @ main");
+    expect(looseRepoClause(session)).toBe("acme/app @ wip");
+  });
+
+  it("treats a branch present on only one side as a different checkout", () => {
+    const brokerOnly = { repo: "acme/app", github: { ...gh, repo: "acme/app", branch: "main" } };
+    expect(githubCluster(brokerOnly)?.repo).toBe("acme/app @ main");
+    expect(looseRepoClause(brokerOnly)).toBe("acme/app");
+
+    const checkoutOnly = { repo: "acme/app", branch: "wip", github: { ...gh, repo: "acme/app" } };
+    expect(githubCluster(checkoutOnly)?.repo).toBe("acme/app");
+    expect(looseRepoClause(checkoutOnly)).toBe("acme/app @ wip");
+  });
+
   it("falls back to one no-repository clause when there is no GitHub block", () => {
     expect(githubCluster({ repo: null })).toBeNull();
     expect(looseRepoClause({ repo: null })).toBe("no repository");

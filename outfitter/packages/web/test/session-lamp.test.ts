@@ -47,6 +47,12 @@ describe("sessionLamp", () => {
     expect(sessionLamp({ ...quiet, phase: "sendFailed", runState: "stopped" }).label).toBe("Message not sent");
   });
 
+  it("lets a pending question win over a work timeout", () => {
+    expect(sessionLamp({ ...quiet, phase: "workTimeout", runState: "running", pendingQuestion: true }).tone).toBe(
+      "question",
+    );
+  });
+
   it("lets an error beat a question, and keeps a BREAK flash as words on top of the lamp", () => {
     expect(sessionLamp({ ...quiet, runState: "failed", pendingQuestion: true }).tone).toBe("error");
     expect(sessionLamp({ ...quiet, runState: "idle", statusLine: "BREAK" })).toEqual({

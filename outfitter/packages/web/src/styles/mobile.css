@@ -356,11 +356,6 @@ select {
     min-width: max-content;
   }
 
-  /* Play, Stop, Break and Eject stay on screen; the tab-group buttons scroll after them. */
-  .session-titlebar .session-transport {
-    order: -1;
-  }
-
   .transcript {
     max-height: none;
     overflow-y: visible;

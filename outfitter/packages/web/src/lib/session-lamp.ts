@@ -1,10 +1,11 @@
 // The lamp beside the run pill. The pill keeps the machine's own word (running, queued,
 // idle, stopped). The lamp is the handful of states a person actually waits on.
 //
-// A question wins over "running": Pi blocks mid-turn, so the run stays running while
-// Run.pendingUiRequest is set. Waking (queued, provisioning, or a send that has not
-// been answered yet) blinks the same way as a turn in progress. Stopping sits with
-// stopped, because the sandbox is on its way out.
+// A question wins over "running" and over a work timeout: Pi blocks mid-turn, so the
+// run stays running (and can look stalled) while Run.pendingUiRequest is set. A failed
+// run, LOAD ERROR, a failed send, and a wake timeout still beat the question. Waking
+// (queued, provisioning, or a send that has not been answered yet) blinks the same way
+// as a turn in progress. Stopping sits with stopped, because the sandbox is on its way out.
 
 import type { ActivityPhase } from "./send-status.ts";
 
@@ -19,7 +20,8 @@ export interface SessionLamp {
 }
 
 const WORKING_PHASES = new Set<ActivityPhase>(["sending", "waking", "working"]);
-const ERROR_PHASES = new Set<ActivityPhase>(["sendFailed", "wakeTimeout", "workTimeout"]);
+// workTimeout is not here: a pending question outranks that stall only.
+const ERROR_PHASES = new Set<ActivityPhase>(["sendFailed", "wakeTimeout"]);
 
 export function sessionLamp(input: {
   /** The run state the pill is showing. Absent means no run has been recorded. */
@@ -31,7 +33,8 @@ export function sessionLamp(input: {
   statusLine: string | null;
 }): SessionLamp {
   const loadError = input.statusLine?.startsWith("LOAD ERROR") ? input.statusLine : null;
-  const failed = input.runState === "failed" || loadError !== null || ERROR_PHASES.has(input.phase);
+  const stalled = input.phase === "workTimeout" && !input.pendingQuestion;
+  const failed = input.runState === "failed" || loadError !== null || ERROR_PHASES.has(input.phase) || stalled;
 
   let lamp: SessionLamp;
   if (failed) {

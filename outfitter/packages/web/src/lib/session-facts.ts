@@ -38,12 +38,13 @@ export function githubCluster(session: SessionRepoFields | null | undefined): Gi
 }
 
 /** Repo words for the status line when the GitHub chip is not already saying them.
- * "no repository" only when there is no chip at all. A checkout that differs from the
- * broker target is the one case both are shown, because they are different facts. */
+ * "no repository" only when there is no chip at all. Both are shown when the checkout
+ * repo or branch differs from the broker target, including a branch on only one side. */
 export function looseRepoClause(session: SessionRepoFields | null | undefined): string | null {
   if (!session) return null;
   if (!session.github) return formatRepo(session.repo, session.branch) ?? "no repository";
-  const broker = session.github.repo;
-  if (!session.repo || !broker || session.repo === broker) return null;
-  return formatRepo(session.repo, session.branch);
+  const checkout = formatRepo(session.repo, session.branch);
+  const broker = formatRepo(session.github.repo, session.github.branch);
+  if (!checkout || !broker || checkout === broker) return null;
+  return checkout;
 }

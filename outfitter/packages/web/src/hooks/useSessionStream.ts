@@ -38,6 +38,31 @@ export function nextStatusDetail(current: string | undefined, incoming: string |
   return incoming ?? undefined;
 }
 
+/** Dialog methods pi blocks on. Display-only methods (notify, setStatus, setWidget, setTitle,
+ * set_editor_text) are not a question -- same set as agentlink.ts, which the web package cannot
+ * import. */
+const INTERACTIVE_UI_METHODS = new Set(["select", "confirm", "input", "editor"]);
+
+/** The pending question after one SSE `event` payload. Only select/confirm/input/editor stick.
+ * A frame with no id, or `cleared: true` (sse.ts, once Run.pendingUiRequest disappears), drops it.
+ * Exported so the rule is testable without a fake EventSource. */
+export function nextPendingUiRequest(
+  current: RawUiRequest | null,
+  event: { type?: string; t?: string; id?: unknown; method?: unknown; cleared?: unknown; [key: string]: unknown },
+): RawUiRequest | null {
+  const eventType = event.type ?? event.t;
+  if (eventType !== "extension_ui_request") return current;
+  if (typeof event.id !== "string" || event.cleared === true) return null;
+  if (typeof event.method === "string" && INTERACTIVE_UI_METHODS.has(event.method)) return event as RawUiRequest;
+  return current;
+}
+
+/** A stopped or failed run is not waiting on an answer. Any other state leaves the question. */
+export function nextPendingOnStatus(current: RawUiRequest | null, state: string | undefined): RawUiRequest | null {
+  if (state === "stopped" || state === "failed") return null;
+  return current;
+}
+
 /** Loads a session's entries, then keeps them (plus run state and pending UI requests) live via
  * GET /api/sessions/:id/stream (SSE: event: entry|event|status|spend|checkpoint -- protocol.md). */
 export function useSessionStream(sessionId: string): StreamState {
@@ -76,6 +101,7 @@ export function useSessionStream(sessionId: string): StreamState {
       // run now, drop it" (sse.ts sends one on the first poll that sees a new run -- without it, a
       // refused run's note stayed pinned over its replacement), and a string replaces it.
       setStatusDetail((prev) => nextStatusDetail(prev, data.detail));
+      setPendingUiRequest((prev) => nextPendingOnStatus(prev, data.state));
     });
 
     source.addEventListener("entry", (ev) => {
@@ -86,11 +112,15 @@ export function useSessionStream(sessionId: string): StreamState {
     });
 
     source.addEventListener("event", (ev) => {
-      const event = JSON.parse((ev as MessageEvent).data) as { type?: string; t?: string; id?: string; [key: string]: unknown };
-      const eventType = event.type ?? event.t;
-      if (eventType === "extension_ui_request" && typeof event.id === "string" && typeof event.method === "string") {
-        setPendingUiRequest(event as unknown as RawUiRequest);
-      }
+      const event = JSON.parse((ev as MessageEvent).data) as {
+        type?: string;
+        t?: string;
+        id?: unknown;
+        method?: unknown;
+        cleared?: unknown;
+        [key: string]: unknown;
+      };
+      setPendingUiRequest((prev) => nextPendingUiRequest(prev, event));
     });
 
     source.addEventListener("spend", (ev) => {

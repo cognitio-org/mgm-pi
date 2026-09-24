@@ -1269,6 +1269,8 @@ test("RunController: browser capture is loopback-only and does not put OUTFITTER
         OUTFITTER_TOKEN: "outf_not-a-real-dongle",
         OUTFITTER_BROWSER_PORT: "1",
         OUTFITTER_BROWSER_TOKEN: "spoofed",
+        OUTFITTER_BROWSER_INSPECT_PORT: "9",
+        OUTFITTER_BROWSER_INSPECT_TOKEN: "spoofed-inspect",
       },
     },
     snapshot: { jsonl: emptySessionJsonl("sess-cap", "/workspace") },
@@ -1287,6 +1289,13 @@ test("RunController: browser capture is loopback-only and does not put OUTFITTER
   assert.notEqual(env.OUTFITTER_BROWSER_ACTION_PORT, env.OUTFITTER_BROWSER_PORT);
   assert.ok((env.OUTFITTER_BROWSER_ACTION_TOKEN ?? "").length > 16);
   assert.notEqual(env.OUTFITTER_BROWSER_ACTION_TOKEN, env.OUTFITTER_BROWSER_TOKEN);
+  assert.match(env.OUTFITTER_BROWSER_INSPECT_PORT ?? "", /^[0-9]+$/);
+  assert.notEqual(env.OUTFITTER_BROWSER_INSPECT_PORT, "9");
+  assert.notEqual(env.OUTFITTER_BROWSER_INSPECT_PORT, env.OUTFITTER_BROWSER_PORT);
+  assert.notEqual(env.OUTFITTER_BROWSER_INSPECT_PORT, env.OUTFITTER_BROWSER_ACTION_PORT);
+  assert.ok((env.OUTFITTER_BROWSER_INSPECT_TOKEN ?? "").length > 16);
+  assert.notEqual(env.OUTFITTER_BROWSER_INSPECT_TOKEN, "spoofed-inspect");
+  assert.notEqual(env.OUTFITTER_BROWSER_INSPECT_TOKEN, env.OUTFITTER_BROWSER_TOKEN);
   assert.ok(spawnArgs!.includes("/opt/outfitter/agentd/dist/pi-extension/outfitter-browser.js"));
 
   const refused = await fetch(`http://127.0.0.1:${env.OUTFITTER_BROWSER_PORT}/browser/capture`);

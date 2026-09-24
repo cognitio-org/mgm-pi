@@ -31,6 +31,7 @@ import type {
   BrowserSharesCollection,
   BrowserRequest,
   BrowserActionResultError,
+  BrowserInspectFailure,
   BrowserRequestsCollection,
   BrowserCapture,
   BrowserCaptureFailure,
@@ -625,6 +626,31 @@ class MemoryBrowserRequests implements BrowserRequestsCollection {
     } else {
       row.status = "failed";
       row.error = outcome.error;
+    }
+    row.updatedAt = nowIso;
+    return { request: clone(row), transitioned: true };
+  }
+
+  async markInspectResult(
+    sessionId: string,
+    id: string,
+    outcome: { ok: true; messages: string[]; element: string | null } | { ok: false; error: BrowserInspectFailure },
+    nowIso: string,
+  ): Promise<{ request: BrowserRequest; transitioned: boolean } | null> {
+    const row = this.tables.requests.get(id);
+    if (!row || row.sessionId !== sessionId) return null;
+    if (row.kind !== "inspect") return { request: clone(row), transitioned: false };
+    if (row.status !== "pending") return { request: clone(row), transitioned: false };
+    if (outcome.ok) {
+      row.status = "done";
+      delete row.error;
+      row.inspectMessages = outcome.messages;
+      row.inspectElement = outcome.element;
+    } else {
+      row.status = "failed";
+      row.error = outcome.error;
+      delete row.inspectMessages;
+      delete row.inspectElement;
     }
     row.updatedAt = nowIso;
     return { request: clone(row), transitioned: true };

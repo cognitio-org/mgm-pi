@@ -66,15 +66,20 @@ export interface DownMessage {
     | "stop"
     | "browser.capture.entry"
     | "browser.capture.result"
-    | "browser.action.result";
+    | "browser.action.result"
+    | "browser.inspect.result";
   /** Set on `browser.capture.entry`: the pi custom entry agentd must emit with its own seq. */
   entry?: PiEntry;
-  /** Set on `browser.capture.result` and `browser.action.result`. Not a transcript seq. */
+  /** Set on `browser.capture.result`, `browser.action.result`, and `browser.inspect.result`. Not a transcript seq. */
   requestId?: string;
   captureId?: string;
   title?: string;
   url?: string;
   error?: string;
+  /** Redacted console lines on `browser.inspect.result`. No network headers. */
+  messages?: string[];
+  /** Short element description on `browser.inspect.result`, or null when none is selected. */
+  element?: string | null;
   [key: string]: unknown;
 }
 
@@ -466,6 +471,9 @@ export type BrowserCaptureFailure = "permission_denied" | "tab_gone" | "too_larg
 
 export type BrowserActionKind = "click" | "type";
 
+/** Owner-reported DevTools failures. `skipped` and `no_share` are statuses the API sends, not this list. */
+export type BrowserInspectFailure = "denied" | "not_shared" | "tab_gone" | "permission_denied" | "debugger_attached";
+
 /** Owner-reported action failures, plus `skipped` when the share is revoked before the action runs. */
 export type BrowserActionResultError =
   | "denied"
@@ -478,8 +486,9 @@ export type BrowserActionResultError =
   | "rejected"
   | "no_share";
 
-/** A capture ask, or a click/type ask. requesterEmail is the authenticated caller, never a body field.
- * `kind` absent means capture. `click` and `type` carry a CSS selector, never JavaScript. */
+/** A capture ask, a click/type ask, or a DevTools inspect. requesterEmail is the authenticated caller, never a body field.
+ * `kind` absent means capture. `click` and `type` carry a CSS selector, never JavaScript.
+ * `inspect` carries no selector and no tab id. Console text is stored only after redaction. */
 export interface BrowserRequest {
   id: string;
   sessionId: string;
@@ -488,11 +497,15 @@ export interface BrowserRequest {
   /** Set when a capture is stored and the request is marked done. */
   captureId?: string;
   /** Set when the extension reports a terminal error and the request is `failed`. */
-  error?: BrowserCaptureFailure | BrowserActionResultError;
-  kind?: BrowserActionKind;
+  error?: BrowserCaptureFailure | BrowserActionResultError | BrowserInspectFailure;
+  kind?: BrowserActionKind | "inspect";
   selector?: string;
   /** Set on `kind: "type"`. */
   text?: string;
+  /** Redacted console lines for a done inspect. Not a transcript. */
+  inspectMessages?: string[];
+  /** Short description of the selected element, or null. Not the DOM. */
+  inspectElement?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -560,6 +573,16 @@ export interface BrowserRequestsCollection {
     sessionId: string,
     id: string,
     outcome: { ok: true } | { ok: false; error: BrowserActionResultError },
+    nowIso: string,
+  ): Promise<{ request: BrowserRequest; transitioned: boolean } | null>;
+  /**
+   * A pending inspect becomes `done` (redacted console lines and an optional element) or `failed`.
+   * `transitioned` is true only for that change. A capture or action row is left unchanged.
+   */
+  markInspectResult(
+    sessionId: string,
+    id: string,
+    outcome: { ok: true; messages: string[]; element: string | null } | { ok: false; error: BrowserInspectFailure },
     nowIso: string,
   ): Promise<{ request: BrowserRequest; transitioned: boolean } | null>;
 }

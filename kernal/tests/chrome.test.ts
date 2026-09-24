@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   browserCapture,
+  browserInspect,
   browserTabs,
   chromeSocketPath,
   formatCapture,
@@ -220,7 +221,7 @@ describe("the tool definition itself", () => {
     const tools: any[] = [];
     const mod = await import("../.pi/extensions/kernal-chrome/index.ts");
     mod.default({ registerTool: (tool: any) => { tools.push(tool); } } as any);
-    assert.deepEqual(tools.map((tool) => tool.name), ["browser_tabs", "browser_capture", "browser_action"]);
+    assert.deepEqual(tools.map((tool) => tool.name), ["browser_tabs", "browser_capture", "browser_action", "browser_inspect"]);
     for (const tool of tools) {
       assert.equal(typeof tool.execute, "function");
       assert.ok(tool.description.length > 20);
@@ -243,6 +244,9 @@ describe("the tool definition itself", () => {
       const acted = await tools.find((tool) => tool.name === "browser_action").execute("3", { tabId: 4, kind: "click", selector: "#go" });
       assert.equal(acted.isError, true);
       assert.equal(acted.content[0].text, NOT_RUNNING);
+      const inspected = await tools.find((tool) => tool.name === "browser_inspect").execute("4", { tabId: 4 });
+      assert.equal(inspected.isError, true);
+      assert.equal(inspected.content[0].text, NOT_RUNNING);
       assert.equal(captured.content.some((block: { type: string }) => block.type === "image"), false);
     } finally {
       if (previous === undefined) delete process.env.KERNAL_HOME;
@@ -303,6 +307,43 @@ describe("the tool definition itself", () => {
     } finally {
       if (previous === undefined) delete process.env.KERNAL_HOME;
       else process.env.KERNAL_HOME = previous;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("browser_inspect drops an Authorization header value", async () => {
+    const dir = temp();
+    const secret = "super-secret-value";
+    const server = await listen(join(dir, "chrome.sock"), (line, socket) => {
+      const msg = JSON.parse(line) as { t: string; tabId?: number };
+      if (msg.t === "inspect" && msg.tabId === 9) {
+        socket.write(`${JSON.stringify({ t: "error", error: "tab is not shared" })}\n`);
+        return;
+      }
+      if (msg.t === "inspect") {
+        socket.write(`${JSON.stringify({
+          t: "inspected",
+          tabId: msg.tabId,
+          messages: [`log: Authorization: Bearer ${secret}`],
+          element: "button#go.primary",
+        })}\n`);
+      }
+    });
+    const previous = process.env.KERNAL_HOME;
+    process.env.KERNAL_HOME = dir;
+    try {
+      const unknown = await browserInspect(9, { env: { KERNAL_HOME: dir } });
+      assert.equal(unknown.isError, true);
+      assert.equal(unknown.text, NOT_SHARED);
+      const read = await browserInspect(4, { env: { KERNAL_HOME: dir } });
+      assert.equal(read.isError, false);
+      assert.equal(read.text.includes(secret), false);
+      assert.match(read.text, /\[redacted\]/);
+      assert.match(read.text, /button#go\.primary/);
+    } finally {
+      if (previous === undefined) delete process.env.KERNAL_HOME;
+      else process.env.KERNAL_HOME = previous;
+      server.close();
       rmSync(dir, { recursive: true, force: true });
     }
   });

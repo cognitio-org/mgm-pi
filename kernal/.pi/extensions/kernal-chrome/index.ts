@@ -1,7 +1,8 @@
 /**
- * Laptop-only browser_tabs, browser_capture, and browser_action. Capture and action take a tab
- * id and talk to the Chrome native host on <kernal-home>/chrome.sock. They do not work in a
- * Drive: there is no Chrome and no socket there. browser_action is not named browser_capture.
+ * Laptop-only browser_tabs, browser_capture, browser_action, and browser_inspect. Capture,
+ * action, and inspect take a tab id and talk to the Chrome native host on
+ * <kernal-home>/chrome.sock. They do not work in a Drive: there is no Chrome and no socket
+ * there. browser_inspect is not named browser_capture or browser_action.
  *
  * The Drive has its own tool, also named browser_capture, in outfitter-browser.ts. That one
  * takes no tab id and goes through agentd to the link API. pi will not start if both
@@ -12,12 +13,13 @@
  * A release bundle therefore ships this file without a separate manifest entry.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { browserAction, browserCapture, browserTabs, imageContent, NOT_RUNNING, type ToolText } from "./lib.ts";
+import { browserAction, browserCapture, browserInspect, browserTabs, imageContent, NOT_RUNNING, type ToolText } from "./lib.ts";
 
 const GUIDELINES = [
   "browser_tabs: list Chrome tabs the user has shared before capturing one. If the Chrome companion is not running, say so. Do not use HTTP or another browser.",
   "browser_capture: capture only a tab id browser_tabs returned. If that tab is not shared, say so. Do not guess another id and do not fall back to the network.",
   "browser_action: click or type only in a tab id browser_tabs returned. selector is CSS, not JavaScript. The user confirms each action. Do not fall back to the network.",
+  "browser_inspect: read the console and the selected element only for a tab id browser_tabs returned. The user confirms before DevTools attaches. Do not fall back to the network.",
 ];
 
 type Block = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
@@ -82,5 +84,22 @@ export default function (pi: ExtensionAPI) {
     },
     execute: async (_id: string, params: { tabId?: unknown; kind?: unknown; selector?: unknown; text?: unknown } | null, signal?: AbortSignal) =>
       run(() => browserAction(params, params?.tabId, { signal })),
+  } as any);
+
+  pi.registerTool({
+    name: "browser_inspect",
+    label: "Browser inspect",
+    description: "Read the console and the element selected in DevTools for one shared Chrome tab. Pass tabId from browser_tabs. The user confirms before DevTools attaches. Returns recent console lines and a short element description, not the DOM. Talks only to the local Chrome companion socket. If that tab is not shared, say so. There is no network fallback.",
+    promptSnippet: "browser_inspect: read the console and selected element of a shared Chrome tab.",
+    promptGuidelines: [GUIDELINES[3]],
+    parameters: {
+      type: "object",
+      required: ["tabId"],
+      properties: {
+        tabId: { type: "number", description: "Tab id from browser_tabs." },
+      },
+    },
+    execute: async (_id: string, params: { tabId?: unknown } | null, signal?: AbortSignal) =>
+      run(() => browserInspect(params?.tabId, { signal })),
   } as any);
 }

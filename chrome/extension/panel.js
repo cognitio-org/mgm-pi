@@ -53,7 +53,10 @@ const actionText = document.querySelector("#action-text");
 const actionButtons = document.querySelector("#action-buttons");
 const allowClick = document.querySelector("#allow-click");
 const allowType = document.querySelector("#allow-type");
+const inspectCopy = document.querySelector("#inspect-copy");
+const inspectButtons = document.querySelector("#inspect-buttons");
 let shownActionId = "";
+let shownInspectId = "";
 const capturing = document.querySelector("#capturing");
 const status = document.querySelector("#status");
 
@@ -312,6 +315,32 @@ async function refreshAction(sessionId, epoch) {
   renderAction(response);
 }
 
+function renderInspect(response) {
+  const prompt = response && response.prompt && typeof response.prompt === "object" ? response.prompt : null;
+  if (!prompt || typeof prompt.requestId !== "string") {
+    shownInspectId = "";
+    inspectCopy.hidden = true;
+    inspectCopy.textContent = "";
+    inspectButtons.hidden = true;
+    return;
+  }
+  shownInspectId = prompt.requestId;
+  inspectCopy.hidden = false;
+  inspectCopy.textContent = typeof prompt.message === "string" ? prompt.message : "";
+  inspectButtons.hidden = false;
+}
+
+async function refreshInspect(sessionId, epoch) {
+  let response = null;
+  try {
+    response = await askWorker({ t: "inspect-state", sessionId });
+  } catch {
+    response = null;
+  }
+  if (epoch !== undefined && epoch !== selectionEpoch) return;
+  renderInspect(response);
+}
+
 function renderCapturing(response) {
   const line = capturingText(response);
   capturing.hidden = line === null;
@@ -327,6 +356,7 @@ function clearStrip() {
   shareStatus.textContent = shareLine;
   renderCapturing(null);
   renderAction(null);
+  renderInspect(null);
 }
 
 function bumpSelection() {
@@ -388,6 +418,7 @@ async function tick(epoch) {
     linkCall("GET", entriesPath),
     refreshShare(show, "status", epoch),
     refreshAction(show, epoch),
+    refreshInspect(show, epoch),
   ]);
   if (committedSession(show, selectedId(), epoch, selectionEpoch) !== show) return;
   if (!note(detail)) {
@@ -585,6 +616,24 @@ function setAllowKind(kind, input) {
 
 allowClick.addEventListener("change", () => setAllowKind("click", allowClick));
 allowType.addEventListener("change", () => setAllowKind("type", allowType));
+
+document.querySelector("#inspect-allow").addEventListener("click", () => {
+  if (!shownInspectId) return;
+  askWorker({ t: "inspect-decide", requestId: shownInspectId, decision: "allow" })
+    .then(() => refresh())
+    .catch(() => {
+      status.textContent = "Could not allow DevTools.";
+    });
+});
+
+document.querySelector("#inspect-deny").addEventListener("click", () => {
+  if (!shownInspectId) return;
+  askWorker({ t: "inspect-decide", requestId: shownInspectId, decision: "deny" })
+    .then(() => refresh())
+    .catch(() => {
+      status.textContent = "Could not deny DevTools.";
+    });
+});
 
 document.querySelector("#revoke").addEventListener("click", () => {
   const sessionId = screenSession();

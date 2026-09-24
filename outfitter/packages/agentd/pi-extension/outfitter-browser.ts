@@ -7,6 +7,7 @@
  *
  * kernal-chrome, on the laptop, registers a different tool with this same name. That one needs
  * the local Chrome socket and must not be in this image. pi refuses to start if both load.
+ * browser_action and browser_inspect are separate tools. This file does not attach a debugger.
  *
  * pi 0.86 tool results (the ToolResultMessage content array in @earendil-works/pi-ai) are
  * `(TextContent | ImageContent)[]`, and ImageContent is `{ type: "image", data, mimeType }`
@@ -37,6 +38,32 @@ type PiBrowserApi = {
 
 function textResult(text: string, details: Record<string, unknown> = {}): ToolResult {
   return { content: [{ type: "text", text }], details };
+}
+
+const ELEMENT_DESCRIPTION = /^[a-z][a-z0-9-]*(?:#[A-Za-z_][A-Za-z0-9_-]{0,63})?(?:\.[A-Za-z_][A-Za-z0-9_-]{0,63}){0,8}$/;
+
+function redactHeaderText(text: string): string {
+  return text.replace(
+    /\b(authorization|proxy-authorization|cookie|set-cookie)\b\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\r\n]+)/gi,
+    "$1: [redacted]",
+  );
+}
+
+function formatInspect(record: { messages?: unknown; element?: unknown }): string {
+  const messages = Array.isArray(record.messages)
+    ? record.messages.filter((line): line is string => typeof line === "string").map((line) => redactHeaderText(line))
+    : [];
+  const element = typeof record.element === "string" && ELEMENT_DESCRIPTION.test(record.element.trim())
+    ? record.element.trim()
+    : null;
+  return redactHeaderText(
+    [
+      "console:",
+      ...(messages.length > 0 ? messages : ["(no recent console messages)"]),
+      "element:",
+      element ?? "(none selected)",
+    ].join("\n"),
+  );
 }
 
 const SELECTOR_MAX = 500;
@@ -77,6 +104,8 @@ export default function outfitterBrowser(pi: PiBrowserApi, env: NodeJS.ProcessEn
   const token = env.OUTFITTER_BROWSER_TOKEN ?? "";
   const actionPort = env.OUTFITTER_BROWSER_ACTION_PORT ?? "";
   const actionToken = env.OUTFITTER_BROWSER_ACTION_TOKEN ?? "";
+  const inspectPort = env.OUTFITTER_BROWSER_INSPECT_PORT ?? "";
+  const inspectToken = env.OUTFITTER_BROWSER_INSPECT_TOKEN ?? "";
 
   pi.registerTool({
     name: "browser_capture",
@@ -185,6 +214,51 @@ export default function outfitterBrowser(pi: PiBrowserApi, env: NodeJS.ProcessEn
       if (record.ok !== true) return textResult("timeout");
       const verb = body.kind === "type" ? "Typed into" : "Clicked";
       return textResult(`${verb} ${body.selector}`, { kind: body.kind, selector: body.selector });
+    },
+  });
+
+  pi.registerTool({
+    name: "browser_inspect",
+    label: "Browser inspect",
+    description:
+      "Read the console and the element selected in DevTools on the tab shared with this Floppy. " +
+      "The owner confirms before DevTools attaches. There is no tab id. " +
+      "Returns recent console lines and a short element description (tag, id, classes), not the DOM. " +
+      "Errors are no_share, skipped, denied, rejected, timeout, not_shared, tab_gone, permission_denied, or debugger_attached.",
+    promptSnippet: "Read the console and selected element of the tab shared with this Floppy",
+    promptGuidelines: [
+      "Use browser_inspect to read the console and the element selected in DevTools. It takes no arguments.",
+      "The owner is asked before DevTools attaches. denied means they said no. skipped means they revoked first. no_share means nothing is shared.",
+    ],
+    parameters: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+    async execute(_toolCallId, _params, signal) {
+      if (!/^[0-9]+$/.test(inspectPort) || inspectToken.length === 0) {
+        return textResult("browser inspect is not available");
+      }
+      const timeout = AbortSignal.timeout(100_000);
+      const abort = signal ? AbortSignal.any([signal, timeout]) : timeout;
+      let parsed: unknown;
+      try {
+        const res = await fetch(`http://127.0.0.1:${inspectPort}/browser/inspect`, {
+          method: "POST",
+          headers: { [TOKEN_HEADER]: inspectToken, "content-type": "application/json" },
+          body: "{}",
+          signal: abort,
+        });
+        if (!res.ok) return textResult("browser inspect is not available");
+        parsed = await res.json();
+      } catch {
+        return textResult("timeout");
+      }
+      if (!parsed || typeof parsed !== "object") return textResult("timeout");
+      const record = parsed as { error?: unknown; messages?: unknown; element?: unknown };
+      if (typeof record.error === "string" && record.error.length > 0) return textResult(redactHeaderText(record.error));
+      if (!Array.isArray(record.messages)) return textResult("timeout");
+      return textResult(formatInspect(record));
     },
   });
 }

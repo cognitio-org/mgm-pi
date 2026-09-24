@@ -11,6 +11,7 @@ import {
   applyExtensionMessage,
   captureJpegPath,
   decideSocketMessage,
+  redactHeaderText,
   encodeNativeMessage,
   jpegBytes,
   kernalHomeFrom,
@@ -99,6 +100,9 @@ test("a share is remembered from the extension, and a socket cannot invent one",
     forward: { t: "action", tabId: 4, kind: "click", selector: "#go" },
   });
   assert.equal(decideSocketMessage({ t: "action", tabId: 4, kind: "type", selector: "#q", text: "hi" }, state).forward.text, "hi");
+  assert.deepEqual(decideSocketMessage({ t: "inspect", tabId: 9 }, state), { reply: { t: "error", error: "tab is not shared" } });
+  assert.deepEqual(decideSocketMessage({ t: "inspect", tabId: 4, code: "x" }, state), { reply: { t: "error", error: "rejected" } });
+  assert.deepEqual(decideSocketMessage({ t: "inspect", tabId: 4 }, state), { forward: { t: "inspect", tabId: 4 } });
 });
 
 test("jpeg bytes are the decoded image, one file per tab under the kernal home", () => {
@@ -507,6 +511,60 @@ test("an unanswered action does not stall the next capture", async () => {
     assert.equal(reply.title, "Spec");
   } finally {
     if (held) held.socket.destroy();
+    await stop(proc);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("an inspected reply strips an Authorization header value", () => {
+  const secret = "super-secret-value";
+  const applied = applyExtensionMessage([{ tabId: 4, title: "Spec", url: "https://example.com/a", sessionId: "floppy-1" }], {
+    t: "inspected",
+    tabId: 4,
+    id: 3,
+    messages: [`log: Authorization: Bearer ${secret}`],
+    element: "button#go",
+    headers: { Authorization: secret },
+  });
+  const encoded = JSON.stringify(applied.inspect);
+  assert.equal(encoded.includes(secret), false);
+  assert.equal(applied.inspect.kind, "done");
+  assert.equal(applied.inspect.element, "button#go");
+  assert.match(redactHeaderText(`Cookie: ${secret}`), /\[redacted\]/);
+  assert.equal(redactHeaderText(`Cookie: ${secret}`).includes(secret), false);
+});
+
+test("an unknown tab is not forwarded for inspect, and a shared tab returns redacted lines", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "kernal-chrome-host-"));
+  const sockPath = join(dir, "chrome.sock");
+  const proc = spawn(process.execPath, [host], {
+    env: { ...process.env, KERNAL_HOME: dir },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const secret = "super-secret-value";
+  try {
+    await waitFor(proc, proc.stderr, "listening");
+    proc.stdin.write(encodeNativeMessage(SHARE));
+    await listedShares(sockPath, (msg) => msg.shares.length === 1);
+    assert.equal(JSON.parse(await sendLine(sockPath, '{"t":"inspect","tabId":9}\n')).error, "tab is not shared");
+
+    const framePromise = readFrame(proc);
+    const replyPromise = sendLine(sockPath, '{"t":"inspect","tabId":4}\n');
+    const frame = await framePromise;
+    assert.deepEqual(frame, { t: "inspect", tabId: 4, id: 1 });
+    proc.stdin.write(encodeNativeMessage({
+      t: "inspected",
+      tabId: 4,
+      id: frame.id,
+      messages: [`log: Authorization: Bearer ${secret}`],
+      element: "div#main",
+    }));
+    const reply = JSON.parse(await replyPromise);
+    assert.equal(reply.t, "inspected");
+    assert.equal(JSON.stringify(reply).includes(secret), false);
+    assert.match(reply.messages[0], /\[redacted\]/);
+    assert.equal(reply.element, "div#main");
+  } finally {
     await stop(proc);
     rmSync(dir, { recursive: true, force: true });
   }

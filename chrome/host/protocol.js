@@ -3,8 +3,9 @@
 //
 // Chrome's frame is a 4-byte little-endian length, then that many JSON bytes.
 // The socket is one JSON object per line. Stdin is the extension (share,
-// unshare, captured, acted, action-error, error). The socket is Kernal
-// (list, capture, action). An action selector is CSS, not JavaScript.
+// unshare, captured, acted, action-error, inspected, inspect-error, error).
+// The socket is Kernal (list, capture, action, inspect). An action selector
+// is CSS, not JavaScript. An inspect is a tab id and nothing else.
 
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -121,6 +122,15 @@ export function decideSocketMessage(message, state = {}) {
     if (!tabIsShared(shares, action.tabId)) return { reply: { t: "error", error: ERR_NOT_SHARED } };
     if (!connected) return { reply: { t: "error", error: ERR_NOT_CONNECTED } };
     return { forward: action };
+  }
+  if (message.t === "inspect") {
+    if (!Number.isInteger(message.tabId) || message.tabId < 0) return { reply: { t: "error", error: ERR_REJECTED } };
+    if (Object.keys(message).some((key) => key !== "t" && key !== "tabId")) {
+      return { reply: { t: "error", error: ERR_REJECTED } };
+    }
+    if (!tabIsShared(shares, message.tabId)) return { reply: { t: "error", error: ERR_NOT_SHARED } };
+    if (!connected) return { reply: { t: "error", error: ERR_NOT_CONNECTED } };
+    return { forward: { t: "inspect", tabId: message.tabId } };
   }
   return { reply: { t: "error", error: ERR_REJECTED } };
 }
@@ -243,6 +253,39 @@ export function applyExtensionMessage(shares, message) {
       }, message),
     };
   }
+  if (message.t === "inspected") {
+    if (!Number.isInteger(message.tabId) || message.tabId < 0) {
+      return {
+        shares: current,
+        broadcast: null,
+        capture: null,
+        inspect: withCarriedId({ kind: "error", tabId: -1, error: ERR_CAPTURE_FAILED }, message),
+      };
+    }
+    return {
+      shares: current,
+      broadcast: null,
+      capture: null,
+      inspect: withCarriedId({
+        kind: "done",
+        tabId: message.tabId,
+        messages: inspectMessages(message.messages),
+        element: inspectElement(message.element),
+      }, message),
+    };
+  }
+  if (message.t === "inspect-error") {
+    return {
+      shares: current,
+      broadcast: null,
+      capture: null,
+      inspect: withCarriedId({
+        kind: "error",
+        tabId: Number.isInteger(message.tabId) ? message.tabId : -1,
+        error: captureErrorText(message.error),
+      }, message),
+    };
+  }
   if (message.t === "error") {
     return {
       shares: current,
@@ -251,6 +294,36 @@ export function applyExtensionMessage(shares, message) {
     };
   }
   return keep;
+}
+
+/** Same replacement as extension/inspect.js. A header value must not cross the socket. */
+export function redactHeaderText(text) {
+  if (typeof text !== "string") return "";
+  return text.replace(
+    /\b(authorization|proxy-authorization|cookie|set-cookie)\b\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\r\n]+)/gi,
+    "$1: [redacted]",
+  );
+}
+
+const INSPECT_ELEMENT = /^[a-z][a-z0-9-]*(?:#[A-Za-z_][A-Za-z0-9_-]{0,63})?(?:\.[A-Za-z_][A-Za-z0-9_-]{0,63}){0,8}$/;
+
+function inspectMessages(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const line of value) {
+    if (typeof line !== "string") continue;
+    const text = redactHeaderText(line).replace(/\u0000/g, "").trim().slice(0, 500);
+    if (!text) continue;
+    out.push(text);
+    if (out.length >= 40) break;
+  }
+  return out;
+}
+
+function inspectElement(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return INSPECT_ELEMENT.test(trimmed) ? trimmed : null;
 }
 
 /** Decode a jpeg the extension sent, or null when it is not a jpeg. */

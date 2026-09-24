@@ -162,12 +162,13 @@ test("the manifest key is the pinned extension id", () => {
     "alarms",
     "nativeMessaging",
     "scripting",
+    "debugger",
   ]);
   assert.equal(manifest.side_panel.default_path, "panel.html");
   assert.equal(manifest.host_permissions, undefined);
   assert.deepEqual(manifest.optional_host_permissions, ["http://*/*", "https://*/*"]);
   assert.equal(JSON.stringify(manifest).includes("<all_urls>"), false);
-  assert.equal(JSON.stringify(manifest).includes("debugger"), false);
+  assert.equal(manifest.permissions.includes("debugger"), true);
 });
 
 test("the service worker does not consult sender.url", () => {

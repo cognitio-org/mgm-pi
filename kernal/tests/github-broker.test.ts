@@ -320,6 +320,31 @@ describe("github broker", { concurrency: 1 }, () => {
     }
   });
 
+  test("a cloud search is one broker call and a list row has no body", async () => {
+    const dir = repo();
+    const trap = ghTrap();
+    const server = await serve((req, socket) => {
+      if (req.op === "github_repo.search") {
+        reply(socket, req, { ok: true, data: { issues: [{ number: 1, title: "A", state: "open", url: "https://github.com/o/r/issues/1" }], pullRequests: [{ number: 2, title: "B", state: "open", url: "https://github.com/o/r/pull/2" }] } });
+        return;
+      }
+      reply(socket, req, { ok: true, data: { pullRequests: [{ number: 7, title: "Add tools", url: "https://github.com/o/r/pull/7", state: "OPEN", sha: SHA_A, author: "ada", body: "x".repeat(100) }] } });
+    });
+    try {
+      const found = await executeGithub("github_repo", { action: "search", query: "tools" }, cloud(dir, server.path, { gh: trap.gh }));
+      assert.equal(found.isError, undefined, found.text);
+      assert.equal(found.data.issues[0].number, 1);
+      assert.equal(found.data.pullRequests[0].number, 2);
+      assert.deepEqual(server.requests.map((r) => r.op), ["github_repo.search"]);
+      const listed = await executeGithub("github_pr", { action: "list" }, cloud(dir, server.path, { gh: trap.gh }));
+      assert.equal(listed.isError, undefined, listed.text);
+      assert.equal(listed.data[0].body, undefined);
+      assert.equal(trap.calls.length, 0);
+    } finally {
+      await server.close();
+    }
+  });
+
   test("an unset socket still uses gh", async () => {
     const dir = repo();
     const { calls, gh } = ghOf(() => ({ stdout: JSON.stringify(PR) }));

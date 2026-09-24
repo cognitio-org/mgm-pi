@@ -431,7 +431,7 @@ function asGhPull(data: any): any {
     headRefName: data.head,
     reviewDecision: data.review,
     author: typeof data.author === "string" ? { login: data.author } : data.author,
-    body: data.body,
+    ...(data.body !== undefined ? { body: data.body } : {}),
     statusCheckRollup: jobs.map((job: any) => ({
       name: job?.name,
       conclusion: job?.state,
@@ -466,7 +466,8 @@ function ghRepoStdout(data: any): string {
 function listStdout(data: any, key: string): string {
   const rows = Array.isArray(data) ? data : Array.isArray(data?.[key]) ? data[key] : Array.isArray(data?.items) ? data.items : undefined;
   if (!rows) return JSON.stringify(data ?? null);
-  return JSON.stringify(key === "pullRequests" ? rows.map(asGhPull) : rows);
+  const mapped = key === "pullRequests" ? rows.map((row) => asGhPull({ ...row, body: undefined })) : rows;
+  return JSON.stringify(mapped);
 }
 
 function checksStdout(data: any): string {
@@ -1263,6 +1264,16 @@ async function runRepo(action: string, params: any, deps: GithubDeps, repo: Repo
     if (!query) return fail("A search query is required.");
     if (query.startsWith("-")) return fail("A search query cannot start with \"-\".");
     const limit = String(limitOf(params.limit));
+    const socket = githubSocketPath(deps.env);
+    if (socket) {
+      const res = await brokerCall({ socketPath: socket, op: "github_repo.search", args: { query, limit: limitOf(params.limit) }, timeoutMs: 30_000, signal: deps.signal });
+      if (!res.ok) return fail(res.error);
+      const data = res.data ?? {};
+      return ok({
+        issues: Array.isArray(data.issues) ? data.issues : [],
+        pullRequests: Array.isArray(data.pullRequests) ? data.pullRequests : [],
+      });
+    }
     const wantIssues = !/\bis:pr\b/.test(query) || /\bis:issue\b/.test(query);
     const wantPrs = !/\bis:issue\b/.test(query) || /\bis:pr\b/.test(query);
     // `gh issue list` uses the repository gh resolved. Search has to name one, and origin is not that.

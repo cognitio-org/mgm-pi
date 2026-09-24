@@ -1,0 +1,54 @@
+# Spike S2 (docs/reports/gke-spike.md): the real image, end to end, as a cold claim. s2_wake.ts
+# creates the run through the api's own RunManager.wake() and then a SandboxClaim on this pool whose
+# env carries RUN_ID/RUN_TOKEN/OUTFITTER_API (claim env forces a cold start, spec §3.5), so agentd
+# dials the deployed link exactly as a Cloud Run execution would.
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: s2-agent
+  namespace: outfitter-sandboxes
+spec:
+  envVarsInjectionPolicy: Allowed
+  networkPolicyManagement: Managed
+  networkPolicy:
+    ingress: []
+    egress:
+      - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16] } }]
+        ports: [{ protocol: TCP, port: 443 }, { protocol: TCP, port: 80 }]
+      - to: [{ ipBlock: { cidr: 169.254.169.254/32 } }]
+        ports: [{ protocol: TCP, port: 80 }]
+      - to:
+          - { namespaceSelector: {}, podSelector: { matchLabels: { k8s-app: kube-dns } } }
+          - { ipBlock: { cidr: 169.254.20.10/32 } }
+          - { ipBlock: { cidr: 34.118.224.10/32 } }
+        ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+  podTemplate:
+    metadata:
+      labels: { app: s2-agent }
+      annotations: { cluster-autoscaler.kubernetes.io/safe-to-evict: "false" }
+    spec:
+      runtimeClassName: gvisor
+      serviceAccountName: outfitter-agent
+      automountServiceAccountToken: false
+      nodeSelector: { sandbox.gke.io/runtime: gvisor }
+      tolerations:
+        - { key: sandbox.gke.io/runtime, operator: Equal, value: gvisor, effect: NoSchedule }
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 15
+      containers:
+        - name: agentd
+          # Must match the deployed link's protocol: 1e21c9f08eb9 was refused 4409 (agentd protocol v1
+          # older than the API's v2) once release adf2016 shipped. See gke-spike.md S2.
+          image: us-central1-docker.pkg.dev/outfitter-509211/outfitter/outfitter-agent:adf2016ac926
+          resources:
+            requests: { cpu: "1", memory: 2Gi, ephemeral-storage: 4Gi }
+            limits: { cpu: "1", memory: 2Gi, ephemeral-storage: 4Gi }
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: s2-agent
+  namespace: outfitter-sandboxes
+spec:
+  replicas: 0
+  sandboxTemplateRef: { name: s2-agent }

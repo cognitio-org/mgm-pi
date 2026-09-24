@@ -1,0 +1,14 @@
+outfitter/packages/agentd/src/protocol.ts
+  h_69b863911ebf05 5,43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "b928019eb579dec5c5cea50b38017ec1f92ab53a",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

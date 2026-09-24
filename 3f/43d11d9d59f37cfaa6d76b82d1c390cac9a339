@@ -1,0 +1,83 @@
+outfitter/deploy/test/gke-skew.test.sh
+  s_217e742e7da57c::t_d177177242e12f 25-30
+  s_217e742e7da57c::t_18d88298a63037 51
+  s_217e742e7da57c::t_fe90779ab07a9e 62-63
+  s_217e742e7da57c::t_ef5a12c559f45a 175-182
+  s_217e742e7da57c::t_4542503574c2af 121-132
+outfitter/deploy/env.sh
+  s_217e742e7da57c::t_3a464805ac7d12 333,335-340,352-355
+  s_217e742e7da57c::t_cbe3f559bc0c60 431-440,447,452-478
+  s_217e742e7da57c::t_22f0093e4624db 396-403,406,408-422,479
+  s_217e742e7da57c::t_9fdd89a091cb51 356-357
+  s_217e742e7da57c::t_4887e81addfa7b 480
+outfitter/deploy/test/gke-iam.test.sh
+  s_217e742e7da57c::t_462459f18a89b6 21-26,40-42,52-53
+  s_217e742e7da57c::t_727c4e197671b6 92-100
+  s_217e742e7da57c::t_f74edf1dd15792 115,123-133
+outfitter/deploy/test/gke-schedule.test.sh
+  s_217e742e7da57c::t_ddf725340e42ed 20-23
+  s_217e742e7da57c::t_c100f29d86b740 92-103
+outfitter/deploy/gke-template.sh
+  s_217e742e7da57c::t_8e0b808c134f84 12-14,42-45,64-67,76-77,80-93,107-112,115,130-150,156-158,160
+  s_217e742e7da57c::t_d5c58c8f313c63 151-153,155
+  s_217e742e7da57c::t_326c8e0c7a3766 35-38
+  s_217e742e7da57c::t_4f9bca56e1ffb1 71-75
+.github/workflows/outfitter-ci.yml
+  s_217e742e7da57c::t_2a4ce9f60513c6 45-46
+outfitter/deploy/gke-schedule.sh
+  s_217e742e7da57c::t_046adf5174cdff 7,11-15,41-50,52,66,69,72
+outfitter/deploy/test/release-gke-off.test.sh
+  s_217e742e7da57c::t_07548bbea59f68 1-100,102,104-117
+  s_217e742e7da57c::t_3db0fdaa548ed9 101,103
+outfitter/deploy/test/gke-template.test.sh
+  s_217e742e7da57c::t_b2b26ea0f22dfd 4-9,23-25,29-33,54-57,63-64,66-67,69-108,116,126-131,188-196,206-214,233-234,236,242-246,254-255,257,261,271-277,289-296
+  s_217e742e7da57c::t_5fc44ff56abc38 237-241
+  s_217e742e7da57c::t_e2d47de839846e 266-270
+  s_217e742e7da57c::t_8c82f7a9d618a5 109-111,119-125
+  s_217e742e7da57c::t_7b773685d91eec 231-232,235
+  s_217e742e7da57c::t_87e99dae2fb2f4 215
+outfitter/docs/specs/gke-sandbox-provider-plan.md
+  s_217e742e7da57c::t_b1903259dd819b 181-218,220-227
+  s_217e742e7da57c::t_9ea4e44fc420cc 219
+  s_217e742e7da57c::t_666d94e79a356d 164-167
+outfitter/deploy/gke-teardown.sh
+  s_217e742e7da57c::t_197e74cb493cf4 14-18
+  s_217e742e7da57c::t_7abd0d7af27fba 76-84
+  s_217e742e7da57c::t_f9e0492ff94246 127
+  s_217e742e7da57c::t_b82fd11d3d4627 45-65
+  s_217e742e7da57c::t_2b6020c9ae8d77 120,122
+outfitter/deploy/gke-iam.sh
+  s_217e742e7da57c::t_df94627e4ace5f 21-25
+  s_217e742e7da57c::t_4d029f98b4f847 52-55
+  s_217e742e7da57c::t_75eaea475221cf 78,80-88
+outfitter/deploy/gke/sandbox-template.yaml
+  s_217e742e7da57c::t_cdaed55abea1c8 9-15
+  s_217e742e7da57c::t_becda95375c700 70-71
+outfitter/deploy/README.md
+  s_217e742e7da57c::t_19d0f652c81492 302,304-315,319-333,336-342,352-366
+outfitter/deploy/release.sh
+  s_217e742e7da57c::t_2771cbec91155f 154,158-160,164,166
+outfitter/deploy/test/service-env-gke-off.test.sh
+  s_217e742e7da57c::t_a92f08cc93e4af 1-113
+outfitter/deploy/ci-setup.sh
+  s_217e742e7da57c::t_7a254ed79f8214 78,85-90,97-98,103,113-119,123,126-142
+.github/workflows/outfitter-deploy.yml
+  s_217e742e7da57c::t_224b1291cf12a3 87-98,102-103,105-106
+  s_217e742e7da57c::t_9d6429392073d8 65-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "3f43d11d9d59f37cfaa6d76b82d1c390cac9a339",
+  "prompts": {},
+  "sessions": {
+    "s_217e742e7da57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4d8a38f8-9583-45df-9f1a-8e69160a3dfb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

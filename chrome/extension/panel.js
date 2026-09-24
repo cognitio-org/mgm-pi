@@ -26,13 +26,17 @@ import {
   placementRecord,
   placementRememberMessage,
   pollDelay,
+  failureNote,
+  pillClass,
   publicError,
+  runStateLabel,
   sessionChoiceLabel,
   sessionIdOk,
   shareMessage,
-  stateLine,
   steerBody,
   transcriptLines,
+  transportEnabled,
+  transportLabel,
   uiResponseBody,
 } from "./panel-model.js";
 
@@ -40,6 +44,10 @@ const setup = document.querySelector("#setup");
 const allowButton = document.querySelector("#allow");
 const floppySelect = document.querySelector("#floppy");
 const state = document.querySelector("#state");
+const reason = document.querySelector("#reason");
+const playButton = document.querySelector("#play");
+const stopButton = document.querySelector("#stop");
+const breakButton = document.querySelector("#break");
 const transcript = document.querySelector("#transcript");
 const steerForm = document.querySelector("#steer");
 const steerInput = document.querySelector("#steer-text");
@@ -53,6 +61,7 @@ const actionText = document.querySelector("#action-text");
 const actionButtons = document.querySelector("#action-buttons");
 const allowClick = document.querySelector("#allow-click");
 const allowType = document.querySelector("#allow-type");
+const inspect = document.querySelector("#inspect");
 const inspectCopy = document.querySelector("#inspect-copy");
 const inspectButtons = document.querySelector("#inspect-buttons");
 let shownActionId = "";
@@ -67,6 +76,8 @@ let running = false;
 let refreshAgain = false;
 let selectionEpoch = 0;
 let paintedSession = "";
+let paintedDetail = null;
+let pendingTransport = "";
 
 function holdPanelPort() {
   try {
@@ -319,12 +330,14 @@ function renderInspect(response) {
   const prompt = response && response.prompt && typeof response.prompt === "object" ? response.prompt : null;
   if (!prompt || typeof prompt.requestId !== "string") {
     shownInspectId = "";
+    inspect.hidden = true;
     inspectCopy.hidden = true;
     inspectCopy.textContent = "";
     inspectButtons.hidden = true;
     return;
   }
   shownInspectId = prompt.requestId;
+  inspect.hidden = false;
   inspectCopy.hidden = false;
   inspectCopy.textContent = typeof prompt.message === "string" ? prompt.message : "";
   inspectButtons.hidden = false;
@@ -347,9 +360,35 @@ function renderCapturing(response) {
   capturing.textContent = line || "";
 }
 
+function paintTransport(session, emptyLabel) {
+  paintedDetail = session && typeof session === "object" ? session : null;
+  const enabled = transportEnabled(paintedDetail, pendingTransport);
+  playButton.disabled = !enabled.play;
+  stopButton.disabled = !enabled.stop;
+  breakButton.disabled = !enabled.break;
+  playButton.textContent = transportLabel("play", pendingTransport);
+  stopButton.textContent = transportLabel("stop", pendingTransport);
+  breakButton.textContent = transportLabel("break", pendingTransport);
+  if (!paintedDetail) {
+    const label = typeof emptyLabel === "string" ? emptyLabel : "";
+    state.hidden = label === "";
+    state.className = "hint";
+    state.textContent = label;
+    reason.hidden = true;
+    reason.textContent = "";
+    return;
+  }
+  state.hidden = false;
+  state.className = `status-pill ${pillClass(paintedDetail.runState)}`;
+  state.textContent = runStateLabel(paintedDetail);
+  const noteText = failureNote(paintedDetail);
+  reason.hidden = noteText === "";
+  reason.textContent = noteText;
+}
+
 function clearStrip() {
   paintedSession = "";
-  state.textContent = "";
+  paintTransport(null);
   transcript.textContent = "";
   renderApproval(null, "");
   shareLine = SHARE_UNAVAILABLE;
@@ -400,7 +439,7 @@ async function tick(epoch) {
   const show = committedSession(sessionId, selectedId(), epoch, selectionEpoch);
   if (!show) {
     if (epoch !== selectionEpoch) return;
-    state.textContent = "Choose a Floppy.";
+    paintTransport(null, "Choose a Floppy.");
     transcript.textContent = "";
     renderApproval(null, "");
     shareStatus.textContent = SHARE_UNAVAILABLE;
@@ -426,7 +465,7 @@ async function tick(epoch) {
     return;
   }
   paintedSession = show;
-  state.textContent = stateLine(detail.body);
+  paintTransport(detail.body);
   if (entries.ok) renderTranscript(entries.body);
   else transcript.textContent = entries.error || "Could not read the transcript.";
   const view = approvalView(detail.body && detail.body.pendingUiRequest);
@@ -558,20 +597,36 @@ steerForm.addEventListener("submit", (event) => {
   });
 });
 
-document.querySelector("#break").addEventListener("click", () => {
-  const path = apiPath("abort", screenSession());
+function runTransport(kind) {
+  const pathKind = kind === "play" ? "wake" : kind === "stop" ? "stop" : "abort";
+  const path = apiPath(pathKind, screenSession());
   if (!path) {
     status.textContent = "Choose a Floppy.";
     return;
   }
+  pendingTransport = kind;
+  paintTransport(paintedDetail);
+  const sent = kind === "play" ? "Play sent." : kind === "stop" ? "Stop sent." : "Break sent.";
+  const failed = kind === "play" ? "Could not play." : kind === "stop" ? "Could not stop." : "Could not break.";
   linkCall("POST", path).then((result) => {
-    if (!note(result)) return;
-    status.textContent = "Break sent.";
+    pendingTransport = "";
+    if (!note(result)) {
+      paintTransport(paintedDetail);
+      return;
+    }
+    status.textContent = sent;
+    paintTransport(paintedDetail);
     refresh();
   }).catch(() => {
-    status.textContent = "Could not break.";
+    pendingTransport = "";
+    paintTransport(paintedDetail);
+    status.textContent = failed;
   });
-});
+}
+
+playButton.addEventListener("click", () => runTransport("play"));
+stopButton.addEventListener("click", () => runTransport("stop"));
+breakButton.addEventListener("click", () => runTransport("break"));
 
 document.querySelector("#share").addEventListener("click", () => {
   const sessionId = screenSession();

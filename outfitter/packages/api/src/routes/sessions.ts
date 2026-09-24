@@ -277,7 +277,9 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
 }
 
 /** Session routes the side panel calls on the link role as well as web (chrome companion §9.1).
- * Not part of registerTeleportRoutes: teleport doesn't steer or answer approvals. */
+ * Not part of registerTeleportRoutes: teleport doesn't steer, answer approvals, or Play.
+ * Play is POST /wake. The panel cannot call the IAP web origin, so wake lives here.
+ * Stop stays on the teleport routes. */
 export async function registerPanelRoutes(app: FastifyInstance, ctx: RouteContext): Promise<void> {
   app.get("/api/sessions/:id/entries", async (req, reply) => {
     const session = await getSessionOr404(ctx, req, reply);
@@ -317,6 +319,13 @@ export async function registerPanelRoutes(app: FastifyInstance, ctx: RouteContex
     if (!run) return reply.code(404).send({ error: "no active run" });
     await ctx.agentLink.send(run.id, { t: "ui_response", id: body.id, value: body.value });
     await ctx.store.runs.update(run.id, { pendingUiRequest: undefined, updatedAt: new Date().toISOString() });
+    return { run };
+  });
+
+  app.post("/api/sessions/:id/wake", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const run = await ctx.runs.wake(session.id);
     return { run };
   });
 }
@@ -398,13 +407,6 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     if (result === "active") await ctx.agentLink.deliverMailForSession(session.id);
     const heldMail = await ctx.store.mail.countHeld(session.id);
     return { released, result, heldMail };
-  });
-
-  app.post("/api/sessions/:id/wake", async (req, reply) => {
-    const session = await getSessionOr404(ctx, req, reply);
-    if (!session) return;
-    const run = await ctx.runs.wake(session.id);
-    return { run };
   });
 
   app.get("/api/sessions/:id/diff", async (req, reply) => {

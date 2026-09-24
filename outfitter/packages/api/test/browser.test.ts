@@ -423,6 +423,10 @@ describe("browser companion on the link role", () => {
     assert.equal(ui.statusCode, 404);
     assert.equal(ui.json().error, "no active run");
 
+    const wake = await app.fastify.inject({ method: "POST", url: "/api/sessions/missing-panel/wake", headers: auth });
+    assert.equal(wake.statusCode, 404);
+    assert.equal(wake.json().error, "session not found");
+
     await app.fastify.close();
   });
 

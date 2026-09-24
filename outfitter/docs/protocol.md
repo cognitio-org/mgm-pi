@@ -344,12 +344,15 @@ same calls with IAP or that bearer. Identity is the token owner's email or the I
 (`req.identity`). An email in the body is ignored.
 
 The link role also registers these existing session routes, unchanged, so the side panel can read
-the transcript, steer, answer an approval, and Break without going through IAP:
+the transcript, steer, answer an approval, Break, and Play without going through IAP:
 
 - `GET /api/sessions/:id/entries`
 - `POST /api/sessions/:id/messages`
 - `POST /api/sessions/:id/ui-response`
 - `POST /api/sessions/:id/abort`
+- `POST /api/sessions/:id/wake`
+
+`POST /api/sessions/:id/stop` is already on the teleport routes. Play calls `/wake`. Stop calls `/stop`.
 
 `GET /api/sessions` and `GET /api/sessions/:id` were already on the link role. The detail payload
 includes `pendingUiRequest` from the active run (`null` when there is none). Guru, operator, and

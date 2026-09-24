@@ -31,8 +31,12 @@ import {
   shareMessage,
   shareStatusText,
   shouldNotifyApproval,
+  failureNote,
+  pillClass,
   stateLine,
   steerBody,
+  transportEnabled,
+  transportLabel,
   transcriptLines,
   uiResponseBody,
 } from "../extension/panel-model.js";
@@ -67,10 +71,34 @@ test("link calls use the link origin and do not carry the Dongle in the URL", ()
   assert.equal(linkUrl(link, apiPath("messages", session)), `${link}/api/sessions/${session}/messages`);
   assert.equal(linkUrl(link, apiPath("ui-response", session)), `${link}/api/sessions/${session}/ui-response`);
   assert.equal(linkUrl(link, apiPath("abort", session)), `${link}/api/sessions/${session}/abort`);
+  assert.equal(linkUrl(link, apiPath("wake", session)), `${link}/api/sessions/${session}/wake`);
+  assert.equal(linkUrl(link, apiPath("stop", session)), `${link}/api/sessions/${session}/stop`);
   assert.equal(apiPath("session", "../x"), null);
   assert.equal(linkUrl(link, "/api/sessions?token=outf_secret"), null);
   assert.equal(linkUrl("javascript:alert(1)", apiPath("list")), null);
   assert.equal(linkUrl("http://user:pass@localhost:8080", apiPath("list")), null);
+});
+
+test("Play is enabled when the run is stopped, and Stop and Break while it is live", () => {
+  const stopped = { runState: "stopped" };
+  assert.deepEqual(transportEnabled(stopped, ""), { play: true, stop: false, break: false });
+  assert.deepEqual(transportEnabled({ runState: "failed" }, ""), { play: true, stop: false, break: false });
+  assert.deepEqual(transportEnabled({}, ""), { play: true, stop: false, break: false });
+  for (const runState of ["queued", "provisioning", "running", "idle"]) {
+    assert.deepEqual(transportEnabled({ runState }, ""), { play: false, stop: true, break: true });
+  }
+  assert.deepEqual(transportEnabled({ runState: "stopping" }, ""), { play: false, stop: false, break: false });
+  assert.deepEqual(transportEnabled(stopped, "play"), { play: false, stop: false, break: false });
+  assert.deepEqual(transportEnabled(null, ""), { play: false, stop: false, break: false });
+  assert.equal(transportLabel("play", ""), "\u25B6 Play");
+  assert.equal(transportLabel("play", "play"), "Waking");
+  assert.equal(transportLabel("stop", ""), "\u25A0 Stop");
+  assert.equal(transportLabel("stop", "stop"), "Stopping");
+  assert.equal(transportLabel("break", "break"), "Breaking");
+  assert.equal(pillClass("running"), "running");
+  assert.equal(pillClass("nope"), "stopped");
+  assert.equal(failureNote({ runState: "failed", runStateReason: "sandbox down" }), "sandbox down");
+  assert.equal(failureNote(stopped), "");
 });
 
 test("the poll runs every 2 seconds only while the document is visible", () => {

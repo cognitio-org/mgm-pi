@@ -3,91 +3,100 @@
 <head>
   <meta charset="utf-8">
   <title>Kernal</title>
-  <style>
-    body {
-      font: 14px/1.4 ui-sans-serif, system-ui, sans-serif;
-      margin: 0.9rem;
-      color: #1a1a1a;
-    }
-    h1 { font-size: 1.15rem; margin: 0 0 0.6rem; }
-    h2 { font-size: 0.95rem; margin: 1rem 0 0.3rem; }
-    label { display: block; margin: 0.6rem 0 0.25rem; font-weight: 600; }
-    input, select {
-      width: 100%;
-      box-sizing: border-box;
-      font: inherit;
-      padding: 0.35rem 0.45rem;
-    }
-    button { font: inherit; margin: 0.4rem 0.4rem 0 0; padding: 0.3rem 0.7rem; }
-    p { margin: 0.35rem 0; }
-    .hint { color: #444; font-weight: 400; }
-    #transcript {
-      white-space: pre-wrap;
-      word-break: break-word;
-      background: #f4f4f4;
-      padding: 0.45rem;
-      margin: 0;
-      min-height: 2.4em;
-      max-height: 12rem;
-      overflow: auto;
-    }
-    #approval { margin-top: 0.6rem; }
-    #approval-actions { display: flex; flex-wrap: wrap; align-items: center; }
-    #approval-actions input { flex: 1; min-width: 8rem; width: auto; }
-    #action label { font-weight: 400; }
-    #action input[type="checkbox"] { width: auto; margin-right: 0.35rem; }
-  </style>
+  <link rel="stylesheet" href="outfitter.css">
+  <link rel="stylesheet" href="panel.css">
 </head>
 <body>
-  <h1>Kernal</h1>
-  <p id="setup" class="hint"></p>
-  <p><button type="button" id="allow" hidden>Allow link origin</button></p>
-  <label for="floppy">Floppy</label>
-  <select id="floppy"></select>
-  <p id="state"></p>
-  <p><button type="button" id="open">Open Floppy</button></p>
-  <h2>Transcript</h2>
-  <pre id="transcript"></pre>
-  <form id="steer">
-    <label for="steer-text">Follow up</label>
-    <input id="steer-text" type="text" maxlength="32000" autocomplete="off" spellcheck="false" autocapitalize="off">
-    <button type="submit">Send</button>
-  </form>
-  <section id="approval" hidden>
-    <h2>Approval</h2>
-    <p id="approval-title"></p>
-    <p id="approval-message" class="hint"></p>
-    <div id="approval-actions"></div>
-  </section>
-  <p><button type="button" id="break">Break</button></p>
-  <h2>This tab</h2>
-  <p id="share-status" class="hint">Share is not available yet</p>
-  <p id="capturing" class="hint" hidden></p>
-  <p>
-    <button type="button" id="share">Share</button>
-    <button type="button" id="revoke">Revoke</button>
-  </p>
-  <section id="action">
-    <h2>Page actions</h2>
-    <p id="action-copy" class="hint" hidden></p>
-    <p id="action-text" class="hint" hidden></p>
-    <p id="action-buttons" hidden>
-      <button type="button" id="action-allow">Allow</button>
-      <button type="button" id="action-deny">Deny</button>
-    </p>
-    <label><input type="checkbox" id="allow-click"> Allow click for this share</label>
-    <label><input type="checkbox" id="allow-type"> Allow typing for this share</label>
-  </section>
-  <section id="inspect">
-    <h2>DevTools</h2>
-    <p id="inspect-copy" class="hint" hidden></p>
-    <p id="inspect-buttons" hidden>
-      <button type="button" id="inspect-allow">Allow</button>
-      <button type="button" id="inspect-deny">Deny</button>
-    </p>
-  </section>
-  <p id="status" role="status"></p>
-  <p><button type="button" id="options">Options</button></p>
+  <main>
+    <header class="panel brand">
+      <div class="panel-titlebar"><span class="panel-label">Kernal</span></div>
+    </header>
+    <p id="setup" class="hint"></p>
+    <p><button type="button" id="allow" hidden>Allow link origin</button></p>
+
+    <section class="panel">
+      <div class="panel-titlebar"><span class="panel-label">Floppy</span></div>
+      <div class="panel-body">
+        <select id="floppy" aria-label="Floppy"></select>
+        <p id="state" class="status-pill stopped" hidden></p>
+        <p id="reason" class="hint" hidden></p>
+        <div class="button-row" aria-label="Run">
+          <button type="button" id="play" class="btn-primary" disabled title="Wake this floppy and start the run">▶ Play</button>
+          <button type="button" id="stop" class="btn-danger" disabled title="Stop this floppy's run">■ Stop</button>
+          <button type="button" id="break" class="btn-danger" disabled title="Interrupt the current turn, like the C64 RUN/STOP key">Break</button>
+        </div>
+        <div class="button-row">
+          <button type="button" id="open">Open Floppy</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-titlebar"><span class="panel-label">Transcript</span></div>
+      <pre id="transcript"></pre>
+    </section>
+
+    <form id="steer" class="panel">
+      <div class="panel-titlebar"><span class="panel-label">Follow up</span></div>
+      <div class="panel-body">
+        <input id="steer-text" type="text" maxlength="32000" autocomplete="off" spellcheck="false" autocapitalize="off" aria-label="Follow up">
+        <div class="button-row">
+          <button type="submit">Send</button>
+        </div>
+      </div>
+    </form>
+
+    <section id="approval" class="panel" hidden>
+      <div class="panel-titlebar"><span class="panel-label">Approval</span></div>
+      <div class="panel-body">
+        <p id="approval-title"></p>
+        <p id="approval-message" class="hint"></p>
+        <div id="approval-actions"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-titlebar"><span class="panel-label">This tab</span></div>
+      <div class="panel-body">
+        <p id="share-status" class="hint">Share is not available yet</p>
+        <p id="capturing" class="hint warn" hidden></p>
+        <div class="button-row">
+          <button type="button" id="share">Share</button>
+          <button type="button" id="revoke">Revoke</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="action" class="panel">
+      <div class="panel-titlebar"><span class="panel-label">Page actions</span></div>
+      <div class="panel-body">
+        <p id="action-copy" class="hint" hidden></p>
+        <p id="action-text" class="hint" hidden></p>
+        <p id="action-buttons" class="button-row" hidden>
+          <button type="button" id="action-allow">Allow</button>
+          <button type="button" id="action-deny" class="btn-danger">Deny</button>
+        </p>
+        <label class="check"><input type="checkbox" id="allow-click"> Allow click for this share</label>
+        <label class="check"><input type="checkbox" id="allow-type"> Allow typing for this share</label>
+      </div>
+    </section>
+
+    <section id="inspect" class="panel" hidden>
+      <div class="panel-titlebar"><span class="panel-label">DevTools</span></div>
+      <div class="panel-body">
+        <p id="inspect-copy" class="hint" hidden></p>
+        <p id="inspect-buttons" class="button-row" hidden>
+          <button type="button" id="inspect-allow">Allow</button>
+          <button type="button" id="inspect-deny" class="btn-danger">Deny</button>
+        </p>
+      </div>
+    </section>
+
+    <p id="status" role="status"></p>
+    <div class="button-row">
+      <button type="button" id="options">Options</button>
+    </div>
+  </main>
   <script type="module" src="panel.js"></script>
 </body>
 </html>

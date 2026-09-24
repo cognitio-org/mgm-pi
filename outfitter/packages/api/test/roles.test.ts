@@ -43,6 +43,7 @@ describe("OUTFITTER_ROLE=link", () => {
     assert.equal(app.fastify.hasRoute({ method: "GET", url: "/api/me/tokens" }), false);
     // The side panel's transcript read is on the link role now (chrome companion §9.1).
     assert.equal(app.fastify.hasRoute({ method: "GET", url: "/api/sessions/:id/entries" }), true);
+    assert.equal(app.fastify.hasRoute({ method: "POST", url: "/api/sessions/:id/wake" }), true);
 
     await app.fastify.close();
   });

@@ -11,6 +11,7 @@ import { buildTestApp, seedGuru } from "./helpers.ts";
 import { openAgentSocket, runTokenFor, sendHello } from "./agent-socket.ts";
 
 const SHA = "a".repeat(40);
+let failIssueClose = 0;
 const SHA_B = "b".repeat(40);
 const RATE = { "x-ratelimit-remaining": "4800", "x-ratelimit-reset": "1700000000" };
 
@@ -62,6 +63,13 @@ function fakeGithub(calls: Call[]): GithubTransport {
         return response(200, { check_runs: [{ name: "test", conclusion: "success", status: "completed", html_url: "https://example/check" }] });
       }
       if (route === "GET /repos/{owner}/{repo}/commits/{ref}/status") return response(200, { statuses: [] });
+      if (route === "PATCH /repos/{owner}/{repo}/issues/{issue_number}" && params.state === "closed") {
+        if (failIssueClose > 0) {
+          failIssueClose -= 1;
+          return response(500, { message: "nope" });
+        }
+        return response(200, { number: params.issue_number, state: "closed" });
+      }
       if (route === "POST /repos/{owner}/{repo}/issues/{issue_number}/comments") {
         return response(201, { html_url: `https://github.com/${params.owner}/${params.repo}/issues/${params.issue_number}#issuecomment-9` });
       }
@@ -250,6 +258,36 @@ describe("github broker", () => {
     await app.fastify.close();
   });
 
+  test("a close that fails after the comment does not comment again on replay", async () => {
+    failIssueClose = 1;
+    const { app, calls, session, runId, runToken } = await socketApp();
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    await agent.nextMessage();
+    const request = {
+      t: "github.request",
+      op: "github_issue.close",
+      args: { number: 4, body: "done" },
+      idempotencyKey: "close-1",
+    };
+    agent.send({ ...request, reqId: "c1" });
+    const first = await agent.nextMessage();
+    assert.equal(first.ok, false);
+    assert.equal(first.progress, undefined);
+    const comments = () => calls.filter((c) => c.route === "POST /repos/{owner}/{repo}/issues/{issue_number}/comments").length;
+    assert.equal(comments(), 1);
+    agent.send({ ...request, reqId: "c2" });
+    const second = await agent.nextMessage();
+    assert.equal(second.ok, true);
+    assert.equal(second.data.state, "closed");
+    assert.equal(comments(), 1);
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+    failIssueClose = 0;
+  });
+
   test("an unknown op, including wait_ci, is an error and does not call GitHub", async () => {
     const { app, calls, session, runId, runToken } = await socketApp();
     const agent = await openAgentSocket(app, runId);
@@ -310,6 +348,7 @@ describe("github broker", () => {
     assert.equal(listed.ok, true);
     assert.equal(listed.data.pullRequests[0].number, 7);
     assert.equal(listed.data.pullRequests[0].sha, SHA);
+    assert.equal(listed.data.pullRequests[0].body, undefined);
     assert.equal(listed.data.items, undefined);
 
     agent.send({ t: "bye", reason: "stop" });

@@ -2,9 +2,10 @@
 // github.request up-frame and gets a github.result down-frame. No gh passthrough.
 // GraphQL is used only for review-thread replies and resolve.
 
+import { createHash } from "node:crypto";
 import { Octokit } from "@octokit/rest";
 import type { SecretsBroker } from "./secrets.ts";
-import type { GithubIdempotencyRecord, Session, Store } from "./store/types.ts";
+import type { GithubIdempotencyRecord, GithubWriteProgress, Session, Store } from "./store/types.ts";
 
 const PENDING_MARK = "idempotency pending";
 const LOW_REMAINING = 10;
@@ -106,7 +107,11 @@ interface Ctx {
   footer: string;
   paced: boolean;
   rateLimit?: RateLimit;
+  /** Steps of this write that already reached GitHub. A replay skips those and finishes the rest. */
+  resume?: GithubWriteProgress;
 }
+
+
 
 const silentLog = { debug() {}, info() {}, warn() {}, error() {} };
 
@@ -182,8 +187,8 @@ export class GithubBroker {
   private readonly memory = new Map<string, Map<string, GithubIdempotencyRecord>>();
   private readonly inflight = new Map<string, Promise<GithubOpResult>>();
   private readonly heads = new Map<string, string>();
-  /** Latest budget seen from GitHub, shared by every run (one token pool). */
-  private budget: RateLimit | undefined;
+  /** Latest budget per token. Sessions on this process can use different credentials. */
+  private readonly budgets = new Map<string, RateLimit>();
   private readonly store: Store;
   private readonly secrets: SecretsBroker;
   private readonly transportFor: (token: string) => GithubTransport;
@@ -240,21 +245,26 @@ export class GithubBroker {
     key: string | undefined,
     write: boolean,
   ): Promise<GithubOpResult> {
+    let resume: GithubWriteProgress | undefined;
     if (write && key) {
       const prior = await this.recall(runId, key);
-      if (prior && !isPending(prior)) return this.settle(runId, op, key, true, prior, true);
-      if (!prior || isPending(prior)) {
+      if (prior && !isPending(prior)) {
+        if (!prior.ok && prior.progress) resume = prior.progress;
+        else return this.settle(runId, op, key, true, prior, true);
+      }
+      if (!resume && (!prior || isPending(prior))) {
         const claim = prior
           ? { status: "existing" as const, record: prior }
           : await this.store.runs.claimGithubIdempotency(runId, key, { ok: false, error: PENDING_MARK });
         if (claim.status === "missing") return this.settle(runId, op, key, write, { ok: false, error: "not found" });
         if (claim.status === "existing" && !isPending(claim.record)) {
-          return this.settle(runId, op, key, true, claim.record, true);
-        }
-        if (claim.status === "existing") {
+          if (!claim.record.ok && claim.record.progress) resume = claim.record.progress;
+          else return this.settle(runId, op, key, true, claim.record, true);
+        } else if (claim.status === "existing") {
           const waited = await this.waitForKey(runId, key);
           if (!waited) return this.settle(runId, op, key, write, { ok: false, error: "this write is still in progress" });
-          return this.settle(runId, op, key, true, waited, true);
+          if (!waited.ok && waited.progress) resume = waited.progress;
+          else return this.settle(runId, op, key, true, waited, true);
         }
       }
     }
@@ -288,6 +298,7 @@ export class GithubBroker {
       transport: this.transportFor(token),
       footer: await this.footerFor(session),
       paced: false,
+      resume,
     };
     const result = await this.execute(ctx, args);
     return this.settle(runId, op, key, write, result);
@@ -316,6 +327,7 @@ export class GithubBroker {
     if (write && key && !replay) await this.remember(runId, key, result);
     const shown = op.replace(/[\r\n]/g, " ").slice(0, 80);
     console.log(`[github] run ${runId} ${shown} ${result.ok ? "ok" : "err"}${replay ? " replay" : ""}`);
+    if (!result.ok) return { ok: false, error: result.error };
     return result;
   }
 
@@ -358,8 +370,12 @@ export class GithubBroker {
     return undefined;
   }
 
-  private async pace(): Promise<void> {
-    const rl = this.budget;
+  private tokenKey(token: string): string {
+    return createHash("sha256").update(token).digest("hex");
+  }
+
+  private async pace(token: string): Promise<void> {
+    const rl = this.budgets.get(this.tokenKey(token));
     if (!rl || rl.remaining > LOW_REMAINING) return;
     let ms = 0;
     if (rl.remaining <= 0) {
@@ -374,7 +390,7 @@ export class GithubBroker {
   private async call(ctx: Ctx, route: string, params: Record<string, unknown>): Promise<CallResult> {
     if (!ctx.paced) {
       ctx.paced = true;
-      await this.pace();
+      await this.pace(ctx.token);
     }
     let res: GithubResponse;
     try {
@@ -384,7 +400,7 @@ export class GithubBroker {
     }
     const rl = rateLimitFromHeaders(res.headers);
     if (rl) {
-      this.budget = rl;
+      this.budgets.set(this.tokenKey(ctx.token), rl);
       ctx.rateLimit = rl;
     }
     if (isRateLimit(res)) return { ok: false, error: "rate limit exceeded" };
@@ -556,7 +572,7 @@ export class GithubBroker {
     if (state === "closed") rows = rows.filter((row) => !row?.merged_at);
     rows = rows.slice(0, limit);
     for (const row of rows) this.rememberHead(ctx, Number(row?.number), row?.head?.sha);
-    return this.data(ctx, { pullRequests: rows.map((row) => normalizePull(row, undefined, undefined, [])) });
+    return this.data(ctx, { pullRequests: rows.map((row) => normalizePull(row, undefined, undefined, [], false)) });
   }
 
   private async createPr(ctx: Ctx, args: Record<string, unknown>): Promise<GithubOpResult> {
@@ -821,7 +837,9 @@ export class GithubBroker {
     if (!title && body === undefined && !labels.values.length && !removeLabels.values.length && !assignees.values.length && !removeAssignees.values.length) {
       return { ok: false, error: "Nothing to change. Pass a title, a body, labels or assignees." };
     }
-    if (title || body !== undefined) {
+    const progress: GithubWriteProgress = { ...(ctx.resume ?? {}) };
+    const removed = new Set(progress.labelsRemoved ?? []);
+    if ((title || body !== undefined) && !progress.patched) {
       const res = await this.call(ctx, "PATCH /repos/{owner}/{repo}/issues/{issue_number}", {
         owner: ctx.owner,
         repo: ctx.repo,
@@ -829,33 +847,49 @@ export class GithubBroker {
         ...(title ? { title } : {}),
         ...(body !== undefined ? { body } : {}),
       });
-      if (!res.ok) return { ok: false, error: res.error };
+      if (!res.ok) return { ok: false, error: res.error, progress };
+      progress.patched = true;
+      await this.checkpoint(ctx, progress);
     }
-    if (labels.values.length) {
+    if (labels.values.length && !progress.labelsAdded) {
       const res = await this.call(ctx, "POST /repos/{owner}/{repo}/issues/{issue_number}/labels", {
         owner: ctx.owner, repo: ctx.repo, issue_number: number, labels: labels.values,
       });
-      if (!res.ok) return { ok: false, error: res.error };
+      if (!res.ok) return { ok: false, error: res.error, progress };
+      progress.labelsAdded = true;
+      await this.checkpoint(ctx, progress);
     }
     for (const name of removeLabels.values) {
+      if (removed.has(name)) continue;
       const res = await this.call(ctx, "DELETE /repos/{owner}/{repo}/issues/{issue_number}/labels/{name}", {
         owner: ctx.owner, repo: ctx.repo, issue_number: number, name,
       });
-      if (!res.ok) return { ok: false, error: res.error };
+      if (!res.ok) return { ok: false, error: res.error, progress: { ...progress, labelsRemoved: [...removed] } };
+      removed.add(name);
+      progress.labelsRemoved = [...removed];
+      await this.checkpoint(ctx, progress);
     }
-    if (assignees.values.length) {
+    if (assignees.values.length && !progress.assigneesAdded) {
       const res = await this.call(ctx, "POST /repos/{owner}/{repo}/issues/{issue_number}/assignees", {
         owner: ctx.owner, repo: ctx.repo, issue_number: number, assignees: assignees.values,
       });
-      if (!res.ok) return { ok: false, error: res.error };
+      if (!res.ok) return { ok: false, error: res.error, progress };
+      progress.assigneesAdded = true;
+      await this.checkpoint(ctx, progress);
     }
-    if (removeAssignees.values.length) {
+    if (removeAssignees.values.length && !progress.assigneesRemoved) {
       const res = await this.call(ctx, "DELETE /repos/{owner}/{repo}/issues/{issue_number}/assignees", {
         owner: ctx.owner, repo: ctx.repo, issue_number: number, assignees: removeAssignees.values,
       });
-      if (!res.ok) return { ok: false, error: res.error };
+      if (!res.ok) return { ok: false, error: res.error, progress };
     }
     return this.data(ctx, { number });
+  }
+
+  /** Remember a half-finished write so a replay does not repeat the steps that already landed. */
+  private async checkpoint(ctx: Ctx, progress: GithubWriteProgress): Promise<void> {
+    if (!ctx.write || !ctx.key) return;
+    await this.remember(ctx.runId, ctx.key, { ok: false, error: "incomplete", progress });
   }
 
   private async closeIssue(ctx: Ctx, args: Record<string, unknown>): Promise<GithubOpResult> {
@@ -863,11 +897,14 @@ export class GithubBroker {
     if (!number) return { ok: false, error: "An issue number is required." };
     const reason = args.reason === undefined ? "completed" : args.reason === "not planned" || args.reason === "completed" ? args.reason : "";
     if (!reason) return { ok: false, error: `Unknown close reason "${String(args.reason)}". Use completed or "not planned".` };
-    if (typeof args.body === "string" && args.body.trim()) {
+    const progress: GithubWriteProgress = { ...(ctx.resume ?? {}) };
+    if (typeof args.body === "string" && args.body.trim() && !progress.commented) {
       const commented = await this.call(ctx, "POST /repos/{owner}/{repo}/issues/{issue_number}/comments", {
         owner: ctx.owner, repo: ctx.repo, issue_number: number, body: withFooter(args.body, ctx.footer),
       });
-      if (!commented.ok) return { ok: false, error: commented.error };
+      if (!commented.ok) return { ok: false, error: commented.error, progress };
+      progress.commented = true;
+      await this.checkpoint(ctx, progress);
     }
     const res = await this.call(ctx, "PATCH /repos/{owner}/{repo}/issues/{issue_number}", {
       owner: ctx.owner,
@@ -876,7 +913,7 @@ export class GithubBroker {
       state: "closed",
       state_reason: reason === "not planned" ? "not_planned" : "completed",
     });
-    if (!res.ok) return { ok: false, error: res.error };
+    if (!res.ok) return { ok: false, error: res.error, progress };
     return this.data(ctx, { number, state: "closed", reason });
   }
 
@@ -1175,6 +1212,7 @@ function normalizePull(
   review: string | undefined,
   checks: { passed: number; failed: number; pending: number; total: number } | undefined,
   jobs: { name: string; state: string; url: string }[],
+  includeBody = true,
 ): Record<string, unknown> {
   const sha = typeof pr?.head?.sha === "string" ? pr.head.sha.toLowerCase() : undefined;
   return obj({
@@ -1188,7 +1226,7 @@ function normalizePull(
     review,
     author: pr?.user?.login ? String(pr.user.login) : undefined,
     head: pr?.head?.ref ? String(pr.head.ref) : undefined,
-    body: typeof pr?.body === "string" ? clip(pr.body, 8000) : undefined,
+    ...(includeBody && typeof pr?.body === "string" ? { body: clip(pr.body, 8000) } : {}),
     checks,
     jobs,
   });

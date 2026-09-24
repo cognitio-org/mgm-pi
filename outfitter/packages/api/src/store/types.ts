@@ -150,10 +150,20 @@ export interface Run {
   updatedAt: string;
 }
 
+/** Steps of a multi-call write that already reached GitHub. Not sent on the socket. */
+export interface GithubWriteProgress {
+  commented?: boolean;
+  patched?: boolean;
+  labelsAdded?: boolean;
+  labelsRemoved?: string[];
+  assigneesAdded?: boolean;
+  assigneesRemoved?: boolean;
+}
+
 /** Stored result of one github.request write. Same shape the broker returns on the socket. */
 export type GithubIdempotencyRecord =
   | { ok: true; data: Record<string, unknown> }
-  | { ok: false; error: string };
+  | { ok: false; error: string; progress?: GithubWriteProgress };
 
 /** E5.5 mailbox: a message addressed to a session, not to a run, so it outlives a run that dies
  * before it is ready. Delivered at least once: claimed with a lease, acked by agentd once pi has

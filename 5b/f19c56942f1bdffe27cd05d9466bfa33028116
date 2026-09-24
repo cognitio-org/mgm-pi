@@ -1,0 +1,112 @@
+outfitter/packages/provider-local/package.json
+  s_217e742e7da57c::t_2a5029193506e9 8-17
+outfitter/packages/api/src/store/types.ts
+  s_217e742e7da57c::t_006a88fc24515d 6-7
+  s_217e742e7da57c::t_dd244a762d0675 347
+  s_217e742e7da57c::t_9a72726daf5080 95-99
+outfitter/packages/provider-local/test/contract.inprocess.test.ts
+  s_217e742e7da57c::t_ef6284e0ded8f4 1-81
+outfitter/packages/api/test/contract.noop.test.ts
+  s_217e742e7da57c::t_9d98a197d13a08 1-12,20-28
+  s_217e742e7da57c::t_1f8a13e430622d 13-19
+outfitter/packages/api/src/server.ts
+  s_217e742e7da57c::t_1dc817b43cdbcb 71-74,82
+outfitter/EPIC.md
+  s_217e742e7da57c::t_4920ddc48eac92 256-270
+outfitter/packages/api/test/cloudrun.test.ts
+  s_217e742e7da57c::t_d08599801c2bff 141-181
+outfitter/packages/api/test/operator.test.ts
+  s_217e742e7da57c::t_ba5972d4ce11c6 137-151
+outfitter/packages/api/test/registry.test.ts
+  s_217e742e7da57c::t_ea35108b5c593a 1-145
+outfitter/packages/provider-local/src/testing/index.ts
+  s_217e742e7da57c::t_3eff862cdfb9a2 1-2
+outfitter/packages/api/src/config.ts
+  s_217e742e7da57c::t_8aae339d76c05f 207-209,211,213,219-224
+  s_217e742e7da57c::t_491c0adc6adcbc 258-264
+  s_217e742e7da57c::t_f1df34b20b0fd3 234
+  s_217e742e7da57c::t_8314d681e06910 48-66
+  s_217e742e7da57c::t_a21139b84155b7 4-8
+  s_217e742e7da57c::t_0752a43d40aec6 139-148,226
+  s_217e742e7da57c::t_5aa23251473f19 225
+  s_217e742e7da57c::t_f3b51d2d74f0c1 227
+outfitter/packages/api/src/runs.ts
+  s_217e742e7da57c::t_38306574f29457 11,16,21-30,33,35-37,39-42,44-45,49-70
+  s_217e742e7da57c::t_9793b81736aa5b 189-199
+  s_217e742e7da57c::t_286f707914edd1 232-233
+  s_217e742e7da57c::t_57a52bdc8d1900 106-107,112-113,120,127,130-134
+  s_217e742e7da57c::t_7eec975d1e32d6 146-147
+  s_217e742e7da57c::t_986d55e5efa58b 71-72
+outfitter/packages/api/src/main.ts
+  s_217e742e7da57c::t_0a3bebebb03714 1,16
+outfitter/packages/api/src/providers/registry.ts
+  s_217e742e7da57c::t_da371d05955d5f 1-14,17-18,22,29-132
+  s_217e742e7da57c::t_bd3273edb02af7 15-16,19-21,23-28
+outfitter/deploy/config.env
+  s_217e742e7da57c::t_7f0f3aa89d2e14 16-20
+outfitter/packages/api/test/contract.cloudrun.test.ts
+  s_217e742e7da57c::t_90ec333608a4d2 1-77
+outfitter/docs/specs/gke-sandbox-provider.md
+  s_217e742e7da57c::t_4c03e3adc663f6 169-175
+  s_217e742e7da57c::t_0fca0f1919ae9f 59-64,70,77-78,80,83,87,91-100
+  s_217e742e7da57c::t_836cb1cdebe0ed 221-222,225-230,233,235-241
+  s_217e742e7da57c::t_d4611187b1029e 196-200
+outfitter/deploy/service.sh
+  s_217e742e7da57c::t_4c1ba8d559d7aa 138-142
+  s_217e742e7da57c::t_b3969898917ddb 155
+outfitter/packages/api/test/config.test.ts
+  s_217e742e7da57c::t_f1c2f47523878f 7
+  s_217e742e7da57c::t_143cea18a82681 81-105
+  s_217e742e7da57c::t_47d08e01ef5c3f 44-53
+  s_217e742e7da57c::t_5e7e2a74f6d5c4 125-128
+outfitter/packages/api/src/providers-status.ts
+  s_217e742e7da57c::t_561ffd6f719016 362-364
+  s_217e742e7da57c::t_173549e57539f9 306,308-321,323,327-329,332-337,339
+  s_217e742e7da57c::t_a26ff171c2bcb1 18,22-23
+  s_217e742e7da57c::t_9b2d9e9a196d02 392
+outfitter/packages/api/src/providers/cloudrun.ts
+  s_217e742e7da57c::t_77588de940c695 5
+  s_217e742e7da57c::t_71707d17d7d54e 155-165
+  s_217e742e7da57c::t_7ed1f2395ab9dd 190-195
+  s_217e742e7da57c::t_bab7e5052d69e4 61-70
+outfitter/packages/provider-local/src/testing/contract.ts
+  s_217e742e7da57c::t_6536dd3bf2e14c 1-199
+outfitter/packages/api/src/routes/operator.ts
+  s_217e742e7da57c::t_2584f570365de6 126-138
+outfitter/packages/provider-local/src/types.ts
+  s_217e742e7da57c::t_b39edd6b557fe2 28-50,52,55-56
+outfitter/packages/provider-local/src/index.ts
+  s_217e742e7da57c::t_089750376d5981 1-8
+outfitter/packages/provider-local/test/contract.docker.test.ts
+  s_217e742e7da57c::t_d35e904e4f0df5 1-72
+outfitter/packages/api/src/providers/index.ts
+  s_217e742e7da57c::t_a3e4833811c093 3,7,10-17,20
+outfitter/packages/api/test/providers-status.test.ts
+  s_217e742e7da57c::t_c5d3bc395fdf0a 407
+  s_217e742e7da57c::t_80f9a7d2e91a1d 445,447
+  s_217e742e7da57c::t_ba89d736d7fd79 17
+  s_217e742e7da57c::t_1b3b7032393368 267-268,270,272,275,279-280,282-283,286-295,302,304
+  s_217e742e7da57c::t_068e908be38e09 356
+  s_217e742e7da57c::t_f3ba6e3a2df91b 11
+  s_217e742e7da57c::t_5586a4ee85f163 390
+  s_217e742e7da57c::t_6b06a01b91d0f4 433
+  s_217e742e7da57c::t_0e16b08276e0e6 420
+  s_217e742e7da57c::t_572dc62324d97c 312,326
+  s_217e742e7da57c::t_eb269e00ea9e2d 369
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "5bf19c56942f1bdffe27cd05d9466bfa33028116",
+  "prompts": {},
+  "sessions": {
+    "s_217e742e7da57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4d8a38f8-9583-45df-9f1a-8e69160a3dfb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

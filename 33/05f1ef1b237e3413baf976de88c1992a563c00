@@ -1,0 +1,35 @@
+kernal/.pi/extensions/kernal-github/github-tools.ts
+  s_217e742e7da57c::t_fb114d8d15a2ea 18,1232-1248,1259-1262,1273-1284
+kernal/.pi/extensions/kernal-github/lib.ts
+  s_217e742e7da57c::t_4deb465f94f125 11
+kernal/tests/github-broker.test.ts
+  s_217e742e7da57c::t_b69c4d387f9392 249-262,270-279,281-282,285-291
+outfitter/packages/agentd/src/git.ts
+  s_217e742e7da57c::t_4aded817f54d29 495-498,501-523
+outfitter/packages/agentd/src/run.ts
+  s_217e742e7da57c::t_2cb57a31e82639 221-222,432,1021-1033,1041-1042,1054
+outfitter/packages/agentd/test/git.test.ts
+  s_217e742e7da57c::t_86046726eda4f1 122,135,165,179-188
+outfitter/packages/agentd/test/run.test.ts
+  s_217e742e7da57c::t_cad006aa6fe972 276,278-297
+outfitter/packages/api/src/agentlink.ts
+  s_217e742e7da57c::t_35a289c6283a2f 997-1006,1034
+outfitter/packages/api/test/agentlink.test.ts
+  s_217e742e7da57c::t_8d6e5c59d6f8b6 382
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "3305f1ef1b237e3413baf976de88c1992a563c00",
+  "prompts": {},
+  "sessions": {
+    "s_217e742e7da57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4d8a38f8-9583-45df-9f1a-8e69160a3dfb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

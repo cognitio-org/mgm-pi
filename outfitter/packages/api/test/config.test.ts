@@ -51,6 +51,27 @@ describe("loadConfig", () => {
     assert.equal(config.gkeLocation, config.gcpRegion);
   });
 
+  // Review round 1, L3: gke.ts builds request URLs as `https://${gkeEndpoint}${path}`, so a value
+  // with a scheme or a trailing slash would silently produce a malformed URL that only fails at
+  // request time. Normalize at boot instead of rejecting -- an operator pasting straight from
+  // `gcloud container clusters describe` (a bare host) is unaffected either way.
+  test("GKE_ENDPOINT is normalized: scheme and trailing slash are stripped", () => {
+    const bare = loadConfig({ GKE_ENDPOINT: "gke-abc-123.us-central1.gke.goog" } as NodeJS.ProcessEnv);
+    assert.equal(bare.gkeEndpoint, "gke-abc-123.us-central1.gke.goog");
+
+    const withScheme = loadConfig({ GKE_ENDPOINT: "https://gke-abc-123.us-central1.gke.goog" } as NodeJS.ProcessEnv);
+    assert.equal(withScheme.gkeEndpoint, "gke-abc-123.us-central1.gke.goog");
+
+    const withSlash = loadConfig({ GKE_ENDPOINT: "gke-abc-123.us-central1.gke.goog/" } as NodeJS.ProcessEnv);
+    assert.equal(withSlash.gkeEndpoint, "gke-abc-123.us-central1.gke.goog");
+
+    const withBoth = loadConfig({ GKE_ENDPOINT: "  https://gke-abc-123.us-central1.gke.goog/  " } as NodeJS.ProcessEnv);
+    assert.equal(withBoth.gkeEndpoint, "gke-abc-123.us-central1.gke.goog");
+
+    const unset = loadConfig({} as NodeJS.ProcessEnv);
+    assert.equal(unset.gkeEndpoint, "");
+  });
+
   test("OUTFITTER_OPERATORS defaults to an empty list", () => {
     const config = loadConfig({} as NodeJS.ProcessEnv);
     assert.deepEqual(config.operators, []);

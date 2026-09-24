@@ -25,6 +25,13 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { RouteContext } from "./context.ts";
 import { verifyTasksToken, bearerFromHeader } from "../auth.ts";
+import { GkeEndpointError, GkeProvider, KubeError, WARM_POOL_MAX_REPLICAS, WARM_POOL_MIN_REPLICAS } from "../providers/gke.ts";
+// Review finding L4: gke.ts itself is imported statically here (it's cheap -- no
+// google-auth-library or network at module load, only inside GkeProvider's methods), unlike
+// registry.ts's buildGke, which lazy-imports it so a deployment that never configures gke doesn't
+// pay even the class definitions. hooks.ts needs the real export (GkeProvider/KubeError/
+// GkeEndpointError) to tell the provider and its errors apart, so a lazy import here would just
+// move the same cost to first request instead of avoiding it.
 
 /** Constant-time HMAC-SHA256 verification of `ngrok-signature` (hex digest) over the raw body. */
 export function verifyNgrokSignature(rawBody: string, headerValue: string | undefined, secret: string): boolean {
@@ -101,6 +108,54 @@ export async function registerHookRoutes(app: FastifyInstance, ctx: RouteContext
     await ctx.runs.reconcileStoppingOnce();
     const woken = await ctx.mail.sweep();
     return { woken };
+  });
+
+  // §5.3 guardrail 1 (gke-sandbox-provider.md): two Cloud Scheduler HTTP jobs (warm-up/warm-down)
+  // call this to resize the warm pool, authenticated exactly like /api/hooks/tick. Reuses the
+  // scheduler's existing SA and hook-auth code so the api stays the only thing that talks to the
+  // cluster. Clamped to 0..2 (guardrail 3): going higher needs a code change, not a schedule change.
+  app.post("/api/hooks/warm-pool", async (req, reply) => {
+    if (!(await tasksCallerOk(req, reply, ctx))) return;
+
+    const raw = (req.body as { replicas?: unknown } | undefined)?.replicas;
+    if (typeof raw !== "number" || !Number.isFinite(raw)) {
+      return reply.code(400).send({ error: "replicas must be a number" });
+    }
+    const replicas = Math.min(WARM_POOL_MAX_REPLICAS, Math.max(WARM_POOL_MIN_REPLICAS, Math.trunc(raw)));
+
+    let provider: Awaited<ReturnType<RouteContext["providers"]["get"]>>;
+    try {
+      provider = await ctx.providers.get("gke");
+    } catch {
+      return reply.code(404).send({ error: "SANDBOX_PROVIDER=gke is not configured here" });
+    }
+    if (!(provider instanceof GkeProvider)) {
+      // Should not happen (the registry only ever builds a GkeProvider for the "gke" name), but
+      // guard against a stub/test provider standing in without crashing the request.
+      return reply.code(404).send({ error: "SANDBOX_PROVIDER=gke is not configured here" });
+    }
+
+    try {
+      await provider.setWarmPoolReplicas(replicas);
+    } catch (err) {
+      // L6: an endpoint-resolution failure (wrong cluster/location, clusters.get itself failing)
+      // is not "the warm pool object is missing" -- check it first so a misconfigured GKE_CLUSTER
+      // doesn't get reported to Cloud Scheduler as a 404 that looks fixable by re-applying YAML.
+      if (err instanceof GkeEndpointError) {
+        return reply.code(502).send({ error: "gke: could not resolve the cluster's control-plane endpoint" });
+      }
+      if (err instanceof KubeError && err.status === 404) {
+        return reply.code(404).send({ error: "warm pool not found" });
+      }
+      if (err instanceof KubeError && err.status === 409) {
+        return reply.code(409).send({ error: "warm pool patch conflict" });
+      }
+      // M2: never let a raw error (which could echo Kubernetes response detail, even after
+      // gke.ts's own redaction) reach the caller through Fastify's default error handler.
+      req.log.error({ err }, "gke: warm pool patch failed");
+      return reply.code(502).send({ error: "gke: warm pool patch failed" });
+    }
+    return { replicas };
   });
 }
 

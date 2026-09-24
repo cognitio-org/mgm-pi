@@ -197,7 +197,8 @@ config is present: `cloudrun` when `gcpProject` and `cloudRunJob` are set, `gke`
 and `gkeCluster` are set. The old provider therefore stays reachable after a switch. Each
 per-provider factory (`registry.ts`'s `buildInProcess`/`buildDocker`/`buildCloudRun`/`buildGke`)
 lazy-imports its own dependency (`@outfitter/provider-local`, `./cloudrun.ts`), so nothing is paid
-until a run on that provider needs it; `buildGke` is a stub in PR1 that throws until PR2 lands.
+until a run on that provider needs it; `buildGke` lazy-imports `./gke.ts` and builds the real
+`GkeProvider` (PR2; it was a stub in PR1 that threw until then).
 `createProvider` (`providers/index.ts`) stays as a thin wrapper around the registry's default for
 anyone who only wants that provider. **Production doesn't use it**: `main.ts` calls
 `createProviders(config)` directly and passes the whole registry to `buildApp`, which is what
@@ -603,13 +604,20 @@ Paths:
 
 | Method | GKE call | Details |
 |---|---|---|
-| `start(run)` | POST `sandboxclaims` (body per §3.5, cold or warm by `launchMode`) | First check `capacity().active >= maxActive` and throw `gke: max active sandboxes (N) reached`. That fails the run the way a Cloud Run error does (`runs.ts:76-83`), and Cloud Tasks retries the mail wake. A 409 on the same name: GET it and return its handle (idempotent). Returns handle `<ns>/run-<runId>` and `warm` from one best-effort GET right after create (`status.sandbox.name` set and Ready), else `undefined`. **Does not** wait for Ready, the same way `CloudRunProvider.start` returns as soon as the execution exists (`cloudrun.ts:84-112`) |
+| `start(run)` | POST `sandboxclaims` (body per §3.5, cold or warm by `launchMode`) | First check a fresh count of non-exited managed claims against `maxActive` and throw `gke: max active sandboxes (N) reached`. That fails the run the way a Cloud Run error does (`runs.ts:76-83`), and Cloud Tasks retries the mail wake. **This check is a soft cap, not admission control**: it's a count-then-create with no lock between the two, so concurrent wakes racing the same instant can all pass it before any of their claims exist, landing a little over `maxActive` (review round 1, M1/L1). A 409 on the same name: GET it and return its handle (idempotent) unless the existing claim already has `deletionTimestamp` set (terminating, so it can't be adopted -- that's a real failure). Returns handle `gke:<ns>/run-<runId>` and `warm` from one best-effort GET right after create (`status.sandbox.name` set and Ready), else `undefined`; cold mode skips the GET entirely and reports `warm: false` deterministically, since claim env always forces a cold start. **Does not** wait for Ready, the same way `CloudRunProvider.start` returns as soon as the execution exists (`cloudrun.ts:84-112`). Any thrown error has the run's token redacted from its message first -- Kubernetes admission can echo the request body (which carries `RUN_TOKEN` in cold mode's claim env) back in a 4xx |
 | `stop(handle)` | DELETE `sandboxclaims/{name}` | 404 means already gone, which is fine. An empty handle is a no-op (as `cloudrun.ts:137`) |
 | `status(handle)` | GET `sandboxclaims/{name}` | mapping in §4.3 |
 | `capacity()` | LIST `sandboxclaims` with `labelSelector=app.kubernetes.io/managed-by=outfitter`, plus GET `sandboxwarmpools/{pool}` | `active` = claims not `exited` by §4.3; `warmReady` = pool `status.readyReplicas`; `warmDesired` = pool `spec.replicas`; `limit` = `maxActive` |
 
-The handle format is `<namespace>/<claimName>`. It stays opaque to callers: only `GkeProvider`
+The handle format is `gke:<namespace>/<claimName>`. It stays opaque to callers: only `GkeProvider`
 parses it. Provider identity lives in `Run.sandboxProvider` (§2.4), not in the handle.
+
+Every Kubernetes error response is reduced to its `Status` object's `code` and `reason` fields
+(never `message` or `details`, which a server can echo request content into) plus a fixed, curated
+hint per reason, before it reaches a caller (review round 1, M2) -- e.g. `gke: 403 Forbidden (the
+api's service account may not perform this action)`, never the raw response body. Every `fetch`
+call (including endpoint discovery, §4.1) carries a 15s `AbortSignal.timeout`, so a hung cluster or
+metadata server can't wedge a wake or a reconcile tick (L2).
 
 ### 4.3 Status mapping
 
@@ -623,15 +631,24 @@ It is **UNVERIFIED** whether the claim also mirrors `Finished`, so there is a fa
 | Claim `Ready=True` | `running` | normal stale handling |
 | Claim `Ready=False` with reason `PodSucceeded`, `PodFailed`, `ClaimExpired` or `SandboxSuspended` | `exited` | as the first row |
 | `status.sandbox.name` set, claim not Ready, Sandbox (fallback GET) has `Finished=True` | `exited` | as the first row |
-| No `status.sandbox.name` yet, or `Ready=False` with any other reason (`DependenciesNotReady`, `AdoptionConflict`, scheduling) | `starting` | **skipped**, like a cold Cloud Run execution |
+| No `status.sandbox.name` yet, or `Ready=False` with any other reason (`DependenciesNotReady`, `AdoptionConflict`, scheduling), and `metadata.creationTimestamp` is within `START_DEADLINE_MS` (10 min, `gke.ts`) | `starting` | **skipped**, like a cold Cloud Run execution |
+| Same as the row above, but `metadata.creationTimestamp` is older than `START_DEADLINE_MS` | `unknown` | not skipped: stop (no-op) then fail the run, same as a status() error. **Review round 1, M4**: without this, a claim stuck `Ready=False` for a reason that never resolves on its own (`ImagePullBackOff`, unschedulable, a persistent `AdoptionConflict`) would report `starting` forever -- the reconciler skips that state outright, so the run would never fail, the claim would hold a `GKE_MAX_ACTIVE` slot, and the session's wakes would stay blocked until the claim's 24h `shutdownTime` |
 | 401, 403, 5xx or a network error | throw | `runs.ts` turns it into `unknown` |
 
 `provisioningGraceMs` (default 10 min, `config.ts:202`) stays as it is. GKE cold starts should be far
-below it.
+below it. `START_DEADLINE_MS` above is the same 10 minutes by default, chosen independently of
+`provisioningGraceMs` (`status()` has no access to the run's `createdAt`, only the claim's own
+`creationTimestamp`, which are close but not identical); S4's worst observed cold start (a brand new
+node, first pull ever) was 145s, well under it.
 
 ### 4.4 Wiring
 
 - `providers/registry.ts`: the `gke` factory lazy-imports `./gke.ts` and builds a `GkeProvider` from config.
+- `routes/hooks.ts` (the warm-pool hook) imports `gke.ts` **statically**, unlike `registry.ts` --
+  it needs the real `GkeProvider`/`KubeError`/`GkeEndpointError` exports to tell the provider and
+  its error types apart, so a lazy import there would only move the same module-load cost to first
+  request instead of avoiding it. `google-auth-library` itself stays lazy either way: importing
+  `gke.ts` never imports it, only calling into `GkeProvider`'s methods does.
 - `server.ts`: `sandboxCapacity` is the default provider's `capacity`, if it has one.
 - `deploy/service.sh`: add `GKE_CLUSTER`, `GKE_LOCATION`, `GKE_NAMESPACE`, `GKE_WARM_POOL`,
   `GKE_LAUNCH_MODE` and `GKE_MAX_ACTIVE` to `ENV_VARS` **only when** `GKE_CLUSTER` is set in the caller's
@@ -685,7 +702,8 @@ rebuild. After every image rebuild both scripts must run, or GKE keeps serving t
    `patch`. This reuses the existing scheduler SA and hook-auth code, and keeps the API the only thing
    that talks to the cluster. Defaults: `WARM_UP_CRON="0 8 * * 1-5"`, `WARM_DOWN_CRON="0 20 * * 1-5"`,
    `WARM_TZ="Europe/Zagreb"` (**owner to confirm**), `WARM_REPLICAS=1`.
-2. **Hard cap** `GKE_MAX_ACTIVE` (default 3), enforced in `start()`.
+2. **Soft cap** `GKE_MAX_ACTIVE` (default 3), enforced in `start()` (count-then-create, no lock
+   between the two -- see §4.2's note under `start(run)`; a cost guardrail, not admission control).
 3. **Pool ceiling**: the hook clamps `replicas` to 0..2. Going higher needs a code change.
 4. **24 h `shutdownTime`** and **`ttlSecondsAfterFinished: 120`** on every claim, so nothing lingers.
 5. **Budget**: the existing $25 alert (`baseline.sh:134-152`). `gke-cluster.sh` prints the §3.7 table and
@@ -702,15 +720,24 @@ rebuild. After every image rebuild both scripts must run, or GKE keeps serving t
 Stub `KubeClientLike` in memory: no credentials, no network. Cases:
 1. `start`, cold: POSTs a claim named `run-<id>` with `warmPoolRef`, `lifecycle` (shutdownTime = now + 24 h
    from the injected clock, `Delete`, TTL 120), `spec.env` with RUN_ID, RUN_TOKEN and OUTFITTER_API, and
-   **no** `additionalPodMetadata`. The handle is `outfitter-sandboxes/run-<id>`.
+   **no** `additionalPodMetadata`. The handle is `gke:outfitter-sandboxes/run-<id>`.
 2. `start`, warm: the same claim with the three `outfitter.dev/*` annotations and **no** `spec.env`. This
    guards against the warm path silently turning cold.
-3. `start` on a 409: returns the existing claim's handle and does not throw.
+3. `start` on a 409: returns the existing claim's handle and does not throw, unless the existing
+   claim has `deletionTimestamp` set, in which case it rethrows (review round 1, L5).
 4. `start` at `maxActive`: throws, and no POST is made.
-5. `status`: one test per row of §4.3, including the Sandbox `Finished` fallback and error-throws.
+5. `status`: one test per row of §4.3, including the Sandbox `Finished` fallback, the
+   `START_DEADLINE_MS` cutover to `unknown` (M4), and error-throws (403 and 5xx must throw, never
+   silently report `exited`).
 6. `stop`: DELETE on the right path; a 404 is swallowed; an empty handle is a no-op.
 7. `capacity`: counts only non-exited managed claims; reads the pool's `replicas` and `readyReplicas`.
-8. The run token never appears in a thrown error message.
+8. The run token never appears in a thrown error message -- driven through a real error path (a
+   stubbed 4xx response whose body contains the token), not just the (token-free) max-active case
+   (review round 1, M2/M3).
+9. M1: a failed `kube()` build is not cached -- the first call rejects, the second (retried) call
+   succeeds against a working stub.
+10. The 409 branch's follow-up GET returning `null` (the claim vanished between the 409 and the
+    GET) rethrows rather than returning a handle for a claim that isn't there.
 
 Plus `test/registry.test.ts`: lazy construction; getting an unconfigured provider throws;
 `providerNameFor` legacy inference; and a `RunManager` with two `NoopProvider`s that stops a `cloudrun`

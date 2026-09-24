@@ -147,6 +147,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     modelsService,
     secretAdmin,
     mail,
+    providers,
   });
   // The down-queue poller only makes sense where AgentLink sockets actually live (role "link" or
   // "all", same condition as registering /agent/ws itself) — see agentLink.startDownQueuePoller's

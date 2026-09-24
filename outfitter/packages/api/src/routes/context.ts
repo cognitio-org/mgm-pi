@@ -8,6 +8,7 @@ import type { ProviderStatusService } from "../providers-status.ts";
 import type { ModelsService } from "../models.ts";
 import type { SecretAdmin } from "../secrets.ts";
 import type { MailService } from "../mail.ts";
+import type { SandboxProviders } from "../providers/registry.ts";
 
 /** Dependencies every route module needs; built once in server.ts and threaded through. */
 export interface RouteContext {
@@ -16,6 +17,10 @@ export interface RouteContext {
   runs: RunManager;
   agentLink: AgentLink;
   sse: SseHub;
+  /** The full SandboxProvider registry (gke-sandbox-provider.md §2.4) -- only routes/hooks.ts's
+   * POST /api/hooks/warm-pool needs this directly (to reach the gke provider specifically, not
+   * just whichever provider is the deployment's current default). */
+  providers: SandboxProviders;
   /** Bug 2 (docs/reports/cloud-fixes.md): keeps GET /api/sessions/:id/stream live in a split
    * web/link deployment by polling the shared store instead of relying only on AgentLink's
    * in-process publish (see sse.ts's SsePoller doc comment). */

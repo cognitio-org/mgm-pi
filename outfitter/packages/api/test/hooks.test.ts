@@ -6,8 +6,12 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { buildTestApp } from "./helpers.ts";
+import { GkeEndpointError, GkeProvider, KubeError, type KubeClientLike } from "../src/providers/gke.ts";
 
 const SECRET = "test-ngrok-secret";
+/** Matches buildTestApp's OUTFITTER_DEV_TOKEN default -- verifyTasksToken's dev-mode bearer check
+ * (src/auth.ts), same credential mail.test.ts uses for /api/hooks/tick and /api/hooks/tasks/wake. */
+const TASKS_AUTH = { authorization: "Bearer test-agent-token" };
 
 function sign(body: string): string {
   return createHmac("sha256", SECRET).update(body, "utf8").digest("hex");
@@ -88,6 +92,184 @@ describe("POST /api/hooks/ngrok", () => {
       payload: body,
     });
     assert.equal(res.statusCode, 401);
+    await app.fastify.close();
+  });
+});
+
+// POST /api/hooks/warm-pool: gke-sandbox-provider.md §5.3 guardrail 1 -- the scheduled warm-up/
+// warm-down Cloud Scheduler jobs resize the warm pool through this hook, authenticated exactly
+// like /api/hooks/tick (verifyTasksToken). See routes/hooks.ts.
+
+const WARM_POOL_PATH = "/apis/extensions.agents.x-k8s.io/v1beta1/namespaces/outfitter-sandboxes/sandboxwarmpools/outfitter-agent";
+
+function fakeKubeWithPool(initialReplicas: number | undefined): { kube: KubeClientLike; store: Map<string, unknown> } {
+  const store = new Map<string, unknown>();
+  if (initialReplicas !== undefined) store.set(WARM_POOL_PATH, { spec: { replicas: initialReplicas }, status: {} });
+  const kube: KubeClientLike = {
+    async get<T>(path: string) {
+      return store.has(path) ? (structuredClone(store.get(path)) as T) : null;
+    },
+    async create<T>(path: string, body: unknown) {
+      store.set(path, body);
+      return body as T;
+    },
+    async delete() {},
+    async list<T>() {
+      return [] as T[];
+    },
+    async patch(path: string, body: unknown) {
+      const existing = store.get(path) as { spec: object } | undefined;
+      if (!existing) throw new KubeError(404, `${path} not found`);
+      const patchBody = body as { spec?: Record<string, unknown> };
+      store.set(path, { ...existing, spec: { ...existing.spec, ...patchBody.spec } });
+    },
+  };
+  return { kube, store };
+}
+
+function gkeProviderWithPool(initialReplicas: number | undefined): { provider: GkeProvider; store: Map<string, unknown> } {
+  const { kube, store } = fakeKubeWithPool(initialReplicas);
+  const provider = new GkeProvider(
+    { project: "p", location: "us-central1", cluster: "outfitter", namespace: "outfitter-sandboxes", warmPool: "outfitter-agent", launchMode: "cold", maxActive: 3 },
+    { kube: async () => kube },
+  );
+  return { provider, store };
+}
+
+describe("POST /api/hooks/warm-pool", () => {
+  test("a correctly authenticated request patches the pool's spec.replicas", async () => {
+    const { provider, store } = gkeProviderWithPool(0);
+    const app = await buildTestApp({ SANDBOX_PROVIDER: "gke", GKE_CLUSTER: "outfitter" }, { extraProviders: { gke: async () => provider } });
+
+    const res = await app.fastify.inject({ method: "POST", url: "/api/hooks/warm-pool", headers: TASKS_AUTH, payload: { replicas: 1 } });
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json(), { replicas: 1 });
+    assert.equal((store.get(WARM_POOL_PATH) as { spec: { replicas: number } }).spec.replicas, 1);
+    await app.fastify.close();
+  });
+
+  test("missing/invalid auth is rejected with 401 and the pool is untouched", async () => {
+    const { provider, store } = gkeProviderWithPool(0);
+    const app = await buildTestApp({ SANDBOX_PROVIDER: "gke", GKE_CLUSTER: "outfitter" }, { extraProviders: { gke: async () => provider } });
+
+    const noAuth = await app.fastify.inject({ method: "POST", url: "/api/hooks/warm-pool", payload: { replicas: 1 } });
+    assert.equal(noAuth.statusCode, 401);
+
+    const badAuth = await app.fastify.inject({
+      method: "POST",
+      url: "/api/hooks/warm-pool",
+      headers: { authorization: "Bearer wrong-token" },
+      payload: { replicas: 1 },
+    });
+    assert.equal(badAuth.statusCode, 401);
+
+    assert.equal((store.get(WARM_POOL_PATH) as { spec: { replicas: number } }).spec.replicas, 0);
+    await app.fastify.close();
+  });
+
+  test("replicas is clamped to 0..2", async () => {
+    const { provider, store } = gkeProviderWithPool(0);
+    const app = await buildTestApp({ SANDBOX_PROVIDER: "gke", GKE_CLUSTER: "outfitter" }, { extraProviders: { gke: async () => provider } });
+
+    const tooHigh = await app.fastify.inject({ method: "POST", url: "/api/hooks/warm-pool", headers: TASKS_AUTH, payload: { replicas: 50 } });
+    assert.equal(tooHigh.statusCode, 200);
+    assert.deepEqual(tooHigh.json(), { replicas: 2 });
+
+    const negative = await app.fastify.inject({ method: "POST", url: "/api/hooks/warm-pool", headers: TASKS_AUTH, payload: { replicas: -5 } });
+    assert.equal(negative.statusCode, 200);
+    assert.deepEqual(negative.json(), { replicas: 0 });
+
+    assert.equal((store.get(WARM_POOL_PATH) as { spec: { replicas: number } }).spec.replicas, 0);
+    await app.fastify.close();
+  });
+
+  test("a non-numeric body is rejected with 400", async () => {
+    const { provider } = gkeProviderWithPool(0);
+    const app = await buildTestApp({ SANDBOX_PROVIDER: "gke", GKE_CLUSTER: "outfitter" }, { extraProviders: { gke: async () => provider } });
+
+    const res = await app.fastify.inject({ method: "POST", url: "/api/hooks/warm-pool", headers: TASKS_AUTH, payload: { replicas: "one" } });
+    assert.equal(res.statusCode, 400);
+    await app.fastify.close();
+  });
+
+  test("gke not configured here: 404, never crashes the request", async () => {
+    // No "gke" factory registered at all -- the default provider is the usual test NoopProvider.
+    const app = await buildTestApp();
+
+    const res = await app.fastify.inject({ method: "POST", url: "/api/hooks/warm-pool", headers: TASKS_AUTH, payload: { replicas: 1 } });
+    assert.equal(res.statusCode, 404);
+    await app.fastify.close();
+  });
+
+  test("the warm pool object itself is missing: 404 from the underlying patch", async () => {
+    const { provider } = gkeProviderWithPool(undefined); // no SandboxWarmPool seeded at all
+    const app = await buildTestApp({ SANDBOX_PROVIDER: "gke", GKE_CLUSTER: "outfitter" }, { extraProviders: { gke: async () => provider } });
+
+    const res = await app.fastify.inject({ method: "POST", url: "/api/hooks/warm-pool", headers: TASKS_AUTH, payload: { replicas: 1 } });
+    assert.equal(res.statusCode, 404);
+    await app.fastify.close();
+  });
+
+  test("a patch conflict from the cluster surfaces as 409", async () => {
+    const { kube } = fakeKubeWithPool(0);
+    const conflictingKube: KubeClientLike = {
+      ...kube,
+      async patch() {
+        throw new KubeError(409, "resourceVersion conflict");
+      },
+    };
+    const provider = new GkeProvider(
+      { project: "p", location: "us-central1", cluster: "outfitter", namespace: "outfitter-sandboxes", warmPool: "outfitter-agent", launchMode: "cold", maxActive: 3 },
+      { kube: async () => conflictingKube },
+    );
+    const app = await buildTestApp({ SANDBOX_PROVIDER: "gke", GKE_CLUSTER: "outfitter" }, { extraProviders: { gke: async () => provider } });
+
+    const res = await app.fastify.inject({ method: "POST", url: "/api/hooks/warm-pool", headers: TASKS_AUTH, payload: { replicas: 1 } });
+    assert.equal(res.statusCode, 409);
+    await app.fastify.close();
+  });
+
+  // Review round 1, L6: an endpoint-resolution failure (wrong cluster/location, or clusters.get
+  // itself failing) is not "the warm pool object is missing" -- both can be a 404, but they mean
+  // different things to whoever's paged. This must surface distinctly, not as 404.
+  test("an endpoint-resolution failure (GkeEndpointError) is a distinct 502, not 'warm pool not found'", async () => {
+    const provider = new GkeProvider(
+      { project: "p", location: "us-central1", cluster: "wrong-cluster", namespace: "outfitter-sandboxes", warmPool: "outfitter-agent", launchMode: "cold", maxActive: 3 },
+      {
+        kube: async () => {
+          throw new GkeEndpointError("gke: clusters.get for wrong-cluster failed: HTTP 404 Not Found");
+        },
+      },
+    );
+    const app = await buildTestApp({ SANDBOX_PROVIDER: "gke", GKE_CLUSTER: "wrong-cluster" }, { extraProviders: { gke: async () => provider } });
+
+    const res = await app.fastify.inject({ method: "POST", url: "/api/hooks/warm-pool", headers: TASKS_AUTH, payload: { replicas: 1 } });
+    assert.equal(res.statusCode, 502);
+    assert.notEqual(res.json().error, "warm pool not found");
+    await app.fastify.close();
+  });
+
+  // Review round 1, M2: any other failure must reach the caller as a clean, fixed message -- never
+  // whatever `err.message` happens to contain (which, before gke.ts's own redaction, could be a raw
+  // Kubernetes response body).
+  test("any other patch failure is a clean 502, not the raw error message", async () => {
+    const { kube } = fakeKubeWithPool(0);
+    const brokenKube: KubeClientLike = {
+      ...kube,
+      async patch() {
+        throw new Error("gke: 500 dial tcp 10.0.0.1:443: connection reset by peer, retrying attempt 3 of 5 ...");
+      },
+    };
+    const provider = new GkeProvider(
+      { project: "p", location: "us-central1", cluster: "outfitter", namespace: "outfitter-sandboxes", warmPool: "outfitter-agent", launchMode: "cold", maxActive: 3 },
+      { kube: async () => brokenKube },
+    );
+    const app = await buildTestApp({ SANDBOX_PROVIDER: "gke", GKE_CLUSTER: "outfitter" }, { extraProviders: { gke: async () => provider } });
+
+    const res = await app.fastify.inject({ method: "POST", url: "/api/hooks/warm-pool", headers: TASKS_AUTH, payload: { replicas: 1 } });
+    assert.equal(res.statusCode, 502);
+    assert.equal(res.json().error, "gke: warm pool patch failed");
     await app.fastify.close();
   });
 });

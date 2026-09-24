@@ -1,0 +1,26 @@
+outfitter/packages/api/src/agentlink.ts
+  h_69b863911ebf05 909-910,912,917-919
+outfitter/packages/api/src/github-broker.ts
+  h_69b863911ebf05 9,245-259,345,351-356,358,645-646,657-658,665-678,984-989
+outfitter/packages/api/src/store/memory.ts
+  h_69b863911ebf05 14,158-172
+outfitter/packages/api/src/store/mongo.ts
+  h_69b863911ebf05 14,196-214
+outfitter/packages/api/src/store/types.ts
+  h_69b863911ebf05 389-398
+outfitter/packages/api/test/github-broker.test.ts
+  h_69b863911ebf05 76-80,231-252
+outfitter/packages/api/test/stop.test.ts
+  h_69b863911ebf05 298-299
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "9e57bcec8c3f6a0530cd57bb35e5645b121957ca",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -62,8 +62,11 @@ export PATH="${WORK}/bin:${PATH}"
 export GCLOUD_CALLS="${WORK}/gcloud-calls" KUBECTL_CALLS="${WORK}/kubectl-calls"
 unset GITHUB_ACTIONS FAIL_GET_CREDENTIALS FAIL_IAM_POLICY FAKE_AGENT_EXTRA_ROLES FAKE_WEB_LABELS \
   FAKE_LINK_LABELS FAKE_JOB_LABELS FAKE_TEMPLATE_COMMIT FAKE_TEMPLATE_MISSING FAKE_TEMPLATE_READ_FAILS \
-  ALLOW_SKEW DEPLOY_ALL_COMMIT KUBECONFIG_OUTFITTER GKE_CLUSTER FAIL_SA_POLICY FAKE_EXTRA_SA_BINDING \
+  ALLOW_SKEW DEPLOY_ALL_COMMIT KUBECONFIG_OUTFITTER FAIL_SA_POLICY FAKE_EXTRA_SA_BINDING \
   FAKE_AUTH_PLUGIN_MISSING
+# GKE off unless a case sets GKE_CLUSTER=outfitter: explicitly empty, not unset, since config.env's
+# `${GKE_CLUSTER-outfitter}` gives an unset GKE_CLUSTER the (on) default.
+export GKE_CLUSTER=""
 
 fails=0
 # run_expr <snippet> -- sources the real env.sh from its own directory, then runs the snippet.

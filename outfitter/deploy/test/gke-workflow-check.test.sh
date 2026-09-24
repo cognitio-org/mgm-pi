@@ -23,12 +23,25 @@ run_clean() {
   env -i PATH="/usr/bin:/bin" "$@" bash "${SCRIPT}" "${config}"
 }
 
+OFF_CONFIG="${WORK}/config-off.env"
+printf 'GKE_CLUSTER="${GKE_CLUSTER-}"\n' >"${OFF_CONFIG}"
 status=0
-OUT="$(run_clean "${DEFAULT_CONFIG}")" || status=$?
+OUT="$(run_clean "${OFF_CONFIG}")" || status=$?
 if [[ ${status} -eq 0 && "${OUT}" == "beta" ]]; then
-  echo "ok: GKE off (the repo's own config.env): succeeds under a clean env, prints 'beta'"
+  echo "ok: GKE off: succeeds under a clean env, prints 'beta'"
 else
   echo "FAIL: GKE off: expected exit 0 and 'beta', got exit ${status}: ${OUT}"
+  fails=$((fails + 1))
+fi
+
+# The repo's own config.env, whatever it says, must parse cleanly under `env -i` (no REGION): the
+# release-breaking bug this script exists to prevent. Its answer follows the checked-in default.
+status=0
+OUT="$(run_clean "${DEFAULT_CONFIG}")" || status=$?
+if [[ ${status} -eq 0 && ( "${OUT}" == "beta" || "${OUT}" == "beta,kubectl,gke-gcloud-auth-plugin" ) ]]; then
+  echo "ok: the repo's own config.env parses under a clean env (${OUT})"
+else
+  echo "FAIL: the repo's own config.env: expected exit 0 and a components string, got exit ${status}: ${OUT}"
   fails=$((fails + 1))
 fi
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# service.sh's --set-env-vars list with GKE_CLUSTER empty (config.env's default) must be exactly
+# service.sh's --set-env-vars list with GKE_CLUSTER empty (forced off in the test's config.env copy,
+# whatever the checked-in default is) must be exactly
 # what it was before GKE_* existed: no GKE_ substring anywhere in it. Against a throwaway git repo
 # (deploy_guard needs one, same setup as guards.test.sh) and fake gcloud (build/deploy skipped by
 # reporting the image as already built). No network, no GCP.
@@ -21,6 +22,11 @@ git -C "${REPO}" config user.name test
 git -C "${REPO}" checkout -q -b main
 mkdir -p "${REPO}/outfitter/deploy"
 cp "${DEPLOY_SRC}/env.sh" "${DEPLOY_SRC}/config.env" "${DEPLOY_SRC}/service.sh" "${REPO}/outfitter/deploy/"
+# Force GKE off in this copy whatever the checked-in default is: `${GKE_CLUSTER:-x}` treats an empty
+# env value as unset, so exporting GKE_CLUSTER="" can't turn it off -- only the file line can.
+CFG="${REPO}/outfitter/deploy/config.env"
+sed 's/^GKE_CLUSTER=.*/GKE_CLUSTER=""/' "${CFG}" >"${CFG}.tmp" && mv "${CFG}.tmp" "${CFG}"
+grep -qx 'GKE_CLUSTER=""' "${CFG}" || { echo "FAIL: couldn't force GKE_CLUSTER off in the test's config.env"; exit 1; }
 git -C "${REPO}" add -A && git -C "${REPO}" commit -q -m one
 git -C "${REPO}" push -q origin main
 TAG="$(git -C "${REPO}" rev-parse --short=12 HEAD)"

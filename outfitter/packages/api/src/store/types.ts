@@ -402,6 +402,16 @@ export interface RunsCollection {
    * run" -- so the UI has nothing to distinguish READY. from "stopped" from "LOAD ERROR". */
   findLatestForSession(sessionId: string): Promise<Run | null>;
   update(id: string, patch: Partial<Run>): Promise<Run | null>;
+  /**
+   * Insert `pending` at `githubIdempotency[key]` only when that key is absent.
+   * `claimed` means this caller owns the write. `existing` is the record already stored.
+   * `missing` means the run does not exist.
+   */
+  claimGithubIdempotency(id: string, key: string, pending: GithubIdempotencyRecord): Promise<
+    { status: "claimed" } | { status: "existing"; record: GithubIdempotencyRecord } | { status: "missing" }
+  >;
+  /** Replace one idempotency key. Does not rewrite the rest of the map. */
+  finishGithubIdempotency(id: string, key: string, result: GithubIdempotencyRecord): Promise<void>;
   /** Runs in an active state whose lastSeenAt is older than the cutoff (reconciler input). */
   listStale(cutoffIso: string): Promise<Run[]>;
   /** Runs still `stopping` whose updatedAt (the moment they entered `stopping`) is older than the

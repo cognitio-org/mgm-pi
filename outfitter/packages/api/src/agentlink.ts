@@ -983,16 +983,17 @@ export class AgentLink {
         break;
       }
       case "github.request": {
-        // Not seq/ack replayed. The broker answers on this socket; a retry is a new frame
-        // carrying the same idempotencyKey, not a replay of lastAckedSeq.
+        // Not seq/ack replayed, and not on this chain. A GitHub call can take longer than the
+        // stale-run window; heartbeats and bye have to keep moving while it runs.
         const reqId = typeof frame.reqId === "string" ? frame.reqId : "";
-        const result = await this.github.handle({
+        void this.github.handle({
           runId,
           op: frame.op,
           args: frame.args,
           idempotencyKey: frame.idempotencyKey,
-        });
-        socket.send(JSON.stringify({ t: "github.result", reqId, ...result }));
+        }).then((result) => {
+          if (socket.readyState === 1) socket.send(JSON.stringify({ t: "github.result", reqId, ...result }));
+        }).catch(() => {});
         break;
       }
       case "bye": {

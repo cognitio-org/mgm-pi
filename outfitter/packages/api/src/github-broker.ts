@@ -6,9 +6,9 @@ import { Octokit } from "@octokit/rest";
 import type { SecretsBroker } from "./secrets.ts";
 import type { GithubIdempotencyRecord, Session, Store } from "./store/types.ts";
 
+const PENDING_MARK = "idempotency pending";
 const LOW_REMAINING = 10;
 const MAX_BACKOFF_MS = 3_000;
-const MAX_KEYS = 100;
 const MAX_KEY_LEN = 200;
 const HTTP_TIMEOUT_MS = 60_000;
 
@@ -182,7 +182,6 @@ export class GithubBroker {
   private readonly memory = new Map<string, Map<string, GithubIdempotencyRecord>>();
   private readonly inflight = new Map<string, Promise<GithubOpResult>>();
   private readonly heads = new Map<string, string>();
-  private readonly persistChain = new Map<string, Promise<void>>();
   /** Latest budget seen from GitHub, shared by every run (one token pool). */
   private budget: RateLimit | undefined;
   private readonly store: Store;
@@ -243,7 +242,21 @@ export class GithubBroker {
   ): Promise<GithubOpResult> {
     if (write && key) {
       const prior = await this.recall(runId, key);
-      if (prior) return this.settle(runId, op, key, true, prior, true);
+      if (prior && !isPending(prior)) return this.settle(runId, op, key, true, prior, true);
+      if (!prior || isPending(prior)) {
+        const claim = prior
+          ? { status: "existing" as const, record: prior }
+          : await this.store.runs.claimGithubIdempotency(runId, key, { ok: false, error: PENDING_MARK });
+        if (claim.status === "missing") return this.settle(runId, op, key, write, { ok: false, error: "not found" });
+        if (claim.status === "existing" && !isPending(claim.record)) {
+          return this.settle(runId, op, key, true, claim.record, true);
+        }
+        if (claim.status === "existing") {
+          const waited = await this.waitForKey(runId, key);
+          if (!waited) return this.settle(runId, op, key, write, { ok: false, error: "this write is still in progress" });
+          return this.settle(runId, op, key, true, waited, true);
+        }
+      }
     }
     const run = await this.store.runs.findById(runId);
     const session = run ? await this.store.sessions.findById(run.sessionId) : null;
@@ -328,33 +341,21 @@ export class GithubBroker {
   private async remember(runId: string, key: string, result: GithubOpResult): Promise<void> {
     const stored = structuredClone(result);
     this.noteMemory(runId, key, stored);
-    const prev = this.persistChain.get(runId) ?? Promise.resolve();
-    const next = prev
-      .catch(() => {})
-      .then(() => this.persist(runId));
-    this.persistChain.set(runId, next);
     try {
-      await next;
+      await this.store.runs.finishGithubIdempotency(runId, key, stored);
     } catch {
       console.warn(`[github] run ${runId} idempotency persist failed`);
     }
   }
 
-  private async persist(runId: string): Promise<void> {
-    const run = await this.store.runs.findById(runId);
-    const merged: Record<string, GithubIdempotencyRecord> = { ...(run?.githubIdempotency ?? {}) };
-    const bucket = this.memory.get(runId);
-    if (bucket) {
-      for (const [key, value] of bucket) merged[key] = value;
+  /** Another instance claimed this key and is still calling GitHub. */
+  private async waitForKey(runId: string, key: string): Promise<GithubIdempotencyRecord | undefined> {
+    for (let i = 0; i < 60; i++) {
+      await this.sleep(500);
+      const hit = await this.recall(runId, key);
+      if (hit && !isPending(hit)) return hit;
     }
-    const ordered = Object.keys(merged);
-    while (ordered.length > MAX_KEYS) {
-      const drop = ordered.shift();
-      if (!drop) break;
-      delete merged[drop];
-      bucket?.delete(drop);
-    }
-    await this.store.runs.update(runId, { githubIdempotency: merged });
+    return undefined;
   }
 
   private async pace(): Promise<void> {
@@ -641,6 +642,8 @@ export class GithubBroker {
     const thread = typeof args.thread === "string" ? args.thread.trim() : "";
     if (!thread || thread.startsWith("-")) return { ok: false, error: "A review thread id is required." };
     if (typeof args.body !== "string" || !args.body.trim()) return { ok: false, error: "A reply body is required." };
+    const allowed = await this.threadInSession(ctx, thread);
+    if (allowed) return allowed;
     const query = "mutation($id:ID!,$body:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$id,body:$body}){comment{url}}}";
     const res = await this.graphql(ctx, query, { id: thread, body: withFooter(args.body, ctx.footer) });
     if (!res.ok) return { ok: false, error: res.error };
@@ -651,10 +654,26 @@ export class GithubBroker {
   private async resolveThread(ctx: Ctx, args: Record<string, unknown>): Promise<GithubOpResult> {
     const thread = typeof args.thread === "string" ? args.thread.trim() : "";
     if (!thread || thread.startsWith("-")) return { ok: false, error: "A review thread id is required." };
+    const allowed = await this.threadInSession(ctx, thread);
+    if (allowed) return allowed;
     const query = "mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}";
     const res = await this.graphql(ctx, query, { id: thread });
     if (!res.ok) return { ok: false, error: res.error };
     return this.data(ctx, { thread, resolved: res.data?.resolveReviewThread?.thread?.isResolved === true });
+  }
+
+  /** A review-thread node id is global. Refuse it unless that thread's pull request is this session's repo. */
+  private async threadInSession(ctx: Ctx, thread: string): Promise<GithubOpResult | undefined> {
+    const query = "query($id:ID!){node(id:$id){... on PullRequestReviewThread{pullRequest{repository{nameWithOwner}}}}}";
+    const res = await this.graphql(ctx, query, { id: thread });
+    if (!res.ok) return { ok: false, error: res.error };
+    const name = (res.data as { node?: { pullRequest?: { repository?: { nameWithOwner?: string } } } } | undefined)
+      ?.node?.pullRequest?.repository?.nameWithOwner;
+    const expected = `${ctx.owner}/${ctx.repo}`;
+    if (typeof name !== "string" || name.toLowerCase() !== expected.toLowerCase()) {
+      return { ok: false, error: "not permitted" };
+    }
+    return undefined;
   }
 
   private async reviewPr(ctx: Ctx, args: Record<string, unknown>): Promise<GithubOpResult> {
@@ -962,7 +981,12 @@ function defaultSleep(ms: number): Promise<void> {
 function idempotencyKey(raw: unknown): string | undefined {
   if (typeof raw !== "string") return undefined;
   const key = raw.trim();
-  return key || undefined;
+  if (!key || key.includes(".") || key.includes("$")) return undefined;
+  return key;
+}
+
+function isPending(record: GithubIdempotencyRecord): boolean {
+  return record.ok === false && record.error === PENDING_MARK;
 }
 
 function argsOf(raw: unknown): Record<string, unknown> {

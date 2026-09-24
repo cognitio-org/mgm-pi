@@ -11,6 +11,7 @@ import type {
   EntriesCollection,
   PiEntry,
   Run,
+  GithubIdempotencyRecord,
   RunState,
   RunsCollection,
   DownMessage,
@@ -191,6 +192,25 @@ class MongoRuns implements RunsCollection {
       { returnDocument: "after" },
     );
     return stripId<Run>(result);
+  }
+
+  async claimGithubIdempotency(id: string, key: string, pending: GithubIdempotencyRecord) {
+    const path = `githubIdempotency.${key}`;
+    const won = await this.col.findOneAndUpdate(
+      { _id: id, [path]: { $exists: false } },
+      { $set: { [path]: pending } },
+      { returnDocument: "after" },
+    );
+    if (won) return { status: "claimed" as const };
+    const run = await this.findById(id);
+    if (!run) return { status: "missing" as const };
+    const record = run.githubIdempotency?.[key];
+    if (!record) return { status: "missing" as const };
+    return { status: "existing" as const, record };
+  }
+
+  async finishGithubIdempotency(id: string, key: string, result: GithubIdempotencyRecord): Promise<void> {
+    await this.col.updateOne({ _id: id }, { $set: { [`githubIdempotency.${key}`]: result } });
   }
 
   async listStale(cutoffIso: string): Promise<Run[]> {

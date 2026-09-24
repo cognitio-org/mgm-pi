@@ -295,6 +295,8 @@ describe("agentlink up-frame ordering", () => {
       listStopping: (c) => inner.runs.listStopping(c),
       enqueueDownMessage: (id, m: DownMessage) => inner.runs.enqueueDownMessage(id, m),
       drainDownMessages: (id) => inner.runs.drainDownMessages(id),
+      claimGithubIdempotency: (id, key, pending) => inner.runs.claimGithubIdempotency(id, key, pending),
+      finishGithubIdempotency: (id, key, result) => inner.runs.finishGithubIdempotency(id, key, result),
     };
     const store: Store = {
       sessions: inner.sessions,

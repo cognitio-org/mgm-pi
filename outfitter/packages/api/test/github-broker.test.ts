@@ -73,6 +73,11 @@ function fakeGithub(calls: Call[]): GithubTransport {
       }
       if (route === "POST /graphql") {
         const query = String(params.query ?? "");
+        if (query.includes("nameWithOwner")) {
+          const id = String((params.variables as { id?: string } | undefined)?.id ?? "");
+          const nameWithOwner = id === "other-repo" ? "other/repo" : "acme/widgets";
+          return response(200, { data: { node: { pullRequest: { repository: { nameWithOwner } } } } });
+        }
         if (query.includes("addPullRequestReviewThreadReply")) {
           return response(200, { data: { addPullRequestReviewThreadReply: { comment: { url: "https://github.com/acme/widgets/pull/7#discussion_r1" } } } });
         }
@@ -221,6 +226,28 @@ describe("github broker", () => {
     await live.nextClose();
     allowed.app.stopBackgroundTasks();
     await allowed.app.fastify.close();
+  });
+
+  test("a review thread in another repository is not permitted", async () => {
+    const { app, calls, session, runId, runToken } = await socketApp();
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    await agent.nextMessage();
+    agent.send({
+      t: "github.request",
+      reqId: "th1",
+      op: "github_pr.reply",
+      args: { thread: "other-repo", body: "hello" },
+      idempotencyKey: "thread-other",
+    });
+    const result = await agent.nextMessage();
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "not permitted");
+    assert.equal(calls.some((c) => String(c.params.query ?? "").includes("addPullRequestReviewThreadReply")), false);
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
   });
 
   test("an unknown op, including wait_ci, is an error and does not call GitHub", async () => {

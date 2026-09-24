@@ -117,26 +117,58 @@ else
 fi
 
 step jobs outfitter-agent "${DEPLOY_DIR}/agent-job.sh"
+
+# GKE template/warm pool, between the Job and link (docs/specs/gke-sandbox-provider-plan.md §2): a
+# template built from an older image than the about-to-be-deployed link is refused 4409, terminally
+# (docs/reports/gke-spike.md S2 attempt 1), so it must never lag a release. Skipped entirely when
+# GKE_CLUSTER is empty (config.env) -- GKE stays off by default.
+if [[ -n "${GKE_CLUSTER:-}" ]]; then
+  if [[ "${DRY_RUN:-}" == 1 ]]; then
+    echo "== DRY_RUN: would apply the GKE SandboxTemplate/SandboxWarmPool for ${HEAD_SHORT} (gke-template.sh) =="
+    DEPLOYED_ANY=1
+  else
+    gke_template_current="$(current_build_commit_gke)"
+    if [[ "${FORCE_ALL:-}" != 1 && "${gke_template_current}" == "${HEAD_SHORT}" ]]; then
+      echo "== GKE template: already at ${HEAD_SHORT}; skipping =="
+    else
+      "${DEPLOY_DIR}/gke-template.sh"
+      DEPLOYED_ANY=1
+    fi
+  fi
+else
+  echo "== GKE template: GKE_CLUSTER is empty; skipping =="
+fi
+
 step services outfitter-link "${DEPLOY_DIR}/service.sh" link
 step services outfitter-api "${DEPLOY_DIR}/service.sh" web
 
-# The Scheduler tick (mailbox.sh) mints its OIDC token for the audience link had when mailbox.sh last
-# ran; after an origin change (service.sh, ALLOW_ORIGIN_CHANGE=1) it must follow. link keeps
-# accepting its previous origins (OUTFITTER_ORIGIN_ALIASES), so a stale tick keeps working meanwhile.
-# mailbox.sh grants IAM, which the CI deployer can't, so in Actions this only says so.
-if gcloud_exists scheduler jobs describe outfitter-tick --project="${PROJECT}" --location="${REGION}"; then
-  TICK_AUDIENCE="$(gcloud scheduler jobs describe outfitter-tick --project="${PROJECT}" --location="${REGION}" \
+# Both Scheduler ticks mint their OIDC token for the audience link had when they last ran; after an
+# origin change (service.sh, ALLOW_ORIGIN_CHANGE=1) they must follow. link keeps accepting its
+# previous origins (OUTFITTER_ORIGIN_ALIASES), so a stale job keeps working meanwhile. Both grant
+# IAM, which the CI deployer can't, so in Actions this only warns.
+# check_scheduler_audience <job> <rerun script...>
+check_scheduler_audience() {
+  local job="$1"
+  shift
+  gcloud_exists scheduler jobs describe "${job}" --project="${PROJECT}" --location="${REGION}" || return 0
+  local audience link_origin_now
+  audience="$(gcloud scheduler jobs describe "${job}" --project="${PROJECT}" --location="${REGION}" \
     --format='value(httpTarget.oidcToken.audience)')"
-  LINK_ORIGIN_NOW="$(deployed_origin outfitter-link)"
-  if [[ "${TICK_AUDIENCE}" == "${LINK_ORIGIN_NOW}" ]]; then
-    echo "== mailbox tick: already targets ${LINK_ORIGIN_NOW} =="
+  link_origin_now="$(deployed_origin outfitter-link)"
+  if [[ "${audience}" == "${link_origin_now}" ]]; then
+    echo "== ${job}: already targets ${link_origin_now} =="
   elif [[ "${DRY_RUN:-}" == 1 ]]; then
-    echo "== DRY_RUN: would re-run mailbox.sh (tick ${TICK_AUDIENCE} -> ${LINK_ORIGIN_NOW}) =="
+    echo "== DRY_RUN: would re-run $* (${job} ${audience} -> ${link_origin_now}) =="
   elif [[ -n "${GITHUB_ACTIONS:-}" ]]; then
-    echo "::warning::mailbox tick still targets ${TICK_AUDIENCE}, link is now ${LINK_ORIGIN_NOW}: the owner should run ./mailbox.sh (link accepts the old audience meanwhile)"
+    echo "::warning::${job} still targets ${audience}, link is now ${link_origin_now}: the owner should run $* (link accepts the old audience meanwhile)"
   else
-    "${DEPLOY_DIR}/mailbox.sh"
+    "$@"
   fi
+}
+check_scheduler_audience outfitter-tick "${DEPLOY_DIR}/mailbox.sh"
+if [[ -n "${GKE_CLUSTER:-}" ]]; then
+  check_scheduler_audience outfitter-warm-up "${DEPLOY_DIR}/gke-schedule.sh"
+  check_scheduler_audience outfitter-warm-down "${DEPLOY_DIR}/gke-schedule.sh"
 fi
 
 if [[ "${DRY_RUN:-}" == 1 ]]; then

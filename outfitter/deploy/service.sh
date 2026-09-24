@@ -173,6 +173,14 @@ if [[ -n "${TASKS_SA_EMAIL:-}" ]]; then
 else
   echo "   note: mailbox infra not found (run ./mailbox.sh); Cloud Tasks wakes and /api/hooks/* auth stay off" >&2
 fi
+# GKE_* (config.env, gke-sandbox-provider.md §4.4): both roles need the same values -- the provider
+# is constructed at boot even though only the web role ever wakes a run (SANDBOX_PROVIDER's own
+# comment above). Added only when GKE_CLUSTER is set, so a deploy with GKE off ships byte-identical
+# env vars to before this existed.
+if [[ -n "${GKE_CLUSTER:-}" ]]; then
+  ENV_VARS="${ENV_VARS},GKE_CLUSTER=${GKE_CLUSTER},GKE_LOCATION=${GKE_LOCATION},GKE_NAMESPACE=${GKE_NAMESPACE},GKE_WARM_POOL=${GKE_WARM_POOL},GKE_LAUNCH_MODE=${GKE_LAUNCH_MODE},GKE_MAX_ACTIVE=${GKE_MAX_ACTIVE}"
+  echo "   gke: cluster=${GKE_CLUSTER} location=${GKE_LOCATION} namespace=${GKE_NAMESPACE} pool=${GKE_WARM_POOL} mode=${GKE_LAUNCH_MODE} maxActive=${GKE_MAX_ACTIVE}"
+fi
 if [[ "${ROLE}" == "web" ]]; then
   # Needed both for IAP_AUDIENCE (below) and for the run.invoker binding further down.
   PROJECT_NUMBER="$(gcloud projects describe "${PROJECT}" --format='value(projectNumber)')"

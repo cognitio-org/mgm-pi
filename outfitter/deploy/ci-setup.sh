@@ -74,11 +74,51 @@ echo "== ${SA_EMAIL}: project roles =="
 # CLOUDSDK_BILLING_QUOTA_PROJECT).
 for role in roles/run.developer roles/run.viewer roles/cloudbuild.builds.editor roles/logging.viewer \
     roles/serviceusage.serviceUsageConsumer roles/secretmanager.viewer roles/cloudtasks.viewer \
-    roles/cloudscheduler.viewer roles/iam.serviceAccountViewer roles/browser; do
+    roles/cloudscheduler.viewer roles/iam.serviceAccountViewer roles/browser \
+    roles/container.clusterViewer roles/iam.securityReviewer; do
   gcloud projects add-iam-policy-binding "${PROJECT}" --member="serviceAccount:${SA_EMAIL}" \
     --role="${role}" --condition=None --quiet >/dev/null
   echo "   ${role}"
 done
+# container.clusterViewer: release.sh's gke-template.sh step reads the cluster's DNS endpoint and
+# kube-dns Service IP (container.clusters.connect/get) when GKE_CLUSTER is set (config.env).
+# iam.securityReviewer: assert_agent_sa_logwriter_only (env.sh), run on every release when GKE is
+# configured, needs resourcemanager.projects.getIamPolicy to check outfitter-agent@'s roles
+# (gke-sandbox-provider-plan.md §1 "option B" -- that account's permissions are the sandbox model's
+# permissions). Both are read-only/connect-only; neither lets the deployer change cluster state.
+
+# container.clusterViewer only gets the deployer to the cluster's API server -- what it may do once
+# there is separate Kubernetes RBAC, same split as outfitter-api's own deploy/gke/rbac.yaml. Only
+# when GKE_CLUSTER is set (config.env) and the cluster already exists: run ./gke-cluster.sh first if
+# this warns, then re-run ci-setup.sh.
+if [[ -n "${GKE_CLUSTER:-}" ]]; then
+  echo "== ${SA_EMAIL}: RBAC in ${GKE_NAMESPACE:-outfitter-sandboxes} (get/patch the SandboxTemplate and pool, create/delete the release-time warm-up claim) =="
+  if gke_kubeconfig; then
+    cat <<YAML | kubectl --kubeconfig="${KUBECONFIG}" apply --server-side -f -
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: outfitter-deployer, namespace: ${GKE_NAMESPACE:-outfitter-sandboxes} }
+rules:
+  - apiGroups: ["extensions.agents.x-k8s.io"]
+    resources: ["sandboxtemplates"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["extensions.agents.x-k8s.io"]
+    resources: ["sandboxwarmpools"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["extensions.agents.x-k8s.io"]
+    resources: ["sandboxclaims"]
+    verbs: ["get", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: outfitter-deployer, namespace: ${GKE_NAMESPACE:-outfitter-sandboxes} }
+subjects: [{ kind: User, name: ${SA_EMAIL}, apiGroup: rbac.authorization.k8s.io }]
+roleRef: { kind: Role, name: outfitter-deployer, apiGroup: rbac.authorization.k8s.io }
+YAML
+  else
+    echo "   GKE_CLUSTER is set but no cluster reachable yet; run ./gke-cluster.sh, then re-run ci-setup.sh" >&2
+  fi
+fi
 
 echo "== ${SA_EMAIL}: read the outfitter repo (image-exists checks) =="
 gcloud artifacts repositories add-iam-policy-binding outfitter --location="${REGION}" --project="${PROJECT}" \

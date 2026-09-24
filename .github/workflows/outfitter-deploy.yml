@@ -54,7 +54,14 @@ jobs:
       - name: Deploy scripts lint and guard tests
         run: |
           shellcheck -x -S warning deploy/*.sh
+          shellcheck -s bash -S warning deploy/config.env
           bash deploy/test/guards.test.sh
+          bash deploy/test/gke-cluster.test.sh
+          bash deploy/test/gke-skew.test.sh
+          bash deploy/test/gke-iam.test.sh
+          bash deploy/test/gke-template.test.sh
+          bash deploy/test/gke-schedule.test.sh
+          bash deploy/test/gke-teardown.test.sh
 
   deploy:
     needs: test
@@ -78,10 +85,16 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
         with:
           # env.sh public_origin lists domain mappings with `gcloud beta run domain-mappings`.
-          install_components: beta
+          # kubectl and gke-gcloud-auth-plugin: gke-template.sh (release.sh's step between the Job
+          # and link, only when GKE_CLUSTER is set in config.env) gets a kubeconfig via
+          # `gcloud container clusters get-credentials --dns-endpoint` into a temp file (env.sh's
+          # gke_kubeconfig) and applies the SandboxTemplate/SandboxWarmPool through it. Harmless
+          # while GKE_CLUSTER is empty (the default): nothing here calls kubectl.
+          install_components: beta,kubectl,gke-gcloud-auth-plugin
       - name: Release
         working-directory: outfitter/deploy
         env:
           ROLLBACK: ${{ inputs.rollback && '1' || '' }}
           FORCE_ALL: ${{ inputs.force_all && '1' || '' }}
+          USE_GKE_GCLOUD_AUTH_PLUGIN: "True"
         run: ./release.sh

@@ -246,10 +246,11 @@ check_deploy_skew() {
   if [[ -n "${DEPLOY_ALL_COMMIT:-}" && "${DEPLOY_ALL_COMMIT}" == "${this_commit}" ]]; then
     return 0
   fi
-  local web_commit link_commit job_commit
+  local web_commit link_commit job_commit template_commit=""
   web_commit="$(current_build_commit services outfitter-api)"
   link_commit="$(current_build_commit services outfitter-link)"
   job_commit="$(current_build_commit jobs outfitter-agent)"
+  [[ -n "${GKE_CLUSTER:-}" ]] && template_commit="$(current_build_commit_gke)"
 
   local mismatches=()
   if [[ "${this_component}" != "web" && -n "${web_commit}" && "${web_commit}" != "${this_commit}" ]]; then
@@ -260,6 +261,10 @@ check_deploy_skew() {
   fi
   if [[ "${this_component}" != "job" && -n "${job_commit}" && "${job_commit}" != "${this_commit}" ]]; then
     mismatches+=("outfitter-agent (Job) is at ${job_commit}")
+  fi
+  if [[ "${this_component}" != "gke-template" && -n "${GKE_CLUSTER:-}" && -n "${template_commit}" \
+        && "${template_commit}" != "${this_commit}" ]]; then
+    mismatches+=("the GKE SandboxTemplate is at ${template_commit}")
   fi
 
   if [[ "${#mismatches[@]}" -eq 0 ]]; then
@@ -319,4 +324,87 @@ deployed_origin() {
   gcloud_exists run services describe "$1" --project="${PROJECT}" --region="${REGION}" || return 0
   gcloud run services describe "$1" --project="${PROJECT}" --region="${REGION}" \
     --format='value(spec.template.spec.containers[0].env.filter(name=OUTFITTER_ORIGIN).extract(value).flatten())'
+}
+
+# --- GKE (docs/specs/gke-sandbox-provider-plan.md; deploy/gke-*.sh) -----------------------------
+# A file, never the shared ~/.kube/config: every kubectl call across these scripts pins it
+# explicitly with --kubeconfig, matching gke-cluster.sh's own get-credentials.
+CLEANUP_PATHS=()
+_deploy_cleanup() {
+  local p
+  for p in ${CLEANUP_PATHS[@]+"${CLEANUP_PATHS[@]}"}; do
+    rm -rf "${p}"
+  done
+}
+# register_cleanup <path> -- removed on exit. A script that also wants its own EXIT trap for
+# something else must register that cleanup here too (a second `trap ... EXIT` would replace this
+# one, dropping the kubeconfig/temp-file cleanup silently).
+register_cleanup() {
+  CLEANUP_PATHS+=("$1")
+  trap _deploy_cleanup EXIT
+}
+
+# gke_kubeconfig -- ensures a kubeconfig for GKE_CLUSTER exists and exports KUBECONFIG to it, then
+# returns 0. Returns 1 (no kubeconfig touched) if GKE_CLUSTER is empty -- callers use that to skip
+# GKE-only work cleanly. Locally, a dedicated persistent file (KUBECONFIG_OUTFITTER, default
+# ~/.kube/outfitter, same as gke-cluster.sh); in GitHub Actions, a fresh temp file removed on exit
+# (register_cleanup), never a checked-out or repo-relative path. In a dry run this only prints the
+# command it would have run (gke-cluster.test.sh's convention: get-credentials never runs under
+# DRY_RUN=1), so callers must not depend on the file actually existing in that case.
+gke_kubeconfig() {
+  [[ -z "${GKE_CLUSTER:-}" ]] && return 1
+  local kubeconfig location="${GKE_LOCATION:-${REGION}}"
+  if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    kubeconfig="$(mktemp)"
+    register_cleanup "${kubeconfig}"
+  else
+    kubeconfig="${KUBECONFIG_OUTFITTER:-${HOME}/.kube/outfitter}"
+  fi
+  if [[ "${DRY_RUN:-0}" == 1 ]]; then
+    echo "   DRY_RUN: gcloud container clusters get-credentials ${GKE_CLUSTER} --location=${location} --project=${PROJECT} --dns-endpoint (KUBECONFIG=${kubeconfig})" >&2
+  else
+    mkdir -p "$(dirname "${kubeconfig}")"
+    # Explicit if/return, not `cmd || return 1`: this function is almost always itself called as
+    # `gke_kubeconfig || ...`, which suspends -e for everything evaluated while running it -- so a
+    # failing get-credentials must be caught here, or the unconditional `export` below would make
+    # the function return 0 regardless and every caller would proceed against a kubeconfig that was
+    # never actually written.
+    if ! KUBECONFIG="${kubeconfig}" gcloud container clusters get-credentials "${GKE_CLUSTER}" \
+        --location="${location}" --project="${PROJECT}" --dns-endpoint >&2; then
+      return 1
+    fi
+  fi
+  export KUBECONFIG="${kubeconfig}"
+}
+
+# current_build_commit_gke -- the outfitter-agent SandboxTemplate's build-commit label (gke-
+# template.sh sets it, mirroring current_build_commit for the three Cloud Run components), or "" if
+# GKE isn't configured, the template doesn't exist yet, or this is a dry run (no real kubeconfig to
+# read from -- see gke_kubeconfig). Used by check_deploy_skew.
+current_build_commit_gke() {
+  [[ -z "${GKE_CLUSTER:-}" ]] && return 0
+  gke_kubeconfig || return 0
+  [[ "${DRY_RUN:-0}" == 1 ]] && return 0
+  kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE:-outfitter-sandboxes}" \
+    get sandboxtemplate outfitter-agent -o jsonpath='{.metadata.labels.build-commit}' 2>/dev/null || true
+}
+
+# assert_agent_sa_logwriter_only -- owner decision "option B" (gke-sandbox-provider-plan.md §1): the
+# GKE template keeps the metadata server reachable from every sandbox (S7 found Autopilot's Warden
+# rejects the per-uid NET_ADMIN block Cloud Run's finding 3 wanted), so outfitter-agent@'s own IAM
+# roles ARE the model's permissions inside a run. Fails loudly if it holds any project role beyond
+# roles/logging.logWriter (baseline.sh grants only that one). Read-only; called on every release
+# when GKE is configured (gke-template.sh) and stand-alone from gke-iam.sh. Needs
+# resourcemanager.projects.getIamPolicy -- ci-setup.sh grants outfitter-deployer
+# roles/iam.securityReviewer for exactly this.
+assert_agent_sa_logwriter_only() {
+  local agent_sa_email="outfitter-agent@${PROJECT}.iam.gserviceaccount.com" extra_roles
+  extra_roles="$(gcloud projects get-iam-policy "${PROJECT}" \
+    --flatten="bindings[].members" \
+    --filter="bindings.members:serviceAccount:${agent_sa_email} AND NOT bindings.role:roles/logging.logWriter" \
+    --format="value(bindings.role)")" \
+    || deploy_fail "could not read ${PROJECT}'s IAM policy (needs resourcemanager.projects.getIamPolicy; ci-setup.sh grants outfitter-deployer roles/iam.securityReviewer for this)"
+  if [[ -n "${extra_roles}" ]]; then
+    deploy_fail "${agent_sa_email} holds project role(s) beyond roles/logging.logWriter: $(tr '\n' ' ' <<<"${extra_roles}") -- with the metadata server reachable (option B), its permissions are the sandbox model's permissions; remove the extra role(s) before continuing"
+  fi
 }

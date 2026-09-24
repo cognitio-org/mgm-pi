@@ -37,6 +37,11 @@ jobs:
           shellcheck -s bash -S warning deploy/config.env
           bash deploy/test/guards.test.sh
           bash deploy/test/gke-cluster.test.sh
+          bash deploy/test/gke-skew.test.sh
+          bash deploy/test/gke-iam.test.sh
+          bash deploy/test/gke-template.test.sh
+          bash deploy/test/gke-schedule.test.sh
+          bash deploy/test/gke-teardown.test.sh
 
   # E2.12: the deploy failures of 2026-09-20 were all image or deploy-env problems invisible to
   # `npm test`. Build both images the way deploy/ does and boot each with the environment the deploy

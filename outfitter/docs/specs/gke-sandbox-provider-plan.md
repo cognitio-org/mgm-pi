@@ -146,6 +146,43 @@ environment change for either service (`SANDBOX_PROVIDER` still resolves to `clo
 
 ---
 
+## 6a. PR3 delivered (2026-09-24)
+
+Matches the §3 PR3 row and §5.1 as amended (no `gke-switch.sh`: the switch is `config.env` +
+release, as §2 already says). Notes for whoever builds on this:
+
+- The logWriter-only guard (§1 "option B") lives once, as `assert_agent_sa_logwriter_only` in
+  `env.sh`, called both from `gke-iam.sh` (owner-run, stand-alone) and from `gke-template.sh` (every
+  release, when `GKE_CLUSTER` is set) — not duplicated between them.
+- `check_deploy_skew` was extended in place, not given a parallel path: it now also reads the
+  SandboxTemplate's `build-commit` label (`current_build_commit_gke`, via a shared `gke_kubeconfig`
+  helper) whenever `GKE_CLUSTER` is set, for *every* caller — a stand-alone `./api.sh` or
+  `./agent-job.sh` run now also refuses (or, `ALLOW_SKEW=1`, warns) on a stale template, not only a
+  `release.sh` run. `gke_kubeconfig` never calls `get-credentials` under `DRY_RUN=1` (matching
+  `gke-cluster.test.sh`'s convention), so `DRY_RUN=1 ./release.sh` never touches the cluster either.
+- `gke-template.sh`'s release-time warm-up (spike S4: a tag's first pull costs ~28s once) is a
+  throwaway cold claim; the script waits up to 120s for it to report a Sandbox, then deletes it
+  regardless of whether that wait succeeded — a slow first pull just means the next real wake pays
+  it instead, not a failed release.
+- `gke-teardown.sh`'s "no active runs" check has a real limitation, called out in its own header:
+  deploy scripts have no Atlas access, so it checks for live `SandboxClaim`s in the namespace as the
+  closest available proxy (every active gke run has exactly one) rather than the API's own run
+  state. `GET /api/operator/runs?active=1` (PR5) is the authoritative check.
+- `ci-setup.sh`'s new namespaced Role/RoleBinding for `outfitter-deployer` (get/patch the
+  SandboxTemplate and pool, get/create/delete the warm-up claim) needs the cluster to already exist;
+  run `gke-cluster.sh` first. Running `ci-setup.sh` before that just warns and skips that one block
+  — re-run `ci-setup.sh` afterward.
+- `service.sh` reads `GKE_CLUSTER`/`GKE_LOCATION`/`GKE_NAMESPACE`/`GKE_WARM_POOL`/`GKE_LAUNCH_MODE`/
+  `GKE_MAX_ACTIVE` straight from `config.env` (checked in) rather than falling back to "whatever's
+  already deployed" the way `TASKS_SA_EMAIL` does: since these are all in `config.env` now (unlike
+  the mailbox settings, which are discovered from GCP resources, not configured), a plain redeploy
+  can't silently drop them the way §4.4's fallback was written to guard against.
+- The GitHub Actions deploy workflow installs `kubectl`/`gke-gcloud-auth-plugin` unconditionally
+  (harmless while `GKE_CLUSTER` is empty — nothing then calls `kubectl`) rather than branching the
+  workflow YAML on whether GKE is configured, since that isn't easily expressible there.
+
+---
+
 ## 6. Spec amendments to fold in
 
 PR1 edits `gke-sandbox-provider.md` to match: §5 rewritten for `config.env`, owner-run scripts and the

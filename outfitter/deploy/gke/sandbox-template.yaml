@@ -1,0 +1,86 @@
+# The outfitter-agent SandboxTemplate (docs/specs/gke-sandbox-provider.md §3.3, spike-verified in
+# deploy/gke/spike/s2.yaml). Rendered by deploy/gke-template.sh with envsubst and applied
+# server-side; never apply this file directly (the placeholders are literal ${...} until then).
+#
+# ${IMAGE}                 outfitter-agent:$(commit_tag), same tag as the Cloud Run Job
+# ${OUTFITTER_LINK_ORIGIN} the deployed outfitter-link origin (agentd's OUTFITTER_API)
+# ${GKE_NAMESPACE}         deploy/config.env's GKE_NAMESPACE (default outfitter-sandboxes)
+# ${KUBE_DNS_SERVICE_IP}   this cluster's kube-dns Service ClusterIP, read live -- it is
+#                          cluster-specific (docs/reports/gke-spike.md S3), never hard-coded
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: outfitter-agent
+  namespace: ${GKE_NAMESPACE}
+spec:
+  # Cold mode (spec §3.5 option A) passes RUN_ID/RUN_TOKEN/OUTFITTER_API via claim env, which forces
+  # a cold start; that's fine until PR4's warm assignment (claim annotations) ships.
+  envVarsInjectionPolicy: Allowed
+  networkPolicyManagement: Managed
+  networkPolicy:
+    ingress: [] # default deny: no ingress at all (no Sandbox Router)
+    egress:
+      # Public internet, excluding RFC1918 and link-local (169.254/16, which also covers the
+      # metadata server and NodeLocal DNSCache -- both get their own narrower rule below).
+      - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16] } }]
+        ports: [{ protocol: TCP, port: 443 }, { protocol: TCP, port: 80 }]
+      # GKE metadata server (Workload Identity token exchange). Reachable on purpose (owner decision
+      # "option B", gke-sandbox-provider-plan.md §1): S7 found Autopilot's Warden rejects the
+      # per-uid NET_ADMIN block, so this stays open and outfitter-agent@'s own permissions are the
+      # guard instead (see gke-iam.sh's logWriter-only check).
+      - to: [{ ipBlock: { cidr: 169.254.169.254/32 } }]
+        ports: [{ protocol: TCP, port: 80 }]
+      # DNS: agentd resolves the link by name (auth.ts), and the spec's policy as written blocked it
+      # (gke-spike.md S3). Cloud DNS with NodeLocal DNSCache needs both the node-local cache
+      # (fixed link-local address) and the cluster's kube-dns Service (cluster-specific), plus the
+      # kube-dns pods themselves.
+      - to:
+          - { namespaceSelector: {}, podSelector: { matchLabels: { k8s-app: kube-dns } } }
+          - { ipBlock: { cidr: 169.254.20.10/32 } }
+          - { ipBlock: { cidr: ${KUBE_DNS_SERVICE_IP}/32 } }
+        ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+  podTemplate:
+    metadata:
+      labels: { app.kubernetes.io/name: outfitter-agent, app.kubernetes.io/managed-by: outfitter }
+      # The one system annotation claims may set (sandboxclaim_types.go); discourages evicting a
+      # busy sandbox.
+      annotations: { cluster-autoscaler.kubernetes.io/safe-to-evict: "false" }
+    spec:
+      runtimeClassName: gvisor
+      serviceAccountName: outfitter-agent
+      # agentd never talks to the Kubernetes API -- required explicitly by sandbox-core-policy too.
+      automountServiceAccountToken: false
+      nodeSelector: { sandbox.gke.io/runtime: gvisor }
+      tolerations:
+        - { key: sandbox.gke.io/runtime, operator: Equal, value: gvisor, effect: NoSchedule }
+      # agentd exit = run over (Cloud Run parity: agent-job.sh's --max-retries=0).
+      restartPolicy: Never
+      # agentd's SIGTERM checkpoint budget is 8s (run.ts); this leaves headroom.
+      terminationGracePeriodSeconds: 15
+      containers:
+        - name: agentd
+          image: ${IMAGE}
+          env:
+            - { name: OUTFITTER_API, value: "${OUTFITTER_LINK_ORIGIN}" }
+            # Read by PR4 agentd only; harmless while unset (today's agentd only reads env).
+            - { name: OUTFITTER_ASSIGNMENT_DIR, value: /etc/outfitter/assignment }
+          # 1 vCPU / 2 GiB matches the Cloud Run job (agent-job.sh). Requests == limits: Autopilot
+          # bills requests, and equal limits mean no burst surprises. Do NOT mount an emptyDir over
+          # /tmp or /run/outfitter, and do not set TMPDIR: the jiti/compile caches baked into /tmp by
+          # the startup-trim PR must survive (docs/specs/gke-sandbox-provider-plan.md §2).
+          resources:
+            requests: { cpu: "1", memory: 2Gi, ephemeral-storage: 4Gi }
+            limits: { cpu: "1", memory: 2Gi, ephemeral-storage: 4Gi }
+          volumeMounts:
+            - { name: assignment, mountPath: /etc/outfitter/assignment, readOnly: true }
+      volumes:
+        # PR4: a warm claim's additionalPodMetadata.annotations land here via the downward API, with
+        # no pod restart. An unset annotation gives an empty file, so this same template serves both
+        # cold claims (env, above) and warm claims (these files) without change.
+        - name: assignment
+          downwardAPI:
+            defaultMode: 0400 # root-only; pi runs as `agent` and cannot read it (#45's split)
+            items:
+              - { path: run-id, fieldRef: { fieldPath: "metadata.annotations['outfitter.dev/run-id']" } }
+              - { path: run-token, fieldRef: { fieldPath: "metadata.annotations['outfitter.dev/run-token']" } }
+              - { path: api, fieldRef: { fieldPath: "metadata.annotations['outfitter.dev/api']" } }

@@ -348,8 +348,17 @@ describe("teleport extension start-up", () => {
 });
 
 describe("teleport push offers to commit a dirty tree", () => {
+  const gitEnv = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: "Test",
+    GIT_AUTHOR_EMAIL: "test@example.com",
+    GIT_COMMITTER_NAME: "Test",
+    GIT_COMMITTER_EMAIL: "test@example.com",
+  };
   const git = (cwd: string, args: string[]) => new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
-    execFile("git", args, { cwd, encoding: "utf8" }, (err: any, stdout: string, stderr: string) => {
+    execFile("git", args, { cwd, encoding: "utf8", env: gitEnv }, (err: any, stdout: string, stderr: string) => {
       resolve({ code: typeof err?.code === "number" ? err.code : err ? 1 : 0, stdout: stdout ?? "", stderr: stderr ?? "" });
     });
   });
@@ -365,6 +374,7 @@ describe("teleport push offers to commit a dirty tree", () => {
     await git(root, ["init", "-q", "-b", "main", repo]);
     await git(repo, ["config", "user.email", "test@example.com"]);
     await git(repo, ["config", "user.name", "Test"]);
+    await git(repo, ["config", "commit.gpgsign", "false"]);
     writeFileSync(join(repo, "README"), "hi\n");
     await git(repo, ["add", "README"]);
     await git(repo, ["commit", "-q", "-m", "init"]);
@@ -375,9 +385,11 @@ describe("teleport push offers to commit a dirty tree", () => {
     return { root, origin, repo, store, session, head };
   }
 
-  async function drive(opts: { dirty: boolean; mode: string; accept?: boolean; quiet?: boolean }) {
+  async function drive(opts: { dirty: boolean; mode: string; accept?: boolean; quiet?: boolean; dropOrigin?: boolean; detach?: boolean }) {
     const env = setup();
     const laid = await env;
+    if (opts.dropOrigin) await git(laid.repo, ["remote", "remove", "origin"]);
+    if (opts.detach) await git(laid.repo, ["checkout", "--detach", "HEAD"]);
     if (opts.dirty) writeFileSync(join(laid.repo, "notes.txt"), "wip\n");
     const prevStore = process.env.KERNAL_TELEPORT_STORE;
     const prevSandbox = process.env.KERNAL_SANDBOX;
@@ -386,9 +398,13 @@ describe("teleport push offers to commit a dirty tree", () => {
     const prevAuthorEmail = process.env.GIT_AUTHOR_EMAIL;
     const prevCommitter = process.env.GIT_COMMITTER_NAME;
     const prevCommitterEmail = process.env.GIT_COMMITTER_EMAIL;
+    const prevConfig = process.env.GIT_CONFIG_GLOBAL;
+    const prevNoSystem = process.env.GIT_CONFIG_NOSYSTEM;
     process.env.KERNAL_TELEPORT_STORE = laid.store;
     process.env.KERNAL_SANDBOX = "1";
     delete process.env.OUTFITTER_SESSION_ID;
+    process.env.GIT_CONFIG_GLOBAL = "/dev/null";
+    process.env.GIT_CONFIG_NOSYSTEM = "1";
     process.env.GIT_AUTHOR_NAME = "Test";
     process.env.GIT_AUTHOR_EMAIL = "test@example.com";
     process.env.GIT_COMMITTER_NAME = "Test";
@@ -418,7 +434,8 @@ describe("teleport push offers to commit a dirty tree", () => {
       if (opts.quiet) await pi.emit("agent_end", {}, ctx);
       else await pi.commands.get("teleport").handler("push", ctx);
       const head = (await git(laid.repo, ["rev-parse", "HEAD"])).stdout.trim();
-      const originHead = (await git(laid.repo, ["rev-parse", "origin/main"])).stdout.trim();
+      const originRes = await git(laid.repo, ["rev-parse", "origin/main"]);
+      const originHead = originRes.code === 0 ? originRes.stdout.trim() : "";
       const subject = (await git(laid.repo, ["log", "-1", "--format=%s"])).stdout.trim();
       return { asks, notices, head, originHead, subject, start: laid.head, stored: existsSync(join(laid.store, "sessions", "sess94.jsonl")) };
     } finally {
@@ -429,6 +446,8 @@ describe("teleport push offers to commit a dirty tree", () => {
       if (prevAuthorEmail === undefined) delete process.env.GIT_AUTHOR_EMAIL; else process.env.GIT_AUTHOR_EMAIL = prevAuthorEmail;
       if (prevCommitter === undefined) delete process.env.GIT_COMMITTER_NAME; else process.env.GIT_COMMITTER_NAME = prevCommitter;
       if (prevCommitterEmail === undefined) delete process.env.GIT_COMMITTER_EMAIL; else process.env.GIT_COMMITTER_EMAIL = prevCommitterEmail;
+      if (prevConfig === undefined) delete process.env.GIT_CONFIG_GLOBAL; else process.env.GIT_CONFIG_GLOBAL = prevConfig;
+      if (prevNoSystem === undefined) delete process.env.GIT_CONFIG_NOSYSTEM; else process.env.GIT_CONFIG_NOSYSTEM = prevNoSystem;
     }
   }
 
@@ -470,6 +489,22 @@ describe("teleport push offers to commit a dirty tree", () => {
     assert.equal(got.asks, 0);
     assert.equal(got.head, got.start);
     assert.equal(got.stored, false);
+  });
+
+  test("a checkout with no origin is not committed", async () => {
+    const got = await drive({ dirty: true, mode: "tui", accept: true, dropOrigin: true });
+    assert.equal(got.asks, 0);
+    assert.equal(got.head, got.start);
+    assert.equal(got.stored, false);
+    assert.equal(got.notices.some((n) => n.msg.includes("no origin")), true);
+  });
+
+  test("a detached HEAD is not committed", async () => {
+    const got = await drive({ dirty: true, mode: "tui", accept: true, detach: true });
+    assert.equal(got.asks, 0);
+    assert.equal(got.head, got.start);
+    assert.equal(got.stored, false);
+    assert.equal(got.notices.some((n) => n.msg.includes("detached")), true);
   });
 });
 

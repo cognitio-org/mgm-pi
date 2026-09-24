@@ -40,6 +40,15 @@ function canOfferCommit(ctx: { mode?: string; ui?: { confirm?: unknown } }, quie
   return ctx.mode === "tui" && typeof ctx.ui?.confirm === "function";
 }
 
+/** Porcelain for the confirm dialog. A cut list says how much was left out, because yes commits every change. */
+function commitPreview(porcelain: string): string {
+  const raw = porcelain.trim();
+  if (!raw) return "Uncommitted changes";
+  if (raw.length <= 500) return raw;
+  const hidden = raw.slice(500).split("\n").filter((line) => line.length > 0).length;
+  return `${raw.slice(0, 500)}\n… ${hidden} more ${hidden === 1 ? "line" : "lines"} not shown. Committing includes them.`;
+}
+
 // Persist into the agent config dir (PI_CODING_AGENT_DIR when launched via bin/kernal, else
 // ~/.pi/agent), same convention as ../connect/index.ts.
 function settingsPath(): string {
@@ -98,6 +107,21 @@ export default function (pi: ExtensionAPI) {
       if (!opts.quiet) ctx.ui.notify(`teleport push: ${ctx.cwd} is not a git repository.`, "error");
       return;
     }
+    // An unborn branch has no HEAD commit yet, and --abbrev-ref reports HEAD for that and for a
+    // detached checkout. symbolic-ref names the branch only when one is checked out.
+    const [origin, symbolic] = await Promise.all([
+      pi.exec("git", ["remote", "get-url", "origin"], { cwd: ctx.cwd }),
+      pi.exec("git", ["symbolic-ref", "--short", "HEAD"], { cwd: ctx.cwd }),
+    ]);
+    if (origin.code !== 0) {
+      if (!opts.quiet) ctx.ui.notify("teleport push: this checkout has no origin remote.", "error");
+      return;
+    }
+    if (symbolic.code !== 0) {
+      if (!opts.quiet) ctx.ui.notify("teleport push: HEAD is detached. Check out a branch before teleporting.", "error");
+      return;
+    }
+    let committedNow = false;
     if (isWorkingTreeDirty(status.stdout)) {
       const asker = ctx as { mode?: string; ui: { confirm?: (title: string, message: string, opts?: { timeout?: number }) => Promise<boolean | undefined> } };
       if (!canOfferCommit(asker, opts.quiet === true)) {
@@ -108,7 +132,7 @@ export default function (pi: ExtensionAPI) {
       try {
         yes = await asker.ui.confirm!(
           "Commit and push, then teleport?",
-          status.stdout.trim().slice(0, 500) || "Uncommitted changes",
+          commitPreview(status.stdout),
           { timeout: CONFIRM_TIMEOUT_MS },
         ) === true;
       } catch {
@@ -123,10 +147,18 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`teleport push: could not commit: ${committed.detail}`, "error");
         return;
       }
+      committedNow = true;
     }
     const git = await gitInfo(ctx.cwd);
     if (!git) {
-      if (!opts.quiet) ctx.ui.notify(`teleport push: could not read the git remote/branch/head for ${ctx.cwd}.`, "error");
+      if (!opts.quiet) {
+        ctx.ui.notify(
+          committedNow
+            ? "teleport push: the commit was created, and the session was not pushed or stored."
+            : `teleport push: could not read the git remote/branch/head for ${ctx.cwd}.`,
+          "error",
+        );
+      }
       return;
     }
 
@@ -135,7 +167,8 @@ export default function (pi: ExtensionAPI) {
       if (needsOriginBranch(branchStatus.stdout, git.branch)) {
         const pushRes = await pi.exec("git", ["push", "-u", "origin", git.branch], { cwd: ctx.cwd });
         if (pushRes.code !== 0) {
-          ctx.ui.notify(`teleport push: git push failed: ${pushRes.stderr.trim()}`, "error");
+          const made = committedNow ? " The commit was created and the session was not stored." : "";
+          ctx.ui.notify(`teleport push: git push failed: ${pushRes.stderr.trim()}${made}`, "error");
           return;
         }
       }

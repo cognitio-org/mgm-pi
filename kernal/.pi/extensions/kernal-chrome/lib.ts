@@ -354,8 +354,8 @@ const INSPECT_ELEMENT = /^[a-z][a-z0-9-]*(?:#[A-Za-z_][A-Za-z0-9_-]{0,63})?(?:\.
 /** Same replacement as chrome/extension/inspect.js. Header values do not enter the tool result. */
 export function redactHeaderText(text: string): string {
   return text.replace(
-    /\b(authorization|proxy-authorization|cookie|set-cookie)\b\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\r\n]+)/gi,
-    "$1: [redacted]",
+    /(["']?)(authorization|proxy-authorization|cookie|set-cookie)\1\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\r\n]+)/gi,
+    "$1$2$1: [redacted]",
   );
 }
 

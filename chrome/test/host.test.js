@@ -558,6 +558,7 @@ test("an inspected reply strips an Authorization header value", () => {
   assert.equal(applied.inspect.element, "button#go");
   assert.match(redactHeaderText(`Cookie: ${secret}`), /\[redacted\]/);
   assert.equal(redactHeaderText(`Cookie: ${secret}`).includes(secret), false);
+  assert.equal(redactHeaderText(JSON.stringify({ Authorization: `Bearer ${secret}` })).includes(secret), false);
 });
 
 test("an unknown tab is not forwarded for inspect, and a shared tab returns redacted lines", async () => {

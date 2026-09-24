@@ -42,8 +42,8 @@ export const SELECTED_ELEMENT_EXPRESSION = `(function () {
 export function redactHeaderText(text) {
   if (typeof text !== "string") return "";
   return text.replace(
-    /\b(authorization|proxy-authorization|cookie|set-cookie)\b\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\r\n]+)/gi,
-    "$1: [redacted]",
+    /(["']?)(authorization|proxy-authorization|cookie|set-cookie)\1\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\r\n]+)/gi,
+    "$1$2$1: [redacted]",
   );
 }
 

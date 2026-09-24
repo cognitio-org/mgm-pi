@@ -15,7 +15,11 @@ test("browser_inspect redacts an Authorization header and does not read OUTFITTE
       listener.deliver({
         t: "browser.inspect.result",
         requestId,
-        messages: [`log: Authorization: Bearer ${SECRET}`, `Cookie: session=${SECRET}`],
+        messages: [
+          `log: Authorization: Bearer ${SECRET}`,
+          `Cookie: session=${SECRET}`,
+          JSON.stringify({ Authorization: `Bearer ${SECRET}` }),
+        ],
         element: "button#go.primary",
       });
     },

@@ -324,7 +324,7 @@ describe("the tool definition itself", () => {
         socket.write(`${JSON.stringify({
           t: "inspected",
           tabId: msg.tabId,
-          messages: [`log: Authorization: Bearer ${secret}`],
+          messages: [`log: Authorization: Bearer ${secret}`, JSON.stringify({ Authorization: `Bearer ${secret}` })],
           element: "button#go.primary",
         })}\n`);
       }

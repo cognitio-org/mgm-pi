@@ -73,6 +73,7 @@ test("a result that contained an Authorization header does not contain the heade
   assert.equal(result.element, "button#go.primary.extra");
   assert.equal(Object.hasOwn(result, "headers"), false);
   assert.equal(redactHeaderText(`Authorization: Bearer ${SECRET}`).includes(SECRET), false);
+  assert.equal(redactHeaderText(JSON.stringify({ Authorization: `Bearer ${SECRET}` })).includes(SECRET), false);
   assert.equal(JSON.stringify(redactSecrets({ name: "Cookie", value: SECRET })).includes(SECRET), false);
 });
 

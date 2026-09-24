@@ -145,6 +145,29 @@ test("GithubAppTokens reports unavailable when a secret read throws", async () =
   assert.deepEqual(await tokens.mint("o/r"), { ok: false, reason: "unavailable" });
 });
 
+test("#158: a partly set or wrong App secret is misconfigured, not not-configured", async () => {
+  const secrets = (values: Record<string, string>) => async (name: string) =>
+    name.includes("installation") ? (values.installation ?? "") : name.includes("private-key") ? (values.key ?? "") : (values.id ?? "");
+  for (const [label, values] of [
+    ["a Client ID instead of the numeric App id", { id: "Iv1.abc123", key: pem, installation: "99" }],
+    ["no installation id (mid-reinstall)", { id: "12345", key: pem }],
+    ["a key without a PEM header", { id: "12345", key: "bm90IGEga2V5", installation: "99" }],
+    ["only the App id", { id: "12345" }],
+  ] as const) {
+    const tokens = new GithubAppTokens(secrets(values), (async () => {
+      throw new Error("must not call GitHub");
+    }) as typeof fetch);
+    assert.deepEqual(await tokens.mint("o/r"), { ok: false, reason: "misconfigured" }, label);
+  }
+  const blank = new GithubAppTokens(async () => "  ");
+  assert.deepEqual(await blank.mint("o/r"), { ok: false, reason: "not-configured" }, "whitespace only counts as unset");
+});
+
+test("#158: with no App at all, even an odd repo string is not-configured (the shared PAT still applies)", async () => {
+  const tokens = new GithubAppTokens(async () => "");
+  assert.deepEqual(await tokens.mint("not a repo"), { ok: false, reason: "not-configured" });
+});
+
 test("#158: GitHub refusing the repo or the installation is not-installed", async () => {
   for (const status of [422, 404]) {
     const tokens = tokensAnswering(async () => new Response(JSON.stringify({ message: "nope" }), { status }));

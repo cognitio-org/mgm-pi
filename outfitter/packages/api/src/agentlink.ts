@@ -78,6 +78,11 @@ interface BuiltRunSpec {
   keepCurrentGithubToken: boolean;
 }
 
+/** #158: the session page's note when some GitHub App secret is set but the three aren't usable. */
+const GITHUB_APP_MISCONFIGURED_DETAIL =
+  "the Outfitter GitHub App's secrets are set but can't be used (a numeric App id, a numeric installation id, " +
+  "and the App's PEM private key are all needed), so this run has no GitHub access. An operator has to fix them.";
+
 /** #158: the session page's note when the App is configured but can't reach the session's repo. */
 function githubAppNotInstalledDetail(repo: string): string {
   return (
@@ -817,8 +822,13 @@ export class AgentLink {
     // agentd applies run.spec once. A reconnect ignores the second one, including when this
     // process is new and its mint cache is empty, so the token has to ride this frame too.
     if (spec.secrets.githubToken) this.deliverGithubCredential(runId, socket, spec.secrets.githubToken);
-    if (built.keepCurrentGithubToken) this.scheduleGithubRetry(runId, session.id);
-    else this.scheduleGithubRefresh(runId, session.id, built.githubTokenExpiresAt);
+    if (built.keepCurrentGithubToken) {
+      // A new hello gets the full retry budget, not what a replaced connection left of it.
+      this.githubRefreshAttempts.delete(runId);
+      this.scheduleGithubRetry(runId, session.id);
+    } else {
+      this.scheduleGithubRefresh(runId, session.id, built.githubTokenExpiresAt);
+    }
 
     // Existing hello behaviour, now run against the same frame the run-token check above already
     // consumed: record first contact and drain anything queued while this run was ready before this
@@ -956,10 +966,13 @@ export class AgentLink {
     const reconnect = isReadyState(run.state);
     let keepCurrentGithubToken = false;
     if (session.repo && !secrets.githubToken && !this.config.devMode) {
-      if (secrets.githubAppFailure && reconnect) {
+      if (reconnect && (secrets.githubAppFailure === "unavailable" || secrets.githubAppFailure === "misconfigured")) {
         // Keep the token agentd already has, and try the mint again on the refresh schedule. Failing
-        // the run, or handing it the shared PAT, both used to happen here.
+        // the run, or handing it the shared PAT, both used to happen here. Not for `not-installed`:
+        // the token a run keeps could be the shared PAT from before the App was configured.
         keepCurrentGithubToken = true;
+      } else if (secrets.githubAppFailure === "misconfigured") {
+        throw new MissingGithubTokenError(`github app secrets unusable for session ${session.id}`, GITHUB_APP_MISCONFIGURED_DETAIL);
       } else if (secrets.githubAppFailure === "unavailable") {
         throw new GithubAppUnavailableError(
           `the GitHub App could not mint a token for ${session.repo} just now; the run will retry`,

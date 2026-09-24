@@ -197,7 +197,11 @@ the page and never moved the fleet, because `release.sh` deploys the page first.
    the API. Once the App is configured, `outfitter-github-token-default` is no longer used (#158):
    a session whose repo the App isn't installed on fails at start with "install the GitHub App on
    <repo>", and a failed mint (GitHub or Secret Manager unreachable) is retried rather than
-   replaced by the shared PAT. A live run keeps its current token until a mint succeeds. Create one
+   replaced by the shared PAT. A live run keeps its current token until a mint succeeds. If any of
+   the three App secrets is set but they aren't usable together (the Client ID pasted as the App
+   id, a key that isn't the PEM, a missing installation id), runs fail with a note asking an
+   operator to fix them; removing all three (deleting or disabling their versions) goes back to the
+   shared PAT. Create one
    App on the `cognitio-org` account (the same App E6 webhooks will use), install it on every repo
    cloud sessions touch, and store:
 

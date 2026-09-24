@@ -271,7 +271,9 @@ export class GithubBroker {
           ? "the GitHub App could not get a token just now; try again shortly"
           : secrets.githubAppFailure === "not-installed"
             ? "the Outfitter GitHub App is not installed on this repository"
-            : "not permitted";
+            : secrets.githubAppFailure === "misconfigured"
+              ? "the Outfitter GitHub App is not set up correctly; an operator has to fix it"
+              : "not permitted";
       return this.settle(runId, op, key, write, { ok: false, error });
     }
 

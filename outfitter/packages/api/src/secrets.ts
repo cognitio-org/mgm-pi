@@ -91,7 +91,7 @@ export class GcpSecretsBroker implements SecretsBroker {
       try {
         return (await this.fetchSecret(secretId)).trim();
       } catch (err) {
-        if (isSecretNotFoundError(err)) return "";
+        if (isSecretAbsentError(err)) return "";
         // A blip reading an App secret is not "the App isn't set up": resolving it to "" would hand
         // the run the shared PAT (#158). Throw, so the mint reports `unavailable`.
         // Log the name only: Secret Manager errors can echo the request, never the key.
@@ -189,8 +189,8 @@ export class GcpSecretsBroker implements SecretsBroker {
     try {
       return await this.fetchSecret(secretId);
     } catch (err) {
-      if (!isSecretNotFoundError(err)) throw err;
-      console.warn(`[secrets] ${secretId} not found in Secret Manager; resolving to ""`);
+      if (!isSecretAbsentError(err)) throw err;
+      console.warn(`[secrets] ${secretId} not found (or disabled) in Secret Manager; resolving to ""`);
       return "";
     }
   }
@@ -219,13 +219,31 @@ export class GcpSecretsBroker implements SecretsBroker {
 
 /** True for a Secret Manager "no such secret/version" failure: a Gaxios HTTP 404, or (in case a
  * client surfaces it as a raw gRPC status instead) code 5 NOT_FOUND. Any other shape of error
- * (network, auth, 403) is a real failure: `accessSecretOrEmpty` rethrows it, and the GitHub App
- * reader logs the error name and returns "" so a run can still use its PAT. */
+ * (network, auth, 403) is a real failure. */
 function isSecretNotFoundError(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
   const e = err as { response?: { status?: number }; code?: number | string; status?: number };
   const status = e.response?.status ?? e.code ?? e.status;
   return status === 404 || status === "404" || status === 5;
+}
+
+/** True when a credential secret has no value to read: not found, or its latest version is
+ * disabled or destroyed. The operator page removes a secret by disabling every version
+ * (`disableAllEnabled`), and Secret Manager then answers `versions/latest:access` with
+ * FAILED_PRECONDITION ("... is in DISABLED state"), not a 404. Counting that as a failure would
+ * make a GitHub App removed from the operator page read as `unavailable` and block every repo
+ * run (PR #161 review). */
+export function isSecretAbsentError(err: unknown): boolean {
+  if (isSecretNotFoundError(err)) return true;
+  if (typeof err !== "object" || err === null) return false;
+  const e = err as {
+    response?: { status?: number; data?: { error?: { status?: string; message?: string } } };
+    code?: number | string;
+    message?: string;
+  };
+  const precondition = e.response?.status === 400 || e.response?.data?.error?.status === "FAILED_PRECONDITION" || e.code === 9;
+  const message = `${e.response?.data?.error?.message ?? ""} ${e.message ?? ""}`;
+  return precondition && /\b(DISABLED|DESTROYED) state\b/.test(message);
 }
 
 // ---------- SecretAdmin (operator settings: routes/operator.ts) ----------

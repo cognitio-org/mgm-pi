@@ -30,13 +30,16 @@ export interface InstallationToken {
 }
 
 /** Why no installation token came back (#158). Callers treat each differently:
- * - `not-configured`: the App's secrets are absent or unusable. The App isn't in use, so the
- *   shared PAT still applies.
+ * - `not-configured`: none of the three App secrets is set. The App isn't in use, so the shared
+ *   PAT still applies.
+ * - `misconfigured`: some App secret is set but the three aren't usable (a Client ID pasted as
+ *   the App id, a wrapped key, a missing installation id mid-reinstall). An operator has to fix
+ *   them; no fallback, since that would quietly put every run back on the shared PAT.
  * - `not-installed`: GitHub says the App can't reach this repo (or the name isn't one it could).
  *   No fallback; the run is told to install the App on the repo.
  * - `unavailable`: anything transient or unexpected (a network error, a timeout, a 5xx, a Secret
  *   Manager blip, a key that won't sign). No fallback; try again later. */
-export type MintFailure = "not-configured" | "not-installed" | "unavailable";
+export type MintFailure = "not-configured" | "misconfigured" | "not-installed" | "unavailable";
 
 export type MintResult = ({ ok: true } & InstallationToken) | { ok: false; reason: MintFailure };
 
@@ -84,6 +87,7 @@ function errorName(err: unknown): string {
 }
 
 const NOT_CONFIGURED: MintResult = { ok: false, reason: "not-configured" };
+const MISCONFIGURED: MintResult = { ok: false, reason: "misconfigured" };
 const NOT_INSTALLED: MintResult = { ok: false, reason: "not-installed" };
 const UNAVAILABLE: MintResult = { ok: false, reason: "unavailable" };
 
@@ -124,9 +128,6 @@ export class GithubAppTokens {
   }
 
   private async mintOnce(ownerRepo: string): Promise<MintResult> {
-    const parsed = sessionGithubRepo(ownerRepo);
-    if (!parsed) return NOT_INSTALLED;
-    const { owner, repo } = parsed;
     let appId: string;
     let privateKey: string;
     let installationId: string;
@@ -141,7 +142,15 @@ export class GithubAppTokens {
       console.warn(`[github-app] app secret read failed: ${errorName(err)}`);
       return UNAVAILABLE;
     }
-    if (!githubAppSecretsUsable(appId, privateKey, installationId)) return NOT_CONFIGURED;
+    if (!githubAppSecretsUsable(appId, privateKey, installationId)) {
+      if (![appId, privateKey, installationId].some((value) => value.trim() !== "")) return NOT_CONFIGURED;
+      console.warn("[github-app] app secrets are set but not usable (numeric app id, numeric installation id, PEM key)");
+      return MISCONFIGURED;
+    }
+    // After the secrets, so a deployment with no App still treats an odd repo string as before.
+    const parsed = sessionGithubRepo(ownerRepo);
+    if (!parsed) return NOT_INSTALLED;
+    const { owner, repo } = parsed;
     appId = appId.trim();
     installationId = installationId.trim();
     const key = `${installationId}:${owner}/${repo}`;

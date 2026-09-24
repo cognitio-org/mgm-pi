@@ -192,6 +192,60 @@ describe("GcpSecretsBroker", () => {
     assert.ok(!requested.includes(GITHUB_TOKEN_DEFAULT_SECRET));
   });
 
+  test("#161 review: App secrets removed on the operator page (versions disabled) read as not configured", async () => {
+    // Secret Manager's answer for versions/latest:access when every version is disabled.
+    const disabled = (secretId: string) => {
+      const err = new Error(`Secret Version [projects/p/secrets/${secretId}/versions/3] is in DISABLED state.`) as Error & {
+        response: { status: number; data: { error: { status: string; message: string } } };
+      };
+      err.response = {
+        status: 400,
+        data: { error: { status: "FAILED_PRECONDITION", message: `Secret Version [projects/p/secrets/${secretId}/versions/3] is in DISABLED state.` } },
+      };
+      return err;
+    };
+    const broker = new GcpSecretsBroker("proj", async (secretId) => {
+      if (secretId === GITHUB_APP_ID_SECRET || secretId === GITHUB_APP_INSTALLATION_SECRET || secretId === GITHUB_APP_KEY_SECRET) {
+        throw disabled(secretId);
+      }
+      if (secretId === GITHUB_TOKEN_DEFAULT_SECRET) return "shared-token";
+      throw notFoundError();
+    });
+    const secrets = await broker.secretsForRun(testSession(), testGuru());
+    assert.equal(secrets.githubToken, "shared-token");
+    assert.equal(secrets.githubAppFailure, undefined);
+  });
+
+  test("#161 review: a 400 that isn't a disabled version is still a real failure", async () => {
+    const broker = new GcpSecretsBroker("proj", async (secretId) => {
+      if (secretId === GITHUB_APP_ID_SECRET) {
+        const err = new Error("bad request") as Error & { response: { status: number } };
+        err.response = { status: 400 };
+        throw err;
+      }
+      if (secretId === GITHUB_TOKEN_DEFAULT_SECRET) return "shared-token";
+      throw notFoundError();
+    });
+    const secrets = await broker.secretsForRun(testSession(), testGuru());
+    assert.equal(secrets.githubToken, "");
+    assert.equal(secrets.githubAppFailure, "unavailable");
+  });
+
+  test("#158: a partly set App (a Client ID as the App id) is misconfigured, never the shared PAT", async () => {
+    const requested: string[] = [];
+    const broker = new GcpSecretsBroker("proj", async (secretId) => {
+      requested.push(secretId);
+      if (secretId === GITHUB_APP_ID_SECRET) return "Iv1.abc123";
+      if (secretId === GITHUB_APP_INSTALLATION_SECRET) return "7";
+      if (secretId === GITHUB_TOKEN_DEFAULT_SECRET) return "shared-token";
+      throw notFoundError();
+    });
+    const secrets = await broker.secretsForRun(testSession(), testGuru());
+    assert.equal(secrets.githubToken, "");
+    assert.equal(secrets.githubAppFailure, "misconfigured");
+    assert.ok(!requested.includes(GITHUB_TOKEN_DEFAULT_SECRET));
+  });
+
   test("a failed refresh returns nothing, and secretsForRun doesn't hand out the shared PAT either", async () => {
     const broker = new GcpSecretsBroker("proj", async (secretId) => {
       if (secretId === GITHUB_TOKEN_DEFAULT_SECRET) return "shared-token";

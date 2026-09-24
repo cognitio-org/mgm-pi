@@ -1492,7 +1492,7 @@ describe("GitHub App installation-token refresh", () => {
    * as in the 4412 test above; connect with `openAgentSocket(app, runId, ID_TOKEN)`. */
   async function appWithMintFailure(
     t: { mock: { method: typeof import("node:test").mock.method } },
-    reason: "unavailable" | "not-installed",
+    reason: "unavailable" | "not-installed" | "misconfigured",
     refreshed?: () => void,
   ) {
     t.mock.method(OAuth2Client.prototype, "verifyIdToken", async () => ({
@@ -1543,18 +1543,42 @@ describe("GitHub App installation-token refresh", () => {
     await app.fastify.close();
   });
 
-  test("#158: a reconnect when the App can't reach the repo keeps the run too", async (t) => {
+  test("#158: a reconnect when the App can't reach the repo is refused, so a pre-App shared PAT isn't kept", async (t) => {
     const app = await appWithMintFailure(t, "not-installed");
     const { session, runId, runToken } = await makeRunningSession(app);
     await app.store.runs.update(runId, { state: "idle" });
     const agent = await openAgentSocket(app, runId, "any-google-id-token");
     sendHello(agent, runId, session.id, runToken);
-    assert.equal((await agent.nextMessage()).t, "run.spec");
-    assert.notEqual((await app.store.runs.findById(runId))?.state, "failed");
-    agent.send({ t: "bye", reason: "stop" });
-    await agent.nextClose();
+    const close = await agent.nextClose();
+    assert.equal(close.code, 4412);
+    const run = await app.store.runs.findById(runId);
+    assert.equal(run?.state, "failed");
+    assert.match(run?.statusDetail ?? "", /not installed on o\/r/);
     app.stopBackgroundTasks();
     await app.fastify.close();
+  });
+
+  test("#158: misconfigured App secrets fail a first connect with an operator note, and a reconnect keeps its token", async (t) => {
+    const first = await appWithMintFailure(t, "misconfigured");
+    const a = await makeRunningSession(first);
+    const agentA = await openAgentSocket(first, a.runId, "any-google-id-token");
+    sendHello(agentA, a.runId, a.session.id, a.runToken);
+    assert.equal((await agentA.nextClose()).code, 4412);
+    assert.match((await first.store.runs.findById(a.runId))?.statusDetail ?? "", /secrets are set but can't be used/);
+    first.stopBackgroundTasks();
+    await first.fastify.close();
+
+    const again = await appWithMintFailure(t, "misconfigured");
+    const b = await makeRunningSession(again);
+    await again.store.runs.update(b.runId, { state: "running" });
+    const agentB = await openAgentSocket(again, b.runId, "any-google-id-token");
+    sendHello(agentB, b.runId, b.session.id, b.runToken);
+    assert.equal((await agentB.nextMessage()).t, "run.spec");
+    assert.notEqual((await again.store.runs.findById(b.runId))?.state, "failed");
+    agentB.send({ t: "bye", reason: "stop" });
+    await agentB.nextClose();
+    again.stopBackgroundTasks();
+    await again.fastify.close();
   });
 
   test("#158: a first connect while the mint is unavailable closes 1011 to retry, with a note, and doesn't fail the run", async (t) => {

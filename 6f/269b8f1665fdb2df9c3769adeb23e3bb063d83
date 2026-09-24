@@ -1,0 +1,24 @@
+outfitter/EPIC.md
+  h_69b863911ebf05 532-534
+outfitter/packages/api/src/routes/sessions.ts
+  h_69b863911ebf05 8-9,157-162,170-176
+outfitter/packages/api/test/routes.test.ts
+  h_69b863911ebf05 76-79
+outfitter/packages/web/src/api/client.ts
+  h_69b863911ebf05 54-61
+outfitter/packages/web/src/pages/SessionPage.tsx
+  h_69b863911ebf05 362-380
+outfitter/packages/web/src/styles/layout.css
+  h_69b863911ebf05 168-171
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "6f269b8f1665fdb2df9c3769adeb23e3bb063d83",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

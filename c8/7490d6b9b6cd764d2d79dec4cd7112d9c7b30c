@@ -1,0 +1,18 @@
+outfitter/docs/protocol.md
+  h_69b863911ebf05 157
+outfitter/packages/api/src/github-broker.ts
+  h_69b863911ebf05 558,755,915
+outfitter/packages/api/test/github-broker.test.ts
+  h_69b863911ebf05 281-287
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "c87490d6b9b6cd764d2d79dec4cd7112d9c7b30c",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

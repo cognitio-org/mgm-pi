@@ -2,10 +2,7 @@
  * Types mirroring outfitter/docs/protocol.md exactly. This is the wire contract between agentd and
  * the api over the WebSocket link (`wss://<api>/agent/ws?run=<runId>`). Keep this file in lockstep
  * with protocol.md; if a shape here diverges from the doc, the doc wins and this file is the bug.
- *
- * Exception, until the protocol-doc half of issue #90 lands: `github.request` / `github.result`
- * are specified by that issue's broker contract (one JSON object, forwarded as-is, not seq/ack
- * replayed). This file is the agentd copy; the API package bumps its own protocol constant.
+ * `github.request` / `github.result` are not seq/ack replayed.
  */
 
 // ---------- shared ----------
@@ -43,7 +40,7 @@ export type PiRpcCommand = Record<string, unknown> & { type: string };
  * agentd ignored, docs/reports/agent-messaging.md). Keep in sync with
  * packages/api/src/agentlink.ts's own copy of this constant -- they can't share a module across
  * packages, so both sides document the pairing. Version 2 adds `github.request` /
- * `github.result` (not seq/ack replayed). The API copy is bumped in its own change. */
+ * `github.result`, which are not seq/ack replayed. */
 export const WIRE_PROTOCOL_VERSION = 2;
 
 export interface UpHello {

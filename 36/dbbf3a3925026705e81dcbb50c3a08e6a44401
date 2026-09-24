@@ -1,0 +1,23 @@
+outfitter/deploy/README.md
+  s_217e742e7da57c::t_09734c177ce8df 335
+  s_217e742e7da57c::t_7f35a5e69e0718 310-319
+  s_217e742e7da57c::t_16339b18ddc270 306-308
+  s_217e742e7da57c::t_914973f450a22b 343-344
+  s_217e742e7da57c::t_dc4466d62bb3d1 360-361
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "36dbbf3a3925026705e81dcbb50c3a08e6a44401",
+  "prompts": {},
+  "sessions": {
+    "s_217e742e7da57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4d8a38f8-9583-45df-9f1a-8e69160a3dfb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

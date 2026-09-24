@@ -1,0 +1,2 @@
+{"round": 1, "node": "gk3-outfitter-nap-jlnbhpvo-b78542a3-m8mh", "new_node": true, "image_cached": false, "scheduled_s": 47.6, "pulled_in_s": 1.893, "started_s": 70.6, "first_log_s": 72.1, "exit": 1, "first_log": "{\"severity\":\"ERROR\",\"message\":\"agentd: fatal: agentd: missing required env var RUN_ID\"}"}
+{"summary": {"rounds": 1, "with_start": 1, "new_node_rounds": 1, "started_p50_s": 70.6, "started_max_s": 70.6}}

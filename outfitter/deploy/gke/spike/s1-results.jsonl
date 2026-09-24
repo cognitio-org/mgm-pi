@@ -1,0 +1,21 @@
+{"round": 1, "latency_s": 2.684, "create_s": 2.191, "mode": "warm", "pod": "s1-probe-27jlc", "waited_for_warm_s": 2.7}
+{"round": 2, "latency_s": 3.921, "create_s": 1.992, "mode": "warm", "pod": "s1-probe-8bbtq", "waited_for_warm_s": 2.5}
+{"round": 3, "latency_s": 2.792, "create_s": 1.998, "mode": "warm", "pod": "s1-probe-tw2xb", "waited_for_warm_s": 5.9}
+{"round": 4, "latency_s": 2.791, "create_s": 1.97, "mode": "warm", "pod": "s1-probe-96zrb", "waited_for_warm_s": 2.9}
+{"round": 5, "latency_s": 3.041, "create_s": 2.063, "mode": "warm", "pod": "s1-probe-vmrzq", "waited_for_warm_s": 2.4}
+{"round": 6, "latency_s": 2.469, "create_s": 2.007, "mode": "warm", "pod": "s1-probe-n7472", "waited_for_warm_s": 2.4}
+{"round": 7, "latency_s": 2.456, "create_s": 1.957, "mode": "warm", "pod": "s1-probe-6nxs9", "waited_for_warm_s": 2.3}
+{"round": 8, "latency_s": 2.557, "create_s": 2.166, "mode": "warm", "pod": "s1-probe-2pq5v", "waited_for_warm_s": 2.4}
+{"round": 9, "latency_s": 2.622, "create_s": 1.99, "mode": "warm", "pod": "s1-probe-jlwnj", "waited_for_warm_s": 2.4}
+{"round": 10, "latency_s": 3.206, "create_s": 2.005, "mode": "warm", "pod": "s1-probe-7k6l5", "waited_for_warm_s": 2.7}
+{"round": 11, "latency_s": 2.813, "create_s": 2.037, "mode": "warm", "pod": "s1-probe-hctth", "waited_for_warm_s": 2.4}
+{"round": 12, "latency_s": 2.711, "create_s": 2.0, "mode": "warm", "pod": "s1-probe-ddsv5", "waited_for_warm_s": 2.3}
+{"round": 13, "latency_s": 2.644, "create_s": 2.17, "mode": "warm", "pod": "s1-probe-4drns", "waited_for_warm_s": 3.0}
+{"round": 14, "latency_s": 2.591, "create_s": 2.017, "mode": "warm", "pod": "s1-probe-8dwv2", "waited_for_warm_s": 2.6}
+{"round": 15, "latency_s": 2.445, "create_s": 1.986, "mode": "warm", "pod": "s1-probe-tspkz", "waited_for_warm_s": 2.5}
+{"round": 16, "latency_s": 2.566, "create_s": 1.953, "mode": "warm", "pod": "s1-probe-22flq", "waited_for_warm_s": 2.6}
+{"round": 17, "latency_s": 3.312, "create_s": 1.989, "mode": "warm", "pod": "s1-probe-x8wdx", "waited_for_warm_s": 2.3}
+{"round": 18, "latency_s": 2.752, "create_s": 2.129, "mode": "warm", "pod": "s1-probe-d969h", "waited_for_warm_s": 2.5}
+{"round": 19, "latency_s": 2.614, "create_s": 1.999, "mode": "warm", "pod": "s1-probe-47z6x", "waited_for_warm_s": 3.6}
+{"round": 20, "latency_s": 2.47, "create_s": 1.993, "mode": "warm", "pod": "s1-probe-w8pkh", "waited_for_warm_s": 2.3}
+{"summary": {"rounds": 20, "warm": 20, "cold": 0, "timeouts": 0, "p50_s": 2.664, "p90_s": 3.206, "min_s": 2.445, "max_s": 3.921}}

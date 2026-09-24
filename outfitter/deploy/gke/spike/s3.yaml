@@ -1,0 +1,129 @@
+# Spike S3 (docs/reports/gke-spike.md): does a sandbox in outfitter-sandboxes get a Google ID token
+# whose `email` is outfitter-agent@ (Workload Identity, GSA-impersonation form), through the custom
+# network policy, and does the deployed link accept it?
+#
+# The link check never touches a real run: link verifies the bearer token BEFORE it looks the run up
+# (api/src/agentlink.ts handleConnection), so a valid token with a made-up run id is refused 4404
+# "run not found" and a bad token 4401 "unauthorized". Neither refusal writes anything.
+#   kubectl apply -f s3.yaml, then create a SandboxClaim on warm pool s3-identity (replicas 0: cold).
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: s3-identity
+  namespace: outfitter-sandboxes
+spec:
+  networkPolicyManagement: Managed
+  # Spec §3.3's policy: replaces the default one, which blocks the metadata server.
+  networkPolicy:
+    ingress: []
+    egress:
+      - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16] } }]
+        ports: [{ protocol: TCP, port: 443 }, { protocol: TCP, port: 80 }]
+      - to: [{ ipBlock: { cidr: 169.254.169.254/32 } }]
+        ports: [{ protocol: TCP, port: 80 }]
+      - to: [{ ipBlock: { cidr: 169.254.169.252/32 } }]
+        ports: [{ protocol: TCP, port: 988 }]
+      # DNS. The cluster runs Cloud DNS with NodeLocal DNSCache: pods ask the kube-dns Service
+      # (34.118.224.10, outside RFC1918), and the node's cache at link-local 169.254.20.10 answers.
+      # Spec §3.3 only allowed kube-dns pods, and every name lookup timed out (first S3 run).
+      - to:
+          - { namespaceSelector: {}, podSelector: { matchLabels: { k8s-app: kube-dns } } }
+          - { ipBlock: { cidr: 169.254.20.10/32 } }
+          - { ipBlock: { cidr: 34.118.224.10/32 } }
+        ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+  podTemplate:
+    metadata:
+      labels: { app: s3-identity }
+    spec:
+      runtimeClassName: gvisor
+      serviceAccountName: outfitter-agent
+      automountServiceAccountToken: false
+      nodeSelector: { sandbox.gke.io/runtime: gvisor }
+      tolerations:
+        - { key: sandbox.gke.io/runtime, operator: Equal, value: gvisor, effect: NoSchedule }
+      restartPolicy: Never
+      containers:
+        - name: probe
+          image: node:22-alpine
+          env:
+            - { name: LINK_ORIGIN, value: "https://link.kernal.one" }
+          command:
+            - node
+            - -e
+            - |
+              const https = require("node:https"), http = require("node:http"), crypto = require("node:crypto");
+              const origin = process.env.LINK_ORIGIN;
+              const log = (k, v) => console.log(JSON.stringify({ [k]: v }));
+              log("uid", process.getuid());
+
+              function get(url) {
+                return new Promise((res, rej) => http.get(url, { headers: { "Metadata-Flavor": "Google" }, timeout: 5000 },
+                  (r) => { let b = ""; r.on("data", (d) => (b += d)); r.on("end", () => res({ status: r.statusCode, body: b })); })
+                  .on("error", rej).on("timeout", function () { this.destroy(new Error("timeout")); }));
+              }
+
+              // A raw WebSocket handshake; returns the close code of the first frame the server sends.
+              function closeCode(token) {
+                return new Promise((res) => {
+                  const u = new URL(`/agent/ws?run=gke-spike-s3-${crypto.randomBytes(4).toString("hex")}`, origin);
+                  const req = https.request({ host: u.host, path: u.pathname + u.search, headers: {
+                    Connection: "Upgrade", Upgrade: "websocket", "Sec-WebSocket-Version": "13",
+                    "Sec-WebSocket-Key": crypto.randomBytes(16).toString("base64"), Authorization: `Bearer ${token}` } });
+                  req.on("upgrade", (_r, sock) => {
+                    let buf = Buffer.alloc(0);
+                    sock.on("data", (d) => {
+                      buf = Buffer.concat([buf, d]);
+                      if (buf.length >= 4 && (buf[0] & 0x0f) === 0x8) {
+                        const len = buf[1] & 0x7f;
+                        res({ code: buf.readUInt16BE(2), reason: buf.subarray(4, 2 + len).toString() });
+                        sock.destroy();
+                      }
+                    });
+                  });
+                  req.on("response", (r) => res({ http: r.statusCode }));
+                  req.on("error", (e) => res({ error: e.message }));
+                  req.setTimeout(15000, () => { req.destroy(); res({ error: "timeout" }); });
+                  req.end();
+                });
+              }
+
+              (async () => {
+                for (const host of ["metadata.google.internal", "169.254.169.254"]) {
+                  try {
+                    const e = await get(`http://${host}/computeMetadata/v1/instance/service-accounts/default/email`);
+                    log(`sa_email_via_${host}`, e);
+                  } catch (err) { log(`sa_email_via_${host}`, { error: err.message }); }
+                }
+                let token;
+                try {
+                  const t = await get(`http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=${encodeURIComponent(origin)}&format=full`);
+                  if (t.status !== 200) throw new Error(`status ${t.status}: ${t.body.slice(0, 200)}`);
+                  token = t.body;
+                  const p = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString());
+                  log("id_token", { iss: p.iss, aud: p.aud, email: p.email, email_verified: p.email_verified,
+                                    ttl_s: p.exp - p.iat });
+                } catch (err) { log("id_token", { error: err.message }); }
+                if (token) log("link_real_token", await closeCode(token));
+                log("link_bad_token", await closeCode("not-a-token"));
+              })();
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: 250m, memory: 512Mi }
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: s3-identity
+  namespace: outfitter-sandboxes
+spec:
+  replicas: 0
+  sandboxTemplateRef: { name: s3-identity }
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxClaim
+metadata:
+  name: s3-identity-2
+  namespace: outfitter-sandboxes
+spec:
+  warmPoolRef: { name: s3-identity }
+  lifecycle: { shutdownPolicy: Delete }

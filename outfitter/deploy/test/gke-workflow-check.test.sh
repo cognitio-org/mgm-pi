@@ -11,6 +11,10 @@ SCRIPT="${HERE}/../gke-workflow-check.sh"
 DEFAULT_CONFIG="${HERE}/../config.env"
 WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
+# Never touch the real home directory: env.sh's gke_kubeconfig defaults to ~/.kube/outfitter, and a
+# case that reaches it without KUBECONFIG_OUTFITTER once truncated a developer's real one (#152).
+export HOME="${WORK}/home"
+mkdir -p "${HOME}"
 
 fails=0
 

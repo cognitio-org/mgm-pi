@@ -4,10 +4,23 @@
  * GKE warm pod, by waiting for it; see assignment.ts), gets an auth token, opens the link to the
  * api, and lets RunController drive the state machine once `run.spec` arrives. Also reads
  * OUTFITTER_DEV_TOKEN, WORKSPACE, PI_BIN. See outfitter/docs/protocol.md.
+ *
+ * HIGH-severity note (fixed): on the env path, `RUN_TOKEN` must be gone from `process.env` before
+ * `getPiVersion` and `resolveRunAsUser` run -- both spawn children (`execFile`) that inherit
+ * `process.env` wholesale, and a review of the first cut of this file proved the leak with a
+ * `PI_BIN` probe that printed `RUN_TOKEN_IN_CHILD=<the real secret>`. `main()` therefore snapshots
+ * `process.env` into `bootEnv` and deletes `RUN_TOKEN`/`OUTFITTER_DEV_TOKEN` from the *real*
+ * `process.env` as its very first act, before resolving the assignment (which reads from the
+ * snapshot, not `process.env`) and before anything else that could spawn a child. On the env path
+ * this also restores this file's pre-assignment.ts behaviour exactly: the three env checks
+ * (`OUTFITTER_API`/`RUN_ID`/`RUN_TOKEN`, same order, same error text) run before a single phase is
+ * logged or a single child is spawned, so a misconfigured deployment fails exactly as fast and as
+ * loudly as it always did. Only a GKE warm pod (`assignment.ts`'s `isWarmAssignmentWait`) defers
+ * `resolveAssignment` past the run-independent setup below, so it can pre-pay that work while idle.
  */
 import { existsSync } from "node:fs";
 import { chown } from "node:fs/promises";
-import { resolveAssignment } from "./assignment.js";
+import { isWarmAssignmentWait, resolveAssignment, type Assignment } from "./assignment.js";
 import { getIdToken } from "./auth.js";
 import { BROWSER_CAPTURE_MAX_BYTES, captureDownloadError } from "./browser-capture.js";
 import { createGitOps } from "./git.js";
@@ -42,26 +55,42 @@ export function buildWsUrl(apiOrigin: string, runId: string): string {
 }
 
 async function main(): Promise<void> {
-  const devToken = process.env.OUTFITTER_DEV_TOKEN;
-  const workspace = process.env.WORKSPACE ?? DEFAULT_WORKSPACE;
-  const piBin = process.env.PI_BIN ?? DEFAULT_PI_BIN;
-
-  // Read exactly once, here, and held in `devToken` above for the rest of the process: drop it
-  // from process.env immediately so nothing agentd spawns can inherit it by accident. pi's own
-  // environment is already built from an allowlist that excludes it (pi.ts's baseEnvForPi), but
-  // every *other* child agentd spawns -- `git`, `pi --version`, anything a future code path adds --
-  // inherits process.env wholesale (git.ts's execFile). RUN_TOKEN gets the same treatment, inside
-  // `resolveAssignment` (assignment.ts), wherever it's actually read from -- env today, or, on a GKE
-  // warm pod, from a root-only downward-API file that was never in process.env to begin with.
+  // Snapshot process.env before touching it: resolveAssignment (env path, below) still needs to
+  // read RUN_TOKEN/OUTFITTER_DEV_TOKEN, but the *real* process.env must never hold them for even one
+  // tick after this point, since getPiVersion/resolveRunAsUser (further below) spawn children
+  // (execFile) that inherit process.env wholesale -- see this file's HIGH-severity module doc.
+  const bootEnv: NodeJS.ProcessEnv = { ...process.env };
+  delete process.env.RUN_TOKEN;
   delete process.env.OUTFITTER_DEV_TOKEN;
 
+  const warmWait = isWarmAssignmentWait(bootEnv);
+  // Env path (Cloud Run, docker, inprocess, GKE cold, or a genuinely missing assignment): resolve
+  // right now, before any phase is logged or any child spawned -- byte for byte the same checks,
+  // order and error text this file has always had, and now the same *timing* too (a misconfigured
+  // deployment fails exactly as fast and as silently -- zero log lines -- as it did before
+  // assignment.ts existed). Only a GKE warm pod defers this (see the `if (!assignment)` block
+  // below), so it can pre-pay the run-independent setup while idle waiting to be claimed.
+  let assignment: Assignment | undefined = warmWait ? undefined : await resolveAssignment(bootEnv);
+
+  const devToken = bootEnv.OUTFITTER_DEV_TOKEN;
+  const workspace = bootEnv.WORKSPACE ?? DEFAULT_WORKSPACE;
+  const piBin = bootEnv.PI_BIN ?? DEFAULT_PI_BIN;
+
   // Startup phases are timed: the first cloud sessions showed ~3 minutes between Cloud Run's start
-  // time and agentd's first log line, and nothing here should take more than seconds. `runId` isn't
-  // known yet on a GKE warm pod (see below), so phase lines before the assignment resolves just omit
-  // it; `phaseRunId` is filled in once it is.
+  // time and agentd's first log line, and nothing here should take more than seconds. `phaseRunId`
+  // is already known on the env path (from `assignment` above); on a GKE warm pod it's genuinely
+  // unknown until the wait below resolves, so early phase lines there just omit it.
   const bootStart = Date.now();
-  let phaseRunId: string | undefined;
+  let phaseRunId = assignment?.runId;
   const phase = (name: string) => console.log(JSON.stringify({ severity: "INFO", message: `startup: ${name}`, elapsedMs: Date.now() - bootStart, runId: phaseRunId }));
+  // Connection attempts (initial connect + every reconnect) get their own counter so a timing line
+  // says "startup: ..." only the first time and "reconnect <n>: ..." after -- see the doc on
+  // `connectPhase` and #143/LOW-3. Incremented once per attempt, inside `headers()` below.
+  let connectAttempt = 0;
+  const connectPhase = (name: string) => {
+    const label = connectAttempt <= 1 ? `startup: ${name}` : `reconnect ${connectAttempt - 1}: ${name}`;
+    console.log(JSON.stringify({ severity: "INFO", message: label, elapsedMs: Date.now() - bootStart, runId: phaseRunId }));
+  };
   phase("main entered");
   const piVersion = await getPiVersion(piBin);
   phase(`pi version resolved (${piVersion})`);
@@ -71,8 +100,10 @@ async function main(): Promise<void> {
   // anywhere but the job's own audit entries -- see docs/reports/cost-and-logs.md. `devToken` is
   // registered now; RUN_TOKEN and, once run.spec arrives, the per-run secrets (RunController.begin)
   // are registered as soon as each is known, so none can ever appear in a log line even if an error
-  // message or pi's own stderr happens to echo one back.
-  let logger = createLogger();
+  // message or pi's own stderr happens to echo one back. `runId` is already in context on the env
+  // path (LOW-1: it used to be missing from every log line before the assignment resolved, even
+  // though it was known from boot).
+  let logger = createLogger(assignment ? { runId: assignment.runId } : {});
   logger.addSecret(devToken);
   const onLog = (line: string) => logger.info(line);
 
@@ -88,19 +119,32 @@ async function main(): Promise<void> {
   // waits idle to be claimed pre-pays this for free).
   preloadSessionManager();
 
-  // Env first (Cloud Run, docker, inprocess, GKE cold claims): RUN_ID/RUN_TOKEN/OUTFITTER_API are
-  // already set, and this resolves immediately, exactly as before assignment.ts existed. On a GKE
-  // warm pod, RUN_ID isn't in env yet -- this waits (no default timeout) for a SandboxClaim's
-  // annotations to reach the pod's downward-API files (spec §3.5 Option B). Never logs the token;
-  // held in memory only (#45), never written to process.env.
-  phase("waiting for assignment");
-  const { runId, runToken, apiOrigin, waitedMs } = await resolveAssignment();
-  phaseRunId = runId;
-  logger = logger.child({ runId });
-  logger.addSecret(runToken);
-  phase(`assigned (waitedMs=${waitedMs})`);
+  // Only reached on a GKE warm pod (`assignment` is still undefined here): wait (no default
+  // timeout) for a SandboxClaim's annotations to reach the pod's downward-API files (spec §3.5
+  // Option B). Never logs a token value; held in memory only (#45), never written to process.env. A
+  // presence-only heartbeat every few minutes proves it's still alive and what it's still missing,
+  // without ever logging a value (LOW-4).
+  if (!assignment) {
+    phase("waiting for assignment");
+    assignment = await resolveAssignment(bootEnv, {
+      onHeartbeat: (present) =>
+        phase(
+          `still waiting for assignment; present: run-id=${present.runId ? "yes" : "no"} ` +
+            `run-token=${present.runToken ? "yes" : "no"} api=${present.api ? "yes" : "no"}`,
+        ),
+    });
+    phaseRunId = assignment.runId;
+    logger = logger.child({ runId: assignment.runId });
+    phase(`assigned (waitedMs=${assignment.waitedMs})`);
+  }
+  logger.addSecret(assignment.runToken);
+  const { runId, runToken, apiOrigin } = assignment;
 
   const wsUrl = buildWsUrl(apiOrigin, runId);
+
+  // The moment (elapsed since boot) the current connect attempt's identity-token fetch started --
+  // read by `onHeadersError` below, which has no other way to know how long the failed attempt ran.
+  let tokenFetchStart = 0;
 
   const link = new Link({
     url: wsUrl,
@@ -110,10 +154,17 @@ async function main(): Promise<void> {
     // logged in between; the likeliest cost is this fetch's first Workload Identity token exchange on
     // a fresh GKE node.
     headers: async () => {
-      const tokenFetchStart = Date.now();
+      connectAttempt++;
+      tokenFetchStart = Date.now();
       const token = await getIdToken(apiOrigin, devToken);
-      phase(`identity token fetched (${Date.now() - tokenFetchStart}ms)`);
+      connectPhase(`identity token fetched (${Date.now() - tokenFetchStart}ms)`);
       return { Authorization: `Bearer ${token}` };
+    },
+    // #157/#143: a failed fetch used to be silently swallowed by link.ts, indistinguishable from a
+    // slow network. `err.message` is safe to log -- getIdToken never puts a token in one.
+    onHeadersError: (err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      connectPhase(`identity token fetch failed (${Date.now() - tokenFetchStart}ms): ${message}`);
     },
     runId,
     runToken,
@@ -215,8 +266,10 @@ async function main(): Promise<void> {
 
   // Timed (#143), paired with "connecting to the link" below: the delta between the two elapsedMs
   // values is the full connect cost (identity token fetch, TCP/TLS, WS upgrade). Fires on every
-  // (re)connect, not just the first -- see link.ts's onOpen doc.
-  link.onOpen(() => phase("connected to the link"));
+  // (re)connect, not just the first -- see link.ts's onOpen doc. `connectPhase`, not `phase`: only
+  // the first ever connect says "startup: connected to the link"; reconnects say "reconnect <n>: ..."
+  // (LOW-3) since they'd otherwise repeat the same "startup:" line every time the socket drops.
+  link.onOpen(() => connectPhase("connected to the link"));
 
   phase("connecting to the link");
   link.connect();

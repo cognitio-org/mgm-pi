@@ -1,9 +1,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, mkdir, symlink, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { resolveAssignment } from "../src/assignment.js";
+import { join, basename } from "node:path";
+import { randomBytes } from "node:crypto";
+import { isWarmAssignmentWait, resolveAssignment } from "../src/assignment.js";
+
+test("isWarmAssignmentWait: true only when RUN_ID is absent and OUTFITTER_ASSIGNMENT_DIR is set", () => {
+  assert.equal(isWarmAssignmentWait({}), false, "neither set -- the env path's own missing-var error applies");
+  assert.equal(isWarmAssignmentWait({ RUN_ID: "run-1" }), false, "RUN_ID present -- env path, even with no dir");
+  assert.equal(isWarmAssignmentWait({ OUTFITTER_ASSIGNMENT_DIR: "/etc/outfitter/assignment" }), true);
+  assert.equal(
+    isWarmAssignmentWait({ RUN_ID: "run-1", OUTFITTER_ASSIGNMENT_DIR: "/etc/outfitter/assignment" }),
+    false,
+    "RUN_ID already present (e.g. a GKE cold claim) takes the env path even if the dir happens to be set too",
+  );
+});
 
 test("resolveAssignment: env path (RUN_ID present) resolves immediately and deletes RUN_TOKEN from the env object", async () => {
   const env: NodeJS.ProcessEnv = { RUN_ID: "run-1", RUN_TOKEN: "secret-token", OUTFITTER_API: "https://api.example.com" };
@@ -22,8 +34,15 @@ test("resolveAssignment: env path throws agentd's original missing-env-var error
   );
 });
 
-test("resolveAssignment: with no RUN_ID and no OUTFITTER_ASSIGNMENT_DIR, throws the same missing RUN_ID error as the env path (no behaviour change)", async () => {
-  await assert.rejects(() => resolveAssignment({ OUTFITTER_API: "https://api.example.com" }), /agentd: missing required env var RUN_ID/);
+test("resolveAssignment: OUTFITTER_ASSIGNMENT_DIR pointing at a directory that doesn't exist on disk at all is treated as empty files (ENOENT), not an error -- only a deadline ends the wait", async () => {
+  // Genuinely missing, not just empty: never created, real fs defaults (no injected readFile), so
+  // this exercises defaultReadFile's ENOENT->"" path for the whole directory, not only a file
+  // inside an existing one (that's the "real files on disk" test further down).
+  const missingDir = join(tmpdir(), `outfitter-assignment-missing-${randomBytes(4).toString("hex")}`);
+  await assert.rejects(
+    () => resolveAssignment({ OUTFITTER_ASSIGNMENT_DIR: missingDir }, { pollMs: 20, deadlineMs: 70 }),
+    /agentd: timed out after 70ms waiting for the run assignment/,
+  );
 });
 
 /** A fake downward-API directory: an in-memory map of filename -> contents, read through the same
@@ -138,6 +157,88 @@ test("resolveAssignment: real files on disk (defaults: fs.readFile, a real setTi
     const result = await promise;
     assert.deepEqual(result, { runId: "run-real", runToken: "real-token", apiOrigin: "https://link.example.com", waitedMs: result.waitedMs });
     assert.ok(result.waitedMs >= 60, `expected to have waited at least a couple of poll cycles, got ${result.waitedMs}`);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("resolveAssignment: reports a presence-only heartbeat at the configured interval while still waiting -- never a value", async () => {
+  const { files, readFile } = fakeDir({ "run-id": "run-warm", "run-token": "", api: "" });
+  let now = 0;
+  const sleep = async (ms: number) => {
+    now += ms;
+  };
+  const heartbeats: Array<{ runId: boolean; runToken: boolean; api: boolean }> = [];
+  const result = await resolveAssignment(
+    { OUTFITTER_ASSIGNMENT_DIR: "/etc/outfitter/assignment" },
+    {
+      readFile,
+      now: () => now,
+      sleep,
+      pollMs: 100,
+      heartbeatMs: 500,
+      onHeartbeat: (presence) => {
+        heartbeats.push(presence);
+        // Only run-id is set so far; let it resolve once the heartbeat itself has fired at least
+        // once, so the test doesn't depend on exactly how many polls a 500ms heartbeat spans.
+        if (heartbeats.length === 1) {
+          files.set("run-token", "warm-token");
+          files.set("api", "https://link.example.com");
+        }
+      },
+    },
+  );
+  assert.equal(result.runToken, "warm-token");
+  assert.deepEqual(heartbeats, [{ runId: true, runToken: false, api: false }]);
+  // Presence booleans only -- assert the actual secret values never appear anywhere in what was
+  // reported (JSON.stringify would surface a leaked string value; a boolean can't leak one).
+  assert.ok(!JSON.stringify(heartbeats).includes("warm-token"));
+});
+
+test("resolveAssignment: reads through the kubelet's real downward-API layout -- files are symlinks through a `..data` symlink to a timestamped directory, and the atomic swap that updates it", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "outfitter-assignment-kubelet-"));
+  try {
+    // Initial state: the kubelet always creates the full layout, even for an unset annotation (an
+    // empty file, not a missing one) -- see deploy/gke/sandbox-template.yaml's downwardAPI volume.
+    const initialTarget = join(dir, "..2024_01_01_00_00_00.000000000");
+    await mkdir(initialTarget);
+    await writeFile(join(initialTarget, "run-id"), "");
+    await writeFile(join(initialTarget, "run-token"), "");
+    await writeFile(join(initialTarget, "api"), "");
+    await symlink(basename(initialTarget), join(dir, "..data"));
+    for (const name of ["run-id", "run-token", "api"]) {
+      await symlink(join("..data", name), join(dir, name));
+    }
+
+    const promise = resolveAssignment({ OUTFITTER_ASSIGNMENT_DIR: dir }, { pollMs: 20 });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    // Confirms the wait is genuinely reading through the symlinks (not just "no error yet"): still
+    // pending, because every value is still empty.
+    let settled = false;
+    void promise.then(() => (settled = true));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(settled, false, "should still be waiting -- the initial layout's files are all empty");
+
+    // A claim adopts the pod: the kubelet creates a *new* timestamped directory, writes the updated
+    // values into it, then atomically re-points `..data` at it with a single rename (never touching
+    // the existing `run-id`/`run-token`/`api` symlinks themselves, which always point through
+    // `..data`) -- this is the real mechanism spec §3.5 and this module's own doc describe.
+    const newTarget = join(dir, "..2024_01_01_00_00_05.000000000");
+    await mkdir(newTarget);
+    await writeFile(join(newTarget, "run-id"), "run-kubelet");
+    await writeFile(join(newTarget, "run-token"), "kubelet-token");
+    await writeFile(join(newTarget, "api"), "https://link.example.com");
+    const tmpLink = join(dir, "..data_tmp");
+    await symlink(basename(newTarget), tmpLink);
+    await rename(tmpLink, join(dir, "..data"));
+
+    const result = await promise;
+    assert.deepEqual(result, {
+      runId: "run-kubelet",
+      runToken: "kubelet-token",
+      apiOrigin: "https://link.example.com",
+      waitedMs: result.waitedMs,
+    });
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -96,21 +96,30 @@ by default instead of leaked by default. Everything pi needs *per run* (the Lite
 URL, the session id, the spend file) is passed explicitly by `run.ts` on top of that. An operator
 who needs more through (e.g. `HTTPS_PROXY`) sets `OUTFITTER_PI_ENV_PASSTHROUGH` on agentd, which can
 add names but can never re-add `RUN_TOKEN`, `RUN_ID`, `OUTFITTER_API`, `OUTFITTER_DEV_TOKEN` or
-`NODE_OPTIONS`. main.ts also deletes `RUN_TOKEN`/`OUTFITTER_DEV_TOKEN` from its own `process.env`
-right after reading them, so no other child agentd spawns (`git`, `pi --version`) inherits them
-either.
+`NODE_OPTIONS`. `main.ts` snapshots `process.env` into a private `bootEnv` object and deletes
+`RUN_TOKEN`/`OUTFITTER_DEV_TOKEN` from the *real* `process.env` as its first act, before resolving
+anything else (including `getPiVersion`'s `pi --version` and `resolveRunAsUser`'s `id`/`getent`
+lookups, both of which spawn children that inherit `process.env` wholesale via `execFile`) -- a
+review of an earlier cut of this file found the delete happening too late, after those two spawns
+already had a chance to inherit `RUN_TOKEN`. Everything downstream reads from the `bootEnv` snapshot
+instead of `process.env`, so nothing after that first line can still see the real value in the
+process's own environment.
 
 **Where the takeover kit comes from: env, or, on a GKE warm pod, a wait.** `packages/agentd/src/assignment.ts`'s
-`resolveAssignment` is what main.ts actually calls. On Cloud Run, docker, inprocess and a GKE *cold*
-claim, `RUN_ID` is already in env at boot and this returns immediately -- no behavior change from
-before this module existed. A GKE *warm* pod boots with none of the three in env: it was pulled
-from the warm pool before any run existed, so there is nothing to assign it yet
-(`docs/specs/gke-sandbox-provider.md` §3.5). `resolveAssignment` instead polls the read-only files
-under `OUTFITTER_ASSIGNMENT_DIR` (default `/etc/outfitter/assignment/{run-id,run-token,api}`,
-root-only 0400) until a `SandboxClaim`'s annotations -- the API's warm-mode `start()` -- reach them
-via the downward API, with no default timeout: an unclaimed warm pod stays idle, never dialling
-out, until the pool shrinks and deletes it. Same isolation rule either way: the resolved values are
-held in memory only and never written to `process.env`.
+`resolveAssignment` is what main.ts actually calls, against `bootEnv`. On Cloud Run, docker,
+inprocess and a GKE *cold* claim, `RUN_ID` is already in env at boot: `main.ts` resolves it right
+away, before any child is spawned or any log line written, and it fails exactly as fast and as
+quietly (zero log lines) on a missing var as it always did -- the same checks, same order, same
+error text as before `assignment.ts` existed. A GKE *warm* pod boots with none of the three in env:
+it was pulled from the warm pool before any run existed, so there is nothing to assign it yet
+(`docs/specs/gke-sandbox-provider.md` §3.5). Only this case defers `resolveAssignment` past agentd's
+own run-independent setup (pi's version, the run-as-user uid/gid, preloading pi's session package),
+so a warm pod pre-pays that work while it waits: `resolveAssignment` polls the read-only files under
+`OUTFITTER_ASSIGNMENT_DIR` (default `/etc/outfitter/assignment/{run-id,run-token,api}`, root-only
+0400) until a `SandboxClaim`'s annotations -- the API's warm-mode `start()` -- reach them via the
+downward API, with no default timeout: an unclaimed warm pod stays idle, never dialling out, until
+the pool shrinks and deletes it. Same isolation rule either way: the resolved values are held in
+memory only and never written to `process.env`.
 
 **Two Linux users inside the sandbox.** `image/Dockerfile`'s entrypoint (agentd) runs as root; `git`
 therefore also runs as root, so the `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0`/`GIT_CONFIG_VALUE_0` env

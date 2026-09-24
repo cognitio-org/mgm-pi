@@ -488,7 +488,7 @@ export async function resolveAssignment(env?: NodeJS.ProcessEnv, opts?: {
 ```
 
 - `RUN_ID` and `RUN_TOKEN` in env: return them immediately (today's path, unchanged).
-- Else, `OUTFITTER_ASSIGNMENT_DIR` set: poll `run-id` and `run-token` every 100 ms until both are
+- Else, `OUTFITTER_ASSIGNMENT_DIR` set: poll `run-id` and `run-token` every 250 ms until both are
   non-empty (trimmed). `apiOrigin` is the `api` file if non-empty, else env `OUTFITTER_API`. No timeout:
   an unclaimed warm pod waits until the pool shrinks and deletes it.
 - Else: today's `requireEnv` error.
@@ -509,15 +509,36 @@ projected KSA token with `resourceNames`-restricted RBAC. It needs a token mount
 fresh security review.
 
 **Verified and implemented (PR4, `gke-sandbox-provider-plan.md` §6d).** S1 passed (p90 well under 2s
-in-cluster; `docs/reports/gke-spike.md` S1), so PR4 shipped Option B as designed above, with one
-addition the design above didn't call out: `resolveAssignment` waits for `run-id`, `run-token` **and**
-`api` to all be non-empty (not just the first two) before returning, since the three annotations land
-in the pod's downward-API files together (one `additionalPodMetadata.annotations` patch, one atomic
-volume refresh) -- waiting on all three avoids a spurious "missing OUTFITTER_API" from a read caught
-between two refreshes. `packages/agentd/src/assignment.ts` is the actual implementation; its
-`resolveAssignment` signature matches the sketch above except it also accepts an injectable `sleep`
-and `deadlineMs` (both test-only knobs -- production never sets a deadline, matching "no timeout by
-default" above).
+in-cluster; `docs/reports/gke-spike.md` S1), so PR4 shipped Option B as designed above, with a few
+adjustments the design above didn't call out:
+
+- `resolveAssignment` waits for `run-id`, `run-token` **and** `api` to all be non-empty (not just
+  the first two) before returning. This is *not* guarding against a real production race: the
+  kubelet's projected-volume refresh swaps the whole `..data` symlink to a fresh timestamped
+  directory in a single atomic rename, so `run-id`/`run-token`/`api` become visible together, not
+  staggered (verified against the real layout in `packages/agentd/test/assignment.test.ts`, which
+  builds the actual `..data`-symlink structure and performs the same atomic rename). Waiting on all
+  three is belt-and-suspenders insurance against this module's own three separate `readFile` calls
+  landing on either side of that rename -- a scenario only reproduced as a deliberate test artifact
+  (staggering the fake files' writes one at a time), never observed against the real mechanism.
+- The poll interval is 250 ms (not the 100 ms sketched above).
+- A presence-only heartbeat (never a value) logs every few minutes while still waiting, so a stuck
+  warm pod is visible in its own logs without ever risking a token in them.
+- `main.ts` resolves the env path (`RUN_ID` already in env) *before* any of the run-independent
+  setup below, not after -- a review of an early cut of this PR found `RUN_TOKEN` still reachable
+  in `process.env` when `getPiVersion`/`resolveRunAsUser` spawned their children, because the delete
+  happened inside `resolveAssignment`, called only after those spawns. Only the warm-pod wait
+  defers `resolveAssignment` past that setup now (`main.ts`'s own module doc has the detail).
+- Both the identity-token fetch and the WebSocket connect are logged on failure too, not just
+  success (`identity token fetch failed (<ms>): <message>`), via a new `onHeadersError` callback on
+  `Link` (`packages/agentd/src/link.ts`, closes #157: it used to swallow a `headers()` rejection with
+  no log line at all). A reconnect's phase lines say `reconnect <n>: ...` instead of repeating
+  `startup: ...` every time the socket drops.
+
+`packages/agentd/src/assignment.ts` is the actual implementation; its `resolveAssignment` signature
+matches the sketch above except it also accepts injectable `sleep`, `deadlineMs`, `heartbeatMs` and
+`onHeartbeat` (the first two are test-only knobs -- production never sets a deadline, matching "no
+timeout by default" above).
 
 ### 3.6 Networking, logs, workspace
 

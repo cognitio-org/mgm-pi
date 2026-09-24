@@ -66,6 +66,13 @@ export interface LinkOptions {
   /** Injectable timer functions, for tests. */
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: typeof clearTimeout;
+  /** Called when the `headers` provider itself rejects (e.g. a failed identity-token fetch) --
+   * before any socket is even attempted. Reconnect is scheduled exactly as before regardless of
+   * whether this is set (#157: this used to be swallowed with no log line at all, which made a
+   * real failure indistinguishable from a slow network). The caller's callback must not log the
+   * error's raw text if it could ever carry a secret; `main.ts`'s own `headers` provider never puts
+   * one in an Error message. Default: no-op. */
+  onHeadersError?: (err: unknown) => void;
 }
 
 export type LinkHandler = (msg: DownMessage) => void;
@@ -225,9 +232,11 @@ export class Link {
     if (this.closed) return;
     this.opts.headers().then(
       (headers) => this.openWithHeaders(headers),
-      () => {
+      (err) => {
         // The headers provider failed (e.g. a transient metadata-server hiccup). Treat it like a
-        // failed connection attempt and retry with backoff rather than throwing out of here.
+        // failed connection attempt and retry with backoff rather than throwing out of here --
+        // but tell the caller first (#157), since this used to be silently swallowed.
+        this.opts.onHeadersError?.(err);
         if (this.closed) return;
         this.scheduleReconnect();
       },

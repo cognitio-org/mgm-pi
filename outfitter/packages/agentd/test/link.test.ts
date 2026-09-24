@@ -280,6 +280,25 @@ test("Link: a headers-provider failure is treated like a failed connection attem
   assert.equal(FakeWebSocket.instances[0].opts.headers?.Authorization, "Bearer token-2");
 });
 
+test("Link: #157 -- a headers-provider failure calls onHeadersError with the rejection, not just a silent retry", async (t) => {
+  let calls = 0;
+  const errors: unknown[] = [];
+  const link = makeLink({
+    headers: async () => {
+      calls++;
+      if (calls === 1) throw new Error("metadata server unreachable");
+      return { Authorization: "Bearer token-2" };
+    },
+    onHeadersError: (err) => errors.push(err),
+  });
+  t.after(() => link.close());
+
+  link.connect();
+  await waitFor(() => FakeWebSocket.instances.length === 1, 2000);
+  assert.equal(errors.length, 1);
+  assert.equal((errors[0] as Error).message, "metadata server unreachable");
+});
+
 test("Link: proactively reconnects once a connection reaches maxConnectionAgeMs (Cloud Run's 60 min cap)", async (t) => {
   const link = makeLink({ maxConnectionAgeMs: 15 });
   t.after(() => link.close());

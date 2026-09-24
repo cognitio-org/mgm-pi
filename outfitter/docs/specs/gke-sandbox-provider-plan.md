@@ -292,58 +292,98 @@ change round 1's own §6b description.
 
 ## 6d. PR4 delivered (2026-09-24)
 
-Matches the §3 PR4 row and spec §3.5's Option B. Notes for whoever builds on this:
+Matches the §3 PR4 row and spec §3.5's Option B. Notes for whoever builds on this (updated by §6e's
+review-round fixes -- read that section too, it changes some of what's described here):
 
 - **`packages/agentd/src/assignment.ts`** (new) is what `main.ts` now calls instead of reading
   `OUTFITTER_API`/`RUN_ID`/`RUN_TOKEN` from env directly. Env path (Cloud Run, docker, inprocess, a
-  GKE cold claim) is byte-for-byte the same checks in the same order, same error text, as before this
-  file existed -- the only behaviour change on that path is that `RUN_TOKEN` is deleted from the
-  `env` object `resolveAssignment` was given (was `process.env` directly; now the same object, just
-  one level of indirection).
+  GKE cold claim): same checks, same order, same error text as before this file existed. `main.ts`
+  now resolves this path *before* any run-independent setup or log line (§6e), so the timing matches
+  too -- see §6e's first bullet for why "byte-for-byte, no behaviour change" wasn't quite true of the
+  first cut.
 - **File path (GKE warm)**: when `RUN_ID` isn't in env and `OUTFITTER_ASSIGNMENT_DIR` is, it polls
-  (default 100 ms, injectable) `run-id`/`run-token`/`api` under that directory until **all three**
-  are non-empty, not just `run-id`/`run-token` -- gke.ts's warm mode sets all three annotations in one
-  `additionalPodMetadata.annotations` patch and the kubelet's downward-API refresh swaps the whole
-  volume atomically, so requiring all three avoids a false "missing OUTFITTER_API" from a read that
-  lands between `run-id`/`run-token` landing and `api` landing (caught by this PR's own
-  `packages/agentd/test/main.test.ts`, which reproduced the race with three separate `writeFile`
-  calls before the fix). No default deadline, per the spec and the plan's acceptance bar: an
-  unclaimed warm pod waits idle forever rather than dialling out or exiting.
-- **Preload before the wait**: `main.ts` now calls `preloadSessionManager()` (and
-  `resolveRunAsUser()`, which also doesn't need the run) *before* `resolveAssignment()`, not after
-  `link.connect()` as before -- a warm pod that waits idle to be claimed now pre-pays that work for
-  free instead of paying it only after a claim arrives. For the env path this is a no-op change
-  (resolution is immediate either way).
-- **#143 (id-token and connect timing)**: `main.ts`'s `headers()` provider passed to `Link` now
-  times each `getIdToken` call and logs `startup: identity token fetched (<ms>ms)`; `link.onOpen`
-  logs `startup: connected to the link`, paired with the existing `startup: connecting to the link`
-  so the delta between the two `elapsedMs` values is the full connect cost. **Deviation from the
-  issue's stretch goal**: warm-path ID-token prefetch (fetching it before the assignment arrives) was
-  not implemented -- the assignment is also what supplies `OUTFITTER_API` (the token's audience) on
-  the warm path, and adding a second, deployment-fixed way to know the link origin ahead of time
-  (e.g. a new `OUTFITTER_LINK_ORIGIN_HINT` env var) felt like a second source of truth for one value
-  for a startup-latency win that hasn't been measured on a warm pod yet (S2's 9s figure is from a
-  *cold* claim, where a fresh node's Workload Identity setup is plausibly a bigger factor than on an
+  (250 ms, injectable) `run-id`/`run-token`/`api` under that directory until **all three** are
+  non-empty, not just `run-id`/`run-token`. This is *not* a real production race being fixed --
+  gke.ts's warm mode sets all three annotations in one `additionalPodMetadata.annotations` patch,
+  and the kubelet's downward-API refresh swaps the whole projected volume's `..data` symlink
+  atomically, so the three files become visible together in practice (verified against the real
+  kubelet layout in `assignment.test.ts`, §6e). Waiting on all three is cheap insurance against this
+  module's own three independent `readFile` calls, nothing more. No default deadline, per the spec
+  and the plan's acceptance bar: an unclaimed warm pod waits idle forever rather than dialling out or
+  exiting. A presence-only heartbeat (§6e) logs every few minutes while still waiting.
+- **Preload before the wait**: `main.ts` calls `preloadSessionManager()` (and `resolveRunAsUser()`,
+  which also doesn't need the run) *before* the warm-pod wait -- a warm pod that waits idle to be
+  claimed pre-pays that work for free instead of paying it only after a claim arrives. The env path
+  is unaffected (resolution there is immediate and now happens even earlier, before this setup --
+  §6e).
+- **#143 (id-token and connect timing)**: `main.ts`'s `headers()` provider passed to `Link` times
+  each `getIdToken` call and logs `startup: identity token fetched (<ms>ms)` (or, on failure,
+  `identity token fetch failed (<ms>): <message>`, §6e); `link.onOpen` logs
+  `startup: connected to the link`, paired with the existing `startup: connecting to the link` so
+  the delta between the two `elapsedMs` values is the full connect cost. A reconnect's lines say
+  `reconnect <n>: ...` instead of repeating `startup: ...` (§6e). **Deviation from the issue's
+  stretch goal**: warm-path ID-token prefetch (fetching it before the assignment arrives) was not
+  implemented -- the assignment is also what supplies `OUTFITTER_API` (the token's audience) on the
+  warm path, and adding a second, deployment-fixed way to know the link origin ahead of time (e.g. a
+  new `OUTFITTER_LINK_ORIGIN_HINT` env var) felt like a second source of truth for one value for a
+  startup-latency win that hasn't been measured on a warm pod yet (S2's 9s figure is from a *cold*
+  claim, where a fresh node's Workload Identity setup is plausibly a bigger factor than on an
   already-running warm pod). Left as a follow-up once PR5's benchmark has warm-pod numbers to justify
   it. The timing itself ships either way, so the next spike has the data.
-- **Tests**: `packages/agentd/test/assignment.test.ts` (unit; env path unchanged including exact
-  error text/order, file path waits/resolves/keeps-waiting-on-a-partial-write, a deadline option,
-  never touches `process.env`, real-fs sanity test with genuinely missing files) and
-  `packages/agentd/test/main.test.ts` (integration; spawns the real built `dist/src/main.js` against
-  a bare `ws` server standing in for the link -- no real api needed for what this PR touches --
-  covering both the env-path and warm-path shapes end to end: phase-line order, no dial-out while
-  unclaimed, and that neither `RUN_TOKEN` nor `OUTFITTER_DEV_TOKEN` ever appears in agentd's own
-  stdout). `main.test.ts` skips itself with a clear message if `packages/agentd` hasn't been built
-  yet, the same convention `packages/api/test/e2e.test.ts` uses for the same reason.
+- **Tests**: `packages/agentd/test/assignment.test.ts` (unit), `packages/agentd/test/link.test.ts`
+  (unit, `onHeadersError`) and `packages/agentd/test/main.test.ts` (integration; spawns the real
+  built `dist/src/main.js` against a bare `ws` server standing in for the link -- no real api needed
+  for what this PR touches). `main.test.ts` skips itself with a clear message if `packages/agentd`
+  hasn't been built yet, the same convention `packages/api/test/e2e.test.ts` uses for the same
+  reason. §6e lists what the review round added to each.
 - **Not touched**: `packages/api/src/providers/gke.ts` (owned by an in-flight auth fix elsewhere) and
   `deploy/gke/sandbox-template.yaml` (already correct from PR3 -- confirmed the file names/paths
   `assignment.ts` reads against it, no changes needed).
-- **Observation, not fixed here**: `link.ts`'s `open()` silently swallows a `headers()` rejection
-  (falls straight to `scheduleReconnect()` with no log line) -- pre-existing, not introduced by this
-  PR, found while writing `main.test.ts`'s warm-path test (a missing `OUTFITTER_DEV_TOKEN` in that
-  test's env made `getIdToken` reject with no visible symptom beyond "hello never arrives"). Worth a
-  log line in a future PR; out of scope here since it isn't part of #139/#143's ask and touching
-  `link.ts`'s reconnect path is easy to get wrong under the "cloud fixes" protocol-version work.
+
+---
+
+## 6e. Review round 1 fixes (2026-09-24)
+
+PR4's first review round found one blocking issue and several medium/low ones, all fixed before
+merge. Recorded here since some correct §6d's own description above.
+
+- **High: `RUN_TOKEN` was still in `process.env` when `getPiVersion` and `resolveRunAsUser` spawned
+  their children.** The first cut deleted it inside `resolveAssignment`, called from `main.ts` only
+  *after* those two run-independent steps (moved earlier, deliberately, so a warm pod could pre-pay
+  them -- see §6d). Both spawn children via `execFile`, which inherits `process.env` wholesale; the
+  reviewer proved the leak with a `PI_BIN` probe script that wrote the real token to a file. Fixed in
+  `main.ts`: `process.env` is snapshotted into a private `bootEnv` and `RUN_TOKEN`/
+  `OUTFITTER_DEV_TOKEN` are deleted from the *real* `process.env` as the very first act of `main()`,
+  before anything else runs; `resolveAssignment` is then called against the `bootEnv` snapshot, not
+  `process.env`. On the env path, `resolveAssignment` is now also called before any of the
+  run-independent setup or a single log line -- restoring the exact pre-`assignment.ts` fail-fast
+  timing (same checks, same order, same error text, and now zero log lines before a fatal missing-var
+  exit, matching what `main.ts` did before this file existed). Only the warm-pod wait still defers
+  past that setup, since deferring it is the whole point there. A regression test
+  (`main.test.ts`, the `PI_BIN` probe) proves `RUN_TOKEN` never reaches a spawned child's environment.
+- **Low fixes**:
+  - Early phase lines (e.g. `main entered`) now carry `runId` from boot on the env path, since it's
+    already known then -- they used to omit it until the (on this path, instant) assignment resolved.
+  - The identity-token fetch is now logged on failure too:
+    `identity token fetch failed (<ms>): <message>` (the message is always safe -- `getIdToken` never
+    puts a token in one). This closes **#157**: `link.ts`'s `open()` used to swallow a `headers()`
+    rejection with no log line at all, indistinguishable from a slow network. `Link` gained an
+    optional `onHeadersError` callback for this, tested directly in `link.test.ts`.
+  - A repeated connection attempt (any reconnect after the first) now says `reconnect <n>: ...`
+    instead of repeating `startup: ...` on every drop, for both the identity-token-fetch line and
+    `connected to the link`.
+  - `resolveAssignment`'s poll interval default changed from 100 ms to 250 ms.
+  - A presence-only heartbeat (`onHeartbeat`, default every 5 minutes) reports which of
+    `run-id`/`run-token`/`api` are present -- never a value -- while still waiting on the file path,
+    so a stuck warm pod is visible in Cloud Logging without risking a token in it.
+  - `assignment.test.ts`'s "no `RUN_ID`, no dir" test used to duplicate another test's input
+    byte-for-byte; replaced with a test against a directory that genuinely doesn't exist on disk
+    (not just an existing directory with missing files), and a new test builds the kubelet's actual
+    downward-API layout (a `..data` symlink to a timestamped directory, the files themselves symlinks
+    through it) and performs the same atomic rename the kubelet does, to verify the "wait on all
+    three files" design directly against the real mechanism rather than only against a hand-rolled
+    fake. This is also what grounds §6d's corrected claim that the three-file wait guards a test
+    artifact, not an observed production race.
 
 ---
 

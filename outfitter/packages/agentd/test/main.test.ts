@@ -9,7 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, chmod, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,11 +37,14 @@ interface PhaseLine {
 
 /** A bare `ws` server: accepts the upgrade and records every frame it receives. Enough to observe
  * Link's "open" (and therefore agentd's "connected to the link" phase) and the `hello` frame,
- * without a real api behind it. */
-async function startFakeLink(): Promise<{ port: number; received: unknown[]; close(): Promise<void> }> {
+ * without a real api behind it. `sockets` (in connection order) lets a test force a server-side
+ * disconnect to exercise a reconnect. */
+async function startFakeLink(): Promise<{ port: number; received: unknown[]; sockets: WsSocket[]; close(): Promise<void> }> {
   const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
   const received: unknown[] = [];
+  const sockets: WsSocket[] = [];
   wss.on("connection", (socket: WsSocket) => {
+    sockets.push(socket);
     socket.on("message", (data) => {
       try {
         received.push(JSON.parse(data.toString()));
@@ -56,6 +59,7 @@ async function startFakeLink(): Promise<{ port: number; received: unknown[]; clo
   return {
     port,
     received,
+    sockets,
     close: () => new Promise<void>((resolve) => wss.close(() => resolve())),
   };
 }
@@ -97,8 +101,13 @@ async function waitFor(predicate: () => boolean, description: string, timeoutMs 
   }
 }
 
+/** Extracts phase names, stripping the "startup: " prefix on the first connect but keeping
+ * "reconnect <n>: " intact (LOW-3): a bare name means the first attempt; a "reconnect <n>: "
+ * prefix means a later one. */
 function phaseNames(jsonLines: PhaseLine[]): string[] {
-  return jsonLines.filter((l) => l.message.startsWith("startup: ")).map((l) => l.message.replace(/^startup: /, ""));
+  return jsonLines
+    .filter((l) => l.message.startsWith("startup: ") || /^reconnect \d+: /.test(l.message))
+    .map((l) => l.message.replace(/^startup: /, ""));
 }
 
 /** `WebSocketServer.close()` waits for every still-connected client socket to close before its
@@ -145,7 +154,15 @@ test(
 
       await waitFor(() => phaseNames(jsonLines).includes("connected to the link"), "the connected-to-the-link phase");
       const phases = phaseNames(jsonLines);
-      const order = ["main entered", "waiting for assignment", "assigned (waitedMs=0)", "connecting to the link", "connected to the link"];
+      // No "waiting for assignment"/"assigned" phase on the env path any more (review fix, LOW-1/
+      // "match main again"): resolveAssignment resolves before any phase is even logged here, so
+      // there's nothing to wait on and nothing to report -- exactly as it behaved before
+      // assignment.ts existed.
+      assert.ok(
+        !phases.some((p) => p === "waiting for assignment" || p.startsWith("assigned (")),
+        `the env path should log no waiting/assigned phase at all, got ${JSON.stringify(phases)}`,
+      );
+      const order = ["main entered", "connecting to the link", "connected to the link"];
       let cursor = -1;
       for (const name of order) {
         const idx = phases.indexOf(name);
@@ -156,6 +173,11 @@ test(
         phases.some((p) => /^identity token fetched \(\d+ms\)$/.test(p)),
         `expected an "identity token fetched (<ms>)" phase in ${JSON.stringify(phases)}`,
       );
+
+      // LOW-1: runId is already known at boot on the env path -- every phase line, including the
+      // very first one, carries it (it used to be missing until the assignment resolved).
+      const mainEntered = jsonLines.find((l) => l.message === "startup: main entered");
+      assert.equal(mainEntered?.runId, "run-env-path", `expected runId on the very first phase line, got ${JSON.stringify(mainEntered)}`);
 
       const blob = rawLines.join("\n");
       assert.ok(!blob.includes(runToken), "RUN_TOKEN never appears in agentd's own stdout");
@@ -193,9 +215,9 @@ test(
     try {
       await waitFor(() => phaseNames(jsonLines).includes("waiting for assignment"), "the waiting-for-assignment phase");
 
-      // Give it several poll cycles (default 100ms) to prove it's genuinely idle, not erroring out
+      // Give it several poll cycles (default 250ms) to prove it's genuinely idle, not erroring out
       // or trying to reach anything -- exit code null means the process is still alive.
-      await new Promise((resolve) => setTimeout(resolve, 350));
+      await new Promise((resolve) => setTimeout(resolve, 600));
       assert.equal(child.exitCode, null, "a warm pod that is never claimed stays up, it doesn't exit");
       assert.ok(!phaseNames(jsonLines).includes("connecting to the link"), "no attempt to connect before a run is assigned");
 
@@ -226,6 +248,127 @@ test(
       await killAndWaitForExit(child);
       await link?.close();
       await rm(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "agentd: HIGH regression -- RUN_TOKEN is gone from process.env before getPiVersion spawns its child, on the env path",
+  { skip: !existsSync(agentdMain) && "packages/agentd is not built -- run npm run build first" },
+  async () => {
+    // A review of the first cut of this file proved RUN_TOKEN was still in process.env when
+    // getPiVersion (main.ts, execFile piBin --version) and resolveRunAsUser (id/getent) spawned
+    // their children, because the delete happened inside resolveAssignment, which main.ts called
+    // *after* both those spawns. This probe stands in for pi: a fresh temp directory (no
+    // package.json above it, so getPiVersion's versionFromPackageJson fails and it actually spawns
+    // the probe with --version, execFile-inheriting process.env exactly like the real bug did) that
+    // writes its own RUN_TOKEN to a file the test can read.
+    const probeDir = await mkdtemp(join(tmpdir(), "outfitter-run-token-probe-"));
+    const probeBin = join(probeDir, "pi-probe.cjs");
+    const probeOut = join(probeDir, "probe-out.txt");
+    await writeFile(
+      probeBin,
+      [
+        "#!/usr/bin/env node",
+        "const fs = require('fs');",
+        "if (process.argv.includes('--version')) {",
+        "  fs.writeFileSync(process.env.PROBE_OUT_FILE, 'RUN_TOKEN_IN_CHILD=' + (process.env.RUN_TOKEN || '') + '\\n');",
+        "  process.stdout.write('probe 0.0.0\\n');",
+        "  process.exit(0);",
+        "}",
+        "process.stdout.write('probe 0.0.0\\n');",
+        "",
+      ].join("\n"),
+    );
+    await chmod(probeBin, 0o755);
+
+    const runToken = randomToken("run-token");
+    const env: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH,
+      RUN_ID: "run-probe",
+      RUN_TOKEN: runToken,
+      OUTFITTER_API: "http://127.0.0.1:1", // never reached -- this test stops before connecting
+      PI_BIN: probeBin,
+      PROBE_OUT_FILE: probeOut,
+    };
+    const { child } = spawnAgentd(env);
+    try {
+      await waitFor(() => existsSync(probeOut), "the probe's --version invocation to write its output file");
+      const contents = await readFile(probeOut, "utf8");
+      assert.equal(contents, "RUN_TOKEN_IN_CHILD=\n", `RUN_TOKEN must not reach the probe's environment, got: ${contents}`);
+    } finally {
+      await killAndWaitForExit(child);
+      await rm(probeDir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "agentd: a reconnect's phase lines say 'reconnect <n>:', not 'startup:' -- only the first connect gets the startup prefix",
+  { skip: !existsSync(agentdMain) && "packages/agentd is not built -- run npm run build first" },
+  async () => {
+    const link = await startFakeLink();
+    const env: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH,
+      RUN_ID: "run-reconnect",
+      RUN_TOKEN: randomToken("run-token"),
+      OUTFITTER_API: `http://127.0.0.1:${link.port}`,
+      OUTFITTER_DEV_TOKEN: randomToken("dev-token"),
+      PI_BIN: fakePiPath,
+    };
+    const { child, jsonLines } = spawnAgentd(env);
+    try {
+      await waitFor(() => phaseNames(jsonLines).includes("connected to the link"), "the first connect");
+      assert.ok(phaseNames(jsonLines).some((p) => /^identity token fetched \(\d+ms\)$/.test(p)));
+
+      // Force a server-side disconnect (a non-terminal close code) -- Link schedules a reconnect
+      // with backoff exactly as it would for a dropped TCP connection.
+      assert.equal(link.sockets.length, 1);
+      link.sockets[0].close();
+
+      await waitFor(
+        () => phaseNames(jsonLines).some((p) => p === "reconnect 1: connected to the link"),
+        "the reconnect's connected-to-the-link phase",
+        WAIT_TIMEOUT_MS,
+      );
+      const phases = phaseNames(jsonLines);
+      assert.ok(
+        phases.some((p) => /^reconnect 1: identity token fetched \(\d+ms\)$/.test(p)),
+        `expected a "reconnect 1: identity token fetched (<ms>)" phase in ${JSON.stringify(phases)}`,
+      );
+      // The first connect's lines keep their "startup:" wording -- only the second attempt onward
+      // switches.
+      assert.equal(phases.filter((p) => p === "connected to the link").length, 1);
+    } finally {
+      await killAndWaitForExit(child);
+      await link.close();
+    }
+  },
+);
+
+test(
+  "agentd: a failed identity-token fetch logs 'identity token fetch failed (<ms>): <message>' via link.ts's onHeadersError (#157)",
+  { skip: !existsSync(agentdMain) && "packages/agentd is not built -- run npm run build first" },
+  async () => {
+    const env: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH,
+      RUN_ID: "run-token-fail",
+      RUN_TOKEN: randomToken("run-token"),
+      OUTFITTER_API: "http://127.0.0.1:1",
+      // No OUTFITTER_DEV_TOKEN, and the GCE metadata server isn't reachable in this test
+      // environment either -- getIdToken has no source for a token and rejects.
+      PI_BIN: fakePiPath,
+    };
+    const { child, jsonLines, rawLines } = spawnAgentd(env);
+    try {
+      await waitFor(
+        () => phaseNames(jsonLines).some((p) => /^identity token fetch failed \(\d+ms\): .+$/.test(p)),
+        "the identity-token-fetch-failed phase",
+      );
+      const blob = rawLines.join("\n");
+      assert.ok(!blob.includes(env.RUN_TOKEN!), "RUN_TOKEN never appears in agentd's own stdout, even on this failure path");
+    } finally {
+      await killAndWaitForExit(child);
     }
   },
 );

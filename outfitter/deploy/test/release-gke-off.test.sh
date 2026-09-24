@@ -70,8 +70,8 @@ git -C "${REPO}" config user.name test
 git -C "${REPO}" checkout -q -b main
 mkdir -p "${REPO}/outfitter/deploy" "${REPO}/kernal"
 cp "${DEPLOY_SRC}/env.sh" "${DEPLOY_SRC}/config.env" "${DEPLOY_SRC}/release.sh" "${REPO}/outfitter/deploy/"
-# Force GKE off in this copy whatever the checked-in default is (an empty env value can't override
-# `${GKE_CLUSTER:-x}`; only the file line can).
+# Force GKE off in this copy's file line, whatever the checked-in default is, so the test doesn't
+# depend on the default's value or on its expansion form (`-` vs `:-`).
 CFG="${REPO}/outfitter/deploy/config.env"
 sed 's/^GKE_CLUSTER=.*/GKE_CLUSTER=""/' "${CFG}" >"${CFG}.tmp" && mv "${CFG}.tmp" "${CFG}"
 grep -qx 'GKE_CLUSTER=""' "${CFG}" || { echo "FAIL: couldn't force GKE_CLUSTER off in the test's config.env"; exit 1; }

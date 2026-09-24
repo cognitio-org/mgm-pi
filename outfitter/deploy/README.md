@@ -288,6 +288,13 @@ release's image, but new runs still launch on Cloud Run until `SANDBOX_PROVIDER=
 `GKE_CLUSTER=` exported empty turns GKE off for one run; with it empty, a deploy ships byte-identical
 env vars to before GKE existed.
 
+**Laptop prerequisite for hand deploys:** with GKE set up, every deploy script run by hand (`api.sh`,
+`link.sh`, `agent-job.sh`, `service.sh`, `MANUAL=1 ./release.sh`) checks the SandboxTemplate's
+`build-commit` label for skew, so the laptop needs `kubectl` and the auth plugin:
+`gcloud components install kubectl gke-gcloud-auth-plugin`. Without them the skew check fails
+loudly. `GKE_CLUSTER= ./api.sh` skips it for one run. Tag deploys from GitHub Actions install both
+themselves.
+
 All of the scripts below are **owner-run**, on the same footing as `access.sh`/`ci-setup.sh`
 (`deploy/CLAUDE.md`): none of them run on their own, and an agent runs them only with the owner's
 explicit go-ahead in the conversation (`gke-template.sh` is the one exception — see below). Order:

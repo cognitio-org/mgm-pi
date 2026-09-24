@@ -53,6 +53,13 @@ describe("webmcp registrar", () => {
       }
     }
     expect(signals[0]?.aborted).toBe(false);
+    const byName = new Map(tools.map((tool) => [tool.name, tool]));
+    for (const name of ["play", "steer", "break", "stop"] as const) {
+      expect(byName.get(name)?.annotations).toMatchObject({ readOnlyHint: false, consequentialHint: true });
+    }
+    for (const name of ["list_floppies", "read_transcript"] as const) {
+      expect(byName.get(name)?.annotations).toMatchObject({ readOnlyHint: true, untrustedContentHint: true });
+    }
   });
 
   it("does not throw when modelContext is absent", () => {

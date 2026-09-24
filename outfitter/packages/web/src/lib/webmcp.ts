@@ -54,7 +54,13 @@ export interface WebMcpTool {
   name: WebMcpToolName;
   description: string;
   inputSchema: JsonSchema;
-  annotations?: { readOnlyHint?: boolean };
+  annotations?: {
+    readOnlyHint?: boolean;
+    /** Real cost or a state change. Chrome confirms with the user before running the tool. */
+    consequentialHint?: boolean;
+    /** Output can contain agent text. Consumers must not treat it as instructions. */
+    untrustedContentHint?: boolean;
+  };
   execute: (input: unknown) => Promise<unknown> | unknown;
 }
 
@@ -161,7 +167,7 @@ function fleetTools(client: WebMcpClient): WebMcpTool[] {
         },
         additionalProperties: false,
       },
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, untrustedContentHint: true },
       async execute(input) {
         const record = readInput(input);
         const filter: { runState?: string; guru?: string } = {};
@@ -190,6 +196,7 @@ function fleetTools(client: WebMcpClient): WebMcpTool[] {
         required: ["guru_id", "prompt"],
         additionalProperties: false,
       },
+      annotations: { readOnlyHint: false, consequentialHint: true },
       async execute(input) {
         const record = readInput(input);
         const guruId = requiredString(record, "guru_id").trim();
@@ -223,6 +230,7 @@ function fleetTools(client: WebMcpClient): WebMcpTool[] {
         required: ["session_id", "text"],
         additionalProperties: false,
       },
+      annotations: { readOnlyHint: false, consequentialHint: true },
       async execute(input) {
         const record = readInput(input);
         const sessionId = requiredString(record, "session_id").trim();
@@ -242,6 +250,7 @@ function fleetTools(client: WebMcpClient): WebMcpTool[] {
         required: ["session_id"],
         additionalProperties: false,
       },
+      annotations: { readOnlyHint: false, consequentialHint: true },
       async execute(input) {
         const record = readInput(input);
         return client.abort(requiredString(record, "session_id").trim());
@@ -259,6 +268,7 @@ function fleetTools(client: WebMcpClient): WebMcpTool[] {
         required: ["session_id"],
         additionalProperties: false,
       },
+      annotations: { readOnlyHint: false, consequentialHint: true },
       async execute(input) {
         const record = readInput(input);
         return client.stop(requiredString(record, "session_id").trim());
@@ -298,7 +308,7 @@ function fleetTools(client: WebMcpClient): WebMcpTool[] {
         required: ["session_id"],
         additionalProperties: false,
       },
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, untrustedContentHint: true },
       async execute(input) {
         const record = readInput(input);
         return client.entries(requiredString(record, "session_id").trim(), optionalString(record, "after"));

@@ -1,0 +1,36 @@
+outfitter/packages/web/src/App.tsx
+  h_69b863911ebf05 1,104-120,129
+outfitter/packages/web/src/components/GithubChip.tsx
+  h_69b863911ebf05 1-34
+outfitter/packages/web/src/components/TransportDot.tsx
+  h_69b863911ebf05 1-16
+outfitter/packages/web/src/lib/session-facts.ts
+  h_69b863911ebf05 1-49
+outfitter/packages/web/src/lib/session-lamp.ts
+  h_69b863911ebf05 1-67
+outfitter/packages/web/src/pages/SessionPage.tsx
+  h_69b863911ebf05 1,17-18,24-25,61-67,84,178-196,199-209,336,343-348,367-368,374-380,393-483,500-502,505-529,561-562,595,598-599
+outfitter/packages/web/src/styles/errors.css
+  h_69b863911ebf05 259-310
+outfitter/packages/web/src/styles/layout.css
+  h_69b863911ebf05 10-12,149-317,385-386
+outfitter/packages/web/src/styles/mobile.css
+  h_69b863911ebf05 284-302,305-308,311,318-331,350-363
+outfitter/packages/web/src/styles/pages.css
+  h_69b863911ebf05 28,30,32-57
+outfitter/packages/web/test/session-facts.test.ts
+  h_69b863911ebf05 1-51
+outfitter/packages/web/test/session-lamp.test.ts
+  h_69b863911ebf05 1-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "dcb599ad9ae827f3c4c70f63d79fd14d0f5a1d51",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

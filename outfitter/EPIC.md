@@ -253,6 +253,22 @@ research on Sonnet; review on Opus).
   stream's first snapshot re-poll when this instance's data is older than `PROVIDER_POLL_MS`, in
   the request, single-flight. Always-allocated CPU would also fix it but costs money for no gain.
   Failure details now name the cause (`timed out after 3000 ms`, `fetch failed`) instead of HTTP 0.
+- **E2.15 GKE Agent Sandbox provider** (in progress; `docs/specs/gke-sandbox-provider.md`,
+  `docs/specs/gke-sandbox-provider-plan.md`): a second `SandboxProvider` (GKE Autopilot + Agent
+  Sandbox, gVisor, image streaming, optional warm pool) alongside Cloud Run, chosen by
+  `SANDBOX_PROVIDER` configuration, to get wake time down to seconds within the $25/month budget
+  (`docs/reports/sandbox-startup.md`). **PR1 (done)**: code-only, no GCP calls. The provider
+  contract is now a shared suite (`@outfitter/provider-local/testing`'s `runProviderContract`,
+  cases C1-C8) run against inprocess, docker, cloudrun and noop adapters. A `SandboxProviders`
+  registry (`packages/api/src/providers/registry.ts`) builds each configured provider lazily, and
+  `main.ts` now hands `buildApp` the **whole registry** (`createProviders(config)`), not just the
+  default provider -- so a run keeps working with whatever provider actually started it even after
+  `SANDBOX_PROVIDER` moves on, in production, not only in tests. `Run.sandboxProvider` records
+  which one that was; capacity reporting is duck-typed on `SandboxProvider.capacity()` instead of
+  `instanceof CloudRunProvider`; and `config.ts` gains the `gke` provider name, `GKE_*` fields, and
+  a boot check for `SANDBOX_PROVIDER=gke` with no `GKE_CLUSTER`. No GKE provider implementation
+  yet -- that's PR2. E7 below also lists `gce-spot`/`cloudrun-workerpool`; this supersedes both as
+  the actual warm-agent lever chosen.
 - **E2.12 Image smoke in CI** (done, `.github/workflows/outfitter-ci.yml`): the repo's CI only ran
   on `kernal/**`, so no Outfitter PR had run its tests in CI at all, and image or deploy-env errors
   only surfaced when Cloud Run rejected a revision. The workflow now runs every suite and builds

@@ -15,10 +15,12 @@
 // Promise.allSettled as a last-resort backstop, so a probe with a bug in it can never wedge the
 // poller or take the whole service down.
 
-import type { Store, ProviderRow, ProviderRecord, ProviderHealth, ProviderTransition } from "./store/types.ts";
+import type { Store, ProviderRow, ProviderRecord, ProviderKind, ProviderHealth, ProviderTransition } from "./store/types.ts";
 import type { SseHub } from "./sse.ts";
 import type { LaptopProbe } from "./laptop.ts";
 import type { SandboxProviderName } from "./config.ts";
+import { isCloudProvider } from "./config.ts";
+import type { SandboxCapacity } from "@outfitter/provider-local";
 
 /** Exported so other services that need a bounded, non-throwing GET against a management API (e.g.
  * models.ts's LiteLLM /model/info fetch for GET /api/models) can reuse the same timeout/JSON
@@ -301,25 +303,40 @@ export async function probeLitellm(
   }
 }
 
-// ---------- Cloud Run ----------
+// ---------- sandbox capacity (Cloud Run / GKE) ----------
 
-/** "unknown" (not a probe failure) when SANDBOX_PROVIDER isn't cloudrun -- there's nothing to
- * count, per EPIC.md E2.10's "otherwise unknown". `countFn` is CloudRunProvider.countRunningExecutions,
- * injected by server.ts only when the configured provider actually is a CloudRunProvider. */
-export async function probeCloudRun(
+/** Row id/kind/label for the configured sandbox provider's capacity row. Only cloudrun and gke
+ * get their own row (dashboard history keeps `id: "cloudrun"` for its 7-day uptime, per
+ * gke-sandbox-provider-plan.md §5 item 7); every local dev provider (inprocess, docker) reports
+ * under the same "cloudrun" row it always has, since there's nothing else to show. */
+function sandboxRow(sandboxProvider: SandboxProviderName): { id: string; kind: ProviderKind; name: string } {
+  if (sandboxProvider === "gke") return { id: "gke", kind: "gke", name: "GKE Agent Sandbox" };
+  return { id: "cloudrun", kind: "cloudrun", name: "Cloud Run agent job" };
+}
+
+/** "unknown" (not a probe failure) when the configured provider has no capacity to report --
+ * either it isn't a cloud provider at all, or `capacityFn` wasn't injected (server.ts only
+ * injects it when the default SandboxProvider actually implements `capacity()`) -- per EPIC.md
+ * E2.10's "otherwise unknown". `capacityFn` is SandboxProvider.capacity(), see server.ts. */
+export async function probeSandbox(
   sandboxProvider: SandboxProviderName,
-  countFn: (() => Promise<number>) | undefined,
+  capacityFn: (() => Promise<SandboxCapacity>) | undefined,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<ProviderRow[]> {
   const checkedAt = nowIso();
-  if (sandboxProvider !== "cloudrun" || !countFn) {
-    return [{ id: "cloudrun", kind: "cloudrun", name: "Cloud Run agent job", status: "unknown", detail: "SANDBOX_PROVIDER is not cloudrun", checkedAt }];
+  const row = sandboxRow(sandboxProvider);
+  if (!isCloudProvider(sandboxProvider) || !capacityFn) {
+    return [{ ...row, status: "unknown", detail: `SANDBOX_PROVIDER is not ${row.id}`, checkedAt }];
   }
   try {
-    const count = await withTimeout(countFn(), timeoutMs);
-    return [{ id: "cloudrun", kind: "cloudrun", name: "Cloud Run agent job", status: "up", checkedAt, meta: { runningExecutions: count } }];
+    const capacity = await withTimeout(capacityFn(), timeoutMs);
+    const meta: Record<string, unknown> = { active: capacity.active, runningExecutions: capacity.active };
+    if (capacity.warmReady !== undefined) meta.warmReady = capacity.warmReady;
+    if (capacity.warmDesired !== undefined) meta.warmDesired = capacity.warmDesired;
+    if (capacity.limit !== undefined) meta.limit = capacity.limit;
+    return [{ ...row, status: "up", checkedAt, meta }];
   } catch (err) {
-    return [{ id: "cloudrun", kind: "cloudrun", name: "Cloud Run agent job", status: "down", detail: errMessage(err), checkedAt }];
+    return [{ ...row, status: "down", detail: errMessage(err), checkedAt }];
   }
 }
 
@@ -342,8 +359,9 @@ export interface ProviderStatusServiceDeps {
   /** Resolves the LiteLLM key to probe management endpoints with (config.litellmAdminKey, falling
    * back to SecretsBroker.defaultLitellmKey() -- see server.ts). */
   litellmKey: () => Promise<string>;
-  /** CloudRunProvider.countRunningExecutions, when the configured provider is cloudrun. */
-  cloudRunCount?: () => Promise<number>;
+  /** The configured default SandboxProvider's optional capacity(), when it has one (server.ts
+   * duck-types this off `provider.capacity` -- gke-sandbox-provider.md §2.4 gap G3). */
+  sandboxCapacity?: () => Promise<SandboxCapacity>;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
 }
@@ -371,7 +389,7 @@ export class ProviderStatusService {
       () => probeNgrok(deps.config.ngrokApiKey, timeoutMs, fetchImpl),
       () => probeLaptop(deps.laptopProbe, deps.config.tunnelDomainLmstudio, deps.config.localTunnelToken, timeoutMs, fetchImpl),
       () => probeLitellm(deps.config.litellmBaseUrl, deps.litellmKey, timeoutMs, fetchImpl),
-      () => probeCloudRun(deps.config.sandboxProvider, deps.cloudRunCount, timeoutMs),
+      () => probeSandbox(deps.config.sandboxProvider, deps.sandboxCapacity, timeoutMs),
     ];
   }
 

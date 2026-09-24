@@ -135,9 +135,11 @@ if [[ -z "${ORIGIN}" ]]; then
 fi
 
 # ROLE-specific pieces: auth flags at deploy time, and OUTFITTER_ROLE/IAP_AUDIENCE in the env.
-# SANDBOX_PROVIDER and CLOUDRUN_JOB go to BOTH roles: the provider is constructed at boot (config
-# validation), even though only the web role ever wakes a run. Without them the API defaults to the
-# in-process dev provider and refuses to start (the link revision 00005 failure).
+# SANDBOX_PROVIDER (from config.env via env.sh -- gke-sandbox-provider-plan.md §5 item 9; a switch
+# is "edit config.env, tag a release", not a flag to this script) and CLOUDRUN_JOB go to BOTH
+# roles: the provider is constructed at boot (config validation), even though only the web role
+# ever wakes a run. Without them the API defaults to the in-process dev provider and refuses to
+# start (the link revision 00005 failure).
 # Every other origin this service answers on (its run.app URL, a custom domain, the origin it had
 # before) is also accepted as a token audience (config.ts tokenAudiences), so an origin change
 # doesn't strand running sandboxes or queued Cloud Tasks minted for the old one. ';'-separated:
@@ -150,7 +152,7 @@ for alias in "${RUN_APP_URL}" "${DEPLOYED_ORIGIN}" "${PUBLIC_ORIGIN}"; do
     ORIGIN_ALIASES="${ORIGIN_ALIASES:+${ORIGIN_ALIASES};}${alias}"
   fi
 done
-ENV_VARS="OUTFITTER_ROLE=${ROLE},OUTFITTER_ORIGIN=${ORIGIN},OUTFITTER_ORIGIN_ALIASES=${ORIGIN_ALIASES},AGENT_SA_EMAIL=${AGENT_SA_EMAIL},GCP_PROJECT=${PROJECT},GCP_REGION=${REGION},TUNNEL_DOMAIN_LMSTUDIO=${TUNNEL_DOMAIN_LMSTUDIO},SANDBOX_PROVIDER=cloudrun,CLOUDRUN_JOB=${CLOUDRUN_JOB},IDLE_STOP_SECONDS=${IDLE_STOP_SECONDS},LITELLM_BASE_URL=${LITELLM_BASE_URL},PROVIDER_POLL_MS=${PROVIDER_POLL_MS}"
+ENV_VARS="OUTFITTER_ROLE=${ROLE},OUTFITTER_ORIGIN=${ORIGIN},OUTFITTER_ORIGIN_ALIASES=${ORIGIN_ALIASES},AGENT_SA_EMAIL=${AGENT_SA_EMAIL},GCP_PROJECT=${PROJECT},GCP_REGION=${REGION},TUNNEL_DOMAIN_LMSTUDIO=${TUNNEL_DOMAIN_LMSTUDIO},SANDBOX_PROVIDER=${SANDBOX_PROVIDER},CLOUDRUN_JOB=${CLOUDRUN_JOB},IDLE_STOP_SECONDS=${IDLE_STOP_SECONDS},LITELLM_BASE_URL=${LITELLM_BASE_URL},PROVIDER_POLL_MS=${PROVIDER_POLL_MS}"
 # E5.5 (deploy/mailbox.sh): both roles need these -- web schedules wake tasks, link verifies the
 # OIDC token on /api/hooks/tasks/wake and /api/hooks/tick. Looked up from what mailbox.sh created
 # when not given, for the same reason as OUTFITTER_LINK_ORIGIN below: --set-env-vars replaces the

@@ -3,6 +3,8 @@
 //
 // See docs/data-model.md for schema, indexes and the "session == pi JSONL file" rationale.
 
+import type { SandboxProviderName } from "../config.ts";
+
 export type RunState = "queued" | "provisioning" | "running" | "idle" | "stopping" | "stopped" | "failed";
 
 export type ByeReason = "idle" | "stop" | "sigterm" | "error";
@@ -95,6 +97,11 @@ export interface Run {
    * provider-local's SandboxHandle -- a Cloud Run execution name, a docker container id, or a
    * synthetic in-process id). Callers should not parse it. */
   providerHandle?: string;
+  /** Which SandboxProvider started this run; providerHandle is only meaningful to that one
+   * (gke-sandbox-provider.md §2.4, gap G1). Absent on runs created before this field existed --
+   * runs.ts's providerNameFor() falls back to inferring cloudrun from providerHandle's shape, then
+   * to the deployment's current default. */
+  sandboxProvider?: SandboxProviderName;
   /** sha256 (hex) of the per-run secret RunManager.wake generates and hands to the provider as
    * RUN_TOKEN. AgentLink.handleConnection compares this against sha256(hello.runToken) before
    * registering the socket -- see docs/reports/security-review-pr1.md finding #2. Only the hash is
@@ -342,7 +349,7 @@ export interface TokensCollection {
   revokeAllForOwners(match: TokenOwnerMatch, revokedAt: string): Promise<ApiToken[]>;
 }
 
-export type ProviderKind = "ngrok" | "laptop" | "litellm" | "cloudrun";
+export type ProviderKind = "ngrok" | "laptop" | "litellm" | "cloudrun" | "gke";
 
 /** "up"/"degraded"/"down" are real probe outcomes; "unknown" is a missing credential or an
  * inapplicable probe (e.g. cloudrun kind when SANDBOX_PROVIDER isn't cloudrun) -- never a crash,

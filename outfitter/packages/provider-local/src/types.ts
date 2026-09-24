@@ -25,8 +25,33 @@ export type SandboxHandle = string;
 
 export type SandboxStatus = "starting" | "running" | "exited" | "unknown";
 
+/** Sandbox capacity for the Peripherals/providers dashboard (gke-sandbox-provider.md §2.3, gap G3:
+ * capacity used to be `instanceof CloudRunProvider`, which breaks once a second cloud provider
+ * exists). Optional on SandboxProvider -- only providers with something to count implement it. */
+export interface SandboxCapacity {
+  /** Sandboxes currently starting or running, started by this deployment. */
+  active: number;
+  /** Warm, unclaimed sandboxes ready right now (GKE only). */
+  warmReady?: number;
+  /** Warm pool's desired size (GKE only; 0 outside active hours). */
+  warmDesired?: number;
+  /** Hard cap on concurrently active sandboxes, when the provider enforces one. */
+  limit?: number;
+}
+
+/** start()'s return type (gap G4: warm vs. cold start telemetry). A structural superset of the
+ * old `{ handle }` shape, so every existing provider's `start()` return type annotation stays
+ * exactly as it was and still satisfies this interface. */
+export interface SandboxStartResult {
+  handle: SandboxHandle;
+  /** true = adopted a warm sandbox, false = cold start, undefined = provider can't tell. */
+  warm?: boolean;
+}
+
 export interface SandboxProvider {
-  start(run: RunLaunch): Promise<{ handle: SandboxHandle }>;
+  start(run: RunLaunch): Promise<SandboxStartResult>;
   stop(handle: SandboxHandle): Promise<void>;
   status(handle: SandboxHandle): Promise<SandboxStatus>;
+  /** Optional: capacity for the Peripherals dashboard (gke-sandbox-provider.md §2.3/§2.4). */
+  capacity?(): Promise<SandboxCapacity>;
 }

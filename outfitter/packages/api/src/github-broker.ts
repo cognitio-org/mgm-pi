@@ -69,7 +69,7 @@ export interface RateLimit {
 
 export type GithubOpResult =
   | { ok: true; data: Record<string, unknown> }
-  | { ok: false; error: string };
+  | { ok: false; error: string; progress?: GithubWriteProgress };
 
 export interface GithubResponse {
   status: number;

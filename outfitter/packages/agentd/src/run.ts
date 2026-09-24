@@ -658,7 +658,10 @@ export class RunController {
         // Connections are paused until after chmod, so nothing is read before that.
         attach: (socket) => {
           this.githubSocket = socket;
-          if (!this.apiLinkUp) socket.onLinkDown();
+          // Reconcile after the awaits in listen: the link may have opened while the socket
+          // was still being created, and onOpen's onLinkUp would have missed this broker.
+          if (this.apiLinkUp) socket.onLinkUp();
+          else socket.onLinkDown();
         },
       });
     } catch (err) {
@@ -849,6 +852,7 @@ export class RunController {
     if (this.stopping) return; // already stopping via handleStop/handleSigterm/a prior idleStop
     this.stopping = true;
     this.setState("checkpointing");
+    await this.stopGitProxy();
     await this.checkpointNow();
     this.setState("stopping");
     await this.tailer?.poll();
@@ -865,6 +869,7 @@ export class RunController {
     this.stopping = true;
     this.clearIdleTimer();
     this.setState("checkpointing");
+    await this.stopGitProxy();
     await this.checkpointNow();
     this.setState("stopping");
     await this.tailer?.poll();
@@ -882,6 +887,7 @@ export class RunController {
     this.stopping = true;
     this.clearIdleTimer();
     this.setState("checkpointing");
+    await this.stopGitProxy();
     await Promise.race([this.checkpointNow(), delay(this.sigtermBudgetMs)]);
     this.setState("stopping");
     this.pi?.kill();
@@ -908,6 +914,18 @@ export class RunController {
     } else {
       this.setState(resolved);
     }
+  }
+
+  /** The proxy lock must not outlive a push. A forward that ignores stop is abandoned here so bye can proceed. */
+  private withNetworkGit<T>(fn: () => Promise<T>): Promise<T> {
+    const LOCK_MS = 120_000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("network git timed out")), LOCK_MS);
+    });
+    return Promise.race([this.networkGitLock(fn), timeout]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
   }
 
   /** Never rejects: a failed checkpoint (a rejected push, a git error) is logged and the run carries
@@ -955,7 +973,7 @@ export class RunController {
     // the agent made itself, for which commitAll finds nothing left to commit.
     // Phase-0 path (root-owned bare repo), not the broker socket. The same lock covers the git
     // proxy's fetch/push forwards so those don't overlap this push.
-    const { head, pushed } = await this.networkGitLock(() =>
+    const { head, pushed } = await this.withNetworkGit(() =>
       this.deps.gitOps.push(this.deps.workspace, {
         remoteUrl: this.spec!.repo!.cloneUrl,
         branch: this.spec!.repo!.branch,

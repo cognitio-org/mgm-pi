@@ -270,6 +270,56 @@ describe("github broker", { concurrency: 1 }, () => {
     }
   });
 
+  test("issue edit and close use the executor's field names", async () => {
+    const dir = repo();
+    const trap = ghTrap();
+    const server = await serve((req, socket) => reply(socket, req, { ok: true, data: { number: 4 } }));
+    try {
+      const edited = await executeGithub("github_issue", { action: "edit", number: 4, labels: ["bug"], assignees: ["ada"] }, cloud(dir, server.path, { gh: trap.gh }));
+      assert.equal(edited.isError, undefined, edited.text);
+      const closed = await executeGithub("github_issue", { action: "close", number: 4, body: "done" }, cloud(dir, server.path, { gh: trap.gh }));
+      assert.equal(closed.isError, undefined, closed.text);
+      const edit = server.requests.find((r) => r.op === "github_issue.edit");
+      const close = server.requests.find((r) => r.op === "github_issue.close");
+      assert.deepEqual(edit?.args.labels, ["bug"]);
+      assert.deepEqual(edit?.args.assignees, ["ada"]);
+      assert.equal(edit?.args.addLabels, undefined);
+      assert.equal(typeof close?.args.body, "string");
+      assert.match(String(close?.args.body), /done/);
+      assert.equal(close?.args.comment, undefined);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("a split multibyte character in the socket response is kept", async () => {
+    const dir = repo();
+    const trap = ghTrap();
+    const path = `/tmp/kernal-gh-split-${process.pid}.sock`;
+    const server = createServer((socket) => {
+      let buf = "";
+      socket.on("data", (chunk) => {
+        buf += chunk.toString("utf8");
+        if (!buf.includes("\n")) return;
+        const req = JSON.parse(buf.slice(0, buf.indexOf("\n"))) as Req;
+        const line = `${JSON.stringify({ t: "github.result", reqId: req.reqId, ok: true, data: { number: 7, title: "café", url: "https://github.com/o/r/issues/7", state: "OPEN", labels: [], assignees: [] } })}\n`;
+        const bytes = Buffer.from(line);
+        const cut = bytes.indexOf(Buffer.from("é")) + 1;
+        socket.write(bytes.subarray(0, cut));
+        socket.write(bytes.subarray(cut));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(path, resolve));
+    try {
+      const res = await executeGithub("github_issue", { action: "view", number: 7 }, cloud(dir, path, { gh: trap.gh }));
+      assert.equal(res.isError, undefined, res.text);
+      assert.equal(res.data.title, "café");
+    } finally {
+      server.close();
+      rmSync(path, { force: true });
+    }
+  });
+
   test("an unset socket still uses gh", async () => {
     const dir = repo();
     const { calls, gh } = ghOf(() => ({ stdout: JSON.stringify(PR) }));

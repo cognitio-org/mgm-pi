@@ -74,6 +74,7 @@ function once(
     const payload: Record<string, unknown> = { t: "github.request", reqId, op, args };
     if (idempotencyKey) payload.idempotencyKey = idempotencyKey;
     const socket = connect(socketPath);
+    socket.setEncoding("utf8");
     let buf = "";
     let settled = false;
     const timer = setTimeout(() => finish(new Error(`the github broker timed out after ${timeoutMs}ms`)), timeoutMs);
@@ -99,8 +100,8 @@ function once(
         if (err) finish(err);
       });
     });
-    socket.on("data", (chunk: Buffer) => {
-      buf += chunk.toString("utf8");
+    socket.on("data", (chunk: string) => {
+      buf += chunk;
       if (buf.length > 16 * 1024 * 1024) {
         finish(new Error("the github broker response is too large"));
         return;

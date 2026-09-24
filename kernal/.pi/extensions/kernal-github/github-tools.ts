@@ -615,11 +615,11 @@ function mapBroker(argv: string[], stdin: string | undefined, env?: NodeJS.Proce
     if (title) args.title = title;
     if (argv.includes("--body-file")) args.body = stdin ?? "";
     const addLabels = options(argv, "--add-label");
-    if (addLabels.length) args.addLabels = addLabels;
+    if (addLabels.length) args.labels = addLabels;
     const removeLabels = options(argv, "--remove-label");
     if (removeLabels.length) args.removeLabels = removeLabels;
     const addAssignees = options(argv, "--add-assignee");
-    if (addAssignees.length) args.addAssignees = addAssignees;
+    if (addAssignees.length) args.assignees = addAssignees;
     const removeAssignees = options(argv, "--remove-assignee");
     if (removeAssignees.length) args.removeAssignees = removeAssignees;
     return { op: "github_issue.edit", args, stdout: () => "" };
@@ -629,7 +629,7 @@ function mapBroker(argv: string[], stdin: string | undefined, env?: NodeJS.Proce
     const reason = option(argv, "--reason");
     if (reason) args.reason = reason;
     const comment = option(argv, "--comment");
-    if (comment) args.comment = comment;
+    if (comment) args.body = comment;
     return { op: "github_issue.close", args, stdout: () => "" };
   }
   if (cmd === "issue" && sub === "reopen") {

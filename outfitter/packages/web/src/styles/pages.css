@@ -25,10 +25,36 @@
 /* Session header: model/thinking/context (E3.8) */
 
 .session-model-info {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: 0.45rem;
   flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* One cluster for the broker facts. The mark stands in for the word "GitHub". */
+.github-chip {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 0.3rem 0;
+  max-width: 100%;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.github-mark {
+  flex: none;
+  margin-right: 0.3rem;
+  color: var(--text);
+}
+
+.github-chip-item + .github-chip-item::before {
+  content: "·";
+  margin: 0 0.35rem;
 }
 
 .context-usage {

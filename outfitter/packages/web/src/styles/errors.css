@@ -256,6 +256,58 @@
   color: var(--ok);
 }
 
+/* Lamp beside the run pill. Working flickers like a drive activity LED. Idle holds a
+ * paler green than that flash. Stopped and stopping are amber. A question waiting on
+ * the person is blue. A failed run is red. */
+.transport-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg) 40%, transparent);
+}
+
+.transport-dot-working {
+  background: var(--ok);
+  /* step-end holds each keyframe so the LED snaps on and off. The uneven stops
+   * are what makes it read as disk activity rather than a steady blink. */
+  animation: drive-lamp 1.7s step-end infinite;
+}
+
+.transport-dot-idle {
+  background: color-mix(in srgb, var(--ok) 62%, white);
+}
+
+.transport-dot-stopped {
+  background: var(--warn);
+}
+
+.transport-dot-question {
+  background: #3d7ee8;
+}
+
+.transport-dot-error {
+  background: var(--danger);
+}
+
+/* Uneven gaps so the LED reads as disk activity rather than a metronome. */
+@keyframes drive-lamp {
+  0%, 7% { opacity: 1; }
+  10%, 28% { opacity: 0.12; }
+  31%, 36% { opacity: 1; }
+  39%, 44% { opacity: 0.12; }
+  47%, 62% { opacity: 1; }
+  66%, 88% { opacity: 0.12; }
+  91%, 100% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transport-dot-working {
+    animation: none;
+  }
+}
+
 /* ---------- unhandled promise rejection: a non-fatal banner, not the KERNAL PANIC screen ------- */
 
 .unhandled-rejection-banner {

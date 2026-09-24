@@ -254,6 +254,14 @@ Grants, made by the owner on 2026-09-24:
   (spec §4.1), and spec §8.2's S6 pass condition "no CA handling needed" holds.
 - The impersonation grant took 43 s to propagate.
 - PR2 is unblocked on S6. With S2 and S3 also passed, nothing gates PR2 now.
+- **Gap found after release (2026-09-24):** S6's token came from `gcloud ... --impersonate-service-account`,
+  which carries the `userinfo.email` scope. The deployed API's token didn't: Cloud Run's metadata
+  server mints exactly the scopes requested, and the provider asked for `cloud-platform` only. GKE then authenticates the account by its numeric
+  unique ID, so the RoleBinding for `User: outfitter-api@...` never matched. The first warm-pool hook
+  call got a 403: the GKE audit log shows `User "109876399607867997839" cannot patch ...
+  sandboxwarmpools`. It would have broken every GKE wake at the switch. Fix: the provider requests
+  both scopes (`GKE_TOKEN_SCOPES`). A test of this kind should use the deployed identity's actual
+  token path, not a stand-in.
 - Not exercised: the Role's `get` on sandboxes (the status fallback in spec §4.3) and `delete` on
   claims. The `list sandboxes` 403 comes from authorization, before routing, so it can't show that
   `agents.x-k8s.io/v1beta1` is served. PR2's own tests against the cluster cover both.

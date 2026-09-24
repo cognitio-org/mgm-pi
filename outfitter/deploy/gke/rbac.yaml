@@ -3,6 +3,9 @@
 # outfitter-sandboxes (docs/specs/gke-sandbox-provider.md §3.2). No pods access: warm-mode run
 # tokens live in pod annotations. The IAM side is roles/container.clusterViewer on the project,
 # which includes container.clusters.connect for the DNS endpoint (checked 2026-09-24).
+# The subject below matches only if the API's access token carries the userinfo.email scope: without
+# it GKE names the account by its numeric unique ID and every call is 403 (GKE_TOKEN_SCOPES in
+# packages/api/src/providers/gke.ts).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

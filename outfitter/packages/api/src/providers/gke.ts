@@ -5,7 +5,8 @@
 // replicas: 0" -- this supersedes the spec's §4.2 wording wherever the two differ).
 //
 // Transport (§4.1): no new dependency. `google-auth-library` (already in package.json, imported
-// lazily here exactly like secrets.ts's GcpSecretAdmin) mints a cloud-platform access token; plain
+// lazily here exactly like secrets.ts's GcpSecretAdmin) mints an access token with GKE_TOKEN_SCOPES
+// (cloud-platform + userinfo.email); plain
 // `fetch` talks to the cluster's DNS-based control-plane endpoint (a *.gke.goog host, publicly
 // trusted per spike S6 -- no cluster CA handling). `@kubernetes/client-node` would be a large
 // dependency for four REST verbs on three resources.
@@ -23,6 +24,18 @@ import type {
   SandboxStatus,
 } from "@outfitter/provider-local";
 import type { GkeLaunchMode } from "../config.ts";
+
+/** OAuth scopes for the access token the API presents to the cluster's DNS endpoint. userinfo.email
+ * is required, not optional: without it GKE authenticates a Google service account by its numeric
+ * unique ID ("109876399607867997839"), not its email, so deploy/gke/rbac.yaml's RoleBinding for
+ * `User: outfitter-api@...` never matches and every call is 403 Forbidden. Seen live on 2026-09-24:
+ * Cloud Run's metadata server mints exactly the scopes requested, and this provider asked for
+ * cloud-platform only, so the first warm-pool hook call was refused (GKE audit log: `User "109876399607867997839" cannot patch ... sandboxwarmpools`).
+ * Spike S6 missed it because gcloud's impersonated token carries the email scope by default. */
+export const GKE_TOKEN_SCOPES: readonly string[] = [
+  "https://www.googleapis.com/auth/cloud-platform",
+  "https://www.googleapis.com/auth/userinfo.email",
+];
 
 // ---------- CRD constants (kubernetes-sigs/agent-sandbox v1.0.3) ----------
 
@@ -314,7 +327,7 @@ export class GkeProvider implements SandboxProvider {
 
   private async buildKubeClient(): Promise<KubeClientLike> {
     const { GoogleAuth } = await import("google-auth-library");
-    const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
+    const auth = new GoogleAuth({ scopes: [...GKE_TOKEN_SCOPES] });
     const authClient = await auth.getClient();
     const getToken = async () => {
       const token = await authClient.getAccessToken();
@@ -562,7 +575,7 @@ function describeFetchFailure(err: unknown, what: string): string {
   return `gke: ${what} failed: network error`;
 }
 
-/** Real transport: Google OAuth access token (from GoogleAuth, cloud-platform scope) plus plain
+/** Real transport: Google OAuth access token (from GoogleAuth, GKE_TOKEN_SCOPES) plus plain
  * `fetch` against the cluster's DNS endpoint (spec §4.1: publicly trusted certificate, no CA
  * handling needed -- confirmed by spike S6). `getToken` is called per request rather than cached
  * here, since google-auth-library's AuthClient.getAccessToken() already caches/refreshes and this

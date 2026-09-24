@@ -568,7 +568,9 @@ the free credit is not already consumed by another cluster on the billing accoun
 ### 4.1 Transport
 
 - **No new dependency.** Use `google-auth-library` (already in `packages/api/package.json`, lazily
-  imported the same way as `src/secrets.ts:119`) for an access token (scope `cloud-platform`), and global
+  imported the same way as `src/secrets.ts:119`) for an access token (scopes `cloud-platform` and
+  `userinfo.email`: without the email scope GKE names the account by its numeric unique ID and RBAC's
+  email subject never matches, per GKE's RBAC docs and #153), and global
   `fetch` against the cluster's **DNS endpoint** (a `*.gke.goog` host). Its certificate is expected to be
   publicly trusted, so no cluster CA handling (**UNVERIFIED**, S6). Fallback: read
   `masterAuth.clusterCaCertificate` from the clusters API and pass it to an undici `Agent`.

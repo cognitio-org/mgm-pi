@@ -1,0 +1,21 @@
+outfitter/packages/agentd/src/playwright-check.ts
+  s_217e742e7da57c::t_94f6e5349d6ebf 12,123-124,126-158
+outfitter/packages/agentd/test/playwright-check.test.ts
+  s_217e742e7da57c::t_c5e992406656e7 3,123-177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "68ed688009e089c38a448a6f605d0a28dac29bee",
+  "prompts": {},
+  "sessions": {
+    "s_217e742e7da57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4d8a38f8-9583-45df-9f1a-8e69160a3dfb",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

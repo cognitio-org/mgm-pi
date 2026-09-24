@@ -25,7 +25,13 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { RouteContext } from "./context.ts";
 import { verifyTasksToken, bearerFromHeader } from "../auth.ts";
-import { GkeProvider, KubeError, WARM_POOL_MAX_REPLICAS, WARM_POOL_MIN_REPLICAS } from "../providers/gke.ts";
+import { GkeEndpointError, GkeProvider, KubeError, WARM_POOL_MAX_REPLICAS, WARM_POOL_MIN_REPLICAS } from "../providers/gke.ts";
+// Review finding L4: gke.ts itself is imported statically here (it's cheap -- no
+// google-auth-library or network at module load, only inside GkeProvider's methods), unlike
+// registry.ts's buildGke, which lazy-imports it so a deployment that never configures gke doesn't
+// pay even the class definitions. hooks.ts needs the real export (GkeProvider/KubeError/
+// GkeEndpointError) to tell the provider and its errors apart, so a lazy import here would just
+// move the same cost to first request instead of avoiding it.
 
 /** Constant-time HMAC-SHA256 verification of `ngrok-signature` (hex digest) over the raw body. */
 export function verifyNgrokSignature(rawBody: string, headerValue: string | undefined, secret: string): boolean {
@@ -132,13 +138,22 @@ export async function registerHookRoutes(app: FastifyInstance, ctx: RouteContext
     try {
       await provider.setWarmPoolReplicas(replicas);
     } catch (err) {
+      // L6: an endpoint-resolution failure (wrong cluster/location, clusters.get itself failing)
+      // is not "the warm pool object is missing" -- check it first so a misconfigured GKE_CLUSTER
+      // doesn't get reported to Cloud Scheduler as a 404 that looks fixable by re-applying YAML.
+      if (err instanceof GkeEndpointError) {
+        return reply.code(502).send({ error: "gke: could not resolve the cluster's control-plane endpoint" });
+      }
       if (err instanceof KubeError && err.status === 404) {
         return reply.code(404).send({ error: "warm pool not found" });
       }
       if (err instanceof KubeError && err.status === 409) {
         return reply.code(409).send({ error: "warm pool patch conflict" });
       }
-      throw err;
+      // M2: never let a raw error (which could echo Kubernetes response detail, even after
+      // gke.ts's own redaction) reach the caller through Fastify's default error handler.
+      req.log.error({ err }, "gke: warm pool patch failed");
+      return reply.code(502).send({ error: "gke: warm pool patch failed" });
     }
     return { replicas };
   });

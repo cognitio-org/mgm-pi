@@ -57,6 +57,19 @@ const CLAIM_TTL_SECONDS_AFTER_FINISHED = 120;
 /** §4.3: Ready=False reasons that mean the sandbox is gone, not still starting. */
 const EXITED_READY_REASONS = new Set(["PodSucceeded", "PodFailed", "ClaimExpired", "SandboxSuspended"]);
 
+/** §4.3, review finding M4: a claim can sit `Ready=False` for a reason that never resolves on its
+ * own (ImagePullBackOff, unschedulable, AdoptionConflict...). The reconciler (runs.ts) skips
+ * "starting" runs outright, so without a deadline a stuck claim would hold a GKE_MAX_ACTIVE slot
+ * and block the session's wakes for up to the claim's 24h shutdownTime. 10 minutes matches
+ * config.ts's own PROVISIONING_GRACE_MS default; S4's worst observed cold start (a brand new node,
+ * first pull ever) was 145s. Past this, status() reports "unknown" instead of "starting", which the
+ * reconciler treats like any other dead run: stop, then fail. */
+const START_DEADLINE_MS = 10 * 60_000;
+
+/** Review finding L2: every fetch (including endpoint discovery) is bounded, so a hung metadata
+ * server or cluster doesn't wedge a wake or a reconcile tick forever. */
+const FETCH_TIMEOUT_MS = 15_000;
+
 /** §5.3 guardrail 3: the warm-pool hook clamps to this range; going higher needs a code change. */
 export const WARM_POOL_MIN_REPLICAS = 0;
 export const WARM_POOL_MAX_REPLICAS = 2;
@@ -117,7 +130,14 @@ interface ConditionsHolder {
 interface SandboxClaim extends ConditionsHolder {
   apiVersion?: string;
   kind?: string;
-  metadata: { name: string; namespace: string; labels?: Record<string, string>; deletionTimestamp?: string };
+  metadata: {
+    name: string;
+    namespace: string;
+    labels?: Record<string, string>;
+    deletionTimestamp?: string;
+    /** M4: the start deadline is measured from here. */
+    creationTimestamp?: string;
+  };
   spec: SandboxClaimSpec;
   status?: { conditions?: Condition[]; sandbox?: { name?: string } };
 }
@@ -160,6 +180,67 @@ export class KubeError extends Error {
   }
 }
 
+/** The subset of a Kubernetes `Status` error body (see errorFor's doc comment) this provider
+ * trusts: `code` and `reason` only, both machine-set by the API server itself, never `message` or
+ * `details` (which can echo request content back). */
+interface K8sStatus {
+  code?: number;
+  reason?: string;
+}
+
+function isK8sStatus(json: unknown): json is K8sStatus {
+  if (typeof json !== "object" || json === null) return false;
+  const obj = json as Record<string, unknown>;
+  return (obj.code === undefined || typeof obj.code === "number") && (obj.reason === undefined || typeof obj.reason === "string");
+}
+
+/** Curated, fixed hints per Kubernetes `Status.reason` -- never derived from server-provided text. */
+const REASON_HINTS: Record<string, string> = {
+  Unauthorized: "the request was not authenticated",
+  Forbidden: "the api's service account may not perform this action",
+  NotFound: "not found",
+  AlreadyExists: "already exists",
+  Conflict: "already exists or is being modified",
+  Invalid: "the request was rejected by admission",
+  BadRequest: "the request was malformed",
+  Timeout: "the server timed out the request",
+  TooManyRequests: "rate limited",
+  InternalError: "the cluster returned an internal error",
+};
+
+/** Review finding L6: thrown only by endpoint discovery (resolveGkeEndpoint) and the auth-client
+ * build it's part of -- a wrong cluster/location/project, or clusters.get itself failing, is a
+ * different failure than "the warm pool object is missing" or "the claim doesn't exist", even
+ * though both can surface as a 404. Callers (routes/hooks.ts) check for this type first so a
+ * misconfigured GKE_CLUSTER doesn't get reported to a caller as "warm pool not found". */
+export class GkeEndpointError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "GkeEndpointError";
+  }
+}
+
+/** Review finding M2: a failed start() must never let the run's own token reach an error message
+ * that ends up as `Run.reason`/`statusDetail` (both user-visible) or, worse, a hook's HTTP
+ * response. Kubernetes admission can echo the request body back in a 422, and the claim body
+ * carries RUN_TOKEN in claim env (cold mode) -- so redact defensively rather than trusting the
+ * server side (errorFor below) alone to never include it. */
+function redactToken(message: string, token: string): string {
+  if (!token) return message;
+  return message.split(token).join("«redacted»");
+}
+
+/** Rewraps `err` with its message redacted, preserving KubeError's status (so callers that switch
+ * on `err.status` after a rethrow -- there are none today, but the type itself promises it -- keep
+ * working) and the original as `cause` for local debugging (never serialized to the run record or
+ * an HTTP response). */
+function redactErrorToken(err: unknown, token: string): Error {
+  const message = err instanceof Error ? err.message : String(err);
+  const redacted = redactToken(message, token);
+  if (err instanceof KubeError) return new KubeError(err.status, redacted);
+  return new Error(redacted, { cause: err });
+}
+
 /** Thin REST seam over the subset of the Kubernetes API this provider needs (mirrors cloudrun.ts's
  * JobsClientLike/ExecutionsClientLike -- an interface small enough to stub in tests with no
  * credentials and no network). */
@@ -185,6 +266,11 @@ export interface GkeProviderConfig {
   /** GKE_ENDPOINT override; empty resolves the DNS endpoint from the clusters.get API. */
   endpoint?: string;
   launchMode: GkeLaunchMode;
+  /** GKE_MAX_ACTIVE. Review finding L1: this is a *soft* cap under concurrent starts -- start()
+   * reads the active count, then creates a claim as two separate calls with no lock between them,
+   * so N wakes racing the same instant can all pass the check before any of their claims exist and
+   * together land a little over maxActive. Fine for its purpose (a cost guardrail, spec §5.3), not
+   * a hard admission-control limit. */
   maxActive: number;
 }
 
@@ -212,8 +298,17 @@ export class GkeProvider implements SandboxProvider {
     };
   }
 
+  /** Review finding M1: a *rejected* promise must not stay memoized -- `??=` alone would cache a
+   * transient failure (one metadata hiccup, one clusters.get 5xx) for the rest of the process's
+   * life, breaking every gke call on this instance until it's recycled. Clearing the memo on
+   * rejection lets the next call retry the build from scratch. */
   private kube(): Promise<KubeClientLike> {
-    this.kubeClientPromise ??= this.deps.kube();
+    if (!this.kubeClientPromise) {
+      this.kubeClientPromise = this.deps.kube().catch((err: unknown) => {
+        this.kubeClientPromise = undefined;
+        throw err;
+      });
+    }
     return this.kubeClientPromise;
   }
 
@@ -274,15 +369,17 @@ export class GkeProvider implements SandboxProvider {
   }
 
   async start(run: RunLaunch): Promise<SandboxStartResult> {
-    const capacity = await this.capacity();
-    if (capacity.active >= this.config.maxActive) {
+    const kube = await this.kube();
+    // L1: countActive() alone, not the full capacity() (which also GETs the warm pool -- a read
+    // start() has no use for).
+    const active = await this.countActive(kube);
+    if (active >= this.config.maxActive) {
       throw new Error(`gke: max active sandboxes (${this.config.maxActive}) reached`);
     }
 
     const namespace = this.config.namespace;
     const name = claimName(run.runId);
     const claim = this.buildClaim(run);
-    const kube = await this.kube();
     // Handle format gke:<namespace>/<claim-name>, per docs/reports/gke-spike.md's s2_wake.ts
     // prototype -- opaque to every caller but this provider (spec §4.2); the run token never
     // appears in it (C8).
@@ -293,12 +390,18 @@ export class GkeProvider implements SandboxProvider {
     } catch (err) {
       if (isConflict(err)) {
         // Same name already exists: idempotent retry (e.g. a wake that raced a retry). If the
-        // claim is actually there, treat this as success; otherwise the 409 was for some other
-        // reason and we don't know what state we're in, so rethrow.
+        // claim is actually there and not on its way out, treat this as success; a claim already
+        // terminating (L5) can't be adopted, so that's a real failure, not idempotency.
         const existing = await kube.get<SandboxClaim>(claimPath(namespace, name));
-        if (existing) return { handle };
+        if (existing && !existing.metadata.deletionTimestamp) return { handle };
+        if (existing) {
+          throw new Error(`gke: claim ${name} already exists and is terminating`);
+        }
       }
-      throw err;
+      // M2: never let the run's own token reach an error message that becomes Run.reason/
+      // statusDetail (both user-visible) -- admission can echo the request body (which carries
+      // RUN_TOKEN in claim env) back in a 4xx.
+      throw redactErrorToken(err, run.runToken);
     }
 
     if (this.config.launchMode === "cold") {
@@ -317,6 +420,12 @@ export class GkeProvider implements SandboxProvider {
     } catch {
       return { handle };
     }
+  }
+
+  /** L1: split out of capacity() so start()'s pre-flight check doesn't also GET the warm pool. */
+  private async countActive(kube: KubeClientLike): Promise<number> {
+    const claims = await kube.list<SandboxClaim>(claimsPath(this.config.namespace), `${MANAGED_BY_LABEL}=${MANAGED_BY_VALUE}`);
+    return claims.filter((claim) => claimPhase(claim) !== "exited").length;
   }
 
   async stop(handle: SandboxHandle): Promise<void> {
@@ -354,13 +463,19 @@ export class GkeProvider implements SandboxProvider {
       const finished = condition(sandbox, "Finished");
       if (finished?.status === "True") return "exited";
     }
+
+    // M4: still ambiguous, but a claim can also sit here forever (ImagePullBackOff, unschedulable,
+    // AdoptionConflict...). Past START_DEADLINE_MS since creation, stop calling it "starting" --
+    // the reconciler skips that state outright, so a stuck claim would otherwise hold a
+    // GKE_MAX_ACTIVE slot and block the session's wakes until the claim's 24h shutdownTime.
+    // "unknown" falls through to the reconciler's stop-then-fail path, same as a status() error.
+    if (isPastStartDeadline(claim, this.deps.now())) return "unknown";
     return "starting";
   }
 
   async capacity(): Promise<SandboxCapacity> {
     const kube = await this.kube();
-    const claims = await kube.list<SandboxClaim>(claimsPath(this.config.namespace), `${MANAGED_BY_LABEL}=${MANAGED_BY_VALUE}`);
-    const active = claims.filter((claim) => claimPhase(claim) !== "exited").length;
+    const active = await this.countActive(kube);
     const pool = await kube.get<SandboxWarmPool>(warmPoolPath(this.config.namespace, this.config.warmPool));
     return {
       active,
@@ -385,6 +500,18 @@ function parseHandle(handle: SandboxHandle): { namespace: string; name: string }
   return { namespace: match[1], name: match[2] };
 }
 
+/** M4: true once `claim` has been ambiguously "starting" longer than START_DEADLINE_MS. A missing
+ * or unparseable creationTimestamp never forces "unknown" -- there's no evidence for it, and
+ * status() should err toward "starting" (which the reconciler already treats as provisioning)
+ * rather than fail a run early on a field the fake/real API happened not to set. */
+function isPastStartDeadline(claim: SandboxClaim, now: Date): boolean {
+  const created = claim.metadata.creationTimestamp;
+  if (!created) return false;
+  const createdMs = Date.parse(created);
+  if (!Number.isFinite(createdMs)) return false;
+  return now.getTime() - createdMs > START_DEADLINE_MS;
+}
+
 /** §4.1 endpoint discovery: one GET of clusters.get, reading
  * controlPlaneEndpointsConfig.dnsEndpointConfig.endpoint (memoized by the caller -- buildKubeClient
  * runs this at most once per provider instance, since the registry itself memoizes providers per
@@ -397,21 +524,42 @@ export async function resolveGkeEndpoint(
 ): Promise<string> {
   const token = await getToken();
   const url = `https://container.googleapis.com/v1/projects/${config.project}/locations/${config.location}/clusters/${config.cluster}`;
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  } catch (err) {
+    throw new GkeEndpointError(describeFetchFailure(err, `clusters.get for ${config.cluster}`), { cause: err });
+  }
+  // L6: a distinct error type from KubeError -- a wrong cluster/location/project (or clusters.get
+  // itself failing) is a different failure than "the warm pool is missing" or "the claim doesn't
+  // exist", even though both can be a 404. Callers that only check `KubeError.status === 404`
+  // (routes/hooks.ts) must not mistake this one for that.
   if (!res.ok) {
-    throw new KubeError(res.status, `gke: clusters.get failed: HTTP ${res.status}`);
+    throw new GkeEndpointError(`gke: clusters.get for ${config.cluster} failed: HTTP ${res.status} ${res.statusText}`);
   }
   const body = (await res.json()) as {
     controlPlaneEndpointsConfig?: { dnsEndpointConfig?: { endpoint?: string } };
   };
   const dnsEndpoint = body.controlPlaneEndpointsConfig?.dnsEndpointConfig?.endpoint;
   if (!dnsEndpoint) {
-    throw new Error(
+    throw new GkeEndpointError(
       `gke: cluster ${config.cluster} has no controlPlaneEndpointsConfig.dnsEndpointConfig.endpoint ` +
         "(enable-dns-access?)",
     );
   }
   return dnsEndpoint;
+}
+
+/** L2: `fetch` rejects (rather than resolving with a non-ok Response) on a network failure or an
+ * `AbortSignal.timeout()` firing -- undici surfaces the latter as a DOMException/Error named
+ * "TimeoutError". Give both a clean, bounded message instead of letting a raw fetch/undici error
+ * (which can be a wall of cause-chain text) become a run's statusDetail or a hook's response. */
+function describeFetchFailure(err: unknown, what: string): string {
+  const name = err instanceof Error ? err.name : undefined;
+  if (name === "TimeoutError" || name === "AbortError") {
+    return `gke: ${what} timed out after ${FETCH_TIMEOUT_MS}ms`;
+  }
+  return `gke: ${what} failed: network error`;
 }
 
 /** Real transport: Google OAuth access token (from GoogleAuth, cloud-platform scope) plus plain
@@ -437,16 +585,40 @@ export class HttpKubeClient implements KubeClientLike {
     const token = await this.getToken();
     const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
     if (body !== undefined) headers["Content-Type"] = contentType;
-    return fetch(`https://${this.endpoint}${path}`, {
-      method,
-      headers,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
+    try {
+      return await fetch(`https://${this.endpoint}${path}`, {
+        method,
+        headers,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        // L2: bounded, so a hung cluster/metadata server can't wedge a wake or a reconcile tick.
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+    } catch (err) {
+      // L2: a clean, bounded message instead of a raw fetch/undici error (which can include a long
+      // cause chain) reaching Run.reason/statusDetail or a hook's response.
+      throw new KubeError(0, describeFetchFailure(err, `${method} ${path}`));
+    }
   }
 
+  /** M2: never let a Kubernetes error response's raw body reach a caller. Admission can echo the
+   * request back in a 4xx (a claim's `spec.env` carries RUN_TOKEN in cold mode), and even without
+   * that, the body is arbitrary server text that ends up as Run.reason/statusDetail (both
+   * user-visible) or a hook's HTTP response. Kubernetes error bodies are a `Status` object
+   * (`{status, message, reason, code}`, https://kubernetes.io/docs/reference/using-api/api-concepts/#error-codes-and-messages);
+   * this keeps only `code` and the short, machine-set `reason` (e.g. "Forbidden", "Conflict") --
+   * never `message` or `details`, which are exactly the fields a server could echo request content
+   * into -- plus a fixed, curated hint per reason. Falls back to the plain HTTP status/statusText
+   * when the body isn't a Status object (or isn't JSON at all). */
   private async errorFor(res: Response): Promise<KubeError> {
-    const text = await res.text().catch(() => "");
-    return new KubeError(res.status, `gke: ${res.status} ${res.statusText}${text ? `: ${text}` : ""}`);
+    const parsed = await res
+      .json()
+      .then((json) => (isK8sStatus(json) ? json : undefined))
+      .catch(() => undefined);
+    const code = parsed?.code ?? res.status;
+    const reason = parsed?.reason || res.statusText || String(res.status);
+    const hint = REASON_HINTS[reason];
+    const message = hint ? `gke: ${code} ${reason} (${hint})` : `gke: ${code} ${reason}`;
+    return new KubeError(res.status, message);
   }
 
   async get<T>(path: string): Promise<T | null> {

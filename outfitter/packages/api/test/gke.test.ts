@@ -7,6 +7,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
   GkeProvider,
+  GkeEndpointError,
   KubeError,
   HttpKubeClient,
   resolveGkeEndpoint,
@@ -173,6 +174,44 @@ describe("GkeProvider.start", () => {
     assert.equal(handle, `gke:${NS}/run-${run.runId}`);
   });
 
+  // Review round 1, L5: a 409 whose existing claim is already terminating can't be adopted --
+  // that's a real failure (the run would silently attach to a claim that's about to vanish), not
+  // the idempotent-retry case above.
+  test("409 whose existing claim has deletionTimestamp set: rethrows instead of adopting it", async () => {
+    const { kube, store } = makeFakeKube();
+    seedWarmPool(store, 0, 0);
+    const run = makeRun();
+    seedClaim(store, `run-${run.runId}`, { metadata: { name: `run-${run.runId}`, namespace: NS, deletionTimestamp: "2026-01-01T00:00:00Z" } });
+    const provider = new GkeProvider(baseConfig(), { kube: async () => kube });
+
+    await assert.rejects(() => provider.start(run), /terminating/);
+  });
+
+  // Review round 1, M3: the 409 path's follow-up GET can itself observe the claim gone (deleted
+  // between the 409 and the GET) -- that must rethrow the original conflict, not silently succeed
+  // with a handle for a claim that isn't there.
+  test("409 whose follow-up GET returns null (claim vanished): rethrows", async () => {
+    const { store } = makeFakeKube();
+    seedWarmPool(store, 0, 0);
+    const run = makeRun();
+    const flakyKube: KubeClientLike = {
+      async get() {
+        return null; // the claim is gone by the time start() re-reads it
+      },
+      async create() {
+        throw new KubeError(409, "gke: 409 Conflict");
+      },
+      async delete() {},
+      async list() {
+        return [];
+      },
+      async patch() {},
+    };
+    const provider = new GkeProvider(baseConfig(), { kube: async () => flakyKube });
+
+    await assert.rejects(() => provider.start(run), (err: unknown) => err instanceof KubeError && err.status === 409);
+  });
+
   test("at GKE_MAX_ACTIVE: throws and makes no POST", async () => {
     const { kube, store } = makeFakeKube();
     seedWarmPool(store, 0, 0);
@@ -186,22 +225,63 @@ describe("GkeProvider.start", () => {
     assert.equal(store.has(`${CLAIMS_PATH}/run-${run.runId}`), false, "no claim should have been created");
   });
 
-  test("the run token never appears in a thrown error message", async () => {
-    const { kube, store } = makeFakeKube();
+  // Review round 1, M2/M3: the previous version of this test only drove the max-active path, where
+  // the token was never in scope at all -- a change that stopped redacting it entirely would still
+  // have passed. This drives a real failure from create() (as a Kubernetes 4xx admission response
+  // would echo the request body back, and the claim body carries RUN_TOKEN in cold mode) and
+  // checks the token is actually redacted, not merely absent by construction.
+  test("the run token is redacted from a create() error, even if the transport echoed it back", async () => {
+    const { store } = makeFakeKube();
     seedWarmPool(store, 0, 0);
-    seedClaim(store, "run-a");
-    seedClaim(store, "run-b");
-    seedClaim(store, "run-c");
-    const provider = new GkeProvider(baseConfig({ maxActive: 3 }), { kube: async () => kube });
-
     const run = makeRun({ runToken: "unmistakable-secret-xyz" });
+    const echoingKube: KubeClientLike = {
+      async get() {
+        return null;
+      },
+      async create() {
+        // Simulates a Kubernetes 4xx admission response that echoes the rejected object's fields,
+        // RUN_TOKEN included -- errorFor() itself never does this (M2), but start() must not rely
+        // on that alone.
+        throw new Error(`gke: 422 Invalid: spec.env[1].value: ${run.runToken} is not permitted`);
+      },
+      async delete() {},
+      async list() {
+        return [];
+      },
+      async patch() {},
+    };
+    const provider = new GkeProvider(baseConfig(), { kube: async () => echoingKube });
+
     try {
       await provider.start(run);
       assert.fail("expected start() to throw");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       assert.ok(!message.includes(run.runToken), `error message leaked the run token: ${message}`);
+      assert.match(message, /«redacted»/, "the redaction marker should be present in place of the token");
     }
+  });
+
+  // Review round 1, M1: a failed kube() build must not be cached -- the first start() call rejects
+  // (a transient clusters.get 5xx, say), and a second call must retry rather than replay the same
+  // rejected promise forever.
+  test("a failed kube() build is retried, not cached, on the next call", async () => {
+    const { kube, store } = makeFakeKube();
+    seedWarmPool(store, 0, 0);
+    let attempts = 0;
+    const provider = new GkeProvider(baseConfig(), {
+      kube: async () => {
+        attempts++;
+        if (attempts === 1) throw new Error("gke: transient clusters.get failure");
+        return kube;
+      },
+    });
+
+    const run = makeRun();
+    await assert.rejects(() => provider.start(run), /transient clusters\.get failure/);
+    const { handle } = await provider.start(run);
+    assert.equal(handle, `gke:${NS}/run-${run.runId}`);
+    assert.equal(attempts, 2);
   });
 });
 
@@ -349,6 +429,74 @@ describe("GkeProvider.status", () => {
     const provider = providerWith(new Map());
     assert.equal(await provider.status("not-a-gke-handle"), "unknown");
   });
+
+  // Review round 1, M3: a permission or server error is a real failure the reconciler needs to
+  // see (runs.ts turns a thrown status() into "unknown" itself, spec §4.3's last row) -- status()
+  // must never quietly report "exited" for one of these instead of propagating it.
+  for (const status of [401, 403, 500, 503]) {
+    test(`a ${status} from the claim GET throws, and does not report 'exited'`, async () => {
+      const throwingKube: KubeClientLike = {
+        async get() {
+          throw new KubeError(status, `gke: ${status} error`);
+        },
+        async create() {
+          throw new Error("not used");
+        },
+        async delete() {},
+        async list() {
+          return [];
+        },
+        async patch() {},
+      };
+      const provider = new GkeProvider(baseConfig(), { kube: async () => throwingKube });
+      await assert.rejects(() => provider.status(`gke:${NS}/run-x`), (err: unknown) => err instanceof KubeError && err.status === status);
+    });
+  }
+
+  // Review round 1, M4: a claim can sit Ready=False for a reason that never resolves on its own
+  // (ImagePullBackOff, unschedulable, a persistent AdoptionConflict). Without a deadline this would
+  // report "starting" forever; the reconciler skips "starting" outright, so the run would never
+  // fail and would hold a GKE_MAX_ACTIVE slot indefinitely.
+  test("Ready=False with an ambiguous reason, past the start deadline -> unknown, not starting forever", async () => {
+    const store = new Map<string, unknown>();
+    const createdAt = new Date("2026-01-01T00:00:00.000Z");
+    store.set(`${CLAIMS_PATH}/run-x`, {
+      metadata: { name: "run-x", namespace: NS, creationTimestamp: createdAt.toISOString() },
+      status: { conditions: [{ type: "Ready", status: "False", reason: "ImagePullBackOff" }] },
+    });
+    const provider = new GkeProvider(baseConfig(), {
+      kube: async () => makeFakeKubeOn(store),
+      now: () => new Date(createdAt.getTime() + 11 * 60_000), // 11 min later, past the 10 min deadline
+    });
+    assert.equal(await provider.status(`gke:${NS}/run-x`), "unknown");
+  });
+
+  test("Ready=False with an ambiguous reason, well within the start deadline -> still starting", async () => {
+    const store = new Map<string, unknown>();
+    const createdAt = new Date("2026-01-01T00:00:00.000Z");
+    store.set(`${CLAIMS_PATH}/run-x`, {
+      metadata: { name: "run-x", namespace: NS, creationTimestamp: createdAt.toISOString() },
+      status: { conditions: [{ type: "Ready", status: "False", reason: "ImagePullBackOff" }] },
+    });
+    const provider = new GkeProvider(baseConfig(), {
+      kube: async () => makeFakeKubeOn(store),
+      now: () => new Date(createdAt.getTime() + 2 * 60_000), // 2 min later, S4's worst case was 145s
+    });
+    assert.equal(await provider.status(`gke:${NS}/run-x`), "starting");
+  });
+
+  test("no creationTimestamp at all -> never forced to unknown, even under a far-future clock", async () => {
+    const store = new Map<string, unknown>();
+    store.set(`${CLAIMS_PATH}/run-x`, {
+      metadata: { name: "run-x", namespace: NS },
+      status: { conditions: [{ type: "Ready", status: "False", reason: "ImagePullBackOff" }] },
+    });
+    const provider = new GkeProvider(baseConfig(), {
+      kube: async () => makeFakeKubeOn(store),
+      now: () => new Date("2099-01-01T00:00:00.000Z"),
+    });
+    assert.equal(await provider.status(`gke:${NS}/run-x`), "starting");
+  });
 });
 
 describe("GkeProvider.capacity", () => {
@@ -450,14 +598,41 @@ describe("resolveGkeEndpoint", () => {
     }
   });
 
-  test("a non-2xx from clusters.get throws KubeError with the status attached", async () => {
+  // Review round 1, L6: endpoint resolution failures are a distinct type from KubeError -- a wrong
+  // cluster/location/project is not "the warm pool is missing" or "the claim doesn't exist", even
+  // though a 404 can result from either. routes/hooks.ts checks for GkeEndpointError first so this
+  // doesn't get misreported as one of those.
+  test("a non-2xx from clusters.get throws GkeEndpointError, not KubeError", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async () => new Response("forbidden", { status: 403 })) as typeof fetch;
     try {
       await assert.rejects(
         () => resolveGkeEndpoint({ project: "p", location: "us-central1", cluster: "outfitter" }, async () => "tok"),
-        (err: unknown) => err instanceof KubeError && err.status === 403,
+        (err: unknown) => err instanceof GkeEndpointError && !(err instanceof KubeError) && /403/.test(err.message),
       );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  // Review round 1, L2: bounded, so a hung metadata server or cluster can't wedge a wake or a
+  // reconcile tick. Verified two ways: the request actually carries an AbortSignal, and a fetch
+  // rejection shaped like AbortSignal.timeout()'s firing produces a clean, bounded message rather
+  // than a raw DOMException reaching a run's statusDetail.
+  test("passes an AbortSignal to fetch, and turns a timeout rejection into a clean message", async () => {
+    const originalFetch = globalThis.fetch;
+    const signals: unknown[] = [];
+    globalThis.fetch = (async (_url: string, init?: { signal?: unknown }) => {
+      signals.push(init?.signal);
+      throw Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+    }) as typeof fetch;
+    try {
+      await assert.rejects(
+        () => resolveGkeEndpoint({ project: "p", location: "us-central1", cluster: "outfitter" }, async () => "tok"),
+        (err: unknown) => err instanceof GkeEndpointError && /timed out after 15000ms/.test(err.message),
+      );
+      assert.equal(signals.length, 1);
+      assert.ok(signals[0] instanceof AbortSignal, "clusters.get must be called with an AbortSignal");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -505,6 +680,74 @@ describe("HttpKubeClient", () => {
     try {
       const client = new HttpKubeClient("gke-abc.us-central1.gke.goog", async () => "test-token");
       await assert.doesNotReject(() => client.delete("/apis/x/v1beta1/namespaces/ns/sandboxclaims/missing"));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  // Review round 1, M2/M3: drive create() against a stubbed fetch returning a 422 whose body is a
+  // Kubernetes Status object that echoes the rejected claim's RUN_TOKEN back in `message` (a real
+  // admission rejection can do exactly this). Assert the thrown message contains neither the token
+  // nor the raw JSON body -- only the curated `code`/`reason` translation.
+  test("create() against a 422 whose body echoes the token: the thrown message has neither the token nor the raw body", async () => {
+    const token = "unmistakable-secret-xyz";
+    const rawBody = JSON.stringify({
+      kind: "Status",
+      status: "Failure",
+      message: `admission webhook denied the request: spec.env[1].value: ${token} is not permitted`,
+      reason: "Invalid",
+      code: 422,
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(rawBody, { status: 422 })) as typeof fetch;
+    try {
+      const client = new HttpKubeClient("gke-abc.us-central1.gke.goog", async () => "test-token");
+      await assert.rejects(
+        () => client.create("/apis/x/v1beta1/namespaces/ns/sandboxclaims", { spec: {} }),
+        (err: unknown) => {
+          if (!(err instanceof KubeError)) return false;
+          if (err.status !== 422) return false;
+          if (err.message.includes(token)) return false;
+          if (err.message.includes(rawBody)) return false;
+          if (err.message.includes("admission webhook")) return false; // the raw `message` field itself
+          return /422/.test(err.message) && /Invalid/.test(err.message);
+        },
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("a non-JSON error body falls back to the plain HTTP status/statusText, still no raw body", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response("<html>502 Bad Gateway</html>", { status: 502, statusText: "Bad Gateway" })) as typeof fetch;
+    try {
+      const client = new HttpKubeClient("gke-abc.us-central1.gke.goog", async () => "test-token");
+      await assert.rejects(
+        () => client.create("/apis/x/v1beta1/namespaces/ns/sandboxclaims", { spec: {} }),
+        (err: unknown) => err instanceof KubeError && err.status === 502 && !err.message.includes("<html>") && /502/.test(err.message),
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  // Review round 1, L2.
+  test("every request carries an AbortSignal timeout, and a timeout rejection is a clean KubeError", async () => {
+    const originalFetch = globalThis.fetch;
+    const signals: unknown[] = [];
+    globalThis.fetch = (async (_url: string, init?: { signal?: unknown }) => {
+      signals.push(init?.signal);
+      throw Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+    }) as typeof fetch;
+    try {
+      const client = new HttpKubeClient("gke-abc.us-central1.gke.goog", async () => "test-token");
+      await assert.rejects(
+        () => client.get("/apis/x/v1beta1/namespaces/ns/sandboxclaims/run-x"),
+        (err: unknown) => err instanceof KubeError && /timed out after 15000ms/.test(err.message),
+      );
+      assert.equal(signals.length, 1);
+      assert.ok(signals[0] instanceof AbortSignal);
     } finally {
       globalThis.fetch = originalFetch;
     }

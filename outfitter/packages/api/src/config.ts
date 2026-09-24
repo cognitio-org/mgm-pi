@@ -56,8 +56,9 @@ export interface Config {
   gkeNamespace: string;
   /** GKE_WARM_POOL: the SandboxWarmPool (and SandboxTemplate) name claims reference. */
   gkeWarmPool: string;
-  /** GKE_ENDPOINT: optional override of the cluster's DNS-based control-plane endpoint host;
-   * empty uses whatever the GKE client library resolves on its own. */
+  /** GKE_ENDPOINT: optional override of the cluster's DNS-based control-plane endpoint host
+   * (bare host, no scheme, no trailing slash -- see envGkeEndpoint); empty resolves it from one
+   * `clusters.get` call (`gke.ts`'s `resolveGkeEndpoint`), memoized per provider instance. */
   gkeEndpoint: string;
   /** GKE_LAUNCH_MODE: cold (claim env, PR2) or warm (claim annotations onto a pre-started pod,
    * PR4). Default cold until PR4's warm-pool image is deployed. */
@@ -176,6 +177,18 @@ function envList(name: string, fallback: string[], env: NodeJS.ProcessEnv): stri
   return items.length > 0 ? items : fallback;
 }
 
+/** Review finding L3: `gke.ts`'s `HttpKubeClient` builds request URLs as `https://${endpoint}${path}`
+ * and `resolveGkeEndpoint`'s own `clusters.get` result is a bare host too -- a `GKE_ENDPOINT` set
+ * with a scheme or a trailing slash would silently produce a malformed URL (`https://https://...`
+ * or a double slash) that fails opaquely at request time instead of at boot. Normalize rather than
+ * reject: an operator pasting the value straight from `gcloud container clusters describe` (which
+ * prints the bare host) gets no error either way, and one copied with `https://` or a trailing `/`
+ * still works instead of breaking every gke call until someone notices. */
+function envGkeEndpoint(env: NodeJS.ProcessEnv): string {
+  const raw = env.GKE_ENDPOINT ?? "";
+  return raw.trim().replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+}
+
 /** OUTFITTER_OPERATORS / OUTFITTER_ORIGIN_ALIASES parser: splits on `;`, `,` or any whitespace run
  * (see Config.operators' doc comment for why more than one separator is accepted), trims each
  * entry, drops empties. */
@@ -259,7 +272,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     gkeLocation: env.GKE_LOCATION ?? env.GCP_REGION ?? "us-central1",
     gkeNamespace: env.GKE_NAMESPACE ?? "outfitter-sandboxes",
     gkeWarmPool: env.GKE_WARM_POOL ?? "outfitter-agent",
-    gkeEndpoint: env.GKE_ENDPOINT ?? "",
+    gkeEndpoint: envGkeEndpoint(env),
     gkeLaunchMode: envEnum("GKE_LAUNCH_MODE", GKE_LAUNCH_MODES, "cold", env),
     gkeMaxActive: envInt("GKE_MAX_ACTIVE", 3, env),
     idleStopSeconds: envInt("IDLE_STOP_SECONDS", 600, env),

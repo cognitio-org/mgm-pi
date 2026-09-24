@@ -300,7 +300,9 @@ says so (`unavailable`) and the checkpoint still continues.
   `spec.replicas` via a merge-patch, clamped to 0..2 regardless of what the caller asks for — the
   API is the only thing that talks to the cluster, so this hook is also the pool's hard ceiling.
   404 when `SANDBOX_PROVIDER=gke` isn't configured here, or the warm pool object itself is missing;
-  409 on a patch conflict. Returns `{replicas}` (the clamped value actually applied) on success.
+  409 on the rare patch conflict (defensive -- a plain merge-patch of `spec.replicas` has little to
+  actually conflict over); 502 if the cluster's endpoint can't be resolved or the patch otherwise
+  fails. Returns `{replicas}` (the clamped value actually applied) on success.
 
 Teleport uses `GET /api/sessions/:id/export.jsonl`, `PUT /api/sessions/:id/import` (body: JSONL,
 same id, refused while a run is `running`), and `GET /api/sessions` for the picker.

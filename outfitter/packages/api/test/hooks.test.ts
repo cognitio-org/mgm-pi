@@ -6,7 +6,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { buildTestApp } from "./helpers.ts";
-import { GkeProvider, KubeError, type KubeClientLike } from "../src/providers/gke.ts";
+import { GkeEndpointError, GkeProvider, KubeError, type KubeClientLike } from "../src/providers/gke.ts";
 
 const SECRET = "test-ngrok-secret";
 /** Matches buildTestApp's OUTFITTER_DEV_TOKEN default -- verifyTasksToken's dev-mode bearer check
@@ -227,6 +227,49 @@ describe("POST /api/hooks/warm-pool", () => {
 
     const res = await app.fastify.inject({ method: "POST", url: "/api/hooks/warm-pool", headers: TASKS_AUTH, payload: { replicas: 1 } });
     assert.equal(res.statusCode, 409);
+    await app.fastify.close();
+  });
+
+  // Review round 1, L6: an endpoint-resolution failure (wrong cluster/location, or clusters.get
+  // itself failing) is not "the warm pool object is missing" -- both can be a 404, but they mean
+  // different things to whoever's paged. This must surface distinctly, not as 404.
+  test("an endpoint-resolution failure (GkeEndpointError) is a distinct 502, not 'warm pool not found'", async () => {
+    const provider = new GkeProvider(
+      { project: "p", location: "us-central1", cluster: "wrong-cluster", namespace: "outfitter-sandboxes", warmPool: "outfitter-agent", launchMode: "cold", maxActive: 3 },
+      {
+        kube: async () => {
+          throw new GkeEndpointError("gke: clusters.get for wrong-cluster failed: HTTP 404 Not Found");
+        },
+      },
+    );
+    const app = await buildTestApp({ SANDBOX_PROVIDER: "gke", GKE_CLUSTER: "wrong-cluster" }, { extraProviders: { gke: async () => provider } });
+
+    const res = await app.fastify.inject({ method: "POST", url: "/api/hooks/warm-pool", headers: TASKS_AUTH, payload: { replicas: 1 } });
+    assert.equal(res.statusCode, 502);
+    assert.notEqual(res.json().error, "warm pool not found");
+    await app.fastify.close();
+  });
+
+  // Review round 1, M2: any other failure must reach the caller as a clean, fixed message -- never
+  // whatever `err.message` happens to contain (which, before gke.ts's own redaction, could be a raw
+  // Kubernetes response body).
+  test("any other patch failure is a clean 502, not the raw error message", async () => {
+    const { kube } = fakeKubeWithPool(0);
+    const brokenKube: KubeClientLike = {
+      ...kube,
+      async patch() {
+        throw new Error("gke: 500 dial tcp 10.0.0.1:443: connection reset by peer, retrying attempt 3 of 5 ...");
+      },
+    };
+    const provider = new GkeProvider(
+      { project: "p", location: "us-central1", cluster: "outfitter", namespace: "outfitter-sandboxes", warmPool: "outfitter-agent", launchMode: "cold", maxActive: 3 },
+      { kube: async () => brokenKube },
+    );
+    const app = await buildTestApp({ SANDBOX_PROVIDER: "gke", GKE_CLUSTER: "outfitter" }, { extraProviders: { gke: async () => provider } });
+
+    const res = await app.fastify.inject({ method: "POST", url: "/api/hooks/warm-pool", headers: TASKS_AUTH, payload: { replicas: 1 } });
+    assert.equal(res.statusCode, 502);
+    assert.equal(res.json().error, "gke: warm pool patch failed");
     await app.fastify.close();
   });
 });

@@ -5,15 +5,16 @@
 
 import type { Guru } from "./store/types.ts";
 import { GITHUB_TOKEN_DEFAULT_SECRET } from "./secrets.ts";
-import { GITHUB_APP_ID_SECRET, GITHUB_APP_INSTALLATION_SECRET, GITHUB_APP_KEY_SECRET, GITHUB_APP_SLUG_SECRET } from "./github-app.ts";
+import { GITHUB_APP_ID_SECRET, GITHUB_APP_INSTALLATION_SECRET, GITHUB_APP_SLUG_SECRET } from "./github-app.ts";
 
 /** When a change to this secret takes effect: "next run" for a secret read live via SecretsBroker
  * at run start (never mounted as container env), "next deploy" for one mounted as a container env
  * var at deploy time (deploy/service.sh's --set-secrets). */
 export type SecretAppliesAt = "next run" | "next deploy";
 
-/** Which provider a secret's value authenticates against, for POST /api/operator/secrets/:name/test. */
-export type SecretKind = "litellm" | "github" | "ngrok" | "tunnel";
+/** Which provider a secret's value authenticates against, for POST /api/operator/secrets/:name/test.
+ * `untested` is stored and shown, and is never placed in an Authorization header. */
+export type SecretKind = "litellm" | "github" | "ngrok" | "tunnel" | "untested";
 
 export interface ManagedSecretDef {
   secretName: string;
@@ -49,33 +50,28 @@ const STATIC_SECRETS: ManagedSecretDef[] = [
     appliesAt: "next deploy",
     kind: "github",
   },
+  // The private key (outfitter-github-app-private-key) stays gcloud-only. A PEM has newlines, so
+  // this writer would reject it, and Test must never send it to GitHub as a Bearer token.
   {
     secretName: GITHUB_APP_ID_SECRET,
     label: "GitHub App id",
     purpose: "Numeric App id. With the private key and installation id, repo sessions mint an installation token.",
     appliesAt: "next run",
-    kind: "github",
-  },
-  {
-    secretName: GITHUB_APP_KEY_SECRET,
-    label: "GitHub App private key",
-    purpose: "PEM private key of the GitHub App, including the BEGIN line. Never sent to a sandbox.",
-    appliesAt: "next run",
-    kind: "github",
+    kind: "untested",
   },
   {
     secretName: GITHUB_APP_INSTALLATION_SECRET,
     label: "GitHub App installation id",
     purpose: "Numeric installation id from the App's installation URL.",
     appliesAt: "next run",
-    kind: "github",
+    kind: "untested",
   },
   {
     secretName: GITHUB_APP_SLUG_SECRET,
     label: "GitHub App slug",
     purpose: "The App's URL slug, shown on the session page as who a cloud action appears as. Not a credential.",
     appliesAt: "next run",
-    kind: "github",
+    kind: "untested",
   },
   {
     secretName: "outfitter-litellm-admin",

@@ -105,6 +105,8 @@ export async function testSecretValue(
       headers = { Authorization: `Bearer ${value}` };
       break;
     }
+    case "untested":
+      return { ok: false, detail: "This secret is not probed." };
   }
   // fetchJson only rejects on a network failure/timeout (a non-2xx response is a resolved,
   // ok: false result) -- catch that here the same way providers-status.ts's own probes do.

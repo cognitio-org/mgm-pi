@@ -88,7 +88,10 @@ export class GcpSecretsBroker implements SecretsBroker {
         return (await this.fetchSecret(secretId)).trim();
       } catch (err) {
         if (isSecretNotFoundError(err)) return "";
-        throw err;
+        // A blip reading an App secret must not fail a repo run that still has a PAT.
+        // Log the name only: Secret Manager errors can echo the request, never the key.
+        console.warn(`[secrets] ${secretId} unreadable: ${err instanceof Error ? err.name : "Error"}`);
+        return "";
       }
     });
   }
@@ -106,22 +109,23 @@ export class GcpSecretsBroker implements SecretsBroker {
     return this.app.mint(session.repo);
   }
 
-  /** The session's own token if it has one, else — for a session that actually has a repo — the
-   * shared `outfitter-github-token-default`.
+  /** Per-session PAT, then a GitHub App installation token, then the shared
+   * `outfitter-github-token-default`.
    *
    * The per-session secret stays the preferred form: a fine-grained PAT scoped to that one repo is
-   * a far smaller blast radius than one token every repo session can reach. But requiring it meant
-   * an operator had to mint a PAT by hand, against a session id that only exists once the session
-   * has been created, before that session's first run could get past buildRunSpec's fatal check —
-   * which is what the shared fallback exists to avoid.
+   * a far smaller blast radius than one token every repo session can reach. The App is the usual
+   * cloud identity once its id, private key, and installation id are set. The shared PAT remains
+   * so a run still starts before that App exists, or when GitHub refuses the mint — requiring a
+   * per-session PAT meant an operator had to mint one by hand, against a session id that only
+   * exists once the session has been created, before the first run could get past buildRunSpec.
    *
-   * The fallback is deliberately gated on `session.repo`. run.spec carries `secrets` for every
-   * run, repo or not (agentlink.ts), so falling back unconditionally would hand the org-wide token
-   * to sandboxes that provably have nothing to clone or push — strictly more exposure for no
-   * capability. A repo-less session with a token of its own still gets it, since creating that
-   * secret is a deliberate act; it just isn't given one it was never granted. Logs which of the
-   * two a run ended up with, because "the token worked" and "the token I expected" are different
-   * questions once something fails to clone or push. */
+   * The App and the shared PAT are gated on `session.repo`. run.spec carries `secrets` for every
+   * run, repo or not (agentlink.ts), so handing either credential to a sandbox with nothing to
+   * clone or push would be strictly more exposure for no capability. A repo-less session stops
+   * before the App for that reason. One with a token of its own still gets it, since creating
+   * that secret is a deliberate act. Logs which of the three a run ended up with, because "the
+   * token worked" and "the token I expected" are different questions once something fails to
+   * clone or push. */
   private async githubTokenForSession(session: Session): Promise<{ token: string; expiresAt?: string }> {
     const perSession = `outfitter-github-token-${session.id}`;
     const own = await this.accessSecretOrEmpty(perSession);
@@ -188,7 +192,8 @@ export class GcpSecretsBroker implements SecretsBroker {
 
 /** True for a Secret Manager "no such secret/version" failure: a Gaxios HTTP 404, or (in case a
  * client surfaces it as a raw gRPC status instead) code 5 NOT_FOUND. Any other shape of error
- * (network, auth, 403) is treated as real and rethrown by the caller. */
+ * (network, auth, 403) is a real failure: `accessSecretOrEmpty` rethrows it, and the GitHub App
+ * reader logs the error name and returns "" so a run can still use its PAT. */
 function isSecretNotFoundError(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
   const e = err as { response?: { status?: number }; code?: number | string; status?: number };

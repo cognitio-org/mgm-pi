@@ -2,6 +2,7 @@
 // A per-session PAT still wins over a minted token; see secrets.ts.
 
 import { createSign } from "node:crypto";
+import { parseSessionRepo } from "./session-repo.ts";
 
 export const GITHUB_APP_ID_SECRET = "outfitter-github-app-id";
 export const GITHUB_APP_KEY_SECRET = "outfitter-github-app-private-key";
@@ -17,10 +18,10 @@ export interface InstallationToken {
 }
 
 /** How long to wait before asking for a replacement. Undefined when `expiresAt` is not a time. */
-export function refreshDelayMs(expiresAt: string, now: number): number | undefined {
+export function refreshDelayMs(expiresAt: string, now: number, floorMs?: number): number | undefined {
   const exp = Date.parse(expiresAt);
   if (!Number.isFinite(exp)) return undefined;
-  return Math.max(MIN_REFRESH_DELAY_MS, exp - now - REFRESH_EARLY_MS);
+  return Math.max(floorMs ?? MIN_REFRESH_DELAY_MS, exp - now - REFRESH_EARLY_MS);
 }
 
 function base64url(data: Buffer | string): string {
@@ -37,12 +38,20 @@ export function githubAppJwt(appId: string, privateKeyPem: string, nowSeconds: n
   return `${data}.${base64url(sig)}`;
 }
 
-/** `owner/repo` → the repo name GitHub's installation-token `repositories` field wants. */
-export function githubRepoName(ownerRepo: string): string | undefined {
-  const parts = ownerRepo.split("/");
-  if (parts.length !== 2 || !parts[0] || !parts[1]) return undefined;
-  if (!/^[A-Za-z0-9_.-]+$/.test(parts[1])) return undefined;
-  return parts[1];
+/** Repo name for the installation-token `repositories` field. Same stored forms as `parseSessionRepo`. */
+export function githubRepoName(sessionRepo: string): string | undefined {
+  const parsed = parseSessionRepo(sessionRepo);
+  if (!parsed || !/^[A-Za-z0-9_.-]+$/.test(parsed.repo)) return undefined;
+  return parsed.repo;
+}
+
+/** True when the three App secrets are values `mint` will actually try to sign with. */
+export function githubAppSecretsUsable(appId: string, privateKey: string, installationId: string): boolean {
+  return /^\d+$/.test(appId.trim()) && /^\d+$/.test(installationId.trim()) && privateKey.includes("PRIVATE KEY");
+}
+
+function errorName(err: unknown): string {
+  return err instanceof Error ? err.name : "Error";
 }
 
 interface CachedToken {
@@ -72,18 +81,43 @@ export class GithubAppTokens {
   }
 
   async mint(ownerRepo: string): Promise<InstallationToken | undefined> {
+    try {
+      return await this.mintOnce(ownerRepo);
+    } catch (err) {
+      console.warn(`[github-app] installation token mint failed: ${errorName(err)}`);
+      return undefined;
+    }
+  }
+
+  private async mintOnce(ownerRepo: string): Promise<InstallationToken | undefined> {
     const repo = githubRepoName(ownerRepo);
     if (!repo) return undefined;
-    const [appId, privateKey, installationId] = await Promise.all([
-      this.read(GITHUB_APP_ID_SECRET),
-      this.read(GITHUB_APP_KEY_SECRET),
-      this.read(GITHUB_APP_INSTALLATION_SECRET),
-    ]);
-    if (!/^\d+$/.test(appId) || !/^\d+$/.test(installationId) || !privateKey.includes("PRIVATE KEY")) return undefined;
+    let appId: string;
+    let privateKey: string;
+    let installationId: string;
+    try {
+      [appId, privateKey, installationId] = await Promise.all([
+        this.read(GITHUB_APP_ID_SECRET),
+        this.read(GITHUB_APP_KEY_SECRET),
+        this.read(GITHUB_APP_INSTALLATION_SECRET),
+      ]);
+    } catch (err) {
+      console.warn(`[github-app] app secret read failed: ${errorName(err)}`);
+      return undefined;
+    }
+    if (!githubAppSecretsUsable(appId, privateKey, installationId)) return undefined;
+    appId = appId.trim();
+    installationId = installationId.trim();
     const key = `${installationId}:${repo}`;
     const hit = this.cache.get(key);
     if (hit && hit.expiresAtMs - this.now() > REFRESH_EARLY_MS) return { token: hit.token, expiresAt: hit.expiresAt };
-    const jwt = githubAppJwt(appId, privateKey, Math.floor(this.now() / 1000));
+    let jwt: string;
+    try {
+      jwt = githubAppJwt(appId, privateKey, Math.floor(this.now() / 1000));
+    } catch (err) {
+      console.warn(`[github-app] could not sign the app jwt: ${errorName(err)}`);
+      return undefined;
+    }
     let res: Response;
     try {
       res = await this.fetchImpl(`https://api.github.com/app/installations/${installationId}/access_tokens`, {
@@ -96,14 +130,20 @@ export class GithubAppTokens {
         body: JSON.stringify({ repositories: [repo] }),
       });
     } catch (err) {
-      console.warn(`[github-app] installation token request failed: ${err instanceof Error ? err.name : "Error"}`);
+      console.warn(`[github-app] installation token request failed: ${errorName(err)}`);
       return undefined;
     }
     if (!res.ok) {
       console.warn(`[github-app] installation token request returned ${res.status}`);
       return undefined;
     }
-    const body = (await res.json()) as { token?: unknown; expires_at?: unknown };
+    let body: { token?: unknown; expires_at?: unknown };
+    try {
+      body = (await res.json()) as { token?: unknown; expires_at?: unknown };
+    } catch (err) {
+      console.warn(`[github-app] installation token response was not json: ${errorName(err)}`);
+      return undefined;
+    }
     if (typeof body.token !== "string" || !body.token || typeof body.expires_at !== "string") return undefined;
     const expiresAtMs = Date.parse(body.expires_at);
     if (!Number.isFinite(expiresAtMs)) return undefined;

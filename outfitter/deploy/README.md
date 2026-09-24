@@ -213,6 +213,10 @@ the page and never moved the fleet, because `release.sh` deploys the page first.
    Metadata read. No user-authorization callback in this slice. Until the three required secrets
    exist, runs keep using the PAT path above. A per-session PAT still wins when it is set.
 
+   Store the private key with the gcloud command above. Operator settings does not list it: a PEM
+   contains newlines, and the Test button must not send that key to GitHub. The App id, installation
+   id, and slug are listed there; their Test button does not call GitHub.
+
    `outfitter-github-token-default` exists so that *not* doing so is merely looser rather than
    fatal — before it, creating a repo session through the UI was impossible until an operator
    minted a PAT by hand, against a session id that only exists once the session has been created.

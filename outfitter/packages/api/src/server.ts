@@ -11,7 +11,7 @@ import { SandboxProviders } from "./providers/registry.ts";
 import type { SecretsBroker, SecretAdmin } from "./secrets.ts";
 import { identityFromRequest, identityFromLinkRequest, verifyAgentToken, bearerFromHeader } from "./auth.ts";
 import { RunManager } from "./runs.ts";
-import { AgentLink } from "./agentlink.ts";
+import { AgentLink, type GithubRefreshTiming } from "./agentlink.ts";
 import { SseHub, SsePoller } from "./sse.ts";
 import { LaptopProbe } from "./laptop.ts";
 import { ProviderStatusService } from "./providers-status.ts";
@@ -34,6 +34,8 @@ export interface BuildAppOptions {
   secretAdmin: SecretAdmin;
   /** GitHub broker for github.request frames. Tests inject a fake transport; production omits this. */
   github?: GithubBroker;
+  /** Shortens installation-token refresh waits. Production omits this. */
+  githubRefresh?: GithubRefreshTiming;
 }
 
 export interface App {
@@ -73,7 +75,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     token: config.localTunnelToken,
   });
   const mail = new MailService(store, runs, wakeSchedulerFor(config), (msg, err) => fastify.log.warn({ err }, msg));
-  const agentLink = new AgentLink(store, config, secretsBroker, sse, laptopProbe, mail, opts.github);
+  const agentLink = new AgentLink(store, config, secretsBroker, sse, laptopProbe, mail, opts.github, opts.githubRefresh);
 
   // Sandbox capacity probe (E2.10, gke-sandbox-provider.md §2.4 gap G3): duck-typed on the
   // *default* provider's optional capacity() rather than `instanceof CloudRunProvider`, so a

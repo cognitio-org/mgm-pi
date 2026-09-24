@@ -6,19 +6,26 @@ import type { RouteContext } from "./context.ts";
 import type { Session, PiEntry, Run } from "../store/types.ts";
 import { MAIL_HELD_NOTICE, MAIL_MAX_TEXT } from "../mail.ts";
 import { GITHUB_TOKEN_DEFAULT_SECRET } from "../secrets.ts";
-import { GITHUB_APP_ID_SECRET, GITHUB_APP_INSTALLATION_SECRET, GITHUB_APP_KEY_SECRET, GITHUB_APP_SLUG_SECRET } from "../github-app.ts";
+import { GITHUB_APP_ID_SECRET, GITHUB_APP_INSTALLATION_SECRET, GITHUB_APP_KEY_SECRET, GITHUB_APP_SLUG_SECRET, githubAppSecretsUsable, githubRepoName } from "../github-app.ts";
 import { sessionGithubTokenSecretName } from "../operator.ts";
 import { entryForWire } from "../entry-wire.ts";
 
 const SESSION_VERSION = 3; // matches pi's CURRENT_SESSION_VERSION; keeps export.jsonl pi-compatible
 
-async function githubAppConfigured(ctx: RouteContext): Promise<boolean> {
-  const [id, key, installation] = await Promise.all([
-    ctx.secretAdmin.info(GITHUB_APP_ID_SECRET),
-    ctx.secretAdmin.info(GITHUB_APP_KEY_SECRET),
-    ctx.secretAdmin.info(GITHUB_APP_INSTALLATION_SECRET),
-  ]);
-  return id.set && key.set && installation.set;
+/** Same checks `GithubAppTokens.mint` uses before it calls GitHub. Existence of a secret version is not enough. */
+async function githubAppConfigured(ctx: RouteContext, repo: string): Promise<boolean> {
+  if (!githubRepoName(repo)) return false;
+  try {
+    const [appId, privateKey, installationId] = await Promise.all([
+      ctx.secretAdmin.accessLatest(GITHUB_APP_ID_SECRET),
+      ctx.secretAdmin.accessLatest(GITHUB_APP_KEY_SECRET),
+      ctx.secretAdmin.accessLatest(GITHUB_APP_INSTALLATION_SECRET),
+    ]);
+    return githubAppSecretsUsable(appId ?? "", privateKey ?? "", installationId ?? "");
+  } catch (err) {
+    console.warn(`[sessions] github app secrets unreadable: ${err instanceof Error ? err.name : "Error"}`);
+    return false;
+  }
 }
 
 async function githubAppSlug(ctx: RouteContext): Promise<string | null> {
@@ -182,9 +189,7 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
     const owner = session.ownerEmail ? await ctx.store.users.findByEmail(session.ownerEmail) : null;
     const login = owner?.githubLogin?.replace(/^@/, "").trim() ?? "";
     const ownToken = await ctx.secretAdmin.info(sessionGithubTokenSecretName(session.id));
-    const appConfigured = session.repo
-      ? await githubAppConfigured(ctx)
-      : false;
+    const appConfigured = session.repo ? await githubAppConfigured(ctx, session.repo) : false;
     const sharedToken = ownToken.set || !session.repo || appConfigured ? { set: false } : await ctx.secretAdmin.info(GITHUB_TOKEN_DEFAULT_SECRET);
     const credential = ownToken.set ? "session" : appConfigured ? "app" : sharedToken.set ? "default" : "none";
     const appSlug = credential === "app" ? await githubAppSlug(ctx) : null;

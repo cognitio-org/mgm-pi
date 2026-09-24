@@ -122,6 +122,10 @@ describe("GET /api/operator/settings", () => {
     assert.ok(names.includes("outfitter-litellm-key-default"));
     assert.ok(names.includes("outfitter-github-token-default"));
     assert.ok(names.includes("outfitter-github-pat"));
+    assert.ok(names.includes("outfitter-github-app-id"));
+    assert.ok(names.includes("outfitter-github-app-installation-id"));
+    assert.ok(names.includes("outfitter-github-app-slug"));
+    assert.equal(names.includes("outfitter-github-app-private-key"), false);
     assert.ok(names.includes("outfitter-litellm-admin"));
     assert.ok(names.includes("outfitter-ngrok-api-key"));
     assert.ok(names.includes("outfitter-local-tunnel-token"));
@@ -384,6 +388,35 @@ describe("POST /api/operator/secrets/:secretName/test", () => {
     const app = await buildTestApp();
     const res = await app.fastify.inject({ method: "POST", url: "/api/operator/secrets/some-random-secret/test", payload: {} });
     assert.equal(res.statusCode, 400);
+    await app.fastify.close();
+  });
+
+  test("the App private key is not operator-managed, and the App id is not probed as a PAT", async () => {
+    const secretAdmin = new MemorySecretAdmin();
+    await secretAdmin.addVersion("outfitter-github-app-id", "42");
+    await secretAdmin.addVersion("outfitter-github-app-private-key", "-----BEGIN PRIVATE KEY-----\nsecret-key-material\n-----END PRIVATE KEY-----");
+    const app = await buildTestApp({}, { secretAdmin });
+    const put = await app.fastify.inject({
+      method: "PUT",
+      url: "/api/operator/secrets/outfitter-github-app-private-key",
+      payload: { value: "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----" },
+    });
+    assert.equal(put.statusCode, 400);
+    const missing = await app.fastify.inject({
+      method: "POST",
+      url: "/api/operator/secrets/outfitter-github-app-private-key/test",
+      payload: {},
+    });
+    assert.equal(missing.statusCode, 400);
+    const probed = await app.fastify.inject({
+      method: "POST",
+      url: "/api/operator/secrets/outfitter-github-app-id/test",
+      payload: {},
+    });
+    assert.equal(probed.statusCode, 200);
+    assert.deepEqual(probed.json(), { ok: false, detail: "This secret is not probed." });
+    assert.equal(probed.body.includes("42"), false);
+    assert.equal(probed.body.includes("secret-key-material"), false);
     await app.fastify.close();
   });
 });

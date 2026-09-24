@@ -57,3 +57,51 @@ test("GithubAppTokens returns undefined when the App secrets are absent", async 
   const tokens = new GithubAppTokens(async () => "");
   assert.equal(await tokens.mint("o/r"), undefined);
 });
+
+test("GithubAppTokens mints the repo name from URL and .git forms", async () => {
+  const repos: string[] = [];
+  const tokens = new GithubAppTokens(
+    async (name) => {
+      if (name.includes("installation")) return "99";
+      if (name.includes("private-key")) return pem;
+      return "12345";
+    },
+    (async (_url: string, init?: RequestInit) => {
+      repos.push(JSON.parse(String(init?.body)).repositories[0]);
+      return new Response(JSON.stringify({ token: "ghs_minted", expires_at: "2026-09-24T06:00:00Z" }), { status: 201 });
+    }) as typeof fetch,
+    () => Date.parse("2026-09-24T04:00:00Z"),
+  );
+  assert.equal((await tokens.mint("https://github.com/cognitio-org/testit.git"))?.token, "ghs_minted");
+  assert.equal((await tokens.mint("git@github.com:cognitio-org/other.git"))?.token, "ghs_minted");
+  assert.equal((await tokens.mint("cognitio-org/third.git"))?.token, "ghs_minted");
+  assert.deepEqual(repos, ["testit", "other", "third"]);
+});
+
+test("GithubAppTokens returns undefined for a key that is not a usable PEM", async () => {
+  const tokens = new GithubAppTokens(async (name) => {
+    if (name.includes("installation")) return "99";
+    if (name.includes("private-key")) return "-----BEGIN PRIVATE KEY-----\nnot-a-pem\n-----END PRIVATE KEY-----";
+    return "12345";
+  });
+  assert.equal(await tokens.mint("o/r"), undefined);
+});
+
+test("GithubAppTokens returns undefined when GitHub's body is not JSON", async () => {
+  const tokens = new GithubAppTokens(
+    async (name) => {
+      if (name.includes("installation")) return "99";
+      if (name.includes("private-key")) return pem;
+      return "12345";
+    },
+    (async () => new Response("nope", { status: 200 })) as typeof fetch,
+  );
+  assert.equal(await tokens.mint("o/r"), undefined);
+});
+
+test("GithubAppTokens returns undefined when a secret read throws", async () => {
+  const tokens = new GithubAppTokens(async () => {
+    throw new Error("secret manager unavailable");
+  });
+  assert.equal(await tokens.mint("o/r"), undefined);
+});

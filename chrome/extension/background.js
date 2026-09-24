@@ -110,6 +110,28 @@ import {
   withKindAllowed,
   withoutSessionAllow,
 } from "./action.js";
+import {
+  INSPECT_PROMPTS_KEY,
+  SELECTED_ELEMENT_EXPRESSION,
+  describeElement,
+  elementFromDescribedNode,
+  gateInspect,
+  hostInspectError,
+  hostInspectedMessage,
+  inspectNotice,
+  inspectNoticeId,
+  inspectPanelMessage,
+  inspectPromptView,
+  inspectRequestIdFromNotice,
+  inspectResultPath,
+  lineFromConsoleEvent,
+  lineFromExceptionEvent,
+  lineFromRuntimeEvent,
+  parseHostInspect,
+  pendingInspects,
+  readInspectPromptMap,
+  redactInspectResult,
+} from "./inspect.js";
 
 const PLACEMENTS_KEY = "placements";
 
@@ -1206,12 +1228,377 @@ async function decideAction(requestId, decision) {
   await finishAction(prompt, decision, false);
 }
 
+// One debugger client: this extension, on a tab it recorded at share time.
+// The buffer is console text only. Network headers are never requested.
+const consoleBuffers = new Map();
+const selectedNodes = new Map();
+const INSPECT_FLUSH_MS = 200;
+
+function pushConsole(tabId, line) {
+  if (!Number.isInteger(tabId) || typeof line !== "string" || line === "") return;
+  const buf = consoleBuffers.get(tabId) ?? [];
+  buf.push(line);
+  while (buf.length > 40) buf.shift();
+  consoleBuffers.set(tabId, buf);
+}
+
+function debuggerTarget(tabId) {
+  return { tabId };
+}
+
+function debuggerSend(tabId, method, params) {
+  return new Promise((resolve, reject) => {
+    if (!chrome.debugger || typeof chrome.debugger.sendCommand !== "function") {
+      reject(new Error("debugger unavailable"));
+      return;
+    }
+    chrome.debugger.sendCommand(debuggerTarget(tabId), method, params ?? {}, (result) => {
+      const err = chrome.runtime.lastError;
+      if (err) reject(new Error(err.message || "debugger"));
+      else resolve(result);
+    });
+  });
+}
+
+function debuggerIsAttached(tabId) {
+  return debuggerSend(tabId, "Runtime.evaluate", { expression: "1", returnByValue: true })
+    .then(() => true)
+    .catch(() => false);
+}
+
+function attachFailure(err) {
+  const text = err instanceof Error ? err.message : String(err);
+  if (/another debugger|already attached/i.test(text)) return "debugger_attached";
+  if (/clos|no tab|cannot find|detached|exist/i.test(text)) return "tab_gone";
+  return "permission_denied";
+}
+
+async function detachDebugger(tabId) {
+  if (!Number.isInteger(tabId) || tabId < 0) return;
+  consoleBuffers.delete(tabId);
+  selectedNodes.delete(tabId);
+  if (!chrome.debugger || typeof chrome.debugger.detach !== "function") return;
+  await new Promise((resolve) => {
+    try {
+      chrome.debugger.detach(debuggerTarget(tabId), () => {
+        void chrome.runtime.lastError;
+        resolve();
+      });
+    } catch {
+      resolve();
+    }
+  });
+}
+
+async function attachAndEnable(tabId) {
+  consoleBuffers.delete(tabId);
+  selectedNodes.delete(tabId);
+  if (!chrome.debugger || typeof chrome.debugger.attach !== "function") {
+    return { ok: false, error: "permission_denied" };
+  }
+  try {
+    await new Promise((resolve, reject) => {
+      chrome.debugger.attach(debuggerTarget(tabId), "1.3", () => {
+        const err = chrome.runtime.lastError;
+        if (err) reject(new Error(err.message || "attach failed"));
+        else resolve();
+      });
+    });
+    await debuggerSend(tabId, "Runtime.enable");
+    await debuggerSend(tabId, "Console.enable");
+    await debuggerSend(tabId, "DOM.enable");
+    await debuggerSend(tabId, "Overlay.enable");
+  } catch (err) {
+    await detachDebugger(tabId);
+    return { ok: false, error: attachFailure(err) };
+  }
+  return { ok: true };
+}
+
+async function readInspect(tabId) {
+  await new Promise((resolve) => setTimeout(resolve, INSPECT_FLUSH_MS));
+  let element = null;
+  const backendNodeId = selectedNodes.get(tabId);
+  if (Number.isInteger(backendNodeId)) {
+    try {
+      const described = await debuggerSend(tabId, "DOM.describeNode", { backendNodeId, depth: 0 });
+      element = elementFromDescribedNode(described && described.node);
+    } catch {
+      element = null;
+    }
+  }
+  if (!element) {
+    try {
+      const evaluated = await debuggerSend(tabId, "Runtime.evaluate", {
+        expression: SELECTED_ELEMENT_EXPRESSION,
+        includeCommandLineAPI: true,
+        returnByValue: true,
+      });
+      const value = evaluated && evaluated.result ? evaluated.result.value : null;
+      element = describeElement(value);
+    } catch {
+      element = null;
+    }
+  }
+  return redactInspectResult({ messages: consoleBuffers.get(tabId) ?? [], element });
+}
+
+if (chrome.debugger && chrome.debugger.onEvent) {
+  chrome.debugger.onEvent.addListener((source, method, params) => {
+    const tabId = source && source.tabId;
+    if (!Number.isInteger(tabId)) return;
+    if (method === "Runtime.consoleAPICalled") pushConsole(tabId, lineFromRuntimeEvent(params));
+    else if (method === "Console.messageAdded") pushConsole(tabId, lineFromConsoleEvent(params));
+    else if (method === "Runtime.exceptionThrown") pushConsole(tabId, lineFromExceptionEvent(params));
+    else if (
+      (method === "Overlay.inspectNodeRequested" || method === "DOM.inspectNodeRequested") &&
+      params &&
+      Number.isInteger(params.backendNodeId)
+    ) {
+      selectedNodes.set(tabId, params.backendNodeId);
+    }
+  });
+}
+
+if (chrome.debugger && chrome.debugger.onDetach) {
+  chrome.debugger.onDetach.addListener((source) => {
+    const tabId = source && source.tabId;
+    if (!Number.isInteger(tabId)) return;
+    consoleBuffers.delete(tabId);
+    selectedNodes.delete(tabId);
+  });
+}
+
+const inspectRunning = new Set();
+
+async function readInspectPrompts() {
+  const stored = await chrome.storage.local.get(INSPECT_PROMPTS_KEY);
+  return readInspectPromptMap(stored[INSPECT_PROMPTS_KEY]);
+}
+
+async function writeInspectPrompts(map) {
+  await chrome.storage.local.set({ [INSPECT_PROMPTS_KEY]: map });
+}
+
+async function clearInspectNotice(requestId) {
+  const id = inspectNoticeId(requestId);
+  if (!id) return;
+  try {
+    await chrome.notifications.clear(id);
+  } catch {
+    // Already gone.
+  }
+}
+
+async function presentInspect(prompt) {
+  if (await sidePanelOpen()) {
+    await clearInspectNotice(prompt.requestId);
+    return;
+  }
+  const id = inspectNoticeId(prompt.requestId);
+  if (!id) return;
+  const notice = inspectNotice(prompt);
+  try {
+    await chrome.notifications.create(id, {
+      type: "basic",
+      iconUrl: chrome.runtime.getURL("icon.png"),
+      title: notice.title,
+      message: notice.message,
+      buttons: notice.buttons.map((title) => ({ title })),
+      requireInteraction: true,
+      priority: 2,
+    });
+  } catch {
+    // The panel can still allow it on the next tick.
+  }
+}
+
+async function saveInspectPrompt(prompt) {
+  const prompts = await readInspectPrompts();
+  prompts[prompt.requestId] = prompt;
+  await writeInspectPrompts(prompts);
+}
+
+async function dropInspectPrompt(requestId) {
+  const prompts = await readInspectPrompts();
+  if (!prompts[requestId]) return null;
+  const prompt = prompts[requestId];
+  delete prompts[requestId];
+  await writeInspectPrompts(prompts);
+  await clearInspectNotice(requestId);
+  return prompt;
+}
+
+function reportInspectError(error) {
+  if (
+    error === "denied" ||
+    error === "not_shared" ||
+    error === "tab_gone" ||
+    error === "permission_denied" ||
+    error === "debugger_attached"
+  ) {
+    return error;
+  }
+  return "permission_denied";
+}
+
+async function replyInspect(prompt, outcome) {
+  if (prompt.source === "host") {
+    if (!outcome.ok) postNative(hostInspectError(prompt.tabId, reportInspectError(outcome.error), prompt.hostId));
+    else postNative(hostInspectedMessage(prompt.tabId, outcome, prompt.hostId));
+    return;
+  }
+  const body = outcome.ok
+    ? { messages: outcome.messages, element: outcome.element }
+    : { error: reportInspectError(outcome.error) };
+  await linkFetch(inspectResultPath(prompt.sessionId, prompt.requestId), { method: "POST", body });
+}
+
+/** Attach runs only inside gateInspect. A deny or an unknown tab never reaches chrome.debugger.attach. */
+async function finishInspect(prompt, confirm) {
+  if (inspectRunning.has(prompt.requestId)) return;
+  inspectRunning.add(prompt.requestId);
+  try {
+    await dropInspectPrompt(prompt.requestId);
+    const map = await readShares();
+    const recorded = recordedTabIds(map);
+    const known = recorded.some((id) => id === prompt.tabId);
+    const attached = known && confirm !== "deny" ? await debuggerIsAttached(prompt.tabId) : false;
+    let ran = false;
+    const gated = gateInspect({
+      tabId: prompt.tabId,
+      recordedTabIds: recorded,
+      confirm,
+      attached,
+      perform() {
+        ran = true;
+      },
+    });
+    if (!gated.read) {
+      if (gated.error === "waiting") {
+        await saveInspectPrompt(prompt);
+        await presentInspect(prompt);
+        return;
+      }
+      await replyInspect(prompt, { ok: false, error: gated.error });
+      return;
+    }
+    const still = await readShares();
+    if (!recordedTabIds(still).some((id) => id === prompt.tabId)) {
+      await replyInspect(prompt, { ok: false, error: "not_shared" });
+      return;
+    }
+    if ((await liveTab(prompt.tabId)) === null) {
+      await detachDebugger(prompt.tabId);
+      await replyInspect(prompt, { ok: false, error: "tab_gone" });
+      return;
+    }
+    if (gated.attach) {
+      if (!ran) {
+        await replyInspect(prompt, { ok: false, error: "denied" });
+        return;
+      }
+      const attachedNow = await attachAndEnable(prompt.tabId);
+      if (!attachedNow.ok) {
+        await replyInspect(prompt, attachedNow);
+        return;
+      }
+    }
+    const reading = await readInspect(prompt.tabId);
+    await replyInspect(prompt, { ok: true, messages: reading.messages, element: reading.element });
+  } finally {
+    inspectRunning.delete(prompt.requestId);
+  }
+}
+
+async function cancelHostInspect(prompt) {
+  await dropInspectPrompt(prompt.requestId);
+  postNative(hostInspectError(prompt.tabId, "not_shared", prompt.hostId));
+}
+
+async function clearInspectPromptsForSession(sessionId) {
+  const prompts = await readInspectPrompts();
+  for (const prompt of Object.values(prompts)) {
+    if (prompt.sessionId !== sessionId) continue;
+    if (prompt.source === "host") await cancelHostInspect(prompt);
+    else await dropInspectPrompt(prompt.requestId);
+  }
+}
+
+async function sweepInspectPrompts(sessionId, inspects) {
+  const pending = new Set(inspects.map((inspect) => inspect.id));
+  const prompts = await readInspectPrompts();
+  for (const prompt of Object.values(prompts)) {
+    if (prompt.sessionId !== sessionId || prompt.source !== "cloud") continue;
+    if (!pending.has(prompt.requestId)) await dropInspectPrompt(prompt.requestId);
+  }
+}
+
+async function startCloudInspect(share, request) {
+  if (inspectRunning.has(request.id)) return;
+  const prompts = await readInspectPrompts();
+  if (prompts[request.id]) {
+    await presentInspect(prompts[request.id]);
+    return;
+  }
+  const prompt = {
+    requestId: request.id,
+    sessionId: share.sessionId,
+    requesterEmail: request.requesterEmail,
+    source: "cloud",
+    tabId: share.tabId,
+  };
+  if (recordedTabIds(await readShares()).some((id) => id === share.tabId) && (await debuggerIsAttached(share.tabId))) {
+    await finishInspect(prompt, null);
+    return;
+  }
+  await saveInspectPrompt(prompt);
+  await presentInspect(prompt);
+}
+
+async function onNativeInspect(message) {
+  const parsed = parseHostInspect(message);
+  if (!parsed) return;
+  const map = await readShares();
+  const refused = hostCaptureReply(parsed.tabId, recordedTabIds(map));
+  if (refused) {
+    postNative(hostInspectError(parsed.tabId, "not_shared", parsed.id));
+    return;
+  }
+  const share = Object.values(map).find((rec) => rec.tabId === parsed.tabId);
+  const sessionId = share ? share.sessionId : "";
+  const prompt = {
+    requestId: `host-${parsed.tabId}-${Date.now()}`,
+    sessionId,
+    requesterEmail: "this computer",
+    source: "host",
+    tabId: parsed.tabId,
+    ...(parsed.id != null ? { hostId: parsed.id } : {}),
+  };
+  if (await debuggerIsAttached(parsed.tabId)) {
+    await finishInspect(prompt, null);
+    return;
+  }
+  await saveInspectPrompt(prompt);
+  await presentInspect(prompt);
+}
+
+async function decideInspect(requestId, decision) {
+  const prompts = await readInspectPrompts();
+  const prompt = prompts[requestId];
+  if (!prompt) return;
+  await finishInspect(prompt, decision);
+}
+
 async function pollOne(share) {
   const listed = await linkFetch(pendingPath(share.sessionId));
   if (!listed.ok) return;
   const actions = pendingActions(listed.body);
   await sweepActionPrompts(share.sessionId, actions);
   for (const action of actions) await startCloudAction(share, action);
+  const inspects = pendingInspects(listed.body);
+  await sweepInspectPrompts(share.sessionId, inspects);
+  for (const inspect of inspects) await startCloudInspect(share, inspect);
   const requests = pendingRequests(listed.body);
   if (requests.length === 0) return;
   const [shareRes, sessionRes] = await Promise.all([
@@ -1299,6 +1686,7 @@ async function commitShare(sessionId, tab) {
   await writeAllow(withoutSessionAllow(await readAllow(), sessionId));
   if (previous && previous.tabId !== record.tabId && !tabStillShared(previous.tabId, next)) {
     postNative(nativeUnshareMessage(previous.tabId));
+    await detachDebugger(previous.tabId);
   }
   postNative(nativeShareMessage({ tabId: record.tabId, title, url, sessionId }));
   await ensureAlarm(next);
@@ -1321,10 +1709,14 @@ async function revokeSessionNow(sessionId) {
   await linkFetch(sharePath(sessionId), { method: "DELETE" });
   const { map: next, removed } = removeSession(map, sessionId);
   await writeShares(next);
-  if (removed && !tabStillShared(removed.tabId, next)) postNative(nativeUnshareMessage(removed.tabId));
+  if (removed && !tabStillShared(removed.tabId, next)) {
+    postNative(nativeUnshareMessage(removed.tabId));
+    await detachDebugger(removed.tabId);
+  }
   await ensureAlarm(next);
   await clearNoticesForSession(sessionId);
   await clearPromptsForSession(sessionId);
+  await clearInspectPromptsForSession(sessionId);
   await writeAllow(withoutSessionAllow(await readAllow(), sessionId));
   blockedSessions.delete(sessionId);
 }
@@ -1347,10 +1739,12 @@ async function revokeClosedTab(tabId) {
       await linkFetch(sharePath(rec.sessionId), { method: "DELETE" });
       await clearNoticesForSession(rec.sessionId);
       await clearPromptsForSession(rec.sessionId);
+      await clearInspectPromptsForSession(rec.sessionId);
       await writeAllow(withoutSessionAllow(await readAllow(), rec.sessionId));
     }
     await writeShares(result.map);
     if (!tabStillShared(tabId, result.map)) postNative(nativeUnshareMessage(tabId));
+    await detachDebugger(tabId);
     await ensureAlarm(result.map);
   } finally {
     closedTabs.delete(tabId);
@@ -1447,6 +1841,10 @@ async function refreshMenu() {
 async function onNativeMessage(message) {
   if (message && message.t === "action") {
     await onNativeAction(message);
+    return;
+  }
+  if (message && message.t === "inspect") {
+    await onNativeInspect(message);
     return;
   }
   await onNativeCapture(message);
@@ -1555,6 +1953,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch(() => sendResponse({ ok: false }));
     return true;
   }
+  const inspectMsg = inspectPanelMessage(message);
+  if (inspectMsg) {
+    if (inspectMsg.t === "inspect-state") {
+      readInspectPrompts()
+        .then((prompts) => {
+          const prompt = Object.values(prompts).find((item) => item.sessionId === inspectMsg.sessionId) ?? null;
+          sendResponse({ ok: true, prompt: inspectPromptView(prompt) });
+        })
+        .catch(() => sendResponse({ ok: false }));
+      return true;
+    }
+    enqueueShare(() => decideInspect(inspectMsg.requestId, inspectMsg.decision))
+      .then(() => sendResponse({ ok: true }))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
   const parsed = panelMessage(message);
   if (!parsed) return;
   if (parsed.t === "panel-request") {
@@ -1596,6 +2010,12 @@ chrome.notifications.onButtonClicked.addListener((notificationId, buttonIndex) =
   if (actionRequestId) {
     const decision = buttonIndex === 0 ? "allow" : "deny";
     enqueueShare(() => decideAction(actionRequestId, decision)).catch(() => {});
+    return;
+  }
+  const inspectRequestId = inspectRequestIdFromNotice(notificationId);
+  if (inspectRequestId) {
+    const decision = buttonIndex === 0 ? "allow" : "deny";
+    enqueueShare(() => decideInspect(inspectRequestId, decision)).catch(() => {});
     return;
   }
   if (buttonIndex !== 0 || notificationId === "need-floppy") return;

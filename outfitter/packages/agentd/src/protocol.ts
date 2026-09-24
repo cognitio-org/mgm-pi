@@ -158,6 +158,13 @@ export interface UpBrowserActionRequest {
   text?: string;
 }
 
+/** The Drive `browser_inspect` tool asked to read the shared tab's console and selected element.
+ * `requestId` is minted once per tool call. There is no tab id. */
+export interface UpBrowserInspectRequest {
+  t: "browser.inspect.request";
+  requestId: string;
+}
+
 export type UpMessage =
   | UpHello
   | UpStatus
@@ -172,7 +179,8 @@ export type UpMessage =
   | UpMailAck
   | UpBrowserCaptureRequest
   | UpGithubRequest
-  | UpBrowserActionRequest;
+  | UpBrowserActionRequest
+  | UpBrowserInspectRequest;
 
 /** Up-messages that carry a `seq` and are subject to the buffer-until-ack contract. */
 export type SeqUpMessage = UpEntry | UpEvent;
@@ -371,6 +379,18 @@ export interface DownBrowserActionResult {
   error?: string;
 }
 
+/** The inspect asked for by `browser.inspect.request` finished or failed. No transcript seq.
+ * Success carries redacted console lines and a short element description (or null).
+ * `error` is `no_share`, `skipped`, `denied`, `rejected`, `not_shared`, `tab_gone`,
+ * `permission_denied`, `debugger_attached`. Raw network headers are not on this frame. */
+export interface DownBrowserInspectResult {
+  t: "browser.inspect.result";
+  requestId: string;
+  messages?: string[];
+  element?: string | null;
+  error?: string;
+}
+
 export type DownMessage =
   | DownRunSpec
   | DownAck
@@ -388,7 +408,8 @@ export type DownMessage =
   | DownBrowserCaptureEntry
   | DownBrowserCaptureResult
   | DownGithubResult
-  | DownBrowserActionResult;
+  | DownBrowserActionResult
+  | DownBrowserInspectResult;
 
 // ---------- replies to diff/read (sent up as `entry`-less custom up-frames) ----------
 // protocol.md does not give these a `t`; agentd sends them as ad-hoc up-frames named after the

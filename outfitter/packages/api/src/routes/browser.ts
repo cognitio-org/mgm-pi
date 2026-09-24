@@ -6,6 +6,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { RouteContext } from "./context.ts";
 import type { BrowserCapture, BrowserCaptureFailure, BrowserRequest, PiEntry } from "../store/types.ts";
 import { isBrowserActionKind, parseBrowserAction, parseBrowserActionResult } from "../browser-action.ts";
+import { parseBrowserInspectCreate, parseBrowserInspectResult } from "../browser-inspect.ts";
 import { getSessionOr404 } from "./sessions.ts";
 
 /** Decoded jpeg cap. Larger uploads are 413; the extension recompresses to fit. */
@@ -55,6 +56,7 @@ function requestView(request: BrowserRequest): {
     ...(request.error ? { error: request.error } : {}),
     ...(isBrowserActionKind(request.kind) ? { kind: request.kind, selector: request.selector } : {}),
     ...(request.kind === "type" ? { text: request.text ?? "" } : {}),
+    ...(request.kind === "inspect" ? { kind: "inspect" as const } : {}),
     createdAt: request.createdAt,
   };
 }
@@ -67,11 +69,20 @@ function pendingView(request: BrowserRequest) {
     createdAt: request.createdAt,
     ...(isBrowserActionKind(request.kind) ? { kind: request.kind, selector: request.selector } : {}),
     ...(request.kind === "type" ? { text: request.text ?? "" } : {}),
+    ...(request.kind === "inspect" ? { kind: "inspect" as const } : {}),
   };
 }
 
 async function sendSkippedResult(ctx: RouteContext, sessionId: string, requestId: string): Promise<void> {
   const request = await ctx.store.browserRequests.findById(sessionId, requestId);
+  if (request?.kind === "inspect") {
+    await ctx.agentLink.sendInspectResult(sessionId, {
+      t: "browser.inspect.result",
+      requestId,
+      error: "skipped",
+    });
+    return;
+  }
   if (isBrowserActionKind(request?.kind)) {
     await ctx.agentLink.sendActionResult(sessionId, {
       t: "browser.action.result",
@@ -406,6 +417,62 @@ export async function registerBrowserRoutes(app: FastifyInstance, ctx: RouteCont
       requestId: marked.request.id,
       ...(outcome.ok ? {} : { error: outcome.error }),
     });
+    return requestView(marked.request);
+  });
+
+  // A DevTools read. Same request row, kind "inspect". No tab id and no selector. 409 without a share.
+  // The owner confirms before the extension attaches. This route does not attach anything itself.
+  app.post("/api/sessions/:id/browser/inspects", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const email = callerEmail(req, reply);
+    if (!email) return;
+    if (!parseBrowserInspectCreate(req.body)) return reply.code(400).send({ error: "inspect takes no arguments" });
+    const now = new Date().toISOString();
+    const request: BrowserRequest = {
+      id: randomUUID(),
+      sessionId: session.id,
+      requesterEmail: email,
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+      kind: "inspect",
+    };
+    const saved = await ctx.store.browserRequests.insertPendingIfShared(session.id, request);
+    if (saved === "no_share") return reply.code(409).send({ error: "no browser share" });
+    return reply.code(201).send(requestView(saved));
+  });
+
+  // The extension reports console lines and the selected element, or a deny. Header values are
+  // stripped before the row is stored and before browser.inspect.result is sent. No transcript seq.
+  app.post("/api/sessions/:id/browser/inspects/:requestId/result", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const email = callerEmail(req, reply);
+    if (!email) return;
+    const share = await ctx.store.browserShares.findBySession(session.id);
+    if (!share) return reply.code(404).send({ error: "no browser share" });
+    if (share.ownerEmail !== email) return reply.code(403).send({ error: "not the share owner" });
+    const outcome = parseBrowserInspectResult(req.body);
+    if (!outcome) return reply.code(400).send({ error: "result must be console lines or a known error" });
+    const { requestId } = req.params as { requestId: string };
+    const existing = await ctx.store.browserRequests.findById(session.id, requestId);
+    if (!existing || existing.kind !== "inspect") return reply.code(404).send({ error: "not found" });
+    const marked = await ctx.store.browserRequests.markInspectResult(session.id, requestId, outcome, new Date().toISOString());
+    if (!marked) return reply.code(404).send({ error: "not found" });
+    if (!marked.transitioned) return reply.code(409).send({ error: "request is not pending" });
+    await ctx.agentLink.sendInspectResult(session.id, outcome.ok
+      ? {
+          t: "browser.inspect.result",
+          requestId: marked.request.id,
+          messages: outcome.messages,
+          element: outcome.element,
+        }
+      : {
+          t: "browser.inspect.result",
+          requestId: marked.request.id,
+          error: outcome.error,
+        });
     return requestView(marked.request);
   });
 }

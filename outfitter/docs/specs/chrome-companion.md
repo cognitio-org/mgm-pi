@@ -33,13 +33,13 @@ Both clients expose a pi tool named `browser_capture`. They are not the same too
 | | Laptop | Drive |
 |---|---|---|
 | Extension | `kernal/.pi/extensions/kernal-chrome/` | `outfitter/packages/agentd/pi-extension/outfitter-browser.ts` |
-| Tool | `browser_tabs`, then `browser_capture` with a tab id | `browser_capture` with no arguments |
+| Tool | `browser_tabs`, `browser_capture`, `browser_action`, and `browser_inspect`, each with a tab id except the list | `browser_capture`, `browser_action`, and `browser_inspect`, with no tab id |
 | How it reaches Chrome | Unix socket `<kernal-home>/chrome.sock`, the native host on this machine | agentd asks the link API; the owner's Chrome takes the screenshot |
 | In the sandbox image | Removed. A Drive has no Chrome, so the socket is never there | Loaded with `--extension`, the same way as `outfitter-mail.ts` |
 
 pi refuses to start if both are loaded, because the tool name collides. The sandbox Dockerfile deletes `kernal-chrome` along with the other laptop-only extensions (`kernal-voice`, `kernal-update`, `kernal-admin`, `kernal-codebase-index`). Do not rename one of them to paper over that. Do not copy `kernal-chrome` back into the image.
 
-The Outfitter page at `https://app.kernal.one` talks to the extension with `chrome.runtime.connect`. That channel is only for pairing, opening the side panel, and placing tabs. It cannot ask for a capture, read a tab the user did not share, or close a tab the extension did not open.
+The Outfitter page at `https://app.kernal.one` talks to the extension with `chrome.runtime.connect`. That channel is only for pairing, opening the side panel, and placing tabs. It cannot ask for a capture, a click, a debugger attach, read a tab the user did not share, or close a tab the extension did not open.
 
 ## 2. Non-goals (first cut)
 
@@ -262,10 +262,12 @@ An idle-stop countdown is not part of this cut.
 
 ## 12. Local Kernal tool
 
-Pi extension `kernal/.pi/extensions/kernal-chrome/`. Laptop only. The sandbox image deletes this directory; see "Two tools, one name" above. It registers two tools. They speak to `<kernal-home>/chrome.sock` and do nothing on the network.
+Pi extension `kernal/.pi/extensions/kernal-chrome/`. Laptop only. The sandbox image deletes this directory; see "Two tools, one name" above. It registers `browser_tabs`, `browser_capture`, `browser_action`, and `browser_inspect`. They speak to `<kernal-home>/chrome.sock` and do nothing on the network.
 
 - `browser_tabs` — the share list (title, url, tab id).
 - `browser_capture` — `{tabId}`. Returns text: title, url, and the workspace-relative path of the copied jpeg. Verify whether pi 0.86 tool results can carry an image content block (see `outfitter-mail.ts`, which only returns `{type:"text"}`). If a supported image block exists, attach the jpeg as well. If it does not, do not invent a content type. The text path is the contract.
+- `browser_action` — `{tabId, kind, selector, text?}`. Click or type. See §17.
+- `browser_inspect` — `{tabId}`. Console lines and the selected element. See §17. Not `browser_capture`.
 
 Missing socket: the tool result says the Chrome companion is not running. Unknown tab id: the tool result says that tab is not shared. No throw out of the tool.
 
@@ -273,7 +275,7 @@ Missing socket: the tool result says the Chrome companion is not running. Unknow
 
 `outfitter/packages/agentd/pi-extension/outfitter-browser.ts`. This is the `browser_capture` a Drive runs. It is not `kernal-chrome`. Loaded the same way as `outfitter-mail.ts`: agentd adds the extension only inside a Drive. The sandbox must not receive `OUTFITTER_TOKEN`, and it must not contain `kernal-chrome`.
 
-`browser_capture` takes no tab id. The session has at most one share.
+`browser_capture` takes no tab id. The session has at most one share. `browser_action` and `browser_inspect` also take no tab id. Neither sees `OUTFITTER_TOKEN`. `browser_inspect` is specified in §17.
 
 Blocking path:
 
@@ -325,7 +327,8 @@ On a laptop with the extension loaded and a Dongle pasted:
 Filed as sub-issues and not part of the first cut:
 
 **Clicks and typing** — this slice is now specified. A Floppy may click or type in the one tab the user shared. Read-only capture stays the default. Each action is confirmed in the side panel, or in a notification when the panel is closed, before it runs. The confirm is per action and names the requester, the kind, and the selector. A switch, "allow this kind of action for this share", exists for `click` and for `type` and defaults to off. The page-to-extension channel cannot request an action; a page message that asks for a click or keystrokes is rejected. The agent asks through the link API and the native host, the same shape as capture. The extension refuses any tab id it did not record at share time. `POST /api/sessions/:id/browser/actions` takes `{kind:"click", selector}` or `{kind:"type", selector, text}` — a CSS selector, never raw JavaScript — and is `409` when the session has no share. Only the share owner reports the result. Nothing runs until Allow, unless that share's switch for the kind is on. Revoke cancels an action that has not run. The extension performs the click or the typing in the shared tab only (`chrome.scripting`, not `chrome.debugger`) and reports done or an error. The laptop tool and the Drive tool each gain `browser_action` (not a second `browser_capture`). The Drive tool still does not see `OUTFITTER_TOKEN`. `kernal-chrome` still talks only to the unix socket and stays out of the sandbox image.
-- **DevTools attach** via `chrome.debugger` on the shared tab only, for the console and the selected element. One debugger client on that tab.
+
+**DevTools attach** — this slice is now specified. `browser_inspect` reads recent console messages and, when one is selected, the element selected in DevTools, on the one tab the user shared. It is not `browser_capture` and not `browser_action`. Attaching `chrome.debugger` is a separate consent from the read-only share and from click or type. The user confirms in the side panel, or in a notification when the panel is closed, before the debugger attaches. Chrome shows its debugging bar. This extension is the only debugger client on that tab: it does not attach `chrome-devtools-mcp` or a second debugger. Revoke detaches. Closing the tab detaches. The page-to-extension channel cannot request an attach. The agent asks through the link API and the native host, the same way `browser_action` does. The extension refuses any tab id it did not record at share time. The tool returns console lines from the Runtime or Console domain and a short description of the selected element (tag, id, classes), not the DOM. Cookie and Authorization header values are stripped before a tool result. Raw network headers are not returned. There is no transcript entry. The laptop tool takes a tab id. The Drive tool does not: a Floppy has one share, and it does not see `OUTFITTER_TOKEN`. `kernal-chrome` stays out of the sandbox image. `POST /api/sessions/:id/browser/inspects` creates the request and is `409` when the session has no share. Only the share owner reports the result. A denied confirm does not attach.
 - **WebMCP** on the Outfitter web app: list, play, steer, break, stop, eject, read the transcript, running as the signed-in user.
 - **Playwright gate** inside the Drive: a Tape option that runs a Playwright spec against a fresh headless browser before checkpoint and attaches the report. This does not attach to the user's Chrome.
 

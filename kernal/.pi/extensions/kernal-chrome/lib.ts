@@ -19,7 +19,17 @@ export const CAPTURE_DIR = "chrome-captures";
 const SOCKET_NAME = "chrome.sock";
 
 export type Share = { tabId: number; title: string; url: string; sessionId: string };
-export type HostMessage = { t?: string; error?: unknown; shares?: unknown; tabId?: unknown; title?: unknown; url?: unknown; path?: unknown };
+export type HostMessage = {
+  t?: string;
+  error?: unknown;
+  shares?: unknown;
+  tabId?: unknown;
+  title?: unknown;
+  url?: unknown;
+  path?: unknown;
+  messages?: unknown;
+  element?: unknown;
+};
 export type ToolText = { text: string; isError: boolean; image?: Buffer };
 
 export type CallOptions = {
@@ -337,6 +347,45 @@ export function parseActionParams(params: unknown): { kind: "click" | "type"; se
 
 export function formatAction(info: { kind: "click" | "type"; selector: string }): string {
   return info.kind === "type" ? `Typed into ${info.selector}` : `Clicked ${info.selector}`;
+}
+
+const INSPECT_ELEMENT = /^[a-z][a-z0-9-]*(?:#[A-Za-z_][A-Za-z0-9_-]{0,63})?(?:\.[A-Za-z_][A-Za-z0-9_-]{0,63}){0,8}$/;
+
+/** Same replacement as chrome/extension/inspect.js. Header values do not enter the tool result. */
+export function redactHeaderText(text: string): string {
+  return text.replace(
+    /(["']?)(authorization|proxy-authorization|cookie|set-cookie)\1\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\r\n]+)/gi,
+    "$1$2$1: [redacted]",
+  );
+}
+
+export function formatInspect(info: { messages: string[]; element: string | null }): string {
+  const messages = info.messages.map((line) => redactHeaderText(line)).filter((line) => line.length > 0).slice(0, 40);
+  const element = info.element && INSPECT_ELEMENT.test(info.element) ? info.element : null;
+  return redactHeaderText(
+    ["console:", ...(messages.length > 0 ? messages : ["(no recent console messages)"]), "element:", element ?? "(none selected)"].join("\n"),
+  );
+}
+
+/** Read the console and the selected element. The extension confirms before DevTools attaches. No network. */
+export async function browserInspect(tabIdValue: unknown, options: CallOptions = {}): Promise<ToolText> {
+  const tabId = parseTabId(tabIdValue);
+  if (tabId === null) return { text: NOT_SHARED, isError: true };
+  try {
+    const msg = await requestHost(chromeSocketPath(options), { t: "inspect", tabId }, (item) => item.t === "inspected" || item.t === "error", {
+      timeoutMs: options.timeoutMs ?? 95_000,
+      signal: options.signal,
+    });
+    if (msg.t === "error") return { text: redactHeaderText(mapHostError(msg.error)), isError: true };
+    if (msg.t !== "inspected" || msg.tabId !== tabId || !Array.isArray(msg.messages)) {
+      return { text: "The Chrome companion sent an unexpected reply.", isError: true };
+    }
+    const messages = msg.messages.filter((line): line is string => typeof line === "string");
+    const element = typeof msg.element === "string" ? msg.element : null;
+    return { text: formatInspect({ messages, element }), isError: false };
+  } catch (err) {
+    return { text: thrownText(err), isError: true };
+  }
 }
 
 /** Click or type in a shared tab. The extension confirms before it runs. No network. */

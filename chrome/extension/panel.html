@@ -78,6 +78,14 @@
     <label><input type="checkbox" id="allow-click"> Allow click for this share</label>
     <label><input type="checkbox" id="allow-type"> Allow typing for this share</label>
   </section>
+  <section id="inspect">
+    <h2>DevTools</h2>
+    <p id="inspect-copy" class="hint" hidden></p>
+    <p id="inspect-buttons" hidden>
+      <button type="button" id="inspect-allow">Allow</button>
+      <button type="button" id="inspect-deny">Deny</button>
+    </p>
+  </section>
   <p id="status" role="status"></p>
   <p><button type="button" id="options">Options</button></p>
   <script type="module" src="panel.js"></script>

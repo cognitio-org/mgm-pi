@@ -2,7 +2,7 @@
 // Chrome starts this process for com.kernal.chrome. stdout is reserved for
 // native-messaging frames; logs go to stderr. The unix socket is how Kernal
 // talks to the host. Stdin is the extension: it announces shares and answers
-// capture or an action. The socket only lists those shares and asks for one.
+// capture, an action, or an inspect. The socket only lists those shares and asks for one.
 //
 // Each connectNative() starts a process. Only the one that bound the socket
 // unlinks it, and only while that socket is still the inode it bound.
@@ -27,6 +27,7 @@ import {
 const CAPTURE_TIMEOUT_MS = 15000;
 // Tests set KERNAL_CHROME_ACTION_TIMEOUT_MS. An unanswered confirm otherwise waits 90s.
 const ACTION_TIMEOUT_MS = readTimeoutMs(process.env.KERNAL_CHROME_ACTION_TIMEOUT_MS, 90000);
+const INSPECT_TIMEOUT_MS = readTimeoutMs(process.env.KERNAL_CHROME_INSPECT_TIMEOUT_MS, 90000);
 
 const sockPath = socketPathFrom(fileURLToPath(import.meta.url));
 const sockets = new Set();
@@ -100,7 +101,16 @@ function dropWaiter(waiter) {
 }
 
 function waiterKind(waiter) {
-  return waiter?.forward?.t === "action" ? "action" : "capture";
+  const type = waiter?.forward?.t;
+  if (type === "action") return "action";
+  if (type === "inspect") return "inspect";
+  return "capture";
+}
+
+function timeoutError(kind) {
+  if (kind === "action") return "action timed out";
+  if (kind === "inspect") return "inspect timed out";
+  return ERR_CAPTURE_TIMEOUT;
 }
 
 function carriedId(value) {
@@ -114,10 +124,10 @@ function pump() {
   head.sent = true;
   head.id = nextId++;
   const timeoutMs = head.timeoutMs ?? CAPTURE_TIMEOUT_MS;
-  const timeoutError = waiterKind(head) === "action" ? "action timed out" : ERR_CAPTURE_TIMEOUT;
+  const timedOut = timeoutError(waiterKind(head));
   head.timer = setTimeout(() => {
     if (shuttingDown || !waiters.includes(head)) return;
-    abandonInFlight(head, timeoutError);
+    abandonInFlight(head, timedOut);
   }, timeoutMs);
   let frame;
   try {
@@ -156,7 +166,7 @@ function abandonInFlight(waiter, error) {
 }
 
 function replyFitsHead(kind, head, result) {
-  if (kind !== "action") return true;
+  if (kind === "capture") return true;
   return result.tabId === head.tabId;
 }
 
@@ -196,6 +206,15 @@ function enqueueAction(socket, forward) {
   pump();
 }
 
+function enqueueInspect(socket, forward) {
+  if (!extensionConnected || shuttingDown) {
+    writeLine(socket, { t: "error", error: ERR_NOT_CONNECTED });
+    return;
+  }
+  waiters.push({ tabId: forward.tabId, forward, socket, sent: false, timer: null, timeoutMs: INSPECT_TIMEOUT_MS });
+  pump();
+}
+
 function settleAction(action) {
   if (discardIfAbandoned("action", action)) return;
   const head = waiters[0];
@@ -206,6 +225,19 @@ function settleAction(action) {
   dropWaiter(head);
   if (action.kind === "error") writeLine(head.socket, { t: "error", error: action.error });
   else writeLine(head.socket, { t: "acted", tabId: action.tabId });
+  pump();
+}
+
+function settleInspect(inspect) {
+  if (discardIfAbandoned("inspect", inspect)) return;
+  const head = waiters[0];
+  if (!head || !head.sent || waiterKind(head) !== "inspect") return;
+  const id = carriedId(inspect);
+  if (id !== null && id !== head.id) return;
+  if (inspect.tabId !== head.tabId) return;
+  dropWaiter(head);
+  if (inspect.kind === "error") writeLine(head.socket, { t: "error", error: inspect.error });
+  else writeLine(head.socket, { t: "inspected", tabId: inspect.tabId, messages: inspect.messages, element: inspect.element });
   pump();
 }
 
@@ -302,6 +334,7 @@ const server = createServer((socket) => {
       if (!decision) continue;
       if (decision.forward) {
         if (decision.forward.t === "action") enqueueAction(socket, decision.forward);
+        else if (decision.forward.t === "inspect") enqueueInspect(socket, decision.forward);
         else enqueueCapture(socket, decision.forward.tabId);
         continue;
       }
@@ -383,6 +416,7 @@ process.stdin.on("data", (chunk) => {
     shares = applied.shares;
     broadcast(applied.broadcast);
     if (applied.action) settleAction(applied.action);
+    if (applied.inspect) settleInspect(applied.inspect);
     if (applied.capture) settleCapture(applied.capture);
   }
 });

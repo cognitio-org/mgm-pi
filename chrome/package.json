@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test test/protocol.test.js test/placement.test.js test/host.test.js test/share.test.js test/panel.test.js test/action.test.js"
+    "test": "node --test test/protocol.test.js test/placement.test.js test/host.test.js test/share.test.js test/panel.test.js test/action.test.js test/inspect.test.js"
   }
 }

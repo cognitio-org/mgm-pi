@@ -466,6 +466,63 @@ export class AgentLink {
     }
   }
 
+  /** Tells the session's agentd how a `browser.inspect.request` finished. No transcript seq. */
+  async sendInspectResult(
+    sessionId: string,
+    frame: {
+      t: "browser.inspect.result";
+      requestId: string;
+      messages?: string[];
+      element?: string | null;
+      error?: string;
+    },
+  ): Promise<void> {
+    const run = await this.store.runs.findActiveForSession(sessionId);
+    if (!run) return;
+    await this.send(run.id, frame);
+  }
+
+  /** `{t:"browser.inspect.request"}` from the Drive. One inspect row per requestId. No tab id. */
+  private async handleBrowserInspectRequest(sessionId: string, frame: UpFrame): Promise<void> {
+    const requestId = frame.requestId;
+    if (typeof requestId !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(requestId)) return;
+    const now = new Date().toISOString();
+    const session = await this.store.sessions.findById(sessionId);
+    const saved = await this.store.browserRequests.insertPendingIfShared(sessionId, {
+      id: requestId,
+      sessionId,
+      requesterEmail: session?.ownerEmail?.trim() || "drive",
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+      kind: "inspect",
+    });
+    if (saved === "no_share") {
+      await this.sendInspectResult(sessionId, { t: "browser.inspect.result", requestId, error: "no_share" });
+      return;
+    }
+    if (saved.kind !== "inspect") {
+      await this.sendInspectResult(sessionId, { t: "browser.inspect.result", requestId, error: "rejected" });
+      return;
+    }
+    if (saved.status === "skipped") {
+      await this.sendInspectResult(sessionId, { t: "browser.inspect.result", requestId, error: "skipped" });
+      return;
+    }
+    if (saved.status === "failed" && saved.error) {
+      await this.sendInspectResult(sessionId, { t: "browser.inspect.result", requestId, error: saved.error });
+      return;
+    }
+    if (saved.status === "done") {
+      await this.sendInspectResult(sessionId, {
+        t: "browser.inspect.result",
+        requestId,
+        messages: saved.inspectMessages ?? [],
+        element: saved.inspectElement ?? null,
+      });
+    }
+  }
+
   /**
    * Sends a request down-message (diff) and waits for the matching `<t>.result` up frame,
    * correlated by reqId. Requires a live socket: there is nothing to diff on a stopped sandbox.
@@ -1059,6 +1116,10 @@ export class AgentLink {
       }
       case "browser.action.request": {
         await this.handleBrowserActionRequest(sessionId, frame);
+        break;
+      }
+      case "browser.inspect.request": {
+        await this.handleBrowserInspectRequest(sessionId, frame);
         break;
       }
       case "bye": {

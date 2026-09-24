@@ -1,0 +1,35 @@
+chrome/extension/inspect.js
+  s_a09835d2e68958::t_a1092721d93fa7 45-46
+chrome/host/protocol.js
+  s_a09835d2e68958::t_f6f7a27d20d017 303-304
+chrome/test/host.test.js
+  s_a09835d2e68958::t_b614fa8c2198d4 561
+chrome/test/inspect.test.js
+  s_a09835d2e68958::t_1fe37306aa4a7d 76
+kernal/.pi/extensions/kernal-chrome/lib.ts
+  s_a09835d2e68958::t_801129a1ed8409 357-358
+kernal/tests/chrome.test.ts
+  s_a09835d2e68958::t_130fe51e78dc3f 327
+outfitter/packages/agentd/pi-extension/outfitter-browser.ts
+  s_a09835d2e68958::t_61dcd3339589c7 47-48
+outfitter/packages/agentd/src/browser-inspect.ts
+  s_a09835d2e68958::t_aa92a31dfdc629 49-50
+outfitter/packages/agentd/test/browser-inspect.test.ts
+  s_a09835d2e68958::t_48ce559dff1cbc 18-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "5dfe7426b2b4c8f3a2447af7ebbc79c734c7ba0a",
+  "prompts": {},
+  "sessions": {
+    "s_a09835d2e68958": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a669d0f3e6e1ee5d8",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

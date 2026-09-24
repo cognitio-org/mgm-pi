@@ -1,0 +1,14 @@
+outfitter/packages/agentd/src/run.ts
+  h_69b863911ebf05 661-664,855,872,890,919-930,976
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "88bccb30bd7d6b8f2baac298b01e2b0355973ba6",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

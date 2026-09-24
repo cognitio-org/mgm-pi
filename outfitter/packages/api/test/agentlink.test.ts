@@ -1432,4 +1432,58 @@ describe("GitHub App installation-token refresh", () => {
     app.stopBackgroundTasks();
     await app.fastify.close();
   });
+
+  test("a mint that finishes after a new hello does not overwrite that hello's token", async () => {
+    let releaseRefresh: (token: { token: string; expiresAt: string } | undefined) => void = () => {};
+    let markRefresh: () => void = () => {};
+    const refreshStarted = new Promise<void>((resolve) => {
+      markRefresh = resolve;
+    });
+    let hellos = 0;
+    const app = await buildTestApp(
+      { AGENT_SOCKET_GRACE_MS: "0" },
+      {
+        githubRefresh: { floorMs: 5, retryMs: 60_000, maxAttempts: 2 },
+        secretsBroker: {
+          async secretsForRun() {
+            hellos += 1;
+            if (hellos === 1) {
+              return { githubToken: "ghs_first", litellmKey: "k", githubTokenExpiresAt: soon(15) };
+            }
+            return { githubToken: "ghs_second", litellmKey: "k", githubTokenExpiresAt: later() };
+          },
+          async defaultLitellmKey() {
+            return "k";
+          },
+          refreshGithubAppToken() {
+            markRefresh();
+            return new Promise((resolve) => {
+              releaseRefresh = resolve;
+            });
+          },
+        },
+      },
+    );
+    const { session, runId, runToken } = await makeRunningSession(app);
+    const first = await openAgentSocket(app, runId);
+    sendHello(first, runId, session.id, runToken);
+    assert.equal((await first.nextCredential()).token, "ghs_first");
+    await refreshStarted;
+
+    const again = await openAgentSocket(app, runId);
+    sendHello(again, runId, session.id, runToken, 1);
+    assert.equal((await again.nextCredential()).token, "ghs_second");
+    releaseRefresh({ token: "ghs_stale", expiresAt: later() });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assert.equal(again.credentialCount(), 0);
+    const stored = await app.store.runs.findById(runId);
+    assert.equal(JSON.stringify(stored).includes("ghs_stale"), false);
+
+    const displaced = await first.nextClose();
+    assert.equal(displaced.code, 1001);
+    again.send({ t: "bye", reason: "stop" });
+    await again.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
 });

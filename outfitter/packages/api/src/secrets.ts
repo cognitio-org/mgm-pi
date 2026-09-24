@@ -105,9 +105,14 @@ export class GcpSecretsBroker implements SecretsBroker {
   }
 
   async refreshGithubAppToken(session: Session): Promise<{ token: string; expiresAt?: string } | undefined> {
-    const next = await this.githubTokenForSession(session);
-    if (!next.token) return undefined;
-    return next;
+    const own = await this.accessSecretOrEmpty(`outfitter-github-token-${session.id}`);
+    if (own) return { token: own };
+    if (!session.repo) return undefined;
+    // A failed mint must not fall through to the shared PAT. That would replace the sandbox's
+    // installation token and cancel the retry. The shared PAT is only the initial-run fallback.
+    const minted = await this.app.mint(session.repo);
+    if (!minted) return undefined;
+    return { token: minted.token, expiresAt: minted.expiresAt };
   }
 
   /** Per-session PAT, then a GitHub App installation token, then the shared

@@ -60,6 +60,7 @@ test("GithubAppTokens mints once per repo and a per-session PAT is not involved"
   assert.equal(body.permissions.metadata, "read");
   assert.equal(await tokens.mint("not a repo"), undefined);
   assert.equal(await tokens.mint("fork/testit"), undefined);
+  assert.equal((await tokens.mint("Cognitio-Org/testit"))?.token, "ghs_minted");
 });
 
 test("GithubAppTokens returns undefined when the App secrets are absent", async () => {
@@ -85,8 +86,14 @@ test("GithubAppTokens mints the repo name from URL and .git forms", async () => 
           ],
         }), { status: 200 });
       }
-      repos.push(JSON.parse(String(init?.body)).repositories[0]);
-      return new Response(JSON.stringify({ token: "ghs_minted", expires_at: "2026-09-24T06:00:00Z" }), { status: 201 });
+      const repoName = JSON.parse(String(init?.body)).repositories[0] as string;
+      repos.push(repoName);
+      const full = repoName === "other" ? "cognitio-org/other" : repoName === "third" ? "cognitio-org/third" : "cognitio-org/testit";
+      return new Response(JSON.stringify({
+        token: "ghs_minted",
+        expires_at: "2026-09-24T06:00:00Z",
+        repositories: [{ full_name: full }],
+      }), { status: 201 });
     }) as typeof fetch,
     () => Date.parse("2026-09-24T04:00:00Z"),
   );

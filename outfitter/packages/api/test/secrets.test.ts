@@ -166,6 +166,19 @@ describe("GcpSecretsBroker", () => {
     assert.equal(secrets.githubTokenExpiresAt, undefined);
   });
 
+  test("a failed refresh does not replace the installation token with the shared PAT", async () => {
+    const broker = new GcpSecretsBroker("proj", async (secretId) => {
+      if (secretId === GITHUB_TOKEN_DEFAULT_SECRET) return "shared-token";
+      if (secretId === GITHUB_APP_ID_SECRET) return "42";
+      if (secretId === GITHUB_APP_INSTALLATION_SECRET) return "7";
+      if (secretId === GITHUB_APP_KEY_SECRET) return "-----BEGIN PRIVATE KEY-----\nnot-a-pem\n-----END PRIVATE KEY-----";
+      throw notFoundError();
+    });
+    assert.equal(await broker.refreshGithubAppToken(testSession()), undefined);
+    const secrets = await broker.secretsForRun(testSession(), testGuru());
+    assert.equal(secrets.githubToken, "shared-token");
+  });
+
   test("a refresh after a per-session PAT is added returns that PAT and stops the App", async () => {
     const broker = new GcpSecretsBroker("proj", async (secretId) => {
       if (secretId === "outfitter-github-token-s1") return "own-token";

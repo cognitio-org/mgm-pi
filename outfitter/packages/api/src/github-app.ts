@@ -157,9 +157,9 @@ export class GithubAppTokens {
       console.warn(`[github-app] installation token request returned ${res.status}`);
       return undefined;
     }
-    let body: { token?: unknown; expires_at?: unknown };
+    let body: { token?: unknown; expires_at?: unknown; repositories?: { full_name?: unknown }[] };
     try {
-      body = (await res.json()) as { token?: unknown; expires_at?: unknown };
+      body = (await res.json()) as { token?: unknown; expires_at?: unknown; repositories?: { full_name?: unknown }[] };
     } catch (err) {
       console.warn(`[github-app] installation token response was not json: ${errorName(err)}`);
       return undefined;
@@ -167,9 +167,13 @@ export class GithubAppTokens {
     if (typeof body.token !== "string" || !body.token || typeof body.expires_at !== "string") return undefined;
     const expiresAtMs = Date.parse(body.expires_at);
     if (!Number.isFinite(expiresAtMs)) return undefined;
-    // `repositories: [name]` is resolved on the installation's account. A session for fork/widget
-    // must not keep a token GitHub issued for cognitio-org/widget, or the PAT fallback never runs.
-    if (!(await this.tokenCoversRepo(body.token, owner, repo))) return undefined;
+    // `repositories: [name]` is resolved on the installation's account. Keep the token only when
+    // GitHub says it is exactly this owner/repo. Names are case-insensitive.
+    const listed = Array.isArray(body.repositories) ? body.repositories : undefined;
+    const covers = listed
+      ? exactlyThisRepo(listed, owner, repo)
+      : await this.tokenCoversRepo(body.token, owner, repo);
+    if (!covers) return undefined;
     this.cache.set(key, { token: body.token, expiresAtMs, expiresAt: body.expires_at });
     return { token: body.token, expiresAt: body.expires_at };
   }
@@ -201,7 +205,13 @@ export class GithubAppTokens {
       console.warn(`[github-app] repository check was not json: ${errorName(err)}`);
       return false;
     }
-    const want = `${owner}/${repo}`;
-    return (body.repositories ?? []).some((row) => row.full_name === want);
+    return exactlyThisRepo(body.repositories, owner, repo);
   }
+}
+
+/** GitHub owner and repo names are case-insensitive. One entry, this repo, nothing else. */
+function exactlyThisRepo(list: { full_name?: unknown }[] | undefined, owner: string, repo: string): boolean {
+  if (!list || list.length !== 1) return false;
+  const name = list[0]?.full_name;
+  return typeof name === "string" && name.toLowerCase() === `${owner}/${repo}`.toLowerCase();
 }

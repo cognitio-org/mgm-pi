@@ -755,9 +755,9 @@ export class AgentLink {
     const released = await this.store.mail.releaseHeld();
     if (released.length > 0) request.log.info({ runId, sessions: released }, "agentlink: protocol validated, released held mail");
 
-    let spec: RunSpecMessage;
+    let built: { spec: RunSpecMessage; githubTokenExpiresAt?: string };
     try {
-      spec = await this.buildRunSpec(run, session, guru);
+      built = await this.buildRunSpec(run, session, guru);
     } catch (err) {
       if (err instanceof MissingGithubTokenError) {
         request.log.warn(err, "run.spec build failed: missing github token secret");
@@ -780,10 +780,15 @@ export class AgentLink {
         .catch(() => {});
       throw err;
     }
+    // A hello that lost the socket while buildRunSpec was awaiting must not send, and must not
+    // replace the timer the new hello just armed.
+    if (this.sockets.get(runId) !== socket) return;
+    const spec = built.spec;
     socket.send(JSON.stringify(spec));
     // agentd applies run.spec once. A reconnect ignores the second one, including when this
     // process is new and its mint cache is empty, so the token has to ride this frame too.
-    if (spec.secrets.githubToken) this.deliverGithubCredential(runId, spec.secrets.githubToken);
+    if (spec.secrets.githubToken) this.deliverGithubCredential(runId, socket, spec.secrets.githubToken);
+    this.scheduleGithubRefresh(runId, session.id, built.githubTokenExpiresAt);
 
     // Existing hello behaviour, now run against the same frame the run-token check above already
     // consumed: record first contact and drain anything queued while this run was ready before this
@@ -882,7 +887,7 @@ export class AgentLink {
     closeQuietly(socket, code, reason);
   }
 
-  private async buildRunSpec(run: Run, session: Session, guru: Guru): Promise<RunSpecMessage> {
+  private async buildRunSpec(run: Run, session: Session, guru: Guru): Promise<{ spec: RunSpecMessage; githubTokenExpiresAt?: string }> {
     const runId = run.id;
     // E2.8 laptop model preflight (src/laptop.ts): swap a laptop-only model for the guru's cloud
     // fallback when the laptop tunnel probes offline, and record it on the run for the UI.
@@ -924,8 +929,9 @@ export class AgentLink {
     }
     const owner = session.ownerEmail ? await this.store.users.findByEmail(session.ownerEmail) : null;
     const author = authorFor(session.ownerEmail, owner);
-    this.scheduleGithubRefresh(runId, session.id, secrets.githubTokenExpiresAt);
     return {
+      githubTokenExpiresAt: secrets.githubTokenExpiresAt,
+      spec: {
       t: "run.spec",
       session: { id: session.id, name: session.name ?? session.id, cwd: "/workspace" },
       ...(session.repo
@@ -960,6 +966,7 @@ export class AgentLink {
       // Deviation from protocol.md (checkpointEvery isn't specced further, and agentd's
       // protocol.ts types it as a string rather than a number): checkpoint after every turn.
       checkpointEvery: "turn",
+      },
     };
   }
 
@@ -1018,31 +1025,32 @@ export class AgentLink {
 
   private async refreshGithubCredential(runId: string, sessionId: string): Promise<void> {
     this.githubRefresh.delete(runId);
+    const socket = this.sockets.get(runId);
+    if (!socket || socket.readyState !== socket.OPEN) return;
     try {
       const session = await this.store.sessions.findById(sessionId);
       const refresh = this.secretsBroker.refreshGithubAppToken;
+      if (this.sockets.get(runId) !== socket) return;
       if (!session || !refresh) return;
       const next = await refresh.call(this.secretsBroker, session);
-      if (!next?.token) {
-        this.scheduleGithubRetry(runId, sessionId);
-        return;
-      }
-      if (!this.deliverGithubCredential(runId, next.token, next.expiresAt)) {
+      // A hello that arrived while this mint was in flight owns the timer now.
+      if (this.sockets.get(runId) !== socket) return;
+      if (!next?.token || !this.deliverGithubCredential(runId, socket, next.token, next.expiresAt)) {
         this.scheduleGithubRetry(runId, sessionId);
         return;
       }
       this.githubRefreshAttempts.delete(runId);
       this.scheduleGithubRefresh(runId, sessionId, next.expiresAt);
     } catch (err) {
+      if (this.sockets.get(runId) !== socket) return;
       console.warn(`[agentlink] github credential refresh failed: ${githubRefreshError(err)}`);
       this.scheduleGithubRetry(runId, sessionId);
     }
   }
 
-  /** Sends the replacement on the open socket. Never `send()`: that queues the token onto `Run.pending`. */
-  private deliverGithubCredential(runId: string, token: string, expiresAt?: string): boolean {
-    const socket = this.sockets.get(runId);
-    if (!socket || socket.readyState !== socket.OPEN) return false;
+  /** Sends on this hello's socket only. Never `send()`: that queues the token onto `Run.pending`. */
+  private deliverGithubCredential(runId: string, socket: WebSocket, token: string, expiresAt?: string): boolean {
+    if (this.sockets.get(runId) !== socket || socket.readyState !== socket.OPEN) return false;
     socket.send(JSON.stringify({ t: "github.credential", token, ...(expiresAt ? { expiresAt } : {}) }));
     return true;
   }

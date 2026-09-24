@@ -134,6 +134,21 @@ describe("GET /api/operator/settings", () => {
     await app.fastify.close();
   });
 
+  test("returns the gke fields only once GKE_CLUSTER is set (plan §5 item 8)", async () => {
+    const unset = await buildTestApp();
+    const unsetBody = (await unset.fastify.inject({ method: "GET", url: "/api/operator/settings" })).json();
+    assert.equal(unsetBody.gkeCluster, undefined);
+    await unset.fastify.close();
+
+    const app = await buildTestApp({ GKE_CLUSTER: "outfitter", GKE_NAMESPACE: "outfitter-sandboxes" });
+    const body = (await app.fastify.inject({ method: "GET", url: "/api/operator/settings" })).json();
+    assert.equal(body.gkeCluster, "outfitter");
+    assert.equal(body.gkeNamespace, "outfitter-sandboxes");
+    assert.equal(typeof body.gkeLaunchMode, "string");
+    assert.equal(typeof body.gkeMaxActive, "number");
+    await app.fastify.close();
+  });
+
   test("appliesAt matches the mount mechanism: run-time secrets are 'next run', mounted ones are 'next deploy'", async () => {
     const app = await buildTestApp();
     const res = await app.fastify.inject({ method: "GET", url: "/api/operator/settings" });

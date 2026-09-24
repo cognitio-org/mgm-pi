@@ -1,7 +1,11 @@
 // Environment-driven config, read once at startup. Every field has a safe dev default so the
 // package runs with `MONGODB_URI=memory OUTFITTER_DEV=1 SANDBOX_PROVIDER=inprocess npm run dev`.
 
-export type SandboxProviderName = "inprocess" | "docker" | "cloudrun";
+export type SandboxProviderName = "inprocess" | "docker" | "cloudrun" | "gke";
+
+/** GKE_LAUNCH_MODE (config below): cold uses SandboxClaim.spec.env; warm (PR4) adopts a pod from
+ * the warm pool via claim annotations instead. See docs/specs/gke-sandbox-provider.md §3.5. */
+export type GkeLaunchMode = "cold" | "warm";
 
 /**
  * Which routes this process registers (see server.ts). IAP on a Cloud Run *service* is
@@ -41,6 +45,25 @@ export interface Config {
   cloudRunJob: string;
   gcpProject: string;
   gcpRegion: string;
+  /** GKE_CLUSTER: the GKE Agent Sandbox cluster's name. Empty means the gke provider isn't
+   * configured here (registry.ts's createProviders skips registering it); SANDBOX_PROVIDER=gke
+   * with this unset fails at boot (see assertGkeConfigured below). */
+  gkeCluster: string;
+  /** GKE_LOCATION: the cluster's region, default gcpRegion (docs/specs/gke-sandbox-provider.md
+   * §3.1: Autopilot clusters are regional). */
+  gkeLocation: string;
+  /** GKE_NAMESPACE: the namespace SandboxClaims/SandboxWarmPools live in. */
+  gkeNamespace: string;
+  /** GKE_WARM_POOL: the SandboxWarmPool (and SandboxTemplate) name claims reference. */
+  gkeWarmPool: string;
+  /** GKE_ENDPOINT: optional override of the cluster's DNS-based control-plane endpoint host;
+   * empty uses whatever the GKE client library resolves on its own. */
+  gkeEndpoint: string;
+  /** GKE_LAUNCH_MODE: cold (claim env, PR2) or warm (claim annotations onto a pre-started pod,
+   * PR4). Default cold until PR4's warm-pool image is deployed. */
+  gkeLaunchMode: GkeLaunchMode;
+  /** GKE_MAX_ACTIVE: hard cap on concurrently active gke sandboxes; start() refuses above it. */
+  gkeMaxActive: number;
   /** Seconds of no user activity before a run checkpoints and stops itself. */
   idleStopSeconds: number;
   /** Domain the laptop's LM Studio is tunneled on (ngrok), e.g. kernal-lmstudio.ngrok.app. */
@@ -113,7 +136,16 @@ export interface Config {
 }
 
 const OUTFITTER_ROLES: readonly OutfitterRole[] = ["all", "web", "link"];
-const SANDBOX_PROVIDERS: readonly SandboxProviderName[] = ["inprocess", "docker", "cloudrun"];
+const SANDBOX_PROVIDERS: readonly SandboxProviderName[] = ["inprocess", "docker", "cloudrun", "gke"];
+const GKE_LAUNCH_MODES: readonly GkeLaunchMode[] = ["cold", "warm"];
+
+/** True for a provider whose sandboxes run on GCP compute this API dials out to over a network
+ * (as opposed to a local dev provider): both `assertSandboxOrigin` (sandboxes must reach the link
+ * origin, not this IAP-protected one) and `mailboxWarning` (Cloud Tasks/Scheduler need their SA
+ * configured) special-cased `=== "cloudrun"` before gke existed. */
+export function isCloudProvider(name: SandboxProviderName): boolean {
+  return name === "cloudrun" || name === "gke";
+}
 
 /** Validates an env var against a fixed set of literal values, failing loudly at boot (rather than
  * silently defaulting, or failing later the first time the bad value is actually used — see
@@ -172,14 +204,24 @@ export function sandboxOrigin(config: Pick<Config, "role" | "origin" | "linkOrig
   return config.role === "web" && config.linkOrigin ? config.linkOrigin : config.origin;
 }
 
-/** Startup check: a web role that wakes Cloud Run sandboxes cannot work without the link origin
- * (see sandboxOrigin). Throws with the fix instead of failing silently at the first wake. */
+/** Startup check: a web role that wakes cloud sandboxes (cloudrun, gke) cannot work without the
+ * link origin (see sandboxOrigin). Throws with the fix instead of failing silently at the first
+ * wake. */
 export function assertSandboxOrigin(config: Pick<Config, "role" | "linkOrigin" | "sandboxProvider">): void {
-  if (config.role === "web" && config.sandboxProvider === "cloudrun" && !config.linkOrigin) {
+  if (config.role === "web" && isCloudProvider(config.sandboxProvider) && !config.linkOrigin) {
     throw new Error(
-      "OUTFITTER_LINK_ORIGIN is required for OUTFITTER_ROLE=web with SANDBOX_PROVIDER=cloudrun: sandboxes " +
+      `OUTFITTER_LINK_ORIGIN is required for OUTFITTER_ROLE=web with SANDBOX_PROVIDER=${config.sandboxProvider}: sandboxes ` +
         "connect to the link service, not to this IAP-protected service. deploy/service.sh sets it.",
     );
+  }
+}
+
+/** Startup check: SANDBOX_PROVIDER=gke with no GKE_CLUSTER can never construct a working
+ * provider (registry.ts's createProviders would simply not register one), so fail loudly at boot
+ * instead of at the first wake -- same pattern as assertSandboxOrigin above. */
+export function assertGkeConfigured(config: Pick<Config, "sandboxProvider" | "gkeCluster">): void {
+  if (config.sandboxProvider === "gke" && !config.gkeCluster) {
+    throw new Error("GKE_CLUSTER is required for SANDBOX_PROVIDER=gke.");
   }
 }
 
@@ -189,7 +231,7 @@ export function assertSandboxOrigin(config: Pick<Config, "role" | "linkOrigin" |
 export function mailboxWarning(
   config: Pick<Config, "role" | "devMode" | "sandboxProvider" | "cloudTasksQueue" | "tasksSaEmail">,
 ): string | undefined {
-  if (config.devMode || config.sandboxProvider !== "cloudrun") return undefined;
+  if (config.devMode || !isCloudProvider(config.sandboxProvider)) return undefined;
   if (config.role !== "web" && !config.tasksSaEmail) {
     return "TASKS_SA_EMAIL is unset: /api/hooks/tick and /api/hooks/tasks/wake will reject every call (deploy/service.sh sets it once deploy/mailbox.sh has run)";
   }
@@ -213,6 +255,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     cloudRunJob: env.CLOUDRUN_JOB ?? "outfitter-agent",
     gcpProject: env.GCP_PROJECT ?? "",
     gcpRegion: env.GCP_REGION ?? "us-central1",
+    gkeCluster: env.GKE_CLUSTER ?? "",
+    gkeLocation: env.GKE_LOCATION ?? env.GCP_REGION ?? "us-central1",
+    gkeNamespace: env.GKE_NAMESPACE ?? "outfitter-sandboxes",
+    gkeWarmPool: env.GKE_WARM_POOL ?? "outfitter-agent",
+    gkeEndpoint: env.GKE_ENDPOINT ?? "",
+    gkeLaunchMode: envEnum("GKE_LAUNCH_MODE", GKE_LAUNCH_MODES, "cold", env),
+    gkeMaxActive: envInt("GKE_MAX_ACTIVE", 3, env),
     idleStopSeconds: envInt("IDLE_STOP_SECONDS", 600, env),
     tunnelDomainLmstudio: env.TUNNEL_DOMAIN_LMSTUDIO ?? "",
     localTunnelToken: env.LOCAL_TUNNEL_TOKEN ?? "",

@@ -2,7 +2,7 @@
 // inside client() so importing this module (or the package as a whole) never requires GCP
 // credentials or the grpc dependency chain at test time.
 
-import type { SandboxProvider, RunLaunch, SandboxStatus, SandboxHandle } from "@outfitter/provider-local";
+import type { SandboxProvider, RunLaunch, SandboxStatus, SandboxHandle, SandboxCapacity } from "@outfitter/provider-local";
 
 export interface CloudRunProviderConfig {
   project: string;
@@ -56,6 +56,16 @@ const DEFAULT_EXECUTION_NAME_POLL = { intervalMs: 1000, maxAttempts: 10 };
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** True for a "no such execution" failure: a Gaxios-style HTTP 404, or (a raw gRPC status
+ * instead) code 5 NOT_FOUND -- same shape secrets.ts's isSecretNotFoundError checks for Secret
+ * Manager. Any other shape (network, auth, permission) is a real error and is rethrown. */
+function isNotFoundError(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const e = err as { response?: { status?: number }; code?: number | string; status?: number };
+  const status = e.response?.status ?? e.code ?? e.status;
+  return status === 404 || status === "404" || status === 5;
 }
 
 export class CloudRunProvider implements SandboxProvider {
@@ -142,7 +152,17 @@ export class CloudRunProvider implements SandboxProvider {
   async status(handle: SandboxHandle): Promise<SandboxStatus> {
     if (!handle) return "unknown";
     const client = await this.deps.executionsClient();
-    const [execution] = await client.getExecution({ name: handle });
+    let execution: ExecutionLike;
+    try {
+      [execution] = await client.getExecution({ name: handle });
+    } catch (err) {
+      // C6 (docs/specs/gke-sandbox-provider.md §6.2): a stale handle whose execution has since
+      // been garbage-collected must report "exited", not throw -- the reconciler (runs.ts) treats
+      // a throwing status() as "unknown" and leaves the run alone, so a real 404 here used to mean
+      // a dead run's sandbox was never noticed as gone.
+      if (isNotFoundError(err)) return "exited";
+      throw err;
+    }
     // Cloud Run v2 Execution resource fields
     // (https://cloud.google.com/run/docs/reference/rest/v2/projects.locations.jobs.executions#Execution):
     // startTime is unset until the first task actually starts running, so an execution still
@@ -166,5 +186,11 @@ export class CloudRunProvider implements SandboxProvider {
     const parent = `projects/${this.config.project}/locations/${this.config.region}/jobs/${this.config.job}`;
     const [executions] = await client.listExecutions({ parent });
     return executions.filter((e) => !e.completionTime).length;
+  }
+
+  /** SandboxCapacity for the providers dashboard (gke-sandbox-provider.md §2.3): Cloud Run has no
+   * warm pool or hard cap, so only `active` is meaningful here. */
+  async capacity(): Promise<SandboxCapacity> {
+    return { active: await this.countRunningExecutions() };
   }
 }

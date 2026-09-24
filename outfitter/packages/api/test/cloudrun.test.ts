@@ -138,4 +138,45 @@ describe("CloudRunProvider", () => {
 
     assert.equal(await provider.status(""), "unknown"); // no handle at all
   });
+
+  // gke-sandbox-provider.md §6.2 C6, plan §5 item 3: a stale handle whose execution has since been
+  // garbage-collected must report "exited", not throw -- a throwing status() reads as "unknown" to
+  // the reconciler (runs.ts), which then never notices the run's sandbox is actually gone.
+  test("status() maps a NOT_FOUND getExecution error to 'exited' instead of throwing", async () => {
+    const provider = new CloudRunProvider(baseConfig(), {
+      executionsClient: async () => ({
+        getExecution: async () => {
+          throw Object.assign(new Error("execution not found"), { code: 5 });
+        },
+        cancelExecution: async () => {},
+      }),
+    });
+
+    assert.equal(await provider.status(EXECUTION_NAME), "exited");
+  });
+
+  test("status() rethrows a non-NOT_FOUND getExecution error", async () => {
+    const provider = new CloudRunProvider(baseConfig(), {
+      executionsClient: async () => ({
+        getExecution: async () => {
+          throw Object.assign(new Error("permission denied"), { code: 7 });
+        },
+        cancelExecution: async () => {},
+      }),
+    });
+
+    await assert.rejects(() => provider.status(EXECUTION_NAME), /permission denied/);
+  });
+
+  test("capacity() counts non-completed executions via countRunningExecutions", async () => {
+    const provider = new CloudRunProvider(baseConfig(), {
+      executionsClient: async () => ({
+        getExecution: async () => [{}],
+        cancelExecution: async () => {},
+        listExecutions: async () => [[{ completionTime: undefined }, { completionTime: "2026-01-01T00:00:00Z" }, {}]],
+      }),
+    });
+
+    assert.deepEqual(await provider.capacity(), { active: 2 });
+  });
 });

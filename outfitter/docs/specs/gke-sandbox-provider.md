@@ -56,40 +56,48 @@ pod snapshots or per-guru pre-spawned pi (§3.8). The spec must not promise it.
 
 ### 2.1 The contract today (exact)
 
-`outfitter/packages/provider-local/src/types.ts:4-32`:
+**Updated by PR1** (gke-sandbox-provider-plan.md §5): §2.2-§2.4's gaps are closed and the citations
+below point at PR1's actual code, not the pre-PR1 state this section originally described. The
+interface itself (RunLaunch/SandboxHandle/SandboxStatus) is unchanged; `SandboxProvider` gained the
+optional `capacity()` and `start()`'s return type, per §2.3.
+
+`outfitter/packages/provider-local/src/types.ts:1-53`:
 
 ```ts
 export interface RunLaunch {
   runId: string;
   apiOrigin: string;        // OUTFITTER_API
-  runToken: string;         // RUN_TOKEN, per run, only its sha256 is stored (runs.ts:54-55)
+  runToken: string;         // RUN_TOKEN, per run, only its sha256 is stored (runs.ts)
   devToken?: string;        // OUTFITTER_DEV_TOKEN, dev only
   image?: string;           // LocalDockerProvider only
   env?: Record<string, string>;
 }
 export type SandboxHandle = string;            // opaque; "callers should not parse it"
 export type SandboxStatus = "starting" | "running" | "exited" | "unknown";
+export interface SandboxCapacity { active: number; warmReady?: number; warmDesired?: number; limit?: number; }
+export interface SandboxStartResult { handle: SandboxHandle; warm?: boolean; }
 export interface SandboxProvider {
-  start(run: RunLaunch): Promise<{ handle: SandboxHandle }>;
+  start(run: RunLaunch): Promise<SandboxStartResult>;
   stop(handle: SandboxHandle): Promise<void>;
   status(handle: SandboxHandle): Promise<SandboxStatus>;
+  capacity?(): Promise<SandboxCapacity>;
 }
 ```
 
-Where it is used:
+Where it is used (post-PR1):
 
 | Site | Use |
 |---|---|
-| `packages/api/src/providers/index.ts:15-48` | `createProvider(config)` has one `switch` on `config.sandboxProvider` and lazily imports `cloudrun.ts` |
-| `packages/api/src/config.ts:4,104,191` | `SandboxProviderName = "inprocess" \| "docker" \| "cloudrun"`, validated by `envEnum` (default `inprocess`) |
-| `packages/api/src/main.ts:19` | one provider per process |
-| `packages/api/src/runs.ts:58-73` | `wake` calls `provider.start`, stores `providerHandle` (and `runTokenHash`) |
-| `packages/api/src/runs.ts:90-91, 132-137, 159-161` | `stop`, `reconcileOnce` (skips while status is `starting`), `reconcileStoppingOnce` |
-| `packages/api/src/store/types.ts:69-73` | `Run.providerHandle?: string`. **Does not record which provider made it** |
-| `packages/api/src/server.ts:66-83` | capacity: `instanceof CloudRunProvider` picks `countRunningExecutions`, else undefined |
-| `packages/api/src/providers-status.ts:309-323`, `store/types.ts:229` | `probeCloudRun`; `ProviderKind` includes `"cloudrun"` |
-| `packages/api/src/config.ts:157-165, 169-181` | `assertSandboxOrigin` and `mailboxWarning` special-case `sandboxProvider === "cloudrun"` |
-| `deploy/service.sh:131-134` | both roles get `SANDBOX_PROVIDER=cloudrun,CLOUDRUN_JOB=...` (both construct the provider: the link role wakes runs from `/api/hooks/tasks/wake` and `/tick` and runs the reconcilers) |
+| `packages/api/src/providers/registry.ts` | `SandboxProviders` (lazy, memoized per-name factories) and `createProviders(config)`; `providers/index.ts`'s `createProvider(config)` is now a thin wrapper around `createProviders(config).get(config.sandboxProvider)` |
+| `packages/api/src/config.ts` (`SandboxProviderName`, `isCloudProvider`) | `SandboxProviderName = "inprocess" \| "docker" \| "cloudrun" \| "gke"`, validated by `envEnum` (default `inprocess`); `isCloudProvider(name)` is true for `cloudrun`/`gke` |
+| `packages/api/src/main.ts` | `assertGkeConfigured(config)` added alongside `assertSandboxOrigin` -- boot fails for `SANDBOX_PROVIDER=gke` with no `GKE_CLUSTER` |
+| `packages/api/src/runs.ts` (`RunManager.wake`, `providerNameFor`) | `wake` resolves the provider via the registry, stores `providerHandle` **and** `sandboxProvider` (which provider made the handle) |
+| `packages/api/src/runs.ts` (`stop`, `reconcileOnce`, `reconcileStoppingOnce`) | each resolves its run's provider via `providerNameFor(run, config.sandboxProvider)` through the registry; an unconfigured provider is logged once and skipped, the state change still applies |
+| `packages/api/src/store/types.ts` (`Run.sandboxProvider`) | records which `SandboxProvider` started the run; absent on legacy rows (`providerNameFor` infers `cloudrun` from a Cloud-Run-shaped `providerHandle`, else falls back to the deployment default) |
+| `packages/api/src/server.ts` (`buildApp`) | capacity is duck-typed on `provider.capacity` instead of `instanceof CloudRunProvider` |
+| `packages/api/src/providers-status.ts` (`probeSandbox`), `store/types.ts` (`ProviderKind`) | `probeSandbox(name, capacityFn)` replaces `probeCloudRun`; `ProviderKind` includes `"cloudrun"` and `"gke"` |
+| `packages/api/src/config.ts` (`assertSandboxOrigin`, `mailboxWarning`) | both now call `isCloudProvider(config.sandboxProvider)` instead of `=== "cloudrun"` |
+| `deploy/service.sh` (`ENV_VARS=...`), `deploy/config.env` (`SANDBOX_PROVIDER`) | both roles get `SANDBOX_PROVIDER=${SANDBOX_PROVIDER},CLOUDRUN_JOB=...`, read from `config.env` (default `cloudrun`) instead of hard-coded |
 
 ### 2.2 Gaps a Kubernetes provider exposes
 
@@ -158,12 +166,13 @@ gkeLaunchMode: "cold" | "warm";   // GKE_LAUNCH_MODE, default "cold" until PR4's
 gkeMaxActive: number;    // GKE_MAX_ACTIVE, default 3; start() refuses above it
 ```
 
-- `SANDBOX_PROVIDER` is the **per-deployment default** for new runs. `deploy/service.sh` passes it
-  through from the caller's env (default stays `cloudrun`) instead of hard-coding it at `service.sh:134`.
-- `SANDBOX_PROVIDER=gke` with an empty `GKE_CLUSTER` fails at boot with an explicit message (same
-  pattern as `assertSandboxOrigin`, `config.ts:157-165`).
-- `assertSandboxOrigin` (`config.ts:157`) and `mailboxWarning` (`config.ts:169`) change their
-  `=== "cloudrun"` tests to a new `isCloudProvider(name)` (true for `cloudrun` and `gke`).
+- `SANDBOX_PROVIDER` is the **per-deployment default** for new runs. `deploy/service.sh`'s
+  `ENV_VARS=...` line reads it from `${SANDBOX_PROVIDER}` (set in `deploy/config.env`, default
+  `cloudrun`) instead of hard-coding it.
+- `SANDBOX_PROVIDER=gke` with an empty `GKE_CLUSTER` fails at boot with an explicit message: a new
+  `assertGkeConfigured` (`config.ts`), called from `main.ts` alongside `assertSandboxOrigin`.
+- `assertSandboxOrigin` and `mailboxWarning` (both in `config.ts`) change their `=== "cloudrun"`
+  tests to a new `isCloudProvider(name)` (true for `cloudrun` and `gke`).
 
 **Registry** (new `packages/api/src/providers/registry.ts`). It replaces the single `provider`
 passed through `buildApp`:
@@ -184,9 +193,11 @@ export function createProviders(config: Config): SandboxProviders;
 
 `createProviders` registers a factory for the default provider, plus any cloud provider whose
 config is present: `cloudrun` when `gcpProject` and `cloudRunJob` are set, `gke` when `gcpProject`
-and `gkeCluster` are set. The old provider therefore stays reachable after a switch. Factories
-lazy-import (as `providers/index.ts:38` does for `cloudrun.ts`), so nothing is paid until a run on
-that provider needs it. `createProvider` stays as a thin wrapper around the registry's default, so
+and `gkeCluster` are set. The old provider therefore stays reachable after a switch. Each
+per-provider factory (`registry.ts`'s `buildInProcess`/`buildDocker`/`buildCloudRun`/`buildGke`)
+lazy-imports its own dependency (`@outfitter/provider-local`, `./cloudrun.ts`), so nothing is paid
+until a run on that provider needs it; `buildGke` is a stub in PR1 that throws until PR2 lands.
+`createProvider` (`providers/index.ts`) stays as a thin wrapper around the registry's default, so
 current callers and tests keep working.
 
 **Recording the provider on the run** (`store/types.ts`, `Run`):
@@ -207,23 +218,27 @@ export function providerNameFor(run: Run, fallback: SandboxProviderName): Sandbo
 }
 ```
 
-`RunManager`'s constructor takes `SandboxProviders`. For source compatibility with the existing
-tests it also accepts a bare `SandboxProvider`, which it wraps with `SandboxProviders.single`.
+`RunManager`'s constructor (`runs.ts`) takes `SandboxProviders`. For source compatibility with the
+existing tests it also accepts a bare `SandboxProvider`, which it wraps with `SandboxProviders.single`.
 - `wake(sessionId)` picks the provider name (v1: `config.sandboxProvider`; PR6: per Tape, §2.5), gets
   it from the registry and calls `start`. It stores `sandboxProvider` next to `providerHandle` in the
-  same `update` as today (`runs.ts:68-74`).
-- `stop`, `reconcileOnce` and `reconcileStoppingOnce` resolve the provider with `providerNameFor(run,
-  config.sandboxProvider)`. If the registry throws (provider no longer configured), they log once, skip
-  the provider call, and still apply the state change. This is the same best-effort semantics as today
-  (`runs.ts:91-93, 135-137`).
+  same `update` call.
+- `stop`, `reconcileOnce` and `reconcileStoppingOnce` resolve the provider via a shared
+  `resolveProvider(run)` helper that calls `providerNameFor(run, config.sandboxProvider)` then the
+  registry. If the registry throws (provider no longer configured), they log once (per provider
+  name, not per reconcile tick), skip the provider call, and still apply the state change. This is
+  the same best-effort semantics as a provider call that itself fails.
 - Mongo: no index change. The new field is written on update only.
 
-**Capacity** (`server.ts:66-83`, `providers-status.ts:309-323`): replace `cloudRunCount` with
+**Capacity** (`server.ts`'s `buildApp`, `providers-status.ts`): replace `cloudRunCount` with
 `sandboxCapacity?: () => Promise<SandboxCapacity>`, taken from the **default** provider's optional
-`capacity`. Generalize `probeCloudRun` to `probeSandbox(name, fn)`, which emits one row with
-`kind: name` (`ProviderKind` gains `"gke"`) and `meta: { active, warmReady, warmDesired, limit }`, and
-also `meta.runningExecutions = active` so the web dashboard (E3.6) needs no change in PR1. Row ids:
-keep `id: "cloudrun"` for the cloudrun kind (keeps its 7-day uptime history) and use `id: "gke"` for gke.
+`capacity` (duck-typed: `provider.capacity ? () => provider.capacity!() : undefined`, no
+`instanceof CloudRunProvider`). Generalize `probeCloudRun` to `probeSandbox(name, fn)`, which emits
+one row with `kind: name` (`ProviderKind` gains `"gke"`) and `meta: { active, warmReady,
+warmDesired, limit }` (only the fields the capacity actually set), plus `meta.runningExecutions =
+active` so the web dashboard (E3.6) needs no change in PR1. Row ids: keep `id: "cloudrun"` for the
+cloudrun kind (keeps its 7-day uptime history, and is also what every local dev provider reports
+under, since there's nothing else to show) and use `id: "gke"` for gke.
 
 ### 2.5 Per-Tape (guru) override: recommended, deferred to PR6
 

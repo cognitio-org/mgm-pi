@@ -8,24 +8,66 @@
 // `stopping` (agentd never got, or never acted on, the graceful `stop` down-message) past
 // config.stopGraceMs.
 
-import { sandboxOrigin } from "./config.ts";
+import { sandboxOrigin, type SandboxProviderName } from "./config.ts";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import type { Store, Run } from "./store/types.ts";
 import type { SandboxProvider } from "@outfitter/provider-local";
 import type { Config } from "./config.ts";
+import { SandboxProviders } from "./providers/registry.ts";
 
 const STALE_AFTER_MS = 90_000;
 const RECONCILE_INTERVAL_MS = 60_000;
 
+/** Which SandboxProvider started `run`; `run.providerHandle` is only meaningful to that one
+ * (gke-sandbox-provider.md §2.4). Runs created before Run.sandboxProvider existed infer cloudrun
+ * from the one handle shape that's unambiguously theirs (a Cloud Run execution resource name),
+ * then fall back to the deployment's current default provider. */
+export function providerNameFor(run: Run, fallback: SandboxProviderName): SandboxProviderName {
+  if (run.sandboxProvider) return run.sandboxProvider;
+  if (run.providerHandle?.startsWith("projects/")) return "cloudrun";
+  return fallback;
+}
+
 export class RunManager {
   private readonly store: Store;
-  private readonly provider: SandboxProvider;
+  private readonly providers: SandboxProviders;
   private readonly config: Config;
+  /** providerNameFor() names logged once each (not per reconcile tick) when their registry lookup
+   * fails -- see resolveProvider. */
+  private readonly warnedUnconfiguredProviders = new Set<string>();
 
-  constructor(store: Store, provider: SandboxProvider, config: Config) {
+  /** Accepts either the registry (SandboxProviders) or, for source compatibility with existing
+   * callers/tests that only ever had one provider (server.ts, most of test/*.test.ts), a bare
+   * SandboxProvider -- wrapped as the registry's sole, default entry. */
+  constructor(store: Store, provider: SandboxProvider | SandboxProviders, config: Config) {
     this.store = store;
-    this.provider = provider;
+    this.providers =
+      provider instanceof SandboxProviders ? provider : SandboxProviders.single(config.sandboxProvider, provider);
     this.config = config;
+  }
+
+  /** Resolves the SandboxProvider that started `run` through the registry. Returns undefined
+   * (rather than throwing) when that provider is no longer configured here -- e.g. a
+   * SANDBOX_PROVIDER switch left old runs behind -- logging it once per provider name instead of
+   * once per reconcile tick. Callers skip the provider call and still apply their own state
+   * change, the same best-effort semantics this already had for a provider call that itself fails. */
+  private async resolveProvider(run: Run): Promise<SandboxProvider | undefined> {
+    const name = providerNameFor(run, this.config.sandboxProvider);
+    try {
+      return await this.providers.get(name);
+    } catch (err) {
+      if (!this.warnedUnconfiguredProviders.has(name)) {
+        this.warnedUnconfiguredProviders.add(name);
+        console.warn(
+          JSON.stringify({
+            severity: "WARNING",
+            message: `sandbox provider "${name}" is not configured here; skipping provider calls for its runs`,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
+      }
+      return undefined;
+    }
   }
 
   /** Creates a run for the session and asks the provider to start it, unless one is already active.
@@ -61,28 +103,35 @@ export class RunManager {
     const runTokenHash = createHash("sha256").update(runToken).digest("hex");
 
     try {
-      const { handle } = await this.provider.start({
+      const provider = await this.providers.get(this.config.sandboxProvider);
+      const { handle } = await provider.start({
         runId: run.id,
         apiOrigin: sandboxOrigin(this.config),
         runToken,
         // devToken is the SANDBOX_PROVIDER=inprocess/docker auth bypass (see @outfitter/
-        // provider-local's RunLaunch doc); cloudrun ignores it, and the sandbox authenticates
-        // with the job's own metadata-server identity token instead.
+        // provider-local's RunLaunch doc); cloudrun/gke ignore it, and the sandbox authenticates
+        // with its own metadata-server identity token instead.
         devToken: this.config.devMode ? this.config.devToken : undefined,
       });
       return (
         (await this.store.runs.update(run.id, {
           state: "provisioning",
           providerHandle: handle,
+          sandboxProvider: this.config.sandboxProvider,
           runTokenHash,
           lastSeenAt: now,
           updatedAt: new Date().toISOString(),
         })) ?? run
       );
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       await this.store.runs.update(run.id, {
         state: "failed",
-        reason: err instanceof Error ? err.message : String(err),
+        reason: message,
+        // #54's convention (store/types.ts's Run.statusDetail doc): a start refusal is one of the
+        // few things a person sees for a run that never got as far as connecting, so it gets a
+        // full sentence with a remedy, not just the short `reason` that also goes on the wire.
+        statusDetail: `this run's sandbox failed to start: ${message}. Press Play to start a new one.`,
         updatedAt: new Date().toISOString(),
       });
       throw err;
@@ -94,7 +143,8 @@ export class RunManager {
     const run = await this.store.runs.findById(runId);
     if (!run) return null;
     if (run.providerHandle) {
-      await this.provider.stop(run.providerHandle).catch(() => {
+      const provider = await this.resolveProvider(run);
+      await provider?.stop(run.providerHandle).catch(() => {
         // best-effort: the reconciler will clean up an unresponsive sandbox later
       });
     }
@@ -136,11 +186,17 @@ export class RunManager {
       if (ageMs < this.config.provisioningGraceMs) continue;
 
       if (run.providerHandle) {
-        const status = await this.provider.status(run.providerHandle).catch(() => "unknown" as const);
-        if (status === "starting") continue;
-        await this.provider.stop(run.providerHandle).catch(() => {
-          // best effort: still mark the run failed below even if the provider stop call itself fails
-        });
+        const provider = await this.resolveProvider(run);
+        if (provider) {
+          const status = await provider.status(run.providerHandle).catch(() => "unknown" as const);
+          if (status === "starting") continue;
+          await provider.stop(run.providerHandle).catch(() => {
+            // best effort: still mark the run failed below even if the provider stop call itself fails
+          });
+        }
+        // provider undefined (no longer configured): skip the provider call and fall through to
+        // marking the run failed below anyway -- the same best-effort semantics as a provider
+        // call that itself fails, per gke-sandbox-provider-plan.md §5 item 6.
       }
       await this.store.runs.update(run.id, {
         state: "failed",
@@ -173,7 +229,8 @@ export class RunManager {
     const stuck = await this.store.runs.listStopping(cutoff);
     for (const run of stuck) {
       if (run.providerHandle) {
-        await this.provider.stop(run.providerHandle).catch(() => {
+        const provider = await this.resolveProvider(run);
+        await provider?.stop(run.providerHandle).catch(() => {
           // best effort: still mark the run stopped below even if the provider stop call itself fails
         });
       }

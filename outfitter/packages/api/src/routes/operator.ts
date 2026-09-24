@@ -123,6 +123,19 @@ export async function registerOperatorRoutes(app: FastifyInstance, ctx: RouteCon
       litellmBaseUrl: ctx.config.litellmBaseUrl,
       sandboxProvider: ctx.config.sandboxProvider,
       cloudRunJob: ctx.config.cloudRunJob,
+      // GKE fields (gke-sandbox-provider-plan.md §5 item 8): returned whenever set, regardless of
+      // sandboxProvider, the same as cloudRunJob above -- an operator switching SANDBOX_PROVIDER
+      // still wants to see both providers' settings, not just the currently-active one.
+      ...(ctx.config.gkeCluster
+        ? {
+            gkeCluster: ctx.config.gkeCluster,
+            gkeLocation: ctx.config.gkeLocation,
+            gkeNamespace: ctx.config.gkeNamespace,
+            gkeWarmPool: ctx.config.gkeWarmPool,
+            gkeLaunchMode: ctx.config.gkeLaunchMode,
+            gkeMaxActive: ctx.config.gkeMaxActive,
+          }
+        : {}),
       tunnelDomain: ctx.config.tunnelDomainLmstudio,
       operators: ctx.config.operators,
       secrets,

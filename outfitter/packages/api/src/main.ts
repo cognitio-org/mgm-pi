@@ -1,4 +1,4 @@
-import { assertSandboxOrigin, loadConfig, mailboxWarning } from "./config.ts";
+import { assertGkeConfigured, assertSandboxOrigin, loadConfig, mailboxWarning } from "./config.ts";
 import { openStore } from "./store/index.ts";
 import { createProvider } from "./providers/index.ts";
 import {
@@ -13,6 +13,7 @@ import { buildApp } from "./server.ts";
 
 const config = loadConfig();
 assertSandboxOrigin(config);
+assertGkeConfigured(config);
 const mailboxProblem = mailboxWarning(config);
 if (mailboxProblem) console.warn(JSON.stringify({ severity: "WARNING", message: mailboxProblem }));
 const store = await openStore(config.mongodbUri, config.mongodbDb);

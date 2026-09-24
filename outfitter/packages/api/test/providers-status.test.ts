@@ -8,12 +8,13 @@ import assert from "node:assert/strict";
 import { MemoryStore } from "../src/store/memory.ts";
 import { SseHub, type SseEvent } from "../src/sse.ts";
 import { LaptopProbe } from "../src/laptop.ts";
+import type { SandboxCapacity } from "@outfitter/provider-local";
 import {
   ProviderStatusService,
   probeNgrok,
   probeLaptop,
   probeLitellm,
-  probeCloudRun,
+  probeSandbox,
   parseNgrokEndpoints,
   parseModelInfo,
   parseKeyInfo,
@@ -263,34 +264,44 @@ describe("probeLitellm", () => {
   });
 });
 
-describe("probeCloudRun", () => {
-  test("SANDBOX_PROVIDER not cloudrun: unknown, countFn never called", async () => {
+describe("probeSandbox", () => {
+  test("SANDBOX_PROVIDER not a cloud provider (inprocess): unknown, capacityFn never called", async () => {
     let called = false;
-    const rows = await probeCloudRun("inprocess", async () => {
+    const rows = await probeSandbox("inprocess", async () => {
       called = true;
-      return 1;
+      return { active: 1 };
     });
     assert.equal(rows[0].status, "unknown");
+    assert.equal(rows[0].id, "cloudrun"); // the historical default row; nothing gke-specific to show
     assert.equal(called, false);
   });
 
-  test("cloudrun with a working counter: up, with the count in meta", async () => {
-    const rows = await probeCloudRun("cloudrun", async () => 3);
+  test("cloudrun with a working capacity(): up, with active/runningExecutions in meta", async () => {
+    const rows = await probeSandbox("cloudrun", async () => ({ active: 3 }));
     assert.equal(rows[0].status, "up");
-    assert.deepEqual(rows[0].meta, { runningExecutions: 3 });
+    assert.equal(rows[0].id, "cloudrun");
+    assert.deepEqual(rows[0].meta, { active: 3, runningExecutions: 3 });
   });
 
-  test("cloudrun with a failing counter: down, never throws", async () => {
-    const rows = await probeCloudRun("cloudrun", async () => {
+  test("gke with a working capacity(): its own row, id/kind 'gke', warm fields included when present", async () => {
+    const rows = await probeSandbox("gke", async () => ({ active: 2, warmReady: 1, warmDesired: 1, limit: 3 }));
+    assert.equal(rows[0].status, "up");
+    assert.equal(rows[0].id, "gke");
+    assert.equal(rows[0].kind, "gke");
+    assert.deepEqual(rows[0].meta, { active: 2, runningExecutions: 2, warmReady: 1, warmDesired: 1, limit: 3 });
+  });
+
+  test("cloudrun with a failing capacity(): down, never throws", async () => {
+    const rows = await probeSandbox("cloudrun", async () => {
       throw new Error("permission denied");
     });
     assert.equal(rows[0].status, "down");
     assert.match(rows[0].detail ?? "", /permission denied/);
   });
 
-  test("cloudrun with a counter that never resolves: down, bounded by timeoutMs", async () => {
+  test("cloudrun with a capacity() that never resolves: down, bounded by timeoutMs", async () => {
     const startedAt = Date.now();
-    const rows = await probeCloudRun("cloudrun", () => new Promise(() => {}), 20);
+    const rows = await probeSandbox("cloudrun", () => new Promise(() => {}), 20);
     assert.equal(rows[0].status, "down");
     assert.ok(Date.now() - startedAt < 1000);
   });
@@ -298,7 +309,7 @@ describe("probeCloudRun", () => {
 
 // ---------- the service: reconcile, history bounding, SSE ----------
 
-function buildService(store: MemoryStore, sse: SseHub, overrides: { cloudRunCount?: () => Promise<number> } = {}) {
+function buildService(store: MemoryStore, sse: SseHub, overrides: { sandboxCapacity?: () => Promise<SandboxCapacity> } = {}) {
   const laptopProbe = new LaptopProbe({ tunnelDomain: "", token: "" });
   return new ProviderStatusService({
     store,
@@ -312,7 +323,7 @@ function buildService(store: MemoryStore, sse: SseHub, overrides: { cloudRunCoun
       sandboxProvider: "cloudrun",
     },
     litellmKey: async () => "",
-    cloudRunCount: overrides.cloudRunCount,
+    sandboxCapacity: overrides.sandboxCapacity,
   });
 }
 
@@ -342,7 +353,7 @@ describe("probe failure detail", () => {
 describe("ProviderStatusService.refreshIfStale", () => {
   test("polls on the first read, then serves stored rows until they are older than maxAge", async () => {
     let calls = 0;
-    const service = buildService(new MemoryStore(), new SseHub(), { cloudRunCount: async () => { calls++; return 1; } });
+    const service = buildService(new MemoryStore(), new SseHub(), { sandboxCapacity: async () => { calls++; return { active: 1 }; } });
     const first = await service.refreshIfStale(60_000);
     assert.equal(calls, 1);
     assert.equal(first.find((r) => r.id === "cloudrun")?.status, "up");
@@ -355,7 +366,7 @@ describe("ProviderStatusService.refreshIfStale", () => {
   test("a store failure mid-poll serves the stored rows instead of failing the read, and retries next time", async () => {
     const store = new MemoryStore();
     let calls = 0;
-    const service = buildService(store, new SseHub(), { cloudRunCount: async () => { calls++; return 1; } });
+    const service = buildService(store, new SseHub(), { sandboxCapacity: async () => { calls++; return { active: 1 }; } });
     await service.pollOnce();
     const upsert = store.providers.upsert.bind(store.providers);
     store.providers.upsert = async () => { throw new Error("atlas failover"); };
@@ -376,7 +387,7 @@ describe("ProviderStatusService.refreshIfStale", () => {
     let calls = 0;
     let release!: () => void;
     const gate = new Promise<void>((r) => { release = r; });
-    const service = buildService(new MemoryStore(), new SseHub(), { cloudRunCount: async () => { calls++; await gate; return 1; } });
+    const service = buildService(new MemoryStore(), new SseHub(), { sandboxCapacity: async () => { calls++; await gate; return { active: 1 }; } });
     const a = service.refreshIfStale(60_000);
     const b = service.refreshIfStale(60_000);
     const c = service.pollOnce();
@@ -393,7 +404,7 @@ describe("ProviderStatusService.pollOnce", () => {
     const published: SseEvent[] = [];
     (sse as unknown as { publish: SseHub["publish"] }).publish = (_channel, event) => published.push(event);
 
-    const service = buildService(store, sse, { cloudRunCount: async () => 1 });
+    const service = buildService(store, sse, { sandboxCapacity: async () => ({ active: 1 }) });
 
     const first = await service.pollOnce();
     assert.equal(first.find((r) => r.id === "cloudrun")?.status, "up");
@@ -406,7 +417,7 @@ describe("ProviderStatusService.pollOnce", () => {
     // A second service instance against the same store, whose counter fails: forces a real
     // up -> down transition and should publish again.
     const throwing = buildService(store, sse, {
-      cloudRunCount: async () => {
+      sandboxCapacity: async () => {
         throw new Error("down");
       },
     });
@@ -419,7 +430,7 @@ describe("ProviderStatusService.pollOnce", () => {
   test("getCurrent never leaks the stored history array", async () => {
     const store = new MemoryStore();
     const sse = new SseHub();
-    const service = buildService(store, sse, { cloudRunCount: async () => 1 });
+    const service = buildService(store, sse, { sandboxCapacity: async () => ({ active: 1 }) });
     await service.pollOnce();
     const current = await service.getCurrent();
     for (const row of current) assert.equal((row as { history?: unknown }).history, undefined);
@@ -431,9 +442,9 @@ describe("ProviderStatusService.pollOnce", () => {
 
     let shouldFail = false;
     const service = buildService(store, sse, {
-      cloudRunCount: async () => {
+      sandboxCapacity: async () => {
         if (shouldFail) throw new Error("down");
-        return 1;
+        return { active: 1 };
       },
     });
 

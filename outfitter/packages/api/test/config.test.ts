@@ -4,7 +4,7 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { assertSandboxOrigin, loadConfig, mailboxWarning, tokenAudiences } from "../src/config.ts";
+import { assertGkeConfigured, assertSandboxOrigin, isCloudProvider, loadConfig, mailboxWarning, tokenAudiences } from "../src/config.ts";
 
 describe("loadConfig", () => {
   test("defaults OUTFITTER_ROLE to \"all\" and SANDBOX_PROVIDER to \"inprocess\" when unset", () => {
@@ -41,6 +41,16 @@ describe("loadConfig", () => {
     );
   });
 
+  test("gke plan §5 item 5: also accepts SANDBOX_PROVIDER=gke, with GKE_* defaults", () => {
+    const config = loadConfig({ SANDBOX_PROVIDER: "gke" } as NodeJS.ProcessEnv);
+    assert.equal(config.sandboxProvider, "gke");
+    assert.equal(config.gkeNamespace, "outfitter-sandboxes");
+    assert.equal(config.gkeWarmPool, "outfitter-agent");
+    assert.equal(config.gkeLaunchMode, "cold");
+    assert.equal(config.gkeMaxActive, 3);
+    assert.equal(config.gkeLocation, config.gcpRegion);
+  });
+
   test("OUTFITTER_OPERATORS defaults to an empty list", () => {
     const config = loadConfig({} as NodeJS.ProcessEnv);
     assert.deepEqual(config.operators, []);
@@ -68,6 +78,31 @@ describe("assertSandboxOrigin", () => {
     assertSandboxOrigin(loadConfig({ SANDBOX_PROVIDER: "cloudrun" } as NodeJS.ProcessEnv));
     assertSandboxOrigin(loadConfig({ OUTFITTER_ROLE: "web" } as NodeJS.ProcessEnv));
   });
+  test("a web role waking gke sandboxes without OUTFITTER_LINK_ORIGIN also refuses (isCloudProvider)", () => {
+    const config = loadConfig({ OUTFITTER_ROLE: "web", SANDBOX_PROVIDER: "gke", GKE_CLUSTER: "outfitter" } as NodeJS.ProcessEnv);
+    assert.throws(() => assertSandboxOrigin(config), /OUTFITTER_LINK_ORIGIN is required/);
+  });
+});
+
+describe("isCloudProvider", () => {
+  test("true for cloudrun and gke, false for the local dev providers", () => {
+    assert.equal(isCloudProvider("cloudrun"), true);
+    assert.equal(isCloudProvider("gke"), true);
+    assert.equal(isCloudProvider("inprocess"), false);
+    assert.equal(isCloudProvider("docker"), false);
+  });
+});
+
+describe("assertGkeConfigured", () => {
+  test("SANDBOX_PROVIDER=gke with no GKE_CLUSTER fails at boot", () => {
+    const config = loadConfig({ SANDBOX_PROVIDER: "gke" } as NodeJS.ProcessEnv);
+    assert.throws(() => assertGkeConfigured(config), /GKE_CLUSTER is required/);
+  });
+  test("passes once GKE_CLUSTER is set, and for every other provider regardless", () => {
+    assertGkeConfigured(loadConfig({ SANDBOX_PROVIDER: "gke", GKE_CLUSTER: "outfitter" } as NodeJS.ProcessEnv));
+    assertGkeConfigured(loadConfig({ SANDBOX_PROVIDER: "cloudrun" } as NodeJS.ProcessEnv));
+    assertGkeConfigured(loadConfig({} as NodeJS.ProcessEnv));
+  });
 });
 
 
@@ -86,6 +121,10 @@ describe("mailboxWarning", () => {
     assert.equal(mailboxWarning(cfg({ OUTFITTER_ROLE: "web", ...full })), undefined);
     assert.equal(mailboxWarning(cfg({ OUTFITTER_ROLE: "link", OUTFITTER_DEV: "1" })), undefined);
     assert.equal(mailboxWarning(loadConfig({ OUTFITTER_ROLE: "link" } as NodeJS.ProcessEnv)), undefined);
+  });
+  test("gke is a cloud provider too: a deployed link role without TASKS_SA_EMAIL is warned the same as cloudrun", () => {
+    const config = loadConfig({ SANDBOX_PROVIDER: "gke", GKE_CLUSTER: "outfitter", OUTFITTER_ROLE: "link" } as NodeJS.ProcessEnv);
+    assert.match(mailboxWarning(config) ?? "", /hooks\/tick .* reject every call/);
   });
 });
 

@@ -15,7 +15,6 @@ import { SseHub, SsePoller } from "./sse.ts";
 import { LaptopProbe } from "./laptop.ts";
 import { ProviderStatusService } from "./providers-status.ts";
 import { ModelsService } from "./models.ts";
-import { CloudRunProvider } from "./providers/cloudrun.ts";
 import { registerRoutes } from "./routes/index.ts";
 import { MailService, CloudTasksWakeScheduler, NoopWakeScheduler, type WakeScheduler } from "./mail.ts";
 import type { GithubBroker } from "./github-broker.ts";
@@ -69,13 +68,10 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   const mail = new MailService(store, runs, wakeSchedulerFor(config), (msg, err) => fastify.log.warn({ err }, msg));
   const agentLink = new AgentLink(store, config, secretsBroker, sse, laptopProbe, mail, opts.github);
 
-  // Cloud Run job capacity probe (E2.10): only meaningful when the configured SandboxProvider
-  // actually is a CloudRunProvider. Importing the class here is safe even for other providers --
-  // it only lazily imports @google-cloud/run inside its own methods, never at module load.
-  const cloudRunCount =
-    config.sandboxProvider === "cloudrun" && provider instanceof CloudRunProvider
-      ? () => (provider as CloudRunProvider).countRunningExecutions()
-      : undefined;
+  // Sandbox capacity probe (E2.10, gke-sandbox-provider.md §2.4 gap G3): duck-typed on the
+  // optional SandboxProvider.capacity() rather than `instanceof CloudRunProvider`, so a second
+  // cloud provider (gke) doesn't need its own special case here.
+  const sandboxCapacity = provider.capacity ? () => provider.capacity!() : undefined;
   const litellmKey = async () => config.litellmAdminKey || secretsBroker.defaultLitellmKey();
   const providerStatus = new ProviderStatusService({
     store,
@@ -83,7 +79,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     laptopProbe,
     config,
     litellmKey,
-    cloudRunCount,
+    sandboxCapacity,
   });
   // E3.7: GET /api/models' backing service, sharing the same key resolver as the provider status
   // service above so both agree on which key probes LiteLLM's /model/info.

@@ -1,0 +1,32 @@
+outfitter/packages/agentd/src/git-proxy.ts
+  h_69b863911ebf05 23,44-45,117,180,206,215,221-224,258
+outfitter/packages/agentd/src/github-socket.ts
+  h_69b863911ebf05 1-347
+outfitter/packages/agentd/src/link.ts
+  h_69b863911ebf05 82,123-127,177-180,264
+outfitter/packages/agentd/src/lock.ts
+  h_69b863911ebf05 1-17
+outfitter/packages/agentd/src/main.ts
+  h_69b863911ebf05 7,22-30,140
+outfitter/packages/agentd/src/protocol.ts
+  h_69b863911ebf05 5-8,45-47,136-145,157-158,327-332,347-348
+outfitter/packages/agentd/src/run.ts
+  h_69b863911ebf05 5-6,13-14,70-72,145-146,157-163,232-237,251-258,279,332-334,524-529,597,613-644,761,913-921
+outfitter/packages/agentd/test/git-proxy.test.ts
+  h_69b863911ebf05 16,85,113-124,277-334
+outfitter/packages/agentd/test/github-socket.test.ts
+  h_69b863911ebf05 1-382
+outfitter/packages/agentd/test/link.test.ts
+  h_69b863911ebf05 100,126-154
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "efab26e6cc0a628a5d3d8013db98e13cf4797078",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

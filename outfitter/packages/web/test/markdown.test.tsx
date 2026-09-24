@@ -47,8 +47,66 @@ describe("Markdown", () => {
     expect(good).toContain('rel="noopener noreferrer"');
   });
 
-  it("keeps HTML inside a code fence as visible code", () => {
+  it("keeps an html fence as visible code, with a Render button and no preview frame yet", () => {
     const out = html("```html\n<div class=\"x\">hi</div>\n```");
     expect(out).toContain("&lt;div class=&quot;x&quot;&gt;hi&lt;/div&gt;");
+    expect(out).toContain(">Render<");
+    expect(out).not.toContain("<iframe");
+  });
+
+  it("does not fetch http or https images; it shows the alt text, or image when alt is empty", () => {
+    const https = html("![cat](https://example.com/a.png)");
+    expect(https).not.toContain("<img");
+    expect(https).not.toContain("https://example.com/a.png");
+    expect(https).toContain("cat");
+    const http = html("![](http://example.com/a.png)");
+    expect(http).not.toContain("<img");
+    expect(http).not.toContain("http://example.com/a.png");
+    expect(http).toContain(">image<");
+  });
+
+  it("renders a data image and leaves relative paths as alt text only", () => {
+    const data = html("![shot](data:image/png;base64,aaaa)");
+    expect(data).toContain("<img");
+    expect(data).toContain('src="data:image/png;base64,aaaa"');
+    expect(data).toContain('alt="shot"');
+    const relative = html("![local](./files/a.png)");
+    expect(relative).not.toContain("<img");
+    expect(relative).not.toContain("./files/a.png");
+    expect(relative).toContain("local");
+    const empty = html("![](./files/a.png)");
+    expect(empty).not.toContain("<img");
+    expect(empty).not.toContain(">image<");
+  });
+
+  it("still drops javascript: and data: links", () => {
+    const js = html("![x](javascript:alert(1))");
+    expect(js).not.toContain("javascript:");
+    expect(js).not.toContain("<img");
+    const data = html("[x](data:text/html,hi)");
+    expect(data).not.toContain("data:text/html");
+  });
+
+  it("collapses a long message to its opening and a Read button", () => {
+    const text = `${"a".repeat(50)}\n\n${"b".repeat(1200)}`;
+    const out = html(text);
+    expect(out).toContain("a".repeat(50));
+    expect(out).not.toContain("b".repeat(100));
+    expect(out).toContain(">Read<");
+    const full = renderToStaticMarkup(<Markdown text={text} reading={false} />);
+    expect(full).toContain("b".repeat(100));
+    expect(full).not.toContain(">Read<");
+  });
+
+  it("collapses two ATX headings even when the prose is short", () => {
+    const text = "# Alpha\n\nFirst paragraph.\n\n# Beta\n\nSecond paragraph.";
+    const out = html(text);
+    expect(out).toContain("First paragraph.");
+    expect(out).not.toContain("Second paragraph.");
+    expect(out).not.toContain("<h1>");
+    expect(out).toContain(">Read<");
+    const one = html("# Alpha\n\nJust a sentence.");
+    expect(one).toContain("<h1>Alpha</h1>");
+    expect(one).not.toContain(">Read<");
   });
 });

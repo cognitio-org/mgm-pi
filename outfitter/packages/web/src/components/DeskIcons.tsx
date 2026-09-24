@@ -175,3 +175,18 @@ export function ThinkingIcon(props: IconProps) {
     </Grid>
   );
 }
+
+/** Toolbox -- rail glyph for a tool call and its result. Box, handle, latch. */
+export function ToolboxIcon(props: IconProps) {
+  return (
+    <Grid {...props}>
+      <rect x="6" y="1" width="4" height="1" />
+      <rect x="5" y="2" width="1" height="2" />
+      <rect x="10" y="2" width="1" height="2" />
+      <rect x="2" y="4" width="12" height="10" />
+      <rect x="3" y="5" width="10" height="8" fill="var(--glyph-inset, var(--bg-elevated, #fff))" />
+      <rect x="6" y="7" width="4" height="3" />
+      <rect x="7" y="8" width="2" height="1" fill="var(--glyph-inset, var(--bg-elevated, #fff))" />
+    </Grid>
+  );
+}

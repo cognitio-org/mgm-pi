@@ -3,7 +3,7 @@
  *
  *   /teleport                interactive picker (pick a pushed session, then pull it)
  *   /teleport list           list sessions in the store
- *   /teleport push [name]    push the current session (requires a clean tree; same-repo pull later)
+ *   /teleport push [name]    push the current session (a dirty tree is committed first, when someone is here to agree)
  *   /teleport pull [id]      pull a session by id (prompts to pick one if id is omitted)
  *
  * Sessions move through a pluggable Store (see ./lib.ts): phase 1/2 ship GitStore, a local clone
@@ -29,6 +29,16 @@ import {
 } from "./lib.ts";
 import { createStore } from "./store-factory.ts";
 import { inSandbox } from "../_shared/env.ts";
+import { commit } from "../_shared/git.ts";
+
+const CONFIRM_TIMEOUT_MS = 60_000;
+const TELEPORT_COMMIT_MESSAGE = "Commit local changes before teleporting this session.";
+
+/** A quiet auto-push, a cloud run, and anything that is not the TUI have nobody to accept the offer. */
+function canOfferCommit(ctx: { mode?: string; ui?: { confirm?: unknown } }, quiet: boolean): boolean {
+  if (quiet || process.env.OUTFITTER_SESSION_ID) return false;
+  return ctx.mode === "tui" && typeof ctx.ui?.confirm === "function";
+}
 
 // Persist into the agent config dir (PI_CODING_AGENT_DIR when launched via bin/kernal, else
 // ~/.pi/agent), same convention as ../connect/index.ts.
@@ -89,8 +99,30 @@ export default function (pi: ExtensionAPI) {
       return;
     }
     if (isWorkingTreeDirty(status.stdout)) {
-      if (!opts.quiet) ctx.ui.notify("Commit or stash your changes before teleporting this session.", "error");
-      return;
+      const asker = ctx as { mode?: string; ui: { confirm?: (title: string, message: string, opts?: { timeout?: number }) => Promise<boolean | undefined> } };
+      if (!canOfferCommit(asker, opts.quiet === true)) {
+        if (!opts.quiet) ctx.ui.notify("Commit or stash your changes before teleporting this session.", "error");
+        return;
+      }
+      let yes = false;
+      try {
+        yes = await asker.ui.confirm!(
+          "Commit and push, then teleport?",
+          status.stdout.trim().slice(0, 500) || "Uncommitted changes",
+          { timeout: CONFIRM_TIMEOUT_MS },
+        ) === true;
+      } catch {
+        yes = false;
+      }
+      if (!yes) {
+        ctx.ui.notify("Teleport cancelled. The changes are still uncommitted.", "info");
+        return;
+      }
+      const committed = await commit(ctx.cwd, { all: true, message: TELEPORT_COMMIT_MESSAGE });
+      if (!committed.ok) {
+        ctx.ui.notify(`teleport push: could not commit: ${committed.detail}`, "error");
+        return;
+      }
     }
     const git = await gitInfo(ctx.cwd);
     if (!git) {

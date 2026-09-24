@@ -1,8 +1,9 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { mkdtempSync, mkdirSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   GitStore, parseOwnerRepo, rewriteHeaderCwd, pickModelForHost, manifestFromGit, describeRef,
@@ -343,6 +344,132 @@ describe("teleport extension start-up", () => {
   });
   test("in a cloud sandbox (KERNAL_SANDBOX=1) nothing touches git at load", async () => {
     assert.equal(await load(true), false);
+  });
+});
+
+describe("teleport push offers to commit a dirty tree", () => {
+  const git = (cwd: string, args: string[]) => new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
+    execFile("git", args, { cwd, encoding: "utf8" }, (err: any, stdout: string, stderr: string) => {
+      resolve({ code: typeof err?.code === "number" ? err.code : err ? 1 : 0, stdout: stdout ?? "", stderr: stderr ?? "" });
+    });
+  });
+  const piExec = (_cmd: string, args: string[], opts: { cwd: string }) => git(opts.cwd, args);
+
+  async function setup() {
+    const root = mkdtempSync(join(tmpdir(), "tp-offer-"));
+    const origin = join(root, "origin.git");
+    const repo = join(root, "repo");
+    const store = join(root, "store");
+    const session = join(root, "session.jsonl");
+    await git(root, ["init", "--bare", "-q", origin]);
+    await git(root, ["init", "-q", "-b", "main", repo]);
+    await git(repo, ["config", "user.email", "test@example.com"]);
+    await git(repo, ["config", "user.name", "Test"]);
+    writeFileSync(join(repo, "README"), "hi\n");
+    await git(repo, ["add", "README"]);
+    await git(repo, ["commit", "-q", "-m", "init"]);
+    await git(repo, ["remote", "add", "origin", origin]);
+    await git(repo, ["push", "-q", "-u", "origin", "main"]);
+    writeFileSync(session, '{"type":"session"}\n');
+    const head = (await git(repo, ["rev-parse", "HEAD"])).stdout.trim();
+    return { root, origin, repo, store, session, head };
+  }
+
+  async function drive(opts: { dirty: boolean; mode: string; accept?: boolean; quiet?: boolean }) {
+    const env = setup();
+    const laid = await env;
+    if (opts.dirty) writeFileSync(join(laid.repo, "notes.txt"), "wip\n");
+    const prevStore = process.env.KERNAL_TELEPORT_STORE;
+    const prevSandbox = process.env.KERNAL_SANDBOX;
+    const prevSession = process.env.OUTFITTER_SESSION_ID;
+    const prevAuthor = process.env.GIT_AUTHOR_NAME;
+    const prevAuthorEmail = process.env.GIT_AUTHOR_EMAIL;
+    const prevCommitter = process.env.GIT_COMMITTER_NAME;
+    const prevCommitterEmail = process.env.GIT_COMMITTER_EMAIL;
+    process.env.KERNAL_TELEPORT_STORE = laid.store;
+    process.env.KERNAL_SANDBOX = "1";
+    delete process.env.OUTFITTER_SESSION_ID;
+    process.env.GIT_AUTHOR_NAME = "Test";
+    process.env.GIT_AUTHOR_EMAIL = "test@example.com";
+    process.env.GIT_COMMITTER_NAME = "Test";
+    process.env.GIT_COMMITTER_EMAIL = "test@example.com";
+    const notices: { msg: string; type: string }[] = [];
+    let asks = 0;
+    try {
+      const { default: teleport } = await import("../.pi/extensions/teleport/index.ts");
+      const { makePi } = await import("./harness.ts");
+      const pi = makePi() as any;
+      pi.exec = piExec;
+      teleport(pi);
+      const ctx = {
+        cwd: laid.repo,
+        mode: opts.mode,
+        settings: { teleport: { autoPush: opts.quiet === true } },
+        ui: {
+          notify: (msg: string, type = "info") => notices.push({ msg, type }),
+          confirm: async () => { asks += 1; return opts.accept === true; },
+        },
+        sessionManager: {
+          getSessionFile: () => laid.session,
+          getSessionId: () => "sess94",
+          getSessionName: () => "phase4",
+        },
+      };
+      if (opts.quiet) await pi.emit("agent_end", {}, ctx);
+      else await pi.commands.get("teleport").handler("push", ctx);
+      const head = (await git(laid.repo, ["rev-parse", "HEAD"])).stdout.trim();
+      const originHead = (await git(laid.repo, ["rev-parse", "origin/main"])).stdout.trim();
+      const subject = (await git(laid.repo, ["log", "-1", "--format=%s"])).stdout.trim();
+      return { asks, notices, head, originHead, subject, start: laid.head, stored: existsSync(join(laid.store, "sessions", "sess94.jsonl")) };
+    } finally {
+      if (prevStore === undefined) delete process.env.KERNAL_TELEPORT_STORE; else process.env.KERNAL_TELEPORT_STORE = prevStore;
+      if (prevSandbox === undefined) delete process.env.KERNAL_SANDBOX; else process.env.KERNAL_SANDBOX = prevSandbox;
+      if (prevSession === undefined) delete process.env.OUTFITTER_SESSION_ID; else process.env.OUTFITTER_SESSION_ID = prevSession;
+      if (prevAuthor === undefined) delete process.env.GIT_AUTHOR_NAME; else process.env.GIT_AUTHOR_NAME = prevAuthor;
+      if (prevAuthorEmail === undefined) delete process.env.GIT_AUTHOR_EMAIL; else process.env.GIT_AUTHOR_EMAIL = prevAuthorEmail;
+      if (prevCommitter === undefined) delete process.env.GIT_COMMITTER_NAME; else process.env.GIT_COMMITTER_NAME = prevCommitter;
+      if (prevCommitterEmail === undefined) delete process.env.GIT_COMMITTER_EMAIL; else process.env.GIT_COMMITTER_EMAIL = prevCommitterEmail;
+    }
+  }
+
+  test("a clean branch teleports without asking", async () => {
+    const got = await drive({ dirty: false, mode: "tui" });
+    assert.equal(got.asks, 0);
+    assert.equal(got.head, got.start);
+    assert.equal(got.stored, true);
+    assert.equal(got.notices.some((n) => n.msg.includes("Teleported")), true);
+  });
+
+  test("accepting the offer commits, pushes, and teleports", async () => {
+    const got = await drive({ dirty: true, mode: "tui", accept: true });
+    assert.equal(got.asks, 1);
+    assert.notEqual(got.head, got.start);
+    assert.equal(got.originHead, got.head);
+    assert.equal(got.stored, true);
+    assert.equal(got.subject, "Commit local changes before teleporting this session.");
+  });
+
+  test("declining leaves the tree and does not teleport", async () => {
+    const got = await drive({ dirty: true, mode: "tui", accept: false });
+    assert.equal(got.asks, 1);
+    assert.equal(got.head, got.start);
+    assert.equal(got.stored, false);
+    assert.equal(got.notices.some((n) => n.msg.includes("still uncommitted")), true);
+  });
+
+  test("a headless push refuses a dirty tree without asking", async () => {
+    const got = await drive({ dirty: true, mode: "rpc" });
+    assert.equal(got.asks, 0);
+    assert.equal(got.head, got.start);
+    assert.equal(got.stored, false);
+    assert.equal(got.notices.some((n) => n.msg.includes("Commit or stash")), true);
+  });
+
+  test("autoPush refuses a dirty tree without asking", async () => {
+    const got = await drive({ dirty: true, mode: "tui", quiet: true });
+    assert.equal(got.asks, 0);
+    assert.equal(got.head, got.start);
+    assert.equal(got.stored, false);
   });
 });
 

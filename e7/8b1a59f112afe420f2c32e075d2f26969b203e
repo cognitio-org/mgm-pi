@@ -1,0 +1,71 @@
+outfitter/packages/api/src/entry-wire.ts
+  s_e0bc7d6e875242::t_343fc4a92ca83c 1-12
+outfitter/packages/api/test/routes.test.ts
+  s_e0bc7d6e875242::t_9cbfdde3b328c0 167-213
+outfitter/packages/api/src/agentlink.ts
+  s_e0bc7d6e875242::t_d88956596d6b9d 23
+  s_e0bc7d6e875242::t_ceee129f790dc6 994,997
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_e0bc7d6e875242::t_80741dc2fddc61 577-582,584-587
+  s_e0bc7d6e875242::t_ffdf1482917b9b 330-334
+  s_e0bc7d6e875242::t_b0bc87d219c2fa 36-41
+outfitter/packages/web/src/lib/beats.ts
+  s_e0bc7d6e875242::t_b331d8086aeab2 186
+  s_e0bc7d6e875242::t_bf35652cf46680 62-64
+outfitter/packages/api/src/store/mongo.ts
+  s_e0bc7d6e875242::t_c4d84c9992ea21 107,109
+  s_e0bc7d6e875242::t_8cc60498f70e4a 193
+  s_e0bc7d6e875242::t_b1f58a6ee8916a 42
+  s_e0bc7d6e875242::t_7180b7e8a7bd81 190-192,194-195
+outfitter/packages/web/src/lib/html-preview-access.ts
+  s_e0bc7d6e875242::t_87ab73da52b930 2-3,6-8,17-44
+outfitter/packages/api/src/store/types.ts
+  s_e0bc7d6e875242::t_f66aa05d9de0fe 57-74
+  s_e0bc7d6e875242::t_d7637a1c2c2ebb 433
+  s_e0bc7d6e875242::t_2bd0c361f42a08 460-462
+outfitter/packages/api/test/mongo-entry-runs.test.ts
+  s_e0bc7d6e875242::t_1432dab8670bff 1-76
+outfitter/packages/api/test/agentlink.test.ts
+  s_e0bc7d6e875242::t_3de38b14e37615 124-127
+  s_e0bc7d6e875242::t_aa06222ad21698 92-123,128-134
+outfitter/packages/api/src/store/memory.ts
+  s_e0bc7d6e875242::t_c47b090080f830 153-159
+  s_e0bc7d6e875242::t_6bb19c71ff4198 79,85
+  s_e0bc7d6e875242::t_a2075cbd6b23ef 41
+outfitter/packages/api/src/routes/sessions.ts
+  s_e0bc7d6e875242::t_b4d07aa95b674b 10
+  s_e0bc7d6e875242::t_98cc8740ef2e45 48-55
+  s_e0bc7d6e875242::t_ee1705182b4d38 181-184
+  s_e0bc7d6e875242::t_099871e5d374ff 306
+outfitter/packages/api/src/sse.ts
+  s_e0bc7d6e875242::t_b84dd0a3152a53 7
+  s_e0bc7d6e875242::t_b4bb8e48f29fee 185
+outfitter/packages/web/src/api/client.ts
+  s_e0bc7d6e875242::t_77e0f3465decd8 75-76
+  s_e0bc7d6e875242::t_0805cf2da75584 52-54
+outfitter/packages/api/test/stop.test.ts
+  s_e0bc7d6e875242::t_add7074d535419 287
+outfitter/docs/protocol.md
+  s_e0bc7d6e875242::t_9efdc1fba83e86 282-283
+outfitter/packages/api/docs/data-model.md
+  s_e0bc7d6e875242::t_ba9b38f8094dab 47
+outfitter/packages/web/test/html-preview-per-run.test.tsx
+  s_e0bc7d6e875242::t_51db7936fa6a24 1-50,52-116
+  s_e0bc7d6e875242::t_3f18583efea795 51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "e78b1a59f112afe420f2c32e075d2f26969b203e",
+  "prompts": {},
+  "sessions": {
+    "s_e0bc7d6e875242": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c37c9d46-795c-4cd1-835d-84b84570be9d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

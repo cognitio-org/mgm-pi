@@ -9,7 +9,7 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { access, chmod, mkdtemp, mkdir, readdir, readFile, stat } from "node:fs/promises";
+import { access, chmod, mkdtemp, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 
@@ -120,34 +120,42 @@ async function runEnabled(opts: PlaywrightCheckOptions): Promise<PlaywrightCheck
     );
   }
 
+  // Only a directory this function created is removed. A caller-supplied outputDir stays.
+  const ownedOutput = opts.outputDir === undefined;
   const outputDir = opts.outputDir ?? (await mkdtemp(join(tmpdir(), "outfitter-playwright-")));
-  await mkdir(outputDir, { recursive: true });
-  // mkdir's mode is masked by umask. The sandbox runs this as root and the browser as `agent`.
-  await chmod(outputDir, 0o777);
+  try {
+    await mkdir(outputDir, { recursive: true });
+    // mkdir's mode is masked by umask. The sandbox runs this as root and the browser as `agent`.
+    await chmod(outputDir, 0o777);
 
-  const cli = opts.cliPath ?? (await findLocalCli(target.configDir, opts.workspace)) ?? imageCli();
-  const startedAt = (opts.now ?? (() => new Date()))().getTime();
-  const result = await (opts.spawn ?? defaultPlaywrightSpawn)(
-    cli,
-    ["test", "--config", target.configPath, "--reporter=line", "--output", outputDir],
-    {
-      cwd: target.configDir,
-      env: spawnEnv(opts),
-      uid: opts.uid,
-      gid: opts.gid,
-      timeoutMs: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-    },
-  );
+    const cli = opts.cliPath ?? (await findLocalCli(target.configDir, opts.workspace)) ?? imageCli();
+    const startedAt = (opts.now ?? (() => new Date()))().getTime();
+    const result = await (opts.spawn ?? defaultPlaywrightSpawn)(
+      cli,
+      ["test", "--config", target.configPath, "--reporter=line", "--output", outputDir],
+      {
+        cwd: target.configDir,
+        env: spawnEnv(opts),
+        uid: opts.uid,
+        gid: opts.gid,
+        timeoutMs: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      },
+    );
 
-  const screenshotPath = await findNewScreenshot(
-    [outputDir, join(target.configDir, "test-results"), join(target.configDir, "playwright-report")],
-    startedAt,
-  );
-  const log = combinedLog(result);
-  if (result.timedOut) return report(opts, "fail", log || "Timed out.", screenshotPath);
-  if (result.code === 0) return report(opts, "pass", log, screenshotPath);
-  if (browserUnavailable(result)) return report(opts, "unavailable", log || "Chromium could not start.", screenshotPath);
-  return report(opts, "fail", log || `exit ${result.code ?? "unknown"}`, screenshotPath);
+    let screenshotPath = await findNewScreenshot(
+      [outputDir, join(target.configDir, "test-results"), join(target.configDir, "playwright-report")],
+      startedAt,
+    );
+    // The owned dir is deleted below, traces and videos included. Do not cite a file inside it.
+    if (ownedOutput && screenshotPath && inside(outputDir, screenshotPath)) screenshotPath = undefined;
+    const log = combinedLog(result);
+    if (result.timedOut) return report(opts, "fail", log || "Timed out.", screenshotPath);
+    if (result.code === 0) return report(opts, "pass", log, screenshotPath);
+    if (browserUnavailable(result)) return report(opts, "unavailable", log || "Chromium could not start.", screenshotPath);
+    return report(opts, "fail", log || `exit ${result.code ?? "unknown"}`, screenshotPath);
+  } finally {
+    if (ownedOutput) await rm(outputDir, { recursive: true, force: true }).catch(() => undefined);
+  }
 }
 
 function imageCli(): string {

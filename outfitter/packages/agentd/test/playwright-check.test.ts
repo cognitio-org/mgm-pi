@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runPlaywrightBeforeCheckpoint, type PlaywrightSpawn } from "../src/playwright-check.js";
@@ -119,4 +119,59 @@ test("playwright check: a screenshot produced by the run is named in the entry",
   const entry = await runPlaywrightBeforeCheckpoint({ enabled: true, workspace: root, spawn, outputDir: output });
   assert.equal(entry?.data.screenshotPath, join(output, "shot.png"));
   assert.match(entry?.data.text ?? "", /Screenshot:/);
+});
+
+test("playwright check: the default output directory is removed and a caller outputDir stays", async () => {
+  const root = await workspace();
+  await plant(root);
+
+  const spawnInto = (outcome: { code: number | null; timedOut?: boolean }): PlaywrightSpawn => {
+    return async (_command, args) => {
+      const dir = args[args.indexOf("--output") + 1];
+      await writeFile(join(dir, "shot.png"), "png");
+      await writeFile(join(dir, "trace.zip"), "trace");
+      return { code: outcome.code, stdout: "", stderr: "boom", timedOut: outcome.timedOut };
+    };
+  };
+
+  let failedDir = "";
+  const failed = await runPlaywrightBeforeCheckpoint({
+    enabled: true,
+    workspace: root,
+    spawn: async (command, args, opts) => {
+      failedDir = args[args.indexOf("--output") + 1];
+      return spawnInto({ code: 1 })(command, args, opts);
+    },
+  });
+  assert.match(failedDir, /outfitter-playwright-/);
+  await assert.rejects(stat(failedDir), (err: NodeJS.ErrnoException) => err.code === "ENOENT");
+  assert.equal(failed?.data.status, "fail");
+  assert.equal(failed?.data.screenshotPath, undefined);
+  assert.doesNotMatch(failed?.data.text ?? "", /Screenshot:/);
+  assert.doesNotMatch(failed?.data.text ?? "", /outfitter-playwright-/);
+
+  let timedOutDir = "";
+  const timedOut = await runPlaywrightBeforeCheckpoint({
+    enabled: true,
+    workspace: root,
+    spawn: async (command, args, opts) => {
+      timedOutDir = args[args.indexOf("--output") + 1];
+      return spawnInto({ code: null, timedOut: true })(command, args, opts);
+    },
+  });
+  assert.notEqual(timedOutDir, failedDir);
+  await assert.rejects(stat(timedOutDir), (err: NodeJS.ErrnoException) => err.code === "ENOENT");
+  assert.equal(timedOut?.data.status, "fail");
+  assert.equal(timedOut?.data.screenshotPath, undefined);
+
+  const output = await mkdtemp(join(tmpdir(), "outfitter-pw-out-"));
+  const kept = await runPlaywrightBeforeCheckpoint({
+    enabled: true,
+    workspace: root,
+    spawn: spawnInto({ code: 0 }),
+    outputDir: output,
+  });
+  assert.equal((await stat(output)).isDirectory(), true);
+  assert.equal((await stat(join(output, "trace.zip"))).isFile(), true);
+  assert.equal(kept?.data.screenshotPath, join(output, "shot.png"));
 });

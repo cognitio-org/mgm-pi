@@ -2,20 +2,32 @@
 
 The one-day spike from `docs/specs/gke-sandbox-provider.md` §8.2, plus S7 from
 `docs/specs/gke-sandbox-provider-plan.md` §4. Each item records the numbers it produced and a verdict.
-In progress; started 2026-09-24.
+Run on 2026-09-24: S0-S4 and S6 pass, S7 is impossible on Autopilot (owner chose option B), and S5
+(cost) waits on the billing data.
 
 | # | Question | Verdict |
 |---|---|---|
 | S0 | Can this billing account create the cluster with Agent Sandbox? | **Pass** (2026-09-24) |
 | S1 | Downward-API annotation-to-file latency under gVisor | **Pass** for the in-cluster part (2026-09-24) |
-| S2 | The real image under gVisor | not run |
+| S2 | The real image under gVisor | **Pass** (2026-09-24): end to end against production, second attempt; the first was refused 4409 on image skew |
 | S3 | Identity and network (WI token `email`, metadata path) | **Pass** (2026-09-24) |
 | S4 | Cold start with image streaming | **Pass on a running node (3 s); not on a new one (70 s, node boot)** (2026-09-24). Streaming works from a tag's second pull |
 | S5 | Cost reality | not run |
-| S6 | API-to-cluster auth over the DNS endpoint | not run |
+| S6 | API-to-cluster auth over the DNS endpoint | **Pass** (2026-09-24) |
 | S7 | Metadata block (`NET_ADMIN` init container, `iptables -m owner`) | **Fail: impossible on Autopilot** (2026-09-24) |
 
 ---
+
+**Go/no-go (spec §8.2):** S2, S3 and S6 pass, so **PR2 is go**. S1 passes, so **PR4 (warm) is go**. S4:
+cold mode is fine while a sandbox node is up (3 s) but costs about 70 s once the node has scaled away,
+so outside 08:00-20:00 the first wake is Cloud-Run-like unless a node is kept (a cost question for S5).
+
+**Follow-ups found along the way:**
+- The default Compute Engine service account (`97916961297-compute@`) has `roles/editor` on the project
+  (a GCP default), and the Autopilot nodes run as it. Sandbox pods can't reach it: Workload Identity
+  gives them `outfitter-agent@`, as S3 showed. It's still broader than needed; narrow it separately.
+- `pi-subagents` cost 9 s in S2's one run on GKE. It's the biggest agentd-side item.
+- agentd should log its ID-token fetch, to confirm where S2's 9 s before link goes (link is ruled out).
 
 ## S0: cluster creation (pass)
 
@@ -108,6 +120,69 @@ and the spec §3.3 network policy. Set up first: the hardening exemption for the
 - Root in `outfitter-sandboxes` with no securityContext was admitted, so the hardening exemption works
   and `sandbox-core-policy` doesn't object to root.
 
+## S2: the real image, end to end against production (pass)
+
+`deploy/gke/spike/s2.yaml` and `s2_wake.ts`. The owner chose a production test session (option a). `s2_wake.ts`
+runs the api's own `RunManager.wake()` once against production Atlas, with a throwaway provider whose
+`start()` creates a cold SandboxClaim carrying `RUN_ID`/`RUN_TOKEN`/`OUTFITTER_API=https://link.kernal.one`
+as claim env. It starts no server, reconciler or mailbox. From there the **deployed** link, store and web
+UI treat the run like any other. The owner ran the cluster and database steps; the auto-mode classifier
+blocks an agent from both. Full agentd log of attempt 2: `s2-agentd.txt`.
+
+**Attempt 1 (session 54cf77aa…, run d057bd5d): refused, as the plan predicted.** The template pinned
+`outfitter-agent:1e21c9f08eb9`, the job's image when S4 ran. Release `adf2016` had shipped since, moving
+the job and link to protocol v2, and link closed the connection **4409 "agentd protocol v1 is older than
+the API's v2"**. That is terminal, so agentd exited 0 and the pod went `Completed`. This is plan §2's
+image-skew risk, seen live: the GKE template must move to the new image in the same release as link
+(PR3's `release.sh` step between the Job and link).
+
+**Attempt 2 (session eef61b0c…, run 4c9a96c5, image `adf2016ac926`): pass.** Repo `cognitio-org/testit`.
+
+| Step (UTC 2026-09-24) | At | Duration |
+|---|---|---|
+| `wake()` called (it returned, claim created, about 2.7 s later) | 03:46:30.6 | 2.7 s |
+| agentd `main entered` (new node, first pull of the new tag) | 03:48:31.4 | 120.8 s after wake |
+| agentd "connecting to the link" → link's first log line for the run | 03:48:40.5 | **9.0 s** (see below) |
+| link → `run.spec received` | 03:48:41.2 | 0.6 s |
+| repo cloned | 03:48:42.7 | 1.5 s |
+| session import | | 26 ms |
+| pi spawned (as `agent`, uid 1001), run `idle` | 03:48:42.7 | 24 ms |
+| **pi ready** | 03:48:55.9 | **13.1 s** after spawn |
+| owner's prompt accepted → first model token → answer done | 03:49:08.3 | 2.0 s → 1.9 s |
+| Stop: `checkpointing` → `stopping`; pod `Completed` | 03:49:24.8 | 52 ms |
+
+- **Everything works under gVisor:** identity to the deployed link, `run.spec` with the session's secrets,
+  clone through the git proxy (#104), session import, pi spawned as `agent` by setuid, extensions loaded,
+  a model answer relayed to the production UI, and a graceful stop with a checkpoint. PR2 is unblocked.
+- **9.0 s passed before agentd's WebSocket reached link, and link wasn't the cause.** agentd logs
+  nothing between "connecting to the link" (03:48:31.49) and `run.spec`. link's Cloud Run request log
+  for `GET /agent/ws?run=4c9a96c5…` is stamped **03:48:40.525**, on an instance that was already running
+  (`…bd208c1c`), with no instance start in the 03:48:25-42 window. Cloud Run stamps a request log at
+  arrival, and its 44.3 s latency runs exactly to the socket's close at Stop (03:49:24.87), which
+  confirms it. So link's `min-instances=0` cold start and its own token check are ruled out: the 9 s
+  went before the request reached Cloud Run. The likeliest agentd-side cost is its first ID token from
+  GKE's metadata server on a fresh node (the Workload Identity token exchange); DNS and TLS were fast in
+  S3. That last attribution is not measured directly, so it's worth a log line in agentd (PR4), and for
+  warm pods, fetching the token before assignment.
+- **pi's extension loading is the main agentd-side cost: 10.5 s** (`createAgentSessionRuntime`), and
+  **one extension is 85% of it: `pi-subagents` import, 8,983 ms** (87% of the 10,356 ms extension total).
+  The other 15 extensions took about 1.4 s together (`pi-mcp-adapter` import 570 ms, `connect` factory
+  318 ms, `pi-web-access` 128 ms, `outfitter-spend` 104 ms, the rest under 100 ms each), in line with a
+  warm cache, so the jiti cache baked into `/tmp` works under gVisor. startup-trim measured
+  `pi-subagents` at 733 ms warm on the laptop and projected about 3.5× that (about 2.6 s) on a 1-vCPU
+  Cloud Run sandbox. On GKE it is about 3.5× the projection. That report explains the cost as jiti evaluating about 280 modules through
+  `new Function`, and gVisor's syscall overhead appears to magnify it. Cloud Run's figure after the trim
+  was never measured, so PR5's wake benchmark gives the like-for-like comparison.
+- agentd from `main` to pi ready: **24.5 s** here, against E2.9's ~28 s on Cloud Run before the trim.
+  From wake: 145 s, dominated by the new node and the new tag's first pull (S4). On a warm pod the node
+  and pull disappear, and the 9 s wait before link (likely the first token) can be moved ahead of
+  assignment. All of this is one run (n=1) on a fresh node; PR5's benchmark repeats it.
+- Production behaviour is as `s2_wake.ts` expected: the production reconciler left the heartbeating run
+  alone, and the UI's Stop reached agentd over the socket.
+- Cleanup: the owner deleted both S2 claims (`s2-d057bd5d`, `s2-4c9a96c5`), and with them the plaintext
+  `RUN_TOKEN` in their env; both runs had ended, so link would refuse the token anyway. The `s2-agent`
+  template and its 0-replica pool remain; they hold no secrets.
+
 ## S4: cold start of the real image
 
 `deploy/gke/spike/s4.yaml` and `s4_measure.py`: 11 cold claims (pool `replicas: 0`) of the production
@@ -147,6 +222,41 @@ which the API's long-lived client doesn't pay. S4 doesn't record that split per 
   whether a sandbox node is still up: about 3 s if so, about 70 s if not (93 s for a tag's first pull). A small always-on capacity
   buffer, or a later warm-down than warm-pool scale-down, would keep a node around; each costs money and
   goes in §3.7 once S5's billing is in.
+
+## S6: API-to-cluster auth (pass)
+
+`deploy/gke/spike/s6_check.py`, run from the laptop as `outfitter-api@` by impersonation instead of a
+one-off Cloud Run job: the DNS endpoint is a public Google API, so where the call comes from doesn't
+change the auth question, and nothing had to be deployed.
+
+Grants, made by the owner on 2026-09-24:
+- `roles/container.clusterViewer` on the project for `outfitter-api@`. **Permanent:** the provider needs
+  it. It includes `container.clusters.connect` and `container.clusters.get`, so spec §3.2's
+  UNVERIFIED point is answered and no custom role is needed.
+- `deploy/gke/rbac.yaml`: the Role and RoleBinding from spec §3.2 in `outfitter-sandboxes`, for
+  `User: outfitter-api@...`. Permanent.
+- `roles/iam.serviceAccountTokenCreator` on `outfitter-api@` for `user:mgm@mgms.eu`. **Temporary,**
+  for this check only, and removed afterwards. The owner role alone can't impersonate a service account.
+
+| Check, as `outfitter-api@` over the DNS endpoint | Want | Got |
+|---|---|---|
+| list claims in `outfitter-sandboxes` | 200 | 200 |
+| create a claim (server-side dry run) | 201 | 201 |
+| read a warm pool | 200 | 200 |
+| resize a warm pool (dry run) | 200 | 200 |
+| list sandboxes (only `get` granted) | 403 | 403 |
+| list pods | 403 | 403 |
+| list claims in another namespace | 403 | 403 |
+| read secrets | 403 | 403 |
+
+- The endpoint's certificate is publicly trusted: `curl` verified it against the macOS store, and
+  Python did once pointed at the system bundle. So the API's Node client needs no CA handling
+  (spec §4.1), and spec §8.2's S6 pass condition "no CA handling needed" holds.
+- The impersonation grant took 43 s to propagate.
+- PR2 is unblocked on S6. With S2 and S3 also passed, nothing gates PR2 now.
+- Not exercised: the Role's `get` on sandboxes (the status fallback in spec §4.3) and `delete` on
+  claims. The `list sandboxes` 403 comes from authorization, before routing, so it can't show that
+  `agents.x-k8s.io/v1beta1` is served. PR2's own tests against the cluster cover both.
 
 ## Admission rules found while running S1 and S7
 

@@ -1,0 +1,34 @@
+# What outfitter-api@ (both Cloud Run roles) may do inside the cluster: create, read and delete
+# claims, resize the warm pool, and read sandboxes for status. Nothing else, and only in
+# outfitter-sandboxes (docs/specs/gke-sandbox-provider.md §3.2). No pods access: warm-mode run
+# tokens live in pod annotations. The IAM side is roles/container.clusterViewer on the project,
+# which includes container.clusters.connect for the DNS endpoint (checked 2026-09-24).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: outfitter-api
+  namespace: outfitter-sandboxes
+rules:
+  - apiGroups: ["extensions.agents.x-k8s.io"]
+    resources: ["sandboxclaims"]
+    verbs: ["create", "get", "list", "delete"]
+  - apiGroups: ["extensions.agents.x-k8s.io"]
+    resources: ["sandboxwarmpools"]
+    verbs: ["get", "list", "patch"]
+  - apiGroups: ["agents.x-k8s.io"]
+    resources: ["sandboxes"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: outfitter-api
+  namespace: outfitter-sandboxes
+subjects:
+  - kind: User
+    name: outfitter-api@outfitter-509211.iam.gserviceaccount.com
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: outfitter-api
+  apiGroup: rbac.authorization.k8s.io

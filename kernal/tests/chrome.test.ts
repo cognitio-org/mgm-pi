@@ -220,7 +220,7 @@ describe("the tool definition itself", () => {
     const tools: any[] = [];
     const mod = await import("../.pi/extensions/kernal-chrome/index.ts");
     mod.default({ registerTool: (tool: any) => { tools.push(tool); } } as any);
-    assert.deepEqual(tools.map((tool) => tool.name), ["browser_tabs", "browser_capture"]);
+    assert.deepEqual(tools.map((tool) => tool.name), ["browser_tabs", "browser_capture", "browser_action"]);
     for (const tool of tools) {
       assert.equal(typeof tool.execute, "function");
       assert.ok(tool.description.length > 20);
@@ -240,6 +240,9 @@ describe("the tool definition itself", () => {
       const captured = await tools[1].execute("2", { tabId: 4 }, undefined, undefined, { cwd: dir });
       assert.equal(captured.isError, true);
       assert.equal(captured.content[0].text, NOT_RUNNING);
+      const acted = await tools.find((tool) => tool.name === "browser_action").execute("3", { tabId: 4, kind: "click", selector: "#go" });
+      assert.equal(acted.isError, true);
+      assert.equal(acted.content[0].text, NOT_RUNNING);
       assert.equal(captured.content.some((block: { type: string }) => block.type === "image"), false);
     } finally {
       if (previous === undefined) delete process.env.KERNAL_HOME;
@@ -274,8 +277,30 @@ describe("the tool definition itself", () => {
       assert.equal(image.mimeType, "image/jpeg");
       assert.equal(image.type, "image");
       assert.deepEqual(Buffer.from(image.data, "base64"), JPEG);
+      await new Promise((resolve) => server.close(() => resolve(undefined)));
+
+      const action = tools.find((tool) => tool.name === "browser_action");
+      let asked: { t?: string; tabId?: number; kind?: string; selector?: string; text?: string } | undefined;
+      const actionServer = await listen(join(dir, "chrome.sock"), (line, socket) => {
+        const msg = JSON.parse(line) as { t: string; tabId?: number };
+        asked = msg;
+        if (msg.t === "action" && msg.tabId === 9) socket.write(`${JSON.stringify({ t: "error", error: "tab is not shared" })}\n`);
+        else if (msg.t === "action") socket.write(`${JSON.stringify({ t: "error", error: "denied" })}\n`);
+      });
+      try {
+        const unknown = await action.execute("2", { tabId: 9, kind: "click", selector: "#go" }, undefined, undefined, { cwd });
+        assert.equal(unknown.isError, true);
+        assert.equal(unknown.content[0].text, NOT_SHARED);
+        assert.equal(asked?.tabId, 9);
+        const denied = await action.execute("3", { tabId: 4, kind: "click", selector: "#go" }, undefined, undefined, { cwd });
+        assert.equal(denied.isError, true);
+        assert.equal(denied.content[0].text, "denied");
+        const bad = await action.execute("4", { tabId: 4, kind: "click", selector: "javascript:alert(1)" });
+        assert.equal(bad.content[0].text, "rejected");
+      } finally {
+        actionServer.close();
+      }
     } finally {
-      server.close();
       if (previous === undefined) delete process.env.KERNAL_HOME;
       else process.env.KERNAL_HOME = previous;
       rmSync(dir, { recursive: true, force: true });

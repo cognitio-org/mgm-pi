@@ -31,6 +31,7 @@ import type {
   BrowserShare,
   BrowserSharesCollection,
   BrowserRequest,
+  BrowserActionResultError,
   BrowserRequestsCollection,
   BrowserCapture,
   BrowserCaptureFailure,
@@ -790,6 +791,34 @@ class MongoBrowserRequests implements BrowserRequestsCollection {
       { $set: { status: "failed", error, updatedAt: nowIso } },
       { returnDocument: "after" },
     );
+    if (updated) {
+      const request = stripId<BrowserRequest>(updated);
+      if (!request) return null;
+      return { request, transitioned: true };
+    }
+    const existing = await this.findById(sessionId, id);
+    if (!existing) return null;
+    return { request: existing, transitioned: false };
+  }
+
+  async markActionResult(
+    sessionId: string,
+    id: string,
+    outcome: { ok: true } | { ok: false; error: BrowserActionResultError },
+    nowIso: string,
+  ): Promise<{ request: BrowserRequest; transitioned: boolean } | null> {
+    const filter = { _id: id, sessionId, status: "pending" as const, kind: { $in: ["click", "type"] as const } };
+    const updated = outcome.ok
+      ? await this.col.findOneAndUpdate(
+          filter,
+          { $set: { status: "done", updatedAt: nowIso }, $unset: { error: "" } },
+          { returnDocument: "after" },
+        )
+      : await this.col.findOneAndUpdate(
+          filter,
+          { $set: { status: "failed", error: outcome.error, updatedAt: nowIso } },
+          { returnDocument: "after" },
+        );
     if (updated) {
       const request = stripId<BrowserRequest>(updated);
       if (!request) return null;

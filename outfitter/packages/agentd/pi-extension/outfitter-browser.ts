@@ -39,6 +39,33 @@ function textResult(text: string, details: Record<string, unknown> = {}): ToolRe
   return { content: [{ type: "text", text }], details };
 }
 
+const SELECTOR_MAX = 500;
+const TEXT_MAX = 8000;
+
+function selectorOk(selector: string): boolean {
+  if (selector.length === 0 || selector.length > SELECTOR_MAX) return false;
+  if (/[\u0000-\u001f\u007f<{}`;]/.test(selector)) return false;
+  if (/javascript\s*:/i.test(selector)) return false;
+  if (/eval\s*\(/i.test(selector) || /function\s*\(/i.test(selector)) return false;
+  if (selector.includes("=>")) return false;
+  if (/url\s*\(/i.test(selector) || /expression\s*\(/i.test(selector)) return false;
+  return true;
+}
+
+/** CSS selector only. A `code` or `javascript:` field is not an action. */
+function actionBody(params: Record<string, unknown> | null | undefined): { kind: "click" | "type"; selector: string; text?: string } | undefined {
+  if (!params || typeof params !== "object") return undefined;
+  const kind = params.kind;
+  const selector = typeof params.selector === "string" ? params.selector.trim() : "";
+  if ((kind !== "click" && kind !== "type") || !selectorOk(selector)) return undefined;
+  if (kind === "click") {
+    if (params.text !== undefined) return undefined;
+    return { kind, selector };
+  }
+  if (typeof params.text !== "string" || params.text.length > TEXT_MAX || params.text.includes("\u0000")) return undefined;
+  return { kind, selector, text: params.text };
+}
+
 /** The listener only writes this shape. Anything else is not opened. */
 function isCaptureFile(path: string): boolean {
   if (path.includes("\0") || path.includes("..")) return false;
@@ -48,6 +75,8 @@ function isCaptureFile(path: string): boolean {
 export default function outfitterBrowser(pi: PiBrowserApi, env: NodeJS.ProcessEnv = process.env): void {
   const port = env.OUTFITTER_BROWSER_PORT ?? "";
   const token = env.OUTFITTER_BROWSER_TOKEN ?? "";
+  const actionPort = env.OUTFITTER_BROWSER_ACTION_PORT ?? "";
+  const actionToken = env.OUTFITTER_BROWSER_ACTION_TOKEN ?? "";
 
   pi.registerTool({
     name: "browser_capture",
@@ -103,6 +132,59 @@ export default function outfitterBrowser(pi: PiBrowserApi, env: NodeJS.ProcessEn
         // The text path is the contract. A jpeg the tool cannot read is still named above.
       }
       return { content, details: { title: record.title, url: record.url, path: record.path } };
+    },
+  });
+
+  pi.registerTool({
+    name: "browser_action",
+    label: "Browser action",
+    description:
+      "Click or type in the browser tab shared with this Floppy. kind is \"click\" or \"type\". " +
+      "selector is a CSS selector, not JavaScript. type also needs text. " +
+      "The owner confirms each action unless they allowed that kind for this share. " +
+      "There is no tab id. Errors are no_share, skipped, denied, rejected, timeout, not_found, permission_denied, tab_gone, not_editable, or not_shared.",
+    promptSnippet: "Click or type in the tab shared with this Floppy",
+    promptGuidelines: [
+      "Use browser_action to click or type in the tab the user shared. Pass kind and a CSS selector. Do not pass JavaScript.",
+      "type needs text. The owner is asked before it runs. denied means they said no. skipped means they revoked first. no_share means nothing is shared.",
+    ],
+    parameters: {
+      type: "object",
+      required: ["kind", "selector"],
+      additionalProperties: false,
+      properties: {
+        kind: { type: "string", enum: ["click", "type"], description: "click or type." },
+        selector: { type: "string", description: "CSS selector in the shared tab. Not JavaScript." },
+        text: { type: "string", description: "Text to type. Required when kind is type. Ignored for click." },
+      },
+    },
+    async execute(_toolCallId, params, signal) {
+      const body = actionBody(params);
+      if (!body) return textResult("rejected");
+      if (!/^[0-9]+$/.test(actionPort) || actionToken.length === 0) {
+        return textResult("browser action is not available");
+      }
+      const timeout = AbortSignal.timeout(100_000);
+      const abort = signal ? AbortSignal.any([signal, timeout]) : timeout;
+      let parsed: unknown;
+      try {
+        const res = await fetch(`http://127.0.0.1:${actionPort}/browser/action`, {
+          method: "POST",
+          headers: { [TOKEN_HEADER]: actionToken, "content-type": "application/json" },
+          body: JSON.stringify(body),
+          signal: abort,
+        });
+        if (!res.ok) return textResult("browser action is not available");
+        parsed = await res.json();
+      } catch {
+        return textResult("timeout");
+      }
+      if (!parsed || typeof parsed !== "object") return textResult("timeout");
+      const record = parsed as { error?: unknown; ok?: unknown };
+      if (typeof record.error === "string" && record.error.length > 0) return textResult(record.error);
+      if (record.ok !== true) return textResult("timeout");
+      const verb = body.kind === "type" ? "Typed into" : "Clicked";
+      return textResult(`${verb} ${body.selector}`, { kind: body.kind, selector: body.selector });
     },
   });
 }

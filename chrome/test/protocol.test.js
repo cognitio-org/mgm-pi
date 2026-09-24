@@ -109,6 +109,10 @@ test("closeTab, capture, a tabId field, and anything outside the allowlist are r
     ["ping"],
     {},
     { t: "ping", extra: true },
+    { t: "click", selector: "#go" },
+    { t: "type", selector: "#q", text: "hello" },
+    { t: "keydown", key: "Enter" },
+    { keystrokes: "hi" },
   ];
   for (const message of rejected) {
     const parsed = parsePageMessage(message);
@@ -157,6 +161,7 @@ test("the manifest key is the pinned extension id", () => {
     "contextMenus",
     "alarms",
     "nativeMessaging",
+    "scripting",
   ]);
   assert.equal(manifest.side_panel.default_path, "panel.html");
   assert.equal(manifest.host_permissions, undefined);

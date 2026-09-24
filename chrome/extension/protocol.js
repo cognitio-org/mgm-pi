@@ -1,5 +1,6 @@
 // Page-to-extension messages for the Chrome companion.
 // No Chrome APIs: the service worker and node:test both import this file.
+import { pageAsksForAction } from "./action.js";
 //
 // externally_connectable is not the whole check. The service worker drops a sender whose
 // origin is not one of the three allowlisted sites. Pass sender.origin only. A URL
@@ -81,11 +82,13 @@ function reject() {
 }
 
 /** Typed allowlist of page messages. Anything else is rejected, including `closeTab`, `capture`,
- * and any message that carries a `tabId` from the page. Place and split do not include a tab id. */
+ * a click or keystrokes, and any message that carries a `tabId` from the page. Place and split
+ * do not include a tab id. The page cannot ask for an action. */
 export function parsePageMessage(message) {
   if (!plainObject(message)) return reject();
   // Direct field check, not a recursive walk: only an own `tabId` is forbidden by name.
   if (Object.hasOwn(message, "tabId")) return reject();
+  if (pageAsksForAction(message)) return reject();
   const type = message.t;
   const keys = PAGE_KEYS[type];
   if (!keys || !sameKeys(message, keys)) return reject();

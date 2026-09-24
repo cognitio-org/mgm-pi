@@ -2,7 +2,7 @@
 // Chrome starts this process for com.kernal.chrome. stdout is reserved for
 // native-messaging frames; logs go to stderr. The unix socket is how Kernal
 // talks to the host. Stdin is the extension: it announces shares and answers
-// capture. The socket only lists those shares and asks for a capture.
+// capture or an action. The socket only lists those shares and asks for one.
 //
 // Each connectNative() starts a process. Only the one that bound the socket
 // unlinks it, and only while that socket is still the inode it bound.
@@ -25,6 +25,7 @@ import {
 } from "./protocol.js";
 
 const CAPTURE_TIMEOUT_MS = 15000;
+const ACTION_TIMEOUT_MS = 90000;
 
 const sockPath = socketPathFrom(fileURLToPath(import.meta.url));
 const sockets = new Set();
@@ -93,14 +94,16 @@ function pump() {
   const head = waiters[0];
   if (!head || head.sent) return;
   head.sent = true;
+  const timeoutMs = head.timeoutMs ?? CAPTURE_TIMEOUT_MS;
+  const timeoutError = head.forward?.t === "action" ? "action timed out" : ERR_CAPTURE_TIMEOUT;
   head.timer = setTimeout(() => {
     if (shuttingDown || !waiters.includes(head)) return;
     dropWaiter(head);
     staleCapture = true;
-    writeLine(head.socket, { t: "error", error: ERR_CAPTURE_TIMEOUT });
-  }, CAPTURE_TIMEOUT_MS);
+    writeLine(head.socket, { t: "error", error: timeoutError });
+  }, timeoutMs);
   try {
-    process.stdout.write(encodeNativeMessage({ t: "capture", tabId: head.tabId }));
+    process.stdout.write(encodeNativeMessage(head.forward ?? { t: "capture", tabId: head.tabId }));
   } catch {
     dropWaiter(head);
     writeLine(head.socket, { t: "error", error: ERR_NOT_CONNECTED });
@@ -114,6 +117,30 @@ function enqueueCapture(socket, tabId) {
     return;
   }
   waiters.push({ tabId, socket, sent: false, timer: null });
+  pump();
+}
+
+function enqueueAction(socket, forward) {
+  if (!extensionConnected || shuttingDown) {
+    writeLine(socket, { t: "error", error: ERR_NOT_CONNECTED });
+    return;
+  }
+  waiters.push({ tabId: forward.tabId, forward, socket, sent: false, timer: null, timeoutMs: ACTION_TIMEOUT_MS });
+  pump();
+}
+
+function settleAction(action) {
+  if (staleCapture) {
+    staleCapture = false;
+    pump();
+    return;
+  }
+  const head = waiters[0];
+  if (!head || !head.sent || head.forward?.t !== "action") return;
+  if (action.tabId !== head.tabId) return;
+  dropWaiter(head);
+  if (action.kind === "error") writeLine(head.socket, { t: "error", error: action.error });
+  else writeLine(head.socket, { t: "acted", tabId: action.tabId });
   pump();
 }
 
@@ -208,7 +235,8 @@ const server = createServer((socket) => {
       const decision = decideSocketLine(line, { shares, extensionConnected });
       if (!decision) continue;
       if (decision.forward) {
-        enqueueCapture(socket, decision.forward.tabId);
+        if (decision.forward.t === "action") enqueueAction(socket, decision.forward);
+        else enqueueCapture(socket, decision.forward.tabId);
         continue;
       }
       writeLine(socket, decision.reply);
@@ -287,6 +315,7 @@ process.stdin.on("data", (chunk) => {
     const applied = applyExtensionMessage(shares, message);
     shares = applied.shares;
     broadcast(applied.broadcast);
+    if (applied.action) settleAction(applied.action);
     if (applied.capture) settleCapture(applied.capture);
   }
 });

@@ -48,6 +48,12 @@ const approvalTitle = document.querySelector("#approval-title");
 const approvalMessage = document.querySelector("#approval-message");
 const approvalActions = document.querySelector("#approval-actions");
 const shareStatus = document.querySelector("#share-status");
+const actionCopy = document.querySelector("#action-copy");
+const actionText = document.querySelector("#action-text");
+const actionButtons = document.querySelector("#action-buttons");
+const allowClick = document.querySelector("#allow-click");
+const allowType = document.querySelector("#allow-type");
+let shownActionId = "";
 const capturing = document.querySelector("#capturing");
 const status = document.querySelector("#status");
 
@@ -269,6 +275,43 @@ function renderApproval(view, sessionId) {
   approvalActions.append(input, answerButton("Submit", () => sendAnswer(sessionId, view.id, input.value)));
 }
 
+function renderAction(response) {
+  const prompt = response && response.prompt && typeof response.prompt === "object" ? response.prompt : null;
+  if (!prompt || typeof prompt.requestId !== "string") {
+    shownActionId = "";
+    actionCopy.hidden = true;
+    actionCopy.textContent = "";
+    actionText.hidden = true;
+    actionText.textContent = "";
+    actionButtons.hidden = true;
+  } else {
+    shownActionId = prompt.requestId;
+    actionCopy.hidden = false;
+    actionCopy.textContent = typeof prompt.message === "string" ? prompt.message : "";
+    if (prompt.kind === "type" && typeof prompt.text === "string" && prompt.text !== "") {
+      actionText.hidden = false;
+      actionText.textContent = prompt.text;
+    } else {
+      actionText.hidden = true;
+      actionText.textContent = "";
+    }
+    actionButtons.hidden = false;
+  }
+  if (response && typeof response.click === "boolean" && document.activeElement !== allowClick) allowClick.checked = response.click;
+  if (response && typeof response.type === "boolean" && document.activeElement !== allowType) allowType.checked = response.type;
+}
+
+async function refreshAction(sessionId, epoch) {
+  let response = null;
+  try {
+    response = await askWorker({ t: "action-state", sessionId });
+  } catch {
+    response = null;
+  }
+  if (epoch !== undefined && epoch !== selectionEpoch) return;
+  renderAction(response);
+}
+
 function renderCapturing(response) {
   const line = capturingText(response);
   capturing.hidden = line === null;
@@ -283,6 +326,7 @@ function clearStrip() {
   shareLine = SHARE_UNAVAILABLE;
   shareStatus.textContent = shareLine;
   renderCapturing(null);
+  renderAction(null);
 }
 
 function bumpSelection() {
@@ -343,6 +387,7 @@ async function tick(epoch) {
     linkCall("GET", sessionPath),
     linkCall("GET", entriesPath),
     refreshShare(show, "status", epoch),
+    refreshAction(show, epoch),
   ]);
   if (committedSession(show, selectedId(), epoch, selectionEpoch) !== show) return;
   if (!note(detail)) {
@@ -507,6 +552,39 @@ document.querySelector("#share").addEventListener("click", () => {
     shareStatus.textContent = SHARE_UNAVAILABLE;
   });
 });
+
+document.querySelector("#action-allow").addEventListener("click", () => {
+  if (!shownActionId) return;
+  askWorker({ t: "action-decide", requestId: shownActionId, decision: "allow" })
+    .then(() => refresh())
+    .catch(() => {
+      status.textContent = "Could not allow that action.";
+    });
+});
+
+document.querySelector("#action-deny").addEventListener("click", () => {
+  if (!shownActionId) return;
+  askWorker({ t: "action-decide", requestId: shownActionId, decision: "deny" })
+    .then(() => refresh())
+    .catch(() => {
+      status.textContent = "Could not deny that action.";
+    });
+});
+
+function setAllowKind(kind, input) {
+  const sessionId = screenSession();
+  if (!sessionId) {
+    input.checked = false;
+    status.textContent = "Choose a Floppy.";
+    return;
+  }
+  askWorker({ t: "action-allow", sessionId, kind, on: input.checked === true }).catch(() => {
+    status.textContent = "Could not save that switch.";
+  });
+}
+
+allowClick.addEventListener("change", () => setAllowKind("click", allowClick));
+allowType.addEventListener("change", () => setAllowKind("type", allowType));
 
 document.querySelector("#revoke").addEventListener("click", () => {
   const sessionId = screenSession();

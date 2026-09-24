@@ -308,6 +308,59 @@ export async function browserTabs(options: CallOptions = {}): Promise<ToolText> 
   }
 }
 
+const ACTION_SELECTOR_MAX = 500;
+const ACTION_TEXT_MAX = 8000;
+
+function actionSelectorOk(selector: string): boolean {
+  if (selector.length === 0 || selector.length > ACTION_SELECTOR_MAX) return false;
+  if (/[\u0000-\u001f\u007f<{}`;]/.test(selector)) return false;
+  if (/javascript\s*:/i.test(selector)) return false;
+  if (/eval\s*\(/i.test(selector) || /function\s*\(/i.test(selector)) return false;
+  if (selector.includes("=>")) return false;
+  if (/url\s*\(/i.test(selector) || /expression\s*\(/i.test(selector)) return false;
+  return true;
+}
+
+export function parseActionParams(params: unknown): { kind: "click" | "type"; selector: string; text?: string } | null {
+  if (params === null || typeof params !== "object") return null;
+  const record = params as { kind?: unknown; selector?: unknown; text?: unknown };
+  if (record.kind !== "click" && record.kind !== "type") return null;
+  if (typeof record.selector !== "string" || !actionSelectorOk(record.selector.trim())) return null;
+  const selector = record.selector.trim();
+  if (record.kind === "click") {
+    if (record.text !== undefined) return null;
+    return { kind: "click", selector };
+  }
+  if (typeof record.text !== "string" || record.text.length > ACTION_TEXT_MAX || record.text.includes("\u0000")) return null;
+  return { kind: "type", selector, text: record.text };
+}
+
+export function formatAction(info: { kind: "click" | "type"; selector: string }): string {
+  return info.kind === "type" ? `Typed into ${info.selector}` : `Clicked ${info.selector}`;
+}
+
+/** Click or type in a shared tab. The extension confirms before it runs. No network. */
+export async function browserAction(params: unknown, tabIdValue: unknown, options: CallOptions = {}): Promise<ToolText> {
+  const tabId = parseTabId(tabIdValue);
+  const action = parseActionParams(params);
+  if (tabId === null) return { text: NOT_SHARED, isError: true };
+  if (!action) return { text: "rejected", isError: true };
+  const payload = action.kind === "type"
+    ? { t: "action", tabId, kind: action.kind, selector: action.selector, text: action.text }
+    : { t: "action", tabId, kind: action.kind, selector: action.selector };
+  try {
+    const msg = await requestHost(chromeSocketPath(options), payload, (item) => item.t === "acted" || item.t === "error", {
+      timeoutMs: options.timeoutMs ?? 95_000,
+      signal: options.signal,
+    });
+    if (msg.t === "error") return { text: mapHostError(msg.error), isError: true };
+    if (msg.t !== "acted" || msg.tabId !== tabId) return { text: "The Chrome companion sent an unexpected reply.", isError: true };
+    return { text: formatAction(action), isError: false };
+  } catch (err) {
+    return { text: thrownText(err), isError: true };
+  }
+}
+
 export async function browserCapture(tabIdValue: unknown, cwd: string, options: CallOptions = {}): Promise<ToolText> {
   const tabId = parseTabId(tabIdValue);
   if (tabId === null) return { text: NOT_SHARED, isError: true };

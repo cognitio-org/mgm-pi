@@ -389,6 +389,7 @@ export function pendingRequests(body) {
     if (row === null || typeof row !== "object") continue;
     if (typeof row.id !== "string" || row.id.length === 0 || row.id.length > 128) continue;
     if (row.status !== "pending") continue;
+    if (row.kind === "click" || row.kind === "type") continue;
     out.push({
       id: row.id,
       requesterEmail: typeof row.requesterEmail === "string" ? row.requesterEmail : "",

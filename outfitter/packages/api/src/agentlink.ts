@@ -17,6 +17,7 @@ import type { LaptopProbe } from "./laptop.ts";
 import { resolveRunModel } from "./laptop.ts";
 import { validateSnapshotUrl, snapshotHostAllowlist } from "./snapshot-url.ts";
 import { MAIL_LEASE_MS, MAIL_MAX_ATTEMPTS, type MailService } from "./mail.ts";
+import { isBrowserActionKind, parseBrowserAction } from "./browser-action.ts";
 import { GithubBroker } from "./github-broker.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -406,6 +407,63 @@ export class AgentLink {
       title: capture.title,
       url: capture.url,
     });
+  }
+
+  /** Tells the session's agentd how a `browser.action.request` finished. No transcript seq. */
+  async sendActionResult(
+    sessionId: string,
+    frame: {
+      t: "browser.action.result";
+      requestId: string;
+      error?: string;
+    },
+  ): Promise<void> {
+    const run = await this.store.runs.findActiveForSession(sessionId);
+    if (!run) return;
+    await this.send(run.id, frame);
+  }
+
+  /** `{t:"browser.action.request"}` from the Drive. One action row per requestId. */
+  private async handleBrowserActionRequest(sessionId: string, frame: UpFrame): Promise<void> {
+    const requestId = frame.requestId;
+    if (typeof requestId !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(requestId)) return;
+    const action = parseBrowserAction({ kind: frame.kind, selector: frame.selector, ...(frame.text !== undefined ? { text: frame.text } : {}) });
+    if (!action) {
+      await this.sendActionResult(sessionId, { t: "browser.action.result", requestId, error: "rejected" });
+      return;
+    }
+    const now = new Date().toISOString();
+    const session = await this.store.sessions.findById(sessionId);
+    const saved = await this.store.browserRequests.insertPendingIfShared(sessionId, {
+      id: requestId,
+      sessionId,
+      requesterEmail: session?.ownerEmail?.trim() || "drive",
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+      kind: action.kind,
+      selector: action.selector,
+      ...(action.kind === "type" ? { text: action.text } : {}),
+    });
+    if (saved === "no_share") {
+      await this.sendActionResult(sessionId, { t: "browser.action.result", requestId, error: "no_share" });
+      return;
+    }
+    if (!isBrowserActionKind(saved.kind) || saved.kind !== action.kind || saved.selector !== action.selector) {
+      await this.sendActionResult(sessionId, { t: "browser.action.result", requestId, error: "rejected" });
+      return;
+    }
+    if (saved.status === "skipped") {
+      await this.sendActionResult(sessionId, { t: "browser.action.result", requestId, error: "skipped" });
+      return;
+    }
+    if (saved.status === "failed" && saved.error) {
+      await this.sendActionResult(sessionId, { t: "browser.action.result", requestId, error: saved.error });
+      return;
+    }
+    if (saved.status === "done") {
+      await this.sendActionResult(sessionId, { t: "browser.action.result", requestId });
+    }
   }
 
   /**
@@ -997,6 +1055,10 @@ export class AgentLink {
         }).then((result) => {
           if (socket.readyState === 1) socket.send(JSON.stringify({ t: "github.result", reqId, ...result }));
         }).catch(() => {});
+        break;
+      }
+      case "browser.action.request": {
+        await this.handleBrowserActionRequest(sessionId, frame);
         break;
       }
       case "bye": {

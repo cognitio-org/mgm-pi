@@ -3,10 +3,11 @@
  * checkpointing -> stopping`. Wires together git, session import, the pi RPC process and the link,
  * and handles every down-message in protocol.md (`run.spec`, `ack`, `prompt`, `steer`, `follow_up`,
  * `abort`, `ui_response`, `rpc`, `checkpoint`, `diff`, `read`, `stop`, `browser.capture.entry`,
- * `browser.capture.result`, `github.result`).
+ * `browser.capture.result`, `browser.action.result`, `github.result`).
  */
 import { mkdir, readFile, open as openFile, chown } from "node:fs/promises";
 import { resolve, sep } from "node:path";
+import { ActionListener } from "./browser-action.js";
 import { CaptureListener } from "./browser-capture.js";
 import { renderGuru } from "./guru.js";
 import { attributionTrailers, authHeaderSecret, botIdentityEnv, sanitizeAuthor, type GitOps } from "./git.js";
@@ -210,6 +211,8 @@ export class RunController {
   private spendTailer: { start(): void; stop(): void; poll(): Promise<void> } | undefined;
   /** Loopback listener for the Drive browser_capture tool. Only set when that extension is loaded. */
   private captureListener: CaptureListener | undefined;
+  /** Sibling loopback listener for browser_action. Same lifetime as the capture listener. */
+  private actionListener: ActionListener | undefined;
   /** E2.11: running sum of every outfitter-spend.ts log line's `usage` (pi's own per-message cost
    * estimate) seen so far this run -- sent as `spend.estimate` on every frame. */
   private costEstimate = 0;
@@ -348,6 +351,10 @@ export class RunController {
         return;
       case "github.result":
         this.githubSocket?.deliver(msg);
+        return;
+      case "browser.action.result":
+        // The action tool is waiting on its own loopback listener. No transcript row.
+        this.actionListener?.deliver(msg);
         return;
     }
   }
@@ -559,6 +566,24 @@ export class RunController {
       this.deps.logger?.addSecret(listener.token);
       secretEnv.OUTFITTER_BROWSER_PORT = String(listener.port);
       secretEnv.OUTFITTER_BROWSER_TOKEN = listener.token;
+      const actions = new ActionListener({
+        peerUid: this.deps.runAsUser?.uid,
+        sendRequest: (action) =>
+          this.deps.link.send({
+            t: "browser.action.request",
+            requestId: action.requestId,
+            kind: action.kind,
+            selector: action.selector,
+            ...(action.text !== undefined ? { text: action.text } : {}),
+          }),
+        onLog: this.onLog,
+      });
+      this.actionListener = actions;
+      await actions.start();
+      if (actions.port === undefined) throw new Error("browser action listener did not bind");
+      this.deps.logger?.addSecret(actions.token);
+      secretEnv.OUTFITTER_BROWSER_ACTION_PORT = String(actions.port);
+      secretEnv.OUTFITTER_BROWSER_ACTION_TOKEN = actions.token;
     }
     // Same pin as OUTFITTER_SESSION_ID: after guru.env, so a guru cannot point the broker
     // socket somewhere else. The token is not part of this overlay.
@@ -801,7 +826,11 @@ export class RunController {
   private stopCaptureListener(): Promise<void> {
     const listener = this.captureListener;
     this.captureListener = undefined;
-    return listener ? listener.stop() : Promise.resolve();
+    const actions = this.actionListener;
+    this.actionListener = undefined;
+    return Promise.all([listener ? listener.stop() : Promise.resolve(), actions ? actions.stop() : Promise.resolve()]).then(
+      () => undefined,
+    );
   }
 
   private async bye(reason: ByeReason, message?: string): Promise<void> {

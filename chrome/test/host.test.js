@@ -89,6 +89,16 @@ test("a share is remembered from the extension, and a socket cannot invent one",
     reply: { t: "error", error: "rejected" },
   });
   assert.equal(replyToMessage({ t: "capture", tabId: 4 }, state), null);
+  assert.deepEqual(decideSocketMessage({ t: "action", tabId: 9, kind: "click", selector: "#go" }, state), {
+    reply: { t: "error", error: "tab is not shared" },
+  });
+  assert.deepEqual(decideSocketMessage({ t: "action", tabId: 4, kind: "click", selector: "javascript:alert(1)" }, state), {
+    reply: { t: "error", error: "rejected" },
+  });
+  assert.deepEqual(decideSocketMessage({ t: "action", tabId: 4, kind: "click", selector: " #go " }, state), {
+    forward: { t: "action", tabId: 4, kind: "click", selector: "#go" },
+  });
+  assert.equal(decideSocketMessage({ t: "action", tabId: 4, kind: "type", selector: "#q", text: "hi" }, state).forward.text, "hi");
 });
 
 test("jpeg bytes are the decoded image, one file per tab under the kernal home", () => {

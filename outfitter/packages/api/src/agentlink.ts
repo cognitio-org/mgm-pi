@@ -54,8 +54,42 @@ export const API_PROTOCOL_VERSION = 2;
  * mark the run failed, instead of the retryable 1011 other buildRunSpec failures get. A
  * 1011 here would make agentd (TERMINAL_CLOSE_CODES, link.ts) treat it as transient and retry for
  * up to ten minutes with the run stuck in provisioning -- this secret is never going to appear on
- * its own, so there is nothing to retry for. */
-export class MissingGithubTokenError extends Error {}
+ * its own, so there is nothing to retry for. `detail` is the session page's note for it. */
+export class MissingGithubTokenError extends Error {
+  readonly detail: string;
+
+  constructor(message: string, detail: string = MISSING_GITHUB_TOKEN_DETAIL) {
+    super(message);
+    this.detail = detail;
+  }
+}
+
+/** #158: the GitHub App is configured but couldn't mint a token just now (network, timeout, a
+ * 5xx, a Secret Manager blip). Not terminal: handleConnection's generic catch closes with 1011 so
+ * agentd retries, and writes this message as the run's note. Never a reason to fall back to the
+ * shared PAT. */
+class GithubAppUnavailableError extends Error {}
+
+interface BuiltRunSpec {
+  spec: RunSpecMessage;
+  githubTokenExpiresAt?: string;
+  /** #158: a reconnect whose mint failed. The spec carries no token, and agentd keeps the one it
+   * has; handleConnection schedules another mint instead of cancelling the refresh. */
+  keepCurrentGithubToken: boolean;
+}
+
+/** #158: the session page's note when some GitHub App secret is set but the three aren't usable. */
+const GITHUB_APP_MISCONFIGURED_DETAIL =
+  "the Outfitter GitHub App's secrets are set but can't be used (a numeric App id, a numeric installation id, " +
+  "and the App's PEM private key are all needed), so this run has no GitHub access. An operator has to fix them.";
+
+/** #158: the session page's note when the App is configured but can't reach the session's repo. */
+function githubAppNotInstalledDetail(repo: string): string {
+  return (
+    `the Outfitter GitHub App is not installed on ${repo}, so this run has no GitHub access. ` +
+    "Install the App on that repository (or its organization), then start the run again."
+  );
+}
 
 /** The session page's note for a run refused because its GitHub token secret was never created.
  * Longer and more actionable than the 123-byte-capped close reason: a per-session
@@ -755,15 +789,15 @@ export class AgentLink {
     const released = await this.store.mail.releaseHeld();
     if (released.length > 0) request.log.info({ runId, sessions: released }, "agentlink: protocol validated, released held mail");
 
-    let built: { spec: RunSpecMessage; githubTokenExpiresAt?: string };
+    let built: BuiltRunSpec;
     try {
       built = await this.buildRunSpec(run, session, guru);
     } catch (err) {
       if (err instanceof MissingGithubTokenError) {
-        request.log.warn(err, "run.spec build failed: missing github token secret");
+        request.log.warn(err, "run.spec build failed: no usable GitHub token for this repo session");
         return this.refuse(socket, buffer, 4412, err.message, {
           runId,
-          detail: MISSING_GITHUB_TOKEN_DETAIL,
+          detail: err.detail,
           fail: true,
         });
       }
@@ -788,7 +822,13 @@ export class AgentLink {
     // agentd applies run.spec once. A reconnect ignores the second one, including when this
     // process is new and its mint cache is empty, so the token has to ride this frame too.
     if (spec.secrets.githubToken) this.deliverGithubCredential(runId, socket, spec.secrets.githubToken);
-    this.scheduleGithubRefresh(runId, session.id, built.githubTokenExpiresAt);
+    if (built.keepCurrentGithubToken) {
+      // A new hello gets the full retry budget, not what a replaced connection left of it.
+      this.githubRefreshAttempts.delete(runId);
+      this.scheduleGithubRetry(runId, session.id);
+    } else {
+      this.scheduleGithubRefresh(runId, session.id, built.githubTokenExpiresAt);
+    }
 
     // Existing hello behaviour, now run against the same frame the run-token check above already
     // consumed: record first contact and drain anything queued while this run was ready before this
@@ -887,7 +927,7 @@ export class AgentLink {
     closeQuietly(socket, code, reason);
   }
 
-  private async buildRunSpec(run: Run, session: Session, guru: Guru): Promise<{ spec: RunSpecMessage; githubTokenExpiresAt?: string }> {
+  private async buildRunSpec(run: Run, session: Session, guru: Guru): Promise<BuiltRunSpec> {
     const runId = run.id;
     // E2.8 laptop model preflight (src/laptop.ts): swap a laptop-only model for the guru's cloud
     // fallback when the laptop tunnel probes offline, and record it on the run for the UI.
@@ -921,16 +961,39 @@ export class AgentLink {
     // on. Dev mode is exempt: it means "no secrets available" (MemorySecretsBroker defaults
     // githubToken to ""), and a dev/test repo session should still be able to clone a public repo
     // anonymously rather than being blocked here.
+    // #158: a reconnect of a run whose pi is already going. agentd applies only its first run.spec,
+    // so it still holds the token that spec (or a later github.credential) gave it.
+    const reconnect = isReadyState(run.state);
+    let keepCurrentGithubToken = false;
     if (session.repo && !secrets.githubToken && !this.config.devMode) {
-      // Close reasons are capped at 123 UTF-8 bytes by the WebSocket protocol; keep this short
-      // even for a long (e.g. UUID) session id. The full secret name is in the server log line
-      // above instead.
-      throw new MissingGithubTokenError(`missing github token secret for session ${session.id}`);
+      if (reconnect && (secrets.githubAppFailure === "unavailable" || secrets.githubAppFailure === "misconfigured")) {
+        // Keep the token agentd already has, and try the mint again on the refresh schedule. Failing
+        // the run, or handing it the shared PAT, both used to happen here. Not for `not-installed`:
+        // the token a run keeps could be the shared PAT from before the App was configured.
+        keepCurrentGithubToken = true;
+      } else if (secrets.githubAppFailure === "misconfigured") {
+        throw new MissingGithubTokenError(`github app secrets unusable for session ${session.id}`, GITHUB_APP_MISCONFIGURED_DETAIL);
+      } else if (secrets.githubAppFailure === "unavailable") {
+        throw new GithubAppUnavailableError(
+          `the GitHub App could not mint a token for ${session.repo} just now; the run will retry`,
+        );
+      } else if (secrets.githubAppFailure === "not-installed") {
+        throw new MissingGithubTokenError(
+          `github app not installed on session ${session.id}'s repo`,
+          githubAppNotInstalledDetail(session.repo),
+        );
+      } else {
+        // Close reasons are capped at 123 UTF-8 bytes by the WebSocket protocol; keep this short
+        // even for a long (e.g. UUID) session id. The full secret name is in the server log line
+        // above instead.
+        throw new MissingGithubTokenError(`missing github token secret for session ${session.id}`);
+      }
     }
     const owner = session.ownerEmail ? await this.store.users.findByEmail(session.ownerEmail) : null;
     const author = authorFor(session.ownerEmail, owner);
     return {
       githubTokenExpiresAt: secrets.githubTokenExpiresAt,
+      keepCurrentGithubToken,
       spec: {
       t: "run.spec",
       session: { id: session.id, name: session.name ?? session.id, cwd: "/workspace" },

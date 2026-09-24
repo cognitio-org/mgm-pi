@@ -3,13 +3,17 @@
 // authenticated WebSocket inside run.spec, never as job/container env.
 
 import type { Session, Guru } from "./store/types.ts";
-import { GithubAppTokens } from "./github-app.ts";
+import { GithubAppTokens, type MintFailure } from "./github-app.ts";
 
 export interface RunSecrets {
   githubToken: string;
   litellmKey: string;
   /** Set when `githubToken` is a GitHub App installation token, so the run can be refreshed. */
   githubTokenExpiresAt?: string;
+  /** #158: why a repo session got no GitHub token although the App is configured. The shared PAT is
+   * never used in that case: `not-installed` needs the App installed on the repo, `unavailable` is
+   * worth trying again. Absent when a token came back, or when nothing is configured at all. */
+  githubAppFailure?: Exclude<MintFailure, "not-configured">;
 }
 
 export interface SecretsBroker {
@@ -87,11 +91,12 @@ export class GcpSecretsBroker implements SecretsBroker {
       try {
         return (await this.fetchSecret(secretId)).trim();
       } catch (err) {
-        if (isSecretNotFoundError(err)) return "";
-        // A blip reading an App secret must not fail a repo run that still has a PAT.
+        if (isSecretAbsentError(err)) return "";
+        // A blip reading an App secret is not "the App isn't set up": resolving it to "" would hand
+        // the run the shared PAT (#158). Throw, so the mint reports `unavailable`.
         // Log the name only: Secret Manager errors can echo the request, never the key.
         console.warn(`[secrets] ${secretId} unreadable: ${err instanceof Error ? err.name : "Error"}`);
-        return "";
+        throw err;
       }
     });
   }
@@ -101,7 +106,12 @@ export class GcpSecretsBroker implements SecretsBroker {
       this.githubTokenForSession(session),
       this.litellmKeyForGuru(guru.id),
     ]);
-    return { githubToken: github.token, litellmKey, ...(github.expiresAt ? { githubTokenExpiresAt: github.expiresAt } : {}) };
+    return {
+      githubToken: github.token,
+      litellmKey,
+      ...(github.expiresAt ? { githubTokenExpiresAt: github.expiresAt } : {}),
+      ...(github.appFailure ? { githubAppFailure: github.appFailure } : {}),
+    };
   }
 
   async refreshGithubAppToken(session: Session): Promise<{ token: string; expiresAt?: string } | undefined> {
@@ -111,19 +121,24 @@ export class GcpSecretsBroker implements SecretsBroker {
     // A failed mint must not fall through to the shared PAT. That would replace the sandbox's
     // installation token and cancel the retry. The shared PAT is only the initial-run fallback.
     const minted = await this.app.mint(session.repo);
-    if (!minted) return undefined;
+    if (!minted.ok) return undefined;
     return { token: minted.token, expiresAt: minted.expiresAt };
   }
 
-  /** Per-session PAT, then a GitHub App installation token, then the shared
-   * `outfitter-github-token-default`.
+  /** Per-session PAT, then a GitHub App installation token, then (only when the App is not
+   * configured) the shared `outfitter-github-token-default`.
    *
    * The per-session secret stays the preferred form: a fine-grained PAT scoped to that one repo is
    * a far smaller blast radius than one token every repo session can reach. The App is the usual
    * cloud identity once its id, private key, and installation id are set. The shared PAT remains
-   * so a run still starts before that App exists, or when GitHub refuses the mint — requiring a
-   * per-session PAT meant an operator had to mint one by hand, against a session id that only
-   * exists once the session has been created, before the first run could get past buildRunSpec.
+   * for a deployment without the App: requiring a per-session PAT meant an operator had to mint one
+   * by hand, against a session id that only exists once the session has been created, before the
+   * first run could get past buildRunSpec.
+   *
+   * Once the App is configured, the shared PAT is never used (#158). A repo the App can't reach
+   * comes back empty with `appFailure: "not-installed"`, and a failed mint with `"unavailable"`;
+   * the caller decides what each means. Before, both quietly handed the run the org-wide PAT, and
+   * a reconnect kept it for the rest of the run.
    *
    * The App and the shared PAT are gated on `session.repo`. run.spec carries `secrets` for every
    * run, repo or not (agentlink.ts), so handing either credential to a sandbox with nothing to
@@ -132,7 +147,9 @@ export class GcpSecretsBroker implements SecretsBroker {
    * that secret is a deliberate act. Logs which of the three a run ended up with, because "the
    * token worked" and "the token I expected" are different questions once something fails to
    * clone or push. */
-  private async githubTokenForSession(session: Session): Promise<{ token: string; expiresAt?: string }> {
+  private async githubTokenForSession(
+    session: Session,
+  ): Promise<{ token: string; expiresAt?: string; appFailure?: Exclude<MintFailure, "not-configured"> }> {
     const perSession = `outfitter-github-token-${session.id}`;
     const own = await this.accessSecretOrEmpty(perSession);
     if (own) {
@@ -141,9 +158,13 @@ export class GcpSecretsBroker implements SecretsBroker {
     }
     if (!session.repo) return { token: "" };
     const minted = await this.app.mint(session.repo);
-    if (minted) {
+    if (minted.ok) {
       console.log(`[secrets] session ${session.id}: using a GitHub App installation token`);
       return { token: minted.token, expiresAt: minted.expiresAt };
+    }
+    if (minted.reason !== "not-configured") {
+      console.warn(`[secrets] session ${session.id}: GitHub App token ${minted.reason}; not using ${GITHUB_TOKEN_DEFAULT_SECRET}`);
+      return { token: "", appFailure: minted.reason };
     }
     const shared = await this.accessSecretOrEmpty(GITHUB_TOKEN_DEFAULT_SECRET);
     if (shared) {
@@ -168,8 +189,8 @@ export class GcpSecretsBroker implements SecretsBroker {
     try {
       return await this.fetchSecret(secretId);
     } catch (err) {
-      if (!isSecretNotFoundError(err)) throw err;
-      console.warn(`[secrets] ${secretId} not found in Secret Manager; resolving to ""`);
+      if (!isSecretAbsentError(err)) throw err;
+      console.warn(`[secrets] ${secretId} not found (or disabled) in Secret Manager; resolving to ""`);
       return "";
     }
   }
@@ -198,13 +219,31 @@ export class GcpSecretsBroker implements SecretsBroker {
 
 /** True for a Secret Manager "no such secret/version" failure: a Gaxios HTTP 404, or (in case a
  * client surfaces it as a raw gRPC status instead) code 5 NOT_FOUND. Any other shape of error
- * (network, auth, 403) is a real failure: `accessSecretOrEmpty` rethrows it, and the GitHub App
- * reader logs the error name and returns "" so a run can still use its PAT. */
+ * (network, auth, 403) is a real failure. */
 function isSecretNotFoundError(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
   const e = err as { response?: { status?: number }; code?: number | string; status?: number };
   const status = e.response?.status ?? e.code ?? e.status;
   return status === 404 || status === "404" || status === 5;
+}
+
+/** True when a credential secret has no value to read: not found, or its latest version is
+ * disabled or destroyed. The operator page removes a secret by disabling every version
+ * (`disableAllEnabled`), and Secret Manager then answers `versions/latest:access` with
+ * FAILED_PRECONDITION ("... is in DISABLED state"), not a 404. Counting that as a failure would
+ * make a GitHub App removed from the operator page read as `unavailable` and block every repo
+ * run (PR #161 review). */
+export function isSecretAbsentError(err: unknown): boolean {
+  if (isSecretNotFoundError(err)) return true;
+  if (typeof err !== "object" || err === null) return false;
+  const e = err as {
+    response?: { status?: number; data?: { error?: { status?: string; message?: string } } };
+    code?: number | string;
+    message?: string;
+  };
+  const precondition = e.response?.status === 400 || e.response?.data?.error?.status === "FAILED_PRECONDITION" || e.code === 9;
+  const message = `${e.response?.data?.error?.message ?? ""} ${e.message ?? ""}`;
+  return precondition && /\b(DISABLED|DESTROYED) state\b/.test(message);
 }
 
 // ---------- SecretAdmin (operator settings: routes/operator.ts) ----------

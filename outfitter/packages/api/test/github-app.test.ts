@@ -1,10 +1,23 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, createVerify } from "node:crypto";
-import { GithubAppTokens, githubAppJwt, refreshDelayMs } from "../src/github-app.ts";
+import { GithubAppTokens, githubAppJwt, refreshDelayMs, type MintResult } from "../src/github-app.ts";
 
 const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const pem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
+
+const tokenOf = (result: MintResult) => (result.ok ? result.token : undefined);
+
+const appSecrets = async (name: string) => {
+  if (name.includes("installation")) return "99";
+  if (name.includes("private-key")) return pem;
+  return "12345";
+};
+
+/** GithubAppTokens whose access_tokens call answers with `answer`. */
+function tokensAnswering(answer: () => Promise<Response>) {
+  return new GithubAppTokens(appSecrets, (async () => answer()) as typeof fetch, () => Date.parse("2026-09-24T04:00:00Z"));
+}
 
 test("githubAppJwt is an RS256 JWT for the app id", () => {
   const now = 1_700_000_000;
@@ -45,8 +58,8 @@ test("GithubAppTokens mints once per repo and a per-session PAT is not involved"
   );
   const first = await tokens.mint("cognitio-org/testit");
   const second = await tokens.mint("cognitio-org/testit");
-  assert.equal(first?.token, "ghs_minted");
-  assert.equal(second?.token, "ghs_minted");
+  assert.equal(tokenOf(first), "ghs_minted");
+  assert.equal(tokenOf(second), "ghs_minted");
   const minted = calls.filter((call) => call.url.includes("/access_tokens"));
   assert.equal(minted.length, 1);
   assert.equal(minted[0].url, "https://api.github.com/app/installations/99/access_tokens");
@@ -58,14 +71,15 @@ test("GithubAppTokens mints once per repo and a per-session PAT is not involved"
   assert.deepEqual(body.repositories, ["testit"]);
   assert.equal(body.permissions.contents, "write");
   assert.equal(body.permissions.metadata, "read");
-  assert.equal(await tokens.mint("not a repo"), undefined);
-  assert.equal(await tokens.mint("fork/testit"), undefined);
-  assert.equal((await tokens.mint("Cognitio-Org/testit"))?.token, "ghs_minted");
+  assert.deepEqual(await tokens.mint("not a repo"), { ok: false, reason: "not-installed" });
+  // A same-named repo on the installation's own account is not this one.
+  assert.deepEqual(await tokens.mint("fork/testit"), { ok: false, reason: "not-installed" });
+  assert.equal(tokenOf(await tokens.mint("Cognitio-Org/testit")), "ghs_minted");
 });
 
-test("GithubAppTokens returns undefined when the App secrets are absent", async () => {
+test("GithubAppTokens reports not-configured when the App secrets are absent", async () => {
   const tokens = new GithubAppTokens(async () => "");
-  assert.equal(await tokens.mint("o/r"), undefined);
+  assert.deepEqual(await tokens.mint("o/r"), { ok: false, reason: "not-configured" });
 });
 
 test("GithubAppTokens mints the repo name from URL and .git forms", async () => {
@@ -97,22 +111,22 @@ test("GithubAppTokens mints the repo name from URL and .git forms", async () => 
     }) as typeof fetch,
     () => Date.parse("2026-09-24T04:00:00Z"),
   );
-  assert.equal((await tokens.mint("https://github.com/cognitio-org/testit.git"))?.token, "ghs_minted");
-  assert.equal((await tokens.mint("git@github.com:cognitio-org/other.git"))?.token, "ghs_minted");
-  assert.equal((await tokens.mint("cognitio-org/third.git"))?.token, "ghs_minted");
+  assert.equal(tokenOf(await tokens.mint("https://github.com/cognitio-org/testit.git")), "ghs_minted");
+  assert.equal(tokenOf(await tokens.mint("git@github.com:cognitio-org/other.git")), "ghs_minted");
+  assert.equal(tokenOf(await tokens.mint("cognitio-org/third.git")), "ghs_minted");
   assert.deepEqual(repos, ["testit", "other", "third"]);
 });
 
-test("GithubAppTokens returns undefined for a key that is not a usable PEM", async () => {
+test("GithubAppTokens reports unavailable, not not-configured, for a key that will not sign", async () => {
   const tokens = new GithubAppTokens(async (name) => {
     if (name.includes("installation")) return "99";
     if (name.includes("private-key")) return "-----BEGIN PRIVATE KEY-----\nnot-a-pem\n-----END PRIVATE KEY-----";
     return "12345";
   });
-  assert.equal(await tokens.mint("o/r"), undefined);
+  assert.deepEqual(await tokens.mint("o/r"), { ok: false, reason: "unavailable" });
 });
 
-test("GithubAppTokens returns undefined when GitHub's body is not JSON", async () => {
+test("GithubAppTokens reports unavailable when GitHub's body is not JSON", async () => {
   const tokens = new GithubAppTokens(
     async (name) => {
       if (name.includes("installation")) return "99";
@@ -121,12 +135,72 @@ test("GithubAppTokens returns undefined when GitHub's body is not JSON", async (
     },
     (async () => new Response("nope", { status: 200 })) as typeof fetch,
   );
-  assert.equal(await tokens.mint("o/r"), undefined);
+  assert.deepEqual(await tokens.mint("o/r"), { ok: false, reason: "unavailable" });
 });
 
-test("GithubAppTokens returns undefined when a secret read throws", async () => {
+test("GithubAppTokens reports unavailable when a secret read throws", async () => {
   const tokens = new GithubAppTokens(async () => {
     throw new Error("secret manager unavailable");
   });
-  assert.equal(await tokens.mint("o/r"), undefined);
+  assert.deepEqual(await tokens.mint("o/r"), { ok: false, reason: "unavailable" });
+});
+
+test("#158: a partly set or wrong App secret is misconfigured, not not-configured", async () => {
+  const secrets = (values: Record<string, string>) => async (name: string) =>
+    name.includes("installation") ? (values.installation ?? "") : name.includes("private-key") ? (values.key ?? "") : (values.id ?? "");
+  for (const [label, values] of [
+    ["a Client ID instead of the numeric App id", { id: "Iv1.abc123", key: pem, installation: "99" }],
+    ["no installation id (mid-reinstall)", { id: "12345", key: pem }],
+    ["a key without a PEM header", { id: "12345", key: "bm90IGEga2V5", installation: "99" }],
+    ["only the App id", { id: "12345" }],
+  ] as const) {
+    const tokens = new GithubAppTokens(secrets(values), (async () => {
+      throw new Error("must not call GitHub");
+    }) as typeof fetch);
+    assert.deepEqual(await tokens.mint("o/r"), { ok: false, reason: "misconfigured" }, label);
+  }
+  const blank = new GithubAppTokens(async () => "  ");
+  assert.deepEqual(await blank.mint("o/r"), { ok: false, reason: "not-configured" }, "whitespace only counts as unset");
+});
+
+test("#158: with no App at all, even an odd repo string is not-configured (the shared PAT still applies)", async () => {
+  const tokens = new GithubAppTokens(async () => "");
+  assert.deepEqual(await tokens.mint("not a repo"), { ok: false, reason: "not-configured" });
+});
+
+test("#158: GitHub refusing the repo or the installation is not-installed", async () => {
+  for (const status of [422, 404]) {
+    const tokens = tokensAnswering(async () => new Response(JSON.stringify({ message: "nope" }), { status }));
+    assert.deepEqual(await tokens.mint("o/r"), { ok: false, reason: "not-installed" }, `status ${status}`);
+  }
+});
+
+test("#158: a 5xx, a 401, a rate limit, or a network error is unavailable, never not-configured", async () => {
+  for (const status of [500, 502, 401, 403, 429]) {
+    const tokens = tokensAnswering(async () => new Response("{}", { status }));
+    assert.deepEqual(await tokens.mint("o/r"), { ok: false, reason: "unavailable" }, `status ${status}`);
+  }
+  const offline = tokensAnswering(async () => {
+    throw new TypeError("fetch failed");
+  });
+  assert.deepEqual(await offline.mint("o/r"), { ok: false, reason: "unavailable" });
+});
+
+test("#158: a repository check that can't be read is unavailable; one naming another repo is not-installed", async () => {
+  const minted = () => new Response(JSON.stringify({ token: "ghs_minted", expires_at: "2026-09-24T06:00:00Z" }), { status: 201 });
+  const checkDown = new GithubAppTokens(
+    appSecrets,
+    (async (url: string) => (String(url).includes("/installation/repositories") ? new Response("", { status: 503 }) : minted())) as typeof fetch,
+    () => Date.parse("2026-09-24T04:00:00Z"),
+  );
+  assert.deepEqual(await checkDown.mint("o/r"), { ok: false, reason: "unavailable" });
+  const otherRepo = new GithubAppTokens(
+    appSecrets,
+    (async (url: string) =>
+      String(url).includes("/installation/repositories")
+        ? new Response(JSON.stringify({ repositories: [{ full_name: "someone/r" }] }), { status: 200 })
+        : minted()) as typeof fetch,
+    () => Date.parse("2026-09-24T04:00:00Z"),
+  );
+  assert.deepEqual(await otherRepo.mint("o/r"), { ok: false, reason: "not-installed" });
 });

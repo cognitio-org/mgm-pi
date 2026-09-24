@@ -1486,4 +1486,127 @@ describe("GitHub App installation-token refresh", () => {
     app.stopBackgroundTasks();
     await app.fastify.close();
   });
+
+  /** A test app whose broker reports an App mint failure on every secretsForRun. devMode off: dev
+   * mode skips the GitHub token check entirely, so agentd's bearer is a (stubbed) Google id token,
+   * as in the 4412 test above; connect with `openAgentSocket(app, runId, ID_TOKEN)`. */
+  async function appWithMintFailure(
+    t: { mock: { method: typeof import("node:test").mock.method } },
+    reason: "unavailable" | "not-installed" | "misconfigured",
+    refreshed?: () => void,
+  ) {
+    t.mock.method(OAuth2Client.prototype, "verifyIdToken", async () => ({
+      getPayload: () => ({ email: "agent@test.local" }),
+    }));
+    return buildTestApp(
+      { AGENT_SOCKET_GRACE_MS: "0", OUTFITTER_DEV: "0", AGENT_SA_EMAIL: "agent@test.local" },
+      {
+        githubRefresh: { floorMs: 5, retryMs: 20, maxAttempts: 3 },
+        secretsBroker: {
+          async secretsForRun() {
+            return { githubToken: "", litellmKey: "k", githubAppFailure: reason };
+          },
+          async defaultLitellmKey() {
+            return "k";
+          },
+          async refreshGithubAppToken() {
+            refreshed?.();
+            return { token: "ghs_minted_again", expiresAt: later() };
+          },
+        },
+      },
+    );
+  }
+
+  test("#158: a reconnect whose mint fails keeps agentd's token and tries the mint again", async (t) => {
+    let refreshes = 0;
+    const app = await appWithMintFailure(t, "unavailable", () => {
+      refreshes += 1;
+    });
+    const { session, runId, runToken } = await makeRunningSession(app);
+    // pi is already going: this hello is a reconnect, and agentd holds the token its first spec had.
+    await app.store.runs.update(runId, { state: "running" });
+    const agent = await openAgentSocket(app, runId, "any-google-id-token");
+    sendHello(agent, runId, session.id, runToken);
+    const spec = await agent.nextMessage();
+    assert.equal(spec.t, "run.spec", "not refused");
+    assert.equal(spec.secrets.githubToken, "");
+    // No credential replaces agentd's token; the retry mints the App token again instead.
+    const frame = await nextCredentialWithin(agent, 1500);
+    assert.equal(frame.token, "ghs_minted_again");
+    assert.ok(refreshes >= 1);
+    const run = await app.store.runs.findById(runId);
+    assert.notEqual(run?.state, "failed");
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("#158: a reconnect when the App can't reach the repo is refused, so a pre-App shared PAT isn't kept", async (t) => {
+    const app = await appWithMintFailure(t, "not-installed");
+    const { session, runId, runToken } = await makeRunningSession(app);
+    await app.store.runs.update(runId, { state: "idle" });
+    const agent = await openAgentSocket(app, runId, "any-google-id-token");
+    sendHello(agent, runId, session.id, runToken);
+    const close = await agent.nextClose();
+    assert.equal(close.code, 4412);
+    const run = await app.store.runs.findById(runId);
+    assert.equal(run?.state, "failed");
+    assert.match(run?.statusDetail ?? "", /not installed on o\/r/);
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("#158: misconfigured App secrets fail a first connect with an operator note, and a reconnect keeps its token", async (t) => {
+    const first = await appWithMintFailure(t, "misconfigured");
+    const a = await makeRunningSession(first);
+    const agentA = await openAgentSocket(first, a.runId, "any-google-id-token");
+    sendHello(agentA, a.runId, a.session.id, a.runToken);
+    assert.equal((await agentA.nextClose()).code, 4412);
+    assert.match((await first.store.runs.findById(a.runId))?.statusDetail ?? "", /secrets are set but can't be used/);
+    first.stopBackgroundTasks();
+    await first.fastify.close();
+
+    const again = await appWithMintFailure(t, "misconfigured");
+    const b = await makeRunningSession(again);
+    await again.store.runs.update(b.runId, { state: "running" });
+    const agentB = await openAgentSocket(again, b.runId, "any-google-id-token");
+    sendHello(agentB, b.runId, b.session.id, b.runToken);
+    assert.equal((await agentB.nextMessage()).t, "run.spec");
+    assert.notEqual((await again.store.runs.findById(b.runId))?.state, "failed");
+    agentB.send({ t: "bye", reason: "stop" });
+    await agentB.nextClose();
+    again.stopBackgroundTasks();
+    await again.fastify.close();
+  });
+
+  test("#158: a first connect while the mint is unavailable closes 1011 to retry, with a note, and doesn't fail the run", async (t) => {
+    const app = await appWithMintFailure(t, "unavailable");
+    const { session, runId, runToken } = await makeRunningSession(app);
+    const agent = await openAgentSocket(app, runId, "any-google-id-token");
+    sendHello(agent, runId, session.id, runToken);
+    const close = await agent.nextClose();
+    assert.equal(close.code, 1011);
+    const run = await app.store.runs.findById(runId);
+    assert.notEqual(run?.state, "failed");
+    assert.match(run?.statusDetail ?? "", /GitHub App could not mint a token/);
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("#158: a first connect to a repo without the App fails the run with a note that says to install it", async (t) => {
+    const app = await appWithMintFailure(t, "not-installed");
+    const { session, runId, runToken } = await makeRunningSession(app);
+    const agent = await openAgentSocket(app, runId, "any-google-id-token");
+    sendHello(agent, runId, session.id, runToken);
+    const close = await agent.nextClose();
+    assert.equal(close.code, 4412);
+    const run = await app.store.runs.findById(runId);
+    assert.equal(run?.state, "failed");
+    assert.match(run?.statusDetail ?? "", /GitHub App is not installed on o\/r/);
+    assert.match(run?.statusDetail ?? "", /Install the App/);
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
 });

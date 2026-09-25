@@ -385,7 +385,7 @@ between fails.
    `outfitter-tasks` (same pattern as `mailbox.sh`'s `outfitter-tick`). Requires `mailbox.sh` and
    `link.sh` to have already run, and the hook itself to exist (`/api/hooks/warm-pool` ships with
    PR2, #128 — the jobs are harmless but ineffective until it merges and outfitter-link redeploys
-   with it). Defaults (owner decision): weekdays 08:00 up / 20:00 down, `Europe/Zagreb`, 1 replica —
+   with it). Defaults (owner decision, changed 2026-09-25): 09:00 up Mon–Fri / 03:00 down Tue–Sat, `Europe/Zagreb`, 1 replica —
    override with `WARM_UP_CRON`/`WARM_DOWN_CRON`/`WARM_TZ`/`WARM_REPLICAS`. `release.sh`'s
    audience-drift check (above) now also covers these two jobs. `DRY_RUN=1` first.
 6. **Switching providers** is a `config.env` edit plus a release, nothing more: set

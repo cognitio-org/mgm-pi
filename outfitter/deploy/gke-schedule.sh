@@ -13,8 +13,8 @@
 # generic not-found response is) until #128 merges and outfitter-link is redeployed with it -- they
 # aren't harmful meanwhile, just ineffective.
 #
-# Defaults (owner decision, gke-sandbox-provider-plan.md §1, changed 2026-09-25): 09:00 up Mon-Fri,
-# 03:00 down Tue-Sat (the night after each weekday),
+# Defaults (owner decision, gke-sandbox-provider-plan.md §1, changed 2026-09-26 "for now"): 00:00 up,
+# 12:00 down, every day,
 # Europe/Zagreb, 1 replica. Override with WARM_UP_CRON/WARM_DOWN_CRON/WARM_TZ/WARM_REPLICAS.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
@@ -34,8 +34,8 @@ if [[ -z "${LINK_ORIGIN}" ]]; then
   exit 1
 fi
 
-WARM_UP_CRON="${WARM_UP_CRON:-0 9 * * 1-5}"
-WARM_DOWN_CRON="${WARM_DOWN_CRON:-0 3 * * 2-6}"
+WARM_UP_CRON="${WARM_UP_CRON:-0 0 * * *}"
+WARM_DOWN_CRON="${WARM_DOWN_CRON:-0 12 * * *}"
 WARM_TZ="${WARM_TZ:-Europe/Zagreb}"
 WARM_REPLICAS="${WARM_REPLICAS:-1}"
 

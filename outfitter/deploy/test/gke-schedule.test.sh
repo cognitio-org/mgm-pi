@@ -61,10 +61,10 @@ expect fail "GKE_CLUSTER empty refuses" "GKE_CLUSTER is empty" GKE_CLUSTER=
 expect fail "no outfitter-tasks SA refuses (run mailbox.sh first)" "run ./mailbox.sh first" FAKE_NO_TASKS_SA=1
 expect fail "outfitter-link not deployed refuses" "outfitter-link is not deployed yet" FAKE_LINK_ORIGIN=
 
-expect pass "both jobs are created when absent" "outfitter-warm-up: 0 9 \* \* 1-5"
-grep -q -- "--schedule=0 3 \* \* 2-6" "${GCLOUD_CALLS}" \
-  && echo "ok:   warm-down defaults to 03:00 Tue-Sat (the night after each weekday)" \
-  || { echo "FAIL:   expected warm-down's default schedule 0 3 * * 2-6"; fails=$((fails + 1)); }
+expect pass "both jobs are created when absent" "outfitter-warm-up: 0 0 \* \* \*"
+grep -q -- "--schedule=0 12 \* \* \*" "${GCLOUD_CALLS}" \
+  && echo "ok:   warm-down defaults to 12:00 every day" \
+  || { echo "FAIL:   expected warm-down's default schedule 0 12 * * *"; fails=$((fails + 1)); }
 grep -q "scheduler jobs create http outfitter-warm-up" "${GCLOUD_CALLS}" \
   && echo "ok:   warm-up: create, --headers (not --update-headers)" \
   || { echo "FAIL:   expected a create call for outfitter-warm-up"; fails=$((fails + 1)); }
@@ -82,7 +82,7 @@ grep -q -- "--time-zone=Europe/Zagreb" "${GCLOUD_CALLS}" \
   || { echo "FAIL:   expected --time-zone=Europe/Zagreb"; fails=$((fails + 1)); }
 
 FAKE_UP_EXISTS_EXIT=0 FAKE_DOWN_EXISTS_EXIT=0 \
-  expect pass "existing jobs are updated, not recreated" "outfitter-warm-up: 0 9"
+  expect pass "existing jobs are updated, not recreated" "outfitter-warm-up: 0 0 "
 grep -q "scheduler jobs update http outfitter-warm-up" "${GCLOUD_CALLS}" \
   && echo "ok:   warm-up: update http, --update-headers" \
   || { echo "FAIL:   expected an update call for outfitter-warm-up"; fails=$((fails + 1)); }

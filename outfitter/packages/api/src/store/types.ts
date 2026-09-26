@@ -505,7 +505,9 @@ export interface EntriesCollection {
   insertIfNew(sessionId: string, seq: number, entry: PiEntry, opts?: EntryInsertOptions): Promise<boolean>;
   /** The row whose `entry.id` is `entryId`, if this session has one. */
   findByEntryId(sessionId: string, entryId: string): Promise<Entry | null>;
-  /** Entries in tree order (by seq), optionally after a given entry id. */
+  /** Entries in insertion order, optionally after a given entry id. Not by seq: seq restarts in
+   * every run (see listRecent), so sorting on it interleaved one run's entries with the next's --
+   * on the page and in the transcript a woken run restores (session-jsonl.ts). */
   listForSession(sessionId: string, afterEntryId?: string): Promise<Entry[]>;
   /** The `limit` most recently *inserted* entries of a session, oldest first. Insertion order, not
    * seq: agentd's seq restarts at 1 in every run and is shared with (far more numerous) `event`

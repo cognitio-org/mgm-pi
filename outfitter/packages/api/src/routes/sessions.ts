@@ -10,8 +10,7 @@ import { GITHUB_APP_ID_SECRET, GITHUB_APP_INSTALLATION_SECRET, GITHUB_APP_KEY_SE
 import { sessionGithubTokenSecretName } from "../operator.ts";
 import { entryForWire } from "../entry-wire.ts";
 import { summarizeStartup } from "../startup.ts";
-
-const SESSION_VERSION = 3; // matches pi's CURRENT_SESSION_VERSION; keeps export.jsonl pi-compatible
+import { sessionJsonl } from "../session-jsonl.ts";
 
 /** Same checks `GithubAppTokens.mint` uses before it calls GitHub. Existence of a secret version is not enough. */
 async function githubAppConfigured(ctx: RouteContext, repo: string): Promise<boolean> {
@@ -97,18 +96,6 @@ async function summarize(ctx: RouteContext, session: Session): Promise<SessionSu
     cost: session.cost,
     updatedAt: session.updatedAt,
   };
-}
-
-function headerLine(session: Session): string {
-  const header = {
-    type: "session" as const,
-    version: SESSION_VERSION,
-    id: session.id,
-    timestamp: session.createdAt,
-    cwd: "/workspace",
-    ...(session.parentId ? { parentSession: session.parentId } : {}),
-  };
-  return JSON.stringify(header);
 }
 
 /** One header value. `undefined` is absent (including an empty value); `false` is a repeated header. */
@@ -267,9 +254,8 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
     const session = await getSessionOr404(ctx, req, reply);
     if (!session) return;
     const entries = await ctx.store.entries.listForSession(session.id);
-    const lines = [headerLine(session), ...entries.map((e) => JSON.stringify(e.entry))];
     reply.header("Content-Type", "application/x-ndjson");
-    return lines.join("\n") + "\n";
+    return sessionJsonl(session, entries.map((e) => e.entry));
   });
 
   app.put("/api/sessions/:id/import", async (req, reply) => {

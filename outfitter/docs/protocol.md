@@ -511,7 +511,11 @@ request behind.
 `queued → provisioning → running ⇄ idle → stopping → stopped | failed`. `idle` means pi is waiting
 for input; after `idleStopSeconds` agentd checkpoints and exits (`bye idle`), the API marks the run
 `stopped` and the session stays `open`. A new message on an open session with no live run creates a
-new run (`wake`) that restores from the last snapshot.
+new run (`wake`) that restores the conversation: `run.spec.snapshot.jsonl` is the session's stored
+entries as a pi session file (`session-jsonl.ts`), in insertion order, with every later root hung off
+the entry before it so pi's leaf sees the whole thread. agentd imports it and tails the session file
+from the end of that import, so restored entries are not sent back up. `snapshot.url` is unused
+(agentd reports no `snapshotUrl`); before `jsonl` was filled, every woken run started pi empty.
 
 `stopping` is entered by `POST /api/sessions/:id/stop` (see below) while a run is `running`/`idle`:
 the graceful path, waiting on agentd to checkpoint and send `bye`. It's an active state (counts for

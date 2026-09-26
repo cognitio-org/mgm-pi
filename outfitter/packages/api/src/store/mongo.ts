@@ -123,15 +123,13 @@ class MongoEntries implements EntriesCollection {
   }
 
   async listForSession(sessionId: string, afterEntryId?: string): Promise<Entry[]> {
-    let afterSeq = -1;
+    // Insertion order (_id), not seq -- see EntriesCollection.listForSession. Served by {sessionId, _id}.
+    const filter: Record<string, unknown> = { sessionId };
     if (afterEntryId) {
       const marker = await this.col.findOne({ sessionId, "entry.id": afterEntryId });
-      afterSeq = marker?.seq ?? -1;
+      if (marker?._id !== undefined) filter._id = { $gt: marker._id };
     }
-    const rows = await this.col
-      .find({ sessionId, seq: { $gt: afterSeq } })
-      .sort({ seq: 1 })
-      .toArray();
+    const rows = await this.col.find(filter).sort({ _id: 1 }).toArray();
     return rows.map((r) => stripIdStrict<Entry>(r));
   }
 

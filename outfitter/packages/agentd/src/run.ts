@@ -5,7 +5,7 @@
  * `abort`, `ui_response`, `rpc`, `checkpoint`, `diff`, `read`, `stop`, `browser.capture.entry`,
  * `browser.capture.result`, `browser.action.result`, `browser.inspect.result`, `github.result`).
  */
-import { mkdir, readFile, open as openFile, chown } from "node:fs/promises";
+import { mkdir, readFile, open as openFile, chown, stat } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { branchAllowed, DEFAULT_BRANCH_PREFIX, normalizeBranchPrefix } from "./branch-policy.js";
 import { ActionListener } from "./browser-action.js";
@@ -95,6 +95,7 @@ export type WriteSnapshotFileFn = typeof writeSnapshotFile;
 export type TailerFactory = (
   sessionFile: string,
   onEntry: (entry: Record<string, unknown>) => void,
+  opts?: { startOffset?: number },
 ) => { start(): void; stop(): void; poll(): Promise<void> };
 
 /** E2.11: same shape as TailerFactory, for OUTFITTER_SPEND_FILE (pi-extension/outfitter-spend.ts's
@@ -530,6 +531,8 @@ export class RunController {
     // appends to this file and creates siblings in its directory, so hand both over now. Without
     // this the first round-two session died with EACCES on its first write.
     await this.deps.chownWorkspace?.(resolve(sessionFile, ".."));
+    // Measured before pi is spawned, so nothing pi appends is mistaken for restored content.
+    const restoredBytes = (await stat(sessionFile).catch(() => undefined))?.size ?? 0;
     this.startup?.mark("session import done");
 
     if (!spec.repo) {
@@ -681,10 +684,16 @@ export class RunController {
     this.pendingPiMessages = [];
     for (const queuedMsg of queued) this.dispatchToPi(queuedMsg);
 
-    const createTailer = this.deps.createTailer ?? ((file, onEntry) => new SessionTailer(file, onEntry as any));
-    this.tailer = createTailer(sessionFile, (entry) => {
-      this.deps.link.sendSeq((seq) => ({ t: "entry", seq, entry: entry as any }));
-    });
+    const createTailer =
+      this.deps.createTailer ?? ((file, onEntry, opts) => new SessionTailer(file, onEntry as any, opts));
+    // The restored transcript came from the api's own store: send only what pi appends after it.
+    this.tailer = createTailer(
+      sessionFile,
+      (entry) => {
+        this.deps.link.sendSeq((seq) => ({ t: "entry", seq, entry: entry as any }));
+      },
+      { startOffset: restoredBytes },
+    );
     this.tailer.start();
 
     // E2.11: reuses the SessionTailer approach (poll-by-byte-offset over an append-only file) for

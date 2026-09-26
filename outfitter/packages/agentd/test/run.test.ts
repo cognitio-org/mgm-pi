@@ -149,7 +149,7 @@ async function setupController(
       return file;
     },
     writeSnapshotFile,
-    createTailer: (file, onEntry) => new SessionTailer(file, onEntry as any, { intervalMs: 20 }),
+    createTailer: (file, onEntry, opts) => new SessionTailer(file, onEntry as any, { ...opts, intervalMs: 20 }),
     onExit: (code) => {
       exitCode = code;
     },
@@ -205,6 +205,25 @@ test("RunController: a prompt drives pi through agent_start -> agent_settled and
 
   // running, then back to idle
   assert.deepEqual(states, ["cloning", "restoring", "starting", "idle", "running", "idle"]);
+});
+
+test("RunController: a restored transcript is not sent back to the api; only what pi appends after it is", async (t) => {
+  const restored =
+    emptySessionJsonl("sess1", "/workspace") +
+    `${JSON.stringify({ type: "message", id: "old-user", parentId: null, timestamp: "t", message: { role: "user", content: "earlier" } })}\n` +
+    `${JSON.stringify({ type: "message", id: "old-reply", parentId: "old-user", timestamp: "t", message: { role: "assistant", content: [] } })}\n`;
+  const { controller, link, states, spec } = await setupController({ snapshot: { jsonl: restored } });
+  t.after(() => controller.dispose());
+  link.deliver(spec);
+  await waitFor(() => states.includes("idle"));
+
+  link.deliver({ t: "prompt", text: "ping" });
+  await waitFor(() => link.sent.some((m) => m.t === "entry"));
+  await waitFor(() => link.sent.some((m) => m.t === "event" && (m as any).event.type === "agent_settled"));
+
+  const ids = (link.sent.filter((m) => m.t === "entry") as any[]).map((m) => m.entry.id);
+  assert.ok(!ids.includes("old-user") && !ids.includes("old-reply"), `restored entries re-sent: ${ids.join(",")}`);
+  assert.equal(ids.length, 1);
 });
 
 test("RunController: explicit checkpoint commits, pushes, and reports the new head, then returns to idle", async (t) => {
@@ -454,7 +473,7 @@ test("RunController: repo-less run skips cloning, restores a workspace tarball, 
       return file;
     },
     writeSnapshotFile,
-    createTailer: (file, onEntry) => new SessionTailer(file, onEntry as any, { intervalMs: 20 }),
+    createTailer: (file, onEntry, opts) => new SessionTailer(file, onEntry as any, { ...opts, intervalMs: 20 }),
     onLog: () => {},
   });
   t.after(() => controller.dispose());

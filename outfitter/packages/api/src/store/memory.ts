@@ -96,7 +96,7 @@ class MemoryEntries implements EntriesCollection {
   }
 
   async listForSession(sessionId: string, afterEntryId?: string): Promise<Entry[]> {
-    const list = (this.bySession.get(sessionId) ?? []).slice().sort((a, b) => a.seq - b.seq);
+    const list = this.bySession.get(sessionId) ?? []; // push order == insertion order
     if (!afterEntryId) return list.map(clone);
     const idx = list.findIndex((e) => e.entry.id === afterEntryId);
     return (idx === -1 ? list : list.slice(idx + 1)).map(clone);

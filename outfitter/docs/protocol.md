@@ -135,7 +135,7 @@ Up (agentd → api):
 
 | t | fields | when |
 |---|---|---|
-| `hello` | `runId, sessionId, agentdVersion, piVersion, lastAckedSeq, runToken, protocolVersion` | first frame after connect; `runToken` is `RUN_TOKEN` echoed back (see "Run token" above); `protocolVersion` is agentd's `WIRE_PROTOCOL_VERSION` (`packages/agentd/src/protocol.ts`) -- the api closes with `4409` when it's older than its own copy of the constant (`packages/api/src/agentlink.ts`'s `API_PROTOCOL_VERSION`), so a deploy that updates the API ahead of the agent image fails loudly instead of the agent silently ignoring frames it doesn't understand (bug 9, `docs/reports/cloud-fixes.md`) |
+| `hello` | `runId, sessionId, agentdVersion, piVersion, lastAckedSeq, runToken, protocolVersion, boot?` | first frame after connect; `boot` (optional) is this sandbox's boot durations on agentd's own clock -- `bootMs, setupMs, assignmentWaitMs?, sinceAssignedMs, identityTokenMs?, connectMs?, preBooted?` (see "Start-up timing" below), numbers only, never a secret; the api keeps the first accepted hello's and ignores it on a reconnect; `runToken` is `RUN_TOKEN` echoed back (see "Run token" above); `protocolVersion` is agentd's `WIRE_PROTOCOL_VERSION` (`packages/agentd/src/protocol.ts`) -- the api closes with `4409` when it's older than its own copy of the constant (`packages/api/src/agentlink.ts`'s `API_PROTOCOL_VERSION`), so a deploy that updates the API ahead of the agent image fails loudly instead of the agent silently ignoring frames it doesn't understand (bug 9, `docs/reports/cloud-fixes.md`) |
 | `status` | `state: "cloning"\|"restoring"\|"starting"\|"running"\|"idle"\|"checkpointing"\|"stopping", detail?` | on change; the api maps this to `Run.state` (`agentlink.ts`'s `mapStatusToRunState`): `running`/`idle` map straight across, `checkpointing` leaves the run's current state untouched (a mid-turn checkpoint push, not a state change), `stopping` maps to the `Run.state` of the same name, anything else (`cloning`/`restoring`/`starting`) maps to `provisioning`. A `status`/`heartbeat` frame that arrives after the run has already reached a terminal state (`bye` already processed) is ignored — `bye` is final. |
 | `entry` | `seq, entry` (a pi session entry exactly as pi writes it to JSONL: message, model_change, compaction, custom, ...) | whenever pi appends to the session file (agentd tails the file; this is the durable transcript) |
 | `event` | `seq, event` (a raw pi RPC event: agent_start, message_update, tool_execution_start/update/end, agent_end, extension_ui_request, ...) | streamed for live UI; not persisted except `extension_ui_request` |
@@ -148,6 +148,7 @@ Up (agentd → api):
 | `github.request` | `reqId, op, args, idempotencyKey?` | agentd asks the api to run one GitHub operation for this session. Not seq/ack replayed — a dropped link retries the request; it is not replayed from `lastAckedSeq`. See "GitHub broker" |
 | `browser.action.request` | `requestId`, `kind` (`click` or `type`), `selector`, `text?` | the Drive's `browser_action` tool asked to click or type in the session's one shared tab. Same shape as capture: agentd mints `requestId` once, the api creates the browser-request row (with `kind` and the CSS `selector`; `text` only for `type`), or answers at once with `browser.action.result`. A selector that is not CSS, including raw JavaScript, is `rejected` and inserts nothing. The same `requestId` does not create a second row. This is not `browser_capture` |
 | `browser.inspect.request` | `requestId` | the Drive's `browser_inspect` tool asked to read the console and the element selected in DevTools on the session's one shared tab. No tab id. agentd mints `requestId` once. The api creates a browser-request row with `kind: "inspect"`, or answers at once with `browser.inspect.result`. The same `requestId` does not create a second row. This is not `browser_capture` and not `browser_action`. A body that names a tab id is not this frame |
+| `startup` | `phases: [{name, ms}]` | when pi answers agentd's readiness probe ("pi ready"), and again after every reconnect until the run ends (the api keeps the first): agentd's start-up phases since `run.spec` arrived (`run.spec received`, `repo cloned`, `workspace restored`, `session import done`, `pi spawned`, `pi ready`), `ms` counted from `run.spec`. Not seq/ack replayed. See "Start-up timing" below |
 
 Down (api → agentd):
 
@@ -297,13 +298,49 @@ way pi does (the workspace's `.pi/APPEND_SYSTEM.md`, then `$PI_CODING_AGENT_DIR/
 when the guru has no `appendSystemPrompt` of its own, passes its path as an earlier
 `--append-system-prompt`. A guru's own text replaces the file, as it did before.
 
+### Start-up timing
+
+How long a run took to start, recorded on `Run.startup` (`packages/api/src/store/types.ts`) and
+summarized by `packages/api/src/startup.ts`:
+
+- api clock, each stamped once: `wakeAt` (the run was created), `providerReturnedAt`
+  (`provider.start()` resolved; `warm` from its result when the provider knows), `helloAt` (the
+  first accepted `hello`), `specSentAt` (the first `run.spec` sent), `readyAt` (the first status
+  that made the run `running`/`idle`: pi spawned, possibly still loading). Plus `provider`.
+- agentd clock, relative durations only (so sandbox clock skew doesn't matter): `hello.boot` and the
+  `startup` frame's `phases`. `preBooted` is agentd's hint that it waited over a second for its
+  assignment (it sat in a warm pool). The api keeps known names only, clamps every number, and bounds the
+  list, since the frame is agent-supplied.
+
+Warm or cold: the provider's own `warm` wins. GKE warm mode usually can't tell (it reports true
+only if its one GET right after creating the claim already sees it adopted and Ready), so for GKE
+the summary derives it (`deriveWarm`): warm when agentd says `preBooted`, or when the pod's boot on
+the api clock (`helloAt - boot.bootMs`) came more than two seconds before `wakeAt`. A cold fallback
+pod (warm mode, empty pool) finds its assignment at once and boots after the wake, so it reads cold.
+Other providers stay unknown.
+
+The summary has four segments that add up to the total: requesting a sandbox (wake -> provider
+returned), sandbox starting (-> hello; agentd's own identity-token and connect times nested, and a
+warm pod's idle wait left out), preparing the workspace (hello -> run.spec sent, then agentd's clone
+/restore/import/spawn phases) and loading pi (pi spawned -> pi ready). The total is wake -> pi ready,
+or wake -> ready when agentd sent no phases. `complete` is false only while a newer agentd's
+`startup` frame is still expected (at most two minutes after ready). When the phases arrive the link
+logs one `{"message":"startup summary", runId, provider, warm, totalMs, requestMs, sandboxMs,
+workspaceMs, piMs}` line for Cloud Logging, and every accepted hello logs `agentlink: hello
+accepted` (with `reconnect`).
+
+Compatibility: both fields are optional and additive, so no protocol version bump. An api that
+predates them ignores `hello.boot` (hello is parsed loosely) and the unknown `startup` frame (unknown
+up-frames are ignored); an agentd that predates them just leaves them out and the run gets the
+wake -> ready summary. Runs created before `Run.startup` existed get no stamps and show nothing.
+
 ## browser ⇄ api (REST)
 
 - `POST /api/sessions` `{guruId, repo?, baseBranch?, branch?, prompt, name?, model?}` → `{session, run}` (`repo` omitted = non-coding session with a scratch workspace; `model` overrides the guru's own model for this session — see the laptop-preflight note above)
 - `GET /api/sessions?status=&guru=` → list with `{id, name, status, runState, guru, repo, branch, parentId?, cost, updatedAt}`
-- `GET /api/sessions/:id` → metadata + `leafId` + `runState` + `pendingUiRequest` (the active run's `Run.pendingUiRequest`, or `null` when there is none — a stopped or failed run does not keep a stale approval) + `allowExternalHtmlResources` (#132: the HTML preview's starting access, from the same run as `runState`, which keeps it after stopping; the guru's current value when that run has not recorded one yet) + `htmlPreviewAccessByRun` (#147: `{<runId>: boolean}` for every run of the session that recorded a value)
+- `GET /api/sessions/:id` → metadata + `leafId` + `runState` + `startup` (the reportable run's start-up summary, see "Start-up timing"; `null` before it is ready or for a run that predates it) + `pendingUiRequest` (the active run's `Run.pendingUiRequest`, or `null` when there is none — a stopped or failed run does not keep a stale approval) + `allowExternalHtmlResources` (#132: the HTML preview's starting access, from the same run as `runState`, which keeps it after stopping; the guru's current value when that run has not recorded one yet) + `htmlPreviewAccessByRun` (#147: `{<runId>: boolean}` for every run of the session that recorded a value)
 - `GET /api/sessions/:id/entries?after=<entryId>` → pi entries in tree order. An entry an agentd run sent also carries `outfitterRunId` (#147), which is not a pi field; the web picks each HTML preview's starting access from `htmlPreviewAccessByRun` with it, and falls back to `allowExternalHtmlResources`. SSE `entry` events carry the same field. The stored entry and `export.jsonl` stay pi's own.
-- `GET /api/sessions/:id/stream` → SSE: `event: entry|event|status|spend|checkpoint`, `data: <json>`
+- `GET /api/sessions/:id/stream` → SSE: `event: entry|event|status|spend|checkpoint`, `data: <json>`. A `status` event may carry `startup` (the run's start-up summary, see "Start-up timing"): absent means unchanged, `null` means the current run has none (yet), an object replaces it.
 - `POST /api/sessions/:id/messages` `{text, behavior?}` → stores the text as mail (see "Mailbox"), wakes a run if none is running, returns `{run}`; `behavior` defaults to `followUp`. If the wake fails it returns **202 `{run: null}`**: the mail is queued for Cloud Tasks and `/tick`, so the client must not resend. Text over 32,000 characters is a 413. `POST /api/sessions` behaves the same way for its `prompt` (201 with `run: null` if the first wake failed)
 - `POST /api/sessions/:id/abort` · `/stop` (graceful for a `running`/`idle` run: enqueues a `stop`
   down-message through the store and sets `stopping` — see "Run state machine" above; cancels via

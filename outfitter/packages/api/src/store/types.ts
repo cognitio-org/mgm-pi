@@ -183,8 +183,58 @@ export interface Run {
   /** Recent github.request write results, keyed by idempotencyKey, so a retry does not post twice.
    * Not a wire field. The broker caps this at the newest 100 keys. */
   githubIdempotency?: Record<string, GithubIdempotencyRecord>;
+  /** How long this run took to start, piece by piece (startup.ts). Absent on runs created before
+   * this field existed; partly filled for a run whose agentd predates the timings it reports. */
+  startup?: RunStartup;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Boot timings agentd measured on its own clock (hello.boot), all relative, so there is no clock
+ * skew between the sandbox and the api. Names follow agentd's "startup: ..." log phases (main.ts). */
+export interface AgentdBootTimings {
+  /** main entered -> hello sent. On a warm pod this includes the whole idle wait. */
+  bootMs?: number;
+  /** main entered -> pi version resolved and run-as-user set up (before any assignment wait). */
+  setupMs?: number;
+  /** GKE warm pod only: how long it idled before being claimed. Not part of anyone's wait. */
+  assignmentWaitMs?: number;
+  /** Assignment known -> hello sent: agentd's share of the person's wait. */
+  sinceAssignedMs?: number;
+  /** The first connect attempt's identity-token fetch. */
+  identityTokenMs?: number;
+  /** Identity token fetched -> socket open (TCP, TLS, WS upgrade). */
+  connectMs?: number;
+  /** agentd's own hint: it waited over a second for its assignment, so it sat in a warm pool. */
+  preBooted?: boolean;
+}
+
+/** One milestone agentd logged after run.spec arrived (startup-phases.ts): `ms` since run.spec. */
+export interface StartupPhase {
+  name: string;
+  ms: number;
+}
+
+/** Run.startup. Timestamps are ISO strings on the api's clock; each is written once. */
+export interface RunStartup {
+  /** RunManager.wake created the run (= Run.createdAt). */
+  wakeAt?: string;
+  /** provider.start() resolved. */
+  providerReturnedAt?: string;
+  /** The run's first accepted hello (token and protocol checked). Not moved by a reconnect. */
+  helloAt?: string;
+  /** The first run.spec went out. */
+  specSentAt?: string;
+  /** The first status that made the run running or idle (pi spawned; pi may still be loading). */
+  readyAt?: string;
+  /** Which SandboxProvider started the run. */
+  provider?: SandboxProviderName;
+  /** SandboxStartResult.warm: true adopted a warm sandbox, false cold, absent unknown. The summary
+   * derives it from agentd's timings when the provider couldn't tell (startup.ts's deriveWarm). */
+  warm?: boolean;
+  agentd?: AgentdBootTimings;
+  /** agentd's run phases from run.spec through "pi ready" (the `startup` up-frame). */
+  phases?: StartupPhase[];
 }
 
 /** Steps of a multi-call write that already reached GitHub. Not sent on the socket. */
@@ -462,6 +512,13 @@ export interface RunsCollection {
    * HTML preview access. */
   listForSession(sessionId: string): Promise<Run[]>;
   update(id: string, patch: Partial<Run>): Promise<Run | null>;
+  /**
+   * Sets `fields` inside Run.startup without rewriting the rest of it, so writers on different
+   * processes (wake on web, hello/status on link) can't clobber each other. With `unlessSet`, writes
+   * only while `startup[unlessSet]` is still absent: that is how each stamp is written once.
+   * Returns the updated run, or null when nothing was written (no such run, or already set).
+   */
+  mergeStartup(id: string, fields: Partial<RunStartup>, unlessSet?: keyof RunStartup): Promise<Run | null>;
   /**
    * Insert `pending` at `githubIdempotency[key]` only when that key is absent.
    * `claimed` means this caller owns the write. `existing` is the record already stored.

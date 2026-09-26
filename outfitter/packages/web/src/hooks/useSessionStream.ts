@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type PiEntry } from "../api/client.ts";
+import { api, type PiEntry, type StartupSummary } from "../api/client.ts";
 import type { RawUiRequest } from "../components/UiRequestPanel.tsx";
 
 export interface StreamState {
@@ -14,6 +14,17 @@ export interface StreamState {
   statusDetail?: string;
   pendingUiRequest: RawUiRequest | null;
   costEstimate?: number;
+  /** The run's start-up timing from status events: undefined until one says, null for none. */
+  startup?: StartupSummary | null;
+}
+
+/** Folds one status event's `startup` into the current one: absent keeps it (most status events
+ * don't carry it), null drops it (a new run), an object replaces it. */
+export function nextStartup(
+  current: StartupSummary | null | undefined,
+  data: { startup?: StartupSummary | null },
+): StartupSummary | null | undefined {
+  return "startup" in data ? (data.startup ?? null) : current;
 }
 
 /** Code review N1 (docs/reports/code-review-pr15.md): the initial `GET .../entries` fetch and the
@@ -72,6 +83,7 @@ export function useSessionStream(sessionId: string): StreamState {
   const [statusDetail, setStatusDetail] = useState<string | undefined>(undefined);
   const [pendingUiRequest, setPendingUiRequest] = useState<StreamState["pendingUiRequest"]>(null);
   const [costEstimate, setCostEstimate] = useState<number | undefined>(undefined);
+  const [startup, setStartup] = useState<StartupSummary | null | undefined>(undefined);
   const entryIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -83,6 +95,7 @@ export function useSessionStream(sessionId: string): StreamState {
     setStatusDetail(undefined);
     setPendingUiRequest(null);
     setCostEstimate(undefined);
+    setStartup(undefined);
 
     api.entries(sessionId).then((initial) => {
       if (cancelled) return;
@@ -93,7 +106,12 @@ export function useSessionStream(sessionId: string): StreamState {
     const source = new EventSource(api.streamUrl(sessionId));
 
     source.addEventListener("status", (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as { state?: string; reason?: string; detail?: string | null };
+      const data = JSON.parse((ev as MessageEvent).data) as {
+        state?: string;
+        reason?: string;
+        detail?: string | null;
+        startup?: StartupSummary | null;
+      };
       if (data.state) setRunState(data.state);
       setRunStateReason(data.reason);
       // Three cases, not two: absent means "nothing new to say" and the last note stands (agentd
@@ -102,6 +120,7 @@ export function useSessionStream(sessionId: string): StreamState {
       // refused run's note stayed pinned over its replacement), and a string replaces it.
       setStatusDetail((prev) => nextStatusDetail(prev, data.detail));
       setPendingUiRequest((prev) => nextPendingOnStatus(prev, data.state));
+      setStartup((prev) => nextStartup(prev, data));
     });
 
     source.addEventListener("entry", (ev) => {
@@ -134,5 +153,5 @@ export function useSessionStream(sessionId: string): StreamState {
     };
   }, [sessionId]);
 
-  return { entries, runState, runStateReason, statusDetail, pendingUiRequest, costEstimate };
+  return { entries, runState, runStateReason, statusDetail, pendingUiRequest, costEstimate, startup };
 }

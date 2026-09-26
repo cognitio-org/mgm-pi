@@ -58,6 +58,38 @@ export interface UpHello {
    * an agentd build that predates this field -- treated as version 0, i.e. always old enough to
    * refuse if the API's own version is bumped past 0. */
   protocolVersion: number;
+  /** Optional: this sandbox's boot durations, measured on agentd's own clock (main.ts). The api
+   * records them on the run's first accepted hello and ignores them on a reconnect. Timings only,
+   * never a secret. An api that predates the field ignores it (hello is parsed loosely). */
+  boot?: BootTimings;
+}
+
+/** hello.boot. All relative durations in ms, so sandbox clock skew doesn't matter. Named after the
+ * "startup: ..." log phases in main.ts. */
+export interface BootTimings {
+  /** main entered -> this hello. On a warm pod this includes the whole idle wait. */
+  bootMs: number;
+  /** main entered -> pi version resolved and run-as-user set up. */
+  setupMs: number;
+  /** GKE warm pod only: how long it waited to be claimed. Not part of anyone's wait. */
+  assignmentWaitMs?: number;
+  /** Assignment known -> this hello: agentd's share of the person's wait. */
+  sinceAssignedMs: number;
+  /** This connect attempt's identity-token fetch. */
+  identityTokenMs?: number;
+  /** Identity token fetched -> socket open. */
+  connectMs?: number;
+  /** true when agentd waited over a second for its assignment: it sat in a warm pool before this run
+   * claimed it. The api combines this with its own clocks to call a start warm or cold. */
+  preBooted?: boolean;
+}
+
+/** agentd's run phases from run.spec through "pi ready" (startup-phases.ts), sent when pi ready
+ * fires and again after every reconnect until the run ends (the api keeps the first). `ms` counts
+ * from run.spec arriving. Not seq/ack replayed. An api that doesn't know this frame ignores it. */
+export interface UpStartup {
+  t: "startup";
+  phases: Array<{ name: string; ms: number }>;
 }
 
 export interface UpStatus {
@@ -180,7 +212,8 @@ export type UpMessage =
   | UpBrowserCaptureRequest
   | UpGithubRequest
   | UpBrowserActionRequest
-  | UpBrowserInspectRequest;
+  | UpBrowserInspectRequest
+  | UpStartup;
 
 /** Up-messages that carry a `seq` and are subject to the buffer-until-ack contract. */
 export type SeqUpMessage = UpEntry | UpEvent;

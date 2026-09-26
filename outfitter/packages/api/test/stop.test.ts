@@ -296,6 +296,7 @@ describe("agentlink up-frame ordering", () => {
         }
         return inner.runs.update(id, patch);
       },
+      mergeStartup: (id, fields, unlessSet) => inner.runs.mergeStartup(id, fields, unlessSet),
       listStale: (c) => inner.runs.listStale(c),
       listStopping: (c) => inner.runs.listStopping(c),
       enqueueDownMessage: (id, m: DownMessage) => inner.runs.enqueueDownMessage(id, m),

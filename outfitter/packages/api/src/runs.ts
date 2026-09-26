@@ -89,6 +89,8 @@ export class RunManager {
       pending: [],
       createdAt: now,
       updatedAt: now,
+      // startup.ts: the rest of Run.startup is stamped as the run gets further.
+      startup: { wakeAt: now, provider: this.config.sandboxProvider },
       ...(opts.mailDriven ? { mailWakePending: true } : {}),
     };
     const { run, inserted } = await this.store.runs.insertIfNoActive(candidate);
@@ -104,7 +106,7 @@ export class RunManager {
 
     try {
       const provider = await this.providers.get(this.config.sandboxProvider);
-      const { handle } = await provider.start({
+      const { handle, warm } = await provider.start({
         runId: run.id,
         apiOrigin: sandboxOrigin(this.config),
         runToken,
@@ -113,16 +115,24 @@ export class RunManager {
         // with its own metadata-server identity token instead.
         devToken: this.config.devMode ? this.config.devToken : undefined,
       });
-      return (
-        (await this.store.runs.update(run.id, {
-          state: "provisioning",
-          providerHandle: handle,
-          sandboxProvider: this.config.sandboxProvider,
-          runTokenHash,
-          lastSeenAt: now,
-          updatedAt: new Date().toISOString(),
-        })) ?? run
-      );
+      const providerReturnedAt = new Date().toISOString();
+      const updated = await this.store.runs.update(run.id, {
+        state: "provisioning",
+        providerHandle: handle,
+        sandboxProvider: this.config.sandboxProvider,
+        runTokenHash,
+        lastSeenAt: now,
+        updatedAt: new Date().toISOString(),
+      });
+      // After the update above, not before: runTokenHash must land as soon as possible, since a fast
+      // hello that arrives before it is refused 4401 for good. Its own write, not part of that
+      // update: agentd may already have said hello (link role, another process) and stamped
+      // startup.helloAt, which a whole-object write would lose. Best-effort: timing never fails a
+      // run whose sandbox did start.
+      const stamped = await this.store.runs
+        .mergeStartup(run.id, { providerReturnedAt, ...(typeof warm === "boolean" ? { warm } : {}) })
+        .catch(() => null);
+      return stamped ?? updated ?? run;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       // A provider's error message occasionally already ends in its own "." (or "..." etc.); strip

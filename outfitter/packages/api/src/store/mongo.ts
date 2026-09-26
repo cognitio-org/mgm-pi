@@ -12,6 +12,7 @@ import type {
   PiEntry,
   Run,
   GithubIdempotencyRecord,
+  RunStartup,
   RunState,
   RunsCollection,
   DownMessage,
@@ -199,6 +200,18 @@ class MongoRuns implements RunsCollection {
       { $set: patch },
       { returnDocument: "after" },
     );
+    return stripId<Run>(result);
+  }
+
+  async mergeStartup(id: string, fields: Partial<RunStartup>, unlessSet?: keyof RunStartup): Promise<Run | null> {
+    const set: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(fields)) {
+      if (value !== undefined) set[`startup.${key}`] = value;
+    }
+    if (Object.keys(set).length === 0) return null;
+    const filter: Record<string, unknown> = { _id: id };
+    if (unlessSet) filter[`startup.${unlessSet}`] = { $exists: false };
+    const result = await this.col.findOneAndUpdate(filter, { $set: set }, { returnDocument: "after" });
     return stripId<Run>(result);
   }
 

@@ -5,6 +5,7 @@
 import type { FastifyReply } from "fastify";
 import type { Store } from "./store/types.ts";
 import { entryForWire } from "./entry-wire.ts";
+import { summarizeStartup } from "./startup.ts";
 
 export type SseEventType = "entry" | "event" | "status" | "spend" | "checkpoint";
 
@@ -108,6 +109,8 @@ export class SsePoller {
       lastCostEstimate?: number;
       lastUiRequestKey?: string;
       lastStatusDetail?: string;
+      /** JSON of the last startup summary published (startup.ts), so it goes out only on change. */
+      lastStartupKey?: string;
       /** Which run the fields above describe, so a note belonging to the previous run isn't left
        * standing over a new one -- see the `detail` handling in pollOne. */
       lastRunId?: string;
@@ -201,8 +204,21 @@ export class SsePoller {
     // reload. So the first poll that observes a different run sends an explicit null, which the
     // browser reads as "drop it".
     const runChanged = terminal !== null && terminal.id !== cursor.lastRunId;
-    if (runChanged) cursor.lastStatusDetail = undefined;
-    if (state !== cursor.lastState || runChanged || (detail !== undefined && detail !== cursor.lastStatusDetail)) {
+    if (runChanged) {
+      cursor.lastStatusDetail = undefined;
+      cursor.lastStartupKey = undefined;
+    }
+    // The run's start-up timing (startup.ts). Sent whenever it changes (ready, then "pi ready"), and
+    // as an explicit null on a new run with none yet, so the browser drops the previous run's.
+    const startup = terminal ? summarizeStartup(terminal) : null;
+    const startupKey = JSON.stringify(startup);
+    const startupChanged = startupKey !== cursor.lastStartupKey;
+    if (
+      state !== cursor.lastState ||
+      runChanged ||
+      startupChanged ||
+      (detail !== undefined && detail !== cursor.lastStatusDetail)
+    ) {
       this.hub.publish(sessionId, {
         type: "status",
         data: {
@@ -210,10 +226,12 @@ export class SsePoller {
           state,
           reason: run ? undefined : terminal?.reason,
           detail: runChanged ? (detail ?? null) : detail,
+          ...(startupChanged ? { startup } : {}),
         },
       });
       cursor.lastState = state;
       cursor.lastRunId = terminal?.id;
+      cursor.lastStartupKey = startupKey;
       if (detail !== undefined) cursor.lastStatusDetail = detail;
     }
     if (run && typeof run.costEstimate === "number" && run.costEstimate !== cursor.lastCostEstimate) {

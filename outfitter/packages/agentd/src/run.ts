@@ -48,6 +48,17 @@ import type {
   UpMessage,
 } from "./protocol.js";
 
+/** The start-up phases the `startup` frame carries: run.spec through pi ready. Later "first ..."
+ * milestones depend on the person's prompt, not on starting up. */
+const STARTUP_REPORT_PHASES = new Set([
+  "run.spec received",
+  "repo cloned",
+  "workspace restored",
+  "session import done",
+  "pi spawned",
+  "pi ready",
+]);
+
 /** Down-messages that target the pi process directly. Queued (see `pendingPiMessages`) while `pi`
  * hasn't been spawned yet -- e.g. a prompt that arrives during `cloning`/`restoring`/`starting`. */
 type PiTargetedDownMessage = DownPrompt | DownSteer | DownFollowUp | DownAbort | DownUiResponse | DownRpc | DownMail;
@@ -249,6 +260,10 @@ export class RunController {
   private readonly mailAccepted = new Set<string>();
   /** Start-up phase timing; only set when deps.startupPhases is on (startup-phases.ts). */
   private startup: StartupPhases | undefined;
+  /** The `startup` frame (phases through "pi ready"), once pi is ready. Sent then, and again after
+   * every reconnect until the run ends: Link drops a non-seq frame while the socket is down, and the
+   * api writes the phases once, so a repeat is harmless. */
+  private startupFrame: UpMessage | undefined;
   /** Localhost git smart-HTTP proxy for this run, if it has a GitHub repo and token. */
   private gitProxy: GitProxy | undefined;
   /** Broker socket for GitHub API calls. Network git does not use it. */
@@ -273,6 +288,7 @@ export class RunController {
     this.deps.link.onOpen?.(() => {
       this.apiLinkUp = true;
       this.githubSocket?.onLinkUp();
+      if (this.startupFrame && !this.stopping && !this.disposed) this.deps.link.send(this.startupFrame);
     });
     this.deps.link.onClose?.(() => {
       this.apiLinkUp = false;
@@ -799,8 +815,22 @@ export class RunController {
     });
   }
 
+  /** Sends the run's start-up phases through "pi ready" to the api (and keeps the frame for a
+   * reconnect, see `startupFrame`). Timings only. */
+  private reportStartup(): void {
+    if (this.startupFrame || !this.startup) return;
+    const phases = this.startup.list().filter((p) => STARTUP_REPORT_PHASES.has(p.name));
+    this.startupFrame = { t: "startup", phases };
+    this.deps.link.send(this.startupFrame);
+  }
+
   private handlePiEvent(event: PiRpcEvent): void {
-    if (this.startup?.observe(event)) return; // agentd's own readiness probe, not the api's business
+    if (this.startup?.observe(event)) {
+      // agentd's own readiness probe, not the api's business -- but its timing is: "pi ready" just
+      // fired, so report the start-up phases once (protocol.md's `startup` frame).
+      this.reportStartup();
+      return;
+    }
     this.deps.link.sendSeq((seq) => ({ t: "event", seq, event }));
     if (event.type === "response" && typeof event.id === "string" && this.mailInFlight.has(event.id)) {
       const mailId = this.mailInFlight.get(event.id)!;

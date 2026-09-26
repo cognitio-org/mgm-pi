@@ -42,6 +42,34 @@ function contract(name: string, getStore: () => Store) {
       assert.equal((runs[0] as { _id?: unknown })._id, undefined);
       assert.deepEqual(await store.runs.listForSession("no-such-session"), []);
     });
+
+    test("mergeStartup sets fields inside Run.startup without rewriting the rest, and unlessSet writes once", async () => {
+      const store = getStore();
+      const sessionId = `s-${randomUUID().slice(0, 8)}`;
+      const id = `${sessionId}-r`;
+      await store.runs.insert(run(sessionId, id, "2026-09-26T01:00:00.000Z", { state: "provisioning", startup: { wakeAt: "2026-09-26T01:00:00.000Z", provider: "gke" } }));
+
+      const first = await store.runs.mergeStartup(id, { helloAt: "2026-09-26T01:00:05.000Z", agentd: { bootMs: 900 } }, "helloAt");
+      assert.equal(first?.startup?.helloAt, "2026-09-26T01:00:05.000Z");
+      assert.equal(first?.startup?.wakeAt, "2026-09-26T01:00:00.000Z", "other startup fields survive");
+      assert.equal(first?.startup?.provider, "gke");
+
+      assert.equal(await store.runs.mergeStartup(id, { helloAt: "2026-09-26T02:00:00.000Z" }, "helloAt"), null, "already set: not written");
+      // Without unlessSet it merges; undefined values are not written.
+      const merged = await store.runs.mergeStartup(id, { providerReturnedAt: "2026-09-26T01:00:02.000Z", warm: undefined });
+      assert.equal(merged?.startup?.providerReturnedAt, "2026-09-26T01:00:02.000Z");
+      assert.equal("warm" in (merged?.startup ?? {}), false);
+
+      const row = await store.runs.findById(id);
+      assert.deepEqual(row?.startup, {
+        wakeAt: "2026-09-26T01:00:00.000Z",
+        provider: "gke",
+        helloAt: "2026-09-26T01:00:05.000Z",
+        agentd: { bootMs: 900 },
+        providerReturnedAt: "2026-09-26T01:00:02.000Z",
+      });
+      assert.equal(await store.runs.mergeStartup("no-such-run", { readyAt: "x" }), null);
+    });
   });
 }
 

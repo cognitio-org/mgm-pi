@@ -27,6 +27,23 @@ test("StartupPhases: logs each phase once, with time since start and since the p
   ]);
 });
 
+test("StartupPhases: list() returns each phase once, in order, as {name, ms}", () => {
+  let now = 0;
+  const phases = new StartupPhases({ log: () => {}, now: () => now });
+  now = 5;
+  phases.mark("run.spec received");
+  now = 900;
+  phases.mark("pi spawned");
+  phases.mark("pi spawned");
+  now = 2400.6;
+  phases.mark("pi ready");
+  assert.deepEqual(phases.list(), [
+    { name: "run.spec received", ms: 5 },
+    { name: "pi spawned", ms: 900 },
+    { name: "pi ready", ms: 2401 },
+  ]);
+});
+
 test("StartupPhases: the probe is a get_state with agentd's own id; its response is swallowed and marks readiness", () => {
   const lines: string[] = [];
   const phases = new StartupPhases({ log: (_m, fields) => lines.push(String(fields.phase)) });
@@ -62,6 +79,18 @@ class FakeLink implements LinkPort {
   sent: UpMessage[] = [];
   private seq = 1;
   private handler: ((msg: DownMessage) => void) | undefined;
+  private openHandlers: Array<() => void> = [];
+  private closeHandlers: Array<() => void> = [];
+  onOpen(h: () => void): void {
+    this.openHandlers.push(h);
+  }
+  onClose(h: () => void): void {
+    this.closeHandlers.push(h);
+  }
+  reconnect(): void {
+    for (const h of this.closeHandlers) h();
+    for (const h of this.openHandlers) h();
+  }
   sendSeq(build: (seq: number) => UpMessage): number {
     const seq = this.seq++;
     this.sent.push(build(seq));
@@ -168,6 +197,46 @@ test("RunController with startupPhases: probes pi once before the queued prompt,
     "first prompt accepted", "first model token", "first answer done",
   ]);
   for (const p of phases) assert.equal(typeof p.ms, "number");
+  controller.dispose();
+});
+
+test("RunController with startupPhases: sends one `startup` frame with the phases through pi ready, when pi ready fires", async () => {
+  const { controller, link, pi } = await startRun(true);
+  assert.equal(link.sent.filter((m) => m.t === "startup").length, 0, "nothing before pi is ready");
+
+  pi.emit({ type: "response", id: STARTUP_PROBE_ID, command: "get_state", success: true, data: {} });
+  const frames = link.sent.filter((m) => m.t === "startup") as Array<{ t: "startup"; phases: Array<{ name: string; ms: number }> }>;
+  assert.equal(frames.length, 1);
+  assert.deepEqual(frames[0].phases.map((p) => p.name), ["run.spec received", "session import done", "pi spawned", "pi ready"]);
+  for (const p of frames[0].phases) assert.equal(typeof p.ms, "number");
+  assert.deepEqual(Object.keys(frames[0]).sort(), ["phases", "t"], "timings only");
+
+  // Later milestones (first prompt accepted, ...) and a repeat of the probe's id send nothing more.
+  pi.emit({ type: "response", command: "prompt", success: true });
+  pi.emit({ type: "agent_end", messages: [] });
+  pi.emit({ type: "response", id: STARTUP_PROBE_ID, command: "get_state", success: true, data: {} });
+  assert.equal(link.sent.filter((m) => m.t === "startup").length, 1, "sent once");
+  controller.dispose();
+});
+
+test("RunController with startupPhases: re-sends the `startup` frame after a reconnect, until the run ends", async () => {
+  const { controller, link, pi } = await startRun(true);
+  link.reconnect();
+  assert.equal(link.sent.filter((m) => m.t === "startup").length, 0, "nothing to re-send before pi is ready");
+  pi.emit({ type: "response", id: STARTUP_PROBE_ID, command: "get_state", success: true, data: {} });
+  link.reconnect();
+  const frames = link.sent.filter((m) => m.t === "startup");
+  assert.equal(frames.length, 2, "sent at pi ready (maybe into a down link) and again on the reconnect");
+  assert.deepEqual(frames[1], frames[0]);
+  controller.dispose();
+  link.reconnect();
+  assert.equal(link.sent.filter((m) => m.t === "startup").length, 2, "not after the run is over");
+});
+
+test("RunController without startupPhases: never sends a `startup` frame", async () => {
+  const { controller, link, pi } = await startRun(false);
+  pi.emit({ type: "response", id: STARTUP_PROBE_ID, command: "get_state", success: true, data: {} });
+  assert.equal(link.sent.filter((m) => m.t === "startup").length, 0);
   controller.dispose();
 });
 

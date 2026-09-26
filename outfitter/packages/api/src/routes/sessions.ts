@@ -9,6 +9,7 @@ import { GITHUB_TOKEN_DEFAULT_SECRET } from "../secrets.ts";
 import { GITHUB_APP_ID_SECRET, GITHUB_APP_INSTALLATION_SECRET, GITHUB_APP_KEY_SECRET, GITHUB_APP_SLUG_SECRET, githubAppSecretsUsable, githubRepoName } from "../github-app.ts";
 import { sessionGithubTokenSecretName } from "../operator.ts";
 import { entryForWire } from "../entry-wire.ts";
+import { summarizeStartup } from "../startup.ts";
 
 const SESSION_VERSION = 3; // matches pi's CURRENT_SESSION_VERSION; keeps export.jsonl pi-compatible
 
@@ -198,6 +199,9 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
       runState: run?.state,
       runStateReason: runStateReason(run),
       pendingUiRequest,
+      // How long the reportable run took to start, step by step (startup.ts); null before it has
+      // started, or for a run that predates the timings.
+      startup: run ? summarizeStartup(run) : null,
       // Issue #132: the HTML preview's starting access. The run's own copy, so an old session's
       // preview matches the prompt that run was given; before any run has recorded one, the
       // Tape's current value, which is what the next run will get.
@@ -430,7 +434,10 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     // the most recent run's real terminal state (and its reason) so the header/composer can tell
     // "stopped" from "LOAD ERROR" on first paint, before any live status frame arrives.
     const latest = run ?? (await ctx.store.runs.findLatestForSession(session.id));
-    ctx.sse.publish(session.id, { type: "status", data: { t: "status", state: latest?.state ?? "stopped", reason: latest?.reason } });
+    ctx.sse.publish(session.id, {
+      type: "status",
+      data: { t: "status", state: latest?.state ?? "stopped", reason: latest?.reason, startup: latest ? summarizeStartup(latest) : null },
+    });
     // Bug 2 (docs/reports/cloud-fixes.md): in a split web/link deployment, entries and status
     // changes land on the "link" role's process (the agentd WebSocket) while this subscriber is on
     // the "web" role's process -- AgentLink's in-process publish never reaches it. ssePoller polls

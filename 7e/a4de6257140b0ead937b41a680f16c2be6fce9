@@ -1,0 +1,32 @@
+outfitter/packages/agentd/src/link.ts
+  s_9e985270e78a63::t_84773a179dcd0f 31,33-34
+  s_9e985270e78a63::t_b933c1de3c553d 249,255-264,272-274
+  s_9e985270e78a63::t_a9bf39e74e2c95 211-216
+  s_9e985270e78a63::t_19e33b6b5e7034 112,114-115
+  s_9e985270e78a63::t_be2a95b6831cee 362-365
+outfitter/packages/api/src/agentlink.ts
+  s_9e985270e78a63::t_1c8cd8f84c9ae9 779
+  s_9e985270e78a63::t_d594e5a3a4ecda 1565,1572-1580
+  s_9e985270e78a63::t_b9666793c9fe00 1581
+outfitter/packages/api/test/agentlink.test.ts
+  s_9e985270e78a63::t_af7b20155b6bac 328-332,334,336,339-364
+  s_9e985270e78a63::t_01abf7ad8b2c46 333,335,337-338
+outfitter/packages/agentd/test/link.test.ts
+  s_9e985270e78a63::t_f2dcbfbf77b130 261,269-276,279-314
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "7ea4de6257140b0ead937b41a680f16c2be6fce9",
+  "prompts": {},
+  "sessions": {
+    "s_9e985270e78a63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "019f7f91-d886-47f5-9a90-f34314b7756e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

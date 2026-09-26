@@ -27,10 +27,13 @@ git -C "${REPO}" checkout -q -b main
 mkdir -p "${REPO}/outfitter/deploy"
 cp "${DEPLOY_SRC}/env.sh" "${DEPLOY_SRC}/config.env" "${DEPLOY_SRC}/service.sh" "${REPO}/outfitter/deploy/"
 # Force GKE off in this copy's file line, whatever the checked-in default is, so the test doesn't
-# depend on the default's value or on its expansion form (`-` vs `:-`).
+# depend on the default's value or on its expansion form (`-` vs `:-`). GKE off means Cloud Run is
+# the provider too (the checked-in default is gke since 2026-09-26), so force that line as well.
 CFG="${REPO}/outfitter/deploy/config.env"
-sed 's/^GKE_CLUSTER=.*/GKE_CLUSTER=""/' "${CFG}" >"${CFG}.tmp" && mv "${CFG}.tmp" "${CFG}"
+sed -e 's/^GKE_CLUSTER=.*/GKE_CLUSTER=""/' -e 's/^SANDBOX_PROVIDER=.*/SANDBOX_PROVIDER="cloudrun"/' \
+  "${CFG}" >"${CFG}.tmp" && mv "${CFG}.tmp" "${CFG}"
 grep -qx 'GKE_CLUSTER=""' "${CFG}" || { echo "FAIL: couldn't force GKE_CLUSTER off in the test's config.env"; exit 1; }
+grep -qx 'SANDBOX_PROVIDER="cloudrun"' "${CFG}" || { echo "FAIL: couldn't force SANDBOX_PROVIDER=cloudrun in the test's config.env"; exit 1; }
 git -C "${REPO}" add -A && git -C "${REPO}" commit -q -m one
 git -C "${REPO}" push -q origin main
 TAG="$(git -C "${REPO}" rev-parse --short=12 HEAD)"

@@ -777,6 +777,7 @@ export class AgentLink {
         fail: true,
       });
     }
+    buffer.accept();
     // Bug 9 (docs/reports/cloud-fixes.md): fail loudly on version skew instead of the silent
     // breakage a mismatched deploy caused before (an older agentd ignoring frames a newer web role
     // sent). A missing protocolVersion (an agentd build that predates this field) counts as older.
@@ -1571,12 +1572,22 @@ class FrameBuffer {
       resolve(raw);
       return;
     }
-    if (this.queue.length >= FRAME_BUFFER_CAP) {
+    if (this.queue.length >= this.cap) {
       this.overflowed = true;
       return;
     }
     this.queue.push(raw);
   };
+
+  private cap = FRAME_BUFFER_CAP;
+
+  /** The run token checked out: this is the run's own sandbox, not an unproven flooder, so stop
+   * capping. Past this point nothing reads `overflowed`, and a frame dropped here would be lost for
+   * good -- agentd drops everything up to the next seq the api acks (#185). A reconnecting agentd
+   * replays its whole unacked backlog the moment run.spec arrives, while this buffer still holds. */
+  accept(): void {
+    this.cap = Number.POSITIVE_INFINITY;
+  }
 
   private readonly onClose = (): void => {
     if (!this.waiter) return;

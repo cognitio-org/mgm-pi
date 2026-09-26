@@ -1,0 +1,23 @@
+outfitter/docs/protocol.md
+  s_9e985270e78a63::t_a700277f699c1d 517-520
+outfitter/packages/api/test/agentlink.test.ts
+  s_9e985270e78a63::t_21283fcf89d847 374-390
+outfitter/packages/api/src/agentlink.ts
+  s_9e985270e78a63::t_7fcc68db6b8269 1142-1145
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "92c915526e25aea9eebe9d5a96d7f348b4142d9a",
+  "prompts": {},
+  "sessions": {
+    "s_9e985270e78a63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "019f7f91-d886-47f5-9a90-f34314b7756e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

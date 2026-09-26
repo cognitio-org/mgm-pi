@@ -371,6 +371,23 @@ describe("agentd <-> api WebSocket", () => {
     await app.fastify.close();
   });
 
+  test("a reconnect of a running run gets no snapshot.jsonl: agentd already applied its spec", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+    await app.store.entries.insertIfNew(session.id, 1, { id: "u1", parentId: null, type: "message" });
+    await app.store.runs.update(runId, { state: "running" });
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    const spec = await agent.nextMessage();
+    assert.equal(spec.t, "run.spec");
+    assert.equal(spec.snapshot.jsonl, undefined);
+
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
   test("run.spec for a session with no entries sends no snapshot.jsonl (agentd starts an empty one)", async () => {
     const app = await buildTestApp();
     const { session, runId, runToken } = await makeRunningSession(app);

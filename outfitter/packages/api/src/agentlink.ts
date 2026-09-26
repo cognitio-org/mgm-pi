@@ -1139,7 +1139,10 @@ export class AgentLink {
     const author = authorFor(session.ownerEmail, owner);
     // The conversation so far, from the store (session-jsonl.ts): a woken session's pi picks up the
     // thread instead of starting empty. agentd prefers `jsonl` over `url` when both are set.
-    const stored = await this.store.entries.listForSession(session.id);
+    // Not on a reconnect of a running/idle/stopping run: only agentd reports those states, after it
+    // has applied its run.spec, and it ignores every later one -- rebuilding the whole transcript
+    // there would only lengthen the reconnect agentd waits out (#185).
+    const stored = isReadyState(run.state) ? [] : await this.store.entries.listForSession(session.id);
     const jsonl = stored.length > 0 ? sessionJsonl(session, stored.map((e) => e.entry)) : undefined;
     return {
       githubTokenExpiresAt: secrets.githubTokenExpiresAt,

@@ -9,9 +9,9 @@
 // the laptop's LM Studio, LiteLLM, Cloud Run job capacity) -- hence the different file name.
 //
 // Every probe function below is written to never throw: a missing credential or an inapplicable
-// probe (e.g. the cloudrun probe when SANDBOX_PROVIDER isn't cloudrun) resolves to a single
-// "unknown" row with a `detail` saying why, and every network call is bounded by a 3s
-// AbortController timeout. ProviderStatusService.pollOnce also wraps each probe in
+// probe (e.g. a sandbox provider with no capacity()) resolves to a single "unknown" row with a
+// `detail` saying why, and every network call is bounded by a timeout (3 s, or SANDBOX_TIMEOUT_MS
+// for the sandbox capacity probes). ProviderStatusService.pollOnce also wraps each probe in
 // Promise.allSettled as a last-resort backstop, so a probe with a bug in it can never wedge the
 // poller or take the whole service down.
 
@@ -305,31 +305,50 @@ export async function probeLitellm(
 
 // ---------- sandbox capacity (Cloud Run / GKE) ----------
 
-/** Row id/kind/label for the configured sandbox provider's capacity row. Only cloudrun and gke
- * get their own row (dashboard history keeps `id: "cloudrun"` for its 7-day uptime, per
- * gke-sandbox-provider-plan.md §5 item 7); every local dev provider (inprocess, docker) reports
- * under the same "cloudrun" row it always has, since there's nothing else to show. */
+/** Longer than DEFAULT_TIMEOUT_MS on purpose (#169): a cold api instance's first GKE capacity()
+ * runs several steps one after another (lazy-import google-auth-library, mint a token,
+ * clusters.get for the endpoint, LIST the claims, GET the warm pool), which can blow through 3 s
+ * while the cluster is healthy. Only the sandbox probes get this; the others keep 3 s, and they all
+ * run in parallel, so a poll takes at most this long. */
+export const SANDBOX_TIMEOUT_MS = 10_000;
+
+/** Kinds whose rows come from the sandbox capacity probes -- the ones reconciled against the
+ * registered providers (a stored row for a provider no longer registered is marked, see
+ * ProviderStatusService.markUnregistered). */
+const SANDBOX_KINDS: ReadonlySet<ProviderKind> = new Set<ProviderKind>(["cloudrun", "gke"]);
+
+/** Set as `detail` on a stored sandbox row whose provider this deployment no longer registers. */
+export const NOT_REGISTERED_DETAIL = "not registered on this deployment";
+
+/** Row id/kind/label for a sandbox provider's capacity row. Only cloudrun and gke get their own
+ * row (dashboard history keeps `id: "cloudrun"` for its 7-day uptime, per
+ * gke-sandbox-provider-plan.md §5 item 7); a local dev default (inprocess, docker) reports under
+ * the same "cloudrun" row it always has, since there's nothing else to show. */
 function sandboxRow(sandboxProvider: SandboxProviderName): { id: string; kind: ProviderKind; name: string } {
   if (sandboxProvider === "gke") return { id: "gke", kind: "gke", name: "GKE Agent Sandbox" };
   return { id: "cloudrun", kind: "cloudrun", name: "Cloud Run agent job" };
 }
 
-/** "unknown" (not a probe failure) when the configured provider has no capacity to report --
- * either it isn't a cloud provider at all, or `capacityFn` wasn't injected (server.ts only
- * injects it when the default SandboxProvider actually implements `capacity()`) -- per EPIC.md
- * E2.10's "otherwise unknown". `capacityFn` is SandboxProvider.capacity(), see server.ts. */
+/** One sandbox provider's capacity row. "unknown" (not a probe failure) when it has no capacity
+ * to report -- it isn't a cloud provider at all, `capacityFn` wasn't given, or it resolved
+ * `undefined` (the provider has no capacity()) -- per EPIC.md E2.10's "otherwise unknown".
+ * `isDefault` marks the provider new runs launch on (config.sandboxProvider); the others are
+ * registered only so runs they already started stay stoppable (registry.ts createProviders). */
 export async function probeSandbox(
   sandboxProvider: SandboxProviderName,
-  capacityFn: (() => Promise<SandboxCapacity>) | undefined,
-  timeoutMs = DEFAULT_TIMEOUT_MS,
+  capacityFn: (() => Promise<SandboxCapacity | undefined>) | undefined,
+  timeoutMs = SANDBOX_TIMEOUT_MS,
+  isDefault = false,
 ): Promise<ProviderRow[]> {
   const checkedAt = nowIso();
-  const row = sandboxRow(sandboxProvider);
-  if (!isCloudProvider(sandboxProvider) || !capacityFn) {
+  const row = { ...sandboxRow(sandboxProvider), ...(isDefault ? { isDefault: true } : {}) };
+  if (!isCloudProvider(sandboxProvider)) {
     return [{ ...row, status: "unknown", detail: `SANDBOX_PROVIDER is not ${row.id}`, checkedAt }];
   }
+  if (!capacityFn) return [{ ...row, status: "unknown", detail: "no capacity probe", checkedAt }];
   try {
     const capacity = await withTimeout(capacityFn(), timeoutMs);
+    if (!capacity) return [{ ...row, status: "unknown", detail: "no capacity probe", checkedAt }];
     const meta: Record<string, unknown> = { active: capacity.active, runningExecutions: capacity.active };
     if (capacity.warmReady !== undefined) meta.warmReady = capacity.warmReady;
     if (capacity.warmDesired !== undefined) meta.warmDesired = capacity.warmDesired;
@@ -338,6 +357,26 @@ export async function probeSandbox(
   } catch (err) {
     return [{ ...row, status: "down", detail: errMessage(err), checkedAt }];
   }
+}
+
+/** The registered sandbox providers, as the status service sees them: server.ts adapts the
+ * SandboxProviders registry to this, tests pass a plain object. */
+export interface SandboxCapacitySource {
+  /** Every registered provider name (SandboxProviders.names()), default included. */
+  names: SandboxProviderName[];
+  /** That provider's capacity(), or undefined when it has none. May reject (e.g. the provider
+   * fails to build); probeSandbox turns that into a "down" row. */
+  capacity(name: SandboxProviderName): Promise<SandboxCapacity | undefined>;
+}
+
+/** Which sandbox rows a poll writes: one per registered cloud provider (default first), so a
+ * provider that's still registered but no longer the default (Cloud Run after the GKE switch)
+ * keeps a live row instead of its last pre-switch status. A local dev default with no cloud
+ * provider registered keeps the historical single "cloudrun" unknown row. */
+export function sandboxTargets(defaultName: SandboxProviderName, names: SandboxProviderName[]): SandboxProviderName[] {
+  const cloud = [...new Set(names)].filter(isCloudProvider);
+  cloud.sort((a, b) => Number(b === defaultName) - Number(a === defaultName));
+  return cloud.length > 0 ? cloud : [defaultName];
 }
 
 // ---------- the service ----------
@@ -359,11 +398,17 @@ export interface ProviderStatusServiceDeps {
   /** Resolves the LiteLLM key to probe management endpoints with (config.litellmAdminKey, falling
    * back to SecretsBroker.defaultLitellmKey() -- see server.ts). */
   litellmKey: () => Promise<string>;
-  /** The configured default SandboxProvider's optional capacity(), when it has one (server.ts
-   * duck-types this off `provider.capacity` -- gke-sandbox-provider.md §2.4 gap G3). */
+  /** Every registered sandbox provider, each probed for capacity (#169). server.ts builds this
+   * from the SandboxProviders registry (capacity() duck-typed per provider -- gke-sandbox-
+   * provider.md §2.4 gap G3). */
+  sandboxes?: SandboxCapacitySource;
+  /** Shorthand when only the default provider is registered (most tests): its capacity(). Ignored
+   * when `sandboxes` is given. */
   sandboxCapacity?: () => Promise<SandboxCapacity>;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  /** The sandbox capacity probes' timeout (default SANDBOX_TIMEOUT_MS). */
+  sandboxTimeoutMs?: number;
 }
 
 function boundHistory(history: ProviderTransition[], nowMs: number): ProviderTransition[] {
@@ -375,6 +420,9 @@ export class ProviderStatusService {
   private readonly store: Store;
   private readonly sse: SseHub;
   private readonly probes: Array<() => Promise<ProviderRow[]>>;
+  /** Row ids the sandbox probes write; any other stored cloudrun/gke row belongs to a provider
+   * this deployment no longer registers. */
+  private readonly sandboxRowIds: ReadonlySet<string>;
   /** When this instance last finished a poll (0 = never). Per instance on purpose: a new Cloud Run
    * instance has no trustworthy in-memory view of how fresh the stored rows are, so it re-polls. */
   private lastPollAt = 0;
@@ -385,19 +433,34 @@ export class ProviderStatusService {
     this.sse = deps.sse;
     const fetchImpl = deps.fetchImpl ?? fetch;
     const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const sandboxTimeoutMs = deps.sandboxTimeoutMs ?? SANDBOX_TIMEOUT_MS;
+    const defaultName = deps.config.sandboxProvider;
+    const shorthand = deps.sandboxCapacity;
+    const sandboxes: SandboxCapacitySource | undefined =
+      deps.sandboxes ?? (shorthand ? { names: [defaultName], capacity: () => shorthand() } : undefined);
+    const targets = sandboxTargets(defaultName, sandboxes?.names ?? [defaultName]);
+    this.sandboxRowIds = new Set(targets.map((name) => sandboxRow(name).id));
     this.probes = [
       () => probeNgrok(deps.config.ngrokApiKey, timeoutMs, fetchImpl),
       () => probeLaptop(deps.laptopProbe, deps.config.tunnelDomainLmstudio, deps.config.localTunnelToken, timeoutMs, fetchImpl),
       () => probeLitellm(deps.config.litellmBaseUrl, deps.litellmKey, timeoutMs, fetchImpl),
-      () => probeSandbox(deps.config.sandboxProvider, deps.sandboxCapacity, timeoutMs),
+      // One probe per registered cloud provider, in parallel with each other and the rest.
+      ...targets.map(
+        (name) => () =>
+          probeSandbox(name, sandboxes && (() => sandboxes.capacity(name)), sandboxTimeoutMs, name === defaultName),
+      ),
     ];
   }
 
   /** Current state, current rows only (no history) -- GET /api/providers and the SSE stream's
-   * initial snapshot both use this. */
+   * initial snapshot both use this. Leaves out sandbox rows for providers this deployment doesn't
+   * register (#169): their stored record is kept (and marked, see markUnregistered) for its
+   * history, but a permanent "unknown" ghost would hold the header's summary pill off "up". */
   async getCurrent(): Promise<ProviderRow[]> {
     const records = await this.store.providers.list();
-    return records.map(({ history: _history, ...row }) => row);
+    return records
+      .filter((r) => !SANDBOX_KINDS.has(r.kind) || this.sandboxRowIds.has(r.id))
+      .map(({ history: _history, ...row }) => row);
   }
 
   /** Runs every probe, reconciles each row against stored state (bounding history to 7 days),
@@ -414,8 +477,9 @@ export class ProviderStatusService {
   /** Polls only when this instance hasn't finished a poll within `maxAgeMs`, then returns current
    * rows. This is how the web role keeps provider status fresh: inside a request, where Cloud Run
    * allocates CPU. A background timer does not work there -- with request-based CPU allocation and
-   * scale-to-zero, a poll started between requests stalls until its 3 s timeouts fire and every
-   * probe reports a false "down" (observed 2026-09-22 on outfitter-api-00007). */
+   * scale-to-zero, a poll started between requests stalls until its timeouts fire and every
+   * probe reports a false "down" (observed 2026-09-22 on outfitter-api-00007). A read that does
+   * poll waits for the slowest probe, so up to SANDBOX_TIMEOUT_MS. */
   async refreshIfStale(maxAgeMs: number): Promise<ProviderRow[]> {
     if (Date.now() - this.lastPollAt < maxAgeMs) return this.getCurrent();
     try {
@@ -433,7 +497,10 @@ export class ProviderStatusService {
     const nowMs = Date.now();
     const settled = await Promise.allSettled(this.probes.map((probe) => probe()));
     const rows = settled.flatMap((s) => (s.status === "fulfilled" ? s.value : []));
-    const changedFlags = await Promise.all(rows.map((row) => this.reconcileRow(row, nowMs)));
+    const changedFlags = await Promise.all([
+      ...rows.map((row) => this.reconcileRow(row, nowMs)),
+      this.markUnregistered(nowMs),
+    ]);
     const current = await this.getCurrent();
     if (changedFlags.some(Boolean)) {
       this.sse.publish(SSE_CHANNEL, { type: "status", data: { providers: current } });
@@ -459,6 +526,30 @@ export class ProviderStatusService {
     }
   }
 
+
+  /** A stored cloudrun/gke row whose provider this deployment no longer registers (e.g. Cloud Run
+   * once CLOUDRUN_JOB goes away) is never probed again; without this it would keep its last live
+   * status and meta forever. It's marked "unknown" with NOT_REGISTERED_DETAIL (no meta, no default
+   * marker) once, rather than deleted, so its history still records the transition. Keyed off the
+   * registered set, not off which probes returned rows, so a probe that crashed never counts. */
+  private async markUnregistered(nowMs: number): Promise<boolean> {
+    const stored = await this.store.providers.list();
+    const stale = stored.filter(
+      (r) =>
+        SANDBOX_KINDS.has(r.kind) &&
+        !this.sandboxRowIds.has(r.id) &&
+        !(r.status === "unknown" && r.detail === NOT_REGISTERED_DETAIL && !r.isDefault && !r.meta),
+    );
+    const flags = await Promise.all(
+      stale.map((r) =>
+        this.reconcileRow(
+          { id: r.id, kind: r.kind, name: r.name, status: "unknown", detail: NOT_REGISTERED_DETAIL, checkedAt: nowIso() },
+          nowMs,
+        ),
+      ),
+    );
+    return flags.some(Boolean);
+  }
 
   private async reconcileRow(row: ProviderRow, nowMs: number): Promise<boolean> {
     const prior = await this.store.providers.findById(row.id);

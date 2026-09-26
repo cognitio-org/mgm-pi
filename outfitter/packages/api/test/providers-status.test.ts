@@ -15,6 +15,11 @@ import {
   probeLaptop,
   probeLitellm,
   probeSandbox,
+  sandboxTargets,
+  DEFAULT_TIMEOUT_MS,
+  SANDBOX_TIMEOUT_MS,
+  NOT_REGISTERED_DETAIL,
+  type SandboxCapacitySource,
   parseNgrokEndpoints,
   parseModelInfo,
   parseKeyInfo,
@@ -305,6 +310,37 @@ describe("probeSandbox", () => {
     assert.equal(rows[0].status, "down");
     assert.ok(Date.now() - startedAt < 1000);
   });
+
+  test("isDefault marks the row only when asked", async () => {
+    const [def] = await probeSandbox("gke", async () => ({ active: 0 }), 100, true);
+    const [other] = await probeSandbox("cloudrun", async () => ({ active: 0 }), 100);
+    assert.equal(def.isDefault, true);
+    assert.equal("isDefault" in other, false);
+  });
+
+  test("a provider with no capacity() (capacityFn resolves undefined): unknown, not down", async () => {
+    const [row] = await probeSandbox("cloudrun", async () => undefined, 100);
+    assert.equal(row.status, "unknown");
+    assert.equal(row.detail, "no capacity probe");
+  });
+
+  test("the sandbox probe's default timeout is the longer SANDBOX_TIMEOUT_MS (about 10 s), not the 3 s one", () => {
+    assert.equal(SANDBOX_TIMEOUT_MS, 10_000);
+    assert.ok(SANDBOX_TIMEOUT_MS > DEFAULT_TIMEOUT_MS);
+    assert.equal(DEFAULT_TIMEOUT_MS, 3_000, "the other probes keep their 3 s");
+  });
+});
+
+describe("sandboxTargets", () => {
+  test("every registered cloud provider, default first; local dev providers never get a row", () => {
+    assert.deepEqual(sandboxTargets("gke", ["cloudrun", "gke"]), ["gke", "cloudrun"]);
+    assert.deepEqual(sandboxTargets("cloudrun", ["gke", "cloudrun"]), ["cloudrun", "gke"]);
+    assert.deepEqual(sandboxTargets("docker", ["docker", "gke"]), ["gke"]);
+  });
+
+  test("a local dev default with no cloud provider registered keeps the historical single row", () => {
+    assert.deepEqual(sandboxTargets("inprocess", ["inprocess"]), ["inprocess"]);
+  });
 });
 
 // ---------- the service: reconcile, history bounding, SSE ----------
@@ -326,6 +362,191 @@ function buildService(store: MemoryStore, sse: SseHub, overrides: { sandboxCapac
     sandboxCapacity: overrides.sandboxCapacity,
   });
 }
+
+/** Like buildService, but with a registry-shaped sandbox source (production's shape, #169). */
+function buildMultiService(
+  store: MemoryStore,
+  sse: SseHub,
+  opts: { defaultName: "gke" | "cloudrun"; sandboxes: SandboxCapacitySource; timeoutMs?: number; sandboxTimeoutMs?: number },
+) {
+  return new ProviderStatusService({
+    store,
+    sse,
+    laptopProbe: new LaptopProbe({ tunnelDomain: "", token: "" }),
+    config: {
+      ngrokApiKey: "",
+      tunnelDomainLmstudio: "",
+      localTunnelToken: "",
+      litellmBaseUrl: "https://litellm.example/v1",
+      sandboxProvider: opts.defaultName,
+    },
+    litellmKey: async () => "",
+    sandboxes: opts.sandboxes,
+    timeoutMs: opts.timeoutMs,
+    sandboxTimeoutMs: opts.sandboxTimeoutMs,
+  });
+}
+
+describe("ProviderStatusService: every registered sandbox provider (#169)", () => {
+  test("probes gke and cloudrun both while both are registered, in parallel, marking only the default", async () => {
+    const store = new MemoryStore();
+    const probed: string[] = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const service = buildMultiService(store, new SseHub(), {
+      defaultName: "gke",
+      sandboxes: {
+        names: ["gke", "cloudrun"],
+        capacity: async (name) => {
+          probed.push(name);
+          inFlight++;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise((r) => setTimeout(r, 10));
+          inFlight--;
+          return name === "gke" ? { active: 1, warmReady: 1, warmDesired: 1, limit: 3 } : { active: 0 };
+        },
+      },
+    });
+
+    const rows = await service.pollOnce();
+    const gke = rows.find((r) => r.id === "gke");
+    const cloudrun = rows.find((r) => r.id === "cloudrun");
+    assert.equal(gke?.status, "up");
+    assert.equal(gke?.isDefault, true);
+    assert.equal(cloudrun?.status, "up");
+    assert.equal(cloudrun?.isDefault, undefined);
+    assert.deepEqual(cloudrun?.meta, { active: 0, runningExecutions: 0 });
+    assert.deepEqual(probed.sort(), ["cloudrun", "gke"]);
+    assert.equal(maxInFlight, 2, "the two capacity probes ran concurrently");
+  });
+
+  test("the non-default provider's row is refreshed every poll: a failure there shows, and doesn't touch the default", async () => {
+    const store = new MemoryStore();
+    let cloudrunFails = false;
+    const service = buildMultiService(store, new SseHub(), {
+      defaultName: "gke",
+      sandboxes: {
+        names: ["gke", "cloudrun"],
+        capacity: async (name) => {
+          if (name === "cloudrun" && cloudrunFails) throw new Error("permission denied");
+          return { active: 0 };
+        },
+      },
+    });
+    await service.pollOnce();
+    cloudrunFails = true;
+    const rows = await service.pollOnce();
+    assert.equal(rows.find((r) => r.id === "cloudrun")?.status, "down");
+    assert.match(rows.find((r) => r.id === "cloudrun")?.detail ?? "", /permission denied/);
+    assert.equal(rows.find((r) => r.id === "gke")?.status, "up");
+  });
+
+  test("after the switch, the old default's stored row loses its default marker", async () => {
+    const store = new MemoryStore();
+    await store.providers.upsert({
+      id: "cloudrun",
+      kind: "cloudrun",
+      name: "Cloud Run agent job",
+      status: "up",
+      checkedAt: "2026-09-25T00:00:00.000Z",
+      isDefault: true,
+      meta: { active: 2, runningExecutions: 2 },
+      history: [{ status: "up", at: "2026-09-25T00:00:00.000Z" }],
+    });
+    const service = buildMultiService(store, new SseHub(), {
+      defaultName: "gke",
+      sandboxes: { names: ["gke", "cloudrun"], capacity: async () => ({ active: 0 }) },
+    });
+    const rows = await service.pollOnce();
+    const cloudrun = rows.find((r) => r.id === "cloudrun");
+    assert.equal(cloudrun?.isDefault, undefined);
+    assert.notEqual(cloudrun?.checkedAt, "2026-09-25T00:00:00.000Z", "re-probed, not the pre-switch row");
+    assert.equal(rows.filter((r) => r.isDefault).map((r) => r.id).join(), "gke");
+  });
+
+  test("a stored sandbox row whose provider is no longer registered is marked unknown once and left out of current rows", async () => {
+    const store = new MemoryStore();
+    const sse = new SseHub();
+    const published: SseEvent[] = [];
+    (sse as unknown as { publish: SseHub["publish"] }).publish = (_channel, event) => published.push(event);
+    await store.providers.upsert({
+      id: "cloudrun",
+      kind: "cloudrun",
+      name: "Cloud Run agent job",
+      status: "up",
+      checkedAt: "2026-09-25T00:00:00.000Z",
+      meta: { active: 2, runningExecutions: 2 },
+      history: [{ status: "up", at: new Date().toISOString() }],
+    });
+    const service = buildMultiService(store, sse, {
+      defaultName: "gke",
+      sandboxes: { names: ["gke"], capacity: async () => ({ active: 0 }) },
+    });
+
+    const rows = await service.pollOnce();
+    assert.equal(rows.some((r) => r.id === "cloudrun"), false, "no ghost row in GET /api/providers");
+    assert.equal(rows.find((r) => r.id === "gke")?.isDefault, true);
+
+    const record = await store.providers.findById("cloudrun");
+    assert.ok(record);
+    assert.equal(record.status, "unknown");
+    assert.equal(record.detail, NOT_REGISTERED_DETAIL);
+    assert.equal(record.meta, undefined, "its last live capacity is dropped");
+    assert.deepEqual(record.history.map((h) => h.status), ["up", "unknown"]);
+    const markedAt = record.checkedAt;
+
+    published.length = 0;
+    await service.pollOnce();
+    assert.equal(published.length, 0, "nothing transitioned on the second poll");
+    assert.equal((await store.providers.findById("cloudrun"))?.checkedAt, markedAt, "marked once, not rewritten every poll");
+  });
+
+  test("a sandbox probe that crashed outright never gets its (still registered) row marked unregistered", async () => {
+    const store = new MemoryStore();
+    const service = buildMultiService(store, new SseHub(), {
+      defaultName: "gke",
+      sandboxes: {
+        names: ["gke", "cloudrun"],
+        capacity: async (name) => {
+          if (name === "cloudrun") throw new Error("boom");
+          return { active: 0 };
+        },
+      },
+    });
+    const rows = await service.pollOnce();
+    assert.equal(rows.find((r) => r.id === "cloudrun")?.status, "down");
+    assert.notEqual(rows.find((r) => r.id === "cloudrun")?.detail, NOT_REGISTERED_DETAIL);
+  });
+
+  test("sandbox probes use their own, longer timeout; the other probes keep theirs", async () => {
+    const store = new MemoryStore();
+    // A capacity() slower than the general timeout but within the sandbox one reports up...
+    const slowButFine = buildMultiService(store, new SseHub(), {
+      defaultName: "gke",
+      timeoutMs: 20,
+      sandboxTimeoutMs: 1_000,
+      sandboxes: {
+        names: ["gke"],
+        capacity: async () => {
+          await new Promise((r) => setTimeout(r, 80));
+          return { active: 0 };
+        },
+      },
+    });
+    assert.equal((await slowButFine.pollOnce()).find((r) => r.id === "gke")?.status, "up");
+
+    // ...and one that never answers is cut off at the sandbox timeout, saying so.
+    const hung = buildMultiService(new MemoryStore(), new SseHub(), {
+      defaultName: "gke",
+      timeoutMs: 1_000,
+      sandboxTimeoutMs: 30,
+      sandboxes: { names: ["gke"], capacity: () => new Promise(() => {}) },
+    });
+    const row = (await hung.pollOnce()).find((r) => r.id === "gke");
+    assert.equal(row?.status, "down");
+    assert.match(row?.detail ?? "", /timed out after 30ms/);
+  });
+});
 
 describe("probe failure detail", () => {
   test("a LiteLLM health check that times out says so instead of reporting HTTP 0", async () => {

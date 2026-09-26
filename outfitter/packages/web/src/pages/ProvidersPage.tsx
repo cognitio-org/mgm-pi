@@ -1,4 +1,5 @@
 import { useProviders } from "../hooks/useProviders.ts";
+import { DEFAULT_PROVIDER_TAG } from "../components/ProviderStrip.tsx";
 import { Working } from "../components/Working.tsx";
 import { DeviceNotPresent } from "../components/DeviceNotPresent.tsx";
 import { vocabSubtitle, vocabulary } from "../lib/vocabulary.ts";
@@ -33,7 +34,17 @@ export function ProvidersPage() {
             <tbody>
               {providers.map((p) => (
                 <tr key={p.id}>
-                  <td data-label="Name">{p.name}</td>
+                  <td data-label="Name">
+                    {p.name}
+                    {p.isDefault && (
+                      <>
+                        {" "}
+                        <span className="chip" title="New runs launch on this sandbox provider">
+                          {DEFAULT_PROVIDER_TAG}
+                        </span>
+                      </>
+                    )}
+                  </td>
                   <td data-label="Kind">{p.kind}</td>
                   <td data-label="Status">
                     <span className={`status-pill ${p.status}`}>{p.status}</span>

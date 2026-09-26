@@ -1,5 +1,15 @@
 import { Link } from "react-router-dom";
 import { useProviders } from "../hooks/useProviders.ts";
+import type { ProviderRow } from "../api/client.ts";
+
+/** Shown next to the sandbox provider new runs launch on, when more than one is registered (e.g.
+ * GKE, with Cloud Run kept for runs it already started). */
+export const DEFAULT_PROVIDER_TAG = "new runs";
+
+/** A provider's name as the strip's popover shows it: the default sandbox provider tagged. */
+export function providerLabel(p: Pick<ProviderRow, "name" | "isDefault">): string {
+  return p.isDefault ? `${p.name} (${DEFAULT_PROVIDER_TAG})` : p.name;
+}
 
 const WORST_FIRST = ["down", "degraded", "unknown", "up"] as const;
 
@@ -39,7 +49,7 @@ export function ProviderStrip() {
       <div className="provider-strip-popover" role="group" aria-label="Peripheral status">
         {providers.map((p) => (
           <span key={p.id} className={`status-pill ${p.status}`} title={p.detail ?? p.name}>
-            {p.name}
+            {providerLabel(p)}
           </span>
         ))}
       </div>

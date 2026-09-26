@@ -67,6 +67,22 @@ describe("SandboxProviders", () => {
     assert.equal(await providers.get("cloudrun"), provider);
     await assert.rejects(() => providers.get("gke"), /not configured here/);
   });
+
+  test("names() lists every registered provider, built or not, without building any", () => {
+    let builds = 0;
+    const providers = new SandboxProviders("gke", {
+      gke: async () => {
+        builds++;
+        return new NoopProvider();
+      },
+      cloudrun: async () => {
+        builds++;
+        return new NoopProvider();
+      },
+    });
+    assert.deepEqual(providers.names().sort(), ["cloudrun", "gke"]);
+    assert.equal(builds, 0);
+  });
 });
 
 describe("providerNameFor", () => {
@@ -244,6 +260,39 @@ describe("buildApp wiring (main.ts-style: the full registry, not just the defaul
     assert.equal(stopped?.state, "stopped");
     assert.deepEqual(cloudrun.stopCalls, ["exec-legacy"]);
     assert.equal(gke.stopCalls.length, 0);
+
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("GET /api/providers has a live row for every registered cloud provider, the default marked (#169)", async () => {
+    // Before #169 only the default's capacity was probed, so after the switch to gke the stored
+    // cloudrun row kept its last pre-switch status forever.
+    const withCapacity = (active: number): SandboxProvider =>
+      Object.assign(new NoopProvider(), { capacity: async () => ({ active }) });
+    const providers = new SandboxProviders("gke", {
+      cloudrun: async () => withCapacity(0),
+      gke: async () => withCapacity(2),
+    });
+    const config = loadConfig({ SANDBOX_PROVIDER: "gke", OUTFITTER_DEV: "1" } as NodeJS.ProcessEnv);
+    const app = await buildApp({
+      store: new MemoryStore(),
+      config,
+      provider: providers,
+      secretsBroker: new MemorySecretsBroker(),
+      secretAdmin: new MemorySecretAdmin(),
+    });
+
+    const res = await app.fastify.inject({ method: "GET", url: "/api/providers" });
+    assert.equal(res.statusCode, 200);
+    const rows = res.json().providers as Array<{ id: string; status: string; isDefault?: boolean; meta?: { active?: number } }>;
+    const gke = rows.find((r) => r.id === "gke");
+    const cloudrun = rows.find((r) => r.id === "cloudrun");
+    assert.equal(gke?.status, "up");
+    assert.equal(gke?.isDefault, true);
+    assert.equal(gke?.meta?.active, 2);
+    assert.equal(cloudrun?.status, "up");
+    assert.equal(cloudrun?.isDefault, undefined);
 
     app.stopBackgroundTasks();
     await app.fastify.close();

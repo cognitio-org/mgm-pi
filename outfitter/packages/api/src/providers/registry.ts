@@ -27,6 +27,11 @@ export class SandboxProviders {
     this.factories = factories;
   }
 
+  /** Every registered provider name, default included (built or not). */
+  names(): SandboxProviderName[] {
+    return Object.keys(this.factories) as SandboxProviderName[];
+  }
+
   /** Lazily builds and memoizes. Throws `sandbox provider "<name>" is not configured here` if
    * `name` has no registered factory -- e.g. a run recorded a provider that this deployment no
    * longer configures after a SANDBOX_PROVIDER switch. Callers (runs.ts) catch this, log once, and

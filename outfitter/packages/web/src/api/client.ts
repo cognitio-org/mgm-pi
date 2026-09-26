@@ -178,6 +178,9 @@ export interface ProviderRow {
   status: "up" | "degraded" | "down" | "unknown";
   detail?: string;
   checkedAt: string;
+  /** Sandbox rows only: the provider new runs launch on. Other registered sandbox providers (kept
+   * so their in-flight runs stay stoppable) have a row without it. */
+  isDefault?: boolean;
 }
 
 /** GET /api/operator/settings's per-secret row (EPIC.md Decisions table / operators.md). Never

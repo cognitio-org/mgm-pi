@@ -486,10 +486,15 @@ export class GkeProvider implements SandboxProvider {
     return "starting";
   }
 
+  /** The providers dashboard's probe (#169). The kube client (and so the resolved endpoint) is
+   * memoized by kube(), and google-auth-library caches the access token until it nears expiry, so
+   * only an instance's first call pays for those; the two reads below run in parallel. */
   async capacity(): Promise<SandboxCapacity> {
     const kube = await this.kube();
-    const active = await this.countActive(kube);
-    const pool = await kube.get<SandboxWarmPool>(warmPoolPath(this.config.namespace, this.config.warmPool));
+    const [active, pool] = await Promise.all([
+      this.countActive(kube),
+      kube.get<SandboxWarmPool>(warmPoolPath(this.config.namespace, this.config.warmPool)),
+    ]);
     return {
       active,
       warmReady: pool?.status?.readyReplicas,

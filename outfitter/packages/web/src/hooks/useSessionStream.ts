@@ -163,9 +163,11 @@ export function useSessionStream(sessionId: string): StreamState {
     });
 
     source.addEventListener("liveness", (ev) => {
+      // Each frame describes the active run as a whole: an age it leaves out is cleared, so a new
+      // run's first frame (agentd connected, pi not yet active) drops the previous run's times.
       const times = livenessTimes(JSON.parse((ev as MessageEvent).data), Date.now());
-      if (times.agentSeenAt !== undefined) setAgentSeenAt(times.agentSeenAt);
-      if (times.piActiveAt !== undefined) setPiActiveAt(times.piActiveAt);
+      setAgentSeenAt(times.agentSeenAt);
+      setPiActiveAt(times.piActiveAt);
     });
 
     source.addEventListener("spend", (ev) => {

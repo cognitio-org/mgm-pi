@@ -1,0 +1,36 @@
+outfitter/packages/agentd/test/link.test.ts
+  s_9e985270e78a63::t_ec63060fe33d30 278,280-292
+  s_9e985270e78a63::t_a69cfd897407b5 256-258
+  s_9e985270e78a63::t_9d0f363567d585 248-255,259-261,266-277
+  s_9e985270e78a63::t_3839e12b265127 317,328,330-331
+  s_9e985270e78a63::t_460ae0bf58cd3b 279
+outfitter/docs/protocol.md
+  s_9e985270e78a63::t_dfa7a9b8976e88 33-36
+outfitter/packages/agentd/src/link.ts
+  s_9e985270e78a63::t_983286a5054934 200
+  s_9e985270e78a63::t_f4d814de0d50e9 219-221,223
+  s_9e985270e78a63::t_0513df89a4f825 344,348
+  s_9e985270e78a63::t_08c7743a8cc462 291
+  s_9e985270e78a63::t_a2f5a96eaaf71e 240,244
+  s_9e985270e78a63::t_0c93b937142a19 264-267,269-270
+  s_9e985270e78a63::t_e3535e8a0b96b3 120-121
+  s_9e985270e78a63::t_1b643a6aee073b 33-38
+  s_9e985270e78a63::t_e39b96bcd31c2d 222
+  s_9e985270e78a63::t_c5f148897aa0fd 235-239,241-243,245-247
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "433d0885fca20cb42992a1605a8cfd6141180431",
+  "prompts": {},
+  "sessions": {
+    "s_9e985270e78a63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "019f7f91-d886-47f5-9a90-f34314b7756e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -323,12 +323,13 @@ export interface MailCollection {
    * of it has reached maxUnvalidatedWakes. Returns how many of the session's mail are held after. */
   /** New mail held this way takes the reason (heldDetail) of the session's mail already held. */
   holdIfStuck(sessionId: string, nowIso: string, maxAttempts: number, maxUnvalidatedWakes: number): Promise<number>;
-  /** #172: parks all of the session's deliverable mail as `held` for a run failure, and sets
-   * `detail` as the reason on every held mail of the session. Returns how many are held after. */
-  holdSession(sessionId: string, nowIso: string, maxAttempts: number, detail: string): Promise<number>;
-  /** Returns held mail (of one session, or of every session) to `queued` with a fresh wake count.
-   * `scope` "deploy-mismatch" leaves run-failure holds (heldDetail) alone. Returns the sessions
-   * that had mail released. */
+  /** #172: parks all of the session's idle mail (queued, or delivered with an expired lease) as
+   * `held` for a run failure, whatever its attempts, and sets `detail` as the reason on every held
+   * mail of the session. Returns how many are held after. */
+  holdSession(sessionId: string, nowIso: string, detail: string): Promise<number>;
+  /** Returns held mail (of one session, or of every session) to `queued` with a fresh budget: no
+   * attempts, no unvalidated wakes. `scope` "deploy-mismatch" leaves run-failure holds
+   * (heldDetail) alone. Returns the sessions that had mail released. */
   releaseHeld(sessionId?: string, scope?: HeldMailScope): Promise<string[]>;
   /** How many of a session's mail are held. */
   countHeld(sessionId: string): Promise<number>;

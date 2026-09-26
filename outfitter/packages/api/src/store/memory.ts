@@ -435,11 +435,14 @@ class MemoryMail implements MailCollection {
     return mine.filter((m) => m.status === "held").length;
   }
 
-  async holdSession(sessionId: string, nowIso: string, maxAttempts: number, detail: string): Promise<number> {
+  async holdSession(sessionId: string, nowIso: string, detail: string): Promise<number> {
     let held = 0;
     for (const m of this.rows.values()) {
       if (m.sessionId !== sessionId) continue;
-      if (isDeliverable(m, nowIso, maxAttempts)) {
+      // Whatever its attempts: mail out of attempts but not yet dead-lettered is held too, rather
+      // than left for the next sweep to drop without telling anyone.
+      const idle = m.status === "queued" || (m.status === "delivered" && (m.lockedUntil ?? "") < nowIso);
+      if (idle) {
         m.status = "held";
         m.heldAt = nowIso;
         delete m.lockedUntil;
@@ -458,6 +461,7 @@ class MemoryMail implements MailCollection {
       if (m.status !== "held" || (sessionId && m.sessionId !== sessionId)) continue;
       if (scope === "deploy-mismatch" && m.heldDetail) continue;
       m.status = "queued";
+      m.attempts = 0;
       delete m.heldAt;
       delete m.heldDetail;
       delete m.unvalidatedWakes;

@@ -564,9 +564,11 @@ class MongoMail implements MailCollection {
     return this.col.countDocuments({ sessionId, status: "held" });
   }
 
-  async holdSession(sessionId: string, nowIso: string, maxAttempts: number, detail: string): Promise<number> {
+  async holdSession(sessionId: string, nowIso: string, detail: string): Promise<number> {
+    // Whatever its attempts: mail out of attempts but not yet dead-lettered is held too, rather
+    // than left for the next sweep to drop without telling anyone.
     await this.col.updateMany(
-      { sessionId, ...deliverableFilter(nowIso, maxAttempts) },
+      { sessionId, $or: [{ status: "queued" as const }, { status: "delivered" as const, lockedUntil: { $lt: nowIso } }] },
       { $set: { status: "held", heldAt: nowIso }, $unset: { lockedUntil: "" } },
     );
     await this.col.updateMany({ sessionId, status: "held" }, { $set: { heldDetail: detail } });
@@ -581,7 +583,7 @@ class MongoMail implements MailCollection {
     };
     const sessions = await this.col.distinct("sessionId", filter);
     if (sessions.length === 0) return [];
-    await this.col.updateMany(filter, { $set: { status: "queued" }, $unset: { heldAt: "", heldDetail: "", unvalidatedWakes: "" } });
+    await this.col.updateMany(filter, { $set: { status: "queued", attempts: 0 }, $unset: { heldAt: "", heldDetail: "", unvalidatedWakes: "" } });
     return sessions;
   }
 

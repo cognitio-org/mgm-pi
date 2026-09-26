@@ -212,7 +212,7 @@ describe("wake", () => {
     assert.equal(detail.json().mailNotice, mailHeldFailureNotice(reason));
     assert.equal(
       detail.json().mailNotice,
-      "Messages held: the Outfitter GitHub App is missing the Checks: read permission, so this run has no GitHub access to o/r. An owner grants it. Press Retry once that's fixed.",
+      "Messages held: the Outfitter GitHub App is missing the Checks: read permission. An owner grants it. Press Retry once that's fixed.",
     );
     assert.deepEqual(await app.mail.sweep(), [], "the tick doesn't wake a held session");
     assert.equal(app.provider.startCalls.length, 0);

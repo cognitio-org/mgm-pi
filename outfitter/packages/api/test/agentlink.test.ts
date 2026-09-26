@@ -1680,6 +1680,28 @@ describe("GitHub App installation-token refresh", () => {
     await app.fastify.close();
   });
 
+  test("#172 review: pressing Retry again and again while the credential problem lasts never dead-letters the mail", async (t) => {
+    const app = await appWithMintFailure(t, "permissions-missing", undefined, { missingPermissions: ["contents:write"] });
+    let { runId, runToken } = await mailDrivenRun(app);
+    for (let i = 0; i < MAIL_MAX_ATTEMPTS + 3; i++) {
+      const agent = await openAgentSocket(app, runId, "any-google-id-token");
+      sendHello(agent, runId, "s1", runToken);
+      assert.equal((await agent.nextClose()).code, 4412, `try ${i}`);
+      const stored = await app.store.mail.findById("m1");
+      assert.equal(stored?.status, "held", `try ${i}`);
+      assert.equal(stored?.attempts, 0, "a refused run never tried to deliver, so it costs no attempt");
+      assert.deepEqual(await app.store.mail.expireExhausted(new Date().toISOString(), MAIL_MAX_ATTEMPTS), []);
+      // Retry: released and woken; the new run is refused the same way.
+      assert.deepEqual(await app.mail.retryHeld("s1"), { released: true, result: "woken" });
+      const run = await app.store.runs.findActiveForSession("s1");
+      assert.ok(run);
+      runId = run.id;
+      runToken = runTokenFor(app, run.id);
+    }
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
   test("#172: another session's run validating the protocol doesn't release a credential hold", async (t) => {
     const app = await appWithMintFailure(t, "not-installed");
     const { runId, runToken } = await mailDrivenRun(app);
@@ -1702,6 +1724,9 @@ describe("GitHub App installation-token refresh", () => {
     assert.equal((await agent.nextClose()).code, 1011);
     assert.equal(await app.store.mail.countHeld("s1"), 0);
     assert.equal((await app.store.mail.findById("m1"))?.status, "queued");
+    // Still charged, so a failure that keeps recurring runs the mail out of attempts instead of
+    // starting a run every tick forever.
+    assert.equal((await app.store.mail.findById("m1"))?.attempts, 1);
     app.stopBackgroundTasks();
     await app.fastify.close();
   });
@@ -1766,5 +1791,15 @@ describe("#172: GitHub App failure notes", () => {
       mailHeldFailureNotice("the App is missing X. An owner grants it, then start the run again."),
       "Messages held: the App is missing X. An owner grants it. Press Retry once that's fixed.",
     );
+    // Every note reads cleanly without its "so this run has no GitHub access" clause.
+    for (const [note, expected] of [
+      [githubAppPermissionsMissingDetail("acme/my.repo", ["contents:write"]), "Messages held: the Outfitter GitHub App is missing the Contents: read and write permission. An owner grants it"],
+      [githubAppNotInstalledDetail("acme/r", "acme"), "Messages held: the Outfitter GitHub App's installation on acme doesn't cover acme/r. An owner of acme"],
+      [githubAppNotInstalledDetail("other/r", "acme"), "Messages held: Outfitter only uses the GitHub App's installation on acme, and other/r belongs to other. Use a repository"],
+    ] as const) {
+      const notice = mailHeldFailureNotice(note);
+      assert.ok(notice.startsWith(expected), notice);
+      assert.doesNotMatch(notice, /this run|start the run again/);
+    }
   });
 });

@@ -201,22 +201,34 @@ interface FakeGithub {
 /** A fake GitHub whose installation grants `granted` (undefined: the lookup fails, and only the
  * required set is allowed) and refuses any token request asking for more with the permissions 422,
  * as the real one does. */
-function fakeGithub(granted: Record<string, string> | undefined, opts: { repoMessage?: boolean } = {}): FakeGithub {
-  const fake: FakeGithub = { tokenRequests: [], installationLookups: 0, fetch: undefined as unknown as typeof fetch };
+function fakeGithub(
+  initial: Record<string, string> | undefined,
+  opts: { repoMessage?: boolean; permissionsMessage?: string; lookupDelayMs?: number } = {},
+): FakeGithub & { granted: Record<string, string> | undefined; opts: typeof opts } {
+  const fake = {
+    tokenRequests: [] as Record<string, string>[],
+    installationLookups: 0,
+    fetch: undefined as unknown as typeof fetch,
+    granted: initial,
+    opts,
+  };
   fake.fetch = (async (url: string, init?: RequestInit) => {
     if (String(url) === "https://api.github.com/app/installations/99") {
       fake.installationLookups += 1;
-      if (!granted) return new Response("{}", { status: 503 });
-      return new Response(JSON.stringify({ account: { login: "cognitio-org" }, permissions: granted }), { status: 200 });
+      if (fake.opts.lookupDelayMs) await new Promise((resolve) => setTimeout(resolve, fake.opts.lookupDelayMs));
+      if (!fake.granted) return new Response("{}", { status: 503 });
+      return new Response(JSON.stringify({ account: { login: "cognitio-org" }, permissions: fake.granted }), { status: 200 });
     }
     const body = JSON.parse(String(init?.body));
     const permissions = body.permissions as Record<string, string>;
     fake.tokenRequests.push(permissions);
-    if (opts.repoMessage) return new Response(JSON.stringify({ message: REPOSITORY_422 }), { status: 422 });
-    const allowed: Record<string, string> = granted ?? { contents: "write", pull_requests: "write", metadata: "read" };
+    if (fake.opts.repoMessage) return new Response(JSON.stringify({ message: REPOSITORY_422 }), { status: 422 });
+    const allowed: Record<string, string> = fake.granted ?? { contents: "write", pull_requests: "write", metadata: "read" };
     const rank: Record<string, number> = { read: 1, write: 2 };
     const over = Object.entries(permissions).some(([name, level]) => (rank[allowed[name]] ?? 0) < rank[level]);
-    if (over) return new Response(JSON.stringify({ message: PERMISSIONS_422, documentation_url: "https://docs.github.com" }), { status: 422 });
+    if (over) {
+      return new Response(JSON.stringify({ message: fake.opts.permissionsMessage ?? PERMISSIONS_422, documentation_url: "https://docs.github.com" }), { status: 422 });
+    }
     return new Response(JSON.stringify({
       token: "ghs_reduced",
       expires_at: "2026-09-24T06:00:00Z",
@@ -226,9 +238,75 @@ function fakeGithub(granted: Record<string, string> | undefined, opts: { repoMes
   return fake;
 }
 
-function tokensWith(fake: FakeGithub) {
-  return new GithubAppTokens(appSecrets, fake.fetch, () => Date.parse("2026-09-24T04:00:00Z"));
+function tokensWith(fake: FakeGithub, now: () => number = () => Date.parse("2026-09-24T04:00:00Z")) {
+  return new GithubAppTokens(appSecrets, fake.fetch, now);
 }
+
+test("#172 review: a permissions 422 reads the grants fresh, not from a cache that predates the change", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  const fake = fakeGithub({ ...GRANTED_NO_CHECKS, checks: "read" }, { repoMessage: true });
+  const tokens = tokensWith(fake);
+  // A not-installed mint caches the installation (then granting checks).
+  assert.equal((await tokens.mint("cognitio-org/gone")).ok, false);
+  assert.equal(fake.installationLookups, 1);
+  // The owner removes checks; the next mint gets the permissions 422.
+  fake.granted = GRANTED_NO_CHECKS;
+  fake.opts.repoMessage = false;
+  assert.equal(tokenOf(await tokens.mint("cognitio-org/spec-studio")), "ghs_reduced");
+  assert.equal(fake.installationLookups, 2, "looked up again on the failure path");
+  assert.equal("checks" in fake.tokenRequests.at(-1)!, false);
+});
+
+test("#172 review: once a missing permission is granted, a cached reduced token is replaced, and the warning re-arms", async (t) => {
+  const warnings: string[] = [];
+  t.mock.method(console, "warn", (msg: string) => warnings.push(msg));
+  let now = Date.parse("2026-09-24T04:00:00Z");
+  const fake = fakeGithub(GRANTED_NO_CHECKS);
+  const tokens = tokensWith(fake, () => now);
+  assert.equal(tokenOf(await tokens.mint("cognitio-org/spec-studio")), "ghs_reduced");
+  assert.equal(fake.tokenRequests.length, 2);
+  // Still within the reduced set's lifetime: the cached token is reused.
+  now += 5 * 60_000;
+  await tokens.mint("cognitio-org/spec-studio");
+  assert.equal(fake.tokenRequests.length, 2);
+  // The owner grants checks; after the reduced set expires the next mint asks for everything and
+  // doesn't keep the reduced token, although it hasn't expired.
+  fake.granted = { ...GRANTED_NO_CHECKS, checks: "read" };
+  now += 6 * 60_000;
+  assert.ok(tokenOf(await tokens.mint("cognitio-org/spec-studio")));
+  assert.equal(fake.tokenRequests.length, 3);
+  assert.equal(fake.tokenRequests[2].checks, "read");
+  // Losing it again warns again (on a repo with no cached token).
+  fake.granted = GRANTED_NO_CHECKS;
+  now += 11 * 60_000;
+  assert.equal(tokenOf(await tokens.mint("cognitio-org/other")), "ghs_reduced");
+  assert.equal(warnings.filter((w) => w.includes("doesn't grant checks:read")).length, 2);
+});
+
+test("#172 review: a 422 in unfamiliar wording is still treated as permissions when the grants lack what was asked", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  const fake = fakeGithub(GRANTED_NO_CHECKS, { permissionsMessage: "Some new wording." });
+  assert.equal(tokenOf(await tokensWith(fake).mint("cognitio-org/spec-studio")), "ghs_reduced");
+  assert.equal("checks" in fake.tokenRequests[1], false);
+  // With every requested permission granted, the same wording is rejected, and nothing retries.
+  const all = fakeGithub({ ...GRANTED_NO_CHECKS, checks: "read" }, { repoMessage: false });
+  const tokens = new GithubAppTokens(
+    appSecrets,
+    (async (url: string, init?: RequestInit) =>
+      String(url).endsWith("/installations/99") ? all.fetch(url, init) : new Response(JSON.stringify({ message: "Some new wording." }), { status: 422 })) as typeof fetch,
+    () => Date.parse("2026-09-24T04:00:00Z"),
+  );
+  assert.deepEqual(await tokens.mint("o/r"), { ok: false, reason: "rejected", githubMessage: "Some new wording." });
+});
+
+test("#172 review: concurrent failed mints share one installation lookup", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  const fake = fakeGithub(GRANTED_NO_CHECKS, { lookupDelayMs: 20 });
+  const tokens = tokensWith(fake);
+  const results = await Promise.all([tokens.mint("cognitio-org/a"), tokens.mint("cognitio-org/b"), tokens.mint("cognitio-org/c")]);
+  assert.deepEqual(results.map(tokenOf), ["ghs_reduced", "ghs_reduced", "ghs_reduced"]);
+  assert.equal(fake.installationLookups, 1);
+});
 
 test("#172: classifyTokenRequest422 tells GitHub's permissions and repository messages apart", () => {
   assert.equal(classifyTokenRequest422(PERMISSIONS_422), "permissions");

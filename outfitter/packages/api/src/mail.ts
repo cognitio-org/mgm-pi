@@ -20,9 +20,11 @@ export const MAIL_HELD_NOTICE = "Deploy mismatch: messages held until the servic
 /** #172: shown instead of MAIL_HELD_NOTICE when the mail is held because the session's runs fail
  * in a way no retry fixes (Mail.heldDetail, e.g. the GitHub App can't give it a token). */
 export function mailHeldFailureNotice(detail: string): string {
-  // The run note's own "start the run again" is what Retry does here.
+  // The run note speaks about "this run" and ends with "start the run again"; the notice is about
+  // the session's messages, and Retry is what starts the run again.
   const reason = detail
     .trim()
+    .replace(/,\s*so this run has no GitHub access(?: to \S+?)?(?=[.,](?:\s|$))/i, "")
     .replace(/[,;.]?\s*then start the run again\.?$/i, "")
     .replace(/[.\s]+$/, "");
   return `Messages held: ${reason}. Press Retry once that's fixed.`;
@@ -220,7 +222,7 @@ export class MailService {
    * the session's mail are held.
    */
   async holdForFailure(sessionId: string, detail: string): Promise<number> {
-    const held = await this.store.mail.holdSession(sessionId, new Date().toISOString(), MAIL_MAX_ATTEMPTS, detail);
+    const held = await this.store.mail.holdSession(sessionId, new Date().toISOString(), detail);
     if (held > 0) this.log(`mail: holding ${held} message(s) for session ${sessionId}: ${detail}`);
     return held;
   }

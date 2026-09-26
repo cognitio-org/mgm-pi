@@ -35,7 +35,7 @@ function contract(name: string, getStore: () => Store) {
       const s = `s-${randomUUID().slice(0, 8)}`;
       await store.mail.insertIfNew(mail(s, "a"));
       await store.mail.insertIfNew(mail(s, "b", { status: "acked" }));
-      assert.equal(await store.mail.holdSession(s, NOW, MAX, "the App is missing X"), 1);
+      assert.equal(await store.mail.holdSession(s, NOW, "the App is missing X"), 1);
       assert.equal((await store.mail.findById(`${s}-a`))?.status, "held");
       assert.equal((await store.mail.findById(`${s}-a`))?.heldDetail, "the App is missing X");
       assert.equal((await store.mail.findById(`${s}-b`))?.status, "acked");
@@ -44,11 +44,24 @@ function contract(name: string, getStore: () => Store) {
       assert.equal((await store.mail.sessionsWithDeliverable(NOW, MAX)).includes(s), false);
     });
 
+    test("holdSession holds mail that is out of attempts (so it isn't dead-lettered), and release resets its attempts", async () => {
+      const store = getStore();
+      const s = `s-${randomUUID().slice(0, 8)}`;
+      await store.mail.insertIfNew(mail(s, "a", { attempts: MAX }));
+      assert.equal(await store.mail.holdSession(s, NOW, "reason"), 1);
+      assert.deepEqual((await store.mail.expireExhausted(NOW, MAX)).filter((m) => m.sessionId === s), []);
+      await store.mail.releaseHeld(s);
+      const row = await store.mail.findById(`${s}-a`);
+      assert.equal(row?.status, "queued");
+      assert.equal(row?.attempts, 0);
+      assert.equal(await store.mail.hasDeliverable(s, NOW, MAX), true);
+    });
+
     test("new mail joining the hold takes its reason", async () => {
       const store = getStore();
       const s = `s-${randomUUID().slice(0, 8)}`;
       await store.mail.insertIfNew(mail(s, "a"));
-      await store.mail.holdSession(s, NOW, MAX, "reason one");
+      await store.mail.holdSession(s, NOW, "reason one");
       await store.mail.insertIfNew(mail(s, "b"));
       assert.equal(await store.mail.holdIfStuck(s, NOW, MAX, 3), 2);
       assert.equal((await store.mail.findById(`${s}-b`))?.heldDetail, "reason one");
@@ -59,7 +72,7 @@ function contract(name: string, getStore: () => Store) {
       const failing = `s-${randomUUID().slice(0, 8)}`;
       const skewed = `s-${randomUUID().slice(0, 8)}`;
       await store.mail.insertIfNew(mail(failing, "a"));
-      await store.mail.holdSession(failing, NOW, MAX, "reason");
+      await store.mail.holdSession(failing, NOW, "reason");
       await store.mail.insertIfNew(mail(skewed, "a", { status: "held", heldAt: NOW, unvalidatedWakes: 3 }));
 
       const released = await store.mail.releaseHeld(undefined, "deploy-mismatch");
@@ -71,6 +84,7 @@ function contract(name: string, getStore: () => Store) {
       assert.deepEqual(await store.mail.releaseHeld(failing), [failing]);
       const row = await store.mail.findById(`${failing}-a`);
       assert.equal(row?.status, "queued");
+      assert.equal(row?.attempts, 0, "a fresh budget");
       assert.equal(row?.heldDetail, undefined);
       assert.equal(row?.heldAt, undefined);
       assert.equal(await store.mail.heldDetail(failing), undefined);

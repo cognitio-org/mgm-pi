@@ -351,7 +351,11 @@ it every tick until the mail was dead-lettered. Such a refusal now holds the ses
 mail too, with the refusal's note stored as `Mail.heldDetail`. The session's `mailNotice` is then
 "Messages held: <note>. Press Retry once that's fixed." A validated hello's automatic release only
 takes deploy-mismatch holds (`releaseHeld(undefined, "deploy-mismatch")`). A failure hold goes back
-to the queue on Retry, or when a run of that same session gets its spec.
+to the queue on Retry, or when a run of that same session gets its spec. Item 10's attempt charge
+for a mail-driven run now happens once `buildRunSpec` has succeeded or failed transiently, not on
+the validated hello itself, so a 4412-refused run (which never tried to deliver) costs no attempt
+and repeated Retries can't age held mail out into the dead-letter sweep. A failure hold takes
+idle mail whatever its attempts, and any release gives the mail a fresh budget (attempts 0).
 
 **Left open**: releasing on *any* validated hello is deliberately broad. A single healthy session
 releases everyone's held mail, and a still-broken session then spends up to three more wakes

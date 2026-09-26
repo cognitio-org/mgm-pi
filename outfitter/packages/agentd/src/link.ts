@@ -28,6 +28,10 @@ import { isSeqUpMessage, WIRE_PROTOCOL_VERSION, type BootTimings, type DownMessa
  * internal error) and everything else stay transient and keep reconnecting. */
 export const TERMINAL_CLOSE_CODES = new Set([4400, 4401, 4404, 4409, 4412]);
 
+/** Non-seq frames kept while a reconnect waits for the api. They are status/spend/heartbeat-like
+ * (the next one supersedes the last), so dropping the oldest past this is harmless. */
+const HELD_CAP = 64;
+
 export type TerminalHandler = (code: number, reason: string) => void;
 /** Every socket close, terminal or not, with the code the server (or the proxy) actually sent. The
  * first cloud session on the round-two stack closed server-side and agentd left no trace of it. */
@@ -102,6 +106,10 @@ export class Link {
   private unspecTimer: ReturnType<typeof setTimeout> | undefined;
   private unspecTimerArmed = false;
   private specReceived = false;
+  /** This connection is a reconnect the api hasn't answered yet: only `hello` has gone out. */
+  private awaitingApi = false;
+  /** Non-seq frames (status, spend, heartbeat, ...) sent while `awaitingApi`, newest HELD_CAP. */
+  private held: UpMessage[] = [];
   private readonly WebSocketImpl: typeof WebSocket;
   private readonly backoffBaseMs: number;
   private readonly backoffMaxMs: number;
@@ -221,11 +229,30 @@ export class Link {
   }
 
   private transmit(msg: UpMessage): void {
-    if (this.ws && this.ws.readyState === this.WebSocketImpl.OPEN) {
-      this.ws.send(JSON.stringify(msg));
+    if (!(this.ws && this.ws.readyState === this.WebSocketImpl.OPEN)) {
+      // Not open: the frame stays in `pending` (for seq frames) or is simply dropped (for non-seq
+      // frames like heartbeat, which the next heartbeat tick will re-send anyway).
+      return;
     }
-    // If not open, the frame stays in `pending` (for seq frames) or is simply dropped (for
-    // non-seq frames like heartbeat, which the next heartbeat tick will re-send anyway).
+    if (this.awaitingApi) {
+      // A reconnect the api hasn't answered yet (see `awaitingApi`). Seq frames are already in
+      // `pending` and go out on the flush; the rest wait in `held`.
+      if (!isSeqUpMessage(msg)) {
+        this.held.push(msg);
+        if (this.held.length > HELD_CAP) this.held.shift();
+      }
+      return;
+    }
+    this.ws.send(JSON.stringify(msg));
+  }
+
+  /** The api answered a reconnect: send what it would have refused before, in order. */
+  private flushAfterApiAnswered(): void {
+    this.awaitingApi = false;
+    const held = this.held;
+    this.held = [];
+    for (const msg of this.pending) this.transmit(msg);
+    for (const msg of held) this.transmit(msg);
   }
 
   /** Fetches fresh headers (a live identity token) and opens the socket with them. Called on the
@@ -269,10 +296,18 @@ export class Link {
         protocolVersion: WIRE_PROTOCOL_VERSION,
         ...(boot ? { boot } : {}),
       };
-      this.transmit(hello);
+      // A reconnect of a run that already has its spec (the 55-minute rotation, or a dropped
+      // socket) sends `hello` alone and waits for the api's first frame before anything else. The
+      // api buffers at most 256 frames before it has checked `hello` and rebuilt run.spec, and
+      // refuses the connection terminally past that (4400). A model streaming tokens produces that
+      // many in seconds, so replaying unacked frames and carrying on live used to kill the run
+      // mid-turn (session 5873e689, #185). The first connect has nothing to send before run.spec.
+      this.awaitingApi = this.specReceived;
+      this.held = [];
+      this.ws!.send(JSON.stringify(hello));
       // Resend everything still unacked, in original order, so the api can replay/dedupe past
-      // lastAckedSeq.
-      for (const msg of this.pending) this.transmit(msg);
+      // lastAckedSeq -- now, or once the api answers a reconnect.
+      if (!this.awaitingApi) for (const msg of this.pending) this.transmit(msg);
       this.armConnectionAgeTimer();
       this.armStableTimer();
       for (const h of this.openHandlers) h();
@@ -286,6 +321,8 @@ export class Link {
         return;
       }
       if (parsed.t === "ack") this.ack(parsed.seq);
+      // Any frame means the api has accepted this connection (it re-sends run.spec on every hello).
+      if (this.awaitingApi) this.flushAfterApiAnswered();
       if (parsed.t === "ack" || parsed.t === "run.spec") {
         // The api actually spoke to us -- real progress, not just a TCP-level open. Reset backoff
         // immediately rather than waiting out the stability window.

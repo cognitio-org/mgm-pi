@@ -200,7 +200,7 @@ test("Link: non-seq frames (heartbeat, status) are not buffered", async (t) => {
   assert.equal(ws.sent.length, 1);
 });
 
-test("Link: reconnects with backoff and resends hello + unacked frames in order", async (t) => {
+test("Link: reconnects with backoff and resends hello + unacked frames in order (before run.spec: straight away)", async (t) => {
   const link = makeLink();
   t.after(() => link.close());
   const ws1 = await connectAndGetInstance(link);
@@ -223,6 +223,56 @@ test("Link: reconnects with backoff and resends hello + unacked frames in order"
   const resent = JSON.parse(ws2.sent[1]);
   assert.equal(resent.t, "entry");
   assert.equal(resent.seq, 2);
+});
+
+test("Link: #185 -- a reconnect after run.spec sends hello alone until the api answers, then flushes in order", async (t) => {
+  const link = makeLink();
+  t.after(() => link.close());
+  const ws1 = await connectAndGetInstance(link);
+  ws1.triggerOpen();
+  ws1.triggerMessage({ t: "run.spec" });
+  link.sendSeq((seq) => ({ t: "event", seq, event: { type: "message_update" } as any })); // seq 1, unacked
+
+  ws1.triggerClose(1005);
+  await waitFor(() => FakeWebSocket.instances.length === 2);
+  const ws2 = FakeWebSocket.instances[1];
+  ws2.triggerOpen();
+
+  // The model keeps streaming while the api checks hello and rebuilds run.spec: well past the
+  // api's 256-frame pre-hello buffer.
+  for (let i = 0; i < 400; i++) link.sendSeq((seq) => ({ t: "event", seq, event: { type: "message_update" } as any }));
+  link.send({ t: "status", state: "running" } as any);
+  assert.deepEqual(ws2.sent.map((s) => JSON.parse(s).t), ["hello"]);
+
+  ws2.triggerMessage({ t: "run.spec" }); // the api re-sends run.spec on every hello
+  const frames = ws2.sent.slice(1).map((s) => JSON.parse(s));
+  assert.equal(frames.length, 402);
+  assert.deepEqual(
+    frames.slice(0, 401).map((f) => f.seq),
+    Array.from({ length: 401 }, (_, i) => i + 1),
+  );
+  assert.equal(frames[401].t, "status");
+
+  // Once answered, frames go straight out again.
+  link.send({ t: "heartbeat", idleSeconds: 0, memMb: 1 });
+  assert.equal(JSON.parse(ws2.sent.at(-1)!).t, "heartbeat");
+});
+
+test("Link: #185 -- held non-seq frames are capped, keeping the newest", async (t) => {
+  const link = makeLink();
+  t.after(() => link.close());
+  const ws1 = await connectAndGetInstance(link);
+  ws1.triggerOpen();
+  ws1.triggerMessage({ t: "run.spec" });
+  ws1.triggerClose(1005);
+  await waitFor(() => FakeWebSocket.instances.length === 2);
+  const ws2 = FakeWebSocket.instances[1];
+  ws2.triggerOpen();
+  for (let i = 0; i < 100; i++) link.send({ t: "heartbeat", idleSeconds: i, memMb: 1 });
+  ws2.triggerMessage({ t: "ack", seq: 0 });
+  const beats = ws2.sent.slice(1).map((s) => JSON.parse(s));
+  assert.equal(beats.length, 64);
+  assert.equal(beats.at(-1).idleSeconds, 99);
 });
 
 test("Link: setSessionId changes the sessionId used in later hello frames", async (t) => {

@@ -344,6 +344,15 @@ session (delivered over the socket) and another session (queued, fresh budget, w
 sweep); a validated run resets the count; and the Retry route. Item 10's "validates but never acks
 -> dead after 6" case still passes unchanged.
 
+**Later (#172)**: a run refused with `4412` (no usable GitHub credential: the App's installation
+doesn't cover the repo, lacks a required permission, or GitHub refused the token request) *does*
+validate the protocol, so the guard above never applied and the sweep burned a run and a sandbox on
+it every tick until the mail was dead-lettered. Such a refusal now holds the session's deliverable
+mail too, with the refusal's note stored as `Mail.heldDetail`. The session's `mailNotice` is then
+"Messages held: <note>. Press Retry once that's fixed." A validated hello's automatic release only
+takes deploy-mismatch holds (`releaseHeld(undefined, "deploy-mismatch")`). A failure hold goes back
+to the queue on Retry, or when a run of that same session gets its spec.
+
 **Left open**: releasing on *any* validated hello is deliberately broad. A single healthy session
 releases everyone's held mail, and a still-broken session then spends up to three more wakes
 before holding again. That's bounded, but it isn't zero. There is no alert yet when mail is held;

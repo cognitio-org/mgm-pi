@@ -47,7 +47,7 @@ treats them:
 | `4401` | unauthorized, or `hello.runToken` missing/incorrect for this run | terminal, exit 1 (misconfiguration) |
 | `4404` | run/session/guru not found | terminal, exit 0 (nothing left to do) |
 | `4409` | run is in a terminal state already, **or** (E5.7/bug 9, cloud-fixes.md) this agentd's `hello.protocolVersion` is older than the API's own (including a build that predates the field, treated as version 0) | terminal, exit 0 (nothing left to do) |
-| `4412` | run cannot start: missing secret (a repo session with no usable GitHub token, including a repo the configured GitHub App isn't installed on) | terminal, exit 1; the API also marks the run `failed` with a reason before closing. Not used for a transient App mint failure (#158): a first connect closes `1011` to retry, and a reconnect of a running run keeps its current token |
+| `4412` | run cannot start: missing secret (a repo session with no usable GitHub token: including a repo the configured GitHub App's installation doesn't cover, an installation missing a permission runs need, or GitHub refusing the token request; #172) | terminal, exit 1; the API also marks the run `failed` with a reason before closing, and holds the session's deliverable mail with that reason (#172) so the `/tick` sweep stops starting runs for it until Retry. Not used for a transient App mint failure (#158): a first connect closes `1011` to retry, and a reconnect of a running run keeps its current token |
 | `4429` | the run already has a live agent connection (see "One live agent connection per run" below) | transient, agentd keeps reconnecting with backoff |
 | `1011` | internal error | transient, agentd keeps reconnecting with backoff |
 
@@ -361,9 +361,11 @@ wake -> ready summary. Runs created before `Run.startup` existed get no stamps a
   IAP-gated): called by Cloud Tasks and Cloud Scheduler with a Google OIDC token whose audience is
   this service's origin and whose email is env `TASKS_SA_EMAIL`; anything else is a 401 (dev mode:
   the agent dev token). `tasks/wake` wakes the session if it still holds deliverable mail and answers
-  `{result: "woken"|"active"|"none"}` (200 once any run exists, so retries don't stack executions; a
+  `{result: "woken"|"active"|"none"|"held"}` (200 once any run exists, so retries don't stack executions; a
   provider failure is a 500 that Cloud Tasks retries, each retry charged as an attempt). `tick` runs the stale-run and stuck-stopping reconcilers and wakes every
-  session with deliverable mail and no active run — the in-process `setInterval` loops only run while
+  session with deliverable mail and no active run (held mail is not deliverable: a deploy mismatch,
+  or #172's permanent run failure, both released by `POST /api/sessions/:id/mail/retry`; `GET
+  /api/sessions/:id`'s `mailNotice` says which) — the in-process `setInterval` loops only run while
   a request keeps a min-instances-0 container alive. Set up by `deploy/mailbox.sh`.
 
 - `POST /api/hooks/warm-pool` `{replicas}` (link role; not IAP-gated): authenticated exactly like

@@ -28,6 +28,7 @@ import type {
   TokenOwnerMatch,
   Mail,
   MailCollection,
+  HeldMailScope,
   BrowserShare,
   BrowserSharesCollection,
   BrowserRequest,
@@ -423,25 +424,51 @@ class MemoryMail implements MailCollection {
     const deliverable = mine.filter((m) => isDeliverable(m, nowIso, maxAttempts));
     const stuck = mine.some((m) => m.status === "held") || deliverable.some((m) => (m.unvalidatedWakes ?? 0) >= maxUnvalidatedWakes);
     if (stuck) {
+      const detail = mine.find((m) => m.status === "held" && m.heldDetail)?.heldDetail;
       for (const m of deliverable) {
         m.status = "held";
         m.heldAt = nowIso;
+        if (detail) m.heldDetail = detail;
         delete m.lockedUntil;
       }
     }
     return mine.filter((m) => m.status === "held").length;
   }
 
-  async releaseHeld(sessionId?: string): Promise<string[]> {
+  async holdSession(sessionId: string, nowIso: string, maxAttempts: number, detail: string): Promise<number> {
+    let held = 0;
+    for (const m of this.rows.values()) {
+      if (m.sessionId !== sessionId) continue;
+      if (isDeliverable(m, nowIso, maxAttempts)) {
+        m.status = "held";
+        m.heldAt = nowIso;
+        delete m.lockedUntil;
+      }
+      if (m.status === "held") {
+        m.heldDetail = detail;
+        held++;
+      }
+    }
+    return held;
+  }
+
+  async releaseHeld(sessionId?: string, scope: HeldMailScope = "all"): Promise<string[]> {
     const released = new Set<string>();
     for (const m of this.rows.values()) {
       if (m.status !== "held" || (sessionId && m.sessionId !== sessionId)) continue;
+      if (scope === "deploy-mismatch" && m.heldDetail) continue;
       m.status = "queued";
       delete m.heldAt;
+      delete m.heldDetail;
       delete m.unvalidatedWakes;
       released.add(m.sessionId);
     }
     return [...released];
+  }
+
+  async heldDetail(sessionId: string): Promise<string | undefined> {
+    for (const m of this.rows.values()) if (m.sessionId === sessionId && m.status === "held" && m.heldDetail) return m.heldDetail;
+    return undefined;
   }
 
   async countHeld(sessionId: string): Promise<number> {

@@ -78,11 +78,13 @@ export interface SessionDetail {
   /** #147: each run's own value, by run id. An entry's `outfitterRunId` picks from it; an entry
    * without one, or a run not listed, uses allowExternalHtmlResources. */
   htmlPreviewAccessByRun?: Record<string, boolean>;
-  /** Cloud-fixes 13: messages parked because this session's runs never validated the protocol. */
+  /** Cloud-fixes 13: messages parked because this session's runs never validated the protocol, or
+   * (#172) because they're refused for a reason no retry fixes (a GitHub credential problem). */
   heldMail?: number;
   /** The reportable run's start-up timing; null before it has started or for an older run. */
   startup?: StartupSummary | null;
-  /** "Deploy mismatch: messages held until the service is redeployed", when heldMail > 0. */
+  /** When heldMail > 0: "Deploy mismatch: messages held until the service is redeployed", or
+   * "Messages held: <reason>. Press Retry once that's fixed." for a run failure (#172). */
   mailNotice?: string;
   /** Cloud GitHub broker state. Never includes a token. */
   github?: {

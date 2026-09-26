@@ -195,9 +195,17 @@ the page and never moved the fleet, because `release.sh` deploys the page first.
    `outfitter-github-token-default`. The token is minted for that session's repo and expires in
    about an hour; the API sends `github.credential` on each hello and again before it expires. The private key stays in
    the API. Once the App is configured, `outfitter-github-token-default` is no longer used (#158):
-   a session whose repo the App isn't installed on fails at start with "install the GitHub App on
-   <repo>", and a failed mint (GitHub or Secret Manager unreachable) is retried rather than
-   replaced by the shared PAT. A live run keeps its current token until a mint succeeds. If any of
+   a session whose repo the App's installation doesn't cover fails at start with a note saying so
+   (or, for a repo outside the installation's account, that Outfitter only uses that one
+   installation), and a failed mint (GitHub or Secret Manager unreachable) is retried rather than
+   replaced by the shared PAT. A live run keeps its current token until a mint succeeds. The run
+   token asks for Contents: read and write, Pull requests: read and write and Metadata: read, which
+   the installation must grant, plus Issues: read and write, Checks: read and Actions: read when it
+   grants them (#172): without those the token is minted anyway, the API logs a warning once, and
+   only the broker tools that need them answer "not permitted". A missing required permission
+   fails the run with a note naming it; grant it in the App's settings and accept it on the
+   installation. These failures also hold the session's queued messages (the session page shows
+   the reason with a Retry button) instead of retrying them every few minutes. If any of
    the three App secrets is set but they aren't usable together (the Client ID pasted as the App
    id, a key that isn't the PEM, a missing installation id), runs fail with a note asking an
    operator to fix them; removing all three (deleting or disabling their versions) goes back to the

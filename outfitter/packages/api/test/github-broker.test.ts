@@ -146,6 +146,34 @@ describe("github broker", () => {
     assert.equal(calls.some((call) => call.route === "GET /user"), false);
   });
 
+  test("#172: a token minted without checks:read still views a pull request; only the checks call says not permitted", async () => {
+    const store = new MemoryStore();
+    const secrets = new MemorySecretsBroker("ghs_no_checks", "");
+    const now = new Date().toISOString();
+    await store.gurus.insert({ id: "g", name: "G", model: "p/m", createdAt: now, updatedAt: now });
+    await store.sessions.insert({
+      id: "s", guruId: "g", repo: "acme/widgets", branch: "feature", status: "open", cost: 0, createdAt: now, updatedAt: now,
+    });
+    await store.runs.insert({ id: "run", sessionId: "s", state: "running", lastAckedSeq: 0, pending: [], createdAt: now, updatedAt: now });
+    const calls: Call[] = [];
+    const base = fakeGithub(calls);
+    const noChecks: GithubTransport = {
+      async request(route, params) {
+        if (route === "GET /repos/{owner}/{repo}/commits/{ref}/check-runs") {
+          calls.push({ route, params: { ...params } });
+          return response(403, { message: "Resource not accessible by integration" });
+        }
+        return base.request(route, params);
+      },
+    };
+    const broker = new GithubBroker(store, secrets, () => noChecks, async () => {});
+    const view = await broker.handle({ runId: "run", op: "github_pr.view", args: { number: 7 } });
+    assert.equal(view.ok, true, "the pull request itself still comes back");
+    if (view.ok) assert.equal((view.data as { checks?: unknown }).checks, undefined);
+    const checks = await broker.handle({ runId: "run", op: "github_pr.checks", args: { number: 7 } });
+    assert.deepEqual(checks, { ok: false, error: "not permitted" });
+  });
+
   test("a write replay returns the same result and does not post twice", async () => {
     const { app, calls, session, runId, runToken } = await socketApp();
     const agent = await openAgentSocket(app, runId);
@@ -459,7 +487,9 @@ describe("github broker", () => {
   test("#158: an App mint failure fails that one request with a reason, and nothing is sent", async () => {
     for (const [failure, error] of [
       ["unavailable", "the GitHub App could not get a token just now; try again shortly"],
-      ["not-installed", "the Outfitter GitHub App is not installed on this repository"],
+      ["not-installed", "the Outfitter GitHub App's installation doesn't cover this repository"],
+      ["permissions-missing", "the Outfitter GitHub App is missing a permission runs need; an owner has to grant it"],
+      ["rejected", "GitHub refused the Outfitter GitHub App's token request; an operator has to check the App"],
     ] as const) {
       const store = new MemoryStore();
       const secrets = {

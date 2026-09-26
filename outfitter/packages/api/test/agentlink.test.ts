@@ -4,7 +4,14 @@ import { OAuth2Client } from "google-auth-library";
 import { buildTestApp, seedGuru } from "./helpers.ts";
 import { makeQueue, openAgentSocket, runTokenFor, makeRunningSession, sendHello, type SocketHandle } from "./agent-socket.ts";
 import type { Session } from "../src/store/types.ts";
-import { authorFor } from "../src/agentlink.ts";
+import {
+  authorFor,
+  githubAppNotInstalledDetail,
+  githubAppPermissionsMissingDetail,
+  githubAppRejectedDetail,
+} from "../src/agentlink.ts";
+import type { MintFailureContext } from "../src/github-app.ts";
+import { MAIL_MAX_ATTEMPTS, mailHeldFailureNotice } from "../src/mail.ts";
 import type { SecretsBroker } from "../src/secrets.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 
@@ -1492,8 +1499,9 @@ describe("GitHub App installation-token refresh", () => {
    * as in the 4412 test above; connect with `openAgentSocket(app, runId, ID_TOKEN)`. */
   async function appWithMintFailure(
     t: { mock: { method: typeof import("node:test").mock.method } },
-    reason: "unavailable" | "not-installed" | "misconfigured",
+    reason: "unavailable" | "not-installed" | "misconfigured" | "permissions-missing" | "rejected",
     refreshed?: () => void,
+    context?: MintFailureContext,
   ) {
     t.mock.method(OAuth2Client.prototype, "verifyIdToken", async () => ({
       getPayload: () => ({ email: "agent@test.local" }),
@@ -1504,7 +1512,7 @@ describe("GitHub App installation-token refresh", () => {
         githubRefresh: { floorMs: 5, retryMs: 20, maxAttempts: 3 },
         secretsBroker: {
           async secretsForRun() {
-            return { githubToken: "", litellmKey: "k", githubAppFailure: reason };
+            return { githubToken: "", litellmKey: "k", githubAppFailure: reason, ...(context ? { githubAppFailureContext: context } : {}) };
           },
           async defaultLitellmKey() {
             return "k";
@@ -1553,7 +1561,7 @@ describe("GitHub App installation-token refresh", () => {
     assert.equal(close.code, 4412);
     const run = await app.store.runs.findById(runId);
     assert.equal(run?.state, "failed");
-    assert.match(run?.statusDetail ?? "", /not installed on o\/r/);
+    assert.match(run?.statusDetail ?? "", /installation can't reach o\/r/);
     app.stopBackgroundTasks();
     await app.fastify.close();
   });
@@ -1595,8 +1603,8 @@ describe("GitHub App installation-token refresh", () => {
     await app.fastify.close();
   });
 
-  test("#158: a first connect to a repo without the App fails the run with a note that says to install it", async (t) => {
-    const app = await appWithMintFailure(t, "not-installed");
+  test("#158/#172: a first connect (a user's Play, not mail) to a repo the installation doesn't cover fails the run with a note, holding nothing", async (t) => {
+    const app = await appWithMintFailure(t, "not-installed", undefined, { installationAccount: "o" });
     const { session, runId, runToken } = await makeRunningSession(app);
     const agent = await openAgentSocket(app, runId, "any-google-id-token");
     sendHello(agent, runId, session.id, runToken);
@@ -1604,9 +1612,159 @@ describe("GitHub App installation-token refresh", () => {
     assert.equal(close.code, 4412);
     const run = await app.store.runs.findById(runId);
     assert.equal(run?.state, "failed");
-    assert.match(run?.statusDetail ?? "", /GitHub App is not installed on o\/r/);
-    assert.match(run?.statusDetail ?? "", /Install the App/);
+    assert.equal(run?.statusDetail, githubAppNotInstalledDetail("o/r", "o"));
+    assert.match(run?.statusDetail ?? "", /installation on o doesn't cover o\/r/);
+    assert.equal(await app.store.mail.countHeld(session.id), 0, "no mail, nothing held");
     app.stopBackgroundTasks();
     await app.fastify.close();
+  });
+
+  test("#172: a missing required permission fails the run with a note naming it", async (t) => {
+    const app = await appWithMintFailure(t, "permissions-missing", undefined, { missingPermissions: ["contents:write"] });
+    const { session, runId, runToken } = await makeRunningSession(app);
+    const agent = await openAgentSocket(app, runId, "any-google-id-token");
+    sendHello(agent, runId, session.id, runToken);
+    assert.equal((await agent.nextClose()).code, 4412);
+    const run = await app.store.runs.findById(runId);
+    assert.equal(run?.state, "failed");
+    assert.equal(run?.statusDetail, githubAppPermissionsMissingDetail("o/r", ["contents:write"]));
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  /** A session with queued user mail whose run was started by the mail (wakeForMail). */
+  async function mailDrivenRun(app: Awaited<ReturnType<typeof buildTestApp>>) {
+    await seedGuru(app.store);
+    const now = new Date().toISOString();
+    await app.store.sessions.insert({ id: "s1", guruId: "test-guru", repo: "o/r", branch: "main", status: "open", cost: 0, createdAt: now, updatedAt: now });
+    await app.store.mail.insertIfNew({
+      id: "m1", sessionId: "s1", from: { kind: "user" }, text: "please fix it", behavior: "followUp", status: "queued", attempts: 0, createdAt: now,
+    });
+    assert.equal(await app.mail.wakeForMail("s1"), "woken");
+    const run = await app.store.runs.findActiveForSession("s1");
+    assert.ok(run?.mailWakePending);
+    return { runId: run.id, runToken: runTokenFor(app, run.id) };
+  }
+
+  test("#172: a mail-driven run refused for a permanent GitHub failure holds the mail with the reason; the sweep stops waking it; Retry releases it", async (t) => {
+    const app = await appWithMintFailure(t, "permissions-missing", undefined, { missingPermissions: ["contents:write"] });
+    const { runId, runToken } = await mailDrivenRun(app);
+    const agent = await openAgentSocket(app, runId, "any-google-id-token");
+    sendHello(agent, runId, "s1", runToken);
+    assert.equal((await agent.nextClose()).code, 4412);
+
+    const stored = await app.store.mail.findById("m1");
+    assert.equal(stored?.status, "held");
+    const reason = githubAppPermissionsMissingDetail("o/r", ["contents:write"]);
+    assert.equal(stored?.heldDetail, reason);
+    // (The session page's notice for it is covered in mail.test.ts, where the routes need no auth.)
+    assert.match(mailHeldFailureNotice(reason), /^Messages held: the Outfitter GitHub App is missing the Contents: read and write permission/);
+
+    // The /tick sweep no longer starts a run (and a sandbox) for it, however often it runs.
+    const starts = app.provider.startCalls.length;
+    for (let i = 0; i < MAIL_MAX_ATTEMPTS + 2; i++) assert.deepEqual(await app.mail.sweep(), []);
+    assert.equal(app.provider.startCalls.length, starts);
+    assert.deepEqual(await app.store.mail.expireExhausted(new Date().toISOString(), MAIL_MAX_ATTEMPTS), [], "held, not dead-lettered");
+    // New mail joins the hold, with the same reason, and wakes nothing.
+    await app.mail.post({ sessionId: "s1", from: { kind: "user" }, text: "and this" });
+    assert.equal(await app.store.mail.countHeld("s1"), 2);
+    assert.equal(await app.store.mail.heldDetail("s1"), reason);
+    assert.equal(app.provider.startCalls.length, starts);
+
+    // Retry (what POST /api/sessions/:id/mail/retry calls): released with a fresh budget and one wake.
+    assert.deepEqual(await app.mail.retryHeld("s1"), { released: true, result: "woken" });
+    assert.equal(await app.store.mail.countHeld("s1"), 0);
+    assert.equal(app.provider.startCalls.length, starts + 1);
+    assert.equal((await app.store.mail.findById("m1"))?.heldDetail, undefined);
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("#172: another session's run validating the protocol doesn't release a credential hold", async (t) => {
+    const app = await appWithMintFailure(t, "not-installed");
+    const { runId, runToken } = await mailDrivenRun(app);
+    const agent = await openAgentSocket(app, runId, "any-google-id-token");
+    sendHello(agent, runId, "s1", runToken);
+    assert.equal((await agent.nextClose()).code, 4412);
+    assert.equal(await app.store.mail.countHeld("s1"), 1);
+    // The deploy-mismatch release every validated hello does leaves it alone.
+    assert.deepEqual(await app.store.mail.releaseHeld(undefined, "deploy-mismatch"), []);
+    assert.equal(await app.store.mail.countHeld("s1"), 1);
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("#172: a transient mint failure on a mail-driven run holds nothing (1011, agentd retries)", async (t) => {
+    const app = await appWithMintFailure(t, "unavailable");
+    const { runId, runToken } = await mailDrivenRun(app);
+    const agent = await openAgentSocket(app, runId, "any-google-id-token");
+    sendHello(agent, runId, "s1", runToken);
+    assert.equal((await agent.nextClose()).code, 1011);
+    assert.equal(await app.store.mail.countHeld("s1"), 0);
+    assert.equal((await app.store.mail.findById("m1"))?.status, "queued");
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("#172: a session whose spec builds again releases its own credential hold", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+    const now = new Date().toISOString();
+    await app.store.mail.insertIfNew({
+      id: "h", sessionId: session.id, from: { kind: "user" }, text: "x", behavior: "followUp", status: "held", attempts: 1,
+      createdAt: now, heldAt: now, heldDetail: "the Outfitter GitHub App is missing the Checks: read permission",
+    });
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    assert.equal((await agent.nextMessage()).t, "run.spec");
+    for (let i = 0; i < 100 && (await app.store.mail.countHeld(session.id)) > 0; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.equal((await app.store.mail.findById("h"))?.status, "queued");
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+});
+
+describe("#172: GitHub App failure notes", () => {
+  test("not-installed: a repo in the installation's own account says the installation doesn't cover it", () => {
+    const text = githubAppNotInstalledDetail("cognitio-org/spec-studio", "cognitio-org");
+    assert.match(text, /installation on cognitio-org doesn't cover cognitio-org\/spec-studio/);
+    assert.match(text, /An owner of cognitio-org adds the repository/);
+    assert.doesNotMatch(text, /Install the App/);
+  });
+
+  test("not-installed: a repo in another account says only that installation is used", () => {
+    const text = githubAppNotInstalledDetail("mgmonteleone/git-ai", "cognitio-org");
+    assert.match(text, /^Outfitter only uses the GitHub App's installation on cognitio-org, and mgmonteleone\/git-ai belongs to mgmonteleone/);
+    assert.match(text, /Use a repository in cognitio-org, or have an operator store a GitHub token for this session/);
+    assert.equal(githubAppNotInstalledDetail("MGMonteleone/git-ai", "mgmonteleone").includes("doesn't cover"), true, "owners compare case-insensitively");
+  });
+
+  test("not-installed: without the installation's account, the note covers both cases", () => {
+    const text = githubAppNotInstalledDetail("o/r");
+    assert.match(text, /installation can't reach o\/r/);
+    assert.match(text, /single installation/);
+  });
+
+  test("permissions-missing names the permission and where an owner grants and accepts it", () => {
+    const one = githubAppPermissionsMissingDetail("o/r", ["contents:write"]);
+    assert.match(one, /missing the Contents: read and write permission,/);
+    assert.match(one, /grants it in the App's settings/);
+    assert.match(one, /accepts the new permissions on the App's installation/);
+    assert.match(githubAppPermissionsMissingDetail("o/r", ["contents:write", "metadata:read"]), /Contents: read and write, Metadata: read permissions/);
+    assert.match(githubAppPermissionsMissingDetail("o/r"), /a permission runs need \(Contents: read and write, Pull requests: read and write, Metadata: read\)/);
+  });
+
+  test("rejected quotes GitHub's message", () => {
+    assert.match(githubAppRejectedDetail("o/r", "Validation Failed"), /token request for o\/r \("Validation Failed"\)/);
+    assert.doesNotMatch(githubAppRejectedDetail("o/r"), /\(""\)/);
+  });
+
+  test("the held-mail notice reuses the note without its own 'start the run again'", () => {
+    assert.equal(
+      mailHeldFailureNotice("the App is missing X. An owner grants it, then start the run again."),
+      "Messages held: the App is missing X. An owner grants it. Press Retry once that's fixed.",
+    );
   });
 });

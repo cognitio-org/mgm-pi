@@ -12,6 +12,7 @@ import {
   MAIL_MAX_UNVALIDATED_WAKES,
   MAIL_MAX_TEXT,
   MAIL_SENDS_PER_HOUR,
+  mailHeldFailureNotice,
   mailIdFor,
   wrapAgentMail,
 } from "../src/mail.ts";
@@ -194,6 +195,42 @@ describe("wake", () => {
 
     const detail = await app.fastify.inject({ method: "GET", url: "/api/sessions/broken" });
     assert.equal(detail.json().heldMail, 1);
+    assert.equal(detail.json().mailNotice, MAIL_HELD_NOTICE);
+    await app.fastify.close();
+  });
+
+  test("#172: mail held for a run failure shows that reason as the notice, isn't woken by the sweep, and Retry releases it", async () => {
+    const app = await buildTestApp();
+    await seedGuru(app.store);
+    await insertSession(app, "s1");
+    await app.store.mail.insertIfNew(mail({ id: "a" }));
+    const reason = "the Outfitter GitHub App is missing the Checks: read permission, so this run has no GitHub access to o/r. An owner grants it, then start the run again.";
+    assert.equal(await app.mail.holdForFailure("s1", reason), 1);
+
+    const detail = await app.fastify.inject({ method: "GET", url: "/api/sessions/s1" });
+    assert.equal(detail.json().heldMail, 1);
+    assert.equal(detail.json().mailNotice, mailHeldFailureNotice(reason));
+    assert.equal(
+      detail.json().mailNotice,
+      "Messages held: the Outfitter GitHub App is missing the Checks: read permission, so this run has no GitHub access to o/r. An owner grants it. Press Retry once that's fixed.",
+    );
+    assert.deepEqual(await app.mail.sweep(), [], "the tick doesn't wake a held session");
+    assert.equal(app.provider.startCalls.length, 0);
+
+    const res = await app.fastify.inject({ method: "POST", url: "/api/sessions/s1/mail/retry" });
+    assert.deepEqual(res.json(), { released: true, result: "woken", heldMail: 0 });
+    assert.equal(app.provider.startCalls.length, 1);
+    const after = await app.fastify.inject({ method: "GET", url: "/api/sessions/s1" });
+    assert.equal(after.json().mailNotice, undefined);
+    await app.fastify.close();
+  });
+
+  test("#172: a deploy-mismatch hold keeps its own notice", async () => {
+    const app = await buildTestApp();
+    await seedGuru(app.store);
+    await insertSession(app, "s1");
+    await app.store.mail.insertIfNew(mail({ id: "old", status: "held", heldAt: iso(0) }));
+    const detail = await app.fastify.inject({ method: "GET", url: "/api/sessions/s1" });
     assert.equal(detail.json().mailNotice, MAIL_HELD_NOTICE);
     await app.fastify.close();
   });

@@ -29,6 +29,7 @@ import type {
   TokenOwnerMatch,
   Mail,
   MailCollection,
+  HeldMailScope,
   BrowserShare,
   BrowserSharesCollection,
   BrowserRequest,
@@ -553,21 +554,44 @@ class MongoMail implements MailCollection {
       alreadyHeld ||
       (await this.col.countDocuments({ ...deliverable, unvalidatedWakes: { $gte: maxUnvalidatedWakes } }, { limit: 1 })) > 0;
     if (stuck) {
-      await this.col.updateMany(deliverable, { $set: { status: "held", heldAt: nowIso }, $unset: { lockedUntil: "" } });
+      // New mail joins an existing hold with its reason (#172).
+      const detail = alreadyHeld ? await this.heldDetail(sessionId) : undefined;
+      await this.col.updateMany(deliverable, {
+        $set: { status: "held", heldAt: nowIso, ...(detail ? { heldDetail: detail } : {}) },
+        $unset: { lockedUntil: "" },
+      });
     }
     return this.col.countDocuments({ sessionId, status: "held" });
   }
 
-  async releaseHeld(sessionId?: string): Promise<string[]> {
-    const filter = { status: "held" as const, ...(sessionId ? { sessionId } : {}) };
+  async holdSession(sessionId: string, nowIso: string, maxAttempts: number, detail: string): Promise<number> {
+    await this.col.updateMany(
+      { sessionId, ...deliverableFilter(nowIso, maxAttempts) },
+      { $set: { status: "held", heldAt: nowIso }, $unset: { lockedUntil: "" } },
+    );
+    await this.col.updateMany({ sessionId, status: "held" }, { $set: { heldDetail: detail } });
+    return this.col.countDocuments({ sessionId, status: "held" });
+  }
+
+  async releaseHeld(sessionId?: string, scope: HeldMailScope = "all"): Promise<string[]> {
+    const filter = {
+      status: "held" as const,
+      ...(sessionId ? { sessionId } : {}),
+      ...(scope === "deploy-mismatch" ? { heldDetail: { $exists: false } } : {}),
+    };
     const sessions = await this.col.distinct("sessionId", filter);
     if (sessions.length === 0) return [];
-    await this.col.updateMany(filter, { $set: { status: "queued" }, $unset: { heldAt: "", unvalidatedWakes: "" } });
+    await this.col.updateMany(filter, { $set: { status: "queued" }, $unset: { heldAt: "", heldDetail: "", unvalidatedWakes: "" } });
     return sessions;
   }
 
   async countHeld(sessionId: string): Promise<number> {
     return this.col.countDocuments({ sessionId, status: "held" });
+  }
+
+  async heldDetail(sessionId: string): Promise<string | undefined> {
+    const doc = await this.col.findOne({ sessionId, status: "held", heldDetail: { $exists: true } }, { projection: { heldDetail: 1 } });
+    return typeof doc?.heldDetail === "string" ? doc.heldDetail : undefined;
   }
 
   async expireExhausted(nowIso: string, maxAttempts: number): Promise<Mail[]> {

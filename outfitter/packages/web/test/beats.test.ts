@@ -131,6 +131,40 @@ describe("groupBeats", () => {
       { kind: "user", id: "u1", text: "stop" },
     ]);
     expect(beforeUser.map((beat) => beat.kind)).toEqual(["tools-only", "user"]);
+    expect((beforeUser[0] as ToolsOnlyBeat).rail[0]).toMatchObject({ id: "c1", running: false });
+  });
+
+  it("stops blinking once a later user message has started the next round", () => {
+    const beats = groupBeats(
+      groupThinkingBlocks([
+        call("c1", "tc1", "bash"),
+        text("a1", "I'll review it"),
+        { kind: "user", id: "u2", text: "next" },
+        call("c2", "tc2", "bash"),
+      ]),
+    );
+    const first = beats[0] as AssistantBeat;
+    expect(first.rail[0]).toMatchObject({ id: "c1", running: false });
+    const second = beats[2] as ToolsOnlyBeat;
+    expect(second.rail[0]).toMatchObject({ id: "c2", running: true });
+  });
+
+  it("fills a settled call when its result arrives after the next user message", () => {
+    const beats = groupBeats(
+      groupThinkingBlocks([
+        call("c1", "tc1", "bash"),
+        { kind: "user", id: "u2", text: "next" },
+        result("r1", "tc1", "done", false, "bash"),
+      ]),
+    );
+    expect((beats[0] as ToolsOnlyBeat).rail[0]).toMatchObject({ id: "c1", running: false, output: "done" });
+    expect(beats.filter((beat) => beat.kind === "tools-only")).toHaveLength(1);
+  });
+
+  it("stops blinking when the run has settled, and keeps blinking while it is still working", () => {
+    const views = groupThinkingBlocks([call("c1", "tc1", "bash"), text("a1", "on it")]);
+    expect((groupBeats(views)[0] as AssistantBeat).rail[0]).toMatchObject({ running: true });
+    expect((groupBeats(views, { runSettled: true })[0] as AssistantBeat).rail[0]).toMatchObject({ running: false });
   });
 
   it("passes user and system views through as their own beats", () => {

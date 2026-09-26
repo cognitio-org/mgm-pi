@@ -1,10 +1,7 @@
 // Retro "busy" indicator, used everywhere the UI is sending, loading, or waiting on a run.
 //
-// Primary design: a C64 cassette-loading border stripe -- the flickering striped bar a C64 draws
-// around the screen edge while a tape loads. Chosen over two alternatives kept as documented SVGs
-// in docs/design/ (an 8-point pixel ring "busy" spinner, and an early-Mac wristwatch cursor) --
-// see docs/design/README.md for the one-line rationale on each. Motion is stepped, not eased, to
-// match the rest of the theme's "no blur, no smooth gradients" language.
+// The mark is a green Knight Rider scanner: one lamp sweeps across a short row and back,
+// stepped, with no blur. It stays about 16px tall so a status line does not grow a row.
 //
 // Accessible by construction: role="status" + aria-live="polite" so assistive tech announces the
 // label when it appears/changes, a visible or screen-reader-only label (never stripe-only), and a

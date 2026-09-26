@@ -342,7 +342,14 @@ export function SettingsPage() {
 
       <h3>Secrets</h3>
       <div className="table-scroll">
-      <table className="data-table stack">
+      <table className="data-table stack secrets-table">
+        <colgroup>
+          <col className="col-secret" />
+          <col className="col-value" />
+          <col className="col-applies" />
+          <col className="col-updated" />
+          <col className="col-actions" />
+        </colgroup>
         <thead>
           <tr>
             <th>Secret</th>

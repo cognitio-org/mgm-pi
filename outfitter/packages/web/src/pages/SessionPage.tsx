@@ -327,7 +327,10 @@ export function SessionPage() {
 
   if (notFound) return <NotFoundError subject="This floppy" />;
 
-  const beats = groupBeats(groupThinkingBlocks(entriesToViews(entries)));
+  // idle/stopped/failed means pi is not inside a tool. A newer user message settles the
+  // previous turn even when the next run is already "running" again.
+  const runSettled = runState === "idle" || runState === "stopped" || runState === "failed";
+  const beats = groupBeats(groupThinkingBlocks(entriesToViews(entries)), { runSettled });
   const previewAccess = previewAccessByEntry(
     entries,
     session?.htmlPreviewAccessByRun,

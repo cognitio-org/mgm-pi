@@ -114,20 +114,20 @@ export function EntryItem({
     }
     case "system":
       return (
-        <div className="entry system">
-          <div className="entry-label">System</div>
-          <Markdown text={view.text} />
+        <div className="entry system boot-line">
+          <div className="boot-tag">System</div>
+          {view.text.trim() ? <Markdown text={view.text} /> : null}
         </div>
       );
     case "model-change":
       return (
-        <div className="entry model-change">
+        <div className="entry model-change boot-line">
           Model changed to {view.provider}/{view.modelId}
         </div>
       );
     case "thinking-level-change":
       return (
-        <div className="entry thinking-level-change">
+        <div className="entry thinking-level-change boot-line">
           Thinking level changed to {view.thinkingLevel}
         </div>
       );

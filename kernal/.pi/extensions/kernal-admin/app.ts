@@ -490,7 +490,13 @@ function api(method, path, body, poll) {
     .then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (data) {
         if (res.status === 401) { gone("This page's session has ended", "Run /admin in kernal to open a fresh one."); throw new Error("unauthorised"); }
-        if (!res.ok) { var e = new Error(data.error || ("HTTP " + res.status)); e.data = data; e.status = res.status; throw e; }
+        if (!res.ok) {
+          var msg = typeof data.error === 'object' && data.error !== null ? (data.error.message || JSON.stringify(data.error)) : data.error;
+          var e = new Error(msg || ("HTTP " + res.status));
+          e.data = data;
+          e.status = res.status;
+          throw e;
+        }
         return data;
       });
     }, function (err) {

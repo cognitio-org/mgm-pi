@@ -1,13 +1,13 @@
 // Tiny SSE helper: one hub of per-session subscriber lists, written to directly (no framework
 // dependency beyond Fastify's raw response). See protocol.md "browser <-> api": GET
-// /api/sessions/:id/stream sends `status` on connect, then live entry|event|status|spend|checkpoint.
+// /api/sessions/:id/stream sends `status` on connect, then live entry|event|status|spend|checkpoint|liveness.
 
 import type { FastifyReply } from "fastify";
 import type { Store } from "./store/types.ts";
 import { entryForWire } from "./entry-wire.ts";
 import { summarizeStartup } from "./startup.ts";
 
-export type SseEventType = "entry" | "event" | "status" | "spend" | "checkpoint";
+export type SseEventType = "entry" | "event" | "status" | "spend" | "checkpoint" | "liveness";
 
 export interface SseEvent {
   type: SseEventType;
@@ -114,6 +114,8 @@ export class SsePoller {
       /** Which run the fields above describe, so a note belonging to the previous run isn't left
        * standing over a new one -- see the `detail` handling in pollOne. */
       lastRunId?: string;
+      /** The active run's lastSeenAt/lastActivityAt as last published in a `liveness` frame. */
+      lastLivenessKey?: string;
     }
   >();
   private timer?: ReturnType<typeof setInterval>;
@@ -233,6 +235,22 @@ export class SsePoller {
       cursor.lastRunId = terminal?.id;
       cursor.lastStartupKey = startupKey;
       if (detail !== undefined) cursor.lastStatusDetail = detail;
+    }
+    // Liveness (#182): pi's own events never cross from the link role to this one, so the page
+    // can't see a long turn streaming. It gets how long ago agentd last spoke (heartbeats every
+    // 15 s) and how long ago pi last did anything, as ages rather than timestamps so the browser's
+    // clock never has to agree with ours. Sent whenever either changes.
+    if (run && (run.lastSeenAt || run.lastActivityAt)) {
+      const key = `${run.id}|${run.lastSeenAt ?? ""}|${run.lastActivityAt ?? ""}`;
+      if (key !== cursor.lastLivenessKey) {
+        const now = Date.now();
+        const age = (iso?: string) => (iso ? Math.max(0, now - Date.parse(iso)) : undefined);
+        this.hub.publish(sessionId, {
+          type: "liveness",
+          data: { seenAgoMs: age(run.lastSeenAt), activityAgoMs: age(run.lastActivityAt) },
+        });
+        cursor.lastLivenessKey = key;
+      }
     }
     if (run && typeof run.costEstimate === "number" && run.costEstimate !== cursor.lastCostEstimate) {
       this.hub.publish(sessionId, { type: "spend", data: { t: "spend", estimate: run.costEstimate } });

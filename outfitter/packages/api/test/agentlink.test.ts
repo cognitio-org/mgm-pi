@@ -325,6 +325,31 @@ describe("agentd <-> api WebSocket", () => {
     await app.fastify.close();
   });
 
+  test("pi entries and events stamp lastActivityAt; a heartbeat moves only lastSeenAt (#182)", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    await agent.nextMessage(); // run.spec
+
+    agent.send({ t: "event", seq: 1, event: { type: "message_update" } });
+    assert.deepEqual(await agent.nextMessage(), { t: "ack", seq: 1 });
+    const afterEvent = await app.store.runs.findById(runId);
+    assert.ok(afterEvent?.lastActivityAt);
+
+    await new Promise((r) => setTimeout(r, 5));
+    agent.send({ t: "heartbeat", idleSeconds: 0, memMb: 1 });
+    await new Promise((r) => setTimeout(r, 50)); // a heartbeat gets no reply; give the api a moment
+    const afterBeat = await app.store.runs.findById(runId);
+    assert.equal(afterBeat?.lastActivityAt, afterEvent.lastActivityAt);
+    assert.ok(afterBeat!.lastSeenAt! > afterEvent.lastActivityAt!);
+
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
   test("proceeds to run.spec once hello carries the correct runToken", async () => {
     const app = await buildTestApp();
     const { session, runId, runToken } = await makeRunningSession(app);

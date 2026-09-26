@@ -19,7 +19,8 @@ export interface SessionLamp {
   detail: string | null;
 }
 
-const WORKING_PHASES = new Set<ActivityPhase>(["sending", "waking", "working"]);
+// quiet is a long step with agentd still heartbeating: working, not an error.
+const WORKING_PHASES = new Set<ActivityPhase>(["sending", "waking", "working", "quiet"]);
 // workTimeout is not here: a pending question outranks that stall only.
 const ERROR_PHASES = new Set<ActivityPhase>(["sendFailed", "wakeTimeout"]);
 

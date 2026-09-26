@@ -11,6 +11,8 @@ describe("sessionLamp", () => {
     expect(sessionLamp({ ...quiet, phase: "sending", runState: "stopped" }).tone).toBe("working");
     expect(sessionLamp({ ...quiet, phase: "waking", runState: "stopped" }).tone).toBe("working");
     expect(sessionLamp({ ...quiet, phase: "working", runState: "idle" }).tone).toBe("working");
+    // A long step with agentd still heartbeating (#182) is working, not an error.
+    expect(sessionLamp({ ...quiet, phase: "quiet", runState: "running" })).toEqual({ tone: "working", label: "Working", detail: null });
   });
 
   it("holds a light green for idle — the sandbox is up and the prompt is free", () => {

@@ -5,6 +5,8 @@ import {
   findEcho,
   nextSendAnchor,
   notePendingRunState,
+  quietLabel,
+  AGENT_SILENT_MS,
   WAKE_TIMEOUT_MS,
   WORK_TIMEOUT_MS,
   type ActivityInput,
@@ -154,6 +156,56 @@ describe("deriveSessionActivity", () => {
     expect(stuck.errorHeadline).toBe("LOAD ERROR");
     const progressing = derive({ runState: "running", pending: p, now: T0 + WORK_TIMEOUT_MS + 1, lastProgressAt: T0 + 60_000 });
     expect(progressing.phase).toBe("working");
+  });
+
+  it("a long step with agentd still heartbeating is quiet, not LOAD ERROR, and says how long (#182)", () => {
+    const p = notePendingRunState(pending({ acceptedAt: T0 }), "running")!;
+    const now = T0 + 5 * 60_000 + 30_000;
+    const a = derive({ runState: "running", pending: p, now, lastProgressAt: T0, agentSeenAt: now - 10_000 });
+    expect(a.phase).toBe("quiet");
+    expect(a.errorHeadline).toBeNull();
+    expect(a.label).toBe("Working, no output for 5 min");
+    expect(a.canAbort).toBe(true);
+    // Same without a send of ours (page reloaded mid-turn).
+    expect(derive({ runState: "running", now, lastProgressAt: T0, agentSeenAt: now - 10_000 }).phase).toBe("quiet");
+  });
+
+  it("quiet turns into LOAD ERROR once agentd has been silent past AGENT_SILENT_MS", () => {
+    const p = notePendingRunState(pending({ acceptedAt: T0 }), "running")!;
+    const now = T0 + WORK_TIMEOUT_MS + 1;
+    expect(derive({ runState: "running", pending: p, now, agentSeenAt: now - AGENT_SILENT_MS }).phase).toBe("quiet");
+    expect(derive({ runState: "running", pending: p, now, agentSeenAt: now - AGENT_SILENT_MS - 1 }).phase).toBe("workTimeout");
+  });
+
+  it("an idle run that never picked the message up is still an error, heartbeat or not", () => {
+    const p = pending({ acceptedAt: T0, runStateAtSend: "idle" });
+    const now = T0 + WORK_TIMEOUT_MS + 1;
+    expect(derive({ runState: "idle", pending: p, now, agentSeenAt: now }).phase).toBe("workTimeout");
+  });
+
+  it("without liveness from the api, a quiet running turn is LOAD ERROR as before", () => {
+    const p = notePendingRunState(pending({ acceptedAt: T0 }), "running")!;
+    expect(derive({ runState: "running", pending: p, now: T0 + WORK_TIMEOUT_MS + 1 }).phase).toBe("workTimeout");
+  });
+
+  it("a stop that isn't finishing is still an error, heartbeat or not", () => {
+    const p = notePendingRunState(pending({ acceptedAt: T0 }), "running")!;
+    const now = T0 + WORK_TIMEOUT_MS + 1;
+    expect(derive({ runState: "stopping", pending: p, now, agentSeenAt: now }).phase).toBe("workTimeout");
+  });
+
+  it("after a reload the quiet label counts from pi's last activity, not from page load", () => {
+    const loadedAt = T0 + 20 * 60_000;
+    const now = loadedAt + WORK_TIMEOUT_MS + 1;
+    const a = derive({ runState: "running", now, lastProgressAt: loadedAt, agentSeenAt: now, piActiveAt: T0 });
+    expect(a.phase).toBe("quiet");
+    expect(a.label).toBe("Working, no output for 22 min");
+  });
+
+  it("quietLabel rounds down to whole minutes, never below 1", () => {
+    expect(quietLabel(0)).toBe("Working, no output for 1 min");
+    expect(quietLabel(2 * 60_000 + 59_000)).toBe("Working, no output for 2 min");
+    expect(quietLabel(61 * 60_000)).toBe("Working, no output for 61 min");
   });
 
   it("reload mid-wait (no pending send): provisioning reads waking, running reads working, with the same timeouts", () => {

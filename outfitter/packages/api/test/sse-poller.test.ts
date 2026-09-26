@@ -129,6 +129,68 @@ describe("SsePoller (bug 2: split web/link deployment)", () => {
   });
 });
 
+describe("SsePoller liveness (#182)", () => {
+  function livenessFrames(frames: string[]) {
+    return frames
+      .filter((f) => f.startsWith("event: liveness"))
+      .map((f) => JSON.parse(f.split("data: ")[1]) as { seenAgoMs?: number; activityAgoMs?: number });
+  }
+
+  test("sends how long ago agentd spoke and pi acted, as ages, once per change", async () => {
+    const store = new MemoryStore();
+    const webHub = new SseHub();
+    const poller = new SsePoller(webHub, store, 5);
+    await seedSession(store, "sl");
+    const { reply, frames } = fakeSubscriber();
+    webHub.subscribe("sl", reply);
+    poller.watch("sl");
+
+    const t = Date.now();
+    const iso = (ms: number) => new Date(ms).toISOString();
+    await store.runs.insert({
+      id: "rl",
+      sessionId: "sl",
+      state: "running",
+      lastAckedSeq: 0,
+      pending: [],
+      lastSeenAt: iso(t - 5_000),
+      lastActivityAt: iso(t - 180_000),
+      createdAt: iso(t),
+      updatedAt: iso(t),
+    });
+    await poller.pollOne("sl");
+    await poller.pollOne("sl"); // nothing changed: no second frame
+
+    let sent = livenessFrames(frames);
+    assert.equal(sent.length, 1);
+    assert.ok(sent[0].seenAgoMs! >= 5_000 && sent[0].seenAgoMs! < 10_000);
+    assert.ok(sent[0].activityAgoMs! >= 180_000 && sent[0].activityAgoMs! < 185_000);
+
+    // A heartbeat moves lastSeenAt only: the page learns agentd is alive though pi is still quiet.
+    await store.runs.update("rl", { lastSeenAt: iso(Date.now()) });
+    await poller.pollOne("sl");
+    sent = livenessFrames(frames);
+    assert.equal(sent.length, 2);
+    assert.ok(sent[1].seenAgoMs! < 1_000);
+    assert.ok(sent[1].activityAgoMs! >= 180_000);
+  });
+
+  test("nothing for a run agentd hasn't reached yet, or for no active run", async () => {
+    const store = new MemoryStore();
+    const webHub = new SseHub();
+    const poller = new SsePoller(webHub, store, 5);
+    await seedSession(store, "sn");
+    const { reply, frames } = fakeSubscriber();
+    webHub.subscribe("sn", reply);
+    poller.watch("sn");
+    await poller.pollOne("sn");
+    const now = new Date().toISOString();
+    await store.runs.insert({ id: "rn", sessionId: "sn", state: "provisioning", lastAckedSeq: 0, pending: [], createdAt: now, updatedAt: now });
+    await poller.pollOne("sn");
+    assert.equal(livenessFrames(frames).length, 0);
+  });
+});
+
 describe("SsePoller entry window (review fix)", () => {
   test("publishes a later run's entries even though agentd's seq restarted below the last one seen", async () => {
     const store = new MemoryStore();

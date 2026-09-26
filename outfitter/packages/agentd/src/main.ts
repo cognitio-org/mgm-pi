@@ -30,6 +30,7 @@ import { resolveRunAsUser, chownRecursive } from "./run-as-user.js";
 import { createLogger } from "./logger.js";
 import { getPiVersion } from "./pi-version.js";
 import { preloadSessionManager } from "./session.js";
+import { bootTimings } from "./boot-timings.js";
 
 const AGENTD_VERSION = "0.1.0";
 const DEFAULT_WORKSPACE = "/workspace";
@@ -118,6 +119,11 @@ async function main(): Promise<void> {
   // sitting between run.spec and spawning pi (docs/reports/startup-trim.md and PR4: a warm pod that
   // waits idle to be claimed pre-pays this for free).
   preloadSessionManager();
+  // hello.boot (protocol.ts's BootTimings): the run-independent setup ends here. On the env path the
+  // assignment was known before bootStart, so everything from here to hello is the person's wait.
+  const setupMs = Date.now() - bootStart;
+  let assignedAt = bootStart;
+  let assignmentWaitMs: number | undefined;
 
   // Only reached on a GKE warm pod (`assignment` is still undefined here): wait (no default
   // timeout) for a SandboxClaim's annotations to reach the pod's downward-API files (spec §3.5
@@ -134,6 +140,8 @@ async function main(): Promise<void> {
         ),
     });
     phaseRunId = assignment.runId;
+    assignedAt = Date.now();
+    assignmentWaitMs = assignment.waitedMs;
     logger = logger.child({ runId: assignment.runId });
     phase(`assigned (waitedMs=${assignment.waitedMs})`);
   }
@@ -145,6 +153,9 @@ async function main(): Promise<void> {
   // The moment (elapsed since boot) the current connect attempt's identity-token fetch started --
   // read by `onHeadersError` below, which has no other way to know how long the failed attempt ran.
   let tokenFetchStart = 0;
+  // The current attempt's identity-token fetch time and when it finished, for hello.boot.
+  let identityTokenMs: number | undefined;
+  let tokenFetchedAt: number | undefined;
 
   const link = new Link({
     url: wsUrl,
@@ -156,8 +167,12 @@ async function main(): Promise<void> {
     headers: async () => {
       connectAttempt++;
       tokenFetchStart = Date.now();
+      identityTokenMs = undefined;
+      tokenFetchedAt = undefined;
       const token = await getIdToken(apiOrigin, devToken);
-      connectPhase(`identity token fetched (${Date.now() - tokenFetchStart}ms)`);
+      tokenFetchedAt = Date.now();
+      identityTokenMs = tokenFetchedAt - tokenFetchStart;
+      connectPhase(`identity token fetched (${identityTokenMs}ms)`);
       return { Authorization: `Bearer ${token}` };
     },
     // #157/#143: a failed fetch used to be silently swallowed by link.ts, indistinguishable from a
@@ -171,6 +186,10 @@ async function main(): Promise<void> {
     sessionId: "", // learned from run.spec; see Link.setSessionId
     agentdVersion: AGENTD_VERSION,
     piVersion,
+    // Read as each hello is built, i.e. the moment the socket opened. The api keeps the first
+    // accepted hello's and ignores later ones, so a reconnect's numbers don't matter.
+    bootTimings: () =>
+      bootTimings({ now: Date.now(), bootStart, setupMs, assignedAt, assignmentWaitMs, identityTokenMs, tokenFetchedAt }),
   });
 
   const controller = new RunController({

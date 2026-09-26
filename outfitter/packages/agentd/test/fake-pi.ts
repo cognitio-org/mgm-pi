@@ -90,6 +90,9 @@ function handle(cmd: any): void {
     emit({ type: "agent_settled" });
   } else if (cmd.type === "abort") {
     emit({ id: cmd.id, type: "response", command: "abort", success: true });
+  } else if (cmd.type === "get_state") {
+    // agentd's start-up readiness probe (startup-phases.ts): real pi answers once it has loaded.
+    emit({ id: cmd.id, type: "response", command: "get_state", success: true, data: {} });
   }
 }
 

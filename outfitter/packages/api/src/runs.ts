@@ -89,6 +89,8 @@ export class RunManager {
       pending: [],
       createdAt: now,
       updatedAt: now,
+      // startup.ts: the rest of Run.startup is stamped as the run gets further.
+      startup: { wakeAt: now, provider: this.config.sandboxProvider },
       ...(opts.mailDriven ? { mailWakePending: true } : {}),
     };
     const { run, inserted } = await this.store.runs.insertIfNoActive(candidate);
@@ -104,7 +106,7 @@ export class RunManager {
 
     try {
       const provider = await this.providers.get(this.config.sandboxProvider);
-      const { handle } = await provider.start({
+      const { handle, warm } = await provider.start({
         runId: run.id,
         apiOrigin: sandboxOrigin(this.config),
         runToken,
@@ -113,6 +115,15 @@ export class RunManager {
         // with its own metadata-server identity token instead.
         devToken: this.config.devMode ? this.config.devToken : undefined,
       });
+      // Its own write, not part of the update below: agentd may already have said hello (link
+      // role, another process) and stamped startup.helloAt, which a whole-object write would lose.
+      // Best-effort: timing never fails a run whose sandbox did start.
+      await this.store.runs
+        .mergeStartup(run.id, {
+          providerReturnedAt: new Date().toISOString(),
+          ...(typeof warm === "boolean" ? { warm } : {}),
+        })
+        .catch(() => null);
       return (
         (await this.store.runs.update(run.id, {
           state: "provisioning",

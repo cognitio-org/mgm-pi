@@ -98,6 +98,40 @@ test("Link: sends hello with lastAckedSeq=0 on first open", async (t) => {
   // Bug 9 (docs/reports/cloud-fixes.md): the wire protocol version, so a version-skewed link can
   // refuse the connection loudly instead of silently ignoring frames it doesn't understand.
   assert.equal(hello.protocolVersion, 2);
+  assert.equal("boot" in hello, false, "no bootTimings provider, no boot field");
+});
+
+test("Link: hello carries bootTimings(), read fresh as each hello is built", async (t) => {
+  let calls = 0;
+  const link = makeLink({
+    bootTimings: () => {
+      calls++;
+      return { bootMs: 100 * calls, setupMs: 20, sinceAssignedMs: 90, identityTokenMs: 30, connectMs: 10 };
+    },
+  });
+  t.after(() => link.close());
+  const ws = await connectAndGetInstance(link);
+  assert.equal(calls, 0, "not read before the socket opens");
+  ws.triggerOpen();
+  const hello = JSON.parse(ws.sent[0]);
+  assert.deepEqual(hello.boot, { bootMs: 100, setupMs: 20, sinceAssignedMs: 90, identityTokenMs: 30, connectMs: 10 });
+  assert.equal(calls, 1);
+});
+
+test("bootTimings: env path and warm pod arithmetic", async () => {
+  const { bootTimings } = await import("../src/boot-timings.js");
+  // Env path: assigned at boot, no wait; token fetched at 1300 of a hello built at 1500.
+  assert.deepEqual(
+    bootTimings({ now: 1500, bootStart: 1000, setupMs: 120, assignedAt: 1000, identityTokenMs: 180, tokenFetchedAt: 1300 }),
+    { bootMs: 500, setupMs: 120, sinceAssignedMs: 500, identityTokenMs: 180, connectMs: 200 },
+  );
+  // Warm pod: idled 60s before the claim at 61_200; only what follows the claim is the person's wait.
+  assert.deepEqual(
+    bootTimings({ now: 62_000, bootStart: 1000, setupMs: 150, assignedAt: 61_200, assignmentWaitMs: 60_000, identityTokenMs: 500, tokenFetchedAt: 61_800 }),
+    { bootMs: 61_000, setupMs: 150, assignmentWaitMs: 60_000, sinceAssignedMs: 800, identityTokenMs: 500, connectMs: 200 },
+  );
+  // A token fetch still in flight (or failed) leaves those two out.
+  assert.deepEqual(bootTimings({ now: 10, bootStart: 0, setupMs: 5, assignedAt: 0 }), { bootMs: 10, setupMs: 5, sinceAssignedMs: 10 });
 });
 
 test("Link: sendSeq assigns monotonic seq and buffers until acked", async (t) => {

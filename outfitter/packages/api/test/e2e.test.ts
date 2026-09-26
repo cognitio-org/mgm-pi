@@ -190,6 +190,28 @@ test(
     assert.equal(message.role, "assistant");
     assert.equal(message.content[0]?.text, "pong");
 
+    // Start-up timing (src/startup.ts) from a real agentd: hello.boot, then the `startup` frame once
+    // fake-pi answers the readiness probe; the session detail then carries a complete summary.
+    const started = await waitUntil(
+      async () => {
+        const r = await store.runs.findById(run.id);
+        return r?.startup?.phases?.some((p) => p.name === "pi ready") ? r : false;
+      },
+      deadline,
+      "the run never recorded agentd's start-up phases",
+    );
+    const s = started.startup!;
+    for (const stamp of [s.wakeAt, s.providerReturnedAt, s.helloAt, s.specSentAt, s.readyAt]) assert.ok(stamp, JSON.stringify(s));
+    assert.equal(typeof s.agentd?.bootMs, "number");
+    assert.equal(typeof s.agentd?.identityTokenMs, "number");
+    const names = s.phases!.map((p) => p.name);
+    assert.equal(names[0], "run.spec received");
+    assert.ok(names.indexOf("pi spawned") > 0 && names.indexOf("pi spawned") < names.indexOf("pi ready"), JSON.stringify(names));
+    const detail = (await (await fetch(`${origin}/api/sessions/${session.id}`)).json()) as { startup: { complete: boolean; totalMs: number; segments: Array<{ id: string; ms: number }> } };
+    assert.equal(detail.startup.complete, true);
+    assert.deepEqual(detail.startup.segments.map((seg) => seg.id), ["request", "sandbox", "workspace", "pi"]);
+    assert.equal(detail.startup.segments.reduce((sum, seg) => sum + seg.ms, 0), detail.startup.totalMs);
+
     const stopRes = await fetch(`${origin}/api/sessions/${session.id}/stop`, { method: "POST" });
     assert.equal(stopRes.status, 200);
 

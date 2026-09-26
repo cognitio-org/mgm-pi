@@ -15,7 +15,7 @@
  * bug -- a token that expired hours into a run would make every reconnect fail with 401 forever).
  */
 import WebSocket from "ws";
-import { isSeqUpMessage, WIRE_PROTOCOL_VERSION, type DownMessage, type UpMessage } from "./protocol.js";
+import { isSeqUpMessage, WIRE_PROTOCOL_VERSION, type BootTimings, type DownMessage, type UpMessage } from "./protocol.js";
 
 /** Close codes the api sends to mean "don't bother reconnecting" -- observed in the first real Cloud
  * Run execution: the api accepted the token, upgraded, then immediately closed with 4404 because the
@@ -73,6 +73,9 @@ export interface LinkOptions {
    * error's raw text if it could ever carry a secret; `main.ts`'s own `headers` provider never puts
    * one in an Error message. Default: no-op. */
   onHeadersError?: (err: unknown) => void;
+  /** Read as each `hello` is built: this sandbox's boot timings (protocol.ts's BootTimings), or
+   * undefined to leave the field out. */
+  bootTimings?: () => BootTimings | undefined;
 }
 
 export type LinkHandler = (msg: DownMessage) => void;
@@ -254,6 +257,7 @@ export class Link {
       // reconnect look like a fresh success and retry at the base delay forever. Only a connection
       // that stays open `stableAfterMs`, or the first ack/run.spec, counts as real progress -- see
       // `armStableTimer` and the "message" handler below.
+      const boot = this.opts.bootTimings?.();
       const hello: UpMessage = {
         t: "hello",
         runId: this.opts.runId,
@@ -263,6 +267,7 @@ export class Link {
         lastAckedSeq: this.lastAckedSeq,
         runToken: this.opts.runToken,
         protocolVersion: WIRE_PROTOCOL_VERSION,
+        ...(boot ? { boot } : {}),
       };
       this.transmit(hello);
       // Resend everything still unacked, in original order, so the api can replay/dedupe past

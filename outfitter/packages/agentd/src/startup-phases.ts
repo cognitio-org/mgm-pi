@@ -13,6 +13,9 @@
  * `get_state` RPC sent right after spawning, which pi only answers once every extension has loaded
  * and every `session_start` handler has returned. Its response is recognised by id and swallowed
  * (`observe` returns true), never forwarded to the api.
+ *
+ * `list()` returns the phases marked so far as `{name, ms}`; RunController sends them to the api in
+ * one `startup` frame when "pi ready" fires (protocol.md), so the web UI can show the breakdown.
  */
 import type { LogFields } from "./logger.js";
 import type { PiRpcCommand, PiRpcEvent } from "./protocol.js";
@@ -33,6 +36,7 @@ export class StartupPhases {
   private readonly origin: number;
   private last: number;
   private readonly seen = new Set<string>();
+  private readonly marked: Array<{ name: string; ms: number }> = [];
   /** Set once the probe was sent and cleared by its one response, so only that response is dropped. */
   private probePending = false;
 
@@ -47,8 +51,15 @@ export class StartupPhases {
     if (this.seen.has(phase)) return;
     this.seen.add(phase);
     const t = this.now();
-    this.opts.log("phase", { phase, ms: Math.round(t - this.origin), sinceLastMs: Math.round(t - this.last), ...fields });
+    const ms = Math.round(t - this.origin);
+    this.marked.push({ name: phase, ms });
+    this.opts.log("phase", { phase, ms, sinceLastMs: Math.round(t - this.last), ...fields });
     this.last = t;
+  }
+
+  /** The phases marked so far, in order, as `{name, ms}` (ms since the timer started). */
+  list(): Array<{ name: string; ms: number }> {
+    return this.marked.map((p) => ({ ...p }));
   }
 
   /** Sends the readiness probe (see the module doc). */

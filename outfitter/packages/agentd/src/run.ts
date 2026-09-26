@@ -20,6 +20,17 @@ import { createAsyncLock } from "./lock.js";
 import { spawnPi, SessionTailer, SpendTailer, validateSpendLine, type PiProcess, type SpendLogLine } from "./pi.js";
 import { importSession, writeSnapshotFile, emptySessionJsonl, lastKnownModelState } from "./session.js";
 import { StartupPhases } from "./startup-phases.js";
+
+/** The start-up phases the `startup` frame carries: run.spec through pi ready. Later "first ..."
+ * milestones depend on the person's prompt, not on starting up. */
+const STARTUP_REPORT_PHASES = new Set([
+  "run.spec received",
+  "repo cloned",
+  "workspace restored",
+  "session import done",
+  "pi spawned",
+  "pi ready",
+]);
 import type { Logger } from "./logger.js";
 import type { RunAsUser } from "./run-as-user.js";
 import { validateSnapshotUrl, snapshotHostAllowlist, isDevMode } from "./snapshot-url.js";
@@ -249,6 +260,8 @@ export class RunController {
   private readonly mailAccepted = new Set<string>();
   /** Start-up phase timing; only set when deps.startupPhases is on (startup-phases.ts). */
   private startup: StartupPhases | undefined;
+  /** Set once the `startup` frame (phases through "pi ready") has gone to the api. */
+  private startupReported = false;
   /** Localhost git smart-HTTP proxy for this run, if it has a GitHub repo and token. */
   private gitProxy: GitProxy | undefined;
   /** Broker socket for GitHub API calls. Network git does not use it. */
@@ -799,8 +812,21 @@ export class RunController {
     });
   }
 
+  /** Sends the run's start-up phases through "pi ready" to the api, once. Timings only. */
+  private reportStartup(): void {
+    if (this.startupReported || !this.startup) return;
+    this.startupReported = true;
+    const phases = this.startup.list().filter((p) => STARTUP_REPORT_PHASES.has(p.name));
+    this.deps.link.send({ t: "startup", phases });
+  }
+
   private handlePiEvent(event: PiRpcEvent): void {
-    if (this.startup?.observe(event)) return; // agentd's own readiness probe, not the api's business
+    if (this.startup?.observe(event)) {
+      // agentd's own readiness probe, not the api's business -- but its timing is: "pi ready" just
+      // fired, so report the start-up phases once (protocol.md's `startup` frame).
+      this.reportStartup();
+      return;
+    }
     this.deps.link.sendSeq((seq) => ({ t: "event", seq, event }));
     if (event.type === "response" && typeof event.id === "string" && this.mailInFlight.has(event.id)) {
       const mailId = this.mailInFlight.get(event.id)!;

@@ -22,6 +22,7 @@ import { GithubBroker } from "./github-broker.ts";
 import { branchAllowed, branchPrefixOf } from "./branch-policy.ts";
 import { entryForWire } from "./entry-wire.ts";
 import { refreshDelayMs } from "./github-app.ts";
+import { parseBootTimings, parseStartupPhases, startupLogLine, summarizeStartup, type StartupSummary } from "./startup.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const GITHUB_REFRESH_RETRY_MS = 60_000;
@@ -768,6 +769,30 @@ export class AgentLink {
       }
     });
 
+    // Past every check: this hello is accepted. `firstHello` is whether this is the run's first
+    // (startup.helloAt not yet stamped) or a reconnect. Runs created before Run.startup existed get
+    // no stamps at all: without wakeAt a partial set would only mislead.
+    const firstHello = run.startup
+      ? (await this.store.runs
+          .mergeStartup(
+            runId,
+            { helloAt: new Date().toISOString(), agentd: parseBootTimings(hello.boot) },
+            "helloAt",
+          )
+          .catch(() => null)) !== null
+      : undefined;
+    request.log.info(
+      {
+        runId,
+        agentdVersion: typeof hello.agentdVersion === "string" ? hello.agentdVersion : undefined,
+        piVersion: typeof hello.piVersion === "string" ? hello.piVersion : undefined,
+        protocolVersion: agentProtocolVersion,
+        lastAckedSeq: typeof hello.lastAckedSeq === "number" ? hello.lastAckedSeq : undefined,
+        reconnect: firstHello === undefined ? undefined : !firstHello,
+      },
+      "agentlink: hello accepted",
+    );
+
     // Bug 10 (docs/reports/cloud-fixes.md): a run created specifically to deliver mail
     // (Run.mailWakePending, set by MailService.wakeForMail) just proved -- token + protocol
     // version both checked out -- that it can genuinely speak the protocol, so charge the
@@ -819,6 +844,9 @@ export class AgentLink {
     if (this.sockets.get(runId) !== socket) return;
     const spec = built.spec;
     socket.send(JSON.stringify(spec));
+    if (run.startup) {
+      await this.store.runs.mergeStartup(runId, { specSentAt: new Date().toISOString() }, "specSentAt").catch(() => null);
+    }
     // agentd applies run.spec once. A reconnect ignores the second one, including when this
     // process is new and its mint cache is empty, so the token has to ride this frame too.
     if (spec.secrets.githubToken) this.deliverGithubCredential(runId, socket, spec.secrets.githubToken);
@@ -1152,7 +1180,17 @@ export class AgentLink {
         const patch: Partial<Run> = { state, lastSeenAt: now, updatedAt: now };
         if (typeof frame.detail === "string") patch.statusDetail = frame.detail;
         await this.store.runs.update(runId, patch);
-        this.sse.publish(sessionId, { type: "status", data: frame });
+        // `startup` on a browser status event is the api's own summary, never something agentd put
+        // on its frame.
+        const { startup: _agentStartup, ...statusData } = frame;
+        let startup: StartupSummary | null | undefined;
+        // First time the run can take a prompt: stamp startup.readyAt (pi is spawned; agentd's
+        // "pi ready" follows in a `startup` frame).
+        if (before?.startup && !before.startup.readyAt && (state === "running" || state === "idle")) {
+          const stamped = await this.store.runs.mergeStartup(runId, { readyAt: now }, "readyAt").catch(() => null);
+          if (stamped) startup = summarizeStartup(stamped);
+        }
+        this.sse.publish(sessionId, { type: "status", data: startup ? { ...statusData, startup } : statusData });
         // First transition into running/idle/stopping: drain anything queued while provisioning
         // (in order).
         if (!wasReady && isReadyState(state)) {
@@ -1278,6 +1316,20 @@ export class AgentLink {
         if (takeBranch && reported && reported !== current) sessionPatch.branch = reported;
         await this.store.sessions.update(sessionId, sessionPatch);
         this.sse.publish(sessionId, { type: "checkpoint", data: frame });
+        break;
+      }
+      case "startup": {
+        // agentd's run phases through "pi ready", sent once (docs/protocol.md). Agent-supplied, so
+        // parseStartupPhases keeps known names and clamped numbers only; written once per run.
+        const phases = parseStartupPhases(frame.phases);
+        if (!phases) break;
+        const before = await this.store.runs.findById(runId);
+        if (!before?.startup || isTerminalState(before.state)) break;
+        const stamped = await this.store.runs.mergeStartup(runId, { phases }, "phases").catch(() => null);
+        const summary = stamped ? summarizeStartup(stamped) : null;
+        if (!summary) break;
+        console.log(JSON.stringify(startupLogLine(summary)));
+        this.sse.publish(sessionId, { type: "status", data: { t: "status", state: stamped!.state, startup: summary } });
         break;
       }
       case "heartbeat": {

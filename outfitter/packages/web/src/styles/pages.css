@@ -57,6 +57,125 @@
   margin: 0 0.35rem;
 }
 
+/* "Started in 4.2 s · GKE warm" (StartupTime.tsx): a status-bar fact that opens a breakdown.
+ * Same inline-chip footprint as the copy chip beside the tape id, not a primary button. */
+.startup-time {
+  display: inline-flex;
+}
+
+.startup-time-toggle {
+  box-shadow: none;
+  border: 1px solid var(--border);
+  padding: 0.05rem 0.4rem;
+  min-height: 32px;
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: inherit;
+  font-weight: inherit;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.startup-time-toggle[aria-expanded="true"] {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.startup-time-source::before {
+  content: "·";
+  margin: 0 0.35rem;
+}
+
+.startup-time-panel {
+  position: fixed;
+  z-index: 40;
+  width: min(22rem, calc(100vw - 24px));
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text);
+  box-shadow: var(--shadow-offset) var(--shadow-offset) 0 0 var(--border);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.startup-bar {
+  display: flex;
+  height: 0.6rem;
+  margin-bottom: 0.5rem;
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+}
+
+.startup-bar-part + .startup-bar-part {
+  border-left: 1px solid var(--bg-elevated);
+}
+
+.startup-bar-request {
+  background: var(--text-dim);
+}
+
+.startup-bar-sandbox {
+  background: var(--accent);
+}
+
+.startup-bar-workspace {
+  background: var(--ok);
+}
+
+.startup-bar-pi {
+  background: var(--warn);
+}
+
+.startup-steps,
+.startup-details {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.startup-step + .startup-step {
+  margin-top: 0.3rem;
+}
+
+.startup-step-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.startup-step-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.startup-step-ms {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.startup-swatch {
+  flex: none;
+  width: 0.6rem;
+  height: 0.6rem;
+  border: 1px solid var(--border);
+}
+
+.startup-details {
+  margin: 0.15rem 0 0 1rem;
+  color: var(--text-dim);
+}
+
+.startup-total {
+  margin: 0.45rem 0 0;
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--border);
+  font-weight: 600;
+}
+
 .context-usage {
   display: inline-flex;
   align-items: center;

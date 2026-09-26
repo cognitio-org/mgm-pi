@@ -32,6 +32,32 @@ export interface RunLike {
   updatedAt: string;
 }
 
+/** How long a run took to start, step by step (api src/startup.ts's StartupSummary). */
+export interface StartupDetail {
+  label: string;
+  ms: number;
+}
+
+export interface StartupSegment {
+  id: "request" | "sandbox" | "workspace" | "pi";
+  label: string;
+  ms: number;
+  details?: StartupDetail[];
+}
+
+export interface StartupSummary {
+  runId: string;
+  /** SandboxProvider name: gke, cloudrun, docker, inprocess. */
+  provider?: string;
+  /** true adopted a warm sandbox, false cold, absent unknown. */
+  warm?: boolean;
+  /** Wake -> pi ready when agentd reported it, else wake -> ready. */
+  totalMs: number;
+  /** false while the total may still grow (pi still loading). */
+  complete: boolean;
+  segments: StartupSegment[];
+}
+
 export interface SessionDetail {
   id: string;
   name?: string;
@@ -54,6 +80,8 @@ export interface SessionDetail {
   htmlPreviewAccessByRun?: Record<string, boolean>;
   /** Cloud-fixes 13: messages parked because this session's runs never validated the protocol. */
   heldMail?: number;
+  /** The reportable run's start-up timing; null before it has started or for an older run. */
+  startup?: StartupSummary | null;
   /** "Deploy mismatch: messages held until the service is redeployed", when heldMail > 0. */
   mailNotice?: string;
   /** Cloud GitHub broker state. Never includes a token. */

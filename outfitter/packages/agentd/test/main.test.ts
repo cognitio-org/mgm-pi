@@ -151,6 +151,15 @@ test(
       assert.equal(hello.t, "hello");
       assert.equal(hello.runId, "run-env-path");
       assert.equal(hello.runToken, runToken, "the run token does travel on the wire -- that's the protocol, not a leak");
+      // hello.boot: agentd's own boot durations, numbers only. No assignment wait on the env path.
+      const boot = hello.boot as Record<string, unknown>;
+      assert.ok(boot && typeof boot === "object", `expected hello.boot, got ${JSON.stringify(hello)}`);
+      for (const key of ["bootMs", "setupMs", "sinceAssignedMs", "identityTokenMs", "connectMs"]) {
+        assert.equal(typeof boot[key], "number", `hello.boot.${key} in ${JSON.stringify(boot)}`);
+        assert.ok((boot[key] as number) >= 0);
+      }
+      assert.equal(boot.assignmentWaitMs, undefined);
+      assert.ok((boot.sinceAssignedMs as number) <= (boot.bootMs as number));
 
       await waitFor(() => phaseNames(jsonLines).includes("connected to the link"), "the connected-to-the-link phase");
       const phases = phaseNames(jsonLines);
@@ -235,6 +244,12 @@ test(
       const hello = link.received[0] as Record<string, unknown>;
       assert.equal(hello.runId, runId);
       assert.equal(hello.runToken, runToken);
+      // hello.boot on a warm pod: the idle wait is reported separately, and agentd's share of the
+      // person's wait (since the claim) excludes it.
+      const boot = hello.boot as Record<string, number>;
+      assert.ok(boot.assignmentWaitMs >= 600, `the wait covered the 600ms idle above, got ${JSON.stringify(boot)}`);
+      assert.ok(boot.bootMs >= boot.assignmentWaitMs, `bootMs includes the wait: ${JSON.stringify(boot)}`);
+      assert.ok(boot.sinceAssignedMs <= boot.bootMs - boot.assignmentWaitMs + 50, `sinceAssignedMs excludes the wait: ${JSON.stringify(boot)}`);
 
       const phases = phaseNames(jsonLines);
       assert.ok(phases.some((p) => /^assigned \(waitedMs=\d+\)$/.test(p)), `expected an "assigned (waitedMs=<n>)" phase in ${JSON.stringify(phases)}`);

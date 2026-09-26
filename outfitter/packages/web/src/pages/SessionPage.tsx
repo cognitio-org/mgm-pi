@@ -22,6 +22,7 @@ import { BeatView, YouMark } from "../components/TranscriptRail.tsx";
 import { Composer } from "../components/Composer.tsx";
 import { StatusPill } from "../components/StatusPill.tsx";
 import { GithubChip } from "../components/GithubChip.tsx";
+import { StartupTime } from "../components/StartupTime.tsx";
 import { TransportDot } from "../components/TransportDot.tsx";
 import { UiRequestPanel } from "../components/UiRequestPanel.tsx";
 import { Working } from "../components/Working.tsx";
@@ -62,7 +63,7 @@ export function SessionPage() {
   const [models, setModels] = useState<ModelRow[]>([]);
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [transportOutcome, setTransportOutcome] = useState<TransportOutcome | null>(null);
-  const { entries, runState, runStateReason, statusDetail, pendingUiRequest, costEstimate } = useSessionStream(sessionId);
+  const { entries, runState, runStateReason, statusDetail, pendingUiRequest, costEstimate, startup: streamStartup } = useSessionStream(sessionId);
   const { providers } = useProviders();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // The status line under the title bar hides once the person scrolls. The jump to the
@@ -514,6 +515,9 @@ export function SessionPage() {
               </span>
             )}
             {typeof cost === "number" && <span>${cost.toFixed(4)}</span>}
+            {/* The stream's value once a status event has said anything (null included), else the
+                session detail's from page load. */}
+            <StartupTime startup={streamStartup !== undefined ? streamStartup : session?.startup} runState={runState} />
             {cluster && <GithubChip cluster={cluster} />}
             <span className="session-model-info">
               {header.model ? <span className="mono">{header.model}</span> : "model unknown yet"}

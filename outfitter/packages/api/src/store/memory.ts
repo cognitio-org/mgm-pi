@@ -12,6 +12,7 @@ import type {
   PiEntry,
   Run,
   GithubIdempotencyRecord,
+  RunStartup,
   RunsCollection,
   DownMessage,
   Guru,
@@ -163,6 +164,16 @@ class MemoryRuns implements RunsCollection {
     const next = { ...row, ...patch };
     this.rows.set(id, next);
     return clone(next);
+  }
+
+  async mergeStartup(id: string, fields: Partial<RunStartup>, unlessSet?: keyof RunStartup): Promise<Run | null> {
+    const row = this.rows.get(id);
+    if (!row) return null;
+    if (unlessSet && row.startup?.[unlessSet] !== undefined) return null;
+    const defined = Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
+    if (Object.keys(defined).length === 0) return null;
+    row.startup = { ...row.startup, ...clone(defined) };
+    return clone(row);
   }
 
   async claimGithubIdempotency(id: string, key: string, pending: GithubIdempotencyRecord) {

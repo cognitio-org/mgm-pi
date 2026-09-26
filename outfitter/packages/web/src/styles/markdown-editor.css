@@ -148,17 +148,31 @@
 
 /* ---- toolbar ---- */
 
+/* Folded until "Aa". The tools are rare, so the closed state is one short button
+   and Preview sits in the same row as the rest when it opens. */
 .md-toolbar {
-  display: flex;
+  display: none;
   flex-wrap: wrap;
-  gap: 0.3rem;
+  gap: 0.25rem;
+}
+
+.md-toolbar.open {
+  display: flex;
+}
+
+.md-tool,
+.md-tools-toggle {
+  box-sizing: border-box;
+  min-height: 0;
+  height: 1.3rem;
+  padding: 0 0.4rem;
+  line-height: 1;
+  font-size: 0.72rem;
+  box-shadow: 1px 1px 0 0 var(--border);
 }
 
 .md-tool {
-  padding: 0.15rem 0.5rem;
-  min-width: 2rem;
-  font-size: 0.75rem;
-  box-shadow: 2px 2px 0 0 var(--border);
+  min-width: 1.5rem;
 }
 
 .md-tool-bold span {
@@ -173,10 +187,6 @@
   font-family: var(--font-mono);
 }
 
-.md-tool-preview {
-  margin-left: auto;
-}
-
 .md-tool-preview[aria-pressed="true"] {
   background: var(--accent);
   color: var(--accent-contrast);
@@ -188,9 +198,11 @@
   cursor: default;
 }
 
-/* "Aa" only exists on phones (below). */
 .md-tools-toggle {
-  display: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
 }
 
 .md-tools-toggle[aria-expanded="true"] {
@@ -239,24 +251,20 @@
     max-height: 38svh;
   }
 
-  .md-tools-toggle {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    flex: none;
-    min-width: 44px;
-    padding: 0 0.5rem;
-    font-family: var(--font-body);
+  .md-tools-toggle,
+  .md-tool {
+    min-height: 44px;
+    height: auto;
+    padding: 0 0.55rem;
     font-size: 0.85rem;
+  }
+
+  .md-tools-toggle {
+    min-width: 44px;
     box-shadow: none;
   }
 
-  .md-toolbar {
-    display: none;
-  }
-
   .md-toolbar.open {
-    display: flex;
     flex-wrap: nowrap;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;

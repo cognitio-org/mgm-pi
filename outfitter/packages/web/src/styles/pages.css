@@ -244,7 +244,7 @@
 }
 
 /* SettingsPage.tsx: a set-secret's masked value ("set (…abcd)"), mirroring mgm-admin's
-   Connections page. */
+   Connections page. The name column yields width so this pill stays one line. */
 .chip {
   display: inline-block;
   padding: 0.1rem 0.5rem;
@@ -252,6 +252,45 @@
   font-size: 0.78rem;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
+}
+
+/* Fixed columns: the value pill fills its column, and the secret name is what wraps. */
+table.secrets-table {
+  table-layout: fixed;
+}
+
+table.secrets-table col.col-secret { width: 28%; }
+table.secrets-table col.col-value { width: 22%; }
+table.secrets-table col.col-applies { width: 11%; }
+table.secrets-table col.col-updated { width: 17%; }
+table.secrets-table col.col-actions { width: 22%; }
+
+table.secrets-table td:first-child {
+  overflow-wrap: break-word;
+}
+
+table.secrets-table .chip {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.2rem 0.75rem;
+  white-space: nowrap;
+  text-align: center;
+}
+
+/* Stacked cards (mobile.css, <=700px) give the value its own row. A full-width pill
+   there crowds out the "Value" label, so the pill shrinks back to its text. */
+@media (max-width: 700px) {
+  table.secrets-table {
+    table-layout: auto;
+  }
+
+  table.secrets-table .chip {
+    display: inline-block;
+    width: auto;
+    min-width: 0;
+    max-width: 100%;
+  }
 }
 
 .note {

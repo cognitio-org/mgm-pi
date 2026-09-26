@@ -1,7 +1,8 @@
 // Groups a transcript (already passed through groupThinkingBlocks) into beats.
 // A tool call and the result that share a toolCallId are one rail item, including when an
 // assistant-text closed the run between them: the result fills the call in place and does not
-// start a second item. A call with no result anywhere in the list is running.
+// start a second item. A call with no result is running only while its turn still is: the next
+// user message, or a run that has gone idle, stopped, or failed, ends it.
 
 import type { GroupedEntry, ThinkingBlock } from "./thinking.ts";
 
@@ -105,11 +106,13 @@ export function collapseRail(items: RailItem[]): RailGlyph[] {
   return glyphs;
 }
 
-export function groupBeats(views: GroupedEntry[]): Beat[] {
+export function groupBeats(views: GroupedEntry[], options?: { runSettled?: boolean }): Beat[] {
   const beats: Beat[] = [];
   let rail: RailItem[] = [];
   // The unpaired half of a tool (a running call, or a result that arrived first).
   const pending = new Map<string, RailTool>();
+  // Calls whose turn already ended. A result that shows up later still fills the same item.
+  const closed = new Map<string, RailTool>();
 
   function flushTools() {
     if (rail.length === 0) return;
@@ -117,9 +120,18 @@ export function groupBeats(views: GroupedEntry[]): Beat[] {
     rail = [];
   }
 
+  function finishOpenCalls() {
+    for (const [id, item] of pending) {
+      if (item.running) item.running = false;
+      closed.set(id, item);
+    }
+    pending.clear();
+  }
+
   for (const view of views) {
     switch (view.kind) {
       case "user":
+        finishOpenCalls();
         flushTools();
         beats.push({ kind: "user", id: view.id, view });
         break;
@@ -138,12 +150,13 @@ export function groupBeats(views: GroupedEntry[]): Beat[] {
         rail.push({ kind: "thinking", id: view.id, blocks: view.blocks });
         break;
       case "tool-call": {
-        const existing = pending.get(view.toolCallId);
+        const existing = pending.get(view.toolCallId) ?? closed.get(view.toolCallId);
         if (existing && existing.output !== undefined && existing.input === undefined) {
           existing.input = view.input;
           existing.toolName = view.toolName || existing.toolName;
           existing.running = false;
           pending.delete(view.toolCallId);
+          closed.delete(view.toolCallId);
           break;
         }
         const item: RailTool = {
@@ -160,13 +173,14 @@ export function groupBeats(views: GroupedEntry[]): Beat[] {
         break;
       }
       case "tool-result": {
-        const existing = pending.get(view.toolCallId);
-        if (existing && existing.running) {
+        const existing = pending.get(view.toolCallId) ?? closed.get(view.toolCallId);
+        if (existing && (existing.running || existing.output === undefined)) {
           existing.output = view.text;
           existing.isError = view.isError;
           existing.running = false;
           if (!existing.toolName) existing.toolName = view.toolName;
           pending.delete(view.toolCallId);
+          closed.delete(view.toolCallId);
           break;
         }
         const item: RailTool = {
@@ -193,6 +207,7 @@ export function groupBeats(views: GroupedEntry[]): Beat[] {
     }
   }
 
+  if (options?.runSettled) finishOpenCalls();
   flushTools();
   return beats;
 }

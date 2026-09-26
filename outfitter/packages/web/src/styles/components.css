@@ -45,7 +45,8 @@ button:active,
 }
 
 button:disabled,
-.btn:disabled {
+.btn:disabled,
+.btn[aria-disabled="true"] {
   opacity: 0.5;
   cursor: not-allowed;
   box-shadow: none;
@@ -309,40 +310,55 @@ table.table a {
 .working {
   display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
+  gap: 0.35rem;
   color: var(--ok);
 }
 
-/* Cassette-loading border stripe: alternating bars scrolling in steps, the way a C64 flashes its
- * screen border while a tape loads. */
+/* Knight Rider scanner: eight lamps, one bright pod sweeping back and forth in steps.
+   16px tall so a status line stays a single short row. */
 .working-stripe {
+  --lamp: 5px;
+  --gap: 2px;
+  --step: calc(var(--lamp) + var(--gap));
+  position: relative;
   display: inline-block;
   flex: none;
-  width: 1.6rem;
-  height: 0.55rem;
+  width: calc(8 * var(--lamp) + 7 * var(--gap));
+  height: 16px;
+  overflow: hidden;
+  background-color: var(--bg-inset);
   background-image: repeating-linear-gradient(
     to right,
-    var(--ok) 0,
-    var(--ok) 3px,
-    var(--accent) 3px,
-    var(--accent) 6px
+    color-mix(in srgb, var(--ok) 28%, var(--bg-inset)) 0 var(--lamp),
+    transparent var(--lamp) var(--step)
   );
-  background-size: 12px 100%;
-  border: 1px solid var(--border);
-  animation: working-scroll 0.6s steps(4, end) infinite;
+}
+
+.working-stripe::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--lamp);
+  height: 100%;
+  background: var(--ok);
+  box-shadow:
+    calc(-1 * var(--step)) 0 0 color-mix(in srgb, var(--ok) 55%, transparent),
+    var(--step) 0 0 color-mix(in srgb, var(--ok) 55%, transparent);
+  animation: kitt-scan 0.84s steps(7, end) infinite alternate;
 }
 
 .working-lg .working-stripe {
-  width: 3.4rem;
-  height: 0.75rem;
+  --lamp: 6px;
+  height: 18px;
 }
 
-@keyframes working-scroll {
+@keyframes kitt-scan {
   from {
-    background-position: 0 0;
+    transform: translateX(0);
   }
   to {
-    background-position: -12px 0;
+    transform: translateX(calc(7 * var(--step)));
   }
 }
 
@@ -386,8 +402,9 @@ button .working,
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .working-stripe {
+  .working-stripe::after {
     animation: none;
+    transform: translateX(calc(3 * var(--step)));
   }
   .working-label::after {
     animation: none;

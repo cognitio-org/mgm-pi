@@ -22,9 +22,16 @@ function mount(mode: "send" | "newline") {
   act(() => {
     root.render(<Composer onSend={async (t) => void sent.push(t)} />);
   });
-  // Set the Enter mode through the composer's own switch (storage may be unavailable here).
-  const toggle = host.querySelector<HTMLButtonElement>(".enter-mode-toggle")!;
-  if ((toggle.getAttribute("aria-checked") === "true") !== (mode === "send")) act(() => toggle.click());
+  // Enter mode lives on a right-click menu on Send (storage may be unavailable here).
+  const wrap = host.querySelector<HTMLElement>(".send-wrap")!;
+  if (wrap.dataset.enterMode === mode) return;
+  act(() => {
+    wrap.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+  });
+  const label = mode === "send" ? "Enter sends" : "Enter is a new line";
+  const item = Array.from(host.querySelectorAll<HTMLButtonElement>("[role='menuitemradio']")).find((b) => b.textContent?.includes(label));
+  if (!item) throw new Error(`missing enter-mode item ${label}`);
+  act(() => item.click());
 }
 
 beforeEach(() => mount("send"));
@@ -86,6 +93,18 @@ describe("MarkdownEditor", () => {
     type("run ls", 4, 6);
     key({ key: "e", ctrlKey: true });
     expect(ta().value).toBe("run `ls`");
+  });
+
+  it("ctrl-click on Send opens the enter menu and does not send the draft", () => {
+    type("hello");
+    const wrap = host.querySelector<HTMLElement>(".send-wrap")!;
+    const send = wrap.querySelector("button")!;
+    act(() => {
+      wrap.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      send.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true }));
+    });
+    expect(sent).toEqual([]);
+    expect(host.querySelector(".enter-mode-menu")).toBeTruthy();
   });
 
   it("Enter sends in send mode but continues a list with Shift+Enter", () => {

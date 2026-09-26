@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from "react";
 import { Working } from "./Working.tsx";
 import { MarkdownEditor } from "./MarkdownEditor.tsx";
 import { withFloppySound } from "../lib/floppy-sound.ts";
@@ -44,14 +44,85 @@ export function Composer({ onSend, disabled, sending, placeholderOverride, statu
   const [touch] = useState(() => isTouchDeviceHere());
   // Cloud-fixes 12: remembered per browser; defaults to "newline" on touch devices, "send" on desktop.
   const [enterMode, setEnterMode] = useState<EnterMode>(() => loadEnterMode());
-  // Phones: the formatting toolbar is folded behind one "Aa" button (styles/markdown-editor.css).
+  const [enterMenu, setEnterMenu] = useState(false);
+  // The formatting toolbar stays folded behind "Aa" until asked. It is rarely used.
   const [toolsOpen, setToolsOpen] = useState(false);
   const toolbarId = useId();
+  const sendWrapRef = useRef<HTMLSpanElement>(null);
+  const enterMenuRef = useRef<HTMLDivElement>(null);
+  const holdRef = useRef<number | null>(null);
+  // Set when a hold already opened the menu, so the contextmenu that follows does not toggle it shut.
+  const openedByHold = useRef(false);
+  // The click that belongs to a right-click or a long-press must not send.
+  const ignoreClick = useRef(false);
 
-  function toggleEnterMode() {
-    const next: EnterMode = enterMode === "send" ? "newline" : "send";
+  function focusDraft() {
+    sendWrapRef.current?.closest(".composer")?.querySelector("textarea")?.focus();
+  }
+
+  useEffect(() => {
+    if (!enterMenu) return;
+    enterMenuRef.current?.querySelector<HTMLButtonElement>("[aria-checked='true']")?.focus();
+    function onPointer(event: globalThis.PointerEvent) {
+      const target = event.target;
+      if (target instanceof Node && enterMenuRef.current?.contains(target)) return;
+      setEnterMenu(false);
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setEnterMenu(false);
+      focusDraft();
+    }
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [enterMenu]);
+
+  function chooseEnterMode(next: EnterMode) {
+    ignoreClick.current = false;
+    openedByHold.current = false;
     setEnterMode(next);
     saveEnterMode(next);
+    setEnterMenu(false);
+    focusDraft();
+  }
+
+  function openEnterMenu(event: MouseEvent) {
+    event.preventDefault();
+    ignoreClick.current = true;
+    if (openedByHold.current) {
+      openedByHold.current = false;
+      return;
+    }
+    setEnterMenu((open) => !open);
+  }
+
+  function armHold(event: PointerEvent) {
+    if (event.pointerType === "mouse") {
+      // Ctrl-click still has its contextmenu and click coming; leave the suppress flag alone.
+      if (!event.ctrlKey) ignoreClick.current = false;
+      return;
+    }
+    ignoreClick.current = false;
+    if (holdRef.current != null) window.clearTimeout(holdRef.current);
+    holdRef.current = window.setTimeout(() => {
+      openedByHold.current = true;
+      ignoreClick.current = true;
+      setEnterMenu(true);
+    }, 450);
+  }
+
+  function clearHold() {
+    if (holdRef.current != null) window.clearTimeout(holdRef.current);
+    holdRef.current = null;
+  }
+
+  function cancelHold() {
+    clearHold();
+    ignoreClick.current = true;
   }
 
   async function send() {
@@ -77,19 +148,6 @@ export function Composer({ onSend, disabled, sending, placeholderOverride, statu
           onClick={() => setToolsOpen((o) => !o)}
         >
           <span aria-hidden="true">Aa</span>
-        </button>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={enterMode === "send"}
-          className="enter-mode-toggle"
-          onClick={toggleEnterMode}
-          title={sendKeyHint}
-        >
-          <span className="enter-mode-track" aria-hidden="true">
-            <span className="enter-mode-thumb" />
-          </span>
-          <span className="enter-mode-label">{enterMode === "send" ? "Enter sends" : "Enter = new line"}</span>
         </button>
       </div>
       <MarkdownEditor
@@ -131,9 +189,49 @@ export function Composer({ onSend, disabled, sending, placeholderOverride, statu
             </button>
           ))}
         </div>
-        <button className="btn btn-primary" onClick={send} disabled={disabled || !text.trim()}>
-          {sending ? <Working label="Sending" /> : "Send"}
-        </button>
+        <span
+          className="send-wrap"
+          data-enter-mode={enterMode}
+          title="Right-click to set whether Enter sends"
+          onContextMenu={openEnterMenu}
+          onPointerDown={armHold}
+          onPointerUp={clearHold}
+          onPointerCancel={cancelHold}
+          onPointerLeave={clearHold}
+        >
+          <button
+            type="button"
+            className="btn btn-primary"
+            aria-haspopup="menu"
+            aria-expanded={enterMenu}
+            aria-disabled={disabled || !text.trim() ? true : undefined}
+            onClick={(event) => {
+              if (ignoreClick.current || event.ctrlKey || event.button !== 0) {
+                ignoreClick.current = false;
+                return;
+              }
+              setEnterMenu(false);
+              void send();
+            }}
+          >
+            {sending ? <Working label="Sending" /> : "Send"}
+          </button>
+          {enterMenu && (
+            <div ref={enterMenuRef} className="enter-mode-menu" role="menu" aria-label="Enter key">
+              <button type="button" role="menuitemradio" aria-checked={enterMode === "send"} onClick={() => chooseEnterMode("send")}>
+                Enter sends
+              </button>
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={enterMode === "newline"}
+                onClick={() => chooseEnterMode("newline")}
+              >
+                Enter is a new line
+              </button>
+            </div>
+          )}
+        </span>
       </div>
     </div>
   );

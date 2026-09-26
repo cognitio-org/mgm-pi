@@ -517,7 +517,11 @@ export function SessionPage() {
             {typeof cost === "number" && <span>${cost.toFixed(4)}</span>}
             {/* The stream's value once a status event has said anything (null included), else the
                 session detail's from page load. */}
-            <StartupTime startup={streamStartup !== undefined ? streamStartup : session?.startup} runState={runState} />
+            <StartupTime
+              startup={streamStartup !== undefined ? streamStartup : session?.startup}
+              runState={runState}
+              collapsed={compact}
+            />
             {cluster && <GithubChip cluster={cluster} />}
             <span className="session-model-info">
               {header.model ? <span className="mono">{header.model}</span> : "model unknown yet"}

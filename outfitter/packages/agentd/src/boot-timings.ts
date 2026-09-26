@@ -4,6 +4,10 @@
  */
 import type { BootTimings } from "./protocol.js";
 
+/** A warm pod idles until claimed; a fresh pod (env path, or a cold fallback pod in GKE warm mode)
+ * finds its assignment on the first poll. Anything over this means it sat in the pool. */
+export const PRE_BOOTED_WAIT_MS = 1_000;
+
 export interface BootClock {
   /** Date.now() as the hello is built. */
   now: number;
@@ -29,5 +33,6 @@ export function bootTimings(c: BootClock): BootTimings {
     sinceAssignedMs: ms(c.now - c.assignedAt),
     ...(c.identityTokenMs !== undefined ? { identityTokenMs: ms(c.identityTokenMs) } : {}),
     ...(c.tokenFetchedAt !== undefined ? { connectMs: ms(c.now - c.tokenFetchedAt) } : {}),
+    ...(c.assignmentWaitMs !== undefined ? { preBooted: c.assignmentWaitMs > PRE_BOOTED_WAIT_MS } : {}),
   };
 }

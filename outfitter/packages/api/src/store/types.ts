@@ -205,6 +205,8 @@ export interface AgentdBootTimings {
   identityTokenMs?: number;
   /** Identity token fetched -> socket open (TCP, TLS, WS upgrade). */
   connectMs?: number;
+  /** agentd's own hint: it waited over a second for its assignment, so it sat in a warm pool. */
+  preBooted?: boolean;
 }
 
 /** One milestone agentd logged after run.spec arrived (startup-phases.ts): `ms` since run.spec. */
@@ -227,7 +229,8 @@ export interface RunStartup {
   readyAt?: string;
   /** Which SandboxProvider started the run. */
   provider?: SandboxProviderName;
-  /** SandboxStartResult.warm: true adopted a warm sandbox, false cold, absent unknown. */
+  /** SandboxStartResult.warm: true adopted a warm sandbox, false cold, absent unknown. The summary
+   * derives it from agentd's timings when the provider couldn't tell (startup.ts's deriveWarm). */
   warm?: boolean;
   agentd?: AgentdBootTimings;
   /** agentd's run phases from run.spec through "pi ready" (the `startup` up-frame). */

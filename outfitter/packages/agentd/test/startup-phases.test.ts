@@ -79,6 +79,18 @@ class FakeLink implements LinkPort {
   sent: UpMessage[] = [];
   private seq = 1;
   private handler: ((msg: DownMessage) => void) | undefined;
+  private openHandlers: Array<() => void> = [];
+  private closeHandlers: Array<() => void> = [];
+  onOpen(h: () => void): void {
+    this.openHandlers.push(h);
+  }
+  onClose(h: () => void): void {
+    this.closeHandlers.push(h);
+  }
+  reconnect(): void {
+    for (const h of this.closeHandlers) h();
+    for (const h of this.openHandlers) h();
+  }
   sendSeq(build: (seq: number) => UpMessage): number {
     const seq = this.seq++;
     this.sent.push(build(seq));
@@ -205,6 +217,20 @@ test("RunController with startupPhases: sends one `startup` frame with the phase
   pi.emit({ type: "response", id: STARTUP_PROBE_ID, command: "get_state", success: true, data: {} });
   assert.equal(link.sent.filter((m) => m.t === "startup").length, 1, "sent once");
   controller.dispose();
+});
+
+test("RunController with startupPhases: re-sends the `startup` frame after a reconnect, until the run ends", async () => {
+  const { controller, link, pi } = await startRun(true);
+  link.reconnect();
+  assert.equal(link.sent.filter((m) => m.t === "startup").length, 0, "nothing to re-send before pi is ready");
+  pi.emit({ type: "response", id: STARTUP_PROBE_ID, command: "get_state", success: true, data: {} });
+  link.reconnect();
+  const frames = link.sent.filter((m) => m.t === "startup");
+  assert.equal(frames.length, 2, "sent at pi ready (maybe into a down link) and again on the reconnect");
+  assert.deepEqual(frames[1], frames[0]);
+  controller.dispose();
+  link.reconnect();
+  assert.equal(link.sent.filter((m) => m.t === "startup").length, 2, "not after the run is over");
 });
 
 test("RunController without startupPhases: never sends a `startup` frame", async () => {

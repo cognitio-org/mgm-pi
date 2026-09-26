@@ -14,6 +14,8 @@ import type { Run, Session } from "../src/store/types.ts";
 import type { SandboxProvider } from "@outfitter/provider-local";
 import {
   PI_READY_GRACE_MS,
+  WARM_BOOT_SLACK_MS,
+  deriveWarm,
   parseBootTimings,
   parseStartupPhases,
   startupLogLine,
@@ -71,6 +73,8 @@ describe("parseBootTimings / parseStartupPhases: agent-supplied numbers are chec
       parseBootTimings({ bootMs: 1500.4, setupMs: -3, identityTokenMs: 1e12, connectMs: "5", sinceAssignedMs: NaN, runToken: "secret", extra: 1 }),
       { bootMs: 1500, setupMs: 0, identityTokenMs: 3_600_000 },
     );
+    assert.deepEqual(parseBootTimings({ preBooted: true, bootMs: 5 }), { bootMs: 5, preBooted: true });
+    assert.deepEqual(parseBootTimings({ preBooted: "yes", bootMs: 5 }), { bootMs: 5 }, "preBooted must be a boolean");
     assert.equal(parseBootTimings(undefined), undefined, "an older agentd sends no boot");
     assert.equal(parseBootTimings([1, 2]), undefined);
     assert.equal(parseBootTimings({ nope: 1 }), undefined);
@@ -95,6 +99,11 @@ describe("parseBootTimings / parseStartupPhases: agent-supplied numbers are chec
         { name: "pi spawned", ms: 901 },
         { name: "pi ready", ms: 3_600_000 },
       ],
+    );
+    assert.deepEqual(
+      parseStartupPhases([{ name: "pi ready", ms: 900 }, { name: "run.spec received", ms: 0 }, { name: "pi spawned", ms: 300 }]),
+      [{ name: "run.spec received", ms: 0 }, { name: "pi spawned", ms: 300 }, { name: "pi ready", ms: 900 }],
+      "sorted by ms",
     );
     assert.equal(parseStartupPhases({ name: "pi ready", ms: 1 }), undefined);
     assert.equal(parseStartupPhases([]), undefined);
@@ -192,6 +201,64 @@ describe("summarizeStartup", () => {
       { label: "Identity token", ms: 350 },
       { label: "Connecting to Outfitter", ms: 100 },
     ]);
+  });
+
+  // MEDIUM 1 (review of #171): GKE warm mode returns warm undefined unless its one GET already saw
+  // the claim Ready, so warmth is derived from agentd's timings.
+  const gkeUnknown = { ...base, warm: undefined, provider: "gke" as const };
+
+  test("warm handover: provider couldn't tell, the pod booted long before the wake -> warm", () => {
+    const startup = {
+      ...gkeUnknown,
+      helloAt: iso(2_000),
+      specSentAt: iso(2_100),
+      readyAt: iso(4_000),
+      agentd: { bootMs: 3_600_000, setupMs: 400, assignmentWaitMs: 3_599_000, sinceAssignedMs: 600, identityTokenMs: 350, connectMs: 100 },
+    };
+    assert.equal(deriveWarm(startup), true);
+    const s = summarizeStartup({ id: "r", startup }, T0 + 4_000 + PI_READY_GRACE_MS)!;
+    assert.equal(s.warm, true);
+    const sandbox = s.segments.find((seg) => seg.id === "sandbox")!;
+    assert.equal(sandbox.details![0].label, "Handing over the warm sandbox");
+    assert.ok(!sandbox.details!.some((d) => d.label === "agentd setup"), "setup ran while it idled");
+    assert.equal(startupLogLine(s).warm, true);
+  });
+
+  test("agentd's preBooted hint alone is enough to call it warm", () => {
+    assert.equal(deriveWarm({ ...gkeUnknown, agentd: { preBooted: true } }), true);
+  });
+
+  test("cold fallback in warm mode: a fresh pod waited ~0 on its files and booted after the wake -> cold, setup counted", () => {
+    const startup = {
+      ...gkeUnknown,
+      // hello at 6.0 s, agentd booted 4.2 s before it: the pod started 1.8 s after the wake.
+      agentd: { bootMs: 4_200, setupMs: 300, assignmentWaitMs: 3, sinceAssignedMs: 3_890, identityTokenMs: 700, connectMs: 150 },
+    };
+    assert.equal(deriveWarm(startup), false);
+    const s = summarizeStartup({ id: "r", startup }, T0 + 9_000 + PI_READY_GRACE_MS)!;
+    assert.equal(s.warm, false);
+    const sandbox = s.segments.find((seg) => seg.id === "sandbox")!;
+    assert.equal(sandbox.details![0].label, "Starting the container");
+    assert.ok(sandbox.details!.some((d) => d.label === "agentd setup" && d.ms === 300));
+  });
+
+  test("a pod that booted only just before the wake (inside the slack) still counts as cold", () => {
+    const startup = { ...gkeUnknown, agentd: { bootMs: 6_000 + WARM_BOOT_SLACK_MS - 1 } };
+    assert.equal(deriveWarm(startup), false);
+  });
+
+  test("cold mode: the provider's own false wins over any derivation", () => {
+    assert.equal(deriveWarm({ ...base, warm: false, agentd: { bootMs: 3_600_000, preBooted: true } }), false);
+    assert.equal(deriveWarm({ ...base, warm: true, agentd: { bootMs: 1 } }), true);
+  });
+
+  test("Cloud Run (and an older agentd on GKE): unknown, left out", () => {
+    const cloudrun = { ...base, warm: undefined, provider: "cloudrun" as const, agentd: { bootMs: 3_600_000, sinceAssignedMs: 4_000, preBooted: true } };
+    assert.equal(deriveWarm(cloudrun), undefined);
+    const s = summarizeStartup({ id: "r", startup: cloudrun }, T0 + 9_000 + PI_READY_GRACE_MS)!;
+    assert.equal("warm" in s, false);
+    assert.equal(s.segments.find((seg) => seg.id === "sandbox")!.details![0].label, "Starting the container");
+    assert.equal(deriveWarm({ ...gkeUnknown }), undefined, "no agentd timings: can't tell");
   });
 
   test("a hello that beats provider.start()'s return (or a skewed clock) never yields a negative segment", () => {

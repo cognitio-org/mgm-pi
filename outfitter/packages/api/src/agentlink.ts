@@ -769,26 +769,33 @@ export class AgentLink {
       }
     });
 
-    // Past every check: this hello is accepted. `firstHello` is whether this is the run's first
-    // (startup.helloAt not yet stamped) or a reconnect. Runs created before Run.startup existed get
-    // no stamps at all: without wakeAt a partial set would only mislead.
-    const firstHello = run.startup
-      ? (await this.store.runs
-          .mergeStartup(
-            runId,
-            { helloAt: new Date().toISOString(), agentd: parseBootTimings(hello.boot) },
-            "helloAt",
-          )
-          .catch(() => null)) !== null
-      : undefined;
+    // Past every check: this hello is accepted. `reconnect` says whether startup.helloAt was already
+    // stamped (false: this is the run's first hello), or "unknown" when the timing write itself
+    // failed. Runs created before Run.startup existed get no stamps at all (without wakeAt a partial
+    // set would only mislead), so there it is left out.
+    let reconnect: boolean | "unknown" | undefined;
+    if (run.startup) {
+      try {
+        const stamped = await this.store.runs.mergeStartup(
+          runId,
+          { helloAt: new Date().toISOString(), agentd: parseBootTimings(hello.boot) },
+          "helloAt",
+        );
+        reconnect = stamped === null;
+      } catch {
+        reconnect = "unknown";
+      }
+    }
+    // agentd-supplied strings: bounded before they go into a log line.
+    const logString = (v: unknown) => (typeof v === "string" ? v.slice(0, 64) : undefined);
     request.log.info(
       {
         runId,
-        agentdVersion: typeof hello.agentdVersion === "string" ? hello.agentdVersion : undefined,
-        piVersion: typeof hello.piVersion === "string" ? hello.piVersion : undefined,
+        agentdVersion: logString(hello.agentdVersion),
+        piVersion: logString(hello.piVersion),
         protocolVersion: agentProtocolVersion,
         lastAckedSeq: typeof hello.lastAckedSeq === "number" ? hello.lastAckedSeq : undefined,
-        reconnect: firstHello === undefined ? undefined : !firstHello,
+        reconnect,
       },
       "agentlink: hello accepted",
     );

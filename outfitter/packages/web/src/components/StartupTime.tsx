@@ -49,7 +49,17 @@ function startupTitle(startup: StartupSummary): string {
  * button opens a small breakdown (a stacked bar and a list of steps, with agentd's own details
  * nested); hovering shows the same steps as a tooltip. Hidden for runs without timing data.
  */
-export function StartupTime({ startup, runState }: { startup: StartupSummary | null | undefined; runState: string | undefined }) {
+export function StartupTime({
+  startup,
+  runState,
+  collapsed = false,
+}: {
+  startup: StartupSummary | null | undefined;
+  runState: string | undefined;
+  /** The status bar is tucked away (SessionPage's compact mode hides it): close the panel, whose
+   * anchor is gone. */
+  collapsed?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
   const panelId = useId();
@@ -57,24 +67,39 @@ export function StartupTime({ startup, runState }: { startup: StartupSummary | n
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const visible = showStartupTime(startup, runState);
 
-  // A new run's summary starts closed.
+  // A new run's summary starts closed; so does one whose chip went away (the run stopped) or whose
+  // status bar was tucked away -- closing also takes the document listeners below off.
   const runId = startup?.runId;
   useEffect(() => setOpen(false), [runId]);
+  useEffect(() => {
+    if (!visible || collapsed) setOpen(false);
+  }, [visible, collapsed]);
 
   // Placed before the browser paints (a layout effect), so the panel never flashes in the wrong spot.
   useLayoutEffect(() => {
     if (!open) return;
     // Follows the button while open: the transcript scrolls, the window resizes.
+    // An anchor with no box (display:none, e.g. the compact status bar) would pin the panel to the
+    // top-left corner: close it instead.
     const place = () => {
       const rect = buttonRef.current?.getBoundingClientRect();
-      if (rect) setPosition(panelPosition(rect, window.innerWidth));
+      if (!rect || rect.width === 0 || rect.height === 0) {
+        setOpen(false);
+        return;
+      }
+      setPosition(panelPosition(rect, window.innerWidth));
     };
     place();
     window.addEventListener("resize", place);
     document.addEventListener("scroll", place, true);
+    // The status bar can be hidden by a re-render after the scroll event that caused it, when no
+    // further event arrives: watch the button's own box too.
+    const observer = typeof ResizeObserver === "function" && buttonRef.current ? new ResizeObserver(place) : undefined;
+    if (observer && buttonRef.current) observer.observe(buttonRef.current);
     return () => {
       window.removeEventListener("resize", place);
       document.removeEventListener("scroll", place, true);
+      observer?.disconnect();
     };
   }, [open]);
 
@@ -86,14 +111,15 @@ export function StartupTime({ startup, runState }: { startup: StartupSummary | n
         buttonRef.current?.focus();
       }
     };
-    const onPointer = (ev: PointerEvent | MouseEvent) => {
+    // pointerdown, not mousedown: iOS Safari fires no mousedown for a tap on a non-clickable element.
+    const onPointer = (ev: Event) => {
       if (rootRef.current && !rootRef.current.contains(ev.target as Node)) setOpen(false);
     };
     document.addEventListener("keydown", onKey);
-    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("pointerdown", onPointer);
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("pointerdown", onPointer);
     };
   }, [open]);
 

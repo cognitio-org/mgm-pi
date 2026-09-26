@@ -159,6 +159,7 @@ test(
         assert.ok((boot[key] as number) >= 0);
       }
       assert.equal(boot.assignmentWaitMs, undefined);
+      assert.equal(boot.preBooted, undefined, "only a pod that waited on its assignment says");
       assert.ok((boot.sinceAssignedMs as number) <= (boot.bootMs as number));
 
       await waitFor(() => phaseNames(jsonLines).includes("connected to the link"), "the connected-to-the-link phase");
@@ -248,6 +249,7 @@ test(
       // person's wait (since the claim) excludes it.
       const boot = hello.boot as Record<string, number>;
       assert.ok(boot.assignmentWaitMs >= 600, `the wait covered the 600ms idle above, got ${JSON.stringify(boot)}`);
+      assert.equal(typeof (hello.boot as Record<string, unknown>).preBooted, "boolean");
       assert.ok(boot.bootMs >= boot.assignmentWaitMs, `bootMs includes the wait: ${JSON.stringify(boot)}`);
       assert.ok(boot.sinceAssignedMs <= boot.bootMs - boot.assignmentWaitMs + 50, `sinceAssignedMs excludes the wait: ${JSON.stringify(boot)}`);
 

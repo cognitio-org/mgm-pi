@@ -128,8 +128,10 @@ test("bootTimings: env path and warm pod arithmetic", async () => {
   // Warm pod: idled 60s before the claim at 61_200; only what follows the claim is the person's wait.
   assert.deepEqual(
     bootTimings({ now: 62_000, bootStart: 1000, setupMs: 150, assignedAt: 61_200, assignmentWaitMs: 60_000, identityTokenMs: 500, tokenFetchedAt: 61_800 }),
-    { bootMs: 61_000, setupMs: 150, assignmentWaitMs: 60_000, sinceAssignedMs: 800, identityTokenMs: 500, connectMs: 200 },
+    { bootMs: 61_000, setupMs: 150, assignmentWaitMs: 60_000, sinceAssignedMs: 800, identityTokenMs: 500, connectMs: 200, preBooted: true },
   );
+  // A cold fallback pod in warm mode: it also went through the wait, but found its files at once.
+  assert.equal(bootTimings({ now: 5000, bootStart: 0, setupMs: 3000, assignedAt: 3010, assignmentWaitMs: 10 }).preBooted, false);
   // A token fetch still in flight (or failed) leaves those two out.
   assert.deepEqual(bootTimings({ now: 10, bootStart: 0, setupMs: 5, assignedAt: 0 }), { bootMs: 10, setupMs: 5, sinceAssignedMs: 10 });
 });

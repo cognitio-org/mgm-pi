@@ -115,25 +115,24 @@ export class RunManager {
         // with its own metadata-server identity token instead.
         devToken: this.config.devMode ? this.config.devToken : undefined,
       });
-      // Its own write, not part of the update below: agentd may already have said hello (link
-      // role, another process) and stamped startup.helloAt, which a whole-object write would lose.
-      // Best-effort: timing never fails a run whose sandbox did start.
-      await this.store.runs
-        .mergeStartup(run.id, {
-          providerReturnedAt: new Date().toISOString(),
-          ...(typeof warm === "boolean" ? { warm } : {}),
-        })
+      const providerReturnedAt = new Date().toISOString();
+      const updated = await this.store.runs.update(run.id, {
+        state: "provisioning",
+        providerHandle: handle,
+        sandboxProvider: this.config.sandboxProvider,
+        runTokenHash,
+        lastSeenAt: now,
+        updatedAt: new Date().toISOString(),
+      });
+      // After the update above, not before: runTokenHash must land as soon as possible, since a fast
+      // hello that arrives before it is refused 4401 for good. Its own write, not part of that
+      // update: agentd may already have said hello (link role, another process) and stamped
+      // startup.helloAt, which a whole-object write would lose. Best-effort: timing never fails a
+      // run whose sandbox did start.
+      const stamped = await this.store.runs
+        .mergeStartup(run.id, { providerReturnedAt, ...(typeof warm === "boolean" ? { warm } : {}) })
         .catch(() => null);
-      return (
-        (await this.store.runs.update(run.id, {
-          state: "provisioning",
-          providerHandle: handle,
-          sandboxProvider: this.config.sandboxProvider,
-          runTokenHash,
-          lastSeenAt: now,
-          updatedAt: new Date().toISOString(),
-        })) ?? run
-      );
+      return stamped ?? updated ?? run;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       // A provider's error message occasionally already ends in its own "." (or "..." etc.); strip

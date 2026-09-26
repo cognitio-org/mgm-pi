@@ -79,11 +79,14 @@ export interface BootTimings {
   identityTokenMs?: number;
   /** Identity token fetched -> socket open. */
   connectMs?: number;
+  /** true when agentd waited over a second for its assignment: it sat in a warm pool before this run
+   * claimed it. The api combines this with its own clocks to call a start warm or cold. */
+  preBooted?: boolean;
 }
 
-/** agentd's run phases from run.spec through "pi ready" (startup-phases.ts), sent once when pi
- * ready fires. `ms` counts from run.spec arriving. Not seq/ack replayed: a dropped link loses it,
- * and the run just shows the shorter total. An api that doesn't know this frame ignores it. */
+/** agentd's run phases from run.spec through "pi ready" (startup-phases.ts), sent when pi ready
+ * fires and again after every reconnect until the run ends (the api keeps the first). `ms` counts
+ * from run.spec arriving. Not seq/ack replayed. An api that doesn't know this frame ignores it. */
 export interface UpStartup {
   t: "startup";
   phases: Array<{ name: string; ms: number }>;

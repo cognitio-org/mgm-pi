@@ -20,17 +20,6 @@ import { createAsyncLock } from "./lock.js";
 import { spawnPi, SessionTailer, SpendTailer, validateSpendLine, type PiProcess, type SpendLogLine } from "./pi.js";
 import { importSession, writeSnapshotFile, emptySessionJsonl, lastKnownModelState } from "./session.js";
 import { StartupPhases } from "./startup-phases.js";
-
-/** The start-up phases the `startup` frame carries: run.spec through pi ready. Later "first ..."
- * milestones depend on the person's prompt, not on starting up. */
-const STARTUP_REPORT_PHASES = new Set([
-  "run.spec received",
-  "repo cloned",
-  "workspace restored",
-  "session import done",
-  "pi spawned",
-  "pi ready",
-]);
 import type { Logger } from "./logger.js";
 import type { RunAsUser } from "./run-as-user.js";
 import { validateSnapshotUrl, snapshotHostAllowlist, isDevMode } from "./snapshot-url.js";
@@ -58,6 +47,17 @@ import type {
   RunState,
   UpMessage,
 } from "./protocol.js";
+
+/** The start-up phases the `startup` frame carries: run.spec through pi ready. Later "first ..."
+ * milestones depend on the person's prompt, not on starting up. */
+const STARTUP_REPORT_PHASES = new Set([
+  "run.spec received",
+  "repo cloned",
+  "workspace restored",
+  "session import done",
+  "pi spawned",
+  "pi ready",
+]);
 
 /** Down-messages that target the pi process directly. Queued (see `pendingPiMessages`) while `pi`
  * hasn't been spawned yet -- e.g. a prompt that arrives during `cloning`/`restoring`/`starting`. */
@@ -260,8 +260,10 @@ export class RunController {
   private readonly mailAccepted = new Set<string>();
   /** Start-up phase timing; only set when deps.startupPhases is on (startup-phases.ts). */
   private startup: StartupPhases | undefined;
-  /** Set once the `startup` frame (phases through "pi ready") has gone to the api. */
-  private startupReported = false;
+  /** The `startup` frame (phases through "pi ready"), once pi is ready. Sent then, and again after
+   * every reconnect until the run ends: Link drops a non-seq frame while the socket is down, and the
+   * api writes the phases once, so a repeat is harmless. */
+  private startupFrame: UpMessage | undefined;
   /** Localhost git smart-HTTP proxy for this run, if it has a GitHub repo and token. */
   private gitProxy: GitProxy | undefined;
   /** Broker socket for GitHub API calls. Network git does not use it. */
@@ -286,6 +288,7 @@ export class RunController {
     this.deps.link.onOpen?.(() => {
       this.apiLinkUp = true;
       this.githubSocket?.onLinkUp();
+      if (this.startupFrame && !this.stopping && !this.disposed) this.deps.link.send(this.startupFrame);
     });
     this.deps.link.onClose?.(() => {
       this.apiLinkUp = false;
@@ -812,12 +815,13 @@ export class RunController {
     });
   }
 
-  /** Sends the run's start-up phases through "pi ready" to the api, once. Timings only. */
+  /** Sends the run's start-up phases through "pi ready" to the api (and keeps the frame for a
+   * reconnect, see `startupFrame`). Timings only. */
   private reportStartup(): void {
-    if (this.startupReported || !this.startup) return;
-    this.startupReported = true;
+    if (this.startupFrame || !this.startup) return;
     const phases = this.startup.list().filter((p) => STARTUP_REPORT_PHASES.has(p.name));
-    this.deps.link.send({ t: "startup", phases });
+    this.startupFrame = { t: "startup", phases };
+    this.deps.link.send(this.startupFrame);
   }
 
   private handlePiEvent(event: PiRpcEvent): void {

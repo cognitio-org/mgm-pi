@@ -33,7 +33,24 @@ const summary: StartupSummary = {
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
+/** jsdom lays nothing out, so every rect is zeros: give the chip's button a real box. */
+function giveButtonsABox(): () => void {
+  const orig = HTMLElement.prototype.getBoundingClientRect;
+  HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+    if (this.classList.contains("startup-time-toggle") && !this.dataset.hidden) {
+      return { x: 100, y: 4, left: 100, top: 4, right: 300, bottom: 36, width: 200, height: 32, toJSON() {} } as DOMRect;
+    }
+    return orig.call(this);
+  };
+  return () => {
+    HTMLElement.prototype.getBoundingClientRect = orig;
+  };
+}
+
+let restoreRect: (() => void) | null = null;
+
 function render(ui: React.ReactElement): HTMLDivElement {
+  restoreRect ??= giveButtonsABox();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -42,6 +59,8 @@ function render(ui: React.ReactElement): HTMLDivElement {
 }
 
 afterEach(() => {
+  restoreRect?.();
+  restoreRect = null;
   act(() => root?.unmount());
   host?.remove();
   root = null;
@@ -90,10 +109,53 @@ describe("StartupTime", () => {
   it("closes on a click outside", () => {
     const el = render(<StartupTime startup={summary} runState="idle" />);
     act(() => (el.querySelector("button.startup-time-toggle") as HTMLButtonElement).click());
+    // A tap inside the panel keeps it open; one outside closes it (pointerdown, which iOS fires).
     act(() => {
-      document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      el.querySelector(".startup-total")!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    });
+    expect(el.querySelector(".startup-time-panel")).not.toBeNull();
+    act(() => {
+      document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
     });
     expect(el.querySelector(".startup-time-panel")).toBeNull();
+  });
+
+  it("the open panel sits under the button", () => {
+    const el = render(<StartupTime startup={summary} runState="idle" />);
+    act(() => (el.querySelector("button.startup-time-toggle") as HTMLButtonElement).click());
+    const panel = el.querySelector(".startup-time-panel") as HTMLElement;
+    expect(panel.style.top).toBe("40px");
+    expect(panel.style.left).toBe("100px");
+  });
+
+  it("closes instead of jumping to the corner when its anchor loses its box (compact status bar)", () => {
+    const el = render(<StartupTime startup={summary} runState="idle" />);
+    const button = el.querySelector("button.startup-time-toggle") as HTMLButtonElement;
+    act(() => button.click());
+    expect(el.querySelector(".startup-time-panel")).not.toBeNull();
+    button.dataset.hidden = "1"; // display:none -> a zero rect
+    act(() => {
+      document.dispatchEvent(new Event("scroll"));
+    });
+    expect(el.querySelector(".startup-time-panel")).toBeNull();
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("closes when the status bar is collapsed, and when the chip hides because the run stopped", () => {
+    const el = render(<StartupTime startup={summary} runState="idle" />);
+    act(() => (el.querySelector("button.startup-time-toggle") as HTMLButtonElement).click());
+    act(() => root!.render(<StartupTime startup={summary} runState="idle" collapsed />));
+    expect(el.querySelector(".startup-time-panel")).toBeNull();
+
+    act(() => root!.render(<StartupTime startup={summary} runState="idle" />));
+    act(() => (el.querySelector("button.startup-time-toggle") as HTMLButtonElement).click());
+    expect(el.querySelector(".startup-time-panel")).not.toBeNull();
+    act(() => root!.render(<StartupTime startup={summary} runState="stopped" />));
+    expect(el.innerHTML).toBe("");
+    // Back to live: it comes back closed, not reopened with stale listeners.
+    act(() => root!.render(<StartupTime startup={summary} runState="idle" />));
+    expect(el.querySelector(".startup-time-panel")).toBeNull();
+    expect(el.querySelector("button.startup-time-toggle")!.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("renders nothing without data, before the start is complete, or once the run is no longer live", () => {

@@ -15,7 +15,7 @@
 import type { AgentdBootTimings, Run, RunStartup, StartupPhase } from "./store/types.ts";
 
 /** The boot fields hello.boot may carry, each with its own ceiling. */
-const BOOT_LIMITS_MS: Record<keyof AgentdBootTimings, number> = {
+const BOOT_LIMITS_MS: Record<Exclude<keyof AgentdBootTimings, "preBooted">, number> = {
   bootMs: 30 * 24 * 60 * 60 * 1000,
   setupMs: 60 * 60 * 1000,
   // A warm pod can idle for most of a day before it is claimed.
@@ -24,6 +24,11 @@ const BOOT_LIMITS_MS: Record<keyof AgentdBootTimings, number> = {
   identityTokenMs: 60 * 60 * 1000,
   connectMs: 60 * 60 * 1000,
 };
+
+/** How much earlier than the wake a pod's boot must be to count as having existed before it (a
+ * warm pod). Covers the api/sandbox request latency and the two api clocks (web stamps wakeAt, link
+ * stamps helloAt). A cold pod boots after the wake, so it lands well on the other side. */
+export const WARM_BOOT_SLACK_MS = 2_000;
 
 /** agentd's run phase names (agentd's startup-phases.ts / run.ts), the only ones kept. */
 export const STARTUP_PHASE_NAMES = [
@@ -51,10 +56,12 @@ function clampMs(value: unknown, max: number): number | undefined {
 export function parseBootTimings(raw: unknown): AgentdBootTimings | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const out: AgentdBootTimings = {};
-  for (const [key, max] of Object.entries(BOOT_LIMITS_MS) as Array<[keyof AgentdBootTimings, number]>) {
+  for (const [key, max] of Object.entries(BOOT_LIMITS_MS) as Array<[keyof typeof BOOT_LIMITS_MS, number]>) {
     const value = clampMs((raw as Record<string, unknown>)[key], max);
     if (value !== undefined) out[key] = value;
   }
+  const preBooted = (raw as Record<string, unknown>).preBooted;
+  if (typeof preBooted === "boolean") out.preBooted = preBooted;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -73,6 +80,8 @@ export function parseStartupPhases(raw: unknown): StartupPhase[] | undefined {
     seen.add(name);
     out.push({ name, ms });
   }
+  // In time order, whatever order agentd listed them in (a stable sort keeps ties as sent).
+  out.sort((a, b) => a.ms - b.ms);
   return out.length > 0 ? out : undefined;
 }
 
@@ -113,6 +122,27 @@ function phaseMs(phases: StartupPhase[] | undefined, name: string): number | und
 
 const nonNegative = (n: number) => Math.max(0, Math.round(n));
 
+/**
+ * Whether the run got a warm sandbox. The provider's own answer wins when it has one (GKE cold mode
+ * says false; warm mode says true only when its one GET after create already saw the claim adopted
+ * and Ready, so it is usually undefined). Otherwise, for GKE only, it is worked out from agentd:
+ *  - boot.preBooted: agentd waited more than a second for its assignment, so the pod sat in the pool;
+ *  - the pod's boot on the api clock, helloAt - boot.bootMs (agentd's own boot->hello duration, so
+ *    no sandbox clock is involved), came before the wake by more than WARM_BOOT_SLACK_MS.
+ * A cold fallback pod in warm mode (the pool was empty) also waits on its assignment files, but finds
+ * them on the first poll and boots after the wake, so both signals say cold. Other providers (Cloud
+ * Run, docker, inprocess) have no warm pool: unknown, and left out.
+ */
+export function deriveWarm(s: RunStartup): boolean | undefined {
+  if (typeof s.warm === "boolean") return s.warm;
+  if (s.provider !== "gke" || !s.agentd) return undefined;
+  if (s.agentd.preBooted === true) return true;
+  const wake = at(s.wakeAt);
+  const hello = at(s.helloAt);
+  if (wake === undefined || hello === undefined || s.agentd.bootMs === undefined) return undefined;
+  return hello - s.agentd.bootMs < wake - WARM_BOOT_SLACK_MS;
+}
+
 /** The per-step breakdown of a run's start, or null while it hasn't started (no readyAt and no
  * "pi ready" yet) or for a run that predates Run.startup. Segments always add up to totalMs. */
 export function summarizeStartup(run: Pick<Run, "id" | "startup">, now = Date.now()): StartupSummary | null {
@@ -135,15 +165,18 @@ export function summarizeStartup(run: Pick<Run, "id" | "startup">, now = Date.no
 
   const sandboxMs = nonNegative(helloT - providerT);
   const a = s.agentd;
+  const warm = deriveWarm(s);
   const sandboxDetails: StartupDetail[] = [];
   if (a) {
     const agentdOwn = a.sinceAssignedMs;
     if (agentdOwn !== undefined) {
       const before = nonNegative(sandboxMs - agentdOwn);
-      sandboxDetails.push({ label: s.warm ? "Handing over the warm sandbox" : "Starting the container", ms: before });
+      sandboxDetails.push({ label: warm ? "Handing over the warm sandbox" : "Starting the container", ms: before });
     }
-    // On a warm pod the setup ran before the claim, while it idled: not part of this wait.
-    if (a.setupMs !== undefined && a.assignmentWaitMs === undefined) sandboxDetails.push({ label: "agentd setup", ms: a.setupMs });
+    // On a warm pod the setup ran before the claim, while it idled: not part of this wait. A cold
+    // fallback pod (warm mode, empty pool) also has an assignmentWaitMs, but it really did wait for
+    // its setup, so this goes by the derived warmth.
+    if (a.setupMs !== undefined && warm !== true) sandboxDetails.push({ label: "agentd setup", ms: a.setupMs });
     if (a.identityTokenMs !== undefined) sandboxDetails.push({ label: "Identity token", ms: a.identityTokenMs });
     if (a.connectMs !== undefined) sandboxDetails.push({ label: "Connecting to Outfitter", ms: a.connectMs });
   }
@@ -181,7 +214,7 @@ export function summarizeStartup(run: Pick<Run, "id" | "startup">, now = Date.no
   return {
     runId: run.id,
     ...(s.provider ? { provider: s.provider } : {}),
-    ...(s.warm !== undefined ? { warm: s.warm } : {}),
+    ...(warm !== undefined ? { warm } : {}),
     totalMs,
     complete,
     segments,

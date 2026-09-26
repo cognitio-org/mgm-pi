@@ -1,0 +1,21 @@
+outfitter/packages/web/src/hooks/useSessionStream.ts
+  s_9e985270e78a63::t_773337af5d8f7e 166-167,169-170
+outfitter/docs/protocol.md
+  s_9e985270e78a63::t_4e5e037a394a77 371
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "1e22b2eeb5f4697022a8ae17f18c54b3529c8102",
+  "prompts": {},
+  "sessions": {
+    "s_9e985270e78a63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "019f7f91-d886-47f5-9a90-f34314b7756e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -61,6 +61,43 @@ describe("agentd <-> api WebSocket", () => {
     await app.fastify.close();
   });
 
+  test("#185: a backlog replayed the moment run.spec arrives is stored in full, not capped at 256", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+    // Hold the api in its post-run.spec awaits, the window where the pre-hello buffer still
+    // collects frames, so the replay piles up there as it does against Atlas.
+    // (handleConnection's first-contact write right after it sends run.spec: lastSeenAt alone.)
+    const update = app.store.runs.update.bind(app.store.runs);
+    let slowed = false;
+    app.store.runs.update = async (id, patch) => {
+      if (!slowed && Object.keys(patch).sort().join() === "lastSeenAt,updatedAt") {
+        slowed = true;
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      return update(id, patch);
+    };
+
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    const spec = await agent.nextMessage();
+    assert.equal(spec.t, "run.spec");
+    const total = 400;
+    for (let seq = 1; seq <= total; seq++) {
+      agent.send({ t: "entry", seq, entry: { id: `e${seq}`, parentId: seq === 1 ? null : `e${seq - 1}`, type: "message" } });
+    }
+    const start = Date.now();
+    while ((await app.store.entries.listForSession(session.id)).length < total && Date.now() - start < 10_000) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    assert.equal((await app.store.entries.listForSession(session.id)).length, total);
+    assert.equal((await app.store.runs.findById(runId))?.state === "failed", false);
+
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
   test("event frames are fanned out over SSE and acked", async () => {
     const app = await buildTestApp();
     const { session, runId, runToken } = await makeRunningSession(app);
@@ -321,43 +358,6 @@ describe("agentd <-> api WebSocket", () => {
     assert.equal(close.code, 4401);
     assert.equal(agent.messageCount(), 0);
 
-    app.stopBackgroundTasks();
-    await app.fastify.close();
-  });
-
-  test("#185: a backlog replayed the moment run.spec arrives is stored in full, not capped at 256", async () => {
-    const app = await buildTestApp();
-    const { session, runId, runToken } = await makeRunningSession(app);
-    // Hold the api in its post-run.spec awaits, the window where the pre-hello buffer still
-    // collects frames, so the replay piles up there as it does against Atlas.
-    // (handleConnection's first-contact write right after it sends run.spec: lastSeenAt alone.)
-    const update = app.store.runs.update.bind(app.store.runs);
-    let slowed = false;
-    app.store.runs.update = async (id, patch) => {
-      if (!slowed && Object.keys(patch).sort().join() === "lastSeenAt,updatedAt") {
-        slowed = true;
-        await new Promise((r) => setTimeout(r, 300));
-      }
-      return update(id, patch);
-    };
-
-    const agent = await openAgentSocket(app, runId);
-    sendHello(agent, runId, session.id, runToken);
-    const spec = await agent.nextMessage();
-    assert.equal(spec.t, "run.spec");
-    const total = 400;
-    for (let seq = 1; seq <= total; seq++) {
-      agent.send({ t: "entry", seq, entry: { id: `e${seq}`, parentId: seq === 1 ? null : `e${seq - 1}`, type: "message" } });
-    }
-    const start = Date.now();
-    while ((await app.store.entries.listForSession(session.id)).length < total && Date.now() - start < 10_000) {
-      await new Promise((r) => setTimeout(r, 20));
-    }
-    assert.equal((await app.store.entries.listForSession(session.id)).length, total);
-    assert.equal((await app.store.runs.findById(runId))?.state === "failed", false);
-
-    agent.send({ t: "bye", reason: "stop" });
-    await agent.nextClose();
     app.stopBackgroundTasks();
     await app.fastify.close();
   });

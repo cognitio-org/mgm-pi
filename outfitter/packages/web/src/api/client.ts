@@ -250,8 +250,12 @@ function authedInit(init: RequestInit = {}): RequestInit {
 async function errorMessage(res: Response): Promise<string> {
   let message = res.statusText;
   try {
-    const body = (await res.json()) as { error?: string };
-    if (body?.error) message = body.error;
+    const body = (await res.json()) as { error?: any };
+    if (body?.error) {
+      message = typeof body.error === 'object' && body.error !== null 
+        ? (body.error.message || JSON.stringify(body.error)) 
+        : String(body.error);
+    }
   } catch {
     // non-JSON error body -- fall back to statusText
   }

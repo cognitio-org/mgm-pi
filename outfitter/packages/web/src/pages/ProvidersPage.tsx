@@ -1,5 +1,5 @@
 import { useProviders } from "../hooks/useProviders.ts";
-import { DEFAULT_PROVIDER_TAG } from "../components/ProviderStrip.tsx";
+import { DEFAULT_PROVIDER_TAG } from "../lib/providers.ts";
 import { Working } from "../components/Working.tsx";
 import { DeviceNotPresent } from "../components/DeviceNotPresent.tsx";
 import { vocabSubtitle, vocabulary } from "../lib/vocabulary.ts";

@@ -68,6 +68,23 @@ describe("SandboxProviders", () => {
     await assert.rejects(() => providers.get("gke"), /not configured here/);
   });
 
+  test("get() forgets a failed build, so a transient failure doesn't stick for the process", async () => {
+    let builds = 0;
+    const provider = new NoopProvider();
+    const providers = new SandboxProviders("gke", {
+      gke: async () => provider,
+      cloudrun: async () => {
+        builds++;
+        if (builds === 1) throw new Error("dynamic import failed");
+        return provider;
+      },
+    });
+    await assert.rejects(() => providers.get("cloudrun"), /dynamic import failed/);
+    assert.equal(await providers.get("cloudrun"), provider);
+    assert.equal(await providers.get("cloudrun"), provider);
+    assert.equal(builds, 2);
+  });
+
   test("names() lists every registered provider, built or not, without building any", () => {
     let builds = 0;
     const providers = new SandboxProviders("gke", {

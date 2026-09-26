@@ -444,10 +444,17 @@ export class ProviderStatusService {
       () => probeNgrok(deps.config.ngrokApiKey, timeoutMs, fetchImpl),
       () => probeLaptop(deps.laptopProbe, deps.config.tunnelDomainLmstudio, deps.config.localTunnelToken, timeoutMs, fetchImpl),
       () => probeLitellm(deps.config.litellmBaseUrl, deps.litellmKey, timeoutMs, fetchImpl),
-      // One probe per registered cloud provider, in parallel with each other and the rest.
+      // One probe per registered cloud provider, in parallel with each other and the rest. Only a
+      // cloud default is marked: a local dev default (inprocess, docker) reports under the
+      // historical "cloudrun" row, which new runs don't use.
       ...targets.map(
         (name) => () =>
-          probeSandbox(name, sandboxes && (() => sandboxes.capacity(name)), sandboxTimeoutMs, name === defaultName),
+          probeSandbox(
+            name,
+            sandboxes && (() => sandboxes.capacity(name)),
+            sandboxTimeoutMs,
+            name === defaultName && isCloudProvider(name),
+          ),
       ),
     ];
   }

@@ -3,6 +3,7 @@
 // credentials or the grpc dependency chain at test time.
 
 import type { SandboxProvider, RunLaunch, SandboxStatus, SandboxHandle, SandboxCapacity } from "@outfitter/provider-local";
+import { memoizeRetrying } from "./memo.ts";
 
 export interface CloudRunProviderConfig {
   project: string;
@@ -83,27 +84,30 @@ function isFailedPreconditionError(err: unknown): boolean {
   return errorStatus(err) === 9;
 }
 
+async function defaultJobsClient(): Promise<JobsClientLike> {
+  const { JobsClient } = await import("@google-cloud/run");
+  return new JobsClient() as unknown as JobsClientLike;
+}
+
+async function defaultExecutionsClient(): Promise<ExecutionsClientLike> {
+  const { ExecutionsClient } = await import("@google-cloud/run");
+  return new ExecutionsClient() as unknown as ExecutionsClientLike;
+}
+
 export class CloudRunProvider implements SandboxProvider {
   private readonly config: CloudRunProviderConfig;
   private readonly deps: Required<CloudRunProviderDeps>;
 
   constructor(config: CloudRunProviderConfig, deps: CloudRunProviderDeps = {}) {
     this.config = config;
+    // The real clients are built once per provider, lazily, and rebuilt only if a build failed
+    // (#169 review): each gax client owns a gRPC channel, and building a new one per call (every
+    // providers-dashboard capacity probe, every status()/stop()) leaked one each time.
     this.deps = {
-      jobsClient: deps.jobsClient ?? (() => this.defaultJobsClient()),
-      executionsClient: deps.executionsClient ?? (() => this.defaultExecutionsClient()),
+      jobsClient: deps.jobsClient ?? memoizeRetrying(defaultJobsClient),
+      executionsClient: deps.executionsClient ?? memoizeRetrying(defaultExecutionsClient),
       executionNamePoll: deps.executionNamePoll ?? DEFAULT_EXECUTION_NAME_POLL,
     };
-  }
-
-  private async defaultJobsClient(): Promise<JobsClientLike> {
-    const { JobsClient } = await import("@google-cloud/run");
-    return new JobsClient() as unknown as JobsClientLike;
-  }
-
-  private async defaultExecutionsClient(): Promise<ExecutionsClientLike> {
-    const { ExecutionsClient } = await import("@google-cloud/run");
-    return new ExecutionsClient() as unknown as ExecutionsClientLike;
   }
 
   async start(run: RunLaunch): Promise<{ handle: SandboxHandle }> {
@@ -205,7 +209,13 @@ export class CloudRunProvider implements SandboxProvider {
 
   /** E2.10 provider status: how many executions of this Job are currently active (no
    * completionTime yet -- still starting or running), regardless of which run started them. Used
-   * to show sandbox capacity on the providers dashboard (E3.6), not by any per-run status() path. */
+   * to show sandbox capacity on the providers dashboard (E3.6), not by any per-run status() path.
+   *
+   * Still lists (auto-paginating) every retained execution, on purpose (#169 review): the v2
+   * ListExecutions API takes only parent/pageSize/pageToken/showDeleted -- no filter for "no
+   * completionTime" -- and doesn't document its sort order, so reading only the first page could
+   * miss an active execution and undercount. The cost is bounded by how many executions the job
+   * retains, and the client is reused (memoized above), so it's one channel, a few pages. */
   async countRunningExecutions(): Promise<number> {
     const client = await this.deps.executionsClient();
     if (!client.listExecutions) throw new Error("cloud run: executions client has no listExecutions");

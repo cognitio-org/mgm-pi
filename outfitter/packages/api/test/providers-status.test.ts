@@ -501,6 +501,56 @@ describe("ProviderStatusService: every registered sandbox provider (#169)", () =
     assert.equal((await store.providers.findById("cloudrun"))?.checkedAt, markedAt, "marked once, not rewritten every poll");
   });
 
+  test("a row marked unregistered comes back once its provider is registered again", async () => {
+    const store = new MemoryStore();
+    const markedAt = new Date(Date.now() - 60_000).toISOString();
+    await store.providers.upsert({
+      id: "cloudrun",
+      kind: "cloudrun",
+      name: "Cloud Run agent job",
+      status: "unknown",
+      detail: NOT_REGISTERED_DETAIL,
+      checkedAt: markedAt,
+      history: [
+        { status: "up", at: new Date(Date.now() - 120_000).toISOString() },
+        { status: "unknown", at: markedAt },
+      ],
+    });
+    const service = buildMultiService(store, new SseHub(), {
+      defaultName: "gke",
+      sandboxes: { names: ["gke", "cloudrun"], capacity: async () => ({ active: 1 }) },
+    });
+
+    const rows = await service.pollOnce();
+    const cloudrun = rows.find((r) => r.id === "cloudrun");
+    assert.equal(cloudrun?.status, "up", "back in getCurrent(), live");
+    assert.equal(cloudrun?.detail, undefined);
+    const record = await store.providers.findById("cloudrun");
+    assert.deepEqual(record?.history.map((h) => h.status), ["up", "unknown", "up"]);
+    assert.equal(record?.detail, undefined);
+  });
+
+  test("a local dev default (inprocess) never marks the historical cloudrun row as the default", async () => {
+    const service = new ProviderStatusService({
+      store: new MemoryStore(),
+      sse: new SseHub(),
+      laptopProbe: new LaptopProbe({ tunnelDomain: "", token: "" }),
+      config: {
+        ngrokApiKey: "",
+        tunnelDomainLmstudio: "",
+        localTunnelToken: "",
+        litellmBaseUrl: "https://litellm.example/v1",
+        sandboxProvider: "inprocess",
+      },
+      litellmKey: async () => "",
+      sandboxes: { names: ["inprocess"], capacity: async () => undefined },
+    });
+    const rows = await service.pollOnce();
+    const cloudrun = rows.find((r) => r.id === "cloudrun");
+    assert.equal(cloudrun?.status, "unknown");
+    assert.equal(cloudrun?.isDefault, undefined);
+  });
+
   test("a sandbox probe that crashed outright never gets its (still registered) row marked unregistered", async () => {
     const store = new MemoryStore();
     const service = buildMultiService(store, new SseHub(), {

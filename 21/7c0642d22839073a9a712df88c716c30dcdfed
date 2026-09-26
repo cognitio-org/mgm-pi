@@ -1,0 +1,51 @@
+outfitter/packages/api/src/store/types.ts
+  s_217e742e7da57c::t_c61b1fdbf8ca6a 472-474
+outfitter/packages/api/test/providers-status.test.ts
+  s_217e742e7da57c::t_4bec76f12f4ac7 313-343
+  s_217e742e7da57c::t_7024f2a76eec89 366-550
+  s_217e742e7da57c::t_597deabf78136c 18-22
+outfitter/packages/api/test/registry.test.ts
+  s_217e742e7da57c::t_975aefd7aa0fdc 70-85
+  s_217e742e7da57c::t_50a4287e7aac65 267-299
+outfitter/packages/api/test/mongo-providers.test.ts
+  s_217e742e7da57c::t_a4048579642e86 1-67
+outfitter/packages/web/src/api/client.ts
+  s_217e742e7da57c::t_78ed456b81bf3e 181-183
+outfitter/packages/web/src/pages/ProvidersPage.tsx
+  s_217e742e7da57c::t_94abf10ba56f1b 2
+  s_217e742e7da57c::t_ee871f74bddb32 37-47
+outfitter/packages/web/test/providers-default.test.tsx
+  s_217e742e7da57c::t_9c4f509600400b 1-57
+outfitter/packages/web/src/components/ProviderStrip.tsx
+  s_217e742e7da57c::t_afd22072e9ade0 52
+  s_217e742e7da57c::t_821121ffefbd11 3-12
+outfitter/packages/api/src/providers/registry.ts
+  s_217e742e7da57c::t_f8600c6123f296 30-34
+outfitter/packages/api/src/providers/gke.ts
+  s_217e742e7da57c::t_32b0cbce58d72e 489-491,494-497
+outfitter/packages/api/src/store/mongo.ts
+  s_217e742e7da57c::t_da25fd362281b5 371-374
+outfitter/packages/api/src/providers-status.ts
+  s_217e742e7da57c::t_1b9ac2f92465ed 456-458,461-463
+  s_217e742e7da57c::t_849e6a869c95fe 12-14,308-326,332-336,339-341,344-345,348,351,362-381,401-406,410-411,423-425,436-442,447-451,480-482,500-503,530-552
+  s_217e742e7da57c::t_a8ea4e8b83065d 553
+outfitter/packages/api/src/server.ts
+  s_217e742e7da57c::t_76887a24c4f420 8
+  s_217e742e7da57c::t_37d59cc2430286 80-93,101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "217c0642d22839073a9a712df88c716c30dcdfed",
+  "prompts": {},
+  "sessions": {
+    "s_217e742e7da57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4d8a38f8-9583-45df-9f1a-8e69160a3dfb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

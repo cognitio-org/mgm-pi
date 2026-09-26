@@ -63,7 +63,17 @@ export function SessionPage() {
   const [models, setModels] = useState<ModelRow[]>([]);
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [transportOutcome, setTransportOutcome] = useState<TransportOutcome | null>(null);
-  const { entries, runState, runStateReason, statusDetail, pendingUiRequest, costEstimate, startup: streamStartup } = useSessionStream(sessionId);
+  const {
+    entries,
+    runState,
+    runStateReason,
+    statusDetail,
+    pendingUiRequest,
+    costEstimate,
+    startup: streamStartup,
+    agentSeenAt,
+    piActiveAt,
+  } = useSessionStream(sessionId);
   const { providers } = useProviders();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // The status line under the title bar hides once the person scrolls. The jump to the
@@ -74,8 +84,9 @@ export function SessionPage() {
   const landedAt = useRef<number | null>(null);
   // Cloud-fixes 11: the message just sent, until its stored entry and reply arrive.
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(null);
-  // Last time the page saw progress (a new entry or run state change) -- the work/wake timeouts
-  // count from here. `now` ticks while something is in flight so a timeout can fire.
+  // Last time the page saw progress (a new entry, a run state change, or pi activity from the
+  // `liveness` frame) -- the work/wake timeouts count from here. `now` ticks while something is in
+  // flight so a timeout can fire.
   const [lastProgressAt, setLastProgressAt] = useState(() => Date.now());
   const [now, setNow] = useState(() => Date.now());
   const chromePlace = useChromeCompanion(sessionId);
@@ -119,6 +130,12 @@ export function SessionPage() {
     setLastProgressAt(Date.now());
   }, [entries.length]);
 
+  // pi streaming a token or starting a tool is progress too, though no entry lands until the step
+  // ends (#182). Only forward: an older activity time never rewinds the clock.
+  useEffect(() => {
+    if (piActiveAt !== undefined) setLastProgressAt((prev) => Math.max(prev, piActiveAt));
+  }, [piActiveAt]);
+
   useEffect(() => {
     setLastProgressAt(Date.now());
     setPendingSend((p) => notePendingRunState(p, runState));
@@ -134,9 +151,11 @@ export function SessionPage() {
     pending: pendingSend,
     now,
     lastProgressAt,
+    agentSeenAt,
     pendingAction,
   });
-  const ticking = activity.phase === "sending" || activity.phase === "waking" || activity.phase === "working";
+  const ticking =
+    activity.phase === "sending" || activity.phase === "waking" || activity.phase === "working" || activity.phase === "quiet";
 
   useEffect(() => {
     if (!ticking) return;

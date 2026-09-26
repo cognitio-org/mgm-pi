@@ -1,6 +1,20 @@
 import { describe, it, expect } from "vitest";
-import { mergeEntries, nextPendingOnStatus, nextPendingUiRequest, nextStatusDetail } from "../src/hooks/useSessionStream.ts";
+import { livenessTimes, mergeEntries, nextPendingOnStatus, nextPendingUiRequest, nextStatusDetail } from "../src/hooks/useSessionStream.ts";
 import type { PiEntry } from "../src/api/client.ts";
+
+describe("livenessTimes (#182)", () => {
+  it("turns the api's ages into times on this browser's clock", () => {
+    expect(livenessTimes({ seenAgoMs: 5_000, activityAgoMs: 180_000 }, 1_000_000)).toEqual({
+      agentSeenAt: 995_000,
+      piActiveAt: 820_000,
+    });
+  });
+
+  it("leaves an age the api didn't send undefined", () => {
+    expect(livenessTimes({ seenAgoMs: 0 }, 10)).toEqual({ agentSeenAt: 10, piActiveAt: undefined });
+    expect(livenessTimes({}, 10)).toEqual({ agentSeenAt: undefined, piActiveAt: undefined });
+  });
+});
 
 function entry(id: string): PiEntry {
   return { id, type: "message" };

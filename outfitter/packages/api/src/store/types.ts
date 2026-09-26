@@ -109,7 +109,11 @@ export interface Run {
   sessionId: string;
   state: RunState;
   reason?: string;
+  /** Last frame of any kind from agentd, heartbeats included (every 15 s while pi is up). */
   lastSeenAt?: string;
+  /** Last pi entry or event (a streamed token, a tool starting) -- the model doing something, as
+   * opposed to agentd merely being alive. The session page counts it as progress (sse.ts). */
+  lastActivityAt?: string;
   lastAckedSeq: number;
   pending: DownMessage[];
   /** Opaque provider handle (SandboxProvider.start's return; a plain string per @outfitter/

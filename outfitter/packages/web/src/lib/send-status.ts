@@ -11,8 +11,13 @@ import type { PiEntry } from "../api/client.ts";
 
 /** Waking a drive (a Cloud Run Job cold start) normally takes about a minute. */
 export const WAKE_TIMEOUT_MS = 3 * 60_000;
-/** A running turn that produces no entry and no status change for this long is presumed stuck. */
+/** A running turn with no progress (entry, status change, or pi activity) for this long is quiet.
+ * Quiet is only an error once agentd has gone silent too (AGENT_SILENT_MS), or when the page
+ * can't tell (an api without `liveness`). A long LLM call or test run is quiet, not stuck (#182). */
 export const WORK_TIMEOUT_MS = 2 * 60_000;
+/** agentd heartbeats every 15 s; this is four missed, the same allowance the api gives a silent
+ * socket (config.agentSocketGraceMs). */
+export const AGENT_SILENT_MS = 60_000;
 
 /** Run states with a live run behind them (the Stop button's domain). */
 export const LIVE_RUN_STATES: ReadonlySet<string> = new Set(["queued", "provisioning", "running", "idle", "stopping"]);
@@ -50,11 +55,14 @@ export type ActivityPhase =
   | "waking"
   /** A run is working on it. */
   | "working"
+  /** Running, nothing new for WORK_TIMEOUT_MS, but agentd is still heartbeating: a long step. */
+  | "quiet"
   /** The POST failed. Retry re-sends. */
   | "sendFailed"
   /** No run came up within WAKE_TIMEOUT_MS (or it failed before running). Retry re-wakes. */
   | "wakeTimeout"
-  /** A running turn went quiet for WORK_TIMEOUT_MS (or the run failed mid-turn). Retry re-sends. */
+  /** A running turn went quiet for WORK_TIMEOUT_MS with agentd silent too, or unknown (or the run
+   * failed mid-turn). Retry re-sends. */
   | "workTimeout";
 
 export interface ActivityInput {
@@ -63,8 +71,11 @@ export interface ActivityInput {
   entries: PiEntry[];
   pending: PendingSend | null;
   now: number;
-  /** When the page last saw progress: a new entry or a run state change (ms). */
+  /** When the page last saw progress: a new entry, a run state change, or pi activity (ms). */
   lastProgressAt: number;
+  /** When agentd last spoke, heartbeats included (useSessionStream's agentSeenAt). Undefined when
+   * the api hasn't said -- then a quiet turn is treated as stuck, as before liveness existed. */
+  agentSeenAt?: number;
   /** A header button's own request is in flight. */
   pendingAction?: "abort" | "stop" | "wake" | null;
 }
@@ -158,7 +169,7 @@ export function deriveSessionActivity(input: ActivityInput): SessionActivity {
 
   return {
     phase,
-    label: phaseLabel(phase),
+    label: phase === "quiet" ? quietLabel(input.now - progressSince(input)) : phaseLabel(phase),
     errorHeadline: phaseError(phase),
     showOptimistic: pending !== null && (pending.error !== undefined || (findEcho(input.entries, pending) < 0 && phase !== "none")),
     // Once a send is accepted with no live run, a drive is being woken even before the first
@@ -171,15 +182,26 @@ export function deriveSessionActivity(input: ActivityInput): SessionActivity {
   };
 }
 
-function derivePhase({ runState, pending, now, lastProgressAt, entries }: ActivityInput): ActivityPhase {
-  const quiet = (since: number) => now - since > WORK_TIMEOUT_MS;
+/** Where the quiet clock starts: the last progress, or the send's acceptance if that is later. */
+function progressSince({ pending, lastProgressAt }: Pick<ActivityInput, "pending" | "lastProgressAt">): number {
+  return pending?.acceptedAt !== undefined ? Math.max(pending.acceptedAt, lastProgressAt) : lastProgressAt;
+}
+
+function derivePhase(input: ActivityInput): ActivityPhase {
+  const { runState, pending, now, lastProgressAt, entries, agentSeenAt } = input;
+  const agentAlive = agentSeenAt !== undefined && now - agentSeenAt <= AGENT_SILENT_MS;
+  // Only a running turn can be legitimately slow. Idle with an undelivered message, or a stop
+  // that isn't finishing, is still an error after WORK_TIMEOUT_MS.
+  const stalled = (since: number): ActivityPhase => {
+    if (now - since <= WORK_TIMEOUT_MS) return "working";
+    return runState === "running" && agentAlive ? "quiet" : "workTimeout";
+  };
   if (pending) {
     if (pending.error !== undefined) return "sendFailed";
     if (pending.acceptedAt === undefined) return "sending";
     if (isAnswered({ entries, runState }, pending)) return "none";
-    const since = Math.max(pending.acceptedAt, lastProgressAt);
     // idle-but-not-yet-running: the mail is on its way to the run, so it counts as working.
-    if (runState === "running" || runState === "idle" || runState === "stopping") return quiet(since) ? "workTimeout" : "working";
+    if (runState === "running" || runState === "idle" || runState === "stopping") return stalled(progressSince(input));
     const ended = runState === "failed" || runState === "stopped" || runState === undefined;
     if (ended && pending.sawChange) return pending.sawRunning ? "workTimeout" : "wakeTimeout";
     // queued/provisioning, or a stale ended state from before the send: a drive is waking.
@@ -187,8 +209,13 @@ function derivePhase({ runState, pending, now, lastProgressAt, entries }: Activi
   }
   // No send of ours in flight: the page was reloaded mid-wait, or a run was started elsewhere.
   if (runState === "queued" || runState === "provisioning") return now - lastProgressAt > WAKE_TIMEOUT_MS ? "wakeTimeout" : "waking";
-  if (runState === "running") return quiet(lastProgressAt) ? "workTimeout" : "working";
+  if (runState === "running") return stalled(lastProgressAt);
   return "none";
+}
+
+/** The status line for a quiet turn, in whole minutes (it ticks with the page's clock). */
+export function quietLabel(quietMs: number): string {
+  return `Working, no output for ${Math.max(1, Math.floor(quietMs / 60_000))} min`;
 }
 
 export function phaseLabel(phase: ActivityPhase): string | null {
@@ -199,6 +226,8 @@ export function phaseLabel(phase: ActivityPhase): string | null {
       return "Waking a drive, about a minute";
     case "working":
       return "Working…";
+    case "quiet":
+      return quietLabel(WORK_TIMEOUT_MS);
     case "sendFailed":
       return "message not sent";
     case "wakeTimeout":

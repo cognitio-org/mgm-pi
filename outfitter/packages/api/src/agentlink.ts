@@ -1518,9 +1518,11 @@ export class AgentLink {
     }
   }
 
+  /** Only `entry` and `event` frames carry a seq, and both are pi at work, so the same write records
+   * lastActivityAt (Run.lastActivityAt) at no extra cost. */
   private async ack(runId: string, socket: WebSocket, seq: number, now: string): Promise<void> {
     socket.send(JSON.stringify({ t: "ack", seq }));
-    await this.store.runs.update(runId, { lastAckedSeq: seq, lastSeenAt: now, updatedAt: now });
+    await this.store.runs.update(runId, { lastAckedSeq: seq, lastSeenAt: now, lastActivityAt: now, updatedAt: now });
   }
 }
 

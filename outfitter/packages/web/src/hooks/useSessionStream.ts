@@ -16,6 +16,22 @@ export interface StreamState {
   costEstimate?: number;
   /** The run's start-up timing from status events: undefined until one says, null for none. */
   startup?: StartupSummary | null;
+  /** When (this browser's clock, ms) agentd last spoke, heartbeats included -- from `liveness`. */
+  agentSeenAt?: number;
+  /** When (this browser's clock, ms) pi last wrote an entry or streamed an event -- from `liveness`. */
+  piActiveAt?: number;
+}
+
+/** One `liveness` frame (sse.ts) on this browser's clock. The api sends ages, not timestamps, so
+ * the two clocks never have to agree. Absent ages stay undefined. */
+export function livenessTimes(
+  data: { seenAgoMs?: number; activityAgoMs?: number },
+  now: number,
+): { agentSeenAt?: number; piActiveAt?: number } {
+  return {
+    agentSeenAt: typeof data.seenAgoMs === "number" ? now - data.seenAgoMs : undefined,
+    piActiveAt: typeof data.activityAgoMs === "number" ? now - data.activityAgoMs : undefined,
+  };
 }
 
 /** Folds one status event's `startup` into the current one: absent keeps it (most status events
@@ -84,6 +100,8 @@ export function useSessionStream(sessionId: string): StreamState {
   const [pendingUiRequest, setPendingUiRequest] = useState<StreamState["pendingUiRequest"]>(null);
   const [costEstimate, setCostEstimate] = useState<number | undefined>(undefined);
   const [startup, setStartup] = useState<StartupSummary | null | undefined>(undefined);
+  const [agentSeenAt, setAgentSeenAt] = useState<number | undefined>(undefined);
+  const [piActiveAt, setPiActiveAt] = useState<number | undefined>(undefined);
   const entryIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -96,6 +114,8 @@ export function useSessionStream(sessionId: string): StreamState {
     setPendingUiRequest(null);
     setCostEstimate(undefined);
     setStartup(undefined);
+    setAgentSeenAt(undefined);
+    setPiActiveAt(undefined);
 
     api.entries(sessionId).then((initial) => {
       if (cancelled) return;
@@ -142,6 +162,12 @@ export function useSessionStream(sessionId: string): StreamState {
       setPendingUiRequest((prev) => nextPendingUiRequest(prev, event));
     });
 
+    source.addEventListener("liveness", (ev) => {
+      const times = livenessTimes(JSON.parse((ev as MessageEvent).data), Date.now());
+      if (times.agentSeenAt !== undefined) setAgentSeenAt(times.agentSeenAt);
+      if (times.piActiveAt !== undefined) setPiActiveAt(times.piActiveAt);
+    });
+
     source.addEventListener("spend", (ev) => {
       const data = JSON.parse((ev as MessageEvent).data) as { estimate?: number };
       if (typeof data.estimate === "number") setCostEstimate(data.estimate);
@@ -153,5 +179,5 @@ export function useSessionStream(sessionId: string): StreamState {
     };
   }, [sessionId]);
 
-  return { entries, runState, runStateReason, statusDetail, pendingUiRequest, costEstimate, startup };
+  return { entries, runState, runStateReason, statusDetail, pendingUiRequest, costEstimate, startup, agentSeenAt, piActiveAt };
 }

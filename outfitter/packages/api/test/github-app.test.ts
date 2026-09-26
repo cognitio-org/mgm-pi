@@ -1,7 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, createVerify } from "node:crypto";
-import { GithubAppTokens, githubAppJwt, refreshDelayMs, type MintResult } from "../src/github-app.ts";
+import {
+  GithubAppTokens,
+  OPTIONAL_RUN_PERMISSIONS,
+  REQUIRED_RUN_PERMISSIONS,
+  classifyTokenRequest422,
+  githubAppJwt,
+  isPermanentMintFailure,
+  permissionsWithin,
+  refreshDelayMs,
+  type MintResult,
+} from "../src/github-app.ts";
 
 const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const pem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
@@ -169,10 +179,225 @@ test("#158: with no App at all, even an odd repo string is not-configured (the s
 });
 
 test("#158: GitHub refusing the repo or the installation is not-installed", async () => {
-  for (const status of [422, 404]) {
-    const tokens = tokensAnswering(async () => new Response(JSON.stringify({ message: "nope" }), { status }));
-    assert.deepEqual(await tokens.mint("o/r"), { ok: false, reason: "not-installed" }, `status ${status}`);
+  const repo422 = tokensAnswering(async () => new Response(JSON.stringify({ message: REPOSITORY_422 }), { status: 422 }));
+  assert.deepEqual(await repo422.mint("o/r"), { ok: false, reason: "not-installed" }, "status 422");
+  const gone = tokensAnswering(async () => new Response(JSON.stringify({ message: "Not Found" }), { status: 404 }));
+  assert.deepEqual(await gone.mint("o/r"), { ok: false, reason: "not-installed" }, "status 404");
+});
+
+// --- #172: 422s classified by GitHub's message -------------------------------------------------
+
+const PERMISSIONS_422 = "The permissions requested are not granted to this installation.";
+const REPOSITORY_422 = "There is at least one repository that does not exist or is not accessible to the parent installation.";
+/** What the kernal-one installation granted on 2026-09-26: no checks. */
+const GRANTED_NO_CHECKS = { actions: "read", contents: "write", issues: "write", metadata: "read", pull_requests: "write" };
+
+interface FakeGithub {
+  tokenRequests: Record<string, string>[];
+  installationLookups: number;
+  fetch: typeof fetch;
+}
+
+/** A fake GitHub whose installation grants `granted` (undefined: the lookup fails, and only the
+ * required set is allowed) and refuses any token request asking for more with the permissions 422,
+ * as the real one does. */
+function fakeGithub(
+  initial: Record<string, string> | undefined,
+  opts: { repoMessage?: boolean; permissionsMessage?: string; lookupDelayMs?: number } = {},
+): FakeGithub & { granted: Record<string, string> | undefined; opts: typeof opts } {
+  const fake = {
+    tokenRequests: [] as Record<string, string>[],
+    installationLookups: 0,
+    fetch: undefined as unknown as typeof fetch,
+    granted: initial,
+    opts,
+  };
+  fake.fetch = (async (url: string, init?: RequestInit) => {
+    if (String(url) === "https://api.github.com/app/installations/99") {
+      fake.installationLookups += 1;
+      if (fake.opts.lookupDelayMs) await new Promise((resolve) => setTimeout(resolve, fake.opts.lookupDelayMs));
+      if (!fake.granted) return new Response("{}", { status: 503 });
+      return new Response(JSON.stringify({ account: { login: "cognitio-org" }, permissions: fake.granted }), { status: 200 });
+    }
+    const body = JSON.parse(String(init?.body));
+    const permissions = body.permissions as Record<string, string>;
+    fake.tokenRequests.push(permissions);
+    if (fake.opts.repoMessage) return new Response(JSON.stringify({ message: REPOSITORY_422 }), { status: 422 });
+    const allowed: Record<string, string> = fake.granted ?? { contents: "write", pull_requests: "write", metadata: "read" };
+    const rank: Record<string, number> = { read: 1, write: 2 };
+    const over = Object.entries(permissions).some(([name, level]) => (rank[allowed[name]] ?? 0) < rank[level]);
+    if (over) {
+      return new Response(JSON.stringify({ message: fake.opts.permissionsMessage ?? PERMISSIONS_422, documentation_url: "https://docs.github.com" }), { status: 422 });
+    }
+    return new Response(JSON.stringify({
+      token: "ghs_reduced",
+      expires_at: "2026-09-24T06:00:00Z",
+      repositories: [{ full_name: `cognitio-org/${body.repositories[0]}` }],
+    }), { status: 201 });
+  }) as typeof fetch;
+  return fake;
+}
+
+function tokensWith(fake: FakeGithub, now: () => number = () => Date.parse("2026-09-24T04:00:00Z")) {
+  return new GithubAppTokens(appSecrets, fake.fetch, now);
+}
+
+test("#172 review: a permissions 422 reads the grants fresh, not from a cache that predates the change", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  const fake = fakeGithub({ ...GRANTED_NO_CHECKS, checks: "read" }, { repoMessage: true });
+  const tokens = tokensWith(fake);
+  // A not-installed mint caches the installation (then granting checks).
+  assert.equal((await tokens.mint("cognitio-org/gone")).ok, false);
+  assert.equal(fake.installationLookups, 1);
+  // The owner removes checks; the next mint gets the permissions 422.
+  fake.granted = GRANTED_NO_CHECKS;
+  fake.opts.repoMessage = false;
+  assert.equal(tokenOf(await tokens.mint("cognitio-org/spec-studio")), "ghs_reduced");
+  assert.equal(fake.installationLookups, 2, "looked up again on the failure path");
+  assert.equal("checks" in fake.tokenRequests.at(-1)!, false);
+});
+
+test("#172 review: once a missing permission is granted, a cached reduced token is replaced, and the warning re-arms", async (t) => {
+  const warnings: string[] = [];
+  t.mock.method(console, "warn", (msg: string) => warnings.push(msg));
+  let now = Date.parse("2026-09-24T04:00:00Z");
+  const fake = fakeGithub(GRANTED_NO_CHECKS);
+  const tokens = tokensWith(fake, () => now);
+  assert.equal(tokenOf(await tokens.mint("cognitio-org/spec-studio")), "ghs_reduced");
+  assert.equal(fake.tokenRequests.length, 2);
+  // Still within the reduced set's lifetime: the cached token is reused.
+  now += 5 * 60_000;
+  await tokens.mint("cognitio-org/spec-studio");
+  assert.equal(fake.tokenRequests.length, 2);
+  // The owner grants checks; after the reduced set expires the next mint asks for everything and
+  // doesn't keep the reduced token, although it hasn't expired.
+  fake.granted = { ...GRANTED_NO_CHECKS, checks: "read" };
+  now += 6 * 60_000;
+  assert.ok(tokenOf(await tokens.mint("cognitio-org/spec-studio")));
+  assert.equal(fake.tokenRequests.length, 3);
+  assert.equal(fake.tokenRequests[2].checks, "read");
+  // Losing it again warns again (on a repo with no cached token).
+  fake.granted = GRANTED_NO_CHECKS;
+  now += 11 * 60_000;
+  assert.equal(tokenOf(await tokens.mint("cognitio-org/other")), "ghs_reduced");
+  assert.equal(warnings.filter((w) => w.includes("doesn't grant checks:read")).length, 2);
+});
+
+test("#172 review: a 422 in unfamiliar wording is still treated as permissions when the grants lack what was asked", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  const fake = fakeGithub(GRANTED_NO_CHECKS, { permissionsMessage: "Some new wording." });
+  assert.equal(tokenOf(await tokensWith(fake).mint("cognitio-org/spec-studio")), "ghs_reduced");
+  assert.equal("checks" in fake.tokenRequests[1], false);
+  // With every requested permission granted, the same wording is rejected, and nothing retries.
+  const all = fakeGithub({ ...GRANTED_NO_CHECKS, checks: "read" }, { repoMessage: false });
+  const tokens = new GithubAppTokens(
+    appSecrets,
+    (async (url: string, init?: RequestInit) =>
+      String(url).endsWith("/installations/99") ? all.fetch(url, init) : new Response(JSON.stringify({ message: "Some new wording." }), { status: 422 })) as typeof fetch,
+    () => Date.parse("2026-09-24T04:00:00Z"),
+  );
+  assert.deepEqual(await tokens.mint("o/r"), { ok: false, reason: "rejected", githubMessage: "Some new wording." });
+});
+
+test("#172 review: concurrent failed mints share one installation lookup", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  const fake = fakeGithub(GRANTED_NO_CHECKS, { lookupDelayMs: 20 });
+  const tokens = tokensWith(fake);
+  const results = await Promise.all([tokens.mint("cognitio-org/a"), tokens.mint("cognitio-org/b"), tokens.mint("cognitio-org/c")]);
+  assert.deepEqual(results.map(tokenOf), ["ghs_reduced", "ghs_reduced", "ghs_reduced"]);
+  assert.equal(fake.installationLookups, 1);
+});
+
+test("#172: classifyTokenRequest422 tells GitHub's permissions and repository messages apart", () => {
+  assert.equal(classifyTokenRequest422(PERMISSIONS_422), "permissions");
+  assert.equal(classifyTokenRequest422(REPOSITORY_422), "repository");
+  assert.equal(classifyTokenRequest422("Validation Failed"), "other");
+  assert.equal(classifyTokenRequest422(undefined), "other");
+});
+
+test("#172: the run token's permissions split into required and optional, and never widen", () => {
+  assert.deepEqual(REQUIRED_RUN_PERMISSIONS, { contents: "write", pull_requests: "write", metadata: "read" });
+  assert.deepEqual(OPTIONAL_RUN_PERMISSIONS, { issues: "write", checks: "read", actions: "read" });
+  const within = permissionsWithin({ ...GRANTED_NO_CHECKS, administration: "write", actions: "write" });
+  assert.deepEqual(within.missing, ["checks"]);
+  assert.equal("administration" in within.grant, false, "never asks for a permission RUN_PERMISSIONS doesn't have");
+  assert.equal(within.grant.actions, "read", "never asks for a higher level than RUN_PERMISSIONS");
+  assert.deepEqual(permissionsWithin({ contents: "read", metadata: "read" }).missing, ["contents", "pull_requests", "issues", "checks", "actions"]);
+});
+
+test("#172: a missing optional permission retries once with what the installation grants, and warns once", async (t) => {
+  const warnings: string[] = [];
+  t.mock.method(console, "warn", (msg: string) => warnings.push(msg));
+  const fake = fakeGithub(GRANTED_NO_CHECKS);
+  const tokens = tokensWith(fake);
+  assert.equal(tokenOf(await tokens.mint("cognitio-org/spec-studio")), "ghs_reduced");
+  assert.equal(fake.tokenRequests.length, 2, "the full set, then the reduced one");
+  assert.equal(fake.tokenRequests[0].checks, "read");
+  assert.deepEqual(fake.tokenRequests[1], { contents: "write", pull_requests: "write", metadata: "read", issues: "write", actions: "read" });
+  assert.ok(warnings.some((w) => w.includes("returned 422 (permissions)") && w.includes(PERMISSIONS_422)), "the classification is logged");
+  assert.ok(warnings.some((w) => w.includes("doesn't grant checks:read")));
+  // Another repo on the same installation asks for the reduced set straight away, and doesn't warn again.
+  assert.equal(tokenOf(await tokens.mint("cognitio-org/other")), "ghs_reduced");
+  assert.equal(fake.tokenRequests.length, 3);
+  assert.equal("checks" in fake.tokenRequests[2], false);
+  assert.equal(warnings.filter((w) => w.includes("doesn't grant")).length, 1);
+  assert.equal(fake.installationLookups, 1, "the installation lookup is cached");
+  assert.equal(warnings.some((w) => /ghs_|Bearer|eyJ/.test(w)), false, "never logs a token or the JWT");
+});
+
+test("#172: without the installation's grants, the retry asks for only the required set", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  const fake = fakeGithub(undefined);
+  assert.equal(tokenOf(await tokensWith(fake).mint("cognitio-org/spec-studio")), "ghs_reduced");
+  assert.deepEqual(fake.tokenRequests[1], { contents: "write", pull_requests: "write", metadata: "read" });
+});
+
+test("#172: a required permission the installation lacks is permissions-missing, naming it", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  const fake = fakeGithub({ contents: "read", metadata: "read", pull_requests: "write" });
+  assert.deepEqual(await tokensWith(fake).mint("cognitio-org/spec-studio"), {
+    ok: false,
+    reason: "permissions-missing",
+    missingPermissions: ["contents:write"],
+    installationAccount: "cognitio-org",
+  });
+  assert.equal(fake.tokenRequests.length, 1, "no retry that couldn't work");
+});
+
+test("#172: a required-only retry that GitHub still refuses is permissions-missing", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  let requests = 0;
+  const tokens = new GithubAppTokens(
+    appSecrets,
+    (async (url: string) => {
+      if (String(url).endsWith("/installations/99")) return new Response("", { status: 500 });
+      requests += 1;
+      return new Response(JSON.stringify({ message: PERMISSIONS_422 }), { status: 422 });
+    }) as typeof fetch,
+    () => Date.parse("2026-09-24T04:00:00Z"),
+  );
+  assert.deepEqual(await tokens.mint("o/r"), { ok: false, reason: "permissions-missing" });
+  assert.equal(requests, 2, "one retry, not a loop");
+});
+
+test("#172: the repository 422 is not-installed, with the installation's account when GitHub gives it", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  const fake = fakeGithub(GRANTED_NO_CHECKS, { repoMessage: true });
+  assert.deepEqual(await tokensWith(fake).mint("mgmonteleone/git-ai"), {
+    ok: false,
+    reason: "not-installed",
+    installationAccount: "cognitio-org",
+  });
+});
+
+test("#172: any other 422 is rejected, carrying GitHub's message; only unavailable is transient", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  const tokens = tokensAnswering(async () => new Response(JSON.stringify({ message: "Validation Failed" }), { status: 422 }));
+  assert.deepEqual(await tokens.mint("o/r"), { ok: false, reason: "rejected", githubMessage: "Validation Failed" });
+  for (const reason of ["rejected", "permissions-missing", "not-installed", "misconfigured"] as const) {
+    assert.equal(isPermanentMintFailure(reason), true, reason);
   }
+  assert.equal(isPermanentMintFailure("unavailable"), false);
 });
 
 test("#158: a 5xx, a 401, a rate limit, or a network error is unavailable, never not-configured", async () => {

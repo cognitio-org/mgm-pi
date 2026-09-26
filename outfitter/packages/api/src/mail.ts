@@ -16,6 +16,24 @@ export const MAIL_MAX_ATTEMPTS = 6;
 export const MAIL_MAX_UNVALIDATED_WAKES = 3;
 /** Shown on a session with held mail (GET /api/sessions/:id `mailNotice`, and the web). */
 export const MAIL_HELD_NOTICE = "Deploy mismatch: messages held until the service is redeployed";
+
+/** #172: shown instead of MAIL_HELD_NOTICE when the mail is held because the session's runs fail
+ * in a way no retry fixes (Mail.heldDetail, e.g. the GitHub App can't give it a token). */
+export function mailHeldFailureNotice(detail: string): string {
+  // The run note speaks about "this run" and ends with "start the run again"; the notice is about
+  // the session's messages, and Retry is what starts the run again.
+  const reason = detail
+    .trim()
+    .replace(/,\s*so this run has no GitHub access(?: to \S+?)?(?=[.,](?:\s|$))/i, "")
+    .replace(/[,;.]?\s*then start the run again\.?$/i, "")
+    .replace(/[.\s]+$/, "");
+  return `Messages held: ${reason}. Press Retry once that's fixed.`;
+}
+
+/** The notice for a session's held mail: the run failure it's held for, or a deploy mismatch. */
+export function mailHeldNotice(heldDetail: string | undefined): string {
+  return heldDetail ? mailHeldFailureNotice(heldDetail) : MAIL_HELD_NOTICE;
+}
 export const MAIL_MAX_TEXT = 32_000;
 export const MAIL_MAX_TO = 64;
 /** Per sending session. Bounds what a looping or prompt-injected agent can spend waking others. */
@@ -187,7 +205,7 @@ export class MailService {
     if (!(await this.store.mail.hasDeliverable(sessionId, now, MAIL_MAX_ATTEMPTS))) return "none";
     const held = await this.store.mail.holdIfStuck(sessionId, now, MAIL_MAX_ATTEMPTS, MAIL_MAX_UNVALIDATED_WAKES);
     if (held > 0) {
-      this.log(`mail: holding ${held} message(s) for session ${sessionId}: its runs never validated the protocol`);
+      this.log(`mail: holding ${held} message(s) for session ${sessionId}: its runs never validated the protocol or can't start`);
       return "held";
     }
     await this.store.mail.noteWake(sessionId, now, MAIL_MAX_ATTEMPTS);
@@ -195,8 +213,22 @@ export class MailService {
     return "woken";
   }
 
-  /** The user pressed Retry on the "Deploy mismatch" notice: return the session's held mail to the
-   * queue with a fresh wake budget and try one wake. */
+  /**
+   * #172: a run of the session was refused for a reason no retry fixes (agentlink.ts's terminal
+   * 4412: no usable GitHub credential). Parks the session's deliverable mail as `held` with
+   * `detail` as the reason, so neither the /tick sweep nor Cloud Tasks start another run (and
+   * sandbox) for it, and the mail isn't silently dead-lettered after MAIL_MAX_ATTEMPTS. Retry
+   * (retryHeld), or a later run of the session that gets its spec, releases it. Returns how many of
+   * the session's mail are held.
+   */
+  async holdForFailure(sessionId: string, detail: string): Promise<number> {
+    const held = await this.store.mail.holdSession(sessionId, new Date().toISOString(), detail);
+    if (held > 0) this.log(`mail: holding ${held} message(s) for session ${sessionId}: ${detail}`);
+    return held;
+  }
+
+  /** The user pressed Retry on a held-mail notice (a deploy mismatch, or a run failure): return the
+   * session's held mail to the queue with a fresh wake budget and try one wake. */
   async retryHeld(sessionId: string): Promise<{ released: boolean; result: "active" | "none" | "woken" | "held" }> {
     const released = (await this.store.mail.releaseHeld(sessionId)).length > 0;
     return { released, result: await this.wakeForMail(sessionId) };

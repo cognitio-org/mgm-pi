@@ -3,7 +3,7 @@
 // authenticated WebSocket inside run.spec, never as job/container env.
 
 import type { Session, Guru } from "./store/types.ts";
-import { GithubAppTokens, type MintFailure } from "./github-app.ts";
+import { GithubAppTokens, type MintFailure, type MintFailureContext } from "./github-app.ts";
 
 export interface RunSecrets {
   githubToken: string;
@@ -11,9 +11,13 @@ export interface RunSecrets {
   /** Set when `githubToken` is a GitHub App installation token, so the run can be refreshed. */
   githubTokenExpiresAt?: string;
   /** #158: why a repo session got no GitHub token although the App is configured. The shared PAT is
-   * never used in that case: `not-installed` needs the App installed on the repo, `unavailable` is
-   * worth trying again. Absent when a token came back, or when nothing is configured at all. */
+   * never used in that case: `unavailable` is worth trying again, and every other reason needs
+   * someone to change the App, its installation, or the session's credentials (#172). Absent when a
+   * token came back, or when nothing is configured at all. */
   githubAppFailure?: Exclude<MintFailure, "not-configured">;
+  /** #172: what the failed mint knew beyond its reason (the installation's account, the missing
+   * permissions, GitHub's message), for the run's note. */
+  githubAppFailureContext?: MintFailureContext;
 }
 
 export interface SecretsBroker {
@@ -111,6 +115,7 @@ export class GcpSecretsBroker implements SecretsBroker {
       litellmKey,
       ...(github.expiresAt ? { githubTokenExpiresAt: github.expiresAt } : {}),
       ...(github.appFailure ? { githubAppFailure: github.appFailure } : {}),
+      ...(github.appFailureContext ? { githubAppFailureContext: github.appFailureContext } : {}),
     };
   }
 
@@ -149,7 +154,12 @@ export class GcpSecretsBroker implements SecretsBroker {
    * clone or push. */
   private async githubTokenForSession(
     session: Session,
-  ): Promise<{ token: string; expiresAt?: string; appFailure?: Exclude<MintFailure, "not-configured"> }> {
+  ): Promise<{
+    token: string;
+    expiresAt?: string;
+    appFailure?: Exclude<MintFailure, "not-configured">;
+    appFailureContext?: MintFailureContext;
+  }> {
     const perSession = `outfitter-github-token-${session.id}`;
     const own = await this.accessSecretOrEmpty(perSession);
     if (own) {
@@ -164,7 +174,8 @@ export class GcpSecretsBroker implements SecretsBroker {
     }
     if (minted.reason !== "not-configured") {
       console.warn(`[secrets] session ${session.id}: GitHub App token ${minted.reason}; not using ${GITHUB_TOKEN_DEFAULT_SECRET}`);
-      return { token: "", appFailure: minted.reason };
+      const { ok: _ok, reason, ...context } = minted;
+      return { token: "", appFailure: reason, ...(Object.keys(context).length > 0 ? { appFailureContext: context } : {}) };
     }
     const shared = await this.accessSecretOrEmpty(GITHUB_TOKEN_DEFAULT_SECRET);
     if (shared) {

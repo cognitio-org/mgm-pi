@@ -13,16 +13,36 @@ const REFRESH_EARLY_MS = 5 * 60_000;
 const MIN_REFRESH_DELAY_MS = 30_000;
 const MINT_TIMEOUT_MS = 10_000;
 
-/** The run token asks only for what cloud git and the broker use. A later permission on this
- * same App (E6) must not widen every sandbox token. */
-const RUN_PERMISSIONS = {
+/** What a run can't work without: cloud git clones and pushes (contents), opens and updates its
+ * pull request (pull_requests), and every App token carries metadata. */
+export const REQUIRED_RUN_PERMISSIONS = {
   contents: "write",
   pull_requests: "write",
+  metadata: "read",
+} as const;
+
+/** What only some broker tools use (the issue tools, a pull request's checks). An installation
+ * that doesn't grant one still gets a token without it (#172); the broker call that needs it then
+ * answers "not permitted". */
+export const OPTIONAL_RUN_PERMISSIONS = {
   issues: "write",
   checks: "read",
   actions: "read",
-  metadata: "read",
 } as const;
+
+/** The run token asks only for what cloud git and the broker use. A later permission on this
+ * same App (E6) must not widen every sandbox token: a mint never asks for more than this. */
+export const RUN_PERMISSIONS = { ...REQUIRED_RUN_PERMISSIONS, ...OPTIONAL_RUN_PERMISSIONS } as const;
+
+type RunPermission = keyof typeof RUN_PERMISSIONS;
+type PermissionSet = Partial<Record<RunPermission, "read" | "write">>;
+
+/** How long the installation's account (for notes) and a reduced permission set (#172) are reused.
+ * Once a reduced set expires, the next mint asks for the full set again, so an owner granting a
+ * missing optional permission is picked up within about this long, without a restart; a cached
+ * token minted with the reduced set is replaced on its next use after that. A failed mint always
+ * reads the installation's grants fresh. */
+const INSTALLATION_INFO_TTL_MS = 10 * 60_000;
 
 export interface InstallationToken {
   token: string;
@@ -36,12 +56,77 @@ export interface InstallationToken {
  *   the App id, a wrapped key, a missing installation id mid-reinstall). An operator has to fix
  *   them; no fallback, since that would quietly put every run back on the shared PAT.
  * - `not-installed`: GitHub says the App can't reach this repo (or the name isn't one it could).
- *   No fallback; the run is told to install the App on the repo.
+ *   No fallback. `installationAccount`, when GitHub told us, lets the run's note say whether the
+ *   repo is outside the installation's account altogether.
+ * - `permissions-missing` (#172): the installation doesn't grant a permission the run can't do
+ *   without (REQUIRED_RUN_PERMISSIONS). `missingPermissions` names them when the installation's
+ *   grants could be read. A missing optional permission is not a failure: the token is minted
+ *   without it.
+ * - `rejected` (#172): GitHub refused the token request (422) for some other reason.
+ *   `githubMessage` is GitHub's own message, which is never secret.
  * - `unavailable`: anything transient or unexpected (a network error, a timeout, a 5xx, a Secret
- *   Manager blip, a key that won't sign). No fallback; try again later. */
-export type MintFailure = "not-configured" | "misconfigured" | "not-installed" | "unavailable";
+ *   Manager blip, a key that won't sign). No fallback; try again later.
+ *
+ * Everything but `unavailable` (and `not-configured`) is permanent: retrying gets the same answer
+ * until someone changes the App, its installation, or the session's credentials. */
+export type MintFailure =
+  | "not-configured"
+  | "misconfigured"
+  | "not-installed"
+  | "permissions-missing"
+  | "rejected"
+  | "unavailable";
 
-export type MintResult = ({ ok: true } & InstallationToken) | { ok: false; reason: MintFailure };
+/** What a failed mint knows beyond its reason, for the run's note. All optional. */
+export interface MintFailureContext {
+  /** The installation's account login (the org or user the App is installed on). */
+  installationAccount?: string;
+  /** Required permissions the installation doesn't grant, as `name:level`. */
+  missingPermissions?: string[];
+  /** GitHub's `message` for a `rejected` request. */
+  githubMessage?: string;
+}
+
+export type MintResult = ({ ok: true } & InstallationToken) | ({ ok: false; reason: MintFailure } & MintFailureContext);
+
+/** True for a failure no amount of retrying fixes without someone changing the App, its
+ * installation, or the session's credentials (#172). */
+export function isPermanentMintFailure(reason: MintFailure): boolean {
+  return reason === "misconfigured" || reason === "not-installed" || reason === "permissions-missing" || reason === "rejected";
+}
+
+/** Which kind of 422 GitHub gave for an installation-token request, from its `message`. */
+export function classifyTokenRequest422(message: string | undefined): "permissions" | "repository" | "other" {
+  const text = (message ?? "").toLowerCase();
+  // "The permissions requested are not granted to this installation."
+  if (/permission/.test(text) && /not granted|not been granted/.test(text)) return "permissions";
+  // "There is at least one repository that does not exist or is not accessible to the parent installation."
+  if (/repositor/.test(text) && /not exist|not accessible|not found/.test(text)) return "repository";
+  return "other";
+}
+
+const LEVEL_RANK: Record<string, number> = { read: 1, write: 2, admin: 3 };
+
+/** The part of RUN_PERMISSIONS an installation grants, and the names it doesn't. Never widens:
+ * only names and levels from RUN_PERMISSIONS come back. */
+export function permissionsWithin(granted: Record<string, unknown>): { grant: PermissionSet; missing: RunPermission[] } {
+  const grant: PermissionSet = {};
+  const missing: RunPermission[] = [];
+  for (const [name, level] of Object.entries(RUN_PERMISSIONS) as [RunPermission, "read" | "write"][]) {
+    const have = granted[name];
+    if (typeof have === "string" && (LEVEL_RANK[have] ?? 0) >= LEVEL_RANK[level]) grant[name] = level;
+    else missing.push(name);
+  }
+  return { grant, missing };
+}
+
+function isRequired(name: string): boolean {
+  return Object.hasOwn(REQUIRED_RUN_PERMISSIONS, name);
+}
+
+function describePermissions(names: readonly RunPermission[]): string[] {
+  return names.map((name) => `${name}:${RUN_PERMISSIONS[name]}`);
+}
 
 /** How long to wait before asking for a replacement. Undefined when `expiresAt` is not a time. */
 export function refreshDelayMs(expiresAt: string, now: number, floorMs?: number): number | undefined {
@@ -91,10 +176,38 @@ const MISCONFIGURED: MintResult = { ok: false, reason: "misconfigured" };
 const NOT_INSTALLED: MintResult = { ok: false, reason: "not-installed" };
 const UNAVAILABLE: MintResult = { ok: false, reason: "unavailable" };
 
+interface InstallationInfo {
+  account?: string;
+  permissions?: Record<string, unknown>;
+  fetchedAtMs: number;
+}
+
+/** GitHub's `message` from an error body, clipped. GitHub never echoes the token or the JWT. */
+async function githubMessage(res: Response): Promise<string | undefined> {
+  try {
+    const body = (await res.json()) as { message?: unknown };
+    return typeof body?.message === "string" ? body.message.slice(0, 300) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function accountOf(info: InstallationInfo | undefined): { installationAccount?: string } {
+  return info?.account ? { installationAccount: info.account } : {};
+}
+
+function samePermissions(a: PermissionSet, b: PermissionSet): boolean {
+  const ka = Object.keys(a).sort() as RunPermission[];
+  const kb = Object.keys(b).sort() as RunPermission[];
+  return ka.length === kb.length && ka.every((key, i) => key === kb[i] && a[key] === b[key]);
+}
+
 interface CachedToken {
   token: string;
   expiresAtMs: number;
   expiresAt: string;
+  /** What the token was minted with. A hit is only used while a new mint would ask for the same. */
+  permissions: PermissionSet;
 }
 
 /**
@@ -104,6 +217,16 @@ interface CachedToken {
  */
 export class GithubAppTokens {
   private readonly cache = new Map<string, CachedToken>();
+  /** GET /app/installations/{id}, by installation id. */
+  private readonly installations = new Map<string, InstallationInfo>();
+  /** Lookups in flight, so concurrent failed mints share one request. */
+  private readonly installationLookups = new Map<string, Promise<InstallationInfo | undefined>>();
+  /** #172: the smaller permission set an installation last accepted, so the next mint doesn't take
+   * the 422 first. Expires after INSTALLATION_INFO_TTL_MS; then the full set is tried again. */
+  private readonly reducedPermissions = new Map<string, { permissions: PermissionSet; atMs: number }>();
+  /** `installationId:dropped permissions` already warned about. Cleared for an installation once
+   * a full-set mint succeeds, so losing a permission again warns again. */
+  private readonly warnedOptional = new Set<string>();
   private readonly read: (secretName: string) => Promise<string>;
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
@@ -154,8 +277,14 @@ export class GithubAppTokens {
     appId = appId.trim();
     installationId = installationId.trim();
     const key = `${installationId}:${owner}/${repo}`;
+    const reduced = this.reducedPermissions.get(installationId);
+    let requested: PermissionSet =
+      reduced && this.now() - reduced.atMs < INSTALLATION_INFO_TTL_MS ? reduced.permissions : { ...RUN_PERMISSIONS };
     const hit = this.cache.get(key);
-    if (hit && hit.expiresAtMs - this.now() > REFRESH_EARLY_MS) return { ok: true, token: hit.token, expiresAt: hit.expiresAt };
+    // A token minted with a reduced set is not reused once a mint would ask for more (#172).
+    if (hit && hit.expiresAtMs - this.now() > REFRESH_EARLY_MS && samePermissions(hit.permissions, requested)) {
+      return { ok: true, token: hit.token, expiresAt: hit.expiresAt };
+    }
     let jwt: string;
     try {
       jwt = githubAppJwt(appId, privateKey, Math.floor(this.now() / 1000));
@@ -164,28 +293,54 @@ export class GithubAppTokens {
       console.warn(`[github-app] could not sign the app jwt: ${errorName(err)}`);
       return UNAVAILABLE;
     }
-    let res: Response;
-    try {
-      res = await this.fetchImpl(`https://api.github.com/app/installations/${installationId}/access_tokens`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${jwt}`,
-          Accept: "application/vnd.github+json",
-          "User-Agent": "outfitter-api",
-        },
-        body: JSON.stringify({ repositories: [repo], permissions: RUN_PERMISSIONS }),
-        signal: AbortSignal.timeout(MINT_TIMEOUT_MS),
-      });
-    } catch (err) {
-      console.warn(`[github-app] installation token request failed: ${errorName(err)}`);
-      return UNAVAILABLE;
+    let res = await this.requestToken(installationId, jwt, repo, requested);
+    if (!res) return UNAVAILABLE;
+    if (res.status === 422) {
+      const message = await githubMessage(res);
+      const kind = classifyTokenRequest422(message);
+      console.warn(`[github-app] installation token request returned 422 (${kind}): ${message ?? "no message"}`);
+      if (kind === "repository") return this.notInstalled(installationId, jwt);
+      // #172: the failure path, so read the installation's grants fresh: cached ones could be from
+      // before an owner changed them, and would make the retry repeat the request just refused.
+      const info = await this.installationInfo(installationId, jwt, true);
+      const within = info?.permissions ? permissionsWithin(info.permissions) : undefined;
+      if (kind === "other") {
+        // Wording GitHub may change: still a permissions problem if the grants lack something we
+        // asked for. Otherwise nothing smaller would help.
+        const lacking = within ? (Object.keys(requested) as RunPermission[]).filter((name) => !(name in within.grant)) : [];
+        if (lacking.length === 0) return { ok: false, reason: "rejected", ...(message ? { githubMessage: message } : {}) };
+        console.warn(`[github-app] treating that 422 as a permissions one: the installation doesn't grant ${describePermissions(lacking).join(", ")}`);
+      }
+      // An optional permission the installation doesn't grant must not stop the run. Ask again for
+      // only what it grants (never more than RUN_PERMISSIONS), or for just the required set when
+      // the grants can't be read.
+      const missingRequired = within ? within.missing.filter(isRequired) : [];
+      if (missingRequired.length > 0) {
+        const missing = describePermissions(missingRequired);
+        console.warn(`[github-app] installation ${installationId} lacks required permissions: ${missing.join(", ")}`);
+        return { ok: false, reason: "permissions-missing", missingPermissions: missing, ...accountOf(info) };
+      }
+      const retry: PermissionSet = within ? within.grant : { ...REQUIRED_RUN_PERMISSIONS };
+      // Already asked for exactly this and GitHub said no: nothing smaller would still work.
+      if (samePermissions(retry, requested)) return { ok: false, reason: "permissions-missing", ...accountOf(info) };
+      requested = retry;
+      res = await this.requestToken(installationId, jwt, repo, requested);
+      if (!res) return UNAVAILABLE;
+      if (res.status === 422) {
+        const again = await githubMessage(res);
+        const againKind = classifyTokenRequest422(again);
+        console.warn(`[github-app] installation token request (reduced permissions) returned 422 (${againKind}): ${again ?? "no message"}`);
+        if (againKind === "repository") return this.notInstalled(installationId, jwt);
+        if (againKind === "other") return { ok: false, reason: "rejected", ...(again ? { githubMessage: again } : {}) };
+        return { ok: false, reason: "permissions-missing", ...accountOf(info) };
+      }
     }
     if (!res.ok) {
       console.warn(`[github-app] installation token request returned ${res.status}`);
-      // 422: a repository in `repositories` isn't accessible to the installation. 404: no such
-      // installation (the App was uninstalled from the account). Anything else may pass.
-      return res.status === 422 || res.status === 404 ? NOT_INSTALLED : UNAVAILABLE;
+      // 404: no such installation (the App was uninstalled from the account). Anything else may pass.
+      return res.status === 404 ? NOT_INSTALLED : UNAVAILABLE;
     }
+    this.notePermissions(installationId, requested);
     let body: { token?: unknown; expires_at?: unknown; repositories?: { full_name?: unknown }[] };
     try {
       body = (await res.json()) as { token?: unknown; expires_at?: unknown; repositories?: { full_name?: unknown }[] };
@@ -203,9 +358,100 @@ export class GithubAppTokens {
       ? exactlyThisRepo(listed, owner, repo)
       : await this.tokenCoversRepo(body.token, owner, repo);
     if (covers === "unavailable") return UNAVAILABLE;
-    if (!covers) return NOT_INSTALLED;
-    this.cache.set(key, { token: body.token, expiresAtMs, expiresAt: body.expires_at });
+    if (!covers) return this.notInstalled(installationId, jwt);
+    this.cache.set(key, { token: body.token, expiresAtMs, expiresAt: body.expires_at, permissions: requested });
     return { ok: true, token: body.token, expiresAt: body.expires_at };
+  }
+
+  /** One installation-token request. Undefined when it got no answer at all. */
+  private async requestToken(installationId: string, jwt: string, repo: string, permissions: PermissionSet): Promise<Response | undefined> {
+    try {
+      return await this.fetchImpl(`https://api.github.com/app/installations/${installationId}/access_tokens`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${jwt}`,
+          Accept: "application/vnd.github+json",
+          "User-Agent": "outfitter-api",
+        },
+        body: JSON.stringify({ repositories: [repo], permissions }),
+        signal: AbortSignal.timeout(MINT_TIMEOUT_MS),
+      });
+    } catch (err) {
+      console.warn(`[github-app] installation token request failed: ${errorName(err)}`);
+      return undefined;
+    }
+  }
+
+  /** #172: a token request with `requested` succeeded. The full set clears any reduced one (and
+   * its warning); a reduced set is remembered and warned about once. */
+  private notePermissions(installationId: string, requested: PermissionSet): void {
+    const dropped = (Object.keys(RUN_PERMISSIONS) as RunPermission[]).filter((name) => !(name in requested));
+    if (dropped.length === 0) {
+      this.reducedPermissions.delete(installationId);
+      for (const warned of this.warnedOptional) if (warned.startsWith(`${installationId}:`)) this.warnedOptional.delete(warned);
+      return;
+    }
+    this.reducedPermissions.set(installationId, { permissions: requested, atMs: this.now() });
+    const warnKey = `${installationId}:${dropped.join(",")}`;
+    if (this.warnedOptional.has(warnKey)) return;
+    this.warnedOptional.add(warnKey);
+    console.warn(
+      `[github-app] installation ${installationId} doesn't grant ${describePermissions(dropped).join(", ")}; ` +
+        "minting run tokens without them (broker tools that need them answer \"not permitted\")",
+    );
+  }
+
+  private async notInstalled(installationId: string, jwt: string): Promise<MintResult> {
+    return { ...NOT_INSTALLED, ...accountOf(await this.installationInfo(installationId, jwt)) };
+  }
+
+  /** GET /app/installations/{id}: the account it's on and the permissions it grants. Cached for
+   * INSTALLATION_INFO_TTL_MS unless `fresh`; concurrent callers share one request. Undefined, and
+   * not cached, when GitHub doesn't answer usefully. */
+  private async installationInfo(installationId: string, jwt: string, fresh = false): Promise<InstallationInfo | undefined> {
+    const hit = this.installations.get(installationId);
+    if (!fresh && hit && this.now() - hit.fetchedAtMs < INSTALLATION_INFO_TTL_MS) return hit;
+    const inFlight = this.installationLookups.get(installationId);
+    if (inFlight) return inFlight;
+    const lookup = this.fetchInstallationInfo(installationId, jwt).finally(() => this.installationLookups.delete(installationId));
+    this.installationLookups.set(installationId, lookup);
+    return lookup;
+  }
+
+  private async fetchInstallationInfo(installationId: string, jwt: string): Promise<InstallationInfo | undefined> {
+    let res: Response;
+    try {
+      res = await this.fetchImpl(`https://api.github.com/app/installations/${installationId}`, {
+        headers: {
+          Authorization: `Bearer ${jwt}`,
+          Accept: "application/vnd.github+json",
+          "User-Agent": "outfitter-api",
+        },
+        signal: AbortSignal.timeout(MINT_TIMEOUT_MS),
+      });
+    } catch (err) {
+      console.warn(`[github-app] installation lookup failed: ${errorName(err)}`);
+      return undefined;
+    }
+    if (!res.ok) {
+      console.warn(`[github-app] installation lookup returned ${res.status}`);
+      return undefined;
+    }
+    let body: { account?: { login?: unknown }; permissions?: unknown };
+    try {
+      body = (await res.json()) as { account?: { login?: unknown }; permissions?: unknown };
+    } catch {
+      return undefined;
+    }
+    const account = typeof body?.account?.login === "string" && body.account.login ? body.account.login : undefined;
+    const permissions =
+      body?.permissions && typeof body.permissions === "object" && !Array.isArray(body.permissions)
+        ? (body.permissions as Record<string, unknown>)
+        : undefined;
+    if (!account && !permissions) return undefined;
+    const info: InstallationInfo = { account, permissions, fetchedAtMs: this.now() };
+    this.installations.set(installationId, info);
+    return info;
   }
 
   /** True when the token's repository list includes this owner/repo and not only a same-named

@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { RouteContext } from "./context.ts";
 import type { Session, PiEntry, Run } from "../store/types.ts";
-import { MAIL_HELD_NOTICE, MAIL_MAX_TEXT } from "../mail.ts";
+import { mailHeldNotice, MAIL_MAX_TEXT } from "../mail.ts";
 import { GITHUB_TOKEN_DEFAULT_SECRET } from "../secrets.ts";
 import { GITHUB_APP_ID_SECRET, GITHUB_APP_INSTALLATION_SECRET, GITHUB_APP_KEY_SECRET, GITHUB_APP_SLUG_SECRET, githubAppSecretsUsable, githubRepoName } from "../github-app.ts";
 import { sessionGithubTokenSecretName } from "../operator.ts";
@@ -178,7 +178,8 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
     // request; GET /api/sessions already computes the same thing per-row via summarize(), and both
     // resolve it the same way (reportableRun) so the list and the detail never disagree.
     const run = await reportableRun(ctx, session.id);
-    // Cloud-fixes 13: mail parked because this session's runs never validated the protocol.
+    // Cloud-fixes 13: mail parked because this session's runs never validated the protocol, or
+    // (#172) because they're refused for a reason no retry fixes.
     const heldMail = await ctx.store.mail.countHeld(session.id);
     // The side panel reads the approval from here. Same run as runState (reportableRun, which is
     // what the list's summarize() uses) but only while that run is active — sse.ts publishes
@@ -211,7 +212,8 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
       // out; their entries use allowExternalHtmlResources above.
       htmlPreviewAccessByRun: await htmlPreviewAccessByRun(ctx, session.id),
       heldMail,
-      ...(heldMail > 0 ? { mailNotice: MAIL_HELD_NOTICE } : {}),
+      // #172: a hold for a run failure (a GitHub credential problem) says what's wrong instead.
+      ...(heldMail > 0 ? { mailNotice: mailHeldNotice(await ctx.store.mail.heldDetail(session.id)) } : {}),
       github: {
         repo: session.repo ?? null,
         branch: session.branch ?? null,
@@ -447,8 +449,8 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     reply.raw.on("close", () => ctx.ssePoller.unwatch(session.id));
   });
 
-  // Cloud-fixes 13: the web's Retry on the "Deploy mismatch" notice -- release this session's held
-  // mail with a fresh wake budget and wake once.
+  // Cloud-fixes 13: the web's Retry on a held-mail notice ("Deploy mismatch", or #172's "Messages
+  // held: <reason>") -- release this session's held mail with a fresh wake budget and wake once.
   app.post("/api/sessions/:id/mail/retry", async (req, reply) => {
     const session = await getSessionOr404(ctx, req, reply);
     if (!session) return;

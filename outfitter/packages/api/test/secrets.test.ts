@@ -184,11 +184,19 @@ describe("GcpSecretsBroker", () => {
     };
     const app = new GithubAppTokens(
       async (secretId) => (await fetchSecret(secretId)).trim(),
-      (async () => new Response(JSON.stringify({ message: "not accessible" }), { status: 422 })) as typeof fetch,
+      (async (url: string) =>
+        String(url).endsWith("/app/installations/7")
+          ? new Response(JSON.stringify({ account: { login: "cognitio-org" }, permissions: { contents: "write" } }), { status: 200 })
+          : new Response(
+              JSON.stringify({ message: "There is at least one repository that does not exist or is not accessible to the parent installation." }),
+              { status: 422 },
+            )) as typeof fetch,
     );
     const secrets = await new GcpSecretsBroker("proj", fetchSecret, app).secretsForRun(testSession(), testGuru());
     assert.equal(secrets.githubToken, "");
     assert.equal(secrets.githubAppFailure, "not-installed");
+    // #172: what the mint learned rides along for the run's note.
+    assert.deepEqual(secrets.githubAppFailureContext, { installationAccount: "cognitio-org" });
     assert.ok(!requested.includes(GITHUB_TOKEN_DEFAULT_SECRET));
   });
 

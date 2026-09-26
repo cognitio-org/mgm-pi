@@ -21,7 +21,14 @@ import { isBrowserActionKind, parseBrowserAction } from "./browser-action.ts";
 import { GithubBroker } from "./github-broker.ts";
 import { branchAllowed, branchPrefixOf } from "./branch-policy.ts";
 import { entryForWire } from "./entry-wire.ts";
-import { refreshDelayMs } from "./github-app.ts";
+import {
+  isPermanentMintFailure,
+  refreshDelayMs,
+  REQUIRED_RUN_PERMISSIONS,
+  type MintFailure,
+  type MintFailureContext,
+} from "./github-app.ts";
+import { parseSessionRepo } from "./session-repo.ts";
 import { parseBootTimings, parseStartupPhases, startupLogLine, summarizeStartup, type StartupSummary } from "./startup.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -84,11 +91,88 @@ const GITHUB_APP_MISCONFIGURED_DETAIL =
   "the Outfitter GitHub App's secrets are set but can't be used (a numeric App id, a numeric installation id, " +
   "and the App's PEM private key are all needed), so this run has no GitHub access. An operator has to fix them.";
 
-/** #158: the session page's note when the App is configured but can't reach the session's repo. */
-function githubAppNotInstalledDetail(repo: string): string {
+/** #158/#172: the session page's note when the App is configured but can't reach the session's
+ * repo. Outfitter only ever uses one installation of the App (a private App, so nobody outside its
+ * own account can install it), so the advice depends on whose repository it is. */
+export function githubAppNotInstalledDetail(repo: string, installationAccount?: string): string {
+  const owner = parseSessionRepo(repo)?.owner;
+  if (installationAccount && owner && owner.toLowerCase() !== installationAccount.toLowerCase()) {
+    return (
+      `Outfitter only uses the GitHub App's installation on ${installationAccount}, and ${repo} belongs to ${owner}, ` +
+      `so this run has no GitHub access. Use a repository in ${installationAccount}, or have an operator store ` +
+      "a GitHub token for this session."
+    );
+  }
+  if (installationAccount) {
+    return (
+      `the Outfitter GitHub App's installation on ${installationAccount} doesn't cover ${repo}, so this run has no ` +
+      `GitHub access. An owner of ${installationAccount} adds the repository to the App's installation ` +
+      "(the installation's Configure page, Repository access), then start the run again."
+    );
+  }
   return (
-    `the Outfitter GitHub App is not installed on ${repo}, so this run has no GitHub access. ` +
-    "Install the App on that repository (or its organization), then start the run again."
+    `the Outfitter GitHub App's installation can't reach ${repo}, so this run has no GitHub access. ` +
+    "Outfitter uses a single installation of the App: if the repository is in that installation's account, " +
+    "an owner adds it to the installation; otherwise use a repository there, or have an operator store a GitHub " +
+    "token for this session. Then start the run again."
+  );
+}
+
+const PERMISSION_LABELS: Record<string, string> = {
+  contents: "Contents",
+  pull_requests: "Pull requests",
+  metadata: "Metadata",
+  issues: "Issues",
+  checks: "Checks",
+  actions: "Actions",
+};
+
+/** `contents:write` as the App settings page names it: "Contents: read and write". */
+function permissionLabel(permission: string): string {
+  const [name, level] = permission.split(":");
+  const label = PERMISSION_LABELS[name] ?? name;
+  return level === "write" ? `${label}: read and write` : level ? `${label}: ${level}` : label;
+}
+
+/** #172: the session page's note when the App's installation doesn't grant a permission a run
+ * can't do without. `missing` is `name:level`, when the installation's grants could be read. */
+export function githubAppPermissionsMissingDetail(repo: string, missing?: readonly string[]): string {
+  const which =
+    missing && missing.length > 0
+      ? `the ${missing.map(permissionLabel).join(", ")} permission${missing.length > 1 ? "s" : ""}`
+      : `a permission runs need (${Object.entries(REQUIRED_RUN_PERMISSIONS).map(([n, l]) => permissionLabel(`${n}:${l}`)).join(", ")})`;
+  return (
+    `the Outfitter GitHub App is missing ${which}, so this run has no GitHub access to ${repo}. ` +
+    "An owner grants it in the App's settings (Permissions), then accepts the new permissions on the " +
+    "App's installation; then start the run again."
+  );
+}
+
+/** #172: the close reason (short: close reasons are capped at 123 bytes) and the session page's
+ * note for a permanent App mint failure. */
+function githubAppFailureNote(
+  failure: MintFailure,
+  repo: string,
+  context: MintFailureContext | undefined,
+): { reason: string; detail: string } {
+  switch (failure) {
+    case "not-installed":
+      return { reason: "github app installation doesn't cover the repo", detail: githubAppNotInstalledDetail(repo, context?.installationAccount) };
+    case "permissions-missing":
+      return { reason: "github app lacks a required permission", detail: githubAppPermissionsMissingDetail(repo, context?.missingPermissions) };
+    case "rejected":
+      return { reason: "github refused the app token", detail: githubAppRejectedDetail(repo, context?.githubMessage) };
+    default:
+      return { reason: "github app secrets unusable", detail: GITHUB_APP_MISCONFIGURED_DETAIL };
+  }
+}
+
+/** #172: the session page's note when GitHub refused the token request for another reason. */
+export function githubAppRejectedDetail(repo: string, githubMessage?: string): string {
+  const said = githubMessage ? ` ("${githubMessage.replace(/\s+/g, " ").trim()}")` : "";
+  return (
+    `GitHub refused the Outfitter GitHub App's token request for ${repo}${said}, so this run has no GitHub ` +
+    "access. An operator has to check the App's settings and its installation."
   );
 }
 
@@ -801,24 +885,32 @@ export class AgentLink {
     );
 
     // Bug 10 (docs/reports/cloud-fixes.md): a run created specifically to deliver mail
-    // (Run.mailWakePending, set by MailService.wakeForMail) just proved -- token + protocol
-    // version both checked out -- that it can genuinely speak the protocol, so charge the
-    // mailbox attempt here, once per run (guarded by Run.protocolAcked so a reconnect on the
-    // same run doesn't charge again), instead of blindly at wake() time before any of that was
-    // known. A run started for some other reason (a browser Start/Wake button) that happens to
-    // also have deliverable mail is left alone here -- its mail still gets delivered and counted
-    // once, by deliverMail's own claimNext call below, not charged twice.
-    if (run.mailWakePending && !run.protocolAcked) {
+    // (Run.mailWakePending, set by MailService.wakeForMail) that has proved -- token + protocol
+    // version both checked out -- that it can genuinely speak the protocol is charged the mailbox
+    // attempt, once per run (guarded by Run.protocolAcked so a reconnect on the same run doesn't
+    // charge again), instead of blindly at wake() time before any of that was known. A run started
+    // for some other reason (a browser Start/Wake button) that happens to also have deliverable
+    // mail is left alone -- its mail still gets delivered and counted once, by deliverMail's own
+    // claimNext call below, not charged twice.
+    //
+    // #172: charged once buildRunSpec has either succeeded or failed transiently (below), not here.
+    // A run refused with 4412 never got as far as trying to deliver, and its mail is held instead;
+    // charging it would let each Retry, while the credential problem lasts, eat an attempt until
+    // the held mail aged out of the hold and was dead-lettered.
+    const chargeMailWake = async () => {
+      if (!run.mailWakePending || run.protocolAcked) return;
       const chargeNow = new Date().toISOString();
       await this.store.mail.chargeWake(run.sessionId, chargeNow, MAIL_MAX_ATTEMPTS);
       await this.store.runs.update(runId, { protocolAcked: true, updatedAt: chargeNow });
-    }
+    };
     // Cloud-fixes 13: this run speaks the protocol, so the session's wakes weren't wasted (reset
     // Mail.unvalidatedWakes), and whatever deploy mismatch parked mail as `held` -- for this
     // session or any other -- is evidently fixed: return it all to the queue. This session's mail
     // goes out over this socket below; other sessions' is woken by the next /tick sweep.
+    // #172: only deploy-mismatch holds. Mail held for a run failure of its own session (a GitHub
+    // credential problem) is released below once that session's spec builds, or by Retry.
     await this.store.mail.markValidated(run.sessionId);
-    const released = await this.store.mail.releaseHeld();
+    const released = await this.store.mail.releaseHeld(undefined, "deploy-mismatch");
     if (released.length > 0) request.log.info({ runId, sessions: released }, "agentlink: protocol validated, released held mail");
 
     let built: BuiltRunSpec;
@@ -827,6 +919,15 @@ export class AgentLink {
     } catch (err) {
       if (err instanceof MissingGithubTokenError) {
         request.log.warn(err, "run.spec build failed: no usable GitHub token for this repo session");
+        // #172: this won't fix itself, so park the session's mail (with the reason as its notice)
+        // instead of letting the /tick sweep start a new run and sandbox for it every few minutes
+        // until the mail runs out of attempts. Retry releases it. A run the user started gets the
+        // same run note as before; its session's queued mail, if any, is held too.
+        const held = await this.mail.holdForFailure(run.sessionId, err.detail).catch((holdErr) => {
+          request.log.warn(holdErr, "agentlink: could not hold mail after a permanent run failure");
+          return 0;
+        });
+        if (held > 0) request.log.info({ runId, held }, "agentlink: held mail after a permanent GitHub credential failure");
         return this.refuse(socket, buffer, 4412, err.message, {
           runId,
           detail: err.detail,
@@ -838,6 +939,9 @@ export class AgentLink {
       // so the run keeps its state and may yet start. It still has to say something -- before this,
       // the run just sat in `provisioning` with the cause visible only in the server log, the same
       // silence refuse() exists to end.
+      // The wake is still charged: a failure that keeps recurring (GitHub unreachable for hours)
+      // must run the mail out of attempts rather than start a run every tick forever.
+      await chargeMailWake().catch(() => {});
       await this.store.runs
         .update(runId, {
           statusDetail: `the api could not build this run's spec: ${err instanceof Error ? err.message : String(err)}. Retrying.`,
@@ -846,6 +950,13 @@ export class AgentLink {
         .catch(() => {});
       throw err;
     }
+    await chargeMailWake();
+    // #172: this session's runs can get their credentials again (someone fixed the App, or the user
+    // pressed Play after fixing it), so mail held for that failure goes back to the queue; this run
+    // delivers it once it's ready. Unconditional: releaseHeld is a single indexed lookup when there
+    // is nothing held (Mongo checks `distinct` before writing), the same cost as counting first.
+    const unheld = await this.store.mail.releaseHeld(run.sessionId).catch(() => []);
+    if (unheld.length > 0) request.log.info({ runId }, "agentlink: run spec built, released this session's held mail");
     // A hello that lost the socket while buildRunSpec was awaiting must not send, and must not
     // replace the timer the new hello just armed.
     if (this.sockets.get(runId) !== socket) return;
@@ -1001,22 +1112,21 @@ export class AgentLink {
     const reconnect = isReadyState(run.state);
     let keepCurrentGithubToken = false;
     if (session.repo && !secrets.githubToken && !this.config.devMode) {
-      if (reconnect && (secrets.githubAppFailure === "unavailable" || secrets.githubAppFailure === "misconfigured")) {
+      const failure = secrets.githubAppFailure;
+      if (reconnect && (failure === "unavailable" || failure === "misconfigured")) {
         // Keep the token agentd already has, and try the mint again on the refresh schedule. Failing
-        // the run, or handing it the shared PAT, both used to happen here. Not for `not-installed`:
-        // the token a run keeps could be the shared PAT from before the App was configured.
+        // the run, or handing it the shared PAT, both used to happen here. Not for `not-installed`
+        // (or a permission the installation lacks): the token a run keeps could be the shared PAT
+        // from before the App was configured.
         keepCurrentGithubToken = true;
-      } else if (secrets.githubAppFailure === "misconfigured") {
-        throw new MissingGithubTokenError(`github app secrets unusable for session ${session.id}`, GITHUB_APP_MISCONFIGURED_DETAIL);
-      } else if (secrets.githubAppFailure === "unavailable") {
+      } else if (failure === "unavailable") {
         throw new GithubAppUnavailableError(
           `the GitHub App could not mint a token for ${session.repo} just now; the run will retry`,
         );
-      } else if (secrets.githubAppFailure === "not-installed") {
-        throw new MissingGithubTokenError(
-          `github app not installed on session ${session.id}'s repo`,
-          githubAppNotInstalledDetail(session.repo),
-        );
+      } else if (failure && isPermanentMintFailure(failure)) {
+        // #172: terminal (4412), and handleConnection holds the session's mail with this note.
+        const { reason, detail } = githubAppFailureNote(failure, session.repo, secrets.githubAppFailureContext);
+        throw new MissingGithubTokenError(`${reason} for session ${session.id}`, detail);
       } else {
         // Close reasons are capped at 123 UTF-8 bytes by the WebSocket protocol; keep this short
         // even for a long (e.g. UUID) session id. The full secret name is in the server log line

@@ -1,0 +1,49 @@
+outfitter/packages/api/src/routes/providers.ts
+  s_217e742e7da57c::t_a7fa24c505157b 9-11
+outfitter/packages/api/test/memo.test.ts
+  s_217e742e7da57c::t_94272f7b3a56b4 1-51
+outfitter/packages/api/src/providers/memo.ts
+  s_217e742e7da57c::t_c7c102337b8d88 1-18
+outfitter/packages/api/test/providers-status.test.ts
+  s_217e742e7da57c::t_a80d82dceeba8b 504-553
+outfitter/packages/web/src/lib/providers.ts
+  s_217e742e7da57c::t_5df3fa9df4f14b 1-37
+outfitter/packages/api/src/providers/registry.ts
+  s_217e742e7da57c::t_ebfe3614620bce 11
+  s_217e742e7da57c::t_5543fb8d53906d 18
+  s_217e742e7da57c::t_83180281292575 42,47-54
+outfitter/packages/api/src/providers-status.ts
+  s_217e742e7da57c::t_4206f172860973 447-449,452-457
+outfitter/packages/web/src/components/ProviderStrip.tsx
+  s_217e742e7da57c::t_dbd06b03342ca8 3,6,17
+outfitter/packages/web/src/pages/ProvidersPage.tsx
+  s_217e742e7da57c::t_414c4b836dbd8a 2
+outfitter/packages/web/test/providers-default.test.tsx
+  s_217e742e7da57c::t_b23887224bc124 30-31
+  s_217e742e7da57c::t_eb159448d32e23 59-84
+  s_217e742e7da57c::t_a93256a0ea77f7 10-11
+outfitter/packages/api/src/providers/cloudrun.ts
+  s_217e742e7da57c::t_2779440ab6f6b3 103-105,107-108
+  s_217e742e7da57c::t_5de8034dfbbb8d 212-216
+  s_217e742e7da57c::t_3492fd661a6ee8 217-218
+  s_217e742e7da57c::t_1ed5bbcf1254d5 6
+  s_217e742e7da57c::t_0c3727b8a32d4c 87-96
+outfitter/packages/api/test/registry.test.ts
+  s_217e742e7da57c::t_9c1889861570e6 71-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "2055ebac2eea1ffc0ee0f9b5d7bc7939e541f530",
+  "prompts": {},
+  "sessions": {
+    "s_217e742e7da57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4d8a38f8-9583-45df-9f1a-8e69160a3dfb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

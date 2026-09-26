@@ -512,8 +512,11 @@ request behind.
 for input; after `idleStopSeconds` agentd checkpoints and exits (`bye idle`), the API marks the run
 `stopped` and the session stays `open`. A new message on an open session with no live run creates a
 new run (`wake`) that restores the conversation: `run.spec.snapshot.jsonl` is the session's stored
-entries as a pi session file (`session-jsonl.ts`), in insertion order, with every later root hung off
-the entry before it so pi's leaf sees the whole thread. agentd imports it and tails the session file
+entries as a pi session file (`session-jsonl.ts`), in insertion order with every entry after its
+parent (same-second ObjectIds from two processes can sort out of order), and every later root hung
+off the entry before it so pi's leaf sees the whole thread. It is rebuilt on every `hello`, reconnects
+included: `hello` doesn't say whether agentd already holds a spec, and a lost first spec must not
+leave a run empty. agentd imports it and tails the session file
 from the end of that import, so restored entries are not sent back up. `snapshot.url` is unused
 (agentd reports no `snapshotUrl`); before `jsonl` was filled, every woken run started pi empty.
 

@@ -40,6 +40,23 @@ describe("linkedEntries", () => {
     ]);
   });
 
+  test("a child stored before its parent (same-second writes from two processes) moves after it, not off the thread", () => {
+    // e6 from a reconnected link instance sorted before e1..e3 from the first one.
+    const stored = [e("e6", "e3"), e("e1", null), e("e2", "e1"), e("e3", "e2"), e("e7", "e6")];
+    assert.deepEqual(pairs(linkedEntries(stored)), [
+      ["e1", null],
+      ["e2", "e1"],
+      ["e3", "e2"],
+      ["e6", "e3"],
+      ["e7", "e6"],
+    ]);
+  });
+
+  test("a parent cycle in bad data doesn't hang or drop entries", () => {
+    const out = linkedEntries([e("a", "b"), e("b", "a")]);
+    assert.equal(out.length, 2);
+  });
+
   test("does not mutate the stored entries", () => {
     const input = [e("a", null), e("b", null)];
     linkedEntries(input);

@@ -217,10 +217,13 @@ export class Link {
     return new Promise((resolve) => {
       if (this.ws && this.ws.readyState === this.WebSocketImpl.OPEN) {
         // A final frame (bye) can't wait for a reconnect's answer or for acks: agentd exits within
-        // a second (run.ts's bye). Send everything still waiting first, the whole unacked backlog
-        // included as before the window existed, then the bye, and resolve on its write.
+        // a second (run.ts's bye). Send what is waiting first, then the bye, and resolve on its
+        // write. Once the api has answered, that is the whole unacked backlog, as before the window
+        // existed. While a reconnect still waits it stays inside the window: the api may not have
+        // accepted the connection yet, and hello + held (<= 64) + 128 + bye fits its 256-frame
+        // buffer, where the whole backlog could turn a clean stop into a 4400-failed run.
         if (this.awaitingApi) this.flushAfterApiAnswered();
-        this.pump(Number.POSITIVE_INFINITY);
+        else this.pump(Number.POSITIVE_INFINITY);
         this.ws.send(JSON.stringify(msg), () => resolve());
       } else {
         resolve();

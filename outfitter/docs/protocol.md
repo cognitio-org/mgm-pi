@@ -32,8 +32,9 @@ by the newest held non-seq frames. The api buffers at most 256 frames before it 
 and refuses past that with a terminal `4400`, so a model streaming through the rotation used to kill
 its run (#185). On any connection agentd also keeps at most 128 seq frames in flight past the last
 `ack` and sends more as acks arrive, so a replay plus live streaming stays inside that buffer against
-any api version (a release rolls out agentd before the link). The final `bye` is the exception: the
-whole unacked backlog goes out ahead of it, since agentd exits right after.
+any api version (a release rolls out agentd before the link). The final `bye` is the exception once
+the api has answered: the whole unacked backlog goes out ahead of it, since agentd exits right after.
+During a reconnect wait it stays inside the window, as the api may not have accepted the connection.
 
 **Run token.** The id token above only proves the caller is *some* execution of the outfitter-agent
 Cloud Run Job -- every execution of that job runs as the same service account, so it says nothing

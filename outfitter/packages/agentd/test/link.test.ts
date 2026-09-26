@@ -277,6 +277,26 @@ test("Link: #185 -- live streaming never has more than 128 seq frames past the l
   assert.equal(link.getPendingCount(), 72);
 });
 
+test("Link: #185 -- a bye during a reconnect wait keeps the flush inside the api's 256-frame buffer", async (t) => {
+  const link = makeLink();
+  t.after(() => link.close());
+  const ws1 = await connectAndGetInstance(link);
+  ws1.triggerOpen();
+  ws1.triggerMessage({ t: "run.spec" });
+  ws1.triggerClose(1005);
+  await waitFor(() => FakeWebSocket.instances.length === 2);
+  const ws2 = FakeWebSocket.instances[1];
+  ws2.triggerOpen();
+  // A long drop: pi kept streaming, and plenty of status/heartbeat piled up too.
+  for (let i = 0; i < 500; i++) link.sendSeq((seq) => ({ t: "event", seq, event: { type: "message_update" } as any }));
+  for (let i = 0; i < 100; i++) link.send({ t: "heartbeat", idleSeconds: i, memMb: 1 });
+  await link.sendAndFlush({ t: "bye", reason: "stop" } as any);
+  const frames = ws2.sent.map((s) => JSON.parse(s));
+  assert.ok(frames.length <= 256, `${frames.length} frames before the api answered`);
+  assert.equal(frames.filter((f) => typeof f.seq === "number").length, 128);
+  assert.equal(frames.at(-1).t, "bye");
+});
+
 test("Link: #185 -- the final bye sends the whole unacked backlog first, window or not", async (t) => {
   const link = makeLink();
   t.after(() => link.close());

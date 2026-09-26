@@ -368,10 +368,10 @@ class MongoProviders implements ProvidersCollection {
   }
 
   async upsert(record: ProviderRecord): Promise<void> {
-    // $set (not replaceOne) so TypeScript's WithoutId<T> replacement typing (which excludes _id)
-    // doesn't need a cast here; upsert:true still gives whole-record-replace semantics in practice
-    // since every field on ProviderRecord is set every time.
-    await this.col.updateOne({ _id: record.id }, { $set: record }, { upsert: true });
+    // replaceOne, not $set: the optional fields (detail, meta, isDefault) must go away when a new
+    // row leaves them out -- $set kept a "down" row's old meta, and would keep an unregistered
+    // sandbox row's last capacity and default marker (#169). The filter supplies _id on insert.
+    await this.col.replaceOne({ _id: record.id }, record, { upsert: true });
   }
 }
 

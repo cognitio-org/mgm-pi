@@ -5,7 +5,7 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyWebsocket from "@fastify/websocket";
 import type { Store } from "./store/types.ts";
-import type { Config } from "./config.ts";
+import type { Config, SandboxProviderName } from "./config.ts";
 import type { SandboxProvider } from "@outfitter/provider-local";
 import { SandboxProviders } from "./providers/registry.ts";
 import type { SecretsBroker, SecretAdmin } from "./secrets.ts";
@@ -77,13 +77,20 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   const mail = new MailService(store, runs, wakeSchedulerFor(config), (msg, err) => fastify.log.warn({ err }, msg));
   const agentLink = new AgentLink(store, config, secretsBroker, sse, laptopProbe, mail, opts.github, opts.githubRefresh);
 
-  // Sandbox capacity probe (E2.10, gke-sandbox-provider.md §2.4 gap G3): duck-typed on the
-  // *default* provider's optional capacity() rather than `instanceof CloudRunProvider`, so a
-  // second cloud provider (gke) doesn't need its own special case here. Resolved through the
-  // registry (not opts.provider directly), since production now hands buildApp the whole
-  // registry rather than one already-built provider.
-  const defaultProvider = await providers.get(providers.defaultName);
-  const sandboxCapacity = defaultProvider.capacity ? () => defaultProvider.capacity!() : undefined;
+  // Sandbox capacity probes (E2.10, gke-sandbox-provider.md §2.4 gap G3, #169): one per
+  // *registered* provider, not just the default, so Cloud Run's row stays live while it's still
+  // registered after the GKE switch. Duck-typed on each provider's optional capacity() rather than
+  // `instanceof`, and resolved through the registry lazily inside the probe (and its timeout), so
+  // a non-default provider that fails to build reports "down" instead of failing boot. The default
+  // is still built here, as before, so a broken default provider fails boot loudly.
+  await providers.get(providers.defaultName);
+  const sandboxes = {
+    names: providers.names(),
+    capacity: async (name: SandboxProviderName) => {
+      const provider = await providers.get(name);
+      return provider.capacity ? provider.capacity() : undefined;
+    },
+  };
   const litellmKey = async () => config.litellmAdminKey || secretsBroker.defaultLitellmKey();
   const providerStatus = new ProviderStatusService({
     store,
@@ -91,7 +98,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     laptopProbe,
     config,
     litellmKey,
-    sandboxCapacity,
+    sandboxes,
   });
   // E3.7: GET /api/models' backing service, sharing the same key resolver as the provider status
   // service above so both agree on which key probes LiteLLM's /model/info.

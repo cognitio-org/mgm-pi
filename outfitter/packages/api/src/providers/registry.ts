@@ -8,13 +8,14 @@
 
 import type { Config, SandboxProviderName } from "../config.ts";
 import type { SandboxProvider } from "@outfitter/provider-local";
+import { memoizeRetrying } from "./memo.ts";
 
 export type SandboxProviderFactory = () => Promise<SandboxProvider>;
 
 export class SandboxProviders {
   readonly defaultName: SandboxProviderName;
   private readonly factories: Partial<Record<SandboxProviderName, SandboxProviderFactory>>;
-  private readonly built = new Map<SandboxProviderName, Promise<SandboxProvider>>();
+  private readonly built = new Map<SandboxProviderName, () => Promise<SandboxProvider>>();
 
   // Plain fields, not TS constructor-parameter properties: those aren't erasable syntax, so
   // `node --test` (which runs .ts test files directly via type-stripping, no build step -- see
@@ -27,22 +28,30 @@ export class SandboxProviders {
     this.factories = factories;
   }
 
+  /** Every registered provider name, default included (built or not). */
+  names(): SandboxProviderName[] {
+    return Object.keys(this.factories) as SandboxProviderName[];
+  }
+
   /** Lazily builds and memoizes. Throws `sandbox provider "<name>" is not configured here` if
    * `name` has no registered factory -- e.g. a run recorded a provider that this deployment no
    * longer configures after a SANDBOX_PROVIDER switch. Callers (runs.ts) catch this, log once, and
    * skip the provider call rather than fail the whole operation. */
   get(name: SandboxProviderName): Promise<SandboxProvider> {
     const existing = this.built.get(name);
-    if (existing) return existing;
+    if (existing) return existing();
     const factory = this.factories[name];
     if (!factory) {
       return Promise.reject(new Error(`sandbox provider "${name}" is not configured here`));
     }
-    // Wrapped in Promise.resolve().then(...) so a factory that throws synchronously (rather than
-    // returning a rejected promise) is still memoized as a rejection, not re-thrown out of get().
-    const building = Promise.resolve().then(factory);
-    this.built.set(name, building);
-    return building;
+    // memoizeRetrying: a factory that throws synchronously is a rejection, not a throw out of
+    // get(), and a rejected build is forgotten so the next get() retries. Otherwise one transient
+    // failure (a dynamic-import hiccup) would stick for the process: since #169 the providers
+    // probe can be the first to build a non-default provider, and a stuck rejection there would
+    // also stop runs.ts from stopping that provider's leftover runs on this instance.
+    const getter = memoizeRetrying(factory);
+    this.built.set(name, getter);
+    return getter();
   }
 
   /** Test helper and back-compat: wrap one already-built provider as the default, so a caller

@@ -1,20 +1,9 @@
 import { Link } from "react-router-dom";
 import { useProviders } from "../hooks/useProviders.ts";
-
-const WORST_FIRST = ["down", "degraded", "unknown", "up"] as const;
-
-/** The single class of the worst status present, for the mobile summary pill's colour --
- * "down" beats "degraded" beats "unknown" beats "up" so one failing peripheral is never hidden
- * behind a sea of healthy ones. */
-export function worstStatus(statuses: string[]): (typeof WORST_FIRST)[number] {
-  for (const s of WORST_FIRST) {
-    if (statuses.includes(s)) return s;
-  }
-  return "up";
-}
+import { providerLabel, summaryStatus, worstStatus } from "../lib/providers.ts";
 
 /** Header strip for the providers/peripherals dashboard (E3.6). Always renders as a single
- * "N/M up" summary pill (coloured by the worst status present) so it holds to one row at any
+ * "N/M up" summary pill (coloured by the worst status present, per lib/providers.ts summaryStatus) so it holds to one row at any
  * header width -- a fixed four-pill-wide row doesn't scale as more peripherals are configured,
  * and was the thing that made the desktop header wrap at ~1100-1200px. Hovering or focusing the
  * pill expands a popover with the full per-provider list (mouse and keyboard both -- `:hover` and
@@ -25,7 +14,7 @@ export function ProviderStrip() {
   if (!loaded || providers.length === 0) return null;
 
   const up = providers.filter((p) => p.status === "up").length;
-  const worst = worstStatus(providers.map((p) => p.status));
+  const worst = worstStatus(providers.map(summaryStatus));
 
   return (
     <div className="provider-strip">
@@ -39,7 +28,7 @@ export function ProviderStrip() {
       <div className="provider-strip-popover" role="group" aria-label="Peripheral status">
         {providers.map((p) => (
           <span key={p.id} className={`status-pill ${p.status}`} title={p.detail ?? p.name}>
-            {p.name}
+            {providerLabel(p)}
           </span>
         ))}
       </div>

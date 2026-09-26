@@ -6,8 +6,9 @@
 import type { FastifyInstance } from "fastify";
 import type { RouteContext } from "./context.ts";
 
-// Security review #3 (docs/reports/security-review-pr15.md): a manual refresh triggers up to 4
-// outbound probes (ngrok, laptop tunnel, LiteLLM, Cloud Run Admin API) with no rate limit, so any
+// Security review #3 (docs/reports/security-review-pr15.md): a manual refresh triggers several
+// outbound probes (ngrok, laptop tunnel, LiteLLM, and one capacity probe per registered cloud
+// sandbox provider -- Cloud Run Admin API, GKE -- so 5 today) with no rate limit, so any
 // IAP-authenticated domain user could hammer this route to amplify calls against those third
 // parties and the Cloud Run Admin API's own quota. A short global cooldown bounds call volume
 // without needing a real per-caller rate limiter for what's otherwise a convenience button.

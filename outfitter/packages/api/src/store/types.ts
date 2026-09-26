@@ -469,6 +469,9 @@ export interface ProviderRow {
   detail?: string;
   checkedAt: string;
   meta?: Record<string, unknown>;
+  /** Sandbox rows only: true on the provider new runs launch on (SANDBOX_PROVIDER). Every other
+   * registered sandbox provider still gets a row (#169), without this. */
+  isDefault?: boolean;
 }
 
 /** Stored form: the current row plus a bounded (last 7 days) history of status transitions, for

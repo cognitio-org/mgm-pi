@@ -1,0 +1,36 @@
+outfitter/packages/web/src/components/Composer.tsx
+  h_69b863911ebf05 1,47-48,51-57,59-86,89-125,192-234
+outfitter/packages/web/src/components/EntryItem.tsx
+  h_69b863911ebf05 117-119,124,130
+outfitter/packages/web/src/components/Working.tsx
+  h_69b863911ebf05 3-4
+outfitter/packages/web/src/lib/beats.ts
+  h_69b863911ebf05 4-5,109,114-115,123-130,134,153,159,176-177,183,210
+outfitter/packages/web/src/pages/SessionPage.tsx
+  h_69b863911ebf05 330-333
+outfitter/packages/web/src/pages/SettingsPage.tsx
+  h_69b863911ebf05 345-352
+outfitter/packages/web/src/styles/components.css
+  h_69b863911ebf05 48-49,313,317-318,320-323,326-329,332-333,335-348,352-353,356,358,361,405,407
+outfitter/packages/web/src/styles/layout.css
+  h_69b863911ebf05 574-606,646,659,663-665,669,673-738,740-741
+outfitter/packages/web/src/styles/markdown-editor.css
+  h_69b863911ebf05 151-152,154,156-171,175,202-205,254-258,262-264
+outfitter/packages/web/src/styles/pages.css
+  h_69b863911ebf05 247,257-295
+outfitter/packages/web/test/beats.test.ts
+  h_69b863911ebf05 134-167
+outfitter/packages/web/test/markdown-editor.test.tsx
+  h_69b863911ebf05 25-34,98-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "3fcfc53265d7ae06bcb5f29422190048b15da3f7",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -13,7 +13,9 @@ import type { PiEntry } from "../api/client.ts";
 export const WAKE_TIMEOUT_MS = 3 * 60_000;
 /** A running turn with no progress (entry, status change, or pi activity) for this long is quiet.
  * Quiet is only an error once agentd has gone silent too (AGENT_SILENT_MS), or when the page
- * can't tell (an api without `liveness`). A long LLM call or test run is quiet, not stuck (#182). */
+ * can't tell (an api without `liveness`). A long LLM call or test run is quiet, not stuck (#182).
+ * So is a pi that hung while agentd keeps heartbeating: the page can't tell those apart, which is
+ * why the quiet label counts the minutes and Break stays available. */
 export const WORK_TIMEOUT_MS = 2 * 60_000;
 /** agentd heartbeats every 15 s; this is four missed, the same allowance the api gives a silent
  * socket (config.agentSocketGraceMs). */
@@ -76,6 +78,9 @@ export interface ActivityInput {
   /** When agentd last spoke, heartbeats included (useSessionStream's agentSeenAt). Undefined when
    * the api hasn't said -- then a quiet turn is treated as stuck, as before liveness existed. */
   agentSeenAt?: number;
+  /** When pi last wrote an entry or streamed an event (useSessionStream's piActiveAt). Only the
+   * quiet label uses it: lastProgressAt restarts on page load, pi's own time doesn't. */
+  piActiveAt?: number;
   /** A header button's own request is in flight. */
   pendingAction?: "abort" | "stop" | "wake" | null;
 }
@@ -169,7 +174,7 @@ export function deriveSessionActivity(input: ActivityInput): SessionActivity {
 
   return {
     phase,
-    label: phase === "quiet" ? quietLabel(input.now - progressSince(input)) : phaseLabel(phase),
+    label: phase === "quiet" ? quietLabel(input.now - quietSince(input)) : phaseLabel(phase),
     errorHeadline: phaseError(phase),
     showOptimistic: pending !== null && (pending.error !== undefined || (findEcho(input.entries, pending) < 0 && phase !== "none")),
     // Once a send is accepted with no live run, a drive is being woken even before the first
@@ -185,6 +190,13 @@ export function deriveSessionActivity(input: ActivityInput): SessionActivity {
 /** Where the quiet clock starts: the last progress, or the send's acceptance if that is later. */
 function progressSince({ pending, lastProgressAt }: Pick<ActivityInput, "pending" | "lastProgressAt">): number {
   return pending?.acceptedAt !== undefined ? Math.max(pending.acceptedAt, lastProgressAt) : lastProgressAt;
+}
+
+/** How long pi has really been quiet: after a reload the page's own clock starts at load, so pi's
+ * last activity, when older, is the truer start. */
+function quietSince(input: ActivityInput): number {
+  const since = progressSince(input);
+  return input.piActiveAt !== undefined ? Math.min(since, input.piActiveAt) : since;
 }
 
 function derivePhase(input: ActivityInput): ActivityPhase {

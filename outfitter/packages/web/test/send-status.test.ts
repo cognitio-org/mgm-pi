@@ -183,6 +183,25 @@ describe("deriveSessionActivity", () => {
     expect(derive({ runState: "idle", pending: p, now, agentSeenAt: now }).phase).toBe("workTimeout");
   });
 
+  it("without liveness from the api, a quiet running turn is LOAD ERROR as before", () => {
+    const p = notePendingRunState(pending({ acceptedAt: T0 }), "running")!;
+    expect(derive({ runState: "running", pending: p, now: T0 + WORK_TIMEOUT_MS + 1 }).phase).toBe("workTimeout");
+  });
+
+  it("a stop that isn't finishing is still an error, heartbeat or not", () => {
+    const p = notePendingRunState(pending({ acceptedAt: T0 }), "running")!;
+    const now = T0 + WORK_TIMEOUT_MS + 1;
+    expect(derive({ runState: "stopping", pending: p, now, agentSeenAt: now }).phase).toBe("workTimeout");
+  });
+
+  it("after a reload the quiet label counts from pi's last activity, not from page load", () => {
+    const loadedAt = T0 + 20 * 60_000;
+    const now = loadedAt + WORK_TIMEOUT_MS + 1;
+    const a = derive({ runState: "running", now, lastProgressAt: loadedAt, agentSeenAt: now, piActiveAt: T0 });
+    expect(a.phase).toBe("quiet");
+    expect(a.label).toBe("Working, no output for 22 min");
+  });
+
   it("quietLabel rounds down to whole minutes, never below 1", () => {
     expect(quietLabel(0)).toBe("Working, no output for 1 min");
     expect(quietLabel(2 * 60_000 + 59_000)).toBe("Working, no output for 2 min");

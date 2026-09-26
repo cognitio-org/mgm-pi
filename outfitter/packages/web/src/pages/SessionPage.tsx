@@ -152,6 +152,7 @@ export function SessionPage() {
     now,
     lastProgressAt,
     agentSeenAt,
+    piActiveAt,
     pendingAction,
   });
   const ticking =

@@ -245,17 +245,49 @@ test("Link: #185 -- a reconnect after run.spec sends hello alone until the api a
   assert.deepEqual(ws2.sent.map((s) => JSON.parse(s).t), ["hello"]);
 
   ws2.triggerMessage({ t: "run.spec" }); // the api re-sends run.spec on every hello
-  const frames = ws2.sent.slice(1).map((s) => JSON.parse(s));
-  assert.equal(frames.length, 402);
-  assert.deepEqual(
-    frames.slice(0, 401).map((f) => f.seq),
-    Array.from({ length: 401 }, (_, i) => i + 1),
-  );
-  assert.equal(frames[401].t, "status");
+  const seqs = () => ws2.sent.map((s) => JSON.parse(s)).filter((f) => typeof f.seq === "number").map((f) => f.seq);
+  // At most 128 in flight past the last ack, then the held status.
+  assert.deepEqual(seqs(), Array.from({ length: 128 }, (_, i) => i + 1));
+  assert.equal(JSON.parse(ws2.sent.at(-1)!).t, "status");
 
-  // Once answered, frames go straight out again.
+  // Each ack lets more out, in order, until the backlog is through.
+  ws2.triggerMessage({ t: "ack", seq: 100 });
+  assert.equal(seqs().at(-1), 228);
+  ws2.triggerMessage({ t: "ack", seq: 228 }); // the api acks only what it has received
+  assert.equal(seqs().at(-1), 356);
+  ws2.triggerMessage({ t: "ack", seq: 356 });
+  assert.deepEqual(seqs(), Array.from({ length: 401 }, (_, i) => i + 1));
+
+  // Once answered, non-seq frames go straight out again.
   link.send({ t: "heartbeat", idleSeconds: 0, memMb: 1 });
   assert.equal(JSON.parse(ws2.sent.at(-1)!).t, "heartbeat");
+});
+
+test("Link: #185 -- live streaming never has more than 128 seq frames past the last ack in flight", async (t) => {
+  const link = makeLink();
+  t.after(() => link.close());
+  const ws = await connectAndGetInstance(link);
+  ws.triggerOpen();
+  ws.sent.length = 0;
+  for (let i = 0; i < 200; i++) link.sendSeq((seq) => ({ t: "event", seq, event: { type: "message_update" } as any }));
+  assert.equal(ws.sent.length, 128);
+  assert.equal(link.getPendingCount(), 200);
+  ws.triggerMessage({ t: "ack", seq: 128 });
+  assert.equal(ws.sent.length, 200);
+  assert.equal(link.getPendingCount(), 72);
+});
+
+test("Link: #185 -- the final bye sends the whole unacked backlog first, window or not", async (t) => {
+  const link = makeLink();
+  t.after(() => link.close());
+  const ws = await connectAndGetInstance(link);
+  ws.triggerOpen();
+  ws.sent.length = 0;
+  for (let i = 0; i < 200; i++) link.sendSeq((seq) => ({ t: "event", seq, event: { type: "message_update" } as any }));
+  await link.sendAndFlush({ t: "bye", reason: "idle" } as any);
+  const frames = ws.sent.map((s) => JSON.parse(s));
+  assert.equal(frames.length, 201);
+  assert.equal(frames.at(-1).t, "bye");
 });
 
 async function reconnectedAwaitingApi(link: Link): Promise<FakeWebSocket> {
@@ -282,7 +314,7 @@ test("Link: #185 -- held frames are capped by dropping superseded kinds only", a
   assert.equal(frames.at(-1).idleSeconds, 99);
 });
 
-test("Link: #185 -- bye sent while a reconnect waits goes out after the replay, and resolves then", async (t) => {
+test("Link: #185 -- a bye during a reconnect wait doesn't wait for the api: replay, held frames, then bye, resolved on its write", async (t) => {
   const link = makeLink();
   t.after(() => link.close());
   const ws1 = await connectAndGetInstance(link);
@@ -293,25 +325,10 @@ test("Link: #185 -- bye sent while a reconnect waits goes out after the replay, 
   await waitFor(() => FakeWebSocket.instances.length === 2);
   const ws2 = FakeWebSocket.instances[1];
   ws2.triggerOpen();
+  link.send({ t: "status", state: "stopping" } as any);
 
-  let done = false;
-  const flushed = link.sendAndFlush({ t: "bye", reason: "stop" } as any).then(() => (done = true));
-  await new Promise((r) => setTimeout(r, 10));
-  assert.equal(done, false);
-  assert.deepEqual(ws2.sent.map((s) => JSON.parse(s).t), ["hello"]);
-
-  ws2.triggerMessage({ t: "run.spec" });
-  await flushed;
-  assert.deepEqual(ws2.sent.map((s) => JSON.parse(s).t), ["hello", "entry", "bye"]);
-});
-
-test("Link: #185 -- a held bye resolves if the socket closes before the api answers", async (t) => {
-  const link = makeLink();
-  t.after(() => link.close());
-  const ws2 = await reconnectedAwaitingApi(link);
-  const flushed = link.sendAndFlush({ t: "bye", reason: "stop" } as any);
-  ws2.triggerClose(1006);
-  await flushed; // does not hang
+  await link.sendAndFlush({ t: "bye", reason: "stop" } as any); // FakeWebSocket calls back after 5 ms
+  assert.deepEqual(ws2.sent.map((s) => JSON.parse(s).t), ["hello", "entry", "status", "bye"]);
 });
 
 test("Link: setSessionId changes the sessionId used in later hello frames", async (t) => {

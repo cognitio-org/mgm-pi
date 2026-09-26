@@ -30,6 +30,12 @@ export const TERMINAL_CLOSE_CODES = new Set([4400, 4401, 4404, 4409, 4412]);
 
 /** Non-seq frames kept while a reconnect waits for the api before superseded ones are dropped. */
 const HELD_CAP = 64;
+/** Most seq frames (entry/event) in flight past the last ack. The api holds up to 256 raw frames
+ * while it accepts a connection -- refusing past that before `hello` checks out, and (before
+ * FrameBuffer.accept) dropping past it silently after. The api acks every seq frame, so a window
+ * well under 256 keeps a replay plus live streaming inside that buffer against any api version,
+ * including an older link still serving while a release rolls out agentd first (#185). */
+const SEQ_WINDOW = 128;
 /** Frames the next one of the same kind replaces, so an old one is safe to drop. */
 const SUPERSEDED_FRAMES: ReadonlySet<string> = new Set(["heartbeat", "spend", "status"]);
 
@@ -111,8 +117,8 @@ export class Link {
   private awaitingApi = false;
   /** Non-seq frames sent while `awaitingApi` (see `hold`). */
   private held: UpMessage[] = [];
-  /** sendAndFlush calls waiting on `held` to go out. */
-  private onFlushed: Array<() => void> = [];
+  /** Highest seq written to the current socket (reset to lastAckedSeq on each open). */
+  private sentSeq = 0;
   private readonly WebSocketImpl: typeof WebSocket;
   private readonly backoffBaseMs: number;
   private readonly backoffMaxMs: number;
@@ -191,7 +197,7 @@ export class Link {
     const seq = this.nextSeq++;
     const msg = build(seq);
     this.pending.push(msg);
-    this.transmit(msg);
+    this.pump();
     return seq;
   }
 
@@ -208,14 +214,13 @@ export class Link {
    * right after a plain `send()` can drop the frame entirely. Use this for the final `bye` before
    * exiting (protocol.md calls `bye` "last frame" -- it has to actually arrive). */
   sendAndFlush(msg: UpMessage): Promise<void> {
-    if (this.awaitingApi && this.ws && this.ws.readyState === this.WebSocketImpl.OPEN) {
-      // A final frame (bye) sent while a reconnect waits for the api goes out behind the replay of
-      // unacked entries, not ahead of it -- agentd exits right after, and those would be lost.
-      this.hold(msg);
-      return new Promise((resolve) => this.onFlushed.push(resolve));
-    }
     return new Promise((resolve) => {
       if (this.ws && this.ws.readyState === this.WebSocketImpl.OPEN) {
+        // A final frame (bye) can't wait for a reconnect's answer or for acks: agentd exits within
+        // a second (run.ts's bye). Send everything still waiting first, the whole unacked backlog
+        // included as before the window existed, then the bye, and resolve on its write.
+        if (this.awaitingApi) this.flushAfterApiAnswered();
+        this.pump(Number.POSITIVE_INFINITY);
         this.ws.send(JSON.stringify(msg), () => resolve());
       } else {
         resolve();
@@ -227,6 +232,19 @@ export class Link {
   private ack(seq: number): void {
     if (seq > this.lastAckedSeq) this.lastAckedSeq = seq;
     this.pending = this.pending.filter((m) => !isSeqUpMessage(m) || m.seq > seq);
+    this.pump();
+  }
+
+  /** Sends pending seq frames in order, keeping at most SEQ_WINDOW past the last ack in flight;
+   * each ack lets more out. See SEQ_WINDOW for why. */
+  private pump(window = SEQ_WINDOW): void {
+    if (!(this.ws && this.ws.readyState === this.WebSocketImpl.OPEN) || this.awaitingApi) return;
+    for (const msg of this.pending) {
+      if (!isSeqUpMessage(msg) || msg.seq <= this.sentSeq) continue;
+      if (msg.seq > this.lastAckedSeq + window) break;
+      this.ws.send(JSON.stringify(msg));
+      this.sentSeq = msg.seq;
+    }
   }
 
   getLastAckedSeq(): number {
@@ -243,10 +261,13 @@ export class Link {
       // frames like heartbeat, which the next heartbeat tick will re-send anyway).
       return;
     }
+    if (isSeqUpMessage(msg)) {
+      this.pump(); // seq frames live in `pending` and go out through the window
+      return;
+    }
     if (this.awaitingApi) {
-      // A reconnect the api hasn't answered yet (see `awaitingApi`). Seq frames are already in
-      // `pending` and go out on the flush; the rest wait in `held`.
-      if (!isSeqUpMessage(msg)) this.hold(msg);
+      // A reconnect the api hasn't answered yet (see `awaitingApi`): wait in `held`.
+      this.hold(msg);
       return;
     }
     this.ws.send(JSON.stringify(msg));
@@ -267,11 +288,8 @@ export class Link {
     this.awaitingApi = false;
     const held = this.held;
     this.held = [];
-    for (const msg of this.pending) this.transmit(msg);
+    this.pump();
     for (const msg of held) this.transmit(msg);
-    const flushed = this.onFlushed;
-    this.onFlushed = [];
-    for (const resolve of flushed) resolve();
   }
 
   /** Fetches fresh headers (a live identity token) and opens the socket with them. Called on the
@@ -323,10 +341,11 @@ export class Link {
       // mid-turn (session 5873e689, #185). The first connect has nothing to send before run.spec.
       this.awaitingApi = this.specReceived;
       this.held = [];
+      this.sentSeq = this.lastAckedSeq; // nothing past the last ack has reached this socket
       this.ws!.send(JSON.stringify(hello));
       // Resend everything still unacked, in original order, so the api can replay/dedupe past
       // lastAckedSeq -- now, or once the api answers a reconnect.
-      if (!this.awaitingApi) for (const msg of this.pending) this.transmit(msg);
+      this.pump();
       this.armConnectionAgeTimer();
       this.armStableTimer();
       for (const h of this.openHandlers) h();
@@ -359,10 +378,6 @@ export class Link {
     });
 
     ws.on("close", (code: number, reasonBuf: Buffer) => {
-      // A held final frame can't go out on a closed socket; don't leave its sender waiting.
-      const flushed = this.onFlushed;
-      this.onFlushed = [];
-      for (const resolve of flushed) resolve();
       this.clearConnectionAgeTimer();
       this.clearStableTimer();
       for (const h of this.closeHandlers) h(code, reasonBuf ? reasonBuf.toString() : "", TERMINAL_CLOSE_CODES.has(code));

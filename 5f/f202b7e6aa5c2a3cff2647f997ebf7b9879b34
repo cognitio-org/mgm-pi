@@ -1,0 +1,19 @@
+outfitter/packages/api/test/agentlink.test.ts
+  s_9e985270e78a63::t_3db8e5853d7f20 64-100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "5ff202b7e6aa5c2a3cff2647f997ebf7b9879b34",
+  "prompts": {},
+  "sessions": {
+    "s_9e985270e78a63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "019f7f91-d886-47f5-9a90-f34314b7756e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

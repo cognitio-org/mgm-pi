@@ -35,8 +35,36 @@ hands the plaintext to the provider as the `RUN_TOKEN` container-override env va
 `RUN_ID`). agentd reads `RUN_TOKEN` and sends it back as `hello.runToken`; the API hashes it and
 compares against the stored hash in constant time before registering the socket, sending
 `run.spec`, or handling any other frame -- a missing or mismatched token closes the connection with
-`4401` and no `run.spec` is ever sent. The plaintext token itself is never logged or persisted
-anywhere.
+`4401` and no `run.spec` is ever sent. Outfitter's own code never logs or stores the plaintext
+token: the api keeps only its hash, and agentd's logger redacts it.
+
+**The launch request is audit-logged, token included (#168, accepted).** The platform records the
+request that starts a sandbox, and that request carries the token:
+- Cloud Run: the `google.cloud.run.v2.Jobs.RunJob` Admin Activity audit entry includes the
+  container overrides, `RUN_TOKEN`'s value among them.
+- GKE warm mode: the controller's `pods.patch`, which puts the claim's annotations on the warm pod,
+  and the later `pods.delete` entries include the `outfitter.dev/run-token` annotation. GKE cold
+  mode passes it as claim env, which reaches the pod spec the same way.
+
+Admin Activity logs can't be turned off, and they are kept for 400 days. Decided 2026-09-26 to accept
+this rather than change the protocol, because a leaked token alone can't drive a run:
+- **Readers are already trusted.** Reading these entries needs Logs Viewer (or wider) on the
+  project. As of 2026-09-26 that is the owner (`mgm@mgms.eu`), `outfitter-deployer@` (Logs Viewer;
+  the release workflow's identity) and the default compute service account (project Editor, which
+  #144 wants to narrow). Both service accounts can already deploy code that runs as
+  `outfitter-agent@` (see deploy/README.md: a stolen deployer token is about as powerful as a
+  malicious release), so reading a run token gives neither anything new.
+- **A second credential is needed.** A connection must also present an id token for the
+  `outfitter-agent@` service account. That account holds only `roles/logging.logWriter`, and
+  `assert_agent_sa_no_unexpected_bindings` (`deploy/env.sh`) keeps it that way.
+- **The token is short-lived.** It is only good for its own run, and only while that run is live.
+- **Only one connection wins.** A second socket for a run that already has one is refused ("One
+  live agent connection per run", below).
+
+Revisit this if anyone who can't already deploy gets log access (a human or service account with
+Logs Viewer alone), or if the agent service account gains broader roles. The options weighed then were: a one-time launch token rotated over the
+WebSocket on first hello; no launch token, first connection wins; and a pod-bound Kubernetes token
+(GKE only).
 
 Close codes the API can send, and how agentd (`TERMINAL_CLOSE_CODES`, `packages/agentd/src/link.ts`)
 treats them:

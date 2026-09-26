@@ -1,0 +1,94 @@
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_217e742e7da57c::t_2200e75d2aea92 25,66,518-520
+outfitter/packages/agentd/src/run.ts
+  s_217e742e7da57c::t_4c62d30a869871 23-33,263-264,815-822,824-829
+outfitter/docs/protocol.md
+  s_217e742e7da57c::t_dff9c5fe8958fb 138,150,301-328,333,335
+outfitter/packages/api/test/stop.test.ts
+  s_217e742e7da57c::t_14d0c1f8593ed4 299
+outfitter/packages/agentd/src/protocol.ts
+  s_217e742e7da57c::t_e27781f684e8d6 61-89,212-213
+outfitter/packages/agentd/test/link.test.ts
+  s_217e742e7da57c::t_3300fd1656e791 101-134
+outfitter/packages/agentd/src/link.ts
+  s_217e742e7da57c::t_e27781f684e8d6 18,76-78,260,270
+outfitter/packages/web/src/styles/pages.css
+  s_217e742e7da57c::t_2ebfbde2f34339 75
+  s_217e742e7da57c::t_3a20da3f0be3a9 60-74,76-178
+outfitter/packages/api/src/startup.ts
+  s_217e742e7da57c::t_14e93aef792943 118,121
+  s_217e742e7da57c::t_ca0233539321f0 1-117,119-120,122-218
+outfitter/packages/api/src/store/memory.ts
+  s_217e742e7da57c::t_4541df51115232 15
+  s_217e742e7da57c::t_0fec68738db86c 169-178
+outfitter/packages/api/src/routes/sessions.ts
+  s_217e742e7da57c::t_e569c1f52ac8d6 12
+  s_217e742e7da57c::t_4cf0a6ca962d66 202-204,437-440
+outfitter/packages/agentd/test/startup-phases.test.ts
+  s_217e742e7da57c::t_4c6d206846cf0f 30-46,191-215
+  s_217e742e7da57c::t_f6deea36ab6bb5 216
+outfitter/packages/api/test/startup.test.ts
+  s_217e742e7da57c::t_8adf077f79b28a 1-469
+outfitter/packages/web/src/api/client.ts
+  s_217e742e7da57c::t_1487b89ccf197b 35-60,83-84
+outfitter/packages/agentd/test/main.test.ts
+  s_217e742e7da57c::t_6eaff423d554a3 154-162,247-252
+outfitter/packages/web/src/components/StartupTime.tsx
+  s_217e742e7da57c::t_bb62a4c1a2d891 33-41,54,67-74,120-126
+  s_217e742e7da57c::t_ef2ca76bfec493 2-32,42-53,55-63,66,83-111,113-119,127-168
+  s_217e742e7da57c::t_64952ce3e3723b 1,64-65,75-82
+  s_217e742e7da57c::t_af5e0352ef7434 112
+outfitter/packages/web/test/startup-time.test.tsx
+  s_217e742e7da57c::t_af5e0352ef7434 57
+  s_217e742e7da57c::t_0581a6c4b7c40c 146-147
+  s_217e742e7da57c::t_d4a36f529a71ba 1-56,58-145,148-156
+outfitter/packages/agentd/src/boot-timings.ts
+  s_217e742e7da57c::t_de4396898d1fcb 1-33
+outfitter/packages/api/src/sse.ts
+  s_217e742e7da57c::t_e569c1f52ac8d6 8,112-113,207-221,229,234
+outfitter/packages/api/src/agentlink.ts
+  s_217e742e7da57c::t_14e93aef792943 25,772-795,847-849,1183-1188,1190-1193,1321-1332
+  s_217e742e7da57c::t_f20c7c8e7bfe0a 1189
+  s_217e742e7da57c::t_bf268a73a3d023 1333-1334
+outfitter/packages/agentd/src/main.ts
+  s_217e742e7da57c::t_3271f87707d1c3 33,122-126,143-144,156-158,170-171,173-175,189-192
+outfitter/packages/agentd/src/startup-phases.ts
+  s_217e742e7da57c::t_4c62d30a869871 16-18,39,54-56,60-62
+  s_217e742e7da57c::t_906871a4679028 63-64
+outfitter/packages/api/src/store/types.ts
+  s_217e742e7da57c::t_7d89537f9b7f12 186-188,193-235
+  s_217e742e7da57c::t_d29ec02bef0ddc 513-518
+  s_217e742e7da57c::t_d42b78bff21518 236
+  s_217e742e7da57c::t_f757e9d46a56cc 512
+outfitter/packages/web/src/hooks/useSessionStream.ts
+  s_217e742e7da57c::t_1487b89ccf197b 2,17-27,86,98,109-114,123,156
+outfitter/packages/api/test/mongo-entry-runs.test.ts
+  s_217e742e7da57c::t_d7edc2221a77d1 45-72
+outfitter/packages/agentd/test/fake-pi.ts
+  s_217e742e7da57c::t_36bb5c6af4687e 93-95
+outfitter/packages/api/test/e2e.test.ts
+  s_217e742e7da57c::t_36bb5c6af4687e 193-206,210-214
+  s_217e742e7da57c::t_5f6773031b50c0 207-209
+outfitter/packages/api/src/runs.ts
+  s_217e742e7da57c::t_0798f4e0546a77 92-93,109,118-119
+  s_217e742e7da57c::t_f9c23f5caaf26c 120-126
+outfitter/packages/api/src/store/mongo.ts
+  s_217e742e7da57c::t_4541df51115232 15
+  s_217e742e7da57c::t_a777688d7bcf03 206-217
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "019b3a488652a2ce7f1280c163e8684329bb8d9b",
+  "prompts": {},
+  "sessions": {
+    "s_217e742e7da57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4d8a38f8-9583-45df-9f1a-8e69160a3dfb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

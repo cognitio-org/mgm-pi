@@ -28,9 +28,10 @@ import { isSeqUpMessage, WIRE_PROTOCOL_VERSION, type BootTimings, type DownMessa
  * internal error) and everything else stay transient and keep reconnecting. */
 export const TERMINAL_CLOSE_CODES = new Set([4400, 4401, 4404, 4409, 4412]);
 
-/** Non-seq frames kept while a reconnect waits for the api. They are status/spend/heartbeat-like
- * (the next one supersedes the last), so dropping the oldest past this is harmless. */
+/** Non-seq frames kept while a reconnect waits for the api before superseded ones are dropped. */
 const HELD_CAP = 64;
+/** Frames the next one of the same kind replaces, so an old one is safe to drop. */
+const SUPERSEDED_FRAMES: ReadonlySet<string> = new Set(["heartbeat", "spend", "status"]);
 
 export type TerminalHandler = (code: number, reason: string) => void;
 /** Every socket close, terminal or not, with the code the server (or the proxy) actually sent. The
@@ -108,8 +109,10 @@ export class Link {
   private specReceived = false;
   /** This connection is a reconnect the api hasn't answered yet: only `hello` has gone out. */
   private awaitingApi = false;
-  /** Non-seq frames (status, spend, heartbeat, ...) sent while `awaitingApi`, newest HELD_CAP. */
+  /** Non-seq frames sent while `awaitingApi` (see `hold`). */
   private held: UpMessage[] = [];
+  /** sendAndFlush calls waiting on `held` to go out. */
+  private onFlushed: Array<() => void> = [];
   private readonly WebSocketImpl: typeof WebSocket;
   private readonly backoffBaseMs: number;
   private readonly backoffMaxMs: number;
@@ -205,6 +208,12 @@ export class Link {
    * right after a plain `send()` can drop the frame entirely. Use this for the final `bye` before
    * exiting (protocol.md calls `bye` "last frame" -- it has to actually arrive). */
   sendAndFlush(msg: UpMessage): Promise<void> {
+    if (this.awaitingApi && this.ws && this.ws.readyState === this.WebSocketImpl.OPEN) {
+      // A final frame (bye) sent while a reconnect waits for the api goes out behind the replay of
+      // unacked entries, not ahead of it -- agentd exits right after, and those would be lost.
+      this.hold(msg);
+      return new Promise((resolve) => this.onFlushed.push(resolve));
+    }
     return new Promise((resolve) => {
       if (this.ws && this.ws.readyState === this.WebSocketImpl.OPEN) {
         this.ws.send(JSON.stringify(msg), () => resolve());
@@ -237,13 +246,20 @@ export class Link {
     if (this.awaitingApi) {
       // A reconnect the api hasn't answered yet (see `awaitingApi`). Seq frames are already in
       // `pending` and go out on the flush; the rest wait in `held`.
-      if (!isSeqUpMessage(msg)) {
-        this.held.push(msg);
-        if (this.held.length > HELD_CAP) this.held.shift();
-      }
+      if (!isSeqUpMessage(msg)) this.hold(msg);
       return;
     }
     this.ws.send(JSON.stringify(msg));
+  }
+
+  /** Queues a non-seq frame while `awaitingApi`. Past HELD_CAP the oldest frame the next one of its
+   * kind supersedes (heartbeat, spend, status) is dropped; anything else (bye, checkpoint,
+   * github.request, startup) is always kept. */
+  private hold(msg: UpMessage): void {
+    this.held.push(msg);
+    if (this.held.length <= HELD_CAP) return;
+    const i = this.held.findIndex((m) => SUPERSEDED_FRAMES.has(m.t));
+    if (i >= 0) this.held.splice(i, 1);
   }
 
   /** The api answered a reconnect: send what it would have refused before, in order. */
@@ -253,6 +269,9 @@ export class Link {
     this.held = [];
     for (const msg of this.pending) this.transmit(msg);
     for (const msg of held) this.transmit(msg);
+    const flushed = this.onFlushed;
+    this.onFlushed = [];
+    for (const resolve of flushed) resolve();
   }
 
   /** Fetches fresh headers (a live identity token) and opens the socket with them. Called on the
@@ -340,6 +359,10 @@ export class Link {
     });
 
     ws.on("close", (code: number, reasonBuf: Buffer) => {
+      // A held final frame can't go out on a closed socket; don't leave its sender waiting.
+      const flushed = this.onFlushed;
+      this.onFlushed = [];
+      for (const resolve of flushed) resolve();
       this.clearConnectionAgeTimer();
       this.clearStableTimer();
       for (const h of this.closeHandlers) h(code, reasonBuf ? reasonBuf.toString() : "", TERMINAL_CLOSE_CODES.has(code));

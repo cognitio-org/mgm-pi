@@ -258,9 +258,7 @@ test("Link: #185 -- a reconnect after run.spec sends hello alone until the api a
   assert.equal(JSON.parse(ws2.sent.at(-1)!).t, "heartbeat");
 });
 
-test("Link: #185 -- held non-seq frames are capped, keeping the newest", async (t) => {
-  const link = makeLink();
-  t.after(() => link.close());
+async function reconnectedAwaitingApi(link: Link): Promise<FakeWebSocket> {
   const ws1 = await connectAndGetInstance(link);
   ws1.triggerOpen();
   ws1.triggerMessage({ t: "run.spec" });
@@ -268,11 +266,52 @@ test("Link: #185 -- held non-seq frames are capped, keeping the newest", async (
   await waitFor(() => FakeWebSocket.instances.length === 2);
   const ws2 = FakeWebSocket.instances[1];
   ws2.triggerOpen();
+  return ws2;
+}
+
+test("Link: #185 -- held frames are capped by dropping superseded kinds only", async (t) => {
+  const link = makeLink();
+  t.after(() => link.close());
+  const ws2 = await reconnectedAwaitingApi(link);
+  link.send({ t: "github.request", reqId: "r1", op: "issues.list", args: {} });
   for (let i = 0; i < 100; i++) link.send({ t: "heartbeat", idleSeconds: i, memMb: 1 });
   ws2.triggerMessage({ t: "ack", seq: 0 });
-  const beats = ws2.sent.slice(1).map((s) => JSON.parse(s));
-  assert.equal(beats.length, 64);
-  assert.equal(beats.at(-1).idleSeconds, 99);
+  const frames = ws2.sent.slice(1).map((s) => JSON.parse(s));
+  assert.equal(frames.length, 64);
+  assert.equal(frames[0].t, "github.request"); // never dropped
+  assert.equal(frames.at(-1).idleSeconds, 99);
+});
+
+test("Link: #185 -- bye sent while a reconnect waits goes out after the replay, and resolves then", async (t) => {
+  const link = makeLink();
+  t.after(() => link.close());
+  const ws1 = await connectAndGetInstance(link);
+  ws1.triggerOpen();
+  ws1.triggerMessage({ t: "run.spec" });
+  link.sendSeq((seq) => ({ t: "entry", seq, entry: { type: "message", id: "a" } as any }));
+  ws1.triggerClose(1005);
+  await waitFor(() => FakeWebSocket.instances.length === 2);
+  const ws2 = FakeWebSocket.instances[1];
+  ws2.triggerOpen();
+
+  let done = false;
+  const flushed = link.sendAndFlush({ t: "bye", reason: "stop" } as any).then(() => (done = true));
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(done, false);
+  assert.deepEqual(ws2.sent.map((s) => JSON.parse(s).t), ["hello"]);
+
+  ws2.triggerMessage({ t: "run.spec" });
+  await flushed;
+  assert.deepEqual(ws2.sent.map((s) => JSON.parse(s).t), ["hello", "entry", "bye"]);
+});
+
+test("Link: #185 -- a held bye resolves if the socket closes before the api answers", async (t) => {
+  const link = makeLink();
+  t.after(() => link.close());
+  const ws2 = await reconnectedAwaitingApi(link);
+  const flushed = link.sendAndFlush({ t: "bye", reason: "stop" } as any);
+  ws2.triggerClose(1006);
+  await flushed; // does not hang
 });
 
 test("Link: setSessionId changes the sessionId used in later hello frames", async (t) => {

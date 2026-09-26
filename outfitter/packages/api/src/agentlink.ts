@@ -21,6 +21,7 @@ import { isBrowserActionKind, parseBrowserAction } from "./browser-action.ts";
 import { GithubBroker } from "./github-broker.ts";
 import { branchAllowed, branchPrefixOf } from "./branch-policy.ts";
 import { entryForWire } from "./entry-wire.ts";
+import { sessionJsonl } from "./session-jsonl.ts";
 import {
   isPermanentMintFailure,
   refreshDelayMs,
@@ -1136,6 +1137,13 @@ export class AgentLink {
     }
     const owner = session.ownerEmail ? await this.store.users.findByEmail(session.ownerEmail) : null;
     const author = authorFor(session.ownerEmail, owner);
+    // The conversation so far, from the store (session-jsonl.ts): a woken session's pi picks up the
+    // thread instead of starting empty. agentd prefers `jsonl` over `url` when both are set.
+    // Not on a reconnect of a running/idle/stopping run: only agentd reports those states, after it
+    // has applied its run.spec, and it ignores every later one -- rebuilding the whole transcript
+    // there would only lengthen the reconnect agentd waits out (#185).
+    const stored = isReadyState(run.state) ? [] : await this.store.entries.listForSession(session.id);
+    const jsonl = stored.length > 0 ? sessionJsonl(session, stored.map((e) => e.entry)) : undefined;
     return {
       githubTokenExpiresAt: secrets.githubTokenExpiresAt,
       keepCurrentGithubToken,
@@ -1167,7 +1175,7 @@ export class AgentLink {
         ...(guru.playwrightBeforeCheckpoint === true ? { playwrightBeforeCheckpoint: true } : {}),
         ...(allowExternalHtmlResources ? { allowExternalHtmlResources: true } : {}),
       },
-      snapshot: { url: session.checkpoint?.snapshotUrl },
+      snapshot: { url: session.checkpoint?.snapshotUrl, ...(jsonl ? { jsonl } : {}) },
       secrets: { githubToken: secrets.githubToken, litellmKey: secrets.litellmKey, litellmBaseUrl: this.config.litellmBaseUrl },
       ...(author ? { author } : {}),
       idleStopSeconds: this.config.idleStopSeconds,

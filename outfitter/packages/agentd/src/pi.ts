@@ -333,6 +333,9 @@ export interface JsonlTailerOptions {
    * `type: "session"`) -- that line is consumed but never passed to `onLine`. Omit when the file has
    * no header to skip (e.g. OUTFITTER_SPEND_FILE). */
   skipHeader?: (parsed: unknown) => boolean;
+  /** Byte offset to start reading from. Everything before it (header included) is treated as
+   * already read -- e.g. the transcript a run restored, which the api already has. Default 0. */
+  startOffset?: number;
 }
 
 /** Alias kept for the pre-existing SessionTailer/SpendTailer constructor signature. */
@@ -359,6 +362,8 @@ export class JsonlTailer {
   ) {
     this.intervalMs = opts.intervalMs ?? 250;
     this.skipHeader = opts.skipHeader;
+    this.offset = opts.startOffset ?? 0;
+    this.sawHeader = this.offset > 0;
   }
 
   start(): void {

@@ -340,6 +340,68 @@ describe("agentd <-> api WebSocket", () => {
     await app.fastify.close();
   });
 
+  test("run.spec carries the stored conversation as snapshot.jsonl, so a woken run keeps the thread", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+    // Two earlier runs: the second started pi on an empty file (the bug), so it has its own root.
+    // Their seqs overlap, as agentd's per-run seqs do.
+    await app.store.entries.insertIfNew(session.id, 1, { id: "u1", parentId: null, type: "message" }, { runId: "r1" });
+    await app.store.entries.insertIfNew(session.id, 2, { id: "a1", parentId: "u1", type: "message" }, { runId: "r1" });
+    await app.store.entries.insertIfNew(session.id, 1, { id: "u2", parentId: null, type: "message" }, { runId: "r2" });
+
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    const spec = await agent.nextMessage();
+
+    const lines = String(spec.snapshot.jsonl).trim().split("\n").map((l) => JSON.parse(l));
+    assert.equal(lines[0].type, "session");
+    assert.equal(lines[0].id, session.id);
+    assert.deepEqual(
+      lines.slice(1).map((e) => [e.id, e.parentId]),
+      [
+        ["u1", null],
+        ["a1", "u1"],
+        ["u2", "a1"],
+      ],
+    );
+
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("a reconnect of a running run gets no snapshot.jsonl: agentd already applied its spec", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+    await app.store.entries.insertIfNew(session.id, 1, { id: "u1", parentId: null, type: "message" });
+    await app.store.runs.update(runId, { state: "running" });
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    const spec = await agent.nextMessage();
+    assert.equal(spec.t, "run.spec");
+    assert.equal(spec.snapshot.jsonl, undefined);
+
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("run.spec for a session with no entries sends no snapshot.jsonl (agentd starts an empty one)", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    const spec = await agent.nextMessage();
+    assert.equal(spec.snapshot.jsonl, undefined);
+
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
   test("run.spec omits repo and carries workspace for a repo-less session", async () => {
     const app = await buildTestApp();
     const { session, runId, runToken } = await makeRunningSession(app, { repo: null, branch: undefined });

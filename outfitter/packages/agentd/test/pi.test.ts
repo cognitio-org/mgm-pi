@@ -63,6 +63,25 @@ test("SessionTailer: emits entries appended after the header, skipping the heade
   tailer.stop();
 });
 
+test("SessionTailer: startOffset skips a restored transcript and emits only what is appended after it", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "outfitter-pi-test-"));
+  const file = join(dir, "session.jsonl");
+  const restored =
+    `${JSON.stringify({ type: "session", version: 3, id: "s1", timestamp: "t", cwd: "/workspace" })}\n` +
+    `${JSON.stringify({ type: "message", id: "old", parentId: null, timestamp: "t", message: { role: "user", content: "earlier" } })}\n`;
+  await writeFile(file, restored);
+
+  const seen: any[] = [];
+  const tailer = new SessionTailer(file, (entry) => seen.push(entry), { intervalMs: 20, startOffset: Buffer.byteLength(restored) });
+  await tailer.poll();
+  assert.equal(seen.length, 0);
+
+  await appendFile(file, `${JSON.stringify({ type: "message", id: "new", parentId: "old", timestamp: "t", message: { role: "user", content: "hi" } })}\n`);
+  await tailer.poll();
+  assert.deepEqual(seen.map((e) => e.id), ["new"]);
+  tailer.stop();
+});
+
 test("SessionTailer: does not emit a partial (no trailing newline) line until it is completed", async () => {
   const dir = await mkdtemp(join(tmpdir(), "outfitter-pi-test-"));
   const file = join(dir, "session.jsonl");

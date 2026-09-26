@@ -1,0 +1,19 @@
+outfitter/packages/web/src/api/client.ts
+  s_9e985270e78a63::t_f17cf497c36211 208-213
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "3a94d769c5085aea4183b88d6340d8119d0e877e",
+  "prompts": {},
+  "sessions": {
+    "s_9e985270e78a63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "019f7f91-d886-47f5-9a90-f34314b7756e",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

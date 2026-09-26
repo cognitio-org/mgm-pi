@@ -1,0 +1,28 @@
+outfitter/packages/web/test/send-status.test.ts
+  s_9e985270e78a63::t_67700b437e111a 186-204
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_9e985270e78a63::t_b978cde153068f 155
+outfitter/packages/web/src/lib/send-status.ts
+  s_9e985270e78a63::t_3c286f97a082ec 177
+  s_9e985270e78a63::t_9a9125d299cf11 81-83
+  s_9e985270e78a63::t_2df36424347d89 195-201
+  s_9e985270e78a63::t_83482e2e57945c 16-18
+outfitter/docs/protocol.md
+  s_9e985270e78a63::t_a4afe695b1d12b 371
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "aae3ad1fccb66ebe7792786bc424e5c51fe8444f",
+  "prompts": {},
+  "sessions": {
+    "s_9e985270e78a63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "019f7f91-d886-47f5-9a90-f34314b7756e",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

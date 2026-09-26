@@ -319,7 +319,9 @@ A second `SandboxProvider` (`docs/specs/gke-sandbox-provider.md`, `docs/specs/
 gke-sandbox-provider-plan.md`): GKE Autopilot with the Agent Sandbox add-on, gVisor-isolated, with
 an optional warm pool to cut wake time to seconds during active hours. **Set up since 2026-09-24**
 (`config.env`'s `GKE_CLUSTER` defaults to `outfitter`): every release keeps the SandboxTemplate on the
-release's image, but new runs still launch on Cloud Run until `SANDBOX_PROVIDER=gke` (step 6).
+release's image. **New runs launch on GKE since 2026-09-26** (`SANDBOX_PROVIDER=gke`,
+`GKE_LAUNCH_MODE=warm`: a claim takes a warm pod during warm hours, step 5, and gets a fresh pod
+otherwise). Runs started earlier finish on Cloud Run. Back to Cloud Run is step 6 in reverse.
 `GKE_CLUSTER=` exported empty turns GKE off for one run; with it empty, a deploy ships byte-identical
 env vars to before GKE existed.
 

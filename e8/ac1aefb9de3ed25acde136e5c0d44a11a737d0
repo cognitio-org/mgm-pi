@@ -1,0 +1,32 @@
+outfitter/EPIC.md
+  h_69b863911ebf05 120
+outfitter/docs/protocol.md
+  h_69b863911ebf05 216
+outfitter/packages/api/src/github-app.ts
+  h_69b863911ebf05 15-16,22-23,54,59,62-67,250-256,261-262,279-281,296,298,305,308-309,313-330,332-333,335,340
+outfitter/packages/api/src/github-broker.ts
+  h_69b863911ebf05 264-271,273,276,278
+outfitter/packages/api/src/main.ts
+  h_69b863911ebf05 9,30-32
+outfitter/packages/api/src/secrets.ts
+  h_69b863911ebf05 6-14,16,35-40,71-74,130,142-149,156-157,183-186,189,203,485-541
+outfitter/packages/api/test/github-app.test.ts
+  h_69b863911ebf05 84,88,90,471-584
+outfitter/packages/api/test/github-broker.test.ts
+  h_69b863911ebf05 520-548
+outfitter/packages/api/test/helpers.ts
+  h_69b863911ebf05 8,58-60
+outfitter/packages/api/test/secrets.test.ts
+  h_69b863911ebf05 8-9,336-410,417-490
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "e8ac1aefb9de3ed25acde136e5c0d44a11a737d0",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

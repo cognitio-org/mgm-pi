@@ -244,11 +244,11 @@ export class PreviewService {
 
   /** The public URL for `port` in `runId`'s sandbox. `share` is only ever true from a person's
    * request (the session page); agentlink refuses it from a sandbox. */
-  async open(runId: string, port: number, share: boolean, internalUrlFromAgent?: string): Promise<OpenResult> {
+  async open(runId: string, port: number, share: boolean, internalUrlFromAgent?: string, opts: { ttlSeconds?: number } = {}): Promise<OpenResult> {
     const key = `${runId}:${port}:${share}`;
     const inflight = this.opening.get(key);
     if (inflight) return inflight;
-    const p = this.openOnce(runId, port, share, internalUrlFromAgent).finally(() => this.opening.delete(key));
+    const p = this.openOnce(runId, port, share, internalUrlFromAgent, opts.ttlSeconds).finally(() => this.opening.delete(key));
     this.opening.set(key, p);
     return p;
   }
@@ -269,7 +269,7 @@ export class PreviewService {
     return JSON.stringify({ purpose: CREDENTIAL_PURPOSE, env: this.config.previewEnv, createdAt: this.now().toISOString(), ...fields });
   }
 
-  private async openOnce(runId: string, port: number, share: boolean, internalUrlFromAgent?: string): Promise<OpenResult> {
+  private async openOnce(runId: string, port: number, share: boolean, internalUrlFromAgent?: string, ttlSeconds?: number): Promise<OpenResult> {
     if (!this.enabled) return { error: "not-configured" };
     if (!validPreviewPort(port)) return { error: "port-not-allowed" };
     const run = await this.store.runs.findById(runId);
@@ -285,7 +285,7 @@ export class PreviewService {
     const id = randomBytes(16).toString("hex");
     const url = `https://${id}.${this.config.previewDomain}`;
     const now = this.now();
-    const ttl = Math.min(this.config.previewShareTtlSeconds, this.config.previewShareMaxSeconds);
+    const ttl = Math.min(ttlSeconds && ttlSeconds > 0 ? ttlSeconds : this.config.previewShareTtlSeconds, this.config.previewShareMaxSeconds);
     const expiresAt = share ? new Date(now.getTime() + ttl * 1000).toISOString() : undefined;
     const policy = share ? sharePolicy(internalUrl, expiresAt!, now) : securePolicy(internalUrl, this.allow, this.config.ngrokGoogleOauth);
     let endpointId: string;
@@ -313,6 +313,12 @@ export class PreviewService {
       return { error: "failed" };
     }
     return { url, ...(expiresAt ? { expiresAt } : {}) };
+  }
+
+  /** The session page's "stop": one open preview of this session, by id. False if there's none. */
+  async closeById(sessionId: string, previewId: string, reason = "closed by a person"): Promise<boolean> {
+    const p = (await this.store.previews.listOpenForSession(sessionId)).find((x) => x.id === previewId);
+    return p ? this.closeOne(p, reason) : false;
   }
 
   /** preview.close: every open preview of `port` in the run (secure and share). */

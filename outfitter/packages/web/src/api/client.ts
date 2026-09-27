@@ -241,6 +241,27 @@ export interface SandboxInfo {
   exit?: SandboxExit;
 }
 
+/** One open Drive preview (#217, api routes/previews.ts). */
+export interface PreviewRow {
+  id: string;
+  port: number;
+  /** A public, time-limited link (made on this page), or signed-in session viewers only. */
+  share: boolean;
+  url: string;
+  createdAt: string;
+  expiresAt?: string;
+}
+
+/** GET /api/sessions/:id/previews. */
+export interface PreviewsState {
+  enabled: boolean;
+  /** The floppy's owner or a sysop: may make public links and close previews. */
+  canShare: boolean;
+  shareMaxSeconds: number;
+  shareDefaultSeconds: number;
+  previews: PreviewRow[];
+}
+
 /** GET /api/sessions/:id/sandbox (api routes/sandbox.ts, #197). */
 export interface SandboxDetail {
   run: { id: string; state: string; provider: string; createdAt: string; lastSeenAt?: string; reason?: string };
@@ -503,6 +524,21 @@ export const api = {
 
   diff(id: string): Promise<{ base: string; patch: string }> {
     return request(`/api/sessions/${id}/diff`);
+  },
+
+  previews(sessionId: string): Promise<PreviewsState> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/previews`);
+  },
+
+  sharePreview(sessionId: string, port: number, ttlSeconds: number): Promise<PreviewRow> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/previews/${port}/share`, {
+      method: "POST",
+      body: JSON.stringify({ ttlSeconds }),
+    });
+  },
+
+  closePreview(sessionId: string, previewId: string): Promise<void> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/previews/${encodeURIComponent(previewId)}`, { method: "DELETE" });
   },
 
   /** #197: a run's sandbox. Without `runId`, the active run, else the latest. */

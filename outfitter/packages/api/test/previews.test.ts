@@ -5,7 +5,8 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { loadConfig } from "../src/config.ts";
-import { createNgrokApi, NgrokApiError, type NgrokApi, type NgrokCredential, type NgrokEndpoint } from "../src/ngrok-api.ts";
+import { createNgrokApi, NgrokApiError } from "../src/ngrok-api.ts";
+import { FakeNgrok } from "./fake-ngrok.ts";
 import {
   MAX_OPEN_PREVIEWS_PER_RUN, OPENS_PER_RUN_PER_HOUR, ORPHAN_GRACE_MS, PreviewService, allowExpression, internalUrlFor, parseAllowlist, runLabel,
   securePolicy, sharePolicy, validPreviewPort,
@@ -14,32 +15,6 @@ import { MemoryStore } from "../src/store/memory.ts";
 import type { Run } from "../src/store/types.ts";
 import { buildTestApp } from "./helpers.ts";
 import { openAgentSocket, makeRunningSession, sendHello } from "./agent-socket.ts";
-
-class FakeNgrok implements NgrokApi {
-  credentials = new Map<string, NgrokCredential>();
-  endpoints = new Map<string, NgrokEndpoint & { trafficPolicy: string }>();
-  deletedCredentials: string[] = [];
-  deletedEndpoints: string[] = [];
-  failCreateEndpoint = false;
-  private seq = 0;
-  async createCredential(input: { description: string; metadata: string; acl: string[] }) {
-    const id = `cr_${++this.seq}`;
-    const cred = { id, token: `tok_${id}`, ...input };
-    this.credentials.set(id, { ...cred, token: undefined });
-    return cred;
-  }
-  async deleteCredential(id: string) { this.deletedCredentials.push(id); this.credentials.delete(id); }
-  async listCredentials() { return [...this.credentials.values()]; }
-  async createCloudEndpoint(input: { url: string; trafficPolicy: string; description: string; metadata: string }) {
-    if (this.failCreateEndpoint) throw new NgrokApiError(400, "ERR_NGROK_18002", "bad policy");
-    const id = `ep_${++this.seq}`;
-    const ep = { id, type: "cloud", url: input.url, description: input.description, metadata: input.metadata, trafficPolicy: input.trafficPolicy };
-    this.endpoints.set(id, ep);
-    return ep;
-  }
-  async deleteEndpoint(id: string) { this.deletedEndpoints.push(id); this.endpoints.delete(id); }
-  async listCloudEndpoints() { return [...this.endpoints.values()]; }
-}
 
 function config(extra: Record<string, string> = {}) {
   return loadConfig({ PREVIEW_DOMAIN: "kernal.run", NGROK_API_KEY: "k", PREVIEW_ALLOW: "domain:mgms.eu;user:matija.turk@gmail.com", ...extra } as NodeJS.ProcessEnv);

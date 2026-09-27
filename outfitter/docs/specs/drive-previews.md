@@ -1,10 +1,14 @@
 # Drive previews: open a Drive's dev server from the browser
 
-Status: phases 1 and 2 built; phase 3 (the session page's "Open preview" chip and share button) is
-next. Owner decisions of 2026-09-27 are folded in. Builds on #121 (background jobs, PR #221).
+Status: built (phases 1–3). Owner decisions of 2026-09-27 are folded in. Builds on #121 (background jobs, PR #221).
 
 - **Phase 1:** the `preview` tool (#225, `kernal/.pi/extensions/kernal-background/preview.ts`) and
   agentd's preview listener, local proxy and ngrok runner (#226, `packages/agentd/src/preview*.ts`).
+- **Phase 3:** the session page (`packages/web/src/components/PreviewChips.tsx`,
+  `packages/api/src/routes/previews.ts`): a chip per previewed port that opens it in a new tab, and,
+  for the floppy's owner or a sysop, "Share…" behind a confirm that makes the public link (1 h,
+  24 h or 7 days, capped by `PREVIEW_SHARE_MAX_SECONDS`), shown with its expiry, a copy button and
+  Stop. Share links are only ever made there.
 - **Phase 2:** the api (`packages/api/src/previews.ts`, `ngrok-api.ts`): per-run credentials in
   run.spec, cloud endpoints with the secure and share policies, cleanup on close, bye and the tick's
   sweep. Deploy: `PREVIEW_DOMAIN` (config.env, default kernal.run), `PREVIEW_ALLOW` (IAP_MEMBERS plus

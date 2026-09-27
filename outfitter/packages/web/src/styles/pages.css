@@ -57,6 +57,50 @@
   margin: 0 0.35rem;
 }
 
+/* Drive previews (PreviewChips.tsx, #217): one cluster per previewed port, same footprint as the
+ * GitHub chip. The public-link chip is marked so it can't be mistaken for the private one. */
+.preview-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  white-space: nowrap;
+}
+
+.preview-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+a.preview-chip:hover,
+a.preview-chip:focus-visible {
+  border-color: var(--text-dim);
+}
+
+.preview-chip-public {
+  border-style: dashed;
+  color: var(--text-dim);
+}
+
+.chip-btn {
+  padding: 0 0.35rem;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+
+.chip-btn:hover:not(:disabled) {
+  color: var(--text);
+}
+
 /* "Started in 4.2 s · GKE warm" (StartupTime.tsx): a status-bar fact that opens a breakdown.
  * Same inline-chip footprint as the copy chip beside the tape id, not a primary button. */
 .startup-time {

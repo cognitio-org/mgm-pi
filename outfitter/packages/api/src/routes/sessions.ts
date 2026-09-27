@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { RouteContext } from "./context.ts";
 import type { Session, PiEntry, Run } from "../store/types.ts";
-import { mailHeldNotice, MAIL_HELD_ARCHIVED, MAIL_MAX_TEXT } from "../mail.ts";
+import { mailHeldNotice, MAIL_MAX_TEXT } from "../mail.ts";
 import { GITHUB_TOKEN_DEFAULT_SECRET } from "../secrets.ts";
 import { GITHUB_APP_ID_SECRET, GITHUB_APP_INSTALLATION_SECRET, GITHUB_APP_KEY_SECRET, GITHUB_APP_SLUG_SECRET, githubAppSecretsUsable, githubRepoName } from "../github-app.ts";
 import { sessionGithubTokenSecretName } from "../operator.ts";
@@ -340,7 +340,6 @@ export async function registerPanelRoutes(app: FastifyInstance, ctx: RouteContex
   app.post("/api/sessions/:id/wake", async (req, reply) => {
     const session = await getSessionOr404(ctx, req, reply);
     if (!session) return;
-    if (session.archivedAt) return reply.code(409).send({ error: ARCHIVED_ERROR });
     try {
       return { run: await ctx.runs.wake(session.id) };
     } catch (err) {
@@ -376,7 +375,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     const session: Session = {
       id: randomUUID(),
       name: body.name,
-      // Only archive, restore and format check it -- see Session.ownerEmail's doc comment and
+      // Only archive and restore check it -- see Session.ownerEmail's doc comment and
       // EPIC.md's E2.2 note (finding #5, docs/reports/security-review-pr1.md).
       ownerEmail: req.identity?.email,
       guruId: body.guruId,
@@ -449,21 +448,21 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
   });
 
   // #207: Archive hides a floppy and makes it read-only; Restore undoes it. Both are idempotent and
-  // return the session. Archiving stamps archivedAt before anything else, so no wake can start a
-  // new run behind it, then parks queued mail and stops an active run.
+  // return the session. Archiving stamps archivedAt before looking for an active run: a wake that
+  // races it either sees archivedAt (RunManager.wake re-checks after inserting its run) or has
+  // already inserted the run this finds and stops. Queued mail waits (MailService.wakeForMail).
   app.post("/api/sessions/:id/archive", async (req, reply) => {
     const session = await getManageableSessionOr404(ctx, req, reply);
     if (!session) return;
     if (session.archivedAt) return { session };
     const now = new Date().toISOString();
     const archived = await ctx.store.sessions.setArchivedAt(session.id, now);
-    await ctx.store.mail.holdSession(session.id, now, MAIL_HELD_ARCHIVED);
     const run = await ctx.store.runs.findActiveForSession(session.id);
     if (run) await stopRun(ctx, run);
     return { session: archived };
   });
 
-  // Held mail stays held: the session page shows it with a Retry button, so nothing wakes on its own.
+  // Mail that queued up while archived is delivered by the next /tick sweep, so a restore can start a drive.
   app.post("/api/sessions/:id/restore", async (req, reply) => {
     const session = await getManageableSessionOr404(ctx, req, reply);
     if (!session) return;
@@ -519,7 +518,7 @@ async function postUserMail(
   return ctx.store.runs.findActiveForSession(sessionId);
 }
 
-const ARCHIVED_ERROR = "this floppy is archived; restore it first";
+export const ARCHIVED_ERROR = "this floppy is archived; restore it first";
 
 /** #207: who may archive, restore or format a floppy: its owner, or a sysop. A session with no
  * ownerEmail (teleport-imported, or created before the field) is sysop-only. This is the first

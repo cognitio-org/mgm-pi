@@ -30,9 +30,6 @@ export function mailHeldFailureNotice(detail: string): string {
   return `Messages held: ${reason}. Press Retry once that's fixed.`;
 }
 
-/** #207: Mail.heldDetail for mail held because its session was archived. Restore, then Retry. */
-export const MAIL_HELD_ARCHIVED = "this floppy is archived; restore it first";
-
 /** The notice for a session's held mail: the run failure it's held for, or a deploy mismatch. */
 export function mailHeldNotice(heldDetail: string | undefined): string {
   return heldDetail ? mailHeldFailureNotice(heldDetail) : MAIL_HELD_NOTICE;
@@ -139,6 +136,9 @@ export interface PostMailInput {
 
 type Log = (msg: string, err?: unknown) => void;
 
+/** What wakeForMail did. "archived": nothing, the session is archived (#207). */
+export type WakeForMailResult = "active" | "none" | "woken" | "held" | "archived";
+
 export class MailService {
   private readonly store: Store;
   private readonly runs: RunManager;
@@ -202,16 +202,13 @@ export class MailService {
    * Retry (releaseHeld). A session that already has held mail holds new mail too, so each new
    * message doesn't buy three more doomed Cloud Run executions.
    */
-  async wakeForMail(sessionId: string): Promise<"active" | "none" | "woken" | "held"> {
-    const now = new Date().toISOString();
-    // #207: an archived session never wakes. Its mail is parked, not dropped, so the Cloud Tasks
-    // wake and the /tick sweep stop retrying; Retry after a restore delivers it.
-    if ((await this.store.sessions.findById(sessionId))?.archivedAt) {
-      await this.store.mail.holdSession(sessionId, now, MAIL_HELD_ARCHIVED);
-      return "held";
-    }
+  async wakeForMail(sessionId: string): Promise<WakeForMailResult> {
     if (await this.store.runs.findActiveForSession(sessionId)) return "active";
+    const now = new Date().toISOString();
     if (!(await this.store.mail.hasDeliverable(sessionId, now, MAIL_MAX_ATTEMPTS))) return "none";
+    // #207: an archived session never wakes. Its mail stays queued, uncharged (not held: that
+    // would overwrite the reason of mail already held), and is delivered once it's restored.
+    if ((await this.store.sessions.findById(sessionId))?.archivedAt) return "archived";
     const held = await this.store.mail.holdIfStuck(sessionId, now, MAIL_MAX_ATTEMPTS, MAIL_MAX_UNVALIDATED_WAKES);
     if (held > 0) {
       this.log(`mail: holding ${held} message(s) for session ${sessionId}: its runs never validated the protocol or can't start`);
@@ -238,7 +235,7 @@ export class MailService {
 
   /** The user pressed Retry on a held-mail notice (a deploy mismatch, or a run failure): return the
    * session's held mail to the queue with a fresh wake budget and try one wake. */
-  async retryHeld(sessionId: string): Promise<{ released: boolean; result: "active" | "none" | "woken" | "held" }> {
+  async retryHeld(sessionId: string): Promise<{ released: boolean; result: WakeForMailResult }> {
     const released = (await this.store.mail.releaseHeld(sessionId)).length > 0;
     return { released, result: await this.wakeForMail(sessionId) };
   }

@@ -391,12 +391,13 @@ wake -> ready summary. Runs created before `Run.startup` existed get no stamps a
 - `GET /api/sessions/:id/diff` · `GET /api/sessions/:id/export.jsonl`
 - `POST /api/sessions/:id/archive` · `/restore` (#207, web role) → `{session}`. Only the session's
   owner (`ownerEmail`, compared case-insensitively) or a sysop may call them; a session with no
-  owner is sysop-only; anyone else gets 403. Both are idempotent. Archive sets `archivedAt`, holds
-  the session's queued mail (`heldDetail` "this floppy is archived; restore it first", shown as
-  `mailNotice`), and stops an active run the same way `/stop` does. While archived, `/wake`,
-  `/messages`, `/mail/retry` and teleport `import` answer 409, the Cloud Tasks wake and `/tick`
-  hold mail instead of waking it, and an agent's `outfitter_send` to it bounces. Restore clears
-  `archivedAt` and leaves held mail held; Retry on the session page delivers it.
+  owner is sysop-only; anyone else gets 403. Both are idempotent. Archive sets `archivedAt` and
+  stops an active run the same way `/stop` does. While archived, `/wake`, `/messages`,
+  `/mail/retry`, teleport `import` and new browser shares, requests, captures, actions and inspects
+  answer 409, and an agent's `outfitter_send` to it bounces. Mail already queued stays queued and
+  uncharged (the Cloud Tasks wake answers `archived`, `/tick` skips it); already-held mail keeps
+  its hold. Restore clears `archivedAt`, so the next `/tick` delivers the queued mail, which starts
+  a run.
 - `GET|POST|PUT /api/gurus`, `/api/environments`
 - `GET /api/me` → `{email}` from `x-goog-iap-jwt-assertion` (dev: `OUTFITTER_DEV=1` → `dev@localhost`)
 - `POST /api/hooks/ngrok` → the E2.8 "optional push path": ngrok event subscription delivery for
@@ -411,7 +412,7 @@ wake -> ready summary. Runs created before `Run.startup` existed get no stamps a
   IAP-gated): called by Cloud Tasks and Cloud Scheduler with a Google OIDC token whose audience is
   this service's origin and whose email is env `TASKS_SA_EMAIL`; anything else is a 401 (dev mode:
   the agent dev token). `tasks/wake` wakes the session if it still holds deliverable mail and answers
-  `{result: "woken"|"active"|"none"|"held"}` (200 once any run exists, so retries don't stack executions; a
+  `{result: "woken"|"active"|"none"|"held"|"archived"}` (200 once any run exists, so retries don't stack executions; a
   provider failure is a 500 that Cloud Tasks retries, each retry charged as an attempt). `tick` runs the stale-run and stuck-stopping reconcilers and wakes every
   session with deliverable mail and no active run (held mail is not deliverable: a deploy mismatch,
   or #172's permanent run failure, both released by `POST /api/sessions/:id/mail/retry`; `GET

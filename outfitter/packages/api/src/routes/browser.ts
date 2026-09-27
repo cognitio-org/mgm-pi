@@ -7,7 +7,7 @@ import type { RouteContext } from "./context.ts";
 import type { BrowserCapture, BrowserCaptureFailure, BrowserRequest, PiEntry } from "../store/types.ts";
 import { isBrowserActionKind, parseBrowserAction, parseBrowserActionResult } from "../browser-action.ts";
 import { parseBrowserInspectCreate, parseBrowserInspectResult } from "../browser-inspect.ts";
-import { getSessionOr404 } from "./sessions.ts";
+import { ARCHIVED_ERROR, getSessionOr404 } from "./sessions.ts";
 
 /** Decoded jpeg cap. Larger uploads are 413; the extension recompresses to fit. */
 export const BROWSER_CAPTURE_MAX_BYTES = 350_000;
@@ -145,6 +145,7 @@ export async function registerBrowserRoutes(app: FastifyInstance, ctx: RouteCont
   app.put("/api/sessions/:id/browser/share", async (req, reply) => {
     const session = await getSessionOr404(ctx, req, reply);
     if (!session) return;
+    if (session.archivedAt) return reply.code(409).send({ error: ARCHIVED_ERROR });
     const email = callerEmail(req, reply);
     if (!email) return;
     const body = asRecord(req.body);
@@ -188,6 +189,7 @@ export async function registerBrowserRoutes(app: FastifyInstance, ctx: RouteCont
   app.post("/api/sessions/:id/browser/requests", async (req, reply) => {
     const session = await getSessionOr404(ctx, req, reply);
     if (!session) return;
+    if (session.archivedAt) return reply.code(409).send({ error: ARCHIVED_ERROR });
     const email = callerEmail(req, reply);
     if (!email) return;
     const now = new Date().toISOString();
@@ -290,6 +292,7 @@ export async function registerBrowserRoutes(app: FastifyInstance, ctx: RouteCont
   app.post("/api/sessions/:id/browser/captures", async (req, reply) => {
     const session = await getSessionOr404(ctx, req, reply);
     if (!session) return;
+    if (session.archivedAt) return reply.code(409).send({ error: ARCHIVED_ERROR });
     const email = callerEmail(req, reply);
     if (!email) return;
     const share = await ctx.store.browserShares.findBySession(session.id);
@@ -373,6 +376,7 @@ export async function registerBrowserRoutes(app: FastifyInstance, ctx: RouteCont
   app.post("/api/sessions/:id/browser/actions", async (req, reply) => {
     const session = await getSessionOr404(ctx, req, reply);
     if (!session) return;
+    if (session.archivedAt) return reply.code(409).send({ error: ARCHIVED_ERROR });
     const email = callerEmail(req, reply);
     if (!email) return;
     const action = parseBrowserAction(req.body);
@@ -425,6 +429,7 @@ export async function registerBrowserRoutes(app: FastifyInstance, ctx: RouteCont
   app.post("/api/sessions/:id/browser/inspects", async (req, reply) => {
     const session = await getSessionOr404(ctx, req, reply);
     if (!session) return;
+    if (session.archivedAt) return reply.code(409).send({ error: ARCHIVED_ERROR });
     const email = callerEmail(req, reply);
     if (!email) return;
     if (!parseBrowserInspectCreate(req.body)) return reply.code(400).send({ error: "inspect takes no arguments" });

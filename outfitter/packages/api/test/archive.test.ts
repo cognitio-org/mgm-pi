@@ -7,9 +7,9 @@ import assert from "node:assert/strict";
 import { buildTestApp, type TestApp } from "./helpers.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { generateToken, hashToken, tokenPrefix } from "../src/tokens.ts";
-import { MAIL_ENTRY_TYPE, MAIL_HELD_ARCHIVED, mailIdFor } from "../src/mail.ts";
+import { MAIL_ENTRY_TYPE, mailIdFor } from "../src/mail.ts";
 import { SessionArchivedError } from "../src/runs.ts";
-import type { Run, Session, Store } from "../src/store/types.ts";
+import type { Mail, Run, Session, Store } from "../src/store/types.ts";
 
 const TASKS_AUTH = { authorization: "Bearer test-agent-token" };
 
@@ -25,6 +25,10 @@ async function insertRun(store: Store, sessionId: string, overrides: Partial<Run
   const run: Run = { id: crypto.randomUUID(), sessionId, state: "running", lastAckedSeq: 0, pending: [], createdAt: now, updatedAt: now, ...overrides };
   await store.runs.insert(run);
   return run;
+}
+
+function queuedMail(id: string, sessionId: string): Mail {
+  return { id, sessionId, from: { kind: "user" }, text: "hi", behavior: "followUp", status: "queued", attempts: 0, createdAt: new Date().toISOString() };
 }
 
 async function archive(app: TestApp, id: string, headers: Record<string, string> = {}) {
@@ -130,7 +134,7 @@ describe("POST /api/sessions/:id/archive and /restore", () => {
 });
 
 describe("archived floppies are read-only", () => {
-  test("Play, messages, mail retry and teleport import answer 409", async () => {
+  test("Play, messages, mail retry, teleport import and new browser shares answer 409", async () => {
     const app = await buildTestApp();
     await insertSession(app.store, "s1", { archivedAt: "2026-09-27T00:00:00.000Z" });
 
@@ -148,6 +152,10 @@ describe("archived floppies are read-only", () => {
       payload: header + "\n",
     });
     assert.equal(imported.statusCode, 409);
+    const share = await app.fastify.inject({ method: "PUT", url: "/api/sessions/s1/browser/share", payload: { tabTitle: "t", tabUrl: "https://example.com" } });
+    assert.equal(share.statusCode, 409);
+    const capture = await app.fastify.inject({ method: "POST", url: "/api/sessions/s1/browser/requests", payload: {} });
+    assert.equal(capture.statusCode, 409);
 
     assert.equal(await app.store.runs.findLatestForSession("s1"), null, "nothing started a run");
     assert.equal(await app.store.mail.countHeld("s1"), 0, "the refused message wasn't stored");
@@ -161,52 +169,71 @@ describe("archived floppies are read-only", () => {
     await app.fastify.close();
   });
 
-  test("queued mail is held when the floppy is archived and shows the archived notice", async () => {
+  test("archiving leaves already-held mail and its reason alone", async () => {
     const app = await buildTestApp();
     await insertSession(app.store, "s1");
-    await app.store.mail.insertIfNew({
-      id: "m1",
-      sessionId: "s1",
-      from: { kind: "user" },
-      text: "hi",
-      behavior: "followUp",
-      status: "queued",
-      attempts: 0,
-      createdAt: new Date().toISOString(),
-    });
+    await app.store.mail.insertIfNew(queuedMail("m1", "s1"));
+    await app.store.mail.holdSession("s1", new Date().toISOString(), "the GitHub App can't give it a token");
+    await app.store.mail.insertIfNew(queuedMail("m2", "s1"));
 
     await archive(app, "s1");
     assert.equal(await app.store.mail.countHeld("s1"), 1);
-    assert.equal(await app.store.mail.heldDetail("s1"), MAIL_HELD_ARCHIVED);
-    const detail = (await app.fastify.inject({ method: "GET", url: "/api/sessions/s1" })).json();
-    assert.match(detail.mailNotice, /archived/);
-
-    // Restore leaves it held: Retry on the session page is what delivers it.
-    await app.fastify.inject({ method: "POST", url: "/api/sessions/s1/restore" });
-    assert.equal(await app.store.mail.countHeld("s1"), 1);
+    assert.equal(await app.store.mail.heldDetail("s1"), "the GitHub App can't give it a token");
+    assert.equal((await app.store.mail.findById("m2"))?.status, "queued");
     await app.fastify.close();
   });
 
-  test("a Cloud Tasks wake and the /tick sweep don't start a run for an archived floppy", async () => {
+  test("queued mail waits while archived, uncharged, and is delivered after restore", async () => {
     const app = await buildTestApp();
-    await insertSession(app.store, "s1", { archivedAt: "2026-09-27T00:00:00.000Z" });
-    await app.store.mail.insertIfNew({
-      id: "m1",
-      sessionId: "s1",
-      from: { kind: "user" },
-      text: "hi",
-      behavior: "followUp",
-      status: "queued",
-      attempts: 0,
-      createdAt: new Date().toISOString(),
-    });
+    await insertSession(app.store, "s1");
+    await app.store.mail.insertIfNew(queuedMail("m3", "s1"));
+    await archive(app, "s1");
 
     const task = await app.fastify.inject({ method: "POST", url: "/api/hooks/tasks/wake", headers: TASKS_AUTH, payload: { sessionId: "s1" } });
     assert.equal(task.statusCode, 200);
-    assert.equal(task.json().result, "held");
+    assert.equal(task.json().result, "archived");
     const tick = await app.fastify.inject({ method: "POST", url: "/api/hooks/tick", headers: TASKS_AUTH });
     assert.deepEqual(tick.json().woken, []);
     assert.equal(await app.store.runs.findLatestForSession("s1"), null);
+    const m3 = await app.store.mail.findById("m3");
+    assert.equal(m3?.status, "queued");
+    assert.equal(m3?.attempts, 0, "waiting while archived costs no attempts");
+
+    await app.fastify.inject({ method: "POST", url: "/api/sessions/s1/restore" });
+    const afterRestore = await app.fastify.inject({ method: "POST", url: "/api/hooks/tick", headers: TASKS_AUTH });
+    assert.deepEqual(afterRestore.json().woken, ["s1"]);
+    await app.fastify.close();
+  });
+
+  test("a wake that races an archive doesn't start a sandbox", async () => {
+    const app = await buildTestApp();
+    await insertSession(app.store, "s1");
+    // The archive lands between RunManager.wake's first check and its insert.
+    const insertIfNoActive = app.store.runs.insertIfNoActive.bind(app.store.runs);
+    app.store.runs.insertIfNoActive = async (run) => {
+      await app.store.sessions.setArchivedAt("s1", new Date().toISOString());
+      return insertIfNoActive(run);
+    };
+    await assert.rejects(app.runs.wake("s1"), SessionArchivedError);
+    assert.equal(app.provider.startCalls.length, 0);
+    assert.equal((await app.store.runs.findLatestForSession("s1"))?.state, "stopped");
+    await app.fastify.close();
+  });
+
+  test("a run stopped while its sandbox was starting gets the sandbox cancelled", async () => {
+    const app = await buildTestApp();
+    await insertSession(app.store, "s1");
+    // /archive (or /stop) finds the queued run, which has no handle yet, and marks it stopped.
+    const start = app.provider.start.bind(app.provider);
+    app.provider.start = async (launch) => {
+      const started = await start(launch);
+      await app.runs.stop(launch.runId, "user");
+      return started;
+    };
+    const run = await app.runs.wake("s1");
+    assert.equal(run.state, "stopped");
+    assert.deepEqual(app.provider.stopCalls, ["noop-1"]);
+    assert.equal((await app.store.runs.findById(run.id))?.state, "stopped");
     await app.fastify.close();
   });
 

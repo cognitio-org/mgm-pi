@@ -13,7 +13,7 @@ export interface Session {
   id: string;
   name?: string;
   /** Email of the caller who created this session (req.identity.email at POST /api/sessions time).
-   * Enforced only for archive, restore and format (#207, routes/sessions.ts canManageSession) -- finding #5 in docs/reports/security-review-pr1.md flags that
+   * Enforced only for archive and restore (#207, routes/sessions.ts canManageSession) -- finding #5 in docs/reports/security-review-pr1.md flags that
    * every session route is open to every authenticated domain user today with no ownership check;
    * whether to add one is an open decision, tracked in EPIC.md under E2.2. */
   ownerEmail?: string;

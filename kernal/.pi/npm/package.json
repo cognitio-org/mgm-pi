@@ -3,12 +3,12 @@
   "private": true,
   "dependencies": {
     "@codexstar/pi-listen": "^7.2.2",
-    "open-codebase-index": "^0.31.1",
+    "open-codebase-index": "^0.32.1",
     "pi-lsp": "^0.1.7",
-    "pi-mcp-adapter": "^2.36.0",
+    "pi-mcp-adapter": "^2.37.0",
     "pi-memory": "^0.4.2",
     "pi-powerline-footer": "^0.17.2",
-    "pi-subagents": "^0.70.1",
-    "pi-web-access": "^0.30.0"
+    "pi-subagents": "^0.71.0",
+    "pi-web-access": "^0.31.0"
   }
 }

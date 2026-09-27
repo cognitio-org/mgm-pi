@@ -23,6 +23,7 @@ import { Composer } from "../components/Composer.tsx";
 import { StatusPill } from "../components/StatusPill.tsx";
 import { GithubChip } from "../components/GithubChip.tsx";
 import { StartupTime } from "../components/StartupTime.tsx";
+import { NerdOutPanel } from "../components/NerdOutPanel.tsx";
 import { TransportDot } from "../components/TransportDot.tsx";
 import { UiRequestPanel } from "../components/UiRequestPanel.tsx";
 import { Working } from "../components/Working.tsx";
@@ -92,6 +93,11 @@ export function SessionPage() {
   const chromePlace = useChromeCompanion(sessionId);
   const [splitTargets, setSplitTargets] = useState<{ id: string; name?: string }[]>([]);
   const [splitTarget, setSplitTarget] = useState("");
+  // #198: the "nerd out" panel, closed on every visit so it never crowds the transcript. Held as
+  // the session it was opened on, so moving to another session closes it in the same render --
+  // it never renders, or fetches, with one session's id and the other's run.
+  const [nerdOutFor, setNerdOutFor] = useState<string | null>(null);
+  const nerdOut = nerdOutFor === sessionId;
 
   // The route reuses this component when navigating from one session to another (App.tsx's
   // /sessions/:id has no key), so a pending send must not follow the user into the next session:
@@ -516,6 +522,16 @@ export function SessionPage() {
             </div>
           </div>
           <div className="session-statusbar">
+            <button
+              type="button"
+              className={`nerd-out-toggle${nerdOut ? " is-open" : ""}`}
+              aria-expanded={nerdOut}
+              aria-controls={nerdOut ? "nerd-out-panel" : undefined}
+              title="Drive details, stats and logs"
+              onClick={() => setNerdOutFor(nerdOut ? null : sessionId)}
+            >
+              Nerd out
+            </button>
             {session?.guruId && (
               <span className="session-guru-id">
                 <span className="mono" title={session.guruId}>
@@ -600,6 +616,17 @@ export function SessionPage() {
             </p>
           )}
         </div>
+        {nerdOut && (
+          <div id="nerd-out-panel" className="nerd-out-slot">
+            <NerdOutPanel
+              key={sessionId}
+              sessionId={sessionId}
+              runState={runState}
+              startup={streamStartup !== undefined ? streamStartup : session?.startup}
+              onClose={() => setNerdOutFor(null)}
+            />
+          </div>
+        )}
         <div className="session-scroll" ref={scrollRef} onScroll={onSessionScroll}>
         <div className="transcript">
           {beats.length === 0 && !activity.showOptimistic ? (

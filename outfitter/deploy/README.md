@@ -530,14 +530,30 @@ users store, as any sign-in does).
 
 **CI.** With `E2E_GITHUB_WORKFLOW` set (config.env; the default is
 `.github/workflows/outfitter-live.yml`), `e2e-identity.sh` also creates a Workload Identity pool of
-its own, `github-live`, whose provider admits only that workflow file of this repo run from `main`.
-It lets that pool mint the account's ID tokens (the same narrow role, nothing else) and sets the
+its own, `github-live`, whose provider admits only that workflow file of this repo **at an
+`outfitter-v*` tag**. Only repository admins can create those (`ci-setup.sh`'s ruleset); `main` is
+not trusted, since it has no branch protection and anyone with write access could push a workflow
+that leaks the token. The IAM grant is pinned the same way (a mapped `attribute.live_release`), not
+only the provider condition, and the script refuses if the pool holds any other provider. It lets
+those tokens mint the account's ID tokens (the same narrow role, nothing else) and sets the
 repository variables `GCP_LIVE_WIF_PROVIDER`, `E2E_SERVICE_ACCOUNT` and `E2E_IAP_AUDIENCE` that
 switch the workflow on. It is deliberately not `ci-setup.sh`'s `github` pool: every principal of
-that pool may act as the deployer.
+that pool may act as the deployer. The job runs `npm ci --ignore-scripts`, so no dependency install
+script runs where the token can be minted.
 
-**The suite** (`packages/web/live/app.live.mjs`, `npm run test:live -w @outfitter/web`) runs after
-every successful deploy and on demand (Actions → "Outfitter live tests"). It checks `/api/me`,
+Emptying `E2E_GITHUB_WORKFLOW` only skips the setup. To switch CI minting off:
+
+    gh variable delete GCP_LIVE_WIF_PROVIDER --repo cognitio-org/mgm-pi
+    gcloud iam workload-identity-pools providers delete outfitter-live --workload-identity-pool=github-live \
+      --location=global --project=outfitter-509211
+    gcloud iam service-accounts remove-iam-policy-binding outfitter-e2e@outfitter-509211.iam.gserviceaccount.com \
+      --project=outfitter-509211 --role=roles/iam.serviceAccountOpenIdTokenCreator \
+      --member=principalSet://iam.googleapis.com/projects/97916961297/locations/global/workloadIdentityPools/github-live/attribute.live_release/yes
+
+**The suite** (`packages/web/live/app.live.mjs`, `npm run test:live -w @outfitter/web`) runs at the
+end of every deploy ("Outfitter deploy" calls "Outfitter live tests" once the release is out, from
+the same tag) and on demand (Actions → "Outfitter live tests" → Run workflow, with an
+`outfitter-v*` tag under "Use workflow from"). It checks `/api/me`,
 renders the main pages, and runs one floppy through create → reply → archive → format on the
 "e2e (live tests)" Tape (created on `E2E_MODEL`, default `litellm/gemini-3.5-flash-lite`). That's
 one short Drive run and one small LLM turn per deploy; `E2E_SKIP_LIFECYCLE=1` (or the dispatch

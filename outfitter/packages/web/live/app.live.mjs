@@ -13,6 +13,9 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { chromium } from "playwright-core";
 import { LIVE, iapToken } from "./iap-token.mjs";
 
+// A fixed id, so a same-named Tape someone else made is never picked up; its settings are put back
+// on every run, so E2E_MODEL changes take effect and nobody's edits linger.
+const TAPE_ID = "e2e-live-tests";
 const TAPE_NAME = "e2e (live tests)";
 const MODEL = process.env.E2E_MODEL ?? "litellm/gemini-3.5-flash-lite";
 const REPLY_TIMEOUT_MS = Number(process.env.E2E_REPLY_TIMEOUT_MS ?? 6 * 60_000);
@@ -20,21 +23,33 @@ const FLOPPY_PREFIX = "live-test ";
 // Where a failing test leaves a screenshot and the page's text (CI uploads it as an artifact).
 const ARTIFACTS = process.env.E2E_ARTIFACTS ?? "/tmp/outfitter-live";
 
+// A leftover from an earlier run is only erased once it's this old, so a run never erases the floppy
+// of another run happening at the same time (a local run during CI's, say).
+const STALE_MS = 30 * 60_000;
+
 let browser;
 let context;
+let token;
 const pageErrors = [];
 
 before(async () => {
-  const token = await iapToken();
+  token = await iapToken();
   // System Chrome, as scripts/record-tour.mjs does: GitHub's ubuntu runners ship it, so nothing to download.
   browser = await chromium.launch({ channel: "chrome" });
   context = await browser.newContext({
     baseURL: LIVE.origin,
     viewport: { width: 1280, height: 800 },
-    // Authorization, not Proxy-Authorization: Chrome refuses to send the latter on page loads
-    // (net::ERR_INVALID_ARGUMENT). IAP takes either, and the api only reads Authorization itself
-    // for an `outf_` token, so a Google ID token there goes on to the IAP assertion check.
-    extraHTTPHeaders: { Authorization: `Bearer ${token}` },
+  });
+  // The token goes to the app's own origin and nowhere else: not to a third-party asset, an HTML
+  // preview's external resources or an off-origin redirect. Authorization, not
+  // Proxy-Authorization: Chrome refuses to send the latter on page loads (net::ERR_INVALID_ARGUMENT).
+  // IAP takes either, and the api only reads Authorization itself for an `outf_` token, so a Google
+  // ID token there goes on to the IAP assertion check.
+  const origin = new URL(LIVE.origin).origin;
+  await context.route("**/*", (route) => {
+    const request = route.request();
+    if (new URL(request.url()).origin !== origin) return route.continue();
+    return route.continue({ headers: { ...request.headers(), authorization: `Bearer ${token}` } });
   });
   context.on("weberror", (e) => pageErrors.push(e.error().message));
 });
@@ -44,9 +59,23 @@ after(async () => {
 });
 
 async function api(method, path, data) {
-  const res = await context.request.fetch(path, { method, data, failOnStatusCode: false });
-  const text = await res.text();
-  return { status: res.status(), body: text ? JSON.parse(text) : undefined };
+  const res = await context.request.fetch(path, {
+    method,
+    data,
+    headers: { authorization: `Bearer ${token}` },
+    failOnStatusCode: false,
+  });
+  // IAP answers a refusal with HTML: keep the status, don't throw a SyntaxError.
+  const json = (res.headers()["content-type"] ?? "").includes("application/json");
+  return { status: res.status(), body: json ? await res.json() : undefined };
+}
+
+/** Navigates, waits for `ready`, and checks no error dialog or uncaught page error showed up. */
+async function visit(page, path, ready) {
+  await page.goto(path);
+  await ready.waitFor();
+  assert.equal(await page.locator('[aria-labelledby="notice-title"], .bomb-dialog').count(), 0, `no error dialog on ${path}`);
+  assert.deepEqual(pageErrors, [], `no uncaught page errors on ${path}`);
 }
 
 /** Archive (stops the drive), then format; retries while the drive is still stopping. */
@@ -70,41 +99,37 @@ test("IAP admits the live-test identity, and the app sees it as a plain user", a
 
 test("the main pages render without errors", async () => {
   const page = await context.newPage();
-  for (const [path, heading] of [
-    ["/fleet", "Disk Box"],
-    ["/fleet?archived=only", "Archive"],
-    ["/gurus", "Tapes"],
-  ]) {
-    await page.goto(path);
-    await page.getByRole("heading", { level: 2, name: heading, exact: true }).waitFor();
-  }
-  await page.goto("/manual");
-  await page.locator("#glossary-heading").waitFor();
-  await page.goto("/");
-  await page.locator(".desk-surface").first().waitFor();
-  assert.equal(await page.locator('[aria-labelledby="notice-title"], .bomb-dialog').count(), 0, "no error dialog");
-  assert.deepEqual(pageErrors, [], "no uncaught page errors");
+  const heading = (name) => page.getByRole("heading", { level: 2, name, exact: true });
+  await visit(page, "/fleet", heading("Disk Box"));
+  await visit(page, "/fleet?archived=only", heading("Archive"));
+  await visit(page, "/gurus", heading("Tapes"));
+  await visit(page, "/manual", page.locator("#glossary-heading"));
+  await visit(page, "/", page.locator(".desk-surface").first());
   await page.close();
 });
 
 test("a floppy: create, get a reply, archive, format", { skip: process.env.E2E_SKIP_LIFECYCLE === "1" }, async () => {
   // Leftovers from a run that died half-way: erase any old live-test floppy this account owns.
   const old = await api("GET", "/api/sessions?archived=all");
-  for (const s of old.body ?? []) {
-    if (s.canManage && s.name?.startsWith(FLOPPY_PREFIX)) await eraseFloppy(s.id);
+  assert.equal(old.status, 200, `listing floppies: ${old.status}`);
+  for (const s of old.body) {
+    const startedAt = Date.parse(s.name?.slice(FLOPPY_PREFIX.length) ?? "");
+    if (s.canManage && s.name?.startsWith(FLOPPY_PREFIX) && Date.now() - startedAt > STALE_MS) await eraseFloppy(s.id);
   }
 
-  const tapes = await api("GET", "/api/gurus");
-  let tape = tapes.body.find((g) => g.name === TAPE_NAME);
-  if (!tape) {
-    const created = await api("POST", "/api/gurus", {
-      name: TAPE_NAME,
-      model: MODEL,
-      appendSystemPrompt: "You are a fixture for automated tests. Answer in one short line and do nothing else.",
-    });
+  const settings = {
+    name: TAPE_NAME,
+    model: MODEL,
+    appendSystemPrompt: "You are a fixture for automated tests. Answer in one short line and do nothing else.",
+  };
+  const put = await api("PUT", `/api/gurus/${TAPE_ID}`, settings);
+  if (put.status === 404) {
+    const created = await api("POST", "/api/gurus", { id: TAPE_ID, ...settings });
     assert.equal(created.status, 201, JSON.stringify(created.body));
-    tape = created.body;
+  } else {
+    assert.equal(put.status, 200, JSON.stringify(put.body));
   }
+  const tape = { id: TAPE_ID };
 
   const page = await context.newPage();
   const name = `${FLOPPY_PREFIX}${new Date().toISOString()}`;
@@ -148,6 +173,8 @@ test("a floppy: create, get a reply, archive, format", { skip: process.env.E2E_S
   } catch (err) {
     await mkdir(ARTIFACTS, { recursive: true });
     await page.screenshot({ path: `${ARTIFACTS}/lifecycle.png`, fullPage: true }).catch(() => {});
+    // The page text too, locally: CI uploads only the screenshot (the text can name other people's
+    // floppies, and artifacts are readable by anyone with repository read access).
     await writeFile(`${ARTIFACTS}/lifecycle.txt`, `${page.url()}\n\n${await page.locator("body").innerText().catch(() => "")}`);
     throw err;
   } finally {

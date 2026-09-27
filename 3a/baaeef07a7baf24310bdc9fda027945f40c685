@@ -1,0 +1,25 @@
+outfitter/deploy/iap-probe.sh
+  s_63cfee548f82b0::t_def9f1ca4cc1b0 16-28
+outfitter/deploy/README.md
+  s_63cfee548f82b0::t_ce1674a8ac4e1c 511-532
+outfitter/docs/protocol.md
+  s_63cfee548f82b0::t_ae80144bc09323 486-489
+outfitter/packages/api/src/auth.ts
+  s_63cfee548f82b0::t_fc417fedfd3fd2 19-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "3abaaeef07a7baf24310bdc9fda027945f40c685",
+  "prompts": {},
+  "sessions": {
+    "s_63cfee548f82b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2abd665b-152d-4945-bee0-e1f672204de7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

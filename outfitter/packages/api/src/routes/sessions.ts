@@ -51,6 +51,8 @@ interface SessionSummary {
   parentId?: string;
   cost: number;
   archivedAt?: string;
+  /** #209: whether the caller may archive, restore or format it (canManageSession). */
+  canManage: boolean;
   updatedAt: string;
 }
 
@@ -84,7 +86,7 @@ function runStateReason(run: Run | null): string | undefined {
   return run.statusDetail ?? run.reason;
 }
 
-async function summarize(ctx: RouteContext, session: Session): Promise<SessionSummary> {
+async function summarize(ctx: RouteContext, session: Session, identity: Identity | undefined): Promise<SessionSummary> {
   const run = await reportableRun(ctx, session.id);
   return {
     id: session.id,
@@ -98,6 +100,7 @@ async function summarize(ctx: RouteContext, session: Session): Promise<SessionSu
     parentId: session.parentId,
     cost: session.cost,
     archivedAt: session.archivedAt,
+    canManage: canManageSession(session, identity),
     updatedAt: session.updatedAt,
   };
 }
@@ -161,7 +164,7 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
       return reply.code(400).send({ error: "archived must be exclude, only or all" });
     }
     const sessions = await ctx.store.sessions.list({ status: query.status, guruId: query.guru, archived });
-    const summaries = await Promise.all(sessions.map((s) => summarize(ctx, s)));
+    const summaries = await Promise.all(sessions.map((s) => summarize(ctx, s, req.identity)));
     if (!query.runState) return summaries;
     return summaries.filter((s) => s.runState === query.runState);
   });
@@ -193,6 +196,7 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
     const appSlug = credential === "app" ? await githubAppSlug(ctx) : null;
     return {
       ...session,
+      canManage: canManageSession(session, req.identity),
       runState: run?.state,
       runStateReason: runStateReason(run),
       pendingUiRequest,

@@ -1121,8 +1121,9 @@
   color: var(--text-dim);
 }
 
-/* cloud-fixes 13: mail held after a deploy mismatch */
-.mail-held-note {
+/* cloud-fixes 13: mail held after a deploy mismatch; #209: an archived floppy */
+.mail-held-note,
+.archived-note {
   display: flex;
   flex-wrap: wrap;
   align-items: center;

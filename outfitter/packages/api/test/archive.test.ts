@@ -264,6 +264,13 @@ describe("who may archive and restore", () => {
     assert.equal(other.statusCode, 403);
     assert.equal((await store.sessions.findById("s1"))?.archivedAt, undefined);
 
+    const canManage = async (headers: Record<string, string>) => [
+      (await app.fastify.inject({ method: "GET", url: "/api/sessions/s1", headers })).json().canManage,
+      (await app.fastify.inject({ method: "GET", url: "/api/sessions?archived=all", headers })).json()[0].canManage,
+    ];
+    assert.deepEqual(await canManage(await bearerFor(store, "someone@example.com")), [false, false]);
+    assert.deepEqual(await canManage(await bearerFor(store, "owner@example.com")), [true, true]);
+
     const owner = await archive(app, "s1", await bearerFor(store, "owner@example.com"));
     assert.equal(owner.statusCode, 200, "owner emails compare case-insensitively");
 

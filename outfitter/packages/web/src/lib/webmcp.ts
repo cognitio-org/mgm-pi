@@ -18,6 +18,8 @@
 // - stop — Stop (api.stop)
 // - eject — Eject button's `kernal --teleport <id>` command, no Dongle
 // - read_transcript — session transcript (api.entries)
+// - archive_floppy / restore_floppy — Archive and Restore (#209). Format is deliberately not a
+//   tool: erasing a floppy for good stays a person's click through the confirm dialog.
 
 import { api, type NewSessionInput, type PiEntry, type RunLike, type SessionDetail, type SessionSummary } from "../api/client.ts";
 
@@ -29,6 +31,8 @@ export const WEBMCP_TOOL_NAMES = [
   "stop",
   "eject",
   "read_transcript",
+  "archive_floppy",
+  "restore_floppy",
 ] as const;
 
 export type WebMcpToolName = (typeof WEBMCP_TOOL_NAMES)[number];
@@ -74,12 +78,14 @@ export interface WebMcpHost {
 
 /** The page client calls these tools are allowed to make. No token and no link-origin methods. */
 export interface WebMcpClient {
-  sessions(filter?: { status?: string; guru?: string; runState?: string }): Promise<SessionSummary[]>;
+  sessions(filter?: { status?: string; guru?: string; runState?: string; archived?: "only" | "all" }): Promise<SessionSummary[]>;
   createSession(input: NewSessionInput): Promise<{ session: SessionDetail; run: RunLike | null }>;
   sendMessage(id: string, text: string, behavior?: "steer" | "followUp"): Promise<{ run: RunLike | null }>;
   abort(id: string): Promise<{ run: RunLike }>;
   stop(id: string): Promise<{ run: RunLike }>;
   entries(id: string, after?: string): Promise<PiEntry[]>;
+  archiveSession(id: string): Promise<{ session: SessionDetail }>;
+  restoreSession(id: string): Promise<{ session: SessionDetail }>;
 }
 
 const CREDENTIAL_KEYS = new Set([
@@ -155,7 +161,7 @@ function fleetTools(client: WebMcpClient): WebMcpTool[] {
     {
       name: "list_floppies",
       description:
-        "Use when you need the signed-in user's Floppies, the same list as the Disk Box. Optional run_state and guru narrow it the way that page's filters do. Does not accept a token.",
+        "Use when you need the signed-in user's Floppies, the same list as the Disk Box. Optional run_state and guru narrow it the way that page's filters do. Archived Floppies are left out unless archived is 'only' (just them, the Archive view) or 'all'. Does not accept a token.",
       inputSchema: {
         type: "object",
         properties: {
@@ -164,17 +170,21 @@ function fleetTools(client: WebMcpClient): WebMcpTool[] {
             description: "Optional run state filter (queued, provisioning, running, idle, stopping, stopped, failed).",
           },
           guru: { type: "string", description: "Optional tape id, the Disk Box guru filter." },
+          archived: { type: "string", description: 'Optional: "only" for archived Floppies, "all" for both.' },
         },
         additionalProperties: false,
       },
       annotations: { readOnlyHint: true, untrustedContentHint: true },
       async execute(input) {
         const record = readInput(input);
-        const filter: { runState?: string; guru?: string } = {};
+        const filter: { runState?: string; guru?: string; archived?: "only" | "all" } = {};
         const runState = optionalString(record, "run_state");
         const guru = optionalString(record, "guru");
+        const archived = optionalString(record, "archived");
+        if (archived && archived !== "only" && archived !== "all") throw new Error('archived must be "only" or "all"');
         if (runState) filter.runState = runState;
         if (guru) filter.guru = guru;
+        if (archived === "only" || archived === "all") filter.archived = archived;
         return client.sessions(filter);
       },
     },
@@ -312,6 +322,42 @@ function fleetTools(client: WebMcpClient): WebMcpTool[] {
       async execute(input) {
         const record = readInput(input);
         return client.entries(requiredString(record, "session_id").trim(), optionalString(record, "after"));
+      },
+    },
+    {
+      name: "archive_floppy",
+      description:
+        "Use when putting a Floppy away, the same as Archive: its drive stops, it leaves list_floppies and it can't run until restored. Only its owner or a Sysop may. Requires session_id. Does not accept a token.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          session_id: { type: "string", description: "Floppy id." },
+        },
+        required: ["session_id"],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: false, consequentialHint: true },
+      async execute(input) {
+        const record = readInput(input);
+        return client.archiveSession(requiredString(record, "session_id").trim());
+      },
+    },
+    {
+      name: "restore_floppy",
+      description:
+        "Use when taking a Floppy out of the archive, the same as Restore. Only its owner or a Sysop may. Requires session_id. Does not accept a token.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          session_id: { type: "string", description: "Floppy id." },
+        },
+        required: ["session_id"],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: false, consequentialHint: true },
+      async execute(input) {
+        const record = readInput(input);
+        return client.restoreSession(requiredString(record, "session_id").trim());
       },
     },
   ];

@@ -14,6 +14,8 @@ function fakeClient(): WebMcpClient {
     abort: vi.fn(async () => ({ run: { id: "r" } })),
     stop: vi.fn(async () => ({ run: { id: "r" } })),
     entries: vi.fn(async () => []),
+    archiveSession: vi.fn(async () => ({ session: { id: "s1" } })),
+    restoreSession: vi.fn(async () => ({ session: { id: "s1" } })),
   } as unknown as WebMcpClient;
 }
 
@@ -40,10 +42,10 @@ describe("webmcp registrar", () => {
     registerWebMcpTools(null, {});
   });
 
-  it("registers the seven fleet tool names on document.modelContext", () => {
+  it("registers every fleet tool name on document.modelContext", () => {
     const { tools, signals } = captureTools();
     expect(tools.map((tool) => tool.name)).toEqual([...WEBMCP_TOOL_NAMES]);
-    expect(new Set(WEBMCP_TOOL_NAMES).size).toBe(7);
+    expect(new Set(WEBMCP_TOOL_NAMES).size).toBe(9);
     for (const tool of tools) {
       expect(tool.description).toMatch(/Use when/i);
       expect(tool.inputSchema.type).toBe("object");
@@ -87,7 +89,7 @@ describe("webmcp registrar", () => {
     registerWebMcpTools("b@example.com", host);
     expect(first?.aborted).toBe(true);
     expect(signals.at(-1)?.aborted).toBe(false);
-    expect(signals).toHaveLength(14);
+    expect(signals).toHaveLength(WEBMCP_TOOL_NAMES.length * 2);
   });
 
   it("execute calls the page client and rejects a token", async () => {
@@ -121,6 +123,16 @@ describe("webmcp registrar", () => {
 
     await byName.get("read_transcript")!.execute({ session_id: "s1", after: "e9" });
     expect(client.entries).toHaveBeenCalledWith("s1", "e9");
+
+    await byName.get("list_floppies")!.execute({ archived: "only" });
+    expect(client.sessions).toHaveBeenLastCalledWith({ archived: "only" });
+    await expect(byName.get("list_floppies")!.execute({ archived: "yes" })).rejects.toThrow(/archived/);
+
+    await byName.get("archive_floppy")!.execute({ session_id: " s1 " });
+    expect(client.archiveSession).toHaveBeenCalledWith("s1");
+    await byName.get("restore_floppy")!.execute({ session_id: "s1" });
+    expect(client.restoreSession).toHaveBeenCalledWith("s1");
+    expect(byName.has("format_floppy" as never)).toBe(false);
 
     await expect(byName.get("play")!.execute({ guru_id: "g1", prompt: "hi", token: "secret" })).rejects.toThrow(/token/i);
     expect(client.createSession).toHaveBeenCalledTimes(1);

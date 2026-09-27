@@ -16,6 +16,10 @@ export interface SessionSummary {
   branch?: string;
   parentId?: string;
   cost: number;
+  /** #207: set while the floppy is archived (hidden from the default list, read-only). */
+  archivedAt?: string;
+  /** #209: whether the signed-in user may archive, restore or format it (its owner, or a sysop). */
+  canManage?: boolean;
   updatedAt: string;
 }
 
@@ -72,6 +76,8 @@ export interface SessionDetail {
   status: "open" | "closed";
   leafId?: string;
   cost: number;
+  archivedAt?: string;
+  canManage?: boolean;
   checkpoint?: { branch?: string; head?: string; snapshotUrl?: string; workspaceUrl?: string };
   /** #132: whether the run's prompt allowed external CSS and JS; HTML previews start from it. */
   allowExternalHtmlResources?: boolean;
@@ -422,8 +428,12 @@ export const api = {
     }
   },
 
-  sessions(filter: { status?: string; guru?: string; runState?: string } = {}): Promise<SessionSummary[]> {
+  /** Archived floppies are left out unless `archived` asks for them (#207). */
+  sessions(
+    filter: { status?: string; guru?: string; runState?: string; archived?: "only" | "all" } = {},
+  ): Promise<SessionSummary[]> {
     const params = new URLSearchParams();
+    if (filter.archived) params.set("archived", filter.archived);
     if (filter.status) params.set("status", filter.status);
     if (filter.guru) params.set("guru", filter.guru);
     // Code review M1 (docs/reports/code-review-pr15.md): the fleet filter offers run states
@@ -463,6 +473,20 @@ export const api = {
 
   wake(id: string): Promise<{ run: RunLike }> {
     return request(`/api/sessions/${id}/wake`, { method: "POST" });
+  },
+
+  /** #207: hide the floppy and make it read-only; stops its drive. */
+  archiveSession(id: string): Promise<{ session: SessionDetail }> {
+    return request(`/api/sessions/${id}/archive`, { method: "POST" });
+  },
+
+  restoreSession(id: string): Promise<{ session: SessionDetail }> {
+    return request(`/api/sessions/${id}/restore`, { method: "POST" });
+  },
+
+  /** #208: permanently erase an archived floppy. No undo. */
+  formatSession(id: string): Promise<void> {
+    return request(`/api/sessions/${id}`, { method: "DELETE" });
   },
 
   /** Cloud-fixes 13: release this session's held mail and wake once. */

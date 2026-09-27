@@ -230,6 +230,8 @@ the corresponding nav item, desk icon or button.
 | Sysop | Operator role: can change keys and deployment settings | `Identity.operator` |
 | Manual | Help / about | (no code equivalent — a dialog only) |
 | Trash | Stopped floppies | sessions with `runState` `stopped`/`failed` |
+| Archive | Floppies put away: hidden from the Disk Box and read-only until restored; also the verb | `archivedAt`, `POST /api/sessions/:id/archive` · `/restore` |
+| Format | Erase an archived floppy for good | `DELETE /api/sessions/:id` |
 | Desk | The Outfitter desktop (home page) | `/` route, `DeskPage.tsx` |
 | ▶ Play | Wake a floppy and start its run | `wake` |
 | ■ Stop | Stop a floppy's run | `stop` |

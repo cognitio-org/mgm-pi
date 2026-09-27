@@ -21,6 +21,8 @@ hand if that changes.
 | **■ Stop** | Stop the drive. | stop |
 | **Break** | Interrupt the current turn. | abort |
 | **⏏ Eject** | Take the floppy home and continue it in Kernal on your laptop. | teleport |
+| **Archive** | Put a floppy away: its drive stops, it leaves the Disk Box and it can't run until you restore it. | archive / restore |
+| **Format** | Erase an archived floppy for good: its conversation, messages and captures. There is no undo. | delete session |
 | **Peripherals** | Model and service providers and their health. | Providers |
 | **Dongles** | Your personal access tokens for Kernal on your laptop. | API tokens |
 | **Control Panel** | Keys and deployment settings. | Settings |

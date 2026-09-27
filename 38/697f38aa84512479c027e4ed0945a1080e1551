@@ -1,0 +1,78 @@
+outfitter/packages/api/test/sandbox-telemetry.test.ts
+  s_e0bc7d6e875242::t_fd4e311609294e 1-154
+outfitter/packages/api/test/sandbox-routes.test.ts
+  s_e0bc7d6e875242::t_41fc2bfb5dd44d 1-141
+outfitter/packages/api/src/sandbox-telemetry.ts
+  s_e0bc7d6e875242::t_ab7ea5d5a20660 1-40,44-45,47-124,127,132-209
+  s_e0bc7d6e875242::t_35299af23acd23 41-43,46
+  s_e0bc7d6e875242::t_7cb2a0be6cec55 125-126,128-131
+outfitter/deploy/test/gke-iam.test.sh
+  s_e0bc7d6e875242::t_1a5dc0faac115f 122
+  s_e0bc7d6e875242::t_616e421b012068 117-121,123-126
+outfitter/packages/api/test/gke.test.ts
+  s_e0bc7d6e875242::t_7c6e5b5b1575b7 18
+  s_e0bc7d6e875242::t_75e23866e74f03 505-547
+outfitter/packages/api/src/server.ts
+  s_e0bc7d6e875242::t_4dc0c1f22278b6 40-42
+  s_e0bc7d6e875242::t_80ad014f201df2 166-168
+  s_e0bc7d6e875242::t_26904cd576a3e0 22
+outfitter/deploy/gke-iam.sh
+  s_e0bc7d6e875242::t_5eae8a257406f4 16-18
+  s_e0bc7d6e875242::t_2ff6835dcd92fb 75-103
+outfitter/packages/api/src/routes/context.ts
+  s_e0bc7d6e875242::t_85431ca17ca5d5 12
+  s_e0bc7d6e875242::t_f6909f2c1887ee 36-38
+outfitter/packages/api/src/routes/sandbox.ts
+  s_e0bc7d6e875242::t_ff49883765b053 1-122
+outfitter/deploy/gke-teardown.sh
+  s_e0bc7d6e875242::t_ec92b13cfaf264 140-146
+outfitter/packages/api/src/routes/index.ts
+  s_e0bc7d6e875242::t_2b87e56d2d8b57 14
+  s_e0bc7d6e875242::t_23b78cfc2ff7fe 28
+outfitter/packages/provider-local/src/types.ts
+  s_e0bc7d6e875242::t_a54afddbafdcee 63-77
+  s_e0bc7d6e875242::t_34466533464fa7 87-89
+outfitter/packages/provider-local/src/index.ts
+  s_e0bc7d6e875242::t_35c5d6627e85a5 8
+outfitter/deploy/test/gke-teardown.test.sh
+  s_e0bc7d6e875242::t_93769136418fc3 72
+  s_e0bc7d6e875242::t_f4c46f4be15d6e 99-104
+outfitter/packages/api/test/helpers.ts
+  s_e0bc7d6e875242::t_895cf1621fb756 14
+  s_e0bc7d6e875242::t_3206f09bc83b0c 71
+  s_e0bc7d6e875242::t_b0f7b50e5472b4 40-41
+outfitter/docs/protocol.md
+  s_e0bc7d6e875242::t_ffb9eacd3fdddc 381-384
+outfitter/deploy/README.md
+  s_e0bc7d6e875242::t_af9bec8f315e2b 351-361
+outfitter/packages/api/src/providers/gke.ts
+  s_e0bc7d6e875242::t_f6e0533e7c16c9 23
+  s_e0bc7d6e875242::t_afb603850b2946 577-587,589,594,598,600
+  s_e0bc7d6e875242::t_8efbdfb5a5af76 607
+  s_e0bc7d6e875242::t_e1c40132cdc86f 131-139,141-142,151-174
+  s_9e985270e78a63::t_cd4619316e6128 175-176
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "38697f38aa84512479c027e4ed0945a1080e1551",
+  "prompts": {},
+  "sessions": {
+    "s_9e985270e78a63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "019f7f91-d886-47f5-9a90-f34314b7756e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_e0bc7d6e875242": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c37c9d46-795c-4cd1-835d-84b84570be9d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

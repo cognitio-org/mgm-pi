@@ -299,17 +299,18 @@ function isTerminalState(state: Run["state"]): boolean {
   return state === "stopped" || state === "failed";
 }
 
-/** #187: a heartbeat's sandbox memory, kept as the run's high-water mark. Only positive whole-ish
- * numbers from agentd are trusted; anything else leaves the stored values alone. */
+/** #187: a heartbeat's sandbox memory: the latest reading, and the run's high-water mark. Only
+ * positive whole-ish numbers from agentd are trusted; anything else leaves the stored values alone. */
 export function sandboxMemoryPatch(
   before: Pick<Run, "sandboxMemPeakMb"> | null,
   frame: { [key: string]: unknown },
-): Pick<Run, "sandboxMemPeakMb" | "sandboxMemLimitMb"> {
+): Pick<Run, "sandboxMemPeakMb" | "sandboxMemLimitMb" | "sandboxMemLastMb"> {
   const valid = (value: unknown): value is number =>
     typeof value === "number" && Number.isFinite(value) && value > 0 && value < 1_048_576;
-  const patch: Pick<Run, "sandboxMemPeakMb" | "sandboxMemLimitMb"> = {};
-  if (valid(frame.sandboxMemMb) && frame.sandboxMemMb > (before?.sandboxMemPeakMb ?? 0)) {
-    patch.sandboxMemPeakMb = Math.round(frame.sandboxMemMb);
+  const patch: Pick<Run, "sandboxMemPeakMb" | "sandboxMemLimitMb" | "sandboxMemLastMb"> = {};
+  if (valid(frame.sandboxMemMb)) {
+    patch.sandboxMemLastMb = Math.round(frame.sandboxMemMb);
+    if (frame.sandboxMemMb > (before?.sandboxMemPeakMb ?? 0)) patch.sandboxMemPeakMb = Math.round(frame.sandboxMemMb);
   }
   if (valid(frame.sandboxMemLimitMb)) patch.sandboxMemLimitMb = Math.round(frame.sandboxMemLimitMb);
   return patch;

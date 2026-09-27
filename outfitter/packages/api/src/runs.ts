@@ -28,20 +28,21 @@ export function providerNameFor(run: Run, fallback: SandboxProviderName): Sandbo
   return fallback;
 }
 
-/** #187: a silent run whose sandbox had reached this share of its memory limit most likely died of
- * it. agentd samples every 5 s and reports the peak every 15 s; the run #187 lost climbed ~500 MB a
- * minute, so its last report before the kill sits well past this. */
+/** #187: a silent run whose sandbox was at this share of its memory limit in agentd's last report
+ * most likely died of it. agentd samples every 5 s and reports the peak every 15 s; the run #187
+ * lost climbed ~500 MB a minute, so its last report before the kill sits well past this. */
 const OOM_LIKELY_SHARE = 0.8;
 
-/** The note for a run the reconciler fails because its sandbox went quiet. When agentd's last
- * reports put the sandbox near its memory limit, say that, with the numbers: the OOM kill takes
- * agentd down too, so nothing else will. */
-export function silentRunDetail(run: Pick<Run, "sandboxMemPeakMb" | "sandboxMemLimitMb">): string {
-  const peak = run.sandboxMemPeakMb;
+/** The note for a run the reconciler fails because its sandbox went quiet. When agentd's last report
+ * put the sandbox near its memory limit, say that, with the numbers: the OOM kill takes agentd down
+ * too, so nothing else will. Judged on the last report, not the run's peak: an early spike the run
+ * survived says nothing about why it later went quiet. */
+export function silentRunDetail(run: Pick<Run, "sandboxMemLastMb" | "sandboxMemLimitMb">): string {
+  const last = run.sandboxMemLastMb;
   const limit = run.sandboxMemLimitMb;
-  if (peak && limit && peak >= limit * OOM_LIKELY_SHARE) {
+  if (last && limit && last >= limit * OOM_LIKELY_SHARE) {
     return (
-      `this run's sandbox stopped reporting after its memory reached ${peak} MiB of its ${limit} MiB limit, ` +
+      `this run's sandbox stopped reporting when its memory was at ${last} MiB of its ${limit} MiB limit, ` +
       "so it most likely ran out of memory and was killed. Something the agent ran (a build, a test " +
       "suite, an install) needed more than the sandbox has; asking it to run that with fewer workers " +
       "can help. Press Play to start a new one: the conversation is kept."

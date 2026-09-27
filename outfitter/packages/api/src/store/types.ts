@@ -177,6 +177,10 @@ export interface Run {
   // runtimes that expose no cgroup or /proc/meminfo.
   sandboxMemPeakMb?: number;
   sandboxMemLimitMb?: number;
+  // #187: the latest heartbeat's peak alone (the ~15 s before agentd last reported). The reconciler
+  // judges "ran out of memory" on this, not the run-long peak, so an early spike doesn't get the
+  // blame for a later, unrelated death.
+  sandboxMemLastMb?: number;
   // Not in protocol.md: `spend.keySpend` (agentlink.ts) is the LiteLLM *key's* cumulative spend,
   // not this run's own — the key is shared across every run/session using that guru. keySpendStart
   // is set to keySpend on the first spend frame this run sees; cost is then

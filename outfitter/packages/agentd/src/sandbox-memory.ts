@@ -52,8 +52,29 @@ function fromMeminfo(read: Read): { totalBytes: number; usedBytes: number } | un
   return { totalBytes: total, usedBytes: total - available };
 }
 
+/** Reclaimable file cache the kernel can drop before an OOM kill: cgroup v1's total_inactive_file
+ * or v2's inactive_file in memory.stat. Subtracting it gives the working set the kubelet itself
+ * uses for OOM decisions, so file cache on a normal kernel (Cloud Run, a laptop) doesn't read as
+ * pressure. gVisor's emulated cgroup has no memory.stat; there this is 0 and changes nothing. */
+function inactiveFile(read: Read, statPath: string, key: string): number {
+  try {
+    const match = new RegExp(`^${key} (\\d+)$`, "m").exec(read(statPath));
+    return match ? Number(match[1]) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function cgroupUsed(read: Read): number | undefined {
+  const v1 = bytes(read, "/sys/fs/cgroup/memory/memory.usage_in_bytes");
+  if (v1 !== undefined) return Math.max(0, v1 - inactiveFile(read, "/sys/fs/cgroup/memory/memory.stat", "total_inactive_file"));
+  const v2 = bytes(read, "/sys/fs/cgroup/memory.current");
+  if (v2 !== undefined) return Math.max(0, v2 - inactiveFile(read, "/sys/fs/cgroup/memory.stat", "inactive_file"));
+  return undefined;
+}
+
 export function readSandboxMemory(read: Read = (path) => readFileSync(path, "utf8")): SandboxMemory | undefined {
-  let used = bytes(read, "/sys/fs/cgroup/memory/memory.usage_in_bytes") ?? bytes(read, "/sys/fs/cgroup/memory.current");
+  let used = cgroupUsed(read);
   let limit = bytes(read, "/sys/fs/cgroup/memory/memory.limit_in_bytes") ?? bytes(read, "/sys/fs/cgroup/memory.max");
   if (limit !== undefined && limit >= NO_LIMIT_BYTES) limit = undefined;
   if (used === undefined || limit === undefined) {

@@ -43,6 +43,21 @@ test("readSandboxMemory: /proc/meminfo alone gives used = total - available", ()
   assert.deepEqual(readSandboxMemory(read), { usedMb: 1024, limitMb: 4096 });
 });
 
+test("readSandboxMemory: reclaimable file cache is not counted (working set, as the kubelet sees it)", () => {
+  const v1 = files({
+    "/sys/fs/cgroup/memory/memory.usage_in_bytes": String(1800 * 2 ** 20),
+    "/sys/fs/cgroup/memory/memory.limit_in_bytes": String(2048 * 2 ** 20),
+    "/sys/fs/cgroup/memory/memory.stat": `cache 1300000000\ntotal_inactive_file ${1200 * 2 ** 20}\ntotal_active_file 1000\n`,
+  });
+  assert.deepEqual(readSandboxMemory(v1), { usedMb: 600, limitMb: 2048 });
+  const v2 = files({
+    "/sys/fs/cgroup/memory.current": String(3000 * 2 ** 20),
+    "/sys/fs/cgroup/memory.max": String(4096 * 2 ** 20),
+    "/sys/fs/cgroup/memory.stat": `anon 1000\ninactive_file ${1000 * 2 ** 20}\nactive_file 5\n`,
+  });
+  assert.deepEqual(readSandboxMemory(v2), { usedMb: 2000, limitMb: 4096 });
+});
+
 test("readSandboxMemory: nothing readable is undefined, never a throw", () => {
   assert.equal(readSandboxMemory(files({})), undefined);
   assert.equal(readSandboxMemory(files({ "/proc/meminfo": "garbage" })), undefined);

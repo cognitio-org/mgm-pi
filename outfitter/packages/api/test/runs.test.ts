@@ -157,7 +157,14 @@ describe("RunManager.reconcileOnce", () => {
     provider.nextStatus = "exited";
     const runs = new RunManager(store, provider, loadConfig({} as NodeJS.ProcessEnv));
     const staleAt = new Date(Date.now() - 20 * 60_000).toISOString();
-    const run = makeRun({ createdAt: staleAt, lastSeenAt: staleAt, providerHandle: "exec-1", sandboxMemPeakMb: 1900, sandboxMemLimitMb: 2048 });
+    const run = makeRun({
+      createdAt: staleAt,
+      lastSeenAt: staleAt,
+      providerHandle: "exec-1",
+      sandboxMemPeakMb: 1900,
+      sandboxMemLastMb: 1900,
+      sandboxMemLimitMb: 2048,
+    });
     await store.runs.insert(run);
 
     await runs.reconcileOnce(60_000);
@@ -165,14 +172,33 @@ describe("RunManager.reconcileOnce", () => {
     const stored = await store.runs.findById(run.id);
     assert.equal(stored?.state, "failed");
     assert.equal(stored?.reason, "no heartbeat");
-    assert.match(stored?.statusDetail ?? "", /memory reached 1900 MiB of its 2048 MiB limit/);
+    assert.match(stored?.statusDetail ?? "", /memory was at 1900 MiB of its 2048 MiB limit/);
     assert.match(stored?.statusDetail ?? "", /ran out of memory/);
   });
 
-  test("#187: a silent run with memory well below its limit keeps the generic note", async () => {
-    assert.match(silentRunDetail({ sandboxMemPeakMb: 600, sandboxMemLimitMb: 2048 }), /stopped reporting to the api/);
+  test("#187: a silent run with memory well below its limit in its last report keeps the generic note", async () => {
+    assert.match(silentRunDetail({ sandboxMemLastMb: 600, sandboxMemLimitMb: 2048 }), /stopped reporting to the api/);
     assert.match(silentRunDetail({}), /stopped reporting to the api/);
-    assert.match(silentRunDetail({ sandboxMemPeakMb: 1700, sandboxMemLimitMb: 2048 }), /ran out of memory/, "83% counts");
+    assert.match(silentRunDetail({ sandboxMemLastMb: 1700, sandboxMemLimitMb: 2048 }), /ran out of memory/, "83% counts");
+  });
+
+  test("#187 review: an early spike the run survived doesn't get the blame for a later death", async () => {
+    const store = new MemoryStore();
+    const provider = new NoopProvider();
+    provider.nextStatus = "exited";
+    const runs = new RunManager(store, provider, loadConfig({} as NodeJS.ProcessEnv));
+    const staleAt = new Date(Date.now() - 20 * 60_000).toISOString();
+    const run = makeRun({
+      createdAt: staleAt,
+      lastSeenAt: staleAt,
+      providerHandle: "exec-1",
+      sandboxMemPeakMb: 1950, // a build an hour ago
+      sandboxMemLastMb: 420, // what it was using when it went quiet
+      sandboxMemLimitMb: 2048,
+    });
+    await store.runs.insert(run);
+    await runs.reconcileOnce(60_000);
+    assert.match((await store.runs.findById(run.id))?.statusDetail ?? "", /stopped reporting to the api/);
   });
 
   test("never fails a run younger than the provisioning grace window, even if stale by heartbeat", async () => {

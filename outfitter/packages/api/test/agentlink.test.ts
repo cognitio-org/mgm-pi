@@ -112,6 +112,7 @@ describe("agentd <-> api WebSocket", () => {
     await settle();
     let run = await app.store.runs.findById(runId);
     assert.equal(run?.sandboxMemPeakMb, 1500, "a lower reading doesn't lower the peak");
+    assert.equal(run?.sandboxMemLastMb, 700, "but the latest reading is kept on its own");
     assert.equal(run?.sandboxMemLimitMb, 4096);
 
     // An older agentd's heartbeat, or garbage, leaves the stored values alone.
@@ -120,6 +121,7 @@ describe("agentd <-> api WebSocket", () => {
     await settle();
     run = await app.store.runs.findById(runId);
     assert.equal(run?.sandboxMemPeakMb, 1500);
+    assert.equal(run?.sandboxMemLastMb, 700);
     assert.equal(run?.sandboxMemLimitMb, 4096);
 
     agent.send({ t: "bye", reason: "stop" });

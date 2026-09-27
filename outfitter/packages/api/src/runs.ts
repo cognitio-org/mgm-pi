@@ -102,6 +102,15 @@ const EXIT_CHECK_DELAYS_MS = [5_000, 30_000];
 const SILENT_AFTER_MS = 30_000;
 const EXIT_PROBE_INTERVAL_MS = 20_000;
 
+/** #207: RunManager.wake refuses an archived session. Routes check first and answer 409; this is
+ * the backstop for a wake that races the archive. */
+export class SessionArchivedError extends Error {
+  constructor(sessionId: string) {
+    super(`session ${sessionId} is archived`);
+    this.name = "SessionArchivedError";
+  }
+}
+
 export class RunManager {
   private readonly store: Store;
   private readonly providers: SandboxProviders;
@@ -153,6 +162,7 @@ export class RunManager {
   async wake(sessionId: string, opts: { mailDriven?: boolean } = {}): Promise<Run> {
     const existing = await this.store.runs.findActiveForSession(sessionId);
     if (existing) return existing;
+    if ((await this.store.sessions.findById(sessionId))?.archivedAt) throw new SessionArchivedError(sessionId);
 
     const now = new Date().toISOString();
     const candidate: Run = {
@@ -169,6 +179,13 @@ export class RunManager {
     };
     const { run, inserted } = await this.store.runs.insertIfNoActive(candidate);
     if (!inserted) return run;
+    // #207: the check above and the insert aren't atomic. POST /archive stamps archivedAt and then
+    // looks for an active run, so after inserting, either this sees archivedAt or the archive sees
+    // this run -- which has no sandbox yet, so it must not get one.
+    if ((await this.store.sessions.findById(sessionId))?.archivedAt) {
+      await this.store.runs.update(run.id, { state: "stopped", reason: "archived", updatedAt: new Date().toISOString() });
+      throw new SessionArchivedError(sessionId);
+    }
 
     // Finding #2 (docs/reports/security-review-pr1.md): every sandbox execution shares one agent
     // SA identity, so a valid agent id token alone doesn't prove the caller is *this* run's own
@@ -190,6 +207,13 @@ export class RunManager {
         devToken: this.config.devMode ? this.config.devToken : undefined,
       });
       const providerReturnedAt = new Date().toISOString();
+      // Stopped while the provider was starting it (/stop or /archive on a queued run, which had no
+      // handle to cancel yet): cancel the sandbox now instead of reviving the run as provisioning.
+      const current = await this.store.runs.findById(run.id);
+      if (current && (current.state === "stopped" || current.state === "failed")) {
+        await provider.stop(handle).catch(() => {});
+        return current;
+      }
       const updated = await this.store.runs.update(run.id, {
         state: "provisioning",
         providerHandle: handle,

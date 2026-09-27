@@ -62,6 +62,8 @@ class MemorySessions implements SessionsCollection {
     let out = [...this.rows.values()];
     if (filter?.status) out = out.filter((s) => s.status === filter.status);
     if (filter?.guruId) out = out.filter((s) => s.guruId === filter.guruId);
+    if (filter?.archived === "exclude") out = out.filter((s) => !s.archivedAt);
+    else if (filter?.archived === "only") out = out.filter((s) => Boolean(s.archivedAt));
     return out.map(clone).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
@@ -69,6 +71,15 @@ class MemorySessions implements SessionsCollection {
     const row = this.rows.get(id);
     if (!row) return null;
     const next = { ...row, ...patch };
+    this.rows.set(id, next);
+    return clone(next);
+  }
+
+  async setArchivedAt(id: string, archivedAt: string | null): Promise<Session | null> {
+    const row = this.rows.get(id);
+    if (!row) return null;
+    const { archivedAt: _previous, ...rest } = row;
+    const next: Session = archivedAt ? { ...rest, archivedAt } : rest;
     this.rows.set(id, next);
     return clone(next);
   }

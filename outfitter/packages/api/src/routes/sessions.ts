@@ -11,6 +11,8 @@ import { sessionGithubTokenSecretName } from "../operator.ts";
 import { entryForWire } from "../entry-wire.ts";
 import { summarizeStartup } from "../startup.ts";
 import { sessionJsonl } from "../session-jsonl.ts";
+import { SessionArchivedError } from "../runs.ts";
+import type { Identity } from "../auth.ts";
 
 /** Same checks `GithubAppTokens.mint` uses before it calls GitHub. Existence of a secret version is not enough. */
 async function githubAppConfigured(ctx: RouteContext, repo: string): Promise<boolean> {
@@ -48,6 +50,7 @@ interface SessionSummary {
   branch?: string;
   parentId?: string;
   cost: number;
+  archivedAt?: string;
   updatedAt: string;
 }
 
@@ -94,6 +97,7 @@ async function summarize(ctx: RouteContext, session: Session): Promise<SessionSu
     branch: session.branch,
     parentId: session.parentId,
     cost: session.cost,
+    archivedAt: session.archivedAt,
     updatedAt: session.updatedAt,
   };
 }
@@ -145,13 +149,18 @@ function teleportRepoPatch(req: FastifyRequest): { error: string } | { patch: Pa
  * registerSessionRoutes (the "web"/"all" role) calls this first, then adds the rest, so neither
  * role duplicates the handler logic. */
 export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteContext): Promise<void> {
-  app.get("/api/sessions", async (req) => {
+  app.get("/api/sessions", async (req, reply) => {
     // Code review M1 (docs/reports/code-review-pr15.md): `status` here is Session.status
     // ("open"/"closed"), while `runState` (queued/provisioning/running/idle/stopping/stopped/
     // failed) only exists per-run, computed by summarize() below -- it isn't a store-level filter.
     // Filter on it post-hoc, after summarizing, rather than pretending the store can push it down.
-    const query = req.query as { status?: string; guru?: string; runState?: string };
-    const sessions = await ctx.store.sessions.list({ status: query.status, guruId: query.guru });
+    // #207: archived floppies are hidden unless asked for (`archived=only` or `archived=all`).
+    const query = req.query as { status?: string; guru?: string; runState?: string; archived?: string };
+    const archived = query.archived ?? "exclude";
+    if (archived !== "exclude" && archived !== "only" && archived !== "all") {
+      return reply.code(400).send({ error: "archived must be exclude, only or all" });
+    }
+    const sessions = await ctx.store.sessions.list({ status: query.status, guruId: query.guru, archived });
     const summaries = await Promise.all(sessions.map((s) => summarize(ctx, s)));
     if (!query.runState) return summaries;
     return summaries.filter((s) => s.runState === query.runState);
@@ -217,37 +226,7 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
     if (!session) return;
     const run = await ctx.store.runs.findActiveForSession(session.id);
     if (!run) return reply.code(404).send({ error: "no active run" });
-
-    // Code review M2 (docs/reports/code-review-pr15.md): branch explicitly on all three cases
-    // instead of collapsing "not running/idle" into "cancel directly" -- that used to also catch
-    // an already-`stopping` run and force-kill it via the provider mid-checkpoint/mid-drain, which
-    // is exactly what the `stopping` grace period exists to avoid. A second `/stop` call while
-    // already stopping is a no-op: return the current run and let the existing grace-period /
-    // RunManager.reconcileStoppingOnce path finish it.
-    if (run.state === "stopping") {
-      return { run };
-    }
-
-    if (run.state !== "running" && run.state !== "idle") {
-      // No live agent yet (queued/provisioning) to ask gracefully -- cancel the provider execution
-      // directly, same as before.
-      const stopped = await ctx.runs.stop(run.id, "user");
-      return { run: stopped };
-    }
-
-    // Graceful stop: always enqueue the `stop` down-message through the store rather than branch on
-    // ctx.agentLink.hasSocket, which is process-local -- outfitter-api (this, the web role) never
-    // holds an agentd socket at all (see docs/protocol.md "Two origins"), so hasSocket is always
-    // false here and used to fall through to a provider cancel (SIGTERM) instead of the graceful
-    // stop this route means to send. agentLink.send delivers immediately if this process happens to
-    // hold the live socket (e.g. local dev's role "all"), otherwise the link role's poller picks the
-    // message up from the store on its next tick. Mark the run `stopping` *after* the send call so
-    // an immediate, same-process delivery above still sees the run as running/idle and isn't forced
-    // to queue instead. If agentd never finishes the graceful stop (checkpoint + `bye`) within
-    // STOP_GRACE_MS, RunManager.reconcileStoppingOnce cancels the sandbox via the provider.
-    await ctx.agentLink.send(run.id, { t: "stop", reason: "user" });
-    const stopping = await ctx.store.runs.update(run.id, { state: "stopping", updatedAt: new Date().toISOString() });
-    return { run: stopping };
+    return { run: await stopRun(ctx, run) };
   });
 
   app.get("/api/sessions/:id/export.jsonl", async (req, reply) => {
@@ -276,6 +255,7 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
     if (header.id !== id) return reply.code(400).send({ error: "header id does not match :id" });
 
     const existing = await ctx.store.sessions.findById(id);
+    if (existing?.archivedAt) return reply.code(409).send({ error: ARCHIVED_ERROR });
     if (existing?.repo && carried.patch?.repo && existing.repo !== carried.patch.repo) {
       return reply.code(409).send({ error: "this session is already bound to a repository" });
     }
@@ -329,6 +309,7 @@ export async function registerPanelRoutes(app: FastifyInstance, ctx: RouteContex
     const body = req.body as { text: string; behavior?: "steer" | "followUp" };
     if (!body?.text) return reply.code(400).send({ error: "text is required" });
     if (body.text.length > MAIL_MAX_TEXT) return reply.code(413).send({ error: `text is over ${MAIL_MAX_TEXT} characters` });
+    if (session.archivedAt) return reply.code(409).send({ error: ARCHIVED_ERROR });
 
     const run = await postUserMail(ctx, session.id, req.identity?.email, body.text, body.behavior);
     // 202: stored, but no run could be started yet; it will be delivered when one is.
@@ -359,8 +340,12 @@ export async function registerPanelRoutes(app: FastifyInstance, ctx: RouteContex
   app.post("/api/sessions/:id/wake", async (req, reply) => {
     const session = await getSessionOr404(ctx, req, reply);
     if (!session) return;
-    const run = await ctx.runs.wake(session.id);
-    return { run };
+    try {
+      return { run: await ctx.runs.wake(session.id) };
+    } catch (err) {
+      if (err instanceof SessionArchivedError) return reply.code(409).send({ error: ARCHIVED_ERROR });
+      throw err;
+    }
   });
 }
 
@@ -390,8 +375,8 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     const session: Session = {
       id: randomUUID(),
       name: body.name,
-      // Recorded but not yet enforced -- see Session.ownerEmail's doc comment and EPIC.md's E2.2
-      // note (finding #5, docs/reports/security-review-pr1.md).
+      // Only archive and restore check it -- see Session.ownerEmail's doc comment and
+      // EPIC.md's E2.2 note (finding #5, docs/reports/security-review-pr1.md).
       ownerEmail: req.identity?.email,
       guruId: body.guruId,
       // repo omitted = non-coding session (protocol.md): no clone, no branch.
@@ -440,6 +425,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
   app.post("/api/sessions/:id/mail/retry", async (req, reply) => {
     const session = await getSessionOr404(ctx, req, reply);
     if (!session) return;
+    if (session.archivedAt) return reply.code(409).send({ error: ARCHIVED_ERROR });
     const { released, result } = await ctx.mail.retryHeld(session.id);
     if (result === "active") await ctx.agentLink.deliverMailForSession(session.id);
     const heldMail = await ctx.store.mail.countHeld(session.id);
@@ -461,6 +447,59 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     }
   });
 
+  // #207: Archive hides a floppy and makes it read-only; Restore undoes it. Both are idempotent and
+  // return the session. Archiving stamps archivedAt before looking for an active run: a wake that
+  // races it either sees archivedAt (RunManager.wake re-checks after inserting its run) or has
+  // already inserted the run this finds and stops. Queued mail waits (MailService.wakeForMail).
+  app.post("/api/sessions/:id/archive", async (req, reply) => {
+    const session = await getManageableSessionOr404(ctx, req, reply);
+    if (!session) return;
+    if (session.archivedAt) return { session };
+    const now = new Date().toISOString();
+    const archived = await ctx.store.sessions.setArchivedAt(session.id, now);
+    const run = await ctx.store.runs.findActiveForSession(session.id);
+    if (run) await stopRun(ctx, run);
+    return { session: archived };
+  });
+
+  // Mail that queued up while archived is delivered by the next /tick sweep, so a restore can start a drive.
+  app.post("/api/sessions/:id/restore", async (req, reply) => {
+    const session = await getManageableSessionOr404(ctx, req, reply);
+    if (!session) return;
+    if (!session.archivedAt) return { session };
+    return { session: await ctx.store.sessions.setArchivedAt(session.id, null) };
+  });
+}
+
+/** Stops a session's active run: a graceful `stop` for a live agent, a provider cancel for one that
+ * hasn't connected yet, nothing for one already stopping. POST /stop and POST /archive both use it. */
+async function stopRun(ctx: RouteContext, run: Run): Promise<Run | null> {
+  // Code review M2 (docs/reports/code-review-pr15.md): branch explicitly on all three cases
+  // instead of collapsing "not running/idle" into "cancel directly" -- that used to also catch
+  // an already-`stopping` run and force-kill it via the provider mid-checkpoint/mid-drain, which
+  // is exactly what the `stopping` grace period exists to avoid. A second `/stop` call while
+  // already stopping is a no-op: return the current run and let the existing grace-period /
+  // RunManager.reconcileStoppingOnce path finish it.
+  if (run.state === "stopping") return run;
+
+  if (run.state !== "running" && run.state !== "idle") {
+    // No live agent yet (queued/provisioning) to ask gracefully -- cancel the provider execution
+    // directly, same as before.
+    return ctx.runs.stop(run.id, "user");
+  }
+
+  // Graceful stop: always enqueue the `stop` down-message through the store rather than branch on
+  // ctx.agentLink.hasSocket, which is process-local -- outfitter-api (this, the web role) never
+  // holds an agentd socket at all (see docs/protocol.md "Two origins"), so hasSocket is always
+  // false here and used to fall through to a provider cancel (SIGTERM) instead of the graceful
+  // stop this route means to send. agentLink.send delivers immediately if this process happens to
+  // hold the live socket (e.g. local dev's role "all"), otherwise the link role's poller picks the
+  // message up from the store on its next tick. Mark the run `stopping` *after* the send call so
+  // an immediate, same-process delivery above still sees the run as running/idle and isn't forced
+  // to queue instead. If agentd never finishes the graceful stop (checkpoint + `bye`) within
+  // STOP_GRACE_MS, RunManager.reconcileStoppingOnce cancels the sandbox via the provider.
+  await ctx.agentLink.send(run.id, { t: "stop", reason: "user" });
+  return ctx.store.runs.update(run.id, { state: "stopping", updatedAt: new Date().toISOString() });
 }
 
 /** Stores a browser message as mail (so a failed wake or a run that dies before it is ready can't
@@ -477,6 +516,32 @@ async function postUserMail(
   await ctx.mail.post({ sessionId, from: { kind: "user", email }, text, behavior });
   await ctx.agentLink.deliverMailForSession(sessionId);
   return ctx.store.runs.findActiveForSession(sessionId);
+}
+
+export const ARCHIVED_ERROR = "this floppy is archived; restore it first";
+
+/** #207: who may archive, restore or format a floppy: its owner, or a sysop. A session with no
+ * ownerEmail (teleport-imported, or created before the field) is sysop-only. This is the first
+ * per-session ownership check; everything else is still open to every signed-in user (EPIC.md E2.2). */
+export function canManageSession(session: Session, identity: Identity | undefined): boolean {
+  if (!identity) return false;
+  if (identity.operator) return true;
+  return session.ownerEmail?.toLowerCase() === identity.email.toLowerCase();
+}
+
+/** getSessionOr404, then 403 unless the caller may manage it (canManageSession). */
+async function getManageableSessionOr404(
+  ctx: RouteContext,
+  req: FastifyRequest,
+  reply: { code: (n: number) => { send: (body: unknown) => unknown } },
+): Promise<Session | undefined> {
+  const session = await getSessionOr404(ctx, req, reply);
+  if (!session) return undefined;
+  if (!canManageSession(session, req.identity)) {
+    reply.code(403).send({ error: "only the floppy's owner or a sysop can do that" });
+    return undefined;
+  }
+  return session;
 }
 
 export async function getSessionOr404(

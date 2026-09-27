@@ -375,7 +375,7 @@ wake -> ready summary. Runs created before `Run.startup` existed get no stamps a
 ## browser ⇄ api (REST)
 
 - `POST /api/sessions` `{guruId, repo?, baseBranch?, branch?, prompt, name?, model?}` → `{session, run}` (`repo` omitted = non-coding session with a scratch workspace; `model` overrides the guru's own model for this session — see the laptop-preflight note above)
-- `GET /api/sessions?status=&guru=` → list with `{id, name, status, runState, guru, repo, branch, parentId?, cost, updatedAt}`
+- `GET /api/sessions?status=&guru=&runState=&archived=` → list with `{id, name, status, runState, guru, repo, branch, parentId?, cost, archivedAt?, updatedAt}`. Archived floppies are left out unless `archived=only` (just them) or `archived=all`; anything else is a 400
 - `GET /api/sessions/:id` → metadata + `leafId` + `runState` + `startup` (the reportable run's start-up summary, see "Start-up timing"; `null` before it is ready or for a run that predates it) + `pendingUiRequest` (the active run's `Run.pendingUiRequest`, or `null` when there is none — a stopped or failed run does not keep a stale approval) + `allowExternalHtmlResources` (#132: the HTML preview's starting access, from the same run as `runState`, which keeps it after stopping; the guru's current value when that run has not recorded one yet) + `htmlPreviewAccessByRun` (#147: `{<runId>: boolean}` for every run of the session that recorded a value)
 - `GET /api/sessions/:id/entries?after=<entryId>` → pi entries in tree order. An entry an agentd run sent also carries `outfitterRunId` (#147), which is not a pi field; the web picks each HTML preview's starting access from `htmlPreviewAccessByRun` with it, and falls back to `allowExternalHtmlResources`. SSE `entry` events carry the same field. The stored entry and `export.jsonl` stay pi's own.
 - `GET /api/sessions/:id/sandbox?runId=` (#197, web role) → one of the session's runs' sandbox: `run {id, state, provider, createdAt, lastSeenAt?, reason?}`, `memory {lastMb?, peakMb?, limitMb?}` (agentd's heartbeats), `exit?` (`Run.sandboxExit`), `live?` (the provider's `describe`: pod, node, image, phase, start, resource limits; only while the run is active), and `runs` (the session's runs, newest first, for a picker). No `runId` means the active run, else the latest. A `runId` that isn't a UUID or isn't this session's is a 404.
@@ -389,6 +389,15 @@ wake -> ready summary. Runs created before `Run.startup` existed get no stamps a
   the provider directly for a `queued`/`provisioning` run, which has no live agent to ask) · `/wake`
   · `/ui-response {id,value}`
 - `GET /api/sessions/:id/diff` · `GET /api/sessions/:id/export.jsonl`
+- `POST /api/sessions/:id/archive` · `/restore` (#207, web role) → `{session}`. Only the session's
+  owner (`ownerEmail`, compared case-insensitively) or a sysop may call them; a session with no
+  owner is sysop-only; anyone else gets 403. Both are idempotent. Archive sets `archivedAt` and
+  stops an active run the same way `/stop` does. While archived, `/wake`, `/messages`,
+  `/mail/retry`, teleport `import` and new browser shares, requests, captures, actions and inspects
+  answer 409, and an agent's `outfitter_send` to it bounces. Mail already queued stays queued and
+  uncharged (the Cloud Tasks wake answers `archived`, `/tick` skips it); already-held mail keeps
+  its hold. Restore clears `archivedAt`, so the next `/tick` delivers the queued mail, which starts
+  a run.
 - `GET|POST|PUT /api/gurus`, `/api/environments`
 - `GET /api/me` → `{email}` from `x-goog-iap-jwt-assertion` (dev: `OUTFITTER_DEV=1` → `dev@localhost`)
 - `POST /api/hooks/ngrok` → the E2.8 "optional push path": ngrok event subscription delivery for
@@ -403,7 +412,7 @@ wake -> ready summary. Runs created before `Run.startup` existed get no stamps a
   IAP-gated): called by Cloud Tasks and Cloud Scheduler with a Google OIDC token whose audience is
   this service's origin and whose email is env `TASKS_SA_EMAIL`; anything else is a 401 (dev mode:
   the agent dev token). `tasks/wake` wakes the session if it still holds deliverable mail and answers
-  `{result: "woken"|"active"|"none"|"held"}` (200 once any run exists, so retries don't stack executions; a
+  `{result: "woken"|"active"|"none"|"held"|"archived"}` (200 once any run exists, so retries don't stack executions; a
   provider failure is a 500 that Cloud Tasks retries, each retry charged as an attempt). `tick` runs the stale-run and stuck-stopping reconcilers and wakes every
   session with deliverable mail and no active run (held mail is not deliverable: a deploy mismatch,
   or #172's permanent run failure, both released by `POST /api/sessions/:id/mail/retry`; `GET
@@ -422,7 +431,7 @@ wake -> ready summary. Runs created before `Run.startup` existed get no stamps a
   fails. Returns `{replicas}` (the clamped value actually applied) on success.
 
 Teleport uses `GET /api/sessions/:id/export.jsonl`, `PUT /api/sessions/:id/import` (body: JSONL,
-same id, refused while a run is `running`), and `GET /api/sessions` for the picker.
+same id, refused while a run is `running` or the session is archived), and `GET /api/sessions` for the picker.
 
 ## Personal API tokens (E4.1b)
 

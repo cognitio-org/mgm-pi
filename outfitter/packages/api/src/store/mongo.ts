@@ -85,6 +85,9 @@ class MongoSessions implements SessionsCollection {
     const query: Record<string, unknown> = {};
     if (filter?.status) query.status = filter.status;
     if (filter?.guruId) query.guruId = filter.guruId;
+    // `null` matches a missing field as well as an explicit null.
+    if (filter?.archived === "exclude") query.archivedAt = null;
+    else if (filter?.archived === "only") query.archivedAt = { $ne: null };
     const rows = await this.col.find(query).sort({ updatedAt: -1 }).toArray();
     return rows.map((r) => stripIdStrict<Session>(r));
   }
@@ -93,6 +96,15 @@ class MongoSessions implements SessionsCollection {
     const result = await this.col.findOneAndUpdate(
       { _id: id },
       { $set: patch },
+      { returnDocument: "after" },
+    );
+    return stripId<Session>(result);
+  }
+
+  async setArchivedAt(id: string, archivedAt: string | null): Promise<Session | null> {
+    const result = await this.col.findOneAndUpdate(
+      { _id: id },
+      archivedAt ? { $set: { archivedAt } } : { $unset: { archivedAt: "" } },
       { returnDocument: "after" },
     );
     return stripId<Session>(result);

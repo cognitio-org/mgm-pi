@@ -185,6 +185,31 @@ describe("CachedSandboxTelemetry (#201 review)", () => {
     assert.equal(counts.metrics, 1);
   });
 
+  test("a slow load that fails after a newer one replaced it doesn't evict the newer answer", async () => {
+    let now = 1_000_000;
+    let rejectOld: (err: Error) => void = () => {};
+    let calls = 0;
+    const inner: SandboxTelemetry = {
+      logs() {
+        calls++;
+        if (calls === 1) return new Promise((_, reject) => { rejectOld = reject; });
+        return Promise.resolve({ lines: [{ time: "t", severity: "INFO", message: "fresh" }] });
+      },
+      async metrics() {
+        return { memoryMb: [], cpuCores: [], diskMb: [] };
+      },
+    };
+    const cached = new CachedSandboxTelemetry(inner, 20_000, 500, () => now);
+    const old = cached.logs(RUN);
+    now += 20_001; // the old entry expires while its load is still pending
+    assert.equal((await cached.logs(RUN)).lines[0]!.message, "fresh");
+    rejectOld(new Error("late failure"));
+    await assert.rejects(old);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal((await cached.logs(RUN)).lines[0]!.message, "fresh");
+    assert.equal(calls, 2, "the newer answer is still cached");
+  });
+
   test("failures aren't cached, and the cache stays bounded", async () => {
     const failing = countingInner(true);
     const cached = new CachedSandboxTelemetry(failing.inner);

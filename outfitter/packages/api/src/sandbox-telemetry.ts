@@ -228,13 +228,13 @@ export class CachedSandboxTelemetry implements SandboxTelemetry {
   }
 
   logs(runId: string, opts: { pageToken?: string; pageSize?: number } = {}): Promise<SandboxLogPage> {
-    return this.cached(`logs:${runId}:${opts.pageToken ?? ""}:${opts.pageSize ?? ""}`, () => this.inner.logs(runId, opts));
+    return this.cached(JSON.stringify(["logs", runId, opts.pageToken ?? null, opts.pageSize ?? null]), () => this.inner.logs(runId, opts));
   }
 
   metrics(podName: string, start: Date, end: Date): Promise<SandboxMetrics> {
     // Minute-aligned end: a live run's window moves every request, and the points are per minute.
     const endKey = Math.floor(end.getTime() / 60_000);
-    return this.cached(`metrics:${podName}:${start.getTime()}:${endKey}`, () => this.inner.metrics(podName, start, end));
+    return this.cached(JSON.stringify(["metrics", podName, start.getTime(), endKey]), () => this.inner.metrics(podName, start, end));
   }
 
   private cached<T>(key: string, load: () => Promise<T>): Promise<T> {
@@ -242,7 +242,11 @@ export class CachedSandboxTelemetry implements SandboxTelemetry {
     if (hit && this.now() - hit.at < this.ttlMs) return hit.value as Promise<T>;
     const value = load();
     this.cache.set(key, { at: this.now(), value });
-    value.catch(() => this.cache.delete(key));
+    // Only drop our own entry: a slow load that fails after a newer one replaced it must not evict
+    // the newer answer (#201 re-review).
+    value.catch(() => {
+      if (this.cache.get(key)?.value === value) this.cache.delete(key);
+    });
     if (this.cache.size > this.maxEntries) this.cache.delete(this.cache.keys().next().value!);
     return value;
   }

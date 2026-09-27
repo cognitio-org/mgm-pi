@@ -88,9 +88,17 @@ if [[ "${DRY_RUN:-0}" == 1 ]]; then
   echo "   DRY_RUN: would create log bucket ${LOG_BUCKET_ID} (global, 30-day retention) if missing"
   echo "   DRY_RUN: would create or update log sink ${LOG_BUCKET_ID} -> ${LOG_BUCKET} with filter: ${LOG_SINK_FILTER}"
 else
-  gcloud logging buckets describe "${LOG_BUCKET_ID}" --location=global --project="${PROJECT}" >/dev/null 2>&1 \
-    || gcloud logging buckets create "${LOG_BUCKET_ID}" --location=global --project="${PROJECT}" --retention-days=30 \
-         --description="Outfitter sandbox logs (agentd), read by the session page" --quiet
+  # A torn-down bucket stays DELETE_REQUESTED for 7 days: its name can't be reused, and describe still
+  # finds it. Undelete it rather than route the sink into a bucket that's about to be purged.
+  bucket_state="$(gcloud logging buckets describe "${LOG_BUCKET_ID}" --location=global --project="${PROJECT}" \
+    --format='value(lifecycleState)' 2>/dev/null || true)"
+  if [[ -z "${bucket_state}" ]]; then
+    gcloud logging buckets create "${LOG_BUCKET_ID}" --location=global --project="${PROJECT}" --retention-days=30 \
+      --description="Outfitter sandbox logs (agentd), read by the session page" --quiet
+  elif [[ "${bucket_state}" == DELETE_REQUESTED ]]; then
+    echo "   ${LOG_BUCKET_ID} was deleted less than 7 days ago; undeleting it"
+    gcloud logging buckets undelete "${LOG_BUCKET_ID}" --location=global --project="${PROJECT}" --quiet
+  fi
   if gcloud logging sinks describe "${LOG_BUCKET_ID}" --project="${PROJECT}" >/dev/null 2>&1; then
     gcloud logging sinks update "${LOG_BUCKET_ID}" "logging.googleapis.com/${LOG_BUCKET}" --project="${PROJECT}" \
       --log-filter="${LOG_SINK_FILTER}" --quiet
@@ -112,7 +120,13 @@ METRICS_ROLE_ID=outfitterMetricsReader
 echo "== Custom role ${METRICS_ROLE_ID} (monitoring.timeSeries.list only) and its grant to ${API_SA_EMAIL} (#197) =="
 if [[ "${DRY_RUN:-0}" == 1 ]]; then
   echo "   DRY_RUN: would create or update projects/${PROJECT}/roles/${METRICS_ROLE_ID} with monitoring.timeSeries.list"
-elif gcloud iam roles describe "${METRICS_ROLE_ID}" --project="${PROJECT}" >/dev/null 2>&1; then
+elif role_deleted="$(gcloud iam roles describe "${METRICS_ROLE_ID}" --project="${PROJECT}" --format='value(deleted)' 2>/dev/null)"; then
+  # A torn-down custom role answers describe (deleted: True) for 7 days and can't be updated until
+  # it's undeleted; its id stays reserved even longer, so create would fail too.
+  if [[ "${role_deleted}" == True ]]; then
+    echo "   ${METRICS_ROLE_ID} was deleted less than 7 days ago; undeleting it"
+    gcloud iam roles undelete "${METRICS_ROLE_ID}" --project="${PROJECT}" --quiet >/dev/null
+  fi
   gcloud iam roles update "${METRICS_ROLE_ID}" --project="${PROJECT}" --permissions=monitoring.timeSeries.list --quiet >/dev/null
 else
   gcloud iam roles create "${METRICS_ROLE_ID}" --project="${PROJECT}" --permissions=monitoring.timeSeries.list \

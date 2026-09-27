@@ -289,11 +289,11 @@ describe("probeSandbox", () => {
   });
 
   test("gke with a working capacity(): its own row, id/kind 'gke', warm fields included when present", async () => {
-    const rows = await probeSandbox("gke", async () => ({ active: 2, warmReady: 1, warmDesired: 1, limit: 3 }));
+    const rows = await probeSandbox("gke", async () => ({ active: 2, warmReady: 1, warmDesired: 1, limit: 3, launchMode: "warm" as const }));
     assert.equal(rows[0].status, "up");
     assert.equal(rows[0].id, "gke");
     assert.equal(rows[0].kind, "gke");
-    assert.deepEqual(rows[0].meta, { active: 2, runningExecutions: 2, warmReady: 1, warmDesired: 1, limit: 3 });
+    assert.deepEqual(rows[0].meta, { active: 2, runningExecutions: 2, warmReady: 1, warmDesired: 1, limit: 3, launchMode: "warm" });
   });
 
   test("cloudrun with a failing capacity(): down, never throws", async () => {

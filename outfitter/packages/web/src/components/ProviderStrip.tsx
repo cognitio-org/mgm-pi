@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { useProviders } from "../hooks/useProviders.ts";
-import { providerLabel, summaryStatus, worstStatus } from "../lib/providers.ts";
+import { providerLabel, sandboxWarmth, summaryStatus, worstStatus } from "../lib/providers.ts";
 
 /** Header strip for the providers/peripherals dashboard (E3.6). Always renders as a single
  * "N/M up" summary pill (coloured by the worst status present, per lib/providers.ts summaryStatus) so it holds to one row at any
@@ -27,7 +27,7 @@ export function ProviderStrip() {
       </Link>
       <div className="provider-strip-popover" role="group" aria-label="Peripheral status">
         {providers.map((p) => (
-          <span key={p.id} className={`status-pill ${p.status}`} title={p.detail ?? p.name}>
+          <span key={p.id} className={`status-pill ${p.status}`} title={p.detail ?? sandboxWarmth(p)?.detail ?? p.name}>
             {providerLabel(p)}
           </span>
         ))}

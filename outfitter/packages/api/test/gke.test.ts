@@ -517,6 +517,13 @@ describe("GkeProvider.capacity", () => {
     assert.equal(capacity.warmReady, 1);
     assert.equal(capacity.warmDesired, 1);
     assert.equal(capacity.limit, 3);
+    assert.equal(capacity.launchMode, "cold"); // baseConfig's
+  });
+
+  test("reports the configured launch mode, so the dashboard can tell warm from cold", async () => {
+    const { kube } = makeFakeKube();
+    const provider = new GkeProvider(baseConfig({ launchMode: "warm" }), { kube: async () => kube });
+    assert.equal((await provider.capacity()).launchMode, "warm");
   });
 
   test("no warm pool object yet: warmReady/warmDesired are undefined, active still counts", async () => {

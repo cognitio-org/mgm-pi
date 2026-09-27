@@ -353,6 +353,7 @@ export async function probeSandbox(
     if (capacity.warmReady !== undefined) meta.warmReady = capacity.warmReady;
     if (capacity.warmDesired !== undefined) meta.warmDesired = capacity.warmDesired;
     if (capacity.limit !== undefined) meta.limit = capacity.limit;
+    if (capacity.launchMode !== undefined) meta.launchMode = capacity.launchMode;
     return [{ ...row, status: "up", checkedAt, meta }];
   } catch (err) {
     return [{ ...row, status: "down", detail: errMessage(err), checkedAt }];

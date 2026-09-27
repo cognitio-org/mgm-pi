@@ -254,6 +254,19 @@
   background: var(--bg-elevated);
 }
 
+/* GKE warmth on the Peripherals page (lib/providers.ts sandboxWarmth): the same tokens the status
+ * pills use, so both themes already cover it. Cold stays the plain chip -- it's the normal state
+ * outside the warm pool's hours, not a problem. */
+.chip.warmth-warm {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.chip.warmth-warming {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
 /* Fixed columns: the value pill fills its column, and the secret name is what wraps. */
 table.secrets-table {
   table-layout: fixed;

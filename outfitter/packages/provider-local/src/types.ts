@@ -37,6 +37,9 @@ export interface SandboxCapacity {
   warmDesired?: number;
   /** Hard cap on concurrently active sandboxes, when the provider enforces one. */
   limit?: number;
+  /** How new runs claim a sandbox (GKE only): "warm" adopts a pool pod when one is ready, "cold"
+   * always starts a fresh one. With warmDesired it says whether new runs actually start warm. */
+  launchMode?: "warm" | "cold";
 }
 
 /** start()'s return type (gap G4: warm vs. cold start telemetry). A structural superset of the

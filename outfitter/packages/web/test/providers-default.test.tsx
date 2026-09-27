@@ -8,7 +8,7 @@ import { MemoryRouter } from "react-router-dom";
 import { api, type ProviderRow } from "../src/api/client.ts";
 import { ProvidersPage } from "../src/pages/ProvidersPage.tsx";
 import { ProviderStrip } from "../src/components/ProviderStrip.tsx";
-import { providerLabel, summaryStatus, worstStatus, DEFAULT_PROVIDER_TAG } from "../src/lib/providers.ts";
+import { providerLabel, sandboxWarmth, summaryStatus, worstStatus, DEFAULT_PROVIDER_TAG } from "../src/lib/providers.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -34,6 +34,57 @@ async function render(node: React.ReactNode, withRows: ProviderRow[] = rows) {
   root = createRoot(container);
   await act(async () => root!.render(<MemoryRouter>{node}</MemoryRouter>));
 }
+
+describe("sandboxWarmth", () => {
+  const gke = (meta: ProviderRow["meta"], status: ProviderRow["status"] = "up"): ProviderRow => ({
+    id: "gke",
+    kind: "gke",
+    name: "GKE Agent Sandbox",
+    status,
+    checkedAt: "2026-09-27T10:00:00.000Z",
+    meta,
+  });
+
+  it("warm launch mode with ready pool pods: warm", () => {
+    expect(sandboxWarmth(gke({ launchMode: "warm", warmReady: 2, warmDesired: 2 }))).toEqual({
+      mode: "warm",
+      detail: "Warm: 2 of 2 ready",
+    });
+  });
+
+  it("warm launch mode, pool on but nothing ready yet: warming, the next run starts cold", () => {
+    expect(sandboxWarmth(gke({ launchMode: "warm", warmReady: 0, warmDesired: 2 }))?.mode).toBe("warming");
+  });
+
+  it("warm launch mode outside the pool's hours (scaled to 0): cold", () => {
+    expect(sandboxWarmth(gke({ launchMode: "warm", warmReady: 0, warmDesired: 0 }))).toEqual({
+      mode: "cold",
+      detail: "Cold: warm pool scaled to 0",
+    });
+  });
+
+  it("cold launch mode is cold whatever the pool holds", () => {
+    expect(sandboxWarmth(gke({ launchMode: "cold", warmReady: 2, warmDesired: 2 }))?.detail).toBe("Cold: launch mode is cold");
+  });
+
+  it("says nothing when it can't tell: not GKE, probe down, or an older api without launchMode", () => {
+    expect(sandboxWarmth(gke({ warmReady: 1, warmDesired: 1 }))).toBeNull();
+    expect(sandboxWarmth(gke({ launchMode: "warm", warmReady: 1, warmDesired: 1 }, "down"))).toBeNull();
+    expect(sandboxWarmth({ ...gke({ launchMode: "warm" }), kind: "cloudrun" })).toBeNull();
+  });
+
+  it("shows on the Peripherals page and in the header strip's popover", async () => {
+    const warmRow = { ...rows[0]!, meta: { launchMode: "warm" as const, warmReady: 1, warmDesired: 2 } };
+    await render(<ProvidersPage />, [warmRow, rows[1]!]);
+    expect(container!.querySelector(".chip.warmth-warm")?.textContent).toBe("warm");
+    expect(container!.textContent).toContain("Warm: 1 of 2 ready");
+    act(() => root?.unmount());
+    root = null;
+    container?.remove();
+    await render(<ProviderStrip />, [warmRow, rows[1]!]);
+    expect(container!.textContent).toContain(`GKE Agent Sandbox (${DEFAULT_PROVIDER_TAG} · warm)`);
+  });
+});
 
 describe("default sandbox provider marker", () => {
   it("providerLabel tags only the default", () => {

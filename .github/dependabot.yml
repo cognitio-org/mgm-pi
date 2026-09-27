@@ -19,6 +19,17 @@ updates:
         patterns: ["*"]
     labels: [dependencies, packages]
     commit-message: { prefix: "packages" }
+  # Outfitter's workspaces (api, agentd, web, provider-local), from the root lockfile. Without this
+  # the api's MongoDB driver sat a major behind (6.21 vs 7.6, #228) with nobody told. Minor and patch
+  # updates arrive as one grouped PR; each major version gets its own PR, to be read before merging.
+  - package-ecosystem: npm
+    directory: /outfitter
+    schedule: { interval: weekly }
+    groups:
+      outfitter-minor-patch:
+        update-types: [minor, patch]
+    labels: [dependencies, javascript]
+    commit-message: { prefix: "outfitter" }
   # the kernal.one landing page's nginx base image, pinned by digest (outfitter/landing/Dockerfile):
   # without this the pin would never pick up nginx/Alpine security fixes
   - package-ecosystem: docker

@@ -1,0 +1,74 @@
+outfitter/packages/api/src/store/memory.ts
+  s_63cfee548f82b0::t_9266668ae15fbc 67-68,79-84
+  s_63cfee548f82b0::t_a18dea0d6291a9 85-87
+  s_63cfee548f82b0::t_e0ce704ddf9e26 42-43
+  s_63cfee548f82b0::t_d7132c0441b22a 88-91,131-137,243-250,550-557,636-639,751-758,821-841,857
+outfitter/packages/api/src/runs.ts
+  s_63cfee548f82b0::t_699067c35544cc 105-113,165
+  s_63cfee548f82b0::t_50919a953f657a 182-188
+  s_63cfee548f82b0::t_5a68c3863ce871 210-216
+outfitter/docs/protocol.md
+  s_63cfee548f82b0::t_722d81216fbdea 378,392-393
+  s_63cfee548f82b0::t_12789b2dde6d12 394-400,422
+  s_63cfee548f82b0::t_3bf024cbf2aeb0 401-407,441
+outfitter/packages/api/test/mongo-sessions.test.ts
+  s_63cfee548f82b0::t_0ae0ab9201f694 5-14,16-43,94-130,143
+  s_63cfee548f82b0::t_5c4ea1d2e10fcd 1-4,15,44-56,58-93,131-140
+  s_63cfee548f82b0::t_7dc301f1008cf4 57,141-142
+outfitter/EPIC.md
+  s_63cfee548f82b0::t_722d81216fbdea 189
+  s_63cfee548f82b0::t_3bf024cbf2aeb0 188
+outfitter/packages/api/src/mail.ts
+  s_63cfee548f82b0::t_b928d566e3cff7 7,290,295
+  s_63cfee548f82b0::t_699067c35544cc 206,296
+  s_63cfee548f82b0::t_50919a953f657a 139-141,205,207,209-211,238
+outfitter/packages/api/src/store/mongo.ts
+  s_63cfee548f82b0::t_9266668ae15fbc 90-92,105-109
+  s_63cfee548f82b0::t_7589af2f3f06e1 110-113
+  s_63cfee548f82b0::t_d7132c0441b22a 114-117,165-168,285-288,657-660,780-783,948-951,1023-1042,1058,1077
+  s_63cfee548f82b0::t_e0ce704ddf9e26 43-44
+outfitter/packages/api/src/routes/sessions.ts
+  s_63cfee548f82b0::t_722d81216fbdea 380-381
+  s_63cfee548f82b0::t_16f7924ba11ba8 260,314,345-350,430,452,456-461,462-465,468-473,554-560,562-577
+  s_63cfee548f82b0::t_e9b8d8b2f37e49 561
+  s_63cfee548f82b0::t_06925b35dccf53 14-15,53,100,152,157-163,229,466,504-534
+  s_63cfee548f82b0::t_75efd25abc71ff 578
+  s_63cfee548f82b0::t_50919a953f657a 7,453-455,467,553
+  s_63cfee548f82b0::t_3bf024cbf2aeb0 380
+  s_63cfee548f82b0::t_6dbc8c80046ad1 242-243,474-503
+outfitter/packages/api/src/store/types.ts
+  s_63cfee548f82b0::t_9266668ae15fbc 38-41,519-521,529-530
+  s_63cfee548f82b0::t_d7132c0441b22a 370-371,531-546,564-565,612-613,722-723,771-772,787-788,804
+  s_63cfee548f82b0::t_3bf024cbf2aeb0 16
+outfitter/packages/api/test/archive.test.ts
+  s_63cfee548f82b0::t_6753a9d8ffae85 247
+  s_63cfee548f82b0::t_1d9e6d37c2eb8a 120
+  s_63cfee548f82b0::t_ce4f20c62ca094 1-9,11,13-29,34-119,121-136,138-154,159-171,173-174,178-180,183-185,187,191-193,195-197,237-246,248-291
+  s_63cfee548f82b0::t_3d64e5df69dcf3 10,12,30-33,137,155-158,175-176,194,198-236
+  s_63cfee548f82b0::t_f1163d6fdc4c23 172,177,181-182,186,188-189
+  s_63cfee548f82b0::t_d84b56394b0065 190
+outfitter/packages/api/src/routes/browser.ts
+  s_63cfee548f82b0::t_50919a953f657a 10
+  s_63cfee548f82b0::t_8dab8b46a28ec0 148,192,295,379,432
+outfitter/packages/api/test/format.test.ts
+  s_63cfee548f82b0::t_b4a94df4179b46 1-52,54-161
+  s_63cfee548f82b0::t_a9c4f481a72518 53
+outfitter/packages/api/test/stop.test.ts
+  s_63cfee548f82b0::t_716d4d694547c5 306,321
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "8f1eba9479535a35c69d8f42305bd79b834688da",
+  "prompts": {},
+  "sessions": {
+    "s_63cfee548f82b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2abd665b-152d-4945-bee0-e1f672204de7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

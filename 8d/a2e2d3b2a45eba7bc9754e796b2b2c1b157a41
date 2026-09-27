@@ -1,0 +1,30 @@
+outfitter/image/bundle-pi-package.mjs
+  s_9e985270e78a63::t_9dec8feb750cd9 4-11,19-21,23-24,45-67,69-71,83-94,99-102,125-137,148,150-154
+  s_9e985270e78a63::t_e88a22d39fa3b4 1-2,12-18,22,31-44,68,72-79,98,103-123,143-147
+  s_9e985270e78a63::t_d6d8002ad818ed 3
+outfitter/image/Dockerfile
+  s_9e985270e78a63::t_d86a74f7c6186c 95-103,106-108
+  s_9e985270e78a63::t_d6d8002ad818ed 94
+outfitter/image/ci/echo-mcp-server.mjs
+  s_9e985270e78a63::t_d6d8002ad818ed 2
+  s_9e985270e78a63::t_2faace73385567 1,3-41
+.github/workflows/outfitter-ci.yml
+  s_9e985270e78a63::t_d6d8002ad818ed 142
+  s_9e985270e78a63::t_441a17f7c92035 143-172
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "8da2e2d3b2a45eba7bc9754e796b2b2c1b157a41",
+  "prompts": {},
+  "sessions": {
+    "s_9e985270e78a63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "019f7f91-d886-47f5-9a90-f34314b7756e",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

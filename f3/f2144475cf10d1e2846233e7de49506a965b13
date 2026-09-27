@@ -1,0 +1,64 @@
+outfitter/packages/agentd/src/protocol.ts
+  s_e0bc7d6e875242::t_eac4575099a6fb 149,151-154
+outfitter/deploy/config.env
+  s_e0bc7d6e875242::t_8b4f06a440a78e 52-56
+outfitter/deploy/README.md
+  s_e0bc7d6e875242::t_50d56695be8409 336-340,343
+  s_e0bc7d6e875242::t_dcdde08e6a8d51 341-342
+outfitter/packages/agentd/test/run.test.ts
+  s_e0bc7d6e875242::t_0e153b8ecd627b 11
+  s_e0bc7d6e875242::t_c1867afd4e40d5 1454
+  s_e0bc7d6e875242::t_62d26dbc32be99 1420-1453,1455-1458
+outfitter/packages/api/src/store/types.ts
+  s_e0bc7d6e875242::t_894233a19aac95 174-179
+outfitter/packages/api/src/runs.ts
+  s_e0bc7d6e875242::t_f182acc7cf4f46 31-56
+  s_e0bc7d6e875242::t_656548bc39ddc6 249
+outfitter/packages/agentd/test/sandbox-memory.test.ts
+  s_e0bc7d6e875242::t_52c51f4b0e2edb 1-69
+outfitter/packages/agentd/src/sandbox-memory.ts
+  s_e0bc7d6e875242::t_42a387d210932b 1-87
+outfitter/deploy/test/gke-template.test.sh
+  s_e0bc7d6e875242::t_c8aa21fef6cea8 240
+  s_e0bc7d6e875242::t_fc0d36fce0204a 241-249
+  s_e0bc7d6e875242::t_7ac7971043e680 265-267
+outfitter/packages/agentd/src/run.ts
+  s_e0bc7d6e875242::t_14ff1941e69024 247-248
+  s_e0bc7d6e875242::t_cc0d551a3f1a6d 34
+  s_e0bc7d6e875242::t_fe1351668b2be2 294
+  s_e0bc7d6e875242::t_070973b4dc05e4 1173-1181,1183-1187,1193-1194
+  s_e0bc7d6e875242::t_65ab44a2944938 150-153
+outfitter/docs/protocol.md
+  s_e0bc7d6e875242::t_07ac5a7c0ad47e 182
+outfitter/deploy/gke-template.sh
+  s_e0bc7d6e875242::t_21c5dfcb23d1c7 26-30
+  s_e0bc7d6e875242::t_15715b2c4c01b8 71-72
+outfitter/deploy/gke/sandbox-template.yaml
+  s_e0bc7d6e875242::t_644004dbe854ea 7
+  s_e0bc7d6e875242::t_af778cc271315f 74-80,82-83
+outfitter/packages/api/test/agentlink.test.ts
+  s_e0bc7d6e875242::t_7eeaf0dc43d196 101-130
+outfitter/packages/api/test/runs.test.ts
+  s_e0bc7d6e875242::t_d91410a847a946 154-177
+  s_e0bc7d6e875242::t_6b0a48e447e350 12
+outfitter/packages/api/src/agentlink.ts
+  s_e0bc7d6e875242::t_857e91c30df1e9 302-305,307-317
+  s_e0bc7d6e875242::t_43f234513dff92 1481
+  s_e0bc7d6e875242::t_6d582d3e84366d 306
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "f3f2144475cf10d1e2846233e7de49506a965b13",
+  "prompts": {},
+  "sessions": {
+    "s_e0bc7d6e875242": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c37c9d46-795c-4cd1-835d-84b84570be9d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}

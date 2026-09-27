@@ -267,6 +267,11 @@
   border-color: var(--warn);
 }
 
+.chip.warmth-missing {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
 /* Fixed columns: the value pill fills its column, and the secret name is what wraps. */
 table.secrets-table {
   table-layout: fixed;

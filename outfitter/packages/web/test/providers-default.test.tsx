@@ -8,6 +8,7 @@ import { MemoryRouter } from "react-router-dom";
 import { api, type ProviderRow } from "../src/api/client.ts";
 import { ProvidersPage } from "../src/pages/ProvidersPage.tsx";
 import { ProviderStrip } from "../src/components/ProviderStrip.tsx";
+import { PROVIDERS_REFRESH_MS } from "../src/hooks/useProviders.ts";
 import { providerLabel, sandboxWarmth, summaryStatus, worstStatus, DEFAULT_PROVIDER_TAG } from "../src/lib/providers.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -67,6 +68,20 @@ describe("sandboxWarmth", () => {
     expect(sandboxWarmth(gke({ launchMode: "cold", warmReady: 2, warmDesired: 2 }))?.detail).toBe("Cold: launch mode is cold");
   });
 
+  it("no warm pool object is a fault in either launch mode: every claim references it", () => {
+    const missing = { mode: "missing", detail: "Warm pool missing: runs can't start" };
+    expect(sandboxWarmth(gke({ launchMode: "warm" }))).toEqual(missing);
+    expect(sandboxWarmth(gke({ launchMode: "cold" }))).toEqual(missing);
+  });
+
+  it("pool on but readiness not reported yet reads warming", () => {
+    expect(sandboxWarmth(gke({ launchMode: "warm", warmDesired: 2 }))?.mode).toBe("warming");
+  });
+
+  it("more ready than the target (a scale-down in progress) says so instead of '3 of 2'", () => {
+    expect(sandboxWarmth(gke({ launchMode: "warm", warmReady: 3, warmDesired: 2 }))?.detail).toBe("Warm: 3 ready (target 2)");
+  });
+
   it("says nothing when it can't tell: not GKE, probe down, or an older api without launchMode", () => {
     expect(sandboxWarmth(gke({ warmReady: 1, warmDesired: 1 }))).toBeNull();
     expect(sandboxWarmth(gke({ launchMode: "warm", warmReady: 1, warmDesired: 1 }, "down"))).toBeNull();
@@ -83,6 +98,30 @@ describe("sandboxWarmth", () => {
     container?.remove();
     await render(<ProviderStrip />, [warmRow, rows[1]!]);
     expect(container!.textContent).toContain(`GKE Agent Sandbox (${DEFAULT_PROVIDER_TAG} · warm)`);
+  });
+});
+
+describe("useProviders refresh (#190)", () => {
+  it("the always-mounted strip re-reads providers, so a pool scaling up turns cold into warm", async () => {
+    vi.useFakeTimers();
+    try {
+      const cold = { ...rows[0]!, meta: { launchMode: "warm" as const, warmReady: 0, warmDesired: 0 } };
+      const warm = { ...rows[0]!, meta: { launchMode: "warm" as const, warmReady: 2, warmDesired: 2 } };
+      const spy = vi.spyOn(api, "providers").mockResolvedValueOnce([cold]).mockResolvedValue([warm]);
+      container = document.createElement("div");
+      document.body.appendChild(container);
+      root = createRoot(container);
+      await act(async () => root!.render(<MemoryRouter><ProviderStrip /></MemoryRouter>));
+      expect(container.textContent).toContain("· cold)");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(PROVIDERS_REFRESH_MS);
+      });
+      expect(spy).toHaveBeenCalledTimes(2);
+      expect(container.textContent).toContain("· warm)");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

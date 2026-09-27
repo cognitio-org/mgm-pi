@@ -15,8 +15,10 @@ export const DEFAULT_PROVIDER_TAG = "new runs";
 /** Whether new runs on a sandbox provider start warm right now. */
 export interface SandboxWarmth {
   /** warm: a ready pool pod is waiting. warming: the pool is on but has none ready yet, so the next
-   * run starts cold. cold: the pool is off (scaled to 0 outside its hours) or launch mode is cold. */
-  mode: "warm" | "warming" | "cold";
+   * run starts cold. cold: the pool is off (scaled to 0 outside its hours) or launch mode is cold.
+   * missing: no warm pool object at all -- every claim references it, warm or cold, so runs can't
+   * start (they time out as "unknown"). */
+  mode: "warm" | "warming" | "cold" | "missing";
   /** One line for the Peripherals page. */
   detail: string;
 }
@@ -27,9 +29,12 @@ export interface SandboxWarmth {
 export function sandboxWarmth(p: Pick<ProviderRow, "kind" | "status" | "meta">): SandboxWarmth | null {
   if (p.kind !== "gke" || p.status !== "up" || !p.meta?.launchMode) return null;
   const { launchMode, warmReady = 0, warmDesired } = p.meta;
+  // Checked first: cold claims go through the pool too (with replicas 0), so cold mode doesn't
+  // make a missing pool harmless.
+  if (warmDesired === undefined) return { mode: "missing", detail: "Warm pool missing: runs can't start" };
   if (launchMode === "cold") return { mode: "cold", detail: "Cold: launch mode is cold" };
-  if (warmDesired === undefined) return { mode: "cold", detail: "Cold: no warm pool" };
   if (warmDesired === 0) return { mode: "cold", detail: "Cold: warm pool scaled to 0" };
+  if (warmReady > warmDesired) return { mode: "warm", detail: `Warm: ${warmReady} ready (target ${warmDesired})` };
   if (warmReady > 0) return { mode: "warm", detail: `Warm: ${warmReady} of ${warmDesired} ready` };
   return { mode: "warming", detail: `Warming: 0 of ${warmDesired} ready, the next run starts cold` };
 }

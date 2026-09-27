@@ -30,7 +30,10 @@ cp "${DEPLOY_SRC}/env.sh" "${DEPLOY_SRC}/config.env" "${DEPLOY_SRC}/service.sh" 
 # depend on the default's value or on its expansion form (`-` vs `:-`). GKE off means Cloud Run is
 # the provider too (the checked-in default is gke since 2026-09-26), so force that line as well.
 CFG="${REPO}/outfitter/deploy/config.env"
+# Previews (#217) off too by default here, so the GKE-off list below stays the pre-GKE one; the
+# previews case at the end turns them on from the environment.
 sed -e 's/^GKE_CLUSTER=.*/GKE_CLUSTER=""/' -e 's/^SANDBOX_PROVIDER=.*/SANDBOX_PROVIDER="cloudrun"/' \
+  -e 's/^PREVIEW_DOMAIN=.*/PREVIEW_DOMAIN="${PREVIEW_DOMAIN-}"/' \
   "${CFG}" >"${CFG}.tmp" && mv "${CFG}.tmp" "${CFG}"
 grep -qx 'GKE_CLUSTER=""' "${CFG}" || { echo "FAIL: couldn't force GKE_CLUSTER off in the test's config.env"; exit 1; }
 grep -qx 'SANDBOX_PROVIDER="cloudrun"' "${CFG}" || { echo "FAIL: couldn't force SANDBOX_PROVIDER=cloudrun in the test's config.env"; exit 1; }
@@ -119,6 +122,21 @@ else
   echo "FAIL: --set-env-vars doesn't match the expected pre-GKE list"
   echo "  got:      ${ENV_VARS_ARG}"
   echo "  expected: --set-env-vars=${EXPECTED}"
+  fails=$((fails + 1))
+fi
+
+# #217: with PREVIEW_DOMAIN set, both preview variables are added, and PREVIEW_ALLOW is IAP_MEMBERS
+# plus the operators with ';' separators (--set-env-vars splits on commas).
+: >"${GCLOUD_CALLS}"
+status=0
+OUT="$(cd "${REPO}/outfitter/deploy" && PREVIEW_DOMAIN=kernal.run ./service.sh web 2>&1)" || status=$?
+PREVIEW_ENV="$(grep '^run deploy outfitter-api' "${GCLOUD_CALLS}" | grep -oE -- '--set-env-vars=[^ ]*' || true)"
+WANT_PREVIEW="PREVIEW_DOMAIN=kernal.run,PREVIEW_ALLOW=domain:mgmonteleone.com;domain:serviam-it.hr;user:matija.turk@gmail.com;mgm@mgms.eu;matej@mgms.eu"
+if [[ ${status} -eq 0 && "${PREVIEW_ENV}" == *",${WANT_PREVIEW},"* ]]; then
+  echo "ok: previews on: PREVIEW_DOMAIN and PREVIEW_ALLOW (IAP members + operators, ';'-separated) are set"
+else
+  echo "FAIL: previews on: expected ${WANT_PREVIEW} in --set-env-vars (exit ${status})"
+  echo "  got: ${PREVIEW_ENV}"
   fails=$((fails + 1))
 fi
 

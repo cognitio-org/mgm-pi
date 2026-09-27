@@ -32,6 +32,8 @@ import type {
   HeldMailScope,
   BrowserShare,
   BrowserSharesCollection,
+  Preview,
+  PreviewsCollection,
   BrowserRequest,
   BrowserActionResultError,
   BrowserInspectFailure,
@@ -1055,6 +1057,43 @@ class MongoFormattedSessions implements FormattedSessionsCollection {
   }
 }
 
+class MongoPreviews implements PreviewsCollection {
+  private readonly col: MongoCollection<Preview & { _id: string }>;
+
+  constructor(col: MongoCollection<Preview & { _id: string }>) {
+    this.col = col;
+  }
+
+  async insert(preview: Preview): Promise<void> {
+    await this.col.insertOne({ ...preview, _id: preview.id });
+  }
+
+  async findOpen(runId: string, port: number, share: boolean): Promise<Preview | null> {
+    return stripId<Preview>(await this.col.findOne({ runId, port, share, closedAt: { $exists: false } }));
+  }
+
+  async listOpenForRun(runId: string): Promise<Preview[]> {
+    return (await this.col.find({ runId, closedAt: { $exists: false } }).toArray()).map((d) => stripId<Preview>(d)!);
+  }
+
+  async listOpenForSession(sessionId: string): Promise<Preview[]> {
+    return (await this.col.find({ sessionId, closedAt: { $exists: false } }).toArray()).map((d) => stripId<Preview>(d)!);
+  }
+
+  async listOpen(): Promise<Preview[]> {
+    return (await this.col.find({ closedAt: { $exists: false } }).toArray()).map((d) => stripId<Preview>(d)!);
+  }
+
+  async markClosed(id: string, closedAt: string, reason: string): Promise<Preview | null> {
+    const doc = await this.col.findOneAndUpdate(
+      { _id: id, closedAt: { $exists: false } },
+      { $set: { closedAt, closedReason: reason } },
+      { returnDocument: "after" },
+    );
+    return stripId<Preview>(doc);
+  }
+}
+
 export class MongoStore implements Store {
   readonly sessions: SessionsCollection;
   readonly entries: EntriesCollection;
@@ -1069,6 +1108,7 @@ export class MongoStore implements Store {
   readonly browserRequests: BrowserRequestsCollection;
   readonly browserCaptures: BrowserCapturesCollection;
   readonly formattedSessions: FormattedSessionsCollection;
+  readonly previews: PreviewsCollection;
   private readonly client: MongoClient;
 
   private constructor(client: MongoClient, db: Db) {
@@ -1088,6 +1128,7 @@ export class MongoStore implements Store {
     this.browserRequests = new MongoBrowserRequests(requestCol, shareCol, client);
     this.browserCaptures = new MongoBrowserCaptures(db.collection<BrowserCaptureDoc>("browserCaptures"), requestCol);
     this.formattedSessions = new MongoFormattedSessions(db.collection("formattedSessions"));
+    this.previews = new MongoPreviews(db.collection("previews"));
   }
 
   /** `dbName` wins over the database in the URI; the stored URI has none, so the default keeps
@@ -1108,6 +1149,8 @@ export class MongoStore implements Store {
       db.collection("entries").createIndex({ sessionId: 1, _id: -1 }),
       db.collection("sessions").createIndex({ updatedAt: -1 }),
       db.collection("runs").createIndex({ sessionId: 1, state: 1 }),
+      db.collection("previews").createIndex({ runId: 1, closedAt: 1 }),
+      db.collection("previews").createIndex({ sessionId: 1, closedAt: 1 }),
       db.collection("tokens").createIndex({ hash: 1 }, { unique: true }),
       db.collection("tokens").createIndex({ ownerEmail: 1 }),
       db.collection("mail").createIndex({ sessionId: 1, status: 1, createdAt: 1 }),

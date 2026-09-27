@@ -447,8 +447,9 @@ are running.
 **Previews.** When a server should be seen, the agent starts it with its `port` and then calls
 `preview` with the job id. On the desktop that is just `http://localhost:<port>`. In a Drive it is a
 private `https://<id>.kernal.run` link that only people with access to the session can open (Google
-sign-in), or, with `share: true`, a public link that expires; agentd runs the tunnel and the Outfitter
-api issues the link (`outfitter/docs/specs/drive-previews.md`). A preview closes when its job ends,
+sign-in); agentd runs the tunnel and the Outfitter api issues the link
+(`outfitter/docs/specs/drive-previews.md`). A public share link, which expires, is the person's to
+make from the session page, never the agent's. A preview closes when its job ends,
 and the end-of-job message says so.
 
 ## Subagents (`pi-subagents`)

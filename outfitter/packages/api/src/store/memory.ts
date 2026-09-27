@@ -31,6 +31,8 @@ import type {
   HeldMailScope,
   BrowserShare,
   BrowserSharesCollection,
+  Preview,
+  PreviewsCollection,
   BrowserRequest,
   BrowserActionResultError,
   BrowserInspectFailure,
@@ -849,6 +851,41 @@ class MemoryFormattedSessions implements FormattedSessionsCollection {
   }
 }
 
+class MemoryPreviews implements PreviewsCollection {
+  private readonly rows = new Map<string, Preview>();
+
+  async insert(preview: Preview): Promise<void> {
+    this.rows.set(preview.id, clone(preview));
+  }
+
+  async findOpen(runId: string, port: number, share: boolean): Promise<Preview | null> {
+    for (const p of this.rows.values()) {
+      if (p.runId === runId && p.port === port && p.share === share && !p.closedAt) return clone(p);
+    }
+    return null;
+  }
+
+  async listOpenForRun(runId: string): Promise<Preview[]> {
+    return [...this.rows.values()].filter((p) => p.runId === runId && !p.closedAt).map(clone);
+  }
+
+  async listOpenForSession(sessionId: string): Promise<Preview[]> {
+    return [...this.rows.values()].filter((p) => p.sessionId === sessionId && !p.closedAt).map(clone);
+  }
+
+  async listOpen(): Promise<Preview[]> {
+    return [...this.rows.values()].filter((p) => !p.closedAt).map(clone);
+  }
+
+  async markClosed(id: string, closedAt: string, reason: string): Promise<Preview | null> {
+    const p = this.rows.get(id);
+    if (!p || p.closedAt) return null;
+    p.closedAt = closedAt;
+    p.closedReason = reason;
+    return clone(p);
+  }
+}
+
 export class MemoryStore implements Store {
   readonly sessions = new MemorySessions();
   readonly entries = new MemoryEntries();
@@ -863,6 +900,7 @@ export class MemoryStore implements Store {
   readonly browserRequests: BrowserRequestsCollection;
   readonly browserCaptures: BrowserCapturesCollection;
   readonly formattedSessions = new MemoryFormattedSessions();
+  readonly previews = new MemoryPreviews();
 
   constructor() {
     const tables: BrowserTables = {

@@ -36,7 +36,7 @@ const GUIDELINES = [
   "kind server: stays up until you stop it (dev server, `tsc --watch`). kind batch: should finish; give timeout_seconds when the default 30 minutes is wrong.",
   "Don't poll. You get one message when a job ends, with its exit status and last lines. Read output with action logs only when you need it (after starting a server, check its log once to confirm it is listening).",
   "Don't put `&`, `nohup` or `setsid` in the command: the job is already in the background, and anything it leaves running when its command exits is stopped.",
-  "When a server job should be seen by the person, pass its port to run, then call `preview` with the job id once its log shows it listening, and give the person the URL. Use share: true only when the person asks for a link to send to someone else.",
+  "When a server job should be seen by the person, pass its port to run, then call `preview` with the job id once its log shows it listening, and give the person the URL. If they want a public link for someone else, they make it from the session page.",
   "stdin stays open and empty: a command that prompts will wait, so pass its non-interactive flag (--yes, CI=1).",
   "A job runs as you, with your credentials; it is not a sandbox. Stop jobs you no longer need with action kill.",
 ];
@@ -232,14 +232,13 @@ export default function (pi: ExtensionAPI) {
     name: "preview",
     label: "Preview",
     description:
-      "Give the person a URL for a web server running here (a background server job, or a port). On a desktop it is http://localhost:<port>; in a Drive it is a private https link on kernal.run that only people with access to this session can open, or with share: true a time-limited public link. close: true removes a preview.",
-    promptSnippet: "preview: a URL for the person to open a server running here (job_id or port); share: true for a public time-limited link.",
+      "Give the person a URL for a web server running here (a background server job, or a port). On a desktop it is http://localhost:<port>; in a Drive it is a private https link on kernal.run that only people with access to this session can open (a public share link is the person's to make, from the session page). close: true removes a preview.",
+    promptSnippet: "preview: a URL for the person to open a server running here (job_id or port).",
     parameters: {
       type: "object",
       properties: {
         job_id: { type: "string", description: "The background server job whose port to open (it must have been started with port)." },
         port: { type: "number", description: "The port to open, when there is no job id." },
-        share: { type: "boolean", description: "Drive only: a public link anyone can open, until it expires or the job ends. Only when the person asks for one." },
         close: { type: "boolean", description: "Remove the preview instead of opening it." },
       },
     } as any,
@@ -260,22 +259,20 @@ export default function (pi: ExtensionAPI) {
         return text(closed ? `Closed the preview of port ${port} (${closed}).` : `No preview is open for port ${port}.`);
       }
       const existing = previews.get(port);
-      if (existing && Boolean(existing.share) === Boolean(params?.share)) return text(`Already open: ${existing.url}`);
+      if (existing) return text(`Already open: ${existing.url}`);
       try {
         const ep = driveEndpoint();
         let result: PreviewResult;
         if (ep) {
-          result = await drivePreview(ep, port, { jobId, share: Boolean(params?.share) });
+          result = await drivePreview(ep, port, { jobId });
         } else if (inDrive()) {
           return text("Previews aren't enabled for this Drive yet, so the person can't open its servers. Test it here with curl instead.", true);
         } else {
-          if (params?.share) return text("Share links are only for Drives. On this machine the person opens it at http://localhost:" + port + ".", true);
           result = await desktopPreview(port);
         }
-        if (existing) await closePreview(port);
-        previews.set(port, { ...result, ...(jobId ? { jobId } : {}), ...(params?.share ? { share: true } : {}) });
+        previews.set(port, { ...result, ...(jobId ? { jobId } : {}) });
         const until = result.expiresAt ? ` It expires ${result.expiresAt}, or sooner if the server stops.` : jobId ? " It closes when the job ends." : "";
-        const who = ep ? (params?.share ? "Anyone with this link can open it." : "Only people with access to this session can open it (they sign in with Google).") : "";
+        const who = ep ? "Only people with access to this session can open it (they sign in with Google)." : "";
         return text(`Preview of port ${port}: ${result.url}\n${who}${until}`.trim());
       } catch (err: any) {
         if (err instanceof PreviewError) return text(`preview: ${explainPreviewError(err)}`, true);

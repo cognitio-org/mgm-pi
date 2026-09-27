@@ -1,0 +1,46 @@
+outfitter/packages/web/test/providers-default.test.tsx
+  s_9e985270e78a63::t_d2cb1edf26beb3 11
+  s_9e985270e78a63::t_614fe7ed9e830d 38-88
+outfitter/packages/api/test/providers-status.test.ts
+  s_9e985270e78a63::t_51f2c275fb6278 292,296
+outfitter/packages/web/src/pages/ProvidersPage.tsx
+  s_9e985270e78a63::t_55e3f63caf1fed 66,71-72
+  s_9e985270e78a63::t_c282e2925813fd 2
+  s_9e985270e78a63::t_ec8b1eaccd7142 35-37,49-53
+  s_9e985270e78a63::t_67cef55d3ac61a 54-56
+outfitter/docs/specs/gke-sandbox-provider.md
+  s_9e985270e78a63::t_ed2a5dfd40f8c3 250-256
+outfitter/packages/web/src/api/client.ts
+  s_9e985270e78a63::t_236edb0e2f13b0 184-194
+outfitter/packages/provider-local/src/types.ts
+  s_9e985270e78a63::t_26bdfcbe2e0554 40-42
+outfitter/packages/api/test/gke.test.ts
+  s_9e985270e78a63::t_75094b612ac92f 520-526
+outfitter/packages/web/src/styles/pages.css
+  s_9e985270e78a63::t_deb2bae0271acb 257-269
+outfitter/packages/web/src/lib/providers.ts
+  s_9e985270e78a63::t_1d2cc55a7fe394 15-42
+outfitter/packages/api/src/providers-status.ts
+  s_9e985270e78a63::t_579f98b2a70932 356
+outfitter/packages/web/src/components/ProviderStrip.tsx
+  s_9e985270e78a63::t_367a283bab007b 3
+  s_9e985270e78a63::t_5cee76040df571 30
+outfitter/packages/api/src/providers/gke.ts
+  s_9e985270e78a63::t_262558131ccbb0 503
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "9942b8dbee2cf5f22d163dc2169a02165d74a19f",
+  "prompts": {},
+  "sessions": {
+    "s_9e985270e78a63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "019f7f91-d886-47f5-9a90-f34314b7756e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

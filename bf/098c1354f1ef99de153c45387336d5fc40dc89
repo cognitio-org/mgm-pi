@@ -1,0 +1,44 @@
+outfitter/packages/agentd/src/run.ts
+  s_9e985270e78a63::t_295aa16ea1dc85 91-93
+  s_9e985270e78a63::t_62ec5b87b9fb0e 1177-1180
+outfitter/packages/agentd/test/run.test.ts
+  s_9e985270e78a63::t_298ab2be44016f 36-41
+  s_9e985270e78a63::t_f2c743022b958d 1451-1473
+outfitter/packages/api/src/agentlink.ts
+  s_9e985270e78a63::t_cc8981fbf7d29c 309
+outfitter/packages/agentd/test/sandbox-memory.test.ts
+  s_9e985270e78a63::t_d89e3dbf89882c 82-101
+outfitter/packages/agentd/src/sandbox-memory.ts
+  s_9e985270e78a63::t_9d51da498ec986 106-112
+  s_9e985270e78a63::t_a8dd6688ee30fe 80-82,84-88
+outfitter/packages/api/test/agentlink.test.ts
+  s_9e985270e78a63::t_2cb87852bdf93e 121
+outfitter/packages/agentd/src/link.ts
+  s_9e985270e78a63::t_1f40cf4d118b16 257-262
+outfitter/deploy/config.env
+  s_9e985270e78a63::t_7ec6b04e93e783 54-55
+outfitter/deploy/test/gke-template.test.sh
+  s_9e985270e78a63::t_9740854cb3ebe0 274
+  s_9e985270e78a63::t_b9d9b1e311e671 387-403
+  s_9e985270e78a63::t_b785657a193ef9 404
+outfitter/deploy/gke-template.sh
+  s_9e985270e78a63::t_698f7401cc13dc 34-35
+  s_9e985270e78a63::t_e384bce986ba7c 30,32-33,36-37
+  s_9e985270e78a63::t_6e0a1c4c4ded85 28-29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "bf098c1354f1ef99de153c45387336d5fc40dc89",
+  "prompts": {},
+  "sessions": {
+    "s_9e985270e78a63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "019f7f91-d886-47f5-9a90-f34314b7756e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -1035,6 +1035,26 @@ describe("run.spec build validates secrets", () => {
     await app.fastify.close();
   });
 
+  test("preview.open is answered not-configured until phase 2 (#217); run.spec carries no preview config", async () => {
+    const app = await buildTestApp({});
+    const { session, runId, runToken } = await makeRunningSession(app);
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    const spec = await agent.nextMessage();
+    assert.equal(spec.t, "run.spec");
+    assert.equal(spec.preview, undefined);
+    assert.equal(spec.secrets.ngrokAuthtoken, undefined);
+
+    agent.send({ t: "preview.open", requestId: "req-1", port: 3000, internalUrl: "https://p3000.r.internal", share: false });
+    assert.deepEqual(await agent.nextMessage(), { t: "preview.result", requestId: "req-1", error: "not-configured" });
+    agent.send({ t: "preview.close", port: 3000 });
+
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
   test("a missing githubToken does not fail a repo session in dev mode (anonymous clone)", async () => {
     const emptyGithubBroker: SecretsBroker = {
       secretsForRun: async () => ({ githubToken: "", litellmKey: "some-key" }),

@@ -1554,6 +1554,18 @@ export class AgentLink {
         await this.handleBrowserActionRequest(sessionId, frame);
         break;
       }
+      // Drive previews (#217, docs/specs/drive-previews.md). Phase 1 ships the sandbox side only:
+      // until phase 2 creates ngrok cloud endpoints, every open is answered `not-configured` (the
+      // api doesn't send preview config in run.spec yet, so a real agentd never asks).
+      case "preview.open": {
+        const requestId = typeof frame.requestId === "string" ? frame.requestId : "";
+        if (requestId && socket.readyState === 1) {
+          socket.send(JSON.stringify({ t: "preview.result", requestId, error: "not-configured" }));
+        }
+        break;
+      }
+      case "preview.close":
+        break;
       case "browser.inspect.request": {
         await this.handleBrowserInspectRequest(sessionId, frame);
         break;

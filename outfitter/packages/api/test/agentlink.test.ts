@@ -98,6 +98,39 @@ describe("agentd <-> api WebSocket", () => {
     await app.fastify.close();
   });
 
+  test("#187: heartbeats keep the sandbox's memory high-water mark and limit on the run", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    await agent.nextMessage(); // run.spec
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
+
+    agent.send({ t: "heartbeat", idleSeconds: 0, memMb: 90, sandboxMemMb: 1500, sandboxMemLimitMb: 4096 });
+    await settle();
+    agent.send({ t: "heartbeat", idleSeconds: 0, memMb: 90, sandboxMemMb: 700, sandboxMemLimitMb: 4096 });
+    await settle();
+    let run = await app.store.runs.findById(runId);
+    assert.equal(run?.sandboxMemPeakMb, 1500, "a lower reading doesn't lower the peak");
+    assert.equal(run?.sandboxMemLastMb, 700, "but the latest reading is kept on its own");
+    assert.equal(run?.sandboxMemLimitMb, 4096);
+
+    // An older agentd's heartbeat, or garbage, leaves the stored values alone.
+    agent.send({ t: "heartbeat", idleSeconds: 0, memMb: 90 });
+    agent.send({ t: "heartbeat", idleSeconds: 0, memMb: 90, sandboxMemMb: "lots", sandboxMemLimitMb: -1 });
+    agent.send({ t: "heartbeat", idleSeconds: 0, memMb: 90, sandboxMemMb: 0.4, sandboxMemLimitMb: 0.4 }); // would round to 0
+    await settle();
+    run = await app.store.runs.findById(runId);
+    assert.equal(run?.sandboxMemPeakMb, 1500);
+    assert.equal(run?.sandboxMemLastMb, 700);
+    assert.equal(run?.sandboxMemLimitMb, 4096);
+
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
   test("event frames are fanned out over SSE and acked", async () => {
     const app = await buildTestApp();
     const { session, runId, runToken } = await makeRunningSession(app);

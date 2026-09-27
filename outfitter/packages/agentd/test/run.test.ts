@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { RunController, type LinkPort, type RunControllerDeps } from "../src/run.js";
 import { spawnPi, SessionTailer } from "../src/pi.js";
 import { writeSnapshotFile, emptySessionJsonl } from "../src/session.js";
+import { SandboxMemoryPeak } from "../src/sandbox-memory.js";
 import type { DownMessage, DownRunSpec, PiRpcCommand, PiRpcEvent, RunState, UpMessage } from "../src/protocol.js";
 import { OUTFITTER_BOT_IDENTITY, type GitOps, type CloneSpec, type PushSpec } from "../src/git.js";
 import type { PiProcess } from "../src/pi.js";
@@ -30,6 +31,12 @@ class FakeLink implements LinkPort {
 
   send(msg: UpMessage): void {
     this.sent.push(msg);
+  }
+
+  /** Tests flip this to simulate the socket being down (Link.isOpen). */
+  linkOpen = true;
+  isOpen(): boolean {
+    return this.linkOpen;
   }
 
   onMessage(handler: (msg: DownMessage) => void): void {
@@ -1415,6 +1422,68 @@ function playwrightEntry(link: FakeLink): { data?: { text?: string } } | undefin
   const frame = link.sent.find((m) => m.t === "entry" && (m as { entry?: { customType?: string } }).entry?.customType === "outfitter.playwright");
   return frame && frame.t === "entry" ? (frame.entry as { data?: { text?: string } }) : undefined;
 }
+
+test("RunController: #187 -- the heartbeat carries the sandbox's peak memory since the last one, and its limit", async (t) => {
+  const readings = [
+    { usedMb: 400, limitMb: 4096 },
+    { usedMb: 3500, limitMb: 4096 },
+    { usedMb: 500, limitMb: 4096 },
+  ];
+  let i = 0;
+  const { controller, link, states, spec } = await setupController(
+    {},
+    {
+      heartbeatIntervalMs: 120,
+      memorySampleMs: 20,
+      sandboxMemory: new SandboxMemoryPeak(() => readings[Math.min(i++, readings.length - 1)]),
+    },
+  );
+  t.after(() => controller.dispose());
+  link.deliver(spec);
+  await waitFor(() => states.includes("idle"));
+  await waitFor(() => link.sent.some((m) => m.t === "heartbeat"));
+  const beat = link.sent.find((m) => m.t === "heartbeat") as { sandboxMemMb?: number; sandboxMemLimitMb?: number; memMb: number };
+  assert.equal(beat.sandboxMemMb, 3500, "the spike between heartbeats, not the last reading");
+  assert.equal(beat.sandboxMemLimitMb, 4096);
+  assert.ok(beat.memMb > 0, "agentd's own rss is still there");
+});
+
+test("RunController: #187 -- a spike while the link is down reaches the first heartbeat after it's back", async (t) => {
+  const readings = [{ usedMb: 3500, limitMb: 4096 }];
+  const calm = { usedMb: 400, limitMb: 4096 };
+  const { controller, link, states, spec } = await setupController(
+    {},
+    {
+      heartbeatIntervalMs: 60,
+      memorySampleMs: 20,
+      sandboxMemory: new SandboxMemoryPeak(() => readings.shift() ?? calm),
+    },
+  );
+  t.after(() => controller.dispose());
+  link.linkOpen = false; // heartbeats in this window are dropped by the real Link
+  link.deliver(spec);
+  await waitFor(() => states.includes("idle"));
+  await waitFor(() => link.sent.filter((m) => m.t === "heartbeat").length >= 2);
+  const droppedCount = link.sent.length;
+  link.linkOpen = true;
+  await waitFor(() => link.sent.slice(droppedCount).some((m) => m.t === "heartbeat"));
+  const delivered = link.sent.slice(droppedCount).find((m) => m.t === "heartbeat") as { sandboxMemMb?: number };
+  assert.equal(delivered.sandboxMemMb, 3500, "the spike from while the link was down, not the calm reading since");
+});
+
+test("RunController: #187 -- no sandbox memory readable means no sandbox fields", async (t) => {
+  const { controller, link, states, spec } = await setupController(
+    {},
+    { heartbeatIntervalMs: 60, memorySampleMs: 20, sandboxMemory: new SandboxMemoryPeak(() => undefined) },
+  );
+  t.after(() => controller.dispose());
+  link.deliver(spec);
+  await waitFor(() => states.includes("idle"));
+  await waitFor(() => link.sent.some((m) => m.t === "heartbeat"));
+  const beat = link.sent.find((m) => m.t === "heartbeat") as unknown as Record<string, unknown>;
+  assert.equal("sandboxMemMb" in beat, false);
+  assert.equal("sandboxMemLimitMb" in beat, false);
+});
 
 test("RunController: playwrightBeforeCheckpoint off does not spawn a browser", async (t) => {
   const browser = countingSpawn({ code: 1, error: "should not spawn" });

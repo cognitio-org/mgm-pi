@@ -299,6 +299,23 @@ function isTerminalState(state: Run["state"]): boolean {
   return state === "stopped" || state === "failed";
 }
 
+/** #187: a heartbeat's sandbox memory: the latest reading, and the run's high-water mark. Only
+ * positive whole-ish numbers from agentd are trusted; anything else leaves the stored values alone. */
+export function sandboxMemoryPatch(
+  before: Pick<Run, "sandboxMemPeakMb"> | null,
+  frame: { [key: string]: unknown },
+): Pick<Run, "sandboxMemPeakMb" | "sandboxMemLimitMb" | "sandboxMemLastMb"> {
+  const valid = (value: unknown): value is number =>
+    typeof value === "number" && Number.isFinite(value) && value >= 1 && value < 1_048_576;
+  const patch: Pick<Run, "sandboxMemPeakMb" | "sandboxMemLimitMb" | "sandboxMemLastMb"> = {};
+  if (valid(frame.sandboxMemMb)) {
+    patch.sandboxMemLastMb = Math.round(frame.sandboxMemMb);
+    if (frame.sandboxMemMb > (before?.sandboxMemPeakMb ?? 0)) patch.sandboxMemPeakMb = Math.round(frame.sandboxMemMb);
+  }
+  if (valid(frame.sandboxMemLimitMb)) patch.sandboxMemLimitMb = Math.round(frame.sandboxMemLimitMb);
+  return patch;
+}
+
 /** Mail goes only to a run whose pi is up and not draining: a follow-up accepted by a `stopping`
  * run would start a turn that the stop then cuts off, after agentd had already acked it. */
 function acceptsMail(state: Run["state"]): boolean {
@@ -1462,7 +1479,7 @@ export class AgentLink {
         const before = await this.store.runs.findById(runId);
         // See the "status" case above: bye is final, a late heartbeat must not touch a terminal run.
         if (before && isTerminalState(before.state)) break;
-        await this.store.runs.update(runId, { lastSeenAt: now, updatedAt: now });
+        await this.store.runs.update(runId, { lastSeenAt: now, updatedAt: now, ...sandboxMemoryPatch(before, frame) });
         break;
       }
       case "diff.result": {

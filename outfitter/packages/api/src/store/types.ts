@@ -171,6 +171,16 @@ export interface Run {
   // Written once (agentd only acts on its first run.spec) and reused by later specs on reconnect;
   // a Tape changed mid-run applies to the next run. Absent until that first spec is built.
   allowExternalHtmlResources?: boolean;
+  // #187: the highest sandbox memory agentd's heartbeats reported for this run, and the sandbox's
+  // limit, in MiB. An OOM kill takes agentd with it, so this is what lets the reconciler say "ran
+  // out of memory" instead of "stopped reporting". Absent from agentd builds before #187 and from
+  // runtimes that expose no cgroup or /proc/meminfo.
+  sandboxMemPeakMb?: number;
+  sandboxMemLimitMb?: number;
+  // #187: the latest heartbeat's peak alone (the ~15 s before agentd last reported). The reconciler
+  // judges "ran out of memory" on this, not the run-long peak, so an early spike doesn't get the
+  // blame for a later, unrelated death.
+  sandboxMemLastMb?: number;
   // Not in protocol.md: `spend.keySpend` (agentlink.ts) is the LiteLLM *key's* cumulative spend,
   // not this run's own — the key is shared across every run/session using that guru. keySpendStart
   // is set to keySpend on the first spend frame this run sees; cost is then

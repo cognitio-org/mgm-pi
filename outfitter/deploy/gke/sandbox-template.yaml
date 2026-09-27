@@ -4,6 +4,7 @@
 #
 # ${IMAGE}                 outfitter-agent:$(commit_tag), same tag as the Cloud Run Job
 # ${GKE_NAMESPACE}         deploy/config.env's GKE_NAMESPACE (default outfitter-sandboxes)
+# ${GKE_SANDBOX_MEMORY}    deploy/config.env's GKE_SANDBOX_MEMORY (default 4Gi), requests == limits
 # ${KUBE_DNS_SERVICE_IP}   this cluster's kube-dns Service ClusterIP, read live -- it is
 #                          cluster-specific (docs/reports/gke-spike.md S3), never hard-coded
 #
@@ -70,13 +71,16 @@ spec:
             # Read by PR4 agentd only; harmless while unset (today's agentd only reads env). No
             # OUTFITTER_API/RUN_ID/RUN_TOKEN here -- see the header note above.
             - { name: OUTFITTER_ASSIGNMENT_DIR, value: /etc/outfitter/assignment }
-          # 1 vCPU / 2 GiB matches the Cloud Run job (agent-job.sh). Requests == limits: Autopilot
-          # bills requests, and equal limits mean no burst surprises. Do NOT mount an emptyDir over
-          # /tmp or /run/outfitter, and do not set TMPDIR: the jiti/compile caches baked into /tmp by
-          # the startup-trim PR must survive (docs/specs/gke-sandbox-provider-plan.md §2).
+          # 1 vCPU, memory from config.env's GKE_SANDBOX_MEMORY (4Gi since #187; the Cloud Run job's
+          # 2Gi left too little once gVisor took its share). Requests == limits: Autopilot bills
+          # requests, and equal limits mean no burst surprises. The limit covers every process in
+          # the sandbox, not files: the rootfs overlay is disk-backed (checked on a live pod, #187).
+          # Do NOT mount an emptyDir over /tmp or /run/outfitter, and do not set TMPDIR: the
+          # jiti/compile caches baked into /tmp by the startup-trim PR must survive
+          # (docs/specs/gke-sandbox-provider-plan.md §2).
           resources:
-            requests: { cpu: "1", memory: 2Gi, ephemeral-storage: 4Gi }
-            limits: { cpu: "1", memory: 2Gi, ephemeral-storage: 4Gi }
+            requests: { cpu: "1", memory: ${GKE_SANDBOX_MEMORY}, ephemeral-storage: 4Gi }
+            limits: { cpu: "1", memory: ${GKE_SANDBOX_MEMORY}, ephemeral-storage: 4Gi }
           volumeMounts:
             - { name: assignment, mountPath: /etc/outfitter/assignment, readOnly: true }
       volumes:

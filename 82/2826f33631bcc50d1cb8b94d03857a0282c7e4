@@ -1,0 +1,56 @@
+outfitter/deploy/gke-teardown.sh
+  s_e0bc7d6e875242::t_7889dbb8a53bad 140-141,145-148
+outfitter/packages/api/src/sandbox-telemetry.ts
+  s_e0bc7d6e875242::t_375608d1325113 174-175
+  s_e0bc7d6e875242::t_8eb0430ad68328 3-12
+  s_e0bc7d6e875242::t_c02041ae8759e7 132,135-137,139
+  s_e0bc7d6e875242::t_657c04f8e9a2a5 212-250
+  s_e0bc7d6e875242::t_1ad02f3c9c0155 45-46,48
+  s_e0bc7d6e875242::t_93f9a91ab7a598 73-75,78
+  s_e0bc7d6e875242::t_153721523bd211 154-157
+outfitter/packages/api/test/sandbox-routes.test.ts
+  s_e0bc7d6e875242::t_ecd03fbc146bdf 115-123
+  s_e0bc7d6e875242::t_02dc19eedec3fe 91
+outfitter/packages/api/src/server.ts
+  s_e0bc7d6e875242::t_c1075b3f22f22b 22
+  s_e0bc7d6e875242::t_1119ccb546c1c8 168-170
+outfitter/packages/api/src/routes/sandbox.ts
+  s_e0bc7d6e875242::t_c50687ab951e37 37
+  s_e0bc7d6e875242::t_0a387e9dd160df 94-101
+outfitter/deploy/gke-iam.sh
+  s_e0bc7d6e875242::t_fa337a21b459be 16-18
+  s_e0bc7d6e875242::t_b048c15c373963 75-86,88-89,91-100,103,106,109-120,122
+outfitter/deploy/README.md
+  s_e0bc7d6e875242::t_e71f563e522637 353-358,360-363,366-369
+  s_e0bc7d6e875242::t_7a01ab09bba409 370
+outfitter/packages/api/test/sandbox-telemetry.test.ts
+  s_e0bc7d6e875242::t_f2495983f127b0 7,10
+  s_e0bc7d6e875242::t_a2c07c8ac392a1 60
+  s_e0bc7d6e875242::t_6cd42287b2dd26 139-202
+  s_e0bc7d6e875242::t_0d3e0198e04766 72-74
+  s_e0bc7d6e875242::t_9abd4950b54702 71
+  s_e0bc7d6e875242::t_10344ca57451ee 53,80,88,95,117,134
+outfitter/deploy/test/gke-iam.test.sh
+  s_e0bc7d6e875242::t_673d4e42da3c59 117-128,130
+outfitter/docs/protocol.md
+  s_e0bc7d6e875242::t_edca1eabfd16f8 382,384
+outfitter/deploy/test/gke-teardown.test.sh
+  s_e0bc7d6e875242::t_3d8c0e398865ce 72
+  s_e0bc7d6e875242::t_53920ea30cedab 101-108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "822826f33631bcc50d1cb8b94d03857a0282c7e4",
+  "prompts": {},
+  "sessions": {
+    "s_e0bc7d6e875242": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c37c9d46-795c-4cd1-835d-84b84570be9d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

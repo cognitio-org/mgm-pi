@@ -91,7 +91,10 @@ deploy_guard() {
     git -C "${root}" status --short -- "$@" >&2
     deploy_fail "uncommitted changes under $* would be uploaded; commit and merge them, or deploy from a clean checkout of main."
   fi
-  git -C "${root}" fetch --quiet origin main
+  # DEPLOY_GUARD_NO_FETCH=1: every check still runs, against the origin/main already fetched. Only
+  # release.sh's background API build sets it: release.sh itself has just fetched, and a second
+  # fetch in the same checkout, concurrent with agent-job.sh's, could fail on the ref lock.
+  [[ "${DEPLOY_GUARD_NO_FETCH:-}" == 1 ]] || git -C "${root}" fetch --quiet origin main
   if ! git -C "${root}" merge-base --is-ancestor HEAD origin/main; then
     deploy_fail "HEAD ($(git -C "${root}" rev-parse --short HEAD)) is not on origin/main. Merge it first; only main deploys."
   fi

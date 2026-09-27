@@ -116,6 +116,40 @@ else
   step services kernal-web "${DEPLOY_DIR}/landing.sh"
 fi
 
+# The outfitter-api image (link and web both run it) builds in the background while the agent image
+# builds below; the two are independent, and one after the other cost about two minutes a release.
+# Only the build runs early: link and web still deploy after the Job and the GKE template, in the
+# order above. Its output is held in a log and printed where link used to build it.
+API_BUILD_PID="" API_BUILD_LOG=""
+if [[ "${DRY_RUN:-}" == 1 ]]; then
+  echo "== DRY_RUN: would build the outfitter-api image in the background, alongside the agent image =="
+elif [[ "${FORCE_ALL:-}" == 1 ]] || ! component_live_at services outfitter-link "${HEAD_SHORT}" \
+  || ! component_live_at services outfitter-api "${HEAD_SHORT}"; then
+  API_BUILD_LOG="$(mktemp)"
+  register_cleanup "${API_BUILD_LOG}"
+  echo "== Building the outfitter-api image in the background (its log follows before link deploys) =="
+  # No second `git fetch`: release.sh's own deploy_guard just fetched, and agent-job.sh's is about
+  # to run concurrently in the same checkout.
+  DEPLOY_GUARD_NO_FETCH=1 "${DEPLOY_DIR}/build-api-image.sh" >"${API_BUILD_LOG}" 2>&1 &
+  API_BUILD_PID=$!
+  # A release that stops early stops the build script. Its gcloud child may outlive it on a laptop;
+  # in Actions the runner ends it with the job, and Cloud Build carries on either way (the next run
+  # reuses the image). Evaluated at exit, so an already-waited build is left alone.
+  register_cleanup_cmd '[[ -n "${API_BUILD_PID}" ]] && kill "${API_BUILD_PID}" 2>/dev/null || true'
+fi
+# wait_for_api_image -- blocks until the background build is done, prints its log, and stops the
+# release if it failed: link and web must never deploy without their image.
+wait_for_api_image() {
+  [[ -n "${API_BUILD_PID}" ]] || return 0
+  local status=0
+  wait "${API_BUILD_PID}" || status=$?
+  API_BUILD_PID=""
+  echo "== outfitter-api image (built in the background) =="
+  sed 's/^/   /' "${API_BUILD_LOG}"
+  [[ "${status}" -eq 0 ]] \
+    || deploy_fail "the outfitter-api image build failed (exit ${status}, log above); link and web were not deployed"
+}
+
 step jobs outfitter-agent "${DEPLOY_DIR}/agent-job.sh"
 
 # GKE template/warm pool, between the Job and link (docs/specs/gke-sandbox-provider-plan.md §2): a
@@ -139,6 +173,7 @@ else
   echo "== GKE template: GKE_CLUSTER is empty; skipping =="
 fi
 
+wait_for_api_image
 step services outfitter-link "${DEPLOY_DIR}/service.sh" link
 step services outfitter-api "${DEPLOY_DIR}/service.sh" web
 

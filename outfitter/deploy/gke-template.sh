@@ -129,7 +129,15 @@ kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" \
 # it can't collide; the new claim itself uses generateName (not a fixed name), so even a concurrent
 # or leftover claim can never cause AlreadyExists. A create failure (quota, a rejected admission,
 # anything) just skips the rest of this section with a note.
-echo "== Warming ${IMAGE} with a throwaway cold claim =="
+#
+# Fire and forget: the release doesn't wait for it. It used to wait up to 60 s for a Sandbox and 120 s
+# for Ready, then delete the claim -- two minutes of every release, and on a cold node that wait
+# timed out anyway. The pull (the only point of this claim) goes on without us watching. The claim
+# cleans itself up: its agentd finds no run "warmup-<tag>" on the link, is refused terminally (4404)
+# and exits, the pod finishes, and ttlSecondsAfterFinished deletes the claim. shutdownTime is the
+# backstop if anything keeps it running, and the next release's sweep catches whatever is left.
+echo "== Warming ${IMAGE} with a throwaway cold claim (not waited on) =="
+WARMUP_SHUTDOWN_TIME="$(date -u -d '+15 minutes' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v+15M +%Y-%m-%dT%H:%M:%SZ)"
 # Every warm-up kubectl call carries --request-timeout: the loops below are bounded by count, but a
 # single call to a hung API server otherwise isn't, and this section must never hang the release.
 WARMUP_KUBECTL_TIMEOUT="--request-timeout=10s"
@@ -156,47 +164,14 @@ metadata:
   labels: { app.kubernetes.io/managed-by: outfitter-release, outfitter.dev/warmup: "true" }
 spec:
   warmPoolRef: { name: ${GKE_WARM_POOL} }
-  lifecycle: { shutdownPolicy: Delete, ttlSecondsAfterFinished: 60 }
+  lifecycle: { shutdownPolicy: Delete, shutdownTime: "${WARMUP_SHUTDOWN_TIME}", ttlSecondsAfterFinished: 60 }
   env:
     - { name: RUN_ID, value: "warmup-${TAG}" }
     - { name: RUN_TOKEN, value: "warmup" }
     - { name: OUTFITTER_API, value: "${OUTFITTER_LINK_ORIGIN}" }
 YAML
 )" && [[ -n "${WARMUP_CLAIM}" ]]; then
-  echo "   created ${WARMUP_CLAIM}"
-  register_cleanup_cmd "kubectl --kubeconfig='${KUBECONFIG}' -n '${GKE_NAMESPACE}' delete sandboxclaim '${WARMUP_CLAIM}' --ignore-not-found --wait=false >/dev/null 2>&1"
-
-  # Bounded: a slow node/image pull here delays the release a little, never fails it -- the next
-  # real wake just pays whatever wasn't warmed. First wait for the controller to assign a Sandbox,
-  # then for that Sandbox to actually report Ready (image pulled, container started), not merely "a
-  # name was assigned". register_cleanup_cmd above deletes the claim regardless of how this comes out.
-  #
-  # A plain bounded poll over `kubectl get`, not `kubectl wait --for=jsonpath=... ` with no
-  # comparison value: that value-less form (wait for a field to merely exist/be non-empty, as
-  # opposed to `--for=jsonpath=...=value`) is a newer kubectl feature, and this script has no way to
-  # confirm which kubectl version `gcloud components install kubectl` puts on a given machine or CI
-  # runner. `get` alone is universally supported and needs only the `get` verb (already granted),
-  # not `list`/`watch` on sandboxclaims.
-  WARMUP_POLL_INTERVAL_S="${WARMUP_POLL_INTERVAL_S:-2}"
-  SANDBOX_NAME=""
-  for _ in $(seq 1 30); do
-    SANDBOX_NAME="$(kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" "${WARMUP_KUBECTL_TIMEOUT}" \
-      get sandboxclaim "${WARMUP_CLAIM}" -o jsonpath='{.status.sandbox.name}' 2>/dev/null || true)"
-    [[ -n "${SANDBOX_NAME}" ]] && break
-    sleep "${WARMUP_POLL_INTERVAL_S}"
-  done
-  if [[ -n "${SANDBOX_NAME}" ]]; then
-    kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" \
-      wait --for=condition=Ready "sandbox/${SANDBOX_NAME}" --timeout=120s \
-      || echo "   note: the warm-up Sandbox didn't report Ready within 120s; the next real wake pays whatever wasn't warmed" >&2
-  else
-    echo "   note: the warm-up claim never got a Sandbox assigned within 60s; the next real wake pays the pull instead" >&2
-  fi
-  # Delete now, in the normal flow (not only via the register_cleanup_cmd trap above, which stays as
-  # the crash-safety net for an interrupt mid-wait): the label right below must come strictly after
-  # this in the script's own order.
-  kubectl --kubeconfig="${KUBECONFIG}" -n "${GKE_NAMESPACE}" "${WARMUP_KUBECTL_TIMEOUT}" \
-    delete sandboxclaim "${WARMUP_CLAIM}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  echo "   created ${WARMUP_CLAIM}; it pulls the image and removes itself (shutdownTime ${WARMUP_SHUTDOWN_TIME} at the latest)"
 else
   echo "   note: couldn't create a warm-up claim (see below); skipping the warm-up entirely -- the next real wake pays the pull instead" >&2
   sed 's/^/   /' "${WARMUP_CREATE_ERR}" >&2

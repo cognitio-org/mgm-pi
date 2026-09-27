@@ -50,6 +50,11 @@ tagged commit may never have been tested alone) and then runs **`release.sh`** o
   link's URL). A component already at that commit (its `build-commit` label) is skipped, so a run
   that failed halfway is safe to re-run. It smoke-checks each service (link returns 401 without a
   token; web still has IAP switched on and redirects to sign-in) and stops at the first failure.
+- The `outfitter-api` image (both link and web run it) builds in the background while the agent
+  image builds (`build-api-image.sh`); only the build runs early, the deploy order above is
+  unchanged, and a failed API build stops the release before link. gcloud itself is still
+  downloaded from Google on every run, not restored from the Actions cache: the deploy job holds
+  production credentials, and any job that runs `npm ci` could write that cache.
 - Deploys run one at a time (a `concurrency` group, never cancelled midway). A newer run waiting
   its turn replaces an older waiting one, so production only moves forward. That includes a
   waiting manual rollback: if a release is pushed while it waits, re-run it afterwards.
@@ -417,8 +422,10 @@ between fails.
    the same name is rejected by agent-sandbox's `Allowed` injection policy), applies them
    server-side, restores the warm pool's current `replicas` (so a template update never undoes what
    the schedule below set), warms the new image with one throwaway cold claim -- `kubectl create`,
-   waiting (best-effort, bounded) for its Sandbox to report Ready, since image streaming needs one
-   real pull of a brand-new tag before it's fast (S4) -- and only then labels the template
+   since image streaming needs one real pull of a brand-new tag before it's fast (S4). The release
+   doesn't wait on it: the claim's agentd is refused by the link (no such run) and exits, and
+   `ttlSecondsAfterFinished` deletes the claim, with a 15-minute `shutdownTime` as the backstop and
+   the next release's label sweep for anything left. It then labels the template
    `build-commit=<tag>`, last, so a failure earlier in this step never hides behind a label that
    makes a retry think it's already done. It also re-runs both `gke-iam.sh` guards. `check_deploy_skew`
    (the bug-9 skew guard) now also compares against the template's `build-commit` label: an older

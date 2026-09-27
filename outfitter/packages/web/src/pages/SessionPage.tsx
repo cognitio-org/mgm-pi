@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type UIEvent } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, type ModelRow, type SessionDetail } from "../api/client.ts";
 import { useSessionStream } from "../hooks/useSessionStream.ts";
 import { useProviders } from "../hooks/useProviders.ts";
@@ -31,7 +31,8 @@ import { NotFoundError } from "../components/NotFoundError.tsx";
 import { SystemErrorDialog, type ApiErrorState } from "../components/SystemErrorDialog.tsx";
 import { DeviceNotPresent } from "../components/DeviceNotPresent.tsx";
 import { withFloppySound } from "../lib/floppy-sound.ts";
-import { transport, transportLabel } from "../lib/vocabulary.ts";
+import { floppyActions, transport, transportLabel } from "../lib/vocabulary.ts";
+import { FormatFloppyDialog } from "../components/FormatFloppyDialog.tsx";
 import { deriveSessionActivity, nextSendAnchor, notePendingRunState, type PendingSend } from "../lib/send-status.ts";
 import { useChromeCompanion } from "../hooks/useChromeCompanion.ts";
 import { teleportCommand } from "../lib/webmcp.ts";
@@ -98,6 +99,10 @@ export function SessionPage() {
   // it never renders, or fetches, with one session's id and the other's run.
   const [nerdOutFor, setNerdOutFor] = useState<string | null>(null);
   const nerdOut = nerdOutFor === sessionId;
+  const navigate = useNavigate();
+  // #209: Archive, Restore and Format. Archived floppies are read-only (api 409s wake and send).
+  const [shelving, setShelving] = useState<"archive" | "restore" | null>(null);
+  const [formatOpen, setFormatOpen] = useState(false);
 
   // The route reuses this component when navigating from one session to another (App.tsx's
   // /sessions/:id has no key), so a pending send must not follow the user into the next session:
@@ -106,6 +111,7 @@ export function SessionPage() {
     setPendingSend(null);
     setLastProgressAt(Date.now());
     setCompact(false);
+    setFormatOpen(false);
   }, [sessionId]);
 
   useEffect(() => {
@@ -321,6 +327,18 @@ export function SessionPage() {
     }
   }
 
+  async function shelve(action: "archive" | "restore") {
+    setShelving(action);
+    try {
+      await withFloppySound(action === "archive" ? api.archiveSession(sessionId) : api.restoreSession(sessionId));
+      await reload();
+    } catch (err) {
+      setApiError(toApiErrorState(err, `Failed to ${action} floppy`));
+    } finally {
+      setShelving(null);
+    }
+  }
+
   const handleAbort = () => runAction("abort", () => api.abort(sessionId));
   const handleStop = () => runAction("stop", () => api.stop(sessionId));
   const handleWake = () => runAction("wake", () => api.wake(sessionId));
@@ -405,6 +423,7 @@ export function SessionPage() {
   // ?DEVICE NOT PRESENT ERROR the Peripherals page shows for that row, right where the user is
   // already looking, instead of a confusing generic run failure.
   const floppyTitle = session?.name ?? `Floppy ${sessionId.slice(0, 8)}`;
+  const archived = Boolean(session?.archivedAt);
   const cluster = githubCluster(session);
   const looseRepo = looseRepoClause(session);
   const modelProviderKind = header.model?.split("/")[0];
@@ -500,6 +519,11 @@ export function SessionPage() {
               <button className="btn session-transport" onClick={copyTeleport} title={transport.eject.hint}>
                 {copied ? "Copied!" : transportLabel("eject")}
               </button>
+              {session?.canManage && !archived && (
+                <button className="btn session-transport" onClick={() => shelve("archive")} disabled={shelving !== null} title={floppyActions.archive.hint}>
+                  {shelving === "archive" ? <Working label="Archiving" /> : floppyActions.archive.word}
+                </button>
+              )}
               <button
                 className="btn btn-danger session-transport"
                 onClick={handleAbort}
@@ -514,7 +538,7 @@ export function SessionPage() {
               <button
                 className="btn btn-primary session-transport"
                 onClick={handleWake}
-                disabled={!activity.canWake}
+                disabled={!activity.canWake || archived}
                 title="Wake this floppy and start the run"
               >
                 {pendingAction === "wake" ? <Working label="Waking" /> : transportLabel("wake")}
@@ -610,6 +634,21 @@ export function SessionPage() {
               </button>
             </p>
           )}
+          {archived && (
+            <p className="archived-note" role="status">
+              <span>This floppy is archived: it can't run or take messages until it's restored.</span>
+              {session?.canManage && (
+                <>
+                  <button type="button" className="btn btn-small" onClick={() => shelve("restore")} disabled={shelving !== null} title={floppyActions.restore.hint}>
+                    {shelving === "restore" ? <Working label="Restoring" /> : floppyActions.restore.word}
+                  </button>
+                  <button type="button" className="btn btn-small btn-danger" onClick={() => setFormatOpen(true)} disabled={shelving !== null} title={floppyActions.format.hint}>
+                    {floppyActions.format.word}…
+                  </button>
+                </>
+              )}
+            </p>
+          )}
           {chromePlace.note && (
             <p className="status-detail-note" role="alert">
               {chromePlace.note}
@@ -668,6 +707,19 @@ export function SessionPage() {
         </div>
       </div>
 
+      {formatOpen && (
+        <FormatFloppyDialog
+          sessionId={sessionId}
+          title={floppyTitle}
+          onCancel={() => setFormatOpen(false)}
+          onError={(error) => {
+            setFormatOpen(false);
+            setApiError(error);
+          }}
+          onFormatted={() => navigate("/fleet?archived=only")}
+        />
+      )}
+
       {pendingUiRequest && <UiRequestPanel request={pendingUiRequest} onRespond={handleUiResponse} />}
 
       <Composer
@@ -675,7 +727,7 @@ export function SessionPage() {
         // another session, where Enter would send it to the wrong agent.
         key={sessionId}
         onSend={handleSend}
-        disabled={activity.composerDisabled}
+        disabled={activity.composerDisabled || archived}
         sending={activity.phase === "sending"}
         status={composerStatus}
         placeholderOverride={statusLine === "READY." ? "READY." : undefined}

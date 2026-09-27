@@ -8,7 +8,9 @@ import { StatusPill } from "../components/StatusPill.tsx";
 import { NewSessionDialog } from "../components/NewSessionDialog.tsx";
 import { Working } from "../components/Working.tsx";
 import { SystemErrorDialog, type ApiErrorState } from "../components/SystemErrorDialog.tsx";
-import { vocabSubtitle, vocabulary } from "../lib/vocabulary.ts";
+import { FormatFloppyDialog } from "../components/FormatFloppyDialog.tsx";
+import { withFloppySound } from "../lib/floppy-sound.ts";
+import { floppyActions, vocabSubtitle, vocabulary } from "../lib/vocabulary.ts";
 
 const RUN_STATES = ["queued", "provisioning", "running", "idle", "stopping", "stopped", "failed"];
 
@@ -25,6 +27,10 @@ export function FleetPage() {
   // filter (still a plain client-side filter change afterward, same as the dropdown).
   const [runStateFilter, setRunStateFilter] = useState(() => searchParams.get("runState") ?? "");
   const [guruFilter, setGuruFilter] = useState("");
+  // #209: the Disk Box shows floppies in use; the Archive is a second view of the same table.
+  const [showArchived, setShowArchived] = useState(() => searchParams.get("archived") === "only");
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [formatting, setFormatting] = useState<SessionSummary | null>(null);
   const [apiError, setApiError] = useState<ApiErrorState | null>(null);
   const [loading, setLoading] = useState(true);
   const [showNewSession, setShowNewSession] = useState(false);
@@ -36,7 +42,11 @@ export function FleetPage() {
         // Code review M1 (docs/reports/code-review-pr15.md): this dropdown offers run states
         // (queued/running/idle/...), which is `runState`, not `status` (open/closed) -- the two
         // were being conflated, so the filter never matched anything.
-        api.sessions({ runState: runStateFilter || undefined, guru: guruFilter || undefined }),
+        api.sessions({
+          runState: runStateFilter || undefined,
+          guru: guruFilter || undefined,
+          archived: showArchived ? "only" : undefined,
+        }),
         api.gurus(),
       ]);
       setSessions(sessionList);
@@ -51,15 +61,28 @@ export function FleetPage() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runStateFilter, guruFilter]);
+  }, [runStateFilter, guruFilter, showArchived]);
+
+  /** Archive or Restore one row, then reload: either way it leaves the current view. */
+  async function shelve(session: SessionSummary, action: "archive" | "restore") {
+    setBusyId(session.id);
+    try {
+      await withFloppySound(action === "archive" ? api.archiveSession(session.id) : api.restoreSession(session.id));
+      await load();
+    } catch (err) {
+      setApiError(toApiErrorState(err, `Failed to ${action} floppy`));
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   const guruName = (id: string) => gurus.find((g) => g.id === id)?.name ?? id;
 
   return (
     <div>
       <div className="page-heading">
-        <h2>{vocabulary.sessionList.one}</h2>
-        <p className="page-subtitle">{vocabSubtitle("sessionList")}</p>
+        <h2>{showArchived ? vocabulary.archive.one : vocabulary.sessionList.one}</h2>
+        <p className="page-subtitle">{vocabSubtitle(showArchived ? "archive" : "sessionList")}</p>
       </div>
       <div className="toolbar">
         <select
@@ -73,6 +96,15 @@ export function FleetPage() {
               {s}
             </option>
           ))}
+        </select>
+        <select
+          value={showArchived ? "archived" : "active"}
+          onChange={(e) => setShowArchived(e.target.value === "archived")}
+          aria-label="Show floppies"
+          title={showArchived ? vocabulary.archive.hint : undefined}
+        >
+          <option value="active">{vocabulary.sessionList.one}</option>
+          <option value="archived">{vocabulary.archive.one}</option>
         </select>
         <select value={guruFilter} onChange={(e) => setGuruFilter(e.target.value)} aria-label="Filter by guru">
           <option value="">All gurus</option>
@@ -91,6 +123,10 @@ export function FleetPage() {
 
       {loading ? (
         <p className="empty-state"><Working label="Loading" size="lg" srOnly={false} /></p>
+      ) : sessions.length === 0 && showArchived ? (
+        <div className="empty-state">
+          <p>The {vocabulary.archive.one} is empty. Archive a floppy to put it away here.</p>
+        </div>
       ) : sessions.length === 0 ? (
         <div className="empty-state dither">
           <p>No floppies yet. Start one to see it here.</p>
@@ -109,6 +145,9 @@ export function FleetPage() {
               <th>Repo / branch</th>
               <th>Cost</th>
               <th>Last activity</th>
+              <th>
+                <span className="sr-only">Actions</span>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -137,12 +176,50 @@ export function FleetPage() {
                 <td data-label="Repo / branch">{s.repo ? `${s.repo}${s.branch ? ` @ ${s.branch}` : ""}` : "—"}</td>
                 <td data-label="Cost">{formatCost(s.cost)}</td>
                 <td data-label="Last activity">{relativeTime(s.updatedAt)}</td>
+                <td data-label="" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                  {s.canManage && (
+                    <div className="toolbar row-actions" style={{ margin: 0 }}>
+                      {busyId === s.id ? (
+                        <Working label={s.archivedAt ? "Restoring" : "Archiving"} />
+                      ) : s.archivedAt ? (
+                        <>
+                          <button type="button" onClick={() => shelve(s, "restore")} title={floppyActions.restore.hint}>
+                            {floppyActions.restore.word}
+                          </button>
+                          <button type="button" className="btn-danger" onClick={() => setFormatting(s)} title={floppyActions.format.hint}>
+                            {floppyActions.format.word}…
+                          </button>
+                        </>
+                      ) : (
+                        <button type="button" onClick={() => shelve(s, "archive")} title={floppyActions.archive.hint}>
+                          {floppyActions.archive.word}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </td>
               </tr>
               );
             })}
           </tbody>
         </table>
         </div>
+      )}
+
+      {formatting && (
+        <FormatFloppyDialog
+          sessionId={formatting.id}
+          title={formatting.name ?? `Floppy ${formatting.id.slice(0, 8)}`}
+          onCancel={() => setFormatting(null)}
+          onError={(error) => {
+            setFormatting(null);
+            setApiError(error);
+          }}
+          onFormatted={() => {
+            setFormatting(null);
+            load();
+          }}
+        />
       )}
 
       {showNewSession && (

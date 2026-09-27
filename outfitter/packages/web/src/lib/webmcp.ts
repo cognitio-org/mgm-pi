@@ -18,6 +18,8 @@
 // - stop — Stop (api.stop)
 // - eject — Eject button's `kernal --teleport <id>` command, no Dongle
 // - read_transcript — session transcript (api.entries)
+// - archive_floppy / restore_floppy — Archive and Restore (#209). Format is deliberately not a
+//   tool: erasing a floppy for good stays a person's click through the confirm dialog.
 
 import { api, type NewSessionInput, type PiEntry, type RunLike, type SessionDetail, type SessionSummary } from "../api/client.ts";
 
@@ -29,6 +31,8 @@ export const WEBMCP_TOOL_NAMES = [
   "stop",
   "eject",
   "read_transcript",
+  "archive_floppy",
+  "restore_floppy",
 ] as const;
 
 export type WebMcpToolName = (typeof WEBMCP_TOOL_NAMES)[number];
@@ -80,6 +84,8 @@ export interface WebMcpClient {
   abort(id: string): Promise<{ run: RunLike }>;
   stop(id: string): Promise<{ run: RunLike }>;
   entries(id: string, after?: string): Promise<PiEntry[]>;
+  archiveSession(id: string): Promise<{ session: SessionDetail }>;
+  restoreSession(id: string): Promise<{ session: SessionDetail }>;
 }
 
 const CREDENTIAL_KEYS = new Set([
@@ -312,6 +318,42 @@ function fleetTools(client: WebMcpClient): WebMcpTool[] {
       async execute(input) {
         const record = readInput(input);
         return client.entries(requiredString(record, "session_id").trim(), optionalString(record, "after"));
+      },
+    },
+    {
+      name: "archive_floppy",
+      description:
+        "Use when putting a Floppy away, the same as Archive: its drive stops, it leaves list_floppies and it can't run until restored. Only its owner or a Sysop may. Requires session_id. Does not accept a token.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          session_id: { type: "string", description: "Floppy id." },
+        },
+        required: ["session_id"],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: false, consequentialHint: true },
+      async execute(input) {
+        const record = readInput(input);
+        return client.archiveSession(requiredString(record, "session_id").trim());
+      },
+    },
+    {
+      name: "restore_floppy",
+      description:
+        "Use when taking a Floppy out of the archive, the same as Restore. Only its owner or a Sysop may. Requires session_id. Does not accept a token.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          session_id: { type: "string", description: "Floppy id." },
+        },
+        required: ["session_id"],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: false, consequentialHint: true },
+      async execute(input) {
+        const record = readInput(input);
+        return client.restoreSession(requiredString(record, "session_id").trim());
       },
     },
   ];

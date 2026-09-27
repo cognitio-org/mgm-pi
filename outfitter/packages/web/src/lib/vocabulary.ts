@@ -29,6 +29,7 @@ export const vocabulary = {
   operator: { one: "Sysop", many: "Sysops", hint: "can change keys and deployment settings" },
   help: { one: "Manual", many: "Manual", hint: "what Outfitter is" },
   trash: { one: "Trash", many: "Trash", hint: "stopped floppies" },
+  archive: { one: "Archive", many: "Archive", hint: "floppies put away: hidden and read-only until restored" },
   desk: { one: "Desk", many: "Desk", hint: "the Outfitter desktop" },
   kernal: {
     one: "Kernal",
@@ -61,6 +62,13 @@ export const transport = {
     word: "Eject",
     hint: "continue this floppy on your laptop with Kernal",
   },
+} as const;
+
+/** What the owner (or a sysop) can do with a whole floppy, as opposed to its drive (transport). */
+export const floppyActions = {
+  archive: { word: "Archive", hint: "put this floppy away: it stops, hides from the Disk Box and turns read-only" },
+  restore: { word: "Restore", hint: "take this floppy out of the archive so it can run again" },
+  format: { word: "Format", hint: "erase this archived floppy for good, like formatting a real disk" },
 } as const;
 
 export function transportLabel(key: keyof typeof transport): string {

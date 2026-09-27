@@ -93,6 +93,20 @@ export const GLOSSARY_TERMS: GlossaryTerm[] = [
     glyph: "⏏", // ⏏
   },
   {
+    id: "archive",
+    label: "Archive",
+    meaning: "Put a floppy away: its drive stops, it leaves the Disk Box and it can't run until you restore it.",
+    codeName: "archive / restore",
+    glyph: "▤", // ▤
+  },
+  {
+    id: "format",
+    label: "Format",
+    meaning: "Erase an archived floppy for good: its conversation, messages and captures. There is no undo.",
+    codeName: "delete session",
+    glyph: "⌫", // ⌫
+  },
+  {
     id: "peripherals",
     label: "Peripherals",
     meaning: "Model and service providers and their health.",

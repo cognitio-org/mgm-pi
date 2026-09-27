@@ -43,16 +43,40 @@ On the desktop there is no problem: the server is on `localhost` and the person 
 
 ## The job API this builds on (#121)
 
-#121 gives the model `bg_run(command, kind: "server" | "batch", deadline?)` → `id`, plus status,
-log tail, kill, and one completion notice. Previews add one optional field and one tool:
+#121 (PR #221, `kernal/.pi/extensions/kernal-background/`, `jobs.ts` and `index.ts`) gives the
+model one tool, `background`, with `action: run | list | logs | kill`.
 
-- **`bg_run(..., port?: number)`:** a hint that this server listens on `port`. It is not required.
+- **`run`:**
+  - takes `command`, `kind: server | batch`, `name`, `cwd`, and, for a batch, `timeout_seconds`
+    (default 30 min, at most 24 h);
+  - returns an id (`bg1`), the pid and the log path;
+  - a server has a hard cap of `KERNAL_BG_SERVER_MAX_HOURS` (default 12 h).
+- **End of a job:** exactly one `pi.sendMessage` custom message (`customType: "kernal-background"`,
+  followUp and triggerTurn) with the status, exit code, last 15 lines and log path. The model's own
+  `kill` returns that result in the tool result instead; reaping at session end sends nothing.
+- **Lifetime:** jobs are per pi process, each in its own process group. They are reaped at
+  `session_shutdown` or when the process exits, and a watchdog follows pi's pid.
+
+Previews add one optional field and one tool:
+
+- **`background` `run` gains `port?: number`:** a hint that this server listens on `port`. It is not
+  required.
 - **`preview(port | jobId)`:** registers the port for the session and returns the URL:
   - desktop: `http://localhost:<port>`;
   - Drive: `https://<previewId>.<preview-domain>/`.
   It fails fast if nothing is listening yet (agentd connects to `127.0.0.1:<port>` once), and says so
-  instead of returning a dead link. When the job exits or is killed, the preview is dropped and the
-  notice says so.
+  instead of returning a dead link.
+- **A preview ends with its job.** The JobManager's `onEnd` is the hook: when the job exits, times
+  out or is killed, the preview extension drops its port. The job's own end notice (or the `kill`
+  result) says the preview is gone.
+
+Recommendation: a **separate `preview` tool**, not a `preview` action on `background`:
+- `background` stays about process lifetime, and its schema is the same on the desktop and in a Drive.
+- Exposing a port to a person's browser is a different capability, with its own policy and later its
+  own permission.
+- `preview` can also serve a port the model started some other way (a foreground `bash` that
+  daemonised, a server from a script).
+- `port` on `run` stays a hint, so `preview(jobId)` works without the model repeating the number.
 
 The model tells the person the URL. The session page shows an "Open preview" chip for each live
 preview (later: in the jobs row #121 describes under "Web, later").
@@ -176,8 +200,9 @@ decision).
 
 ## Idle and lifetime
 
-- **A preview needs its job.** Job exit, kill or deadline removes the port. The tunnel closes when no
-  ports remain.
+- **A preview needs its job.** When a job exits, is killed, hits its timeout or its server cap, or is
+  reaped at session end, its port is removed; the JobManager's `onEnd` hook does this. The tunnel
+  closes when no ports remain.
 - **Viewing keeps the Drive up, within limits.** #121 says a job never holds a Drive open. A person
   actively using a preview is different: they are working, just not in the chat. Recommendation:
   - an authenticated browser request (not WebSocket keepalives or HMR pings) reports activity to

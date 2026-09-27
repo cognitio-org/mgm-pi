@@ -35,6 +35,12 @@ async function exercise(sessions: SessionsCollection): Promise<Record<string, un
     all: await ids("all"),
     missing: await sessions.setArchivedAt("no-such-session", "2026-09-27T00:00:00.000Z"),
   };
+  result.claim = Boolean(await sessions.claimForFormat("shelved", "2026-09-27T01:00:00.000Z"));
+  result.secondClaim = await sessions.claimForFormat("shelved", "2026-09-27T02:00:00.000Z");
+  result.claimLive = await sessions.claimForFormat("live", "2026-09-27T01:00:00.000Z");
+  result.restoreWhileClaimed = await sessions.setArchivedAt("shelved", null);
+  await sessions.releaseFormatClaim("shelved");
+  result.releasedHasField = "formattingAt" in ((await sessions.findById("shelved")) ?? {});
   const restored = await sessions.setArchivedAt("shelved", null);
   result.restoredHasField = restored ? "archivedAt" in restored : "missing";
   result.afterRestore = await ids("exclude");
@@ -124,6 +130,11 @@ describe("MongoSessions archive filter against a real MongoDB", () => {
       only: ["shelved"],
       all: ["live", "shelved"],
       missing: null,
+      claim: true,
+      secondClaim: null,
+      claimLive: null,
+      restoreWhileClaimed: null,
+      releasedHasField: false,
       restoredHasField: false,
       afterRestore: ["live", "shelved"],
     });

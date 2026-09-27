@@ -105,11 +105,24 @@ class MongoSessions implements SessionsCollection {
 
   async setArchivedAt(id: string, archivedAt: string | null): Promise<Session | null> {
     const result = await this.col.findOneAndUpdate(
-      { _id: id },
+      archivedAt ? { _id: id } : { _id: id, formattingAt: { $exists: false } },
       archivedAt ? { $set: { archivedAt } } : { $unset: { archivedAt: "" } },
       { returnDocument: "after" },
     );
     return stripId<Session>(result);
+  }
+
+  async claimForFormat(id: string, nowIso: string): Promise<Session | null> {
+    const result = await this.col.findOneAndUpdate(
+      { _id: id, archivedAt: { $type: "string" }, formattingAt: { $exists: false } },
+      { $set: { formattingAt: nowIso } },
+      { returnDocument: "after" },
+    );
+    return stripId<Session>(result);
+  }
+
+  async releaseFormatClaim(id: string): Promise<void> {
+    await this.col.updateOne({ _id: id }, { $unset: { formattingAt: "" } });
   }
 
   async delete(id: string): Promise<boolean> {

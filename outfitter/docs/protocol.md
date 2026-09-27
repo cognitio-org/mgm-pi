@@ -404,7 +404,10 @@ wake -> ready summary. Runs created before `Run.startup` existed get no stamps a
   disables its GitHub token secret (`outfitter-github-token-<id>`; the api's custom role can't delete
   secrets). Mail it sent to other sessions and its `outfitter/<id>` branch stay. A
   `formattedSessions` record (`{id, formattedAt, formattedBy}`) keeps the id from being re-imported.
-  A second call is a 404; a leftover Cloud Tasks wake answers `none`.
+  It first claims the session (`formattingAt`), so a racing `/restore` answers 409 rather than
+  being overridden. Open `/stream`s for it are ended. A second call is a 404. Mail for a formatted
+  id (a leftover Cloud Tasks wake, a dead-letter bounce) is dropped without waking anything, and
+  `/wake` on it is a 404.
 - `GET|POST|PUT /api/gurus`, `/api/environments`
 - `GET /api/me` → `{email}` from `x-goog-iap-jwt-assertion` (dev: `OUTFITTER_DEV=1` → `dev@localhost`)
 - `POST /api/hooks/ngrok` → the E2.8 "optional push path": ngrok event subscription delivery for

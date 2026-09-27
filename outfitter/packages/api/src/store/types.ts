@@ -39,6 +39,9 @@ export interface Session {
    * GET /api/sessions by default and read-only: no wakes, no new mail, no teleport import, until
    * POST /restore clears it. Only an archived session can be formatted (deleted). */
   archivedAt?: string;
+  /** #208: set by DELETE /api/sessions/:id when it claims the session, just before erasing it.
+   * Restore refuses a session that has it, so a restore can't race a format. */
+  formattingAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -526,8 +529,14 @@ export interface SessionsCollection {
   findById(id: string): Promise<Session | null>;
   list(filter?: SessionListFilter): Promise<Session[]>;
   update(id: string, patch: Partial<Session>): Promise<Session | null>;
-  /** #207: sets archivedAt, or clears it for `null`. Returns the updated session, or null if it doesn't exist. */
+  /** #207: sets archivedAt, or clears it for `null`. Returns the updated session, or null if it
+   * doesn't exist -- or, when clearing, if it is being formatted (formattingAt). */
   setArchivedAt(id: string, archivedAt: string | null): Promise<Session | null>;
+  /** #208: atomically sets formattingAt on an archived session that isn't already being formatted.
+   * null if there is no such session (missing, restored, or claimed by another format). */
+  claimForFormat(id: string, nowIso: string): Promise<Session | null>;
+  /** Clears formattingAt again, for a format that gave up before erasing anything. */
+  releaseFormatClaim(id: string): Promise<void>;
   /** #208: removes the session document itself. false if there was none. */
   delete(id: string): Promise<boolean>;
 }

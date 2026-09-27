@@ -6,6 +6,7 @@ import { buildTestApp, seedGuru, type TestApp } from "./helpers.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { generateToken, hashToken, tokenPrefix } from "../src/tokens.ts";
 import { sessionGithubTokenSecretName } from "../src/operator.ts";
+import { SessionFormattedError } from "../src/runs.ts";
 import type { Mail, Run, Session, Store } from "../src/store/types.ts";
 
 const TASKS_AUTH = { authorization: "Bearer test-agent-token" };
@@ -156,6 +157,57 @@ describe("DELETE /api/sessions/:id (format)", () => {
     assert.equal((await app.fastify.inject({ method: "DELETE", url: "/api/gurus/old-tape" })).statusCode, 409);
     await format(app, "s1");
     assert.equal((await app.fastify.inject({ method: "DELETE", url: "/api/gurus/old-tape" })).statusCode, 204);
+    await app.fastify.close();
+  });
+
+  test("a dead-letter bounce to a formatted sender starts no drive and is dropped", async () => {
+    const app = await buildTestApp();
+    await insertSession(app.store, "gone", { archivedAt: ARCHIVED });
+    await format(app, "gone");
+
+    // What MailService.sweep posts when mail the formatted floppy sent runs out of attempts.
+    await app.mail.post({ id: "bounce", sessionId: "gone", from: { kind: "system" }, text: "not delivered" });
+    assert.equal(app.provider.startCalls.length, 0);
+    assert.equal(await app.store.mail.findById("bounce"), null);
+    await assert.rejects(app.runs.wake("gone"), SessionFormattedError);
+    assert.equal((await app.fastify.inject({ method: "POST", url: "/api/sessions/gone/wake" })).statusCode, 404);
+    await app.fastify.close();
+  });
+
+  test("a drive still starting when its floppy is formatted gets cancelled", async () => {
+    const app = await buildTestApp();
+    await insertSession(app.store, "s1");
+    // Archive stops the queued run (no handle yet), then Format erases the run row, all while the
+    // provider is still starting the sandbox.
+    const start = app.provider.start.bind(app.provider);
+    app.provider.start = async (launch) => {
+      const started = await start(launch);
+      await app.fastify.inject({ method: "POST", url: "/api/sessions/s1/archive" });
+      assert.equal((await format(app, "s1")).statusCode, 204);
+      return started;
+    };
+    await assert.rejects(app.runs.wake("s1"), SessionFormattedError);
+    assert.deepEqual(app.provider.stopCalls, ["noop-1"]);
+    await app.fastify.close();
+  });
+
+  test("a restore that races a format gets 409 once the format has claimed the floppy", async () => {
+    const app = await buildTestApp();
+    await insertSession(app.store, "s1", { archivedAt: ARCHIVED });
+    assert.ok(await app.store.sessions.claimForFormat("s1", new Date().toISOString()));
+    const restore = await app.fastify.inject({ method: "POST", url: "/api/sessions/s1/restore" });
+    assert.equal(restore.statusCode, 409);
+    assert.equal((await format(app, "s1")).statusCode, 204, "the claimed format still finishes");
+    await app.fastify.close();
+  });
+
+  test("a format that finds the drive still stopping releases its claim", async () => {
+    const app = await buildTestApp();
+    await insertSession(app.store, "s1", { archivedAt: ARCHIVED });
+    await insertRun(app.store, "s1", "stopping");
+    assert.equal((await format(app, "s1")).statusCode, 409);
+    assert.equal((await app.store.sessions.findById("s1"))?.formattingAt, undefined);
+    assert.equal((await app.fastify.inject({ method: "POST", url: "/api/sessions/s1/restore" })).statusCode, 200);
     await app.fastify.close();
   });
 });

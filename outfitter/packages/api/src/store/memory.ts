@@ -48,6 +48,15 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
+/** Deletes every row matching `pred`; returns how many went. */
+function deleteWhere<T>(rows: Map<string, T>, pred: (row: T) => boolean): number {
+  let count = 0;
+  for (const [id, row] of rows) {
+    if (pred(row) && rows.delete(id)) count++;
+  }
+  return count;
+}
+
 class MemorySessions implements SessionsCollection {
   private readonly rows = new Map<string, Session>();
 
@@ -79,11 +88,26 @@ class MemorySessions implements SessionsCollection {
 
   async setArchivedAt(id: string, archivedAt: string | null): Promise<Session | null> {
     const row = this.rows.get(id);
-    if (!row) return null;
+    if (!row || (!archivedAt && row.formattingAt)) return null;
     const { archivedAt: _previous, ...rest } = row;
     const next: Session = archivedAt ? { ...rest, archivedAt } : rest;
     this.rows.set(id, next);
     return clone(next);
+  }
+
+  async claimForFormat(id: string, nowIso: string): Promise<Session | null> {
+    const row = this.rows.get(id);
+    if (!row?.archivedAt || row.formattingAt) return null;
+    const next = { ...row, formattingAt: nowIso };
+    this.rows.set(id, next);
+    return clone(next);
+  }
+
+  async releaseFormatClaim(id: string): Promise<void> {
+    const row = this.rows.get(id);
+    if (!row) return;
+    const { formattingAt: _claim, ...rest } = row;
+    this.rows.set(id, rest);
   }
 
   async delete(id: string): Promise<boolean> {
@@ -242,11 +266,7 @@ class MemoryRuns implements RunsCollection {
   }
 
   async deleteForSession(sessionId: string): Promise<number> {
-    let count = 0;
-    for (const [id, row] of this.rows) {
-      if (row.sessionId === sessionId && this.rows.delete(id)) count++;
-    }
-    return count;
+    return deleteWhere(this.rows, (row) => row.sessionId === sessionId);
   }
 }
 
@@ -549,11 +569,7 @@ class MemoryMail implements MailCollection {
   }
 
   async deleteForSession(sessionId: string): Promise<number> {
-    let count = 0;
-    for (const [id, row] of this.rows) {
-      if (row.sessionId === sessionId && this.rows.delete(id)) count++;
-    }
-    return count;
+    return deleteWhere(this.rows, (row) => row.sessionId === sessionId);
   }
 }
 
@@ -750,11 +766,7 @@ class MemoryBrowserRequests implements BrowserRequestsCollection {
   }
 
   async deleteForSession(sessionId: string): Promise<number> {
-    let count = 0;
-    for (const [id, row] of this.tables.requests) {
-      if (row.sessionId === sessionId && this.tables.requests.delete(id)) count++;
-    }
-    return count;
+    return deleteWhere(this.tables.requests, (row) => row.sessionId === sessionId);
   }
 }
 
@@ -820,11 +832,7 @@ class MemoryBrowserCaptures implements BrowserCapturesCollection {
   }
 
   async deleteForSession(sessionId: string): Promise<number> {
-    let count = 0;
-    for (const [id, row] of this.tables.captures) {
-      if (row.sessionId === sessionId && this.tables.captures.delete(id)) count++;
-    }
-    return count;
+    return deleteWhere(this.tables.captures, (row) => row.sessionId === sessionId);
   }
 }
 

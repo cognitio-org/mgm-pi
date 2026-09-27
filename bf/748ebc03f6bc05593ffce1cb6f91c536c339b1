@@ -1,0 +1,59 @@
+outfitter/docs/protocol.md
+  s_9e985270e78a63::t_f391893a795fe9 68-71
+outfitter/deploy/test/gke-iam.test.sh
+  s_9e985270e78a63::t_e88922c5409bae 148
+  s_9e985270e78a63::t_6f09811e1aefd2 23-27,33,36-48,75-76,100,134-147,149-177
+outfitter/deploy/service.sh
+  s_9e985270e78a63::t_515a10d795ea2d 182-184
+outfitter/packages/api/src/auth.ts
+  s_9e985270e78a63::t_fb82b73d39a60a 23-26,141-143,158-160,164-176
+  s_9e985270e78a63::t_a2bfdb27624a71 177
+outfitter/packages/api/test/agentlink.test.ts
+  s_9e985270e78a63::t_ecad5f99b8668a 999-1003,1007,1024
+  s_9e985270e78a63::t_9cc2a7aaa6f872 996-998,1004-1006,1008-1023,1025-1040
+outfitter/deploy/gke-teardown.sh
+  s_9e985270e78a63::t_e88922c5409bae 153-154
+outfitter/deploy/gke/namespace.yaml
+  s_9e985270e78a63::t_515a10d795ea2d 2-6,18
+outfitter/deploy/gke-template.sh
+  s_9e985270e78a63::t_515a10d795ea2d 51-54
+outfitter/docs/specs/gke-sandbox-provider.md
+  s_9e985270e78a63::t_f391893a795fe9 297-299,303-307
+  s_9e985270e78a63::t_293bc14716ab09 308
+outfitter/packages/api/src/server.ts
+  s_9e985270e78a63::t_fb82b73d39a60a 136,138
+outfitter/packages/api/src/config.ts
+  s_9e985270e78a63::t_fb82b73d39a60a 41-44,270
+outfitter/deploy/env.sh
+  s_9e985270e78a63::t_515a10d795ea2d 461-508,549-553
+outfitter/packages/api/test/auth.test.ts
+  s_9e985270e78a63::t_9cc2a7aaa6f872 4-5,98-148
+  s_9e985270e78a63::t_4ff8dd0dfa506d 149
+outfitter/deploy/test/gke-template.test.sh
+  s_9e985270e78a63::t_a782a652052028 178,217-221
+  s_9e985270e78a63::t_e8d15894bda9e7 31-35
+  s_9e985270e78a63::t_300b73c1cfe066 222
+outfitter/packages/api/src/agentlink.ts
+  s_9e985270e78a63::t_fb82b73d39a60a 15,721,723,737-741
+  s_9e985270e78a63::t_3f828c7b0be7c1 742
+outfitter/deploy/gke-iam.sh
+  s_9e985270e78a63::t_773e894568e226 9,12-18,35-41,52-53,74-114,118-131
+outfitter/deploy/README.md
+  s_9e985270e78a63::t_f391893a795fe9 398-400,410-411,413-419
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "bf748ebc03f6bc05593ffce1cb6f91c536c339b1",
+  "prompts": {},
+  "sessions": {
+    "s_9e985270e78a63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "019f7f91-d886-47f5-9a90-f34314b7756e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

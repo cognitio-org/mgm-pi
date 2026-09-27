@@ -5,7 +5,7 @@ import { mkdtemp, copyFile, writeFile, readFile, mkdir } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { RunController, type LinkPort, type RunControllerDeps } from "../src/run.js";
+import { RunController, PREVIEW_IDLE_CAP_MS, previewActivityCounts, type LinkPort, type RunControllerDeps } from "../src/run.js";
 import { spawnPi, SessionTailer } from "../src/pi.js";
 import { writeSnapshotFile, emptySessionJsonl } from "../src/session.js";
 import { SandboxMemoryPeak } from "../src/sandbox-memory.js";
@@ -1376,6 +1376,68 @@ test("RunController: a GitHub repo and token pin insteadOf on pi and do not put 
   link.deliver({ t: "stop", reason: "done" });
   await waitFor(() => link.sent.some((m) => m.t === "bye"));
   assert.equal(await portOpen(port), false);
+});
+
+test("RunController: preview config starts the preview listener; the ngrok credential stays out of pi's env (#217)", async (t) => {
+  for (const withPreview of [true, false]) {
+    const workspace = await mkdtemp(join(tmpdir(), "outfitter-run-test-"));
+    const link = new FakeLink();
+    let spawnEnv: Record<string, string> | undefined;
+    const controller = new RunController({
+      link,
+      gitOps: fakeGitOps(),
+      workspace,
+      piBin: "unused-in-test",
+      agentdVersion: "test",
+      piVersion: "test",
+      heartbeatIntervalMs: 60_000,
+      spawnPi: (opts) => {
+        spawnEnv = opts.env;
+        return makeControllablePi();
+      },
+      importSession: async (_snapshotFile, _cwd, sessionId) => join(workspace, `${sessionId}.jsonl`),
+      writeSnapshotFile,
+      createTailer: () => ({ start() {}, stop() {}, poll: async () => {} }),
+      onLog: () => {},
+    });
+    t.after(() => controller.dispose());
+    link.deliver({
+      t: "run.spec",
+      session: { id: "sess-prev", name: "prev", cwd: "/workspace" },
+      guru: { model: "fake/model", env: { OUTFITTER_PREVIEW_PORT: "1", OUTFITTER_PREVIEW_TOKEN: "spoofed" } },
+      snapshot: { jsonl: emptySessionJsonl("sess-prev", "/workspace") },
+      secrets: withPreview ? { ngrokAuthtoken: "ngrok-secret-credential-value" } : {},
+      ...(withPreview ? { preview: { internalDomain: "rtest.internal" } } : {}),
+      idleStopSeconds: 3600,
+      checkpointEvery: "turn",
+    });
+    await waitFor(() => spawnEnv !== undefined);
+    const env = spawnEnv!;
+    if (withPreview) {
+      assert.match(env.OUTFITTER_PREVIEW_PORT ?? "", /^[0-9]+$/);
+      assert.notEqual(env.OUTFITTER_PREVIEW_PORT, "1");
+      assert.ok((env.OUTFITTER_PREVIEW_TOKEN ?? "").length > 16);
+      assert.notEqual(env.OUTFITTER_PREVIEW_TOKEN, "spoofed");
+      const res = await fetch(`http://127.0.0.1:${env.OUTFITTER_PREVIEW_PORT}/previews`, {
+        headers: { "x-outfitter-preview-token": env.OUTFITTER_PREVIEW_TOKEN! },
+      });
+      assert.deepEqual(await res.json(), { previews: [] });
+    } else {
+      // No preview config: guru.env's values are all pi gets; nothing listens for previews.
+      assert.equal(env.OUTFITTER_PREVIEW_TOKEN, "spoofed");
+    }
+    assert.ok(!Object.values(env).includes("ngrok-secret-credential-value"));
+    controller.dispose();
+  }
+});
+
+test("previewActivityCounts: browsing re-arms idle-stop only within the cap after the last chat activity", () => {
+  const cap = 2 * 60 * 60 * 1000;
+  assert.equal(PREVIEW_IDLE_CAP_MS, cap);
+  assert.equal(previewActivityCounts(10_000, 0, cap), true);
+  assert.equal(previewActivityCounts(cap - 1, 0, cap), true);
+  assert.equal(previewActivityCounts(cap, 0, cap), false);
+  assert.equal(previewActivityCounts(cap * 3, cap, cap), false);
 });
 
 test("RunController: browser capture is loopback-only and does not put OUTFITTER_TOKEN in the sandbox", async (t) => {

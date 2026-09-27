@@ -202,6 +202,25 @@ export interface UpBrowserInspectRequest {
   requestId: string;
 }
 
+/** The Drive `preview` tool asked for a public URL for a dev server (drive-previews.md, #217). agentd
+ * has already bound the ngrok internal endpoint `internalUrl` for it; the api creates the public
+ * `https://<id>.kernal.run` cloud endpoint forwarding there and answers `preview.result`. */
+export interface UpPreviewOpen {
+  t: "preview.open";
+  requestId: string;
+  port: number;
+  internalUrl: string;
+  /** An anonymous, time-boxed share link instead of the secure (session access) mode. */
+  share: boolean;
+}
+
+/** The preview on `port` ended (the tool closed it, its tunnel died, or the run is stopping): the api
+ * deletes its public endpoint. */
+export interface UpPreviewClose {
+  t: "preview.close";
+  port: number;
+}
+
 export type UpMessage =
   | UpHello
   | UpStatus
@@ -218,6 +237,8 @@ export type UpMessage =
   | UpGithubRequest
   | UpBrowserActionRequest
   | UpBrowserInspectRequest
+  | UpPreviewOpen
+  | UpPreviewClose
   | UpStartup;
 
 /** Up-messages that carry a `seq` and are subject to the buffer-until-ack contract. */
@@ -292,6 +313,17 @@ export interface RunSpecSecrets {
    * guru-supplied LITELLM_BASE_URL (already denylisted at the API/guru.ts level too) can never
    * redirect where the real key gets sent. */
   litellmBaseUrl?: string;
+  /** Drive previews (#217): a per-run ngrok credential whose ACL only lets it bind
+   * `*.<preview.internalDomain>` internal endpoints. agentd keeps it in a root-only config for the
+   * ngrok agent; it is never put in pi's environment. */
+  ngrokAuthtoken?: string;
+}
+
+/** Drive previews (#217). Present, with `secrets.ngrokAuthtoken`, only when the api can serve them;
+ * absent, agentd starts no preview listener and the tool says previews are unavailable. */
+export interface RunSpecPreview {
+  /** The run's internal ngrok domain, e.g. `r1a2b3c.internal`; previews bind `p<port>.<this>`. */
+  internalDomain: string;
 }
 
 export interface RunSpec {
@@ -305,6 +337,7 @@ export interface RunSpec {
   snapshot: RunSpecSnapshot;
   secrets: RunSpecSecrets;
   author?: RunSpecAuthor;
+  preview?: RunSpecPreview;
   idleStopSeconds: number;
   checkpointEvery: string;
 }
@@ -318,6 +351,7 @@ export interface DownRunSpec {
   snapshot: RunSpecSnapshot;
   secrets: RunSpecSecrets;
   author?: RunSpecAuthor;
+  preview?: RunSpecPreview;
   idleStopSeconds: number;
   checkpointEvery: string;
 }
@@ -443,6 +477,16 @@ export interface DownBrowserInspectResult {
   error?: string;
 }
 
+/** The answer to `preview.open`: the public URL (and, for a share link, when it expires), or an
+ * `error` (`not-configured`, or the api's reason). No transcript seq. */
+export interface DownPreviewResult {
+  t: "preview.result";
+  requestId: string;
+  url?: string;
+  expiresAt?: string;
+  error?: string;
+}
+
 export type DownMessage =
   | DownRunSpec
   | DownAck
@@ -462,7 +506,8 @@ export type DownMessage =
   | DownGithubResult
   | DownGithubCredential
   | DownBrowserActionResult
-  | DownBrowserInspectResult;
+  | DownBrowserInspectResult
+  | DownPreviewResult;
 
 // ---------- replies to diff/read (sent up as `entry`-less custom up-frames) ----------
 // protocol.md does not give these a `t`; agentd sends them as ad-hoc up-frames named after the

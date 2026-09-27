@@ -146,6 +146,13 @@ FROM ${NODE_IMAGE} AS runtime
 # even though nothing uses it yet; it is the single largest apt package here (~38 MB installed) so
 # it is worth revisiting if E6 ends up not needing it inside the sandbox (a guru could shell out to
 # the api's own GitHub broker instead of a local gh install).
+# ngrok: the agent behind Drive previews (docs/specs/drive-previews.md, #217). agentd starts one per
+# preview, binding an internal endpoint with the run's own ACL-restricted credential. From ngrok's
+# signed apt repository: apt checks the repo's InRelease signature against ngrok's key (signed-by)
+# and every package against the checksums in it. Pinned so a release can't change under a rebuild;
+# bump NGROK_VERSION deliberately. Egress it needs (TCP 443 to ngrok's edge) is already allowed:
+# deploy/gke/sandbox-template.yaml's egress rule for public addresses.
+ARG NGROK_VERSION=3.39.11
 RUN apt-get update \
   && apt-get install -y --no-install-recommends git ripgrep ca-certificates curl gnupg \
   && mkdir -p -m 755 /etc/apt/keyrings \
@@ -153,8 +160,12 @@ RUN apt-get update \
   && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
   && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
        > /etc/apt/sources.list.d/github-cli.list \
+  && curl -fsSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc -o /etc/apt/keyrings/ngrok.asc \
+  && chmod go+r /etc/apt/keyrings/ngrok.asc \
+  && echo "deb [signed-by=/etc/apt/keyrings/ngrok.asc] https://ngrok-agent.s3.amazonaws.com bookworm main" \
+       > /etc/apt/sources.list.d/ngrok.list \
   && apt-get update \
-  && apt-get install -y --no-install-recommends gh \
+  && apt-get install -y --no-install-recommends gh "ngrok=${NGROK_VERSION}" \
   && apt-get purge -y --auto-remove gnupg \
   && rm -rf /var/lib/apt/lists/*
 

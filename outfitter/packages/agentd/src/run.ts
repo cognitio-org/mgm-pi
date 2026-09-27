@@ -11,6 +11,7 @@ import { branchAllowed, DEFAULT_BRANCH_PREFIX, normalizeBranchPrefix } from "./b
 import { ActionListener } from "./browser-action.js";
 import { CaptureListener } from "./browser-capture.js";
 import { InspectListener } from "./browser-inspect.js";
+import { PreviewListener } from "./preview.js";
 import { renderGuru } from "./guru.js";
 import { discoverAppendSystemPromptFile } from "./append-system.js";
 import { attributionTrailers, authHeaderSecret, botIdentityEnv, sanitizeAuthor, type GitOps } from "./git.js";
@@ -182,11 +183,37 @@ export interface RunControllerDeps {
   githubSocketPath?: string;
   /** Injected by tests. Production uses playwright-check.ts's own spawn, which never throws. */
   spawnPlaywright?: PlaywrightSpawn;
+  /** Drive previews (#217): browsing a preview re-arms idle-stop only while the last chat turn is
+   * younger than this (default PREVIEW_IDLE_CAP_MS, 2 h), so a forgotten tab can't keep a Drive up. */
+  previewIdleCapMs?: number;
+  /** Drive previews: the ngrok binary (default `ngrok` on PATH). */
+  ngrokBin?: string;
+  /** Tests: replaces the real preview listener's tunnel start (preview.ts). */
+  previewStartTunnel?: ConstructorParameters<typeof PreviewListener>[0]["startTunnel"];
 }
 
 export type StateChangeHandler = (state: RunState, detail?: string) => void;
 
 const MAIL_RESPONSE_TIMEOUT_MS = 30_000;
+/** Drive previews (#217): how long after the last chat activity browsing a preview still re-arms
+ * idle-stop. main.ts reads PREVIEW_IDLE_CAP_MS to override it. */
+export const PREVIEW_IDLE_CAP_MS = 2 * 60 * 60 * 1000;
+
+/** Whether a preview page load at `now` may re-arm idle-stop: only while the last chat activity is
+ * younger than `capMs`. */
+export function previewActivityCounts(now: number, lastChatAt: number, capMs: number): boolean {
+  return now - lastChatAt < capMs;
+}
+
+/** The port in a loopback URL like the git proxy's `http://127.0.0.1:<port>/o/r.git`. */
+function portOf(url: string): number | undefined {
+  try {
+    const port = Number(new URL(url).port);
+    return Number.isInteger(port) && port > 0 ? port : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -263,6 +290,11 @@ export class RunController {
   private actionListener: ActionListener | undefined;
   /** Sibling loopback listener for browser_inspect. Same lifetime as the capture listener. */
   private inspectListener: InspectListener | undefined;
+  /** Loopback listener for the Drive `preview` tool (#217). Only when run.spec carries preview config. */
+  private previewListener: PreviewListener | undefined;
+  /** Last chat activity: a prompt/steer/follow-up/mail, a turn starting, or a turn settling. The
+   * reference for the preview idle cap. */
+  private lastChatAt = 0;
   /** E2.11: running sum of every outfitter-spend.ts log line's `usage` (pi's own per-message cost
    * estimate) seen so far this run -- sent as `spend.estimate` on every frame. */
   private costEstimate = 0;
@@ -426,6 +458,10 @@ export class RunController {
         // The inspect tool is waiting on its own loopback listener. No transcript row.
         this.inspectListener?.deliver(msg);
         return;
+      case "preview.result":
+        // The preview tool is waiting on its loopback listener for the public URL. No transcript row.
+        this.previewListener?.deliver(msg);
+        return;
     }
   }
 
@@ -514,6 +550,7 @@ export class RunController {
     // ...and the base64 form git carries in its auth header, in case a trace ever echoes it.
     if (spec.secrets.githubToken) this.deps.logger?.addSecret(authHeaderSecret(spec.secrets.githubToken));
     this.deps.logger?.addSecret(spec.secrets.litellmKey);
+    this.deps.logger?.addSecret(spec.secrets.ngrokAuthtoken);
 
     if (spec.repo) {
       this.setState("cloning");
@@ -678,6 +715,33 @@ export class RunController {
       this.deps.logger?.addSecret(inspects.token);
       secretEnv.OUTFITTER_BROWSER_INSPECT_PORT = String(inspects.port);
       secretEnv.OUTFITTER_BROWSER_INSPECT_TOKEN = inspects.token;
+    }
+    // Drive previews (#217): only when the api sent preview config. Port and token pinned after
+    // guru.env like the browser ones; the ngrok credential stays with agentd (a root-only config for
+    // the ngrok agent), never in pi's environment.
+    if (spec.preview?.internalDomain && spec.secrets.ngrokAuthtoken) {
+      const previews = new PreviewListener({
+        internalDomain: spec.preview.internalDomain,
+        authtoken: spec.secrets.ngrokAuthtoken,
+        peerUid: this.deps.runAsUser?.uid,
+        send: (frame) => this.deps.link.send(frame),
+        onActivity: () => this.markPreviewActivity(),
+        reservedPorts: () => [
+          this.captureListener?.port,
+          this.actionListener?.port,
+          this.inspectListener?.port,
+          this.gitProxy ? portOf(this.gitProxy.url) : undefined,
+        ],
+        ngrokBin: this.deps.ngrokBin,
+        startTunnel: this.deps.previewStartTunnel,
+        onLog: this.onLog,
+      });
+      this.previewListener = previews;
+      await previews.start();
+      if (previews.port === undefined) throw new Error("preview listener did not bind");
+      this.deps.logger?.addSecret(previews.token);
+      secretEnv.OUTFITTER_PREVIEW_PORT = String(previews.port);
+      secretEnv.OUTFITTER_PREVIEW_TOKEN = previews.token;
     }
     // Same pin as OUTFITTER_SESSION_ID: after guru.env, so a guru cannot point the broker
     // socket somewhere else. The token is not part of this overlay.
@@ -918,6 +982,7 @@ export class RunController {
         this.setState("running");
       }
     } else if (event.type === "agent_settled") {
+      this.lastChatAt = this.now();
       if (this.state === "checkpointing") {
         // Same deal: the turn settled while checkpointNow() was still in flight. Without tracking
         // this, checkpoint() would restore "running" once the checkpoint finishes even though pi
@@ -947,10 +1012,15 @@ export class RunController {
     this.actionListener = undefined;
     const inspects = this.inspectListener;
     this.inspectListener = undefined;
+    // Previews go with the run: every tunnel and proxy stops and each sends `preview.close` (before
+    // the `bye`, so the api deletes the public endpoints on a live socket).
+    const previews = this.previewListener;
+    this.previewListener = undefined;
     return Promise.all([
       listener ? listener.stop() : Promise.resolve(),
       actions ? actions.stop() : Promise.resolve(),
       inspects ? inspects.stop() : Promise.resolve(),
+      previews ? previews.stop() : Promise.resolve(),
     ]).then(() => undefined);
   }
 
@@ -982,8 +1052,21 @@ export class RunController {
     this.armIdleTimer();
   }
 
+  /** Someone loaded a preview page (#217). Browsing is working, so it re-arms idle-stop like a quiet
+   * `/command` does -- but only while the last chat activity is younger than the cap, so a tab left
+   * open can't keep a Drive billing. It never counts as chat activity itself. */
+  private markPreviewActivity(): void {
+    if (this.stopping) return;
+    if (!previewActivityCounts(this.now(), this.lastChatAt, this.deps.previewIdleCapMs ?? PREVIEW_IDLE_CAP_MS)) return;
+    if (this.state === "idle") {
+      this.idleSince = this.now();
+      this.armIdleTimer();
+    }
+  }
+
   private markActivity(): void {
     this.lastActivityAt = this.now();
+    this.lastChatAt = this.lastActivityAt;
     if (this.state === "idle") {
       // Activity while idle -- e.g. a `/command` prompt pi handles locally, or one it rejects
       // outright -- never produces agent_start/agent_settled, so nothing would otherwise re-arm

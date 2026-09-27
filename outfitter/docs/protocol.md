@@ -186,13 +186,15 @@ Up (agentd → api):
 | `github.request` | `reqId, op, args, idempotencyKey?` | agentd asks the api to run one GitHub operation for this session. Not seq/ack replayed — a dropped link retries the request; it is not replayed from `lastAckedSeq`. See "GitHub broker" |
 | `browser.action.request` | `requestId`, `kind` (`click` or `type`), `selector`, `text?` | the Drive's `browser_action` tool asked to click or type in the session's one shared tab. Same shape as capture: agentd mints `requestId` once, the api creates the browser-request row (with `kind` and the CSS `selector`; `text` only for `type`), or answers at once with `browser.action.result`. A selector that is not CSS, including raw JavaScript, is `rejected` and inserts nothing. The same `requestId` does not create a second row. This is not `browser_capture` |
 | `browser.inspect.request` | `requestId` | the Drive's `browser_inspect` tool asked to read the console and the element selected in DevTools on the session's one shared tab. No tab id. agentd mints `requestId` once. The api creates a browser-request row with `kind: "inspect"`, or answers at once with `browser.inspect.result`. The same `requestId` does not create a second row. This is not `browser_capture` and not `browser_action`. A body that names a tab id is not this frame |
+| `preview.open` | `requestId, port, internalUrl, share` | the Drive's `preview` tool asked for a public URL for a dev server on `port` (drive-previews.md, #217). agentd has already bound the ngrok internal endpoint `internalUrl` (`https://p<port>.<preview.internalDomain>`) behind a local proxy; the api creates the public `https://<id>.kernal.run` cloud endpoint forwarding there (secure, or an anonymous time-boxed link when `share`) and answers `preview.result`. agentd waits up to 30s and then tells the tool `timeout`. Not seq/ack replayed. **Phase 1:** the api answers every open `not-configured` (it sends no preview config yet); phase 2 creates the endpoints |
+| `preview.close` | `port` | the preview on `port` ended: the tool closed it, its ngrok agent died, or the run is stopping (sent before `bye`). The api deletes that preview's public endpoint. Not seq/ack replayed. **Phase 1:** ignored |
 | `startup` | `phases: [{name, ms}]` | when pi answers agentd's readiness probe ("pi ready"), and again after every reconnect until the run ends (the api keeps the first): agentd's start-up phases since `run.spec` arrived (`run.spec received`, `repo cloned`, `workspace restored`, `session import done`, `pi spawned`, `pi ready`), `ms` counted from `run.spec`. Not seq/ack replayed. See "Start-up timing" below |
 
 Down (api → agentd):
 
 | t | fields | effect |
 |---|---|---|
-| `run.spec` | `session {id, name, cwd:"/workspace"}, repo? {cloneUrl, branch, baseBranch, createBranch, branchPrefix?} (absent for non-coding sessions: agentd starts with an empty /workspace, or restores `workspace.snapshotUrl`), workspace? {snapshotUrl?}, guru {systemPrompt?, appendSystemPrompt?, model, thinking, tools?, excludeTools?, packages?, env?, playwrightBeforeCheckpoint?, allowExternalHtmlResources?}, snapshot {url?, jsonl?}, secrets {githubToken, litellmKey, litellmBaseUrl?}, author? {name, email, login?}, idleStopSeconds, checkpointEvery` | start the run |
+| `run.spec` | `session {id, name, cwd:"/workspace"}, repo? {cloneUrl, branch, baseBranch, createBranch, branchPrefix?} (absent for non-coding sessions: agentd starts with an empty /workspace, or restores `workspace.snapshotUrl`), workspace? {snapshotUrl?}, guru {systemPrompt?, appendSystemPrompt?, model, thinking, tools?, excludeTools?, packages?, env?, playwrightBeforeCheckpoint?, allowExternalHtmlResources?}, snapshot {url?, jsonl?}, secrets {githubToken, litellmKey, litellmBaseUrl?, ngrokAuthtoken?}, author? {name, email, login?}, preview? {internalDomain}, idleStopSeconds, checkpointEvery` | start the run. `preview` with `secrets.ngrokAuthtoken` (drive-previews.md, #217): agentd starts the preview listener and pins `OUTFITTER_PREVIEW_PORT`/`OUTFITTER_PREVIEW_TOKEN` for the tool; the credential (ACL `bind:*.<internalDomain>`) stays in a root-only ngrok config, never in pi's env. Absent: no previews |
 | `ack` | `seq` | agentd may drop buffered frames ≤ seq |
 | `prompt` | `text, images?, behavior?: "steer"\|"followUp"` | pi RPC `prompt` (with `streamingBehavior` if pi is busy) |
 | `steer` / `follow_up` | `text` | pi RPC same name |
@@ -209,7 +211,27 @@ Down (api → agentd):
 | `browser.action.result` | `requestId`, and either no `error` (the extension ran it) or `error` (`no_share`, `skipped`, `denied`, `rejected`, `not_found`, `permission_denied`, `tab_gone`, `not_editable`, `not_shared`) | answers `browser.action.request`. No transcript seq. Sent when there is no share, when the selector is rejected, when a pending action becomes `skipped`, or when the share owner reports the result (`POST .../actions/:requestId/result`). A repeat does not send it again. agentd waits up to 90s and then tells the tool `timeout`. Nothing runs in the page until the owner allows it, unless that share's switch for the kind is on |
 | `browser.inspect.result` | `requestId`, and either `messages` (redacted console lines) plus `element` (a short tag/id/class description, or null) or `error` (`no_share`, `skipped`, `denied`, `rejected`, `not_shared`, `tab_gone`, `permission_denied`, `debugger_attached`) | answers `browser.inspect.request`. No transcript seq. Sent when there is no share, when a pending inspect becomes `skipped`, or when the share owner reports the result (`POST .../inspects/:requestId/result`). Cookie and Authorization header values are stripped before this frame is sent. Raw network headers are not on it. A repeat does not send it again. agentd waits up to 90s and then tells the tool `timeout`. The debugger does not attach until the owner allows it |
 | `github.result` | `reqId, ok: boolean, data? \| error?` | answer to `github.request` with the same `reqId`. `ok: true` carries `data`; `ok: false` carries `error` (a string, no stack). Not seq/ack replayed |
+| `preview.result` | `requestId`, and either `url` (plus `expiresAt` for a share link) or `error` (`not-configured`, or the api's reason) | answers `preview.open`. No transcript seq. On an error agentd stops that preview's ngrok agent and proxy and sends `preview.close` |
 | `github.credential` | `token, expiresAt?` | a replacement GitHub credential for the git proxy and later checkpoint pushes. The api sends it on each hello, because a reconnect ignores a second `run.spec`, and again before a GitHub App installation token expires. Not seq/ack replayed. An agentd that does not know this frame ignores it |
+
+### Drive previews (#217)
+
+The Drive's `preview` tool (Kernal's `kernal-background`) calls agentd's loopback listener, header
+`x-outfitter-preview-token: $OUTFITTER_PREVIEW_TOKEN`, on `127.0.0.1:$OUTFITTER_PREVIEW_PORT` (the
+same loopback, token and peer-uid checks as the browser listeners):
+
+| call | answer |
+|---|---|
+| `POST /previews {port, jobId?, share?}` | `200 {url, port, expiresAt?}`, or `{error, detail}`: `nothing-listening` 409, `port-not-allowed` 400 (outside 1024–65535, or one of agentd's own ports), `not-configured` 503, `timeout` 504, `failed` 502 |
+| `DELETE /previews/<port>` | `200 {closed: true}`, idempotent |
+| `GET /previews` | `200 {previews: [{port, url, jobId?, share?, expiresAt?}]}` |
+
+Opening one: agentd checks something listens on `127.0.0.1:<port>`, starts a local proxy that
+forwards HTTP and WebSocket upgrades to that port only (Host rewritten to `localhost:<port>`), starts
+an ngrok agent binding `https://p<port>.<internalDomain>` to the proxy, then sends `preview.open`.
+A page load through the proxy (a navigation, or a request accepting HTML; never WebSocket or asset
+traffic) re-arms idle-stop while the last chat activity is younger than `PREVIEW_IDLE_CAP_MS`
+(default 2 h). Every preview closes with the run.
 
 ### GitHub broker (phase 3)
 

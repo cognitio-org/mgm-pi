@@ -47,6 +47,12 @@ function githubSocketPath(): string | undefined {
 
 /** `https://api.example.com` -> `wss://api.example.com/agent/ws?run=<runId>` (and http -> ws for
  * local dev). */
+/** A positive integer number of milliseconds from the environment, or undefined (use the default). */
+function positiveMs(raw: string | undefined): number | undefined {
+  const n = Number(raw);
+  return raw && Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+}
+
 export function buildWsUrl(apiOrigin: string, runId: string): string {
   const url = new URL(apiOrigin);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -254,6 +260,9 @@ async function main(): Promise<void> {
     },
     startupPhases: true,
     githubSocketPath: githubSocketPath(),
+    // Drive previews (#217): the listener itself only starts when run.spec carries preview config.
+    previewIdleCapMs: positiveMs(process.env.PREVIEW_IDLE_CAP_MS),
+    ngrokBin: process.env.OUTFITTER_NGROK_BIN || undefined,
   });
 
   controller.onStateChange((state) => logger.info("state change", { state }));

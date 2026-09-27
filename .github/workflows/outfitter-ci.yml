@@ -116,6 +116,8 @@ jobs:
             ! test -e /opt/kernal/.pi/extensions/kernal-voice
             ! test -e /opt/kernal/.pi/extensions/kernal-admin
             ! test -e /opt/kernal/.pi/npm/node_modules/open-codebase-index
+            # Drive previews (#217): agentd starts the ngrok agent; it must be the pinned version.
+            su agent -s /bin/sh -c "ngrok version" | tee /dev/stderr | grep -q "ngrok version 3\."
           '
       - name: pi-subagents loads as a bundle and still finds its own files (#142)
         run: |

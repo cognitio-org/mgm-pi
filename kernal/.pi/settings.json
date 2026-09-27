@@ -12,6 +12,7 @@
   ],
   "lastChangelogVersion": "0.87.0",
   "theme": "dark",
+  "httpIdleTimeoutMs": 1800000,
   "powerline": {
     "preset": "default",
     "welcome": false

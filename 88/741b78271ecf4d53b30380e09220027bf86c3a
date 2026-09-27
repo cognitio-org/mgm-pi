@@ -1,0 +1,65 @@
+outfitter/packages/api/src/agentlink.ts
+  s_e0bc7d6e875242::t_7f27741ec2df9b 1216-1226
+outfitter/docs/protocol.md
+  s_e0bc7d6e875242::t_fbebb658fea9aa 182
+outfitter/packages/api/docs/data-model.md
+  s_e0bc7d6e875242::t_4636cda81b3f74 84
+outfitter/packages/api/test/gke.test.ts
+  s_e0bc7d6e875242::t_d1aeeef4139601 504-586
+  s_e0bc7d6e875242::t_61f6623e1f6122 17
+outfitter/packages/provider-local/src/types.ts
+  s_e0bc7d6e875242::t_fb9f11e97052f6 54-64,71-73
+outfitter/packages/provider-local/src/index.ts
+  s_e0bc7d6e875242::t_1c2e2c513bae7a 7
+outfitter/packages/api/test/runs.test.ts
+  s_e0bc7d6e875242::t_512f01d0371d3e 14
+  s_e0bc7d6e875242::t_bf5fb2803880eb 210-228
+  s_e0bc7d6e875242::t_f985b6e67a4643 132-209,229-247
+outfitter/packages/api/src/server.ts
+  s_e0bc7d6e875242::t_f3647fa702a5d9 79-80
+outfitter/packages/api/src/runs.ts
+  s_e0bc7d6e875242::t_fa64811396f03b 309,315-359
+  s_e0bc7d6e875242::t_4529502c3c241b 60-81
+  s_e0bc7d6e875242::t_e7343ad7c1e543 40,43-44
+  s_e0bc7d6e875242::t_bc4dc1ba008981 229,239-265
+  s_e0bc7d6e875242::t_420ccc6e378dac 82-86
+  s_e0bc7d6e875242::t_f081a64f8b9dcd 283,289-290,302
+  s_e0bc7d6e875242::t_e70eacf6665fa3 360
+outfitter/packages/api/src/store/types.ts
+  s_e0bc7d6e875242::t_7bb304e4ff55c6 184-188
+outfitter/deploy/gke-iam.sh
+  s_e0bc7d6e875242::t_9061f6f33200f0 16-19
+  s_e0bc7d6e875242::t_5e80fbaf9c4b62 74-83
+outfitter/deploy/README.md
+  s_e0bc7d6e875242::t_605435aff5c0b1 344-351
+outfitter/deploy/gke/rbac.yaml
+  s_e0bc7d6e875242::t_5e7f1d6ca9d00f 2-7
+  s_e0bc7d6e875242::t_0efc9bcfd0207d 27-29
+outfitter/packages/api/src/providers/gke.ts
+  s_e0bc7d6e875242::t_8c3210b6fef4a5 21
+  s_e0bc7d6e875242::t_87cbe739ae8ed3 107-151
+  s_e0bc7d6e875242::t_d93f1e2d9299b1 535-566
+outfitter/packages/api/test/agentlink.test.ts
+  s_e0bc7d6e875242::t_2670c15bd96812 162
+  s_e0bc7d6e875242::t_1db37cea84a588 150-161
+  s_e0bc7d6e875242::t_2407f1664eb299 163
+  s_e0bc7d6e875242::t_9bcaac25e293d5 134-149,164-167
+outfitter/deploy/test/gke-iam.test.sh
+  s_e0bc7d6e875242::t_a7e581abf6a9d1 117-118
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "88741b78271ecf4d53b30380e09220027bf86c3a",
+  "prompts": {},
+  "sessions": {
+    "s_e0bc7d6e875242": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c37c9d46-795c-4cd1-835d-84b84570be9d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

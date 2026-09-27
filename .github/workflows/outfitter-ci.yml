@@ -115,21 +115,29 @@ jobs:
             ! test -e /opt/kernal/.pi/extensions/kernal-admin
             ! test -e /opt/kernal/.pi/npm/node_modules/open-codebase-index
           '
-      - name: pi-subagents loads as one bundled module and still finds its own files (#142)
+      - name: pi-subagents loads as a bundle and still finds its own files (#142)
         run: |
           docker run --rm --entrypoint sh outfitter-agent:ci -c '
             set -e
             pkg=/opt/kernal/.pi/npm/node_modules/pi-subagents
-            test -f "$pkg/index.bundle.js"
-            node -e "const p=require(\"$pkg/package.json\"); if (JSON.stringify(p.pi.extensions)!==JSON.stringify([\"./index.bundle.js\"])) { console.error(p.pi.extensions); process.exit(1); }"
+            test -f "$pkg/bundle/index.js"
+            node -e "const p=require(\"$pkg/package.json\"); if (JSON.stringify(p.pi.extensions)!==JSON.stringify([\"./bundle/index.js\"])) { console.error(p.pi.extensions); process.exit(1); }"
             home=$(getent passwd agent | cut -d: -f6)
             # /subagents-doctor runs locally (no model): it resolves the built-in agents dir, the runner
             # scripts and temp dirs through the rewritten import.meta.url paths. A broken rewrite loads
-            # fine but finds 0 agents, which is what this catches.
-            out=$( { printf "%s\n" "{\"id\":\"d\",\"type\":\"prompt\",\"message\":\"/subagents-doctor\"}"; sleep 8; } \
-              | su agent -s /bin/sh -c "cd /tmp && HOME=$home KERNAL_NO_DISCOVERY=1 timeout 60 /opt/kernal/node_modules/.bin/pi --mode rpc --no-session" 2>&1 ) || true
-            echo "$out" | grep -o "agents: total [0-9]* (builtin [0-9]*[^)]*)" || { echo "$out" | tail -40; exit 1; }
-            echo "$out" | grep -qE "builtin [1-9]"
+            # fine but finds 0 agents, which is what this catches. pi exits as soon as its stdin closes,
+            # without waiting for a running command, so stdin (a fifo) stays open until the report is
+            # out, or 60 s pass.
+            fifo=$(mktemp -u); mkfifo "$fifo"; out=$(mktemp); chmod 666 "$fifo" "$out"
+            su agent -s /bin/sh -c "cd /tmp && HOME=$home KERNAL_NO_DISCOVERY=1 timeout 90 /opt/kernal/node_modules/.bin/pi --mode rpc --no-session <$fifo >$out 2>&1" &
+            exec 3>"$fifo"
+            printf "%s\n" "{\"id\":\"d\",\"type\":\"prompt\",\"message\":\"/subagents-doctor\"}" >&3
+            i=0; while [ "$i" -lt 60 ] && ! grep -q "agents: total" "$out"; do sleep 1; i=$((i + 1)); done
+            exec 3>&-
+            wait || true
+            grep -q "agents: total" "$out" || { echo "no doctor report within 60 s:"; tail -40 "$out"; exit 1; }
+            grep -o "agents: total [0-9]* (builtin [0-9]*[^)]*)" "$out" | head -1
+            grep -qE "builtin [1-9]" "$out"
           '
       - name: agentd refuses to start without its run identity (and says so in structured JSON)
         run: |

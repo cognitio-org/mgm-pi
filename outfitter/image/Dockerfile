@@ -91,8 +91,9 @@ RUN npm ci --legacy-peer-deps --omit=dev --no-audit --no-fund --loglevel=error \
        pi-lsp pi-powerline-footer @codexstar/pi-listen open-codebase-index \
   && rm -rf node_modules/recheck-jar
 
-# pi-subagents as one module (#142): pi's loader evaluates its ~290 modules one by one, and under
-# gVisor that import took 4-16 s of every sandbox start (85-90% of extension loading). The bundle
+# pi-subagents bundled (#142): pi's loader evaluates its ~290 modules one by one, and under gVisor
+# that import took 4-16 s of every sandbox start (85-90% of extension loading). The bundle
+# (pi-subagents/bundle/, ~10 files, split so a subagent child process still loads only a tiny entry)
 # keeps every module's own import.meta.url, so its agents, prompts and runner scripts resolve as
 # before; the original files stay (the runner processes it spawns load them by path). esbuild is
 # installed only for this step, in a throwaway directory, and never reaches the runtime image.

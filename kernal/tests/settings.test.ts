@@ -39,6 +39,19 @@ const v2 = {
   theme: "dark",
 };
 
+describe("shipped settings", () => {
+  // pi aborts a model request after httpIdleTimeoutMs with no bytes (headers or body; undici's
+  // headersTimeout/bodyTimeout), default 5 min. A reasoning model that thinks silently, or a gateway
+  // that holds headers until the upstream answers, crosses that on a long turn -- in a laptop kernal
+  // and in every Outfitter sandbox, which renders this same file (outfitter/image/render-settings.sh).
+  test("raise pi's HTTP idle timeout well past its 5-minute default, without disabling it", () => {
+    const shipped = JSON.parse(readFileSync(join(root, ".pi", "settings.json"), "utf8"));
+    assert.equal(typeof shipped.httpIdleTimeoutMs, "number");
+    assert.ok(shipped.httpIdleTimeoutMs >= 20 * 60_000, "at least 20 min");
+    assert.ok(shipped.httpIdleTimeoutMs > 0, "0 would disable it: a dead connection would hang a turn forever");
+  });
+});
+
 describe("settings merge across an upgrade", () => {
   const { settings: s, kept } = mergeSettings(v1, user, v2);
 

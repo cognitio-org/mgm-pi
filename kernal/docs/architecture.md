@@ -69,6 +69,14 @@ model never sees or rewrites it): the first user message of the session, extensi
 messages (e.g. pi-memory notes) that pi's default compaction would drop, and anything you mark with
 `/pin <text>` or `/pin` (pins your last message).
 
+**Long model calls.** `.pi/settings.json` sets `httpIdleTimeoutMs: 1800000` (30 min). pi aborts a
+model request after that long with no bytes, headers or body alike (undici's `headersTimeout` and
+`bodyTimeout`), and its own default is 5 min: a reasoning model that thinks silently, or a gateway
+that holds headers until the upstream answers, crossed that on long turns. It isn't 0 (disabled), so a
+dead connection still ends. The Outfitter sandbox renders this same file (`outfitter/image/render-settings.sh`).
+Other limits on the path stay: pi's bash tool has no default timeout (only one the model passes), and
+the LiteLLM gateway's own load balancer and Cloud Run request timeouts are set where it's deployed.
+
 `.pi/settings.json` sets `compaction.keepRecentTokens: 6000` / `reserveTokens: 8192` only so pi's own
 preparation succeeds on small windows; the extension re-derives the real budgets from the model.
 **`/compaction` opens a settings dialog**: summarizer (list of authenticated models, cheapest first,

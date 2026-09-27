@@ -442,7 +442,14 @@ are running.
   jobs would stop the moment it ends.
 - A job runs as you, with your credentials. It is not a sandbox.
 - On a Drive (Outfitter) the same tool works, but a job doesn't keep the Drive awake and dies with the
-  sandbox. A server there is reachable by the agent only, until Drive previews (#217) land.
+  sandbox.
+
+**Previews.** When a server should be seen, the agent starts it with its `port` and then calls
+`preview` with the job id. On the desktop that is just `http://localhost:<port>`. In a Drive it is a
+private `https://<id>.kernal.run` link that only people with access to the session can open (Google
+sign-in), or, with `share: true`, a public link that expires; agentd runs the tunnel and the Outfitter
+api issues the link (`outfitter/docs/specs/drive-previews.md`). A preview closes when its job ends,
+and the end-of-job message says so.
 
 ## Subagents (`pi-subagents`)
 

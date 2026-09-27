@@ -9,7 +9,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { loadConfig } from "../src/config.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { NoopProvider } from "../src/providers/noop.ts";
-import { RunManager } from "../src/runs.ts";
+import { RunManager, silentRunDetail } from "../src/runs.ts";
 import type { Run } from "../src/store/types.ts";
 import type { SandboxProvider } from "@outfitter/provider-local";
 
@@ -149,6 +149,30 @@ describe("RunManager.reconcileOnce", () => {
     const stored = await store.runs.findById(run.id);
     assert.equal(stored?.state, "failed");
     assert.equal(stored?.reason, "no heartbeat");
+  });
+
+  test("#187: a silent run whose sandbox was near its memory limit is failed with an out-of-memory note", async () => {
+    const store = new MemoryStore();
+    const provider = new NoopProvider();
+    provider.nextStatus = "exited";
+    const runs = new RunManager(store, provider, loadConfig({} as NodeJS.ProcessEnv));
+    const staleAt = new Date(Date.now() - 20 * 60_000).toISOString();
+    const run = makeRun({ createdAt: staleAt, lastSeenAt: staleAt, providerHandle: "exec-1", sandboxMemPeakMb: 1900, sandboxMemLimitMb: 2048 });
+    await store.runs.insert(run);
+
+    await runs.reconcileOnce(60_000);
+
+    const stored = await store.runs.findById(run.id);
+    assert.equal(stored?.state, "failed");
+    assert.equal(stored?.reason, "no heartbeat");
+    assert.match(stored?.statusDetail ?? "", /memory reached 1900 MiB of its 2048 MiB limit/);
+    assert.match(stored?.statusDetail ?? "", /ran out of memory/);
+  });
+
+  test("#187: a silent run with memory well below its limit keeps the generic note", async () => {
+    assert.match(silentRunDetail({ sandboxMemPeakMb: 600, sandboxMemLimitMb: 2048 }), /stopped reporting to the api/);
+    assert.match(silentRunDetail({}), /stopped reporting to the api/);
+    assert.match(silentRunDetail({ sandboxMemPeakMb: 1700, sandboxMemLimitMb: 2048 }), /ran out of memory/, "83% counts");
   });
 
   test("never fails a run younger than the provisioning grace window, even if stale by heartbeat", async () => {

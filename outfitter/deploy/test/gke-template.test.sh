@@ -238,6 +238,16 @@ else
 fi
 
 FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
+  FAKE_JOB_LABELS="build-commit=${TAG}" \
+  expect fail "#187: a malformed GKE_SANDBOX_MEMORY refuses before touching the cluster" \
+  "GKE_SANDBOX_MEMORY must look like 4Gi" GKE_SANDBOX_MEMORY="4 GB"
+if [[ -s "${KUBECTL_CALLS}" ]]; then
+  echo "FAIL:   a bad GKE_SANDBOX_MEMORY must not reach kubectl"; fails=$((fails + 1))
+else
+  echo "ok:   ... and kubectl was never called"
+fi
+
+FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
   FAKE_JOB_LABELS="build-commit=${TAG}" FAKE_CURRENT_REPLICAS=2 \
   expect pass "happy path applies the template and pool, warms up, and labels build-commit" \
   "Done: SandboxTemplate/SandboxWarmPool at ${TAG}"
@@ -252,6 +262,9 @@ grep -q "cidr: 10.1.2.3/32" "${RENDERED_LOG}" \
 grep -q "namespace: outfitter-sandboxes" "${RENDERED_LOG}" \
   && echo "ok: GKE_NAMESPACE was substituted" \
   || { echo "FAIL: expected namespace: outfitter-sandboxes in the rendered YAML"; fails=$((fails + 1)); }
+[[ "$(grep -c 'memory: 4Gi,' "${RENDERED_LOG}")" == 2 ]] \
+  && echo "ok: #187: sandbox memory defaults to 4Gi, requests and limits alike" \
+  || { echo "FAIL: expected memory: 4Gi in both requests and limits"; grep -n "memory:" "${RENDERED_LOG}" | sed 's/^/    /'; fails=$((fails + 1)); }
 if grep -qE '\$\{[A-Z_][A-Z0-9_]*\}' "${RENDERED_LOG}"; then
   echo "FAIL: a template placeholder was left unrendered:"; grep -nE '\$\{[A-Z_][A-Z0-9_]*\}' "${RENDERED_LOG}" | sed 's/^/    /'
   fails=$((fails + 1))

@@ -31,6 +31,7 @@ import {
   type FileMtimes,
 } from "./workspace.js";
 import { runPlaywrightBeforeCheckpoint, type PlaywrightSpawn } from "./playwright-check.js";
+import { SandboxMemoryPeak } from "./sandbox-memory.js";
 import type {
   ByeReason,
   DownAbort,
@@ -146,6 +147,10 @@ export interface RunControllerDeps {
   restoreWorkspace?: typeof restoreWorkspace;
   checkpointWorkspaceTarball?: typeof checkpointWorkspaceTarball;
   heartbeatIntervalMs?: number;
+  /** #187: reads the sandbox's memory (sandbox-memory.ts); tests inject one. */
+  sandboxMemory?: SandboxMemoryPeak;
+  /** #187: how often to sample it between heartbeats. Default 5 s. */
+  memorySampleMs?: number;
   sigtermBudgetMs?: number;
   now?: () => number;
   onExit?: (code: number) => void;
@@ -239,6 +244,8 @@ export class RunController {
   private stateHandlers: StateChangeHandler[] = [];
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  private memorySampleTimer: ReturnType<typeof setInterval> | undefined;
+  private readonly sandboxMemory: SandboxMemoryPeak;
   private lastActivityAt = 0;
   private idleSince: number | undefined;
   private stopping = false;
@@ -284,6 +291,7 @@ export class RunController {
     this.onExit = deps.onExit ?? ((code) => process.exit(code));
     this.onLog = deps.onLog ?? (() => {});
     this.heartbeatIntervalMs = deps.heartbeatIntervalMs ?? 15_000;
+    this.sandboxMemory = deps.sandboxMemory ?? new SandboxMemoryPeak();
     this.sigtermBudgetMs = deps.sigtermBudgetMs ?? 8_000;
     this.deps.link.onMessage((msg) => this.handleDown(msg));
     this.deps.link.onOpen?.(() => {
@@ -1162,12 +1170,27 @@ export class RunController {
     this.heartbeatTimer = setInterval(() => {
       const idleSeconds = this.idleSince ? Math.floor((this.now() - this.idleSince) / 1000) : 0;
       const memMb = Math.round(process.memoryUsage().rss / (1024 * 1024));
-      this.deps.link.send({ t: "heartbeat", idleSeconds, memMb });
+      // #187: the whole sandbox's peak since the last heartbeat, not only agentd's own rss, so a
+      // run that is then OOM-killed has already told the api how close it came.
+      const sandbox = this.sandboxMemory.take();
+      this.deps.link.send({
+        t: "heartbeat",
+        idleSeconds,
+        memMb,
+        ...(sandbox ? { sandboxMemMb: sandbox.usedMb, sandboxMemLimitMb: sandbox.limitMb } : {}),
+      });
     }, this.heartbeatIntervalMs);
+    const sampleMs = this.deps.memorySampleMs ?? 5_000;
+    if (sampleMs < this.heartbeatIntervalMs) {
+      this.memorySampleTimer = setInterval(() => this.sandboxMemory.sample(), sampleMs);
+      this.memorySampleTimer.unref?.();
+    }
   }
 
   private stopHeartbeat(): void {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = undefined;
+    if (this.memorySampleTimer) clearInterval(this.memorySampleTimer);
+    this.memorySampleTimer = undefined;
   }
 }

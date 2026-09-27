@@ -23,6 +23,11 @@ if [[ -z "${GKE_CLUSTER:-}" ]]; then
 fi
 GKE_NAMESPACE="${GKE_NAMESPACE:-outfitter-sandboxes}"
 GKE_WARM_POOL="${GKE_WARM_POOL:-outfitter-agent}"
+GKE_SANDBOX_MEMORY="${GKE_SANDBOX_MEMORY:-4Gi}"
+# A Kubernetes quantity in Mi or Gi only: it lands unquoted in the template's resources, and a
+# typo there would fail the apply after link already moved to the new image.
+[[ "${GKE_SANDBOX_MEMORY}" =~ ^[1-9][0-9]*(Mi|Gi)$ ]] \
+  || { echo "gke-template: GKE_SANDBOX_MEMORY must look like 4Gi or 4096Mi, got '${GKE_SANDBOX_MEMORY}'" >&2; exit 1; }
 AR_REPO="${AR_REPO:-outfitter}"
 GKE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/gke" && pwd)"
 
@@ -63,8 +68,8 @@ RENDERED="$(mktemp -d)"
 register_cleanup "${RENDERED}"
 # OUTFITTER_LINK_ORIGIN is NOT a sandbox-template.yaml placeholder (the template must define no
 # static OUTFITTER_API -- see its header comment); it's only used below, for the warm-up claim.
-export IMAGE GKE_NAMESPACE GKE_WARM_POOL KUBE_DNS_SERVICE_IP
-envsubst '${IMAGE} ${GKE_NAMESPACE} ${KUBE_DNS_SERVICE_IP}' \
+export IMAGE GKE_NAMESPACE GKE_WARM_POOL KUBE_DNS_SERVICE_IP GKE_SANDBOX_MEMORY
+envsubst '${IMAGE} ${GKE_NAMESPACE} ${KUBE_DNS_SERVICE_IP} ${GKE_SANDBOX_MEMORY}' \
   <"${GKE_DIR}/sandbox-template.yaml" >"${RENDERED}/sandbox-template.yaml"
 envsubst '${GKE_WARM_POOL} ${GKE_NAMESPACE}' \
   <"${GKE_DIR}/warm-pool.yaml" >"${RENDERED}/warm-pool.yaml"

@@ -28,6 +28,32 @@ export function providerNameFor(run: Run, fallback: SandboxProviderName): Sandbo
   return fallback;
 }
 
+/** #187: a silent run whose sandbox had reached this share of its memory limit most likely died of
+ * it. agentd samples every 5 s and reports the peak every 15 s; the run #187 lost climbed ~500 MB a
+ * minute, so its last report before the kill sits well past this. */
+const OOM_LIKELY_SHARE = 0.8;
+
+/** The note for a run the reconciler fails because its sandbox went quiet. When agentd's last
+ * reports put the sandbox near its memory limit, say that, with the numbers: the OOM kill takes
+ * agentd down too, so nothing else will. */
+export function silentRunDetail(run: Pick<Run, "sandboxMemPeakMb" | "sandboxMemLimitMb">): string {
+  const peak = run.sandboxMemPeakMb;
+  const limit = run.sandboxMemLimitMb;
+  if (peak && limit && peak >= limit * OOM_LIKELY_SHARE) {
+    return (
+      `this run's sandbox stopped reporting after its memory reached ${peak} MiB of its ${limit} MiB limit, ` +
+      "so it most likely ran out of memory and was killed. Something the agent ran (a build, a test " +
+      "suite, an install) needed more than the sandbox has; asking it to run that with fewer workers " +
+      "can help. Press Play to start a new one: the conversation is kept."
+    );
+  }
+  return (
+    "this run's sandbox stopped reporting to the api, so the api gave up on it. It may have " +
+    "failed to start, been refused when it tried to connect (the server log for this run id " +
+    "says why), or died mid-run. Press Play to start a new one."
+  );
+}
+
 export class RunManager {
   private readonly store: Store;
   private readonly providers: SandboxProviders;
@@ -220,10 +246,7 @@ export class RunManager {
         // refuse()), so spend it on the three things that actually produce a silent sandbox --
         // including a connection the api itself refused before it could prove which run it was
         // (agentlink.ts's run-token check, which deliberately writes nothing on the run).
-        statusDetail:
-          "this run's sandbox stopped reporting to the api, so the api gave up on it. It may have " +
-          "failed to start, been refused when it tried to connect (the server log for this run id " +
-          "says why), or died mid-run. Press Play to start a new one.",
+        statusDetail: silentRunDetail(run),
         updatedAt: new Date().toISOString(),
       });
     }

@@ -333,6 +333,14 @@ otherwise). Runs started earlier finish on Cloud Run. Back to Cloud Run is step 
 `GKE_CLUSTER=` exported empty turns GKE off for one run; with it empty, a deploy ships byte-identical
 env vars to before GKE existed.
 
+**Sandbox size:** 1 vCPU and `GKE_SANDBOX_MEMORY` (default `4Gi` since #187, requests == limits) per
+pod, set in `config.env` and applied by the next release's `gke-template.sh`. The limit covers every
+process in the sandbox (gVisor's own share, pi, and whatever the agent runs); files don't count, since
+the rootfs overlay is disk-backed. At 2Gi a build or test suite OOM-killed a run mid-turn. agentd
+reports the sandbox's peak memory in each heartbeat, so a run killed that way is failed with an
+"ran out of memory" note that gives the numbers. The warm pool's `updateStrategy: Recreate` replaces
+idle warm pods with the new size when the template changes; a run already in progress keeps its pod.
+
 **Laptop prerequisite for hand deploys:** with GKE set up, every deploy script run by hand (`api.sh`,
 `link.sh`, `agent-job.sh`, `service.sh`, `MANUAL=1 ./release.sh`) checks the SandboxTemplate's
 `build-commit` label for skew, so the laptop needs `kubectl` and the auth plugin:

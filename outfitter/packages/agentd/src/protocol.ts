@@ -146,7 +146,12 @@ export interface UpCheckpoint {
 export interface UpHeartbeat {
   t: "heartbeat";
   idleSeconds: number;
+  /** agentd's own rss. */
   memMb: number;
+  /** #187: the whole sandbox's peak memory since the previous heartbeat, and its limit (cgroup
+   * inside gVisor). Absent when the runtime exposes neither; an older api ignores both. */
+  sandboxMemMb?: number;
+  sandboxMemLimitMb?: number;
 }
 
 export interface UpBye {

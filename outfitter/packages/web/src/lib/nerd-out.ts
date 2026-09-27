@@ -163,25 +163,48 @@ function lineKey(l: SandboxLogLine): string {
 }
 
 /**
- * Adds a freshly fetched newest page to the lines already shown: only lines not older than the
- * newest one held, and not already held at that same time. Returns the same array when nothing
- * is new, so a refresh that found nothing doesn't re-render.
+ * The lines already shown plus a fetched page, each line once, oldest first. A union, not an
+ * append: Cloud Logging can make a line readable after later ones (it lands in the middle), and a
+ * page can overlap what's held (Follow, or Load earlier after the log grew). Returns the same array
+ * when nothing is new, so a refresh that found nothing doesn't re-render.
  */
-export function mergeNewer(held: readonly SandboxLogLine[], fresh: readonly SandboxLogLine[]): readonly SandboxLogLine[] {
-  if (held.length === 0) return fresh.length ? fresh.slice() : held;
-  // By parsed time, not string order: RFC 3339 fractions vary in length. Lines within the newest
-  // millisecond are told apart by their content.
-  const newest = Date.parse(held[held.length - 1]!.time);
-  const atNewest = new Set<string>();
-  for (let i = held.length - 1; i >= 0 && Date.parse(held[i]!.time) >= newest; i--) atNewest.add(lineKey(held[i]!));
-  const added = fresh.filter((l) => {
-    const t = Date.parse(l.time);
-    return t > newest || (t === newest && !atNewest.has(lineKey(l)));
-  });
-  return added.length ? [...held, ...added] : held;
+export function mergeLines(held: readonly SandboxLogLine[], page: readonly SandboxLogLine[]): readonly SandboxLogLine[] {
+  const keys = new Set(held.map(lineKey));
+  const added: SandboxLogLine[] = [];
+  for (const l of page) {
+    const k = lineKey(l);
+    if (keys.has(k)) continue;
+    keys.add(k);
+    added.push(l);
+  }
+  if (added.length === 0) return held;
+  // By parsed time, not string order: RFC 3339 fractions vary in length. The sort is stable, so
+  // lines in the same millisecond keep their order.
+  return [...held, ...added].sort((a, b) => Date.parse(a.time) - Date.parse(b.time));
 }
 
-/** Plain text for the clipboard: one "time SEVERITY message" per line. */
+/** Whether a newest-first page reaches back to what's held: its oldest line is not newer than the
+ * newest held line. When it doesn't, lines in between are missing and the next page is needed. */
+export function pageReaches(held: readonly SandboxLogLine[], page: readonly SandboxLogLine[]): boolean {
+  if (held.length === 0 || page.length === 0) return true;
+  return Date.parse(page[0]!.time) <= Date.parse(held[held.length - 1]!.time);
+}
+
+/** Characters a line must not use to pass itself off as something else: line breaks (a fake next
+ * line), other C0/C1 controls (terminal escapes when copied) and bidi controls (reordered text). */
+const HIDDEN_CHARS = /\r\n|\n|\r|\t|[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+
+/** A message made safe to show and copy as one line: a line break becomes a visible "⏎", a tab
+ * two spaces, and any other control or bidi character its code, e.g. "\u001b" -> "<U+001B>". */
+export function displayMessage(message: string): string {
+  return message.replace(HIDDEN_CHARS, (ch) => {
+    if (ch === "\t") return "  ";
+    if (ch === "\n" || ch === "\r" || ch === "\r\n") return " ⏎ ";
+    return `<U+${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}>`;
+  });
+}
+
+/** Plain text for the clipboard: one "time SEVERITY message" per line, each message on one line. */
 export function linesToText(lines: readonly SandboxLogLine[]): string {
-  return lines.map((l) => `${l.time} ${l.severity} ${l.message}`).join("\n");
+  return lines.map((l) => `${l.time} ${l.severity} ${displayMessage(l.message)}`).join("\n");
 }

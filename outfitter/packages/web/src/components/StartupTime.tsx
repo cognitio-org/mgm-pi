@@ -1,16 +1,11 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { StartupSummary } from "../api/client.ts";
+import { providerLabel } from "../lib/nerd-out.ts";
 
 /** Run states in which the run's own start is still the one on screen. A stopped or failed run's
  * start is history; the next run brings its own. */
 const LIVE_STATES = new Set(["running", "idle", "stopping"]);
 
-const PROVIDER_LABELS: Record<string, string> = {
-  gke: "GKE",
-  cloudrun: "Cloud Run",
-  docker: "Docker",
-  inprocess: "local",
-};
 
 /** 4230 -> "4.2 s"; anything under a tenth of a second reads "<0.1 s" rather than "0.0 s". */
 export function formatSeconds(ms: number): string {
@@ -20,7 +15,7 @@ export function formatSeconds(ms: number): string {
 
 /** "GKE warm", "Cloud Run", "local cold", or "" when neither is known. */
 export function startupSource(startup: Pick<StartupSummary, "provider" | "warm">): string {
-  const provider = startup.provider ? (PROVIDER_LABELS[startup.provider] ?? startup.provider) : "";
+  const provider = startup.provider ? providerLabel(startup.provider) : "";
   const warmth = startup.warm === true ? "warm" : startup.warm === false ? "cold" : "";
   return [provider, warmth].filter(Boolean).join(" ");
 }

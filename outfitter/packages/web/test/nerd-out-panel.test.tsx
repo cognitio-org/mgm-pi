@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NerdOutPanel } from "../src/components/NerdOutPanel.tsx";
-import { FOLLOW_MS, LogViewerDialog } from "../src/components/LogViewerDialog.tsx";
+import { CATCH_UP_PAGES, FOLLOW_MS, LogViewerDialog } from "../src/components/LogViewerDialog.tsx";
 import type { SandboxDetail, SandboxLogLine } from "../src/api/client.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -142,7 +142,8 @@ describe("NerdOutPanel", () => {
     routes[`/api/sessions/s1/sandbox/metrics`] = () => ({ status: 200, body: { runId: RUN, series: { memoryMb: [], cpuCores: [], diskMb: [] } } });
     await mount(<NerdOutPanel sessionId="s1" runState="running" startup={null} onClose={() => {}} />);
     const picker = container!.querySelector<HTMLSelectElement>(".nerd-out-run-picker")!;
-    expect(picker.options).toHaveLength(2);
+    expect(picker.options).toHaveLength(3);
+    expect(picker.value).toBe("");
     await act(async () => {
       picker.value = OLD_RUN;
       picker.dispatchEvent(new Event("change", { bubbles: true }));
@@ -151,6 +152,37 @@ describe("NerdOutPanel", () => {
     const ended = container!.querySelector(".spec-row dd.is-danger");
     expect(ended?.textContent).toBe("OOMKilled · exit 137");
     expect(container!.textContent).toContain("out of memory");
+
+    // Back to "Latest run": follows the latest again, no id pinned.
+    calls = [];
+    await act(async () => {
+      picker.value = "";
+      picker.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flush();
+    expect(calls).toContain("/api/sessions/s1/sandbox");
+  });
+
+  it("keeps the charts when the run ends", async () => {
+    let state = "running";
+    let metricsCalls = 0;
+    routes[`/api/sessions/s1/sandbox`] = () => ({
+      status: 200,
+      body: detail({ run: { id: RUN, state, provider: "gke", createdAt: "2026-09-27T05:00:00Z" } }),
+    });
+    routes[`/api/sessions/s1/sandbox/metrics`] = () => {
+      metricsCalls++;
+      return metricsCalls === 1
+        ? { status: 200, body: { runId: RUN, podName: "p", series: { memoryMb: [["2026-09-27T05:00:00Z", 4000]], cpuCores: [], diskMb: [] } } }
+        : { status: 502, body: { error: "failed" } };
+    };
+    await mount(<NerdOutPanel sessionId="s1" runState="running" startup={null} onClose={() => {}} />);
+    expect(container!.querySelectorAll(".strip-chart")).toHaveLength(3);
+    state = "failed";
+    await act(async () => root!.render(<NerdOutPanel sessionId="s1" runState="failed" startup={null} onClose={() => {}} />));
+    await flush();
+    expect(metricsCalls).toBe(2);
+    expect(container!.querySelectorAll(".strip-chart")).toHaveLength(3);
   });
 
   it("says there's no run yet for a session that never ran", async () => {
@@ -219,6 +251,56 @@ describe("LogViewerDialog", () => {
     });
     await flush();
     expect([...document.querySelectorAll(".log-msg")].map((n) => n.textContent)).toEqual(["one", "two"]);
+  });
+
+  it("catches up across a burst, and marks a hole it can't fill", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
+    let newest: { lines: SandboxLogLine[]; nextPageToken?: string } = { lines: lines(["one"], 0) };
+    const older: Record<string, { lines: SandboxLogLine[]; nextPageToken?: string }> = {};
+    routes[`/api/sessions/s1/sandbox/logs?runId=${RUN}&pageToken=`] = () => {
+      const token = decodeURIComponent(calls[calls.length - 1]!.split("pageToken=")[1]!);
+      return { status: 200, body: { runId: RUN, untrusted: true, ...older[token]! } };
+    };
+    routes[`/api/sessions/s1/sandbox/logs?runId=${RUN}`] = () => ({ status: 200, body: { runId: RUN, untrusted: true, ...newest } });
+    await mount(<LogViewerDialog sessionId="s1" runId={RUN} live onClose={() => {}} />);
+
+    // Two pages arrive: the newest doesn't reach "one", the next page back does.
+    newest = { lines: lines(["four", "five"], 40), nextPageToken: "p2" };
+    older.p2 = { lines: lines(["two", "three"], 20), nextPageToken: "p3" };
+    older.p3 = { lines: lines(["one"], 0) };
+    await act(async () => {
+      vi.advanceTimersByTime(FOLLOW_MS);
+    });
+    await flush();
+    expect([...document.querySelectorAll(".log-msg")].map((n) => n.textContent)).toEqual(["one", "two", "three", "four", "five"]);
+    expect(document.querySelector(".log-viewer-earlier")).toBeNull();
+
+    // A burst longer than CATCH_UP_PAGES: the hole is said, not hidden.
+    newest = { lines: lines(["z"], 900), nextPageToken: "q1" };
+    for (let i = 1; i <= CATCH_UP_PAGES; i++) older[`q${i}`] = { lines: lines([`q${i}`], 900 - i * 10), nextPageToken: `q${i + 1}` };
+    await act(async () => {
+      vi.advanceTimersByTime(FOLLOW_MS);
+    });
+    await flush();
+    expect(document.querySelector(".log-viewer-status")?.textContent).toMatch(/were skipped/);
+  });
+
+  it("doesn't close when a selection is dragged out onto the backdrop", async () => {
+    routes[`/api/sessions/s1/sandbox/logs`] = () => ({ status: 200, body: { runId: RUN, untrusted: true, lines: lines(["one"]) } });
+    const onClose = vi.fn();
+    await mount(<LogViewerDialog sessionId="s1" runId={RUN} live={false} onClose={onClose} />);
+    const backdrop = document.querySelector<HTMLElement>(".log-viewer-backdrop")!;
+    const msg = document.querySelector<HTMLElement>(".log-msg")!;
+    act(() => {
+      msg.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      backdrop.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    act(() => {
+      backdrop.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      backdrop.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("explains a 503 and closes on Escape", async () => {

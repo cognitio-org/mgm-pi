@@ -93,8 +93,11 @@ export function SessionPage() {
   const chromePlace = useChromeCompanion(sessionId);
   const [splitTargets, setSplitTargets] = useState<{ id: string; name?: string }[]>([]);
   const [splitTarget, setSplitTarget] = useState("");
-  // #198: the "nerd out" panel, closed on every visit so it never crowds the transcript.
-  const [nerdOut, setNerdOut] = useState(false);
+  // #198: the "nerd out" panel, closed on every visit so it never crowds the transcript. Held as
+  // the session it was opened on, so moving to another session closes it in the same render --
+  // it never renders, or fetches, with one session's id and the other's run.
+  const [nerdOutFor, setNerdOutFor] = useState<string | null>(null);
+  const nerdOut = nerdOutFor === sessionId;
 
   // The route reuses this component when navigating from one session to another (App.tsx's
   // /sessions/:id has no key), so a pending send must not follow the user into the next session:
@@ -103,7 +106,6 @@ export function SessionPage() {
     setPendingSend(null);
     setLastProgressAt(Date.now());
     setCompact(false);
-    setNerdOut(false);
   }, [sessionId]);
 
   useEffect(() => {
@@ -526,7 +528,7 @@ export function SessionPage() {
               aria-expanded={nerdOut}
               aria-controls={nerdOut ? "nerd-out-panel" : undefined}
               title="Drive details, stats and logs"
-              onClick={() => setNerdOut((open) => !open)}
+              onClick={() => setNerdOutFor(nerdOut ? null : sessionId)}
             >
               Nerd out
             </button>
@@ -617,10 +619,11 @@ export function SessionPage() {
         {nerdOut && (
           <div id="nerd-out-panel" className="nerd-out-slot">
             <NerdOutPanel
+              key={sessionId}
               sessionId={sessionId}
               runState={runState}
               startup={streamStartup !== undefined ? streamStartup : session?.startup}
-              onClose={() => setNerdOut(false)}
+              onClose={() => setNerdOutFor(null)}
             />
           </div>
         )}

@@ -7,7 +7,9 @@ import {
   filterLines,
   formatMb,
   linesToText,
-  mergeNewer,
+  displayMessage,
+  mergeLines,
+  pageReaches,
   severityTag,
   shortImage,
   telemetryMessage,
@@ -98,24 +100,43 @@ describe("log lines", () => {
     expect(filterLines(lines, "  DISK ", "all").map((l) => l.message)).toEqual(["Disk low"]);
   });
 
-  it("merges only newer lines, telling apart lines in the same instant", () => {
-    const held = [line("2026-09-27T05:00:00.100Z", "a"), line("2026-09-27T05:00:01.000Z", "b")];
-    const fresh = [
-      line("2026-09-27T05:00:00.100Z", "a"),
-      line("2026-09-27T05:00:01Z", "b"),
-      line("2026-09-27T05:00:01.000Z", "b2"),
-      line("2026-09-27T05:00:02.5Z", "c"),
+  it("merges as a union in time order: overlaps once, late lines in place", () => {
+    const held = [line("2026-09-27T05:00:00.100Z", "a"), line("2026-09-27T05:00:03.000Z", "d")];
+    const page = [
+      line("2026-09-27T05:00:00.1Z", "a"),
+      line("2026-09-27T05:00:02Z", "late"),
+      line("2026-09-27T05:00:03.000Z", "d"),
+      line("2026-09-27T05:00:03.000Z", "d2"),
+      line("2026-09-27T05:00:04.5Z", "e"),
     ];
-    expect(mergeNewer(held, fresh).map((l) => l.message)).toEqual(["a", "b", "b2", "c"]);
+    expect(mergeLines(held, page).map((l) => l.message)).toEqual(["a", "late", "d", "d2", "e"]);
+    // Load earlier after the log grew: the older page overlaps what's held.
+    expect(mergeLines(held, [line("2026-09-27T04:59:59Z", "z"), held[0]!]).map((l) => l.message)).toEqual(["z", "a", "d"]);
   });
 
   it("returns the same array when nothing is new", () => {
     const held = [line("2026-09-27T05:00:00Z", "a")];
-    expect(mergeNewer(held, [line("2026-09-27T05:00:00Z", "a")])).toBe(held);
-    expect(mergeNewer([], [line("2026-09-27T05:00:00Z", "a")])).toHaveLength(1);
+    expect(mergeLines(held, [line("2026-09-27T05:00:00.000Z", "a")])).toBe(held);
+    expect(mergeLines([], [line("2026-09-27T05:00:00Z", "a")])).toHaveLength(1);
+  });
+
+  it("knows whether a page reaches back to the lines held", () => {
+    const held = [line("2026-09-27T05:00:10Z", "a")];
+    expect(pageReaches(held, [line("2026-09-27T05:00:10Z", "a"), line("2026-09-27T05:00:11Z", "b")])).toBe(true);
+    expect(pageReaches(held, [line("2026-09-27T05:00:12Z", "c")])).toBe(false);
+    expect(pageReaches([], [line("2026-09-27T05:00:12Z", "c")])).toBe(true);
+  });
+
+  it("shows a message on one line, with controls and bidi characters made visible", () => {
+    expect(displayMessage("ok\n2026-09-27T05:04:12Z INFO deploy approved")).toBe("ok ⏎ 2026-09-27T05:04:12Z INFO deploy approved");
+    expect(displayMessage("a\r\nb\rc\td")).toBe("a ⏎ b ⏎ c  d");
+    expect(displayMessage("\u001b[31mred")).toBe("<U+001B>[31mred");
+    expect(displayMessage("abc\u202Efdp.exe")).toBe("abc<U+202E>fdp.exe");
+    expect(displayMessage("plain ünïcode ✓")).toBe("plain ünïcode ✓");
   });
 
   it("copies as plain text", () => {
     expect(linesToText([line("t1", "<b>hi</b>", "WARNING")])).toBe("t1 WARNING <b>hi</b>");
+    expect(linesToText([line("t1", "x\nt2 INFO forged")])).toBe("t1 INFO x ⏎ t2 INFO forged");
   });
 });

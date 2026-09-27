@@ -3,19 +3,26 @@ import { api, type SandboxLogLine } from "../api/client.ts";
 import {
   filterLines,
   formatClock,
+  displayMessage,
   linesToText,
-  mergeNewer,
+  mergeLines,
+  pageReaches,
   severityTag,
   telemetryMessage,
   type LogLevel,
 } from "../lib/nerd-out.ts";
 
-const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])';
+// [tabindex] too: the log body is a focusable scroll region, so the keyboard can scroll it.
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 /** While the run is live and Follow is on, the newest page is re-read this often. The api caches a
  * page for 20 s, so faster would only re-read its cache. */
 export const FOLLOW_MS = 20_000;
 /** Within this many pixels of the bottom counts as "at the bottom": new lines keep it there. */
 const STICK_PX = 24;
+/** A refresh pages back this far to reach the lines already shown; past it, it says lines were
+ * skipped rather than read on. 5 pages of 100 in 20 s is far more than agentd writes. */
+export const CATCH_UP_PAGES = 5;
 
 const LEVELS: { id: LogLevel; label: string; title: string }[] = [
   { id: "all", label: "All", title: "Every line" },
@@ -35,7 +42,7 @@ const LogRow = memo(function LogRow({ line }: { line: SandboxLogLine }) {
       <span className={`log-sev log-sev-${sev.tone}`} title={line.severity}>
         {sev.tag}
       </span>
-      <span className="log-msg">{line.message}</span>
+      <span className="log-msg">{displayMessage(line.message)}</span>
     </div>
   );
 });
@@ -68,6 +75,8 @@ export function LogViewerDialog({
   const [wrap, setWrap] = useState(() => typeof window !== "undefined" && !!window.matchMedia?.("(max-width: 700px)").matches);
   const [follow, setFollow] = useState(true);
   const [copied, setCopied] = useState(false);
+  /** Set when a refresh couldn't reach back to the lines shown: the times of the hole. */
+  const [gap, setGap] = useState<{ after: string; before: string } | null>(null);
 
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -78,6 +87,12 @@ export function LogViewerDialog({
   /** What the next layout pass does to the scroll position: keep the view still after lines were
    * added above it, or go to the bottom. */
   const scrollIntent = useRef<{ kind: "bottom" } | { kind: "keep"; fromBottom: number } | null>(null);
+  const linesRef = useRef(lines);
+  linesRef.current = lines;
+  const refreshing = useRef(false);
+  /** A press on the backdrop itself: only then does the click that follows close the dialog, so a
+   * text selection dragged out past the edge doesn't. */
+  const pressedBackdrop = useRef(false);
 
   const atBottom = () => {
     const el = bodyRef.current;
@@ -110,20 +125,39 @@ export function LogViewerDialog({
     };
   }, [sessionId, runId]);
 
+  /** Re-reads the newest lines. When the newest page doesn't reach back to the lines shown (a burst
+   * since the last read), it pages back until it does, up to CATCH_UP_PAGES, and otherwise marks the
+   * hole. Everything is merged as a union, so a line Cloud Logging made readable late lands in place. */
   const refresh = useCallback(async () => {
+    if (refreshing.current) return;
+    refreshing.current = true;
     try {
-      const page = await api.sandboxLogs(sessionId, runId);
+      const held = linesRef.current;
+      let page = await api.sandboxLogs(sessionId, runId);
+      let fetched = page.lines;
+      let token = page.nextPageToken;
+      for (let n = 1; token && !pageReaches(held, fetched) && n < CATCH_UP_PAGES; n++) {
+        page = await api.sandboxLogs(sessionId, runId, token);
+        fetched = [...page.lines, ...fetched];
+        token = page.nextPageToken;
+      }
       const stick = atBottom();
-      setLines((held) => {
-        const next = mergeNewer(held, page.lines);
-        if (next !== held && stick) scrollIntent.current = { kind: "bottom" };
+      setLines((current) => {
+        const next = mergeLines(current, fetched);
+        if (next !== current && stick) scrollIntent.current = { kind: "bottom" };
         return next;
       });
-      // A first page that was empty had no token; one may exist now.
-      setOlderToken((token) => token ?? page.nextPageToken);
+      if (held.length === 0) {
+        // Nothing was shown (the first page was empty): the older pages are all unread.
+        setOlderToken((current) => current ?? token);
+      } else if (token && !pageReaches(held, fetched) && fetched.length > 0) {
+        setGap({ after: held[held.length - 1]!.time, before: fetched[0]!.time });
+      }
       setError(null);
     } catch (err) {
       setError(telemetryMessage(err, "Logs"));
+    } finally {
+      refreshing.current = false;
     }
   }, [sessionId, runId]);
 
@@ -140,7 +174,7 @@ export function LogViewerDialog({
       const page = await api.sandboxLogs(sessionId, runId, olderToken);
       const el = bodyRef.current;
       scrollIntent.current = { kind: "keep", fromBottom: el ? el.scrollHeight - el.scrollTop : 0 };
-      setLines((held) => [...page.lines, ...held]);
+      setLines((held) => mergeLines(held, page.lines));
       setOlderToken(page.nextPageToken);
       setError(null);
     } catch (err) {
@@ -214,7 +248,16 @@ export function LogViewerDialog({
   }
 
   return (
-    <div className="dialog-backdrop log-viewer-backdrop" onClick={onClose}>
+    <div
+      className="dialog-backdrop log-viewer-backdrop"
+      onMouseDown={(e) => {
+        pressedBackdrop.current = e.target === e.currentTarget;
+      }}
+      onClick={(e) => {
+        if (pressedBackdrop.current && e.target === e.currentTarget) onClose();
+        pressedBackdrop.current = false;
+      }}
+    >
       <div
         ref={dialogRef}
         className="dialog panel log-viewer"
@@ -294,6 +337,11 @@ export function LogViewerDialog({
         <div className="log-viewer-status" role="status">
           {error ? (
             <span className="log-viewer-error">{error}</span>
+          ) : gap ? (
+            <span className="log-viewer-error">
+              Lines between {formatClock(gap.after)} and {formatClock(gap.before)} were skipped (too many to catch up). Reopen the
+              log to read them.
+            </span>
           ) : (
             <span>
               {filtered ? `${shown.length} of ${lines.length} lines` : `${lines.length} lines`}

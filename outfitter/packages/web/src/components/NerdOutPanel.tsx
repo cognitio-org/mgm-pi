@@ -19,6 +19,9 @@ export const DETAIL_POLL_MS = 15_000;
 /** And the stats history, which Cloud Monitoring keeps per minute. */
 export const METRICS_POLL_MS = 60_000;
 
+/** The run can still have a sandbox: anything short of stopped or failed, queued and provisioning
+ * included (unlike StartupTime's LIVE_STATES, which is about a finished start being current). The
+ * api's routes/sandbox.ts isActive draws the same line. */
 export function isLiveRun(state: string): boolean {
   return state !== "stopped" && state !== "failed";
 }
@@ -65,6 +68,8 @@ export function NerdOutPanel({
   const [metrics, setMetrics] = useState<SandboxMetrics | null>(null);
   const [metricsError, setMetricsError] = useState<string | null>(null);
   const [logsOpen, setLogsOpen] = useState(false);
+  /** The pick changed and its details haven't arrived: what's shown is still the previous run. */
+  const [switching, setSwitching] = useState(false);
 
   const runId = detail?.run.id;
   const live = detail ? isLiveRun(detail.run.state) : false;
@@ -79,10 +84,12 @@ export function NerdOutPanel({
           if (cancelled) return;
           setDetail(d);
           setDetailError(null);
+          setSwitching(false);
         })
         .catch((err) => {
           if (cancelled) return;
           setDetailError(detailMessage(err, pickedRun === undefined));
+          setSwitching(false);
         });
     void load();
     return () => {
@@ -102,9 +109,14 @@ export function NerdOutPanel({
     return () => clearInterval(timer);
   }, [sessionId, runId, live]);
 
+  // A different run's history starts empty. Not on `live` flipping: the run that just ended keeps
+  // its charts (an OOM kill's climb is what the person came to see).
   useEffect(() => {
     setMetrics(null);
     setMetricsError(null);
+  }, [sessionId, runId]);
+
+  useEffect(() => {
     if (!runId || !gke) return;
     let cancelled = false;
     const load = () =>
@@ -144,15 +156,17 @@ export function NerdOutPanel({
           <select
             className="nerd-out-run-picker"
             aria-label="Run"
-            value={run?.id ?? ""}
+            value={pickedRun ?? ""}
             onChange={(e) => {
               setLogsOpen(false);
-              setPickedRun(e.target.value);
+              setSwitching(true);
+              // "" is the latest run, followed as new runs start; an id pins that run.
+              setPickedRun(e.target.value || undefined);
             }}
           >
-            {detail.runs.map((r, i) => (
+            <option value="">Latest run</option>
+            {detail.runs.map((r) => (
               <option key={r.id} value={r.id}>
-                {i === 0 ? "latest · " : ""}
                 {formatStamp(r.createdAt)} · {r.state}
               </option>
             ))}
@@ -235,7 +249,7 @@ export function NerdOutPanel({
                 </h3>
                 {!gke ? (
                   <p className="nerd-out-note">Stats history is kept for GKE drives only.</p>
-                ) : metricsError ? (
+                ) : metricsError && !metrics ? (
                   <p className="nerd-out-note">{metricsError}</p>
                 ) : !metrics ? (
                   <p className="nerd-out-note">LOADING…</p>
@@ -257,7 +271,7 @@ export function NerdOutPanel({
               </section>
             </div>
             <div className="nerd-out-actions">
-              <button type="button" className="btn" onClick={() => setLogsOpen(true)}>
+              <button type="button" className="btn" onClick={() => setLogsOpen(true)} disabled={switching}>
                 View logs
               </button>
               {detailError && <span className="nerd-out-note">{detailError}</span>}

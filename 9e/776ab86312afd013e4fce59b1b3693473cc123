@@ -1,0 +1,48 @@
+outfitter/packages/web/src/components/NerdOutPanel.tsx
+  s_e0bc7d6e875242::t_fb0fea8290fd34 8,85
+  s_e0bc7d6e875242::t_2a1d654d61da6a 1-7,9-84,86-273
+outfitter/packages/web/test/nerd-out.test.ts
+  s_e0bc7d6e875242::t_5c32d6f73850ff 1-121
+outfitter/packages/web/src/components/LogViewerDialog.tsx
+  s_e0bc7d6e875242::t_48dd039eece9ad 1-195,205-290,292-307
+  s_e0bc7d6e875242::t_e487e7461d1297 196-204,291
+outfitter/packages/web/src/styles/nerd-out.css
+  s_e0bc7d6e875242::t_9866810fb084b3 548-558
+  s_e0bc7d6e875242::t_ac05acdc68f18c 191-196,200-201
+  s_e0bc7d6e875242::t_34bbd0da16ce94 1-190,197-199,202-547
+outfitter/packages/web/test/nerd-out-panel.test.tsx
+  s_e0bc7d6e875242::t_cc341b2d0ce696 1-234
+outfitter/docs/design/README.md
+  s_e0bc7d6e875242::t_09cb330b397809 96-112
+outfitter/packages/web/src/style.css
+  s_e0bc7d6e875242::t_ac05acdc68f18c 13
+outfitter/packages/web/src/api/client.ts
+  s_e0bc7d6e875242::t_37a9cffb592266 219-274,484-500
+  s_e0bc7d6e875242::t_9d27f1fa7dfc60 501
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_e0bc7d6e875242::t_5c9d479a98ac88 26,96-97,106,523-526,528-532,617-626
+  s_e0bc7d6e875242::t_79fef5c8c6077d 527
+outfitter/packages/web/src/lib/nerd-out.ts
+  s_e0bc7d6e875242::t_89eb6a2ac7de52 110,172-174,176-180
+  s_e0bc7d6e875242::t_bcab71b862fcae 1-71,79-109,111-161,163-171,175,181-187
+  s_e0bc7d6e875242::t_64e4babb462f65 162
+  s_e0bc7d6e875242::t_fb0fea8290fd34 72-78
+outfitter/packages/web/src/components/StripChart.tsx
+  s_e0bc7d6e875242::t_18c6b39f32f29b 1-61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "9e776ab86312afd013e4fce59b1b3693473cc123",
+  "prompts": {},
+  "sessions": {
+    "s_e0bc7d6e875242": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c37c9d46-795c-4cd1-835d-84b84570be9d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

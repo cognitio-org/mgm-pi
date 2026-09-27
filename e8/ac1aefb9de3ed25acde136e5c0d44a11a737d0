@@ -4,20 +4,28 @@ outfitter/docs/protocol.md
   h_69b863911ebf05 216
 outfitter/packages/api/src/github-app.ts
   h_69b863911ebf05 15-16,22-23,54,59,62-67,250-256,261-262,279-281,296,298,305,308-309,313-330,332-333,335,340
+  s_9e985270e78a63::t_dc2a4ac4eb3fe9 72
+  s_9e985270e78a63::t_fbe14eadf33a1b 18-21,24-25,41-42,45-47,51-53,55-58,60-61,68-71,73,95-96,144-149,152,160-161,263,271-273,275-277,306-307,347-348,350,374,383-385,391,411,453-457,459-460,463-464
 outfitter/packages/api/src/github-broker.ts
   h_69b863911ebf05 264-271,273,276,278
+  s_9e985270e78a63::t_f305308210b5fc 280,282,284
 outfitter/packages/api/src/main.ts
   h_69b863911ebf05 9,30-32
 outfitter/packages/api/src/secrets.ts
   h_69b863911ebf05 6-14,16,35-40,71-74,130,142-149,156-157,183-186,189,203,485-541
+  s_9e985270e78a63::t_f305308210b5fc 15
 outfitter/packages/api/test/github-app.test.ts
   h_69b863911ebf05 84,88,90,471-584
+  s_9e985270e78a63::t_dcc8ce21608af0 406-441
+  s_9e985270e78a63::t_a5a28d5bbddd6b 253,258,269,273,279,285,292,302,309,336,343,354,361,382,389,399
+  s_9e985270e78a63::t_267ebd0a8e89ae 5-6
 outfitter/packages/api/test/github-broker.test.ts
   h_69b863911ebf05 520-548
 outfitter/packages/api/test/helpers.ts
   h_69b863911ebf05 8,58-60
 outfitter/packages/api/test/secrets.test.ts
   h_69b863911ebf05 8-9,336-410,417-490
+  s_9e985270e78a63::t_dfce29e2fe5b6b 411-416
 ---
 {
   "schema_version": "authorship/3.0.0",
@@ -27,6 +35,16 @@ outfitter/packages/api/test/secrets.test.ts
   "humans": {
     "h_69b863911ebf05": {
       "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  },
+  "sessions": {
+    "s_9e985270e78a63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "019f7f91-d886-47f5-9a90-f34314b7756e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
     }
   }
 }

@@ -134,6 +134,33 @@ describe("PreviewChips", () => {
     expect(container!.querySelector(".preview-chip-public")).toBeNull();
   });
 
+  it("a viewer who can't manage the floppy can copy a public link but not stop it; duplicates all show", async () => {
+    const PUB2 = { ...PUB, id: "c".repeat(32), url: `https://${"c".repeat(32)}.kernal.run` };
+    state = base({ canShare: false, previews: [PRIV, PUB, PUB2] });
+    await mount("running");
+    expect(container!.querySelectorAll(".preview-chip-public").length).toBe(2);
+    expect(document.querySelectorAll('[aria-label="Copy the public link"]').length).toBe(2);
+    expect(button("Stop")).toBeUndefined();
+  });
+
+  it("the confirm keeps Tab inside, and Escape closes it and returns focus to Share…", async () => {
+    await mount("running");
+    const opener = button("Share")!;
+    opener.focus();
+    await act(async () => opener.click());
+    const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]')!;
+    const inside = () => dialog.contains(document.activeElement);
+    for (let i = 0; i < 5; i++) {
+      await act(async () => dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true })));
+      expect(inside()).toBe(true);
+    }
+    await act(async () => dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true })));
+    expect(inside()).toBe(true);
+    await act(async () => dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(document.activeElement?.textContent).toContain("Share");
+  });
+
   it("a failed share goes to the page's error dialog", async () => {
     vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) =>
       init?.method === "POST"

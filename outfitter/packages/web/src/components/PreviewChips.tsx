@@ -41,13 +41,25 @@ export function PreviewChips({ sessionId, runState, onError }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const live = Boolean(runState && LIVE.has(runState));
+  /** The session the chips currently belong to: a response for another one (the page moved on while
+   * it was in flight) is dropped rather than shown under the wrong session. */
+  const current = useRef(sessionId);
+  const shareOpener = useRef<HTMLButtonElement | null>(null);
 
   const load = useCallback(async () => {
+    const asked = sessionId;
     try {
-      setState(await api.previews(sessionId));
+      const next = await api.previews(asked);
+      if (current.current === asked) setState(next);
     } catch {
       // A chip is a convenience: a failed poll keeps the last state and tries again later.
     }
+  }, [sessionId]);
+
+  useEffect(() => {
+    current.current = sessionId;
+    setState(null);
+    setSharing(null);
   }, [sessionId]);
 
   useEffect(() => {
@@ -59,7 +71,15 @@ export function PreviewChips({ sessionId, runState, onError }: Props) {
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") void load();
     }, PREVIEWS_REFRESH_MS);
-    return () => clearInterval(timer);
+    // Back to the tab: refresh at once rather than up to 15 s later.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [live, load]);
 
   if (!state?.enabled || state.previews.length === 0) return null;
@@ -92,10 +112,12 @@ export function PreviewChips({ sessionId, runState, onError }: Props) {
     <>
       {ports.map((port) => {
         const priv = state.previews.find((p) => p.port === port && !p.share);
-        const pub = state.previews.find((p) => p.port === port && p.share);
+        // Every public link, not just one: a rare duplicate (two instances racing) must still be
+        // visible and stoppable here.
+        const pubs = state.previews.filter((p) => p.port === port && p.share);
         return (
           <span className="preview-cluster" key={port}>
-            {priv && (
+            {priv && priv.url.startsWith("https://") && (
               <a
                 className="preview-chip"
                 href={priv.url}
@@ -106,8 +128,8 @@ export function PreviewChips({ sessionId, runState, onError }: Props) {
                 <span aria-hidden="true">↗</span> Preview :{port}
               </a>
             )}
-            {pub && (
-              <span className="preview-chip preview-chip-public" title={`Public link: anyone with it can open the app, ${untilLabel(pub.expiresAt ?? pub.createdAt)}.`}>
+            {pubs.map((pub) => (
+              <span key={pub.id} className="preview-chip preview-chip-public" title={`Public link: anyone with it can open the app, ${untilLabel(pub.expiresAt ?? pub.createdAt)}.`}>
                 Public link · {pub.expiresAt ? untilLabel(pub.expiresAt) : "open"}
                 <button type="button" className="chip-btn" onClick={() => copy(pub)} aria-label="Copy the public link">
                   {copied === pub.id ? "✓" : "⧉"}
@@ -118,9 +140,16 @@ export function PreviewChips({ sessionId, runState, onError }: Props) {
                   </button>
                 )}
               </span>
-            )}
-            {state.canShare && priv && !pub && (
-              <button type="button" className="chip-btn preview-share-btn" onClick={() => setSharing(port)}>
+            ))}
+            {state.canShare && priv && pubs.length === 0 && (
+              <button
+                type="button"
+                className="chip-btn preview-share-btn"
+                onClick={(e) => {
+                  shareOpener.current = e.currentTarget;
+                  setSharing(port);
+                }}
+              >
                 Share…
               </button>
             )}
@@ -133,7 +162,10 @@ export function PreviewChips({ sessionId, runState, onError }: Props) {
           port={sharing}
           maxSeconds={state.shareMaxSeconds}
           defaultSeconds={state.shareDefaultSeconds}
-          onCancel={() => setSharing(null)}
+          onCancel={() => {
+            setSharing(null);
+            shareOpener.current?.focus();
+          }}
           onShared={async () => {
             setSharing(null);
             await load();
@@ -166,11 +198,21 @@ export function ShareLinkDialog({ sessionId, port, maxSeconds, defaultSeconds, o
   const [working, setWorking] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
 
+  // Escape cancels, and Tab stays inside (FormatFloppyDialog's trap, plus the select): focus must
+  // not wander to the page behind the confirm that makes an app public.
   function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
-    if (e.key === "Escape" && !working) {
+    if (e.key === "Escape") {
       e.preventDefault();
-      onCancel();
+      if (!working) onCancel();
+      return;
     }
+    if (e.key !== "Tab" || !ref.current) return;
+    const items = [...ref.current.querySelectorAll<HTMLElement>("button:not(:disabled), select:not(:disabled)")];
+    if (items.length === 0) return;
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const next = items[(at + (e.shiftKey ? -1 : 1) + items.length) % items.length];
+    e.preventDefault();
+    next.focus();
   }
 
   async function confirm() {

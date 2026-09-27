@@ -526,7 +526,6 @@ export const api = {
     return request(`/api/sessions/${id}/diff`);
   },
 
-  /** #197: a run's sandbox. Without `runId`, the active run, else the latest. */
   previews(sessionId: string): Promise<PreviewsState> {
     return request(`/api/sessions/${encodeURIComponent(sessionId)}/previews`);
   },
@@ -542,6 +541,7 @@ export const api = {
     return request(`/api/sessions/${encodeURIComponent(sessionId)}/previews/${encodeURIComponent(previewId)}`, { method: "DELETE" });
   },
 
+  /** #197: a run's sandbox. Without `runId`, the active run, else the latest. */
   sandbox(id: string, runId?: string): Promise<SandboxDetail> {
     const qs = runId ? `?runId=${encodeURIComponent(runId)}` : "";
     return request(`/api/sessions/${id}/sandbox${qs}`);

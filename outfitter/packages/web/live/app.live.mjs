@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { chromium } from "playwright-core";
 import { LIVE, iapToken } from "./iap-token.mjs";
+import { finish, shot } from "./shots.mjs";
 
 // A fixed id, so a same-named Tape someone else made is never picked up; its settings are put back
 // on every run, so E2E_MODEL changes take effect and nobody's edits linger.
@@ -22,6 +23,9 @@ const REPLY_TIMEOUT_MS = Number(process.env.E2E_REPLY_TIMEOUT_MS ?? 6 * 60_000);
 const FLOPPY_PREFIX = "live-test ";
 // Where a failing test leaves a screenshot and the page's text (CI uploads it as an artifact).
 const ARTIFACTS = process.env.E2E_ARTIFACTS ?? "/tmp/outfitter-live";
+// Every step's screenshot, pass or fail, plus index.html (shots.mjs). CI uploads this on every run.
+const SHOTS = `${ARTIFACTS}/shots`;
+const STARTED_AT = new Date().toISOString();
 
 // A leftover from an earlier run is only erased once it's this old, so a run never erases the floppy
 // of another run happening at the same time (a local run during CI's, say).
@@ -55,6 +59,13 @@ before(async () => {
 });
 
 after(async () => {
+  // What was tested, for the gallery's heading (GET /api/version; absent on older deploys).
+  const version = context ? await api("GET", "/api/version").catch(() => undefined) : undefined;
+  await finish(SHOTS, {
+    origin: LIVE.origin,
+    startedAt: STARTED_AT,
+    ...(version?.status === 200 && version.body ? { release: version.body.release ?? undefined, commit: version.body.commit ?? undefined } : {}),
+  }).catch((err) => console.error("writing the screenshot gallery failed:", err));
   await browser?.close();
 });
 
@@ -70,12 +81,20 @@ async function api(method, path, data) {
   return { status: res.status(), body: json ? await res.json() : undefined };
 }
 
-/** Navigates, waits for `ready`, and checks no error dialog or uncaught page error showed up. */
-async function visit(page, path, ready) {
-  await page.goto(path);
-  await ready.waitFor();
-  assert.equal(await page.locator('[aria-labelledby="notice-title"], .bomb-dialog').count(), 0, `no error dialog on ${path}`);
-  assert.deepEqual(pageErrors, [], `no uncaught page errors on ${path}`);
+/** Navigates, waits for `ready`, checks no error dialog or uncaught page error showed up, and takes
+ * the step's screenshot (a FAILED one if any of that didn't hold). */
+async function visit(page, path, ready, testName, step) {
+  const own = [FLOPPY_PREFIX, TAPE_NAME]; // the suite's own floppies and Tape stay readable in shots
+  try {
+    await page.goto(path);
+    await ready.waitFor();
+    assert.equal(await page.locator('[aria-labelledby="notice-title"], .bomb-dialog').count(), 0, `no error dialog on ${path}`);
+    assert.deepEqual(pageErrors, [], `no uncaught page errors on ${path}`);
+  } catch (err) {
+    await shot(page, SHOTS, testName, `${step} (failed)`, { own, ok: false });
+    throw err;
+  }
+  await shot(page, SHOTS, testName, step, { own });
 }
 
 /** Archive (stops the drive), then format; retries while the drive is still stopping. */
@@ -100,11 +119,12 @@ test("IAP admits the live-test identity, and the app sees it as a plain user", a
 test("the main pages render without errors", async () => {
   const page = await context.newPage();
   const heading = (name) => page.getByRole("heading", { level: 2, name, exact: true });
-  await visit(page, "/fleet", heading("Disk Box"));
-  await visit(page, "/fleet?archived=only", heading("Archive"));
-  await visit(page, "/gurus", heading("Tapes"));
-  await visit(page, "/manual", page.locator("#glossary-heading"));
-  await visit(page, "/", page.locator(".desk-surface").first());
+  const t = "main pages";
+  await visit(page, "/fleet", heading("Disk Box"), t, "Disk Box");
+  await visit(page, "/fleet?archived=only", heading("Archive"), t, "Archive");
+  await visit(page, "/gurus", heading("Tapes"), t, "Tapes");
+  await visit(page, "/manual", page.locator("#glossary-heading"), t, "Manual");
+  await visit(page, "/", page.locator(".desk-surface").first(), t, "Desk");
   await page.close();
 });
 
@@ -133,6 +153,8 @@ test("a floppy: create, get a reply, archive, format", { skip: process.env.E2E_S
 
   const page = await context.newPage();
   const name = `${FLOPPY_PREFIX}${new Date().toISOString()}`;
+  // Its own floppy and Tape stay readable in the shots; everyone else's rows are masked.
+  const snap = (step) => shot(page, SHOTS, "floppy lifecycle", step, { own: [name, TAPE_NAME] });
   let floppyId;
   try {
     await page.goto("/fleet");
@@ -140,15 +162,19 @@ test("a floppy: create, get a reply, archive, format", { skip: process.env.E2E_S
     await page.locator("#ns-guru").selectOption(tape.id);
     await page.locator("#ns-name").fill(name);
     await page.locator("#ns-prompt").fill("Reply with exactly one word: pong");
+    await snap("New Floppy, filled in");
     await page.getByRole("button", { name: "Start session" }).click();
     await page.waitForURL(/\/sessions\/[0-9a-f-]{36}$/);
     floppyId = page.url().split("/").pop();
+    await snap("Session page, starting");
 
     // A cold Drive start plus one turn.
     await page.locator(".entry.assistant-text").first().waitFor({ timeout: REPLY_TIMEOUT_MS });
+    await snap("The reply arrived");
 
     await page.locator(".run-controls").getByRole("button", { name: "Archive" }).click();
     await page.locator(".archived-note").waitFor();
+    await snap("Archived");
     assert.equal((await api("GET", `/api/sessions/${floppyId}`)).body.archivedAt !== undefined, true);
 
     // Format answers 409 while the drive is still stopping; retry through the UI a few times.
@@ -162,7 +188,10 @@ test("a floppy: create, get a reply, archive, format", { skip: process.env.E2E_S
         page.locator(".bomb-dialog").waitFor().then(() => "failed"),
       ]);
       assert.notEqual(outcome, "failed", "format hit a system error");
-      if (outcome === "formatted") break;
+      if (outcome === "formatted") {
+        await snap("Formatted, back in the Archive");
+        break;
+      }
       assert.ok(attempt < 12, "format kept being refused");
       await page.getByRole("button", { name: "OK" }).click();
       await page.waitForTimeout(5_000);
@@ -171,6 +200,7 @@ test("a floppy: create, get a reply, archive, format", { skip: process.env.E2E_S
     floppyId = undefined;
     assert.deepEqual(pageErrors, [], "no uncaught page errors");
   } catch (err) {
+    await shot(page, SHOTS, "floppy lifecycle", "Failed here", { own: [name, TAPE_NAME], ok: false });
     await mkdir(ARTIFACTS, { recursive: true });
     await page.screenshot({ path: `${ARTIFACTS}/lifecycle.png`, fullPage: true }).catch(() => {});
     // The page text too, locally: CI uploads only the screenshot (the text can name other people's

@@ -60,8 +60,27 @@ jobs:
           E2E_SKIP_LIFECYCLE: ${{ inputs.skip_lifecycle && '1' || '' }}
           E2E_ARTIFACTS: ${{ runner.temp }}/outfitter-live
         run: npm run test:live -w @outfitter/web
-      # The screenshot only: the page's text can name other people's floppies, and artifacts are
-      # readable by anyone with repository read access.
+      # Every step's screenshot, pass or fail, with index.html to browse them (live/shots.mjs).
+      # Other people's floppies are masked in each shot before it's taken: artifacts are readable by
+      # anyone with repository read access.
+      - id: shots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: outfitter-live-screenshots
+          path: ${{ runner.temp }}/outfitter-live/shots/
+          if-no-files-found: ignore
+          retention-days: 14
+      - if: always() && steps.shots.outputs.artifact-url != ''
+        env:
+          SHOTS_URL: ${{ steps.shots.outputs.artifact-url }}
+        run: |
+          {
+            echo "### Live-test screenshots"
+            echo "[outfitter-live-screenshots](${SHOTS_URL}): unzip and open \`index.html\`. Kept 14 days; other people's floppies are masked."
+          } >> "$GITHUB_STEP_SUMMARY"
+      # The failure screenshot only: the page's text can name other people's floppies, and artifacts
+      # are readable by anyone with repository read access.
       - if: failure()
         uses: actions/upload-artifact@v4
         with:

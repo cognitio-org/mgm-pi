@@ -558,8 +558,12 @@ renders the main pages, and runs one floppy through create → reply → archive
 "e2e (live tests)" Tape (created on `E2E_MODEL`, default `litellm/gemini-3.5-flash-lite`). That's
 one short Drive run and one small LLM turn per deploy; `E2E_SKIP_LIFECYCLE=1` (or the dispatch
 checkbox) runs only the page smoke. Locally it mints its own token through gcloud configuration
-`outfitter` when `E2E_IAP_TOKEN` is unset. A failure leaves a screenshot and the page text as the
-`outfitter-live-failure` artifact.
+`outfitter` when `E2E_IAP_TOKEN` is unset. Every run, pass or fail, uploads a screenshot of each step
+as the `outfitter-live-screenshots` artifact (kept 14 days, linked from the run's summary): unzip it
+and open `index.html` for a gallery of the steps with pass or fail and timings. Each shot masks the
+rows of other people's floppies and Tapes before it's taken (`live/shots.mjs`), since artifacts are
+readable by anyone with repository read access; only what the suite made is readable. A failure
+also leaves its screenshot as `outfitter-live-failure`, and the page text locally.
 
 The app treats the account as an ordinary user: not a sysop, owner only of what it creates, but
 like every IAP member it can see and steer every session. It can't create `outf_` personal tokens

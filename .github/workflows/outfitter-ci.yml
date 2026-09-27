@@ -14,6 +14,39 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  gcloud-cache:
+    # Fills the Actions cache outfitter-deploy.yml restores gcloud (and its components) from. A
+    # deploy runs on a new outfitter-v* tag every time, and a tag's run can only read caches saved
+    # on that same tag or on the default branch, so the cache is written here, on main. Same key
+    # recipe as the deploy job; lookup-only, so a hit costs nothing and only a new gcloud version
+    # (or a changed component list) installs anything.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Which components the deploy installs
+        id: gke
+        working-directory: outfitter/deploy
+        run: ./gke-workflow-check.sh
+      - name: Resolve the gcloud version (cache key)
+        id: gcloud-version
+        run: |
+          v="$(curl -sf --max-time 20 https://dl.google.com/dl/cloudsdk/channels/rapid/components-2.json \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["version"])' || true)"
+          echo "version=${v}" >>"$GITHUB_OUTPUT"
+      - id: cache
+        if: steps.gcloud-version.outputs.version != ''
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.tool_cache }}/gcloud
+          key: gcloud-${{ runner.os }}-${{ runner.arch }}-${{ steps.gcloud-version.outputs.version }}-${{ steps.gke.outputs.components }}
+          lookup-only: true
+      - if: steps.gcloud-version.outputs.version != '' && steps.cache.outputs.cache-hit != 'true'
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          version: ${{ steps.gcloud-version.outputs.version }}
+          install_components: ${{ steps.gke.outputs.components }}
+
   test:
     runs-on: ubuntu-24.04
     defaults: { run: { working-directory: outfitter } }

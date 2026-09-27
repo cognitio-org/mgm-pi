@@ -90,8 +90,27 @@ jobs:
         id: gke
         working-directory: outfitter/deploy
         run: ./gke-workflow-check.sh
+      # gcloud and its components come from the Actions cache when this exact version has been
+      # installed before: downloading the SDK and installing beta/kubectl/gke-gcloud-auth-plugin
+      # took about a minute of every deploy. setup-gcloud looks in the runner's tool cache for the
+      # version it's given before downloading, so the version is resolved once here (the same
+      # "latest" feed) and both the cache key and setup-gcloud use it. A new gcloud release is a new
+      # key: one run installs it in full, and the ones after reuse it. If the feed can't be read,
+      # the version is empty and setup-gcloud falls back to its own "latest", as before.
+      - name: Resolve the gcloud version (cache key)
+        id: gcloud-version
+        run: |
+          v="$(curl -sf --max-time 20 https://dl.google.com/dl/cloudsdk/channels/rapid/components-2.json \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["version"])' || true)"
+          echo "version=${v}" >>"$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        if: steps.gcloud-version.outputs.version != ''
+        with:
+          path: ${{ runner.tool_cache }}/gcloud
+          key: gcloud-${{ runner.os }}-${{ runner.arch }}-${{ steps.gcloud-version.outputs.version }}-${{ steps.gke.outputs.components }}
       - uses: google-github-actions/setup-gcloud@v2
         with:
+          version: ${{ steps.gcloud-version.outputs.version || 'latest' }}
           # env.sh public_origin lists domain mappings with `gcloud beta run domain-mappings`.
           # kubectl and gke-gcloud-auth-plugin only when config.env has GKE_CLUSTER set: gke-
           # template.sh (release.sh's step between the Job and link) then gets a kubeconfig via

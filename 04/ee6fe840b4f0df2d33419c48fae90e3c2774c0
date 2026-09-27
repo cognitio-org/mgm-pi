@@ -1,0 +1,41 @@
+outfitter/docs/protocol.md
+  s_63cfee548f82b0::t_3bf024cbf2aeb0 401-407,441
+outfitter/packages/api/src/store/types.ts
+  s_63cfee548f82b0::t_d7132c0441b22a 370-371,531-546,564-565,612-613,722-723,771-772,787-788,804
+  s_63cfee548f82b0::t_3bf024cbf2aeb0 16
+outfitter/packages/api/test/format.test.ts
+  s_63cfee548f82b0::t_b4a94df4179b46 1-52,54-161
+  s_63cfee548f82b0::t_a9c4f481a72518 53
+outfitter/packages/api/test/stop.test.ts
+  s_63cfee548f82b0::t_716d4d694547c5 306,321
+outfitter/EPIC.md
+  s_63cfee548f82b0::t_3bf024cbf2aeb0 188
+outfitter/packages/api/src/store/memory.ts
+  s_63cfee548f82b0::t_e0ce704ddf9e26 42-43
+  s_63cfee548f82b0::t_d7132c0441b22a 88-91,131-137,243-250,550-557,636-639,751-758,821-841,857
+outfitter/packages/api/src/store/mongo.ts
+  s_63cfee548f82b0::t_d7132c0441b22a 114-117,165-168,285-288,657-660,780-783,948-951,1023-1042,1058,1077
+  s_63cfee548f82b0::t_e0ce704ddf9e26 43-44
+outfitter/packages/api/test/mongo-sessions.test.ts
+  s_63cfee548f82b0::t_5c4ea1d2e10fcd 1-4,15,44-56,58-93,131-140
+  s_63cfee548f82b0::t_7dc301f1008cf4 57,141-142
+outfitter/packages/api/src/routes/sessions.ts
+  s_63cfee548f82b0::t_3bf024cbf2aeb0 380
+  s_63cfee548f82b0::t_6dbc8c80046ad1 242-243,474-503
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "04ee6fe840b4f0df2d33419c48fae90e3c2774c0",
+  "prompts": {},
+  "sessions": {
+    "s_63cfee548f82b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2abd665b-152d-4945-bee0-e1f672204de7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

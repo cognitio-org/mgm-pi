@@ -75,6 +75,9 @@ chmod +x "${WORK}/bin/gcloud"
 
 export PATH="${WORK}/bin:${PATH}"
 export GCLOUD_CALLS="${WORK}/gcloud-calls" OUTFITTER_LINK_ORIGIN=https://outfitter-link-abc.run.app
+# GITHUB_REF_NAME/OUTFITTER_RELEASE too: in the release workflow the ref is the outfitter-v* tag, and
+# service.sh would add OUTFITTER_RELEASE to the baseline list below (the release case sets it itself).
+unset GITHUB_REF_NAME OUTFITTER_RELEASE
 unset GITHUB_ACTIONS ROLLBACK ALLOW_OFF_MAIN ALLOW_SKEW ALLOW_ORIGIN_CHANGE GKE_CLUSTER \
   CLOUD_TASKS_QUEUE TASKS_SA_EMAIL DEPLOY_ALL_COMMIT
 : >"${GCLOUD_CALLS}"

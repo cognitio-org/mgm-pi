@@ -13,7 +13,7 @@ export interface Session {
   id: string;
   name?: string;
   /** Email of the caller who created this session (req.identity.email at POST /api/sessions time).
-   * Recorded but not yet enforced -- finding #5 in docs/reports/security-review-pr1.md flags that
+   * Enforced only for archive, restore and format (#207, routes/sessions.ts canManageSession) -- finding #5 in docs/reports/security-review-pr1.md flags that
    * every session route is open to every authenticated domain user today with no ownership check;
    * whether to add one is an open decision, tracked in EPIC.md under E2.2. */
   ownerEmail?: string;
@@ -35,6 +35,10 @@ export interface Session {
    * repo session reports branch/head (and maybe snapshotUrl); a repo-less session reports
    * workspaceUrl instead (protocol.md's agentd<->api `checkpoint` row). */
   checkpoint?: { branch?: string; head?: string; snapshotUrl?: string; workspaceUrl?: string };
+  /** #207: when the owner or a sysop archived this floppy. An archived session is hidden from
+   * GET /api/sessions by default and read-only: no wakes, no new mail, no teleport import, until
+   * POST /restore clears it. Only an archived session can be formatted (deleted). */
+  archivedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -510,6 +514,9 @@ export interface ProvidersCollection {
 export interface SessionListFilter {
   status?: string;
   guruId?: string;
+  /** #207: "exclude" hides archived sessions, "only" returns just them. Omitted (or "all") returns
+   * both -- what internal callers such as the Tape and secret reference guards need. */
+  archived?: "exclude" | "only" | "all";
 }
 
 export interface SessionsCollection {
@@ -517,6 +524,8 @@ export interface SessionsCollection {
   findById(id: string): Promise<Session | null>;
   list(filter?: SessionListFilter): Promise<Session[]>;
   update(id: string, patch: Partial<Session>): Promise<Session | null>;
+  /** #207: sets archivedAt, or clears it for `null`. Returns the updated session, or null if it doesn't exist. */
+  setArchivedAt(id: string, archivedAt: string | null): Promise<Session | null>;
 }
 
 export interface EntriesCollection {

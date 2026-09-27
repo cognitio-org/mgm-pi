@@ -4,7 +4,7 @@
 // agentlink.ts, where the sockets are; this module owns posting, agent sends, and the wake side.
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import type { Store, Mail, MailSender, PiEntry } from "./store/types.ts";
+import type { Store, Mail, MailSender, PiEntry, Session } from "./store/types.ts";
 import type { RunManager } from "./runs.ts";
 
 export const MAIL_LEASE_MS = 60_000;
@@ -29,6 +29,9 @@ export function mailHeldFailureNotice(detail: string): string {
     .replace(/[.\s]+$/, "");
   return `Messages held: ${reason}. Press Retry once that's fixed.`;
 }
+
+/** #207: Mail.heldDetail for mail held because its session was archived. Restore, then Retry. */
+export const MAIL_HELD_ARCHIVED = "this floppy is archived; restore it first";
 
 /** The notice for a session's held mail: the run failure it's held for, or a deploy mismatch. */
 export function mailHeldNotice(heldDetail: string | undefined): string {
@@ -200,8 +203,14 @@ export class MailService {
    * message doesn't buy three more doomed Cloud Run executions.
    */
   async wakeForMail(sessionId: string): Promise<"active" | "none" | "woken" | "held"> {
-    if (await this.store.runs.findActiveForSession(sessionId)) return "active";
     const now = new Date().toISOString();
+    // #207: an archived session never wakes. Its mail is parked, not dropped, so the Cloud Tasks
+    // wake and the /tick sweep stop retrying; Retry after a restore delivers it.
+    if ((await this.store.sessions.findById(sessionId))?.archivedAt) {
+      await this.store.mail.holdSession(sessionId, now, MAIL_HELD_ARCHIVED);
+      return "held";
+    }
+    if (await this.store.runs.findActiveForSession(sessionId)) return "active";
     if (!(await this.store.mail.hasDeliverable(sessionId, now, MAIL_MAX_ATTEMPTS))) return "none";
     const held = await this.store.mail.holdIfStuck(sessionId, now, MAIL_MAX_ATTEMPTS, MAIL_MAX_UNVALIDATED_WAKES);
     if (held > 0) {
@@ -281,11 +290,13 @@ export class MailService {
     const text = typeof data.text === "string" ? data.text : "";
 
     let problem: string | undefined;
+    let recipient: Session | null;
     if (!to || !text.trim()) problem = "a send needs both `to` and non-empty `text`";
     else if (to.length > MAIL_MAX_TO) problem = `\`to\` is over ${MAIL_MAX_TO} characters`;
     else if (text.length > MAIL_MAX_TEXT) problem = `the message is over ${MAIL_MAX_TEXT} characters`;
     else if (to === fromSessionId) problem = "a session can't message itself";
-    else if (!(await this.store.sessions.findById(to))) problem = `there is no session "${to}"`;
+    else if (!(recipient = await this.store.sessions.findById(to))) problem = `there is no session "${to}"`;
+    else if (recipient.archivedAt) problem = `session "${to}" is archived`;
     else if ((await this.store.mail.countSentSince(fromSessionId, new Date(Date.now() - 3_600_000).toISOString())) >= MAIL_SENDS_PER_HOUR) {
       problem = `this session has sent ${MAIL_SENDS_PER_HOUR} messages in the last hour, the limit`;
     }

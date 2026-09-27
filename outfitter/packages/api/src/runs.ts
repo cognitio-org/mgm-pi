@@ -102,6 +102,15 @@ const EXIT_CHECK_DELAYS_MS = [5_000, 30_000];
 const SILENT_AFTER_MS = 30_000;
 const EXIT_PROBE_INTERVAL_MS = 20_000;
 
+/** #207: RunManager.wake refuses an archived session. Routes check first and answer 409; this is
+ * the backstop for a wake that races the archive. */
+export class SessionArchivedError extends Error {
+  constructor(sessionId: string) {
+    super(`session ${sessionId} is archived`);
+    this.name = "SessionArchivedError";
+  }
+}
+
 export class RunManager {
   private readonly store: Store;
   private readonly providers: SandboxProviders;
@@ -153,6 +162,7 @@ export class RunManager {
   async wake(sessionId: string, opts: { mailDriven?: boolean } = {}): Promise<Run> {
     const existing = await this.store.runs.findActiveForSession(sessionId);
     if (existing) return existing;
+    if ((await this.store.sessions.findById(sessionId))?.archivedAt) throw new SessionArchivedError(sessionId);
 
     const now = new Date().toISOString();
     const candidate: Run = {

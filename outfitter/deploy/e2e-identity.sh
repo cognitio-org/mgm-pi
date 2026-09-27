@@ -17,6 +17,12 @@
 # - Refuses (before changing anything, dry run included) if the account already exists with a
 #   user-managed key or a project role: either would reach IAP around the minter grants.
 #
+# - With E2E_GITHUB_WORKFLOW set: a Workload Identity pool of its own (github-live) whose provider
+#   admits only that workflow file of this repo, run from main, and lets that pool mint the
+#   account's ID tokens -- the same narrow role as a minter. The repository variable
+#   GCP_LIVE_WIF_PROVIDER switches the workflow on. A separate pool, not ci-setup.sh's: every
+#   principal of that pool may act as the deployer.
+#
 # Grants are add-only: dropping a principal from E2E_TOKEN_MINTERS doesn't revoke it. README.md
 # "Live-test identity" has the remove command, and how to retire the account.
 #
@@ -96,5 +102,42 @@ for minter in "${MINTERS[@]}"; do
     --role="roles/iam.serviceAccountOpenIdTokenCreator" \
     --quiet >/dev/null
 done
+
+if [[ -n "${E2E_GITHUB_WORKFLOW}" ]]; then
+  GITHUB_REPO="${GITHUB_REPO:-cognitio-org/mgm-pi}"
+  POOL="github-live"
+  PROVIDER="outfitter-live"
+  # Numeric ids too, so the trust doesn't follow the name if the repo is renamed or re-registered.
+  REPO_ID="$(gh api "repos/${GITHUB_REPO}" --jq .id)"
+  OWNER_ID="$(gh api "repos/${GITHUB_REPO}" --jq .owner.id)"
+  PROJECT_NUMBER="$(gcloud projects describe "${PROJECT}" --format='value(projectNumber)')"
+  echo "== Workload identity pool '${POOL}' and provider '${PROVIDER}' (${GITHUB_REPO}/${E2E_GITHUB_WORKFLOW} on main) =="
+  if ! gcloud_exists iam workload-identity-pools describe "${POOL}" --location=global --project="${PROJECT}"; then
+    run gcloud iam workload-identity-pools create "${POOL}" --location=global --project="${PROJECT}" \
+      --display-name="GitHub Actions: live tests" >/dev/null
+  fi
+  PROVIDER_FLAGS=(
+    --location=global --project="${PROJECT}" --workload-identity-pool="${POOL}"
+    --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.job_workflow_ref=assertion.job_workflow_ref"
+    --attribute-condition="assertion.repository_id == '${REPO_ID}' && assertion.repository_owner_id == '${OWNER_ID}' && assertion.repository == '${GITHUB_REPO}' && assertion.job_workflow_ref == '${GITHUB_REPO}/${E2E_GITHUB_WORKFLOW}@refs/heads/main'"
+  )
+  if gcloud_exists iam workload-identity-pools providers describe "${PROVIDER}" --location=global \
+      --workload-identity-pool="${POOL}" --project="${PROJECT}"; then
+    run gcloud iam workload-identity-pools providers update-oidc "${PROVIDER}" "${PROVIDER_FLAGS[@]}" >/dev/null
+  else
+    run gcloud iam workload-identity-pools providers create-oidc "${PROVIDER}" "${PROVIDER_FLAGS[@]}" \
+      --issuer-uri="https://token.actions.githubusercontent.com" >/dev/null
+  fi
+  echo "== Letting that workflow mint ID tokens for ${E2E_SA_EMAIL} =="
+  run gcloud iam service-accounts add-iam-policy-binding "${E2E_SA_EMAIL}" --project="${PROJECT}" \
+    --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL}/attribute.repository/${GITHUB_REPO}" \
+    --role="roles/iam.serviceAccountOpenIdTokenCreator" \
+    --quiet >/dev/null
+  WIF_PROVIDER="projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL}/providers/${PROVIDER}"
+  echo "== Repository variables for ${E2E_GITHUB_WORKFLOW} =="
+  run gh variable set GCP_LIVE_WIF_PROVIDER --repo "${GITHUB_REPO}" --body "${WIF_PROVIDER}"
+  run gh variable set E2E_SERVICE_ACCOUNT --repo "${GITHUB_REPO}" --body "${E2E_SA_EMAIL}"
+  run gh variable set E2E_IAP_AUDIENCE --repo "${GITHUB_REPO}" --body "${IAP_OAUTH_CLIENT_ID}"
+fi
 
 echo "== Done. Check it with ./iap-probe.sh =="

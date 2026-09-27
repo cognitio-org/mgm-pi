@@ -1,0 +1,66 @@
+name: Outfitter live tests
+# Playwright against the deployed web app (#219), after every successful "Outfitter deploy" and on
+# demand. Signs in through IAP as the outfitter-e2e service account: google-github-actions/auth mints
+# its ID token through a Workload Identity pool of its own (deploy/e2e-identity.sh), whose provider
+# admits only this workflow file, run from main. That pool may mint the account's ID tokens and
+# nothing else; it has no access to the deploy pool or its service account.
+#
+# The lifecycle test starts one real Drive and one short LLM turn on the "e2e (live tests)" Tape,
+# then archives and formats the floppy it made (packages/web/live/app.live.mjs).
+on:
+  workflow_run:
+    workflows: ["Outfitter deploy"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      skip_lifecycle:
+        description: "Page smoke only: create no floppy (E2E_SKIP_LIFECYCLE=1)"
+        type: boolean
+        default: false
+
+# One run at a time: two lifecycle runs would erase each other's floppies as leftovers.
+concurrency:
+  group: outfitter-live
+  cancel-in-progress: false
+
+jobs:
+  live:
+    # Off until e2e-identity.sh has set the repository variables; after a deploy only if it passed.
+    if: >-
+      vars.GCP_LIVE_WIF_PROVIDER != '' &&
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    defaults: { run: { working-directory: outfitter } }
+    steps:
+      # main, whichever event started the run: the provider only trusts this file at refs/heads/main.
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 24, cache: npm, cache-dependency-path: outfitter/package-lock.json }
+      - run: npm ci
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_LIVE_WIF_PROVIDER }}
+          service_account: ${{ vars.E2E_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ vars.E2E_IAP_AUDIENCE }}
+          id_token_include_email: true
+          create_credentials_file: false
+      - name: Live tests (system Chrome, already on the runner)
+        env:
+          E2E_IAP_TOKEN: ${{ steps.auth.outputs.id_token }}
+          E2E_SERVICE_ACCOUNT: ${{ vars.E2E_SERVICE_ACCOUNT }}
+          E2E_SKIP_LIFECYCLE: ${{ inputs.skip_lifecycle && '1' || '' }}
+          E2E_ARTIFACTS: ${{ runner.temp }}/outfitter-live
+        run: npm run test:live -w @outfitter/web
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: outfitter-live-failure
+          path: ${{ runner.temp }}/outfitter-live
+          if-no-files-found: ignore
+          retention-days: 14

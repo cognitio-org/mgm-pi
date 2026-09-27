@@ -526,8 +526,24 @@ A test mints an ID token with the IAM Credentials `generateIdToken` API (audienc
 print-identity-token --impersonate-service-account`, which fetches an access token first and so
 needs the broader `serviceAccountTokenCreator`. `./iap-probe.sh` is the check: it mints a token and
 expects `GET /api/me` to answer 200 with the account's email (that call records the account in the
-users store, as any sign-in does). Minting from CI needs its own setup (a dedicated Workload
-Identity provider for the test workflow, not the deploy one), which comes with the test suite.
+users store, as any sign-in does).
+
+**CI.** With `E2E_GITHUB_WORKFLOW` set (config.env; the default is
+`.github/workflows/outfitter-live.yml`), `e2e-identity.sh` also creates a Workload Identity pool of
+its own, `github-live`, whose provider admits only that workflow file of this repo run from `main`.
+It lets that pool mint the account's ID tokens (the same narrow role, nothing else) and sets the
+repository variables `GCP_LIVE_WIF_PROVIDER`, `E2E_SERVICE_ACCOUNT` and `E2E_IAP_AUDIENCE` that
+switch the workflow on. It is deliberately not `ci-setup.sh`'s `github` pool: every principal of
+that pool may act as the deployer.
+
+**The suite** (`packages/web/live/app.live.mjs`, `npm run test:live -w @outfitter/web`) runs after
+every successful deploy and on demand (Actions → "Outfitter live tests"). It checks `/api/me`,
+renders the main pages, and runs one floppy through create → reply → archive → format on the
+"e2e (live tests)" Tape (created on `E2E_MODEL`, default `litellm/gemini-3.5-flash-lite`). That's
+one short Drive run and one small LLM turn per deploy; `E2E_SKIP_LIFECYCLE=1` (or the dispatch
+checkbox) runs only the page smoke. Locally it mints its own token through gcloud configuration
+`outfitter` when `E2E_IAP_TOKEN` is unset. A failure leaves a screenshot and the page text as the
+`outfitter-live-failure` artifact.
 
 The app treats the account as an ordinary user: not a sysop, owner only of what it creates, but
 like every IAP member it can see and steer every session. It can't create `outf_` personal tokens

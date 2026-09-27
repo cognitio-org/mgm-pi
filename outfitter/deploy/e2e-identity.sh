@@ -9,8 +9,16 @@
 #   out of IAP_MEMBERS on purpose: access.sh only accepts user:/group:/domain: there, so a pasted
 #   allUsers can't slip in.
 # - Grants each E2E_TOKEN_MINTERS principal roles/iam.serviceAccountOpenIdTokenCreator on that one
-#   account, so it can mint the account's ID tokens (gcloud auth print-identity-token
-#   --impersonate-service-account). That is all it can do as the account: no access tokens.
+#   account, so it can mint the account's ID tokens with the IAM Credentials generateIdToken API
+#   (iap-probe.sh shows how). That is all it can do as the account: no access tokens. Don't reach
+#   for `gcloud auth print-identity-token --impersonate-service-account` instead: it fetches an
+#   access token first, and "fixing" its PERMISSION_DENIED with serviceAccountTokenCreator would
+#   hand minters access tokens too.
+# - Refuses (before changing anything, dry run included) if the account already exists with a
+#   user-managed key or a project role: either would reach IAP around the minter grants.
+#
+# Grants are add-only: dropping a principal from E2E_TOKEN_MINTERS doesn't revoke it. README.md
+# "Live-test identity" has the remove command, and how to retire the account.
 #
 # A test then sends `Proxy-Authorization: Bearer <id token>`, audience = IAP_OAUTH_CLIENT_ID with
 # the email claim included (iap-probe.sh shows how), and the app sees the account's email as the
@@ -43,22 +51,42 @@ for minter in "${MINTERS[@]}"; do
 done
 
 echo "== Service account ${E2E_SA_EMAIL} =="
+CREATED=0
 if gcloud_exists iam service-accounts describe "${E2E_SA_EMAIL}" --project="${PROJECT}"; then
-  echo "   exists"
+  echo "   exists; checking it still has no keys and no project roles"
+  if ! KEYS="$(gcloud iam service-accounts keys list --iam-account="${E2E_SA_EMAIL}" --project="${PROJECT}" \
+      --managed-by=user --format='value(name)' 2>&1)"; then
+    deploy_fail "could not read ${E2E_SA_EMAIL}'s keys: ${KEYS}"
+  fi
+  [[ -z "${KEYS}" ]] || deploy_fail "${E2E_SA_EMAIL} has user-managed keys; delete them first (keys reach IAP around the minter grants)"
+  if ! ROLES="$(gcloud projects get-iam-policy "${PROJECT}" --flatten='bindings[].members' \
+      --filter="bindings.members=serviceAccount:${E2E_SA_EMAIL}" --format='value(bindings.role)' 2>&1)"; then
+    deploy_fail "could not read ${PROJECT}'s IAM policy: ${ROLES}"
+  fi
+  [[ -z "${ROLES}" ]] || deploy_fail "${E2E_SA_EMAIL} holds project roles (${ROLES//$'\n'/, }); remove them first"
 else
   run gcloud iam service-accounts create "${E2E_SA_NAME}" --project="${PROJECT}" \
     --display-name="Outfitter live tests" \
     --description="Signs in to outfitter-api through IAP for automated live tests (#219). No project roles." >/dev/null
+  CREATED=1
 fi
 
 echo "== Granting ${E2E_SA_EMAIL} roles/iap.httpsResourceAccessor on ${WEB_SERVICE} =="
-run gcloud iap web add-iam-policy-binding \
-  --resource-type=cloud-run \
-  --service="${WEB_SERVICE}" \
-  --region="${REGION}" \
-  --project="${PROJECT}" \
-  --member="serviceAccount:${E2E_SA_EMAIL}" \
-  --role="roles/iap.httpsResourceAccessor" >/dev/null
+# A just-created account can take a moment to be visible to other APIs; retry only then.
+for attempt in 1 2 3 4 5 6; do
+  if run gcloud iap web add-iam-policy-binding \
+      --resource-type=cloud-run \
+      --service="${WEB_SERVICE}" \
+      --region="${REGION}" \
+      --project="${PROJECT}" \
+      --member="serviceAccount:${E2E_SA_EMAIL}" \
+      --role="roles/iap.httpsResourceAccessor" >/dev/null; then
+    break
+  fi
+  [[ ${CREATED} == 1 && ${attempt} -lt 6 ]] || deploy_fail "could not grant IAP access to ${E2E_SA_EMAIL}"
+  echo "   not visible yet; retrying in 10 s"
+  sleep 10
+done
 
 for minter in "${MINTERS[@]}"; do
   echo "== Letting ${minter} mint ID tokens for ${E2E_SA_EMAIL} =="

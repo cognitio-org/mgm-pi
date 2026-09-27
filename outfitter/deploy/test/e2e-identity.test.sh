@@ -16,12 +16,14 @@ case "$*" in
   "iam service-accounts describe"*)
     [[ -n "${FAKE_SA_EXISTS:-}" ]] && exit 0
     echo "ERROR: NOT_FOUND: Unknown service account" >&2; exit 1 ;;
+  "iam service-accounts keys list"*) [[ -n "${FAKE_SA_KEY:-}" ]] && echo "projects/p/serviceAccounts/x/keys/k1" ;;
+  "projects get-iam-policy"*) [[ -n "${FAKE_SA_ROLE:-}" ]] && echo "${FAKE_SA_ROLE}" ;;
 esac
 exit 0
 FAKE
 chmod +x "${WORK}/bin/gcloud"
 export PATH="${WORK}/bin:${PATH}" GCLOUD_CALLS="${WORK}/gcloud-calls"
-unset GITHUB_ACTIONS FAKE_SA_EXISTS E2E_TOKEN_MINTERS E2E_SA_NAME
+unset GITHUB_ACTIONS FAKE_SA_EXISTS FAKE_SA_KEY FAKE_SA_ROLE E2E_TOKEN_MINTERS E2E_SA_NAME
 
 fails=0
 OUT=""
@@ -74,8 +76,13 @@ else
 fi
 
 expect pass "several minters each get the binding" \
-  "--member=serviceAccount:outfitter-deployer@outfitter-509211.iam.gserviceaccount.com" \
-  E2E_TOKEN_MINTERS=user:mgm@mgms.eu,serviceAccount:outfitter-deployer@outfitter-509211.iam.gserviceaccount.com
+  "--member=group:outfitter-testers@example.com" \
+  E2E_TOKEN_MINTERS=user:mgm@mgms.eu,group:outfitter-testers@example.com
+
+FAKE_SA_EXISTS=1 FAKE_SA_KEY=1 expect fail "an existing account with a user-managed key refuses" "has user-managed keys"
+no_mutations "... and changes nothing"
+FAKE_SA_EXISTS=1 FAKE_SA_ROLE=roles/editor expect fail "an existing account with a project role refuses" "holds project roles (roles/editor)"
+no_mutations "... and changes nothing"
 
 if [[ ${fails} -gt 0 ]]; then
   echo "${fails} failure(s)"; exit 1

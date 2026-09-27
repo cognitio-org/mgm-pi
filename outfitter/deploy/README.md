@@ -522,17 +522,27 @@ creates it with no project roles and no keys, grants it `roles/iap.httpsResource
 
 A test mints an ID token with the IAM Credentials `generateIdToken` API (audience =
 `IAP_OAUTH_CLIENT_ID`, `includeEmail: true`) and sends it as `Proxy-Authorization: Bearer
-<token>` on every request, pages and assets included. That leaves `Authorization` free for an
-`outf_` token. Use the API rather than `gcloud auth print-identity-token
---impersonate-service-account`, which fetches an access token first and so needs the broader
-`serviceAccountTokenCreator`. In GitHub Actions, `google-github-actions/auth` with
-`token_format: id_token` does the same. `./iap-probe.sh` is the read-only check: it mints a token
-and expects `GET /api/me` to answer 200 with the account's email.
+<token>` on every request, pages and assets included. Use the API rather than `gcloud auth
+print-identity-token --impersonate-service-account`, which fetches an access token first and so
+needs the broader `serviceAccountTokenCreator`. `./iap-probe.sh` is the check: it mints a token and
+expects `GET /api/me` to answer 200 with the account's email (that call records the account in the
+users store, as any sign-in does). Minting from CI needs its own setup (a dedicated Workload
+Identity provider for the test workflow, not the deploy one), which comes with the test suite.
 
 The app treats the account as an ordinary user: not a sysop, owner only of what it creates, but
-like every IAP member it can see and steer every session. A fresh binding can take a few minutes to
-propagate; until then minting answers `IAM_PERMISSION_DENIED`. To retire it, delete the account
-(`gcloud iam service-accounts delete outfitter-e2e@...`); its IAP binding then matches nothing.
+like every IAP member it can see and steer every session. It can't create `outf_` personal tokens
+(the api refuses them for any `*.gserviceaccount.com` identity). A fresh binding can take a few
+minutes to propagate; until then minting answers `IAM_PERMISSION_DENIED`.
+
+Grants are add-only. To take minting away from a principal dropped from `E2E_TOKEN_MINTERS`:
+
+    gcloud iam service-accounts remove-iam-policy-binding outfitter-e2e@outfitter-509211.iam.gserviceaccount.com \
+      --project=outfitter-509211 --member=<principal> --role=roles/iam.serviceAccountOpenIdTokenCreator
+
+To retire the identity: revoke any tokens in its name as a belt-and-braces step (Control Panel →
+Revoke Dongles, email `outfitter-e2e@outfitter-509211.iam.gserviceaccount.com`), then delete the
+account (`gcloud iam service-accounts delete outfitter-e2e@outfitter-509211.iam.gserviceaccount.com
+--project=outfitter-509211`); its IAP binding then matches nothing.
 
 ## kernal.one
 

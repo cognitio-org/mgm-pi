@@ -1,0 +1,72 @@
+.github/workflows/outfitter-deploy.yml
+  s_63cfee548f82b0::t_759f7135359960 63
+outfitter/deploy/iap-probe.sh
+  s_63cfee548f82b0::t_874a5af663ddaa 1,7-13,16,33-35,37-38,41-44
+  s_63cfee548f82b0::t_2979f913b94d5a 14-15
+  s_63cfee548f82b0::t_def9f1ca4cc1b0 20-22,25-27,29-30,32
+  s_63cfee548f82b0::t_9e12ac26cebcfe 2-6,17-19,23-24,28,31,36,39-40
+.github/workflows/outfitter-ci.yml
+  s_63cfee548f82b0::t_759f7135359960 43
+outfitter/deploy/e2e-identity.sh
+  s_63cfee548f82b0::t_874a5af663ddaa 1-11,28-41,44-45,47-59,61,73-76,78-80,96-105,143
+  s_63cfee548f82b0::t_8ed45b52751cc5 42-43,46
+  s_63cfee548f82b0::t_9e12ac26cebcfe 12-19,26-27,60,62-72,77,81-95
+  s_63cfee548f82b0::t_d794336d09d83d 20-25,106-141
+  s_63cfee548f82b0::t_1554daac80d93a 142
+outfitter/deploy/CLAUDE.md
+  s_63cfee548f82b0::t_759f7135359960 13
+  s_63cfee548f82b0::t_9e12ac26cebcfe 14-16
+outfitter/deploy/config.env
+  s_63cfee548f82b0::t_874a5af663ddaa 67-72
+  s_63cfee548f82b0::t_863946c51e6505 76
+  s_63cfee548f82b0::t_d794336d09d83d 73-75
+outfitter/deploy/test/e2e-identity.test.sh
+  s_63cfee548f82b0::t_b0435851b7bb06 1-18,23-26,36,38-60,62-89,111-115
+  s_63cfee548f82b0::t_d4278a9bb42f96 19-20,37,90-96
+  s_63cfee548f82b0::t_d794336d09d83d 21-22,27-35,61,98-99,101-110
+  s_63cfee548f82b0::t_863946c51e6505 100
+  s_63cfee548f82b0::t_67bf40cabb8d23 111
+outfitter/deploy/README.md
+  s_63cfee548f82b0::t_ce1674a8ac4e1c 515-524,547-548,562
+  s_63cfee548f82b0::t_d4278a9bb42f96 525-528,549-561
+  s_63cfee548f82b0::t_70463c9659c2e2 529-546
+outfitter/docs/protocol.md
+  s_63cfee548f82b0::t_ae80144bc09323 486-489
+outfitter/packages/api/src/auth.ts
+  s_63cfee548f82b0::t_fc417fedfd3fd2 19-22
+outfitter/packages/api/test/tokens.test.ts
+  s_63cfee548f82b0::t_37613ec9a5d229 8,11-30
+outfitter/packages/api/src/routes/tokens.ts
+  s_63cfee548f82b0::t_37613ec9a5d229 34-39
+.github/workflows/outfitter-live.yml
+  s_63cfee548f82b0::t_fa6b9c6bc29701 1-66
+outfitter/packages/web/package.json
+  s_63cfee548f82b0::t_4512a9708752dd 13
+  s_63cfee548f82b0::t_6f0f2a79713f47 14
+outfitter/packages/web/live/app.live.mjs
+  s_63cfee548f82b0::t_62debe7b34ecb4 85,135-136
+  s_63cfee548f82b0::t_ed6d1fc286c453 137,139
+  s_63cfee548f82b0::t_6b9668882498a5 84
+  s_63cfee548f82b0::t_42a584925e3539 12,20-21,148-152
+  s_63cfee548f82b0::t_9e16988a1800ce 34-37
+  s_63cfee548f82b0::t_4512a9708752dd 1-11,13-19,22-33,38-83,86-134,138,140-147,153-157
+outfitter/packages/web/live/iap-token.mjs
+  s_63cfee548f82b0::t_4512a9708752dd 1,5-39
+  s_63cfee548f82b0::t_9e16988a1800ce 2-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "a9a8bbb092a5af25a039df4b47515c5431355e94",
+  "prompts": {},
+  "sessions": {
+    "s_63cfee548f82b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2abd665b-152d-4945-bee0-e1f672204de7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

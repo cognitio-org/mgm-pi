@@ -20,6 +20,7 @@ import type {
   SandboxCapacity,
   SandboxExit,
   SandboxHandle,
+  SandboxInfo,
   SandboxProvider,
   SandboxStartResult,
   SandboxStatus,
@@ -127,12 +128,49 @@ interface TerminatedState {
 /** Only the pod fields exitInfo reads. `pods: get` also exposes annotations, which hold a warm
  * run's token (#193): nothing here reads, returns or logs them. */
 interface PodLike {
+  metadata?: { name?: string };
+  spec?: {
+    nodeName?: string;
+    containers?: {
+      name?: string;
+      image?: string;
+      resources?: { limits?: { cpu?: string; memory?: string; "ephemeral-storage"?: string } };
+    }[];
+  };
   status?: {
+    phase?: string;
+    startTime?: string;
     containerStatuses?: {
       name?: string;
       state?: { terminated?: TerminatedState };
       lastState?: { terminated?: TerminatedState };
     }[];
+  };
+}
+
+/** #197: the fields of a pod the session page shows. Deliberately a whitelist: metadata beyond the
+ * name, env and annotations (a warm run's token) never leave this function. */
+export function podInfo(pod: PodLike | null): SandboxInfo | undefined {
+  if (!pod) return undefined;
+  const container = pod.spec?.containers?.find((c) => c.name === AGENT_CONTAINER);
+  const limits = container?.resources?.limits;
+  const exit = podExit(pod);
+  return {
+    ...(pod.metadata?.name ? { name: pod.metadata.name } : {}),
+    ...(pod.spec?.nodeName ? { node: pod.spec.nodeName } : {}),
+    ...(container?.image ? { image: container.image } : {}),
+    ...(pod.status?.phase ? { phase: pod.status.phase } : {}),
+    ...(pod.status?.startTime ? { startedAt: pod.status.startTime } : {}),
+    ...(limits
+      ? {
+          resources: {
+            ...(limits.cpu ? { cpu: limits.cpu } : {}),
+            ...(limits.memory ? { memory: limits.memory } : {}),
+            ...(limits["ephemeral-storage"] ? { ephemeralStorage: limits["ephemeral-storage"] } : {}),
+          },
+        }
+      : {}),
+    ...(exit ? { exit } : {}),
   };
 }
 
@@ -536,26 +574,37 @@ export class GkeProvider implements SandboxProvider {
    * running, once the claim or pod is gone (the controller deletes a finished claim ~2 min later),
    * or while the Role still lacks `pods: get` (a 403 until the owner runs gke-iam.sh). */
   async exitInfo(handle: SandboxHandle): Promise<SandboxExit | undefined> {
+    return podExit(await this.claimedPod(handle));
+  }
+
+  /** #197: the claimed pod's details for the session page (podInfo's whitelist only). */
+  async describe(handle: SandboxHandle): Promise<SandboxInfo | undefined> {
+    return podInfo(await this.claimedPod(handle));
+  }
+
+  /** The pod behind a claim handle: claim -> Sandbox -> pod, agent-sandbox's own resolvePodName.
+   * Null when any step is gone, or while the Role lacks `pods: get` (a 403, logged once). */
+  private async claimedPod(handle: SandboxHandle): Promise<PodLike | null> {
     const parsed = handle ? parseHandle(handle) : undefined;
-    if (!parsed) return undefined;
+    if (!parsed) return null;
     const kube = await this.kube();
     try {
       const claim = await kube.get<SandboxClaim>(claimPath(parsed.namespace, parsed.name));
       const sandboxName = claim?.status?.sandbox?.name;
-      if (!sandboxName) return undefined;
+      if (!sandboxName) return null;
       const sandbox = await kube.get<{ metadata?: { annotations?: Record<string, string> } }>(
         sandboxPath(parsed.namespace, sandboxName),
       );
-      if (!sandbox) return undefined;
+      if (!sandbox) return null;
       const podName = sandbox.metadata?.annotations?.[SANDBOX_POD_NAME_ANNOTATION] || sandboxName;
-      return podExit(await kube.get<PodLike>(podPath(parsed.namespace, podName)));
+      return await kube.get<PodLike>(podPath(parsed.namespace, podName));
     } catch (err) {
       if (err instanceof KubeError && err.status === 403) {
         if (!this.warnedPodsForbidden) {
           this.warnedPodsForbidden = true;
           console.warn("[gke] pods: get is not granted yet (run deploy/gke-iam.sh); sandbox exit reasons stay unknown");
         }
-        return undefined;
+        return null;
       }
       throw err;
     }

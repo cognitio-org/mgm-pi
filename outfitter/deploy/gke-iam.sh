@@ -13,6 +13,9 @@
 #   impersonation form -- keeps agentd's ID token `email` unchanged, spec §3.2)
 # - roles/container.clusterViewer on the project for outfitter-api@ (both Cloud Run roles dial the
 #   cluster's DNS endpoint as this account)
+# - the outfitter-sandboxes log view on the _Default bucket (sandbox logs only), roles/logging.viewAccessor
+#   on that view alone, and roles/monitoring.viewer, for outfitter-api@ (#197: the session page's
+#   sandbox logs and stats)
 # - the outfitter-api Role/RoleBinding in outfitter-sandboxes (deploy/gke/rbac.yaml; since #193
 #   it includes `get` on pods, for termination reasons)
 # - the sandbox-hardening-policy exemption for outfitter-sandboxes only (hardening-exemption.json),
@@ -68,6 +71,35 @@ echo "== ${API_SA_EMAIL}: roles/container.clusterViewer (project-wide, permanent
 run gcloud projects add-iam-policy-binding "${PROJECT}" \
   --member="serviceAccount:${API_SA_EMAIL}" --role=roles/container.clusterViewer \
   --condition=None --quiet
+
+# #197: the session page shows a run's sandbox logs and its memory/CPU/disk history. Logs are read
+# through a log view that holds only the sandboxes' own logs, and outfitter-api@'s grant is
+# roles/logging.viewAccessor conditioned on that one view: it can read nothing else in the project
+# (not project-wide roles/logging.viewer; PR #199 security review). The view name here is
+# SANDBOX_LOG_VIEW_ID in packages/api/src/sandbox-telemetry.ts.
+LOG_VIEW_ID=outfitter-sandboxes
+LOG_VIEW_NAME="projects/${PROJECT}/locations/global/buckets/_Default/views/${LOG_VIEW_ID}"
+LOG_VIEW_FILTER="(resource.type=\"k8s_container\" AND resource.labels.namespace_name=\"${GKE_NAMESPACE}\") OR (resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"${CLOUDRUN_JOB:-outfitter-agent}\")"
+echo "== Log view ${LOG_VIEW_ID} on _Default: sandbox logs only (#197) =="
+if [[ "${DRY_RUN:-0}" == 1 ]]; then
+  echo "   DRY_RUN: would create or update log view ${LOG_VIEW_ID} with filter: ${LOG_VIEW_FILTER}"
+elif gcloud logging views describe "${LOG_VIEW_ID}" --bucket=_Default --location=global --project="${PROJECT}" >/dev/null 2>&1; then
+  gcloud logging views update "${LOG_VIEW_ID}" --bucket=_Default --location=global --project="${PROJECT}" \
+    --log-filter="${LOG_VIEW_FILTER}" --quiet
+else
+  gcloud logging views create "${LOG_VIEW_ID}" --bucket=_Default --location=global --project="${PROJECT}" \
+    --log-filter="${LOG_VIEW_FILTER}" --description="Outfitter sandbox logs (agentd), read by the session page" --quiet
+fi
+
+echo "== ${API_SA_EMAIL}: roles/logging.viewAccessor on the ${LOG_VIEW_ID} view only (#197) =="
+run gcloud projects add-iam-policy-binding "${PROJECT}" \
+  --member="serviceAccount:${API_SA_EMAIL}" --role=roles/logging.viewAccessor \
+  --condition="expression=resource.name == \"${LOG_VIEW_NAME}\",title=outfitter-sandbox-logs,description=Only the outfitter-sandboxes log view" \
+  --quiet
+
+echo "== ${API_SA_EMAIL}: roles/monitoring.viewer (read-only metrics; sandbox stats, #197) =="
+run gcloud projects add-iam-policy-binding "${PROJECT}" \
+  --member="serviceAccount:${API_SA_EMAIL}" --role=roles/monitoring.viewer --condition=None --quiet
 
 echo "== RBAC: ${API_SA_EMAIL} in ${GKE_NAMESPACE} (deploy/gke/rbac.yaml) =="
 run kubectl --kubeconfig="${KUBECONFIG}" apply --server-side -f "${GKE_DIR}/rbac.yaml"

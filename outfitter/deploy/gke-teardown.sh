@@ -137,6 +137,13 @@ fi
 echo "== Removing IAM bindings gke-iam.sh added =="
 remove_binding_if_present gcloud projects remove-iam-policy-binding "${PROJECT}" \
   --member="serviceAccount:${API_SA_EMAIL}" --role=roles/container.clusterViewer --condition=None --quiet
+# #197's sandbox logs and stats grants, and the log view they read through.
+remove_binding_if_present gcloud projects remove-iam-policy-binding "${PROJECT}" \
+  --member="serviceAccount:${API_SA_EMAIL}" --role=roles/logging.viewAccessor --all --quiet
+remove_binding_if_present gcloud projects remove-iam-policy-binding "${PROJECT}" \
+  --member="serviceAccount:${API_SA_EMAIL}" --role=roles/monitoring.viewer --condition=None --quiet
+remove_binding_if_present gcloud logging views delete outfitter-sandboxes --bucket=_Default --location=global \
+  --project="${PROJECT}" --quiet
 remove_binding_if_present gcloud iam service-accounts remove-iam-policy-binding "${AGENT_SA_EMAIL}" \
   --project="${PROJECT}" \
   --member="serviceAccount:${PROJECT}.svc.id.goog[${GKE_NAMESPACE}/outfitter-agent]" \

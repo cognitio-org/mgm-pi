@@ -15,6 +15,7 @@ import {
   WARM_POOL_MAX_REPLICAS,
   WARM_POOL_MIN_REPLICAS,
   podExit,
+  podInfo,
   type KubeClientLike,
   type GkeProviderConfig,
 } from "../src/providers/gke.ts";
@@ -498,6 +499,49 @@ describe("GkeProvider.status", () => {
       now: () => new Date("2099-01-01T00:00:00.000Z"),
     });
     assert.equal(await provider.status(`gke:${NS}/run-x`), "starting");
+  });
+});
+
+describe("GkeProvider.describe (#197)", () => {
+  const livePod = {
+    metadata: { name: "outfitter-agent-6t2nv", annotations: { "outfitter.dev/run-token": "must-not-leak" }, labels: { a: "b" } },
+    spec: {
+      nodeName: "gk3-outfitter-nap-1",
+      containers: [
+        {
+          name: "agentd",
+          image: "us-central1-docker.pkg.dev/p/outfitter/outfitter-agent:38ba58d",
+          env: [{ name: "OUTFITTER_ASSIGNMENT_DIR", value: "/etc/outfitter/assignment" }],
+          resources: { limits: { cpu: "1", memory: "4Gi", "ephemeral-storage": "4Gi" } },
+        },
+      ],
+    },
+    status: { phase: "Running", startTime: "2026-09-27T08:45:06Z", containerStatuses: [{ name: "agentd", state: { running: {} } }] },
+  };
+
+  test("returns the pod's name, node, image, phase, start and limits, and nothing else", () => {
+    const info = podInfo(livePod as Parameters<typeof podInfo>[0]);
+    assert.deepEqual(info, {
+      name: "outfitter-agent-6t2nv",
+      node: "gk3-outfitter-nap-1",
+      image: "us-central1-docker.pkg.dev/p/outfitter/outfitter-agent:38ba58d",
+      phase: "Running",
+      startedAt: "2026-09-27T08:45:06Z",
+      resources: { cpu: "1", memory: "4Gi", ephemeralStorage: "4Gi" },
+    });
+    const text = JSON.stringify(info);
+    assert.equal(text.includes("must-not-leak"), false, "annotations never leave");
+    assert.equal(text.includes("OUTFITTER_ASSIGNMENT_DIR"), false, "env never leaves");
+  });
+
+  test("goes through the claim and Sandbox, like exitInfo", async () => {
+    const { kube, store } = makeFakeKube();
+    seedClaim(store, "run-live", { status: { sandbox: { name: "sbx-live" } } });
+    store.set(`${SANDBOXES_PATH}/sbx-live`, { metadata: { name: "sbx-live", annotations: { "agents.x-k8s.io/pod-name": "outfitter-agent-6t2nv" } } });
+    store.set(`/api/v1/namespaces/${NS}/pods/outfitter-agent-6t2nv`, livePod);
+    const provider = new GkeProvider(baseConfig(), { kube: async () => kube });
+    assert.equal((await provider.describe(`gke:${NS}/run-live`))?.name, "outfitter-agent-6t2nv");
+    assert.equal(await provider.describe(`gke:${NS}/gone`), undefined);
   });
 });
 

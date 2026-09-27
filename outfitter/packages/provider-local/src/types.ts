@@ -60,6 +60,21 @@ export interface SandboxExit {
   finishedAt?: string;
 }
 
+/** A live sandbox's details for the session page (#197). Every field is optional: providers fill
+ * what they know. Never includes the pod's annotations or env (a warm run's token lives there). */
+export interface SandboxInfo {
+  /** The pod (GKE) or execution (Cloud Run) name. */
+  name?: string;
+  node?: string;
+  /** The agent container's image. */
+  image?: string;
+  /** Pending, Running, Succeeded, Failed. */
+  phase?: string;
+  startedAt?: string;
+  resources?: { cpu?: string; memory?: string; ephemeralStorage?: string };
+  exit?: SandboxExit;
+}
+
 export interface SandboxProvider {
   start(run: RunLaunch): Promise<SandboxStartResult>;
   stop(handle: SandboxHandle): Promise<void>;
@@ -69,4 +84,7 @@ export interface SandboxProvider {
   /** Optional (#193): how the sandbox's agent container ended. Undefined while it's still running,
    * once the sandbox is gone, or when the provider can't tell. Never throws for "not found". */
   exitInfo?(handle: SandboxHandle): Promise<SandboxExit | undefined>;
+  /** Optional (#197): the live sandbox's details. Undefined once it's gone or when the provider
+   * can't tell. Never throws for "not found". */
+  describe?(handle: SandboxHandle): Promise<SandboxInfo | undefined>;
 }

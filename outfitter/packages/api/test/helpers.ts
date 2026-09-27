@@ -11,6 +11,7 @@ import { buildApp, type App } from "../src/server.ts";
 import type { SandboxProvider } from "@outfitter/provider-local";
 import { SandboxProviders } from "../src/providers/registry.ts";
 import type { GithubRefreshTiming } from "../src/agentlink.ts";
+import type { SandboxTelemetry } from "../src/sandbox-telemetry.ts";
 
 export interface TestApp extends App {
   store: Store;
@@ -36,6 +37,8 @@ export interface BuildTestAppOptions {
   extraProviders?: Partial<Record<SandboxProviderName, () => Promise<SandboxProvider>>>;
   /** Shortens installation-token refresh waits. */
   githubRefresh?: GithubRefreshTiming;
+  /** #197: sandbox logs and stats. Defaults to NoSandboxTelemetry (dev mode). */
+  telemetry?: SandboxTelemetry;
 }
 
 export async function buildTestApp(
@@ -65,6 +68,7 @@ export async function buildTestApp(
     secretAdmin,
     github: opts.github,
     githubRefresh: opts.githubRefresh,
+    telemetry: opts.telemetry,
   });
   await app.fastify.ready();
   return { ...app, store, provider, secretAdmin };

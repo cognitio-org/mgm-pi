@@ -348,6 +348,17 @@ deletes a finished pod about two minutes later. A found exit fails the run at on
 which beats the memory estimate above. Until `gke-iam.sh` has run, the pod read is a 403, logged once,
 and runs fall back to the estimate.
 
+**Sandbox logs and stats (#197):** the session page reads a run's agentd log lines from Cloud Logging
+and its memory, CPU and disk history from Cloud Monitoring. `gke-iam.sh` sets up the access:
+- a log view `outfitter-sandboxes` on the `_Default` bucket, holding only the sandbox namespace's
+  containers and the Cloud Run agent job;
+- `roles/logging.viewAccessor` for outfitter-api@, conditioned on that one view, so it can read no
+  other log in the project;
+- `roles/monitoring.viewer`.
+
+`gke-teardown.sh` removes all three. Until `gke-iam.sh` has run, the page says the logs and stats
+aren't granted yet (a 503 from the api).
+
 **Laptop prerequisite for hand deploys:** with GKE set up, every deploy script run by hand (`api.sh`,
 `link.sh`, `agent-job.sh`, `service.sh`, `MANUAL=1 ./release.sh`) checks the SandboxTemplate's
 `build-commit` label for skew, so the laptop needs `kubectl` and the auth plugin:

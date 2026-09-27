@@ -69,7 +69,7 @@ expect() {
   fi
 }
 mutation_calls() {
-  grep -E 'patch|clusters delete|jobs delete|remove-iam-policy-binding' "${GCLOUD_CALLS}" "${KUBECTL_CALLS}" 2>/dev/null || true
+  grep -E 'patch|clusters delete|jobs delete|views delete|remove-iam-policy-binding' "${GCLOUD_CALLS}" "${KUBECTL_CALLS}" 2>/dev/null || true
 }
 
 expect fail "GKE_CLUSTER empty refuses" "nothing to tear down" GKE_CLUSTER=
@@ -96,6 +96,12 @@ grep -q "remove-iam-policy-binding.*roles/container.clusterViewer" "${GCLOUD_CAL
   && echo "ok:   ... removed outfitter-api@'s clusterViewer" || { echo "FAIL: expected a clusterViewer removal"; fails=$((fails + 1)); }
 grep -q "remove-iam-policy-binding.*roles/iam.workloadIdentityUser" "${GCLOUD_CALLS}" \
   && echo "ok:   ... removed the Workload Identity binding" || { echo "FAIL: expected a workloadIdentityUser removal"; fails=$((fails + 1)); }
+grep -q "remove-iam-policy-binding.*roles/logging.viewAccessor" "${GCLOUD_CALLS}" \
+  && echo "ok:   ... #197: removed the log view grant" || { echo "FAIL: expected a logging.viewAccessor removal"; fails=$((fails + 1)); }
+grep -q "remove-iam-policy-binding.*roles/monitoring.viewer" "${GCLOUD_CALLS}" \
+  && echo "ok:   ... #197: removed monitoring.viewer" || { echo "FAIL: expected a monitoring.viewer removal"; fails=$((fails + 1)); }
+grep -q "logging views delete outfitter-sandboxes" "${GCLOUD_CALLS}" \
+  && echo "ok:   ... #197: deleted the sandbox log view" || { echo "FAIL: expected the log view deleted"; fails=$((fails + 1)); }
 
 expect pass "no live claims proceeds without --force" "Done"
 

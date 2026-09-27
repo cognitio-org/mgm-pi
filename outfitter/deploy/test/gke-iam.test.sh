@@ -114,6 +114,16 @@ fi
 expect pass "dry run mentions the namespace apply" "DRY_RUN:.*kubectl.*apply.*namespace.yaml"
 expect pass "dry run mentions the WI binding" "DRY_RUN:.*iam service-accounts add-iam-policy-binding"
 expect pass "dry run mentions clusterViewer" "DRY_RUN:.*roles/container.clusterViewer"
+expect pass "#197: dry run creates or updates the sandbox-only log view" \
+  'DRY_RUN: would create or update log view outfitter-sandboxes with filter: (resource.type="k8s_container" AND resource.labels.namespace_name="outfitter-sandboxes")'
+expect pass "#197: logging.viewAccessor is conditioned on that view alone" \
+  'DRY_RUN:.*roles/logging.viewAccessor.*resource.name.*buckets/_Default/views/outfitter-sandboxes'
+expect pass "#197: dry run grants monitoring.viewer" "DRY_RUN:.*outfitter-api@.*roles/monitoring.viewer"
+if grep -q 'roles/logging.viewer' <<<"$(env DRY_RUN=1 "${HERE}/../gke-iam.sh" 2>&1)"; then
+  echo "FAIL: #197 must never grant project-wide roles/logging.viewer"; fails=$((fails + 1))
+else
+  echo "ok: #197: no project-wide roles/logging.viewer"
+fi
 expect pass "dry run mentions the RBAC apply" "DRY_RUN:.*kubectl.*apply.*rbac.yaml"
 expect pass "dry run doesn't touch the hardening binding" "DRY_RUN: would check.*sandbox-hardening-binding"
 

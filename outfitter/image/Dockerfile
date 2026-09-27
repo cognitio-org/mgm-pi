@@ -91,17 +91,21 @@ RUN npm ci --legacy-peer-deps --omit=dev --no-audit --no-fund --loglevel=error \
        pi-lsp pi-powerline-footer @codexstar/pi-listen open-codebase-index \
   && rm -rf node_modules/recheck-jar
 
-# pi-subagents bundled (#142): pi's loader evaluates its ~290 modules one by one, and under gVisor
-# that import took 4-16 s of every sandbox start (85-90% of extension loading). The bundle
-# (pi-subagents/bundle/, ~10 files, split so a subagent child process still loads only a tiny entry)
-# keeps every module's own import.meta.url, so its agents, prompts and runner scripts resolve as
-# before; the original files stay (the runner processes it spawns load them by path). esbuild is
-# installed only for this step, in a throwaway directory, and never reaches the runtime image.
-COPY outfitter/image/bundle-pi-subagents.mjs /tmp/bundle-pi-subagents.mjs
+# pi-subagents and pi-mcp-adapter bundled (#142, #222): pi's loader evaluates each module one by
+# one, and under gVisor that is a run of syscalls per module. pi-subagents' ~290 took 4-16 s of every
+# sandbox start (85-90% of extension loading); pi-mcp-adapter's ~140 up to 1.7 s. Each bundle
+# (<package>/bundle/) keeps every module's own import.meta.url, so their agents, prompts, runner
+# scripts, keyring helper and worker resolve as before; the original files stay (some are spawned or
+# loaded by path). pi-subagents is split so a subagent child process still loads only a tiny entry;
+# pi-mcp-adapter is one bundle/index.ts, so jiti transpiles it with pi's aliases instead of first
+# trying (and failing) a native import (bundle-pi-package.mjs, PACKAGES). esbuild is installed only
+# for this step, in a throwaway directory, and never reaches the runtime image.
+COPY outfitter/image/bundle-pi-package.mjs /tmp/bundle-pi-package.mjs
 RUN mkdir /tmp/bundler \
   && npm install --prefix /tmp/bundler --no-save --no-audit --no-fund --loglevel=error esbuild@0.25.12 \
-  && node /tmp/bundle-pi-subagents.mjs /opt/kernal/.pi/npm/node_modules/pi-subagents /tmp/bundler/node_modules/esbuild/lib/main.js \
-  && rm -rf /tmp/bundler /tmp/bundle-pi-subagents.mjs
+  && node /tmp/bundle-pi-package.mjs /opt/kernal/.pi/npm/node_modules/pi-subagents /tmp/bundler/node_modules/esbuild/lib/main.js \
+  && node /tmp/bundle-pi-package.mjs /opt/kernal/.pi/npm/node_modules/pi-mcp-adapter /tmp/bundler/node_modules/esbuild/lib/main.js \
+  && rm -rf /tmp/bundler /tmp/bundle-pi-package.mjs
 
 # esbuild's per-platform optional deps (@esbuild/darwin-arm64, @esbuild/win32-x64, ...) are the
 # single biggest offender in kernal's own node_modules too: `npm ci` installs every platform's binary

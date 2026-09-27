@@ -14,7 +14,10 @@
  *   email is one IAP lets into Outfitter (PREVIEW_ALLOW: IAP_MEMBERS plus the operators). Empty
  *   allowlist: nobody gets in.
  * - share: a public, time-limited link. A first-visit notice page says it's an AI-built preview
- *   before the app is shown.
+ *   before the app is shown. Only a person makes one (the session page, phase 3): agentlink refuses
+ *   `share` from a sandbox, so a model can't publish anything on its own.
+ * Every endpoint and credential is stamped with this deployment's environment id (PREVIEW_ENV,
+ * default the GCP project), and the sweep only ever touches ones that carry it.
  * Endpoints go with their job (preview.close), their run (closeRun), or their deadline (sweep); the
  * credential goes with its run. sweep() also removes what a crash left behind on ngrok's side.
  */
@@ -27,7 +30,11 @@ export const MAX_OPEN_PREVIEWS_PER_RUN = 8;
 /** An endpoint or credential on ngrok's side with no record here is only swept once it's this old,
  * so a preview being created (endpoint made, record not yet written) is never taken for an orphan. */
 export const ORPHAN_GRACE_MS = 5 * 60_000;
+/** Opens a run may make in an hour (each is an ngrok API create), so a looping model can't burn the
+ * account's API rate limit for everyone else. */
+export const OPENS_PER_RUN_PER_HOUR = 20;
 const ACK_COOKIE = "kernal_preview_ack";
+const ACK_PATH = "/__kernal_preview_ack";
 const LIVE_RUN_STATES = new Set(["queued", "provisioning", "running", "idle", "stopping"]);
 const CREDENTIAL_PURPOSE = "outfitter-preview";
 
@@ -73,7 +80,9 @@ export function parseAllowlist(entries: string[]): { emails: string[]; domains: 
 
 /** The CEL condition "this signed-in email may open it". `false` when nobody is allowed. */
 export function allowExpression(allow: { emails: string[]; domains: string[] }): string {
-  const email = "actions.ngrok.oauth.identity.email";
+  // Lowercased at the edge too (lowerAscii, checked live): a mixed-case identity email must not be
+  // locked out, since the allowlist itself is lowercased.
+  const email = "actions.ngrok.oauth.identity.email.lowerAscii()";
   const parts: string[] = [];
   if (allow.emails.length > 0) parts.push(`${email} in [${allow.emails.map((e) => `'${e}'`).join(", ")}]`);
   for (const d of allow.domains) parts.push(`${email}.endsWith('@${d}')`);
@@ -82,7 +91,19 @@ export function allowExpression(allow: { emails: string[]; domains: string[] }):
 
 const RESPONSE_HEADERS = {
   on_http_response: [
-    { actions: [{ type: "add-headers", config: { headers: { "x-robots-tag": "noindex, nofollow", "referrer-policy": "no-referrer" } } }] },
+    {
+      actions: [{
+        type: "add-headers",
+        config: {
+          headers: {
+            "x-robots-tag": "noindex, nofollow",
+            "referrer-policy": "no-referrer",
+            // .run isn't HSTS-preloaded; every kernal.run host is a preview, so includeSubDomains is safe.
+            "strict-transport-security": "max-age=31536000; includeSubDomains",
+          },
+        },
+      }],
+    },
   ],
 };
 
@@ -120,21 +141,22 @@ function noticePage(expiresAt: string): string {
     "<p>Someone shared a work-in-progress app from a Kernal session. It was written by an AI agent and runs in a temporary sandbox.",
     " It isn't a Kernal or Google page: <strong>don't enter passwords, codes or payment details.</strong></p>",
     `<p>The link stops working ${expiresAt.slice(0, 16).replace("T", " ")} UTC, or sooner when the session stops.</p>`,
-    `<p><a href='/?${ACK_COOKIE}=1' style='font-weight:600'>Continue to the preview</a></p></body></html>`,
+    `<form method=post action='${ACK_PATH}'><button type=submit style='font:inherit;font-weight:600;padding:.5rem 1rem'>Continue to the preview</button></form></body></html>`,
   ].join("");
 }
 
-/** Share link: a notice on first visit (cookie-acknowledged), then the app. */
+/** Share link: a notice on first visit, then the app. The notice is acknowledged only by its own
+ * form (a same-origin POST to ACK_PATH), so a crafted link, or another site, can't skip it. */
 export function sharePolicy(internalUrl: string, expiresAt: string, now: Date): string {
   const maxAge = Math.max(60, Math.floor((Date.parse(expiresAt) - now.getTime()) / 1000));
   return JSON.stringify({
     on_http_request: [
       {
-        expressions: [`'${ACK_COOKIE}' in req.url.query_params`],
+        expressions: [`req.method == 'POST' && req.url.path == '${ACK_PATH}' && 'sec-fetch-site' in req.headers && req.headers['sec-fetch-site'][0] == 'same-origin'`],
         actions: [{
           type: "custom-response",
           config: {
-            status_code: 302,
+            status_code: 303,
             headers: { location: "/", "set-cookie": `${ACK_COOKIE}=1; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${maxAge}` },
           },
         }],
@@ -163,6 +185,11 @@ export class PreviewService {
   private readonly now: () => Date;
   private readonly log: (msg: string, detail?: Record<string, unknown>) => void;
   private readonly allow: { emails: string[]; domains: string[] };
+  /** In-flight opens by run, port and mode: two at once (agentd retrying) share one endpoint. */
+  private readonly opening = new Map<string, Promise<OpenResult>>();
+  /** Recent open attempts per run, for OPENS_PER_RUN_PER_HOUR. Per instance, which is enough to
+   * stop a loop: a run's socket lives on one link instance at a time. */
+  private readonly recentOpens = new Map<string, number[]>();
 
   constructor(opts: {
     store: Store;
@@ -193,15 +220,19 @@ export class PreviewService {
    */
   async runSpecConfig(run: Run): Promise<{ internalDomain: string; token?: string } | undefined> {
     if (!this.enabled) return undefined;
-    const existing = (await this.store.runs.findById(run.id))?.preview ?? run.preview;
-    if (existing) return { internalDomain: `${existing.label}.internal` };
+    const current = (await this.store.runs.findById(run.id)) ?? run;
+    const existing = current.preview;
+    // A credential whose token never reached agentd (the first spec was built but not sent) is
+    // useless: agentd has no copy and ngrok won't show the token again. Replace it.
+    if (existing && current.startup?.specSentAt) return { internalDomain: `${existing.label}.internal` };
+    if (existing) await this.ngrok!.deleteCredential(existing.credentialId).catch(() => {});
     const label = runLabel(run.id);
     try {
       const cred = await this.ngrok!.createCredential({
         description: `outfitter preview, run ${run.id}`.slice(0, 255),
-        metadata: JSON.stringify({ purpose: CREDENTIAL_PURPOSE, runId: run.id, sessionId: run.sessionId, createdAt: this.now().toISOString() }),
+        metadata: this.meta({ runId: run.id, sessionId: run.sessionId }),
         acl: [`bind:*.${label}.internal`],
-      });
+      }, { timeoutMs: 5000 });
       if (!cred.token) throw new Error("ngrok returned no token");
       await this.store.runs.update(run.id, { preview: { label, credentialId: cred.id } });
       return { internalDomain: `${label}.internal`, token: cred.token };
@@ -211,8 +242,34 @@ export class PreviewService {
     }
   }
 
-  /** preview.open: the public URL for `port` in `runId`'s sandbox. */
+  /** The public URL for `port` in `runId`'s sandbox. `share` is only ever true from a person's
+   * request (the session page); agentlink refuses it from a sandbox. */
   async open(runId: string, port: number, share: boolean, internalUrlFromAgent?: string): Promise<OpenResult> {
+    const key = `${runId}:${port}:${share}`;
+    const inflight = this.opening.get(key);
+    if (inflight) return inflight;
+    const p = this.openOnce(runId, port, share, internalUrlFromAgent).finally(() => this.opening.delete(key));
+    this.opening.set(key, p);
+    return p;
+  }
+
+  private overBudget(runId: string): boolean {
+    const hourAgo = this.now().getTime() - 3600_000;
+    const recent = (this.recentOpens.get(runId) ?? []).filter((t) => t > hourAgo);
+    if (recent.length >= OPENS_PER_RUN_PER_HOUR) {
+      this.recentOpens.set(runId, recent);
+      return true;
+    }
+    recent.push(this.now().getTime());
+    this.recentOpens.set(runId, recent);
+    return false;
+  }
+
+  private meta(fields: Record<string, unknown>): string {
+    return JSON.stringify({ purpose: CREDENTIAL_PURPOSE, env: this.config.previewEnv, createdAt: this.now().toISOString(), ...fields });
+  }
+
+  private async openOnce(runId: string, port: number, share: boolean, internalUrlFromAgent?: string): Promise<OpenResult> {
     if (!this.enabled) return { error: "not-configured" };
     if (!validPreviewPort(port)) return { error: "port-not-allowed" };
     const run = await this.store.runs.findById(runId);
@@ -223,6 +280,7 @@ export class PreviewService {
     const open = await this.store.previews.findOpen(runId, port, share);
     if (open) return { url: open.url, ...(open.expiresAt ? { expiresAt: open.expiresAt } : {}) };
     if ((await this.store.previews.listOpenForRun(runId)).length >= MAX_OPEN_PREVIEWS_PER_RUN) return { error: "too-many" };
+    if (this.overBudget(runId)) return { error: "too-many" };
 
     const id = randomBytes(16).toString("hex");
     const url = `https://${id}.${this.config.previewDomain}`;
@@ -236,7 +294,7 @@ export class PreviewService {
         url,
         trafficPolicy: policy,
         description: `outfitter preview, session ${run.sessionId} port ${port}${share ? " (share)" : ""}`.slice(0, 255),
-        metadata: JSON.stringify({ purpose: CREDENTIAL_PURPOSE, previewId: id, runId, sessionId: run.sessionId, port, share, createdAt: now.toISOString() }),
+        metadata: this.meta({ previewId: id, runId, sessionId: run.sessionId, port, share }),
       });
       endpointId = ep.id;
     } catch (err) {
@@ -308,13 +366,15 @@ export class PreviewService {
       const known = new Set((await this.store.previews.listOpen()).map((p) => p.endpointId));
       for (const ep of await this.ngrok.listCloudEndpoints()) {
         if (known.has(ep.id) || !hostOf(ep.url).endsWith(`.${this.config.previewDomain}`)) continue;
-        if (!olderThanGrace(ep.metadata, now)) continue;
+        // Only this deployment's own previews: never a hand-made endpoint, a test's, or another
+        // environment's that shares the account and domain.
+        if (!this.ours(ep.metadata) || !olderThanGrace(ep.metadata, now)) continue;
         await this.ngrok.deleteEndpoint(ep.id);
         out.orphanEndpoints++;
       }
       for (const cred of await this.ngrok.listCredentials()) {
         const meta = parseMeta(cred.metadata);
-        if (meta?.purpose !== CREDENTIAL_PURPOSE || typeof meta.runId !== "string") continue;
+        if (!this.ours(cred.metadata) || typeof meta?.runId !== "string") continue;
         if (!olderThanGrace(cred.metadata, now) || (await isLive(meta.runId))) continue;
         await this.ngrok.deleteCredential(cred.id);
         out.credentials++;
@@ -323,6 +383,11 @@ export class PreviewService {
       this.log("previews: sweeping ngrok's side failed; next tick retries", { err: String(err) });
     }
     return out;
+  }
+
+  private ours(metadata: string | undefined): boolean {
+    const meta = parseMeta(metadata);
+    return meta?.purpose === CREDENTIAL_PURPOSE && meta.env === this.config.previewEnv;
   }
 
   private async closeOne(p: Preview, reason: string): Promise<boolean> {
@@ -346,8 +411,8 @@ function parseMeta(raw: string | undefined): Record<string, unknown> | undefined
   try { const j = JSON.parse(raw); return j && typeof j === "object" ? j : undefined; } catch { return undefined; }
 }
 
-/** True when the resource's metadata says it was made more than ORPHAN_GRACE_MS ago. Missing or
- * unreadable createdAt counts as old: that's no resource this code made recently. */
+/** True when the resource's metadata says it was made more than ORPHAN_GRACE_MS ago. (Only called
+ * on resources `ours` already matched, which this code stamps with createdAt.) */
 function olderThanGrace(metadata: string | undefined, now: Date): boolean {
   const created = Date.parse(String(parseMeta(metadata)?.createdAt ?? ""));
   return !Number.isFinite(created) || now.getTime() - created > ORPHAN_GRACE_MS;

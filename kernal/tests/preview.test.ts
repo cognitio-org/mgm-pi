@@ -132,28 +132,38 @@ describe("the preview tool", () => {
     const r = await x.call("preview", { port: dead });
     assert.equal(r.isError, true);
     assert.match(r.text, /nothing is listening on port/);
-    assert.match((await x.call("preview", { port: dead, share: true })).text, /only for Drives/);
     assert.match((await x.call("preview", {})).text, /Give job_id/);
     assert.match((await x.call("preview", { job_id: "bg9" })).text, /No background job bg9/);
     await x.shutdown();
   });
 
-  test("Drive: goes through agentd, share passes through, a job's end closes the tunnel and says so", async () => {
+  test("Drive: goes through agentd, a job's end closes the tunnel and says so", async () => {
     const agentd = await fakeAgentd({ token: "tok" });
     process.env.OUTFITTER_PREVIEW_PORT = String(agentd.port);
     process.env.OUTFITTER_PREVIEW_TOKEN = "tok";
     const x = loadExtension();
     await x.call("background", { action: "run", kind: "server", port: 3000, command: "sleep 0.5" });
-    const p = await x.call("preview", { job_id: "bg1", share: true });
+    const p = await x.call("preview", { job_id: "bg1" });
     assert.equal(p.isError, false, p.text);
     assert.match(p.text, /https:\/\/abc3000\.kernal\.run\//);
-    assert.match(p.text, /Anyone with this link/);
-    assert.deepEqual(agentd.calls[0].body, { port: 3000, jobId: "bg1", share: true });
+    assert.match(p.text, /Only people with access to this session/);
+    assert.deepEqual(agentd.calls[0].body, { port: 3000, jobId: "bg1" });
     // the job exits on its own: the notice carries the closed preview, and agentd got the DELETE
     for (let i = 0; i < 100 && x.messages.length === 0; i++) await sleep(50);
     assert.equal(x.messages.length, 1);
     assert.match(x.messages[0].content, /Its preview \(https:\/\/abc3000\.kernal\.run\/\) was closed/);
     assert.ok(agentd.calls.some((c) => c.method === "DELETE" && c.url === "/previews/3000"));
+    await x.shutdown();
+  });
+
+  test("Drive: the api's refusals come back as instructions", async () => {
+    const agentd = await fakeAgentd({ token: "tok", reply: () => ({ status: 403, json: { error: "share-not-allowed", detail: "share-not-allowed" } }) });
+    process.env.OUTFITTER_PREVIEW_PORT = String(agentd.port);
+    process.env.OUTFITTER_PREVIEW_TOKEN = "tok";
+    const x = loadExtension();
+    const r = await x.call("preview", { port: 3000 });
+    assert.equal(r.isError, true);
+    assert.match(r.text, /made by the person, from the session page/);
     await x.shutdown();
   });
 

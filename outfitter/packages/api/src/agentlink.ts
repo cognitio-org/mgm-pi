@@ -1580,9 +1580,12 @@ export class AgentLink {
         const requestId = typeof frame.requestId === "string" ? frame.requestId : "";
         if (!requestId) break;
         const port = Number(frame.port);
-        const share = frame.share === true;
         const internalUrl = typeof frame.internalUrl === "string" ? frame.internalUrl : undefined;
-        const answer = this.previews ? this.previews.open(runId, port, share, internalUrl) : Promise.resolve({ error: "not-configured" });
+        // A share link is a person's decision (the session page, phase 3), never the sandbox's:
+        // otherwise a prompt-injected model could publish anything anonymously on the preview domain.
+        const answer = frame.share === true
+          ? Promise.resolve({ error: "share-not-allowed" })
+          : this.previews ? this.previews.open(runId, port, false, internalUrl) : Promise.resolve({ error: "not-configured" });
         void answer
           .catch(() => ({ error: "failed" }))
           .then((result) => {

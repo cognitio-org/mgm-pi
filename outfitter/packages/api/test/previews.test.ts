@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { loadConfig } from "../src/config.ts";
 import { createNgrokApi, NgrokApiError, type NgrokApi, type NgrokCredential, type NgrokEndpoint } from "../src/ngrok-api.ts";
 import {
-  MAX_OPEN_PREVIEWS_PER_RUN, ORPHAN_GRACE_MS, PreviewService, allowExpression, internalUrlFor, parseAllowlist, runLabel,
+  MAX_OPEN_PREVIEWS_PER_RUN, OPENS_PER_RUN_PER_HOUR, ORPHAN_GRACE_MS, PreviewService, allowExpression, internalUrlFor, parseAllowlist, runLabel,
   securePolicy, sharePolicy, validPreviewPort,
 } from "../src/previews.ts";
 import { MemoryStore } from "../src/store/memory.ts";
@@ -74,6 +74,8 @@ describe("ngrok API client", () => {
     assert.equal(calls[0].init.headers["Ngrok-Version"], "2");
     assert.equal(calls[1].url, "https://api.ngrok.com/endpoints?limit=100&before_id=ep_2");
     await api.deleteEndpoint("ep_gone");
+    await assert.rejects(createNgrokApi("k", (async () => new Response(JSON.stringify({ endpoints: [], next_page_uri: "https://evil.example/steal" }))) as any).listCloudEndpoints(),
+      (e: any) => e.code === "BAD_URL", "the key never follows a next_page_uri off api.ngrok.com");
     await assert.rejects(api.createCredential({ description: "d", metadata: "{}", acl: ["bind:*.r1.internal"] }),
       (e: any) => e instanceof NgrokApiError && e.status === 400 && e.code === "ERR_NGROK_620" && /Pay-as-you-go/.test(e.message));
     assert.deepEqual(JSON.parse(calls[3].init.body), { description: "d", metadata: "{}", acl: ["bind:*.r1.internal"] });
@@ -94,7 +96,8 @@ describe("policies", () => {
     assert.deepEqual(a.emails, ["matija.turk@gmail.com", "mgm@mgms.eu"]);
     assert.deepEqual(a.domains, ["mgms.eu"]);
     assert.deepEqual(a.ignored, ["group:eng@mgms.eu", "x' || true || 'y@a.com", "domain:a' || true"]);
-    assert.equal(allowExpression(a), "actions.ngrok.oauth.identity.email in ['matija.turk@gmail.com', 'mgm@mgms.eu'] || actions.ngrok.oauth.identity.email.endsWith('@mgms.eu')");
+    const e = "actions.ngrok.oauth.identity.email.lowerAscii()";
+    assert.equal(allowExpression(a), `${e} in ['matija.turk@gmail.com', 'mgm@mgms.eu'] || ${e}.endsWith('@mgms.eu')`);
     assert.equal(allowExpression({ emails: [], domains: [] }), "false", "nobody allowed means nobody gets in");
   });
 
@@ -105,7 +108,9 @@ describe("policies", () => {
     assert.equal(managed.on_http_request[1].expressions[0], `!(${allowExpression(allow)})`);
     assert.deepEqual(managed.on_http_request[1].actions[0], { type: "deny", config: { status_code: 403 } });
     assert.deepEqual(managed.on_http_request[2].actions[0], { type: "forward-internal", config: { url: "https://p3000.rabc.internal" } });
-    assert.equal(managed.on_http_response[0].actions[0].config.headers["x-robots-tag"], "noindex, nofollow");
+    const headers = managed.on_http_response[0].actions[0].config.headers;
+    assert.equal(headers["x-robots-tag"], "noindex, nofollow");
+    assert.equal(headers["strict-transport-security"], "max-age=31536000; includeSubDomains");
     const own = JSON.parse(securePolicy("https://p3000.rabc.internal", allow, { clientId: "cid", clientSecret: "cs" }));
     assert.deepEqual(own.on_http_request[0].actions[0].config, {
       provider: "google", client_id: "cid", client_secret: "cs", scopes: ["openid", "https://www.googleapis.com/auth/userinfo.email"],
@@ -116,11 +121,15 @@ describe("policies", () => {
     const now = new Date("2026-09-28T10:00:00Z");
     const p = JSON.parse(sharePolicy("https://p3000.rabc.internal", "2026-09-29T10:00:00.000Z", now));
     const [ack, notice, fwd] = p.on_http_request;
-    assert.equal(ack.expressions[0], "'kernal_preview_ack' in req.url.query_params");
-    assert.equal(ack.actions[0].config.status_code, 302);
+    // Only the notice's own form acknowledges it: a same-origin POST, so neither a crafted link nor
+    // another site can skip it (checked live against ngrok's CEL).
+    assert.equal(ack.expressions[0], "req.method == 'POST' && req.url.path == '/__kernal_preview_ack' && 'sec-fetch-site' in req.headers && req.headers['sec-fetch-site'][0] == 'same-origin'");
+    assert.equal(ack.actions[0].config.status_code, 303);
     assert.match(ack.actions[0].config.headers["set-cookie"], /^kernal_preview_ack=1; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=86400$/);
     assert.equal(notice.expressions[0], "!('kernal_preview_ack' in req.cookies)");
     assert.match(notice.actions[0].config.body, /AI agent/);
+    assert.match(notice.actions[0].config.body, /<form method=post action='\/__kernal_preview_ack'>/);
+    assert.doesNotMatch(notice.actions[0].config.body, /kernal_preview_ack=1/, "no GET link that skips the notice");
     assert.match(notice.actions[0].config.body, /2026-09-29 10:00 UTC/);
     assert.deepEqual(fwd.actions[0], { type: "forward-internal", config: { url: "https://p3000.rabc.internal" } });
   });
@@ -149,8 +158,21 @@ describe("PreviewService", () => {
     assert.deepEqual(cred.acl, [`bind:*.${label}.internal`]);
     assert.equal(JSON.parse(cred.metadata!).runId, run.id);
     assert.deepEqual((await store.runs.findById(run.id))?.preview, { label, credentialId: "cr_1" });
+    await store.runs.update(run.id, { startup: { specSentAt: new Date().toISOString() } as any });
     assert.deepEqual(await svc.runSpecConfig(run), { internalDomain: `${label}.internal` }, "no token, no second credential");
     assert.equal(ngrok.credentials.size, 1);
+  });
+
+  test("a credential whose spec never went out is replaced, not reused (agentd never got its token)", async () => {
+    const store = new MemoryStore();
+    const ngrok = new FakeNgrok();
+    const svc = new PreviewService({ store, config: config(), ngrok });
+    const run = await liveRun(store);
+    await svc.runSpecConfig(run);
+    const again = await svc.runSpecConfig(run);
+    assert.equal(again?.token, "tok_cr_2");
+    assert.deepEqual(ngrok.deletedCredentials, ["cr_1"]);
+    assert.equal((await store.runs.findById(run.id))?.preview?.credentialId, "cr_2");
   });
 
   test("open makes a random host on the preview domain with the right policy, idempotently; share is separate and expires", async () => {
@@ -191,6 +213,23 @@ describe("PreviewService", () => {
     const dead = await liveRun(store, "3f2a9c1e-0000-4000-8000-000000000002", "stopped");
     await store.runs.update(dead.id, { preview: { label: runLabel(dead.id), credentialId: "cr_x" } });
     assert.deepEqual(await svc.open(dead.id, 3000, false), { error: "not-configured" });
+  });
+
+  test("two opens at once share one endpoint; a run's opens are budgeted per hour", async () => {
+    const store = new MemoryStore();
+    const ngrok = new FakeNgrok();
+    const svc = new PreviewService({ store, config: config(), ngrok });
+    const run = await liveRun(store);
+    await svc.runSpecConfig(run);
+    const [a, b] = await Promise.all([svc.open(run.id, 3000, false), svc.open(run.id, 3000, false)]);
+    assert.deepEqual(a, b);
+    assert.equal(ngrok.endpoints.size, 1);
+    await svc.close(run.id, 3000);
+    for (let i = 1; i < OPENS_PER_RUN_PER_HOUR; i++) {
+      assert.ok("url" in (await svc.open(run.id, 3000, false)), `open ${i}`);
+      await svc.close(run.id, 3000);
+    }
+    assert.deepEqual(await svc.open(run.id, 3000, false), { error: "too-many" });
   });
 
   test("an ngrok failure answers failed and records nothing", async () => {
@@ -236,15 +275,21 @@ describe("PreviewService", () => {
     await svc.open(ending.id, 3000, false);
     await store.runs.update(ending.id, { state: "failed" });
     // a crash between creating an endpoint and recording it, a foreign endpoint, and one just made
-    const orphanMeta = (createdAt: string) => JSON.stringify({ purpose: "outfitter-preview", createdAt });
+    const orphanMeta = (createdAt: string, env = "local") => JSON.stringify({ purpose: "outfitter-preview", env, createdAt });
     ngrok.endpoints.set("ep_orphan", { id: "ep_orphan", type: "cloud", url: "https://dead.kernal.run", metadata: orphanMeta("2026-09-28T09:00:00Z"), trafficPolicy: "{}" });
     ngrok.endpoints.set("ep_young", { id: "ep_young", type: "cloud", url: "https://young.kernal.run", metadata: orphanMeta(new Date(now.getTime() + 25 * 3600_000 - ORPHAN_GRACE_MS / 2).toISOString()), trafficPolicy: "{}" });
     ngrok.endpoints.set("ep_foreign", { id: "ep_foreign", type: "cloud", url: "https://mgm-lmstudio.ngrok.app", metadata: "", trafficPolicy: "{}" });
+    // on the preview domain but not ours: hand-made (no metadata), and another environment's
+    ngrok.endpoints.set("ep_handmade", { id: "ep_handmade", type: "cloud", url: "https://debug.kernal.run", metadata: "", trafficPolicy: "{}" });
+    ngrok.endpoints.set("ep_staging", { id: "ep_staging", type: "cloud", url: "https://stg.kernal.run", metadata: orphanMeta("2026-09-28T09:00:00Z", "staging"), trafficPolicy: "{}" });
+    ngrok.credentials.set("cr_staging", { id: "cr_staging", metadata: JSON.stringify({ purpose: "outfitter-preview", env: "staging", runId: "not-in-this-store", createdAt: "2026-09-28T09:00:00Z" }) });
     ngrok.credentials.set("cr_other", { id: "cr_other", metadata: JSON.stringify({ purpose: "something-else" }) });
     now = new Date(now.getTime() + 25 * 3600_000); // past the share link's 24 h
     const out = await svc.sweep();
     assert.deepEqual(out, { expired: 1, deadRuns: 1, orphanEndpoints: 1, credentials: 1 });
     assert.ok(ngrok.endpoints.has("ep_young") && ngrok.endpoints.has("ep_foreign"));
+    assert.ok(ngrok.endpoints.has("ep_handmade") && ngrok.endpoints.has("ep_staging"), "never another environment's or a hand-made endpoint");
+    assert.ok(ngrok.credentials.has("cr_staging"), "never another environment's credential");
     assert.ok(!ngrok.endpoints.has("ep_orphan"));
     assert.deepEqual((await store.previews.listOpen()).map((p) => p.url), ["url" in keep ? keep.url : ""]);
     assert.deepEqual(ngrok.deletedCredentials, ["cr_2"], "the ended run's credential; the live run's and the unrelated one stay");
@@ -278,6 +323,23 @@ describe("agentlink wiring", () => {
     for (let i = 0; i < 50 && ngrok.deletedCredentials.length === 0; i++) await new Promise((r) => setTimeout(r, 20));
     assert.equal(ngrok.endpoints.size, 0);
     assert.deepEqual(ngrok.deletedCredentials, ["cr_1"]);
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("a sandbox can't ask for a public share link", async () => {
+    const ngrok = new FakeNgrok();
+    const app = await buildTestApp(env, { ngrok });
+    const { session, runId, runToken } = await makeRunningSession(app);
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    await agent.nextMessage(); // run.spec
+    agent.send({ t: "preview.open", requestId: "q1", port: 3000, internalUrl: internalUrlFor(runLabel(runId), 3000), share: true });
+    const result = await agent.nextMessage();
+    assert.deepEqual({ t: result.t, error: result.error, url: result.url }, { t: "preview.result", error: "share-not-allowed", url: undefined });
+    assert.equal(ngrok.endpoints.size, 0);
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
     app.stopBackgroundTasks();
     await app.fastify.close();
   });

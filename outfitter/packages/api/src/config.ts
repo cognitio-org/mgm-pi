@@ -110,6 +110,10 @@ export interface Config {
    * long a public share link lives, at most. It always ends with its job or run anyway. */
   previewShareTtlSeconds: number;
   previewShareMaxSeconds: number;
+  /** PREVIEW_ENV (default: GCP_PROJECT, else "local"): stamped into every preview endpoint and
+   * credential's metadata, so the sweep only ever removes this deployment's own, not another
+   * environment's sharing the ngrok account and PREVIEW_DOMAIN. */
+  previewEnv: string;
   /** NGROK_GOOGLE_OAUTH (Secret Manager outfitter-ngrok-google-oauth): our Google OAuth client for
    * ngrok's sign-in on secure previews, JSON {client_id, client_secret}. Absent or unparseable:
    * ngrok's managed Google app is used instead. */
@@ -319,6 +323,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     previewAllow: envOperators("PREVIEW_ALLOW", env),
     previewShareTtlSeconds: envInt("PREVIEW_SHARE_TTL_SECONDS", 24 * 60 * 60, env),
     previewShareMaxSeconds: envInt("PREVIEW_SHARE_MAX_SECONDS", 7 * 24 * 60 * 60, env),
+    previewEnv: (env.PREVIEW_ENV || env.GCP_PROJECT || "local").trim(),
     ...(envGoogleOauth(env.NGROK_GOOGLE_OAUTH) ? { ngrokGoogleOauth: envGoogleOauth(env.NGROK_GOOGLE_OAUTH) } : {}),
     litellmBaseUrl: env.LITELLM_BASE_URL ?? "https://litellm.augment-code.support/v1",
     litellmAdminKey: env.LITELLM_ADMIN_KEY ?? "",

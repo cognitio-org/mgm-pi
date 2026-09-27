@@ -23,7 +23,8 @@ export interface NgrokEndpoint {
 }
 
 export interface NgrokApi {
-  createCredential(input: { description: string; metadata: string; acl: string[] }): Promise<NgrokCredential>;
+  /** `timeoutMs` shortens the call's deadline (a run's wake waits on this one). */
+  createCredential(input: { description: string; metadata: string; acl: string[] }, opts?: { timeoutMs?: number }): Promise<NgrokCredential>;
   /** Idempotent: a credential that's already gone is not an error. */
   deleteCredential(id: string): Promise<void>;
   listCredentials(): Promise<NgrokCredential[]>;
@@ -51,8 +52,11 @@ const TIMEOUT_MS = 15_000;
 const MAX_PAGES = 20;
 
 export function createNgrokApi(apiKey: string, fetchImpl: typeof fetch = fetch): NgrokApi {
-  const call = async (method: string, path: string, body?: unknown): Promise<any> => {
-    const res = await fetchImpl(path.startsWith("https://") ? path : `${BASE}${path}`, {
+  const call = async (method: string, path: string, body?: unknown, timeoutMs = TIMEOUT_MS): Promise<any> => {
+    const url = path.startsWith("https://") ? path : `${BASE}${path}`;
+    // The API key goes to ngrok's API and nowhere else, whatever a response's next_page_uri says.
+    if (!url.startsWith(`${BASE}/`)) throw new NgrokApiError(0, "BAD_URL", `refusing to call ${url.slice(0, 80)}`);
+    const res = await fetchImpl(url, {
       method,
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -60,7 +64,7 @@ export function createNgrokApi(apiKey: string, fetchImpl: typeof fetch = fetch):
         ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (method === "DELETE" && res.status === 404) return undefined;
     const text = await res.text();
@@ -84,8 +88,8 @@ export function createNgrokApi(apiKey: string, fetchImpl: typeof fetch = fetch):
   };
 
   return {
-    async createCredential(input) {
-      const json = await call("POST", "/credentials", input);
+    async createCredential(input, opts) {
+      const json = await call("POST", "/credentials", input, opts?.timeoutMs);
       return { id: String(json.id), token: typeof json.token === "string" ? json.token : undefined, description: json.description, metadata: json.metadata, acl: json.acl };
     },
     async deleteCredential(id) {

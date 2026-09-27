@@ -99,6 +99,8 @@ export function explainPreviewError(err: PreviewError): string {
     case "port-not-allowed": return `${err.message}. Use the port the server itself listens on (1024-65535).`;
     case "not-configured": return `Previews aren't enabled for this Drive (${err.message}).`;
     case "timeout": return `The preview tunnel didn't come up in time (${err.message}). Try again once.`;
+    case "share-not-allowed": return "Public share links are made by the person, from the session page. Give them the private link instead; they can share it from there.";
+    case "too-many": return `Too many previews for this Drive right now (${err.message}). Close ones you no longer need (preview close: true).`;
     default: return err.message;
   }
 }

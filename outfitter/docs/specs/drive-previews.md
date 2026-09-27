@@ -16,6 +16,21 @@ next. Owner decisions of 2026-09-27 are folded in. Builds on #121 (background jo
   - the share notice, cookie and forward work;
   - the secure link signs in through our Google client;
   - `closeRun` leaves nothing behind.
+- **Security review of the api side (#227), resolved:**
+  - a sandbox's `preview.open` with `share` is refused (`share-not-allowed`), and the tool has no
+    `share` option; share links come only from the person, on the session page (phase 3);
+  - the share notice is acknowledged only by its own form, a same-origin `POST` to
+    `/__kernal_preview_ack` (checked live), so a crafted `?ack` link or another site can't skip it;
+  - every endpoint and credential carries `{purpose: "outfitter-preview", env: PREVIEW_ENV}` (env
+    defaults to the GCP project), and the sweep touches nothing else, so hand-made or another
+    environment's endpoints on the same account are never removed;
+  - emails are compared lowercased at the edge (`lowerAscii()`, checked live), responses carry HSTS
+    (`.run` isn't preloaded), each run gets at most 20 opens an hour, and concurrent opens share one
+    endpoint.
+- **Known gap: `domain:` entries.** IAP's `domain:example.com` means members of that Workspace
+  domain; ngrok's edge can only match an email ending `@example.com`, which also admits a personal
+  Google account registered with such an address. ngrok doesn't expose Google's `hd` claim to the
+  policy. Accepted for now; list explicit `user:` entries in `IAP_MEMBERS` if that matters.
 - **Settled open decisions:** share links default to 24 h, 7 days at most
   (`PREVIEW_SHARE_TTL_SECONDS`, `PREVIEW_SHARE_MAX_SECONDS`), with a first-visit notice page at
   ngrok's edge. Drives come first; the desktop tool returns localhost.

@@ -25,9 +25,16 @@ GKE_NAMESPACE="${GKE_NAMESPACE:-outfitter-sandboxes}"
 GKE_WARM_POOL="${GKE_WARM_POOL:-outfitter-agent}"
 GKE_SANDBOX_MEMORY="${GKE_SANDBOX_MEMORY:-4Gi}"
 # A Kubernetes quantity in Mi or Gi only: it lands unquoted in the template's resources, and a
-# typo there would fail the apply after link already moved to the new image.
-[[ "${GKE_SANDBOX_MEMORY}" =~ ^[1-9][0-9]*(Mi|Gi)$ ]] \
+# typo there would fail the apply mid-release (release.sh runs this after the agent Job has moved to
+# the new image, before link and web). Checked here, before anything touches the cluster.
+[[ "${GKE_SANDBOX_MEMORY}" =~ ^([1-9][0-9]*)(Mi|Gi)$ ]] \
   || { echo "gke-template: GKE_SANDBOX_MEMORY must look like 4Gi or 4096Mi, got '${GKE_SANDBOX_MEMORY}'" >&2; exit 1; }
+# Autopilot allows 1-6.5 GiB per vCPU and adjusts anything outside that (more CPU, a bigger bill)
+# rather than refusing it; the sandbox is 1 vCPU, so hold the value to that range here.
+SANDBOX_MEMORY_MI="${BASH_REMATCH[1]}"
+if [[ "${BASH_REMATCH[2]}" == "Gi" ]]; then SANDBOX_MEMORY_MI=$(( SANDBOX_MEMORY_MI * 1024 )); fi
+(( SANDBOX_MEMORY_MI >= 1024 && SANDBOX_MEMORY_MI <= 6656 )) \
+  || { echo "gke-template: GKE_SANDBOX_MEMORY must be 1Gi-6656Mi for a 1 vCPU sandbox, got '${GKE_SANDBOX_MEMORY}'" >&2; exit 1; }
 AR_REPO="${AR_REPO:-outfitter}"
 GKE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/gke" && pwd)"
 

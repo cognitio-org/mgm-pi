@@ -77,10 +77,15 @@ export function readSandboxMemory(read: Read = (path) => readFileSync(path, "utf
   let used = cgroupUsed(read);
   let limit = bytes(read, "/sys/fs/cgroup/memory/memory.limit_in_bytes") ?? bytes(read, "/sys/fs/cgroup/memory.max");
   if (limit !== undefined && limit >= NO_LIMIT_BYTES) limit = undefined;
-  if (used === undefined || limit === undefined) {
+  if (used === undefined) {
+    // No cgroup usage: take both from /proc/meminfo, never meminfo's system-wide usage against a
+    // cgroup limit -- two different scopes would make the 80% rule meaningless.
     const meminfo = fromMeminfo(read);
-    used ??= meminfo?.usedBytes;
-    limit ??= meminfo?.totalBytes;
+    used = meminfo?.usedBytes;
+    limit = meminfo?.totalBytes;
+  } else if (limit === undefined) {
+    // Cgroup usage with no cgroup limit: under gVisor MemTotal is the sandbox's own size.
+    limit = fromMeminfo(read)?.totalBytes;
   }
   if (used === undefined || limit === undefined || limit <= 0) return undefined;
   return { usedMb: Math.round(used / MIB), limitMb: Math.round(limit / MIB) };
@@ -96,6 +101,13 @@ export class SandboxMemoryPeak {
   sample(): void {
     const now = this.read();
     if (now && (!this.peak || now.usedMb >= this.peak.usedMb)) this.peak = now;
+  }
+
+  /** The highest reading so far, without starting over: for a heartbeat that can't be delivered
+   * (link down), so the peak carries to the first one that is. */
+  peek(): SandboxMemory | undefined {
+    this.sample();
+    return this.peak;
   }
 
   /** The highest reading since the last call, then starts over. Undefined when nothing was readable. */

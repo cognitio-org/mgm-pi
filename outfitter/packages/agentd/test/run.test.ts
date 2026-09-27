@@ -33,6 +33,12 @@ class FakeLink implements LinkPort {
     this.sent.push(msg);
   }
 
+  /** Tests flip this to simulate the socket being down (Link.isOpen). */
+  linkOpen = true;
+  isOpen(): boolean {
+    return this.linkOpen;
+  }
+
   onMessage(handler: (msg: DownMessage) => void): void {
     this.handler = handler;
   }
@@ -1440,6 +1446,29 @@ test("RunController: #187 -- the heartbeat carries the sandbox's peak memory sin
   assert.equal(beat.sandboxMemMb, 3500, "the spike between heartbeats, not the last reading");
   assert.equal(beat.sandboxMemLimitMb, 4096);
   assert.ok(beat.memMb > 0, "agentd's own rss is still there");
+});
+
+test("RunController: #187 -- a spike while the link is down reaches the first heartbeat after it's back", async (t) => {
+  const readings = [{ usedMb: 3500, limitMb: 4096 }];
+  const calm = { usedMb: 400, limitMb: 4096 };
+  const { controller, link, states, spec } = await setupController(
+    {},
+    {
+      heartbeatIntervalMs: 60,
+      memorySampleMs: 20,
+      sandboxMemory: new SandboxMemoryPeak(() => readings.shift() ?? calm),
+    },
+  );
+  t.after(() => controller.dispose());
+  link.linkOpen = false; // heartbeats in this window are dropped by the real Link
+  link.deliver(spec);
+  await waitFor(() => states.includes("idle"));
+  await waitFor(() => link.sent.filter((m) => m.t === "heartbeat").length >= 2);
+  const droppedCount = link.sent.length;
+  link.linkOpen = true;
+  await waitFor(() => link.sent.slice(droppedCount).some((m) => m.t === "heartbeat"));
+  const delivered = link.sent.slice(droppedCount).find((m) => m.t === "heartbeat") as { sandboxMemMb?: number };
+  assert.equal(delivered.sandboxMemMb, 3500, "the spike from while the link was down, not the calm reading since");
 });
 
 test("RunController: #187 -- no sandbox memory readable means no sandbox fields", async (t) => {

@@ -118,6 +118,7 @@ describe("agentd <-> api WebSocket", () => {
     // An older agentd's heartbeat, or garbage, leaves the stored values alone.
     agent.send({ t: "heartbeat", idleSeconds: 0, memMb: 90 });
     agent.send({ t: "heartbeat", idleSeconds: 0, memMb: 90, sandboxMemMb: "lots", sandboxMemLimitMb: -1 });
+    agent.send({ t: "heartbeat", idleSeconds: 0, memMb: 90, sandboxMemMb: 0.4, sandboxMemLimitMb: 0.4 }); // would round to 0
     await settle();
     run = await app.store.runs.findById(runId);
     assert.equal(run?.sandboxMemPeakMb, 1500);

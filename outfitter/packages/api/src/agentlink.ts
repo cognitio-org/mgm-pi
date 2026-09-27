@@ -306,7 +306,7 @@ export function sandboxMemoryPatch(
   frame: { [key: string]: unknown },
 ): Pick<Run, "sandboxMemPeakMb" | "sandboxMemLimitMb" | "sandboxMemLastMb"> {
   const valid = (value: unknown): value is number =>
-    typeof value === "number" && Number.isFinite(value) && value > 0 && value < 1_048_576;
+    typeof value === "number" && Number.isFinite(value) && value >= 1 && value < 1_048_576;
   const patch: Pick<Run, "sandboxMemPeakMb" | "sandboxMemLimitMb" | "sandboxMemLastMb"> = {};
   if (valid(frame.sandboxMemMb)) {
     patch.sandboxMemLastMb = Math.round(frame.sandboxMemMb);

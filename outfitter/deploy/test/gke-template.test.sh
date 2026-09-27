@@ -271,6 +271,7 @@ if grep -qE '\$\{[A-Z_][A-Z0-9_]*\}' "${RENDERED_LOG}"; then
 else
   echo "ok: no \${VAR} placeholder was left unrendered"
 fi
+
 # env_name_collides <text> -- true if <text> defines OUTFITTER_API/RUN_ID/RUN_TOKEN as a `name:`
 # key, in either YAML flow style (`{ name: OUTFITTER_API, value: ... }`, the comma or brace
 # immediately after) or block style (`- name: OUTFITTER_API` on its own line, nothing after but
@@ -382,6 +383,24 @@ if grep -q "wait " "${KUBECTL_CALLS}"; then
 else
   echo "ok:   ... and no wait calls were made (nothing to wait on)"
 fi
+
+# #187: a non-default size renders as given, and one outside Autopilot's 1 vCPU range is refused.
+FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
+  FAKE_JOB_LABELS="build-commit=${TAG}" FAKE_CURRENT_REPLICAS=2 \
+  expect pass "#187: GKE_SANDBOX_MEMORY=3072Mi renders into requests and limits" \
+  "Done: SandboxTemplate/SandboxWarmPool at ${TAG}" GKE_SANDBOX_MEMORY=3072Mi
+[[ "$(grep -c 'memory: 3072Mi,' "${RENDERED_LOG}")" == 2 ]] \
+  && echo "ok: #187: a non-default sandbox memory is substituted, requests and limits alike" \
+  || { echo "FAIL: expected memory: 3072Mi in both requests and limits"; grep -n "memory:" "${RENDERED_LOG}" | sed 's/^/    /'; fails=$((fails + 1)); }
+for too in 512Mi 8Gi; do
+  FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
+    FAKE_JOB_LABELS="build-commit=${TAG}" \
+    expect fail "#187: GKE_SANDBOX_MEMORY=${too} is outside 1Gi-6656Mi and refused before touching the cluster" \
+    "must be 1Gi-6656Mi for a 1 vCPU sandbox" GKE_SANDBOX_MEMORY="${too}"
+  if [[ -s "${KUBECTL_CALLS}" ]]; then
+    echo "FAIL:   an out-of-range GKE_SANDBOX_MEMORY must not reach kubectl"; fails=$((fails + 1))
+  fi
+done
 
 echo "${fails} failed"
 [[ "${fails}" -eq 0 ]]

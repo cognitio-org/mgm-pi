@@ -254,6 +254,12 @@ export class Link {
     return this.lastAckedSeq;
   }
 
+  /** Whether a non-seq frame sent now goes out, or is held for the api's answer (#185), rather than
+   * being dropped. */
+  isOpen(): boolean {
+    return Boolean(this.ws && this.ws.readyState === this.WebSocketImpl.OPEN);
+  }
+
   getPendingCount(): number {
     return this.pending.length;
   }

@@ -79,6 +79,26 @@ test("SandboxMemoryPeak: take() returns the highest sample since the last take, 
   assert.deepEqual(peak.take(), { usedMb: 200, limitMb: 2048 });
 });
 
+test("readSandboxMemory: no cgroup usage takes both from /proc/meminfo, never meminfo usage against a cgroup limit", () => {
+  const read = files({
+    "/sys/fs/cgroup/memory/memory.limit_in_bytes": String(4096 * 2 ** 20),
+    "/proc/meminfo": "MemTotal:        16777216 kB\nMemAvailable:    8388608 kB\n",
+  });
+  assert.deepEqual(readSandboxMemory(read), { usedMb: 8192, limitMb: 16384 });
+});
+
+test("SandboxMemoryPeak: peek() keeps the peak for a later take(), which then starts over", () => {
+  const readings: SandboxMemory[] = [
+    { usedMb: 3500, limitMb: 4096 }, // peek (heartbeat while the link is down)
+    { usedMb: 1000, limitMb: 4096 }, // take, after it's back
+    { usedMb: 900, limitMb: 4096 },
+  ];
+  const peak = new SandboxMemoryPeak(() => readings.shift());
+  assert.deepEqual(peak.peek(), { usedMb: 3500, limitMb: 4096 });
+  assert.deepEqual(peak.take(), { usedMb: 3500, limitMb: 4096 }, "the spike survives the dropped heartbeat");
+  assert.deepEqual(peak.take(), { usedMb: 900, limitMb: 4096 });
+});
+
 test("SandboxMemoryPeak: an unreadable runtime gives undefined", () => {
   assert.equal(new SandboxMemoryPeak(() => undefined).take(), undefined);
 });

@@ -88,6 +88,9 @@ export interface LinkPort {
   /** The API WebSocket opened or dropped. The GitHub broker uses these; seq replay does not. */
   onOpen?(handler: () => void): void;
   onClose?(handler: () => void): void;
+  /** Optional: whether a non-seq frame sent now would go out (or be held for the api, #185)
+   * rather than be dropped. Absent in test doubles, which are treated as open. */
+  isOpen?(): boolean;
 }
 
 export type SpawnPiFn = typeof spawnPi;
@@ -1171,8 +1174,10 @@ export class RunController {
       const idleSeconds = this.idleSince ? Math.floor((this.now() - this.idleSince) / 1000) : 0;
       const memMb = Math.round(process.memoryUsage().rss / (1024 * 1024));
       // #187: the whole sandbox's peak since the last heartbeat, not only agentd's own rss, so a
-      // run that is then OOM-killed has already told the api how close it came.
-      const sandbox = this.sandboxMemory.take();
+      // run that is then OOM-killed has already told the api how close it came. With the link down
+      // the heartbeat is dropped, so the peak is kept for the first one that gets through: a spike
+      // during a reconnect must not vanish.
+      const sandbox = this.deps.link.isOpen?.() === false ? this.sandboxMemory.peek() : this.sandboxMemory.take();
       this.deps.link.send({
         t: "heartbeat",
         idleSeconds,

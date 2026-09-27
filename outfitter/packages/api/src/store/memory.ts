@@ -39,6 +39,8 @@ import type {
   BrowserCaptureFailure,
   BrowserCapturesCollection,
   BrowserCaptureSave,
+  FormattedSession,
+  FormattedSessionsCollection,
 } from "./types.ts";
 import { BROWSER_CAPTURES_PER_SESSION, entryInsertFields, type EntryInsertOptions } from "./types.ts";
 
@@ -83,6 +85,10 @@ class MemorySessions implements SessionsCollection {
     this.rows.set(id, next);
     return clone(next);
   }
+
+  async delete(id: string): Promise<boolean> {
+    return this.rows.delete(id);
+  }
 }
 
 class MemoryEntries implements EntriesCollection {
@@ -121,6 +127,13 @@ class MemoryEntries implements EntriesCollection {
   async maxSeq(sessionId: string): Promise<number> {
     const list = this.bySession.get(sessionId) ?? [];
     return list.reduce((max, e) => Math.max(max, e.seq), 0);
+  }
+
+  async deleteForSession(sessionId: string): Promise<number> {
+    const count = this.bySession.get(sessionId)?.length ?? 0;
+    this.bySession.delete(sessionId);
+    this.seenIds.delete(sessionId);
+    return count;
   }
 }
 
@@ -226,6 +239,14 @@ class MemoryRuns implements RunsCollection {
     const drained = row.pending;
     row.pending = [];
     return drained.map(clone);
+  }
+
+  async deleteForSession(sessionId: string): Promise<number> {
+    let count = 0;
+    for (const [id, row] of this.rows) {
+      if (row.sessionId === sessionId && this.rows.delete(id)) count++;
+    }
+    return count;
   }
 }
 
@@ -526,6 +547,14 @@ class MemoryMail implements MailCollection {
     const row = this.rows.get(id);
     return row ? clone(row) : null;
   }
+
+  async deleteForSession(sessionId: string): Promise<number> {
+    let count = 0;
+    for (const [id, row] of this.rows) {
+      if (row.sessionId === sessionId && this.rows.delete(id)) count++;
+    }
+    return count;
+  }
 }
 
 function isDeliverable(m: Mail, nowIso: string, maxAttempts: number): boolean {
@@ -603,6 +632,10 @@ class MemoryBrowserShares implements BrowserSharesCollection {
       }
       return { outcome: "deleted" as const, skippedIds };
     });
+  }
+
+  async deleteForSession(sessionId: string): Promise<number> {
+    return this.tables.shares.delete(sessionId) ? 1 : 0;
   }
 }
 
@@ -715,6 +748,14 @@ class MemoryBrowserRequests implements BrowserRequestsCollection {
     row.updatedAt = nowIso;
     return { request: clone(row), transitioned: true };
   }
+
+  async deleteForSession(sessionId: string): Promise<number> {
+    let count = 0;
+    for (const [id, row] of this.tables.requests) {
+      if (row.sessionId === sessionId && this.tables.requests.delete(id)) count++;
+    }
+    return count;
+  }
 }
 
 class MemoryBrowserCaptures implements BrowserCapturesCollection {
@@ -777,6 +818,27 @@ class MemoryBrowserCaptures implements BrowserCapturesCollection {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
     for (const old of mine.slice(BROWSER_CAPTURES_PER_SESSION)) this.tables.captures.delete(old.id);
   }
+
+  async deleteForSession(sessionId: string): Promise<number> {
+    let count = 0;
+    for (const [id, row] of this.tables.captures) {
+      if (row.sessionId === sessionId && this.tables.captures.delete(id)) count++;
+    }
+    return count;
+  }
+}
+
+class MemoryFormattedSessions implements FormattedSessionsCollection {
+  private readonly rows = new Map<string, FormattedSession>();
+
+  async insert(record: FormattedSession): Promise<void> {
+    if (!this.rows.has(record.id)) this.rows.set(record.id, clone(record));
+  }
+
+  async findById(id: string): Promise<FormattedSession | null> {
+    const row = this.rows.get(id);
+    return row ? clone(row) : null;
+  }
 }
 
 export class MemoryStore implements Store {
@@ -792,6 +854,7 @@ export class MemoryStore implements Store {
   readonly browserShares: BrowserSharesCollection;
   readonly browserRequests: BrowserRequestsCollection;
   readonly browserCaptures: BrowserCapturesCollection;
+  readonly formattedSessions = new MemoryFormattedSessions();
 
   constructor() {
     const tables: BrowserTables = {

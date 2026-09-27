@@ -40,6 +40,8 @@ import type {
   BrowserCaptureFailure,
   BrowserCapturesCollection,
   BrowserCaptureSave,
+  FormattedSession,
+  FormattedSessionsCollection,
 } from "./types.ts";
 import { BROWSER_CAPTURES_PER_SESSION, entryInsertFields, type EntryInsertOptions } from "./types.ts";
 import { TOKEN_TTL_MS } from "../tokens.ts";
@@ -109,6 +111,10 @@ class MongoSessions implements SessionsCollection {
     );
     return stripId<Session>(result);
   }
+
+  async delete(id: string): Promise<boolean> {
+    return (await this.col.deleteOne({ _id: id })).deletedCount > 0;
+  }
 }
 
 class MongoEntries implements EntriesCollection {
@@ -155,6 +161,10 @@ class MongoEntries implements EntriesCollection {
   async maxSeq(sessionId: string): Promise<number> {
     const row = await this.col.find({ sessionId }).sort({ seq: -1 }).limit(1).next();
     return row?.seq ?? 0;
+  }
+
+  async deleteForSession(sessionId: string): Promise<number> {
+    return (await this.col.deleteMany({ sessionId })).deletedCount;
   }
 }
 
@@ -271,6 +281,10 @@ class MongoRuns implements RunsCollection {
       { returnDocument: "before" },
     );
     return result?.pending ?? [];
+  }
+
+  async deleteForSession(sessionId: string): Promise<number> {
+    return (await this.col.deleteMany({ sessionId })).deletedCount;
   }
 }
 
@@ -640,6 +654,10 @@ class MongoMail implements MailCollection {
   async findById(id: string): Promise<Mail | null> {
     return stripMail(await this.col.findOne({ _id: id }));
   }
+
+  async deleteForSession(sessionId: string): Promise<number> {
+    return (await this.col.deleteMany({ sessionId })).deletedCount;
+  }
 }
 
 function stripMail(doc: MailDoc | null): Mail | null {
@@ -758,6 +776,10 @@ class MongoBrowserShares implements BrowserSharesCollection {
     } finally {
       await tx.endSession();
     }
+  }
+
+  async deleteForSession(sessionId: string): Promise<number> {
+    return (await this.shares.deleteMany({ sessionId })).deletedCount;
   }
 }
 
@@ -923,6 +945,10 @@ class MongoBrowserRequests implements BrowserRequestsCollection {
     if (!existing) return null;
     return { request: existing, transitioned: false };
   }
+
+  async deleteForSession(sessionId: string): Promise<number> {
+    return (await this.col.deleteMany({ sessionId })).deletedCount;
+  }
 }
 
 class MongoBrowserCaptures implements BrowserCapturesCollection {
@@ -994,6 +1020,26 @@ class MongoBrowserCaptures implements BrowserCapturesCollection {
     if (stale.length === 0) return;
     await this.captures.deleteMany({ _id: { $in: stale.map((row) => row._id) } });
   }
+
+  async deleteForSession(sessionId: string): Promise<number> {
+    return (await this.captures.deleteMany({ sessionId })).deletedCount;
+  }
+}
+
+class MongoFormattedSessions implements FormattedSessionsCollection {
+  private readonly col: MongoCollection<FormattedSession & { _id: string }>;
+
+  constructor(col: MongoCollection<FormattedSession & { _id: string }>) {
+    this.col = col;
+  }
+
+  async insert(record: FormattedSession): Promise<void> {
+    await this.col.updateOne({ _id: record.id }, { $setOnInsert: { ...record, _id: record.id } }, { upsert: true });
+  }
+
+  async findById(id: string): Promise<FormattedSession | null> {
+    return stripId<FormattedSession>(await this.col.findOne({ _id: id }));
+  }
 }
 
 export class MongoStore implements Store {
@@ -1009,6 +1055,7 @@ export class MongoStore implements Store {
   readonly browserShares: BrowserSharesCollection;
   readonly browserRequests: BrowserRequestsCollection;
   readonly browserCaptures: BrowserCapturesCollection;
+  readonly formattedSessions: FormattedSessionsCollection;
   private readonly client: MongoClient;
 
   private constructor(client: MongoClient, db: Db) {
@@ -1027,6 +1074,7 @@ export class MongoStore implements Store {
     this.browserShares = new MongoBrowserShares(shareCol, requestCol, client);
     this.browserRequests = new MongoBrowserRequests(requestCol, shareCol, client);
     this.browserCaptures = new MongoBrowserCaptures(db.collection<BrowserCaptureDoc>("browserCaptures"), requestCol);
+    this.formattedSessions = new MongoFormattedSessions(db.collection("formattedSessions"));
   }
 
   /** `dbName` wins over the database in the URI; the stored URI has none, so the default keeps

@@ -1,0 +1,33 @@
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_e0bc7d6e875242::t_2738a015631b7f 96-100,531,622,626
+outfitter/packages/web/src/components/NerdOutPanel.tsx
+  s_e0bc7d6e875242::t_2738a015631b7f 22-24,71-72,87,92,112-113,117-119,159,162-164,167-168,252,274
+outfitter/packages/web/src/components/StartupTime.tsx
+  s_e0bc7d6e875242::t_2738a015631b7f 3,18
+outfitter/packages/web/src/components/LogViewerDialog.tsx
+  s_e0bc7d6e875242::t_32ecc8da93bbb2 6,8-9,15-17,23-25,45,78-79,90-95,128-130,132-133,135-143,145-147,150-155,159-160,177,251-260,340-344
+outfitter/packages/web/test/nerd-out.test.ts
+  s_e0bc7d6e875242::t_59683bb81ec771 10-12,103-110,112-114,119-135,140
+outfitter/packages/web/src/lib/nerd-out.ts
+  s_e0bc7d6e875242::t_3e60d0e7c7419a 195
+  s_e0bc7d6e875242::t_6cfb1fc027edf4 166-169,171-194,196-203,207,209
+outfitter/packages/web/test/nerd-out-panel.test.tsx
+  s_e0bc7d6e875242::t_59683bb81ec771 6,145-146,155-185,256-304
+  s_e0bc7d6e875242::t_794bf8d80a8e2c 305
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "11f2762989447789155ac56bb733446665b278d1",
+  "prompts": {},
+  "sessions": {
+    "s_e0bc7d6e875242": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c37c9d46-795c-4cd1-835d-84b84570be9d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -47,6 +47,8 @@ export interface Job {
   /** When the job is killed as timed out (batch deadline, or a server's hard cap). */
   deadlineAt: number;
   logPath: string;
+  /** The port a server job listens on, when the model said so (previews, #217). */
+  port?: number;
 }
 
 export interface JobManagerOptions {
@@ -74,6 +76,8 @@ export interface StartOptions {
   name?: string;
   /** Seconds until the job is killed as timed out. */
   timeoutSeconds: number;
+  /** The port the job's server listens on (metadata for previews). */
+  port?: number;
 }
 
 /** setTimeout's ceiling (~24.8 days); a longer delay fires at once. */
@@ -161,6 +165,7 @@ export class JobManager {
     const job: Job = {
       id, name: o.name?.trim() || firstWords(command), command, kind: o.kind, cwd: o.cwd,
       pid: child.pid, startedAt, status: "running", deadlineAt: startedAt + timeoutSeconds * 1000, logPath,
+      ...(o.port !== undefined ? { port: o.port } : {}),
     };
     const log = new RotatingLog(logPath, this.logCapBytes);
     child.stdout!.on("data", (b: Buffer) => log.write(b));

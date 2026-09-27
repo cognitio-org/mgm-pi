@@ -1,50 +1,52 @@
 # Drive previews: open a Drive's dev server from the browser
 
-Status: design, not built. Builds on #121 (background shell jobs). Owner decisions are at the end.
+Status: design, not built. Owner decisions of 2026-09-27 are folded in; the few still open are at the
+end. Builds on #121 (background jobs, PR #221).
 
 ## Problem
 
-A model in a Drive starts a dev server (`npm run dev`, `vite`, `next dev`, a docs preview) on a
-port inside the sandbox. The person wants to open that page in their own browser, click around, and
-see changes land (HMR). Today nothing can reach it:
+A model in a Drive starts a dev server (`npm run dev`, `vite`, `next dev`, a docs preview) as a
+background job. The person wants to open that page in their own browser, click around, and see
+changes land. Today nothing can reach it:
 
-- The GKE sandbox has no ingress at all: `networkPolicy.ingress: []`, "no Sandbox Router"
-  (`deploy/gke/sandbox-template.yaml:26-28`). Egress is TCP 443/80 to public addresses, the
-  metadata server, and DNS (`:29-48`).
-- The Cloud Run job has no inbound port either.
-- The only path in is agentd's own outbound WebSocket to the link role (`protocol.md`
-  "agentd ⇄ api").
+- **GKE sandbox:** no ingress at all (`networkPolicy.ingress: []`, "no Sandbox Router",
+  `deploy/gke/sandbox-template.yaml:26-28`). Egress is TCP 443/80 to public addresses, the metadata
+  server, and DNS (`:29-48`).
+- **Cloud Run job:** no inbound port either.
 
-On the desktop there is no problem: the server is on `localhost` and the person opens it.
+On the desktop there is no problem: the server is on `localhost`.
+
+## Decisions (owner, 2026-09-27)
+
+- **Approach:** ngrok, done safely (below). Our own reverse proxy (option A) and Cloudflare Tunnel
+  were considered and not chosen.
+- **Domain:** `kernal.run`, registered by the owner. A preview's URL is
+  `https://<id>.kernal.run`, where `<id>` is 128 random bits (base32).
+- **Idle-stop:** browsing a preview counts as activity, capped at 2 h past the last chat turn.
+- **Access:** two modes, chosen per preview:
+  - **secure:** anyone with session access;
+  - **share:** an anonymous, time-boxed link.
 
 ## Requirements
 
-1. **One tool for the model, both modes.** On the desktop it returns `http://localhost:<port>`. In
-   a Drive it returns an HTTPS URL. The model learns one call, the same as #121's one job API.
-2. **Only the right people can open it:** the session's owner and anyone who can already open the
-   session. A preview is never public by default, and never reachable by guessing a URL.
-3. **The preview can't reach the person's Outfitter session.** The app is model-written code
-   running in the person's browser. It must not be able to:
-   - read or overwrite the `app.kernal.one` / `link.kernal.one` cookies;
-   - send credentialed requests to them (CSRF);
-   - read other previews.
-   See "Origin model".
-4. **Real dev servers work:**
-   - HTTP/1.1 streaming;
-   - WebSocket (vite/next/webpack HMR);
-   - server-sent events;
-   - absolute paths (`/assets/x.js`, `/_next/...`, `/@vite/client`). Path-prefix proxies break
-     that last one, so each preview gets its own host.
-5. **No new secret the model can read.** Anything in the sandbox is the model's (option B:
-   everything the `agent` user can read or reach).
-6. **Lifetime follows the job and the Drive.** The preview dies when its job exits, is killed, or the
-   Drive stops (#121's reaping). It never outlives the sandbox.
-7. **Low spend** (`memory: outfitter-project`), and nothing per-preview in GCP.
+1. **One tool, both modes.** On the desktop it returns `http://localhost:<port>`; in a Drive, an HTTPS
+   URL. The model learns one call.
+2. **Only the right people get in.** Secure previews check a Google identity at the edge. Share links
+   are unguessable and expire. Nothing the sandbox controls can loosen either.
+3. **The preview can't reach the person's Outfitter session.** A preview is model-written code in the
+   person's browser, so it must be cross-site to `app.kernal.one` and `link.kernal.one`, and
+   cross-origin to every other preview (see "Origin model").
+4. **Real dev servers work:** HTTP streaming, WebSocket (HMR), SSE, and absolute paths. One host per
+   preview avoids path-prefix breakage.
+5. **Nothing in the sandbox can make a preview public, or open a tunnel for another run.**
+   - The ngrok API key never enters the sandbox.
+   - The sandbox's own credential is per run and can only bind that run's private endpoints.
+6. **A preview's lifetime is bounded by its job and its Drive.** Nothing leaks after an api crash.
 
 ## The job API this builds on (#121)
 
-#121 (PR #221, `kernal/.pi/extensions/kernal-background/`, `jobs.ts` and `index.ts`) gives the
-model one tool, `background`, with `action: run | list | logs | kill`.
+PR #221's `background` tool (`kernal/.pi/extensions/kernal-background/`, `jobs.ts` and `index.ts`)
+has `action: run | list | logs | kill`.
 
 - **`run`:**
   - takes `command`, `kind: server | batch`, `name`, `cwd`, and, for a batch, `timeout_seconds`
@@ -55,209 +57,269 @@ model one tool, `background`, with `action: run | list | logs | kill`.
   followUp and triggerTurn) with the status, exit code, last 15 lines and log path. The model's own
   `kill` returns that result in the tool result instead; reaping at session end sends nothing.
 - **Lifetime:** jobs are per pi process, each in its own process group. They are reaped at
-  `session_shutdown` or when the process exits, and a watchdog follows pi's pid.
+  `session_shutdown` or process exit, and a watchdog follows pi's pid.
 
-Previews add one optional field and one tool:
+Previews add:
+- **`background` `run` gains `port?: number`:** a hint only, so `preview(jobId)` works without the
+  model repeating the number.
+- **A separate `preview(port | jobId)` tool** in the same extension, not a `background` action:
+  - `background` stays about process lifetime, with one schema on the desktop and in a Drive;
+  - exposing a port to a person is a different capability, with its own policy;
+  - `preview` can also serve a port started some other way.
+  - Desktop: it probes `127.0.0.1:<port>` and returns `http://localhost:<port>`, or says nothing is
+    listening.
+  - Drive: it returns the secure URL (below).
+- **A preview ends with its job.** JobManager's `onEnd` (exit, kill, timeout, server cap, reaping)
+  tells agentd to drop the port. The job's end notice or `kill` result says the preview is gone.
 
-- **`background` `run` gains `port?: number`:** a hint that this server listens on `port`. It is not
-  required.
-- **`preview(port | jobId)`:** registers the port for the session and returns the URL:
-  - desktop: `http://localhost:<port>`;
-  - Drive: `https://<previewId>.<preview-domain>/`.
-  It fails fast if nothing is listening yet (agentd connects to `127.0.0.1:<port>` once), and says so
-  instead of returning a dead link.
-- **A preview ends with its job.** The JobManager's `onEnd` is the hook: when the job exits, times
-  out or is killed, the preview extension drops its port. The job's own end notice (or the `kill`
-  result) says the preview is gone.
+The model can only create **secure** previews. A share link is made by a person, from the session
+page (phase 3), never by the model: otherwise a model could publish the sandbox to the internet.
 
-Recommendation: a **separate `preview` tool**, not a `preview` action on `background`:
-- `background` stays about process lifetime, and its schema is the same on the desktop and in a Drive.
-- Exposing a port to a person's browser is a different capability, with its own policy and later its
-  own permission.
-- `preview` can also serve a port the model started some other way (a foreground `bash` that
-  daemonised, a server from a script).
-- `port` on `run` stays a hint, so `preview(jobId)` works without the model repeating the number.
+## Why not naive ngrok
 
-The model tells the person the URL. The session page shows an "Open preview" chip for each live
-preview (later: in the jobs row #121 describes under "Web, later").
+The obvious setup: put the account's authtoken in the sandbox and run
+`ngrok http 3000 --oauth google --oauth-allow-email …`. It fails requirement 5 twice:
 
-## Options
+- **The policy lives in the agent's flags.** Anything that can run `ngrok` in the sandbox can run it
+  again without `--oauth` and get a public URL.
+- **The authtoken is account-wide.** Anyone holding it can open any tunnel on our account, including
+  on our own domain: phishing pages on `*.kernal.run`, or tunnels posing as other runs.
 
-| | A. Reverse proxy through Outfitter | B. Cloudflare Tunnel per Drive | B'. ngrok in the sandbox | C. GKE-native (Gateway/Ingress) |
-|---|---|---|---|---|
-| Path in | browser → preview host (own Cloud Run role) ← agentd's outbound tunnel socket | browser → Cloudflare edge ← `cloudflared` in the sandbox (outbound 443, `--protocol http2`) | browser → ngrok edge ← `ngrok` agent in the sandbox | browser → GCLB → Service → pod |
-| Who can open it | Outfitter's own check: session access, via a grant from the web role | Cloudflare Access policy on the hostname (enforced at the edge; the model can't change it) | ngrok OAuth/IP policy, **set by the agent's own flags**: the model can drop it and go public | IAP on the backend |
-| Secret in the sandbox | none (id token + run token already there) | a per-tunnel connector token: it can only run that one tunnel, and the api deletes the tunnel at stop | the account authtoken: the model can open any tunnel on our account (phishing on our domain) | none |
-| Origin isolation | separate registrable domain, host per preview | same, on Cloudflare DNS | `*.ngrok.app` or a reserved domain | own domain |
-| HMR / WebSocket | yes (proxied frames) | yes | yes | yes |
-| Cloud Run limits | 60 min per request/socket; both reconnect (HMR clients do) | none | none | none |
-| Works on Cloud Run provider | yes | yes | yes | **no** (GKE only) |
-| Fixed cost | global external LB + wildcard cert: ≈ $18–25/month | $0 (Tunnel free; Access free to 50 users) | paid plan for OAuth + reserved domain (≈ $20+/month) | LB + cert, plus per-sandbox routes |
-| New dependency | none | Cloudflare account, domain on Cloudflare, API token in the api | ngrok account (already used for LM Studio) | Gateway API, sandbox ingress opened |
-| Build size | largest: preview role, tunnel protocol, agentd tunnel client (≈ 1–1.5k lines with tests) | medium: tunnel/DNS/Access lifecycle in the api, `cloudflared` in the image (≈ 40 MB) | small, but the auth hole makes it unshippable as is | large, and ingress into gVisor pods |
+This design moves both out of reach:
 
-D. **Rejected:**
-- **Tailscale Funnel:** public with no auth, or tailnet-only, which people don't have.
-- **Sidecar on Cloud Run:** the Drive isn't a service.
-- **Path prefix on one shared host** (`/p/<id>/`): breaks absolute paths, and every preview then
-  shares one origin, so one preview's JS can read another's with the viewer's cookie.
+- The **public** endpoint, and its Traffic Policy, is created by the api through the ngrok API.
+- The sandbox only ever **binds a private internal endpoint**. Internal endpoints (`*.internal`)
+  receive no internet traffic; they're reachable only through a cloud endpoint's `forward-internal`
+  action, which only the api configures.
+- The sandbox's credential is scoped to its own run's internal names, and deleted at run end.
 
-## Recommendation: A, with B as the fallback if the load balancer's cost or ops are unwelcome
+## Design
 
-**A keeps auth, identity and lifetime inside Outfitter:**
-- the same session-access rule as the page, and the same Dongle for the Chrome companion;
-- no third party;
-- no secret in the sandbox;
-- works for both providers.
+### 1. Per-run ngrok credential (api)
 
-**Its cost:** a global load balancer (for the wildcard host) and the largest build. **B** is the
-credible cheaper route. Its edge enforces Access, so a model can't open the preview to the world.
-The price is a second identity system (Cloudflare Access login rather than IAP/Google via Outfitter)
-and a Cloudflare dependency. ngrok (B') is out unless it is given per-run credentials the model
-can't use to open other tunnels.
+When the api builds `run.spec` for a Drive (`agentlink.ts` `buildRunSpec`):
 
-### A in detail
+- **Create:** it calls the ngrok API to create a **credential** (an authtoken) restricted by ACL to
+  binding internal endpoints under that run's own name, e.g. `bind:*.<runId>.internal`. It is
+  delivered in `run.spec.secrets` as `ngrokAuthtoken` (`RunSpecSecrets`,
+  `packages/agentd/src/protocol.ts:286`).
+- **UNVERIFIED:** ngrok's documentation shows `bind:` ACL rules for public domains and labels. That a
+  rule can restrict binds to an internal hostname pattern, and that ngrok enforces it, must be proven
+  against our account before phase 2 (the owner's checklist, below).
+- **Handling:** agentd holds the token as root, like the GitHub credential (protocol.md "Two Linux
+  users inside the sandbox"). pi and the model run as `agent` and shouldn't be able to read it. Treat
+  that as defence in depth, not the guarantee: if it leaks, the worst it allows is binding private
+  endpoints for this run, which nothing can reach without an api-made cloud endpoint.
+- **Delete:** when the run ends (`bye`, stop, or the reconciler failing it), the api deletes the
+  credential. The sweeper (§5) catches misses.
+- **Reconnect:** the same credential is reused, since a reconnect ignores a second `run.spec`.
 
-**Preview role.** `packages/api`'s image gains `OUTFITTER_ROLE=preview`, a third Cloud Run service,
-`outfitter-preview`. It is `--allow-unauthenticated`, because its own cookie check is the gate (IAP
-can't sit in front of it; see "Auth"). Why a separate role:
-- **Scaling:** it pins `--max-instances=1` so the browser's request and agentd's tunnel socket meet in
-  one process. Today a web-role message reaches a link-role socket only through Mongo, polled every
-  1.5 s (`agentlink.ts:381-414`), and the link scales to 40 instances. That is fine for prompts,
-  useless for HTTP.
-- **Isolation:** the control link keeps its current scaling and protocol, and preview traffic can't
-  push against the api's 256-frame pre-accept buffer or agentd's 128-frame seq window (`link.ts:38`).
+### 2. In the sandbox (agentd)
 
-One instance (concurrency 1000) is ample at Outfitter's size. A restart drops live previews:
-agentd's tunnel reconnects with backoff, and the browser retries.
+The `preview` tool never sees the credential. It calls agentd's loopback listener, the same pattern as
+`browser_capture`:
 
-**Tunnel socket.** When the model calls `preview`, agentd opens a second WebSocket to
-`wss://<preview-host>/tunnel?run=<runId>` with the same `Authorization: Bearer <id token>`, then
-sends `hello {runId, runToken}`, checked exactly as `agentlink` checks it (and, after #216, the
-sandbox identity only for gke runs). It carries binary frames, one multiplexed stream per browser
-request:
+- The pi extension calls `http://127.0.0.1:<port>/…` with a per-run token header
+  (`outfitter-browser.ts:21,104,135`).
+- agentd binds 127.0.0.1 only, checks the token, and on Linux checks the peer uid
+  (`browser-capture.ts:1-12,93`).
 
-| frame | direction | meaning |
-|---|---|---|
-| `open {sid, port, method, path, headers}` | preview → agentd | new HTTP request or WebSocket upgrade (`upgrade: true`) to `127.0.0.1:<port>` |
-| `data {sid, bytes}` | both | body / WebSocket message bytes, ≤ 64 KiB each |
-| `head {sid, status, headers}` | agentd → preview | response head (or `101` for an upgrade) |
-| `end {sid}` / `reset {sid, reason}` | both | stream done / aborted (port closed, client gone, limit hit) |
-| `credit {sid, bytes}` | both | flow control: each side sends at most 256 KiB unacknowledged per stream |
-| `ports {open: [port]}` | agentd → preview | ports registered by `preview`, sent on connect and on change |
+On `POST /preview {port}`, agentd:
 
-It isn't seq/ack-replayed. A dropped tunnel resets its streams, and browsers retry. It rotates at
-55 minutes like the link (`link.ts:142`); open streams reset at rotation, and HMR clients reconnect
-on their own. agentd only dials ports the model registered, only on `127.0.0.1`, never another
-address, so the tunnel can't become a proxy into the cluster or the metadata server.
+1. **Checks the port** is 1024–65535 and has a listener on `127.0.0.1:<port>`, and that it is not
+   agentd's own ports.
+2. **Starts a small local reverse proxy** on a fresh loopback port.
+   - It forwards only to `127.0.0.1:<registered port>`, never another address, so it can't reach the
+     metadata server or the cluster.
+   - It passes HTTP and WebSocket upgrades through unchanged, and rewrites `Host` to
+     `localhost:<port>` (vite/next reject unknown hosts).
+   - It counts **page requests** for idle-stop (§4).
+3. **Starts, as root,** `ngrok http <proxy port> --url https://p<port>.<runId>.internal` with the
+   per-run credential. The `agent` user can't signal a root process, so the model can't swap it for
+   its own.
+4. **Asks the api for the public side:** an up-frame `preview.open {requestId, port}`, answered by
+   `preview.result {requestId, url | error}`.
+   - It isn't seq/ack-replayed; like `browser.capture.request`, a dropped link retries it.
+   - A `preview.close {port}` up-frame goes out when the job ends (JobManager `onEnd`, via the
+     extension calling `DELETE /preview/<port>` on the loopback listener) or the port stops
+     listening.
+   - On `bye`, agentd kills every ngrok agent and proxy.
 
-**Header hygiene.**
-- Dropped inbound: the preview cookie, any `authorization` the browser added for us, `x-goog-*`, and
-  hop-by-hop headers.
-- `Host` is rewritten to `localhost:<port>`, since dev servers check it (vite `allowedHosts`).
-- `X-Forwarded-Host/Proto` are set.
-- Outbound, `Set-Cookie` with a `Domain` attribute is refused (host-only cookies only). A response
-  `Content-Security-Policy` is left to the app.
-- Every response gets `Cross-Origin-Resource-Policy: same-site` and never any CORS allowance for the
-  Outfitter origins.
+**Image:** the `ngrok` agent binary is added to the sandbox image (pinned version, checksum-verified).
+It only needs outbound TCP 443, which `sandbox-template.yaml:32-33` already allows.
 
-## Origin model (both A and B)
+### 3. Public side (api only)
 
-Previews live on a **separate registrable domain**, never under `kernal.one`, e.g.
-`*.kernal-preview.app` (owner picks; see "Open decisions"), one host per preview:
-`<previewId>.<domain>`, where `previewId` is 128 bits of randomness, not the session id. Why not a
-`kernal.one` subdomain: every `*.kernal.one` host is **same-site** with `app.kernal.one`, so:
-- `SameSite=Lax` cookies (IAP's included) ride along on requests a preview page makes to the api,
-  so a model-written page could CSRF the person's session;
-- a preview host could set `Domain=kernal.one` cookies (cookie tossing);
-- `kernal.one` sends HSTS `includeSubDomains` (`deploy/README.md:554-556`), which only helps HTTPS,
-  not isolation.
+On `preview.open`, the api creates, through the ngrok API with the key from Secret Manager, a
+**cloud endpoint** `https://<id>.kernal.run` with a Traffic Policy the sandbox can't see or change.
+It records `{previewId, runId, sessionId, port, mode, expiresAt}` in the store and returns the URL.
 
-A separate registrable domain makes previews cross-site to Outfitter. A host per preview makes them
+**Secure mode:**
+```yaml
+on_http_request:
+  - actions:
+      - type: oauth
+        config: { provider: google }          # production: our own Google OAuth client
+  - expressions:
+      - "!(actions.ngrok.oauth.identity.email in ['a@x', 'b@y'])"   # emails with session access
+    actions:
+      - type: deny
+  - actions:
+      - type: forward-internal
+        config: { url: "https://p3000.<runId>.internal" }
+on_http_response:
+  - actions:
+      - type: add-headers
+        config: { headers: { strict-transport-security: "max-age=31536000; includeSubDomains" } }
+```
+- **The allowlist** is the same rule as `GET /api/sessions/:id` access. The api updates the endpoint's
+  policy whenever the session's access changes.
+- **OAuth client:** ngrok's managed Google app is for testing only; production uses our own OAuth
+  client, whose consent screen names Kernal.
+- **Why OAuth and not JWT validation:** ngrok's `jwt-validation` reads a token from a header or the
+  body, not a cookie, so it can't gate a browser opening a link.
+
+**Share mode.** A person clicks "Share link" on the session page and picks a TTL (default 24 h, at
+most 7 days).
+- The api creates a second cloud endpoint with a fresh random id: interstitial, then
+  `forward-internal`, and the same HSTS header.
+- **Interstitial, not a banner:** the first visit gets a `custom-response` page ("This is an
+  AI-built preview from a Kernal session. Don't enter passwords or payment details.") with a
+  Continue button that sets a host-only cookie. Later requests carrying the cookie pass straight to
+  `forward-internal`.
+  - The edge enforces it, and the sandbox can't remove it.
+  - Injecting a banner into the app's HTML would be fragile (CSP, streaming, non-HTML responses) and
+    would have to happen in the sandbox's proxy, which the model's server output could fight.
+  - **UNVERIFIED:** that Traffic Policy expressions can read request cookies (`req.cookies`) for this
+    check.
+- **Lifetime:** the api deletes the endpoint at TTL, and always when the job or the Drive ends,
+  whichever comes first.
+
+### 4. Idle and lifetime
+
+- **Browsing is activity.**
+  - agentd's proxy counts every non-upgrade HTTP request as a page request. WebSocket frames and
+    HMR pings are not counted.
+  - At most once a minute, a page request calls the same path as `markActivity`
+    (`packages/agentd/src/run.ts:985-998`), which re-arms idle-stop (default 30 min,
+    `deploy/config.env:14`).
+  - This extension stops 2 h after the last chat turn, so a forgotten tab or a polling page can't keep
+    a Drive billing.
+- **A preview needs its job.** Job end removes the port (`onEnd` → `preview.close` → the api deletes
+  its cloud endpoints). When no ports remain, agentd stops the ngrok agent and proxy.
+- **Drive stop.** `bye` makes the api delete every cloud endpoint for the run and then its
+  credential. The job doesn't survive the next wake (#121), so after Play the model starts it again
+  and calls `preview` again. The URL is new each time.
+
+### 5. Cleanup and the sweeper
+
+`POST /api/hooks/tick` (`packages/api/src/routes/hooks.ts:105`) gains a sweep. It lists the account's
+cloud endpoints and credentials through the ngrok API and deletes any that:
+- are tagged with a run that isn't live;
+- are past their TTL;
+- have no store record.
+
+Every endpoint and credential the api creates carries metadata `{outfitter: <runId>}` so the sweep
+can match them. So an api crash between "create" and "record", or a missed `bye`, leaks nothing for
+longer than one tick.
+
+### 6. Origin model
+
+`kernal.run` is a separate registrable domain from `kernal.one`, so previews are **cross-site** to
+Outfitter. A model-written page can't send the person's `SameSite=Lax` cookies (IAP's included) to
+the api, and can't set `Domain=kernal.one` cookies. With one host per preview, previews are
 cross-origin to each other.
 
-## Auth (A)
+`.run` isn't HSTS-preloaded. Every preview is HTTPS-only (ngrok cloud endpoints serve HTTPS), and each
+policy adds a `Strict-Transport-Security` header. Preloading `kernal.run` is optional later.
 
-1. **The web role mints a grant.** The person clicks "Open preview" on the session page (IAP), or the
-   companion calls the link with a Dongle. That role checks session access (the same rule as
-   `GET /api/sessions/:id`) and mints a **grant**: an HMAC-signed `{previewId, email, exp: 60 s}`,
-   key in Secret Manager, shared by the web, link and preview roles.
-2. **The preview host sets its own cookie.** The browser goes to
-   `https://<previewId>.<domain>/__outfitter/auth?grant=…`. The preview role verifies it and sets a
-   **host-only**, `HttpOnly`, `Secure`, `SameSite=Lax` cookie `__Host-outfitter-preview`, bound to
-   that `previewId` and email, 12 h. Then it redirects to `/`.
-3. **Every request is checked.** Each request needs that cookie for its own host and a preview that is
-   still live. Otherwise it gets a 302 to the session page, which re-mints a grant. The cookie is
-   stripped before proxying, so the app never sees it.
+### 7. Where keys live
 
-A model can't mint grants: it has no IAP identity or Dongle, and the grant key never enters the
-sandbox. A URL the model gives the person carries no grant. It lands on the session page, which
-checks access and redirects, so it is phishing-neutral: the only thing it can open is this session's
-preview, for someone who can already see the session.
+| Secret | Where | Who can use it |
+|---|---|---|
+| ngrok API key | Secret Manager, read by the api only | creates and deletes endpoints and credentials |
+| per-run ngrok credential | `run.spec.secrets`, held by agentd as root | binds `*.<runId>.internal` only (UNVERIFIED ACL) |
+| Google OAuth client secret | ngrok, set by the owner on the account/endpoint | ngrok's OAuth action |
 
-**Sharing** a preview means sharing the session. Anonymous links are out of the MVP (an open
-decision).
+## Options considered
 
-## Idle and lifetime
+| | ngrok, safe (chosen) | A. Our own reverse proxy | Cloudflare Tunnel + Access | Naive ngrok |
+|---|---|---|---|---|
+| Public policy set by | the api, via the ngrok API | our code | Cloudflare Access (edge) | the sandbox's agent flags |
+| Secret in the sandbox | per-run credential, own internal names only | none | per-tunnel connector token | account authtoken |
+| Login | Google via ngrok OAuth | IAP / Dongle via a grant | Cloudflare Access | Google via ngrok OAuth |
+| Build size | medium | largest (third Cloud Run role, tunnel protocol) | medium | small |
+| Fixed cost | ngrok plan (≈ $20/month) | global LB + wildcard cert (≈ $18–25/month) | ≈ $0 | ngrok plan |
+| Why not | chosen | largest build, a new always-on service | a second vendor and login, a Cloudflare DNS move | fails requirement 5 (see above) |
 
-- **A preview needs its job.** When a job exits, is killed, hits its timeout or its server cap, or is
-  reaped at session end, its port is removed; the JobManager's `onEnd` hook does this. The tunnel
-  closes when no ports remain.
-- **Viewing keeps the Drive up, within limits.** #121 says a job never holds a Drive open. A person
-  actively using a preview is different: they are working, just not in the chat. Recommendation:
-  - an authenticated browser request (not WebSocket keepalives or HMR pings) reports activity to
-    agentd;
-  - agentd treats it like `markActivity` (`run.ts:985-998`), which re-arms the idle-stop timer
-    (default 30 min, `deploy/config.env:14`);
-  - this extension is capped at `PREVIEW_IDLE_CAP` (default 2 h past the last chat turn), so a
-    forgotten tab can't keep a sandbox billing.
-- **Drive stop.** The run's `bye` makes the preview role drop the tunnel and mark the preview dead.
-  The page offers Play to wake the Drive, but the job doesn't come back (#121: a job doesn't survive
-  the next wake), so the model has to start it again.
+## Plan and cost
+
+- **The plan needed:** ngrok **Pay-as-you-go** (≈ $20/month) covers our own domain, wildcard
+  endpoints, and no ngrok interstitial.
+- **The account we already have:** it serves the LM Studio tunnel (`TUNNEL_DOMAIN_LMSTUDIO`,
+  `deploy/config.env:11`) and may already be on a plan; to verify.
+- **Traffic:** billed by ngrok's data transfer allowance, not Cloud Run egress.
+
+## Tradeoffs
+
+- **ngrok terminates TLS** and sees all preview traffic.
+- **A second login surface:** Google through ngrok's OAuth, not IAP. Session access is enforced by our
+  allowlist, which must be kept in sync.
+- **Allowlist sync:** a missed update leaves an ex-member able to open a still-live preview until it
+  ends. Mitigations: the tick re-syncs allowlists for live previews, and previews are short-lived.
+- **API rate limits:** each preview means several ngrok API calls (endpoint create, policy updates,
+  deletes, the sweep). The limits must be checked against a busy hour.
+- **A third party in the path:** an ngrok outage means no previews. Runs themselves are unaffected.
 
 ## Phases
 
-1. **MVP (A):**
-   - the `preview` tool (desktop: localhost; Drive: tunnel), HTTP streaming, WebSocket, SSE;
-   - the preview role with max-instances 1, grant + cookie auth, and the header rules;
-   - one "Open preview" chip on the session page;
-   - ops: preview domain, Cloud DNS zone, Certificate Manager wildcard cert (DNS authorization), a
-     global external HTTPS LB with a serverless NEG to `outfitter-preview`. Cloud Run domain mappings
-     don't do wildcards; ours are plain mappings today, and `gcloud beta run domain-mappings list`
-     shows four.
-   - Tests: tunnel framing and flow control, header stripping, grant expiry, the port allowlist, the
-     `Set-Cookie Domain` refusal, and an e2e vite HMR round trip through the in-process provider.
-2. **Later:** preview activity in the idle rules, several ports per job, the jobs row in the
-   transcript, a companion "open in tab", and optionally time-boxed anonymous share links.
+1. **Tool and sandbox:**
+   - the `preview` tool plus the desktop path (probe, localhost);
+   - agentd's loopback route, local proxy, and ngrok runner;
+   - the `preview.*` frames;
+   - testable locally with a scratch ngrok token and a hand-made cloud endpoint.
+2. **api ngrok integration:**
+   - per-run credentials;
+   - cloud endpoints with both policies;
+   - allowlist sync, cleanup on job end, stop and run end;
+   - the tick sweeper.
+3. **Web:** an "Open preview" chip per live preview, and a "Share link" button with a TTL picker, a
+   list of active links, and revoke.
+4. **Owner setup, then a real Drive test:**
+   - register `kernal.run`;
+   - add the domain to ngrok, with a wildcard CNAME and verification;
+   - create our Google OAuth client and put it in ngrok;
+   - add the ngrok API key to Secret Manager.
 
-## Open decisions (owner)
+## Owner verification before phase 2
 
-1. **Option A** (own proxy, LB ≈ $18–25/month, largest build) **or B** (Cloudflare Tunnel + Access,
-   ≈ $0, Cloudflare account and a second login)?
-2. **The preview domain:** a new registrable domain (who registers it, where DNS lives: Cloud DNS for
-   A, Cloudflare for B).
-3. **Does browsing a preview count as activity for idle-stop,** and with what cap (proposed: yes,
-   2 h)?
-4. **Who can open a preview:** anyone with session access (proposed), or the session owner only? Are
-   anonymous share links ever wanted?
-5. **`--max-instances=1`** for the preview role, accepting that a restart drops live previews.
-6. **Scope of the first cut:** Drive only, with the desktop tool just returning localhost (proposed),
-   or also teleport-style previews of a laptop session from the web?
+A one-command script (written separately) that, against the real account:
+
+1. **Proves the ACL:** creates a credential with `bind:*.<test>.internal`. Binding
+   `https://x.<test>.internal` must succeed; binding `https://x.<other>.internal` and any public
+   domain must fail.
+2. **Proves `forward-internal`:** a cloud endpoint forwarding to that internal endpoint works, and
+   the internal endpoint is unreachable directly.
+3. **Proves cookie matching:** a Traffic Policy expression can read request cookies, for the share
+   interstitial.
+4. **Reports the plan:** the account's plan and features (own domain, wildcard, OAuth, no
+   interstitial).
+5. **Reports the API rate limits.**
+
+## Open decisions
+
+1. **Share-link TTL:** proposed default 24 h, maximum 7 days.
+2. **Notice style for share links:** proposed an edge interstitial on first visit (above), rather than
+   an injected banner.
+3. **Drive-only at first,** with the desktop tool just returning localhost: proposed yes.
 
 ## Risks
 
-- **A model-written app runs in the person's browser.** Origin isolation is what contains it. Getting
-  the domain wrong (a `kernal.one` subdomain) turns the preview into a CSRF and cookie-tossing channel
-  against the session.
-- **Phishing:** a preview can render anything, including a fake Google login, on our preview domain.
-  Mitigations: a non-brand domain, the grant flow (only session viewers ever reach it), and a small
-  "Outfitter preview of <session>" banner (proxy-injected, or on the auth interstitial only, if
-  injecting into apps proves fragile).
-- **One preview instance** is a single point: a restart or deploy drops every preview for a few
-  seconds. Acceptable at this size; revisit if usage grows.
-- **Bandwidth through Cloud Run:** dev bundles are MBs per load, which is fine. Large media or
-  downloads would be slow and billed as Cloud Run egress (≈ $0.12/GB).
-- **Dev server host checks:** vite and next reject unknown `Host` headers. The rewrite to
-  `localhost:<port>` handles most of them; some frameworks also check `Origin` on the HMR socket and
-  need the rewrite there too.
-- **Idle cost:** without the cap, a preview tab left open would keep a Drive billing indefinitely.
+- **An unverified ACL.** If ngrok can't restrict binds to a run's internal names, a leaked per-run
+  credential could bind other runs' internal names. The fallback is to have the api bind on the
+  run's behalf, which isn't possible with ngrok today; the design would need revisiting. That's why
+  it's the first item on the checklist.
+- **Phishing:** a share link can render anything, including a fake login. The interstitial, the
+  non-brand domain, short TTLs, and share links being person-made only are the mitigations.
+- **Allowlist drift** (above) and **ngrok availability.**
+- **Idle cost:** bounded by the 2 h cap past the last chat turn.

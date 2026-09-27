@@ -1,0 +1,31 @@
+outfitter/deploy/config.env
+  s_63cfee548f82b0::t_dbb5045e642f0d 73-76
+outfitter/packages/web/live/app.live.mjs
+  s_63cfee548f82b0::t_09da86fc692c63 16-18,26-29,32,36,42-52,62-78,102-107,114-117,120-127,129-130,132,176-177
+outfitter/deploy/e2e-identity.sh
+  s_63cfee548f82b0::t_dbb5045e642f0d 21-24,31-33,62-81,130-132,135-139,141-143,145-147,149,154,157,162-163
+.github/workflows/outfitter-deploy.yml
+  s_63cfee548f82b0::t_4087002d15f18f 110-119
+outfitter/deploy/test/e2e-identity.test.sh
+  s_63cfee548f82b0::t_1e95819ea49ce7 22-24,33,38,100-108,116-118
+outfitter/deploy/README.md
+  s_63cfee548f82b0::t_8c9325aa76e4e2 533-538,541-556
+.github/workflows/outfitter-live.yml
+  s_63cfee548f82b0::t_4087002d15f18f 2-11,16,26-27,30-33,40-41,44-46,63-64,69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "0257946b24ed5be3961d910a0230be7a3e3aa183",
+  "prompts": {},
+  "sessions": {
+    "s_63cfee548f82b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2abd665b-152d-4945-bee0-e1f672204de7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

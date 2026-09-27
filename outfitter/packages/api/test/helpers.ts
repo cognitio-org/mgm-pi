@@ -5,7 +5,7 @@ import { loadConfig, type SandboxProviderName } from "../src/config.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import type { Store, Guru } from "../src/store/types.ts";
 import { NoopProvider } from "../src/providers/noop.ts";
-import { MemorySecretsBroker, MemorySecretAdmin, type SecretsBroker, type SecretAdmin } from "../src/secrets.ts";
+import { AppSecretCache, MemorySecretsBroker, MemorySecretAdmin, type SecretsBroker, type SecretAdmin } from "../src/secrets.ts";
 import type { GithubBroker } from "../src/github-broker.ts";
 import { buildApp, type App } from "../src/server.ts";
 import type { SandboxProvider } from "@outfitter/provider-local";
@@ -55,7 +55,9 @@ export async function buildTestApp(
   const store = opts.store ?? new MemoryStore();
   const provider = new NoopProvider();
   const secretsBroker = opts.secretsBroker ?? new MemorySecretsBroker();
-  const secretAdmin = opts.secretAdmin ?? new MemorySecretAdmin();
+  // One wrapper, shared with the app. Route tests mutate `app.secretAdmin` and expect the next
+  // GET to see it; wrapping again inside buildApp would split that cache from this object.
+  const secretAdmin = new AppSecretCache(opts.secretAdmin ?? new MemorySecretAdmin());
   const providers = new SandboxProviders(config.sandboxProvider, {
     [config.sandboxProvider]: async () => provider,
     ...opts.extraProviders,

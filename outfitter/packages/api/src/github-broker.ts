@@ -261,21 +261,27 @@ export class GithubBroker {
     if (op === "github_pr.merge" && guru.mergeFromCloud !== true) {
       return this.settle(runId, op, key, write, { ok: false, error: "not permitted" });
     }
-    const secrets = await this.secrets.secretsForRun(session, guru);
-    const token = secrets.githubToken.trim();
+    // The broker mints its own installation token (issues, PRs, checks, actions). A stub that
+    // only implements secretsForRun still works; that path is the drive token.
+    const brokerCred = this.secrets.brokerGithubToken
+      ? await this.secrets.brokerGithubToken(session)
+      : undefined;
+    const runSecrets = brokerCred ? undefined : await this.secrets.secretsForRun(session, guru);
+    const token = (brokerCred ? brokerCred.token : runSecrets!.githubToken).trim();
+    const appFailure = brokerCred ? brokerCred.appFailure : runSecrets!.githubAppFailure;
     if (!token) {
-      // #158: with the App configured, secretsForRun never falls back to the shared PAT, so this
+      // #158: with the App configured, neither mint falls back to the shared PAT, so this
       // one request fails instead of being written as the PAT's user.
       const error =
-        secrets.githubAppFailure === "unavailable"
+        appFailure === "unavailable"
           ? "the GitHub App could not get a token just now; try again shortly"
-          : secrets.githubAppFailure === "not-installed"
+          : appFailure === "not-installed"
             ? "the Outfitter GitHub App's installation doesn't cover this repository"
-            : secrets.githubAppFailure === "permissions-missing"
+            : appFailure === "permissions-missing"
               ? "the Outfitter GitHub App is missing a permission runs need; an owner has to grant it"
-              : secrets.githubAppFailure === "rejected"
+              : appFailure === "rejected"
                 ? "GitHub refused the Outfitter GitHub App's token request; an operator has to check the App"
-                : secrets.githubAppFailure === "misconfigured"
+                : appFailure === "misconfigured"
                   ? "the Outfitter GitHub App is not set up correctly; an operator has to fix it"
                   : "not permitted";
       return this.settle(runId, op, key, write, { ok: false, error });

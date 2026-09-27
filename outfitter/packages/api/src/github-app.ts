@@ -12,9 +12,17 @@ export const GITHUB_APP_SLUG_SECRET = "outfitter-github-app-slug";
 const REFRESH_EARLY_MS = 5 * 60_000;
 const MIN_REFRESH_DELAY_MS = 30_000;
 const MINT_TIMEOUT_MS = 10_000;
+/** How long a usable App-secret triple may skip Secret Manager. Not an installation token. */
+const APP_SECRET_TTL_MS = 60_000;
 
-/** What a run can't work without: cloud git clones and pushes (contents), opens and updates its
- * pull request (pull_requests), and every App token carries metadata. */
+/** The Drive's token (#160), sent to agentd for git over smart HTTP (clone, fetch, push through
+ * the git proxy). Nothing else in the sandbox uses it: pull requests, issues and checks go through
+ * the api's broker with its own token. A proxy bug must not also expose issues and PRs. Every
+ * permission here is required: a Drive can't clone or push without them. */
+export const DRIVE_PERMISSIONS = { contents: "write", metadata: "read" } as const;
+
+/** What the broker can't work without: pushes (contents), opens and updates the run's pull request
+ * (pull_requests), and every App token carries metadata. */
 export const REQUIRED_RUN_PERMISSIONS = {
   contents: "write",
   pull_requests: "write",
@@ -30,12 +38,38 @@ export const OPTIONAL_RUN_PERMISSIONS = {
   actions: "read",
 } as const;
 
-/** The run token asks only for what cloud git and the broker use. A later permission on this
- * same App (E6) must not widen every sandbox token: a mint never asks for more than this. */
+/** The broker's full set, the widest any mint asks for. A later permission on this same App (E6)
+ * must not widen these tokens: a mint never asks for more than its profile's set. */
 export const RUN_PERMISSIONS = { ...REQUIRED_RUN_PERMISSIONS, ...OPTIONAL_RUN_PERMISSIONS } as const;
+
+/** The API broker's token (#160). Never sent to the sandbox. */
+export const BROKER_PERMISSIONS = RUN_PERMISSIONS;
 
 type RunPermission = keyof typeof RUN_PERMISSIONS;
 type PermissionSet = Partial<Record<RunPermission, "read" | "write">>;
+
+/** Which token a mint is for. Each has its own full set, required subset, token cache entries and
+ * remembered reduced set, so the two never stand in for each other. */
+type TokenProfile = "drive" | "broker";
+type InstallationPermissions = typeof DRIVE_PERMISSIONS | typeof BROKER_PERMISSIONS;
+const PROFILES: Record<TokenProfile, { all: PermissionSet; required: PermissionSet }> = {
+  drive: { all: DRIVE_PERMISSIONS, required: DRIVE_PERMISSIONS },
+  broker: { all: RUN_PERMISSIONS, required: REQUIRED_RUN_PERMISSIONS },
+};
+
+/** Stable across key order, so two permission sets can't be taken for one another. */
+function permissionKey(permissions: PermissionSet): string {
+  return Object.entries(permissions)
+    .map(([name, value]) => `${name}=${value}`)
+    .sort()
+    .join(",");
+}
+
+/** The profile a caller's permission set names. Anything but exactly the broker's set is the
+ * Drive's, the narrower of the two. */
+function profileOf(permissions: InstallationPermissions): TokenProfile {
+  return permissionKey(permissions) === permissionKey(BROKER_PERMISSIONS) ? "broker" : "drive";
+}
 
 /** How long the installation's account (for notes) and a reduced permission set (#172) are reused.
  * Once a reduced set expires, the next mint asks for the full set again, so an owner granting a
@@ -58,8 +92,8 @@ export interface InstallationToken {
  * - `not-installed`: GitHub says the App can't reach this repo (or the name isn't one it could).
  *   No fallback. `installationAccount`, when GitHub told us, lets the run's note say whether the
  *   repo is outside the installation's account altogether.
- * - `permissions-missing` (#172): the installation doesn't grant a permission the run can't do
- *   without (REQUIRED_RUN_PERMISSIONS). `missingPermissions` names them when the installation's
+ * - `permissions-missing` (#172): the installation doesn't grant a permission the token can't do
+ *   without (DRIVE_PERMISSIONS for the Drive's, REQUIRED_RUN_PERMISSIONS for the broker's). `missingPermissions` names them when the installation's
  *   grants could be read. A missing optional permission is not a failure: the token is minted
  *   without it.
  * - `rejected` (#172): GitHub refused the token request (422) for some other reason.
@@ -107,12 +141,15 @@ export function classifyTokenRequest422(message: string | undefined): "permissio
 
 const LEVEL_RANK: Record<string, number> = { read: 1, write: 2, admin: 3 };
 
-/** The part of RUN_PERMISSIONS an installation grants, and the names it doesn't. Never widens:
- * only names and levels from RUN_PERMISSIONS come back. */
-export function permissionsWithin(granted: Record<string, unknown>): { grant: PermissionSet; missing: RunPermission[] } {
+/** The part of a profile's set (default: the broker's) an installation grants, and the names it
+ * doesn't. Never widens: only names and levels from that set come back. */
+export function permissionsWithin(
+  granted: Record<string, unknown>,
+  profile: TokenProfile = "broker",
+): { grant: PermissionSet; missing: RunPermission[] } {
   const grant: PermissionSet = {};
   const missing: RunPermission[] = [];
-  for (const [name, level] of Object.entries(RUN_PERMISSIONS) as [RunPermission, "read" | "write"][]) {
+  for (const [name, level] of Object.entries(PROFILES[profile].all) as [RunPermission, "read" | "write"][]) {
     const have = granted[name];
     if (typeof have === "string" && (LEVEL_RANK[have] ?? 0) >= LEVEL_RANK[level]) grant[name] = level;
     else missing.push(name);
@@ -120,8 +157,8 @@ export function permissionsWithin(granted: Record<string, unknown>): { grant: Pe
   return { grant, missing };
 }
 
-function isRequired(name: string): boolean {
-  return Object.hasOwn(REQUIRED_RUN_PERMISSIONS, name);
+function isRequired(name: string, profile: TokenProfile): boolean {
+  return Object.hasOwn(PROFILES[profile].required, name);
 }
 
 function describePermissions(names: readonly RunPermission[]): string[] {
@@ -210,10 +247,20 @@ interface CachedToken {
   permissions: PermissionSet;
 }
 
+interface CachedAppSecrets {
+  appId: string;
+  privateKey: string;
+  installationId: string;
+  readAt: number;
+}
+
 /**
  * Mints an installation token for one repo. Never throws: a failure comes back as a `MintResult`
  * reason, so the caller can tell "the App isn't set up" (shared PAT still applies) from "the App
  * can't reach this repo" and "try again" (neither may fall back; #158).
+ *
+ * The default permission set is the Drive's. Pass `BROKER_PERMISSIONS` for the API process.
+ * The two never share a cache entry or a remembered reduced set.
  */
 export class GithubAppTokens {
   private readonly cache = new Map<string, CachedToken>();
@@ -221,12 +268,17 @@ export class GithubAppTokens {
   private readonly installations = new Map<string, InstallationInfo>();
   /** Lookups in flight, so concurrent failed mints share one request. */
   private readonly installationLookups = new Map<string, Promise<InstallationInfo | undefined>>();
-  /** #172: the smaller permission set an installation last accepted, so the next mint doesn't take
-   * the 422 first. Expires after INSTALLATION_INFO_TTL_MS; then the full set is tried again. */
+  /** #172: the smaller permission set an installation last accepted, by `installationId:profile`,
+   * so the next mint doesn't take the 422 first. Expires after INSTALLATION_INFO_TTL_MS; then the
+   * profile's full set is tried again. */
   private readonly reducedPermissions = new Map<string, { permissions: PermissionSet; atMs: number }>();
-  /** `installationId:dropped permissions` already warned about. Cleared for an installation once
-   * a full-set mint succeeds, so losing a permission again warns again. */
+  /** `installationId:profile:dropped permissions` already warned about. Cleared for that
+   * installation and profile once a full-set mint succeeds, so losing a permission again warns
+   * again. */
   private readonly warnedOptional = new Set<string>();
+  /** Usable App id, private key, and installation id only. A throw or an empty/unusable triple is
+   * not stored, so the next mint reads Secret Manager again instead of keeping a token alive. */
+  private appSecrets: CachedAppSecrets | undefined;
   private readonly read: (secretName: string) => Promise<string>;
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
@@ -241,45 +293,61 @@ export class GithubAppTokens {
     this.now = now;
   }
 
-  async mint(ownerRepo: string): Promise<MintResult> {
+  async mint(ownerRepo: string, permissions: InstallationPermissions = DRIVE_PERMISSIONS): Promise<MintResult> {
     try {
-      return await this.mintOnce(ownerRepo);
+      return await this.mintOnce(ownerRepo, permissions);
     } catch (err) {
       console.warn(`[github-app] installation token mint failed: ${errorName(err)}`);
       return UNAVAILABLE;
     }
   }
 
-  private async mintOnce(ownerRepo: string): Promise<MintResult> {
+  private async mintOnce(ownerRepo: string, permissions: InstallationPermissions): Promise<MintResult> {
+    const profile = profileOf(permissions);
+    const full = PROFILES[profile].all;
+    const secretHit = this.appSecrets;
+    const rereadSecrets = !secretHit || this.now() - secretHit.readAt >= APP_SECRET_TTL_MS;
     let appId: string;
     let privateKey: string;
     let installationId: string;
-    try {
-      [appId, privateKey, installationId] = await Promise.all([
-        this.read(GITHUB_APP_ID_SECRET),
-        this.read(GITHUB_APP_KEY_SECRET),
-        this.read(GITHUB_APP_INSTALLATION_SECRET),
-      ]);
-    } catch (err) {
-      // `read` resolves a missing secret to "", so this is a real failure, not "not set up".
-      console.warn(`[github-app] app secret read failed: ${errorName(err)}`);
-      return UNAVAILABLE;
+    if (!rereadSecrets && secretHit) {
+      appId = secretHit.appId;
+      privateKey = secretHit.privateKey;
+      installationId = secretHit.installationId;
+    } else {
+      try {
+        [appId, privateKey, installationId] = await Promise.all([
+          this.read(GITHUB_APP_ID_SECRET),
+          this.read(GITHUB_APP_KEY_SECRET),
+          this.read(GITHUB_APP_INSTALLATION_SECRET),
+        ]);
+      } catch (err) {
+        // `read` resolves a missing secret to "", so this is a real failure, not "not set up".
+        // A throw is not cached: the next mint has to ask Secret Manager again.
+        this.appSecrets = undefined;
+        console.warn(`[github-app] app secret read failed: ${errorName(err)}`);
+        return UNAVAILABLE;
+      }
     }
+    // Before the token cache. A cached installation token must not outlive secrets that are no
+    // longer usable (#158/#161). An empty or unusable triple is not cached either.
     if (!githubAppSecretsUsable(appId, privateKey, installationId)) {
+      this.appSecrets = undefined;
       if (![appId, privateKey, installationId].some((value) => value.trim() !== "")) return NOT_CONFIGURED;
       console.warn("[github-app] app secrets are set but not usable (numeric app id, numeric installation id, PEM key)");
       return MISCONFIGURED;
     }
+    if (rereadSecrets) this.appSecrets = { appId, privateKey, installationId, readAt: this.now() };
     // After the secrets, so a deployment with no App still treats an odd repo string as before.
     const parsed = sessionGithubRepo(ownerRepo);
     if (!parsed) return NOT_INSTALLED;
     const { owner, repo } = parsed;
     appId = appId.trim();
     installationId = installationId.trim();
-    const key = `${installationId}:${owner}/${repo}`;
-    const reduced = this.reducedPermissions.get(installationId);
+    const key = `${installationId}:${owner.toLowerCase()}/${repo.toLowerCase()}:${profile}`;
+    const reduced = this.reducedPermissions.get(`${installationId}:${profile}`);
     let requested: PermissionSet =
-      reduced && this.now() - reduced.atMs < INSTALLATION_INFO_TTL_MS ? reduced.permissions : { ...RUN_PERMISSIONS };
+      reduced && this.now() - reduced.atMs < INSTALLATION_INFO_TTL_MS ? reduced.permissions : { ...full };
     const hit = this.cache.get(key);
     // A token minted with a reduced set is not reused once a mint would ask for more (#172).
     if (hit && hit.expiresAtMs - this.now() > REFRESH_EARLY_MS && samePermissions(hit.permissions, requested)) {
@@ -303,7 +371,7 @@ export class GithubAppTokens {
       // #172: the failure path, so read the installation's grants fresh: cached ones could be from
       // before an owner changed them, and would make the retry repeat the request just refused.
       const info = await this.installationInfo(installationId, jwt, true);
-      const within = info?.permissions ? permissionsWithin(info.permissions) : undefined;
+      const within = info?.permissions ? permissionsWithin(info.permissions, profile) : undefined;
       if (kind === "other") {
         // Wording GitHub may change: still a permissions problem if the grants lack something we
         // asked for. Otherwise nothing smaller would help.
@@ -312,15 +380,15 @@ export class GithubAppTokens {
         console.warn(`[github-app] treating that 422 as a permissions one: the installation doesn't grant ${describePermissions(lacking).join(", ")}`);
       }
       // An optional permission the installation doesn't grant must not stop the run. Ask again for
-      // only what it grants (never more than RUN_PERMISSIONS), or for just the required set when
-      // the grants can't be read.
-      const missingRequired = within ? within.missing.filter(isRequired) : [];
+      // only what it grants (never more than the profile's set), or for just the required set when
+      // the grants can't be read. The Drive's set has nothing optional.
+      const missingRequired = within ? within.missing.filter((name) => isRequired(name, profile)) : [];
       if (missingRequired.length > 0) {
         const missing = describePermissions(missingRequired);
         console.warn(`[github-app] installation ${installationId} lacks required permissions: ${missing.join(", ")}`);
         return { ok: false, reason: "permissions-missing", missingPermissions: missing, ...accountOf(info) };
       }
-      const retry: PermissionSet = within ? within.grant : { ...REQUIRED_RUN_PERMISSIONS };
+      const retry: PermissionSet = within ? within.grant : { ...PROFILES[profile].required };
       // Already asked for exactly this and GitHub said no: nothing smaller would still work.
       if (samePermissions(retry, requested)) return { ok: false, reason: "permissions-missing", ...accountOf(info) };
       requested = retry;
@@ -340,7 +408,7 @@ export class GithubAppTokens {
       // 404: no such installation (the App was uninstalled from the account). Anything else may pass.
       return res.status === 404 ? NOT_INSTALLED : UNAVAILABLE;
     }
-    this.notePermissions(installationId, requested);
+    this.notePermissions(installationId, profile, requested);
     let body: { token?: unknown; expires_at?: unknown; repositories?: { full_name?: unknown }[] };
     try {
       body = (await res.json()) as { token?: unknown; expires_at?: unknown; repositories?: { full_name?: unknown }[] };
@@ -382,17 +450,18 @@ export class GithubAppTokens {
     }
   }
 
-  /** #172: a token request with `requested` succeeded. The full set clears any reduced one (and
-   * its warning); a reduced set is remembered and warned about once. */
-  private notePermissions(installationId: string, requested: PermissionSet): void {
-    const dropped = (Object.keys(RUN_PERMISSIONS) as RunPermission[]).filter((name) => !(name in requested));
+  /** #172: a token request with `requested` succeeded. The profile's full set clears any reduced
+   * one (and its warning); a reduced set is remembered and warned about once. */
+  private notePermissions(installationId: string, profile: TokenProfile, requested: PermissionSet): void {
+    const scope = `${installationId}:${profile}`;
+    const dropped = (Object.keys(PROFILES[profile].all) as RunPermission[]).filter((name) => !(name in requested));
     if (dropped.length === 0) {
-      this.reducedPermissions.delete(installationId);
-      for (const warned of this.warnedOptional) if (warned.startsWith(`${installationId}:`)) this.warnedOptional.delete(warned);
+      this.reducedPermissions.delete(scope);
+      for (const warned of this.warnedOptional) if (warned.startsWith(`${scope}:`)) this.warnedOptional.delete(warned);
       return;
     }
-    this.reducedPermissions.set(installationId, { permissions: requested, atMs: this.now() });
-    const warnKey = `${installationId}:${dropped.join(",")}`;
+    this.reducedPermissions.set(scope, { permissions: requested, atMs: this.now() });
+    const warnKey = `${scope}:${dropped.join(",")}`;
     if (this.warnedOptional.has(warnKey)) return;
     this.warnedOptional.add(warnKey);
     console.warn(

@@ -5,8 +5,8 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
-import { GcpSecretsBroker, GITHUB_TOKEN_DEFAULT_SECRET } from "../src/secrets.ts";
-import { GITHUB_APP_ID_SECRET, GITHUB_APP_INSTALLATION_SECRET, GITHUB_APP_KEY_SECRET, GithubAppTokens } from "../src/github-app.ts";
+import { AppSecretCache, GcpSecretsBroker, GITHUB_TOKEN_DEFAULT_SECRET, MemorySecretAdmin, type SecretAdmin } from "../src/secrets.ts";
+import { BROKER_PERMISSIONS, DRIVE_PERMISSIONS, GITHUB_APP_ID_SECRET, GITHUB_APP_INSTALLATION_SECRET, GITHUB_APP_KEY_SECRET, GithubAppTokens } from "../src/github-app.ts";
 import type { Session, Guru } from "../src/store/types.ts";
 
 function testSession(overrides: Partial<Session> = {}): Session {
@@ -332,5 +332,160 @@ describe("GcpSecretsBroker", () => {
       throw new Error("boom: auth failure");
     });
     await assert.rejects(() => broker.secretsForRun(testSession(), testGuru()), /boom/);
+  });
+
+  test("#160: the drive and the broker mint two permission sets for one configured App", async () => {
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const pem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
+    const bodies: { permissions: Record<string, string> }[] = [];
+    const fetchSecret = async (secretId: string) => {
+      if (secretId === GITHUB_APP_ID_SECRET) return "42";
+      if (secretId === GITHUB_APP_INSTALLATION_SECRET) return "7";
+      if (secretId === GITHUB_APP_KEY_SECRET) return pem;
+      if (secretId === GITHUB_TOKEN_DEFAULT_SECRET) return "shared-token";
+      throw notFoundError();
+    };
+    const app = new GithubAppTokens(
+      async (secretId) => {
+        try { return (await fetchSecret(secretId)).trim(); } catch { return ""; }
+      },
+      (async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as { permissions: Record<string, string> };
+        bodies.push(body);
+        const token = body.permissions.issues ? "ghs_broker" : "ghs_drive";
+        return new Response(JSON.stringify({
+          token,
+          expires_at: "2026-09-24T06:00:00Z",
+          repositories: [{ full_name: "o/r" }],
+        }), { status: 201 });
+      }) as typeof fetch,
+    );
+    const broker = new GcpSecretsBroker("proj", fetchSecret, app);
+    const secrets = await broker.secretsForRun(testSession(), testGuru());
+    const brokerToken = await broker.brokerGithubToken(testSession());
+    assert.equal(secrets.githubToken, "ghs_drive");
+    assert.equal(brokerToken.token, "ghs_broker");
+    assert.equal(brokerToken.appFailure, undefined);
+    assert.equal(bodies.length, 2);
+    assert.deepEqual(bodies[0]?.permissions, DRIVE_PERMISSIONS);
+    assert.deepEqual(bodies[1]?.permissions, BROKER_PERMISSIONS);
+  });
+
+  test("#160: a per-session PAT is what both the drive and the broker get, and GitHub is not called", async () => {
+    let githubCalls = 0;
+    const app = new GithubAppTokens(
+      async () => {
+        throw new Error("app secrets must not be read");
+      },
+      (async () => {
+        githubCalls += 1;
+        throw new Error("github must not be called");
+      }) as typeof fetch,
+    );
+    const broker = new GcpSecretsBroker("proj", async (secretId) => {
+      if (secretId === "outfitter-github-token-s1") return "own-token";
+      throw notFoundError();
+    }, app);
+    const secrets = await broker.secretsForRun(testSession(), testGuru());
+    const brokerToken = await broker.brokerGithubToken(testSession());
+    assert.equal(secrets.githubToken, "own-token");
+    assert.equal(brokerToken.token, "own-token");
+    assert.equal(brokerToken.appFailure, undefined);
+    assert.equal(githubCalls, 0);
+  });
+
+  test("#160: brokerGithubToken reports not-installed and does not read the shared PAT", async () => {
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const pem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
+    const requested: string[] = [];
+    const fetchSecret = async (secretId: string) => {
+      requested.push(secretId);
+      if (secretId === GITHUB_APP_ID_SECRET) return "42";
+      if (secretId === GITHUB_APP_INSTALLATION_SECRET) return "7";
+      if (secretId === GITHUB_APP_KEY_SECRET) return pem;
+      if (secretId === GITHUB_TOKEN_DEFAULT_SECRET) return "shared-token";
+      throw notFoundError();
+    };
+    const app = new GithubAppTokens(
+      async (secretId) => (await fetchSecret(secretId)).trim(),
+      // GitHub's wording for a repo outside the installation (#172 classifies 422s by message).
+      (async () =>
+        new Response(
+          JSON.stringify({ message: "There is at least one repository that does not exist or is not accessible to the parent installation." }),
+          { status: 422 },
+        )) as typeof fetch,
+    );
+    const cred = await new GcpSecretsBroker("proj", fetchSecret, app).brokerGithubToken(testSession());
+    assert.deepEqual(cred, { token: "", appFailure: "not-installed" });
+    assert.ok(!requested.includes(GITHUB_TOKEN_DEFAULT_SECRET));
+  });
+});
+
+describe("AppSecretCache", () => {
+  test("caches app secret names for 60s, drops them on write, and never caches a throw or another name", async () => {
+    let now = 1_000_000;
+    const inner = new MemorySecretAdmin();
+    let reads = 0;
+    let infos = 0;
+    const counting: SecretAdmin = {
+      info: async (name) => {
+        infos += 1;
+        return inner.info(name);
+      },
+      addVersion: (name, value) => inner.addVersion(name, value),
+      disableAllEnabled: (name) => inner.disableAllEnabled(name),
+      accessLatest: async (name) => {
+        reads += 1;
+        return inner.accessLatest(name);
+      },
+    };
+    await inner.addVersion(GITHUB_APP_ID_SECRET, "42");
+    const cache = new AppSecretCache(counting, () => now);
+    assert.equal(await cache.accessLatest(GITHUB_APP_ID_SECRET), "42");
+    assert.equal(await cache.accessLatest(GITHUB_APP_ID_SECRET), "42");
+    assert.equal(reads, 1);
+
+    await cache.addVersion(GITHUB_APP_ID_SECRET, "43");
+    assert.equal(await cache.accessLatest(GITHUB_APP_ID_SECRET), "43");
+    assert.equal(reads, 2);
+
+    await cache.disableAllEnabled(GITHUB_APP_ID_SECRET);
+    assert.equal(await cache.accessLatest(GITHUB_APP_ID_SECRET), undefined);
+    assert.equal(reads, 3);
+
+    now += 60_001;
+    await cache.addVersion(GITHUB_APP_ID_SECRET, "44");
+    assert.equal(await cache.accessLatest(GITHUB_APP_ID_SECRET), "44");
+    const cachedAt = reads;
+    now += 60_001;
+    assert.equal(await cache.accessLatest(GITHUB_APP_ID_SECRET), "44");
+    assert.equal(reads, cachedAt + 1);
+
+    await inner.addVersion("outfitter-litellm-key-default", "one");
+    const beforeOther = reads;
+    assert.equal(await cache.accessLatest("outfitter-litellm-key-default"), "one");
+    await inner.addVersion("outfitter-litellm-key-default", "two");
+    assert.equal(await cache.accessLatest("outfitter-litellm-key-default"), "two");
+    assert.equal(reads, beforeOther + 2);
+
+    assert.equal(infos, 0);
+    await cache.info(GITHUB_APP_ID_SECRET);
+    await cache.info(GITHUB_APP_ID_SECRET);
+    assert.equal(infos, 2);
+
+    let throws = 0;
+    const failing: SecretAdmin = {
+      info: async () => ({ set: false }),
+      addVersion: async () => {},
+      disableAllEnabled: async () => {},
+      accessLatest: async () => {
+        throws += 1;
+        throw new Error("boom");
+      },
+    };
+    const failingCache = new AppSecretCache(failing, () => now);
+    await assert.rejects(() => failingCache.accessLatest(GITHUB_APP_ID_SECRET), /boom/);
+    await assert.rejects(() => failingCache.accessLatest(GITHUB_APP_ID_SECRET), /boom/);
+    assert.equal(throws, 2);
   });
 });

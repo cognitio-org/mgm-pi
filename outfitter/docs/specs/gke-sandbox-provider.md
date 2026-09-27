@@ -247,6 +247,17 @@ active` so the web dashboard (E3.6) needs no change in PR1. Row ids: keep `id: "
 cloudrun kind (keeps its 7-day uptime history, and is also what every local dev provider reports
 under, since there's nothing else to show) and use `id: "gke"` for gke.
 
+Later: GKE's capacity also carries `launchMode` (`GKE_LAUNCH_MODE`), passed through as
+`meta.launchMode`. The Peripherals page and the header strip derive the effective mode from it and
+the pool size (web `lib/providers.ts` `sandboxWarmth`): **warm** (warm launch mode, ready pool pods),
+**warming** (pool on, none ready yet, so the next run starts cold), **cold** (cold launch mode, or
+the pool scaled to 0 outside its scheduled hours), or **missing** (no warm pool object: every claim
+references it, so runs can't start in either mode). The page re-reads `GET /api/providers` every
+minute while visible (`useProviders`), and the api re-probes when its view is older than
+`PROVIDER_POLL_MS`, so the indicator can trail a pool scale-up or scale-down by up to about
+`PROVIDER_POLL_MS` plus a minute; the Checked column says when the probe ran. (The providers SSE
+stream only pushes status transitions, not meta changes, so it isn't used for this.)
+
 ### 2.5 Per-Tape (guru) override: recommended, deferred to PR6
 
 | Option | Verdict |

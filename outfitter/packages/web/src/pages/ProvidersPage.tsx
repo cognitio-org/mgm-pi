@@ -1,5 +1,5 @@
 import { useProviders } from "../hooks/useProviders.ts";
-import { DEFAULT_PROVIDER_TAG } from "../lib/providers.ts";
+import { DEFAULT_PROVIDER_TAG, sandboxWarmth } from "../lib/providers.ts";
 import { Working } from "../components/Working.tsx";
 import { DeviceNotPresent } from "../components/DeviceNotPresent.tsx";
 import { vocabSubtitle, vocabulary } from "../lib/vocabulary.ts";
@@ -32,7 +32,9 @@ export function ProvidersPage() {
               </tr>
             </thead>
             <tbody>
-              {providers.map((p) => (
+              {providers.map((p) => {
+                const warmth = sandboxWarmth(p);
+                return (
                 <tr key={p.id}>
                   <td data-label="Name">
                     {p.name}
@@ -41,6 +43,14 @@ export function ProvidersPage() {
                         {" "}
                         <span className="chip" title="New runs launch on this sandbox provider">
                           {DEFAULT_PROVIDER_TAG}
+                        </span>
+                      </>
+                    )}
+                    {warmth && (
+                      <>
+                        {" "}
+                        <span className={`chip warmth-${warmth.mode}`} title={warmth.detail}>
+                          {warmth.mode}
                         </span>
                       </>
                     )}
@@ -53,12 +63,13 @@ export function ProvidersPage() {
                     {p.status === "down" ? (
                       <DeviceNotPresent reason={p.detail || "this peripheral isn't responding."} />
                     ) : (
-                      (p.detail ?? "—")
+                      (p.detail ?? warmth?.detail ?? "—")
                     )}
                   </td>
                   <td data-label="Checked">{p.checkedAt}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

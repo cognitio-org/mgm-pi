@@ -181,6 +181,17 @@ export interface ProviderRow {
   /** Sandbox rows only: the provider new runs launch on. Other registered sandbox providers (kept
    * so their in-flight runs stay stoppable) have a row without it. */
   isDefault?: boolean;
+  /** Sandbox rows only, from the capacity probe (api providers-status.ts probeSandbox). */
+  meta?: {
+    active?: number;
+    limit?: number;
+    /** GKE: warm, unclaimed pods ready right now. */
+    warmReady?: number;
+    /** GKE: the warm pool's desired size (0 outside its scheduled hours). */
+    warmDesired?: number;
+    /** GKE: how new runs claim a sandbox. */
+    launchMode?: "warm" | "cold";
+  };
 }
 
 /** GET /api/operator/settings's per-secret row (EPIC.md Decisions table / operators.md). Never

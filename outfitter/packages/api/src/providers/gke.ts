@@ -500,6 +500,7 @@ export class GkeProvider implements SandboxProvider {
       warmReady: pool?.status?.readyReplicas,
       warmDesired: pool?.spec?.replicas,
       limit: this.config.maxActive,
+      launchMode: this.config.launchMode,
     };
   }
 

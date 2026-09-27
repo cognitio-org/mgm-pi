@@ -12,9 +12,39 @@ const SANDBOX_KINDS = new Set(["cloudrun", "gke"]);
  * on a cloud default, so a local dev deployment shows no tag. */
 export const DEFAULT_PROVIDER_TAG = "new runs";
 
-/** A provider's name as the strip's popover shows it: the default sandbox provider tagged. */
-export function providerLabel(p: Pick<ProviderRow, "name" | "isDefault">): string {
-  return p.isDefault ? `${p.name} (${DEFAULT_PROVIDER_TAG})` : p.name;
+/** Whether new runs on a sandbox provider start warm right now. */
+export interface SandboxWarmth {
+  /** warm: a ready pool pod is waiting. warming: the pool is on but has none ready yet, so the next
+   * run starts cold. cold: the pool is off (scaled to 0 outside its hours) or launch mode is cold.
+   * missing: no warm pool object at all -- every claim references it, warm or cold, so runs can't
+   * start (they time out as "unknown"). */
+  mode: "warm" | "warming" | "cold" | "missing";
+  /** One line for the Peripherals page. */
+  detail: string;
+}
+
+/** GKE rows only, from the capacity probe: launch mode and the warm pool's size together. Warm
+ * launch mode alone isn't enough -- the pool is only scaled up for its scheduled hours, and outside
+ * them every run starts cold. null when the row doesn't say (not GKE, probe down, older api). */
+export function sandboxWarmth(p: Pick<ProviderRow, "kind" | "status" | "meta">): SandboxWarmth | null {
+  if (p.kind !== "gke" || p.status !== "up" || !p.meta?.launchMode) return null;
+  const { launchMode, warmReady = 0, warmDesired } = p.meta;
+  // Checked first: cold claims go through the pool too (with replicas 0), so cold mode doesn't
+  // make a missing pool harmless.
+  if (warmDesired === undefined) return { mode: "missing", detail: "Warm pool missing: runs can't start" };
+  if (launchMode === "cold") return { mode: "cold", detail: "Cold: launch mode is cold" };
+  if (warmDesired === 0) return { mode: "cold", detail: "Cold: warm pool scaled to 0" };
+  if (warmReady > warmDesired) return { mode: "warm", detail: `Warm: ${warmReady} ready (target ${warmDesired})` };
+  if (warmReady > 0) return { mode: "warm", detail: `Warm: ${warmReady} of ${warmDesired} ready` };
+  return { mode: "warming", detail: `Warming: 0 of ${warmDesired} ready, the next run starts cold` };
+}
+
+/** A provider's name as the strip's popover shows it: the default sandbox provider tagged, and a
+ * GKE row's warmth when the probe reports it. */
+export function providerLabel(p: Pick<ProviderRow, "name" | "isDefault"> & Partial<Pick<ProviderRow, "kind" | "status" | "meta">>): string {
+  const warmth = p.kind && p.status ? sandboxWarmth({ kind: p.kind, status: p.status, meta: p.meta }) : null;
+  const tags = [p.isDefault ? DEFAULT_PROVIDER_TAG : null, warmth?.mode ?? null].filter(Boolean);
+  return tags.length > 0 ? `${p.name} (${tags.join(" · ")})` : p.name;
 }
 
 /** The single class of the worst status present, for the mobile summary pill's colour --

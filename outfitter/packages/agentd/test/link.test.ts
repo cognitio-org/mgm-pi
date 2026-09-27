@@ -395,6 +395,31 @@ test("Link: sendAndFlush resolves only after the socket confirms the write", asy
   assert.equal(JSON.parse(ws.sent[0]).t, "bye");
 });
 
+test("Link: #205 -- sendFinal resolves when the api closes the socket, not on the write, and doesn't reconnect", async (t) => {
+  const link = makeLink();
+  t.after(() => link.close());
+  const ws = await connectAndGetInstance(link);
+  ws.triggerOpen();
+  ws.sent.length = 0;
+
+  let resolved = false;
+  const p = link.sendFinal({ t: "bye", reason: "idle" }).then(() => {
+    resolved = true;
+  });
+  await new Promise((r) => setTimeout(r, 30)); // well past FakeWebSocket's 5 ms write callback
+  assert.equal(JSON.parse(ws.sent[0]).t, "bye");
+  assert.equal(resolved, false, "resolved before the api closed the socket");
+  ws.triggerClose(1000);
+  await p;
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(FakeWebSocket.instances.length, 1, "reconnected after the final frame");
+});
+
+test("Link: #205 -- sendFinal resolves immediately when not connected", async () => {
+  const link = makeLink();
+  await link.sendFinal({ t: "bye", reason: "stop" }); // must not hang
+});
+
 test("Link: sendAndFlush resolves immediately when not connected (nothing to flush)", async () => {
   const link = makeLink();
   // never call connect()/triggerOpen() -- no socket

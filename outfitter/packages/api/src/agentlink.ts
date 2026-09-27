@@ -1541,12 +1541,19 @@ export class AgentLink {
           lastSeenAt: now,
           updatedAt: now,
         });
-        this.sockets.delete(runId);
-        closeQuietly(socket, 1000, reason);
         // Mail this run was handed but never acked goes back to the queue now rather than after its
-        // lease. Then start the next run for it, and for mail held back while this run was stopping
-        // -- except after an explicit stop, which the /tick sweep may still override later.
-        await this.store.mail.releaseRun(runId);
+        // lease.
+        try {
+          await this.store.mail.releaseRun(runId);
+        } finally {
+          // #205: closing is how agentd learns the bye is handled (Link.sendFinal), and it exits on
+          // it. Close after the store writes: this socket may be the last request keeping a retired
+          // Cloud Run instance alive, and anything still pending when it closes can be lost.
+          this.sockets.delete(runId);
+          closeQuietly(socket, 1000, reason);
+        }
+        // Then start the next run for it, and for mail held back while this run was stopping --
+        // except after an explicit stop, which the /tick sweep may still override later.
         if (reason !== "stop") await this.mail.wakeIfMail(sessionId);
         break;
       }

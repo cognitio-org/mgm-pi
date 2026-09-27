@@ -103,6 +103,8 @@ export class Link {
   private openHandlers: Array<() => void> = [];
   private terminalHandlers: TerminalHandler[] = [];
   private closeHandlers: CloseHandler[] = [];
+  /** #205: resolved by the next socket close, for sendFinal. */
+  private finalCloseWaiters: Array<() => void> = [];
   private unspecTimeoutHandlers: UnspecTimeoutHandler[] = [];
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private connectionAgeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -229,6 +231,25 @@ export class Link {
         resolve();
       }
     });
+  }
+
+  /**
+   * #205: sends the final `bye` (as sendAndFlush does) and resolves only once the socket closes.
+   * The api closes it with 1000 right after it has stored the bye, so this is the api saying it has
+   * handled every frame before it. Exiting on the write alone lost them: the api handles a
+   * connection's frames one at a time, and a Cloud Run instance whose last request is this socket
+   * (a revision retired by a deploy while the run was live) is torn down the moment the socket
+   * closes, taking the unhandled checkpoint, `stopping` and bye with it. No reconnect afterwards:
+   * this is the last frame. Resolves immediately when not connected. The caller bounds the wait.
+   */
+  sendFinal(msg: UpMessage): Promise<void> {
+    if (!this.isOpen()) return Promise.resolve();
+    this.closed = true;
+    if (this.reconnectTimer) this.clearTimeoutFn(this.reconnectTimer);
+    this.clearConnectionAgeTimer();
+    const closed = new Promise<void>((resolve) => this.finalCloseWaiters.push(resolve));
+    void this.sendAndFlush(msg);
+    return closed;
   }
 
   /** Drops buffered frames the api has acked up to and including `seq`. */
@@ -390,6 +411,9 @@ export class Link {
       this.clearConnectionAgeTimer();
       this.clearStableTimer();
       for (const h of this.closeHandlers) h(code, reasonBuf ? reasonBuf.toString() : "", TERMINAL_CLOSE_CODES.has(code));
+      const waiters = this.finalCloseWaiters;
+      this.finalCloseWaiters = [];
+      for (const resolve of waiters) resolve();
       if (this.closed) return;
       if (TERMINAL_CLOSE_CODES.has(code)) {
         this.closed = true;

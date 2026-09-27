@@ -82,9 +82,10 @@ export interface LinkPort {
   onMessage(handler: (msg: DownMessage) => void): void;
   /** Optional: Link implements this so later reconnects' `hello` carries the learned sessionId. */
   setSessionId?(sessionId: string): void;
-  /** Optional: Link implements this to flush the final `bye` before the process exits (see
-   * Link.sendAndFlush). Falls back to a plain `send` when a test double doesn't provide it. */
-  sendAndFlush?(msg: UpMessage): Promise<void>;
+  /** Optional: Link implements this to send the final `bye` and resolve once the api has closed
+   * the socket (see Link.sendFinal, #205). Falls back to a plain `send` when a test double doesn't
+   * provide it. */
+  sendFinal?(msg: UpMessage): Promise<void>;
   /** The API WebSocket opened or dropped. The GitHub broker uses these; seq replay does not. */
   onOpen?(handler: () => void): void;
   onClose?(handler: () => void): void;
@@ -155,6 +156,9 @@ export interface RunControllerDeps {
   /** #187: how often to sample it between heartbeats. Default 5 s. */
   memorySampleMs?: number;
   sigtermBudgetMs?: number;
+  /** #205: how long a stop waits after its `bye` for the api to close the socket. Default
+   * BYE_CLOSE_WAIT_MS (SIGTERM uses the smaller of this and SIGTERM_BYE_CLOSE_WAIT_MS). */
+  byeCloseWaitMs?: number;
   now?: () => number;
   onExit?: (code: number) => void;
   onLog?: (line: string) => void;
@@ -186,6 +190,26 @@ const MAIL_RESPONSE_TIMEOUT_MS = 30_000;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** #205: how long a stop waits after its `bye` for the api to close the socket (Link.sendFinal)
+ * before exiting anyway: long enough for the api's per-connection frame queue to drain, short
+ * enough that a dead api doesn't hold the pod. SIGTERM waits less: its checkpoint already spent up
+ * to sigtermBudgetMs of the platform's grace period (15 s on GKE, ~10 s on Cloud Run). */
+const BYE_CLOSE_WAIT_MS = 10_000;
+const SIGTERM_BYE_CLOSE_WAIT_MS = 1_500;
+
+/** Waits for `p`, or `ms`, whichever is first, without leaving the timer behind. */
+async function waitAtMost(p: Promise<void>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, ms);
+  });
+  try {
+    await Promise.race([p, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function codeOf(err: unknown): string {
@@ -288,6 +312,7 @@ export class RunController {
   private readonly onLog: (line: string) => void;
   private readonly heartbeatIntervalMs: number;
   private readonly sigtermBudgetMs: number;
+  private readonly byeCloseWaitMs: number;
 
   constructor(private readonly deps: RunControllerDeps) {
     this.now = deps.now ?? Date.now;
@@ -296,6 +321,7 @@ export class RunController {
     this.heartbeatIntervalMs = deps.heartbeatIntervalMs ?? 15_000;
     this.sandboxMemory = deps.sandboxMemory ?? new SandboxMemoryPeak();
     this.sigtermBudgetMs = deps.sigtermBudgetMs ?? 8_000;
+    this.byeCloseWaitMs = deps.byeCloseWaitMs ?? BYE_CLOSE_WAIT_MS;
     this.deps.link.onMessage((msg) => this.handleDown(msg));
     this.deps.link.onOpen?.(() => {
       this.apiLinkUp = true;
@@ -912,9 +938,6 @@ export class RunController {
     void this.bye("error", `pi exited: code=${code} signal=${signal}`).then(() => this.onExit(1));
   }
 
-  /** Sends the final `bye` frame and waits (briefly, bounded) for the socket to actually flush it
-   * before the caller exits the process -- see Link.sendAndFlush's doc comment for why a plain
-   * `send()` right before `process.exit()` can silently drop it. */
   private stopCaptureListener(): Promise<void> {
     const listener = this.captureListener;
     this.captureListener = undefined;
@@ -929,13 +952,16 @@ export class RunController {
     ]).then(() => undefined);
   }
 
-  private async bye(reason: ByeReason, message?: string): Promise<void> {
+  /** Sends the final `bye` frame and waits, bounded by `waitMs`, for the api to close the socket
+   * before the caller exits the process -- see Link.sendFinal for why the write alone isn't enough
+   * (#205). */
+  private async bye(reason: ByeReason, message?: string, waitMs = this.byeCloseWaitMs): Promise<void> {
     await this.stopGitProxy();
     await this.stopCaptureListener();
     await this.stopGithubSocket();
     const msg = { t: "bye" as const, reason, message };
-    if (this.deps.link.sendAndFlush) {
-      await Promise.race([this.deps.link.sendAndFlush(msg), delay(1000)]);
+    if (this.deps.link.sendFinal) {
+      await waitAtMost(this.deps.link.sendFinal(msg), waitMs);
     } else {
       this.deps.link.send(msg);
     }
@@ -1022,7 +1048,7 @@ export class RunController {
     this.stopHeartbeat();
     this.tailer?.stop();
     this.spendTailer?.stop();
-    await this.bye("sigterm");
+    await this.bye("sigterm", undefined, Math.min(this.byeCloseWaitMs, SIGTERM_BYE_CLOSE_WAIT_MS));
     this.onExit(0);
   }
 

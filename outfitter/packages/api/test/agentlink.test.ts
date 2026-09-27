@@ -61,6 +61,35 @@ describe("agentd <-> api WebSocket", () => {
     await app.fastify.close();
   });
 
+  test("#205: the bye's close comes only after its store writes, and even when releasing mail fails", async () => {
+    for (const fail of [false, true]) {
+      const app = await buildTestApp();
+      const { session, runId, runToken } = await makeRunningSession(app);
+      const releaseRun = app.store.mail.releaseRun.bind(app.store.mail);
+      let released = false;
+      app.store.mail.releaseRun = async (id) => {
+        await new Promise((r) => setTimeout(r, 200));
+        if (fail) throw new Error("store hiccup");
+        const result = await releaseRun(id);
+        released = true;
+        return result;
+      };
+
+      const agent = await openAgentSocket(app, runId);
+      sendHello(agent, runId, session.id, runToken);
+      await agent.nextMessage(); // run.spec
+      agent.send({ t: "bye", reason: "idle" });
+      const close = await agent.nextClose();
+      assert.equal(close.code, 1000);
+      // agentd exits on this close (Link.sendFinal), so everything must already be stored.
+      assert.equal((await app.store.runs.findById(runId))?.state, "stopped");
+      assert.equal(released, !fail);
+
+      app.stopBackgroundTasks();
+      await app.fastify.close();
+    }
+  });
+
   test("#185: a backlog replayed the moment run.spec arrives is stored in full, not capped at 256", async () => {
     const app = await buildTestApp();
     const { session, runId, runToken } = await makeRunningSession(app);

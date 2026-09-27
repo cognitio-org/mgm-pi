@@ -419,6 +419,26 @@ The address is a reserved `.invalid` domain: a `users.noreply.github.com` one wo
 GitHub account owns that name. In an Outfitter cloud run the commit is the Outfitter bot's, and the
 session's person is credited with `Co-authored-by` and `On-behalf-of` trailers.
 
+## Background jobs (`kernal-background`)
+
+pi's `bash` tool holds the turn until a command exits. For a dev server, a watcher, a long test run or
+a pass over a big file, the agent uses the `background` tool instead: `run` starts the command and
+returns at once with an id (`bg1`, `bg2`, ...), `list` shows the session's jobs, `logs` reads the end
+of one's output, and `kill` stops it. When a job ends (it exits, fails, hits its deadline or is
+stopped) the agent gets one message with the status and the last lines of output, so it never has to
+poll. You can see and stop them yourself with `/jobs` and `/jobs kill bg1`; the footer shows how many
+are running.
+
+- **server** jobs run until stopped, the session ends, or a hard cap (`KERNAL_BG_SERVER_MAX_HOURS`,
+  default 12). **batch** jobs have a deadline (default 30 minutes, at most 24 hours).
+- Each job runs in its own process group. Stopping it stops everything it started; anything it left
+  running when its command exited is stopped and reported; and every job is stopped when the session
+  ends or pi exits, even if pi is killed (a watchdog in the job's group notices within seconds).
+- Output goes to a log under the system temp directory, capped at 10 MB per job.
+- A job runs as you, with your credentials. It is not a sandbox.
+- On a Drive (Outfitter) the same tool works, but a job doesn't keep the Drive awake and dies with the
+  sandbox. A server there is reachable by the agent only, until Drive previews (#217) land.
+
 ## Subagents (`pi-subagents`)
 
 Delegation to focused child sessions, which the model uses when your wording invites it: "use

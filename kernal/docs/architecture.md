@@ -186,7 +186,8 @@ writes that one file: merging once at install needs no change to any writer and 
 | `pi-lsp` | diagnostics, hover, definitions, references | `.pi/agent/lsp.json`: TypeScript, Python, Rust (see below) |
 
 Not installed, by decision: `pi-goal-x` (peer range excludes pi 0.85), `pi-background-tasks` (peer
-pinned to 0.81–0.84, untested on 0.85), `@quintinshaw/pi-dynamic-workflows` (overlaps pi-subagents;
+pinned to 0.81–0.84, untested on 0.85; Kernal's own `kernal-background` extension covers background
+jobs instead, #121), `@quintinshaw/pi-dynamic-workflows` (overlaps pi-subagents;
 only for mass fan-out), `pi-provider-litellm` (see below). Add with `bin/kernal install -l npm:<pkg>`.
 
 ### Why not pi-provider-litellm?

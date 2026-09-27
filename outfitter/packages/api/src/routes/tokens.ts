@@ -31,6 +31,12 @@ export async function registerTokenRoutes(app: FastifyInstance, ctx: RouteContex
 
   app.post("/api/me/tokens", async (req, reply) => {
     const email = req.identity!.email;
+    // #219: a service account reaching the web role through IAP (the live-test identity) never
+    // needs a Dongle, and one would outlive the account: link accepts it for 90 days after the
+    // account is deleted. Only people get tokens.
+    if (email.toLowerCase().endsWith(".gserviceaccount.com")) {
+      return reply.code(403).send({ error: "service accounts can't create personal tokens" });
+    }
     const body = req.body as { name?: string };
     const name = body?.name?.trim();
     if (!name) return reply.code(400).send({ error: "name is required" });

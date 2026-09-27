@@ -40,6 +40,7 @@ jobs:
           bash deploy/test/gke-cluster.test.sh
           bash deploy/test/gke-skew.test.sh
           bash deploy/test/gke-iam.test.sh
+          bash deploy/test/e2e-identity.test.sh
           bash deploy/test/gke-template.test.sh
           bash deploy/test/gke-schedule.test.sh
           bash deploy/test/gke-teardown.test.sh

@@ -5,8 +5,29 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { buildTestApp, seedGuru } from "./helpers.ts";
 import { MemoryStore } from "../src/store/memory.ts";
+import { hashToken } from "../src/tokens.ts";
 
 describe("POST /api/me/tokens", () => {
+  test("#219: a service account (the live-test identity through IAP) can't create one", async () => {
+    const store = new MemoryStore();
+    const dev = await buildTestApp({}, { store });
+    const minted = await dev.fastify.inject({ method: "POST", url: "/api/me/tokens", payload: { name: "seed" } });
+    // Re-own the dev token as a service account, then use it on a non-dev app.
+    const record = await store.tokens.findById(minted.json().record.id);
+    await store.tokens.insert({ ...record!, id: "sa-token", hash: hashToken("outf_sa"), ownerEmail: "outfitter-e2e@outfitter-509211.iam.gserviceaccount.com" });
+    const prod = await buildTestApp({ OUTFITTER_DEV: "0" }, { store });
+    const res = await prod.fastify.inject({
+      method: "POST",
+      url: "/api/me/tokens",
+      headers: { authorization: "Bearer outf_sa" },
+      payload: { name: "laptop" },
+    });
+    assert.equal(res.statusCode, 403);
+    assert.equal(await store.tokens.countActiveForOwner("outfitter-e2e@outfitter-509211.iam.gserviceaccount.com"), 1);
+    await dev.fastify.close();
+    await prod.fastify.close();
+  });
+
   test("creates a token, returns the plaintext once, never returns the hash", async () => {
     const app = await buildTestApp();
     const res = await app.fastify.inject({

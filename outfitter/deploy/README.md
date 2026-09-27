@@ -512,6 +512,38 @@ admin creates, now and later, including its secondary domains; use `user:` entri
 access should stay with named people. To remove someone later, see Rollback → "IAP access": the
 IAP binding is only half of it.
 
+## Live-test identity (#219)
+
+Automated tests reach `outfitter-api` through IAP as the `outfitter-e2e` service account, with no
+person signing in. `./e2e-identity.sh` (owner-run, like `access.sh`; `DRY_RUN=1` to preview)
+creates it with no project roles and no keys, grants it `roles/iap.httpsResourceAccessor` on
+`outfitter-api` only, and lets each `E2E_TOKEN_MINTERS` principal (config.env) mint its ID tokens
+(`roles/iam.serviceAccountOpenIdTokenCreator` on that one account).
+
+A test mints an ID token with the IAM Credentials `generateIdToken` API (audience =
+`IAP_OAUTH_CLIENT_ID`, `includeEmail: true`) and sends it as `Proxy-Authorization: Bearer
+<token>` on every request, pages and assets included. Use the API rather than `gcloud auth
+print-identity-token --impersonate-service-account`, which fetches an access token first and so
+needs the broader `serviceAccountTokenCreator`. `./iap-probe.sh` is the check: it mints a token and
+expects `GET /api/me` to answer 200 with the account's email (that call records the account in the
+users store, as any sign-in does). Minting from CI needs its own setup (a dedicated Workload
+Identity provider for the test workflow, not the deploy one), which comes with the test suite.
+
+The app treats the account as an ordinary user: not a sysop, owner only of what it creates, but
+like every IAP member it can see and steer every session. It can't create `outf_` personal tokens
+(the api refuses them for any `*.gserviceaccount.com` identity). A fresh binding can take a few
+minutes to propagate; until then minting answers `IAM_PERMISSION_DENIED`.
+
+Grants are add-only. To take minting away from a principal dropped from `E2E_TOKEN_MINTERS`:
+
+    gcloud iam service-accounts remove-iam-policy-binding outfitter-e2e@outfitter-509211.iam.gserviceaccount.com \
+      --project=outfitter-509211 --member=<principal> --role=roles/iam.serviceAccountOpenIdTokenCreator
+
+To retire the identity: revoke any tokens in its name as a belt-and-braces step (Control Panel →
+Revoke Dongles, email `outfitter-e2e@outfitter-509211.iam.gserviceaccount.com`), then delete the
+account (`gcloud iam service-accounts delete outfitter-e2e@outfitter-509211.iam.gserviceaccount.com
+--project=outfitter-509211`); its IAP binding then matches nothing.
+
 ## kernal.one
 
 `kernal.one` (registered at Squarespace, DNS in Cloud DNS zone `kernal-one`, project

@@ -1,0 +1,21 @@
+outfitter/packages/api/package.json
+  s_9e985270e78a63::t_5b6300a087bccd 22
+outfitter/package-lock.json
+  s_9e985270e78a63::t_c959c385bb6869 2452-2454,2903-2905,2908,6166-6168,6171-6173,6176,6179-6183,6185,6212-6214,6217-6221,8228
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "171312acb1aa25ffa0e7f20842c2212655a10fa3",
+  "prompts": {},
+  "sessions": {
+    "s_9e985270e78a63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "019f7f91-d886-47f5-9a90-f34314b7756e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

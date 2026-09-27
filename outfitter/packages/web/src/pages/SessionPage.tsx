@@ -22,6 +22,7 @@ import { BeatView, YouMark } from "../components/TranscriptRail.tsx";
 import { Composer } from "../components/Composer.tsx";
 import { StatusPill } from "../components/StatusPill.tsx";
 import { GithubChip } from "../components/GithubChip.tsx";
+import { PreviewChips } from "../components/PreviewChips.tsx";
 import { StartupTime } from "../components/StartupTime.tsx";
 import { NerdOutPanel } from "../components/NerdOutPanel.tsx";
 import { TransportDot } from "../components/TransportDot.tsx";
@@ -595,6 +596,7 @@ export function SessionPage() {
               collapsed={compact}
             />
             {cluster && <GithubChip cluster={cluster} />}
+            <PreviewChips sessionId={sessionId} runState={runState} onError={setApiError} />
             <span className="session-model-info">
               {header.model ? <span className="mono">{header.model}</span> : "model unknown yet"}
               {header.thinking ? <span>thinking {header.thinking}</span> : null}

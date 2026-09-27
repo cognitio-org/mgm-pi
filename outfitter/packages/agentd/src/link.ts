@@ -103,6 +103,10 @@ export class Link {
   private openHandlers: Array<() => void> = [];
   private terminalHandlers: TerminalHandler[] = [];
   private closeHandlers: CloseHandler[] = [];
+  /** #205: the final `bye` (sendFinal), resent after a reconnect until the api closes with 1000. */
+  private finalMsg: UpMessage | undefined;
+  private finalClosed: Promise<void> | undefined;
+  private resolveFinal: (() => void) | undefined;
   private unspecTimeoutHandlers: UnspecTimeoutHandler[] = [];
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private connectionAgeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -211,13 +215,14 @@ export class Link {
 
   /** Like `send`, but resolves only once the OS has actually accepted the write (or immediately, if
    * not connected) -- `ws.send()` queues and returns before that happens, so a `process.exit()`
-   * right after a plain `send()` can drop the frame entirely. Use this for the final `bye` before
-   * exiting (protocol.md calls `bye` "last frame" -- it has to actually arrive). */
+   * right after a plain `send()` can drop the frame entirely. Sends the whole unacked backlog
+   * first. The final `bye` goes through sendFinal instead: an accepted write isn't a handled frame
+   * (#205). */
   sendAndFlush(msg: UpMessage): Promise<void> {
     return new Promise((resolve) => {
       if (this.ws && this.ws.readyState === this.WebSocketImpl.OPEN) {
-        // A final frame (bye) can't wait for a reconnect's answer or for acks: agentd exits within
-        // a second (run.ts's bye). Send what is waiting first, then the bye, and resolve on its
+        // A final frame (bye) can't wait for a reconnect's answer or for acks: agentd exits soon
+        // after it (run.ts's bye). Send what is waiting first, then the bye, and resolve on its
         // write. Once the api has answered, that is the whole unacked backlog, as before the window
         // existed. While a reconnect still waits it stays inside the window: the api may not have
         // accepted the connection yet, and hello + held (<= 64) + 128 + bye fits its 256-frame
@@ -229,6 +234,33 @@ export class Link {
         resolve();
       }
     });
+  }
+
+  /**
+   * #205: sends the final `bye` (as sendAndFlush does) and resolves only once the api closes the
+   * socket with 1000, which it does right after it has stored the bye: the api saying it has
+   * handled every frame before it. Exiting on the write alone lost them: the api handles a
+   * connection's frames one at a time, and a Cloud Run instance whose last request is this socket
+   * (a revision retired by a deploy while the run was live) is torn down the moment the socket
+   * closes, taking the unhandled checkpoint, `stopping` and bye with it. Any other close (a drop)
+   * reconnects as usual, replays the unacked frames and sends the bye again; a terminal code also
+   * resolves, since the api is done with this run. Resolves immediately when not connected; a
+   * second call returns the first one's wait. The caller bounds the wait.
+   */
+  sendFinal(msg: UpMessage): Promise<void> {
+    if (this.finalClosed) return this.finalClosed;
+    if (!this.isOpen()) return Promise.resolve();
+    this.finalMsg = msg;
+    this.finalClosed = new Promise<void>((resolve) => (this.resolveFinal = resolve));
+    // Nothing may rotate or give up on the connection while the api drains it: the 55-minute
+    // rotation would close it, and the run.spec timeout would exit 1 (main.ts).
+    this.clearConnectionAgeTimer();
+    if (this.unspecTimer) {
+      this.clearTimeoutFn(this.unspecTimer);
+      this.unspecTimer = undefined;
+    }
+    void this.sendAndFlush(msg);
+    return this.finalClosed;
   }
 
   /** Drops buffered frames the api has acked up to and including `seq`. */
@@ -297,7 +329,7 @@ export class Link {
     this.awaitingApi = false;
     const held = this.held;
     this.held = [];
-    this.pump();
+    this.pump(this.finalMsg ? Number.POSITIVE_INFINITY : SEQ_WINDOW);
     for (const msg of held) this.transmit(msg);
   }
 
@@ -354,8 +386,11 @@ export class Link {
       this.ws!.send(JSON.stringify(hello));
       // Resend everything still unacked, in original order, so the api can replay/dedupe past
       // lastAckedSeq -- now, or once the api answers a reconnect.
-      this.pump();
-      this.armConnectionAgeTimer();
+      this.pump(this.finalMsg ? Number.POSITIVE_INFINITY : SEQ_WINDOW);
+      // #205: a drop after the bye went out: send it again, after the replay (held until the api
+      // answers a reconnect, like any other frame).
+      if (this.finalMsg) this.transmit(this.finalMsg);
+      else this.armConnectionAgeTimer();
       this.armStableTimer();
       for (const h of this.openHandlers) h();
     });
@@ -390,6 +425,14 @@ export class Link {
       this.clearConnectionAgeTimer();
       this.clearStableTimer();
       for (const h of this.closeHandlers) h(code, reasonBuf ? reasonBuf.toString() : "", TERMINAL_CLOSE_CODES.has(code));
+      if (this.resolveFinal && (code === 1000 || TERMINAL_CLOSE_CODES.has(code))) {
+        // #205: the api handled the bye (1000), or is done with this run anyway: the caller exits.
+        this.closed = true;
+        if (this.reconnectTimer) this.clearTimeoutFn(this.reconnectTimer);
+        this.resolveFinal();
+        this.resolveFinal = undefined;
+        return;
+      }
       if (this.closed) return;
       if (TERMINAL_CLOSE_CODES.has(code)) {
         this.closed = true;

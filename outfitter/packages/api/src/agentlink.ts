@@ -1535,18 +1535,28 @@ export class AgentLink {
       }
       case "bye": {
         const reason = String(frame.reason ?? "stop");
-        await this.store.runs.update(runId, {
-          state: reason === "error" ? "failed" : "stopped",
-          reason,
-          lastSeenAt: now,
-          updatedAt: now,
-        });
-        this.sockets.delete(runId);
-        closeQuietly(socket, 1000, reason);
-        // Mail this run was handed but never acked goes back to the queue now rather than after its
-        // lease. Then start the next run for it, and for mail held back while this run was stopping
-        // -- except after an explicit stop, which the /tick sweep may still override later.
-        await this.store.mail.releaseRun(runId);
+        // #205: the close is how agentd learns the bye is handled (Link.sendFinal), and it exits on
+        // a 1000. So close only after the store writes, since this socket may be the last request
+        // keeping a retired Cloud Run instance alive; and close 1011 if they failed, so agentd
+        // reconnects and sends the bye again (the reconnect gets 4409 if the run did stop).
+        let stored = false;
+        try {
+          await this.store.runs.update(runId, {
+            state: reason === "error" ? "failed" : "stopped",
+            reason,
+            lastSeenAt: now,
+            updatedAt: now,
+          });
+          // Mail this run was handed but never acked goes back to the queue now rather than after
+          // its lease.
+          await this.store.mail.releaseRun(runId);
+          stored = true;
+        } finally {
+          if (this.sockets.get(runId) === socket) this.sockets.delete(runId);
+          closeQuietly(socket, stored ? 1000 : 1011, stored ? reason : "bye not stored");
+        }
+        // Then start the next run for it, and for mail held back while this run was stopping --
+        // except after an explicit stop, which the /tick sweep may still override later.
         if (reason !== "stop") await this.mail.wakeIfMail(sessionId);
         break;
       }

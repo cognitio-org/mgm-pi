@@ -395,6 +395,67 @@ test("Link: sendAndFlush resolves only after the socket confirms the write", asy
   assert.equal(JSON.parse(ws.sent[0]).t, "bye");
 });
 
+test("Link: #205 -- sendFinal resolves when the api closes the socket, not on the write, and doesn't reconnect", async (t) => {
+  const link = makeLink();
+  t.after(() => link.close());
+  const ws = await connectAndGetInstance(link);
+  ws.triggerOpen();
+  ws.sent.length = 0;
+
+  let resolved = false;
+  const p = link.sendFinal({ t: "bye", reason: "idle" }).then(() => {
+    resolved = true;
+  });
+  await new Promise((r) => setTimeout(r, 30)); // well past FakeWebSocket's 5 ms write callback
+  assert.equal(JSON.parse(ws.sent[0]).t, "bye");
+  assert.equal(resolved, false, "resolved before the api closed the socket");
+  ws.triggerClose(1000);
+  await p;
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(FakeWebSocket.instances.length, 1, "reconnected after the final frame");
+});
+
+test("Link: #205 -- a drop while waiting reconnects, replays and resends the bye; the api's 1000 ends it", async (t) => {
+  const link = makeLink();
+  t.after(() => link.close());
+  const ws1 = await connectAndGetInstance(link);
+  ws1.triggerOpen();
+  ws1.triggerMessage({ t: "run.spec" });
+  link.sendSeq((seq) => ({ t: "entry", seq, entry: { type: "message", id: "a" } as any }));
+  let resolved = false;
+  const p = link.sendFinal({ t: "bye", reason: "idle" }).then(() => {
+    resolved = true;
+  });
+  ws1.triggerClose(1006);
+  await waitFor(() => FakeWebSocket.instances.length === 2);
+  const ws2 = FakeWebSocket.instances[1];
+  ws2.triggerOpen();
+  assert.deepEqual(ws2.sent.map((s) => JSON.parse(s).t), ["hello"], "waits for the api to answer the reconnect");
+  ws2.triggerMessage({ t: "run.spec" });
+  assert.deepEqual(ws2.sent.map((s) => JSON.parse(s).t), ["hello", "entry", "bye"]);
+  assert.equal(resolved, false);
+  ws2.triggerClose(1000);
+  await p;
+  assert.equal(link.sendFinal({ t: "bye", reason: "error" }), link.sendFinal({ t: "bye", reason: "stop" }), "one wait per run");
+});
+
+test("Link: #205 -- a terminal close (the api already finished the run) also ends the wait", async (t) => {
+  const link = makeLink();
+  t.after(() => link.close());
+  const ws = await connectAndGetInstance(link);
+  ws.triggerOpen();
+  const p = link.sendFinal({ t: "bye", reason: "stop" });
+  ws.triggerClose(4409);
+  await p;
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(FakeWebSocket.instances.length, 1);
+});
+
+test("Link: #205 -- sendFinal resolves immediately when not connected", async () => {
+  const link = makeLink();
+  await link.sendFinal({ t: "bye", reason: "stop" }); // must not hang
+});
+
 test("Link: sendAndFlush resolves immediately when not connected (nothing to flush)", async () => {
   const link = makeLink();
   // never call connect()/triggerOpen() -- no socket

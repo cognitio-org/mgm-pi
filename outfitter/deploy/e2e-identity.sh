@@ -17,11 +17,20 @@
 # - Refuses (before changing anything, dry run included) if the account already exists with a
 #   user-managed key or a project role: either would reach IAP around the minter grants.
 #
+# - With E2E_GITHUB_WORKFLOW set: a Workload Identity pool of its own (github-live) whose provider
+#   admits only that workflow file of this repo at an outfitter-v* tag (admin-only, ci-setup.sh's
+#   ruleset; main has no branch protection, so it isn't trusted), and lets exactly those tokens
+#   mint the account's ID tokens -- the same narrow role as a minter. It refuses if the pool holds
+#   any other provider. The repository variable
+#   GCP_LIVE_WIF_PROVIDER switches the workflow on. A separate pool, not ci-setup.sh's: every
+#   principal of that pool may act as the deployer.
+#
 # Grants are add-only: dropping a principal from E2E_TOKEN_MINTERS doesn't revoke it. README.md
 # "Live-test identity" has the remove command, and how to retire the account.
 #
-# A test then sends `Proxy-Authorization: Bearer <id token>`, audience = IAP_OAUTH_CLIENT_ID with
-# the email claim included (iap-probe.sh shows how), and the app sees the account's email as the
+# A test then sends the ID token as `Authorization: Bearer` (a browser: Chrome won't send
+# Proxy-Authorization on page loads) or `Proxy-Authorization: Bearer` (curl), audience =
+# IAP_OAUTH_CLIENT_ID with the email claim included (iap-probe.sh shows how), and the app sees the account's email as the
 # signed-in user: not a sysop, owner only of what it creates.
 #
 # Docs: https://cloud.google.com/iap/docs/authentication-howto (a service account's OIDC token,
@@ -49,6 +58,26 @@ for minter in "${MINTERS[@]}"; do
     deploy_fail "E2E_TOKEN_MINTERS entry '${minter}' is not user:, group: or serviceAccount:"
   fi
 done
+
+# Everything the CI part needs to look up, before changing anything: a missing gh login must not
+# stop the script half-way through its grants.
+GITHUB_REPO="${GITHUB_REPO:-cognitio-org/mgm-pi}"
+CI_POOL="github-live"
+CI_PROVIDER="outfitter-live"
+if [[ -n "${E2E_GITHUB_WORKFLOW}" ]]; then
+  # Numeric ids too, so the trust doesn't follow the name if the repo is renamed or re-registered.
+  IDS="$(gh api "repos/${GITHUB_REPO}" --jq '.id, .owner.id')" || deploy_fail "gh can't read ${GITHUB_REPO} (gh auth login?)"
+  REPO_ID="$(sed -n 1p <<<"${IDS}")"
+  OWNER_ID="$(sed -n 2p <<<"${IDS}")"
+  PROJECT_NUMBER="$(gcloud projects describe "${PROJECT}" --format='value(projectNumber)')"
+  # The grant below trusts the whole pool's live_release attribute, so the pool must hold only the
+  # provider this script pins.
+  if gcloud_exists iam workload-identity-pools describe "${CI_POOL}" --location=global --project="${PROJECT}"; then
+    OTHERS="$(gcloud iam workload-identity-pools providers list --workload-identity-pool="${CI_POOL}" \
+      --location=global --project="${PROJECT}" --format='value(name.basename())' | grep -vx "${CI_PROVIDER}" || true)"
+    [[ -z "${OTHERS}" ]] || deploy_fail "pool ${CI_POOL} has other providers (${OTHERS//$'\n'/, }); it must hold only ${CI_PROVIDER}"
+  fi
+fi
 
 echo "== Service account ${E2E_SA_EMAIL} =="
 CREATED=0
@@ -96,5 +125,42 @@ for minter in "${MINTERS[@]}"; do
     --role="roles/iam.serviceAccountOpenIdTokenCreator" \
     --quiet >/dev/null
 done
+
+if [[ -n "${E2E_GITHUB_WORKFLOW}" ]]; then
+  echo "== Workload identity pool '${CI_POOL}' and provider '${CI_PROVIDER}' (${GITHUB_REPO}/${E2E_GITHUB_WORKFLOW} at outfitter-v* tags) =="
+  if ! gcloud_exists iam workload-identity-pools describe "${CI_POOL}" --location=global --project="${PROJECT}"; then
+    run gcloud iam workload-identity-pools create "${CI_POOL}" --location=global --project="${PROJECT}" \
+      --display-name="GitHub Actions: live tests" >/dev/null
+  fi
+  # Trust exactly one workflow file, and only at a release tag: only repository admins can create
+  # those (ci-setup.sh's ruleset). Not main -- it has no branch protection, so anyone with write
+  # access could push a workflow that leaks the token. The same test is mapped to
+  # attribute.live_release so the IAM grant below is pinned to it too, not only this condition.
+  LIVE_REF="${GITHUB_REPO}/${E2E_GITHUB_WORKFLOW}@refs/tags/outfitter-v"
+  PROVIDER_FLAGS=(
+    --location=global --project="${PROJECT}" --workload-identity-pool="${CI_POOL}"
+    --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.live_release=assertion.job_workflow_ref.startsWith('${LIVE_REF}') ? 'yes' : 'no'"
+    --attribute-condition="assertion.repository_id == '${REPO_ID}' && assertion.repository_owner_id == '${OWNER_ID}' && assertion.repository == '${GITHUB_REPO}' && assertion.job_workflow_ref.startsWith('${LIVE_REF}')"
+  )
+  if gcloud_exists iam workload-identity-pools providers describe "${CI_PROVIDER}" --location=global \
+      --workload-identity-pool="${CI_POOL}" --project="${PROJECT}"; then
+    run gcloud iam workload-identity-pools providers update-oidc "${CI_PROVIDER}" "${PROVIDER_FLAGS[@]}" >/dev/null
+  else
+    run gcloud iam workload-identity-pools providers create-oidc "${CI_PROVIDER}" "${PROVIDER_FLAGS[@]}" \
+      --issuer-uri="https://token.actions.githubusercontent.com" >/dev/null
+  fi
+  echo "== Letting that workflow mint ID tokens for ${E2E_SA_EMAIL} =="
+  run gcloud iam service-accounts add-iam-policy-binding "${E2E_SA_EMAIL}" --project="${PROJECT}" \
+    --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${CI_POOL}/attribute.live_release/yes" \
+    --role="roles/iam.serviceAccountOpenIdTokenCreator" \
+    --quiet >/dev/null
+  WIF_PROVIDER="projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${CI_POOL}/providers/${CI_PROVIDER}"
+  echo "== Repository variables for ${E2E_GITHUB_WORKFLOW} =="
+  run gh variable set GCP_LIVE_WIF_PROVIDER --repo "${GITHUB_REPO}" --body "${WIF_PROVIDER}"
+  run gh variable set E2E_SERVICE_ACCOUNT --repo "${GITHUB_REPO}" --body "${E2E_SA_EMAIL}"
+  run gh variable set E2E_IAP_AUDIENCE --repo "${GITHUB_REPO}" --body "${IAP_OAUTH_CLIENT_ID}"
+elif gcloud_exists iam workload-identity-pools describe "${CI_POOL}" --location=global --project="${PROJECT}"; then
+  echo "   note: E2E_GITHUB_WORKFLOW is empty, but pool ${CI_POOL} exists: CI can still mint tokens. README.md \"Live-test identity\" has the revoke steps." >&2
+fi
 
 echo "== Done. Check it with ./iap-probe.sh =="

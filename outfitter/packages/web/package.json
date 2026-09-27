@@ -10,7 +10,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pretest": "npm run typecheck",
     "test": "vitest run",
-    "record-tour": "node scripts/record-tour.mjs"
+    "record-tour": "node scripts/record-tour.mjs",
+    "test:live": "node --test --test-timeout=900000 live/app.live.mjs"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.3.0",

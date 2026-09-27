@@ -18,12 +18,24 @@ case "$*" in
     echo "ERROR: NOT_FOUND: Unknown service account" >&2; exit 1 ;;
   "iam service-accounts keys list"*) [[ -n "${FAKE_SA_KEY:-}" ]] && echo "projects/p/serviceAccounts/x/keys/k1" ;;
   "projects get-iam-policy"*) [[ -n "${FAKE_SA_ROLE:-}" ]] && echo "${FAKE_SA_ROLE}" ;;
+  "projects describe"*) echo 97916961297 ;;
+  "iam workload-identity-pools providers list"*) printf '%s\n' ${FAKE_POOL_PROVIDERS:-} ;;
+  "iam workload-identity-pools describe"*) [[ -n "${FAKE_POOL_EXISTS:-}" ]] && exit 0; echo "ERROR: NOT_FOUND" >&2; exit 1 ;;
+  "iam workload-identity-pools providers describe"*) echo "ERROR: NOT_FOUND" >&2; exit 1 ;;
 esac
 exit 0
 FAKE
 chmod +x "${WORK}/bin/gcloud"
+cat >"${WORK}/bin/gh" <<'FAKE'
+#!/usr/bin/env bash
+echo "gh $*" >>"${GCLOUD_CALLS}"
+case "$*" in
+  *"--jq .id, .owner.id"*) printf '111\n222\n' ;;
+esac
+FAKE
+chmod +x "${WORK}/bin/gh"
 export PATH="${WORK}/bin:${PATH}" GCLOUD_CALLS="${WORK}/gcloud-calls"
-unset GITHUB_ACTIONS FAKE_SA_EXISTS FAKE_SA_KEY FAKE_SA_ROLE E2E_TOKEN_MINTERS E2E_SA_NAME
+unset GITHUB_ACTIONS FAKE_SA_EXISTS FAKE_SA_KEY FAKE_SA_ROLE FAKE_POOL_EXISTS FAKE_POOL_PROVIDERS E2E_TOKEN_MINTERS E2E_SA_NAME E2E_GITHUB_WORKFLOW
 
 fails=0
 OUT=""
@@ -47,7 +59,7 @@ expect() {
 }
 no_mutations() {
   local found
-  found="$(grep -E 'create|add-iam-policy-binding' "${GCLOUD_CALLS}" || true)"
+  found="$(grep -E 'create|add-iam-policy-binding|update-oidc|variable set' "${GCLOUD_CALLS}" || true)"
   if [[ -z "${found}" ]]; then echo "ok:   $1"; else echo "FAIL:   $1 (${found})"; fails=$((fails + 1)); fi
 }
 
@@ -83,6 +95,27 @@ FAKE_SA_EXISTS=1 FAKE_SA_KEY=1 expect fail "an existing account with a user-mana
 no_mutations "... and changes nothing"
 FAKE_SA_EXISTS=1 FAKE_SA_ROLE=roles/editor expect fail "an existing account with a project role refuses" "holds project roles (roles/editor)"
 no_mutations "... and changes nothing"
+
+expect pass "CI: its own pool, not the deploy pool" "DRY_RUN: gcloud iam workload-identity-pools create github-live"
+expect pass "CI: the provider admits only the live workflow at a release tag" \
+  "attribute-condition=.*job_workflow_ref.startsWith.*cognitio-org/mgm-pi/.github/workflows/outfitter-live.yml@refs/tags/outfitter-v"
+if grep -q "refs/heads/main" <<<"${OUT}"; then echo "FAIL:   ... never main"; fails=$((fails + 1)); else echo "ok:   ... never main"; fi
+expect pass "CI: the IAM grant itself is pinned to the release-tag attribute, and is ID-token only" \
+  "--member=principalSet://iam.googleapis.com/projects/97916961297/locations/global/workloadIdentityPools/github-live/attribute.live_release/yes --role=roles/iam.serviceAccountOpenIdTokenCreator"
+FAKE_POOL_EXISTS=1 FAKE_POOL_PROVIDERS="outfitter-live sneaky" expect fail "CI: a pool holding another provider refuses" \
+  "has other providers (sneaky)"
+no_mutations "... and changes nothing, not even the service account"
+FAKE_POOL_EXISTS=1 FAKE_POOL_PROVIDERS="outfitter-live" expect pass "CI: a pool holding only our provider is fine" "Done"
+no_mutations "CI: a dry run sets no repository variable and creates nothing"
+if grep -q "workloadIdentityUser\|workloadIdentityPools/github/" <<<"${OUT}"; then
+  echo "FAIL:   CI never grants workloadIdentityUser or touches the deploy pool"; fails=$((fails + 1))
+else
+  echo "ok:   CI never grants workloadIdentityUser or touches the deploy pool"
+fi
+expect pass "E2E_GITHUB_WORKFLOW empty skips the CI setup" "Done" E2E_GITHUB_WORKFLOW=
+if grep -q "DRY_RUN:.*github-live\|variable set" <<<"${OUT}"; then echo "FAIL:   ... entirely"; fails=$((fails + 1)); else echo "ok:   ... entirely"; fi
+FAKE_POOL_EXISTS=1 expect pass "E2E_GITHUB_WORKFLOW empty, pool still there: warns that CI can still mint" \
+  "CI can still mint tokens" E2E_GITHUB_WORKFLOW=
 
 if [[ ${fails} -gt 0 ]]; then
   echo "${fails} failure(s)"; exit 1

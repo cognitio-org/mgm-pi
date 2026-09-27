@@ -107,3 +107,13 @@ jobs:
           FORCE_ALL: ${{ inputs.force_all && '1' || '' }}
           USE_GKE_GCLOUD_AUTH_PLUGIN: "True"
         run: ./release.sh
+
+  # #219: Playwright against what just shipped, signed in through IAP as outfitter-e2e. A separate
+  # workflow file with its own Workload Identity pool: this workflow's deploy credentials never
+  # reach it, and its token can't deploy. Skipped until e2e-identity.sh has set its variables.
+  live:
+    needs: deploy
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/outfitter-live.yml

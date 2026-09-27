@@ -1,0 +1,71 @@
+name: Outfitter live tests
+# Playwright against the deployed web app (#219). "Outfitter deploy" calls this after a successful
+# release, and it can be run by hand: Run workflow, with an outfitter-v* tag under "Use workflow
+# from" (normally the release in production). Either way it runs a release tag's own copy of this
+# file and of the suite, so it tests exactly what that release shipped.
+#
+# Signs in through IAP as the outfitter-e2e service account. google-github-actions/auth mints its ID
+# token through a Workload Identity pool of its own (deploy/e2e-identity.sh). That pool's provider,
+# and the IAM grant itself, admit only this file at an outfitter-v* tag, which only repository admins
+# can create (ci-setup.sh's tag ruleset). main is not trusted: it has no branch protection. The pool
+# may mint the account's ID tokens and nothing else, and it never touches the deploy pool.
+#
+# The lifecycle test starts one real Drive and one short LLM turn on the "e2e (live tests)" Tape,
+# then archives and formats the floppy it made (packages/web/live/app.live.mjs).
+on:
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      skip_lifecycle:
+        description: "Page smoke only: create no floppy (E2E_SKIP_LIFECYCLE=1)"
+        type: boolean
+        default: false
+
+jobs:
+  live:
+    # Off until e2e-identity.sh has set the repository variables; only from a release tag.
+    if: vars.GCP_LIVE_WIF_PROVIDER != '' && startsWith(github.ref, 'refs/tags/outfitter-v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # One run at a time: two lifecycle runs would treat each other's floppies as leftovers.
+    concurrency:
+      group: outfitter-live
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    defaults: { run: { working-directory: outfitter } }
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v5
+        with: { node-version: 24, cache: npm, cache-dependency-path: outfitter/package-lock.json }
+      # This job can mint the account's token, so no dependency install script runs in it. The suite
+      # only imports playwright-core, which needs none (it uses the runner's own Chrome).
+      - run: npm ci --ignore-scripts
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_LIVE_WIF_PROVIDER }}
+          service_account: ${{ vars.E2E_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ vars.E2E_IAP_AUDIENCE }}
+          id_token_include_email: true
+          create_credentials_file: false
+      - name: Live tests (system Chrome, already on the runner)
+        env:
+          E2E_IAP_TOKEN: ${{ steps.auth.outputs.id_token }}
+          E2E_SERVICE_ACCOUNT: ${{ vars.E2E_SERVICE_ACCOUNT }}
+          E2E_SKIP_LIFECYCLE: ${{ inputs.skip_lifecycle && '1' || '' }}
+          E2E_ARTIFACTS: ${{ runner.temp }}/outfitter-live
+        run: npm run test:live -w @outfitter/web
+      # The screenshot only: the page's text can name other people's floppies, and artifacts are
+      # readable by anyone with repository read access.
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: outfitter-live-failure
+          path: ${{ runner.temp }}/outfitter-live/*.png
+          if-no-files-found: ignore
+          retention-days: 14

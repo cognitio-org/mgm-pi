@@ -52,9 +52,9 @@ tagged commit may never have been tested alone) and then runs **`release.sh`** o
   token; web still has IAP switched on and redirects to sign-in) and stops at the first failure.
 - The `outfitter-api` image (both link and web run it) builds in the background while the agent
   image builds (`build-api-image.sh`); only the build runs early, the deploy order above is
-  unchanged, and a failed API build stops the release before link. gcloud and its components come
-  from the Actions cache (filled by `outfitter-ci.yml`'s `gcloud-cache` job on `main`, since a tag's
-  run can only read caches from `main`), so only a new gcloud release pays the full install.
+  unchanged, and a failed API build stops the release before link. gcloud itself is still
+  downloaded from Google on every run, not restored from the Actions cache: the deploy job holds
+  production credentials, and any job that runs `npm ci` could write that cache.
 - Deploys run one at a time (a `concurrency` group, never cancelled midway). A newer run waiting
   its turn replaces an older waiting one, so production only moves forward. That includes a
   waiting manual rollback: if a release is pushed while it waits, re-run it afterwards.

@@ -128,10 +128,13 @@ elif [[ "${FORCE_ALL:-}" == 1 ]] || ! component_live_at services outfitter-link 
   API_BUILD_LOG="$(mktemp)"
   register_cleanup "${API_BUILD_LOG}"
   echo "== Building the outfitter-api image in the background (its log follows before link deploys) =="
-  "${DEPLOY_DIR}/build-api-image.sh" >"${API_BUILD_LOG}" 2>&1 &
+  # No second `git fetch`: release.sh's own deploy_guard just fetched, and agent-job.sh's is about
+  # to run concurrently in the same checkout.
+  DEPLOY_GUARD_NO_FETCH=1 "${DEPLOY_DIR}/build-api-image.sh" >"${API_BUILD_LOG}" 2>&1 &
   API_BUILD_PID=$!
-  # A release that stops early doesn't leave the build's gcloud client behind. (Cloud Build itself
-  # carries on; the next run reuses the image.) Evaluated at exit, so an already-waited build is left alone.
+  # A release that stops early stops the build script. Its gcloud child may outlive it on a laptop;
+  # in Actions the runner ends it with the job, and Cloud Build carries on either way (the next run
+  # reuses the image). Evaluated at exit, so an already-waited build is left alone.
   register_cleanup_cmd '[[ -n "${API_BUILD_PID}" ]] && kill "${API_BUILD_PID}" 2>/dev/null || true'
 fi
 # wait_for_api_image -- blocks until the background build is done, prints its log, and stops the

@@ -52,6 +52,14 @@ export class SseHub {
     for (const reply of set) reply.raw.write(frame);
   }
 
+  /** Ends every stream on the channel (#208: its session was formatted). The browser's reconnect
+   * then gets a 404, and the poller drops the session once it has no subscribers. */
+  close(channel: string): void {
+    const set = this.subscribers.get(channel);
+    this.subscribers.delete(channel);
+    for (const reply of set ?? []) reply.raw.end();
+  }
+
   /** Writes an SSE comment line to every subscriber: keeps idle streams from being cut by a proxy
    * that times out a silent connection (EventSource ignores comments). */
   keepalive(): void {

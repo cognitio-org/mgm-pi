@@ -303,6 +303,7 @@ describe("agentlink up-frame ordering", () => {
       drainDownMessages: (id) => inner.runs.drainDownMessages(id),
       claimGithubIdempotency: (id, key, pending) => inner.runs.claimGithubIdempotency(id, key, pending),
       finishGithubIdempotency: (id, key, result) => inner.runs.finishGithubIdempotency(id, key, result),
+      deleteForSession: (s) => inner.runs.deleteForSession(s),
     };
     const store: Store = {
       sessions: inner.sessions,
@@ -317,6 +318,7 @@ describe("agentlink up-frame ordering", () => {
       browserShares: inner.browserShares,
       browserRequests: inner.browserRequests,
       browserCaptures: inner.browserCaptures,
+      formattedSessions: inner.formattedSessions,
       close: () => inner.close(),
     };
 

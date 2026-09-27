@@ -11,7 +11,7 @@ import { sessionGithubTokenSecretName } from "../operator.ts";
 import { entryForWire } from "../entry-wire.ts";
 import { summarizeStartup } from "../startup.ts";
 import { sessionJsonl } from "../session-jsonl.ts";
-import { SessionArchivedError } from "../runs.ts";
+import { SessionArchivedError, SessionFormattedError } from "../runs.ts";
 import type { Identity } from "../auth.ts";
 
 /** Same checks `GithubAppTokens.mint` uses before it calls GitHub. Existence of a secret version is not enough. */
@@ -239,6 +239,8 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
 
   app.put("/api/sessions/:id/import", async (req, reply) => {
     const id = (req.params as { id: string }).id;
+    // #208: a formatted floppy stays gone; importing its id would bring back an empty shell.
+    if (await ctx.store.formattedSessions.findById(id)) return reply.code(410).send({ error: "this floppy was formatted" });
     const active = await ctx.store.runs.findActiveForSession(id);
     if (active) return reply.code(409).send({ error: "a run is active for this session" });
 
@@ -262,6 +264,8 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
     const now = new Date().toISOString();
     let session = existing;
     if (!session) {
+      // Again, now that the body is parsed: a format may have finished since the check above.
+      if (await ctx.store.formattedSessions.findById(id)) return reply.code(410).send({ error: "this floppy was formatted" });
       session = {
         id,
         guruId: "",
@@ -344,6 +348,7 @@ export async function registerPanelRoutes(app: FastifyInstance, ctx: RouteContex
       return { run: await ctx.runs.wake(session.id) };
     } catch (err) {
       if (err instanceof SessionArchivedError) return reply.code(409).send({ error: ARCHIVED_ERROR });
+      if (err instanceof SessionFormattedError) return reply.code(404).send({ error: "session not found" });
       throw err;
     }
   });
@@ -375,7 +380,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     const session: Session = {
       id: randomUUID(),
       name: body.name,
-      // Only archive and restore check it -- see Session.ownerEmail's doc comment and
+      // Only archive, restore and format check it -- see Session.ownerEmail's doc comment and
       // EPIC.md's E2.2 note (finding #5, docs/reports/security-review-pr1.md).
       ownerEmail: req.identity?.email,
       guruId: body.guruId,
@@ -467,7 +472,45 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     const session = await getManageableSessionOr404(ctx, req, reply);
     if (!session) return;
     if (!session.archivedAt) return { session };
-    return { session: await ctx.store.sessions.setArchivedAt(session.id, null) };
+    const restored = await ctx.store.sessions.setArchivedAt(session.id, null);
+    if (!restored) return reply.code(409).send({ error: "this floppy is being formatted" });
+    return { session: restored };
+  });
+
+  // #208: Format permanently erases an archived floppy: its transcript, runs, mail addressed to it,
+  // browser shares, requests and captures, and its GitHub token secret (disabled: the api's custom
+  // role can't delete secrets). Mail it sent to other floppies is theirs and stays; so does its
+  // GitHub branch. It first claims the session (formattingAt, only on an archived session), so a
+  // racing Restore gets 409 instead of being overridden. The formattedSessions record goes next, so
+  // teleport can't re-import the id mid-way, and the session document last, so a format that fails
+  // part-way can simply be retried.
+  app.delete("/api/sessions/:id", async (req, reply) => {
+    const session = await getManageableSessionOr404(ctx, req, reply);
+    if (!session) return;
+    if (!session.archivedAt) return reply.code(409).send({ error: "archive this floppy before formatting it" });
+    const claimed = session.formattingAt ? session : await ctx.store.sessions.claimForFormat(session.id, new Date().toISOString());
+    if (!claimed) return reply.code(409).send({ error: "archive this floppy before formatting it" });
+    if (await ctx.store.runs.findActiveForSession(session.id)) {
+      await ctx.store.sessions.releaseFormatClaim(session.id);
+      return reply.code(409).send({ error: "this floppy's drive is still stopping; try again in a moment" });
+    }
+    await ctx.store.formattedSessions.insert({
+      id: session.id,
+      formattedAt: new Date().toISOString(),
+      formattedBy: req.identity?.email ?? "",
+    });
+    await ctx.secretAdmin.disableAllEnabled(sessionGithubTokenSecretName(session.id));
+    await Promise.all([
+      ctx.store.entries.deleteForSession(session.id),
+      ctx.store.runs.deleteForSession(session.id),
+      ctx.store.mail.deleteForSession(session.id),
+      ctx.store.browserShares.deleteForSession(session.id),
+      ctx.store.browserRequests.deleteForSession(session.id),
+      ctx.store.browserCaptures.deleteForSession(session.id),
+    ]);
+    await ctx.store.sessions.delete(session.id);
+    ctx.sse.close(session.id);
+    return reply.code(204).send();
   });
 }
 

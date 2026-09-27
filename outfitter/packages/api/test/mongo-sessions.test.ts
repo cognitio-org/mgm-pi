@@ -1,6 +1,7 @@
-// MongoSessions' archive filter and setArchivedAt against a real MongoDB, checked against
-// MemoryStore (#207). The Mongo side leans on `{archivedAt: null}` matching a missing field and on
-// `$unset` for restore, neither of which MemoryStore exercises.
+// MongoSessions' archive filter and setArchivedAt (#207), and format's per-session deletes and
+// formattedSessions record (#208), against a real MongoDB, checked against MemoryStore. The Mongo
+// side leans on `{archivedAt: null}` matching a missing field and on `$unset` for restore, neither
+// of which MemoryStore exercises.
 //
 // Starts its own mongod (mongodb-memory-server) unless OUTFITTER_TEST_MONGODB_URI points at one;
 // see mongo-tokens.test.ts. Either way it uses a scratch `outfitter_sessiontest_<random>` database
@@ -11,7 +12,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { MongoStore } from "../src/store/mongo.ts";
 import { MemoryStore } from "../src/store/memory.ts";
-import type { Session, SessionsCollection } from "../src/store/types.ts";
+import type { Session, SessionsCollection, Store } from "../src/store/types.ts";
 
 const EXTERNAL_URI = process.env.OUTFITTER_TEST_MONGODB_URI;
 const DB_NAME = `outfitter_sessiontest_${randomUUID().slice(0, 8)}`;
@@ -34,10 +35,66 @@ async function exercise(sessions: SessionsCollection): Promise<Record<string, un
     all: await ids("all"),
     missing: await sessions.setArchivedAt("no-such-session", "2026-09-27T00:00:00.000Z"),
   };
+  result.claim = Boolean(await sessions.claimForFormat("shelved", "2026-09-27T01:00:00.000Z"));
+  result.secondClaim = await sessions.claimForFormat("shelved", "2026-09-27T02:00:00.000Z");
+  result.claimLive = await sessions.claimForFormat("live", "2026-09-27T01:00:00.000Z");
+  result.restoreWhileClaimed = await sessions.setArchivedAt("shelved", null);
+  await sessions.releaseFormatClaim("shelved");
+  result.releasedHasField = "formattingAt" in ((await sessions.findById("shelved")) ?? {});
   const restored = await sessions.setArchivedAt("shelved", null);
   result.restoredHasField = restored ? "archivedAt" in restored : "missing";
   result.afterRestore = await ids("exclude");
   return result;
+}
+
+/** #208: format's deletes. Rows of the formatted session go; another session's rows, and mail the
+ * formatted session sent (keyed by the recipient), stay. */
+async function exerciseFormat(store: Store): Promise<Record<string, unknown>> {
+  const now = new Date().toISOString();
+  const tag = randomUUID().slice(0, 8);
+  const gone = `gone-${tag}`;
+  const kept = `kept-${tag}`;
+  for (const id of [gone, kept]) {
+    await store.sessions.insert(sessionRow(id));
+    await store.entries.insertIfNew(id, 1, { id: `e-${id}`, type: "message" });
+    await store.runs.insert({ id: `r-${id}`, sessionId: id, state: "stopped", lastAckedSeq: 0, pending: [], createdAt: now, updatedAt: now });
+    await store.mail.insertIfNew({ id: `m-${id}`, sessionId: id, from: { kind: "user" }, text: "hi", behavior: "followUp", status: "queued", attempts: 0, createdAt: now });
+    await store.browserShares.put({ sessionId: id, tabTitle: "t", tabUrl: "https://example.com", ownerEmail: "a@example.com", createdAt: now });
+    await store.browserRequests.insert({ id: `q-${id}`, sessionId: id, requesterEmail: "a@example.com", status: "pending", createdAt: now, updatedAt: now });
+    await store.browserCaptures.save(
+      { id: `c-${id}`, sessionId: id, requestId: `q-${id}`, ownerEmail: "a@example.com", requesterEmail: "a@example.com", title: "t", url: "https://example.com", bytes: Buffer.from([1]), createdAt: now },
+      now,
+    );
+  }
+  await store.mail.insertIfNew({ id: `sent-${tag}`, sessionId: kept, from: { kind: "session", sessionId: gone }, text: "hi", behavior: "followUp", status: "queued", attempts: 0, createdAt: now });
+
+  const deleted = {
+    entries: await store.entries.deleteForSession(gone),
+    runs: await store.runs.deleteForSession(gone),
+    mail: await store.mail.deleteForSession(gone),
+    shares: await store.browserShares.deleteForSession(gone),
+    requests: await store.browserRequests.deleteForSession(gone),
+    captures: await store.browserCaptures.deleteForSession(gone),
+    session: await store.sessions.delete(gone),
+    sessionAgain: await store.sessions.delete(gone),
+  };
+  await store.formattedSessions.insert({ id: gone, formattedAt: "2026-09-27T00:00:00.000Z", formattedBy: "first@example.com" });
+  await store.formattedSessions.insert({ id: gone, formattedAt: "2026-09-28T00:00:00.000Z", formattedBy: "second@example.com" });
+  return {
+    deleted,
+    kept: {
+      session: Boolean(await store.sessions.findById(kept)),
+      entries: (await store.entries.listForSession(kept)).length,
+      runs: (await store.runs.listForSession(kept)).length,
+      mail: Boolean(await store.mail.findById(`m-${kept}`)),
+      sentByGone: Boolean(await store.mail.findById(`sent-${tag}`)),
+      share: Boolean(await store.browserShares.findBySession(kept)),
+      request: Boolean(await store.browserRequests.findById(kept, `q-${kept}`)),
+      capture: Boolean(await store.browserCaptures.findById(kept, `c-${kept}`)),
+    },
+    formattedBy: (await store.formattedSessions.findById(gone))?.formattedBy,
+    notFormatted: await store.formattedSessions.findById(kept),
+  };
 }
 
 describe("MongoSessions archive filter against a real MongoDB", () => {
@@ -73,8 +130,25 @@ describe("MongoSessions archive filter against a real MongoDB", () => {
       only: ["shelved"],
       all: ["live", "shelved"],
       missing: null,
+      claim: true,
+      secondClaim: null,
+      claimLive: null,
+      restoreWhileClaimed: null,
+      releasedHasField: false,
       restoredHasField: false,
       afterRestore: ["live", "shelved"],
+    });
+  });
+
+  test("format's deletes and the formattedSessions record behave the same as MemoryStore", async () => {
+    const mongo = await exerciseFormat(store);
+    const memory = await exerciseFormat(new MemoryStore());
+    assert.deepEqual(mongo, memory);
+    assert.deepEqual(mongo, {
+      deleted: { entries: 1, runs: 1, mail: 1, shares: 1, requests: 1, captures: 1, session: true, sessionAgain: false },
+      kept: { session: true, entries: 1, runs: 1, mail: true, sentByGone: true, share: true, request: true, capture: true },
+      formattedBy: "first@example.com",
+      notFormatted: null,
     });
   });
 });

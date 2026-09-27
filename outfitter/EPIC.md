@@ -185,7 +185,7 @@ research on Sonnet; review on Opus).
     currently checks only that a session exists (`getSessionOr404`), not who's asking -- any signed-in
     domain user can read/steer/stop/import over any other user's session. `Session.ownerEmail`
     (store/types.ts) is now recorded from `req.identity.email` on `POST /sessions`, but nothing reads
-    it back for anything but archive and restore (#207: owner or sysop only, ownerless = sysop
+    it back for anything but archive, restore (#207) and format (#208: owner or sysop only, ownerless = sysop
     only; `canManageSession` in routes/sessions.ts). Plausible either way for an org-wide fleet UI (like a shared Cosmos/Kubernetes
     dashboard) -- decide explicitly whether to add an ownership/role check in `getSessionOr404`
     before this ships past internal use, rather than leaving it as an unreviewed default.

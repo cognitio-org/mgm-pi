@@ -208,7 +208,13 @@ export class MailService {
     if (!(await this.store.mail.hasDeliverable(sessionId, now, MAIL_MAX_ATTEMPTS))) return "none";
     // #207: an archived session never wakes. Its mail stays queued, uncharged (not held: that
     // would overwrite the reason of mail already held), and is delivered once it's restored.
-    if ((await this.store.sessions.findById(sessionId))?.archivedAt) return "archived";
+    const session = await this.store.sessions.findById(sessionId);
+    if (session?.archivedAt) return "archived";
+    // #208: mail for a formatted session (a dead-letter bounce to it, say) has no one to read it.
+    if (!session && (await this.store.formattedSessions.findById(sessionId))) {
+      await this.store.mail.deleteForSession(sessionId);
+      return "none";
+    }
     const held = await this.store.mail.holdIfStuck(sessionId, now, MAIL_MAX_ATTEMPTS, MAIL_MAX_UNVALIDATED_WAKES);
     if (held > 0) {
       this.log(`mail: holding ${held} message(s) for session ${sessionId}: its runs never validated the protocol or can't start`);

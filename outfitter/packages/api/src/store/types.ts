@@ -13,7 +13,7 @@ export interface Session {
   id: string;
   name?: string;
   /** Email of the caller who created this session (req.identity.email at POST /api/sessions time).
-   * Enforced only for archive and restore (#207, routes/sessions.ts canManageSession) -- finding #5 in docs/reports/security-review-pr1.md flags that
+   * Enforced only for archive, restore and format (#207, #208, routes/sessions.ts canManageSession) -- finding #5 in docs/reports/security-review-pr1.md flags that
    * every session route is open to every authenticated domain user today with no ownership check;
    * whether to add one is an open decision, tracked in EPIC.md under E2.2. */
   ownerEmail?: string;
@@ -39,6 +39,9 @@ export interface Session {
    * GET /api/sessions by default and read-only: no wakes, no new mail, no teleport import, until
    * POST /restore clears it. Only an archived session can be formatted (deleted). */
   archivedAt?: string;
+  /** #208: set by DELETE /api/sessions/:id when it claims the session, just before erasing it.
+   * Restore refuses a session that has it, so a restore can't race a format. */
+  formattingAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -367,6 +370,8 @@ export interface MailCollection {
   /** Distinct sessions holding deliverable mail (the /tick sweep's input). */
   sessionsWithDeliverable(nowIso: string, maxAttempts: number): Promise<string[]>;
   findById(id: string): Promise<Mail | null>;
+  /** #208: removes every row of this session (format). Returns how many were removed. */
+  deleteForSession(sessionId: string): Promise<number>;
 }
 
 export interface Guru {
@@ -524,8 +529,30 @@ export interface SessionsCollection {
   findById(id: string): Promise<Session | null>;
   list(filter?: SessionListFilter): Promise<Session[]>;
   update(id: string, patch: Partial<Session>): Promise<Session | null>;
-  /** #207: sets archivedAt, or clears it for `null`. Returns the updated session, or null if it doesn't exist. */
+  /** #207: sets archivedAt, or clears it for `null`. Returns the updated session, or null if it
+   * doesn't exist -- or, when clearing, if it is being formatted (formattingAt). */
   setArchivedAt(id: string, archivedAt: string | null): Promise<Session | null>;
+  /** #208: atomically sets formattingAt on an archived session that isn't already being formatted.
+   * null if there is no such session (missing, restored, or claimed by another format). */
+  claimForFormat(id: string, nowIso: string): Promise<Session | null>;
+  /** Clears formattingAt again, for a format that gave up before erasing anything. */
+  releaseFormatClaim(id: string): Promise<void>;
+  /** #208: removes the session document itself. false if there was none. */
+  delete(id: string): Promise<boolean>;
+}
+
+/** #208: a formatted (deleted) session's id, kept so teleport import can't bring it back. */
+export interface FormattedSession {
+  id: string;
+  formattedAt: string;
+  /** Email of the owner or sysop who formatted it. */
+  formattedBy: string;
+}
+
+export interface FormattedSessionsCollection {
+  /** Idempotent: a second insert for the same id keeps the first record. */
+  insert(record: FormattedSession): Promise<void>;
+  findById(id: string): Promise<FormattedSession | null>;
 }
 
 export interface EntriesCollection {
@@ -543,6 +570,8 @@ export interface EntriesCollection {
    * one. SsePoller uses this as its cursor-free "what's new" window. */
   listRecent(sessionId: string, limit: number): Promise<Entry[]>;
   maxSeq(sessionId: string): Promise<number>;
+  /** #208: removes every row of this session (format). Returns how many were removed. */
+  deleteForSession(sessionId: string): Promise<number>;
 }
 
 export interface RunsCollection {
@@ -589,6 +618,8 @@ export interface RunsCollection {
   enqueueDownMessage(id: string, message: DownMessage): Promise<void>;
   /** Removes and returns all queued down-messages, in FIFO order. */
   drainDownMessages(id: string): Promise<DownMessage[]>;
+  /** #208: removes every row of this session (format). Returns how many were removed. */
+  deleteForSession(sessionId: string): Promise<number>;
 }
 
 export interface GurusCollection {
@@ -697,6 +728,8 @@ export interface BrowserSharesCollection {
     ownerEmail: string,
     nowIso: string,
   ): Promise<{ outcome: "deleted" | "missing" | "forbidden"; skippedIds: string[] }>;
+  /** #208: removes every row of this session (format). Returns how many were removed. */
+  deleteForSession(sessionId: string): Promise<number>;
 }
 
 export interface BrowserRequestsCollection {
@@ -744,6 +777,8 @@ export interface BrowserRequestsCollection {
     outcome: { ok: true; messages: string[]; element: string | null } | { ok: false; error: BrowserInspectFailure },
     nowIso: string,
   ): Promise<{ request: BrowserRequest; transitioned: boolean } | null>;
+  /** #208: removes every row of this session (format). Returns how many were removed. */
+  deleteForSession(sessionId: string): Promise<number>;
 }
 
 export type BrowserCaptureSave =
@@ -758,6 +793,8 @@ export interface BrowserCapturesCollection {
   save(capture: BrowserCapture, nowIso: string): Promise<BrowserCaptureSave>;
   findById(sessionId: string, id: string): Promise<BrowserCapture | null>;
   findByRequestId(sessionId: string, requestId: string): Promise<BrowserCapture | null>;
+  /** #208: removes every row of this session (format). Returns how many were removed. */
+  deleteForSession(sessionId: string): Promise<number>;
 }
 
 export interface Store {
@@ -773,5 +810,6 @@ export interface Store {
   browserShares: BrowserSharesCollection;
   browserRequests: BrowserRequestsCollection;
   browserCaptures: BrowserCapturesCollection;
+  formattedSessions: FormattedSessionsCollection;
   close(): Promise<void>;
 }

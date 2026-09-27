@@ -111,6 +111,14 @@ export class SessionArchivedError extends Error {
   }
 }
 
+/** #208: RunManager.wake refuses a formatted session (one with a formattedSessions record). */
+export class SessionFormattedError extends Error {
+  constructor(sessionId: string) {
+    super(`session ${sessionId} was formatted`);
+    this.name = "SessionFormattedError";
+  }
+}
+
 export class RunManager {
   private readonly store: Store;
   private readonly providers: SandboxProviders;
@@ -162,7 +170,7 @@ export class RunManager {
   async wake(sessionId: string, opts: { mailDriven?: boolean } = {}): Promise<Run> {
     const existing = await this.store.runs.findActiveForSession(sessionId);
     if (existing) return existing;
-    if ((await this.store.sessions.findById(sessionId))?.archivedAt) throw new SessionArchivedError(sessionId);
+    await this.refuseArchivedOrFormatted(sessionId);
 
     const now = new Date().toISOString();
     const candidate: Run = {
@@ -182,9 +190,12 @@ export class RunManager {
     // #207: the check above and the insert aren't atomic. POST /archive stamps archivedAt and then
     // looks for an active run, so after inserting, either this sees archivedAt or the archive sees
     // this run -- which has no sandbox yet, so it must not get one.
-    if ((await this.store.sessions.findById(sessionId))?.archivedAt) {
-      await this.store.runs.update(run.id, { state: "stopped", reason: "archived", updatedAt: new Date().toISOString() });
-      throw new SessionArchivedError(sessionId);
+    try {
+      await this.refuseArchivedOrFormatted(sessionId);
+    } catch (err) {
+      const reason = err instanceof SessionFormattedError ? "formatted" : "archived";
+      await this.store.runs.update(run.id, { state: "stopped", reason, updatedAt: new Date().toISOString() });
+      throw err;
     }
 
     // Finding #2 (docs/reports/security-review-pr1.md): every sandbox execution shares one agent
@@ -209,9 +220,11 @@ export class RunManager {
       const providerReturnedAt = new Date().toISOString();
       // Stopped while the provider was starting it (/stop or /archive on a queued run, which had no
       // handle to cancel yet): cancel the sandbox now instead of reviving the run as provisioning.
+      // Gone altogether: archived, stopped and then formatted while the provider was starting it.
       const current = await this.store.runs.findById(run.id);
-      if (current && (current.state === "stopped" || current.state === "failed")) {
+      if (!current || current.state === "stopped" || current.state === "failed") {
         await provider.stop(handle).catch(() => {});
+        if (!current) throw new SessionFormattedError(sessionId);
         return current;
       }
       const updated = await this.store.runs.update(run.id, {
@@ -247,6 +260,14 @@ export class RunManager {
       });
       throw err;
     }
+  }
+
+  /** Throws for an archived session (#207), or a missing one that was formatted (#208). A missing
+   * session with no formattedSessions record still wakes: tests and older callers rely on that. */
+  private async refuseArchivedOrFormatted(sessionId: string): Promise<void> {
+    const session = await this.store.sessions.findById(sessionId);
+    if (session?.archivedAt) throw new SessionArchivedError(sessionId);
+    if (!session && (await this.store.formattedSessions.findById(sessionId))) throw new SessionFormattedError(sessionId);
   }
 
   /** Asks the provider to stop the run's sandbox and marks the run stopped. */

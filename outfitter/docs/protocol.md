@@ -398,6 +398,16 @@ wake -> ready summary. Runs created before `Run.startup` existed get no stamps a
   uncharged (the Cloud Tasks wake answers `archived`, `/tick` skips it); already-held mail keeps
   its hold. Restore clears `archivedAt`, so the next `/tick` delivers the queued mail, which starts
   a run.
+- `DELETE /api/sessions/:id` (#208, web role; Format) → 204. Same owner-or-sysop rule as archive.
+  409 unless the session is archived, and 409 while a run is still active (stopping). Erases the
+  session, its entries, runs, mail addressed to it, browser share, requests and captures, and
+  disables its GitHub token secret (`outfitter-github-token-<id>`; the api's custom role can't delete
+  secrets). Mail it sent to other sessions and its `outfitter/<id>` branch stay. A
+  `formattedSessions` record (`{id, formattedAt, formattedBy}`) keeps the id from being re-imported.
+  It first claims the session (`formattingAt`), so a racing `/restore` answers 409 rather than
+  being overridden. Open `/stream`s for it are ended. A second call is a 404. Mail for a formatted
+  id (a leftover Cloud Tasks wake, a dead-letter bounce) is dropped without waking anything, and
+  `/wake` on it is a 404.
 - `GET|POST|PUT /api/gurus`, `/api/environments`
 - `GET /api/me` → `{email}` from `x-goog-iap-jwt-assertion` (dev: `OUTFITTER_DEV=1` → `dev@localhost`)
 - `POST /api/hooks/ngrok` → the E2.8 "optional push path": ngrok event subscription delivery for
@@ -431,7 +441,7 @@ wake -> ready summary. Runs created before `Run.startup` existed get no stamps a
   fails. Returns `{replicas}` (the clamped value actually applied) on success.
 
 Teleport uses `GET /api/sessions/:id/export.jsonl`, `PUT /api/sessions/:id/import` (body: JSONL,
-same id, refused while a run is `running` or the session is archived), and `GET /api/sessions` for the picker.
+same id, refused while a run is `running` or the session is archived, and 410 for a formatted id), and `GET /api/sessions` for the picker.
 
 ## Personal API tokens (E4.1b)
 

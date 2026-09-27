@@ -34,7 +34,7 @@ async function runFor(ctx: RouteContext, sessionId: string, runId: string | unde
 
 function telemetryError(reply: { code: (n: number) => { send: (body: unknown) => unknown } }, err: unknown) {
   if (err instanceof TelemetryUnavailable) {
-    const status = err.kind === "not-configured" ? 501 : err.kind === "forbidden" ? 503 : 502;
+    const status = { "not-configured": 501, forbidden: 503, failed: 502, "bad-request": 400 }[err.kind];
     return reply.code(status).send({ error: err.message, unavailable: err.kind });
   }
   throw err;
@@ -91,7 +91,14 @@ export async function registerSandboxRoutes(app: FastifyInstance, ctx: RouteCont
         ...(pageToken ? { pageToken } : {}),
         ...(pageSize && /^\d+$/.test(pageSize) ? { pageSize: Number(pageSize) } : {}),
       });
-      return { runId: run.id, lines: page.lines, ...(page.nextPageToken ? { nextPageToken: page.nextPageToken } : {}) };
+      // `untrusted`: the lines include the model's own output, and any sandbox can write entries
+      // claiming this run's id (#201). The page shows them as plain text and says so.
+      return {
+        runId: run.id,
+        untrusted: true,
+        lines: page.lines,
+        ...(page.nextPageToken ? { nextPageToken: page.nextPageToken } : {}),
+      };
     } catch (err) {
       return telemetryError(reply, err);
     }

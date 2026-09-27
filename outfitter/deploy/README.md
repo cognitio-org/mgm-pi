@@ -350,14 +350,23 @@ and runs fall back to the estimate.
 
 **Sandbox logs and stats (#197):** the session page reads a run's agentd log lines from Cloud Logging
 and its memory, CPU and disk history from Cloud Monitoring. `gke-iam.sh` sets up the access:
-- a log view `outfitter-sandboxes` on the `_Default` bucket, holding only the sandbox namespace's
-  containers and the Cloud Run agent job;
-- `roles/logging.viewAccessor` for outfitter-api@, conditioned on that one view, so it can read no
-  other log in the project;
-- `roles/monitoring.viewer`.
+- a log bucket `outfitter-sandboxes` (30-day retention);
+- a sink that copies agentd's lines into it: agentd containers in the sandbox namespace, and the
+  Cloud Run agent job;
+- `roles/logging.viewAccessor` for outfitter-api@, conditioned on that bucket's `_AllLogs` view, so it
+  can read no other log in the project;
+- a custom role `outfitterMetricsReader` with only `monitoring.timeSeries.list`.
 
-`gke-teardown.sh` removes all three. Until `gke-iam.sh` has run, the page says the logs and stats
+A log view on `_Default` can't do this: view filters only allow source, resource type and log id,
+not a namespace. The lines stay in `_Default` too; the bucket is a small billed copy.
+
+`gke-teardown.sh` removes all of it. Until `gke-iam.sh` has run, the page says the logs and stats
 aren't granted yet (a 503 from the api).
+
+The lines are untrusted. Some are the model's own output, and any sandbox can write log entries
+through its service account's `logWriter` (Cloud Run needs it), including ones claiming another
+run's id. The page shows them as plain text and says so. #202 closes the gap for GKE runs with a
+service account of their own.
 
 **Laptop prerequisite for hand deploys:** with GKE set up, every deploy script run by hand (`api.sh`,
 `link.sh`, `agent-job.sh`, `service.sh`, `MANUAL=1 ./release.sh`) checks the SandboxTemplate's

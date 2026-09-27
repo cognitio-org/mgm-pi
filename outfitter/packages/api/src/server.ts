@@ -19,7 +19,7 @@ import { ModelsService } from "./models.ts";
 import { registerRoutes } from "./routes/index.ts";
 import { MailService, CloudTasksWakeScheduler, NoopWakeScheduler, type WakeScheduler } from "./mail.ts";
 import type { GithubBroker } from "./github-broker.ts";
-import { GcpSandboxTelemetry, NoSandboxTelemetry, type SandboxTelemetry } from "./sandbox-telemetry.ts";
+import { CachedSandboxTelemetry, GcpSandboxTelemetry, NoSandboxTelemetry, type SandboxTelemetry } from "./sandbox-telemetry.ts";
 
 export interface BuildAppOptions {
   store: Store;
@@ -165,7 +165,9 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     providers,
     telemetry:
       opts.telemetry ??
-      (config.devMode || !config.gcpProject ? new NoSandboxTelemetry() : new GcpSandboxTelemetry(config.gcpProject)),
+      (config.devMode || !config.gcpProject
+        ? new NoSandboxTelemetry()
+        : new CachedSandboxTelemetry(new GcpSandboxTelemetry(config.gcpProject, config.gkeNamespace))),
   });
   // The down-queue poller only makes sense where AgentLink sockets actually live (role "link" or
   // "all", same condition as registering /agent/ws itself) — see agentLink.startDownQueuePoller's

@@ -88,6 +88,7 @@ describe("GET /api/sessions/:id/sandbox/logs (#197)", () => {
     assert.equal(res.json().runId, first!.id);
     assert.equal(res.json().lines[0].message, `line for ${first!.id}`);
     assert.equal(res.json().nextPageToken, "older");
+    assert.equal(res.json().untrusted, true, "the page must show these as untrusted text");
     assert.deepEqual(calls.map((c) => c.arg), [first!.id]);
 
     const latest = await app.fastify.inject({ method: "GET", url: "/api/sessions/s-l/sandbox/logs" });
@@ -109,6 +110,15 @@ describe("GET /api/sessions/:id/sandbox/logs (#197)", () => {
     const forbidden = await app.fastify.inject({ method: "GET", url: "/api/sessions/s-f/sandbox/logs" });
     assert.equal(forbidden.statusCode, 503);
     assert.equal(forbidden.json().unavailable, "forbidden");
+    await app.fastify.close();
+  });
+
+  test("a malformed page token is the caller's 400, not a backend 502", async () => {
+    const { telemetry } = fakeTelemetry({ fail: new TelemetryUnavailable("bad-request", "not a page token from this endpoint") });
+    const app = await buildTestApp({}, { telemetry });
+    await seed(app, "s-b", [{}]);
+    const res = await app.fastify.inject({ method: "GET", url: "/api/sessions/s-b/sandbox/logs?pageToken=a%20b" });
+    assert.equal(res.statusCode, 400);
     await app.fastify.close();
   });
 });

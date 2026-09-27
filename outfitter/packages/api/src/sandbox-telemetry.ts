@@ -1,11 +1,15 @@
 // Sandbox logs and stats for the session page (#196, #197).
 //
-// Logs come from Cloud Logging through the `outfitter-sandboxes` log view (deploy/gke-iam.sh
-// creates it on the _Default bucket, filtered to the sandbox namespace's containers and the Cloud
-// Run agent job), which is the only log data outfitter-api@ can read: its grant is
-// roles/logging.viewAccessor conditioned on that one view. agentd logs every line with `runId` in
-// jsonPayload on both providers, so a run's lines are one filter away. Stats come from Cloud
-// Monitoring's GKE container metrics for the run's pod.
+// Logs come from Cloud Logging's `outfitter-sandboxes` log bucket, which a sink fills with agentd's
+// lines only (deploy/gke-iam.sh: the sandbox namespace's agentd containers and the Cloud Run agent
+// job). It is the only log data outfitter-api@ can read: its grant is roles/logging.viewAccessor
+// conditioned on that bucket's _AllLogs view. agentd logs every line with `runId` in jsonPayload on
+// both providers, so a run's lines are one filter away. Stats come from Cloud Monitoring's GKE
+// container metrics for the run's pod.
+//
+// The lines are untrusted text. Some are the model's own output, and any sandbox can write log
+// entries through its service account's logWriter (Cloud Run needs it), including ones claiming
+// another run's id (#201 security review). The page shows them as plain text, labelled as such.
 //
 // Everything a caller passes ends up inside a Logging or Monitoring filter, so both inputs are
 // checked against a strict shape first (a run id is a UUID, a pod name a DNS label) and nothing
@@ -38,9 +42,10 @@ export interface SandboxMetrics {
 /** Why a telemetry call has nothing to return: not set up (dev, a deployment without the grants),
  * or the backend refused or failed. Never a stack trace or a Google error body. */
 export class TelemetryUnavailable extends Error {
-  readonly kind: "not-configured" | "forbidden" | "failed";
+  /** `bad-request`: the caller's own input (a malformed page token), not the backend. */
+  readonly kind: "not-configured" | "forbidden" | "failed" | "bad-request";
 
-  constructor(kind: "not-configured" | "forbidden" | "failed", message: string) {
+  constructor(kind: "not-configured" | "forbidden" | "failed" | "bad-request", message: string) {
     super(message);
     this.name = "TelemetryUnavailable";
     this.kind = kind;
@@ -65,11 +70,12 @@ export function isPodName(value: string): boolean {
   return POD_NAME.test(value);
 }
 
-/** The log view deploy/gke-iam.sh creates; the one resource outfitter-api@ may read logs through. */
-export const SANDBOX_LOG_VIEW_ID = "outfitter-sandboxes";
+/** The log bucket deploy/gke-iam.sh creates and fills; its _AllLogs view is the one resource
+ * outfitter-api@ may read logs through. */
+export const SANDBOX_LOG_BUCKET_ID = "outfitter-sandboxes";
 
 export function sandboxLogViewName(project: string): string {
-  return `projects/${project}/locations/global/buckets/_Default/views/${SANDBOX_LOG_VIEW_ID}`;
+  return `projects/${project}/locations/global/buckets/${SANDBOX_LOG_BUCKET_ID}/views/_AllLogs`;
 }
 
 /** A log line is shown whole up to this many characters; pi's start-up timing dumps run longer. */
@@ -123,10 +129,14 @@ type Request = <T>(opts: { url: string; method?: "GET" | "POST"; data?: unknown;
 export class GcpSandboxTelemetry implements SandboxTelemetry {
   private clientPromise: Promise<{ request: Request }> | undefined;
   private readonly project: string;
+  private readonly namespace: string;
   private readonly client: { request: Request } | undefined;
 
-  constructor(project: string, client?: { request: Request }) {
+  /** `namespace` is config.gkeNamespace (GKE_NAMESPACE), the only namespace metrics are read from. */
+  constructor(project: string, namespace: string, client?: { request: Request }) {
+    if (!isPodName(namespace)) throw new Error(`GKE namespace "${namespace}" is not a Kubernetes name`);
     this.project = project;
+    this.namespace = namespace;
     this.client = client;
   }
 
@@ -141,8 +151,10 @@ export class GcpSandboxTelemetry implements SandboxTelemetry {
   }
 
   async logs(runId: string, opts: { pageToken?: string; pageSize?: number } = {}): Promise<SandboxLogPage> {
-    if (!isRunId(runId)) throw new TelemetryUnavailable("failed", "not a run id");
-    if (opts.pageToken !== undefined && !PAGE_TOKEN.test(opts.pageToken)) throw new TelemetryUnavailable("failed", "bad page token");
+    if (!isRunId(runId)) throw new TelemetryUnavailable("bad-request", "not a run id");
+    if (opts.pageToken !== undefined && !PAGE_TOKEN.test(opts.pageToken)) {
+      throw new TelemetryUnavailable("bad-request", "not a page token from this endpoint");
+    }
     const pageSize = Math.min(Math.max(opts.pageSize ?? 100, 1), MAX_PAGE);
     const body = await this.call<{ entries?: LogEntryWire[]; nextPageToken?: string }>({
       url: "https://logging.googleapis.com/v2/entries:list",
@@ -159,8 +171,8 @@ export class GcpSandboxTelemetry implements SandboxTelemetry {
   }
 
   async metrics(podName: string, start: Date, end: Date): Promise<SandboxMetrics> {
-    if (!isPodName(podName)) throw new TelemetryUnavailable("failed", "not a pod name");
-    const where = `resource.labels.namespace_name="outfitter-sandboxes" AND resource.labels.pod_name="${podName}"`;
+    if (!isPodName(podName)) throw new TelemetryUnavailable("bad-request", "not a pod name");
+    const where = `resource.labels.namespace_name="${this.namespace}" AND resource.labels.pod_name="${podName}"`;
     const query = (metric: string, aligner: string, extra = "") =>
       this.call<{ timeSeries?: TimeSeriesWire[] }>({
         url: `https://monitoring.googleapis.com/v3/projects/${this.project}/timeSeries`,
@@ -194,6 +206,45 @@ export class GcpSandboxTelemetry implements SandboxTelemetry {
       console.warn(`[telemetry] request failed${status ? ` (${status})` : ""}`);
       throw new TelemetryUnavailable("failed", status ? `the telemetry backend answered ${status}` : "the telemetry backend didn't answer");
     }
+  }
+}
+
+/** Holds each answer for `ttlMs`, keyed by the call's exact arguments, so a page that polls, or
+ * several open tabs, costs Cloud Logging's ~60 reads/min project quota once per window rather than
+ * once per request (#201 security review). Failures aren't cached. Bounded: the oldest entry goes
+ * once `maxEntries` is reached. */
+export class CachedSandboxTelemetry implements SandboxTelemetry {
+  private readonly cache = new Map<string, { at: number; value: Promise<unknown> }>();
+  private readonly inner: SandboxTelemetry;
+  private readonly ttlMs: number;
+  private readonly maxEntries: number;
+  private readonly now: () => number;
+
+  constructor(inner: SandboxTelemetry, ttlMs = 20_000, maxEntries = 500, now: () => number = Date.now) {
+    this.inner = inner;
+    this.ttlMs = ttlMs;
+    this.maxEntries = maxEntries;
+    this.now = now;
+  }
+
+  logs(runId: string, opts: { pageToken?: string; pageSize?: number } = {}): Promise<SandboxLogPage> {
+    return this.cached(`logs:${runId}:${opts.pageToken ?? ""}:${opts.pageSize ?? ""}`, () => this.inner.logs(runId, opts));
+  }
+
+  metrics(podName: string, start: Date, end: Date): Promise<SandboxMetrics> {
+    // Minute-aligned end: a live run's window moves every request, and the points are per minute.
+    const endKey = Math.floor(end.getTime() / 60_000);
+    return this.cached(`metrics:${podName}:${start.getTime()}:${endKey}`, () => this.inner.metrics(podName, start, end));
+  }
+
+  private cached<T>(key: string, load: () => Promise<T>): Promise<T> {
+    const hit = this.cache.get(key);
+    if (hit && this.now() - hit.at < this.ttlMs) return hit.value as Promise<T>;
+    const value = load();
+    this.cache.set(key, { at: this.now(), value });
+    value.catch(() => this.cache.delete(key));
+    if (this.cache.size > this.maxEntries) this.cache.delete(this.cache.keys().next().value!);
+    return value;
   }
 }
 

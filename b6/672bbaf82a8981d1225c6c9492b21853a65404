@@ -1,0 +1,121 @@
+outfitter/packages/api/src/store/memory.ts
+  s_63cfee548f82b0::t_9266668ae15fbc 76-77,88-90,92-93
+  s_63cfee548f82b0::t_a18dea0d6291a9 94-96
+  s_63cfee548f82b0::t_e0ce704ddf9e26 42-43
+  s_63cfee548f82b0::t_d7132c0441b22a 97,113-115,155-161,267-268,270,570-571,573,652-655,767-768,770,833-834,836-849,865
+  s_63cfee548f82b0::t_3e0455912738ae 51-59,91,98-112,269,572,769,835
+outfitter/packages/api/src/runs.ts
+  s_63cfee548f82b0::t_699067c35544cc 105-113
+  s_63cfee548f82b0::t_50919a953f657a 190-192,199
+  s_63cfee548f82b0::t_5a68c3863ce871 221-222,224,226,228-229
+  s_63cfee548f82b0::t_1c909b62c81232 114-121,173,193-195,198,223,225,227,265-271
+  s_63cfee548f82b0::t_1aa072613049b4 196-197
+  s_63cfee548f82b0::t_09eb4907dd9ac7 272
+outfitter/docs/protocol.md
+  s_63cfee548f82b0::t_722d81216fbdea 392-393
+  s_63cfee548f82b0::t_12789b2dde6d12 394-400,425
+  s_63cfee548f82b0::t_3bf024cbf2aeb0 401-406,444
+  s_63cfee548f82b0::t_1b9db727134236 407-410
+  s_63cfee548f82b0::t_b65b51cc65aeb2 378
+outfitter/packages/api/test/mongo-sessions.test.ts
+  s_63cfee548f82b0::t_0ae0ab9201f694 5-14,16-37,44-49,100-132,138-141,154
+  s_63cfee548f82b0::t_5c4ea1d2e10fcd 1-4,15,50-62,64-99,142-151
+  s_63cfee548f82b0::t_7dc301f1008cf4 63,152-153
+  s_63cfee548f82b0::t_1aa072613049b4 38-43,133-137
+outfitter/EPIC.md
+  s_63cfee548f82b0::t_722d81216fbdea 189
+  s_63cfee548f82b0::t_3bf024cbf2aeb0 188
+outfitter/packages/api/src/mail.ts
+  s_63cfee548f82b0::t_b928d566e3cff7 7,296,301
+  s_63cfee548f82b0::t_699067c35544cc 206,302
+  s_63cfee548f82b0::t_50919a953f657a 139-141,205,207,209-210,244
+  s_63cfee548f82b0::t_1c909b62c81232 211-217
+outfitter/packages/api/src/store/mongo.ts
+  s_63cfee548f82b0::t_9266668ae15fbc 90-92,105-107,109
+  s_63cfee548f82b0::t_7589af2f3f06e1 110-113
+  s_63cfee548f82b0::t_d7132c0441b22a 114,128-130,178-181,298-301,670-673,793-796,961-964,1036-1055,1071,1090
+  s_63cfee548f82b0::t_e0ce704ddf9e26 43-44
+  s_63cfee548f82b0::t_3e0455912738ae 117
+  s_63cfee548f82b0::t_1588b62666274c 108,115-116,118-126
+  s_63cfee548f82b0::t_059d8479684bf9 127
+outfitter/packages/api/src/routes/sessions.ts
+  s_63cfee548f82b0::t_722d81216fbdea 387-388
+  s_63cfee548f82b0::t_16f7924ba11ba8 264,320,351-354,356-357,437,459,463-468,469-472,475-478,518,569-575,577-592
+  s_63cfee548f82b0::t_e9b8d8b2f37e49 576
+  s_63cfee548f82b0::t_06925b35dccf53 15,53,102,155,160-166,233,473,519-549
+  s_63cfee548f82b0::t_75efd25abc71ff 593
+  s_63cfee548f82b0::t_50919a953f657a 7,460-462,474,568
+  s_63cfee548f82b0::t_3bf024cbf2aeb0 387
+  s_63cfee548f82b0::t_6dbc8c80046ad1 246-247,483-486,491-494,497,499-515,517-518
+  s_63cfee548f82b0::t_1c909b62c81232 14,271-272,355,479-481,487-490,495-496,498,516
+  s_63cfee548f82b0::t_3f8d6181543a99 54-55,89,103,167,199
+outfitter/packages/api/src/store/types.ts
+  s_63cfee548f82b0::t_9266668ae15fbc 38-41,522-524,534
+  s_63cfee548f82b0::t_d7132c0441b22a 373-374,540-555,573-574,621-622,731-732,780-781,796-797,813
+  s_63cfee548f82b0::t_3bf024cbf2aeb0 16
+  s_63cfee548f82b0::t_1588b62666274c 42-44,532-533,535-539
+outfitter/packages/api/test/archive.test.ts
+  s_63cfee548f82b0::t_6753a9d8ffae85 247
+  s_63cfee548f82b0::t_1d9e6d37c2eb8a 120
+  s_63cfee548f82b0::t_ce4f20c62ca094 1-9,11,13-29,34-119,121-136,138-154,159-171,173-174,178-180,183-185,187,191-193,195-197,237-246,248-266,274-298
+  s_63cfee548f82b0::t_3d64e5df69dcf3 10,12,30-33,137,155-158,175-176,194,198-236
+  s_63cfee548f82b0::t_f1163d6fdc4c23 172,177,181-182,186,188-189
+  s_63cfee548f82b0::t_d84b56394b0065 190
+  s_63cfee548f82b0::t_75b6746dcbd484 267-273
+outfitter/packages/api/src/routes/browser.ts
+  s_63cfee548f82b0::t_50919a953f657a 10
+  s_63cfee548f82b0::t_8dab8b46a28ec0 148,192,295,379,432
+outfitter/packages/api/test/format.test.ts
+  s_63cfee548f82b0::t_b4a94df4179b46 1-8,10-53,55-161,213
+  s_63cfee548f82b0::t_a9c4f481a72518 54
+  s_63cfee548f82b0::t_1aa072613049b4 9,162-212
+outfitter/packages/api/test/stop.test.ts
+  s_63cfee548f82b0::t_716d4d694547c5 306,321
+outfitter/packages/api/src/sse.ts
+  s_63cfee548f82b0::t_1588b62666274c 55-62
+outfitter/packages/web/src/lib/vocabulary.ts
+  s_63cfee548f82b0::t_2d611d7e9ac99b 32,67-71
+  s_63cfee548f82b0::t_ee8b12f98ea149 72-73
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_63cfee548f82b0::t_83ac39ef5c5f26 2,34-35,102-105,114,330-341,426,522-526,541,637-651,710-722,730
+outfitter/packages/web/src/pages/FleetPage.tsx
+  s_63cfee548f82b0::t_483da812068c37 223-224
+  s_63cfee548f82b0::t_07f3127687b910 11-13,30-33,45-49,64-77,84-85,100-108,126-129,148-150,179-200,209-222
+outfitter/packages/web/src/api/client.ts
+  s_63cfee548f82b0::t_2d611d7e9ac99b 19-22,79-80,431-434,436,478-490
+  s_63cfee548f82b0::t_6c972094d834e9 491
+outfitter/packages/web/test/floppy-archive.test.tsx
+  s_63cfee548f82b0::t_6598f2b4cc7601 1-141
+outfitter/packages/web/test/webmcp.test.ts
+  s_63cfee548f82b0::t_9aa6084275cd99 17-18,92,127-131
+  s_63cfee548f82b0::t_c3c06b7a084534 132
+  s_63cfee548f82b0::t_6b6c8c10080d8b 48
+outfitter/packages/web/src/lib/glossary.ts
+  s_63cfee548f82b0::t_2d611d7e9ac99b 95-108
+outfitter/packages/web/src/lib/webmcp.ts
+  s_63cfee548f82b0::t_6b6c8c10080d8b 21-22,34-35,87-88,323-358
+outfitter/packages/web/src/styles/layout.css
+  s_63cfee548f82b0::t_83ac39ef5c5f26 1124-1126
+outfitter/packages/web/src/components/FormatFloppyDialog.tsx
+  s_63cfee548f82b0::t_d6e9874096414f 1-66
+outfitter/docs/design/README.md
+  s_63cfee548f82b0::t_2e3ba4bd59ac80 233-234
+outfitter/docs/glossary.md
+  s_63cfee548f82b0::t_2dd4e246a9674e 24-25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "b6672bbaf82a8981d1225c6c9492b21853a65404",
+  "prompts": {},
+  "sessions": {
+    "s_63cfee548f82b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2abd665b-152d-4945-bee0-e1f672204de7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

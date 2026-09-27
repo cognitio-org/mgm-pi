@@ -141,6 +141,37 @@ jobs:
             grep -o "agents: total [0-9]* (builtin [0-9]*[^)]*)" "$out" | head -1
             grep -qE "builtin [1-9]" "$out"
           '
+      - name: pi-mcp-adapter loads as a bundle and still talks MCP (#222)
+        # A real round trip through the bundled adapter: pi (RPC mode, no model) with only the bundle
+        # loaded, an agent dir whose mcp.json starts a tiny stdio MCP server (ci/echo-mcp-server.mjs,
+        # mounted in, never in the image) eagerly, and "/mcp tools", which lists what it connected. That
+        # exercises the bundled MCP client, its schemas, spawning the server and the lazily loaded
+        # commands. The previous step already loads the bundle through settings.json (pi --help).
+        run: |
+          docker run --rm --entrypoint sh \
+            -v "$PWD/outfitter/image/ci/echo-mcp-server.mjs:/tmp/echo-mcp-server.mjs:ro" \
+            outfitter-agent:ci -c '
+            set -e
+            pkg=/opt/kernal/.pi/npm/node_modules/pi-mcp-adapter
+            test -f "$pkg/bundle/index.ts"
+            node -e "const p=require(\"$pkg/package.json\"); if (JSON.stringify(p.pi.extensions)!==JSON.stringify([\"./bundle/index.ts\"])) { console.error(p.pi.extensions); process.exit(1); }"
+            work=$(mktemp -d); mkdir -p "$work/agent" "$work/home" "$work/cwd"
+            printf "%s\n" "{\"mcpServers\":{\"ci-echo\":{\"command\":\"node\",\"args\":[\"/tmp/echo-mcp-server.mjs\"],\"lifecycle\":\"eager\"}}}" >"$work/agent/mcp.json"
+            printf "{}\n" >"$work/agent/settings.json"
+            chown -R agent "$work"
+            fifo="$work/in"; mkfifo "$fifo"; out="$work/out"; touch "$out"; chmod 666 "$fifo" "$out"
+            # Same fifo pattern as the /subagents-doctor step: pi exits when stdin closes, so stdin stays
+            # open until the listing is out, or 60 s pass.
+            su agent -s /bin/sh -c "cd $work/cwd && HOME=$work/home PI_CODING_AGENT_DIR=$work/agent KERNAL_NO_DISCOVERY=1 timeout 90 /opt/kernal/node_modules/.bin/pi --mode rpc --no-session --no-extensions --extension $pkg/bundle/index.ts <$fifo >$out 2>&1" &
+            exec 3>"$fifo"
+            printf "%s\n" "{\"id\":\"m\",\"type\":\"prompt\",\"message\":\"/mcp tools\"}" >&3
+            i=0; while [ "$i" -lt 60 ] && ! grep -q "ci-echo_ci_echo" "$out"; do sleep 1; i=$((i + 1)); done
+            exec 3>&-
+            wait || true
+            grep -q "ci-echo_ci_echo" "$out" || { echo "the bundled adapter listed no ci_echo tool within 60 s:"; tail -40 "$out"; exit 1; }
+            grep -o "MCP: [0-9]* servers connected ([0-9]* tools)" "$out" | head -1
+            ! grep -qi "failed to load extension" "$out"
+          '
       - name: agentd refuses to start without its run identity (and says so in structured JSON)
         run: |
           set +e

@@ -1,0 +1,59 @@
+outfitter/packages/api/src/ngrok-api.ts
+  s_9e985270e78a63::t_e0b446ec9af60d 1-115
+outfitter/packages/api/src/agentlink.ts
+  s_9e985270e78a63::t_f86357ed280b20 8,239-242,344-345,1125-1126,1221-1227,1255-1259,1576-1578,1581-1590,1593-1595,1597,1624-1626
+outfitter/packages/api/src/server.ts
+  s_9e985270e78a63::t_cab36b65e254e1 45-47,58,175,203
+  s_9e985270e78a63::t_f86357ed280b20 5-6,89-92
+outfitter/deploy/test/service-env-gke-off.test.sh
+  s_9e985270e78a63::t_303d4b94c52ee6 33-34,36,128-139
+  s_9e985270e78a63::t_0fac71860cc033 140-142
+outfitter/packages/api/src/store/memory.ts
+  s_9e985270e78a63::t_2360e143b05aa6 34-35,854-888,903
+outfitter/packages/api/test/stop.test.ts
+  s_9e985270e78a63::t_c3ca7e3ee36f97 313
+outfitter/packages/api/src/previews.ts
+  s_9e985270e78a63::t_ccc6a9a70a0fa2 1-354
+outfitter/docs/specs/drive-previews.md
+  s_9e985270e78a63::t_d04139fbbac69b 1-2,22-342
+  s_9e985270e78a63::t_62c2eae2b3a3d5 3-21
+outfitter/packages/api/test/previews.test.ts
+  s_9e985270e78a63::t_e268eda1d8250e 1-303
+outfitter/packages/api/src/store/types.ts
+  s_9e985270e78a63::t_2360e143b05aa6 117-123,128-129,568-598,861
+outfitter/packages/api/src/routes/context.ts
+  s_9e985270e78a63::t_cab36b65e254e1 1,37-38
+outfitter/packages/api/src/routes/hooks.ts
+  s_9e985270e78a63::t_cab36b65e254e1 110-113
+outfitter/deploy/config.env
+  s_9e985270e78a63::t_303d4b94c52ee6 59-63
+outfitter/deploy/service.sh
+  s_9e985270e78a63::t_303d4b94c52ee6 75,184-190
+  s_9e985270e78a63::t_c32fc4f5093cc2 191
+outfitter/packages/api/test/helpers.ts
+  s_9e985270e78a63::t_0adacb11fb9663 4,43-44,77
+outfitter/packages/api/test/mongo-previews.test.ts
+  s_9e985270e78a63::t_347c6190034b56 1-78
+outfitter/packages/api/src/store/mongo.ts
+  s_9e985270e78a63::t_2360e143b05aa6 35-36,1060-1096,1111,1131,1152-1153
+outfitter/packages/api/src/config.ts
+  s_9e985270e78a63::t_590454d3b30735 100-116,212-223,318-322
+outfitter/docs/protocol.md
+  s_9e985270e78a63::t_4b6a4f266ee2a2 189,214
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "a5cc745e1660f0c8c60cbf447fa1b4f478dddf2d",
+  "prompts": {},
+  "sessions": {
+    "s_9e985270e78a63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "019f7f91-d886-47f5-9a90-f34314b7756e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

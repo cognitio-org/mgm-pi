@@ -395,7 +395,9 @@ changes (each `config.env` line keeps a value already exported). The order matte
 between fails.
 
 2. **`GKE_CLUSTER=outfitter ./gke-iam.sh`** — the `outfitter-sandboxes` namespace and its `outfitter-agent` KSA, the
-   Workload Identity binding letting it impersonate the existing `outfitter-agent@` GSA,
+   sandboxes' own GSA `outfitter-sandbox@` with **no project roles** and the Workload Identity binding letting the KSA
+   impersonate it (#202; it refuses to point the KSA at it until both Cloud Run roles have `SANDBOX_SA_EMAIL`, which
+   `service.sh` sets when `GKE_CLUSTER` is set, so release first),
    `roles/container.clusterViewer` on the project for `outfitter-api@`, its RBAC Role/RoleBinding in
    the namespace (`deploy/gke/rbac.yaml`), and the `sandbox-hardening-policy` exemption for that one
    namespace (`deploy/gke/hardening-exemption.json` — GKE's binding stays `Deny` everywhere else).
@@ -405,8 +407,16 @@ between fails.
    account's permissions are the model's permissions) and **no unexpected binding** on
    `outfitter-agent@`'s own IAM policy (only three are expected: `outfitter-api`'s and
    `outfitter-deployer`'s `serviceAccountUser`, from `baseline.sh` and `ci-setup.sh`, and the KSA's
-   `workloadIdentityUser`, from this script). Idempotent; safe to re-run (a GKE upgrade can restore
+   `workloadIdentityUser`, from before #202), and the same pair for `outfitter-sandbox@` (**no project role at all**;
+   only the KSA's `workloadIdentityUser` on it). Idempotent; safe to re-run (a GKE upgrade can restore
    the hardening binding this un-exempts). `DRY_RUN=1` first.
+
+   **Moving an existing cluster to `outfitter-sandbox@` (#202).** Before it, GKE sandboxes ran as `outfitter-agent@`,
+   whose `logging.logWriter` let a model that reached the metadata server forge log entries for other runs (the
+   session page's log panel). Order: (1) release a commit with #202 (the api starts accepting `outfitter-sandbox@`, for
+   gke runs only); (2) `./gke-iam.sh` (creates the GSA, binds it, moves the KSA); (3) a day later, once no sandbox from
+   before the switch can still be alive, `DROP_LEGACY_WI=1 ./gke-iam.sh` removes the KSA's old binding on
+   `outfitter-agent@`. Every release checks `outfitter-sandbox@` still holds no project role (`gke-template.sh`).
 3. **`GKE_CLUSTER=outfitter ./ci-setup.sh`** (owner-run). With `GKE_CLUSTER` set and the cluster up,
    it applies the namespaced Role letting `outfitter-deployer` create/patch the SandboxTemplate and
    pool, manage the release-time warm-up claim, and read the `kube-dns` Service in `kube-system`. The

@@ -294,10 +294,17 @@ stream only pushes status transitions, not meta changes, so it isn't used for th
 
 ```
 namespace  outfitter-sandboxes
-KSA        outfitter-sandboxes/outfitter-agent   (annotated to impersonate GSA outfitter-agent@PROJECT)
-GSA        outfitter-agent@PROJECT               (existing; roles/logging.logWriter only, baseline.sh:127-132)
+KSA        outfitter-sandboxes/outfitter-agent   (annotated to impersonate GSA outfitter-sandbox@PROJECT since #202)
+GSA        outfitter-sandbox@PROJECT             (#202; no project roles -- see the note below)
+GSA        outfitter-agent@PROJECT               (existing; roles/logging.logWriter only, baseline.sh:127-132; Cloud Run)
 GSA        outfitter-api@PROJECT                 (existing; the API's Cloud Run identity, both roles)
 ```
+
+**Update (#202):** the KSA now impersonates its own GSA, `outfitter-sandbox@`, which holds no project
+role: `outfitter-agent@`'s `logging.logWriter` (needed only for Cloud Run to ingest a job's stdout; GKE
+ships container logs through the node's agent) let a sandbox forge other runs' log entries. The api
+accepts `outfitter-sandbox@` (`SANDBOX_SA_EMAIL`) for gke runs only. The text below is the original
+design, with `outfitter-agent@` as the impersonated GSA.
 
 **Sandbox identity: Workload Identity Federation for GKE, GSA-impersonation form.** agentd
 authenticates to the link with a Google ID token from the metadata server (`agentd/src/auth.ts:32`,

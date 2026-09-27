@@ -12,7 +12,7 @@ import type { Config } from "./config.ts";
 import type { Store, Run, Session, Guru, PiEntry, DownMessage, User } from "./store/types.ts";
 import type { SecretsBroker } from "./secrets.ts";
 import type { SseHub } from "./sse.ts";
-import { verifyAgentToken, bearerFromHeader } from "./auth.ts";
+import { verifyAgentToken, bearerFromHeader, agentMayActForRun } from "./auth.ts";
 import type { LaptopProbe } from "./laptop.ts";
 import { resolveRunModel } from "./laptop.ts";
 import { validateSnapshotUrl, snapshotHostAllowlist } from "./snapshot-url.ts";
@@ -718,8 +718,9 @@ export class AgentLink {
     // buffering listener synchronously, before any await, so no frame sent this early is ever lost.
     const buffer = new FrameBuffer(socket);
 
+    let agentEmail: string;
     try {
-      await verifyAgentToken(bearerFromHeader(request), this.config);
+      agentEmail = (await verifyAgentToken(bearerFromHeader(request), this.config)).email;
     } catch {
       // No notice: nothing has yet tied this caller to `runId` -- see refuse() on why an unproven
       // caller never gets to write on a run.
@@ -732,6 +733,12 @@ export class AgentLink {
       // Nothing to write a notice onto, by definition.
       request.log.warn({ runId }, "agentlink: closing connection, no such run");
       return this.refuse(socket, buffer, 4404, "run not found");
+    }
+    if (!agentMayActForRun(agentEmail, run.startup?.provider, this.config)) {
+      // #202: the GKE sandboxes' own identity, on a run some other provider started. No notice, for
+      // the same reason as the 4401 above: nothing ties this caller to the run.
+      request.log.warn({ runId, provider: run.startup?.provider }, "agentlink: closing connection, a GKE sandbox identity for a run GKE didn't start");
+      return this.refuse(socket, buffer, 4401, "unauthorized");
     }
     if (!["provisioning", "running", "idle", "stopping"].includes(run.state)) {
       // No notice on purpose: this run already holds the state and reason it really ended with

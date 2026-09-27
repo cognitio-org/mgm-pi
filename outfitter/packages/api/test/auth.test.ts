@@ -1,7 +1,8 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { loadConfig } from "../src/config.ts";
-import { identityFromRequest, identityFromLinkRequest, verifyAgentToken, bearerFromHeader, isOperator } from "../src/auth.ts";
+import { identityFromRequest, identityFromLinkRequest, verifyAgentToken, bearerFromHeader, isOperator, agentMayActForRun } from "../src/auth.ts";
+import { OAuth2Client } from "google-auth-library";
 import { MemoryStore } from "../src/store/memory.ts";
 import type { ApiToken } from "../src/store/types.ts";
 
@@ -91,6 +92,58 @@ describe("verifyAgentToken (dev mode)", () => {
 
   test("rejects a missing token", async () => {
     await assert.rejects(() => verifyAgentToken(undefined, devConfig));
+  });
+});
+
+// #202: GKE sandboxes get their own service account (SANDBOX_SA_EMAIL) without logging.logWriter.
+describe("verifyAgentToken with SANDBOX_SA_EMAIL (#202)", () => {
+  const prodConfig = loadConfig({
+    OUTFITTER_DEV: "0",
+    AGENT_SA_EMAIL: "agent@test.local",
+    SANDBOX_SA_EMAIL: "sandbox@test.local",
+  } as NodeJS.ProcessEnv);
+  const tokenFor = (t: { mock: { method: typeof import("node:test").mock.method } }, email: string) =>
+    t.mock.method(OAuth2Client.prototype, "verifyIdToken", async () => ({ getPayload: () => ({ email }) }));
+
+  test("accepts both service accounts and returns the one the token carries", async (t) => {
+    tokenFor(t, "sandbox@test.local");
+    assert.equal((await verifyAgentToken("id-token", prodConfig)).email, "sandbox@test.local");
+    t.mock.restoreAll();
+    tokenFor(t, "agent@test.local");
+    assert.equal((await verifyAgentToken("id-token", prodConfig)).email, "agent@test.local");
+  });
+
+  test("rejects any other service account", async (t) => {
+    tokenFor(t, "someone@test.local");
+    await assert.rejects(() => verifyAgentToken("id-token", prodConfig), /neither AGENT_SA_EMAIL nor SANDBOX_SA_EMAIL/);
+  });
+
+  test("with SANDBOX_SA_EMAIL unset, only AGENT_SA_EMAIL is accepted", async (t) => {
+    const config = loadConfig({ OUTFITTER_DEV: "0", AGENT_SA_EMAIL: "agent@test.local" } as NodeJS.ProcessEnv);
+    tokenFor(t, "sandbox@test.local");
+    await assert.rejects(() => verifyAgentToken("id-token", config));
+  });
+
+  test("with neither set, an email-less config accepts nothing", async (t) => {
+    const config = loadConfig({ OUTFITTER_DEV: "0" } as NodeJS.ProcessEnv);
+    tokenFor(t, "");
+    await assert.rejects(() => verifyAgentToken("id-token", config));
+  });
+});
+
+describe("agentMayActForRun (#202)", () => {
+  const config = loadConfig({ AGENT_SA_EMAIL: "agent@test.local", SANDBOX_SA_EMAIL: "sandbox@test.local" } as NodeJS.ProcessEnv);
+
+  test("the sandbox identity may only act for gke runs", () => {
+    assert.equal(agentMayActForRun("sandbox@test.local", "gke", config), true);
+    assert.equal(agentMayActForRun("sandbox@test.local", "cloudrun", config), false);
+    assert.equal(agentMayActForRun("sandbox@test.local", undefined, config), false);
+  });
+
+  test("the agent identity acts for every run (GKE sandboxes carry it until gke-iam.sh moves them)", () => {
+    for (const provider of ["gke", "cloudrun", "inprocess", undefined]) {
+      assert.equal(agentMayActForRun("agent@test.local", provider, config), true);
+    }
   });
 });
 

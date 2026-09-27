@@ -133,9 +133,9 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     const runToken = Array.isArray(runTokenHeader) ? runTokenHeader[0] : runTokenHeader;
     if (capture && runToken) {
       try {
-        await verifyAgentToken(bearerFromHeader(req), config);
+        const agent = await verifyAgentToken(bearerFromHeader(req), config);
         if (await agentLink.runMayDownloadCapture(capture.sessionId, runToken)) {
-          req.identity = { email: config.agentSaEmail || "agent@dev.local", operator: false };
+          req.identity = agent;
           return;
         }
       } catch {

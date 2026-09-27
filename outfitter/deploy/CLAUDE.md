@@ -10,7 +10,9 @@
 - Settings go in `config.env`, not in someone's shell. Access (IAP, members, invokers) is
   `access.sh`, run by the owner, never by an agent.
 - `tag-release.sh` (without DRY_RUN=1), `ROLLBACK=1`, `ALLOW_OFF_MAIN=1`, `ALLOW_SKEW=1`,
-  `access.sh` and `ci-setup.sh` need the owner's explicit go-ahead in the conversation. Never create
+  `access.sh`, `ci-setup.sh` and `e2e-identity.sh` (without DRY_RUN=1) need the owner's explicit
+  go-ahead in the conversation. `iap-probe.sh` only reads, and is safe once the caller is an
+  `E2E_TOKEN_MINTERS` principal. Never create
   a GitHub Release for Outfitter: Releases here are Kernal's, and `kernal update` reads the latest.
 - GKE (README.md "GKE provider (optional)"): `gke-cluster.sh` (without `DRY_RUN=1`), `gke-iam.sh`
   (without `DRY_RUN=1`), `gke-schedule.sh` and `gke-teardown.sh` (without `DRY_RUN=1`, and

@@ -18,6 +18,7 @@
 import type {
   RunLaunch,
   SandboxCapacity,
+  SandboxExit,
   SandboxHandle,
   SandboxProvider,
   SandboxStartResult,
@@ -101,6 +102,51 @@ function warmPoolPath(namespace: string, name: string): string {
 
 function sandboxPath(namespace: string, name: string): string {
   return `/apis/${SANDBOXES_API}/namespaces/${namespace}/${SANDBOXES_RESOURCE}/${name}`;
+}
+
+function podPath(namespace: string, name: string): string {
+  return `/api/v1/namespaces/${namespace}/pods/${name}`;
+}
+
+/** agent-sandbox v1.0.3's resolvePodName (controllers/sandbox_controller.go): a Sandbox that adopted
+ * a warm pod before the warm pool created full Sandbox CRs names its pod in this annotation;
+ * otherwise the pod has the Sandbox's own name. */
+const SANDBOX_POD_NAME_ANNOTATION = "agents.x-k8s.io/pod-name";
+
+/** The container sandbox-template.yaml runs agentd in. */
+const AGENT_CONTAINER = "agentd";
+
+interface TerminatedState {
+  reason?: string;
+  exitCode?: number;
+  finishedAt?: string;
+  message?: string;
+}
+
+/** Only the pod fields exitInfo reads. `pods: get` also exposes annotations, which hold a warm
+ * run's token (#193): nothing here reads, returns or logs them. */
+interface PodLike {
+  status?: {
+    containerStatuses?: {
+      name?: string;
+      state?: { terminated?: TerminatedState };
+      lastState?: { terminated?: TerminatedState };
+    }[];
+  };
+}
+
+/** How the pod's agentd container ended, from its current or last terminated state. */
+export function podExit(pod: PodLike | null): SandboxExit | undefined {
+  const container = pod?.status?.containerStatuses?.find((status) => status.name === AGENT_CONTAINER);
+  const terminated = container?.state?.terminated ?? container?.lastState?.terminated;
+  if (!terminated?.reason) return undefined;
+  return {
+    reason: terminated.reason,
+    ...(typeof terminated.exitCode === "number" ? { exitCode: terminated.exitCode } : {}),
+    ...(terminated.finishedAt ? { finishedAt: terminated.finishedAt } : {}),
+    // Kubernetes' own short message (e.g. for a failed start), capped: never a log.
+    ...(terminated.message ? { message: terminated.message.slice(0, 200) } : {}),
+  };
 }
 
 function claimName(runId: string): string {
@@ -485,6 +531,38 @@ export class GkeProvider implements SandboxProvider {
     if (isPastStartDeadline(claim, this.deps.now())) return "unknown";
     return "starting";
   }
+
+  /** #193: the claimed pod's agentd termination state (OOMKilled, Error with an exit code, ...).
+   * Claim -> Sandbox -> pod, the same lookup agent-sandbox itself does. Undefined while agentd is
+   * running, once the claim or pod is gone (the controller deletes a finished claim ~2 min later),
+   * or while the Role still lacks `pods: get` (a 403 until the owner runs gke-iam.sh). */
+  async exitInfo(handle: SandboxHandle): Promise<SandboxExit | undefined> {
+    const parsed = handle ? parseHandle(handle) : undefined;
+    if (!parsed) return undefined;
+    const kube = await this.kube();
+    try {
+      const claim = await kube.get<SandboxClaim>(claimPath(parsed.namespace, parsed.name));
+      const sandboxName = claim?.status?.sandbox?.name;
+      if (!sandboxName) return undefined;
+      const sandbox = await kube.get<{ metadata?: { annotations?: Record<string, string> } }>(
+        sandboxPath(parsed.namespace, sandboxName),
+      );
+      if (!sandbox) return undefined;
+      const podName = sandbox.metadata?.annotations?.[SANDBOX_POD_NAME_ANNOTATION] || sandboxName;
+      return podExit(await kube.get<PodLike>(podPath(parsed.namespace, podName)));
+    } catch (err) {
+      if (err instanceof KubeError && err.status === 403) {
+        if (!this.warnedPodsForbidden) {
+          this.warnedPodsForbidden = true;
+          console.warn("[gke] pods: get is not granted yet (run deploy/gke-iam.sh); sandbox exit reasons stay unknown");
+        }
+        return undefined;
+      }
+      throw err;
+    }
+  }
+
+  private warnedPodsForbidden = false;
 
   /** The providers dashboard's probe (#169). The kube client (and so the resolved endpoint) is
    * memoized by kube(), and google-auth-library caches the access token until it nears expiry, so

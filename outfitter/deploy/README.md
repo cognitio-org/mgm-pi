@@ -341,6 +341,14 @@ reports the sandbox's peak memory in each heartbeat, so a run killed that way is
 "ran out of memory" note that gives the numbers. The warm pool's `updateStrategy: Recreate` replaces
 idle warm pods with the new size when the template changes; a run already in progress keeps its pod.
 
+**Exit reasons (#193):** with `get` on pods (`rbac.yaml`, applied by `gke-iam.sh`), the api reads how
+a sandbox's agentd container ended (`OOMKilled`, or an exit code) from the pod itself. It looks a few
+seconds after agentd's socket drops, and every 20 s at runs quiet for 30 s, since the controller
+deletes a finished pod about two minutes later. A found exit fails the run at once with that reason,
+which beats the memory estimate above. Until `gke-iam.sh` has run, the pod read is a 403, logged once,
+and runs fall back to the estimate. `gke-iam.sh` also grants outfitter-api@ `roles/logging.viewer`
+and `roles/monitoring.viewer` for the session page's sandbox logs and stats (#196).
+
 **Laptop prerequisite for hand deploys:** with GKE set up, every deploy script run by hand (`api.sh`,
 `link.sh`, `agent-job.sh`, `service.sh`, `MANUAL=1 ./release.sh`) checks the SandboxTemplate's
 `build-commit` label for skew, so the laptop needs `kubectl` and the auth plugin:

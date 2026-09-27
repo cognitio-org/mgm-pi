@@ -13,7 +13,10 @@
 #   impersonation form -- keeps agentd's ID token `email` unchanged, spec §3.2)
 # - roles/container.clusterViewer on the project for outfitter-api@ (both Cloud Run roles dial the
 #   cluster's DNS endpoint as this account)
-# - the outfitter-api Role/RoleBinding in outfitter-sandboxes (deploy/gke/rbac.yaml)
+# - roles/logging.viewer and roles/monitoring.viewer on the project for outfitter-api@ (#196: the
+#   session page's sandbox logs and stats)
+# - the outfitter-api Role/RoleBinding in outfitter-sandboxes (deploy/gke/rbac.yaml; since #193
+#   it includes `get` on pods, for termination reasons)
 # - the sandbox-hardening-policy exemption for outfitter-sandboxes only (hardening-exemption.json),
 #   patched in only when missing -- GKE's binding stays Deny everywhere else
 #
@@ -67,6 +70,16 @@ echo "== ${API_SA_EMAIL}: roles/container.clusterViewer (project-wide, permanent
 run gcloud projects add-iam-policy-binding "${PROJECT}" \
   --member="serviceAccount:${API_SA_EMAIL}" --role=roles/container.clusterViewer \
   --condition=None --quiet
+
+# #196: the session page shows a run's sandbox logs (Cloud Logging, by run id) and its memory and
+# CPU history (Cloud Monitoring). Read-only, project-wide: those APIs have no narrower resource to
+# scope a grant to. Both Cloud Run roles run as this account; only the web role serves the page.
+for role in roles/logging.viewer roles/monitoring.viewer; do
+  echo "== ${API_SA_EMAIL}: ${role} (project-wide, read-only; sandbox logs and stats, #196) =="
+  run gcloud projects add-iam-policy-binding "${PROJECT}" \
+    --member="serviceAccount:${API_SA_EMAIL}" --role="${role}" \
+    --condition=None --quiet
+done
 
 echo "== RBAC: ${API_SA_EMAIL} in ${GKE_NAMESPACE} (deploy/gke/rbac.yaml) =="
 run kubectl --kubeconfig="${KUBECONFIG}" apply --server-side -f "${GKE_DIR}/rbac.yaml"

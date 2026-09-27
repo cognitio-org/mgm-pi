@@ -1,7 +1,10 @@
 # What outfitter-api@ (both Cloud Run roles) may do inside the cluster: create, read and delete
-# claims, resize the warm pool, and read sandboxes for status. Nothing else, and only in
-# outfitter-sandboxes (docs/specs/gke-sandbox-provider.md §3.2). No pods access: warm-mode run
-# tokens live in pod annotations. The IAM side is roles/container.clusterViewer on the project,
+# claims, resize the warm pool, read sandboxes for status, and (#193) read pods, so a run killed
+# for memory is reported as OOMKilled rather than guessed. Nothing else, and only in
+# outfitter-sandboxes (docs/specs/gke-sandbox-provider.md §3.2). `get` only: no list, no watch, no
+# logs, no exec. Owner-approved 2026-09-27, knowing warm-mode run tokens live in pod annotations:
+# outfitter-api@ mints those tokens in the first place, and the api reads only the containers'
+# termination state (providers/gke.ts podExit). The IAM side is roles/container.clusterViewer on the project,
 # which includes container.clusters.connect for the DNS endpoint (checked 2026-09-24).
 # The subject below matches only if the API's access token carries the userinfo.email scope: without
 # it GKE names the account by its numeric unique ID and every call is 403 (GKE_TOKEN_SCOPES in
@@ -20,6 +23,9 @@ rules:
     verbs: ["get", "list", "patch"]
   - apiGroups: ["agents.x-k8s.io"]
     resources: ["sandboxes"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods"]
     verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

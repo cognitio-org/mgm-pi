@@ -37,9 +37,11 @@ const OOM_LIKELY_SHARE = 0.8;
  * put the sandbox near its memory limit, say that, with the numbers: the OOM kill takes agentd down
  * too, so nothing else will. Judged on the last report, not the run's peak: an early spike the run
  * survived says nothing about why it later went quiet. */
-export function silentRunDetail(run: Pick<Run, "sandboxMemLastMb" | "sandboxMemLimitMb">): string {
+export function silentRunDetail(run: Pick<Run, "sandboxMemLastMb" | "sandboxMemLimitMb" | "sandboxExit">): string {
   const last = run.sandboxMemLastMb;
   const limit = run.sandboxMemLimitMb;
+  // #193: what the orchestrator recorded beats any inference from memory reports.
+  if (run.sandboxExit) return sandboxExitDetail(run.sandboxExit, limit);
   if (last && limit && last >= limit * OOM_LIKELY_SHARE) {
     return (
       `this run's sandbox stopped reporting when its memory was at ${last} MiB of its ${limit} MiB limit, ` +
@@ -54,6 +56,33 @@ export function silentRunDetail(run: Pick<Run, "sandboxMemLastMb" | "sandboxMemL
     "says why), or died mid-run. Press Play to start a new one."
   );
 }
+
+/** #193: the note for a run whose sandbox the orchestrator says has ended. */
+export function sandboxExitDetail(exit: NonNullable<Run["sandboxExit"]>, limitMb?: number): string {
+  if (exit.reason === "OOMKilled") {
+    const limit = limitMb ? ` (${limitMb} MiB)` : "";
+    return (
+      `this run's sandbox ran out of memory${limit} and was killed (OOMKilled). Something the agent ran ` +
+      "(a build, a test suite, an install) needed more than the sandbox has; asking it to run that with " +
+      "fewer workers can help. Press Play to start a new one: the conversation is kept."
+    );
+  }
+  const code = exit.exitCode !== undefined ? ` with exit code ${exit.exitCode}` : "";
+  return (
+    `this run's sandbox stopped: its agent exited${code} (${exit.reason}). ` +
+    "Press Play to start a new one: the conversation is kept."
+  );
+}
+
+/** #193: how long after agentd's socket drops without a bye to look at the sandbox, in ms. Soon
+ * enough to beat the controller deleting a finished claim (~2 min), late enough for the kubelet to
+ * have recorded the termination. */
+const EXIT_CHECK_DELAYS_MS = [5_000, 30_000];
+
+/** #193: a run agentd hasn't reported on for this long (two missed heartbeats) gets its sandbox's
+ * exit looked up, every EXIT_PROBE_INTERVAL_MS. */
+const SILENT_AFTER_MS = 30_000;
+const EXIT_PROBE_INTERVAL_MS = 20_000;
 
 export class RunManager {
   private readonly store: Store;
@@ -197,7 +226,7 @@ export class RunManager {
 
   /** Starts the 60s reconciler loop (stale-run failure and stuck-stopping cancellation); returns a
    * function that stops it. */
-  startReconciler(intervalMs = RECONCILE_INTERVAL_MS): () => void {
+  startReconciler(intervalMs = RECONCILE_INTERVAL_MS, exitProbeMs = EXIT_PROBE_INTERVAL_MS): () => void {
     const timer = setInterval(() => {
       this.reconcileOnce().catch(() => {
         // errors are transient (store/provider hiccup); next tick retries
@@ -207,7 +236,33 @@ export class RunManager {
       });
     }, intervalMs);
     timer.unref?.();
-    return () => clearInterval(timer);
+    // #193: a sandbox killed mid-run may never close its socket cleanly, and the controller deletes
+    // its pod ~2 min after it ends, so look at quiet runs well before the 90 s stale mark.
+    const probe = setInterval(() => {
+      this.probeSilentRuns().catch(() => {
+        // transient; next tick retries
+      });
+    }, exitProbeMs);
+    probe.unref?.();
+    return () => {
+      clearInterval(timer);
+      clearInterval(probe);
+    };
+  }
+
+  /**
+   * #193: for each active run agentd has been quiet on for SILENT_AFTER_MS (two missed 15 s
+   * heartbeats), asks the provider how its sandbox ended. A found exit fails the run now with the
+   * orchestrator's reason (checkSandboxExit); a still-running sandbox (a slow link, a reconnect)
+   * is left alone for the reconciler. Only providers with exitInfo are asked, and only about runs
+   * already silent, so a healthy fleet costs one store query per tick.
+   */
+  async probeSilentRuns(silentAfterMs = SILENT_AFTER_MS): Promise<void> {
+    const cutoff = new Date(Date.now() - silentAfterMs).toISOString();
+    for (const run of await this.store.runs.listStale(cutoff)) {
+      if (!run.providerHandle || run.state === "provisioning" || run.state === "queued") continue;
+      await this.checkSandboxExit(run.id).catch(() => false);
+    }
   }
 
   /**
@@ -225,11 +280,14 @@ export class RunManager {
       const ageMs = now - new Date(run.createdAt).getTime();
       if (ageMs < this.config.provisioningGraceMs) continue;
 
+      let sandboxExit = run.sandboxExit;
       if (run.providerHandle) {
         const provider = await this.resolveProvider(run);
         if (provider) {
           const status = await provider.status(run.providerHandle).catch(() => "unknown" as const);
           if (status === "starting") continue;
+          // #193: ask how it ended before stop() deletes the evidence, unless already known.
+          sandboxExit ??= await provider.exitInfo?.(run.providerHandle).catch(() => undefined);
           await provider.stop(run.providerHandle).catch(() => {
             // best effort: still mark the run failed below even if the provider stop call itself fails
           });
@@ -241,16 +299,63 @@ export class RunManager {
       await this.store.runs.update(run.id, {
         state: "failed",
         reason: "no heartbeat",
+        ...(sandboxExit ? { sandboxExit } : {}),
         // "no heartbeat" is the whole of what the session page used to show for this ("LOAD ERROR
         // — No heartbeat"), and it named neither a cause nor anything to do about it. statusDetail
         // is the field the page renders in full (packages/web SessionPage, agentlink.ts's
         // refuse()), so spend it on the three things that actually produce a silent sandbox --
         // including a connection the api itself refused before it could prove which run it was
         // (agentlink.ts's run-token check, which deliberately writes nothing on the run).
-        statusDetail: silentRunDetail(run),
+        statusDetail: silentRunDetail({ ...run, sandboxExit }),
         updatedAt: new Date().toISOString(),
       });
     }
+  }
+
+  /**
+   * #193: agentd's socket for `runId` closed without a bye. Looks at the sandbox shortly after
+   * (EXIT_CHECK_DELAYS_MS), while its pod still exists: if the agent container has terminated, the
+   * run is failed now with the orchestrator's reason (OOMKilled, an exit code) instead of waiting
+   * ~2 min for the reconciler to call it "stopped reporting". Nothing happens for a run that ended
+   * cleanly (bye made it terminal), one whose agentd reconnects (its pod is still running), or on a
+   * provider without exitInfo. Timers are unref'd and best-effort.
+   */
+  noteAgentLost(runId: string, delaysMs: readonly number[] = EXIT_CHECK_DELAYS_MS): void {
+    const [delay, ...later] = delaysMs;
+    if (delay === undefined) return;
+    const timer = setTimeout(() => {
+      void this.checkSandboxExit(runId)
+        .then((settled) => {
+          if (!settled) this.noteAgentLost(runId, later);
+        })
+        .catch((err) => {
+          console.warn(`[runs] sandbox exit check failed: ${err instanceof Error ? err.name : "Error"}`);
+        });
+    }, delay);
+    timer.unref?.();
+  }
+
+  /** One look. True once there's nothing more to learn: the run is terminal, or the exit is known. */
+  async checkSandboxExit(runId: string): Promise<boolean> {
+    const run = await this.store.runs.findById(runId);
+    if (!run || run.state === "stopped" || run.state === "failed") return true;
+    if (!run.providerHandle) return true;
+    const provider = await this.resolveProvider(run);
+    if (!provider?.exitInfo) return true;
+    const exit = await provider.exitInfo(run.providerHandle);
+    if (!exit) return false;
+    // A bye may have landed while exitInfo was in flight: that run already says how it ended.
+    const now = await this.store.runs.findById(runId);
+    if (!now || now.state === "stopped" || now.state === "failed") return true;
+    await this.store.runs.update(runId, {
+      state: "failed",
+      reason: exit.reason === "OOMKilled" ? "out of memory" : `sandbox exited (${exit.reason})`,
+      sandboxExit: exit,
+      statusDetail: sandboxExitDetail(exit, now.sandboxMemLimitMb),
+      updatedAt: new Date().toISOString(),
+    });
+    await provider.stop(run.providerHandle).catch(() => {});
+    return true;
   }
 
   /**

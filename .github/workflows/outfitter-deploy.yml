@@ -56,6 +56,7 @@ jobs:
           shellcheck -x -S warning deploy/*.sh
           shellcheck -s bash -S warning deploy/config.env
           bash deploy/test/guards.test.sh
+          bash deploy/test/agent-job-build.test.sh
           bash deploy/test/gke-cluster.test.sh
           bash deploy/test/gke-skew.test.sh
           bash deploy/test/gke-iam.test.sh

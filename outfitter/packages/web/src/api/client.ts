@@ -216,6 +216,62 @@ export interface OperatorSettings {
   secrets: OperatorSecretRow[];
 }
 
+/** How a run's sandbox ended (api provider-local SandboxExit). */
+export interface SandboxExit {
+  /** Kubernetes' own word: OOMKilled, Error, Completed, ... */
+  reason: string;
+  exitCode?: number;
+  finishedAt?: string;
+}
+
+/** The provider's live view of a sandbox, while the run is active (api SandboxInfo). */
+export interface SandboxInfo {
+  name?: string;
+  node?: string;
+  image?: string;
+  phase?: string;
+  startedAt?: string;
+  resources?: { cpu?: string; memory?: string; ephemeralStorage?: string };
+  exit?: SandboxExit;
+}
+
+/** GET /api/sessions/:id/sandbox (api routes/sandbox.ts, #197). */
+export interface SandboxDetail {
+  run: { id: string; state: string; provider: string; createdAt: string; lastSeenAt?: string; reason?: string };
+  /** From agentd's heartbeats (#192). */
+  memory: { lastMb?: number; peakMb?: number; limitMb?: number };
+  exit?: SandboxExit;
+  live?: SandboxInfo;
+  /** The session's runs, newest first. */
+  runs: { id: string; state: string; createdAt: string }[];
+}
+
+export interface SandboxLogLine {
+  time: string;
+  severity: string;
+  message: string;
+}
+
+/** GET .../sandbox/logs. `untrusted`: the sandbox wrote these lines; show them as plain text. */
+export interface SandboxLogPage {
+  runId: string;
+  untrusted: true;
+  /** Oldest first within the page. */
+  lines: SandboxLogLine[];
+  /** The next, older page. */
+  nextPageToken?: string;
+}
+
+/** [ISO time, value] points, oldest first. */
+export type SandboxSeries = [string, number][];
+
+/** GET .../sandbox/metrics (GKE only). */
+export interface SandboxMetrics {
+  runId: string;
+  podName?: string;
+  series: { memoryMb: SandboxSeries; cpuCores: SandboxSeries; diskMb: SandboxSeries };
+}
+
 export interface NewSessionInput {
   guruId: string;
   repo?: string;
@@ -423,6 +479,24 @@ export const api = {
 
   diff(id: string): Promise<{ base: string; patch: string }> {
     return request(`/api/sessions/${id}/diff`);
+  },
+
+  /** #197: a run's sandbox. Without `runId`, the active run, else the latest. */
+  sandbox(id: string, runId?: string): Promise<SandboxDetail> {
+    const qs = runId ? `?runId=${encodeURIComponent(runId)}` : "";
+    return request(`/api/sessions/${id}/sandbox${qs}`);
+  },
+
+  /** Newest page first; `pageToken` fetches the next, older one. 503 until access is granted. */
+  sandboxLogs(id: string, runId: string, pageToken?: string): Promise<SandboxLogPage> {
+    const params = new URLSearchParams({ runId });
+    if (pageToken) params.set("pageToken", pageToken);
+    return request(`/api/sessions/${id}/sandbox/logs?${params}`);
+  },
+
+  /** Per-minute history over the run's lifetime. 501 for a provider other than GKE. */
+  sandboxMetrics(id: string, runId: string): Promise<SandboxMetrics> {
+    return request(`/api/sessions/${id}/sandbox/metrics?runId=${encodeURIComponent(runId)}`);
   },
 
   streamUrl(id: string): string {

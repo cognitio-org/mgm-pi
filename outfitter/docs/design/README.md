@@ -93,6 +93,23 @@ and restyled in place, not renamed.
 | `.dither` | Sparing 1-bit dither texture | Header strip and empty states only, per the brief — don't reach for it elsewhere |
 | `.sr-only` | Visually-hidden, screen-reader-only text | Utility, not theme-specific |
 
+## Nerd out panel
+
+The session page's home for operational details (#198), in `src/styles/nerd-out.css`. The
+**Nerd out** chip, first in the status bar, opens it between the title bar and the transcript. It's
+closed on every visit, and on a desktop it scrolls inside itself at about half the window.
+
+- **Spec sheet** (`.spec`, `.spec-row`): pixel-face labels, a dotted leader, monospace values that
+  ellipsize (the full value is the `title`). Used for the drive's run, provider, pod, node, image,
+  limits and how it ended (`is-danger` / `is-ok`).
+- **Strip charts** (`StripChart.tsx`, `.strip-chart`): a stepped phosphor (`--ok`) line over a dot
+  grid on `--bg`, like a strip-chart recorder; a dashed `--danger` line marks a limit.
+- **Drive log** (`LogViewerDialog.tsx`, `.log-viewer`): fetched only when **View logs** is
+  pressed. A terminal screen on `--bg-inset` with a faint scanline, a severity tag per line (INF,
+  WRN in `--warn`, ERR in `--danger`, DBG), filter, level, wrap, follow and copy. A `--warn` strip
+  says the lines come from the drive itself and aren't verified; they're always plain text.
+  Off-screen rows use `content-visibility: auto`.
+
 ## Busy/working indicator
 
 `components/Working.tsx` is a reusable "the UI is sending/loading/waiting" indicator, used for

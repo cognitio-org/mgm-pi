@@ -11,6 +11,12 @@ import type { RouteContext } from "./context.ts";
  * table) is what the web UI's App shell uses to decide whether to show the Settings nav link --
  * always `false` on the "link" role, since identityFromLinkRequest never grants it (auth.ts). */
 export async function registerMeRoute(app: FastifyInstance, ctx: RouteContext): Promise<void> {
+  // The web app's version indicator: what's deployed. Signed-in users only, like every /api route.
+  app.get("/api/version", async () => ({
+    commit: ctx.config.buildCommit || null,
+    release: ctx.config.release || null,
+  }));
+
   app.get("/api/me", async (req) => {
     const email = req.identity!.email;
     const user = await ctx.store.users.upsertSeen(email);

@@ -114,6 +114,10 @@ export interface Config {
    * credential's metadata, so the sweep only ever removes this deployment's own, not another
    * environment's sharing the ngrok account and PREVIEW_DOMAIN. */
   previewEnv: string;
+  /** OUTFITTER_BUILD_COMMIT / OUTFITTER_RELEASE (deploy/service.sh): the commit this deploy ships
+   * and, for a tagged release, its outfitter-v* tag. GET /api/version; empty in dev. */
+  buildCommit: string;
+  release: string;
   /** NGROK_GOOGLE_OAUTH (Secret Manager outfitter-ngrok-google-oauth): our Google OAuth client for
    * ngrok's sign-in on secure previews, JSON {client_id, client_secret}. Absent or unparseable:
    * ngrok's managed Google app is used instead. */
@@ -324,6 +328,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     previewShareTtlSeconds: envInt("PREVIEW_SHARE_TTL_SECONDS", 24 * 60 * 60, env),
     previewShareMaxSeconds: envInt("PREVIEW_SHARE_MAX_SECONDS", 7 * 24 * 60 * 60, env),
     previewEnv: (env.PREVIEW_ENV || env.GCP_PROJECT || "local").trim(),
+    buildCommit: (env.OUTFITTER_BUILD_COMMIT ?? "").trim(),
+    release: (env.OUTFITTER_RELEASE ?? "").trim(),
     ...(envGoogleOauth(env.NGROK_GOOGLE_OAUTH) ? { ngrokGoogleOauth: envGoogleOauth(env.NGROK_GOOGLE_OAUTH) } : {}),
     litellmBaseUrl: env.LITELLM_BASE_URL ?? "https://litellm.augment-code.support/v1",
     litellmAdminKey: env.LITELLM_ADMIN_KEY ?? "",

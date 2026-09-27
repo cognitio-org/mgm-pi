@@ -241,6 +241,12 @@ export interface SandboxInfo {
   exit?: SandboxExit;
 }
 
+/** GET /api/version: what's deployed (deploy/service.sh's OUTFITTER_BUILD_COMMIT / OUTFITTER_RELEASE). */
+export interface AppVersion {
+  commit: string | null;
+  release: string | null;
+}
+
 /** One open Drive preview (#217, api routes/previews.ts). */
 export interface PreviewRow {
   id: string;
@@ -371,6 +377,10 @@ async function requestBlob(path: string): Promise<Blob> {
 }
 
 export const api = {
+  version(): Promise<AppVersion> {
+    return request("/api/version");
+  },
+
   me(): Promise<{ email: string; operator?: boolean; linkOrigin?: string; name?: string }> {
     return request("/api/me");
   },

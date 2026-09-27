@@ -111,6 +111,9 @@ export interface DownMessage {
   [key: string]: unknown;
 }
 
+/** Which GitHub credential a run was actually given (#159). */
+export type GithubCredential = "app" | "session" | "default" | "none";
+
 export interface Run {
   id: string;
   sessionId: string;
@@ -193,6 +196,10 @@ export interface Run {
   // bye, or by the reconciler; the controller deletes the pod ~2 min after it finishes, so later is
   // too late. Absent while running, on providers that can't tell (Cloud Run), and after a clean bye.
   sandboxExit?: { reason: string; exitCode?: number; finishedAt?: string };
+  /** Which GitHub credential this run was actually given (#159): a per-session PAT, a GitHub App
+   * installation token, the shared PAT, or none. Absent until buildRunSpec resolves secrets.
+   * GET /api/sessions/:id prefers this over the configured-state guess. */
+  githubCredential?: GithubCredential;
   // Not in protocol.md: `spend.keySpend` (agentlink.ts) is the LiteLLM *key's* cumulative spend,
   // not this run's own — the key is shared across every run/session using that guru. keySpendStart
   // is set to keySpend on the first spend frame this run sees; cost is then

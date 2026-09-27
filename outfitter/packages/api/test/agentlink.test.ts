@@ -1969,6 +1969,202 @@ describe("GitHub App installation-token refresh", () => {
     app.stopBackgroundTasks();
     await app.fastify.close();
   });
+
+  test("#159: buildRunSpec records the credential the run was given", async () => {
+    const app = await buildTestApp(
+      {},
+      {
+        secretsBroker: {
+          async secretsForRun() {
+            return { githubToken: "ghs_app", litellmKey: "k", githubCredential: "app" };
+          },
+          async defaultLitellmKey() {
+            return "k";
+          },
+        },
+      },
+    );
+    const { session, runId, runToken } = await makeRunningSession(app);
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    assert.equal((await agent.nextMessage()).t, "run.spec");
+    assert.equal((await app.store.runs.findById(runId))?.githubCredential, "app");
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("#159: a refused run records none before it is failed", async (t) => {
+    t.mock.method(OAuth2Client.prototype, "verifyIdToken", async () => ({
+      getPayload: () => ({ email: "agent@test.local" }),
+    }));
+    const app = await buildTestApp(
+      { OUTFITTER_DEV: "0", AGENT_SA_EMAIL: "agent@test.local" },
+      {
+        secretsBroker: {
+          async secretsForRun() {
+            return { githubToken: "", litellmKey: "k", githubCredential: "none", githubAppFailure: "not-installed" };
+          },
+          async defaultLitellmKey() {
+            return "k";
+          },
+        },
+      },
+    );
+    const { session, runId, runToken } = await makeRunningSession(app);
+    const agent = await openAgentSocket(app, runId, "any-google-id-token");
+    sendHello(agent, runId, session.id, runToken);
+    assert.equal((await agent.nextClose()).code, 4412);
+    const run = await app.store.runs.findById(runId);
+    assert.equal(run?.githubCredential, "none");
+    assert.equal(run?.state, "failed");
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("#159: a reconnect that keeps agentd's token does not relabel the credential", async (t) => {
+    t.mock.method(OAuth2Client.prototype, "verifyIdToken", async () => ({
+      getPayload: () => ({ email: "agent@test.local" }),
+    }));
+    const app = await buildTestApp(
+      { AGENT_SOCKET_GRACE_MS: "0", OUTFITTER_DEV: "0", AGENT_SA_EMAIL: "agent@test.local" },
+      {
+        githubRefresh: { floorMs: 60_000, retryMs: 60_000, maxAttempts: 1 },
+        secretsBroker: {
+          async secretsForRun() {
+            return { githubToken: "", litellmKey: "k", githubCredential: "none", githubAppFailure: "unavailable" };
+          },
+          async defaultLitellmKey() {
+            return "k";
+          },
+          async refreshGithubAppToken() {
+            return undefined;
+          },
+        },
+      },
+    );
+    const { session, runId, runToken } = await makeRunningSession(app);
+    await app.store.runs.update(runId, { state: "running", githubCredential: "app" });
+    const agent = await openAgentSocket(app, runId, "any-google-id-token");
+    sendHello(agent, runId, session.id, runToken);
+    const spec = await agent.nextMessage();
+    assert.equal(spec.t, "run.spec");
+    assert.equal(spec.secrets.githubToken, "");
+    const run = await app.store.runs.findById(runId);
+    assert.equal(run?.githubCredential, "app");
+    assert.notEqual(run?.state, "failed");
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("#159: a store failure while recording the credential does not hide the refusal", async (t) => {
+    t.mock.method(OAuth2Client.prototype, "verifyIdToken", async () => ({
+      getPayload: () => ({ email: "agent@test.local" }),
+    }));
+    const app = await buildTestApp(
+      { OUTFITTER_DEV: "0", AGENT_SA_EMAIL: "agent@test.local" },
+      {
+        secretsBroker: {
+          async secretsForRun() {
+            return { githubToken: "", litellmKey: "k", githubCredential: "none", githubAppFailure: "not-installed" };
+          },
+          async defaultLitellmKey() {
+            return "k";
+          },
+        },
+      },
+    );
+    const original = app.store.runs.update.bind(app.store.runs);
+    app.store.runs.update = async (id, patch) => {
+      if ("githubCredential" in patch) throw new Error("store down");
+      return original(id, patch);
+    };
+    const { session, runId, runToken } = await makeRunningSession(app);
+    const agent = await openAgentSocket(app, runId, "any-google-id-token");
+    sendHello(agent, runId, session.id, runToken);
+    const close = await agent.nextClose();
+    assert.equal(close.code, 4412);
+    // #172's wording for not-installed.
+    assert.match(close.reason, /installation doesn't cover the repo/);
+    const run = await app.store.runs.findById(runId);
+    assert.equal(run?.state, "failed");
+    assert.equal(run?.githubCredential, undefined);
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("#159: a delivered refresh records its credential, and a miss leaves the old one", async () => {
+    const delivered = await buildTestApp(
+      {},
+      {
+        githubRefresh: { floorMs: 5, retryMs: 60_000, maxAttempts: 1 },
+        secretsBroker: {
+          async secretsForRun() {
+            return { githubToken: "ghs_original", litellmKey: "k", githubTokenExpiresAt: soon(20), githubCredential: "app" };
+          },
+          async defaultLitellmKey() {
+            return "k";
+          },
+          async refreshGithubAppToken() {
+            return { token: "ghp_session", credential: "session" };
+          },
+        },
+      },
+    );
+    const first = await makeRunningSession(delivered);
+    const agent = await openAgentSocket(delivered, first.runId);
+    sendHello(agent, first.runId, first.session.id, first.runToken);
+    assert.equal((await agent.nextMessage()).t, "run.spec");
+    assert.equal((await agent.nextCredential()).token, "ghs_original");
+    const frame = await nextCredentialWithin(agent, 1500);
+    assert.equal(frame.token, "ghp_session");
+    const start = Date.now();
+    let credential = (await delivered.store.runs.findById(first.runId))?.githubCredential;
+    while (credential !== "session" && Date.now() - start < 1500) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      credential = (await delivered.store.runs.findById(first.runId))?.githubCredential;
+    }
+    assert.equal(credential, "session");
+    assert.equal(JSON.stringify(await delivered.store.runs.findById(first.runId)).includes("ghp_session"), false);
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    delivered.stopBackgroundTasks();
+    await delivered.fastify.close();
+
+    let misses = 0;
+    const missed = await buildTestApp(
+      {},
+      {
+        githubRefresh: { floorMs: 5, retryMs: 60_000, maxAttempts: 1 },
+        secretsBroker: {
+          async secretsForRun() {
+            return { githubToken: "ghs_original", litellmKey: "k", githubTokenExpiresAt: soon(20), githubCredential: "app" };
+          },
+          async defaultLitellmKey() {
+            return "k";
+          },
+          async refreshGithubAppToken() {
+            misses += 1;
+            return undefined;
+          },
+        },
+      },
+    );
+    const second = await makeRunningSession(missed, { id: "s-miss" });
+    const quiet = await openAgentSocket(missed, second.runId);
+    sendHello(quiet, second.runId, second.session.id, second.runToken);
+    assert.equal((await quiet.nextMessage()).t, "run.spec");
+    await waitFor(() => misses >= 1, 1500);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal((await missed.store.runs.findById(second.runId))?.githubCredential, "app");
+    quiet.send({ t: "bye", reason: "stop" });
+    await quiet.nextClose();
+    missed.stopBackgroundTasks();
+    await missed.fastify.close();
+  });
 });
 
 describe("#172: GitHub App failure notes", () => {

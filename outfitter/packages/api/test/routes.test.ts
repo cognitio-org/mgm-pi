@@ -2,7 +2,8 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { buildTestApp, seedGuru } from "./helpers.ts";
 import { GITHUB_APP_ID_SECRET, GITHUB_APP_INSTALLATION_SECRET, GITHUB_APP_KEY_SECRET, GITHUB_APP_SLUG_SECRET } from "../src/github-app.ts";
-import { GITHUB_TOKEN_DEFAULT_SECRET } from "../src/secrets.ts";
+import { GITHUB_TOKEN_DEFAULT_SECRET, MemorySecretAdmin, type SecretAdmin } from "../src/secrets.ts";
+import type { GithubCredential } from "../src/store/types.ts";
 
 describe("POST /api/sessions", () => {
   test("creates a session, wakes a queued->provisioning run, and calls the provider", async () => {
@@ -149,6 +150,108 @@ describe("GET /api/sessions/:id", () => {
     const badRepo = await get();
     assert.equal(badRepo.json().github.credential, "default");
     assert.equal(badRepo.body.includes("not-a-real-key"), false);
+
+    await app.fastify.close();
+  });
+
+  test("#159: GET reports the credential the run was given, not that the App is configured", async () => {
+    const app = await buildTestApp();
+    await seedGuru(app.store);
+    const pem = "-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----";
+    await app.secretAdmin.addVersion(GITHUB_APP_ID_SECRET, "42");
+    await app.secretAdmin.addVersion(GITHUB_APP_KEY_SECRET, pem);
+    await app.secretAdmin.addVersion(GITHUB_APP_INSTALLATION_SECRET, "7");
+    await app.secretAdmin.addVersion(GITHUB_APP_SLUG_SECRET, "outfitter");
+    const createRes = await app.fastify.inject({
+      method: "POST",
+      url: "/api/sessions",
+      payload: { guruId: "test-guru", repo: "o/r", prompt: "hello" },
+    });
+    const { session, run } = createRes.json();
+    const get = () => app.fastify.inject({ method: "GET", url: `/api/sessions/${session.id}` });
+
+    // No recorded value yet: the configured-state guess still says the App.
+    const before = await get();
+    assert.equal(before.json().github.credential, "app");
+    assert.equal(before.json().github.appSlug, "outfitter");
+
+    await app.store.runs.update(run.id, { githubCredential: "default" });
+    const asDefault = await get();
+    assert.equal(asDefault.json().github.credential, "default");
+    assert.equal(asDefault.json().github.appSlug, undefined);
+
+    await app.store.runs.update(run.id, { githubCredential: "none" });
+    const asNone = await get();
+    assert.equal(asNone.json().github.credential, "none");
+    assert.equal(asNone.json().github.appSlug, undefined);
+
+    await app.store.runs.update(run.id, { githubCredential: "app" });
+    const asApp = await get();
+    assert.equal(asApp.json().github.credential, "app");
+    assert.equal(asApp.json().github.appSlug, "outfitter");
+    assert.equal(asApp.body.includes(pem), false);
+
+    await app.store.runs.update(run.id, { githubCredential: "bogus" as GithubCredential });
+    const ignored = await get();
+    assert.equal(ignored.json().github.credential, "app");
+    assert.equal(ignored.json().github.appSlug, "outfitter");
+
+    await app.fastify.close();
+  });
+
+  test("#159: a slug secret that can't be read is absent, and the session still loads", async () => {
+    const inner = new MemorySecretAdmin();
+    const pem = "-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----";
+    let slugReads = 0;
+    const secretAdmin: SecretAdmin = {
+      info: (name) => inner.info(name),
+      addVersion: (name, value) => inner.addVersion(name, value),
+      disableAllEnabled: (name) => inner.disableAllEnabled(name),
+      async accessLatest(name) {
+        if (name === GITHUB_APP_SLUG_SECRET) {
+          slugReads += 1;
+          const err = new Error(pem);
+          err.name = "SecretAccessError";
+          throw err;
+        }
+        return inner.accessLatest(name);
+      },
+    };
+    const app = await buildTestApp({}, { secretAdmin });
+    await seedGuru(app.store);
+    await secretAdmin.addVersion(GITHUB_APP_ID_SECRET, "42");
+    await secretAdmin.addVersion(GITHUB_APP_KEY_SECRET, pem);
+    await secretAdmin.addVersion(GITHUB_APP_INSTALLATION_SECRET, "7");
+    await secretAdmin.addVersion(GITHUB_APP_SLUG_SECRET, "outfitter");
+    const createRes = await app.fastify.inject({
+      method: "POST",
+      url: "/api/sessions",
+      payload: { guruId: "test-guru", repo: "o/r", prompt: "hello" },
+    });
+    const { session, run } = createRes.json();
+    await app.store.runs.update(run.id, { githubCredential: "app" });
+    const warnings: string[] = [];
+    const orig = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    };
+    try {
+      const first = await app.fastify.inject({ method: "GET", url: `/api/sessions/${session.id}` });
+      const second = await app.fastify.inject({ method: "GET", url: `/api/sessions/${session.id}` });
+      assert.equal(first.statusCode, 200);
+      assert.equal(second.statusCode, 200);
+      assert.equal(first.json().github.credential, "app");
+      assert.equal(first.json().github.appSlug, undefined);
+      assert.equal(second.json().github.appSlug, undefined);
+      assert.equal(slugReads, 2, "a failed slug read is not cached");
+      assert.equal(first.body.includes(pem), false);
+      assert.equal(first.body.includes("not-a-real-key"), false);
+      assert.match(warnings.join("\n"), /SecretAccessError/);
+      assert.equal(warnings.join("\n").includes(pem), false);
+      assert.equal(warnings.join("\n").includes("not-a-real-key"), false);
+    } finally {
+      console.warn = orig;
+    }
 
     await app.fastify.close();
   });

@@ -3,20 +3,24 @@
  *
  * Every job runs in its own session and process group (spawn `detached`, i.e. setsid), under a small
  * bash wrapper that also starts a watchdog in the same group. The watchdog polls pi's pid and kills
- * the whole group when pi is gone, so a job never outlives the agent even when pi dies by SIGKILL and
- * none of our cleanup runs. Everything that ends a job -- the model, the person, a deadline, session
- * shutdown -- goes through one path: SIGTERM to the group, SIGKILL after a grace period.
+ * the whole group when pi is gone (SIGTERM, then SIGKILL), so a job never outlives the agent even
+ * when pi dies by SIGKILL and none of our cleanup runs. Everything that ends a job -- the model, the
+ * person, a deadline, session shutdown -- goes through one path: SIGTERM to the group, SIGKILL after
+ * a grace period.
  *
  * A job ends when its command exits. Whatever it left running in its group (a server it put in the
  * background with `&`, a daemonized child) is stopped then and reported, rather than left behind
  * unmanaged: grandchildren die with the group. "Running" is the command's own process, which a
- * quiet server still has; a log line arriving is never the signal.
+ * quiet server still has; a log line arriving is never the signal. A process that calls setsid or
+ * double-forks leaves the group, and nothing here can follow it.
  *
- * Output goes through a pipe to a log file that rotates at half of `logCapBytes`, keeping one
- * previous file, so a chatty server can't fill the disk. The model reads a tail, never a stream.
+ * stdout and stderr share one pipe (in order) into a log file that rotates at half of
+ * `logCapBytes`, keeping one previous file, so a chatty server can't fill the disk. The model reads a
+ * tail, never a stream. stdin is a pipe pi holds open and never writes to: some watchers (esbuild
+ * --watch) exit when stdin reaches EOF, and a command that prompts waits instead of failing.
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 export type JobKind = "server" | "batch";
@@ -46,7 +50,7 @@ export interface Job {
 }
 
 export interface JobManagerOptions {
-  /** Directory for the logs; created on first use. */
+  /** Directory for the logs; created (mode 0700) on first use. */
   dir: string;
   /** Called exactly once when a job reaches a terminal state, unless it ended through kill() with
    * `quiet` or through reapAll() (the caller reports those itself). */
@@ -72,14 +76,23 @@ export interface StartOptions {
   timeoutSeconds: number;
 }
 
-// The wrapper runs as `bash -c WRAPPER` in a new session. The watchdog sleeps in the background so
-// its TERM trap can fire at once and take its sleep with it (no stray `sleep` left in the group).
+/** setTimeout's ceiling (~24.8 days); a longer delay fires at once. */
+export const MAX_TIMEOUT_SECONDS = Math.floor(2 ** 31 / 1000) - 1;
+
+// The wrapper runs as `bash -c WRAPPER` in a new session, with stderr folded into stdout. The
+// watchdog sleeps in the background so its TERM trap can fire at once; the trap waits for that
+// sleep, so no orphan is left for a PID 1 that never reaps (agentd in a Drive). Before signalling the
+// group, the watchdog ignores TERM itself, or its own trap would end it before the SIGKILL.
 const WRAPPER = `
-( trap 'kill "$s" 2>/dev/null; exit 0' TERM
+exec 2>&1
+( trap 'kill "$s" 2>/dev/null; wait "$s" 2>/dev/null; exit 0' TERM
   while kill -0 "$KERNAL_BG_PARENT" 2>/dev/null; do sleep "$KERNAL_BG_WATCH" & s=$!; wait "$s"; done
+  trap '' TERM
   kill -TERM 0 2>/dev/null; sleep "$KERNAL_BG_GRACE"; kill -KILL 0 2>/dev/null ) </dev/null >/dev/null 2>&1 &
 w=$!
-bash -c "$KERNAL_BG_CMD" </dev/null
+cmd=$KERNAL_BG_CMD
+unset KERNAL_BG_CMD KERNAL_BG_PARENT KERNAL_BG_WATCH KERNAL_BG_GRACE
+bash -c "$cmd"
 c=$?
 kill -TERM "$w" 2>/dev/null
 wait "$w" 2>/dev/null
@@ -93,6 +106,8 @@ interface Running {
   ending?: { status: JobStatus; quiet: boolean };
   log: RotatingLog;
   done: Promise<Job>;
+  /** Resolves when the output pipe has closed (all output read). */
+  outputClosed: Promise<void>;
 }
 
 export class JobManager {
@@ -115,14 +130,16 @@ export class JobManager {
     const command = o.command.trim();
     if (!command) throw new Error("command is empty");
     if (!existsSync(o.cwd)) throw new Error(`cwd does not exist: ${o.cwd}`);
-    mkdirSync(this.opts.dir, { recursive: true });
-    const id = `bg${++this.seq}`;
+    mkdirSync(this.opts.dir, { recursive: true, mode: 0o700 });
+    const id = `bg${this.seq + 1}`;
     const logPath = join(this.opts.dir, `${id}.log`);
     const graceSeconds = Math.max(1, Math.ceil(this.graceMs / 1000));
+    const timeoutSeconds = Math.min(Math.max(1, o.timeoutSeconds), MAX_TIMEOUT_SECONDS);
+    let spawnError: Error | undefined;
     const child = spawn("bash", ["-c", WRAPPER], {
       cwd: o.cwd,
       detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "ignore"],
       env: {
         ...(this.opts.env ?? process.env),
         KERNAL_BG_CMD: command,
@@ -131,28 +148,43 @@ export class JobManager {
         KERNAL_BG_GRACE: String(graceSeconds),
       },
     });
-    if (child.pid === undefined) throw new Error("could not start bash");
+    // Attached before anything else: a spawn failure (no bash, EAGAIN, EMFILE) is emitted on the next
+    // tick, and with no listener it would be an uncaught exception that takes pi down.
+    child.on("error", (err) => { spawnError = err; });
+    if (child.pid === undefined) {
+      child.stdin?.destroy();
+      child.stdout?.destroy();
+      throw new Error("could not start bash");
+    }
+    this.seq += 1;
     const startedAt = this.now();
     const job: Job = {
       id, name: o.name?.trim() || firstWords(command), command, kind: o.kind, cwd: o.cwd,
-      pid: child.pid, startedAt, status: "running", deadlineAt: startedAt + o.timeoutSeconds * 1000, logPath,
+      pid: child.pid, startedAt, status: "running", deadlineAt: startedAt + timeoutSeconds * 1000, logPath,
     };
     const log = new RotatingLog(logPath, this.logCapBytes);
     child.stdout!.on("data", (b: Buffer) => log.write(b));
-    child.stderr!.on("data", (b: Buffer) => log.write(b));
-    const timer = setTimeout(() => void this.stop(id, "timed_out", false), o.timeoutSeconds * 1000);
+    const outputClosed = new Promise<void>((r) => {
+      child.stdout!.once("close", () => r());
+      child.stdout!.once("error", () => r());
+    });
+    // Held open, never written: a command reading stdin waits rather than seeing EOF.
+    child.stdin!.on("error", () => { /* the job closed its end */ });
+    const timer = setTimeout(() => void this.stop(id, "timed_out", false), timeoutSeconds * 1000);
     timer.unref();
     let resolveDone!: (j: Job) => void;
     const done = new Promise<Job>((r) => { resolveDone = r; });
-    const run: Running = { child, timer, log, done };
+    const run: Running = { child, timer, log, done, outputClosed };
     this.jobs.set(id, job);
     this.running.set(id, run);
-    child.on("error", (err) => log.write(Buffer.from(`\n[kernal-background] ${err.message}\n`)));
-    child.on("exit", (code, signal) => void this.finish(id, code, signal).then(resolveDone));
-    // The pipes keep our event loop busy; a job must never hold pi open by itself.
+    child.on("exit", (code, signal) => {
+      if (spawnError) log.write(Buffer.from(`\n[kernal-background] ${spawnError.message}\n`));
+      void this.finish(id, code, signal).then(resolveDone, () => resolveDone({ ...job }));
+    });
+    // A job must never hold pi open by itself.
     child.unref();
     (child.stdout as any)?.unref?.();
-    (child.stderr as any)?.unref?.();
+    (child.stdin as any)?.unref?.();
     return { ...job };
   }
 
@@ -175,10 +207,12 @@ export class JobManager {
   tail(id: string, lines = 40, grep?: string): string {
     const job = this.jobs.get(id);
     if (!job) throw new Error(`no job ${id}`);
-    this.running.get(id)?.log.flush();
-    let text = "";
-    for (const p of [`${job.logPath}.1`, job.logPath]) if (existsSync(p)) text += readFileSync(p, "utf8");
-    let all = text.split("\n");
+    const parts: Buffer[] = [];
+    for (const p of [`${job.logPath}.1`, job.logPath]) {
+      try { parts.push(readFileSync(p)); } catch { /* not there (yet) */ }
+    }
+    // Decoded as one buffer, so a character split across the rotation point stays whole.
+    let all = Buffer.concat(parts).toString("utf8").split("\n");
     if (all.length > 0 && all[all.length - 1] === "") all.pop();
     if (grep) all = all.filter((l) => l.includes(grep));
     return all.slice(-Math.max(1, lines)).join("\n");
@@ -223,23 +257,31 @@ export class JobManager {
     const job = this.jobs.get(id)!;
     const run = this.running.get(id)!;
     clearTimeout(run.timer);
-    // Whatever the command left in its group goes too. The wrapper already stopped its watchdog, so
-    // anything still answering kill -0 here is the command's own leftover.
-    if (groupAlive(job.pid)) {
-      if (!run.ending) job.leftovers = true;
-      signalGroup(job.pid, "SIGTERM");
-      const until = this.now() + this.graceMs;
-      while (groupAlive(job.pid) && this.now() < until) await sleep(50);
-      if (groupAlive(job.pid)) signalGroup(job.pid, "SIGKILL");
+    // Decided now, before any await: a kill arriving while leftovers are being stopped must not turn
+    // a job that already exited on its own into "killed".
+    const ending = run.ending;
+    try {
+      // Whatever the command left in its group goes too. The wrapper already stopped its watchdog,
+      // so a live process still in the group here is the command's own leftover.
+      if (groupHasLiveMembers(job.pid)) {
+        if (!ending) job.leftovers = true;
+        signalGroup(job.pid, "SIGTERM");
+        const until = this.now() + this.graceMs;
+        while (groupHasLiveMembers(job.pid) && this.now() < until) await sleep(50);
+        if (groupHasLiveMembers(job.pid)) signalGroup(job.pid, "SIGKILL");
+      }
+      // Read what's left in the pipe before closing the log ('exit' can come before the last output).
+      await Promise.race([run.outputClosed, sleep(1000)]);
+    } finally {
+      run.log.close();
+      run.child.stdin?.destroy();
+      job.endedAt = this.now();
+      if (code !== null) job.exitCode = code;
+      if (signal) job.signal = signal;
+      job.status = ending?.status ?? (code === 0 ? "exited" : "failed");
+      this.running.delete(id);
     }
-    run.log.flush();
-    run.log.close();
-    job.endedAt = this.now();
-    if (code !== null) job.exitCode = code;
-    if (signal) job.signal = signal;
-    job.status = run.ending?.status ?? (code === 0 ? "exited" : "failed");
-    this.running.delete(id);
-    if (!run.ending?.quiet) {
+    if (!ending?.quiet) {
       try { this.opts.onEnd?.({ ...job }); } catch { /* a reporting failure must not wedge the manager */ }
     }
     return { ...job };
@@ -277,43 +319,75 @@ function signalGroup(pgid: number, signal: NodeJS.Signals): void {
   try { process.kill(-pgid, signal); } catch { /* already gone */ }
 }
 
-function groupAlive(pgid: number): boolean {
-  try { process.kill(-pgid, 0); return true; } catch (err: any) { return err?.code === "EPERM"; }
+/** Whether any process in the group is still running. On Linux, zombies don't count: kill -0
+ * succeeds on a group of zombies, and in a Drive PID 1 (agentd) never reaps processes it didn't
+ * start, so a stopped leftover would otherwise look alive forever. */
+export function groupHasLiveMembers(pgid: number): boolean {
+  try { process.kill(-pgid, 0); } catch (err: any) { if (err?.code !== "EPERM") return false; }
+  if (process.platform !== "linux") return true;
+  let entries: string[];
+  try { entries = readdirSync("/proc"); } catch { return true; }
+  for (const e of entries) {
+    if (!/^\d+$/.test(e)) continue;
+    let stat: string;
+    try { stat = readFileSync(`/proc/${e}/stat`, "utf8"); } catch { continue; }
+    // "pid (comm) state ppid pgrp ...": comm may contain spaces and parentheses.
+    const rest = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    if (Number(rest[2]) === pgid && rest[0] !== "Z" && rest[0] !== "X") return true;
+  }
+  return false;
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/** Appends to `path`; past half the cap, moves it to `path.1` (replacing the older one) and starts
- * over, so at most `capBytes` stay on disk. */
+/** Appends to `path`; at half the cap, moves it to `path.1` (replacing the older one) and starts
+ * over, so at most `capBytes` stay on disk. A disk or file error stops logging for that job; it
+ * never throws into the pipe's event handler (which would take pi down). */
 class RotatingLog {
-  private fd: number;
+  private fd = -1;
   private size = 0;
   private closed = false;
   private readonly path: string;
-  private readonly capBytes: number;
+  private readonly half: number;
   constructor(path: string, capBytes: number) {
     this.path = path;
-    this.capBytes = capBytes;
-    this.fd = openSync(path, "a");
-    try { this.size = statSync(path).size; } catch { this.size = 0; }
+    this.half = Math.max(1, Math.floor(capBytes / 2));
+    try {
+      this.fd = openSync(path, "a", 0o600);
+      this.size = statSync(path).size;
+    } catch {
+      this.closed = true;
+    }
   }
   write(b: Buffer): void {
-    if (this.closed) return;
-    if (this.size + b.length > this.capBytes / 2 && this.size > 0) {
-      closeSync(this.fd);
-      renameSync(this.path, `${this.path}.1`);
-      this.fd = openSync(this.path, "a");
-      this.size = 0;
+    let rest = b;
+    try {
+      while (!this.closed && rest.length > 0) {
+        if (this.size >= this.half) this.rotate();
+        const n = Math.min(rest.length, this.half - this.size);
+        writeSync(this.fd, rest.subarray(0, n));
+        this.size += n;
+        rest = rest.subarray(n);
+      }
+    } catch {
+      this.close();
     }
-    writeSync(this.fd, b);
-    this.size += b.length;
   }
-  flush(): void { /* writeSync is unbuffered; kept for callers that read the file */ }
   close(): void {
     if (this.closed) return;
     this.closed = true;
-    closeSync(this.fd);
+    const fd = this.fd;
+    this.fd = -1;
+    try { if (fd >= 0) closeSync(fd); } catch { /* already closed */ }
+  }
+  private rotate(): void {
+    const fd = this.fd;
+    this.fd = -1; // never keep a number the OS may hand to another file
+    closeSync(fd);
+    renameSync(this.path, `${this.path}.1`);
+    this.fd = openSync(this.path, "a", 0o600);
+    this.size = 0;
   }
 }

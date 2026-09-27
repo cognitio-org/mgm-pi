@@ -18,9 +18,9 @@
  * turn. Every job is stopped when the session ends or pi exits.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { JobManager, describeJob, type Job, type JobKind } from "./jobs.ts";
+import { tmpdir, userInfo } from "node:os";
+import { join, resolve } from "node:path";
+import { JobManager, MAX_TIMEOUT_SECONDS, describeJob, type Job, type JobKind } from "./jobs.ts";
 
 const BATCH_DEFAULT_SECONDS = 30 * 60;
 const BATCH_MAX_SECONDS = 24 * 60 * 60;
@@ -32,12 +32,37 @@ const GUIDELINES = [
   "kind server: stays up until you stop it (dev server, `tsc --watch`). kind batch: should finish; give timeout_seconds when the default 30 minutes is wrong.",
   "Don't poll. You get one message when a job ends, with its exit status and last lines. Read output with action logs only when you need it (after starting a server, check its log once to confirm it is listening).",
   "Don't put `&`, `nohup` or `setsid` in the command: the job is already in the background, and anything it leaves running when its command exits is stopped.",
+  "stdin stays open and empty: a command that prompts will wait, so pass its non-interactive flag (--yes, CI=1).",
   "A job runs as you, with your credentials; it is not a sandbox. Stop jobs you no longer need with action kill.",
 ];
 
+// pi builds a fresh extension instance on every /new, /resume, /fork and /reload; one process-exit
+// hook serves them all, so listeners don't pile up.
+const liveManagers = new Set<JobManager>();
+let exitHookInstalled = false;
+function installExitHook(): void {
+  if (exitHookInstalled) return;
+  exitHookInstalled = true;
+  // pi exiting without a session_shutdown (a crash, an uncaught error): SIGKILL every group now.
+  // SIGKILL of pi itself runs nothing here; each job's watchdog covers that (jobs.ts).
+  process.on("exit", () => { for (const m of liveManagers) m.killAllNow(); });
+}
+
+/** Per user and per pi process, private: logs can hold whatever a command printed. */
+function logDir(): string {
+  let who = "user";
+  try { who = String(userInfo().uid >= 0 ? userInfo().uid : userInfo().username); } catch { /* keep default */ }
+  return join(tmpdir(), `kernal-background-${who}`, String(process.pid));
+}
+
 function serverMaxSeconds(): number {
   const h = Number(process.env.KERNAL_BG_SERVER_MAX_HOURS);
-  return (Number.isFinite(h) && h > 0 ? h : 12) * 60 * 60;
+  return Math.min(MAX_TIMEOUT_SECONDS, Math.round((Number.isFinite(h) && h > 0 ? h : 12) * 60 * 60));
+}
+
+function hours(seconds: number): string {
+  const h = seconds / 3600;
+  return `${Number.isInteger(h) ? h : h.toFixed(1)} h`;
 }
 
 function text(t: string, isError = false) {
@@ -62,8 +87,10 @@ export default function (pi: ExtensionAPI) {
   };
 
   const jobs = (): JobManager => {
-    manager ??= new JobManager({
-      dir: join(tmpdir(), "kernal-background", String(process.pid)),
+    if (manager) return manager;
+    installExitHook();
+    manager = new JobManager({
+      dir: logDir(),
       onEnd: (job) => {
         let tail = "";
         try { tail = manager!.tail(job.id, NOTICE_TAIL_LINES); } catch { /* log gone */ }
@@ -74,21 +101,23 @@ export default function (pi: ExtensionAPI) {
         );
       },
     });
+    liveManagers.add(manager);
     return manager;
   };
-
-  // pi exiting without a session_shutdown (a crash, an uncaught error): SIGKILL every group now.
-  // SIGKILL of pi itself runs nothing here; each job's watchdog covers that (jobs.ts).
-  process.on("exit", () => manager?.killAllNow());
 
   pi.on("session_start", async (_event: any, ctx: any) => { statusCtx = ctx; });
 
   pi.on("session_shutdown", async () => {
     if (!manager) return;
-    await manager.reapAll();
-    manager.cleanup();
+    const m = manager;
+    const reaped = await m.reapAll();
+    m.cleanup();
+    liveManagers.delete(m);
     manager = undefined;
     refreshStatus();
+    if (reaped.length > 0) {
+      try { statusCtx?.ui?.notify?.(`Stopped ${reaped.length} background job${reaped.length === 1 ? "" : "s"} with the session.`, "info"); } catch { /* no UI */ }
+    }
   });
 
   pi.registerTool({
@@ -119,6 +148,11 @@ export default function (pi: ExtensionAPI) {
       try {
         switch (action) {
           case "run": {
+            // print and json modes end with the prompt, and the session's jobs with them: a job
+            // started there would be stopped silently, never reporting.
+            if (ctx?.mode === "print" || ctx?.mode === "json") {
+              return text("background jobs need an interactive or RPC session: in print mode they would be stopped as soon as this prompt finishes. Run the command in the foreground instead.", true);
+            }
             const kind: JobKind = params?.kind === "server" ? "server" : "batch";
             const asked = Number(params?.timeout_seconds);
             const timeoutSeconds = kind === "server"
@@ -126,10 +160,10 @@ export default function (pi: ExtensionAPI) {
               : Math.min(BATCH_MAX_SECONDS, Number.isFinite(asked) && asked > 0 ? asked : BATCH_DEFAULT_SECONDS);
             const job = jobs().start({
               command: String(params?.command ?? ""), kind, name: params?.name,
-              cwd: String(params?.cwd || ctx?.cwd || process.cwd()), timeoutSeconds,
+              cwd: resolve(String(ctx?.cwd || process.cwd()), String(params?.cwd || ".")), timeoutSeconds,
             });
             refreshStatus();
-            const limit = kind === "server" ? `runs until stopped (hard cap ${Math.round(timeoutSeconds / 3600)} h)` : `deadline ${timeoutSeconds} s`;
+            const limit = kind === "server" ? `runs until stopped (hard cap ${hours(timeoutSeconds)})` : `deadline ${timeoutSeconds} s`;
             return text(`Started ${job.id} (${kind}, pid ${job.pid}, ${limit}). Log: ${job.logPath}\nYou'll get a message when it ends.${kind === "server" ? " Check its log once to confirm it's listening." : ""}`);
           }
           case "list": {

@@ -434,7 +434,12 @@ are running.
 - Each job runs in its own process group. Stopping it stops everything it started; anything it left
   running when its command exited is stopped and reported; and every job is stopped when the session
   ends or pi exits, even if pi is killed (a watchdog in the job's group notices within seconds).
-- Output goes to a log under the system temp directory, capped at 10 MB per job.
+  A process that detaches itself (`setsid`, a double fork) leaves the group and can't be followed.
+- Output (stdout and stderr, in order) goes to a private log under the system temp directory, capped
+  at 10 MB per job. stdin stays open and empty, so a command that prompts waits: give it its
+  non-interactive flag.
+- Background jobs need an interactive or RPC session; `kernal -p` refuses them, because a print run's
+  jobs would stop the moment it ends.
 - A job runs as you, with your credentials. It is not a sandbox.
 - On a Drive (Outfitter) the same tool works, but a job doesn't keep the Drive awake and dies with the
   sandbox. A server there is reachable by the agent only, until Drive previews (#217) land.

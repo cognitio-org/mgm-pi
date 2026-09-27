@@ -10,7 +10,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { JobManager, describeJob, formatDuration, type Job } from "../.pi/extensions/kernal-background/jobs.ts";
+import { JobManager, describeJob, formatDuration, groupHasLiveMembers, type Job } from "../.pi/extensions/kernal-background/jobs.ts";
 import { endNotice } from "../.pi/extensions/kernal-background/index.ts";
 
 const trash: string[] = [];
@@ -122,6 +122,62 @@ describe("JobManager", () => {
     assert.notEqual(ended[0].status, "running");
   });
 
+  test("the watchdog escalates to SIGKILL: a job that ignores SIGTERM still dies with its parent", async () => {
+    const parent = spawn("sleep", ["60"], { stdio: "ignore" });
+    const { m } = manager({ parentPid: parent.pid });
+    const d = dir();
+    const job = m.start({ command: `trap '' TERM; echo $$ > ${d}/me; sleep 60`, kind: "server", cwd: tmpdir(), timeoutSeconds: 60 });
+    const me = await readPid(join(d, "me"));
+    parent.kill("SIGKILL");
+    await until(() => !alive(me) && !groupHasLiveMembers(job.pid), 8000);
+  });
+
+  test("kill escalates to SIGKILL for a job that ignores SIGTERM", async () => {
+    const { m } = manager();
+    const d = dir();
+    const job = m.start({ command: `trap '' TERM; echo $$ > ${d}/me; while :; do sleep 1; done`, kind: "server", cwd: tmpdir(), timeoutSeconds: 60 });
+    const me = await readPid(join(d, "me"));
+    const done = await m.kill(job.id);
+    assert.equal(done.status, "killed");
+    await until(() => !alive(me));
+  });
+
+  test("stdout and stderr keep their order in the log", async () => {
+    const { m, ended } = manager();
+    m.start({ command: "echo one; echo two >&2; echo three; echo four >&2", kind: "batch", cwd: tmpdir(), timeoutSeconds: 30 });
+    await until(() => ended.length === 1);
+    assert.equal(m.tail("bg1"), "one\ntwo\nthree\nfour");
+  });
+
+  test("stdin stays open: a command reading it waits instead of seeing EOF", async () => {
+    const { m, ended } = manager();
+    const job = m.start({ command: "cat; echo eof-seen", kind: "server", cwd: tmpdir(), timeoutSeconds: 60 });
+    await sleep(600);
+    assert.equal(m.get(job.id)?.status, "running");
+    await m.kill(job.id);
+    assert.equal(ended.length, 0);
+    assert.doesNotMatch(m.tail(job.id), /eof-seen/);
+  });
+
+  test("a spawn failure is an error for the caller, not an uncaught exception", async () => {
+    let uncaught: unknown;
+    const onUncaught = (err: unknown) => { uncaught = err; };
+    process.on("uncaughtException", onUncaught);
+    try {
+      const { m } = manager({ env: { PATH: "/nonexistent" } });
+      assert.throws(() => m.start({ command: "true", kind: "batch", cwd: tmpdir(), timeoutSeconds: 30 }), /could not start bash/);
+      await sleep(100);
+      assert.equal(uncaught, undefined);
+      assert.equal(m.list().length, 0);
+    } finally {
+      process.off("uncaughtException", onUncaught);
+    }
+  });
+
+  test("groupHasLiveMembers is false for a group that doesn't exist", () => {
+    assert.equal(groupHasLiveMembers(2 ** 22 + 12345), false);
+  });
+
   test("reapAll stops every running job without notifying; finished ones are untouched", async () => {
     const { m, ended } = manager();
     m.start({ command: "true", kind: "batch", cwd: tmpdir(), timeoutSeconds: 30 });
@@ -149,7 +205,7 @@ describe("JobManager", () => {
     const job = m.start({ command: "for i in $(seq 1 1000); do echo line-$i; done", kind: "batch", cwd: tmpdir(), timeoutSeconds: 30 });
     await until(() => ended.length === 1);
     const size = statSync(job.logPath).size + (existsSync(`${job.logPath}.1`) ? statSync(`${job.logPath}.1`).size : 0);
-    assert.ok(size <= 4000 + 4096, `on disk: ${size}`);
+    assert.ok(size <= 4000, `on disk: ${size}`);
     assert.ok(existsSync(`${job.logPath}.1`));
     assert.equal(m.tail(job.id, 3), "line-998\nline-999\nline-1000");
     assert.equal(m.tail(job.id, 5, "line-99"), ["line-995", "line-996", "line-997", "line-998", "line-999"].join("\n"));

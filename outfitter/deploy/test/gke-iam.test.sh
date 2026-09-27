@@ -114,6 +114,21 @@ fi
 expect pass "dry run mentions the namespace apply" "DRY_RUN:.*kubectl.*apply.*namespace.yaml"
 expect pass "dry run mentions the WI binding" "DRY_RUN:.*iam service-accounts add-iam-policy-binding"
 expect pass "dry run mentions clusterViewer" "DRY_RUN:.*roles/container.clusterViewer"
+expect pass "#197: dry run creates the sandbox log bucket" \
+  'DRY_RUN: would create log bucket outfitter-sandboxes (global, 30-day retention)'
+expect pass "#197: the sink copies only agentd containers in the sandbox namespace, and the Cloud Run agent job" \
+  'DRY_RUN: would create or update log sink outfitter-sandboxes -> projects/outfitter-509211/locations/global/buckets/outfitter-sandboxes with filter: (resource.type="k8s_container" AND resource.labels.namespace_name="outfitter-sandboxes" AND resource.labels.container_name="agentd") OR (resource.type="cloud_run_job"'
+expect pass "#197: logging.viewAccessor is conditioned on that bucket's _AllLogs view alone" \
+  'DRY_RUN:.*roles/logging.viewAccessor.*resource.name.*buckets/outfitter-sandboxes/views/_AllLogs'
+expect pass "#197: metrics come from a custom role with timeSeries.list only" \
+  'DRY_RUN: would create or update projects/outfitter-509211/roles/outfitterMetricsReader with monitoring.timeSeries.list'
+expect pass "#197: dry run grants that custom role" "DRY_RUN:.*outfitter-api@.*roles/outfitterMetricsReader"
+dry_out="$(env DRY_RUN=1 "${HERE}/../gke-iam.sh" 2>&1)"
+if grep -qE 'role(=| )roles/(logging\.viewer|monitoring\.viewer)' <<<"${dry_out}"; then
+  echo "FAIL: #197 must never grant project-wide roles/logging.viewer or roles/monitoring.viewer"; fails=$((fails + 1))
+else
+  echo "ok: #197: no project-wide logging.viewer or monitoring.viewer"
+fi
 expect pass "dry run mentions the RBAC apply" "DRY_RUN:.*kubectl.*apply.*rbac.yaml"
 expect pass "dry run doesn't touch the hardening binding" "DRY_RUN: would check.*sandbox-hardening-binding"
 

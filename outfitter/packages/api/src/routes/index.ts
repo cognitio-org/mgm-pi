@@ -11,6 +11,7 @@ import { registerHookRoutes } from "./hooks.ts";
 import { registerProviderRoutes } from "./providers.ts";
 import { registerOperatorRoutes } from "./operator.ts";
 import { registerStaticRoutes } from "./static.ts";
+import { registerSandboxRoutes } from "./sandbox.ts";
 
 export type { RouteContext } from "./context.ts";
 
@@ -24,6 +25,7 @@ export type { RouteContext } from "./context.ts";
 export async function registerRoutes(app: FastifyInstance, ctx: RouteContext): Promise<void> {
   if (ctx.config.role !== "link") {
     await registerSessionRoutes(app, ctx);
+    await registerSandboxRoutes(app, ctx);
     await registerGuruRoutes(app, ctx);
     await registerModelRoutes(app, ctx);
     await registerEnvironmentRoutes(app, ctx);

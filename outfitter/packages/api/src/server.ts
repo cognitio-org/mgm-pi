@@ -19,6 +19,7 @@ import { ModelsService } from "./models.ts";
 import { registerRoutes } from "./routes/index.ts";
 import { MailService, CloudTasksWakeScheduler, NoopWakeScheduler, type WakeScheduler } from "./mail.ts";
 import type { GithubBroker } from "./github-broker.ts";
+import { CachedSandboxTelemetry, GcpSandboxTelemetry, NoSandboxTelemetry, type SandboxTelemetry } from "./sandbox-telemetry.ts";
 
 export interface BuildAppOptions {
   store: Store;
@@ -36,6 +37,9 @@ export interface BuildAppOptions {
   github?: GithubBroker;
   /** Shortens installation-token refresh waits. Production omits this. */
   githubRefresh?: GithubRefreshTiming;
+  /** #197: sandbox logs and stats. Tests inject a fake; production omits it and gets Cloud
+   * Logging/Monitoring (or nothing, in dev or without GCP_PROJECT). */
+  telemetry?: SandboxTelemetry;
 }
 
 export interface App {
@@ -159,6 +163,11 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     secretAdmin,
     mail,
     providers,
+    telemetry:
+      opts.telemetry ??
+      (config.devMode || !config.gcpProject
+        ? new NoSandboxTelemetry()
+        : new CachedSandboxTelemetry(new GcpSandboxTelemetry(config.gcpProject, config.gkeNamespace))),
   });
   // The down-queue poller only makes sense where AgentLink sockets actually live (role "link" or
   // "all", same condition as registering /agent/ws itself) — see agentLink.startDownQueuePoller's

@@ -9,6 +9,7 @@ import type { ModelsService } from "../models.ts";
 import type { SecretAdmin } from "../secrets.ts";
 import type { MailService } from "../mail.ts";
 import type { SandboxProviders } from "../providers/registry.ts";
+import type { SandboxTelemetry } from "../sandbox-telemetry.ts";
 
 /** Dependencies every route module needs; built once in server.ts and threaded through. */
 export interface RouteContext {
@@ -32,4 +33,7 @@ export interface RouteContext {
    * interface, so tests run against MemorySecretAdmin with no GCP. */
   secretAdmin: SecretAdmin;
   mail: MailService;
+  /** #197: sandbox logs (Cloud Logging, through the scoped log view) and stats (Cloud Monitoring).
+   * NoSandboxTelemetry in dev and tests unless one injects a fake. */
+  telemetry: SandboxTelemetry;
 }

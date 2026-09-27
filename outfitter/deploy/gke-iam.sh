@@ -13,6 +13,9 @@
 #   impersonation form -- keeps agentd's ID token `email` unchanged, spec §3.2)
 # - roles/container.clusterViewer on the project for outfitter-api@ (both Cloud Run roles dial the
 #   cluster's DNS endpoint as this account)
+# - the outfitter-sandboxes log bucket and the sink that copies agentd's logs into it,
+#   roles/logging.viewAccessor on that bucket alone, and a custom outfitterMetricsReader role
+#   (monitoring.timeSeries.list), for outfitter-api@ (#197: the session page's sandbox logs and stats)
 # - the outfitter-api Role/RoleBinding in outfitter-sandboxes (deploy/gke/rbac.yaml; since #193
 #   it includes `get` on pods, for termination reasons)
 # - the sandbox-hardening-policy exemption for outfitter-sandboxes only (hardening-exemption.json),
@@ -68,6 +71,69 @@ echo "== ${API_SA_EMAIL}: roles/container.clusterViewer (project-wide, permanent
 run gcloud projects add-iam-policy-binding "${PROJECT}" \
   --member="serviceAccount:${API_SA_EMAIL}" --role=roles/container.clusterViewer \
   --condition=None --quiet
+
+# #197: the session page shows a run's sandbox logs and its memory/CPU/disk history.
+# Logs: a log view on _Default can only filter by source, resource type and log id (LogView docs), not
+# by namespace, so the sandboxes get their own log bucket instead. A sink copies agentd's lines (the
+# sandbox namespace's agentd containers, and the Cloud Run agent job) into it, and outfitter-api@'s
+# grant is roles/logging.viewAccessor conditioned on that bucket's _AllLogs view: it can read nothing
+# else in the project (not project-wide roles/logging.viewer; PR #199 and #201 reviews). The bucket
+# id is SANDBOX_LOG_BUCKET_ID in packages/api/src/sandbox-telemetry.ts. The lines stay in _Default
+# too; this is a copy, billed as a second destination.
+LOG_BUCKET_ID=outfitter-sandboxes
+LOG_BUCKET="projects/${PROJECT}/locations/global/buckets/${LOG_BUCKET_ID}"
+LOG_SINK_FILTER="(resource.type=\"k8s_container\" AND resource.labels.namespace_name=\"${GKE_NAMESPACE}\" AND resource.labels.container_name=\"agentd\") OR (resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"${CLOUDRUN_JOB:-outfitter-agent}\")"
+echo "== Log bucket ${LOG_BUCKET_ID} (30 days) and the sink that fills it: sandbox logs only (#197) =="
+if [[ "${DRY_RUN:-0}" == 1 ]]; then
+  echo "   DRY_RUN: would create log bucket ${LOG_BUCKET_ID} (global, 30-day retention) if missing"
+  echo "   DRY_RUN: would create or update log sink ${LOG_BUCKET_ID} -> ${LOG_BUCKET} with filter: ${LOG_SINK_FILTER}"
+else
+  # A torn-down bucket stays DELETE_REQUESTED for 7 days: its name can't be reused, and describe still
+  # finds it. Undelete it rather than route the sink into a bucket that's about to be purged.
+  bucket_state="$(gcloud logging buckets describe "${LOG_BUCKET_ID}" --location=global --project="${PROJECT}" \
+    --format='value(lifecycleState)' 2>/dev/null || true)"
+  if [[ -z "${bucket_state}" ]]; then
+    gcloud logging buckets create "${LOG_BUCKET_ID}" --location=global --project="${PROJECT}" --retention-days=30 \
+      --description="Outfitter sandbox logs (agentd), read by the session page" --quiet
+  elif [[ "${bucket_state}" == DELETE_REQUESTED ]]; then
+    echo "   ${LOG_BUCKET_ID} was deleted less than 7 days ago; undeleting it"
+    gcloud logging buckets undelete "${LOG_BUCKET_ID}" --location=global --project="${PROJECT}" --quiet
+  fi
+  if gcloud logging sinks describe "${LOG_BUCKET_ID}" --project="${PROJECT}" >/dev/null 2>&1; then
+    gcloud logging sinks update "${LOG_BUCKET_ID}" "logging.googleapis.com/${LOG_BUCKET}" --project="${PROJECT}" \
+      --log-filter="${LOG_SINK_FILTER}" --quiet
+  else
+    gcloud logging sinks create "${LOG_BUCKET_ID}" "logging.googleapis.com/${LOG_BUCKET}" --project="${PROJECT}" \
+      --log-filter="${LOG_SINK_FILTER}" --description="Outfitter sandbox logs for the session page (#197)" --quiet
+  fi
+fi
+
+echo "== ${API_SA_EMAIL}: roles/logging.viewAccessor on the ${LOG_BUCKET_ID} bucket's _AllLogs view only (#197) =="
+run gcloud projects add-iam-policy-binding "${PROJECT}" \
+  --member="serviceAccount:${API_SA_EMAIL}" --role=roles/logging.viewAccessor \
+  --condition="expression=resource.name == \"${LOG_BUCKET}/views/_AllLogs\",title=outfitter-sandbox-logs,description=Only the outfitter-sandboxes log bucket" \
+  --quiet
+
+# Metrics: a custom role with timeSeries.list alone, not roles/monitoring.viewer (which also reads
+# dashboards, alert policies and notification channels; #201 security review).
+METRICS_ROLE_ID=outfitterMetricsReader
+echo "== Custom role ${METRICS_ROLE_ID} (monitoring.timeSeries.list only) and its grant to ${API_SA_EMAIL} (#197) =="
+if [[ "${DRY_RUN:-0}" == 1 ]]; then
+  echo "   DRY_RUN: would create or update projects/${PROJECT}/roles/${METRICS_ROLE_ID} with monitoring.timeSeries.list"
+elif role_deleted="$(gcloud iam roles describe "${METRICS_ROLE_ID}" --project="${PROJECT}" --format='value(deleted)' 2>/dev/null)"; then
+  # A torn-down custom role answers describe (deleted: True) for 7 days and can't be updated until
+  # it's undeleted; its id stays reserved even longer, so create would fail too.
+  if [[ "${role_deleted}" == True ]]; then
+    echo "   ${METRICS_ROLE_ID} was deleted less than 7 days ago; undeleting it"
+    gcloud iam roles undelete "${METRICS_ROLE_ID}" --project="${PROJECT}" --quiet >/dev/null
+  fi
+  gcloud iam roles update "${METRICS_ROLE_ID}" --project="${PROJECT}" --permissions=monitoring.timeSeries.list --quiet >/dev/null
+else
+  gcloud iam roles create "${METRICS_ROLE_ID}" --project="${PROJECT}" --permissions=monitoring.timeSeries.list \
+    --title="Outfitter metrics reader" --description="Read sandbox metrics for the session page (#197)" --quiet >/dev/null
+fi
+run gcloud projects add-iam-policy-binding "${PROJECT}" \
+  --member="serviceAccount:${API_SA_EMAIL}" --role="projects/${PROJECT}/roles/${METRICS_ROLE_ID}" --condition=None --quiet
 
 echo "== RBAC: ${API_SA_EMAIL} in ${GKE_NAMESPACE} (deploy/gke/rbac.yaml) =="
 run kubectl --kubeconfig="${KUBECONFIG}" apply --server-side -f "${GKE_DIR}/rbac.yaml"

@@ -303,7 +303,11 @@ the page and never moved the fleet, because `release.sh` deploys the page first.
    `link.sh`'s `--set-env-vars` once it does.
 6. **`./agent-job.sh`** — builds `image/Dockerfile` (repo root context) with Cloud Build and
    deploys/updates the `outfitter-agent` Cloud Run Job, pointed at `outfitter-link`'s URL (looked
-   up; agentd only ever dials `outfitter-link`, never `outfitter-api`).
+   up; agentd only ever dials `outfitter-link`, never `outfitter-api`). The build uses BuildKit
+   with the job's current image as its layer cache (`--cache-from`, `BUILDKIT_INLINE_CACHE=1`), so
+   unchanged layers (apt, Playwright, unchanged npm installs) are neither rebuilt nor pushed again.
+   With no usable cache (first deploy, a new `node` base image, an image from another repo) it
+   builds everything, as before.
 7. **`./access.sh`** — IAP on `outfitter-api` with its OAuth client and `IAP_MEMBERS`, the IAP
    service agent's invoker binding, and the public invoker on `outfitter-link` and (once it
    exists) `kernal-web`. Re-run it whenever `IAP_MEMBERS` or `IAP_OAUTH_CLIENT_ID` in `config.env`

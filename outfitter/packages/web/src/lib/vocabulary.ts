@@ -71,6 +71,11 @@ export const floppyActions = {
   format: { word: "Format", hint: "erase this archived floppy for good, like formatting a real disk" },
 } as const;
 
+/** A floppy's display title: its name, or "Floppy" and the first 8 characters of its id. */
+export function floppyTitle(session: { id: string; name?: string }): string {
+  return session.name ?? `Floppy ${session.id.slice(0, 8)}`;
+}
+
 export function transportLabel(key: keyof typeof transport): string {
   const t = transport[key];
   return t.glyph ? `${t.glyph} ${t.word}` : t.word;

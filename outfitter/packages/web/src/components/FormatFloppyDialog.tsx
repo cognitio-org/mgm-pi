@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 import { api } from "../api/client.ts";
 import { toApiErrorState } from "../lib/api-error.ts";
 import { withFloppySound } from "../lib/floppy-sound.ts";
@@ -9,6 +9,7 @@ import type { ApiErrorState } from "./SystemErrorDialog.tsx";
 interface Props {
   sessionId: string;
   title: string;
+  /** Called once the floppy is gone. The caller unmounts the dialog (its buttons stay disabled). */
   onFormatted: () => void;
   onCancel: () => void;
   onError: (error: ApiErrorState) => void;
@@ -19,6 +20,24 @@ interface Props {
  * accidental Enter doesn't erase anything. */
 export function FormatFloppyDialog({ sessionId, title, onFormatted, onCancel, onError }: Props) {
   const [formatting, setFormatting] = useState(false);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+
+  // Escape cancels, and Tab stays on the two buttons: focus must not wander to the page behind a
+  // destructive confirm.
+  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      if (!formatting) onCancel();
+      return;
+    }
+    if (e.key !== "Tab" || !dialogRef.current) return;
+    const buttons = [...dialogRef.current.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
+    if (buttons.length === 0) return;
+    const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    const next = buttons[(at + (e.shiftKey ? -1 : 1) + buttons.length) % buttons.length];
+    e.preventDefault();
+    next.focus();
+  }
 
   async function confirm() {
     setFormatting(true);
@@ -40,6 +59,8 @@ export function FormatFloppyDialog({ sessionId, title, onFormatted, onCancel, on
         aria-labelledby="format-title"
         aria-describedby="format-body"
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={onKeyDown}
+        ref={dialogRef}
       >
         <div className="panel-titlebar">
           <span className="panel-label" id="format-title">

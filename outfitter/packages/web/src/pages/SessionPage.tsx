@@ -103,6 +103,10 @@ export function SessionPage() {
   // #209: Archive, Restore and Format. Archived floppies are read-only (api 409s wake and send).
   const [shelving, setShelving] = useState<"archive" | "restore" | null>(null);
   const [formatOpen, setFormatOpen] = useState(false);
+  // The route reuses this component across sessions, so an archive that returns after the user
+  // moved on must not write its session into the next one's page.
+  const currentSessionId = useRef(sessionId);
+  currentSessionId.current = sessionId;
 
   // The route reuses this component when navigating from one session to another (App.tsx's
   // /sessions/:id has no key), so a pending send must not follow the user into the next session:
@@ -112,6 +116,7 @@ export function SessionPage() {
     setLastProgressAt(Date.now());
     setCompact(false);
     setFormatOpen(false);
+    setShelving(null);
   }, [sessionId]);
 
   useEffect(() => {
@@ -328,14 +333,15 @@ export function SessionPage() {
   }
 
   async function shelve(action: "archive" | "restore") {
+    const id = sessionId;
     setShelving(action);
     try {
-      await withFloppySound(action === "archive" ? api.archiveSession(sessionId) : api.restoreSession(sessionId));
-      await reload();
+      await withFloppySound(action === "archive" ? api.archiveSession(id) : api.restoreSession(id));
+      if (currentSessionId.current === id) await reload();
     } catch (err) {
-      setApiError(toApiErrorState(err, `Failed to ${action} floppy`));
+      if (currentSessionId.current === id) setApiError(toApiErrorState(err, `Failed to ${action} floppy`));
     } finally {
-      setShelving(null);
+      if (currentSessionId.current === id) setShelving(null);
     }
   }
 
@@ -370,6 +376,8 @@ export function SessionPage() {
   }
 
   if (notFound) return <NotFoundError subject="This floppy" />;
+
+  const archived = Boolean(session?.archivedAt);
 
   // idle/stopped/failed means pi is not inside a tool. A newer user message settles the
   // previous turn even when the next run is already "running" again.
@@ -410,9 +418,11 @@ export function SessionPage() {
     <span className="send-status send-status-error" role="alert">
       <strong>{statusError}</strong>
       <span className="send-status-detail">{activity.label}</span>
-      <button type="button" className="btn btn-small" onClick={handleRetry}>
-        Retry
-      </button>
+      {!archived && (
+        <button type="button" className="btn btn-small" onClick={handleRetry}>
+          Retry
+        </button>
+      )}
     </span>
   ) : activity.label ? (
     <Working label={activity.label.replace(/…$/, "")} srOnly={false} className={`send-status send-status-${activity.phase}`} />
@@ -423,7 +433,6 @@ export function SessionPage() {
   // ?DEVICE NOT PRESENT ERROR the Peripherals page shows for that row, right where the user is
   // already looking, instead of a confusing generic run failure.
   const floppyTitle = session?.name ?? `Floppy ${sessionId.slice(0, 8)}`;
-  const archived = Boolean(session?.archivedAt);
   const cluster = githubCluster(session);
   const looseRepo = looseRepoClause(session);
   const modelProviderKind = header.model?.split("/")[0];
@@ -629,7 +638,13 @@ export function SessionPage() {
                 {session.mailNotice}
                 {session.heldMail ? ` (${session.heldMail})` : ""}
               </span>
-              <button type="button" className="btn btn-small" onClick={handleMailRetry}>
+              <button
+                type="button"
+                className="btn btn-small"
+                onClick={handleMailRetry}
+                disabled={archived}
+                title={archived ? "Restore this floppy to deliver its messages" : undefined}
+              >
                 Retry
               </button>
             </p>

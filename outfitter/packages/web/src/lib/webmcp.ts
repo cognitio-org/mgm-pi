@@ -78,7 +78,7 @@ export interface WebMcpHost {
 
 /** The page client calls these tools are allowed to make. No token and no link-origin methods. */
 export interface WebMcpClient {
-  sessions(filter?: { status?: string; guru?: string; runState?: string }): Promise<SessionSummary[]>;
+  sessions(filter?: { status?: string; guru?: string; runState?: string; archived?: "only" | "all" }): Promise<SessionSummary[]>;
   createSession(input: NewSessionInput): Promise<{ session: SessionDetail; run: RunLike | null }>;
   sendMessage(id: string, text: string, behavior?: "steer" | "followUp"): Promise<{ run: RunLike | null }>;
   abort(id: string): Promise<{ run: RunLike }>;
@@ -161,7 +161,7 @@ function fleetTools(client: WebMcpClient): WebMcpTool[] {
     {
       name: "list_floppies",
       description:
-        "Use when you need the signed-in user's Floppies, the same list as the Disk Box. Optional run_state and guru narrow it the way that page's filters do. Does not accept a token.",
+        "Use when you need the signed-in user's Floppies, the same list as the Disk Box. Optional run_state and guru narrow it the way that page's filters do. Archived Floppies are left out unless archived is 'only' (just them, the Archive view) or 'all'. Does not accept a token.",
       inputSchema: {
         type: "object",
         properties: {
@@ -170,17 +170,21 @@ function fleetTools(client: WebMcpClient): WebMcpTool[] {
             description: "Optional run state filter (queued, provisioning, running, idle, stopping, stopped, failed).",
           },
           guru: { type: "string", description: "Optional tape id, the Disk Box guru filter." },
+          archived: { type: "string", description: 'Optional: "only" for archived Floppies, "all" for both.' },
         },
         additionalProperties: false,
       },
       annotations: { readOnlyHint: true, untrustedContentHint: true },
       async execute(input) {
         const record = readInput(input);
-        const filter: { runState?: string; guru?: string } = {};
+        const filter: { runState?: string; guru?: string; archived?: "only" | "all" } = {};
         const runState = optionalString(record, "run_state");
         const guru = optionalString(record, "guru");
+        const archived = optionalString(record, "archived");
+        if (archived && archived !== "only" && archived !== "all") throw new Error('archived must be "only" or "all"');
         if (runState) filter.runState = runState;
         if (guru) filter.guru = guru;
+        if (archived === "only" || archived === "all") filter.archived = archived;
         return client.sessions(filter);
       },
     },

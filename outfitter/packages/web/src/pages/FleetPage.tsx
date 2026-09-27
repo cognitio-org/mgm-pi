@@ -10,7 +10,7 @@ import { Working } from "../components/Working.tsx";
 import { SystemErrorDialog, type ApiErrorState } from "../components/SystemErrorDialog.tsx";
 import { FormatFloppyDialog } from "../components/FormatFloppyDialog.tsx";
 import { withFloppySound } from "../lib/floppy-sound.ts";
-import { floppyActions, vocabSubtitle, vocabulary } from "../lib/vocabulary.ts";
+import { floppyActions, floppyTitle, vocabSubtitle, vocabulary } from "../lib/vocabulary.ts";
 
 const RUN_STATES = ["queued", "provisioning", "running", "idle", "stopping", "stopped", "failed"];
 
@@ -20,16 +20,17 @@ function formatCost(cost: number): string {
 
 export function FleetPage() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [gurus, setGurus] = useState<Guru[]>([]);
   // The desk's Trash icon deep-links here as /fleet?runState=stopped -- honour it as the initial
   // filter (still a plain client-side filter change afterward, same as the dropdown).
   const [runStateFilter, setRunStateFilter] = useState(() => searchParams.get("runState") ?? "");
   const [guruFilter, setGuruFilter] = useState("");
-  // #209: the Disk Box shows floppies in use; the Archive is a second view of the same table.
-  const [showArchived, setShowArchived] = useState(() => searchParams.get("archived") === "only");
-  const [busyId, setBusyId] = useState<string | null>(null);
+  // #209: the Disk Box shows floppies in use; the Archive is a second view of the same table. Held
+  // in the URL (?archived=only), so the nav link, Back, reload and a format's redirect all agree.
+  const showArchived = searchParams.get("archived") === "only";
+  const [busyIds, setBusyIds] = useState<ReadonlySet<string>>(new Set());
   const [formatting, setFormatting] = useState<SessionSummary | null>(null);
   const [apiError, setApiError] = useState<ApiErrorState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -65,14 +66,18 @@ export function FleetPage() {
 
   /** Archive or Restore one row, then reload: either way it leaves the current view. */
   async function shelve(session: SessionSummary, action: "archive" | "restore") {
-    setBusyId(session.id);
+    setBusyIds((ids) => new Set(ids).add(session.id));
     try {
       await withFloppySound(action === "archive" ? api.archiveSession(session.id) : api.restoreSession(session.id));
       await load();
     } catch (err) {
       setApiError(toApiErrorState(err, `Failed to ${action} floppy`));
     } finally {
-      setBusyId(null);
+      setBusyIds((ids) => {
+        const next = new Set(ids);
+        next.delete(session.id);
+        return next;
+      });
     }
   }
 
@@ -99,7 +104,12 @@ export function FleetPage() {
         </select>
         <select
           value={showArchived ? "archived" : "active"}
-          onChange={(e) => setShowArchived(e.target.value === "archived")}
+          onChange={(e) => {
+            const next = new URLSearchParams(searchParams);
+            if (e.target.value === "archived") next.set("archived", "only");
+            else next.delete("archived");
+            setSearchParams(next);
+          }}
           aria-label="Show floppies"
           title={showArchived ? vocabulary.archive.hint : undefined}
         >
@@ -123,6 +133,10 @@ export function FleetPage() {
 
       {loading ? (
         <p className="empty-state"><Working label="Loading" size="lg" srOnly={false} /></p>
+      ) : sessions.length === 0 && (runStateFilter || guruFilter) ? (
+        <div className="empty-state">
+          <p>No floppies match these filters.</p>
+        </div>
       ) : sessions.length === 0 && showArchived ? (
         <div className="empty-state">
           <p>The {vocabulary.archive.one} is empty. Archive a floppy to put it away here.</p>
@@ -179,7 +193,7 @@ export function FleetPage() {
                 <td data-label="" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
                   {s.canManage && (
                     <div className="toolbar row-actions" style={{ margin: 0 }}>
-                      {busyId === s.id ? (
+                      {busyIds.has(s.id) ? (
                         <Working label={s.archivedAt ? "Restoring" : "Archiving"} />
                       ) : s.archivedAt ? (
                         <>
@@ -209,7 +223,7 @@ export function FleetPage() {
       {formatting && (
         <FormatFloppyDialog
           sessionId={formatting.id}
-          title={formatting.name ?? `Floppy ${formatting.id.slice(0, 8)}`}
+          title={floppyTitle(formatting)}
           onCancel={() => setFormatting(null)}
           onError={(error) => {
             setFormatting(null);

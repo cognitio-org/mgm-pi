@@ -42,7 +42,7 @@ describe("webmcp registrar", () => {
     registerWebMcpTools(null, {});
   });
 
-  it("registers the seven fleet tool names on document.modelContext", () => {
+  it("registers every fleet tool name on document.modelContext", () => {
     const { tools, signals } = captureTools();
     expect(tools.map((tool) => tool.name)).toEqual([...WEBMCP_TOOL_NAMES]);
     expect(new Set(WEBMCP_TOOL_NAMES).size).toBe(9);
@@ -123,6 +123,10 @@ describe("webmcp registrar", () => {
 
     await byName.get("read_transcript")!.execute({ session_id: "s1", after: "e9" });
     expect(client.entries).toHaveBeenCalledWith("s1", "e9");
+
+    await byName.get("list_floppies")!.execute({ archived: "only" });
+    expect(client.sessions).toHaveBeenLastCalledWith({ archived: "only" });
+    await expect(byName.get("list_floppies")!.execute({ archived: "yes" })).rejects.toThrow(/archived/);
 
     await byName.get("archive_floppy")!.execute({ session_id: " s1 " });
     expect(client.archiveSession).toHaveBeenCalledWith("s1");

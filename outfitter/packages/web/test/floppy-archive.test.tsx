@@ -65,6 +65,30 @@ afterEach(() => {
 });
 
 describe("Disk Box archive actions", () => {
+  it("follows ?archived=only and writes the view back to the URL", async () => {
+    stubApi({
+      "GET /api/sessions?archived=only": [],
+      "GET /api/sessions": [row("mine")],
+      "GET /api/gurus": [],
+    });
+    const view = mount(
+      <MemoryRouter initialEntries={["/fleet?archived=only"]}>
+        <FleetPage />
+      </MemoryRouter>,
+    );
+    await flush();
+    expect(view.container.querySelector("h2")?.textContent).toBe("Archive");
+    const select = view.container.querySelector('select[aria-label="Show floppies"]') as HTMLSelectElement;
+    act(() => {
+      select.value = "active";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flush();
+    expect(view.container.querySelector("h2")?.textContent).toBe("Disk Box");
+    expect(button(view.container, "Archive")).toBeTruthy();
+    view.unmount();
+  });
+
   it("offers Archive only on floppies the user may manage, and archives through the api", async () => {
     const calls = stubApi({
       "GET /api/sessions": [row("mine"), row("theirs", { canManage: false })],
@@ -126,6 +150,24 @@ describe("FormatFloppyDialog", () => {
     expect(calls).toEqual([{ method: "DELETE", url: "/api/sessions/s1" }]);
     expect(onFormatted).toHaveBeenCalledTimes(1);
     expect(onCancel).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it("Escape cancels and Tab stays on the two buttons", () => {
+    stubApi({});
+    const onCancel = vi.fn();
+    const view = mount(<FormatFloppyDialog sessionId="s1" title="t" onFormatted={vi.fn()} onCancel={onCancel} onError={vi.fn()} />);
+    const dialog = view.container.querySelector('[role="alertdialog"]') as HTMLElement;
+    const key = (k: string, shiftKey = false) =>
+      act(() => {
+        dialog.dispatchEvent(new KeyboardEvent("keydown", { key: k, shiftKey, bubbles: true }));
+      });
+    key("Tab");
+    expect(document.activeElement?.textContent).toBe("Yes, format");
+    key("Tab", true);
+    expect(document.activeElement?.textContent).toBe("Cancel");
+    key("Escape");
+    expect(onCancel).toHaveBeenCalledTimes(1);
     view.unmount();
   });
 

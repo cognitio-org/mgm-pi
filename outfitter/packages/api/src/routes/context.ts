@@ -1,3 +1,4 @@
+import type { PreviewService } from "../previews.ts";
 import type { Store } from "../store/types.ts";
 import type { Config } from "../config.ts";
 import type { RunManager } from "../runs.ts";
@@ -33,6 +34,8 @@ export interface RouteContext {
    * interface, so tests run against MemorySecretAdmin with no GCP. */
   secretAdmin: SecretAdmin;
   mail: MailService;
+  /** #217 Drive previews: the tick sweeps expired and orphaned preview endpoints. */
+  previews: PreviewService;
   /** #197: sandbox logs (Cloud Logging, through the scoped log view) and stats (Cloud Monitoring).
    * NoSandboxTelemetry in dev and tests unless one injects a fake. */
   telemetry: SandboxTelemetry;

@@ -107,7 +107,10 @@ export async function registerHookRoutes(app: FastifyInstance, ctx: RouteContext
     await ctx.runs.reconcileOnce();
     await ctx.runs.reconcileStoppingOnce();
     const woken = await ctx.mail.sweep();
-    return { woken };
+    // #217: share links past their deadline, previews of runs that ended without a bye, and what a
+    // crash left on ngrok's side. Never fails the tick.
+    const previews = await ctx.previews.sweep().catch(() => undefined);
+    return { woken, ...(previews ? { previews } : {}) };
   });
 
   // §5.3 guardrail 1 (gke-sandbox-provider.md): two Cloud Scheduler HTTP jobs (warm-up/warm-down)

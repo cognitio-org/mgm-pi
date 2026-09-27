@@ -2,6 +2,8 @@
 // agentd, and the run reconciler. Kept separate from main.ts so tests can build an app in-process
 // (light-my-request) without binding a port.
 
+import { createNgrokApi, type NgrokApi } from "./ngrok-api.ts";
+import { PreviewService } from "./previews.ts";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyWebsocket from "@fastify/websocket";
 import type { Store } from "./store/types.ts";
@@ -40,6 +42,9 @@ export interface BuildAppOptions {
   /** #197: sandbox logs and stats. Tests inject a fake; production omits it and gets Cloud
    * Logging/Monitoring (or nothing, in dev or without GCP_PROJECT). */
   telemetry?: SandboxTelemetry;
+  /** #217 Drive previews' ngrok API. Tests inject a fake; production builds one from NGROK_API_KEY
+   * when PREVIEW_DOMAIN is set. */
+  ngrok?: NgrokApi;
 }
 
 export interface App {
@@ -50,6 +55,7 @@ export interface App {
   laptopProbe: LaptopProbe;
   providerStatus: ProviderStatusService;
   mail: MailService;
+  previews: PreviewService;
   /** Stops the run reconciler interval, (role link/all) the down-queue poller, and (role web/all)
    * the provider status poller; call from tests and from main.ts on shutdown. */
   stopBackgroundTasks: () => void;
@@ -80,6 +86,10 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   });
   const mail = new MailService(store, runs, wakeSchedulerFor(config), (msg, err) => fastify.log.warn({ err }, msg));
   const agentLink = new AgentLink(store, config, secretsBroker, sse, laptopProbe, mail, opts.github, opts.githubRefresh);
+  // #217 Drive previews: on when PREVIEW_DOMAIN and NGROK_API_KEY are set (tests inject opts.ngrok).
+  const ngrok = opts.ngrok ?? (config.ngrokApiKey && config.previewDomain ? createNgrokApi(config.ngrokApiKey) : undefined);
+  const previews = new PreviewService({ store, config, ngrok, log: (msg, detail) => fastify.log.warn(detail ?? {}, msg) });
+  agentLink.setPreviews(previews);
   // #193: a run whose agent vanished without a bye gets its sandbox's exit reason read promptly.
   agentLink.onAgentLost((runId) => runs.noteAgentLost(runId));
 
@@ -162,6 +172,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     modelsService,
     secretAdmin,
     mail,
+    previews,
     providers,
     telemetry:
       opts.telemetry ??
@@ -189,7 +200,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     ssePoller.stop();
   };
 
-  return { fastify, runs, agentLink, sse, laptopProbe, providerStatus, mail, stopBackgroundTasks };
+  return { fastify, runs, agentLink, sse, laptopProbe, providerStatus, mail, previews, stopBackgroundTasks };
 }
 
 /** GET /api/sessions/:id/browser/captures/:captureId, or undefined. Query strings are ignored. */

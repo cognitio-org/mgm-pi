@@ -310,6 +310,7 @@ describe("agentlink up-frame ordering", () => {
       entries: inner.entries,
       runs: delayingRuns,
       mail: inner.mail,
+      previews: inner.previews,
       gurus: inner.gurus,
       environments: inner.environments,
       users: inner.users,

@@ -5,6 +5,7 @@
 // queue drains once agentd reports the run running/idle — on that first "status", or on a later
 // reconnect's "hello" if it was already ready).
 
+import type { PreviewService } from "./previews.ts";
 import { randomUUID, createHash, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { WebSocket } from "@fastify/websocket";
@@ -235,7 +236,10 @@ export interface RunSpecMessage {
   // litellmBaseUrl is server-controlled (config.litellmBaseUrl), never guru-editable -- see
   // security-review-pr15.md finding #1: agentd pins it into the pi child's env after guru.env so a
   // guru-supplied LITELLM_BASE_URL can't redirect where the real litellmKey gets sent.
-  secrets: { githubToken: string; litellmKey: string; litellmBaseUrl: string };
+  secrets: { githubToken: string; litellmKey: string; litellmBaseUrl: string; ngrokAuthtoken?: string };
+  /** Drive previews (#217): the run's internal endpoint domain; with secrets.ngrokAuthtoken on the
+   * run's first spec. Absent when previews are off (PreviewService.runSpecConfig). */
+  preview?: { internalDomain: string };
   /** The session's person, credited on cloud commits (the Outfitter bot authors and commits them;
    * agentd adds `Co-authored-by`/`On-behalf-of` trailers from this). Omitted when the session has
    * no owner on record; agentd then commits as the bot alone. See docs/protocol.md. */
@@ -337,6 +341,8 @@ export class AgentLink {
   private readonly laptopProbe: LaptopProbe;
   private readonly mail: MailService;
   private readonly github: GithubBroker;
+  /** Drive previews (#217); unset in apps built without one (setPreviews). */
+  private previews: PreviewService | undefined;
   /** Installation-token refresh timers, one per run. Cleared only when that run's current socket closes. */
   private readonly githubRefresh = new Map<string, ReturnType<typeof setTimeout>>();
   /** Failed mint attempts since the last token was delivered. Capped, then the current token stays. */
@@ -1116,6 +1122,8 @@ export class AgentLink {
     });
 
     const secrets = await this.secretsBroker.secretsForRun(session, guru);
+    // #217: the run's preview credential, minted on its first spec; undefined when previews are off.
+    const previewConfig = await this.previews?.runSpecConfig(run);
     // GcpSecretsBroker (secrets.ts) resolves a missing `outfitter-github-token-<sessionId>` secret
     // to "" rather than throwing -- after a GitHub App installation token, then the shared
     // `outfitter-github-token-default` -- so a session with no repo (which needs no GitHub token at
@@ -1210,7 +1218,13 @@ export class AgentLink {
         ...(allowExternalHtmlResources ? { allowExternalHtmlResources: true } : {}),
       },
       snapshot: { url: session.checkpoint?.snapshotUrl, ...(jsonl ? { jsonl } : {}) },
-      secrets: { githubToken: secrets.githubToken, litellmKey: secrets.litellmKey, litellmBaseUrl: this.config.litellmBaseUrl },
+      secrets: {
+        githubToken: secrets.githubToken,
+        litellmKey: secrets.litellmKey,
+        litellmBaseUrl: this.config.litellmBaseUrl,
+        ...(previewConfig?.token ? { ngrokAuthtoken: previewConfig.token } : {}),
+      },
+      ...(previewConfig ? { preview: { internalDomain: previewConfig.internalDomain } } : {}),
       ...(author ? { author } : {}),
       idleStopSeconds: this.config.idleStopSeconds,
       // Deviation from protocol.md (checkpointEvery isn't specced further, and agentd's
@@ -1238,6 +1252,11 @@ export class AgentLink {
 
   /** #193: called with the run id when a run's registered agent socket closes (server.ts wires it to
    * RunManager.noteAgentLost). A superseded socket closing doesn't count: its replacement is live. */
+  /** Drive previews (#217): wired by buildApp after construction. */
+  setPreviews(previews: PreviewService): void {
+    this.previews = previews;
+  }
+
   onAgentLost(listener: (runId: string) => void): void {
     this.agentLostListeners.push(listener);
   }
@@ -1554,18 +1573,28 @@ export class AgentLink {
         await this.handleBrowserActionRequest(sessionId, frame);
         break;
       }
-      // Drive previews (#217, docs/specs/drive-previews.md). Phase 1 ships the sandbox side only:
-      // until phase 2 creates ngrok cloud endpoints, every open is answered `not-configured` (the
-      // api doesn't send preview config in run.spec yet, so a real agentd never asks).
+      // Drive previews (#217, docs/specs/drive-previews.md): agentd has bound the run's internal
+      // endpoint; PreviewService makes (or finds) the public cloud endpoint. Not on this chain's
+      // critical path: an ngrok API call mustn't hold up heartbeats.
       case "preview.open": {
         const requestId = typeof frame.requestId === "string" ? frame.requestId : "";
-        if (requestId && socket.readyState === 1) {
-          socket.send(JSON.stringify({ t: "preview.result", requestId, error: "not-configured" }));
-        }
+        if (!requestId) break;
+        const port = Number(frame.port);
+        const share = frame.share === true;
+        const internalUrl = typeof frame.internalUrl === "string" ? frame.internalUrl : undefined;
+        const answer = this.previews ? this.previews.open(runId, port, share, internalUrl) : Promise.resolve({ error: "not-configured" });
+        void answer
+          .catch(() => ({ error: "failed" }))
+          .then((result) => {
+            if (socket.readyState === 1) socket.send(JSON.stringify({ t: "preview.result", requestId, ...result }));
+          });
         break;
       }
-      case "preview.close":
+      case "preview.close": {
+        const port = Number(frame.port);
+        if (this.previews && Number.isInteger(port)) void this.previews.close(runId, port, "closed by the sandbox").catch(() => {});
         break;
+      }
       case "browser.inspect.request": {
         await this.handleBrowserInspectRequest(sessionId, frame);
         break;
@@ -1592,6 +1621,9 @@ export class AgentLink {
           if (this.sockets.get(runId) === socket) this.sockets.delete(runId);
           closeQuietly(socket, stored ? 1000 : 1011, stored ? reason : "bye not stored");
         }
+        // #217: the run's previews and preview credential go with it (the tick's sweep catches a run
+        // that ends without a bye).
+        if (stored && this.previews) void this.previews.closeRun(runId).catch(() => {});
         // Then start the next run for it, and for mail held back while this run was stopping --
         // except after an explicit stop, which the /tick sweep may still override later.
         if (reason !== "stop") await this.mail.wakeIfMail(sessionId);

@@ -114,10 +114,19 @@ export interface DownMessage {
 /** Which GitHub credential a run was actually given (#159). */
 export type GithubCredential = "app" | "session" | "default" | "none";
 
+/** A run's Drive-preview identity (#217): the ngrok credential minted for it at its first run.spec,
+ * which may bind only `*.<label>.internal`. Kept so a reconnect reuses it and run end deletes it. */
+export interface RunPreview {
+  label: string;
+  credentialId: string;
+}
+
 export interface Run {
   id: string;
   sessionId: string;
   state: RunState;
+  /** Drive previews (#217): present once the run's preview credential exists. */
+  preview?: RunPreview;
   reason?: string;
   /** Last frame of any kind from agentd, heartbeats included (every 15 s while pi is up). */
   lastSeenAt?: string;
@@ -556,6 +565,37 @@ export interface FormattedSession {
   formattedBy: string;
 }
 
+/** One public preview URL for a port in a run's sandbox (#217, docs/specs/drive-previews.md): an
+ * ngrok cloud endpoint `https://<id>.<PREVIEW_DOMAIN>` forwarding to the run's internal endpoint. */
+export interface Preview {
+  /** The host label: 128 random bits, hex. Also the record id. */
+  id: string;
+  runId: string;
+  sessionId: string;
+  port: number;
+  /** A public, time-limited link (true), or signed-in session viewers only (false). */
+  share: boolean;
+  url: string;
+  endpointId: string;
+  internalUrl: string;
+  createdAt: string;
+  /** Share links only: when the sweeper deletes the endpoint. */
+  expiresAt?: string;
+  closedAt?: string;
+  closedReason?: string;
+}
+
+export interface PreviewsCollection {
+  insert(preview: Preview): Promise<void>;
+  /** The open preview of `port` in `runId` with this `share` mode, if any. */
+  findOpen(runId: string, port: number, share: boolean): Promise<Preview | null>;
+  listOpenForRun(runId: string): Promise<Preview[]>;
+  listOpenForSession(sessionId: string): Promise<Preview[]>;
+  listOpen(): Promise<Preview[]>;
+  /** Marks an open preview closed; null if it was already closed or doesn't exist. */
+  markClosed(id: string, closedAt: string, reason: string): Promise<Preview | null>;
+}
+
 export interface FormattedSessionsCollection {
   /** Idempotent: a second insert for the same id keeps the first record. */
   insert(record: FormattedSession): Promise<void>;
@@ -818,5 +858,6 @@ export interface Store {
   browserRequests: BrowserRequestsCollection;
   browserCaptures: BrowserCapturesCollection;
   formattedSessions: FormattedSessionsCollection;
+  previews: PreviewsCollection;
   close(): Promise<void>;
 }

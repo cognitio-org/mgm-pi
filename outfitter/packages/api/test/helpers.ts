@@ -1,6 +1,7 @@
 // Shared test scaffolding: an app wired to MemoryStore + NoopProvider in dev mode, so route,
 // agentlink and auth tests never touch Mongo, a real provider, or GCP.
 
+import type { NgrokApi } from "../src/ngrok-api.ts";
 import { loadConfig, type SandboxProviderName } from "../src/config.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import type { Store, Guru } from "../src/store/types.ts";
@@ -39,6 +40,8 @@ export interface BuildTestAppOptions {
   githubRefresh?: GithubRefreshTiming;
   /** #197: sandbox logs and stats. Defaults to NoSandboxTelemetry (dev mode). */
   telemetry?: SandboxTelemetry;
+  /** #217: a fake ngrok API for Drive previews (with PREVIEW_DOMAIN in envOverrides). */
+  ngrok?: NgrokApi;
 }
 
 export async function buildTestApp(
@@ -71,6 +74,7 @@ export async function buildTestApp(
     github: opts.github,
     githubRefresh: opts.githubRefresh,
     telemetry: opts.telemetry,
+    ngrok: opts.ngrok,
   });
   await app.fastify.ready();
   return { ...app, store, provider, secretAdmin };

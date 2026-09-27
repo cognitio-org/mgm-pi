@@ -72,7 +72,7 @@ IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}/outfitter-api:${TAG}"
 # default 5 minutes). LITELLM_ADMIN_KEY was already mounted here (it predates E2.10) and is now also
 # read by the provider status service's LiteLLM probe, falling back to the default guru LiteLLM key
 # (outfitter-litellm-key-default, secrets.ts's SecretsBroker.defaultLitellmKey) when unset.
-SECRETS="$(existing_secrets MONGODB_URI=outfitter-mongodb-uri:latest GITHUB_PAT=outfitter-github-pat:latest LITELLM_ADMIN_KEY=outfitter-litellm-admin:latest LOCAL_TUNNEL_TOKEN=outfitter-local-tunnel-token:latest NGROK_API_KEY=outfitter-ngrok-api-key:latest)"
+SECRETS="$(existing_secrets MONGODB_URI=outfitter-mongodb-uri:latest GITHUB_PAT=outfitter-github-pat:latest LITELLM_ADMIN_KEY=outfitter-litellm-admin:latest LOCAL_TUNNEL_TOKEN=outfitter-local-tunnel-token:latest NGROK_API_KEY=outfitter-ngrok-api-key:latest NGROK_GOOGLE_OAUTH=outfitter-ngrok-google-oauth:latest)"
 
 # Both roles run the same image, so whichever deploys second reuses the first one's build.
 if image_exists "${IMAGE}"; then
@@ -180,6 +180,14 @@ fi
 if [[ -n "${GKE_CLUSTER:-}" ]]; then
   ENV_VARS="${ENV_VARS},GKE_CLUSTER=${GKE_CLUSTER},GKE_LOCATION=${GKE_LOCATION},GKE_NAMESPACE=${GKE_NAMESPACE},GKE_WARM_POOL=${GKE_WARM_POOL},GKE_LAUNCH_MODE=${GKE_LAUNCH_MODE},GKE_MAX_ACTIVE=${GKE_MAX_ACTIVE}"
   echo "   gke: cluster=${GKE_CLUSTER} location=${GKE_LOCATION} namespace=${GKE_NAMESPACE} pool=${GKE_WARM_POOL} mode=${GKE_LAUNCH_MODE} maxActive=${GKE_MAX_ACTIVE}"
+fi
+# #217 Drive previews, both roles (link answers agentd's preview.open and runs the tick's sweep).
+# PREVIEW_ALLOW is who may open a secure preview: the people IAP lets into Outfitter, i.e.
+# IAP_MEMBERS plus the operators, ';'-separated because --set-env-vars splits on commas.
+if [[ -n "${PREVIEW_DOMAIN:-}" ]]; then
+  PREVIEW_ALLOW="$(tr ',' ';' <<<"${IAP_MEMBERS:-}")${OUTFITTER_OPERATORS:+;${OUTFITTER_OPERATORS}}"
+  ENV_VARS="${ENV_VARS},PREVIEW_DOMAIN=${PREVIEW_DOMAIN},PREVIEW_ALLOW=${PREVIEW_ALLOW#;}"
+  echo "   previews: https://<id>.${PREVIEW_DOMAIN}, secure previews open to: ${PREVIEW_ALLOW#;}"
 fi
 if [[ "${ROLE}" == "web" ]]; then
   # Needed both for IAP_AUDIENCE (below) and for the run.invoker binding further down.

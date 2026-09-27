@@ -97,6 +97,23 @@ export interface Config {
    * provider status service to reconcile which tunnels are online. Empty means the ngrok probe
    * reports "unknown"/"not configured" rather than failing. */
   ngrokApiKey: string;
+  /** PREVIEW_DOMAIN: the registrable domain Drive previews are served on, e.g. kernal.run (#217,
+   * docs/specs/drive-previews.md). Never under the app's own domain: a preview is model-written code
+   * in the person's browser. Previews are on when this and NGROK_API_KEY are both set. */
+  previewDomain: string;
+  /** PREVIEW_ALLOW: who may open a secure (non-share) preview, the same people IAP lets into
+   * Outfitter: `user:a@b`, bare emails and `domain:example.com` entries, `;` or `,` separated
+   * (deploy/service.sh passes IAP_MEMBERS plus the operators). `group:` entries can't be checked
+   * at ngrok's edge and are ignored. */
+  previewAllow: string[];
+  /** PREVIEW_SHARE_TTL_SECONDS (default 24 h) and PREVIEW_SHARE_MAX_SECONDS (default 7 days): how
+   * long a public share link lives, at most. It always ends with its job or run anyway. */
+  previewShareTtlSeconds: number;
+  previewShareMaxSeconds: number;
+  /** NGROK_GOOGLE_OAUTH (Secret Manager outfitter-ngrok-google-oauth): our Google OAuth client for
+   * ngrok's sign-in on secure previews, JSON {client_id, client_secret}. Absent or unparseable:
+   * ngrok's managed Google app is used instead. */
+  ngrokGoogleOauth?: { clientId: string; clientSecret: string };
   /** LITELLM_BASE_URL: the LiteLLM proxy's OpenAI-compatible base URL (a trailing /v1 is stripped
    * before appending management endpoints like /model/info). Same var name as kernal's .env.example. */
   litellmBaseUrl: string;
@@ -192,6 +209,18 @@ function envGkeEndpoint(env: NodeJS.ProcessEnv): string {
 /** OUTFITTER_OPERATORS / OUTFITTER_ORIGIN_ALIASES parser: splits on `;`, `,` or any whitespace run
  * (see Config.operators' doc comment for why more than one separator is accepted), trims each
  * entry, drops empties. */
+function envGoogleOauth(raw: string | undefined): { clientId: string; clientSecret: string } | undefined {
+  if (!raw) return undefined;
+  try {
+    const j = JSON.parse(raw);
+    const clientId = typeof j?.client_id === "string" ? j.client_id.trim() : "";
+    const clientSecret = typeof j?.client_secret === "string" ? j.client_secret.trim() : "";
+    return clientId && clientSecret ? { clientId, clientSecret } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function envOperators(name: string, env: NodeJS.ProcessEnv): string[] {
   const raw = env[name];
   if (!raw) return [];
@@ -286,6 +315,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     stopGraceMs: envInt("STOP_GRACE_MS", 60_000, env),
     downQueuePollMs: envInt("DOWN_QUEUE_POLL_MS", 1500, env),
     ngrokApiKey: env.NGROK_API_KEY ?? "",
+    previewDomain: (env.PREVIEW_DOMAIN ?? "").trim().toLowerCase().replace(/^\.+|\.+$/g, ""),
+    previewAllow: envOperators("PREVIEW_ALLOW", env),
+    previewShareTtlSeconds: envInt("PREVIEW_SHARE_TTL_SECONDS", 24 * 60 * 60, env),
+    previewShareMaxSeconds: envInt("PREVIEW_SHARE_MAX_SECONDS", 7 * 24 * 60 * 60, env),
+    ...(envGoogleOauth(env.NGROK_GOOGLE_OAUTH) ? { ngrokGoogleOauth: envGoogleOauth(env.NGROK_GOOGLE_OAUTH) } : {}),
     litellmBaseUrl: env.LITELLM_BASE_URL ?? "https://litellm.augment-code.support/v1",
     litellmAdminKey: env.LITELLM_ADMIN_KEY ?? "",
     providerPollMs: envInt("PROVIDER_POLL_MS", 5 * 60_000, env),

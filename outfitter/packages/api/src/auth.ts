@@ -16,7 +16,10 @@
 // "link" role's /api/* routes accept (see identityFromLinkRequest) -- that role has no IAP session
 // to read, and per the E4.1 design decision (EPIC.md, docs/reports/critic-review-pr15.md finding
 // #1) IAP's Google-managed OAuth client can never be used for programmatic access, so there is no
-// IAP-based alternative for a laptop client. The "web"/"all" role accepts either an IAP session or
+// IAP-based alternative for a laptop client. (Since IAP moved to the custom OAuth client in
+// config.env, a *service account* can present an OIDC token IAP accepts -- the live-test identity,
+// deploy/README.md "Live-test identity" (#219). Laptop clients still use `outf_` tokens on link.)
+// The "web"/"all" role accepts either an IAP session or
 // an `outf_` token (identityFromRequest), so the same personal token also works against a
 // single-process dev/"all" deployment.
 //

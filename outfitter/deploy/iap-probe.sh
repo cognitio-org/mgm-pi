@@ -13,10 +13,19 @@ E2E_SA_EMAIL="${E2E_SA_NAME}@${PROJECT}.iam.gserviceaccount.com"
 WEB_ORIGIN="${WEB_ORIGIN:-$(deployed_origin outfitter-api)}"
 [[ -n "${WEB_ORIGIN}" ]] || deploy_fail "outfitter-api has no OUTFITTER_ORIGIN; set WEB_ORIGIN"
 
-TOKEN="$(gcloud auth print-identity-token \
-  --impersonate-service-account="${E2E_SA_EMAIL}" \
-  --audiences="${IAP_OAUTH_CLIENT_ID}" \
-  --include-email 2>/dev/null)" || deploy_fail "could not mint an ID token for ${E2E_SA_EMAIL}; has e2e-identity.sh run, and is ${ACCOUNT} in E2E_TOKEN_MINTERS?"
+# generateIdToken needs only roles/iam.serviceAccountOpenIdTokenCreator, which is all
+# e2e-identity.sh grants. `gcloud auth print-identity-token --impersonate-service-account` would
+# fetch an access token for the account first, which needs the broader serviceAccountTokenCreator.
+MINTED="$(curl -sS -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" \
+  -d "{\"audience\":\"${IAP_OAUTH_CLIENT_ID}\",\"includeEmail\":true}" \
+  "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${E2E_SA_EMAIL}:generateIdToken")"
+TOKEN="$(sed -n 's/.*"token": *"\([^"]*\)".*/\1/p' <<<"${MINTED}")"
+if [[ -z "${TOKEN}" ]]; then
+  echo "${MINTED}" | head -c 600 >&2; echo >&2
+  deploy_fail "could not mint an ID token for ${E2E_SA_EMAIL}; has e2e-identity.sh run, and is ${ACCOUNT} in E2E_TOKEN_MINTERS?"
+fi
 
 BODY="$(mktemp)"
 trap 'rm -f "${BODY}"' EXIT

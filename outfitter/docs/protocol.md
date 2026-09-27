@@ -483,6 +483,10 @@ programmatic access, so `gcloud auth print-identity-token` could never mint a to
 accept. Personal API tokens on the non-IAP "link" service are the fix; the IAP-token mode has been
 removed from `outfitter-store.ts` entirely, not left in as a fallback.
 
+(#219: since IAP moved to the custom OAuth client in `deploy/config.env`, a service account's OIDC
+token for that client ID *is* accepted, in `Proxy-Authorization`. The live-test identity uses it;
+see `deploy/README.md` "Live-test identity". Laptop clients still use personal tokens on link.)
+
 ## Browser companion
 
 The Chrome companion (`docs/specs/chrome-companion.md`) calls the **link** role with a Dongle

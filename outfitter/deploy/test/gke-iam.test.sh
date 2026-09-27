@@ -113,7 +113,8 @@ fi
 
 expect pass "dry run mentions the namespace apply" "DRY_RUN:.*kubectl.*apply.*namespace.yaml"
 expect pass "dry run mentions the WI binding" "DRY_RUN:.*iam service-accounts add-iam-policy-binding"
-expect pass "dry run mentions clusterViewer" "DRY_RUN:.*roles/container.clusterViewer"expect pass "dry run mentions the RBAC apply" "DRY_RUN:.*kubectl.*apply.*rbac.yaml"
+expect pass "dry run mentions clusterViewer" "DRY_RUN:.*roles/container.clusterViewer"
+expect pass "dry run mentions the RBAC apply" "DRY_RUN:.*kubectl.*apply.*rbac.yaml"
 expect pass "dry run doesn't touch the hardening binding" "DRY_RUN: would check.*sandbox-hardening-binding"
 
 DRY_RUN_OVERRIDE=0 FAKE_HARDENING_VALUES='["outfitter-other","outfitter-sandboxes"]' \

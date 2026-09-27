@@ -181,6 +181,11 @@ export interface Run {
   // judges "ran out of memory" on this, not the run-long peak, so an early spike doesn't get the
   // blame for a later, unrelated death.
   sandboxMemLastMb?: number;
+  // #193: how the sandbox's agent container ended, as the orchestrator recorded it (GKE: the pod's
+  // containerStatuses[agentd].state.terminated). Read shortly after agentd's socket drops without a
+  // bye, or by the reconciler; the controller deletes the pod ~2 min after it finishes, so later is
+  // too late. Absent while running, on providers that can't tell (Cloud Run), and after a clean bye.
+  sandboxExit?: { reason: string; exitCode?: number; finishedAt?: string };
   // Not in protocol.md: `spend.keySpend` (agentlink.ts) is the LiteLLM *key's* cumulative spend,
   // not this run's own — the key is shared across every run/session using that guru. keySpendStart
   // is set to keySpend on the first spend frame this run sees; cost is then

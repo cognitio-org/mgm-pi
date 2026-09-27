@@ -131,6 +131,40 @@ describe("agentd <-> api WebSocket", () => {
     await app.fastify.close();
   });
 
+  test("#193: onAgentLost fires when the run's own socket closes, not when a replaced one does", async () => {
+    const app = await buildTestApp({ AGENT_SOCKET_GRACE_MS: "0" });
+    const lost: string[] = [];
+    app.agentLink.onAgentLost((runId) => lost.push(runId));
+    const { session, runId, runToken } = await makeRunningSession(app);
+
+    const first = await openAgentSocket(app, runId);
+    sendHello(first, runId, session.id, runToken);
+    await first.nextMessage(); // run.spec
+    const second = await openAgentSocket(app, runId);
+    sendHello(second, runId, session.id, runToken);
+    await second.nextMessage(); // run.spec
+    await first.nextClose(); // replaced: 1001
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.deepEqual(lost, [], "the replacement is live, so nothing is lost");
+
+    // A client-side close doesn't reliably reach the server's `close` in this harness (nor, for a
+    // killed pod, in production, which is why RunManager also probes silent runs), so drive the
+    // handler directly, as the supersede test above does.
+    const link = app.agentLink as unknown as {
+      sockets: Map<string, object>;
+      onAgentSocketClosed(runId: string, socket: object): void;
+    };
+    link.onAgentSocketClosed(runId, {});
+    assert.deepEqual(lost, [], "a socket that isn't the registered one doesn't count");
+    link.onAgentSocketClosed(runId, link.sockets.get(runId)!);
+    assert.deepEqual(lost, [runId]);
+
+    second.send({ t: "bye", reason: "stop" });
+    await second.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
   test("event frames are fanned out over SSE and acked", async () => {
     const app = await buildTestApp();
     const { session, runId, runToken } = await makeRunningSession(app);

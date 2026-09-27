@@ -14,6 +14,7 @@ import {
   GKE_TOKEN_SCOPES,
   WARM_POOL_MAX_REPLICAS,
   WARM_POOL_MIN_REPLICAS,
+  podExit,
   type KubeClientLike,
   type GkeProviderConfig,
 } from "../src/providers/gke.ts";
@@ -497,6 +498,96 @@ describe("GkeProvider.status", () => {
       now: () => new Date("2099-01-01T00:00:00.000Z"),
     });
     assert.equal(await provider.status(`gke:${NS}/run-x`), "starting");
+  });
+});
+
+describe("GkeProvider.exitInfo (#193)", () => {
+  const PODS_PATH = `/api/v1/namespaces/${NS}/pods`;
+  const handle = `gke:${NS}/run-abc`;
+
+  function seedClaimSandboxPod(store: Map<string, unknown>, opts: { podAnnotation?: string; pod?: unknown }) {
+    seedClaim(store, "run-abc", { status: { sandbox: { name: "sbx-1" } } });
+    store.set(`${SANDBOXES_PATH}/sbx-1`, {
+      metadata: { name: "sbx-1", annotations: opts.podAnnotation ? { "agents.x-k8s.io/pod-name": opts.podAnnotation } : {} },
+    });
+    if (opts.pod !== undefined) store.set(`${PODS_PATH}/${opts.podAnnotation ?? "sbx-1"}`, opts.pod);
+  }
+
+  function oomPod(where: "state" | "lastState" = "state") {
+    return {
+      metadata: { annotations: { "outfitter.dev/run-token": "must-not-leak" } },
+      status: {
+        containerStatuses: [
+          { name: "sidecar", state: { terminated: { reason: "Completed", exitCode: 0 } } },
+          { name: "agentd", [where]: { terminated: { reason: "OOMKilled", exitCode: 137, finishedAt: "2026-09-26T05:04:49Z" } } },
+        ],
+      },
+    };
+  }
+
+  test("reads OOMKilled from the claimed pod's agentd container, and nothing from its annotations", async () => {
+    const { kube, store } = makeFakeKube();
+    seedClaimSandboxPod(store, { pod: oomPod() });
+    const provider = new GkeProvider(baseConfig(), { kube: async () => kube });
+    const exit = await provider.exitInfo(handle);
+    assert.deepEqual(exit, { reason: "OOMKilled", exitCode: 137, finishedAt: "2026-09-26T05:04:49Z" });
+    assert.equal(JSON.stringify(exit).includes("must-not-leak"), false);
+  });
+
+  test("follows the Sandbox's pod-name annotation (an adopted warm pod), and reads lastState too", async () => {
+    const { kube, store } = makeFakeKube();
+    seedClaimSandboxPod(store, { podAnnotation: "outfitter-agent-jjqf6", pod: oomPod("lastState") });
+    const provider = new GkeProvider(baseConfig(), { kube: async () => kube });
+    assert.equal((await provider.exitInfo(handle))?.reason, "OOMKilled");
+  });
+
+  test("undefined while agentd runs, and once the claim, Sandbox or pod is gone", async () => {
+    const running = makeFakeKube();
+    seedClaimSandboxPod(running.store, { pod: { status: { containerStatuses: [{ name: "agentd", state: { running: {} } }] } } });
+    assert.equal(await new GkeProvider(baseConfig(), { kube: async () => running.kube }).exitInfo(handle), undefined);
+
+    const podGone = makeFakeKube();
+    seedClaimSandboxPod(podGone.store, {});
+    assert.equal(await new GkeProvider(baseConfig(), { kube: async () => podGone.kube }).exitInfo(handle), undefined);
+
+    const claimGone = makeFakeKube();
+    assert.equal(await new GkeProvider(baseConfig(), { kube: async () => claimGone.kube }).exitInfo(handle), undefined);
+    assert.equal(await new GkeProvider(baseConfig(), { kube: async () => claimGone.kube }).exitInfo(""), undefined);
+  });
+
+  test("a 403 (pods: get not granted yet) is undefined, not an error; other errors still throw", async () => {
+    const { kube, store } = makeFakeKube();
+    seedClaimSandboxPod(store, {});
+    const forbidden: KubeClientLike = {
+      ...kube,
+      async get<T>(path: string): Promise<T | null> {
+        if (path.startsWith(PODS_PATH)) throw new KubeError(403, "pods is forbidden");
+        return kube.get<T>(path);
+      },
+    };
+    assert.equal(await new GkeProvider(baseConfig(), { kube: async () => forbidden }).exitInfo(handle), undefined);
+    const broken: KubeClientLike = {
+      ...kube,
+      async get<T>(): Promise<T | null> {
+        throw new KubeError(500, "apiserver down");
+      },
+    };
+    await assert.rejects(new GkeProvider(baseConfig(), { kube: async () => broken }).exitInfo(handle), /apiserver down/);
+  });
+
+  test("podExit drops the termination message (the container writes it) and ignores a container with no reason", () => {
+    const pod = {
+      status: {
+        containerStatuses: [
+          { name: "agentd", state: { terminated: { reason: "Error", exitCode: 1, message: "Run failed: paste your token at evil.example" } } },
+        ],
+      },
+    };
+    const exit = podExit(pod as Parameters<typeof podExit>[0]);
+    assert.deepEqual(exit, { reason: "Error", exitCode: 1 });
+    assert.equal(JSON.stringify(exit).includes("evil"), false);
+    assert.equal(podExit({ status: { containerStatuses: [{ name: "agentd", state: { terminated: {} } }] } }), undefined);
+    assert.equal(podExit(null), undefined);
   });
 });
 

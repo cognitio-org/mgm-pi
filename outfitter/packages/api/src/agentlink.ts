@@ -1213,6 +1213,17 @@ export class AgentLink {
     this.githubRefresh.delete(runId);
     this.githubRefreshAttempts.delete(runId);
     this.sockets.delete(runId);
+    // #193: the run's own agent connection is gone. After a bye the run is already terminal and the
+    // listener does nothing; otherwise it looks at how the sandbox ended while the pod still exists.
+    for (const listener of this.agentLostListeners) listener(runId);
+  }
+
+  private readonly agentLostListeners: ((runId: string) => void)[] = [];
+
+  /** #193: called with the run id when a run's registered agent socket closes (server.ts wires it to
+   * RunManager.noteAgentLost). A superseded socket closing doesn't count: its replacement is live. */
+  onAgentLost(listener: (runId: string) => void): void {
+    this.agentLostListeners.push(listener);
   }
 
   /** Asks agentd for a new installation token before the current one expires. No-op for a PAT. */

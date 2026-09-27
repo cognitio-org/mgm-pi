@@ -4,6 +4,7 @@ export type {
   SandboxProvider,
   SandboxStatus,
   SandboxCapacity,
+  SandboxExit,
   SandboxStartResult,
 } from "./types.js";
 export { LocalDockerProvider, type LocalDockerProviderOptions } from "./local-docker.js";

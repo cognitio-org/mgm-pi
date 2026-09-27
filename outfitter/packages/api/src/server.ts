@@ -76,6 +76,8 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   });
   const mail = new MailService(store, runs, wakeSchedulerFor(config), (msg, err) => fastify.log.warn({ err }, msg));
   const agentLink = new AgentLink(store, config, secretsBroker, sse, laptopProbe, mail, opts.github, opts.githubRefresh);
+  // #193: a run whose agent vanished without a bye gets its sandbox's exit reason read promptly.
+  agentLink.onAgentLost((runId) => runs.noteAgentLost(runId));
 
   // Sandbox capacity probes (E2.10, gke-sandbox-provider.md §2.4 gap G3, #169): one per
   // *registered* provider, not just the default, so Cloud Run's row stays live while it's still

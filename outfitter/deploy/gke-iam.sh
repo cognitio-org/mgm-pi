@@ -13,7 +13,8 @@
 #   impersonation form -- keeps agentd's ID token `email` unchanged, spec §3.2)
 # - roles/container.clusterViewer on the project for outfitter-api@ (both Cloud Run roles dial the
 #   cluster's DNS endpoint as this account)
-# - the outfitter-api Role/RoleBinding in outfitter-sandboxes (deploy/gke/rbac.yaml)
+# - the outfitter-api Role/RoleBinding in outfitter-sandboxes (deploy/gke/rbac.yaml; since #193
+#   it includes `get` on pods, for termination reasons)
 # - the sandbox-hardening-policy exemption for outfitter-sandboxes only (hardening-exemption.json),
 #   patched in only when missing -- GKE's binding stays Deny everywhere else
 #

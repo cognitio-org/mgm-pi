@@ -51,10 +51,22 @@ export interface SandboxStartResult {
   warm?: boolean;
 }
 
+/** How a sandbox's agent container ended (#193), as the orchestrator recorded it. */
+export interface SandboxExit {
+  /** The orchestrator's own word: Kubernetes' `OOMKilled`, `Error`, `Completed`, ... */
+  reason: string;
+  exitCode?: number;
+  /** ISO time the container finished, when known. */
+  finishedAt?: string;
+}
+
 export interface SandboxProvider {
   start(run: RunLaunch): Promise<SandboxStartResult>;
   stop(handle: SandboxHandle): Promise<void>;
   status(handle: SandboxHandle): Promise<SandboxStatus>;
   /** Optional: capacity for the Peripherals dashboard (gke-sandbox-provider.md §2.3/§2.4). */
   capacity?(): Promise<SandboxCapacity>;
+  /** Optional (#193): how the sandbox's agent container ended. Undefined while it's still running,
+   * once the sandbox is gone, or when the provider can't tell. Never throws for "not found". */
+  exitInfo?(handle: SandboxHandle): Promise<SandboxExit | undefined>;
 }

@@ -11,7 +11,7 @@ import { MemoryStore } from "../src/store/memory.ts";
 import { NoopProvider } from "../src/providers/noop.ts";
 import { RunManager, silentRunDetail } from "../src/runs.ts";
 import type { Run } from "../src/store/types.ts";
-import type { SandboxProvider } from "@outfitter/provider-local";
+import type { SandboxExit, SandboxProvider } from "@outfitter/provider-local";
 
 function makeRun(overrides: Partial<Run> = {}): Run {
   const now = new Date().toISOString();
@@ -126,6 +126,158 @@ describe("RunManager.wake", () => {
 
     const stored = await store.runs.findLatestForSession("s1");
     assert.equal(stored?.statusDetail, "this run's sandbox failed to start: cluster unreachable. Press Play to start a new one.");
+  });
+});
+
+/** A NoopProvider whose exitInfo answers from a queue (#193). */
+class ExitingProvider extends NoopProvider {
+  exits: (SandboxExit | undefined)[] = [];
+  exitCalls = 0;
+  async exitInfo(): Promise<SandboxExit | undefined> {
+    this.exitCalls++;
+    return this.exits.length > 1 ? this.exits.shift() : this.exits[0];
+  }
+}
+
+describe("RunManager: sandbox exit reasons (#193)", () => {
+  const oom: SandboxExit = { reason: "OOMKilled", exitCode: 137, finishedAt: "2026-09-26T05:04:49Z" };
+
+  test("checkSandboxExit fails a running run now with the orchestrator's OOMKilled, and stops its handle", async () => {
+    const store = new MemoryStore();
+    const provider = new ExitingProvider();
+    provider.exits = [oom];
+    const runs = new RunManager(store, provider, loadConfig({} as NodeJS.ProcessEnv));
+    const run = makeRun({ providerHandle: "h-1", sandboxMemLimitMb: 4096 });
+    await store.runs.insert(run);
+
+    assert.equal(await runs.checkSandboxExit(run.id), true);
+    const stored = await store.runs.findById(run.id);
+    assert.equal(stored?.state, "failed");
+    assert.equal(stored?.reason, "out of memory");
+    assert.deepEqual(stored?.sandboxExit, oom);
+    assert.match(stored?.statusDetail ?? "", /ran out of memory \(4096 MiB\) and was killed \(OOMKilled\)/);
+    assert.deepEqual(provider.stopCalls, ["h-1"]);
+  });
+
+  test("checkSandboxExit reports another exit with its code, and leaves a still-running sandbox alone", async () => {
+    const store = new MemoryStore();
+    const provider = new ExitingProvider();
+    const runs = new RunManager(store, provider, loadConfig({} as NodeJS.ProcessEnv));
+    const alive = makeRun({ providerHandle: "h-alive" });
+    await store.runs.insert(alive);
+    provider.exits = [undefined];
+    assert.equal(await runs.checkSandboxExit(alive.id), false, "not settled: look again later");
+    assert.equal((await store.runs.findById(alive.id))?.state, "running");
+
+    const crashed = makeRun({ providerHandle: "h-crash" });
+    await store.runs.insert(crashed);
+    provider.exits = [{ reason: "Error", exitCode: 1 }];
+    await runs.checkSandboxExit(crashed.id);
+    const stored = await store.runs.findById(crashed.id);
+    assert.equal(stored?.reason, "sandbox exited (Error)");
+    assert.match(stored?.statusDetail ?? "", /its agent exited with exit code 1 \(Error\)/);
+  });
+
+  test("#199 review: a clean exit (0/Completed) with a lost bye is a stop, not a failure", async () => {
+    const store = new MemoryStore();
+    const provider = new ExitingProvider();
+    provider.exits = [{ reason: "Completed", exitCode: 0 }];
+    const runs = new RunManager(store, provider, loadConfig({} as NodeJS.ProcessEnv));
+    const run = makeRun({ providerHandle: "h-idle", state: "idle" });
+    await store.runs.insert(run);
+    await runs.checkSandboxExit(run.id);
+    const stored = await store.runs.findById(run.id);
+    assert.equal(stored?.state, "stopped");
+    assert.equal(stored?.reason, "agent exited");
+    assert.equal(stored?.statusDetail, undefined, "no failure note");
+
+    // The reconciler reaches the same answer for a run it finds first.
+    provider.nextStatus = "exited";
+    const staleAt = new Date(Date.now() - 20 * 60_000).toISOString();
+    const quiet = makeRun({ providerHandle: "h-q", createdAt: staleAt, lastSeenAt: staleAt });
+    await store.runs.insert(quiet);
+    await runs.reconcileOnce(60_000);
+    assert.equal((await store.runs.findById(quiet.id))?.state, "stopped");
+  });
+
+  test("#199 review: a user's Stop (state stopping) is left to the stop-grace path", async () => {
+    const store = new MemoryStore();
+    const provider = new ExitingProvider();
+    provider.exits = [{ reason: "Completed", exitCode: 0 }];
+    const runs = new RunManager(store, provider, loadConfig({} as NodeJS.ProcessEnv));
+    const quietAt = new Date(Date.now() - 45_000).toISOString();
+    const run = makeRun({ providerHandle: "h-stop", state: "stopping", lastSeenAt: quietAt, createdAt: quietAt });
+    await store.runs.insert(run);
+    assert.equal(await runs.checkSandboxExit(run.id), true);
+    await runs.probeSilentRuns(30_000);
+    assert.equal((await store.runs.findById(run.id))?.state, "stopping");
+    assert.equal(provider.exitCalls, 0);
+  });
+
+  test("checkSandboxExit never touches a run that ended cleanly or already failed", async () => {
+    const store = new MemoryStore();
+    const provider = new ExitingProvider();
+    provider.exits = [oom];
+    const runs = new RunManager(store, provider, loadConfig({} as NodeJS.ProcessEnv));
+    for (const state of ["stopped", "failed"] as const) {
+      const run = makeRun({ providerHandle: `h-${state}`, state, reason: "keep me" });
+      await store.runs.insert(run);
+      assert.equal(await runs.checkSandboxExit(run.id), true);
+      assert.equal((await store.runs.findById(run.id))?.reason, "keep me");
+    }
+    assert.equal(provider.exitCalls, 0);
+  });
+
+  test("noteAgentLost looks again after a first 'still running', then records the exit", async () => {
+    const store = new MemoryStore();
+    const provider = new ExitingProvider();
+    provider.exits = [undefined, oom];
+    const runs = new RunManager(store, provider, loadConfig({} as NodeJS.ProcessEnv));
+    const run = makeRun({ providerHandle: "h-late" });
+    await store.runs.insert(run);
+    runs.noteAgentLost(run.id, [5, 5]);
+    for (let i = 0; i < 50 && (await store.runs.findById(run.id))?.state !== "failed"; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal((await store.runs.findById(run.id))?.reason, "out of memory");
+    assert.equal(provider.exitCalls, 2);
+  });
+
+  test("probeSilentRuns looks only at active runs quiet past the cutoff, and fails the ones that ended", async () => {
+    const store = new MemoryStore();
+    const provider = new ExitingProvider();
+    provider.exits = [oom];
+    const runs = new RunManager(store, provider, loadConfig({} as NodeJS.ProcessEnv));
+    const quietAt = new Date(Date.now() - 45_000).toISOString();
+    const quiet = makeRun({ providerHandle: "h-quiet", lastSeenAt: quietAt, createdAt: quietAt });
+    const chatty = makeRun({ providerHandle: "h-chatty", lastSeenAt: new Date().toISOString() });
+    const booting = makeRun({ providerHandle: "h-boot", state: "provisioning", createdAt: quietAt });
+    for (const run of [quiet, chatty, booting]) await store.runs.insert(run);
+
+    await runs.probeSilentRuns(30_000);
+
+    assert.equal((await store.runs.findById(quiet.id))?.reason, "out of memory");
+    assert.equal((await store.runs.findById(chatty.id))?.state, "running");
+    assert.equal((await store.runs.findById(booting.id))?.state, "provisioning");
+    assert.equal(provider.exitCalls, 1, "only the quiet, started run was looked at");
+  });
+
+  test("the reconciler asks exitInfo before stop(), and a real reason beats the memory estimate", async () => {
+    const store = new MemoryStore();
+    const provider = new ExitingProvider();
+    provider.nextStatus = "exited";
+    provider.exits = [{ reason: "Error", exitCode: 2 }];
+    const runs = new RunManager(store, provider, loadConfig({} as NodeJS.ProcessEnv));
+    const staleAt = new Date(Date.now() - 20 * 60_000).toISOString();
+    // Memory near the limit would have said "most likely ran out of memory".
+    const run = makeRun({ createdAt: staleAt, lastSeenAt: staleAt, providerHandle: "h-r", sandboxMemLastMb: 1900, sandboxMemLimitMb: 2048 });
+    await store.runs.insert(run);
+    await runs.reconcileOnce(60_000);
+    const stored = await store.runs.findById(run.id);
+    assert.equal(stored?.state, "failed");
+    assert.deepEqual(stored?.sandboxExit, { reason: "Error", exitCode: 2 });
+    assert.match(stored?.statusDetail ?? "", /exit code 2 \(Error\)/);
+    assert.doesNotMatch(stored?.statusDetail ?? "", /most likely/);
   });
 });
 

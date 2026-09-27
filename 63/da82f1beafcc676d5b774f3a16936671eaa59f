@@ -1,0 +1,26 @@
+outfitter/packages/api/src/agentlink.ts
+  h_69b863911ebf05 1133-1135,1145,1156,1159-1171,1305-1313
+outfitter/packages/api/src/routes/sessions.ts
+  h_69b863911ebf05 6,34-50,210-214
+outfitter/packages/api/src/secrets.ts
+  h_69b863911ebf05 5,31-32,43-44,70-74,145,157,159,166,208,210,214,232
+outfitter/packages/api/src/store/types.ts
+  h_69b863911ebf05 114-116,199-202
+outfitter/packages/api/test/agentlink.test.ts
+  h_69b863911ebf05 1972-2089,2092-2167
+outfitter/packages/api/test/routes.test.ts
+  h_69b863911ebf05 5-6,157-258
+outfitter/packages/api/test/secrets.test.ts
+  h_69b863911ebf05 43,79,91,106,140,143-145,162,177,206,234,250,265,281,294,305,317,333,345
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "63da82f1beafcc676d5b774f3a16936671eaa59f",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

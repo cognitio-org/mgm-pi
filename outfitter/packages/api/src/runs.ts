@@ -74,6 +74,24 @@ export function sandboxExitDetail(exit: NonNullable<Run["sandboxExit"]>, limitMb
   );
 }
 
+/** #193: a clean end (exit code 0, `Completed`): agentd finished on its own (idle stop, a stop it
+ * acted on) and only its bye was lost. */
+export function isCleanExit(exit: NonNullable<Run["sandboxExit"]>): boolean {
+  return exit.exitCode === 0 || exit.reason === "Completed";
+}
+
+/** #193: the run fields for a sandbox that has ended. A clean exit is `stopped` with no note; anything
+ * else is `failed` with the orchestrator's reason. */
+export function exitOutcome(exit: NonNullable<Run["sandboxExit"]>, limitMb?: number): Partial<Run> {
+  if (isCleanExit(exit)) return { state: "stopped", reason: "agent exited", sandboxExit: exit };
+  return {
+    state: "failed",
+    reason: exit.reason === "OOMKilled" ? "out of memory" : `sandbox exited (${exit.reason})`,
+    sandboxExit: exit,
+    statusDetail: sandboxExitDetail(exit, limitMb),
+  };
+}
+
 /** #193: how long after agentd's socket drops without a bye to look at the sandbox, in ms. Soon
  * enough to beat the controller deleting a finished claim (~2 min), late enough for the kubelet to
  * have recorded the termination. */
@@ -296,6 +314,11 @@ export class RunManager {
         // marking the run failed below anyway -- the same best-effort semantics as a provider
         // call that itself fails, per gke-sandbox-provider-plan.md §5 item 6.
       }
+      if (sandboxExit && isCleanExit(sandboxExit)) {
+        // agentd ended on its own and only its bye was lost: a stop, not a failure.
+        await this.store.runs.update(run.id, { ...exitOutcome(sandboxExit), updatedAt: new Date().toISOString() });
+        continue;
+      }
       await this.store.runs.update(run.id, {
         state: "failed",
         reason: "no heartbeat",
@@ -339,6 +362,9 @@ export class RunManager {
   async checkSandboxExit(runId: string): Promise<boolean> {
     const run = await this.store.runs.findById(runId);
     if (!run || run.state === "stopped" || run.state === "failed") return true;
+    // A user's Stop is finished by the bye or, failing that, reconcileStoppingOnce's grace path,
+    // which marks it `stopped`. Not this: a clean exit there is the expected end (PR #199 review).
+    if (run.state === "stopping") return true;
     if (!run.providerHandle) return true;
     const provider = await this.resolveProvider(run);
     if (!provider?.exitInfo) return true;
@@ -346,14 +372,8 @@ export class RunManager {
     if (!exit) return false;
     // A bye may have landed while exitInfo was in flight: that run already says how it ended.
     const now = await this.store.runs.findById(runId);
-    if (!now || now.state === "stopped" || now.state === "failed") return true;
-    await this.store.runs.update(runId, {
-      state: "failed",
-      reason: exit.reason === "OOMKilled" ? "out of memory" : `sandbox exited (${exit.reason})`,
-      sandboxExit: exit,
-      statusDetail: sandboxExitDetail(exit, now.sandboxMemLimitMb),
-      updatedAt: new Date().toISOString(),
-    });
+    if (!now || now.state === "stopped" || now.state === "failed" || now.state === "stopping") return true;
+    await this.store.runs.update(runId, { ...exitOutcome(exit, now.sandboxMemLimitMb), updatedAt: new Date().toISOString() });
     await provider.stop(run.providerHandle).catch(() => {});
     return true;
   }

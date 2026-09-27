@@ -178,6 +178,42 @@ describe("RunManager: sandbox exit reasons (#193)", () => {
     assert.match(stored?.statusDetail ?? "", /its agent exited with exit code 1 \(Error\)/);
   });
 
+  test("#199 review: a clean exit (0/Completed) with a lost bye is a stop, not a failure", async () => {
+    const store = new MemoryStore();
+    const provider = new ExitingProvider();
+    provider.exits = [{ reason: "Completed", exitCode: 0 }];
+    const runs = new RunManager(store, provider, loadConfig({} as NodeJS.ProcessEnv));
+    const run = makeRun({ providerHandle: "h-idle", state: "idle" });
+    await store.runs.insert(run);
+    await runs.checkSandboxExit(run.id);
+    const stored = await store.runs.findById(run.id);
+    assert.equal(stored?.state, "stopped");
+    assert.equal(stored?.reason, "agent exited");
+    assert.equal(stored?.statusDetail, undefined, "no failure note");
+
+    // The reconciler reaches the same answer for a run it finds first.
+    provider.nextStatus = "exited";
+    const staleAt = new Date(Date.now() - 20 * 60_000).toISOString();
+    const quiet = makeRun({ providerHandle: "h-q", createdAt: staleAt, lastSeenAt: staleAt });
+    await store.runs.insert(quiet);
+    await runs.reconcileOnce(60_000);
+    assert.equal((await store.runs.findById(quiet.id))?.state, "stopped");
+  });
+
+  test("#199 review: a user's Stop (state stopping) is left to the stop-grace path", async () => {
+    const store = new MemoryStore();
+    const provider = new ExitingProvider();
+    provider.exits = [{ reason: "Completed", exitCode: 0 }];
+    const runs = new RunManager(store, provider, loadConfig({} as NodeJS.ProcessEnv));
+    const quietAt = new Date(Date.now() - 45_000).toISOString();
+    const run = makeRun({ providerHandle: "h-stop", state: "stopping", lastSeenAt: quietAt, createdAt: quietAt });
+    await store.runs.insert(run);
+    assert.equal(await runs.checkSandboxExit(run.id), true);
+    await runs.probeSilentRuns(30_000);
+    assert.equal((await store.runs.findById(run.id))?.state, "stopping");
+    assert.equal(provider.exitCalls, 0);
+  });
+
   test("checkSandboxExit never touches a run that ended cleanly or already failed", async () => {
     const store = new MemoryStore();
     const provider = new ExitingProvider();

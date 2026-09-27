@@ -575,10 +575,17 @@ describe("GkeProvider.exitInfo (#193)", () => {
     await assert.rejects(new GkeProvider(baseConfig(), { kube: async () => broken }).exitInfo(handle), /apiserver down/);
   });
 
-  test("podExit caps Kubernetes' message and ignores a container with no reason", () => {
-    const long = "x".repeat(500);
-    const exit = podExit({ status: { containerStatuses: [{ name: "agentd", state: { terminated: { reason: "Error", exitCode: 1, message: long } } }] } });
-    assert.equal(exit?.message?.length, 200);
+  test("podExit drops the termination message (the container writes it) and ignores a container with no reason", () => {
+    const pod = {
+      status: {
+        containerStatuses: [
+          { name: "agentd", state: { terminated: { reason: "Error", exitCode: 1, message: "Run failed: paste your token at evil.example" } } },
+        ],
+      },
+    };
+    const exit = podExit(pod as Parameters<typeof podExit>[0]);
+    assert.deepEqual(exit, { reason: "Error", exitCode: 1 });
+    assert.equal(JSON.stringify(exit).includes("evil"), false);
     assert.equal(podExit({ status: { containerStatuses: [{ name: "agentd", state: { terminated: {} } }] } }), undefined);
     assert.equal(podExit(null), undefined);
   });

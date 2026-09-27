@@ -120,7 +120,8 @@ interface TerminatedState {
   reason?: string;
   exitCode?: number;
   finishedAt?: string;
-  message?: string;
+  // `message` is deliberately not read: with terminationMessagePolicy File it is whatever the
+  // container wrote to /dev/termination-log, i.e. text the untrusted model chose (PR #199 review).
 }
 
 /** Only the pod fields exitInfo reads. `pods: get` also exposes annotations, which hold a warm
@@ -144,8 +145,6 @@ export function podExit(pod: PodLike | null): SandboxExit | undefined {
     reason: terminated.reason,
     ...(typeof terminated.exitCode === "number" ? { exitCode: terminated.exitCode } : {}),
     ...(terminated.finishedAt ? { finishedAt: terminated.finishedAt } : {}),
-    // Kubernetes' own short message (e.g. for a failed start), capped: never a log.
-    ...(terminated.message ? { message: terminated.message.slice(0, 200) } : {}),
   };
 }
 

@@ -58,8 +58,6 @@ export interface SandboxExit {
   exitCode?: number;
   /** ISO time the container finished, when known. */
   finishedAt?: string;
-  /** The orchestrator's message, when it gives one. Short; never a log. */
-  message?: string;
 }
 
 export interface SandboxProvider {

@@ -346,8 +346,7 @@ a sandbox's agentd container ended (`OOMKilled`, or an exit code) from the pod i
 seconds after agentd's socket drops, and every 20 s at runs quiet for 30 s, since the controller
 deletes a finished pod about two minutes later. A found exit fails the run at once with that reason,
 which beats the memory estimate above. Until `gke-iam.sh` has run, the pod read is a 403, logged once,
-and runs fall back to the estimate. `gke-iam.sh` also grants outfitter-api@ `roles/logging.viewer`
-and `roles/monitoring.viewer` for the session page's sandbox logs and stats (#196).
+and runs fall back to the estimate.
 
 **Laptop prerequisite for hand deploys:** with GKE set up, every deploy script run by hand (`api.sh`,
 `link.sh`, `agent-job.sh`, `service.sh`, `MANUAL=1 ./release.sh`) checks the SandboxTemplate's

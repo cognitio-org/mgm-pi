@@ -225,6 +225,13 @@ if [[ "${ROLE}" == "web" ]]; then
   # OUTFITTER_OPERATORS before running this script.
   ENV_VARS="${ENV_VARS},OUTFITTER_OPERATORS=${OUTFITTER_OPERATORS}"
 fi
+# What's running, for the web app's version indicator (GET /api/version): the commit this deploy
+# ships and, when the deploy came from a release tag (outfitter-deploy.yml sets GITHUB_REF_NAME),
+# that tag. OUTFITTER_RELEASE can be exported by hand for a manual deploy.
+ENV_VARS="${ENV_VARS},OUTFITTER_BUILD_COMMIT=${TAG}"
+RELEASE_TAG="${OUTFITTER_RELEASE:-}"
+if [[ -z "${RELEASE_TAG}" && "${GITHUB_REF_NAME:-}" == outfitter-v* ]]; then RELEASE_TAG="${GITHUB_REF_NAME}"; fi
+if [[ -n "${RELEASE_TAG}" ]]; then ENV_VARS="${ENV_VARS},OUTFITTER_RELEASE=${RELEASE_TAG}"; fi
 
 # Request timeout: Cloud Run's default is 300s, which was silently capping BOTH roles' long-lived
 # connections -- the agentd WebSocket on "link" (agentd only reconnects proactively at 55 min, see

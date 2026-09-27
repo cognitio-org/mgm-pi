@@ -115,7 +115,7 @@ else
   echo "ok: --set-env-vars has no GKE_ variable while GKE is off"
 fi
 
-EXPECTED="OUTFITTER_ROLE=web,OUTFITTER_ORIGIN=https://outfitter-api-abc.run.app,OUTFITTER_ORIGIN_ALIASES=,AGENT_SA_EMAIL=outfitter-agent@outfitter-509211.iam.gserviceaccount.com,GCP_PROJECT=outfitter-509211,GCP_REGION=us-central1,TUNNEL_DOMAIN_LMSTUDIO=mgm-lmstudio.ngrok.app,SANDBOX_PROVIDER=cloudrun,CLOUDRUN_JOB=outfitter-agent,IDLE_STOP_SECONDS=1800,LITELLM_BASE_URL=https://litellm.augment-code.support/v1,PROVIDER_POLL_MS=300000,IAP_AUDIENCE=/projects/123456789012/locations/us-central1/services/outfitter-api,OUTFITTER_LINK_ORIGIN=https://outfitter-link-abc.run.app,OUTFITTER_OPERATORS=mgm@mgms.eu;matej@mgms.eu"
+EXPECTED="OUTFITTER_ROLE=web,OUTFITTER_ORIGIN=https://outfitter-api-abc.run.app,OUTFITTER_ORIGIN_ALIASES=,AGENT_SA_EMAIL=outfitter-agent@outfitter-509211.iam.gserviceaccount.com,GCP_PROJECT=outfitter-509211,GCP_REGION=us-central1,TUNNEL_DOMAIN_LMSTUDIO=mgm-lmstudio.ngrok.app,SANDBOX_PROVIDER=cloudrun,CLOUDRUN_JOB=outfitter-agent,IDLE_STOP_SECONDS=1800,LITELLM_BASE_URL=https://litellm.augment-code.support/v1,PROVIDER_POLL_MS=300000,IAP_AUDIENCE=/projects/123456789012/locations/us-central1/services/outfitter-api,OUTFITTER_LINK_ORIGIN=https://outfitter-link-abc.run.app,OUTFITTER_OPERATORS=mgm@mgms.eu;matej@mgms.eu,OUTFITTER_BUILD_COMMIT=${TAG}"
 if [[ "${ENV_VARS_ARG}" == "--set-env-vars=${EXPECTED}" ]]; then
   echo "ok: --set-env-vars is exactly config.env's pre-GKE list, unchanged"
 else
@@ -137,6 +137,17 @@ if [[ ${status} -eq 0 && "${PREVIEW_ENV}" == *",${WANT_PREVIEW},"* ]]; then
 else
   echo "FAIL: previews on: expected ${WANT_PREVIEW} in --set-env-vars (exit ${status})"
   echo "  got: ${PREVIEW_ENV}"
+  fails=$((fails + 1))
+fi
+
+# The release tag rides along when the deploy came from one (GITHUB_REF_NAME in the deploy workflow).
+: >"${GCLOUD_CALLS}"
+OUT="$(cd "${REPO}/outfitter/deploy" && GITHUB_REF_NAME=outfitter-v2026.09.28.1 ./service.sh web 2>&1)" || true
+REL_ENV="$(grep '^run deploy outfitter-api' "${GCLOUD_CALLS}" | grep -oE -- '--set-env-vars=[^ ]*' || true)"
+if [[ "${REL_ENV}" == *",OUTFITTER_BUILD_COMMIT=${TAG},OUTFITTER_RELEASE=outfitter-v2026.09.28.1"* ]]; then
+  echo "ok: a release deploy also sets OUTFITTER_RELEASE"
+else
+  echo "FAIL: expected OUTFITTER_RELEASE=outfitter-v2026.09.28.1 after OUTFITTER_BUILD_COMMIT; got: ${REL_ENV}"
   fails=$((fails + 1))
 fi
 

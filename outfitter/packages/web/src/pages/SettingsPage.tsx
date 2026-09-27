@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useAppVersion } from "../hooks/useAppVersion.ts";
 import {
   api,
   ApiError,
@@ -271,6 +272,7 @@ function RevokeDonglesPanel() {
 }
 
 export function SettingsPage() {
+  const { version } = useAppVersion();
   const [settings, setSettings] = useState<OperatorSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);
@@ -316,6 +318,14 @@ export function SettingsPage() {
       <div className="table-scroll">
       <table className="data-table">
         <tbody>
+          <tr>
+            <td>Release</td>
+            <td className="mono">{version?.release ?? "not a tagged release"}</td>
+          </tr>
+          <tr>
+            <td>Commit</td>
+            <td className="mono">{version?.commit ?? "unknown (dev)"}</td>
+          </tr>
           <tr>
             <td>LiteLLM base URL</td>
             <td>{settings.litellmBaseUrl}</td>

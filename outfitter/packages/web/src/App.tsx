@@ -18,6 +18,7 @@ import { UnhandledRejectionBanner } from "./components/UnhandledRejectionBanner.
 import { NotFoundError } from "./components/NotFoundError.tsx";
 import { DeviceNotPresent } from "./components/DeviceNotPresent.tsx";
 import { useOnlineStatus } from "./hooks/useOnlineStatus.ts";
+import { useAppVersion, versionLabel } from "./hooks/useAppVersion.ts";
 import { EasterEggPage } from "./easter/EasterEggPage.tsx";
 import { useKonamiCode } from "./easter/useKonamiCode.ts";
 import { useSysCommand } from "./easter/useSysCommand.ts";
@@ -119,6 +120,9 @@ export function App() {
     };
   }, []);
 
+  const { version, updated } = useAppVersion();
+  const versionText = versionLabel(version);
+
   return (
     <div className="app-shell">
       {/* On the desk (/), the desk's own GEOS-style menu bar (DeskPage.tsx) replaces this header
@@ -127,7 +131,12 @@ export function App() {
        * button) still renders regardless of route, since the desk's menu bar collapses into the
        * icon grid there and has no room for its own top bar too. */}
       <header ref={headerRef} className={`app-header${isDesk ? " app-header-desk" : ""}`}>
-        <NavLink to="/" aria-label="Outfitter desk" style={{ textDecoration: "none" }} title={vocabulary.desk.hint}>
+        <NavLink
+          to="/"
+          aria-label="Outfitter desk"
+          style={{ textDecoration: "none" }}
+          title={versionText ? `${vocabulary.desk.hint} · Outfitter ${versionText}` : vocabulary.desk.hint}
+        >
           <Logo />
         </NavLink>
         <nav className="app-nav-desktop">
@@ -185,6 +194,7 @@ export function App() {
               <SoundToggle />
               <ThemeToggle />
             </div>
+            {versionText && <div className="app-version">Outfitter {versionText}</div>}
           </nav>
         </div>
       )}
@@ -194,6 +204,14 @@ export function App() {
           <DeviceNotPresent
             reason="you're offline — changes won't reach Outfitter until the connection comes back."
           />
+        </div>
+      )}
+      {updated && (
+        <div className="app-update-banner" role="status">
+          Outfitter was updated{versionLabel(updated) ? ` to ${versionLabel(updated)}` : ""}. Reload to use the new version.
+          <button type="button" className="btn" onClick={() => window.location.reload()}>
+            Reload
+          </button>
         </div>
       )}
       <UnhandledRejectionBanner />

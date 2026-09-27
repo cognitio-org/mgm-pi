@@ -193,11 +193,12 @@ function delay(ms: number): Promise<void> {
 }
 
 /** #205: how long a stop waits after its `bye` for the api to close the socket (Link.sendFinal)
- * before exiting anyway: long enough for the api's per-connection frame queue to drain, short
- * enough that a dead api doesn't hold the pod. SIGTERM waits less: its checkpoint already spent up
- * to sigtermBudgetMs of the platform's grace period (15 s on GKE, ~10 s on Cloud Run). */
-const BYE_CLOSE_WAIT_MS = 10_000;
-const SIGTERM_BYE_CLOSE_WAIT_MS = 1_500;
+ * before exiting anyway: long enough for the api to work through a replayed backlog (one frame at a
+ * time, with store writes each) after a drop, short enough that a dead api doesn't hold the pod for
+ * long. SIGTERM keeps the 1 s it always had: its checkpoint already spent up to sigtermBudgetMs of
+ * the platform's grace period (15 s on GKE, ~10 s on Cloud Run). */
+const BYE_CLOSE_WAIT_MS = 30_000;
+const SIGTERM_BYE_CLOSE_WAIT_MS = 1_000;
 
 /** Waits for `p`, or `ms`, whichever is first, without leaving the timer behind. */
 async function waitAtMost(p: Promise<void>, ms: number): Promise<void> {
@@ -313,6 +314,7 @@ export class RunController {
   private readonly heartbeatIntervalMs: number;
   private readonly sigtermBudgetMs: number;
   private readonly byeCloseWaitMs: number;
+  private byeDone: Promise<void> | undefined;
 
   constructor(private readonly deps: RunControllerDeps) {
     this.now = deps.now ?? Date.now;
@@ -955,7 +957,14 @@ export class RunController {
   /** Sends the final `bye` frame and waits, bounded by `waitMs`, for the api to close the socket
    * before the caller exits the process -- see Link.sendFinal for why the write alone isn't enough
    * (#205). */
-  private async bye(reason: ByeReason, message?: string, waitMs = this.byeCloseWaitMs): Promise<void> {
+  private bye(reason: ByeReason, message?: string, waitMs = this.byeCloseWaitMs): Promise<void> {
+    // One bye per run: a failure during a stop (fail(), a pi exit) shares the first one's wait
+    // rather than sending a second bye that could turn the api's `stopped` into `failed`.
+    this.byeDone ??= this.sendBye(reason, message, waitMs);
+    return this.byeDone;
+  }
+
+  private async sendBye(reason: ByeReason, message: string | undefined, waitMs: number): Promise<void> {
     await this.stopGitProxy();
     await this.stopCaptureListener();
     await this.stopGithubSocket();

@@ -447,6 +447,29 @@ test("RunController: #205 -- after bye, waits for the api to close the socket be
   assert.equal(getExitCode(), 0);
 });
 
+test("RunController: #205 -- a failure during a stop shares the stop's bye instead of sending a second", async (t) => {
+  const exits: number[] = [];
+  const { controller, link, states, spec } = await setupController({}, { onExit: (code) => exits.push(code) });
+  const getExitCode = () => exits[0]; // the first exit ends the process
+  t.after(() => controller.dispose());
+  let apiClosed!: () => void;
+  (link as LinkPort).sendFinal = (msg) => {
+    link.sent.push(msg);
+    return new Promise<void>((resolve) => (apiClosed = resolve));
+  };
+  link.deliver(spec);
+  await waitFor(() => states.includes("idle"));
+  link.deliver({ t: "stop", reason: "user requested" });
+  await waitFor(() => link.sent.some((m) => m.t === "bye"));
+  (controller as any).fail("late failure");
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(link.sent.filter((m) => m.t === "bye").length, 1);
+  assert.equal(getExitCode(), undefined);
+  apiClosed();
+  await waitFor(() => getExitCode() !== undefined);
+  assert.equal(getExitCode(), 0);
+});
+
 test("RunController: #205 -- a bye the api never answers still exits after byeCloseWaitMs", async (t) => {
   const { controller, link, spec, getExitCode } = await setupController({ idleStopSeconds: 0 }, { byeCloseWaitMs: 50 });
   t.after(() => controller.dispose());

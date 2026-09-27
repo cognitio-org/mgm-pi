@@ -61,7 +61,7 @@ describe("agentd <-> api WebSocket", () => {
     await app.fastify.close();
   });
 
-  test("#205: the bye's close comes only after its store writes, and even when releasing mail fails", async () => {
+  test("#205: the bye's close comes only after its store writes; 1011 when they fail, so agentd resends", async () => {
     for (const fail of [false, true]) {
       const app = await buildTestApp();
       const { session, runId, runToken } = await makeRunningSession(app);
@@ -80,8 +80,8 @@ describe("agentd <-> api WebSocket", () => {
       await agent.nextMessage(); // run.spec
       agent.send({ t: "bye", reason: "idle" });
       const close = await agent.nextClose();
-      assert.equal(close.code, 1000);
-      // agentd exits on this close (Link.sendFinal), so everything must already be stored.
+      // agentd exits on a 1000 (Link.sendFinal), so everything must already be stored by then.
+      assert.equal(close.code, fail ? 1011 : 1000);
       assert.equal((await app.store.runs.findById(runId))?.state, "stopped");
       assert.equal(released, !fail);
 

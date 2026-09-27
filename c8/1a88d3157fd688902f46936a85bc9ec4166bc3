@@ -1,0 +1,36 @@
+outfitter/packages/web/src/components/FormatFloppyDialog.tsx
+  s_63cfee548f82b0::t_2c3580cd82152d 1,12,23-40,62-63
+outfitter/packages/web/src/lib/vocabulary.ts
+  s_63cfee548f82b0::t_d8a3d6443b71a4 74-78
+outfitter/packages/web/src/pages/FleetPage.tsx
+  s_63cfee548f82b0::t_d8a3d6443b71a4 13,23,30-33,69,76-80,107-112,136-139,196,226
+outfitter/packages/web/src/lib/webmcp.ts
+  s_63cfee548f82b0::t_431d47396557ac 81,173,180,183-184,187
+  s_63cfee548f82b0::t_d62283a2b4f2e9 164
+outfitter/packages/web/test/floppy-archive.test.tsx
+  s_63cfee548f82b0::t_2c3580cd82152d 68-91,156-172
+  s_63cfee548f82b0::t_ec01480dd9f4e6 173
+outfitter/packages/web/test/webmcp.test.ts
+  s_63cfee548f82b0::t_431d47396557ac 127-129
+  s_63cfee548f82b0::t_2c3580cd82152d 45
+  s_63cfee548f82b0::t_6eaf7f33702e87 130
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_63cfee548f82b0::t_7bbd8ca46a0315 106-109,119,336,342,344,380-381,421-425,641-647
+  s_63cfee548f82b0::t_96d04ba1638791 339-340
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "c81a88d3157fd688902f46936a85bc9ec4166bc3",
+  "prompts": {},
+  "sessions": {
+    "s_63cfee548f82b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2abd665b-152d-4945-bee0-e1f672204de7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

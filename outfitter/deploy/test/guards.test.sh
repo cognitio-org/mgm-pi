@@ -51,7 +51,9 @@ check() {
 }
 
 check "clean, up-to-date main" ok "deploy_guard kernal outfitter"
+check "clean main with DEPLOY_GUARD_NO_FETCH=1" ok "DEPLOY_GUARD_NO_FETCH=1 deploy_guard kernal outfitter"
 echo dirty >>"${REPO}/outfitter/app.txt"
+check "DEPLOY_GUARD_NO_FETCH=1 still refuses an uncommitted change" refuse "DEPLOY_GUARD_NO_FETCH=1 deploy_guard outfitter"
 check "uncommitted change under outfitter/" refuse "deploy_guard outfitter"
 check "uncommitted change elsewhere is ignored for kernal/" ok "deploy_guard kernal"
 git -C "${REPO}" checkout -q -- outfitter/app.txt
@@ -59,6 +61,8 @@ git -C "${REPO}" checkout -q -b feature
 echo three >"${REPO}/outfitter/app.txt" && git -C "${REPO}" commit -q -am three
 check "commit not on origin/main" refuse "deploy_guard outfitter"
 check "ALLOW_OFF_MAIN=1 skips it" ok "ALLOW_OFF_MAIN=1 deploy_guard outfitter"
+# DEPLOY_GUARD_NO_FETCH=1 (release.sh's background API build) skips only the fetch, never a check.
+check "DEPLOY_GUARD_NO_FETCH=1 still refuses a commit not on origin/main" refuse "DEPLOY_GUARD_NO_FETCH=1 deploy_guard outfitter"
 git -C "${REPO}" checkout -q --detach "${FIRST}"
 check "behind origin/main" refuse "deploy_guard outfitter"
 check "behind origin/main with ROLLBACK=1" ok "ROLLBACK=1 deploy_guard outfitter"

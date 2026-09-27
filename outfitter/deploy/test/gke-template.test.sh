@@ -146,14 +146,6 @@ if [[ "$*" == *"create -f -"* && "$*" == *"jsonpath={.metadata.name}"* ]]; then
   printf '%s' "${FAKE_WARMUP_NAME:-warmup-fakeabc123}"
   exit 0
 fi
-case "$*" in
-  *"get sandboxclaim "*"jsonpath={.status.sandbox.name}"*)
-    [[ -n "${FAKE_NO_SANDBOX_ASSIGNED:-}" ]] || printf '%s' "${FAKE_SANDBOX_NAME:-warmup-sandbox-1}"
-    ;;
-  *"wait --for=condition=Ready sandbox/"*)
-    [[ -n "${FAKE_SANDBOX_NOT_READY:-}" ]] && exit 1
-    ;;
-esac
 exit 0
 SH
 chmod +x "${WORK}/bin/kubectl"
@@ -178,7 +170,7 @@ TAG="$(git -C "${REPO}" rev-parse --short=12 HEAD)"
 export PATH="${WORK}/bin:${PATH}"
 export GCLOUD_CALLS="${WORK}/gcloud-calls" KUBECTL_CALLS="${WORK}/kubectl-calls" \
   RENDERED_LOG="${WORK}/rendered-log" GKE_CLUSTER=outfitter FAKE_LINK_ORIGIN=https://link.example.com \
-  KUBECONFIG_OUTFITTER="${WORK}/kube/outfitter" WARMUP_POLL_INTERVAL_S=0
+  KUBECONFIG_OUTFITTER="${WORK}/kube/outfitter"
 unset GITHUB_ACTIONS ROLLBACK ALLOW_OFF_MAIN ALLOW_SKEW DEPLOY_ALL_COMMIT
 
 fails=0
@@ -310,21 +302,26 @@ else
   echo "FAIL: expected 'kubectl create -f -' for the warm-up claim"; fails=$((fails + 1))
 fi
 
-if grep -q "delete sandboxclaim warmup-fakeabc123" "${KUBECTL_CALLS}"; then
-  echo "ok: the warm-up claim was deleted"
+# Fire and forget: the release neither waits on the warm-up claim nor deletes it (it removes itself,
+# with shutdownTime as the backstop). Those two waits used to cost up to three minutes a release.
+if grep -qE "wait |get sandboxclaim warmup-|delete sandboxclaim warmup-fakeabc123" "${KUBECTL_CALLS}"; then
+  echo "FAIL: the release waited on or deleted the warm-up claim:"; grep -nE "wait |get sandboxclaim warmup-|delete sandboxclaim warmup-" "${KUBECTL_CALLS}" | sed 's/^/    /'
+  fails=$((fails + 1))
 else
-  echo "FAIL: expected the warm-up claim to be deleted"; fails=$((fails + 1))
+  echo "ok: the warm-up claim is not waited on or deleted by the release"
+fi
+if grep -qE 'shutdownTime: "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"' "${RENDERED_LOG}"; then
+  echo "ok: the warm-up claim carries a shutdownTime backstop"
+else
+  echo "FAIL: expected a shutdownTime on the warm-up claim"; grep -n "lifecycle" "${RENDERED_LOG}" | sed 's/^/    /'; fails=$((fails + 1))
 fi
 
-# head -1: the registered EXIT-trap cleanup also deletes the claim again (harmless,
-# --ignore-not-found) once this whole test process exits, adding a second "delete" line later in
-# the same call log -- only the first (in-script) occurrence matters for ordering here.
 LABEL_LINE="$(grep -n "label sandboxtemplate outfitter-agent build-commit=${TAG}" "${KUBECTL_CALLS}" | head -1 | cut -d: -f1 || true)"
-DELETE_LINE="$(grep -n "delete sandboxclaim warmup-fakeabc123" "${KUBECTL_CALLS}" | head -1 | cut -d: -f1 || true)"
-if [[ -n "${LABEL_LINE}" && -n "${DELETE_LINE}" && "${LABEL_LINE}" -gt "${DELETE_LINE}" ]]; then
+CREATE_LINE="$(grep -n "create -f -" "${KUBECTL_CALLS}" | head -1 | cut -d: -f1 || true)"
+if [[ -n "${LABEL_LINE}" && -n "${CREATE_LINE}" && "${LABEL_LINE}" -gt "${CREATE_LINE}" ]]; then
   echo "ok: the build-commit label is applied LAST, after the pool patch and the warm-up"
 else
-  echo "FAIL: expected the build-commit label (line ${LABEL_LINE:-?}) after the warm-up delete (line ${DELETE_LINE:-?})"
+  echo "FAIL: expected the build-commit label (line ${LABEL_LINE:-?}) after the warm-up create (line ${CREATE_LINE:-?})"
   fails=$((fails + 1))
 fi
 
@@ -351,15 +348,6 @@ else
   echo "FAIL:   expected a patch to replicas:0"; fails=$((fails + 1))
 fi
 
-FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
-  FAKE_JOB_LABELS="build-commit=${TAG}" FAKE_NO_SANDBOX_ASSIGNED=1 \
-  expect pass "a warm-up claim that never gets a Sandbox assigned still finishes" \
-  "never got a Sandbox assigned within 60s"
-
-FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
-  FAKE_JOB_LABELS="build-commit=${TAG}" FAKE_SANDBOX_NOT_READY=1 \
-  expect pass "a Sandbox that never reports Ready still finishes (next real wake pays the pull)" \
-  "didn't report Ready within 120s"
 
 # Medium (review round 2): a stale warm-up claim (left by an interrupted previous run) is cleaned up
 # by label before creating a new one, and a failed create (quota, AlreadyExists, anything) is

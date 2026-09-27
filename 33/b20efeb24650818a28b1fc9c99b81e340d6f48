@@ -1,0 +1,19 @@
+outfitter/docs/specs/drive-previews.md
+  s_9e985270e78a63::t_65c9d4dba9b69e 1-238
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "33b20efeb24650818a28b1fc9c99b81e340d6f48",
+  "prompts": {},
+  "sessions": {
+    "s_9e985270e78a63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "019f7f91-d886-47f5-9a90-f34314b7756e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -1,0 +1,30 @@
+outfitter/packages/web/src/hooks/useProviders.ts
+  s_9e985270e78a63::t_63f3429a0cd286 4-9,12-13,20-41,44-45
+outfitter/packages/web/test/providers-default.test.tsx
+  s_9e985270e78a63::t_48c98b7d8449c9 104-127
+  s_9e985270e78a63::t_bdb63e2f962785 11
+  s_9e985270e78a63::t_a7ce47aa1732b2 71-84
+outfitter/docs/specs/gke-sandbox-provider.md
+  s_9e985270e78a63::t_d13d2d44dc529b 253-259
+outfitter/packages/web/src/styles/pages.css
+  s_9e985270e78a63::t_5f7fce88c47c35 270-274
+outfitter/packages/web/src/lib/providers.ts
+  s_9e985270e78a63::t_5756ff33ccbad7 18-21
+  s_9e985270e78a63::t_48203a8ed8e55f 32-34,37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "44c78d1976c844991b5f60ecb8b51c7daafe70b1",
+  "prompts": {},
+  "sessions": {
+    "s_9e985270e78a63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "019f7f91-d886-47f5-9a90-f34314b7756e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

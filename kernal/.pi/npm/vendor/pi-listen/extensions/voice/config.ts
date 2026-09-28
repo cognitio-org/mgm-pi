@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { mergeVoiceBlocks } from "./kernal";
 
 function getAgentDir(): string {
 	return path.join(os.homedir(), ".pi", "agent");
@@ -246,8 +247,12 @@ export function loadConfigWithSource(cwd: string, options: ConfigPathOptions = {
 	const projectVoice = readJsonFile(projectSettingsPath)[SETTINGS_KEY];
 
 	if (projectVoice && typeof projectVoice === "object") {
+		// kernal: a project block overrides the global one key by key instead of replacing it
+		// wholesale, so a project that only sets its language keeps the global backend, model and
+		// Deepgram key. (Upstream dropped the whole global setup.)
+		const merged = mergeVoiceBlocks(globalVoice, projectVoice);
 		return {
-			config: migrateConfig(projectVoice, "project"),
+			config: migrateConfig(merged, "project"),
 			source: "project",
 			globalSettingsPath,
 			projectSettingsPath,

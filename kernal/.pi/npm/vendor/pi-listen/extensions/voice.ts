@@ -84,6 +84,7 @@ import { makeRenderTicker, type RenderTicker } from "./voice/ui-render-ticker";
 import { TtsInstallProgressWidget } from "./voice/tts-install-progress";
 import { TtsPlaybackIndicator } from "./voice/tts-playback-indicator";
 import { buildDeepgramWsUrl, resolveDeepgramApiKey, SAMPLE_RATE, CHANNELS } from "./voice/deepgram";
+import { autoSpeakAllowed, rearmReleaseOnRepeat, streamLogPath } from "./voice/kernal";
 import {
 	startLocalSession, stopLocalSession, abortLocalSession,
 	checkLocalServer, LOCAL_MODELS, DEFAULT_LOCAL_ENDPOINT,
@@ -1704,6 +1705,12 @@ export default function (pi: ExtensionAPI) {
 				if (isKeyRepeat(data)) {
 					// Already in recording/finalizing — just consume
 					if (voiceState === "recording" || voiceState === "finalizing" || spaceConsumed) {
+						// kernal: re-arm the gap-based release timer on every repeat while recording
+						// (upstream #13). Recording start clears it, and a terminal that sends Kitty
+						// repeat events but no release events has no other way to say "let go", so
+						// without this the recording never stopped. Terminals that do send releases
+						// stop on the release event first; ones that don't stop on the gap.
+						if (rearmReleaseOnRepeat({ voiceState, spaceConsumed, kittyReleaseDetected })) resetReleaseDetect();
 						return { consume: true };
 					}
 					// Already in warmup — consume (hold timer is running)
@@ -2120,7 +2127,7 @@ export default function (pi: ExtensionAPI) {
 		// actually loaded after a `pi install .` (path-installed
 		// extensions cache modules across `pi install` reinstalls — only
 		// a fresh `pi` process picks up source changes).
-		voiceDebug("pi-listen v7.1.3 loaded", { reason });
+		voiceDebug("pi-listen 7.2.2-kernal loaded", { reason }); // kernal: the real version
 
 		// Migration / setup runs on EVERY session_start, regardless of reason.
 		// Only the first-run notification is gated on isStartup.
@@ -2324,7 +2331,9 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	async function maybeSpeakNew(messageId: string, fullText: string, isFinal: boolean): Promise<void> {
-		if (!config.ttsEnabled || !config.ttsAutoSpeak) return;
+		// kernal: never speak without a UI: `pi -p`, subagents and scripted runs mustn't read replies
+		// aloud on the host.
+		if (!autoSpeakAllowed(config, ctx?.hasUI)) return;
 		// Don't speak while STT is hot — feedback loop hazard.
 		if (voiceState === "warmup" || voiceState === "recording" || voiceState === "finalizing") return;
 		if (!fullText) return;
@@ -2386,11 +2395,12 @@ export default function (pi: ExtensionAPI) {
 	// Diagnostic: stream log shows when message_update / message_end
 	// actually fire (some Pi versions don't emit message_update
 	// per-token). Lets us verify the streaming path is alive.
+	// kernal: only with PI_VOICE_DEBUG, and in the OS temp dir. Upstream appended to
+	// /tmp/pi-listen-stream.log on every stream, unconditionally, with no size limit.
 	const streamDiag = (s: string) => {
-		try {
-			const fs2 = require("node:fs") as typeof import("node:fs");
-			fs2.appendFileSync("/tmp/pi-listen-stream.log", `[${new Date().toISOString()}] ${s}\n`);
-		} catch { /* best-effort */ }
+		const logPath = streamLogPath(process.env, os.tmpdir());
+		if (!logPath) return;
+		try { fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${s}\n`); } catch { /* best-effort */ }
 	};
 	let mu_count = 0;
 	pi.on("message_update", async (event) => {
@@ -2427,7 +2437,7 @@ export default function (pi: ExtensionAPI) {
 	// it doesn't double-speak when message_update already covered the
 	// content.
 	pi.on("turn_end", async (event, _evtCtx) => {
-		if (!config.ttsEnabled || !config.ttsAutoSpeak) return;
+		if (!autoSpeakAllowed(config, ctx?.hasUI)) return; // kernal: no speaking without a UI (see maybeSpeakNew)
 		const message = (event as any)?.message;
 		if (!message || message.role !== "assistant") return;
 		const id = (message.id as string) || "current";
@@ -2474,7 +2484,6 @@ export default function (pi: ExtensionAPI) {
 					"  /voice dictate  → continuous mode (no hold)",
 					"  /voice test     → verify setup",
 					"",
-					"  Say 'undo', 'clear', 'new line', 'period' during dictation",
 				].join("\n"), "info");
 				return;
 			}

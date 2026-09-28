@@ -14,4 +14,19 @@ decision (#250) was to vendor it and improve it here, rather than switch to a yo
 
 ## Kernal's changes
 
-(none yet)
+The decisions live in `extensions/voice/kernal.ts` as small pure functions, which the call sites use
+and the tests check.
+
+| # | Change | Where | Upstream |
+|---|---|---|---|
+| 1 | **Hold Space no longer locks on:** a Space repeat while recording re-arms the gap-based release timer (`rearmReleaseOnRepeat`). Terminals that send Kitty repeat events but no release events, some Linux terminals and some Ghostty setups, kept recording forever. Warp and Terminal.app weren't affected. | `voice.ts` Kitty repeat branch | #13 |
+| 2 | **No spoken replies without a UI** (`autoSpeakAllowed`): `pi -p`, subagents and scripted runs no longer read replies aloud on the host. | `voice.ts` `maybeSpeakNew`, `turn_end` | — |
+| 3 | **No always-on stream log** (`streamLogPath`): only with `PI_VOICE_DEBUG`, in the OS temp dir. Upstream appended to `/tmp/pi-listen-stream.log` on every stream, with no size limit. | `voice.ts`, `voice/tts-playback.ts` | — |
+| 4 | **Project voice settings merge over the global ones** (`mergeVoiceBlocks`), key by key, instead of replacing them. A project that sets only its language keeps your backend, model and Deepgram key. | `voice/config.ts` | — |
+| 5 | **`/voice on` no longer advertises spoken commands** ("undo", "clear", "new line", "period") that were never implemented. | `voice.ts` | — |
+| 6 | **The version banner** in the debug log says 7.2.2-kernal instead of 7.1.3. | `voice.ts` | — |
+| 7 | **Linux playback:** ffplay gets `-ac 1` below ffmpeg 5.1 and `-ch_layout mono` from 5.1 (`ffplayChannelArgs`). Ubuntu 22.04's 4.4 rejected `-ch_layout` and ffplay exited 1; this was checked in `ubuntu:22.04` and `ubuntu:24.04`. WAV playback also uses aplay when paplay isn't installed (`linuxFilePlayer`). | `voice/tts-playback.ts` | #6 |
+
+Not changed: in RPC mode the final Deepgram transcript is still only applied when the editor has text
+(`getEditorText()` is always "" there). Nothing kernal runs uses pi-listen under RPC; Outfitter's
+voice is in the browser.

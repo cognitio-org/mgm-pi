@@ -31,6 +31,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
+import { ffplayChannelArgs, linuxFilePlayer, streamLogPath } from "./kernal";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -239,11 +240,12 @@ export function openPlaybackStream(opts: OpenPlaybackStreamOpts): PlaybackStream
 	// stable log path so production truncation issues can be diagnosed
 	// without re-running with PI_VOICE_DEBUG. Best-effort — silently
 	// drops if /tmp isn't writable.
+	// kernal: only with PI_VOICE_DEBUG, and in the OS temp dir. Upstream appended to
+	// /tmp/pi-listen-stream.log on every stream, unconditionally, with no size limit.
 	const diagLog = (s: string) => {
-		try {
-			const fs2 = require("node:fs") as typeof import("node:fs");
-			fs2.appendFileSync("/tmp/pi-listen-stream.log", `[${new Date().toISOString()}] ${s}\n`);
-		} catch { /* best-effort */ }
+		const logPath = streamLogPath(process.env, os.tmpdir());
+		if (!logPath) return;
+		try { fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${s}\n`); } catch { /* best-effort */ }
 	};
 	diagLog(`opened ${player.cmd} sampleRate=${sampleRate} pid=${proc.pid}`);
 	let totalBytesAccepted = 0;
@@ -417,7 +419,9 @@ function pickStreamingPlayer(sampleRate: number): StreamingPlayerSpec | null {
 				"-loglevel", "quiet",
 				"-f", "s16le",
 				"-ar", String(sampleRate),
-				"-ch_layout", "mono", // ffmpeg 8+ uses ch_layout instead of -ac
+				// kernal: -ch_layout exists from ffmpeg 5.1 (and 8+ drops -ac); older ffmpeg, such as
+				// 4.4 on Ubuntu 22.04, rejects it and ffplay exits 1 (upstream #6).
+				...ffplayChannelArgs(ffplayVersion()),
 				"-i", "pipe:0",
 			],
 		};
@@ -549,10 +553,21 @@ function choosePlayer(): PlayerSpec {
  * if field reports show it's needed.
  */
 function linuxPlayer(): PlayerSpec {
-	return {
-		cmd: "paplay",
-		args: (p) => [p],
-	};
+	// kernal: aplay (ALSA) when paplay isn't installed; binaryAvailable caches its probe.
+	return linuxFilePlayer(binaryAvailable);
+}
+
+let ffplayVersionCache: string | undefined | null = null;
+/** "4.4.2-0ubuntu…", "7.1.1", "n7.1", or undefined; probed once. */
+function ffplayVersion(): string | undefined {
+	if (ffplayVersionCache !== null) return ffplayVersionCache;
+	try {
+		const out = spawnSync("ffplay", ["-version"], { encoding: "utf8", timeout: 3000 }).stdout ?? "";
+		ffplayVersionCache = out.match(/ffplay version n?([\d.]+)/)?.[1];
+	} catch {
+		ffplayVersionCache = undefined;
+	}
+	return ffplayVersionCache;
 }
 
 // ─── Temp file ────────────────────────────────────────────────────────────────

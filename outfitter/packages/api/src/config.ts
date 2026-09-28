@@ -179,7 +179,9 @@ export interface Config {
   voiceSttUsdPerMinute: number;
   voiceTtsUsdPer1kChars: number;
   /** VOICE_MONTHLY_CAP_USD: a person's Deepgram spend this month at which POST /api/voice/token
-   * refuses (voice_cap_reached) and the mic uses the browser's built-in speech. 0 (default): no cap. */
+   * refuses (voice_cap_reached) and the mic uses the browser's built-in speech. 0 (default): no cap.
+   * Soft: checked when a stream starts, against usage up to a minute or two old, so one long session
+   * can run past it. Plain dollars ("5", not "$5"). */
   voiceMonthlyCapUsd: number;
 }
 
@@ -222,7 +224,10 @@ function envNonNegative(name: string, fallback: number, env: NodeJS.ProcessEnv):
   const raw = env[name];
   if (!raw) return fallback;
   const n = Number(raw);
-  return Number.isFinite(n) && n >= 0 ? n : fallback;
+  if (Number.isFinite(n) && n >= 0) return n;
+  // Loud, because for VOICE_MONTHLY_CAP_USD the fallback (0) means "no cap".
+  console.warn(`[config] ${name}=${JSON.stringify(raw)} isn't a non-negative number; using ${fallback}`);
+  return fallback;
 }
 
 function envList(name: string, fallback: string[], env: NodeJS.ProcessEnv): string[] {

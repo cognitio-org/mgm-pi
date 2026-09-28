@@ -459,12 +459,16 @@ wake -> ready summary. Runs created before `Run.startup` existed get no stamps a
     tag (cached 60 s per instance) and priced at `VOICE_STT_USD_PER_MINUTE` (default 0.0077) and
     `VOICE_TTS_USD_PER_1K_CHARS` (default 0.03), Deepgram's list prices. Periods are UTC: today, the
     week from Monday, the calendar month. 502 `voice_usage_upstream` when Deepgram can't be read.
-  - `GET /api/operator/voice/spend` (#257, sysops) → the month so far per tag (`users: [{tag, email?,
-    minutes, ttsCharacters, usd}]`, largest first, `email` when a user here has that tag), `untagged`
-    (streams with no tag: the laptop's pi-listen, which shares the Deepgram project) and `total`.
-  - `VOICE_MONTHLY_CAP_USD` (default 0, off): at or over it, `POST /api/voice/token` answers 403
-    `{error: "voice_cap_reached", capUsd, monthUsd}` and the mic uses the built-in engine. If the usage
-    can't be read, the token is minted anyway.
+  - `GET /api/operator/voice/spend` (#257, sysops) → `{available: false}` when not configured, else
+    `{available: true, currency: "USD", users, untagged, total, asOf, rates}`: the month so far per tag
+    (`users: [{tag, email?, minutes, ttsCharacters, usd}]`, largest first, `email` when a user here has
+    that tag), `untagged` (streams with no tag: the laptop's pi-listen, which shares the Deepgram
+    project) and `total`. 502 `voice_usage_upstream` when Deepgram can't be read.
+  - `VOICE_MONTHLY_CAP_USD` (default 0, off; plain dollars): at or over it (compared in cents),
+    `POST /api/voice/token` answers 403 `{error: "voice_cap_reached", capUsd, monthUsd}` and the mic
+    uses the built-in engine. A soft cap: it's checked when a stream starts, against usage up to a
+    minute or two old, so one long session can run past it. If the usage can't be read within 1.5 s,
+    the token is minted anyway.
 - `POST /api/hooks/ngrok` → the E2.8 "optional push path": ngrok event subscription delivery for
   `agent_session_start.v0` / `agent_session_stop.v0`, flipping the laptop preflight's cached
   `laptopOnline` immediately instead of waiting out its 60s poll. **Not IAP-gated** — every other

@@ -728,9 +728,15 @@
   min-width: 15rem;
 }
 
-.voice-menu-group {
+.voice-menu-group,
+.voice-menu-items {
   display: flex;
   flex-direction: column;
+}
+
+h4.voice-menu-heading {
+  margin: 0;
+  font-weight: normal;
 }
 
 .voice-menu-heading {

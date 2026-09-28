@@ -159,7 +159,10 @@ export function VoiceControl({ voice }: { voice: Voice }) {
         <span aria-hidden="true">▾</span>
       </button>
       {menuOpen && (
-        <div ref={menuRef} className="enter-mode-menu voice-menu" role="menu" aria-label="Voice settings" onKeyDown={menuKeys}>
+        // The popover holds the menu proper, then plain text (spend, hint) outside role="menu" so a
+        // screen reader reads it rather than skipping non-items.
+        <div ref={menuRef} className="enter-mode-menu voice-menu" onKeyDown={menuKeys}>
+          <div role="menu" aria-label="Voice settings" className="voice-menu-items">
           <div role="group" aria-labelledby="voice-menu-engine" className="voice-menu-group">
           <div className="voice-menu-heading" id="voice-menu-engine">
             Engine (this floppy)
@@ -194,13 +197,14 @@ export function VoiceControl({ voice }: { voice: Voice }) {
             Leave it to review
           </button>
           </div>
+          </div>
           {voice.deepgramAvailable && (
-            <div className="voice-menu-group" role="group" aria-labelledby="voice-menu-spend">
-              <div className="voice-menu-heading" id="voice-menu-spend">
+            <section className="voice-menu-group" aria-labelledby="voice-menu-spend">
+              <h4 className="voice-menu-heading" id="voice-menu-spend">
                 Your Deepgram spend
-              </div>
+              </h4>
               <VoiceSpendView compact />
-            </div>
+            </section>
           )}
           <div className="voice-menu-hint" aria-hidden="true">
             {hint}

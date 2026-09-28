@@ -203,6 +203,25 @@ describe("POST /api/voice/token with VOICE_MONTHLY_CAP_USD", () => {
     await app.fastify.close();
   });
 
+  test("a hanging usage read doesn't hold the mic: it mints after about 1.5 s", async () => {
+    const hang = (() => new Promise<Response>(() => {})) as typeof fetch;
+    const app = await voiceApp(usage(hang), { VOICE_MONTHLY_CAP_USD: "6" });
+    const t0 = Date.now();
+    const res = await app.fastify.inject({ method: "POST", url: "/api/voice/token" });
+    const took = Date.now() - t0;
+    assert.equal(res.statusCode, 200);
+    assert.ok(took >= 1400 && took < 4000, `took ${took} ms`);
+    await app.fastify.close();
+  });
+
+  test("compared in cents, as shown: $4.996 against a $5 cap is refused", async () => {
+    const f = fakeFetch(() => ({ results: [day("2026-09-10", 4.996 / 0.6)] })); // $4.996 at $0.01/min
+    const app = await voiceApp(usage(f.impl), { VOICE_MONTHLY_CAP_USD: "5" });
+    const res = await app.fastify.inject({ method: "POST", url: "/api/voice/token" });
+    assert.equal(res.statusCode, 403);
+    await app.fastify.close();
+  });
+
   test("no cap: usage isn't read at all", async () => {
     const f = fakeFetch(() => ({ results: [] }));
     const app = await voiceApp(usage(f.impl));

@@ -27,6 +27,14 @@ export interface VoiceEngines {
   builtinAvailable: boolean;
 }
 
+/** What a failed POST /api/voice/token means for the mic. */
+export function voiceTokenError(err: unknown): VoiceError {
+  if (err instanceof ApiError && err.status === 404) return new VoiceError("disabled", "Deepgram voice is off here");
+  if (err instanceof ApiError && err.status === 429) return new VoiceError("rate-limited", "Too many voice requests; try again in a minute");
+  if (err instanceof ApiError && err.status === 403) return new VoiceError("cap-reached", "This month's Deepgram voice cap is reached");
+  return new VoiceError("upstream", "Couldn't get a Deepgram token");
+}
+
 /** Production engines: real browser APIs, tokens from the API. */
 export function browserEngines(language = navigator.language || "en"): VoiceEngines {
   const Recognition = builtinRecognition();
@@ -37,10 +45,7 @@ export function browserEngines(language = navigator.language || "en"): VoiceEngi
           try {
             return await api.voiceToken();
           } catch (err) {
-            if (err instanceof ApiError && err.status === 404) throw new VoiceError("disabled", "Deepgram voice is off here");
-            if (err instanceof ApiError && err.status === 429) throw new VoiceError("rate-limited", "Too many voice requests; try again in a minute");
-            if (err instanceof ApiError && err.status === 403) throw new VoiceError("cap-reached", "This month's Deepgram voice cap is reached");
-            throw new VoiceError("upstream", "Couldn't get a Deepgram token");
+            throw voiceTokenError(err);
           }
         },
         getUserMedia: (c) => navigator.mediaDevices.getUserMedia(c),

@@ -76,9 +76,9 @@ describe("VoiceSpendView", () => {
     ]);
   });
 
-  it("not set up: nothing in the menu, a note on the page", async () => {
+  it("not set up: a short note in the menu and on the page", async () => {
     answer("/api/me/voice/spend", { available: false });
-    expect((await render(<VoiceSpendView compact />)).textContent).toBe("");
+    expect((await render(<VoiceSpendView compact />)).textContent).toBe("Not tracked here yet.");
     act(() => root!.unmount());
     answer("/api/me/voice/spend", { available: false });
     expect((await render(<VoiceSpendView />)).textContent).toMatch(/isn't set up/);
@@ -87,6 +87,18 @@ describe("VoiceSpendView", () => {
   it("says so when Deepgram's usage can't be read", async () => {
     answer("/api/me/voice/spend", { error: "voice_usage_upstream" }, 502);
     expect((await render(<VoiceSpendView />)).textContent).toMatch(/Couldn't read/);
+  });
+});
+
+describe("voiceTokenError", () => {
+  it("maps the token endpoint's refusals to what the mic does next", async () => {
+    const { voiceTokenError } = await import("../src/hooks/useVoice.ts");
+    const { ApiError } = await import("../src/api/client.ts");
+    expect(voiceTokenError(new ApiError(404, "voice_disabled")).kind).toBe("disabled");
+    expect(voiceTokenError(new ApiError(429, "voice_rate_limited")).kind).toBe("rate-limited");
+    expect(voiceTokenError(new ApiError(403, "voice_cap_reached")).kind).toBe("cap-reached");
+    expect(voiceTokenError(new ApiError(502, "voice_upstream")).kind).toBe("upstream");
+    expect(voiceTokenError(new TypeError("fetch failed")).kind).toBe("upstream");
   });
 });
 

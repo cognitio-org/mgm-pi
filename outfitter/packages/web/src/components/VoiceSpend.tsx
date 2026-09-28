@@ -21,7 +21,9 @@ export function VoiceSpendView({ compact = false }: { compact?: boolean }) {
 
   if (failed) return <p className={compact ? "voice-menu-hint" : "session-meta"}>Couldn't read voice spend from Deepgram.</p>;
   if (!spend) return <p className={compact ? "voice-menu-hint" : "session-meta"}>Reading voice spend…</p>;
-  if (!spend.available) return compact ? null : <p className="session-meta">Deepgram voice isn't set up here.</p>;
+  if (!spend.available) {
+    return compact ? <p className="voice-menu-hint">Not tracked here yet.</p> : <p className="session-meta">Deepgram voice spend isn't set up here.</p>;
+  }
 
   const cap = spend.capUsd ? ` of ${formatUsd(spend.capUsd)} cap` : "";
   if (compact) {

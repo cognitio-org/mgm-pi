@@ -4,6 +4,9 @@ import { getSessionOr404 } from "./sessions.ts";
 import { AFTER_SPEAKING, DEFAULT_VOICE_PREFS, VOICE_ENGINES, voiceTag, type AfterSpeaking, type VoiceEngine } from "../voice.ts";
 import { requireOperator } from "../auth.ts";
 
+/** How long a token request waits on Deepgram's usage for the cap check before minting anyway. */
+const CAP_CHECK_MS = 1_500;
+
 /** Web voice (#252, epic #256), "web"/"all" role. The browser streams the mic straight to Deepgram
  * with a token from POST /api/voice/token; the transcript goes out through the ordinary
  * POST /api/sessions/:id/messages, so nothing here touches runs, agentd or pi. */
@@ -35,13 +38,18 @@ export async function registerVoiceRoutes(app: FastifyInstance, ctx: RouteContex
   app.post("/api/voice/token", async (req, reply) => {
     const email = req.identity!.email;
     reply.header("cache-control", "no-store");
-    // #257's optional cap. If Deepgram's usage can't be read, voice carries on: a usage outage
-    // mustn't take the mic away.
+    // #257's optional cap, checked when a stream starts (a soft cap: an open stream runs on). If
+    // Deepgram's usage can't be read quickly, voice carries on: a usage outage mustn't take the mic
+    // away, or make every press wait out a hanging request.
     const cap = ctx.config.voiceMonthlyCapUsd;
     if (cap > 0 && ctx.voice.enabled && ctx.voiceUsage.enabled) {
       try {
-        const spend = await ctx.voiceUsage.forUser(email);
-        if (spend.month.usd >= cap) {
+        const spend = await Promise.race([
+          ctx.voiceUsage.forUser(email),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("usage read took over 1.5 s")), CAP_CHECK_MS).unref()),
+        ]);
+        // In cents, as shown: "$5.00 of $5.00" must mean refused.
+        if (Math.round(spend.month.usd * 100) >= Math.round(cap * 100)) {
           return reply.code(403).send({ error: "voice_cap_reached", capUsd: cap, monthUsd: spend.month.usd });
         }
       } catch (err) {

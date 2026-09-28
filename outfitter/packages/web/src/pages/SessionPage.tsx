@@ -743,6 +743,8 @@ export function SessionPage() {
         // One composer per session: a draft (and its Preview state) never follows the user to
         // another session, where Enter would send it to the wrong agent.
         key={sessionId}
+        sessionId={sessionId}
+        voiceEngine={session?.voiceEngine}
         onSend={handleSend}
         disabled={activity.composerDisabled || archived}
         sending={activity.phase === "sending"}

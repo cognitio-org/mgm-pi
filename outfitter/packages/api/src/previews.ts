@@ -49,6 +49,14 @@ export function internalUrlFor(label: string, port: number): string {
   return `https://p${port}.${label}.internal`;
 }
 
+/** Browser IDE (#242): the IDE's internal endpoint, a name the preview tool never uses. */
+export function ideInternalUrlFor(label: string): string {
+  return `https://ide.${label}.internal`;
+}
+
+/** The IDE's Preview record carries port 0: never a dev server's, and never shareable. */
+export const IDE_PREVIEW_PORT = 0;
+
 export function validPreviewPort(port: unknown): port is number {
   return typeof port === "number" && Number.isInteger(port) && port >= 1024 && port <= 65535;
 }
@@ -279,7 +287,9 @@ export class PreviewService {
     if (internalUrlFromAgent && internalUrlFromAgent.replace(/\/+$/, "") !== internalUrl) return { error: "failed" };
     const open = await this.store.previews.findOpen(runId, port, share);
     if (open) return { url: open.url, ...(open.expiresAt ? { expiresAt: open.expiresAt } : {}) };
-    if ((await this.store.previews.listOpenForRun(runId)).length >= MAX_OPEN_PREVIEWS_PER_RUN) return { error: "too-many" };
+    // The IDE's endpoint (#242) doesn't count: a model opening previews can't crowd it out.
+    const openPreviews = (await this.store.previews.listOpenForRun(runId)).filter((p) => p.kind !== "ide");
+    if (openPreviews.length >= MAX_OPEN_PREVIEWS_PER_RUN) return { error: "too-many" };
     if (this.overBudget(runId)) return { error: "too-many" };
 
     const id = randomBytes(16).toString("hex");
@@ -313,6 +323,62 @@ export class PreviewService {
       return { error: "failed" };
     }
     return { url, ...(expiresAt ? { expiresAt } : {}) };
+  }
+
+  /**
+   * Browser IDE (#242, docs/specs/browser-ide.md §4): the public endpoint for the run's IDE. Only
+   * agentlink calls this, for an `ide.status` "ready" that answers the run's own pending `ide.open`.
+   * The allowlist is the floppy's owner and this deployment's sysops (the people canManageSession
+   * lets manage it), not PREVIEW_ALLOW: a dev-server preview is a web page, the IDE is a shell. It's
+   * fixed when the endpoint is made; closeIde() then a new open re-makes it. At most one per run.
+   */
+  async openIde(runId: string, internalUrlFromAgent: string): Promise<OpenResult> {
+    if (!this.enabled) return { error: "not-configured" };
+    const run = await this.store.runs.findById(runId);
+    if (!run?.preview || !LIVE_RUN_STATES.has(run.state)) return { error: "not-configured" };
+    const internalUrl = ideInternalUrlFor(run.preview.label);
+    if (internalUrlFromAgent.replace(/\/+$/, "") !== internalUrl) return { error: "failed" };
+    const existing = await this.store.previews.findOpen(runId, IDE_PREVIEW_PORT, false);
+    if (existing?.kind === "ide") return { url: existing.url };
+    const session = await this.store.sessions.findById(run.sessionId);
+    if (!session?.ownerEmail) return { error: "no-owner" };
+    if (this.overBudget(runId)) return { error: "too-many" };
+    const allow = parseAllowlist([session.ownerEmail, ...this.config.operators]);
+    const id = randomBytes(16).toString("hex");
+    const url = `https://${id}.${this.config.previewDomain}`;
+    const now = this.now();
+    let endpointId: string;
+    try {
+      const ep = await this.ngrok!.createCloudEndpoint({
+        url,
+        trafficPolicy: securePolicy(internalUrl, allow, this.config.ngrokGoogleOauth),
+        description: `outfitter IDE, session ${run.sessionId}`.slice(0, 255),
+        metadata: this.meta({ previewId: id, runId, sessionId: run.sessionId, port: IDE_PREVIEW_PORT, share: false, kind: "ide" }),
+      });
+      endpointId = ep.id;
+    } catch (err) {
+      this.log("previews: creating the IDE endpoint failed", { runId, err: String(err) });
+      return { error: "failed" };
+    }
+    const preview: Preview = {
+      id, runId, sessionId: run.sessionId, port: IDE_PREVIEW_PORT, share: false, url, endpointId, internalUrl,
+      kind: "ide", createdAt: now.toISOString(),
+    };
+    try {
+      await this.store.previews.insert(preview);
+    } catch (err) {
+      await this.ngrok!.deleteEndpoint(endpointId).catch(() => {});
+      this.log("previews: recording the IDE endpoint failed; endpoint removed", { runId, err: String(err) });
+      return { error: "failed" };
+    }
+    return { url };
+  }
+
+  /** Closes the run's IDE endpoint, if any. code-server keeps running in the Drive. */
+  async closeIde(runId: string, reason = "closed"): Promise<void> {
+    for (const p of await this.store.previews.listOpenForRun(runId)) {
+      if (p.kind === "ide") await this.closeOne(p, reason);
+    }
   }
 
   /** The session page's "stop": one open preview of this session, by id. False if there's none. */

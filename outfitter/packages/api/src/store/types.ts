@@ -101,7 +101,8 @@ export interface DownMessage {
     | "browser.capture.result"
     | "browser.action.result"
     | "browser.inspect.result"
-    | "github.credential";
+    | "github.credential"
+    | "ide.open";
   /** Set on `browser.capture.entry`: the pi custom entry agentd must emit with its own seq. */
   entry?: PiEntry;
   /** Set on `browser.capture.result`, `browser.action.result`, and `browser.inspect.result`. Not a transcript seq. */
@@ -115,6 +116,17 @@ export interface DownMessage {
   /** Short element description on `browser.inspect.result`, or null when none is selected. */
   element?: string | null;
   [key: string]: unknown;
+}
+
+/** Browser IDE (#242) state on a run. "closed": a person closed the public endpoint; code-server
+ * keeps running in the Drive, and the next open makes a new endpoint. */
+export type RunIdeState = "requested" | "installing" | "starting" | "ready" | "error" | "stopped" | "closed";
+export interface RunIde {
+  reqId: string;
+  state: RunIdeState;
+  url?: string;
+  detail?: string;
+  updatedAt: string;
 }
 
 /** Which GitHub credential a run was actually given (#159). */
@@ -200,6 +212,10 @@ export interface Run {
   // asked for it and previews were on), so agentd downloaded code-server into this Drive. Settled by
   // the first spec that was actually sent (startup.specSentAt) and reused on reconnect.
   browserIde?: boolean;
+  // Browser IDE (#242): the latest `ide.open` a person made for this run, and how it's going. The
+  // web role writes `reqId` and state "requested" when it queues the frame; the link role accepts an
+  // `ide.status` only for that reqId, and on "ready" creates the owner-only endpoint (`url`).
+  ide?: RunIde;
   // #187: the highest sandbox memory agentd's heartbeats reported for this run, and the sandbox's
   // limit, in MiB. An OOM kill takes agentd with it, so this is what lets the reconciler say "ran
   // out of memory" instead of "stopped reporting". Absent from agentd builds before #187 and from
@@ -598,6 +614,9 @@ export interface Preview {
   createdAt: string;
   /** Share links only: when the sweeper deletes the endpoint. */
   expiresAt?: string;
+  /** Browser IDE (#242): "ide" for the IDE's endpoint (port 0, never shared, owner and sysops
+   * only, not counted toward the per-run cap). Absent: a dev-server preview. */
+  kind?: "ide";
   closedAt?: string;
   closedReason?: string;
 }

@@ -221,6 +221,19 @@ export interface UpPreviewClose {
   port: number;
 }
 
+/** Browser IDE (#242, docs/specs/browser-ide.md §3): how an `ide.open` is going. `installing` →
+ * `starting` → `ready` (with `internalUrl`, the ngrok internal endpoint the api forwards to) or
+ * `error` (with `detail`); each carries the request's `reqId`. `stopped` is sent unprompted, without
+ * one, when code-server or its tunnel dies. Not seq/ack-replayed. */
+export type IdeStatusState = "installing" | "starting" | "ready" | "error" | "stopped";
+export interface UpIdeStatus {
+  t: "ide.status";
+  reqId?: string;
+  state: IdeStatusState;
+  detail?: string;
+  internalUrl?: string;
+}
+
 export type UpMessage =
   | UpHello
   | UpStatus
@@ -239,6 +252,7 @@ export type UpMessage =
   | UpBrowserInspectRequest
   | UpPreviewOpen
   | UpPreviewClose
+  | UpIdeStatus
   | UpStartup;
 
 /** Up-messages that carry a `seq` and are subject to the buffer-until-ack contract. */
@@ -419,6 +433,13 @@ export interface DownRead {
   path: string;
 }
 
+/** Browser IDE (#242): a person asked to open this Drive in VS Code. Answered with `ide.status`
+ * frames carrying the same `reqId`. */
+export interface DownIdeOpen {
+  t: "ide.open";
+  reqId: string;
+}
+
 /** E5.5: a mailbox message for this session. Handed to pi as a `prompt` with `streamingBehavior`
  * (starts a turn when idle, queues when busy) and acked with `mail.ack` once pi accepts it. */
 export interface DownMail {
@@ -517,7 +538,8 @@ export type DownMessage =
   | DownGithubCredential
   | DownBrowserActionResult
   | DownBrowserInspectResult
-  | DownPreviewResult;
+  | DownPreviewResult
+  | DownIdeOpen;
 
 // ---------- replies to diff/read (sent up as `entry`-less custom up-frames) ----------
 // protocol.md does not give these a `t`; agentd sends them as ad-hoc up-frames named after the

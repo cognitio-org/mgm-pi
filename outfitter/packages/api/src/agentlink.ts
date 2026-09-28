@@ -1247,6 +1247,43 @@ export class AgentLink {
     };
   }
 
+  /**
+   * `ide.status` from agentd (#242). The run's `ide.reqId` is what the web role wrote when a person
+   * clicked "Open in VS Code"; a frame for any other request (stale, or made up by the sandbox) is
+   * ignored, so the sandbox can't make anything count as the IDE. The kind of endpoint comes from
+   * that stored request, never from the frame. "stopped" carries no reqId: code-server or its tunnel
+   * died, so the endpoint goes and the next click starts it again.
+   */
+  private async handleIdeStatus(runId: string, frame: UpFrame): Promise<void> {
+    const state = typeof frame.state === "string" ? frame.state : "";
+    const run = await this.store.runs.findById(runId);
+    if (!run?.ide || run.browserIde !== true) return;
+    const now = () => new Date().toISOString();
+    const detail = typeof frame.detail === "string" ? frame.detail.slice(0, 300) : undefined;
+    if (state === "stopped") {
+      await this.previews?.closeIde(runId, "code-server stopped");
+      if (run.ide.state === "ready" || run.ide.state === "starting" || run.ide.state === "installing") {
+        await this.store.runs.update(runId, { ide: { reqId: run.ide.reqId, state: "stopped", ...(detail ? { detail } : {}), updatedAt: now() } });
+      }
+      return;
+    }
+    if (typeof frame.reqId !== "string" || frame.reqId !== run.ide.reqId) return;
+    if (state === "installing" || state === "starting" || state === "error") {
+      await this.store.runs.update(runId, { ide: { reqId: run.ide.reqId, state, ...(detail ? { detail } : {}), updatedAt: now() } });
+      return;
+    }
+    if (state !== "ready" || typeof frame.internalUrl !== "string") return;
+    const result = this.previews ? await this.previews.openIde(runId, frame.internalUrl) : { error: "not-configured" };
+    // A newer click may have replaced the request while the endpoint was being made.
+    const latest = await this.store.runs.findById(runId);
+    if (latest?.ide?.reqId !== run.ide.reqId) return;
+    await this.store.runs.update(runId, {
+      ide: "error" in result
+        ? { reqId: run.ide.reqId, state: "error", detail: `couldn't make the IDE's address: ${result.error}`, updatedAt: now() }
+        : { reqId: run.ide.reqId, state: "ready", url: result.url, updatedAt: now() },
+    });
+  }
+
   /** A superseded connection closes after `buildRunSpec` has armed the replacement's timer.
    * Only the socket still in `sockets` may clear that timer. */
   private onAgentSocketClosed(runId: string, socket: WebSocket): void {
@@ -1613,6 +1650,14 @@ export class AgentLink {
       }
       case "browser.inspect.request": {
         await this.handleBrowserInspectRequest(sessionId, frame);
+        break;
+      }
+      // Browser IDE (#242, docs/specs/browser-ide.md §4). Off the chain's critical path like
+      // preview.open: an ngrok API call mustn't hold up heartbeats.
+      case "ide.status": {
+        void this.handleIdeStatus(runId, frame).catch((err) => {
+          console.warn(`[agentlink] ide.status failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
         break;
       }
       case "bye": {

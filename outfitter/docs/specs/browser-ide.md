@@ -294,7 +294,7 @@ the same access the terminal does, and no more.
    `run.spec.ide` (only with previews on), the streamed, verified, Copilot-excluding install at Drive
    start (with a test that the excludes match and the hash still covers the whole body), and the
    scheduled "newer code-server" check.
-2. **Start and open (agentd, api):** `ide.open`/`ide.status`, `IdeManager` (code-server as `agent`
+2. **Start and open (agentd, api)** (#242): `ide.open`/`ide.status`, `IdeManager` (code-server as `agent`
    in its own process group, root-owned config, listed environment, own proxy and tunnel, reserved
    port), agentlink's request matching, `Preview.kind`, owner-and-sysop allowlist, share refusal,
    `POST`/`GET /api/sessions/:id/ide`, uncapped WebSocket activity (`markIdeActivity`). Tests: share refused for the IDE;

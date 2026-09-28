@@ -12,6 +12,7 @@ import { ActionListener } from "./browser-action.js";
 import { CaptureListener } from "./browser-capture.js";
 import { InspectListener } from "./browser-inspect.js";
 import { PreviewListener } from "./preview.js";
+import { IdeManager, type IdeManagerOptions } from "./ide-server.js";
 import { CodeServerInstaller, type IdeInstallResult, type IdeInstallState } from "./ide-install.js";
 import { renderGuru } from "./guru.js";
 import { discoverAppendSystemPromptFile } from "./append-system.js";
@@ -195,6 +196,12 @@ export interface RunControllerDeps {
   /** Browser IDE (#241): builds the code-server installer for `run.spec.ide`. Default
    * CodeServerInstaller into /opt/code-server; tests pass a fake. */
   ideInstaller?: (ide: RunSpecIde) => IdeInstaller;
+  /** Tests (#242): replace the IDE's ngrok agent and code-server process, and where they live. */
+  ideStartTunnel?: IdeManagerOptions["startTunnel"];
+  ideSpawnCodeServer?: IdeManagerOptions["spawnCodeServer"];
+  ideCodeServerBin?: string;
+  ideConfigDir?: string;
+  ideHome?: string;
 }
 
 /** What the run needs of ide-install.ts's CodeServerInstaller. */
@@ -306,6 +313,8 @@ export class RunController {
   private previewListener: PreviewListener | undefined;
   /** Browser IDE (#241): code-server's install, started with the run when run.spec carries `ide`. */
   private ideInstall: IdeInstaller | undefined;
+  /** Browser IDE (#242): code-server itself, started by `ide.open`. Only with previews on. */
+  private ideManager: IdeManager | undefined;
   /** Last chat activity: a prompt/steer/follow-up/mail, a turn starting, or a turn settling. The
    * reference for the preview idle cap. */
   private lastChatAt = 0;
@@ -446,6 +455,10 @@ export class RunController {
         return;
       case "read":
         void this.handleRead(msg.reqId, msg.path);
+        return;
+      case "ide.open":
+        if (this.ideManager) this.ideManager.open(msg.reqId);
+        else this.deps.link.send({ t: "ide.status", reqId: msg.reqId, state: "error", detail: "this Drive has no IDE" });
         return;
       case "stop":
         void this.handleStop(msg.reason);
@@ -753,6 +766,8 @@ export class RunController {
           this.actionListener?.port,
           this.inspectListener?.port,
           this.gitProxy ? portOf(this.gitProxy.url) : undefined,
+          // #242: the IDE's code-server and proxy ports are never the model's to publish.
+          ...(this.ideManager?.ports() ?? []),
         ],
         ngrokBin: this.deps.ngrokBin,
         startTunnel: this.deps.previewStartTunnel,
@@ -764,6 +779,28 @@ export class RunController {
       this.deps.logger?.addSecret(previews.token);
       secretEnv.OUTFITTER_PREVIEW_PORT = String(previews.port);
       secretEnv.OUTFITTER_PREVIEW_TOKEN = previews.token;
+      // #242: the browser IDE, served through the same run credential but apart from the preview
+      // listener. Started only by `ide.open` from the api (a person's click), never by the model.
+      if (this.ideInstall) {
+        this.ideManager = new IdeManager({
+          installer: this.ideInstall,
+          internalDomain: spec.preview.internalDomain,
+          authtoken: spec.secrets.ngrokAuthtoken,
+          workspace: this.deps.workspace,
+          runAsUser: this.deps.runAsUser,
+          // The same git proxy and commit identity as the model's shell; none of pi's secrets.
+          env: { ...gitProxyEnv, ...botIdentityEnv() },
+          send: (frame) => this.deps.link.send(frame),
+          onActivity: () => this.markIdeActivity(),
+          ngrokBin: this.deps.ngrokBin,
+          ...(this.deps.ideStartTunnel ? { startTunnel: this.deps.ideStartTunnel } : {}),
+          ...(this.deps.ideSpawnCodeServer ? { spawnCodeServer: this.deps.ideSpawnCodeServer } : {}),
+          ...(this.deps.ideCodeServerBin ? { codeServerBin: this.deps.ideCodeServerBin } : {}),
+          ...(this.deps.ideConfigDir ? { configDir: this.deps.ideConfigDir } : {}),
+          ...(this.deps.ideHome ? { home: this.deps.ideHome } : {}),
+          onLog: this.onLog,
+        });
+      }
     }
     // Same pin as OUTFITTER_SESSION_ID: after guru.env, so a guru cannot point the broker
     // socket somewhere else. The token is not part of this overlay.
@@ -1038,6 +1075,9 @@ export class RunController {
     // the `bye`, so the api deletes the public endpoints on a live socket).
     const previews = this.previewListener;
     this.previewListener = undefined;
+    // #242: code-server's whole process group, its tunnel and proxy go with the run.
+    const ide = this.ideManager;
+    this.ideManager = undefined;
     // #241: a download or unpack still running stops with the run, and nothing is moved into place
     // after this. Its temp dir is removed asynchronously; one left behind by a fast exit goes with
     // the container.
@@ -1047,6 +1087,7 @@ export class RunController {
       actions ? actions.stop() : Promise.resolve(),
       inspects ? inspects.stop() : Promise.resolve(),
       previews ? previews.stop() : Promise.resolve(),
+      ide ? ide.stop() : Promise.resolve(),
     ]).then(() => undefined);
   }
 
@@ -1081,6 +1122,18 @@ export class RunController {
   /** Someone loaded a preview page (#217). Browsing is working, so it re-arms idle-stop like a quiet
    * `/command` does -- but only while the last chat activity is younger than the cap, so a tab left
    * open can't keep a Drive billing. It never counts as chat activity itself. */
+  /** Someone is using the browser IDE (#242, ide-activity.ts). Like a preview page load it re-arms
+   * idle-stop without counting as chat, but with no cap since the last chat turn (owner decision):
+   * a person editing keeps the Drive up for as long as they edit. The meter only counts traffic
+   * that came through ngrok's sign-in, so the model can't fake it. */
+  private markIdeActivity(): void {
+    if (this.stopping) return;
+    if (this.state === "idle") {
+      this.idleSince = this.now();
+      this.armIdleTimer();
+    }
+  }
+
   private markPreviewActivity(): void {
     if (this.stopping) return;
     if (!previewActivityCounts(this.now(), this.lastChatAt, this.deps.previewIdleCapMs ?? PREVIEW_IDLE_CAP_MS)) return;

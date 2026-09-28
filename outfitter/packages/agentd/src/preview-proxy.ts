@@ -9,6 +9,14 @@
  * - `onActivity` fires for real page requests only (a navigation, or a request that accepts HTML),
  *   never for WebSocket traffic, HMR pings or asset fetches, so an open tab alone doesn't keep a
  *   Drive awake.
+ *
+ * Browser IDE (#242) options, off for dev-server previews:
+ * - `keepOrigin`: pass the browser's `Origin` through on upgrades instead of rewriting it to
+ *   localhost. code-server compares it with `X-Forwarded-Host` and refuses every WebSocket when they
+ *   differ (spike S3); left alone, that check keeps guarding against cross-site WebSocket hijacking.
+ * - `clientData`: called once per upgraded (WebSocket) connection; the function it returns gets every
+ *   chunk the browser sends up it, for the IDE's activity meter (ide-activity.ts). It only ever sees
+ *   traffic that came through ngrok's sign-in.
  */
 import { createServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type Server } from "node:http";
 import { connect, type Socket } from "node:net";
@@ -23,6 +31,10 @@ export interface LocalPreviewProxyOptions {
   port: number;
   onActivity?: () => void;
   onLog?: (line: string) => void;
+  /** #242: leave `Origin` as the browser sent it on WebSocket upgrades. */
+  keepOrigin?: boolean;
+  /** #242: per upgraded connection, a sink for each chunk the client sends up it. */
+  clientData?: () => (chunk: Buffer) => void;
 }
 
 /** Whether a request is someone looking at a page, as opposed to the page's own background traffic. */
@@ -36,7 +48,12 @@ export function isPageRequest(req: Pick<IncomingMessage, "method" | "headers">):
 }
 
 /** Request headers as the dev server should see them. */
-export function upstreamHeaders(headers: IncomingHttpHeaders, port: number, upgrade: boolean): Record<string, string | string[]> {
+export function upstreamHeaders(
+  headers: IncomingHttpHeaders,
+  port: number,
+  upgrade: boolean,
+  opts: { keepOrigin?: boolean } = {},
+): Record<string, string | string[]> {
   const out: Record<string, string | string[]> = {};
   const listed = new Set(String(headers.connection ?? "").toLowerCase().split(",").map((s) => s.trim()).filter(Boolean));
   for (const [name, value] of Object.entries(headers)) {
@@ -54,8 +71,9 @@ export function upstreamHeaders(headers: IncomingHttpHeaders, port: number, upgr
   out.host = `localhost:${port}`;
   if (upgrade) {
     out.connection = "Upgrade";
-    // Dev servers that check Origin on the HMR socket expect their own.
-    if (out.origin) out.origin = `http://localhost:${port}`;
+    // Dev servers that check Origin on the HMR socket expect their own. code-server wants the real
+    // one (#242, keepOrigin).
+    if (out.origin && !opts.keepOrigin) out.origin = `http://localhost:${port}`;
   }
   return out;
 }
@@ -112,12 +130,14 @@ export class LocalPreviewProxy {
       const upstream = connect(target, "127.0.0.1");
       this.track(upstream);
       upstream.once("connect", () => {
-        const headers = upstreamHeaders(req.headers, target, true);
+        const headers = upstreamHeaders(req.headers, target, true, { keepOrigin: this.opts.keepOrigin });
         let raw = `${req.method ?? "GET"} ${req.url ?? "/"} HTTP/1.1\r\n`;
         for (const [k, v] of Object.entries(headers)) for (const one of Array.isArray(v) ? v : [v]) raw += `${k}: ${one}\r\n`;
         upstream.write(`${raw}\r\n`);
-        if (head.length) upstream.write(head);
+        const sink = this.opts.clientData?.();
+        if (head.length) { sink?.(head); upstream.write(head); }
         upstream.pipe(client);
+        if (sink) client.on("data", (chunk: Buffer) => sink(chunk));
         client.pipe(upstream);
       });
       const close = () => { client.destroy(); upstream.destroy(); };

@@ -1,0 +1,21 @@
+outfitter/packages/api/src/routes/voice.ts
+  s_fd47f462159c85::t_8ffd03953e885f 32-33,37
+outfitter/packages/api/test/voice.test.ts
+  s_fd47f462159c85::t_cb17918dea47d5 118
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "531edcd1a102f1a6b12a4ad874158f44883010be",
+  "prompts": {},
+  "sessions": {
+    "s_fd47f462159c85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4302a461-a7ca-4bcd-bca6-85c286e60f99",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

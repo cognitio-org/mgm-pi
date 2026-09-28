@@ -30,6 +30,7 @@ COPY packages/provider-local/src packages/provider-local/src
 COPY packages/provider-local/tsconfig.json packages/provider-local/
 RUN npm run build --workspace=@outfitter/provider-local
 COPY packages/web/src packages/web/src
+COPY packages/web/public packages/web/public
 COPY packages/web/index.html packages/web/tsconfig.json packages/web/vite.config.ts packages/web/
 RUN npm run build --workspace=@outfitter/web
 

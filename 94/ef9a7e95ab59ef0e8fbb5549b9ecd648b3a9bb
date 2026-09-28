@@ -1,0 +1,97 @@
+kernal/.pi/npm/.gitignore
+  s_fd47f462159c85::t_9e6c05c4077765 6-8
+kernal/scripts/package.sh
+  s_fd47f462159c85::t_9e6c05c4077765 50-51
+kernal/.pi/npm/package.json
+  s_fd47f462159c85::t_9e6c05c4077765 12-14
+outfitter/image/Dockerfile
+  s_fd47f462159c85::t_9e6c05c4077765 91
+kernal/tests/settings.test.ts
+  s_fd47f462159c85::t_c7ca72358fb60f 138-154
+kernal/.pi/settings.json
+  s_fd47f462159c85::t_9e6c05c4077765 11
+kernal/.pi/npm/package-lock.json
+  s_fd47f462159c85::t_51de89851f96ce 16
+kernal/.pi/npm/vendor/pi-listen/LICENSE
+  s_fd47f462159c85::t_77be0ebe484eb9 1-21
+kernal/.pi/npm/vendor/pi-listen/README.md
+  s_fd47f462159c85::t_395d374343516e 1-337
+kernal/.pi/npm/vendor/pi-listen/VENDORED.md
+  s_fd47f462159c85::t_64a15cca0e988f 1-17
+kernal/.pi/npm/vendor/pi-listen/extensions/voice.ts
+  s_fd47f462159c85::t_5ff323f3d305dc 1-3421
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/config.ts
+  s_fd47f462159c85::t_619776448cc025 1-386
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/deepgram.ts
+  s_fd47f462159c85::t_4c604fe34a3443 1-33
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/device.ts
+  s_fd47f462159c85::t_d360ad32a05c4c 1-392
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/local.ts
+  s_fd47f462159c85::t_c69a7ba87a8c37 1-833
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/model-download.ts
+  s_fd47f462159c85::t_3ee02058ffd7ab 1-632
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/onboarding.ts
+  s_fd47f462159c85::t_f85e68921f6966 1-713
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/settings-panel.ts
+  s_fd47f462159c85::t_d83a34855b35fe 1-1565
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/sherpa-engine.ts
+  s_fd47f462159c85::t_3b990341197739 1-326
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/sherpa-loader.ts
+  s_fd47f462159c85::t_0fa1d493b1c1a0 1-139
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/sherpa-onnx-node.d.ts
+  s_fd47f462159c85::t_bfed49d523507c 1-4
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/speak.ts
+  s_fd47f462159c85::t_ffa169bed4daed 1-417
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/tts-deepgram.ts
+  s_fd47f462159c85::t_9e7b84b2a6c3dd 1-432
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/tts-engine.ts
+  s_fd47f462159c85::t_57b93782dd537f 1-653
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/tts-install-progress.ts
+  s_fd47f462159c85::t_f95b0fb3f723a5 1-243
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/tts-local-models.ts
+  s_fd47f462159c85::t_6300e370ca5520 1-1080
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/tts-onboarding-overlay.ts
+  s_fd47f462159c85::t_dd5e5c3aad927e 1-171
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/tts-onboarding.ts
+  s_fd47f462159c85::t_79190f7a969b36 1-83
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/tts-playback-indicator.ts
+  s_fd47f462159c85::t_99a1bc5df4a0ef 1-123
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/tts-playback.ts
+  s_fd47f462159c85::t_08d91b151a01e8 1-657
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/tts-text-filter.ts
+  s_fd47f462159c85::t_886c7ab005e368 1-379
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/ui-aura.ts
+  s_fd47f462159c85::t_9342cb8bfc6619 1-268
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/ui-help-overlay.ts
+  s_fd47f462159c85::t_b7d4a4cd3b22ee 1-145
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/ui-icons.ts
+  s_fd47f462159c85::t_b634c83d98ca20 1-124
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/ui-locale-labels.ts
+  s_fd47f462159c85::t_49252066bfa86e 1-110
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/ui-picker.ts
+  s_fd47f462159c85::t_c2c9e40e357b99 1-209
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/ui-render-ticker.ts
+  s_fd47f462159c85::t_729ca972b8456a 1-163
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/ui-widget-base.ts
+  s_fd47f462159c85::t_700b3bb2771a84 1-191
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/ui-width.ts
+  s_fd47f462159c85::t_8bf7ceb6fdd61c 1-112
+kernal/.pi/npm/vendor/pi-listen/package.json
+  s_fd47f462159c85::t_c214c8eead94dc 1-65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "94ef9a7e95ab59ef0e8fbb5549b9ecd648b3a9bb",
+  "prompts": {},
+  "sessions": {
+    "s_fd47f462159c85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4302a461-a7ca-4bcd-bca6-85c286e60f99",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

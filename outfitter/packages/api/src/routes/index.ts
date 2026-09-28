@@ -13,6 +13,7 @@ import { registerOperatorRoutes } from "./operator.ts";
 import { registerStaticRoutes } from "./static.ts";
 import { registerSandboxRoutes } from "./sandbox.ts";
 import { registerPreviewRoutes } from "./previews.ts";
+import { registerVoiceRoutes } from "./voice.ts";
 
 export type { RouteContext } from "./context.ts";
 
@@ -35,6 +36,7 @@ export async function registerRoutes(app: FastifyInstance, ctx: RouteContext): P
     await registerTokenRoutes(app, ctx);
     await registerProviderRoutes(app, ctx);
     await registerOperatorRoutes(app, ctx);
+    await registerVoiceRoutes(app, ctx);
     await registerStaticRoutes(app);
   } else {
     // Teleport, plus the side panel and browser companion (docs/protocol.md "Browser companion").

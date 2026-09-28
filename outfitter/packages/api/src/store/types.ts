@@ -4,6 +4,7 @@
 // See docs/data-model.md for schema, indexes and the "session == pi JSONL file" rationale.
 
 import type { SandboxProviderName } from "../config.ts";
+import type { VoiceEngine, VoicePrefs } from "../voice.ts";
 
 export type RunState = "queued" | "provisioning" | "running" | "idle" | "stopping" | "stopped" | "failed";
 
@@ -17,6 +18,9 @@ export interface Session {
    * every session route is open to every authenticated domain user today with no ownership check;
    * whether to add one is an open decision, tracked in EPIC.md under E2.2. */
   ownerEmail?: string;
+  /** #252: which speech engine the web app's mic uses on this floppy (PUT /api/sessions/:id/voice).
+   * Absent means "deepgram", the default (owner decision on #251). */
+  voiceEngine?: VoiceEngine;
   guruId: string;
   /** null = non-coding session (protocol.md: `repo` omitted on POST /api/sessions). */
   repo: string | null;
@@ -444,6 +448,9 @@ export interface User {
    * exposing their work email. Optional and operator-set for now; without it run.spec carries no
    * author, and cloud commits are the bot's alone. */
   githubEmail?: string;
+  /** #252: voice preferences the person set in the web app (PUT /api/me/voice). Absent means
+   * DEFAULT_VOICE_PREFS (src/voice.ts). */
+  voice?: VoicePrefs;
 }
 
 /** Personal API token (E4.1b): the only auth the "link" role (no IAP) accepts, and also accepted
@@ -689,6 +696,8 @@ export interface EnvironmentsCollection {
 export interface UsersCollection {
   upsertSeen(email: string): Promise<User>;
   findByEmail(email: string): Promise<User | null>;
+  /** #252: replaces the person's voice preferences, creating the user row if needed. */
+  setVoicePrefs(email: string, prefs: VoicePrefs): Promise<User>;
 }
 
 /** One shared browser tab per session (chrome companion, docs/specs/chrome-companion.md §9.2).

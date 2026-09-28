@@ -13,6 +13,7 @@ import type { SandboxProvider } from "@outfitter/provider-local";
 import { SandboxProviders } from "../src/providers/registry.ts";
 import type { GithubRefreshTiming } from "../src/agentlink.ts";
 import type { SandboxTelemetry } from "../src/sandbox-telemetry.ts";
+import type { VoiceService } from "../src/voice.ts";
 
 export interface TestApp extends App {
   store: Store;
@@ -42,6 +43,8 @@ export interface BuildTestAppOptions {
   telemetry?: SandboxTelemetry;
   /** #217: a fake ngrok API for Drive previews (with PREVIEW_DOMAIN in envOverrides). */
   ngrok?: NgrokApi;
+  /** #252: a VoiceService with a fake fetch. Defaults to one built from config (DEEPGRAM_API_KEY). */
+  voice?: VoiceService;
 }
 
 export async function buildTestApp(
@@ -75,6 +78,7 @@ export async function buildTestApp(
     githubRefresh: opts.githubRefresh,
     telemetry: opts.telemetry,
     ngrok: opts.ngrok,
+    voice: opts.voice,
   });
   await app.fastify.ready();
   return { ...app, store, provider, secretAdmin };

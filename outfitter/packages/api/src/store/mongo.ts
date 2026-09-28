@@ -45,6 +45,7 @@ import type {
   FormattedSession,
   FormattedSessionsCollection,
 } from "./types.ts";
+import type { VoicePrefs } from "../voice.ts";
 import { BROWSER_CAPTURES_PER_SESSION, entryInsertFields, type EntryInsertOptions } from "./types.ts";
 import { TOKEN_TTL_MS } from "../tokens.ts";
 
@@ -387,6 +388,15 @@ class MongoUsers implements UsersCollection {
 
   async findByEmail(email: string): Promise<User | null> {
     return stripId<User>(await this.col.findOne({ _id: email }));
+  }
+
+  async setVoicePrefs(email: string, prefs: VoicePrefs): Promise<User> {
+    const result = await this.col.findOneAndUpdate(
+      { _id: email },
+      { $set: { voice: { ...prefs } }, $setOnInsert: { email, createdAt: new Date().toISOString() } },
+      { upsert: true, returnDocument: "after" },
+    );
+    return stripId<User>(result) as User; // upsert:true guarantees a document comes back
   }
 }
 

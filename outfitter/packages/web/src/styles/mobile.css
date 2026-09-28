@@ -325,6 +325,13 @@ select {
     flex: 0 0 auto;
   }
 
+  /* In the sideways scroller the GitHub chip takes its full width, like every other fact. Capped at
+   * 100% with nowrap and no clipping, its text used to spill past the box and draw over the chips
+   * after it (a preview's Share…, the IDE's Close). */
+  .session-statusbar > .github-chip {
+    max-width: none;
+  }
+
   .session-model-info {
     flex-wrap: nowrap;
   }

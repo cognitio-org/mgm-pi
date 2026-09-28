@@ -275,6 +275,18 @@ export interface PreviewsState {
   previews: PreviewRow[];
 }
 
+/** Browser IDE (#242/#243, api routes/ide.ts): the Drive's VS Code in the browser. */
+export type IdeStateName = "none" | "requested" | "installing" | "starting" | "ready" | "error" | "stopped" | "closed";
+export interface IdeState {
+  /** The Drive has the IDE (its Tape asked for it, previews are on) and is live. */
+  available: boolean;
+  state: IdeStateName;
+  /** Only when ready: the owner-and-sysops address, behind Google sign-in. */
+  url?: string;
+  detail?: string;
+  updatedAt?: string;
+}
+
 /** GET /api/sessions/:id/sandbox (api routes/sandbox.ts, #197). */
 export interface SandboxDetail {
   run: { id: string; state: string; provider: string; createdAt: string; lastSeenAt?: string; reason?: string };
@@ -624,6 +636,21 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ ttlSeconds }),
     });
+  },
+
+  /** #243: the Drive's IDE state. 403 for anyone but the floppy's owner or a sysop. */
+  ide(sessionId: string): Promise<IdeState> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/ide`);
+  },
+
+  /** #243: ask the Drive to start its IDE (202 while it starts, 200 when it's already open). */
+  openIde(sessionId: string): Promise<IdeState> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/ide`, { method: "POST" });
+  },
+
+  /** #243: close the IDE's public address (code-server keeps running in the Drive). */
+  closeIde(sessionId: string): Promise<void> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/ide`, { method: "DELETE" });
   },
 
   closePreview(sessionId: string, previewId: string): Promise<void> {

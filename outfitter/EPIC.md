@@ -435,6 +435,14 @@ research on Sonnet; review on Opus).
   downloaded at Drive start. Run as `agent`, served through the Drive previews pieces
   with an owner-and-sysop allowlist and no share links. Extensions from Open VSX; editing keeps a
   Drive up with no cap (up to the 24 h hard timeout). Spike done: `docs/reports/browser-ide-spike.md`.
+- **E3.11 Web voice** (built 2026-09-28, live since outfitter-v2026.09.28.2; `docs/specs/web-voice.md`,
+  epic #256): a mic in the Composer. A tap latches it on, a hold talks until release, ⌥/Alt+Space
+  does the same, and Esc cancels. The browser streams straight to Deepgram nova-3 with a 30 s token
+  from `POST /api/voice/token` (a Member key in Secret Manager; the bundle key can't mint), or uses
+  the browser's built-in speech, chosen per floppy. After speaking sends by default or leaves the text
+  to review. Each person sees their Deepgram spend today/week/month (read back by tag), sysops see
+  it per person, and an optional soft monthly cap falls back to built-in speech. The live suite uses
+  the mic after each deploy. Next: spoken replies (#255).
 
 ### E4 Teleport, both directions
 

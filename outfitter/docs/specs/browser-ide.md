@@ -101,8 +101,10 @@ case, and the session page shows no IDE button otherwise.
   code-server release exists (nothing like it exists for the ngrok pin yet, `Dockerfile:149-155` just
   says "bump deliberately").
 - **Egress:** TCP 443 to public addresses is already allowed on both providers.
-- **UNVERIFIED:** size (about 100 MB compressed from memory; unpacked is larger) and download plus
-  unpack time in a 1-vCPU sandbox (spike S2); in-memory footprint on Cloud Run (S5).
+- **Size (spike, 4.139.1):** 222 MB compressed, 622 MB unpacked. Unpacking takes 3.6 s of CPU on
+  the laptop (about 12 s expected on a cloud vCPU); the cloud download time is spike S2's GKE run.
+- **Checksums are ours:** the release publishes none, so the pin records SHA-256s we compute when we
+  bump it (`docs/reports/browser-ide-spike.md`).
 
 **Alternative, if the spike shows it's cheap: bake it in.** Add code-server to `image/Dockerfile`
 under the same pin. The Tape option then only gates the button, and `ide.prepare` goes away. Pick
@@ -135,11 +137,18 @@ install without an HTTP timeout.
    them:
    - `--auth none`: sign-in happens at ngrok's edge (§4);
    - `--disable-telemetry`, `--disable-update-check`;
-   - `--disable-proxy` if the pinned version has it (**UNVERIFIED**): code-server's `/proxy/<port>`
-     would otherwise forward to any loopback port, agentd's listeners included;
+   - `--disable-proxy` (present in 4.139.1, spike): code-server's `/proxy/<port>` would otherwise
+     forward to any loopback port, agentd's listeners included;
+   - `--disable-workspace-trust`: the workspace is the Drive's own; without it the IDE opens in
+     Restricted Mode behind a trust dialog (spike);
    - `--user-data-dir` and `--extensions-dir` under the `agent` home;
-   - `/workspace` as the folder to open.
-3. Starts its own `LocalPreviewProxy` and ngrok tunnel on `https://ide.<run label>.internal` (a
+   - `/workspace` as the folder to open;
+   - default machine settings (`<user-data-dir>/Machine/settings.json`) that turn off VS Code's AI
+     Chat panel, which is open by default in 1.139 and wired to nothing here, and telemetry.
+3. Starts its own `LocalPreviewProxy`, **in a mode that leaves `Origin` alone** (spike S3: the
+   dev-server rewrite of `Origin` to localhost, `preview-proxy.ts:55-59`, makes code-server refuse
+   every WebSocket with 403; kept, `Origin` is checked against `X-Forwarded-Host` and the check
+   still guards against cross-site WebSocket hijacking), and an ngrok tunnel on `https://ide.<run label>.internal` (a
    name the run's credential can bind, `bind:*.<label>.internal`, and one the preview tool never
    uses, since previews are `p<port>.…`). These live in an `IdeManager` beside the
    `PreviewListener`, not in its `open` map, so the tool's `GET /previews` doesn't list the IDE and
@@ -186,8 +195,10 @@ The preview proxy counts only page navigations as activity (`preview-proxy.ts:9-
 a single-page app on a WebSocket: after the first load, editing makes no page requests, so a person
 typing in the IDE would look idle and the Drive would stop under them.
 
-- The IDE's proxy counts **client-to-server WebSocket traffic** as activity, above a floor that
-  excludes code-server's own keepalives (the floor is measured in spike S4). Measured there, not
+- The IDE's proxy counts **client-to-server WebSocket traffic** as activity: a minute counts when
+  the client sent at least **60 frames or 2 KB** in it. Spike S4 (local): an idle tab, focused or in
+  the background, sends about 30 frames and under 600 bytes a minute; scrolling 109 frames, a
+  terminal 210, typing 1,400. To be confirmed through ngrok and gVisor. Measured there, not
   from code-server's heartbeat file: that file sits in the agent-writable data dir, so the model
   could touch it; traffic through the proxy can only come from someone past ngrok's sign-in.
 - It re-arms idle-stop **without** the preview cap (owner decision): dev-server page loads count

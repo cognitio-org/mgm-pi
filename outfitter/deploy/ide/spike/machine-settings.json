@@ -1,0 +1,7 @@
+{
+  "chat.disableAIFeatures": true,
+  "workbench.secondarySideBar.defaultVisibility": "hidden",
+  "workbench.startupEditor": "none",
+  "telemetry.telemetryLevel": "off",
+  "extensions.autoCheckUpdates": false
+}

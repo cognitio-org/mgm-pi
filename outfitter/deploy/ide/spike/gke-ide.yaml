@@ -1,0 +1,62 @@
+# Browser IDE spike, GKE half (docs/specs/browser-ide.md phase 0, issue #240): code-server under
+# gVisor in the production image, in the real sandbox shape (1 vCPU / 2 GiB / 4 GiB ephemeral) and
+# network policy (from deploy/gke/spike/s4.yaml, gke-spike.md S3's DNS fix included).
+#
+# The container runs run-in-pod.sh as root: clone a small public repo into /workspace, install
+# code-server with install.sh (timed: S2), start it as `agent` on 127.0.0.1:8080, then log memory
+# every 15 s (S5) until activeDeadlineSeconds. gke-run.sh port-forwards to it and drives the harness
+# (S3 under gVisor, S4). ${IMAGE} is filled by gke-run.sh from the live outfitter-agent template.
+# Nothing here talks to link or the api: no RUN_ID, no token.
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: ide-spike
+  namespace: outfitter-sandboxes
+spec:
+  networkPolicyManagement: Managed
+  networkPolicy:
+    ingress: []
+    egress:
+      - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16] } }]
+        ports: [{ protocol: TCP, port: 443 }, { protocol: TCP, port: 80 }]
+      - to:
+          - { namespaceSelector: {}, podSelector: { matchLabels: { k8s-app: kube-dns } } }
+          - { ipBlock: { cidr: 169.254.20.10/32 } }
+          - { ipBlock: { cidr: 34.118.224.10/32 } }
+        ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+  podTemplate:
+    metadata:
+      labels: { app: ide-spike }
+    spec:
+      runtimeClassName: gvisor
+      serviceAccountName: outfitter-agent
+      automountServiceAccountToken: false
+      nodeSelector: { sandbox.gke.io/runtime: gvisor }
+      tolerations:
+        - { key: sandbox.gke.io/runtime, operator: Equal, value: gvisor, effect: NoSchedule }
+      restartPolicy: Never
+      activeDeadlineSeconds: 2700
+      containers:
+        - name: ide
+          image: ${IMAGE}
+          command: ["/bin/sh", "/spike/run-in-pod.sh"]
+          env:
+            - { name: CS_VERSION, value: "4.139.1" }
+            - { name: CS_SHA256, value: "53029be6c5781b7bca49b815fcc9a2a3fc111813ad8c9965b2c0f0d2985a0674" }
+          resources:
+            requests: { cpu: "1", memory: 2Gi, ephemeral-storage: 4Gi }
+            limits: { cpu: "1", memory: 2Gi, ephemeral-storage: 4Gi }
+          volumeMounts:
+            - { name: spike, mountPath: /spike, readOnly: true }
+      volumes:
+        - name: spike
+          configMap: { name: ide-spike-scripts, defaultMode: 0555 }
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: ide-spike
+  namespace: outfitter-sandboxes
+spec:
+  replicas: 0
+  sandboxTemplateRef: { name: ide-spike }

@@ -1,0 +1,19 @@
+outfitter/packages/api/Dockerfile
+  s_fd47f462159c85::t_e3bf8a1cedc217 33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "496df798245311bb2f93c056dfa0e08fc9432ec7",
+  "prompts": {},
+  "sessions": {
+    "s_fd47f462159c85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4302a461-a7ca-4bcd-bca6-85c286e60f99",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}

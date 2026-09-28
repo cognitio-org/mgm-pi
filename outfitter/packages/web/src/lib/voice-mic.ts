@@ -61,12 +61,13 @@ export function saveMicChoice(choice: MicChoice | undefined, storage: Pick<Stora
   }
 }
 
-/** The saved choice against the mics connected now: its id if that's there, else the mic with its
- * name (the browser issued new ids), else the id as saved (not connected). */
+/** The saved choice against the mics connected now: its id if that's there, else the one mic with
+ * its name (the browser issued new ids), else the id as saved (not connected). Two mics with the same
+ * name are never guessed between: unplugging one of a pair mustn't move the choice to its twin. */
 export function resolveMic(choice: MicChoice | undefined, mics: Mic[]): MicChoice | undefined {
   if (!choice || mics.some((m) => m.id === choice.id)) return choice;
-  const byName = choice.label ? mics.find((m) => m.label === choice.label) : undefined;
-  return byName ? { id: byName.id, label: byName.label } : choice;
+  const named = choice.label ? mics.filter((m) => m.label === choice.label) : [];
+  return named.length === 1 ? { id: named[0].id, label: named[0].label } : choice;
 }
 
 function safeLocalStorage(): Storage | undefined {

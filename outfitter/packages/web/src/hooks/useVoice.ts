@@ -138,6 +138,7 @@ export function useVoice(opts: UseVoiceOptions): Voice {
   // navigator.mediaDevices is one object for the page's life, so this is stable.
   const [devices] = useState(() => (typeof navigator === "undefined" ? undefined : navigator.mediaDevices));
   const micId = micChoice?.id;
+  const resolvedByName = useRef(false);
 
   const gesture = useRef<GestureState>(IDLE);
   const recording = useRef<VoiceRecording | null>(null);
@@ -161,15 +162,20 @@ export function useVoice(opts: UseVoiceOptions): Voice {
       .then(({ mics: found, labelled }) => {
         setMics(found);
         setMicsLabelled(labelled);
-        // The same mic under a new id (a private window, cleared site data): follow it by name.
-        setMicChoice((current) => {
-          const resolved = labelled ? resolveMic(current, found) : current;
-          if (resolved && resolved.id !== current?.id) saveMicChoice(resolved);
-          return resolved;
-        });
+        // The same mic under a new id (a private window, cleared site data): follow it by name. Only
+        // on the page's first named listing: ids change between sessions, not while a page is open,
+        // so a mic unplugged mid-session stays the choice (shown "not connected") rather than
+        // passing to a same-named twin.
+        if (labelled && !resolvedByName.current) {
+          resolvedByName.current = true;
+          setMicChoice((current) => resolveMic(current, found));
+        }
       })
       .catch(() => {});
   }, [devices]);
+
+  // One place writes the choice to storage, whatever changed it.
+  useEffect(() => saveMicChoice(micChoice), [micChoice]);
 
   // The list follows headsets and USB mics coming and going.
   useEffect(() => {
@@ -369,9 +375,9 @@ export function useVoice(opts: UseVoiceOptions): Voice {
     micsAvailable: !!devices?.enumerateDevices,
     micId,
     setMicId(id) {
-      const choice = id ? { id, label: mics.find((m) => m.id === id)?.label } : undefined;
+      // Before permission the names are placeholders ("Microphone 2"); only a real one is kept.
+      const choice = id ? { id, label: micsLabelled ? mics.find((m) => m.id === id)?.label : undefined } : undefined;
       setMicChoice(choice);
-      saveMicChoice(choice);
     },
     refreshMics,
     allowMicList() {

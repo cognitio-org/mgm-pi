@@ -602,6 +602,33 @@ describe("#267 choosing the microphone", () => {
     expect(deviceIds).toEqual(["shure"]);
   });
 
+  it("unplugging the chosen mic mid-session doesn't move the choice to a same-named twin", async () => {
+    stubDevices();
+    granted = true;
+    const usb = (deviceId: string) => ({ kind: "audioinput", deviceId, label: "USB Audio", groupId: "g" }) as MediaDeviceInfo;
+    inputs = [...inputs, usb("usb-a"), usb("usb-b")];
+    window.localStorage.setItem("outfitter.voice.micId", "usb-a");
+    window.localStorage.setItem("outfitter.voice.micLabel", "USB Audio");
+    await mount();
+    inputs = inputs.filter((i) => i.deviceId !== "usb-a"); // the chosen one unplugged
+    await act(async () => listeners.forEach((fn) => fn()));
+    await flush();
+    expect(window.localStorage.getItem("outfitter.voice.micId")).toBe("usb-a");
+    await openMenu();
+    expect(item(/not connected/).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("a placeholder name picked before permission isn't saved", async () => {
+    stubDevices();
+    await mount();
+    await openMenu();
+    const unnamed = items().find((b) => /^Microphone \d/.test(b.textContent ?? ""));
+    if (unnamed) {
+      await act(async () => unnamed.click());
+      expect(window.localStorage.getItem("outfitter.voice.micLabel")).toBeNull();
+    }
+  });
+
   it("a chosen mic that isn't connected shows as such", async () => {
     stubDevices();
     granted = true;

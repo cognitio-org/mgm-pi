@@ -58,6 +58,10 @@ describe("resolveMic", () => {
   it("finds the same mic by name when the browser issued new ids", () => {
     expect(resolveMic({ id: "old-2", label: "Shure MV7" }, mics)).toEqual({ id: "new-2", label: "Shure MV7" });
   });
+  it("never guesses between two mics with the same name", () => {
+    const twins = [{ id: "usb-a", label: "USB Audio" }, { id: "usb-b", label: "USB Audio" }];
+    expect(resolveMic({ id: "usb-c", label: "USB Audio" }, twins)).toEqual({ id: "usb-c", label: "USB Audio" });
+  });
   it("otherwise keeps the saved choice (not connected), and the default stays the default", () => {
     expect(resolveMic({ id: "gone", label: "USB Headset" }, mics)).toEqual({ id: "gone", label: "USB Headset" });
     expect(resolveMic(undefined, mics)).toBeUndefined();

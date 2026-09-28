@@ -56,3 +56,29 @@ describe("GuruForm: #132 Allow external CSS and JS in HTML previews", () => {
     expect(render({ ...guru, allowExternalHtmlResources: true }).checked).toBe(true);
   });
 });
+
+describe("GuruForm: #241 VS Code in the browser", () => {
+  const ideBox = () =>
+    [...container!.querySelectorAll<HTMLInputElement>('label.form-check input[type="checkbox"]')].find((b) =>
+      b.closest("label")!.textContent!.includes("VS Code in the browser"),
+    )!;
+
+  it("is off for a Tape without the field, and saving sends browserIde", async () => {
+    const update = vi.spyOn(api, "updateGuru").mockResolvedValue({ ...guru, browserIde: true });
+    render(guru);
+    const box = ideBox();
+    expect(box.checked).toBe(false);
+    act(() => box.click());
+    await act(async () => {
+      container!.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update.mock.calls[0]![1].browserIde).toBe(true);
+    expect(update.mock.calls[0]![1].allowExternalHtmlResources).toBe(false);
+  });
+
+  it("shows a Tape that has it on as checked", () => {
+    render({ ...guru, browserIde: true });
+    expect(ideBox().checked).toBe(true);
+  });
+});

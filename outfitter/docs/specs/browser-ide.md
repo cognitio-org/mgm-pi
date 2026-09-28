@@ -287,7 +287,7 @@ the same access the terminal does, and no more.
 0. **Spike: done** (`docs/reports/browser-ide-spike.md`, #240). It changed §2 (the download is
    222 MB; the Copilot trim), §3 (`Origin` passed through; workspace trust and AI chat off; `SHELL`
    required) and §5 (the 60 frames / 2 KB rule), and confirmed the 4 GiB template is enough.
-1. **Tape option and install (api, agentd, web form, CI):** `Guru.browserIde`, `Run.browserIde`,
+1. **Tape option and install (api, agentd, web form, CI)** (#241): `Guru.browserIde`, `Run.browserIde`,
    `run.spec.ide` (only with previews on), the streamed, verified, Copilot-excluding install at Drive
    start (with a test that the excludes match and the hash still covers the whole body), and the
    scheduled "newer code-server" check.

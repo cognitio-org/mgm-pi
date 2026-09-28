@@ -114,6 +114,11 @@ export interface Config {
    * credential's metadata, so the sweep only ever removes this deployment's own, not another
    * environment's sharing the ngrok account and PREVIEW_DOMAIN. */
   previewEnv: string;
+  /** Browser IDE (#241, docs/specs/browser-ide.md §2): the code-server release IDE Drives download,
+   * and its SHA-256 per architecture (the release publishes none; we compute them when we bump the
+   * pin). IDE_CODE_SERVER_VERSION / IDE_CODE_SERVER_SHA256_AMD64 / IDE_CODE_SERVER_SHA256_ARM64
+   * override the defaults below. A bump is an api deploy, not an image rebuild. */
+  ideCodeServer: { version: string; artifacts: { amd64: string; arm64: string } };
   /** OUTFITTER_BUILD_COMMIT / OUTFITTER_RELEASE (deploy/service.sh): the commit this deploy ships
    * and, for a tagged release, its outfitter-v* tag. GET /api/version; empty in dev. */
   buildCommit: string;
@@ -184,6 +189,17 @@ export interface Config {
    * can run past it. Plain dollars ("5", not "$5"). */
   voiceMonthlyCapUsd: number;
 }
+
+/** The code-server release IDE Drives download (browser IDE, #241). The scheduled check in
+ * .github/workflows/code-server-release.yml reads this version and opens an issue when coder/code-server
+ * publishes a newer one. SHA-256s computed from the release assets (docs/reports/browser-ide-spike.md). */
+export const IDE_CODE_SERVER_PIN = {
+  version: "4.139.1",
+  artifacts: {
+    amd64: "53029be6c5781b7bca49b815fcc9a2a3fc111813ad8c9965b2c0f0d2985a0674",
+    arm64: "0edb4b60d9c4744b2dd14b0911e3c2e6dd8c6f3c13bd58bda23ae744e59e7df1",
+  },
+} as const;
 
 const OUTFITTER_ROLES: readonly OutfitterRole[] = ["all", "web", "link"];
 const SANDBOX_PROVIDERS: readonly SandboxProviderName[] = ["inprocess", "docker", "cloudrun", "gke"];
@@ -363,6 +379,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     previewShareTtlSeconds: envInt("PREVIEW_SHARE_TTL_SECONDS", 24 * 60 * 60, env),
     previewShareMaxSeconds: envInt("PREVIEW_SHARE_MAX_SECONDS", 7 * 24 * 60 * 60, env),
     previewEnv: (env.PREVIEW_ENV || env.GCP_PROJECT || "local").trim(),
+    ideCodeServer: {
+      version: (env.IDE_CODE_SERVER_VERSION || IDE_CODE_SERVER_PIN.version).trim(),
+      artifacts: {
+        amd64: (env.IDE_CODE_SERVER_SHA256_AMD64 || IDE_CODE_SERVER_PIN.artifacts.amd64).trim().toLowerCase(),
+        arm64: (env.IDE_CODE_SERVER_SHA256_ARM64 || IDE_CODE_SERVER_PIN.artifacts.arm64).trim().toLowerCase(),
+      },
+    },
     buildCommit: (env.OUTFITTER_BUILD_COMMIT ?? "").trim(),
     release: (env.OUTFITTER_RELEASE ?? "").trim(),
     ...(envGoogleOauth(env.NGROK_GOOGLE_OAUTH) ? { ngrokGoogleOauth: envGoogleOauth(env.NGROK_GOOGLE_OAUTH) } : {}),

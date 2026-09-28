@@ -55,6 +55,7 @@ export function GuruForm({ guru, models, meta, onClose, onSaved }: Props) {
   const [excludeTools, setExcludeTools] = useState(listToText(guru?.excludeTools));
   const [playwrightBeforeCheckpoint, setPlaywrightBeforeCheckpoint] = useState(guru?.playwrightBeforeCheckpoint === true);
   const [allowExternalHtmlResources, setAllowExternalHtmlResources] = useState(guru?.allowExternalHtmlResources === true);
+  const [browserIde, setBrowserIde] = useState(guru?.browserIde === true);
   const [branchPrefix, setBranchPrefix] = useState(guru?.branchPrefix ?? "outfitter/");
   const [envRows, setEnvRows] = useState<EnvRow[]>(envToRows(guru?.env).length > 0 ? envToRows(guru?.env) : [{ key: "", value: "" }]);
   const [submitting, setSubmitting] = useState(false);
@@ -85,6 +86,7 @@ export function GuruForm({ guru, models, meta, onClose, onSaved }: Props) {
       excludeTools: textToList(excludeTools),
       playwrightBeforeCheckpoint,
       allowExternalHtmlResources,
+      browserIde,
       branchPrefix: branchPrefix.trim() || undefined,
       env: rowsToEnv(envRows),
     };
@@ -158,6 +160,15 @@ export function GuruForm({ guru, models, meta, onClose, onSaved }: Props) {
             <p className="session-meta">
               Off by default. Runs are told whether HTML they write may link external stylesheets and scripts, and
               previews start that way. You can still change one preview in its dialog.
+            </p>
+          </div>
+          <div className="form-row">
+            <label className="form-check">
+              <input type="checkbox" checked={browserIde} onChange={(e) => setBrowserIde(e.target.checked)} />
+              VS Code in the browser
+            </label>
+            <p className="session-meta">
+              Off by default. Lets the floppy&apos;s owner open this Drive&apos;s files in an editor with a terminal.
             </p>
           </div>
 

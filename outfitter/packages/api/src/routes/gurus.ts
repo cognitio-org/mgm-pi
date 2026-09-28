@@ -87,6 +87,7 @@ function validationError(body: {
   mergeFromCloud?: unknown;
   playwrightBeforeCheckpoint?: unknown;
   allowExternalHtmlResources?: unknown;
+  browserIde?: unknown;
   branchPrefix?: unknown;
 }): string | undefined {
   if (body.model !== undefined && !isValidModelRef(body.model)) {
@@ -108,6 +109,9 @@ function validationError(body: {
   }
   if (body.allowExternalHtmlResources !== undefined && typeof body.allowExternalHtmlResources !== "boolean") {
     return "allowExternalHtmlResources must be a boolean";
+  }
+  if (body.browserIde !== undefined && typeof body.browserIde !== "boolean") {
+    return "browserIde must be a boolean";
   }
   if (body.branchPrefix !== undefined) {
     const parsed = parseBranchPrefix(body.branchPrefix);

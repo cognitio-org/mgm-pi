@@ -326,6 +326,14 @@ export interface RunSpecPreview {
   internalDomain: string;
 }
 
+/** Browser IDE (#241, docs/specs/browser-ide.md §2). Present only when the run's Tape asked for the
+ * IDE and previews are on: agentd downloads this code-server release at start and checks it against
+ * the SHA-256 for its architecture (the release publishes none; the api pins them). */
+export interface RunSpecIde {
+  version: string;
+  artifacts: { amd64?: string; arm64?: string };
+}
+
 export interface RunSpec {
   session: RunSpecSession;
   /** Absent for non-coding sessions: agentd starts with an empty /workspace (or restores
@@ -338,6 +346,7 @@ export interface RunSpec {
   secrets: RunSpecSecrets;
   author?: RunSpecAuthor;
   preview?: RunSpecPreview;
+  ide?: RunSpecIde;
   idleStopSeconds: number;
   checkpointEvery: string;
 }
@@ -352,6 +361,7 @@ export interface DownRunSpec {
   secrets: RunSpecSecrets;
   author?: RunSpecAuthor;
   preview?: RunSpecPreview;
+  ide?: RunSpecIde;
   idleStopSeconds: number;
   checkpointEvery: string;
 }

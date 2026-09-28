@@ -134,6 +134,9 @@ export interface Guru {
   /** Tape option, default off (#132). Tells the agent external CSS and JS are allowed in HTML it
    * writes, and HTML previews of its runs start with them allowed. */
   allowExternalHtmlResources?: boolean;
+  /** Tape option, default off (#241). Its Drives get code-server, so the floppy's owner can open
+   * them in VS Code in the browser. */
+  browserIde?: boolean;
   /** Branches under this prefix may be pushed besides the session branch. Absent means outfitter/. */
   branchPrefix?: string;
   createdAt: string;

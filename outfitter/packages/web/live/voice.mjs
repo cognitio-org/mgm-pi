@@ -75,8 +75,12 @@ export async function voiceChecks({ page, api, snap }) {
     // could be undone when they arrive.
     await page.locator(".voice-menu [role='menuitemradio']:not([disabled])", { hasText: /^Deepgram$/ }).waitFor({ timeout: 10_000 });
     const reviewItem = page.locator(".voice-menu [role='menuitemradio']", { hasText: "Leave it to review" });
-    await reviewItem.click();
-    await page.waitForFunction((el) => el?.getAttribute("aria-checked") === "true", await reviewItem.elementHandle(), { timeout: 10_000 });
+    // The menu shows the choice before it's saved and reverts if the save fails, so wait for the save.
+    const [saved] = await Promise.all([
+      page.waitForResponse((r) => r.request().method() === "PUT" && new URL(r.url()).pathname === "/api/me/voice", { timeout: 10_000 }),
+      reviewItem.click(),
+    ]);
+    assert.ok(saved.ok(), `saving "after speaking: review" answered ${saved.status()}`);
     assert.equal(await reviewItem.getAttribute("aria-checked"), "true", "after speaking is set to review");
     await page.keyboard.press("Escape");
     await box.fill("");
@@ -135,6 +139,8 @@ export async function voiceChecks({ page, api, snap }) {
     assert.deepEqual(sends, [], "the voice checks sent nothing");
   } finally {
     page.off("request", onRequest);
+    // Reported whether or not an earlier check failed first: a send starts a real turn.
+    if (sends.length > 0) console.warn(`voice checks: a message was sent during them: ${sends.join(", ")}`);
     if (before !== "review") {
       const restored = await api("PUT", "/api/me/voice", { afterSpeaking: before }).catch((err) => ({ status: String(err) }));
       if (restored.status !== 200) console.warn(`voice checks: couldn't put "after speaking" back to ${before} (${restored.status})`);

@@ -44,6 +44,8 @@ jobs:
       # This job can mint the account's token, so no dependency install script runs in it. The suite
       # only imports playwright-core, which needs none (it uses the runner's own Chrome).
       - run: npm ci --ignore-scripts
+      # The voice check's spoken sentence (#254, packages/web/live/voice.mjs) is made at run time.
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq espeak-ng
       - id: auth
         uses: google-github-actions/auth@v2
         with:

@@ -10,15 +10,18 @@
 // Usage: node deploy/ide/spike/harness.mjs [--container ide-spike] [--target 18080] [--phase-seconds 120]
 import { createServer, connect } from "node:net";
 import { execFileSync } from "node:child_process";
-import { appendFileSync, writeFileSync } from "node:fs";
-import { chromium } from "playwright-core";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+// In the pod, the image's Playwright (/opt/outfitter/playwright) via PLAYWRIGHT_MODULE.
+const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ?? "playwright-core");
 import { readFileSync } from "node:fs";
 
 // S3 finding: agentd's proxy rewrites Origin to localhost on upgrades but passes the public host in
 // X-Forwarded-Host; code-server compares the two and answers 403 to every WebSocket. The IDE's proxy
 // must leave Origin alone (KEEP_ORIGIN=1, the default here). KEEP_ORIGIN=0 runs agentd's proxy as is.
 const KEEP_ORIGIN = process.env.KEEP_ORIGIN !== "0";
-const proxySrc = new URL("../../../packages/agentd/src/preview-proxy.ts", import.meta.url);
+const proxySrc = process.env.PREVIEW_PROXY_SRC
+  ? new URL(`file://${process.env.PREVIEW_PROXY_SRC}`)
+  : new URL("../../../packages/agentd/src/preview-proxy.ts", import.meta.url);
 let LocalPreviewProxy;
 if (KEEP_ORIGIN) {
   const src = readFileSync(proxySrc, "utf8");
@@ -39,8 +42,10 @@ const HOST = "ide-test.kernal.run";
 // RESULTS_TAG separates runs (e.g. "local", "gke"). IDE_EXEC replaces `docker exec <container>` for
 // commands in the IDE's environment (gke-run.sh sets it to `kubectl ... exec <pod> --`).
 const TAG = process.env.RESULTS_TAG ?? "local";
-const OUT = new URL(`./s4-results-${TAG}.jsonl`, import.meta.url).pathname;
-const CHECKS = new URL(`./s3-results-${TAG}.json`, import.meta.url).pathname;
+const RESULTS_DIR = process.env.RESULTS_DIR ?? new URL(".", import.meta.url).pathname;
+const OUT = `${RESULTS_DIR}/s4-results-${TAG}.jsonl`;
+const CHECKS = `${RESULTS_DIR}/s3-results-${TAG}.json`;
+mkdirSync("/tmp/ide-spike", { recursive: true });
 const EXEC = process.env.IDE_EXEC ? process.env.IDE_EXEC.split(" ").filter(Boolean) : ["docker", "exec", CONTAINER];
 writeFileSync(OUT, "");
 
@@ -101,7 +106,8 @@ async function startRelay(upstreamPort) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function memory() {
   // cgroup v2 memory.current (includes page cache) and the agent user's summed VmRSS (no procps needed).
-  const out = sh("cat /sys/fs/cgroup/memory.current 2>/dev/null || echo 0; awk -v u=$(id -u agent) '/^Uid:/ {m = ($2 == u)} /^VmRSS:/ && m {s += $2} END {print s+0}' /proc/[0-9]*/status 2>/dev/null");
+  // gVisor has no cgroup v2 memory.current; fall back to v1, then to /proc/meminfo's used memory.
+  const out = sh("cat /sys/fs/cgroup/memory.current 2>/dev/null || cat /sys/fs/cgroup/memory/memory.usage_in_bytes 2>/dev/null || awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {print (t-a)*1024}' /proc/meminfo; awk -v u=$(id -u agent) '/^Uid:/ {m = ($2 == u)} /^VmRSS:/ && m {s += $2} END {print s+0}' /proc/[0-9]*/status 2>/dev/null");
   const [cg, rss] = out.split("\n").map(Number);
   return { cgroupMb: Math.round(cg / 1048576), agentRssMb: Math.round(rss / 1024) };
 }
@@ -139,7 +145,14 @@ const relayPort = await startRelay(proxy.port);
 const url = `http://${HOST}:${relayPort}/?folder=/workspace`;
 console.log("proxy", proxy.port, "relay", relayPort, url);
 
-const browser = await chromium.launch({ ...(process.env.CHROMIUM ? { executablePath: process.env.CHROMIUM } : {}), args: [`--host-resolver-rules=MAP ${HOST} 127.0.0.1`, `--unsafely-treat-insecure-origin-as-secure=http://${HOST}:${relayPort}`] });
+const launchOpts = {
+  ...(process.env.CHROMIUM ? { executablePath: process.env.CHROMIUM } : {}),
+  args: [`--host-resolver-rules=MAP ${HOST} 127.0.0.1`, `--unsafely-treat-insecure-origin-as-secure=http://${HOST}:${relayPort}`,
+    ...(process.getuid?.() === 0 ? ["--no-sandbox"] : [])],
+};
+let browser;
+try { browser = await chromium.launch(process.env.HARNESS_CHANNEL ? { ...launchOpts, channel: process.env.HARNESS_CHANNEL } : launchOpts); }
+catch (err) { console.log("headless shell failed, trying full chromium:", String(err.message).split("\n")[0]); browser = await chromium.launch({ ...launchOpts, channel: "chromium" }); }
 const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
 const page = await ctx.newPage();
 const consoleErrors = [];
@@ -185,9 +198,9 @@ await check("s3.edit-and-save", async () => {
 
 await check("s3.terminal", async () => {
   await palette("Terminal: Create New Terminal");
-  await page.locator(".terminal-wrapper, .xterm").first().waitFor({ timeout: 20_000 });
+  await page.locator(".xterm-helper-textarea").first().waitFor({ state: "attached", timeout: 60_000 });
   await sleep(4000); // xterm draws on a canvas, so wait for the shell rather than match its prompt
-  await page.locator(".xterm-helper-textarea").first().focus();
+  await page.locator(".xterm-helper-textarea").first().focus({ timeout: 60_000 });
   await page.keyboard.type("echo from-terminal $(id -un) > /workspace/t.txt\n");
   await sleep(2500);
   const out = sh("cat /workspace/t.txt 2>&1; stat -c %U /workspace/t.txt 2>&1");

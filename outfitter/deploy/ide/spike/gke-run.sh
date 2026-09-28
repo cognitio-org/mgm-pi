@@ -6,8 +6,8 @@
 #   DRY_RUN=1 deploy/ide/spike/gke-run.sh     # print what it would apply; changes nothing
 #   deploy/ide/spike/gke-run.sh [phase_seconds]   # default 120; about 20 minutes in all
 #
-# Needs: ~/.kube/outfitter (deploy/gke-cluster.sh), gcloud configuration `outfitter`, node, and
-# CHROMIUM pointing at a Chromium/Chrome binary if playwright-core's own isn't installed.
+# Needs: ~/.kube/outfitter (deploy/gke-cluster.sh) and gcloud configuration `outfitter`. The harness
+# runs inside the pod with the image's own Playwright, so nothing runs a browser on this machine.
 # Writes: gke-pod.jsonl (install timing, memory every 15 s), s3-results-gke.json, s4-results-gke.jsonl.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -21,8 +21,9 @@ IMAGE=$("${K[@]}" get sandboxtemplate outfitter-agent -o jsonpath='{.spec.podTem
 echo "image: $IMAGE"
 
 CM=$("${K[@]}" create configmap ide-spike-scripts --from-file=install.sh --from-file=run-in-pod.sh \
-  --from-file=machine-settings.json --dry-run=client -o yaml)
-TEMPLATE=$(IMAGE="$IMAGE" envsubst '${IMAGE}' < gke-ide.yaml)
+  --from-file=machine-settings.json --from-file=harness.mjs \
+  --from-file=preview-proxy.ts=../../../packages/agentd/src/preview-proxy.ts --dry-run=client -o yaml)
+TEMPLATE=$(IMAGE="$IMAGE" PHASE_S="$PHASE_S" envsubst '${IMAGE} ${PHASE_S}' < gke-ide.yaml)
 CLAIM_YAML="apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxClaim
 metadata: { name: $CLAIM, namespace: outfitter-sandboxes }
@@ -35,9 +36,8 @@ if [[ -n "${DRY_RUN:-}" ]]; then
   exit 0
 fi
 
-PF_PID=""; LOG_PID=""
+LOG_PID=""
 cleanup() {
-  [[ -n "$PF_PID" ]] && kill "$PF_PID" 2>/dev/null || true
   [[ -n "$LOG_PID" ]] && kill "$LOG_PID" 2>/dev/null || true
   "${K[@]}" delete sandboxclaim "$CLAIM" --ignore-not-found --wait=false >/dev/null || true
   "${K[@]}" delete sandboxwarmpool ide-spike --ignore-not-found >/dev/null || true
@@ -69,13 +69,13 @@ until grep -q '"ready"' gke-pod.jsonl; do
   (( $(date +%s) - t0 > 900 )) && { echo "code-server not ready after 15 minutes" >&2; cat gke-pod.jsonl; exit 1; }
 done
 grep -E '"installed"|"listening"' gke-pod.jsonl
-
-# S3 under gVisor, through agentd's proxy (Origin kept) on this laptop, over a port-forward.
-"${K[@]}" port-forward "pod/$POD" 18081:8080 >/dev/null 2>&1 &
-PF_PID=$!
-sleep 3
-curl -fsS -o /dev/null -w "port-forward: HTTP %{http_code}\n" http://127.0.0.1:18081/ || {
-  echo "port-forward to the gVisor pod failed; see README 'If port-forward fails'" >&2; exit 1; }
-
-RESULTS_TAG=gke IDE_EXEC="${K[*]} exec $POD --" node harness.mjs --target 18081 --phase-seconds "$PHASE_S"
+echo "harness running in the pod (about $(( PHASE_S * 6 / 60 + 3 )) minutes)..."
+until grep -q '"event":"done"' gke-pod.jsonl; do
+  sleep 10
+  (( $(date +%s) - t0 > 2600 )) && { echo "harness didn't finish" >&2; tail -20 gke-pod.jsonl; exit 1; }
+done
+# Split the pod log into the result files.
+awk '/^=== s3-results-gke.json/ {f="s3-results-gke.json"; next} /^=== s4-results-gke.jsonl/ {f="s4-results-gke.jsonl"; next}
+     /^=== / {f=""; next} f {print > f}' gke-pod.jsonl
+sed -n '/^=== harness.log/,/^=== s3-results/p' gke-pod.jsonl | grep -E '^s3\.|headless|Error' || true
 echo "results: gke-pod.jsonl s3-results-gke.json s4-results-gke.jsonl"

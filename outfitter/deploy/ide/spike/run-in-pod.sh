@@ -4,7 +4,9 @@ set -eu
 log() { echo "{\"t\":$(date +%s.%N | cut -c1-14),$1}"; }
 # No procps in the image: sum VmRSS over /proc for the agent user's processes.
 AGENT_UID=$(id -u agent)
-mem() { echo "\"cgroupBytes\":$(cat /sys/fs/cgroup/memory.current 2>/dev/null || echo null),\"agentRssKb\":$(awk -v u="$AGENT_UID" '/^Uid:/ {mine = ($2 == u)} /^VmRSS:/ && mine {s += $2} END {print s+0}' /proc/[0-9]*/status 2>/dev/null)"; }
+# gVisor has no cgroup v2 memory.current: fall back to v1, then to /proc/meminfo (the sandbox's own).
+podmem() { cat /sys/fs/cgroup/memory.current 2>/dev/null || cat /sys/fs/cgroup/memory/memory.usage_in_bytes 2>/dev/null || awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {print (t-a)*1024}' /proc/meminfo; }
+mem() { echo "\"podBytes\":$(podmem),\"agentRssKb\":$(awk -v u="$AGENT_UID" '/^Uid:/ {mine = ($2 == u)} /^VmRSS:/ && mine {s += $2} END {print s+0}' /proc/[0-9]*/status 2>/dev/null)"; }
 
 log "\"event\":\"start\",\"uname\":\"$(uname -m)\",\"pod\":\"$(cat /etc/hostname)\",$(mem)"
 su agent -s /bin/sh -c 'git clone -q --depth 1 https://github.com/sindresorhus/ky /workspace/ky && mv /workspace/ky/* /workspace/ky/.[!.]* /workspace/ && rmdir /workspace/ky'
@@ -26,4 +28,18 @@ until grep -q "HTTP server listening" /tmp/ide.log 2>/dev/null; do sleep 0.2; do
 log "\"event\":\"listening\",\"startSeconds\":$(awk "BEGIN {print $(date +%s.%N) - $t0}"),$(mem)"
 log "\"event\":\"ready\""
 
-while true; do sleep 15; log "\"event\":\"mem\",$(mem)"; done
+# Memory every 15 s in the background while the harness drives the IDE from inside the pod (gVisor's
+# netstack keeps kubectl port-forward out). Chromium runs as root, so agentRssKb stays code-server's.
+# The full Chromium, not the headless shell: webviews don't render in the shell (local test).
+( while true; do sleep 15; log "\"event\":\"mem\",$(mem)"; done ) &
+MEMLOOP=$!
+cp /spike/preview-proxy.ts /tmp/preview-proxy.ts
+HARNESS_CHANNEL=chromium IDE_EXEC=env RESULTS_TAG=gke RESULTS_DIR=/tmp PREVIEW_PROXY_SRC=/tmp/preview-proxy.ts \
+  PLAYWRIGHT_MODULE=/opt/outfitter/playwright/node_modules/playwright/index.mjs \
+  node /spike/harness.mjs --target 8080 --phase-seconds "${PHASE_S:-120}" > /tmp/harness.log 2>&1 || true
+kill "$MEMLOOP" 2>/dev/null || true
+echo "=== harness.log"; grep -vE '^\[proxy\]' /tmp/harness.log | tail -40
+echo "=== s3-results-gke.json"; cat /tmp/s3-results-gke.json 2>/dev/null || echo "{}"
+echo "=== s4-results-gke.jsonl"; cat /tmp/s4-results-gke.jsonl 2>/dev/null || true
+echo "=== end"
+log "\"event\":\"done\",$(mem)"

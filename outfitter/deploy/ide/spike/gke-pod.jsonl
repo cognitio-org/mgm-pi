@@ -1,0 +1,6 @@
+{"t":1790558979.091,"event":"start","uname":"x86_64","pod":"ide-spike-1790558960","cgroupBytes":null,"agentRssKb":0}
+{"t":1790558980.221,"event":"cloned","cgroupBytes":null,"agentRssKb":0}
+{"t":1790559000.244,"event":"installed","run":1,"install":{"arch":"amd64","version":"4.139.1","seconds":19.4911,"bytes":669687449},"cgroupBytes":null,"agentRssKb":0}
+{"t":1790559020.324,"event":"installed","run":2,"install":{"arch":"amd64","version":"4.139.1","seconds":19.1752,"bytes":669687449},"cgroupBytes":null,"agentRssKb":0}
+{"t":1790559021.449,"event":"listening","startSeconds":1.07809,"cgroupBytes":null,"agentRssKb":249688}
+{"t":1790559021.455,"event":"ready"}

@@ -11,7 +11,7 @@ scope: the fleet is moving fully to GKE (owner decision, 2026-09-27).
 | Item | Question | Local | GKE |
 |---|---|---|---|
 | S1 | What does baking code-server into the image cost a cold start? | size only (below) | **pending**, `s1-run.sh` |
-| S2 | How long does the on-demand install take? | 21 s, network-bound; unpack 3.6 s CPU | **pending**, `gke-run.sh` |
+| S2 | How long does the on-demand install take? | 21 s, network-bound; unpack 3.6 s CPU | **19.5 s and 19.2 s** under gVisor |
 | S3 | Does code-server work through agentd's proxy? | **pass after one proxy change** | **pending** (gVisor), `gke-run.sh` |
 | S4 | Can activity be told from an idle tab at the proxy? | **yes**: 30 frames/min idle vs 109+ active | **pending**, `gke-run.sh` |
 | S5 | Does it fit in 2 GiB? | 540-725 MiB for code-server with a client | **pending** (next to pi), `gke-run.sh` |
@@ -64,7 +64,15 @@ SHA-256 (computed from the release assets; the release publishes none):
    this only matters for local testing; the harness tells Chromium to treat its test origin as
    secure.
 
-7. **The install script's temp dir came out `0700`,** so `agent` couldn't run code-server; fixed
+7. **`SHELL` must be in code-server's environment.** The `agent` user's login shell is
+   `/usr/sbin/nologin` (`image/Dockerfile:172`); without `SHELL=/bin/bash`, every terminal VS Code
+   opens exits at once. The spec's listed environment has it; this makes it required, not cosmetic.
+
+8. **`kubectl port-forward` doesn't reach a gVisor pod's loopback** (first GKE run: the forward
+   accepted and returned an empty reply). Irrelevant to the design, which reaches code-server through
+   ngrok from inside the pod, but it means the GKE harness runs inside the pod.
+
+9. **The install script's temp dir came out `0700`,** so `agent` couldn't run code-server; fixed
    (`chmod 755` after the move).
 
 ## S2: install time (local)
@@ -85,6 +93,11 @@ memory figure (825 MB right after an install in the production-like test contain
 GKE's disk-backed ephemeral storage.
 
 code-server starts listening **0.4 s** after launch.
+
+**GKE (first `gke-run.sh`, 2026-09-28, image `c66fd6657b1a`, amd64, gVisor, 1 vCPU):** two installs
+of **19.5 s and 19.2 s** (download from GitHub, checksum, unpack; 670 MB on disk), and code-server
+listening **1.1 s** after launch, with 250 MB RSS before any client. That is the wait on a first
+"Open in VS Code" if nothing prefetched.
 
 ## S3: through the proxy (local)
 

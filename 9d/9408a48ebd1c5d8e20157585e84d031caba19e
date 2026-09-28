@@ -1,0 +1,19 @@
+outfitter/deploy/ide/spike/harness-gke-run3.log
+  s_885dde90a8ec58::t_69f8d4e42255a3 1-11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "9d9408a48ebd1c5d8e20157585e84d031caba19e",
+  "prompts": {},
+  "sessions": {
+    "s_885dde90a8ec58": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fc9bab2f-409c-4e9c-9cd5-ff15ccd352cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

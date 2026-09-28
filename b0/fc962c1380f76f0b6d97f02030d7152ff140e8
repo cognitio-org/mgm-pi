@@ -1,0 +1,24 @@
+outfitter/packages/web/src/styles/pages.css
+  s_885dde90a8ec58::t_1a876b9a0e830a 104-111
+outfitter/packages/web/src/components/IdeChip.tsx
+  s_885dde90a8ec58::t_1a876b9a0e830a 116,191-193,201
+  s_885dde90a8ec58::t_d119984e118089 1-2,10-12,15-16,23-24,35-40,43,45,48,50,52-56,60,64-67,73,75,78-79,99-112,117,119,121-122,124,131,134-141,149-155,159,166,171,176-183,187,194-196,198,202,205
+outfitter/packages/web/test/ide-chip.test.tsx
+  s_885dde90a8ec58::t_82bfdb56be5ffe 6,16,18,25,32-33,54,59,63-68,71-72,76-78,81,89,92-101,103-105,107-110,112-115,118,123-124,127-130,132-140,143-152,155-158,167-170,172-173
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "b0fc962c1380f76f0b6d97f02030d7152ff140e8",
+  "prompts": {},
+  "sessions": {
+    "s_885dde90a8ec58": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fc9bab2f-409c-4e9c-9cd5-ff15ccd352cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

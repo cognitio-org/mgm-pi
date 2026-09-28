@@ -1,0 +1,64 @@
+outfitter/deploy/ide/spike/machine-settings.json
+  s_885dde90a8ec58::t_64033caa1a733c 1-7
+outfitter/deploy/ide/spike/.gitignore
+  s_885dde90a8ec58::t_abbd11025f01f8 1
+outfitter/docs/reports/browser-ide-spike.md
+  s_885dde90a8ec58::t_8f301d03d713f6 1-19,23-172
+  s_885dde90a8ec58::t_b332857d8e234e 20-22
+outfitter/deploy/ide/spike/gke-run.sh
+  s_885dde90a8ec58::t_1317e1886e2cc8 1-67,69-81
+  s_885dde90a8ec58::t_1aeaaf3763668e 68
+outfitter/deploy/ide/spike/run-in-pod.sh
+  s_885dde90a8ec58::t_8c59b381060ab5 1-4,8,10-25,27-29
+  s_885dde90a8ec58::t_a8c71bdb37b1ce 5-7,9,26
+outfitter/deploy/ide/spike/install.sh
+  s_885dde90a8ec58::t_71a16bca27dd99 1-18
+  s_885dde90a8ec58::t_31d5046741faa5 19
+  s_885dde90a8ec58::t_a8c71bdb37b1ce 20
+outfitter/deploy/ide/spike/origin-probe.mjs
+  s_885dde90a8ec58::t_23b3cb5d5c8a30 1-18
+outfitter/deploy/ide/spike/s1-run.sh
+  s_885dde90a8ec58::t_abbd11025f01f8 43
+  s_885dde90a8ec58::t_7581f7da641c90 1-42,44-47
+outfitter/deploy/ide/spike/Dockerfile.s1
+  s_885dde90a8ec58::t_7581f7da641c90 1-6
+outfitter/deploy/ide/spike/harness.mjs
+  s_885dde90a8ec58::t_62f512900a1556 80
+  s_885dde90a8ec58::t_bcfad501e27f60 1-14,33-38,45-46,48-63,65-79,81-102,107-116,118-141,143-148,153-168,170,173-180,183-188,191-192,196-203,205,208-214,216-226,232-262
+  s_885dde90a8ec58::t_481d9866613917 15-32
+  s_885dde90a8ec58::t_2ea97e487f3b72 39-44,47,103-106
+  s_885dde90a8ec58::t_d6bb01803717c3 169,171-172,204,206-207
+  s_885dde90a8ec58::t_18e5d946803687 149,151-152,190
+  s_885dde90a8ec58::t_744250aa0778cb 117,142,215
+  s_885dde90a8ec58::t_026da9d36901ec 193-195
+  s_885dde90a8ec58::t_a89209325dbccd 181-182,189
+  s_885dde90a8ec58::t_17047c3f0aa038 227-231
+  s_885dde90a8ec58::t_15018767244209 64,150
+outfitter/deploy/ide/spike/gke-ide.yaml
+  s_885dde90a8ec58::t_afeeb5a3d9022f 1-62
+outfitter/docs/specs/browser-ide.md
+  s_885dde90a8ec58::t_4b20ceb7e87250 104-107,140-143,145-151,198-201
+outfitter/deploy/ide/spike/reset.sh
+  s_885dde90a8ec58::t_64033caa1a733c 4
+  s_885dde90a8ec58::t_23b3cb5d5c8a30 1-3
+outfitter/deploy/ide/spike/s3-results-local.json
+  s_885dde90a8ec58::t_b71d2b966c3e25 1-40
+outfitter/deploy/ide/spike/s4-results-local.jsonl
+  s_885dde90a8ec58::t_04e22fcdd53f2f 1-6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "67d7a87dbbbb1c90a9049ff68336ce6f325de4fe",
+  "prompts": {},
+  "sessions": {
+    "s_885dde90a8ec58": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fc9bab2f-409c-4e9c-9cd5-ff15ccd352cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

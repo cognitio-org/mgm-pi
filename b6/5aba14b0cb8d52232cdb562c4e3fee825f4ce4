@@ -1,0 +1,33 @@
+outfitter/packages/web/src/lib/voice-engines.ts
+  s_fd47f462159c85::t_d1888bebb8a5a8 67-68,129-131,135-140,149-155,162-163,167,169-170,190-196,208-228,235,237,242-244,246,258,395-396,401
+outfitter/packages/web/src/hooks/useVoice.ts
+  s_fd47f462159c85::t_b53be181bff652 5,72-73,108,113,120-124,129-130,140,143-145,159-160,167-170,179,185-188,212-220,222-224,229,234,236,241-249,251,263-273,284,287,295,329
+  s_fd47f462159c85::t_3fad7b0e5897d3 326-328
+outfitter/packages/web/test/voice-control.test.tsx
+  s_fd47f462159c85::t_b311662ae7974e 30-33,37,44,61-63,374-510
+outfitter/packages/web/src/styles/layout.css
+  s_fd47f462159c85::t_3fad7b0e5897d3 731-735
+outfitter/packages/web/test/voice-engines.test.ts
+  s_fd47f462159c85::t_18c251a8461729 117-125,137,156,161-165,168,172-188,192,209-210,214,221,232,357-365
+  s_fd47f462159c85::t_82690f76c6fc44 366
+outfitter/packages/web/src/components/VoiceControl.tsx
+  s_fd47f462159c85::t_1d4b329a3cffa7 4,100-102
+  s_fd47f462159c85::t_3fad7b0e5897d3 1,14,27-28,35-36,40,77-79,89-98,109-112,133-136,148,160-162,183-185,194-195,212-217
+  s_fd47f462159c85::t_f9acf747122c3b 99,218
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "b65aba14b0cb8d52232cdb562c4e3fee825f4ce4",
+  "prompts": {},
+  "sessions": {
+    "s_fd47f462159c85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4302a461-a7ca-4bcd-bca6-85c286e60f99",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

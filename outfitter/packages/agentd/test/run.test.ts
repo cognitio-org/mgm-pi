@@ -5,11 +5,11 @@ import { mkdtemp, copyFile, writeFile, readFile, mkdir } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { RunController, PREVIEW_IDLE_CAP_MS, previewActivityCounts, type LinkPort, type RunControllerDeps } from "../src/run.js";
+import { RunController, PREVIEW_IDLE_CAP_MS, previewActivityCounts, type IdeInstaller, type LinkPort, type RunControllerDeps } from "../src/run.js";
 import { spawnPi, SessionTailer } from "../src/pi.js";
 import { writeSnapshotFile, emptySessionJsonl } from "../src/session.js";
 import { SandboxMemoryPeak } from "../src/sandbox-memory.js";
-import type { DownMessage, DownRunSpec, PiRpcCommand, PiRpcEvent, RunState, UpMessage } from "../src/protocol.js";
+import type { DownMessage, DownRunSpec, PiRpcCommand, PiRpcEvent, RunSpecIde, RunState, UpMessage } from "../src/protocol.js";
 import { OUTFITTER_BOT_IDENTITY, type GitOps, type CloneSpec, type PushSpec } from "../src/git.js";
 import type { PiProcess } from "../src/pi.js";
 
@@ -1659,4 +1659,46 @@ test("RunController: Chromium failing to start is an entry and the checkpoint co
   assert.equal(browser.calls(), 1);
   assert.equal(gitOps.pushes, 1);
   assert.match(playwrightEntry(link)?.data?.text ?? "", /Chromium could not start/);
+});
+
+// ---- Browser IDE (#241): run.spec.ide starts code-server's install; the run's end aborts it ----
+
+function fakeIdeInstaller() {
+  const made: RunSpecIde[] = [];
+  let starts = 0;
+  let aborts = 0;
+  const factory = (ide: RunSpecIde): IdeInstaller => {
+    made.push(ide);
+    return {
+      state: "installing",
+      start: () => { starts++; return new Promise(() => {}); },
+      abort: () => { aborts++; },
+    };
+  };
+  return { factory, made, starts: () => starts, aborts: () => aborts };
+}
+
+test("RunController: #241 run.spec.ide starts the code-server install with the run, and a stop aborts it", async (t) => {
+  const ide = fakeIdeInstaller();
+  const spec = { version: "4.139.1", artifacts: { amd64: "a".repeat(64), arm64: "b".repeat(64) } };
+  const { controller, link, states, spec: runSpec } = await setupController({ ide: spec }, { ideInstaller: ide.factory });
+  t.after(() => controller.dispose());
+  link.deliver(runSpec);
+  await waitFor(() => states.includes("idle"));
+  assert.deepEqual(ide.made, [spec]);
+  assert.equal(ide.starts(), 1);
+  assert.equal(ide.aborts(), 0);
+
+  link.deliver({ t: "stop", reason: "user requested" });
+  await waitFor(() => link.sent.some((m) => m.t === "bye"));
+  assert.equal(ide.aborts(), 1, "the install goes with the run");
+});
+
+test("RunController: #241 no run.spec.ide, no install", async (t) => {
+  const ide = fakeIdeInstaller();
+  const { controller, link, states, spec } = await setupController({}, { ideInstaller: ide.factory });
+  t.after(() => controller.dispose());
+  link.deliver(spec);
+  await waitFor(() => states.includes("idle"));
+  assert.deepEqual(ide.made, []);
 });

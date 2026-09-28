@@ -1,0 +1,63 @@
+name: code-server release check
+# Browser IDE (#241, outfitter/docs/specs/browser-ide.md §2): IDE Drives download the code-server
+# release pinned in outfitter/packages/api/src/config.ts (IDE_CODE_SERVER_PIN). Dependabot can't see
+# that pin, so once a week this compares it with coder/code-server's latest release and, when there's
+# a newer one, opens an issue carrying the SHA-256s the bump needs (the release publishes none).
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays, 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          sparse-checkout: outfitter/packages/api/src/config.ts
+          sparse-checkout-cone-mode: false
+      - name: Compare the pin with the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pinned=$(sed -n '/IDE_CODE_SERVER_PIN = {/,/} as const/p' outfitter/packages/api/src/config.ts \
+            | sed -n 's/^ *version: "\([0-9.]*\)".*/\1/p')
+          latest=$(gh api repos/coder/code-server/releases/latest --jq .tag_name | sed 's/^v//')
+          echo "pinned ${pinned:-?}, latest ${latest:-?}"
+          [[ "$pinned" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$latest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || { echo "::error::could not read a version (pinned '$pinned', latest '$latest')"; exit 1; }
+          if [[ "$pinned" == "$latest" || "$(printf '%s\n%s\n' "$pinned" "$latest" | sort -V | tail -1)" == "$pinned" ]]; then
+            echo "up to date"; exit 0
+          fi
+          title="Bump code-server to ${latest} (browser IDE pin)"
+          if [[ -n "$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "\"${title}\" in:title" --json number --jq '.[0].number')" ]]; then
+            echo "an open issue already asks for ${latest}"; exit 0
+          fi
+          sums=""
+          for arch in amd64 arm64; do
+            url="https://github.com/coder/code-server/releases/download/v${latest}/code-server-${latest}-linux-${arch}.tar.gz"
+            sums+="- ${arch}: \`$(curl -fsSL "$url" | sha256sum | cut -d' ' -f1)\`"$'\n'
+          done
+          body=$(cat <<EOF
+          coder/code-server released **${latest}**; IDE Drives download **${pinned}**.
+
+          To bump, change \`IDE_CODE_SERVER_PIN\` in \`outfitter/packages/api/src/config.ts\` (version and both checksums), then deploy the api. No image rebuild.
+
+          SHA-256 of the release assets as GitHub served them to this workflow (the release publishes none, so this is trust on first use: compare with a download of your own before pinning):
+          ${sums}
+          Before merging, check the release notes for changes to the flags agentd passes (\`--auth none\`, \`--disable-proxy\`, \`--disable-workspace-trust\`, \`--config\`), and that excluding \`lib/vscode/extensions/copilot\` and \`lib/vscode/node_modules/@github\` still leaves a working editor (docs/specs/browser-ide.md §2-§3).
+
+          Release notes: https://github.com/coder/code-server/releases/tag/v${latest}
+          EOF
+          )
+          gh issue create -R "$GITHUB_REPOSITORY" --title "$title" --label browser-ide --label dependencies --body "$body"

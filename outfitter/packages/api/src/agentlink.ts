@@ -240,6 +240,10 @@ export interface RunSpecMessage {
   /** Drive previews (#217): the run's internal endpoint domain; with secrets.ngrokAuthtoken on the
    * run's first spec. Absent when previews are off (PreviewService.runSpecConfig). */
   preview?: { internalDomain: string };
+  /** Browser IDE (#241): present only when the run's Tape has browserIde and `preview` is present
+   * too (the IDE is served through the preview pieces). agentd downloads this code-server release
+   * into the Drive at start and checks it against the SHA-256 for its architecture. */
+  ide?: { version: string; artifacts: { amd64: string; arm64: string } };
   /** The session's person, credited on cloud commits (the Outfitter bot authors and commits them;
    * agentd adds `Co-authored-by`/`On-behalf-of` trailers from this). Omitted when the session has
    * no owner on record; agentd then commits as the bot alone. See docs/protocol.md. */
@@ -1115,15 +1119,23 @@ export class AgentLink {
     // its first run.spec only), so a reconnect reuses what the run recorded rather than a Tape
     // edited since.
     const allowExternalHtmlResources = run.allowExternalHtmlResources ?? guru.allowExternalHtmlResources === true;
+    // #217: the run's preview credential, minted on its first spec; undefined when previews are off.
+    const previewConfig = await this.previews?.runSpecConfig(run);
+    // #241: what the run's first *sent* spec carried (agentd acts on that one only). Before a spec
+    // has gone out, recompute: an earlier build may have failed to mint the preview credential, or
+    // never been sent. The IDE needs previews, so without them the run records false: it never got
+    // `ide`, and the session page shows no button.
+    const specSent = Boolean((await this.store.runs.findById(runId))?.startup?.specSentAt ?? run.startup?.specSentAt);
+    const browserIde =
+      specSent && run.browserIde !== undefined ? run.browserIde : guru.browserIde === true && previewConfig !== undefined;
     await this.store.runs.update(runId, {
       modelFallback: resolved.fallback,
       allowExternalHtmlResources,
+      browserIde,
       updatedAt: new Date().toISOString(),
     });
 
     const secrets = await this.secretsBroker.secretsForRun(session, guru);
-    // #217: the run's preview credential, minted on its first spec; undefined when previews are off.
-    const previewConfig = await this.previews?.runSpecConfig(run);
     // GcpSecretsBroker (secrets.ts) resolves a missing `outfitter-github-token-<sessionId>` secret
     // to "" rather than throwing -- after a GitHub App installation token, then the shared
     // `outfitter-github-token-default` -- so a session with no repo (which needs no GitHub token at
@@ -1225,6 +1237,7 @@ export class AgentLink {
         ...(previewConfig?.token ? { ngrokAuthtoken: previewConfig.token } : {}),
       },
       ...(previewConfig ? { preview: { internalDomain: previewConfig.internalDomain } } : {}),
+      ...(browserIde && previewConfig ? { ide: this.config.ideCodeServer } : {}),
       ...(author ? { author } : {}),
       idleStopSeconds: this.config.idleStopSeconds,
       // Deviation from protocol.md (checkpointEvery isn't specced further, and agentd's

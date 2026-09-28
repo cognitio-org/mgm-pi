@@ -194,6 +194,10 @@ export interface Run {
   // Written once (agentd only acts on its first run.spec) and reused by later specs on reconnect;
   // a Tape changed mid-run applies to the next run. Absent until that first spec is built.
   allowExternalHtmlResources?: boolean;
+  // Browser IDE (#241, docs/specs/browser-ide.md): whether this run's spec carried `ide` (the Tape
+  // asked for it and previews were on), so agentd downloaded code-server into this Drive. Settled by
+  // the first spec that was actually sent (startup.specSentAt) and reused on reconnect.
+  browserIde?: boolean;
   // #187: the highest sandbox memory agentd's heartbeats reported for this run, and the sandbox's
   // limit, in MiB. An OOM kill takes agentd with it, so this is what lets the reconciler say "ran
   // out of memory" instead of "stopped reporting". Absent from agentd builds before #187 and from
@@ -420,6 +424,10 @@ export interface Guru {
    * (external when true, sealed otherwise). Copied onto each run as it starts (Run's field of the
    * same name). */
   allowExternalHtmlResources?: boolean;
+  /** Tape option, default off (browser IDE, #241). Absent on existing gurus. When true, the run's
+   * spec asks agentd to download code-server so the floppy's owner can open the Drive in VS Code in
+   * the browser. Copied onto each run as it starts (Run.browserIde). */
+  browserIde?: boolean;
   createdAt: string;
   updatedAt: string;
 }

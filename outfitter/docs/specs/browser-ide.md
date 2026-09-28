@@ -94,22 +94,25 @@ case, and the session page shows no IDE button otherwise.
   or retries it. Other Drives never download anything.
 - **What:** the pinned code-server release for the pod's architecture
   (`https://github.com/coder/code-server/releases/download/v<version>/code-server-<version>-linux-<arch>.tar.gz`).
-- **How:** as root, niced. The HTTP body goes through a SHA-256 hash and then into GNU `tar`, so
-  there's no tarball on disk:
+- **How** (`packages/agentd/src/ide-install.ts`), as root, so that tar never parses an unverified
+  byte (security review of #265):
+  - **Download, hash, cap:** the body goes to a 0600 file inside a fresh 0700 temp dir beside
+    `/opt/code-server`, hashed as it arrives and capped at 400 MB (the release is 222 MB).
+  - **Verify, then unpack:** only a file whose SHA-256 matches `run.spec.ide.artifacts[arch]` is
+    unpacked, by GNU tar under `nice`, into `<tmp>/tree`, with `--no-same-owner
+    --no-same-permissions` (root-owned, umask modes; setuid bits dropped). The temp dir stays 0700
+    whatever an archive entry does to `tree`.
   - **Copilot excluded:** `--exclude` for the bundled Copilot extension and SDK
     (`*/lib/vscode/extensions/copilot`, `*/lib/vscode/node_modules/@github`; GNU tar matches
-    excludes before `--strip-components`). That's about 270 MB, some 40% of the unpacked tree, for AI features the IDE
-    turns off. The spike found everything works without them, though it tested the trim by deleting
-    after unpacking, not with `--exclude`; phase 1's test covers that.
-  - **The hash covers the whole download,** excluded entries included, because it sits before tar.
-    The whole body is read and hashed even if tar stops early, and a tar or pipe error fails the
-    install.
-  - **Owned by root:** `--no-same-owner --no-same-permissions`, then mode 755 on the top directory,
-    so `agent` can run code-server but not change it.
-  - **Unverified bytes stay in a root-only temp dir.** tar unpacks before the hash is known; that's
-    acceptable only because nothing runs from the temp dir. It's renamed to `/opt/code-server` only if
-    the hash matches `run.spec.ide.artifacts[arch]`.
-  - One attempt at a time; a failure is reported and `ide.open` retries.
+    excludes before `--strip-components`). That's about 270 MB, some 40% of the unpacked tree, for AI
+    features the IDE turns off; the spike found everything works without them.
+  - **Into place:** `tree` is renamed to `/opt/code-server` (the same filesystem; it mustn't become a
+    mount point) and made 0755, so `agent` can run code-server but not change it.
+  - **Lifetime:** a 5-minute timeout; the run's end aborts the download or tar and nothing is moved
+    into place after it; one attempt at a time, and `ide.open` retries after a failure. A failure
+    is logged (tar's stderr reduced to printable ASCII) and never fails the run.
+  - **Time:** download plus unpack in sequence; the unpack was 3.6 s of CPU on the laptop, about 12 s
+    expected on a cloud vCPU, on top of the download.
 - **Pin:** version and per-arch checksums live in api config (`IDE_CODE_SERVER_VERSION`,
   `IDE_CODE_SERVER_SHA256_AMD64`, `_ARM64`), so a bump is a config change, not an image rebuild.
   Dependabot can't see it; phase 1 adds a small scheduled CI job that opens an issue when a newer
@@ -287,7 +290,7 @@ the same access the terminal does, and no more.
 0. **Spike: done** (`docs/reports/browser-ide-spike.md`, #240). It changed §2 (the download is
    222 MB; the Copilot trim), §3 (`Origin` passed through; workspace trust and AI chat off; `SHELL`
    required) and §5 (the 60 frames / 2 KB rule), and confirmed the 4 GiB template is enough.
-1. **Tape option and install (api, agentd, web form, CI):** `Guru.browserIde`, `Run.browserIde`,
+1. **Tape option and install (api, agentd, web form, CI)** (#241): `Guru.browserIde`, `Run.browserIde`,
    `run.spec.ide` (only with previews on), the streamed, verified, Copilot-excluding install at Drive
    start (with a test that the excludes match and the hash still covers the whole body), and the
    scheduled "newer code-server" check.

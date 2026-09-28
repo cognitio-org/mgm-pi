@@ -12,6 +12,7 @@ import { ActionListener } from "./browser-action.js";
 import { CaptureListener } from "./browser-capture.js";
 import { InspectListener } from "./browser-inspect.js";
 import { PreviewListener } from "./preview.js";
+import { CodeServerInstaller, type IdeInstallResult, type IdeInstallState } from "./ide-install.js";
 import { renderGuru } from "./guru.js";
 import { discoverAppendSystemPromptFile } from "./append-system.js";
 import { attributionTrailers, authHeaderSecret, botIdentityEnv, sanitizeAuthor, type GitOps } from "./git.js";
@@ -46,6 +47,7 @@ import type {
   DownUiResponse,
   PiRpcCommand,
   PiRpcEvent,
+  RunSpecIde,
   RunState,
   UpMessage,
 } from "./protocol.js";
@@ -190,6 +192,16 @@ export interface RunControllerDeps {
   ngrokBin?: string;
   /** Tests: replaces the real preview listener's tunnel start (preview.ts). */
   previewStartTunnel?: ConstructorParameters<typeof PreviewListener>[0]["startTunnel"];
+  /** Browser IDE (#241): builds the code-server installer for `run.spec.ide`. Default
+   * CodeServerInstaller into /opt/code-server; tests pass a fake. */
+  ideInstaller?: (ide: RunSpecIde) => IdeInstaller;
+}
+
+/** What the run needs of ide-install.ts's CodeServerInstaller. */
+export interface IdeInstaller {
+  start(): Promise<IdeInstallResult>;
+  abort(): void;
+  readonly state: IdeInstallState;
 }
 
 export type StateChangeHandler = (state: RunState, detail?: string) => void;
@@ -292,6 +304,8 @@ export class RunController {
   private inspectListener: InspectListener | undefined;
   /** Loopback listener for the Drive `preview` tool (#217). Only when run.spec carries preview config. */
   private previewListener: PreviewListener | undefined;
+  /** Browser IDE (#241): code-server's install, started with the run when run.spec carries `ide`. */
+  private ideInstall: IdeInstaller | undefined;
   /** Last chat activity: a prompt/steer/follow-up/mail, a turn starting, or a turn settling. The
    * reference for the preview idle cap. */
   private lastChatAt = 0;
@@ -551,6 +565,14 @@ export class RunController {
     if (spec.secrets.githubToken) this.deps.logger?.addSecret(authHeaderSecret(spec.secrets.githubToken));
     this.deps.logger?.addSecret(spec.secrets.litellmKey);
     this.deps.logger?.addSecret(spec.secrets.ngrokAuthtoken);
+    // #241: code-server for the browser IDE, downloaded alongside the rest of the start (tar runs
+    // niced, so it yields the CPU to the clone and pi). Its outcome is logged; `ide.open` (phase 2)
+    // waits for it or retries it. A failure never fails the run.
+    if (spec.ide) {
+      const make = this.deps.ideInstaller ?? ((ide: RunSpecIde) => new CodeServerInstaller({ spec: ide, onLog: this.onLog }));
+      this.ideInstall = make(spec.ide);
+      void this.ideInstall.start();
+    }
 
     if (spec.repo) {
       this.setState("cloning");
@@ -1016,6 +1038,10 @@ export class RunController {
     // the `bye`, so the api deletes the public endpoints on a live socket).
     const previews = this.previewListener;
     this.previewListener = undefined;
+    // #241: a download or unpack still running stops with the run, and nothing is moved into place
+    // after this. Its temp dir is removed asynchronously; one left behind by a fast exit goes with
+    // the container.
+    this.ideInstall?.abort();
     return Promise.all([
       listener ? listener.stop() : Promise.resolve(),
       actions ? actions.stop() : Promise.resolve(),

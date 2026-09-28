@@ -1,6 +1,130 @@
-{"t":1790558979.091,"event":"start","uname":"x86_64","pod":"ide-spike-1790558960","cgroupBytes":null,"agentRssKb":0}
-{"t":1790558980.221,"event":"cloned","cgroupBytes":null,"agentRssKb":0}
-{"t":1790559000.244,"event":"installed","run":1,"install":{"arch":"amd64","version":"4.139.1","seconds":19.4911,"bytes":669687449},"cgroupBytes":null,"agentRssKb":0}
-{"t":1790559020.324,"event":"installed","run":2,"install":{"arch":"amd64","version":"4.139.1","seconds":19.1752,"bytes":669687449},"cgroupBytes":null,"agentRssKb":0}
-{"t":1790559021.449,"event":"listening","startSeconds":1.07809,"cgroupBytes":null,"agentRssKb":249688}
-{"t":1790559021.455,"event":"ready"}
+{"t":1790560081.650,"event":"start","uname":"x86_64","pod":"ide-spike-1790560060","podBytes":3067904,"agentRssKb":0}
+{"t":1790560082.804,"event":"cloned","podBytes":3059712,"agentRssKb":0}
+{"t":1790560106.763,"event":"installed","run":1,"install":{"arch":"amd64","version":"4.139.1","seconds":23.3236,"bytes":669687449},"podBytes":3043328,"agentRssKb":0}
+{"t":1790560127.739,"event":"installed","run":2,"install":{"arch":"amd64","version":"4.139.1","seconds":20.0517,"bytes":669687449},"podBytes":3059712,"agentRssKb":0}
+{"t":1790560129.295,"event":"listening","startSeconds":1.49651,"podBytes":64245760,"agentRssKb":248268}
+{"t":1790560129.309,"event":"ready"}
+{"t":1790560144.629,"event":"mem","podBytes":950407168,"agentRssKb":507896}
+{"t":1790560159.838,"event":"mem","podBytes":1166954496,"agentRssKb":801236}
+{"t":1790560174.875,"event":"mem","podBytes":1178865664,"agentRssKb":812976}
+{"t":1790560190.029,"event":"mem","podBytes":1203240960,"agentRssKb":816408}
+{"t":1790560205.341,"event":"mem","podBytes":1311485952,"agentRssKb":956200}
+{"t":1790560220.632,"event":"mem","podBytes":1428127744,"agentRssKb":1064644}
+{"t":1790560235.666,"event":"mem","podBytes":1564405760,"agentRssKb":1091680}
+{"t":1790560250.852,"event":"mem","podBytes":1467465728,"agentRssKb":1079588}
+{"t":1790560265.969,"event":"mem","podBytes":1581527040,"agentRssKb":1087836}
+{"t":1790560281.004,"event":"mem","podBytes":1575632896,"agentRssKb":1087836}
+{"t":1790560296.040,"event":"mem","podBytes":1574912000,"agentRssKb":1087836}
+{"t":1790560311.088,"event":"mem","podBytes":1575407616,"agentRssKb":1087836}
+{"t":1790560326.159,"event":"mem","podBytes":1575964672,"agentRssKb":1089160}
+{"t":1790560341.204,"event":"mem","podBytes":1565810688,"agentRssKb":1076948}
+{"t":1790560356.245,"event":"mem","podBytes":1566642176,"agentRssKb":1076948}
+{"t":1790560371.284,"event":"mem","podBytes":1478561792,"agentRssKb":1002964}
+{"t":1790560386.543,"event":"mem","podBytes":1523224576,"agentRssKb":1024728}
+{"t":1790560401.739,"event":"mem","podBytes":1575550976,"agentRssKb":1057392}
+{"t":1790560417.028,"event":"mem","podBytes":1603137536,"agentRssKb":1085984}
+{"t":1790560432.236,"event":"mem","podBytes":1623605248,"agentRssKb":1097280}
+{"t":1790560447.430,"event":"mem","podBytes":1630494720,"agentRssKb":1118980}
+{"t":1790560462.539,"event":"mem","podBytes":1647636480,"agentRssKb":1122460}
+{"t":1790560477.656,"event":"mem","podBytes":1634156544,"agentRssKb":1119900}
+{"t":1790560492.732,"event":"mem","podBytes":1643606016,"agentRssKb":1123212}
+{"t":1790560507.764,"event":"mem","podBytes":1633116160,"agentRssKb":1119248}
+{"t":1790560522.797,"event":"mem","podBytes":1621372928,"agentRssKb":1119248}
+{"t":1790560537.829,"event":"mem","podBytes":1622364160,"agentRssKb":1120276}
+{"t":1790560552.869,"event":"mem","podBytes":1622835200,"agentRssKb":1120276}
+{"t":1790560567.915,"event":"mem","podBytes":1623519232,"agentRssKb":1122196}
+{"t":1790560582.955,"event":"mem","podBytes":1624158208,"agentRssKb":1124884}
+{"t":1790560597.997,"event":"mem","podBytes":1624854528,"agentRssKb":1127336}
+{"t":1790560613.030,"event":"mem","podBytes":1473568768,"agentRssKb":967056}
+{"t":1790560628.066,"event":"mem","podBytes":1476468736,"agentRssKb":967088}
+{"t":1790560643.139,"event":"mem","podBytes":1480785920,"agentRssKb":967108}
+{"t":1790560658.177,"event":"mem","podBytes":1485824000,"agentRssKb":967116}
+{"t":1790560673.214,"event":"mem","podBytes":1476952064,"agentRssKb":967116}
+{"t":1790560688.253,"event":"mem","podBytes":1479979008,"agentRssKb":967116}
+{"t":1790560703.288,"event":"mem","podBytes":1482887168,"agentRssKb":967120}
+{"t":1790560718.321,"event":"mem","podBytes":1484500992,"agentRssKb":966596}
+{"t":1790560733.356,"event":"mem","podBytes":1488646144,"agentRssKb":966620}
+{"t":1790560748.387,"event":"mem","podBytes":1490968576,"agentRssKb":966672}
+{"t":1790560763.470,"event":"mem","podBytes":1480491008,"agentRssKb":982172}
+{"t":1790560778.564,"event":"mem","podBytes":1490329600,"agentRssKb":982008}
+{"t":1790560793.644,"event":"mem","podBytes":1492447232,"agentRssKb":983160}
+{"t":1790560808.684,"event":"mem","podBytes":1502916608,"agentRssKb":967488}
+{"t":1790560823.723,"event":"mem","podBytes":1502867456,"agentRssKb":967488}
+{"t":1790560838.763,"event":"mem","podBytes":1503162368,"agentRssKb":967744}
+{"t":1790560853.806,"event":"mem","podBytes":1503391744,"agentRssKb":967744}
+{"t":1790560868.844,"event":"mem","podBytes":1503924224,"agentRssKb":967744}
+{"t":1790560883.930,"event":"mem","podBytes":1504968704,"agentRssKb":968000}
+{"t":1790560898.967,"event":"mem","podBytes":1478221824,"agentRssKb":968256}
+{"t":1790560914.003,"event":"mem","podBytes":1476247552,"agentRssKb":968256}
+=== harness.log
+proxy 22648 relay 58399 http://ide-test.kernal.run:58399/?folder=/workspace
+baseline memory (no client) {"cgroupMb":690,"agentRssMb":242}
+s3.load PASS 
+s3.edit-and-save FAIL locator.waitFor: Timeout 30000ms exceeded.
+Call log:
+  - waiting for locator('.monaco-editor .view-lines').first() to be visible
+
+s3.terminal PASS from-terminal agent
+agent
+s3.file-watcher PASS 
+s3.webview-markdown-preview FAIL no webview frame rendered the file; frames: http://ide-test.kernal.run:58399/?folder=/workspace | http://ide-test.kernal.run:58399/stable-53c2f3253bcf32886706fc023e794bbeb253c90f | http://ide-test.kernal.run:58399/stable-53c2f3253bcf32886706fc023e794bbeb253c90f | http://ide-test.kernal.run:58399/stable-53c2f3253bcf32886706fc023e794bbeb253c90f
+s3.openvsx-cli-install PASS Installing extension 'redhat.vscode-yaml'...
+Extension 'redhat.vscode-yaml' v1.24.0 was successfully installed.
+s3.openvsx-ui-search PASS 
+{"phase":"idle-focused","seconds":120.001,"c2sBytes":1477,"s2cBytes":1351,"frames":{"binary":78},"dataFrames":78,"dataBytes":1009,"heartbeatAgeStart":7,"heartbeatAgeEnd":7,"memory":{"cgroupMb":1410,"agentRssMb":979}}
+{"phase":"typing","seconds":120.794,"c2sBytes":118417,"s2cBytes":5070841,"frames":{"binary":1702},"dataFrames":1702,"dataBytes":108141,"heartbeatAgeStart":7,"heartbeatAgeEnd":8,"memory":{"cgroupMb":1568,"agentRssMb":1090}}
+{"phase":"idle-after-typing","seconds":120.001,"c2sBytes":22021,"s2cBytes":10422,"frames":{"binary":100},"dataFrames":100,"dataBytes":21409,"heartbeatAgeStart":8,"heartbeatAgeEnd":8,"memory":{"cgroupMb":1406,"agentRssMb":944}}
+{"phase":"scrolling-reading","seconds":120.001,"c2sBytes":5678,"s2cBytes":4249,"frames":{"binary":222},"dataFrames":222,"dataBytes":4346,"heartbeatAgeStart":8,"heartbeatAgeEnd":8,"memory":{"cgroupMb":1419,"agentRssMb":944}}
+{"phase":"terminal-command","seconds":62.318,"c2sBytes":6151,"s2cBytes":83442,"frames":{"binary":227},"dataFrames":227,"dataBytes":4148,"heartbeatAgeStart":8,"heartbeatAgeEnd":11,"memory":{"cgroupMb":1425,"agentRssMb":955}}
+{"phase":"idle-background-tab","seconds":120.002,"c2sBytes":846,"s2cBytes":622,"frames":{"binary":62},"dataFrames":62,"dataBytes":474,"heartbeatAgeStart":11,"heartbeatAgeEnd":11,"memory":{"cgroupMb":1408,"agentRssMb":946}}
+done; results in /tmp/s4-results-gke.jsonl and /tmp/s3-results-gke.json
+=== s3-results-gke.json
+{
+  "checks": {
+    "s3.load": {
+      "ok": true,
+      "ms": 14076
+    },
+    "s3.edit-and-save": {
+      "ok": false,
+      "ms": 32404,
+      "error": "locator.waitFor: Timeout 30000ms exceeded.\nCall log:\n  - waiting for locator('.monaco-editor .view-lines').first() to be visible\n"
+    },
+    "s3.terminal": {
+      "ok": true,
+      "ms": 14443,
+      "detail": "from-terminal agent\nagent"
+    },
+    "s3.file-watcher": {
+      "ok": true,
+      "ms": 874
+    },
+    "s3.webview-markdown-preview": {
+      "ok": false,
+      "ms": 41961,
+      "error": "no webview frame rendered the file; frames: http://ide-test.kernal.run:58399/?folder=/workspace | http://ide-test.kernal.run:58399/stable-53c2f3253bcf32886706fc023e794bbeb253c90f | http://ide-test.kernal.run:58399/stable-53c2f3253bcf32886706fc023e794bbeb253c90f | http://ide-test.kernal.run:58399/stable-53c2f3253bcf32886706fc023e794bbeb253c90f"
+    },
+    "s3.openvsx-cli-install": {
+      "ok": true,
+      "ms": 2689,
+      "detail": "Installing extension 'redhat.vscode-yaml'...\nExtension 'redhat.vscode-yaml' v1.24.0 was successfully installed."
+    },
+    "s3.openvsx-ui-search": {
+      "ok": true,
+      "ms": 7903
+    }
+  },
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "%c  ERR color: #f33 Error: Timed out waiting for authentication provider 'github' to register.\n    at ppt.tryActivateProvider (http://ide-test.kernal.run:58399/stable-53c2f3253bcf32886706fc023e794bbeb"
+  ]
+}=== s4-results-gke.jsonl
+{"phase":"idle-focused","seconds":120.001,"c2sBytes":1477,"s2cBytes":1351,"frames":{"binary":78},"dataFrames":78,"dataBytes":1009,"heartbeatAgeStart":7,"heartbeatAgeEnd":7,"memory":{"cgroupMb":1410,"agentRssMb":979}}
+{"phase":"typing","seconds":120.794,"c2sBytes":118417,"s2cBytes":5070841,"frames":{"binary":1702},"dataFrames":1702,"dataBytes":108141,"heartbeatAgeStart":7,"heartbeatAgeEnd":8,"memory":{"cgroupMb":1568,"agentRssMb":1090}}
+{"phase":"idle-after-typing","seconds":120.001,"c2sBytes":22021,"s2cBytes":10422,"frames":{"binary":100},"dataFrames":100,"dataBytes":21409,"heartbeatAgeStart":8,"heartbeatAgeEnd":8,"memory":{"cgroupMb":1406,"agentRssMb":944}}
+{"phase":"scrolling-reading","seconds":120.001,"c2sBytes":5678,"s2cBytes":4249,"frames":{"binary":222},"dataFrames":222,"dataBytes":4346,"heartbeatAgeStart":8,"heartbeatAgeEnd":8,"memory":{"cgroupMb":1419,"agentRssMb":944}}
+{"phase":"terminal-command","seconds":62.318,"c2sBytes":6151,"s2cBytes":83442,"frames":{"binary":227},"dataFrames":227,"dataBytes":4148,"heartbeatAgeStart":8,"heartbeatAgeEnd":11,"memory":{"cgroupMb":1425,"agentRssMb":955}}
+{"phase":"idle-background-tab","seconds":120.002,"c2sBytes":846,"s2cBytes":622,"frames":{"binary":62},"dataFrames":62,"dataBytes":474,"heartbeatAgeStart":11,"heartbeatAgeEnd":11,"memory":{"cgroupMb":1408,"agentRssMb":946}}
+=== end
+{"t":1790560925.243,"event":"done","podBytes":695128064,"agentRssKb":968260}

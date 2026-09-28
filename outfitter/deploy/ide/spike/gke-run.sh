@@ -36,9 +36,7 @@ if [[ -n "${DRY_RUN:-}" ]]; then
   exit 0
 fi
 
-LOG_PID=""
 cleanup() {
-  [[ -n "$LOG_PID" ]] && kill "$LOG_PID" 2>/dev/null || true
   "${K[@]}" delete sandboxclaim "$CLAIM" --ignore-not-found --wait=false >/dev/null || true
   "${K[@]}" delete sandboxwarmpool ide-spike --ignore-not-found >/dev/null || true
   "${K[@]}" delete sandboxtemplate ide-spike --ignore-not-found >/dev/null || true
@@ -61,17 +59,18 @@ done
 echo "pod $POD running after $(( $(date +%s) - t0 )) s"
 
 : > gke-pod.jsonl
-"${K[@]}" logs -f "$POD" >> gke-pod.jsonl 2>&1 &
-LOG_PID=$!
+# Poll the whole log rather than follow it: a followed stream can drop ("http2: client connection
+# lost", second run) and never see the end.
+pull() { "${K[@]}" logs "$POD" > gke-pod.jsonl.tmp 2>/dev/null && mv gke-pod.jsonl.tmp gke-pod.jsonl || true; }
 until grep -q '"ready"' gke-pod.jsonl; do
-  sleep 3
+  sleep 3; pull
   grep -qE 'checksum mismatch|unsupported arch|Error from server' gke-pod.jsonl && { cat gke-pod.jsonl; exit 1; }
   (( $(date +%s) - t0 > 900 )) && { echo "code-server not ready after 15 minutes" >&2; cat gke-pod.jsonl; exit 1; }
 done
 grep -E '"installed"|"listening"' gke-pod.jsonl
 echo "harness running in the pod (about $(( PHASE_S * 6 / 60 + 3 )) minutes)..."
 until grep -q '"event":"done"' gke-pod.jsonl; do
-  sleep 10
+  sleep 10; pull
   (( $(date +%s) - t0 > 2600 )) && { echo "harness didn't finish" >&2; tail -20 gke-pod.jsonl; exit 1; }
 done
 # Split the pod log into the result files.

@@ -39,7 +39,7 @@ HARNESS_CHANNEL=chromium IDE_EXEC=env RESULTS_TAG=gke RESULTS_DIR=/tmp PREVIEW_P
   node /spike/harness.mjs --target 8080 --phase-seconds "${PHASE_S:-120}" > /tmp/harness.log 2>&1 || true
 kill "$MEMLOOP" 2>/dev/null || true
 echo "=== harness.log"; grep -vE '^\[proxy\]' /tmp/harness.log | tail -40
-echo "=== s3-results-gke.json"; cat /tmp/s3-results-gke.json 2>/dev/null || echo "{}"
+echo "=== s3-results-gke.json"; cat /tmp/s3-results-gke.json 2>/dev/null || echo "{}"; echo
 echo "=== s4-results-gke.jsonl"; cat /tmp/s4-results-gke.jsonl 2>/dev/null || true
 echo "=== end"
 log "\"event\":\"done\",$(mem)"

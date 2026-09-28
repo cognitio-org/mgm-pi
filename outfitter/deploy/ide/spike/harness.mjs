@@ -167,6 +167,12 @@ const palette = async (cmd) => {
   await page.keyboard.press("Enter");
 };
 
+const openFromExplorer = async (name) => {
+  await page.keyboard.press("Escape");
+  await page.locator(".explorer-folders-view .monaco-list-row", { hasText: name }).first().dblclick();
+  await page.locator(".tabs-container .tab", { hasText: name }).first().waitFor({ timeout: 60_000 });
+  await page.locator(".monaco-editor .view-lines").first().waitFor({ timeout: 60_000 });
+};
 console.log("baseline memory (no client)", JSON.stringify(memory()));
 
 await check("s3.load", async () => {
@@ -178,14 +184,13 @@ await sleep(3000);
 // Workspace Trust prompt, if any.
 await page.getByRole("button", { name: /Yes, I trust/i }).click({ timeout: 3000 }).catch(() => {});
 
+await check("s3.ripgrep", async () => {
+  // Quick Open and search run code-server's bundled ripgrep; run it directly as agent.
+  return sh("rg=$(ls -d /opt/code-server/lib/vscode/node_modules/@vscode/ripgrep-universal/bin/linux-*/rg | head -1); s=$(date +%s%N); n=$(su agent -s /bin/sh -c \"cd /workspace && timeout 30 $rg --files | wc -l\"); echo \"$n files in $(( ($(date +%s%N) - s) / 1000000 )) ms\"");
+});
+
 await check("s3.edit-and-save", async () => {
-  await page.keyboard.press("Escape");
-  await page.keyboard.press(`${mod}+P`);
-  await page.locator(".quick-input-widget input.input").first().waitFor({ state: "visible" });
-  await page.keyboard.type("readme.md");
-  await sleep(800);
-  await page.keyboard.press("Enter");
-  await page.locator(".monaco-editor .view-lines").first().waitFor();
+  await openFromExplorer("readme.md");
   await page.locator(".monaco-editor .view-lines").first().click();
   await page.keyboard.press(`${mod}+Home`);
   await page.keyboard.type("SPIKE-EDIT-MARKER\n");
@@ -213,14 +218,18 @@ await check("s3.file-watcher", async () => {
   await page.locator(".explorer-folders-view .monaco-list-row", { hasText: "from-model.txt" }).first().waitFor({ timeout: 15_000 });
 });
 
-await check("s3.webview-markdown-preview", async () => {
+await check("s3.quick-open", async () => {
   await page.keyboard.press("Escape");
   await page.keyboard.press(`${mod}+P`);
   await page.locator(".quick-input-widget input.input").first().waitFor({ state: "visible" });
-  await page.keyboard.type("readme.md");
-  await sleep(800);
+  await page.keyboard.type("package.json");
+  await page.locator(".quick-input-widget .monaco-list-row", { hasText: "package.json" }).first().waitFor({ timeout: 90_000 });
   await page.keyboard.press("Enter");
-  await sleep(800);
+  await page.locator(".tabs-container .tab", { hasText: "package.json" }).first().waitFor({ timeout: 30_000 });
+});
+
+await check("s3.webview-markdown-preview", async () => {
+  await openFromExplorer("readme.md");
   await palette("Markdown: Open Preview to the Side");
   for (let i = 0; i < 40; i++) {
     for (const f of page.frames()) {

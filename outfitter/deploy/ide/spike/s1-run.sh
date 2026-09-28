@@ -27,6 +27,9 @@ fi
 [[ -f code-server-4.139.1-linux-amd64.tar.gz ]] || curl -fsSL -o code-server-4.139.1-linux-amd64.tar.gz \
   https://github.com/coder/code-server/releases/download/v4.139.1/code-server-4.139.1-linux-amd64.tar.gz
 echo "53029be6c5781b7bca49b815fcc9a2a3fc111813ad8c9965b2c0f0d2985a0674  code-server-4.139.1-linux-amd64.tar.gz" | shasum -a 256 -c -
+rm -rf cs-amd64 && mkdir cs-amd64 && tar xzf code-server-4.139.1-linux-amd64.tar.gz -C cs-amd64 --strip-components=1
+rm -rf cs-amd64/lib/vscode/extensions/copilot cs-amd64/lib/vscode/node_modules/@github   # 272 MB, AI off
+du -sh cs-amd64
 gcloud --configuration=outfitter auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://us-central1-docker.pkg.dev >/dev/null
 docker buildx build --platform linux/amd64 --build-arg BASE="$BASE" -f Dockerfile.s1 -t "$BAKED" --push .
 

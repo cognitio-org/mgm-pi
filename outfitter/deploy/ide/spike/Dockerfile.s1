@@ -1,6 +1,7 @@
-# Browser IDE spike S1 (issue #240): the production agent image plus code-server, to measure what
-# baking it in costs a cold start. ADD unpacks a local tarball without running anything, so this
+# Browser IDE spike S1 (issue #240): the production agent image plus code-server, trimmed of its
+# bundled Copilot extension and SDK (272 MB of 622; AI features are off), to measure what baking it
+# in costs a cold start. s1-run.sh unpacks and trims on the build machine, so this only COPYs: it
 # builds for linux/amd64 on any machine with no emulation. Not for production.
 ARG BASE
 FROM ${BASE}
-ADD code-server-4.139.1-linux-amd64.tar.gz /opt/
+COPY --chown=root:root cs-amd64/ /opt/code-server/

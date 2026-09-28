@@ -3,18 +3,18 @@
 Spec: `docs/specs/browser-ide.md`. Issue #240, epic #245. Scripts and raw results:
 `deploy/ide/spike/`.
 
-The spike has two halves. The **local half** (this laptop, Docker, 1 CPU / 2 GiB, arm64) is done. The
-**GKE half** (gVisor, the production image, amd64) needs the owner to run two scripts, because they
-create objects on the production cluster and push a tag to Artifact Registry. Cloud Run is out of
+The spike has two halves: **local** (this laptop, Docker, 1 CPU / 2 GiB, arm64) and **GKE**
+(gVisor, the production image `c66fd6657b1a`, amd64, 1 vCPU / 2 GiB), run by the owner with
+`gke-run.sh` three times on 2026-09-28. S1 (`s1-run.sh`) is still to run. Cloud Run is out of
 scope: the fleet is moving fully to GKE (owner decision, 2026-09-27).
 
 | Item | Question | Local | GKE |
 |---|---|---|---|
 | S1 | What does baking code-server into the image cost a cold start? | size only (below) | **pending**, `s1-run.sh` |
-| S2 | How long does the on-demand install take? | 21 s, network-bound; unpack 3.6 s CPU | **19.5 s and 19.2 s** under gVisor |
-| S3 | Does code-server work through agentd's proxy? | **pass after one proxy change** | **pending** (gVisor), `gke-run.sh` |
-| S4 | Can activity be told from an idle tab at the proxy? | **yes**: 30 frames/min idle vs 109+ active | **pending**, `gke-run.sh` |
-| S5 | Does it fit in 2 GiB? | 540-725 MiB for code-server with a client | **pending** (next to pi), `gke-run.sh` |
+| S2 | How long does the on-demand install take? | 21 s, network-bound; unpack 3.6 s CPU | **18.8-23.3 s** (6 installs) |
+| S3 | Does code-server work through agentd's proxy? | **pass after one proxy change** | **pass** (below) |
+| S4 | Can activity be told from an idle tab at the proxy? | **yes**: 30 frames/min idle vs 109+ active | **yes**: 31-39 idle vs 111+ active |
+| S5 | Does it fit in 2 GiB? | 540-725 MiB for code-server with a client | **tight**: 944-1,100 MB RSS for code-server |
 
 Pinned for the spike: code-server **4.139.1** (VS Code 1.139.1), released 2026-09-26.
 SHA-256 (computed from the release assets; the release publishes none):
@@ -94,10 +94,10 @@ GKE's disk-backed ephemeral storage.
 
 code-server starts listening **0.4 s** after launch.
 
-**GKE (first `gke-run.sh`, 2026-09-28, image `c66fd6657b1a`, amd64, gVisor, 1 vCPU):** two installs
-of **19.5 s and 19.2 s** (download from GitHub, checksum, unpack; 670 MB on disk), and code-server
-listening **1.1 s** after launch, with 250 MB RSS before any client. That is the wait on a first
-"Open in VS Code" if nothing prefetched.
+**GKE (three `gke-run.sh` runs, two installs each):** 19.5, 19.2, 23.3, 20.1, 18.8 and 19.1 s
+(download from GitHub, checksum, unpack; 670 MB on disk). code-server listens **1.1-1.5 s** after
+launch, with 250 MB RSS before any client. About 20 s is therefore the wait on a first
+"Open in VS Code" if nothing downloaded ahead.
 
 ## S3: through the proxy (local)
 
@@ -116,6 +116,24 @@ code-server ran as `agent` with the spec's flags (`--auth none --disable-proxy -
 | Open VSX: CLI install of `redhat.vscode-yaml`; UI search finds Prettier | pass |
 
 Raw: `s3-results-local.json`. Screenshots were used to debug the harness; none are kept.
+
+**Under gVisor (GKE).** `kubectl port-forward` can't reach a gVisor pod's loopback, so the harness
+runs inside the pod with the image's Playwright and full Chromium, sharing the pod's one vCPU with
+code-server. That contention made the harness's fixed waits flaky, so the evidence is taken across
+runs 2 and 3 plus the files each run left in the pod:
+
+| Check | Result under gVisor |
+|---|---|
+| Load, file tree | pass (both runs) |
+| Bundled ripgrep (`rg --files` as `agent`) | pass: 97 files in 197 ms (4 ms locally) |
+| Quick Open | pass (run 3). Run 2's editor checks failed only where they opened files through Quick Open with a 30 s wait |
+| Edit and save | works: the marker was on line 1 of `readme.md`, owned by `agent`, after the check. The check read the file 1.5 s after Ctrl+S, before the save landed |
+| Terminal | pass (run 2); in run 3, `t.txt` held `from-terminal agent`, owned by `agent`, after the check |
+| File watcher | pass (both runs) |
+| Webview (Markdown preview) | pass (run 3) |
+| Open VSX: CLI install, UI search | pass (run 2); run 3's harness hung on the UI search with Chromium's renderer at 800 MB |
+
+Raw: `s3-results-gke-run2.json`, `harness-gke-run3.log`, `gke-pod-run2.jsonl`, `gke-pod-run3.jsonl`.
 
 ## S4: activity at the proxy (local)
 
@@ -138,6 +156,19 @@ Client-to-server WebSocket frames and bytes at the relay, 2 minutes per phase, o
   activity by a minute.
 - **Proposed rule:** a minute counts as activity when the client sent **at least 60 frames or 2 KB**
   in it. Only traffic through the proxy counts, which only comes from past ngrok's sign-in.
+- **Under gVisor (GKE run 2, `s4-results-gke-run2.jsonl`), the same shape:**
+
+  | Phase | Frames/min | Bytes/min |
+  |---|---|---|
+  | Idle, focused tab | 39 | 738 |
+  | Idle, tab in the background | 31 | 423 |
+  | Idle, right after typing | 50 | 11,010 |
+  | Scrolling and reading | 111 | 2,839 |
+  | Terminal | 219 | 5,922 |
+  | Typing | 845 | 58,819 |
+
+  Idle never passed 39 frames or 740 bytes a minute, so the 60 frames / 2 KB rule holds with room.
+  The harness ran in the pod rather than through ngrok; ngrok forwards the same client frames.
 - No page requests happened after the first load (`pageRequests` 0 in every phase), which is why the
   dev-server rule (page loads) can't be reused.
 
@@ -151,8 +182,18 @@ In Docker, 1 CPU / 2 GiB, one browser tab, two extensions (built-in Markdown, YA
 | Client connected, idle | 540-585 MiB | 640-670 MiB |
 | While typing | 725 MiB | 820 MiB |
 
-(Summed RSS double-counts shared pages, so it can exceed the container figure.) That leaves roughly
-1.3 GiB for pi, agentd and a dev server. The GKE run measures it next to the real image.
+(Summed RSS double-counts shared pages, so it can exceed the container figure.)
+
+**Under gVisor (GKE, 52 + 91 samples every 15 s):** code-server's summed RSS was **944-1,100 MB**
+with a client connected (250 MB with none), against 640-820 MB locally. The pod-wide figure
+(1.4-1.57 GB) also counts the in-pod test Chromium (its renderer alone reached 800 MB), which a real
+IDE session doesn't have: the person's browser is on their own machine.
+
+That leaves under 1 GiB of the 2 GiB for pi, agentd and whatever the model runs. pi alone isn't
+small, and a dev server or a test run on top would push a Drive toward its limit. **IDE Drives
+likely need more memory: 3 GiB is the proposal,** which on GKE is a second SandboxTemplate (and a
+second warm pool if IDE Tapes should start warm). That reopens part of the "one template" argument
+and belongs in the decision below.
 
 ## GKE half: how to run it
 
@@ -175,10 +216,43 @@ cd outfitter/deploy/ide/spike
   `ADD`, so no emulation) and pushes it, then runs `deploy/gke/spike/s4_measure.py` against the
   production image and the baked one. The first baked round is its tag's first pull.
 
+## Trimming code-server
+
+The release bundles GitHub Copilot: `lib/vscode/extensions/copilot` (158 MB) and
+`lib/vscode/node_modules/@github` (114 MB, the Copilot SDK with ripgrep builds for two
+architectures). That's 272 MB of the 622, for features the IDE turns off.
+
+Removed (local test): **355 MB unpacked, 112 MB compressed** (from 622 / 217 MB). All nine S3 checks
+still pass and code-server's logs show no errors about the missing modules. Memory doesn't change
+(the extension host doesn't load Copilot with AI features off), so trimming is about size only.
+
+## Decision inputs
+
+**Memory decides more than the image does.** code-server needs about 1 GB under gVisor, which a
+2 GiB Drive can't spare beside pi and a dev server. The options:
+
+| | IDE Drives start | Extra cost a month (Autopilot memory $0.0049/GiB-h, gke-sandbox-provider.md §3.7) | Complexity |
+|---|---|---|---|
+| **A. One template, raised to 3 GiB for every Drive** | warm, like every Drive | +1 GiB on the warm pod (~365 h) and on active use (~60 h): **about +$2.10**, which puts the default at ~$25.50, just over the $25 alert | none: one template, one pool |
+| B. A second, 3 GiB template for IDE Tapes, no warm pool | cold: ~3 s on a running node, ~70 s on a new one (gke-spike.md S4) | only while IDE Drives run | the provider picks a template per Tape (GKE spec §2.5's per-Tape override, deferred until now) |
+| C. A second template with its own warm pool | warm | about +$21.60 (a second warm pod): over budget | as B, plus a second pool |
+| D. Stay at 2 GiB | warm | none | none, but an IDE session plus a dev server risks an OOM that ends the Drive |
+
+**Download or bake in:**
+
+- Downloading takes about 20 s on GKE for the full release. A trimmed tree (112 MB) would be faster,
+  but then we host the tarball ourselves (Artifact Registry or GCS) instead of fetching GitHub's.
+- Baking in the trimmed tree adds about 355 MB to the ~680 MB image. With image streaming, cold
+  starts only fetch the bytes they read, and warm-pool pods pay each release's first pull where no
+  one waits. `s1-run.sh` measures exactly this (it now bakes the trimmed tree).
+- If A is chosen, baking in is the natural pair: one image, one template, one pool, and the Tape
+  option only gates the button. `ide.prepare`, the installer, its pin-in-config and its failure
+  modes all go away.
+
+**Proposal, pending S1:** A plus a trimmed bake-in, if S1 shows the bigger image adds no more than a
+second or two to a cold start on a running node. Otherwise B with the download.
+
 ## Open
 
-- Pick download or bake-in when S1 and S2 are in (spec §2). Bake-in looks better than the spec
-  assumed: warm-pool pods are replaced on each release and pay the first pull where nobody waits,
-  and streaming spares cold starts the unused bytes. If S1 confirms that, the on-demand install,
-  `ide.prepare`, and its failure modes go away.
-- Confirm the S4 floor through ngrok and under gVisor.
+- S1: `s1-run.sh 5`.
+- The owner's choice among A-D.

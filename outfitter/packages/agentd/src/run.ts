@@ -808,6 +808,8 @@ export class RunController {
         secretEnv.OUTFITTER_IDE = "1";
       }
     }
+    // #273: pinned either way, so a Tape's env can't offer Kernal's `vscode` tool on a Drive without it.
+    if (!this.ideManager) secretEnv.OUTFITTER_IDE = "0";
     // Same pin as OUTFITTER_SESSION_ID: after guru.env, so a guru cannot point the broker
     // socket somewhere else. The token is not part of this overlay.
     if (this.deps.githubSocketPath) {

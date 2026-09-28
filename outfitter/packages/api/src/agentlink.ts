@@ -1263,10 +1263,17 @@ export class AgentLink {
     this.ideRequests.set(runId, recent);
     const [run, session] = await Promise.all([this.store.runs.findById(runId), this.store.sessions.findById(sessionId)]);
     if (!run || !session || !this.previews) return;
+    // A person closed it: only a person reopens it (the page's chip), so a looping or prompt-injected
+    // model can't undo the owner's Close.
+    if (run.ide?.state === "closed") {
+      console.info(`[agentlink] ide.request for run ${runId}: closed by a person, not reopening`);
+      return;
+    }
     const outcome = await askForIde({ store: this.store, previews: this.previews }, session, run, (message) => {
       if (socket.readyState === 1) socket.send(JSON.stringify(message));
     });
     if ("error" in outcome) console.info(`[agentlink] ide.request for run ${runId} refused: ${outcome.error}`);
+    else if (outcome.asked) console.info(`[agentlink] ide: open requested by the model (run ${runId}, session ${sessionId})`);
   }
 
   /**
@@ -1319,6 +1326,7 @@ export class AgentLink {
    * Only the socket still in `sockets` may clear that timer. */
   private onAgentSocketClosed(runId: string, socket: WebSocket): void {
     if (this.sockets.get(runId) !== socket) return;
+    this.ideRequests.delete(runId); // #273: the per-run limit's record goes with the run's socket
     const timer = this.githubRefresh.get(runId);
     if (timer) clearTimeout(timer);
     this.githubRefresh.delete(runId);

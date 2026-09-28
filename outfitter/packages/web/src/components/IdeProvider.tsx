@@ -17,6 +17,8 @@ const STARTING = new Set(["requested", "installing", "starting"]);
 
 export interface IdeController {
   ide: IdeState | null;
+  /** The first answer (or a 403) has come back; before that nothing is known. */
+  loaded: boolean;
   /** The api said 403: not the floppy's owner or a sysop. Nothing is polled after that. */
   forbidden: boolean;
   /** Installing or starting, and not stale. */
@@ -52,6 +54,7 @@ export function IdeProvider({ sessionId, runState, onError, now = Date.now, chil
   const [ide, setIde] = useState<IdeState | null>(null);
   const [busy, setBusy] = useState<"open" | "close" | null>(null);
   const [forbidden, setForbidden] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const live = Boolean(runState && LIVE.has(runState));
   const openable = Boolean(runState && OPENABLE.has(runState));
   const current = useRef(sessionId);
@@ -62,12 +65,16 @@ export function IdeProvider({ sessionId, runState, onError, now = Date.now, chil
     if (forbiddenRef.current) return;
     try {
       const next = await api.ide(asked);
-      if (current.current === asked) setIde(next);
+      if (current.current === asked) {
+        setIde(next);
+        setLoaded(true);
+      }
     } catch (err) {
       // Not the owner or a sysop: stay hidden, and stop asking until the session changes.
       if (err instanceof ApiError && err.status === 403 && current.current === asked) {
         forbiddenRef.current = true;
         setForbidden(true);
+        setLoaded(true);
       }
       /* otherwise keep the last state and try again later */
     }
@@ -77,6 +84,7 @@ export function IdeProvider({ sessionId, runState, onError, now = Date.now, chil
     current.current = sessionId;
     forbiddenRef.current = false;
     setForbidden(false);
+    setLoaded(false);
     setIde(null);
   }, [sessionId]);
 
@@ -137,8 +145,8 @@ export function IdeProvider({ sessionId, runState, onError, now = Date.now, chil
   }, [sessionId, load, onError]);
 
   const value = useMemo<IdeController>(
-    () => ({ ide, forbidden, starting, stale, openable, ready, busy, open, close }),
-    [ide, forbidden, starting, stale, openable, ready, busy, open, close],
+    () => ({ ide, loaded, forbidden, starting, stale, openable, ready, busy, open, close }),
+    [ide, loaded, forbidden, starting, stale, openable, ready, busy, open, close],
   );
   return <IdeContext.Provider value={value}>{children}</IdeContext.Provider>;
 }

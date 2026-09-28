@@ -9,7 +9,7 @@ import { Working } from "./Working.tsx";
  * once ready, or a button to open it again. The model never had the link; this page gets it from the
  * api, which gives it only to the floppy's owner and sysops. Everyone else sees a plain note.
  */
-export function VsCodeCard() {
+export function VsCodeCard({ live = true }: { live?: boolean }) {
   const c = useIde();
   const shell = (body: ReactNode, extra = "") => (
     <div className={`vscode-card${extra ? ` ${extra}` : ""}`}>
@@ -19,6 +19,10 @@ export function VsCodeCard() {
   );
 
   if (!c) return shell(<span className="vscode-card-title">VS Code</span>);
+  // An earlier ask in this conversation: only the latest card is live, so an old one doesn't offer
+  // to reopen what the owner closed since.
+  if (!live) return shell(<span className="vscode-card-note">VS Code was opened here earlier.</span>, "is-quiet");
+  if (!c.loaded) return shell(<span className="vscode-card-title">VS Code</span>);
   if (c.forbidden) return shell(<span className="vscode-card-note">VS Code was opened for this floppy's owner.</span>, "is-quiet");
   if (!c.ide?.available) return shell(<span className="vscode-card-note">VS Code isn't available: the Drive isn't running.</span>, "is-quiet");
 

@@ -239,3 +239,40 @@ describe("VsCodeCard: the chat's chip for the vscode tool (#273)", () => {
     expect(card()!.querySelector("a, button")).toBeNull();
   });
 });
+
+describe("VsCodeCard: earlier cards and before the first answer (#276 review)", () => {
+  it("an earlier card in the conversation is a static line, whatever the state", async () => {
+    state = { available: true, state: "closed" };
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => root!.render(
+      <IdeProvider sessionId="s1" runState="idle" onError={vi.fn()} now={() => T0}>
+        <VsCodeCard live={false} />
+      </IdeProvider>,
+    ));
+    await act(async () => {});
+    const c = container.querySelector(".vscode-card")!;
+    expect(c.textContent).toContain("opened here earlier");
+    expect(c.querySelector("a, button")).toBeNull();
+  });
+
+  it("says nothing about the Drive before the first answer comes back", async () => {
+    let release: (() => void) | undefined;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { release = () => resolve(json({ available: true, state: "none" })); })));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => root!.render(
+      <IdeProvider sessionId="s1" runState="idle" onError={vi.fn()} now={() => T0}>
+        <VsCodeCard />
+      </IdeProvider>,
+    ));
+    const c = () => container!.querySelector(".vscode-card")!;
+    expect(c().textContent).toBe("VS Code");
+    expect(c().textContent).not.toContain("isn't running");
+    await act(async () => release?.());
+    await act(async () => {});
+    expect(c().querySelector("button")!.textContent).toBe("Open in VS Code");
+  });
+});

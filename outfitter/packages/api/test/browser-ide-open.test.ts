@@ -342,6 +342,23 @@ describe("the model's vscode tool: ide.request (#273)", () => {
     await done(app, agent);
   });
 
+  test("after the owner closes it, the model can't reopen it; the owner's click still can", async () => {
+    const { app, agent, internalUrl } = await flowSetup();
+    agent.send({ t: "ide.request" });
+    const open = await agent.nextMessage();
+    agent.send({ t: "ide.status", reqId: open.reqId, state: "ready", internalUrl });
+    await eventually(() => ideState(app), (st) => st.state === "ready");
+    assert.equal((await app.fastify.inject({ method: "DELETE", url: "/api/sessions/s1/ide" })).statusCode, 204);
+    agent.send({ t: "ide.request" });
+    const pending = agent.nextMessage(); // kept: it receives the next frame, whenever that comes
+    assert.equal(await Promise.race([pending, sleep(300).then(() => null)]), null, "the model doesn't undo a Close");
+    assert.equal((await ideState(app)).state, "closed");
+    const res = await app.fastify.inject({ method: "POST", url: "/api/sessions/s1/ide" });
+    assert.equal(res.statusCode, 202);
+    assert.equal((await pending).t, "ide.open", "a person's click reopens it");
+    await done(app, agent);
+  });
+
   test("a looping model is cut off after the hourly limit", async () => {
     const { app, agent, runId } = await flowSetup();
     let opens = 0;

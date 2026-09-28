@@ -1801,7 +1801,7 @@ test("RunController: #273 a Drive with the IDE tells Kernal (OUTFITTER_IDE) and 
       assert.equal(again.status, 429, "a looping model can't flood the link");
       assert.equal(link.sent.filter((m) => m.t === "ide.request").length, 1);
     } else {
-      assert.equal(env.OUTFITTER_IDE, "spoofed", "only guru.env's own value; agentd sets nothing");
+      assert.equal(env.OUTFITTER_IDE, "0", "pinned off: a Tape can't offer the tool on a Drive without the IDE");
       assert.equal((await post()).status, 404);
       assert.equal(link.sent.filter((m) => m.t === "ide.request").length, 0);
     }

@@ -198,6 +198,9 @@ tunnel and proxy.
 - **web** shows a chip under the beat where the tool ran (`VsCodeCard`, with a VS Code-shaped mark),
   driven by the same state as the status-bar chip: on its way, then **Open VS Code ↗** for the
   owner and sysops; everyone else sees a plain note.
+- **A person's Close sticks:** once the owner (or a sysop) closes the IDE, the model's requests are
+  ignored until a person opens it again from the page, so a looping or prompt-injected model can't
+  undo the Close. Only the conversation's latest chip is live; earlier ones are a static line.
 - A prompt-injected model could at worst open an IDE that only the owner can reach.
 
 ### 4. The public side (api)

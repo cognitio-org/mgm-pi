@@ -62,7 +62,9 @@ export function IdeChip() {
           type="button"
           className="chip-btn"
           onClick={async () => {
-            if (await c.close()) focusOpen.current = true;
+            // Set before the await, so the render that swaps the link for the button finds it.
+            focusOpen.current = true;
+            if (!(await c.close())) focusOpen.current = false;
           }}
           disabled={busy !== null}
           aria-label="Close VS Code's address"

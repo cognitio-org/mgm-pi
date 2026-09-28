@@ -18,7 +18,7 @@ import { sessionLamp } from "../lib/session-lamp.ts";
 import { githubCluster, looseRepoClause } from "../lib/session-facts.ts";
 import { toApiErrorState } from "../lib/api-error.ts";
 import { EntryItem } from "../components/EntryItem.tsx";
-import { BeatView, YouMark } from "../components/TranscriptRail.tsx";
+import { BeatView, YouMark, beatOpensVsCode } from "../components/TranscriptRail.tsx";
 import { Composer } from "../components/Composer.tsx";
 import { StatusPill } from "../components/StatusPill.tsx";
 import { GithubChip } from "../components/GithubChip.tsx";
@@ -387,6 +387,8 @@ export function SessionPage() {
   // previous turn even when the next run is already "running" again.
   const runSettled = runState === "idle" || runState === "stopped" || runState === "failed";
   const beats = groupBeats(groupThinkingBlocks(entriesToViews(entries)), { runSettled });
+  // #273: only the latest VS Code chip in the conversation is live.
+  const lastVsCodeBeat = [...beats].reverse().find((b) => b.kind !== "passthrough" && b.kind !== "user" && beatOpensVsCode(b))?.id;
   const previewAccess = previewAccessByEntry(
     entries,
     session?.htmlPreviewAccessByRun,
@@ -701,7 +703,7 @@ export function SessionPage() {
                 {beat.kind === "passthrough" ? (
                   <EntryItem view={beat.view} sessionId={sessionId} />
                 ) : (
-                  <BeatView beat={beat} defaultThinkingExpanded={defaultThinkingExpanded} />
+                  <BeatView beat={beat} defaultThinkingExpanded={defaultThinkingExpanded} vscodeLive={beat.id === lastVsCodeBeat} />
                 )}
               </HtmlPreviewAccessContext.Provider>
             ))

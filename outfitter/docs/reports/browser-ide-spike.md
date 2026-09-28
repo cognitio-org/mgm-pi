@@ -5,12 +5,12 @@ Spec: `docs/specs/browser-ide.md`. Issue #240, epic #245. Scripts and raw result
 
 The spike has two halves: **local** (this laptop, Docker, 1 CPU / 2 GiB, arm64) and **GKE**
 (gVisor, the production image `c66fd6657b1a`, amd64, 1 vCPU / 2 GiB), run by the owner with
-`gke-run.sh` three times on 2026-09-28. S1 (`s1-run.sh`) is still to run. Cloud Run is out of
+`gke-run.sh` three times on 2026-09-28. S1 was dropped after the memory decision. Cloud Run is out of
 scope: the fleet is moving fully to GKE (owner decision, 2026-09-27).
 
 | Item | Question | Local | GKE |
 |---|---|---|---|
-| S1 | What does baking code-server into the image cost a cold start? | size only (below) | **pending**, `s1-run.sh` |
+| S1 | What does baking code-server into the image cost a cold start? | size only (below) | **dropped** (decision below) |
 | S2 | How long does the on-demand install take? | 21 s, network-bound; unpack 3.6 s CPU | **18.8-23.3 s** (6 installs) |
 | S3 | Does code-server work through agentd's proxy? | **pass after one proxy change** | **pass** (below) |
 | S4 | Can activity be told from an idle tab at the proxy? | **yes**: 30 frames/min idle vs 109+ active | **yes**: 31-39 idle vs 111+ active |
@@ -249,10 +249,14 @@ still pass and code-server's logs show no errors about the missing modules. Memo
   option only gates the button. `ide.prepare`, the installer, its pin-in-config and its failure
   modes all go away.
 
-**Proposal, pending S1:** A plus a trimmed bake-in, if S1 shows the bigger image adds no more than a
-second or two to a cold start on a running node. Otherwise B with the download.
+**Decision (owner, 2026-09-28): B.** IDE Tapes get their own 3 GiB template with no warm pool;
+other Tapes are unchanged. That settles the image too: baking code-server into the shared image would
+cost every Tape, and a separate IDE image is the second-image path the spec set aside, so IDE Drives
+download it (trimmed on unpack) at Drive start. **S1 was dropped** before it ran: it measured a
+bake-in that's no longer on the table. `s1-run.sh` and `Dockerfile.s1` stay for the record.
 
-## Open
+## Outcome
 
-- S1: `s1-run.sh 5`.
-- The owner's choice among A-D.
+Folded into `docs/specs/browser-ide.md`: §2 (download at Drive start, Copilot excluded on unpack),
+§3 (`Origin` passed through, workspace trust and AI chat off, `SHELL` required), §5 (60 frames or
+2 KB a minute), §8 (the `outfitter-agent-ide` template). Phase 1 (#241) is next.

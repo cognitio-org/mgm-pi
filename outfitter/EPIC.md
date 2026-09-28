@@ -430,11 +430,11 @@ research on Sonnet; review on Opus).
   "no value in URLs, clear the input after save" care as `pages/TokensPage.tsx`.
 - **E3.10 Browser IDE** (designed 2026-09-28, not built; `docs/specs/browser-ide.md`): VS Code in
   the browser (code-server) on a Drive's own `/workspace`, opened from the session page by the
-  floppy's owner or a sysop. A Tape option, off by default; code-server is fetched on demand into the
-  one image (no second image or warm pool), run as `agent`, and served through the Drive previews
-  pieces with an owner-and-sysop allowlist and no share links. Extensions from Open VSX; editing
-  keeps a Drive up with no cap (up to the 24 h hard timeout). Spike first: image cost versus
-  download cost, gVisor, memory, activity.
+  floppy's owner or a sysop. A Tape option, off by default. IDE Drives run from their own 3 GiB
+  SandboxTemplate with no warm pool (code-server needs ~1 GB under gVisor); the same image, with
+  code-server downloaded at Drive start. Run as `agent`, served through the Drive previews pieces
+  with an owner-and-sysop allowlist and no share links. Extensions from Open VSX; editing keeps a
+  Drive up with no cap (up to the 24 h hard timeout). Spike done: `docs/reports/browser-ide-spike.md`.
 
 ### E4 Teleport, both directions
 

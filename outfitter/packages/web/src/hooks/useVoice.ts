@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { api, ApiError, type VoiceConfig } from "../api/client.ts";
 import { composeDraft, IDLE, stepGesture, type GestureEvent, type GestureState } from "../lib/voice-gesture.ts";
+import { listMics, loadMicChoice, resolveMic, saveMicChoice, type Mic, type MicChoice } from "../lib/voice-mic.ts";
 import {
   builtinRecognition,
   startBuiltin,
@@ -18,7 +19,8 @@ import {
 export type VoiceStatus = "idle" | "starting" | "recording" | "finishing";
 export type AfterSpeaking = VoiceConfig["prefs"]["afterSpeaking"];
 
-export type EngineStarter = (callbacks: VoiceCallbacks) => Promise<VoiceRecording>;
+/** `deviceId`: the chosen microphone (#267); only the Deepgram engine can use it. */
+export type EngineStarter = (callbacks: VoiceCallbacks, opts?: { deviceId?: string }) => Promise<VoiceRecording>;
 
 export interface VoiceEngines {
   deepgram: EngineStarter;
@@ -39,8 +41,9 @@ export function voiceTokenError(err: unknown): VoiceError {
 export function browserEngines(language = navigator.language || "en"): VoiceEngines {
   const Recognition = builtinRecognition();
   return {
-    deepgram: (callbacks) =>
+    deepgram: (callbacks, opts) =>
       startDeepgram(callbacks, {
+        deviceId: opts?.deviceId,
         getToken: async () => {
           try {
             return await api.voiceToken();
@@ -86,6 +89,17 @@ export interface Voice {
   /** False until GET /api/me/voice answers, then whether Deepgram works here. */
   deepgramAvailable: boolean;
   builtinAvailable: boolean;
+  /** #267: the microphones the browser offers, the chosen one (undefined: system default), and
+   * whether their names are visible yet (only after mic permission has been granted once). */
+  mics: Mic[];
+  micsLabelled: boolean;
+  /** Whether this page can list and open microphones at all (not on plain http, for instance). */
+  micsAvailable: boolean;
+  micId: string | undefined;
+  setMicId(id: string | undefined): void;
+  refreshMics(): void;
+  /** Asks for mic permission once, so the list shows real names. */
+  allowMicList(): void;
   /** Whether the mic can be used at all (some engine is available, the composer isn't disabled). */
   usable: boolean;
   press(): void;
@@ -118,6 +132,13 @@ export function useVoice(opts: UseVoiceOptions): Voice {
   const [afterSpeaking, setAfterSpeakingState] = useState<AfterSpeaking>("send");
   const [deepgramAvailable, setDeepgramAvailable] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
+  const [mics, setMics] = useState<Mic[]>([]);
+  const [micsLabelled, setMicsLabelled] = useState(false);
+  const [micChoice, setMicChoice] = useState<MicChoice | undefined>(() => loadMicChoice());
+  // navigator.mediaDevices is one object for the page's life, so this is stable.
+  const [devices] = useState(() => (typeof navigator === "undefined" ? undefined : navigator.mediaDevices));
+  const micId = micChoice?.id;
+  const resolvedByName = useRef(false);
 
   const gesture = useRef<GestureState>(IDLE);
   const recording = useRef<VoiceRecording | null>(null);
@@ -133,8 +154,35 @@ export function useVoice(opts: UseVoiceOptions): Voice {
   // ignored, or its recording would replace this one and lose its transcript.
   const busy = useRef(false);
   // Latest values for callbacks that outlive a render.
-  const live = useRef({ opts, afterSpeaking, engine, deepgramAvailable, configLoaded });
-  live.current = { opts, afterSpeaking, engine, deepgramAvailable, configLoaded };
+  const live = useRef({ opts, afterSpeaking, engine, deepgramAvailable, configLoaded, micId });
+  live.current = { opts, afterSpeaking, engine, deepgramAvailable, configLoaded, micId };
+
+  const refreshMics = useCallback(() => {
+    listMics(devices)
+      .then(({ mics: found, labelled }) => {
+        setMics(found);
+        setMicsLabelled(labelled);
+        // The same mic under a new id (a private window, cleared site data): follow it by name. Only
+        // on the page's first named listing: ids change between sessions, not while a page is open,
+        // so a mic unplugged mid-session stays the choice (shown "not connected") rather than
+        // passing to a same-named twin.
+        if (labelled && !resolvedByName.current) {
+          resolvedByName.current = true;
+          setMicChoice((current) => resolveMic(current, found));
+        }
+      })
+      .catch(() => {});
+  }, [devices]);
+
+  // One place writes the choice to storage, whatever changed it.
+  useEffect(() => saveMicChoice(micChoice), [micChoice]);
+
+  // The list follows headsets and USB mics coming and going.
+  useEffect(() => {
+    refreshMics();
+    devices?.addEventListener?.("devicechange", refreshMics);
+    return () => devices?.removeEventListener?.("devicechange", refreshMics);
+  }, [devices, refreshMics]);
 
   useEffect(() => {
     let gone = false;
@@ -188,6 +236,7 @@ export function useVoice(opts: UseVoiceOptions): Voice {
   const callbacks: VoiceCallbacks = {
     onTranscript: (text) => live.current.opts.setDraft(composeDraft(base.current, text)),
     onLevel: setLevel,
+    onDeviceFallback: () => setNote("Your chosen microphone isn't connected, so the default one is recording."),
     onError: (err) => {
       // Mid-recording failure (the connection dropped): keep what was heard, never send it. A
       // start still in flight is stale now and cancels what it gets.
@@ -236,7 +285,7 @@ export function useVoice(opts: UseVoiceOptions): Voice {
     const first = firstEngine();
     let rec: VoiceRecording;
     try {
-      rec = await engines[first](callbacks);
+      rec = await engines[first](callbacks, { deviceId: live.current.micId });
     } catch (err) {
       if (stale()) return;
       const e = err instanceof VoiceError ? err : new VoiceError("upstream", String(err));
@@ -321,6 +370,27 @@ export function useVoice(opts: UseVoiceOptions): Voice {
     },
     deepgramAvailable,
     builtinAvailable: engines.builtinAvailable,
+    mics,
+    micsLabelled,
+    micsAvailable: !!devices?.enumerateDevices,
+    micId,
+    setMicId(id) {
+      // Before permission the names are placeholders ("Microphone 2"); only a real one is kept.
+      const choice = id ? { id, label: micsLabelled ? mics.find((m) => m.id === id)?.label : undefined } : undefined;
+      setMicChoice(choice);
+    },
+    refreshMics,
+    allowMicList() {
+      devices
+        ?.getUserMedia({ audio: true })
+        .then((stream) => {
+          stream.getTracks().forEach((t) => t.stop());
+          refreshMics();
+        })
+        .catch((err) =>
+          setNote((err as { name?: string })?.name === "NotFoundError" ? ERROR_NOTES["no-mic"] : ERROR_NOTES.permission),
+        );
+    },
     usable,
     press() {
       if (gesture.current.kind === "idle" && (!usable || busy.current)) return;

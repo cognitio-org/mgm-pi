@@ -734,6 +734,12 @@
   flex-direction: column;
 }
 
+.voice-menu .voice-mic-choice {
+  max-width: 15rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 h4.voice-menu-heading {
   margin: 0;
   font-weight: normal;

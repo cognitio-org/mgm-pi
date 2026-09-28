@@ -72,6 +72,7 @@ export function VoiceControl({ voice }: { voice: Voice }) {
 
   useEffect(() => {
     if (!menuOpen) return;
+    live.current.refreshMics(); // names appear once mic permission has been granted
     menuRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
     function onPointer(event: PointerEvent) {
       if (event.target instanceof Node && wrapRef.current?.contains(event.target)) return;
@@ -93,7 +94,7 @@ export function VoiceControl({ voice }: { voice: Voice }) {
   function menuKeys(e: ReactKeyboardEvent<HTMLDivElement>) {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Home" && e.key !== "End") return;
     e.preventDefault();
-    const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>("[role='menuitemradio']:not(:disabled)") ?? []);
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>("[role='menuitemradio']:not(:disabled), [role='menuitem']:not(:disabled)") ?? []);
     if (items.length === 0) return;
     const at = items.indexOf(document.activeElement as HTMLButtonElement);
     const next =
@@ -186,6 +187,37 @@ export function VoiceControl({ voice }: { voice: Voice }) {
             {voice.builtinAvailable ? "Browser built-in" : "Browser built-in (not in this browser)"}
           </button>
           </div>
+          <div role="group" aria-labelledby="voice-menu-mic" className="voice-menu-group">
+            <div className="voice-menu-heading" id="voice-menu-mic">
+              Microphone
+            </div>
+            <button type="button" role="menuitemradio" aria-checked={!voice.micId} onClick={() => voice.setMicId(undefined)}>
+              System default
+            </button>
+            {voice.mics.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                role="menuitemradio"
+                className="voice-mic-choice"
+                aria-checked={voice.micId === m.id}
+                title={m.label}
+                onClick={() => voice.setMicId(m.id)}
+              >
+                {m.label}
+              </button>
+            ))}
+            {voice.micId && !voice.mics.some((m) => m.id === voice.micId) && voice.micsLabelled && (
+              <button type="button" role="menuitemradio" aria-checked={true} disabled>
+                Chosen microphone (not connected)
+              </button>
+            )}
+            {!voice.micsLabelled && voice.micsAvailable && (
+              <button type="button" role="menuitem" onClick={() => voice.allowMicList()}>
+                Show my microphones…
+              </button>
+            )}
+          </div>
           <div role="group" aria-labelledby="voice-menu-after" className="voice-menu-group">
           <div className="voice-menu-heading" id="voice-menu-after">
             After speaking
@@ -205,6 +237,9 @@ export function VoiceControl({ voice }: { voice: Voice }) {
               </h4>
               <VoiceSpendView compact />
             </section>
+          )}
+          {(voice.engine === "builtin" || (!voice.deepgramAvailable && voice.builtinAvailable)) && (
+            <p className="voice-menu-hint">Browser built-in speech always uses the system default microphone.</p>
           )}
           <div className="voice-menu-hint" aria-hidden="true">
             {hint}

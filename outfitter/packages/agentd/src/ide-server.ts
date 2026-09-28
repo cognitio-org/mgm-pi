@@ -64,6 +64,10 @@ export interface IdeManagerOptions {
   send: (frame: UpIdeStatus) => void;
   /** Someone is using the IDE (ide-activity.ts's rule). */
   onActivity: () => void;
+  /** Called with code-server's and the proxy's ports once both are bound: the run closes any
+   * dev-server preview aimed at them (one opened before the IDE, on a port the OS then reused), so
+   * no root-run preview proxy forwards into the IDE's. */
+  onPortsClaimed?: (ports: number[]) => void;
   /** code-server runs as this user; undefined only where agentd isn't root (tests, laptop). */
   runAsUser?: RunAsUser;
   /** Extra environment for code-server's terminals: the run's git proxy and commit identity. */
@@ -269,6 +273,7 @@ export class IdeManager {
     });
     await proxy.start();
     this.proxy = proxy;
+    this.opts.onPortsClaimed?.(this.ports());
     const startTunnel: StartTunnel = this.opts.startTunnel
       ?? ((o) => startNgrok({ ...o, bin: this.opts.ngrokBin, onLog: this.log }));
     this.tunnel = await startTunnel({

@@ -75,6 +75,7 @@ function harness(extra: Partial<IdeManagerOptions> = {}, fakeMode = "") {
   const frames: UpIdeStatus[] = [];
   const tunnels: { upstream: string; url: string; authtoken: string; stopped: boolean; onExit: (r: string) => void }[] = [];
   let activity = 0;
+  const claimed: number[][] = [];
   const home = tmp();
   const configDir = join(tmp(), "cfg");
   const workspace = tmp();
@@ -87,6 +88,7 @@ function harness(extra: Partial<IdeManagerOptions> = {}, fakeMode = "") {
     configDir,
     send: (f) => frames.push(f),
     onActivity: () => activity++,
+    onPortsClaimed: (ports) => claimed.push(ports),
     env: { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "url.x.insteadOf", GIT_CONFIG_VALUE_0: "y" },
     startTimeoutMs: 5000,
     spawnCodeServer: (_bin, args, opts) =>
@@ -104,7 +106,7 @@ function harness(extra: Partial<IdeManagerOptions> = {}, fakeMode = "") {
     ...extra,
   });
   const fake = () => JSON.parse(readFileSync(join(home, ".local/share/code-server/fake.json"), "utf8"));
-  return { mgr, frames, tunnels, home, configDir, workspace, fake, activity: () => activity };
+  return { mgr, frames, tunnels, home, configDir, workspace, fake, claimed, activity: () => activity };
 }
 
 describe("IdeManager (#242)", () => {
@@ -136,6 +138,7 @@ describe("IdeManager (#242)", () => {
     assert.equal(h.tunnels[0]!.url, "https://ide.rtest.internal");
     assert.equal(h.tunnels[0]!.authtoken, "tok");
     assert.equal(h.mgr.ports().length, 2, "code-server's and the proxy's ports, for reservedPorts");
+    assert.deepEqual(h.claimed, [h.mgr.ports()], "the run is told which ports the IDE took");
 
     h.mgr.open("r2");
     assert.deepEqual(h.frames.at(-1), { t: "ide.status", reqId: "r2", state: "ready", internalUrl: "https://ide.rtest.internal" }, "a second click reuses it at once");

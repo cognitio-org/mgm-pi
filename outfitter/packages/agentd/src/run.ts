@@ -792,6 +792,8 @@ export class RunController {
           env: { ...gitProxyEnv, ...botIdentityEnv() },
           send: (frame) => this.deps.link.send(frame),
           onActivity: () => this.markIdeActivity(),
+          // A preview opened earlier on a port the OS has now given the IDE goes (security review).
+          onPortsClaimed: (ports) => { for (const port of ports) void this.previewListener?.close(port); },
           ngrokBin: this.deps.ngrokBin,
           ...(this.deps.ideStartTunnel ? { startTunnel: this.deps.ideStartTunnel } : {}),
           ...(this.deps.ideSpawnCodeServer ? { spawnCodeServer: this.deps.ideSpawnCodeServer } : {}),

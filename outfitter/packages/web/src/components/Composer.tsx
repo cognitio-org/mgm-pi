@@ -31,6 +31,8 @@ interface Props {
   /** #255 spoken replies: the transcript (new assistant replies get read aloud), the floppy's saved
    * speaker setting, and whether the agent is still on its turn. */
   entries?: PiEntry[];
+  /** The page has loaded its history; defaults to true (tests pass entries already loaded). */
+  entriesLoaded?: boolean;
   voiceSpeak?: boolean;
   agentBusy?: boolean;
   speech?: SpeechStarter;
@@ -63,6 +65,7 @@ export function Composer({
   voiceEngine,
   voiceEngines,
   entries = NO_ENTRIES,
+  entriesLoaded = true,
   voiceSpeak,
   agentBusy = false,
   speech,
@@ -94,6 +97,7 @@ export function Composer({
   const speaker = useSpeaker({
     sessionId,
     entries,
+    entriesLoaded,
     initialOn: voiceSpeak,
     // Read with the floppy's engine, unless it can't work here (as the mic does).
     engine: voice.engine === "deepgram" && !voice.deepgramAvailable && voice.builtinAvailable ? "builtin" : voice.engine,

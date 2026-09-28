@@ -17,6 +17,9 @@ export type SpeechStarter = (sentences: string[], engine: SpeakEngine, voice: st
 export interface UseSpeakerOptions {
   sessionId: string;
   entries: PiEntry[];
+  /** The page has its history. Entries before that are history, not new replies, however they
+   * arrive (the first render has none; the history lands a moment later). */
+  entriesLoaded: boolean;
   initialOn?: boolean;
   /** Which engine to read with: the floppy's, unless it can't work here. */
   engine: SpeakEngine;
@@ -125,6 +128,7 @@ export function useSpeaker(opts: UseSpeakerOptions): Speaker {
 
   // New replies: read the ones that arrived after the page had its history, while the speaker is on.
   useEffect(() => {
+    if (!opts.entriesLoaded) return;
     if (!seen.current) {
       seen.current = new Set(opts.entries.map((e) => e.id));
       return;
@@ -137,7 +141,7 @@ export function useSpeaker(opts: UseSpeakerOptions): Speaker {
       if (sentences.length > 0) queue.current.push(sentences);
     }
     playNext();
-  }, [opts.entries, on, playNext]);
+  }, [opts.entries, opts.entriesLoaded, on, playNext]);
 
   // The mic comes first: going live stops speech. When it's done, anything still queued plays.
   useEffect(() => {

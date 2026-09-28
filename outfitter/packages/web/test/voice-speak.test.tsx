@@ -112,7 +112,7 @@ async function flush() {
   for (let i = 0; i < 8; i++) await act(async () => await Promise.resolve());
 }
 
-let props: { entries: PiEntry[]; voiceSpeak?: boolean; agentBusy?: boolean };
+let props: { entries: PiEntry[]; entriesLoaded?: boolean; voiceSpeak?: boolean; agentBusy?: boolean };
 
 async function render(next: Partial<typeof props> = {}) {
   props = { ...props, ...next };
@@ -123,6 +123,7 @@ async function render(next: Partial<typeof props> = {}) {
         voiceEngines={engines}
         speech={speech}
         entries={props.entries}
+        entriesLoaded={props.entriesLoaded}
         voiceSpeak={props.voiceSpeak}
         agentBusy={props.agentBusy}
         onSend={async (text) => void sent.push(text)}
@@ -136,7 +137,7 @@ async function mount(initial: Partial<typeof props> = {}) {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  props = { entries: [], voiceSpeak: false, agentBusy: false };
+  props = { entries: [], entriesLoaded: true, voiceSpeak: false, agentBusy: false };
   await render(initial);
 }
 
@@ -166,6 +167,16 @@ describe("reading replies aloud", () => {
     expect(spoken[0].sentences).toEqual(["I fixed the login bug.", "All tests pass."]);
     expect(spoken[0].voice).toBe("aura-2-hermes-en");
     expect(spoken[0].engine).toBe("deepgram");
+  });
+
+  it("history that lands after the first render (the page's real load order) isn't read", async () => {
+    await mount({ entries: [], entriesLoaded: false, voiceSpeak: true });
+    // The history arrives a moment later, then the fetch reports done.
+    await render({ entries: [user("u0", "old"), reply("a0", "An old answer from yesterday.")] });
+    await render({ entriesLoaded: true });
+    expect(spoken).toHaveLength(0);
+    await render({ entries: [...props.entries, reply("a1", "A new answer.")] });
+    expect(spoken.map((x) => x.sentences)).toEqual([["A new answer."]]);
   });
 
   it("the speaker off reads nothing, and turning it on doesn't read what already arrived", async () => {

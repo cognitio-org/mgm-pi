@@ -1,0 +1,35 @@
+kernal/scripts/package.sh
+  s_fd47f462159c85::t_ed99bd81f727b8 52-54
+outfitter/image/Dockerfile
+  s_fd47f462159c85::t_ed99bd81f727b8 89-91
+kernal/.pi/npm/.gitignore
+  s_fd47f462159c85::t_ed99bd81f727b8 9-12
+kernal/tests/pi-listen-vendored.test.ts
+  s_fd47f462159c85::t_ed99bd81f727b8 7,12-13,20,24-30,33,35-41,68-77,90-108,134,136-137,148-157,161-163
+kernal/.pi/npm/vendor/pi-listen/VENDORED.md
+  s_fd47f462159c85::t_cf06e68f67fd27 22,25
+kernal/.pi/npm/vendor/pi-listen/extensions/voice.ts
+  s_fd47f462159c85::t_630de229d56112 87,1713,1756-1757,1869-1870,1930-1931
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/config.ts
+  s_fd47f462159c85::t_b9cf9df477c6f0 4,371-375
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/kernal.ts
+  s_fd47f462159c85::t_697c5d8970a34a 16,18-30,46-50,52-67
+kernal/.pi/npm/vendor/pi-listen/package.json
+  s_fd47f462159c85::t_e3e54b6f9fbbc2 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "81bd17cf773ded96eac464aa4041067606c4eb88",
+  "prompts": {},
+  "sessions": {
+    "s_fd47f462159c85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4302a461-a7ca-4bcd-bca6-85c286e60f99",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

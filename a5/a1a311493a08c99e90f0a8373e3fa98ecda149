@@ -1,0 +1,25 @@
+outfitter/packages/web/src/lib/send-status.ts
+  s_fd47f462159c85::t_a25cc4ca0055c8 120
+outfitter/packages/web/src/hooks/useSpeaker.ts
+  s_fd47f462159c85::t_a25cc4ca0055c8 11,148-150
+outfitter/packages/web/src/lib/voice-tts.ts
+  s_fd47f462159c85::t_a25cc4ca0055c8 101-102
+outfitter/packages/web/test/voice-speak.test.tsx
+  s_fd47f462159c85::t_a25cc4ca0055c8 358
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "a5a1a311493a08c99e90f0a8373e3fa98ecda149",
+  "prompts": {},
+  "sessions": {
+    "s_fd47f462159c85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4302a461-a7ca-4bcd-bca6-85c286e60f99",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

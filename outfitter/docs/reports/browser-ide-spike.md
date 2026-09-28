@@ -162,16 +162,15 @@ they create on exit. `DRY_RUN=1` prints the objects and changes nothing.
 
 ```sh
 cd outfitter/deploy/ide/spike
-export CHROMIUM="$HOME/Library/Caches/ms-playwright/chromium-1223/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
 ./gke-run.sh        # S2, S3 under gVisor, S4, S5: ~20 min; one claim in outfitter-sandboxes
 ./s1-run.sh 5       # S1: pushes outfitter-agent:ide-spike-s1-<time>, 5 cold claims per image
 ```
 
-- `gke-run.sh` creates a ConfigMap, the `ide-spike` SandboxTemplate and pool (replicas 0), and one
-  claim. The pod clones a public repo, installs code-server twice (timed), starts it on
-  127.0.0.1:8080 and logs memory every 15 s. The script port-forwards to it and runs the harness.
-  If port-forward to a gVisor pod doesn't work, the script stops there with the install and memory
-  figures already in `gke-pod.jsonl`.
+- `gke-run.sh` creates a ConfigMap (the scripts, the harness, agentd's `preview-proxy.ts`), the
+  `ide-spike` SandboxTemplate and pool (replicas 0), and one claim. The pod clones a public repo,
+  installs code-server twice (timed), starts it on 127.0.0.1:8080, logs memory every 15 s, and runs
+  the harness itself with the image's Playwright and full Chromium. The script splits the pod's log
+  into `gke-pod.jsonl`, `s3-results-gke.json` and `s4-results-gke.jsonl`.
 - `s1-run.sh` builds `Dockerfile.s1` (the production image plus the unpacked amd64 tarball, via
   `ADD`, so no emulation) and pushes it, then runs `deploy/gke/spike/s4_measure.py` against the
   production image and the baked one. The first baked round is its tag's first pull.

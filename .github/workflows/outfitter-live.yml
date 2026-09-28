@@ -11,7 +11,8 @@ name: Outfitter live tests
 # may mint the account's ID tokens and nothing else, and it never touches the deploy pool.
 #
 # The lifecycle test starts one real Drive and one short LLM turn on the "e2e (live tests)" Tape,
-# then archives and formats the floppy it made (packages/web/live/app.live.mjs).
+# checks the Composer's mic on it against real Deepgram (nothing is sent), then archives and formats
+# the floppy it made (packages/web/live/app.live.mjs, live/voice.mjs).
 on:
   workflow_call:
   workflow_dispatch:
@@ -22,9 +23,29 @@ on:
         default: false
 
 jobs:
-  live:
-    # Off until e2e-identity.sh has set the repository variables; only from a release tag.
+  # The voice check's spoken sentence (#254, packages/web/live/voice.mjs), made here with espeak-ng
+  # rather than in the live job: that job can mint the account's token, so nothing is installed
+  # there. A failure here doesn't stop the live job; its voice check then fails, saying why.
+  mic-fixture:
     if: vars.GCP_LIVE_WIF_PROVIDER != '' && startsWith(github.ref, 'refs/tags/outfitter-v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq espeak-ng
+          espeak-ng -s 140 -w "${RUNNER_TEMP}/voice-fixture.wav" "Please fix the login bug and add a test."
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voice-fixture
+          path: ${{ runner.temp }}/voice-fixture.wav
+          retention-days: 1
+
+  live:
+    needs: mic-fixture
+    # Off until e2e-identity.sh has set the repository variables; only from a release tag. Runs even
+    # if mic-fixture failed (!cancelled()), so the page and lifecycle checks still report.
+    if: ${{ !cancelled() && vars.GCP_LIVE_WIF_PROVIDER != '' && startsWith(github.ref, 'refs/tags/outfitter-v') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     # One run at a time: two lifecycle runs would treat each other's floppies as leftovers.
@@ -44,6 +65,11 @@ jobs:
       # This job can mint the account's token, so no dependency install script runs in it. The suite
       # only imports playwright-core, which needs none (it uses the runner's own Chrome).
       - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: voice-fixture
+          path: ${{ runner.temp }}/mic
       - id: auth
         uses: google-github-actions/auth@v2
         with:
@@ -59,6 +85,9 @@ jobs:
           E2E_SERVICE_ACCOUNT: ${{ vars.E2E_SERVICE_ACCOUNT }}
           E2E_SKIP_LIFECYCLE: ${{ inputs.skip_lifecycle && '1' || '' }}
           E2E_ARTIFACTS: ${{ runner.temp }}/outfitter-live
+          # #254: the fake mic's sentence, and fail rather than skip if Deepgram is off in production.
+          E2E_MIC_FIXTURE: ${{ runner.temp }}/mic/voice-fixture.wav
+          E2E_EXPECT_DEEPGRAM: "1"
         run: npm run test:live -w @outfitter/web
       # Every step's screenshot, pass or fail, with index.html to browse them (live/shots.mjs).
       # Other people's floppies are masked in each shot before it's taken: artifacts are readable by

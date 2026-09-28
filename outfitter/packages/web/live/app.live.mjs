@@ -6,6 +6,9 @@
 //   npm run test:live                         # mints a token with gcloud (configuration "outfitter")
 //   E2E_IAP_TOKEN=... npm run test:live       # CI: token from google-github-actions/auth
 //   E2E_SKIP_LIFECYCLE=1 npm run test:live    # page smoke only, creates nothing
+//
+// The lifecycle test also checks the Composer's mic against real Deepgram (#254, live/voice.mjs),
+// with Chrome's fake mic playing a generated sentence; nothing is sent.
 
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -13,6 +16,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { chromium } from "playwright-core";
 import { LIVE, iapToken } from "./iap-token.mjs";
 import { finish, shot } from "./shots.mjs";
+import { fakeMicArgs, speechFixture, voiceChecks } from "./voice.mjs";
 
 // A fixed id, so a same-named Tape someone else made is never picked up; its settings are put back
 // on every run, so E2E_MODEL changes take effect and nobody's edits linger.
@@ -34,12 +38,15 @@ const STALE_MS = 30 * 60_000;
 let browser;
 let context;
 let token;
+let micFixture;
 const pageErrors = [];
 
 before(async () => {
   token = await iapToken();
+  micFixture = await speechFixture(ARTIFACTS);
   // System Chrome, as scripts/record-tour.mjs does: GitHub's ubuntu runners ship it, so nothing to download.
-  browser = await chromium.launch({ channel: "chrome" });
+  // Its fake mic plays the voice fixture (#254); harmless for every page that doesn't use it.
+  browser = await chromium.launch({ channel: "chrome", args: fakeMicArgs(micFixture) });
   context = await browser.newContext({
     baseURL: LIVE.origin,
     viewport: { width: 1280, height: 800 },
@@ -128,7 +135,7 @@ test("the main pages render without errors", async () => {
   await page.close();
 });
 
-test("a floppy: create, get a reply, archive, format", { skip: process.env.E2E_SKIP_LIFECYCLE === "1" }, async () => {
+test("a floppy: create, get a reply, talk to it, archive, format", { skip: process.env.E2E_SKIP_LIFECYCLE === "1" }, async (t) => {
   // Leftovers from a run that died half-way: erase any old live-test floppy this account owns.
   const old = await api("GET", "/api/sessions?archived=all");
   assert.equal(old.status, 200, `listing floppies: ${old.status}`);
@@ -171,6 +178,15 @@ test("a floppy: create, get a reply, archive, format", { skip: process.env.E2E_S
     // A cold Drive start plus one turn.
     await page.locator(".entry.assistant-text").first().waitFor({ timeout: REPLY_TIMEOUT_MS });
     await snap("The reply arrived");
+
+    // #254: the mic, on this floppy's page, in review mode (nothing is sent).
+    const skipped = micFixture ? await voiceChecks({ page, api, snap }) : "no mic fixture (E2E_MIC_FIXTURE, say or espeak-ng)";
+    if (skipped) {
+      // In CI a skip would hide a regression (voice off by mistake, the fixture job broken): fail.
+      assert.ok(!(process.env.CI && !micFixture), `voice checks can't run in CI: ${skipped}`);
+      assert.ok(process.env.E2E_EXPECT_DEEPGRAM !== "1", `voice checks: ${skipped}, but E2E_EXPECT_DEEPGRAM=1`);
+      t.diagnostic(`voice checks skipped: ${skipped}`);
+    }
 
     await page.locator(".run-controls").getByRole("button", { name: "Archive" }).click();
     await page.locator(".archived-note").waitFor();

@@ -4,8 +4,10 @@ Spec: `docs/specs/browser-ide.md`. Issue #240, epic #245. Scripts and raw result
 `deploy/ide/spike/`.
 
 The spike has two halves: **local** (this laptop, Docker, 1 CPU / 2 GiB, arm64) and **GKE**
-(gVisor, the production image `c66fd6657b1a`, amd64, 1 vCPU / 2 GiB), run by the owner with
-`gke-run.sh` three times on 2026-09-28. S1 was dropped after the memory decision. Cloud Run is out of
+(gVisor, the production image `c66fd6657b1a`, amd64, 1 vCPU), run by the owner with `gke-run.sh`
+three times on 2026-09-28. The spike pods ran at 2 GiB, copied from the GKE spec's original shape;
+production Drives have been 4 GiB since #187 (`deploy/config.env`), which the decision below takes
+into account. S1 was dropped after that decision. Cloud Run is out of
 scope: the fleet is moving fully to GKE (owner decision, 2026-09-27).
 
 | Item | Question | Local | GKE |
@@ -14,7 +16,7 @@ scope: the fleet is moving fully to GKE (owner decision, 2026-09-27).
 | S2 | How long does the on-demand install take? | 21 s, network-bound; unpack 3.6 s CPU | **18.8-23.3 s** (6 installs) |
 | S3 | Does code-server work through agentd's proxy? | **pass after one proxy change** | **pass** (below) |
 | S4 | Can activity be told from an idle tab at the proxy? | **yes**: 30 frames/min idle vs 109+ active | **yes**: 31-39 idle vs 111+ active |
-| S5 | Does it fit in 2 GiB? | 540-725 MiB for code-server with a client | **tight**: 944-1,100 MB RSS for code-server |
+| S5 | How much memory does code-server need? | 540-725 MiB with a client | **944-1,100 MB RSS**: fits in today's 4 GiB Drives |
 
 Pinned for the spike: code-server **4.139.1** (VS Code 1.139.1), released 2026-09-26.
 SHA-256 (computed from the release assets; the release publishes none):
@@ -40,10 +42,9 @@ SHA-256 (computed from the release assets; the release publishes none):
    host), which dropping `X-Forwarded-Host` would defeat. Dev-server previews keep today's rewrite.
    The harness runs agentd's proxy source with only that line changed.
 
-2. **The download is 222 MB, not about 100 MB,** and unpacks to 622 MB (`lib/vscode` 488 MB, a
-   bundled Node 117 MB). Baking it in nearly doubles the ~680 MB image. With GKE image streaming a
-   cold start only fetches the bytes it reads, so an unused code-server costs little after the first
-   pull of each tag; S1 measures that first pull.
+2. **The download is 222 MB, not about 100 MB,** and unpacks to 670 MB on amd64 (arm64: 217 MB and
+   641 MB; the `du -h` figures used below, 622 MiB with `lib/vscode` 488 and a bundled Node 117, are
+   arm64 in binary units). Baking it in would nearly double the ~680 MB image.
 
 3. **Workspace Trust and the AI Chat panel get in the way.** 4.139 opens in Restricted Mode with a
    trust dialog, and the Chat panel is open by default (it took the harness's keystrokes). The IDE
@@ -95,7 +96,7 @@ GKE's disk-backed ephemeral storage.
 code-server starts listening **0.4 s** after launch.
 
 **GKE (three `gke-run.sh` runs, two installs each):** 19.5, 19.2, 23.3, 20.1, 18.8 and 19.1 s
-(download from GitHub, checksum, unpack; 670 MB on disk). code-server listens **1.1-1.5 s** after
+(download from GitHub, checksum, unpack; 670 MB unpacked on amd64). code-server listens **1.1-1.5 s** after
 launch, with 250 MB RSS before any client. About 20 s is therefore the wait on a first
 "Open in VS Code" if nothing downloaded ahead.
 
@@ -189,11 +190,9 @@ with a client connected (250 MB with none), against 640-820 MB locally. The pod-
 (1.4-1.57 GB) also counts the in-pod test Chromium (its renderer alone reached 800 MB), which a real
 IDE session doesn't have: the person's browser is on their own machine.
 
-That leaves under 1 GiB of the 2 GiB for pi, agentd and whatever the model runs. pi alone isn't
-small, and a dev server or a test run on top would push a Drive toward its limit. **IDE Drives
-likely need more memory: 3 GiB is the proposal,** which on GKE is a second SandboxTemplate (and a
-second warm pool if IDE Tapes should start warm). That reopens part of the "one template" argument
-and belongs in the decision below.
+On the spike's 2 GiB pods that would leave under 1 GiB for pi, agentd and the model's commands. But
+**production Drives are 4 GiB** (since #187, after 2 GiB left ~1.8 GiB and builds were OOM-killed),
+which leaves about **2.8 GiB** beside code-server: more than the agent had when the OOMs happened.
 
 ## GKE half: how to run it
 
@@ -204,7 +203,7 @@ they create on exit. `DRY_RUN=1` prints the objects and changes nothing.
 ```sh
 cd outfitter/deploy/ide/spike
 ./gke-run.sh        # S2, S3 under gVisor, S4, S5: ~20 min; one claim in outfitter-sandboxes
-./s1-run.sh 5       # S1: pushes outfitter-agent:ide-spike-s1-<time>, 5 cold claims per image
+./s1-run.sh 5       # S1 (never run; dropped): pushes a spike tag, 5 cold claims per image
 ```
 
 - `gke-run.sh` creates a ConfigMap (the scripts, the harness, agentd's `preview-proxy.ts`), the
@@ -220,43 +219,33 @@ cd outfitter/deploy/ide/spike
 
 The release bundles GitHub Copilot: `lib/vscode/extensions/copilot` (158 MB) and
 `lib/vscode/node_modules/@github` (114 MB, the Copilot SDK with ripgrep builds for two
-architectures). That's 272 MB of the 622, for features the IDE turns off.
+architectures). That's 272 MiB of the 622 (arm64, `du -h`), for features the IDE turns off.
 
-Removed (local test): **355 MB unpacked, 112 MB compressed** (from 622 / 217 MB). All nine S3 checks
+Removed (local test, arm64): **355 MiB unpacked by `du -h`** (622 − 272 = 350; the difference is
+`du`'s per-directory block rounding), **112 MB compressed** (from 217 MB). All nine S3 checks
 still pass and code-server's logs show no errors about the missing modules. Memory doesn't change
 (the extension host doesn't load Copilot with AI features off), so trimming is about size only.
 
-## Decision inputs
+## Decision
 
-**Memory decides more than the image does.** code-server needs about 1 GB under gVisor, which a
-2 GiB Drive can't spare beside pi and a dev server. The options:
+**Memory.** The first write-up of this section assumed 2 GiB Drives and offered four options,
+three of them about more memory for the IDE (a 3 GiB template for everyone, a separate cold 3 GiB IDE
+template, a separate warm one). The owner first chose the separate cold template; the review of this
+PR then found production Drives are already 4 GiB (#187), so a 3 GiB IDE template would have had
+*less* memory than every other Drive.
 
-| | IDE Drives start | Extra cost a month (Autopilot memory $0.0049/GiB-h, gke-sandbox-provider.md §3.7) | Complexity |
-|---|---|---|---|
-| **A. One template, raised to 3 GiB for every Drive** | warm, like every Drive | +1 GiB on the warm pod (~365 h) and on active use (~60 h): **about +$2.10**, which puts the default at ~$25.50, just over the $25 alert | none: one template, one pool |
-| B. A second, 3 GiB template for IDE Tapes, no warm pool | cold: ~3 s on a running node, ~70 s on a new one (gke-spike.md S4) | only while IDE Drives run | the provider picks a template per Tape (GKE spec §2.5's per-Tape override, deferred until now) |
-| C. A second template with its own warm pool | warm | about +$21.60 (a second warm pod): over budget | as B, plus a second pool |
-| D. Stay at 2 GiB | warm | none | none, but an IDE session plus a dev server risks an OOM that ends the Drive |
+**Decision (owner, 2026-09-28): IDE Drives use today's 4 GiB template and warm pool.** code-server
+leaves about 2.8 GiB for everything else; no second template, no cold starts, no extra cost. A
+separate, larger IDE template stays the lever if real use shows 4 GiB isn't enough.
 
-**Download or bake in:**
-
-- Downloading takes about 20 s on GKE for the full release. A trimmed tree (112 MB) would be faster,
-  but then we host the tarball ourselves (Artifact Registry or GCS) instead of fetching GitHub's.
-- Baking in the trimmed tree adds about 355 MB to the ~680 MB image. With image streaming, cold
-  starts only fetch the bytes they read, and warm-pool pods pay each release's first pull where no
-  one waits. `s1-run.sh` measures exactly this (it now bakes the trimmed tree).
-- If A is chosen, baking in is the natural pair: one image, one template, one pool, and the Tape
-  option only gates the button. `ide.prepare`, the installer, its pin-in-config and its failure
-  modes all go away.
-
-**Decision (owner, 2026-09-28): B.** IDE Tapes get their own 3 GiB template with no warm pool;
-other Tapes are unchanged. That settles the image too: baking code-server into the shared image would
-cost every Tape, and a separate IDE image is the second-image path the spec set aside, so IDE Drives
-download it (trimmed on unpack) at Drive start. **S1 was dropped** before it ran: it measured a
-bake-in that's no longer on the table. `s1-run.sh` and `Dockerfile.s1` stay for the record.
+**Image.** With one template, baking code-server into the image would put about 350 MB (trimmed) on
+every Tape, and a separate IDE image means a second template after all. So IDE Drives download it at
+Drive start (Copilot excluded on unpack), about 20 s in parallel with pi's start. **S1 was dropped**
+before it ran; `s1-run.sh` and `Dockerfile.s1` stay for the record. (Earlier text in this report
+about bake-in being the likely choice is historical.)
 
 ## Outcome
 
-Folded into `docs/specs/browser-ide.md`: §2 (download at Drive start, Copilot excluded on unpack),
-§3 (`Origin` passed through, workspace trust and AI chat off, `SHELL` required), §5 (60 frames or
-2 KB a minute), §8 (the `outfitter-agent-ide` template). Phase 1 (#241) is next.
+Folded into `docs/specs/browser-ide.md`: the memory and image decisions, §2 (download at Drive
+start, Copilot excluded on unpack), §3 (`Origin` passed through, workspace trust and AI chat off,
+`SHELL` required) and §5 (60 frames or 2 KB a minute). Phase 1 (#241) is next.

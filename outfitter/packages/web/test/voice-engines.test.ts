@@ -256,6 +256,26 @@ describe("startDeepgram", () => {
     expect(FakeSocket.last).toBeUndefined();
   });
 
+  it("a mic opened but a socket that can't be constructed still lets go of the mic", async () => {
+    const track = new FakeTrack();
+    const Throwing = class {
+      static CONNECTING = 0;
+      static OPEN = 1;
+      constructor() {
+        throw new SyntaxError("bad subprotocol");
+      }
+    };
+    await expect(
+      startDeepgram(callbacks().cb, {
+        getToken: async () => TOKEN,
+        getUserMedia: async () => ({ getTracks: () => [track] }) as unknown as MediaStream,
+        MediaRecorder: FakeRecorder as unknown as typeof MediaRecorder,
+        WebSocket: Throwing as unknown as typeof WebSocket,
+      }),
+    ).rejects.toMatchObject({ kind: "upstream" });
+    expect(track.stopped).toBe(true);
+  });
+
   it("no recordable format is unsupported", async () => {
     FakeRecorder.supported = new Set();
     await expect(startDeepgram(callbacks().cb, deps().d)).rejects.toMatchObject({ kind: "unsupported" });
@@ -367,26 +387,6 @@ describe("startBuiltin", () => {
     expect(rec.onresult).toBeNull();
   });
 
-  it("a mic opened but a socket that can't be constructed still lets go of the mic", async () => {
-    vi.useRealTimers();
-    const track = new FakeTrack();
-    const Throwing = class {
-      static CONNECTING = 0;
-      static OPEN = 1;
-      constructor() {
-        throw new SyntaxError("bad subprotocol");
-      }
-    };
-    await expect(
-      startDeepgram(callbacks().cb, {
-        getToken: async () => TOKEN,
-        getUserMedia: async () => ({ getTracks: () => [track] }) as unknown as MediaStream,
-        MediaRecorder: FakeRecorder as unknown as typeof MediaRecorder,
-        WebSocket: Throwing as unknown as typeof WebSocket,
-      }),
-    ).rejects.toMatchObject({ kind: "upstream" });
-    expect(track.stopped).toBe(true);
-  });
 
   it("no SpeechRecognition here is unsupported", async () => {
     await expect(startBuiltin(callbacks().cb, { Recognition: undefined, language: "en" })).rejects.toMatchObject({ kind: "unsupported" });

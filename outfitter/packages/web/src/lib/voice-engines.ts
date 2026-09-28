@@ -124,14 +124,22 @@ export async function startDeepgram(callbacks: VoiceCallbacks, deps: DeepgramDep
   const joined = () => [...finals, interim].filter(Boolean).join(" ");
 
   // From here the mic is open: anything that throws while setting up must still let go of it.
+  const setupFailed = (err: unknown) => {
+    stream.getTracks().forEach((t) => t.stop());
+    return new VoiceError("upstream", err instanceof Error ? err.message : String(err));
+  };
   let ws: WebSocket;
-  let recorder: MediaRecorder;
   try {
     ws = new deps.WebSocket(listenUrl(token), ["bearer", token.token]);
+  } catch (err) {
+    throw setupFailed(err);
+  }
+  let recorder: MediaRecorder;
+  try {
     recorder = new deps.MediaRecorder(stream, { mimeType });
   } catch (err) {
-    stream.getTracks().forEach((t) => t.stop());
-    throw new VoiceError("upstream", err instanceof Error ? err.message : String(err));
+    ws.close();
+    throw setupFailed(err);
   }
   const queue: Blob[] = [];
   let opened = false;
@@ -274,9 +282,15 @@ function startLevelMeter(stream: MediaStream, onLevel: ((level: number) => void)
     return { stop() {} };
   }
   void ctx.resume?.().catch(() => {}); // Safari creates it suspended after an await
-  const analyser = ctx.createAnalyser();
-  analyser.fftSize = 512;
-  ctx.createMediaStreamSource(stream).connect(analyser);
+  let analyser: AnalyserNode;
+  try {
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    ctx.createMediaStreamSource(stream).connect(analyser);
+  } catch {
+    void ctx.close().catch(() => {});
+    return { stop() {} };
+  }
   const buf = new Uint8Array(analyser.fftSize);
   const timer = setInterval(() => {
     analyser.getByteTimeDomainData(buf);

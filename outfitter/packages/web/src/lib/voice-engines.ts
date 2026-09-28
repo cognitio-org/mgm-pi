@@ -6,6 +6,8 @@
 //   free, and the fallback when Deepgram is off or refuses.
 // Every browser API comes in through `deps`, so the tests drive both engines with fakes.
 
+import { micConstraints } from "./voice-mic.ts";
+
 export type VoiceEngineName = "deepgram" | "builtin";
 
 export type VoiceErrorKind =
@@ -41,6 +43,8 @@ export interface VoiceCallbacks {
   onLevel?(level: number): void;
   /** Something went wrong after start() resolved (the connection dropped, the mic went away). */
   onError(error: VoiceError): void;
+  /** #267: the chosen microphone isn't connected any more, so the default one is recording. */
+  onDeviceFallback?(): void;
 }
 
 export interface VoiceRecording {
@@ -60,6 +64,8 @@ export interface VoiceToken {
 export interface DeepgramDeps {
   getToken(): Promise<VoiceToken>;
   getUserMedia(constraints: MediaStreamConstraints): Promise<MediaStream>;
+  /** #267: the microphone to record from; undefined for the browser's default. */
+  deviceId?: string;
   MediaRecorder: typeof MediaRecorder;
   WebSocket: typeof WebSocket;
   AudioContext?: typeof AudioContext;
@@ -96,6 +102,19 @@ function micError(err: unknown): VoiceError {
   return new VoiceError("no-mic", err instanceof Error ? err.message : "The microphone couldn't be opened");
 }
 
+/** The chosen microphone, or the default one (with a note) when it's no longer connected. */
+async function openMic(deps: DeepgramDeps, callbacks: VoiceCallbacks): Promise<MediaStream> {
+  try {
+    return await deps.getUserMedia({ audio: micConstraints(deps.deviceId) });
+  } catch (err) {
+    const name = (err as { name?: string })?.name;
+    if (!deps.deviceId || (name !== "OverconstrainedError" && name !== "NotFoundError")) throw err;
+    const stream = await deps.getUserMedia({ audio: micConstraints(undefined) });
+    callbacks.onDeviceFallback?.();
+    return stream;
+  }
+}
+
 interface DeepgramMessage {
   type?: string;
   is_final?: boolean;
@@ -107,7 +126,7 @@ export async function startDeepgram(callbacks: VoiceCallbacks, deps: DeepgramDep
   if (!mimeType) throw new VoiceError("unsupported", "This browser can't record audio");
 
   // The token and the mic in parallel: both take a moment, and the mic prompt is the slow one.
-  const micPromise = deps.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  const micPromise = openMic(deps, callbacks);
   let token: VoiceToken;
   let stream: MediaStream;
   try {

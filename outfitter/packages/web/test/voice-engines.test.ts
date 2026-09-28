@@ -276,6 +276,32 @@ describe("startDeepgram", () => {
     expect(track.stopped).toBe(true);
   });
 
+  it("#267: records from the chosen microphone exactly", async () => {
+    const { d } = deps({ deviceId: "shure" });
+    await startOpen(callbacks().cb, d);
+    expect(d.getUserMedia).toHaveBeenCalledWith({ audio: { echoCancellation: true, noiseSuppression: true, deviceId: { exact: "shure" } } });
+  });
+
+  it("#267: a chosen microphone that's gone falls back to the default and says so", async () => {
+    const { stream } = fakeStream();
+    const getUserMedia = vi.fn(async (c: MediaStreamConstraints) => {
+      if ((c.audio as MediaTrackConstraints).deviceId) throw Object.assign(new Error("gone"), { name: "OverconstrainedError" });
+      return stream;
+    });
+    const fallback = vi.fn();
+    const cb = { ...callbacks().cb, onDeviceFallback: fallback };
+    await startOpen(cb, deps({ deviceId: "unplugged", getUserMedia }).d);
+    expect(getUserMedia).toHaveBeenCalledTimes(2);
+    expect(getUserMedia.mock.calls[1][0]).toEqual({ audio: { echoCancellation: true, noiseSuppression: true } });
+    expect(fallback).toHaveBeenCalledOnce();
+  });
+
+  it("#267: a refusal with a chosen microphone is still a refusal, not a fallback", async () => {
+    const getUserMedia = vi.fn(async () => Promise.reject(Object.assign(new Error("no"), { name: "NotAllowedError" })));
+    await expect(startDeepgram(callbacks().cb, deps({ deviceId: "shure", getUserMedia }).d)).rejects.toMatchObject({ kind: "permission" });
+    expect(getUserMedia).toHaveBeenCalledOnce();
+  });
+
   it("no recordable format is unsupported", async () => {
     FakeRecorder.supported = new Set();
     await expect(startDeepgram(callbacks().cb, deps().d)).rejects.toMatchObject({ kind: "unsupported" });

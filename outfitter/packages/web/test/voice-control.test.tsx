@@ -27,13 +27,15 @@ let calls: Array<{ method: string; path: string; body?: unknown }>;
 let config: { deepgram: boolean; model: string; language: string; prefs: { afterSpeaking: "send" | "review" } };
 let clock: number;
 let deepgramFailure: VoiceError | undefined;
+let deviceIds: Array<string | undefined>;
 /** When set, engine starts (and stops) wait for the test to release them. */
 let deferred: boolean;
 let pendingStarts: Array<() => void>;
 let pendingStops: Array<() => void>;
 
 function engines(builtinAvailable = true): VoiceEngines {
-  const make = (engine: "deepgram" | "builtin") => async (cb: VoiceCallbacks) => {
+  const make = (engine: "deepgram" | "builtin") => async (cb: VoiceCallbacks, opts?: { deviceId?: string }) => {
+    deviceIds.push(opts?.deviceId);
     if (deferred) await new Promise<void>((r) => pendingStarts.push(r));
     if (engine === "deepgram" && deepgramFailure) throw deepgramFailure;
     const run: FakeRun = { engine, cb, stopped: false, cancelled: false, result: { transcript: "", complete: true } };
@@ -58,6 +60,8 @@ beforeEach(() => {
   calls = [];
   clock = 1_000_000;
   deepgramFailure = undefined;
+  deviceIds = [];
+  window.localStorage.clear();
   deferred = false;
   pendingStarts = [];
   pendingStops = [];
@@ -522,5 +526,91 @@ describe("more ways in", () => {
     await pointer("pointerdown");
     await act(async () => runs[0].cb.onLevel?.(0.5));
     expect(mic().style.getPropertyValue("--voice-level")).toBe("0.5");
+  });
+});
+
+describe("#267 choosing the microphone", () => {
+  let listeners: Array<() => void>;
+  let inputs: MediaDeviceInfo[];
+  let granted: boolean;
+
+  function stubDevices() {
+    listeners = [];
+    granted = false;
+    const d = (deviceId: string, label: string) => ({ kind: "audioinput", deviceId, label, groupId: "g" }) as MediaDeviceInfo;
+    inputs = [d("default", "Default - MacBook Pro Microphone"), d("mac", "MacBook Pro Microphone"), d("shure", "Shure MV7")];
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        enumerateDevices: async () => (granted ? inputs : inputs.map((i) => ({ ...i, label: "" }) as MediaDeviceInfo)),
+        getUserMedia: async () => {
+          granted = true;
+          return { getTracks: () => [{ stop() {} }] };
+        },
+        addEventListener: (_: string, fn: () => void) => listeners.push(fn),
+        removeEventListener: () => {},
+      },
+    });
+  }
+  afterEach(() => {
+    delete (navigator as { mediaDevices?: unknown }).mediaDevices;
+  });
+
+  async function openMenu() {
+    await act(async () => host.querySelector<HTMLButtonElement>(".voice-options")!.click());
+    await flush();
+  }
+  const items = () => Array.from(host.querySelectorAll<HTMLButtonElement>(".voice-menu [role='menuitemradio'], .voice-menu [role='menuitem']"));
+  const item = (label: RegExp) => items().find((b) => label.test(b.textContent ?? ""))!;
+
+  it("before permission it offers to show the microphones; after, it lists them by name", async () => {
+    stubDevices();
+    await mount();
+    await openMenu();
+    expect(item(/Show my microphones/)).toBeTruthy();
+    await act(async () => item(/Show my microphones/).click());
+    await flush();
+    expect(items().map((b) => b.textContent)).toEqual(expect.arrayContaining(["System default", "MacBook Pro Microphone", "Shure MV7"]));
+    expect(items().some((b) => /Show my microphones/.test(b.textContent ?? ""))).toBe(false);
+    expect(items().some((b) => /^Default - /.test(b.textContent ?? ""))).toBe(false);
+  });
+
+  it("the chosen microphone is remembered and recorded from", async () => {
+    stubDevices();
+    granted = true;
+    await mount();
+    await openMenu();
+    expect(item(/System default/).getAttribute("aria-checked")).toBe("true");
+    await act(async () => item(/Shure MV7/).click());
+    expect(item(/Shure MV7/).getAttribute("aria-checked")).toBe("true");
+    expect(window.localStorage.getItem("outfitter.voice.micId")).toBe("shure");
+    await pointer("pointerdown");
+    expect(deviceIds).toEqual(["shure"]);
+  });
+
+  it("follows microphones being plugged in", async () => {
+    stubDevices();
+    granted = true;
+    await mount();
+    inputs = [...inputs, { kind: "audioinput", deviceId: "usb", label: "USB Headset", groupId: "g" } as MediaDeviceInfo];
+    await act(async () => listeners.forEach((fn) => fn()));
+    await flush();
+    await openMenu();
+    expect(item(/USB Headset/)).toBeTruthy();
+  });
+
+  it("says when the chosen microphone is gone and the default is recording", async () => {
+    stubDevices();
+    await mount();
+    await pointer("pointerdown");
+    await act(async () => runs[0].cb.onDeviceFallback?.());
+    expect(host.querySelector(".voice-note")?.textContent).toMatch(/chosen microphone isn't connected/);
+  });
+
+  it("with built-in speech it says the system default is used", async () => {
+    stubDevices();
+    await mount({ voiceEngine: "builtin" });
+    await openMenu();
+    expect(host.querySelector(".voice-menu")?.textContent).toMatch(/built-in speech always uses the system default microphone/);
   });
 });

@@ -1,0 +1,23 @@
+kernal/tests/pi-listen-vendored.test.ts
+  s_fd47f462159c85::t_76f66d99a39673 92-106
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/config.ts
+  s_fd47f462159c85::t_50444721562a1f 363-370,382
+kernal/.pi/npm/vendor/pi-listen/extensions/voice/kernal.ts
+  s_fd47f462159c85::t_c6372f9ff4a8da 48,53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "b85e1890372028641041a88bce6b2d0eb4484ebf",
+  "prompts": {},
+  "sessions": {
+    "s_fd47f462159c85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4302a461-a7ca-4bcd-bca6-85c286e60f99",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

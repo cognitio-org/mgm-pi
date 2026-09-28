@@ -1,7 +1,7 @@
 # Browser IDE: look at and edit a Drive's files in VS Code in the browser
 
 Status: design, not built (epic #245). Builds on Drive previews (`docs/specs/drive-previews.md`,
-#217, merged 2026-09-27). Owner decisions of 2026-09-28 are folded in; the rest are at the end.
+#217, merged 2026-09-27). Owner decisions of 2026-09-28 are folded in.
 
 ## Problem
 
@@ -22,6 +22,10 @@ the session page, with the same safety properties Drive previews already have.
 - **One image, installed on demand; no second image.** A separate `outfitter-agent-ide` image was
   considered and set aside (see "Options considered"). The spike (phase 0) measures whether baking
   it into the one image is cheap enough to skip the on-demand install.
+- **Who:** the floppy's owner and sysops (admins) open the IDE; nobody else, and no share links.
+- **Idle:** editing keeps a Drive running for as long as someone keeps editing. IDE activity is not
+  capped by time since the last chat turn. An open but untouched tab doesn't count (§5).
+- **Extensions:** allowed, from Open VSX.
 
 ## Requirements
 
@@ -37,8 +41,8 @@ the session page, with the same safety properties Drive previews already have.
    close).
 5. **Works on both providers** (GKE and Cloud Run), since it rides on the preview path, which only
    needs outbound 443.
-6. **Bounded lifetime.** The IDE dies with its Drive; an open IDE tab can't keep a Drive billing
-   forever.
+6. **Lives as long as someone uses it.** The IDE dies with its Drive. Real editing keeps the Drive
+   up; an open tab nobody touches doesn't.
 
 ## What already exists (Drive previews)
 
@@ -186,9 +190,18 @@ typing in the IDE would look idle and the Drive would stop under them.
   excludes code-server's own keepalives (the floor is measured in spike S4). Measured there, not
   from code-server's heartbeat file: that file sits in the agent-writable data dir, so the model
   could touch it; traffic through the proxy can only come from someone past ngrok's sign-in.
-- It feeds the same `markPreviewActivity` path (`run.ts:1058`), so the existing cap still applies:
-  activity counts only within 2 h of the last chat turn (`PREVIEW_IDLE_CAP_MS`, `run.ts:200`).
-  Open decision 2 asks whether an IDE session should get a longer cap.
+- It re-arms idle-stop **without** the preview cap (owner decision): dev-server page loads count
+  only within 2 h of the last chat turn (`PREVIEW_IDLE_CAP_MS`, `run.ts:200`, `markPreviewActivity`
+  at `run.ts:1058`), but IDE activity counts whenever it happens. A new `markIdeActivity` does what
+  `markPreviewActivity` does minus the `previewActivityCounts` check. Like preview activity, it
+  never counts as chat activity.
+- This is safe to leave uncapped only because the signal can't be faked from inside the sandbox:
+  it's traffic that came through ngrok's sign-in, above the keepalive floor. An idle tab stops
+  counting; the Drive then idle-stops on its normal timer.
+- **The Drive's hard timeout still applies.** Every run has one: 24 h (Cloud Run
+  `--task-timeout=24h`; GKE claim `lifecycle.shutdownTime`, `gke-sandbox-provider.md` §3.6). A person
+  editing past it loses the Drive at that point, like any run. Lifting or extending it for IDE runs
+  is a separate change to both providers, not part of this work.
 
 ### 6. Working next to the model
 
@@ -202,8 +215,9 @@ typing in the IDE would look idle and the Drive would stop under them.
 
 ### 7. Extensions
 
-code-server installs extensions from Open VSX over 443, which egress allows. v1 leaves the
-marketplace on (open decision 3).
+code-server installs extensions from Open VSX over 443, which egress allows. The marketplace is on
+(owner decision). Extensions run in code-server's extension host as `agent`, so an extension gets
+the same access the terminal does, and no more.
 
 ## Options considered
 
@@ -266,7 +280,7 @@ marketplace on (open decision 3).
 2. **Start and open (agentd, api):** `ide.open`/`ide.status`, `IdeManager` (code-server as `agent`
    in its own process group, root-owned config, listed environment, own proxy and tunnel, reserved
    port), agentlink's request matching, `Preview.kind`, owner-and-sysop allowlist, share refusal,
-   `POST`/`GET /api/sessions/:id/ide`, WebSocket activity. Tests: share refused for the IDE;
+   `POST`/`GET /api/sessions/:id/ide`, uncapped WebSocket activity (`markIdeActivity`). Tests: share refused for the IDE;
    `ide.status` with an unknown `reqId`, another run's, or a wrong `internalUrl` is ignored; the
    preview tool's `GET` doesn't list and `DELETE` can't close the IDE; a reconnect mid-open
    re-opens cleanly; the process group dies at run end; no owner answers 409.
@@ -278,12 +292,8 @@ marketplace on (open decision 3).
 
 ## Open decisions
 
-1. **Allowlist:** owner and sysops only (proposed), or everyone in `PREVIEW_ALLOW` like dev-server
-   previews?
-2. **Idle cap for the IDE:** keep the 2 h-after-last-chat cap (proposed for v1), or let IDE
-   activity keep a Drive up on its own, up to the 24 h hard timeout? (Activity is measured at the
-   proxy, so the model can't fake it either way.)
-3. **Extensions:** Open VSX on (proposed), or off in v1?
+None left from the design; the spike may raise new ones. The 24 h hard timeout (§5) stays as it is
+unless the owner asks to change it.
 
 ## Risks
 
@@ -293,7 +303,9 @@ marketplace on (open decision 3).
 - **Download failures** (GitHub rate limits or outages) leave the IDE unavailable for that Drive;
   the button says so, and the Drive itself is unaffected. Mirroring the tarball to our Artifact
   Registry is the fallback.
-- **Idle drift:** if WebSocket traffic doesn't separate active from idle tabs cleanly, IDE users
-  either get stopped mid-edit or keep Drives up; S4 decides.
+- **Idle drift:** with no cap, the floor is the only thing between an idle tab and a Drive that
+  never stops. If WebSocket traffic doesn't separate active from idle tabs cleanly, IDE users either
+  get stopped mid-edit or keep Drives up until the 24 h timeout; S4 decides, and the fallback is a
+  generous cap (say 8 h of IDE activity with no chat turn) rather than none.
 - **Two editors, one tree:** a person and the model can overwrite each other's changes. VS Code's
   "file changed on disk" prompt is the only guard in v1.

@@ -61,7 +61,7 @@ export function VoiceSpendView({ compact = false }: { compact?: boolean }) {
         </table>
       </div>
       <p className="session-meta">
-        Deepgram voice input from the web app, at list price{spend.capUsd ? `, capped at ${formatUsd(spend.capUsd)} a month` : ""}. Days are UTC
+        Deepgram voice input from the web app, at Deepgram's Pay As You Go rate{spend.capUsd ? `, capped at ${formatUsd(spend.capUsd)} a month` : ""}. Days are UTC
         days and weeks start on Monday. The browser's built-in speech is free and not counted.
       </p>
     </>

@@ -7,9 +7,9 @@
  * model on first use. kernal seeds that configuration once, and never overrides a user's own choice.
  *
  * The seed is only a stand-in for a Deepgram key (#249): once a key turns up, kernal takes its own
- * seed back out so pi-listen streams live through Deepgram. It knows the seed is its own from a
- * marker file (pi-listen rewrites its settings with known fields only, so the mark can't live
- * there), or, for seeds from before the marker, from the model never having been downloaded.
+ * seed back out so pi-listen streams live through Deepgram, and puts it back if the key goes away.
+ * It tracks that in a marker file beside the settings (pi-listen rewrites its settings with known
+ * fields only, so the mark can't live there); see reconcileVoice.
  */
 export const DEFAULT_VOICE_MODEL = "parakeet-v3";   // pi-listen's own recommended local STT model (~671 MB, English + 24 languages)
 
@@ -34,31 +34,68 @@ export function seedVoiceDefaults(settings: Record<string, any>, opts: { model?:
   return { settings: { ...settings, voice: seeded }, changed: true, reason: `seeded local backend with ${seeded.localModel}` };
 }
 
-/** What kernal wrote when it seeded, kept beside pi-listen's settings (see voiceSeedMarkerPath). */
-export type SeedMarker = { backend: "local"; localModel: string; seededAt: string };
+/**
+ * kernal's note beside pi-listen's settings (see voiceSeedMarkerPath): "seeded" while its local seed
+ * stands in for a missing key, "unseeded" after it took that seed out for a key, so it can put it
+ * back if the key goes away again.
+ */
+export type SeedMarker = { state: "seeded"; localModel: string; at: string } | { state: "unseeded"; at: string };
 
-export type UnseedResult = SeedResult & { dropMarker: boolean };
+export type Reconcile = {
+  settings: Record<string, any>;
+  changed: boolean;
+  /** The marker to keep (undefined: delete it). */
+  marker?: SeedMarker;
+  notice?: "seeded" | "unseeded" | "reseeded";
+  reason: string;
+};
+
+function withoutSeed(settings: Record<string, any>): Record<string, any> {
+  const { backend: _b, localModel: _m, ...rest } = settings.voice ?? {};
+  return { ...settings, voice: rest };
+}
 
 /**
- * Takes kernal's local seed back out once a Deepgram key is available, so pi-listen's default
- * (Deepgram, live streaming) applies. Only ever kernal's own seed: one matching the marker, or,
- * with no marker, the default model that was never downloaded (so nothing the person used goes).
+ * Decides what kernal does to pi-listen's voice settings at load (#249). Its local seed only stands
+ * in for a Deepgram key: it comes out once a key is available and goes back if the key goes away.
+ * Anything the person chose is theirs, and the marker is dropped the moment the settings stop
+ * matching kernal's seed. Settings can't tell a deliberate re-pick of the very same local model from
+ * the seed; that one case is treated as the seed.
  */
-export function unseedVoiceDefaults(
+export function reconcileVoice(
   settings: Record<string, any>,
-  opts: { marker?: SeedMarker; deepgramKey: boolean; modelDownloaded: boolean },
-): UnseedResult {
+  opts: { marker?: SeedMarker; deepgramKey: boolean; modelDownloaded: boolean; model?: string; language?: string; now?: string },
+): Reconcile {
   const voice = settings.voice && typeof settings.voice === "object" ? settings.voice : {};
+  const at = opts.now ?? new Date().toISOString();
   const same = { settings, changed: false };
-  if (!opts.deepgramKey) return { ...same, reason: "no Deepgram key", dropMarker: false };
-  if (voice.backend !== "local") return { ...same, reason: "not on the local backend", dropMarker: !!opts.marker };
-  if (opts.marker) {
-    if (voice.localModel !== opts.marker.localModel) return { ...same, reason: "the person chose another local model", dropMarker: true };
-  } else if (voice.localModel !== DEFAULT_VOICE_MODEL || opts.modelDownloaded) {
-    return { ...same, reason: "local backend in use (not an unused kernal seed)", dropMarker: false };
+  const m = opts.marker;
+
+  if (m?.state === "seeded") {
+    if (voice.backend !== "local" || voice.localModel !== m.localModel) return { ...same, reason: "the person changed voice since kernal seeded it" };
+    if (!opts.deepgramKey) return { ...same, marker: m, reason: "seed still standing in for a key" };
+    return { settings: withoutSeed(settings), changed: true, marker: { state: "unseeded", at }, notice: "unseeded", reason: "Deepgram key present: took kernal's seed out" };
   }
-  const { backend: _backend, localModel: _model, ...rest } = voice;
-  return { settings: { ...settings, voice: rest }, changed: true, reason: "Deepgram key present: removed kernal's local seed", dropMarker: true };
+
+  if (m?.state === "unseeded") {
+    if (voice.backend || voice.enabled === false) return { ...same, reason: "the person chose voice settings since" };
+    if (opts.deepgramKey) return { ...same, marker: m, reason: "on Deepgram with a key" };
+    const localModel = opts.model || DEFAULT_VOICE_MODEL;
+    const reseeded = { ...settings, voice: { ...voice, enabled: true, backend: "local", localModel } };
+    return { settings: reseeded, changed: true, marker: { state: "seeded", localModel, at }, notice: "reseeded", reason: "no key any more: put the local seed back" };
+  }
+
+  // No marker. A seed from before kernal kept one counts as kernal's only if pi-listen completed its
+  // onboarding on its own ("migration", as it does right after a seed) and the model was never
+  // downloaded, so nothing the person picked or used is removed.
+  const legacySeed =
+    voice.backend === "local" && voice.localModel === DEFAULT_VOICE_MODEL && voice.onboarding?.source === "migration" && !opts.modelDownloaded;
+  if (legacySeed && opts.deepgramKey) {
+    return { settings: withoutSeed(settings), changed: true, marker: { state: "unseeded", at }, notice: "unseeded", reason: "Deepgram key present: took an unused earlier seed out" };
+  }
+  const r = seedVoiceDefaults(settings, { model: opts.model, language: opts.language, deepgramKeyInEnv: opts.deepgramKey });
+  if (!r.changed) return { ...same, reason: r.reason };
+  return { settings: r.settings, changed: true, marker: { state: "seeded", localModel: r.settings.voice.localModel, at }, notice: "seeded", reason: r.reason };
 }
 
 /** Two-letter language from a POSIX locale such as "en_US.UTF-8" or "sl_SI"; "en" when unknown. */

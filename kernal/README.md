@@ -555,10 +555,13 @@ reading `~/.pi/agent/settings.json`; `.pi/extensions/kernal-voice/` therefore se
 setup there the first time kernal starts, if nothing is configured yet: backend `local`, model
 `parakeet-v3` (pi-listen's recommended offline model, ~670 MB, downloaded on first use with a
 progress bar), language from your locale. That seed only stands in for a key: once a Deepgram key
-is available, kernal takes its own seed back out (it notes the seed in
-`~/.pi/agent/kernal-voice-seed.json`; a seed from before that note counts as kernal's if its model
-was never downloaded) and says so, and voice streams live. It never overrides a choice of yours:
-another backend or model, a Deepgram setup, or voice turned off. `KERNAL_VOICE_MODEL` picks another
+is available, kernal takes its own seed back out and says so, and voice streams live; if the key
+goes away again (a checkout with no `.env`), the seed goes back rather than leaving a keyless
+Deepgram. kernal tracks this in `~/.pi/agent/kernal-voice-seed.json`; a seed from before that file
+counts as kernal's only if pi-listen completed its setup on its own and the model was never
+downloaded. It never overrides a choice of yours: another backend or model, a Deepgram setup, or
+voice turned off. (Settings can't tell a deliberate re-pick of the very same local model from the
+seed; re-pick another model, or set `KERNAL_VOICE=off`, to keep a local setup with a key around.) `KERNAL_VOICE_MODEL` picks another
 default model, `KERNAL_VOICE=off` leaves pi-listen's settings alone. Audio capture needs SoX
 (`brew install sox`) or ffmpeg; kernal and the installer say so when neither is found.
 

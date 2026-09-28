@@ -10,7 +10,7 @@ import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { seedVoiceDefaults, unseedVoiceDefaults, languageFromLocale, audioToolHint, AUDIO_TOOLS, type SeedMarker } from "./lib.ts";
+import { reconcileVoice, languageFromLocale, audioToolHint, AUDIO_TOOLS, DEFAULT_VOICE_MODEL, type Reconcile } from "./lib.ts";
 import { env } from "../_shared/env.ts";
 
 /** pi-listen's global settings file (it ignores PI_CODING_AGENT_DIR); overridable for tests. */
@@ -24,32 +24,35 @@ const modelDir = (model: string) => join(dirname(dirname(voiceSettingsPath())), 
 function writeJsonAtomic(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(value, null, 2) + "\n");
-  renameSync(tmp, path);
+  try {
+    writeFileSync(tmp, JSON.stringify(value, null, 2) + "\n");
+    renameSync(tmp, path);
+  } finally {
+    rmSync(tmp, { force: true });
+  }
 }
 
 function readJson(path: string): any {
   try { return JSON.parse(readFileSync(path, "utf8")); } catch { return undefined; }
 }
 
-export function seedFile(): { changed: boolean; reason: string; path: string; unseeded: boolean } {
+export type SeedOutcome = { notice?: Reconcile["notice"]; reason: string; path: string };
+
+export function seedFile(): SeedOutcome {
   const path = voiceSettingsPath();
   const markerPath = voiceSeedMarkerPath();
-  let settings: Record<string, any> = readJson(path) ?? {};
-  const marker: SeedMarker | undefined = readJson(markerPath);
-  const deepgramKey = !!process.env.DEEPGRAM_API_KEY || !!settings.voice?.deepgramApiKey;
-
-  const un = unseedVoiceDefaults(settings, { marker, deepgramKey, modelDownloaded: existsSync(modelDir(settings.voice?.localModel ?? "")) });
-  if (un.changed) { writeJsonAtomic(path, un.settings); settings = un.settings; }
-  if (un.dropMarker) rmSync(markerPath, { force: true });
-  if (un.changed) return { changed: false, reason: un.reason, path, unseeded: true };
-
-  const r = seedVoiceDefaults(settings, { model: env("VOICE_MODEL"), language: languageFromLocale(process.env.LANG), deepgramKeyInEnv: !!process.env.DEEPGRAM_API_KEY });
-  if (r.changed) {
-    writeJsonAtomic(path, r.settings);
-    writeJsonAtomic(markerPath, { backend: "local", localModel: r.settings.voice.localModel, seededAt: new Date().toISOString() } satisfies SeedMarker);
-  }
-  return { changed: r.changed, reason: r.reason, path, unseeded: false };
+  const settings: Record<string, any> = readJson(path) ?? {};
+  const r = reconcileVoice(settings, {
+    marker: readJson(markerPath),
+    deepgramKey: !!process.env.DEEPGRAM_API_KEY || !!settings.voice?.deepgramApiKey,
+    modelDownloaded: existsSync(modelDir(settings.voice?.localModel ?? DEFAULT_VOICE_MODEL)),
+    model: env("VOICE_MODEL"),
+    language: languageFromLocale(process.env.LANG),
+  });
+  if (r.changed) writeJsonAtomic(path, r.settings);
+  if (r.marker) writeJsonAtomic(markerPath, r.marker);
+  else rmSync(markerPath, { force: true });
+  return { notice: r.notice, reason: r.reason, path };
 }
 
 export function findAudioTool(): string | undefined {
@@ -59,12 +62,22 @@ export function findAudioTool(): string | undefined {
 
 export default function (pi: ExtensionAPI) {
   if (env("VOICE") === "off") return;
-  const seeded = seedFile();   // at load time: runs before any extension's session_start
+  // At load time: runs before any extension's session_start. A failure (a full disk, a read-only
+  // home) must not stop kernal starting; voice just stays as it was.
+  let seeded: SeedOutcome;
+  try {
+    seeded = seedFile();
+  } catch (err) {
+    seeded = { reason: `left alone: ${err instanceof Error ? err.message : String(err)}`, path: voiceSettingsPath() };
+    console.error(`[kernal-voice] couldn't update voice settings: ${seeded.reason}`);
+  }
   if (env("VOICE_DEBUG")) console.error(`[kernal-voice] ${seeded.reason} → ${seeded.path}`);
   pi.on("session_start", async (_e, ctx) => {
     if (!ctx.hasUI) return;
-    if (seeded.changed) ctx.ui.notify(`Voice input ready: local model ${env("VOICE_MODEL") || "parakeet-v3"} (downloads on first use). Hold Space to talk; /voice-settings to change.`, "info");
-    if (seeded.unseeded) ctx.ui.notify("Voice input now streams live through Deepgram (your key is set). Hold Space to talk; /voice-settings to change.", "info");
+    const model = env("VOICE_MODEL") || DEFAULT_VOICE_MODEL;
+    if (seeded.notice === "seeded") ctx.ui.notify(`Voice input ready: local model ${model} (downloads on first use). Hold Space to talk; /voice-settings to change.`, "info");
+    if (seeded.notice === "unseeded") ctx.ui.notify("Voice input now streams live through Deepgram (your key is set). Hold Space to talk; /voice-settings to change.", "info");
+    if (seeded.notice === "reseeded") ctx.ui.notify(`No Deepgram key now, so voice input is back on the local model ${model}. Hold Space to talk.`, "info");
     const hint = audioToolHint(findAudioTool(), process.platform);
     if (hint) ctx.ui.notify(hint, "warning");
   });

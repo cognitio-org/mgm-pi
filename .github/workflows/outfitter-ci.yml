@@ -129,6 +129,9 @@ jobs:
               test "$(stat -c %U "$p")" = root || { echo "$p is not root-owned"; exit 1; }
             done
             if su agent -s /bin/sh -c "echo x >> /opt/outfitter/agentd/dist/src/main.js" 2>/dev/null; then echo "agent can change agentd"; exit 1; fi
+            # The whole of both trees, not a sample: nothing agent-owned or world-writable outside .pi.
+            bad=$(find /opt/outfitter/agentd /opt/kernal -path /opt/kernal/.pi -prune -o \( -user agent -o -perm -o+w \) ! -type l -print | head -20)
+            if [ -n "$bad" ]; then echo "agent-owned or world-writable under the root trees:"; echo "$bad"; exit 1; fi
             su agent -s /bin/sh -c "touch /opt/kernal/.pi/.agent-write-test && rm /opt/kernal/.pi/.agent-write-test"
             echo "ok: agentd and pi-coding-agent are root-owned; /opt/kernal/.pi stays agent-writable"
           '

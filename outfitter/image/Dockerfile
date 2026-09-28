@@ -262,7 +262,8 @@ ENV PI_CODING_AGENT_DIR=/opt/kernal/.pi \
 # inside a live session, which a headless Cloud Run Job execution never does. Its writes
 # (`$PI_CODING_AGENT_DIR/bug-reports`, i.e. /opt/kernal/.pi/bug-reports) land under /opt/kernal/.pi,
 # which is `COPY --chown=agent:agent` above -- writable by `agent`, the same user pi runs as -- so no
-# extra directory or chmod is needed for it here. If /report is ever wired into the guru flow, gh
+# extra directory or chmod is needed for it here. (Kernal's interactive /setup writes $PI_CODING_AGENT_DIR/../.env, i.e. the
+# now root-owned /opt/kernal/.env; it needs a UI, so a Drive never runs it -- #266.) If /report is ever wired into the guru flow, gh
 # also needs to be authenticated inside the sandbox, which is out of scope for this trim.
 #
 # OUTFITTER_SPEND_FILE now lives under /run/outfitter (0750 root:agent, created above) instead of

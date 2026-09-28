@@ -14,6 +14,7 @@ import { SandboxProviders } from "../src/providers/registry.ts";
 import type { GithubRefreshTiming } from "../src/agentlink.ts";
 import type { SandboxTelemetry } from "../src/sandbox-telemetry.ts";
 import type { VoiceService } from "../src/voice.ts";
+import type { VoiceUsage } from "../src/voice-usage.ts";
 
 export interface TestApp extends App {
   store: Store;
@@ -45,6 +46,8 @@ export interface BuildTestAppOptions {
   ngrok?: NgrokApi;
   /** #252: a VoiceService with a fake fetch. Defaults to one built from config (DEEPGRAM_API_KEY). */
   voice?: VoiceService;
+  /** #257: a VoiceUsage with a fake fetch. */
+  voiceUsage?: VoiceUsage;
 }
 
 export async function buildTestApp(
@@ -79,6 +82,7 @@ export async function buildTestApp(
     telemetry: opts.telemetry,
     ngrok: opts.ngrok,
     voice: opts.voice,
+    voiceUsage: opts.voiceUsage,
   });
   await app.fastify.ready();
   return { ...app, store, provider, secretAdmin };

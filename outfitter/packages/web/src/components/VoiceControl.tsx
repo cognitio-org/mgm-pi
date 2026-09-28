@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, 
 import type { Voice } from "../hooks/useVoice.ts";
 import { isVoiceShortcut, VOICE_SHORTCUT_LABEL } from "../lib/voice-gesture.ts";
 import { isTouchDeviceHere } from "../lib/touch.ts";
+import { VoiceSpendView } from "./VoiceSpend.tsx";
 
 /** #253: the Composer's mic. One button, two behaviours (owner decision on #251): a quick press
  * latches it on until the next press, press-and-hold talks until release. ⌥/Alt+Space does the same
@@ -193,6 +194,14 @@ export function VoiceControl({ voice }: { voice: Voice }) {
             Leave it to review
           </button>
           </div>
+          {voice.deepgramAvailable && (
+            <div className="voice-menu-group" role="group" aria-labelledby="voice-menu-spend">
+              <div className="voice-menu-heading" id="voice-menu-spend">
+                Your Deepgram spend
+              </div>
+              <VoiceSpendView compact />
+            </div>
+          )}
           <div className="voice-menu-hint" aria-hidden="true">
             {hint}
           </div>

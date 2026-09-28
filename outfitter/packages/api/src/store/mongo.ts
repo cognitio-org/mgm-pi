@@ -390,6 +390,11 @@ class MongoUsers implements UsersCollection {
     return stripId<User>(await this.col.findOne({ _id: email }));
   }
 
+  async list(): Promise<User[]> {
+    const rows = await this.col.find({}).toArray();
+    return rows.map((r) => stripIdStrict<User>(r));
+  }
+
   async setVoicePrefs(email: string, prefs: VoicePrefs): Promise<User> {
     const result = await this.col.findOneAndUpdate(
       { _id: email },

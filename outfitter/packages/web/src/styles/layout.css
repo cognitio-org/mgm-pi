@@ -749,6 +749,14 @@
   white-space: normal;
 }
 
+.voice-spend-line {
+  margin: 0;
+  padding: 0.1rem 0.45rem 0.25rem;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .voice-note {
   font-size: 0.75rem;
   color: var(--warn);

@@ -14,6 +14,7 @@ export type VoiceErrorKind =
   | "unsupported" // no MediaRecorder / SpeechRecognition here
   | "disabled" // the server has no Deepgram key
   | "rate-limited"
+  | "cap-reached" // this month's Deepgram spend is at the cap (#257)
   | "network" // the connection dropped mid-recording
   | "upstream"; // Deepgram or the API refused
 

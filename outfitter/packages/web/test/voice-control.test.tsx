@@ -74,6 +74,7 @@ beforeEach(() => {
       if (path === "/api/me/voice" && method === "GET") return json(config);
       if (path === "/api/me/voice" && method === "PUT") return json({ prefs: body });
       if (path.endsWith("/voice") && method === "PUT") return json({ voiceEngine: body.engine });
+      if (path === "/api/me/voice/spend") return json({ available: true, currency: "USD", today: { minutes: 1, ttsCharacters: 0, usd: 0.0077 }, week: { minutes: 1, ttsCharacters: 0, usd: 0.0077 }, month: { minutes: 3, ttsCharacters: 0, usd: 0.0231 }, asOf: "x" });
       return new Response("{}", { status: 404 });
     }),
   );
@@ -312,6 +313,14 @@ describe("engines", () => {
     expect(host.querySelector(".voice-note")?.textContent).toMatch(/built-in/);
   });
 
+  it("at the monthly cap it uses built-in and says why", async () => {
+    deepgramFailure = new VoiceError("cap-reached", "cap");
+    await mount();
+    await pointer("pointerdown");
+    expect(runs.map((r) => r.engine)).toEqual(["builtin"]);
+    expect(host.querySelector(".voice-note")?.textContent).toMatch(/cap.*built-in/);
+  });
+
   it("a refused mic isn't papered over with the other engine", async () => {
     deepgramFailure = new VoiceError("permission", "no");
     await mount();
@@ -348,6 +357,13 @@ describe("the settings menu", () => {
     expect(item(/built-in/).getAttribute("aria-checked")).toBe("true");
     await pointer("pointerdown");
     expect(runs[0].engine).toBe("builtin");
+  });
+
+  it("shows your Deepgram spend", async () => {
+    await mount();
+    await openMenu();
+    await flush();
+    expect(host.querySelector(".voice-spend-line")?.textContent).toBe("$0.01 today · $0.01 week · $0.02 month");
   });
 
   it("marks Deepgram unavailable when it's off here", async () => {

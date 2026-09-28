@@ -343,6 +343,10 @@ class MemoryUsers implements UsersCollection {
     return row ? clone(row) : null;
   }
 
+  async list(): Promise<User[]> {
+    return [...this.rows.values()].map((row) => clone(row));
+  }
+
   async setVoicePrefs(email: string, prefs: VoicePrefs): Promise<User> {
     const existing = this.rows.get(email);
     const next: User = { ...(existing ?? { email, createdAt: new Date().toISOString() }), voice: { ...prefs } };

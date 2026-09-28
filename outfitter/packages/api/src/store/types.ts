@@ -698,6 +698,8 @@ export interface UsersCollection {
   findByEmail(email: string): Promise<User | null>;
   /** #252: replaces the person's voice preferences, creating the user row if needed. */
   setVoicePrefs(email: string, prefs: VoicePrefs): Promise<User>;
+  /** #257: every user row, for naming voice usage tags on the sysop spend table. */
+  list(): Promise<User[]>;
 }
 
 /** One shared browser tab per session (chrome companion, docs/specs/chrome-companion.md §9.2).

@@ -39,6 +39,7 @@ export function browserEngines(language = navigator.language || "en"): VoiceEngi
           } catch (err) {
             if (err instanceof ApiError && err.status === 404) throw new VoiceError("disabled", "Deepgram voice is off here");
             if (err instanceof ApiError && err.status === 429) throw new VoiceError("rate-limited", "Too many voice requests; try again in a minute");
+            if (err instanceof ApiError && err.status === 403) throw new VoiceError("cap-reached", "This month's Deepgram voice cap is reached");
             throw new VoiceError("upstream", "Couldn't get a Deepgram token");
           }
         },
@@ -93,12 +94,13 @@ const ERROR_NOTES: Record<VoiceError["kind"], string> = {
   unsupported: "This browser can't do voice input.",
   disabled: "Deepgram voice is off here.",
   "rate-limited": "Too many voice requests; try again in a minute.",
+  "cap-reached": "You've reached this month's Deepgram voice cap.",
   network: "The connection dropped. What was heard is in the box; it wasn't sent.",
   upstream: "Deepgram didn't answer.",
 };
 
 /** Deepgram failures the built-in engine can stand in for (#251: "offered automatically"). */
-const FALLBACK_KINDS = new Set<VoiceError["kind"]>(["disabled", "rate-limited", "upstream"]);
+const FALLBACK_KINDS = new Set<VoiceError["kind"]>(["disabled", "rate-limited", "cap-reached", "upstream"]);
 
 export function useVoice(opts: UseVoiceOptions): Voice {
   const [engines] = useState<VoiceEngines>(() => opts.engines ?? browserEngines());

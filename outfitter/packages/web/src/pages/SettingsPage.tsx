@@ -14,6 +14,7 @@ import { SyntaxError } from "../components/SyntaxError.tsx";
 import { Working } from "../components/Working.tsx";
 import { withFloppySound } from "../lib/floppy-sound.ts";
 import { vocabSubtitle, vocabulary } from "../lib/vocabulary.ts";
+import { ProjectVoiceSpendView } from "../components/VoiceSpend.tsx";
 
 /** One managed secret's row: masked value, when it applies, and the Replace/Test/Disable controls
  * (same "no value in URLs, clear the input after save" care as TokensPage.tsx). `replacing` opens
@@ -379,6 +380,9 @@ export function SettingsPage() {
 
       <h3>Access</h3>
       <RevokeDonglesPanel />
+
+      <h3>Voice spend</h3>
+      <ProjectVoiceSpendView />
     </div>
   );
 }

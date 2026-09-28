@@ -12,6 +12,7 @@ import type { MailService } from "../mail.ts";
 import type { SandboxProviders } from "../providers/registry.ts";
 import type { SandboxTelemetry } from "../sandbox-telemetry.ts";
 import type { VoiceService } from "../voice.ts";
+import type { VoiceUsage } from "../voice-usage.ts";
 
 /** Dependencies every route module needs; built once in server.ts and threaded through. */
 export interface RouteContext {
@@ -42,4 +43,6 @@ export interface RouteContext {
   telemetry: SandboxTelemetry;
   /** #252 web voice: mints short-lived Deepgram tokens (routes/voice.ts). */
   voice: VoiceService;
+  /** #257: per-person Deepgram spend, read back from Deepgram's usage API. */
+  voiceUsage: VoiceUsage;
 }

@@ -1,4 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { VsCodeCard } from "./VsCodeCard.tsx";
 import {
   collapseRail,
   type Beat,
@@ -421,18 +422,29 @@ export function UserEntry({ view }: { view: Extract<GroupedEntry, { kind: "user"
   );
 }
 
+/** #273: a beat where the model's `vscode` tool ran (and didn't fail). */
+export function beatOpensVsCode(beat: { kind: string; rail?: RailItem[] }): boolean {
+  return Boolean(beat.rail?.some((item) => item.kind === "tool" && item.toolName === "vscode" && !item.isError));
+}
+
 export function BeatView({
   beat,
   defaultThinkingExpanded = false,
+  vscodeLive = true,
 }: {
   beat: VisibleBeat;
   defaultThinkingExpanded?: boolean;
+  /** #273: whether this beat's VS Code chip is the conversation's latest (live) one. */
+  vscodeLive?: boolean;
 }) {
   if (beat.kind === "user") return <UserEntry view={beat.view} />;
+  // #273: a beat where the model opened VS Code gets one chip for it, in the chat, not in the rail.
+  const vscode = beatOpensVsCode(beat) ? <VsCodeCard live={vscodeLive} /> : null;
   if (beat.kind === "tools-only") {
     return (
       <div className="beat tools-only">
         <TranscriptRail items={beat.rail} defaultThinkingExpanded={defaultThinkingExpanded} />
+        {vscode}
       </div>
     );
   }
@@ -443,6 +455,7 @@ export function BeatView({
         <Markdown text={beat.prose} />
       </div>
       <TranscriptRail items={beat.rail} defaultThinkingExpanded={defaultThinkingExpanded} />
+      {vscode}
     </div>
   );
 }

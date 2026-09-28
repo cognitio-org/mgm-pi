@@ -18,12 +18,13 @@ import { sessionLamp } from "../lib/session-lamp.ts";
 import { githubCluster, looseRepoClause } from "../lib/session-facts.ts";
 import { toApiErrorState } from "../lib/api-error.ts";
 import { EntryItem } from "../components/EntryItem.tsx";
-import { BeatView, YouMark } from "../components/TranscriptRail.tsx";
+import { BeatView, YouMark, beatOpensVsCode } from "../components/TranscriptRail.tsx";
 import { Composer } from "../components/Composer.tsx";
 import { StatusPill } from "../components/StatusPill.tsx";
 import { GithubChip } from "../components/GithubChip.tsx";
 import { PreviewChips } from "../components/PreviewChips.tsx";
 import { IdeChip } from "../components/IdeChip.tsx";
+import { IdeProvider } from "../components/IdeProvider.tsx";
 import { StartupTime } from "../components/StartupTime.tsx";
 import { NerdOutPanel } from "../components/NerdOutPanel.tsx";
 import { TransportDot } from "../components/TransportDot.tsx";
@@ -386,6 +387,8 @@ export function SessionPage() {
   // previous turn even when the next run is already "running" again.
   const runSettled = runState === "idle" || runState === "stopped" || runState === "failed";
   const beats = groupBeats(groupThinkingBlocks(entriesToViews(entries)), { runSettled });
+  // #273: only the latest VS Code chip in the conversation is live.
+  const lastVsCodeBeat = [...beats].reverse().find((b) => b.kind !== "passthrough" && b.kind !== "user" && beatOpensVsCode(b))?.id;
   const previewAccess = previewAccessByEntry(
     entries,
     session?.htmlPreviewAccessByRun,
@@ -451,6 +454,8 @@ export function SessionPage() {
   }
 
   return (
+    // #273: one view of the Drive's IDE for the status-bar chip and any chat chips (the vscode tool).
+    <IdeProvider sessionId={sessionId} runState={runState} onError={setApiError}>
     <div className="session-view">
       {apiError && (
         <SystemErrorDialog
@@ -599,7 +604,7 @@ export function SessionPage() {
             />
             {cluster && <GithubChip cluster={cluster} />}
             <PreviewChips sessionId={sessionId} runState={runState} onError={setApiError} />
-            <IdeChip sessionId={sessionId} runState={runState} onError={setApiError} />
+            <IdeChip />
             <span className="session-model-info">
               {header.model ? <span className="mono">{header.model}</span> : "model unknown yet"}
               {header.thinking ? <span>thinking {header.thinking}</span> : null}
@@ -698,7 +703,7 @@ export function SessionPage() {
                 {beat.kind === "passthrough" ? (
                   <EntryItem view={beat.view} sessionId={sessionId} />
                 ) : (
-                  <BeatView beat={beat} defaultThinkingExpanded={defaultThinkingExpanded} />
+                  <BeatView beat={beat} defaultThinkingExpanded={defaultThinkingExpanded} vscodeLive={beat.id === lastVsCodeBeat} />
                 )}
               </HtmlPreviewAccessContext.Provider>
             ))
@@ -759,5 +764,6 @@ export function SessionPage() {
         placeholderOverride={statusLine === "READY." ? "READY." : undefined}
       />
     </div>
+    </IdeProvider>
   );
 }

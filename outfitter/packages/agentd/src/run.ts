@@ -769,6 +769,8 @@ export class RunController {
           // #242: the IDE's code-server and proxy ports are never the model's to publish.
           ...(this.ideManager?.ports() ?? []),
         ],
+        // #273: the `vscode` tool. The api decides; this only forwards, at most once per 20 s.
+        onIdeRequest: () => this.requestIdeFromTool(),
         ngrokBin: this.deps.ngrokBin,
         startTunnel: this.deps.previewStartTunnel,
         onLog: this.onLog,
@@ -802,8 +804,12 @@ export class RunController {
           ...(this.deps.ideHome ? { home: this.deps.ideHome } : {}),
           onLog: this.onLog,
         });
+        // #273: Kernal registers its `vscode` tool only when this is set.
+        secretEnv.OUTFITTER_IDE = "1";
       }
     }
+    // #273: pinned either way, so a Tape's env can't offer Kernal's `vscode` tool on a Drive without it.
+    if (!this.ideManager) secretEnv.OUTFITTER_IDE = "0";
     // Same pin as OUTFITTER_SESSION_ID: after guru.env, so a guru cannot point the broker
     // socket somewhere else. The token is not part of this overlay.
     if (this.deps.githubSocketPath) {
@@ -1124,6 +1130,21 @@ export class RunController {
   /** Someone loaded a preview page (#217). Browsing is working, so it re-arms idle-stop like a quiet
    * `/command` does -- but only while the last chat activity is younger than the cap, so a tab left
    * open can't keep a Drive billing. It never counts as chat activity itself. */
+  private lastIdeRequestAt = 0;
+
+  /** #273: the model's `vscode` tool. Forwarded to the api as `ide.request`, which applies the same
+   * checks as the owner's click and its own limit; this just stops a looping model flooding the link. */
+  private requestIdeFromTool(): { ok: true } | { error: "not-configured" | "too-many"; detail: string } | undefined {
+    if (!this.ideManager) return undefined;
+    const now = this.now();
+    if (now - this.lastIdeRequestAt < 20_000) {
+      return { error: "too-many", detail: "VS Code was asked for a moment ago; the owner's chip is already on its way" };
+    }
+    this.lastIdeRequestAt = now;
+    this.deps.link.send({ t: "ide.request" });
+    return { ok: true };
+  }
+
   /** Someone is using the browser IDE (#242, ide-activity.ts). Like a preview page load it re-arms
    * idle-stop without counting as chat, but with no cap since the last chat turn (owner decision):
    * a person editing keeps the Drive up for as long as they edit. The meter only counts traffic

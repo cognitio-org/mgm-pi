@@ -39,10 +39,12 @@ the session page, with the same safety properties Drive previews already have.
    same Linux user (`agent`), so neither leaves files the other can't write.
 3. **Only the floppy's owner and sysops open it.** code-server's terminal is a shell in the sandbox.
    The IDE's own endpoint admits only them, and has no share link.
-4. **The IDE gives the model nothing new.** The model can't start, list, close or relabel the IDE
-   through agentd or the api. It *can* reach code-server on loopback, as the same user; that is no
-   more than the shell it already has (see "Security notes", which says what that does and doesn't
-   close).
+4. **The IDE gives the model nothing new.** The model can ask for the IDE when the person asks it to
+   (the `vscode` tool, #273, owner decision 2026-09-28), which is exactly the owner's click: the
+   same checks, the same owner-and-sysops endpoint, a limit per run, and the link goes to the
+   person's page, never to the model. It can't list, close, relabel or widen the IDE. It *can*
+   reach code-server on loopback, as the same user; that is no more than the shell it already has
+   (see "Security notes").
 5. **GKE only.** The fleet is moving fully to GKE (owner decision, 2026-09-27); Cloud Run isn't a
    target.
 6. **Lives as long as someone uses it.** The IDE dies with its Drive. Real editing keeps the Drive
@@ -182,6 +184,24 @@ tunnel and proxy.
 **not** get pi's `LITELLM_AGENT_KEY`, the preview/browser/inspect tokens, or the Tape's `env`
 (`run.ts:636-652`, `:740-741`). (A person in the IDE's terminal can still read pi's environment from
 `/proc`, as the same user; the owner is trusted with that, see "Security notes".)
+
+### 3b. The model's `vscode` tool (#273)
+
+- **Kernal** (`kernal-background`) registers `vscode` only when agentd pinned `OUTFITTER_IDE=1` (the
+  run has the IDE and previews) and the preview listener's port and token. It calls
+  `POST /ide` on that listener (token and peer-uid checked, like `preview`) and tells the model the
+  owner will see a chip in the chat; it never gets the URL.
+- **agentd** forwards it as an `ide.request` up-frame, at most once per 20 s.
+- **api** (link role) applies the same `askForIde` (`src/ide.ts`) as `POST /api/sessions/:id/ide`,
+  after a limit of 6 per run per hour: an owner on record, previews on, a running Drive with the
+  IDE; a pending request under 90 s old or an open endpoint means nothing new is asked.
+- **web** shows a chip under the beat where the tool ran (`VsCodeCard`, with a VS Code-shaped mark),
+  driven by the same state as the status-bar chip: on its way, then **Open VS Code ↗** for the
+  owner and sysops; everyone else sees a plain note.
+- **A person's Close sticks:** once the owner (or a sysop) closes the IDE, the model's requests are
+  ignored until a person opens it again from the page, so a looping or prompt-injected model can't
+  undo the Close. Only the conversation's latest chip is live; earlier ones are a static line.
+- A prompt-injected model could at worst open an IDE that only the owner can reach.
 
 ### 4. The public side (api)
 

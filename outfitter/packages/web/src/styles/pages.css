@@ -111,6 +111,57 @@ a.preview-chip:focus-visible {
   cursor: progress;
 }
 
+.vscode-icon {
+  flex: none;
+  vertical-align: -2px;
+}
+
+.ide-open-btn .vscode-icon,
+.ide-chip .vscode-icon {
+  margin-right: 0.15rem;
+}
+
+/* #273: the chat's chip for the model's vscode tool: a card under the beat, with the VS Code mark. */
+.vscode-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.4rem 0 0.2rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  text-decoration: none;
+  width: fit-content;
+  max-width: 100%;
+  align-self: flex-start;
+}
+
+.vscode-card-body {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.vscode-card-title {
+  font-weight: 600;
+}
+
+.vscode-card-note {
+  color: var(--text-dim);
+  font-size: 0.85em;
+}
+
+a.vscode-card:hover,
+a.vscode-card:focus-visible {
+  border-color: var(--accent);
+}
+
+.vscode-card.is-quiet {
+  color: var(--text-dim);
+}
+
 .chip-btn {
   padding: 0 0.35rem;
   border: 1px solid var(--border);

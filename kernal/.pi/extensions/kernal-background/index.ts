@@ -22,7 +22,8 @@ import { tmpdir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { JobManager, MAX_TIMEOUT_SECONDS, describeJob, type Job, type JobKind } from "./jobs.ts";
 import {
-  PreviewError, closeDrivePreview, desktopPreview, driveEndpoint, drivePreview, explainPreviewError, inDrive, validPort,
+  PreviewError, closeDrivePreview, desktopPreview, driveEndpoint, driveHasIde, drivePreview, explainPreviewError, inDrive,
+  requestDriveIde, validPort,
   type PreviewResult,
 } from "./preview.ts";
 
@@ -280,6 +281,33 @@ export default function (pi: ExtensionAPI) {
       }
     },
   } as any);
+
+  // Browser IDE (#273): only in a Drive whose Tape has "VS Code in the browser", so the model is
+  // never offered a tool that can't work. The person gets the link as a chip in the chat; the model
+  // doesn't see it, and only the floppy's owner and sysops can open it.
+  if (driveHasIde()) {
+    pi.registerTool({
+      name: "vscode",
+      label: "VS Code",
+      description:
+        "Open this Drive in VS Code in the browser for the person, when they ask for VS Code, an editor or an IDE. It takes about half a minute to start; the floppy's owner then sees an \"Open VS Code\" chip in the chat (only they and sysops can open it, after signing in with Google). You don't get the link, and you don't need it: carry on with your work.",
+      promptSnippet: "vscode: open this Drive in VS Code in the browser for the person, when they ask.",
+      parameters: { type: "object", properties: {} } as any,
+      execute: async (_id: string, _params: any, _signal: unknown, _update: unknown, ctx: any) => {
+        statusCtx = ctx ?? statusCtx;
+        const ep = driveEndpoint();
+        if (!ep) return text("VS Code isn't available in this Drive.", true);
+        try {
+          await requestDriveIde(ep);
+          return text("VS Code is starting. The floppy's owner will see an \"Open VS Code\" chip in the chat in about half a minute; only they and sysops can open it. Tell them it's on its way.");
+        } catch (err: any) {
+          if (err instanceof PreviewError && err.code === "too-many") return text("VS Code was asked for a moment ago; the chip is already on its way. Don't ask again.");
+          if (err instanceof PreviewError && err.code === "not_found") return text("This Drive has no VS Code: its Tape needs \"VS Code in the browser\" turned on, then a new Drive.", true);
+          return text(`vscode: ${err?.message ?? String(err)}`, true);
+        }
+      },
+    } as any);
+  }
 
   pi.registerCommand("jobs", {
     description: "Background jobs: list them, or `/jobs kill <id>` to stop one",

@@ -11,6 +11,7 @@ import { FakeNgrok } from "./fake-ngrok.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { generateToken, hashToken, tokenPrefix } from "../src/tokens.ts";
 import { ideInternalUrlFor, runLabel, MAX_OPEN_PREVIEWS_PER_RUN } from "../src/previews.ts";
+import { IDE_REQUESTS_PER_RUN_PER_HOUR } from "../src/agentlink.ts";
 import type { Run, Store } from "../src/store/types.ts";
 
 const ENV = { PREVIEW_DOMAIN: "kernal.run", PREVIEW_ALLOW: "domain:example.com", OUTFITTER_OPERATORS: "sysop@example.com" };
@@ -255,12 +256,26 @@ describe("IDE races (#242 review)", () => {
     await done(app, agent);
   });
 
-  test("two clicks answered together share one endpoint", async () => {
+  test("a second click while the first is on its way doesn't ask again (#273)", async () => {
+    const { app, agent } = await gatedSetup();
+    await openAndGetReq(app, agent);
+    const again = await app.fastify.inject({ method: "POST", url: "/api/sessions/s1/ide" });
+    assert.equal(again.statusCode, 202);
+    assert.equal(again.json().state, "requested");
+    const next = await Promise.race([agent.nextMessage(), sleep(300).then(() => null)]);
+    assert.equal(next, null, "no second ide.open");
+    await done(app, agent);
+  });
+
+  test("two requests answered together share one endpoint", async () => {
     const { app, ngrok, agent, runId, internalUrl } = await gatedSetup();
     const reqA = await openAndGetReq(app, agent);
     ngrok.hold();
     agent.send({ t: "ide.status", reqId: reqA, state: "ready", internalUrl });
     await sleep(80);
+    // Age the first request past the fresh window, so the next click really asks again.
+    const run = await app.store.runs.findById(runId);
+    await app.store.runs.update(runId, { ide: { ...run!.ide!, updatedAt: new Date(Date.now() - 120_000).toISOString() } });
     const reqB = await openAndGetReq(app, agent);
     agent.send({ t: "ide.status", reqId: reqB, state: "ready", internalUrl });
     await sleep(80);
@@ -295,6 +310,67 @@ describe("IDE races (#242 review)", () => {
     const res = await app.fastify.inject({ method: "POST", url: "/api/sessions/s1/ide" });
     assert.equal(res.statusCode, 202, "not the dead URL");
     assert.equal((await agent.nextMessage()).t, "ide.open");
+    await done(app, agent);
+  });
+});
+
+describe("the model's vscode tool: ide.request (#273)", () => {
+  test("asks like the owner's click: ide.open, the same endpoint, and the chip's state", async () => {
+    const { app, ngrok, agent, internalUrl } = await flowSetup();
+    agent.send({ t: "ide.request" });
+    const open = await agent.nextMessage();
+    assert.equal(open.t, "ide.open");
+    assert.equal((await ideState(app)).state, "requested", "the page's chip picks it up");
+    agent.send({ t: "ide.status", reqId: open.reqId, state: "ready", internalUrl });
+    const ready = await eventually(() => ideState(app), (st) => st.state === "ready");
+    const policy = [...ngrok.endpoints.values()][0]!.trafficPolicy;
+    assert.ok(policy.includes("owner@example.com") && policy.includes("sysop@example.com"), "owner and sysops, as ever");
+    assert.match(ready.url, /^https:\/\/[0-9a-f]{32}\.kernal\.run$/);
+    await done(app, agent);
+  });
+
+  test("a request while one is on its way, or once it's open, asks nothing new", async () => {
+    const { app, agent, internalUrl } = await flowSetup();
+    agent.send({ t: "ide.request" });
+    const open = await agent.nextMessage();
+    agent.send({ t: "ide.request" });
+    assert.equal(await Promise.race([agent.nextMessage(), sleep(300).then(() => null)]), null);
+    agent.send({ t: "ide.status", reqId: open.reqId, state: "ready", internalUrl });
+    await eventually(() => ideState(app), (st) => st.state === "ready");
+    agent.send({ t: "ide.request" });
+    assert.equal(await Promise.race([agent.nextMessage(), sleep(300).then(() => null)]), null, "already open");
+    await done(app, agent);
+  });
+
+  test("after the owner closes it, the model can't reopen it; the owner's click still can", async () => {
+    const { app, agent, internalUrl } = await flowSetup();
+    agent.send({ t: "ide.request" });
+    const open = await agent.nextMessage();
+    agent.send({ t: "ide.status", reqId: open.reqId, state: "ready", internalUrl });
+    await eventually(() => ideState(app), (st) => st.state === "ready");
+    assert.equal((await app.fastify.inject({ method: "DELETE", url: "/api/sessions/s1/ide" })).statusCode, 204);
+    agent.send({ t: "ide.request" });
+    const pending = agent.nextMessage(); // kept: it receives the next frame, whenever that comes
+    assert.equal(await Promise.race([pending, sleep(300).then(() => null)]), null, "the model doesn't undo a Close");
+    assert.equal((await ideState(app)).state, "closed");
+    const res = await app.fastify.inject({ method: "POST", url: "/api/sessions/s1/ide" });
+    assert.equal(res.statusCode, 202);
+    assert.equal((await pending).t, "ide.open", "a person's click reopens it");
+    await done(app, agent);
+  });
+
+  test("a looping model is cut off after the hourly limit", async () => {
+    const { app, agent, runId } = await flowSetup();
+    let opens = 0;
+    for (let i = 0; i < IDE_REQUESTS_PER_RUN_PER_HOUR + 3; i++) {
+      // Each time, as if the last request went stale, so only the limit stops a new one.
+      const run = await app.store.runs.findById(runId);
+      if (run?.ide) await app.store.runs.update(runId, { ide: { ...run.ide, state: "error", updatedAt: new Date().toISOString() } });
+      agent.send({ t: "ide.request" });
+      const m = await Promise.race([agent.nextMessage(), sleep(300).then(() => null)]);
+      if (m?.t === "ide.open") opens++;
+    }
+    assert.equal(opens, IDE_REQUESTS_PER_RUN_PER_HOUR);
     await done(app, agent);
   });
 });

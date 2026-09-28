@@ -92,6 +92,18 @@ export async function closeDrivePreview(ep: DriveEndpoint, port: number): Promis
   await call(ep, "DELETE", `/previews/${port}`, undefined, 15_000);
 }
 
+/** Browser IDE (#273): whether this Drive can open VS Code for the person (agentd pins
+ * OUTFITTER_IDE=1 only when the run's Tape has the IDE and previews are on). */
+export function driveHasIde(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.OUTFITTER_IDE === "1" && driveEndpoint(env) !== undefined;
+}
+
+/** Browser IDE (#273): ask the Drive to open VS Code. agentd forwards it to the api, which treats it
+ * like the floppy's owner clicking "Open in VS Code". The link goes to the person's page, never here. */
+export async function requestDriveIde(ep: DriveEndpoint): Promise<void> {
+  await call(ep, "POST", "/ide", {}, 15_000);
+}
+
 /** What the model should do about each failure, in one line. */
 export function explainPreviewError(err: PreviewError): string {
   switch (err.code) {

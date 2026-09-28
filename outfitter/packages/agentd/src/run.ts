@@ -1038,7 +1038,9 @@ export class RunController {
     // the `bye`, so the api deletes the public endpoints on a live socket).
     const previews = this.previewListener;
     this.previewListener = undefined;
-    // #241: a download or unpack still running stops with the run; its temp dir goes with it.
+    // #241: a download or unpack still running stops with the run, and nothing is moved into place
+    // after this. Its temp dir is removed asynchronously; one left behind by a fast exit goes with
+    // the container.
     this.ideInstall?.abort();
     return Promise.all([
       listener ? listener.stop() : Promise.resolve(),

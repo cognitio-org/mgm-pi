@@ -60,14 +60,25 @@ describe("run.spec.ide (#241)", () => {
     assert.equal(run?.browserIde, false);
   });
 
-  test("a run that already recorded it keeps it, whatever the Tape says now", async () => {
+  test("once a spec has been sent, the run keeps its value, whatever the Tape says now", async () => {
     const app = await buildTestApp(PREVIEWS, { ngrok: new FakeNgrok() });
     const { spec, run } = await firstSpec(app, async (runId) => {
-      // As if an earlier connection of this run got `ide`, then the Tape was switched off.
+      // As if an earlier connection of this run was sent `ide`, then the Tape was switched off.
       await app.store.runs.update(runId, { browserIde: true });
+      await app.store.runs.mergeStartup(runId, { specSentAt: new Date().toISOString() }, "specSentAt");
     });
     assert.ok(spec.ide);
     assert.equal(run?.browserIde, true);
+  });
+
+  test("a value recorded by a spec that was never sent is worked out again", async () => {
+    const app = await buildTestApp(PREVIEWS, { ngrok: new FakeNgrok() });
+    const { spec, run } = await firstSpec(app, async (runId) => {
+      // An earlier build recorded true (then failed before sending); the Tape is off now.
+      await app.store.runs.update(runId, { browserIde: true });
+    });
+    assert.equal(spec.ide, undefined);
+    assert.equal(run?.browserIde, false, "the stored value matches what agentd was actually sent");
   });
 });
 

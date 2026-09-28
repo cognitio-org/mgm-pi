@@ -105,17 +105,46 @@ describe("CodeServerInstaller (#241)", () => {
     assert.deepEqual(leftovers(parent), []);
   });
 
-  test("the checksum covers the excluded entries too", async () => {
-    // Same tree except inside the excluded Copilot dirs: tar writes identical files for both, so
-    // only a hash taken before tar tells them apart.
-    const pinned = fakeRelease("copilot v1");
-    const served = fakeRelease("copilot v2, tampered");
-    bodies.set("/tampered-excluded", { body: served });
-    const { inst, dest } = installer("/tampered-excluded", sha256(pinned));
+  test("tar never runs on bytes that failed the checksum", async () => {
+    // A stand-in tar that only records it was called: the unpack must wait for the verified file.
+    const dir = tmp();
+    const marker = join(dir, "tar-ran");
+    const fakeTar = join(dir, "fake-tar");
+    writeFileSync(fakeTar, `#!/bin/sh\ntouch ${marker}\nexit 0\n`, { mode: 0o755 });
+    bodies.set("/unverified", { body: fakeRelease() });
+    const { inst, dest } = installer("/unverified", "e".repeat(64), { tarBin: fakeTar });
+    const result = await inst.start();
+    assert.match(result.error ?? "", /checksum mismatch/);
+    assert.equal(existsSync(marker), false, "tar was never started");
+    assert.equal(existsSync(dest), false);
+  });
+
+  test("a download past the size cap stops, unhashed and unpacked", async () => {
+    const release = fakeRelease();
+    bodies.set("/big", { body: release });
+    const { inst, dest, parent } = installer("/big", sha256(release), { maxBytes: 100 });
     const result = await inst.start();
     assert.equal(result.ok, false);
-    assert.match(result.error ?? "", /checksum mismatch/);
+    assert.match(result.error ?? "", /larger than 100 bytes/);
     assert.equal(existsSync(dest), false);
+    assert.deepEqual(leftovers(parent), []);
+  });
+
+  test("abort() during the unpack moves nothing into place", async () => {
+    const dir = tmp();
+    const slowTar = join(dir, "slow-tar");
+    writeFileSync(slowTar, "#!/bin/sh\nsleep 5\n", { mode: 0o755 });
+    const release = fakeRelease();
+    bodies.set("/slow-unpack", { body: release });
+    const { inst, dest, parent } = installer("/slow-unpack", sha256(release), { tarBin: slowTar });
+    const pending = inst.start();
+    await new Promise((r) => setTimeout(r, 400));
+    inst.abort();
+    const result = await pending;
+    assert.equal(result.ok, false);
+    assert.match(result.error ?? "", /stopping/);
+    assert.equal(existsSync(dest), false);
+    assert.deepEqual(leftovers(parent), []);
   });
 
   test("an HTTP error is a failed install", async () => {

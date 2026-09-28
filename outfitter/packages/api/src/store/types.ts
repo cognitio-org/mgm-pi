@@ -194,9 +194,9 @@ export interface Run {
   // Written once (agentd only acts on its first run.spec) and reused by later specs on reconnect;
   // a Tape changed mid-run applies to the next run. Absent until that first spec is built.
   allowExternalHtmlResources?: boolean;
-  // Browser IDE (#241, docs/specs/browser-ide.md): the guru's browserIde as it was when this run's
-  // first run.spec was built, reused on reconnect like allowExternalHtmlResources. true means the
-  // spec carried `ide` (previews on), so agentd downloaded code-server into this Drive.
+  // Browser IDE (#241, docs/specs/browser-ide.md): whether this run's spec carried `ide` (the Tape
+  // asked for it and previews were on), so agentd downloaded code-server into this Drive. Settled by
+  // the first spec that was actually sent (startup.specSentAt) and reused on reconnect.
   browserIde?: boolean;
   // #187: the highest sandbox memory agentd's heartbeats reported for this run, and the sandbox's
   // limit, in MiB. An OOM kill takes agentd with it, so this is what lets the reconciler say "ran

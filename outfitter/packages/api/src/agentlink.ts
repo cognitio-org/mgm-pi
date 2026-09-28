@@ -1121,9 +1121,13 @@ export class AgentLink {
     const allowExternalHtmlResources = run.allowExternalHtmlResources ?? guru.allowExternalHtmlResources === true;
     // #217: the run's preview credential, minted on its first spec; undefined when previews are off.
     const previewConfig = await this.previews?.runSpecConfig(run);
-    // #241: same first-spec rule. The IDE needs previews, so a Tape with browserIde on a deployment
-    // without them records false: the run never got `ide`, and the session page shows no button.
-    const browserIde = run.browserIde ?? (guru.browserIde === true && previewConfig !== undefined);
+    // #241: what the run's first *sent* spec carried (agentd acts on that one only). Before a spec
+    // has gone out, recompute: an earlier build may have failed to mint the preview credential, or
+    // never been sent. The IDE needs previews, so without them the run records false: it never got
+    // `ide`, and the session page shows no button.
+    const specSent = Boolean((await this.store.runs.findById(runId))?.startup?.specSentAt ?? run.startup?.specSentAt);
+    const browserIde =
+      specSent && run.browserIde !== undefined ? run.browserIde : guru.browserIde === true && previewConfig !== undefined;
     await this.store.runs.update(runId, {
       modelFallback: resolved.fallback,
       allowExternalHtmlResources,

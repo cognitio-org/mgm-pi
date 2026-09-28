@@ -22,6 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          persist-credentials: false
           sparse-checkout: outfitter/packages/api/src/config.ts
           sparse-checkout-cone-mode: false
       - name: Compare the pin with the latest release
@@ -52,7 +53,7 @@ jobs:
 
           To bump, change \`IDE_CODE_SERVER_PIN\` in \`outfitter/packages/api/src/config.ts\` (version and both checksums), then deploy the api. No image rebuild.
 
-          SHA-256 of the release assets, computed by this workflow (the release publishes none):
+          SHA-256 of the release assets as GitHub served them to this workflow (the release publishes none, so this is trust on first use: compare with a download of your own before pinning):
           ${sums}
           Before merging, check the release notes for changes to the flags agentd passes (\`--auth none\`, \`--disable-proxy\`, \`--disable-workspace-trust\`, \`--config\`), and that excluding \`lib/vscode/extensions/copilot\` and \`lib/vscode/node_modules/@github\` still leaves a working editor (docs/specs/browser-ide.md §2-§3).
 

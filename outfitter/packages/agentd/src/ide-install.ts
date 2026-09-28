@@ -3,31 +3,35 @@
  * `/opt/code-server` when `run.spec.ide` asks for it, started as soon as the spec arrives so it's
  * usually done before anyone clicks "Open in VS Code" (about 20 s on GKE, spike S2).
  *
- * agentd runs as root and pi (and code-server, later) as `agent`, so:
- * - The HTTP body goes through a SHA-256 hash and then into tar's stdin: no tarball on disk. The
- *   hash sits before tar, so it covers every byte, the excluded entries included, and the whole body
- *   is read and hashed even if tar stops early.
- * - tar unpacks into a root-only (0700) temp dir beside the destination. Those bytes aren't verified
- *   yet; nothing runs from there, and the dir is renamed into place only once the hash matches.
- * - `--no-same-owner --no-same-permissions`: files belong to root with the process umask, whatever
- *   the archive says; the top dir becomes 0755 so `agent` can run code-server but not change it.
- * - The bundled Copilot extension and SDK (~40% of the tree, spike) are excluded: AI features are
- *   off in the IDE. GNU tar matches excludes against archive paths before --strip-components, hence
- *   the leading `*`.
- * - tar runs under `nice`, so it yields the one vCPU to pi's start.
+ * agentd runs as root and pi (and code-server, later) as `agent`, so tar never sees an unverified
+ * byte:
+ * 1. The download is written to a 0600 file inside a fresh 0700 temp dir beside the destination,
+ *    hashed as it arrives, and capped at MAX_DOWNLOAD_BYTES.
+ * 2. Only if its SHA-256 matches the pin does GNU tar unpack it, niced (it yields the one vCPU to
+ *    pi's start), into `<tmp>/tree`: `--no-same-owner --no-same-permissions` make everything root's
+ *    with the process umask, whatever the archive says. The temp dir itself stays 0700 whatever tar
+ *    does to `tree` (a `top/.` member can reset `tree`'s mode, not its parent's).
+ * 3. The bundled Copilot extension and SDK (~40% of the tree, spike) are excluded: AI features are
+ *    off in the IDE. GNU tar matches excludes against archive paths before --strip-components,
+ *    hence the leading `*`.
+ * 4. `tree` is renamed to the destination (a sibling path, so the same filesystem; don't make
+ *    /opt/code-server a mount point) and made 0755: `agent` can run code-server, not change it.
  *
  * One install at a time; after a failure the next start() tries again. abort() (run end) stops the
- * download and tar and removes the temp dir.
+ * download or tar, and nothing is moved into place after it.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, rename, rm, stat } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { chmod, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { dirname, basename, join } from "node:path";
 import type { RunSpecIde } from "./protocol.js";
 
 export const CODE_SERVER_DIR = "/opt/code-server";
 /** The whole install, download and unpack, must finish within this. */
 export const IDE_INSTALL_TIMEOUT_MS = 5 * 60_000;
+/** The 4.139.1 release is 222 MB; anything far past that isn't the file we pinned. */
+export const MAX_DOWNLOAD_BYTES = 400 * 1024 * 1024;
 export const COPILOT_EXCLUDES = ["*/lib/vscode/extensions/copilot", "*/lib/vscode/node_modules/@github"];
 
 export type IdeArch = "amd64" | "arm64";
@@ -60,6 +64,11 @@ export function parseIdeSpec(ide: RunSpecIde | undefined, arch: IdeArch | undefi
   return { version: ide.version, sha256: sha };
 }
 
+/** tar's stderr, for a log line: printable ASCII only, so a member name can't forge log lines. */
+function printable(text: string): string {
+  return text.replace(/[^\x20-\x7e]+/g, " ").trim().slice(0, 300);
+}
+
 export interface CodeServerInstallerOptions {
   spec: RunSpecIde;
   /** Default CODE_SERVER_DIR. */
@@ -74,6 +83,8 @@ export interface CodeServerInstallerOptions {
   /** Default true; tests may turn it off where `nice` isn't on PATH. */
   nice?: boolean;
   timeoutMs?: number;
+  /** Default MAX_DOWNLOAD_BYTES. */
+  maxBytes?: number;
   onLog?: (line: string) => void;
 }
 
@@ -107,7 +118,7 @@ export class CodeServerInstaller {
     return this.current;
   }
 
-  /** Run end: stop the download and tar; the temp dir is removed by install()'s cleanup. */
+  /** Run end: stop the download or tar. install() removes its temp dir and moves nothing. */
   abort(): void {
     this.aborted = true;
     this.controller?.abort();
@@ -123,70 +134,90 @@ export class CodeServerInstaller {
       else log(`code-server installed in ${seconds}s`);
       return error ? { ok: false, error, seconds } : { ok: true, seconds };
     };
-    const parsed = parseIdeSpec(this.opts.spec, this.opts.arch ?? ideArch());
+    const arch = this.opts.arch ?? ideArch();
+    const parsed = parseIdeSpec(this.opts.spec, arch);
     if ("error" in parsed) return done(parsed.error);
-    const arch = (this.opts.arch ?? ideArch())!;
-    const url = (this.opts.urlFor ?? codeServerUrl)(parsed.version, arch);
+    const url = (this.opts.urlFor ?? codeServerUrl)(parsed.version, arch!);
+    const maxBytes = this.opts.maxBytes ?? MAX_DOWNLOAD_BYTES;
 
     let tmp: string | undefined;
     const controller = new AbortController();
     this.controller = controller;
+    // A timeout or abort also stops tar once the download is done.
+    controller.signal.addEventListener("abort", () => this.tar?.kill("SIGKILL"));
     const timer = setTimeout(() => controller.abort(), this.opts.timeoutMs ?? IDE_INSTALL_TIMEOUT_MS);
     timer.unref?.();
+    const stopped = () => (this.aborted ? "the run is stopping" : "timed out");
     try {
       tmp = await mkdtemp(join(dirname(this.dest), `.${basename(this.dest)}.tmp-`));
-      const res = await (this.opts.fetch ?? fetch)(url, { signal: controller.signal, redirect: "follow" });
-      if (!res.ok || !res.body) return done(`download failed: HTTP ${res.status}`);
 
+      // 1. Download to a 0600 file, hashing as it arrives.
+      const res = await (this.opts.fetch ?? fetch)(url, { signal: controller.signal, redirect: "follow" });
+      if (!res.ok || !res.body) {
+        await res.body?.cancel().catch(() => {});
+        return done(`download failed: HTTP ${res.status}`);
+      }
+      const archive = join(tmp, "release.tar.gz");
+      const file = createWriteStream(archive, { flags: "wx", mode: 0o600 });
+      const fileDone = new Promise<void>((resolve, reject) => { file.once("finish", resolve); file.once("error", reject); });
+      fileDone.catch(() => {}); // awaited below; don't let an early error go unhandled meanwhile
+      const hash = createHash("sha256");
+      let bytes = 0;
+      let tooBig = false;
+      try {
+        for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+          bytes += chunk.length;
+          // Leaving the loop cancels the body; aborting here would surface as an abort instead.
+          if (bytes > maxBytes) { tooBig = true; break; }
+          hash.update(chunk);
+          if (!file.write(chunk)) {
+            await new Promise<void>((resolve) => {
+              const go = () => { file.off("drain", go); file.off("error", go); file.off("close", go); resolve(); };
+              file.once("drain", go); file.once("error", go); file.once("close", go);
+            });
+          }
+        }
+      } finally {
+        file.end();
+      }
+      await fileDone;
+      if (tooBig) return done(`download larger than ${maxBytes} bytes`);
+      if (controller.signal.aborted) return done(stopped());
+      const got = hash.digest("hex");
+      if (got !== parsed.sha256) return done(`checksum mismatch (got ${got.slice(0, 12)}…, ${bytes} bytes)`);
+
+      // 2. Unpack the verified file.
+      const tree = join(tmp, "tree");
+      await mkdir(tree, { mode: 0o700 });
       const tarArgs = [
-        "xzf", "-", "-C", tmp, "--strip-components=1", "--no-same-owner", "--no-same-permissions",
+        "xzf", archive, "-C", tree, "--strip-components=1", "--no-same-owner", "--no-same-permissions",
         ...COPILOT_EXCLUDES.flatMap((pattern) => ["--exclude", pattern]),
       ];
       const tarBin = this.opts.tarBin ?? "tar";
       const tar = this.opts.nice === false
-        ? spawn(tarBin, tarArgs, { stdio: ["pipe", "ignore", "pipe"] })
-        : spawn("nice", ["-n", "10", tarBin, ...tarArgs], { stdio: ["pipe", "ignore", "pipe"] });
+        ? spawn(tarBin, tarArgs, { stdio: ["ignore", "ignore", "pipe"] })
+        : spawn("nice", ["-n", "10", tarBin, ...tarArgs], { stdio: ["ignore", "ignore", "pipe"] });
       this.tar = tar;
       let tarStderr = "";
       tar.stderr?.on("data", (d: Buffer) => { if (tarStderr.length < 2000) tarStderr += d.toString(); });
-      const tarExit = new Promise<number | null>((resolve) => {
-        tar.once("error", () => resolve(-1));
-        tar.once("close", (code) => resolve(code));
+      const code = await new Promise<number | null>((resolve) => {
+        tar.on("error", () => resolve(-1));
+        tar.once("close", (c) => resolve(c));
       });
-      // A write error (tar died: EPIPE) mustn't stop the hash: keep reading, report it after.
-      let pipeError: string | undefined;
-      tar.stdin?.on("error", (err) => { pipeError ??= (err as NodeJS.ErrnoException).code ?? err.message; });
-
-      const hash = createHash("sha256");
-      let bytes = 0;
-      for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
-        hash.update(chunk);
-        bytes += chunk.length;
-        const stdin = tar.stdin;
-        if (!pipeError && stdin && !stdin.destroyed && !stdin.write(chunk)) {
-          await new Promise<void>((resolve) => {
-            const go = () => { stdin.off("drain", go); stdin.off("close", go); stdin.off("error", go); resolve(); };
-            stdin.once("drain", go); stdin.once("close", go); stdin.once("error", go);
-          });
-        }
-      }
-      tar.stdin?.end();
-      const code = await tarExit;
       this.tar = undefined;
+      if (controller.signal.aborted) return done(stopped());
+      if (code !== 0) return done(`unpack failed (tar exit ${code}): ${printable(tarStderr)}`);
+      if (!(await stat(join(tree, "bin", "code-server")).catch(() => undefined))) return done("unpacked tree has no bin/code-server");
 
-      const got = hash.digest("hex");
-      if (got !== parsed.sha256) return done(`checksum mismatch (got ${got.slice(0, 12)}…, ${bytes} bytes)`);
-      if (pipeError || code !== 0) return done(`unpack failed (tar exit ${code}${pipeError ? `, ${pipeError}` : ""}): ${tarStderr.trim().slice(0, 300)}`);
-      if (!(await stat(join(tmp, "bin", "code-server")).catch(() => undefined))) return done("unpacked tree has no bin/code-server");
-
+      // 3. Into place, unless the run ended meanwhile.
+      if (this.aborted) return done(stopped());
       await rm(this.dest, { recursive: true, force: true });
-      await rename(tmp, this.dest);
-      tmp = undefined;
+      await rename(tree, this.dest);
       await chmod(this.dest, 0o755);
       return done();
     } catch (err) {
-      if (controller.signal.aborted) return done(this.aborted ? "the run is stopping" : "timed out");
-      return done((err as Error).message);
+      if (controller.signal.aborted) return done(stopped());
+      return done(printable((err as Error).message));
     } finally {
       clearTimeout(timer);
       this.controller = undefined;

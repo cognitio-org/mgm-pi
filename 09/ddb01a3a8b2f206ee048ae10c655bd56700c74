@@ -1,0 +1,73 @@
+outfitter/packages/web/src/components/IdeChip.tsx
+  s_885dde90a8ec58::t_e61d4f0153089c 58-59,103-104
+  s_885dde90a8ec58::t_f2b1d976973aca 1-3,7-13,18-19,22,24,28,33-34,39-40,61-69,91,99-102,105-106
+outfitter/packages/web/src/components/IdeProvider.tsx
+  s_885dde90a8ec58::t_b58adbee8f267a 1-150
+outfitter/packages/web/src/components/VsCodeIcon.tsx
+  s_885dde90a8ec58::t_e6ac28ec43912b 1-24
+outfitter/packages/agentd/src/preview.ts
+  s_885dde90a8ec58::t_e7041fcf322ef4 61-63
+  s_885dde90a8ec58::t_258b9663216765 10,312-317
+outfitter/packages/api/test/browser-ide-open.test.ts
+  s_885dde90a8ec58::t_760522708c7b78 14,316-358
+  s_885dde90a8ec58::t_2cd9c976cb66b2 259-270,276-278
+  s_885dde90a8ec58::t_f85e35164d8a8d 359
+outfitter/packages/web/src/components/VsCodeCard.tsx
+  s_885dde90a8ec58::t_b48cfa99cda745 1,14
+  s_885dde90a8ec58::t_ec40cf7ef33010 2-13,15-63
+outfitter/packages/web/src/styles/pages.css
+  s_885dde90a8ec58::t_37e6a90d3739d3 135,137
+  s_885dde90a8ec58::t_56008170faaa98 114-134,136,138-164
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_885dde90a8ec58::t_b48cfa99cda745 27,455-456,605,765
+outfitter/docs/protocol.md
+  s_885dde90a8ec58::t_d0f616c0eb318e 192,231
+kernal/README.md
+  s_885dde90a8ec58::t_5dc0b8eed318a5 455-460
+outfitter/packages/agentd/src/run.ts
+  s_885dde90a8ec58::t_258b9663216765 772-773,807-808,1131-1145
+outfitter/docs/specs/browser-ide.md
+  s_885dde90a8ec58::t_d0f616c0eb318e 42-47,188-201
+  s_885dde90a8ec58::t_deba90942824da 202
+outfitter/packages/agentd/src/protocol.ts
+  s_885dde90a8ec58::t_258b9663216765 229-235,263
+outfitter/packages/api/src/ide.ts
+  s_885dde90a8ec58::t_b48a8cbe0f9a5f 1-64
+kernal/.pi/extensions/kernal-background/index.ts
+  s_885dde90a8ec58::t_d6754f967d7294 25-26,285-310
+  s_885dde90a8ec58::t_b3a743f1e078f7 311
+outfitter/packages/web/test/ide-chip.test.tsx
+  s_885dde90a8ec58::t_1b3f664a7daf4e 6-8,61-68,73-74
+  s_885dde90a8ec58::t_56008170faaa98 85-87,96,100,132,189-204,222-240
+  s_885dde90a8ec58::t_8d9d487b222f0e 205-221
+  s_885dde90a8ec58::t_0b91621c04b315 241
+outfitter/packages/web/src/components/TranscriptRail.tsx
+  s_885dde90a8ec58::t_b48cfa99cda745 2,433-434,439,450
+outfitter/packages/agentd/test/run.test.ts
+  s_885dde90a8ec58::t_f6bee257d3c03e 1757-1810
+kernal/.pi/extensions/kernal-background/preview.ts
+  s_885dde90a8ec58::t_d6754f967d7294 95-106
+kernal/tests/preview.test.ts
+  s_885dde90a8ec58::t_a38a487588b220 18,185-227
+  s_885dde90a8ec58::t_e881edc6ac6d34 228
+outfitter/packages/api/src/agentlink.ts
+  s_885dde90a8ec58::t_e66a0db426f486 9-12,1254-1271,1688-1695
+outfitter/packages/api/src/routes/ide.ts
+  s_885dde90a8ec58::t_16a9dffa33c0b9 11-12,16,23,31-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "09ddb01a3a8b2f206ee048ae10c655bd56700c74",
+  "prompts": {},
+  "sessions": {
+    "s_885dde90a8ec58": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fc9bab2f-409c-4e9c-9cd5-ff15ccd352cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

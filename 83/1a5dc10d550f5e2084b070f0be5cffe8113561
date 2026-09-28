@@ -1,0 +1,39 @@
+outfitter/packages/agentd/src/ide-activity.ts
+  s_885dde90a8ec58::t_3b3327bdc4ab47 19-22,24-26,28,30,32-45,48-49,52-54,58-60,62-66,68
+outfitter/packages/api/src/routes/ide.ts
+  s_885dde90a8ec58::t_69e4afdd55b15e 10-11,17,52-56
+outfitter/packages/api/src/previews.ts
+  s_885dde90a8ec58::t_69e4afdd55b15e 336-345,355-358,402,405
+outfitter/packages/agentd/src/preview-proxy.ts
+  s_885dde90a8ec58::t_36dd5f7a07812f 18-22,41-42,113-119,139,141-144
+  s_885dde90a8ec58::t_3b3327bdc4ab47 152-161,163
+outfitter/packages/api/src/agentlink.ts
+  s_885dde90a8ec58::t_69e4afdd55b15e 1263,1266,1271-1273,1275,1280-1288,1291-1292
+outfitter/packages/api/test/browser-ide-open.test.ts
+  s_885dde90a8ec58::t_992c88e44f6880 201-300
+outfitter/packages/agentd/src/ide-server.ts
+  s_885dde90a8ec58::t_36dd5f7a07812f 21-22,79-81,97-104,199-201,203,265-267,282-301
+  s_885dde90a8ec58::t_61be630953980e 15-17,20,187-188,191-195,197-198,250,252-253,257-259,315,323-333,340-342
+  s_885dde90a8ec58::t_719be8f56cef28 302-304
+outfitter/packages/agentd/test/ide-server.test.ts
+  s_885dde90a8ec58::t_37a7aa397d331d 202-203,205-219
+  s_885dde90a8ec58::t_32bf507c59ec81 248-275
+outfitter/docs/specs/browser-ide.md
+  s_885dde90a8ec58::t_b82435da9c0fe6 162-164,198-200,217-223
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "831a5dc10d550f5e2084b070f0be5cffe8113561",
+  "prompts": {},
+  "sessions": {
+    "s_885dde90a8ec58": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fc9bab2f-409c-4e9c-9cd5-ff15ccd352cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

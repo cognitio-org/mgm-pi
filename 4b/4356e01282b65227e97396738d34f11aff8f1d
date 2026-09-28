@@ -1,0 +1,36 @@
+outfitter/packages/web/src/components/VoiceControl.tsx
+  s_fd47f462159c85::t_33fae709ec3a55 45
+outfitter/packages/web/test/voice-tts.test.ts
+  s_fd47f462159c85::t_dfb7839a6c30b6 102-103,107-126
+  s_fd47f462159c85::t_93d2f26cb7daf5 127-128
+outfitter/packages/web/test/voice-speak.test.tsx
+  s_fd47f462159c85::t_3ed2ccfda93932 182-205,347-375
+  s_fd47f462159c85::t_3e256ffa91eb43 376
+outfitter/packages/web/src/hooks/useSpeaker.ts
+  s_fd47f462159c85::t_33fae709ec3a55 84-87,104-106,112,133-138,146-148,150,167-178,210-212
+  s_fd47f462159c85::t_81ff6a8786d031 213
+outfitter/packages/web/src/lib/speech-text.ts
+  s_fd47f462159c85::t_33fae709ec3a55 27-29,31-32
+outfitter/packages/web/src/hooks/useVoice.ts
+  s_fd47f462159c85::t_33fae709ec3a55 406-408
+outfitter/packages/web/src/lib/voice-tts.ts
+  s_fd47f462159c85::t_33fae709ec3a55 91-92,94-98,180,183-189
+outfitter/packages/web/test/speech-text.test.ts
+  s_fd47f462159c85::t_dfb7839a6c30b6 20-24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "4b4356e01282b65227e97396738d34f11aff8f1d",
+  "prompts": {},
+  "sessions": {
+    "s_fd47f462159c85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4302a461-a7ca-4bcd-bca6-85c286e60f99",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

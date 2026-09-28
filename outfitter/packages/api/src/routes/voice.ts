@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { RouteContext } from "./context.ts";
 import { getSessionOr404 } from "./sessions.ts";
-import { AFTER_SPEAKING, DEFAULT_VOICE_PREFS, VOICE_ENGINES, voiceTag, type AfterSpeaking, type VoiceEngine } from "../voice.ts";
+import { AFTER_SPEAKING, DEFAULT_VOICE_PREFS, VOICE_ENGINES, isTtsVoice, voiceTag, type AfterSpeaking, type VoiceEngine, type VoicePrefs } from "../voice.ts";
 import { requireOperator } from "../auth.ts";
 
 /** How long a token request waits on Deepgram's usage for the cap check before minting anyway. */
@@ -23,12 +23,29 @@ export async function registerVoiceRoutes(app: FastifyInstance, ctx: RouteContex
     };
   });
 
+  // Any of the preferences; the rest stay as they are.
   app.put("/api/me/voice", async (req, reply) => {
-    const body = (req.body ?? {}) as { afterSpeaking?: unknown };
-    if (!(AFTER_SPEAKING as readonly unknown[]).includes(body.afterSpeaking)) {
+    const body = (req.body ?? {}) as { afterSpeaking?: unknown; ttsVoice?: unknown; handsFree?: unknown };
+    if (body.afterSpeaking !== undefined && !(AFTER_SPEAKING as readonly unknown[]).includes(body.afterSpeaking)) {
       return reply.code(400).send({ error: `afterSpeaking must be one of ${AFTER_SPEAKING.join(", ")}` });
     }
-    const user = await ctx.store.users.setVoicePrefs(req.identity!.email, { afterSpeaking: body.afterSpeaking as AfterSpeaking });
+    if (body.ttsVoice !== undefined && !isTtsVoice(body.ttsVoice)) {
+      return reply.code(400).send({ error: "ttsVoice must be a Deepgram Aura voice id, e.g. aura-2-hermes-en" });
+    }
+    if (body.handsFree !== undefined && typeof body.handsFree !== "boolean") {
+      return reply.code(400).send({ error: "handsFree must be true or false" });
+    }
+    if (body.afterSpeaking === undefined && body.ttsVoice === undefined && body.handsFree === undefined) {
+      return reply.code(400).send({ error: "nothing to change: afterSpeaking, ttsVoice or handsFree" });
+    }
+    const email = req.identity!.email;
+    const current = { ...DEFAULT_VOICE_PREFS, ...(await ctx.store.users.findByEmail(email))?.voice };
+    const next: VoicePrefs = {
+      afterSpeaking: (body.afterSpeaking as AfterSpeaking | undefined) ?? current.afterSpeaking,
+      ttsVoice: (body.ttsVoice as string | undefined) ?? current.ttsVoice,
+      handsFree: (body.handsFree as boolean | undefined) ?? current.handsFree,
+    };
+    const user = await ctx.store.users.setVoicePrefs(email, next);
     return { prefs: { ...DEFAULT_VOICE_PREFS, ...user.voice } };
   });
 
@@ -78,18 +95,27 @@ export async function registerVoiceRoutes(app: FastifyInstance, ctx: RouteContex
     }
   });
 
-  // Per-floppy engine toggle (owner decision on #251): Deepgram by default, or the browser's own.
-  // Open to anyone who can open the session, like sending it a message.
+  // Per-floppy voice settings: the engine (owner decision on #251: Deepgram by default, or the
+  // browser's own), which the mic and spoken replies both use, and whether replies are read aloud
+  // (#255, off by default). Open to anyone who can open the session, like sending it a message.
   app.put("/api/sessions/:id/voice", async (req, reply) => {
     const session = await getSessionOr404(ctx, req, reply);
     if (!session) return;
-    const body = (req.body ?? {}) as { engine?: unknown };
-    if (!(VOICE_ENGINES as readonly unknown[]).includes(body.engine)) {
+    const body = (req.body ?? {}) as { engine?: unknown; speak?: unknown };
+    if (body.engine !== undefined && !(VOICE_ENGINES as readonly unknown[]).includes(body.engine)) {
       return reply.code(400).send({ error: `engine must be one of ${VOICE_ENGINES.join(", ")}` });
     }
-    const updated = await ctx.store.sessions.update(session.id, { voiceEngine: body.engine as VoiceEngine });
+    if (body.speak !== undefined && typeof body.speak !== "boolean") {
+      return reply.code(400).send({ error: "speak must be true or false" });
+    }
+    if (body.engine === undefined && body.speak === undefined) return reply.code(400).send({ error: "nothing to change: engine or speak" });
+    const patch = {
+      ...(body.engine !== undefined ? { voiceEngine: body.engine as VoiceEngine } : {}),
+      ...(body.speak !== undefined ? { voiceSpeak: body.speak as boolean } : {}),
+    };
+    const updated = await ctx.store.sessions.update(session.id, patch);
     if (!updated) return reply.code(404).send({ error: "session not found" });
-    return { voiceEngine: updated.voiceEngine ?? "deepgram" };
+    return { voiceEngine: updated.voiceEngine ?? "deepgram", voiceSpeak: updated.voiceSpeak ?? false };
   });
 
   // #257: the caller's own Deepgram spend, today, this ISO week and this calendar month (UTC days,

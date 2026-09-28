@@ -1,6 +1,6 @@
 # Web voice: talk to a guru from the session page
 
-Status: phases 1–3 built and live since `outfitter-v2026.09.28.2`; phase 4 (spoken replies) planned.
+Status: phases 1–3 live since `outfitter-v2026.09.28.2`, the mic picker since `.3`; phase 4 (spoken replies and hands-free) built.
 Epic #256. Owner decisions of 2026-09-28 (#251) are folded in.
 
 - **Phase 1** (#252, PR #258): `POST /api/voice/token`, voice preferences, the per-floppy engine,
@@ -8,7 +8,8 @@ Epic #256. Owner decisions of 2026-09-28 (#251) are folded in.
 - **Phase 2** (#253, PR #260): the mic in the Composer.
 - **Spend** (#257, PR #261): each person's Deepgram spend, the sysop table, an optional cap.
 - **Phase 3** (#254, PR #262): the live suite uses the mic against real Deepgram after each deploy.
-- **Phase 4** (#255): spoken replies. Planned below, not started.
+- **Mic picker** (#267, PR #268): choose the microphone in the mic's menu.
+- **Phase 4** (#255): spoken replies and hands-free. Built; see "Phase 4" below.
 
 ## Problem
 
@@ -180,35 +181,46 @@ The routes are on the web role only; link registers none of them.
 - **Laptop use isn't attributed to anyone:** kernal's pi-listen tags nothing, so it shows only as
   "untagged".
 
-## Phase 4: spoken replies (#255, planned)
+## Phase 4: spoken replies and hands-free (#255)
 
-Mirrors voice input:
+Owner decisions (2026-09-28): the default voice is **Aura-2 Hermes** (`aura-2-hermes-en`), picked from
+samples of 11 candidates (Thalia and Orion were close), and **hands-free is wanted**.
 
-- **Engine:** Deepgram Aura by default, with a per-floppy toggle to the browser's built-in
-  `speechSynthesis`.
-- **Auth:** the same 30 s token from `POST /api/voice/token` (grant tokens also cover `/v1/speak`).
-  The Aura WebSocket (`wss://api.deepgram.com/v1/speak`) runs straight from the browser for low
-  latency, with REST `POST /v1/speak` as the fallback. Every request carries the person's tag, so TTS
-  characters count toward the spend above (`ttsCharacters`, already priced).
-- **What's spoken:** only the assistant's reply text, taken from the SSE stream, sentence by sentence
-  as it arrives. Code blocks, links and markdown are stripped (pi-listen's `tts-text-filter.ts` is the
-  model); tool output and thinking are skipped.
-- **Controls:**
-  - a speaker toggle per floppy, next to the existing sound toggle (off by default);
-  - Esc or the mic stops playback;
-  - playback mutes while the mic is live, and pressing the mic interrupts speech;
-  - voice and speed live in the voice menu.
-- **Autoplay:** browsers need a user gesture before audio plays. Turning the toggle on counts as one,
-  so the AudioContext is created and resumed there.
-- **Tests:**
-  - unit: the text filter, the sentence chunker, the mic interrupting speech;
-  - live: turn the speaker on and assert an Aura request is made and audio starts. The sound itself
-    isn't checked.
-
-Open for the owner:
-- the default Aura voice;
-- whether after speaking = Send plus the speaker toggle should make a hands-free mode: speak, it
-  sends, the reply is read, and the mic reopens.
+- **Speaker toggle** next to the mic, per floppy (`Session.voiceSpeak`), off by default. It reads
+  with the floppy's engine, like the mic: Deepgram Aura over `wss://api.deepgram.com/v1/speak` with
+  the same 30 s token (bearer subprotocol, the person's tag, so TTS characters count toward spend),
+  or the browser's `speechSynthesis`.
+- **What's read:** only replies that arrive while the speaker is on, never the history already on the
+  page. Only an assistant message's text blocks are read (no thinking or tool calls). Code blocks
+  become "(code omitted)", links keep their text, URLs, images, tables and markdown punctuation go,
+  and the result is split into sentences (`lib/speech-text.ts`).
+- **When:** in production only complete `entry` frames reach the web role; raw deltas stay on link.
+  So a reply is read once it's finished, not while it's being written. Deepgram gets every sentence
+  and a Flush, and the PCM is scheduled gaplessly, so the first sentence plays while the rest are
+  synthesized.
+- **The mic comes first:** nothing is read while it's live, and pressing it stops what's playing.
+  Esc stops a reply being read.
+- **Reply voice** (`User.voice.ttsVoice`): picked in the ▾ menu from the 41 Aura-2 English voices
+  (`lib/tts-voices.ts`, from Deepgram's `/v1/models`).
+- **Hands-free** (`User.voice.handsFree`, turning it on also turns the speaker on):
+  - once the agent's turn is over (it isn't sending, waking or working) and everything has been
+    read, the mic reopens, latched;
+  - after you've said something, 1.5 s without a new word ends the turn and sends it, whatever
+    "after speaking" says;
+  - a reopened mic that hears nothing for 8 s closes and pauses the loop rather than streaming and
+    billing silence; Esc pauses it too, and your next press picks it back up.
+  - Only new words count toward that pause: Deepgram keeps sending results through a silence, each
+    repeating the transcript so far, and before the fix those held the pause open forever. The real
+    check below caught it.
+- **Audio unlock:** browsers only allow audio after a click or key on the page. Turning the speaker
+  on is one; with the speaker already on when the page loads, the first click or key unlocks it.
+- **Checked** in real Chrome against real Deepgram, with a local API pushing replies over SSE:
+  - a reply is read (code as "(code omitted)", audio streamed and played);
+  - with hands-free on, the mic reopened after the next reply;
+  - the fake mic said "Please fix the login bug and add a test.", paused, and exactly that was sent.
+- **Not live-tested after deploy:** a spoken reply needs a reply to arrive while the speaker is on,
+  which would cost the live suite a second LLM turn per deploy. Unit tests cover it
+  (`voice-speak.test.tsx`, `voice-tts.test.ts`, `speech-text.test.ts`).
 
 ## The laptop side
 

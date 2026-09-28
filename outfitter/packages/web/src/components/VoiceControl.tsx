@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import type { Voice } from "../hooks/useVoice.ts";
+import type { Speaker } from "../hooks/useSpeaker.ts";
+import { TTS_VOICES } from "../lib/tts-voices.ts";
 import { isVoiceShortcut, VOICE_SHORTCUT_LABEL } from "../lib/voice-gesture.ts";
 import { isTouchDeviceHere } from "../lib/touch.ts";
 import { VoiceSpendView } from "./VoiceSpend.tsx";
@@ -8,13 +10,15 @@ import { VoiceSpendView } from "./VoiceSpend.tsx";
  * latches it on until the next press, press-and-hold talks until release. ⌥/Alt+Space does the same
  * from anywhere on the session page; Esc cancels and puts the draft back. The ▾ menu holds the
  * floppy's engine and the person's "after speaking" choice. */
-export function VoiceControl({ voice }: { voice: Voice }) {
+export function VoiceControl({ voice, speaker }: { voice: Voice; speaker?: Speaker }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLSpanElement>(null);
   const optionsRef = useRef<HTMLButtonElement>(null);
   const live = useRef(voice);
   live.current = voice;
+  const liveSpeaker = useRef(speaker);
+  liveSpeaker.current = speaker;
   // Only a press that began on the button or the shortcut may end it: a stray keyup of Space
   // while typing mustn't stop a latched recording.
   const pointerDown = useRef(false);
@@ -35,6 +39,14 @@ export function VoiceControl({ voice }: { voice: Voice }) {
       }
       // While the mic is live, Esc belongs to it (deliberately ahead of the page's other Esc
       // handlers): it cancels the recording and nothing else.
+      // Esc while a reply is being read: stop it (and step out of hands-free).
+      if (e.key === "Escape" && liveSpeaker.current?.speaking && live.current.status === "idle" && !live.current.latched) {
+        e.preventDefault();
+        e.stopPropagation();
+        liveSpeaker.current.stop();
+        if (live.current.handsFree) live.current.cancel();
+        return;
+      }
       if (e.key === "Escape" && (live.current.status !== "idle" || live.current.latched)) {
         e.preventDefault();
         e.stopPropagation();
@@ -94,7 +106,7 @@ export function VoiceControl({ voice }: { voice: Voice }) {
   function menuKeys(e: ReactKeyboardEvent<HTMLDivElement>) {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Home" && e.key !== "End") return;
     e.preventDefault();
-    const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>("[role='menuitemradio']:not(:disabled), [role='menuitem']:not(:disabled)") ?? []);
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>("[role='menuitemradio']:not(:disabled), [role='menuitem']:not(:disabled), [role='menuitemcheckbox']:not(:disabled)") ?? []);
     if (items.length === 0) return;
     const at = items.indexOf(document.activeElement as HTMLButtonElement);
     const next =
@@ -147,6 +159,18 @@ export function VoiceControl({ voice }: { voice: Voice }) {
       >
         <MicIcon />
       </button>
+      {speaker && (
+        <button
+          type="button"
+          className={`voice-speaker${speaker.on ? " is-on" : ""}${speaker.speaking ? " is-speaking" : ""}`}
+          aria-label="Read replies aloud"
+          aria-pressed={speaker.on}
+          title={speaker.on ? (speaker.speaking ? "Reading the reply (Esc stops)" : "Replies are read aloud") : "Read replies aloud"}
+          onClick={() => speaker.setOn(!speaker.on)}
+        >
+          <SpeakerIcon on={speaker.on} />
+        </button>
+      )}
       <button
         ref={optionsRef}
         type="button"
@@ -218,6 +242,28 @@ export function VoiceControl({ voice }: { voice: Voice }) {
               </button>
             )}
           </div>
+          {speaker && (
+            <div role="group" aria-labelledby="voice-menu-replies" className="voice-menu-group">
+              <div className="voice-menu-heading" id="voice-menu-replies">
+                Replies
+              </div>
+              <button type="button" role="menuitemcheckbox" aria-checked={speaker.on} onClick={() => speaker.setOn(!speaker.on)}>
+                Read replies aloud (this floppy)
+              </button>
+              <button
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={voice.handsFree}
+                onClick={() => {
+                  const next = !voice.handsFree;
+                  voice.setHandsFree(next);
+                  if (next && !speaker.on) speaker.setOn(true); // the loop needs the reply read
+                }}
+              >
+                Hands-free: talk, it sends, the reply is read, the mic reopens
+              </button>
+            </div>
+          )}
           <div role="group" aria-labelledby="voice-menu-after" className="voice-menu-group">
           <div className="voice-menu-heading" id="voice-menu-after">
             After speaking
@@ -230,6 +276,19 @@ export function VoiceControl({ voice }: { voice: Voice }) {
           </button>
           </div>
           </div>
+          {speaker && voice.deepgramAvailable && (
+            <label className="voice-menu-group voice-tts-voice">
+              <span className="voice-menu-heading">Reply voice</span>
+              <select value={voice.ttsVoice} onChange={(e) => voice.setTtsVoice(e.target.value)}>
+                {TTS_VOICES.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.name} ({v.accent}
+                    {v.gender ? `, ${v.gender}` : ""})
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           {voice.deepgramAvailable && (
             <section className="voice-menu-group" aria-labelledby="voice-menu-spend">
               <h4 className="voice-menu-heading" id="voice-menu-spend">
@@ -264,4 +323,17 @@ function editableOutsideComposer(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const editable = target.isContentEditable || target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement;
   return editable && !target.closest(".composer");
+}
+
+function SpeakerIcon({ on }: { on: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+      <path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor" />
+      {on ? (
+        <path d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      ) : (
+        <path d="M16 9l5 6M21 9l-5 6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      )}
+    </svg>
+  );
 }

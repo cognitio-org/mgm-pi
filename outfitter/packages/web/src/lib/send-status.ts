@@ -117,7 +117,7 @@ function userText(e: PiEntry): string | null {
  * or is still streaming ("pending"): in a tool-using turn that is the *first* assistant entry, and
  * the run keeps working for minutes after it -- counting it as the reply dropped the status line
  * (and the work timeout) right at the start of the long part of the turn. */
-function isFinalAssistant(e: PiEntry): boolean {
+export function isFinalAssistant(e: PiEntry): boolean {
   if (e.type !== "message") return false;
   const m = e.message as { role?: string; stopReason?: string } | undefined;
   return m?.role === "assistant" && m.stopReason !== "toolUse" && m.stopReason !== "pending";

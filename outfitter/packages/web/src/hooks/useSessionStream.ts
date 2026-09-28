@@ -3,6 +3,8 @@ import { api, type PiEntry, type StartupSummary } from "../api/client.ts";
 import type { RawUiRequest } from "../components/UiRequestPanel.tsx";
 
 export interface StreamState {
+  /** #255: the initial history fetch has finished (or failed). */
+  entriesLoaded: boolean;
   entries: PiEntry[];
   runState?: string;
   /** Bug 3 (docs/reports/cloud-fixes.md): the failed run's own reason, when runState is "failed" --
@@ -103,11 +105,15 @@ export function useSessionStream(sessionId: string): StreamState {
   const [agentSeenAt, setAgentSeenAt] = useState<number | undefined>(undefined);
   const [piActiveAt, setPiActiveAt] = useState<number | undefined>(undefined);
   const entryIds = useRef<Set<string>>(new Set());
+  // #255: the history has been fetched (or the fetch failed). Until then `entries` is only what
+  // SSE has sent, so nothing can tell history from new replies yet.
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     entryIds.current = new Set();
     setEntries([]);
+    setLoaded(false);
     setRunState(undefined);
     setRunStateReason(undefined);
     setStatusDetail(undefined);
@@ -117,11 +123,17 @@ export function useSessionStream(sessionId: string): StreamState {
     setAgentSeenAt(undefined);
     setPiActiveAt(undefined);
 
-    api.entries(sessionId).then((initial) => {
-      if (cancelled) return;
-      for (const e of initial) entryIds.current.add(e.id);
-      setEntries((prev) => mergeEntries(prev, initial));
-    });
+    api
+      .entries(sessionId)
+      .then((initial) => {
+        if (cancelled) return;
+        for (const e of initial) entryIds.current.add(e.id);
+        setEntries((prev) => mergeEntries(prev, initial));
+        setLoaded(true);
+      })
+      .catch(() => {
+        if (!cancelled) setLoaded(true);
+      });
 
     const source = new EventSource(api.streamUrl(sessionId));
 
@@ -181,5 +193,5 @@ export function useSessionStream(sessionId: string): StreamState {
     };
   }, [sessionId]);
 
-  return { entries, runState, runStateReason, statusDetail, pendingUiRequest, costEstimate, startup, agentSeenAt, piActiveAt };
+  return { entries, entriesLoaded: loaded, runState, runStateReason, statusDetail, pendingUiRequest, costEstimate, startup, agentSeenAt, piActiveAt };
 }

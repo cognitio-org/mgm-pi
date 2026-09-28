@@ -68,6 +68,7 @@ export function SessionPage() {
   const [transportOutcome, setTransportOutcome] = useState<TransportOutcome | null>(null);
   const {
     entries,
+    entriesLoaded,
     runState,
     runStateReason,
     statusDetail,
@@ -745,6 +746,10 @@ export function SessionPage() {
         key={sessionId}
         sessionId={sessionId}
         voiceEngine={session?.voiceEngine}
+        voiceSpeak={session?.voiceSpeak}
+        entries={entries}
+        entriesLoaded={entriesLoaded}
+        agentBusy={ticking}
         onSend={handleSend}
         disabled={activity.composerDisabled || archived}
         sending={activity.phase === "sending"}

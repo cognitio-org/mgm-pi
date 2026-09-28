@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { api, ApiError, type VoiceConfig } from "../api/client.ts";
+import { DEFAULT_TTS_VOICE } from "../lib/tts-voices.ts";
 import { composeDraft, IDLE, stepGesture, type GestureEvent, type GestureState } from "../lib/voice-gesture.ts";
 import { listMics, loadMicChoice, resolveMic, saveMicChoice, type Mic, type MicChoice } from "../lib/voice-mic.ts";
 import {
@@ -105,7 +106,22 @@ export interface Voice {
   press(): void;
   release(): void;
   cancel(): void;
+  /** #255: the Aura voice replies are read in, and hands-free (see HANDS_FREE_*). */
+  ttsVoice: string;
+  setTtsVoice(voice: string): void;
+  handsFree: boolean;
+  setHandsFree(on: boolean): void;
+  /** Hands-free is on but waiting: Esc, or the reopened mic heard nothing. The next press resumes. */
+  handsFreePaused: boolean;
+  /** Hands-free: reopen the mic (latched) for the next turn. No-op unless it's idle and not paused. */
+  openHandsFree(): void;
 }
+
+/** Hands-free: this long without a new word, after something was said, ends the turn and sends. */
+export const HANDS_FREE_SILENCE_MS = 1_500;
+/** Hands-free: a reopened mic that hears nothing for this long closes and pauses the loop, rather
+ * than streaming (and billing) silence. */
+export const HANDS_FREE_NO_SPEECH_MS = 8_000;
 
 const ERROR_NOTES: Record<VoiceError["kind"], string> = {
   permission: "Microphone access was refused. Allow it in the browser's site settings.",
@@ -130,6 +146,17 @@ export function useVoice(opts: UseVoiceOptions): Voice {
   const [note, setNote] = useState<string | null>(null);
   const [engine, setEngineState] = useState<VoiceEngineName>(opts.initialEngine ?? "deepgram");
   const [afterSpeaking, setAfterSpeakingState] = useState<AfterSpeaking>("send");
+  const [ttsVoice, setTtsVoiceState] = useState(DEFAULT_TTS_VOICE);
+  const [handsFree, setHandsFreeState] = useState(false);
+  const [handsFreePaused, setHandsFreePaused] = useState(false);
+  // Hands-free turn-taking: when words last arrived, whether any have, when this recording began,
+  // and whether hands-free opened it (only then does the no-speech timeout apply).
+  const heardAt = useRef(0);
+  const heard = useRef(false);
+  const startedAt = useRef(0);
+  const autoOpened = useRef(false);
+  const autoNext = useRef(false);
+  const lastHeard = useRef("");
   const [deepgramAvailable, setDeepgramAvailable] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [mics, setMics] = useState<Mic[]>([]);
@@ -154,8 +181,8 @@ export function useVoice(opts: UseVoiceOptions): Voice {
   // ignored, or its recording would replace this one and lose its transcript.
   const busy = useRef(false);
   // Latest values for callbacks that outlive a render.
-  const live = useRef({ opts, afterSpeaking, engine, deepgramAvailable, configLoaded, micId });
-  live.current = { opts, afterSpeaking, engine, deepgramAvailable, configLoaded, micId };
+  const live = useRef({ opts, afterSpeaking, engine, deepgramAvailable, configLoaded, micId, handsFree });
+  live.current = { opts, afterSpeaking, engine, deepgramAvailable, configLoaded, micId, handsFree };
 
   const refreshMics = useCallback(() => {
     listMics(devices)
@@ -192,6 +219,8 @@ export function useVoice(opts: UseVoiceOptions): Voice {
         if (gone) return;
         setDeepgramAvailable(cfg.deepgram);
         setAfterSpeakingState(cfg.prefs.afterSpeaking);
+        if (cfg.prefs.ttsVoice) setTtsVoiceState(cfg.prefs.ttsVoice);
+        setHandsFreeState(cfg.prefs.handsFree === true);
         setConfigLoaded(true);
       })
       .catch(() => {
@@ -234,7 +263,16 @@ export function useVoice(opts: UseVoiceOptions): Voice {
   }, [setLevel]);
 
   const callbacks: VoiceCallbacks = {
-    onTranscript: (text) => live.current.opts.setDraft(composeDraft(base.current, text)),
+    onTranscript: (text) => {
+      // Only new words count: Deepgram keeps sending results through a silence, each repeating
+      // the transcript so far, and those mustn't hold hands-free's pause open.
+      if (text.trim() && text !== lastHeard.current) {
+        heard.current = true;
+        heardAt.current = now();
+      }
+      lastHeard.current = text;
+      live.current.opts.setDraft(composeDraft(base.current, text));
+    },
     onLevel: setLevel,
     onDeviceFallback: () => setNote("Your chosen microphone isn't connected, so the default one is recording."),
     onError: (err) => {
@@ -262,7 +300,8 @@ export function useVoice(opts: UseVoiceOptions): Voice {
       setNote(ERROR_NOTES.network);
       return;
     }
-    if (after === "send" && result.transcript.trim() && !o.disabled) await o.send(draft);
+    // Hands-free always sends: that's the loop.
+    if ((after === "send" || live.current.handsFree) && result.transcript.trim() && !o.disabled) await o.send(draft);
   }, [reset]);
 
   /** Which engine to try first. The floppy's choice, unless it can't work here: Deepgram off (once
@@ -280,6 +319,11 @@ export function useVoice(opts: UseVoiceOptions): Voice {
     const o = live.current.opts;
     setNote(null);
     busy.current = true;
+    heard.current = false;
+    lastHeard.current = "";
+    startedAt.current = now();
+    autoOpened.current = autoNext.current;
+    autoNext.current = false;
     base.current = o.getDraft();
     setStatus("starting");
     const first = firstEngine();
@@ -345,6 +389,35 @@ export function useVoice(opts: UseVoiceOptions): Voice {
 
   const usable = !opts.disabled && (deepgramAvailable || engines.builtinAvailable);
 
+  /** Ends the recording as if it were released: its transcript goes the usual way. */
+  const stopNow = useCallback(() => {
+    gesture.current = IDLE;
+    setLatched(false);
+    if (recording.current) void finish();
+    else stopWhenStarted.current = true;
+  }, [finish]);
+
+  // Hands-free turn-taking while recording: a pause after speaking sends; a reopened mic that hears
+  // nothing closes and pauses the loop.
+  useEffect(() => {
+    if (status !== "recording" || !handsFree) return;
+    const timer = setInterval(() => {
+      const t = now();
+      // Only a latched recording (hands-free's own, or a tap): a hold ends when you let go, and
+      // pausing mid-hold to think mustn't send it.
+      if (heard.current && gesture.current.kind === "latched" && t - heardAt.current >= HANDS_FREE_SILENCE_MS) {
+        clearInterval(timer);
+        stopNow();
+      } else if (!heard.current && autoOpened.current && t - startedAt.current >= HANDS_FREE_NO_SPEECH_MS) {
+        clearInterval(timer);
+        abort();
+        setHandsFreePaused(true);
+        setNote("Hands-free paused: nothing heard. Press the mic to go on.");
+      }
+    }, 250);
+    return () => clearInterval(timer);
+  }, [status, handsFree, stopNow, abort]);
+
   return {
     status,
     latched,
@@ -392,14 +465,43 @@ export function useVoice(opts: UseVoiceOptions): Voice {
         );
     },
     usable,
+    ttsVoice,
+    setTtsVoice(next) {
+      const prev = ttsVoice;
+      setTtsVoiceState(next);
+      api.setVoicePrefs({ ttsVoice: next }).catch(() => {
+        setTtsVoiceState(prev);
+        setNote("Couldn't save the reply voice.");
+      });
+    },
+    handsFree,
+    setHandsFree(on) {
+      const prev = handsFree;
+      setHandsFreeState(on);
+      setHandsFreePaused(false);
+      api.setVoicePrefs({ handsFree: on }).catch(() => {
+        setHandsFreeState(prev);
+        setNote("Couldn't save hands-free.");
+      });
+    },
+    handsFreePaused,
+    openHandsFree() {
+      if (!live.current.handsFree || handsFreePaused || !usable || busy.current || gesture.current.kind !== "idle") return;
+      autoNext.current = true;
+      gesture.current = { kind: "latched" };
+      setLatched(true);
+      void begin();
+    },
     press() {
       if (gesture.current.kind === "idle" && (!usable || busy.current)) return;
+      setHandsFreePaused(false); // a press of your own picks the loop back up
       dispatch({ type: "press", at: now() });
     },
     release() {
       dispatch({ type: "release", at: now() });
     },
     cancel() {
+      if (live.current.handsFree) setHandsFreePaused(true); // Esc steps out of the loop
       // Finishing: the gesture is already over (or only its stopping press is down), so it has
       // nothing to cancel; the recording still does.
       if (busy.current && (gesture.current.kind === "idle" || gesture.current.kind === "stopping")) abort();

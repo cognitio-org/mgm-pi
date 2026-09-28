@@ -447,12 +447,21 @@ wake -> ready summary. Runs created before `Run.startup` existed get no stamps a
     (#257). 404 `voice_disabled` without a key (the web then offers only the built-in engine), 429
     `voice_rate_limited` with `retry-after` past `VOICE_TOKENS_PER_MINUTE` (default 20, per person,
     per instance), 502 `voice_upstream` when Deepgram refuses or can't be reached.
-  - `GET /api/me/voice` → `{deepgram, model, language, prefs: {afterSpeaking}}`; `PUT /api/me/voice`
-    `{afterSpeaking: "send"|"review"}` → `{prefs}`. `send` (the default) sends the transcript when
-    recording stops; `review` leaves it in the composer.
-  - `PUT /api/sessions/:id/voice` `{engine: "deepgram"|"builtin"}` → `{voiceEngine}`: the floppy's
-    engine, also on `GET /api/sessions/:id` as `voiceEngine` (absent = `deepgram`). Anyone who can
-    open the session, like sending it a message.
+  - `GET /api/me/voice` → `{deepgram, model, language, prefs: {afterSpeaking, ttsVoice, handsFree}}`;
+    `PUT /api/me/voice` with any of `{afterSpeaking: "send"|"review", ttsVoice, handsFree}` → `{prefs}`
+    (the rest stay as they are; 400 for an invalid value or nothing to change). `send` (the default)
+    sends the transcript when recording stops; `review` leaves it in the composer. `ttsVoice` (#255) is
+    a Deepgram Aura id (`aura-2-<name>-<lang>`), default `aura-2-hermes-en`. `handsFree` (default
+    false): after a reply has been read the mic reopens, and a pause after speaking sends.
+  - `PUT /api/sessions/:id/voice` with `{engine: "deepgram"|"builtin"}` and/or `{speak: boolean}` →
+    `{voiceEngine, voiceSpeak}`: the floppy's engine (the mic and spoken replies both use it) and
+    whether its replies are read aloud (#255), also on `GET /api/sessions/:id` (absent = `deepgram`,
+    off). Anyone who can open the session, like sending it a message.
+  - Spoken replies (#255) use the same token: the browser opens
+    `wss://api.deepgram.com/v1/speak?model=<ttsVoice>&encoding=linear16&sample_rate=24000&tag=<tag>`
+    with `Sec-WebSocket-Protocol: bearer, <token>`, sends `Speak` per sentence then `Flush`, and plays
+    the PCM. Only complete `entry` frames reach the web role (no deltas), so a reply is read once it's
+    finished.
   - `GET /api/me/voice/spend` (#257) → `{available: false}` without the key and `DEEPGRAM_PROJECT_ID`,
     else `{available: true, currency: "USD", today, week, month, asOf, rates, capUsd?}`, each period
     `{minutes, ttsCharacters, usd}`: the caller's Deepgram use, read from Deepgram's usage API by their

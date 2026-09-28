@@ -21,6 +21,8 @@ export interface Session {
   /** #252: which speech engine the web app's mic uses on this floppy (PUT /api/sessions/:id/voice).
    * Absent means "deepgram", the default (owner decision on #251). */
   voiceEngine?: VoiceEngine;
+  /** #255: whether replies on this floppy are read aloud (PUT /api/sessions/:id/voice). Absent: off. */
+  voiceSpeak?: boolean;
   guruId: string;
   /** null = non-coding session (protocol.md: `repo` omitted on POST /api/sessions). */
   repo: string | null;

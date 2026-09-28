@@ -45,12 +45,12 @@ export function streamLogPath(env: Record<string, string | undefined>, tmpdir: s
 
 /**
  * A project "voice" block overrides the global one key by key (upstream replaced it wholesale). The
- * result is the project's: its `scope` is the project's own or "project", never the global block's,
+ * result is the project's: its `scope` is always "project", never the global block's,
  * or saving a change would write the project's settings into the global file.
  */
 export function mergeVoiceBlocks(globalVoice: unknown, projectVoice: Record<string, unknown>): Record<string, unknown> {
 	const base = globalVoice && typeof globalVoice === "object" ? (globalVoice as Record<string, unknown>) : {};
-	return { ...base, ...projectVoice, scope: projectVoice.scope ?? "project" };
+	return { ...base, ...projectVoice, scope: "project" };
 }
 
 /**

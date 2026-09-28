@@ -89,6 +89,21 @@ describe("project voice settings merge over the global ones", () => {
     assert.equal(loaded.config.localModel, "parakeet-v3");
     assert.equal(loaded.config.scope, "project");
   });
+  test("an older global block without defaults doesn't push those defaults into a project save", () => {
+    const home = mkdtempSync(join(tmpdir(), "pl-agent-"));
+    const project = mkdtempSync(join(tmpdir(), "pl-project-"));
+    writeFileSync(join(home, "settings.json"), JSON.stringify({ voice: { backend: "local", localModel: "parakeet-v3" } }));
+    mkdirSync(join(project, ".pi"));
+    writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify({ voice: { language: "de", scope: "global" } }));
+    const loaded = loadConfigWithSource(project, { agentDir: home });
+    assert.equal(loaded.config.scope, "project", "even a project block that says global is the project's");
+    saveConfig(loaded.config, loaded.config.scope, project, { agentDir: home });
+    const pj = JSON.parse(readFileSync(join(project, ".pi", "settings.json"), "utf8")).voice;
+    assert.equal(pj.language, "de");
+    assert.equal(pj.enabled, undefined, "a default the global block lacked isn't frozen into the project");
+    assert.equal(pj.ttsEnabled, undefined);
+  });
+
   test("saving a change in a project writes only the project file, and only the project's keys", () => {
     const home = mkdtempSync(join(tmpdir(), "pl-agent-"));
     const project = mkdtempSync(join(tmpdir(), "pl-project-"));

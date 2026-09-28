@@ -360,6 +360,14 @@ function serializeConfig(config: VoiceConfig, scope: VoiceSettingsScope): VoiceC
 	};
 }
 
+/** kernal: the global block as a save would write it (defaults filled), for projectOnlyKeys: a
+ * field the raw global block lacks mustn't count as a project difference. */
+function globalAsSaved(options: ConfigPathOptions): Record<string, unknown> | undefined {
+	const raw = readJsonFile(getGlobalSettingsPath(options))[SETTINGS_KEY];
+	if (!raw || typeof raw !== "object") return undefined;
+	return serializeConfig(migrateConfig(raw, "global"), "global") as unknown as Record<string, unknown>;
+}
+
 export function saveConfig(
 	config: VoiceConfig,
 	scope: VoiceSettingsScope,
@@ -371,7 +379,7 @@ export function saveConfig(
 	const serialized = serializeConfig(config, scope);
 	// kernal: a project save keeps only what differs from the global settings (see projectOnlyKeys).
 	settings[SETTINGS_KEY] = scope === "project"
-		? projectOnlyKeys(serialized as unknown as Record<string, unknown>, readJsonFile(getGlobalSettingsPath(options))[SETTINGS_KEY])
+		? projectOnlyKeys(serialized as unknown as Record<string, unknown>, globalAsSaved(options))
 		: serialized;
 	fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
 	// Atomic write: temp file + rename prevents corruption from partial writes

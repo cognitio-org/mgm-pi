@@ -352,6 +352,16 @@ describe("hands-free", () => {
     expect(recs).toHaveLength(1);
   });
 
+  it("a mid-turn message that calls tools doesn't hand the turn back", async () => {
+    prefs.handsFree = true;
+    await mount({ voiceSpeak: true });
+    const midTurn: PiEntry = { id: "m1", type: "message", message: { role: "assistant", content: [{ type: "text", text: "Let me check." }, { type: "toolCall", name: "bash" }] } };
+    await render({ entries: [midTurn] });
+    await act(async () => spoken[0].end());
+    await flush();
+    expect(recs).toHaveLength(0); // read, but not the end of the turn
+  });
+
   it("with the speaker off on this floppy, hands-free still reopens the mic after the agent's turn", async () => {
     prefs.handsFree = true;
     await mount({ voiceSpeak: false });

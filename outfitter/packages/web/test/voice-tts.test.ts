@@ -124,6 +124,7 @@ describe("speakDeepgram", () => {
     const t0 = Date.now();
     await expect(b.done).resolves.toBe("done");
     expect(Date.now() - t0).toBeLessThan(1500);
+    expect(suspended.sources.every((src) => src.stopped)).toBe(true); // nothing left to burst out later
   });
 
   it("an odd byte split across frames is carried over", async () => {

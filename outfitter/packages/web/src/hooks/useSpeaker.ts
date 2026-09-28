@@ -143,20 +143,24 @@ export function useSpeaker(opts: UseSpeakerOptions): Speaker {
     for (const entry of opts.entries) {
       if (seen.current.has(entry.id)) continue;
       seen.current.add(entry.id);
-      const text = replyText(entry);
-      if (!text && !isAssistant(entry)) continue;
-      replyThisTurn.current = true;
+      if (!isAssistant(entry)) continue;
+      // Only the turn's final reply hands the turn back; one that also calls tools is mid-turn.
+      if (!callsTools(entry)) replyThisTurn.current = true;
       if (!on) continue;
+      const text = replyText(entry);
       const sentences = splitSentences(prepareForSpeech(text));
       if (sentences.length > 0) queue.current.push(sentences);
     }
     playNext();
   }, [opts.entries, opts.entriesLoaded, on, playNext]);
 
-  // The mic comes first: going live stops speech. When it's done, anything still queued plays.
+  // The mic comes first: going live stops speech, and it's the person's turn now, so replies from
+  // before don't hand the turn back again when they finish. When it's done, anything queued plays.
   useEffect(() => {
-    if (opts.micBusy) stop();
-    else playNext();
+    if (opts.micBusy) {
+      replyThisTurn.current = false;
+      stop();
+    } else playNext();
   }, [opts.micBusy, stop, playNext]);
 
   // The agent finishing its turn may be the last thing hands-free was waiting for.
@@ -210,4 +214,9 @@ export function useSpeaker(opts: UseSpeakerOptions): Speaker {
 
 function isAssistant(entry: PiEntry): boolean {
   return entry.type === "message" && (entry.message as { role?: unknown } | undefined)?.role === "assistant";
+}
+
+function callsTools(entry: PiEntry): boolean {
+  const content = (entry.message as { content?: unknown } | undefined)?.content;
+  return Array.isArray(content) && content.some((b) => typeof b === "object" && b !== null && (b as { type?: unknown }).type === "toolCall");
 }

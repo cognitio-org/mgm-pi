@@ -94,8 +94,22 @@ export function speakDeepgram(sentences: string[], voice: string, deps: Deepgram
     const remaining = Math.max(0, nextAt - deps.audio.currentTime);
     if (remaining === 0 || sources.length === 0) return settle(stopped ? "stopped" : "done");
     const wait = remaining * 1000 + 50;
-    // A suspended context doesn't advance; don't wait on it for ever.
-    setTimeout(() => settle(stopped ? "stopped" : "done"), deps.audio.state === "suspended" ? Math.min(wait, 1000) : wait);
+    if (deps.audio.state === "suspended") {
+      // A suspended context doesn't advance, so don't wait on it for ever, and don't leave its audio
+      // scheduled: it would burst out on the next click, over the next reply or an open mic.
+      setTimeout(() => {
+        for (const s of sources) {
+          try {
+            s.stop();
+          } catch {
+            // already ended
+          }
+        }
+        settle(stopped ? "stopped" : "done");
+      }, Math.min(wait, 1000));
+      return;
+    }
+    setTimeout(() => settle(stopped ? "stopped" : "done"), wait);
   }
 
   (async () => {

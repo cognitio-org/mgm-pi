@@ -1247,6 +1247,52 @@ export class AgentLink {
     };
   }
 
+  /**
+   * `ide.status` from agentd (#242). The run's `ide.reqId` is what the web role wrote when a person
+   * clicked "Open in VS Code"; a frame for any other request (stale, or made up by the sandbox) is
+   * ignored, so the sandbox can't make anything count as the IDE. The kind of endpoint comes from
+   * that stored request, never from the frame. "stopped" carries no reqId: code-server or its tunnel
+   * died, so the endpoint goes and the next click starts it again.
+   */
+  private async handleIdeStatus(runId: string, frame: UpFrame): Promise<void> {
+    const state = typeof frame.state === "string" ? frame.state : "";
+    const run = await this.store.runs.findById(runId);
+    if (!run?.ide || run.browserIde !== true) return;
+    const now = () => new Date().toISOString();
+    const detail = typeof frame.detail === "string" ? frame.detail.slice(0, 300) : undefined;
+    const PENDING = new Set(["requested", "installing", "starting"]);
+    if (state === "stopped") {
+      await this.previews?.closeIde(runId, "code-server stopped");
+      if (PENDING.has(run.ide.state) || run.ide.state === "ready") {
+        await this.store.runs.update(runId, { ide: { reqId: run.ide.reqId, state: "stopped", ...(detail ? { detail } : {}), updatedAt: now() } });
+      }
+      return;
+    }
+    // Only the pending request's own frames move it on; a closed, stopped or failed one stays so.
+    if (typeof frame.reqId !== "string" || frame.reqId !== run.ide.reqId || !PENDING.has(run.ide.state)) return;
+    const reqId = run.ide.reqId;
+    if (state === "installing" || state === "starting" || state === "error") {
+      await this.store.runs.update(runId, { ide: { reqId, state, ...(detail ? { detail } : {}), updatedAt: now() } });
+      return;
+    }
+    if (state !== "ready" || typeof frame.internalUrl !== "string") return;
+    const result = this.previews ? await this.previews.openIde(runId, frame.internalUrl) : { error: "not-configured" };
+    // Settle against the run as it is now: a person may have closed it, or clicked again, meanwhile.
+    const latest = (await this.store.runs.findById(runId))?.ide;
+    if (!latest || latest.reqId !== reqId || !PENDING.has(latest.state)) {
+      // Superseded by a newer click: that request will use the same (one-per-run) endpoint. Closed,
+      // stopped or failed instead: nobody wants the endpoint just made, so it goes.
+      const wanted = latest && PENDING.has(latest.state);
+      if (!wanted && !("error" in result)) await this.previews?.closeIde(runId, "closed while it was being made");
+      return;
+    }
+    await this.store.runs.update(runId, {
+      ide: "error" in result
+        ? { reqId, state: "error", detail: `couldn't make the IDE's address: ${result.error}`, updatedAt: now() }
+        : { reqId, state: "ready", url: result.url, updatedAt: now() },
+    });
+  }
+
   /** A superseded connection closes after `buildRunSpec` has armed the replacement's timer.
    * Only the socket still in `sockets` may clear that timer. */
   private onAgentSocketClosed(runId: string, socket: WebSocket): void {
@@ -1613,6 +1659,14 @@ export class AgentLink {
       }
       case "browser.inspect.request": {
         await this.handleBrowserInspectRequest(sessionId, frame);
+        break;
+      }
+      // Browser IDE (#242, docs/specs/browser-ide.md §4). Off the chain's critical path like
+      // preview.open: an ngrok API call mustn't hold up heartbeats.
+      case "ide.status": {
+        void this.handleIdeStatus(runId, frame).catch((err) => {
+          console.warn(`[agentlink] ide.status failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
         break;
       }
       case "bye": {

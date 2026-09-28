@@ -1702,3 +1702,55 @@ test("RunController: #241 no run.spec.ide, no install", async (t) => {
   await waitFor(() => states.includes("idle"));
   assert.deepEqual(ide.made, []);
 });
+
+// ---- Browser IDE (#242): ide.open ----
+
+test("RunController: #242 ide.open on a Drive without the IDE answers error", async (t) => {
+  const { controller, link, states, spec } = await setupController();
+  t.after(() => controller.dispose());
+  link.deliver(spec);
+  await waitFor(() => states.includes("idle"));
+  link.deliver({ t: "ide.open", reqId: "q1" });
+  await waitFor(() => link.sent.some((m) => m.t === "ide.status"));
+  assert.deepEqual(link.sent.find((m) => m.t === "ide.status"), { t: "ide.status", reqId: "q1", state: "error", detail: "this Drive has no IDE" });
+});
+
+test("RunController: #242 ide.open with the IDE and previews starts it and answers ready; the stop takes it down", async (t) => {
+  const { spawn: spawnChild } = await import("node:child_process");
+  const { fileURLToPath } = await import("node:url");
+  const fakeCs = join(dirname(fileURLToPath(import.meta.url)), "fake-code-server.js");
+  const tunnels: { url: string; stopped: boolean }[] = [];
+  const home = await mkdtemp(join(tmpdir(), "outfitter-run-ide-home-"));
+  const { controller, link, states, spec } = await setupController(
+    {
+      ide: { version: "4.139.1", artifacts: { amd64: "a".repeat(64), arm64: "b".repeat(64) } },
+      preview: { internalDomain: "rtest.internal" },
+      secrets: { ngrokAuthtoken: "tok" },
+    },
+    {
+      ideInstaller: () => ({ state: "ready", start: async () => ({ ok: true, seconds: 0 }), abort: () => {} }),
+      ideSpawnCodeServer: (_bin, args, opts) =>
+        spawnChild(process.execPath, [fakeCs, ...args], { env: opts.env, cwd: opts.cwd, detached: true, stdio: ["ignore", "pipe", "pipe"] }),
+      ideStartTunnel: async (o) => {
+        const tn = { url: o.url, stopped: false };
+        tunnels.push(tn);
+        return { url: o.url, stop: async () => { tn.stopped = true; } };
+      },
+      ideConfigDir: join(home, "cfg"),
+      ideHome: home,
+    },
+  );
+  t.after(() => controller.dispose());
+  link.deliver(spec);
+  await waitFor(() => states.includes("idle"));
+  link.deliver({ t: "ide.open", reqId: "q1" });
+  await waitFor(() => link.sent.some((m) => m.t === "ide.status" && ((m as any).state === "ready" || (m as any).state === "error")));
+  const last = link.sent.filter((m) => m.t === "ide.status").at(-1) as any;
+  assert.equal(last.state, "ready", last.detail);
+  assert.equal(last.internalUrl, "https://ide.rtest.internal");
+  assert.equal(tunnels[0]?.url, "https://ide.rtest.internal");
+
+  link.deliver({ t: "stop", reason: "user requested" });
+  await waitFor(() => link.sent.some((m) => m.t === "bye"));
+  assert.equal(tunnels[0]?.stopped, true, "the IDE goes with the run");
+});

@@ -159,7 +159,9 @@ install without an HTTP timeout.
    - `--user-data-dir` and `--extensions-dir` under the `agent` home;
    - `/workspace` as the folder to open;
    - default machine settings (`<user-data-dir>/Machine/settings.json`) that turn off VS Code's AI
-     Chat panel, which is open by default in 1.139 and wired to nothing here, and telemetry.
+     Chat panel, which is open by default in 1.139 and wired to nothing here, and telemetry. Written
+     **as `agent`**, never as root: the path is in the agent's home, where a planted symlink would
+     otherwise turn root's write into an overwrite of any file (security review of #271).
 3. Starts its own `LocalPreviewProxy`, **in a mode that leaves `Origin` alone** (spike S3: the
    dev-server rewrite of `Origin` to localhost, `preview-proxy.ts:55-59`, makes code-server refuse
    every WebSocket with 403; kept, `Origin` is checked against `X-Forwarded-Host` and the check
@@ -193,7 +195,9 @@ tunnel and proxy.
   don't count toward `MAX_OPEN_PREVIEWS_PER_RUN` (`previews.ts:29`), and at most one exists per run.
 - **Allowlist:** the floppy's owner (`Session.ownerEmail`) and the deployment's sysops
   (`config.operators`, `config.ts:148`), the same people `canManageSession` lets manage it, **not**
-  every `PREVIEW_ALLOW` member. A dev-server preview is a web page; an IDE is a shell.
+  every `PREVIEW_ALLOW` member. A dev-server preview is a web page; an IDE is a shell. Exact emails
+  only: a `domain:` entry on the operators list makes nobody a sysop in the app, so it lets nobody in
+  here either.
   - `ownerEmail` is optional (`store/types.ts:19`): with no owner, `POST /ide` answers 409 and the
     button says why.
   - The policy is fixed when the endpoint is made. A change of owner or sysops applies at the next
@@ -210,7 +214,13 @@ The preview proxy counts only page navigations as activity (`preview-proxy.ts:9-
 a single-page app on a WebSocket: after the first load, editing makes no page requests, so a person
 typing in the IDE would look idle and the Drive would stop under them.
 
-- The IDE's proxy counts **client-to-server WebSocket traffic** as activity: a minute counts when
+- **Only root's connections reach the IDE's proxy** (a `/proc/net/tcp` peer check, as the preview
+  listener does): the ngrok agent runs as root, the model's shell as `agent`. So everything that
+  reaches code-server through the proxy, and everything that counts as activity, came through
+  ngrok's sign-in. (The model can still reach code-server's own port directly; that's the accepted
+  relay case in "Security notes", and it counts for nothing here.)
+- The IDE's proxy counts **client-to-server WebSocket traffic** as activity, once code-server has
+  accepted the upgrade (101), masked client data frames only: a minute counts when
   the client sent at least **60 frames or 2 KB** in it. Spike S4 under gVisor: an idle tab, focused
   or in the background, sends 31 to 39 frames and under 740 bytes a minute; scrolling 111 frames, a
   terminal 219, typing 845 (the laptop run agreed). Measured there, not
@@ -294,7 +304,7 @@ the same access the terminal does, and no more.
    `run.spec.ide` (only with previews on), the streamed, verified, Copilot-excluding install at Drive
    start (with a test that the excludes match and the hash still covers the whole body), and the
    scheduled "newer code-server" check.
-2. **Start and open (agentd, api):** `ide.open`/`ide.status`, `IdeManager` (code-server as `agent`
+2. **Start and open (agentd, api)** (#242): `ide.open`/`ide.status`, `IdeManager` (code-server as `agent`
    in its own process group, root-owned config, listed environment, own proxy and tunnel, reserved
    port), agentlink's request matching, `Preview.kind`, owner-and-sysop allowlist, share refusal,
    `POST`/`GET /api/sessions/:id/ide`, uncapped WebSocket activity (`markIdeActivity`). Tests: share refused for the IDE;

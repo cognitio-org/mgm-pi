@@ -1,6 +1,6 @@
 {
 	"name": "@kernal/pi-listen",
-	"version": "7.2.2-kernal.2",
+	"version": "7.2.2-kernal.3",
 	"description": "Kernal's vendored fork of @codexstar/pi-listen 7.2.2 (MIT, unmaintained upstream since 2026-05-01). See VENDORED.md.",
 	"type": "module",
 	"keywords": [

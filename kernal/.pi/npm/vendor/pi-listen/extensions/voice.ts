@@ -84,7 +84,7 @@ import { makeRenderTicker, type RenderTicker } from "./voice/ui-render-ticker";
 import { TtsInstallProgressWidget } from "./voice/tts-install-progress";
 import { TtsPlaybackIndicator } from "./voice/tts-playback-indicator";
 import { buildDeepgramWsUrl, resolveDeepgramApiKey, SAMPLE_RATE, CHANNELS } from "./voice/deepgram";
-import { autoSpeakAllowed, rearmReleaseOnRepeat, streamLogPath } from "./voice/kernal";
+import { armAfterRecordingStart, autoSpeakAllowed, rearmReleaseOnRepeat, streamLogPath } from "./voice/kernal";
 import {
 	startLocalSession, stopLocalSession, abortLocalSession,
 	checkLocalServer, LOCAL_MODELS, DEFAULT_LOCAL_ENDPOINT,
@@ -1710,7 +1710,7 @@ export default function (pi: ExtensionAPI) {
 						// repeat events but no release events has no other way to say "let go", so
 						// without this the recording never stopped. Terminals that do send releases
 						// stop on the release event first; ones that don't stop on the gap.
-						if (rearmReleaseOnRepeat({ voiceState, spaceConsumed, kittyReleaseDetected })) resetReleaseDetect();
+						if (rearmReleaseOnRepeat({ voiceState, kittyReleaseDetected })) resetReleaseDetect();
 						return { consume: true };
 					}
 					// Already in warmup — consume (hold timer is running)
@@ -1753,6 +1753,8 @@ export default function (pi: ExtensionAPI) {
 									clearReleaseTimer();
 									voiceDebug("holdActivationTimer fired → starting recording (Kitty repeat path)");
 									startVoiceRecording().then((ok) => {
+										// kernal: arm the release timer once a hold's recording has started (see armAfterRecordingStart)
+										if (armAfterRecordingStart({ ok, voiceState, isHold: spaceDownTime !== null, kittyReleaseDetected })) resetReleaseDetect();
 										if (!ok) {
 											resetHoldState();
 											setVoiceState("idle");
@@ -1864,6 +1866,8 @@ export default function (pi: ExtensionAPI) {
 								recordingStartedAt = Date.now();
 								voiceDebug("holdActivationTimer fired → starting recording (Kitty path)");
 								startVoiceRecording().then((ok) => {
+										// kernal: arm the release timer once a hold's recording has started (see armAfterRecordingStart)
+										if (armAfterRecordingStart({ ok, voiceState, isHold: spaceDownTime !== null, kittyReleaseDetected })) resetReleaseDetect();
 									if (!ok) {
 										resetHoldState();
 										setVoiceState("idle");
@@ -1923,6 +1927,8 @@ export default function (pi: ExtensionAPI) {
 									clearReleaseTimer();
 									voiceDebug("holdActivationTimer fired → starting recording (non-Kitty)");
 									startVoiceRecording().then((ok) => {
+										// kernal: arm the release timer once a hold's recording has started (see armAfterRecordingStart)
+										if (armAfterRecordingStart({ ok, voiceState, isHold: spaceDownTime !== null, kittyReleaseDetected })) resetReleaseDetect();
 										if (!ok) {
 											resetHoldState();
 											setVoiceState("idle");

@@ -49,6 +49,9 @@ cp "$STAGE/.pi/settings.json" "$STAGE/.pi/settings.shipped.json"
 cp "$ROOT/.pi/npm/package.json" "$ROOT/.pi/npm/package-lock.json" "$STAGE/.pi/npm/"
 # kernal's vendored fork of pi-listen (#250), loaded from ./npm/vendor/pi-listen in settings.json.
 cp -R "$ROOT/.pi/npm/vendor" "$STAGE/.pi/npm/vendor"
+find "$STAGE/.pi/npm/vendor" \( -name node_modules -o -name .DS_Store -o -name .omc \) -prune -exec rm -rf {} +
+# pi skips a missing local package silently, so a bundle without voice would pass the smoke test.
+test -f "$STAGE/.pi/npm/vendor/pi-listen/extensions/voice.ts" || { echo "vendored pi-listen missing from the bundle" >&2; exit 1; }
 cp "$ROOT"/bin/* "$STAGE/bin/"; chmod +x "$STAGE"/bin/*
 cp "$ROOT/README.md" "$STAGE/"; cp -R "$ROOT/docs" "$STAGE/docs"
 cp "$ROOT/../.env.example" "$STAGE/.env.example" 2>/dev/null || cp "$ROOT/.env.example" "$STAGE/.env.example"

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { mergeVoiceBlocks } from "./kernal";
+import { mergeVoiceBlocks, projectOnlyKeys } from "./kernal";
 
 function getAgentDir(): string {
 	return path.join(os.homedir(), ".pi", "agent");
@@ -368,7 +368,11 @@ export function saveConfig(
 ): string {
 	const settingsPath = scope === "project" ? getProjectSettingsPath(cwd) : getGlobalSettingsPath(options);
 	const settings = readJsonFile(settingsPath);
-	settings[SETTINGS_KEY] = serializeConfig(config, scope);
+	const serialized = serializeConfig(config, scope);
+	// kernal: a project save keeps only what differs from the global settings (see projectOnlyKeys).
+	settings[SETTINGS_KEY] = scope === "project"
+		? projectOnlyKeys(serialized as unknown as Record<string, unknown>, readJsonFile(getGlobalSettingsPath(options))[SETTINGS_KEY])
+		: serialized;
 	fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
 	// Atomic write: temp file + rename prevents corruption from partial writes
 	const tmpPath = `${settingsPath}.${process.pid}.tmp`;

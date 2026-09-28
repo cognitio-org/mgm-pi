@@ -5,6 +5,8 @@ import { withFloppySound } from "../lib/floppy-sound.ts";
 import { isTouchDeviceHere } from "../lib/touch.ts";
 import { loadEnterMode, saveEnterMode, type EnterMode } from "../lib/composer-keys.ts";
 import { useVoice, type VoiceEngines } from "../hooks/useVoice.ts";
+import { useSpeaker, type SpeechStarter } from "../hooks/useSpeaker.ts";
+import type { PiEntry } from "../api/client.ts";
 import { VoiceControl } from "./VoiceControl.tsx";
 
 interface Props {
@@ -26,9 +28,17 @@ interface Props {
   voiceEngine?: "deepgram" | "builtin";
   /** Tests inject fake engines; production uses the browser's. */
   voiceEngines?: VoiceEngines;
+  /** #255 spoken replies: the transcript (new assistant replies get read aloud), the floppy's saved
+   * speaker setting, and whether the agent is still on its turn. */
+  entries?: PiEntry[];
+  voiceSpeak?: boolean;
+  agentBusy?: boolean;
+  speech?: SpeechStarter;
 }
 
 type Behavior = "" | "steer" | "followUp";
+
+const NO_ENTRIES: PiEntry[] = [];
 
 const MODES: Array<{ value: Behavior; label: string; short: string }> = [
   // Short label "Prompt", not "Send": on phones the segmented control sits beside the Send button,
@@ -43,7 +53,20 @@ const MODES: Array<{ value: Behavior; label: string; short: string }> = [
  * `prompt.behavior`). The mode picker is a `<select>` on desktop and a compact segmented control
  * on phones (styles/mobile.css toggles which one is visible) -- both drive the same `behavior`
  * state, so nothing about the send logic differs between them. */
-export function Composer({ onSend, disabled, sending, placeholderOverride, status, sessionId, voiceEngine, voiceEngines }: Props) {
+export function Composer({
+  onSend,
+  disabled,
+  sending,
+  placeholderOverride,
+  status,
+  sessionId,
+  voiceEngine,
+  voiceEngines,
+  entries = NO_ENTRIES,
+  voiceSpeak,
+  agentBusy = false,
+  speech,
+}: Props) {
   const [text, setText] = useState("");
   const [behavior, setBehavior] = useState<Behavior>("");
   const textRef = useRef(text);
@@ -68,6 +91,19 @@ export function Composer({ onSend, disabled, sending, placeholderOverride, statu
     },
   });
   const voiceBusy = voice.status !== "idle";
+  const speaker = useSpeaker({
+    sessionId,
+    entries,
+    initialOn: voiceSpeak,
+    // Read with the floppy's engine, unless it can't work here (as the mic does).
+    engine: voice.engine === "deepgram" && !voice.deepgramAvailable && voice.builtinAvailable ? "builtin" : voice.engine,
+    voice: voice.ttsVoice,
+    micBusy: voiceBusy || voice.latched,
+    agentBusy,
+    // Hands-free: the reply has been read and the agent is idle, so it's your turn again.
+    onTurnSpoken: () => voice.openHandsFree(),
+    start: speech,
+  });
   // Read once per mount, not per render -- the device class doesn't change mid-session, and this
   // avoids calling matchMedia on every keystroke.
   const [touch] = useState(() => isTouchDeviceHere());
@@ -220,7 +256,7 @@ export function Composer({ onSend, disabled, sending, placeholderOverride, statu
             </button>
           ))}
         </div>
-        <VoiceControl voice={voice} />
+        <VoiceControl voice={voice} speaker={speaker} />
         <span
           className="send-wrap"
           data-enter-mode={enterMode}
@@ -265,9 +301,9 @@ export function Composer({ onSend, disabled, sending, placeholderOverride, statu
           )}
         </span>
       </div>
-      {voice.note && (
+      {(voice.note || speaker.note) && (
         <div className="voice-note" role="status">
-          {voice.note}
+          {voice.note ?? speaker.note}
         </div>
       )}
     </div>

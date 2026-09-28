@@ -745,6 +745,9 @@ export function SessionPage() {
         key={sessionId}
         sessionId={sessionId}
         voiceEngine={session?.voiceEngine}
+        voiceSpeak={session?.voiceSpeak}
+        entries={entries}
+        agentBusy={ticking}
         onSend={handleSend}
         disabled={activity.composerDisabled || archived}
         sending={activity.phase === "sending"}

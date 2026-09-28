@@ -67,6 +67,8 @@ export interface SessionDetail {
   name?: string;
   /** #253: the floppy's speech engine; absent means "deepgram". */
   voiceEngine?: "deepgram" | "builtin";
+  /** #255: whether replies are read aloud on this floppy; absent means off. */
+  voiceSpeak?: boolean;
   ownerEmail?: string;
   guruId: string;
   repo: string | null;
@@ -387,7 +389,7 @@ export interface VoiceConfig {
   deepgram: boolean;
   model: string;
   language: string;
-  prefs: { afterSpeaking: "send" | "review" };
+  prefs: { afterSpeaking: "send" | "review"; ttsVoice?: string; handsFree?: boolean };
 }
 
 export interface VoiceTokenResponse {
@@ -540,7 +542,8 @@ export const api = {
     return request("/api/me/voice");
   },
 
-  setVoicePrefs(prefs: VoiceConfig["prefs"]): Promise<{ prefs: VoiceConfig["prefs"] }> {
+  /** Any of the preferences; the rest stay as they are. */
+  setVoicePrefs(prefs: Partial<VoiceConfig["prefs"]>): Promise<{ prefs: VoiceConfig["prefs"] }> {
     return request("/api/me/voice", { method: "PUT", body: JSON.stringify(prefs) });
   },
 
@@ -559,6 +562,11 @@ export const api = {
 
   setSessionVoiceEngine(id: string, engine: "deepgram" | "builtin"): Promise<{ voiceEngine: "deepgram" | "builtin" }> {
     return request(`/api/sessions/${id}/voice`, { method: "PUT", body: JSON.stringify({ engine }) });
+  },
+
+  /** #255: whether replies on this floppy are read aloud. */
+  setSessionVoiceSpeak(id: string, speak: boolean): Promise<{ voiceSpeak: boolean }> {
+    return request(`/api/sessions/${id}/voice`, { method: "PUT", body: JSON.stringify({ speak }) });
   },
 
   sendMessage(id: string, text: string, behavior?: "steer" | "followUp"): Promise<{ run: RunLike | null }> {

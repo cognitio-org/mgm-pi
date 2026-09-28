@@ -11,12 +11,24 @@ export type VoiceEngine = (typeof VOICE_ENGINES)[number];
 export const AFTER_SPEAKING = ["send", "review"] as const;
 export type AfterSpeaking = (typeof AFTER_SPEAKING)[number];
 
-/** A person's voice preferences (User.voice). Owner decision on #251: "send" is the default. */
+/** A person's voice preferences (User.voice). Owner decisions: after speaking = "send" (#251);
+ * replies read in Aura-2 Hermes, hands-free off until turned on (#255). */
 export interface VoicePrefs {
   afterSpeaking: AfterSpeaking;
+  /** The Deepgram Aura voice replies are read in, e.g. "aura-2-hermes-en". */
+  ttsVoice: string;
+  /** Hands-free: after a reply has been read, the mic reopens; a pause after speaking sends. */
+  handsFree: boolean;
 }
 
-export const DEFAULT_VOICE_PREFS: VoicePrefs = { afterSpeaking: "send" };
+export const DEFAULT_TTS_VOICE = "aura-2-hermes-en";
+
+export const DEFAULT_VOICE_PREFS: VoicePrefs = { afterSpeaking: "send", ttsVoice: DEFAULT_TTS_VOICE, handsFree: false };
+
+/** An Aura voice id as Deepgram names them: aura-2-<name>-<language>, or aura-<name>-<language>. */
+export function isTtsVoice(value: unknown): value is string {
+  return typeof value === "string" && /^aura(-2)?-[a-z]+-[a-z]{2}$/.test(value);
+}
 
 export interface VoiceToken {
   token: string;

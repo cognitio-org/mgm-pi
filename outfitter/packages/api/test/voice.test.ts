@@ -139,7 +139,7 @@ describe("GET|PUT /api/me/voice", () => {
     const on = await buildTestApp({}, { voice: service(fakeDeepgram(granted).fetch) });
     const res = await on.fastify.inject({ method: "GET", url: "/api/me/voice" });
     assert.equal(res.statusCode, 200);
-    assert.deepEqual(res.json(), { deepgram: true, model: "nova-3", language: "en", prefs: { afterSpeaking: "send" } });
+    assert.deepEqual(res.json(), { deepgram: true, model: "nova-3", language: "en", prefs: { afterSpeaking: "send", ttsVoice: "aura-2-hermes-en", handsFree: false } });
     await on.fastify.close();
 
     const off = await buildTestApp();
@@ -151,10 +151,47 @@ describe("GET|PUT /api/me/voice", () => {
     const app = await buildTestApp();
     const put = await app.fastify.inject({ method: "PUT", url: "/api/me/voice", payload: { afterSpeaking: "review" } });
     assert.equal(put.statusCode, 200);
-    assert.deepEqual(put.json(), { prefs: { afterSpeaking: "review" } });
+    assert.deepEqual(put.json(), { prefs: { afterSpeaking: "review", ttsVoice: "aura-2-hermes-en", handsFree: false } });
     assert.equal((await app.fastify.inject({ method: "GET", url: "/api/me/voice" })).json().prefs.afterSpeaking, "review");
     const bad = await app.fastify.inject({ method: "PUT", url: "/api/me/voice", payload: { afterSpeaking: "shout" } });
     assert.equal(bad.statusCode, 400);
+    await app.fastify.close();
+  });
+});
+
+describe("#255 reply voice, hands-free and the speaker", () => {
+  test("PUT /api/me/voice changes only what it's given, and validates each", async () => {
+    const app = await buildTestApp();
+    const put = (payload: Record<string, unknown>) => app.fastify.inject({ method: "PUT", url: "/api/me/voice", payload });
+    assert.deepEqual((await put({ ttsVoice: "aura-2-thalia-en" })).json().prefs, { afterSpeaking: "send", ttsVoice: "aura-2-thalia-en", handsFree: false });
+    assert.deepEqual((await put({ handsFree: true })).json().prefs, { afterSpeaking: "send", ttsVoice: "aura-2-thalia-en", handsFree: true });
+    assert.deepEqual((await put({ afterSpeaking: "review" })).json().prefs, { afterSpeaking: "review", ttsVoice: "aura-2-thalia-en", handsFree: true });
+    assert.equal((await put({ ttsVoice: "hermes" })).statusCode, 400);
+    assert.equal((await put({ ttsVoice: "aura-2-hermes-en; rm" })).statusCode, 400);
+    assert.equal((await put({ handsFree: "yes" })).statusCode, 400);
+    assert.equal((await put({})).statusCode, 400);
+    await app.fastify.close();
+  });
+
+  test("a person saved before these fields gets the defaults for them", async () => {
+    const app = await buildTestApp();
+    await app.store.users.setVoicePrefs("dev@localhost", { afterSpeaking: "review" } as never);
+    const got = (await app.fastify.inject({ method: "GET", url: "/api/me/voice" })).json();
+    assert.deepEqual(got.prefs, { afterSpeaking: "review", ttsVoice: "aura-2-hermes-en", handsFree: false });
+    await app.fastify.close();
+  });
+
+  test("PUT /api/sessions/:id/voice turns the speaker on and off, without touching the engine", async () => {
+    const app = await buildTestApp();
+    await seedSession(app, "s-speak");
+    const on = await app.fastify.inject({ method: "PUT", url: "/api/sessions/s-speak/voice", payload: { speak: true } });
+    assert.deepEqual(on.json(), { voiceEngine: "deepgram", voiceSpeak: true });
+    assert.equal((await app.fastify.inject({ method: "GET", url: "/api/sessions/s-speak" })).json().voiceSpeak, true);
+    await app.fastify.inject({ method: "PUT", url: "/api/sessions/s-speak/voice", payload: { engine: "builtin" } });
+    const both = (await app.fastify.inject({ method: "PUT", url: "/api/sessions/s-speak/voice", payload: { speak: false } })).json();
+    assert.deepEqual(both, { voiceEngine: "builtin", voiceSpeak: false });
+    assert.equal((await app.fastify.inject({ method: "PUT", url: "/api/sessions/s-speak/voice", payload: { speak: "on" } })).statusCode, 400);
+    assert.equal((await app.fastify.inject({ method: "PUT", url: "/api/sessions/s-speak/voice", payload: {} })).statusCode, 400);
     await app.fastify.close();
   });
 });
@@ -165,7 +202,7 @@ describe("PUT /api/sessions/:id/voice", () => {
     await seedSession(app, "s-voice");
     const put = await app.fastify.inject({ method: "PUT", url: "/api/sessions/s-voice/voice", payload: { engine: "builtin" } });
     assert.equal(put.statusCode, 200);
-    assert.deepEqual(put.json(), { voiceEngine: "builtin" });
+    assert.deepEqual(put.json(), { voiceEngine: "builtin", voiceSpeak: false });
     const got = await app.fastify.inject({ method: "GET", url: "/api/sessions/s-voice" });
     assert.equal(got.json().voiceEngine, "builtin");
     await app.fastify.close();
@@ -204,16 +241,16 @@ describe("MongoUsers.setVoicePrefs against a real MongoDB", () => {
   });
 
   test("creates the user when needed, replaces the prefs, and keeps the rest of the row", async () => {
-    const created = await store.users.setVoicePrefs("new@example.com", { afterSpeaking: "review" });
+    const created = await store.users.setVoicePrefs("new@example.com", { afterSpeaking: "review", ttsVoice: "aura-2-thalia-en", handsFree: true });
     assert.equal(created.email, "new@example.com");
     assert.ok(created.createdAt);
-    assert.deepEqual(created.voice, { afterSpeaking: "review" });
+    assert.deepEqual(created.voice, { afterSpeaking: "review", ttsVoice: "aura-2-thalia-en", handsFree: true });
 
     const seen = await store.users.upsertSeen("seen@example.com");
-    const updated = await store.users.setVoicePrefs("seen@example.com", { afterSpeaking: "send" });
+    const updated = await store.users.setVoicePrefs("seen@example.com", { afterSpeaking: "send", ttsVoice: "aura-2-hermes-en", handsFree: false });
     assert.equal(updated.createdAt, seen.createdAt);
     assert.equal(updated.lastSeenAt, seen.lastSeenAt);
-    assert.deepEqual((await store.users.findByEmail("seen@example.com"))?.voice, { afterSpeaking: "send" });
+    assert.deepEqual((await store.users.findByEmail("seen@example.com"))?.voice, { afterSpeaking: "send", ttsVoice: "aura-2-hermes-en", handsFree: false });
     assert.equal((updated as { _id?: unknown })._id, undefined);
   });
 

@@ -1,27 +1,58 @@
 /**
  * Makes pi-listen work out of the box: seeds a local speech backend into the user's global pi
- * settings at extension load time (before pi-listen's session_start reads it) and warns when no
- * audio capture tool is installed. Set KERNAL_VOICE_MODEL to pick another local model, or
- * KERNAL_VOICE=off to leave pi-listen's configuration alone.
+ * settings at extension load time (before pi-listen's session_start reads it), takes that seed back
+ * out once a Deepgram key is available (#249), and warns when no audio capture tool is installed.
+ * Set KERNAL_VOICE_MODEL to pick another local model, or KERNAL_VOICE=off to leave pi-listen's
+ * configuration alone.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { seedVoiceDefaults, languageFromLocale, audioToolHint, AUDIO_TOOLS } from "./lib.ts";
+import { reconcileVoice, languageFromLocale, audioToolHint, AUDIO_TOOLS, DEFAULT_VOICE_MODEL, type Reconcile } from "./lib.ts";
 import { env } from "../_shared/env.ts";
 
 /** pi-listen's global settings file (it ignores PI_CODING_AGENT_DIR); overridable for tests. */
 export const voiceSettingsPath = () => env("VOICE_SETTINGS") || join(homedir(), ".pi", "agent", "settings.json");
+/** kernal's note that it wrote the seed, beside pi-listen's settings. */
+export const voiceSeedMarkerPath = () => join(dirname(voiceSettingsPath()), "kernal-voice-seed.json");
+/** Where pi-listen keeps downloaded models: ~/.pi/models/<id>. */
+const modelDir = (model: string) => join(dirname(dirname(voiceSettingsPath())), "models", model);
 
-export function seedFile(): { changed: boolean; reason: string; path: string } {
+/** Temp file + rename, as pi-listen writes it: a crash mid-write can't leave half a settings file. */
+function writeJsonAtomic(path: string, value: unknown): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = `${path}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify(value, null, 2) + "\n");
+    renameSync(tmp, path);
+  } finally {
+    rmSync(tmp, { force: true });
+  }
+}
+
+function readJson(path: string): any {
+  try { return JSON.parse(readFileSync(path, "utf8")); } catch { return undefined; }
+}
+
+export type SeedOutcome = { notice?: Reconcile["notice"]; reason: string; path: string };
+
+export function seedFile(): SeedOutcome {
   const path = voiceSettingsPath();
-  let settings: Record<string, any> = {};
-  try { settings = JSON.parse(readFileSync(path, "utf8")); } catch {}
-  const r = seedVoiceDefaults(settings, { model: env("VOICE_MODEL"), language: languageFromLocale(process.env.LANG), deepgramKeyInEnv: !!process.env.DEEPGRAM_API_KEY });
-  if (r.changed) { mkdirSync(join(path, ".."), { recursive: true }); writeFileSync(path, JSON.stringify(r.settings, null, 2) + "\n"); }
-  return { ...r, path };
+  const markerPath = voiceSeedMarkerPath();
+  const settings: Record<string, any> = readJson(path) ?? {};
+  const r = reconcileVoice(settings, {
+    marker: readJson(markerPath),
+    deepgramKey: !!process.env.DEEPGRAM_API_KEY || !!settings.voice?.deepgramApiKey,
+    modelDownloaded: existsSync(modelDir(settings.voice?.localModel ?? DEFAULT_VOICE_MODEL)),
+    model: env("VOICE_MODEL"),
+    language: languageFromLocale(process.env.LANG),
+  });
+  if (r.changed) writeJsonAtomic(path, r.settings);
+  if (r.marker) writeJsonAtomic(markerPath, r.marker);
+  else rmSync(markerPath, { force: true });
+  return { notice: r.notice, reason: r.reason, path };
 }
 
 export function findAudioTool(): string | undefined {
@@ -31,11 +62,22 @@ export function findAudioTool(): string | undefined {
 
 export default function (pi: ExtensionAPI) {
   if (env("VOICE") === "off") return;
-  const seeded = seedFile();   // at load time: runs before any extension's session_start
+  // At load time: runs before any extension's session_start. A failure (a full disk, a read-only
+  // home) must not stop kernal starting; voice just stays as it was.
+  let seeded: SeedOutcome;
+  try {
+    seeded = seedFile();
+  } catch (err) {
+    seeded = { reason: `left alone: ${err instanceof Error ? err.message : String(err)}`, path: voiceSettingsPath() };
+    console.error(`[kernal-voice] couldn't update voice settings: ${seeded.reason}`);
+  }
   if (env("VOICE_DEBUG")) console.error(`[kernal-voice] ${seeded.reason} → ${seeded.path}`);
   pi.on("session_start", async (_e, ctx) => {
     if (!ctx.hasUI) return;
-    if (seeded.changed) ctx.ui.notify(`Voice input ready: local model ${env("VOICE_MODEL") || "parakeet-v3"} (downloads on first use). Hold ctrl+shift+v to talk; /voice-settings to change.`, "info");
+    const model = env("VOICE_MODEL") || DEFAULT_VOICE_MODEL;
+    if (seeded.notice === "seeded") ctx.ui.notify(`Voice input ready: local model ${model} (downloads on first use). Hold Space to talk; /voice-settings to change.`, "info");
+    if (seeded.notice === "unseeded") ctx.ui.notify("Voice input now streams live through Deepgram (your key is set). Hold Space to talk; /voice-settings to change.", "info");
+    if (seeded.notice === "reseeded") ctx.ui.notify(`No Deepgram key now, so voice input is back on the local model ${model}. Hold Space to talk.`, "info");
     const hint = audioToolHint(findAudioTool(), process.platform);
     if (hint) ctx.ui.notify(hint, "warning");
   });

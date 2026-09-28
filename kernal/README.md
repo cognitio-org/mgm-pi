@@ -541,17 +541,29 @@ Notes from setting this up:
 
 ## Voice input (pi-listen)
 
-Hold **ctrl+shift+v** and talk; release to transcribe into the prompt. Release bundles ship a
-shared `DEEPGRAM_API_KEY` in their `.env` (from the `DEEPGRAM_API_KEY` repo secret; locally from
-`~/localllm/.env`), so pi-listen streams live transcription out of the box. Without a key, pi-listen
-would default to Deepgram anyway and sit unconfigured, reading `~/.pi/agent/settings.json`;
-`.pi/extensions/kernal-voice/` therefore seeds a fully local setup there the first time kernal starts,
-if nothing is configured yet: backend `local`, model
+**Hold Space** for a moment and talk; let go to transcribe into the prompt (a quick tap still types
+a space). Or press **ctrl+shift+v** to start and again to stop; that shortcut needs a terminal that
+reports ctrl+shift+letter, through the Kitty keyboard protocol or modifyOtherKeys (Ghostty, Kitty,
+WezTerm, iTerm2 with CSI u turned on). In Terminal.app it arrives as plain ctrl+v, so use Space
+there. **Esc** cancels a recording and puts back what you'd typed. `/voice-settings` changes the
+backend, model and language, and `/voice-help` (F1) lists the keys.
+
+Release bundles ship a shared `DEEPGRAM_API_KEY` in their `.env` (from the `DEEPGRAM_API_KEY` repo
+secret; locally from `~/localllm/.env`), so pi-listen streams live transcription through Deepgram
+out of the box. Without a key, pi-listen would default to Deepgram anyway and sit unconfigured,
+reading `~/.pi/agent/settings.json`; `.pi/extensions/kernal-voice/` therefore seeds a fully local
+setup there the first time kernal starts, if nothing is configured yet: backend `local`, model
 `parakeet-v3` (pi-listen's recommended offline model, ~670 MB, downloaded on first use with a
-progress bar), language from your locale. It never overrides an existing choice; `/voice-settings`
-changes model, language or backend, `KERNAL_VOICE_MODEL` picks another default, `KERNAL_VOICE=off`
-disables the seeding. Audio capture needs SoX (`brew install sox`) or ffmpeg; kernal and the installer
-say so when neither is found.
+progress bar), language from your locale. That seed only stands in for a key: once a Deepgram key
+is available, kernal takes its own seed back out and says so, and voice streams live; if the key
+goes away again (a checkout with no `.env`), the seed goes back rather than leaving a keyless
+Deepgram. kernal tracks this in `~/.pi/agent/kernal-voice-seed.json`; a seed from before that file
+counts as kernal's only if pi-listen completed its setup on its own and the model was never
+downloaded. It never overrides a choice of yours: another backend or model, a Deepgram setup, or
+voice turned off. (Settings can't tell a deliberate re-pick of the very same local model from the
+seed; re-pick another model, or set `KERNAL_VOICE=off`, to keep a local setup with a key around.) `KERNAL_VOICE_MODEL` picks another
+default model, `KERNAL_VOICE=off` leaves pi-listen's settings alone. Audio capture needs SoX
+(`brew install sox`) or ffmpeg; kernal and the installer say so when neither is found.
 
 ## Reporting problems (`/report`)
 

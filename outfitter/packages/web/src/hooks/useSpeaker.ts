@@ -9,6 +9,7 @@ import { api, ApiError, type PiEntry } from "../api/client.ts";
 import { prepareForSpeech, replyText, splitSentences } from "../lib/speech-text.ts";
 import { speakBuiltin, speakDeepgram, type Speech } from "../lib/voice-tts.ts";
 import { isFinalAssistant } from "../lib/send-status.ts";
+import { hiddenEntryIds } from "../lib/entry-view.ts";
 
 export type SpeakEngine = "deepgram" | "builtin";
 
@@ -141,21 +142,27 @@ export function useSpeaker(opts: UseSpeakerOptions): Speaker {
       seen.current = new Set(opts.entries.map((e) => e.id));
       return;
     }
-    for (const [i, entry] of opts.entries.entries()) {
+    const hidden = hiddenEntryIds(opts.entries);
+    for (const entry of opts.entries) {
       if (seen.current.has(entry.id)) continue;
+      // #278: a failed attempt may be retried, and pi says so (a context_edit) only after the message
+      // lands. Decide once the agent isn't busy; until then leave it unseen. It is never read aloud:
+      // its prose is a half-written reply the retry usually repeats.
+      const failed = isAssistant(entry) && (entry.message as { stopReason?: string }).stopReason === "error";
+      if (failed && opts.agentBusy) continue;
       seen.current.add(entry.id);
       if (!isAssistant(entry)) continue;
       // Only the turn's final reply hands the turn back (the status line's own test: not one that
-      // stopped to call tools, is still streaming, or failed and is being retried; an aborted or
-      // errored reply otherwise does count).
-      if (isFinalAssistant(entry, opts.entries.slice(i + 1))) replyThisTurn.current = true;
-      if (!on) continue;
+      // stopped to call tools, is still streaming, or was hidden for a retry; an aborted or errored
+      // reply otherwise does count).
+      if (isFinalAssistant(entry, { hidden })) replyThisTurn.current = true;
+      if (!on || failed) continue;
       const text = replyText(entry);
       const sentences = splitSentences(prepareForSpeech(text));
       if (sentences.length > 0) queue.current.push(sentences);
     }
     playNext();
-  }, [opts.entries, opts.entriesLoaded, on, playNext]);
+  }, [opts.entries, opts.entriesLoaded, opts.agentBusy, on, playNext]);
 
   // The mic comes first: going live stops speech, and it's the person's turn now, so replies from
   // before don't hand the turn back again when they finish. When it's done, anything queued plays.

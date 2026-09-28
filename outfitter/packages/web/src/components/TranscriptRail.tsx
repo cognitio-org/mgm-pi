@@ -424,9 +424,9 @@ export function UserEntry({ view }: { view: Extract<GroupedEntry, { kind: "user"
   );
 }
 
-/** #273: a beat where the model's `vscode` tool ran (and didn't fail). */
+/** #273: a beat where the model's `vscode` tool ran (and didn't fail or get cut off). */
 export function beatOpensVsCode(beat: { kind: string; rail?: RailItem[] }): boolean {
-  return Boolean(beat.rail?.some((item) => item.kind === "tool" && item.toolName === "vscode" && !item.isError));
+  return Boolean(beat.rail?.some((item) => item.kind === "tool" && item.toolName === "vscode" && !item.isError && !item.interrupted));
 }
 
 export function BeatView({

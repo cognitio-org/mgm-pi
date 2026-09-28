@@ -141,7 +141,7 @@ export function EntryItem({
     case "assistant-failed": {
       const copy = failedAttemptCopy(view);
       return (
-        <div className="entry assistant-failed" role="status">
+        <div className="entry assistant-failed">
           <div className="entry-label">{copy.headline}</div>
           <div>{copy.note}</div>
           {view.errorMessage ? (
@@ -156,7 +156,8 @@ export function EntryItem({
     case "context-edit":
       return (
         <div className="entry context-edit">
-          {view.replaced ? "An earlier message was replaced in the model's context" : "An earlier message was hidden from the model"}
+          {view.count === 1 ? "An earlier message was" : `${view.count} earlier messages were`}{" "}
+          {view.replaced ? "replaced in the model's context" : "hidden from the model"}
         </div>
       );
     case "custom":

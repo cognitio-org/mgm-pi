@@ -362,6 +362,41 @@ describe("hands-free", () => {
     expect(recs).toHaveLength(0); // read, but not the end of the turn
   });
 
+  // #278: pi writes the failed message first and the context_edit that marks its retry later.
+  const failed: PiEntry = {
+    id: "f1",
+    type: "message",
+    message: { role: "assistant", stopReason: "error", errorMessage: "terminated", content: [{ type: "text", text: "Let me write the report." }] },
+  };
+  const retryEdit: PiEntry = { id: "x1", type: "context_edit", targetId: "f1", replacement: null };
+
+  it("a failed attempt pi retries is never read and doesn't hand the turn back, even before its edit lands", async () => {
+    prefs.handsFree = true;
+    await mount({ voiceSpeak: true });
+    await render({ agentBusy: true, entries: [failed] });
+    await flush();
+    expect(spoken).toHaveLength(0);
+    expect(recs).toHaveLength(0);
+    await render({ agentBusy: true, entries: [failed, retryEdit] });
+    await render({ agentBusy: false, entries: [failed, retryEdit, reply("a1", "Here's the report.")] });
+    expect(spoken).toHaveLength(1);
+    expect(recs).toHaveLength(0); // still reading the retry's reply
+    await act(async () => spoken[0].end());
+    await flush();
+    expect(recs).toHaveLength(1);
+  });
+
+  it("a failure pi doesn't retry hands the turn back once the agent is idle, without reading it", async () => {
+    prefs.handsFree = true;
+    await mount({ voiceSpeak: true });
+    await render({ agentBusy: true, entries: [failed] });
+    expect(recs).toHaveLength(0);
+    await render({ agentBusy: false });
+    await flush();
+    expect(spoken).toHaveLength(0);
+    expect(recs).toHaveLength(1);
+  });
+
   it("with the speaker off on this floppy, hands-free still reopens the mic after the agent's turn", async () => {
     prefs.handsFree = true;
     await mount({ voiceSpeak: false });

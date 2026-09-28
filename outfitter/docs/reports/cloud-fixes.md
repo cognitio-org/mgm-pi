@@ -364,7 +364,7 @@ the session notice and an `info` log line are the only signals.
 
 ## 14. A retried model call looked stuck (#278)
 
-**Cause**: pi 0.87 retries a failed model call on its own. Before each retry it appends a
+**Cause**: pi 0.87 retries a failed model call on its own. Before each retry's backoff it appends a
 `context_edit` entry that hides the failed attempt from the model; the session file keeps it. The
 web had no case for any of this. A session on a local model behind ngrok lost each long reply at
 about five minutes (`APIConnectionError … Response payload is not completed`). For 20 minutes it
@@ -372,16 +372,25 @@ showed the attempt's prose, an empty tool box, and "unrecognized entry: context_
 and never the error. The fourth attempt succeeded.
 
 **Fix** (`web/src/lib/entry-view.ts`): an assistant message with `stopReason` `error` or `aborted`
-ends with an `assistant-failed` row: "Attempt failed, retrying" when a `context_edit` hides it (pi's
-retry), "Model call failed" otherwise, "Reply stopped" for an abort, with the raw error behind a
-disclosure. The retry's `context_edit` folds into that row. Any other `context_edit` is a quiet
-"An earlier message was hidden from the model" line. A tool call in a failed message is
-`interrupted`: never running, not batched, and its card says it never ran. `isFinalAssistant` no
-longer counts a failed attempt that pi is retrying as the reply, so the status line stays up
-through the retry, and so does voice's turn hand-back.
+ends with an `assistant-failed` row, the raw error behind a disclosure. When a `context_edit` hides
+it, the row's retry state comes from what follows: "retried" once a later reply exists, "retrying"
+while the run is live, "Attempt failed … the retry was stopped" when the run settled without one
+(Stop during pi's backoff). Otherwise it reads "Model call failed", or "Reply stopped" for an abort.
+The retry's `context_edit` folds into that row. Other edits (pi's overflow recovery hides a cut-off
+reply and its tool results) are one quiet line per run: "N earlier messages were hidden from the
+model". A tool call in a failed message is `interrupted`. pi's agent loop returns before executing
+tools when a reply errors or aborts, so it never ran. It is not running, not batched, gets no VS Code
+chip, and its card says so.
 
-**Test**: `packages/web/test/failed-attempts.test.tsx`, built from the real session's entries.
-Screenshots: `docs/design/screenshots/failed-attempt-*.png`.
+pi writes the `context_edit` after the message, and the two can reach the page in separate polls.
+So `isFinalAssistant` (send-status.ts) doesn't count a hidden attempt as the reply. It doesn't count
+an errored one while the run is still `running` either; it does once the run settles. Voice
+(`useSpeaker`) never reads a failed attempt aloud and decides whether it ends the turn only once the
+agent isn't busy.
+
+**Test**: `packages/web/test/failed-attempts.test.tsx`, built from the real session's entries, and
+two cases in `voice-speak.test.tsx` (both fail on the old speaker). Screenshots:
+`docs/design/screenshots/failed-attempt-*.png`.
 
 **Left open**: the roughly five-minute stream cap is between LiteLLM and the tunnel, outside this
 repo.

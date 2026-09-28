@@ -4,14 +4,15 @@
 // context_edit and retried; the transcript showed "unrecognized entry: context_edit", an empty tool
 // box, and no error at all.
 import { afterEach, describe, expect, it } from "vitest";
-import { act } from "react";
+import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { PiEntry } from "../src/api/client.ts";
-import { entriesToViews, entryToViews, failedAttemptCopy } from "../src/lib/entry-view.ts";
+import { entriesToViews, entryToViews, failedAttemptCopy, hiddenEntryIds } from "../src/lib/entry-view.ts";
 import { groupBeats, collapseRail, type RailTool } from "../src/lib/beats.ts";
 import { groupThinkingBlocks } from "../src/lib/thinking.ts";
 import { EntryItem } from "../src/components/EntryItem.tsx";
-import { deriveSessionActivity, notePendingRunState, type PendingSend } from "../src/lib/send-status.ts";
+import { TranscriptRail, beatOpensVsCode } from "../src/components/TranscriptRail.tsx";
+import { deriveSessionActivity, isFinalAssistant, notePendingRunState, type PendingSend } from "../src/lib/send-status.ts";
 
 const DROPPED =
   "litellm.APIConnectionError: APIConnectionError: OpenAIException - Response payload is not completed: <TransferEncodingError: 400, message='Not enough data to satisfy transfer length header.'>. SSLError(1, '[SSL] record layer failure (_ssl.c:2718)')";
@@ -55,6 +56,22 @@ function show(view: unknown): HTMLElement {
   return container;
 }
 
+function mount(node: React.ReactNode): HTMLElement {
+  // TranscriptRail places its card with matchMedia (desktop here); jsdom has none.
+  window.matchMedia = ((query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} })) as never;
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  act(() => root!.render(node));
+  return container;
+}
+
+const reply: PiEntry = { id: "ok", type: "message", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Here's your report." }] } };
+
+function failedView(entries: PiEntry[], options?: { runSettled?: boolean }) {
+  return entriesToViews(entries, options).filter((v) => v.kind === "assistant-failed");
+}
+
 const user: PiEntry = { id: "u1", type: "message", message: { role: "user", content: [{ type: "text", text: "research it" }] } };
 
 describe("failed attempts", () => {
@@ -66,50 +83,110 @@ describe("failed attempts", () => {
     ]);
   });
 
+  it("pi's pre-built error message (no content) is only the failed row", () => {
+    const empty: PiEntry = { id: "a1", type: "message", message: { role: "assistant", content: [], stopReason: "error", errorMessage: "boom" } };
+    expect(entryToViews(empty)).toEqual([{ kind: "assistant-failed", id: "a1#failed", stopReason: "error", errorMessage: "boom" }]);
+  });
+
   it("pi's retry edit folds into the failed row instead of rendering as its own line", () => {
     const views = entriesToViews([user, failedAttempt("a1"), hide("x1", "a1")]);
     expect(views.some((v) => v.kind === "context-edit" || v.kind === "unknown")).toBe(false);
-    expect(views.at(-1)).toMatchObject({ kind: "assistant-failed", hidden: true });
+    expect(views.at(-1)).toMatchObject({ kind: "assistant-failed", retry: "retrying" });
   });
 
-  it("any other context edit is a quiet line, not 'unrecognized entry'", () => {
-    const views = entriesToViews([user, hide("x1", "u1"), { id: "x2", type: "context_edit", targetId: "u1", replacement: [] }]);
+  it("the retry state follows what came after: retried, retrying, cancelled, or none", () => {
+    const retried = [user, failedAttempt("a1"), hide("x1", "a1"), reply];
+    expect(failedView(retried)[0]).toMatchObject({ retry: "retried" });
+    expect(failedView(retried, { runSettled: true })[0]).toMatchObject({ retry: "retried" });
+    const waiting = [user, failedAttempt("a1"), hide("x1", "a1")];
+    expect(failedView(waiting)[0]).toMatchObject({ retry: "retrying" });
+    // Stop during pi's backoff: the edit is written, the retry never happens.
+    expect(failedView(waiting, { runSettled: true })[0]).toMatchObject({ retry: "cancelled" });
+    expect(failedView([user, failedAttempt("a1"), reply])[0]!.retry).toBeUndefined();
+  });
+
+  it("builds fresh views: the same entries give the same answer twice", () => {
+    const entries = [user, failedAttempt("a1"), hide("x1", "a1")];
+    expect(entriesToViews(entries)).toEqual(entriesToViews(entries));
+    expect(entryToViews(entries[1]!).at(-1)).not.toHaveProperty("retry");
+  });
+
+  it("other context edits are one quiet line per run, not 'unrecognized entry'", () => {
+    const edits = [hide("x1", "u1"), hide("x2", "t1"), { id: "x3", type: "context_edit", targetId: "u1", replacement: [] }];
+    const views = entriesToViews([user, ...edits]);
     expect(views.slice(1)).toEqual([
-      { kind: "context-edit", id: "x1", targetId: "u1", replaced: false },
-      { kind: "context-edit", id: "x2", targetId: "u1", replaced: true },
+      { kind: "context-edit", id: "x1", count: 2, replaced: false },
+      { kind: "context-edit", id: "x3", count: 1, replaced: true },
     ]);
-    expect(show(views[1]).textContent).toBe("An earlier message was hidden from the model");
+    expect(show(views[1]).textContent).toBe("2 earlier messages were hidden from the model");
+    act(() => root?.unmount());
+    container?.remove();
+    expect(show(views[2]).textContent).toBe("An earlier message was replaced in the model's context");
   });
 
-  it("says the connection dropped and that pi is retrying, with the raw error behind a disclosure", () => {
-    const [failed] = entriesToViews([failedAttempt("a1"), hide("x1", "a1")]).filter((v) => v.kind === "assistant-failed");
-    const el = show(failed);
+  it("renders the connection drop and the retry, with the raw error behind a disclosure", () => {
+    const el = show(failedView([user, failedAttempt("a1"), hide("x1", "a1")])[0]);
     expect(el.querySelector(".entry-label")?.textContent).toBe("Attempt failed, retrying");
-    expect(el.textContent).toContain("The connection to the model dropped. pi hid this attempt from the model and tried again.");
+    expect(el.textContent).toContain("The connection to the model dropped. pi hid this attempt from the model and is trying again.");
     expect(el.querySelector("details summary")?.textContent).toBe("Error");
     expect(el.querySelector("details pre")?.textContent).toContain("record layer failure");
+    expect(el.querySelector("[role]")).toBeNull();
   });
 
-  it("copy for an unretried failure, an unknown error, and a stopped reply", () => {
-    expect(failedAttemptCopy({ kind: "assistant-failed", id: "f", stopReason: "error", errorMessage: DROPPED })).toEqual({
-      headline: "Model call failed",
-      note: "The connection to the model dropped.",
+  it("renders a failure pi does not retry as 'Model call failed'", () => {
+    const el = show(failedView([user, failedAttempt("a1")])[0]);
+    expect(el.querySelector(".entry-label")?.textContent).toBe("Model call failed");
+    expect(el.textContent).toContain("The connection to the model dropped.");
+  });
+
+  it("copy for each state, an unknown error, and a stopped reply", () => {
+    const base = { kind: "assistant-failed" as const, id: "f", stopReason: "error" as const, errorMessage: DROPPED };
+    expect(failedAttemptCopy({ ...base, retry: "retried" }).headline).toBe("Attempt failed, retried");
+    expect(failedAttemptCopy({ ...base, retry: "cancelled" })).toEqual({
+      headline: "Attempt failed",
+      note: "The connection to the model dropped. pi hid this attempt from the model, but the retry was stopped.",
     });
-    expect(failedAttemptCopy({ kind: "assistant-failed", id: "f", stopReason: "error", errorMessage: "400 bad request" }).note).toBe(
-      "The model call failed.",
-    );
-    expect(failedAttemptCopy({ kind: "assistant-failed", id: "f", stopReason: "aborted", errorMessage: "" }).headline).toBe("Reply stopped");
+    expect(failedAttemptCopy({ ...base, errorMessage: "400 bad request" }).note).toBe("The model call failed.");
+    expect(failedAttemptCopy({ ...base, errorMessage: "terminated" }).note).toBe("The connection to the model dropped.");
+    expect(failedAttemptCopy({ ...base, errorMessage: "generation terminated by content filter" }).note).toBe("The model call failed.");
+    expect(failedAttemptCopy({ ...base, stopReason: "aborted", errorMessage: "" }).headline).toBe("Reply stopped");
   });
 
-  it("an interrupted call is not running, not batched away, and says it never ran", () => {
+  it("an aborted reply's calls are interrupted too, and it is never 'retrying'", () => {
+    const aborted: PiEntry = {
+      id: "a1",
+      type: "message",
+      message: { role: "assistant", stopReason: "aborted", content: [{ type: "toolCall", id: "c1", name: "bash", arguments: { command: "ls" } }] },
+    };
+    const views = entriesToViews([user, aborted]);
+    expect(views[1]).toMatchObject({ kind: "tool-call", interrupted: true });
+    expect(failedAttemptCopy(views[2] as never).headline).toBe("Reply stopped");
+  });
+
+  it("an interrupted call is not running, not batched, not paired with a later result, and says it never ran", () => {
     const entries = [user, failedAttempt("a1"), hide("x1", "a1"), failedAttempt("a2"), hide("x2", "a2")];
-    const beats = groupBeats(groupThinkingBlocks(entriesToViews(entries)));
+    const late: PiEntry = { id: "r1", type: "message", message: { role: "toolResult", toolCallId: "call-a1", toolName: "html_report", content: "late", isError: false } };
+    const beats = groupBeats(groupThinkingBlocks(entriesToViews([...entries, late])));
     const tools = beats.flatMap((b) => ("rail" in b ? b.rail : [])).filter((i): i is RailTool => i.kind === "tool");
-    expect(tools).toHaveLength(2);
-    expect(tools.every((t) => t.interrupted && !t.running)).toBe(true);
-    expect(collapseRail(tools).every((g) => g.kind === "single")).toBe(true);
-    const failedRows = beats.filter((b) => b.kind === "passthrough" && b.view.kind === "assistant-failed");
-    expect(failedRows).toHaveLength(2);
+    const interrupted = tools.filter((t) => t.interrupted);
+    expect(interrupted).toHaveLength(2);
+    expect(interrupted.every((t) => !t.running && t.output === undefined)).toBe(true);
+    expect(collapseRail(interrupted).every((g) => g.kind === "single")).toBe(true);
+    expect(beats.filter((b) => b.kind === "passthrough" && b.view.kind === "assistant-failed")).toHaveLength(2);
+
+    const el = mount(<TranscriptRail items={interrupted.slice(0, 1)} />);
+    const glyph = el.querySelector(".rail-glyph")!;
+    expect(glyph.getAttribute("aria-label")).toBe("Show tool html_report, interrupted");
+    expect(glyph.classList.contains("is-error")).toBe(true);
+    act(() => (glyph as HTMLButtonElement).click());
+    expect(el.querySelector(".rail-card")?.classList.contains("is-error")).toBe(true);
+    expect(el.querySelector(".rail-card-body")?.textContent).toContain("the reply was cut off, so this call never ran");
+  });
+
+  it("an interrupted vscode call opens no VS Code chip", () => {
+    const tool = (interrupted: boolean): RailTool => ({ kind: "tool", id: "t", toolName: "vscode", toolCallId: "c", isError: false, running: false, ...(interrupted ? { interrupted } : {}) });
+    expect(beatOpensVsCode({ kind: "tools-only", rail: [tool(true)] })).toBe(false);
+    expect(beatOpensVsCode({ kind: "tools-only", rail: [tool(false)] })).toBe(true);
   });
 });
 
@@ -118,13 +195,24 @@ describe("status line during a retry", () => {
     { localId: "l", text: "research it", sentAt: 0, acceptedAt: 0, baseline: 0, runStateAtSend: "stopped", sawChange: false, sawRunning: false } satisfies PendingSend,
     "running",
   )!;
-  const derive = (entries: PiEntry[]) => deriveSessionActivity({ runState: "running", pending: p, entries, now: 1000, lastProgressAt: 1000 });
+  const derive = (entries: PiEntry[], runState = "running") => deriveSessionActivity({ runState, pending: p, entries, now: 1000, lastProgressAt: 1000 });
 
   it("a failed attempt pi is retrying is not the reply: still working", () => {
     expect(derive([user, failedAttempt("a1"), hide("x1", "a1")]).phase).toBe("working");
   });
 
-  it("a failure pi does not retry still ends the wait", () => {
-    expect(derive([user, failedAttempt("a1")]).phase).toBe("none");
+  it("a failed message whose edit hasn't arrived yet isn't the reply while the run is running", () => {
+    expect(derive([user, failedAttempt("a1")]).phase).toBe("working");
+  });
+
+  it("a failure pi does not retry ends the wait once the run settles", () => {
+    expect(derive([user, failedAttempt("a1")], "idle").phase).toBe("none");
+    expect(isFinalAssistant(failedAttempt("a1"), { runState: "failed" })).toBe(true);
+  });
+
+  it("an edit that replaces a reply (rather than hiding it) leaves it final", () => {
+    const edited = { id: "x1", type: "context_edit", targetId: "ok", replacement: [{ type: "text", text: "short" }] };
+    expect(isFinalAssistant(reply, { hidden: hiddenEntryIds([reply, edited]) })).toBe(true);
+    expect(isFinalAssistant(reply, { hidden: hiddenEntryIds([reply, hide("x2", "ok")]) })).toBe(false);
   });
 });

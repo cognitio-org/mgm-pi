@@ -1,0 +1,19 @@
+outfitter/packages/web/live/voice.mjs
+  s_fd47f462159c85::t_35d67fe9cac9d2 78-83,142-143
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "32edcbe2fefbafa21d9733fe03b277ebdc648206",
+  "prompts": {},
+  "sessions": {
+    "s_fd47f462159c85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4302a461-a7ca-4bcd-bca6-85c286e60f99",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

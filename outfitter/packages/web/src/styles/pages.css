@@ -101,6 +101,14 @@ a.preview-chip:focus-visible {
 .ide-note {
   color: var(--text-dim);
   font-size: 0.9em;
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ide-open-btn[aria-disabled="true"] {
+  cursor: progress;
 }
 
 .chip-btn {

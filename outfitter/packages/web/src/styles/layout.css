@@ -734,13 +734,13 @@
   flex-direction: column;
 }
 
-h4.voice-menu .voice-mic-choice {
+.voice-menu .voice-mic-choice {
   max-width: 15rem;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.voice-menu-heading {
+h4.voice-menu-heading {
   margin: 0;
   font-weight: normal;
 }

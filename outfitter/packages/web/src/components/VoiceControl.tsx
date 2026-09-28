@@ -94,7 +94,7 @@ export function VoiceControl({ voice }: { voice: Voice }) {
   function menuKeys(e: ReactKeyboardEvent<HTMLDivElement>) {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Home" && e.key !== "End") return;
     e.preventDefault();
-    const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>("[role='menuitemradio']:not(:disabled)") ?? []);
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>("[role='menuitemradio']:not(:disabled), [role='menuitem']:not(:disabled)") ?? []);
     if (items.length === 0) return;
     const at = items.indexOf(document.activeElement as HTMLButtonElement);
     const next =
@@ -212,7 +212,7 @@ export function VoiceControl({ voice }: { voice: Voice }) {
                 Chosen microphone (not connected)
               </button>
             )}
-            {!voice.micsLabelled && (
+            {!voice.micsLabelled && voice.micsAvailable && (
               <button type="button" role="menuitem" onClick={() => voice.allowMicList()}>
                 Show my microphones…
               </button>
@@ -238,7 +238,7 @@ export function VoiceControl({ voice }: { voice: Voice }) {
               <VoiceSpendView compact />
             </section>
           )}
-          {voice.engine === "builtin" && (
+          {(voice.engine === "builtin" || (!voice.deepgramAvailable && voice.builtinAvailable)) && (
             <p className="voice-menu-hint">Browser built-in speech always uses the system default microphone.</p>
           )}
           <div className="voice-menu-hint" aria-hidden="true">

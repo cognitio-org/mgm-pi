@@ -1,6 +1,6 @@
 // #267: the microphone list and the remembered choice.
 import { describe, expect, it } from "vitest";
-import { listMics, loadMicId, micConstraints, saveMicId, MIC_STORAGE_KEY } from "../src/lib/voice-mic.ts";
+import { listMics, loadMicChoice, micConstraints, resolveMic, saveMicChoice, MIC_LABEL_STORAGE_KEY, MIC_STORAGE_KEY } from "../src/lib/voice-mic.ts";
 
 const dev = (kind: string, deviceId: string, label = "") => ({ kind, deviceId, label, groupId: "g" }) as MediaDeviceInfo;
 
@@ -35,16 +35,31 @@ describe("micConstraints", () => {
 });
 
 describe("saved choice", () => {
-  it("round-trips, clears back to the default, and survives storage that throws", () => {
+  it("round-trips id and name, clears back to the default, and survives storage that throws", () => {
     const store = new Map<string, string>();
     const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) };
-    saveMicId("a2", storage);
-    expect(store.get(MIC_STORAGE_KEY)).toBe("a2");
-    expect(loadMicId(storage)).toBe("a2");
-    saveMicId(undefined, storage);
-    expect(loadMicId(storage)).toBeUndefined();
+    saveMicChoice({ id: "a2", label: "Shure MV7" }, storage);
+    expect([store.get(MIC_STORAGE_KEY), store.get(MIC_LABEL_STORAGE_KEY)]).toEqual(["a2", "Shure MV7"]);
+    expect(loadMicChoice(storage)).toEqual({ id: "a2", label: "Shure MV7" });
+    saveMicChoice(undefined, storage);
+    expect(loadMicChoice(storage)).toBeUndefined();
+    expect(store.size).toBe(0);
     const broken = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); }, removeItem: () => { throw new Error("blocked"); } };
-    expect(loadMicId(broken)).toBeUndefined();
-    expect(() => saveMicId("a2", broken)).not.toThrow();
+    expect(loadMicChoice(broken)).toBeUndefined();
+    expect(() => saveMicChoice({ id: "a2" }, broken)).not.toThrow();
+  });
+});
+
+describe("resolveMic", () => {
+  const mics = [{ id: "new-1", label: "MacBook Pro Microphone" }, { id: "new-2", label: "Shure MV7" }];
+  it("keeps an id that's connected", () => {
+    expect(resolveMic({ id: "new-2", label: "Shure MV7" }, mics)).toEqual({ id: "new-2", label: "Shure MV7" });
+  });
+  it("finds the same mic by name when the browser issued new ids", () => {
+    expect(resolveMic({ id: "old-2", label: "Shure MV7" }, mics)).toEqual({ id: "new-2", label: "Shure MV7" });
+  });
+  it("otherwise keeps the saved choice (not connected), and the default stays the default", () => {
+    expect(resolveMic({ id: "gone", label: "USB Headset" }, mics)).toEqual({ id: "gone", label: "USB Headset" });
+    expect(resolveMic(undefined, mics)).toBeUndefined();
   });
 });

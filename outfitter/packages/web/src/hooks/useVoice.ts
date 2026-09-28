@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { api, ApiError, type VoiceConfig } from "../api/client.ts";
 import { composeDraft, IDLE, stepGesture, type GestureEvent, type GestureState } from "../lib/voice-gesture.ts";
-import { listMics, loadMicId, saveMicId, type Mic } from "../lib/voice-mic.ts";
+import { listMics, loadMicChoice, resolveMic, saveMicChoice, type Mic, type MicChoice } from "../lib/voice-mic.ts";
 import {
   builtinRecognition,
   startBuiltin,
@@ -72,8 +72,6 @@ export interface UseVoiceOptions {
   send(text: string): Promise<void>;
   engines?: VoiceEngines;
   now?: () => number;
-  /** #267: where the microphone list comes from; the browser's by default. */
-  mediaDevices?: Pick<MediaDevices, "enumerateDevices" | "getUserMedia" | "addEventListener" | "removeEventListener">;
 }
 
 export interface Voice {
@@ -95,6 +93,8 @@ export interface Voice {
    * whether their names are visible yet (only after mic permission has been granted once). */
   mics: Mic[];
   micsLabelled: boolean;
+  /** Whether this page can list and open microphones at all (not on plain http, for instance). */
+  micsAvailable: boolean;
   micId: string | undefined;
   setMicId(id: string | undefined): void;
   refreshMics(): void;
@@ -134,8 +134,10 @@ export function useVoice(opts: UseVoiceOptions): Voice {
   const [configLoaded, setConfigLoaded] = useState(false);
   const [mics, setMics] = useState<Mic[]>([]);
   const [micsLabelled, setMicsLabelled] = useState(false);
-  const [micId, setMicIdState] = useState<string | undefined>(() => loadMicId());
-  const devices = opts.mediaDevices ?? (typeof navigator === "undefined" ? undefined : navigator.mediaDevices);
+  const [micChoice, setMicChoice] = useState<MicChoice | undefined>(() => loadMicChoice());
+  // navigator.mediaDevices is one object for the page's life, so this is stable.
+  const [devices] = useState(() => (typeof navigator === "undefined" ? undefined : navigator.mediaDevices));
+  const micId = micChoice?.id;
 
   const gesture = useRef<GestureState>(IDLE);
   const recording = useRef<VoiceRecording | null>(null);
@@ -159,6 +161,12 @@ export function useVoice(opts: UseVoiceOptions): Voice {
       .then(({ mics: found, labelled }) => {
         setMics(found);
         setMicsLabelled(labelled);
+        // The same mic under a new id (a private window, cleared site data): follow it by name.
+        setMicChoice((current) => {
+          const resolved = labelled ? resolveMic(current, found) : current;
+          if (resolved && resolved.id !== current?.id) saveMicChoice(resolved);
+          return resolved;
+        });
       })
       .catch(() => {});
   }, [devices]);
@@ -358,10 +366,12 @@ export function useVoice(opts: UseVoiceOptions): Voice {
     builtinAvailable: engines.builtinAvailable,
     mics,
     micsLabelled,
+    micsAvailable: !!devices?.enumerateDevices,
     micId,
     setMicId(id) {
-      setMicIdState(id);
-      saveMicId(id);
+      const choice = id ? { id, label: mics.find((m) => m.id === id)?.label } : undefined;
+      setMicChoice(choice);
+      saveMicChoice(choice);
     },
     refreshMics,
     allowMicList() {
@@ -371,7 +381,9 @@ export function useVoice(opts: UseVoiceOptions): Voice {
           stream.getTracks().forEach((t) => t.stop());
           refreshMics();
         })
-        .catch(() => setNote("Microphone access was refused. Allow it in the browser's site settings."));
+        .catch((err) =>
+          setNote((err as { name?: string })?.name === "NotFoundError" ? ERROR_NOTES["no-mic"] : ERROR_NOTES.permission),
+        );
     },
     usable,
     press() {

@@ -588,6 +588,47 @@ describe("#267 choosing the microphone", () => {
     expect(deviceIds).toEqual(["shure"]);
   });
 
+  it("follows the chosen mic by name when the browser issued new ids", async () => {
+    stubDevices();
+    granted = true;
+    window.localStorage.setItem("outfitter.voice.micId", "old-id-from-before");
+    window.localStorage.setItem("outfitter.voice.micLabel", "Shure MV7");
+    await mount();
+    await openMenu();
+    expect(item(/Shure MV7/).getAttribute("aria-checked")).toBe("true");
+    expect(window.localStorage.getItem("outfitter.voice.micId")).toBe("shure");
+    await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    await pointer("pointerdown");
+    expect(deviceIds).toEqual(["shure"]);
+  });
+
+  it("a chosen mic that isn't connected shows as such", async () => {
+    stubDevices();
+    granted = true;
+    window.localStorage.setItem("outfitter.voice.micId", "unplugged");
+    window.localStorage.setItem("outfitter.voice.micLabel", "USB Headset");
+    await mount();
+    await openMenu();
+    const row = item(/not connected/);
+    expect(row.disabled).toBe(true);
+    expect(row.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("arrow keys reach Show my microphones…", async () => {
+    stubDevices();
+    await mount();
+    await openMenu();
+    const menu = host.querySelector<HTMLElement>(".voice-menu")!;
+    await act(async () => menu.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })));
+    await act(async () => menu.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true })));
+    const seen = new Set<string>();
+    for (let i = 0; i < 12; i++) {
+      seen.add(document.activeElement?.textContent ?? "");
+      await act(async () => menu.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+    }
+    expect([...seen].some((t) => /Show my microphones/.test(t))).toBe(true);
+  });
+
   it("follows microphones being plugged in", async () => {
     stubDevices();
     granted = true;

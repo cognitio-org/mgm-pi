@@ -9,6 +9,9 @@ export interface Mic {
 }
 
 export const MIC_STORAGE_KEY = "outfitter.voice.micId";
+/** The chosen mic's name, so it's found again when the browser issues new device ids (a private
+ * window, cleared site data). */
+export const MIC_LABEL_STORAGE_KEY = "outfitter.voice.micLabel";
 
 /** The audio inputs, minus Chrome's "default" and "communications" aliases (the menu offers its own
  * "System default"). `labelled` is false until mic permission has been granted once: browsers hide
@@ -26,22 +29,44 @@ export function micConstraints(deviceId: string | undefined): MediaTrackConstrai
   return { echoCancellation: true, noiseSuppression: true, ...(deviceId ? { deviceId: { exact: deviceId } } : {}) };
 }
 
+export interface MicChoice {
+  id: string;
+  label?: string;
+}
+
 /** The saved choice, or undefined for the system default. Storage can throw (private mode). */
-export function loadMicId(storage: Pick<Storage, "getItem"> | undefined = safeLocalStorage()): string | undefined {
+export function loadMicChoice(storage: Pick<Storage, "getItem"> | undefined = safeLocalStorage()): MicChoice | undefined {
   try {
-    return storage?.getItem(MIC_STORAGE_KEY) || undefined;
+    const id = storage?.getItem(MIC_STORAGE_KEY);
+    if (!id) return undefined;
+    const label = storage?.getItem(MIC_LABEL_STORAGE_KEY) || undefined;
+    return { id, ...(label ? { label } : {}) };
   } catch {
     return undefined;
   }
 }
 
-export function saveMicId(id: string | undefined, storage: Pick<Storage, "setItem" | "removeItem"> | undefined = safeLocalStorage()): void {
+export function saveMicChoice(choice: MicChoice | undefined, storage: Pick<Storage, "setItem" | "removeItem"> | undefined = safeLocalStorage()): void {
   try {
-    if (id) storage?.setItem(MIC_STORAGE_KEY, id);
-    else storage?.removeItem(MIC_STORAGE_KEY);
+    if (choice) {
+      storage?.setItem(MIC_STORAGE_KEY, choice.id);
+      if (choice.label) storage?.setItem(MIC_LABEL_STORAGE_KEY, choice.label);
+      else storage?.removeItem(MIC_LABEL_STORAGE_KEY);
+    } else {
+      storage?.removeItem(MIC_STORAGE_KEY);
+      storage?.removeItem(MIC_LABEL_STORAGE_KEY);
+    }
   } catch {
     // not persisted; the choice still holds for this page
   }
+}
+
+/** The saved choice against the mics connected now: its id if that's there, else the mic with its
+ * name (the browser issued new ids), else the id as saved (not connected). */
+export function resolveMic(choice: MicChoice | undefined, mics: Mic[]): MicChoice | undefined {
+  if (!choice || mics.some((m) => m.id === choice.id)) return choice;
+  const byName = choice.label ? mics.find((m) => m.label === choice.label) : undefined;
+  return byName ? { id: byName.id, label: byName.label } : choice;
 }
 
 function safeLocalStorage(): Storage | undefined {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import type { Voice } from "../hooks/useVoice.ts";
 import { isVoiceShortcut, VOICE_SHORTCUT_LABEL } from "../lib/voice-gesture.ts";
 import { isTouchDeviceHere } from "../lib/touch.ts";
@@ -37,7 +37,10 @@ export function VoiceControl({ voice }: { voice: Voice }) {
       if (e.key === "Escape" && (live.current.status !== "idle" || live.current.latched)) {
         e.preventDefault();
         e.stopPropagation();
-        setMenuOpen(false);
+        if (menuRef.current) {
+          setMenuOpen(false);
+          optionsRef.current?.focus(); // the menu's own Esc handler, which does this, won't run
+        }
         shortcutDown.current = false;
         pointerDown.current = false;
         live.current.cancel();
@@ -106,9 +109,7 @@ export function VoiceControl({ voice }: { voice: Voice }) {
       <button
         type="button"
         className={`voice-mic${active ? " is-live" : ""}${voice.status === "finishing" ? " is-finishing" : ""}`}
-        ref={(el) => {
-          voice.levelTarget.current = el;
-        }}
+        ref={voice.levelTarget as RefObject<HTMLButtonElement | null>}
         aria-label="Voice input"
         aria-pressed={active}
         title={voice.usable ? hint : "Voice input isn't available here"}

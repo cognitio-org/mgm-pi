@@ -362,6 +362,30 @@ describe("startBuiltin", () => {
     const done = recording.stop();
     await vi.advanceTimersByTimeAsync(50);
     await expect(done).resolves.toEqual({ transcript: "maybe cut off", complete: false });
+    expect(rec.aborted).toBe(true);
+    // A result arriving after the stop settled goes nowhere (the draft may be being edited).
+    expect(rec.onresult).toBeNull();
+  });
+
+  it("a mic opened but a socket that can't be constructed still lets go of the mic", async () => {
+    vi.useRealTimers();
+    const track = new FakeTrack();
+    const Throwing = class {
+      static CONNECTING = 0;
+      static OPEN = 1;
+      constructor() {
+        throw new SyntaxError("bad subprotocol");
+      }
+    };
+    await expect(
+      startDeepgram(callbacks().cb, {
+        getToken: async () => TOKEN,
+        getUserMedia: async () => ({ getTracks: () => [track] }) as unknown as MediaStream,
+        MediaRecorder: FakeRecorder as unknown as typeof MediaRecorder,
+        WebSocket: Throwing as unknown as typeof WebSocket,
+      }),
+    ).rejects.toMatchObject({ kind: "upstream" });
+    expect(track.stopped).toBe(true);
   });
 
   it("no SpeechRecognition here is unsupported", async () => {

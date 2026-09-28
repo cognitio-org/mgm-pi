@@ -123,9 +123,17 @@ export async function startDeepgram(callbacks: VoiceCallbacks, deps: DeepgramDep
   let dropped = false;
   const joined = () => [...finals, interim].filter(Boolean).join(" ");
 
-  const ws = new deps.WebSocket(listenUrl(token), ["bearer", token.token]);
+  // From here the mic is open: anything that throws while setting up must still let go of it.
+  let ws: WebSocket;
+  let recorder: MediaRecorder;
+  try {
+    ws = new deps.WebSocket(listenUrl(token), ["bearer", token.token]);
+    recorder = new deps.MediaRecorder(stream, { mimeType });
+  } catch (err) {
+    stream.getTracks().forEach((t) => t.stop());
+    throw new VoiceError("upstream", err instanceof Error ? err.message : String(err));
+  }
   const queue: Blob[] = [];
-  const recorder = new deps.MediaRecorder(stream, { mimeType });
   let opened = false;
   let recorderStopped = false;
   let closeSent = false;
@@ -139,7 +147,12 @@ export async function startDeepgram(callbacks: VoiceCallbacks, deps: DeepgramDep
     openFailed = reject;
   });
 
-  const level = startLevelMeter(stream, callbacks.onLevel, deps.AudioContext);
+  let level: { stop(): void } = { stop() {} };
+  try {
+    level = startLevelMeter(stream, callbacks.onLevel, deps.AudioContext);
+  } catch {
+    // no level meter; recording works without it
+  }
 
   function release() {
     level.stop();
@@ -215,16 +228,21 @@ export async function startDeepgram(callbacks: VoiceCallbacks, deps: DeepgramDep
     release();
   }
 
+  let openTimer: ReturnType<typeof setTimeout> | undefined;
   try {
     // Recording starts now so the first words are queued while the socket opens.
     recorder.start(250);
     await Promise.race([
       openPromise,
-      new Promise<never>((_, reject) => setTimeout(() => reject(new VoiceError("upstream", "Deepgram didn't answer")), deps.openTimeoutMs ?? 8000)),
+      new Promise<never>((_, reject) => {
+        openTimer = setTimeout(() => reject(new VoiceError("upstream", "Deepgram didn't answer")), deps.openTimeoutMs ?? 8000);
+      }),
     ]);
   } catch (err) {
     abandon();
     throw err instanceof VoiceError ? err : new VoiceError("upstream", String(err));
+  } finally {
+    clearTimeout(openTimer);
   }
 
   return {
@@ -395,6 +413,11 @@ export async function startBuiltin(callbacks: VoiceCallbacks, deps: BuiltinDeps)
       let timedOut = false;
       await Promise.race([endedPromise, new Promise((r) => setTimeout(r, deps.finishTimeoutMs ?? 3000)).then(() => (timedOut = true))]);
       finished = true;
+      // Nothing may arrive after this: a late result would overwrite a draft the person is already
+      // editing. A recognizer that never ended is aborted.
+      rec.onresult = null;
+      rec.onerror = null;
+      if (timedOut) rec.abort();
       committed.push(...round);
       round = [];
       const transcript = [...committed, interim].filter(Boolean).join(" ");

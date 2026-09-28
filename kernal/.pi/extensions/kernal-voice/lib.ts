@@ -72,13 +72,19 @@ export function reconcileVoice(
   const m = opts.marker;
 
   if (m?.state === "seeded") {
-    if (voice.backend !== "local" || voice.localModel !== m.localModel) return { ...same, reason: "the person changed voice since kernal seeded it" };
+    if (voice.backend !== "local" || voice.localModel !== m.localModel || voice.enabled === false) {
+      return { ...same, reason: "the person changed voice since kernal seeded it" };
+    }
     if (!opts.deepgramKey) return { ...same, marker: m, reason: "seed still standing in for a key" };
     return { settings: withoutSeed(settings), changed: true, marker: { state: "unseeded", at }, notice: "unseeded", reason: "Deepgram key present: took kernal's seed out" };
   }
 
   if (m?.state === "unseeded") {
-    if (voice.backend || voice.enabled === false) return { ...same, reason: "the person chose voice settings since" };
+    // pi-listen stores a Deepgram choice as no backend once it reloads its settings, so an explicit
+    // setup also shows in how onboarding was completed: kernal's own seed and unseed leave
+    // "migration"; the person's setup leaves "first-run" or "setup-command".
+    const chosen = voice.onboarding?.source === "first-run" || voice.onboarding?.source === "setup-command";
+    if (voice.backend || voice.enabled === false || chosen) return { ...same, reason: "the person chose voice settings since" };
     if (opts.deepgramKey) return { ...same, marker: m, reason: "on Deepgram with a key" };
     const localModel = opts.model || DEFAULT_VOICE_MODEL;
     const reseeded = { ...settings, voice: { ...voice, enabled: true, backend: "local", localModel } };

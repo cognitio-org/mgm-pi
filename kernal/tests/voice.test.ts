@@ -86,6 +86,12 @@ describe("reconcileVoice (#249)", () => {
     assert.deepEqual([picked.changed, picked.marker], [false, undefined]);
     const off = reconcileVoice({ voice: { enabled: false } }, { ...base, marker: { state: "unseeded", at: AT } });
     assert.deepEqual([off.changed, off.marker], [false, undefined]);
+    // A Deepgram setup of theirs, after pi-listen reloaded it to "no backend": onboarding says who.
+    const setup = reconcileVoice({ voice: { onboarding: { completed: true, source: "setup-command" } } }, { ...base, marker: { state: "unseeded", at: AT } });
+    assert.deepEqual([setup.changed, setup.marker], [false, undefined]);
+    // Voice turned off on the seeded model: no "now streams through Deepgram" when a key arrives.
+    const offSeed = reconcileVoice({ voice: { ...seededVoice, enabled: false } }, { ...base, marker: seededMarker, deepgramKey: true });
+    assert.deepEqual([offSeed.changed, offSeed.notice, offSeed.marker], [false, undefined, undefined]);
   });
   test("no marker: an earlier seed counts as kernal's only if pi-listen auto-completed it and the model was never downloaded", () => {
     assert.equal(reconcileVoice({ voice: seededVoice }, { ...base, deepgramKey: true }).notice, "unseeded");

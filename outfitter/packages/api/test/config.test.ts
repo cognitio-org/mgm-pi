@@ -164,3 +164,17 @@ describe("tokenAudiences (OUTFITTER_ORIGIN_ALIASES)", () => {
     assert.deepEqual(tokenAudiences(config), ["https://link.kernal.one", "https://outfitter-link-abc-uc.a.run.app"]);
   });
 });
+
+describe("voice config (#252)", () => {
+  test("defaults, and clamps the token TTL and per-minute limit to what makes sense", () => {
+    const d = loadConfig({} as NodeJS.ProcessEnv);
+    assert.equal(d.deepgramApiKey, "");
+    assert.equal(d.voiceModel, "nova-3");
+    assert.equal(d.voiceTokenTtlSeconds, 30);
+    assert.equal(d.voiceTokensPerMinute, 20);
+    const low = loadConfig({ VOICE_TOKEN_TTL_SECONDS: "0", VOICE_TOKENS_PER_MINUTE: "-3" } as NodeJS.ProcessEnv);
+    assert.equal(low.voiceTokenTtlSeconds, 1);
+    assert.equal(low.voiceTokensPerMinute, 1);
+    assert.equal(loadConfig({ VOICE_TOKEN_TTL_SECONDS: "99999" } as NodeJS.ProcessEnv).voiceTokenTtlSeconds, 3600);
+  });
+});

@@ -73,6 +73,13 @@ IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}/outfitter-api:${TAG}"
 # read by the provider status service's LiteLLM probe, falling back to the default guru LiteLLM key
 # (outfitter-litellm-key-default, secrets.ts's SecretsBroker.defaultLitellmKey) when unset.
 SECRETS="$(existing_secrets MONGODB_URI=outfitter-mongodb-uri:latest GITHUB_PAT=outfitter-github-pat:latest LITELLM_ADMIN_KEY=outfitter-litellm-admin:latest LOCAL_TUNNEL_TOKEN=outfitter-local-tunnel-token:latest NGROK_API_KEY=outfitter-ngrok-api-key:latest NGROK_GOOGLE_OAUTH=outfitter-ngrok-google-oauth:latest)"
+# #252 web voice: the Deepgram Member key POST /api/voice/token mints browser tokens with. Web role
+# only (the exception to "identical for both roles"): link serves no voice route, and this key can
+# mint tokens and read usage, unlike the usage-only key kernal bundles ship.
+if [[ "${ROLE}" == "web" ]]; then
+  VOICE_SECRET="$(existing_secrets DEEPGRAM_API_KEY=outfitter-deepgram-key:latest)"
+  [[ -n "${VOICE_SECRET}" ]] && SECRETS="${SECRETS:+${SECRETS},}${VOICE_SECRET}"
+fi
 
 # Both roles run the same image, so whichever deploys second reuses the first one's build.
 if image_exists "${IMAGE}"; then
@@ -224,6 +231,9 @@ if [[ "${ROLE}" == "web" ]]; then
   # the two current operators (see the same Decisions table entry); override by exporting
   # OUTFITTER_OPERATORS before running this script.
   ENV_VARS="${ENV_VARS},OUTFITTER_OPERATORS=${OUTFITTER_OPERATORS}"
+  # #252/#257 web voice (config.env): the Deepgram project the voice key belongs to, for per-person
+  # usage. Not secret. Empty leaves it out.
+  [[ -n "${DEEPGRAM_PROJECT_ID:-}" ]] && ENV_VARS="${ENV_VARS},DEEPGRAM_PROJECT_ID=${DEEPGRAM_PROJECT_ID}"
 fi
 # What's running, for the web app's version indicator (GET /api/version): the commit this deploy
 # ships and, when the deploy came from a release tag (outfitter-deploy.yml sets GITHUB_REF_NAME),

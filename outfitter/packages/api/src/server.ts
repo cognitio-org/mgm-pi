@@ -4,6 +4,7 @@
 
 import { createNgrokApi, type NgrokApi } from "./ngrok-api.ts";
 import { PreviewService } from "./previews.ts";
+import { VoiceService } from "./voice.ts";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyWebsocket from "@fastify/websocket";
 import type { Store } from "./store/types.ts";
@@ -45,6 +46,8 @@ export interface BuildAppOptions {
   /** #217 Drive previews' ngrok API. Tests inject a fake; production builds one from NGROK_API_KEY
    * when PREVIEW_DOMAIN is set. */
   ngrok?: NgrokApi;
+  /** #252 web voice. Tests inject one with a fake fetch; production builds one from config. */
+  voice?: VoiceService;
 }
 
 export interface App {
@@ -174,6 +177,15 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     mail,
     previews,
     providers,
+    voice:
+      opts.voice ??
+      new VoiceService({
+        apiKey: config.deepgramApiKey,
+        model: config.voiceModel,
+        language: config.voiceLanguage,
+        ttlSeconds: config.voiceTokenTtlSeconds,
+        perMinute: config.voiceTokensPerMinute,
+      }),
     telemetry:
       opts.telemetry ??
       (config.devMode || !config.gcpProject

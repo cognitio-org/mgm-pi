@@ -44,6 +44,7 @@ import type {
   FormattedSession,
   FormattedSessionsCollection,
 } from "./types.ts";
+import type { VoicePrefs } from "../voice.ts";
 import { BROWSER_CAPTURES_PER_SESSION, entryInsertFields, type EntryInsertOptions } from "./types.ts";
 
 function clone<T>(value: T): T {
@@ -340,6 +341,13 @@ class MemoryUsers implements UsersCollection {
   async findByEmail(email: string): Promise<User | null> {
     const row = this.rows.get(email);
     return row ? clone(row) : null;
+  }
+
+  async setVoicePrefs(email: string, prefs: VoicePrefs): Promise<User> {
+    const existing = this.rows.get(email);
+    const next: User = { ...(existing ?? { email, createdAt: new Date().toISOString() }), voice: { ...prefs } };
+    this.rows.set(email, next);
+    return clone(next);
   }
 }
 

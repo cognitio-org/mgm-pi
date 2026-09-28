@@ -159,6 +159,20 @@ export interface Config {
    * a dead half-open connection and replaced. 0 disables the rule (every valid hello takes the run
    * over, the pre-fix behaviour) -- tests use that to exercise the replacement path. */
   agentSocketGraceMs: number;
+  /** DEEPGRAM_API_KEY (Secret Manager outfitter-deepgram-key, web role): the Member key POST
+   * /api/voice/token mints short-lived browser tokens with (#252, src/voice.ts). Empty turns
+   * Deepgram voice off; the web then offers only the browser's built-in engine. */
+  deepgramApiKey: string;
+  /** DEEPGRAM_PROJECT_ID (deploy/config.env, not secret): the Deepgram project that key belongs to,
+   * for reading per-person usage (#257). */
+  deepgramProjectId: string;
+  /** VOICE_MODEL (default nova-3) and VOICE_LANGUAGE (default en): what the browser streams with. */
+  voiceModel: string;
+  voiceLanguage: string;
+  /** VOICE_TOKEN_TTL_SECONDS (default 30): how long a minted token may open a socket. */
+  voiceTokenTtlSeconds: number;
+  /** VOICE_TOKENS_PER_MINUTE (default 20): tokens one person may mint per minute, per instance. */
+  voiceTokensPerMinute: number;
 }
 
 const OUTFITTER_ROLES: readonly OutfitterRole[] = ["all", "web", "link"];
@@ -339,5 +353,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     cloudTasksQueue: env.CLOUD_TASKS_QUEUE ?? "",
     tasksSaEmail: env.TASKS_SA_EMAIL ?? "",
     agentSocketGraceMs: envInt("AGENT_SOCKET_GRACE_MS", 60_000, env),
+    deepgramApiKey: (env.DEEPGRAM_API_KEY ?? "").trim(),
+    deepgramProjectId: (env.DEEPGRAM_PROJECT_ID ?? "").trim(),
+    voiceModel: env.VOICE_MODEL || "nova-3",
+    voiceLanguage: env.VOICE_LANGUAGE || "en",
+    // Deepgram accepts 1..3600 s; a limit below 1 would refuse everyone with a meaningless retry-after.
+    voiceTokenTtlSeconds: Math.min(3600, Math.max(1, envInt("VOICE_TOKEN_TTL_SECONDS", 30, env))),
+    voiceTokensPerMinute: Math.max(1, envInt("VOICE_TOKENS_PER_MINUTE", 20, env)),
   };
 }

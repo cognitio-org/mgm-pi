@@ -11,6 +11,7 @@ import type { SecretAdmin } from "../secrets.ts";
 import type { MailService } from "../mail.ts";
 import type { SandboxProviders } from "../providers/registry.ts";
 import type { SandboxTelemetry } from "../sandbox-telemetry.ts";
+import type { VoiceService } from "../voice.ts";
 
 /** Dependencies every route module needs; built once in server.ts and threaded through. */
 export interface RouteContext {
@@ -39,4 +40,6 @@ export interface RouteContext {
   /** #197: sandbox logs (Cloud Logging, through the scoped log view) and stats (Cloud Monitoring).
    * NoSandboxTelemetry in dev and tests unless one injects a fake. */
   telemetry: SandboxTelemetry;
+  /** #252 web voice: mints short-lived Deepgram tokens (routes/voice.ts). */
+  voice: VoiceService;
 }

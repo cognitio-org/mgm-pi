@@ -146,12 +146,15 @@ the page and never moved the fleet, because `release.sh` deploys the page first.
    | `outfitter-github-pat` | `GITHUB_PAT` | **nothing yet** | deployed as a placeholder only — see (b) |
    | `outfitter-litellm-admin` | `LITELLM_ADMIN_KEY` | `config.ts` → `src/providers-status.ts`'s LiteLLM probe (E2.10) | calls `/health/liveliness`, `/model/info`, `/key/info`; falls back to `outfitter-litellm-key-default` (b) when unset |
    | `outfitter-ngrok-api-key` | `NGROK_API_KEY` | `config.ts` → `src/providers-status.ts`'s ngrok probe (E2.10) | optional; `GET https://api.ngrok.com/endpoints` reconciler. Unset means the "ngrok" row reports `unknown`/"not configured", not a poll failure |
+   | `outfitter-deepgram-key` | `DEEPGRAM_API_KEY` | `config.ts` → `src/voice.ts`'s `VoiceService` (#252), **web role only** | optional; a Deepgram **Member** key with `usage:read`, in the same Deepgram project as kernal's bundle key (`DEEPGRAM_PROJECT_ID` in `config.env`). The bundle key is usage-only and can't mint the browser tokens. Unset means `POST /api/voice/token` answers 404 `voice_disabled` |
 
    ```bash
    printf '%s' "<mongodb+srv connection string>" | gcloud secrets create outfitter-mongodb-uri --project=outfitter-509211 --data-file=-
    printf '%s' "<LOCAL_TUNNEL_TOKEN from ~/localllm/.env>" | gcloud secrets create outfitter-local-tunnel-token --project=outfitter-509211 --data-file=-
    printf '%s' "<LiteLLM admin/master key>"   | gcloud secrets create outfitter-litellm-admin  --project=outfitter-509211 --data-file=-
    printf '%s' "<ngrok API key, dashboard -> API keys>" | gcloud secrets create outfitter-ngrok-api-key --project=outfitter-509211 --data-file=-
+   # Deepgram Member key (console -> project -> API keys, role Member); copy it, then:
+   pbpaste | tr -d ' \r\n' | gcloud secrets create outfitter-deepgram-key --project=outfitter-509211 --replication-policy=automatic --labels=app=outfitter,purpose=voice --data-file=-
    # placeholder only (see (b) below for the secret that actually gates GitHub access today):
    printf '%s' "<fine-grained GitHub PAT>"    | gcloud secrets create outfitter-github-pat    --project=outfitter-509211 --data-file=-
    ```

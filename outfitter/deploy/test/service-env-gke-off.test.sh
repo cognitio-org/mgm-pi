@@ -30,10 +30,11 @@ cp "${DEPLOY_SRC}/env.sh" "${DEPLOY_SRC}/config.env" "${DEPLOY_SRC}/service.sh" 
 # depend on the default's value or on its expansion form (`-` vs `:-`). GKE off means Cloud Run is
 # the provider too (the checked-in default is gke since 2026-09-26), so force that line as well.
 CFG="${REPO}/outfitter/deploy/config.env"
-# Previews (#217) off too by default here, so the GKE-off list below stays the pre-GKE one; the
-# previews case at the end turns them on from the environment.
+# Previews (#217) and web voice's DEEPGRAM_PROJECT_ID (#252) off too by default here, so the GKE-off list below stays the pre-GKE one; the
+# previews and voice cases at the end turn them on from the environment.
 sed -e 's/^GKE_CLUSTER=.*/GKE_CLUSTER=""/' -e 's/^SANDBOX_PROVIDER=.*/SANDBOX_PROVIDER="cloudrun"/' \
   -e 's/^PREVIEW_DOMAIN=.*/PREVIEW_DOMAIN="${PREVIEW_DOMAIN-}"/' \
+  -e 's/^DEEPGRAM_PROJECT_ID=.*/DEEPGRAM_PROJECT_ID="${DEEPGRAM_PROJECT_ID-}"/' \
   "${CFG}" >"${CFG}.tmp" && mv "${CFG}.tmp" "${CFG}"
 grep -qx 'GKE_CLUSTER=""' "${CFG}" || { echo "FAIL: couldn't force GKE_CLUSTER off in the test's config.env"; exit 1; }
 grep -qx 'SANDBOX_PROVIDER="cloudrun"' "${CFG}" || { echo "FAIL: couldn't force SANDBOX_PROVIDER=cloudrun in the test's config.env"; exit 1; }
@@ -140,6 +141,32 @@ if [[ ${status} -eq 0 && "${PREVIEW_ENV}" == *",${WANT_PREVIEW},"* ]]; then
 else
   echo "FAIL: previews on: expected ${WANT_PREVIEW} in --set-env-vars (exit ${status})"
   echo "  got: ${PREVIEW_ENV}"
+  fails=$((fails + 1))
+fi
+
+# #252 web voice: DEEPGRAM_PROJECT_ID is a web-role env var, and the Deepgram key is mounted on web
+# only (the fake gcloud reports every secret as existing). Link gets neither.
+: >"${GCLOUD_CALLS}"
+status=0
+OUT="$(cd "${REPO}/outfitter/deploy" && DEEPGRAM_PROJECT_ID=dg-project ./service.sh web 2>&1)" || status=$?
+VOICE_CALL="$(grep '^run deploy outfitter-api' "${GCLOUD_CALLS}" || true)"
+if [[ ${status} -eq 0 && "${VOICE_CALL}" == *",DEEPGRAM_PROJECT_ID=dg-project,"* && "${VOICE_CALL}" == *"DEEPGRAM_API_KEY=outfitter-deepgram-key:latest"* ]]; then
+  echo "ok: web voice: DEEPGRAM_PROJECT_ID set and outfitter-deepgram-key mounted on web"
+else
+  echo "FAIL: web voice: expected DEEPGRAM_PROJECT_ID and the outfitter-deepgram-key mount on web (exit ${status})"
+  echo "  got: ${VOICE_CALL}"
+  fails=$((fails + 1))
+fi
+: >"${GCLOUD_CALLS}"
+status=0
+OUT="$(cd "${REPO}/outfitter/deploy" && DEEPGRAM_PROJECT_ID=dg-project ./service.sh link 2>&1)" || status=$?
+LINK_CALL="$(grep '^run deploy outfitter-link' "${GCLOUD_CALLS}" || true)"
+if [[ ${status} -eq 0 && -n "${LINK_CALL}" && "${LINK_CALL}" != *DEEPGRAM* ]]; then
+  echo "ok: web voice: link gets neither DEEPGRAM_PROJECT_ID nor the Deepgram key"
+else
+  echo "FAIL: web voice: link deploy should carry no DEEPGRAM_* (exit ${status})"
+  echo "  got: ${LINK_CALL:-<no deploy call>}"
+  echo "${OUT}" | tail -5 | sed 's/^/    /'
   fails=$((fails + 1))
 fi
 

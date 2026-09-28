@@ -435,6 +435,24 @@ wake -> ready summary. Runs created before `Run.startup` existed get no stamps a
   `/wake` on it is a 404.
 - `GET|POST|PUT /api/gurus`, `/api/environments`
 - `GET /api/me` → `{email}` from `x-goog-iap-jwt-assertion` (dev: `OUTFITTER_DEV=1` → `dev@localhost`)
+- Web voice (#252, epic #256; "web"/"all" role). The browser streams the mic straight to Deepgram
+  and sends the transcript with `POST /api/sessions/:id/messages` like typed text; nothing reaches
+  agentd or pi any other way.
+  - `POST /api/voice/token` → `{token, expiresAt, model, language, tag}`: a Deepgram token from
+    `/v1/auth/grant` (TTL `VOICE_TOKEN_TTL_SECONDS`, default 30 s; it only has to be valid while the
+    socket opens), minted with the Member key `DEEPGRAM_API_KEY` (Secret Manager
+    `outfitter-deepgram-key`). The browser authenticates `wss://api.deepgram.com/v1/listen` with it
+    through `Sec-WebSocket-Protocol` and must put `tag` (`outfitter-user-` + 16 hex of sha256 of the
+    lower-cased email, so Deepgram never sees the address) on every stream for per-person spend
+    (#257). 404 `voice_disabled` without a key (the web then offers only the built-in engine), 429
+    `voice_rate_limited` with `retry-after` past `VOICE_TOKENS_PER_MINUTE` (default 20, per person,
+    per instance), 502 `voice_upstream` when Deepgram refuses or can't be reached.
+  - `GET /api/me/voice` → `{deepgram, model, language, prefs: {afterSpeaking}}`; `PUT /api/me/voice`
+    `{afterSpeaking: "send"|"review"}` → `{prefs}`. `send` (the default) sends the transcript when
+    recording stops; `review` leaves it in the composer.
+  - `PUT /api/sessions/:id/voice` `{engine: "deepgram"|"builtin"}` → `{voiceEngine}`: the floppy's
+    engine, also on `GET /api/sessions/:id` as `voiceEngine` (absent = `deepgram`). Anyone who can
+    open the session, like sending it a message.
 - `POST /api/hooks/ngrok` → the E2.8 "optional push path": ngrok event subscription delivery for
   `agent_session_start.v0` / `agent_session_stop.v0`, flipping the laptop preflight's cached
   `laptopOnline` immediately instead of waiting out its 60s poll. **Not IAP-gated** — every other

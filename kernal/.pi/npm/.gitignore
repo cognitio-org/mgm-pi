@@ -3,3 +3,6 @@
 !package.json
 !package-lock.json
 !.npmrc
+# kernal's vendored fork of pi-listen (#250): source, not an install.
+!vendor/
+!vendor/**

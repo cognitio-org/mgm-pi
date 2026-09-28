@@ -1,0 +1,65 @@
+{
+	"name": "@kernal/pi-listen",
+	"version": "7.2.2-kernal.1",
+	"description": "Kernal's vendored fork of @codexstar/pi-listen 7.2.2 (MIT, unmaintained upstream since 2026-05-01). See VENDORED.md.",
+	"type": "module",
+	"keywords": [
+		"pi-package",
+		"pi",
+		"pi-extension",
+		"voice",
+		"speech-to-text",
+		"stt",
+		"deepgram",
+		"nova-3",
+		"hold-to-talk",
+		"voice-input",
+		"transcription",
+		"streaming",
+		"dictation",
+		"waveform",
+		"terminal",
+		"cli",
+		"coding-agent",
+		"tts",
+		"text-to-speech",
+		"kitten-tts",
+		"piper-tts",
+		"kokoro",
+		"deepgram-tts",
+		"aura"
+	],
+	"author": {
+		"name": "codexstar69",
+		"url": "https://x.com/baanditeagle"
+	},
+	"license": "MIT",
+	"homepage": "https://github.com/codexstar69/pi-listen#readme",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/codexstar69/pi-listen.git"
+	},
+	"bugs": {
+		"url": "https://github.com/codexstar69/pi-listen/issues"
+	},
+	"peerDependencies": {
+		"@mariozechner/pi-coding-agent": ">=0.70.0",
+		"@mariozechner/pi-tui": ">=0.70.0"
+	},
+	"devDependencies": {
+		"@mariozechner/pi-coding-agent": "^0.70.5",
+		"@mariozechner/pi-tui": "^0.70.5"
+	},
+	"pi": {
+		"extensions": [
+			"./extensions/voice.ts"
+		]
+	},
+	"files": [
+		"extensions",
+		"README.md",
+		"LICENSE",
+		"package.json"
+	],
+	"private": true
+}

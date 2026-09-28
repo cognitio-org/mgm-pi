@@ -47,6 +47,8 @@ node -e '
 # it to tell the user's own changes from this release's defaults (install.sh, connect/settings.ts).
 cp "$STAGE/.pi/settings.json" "$STAGE/.pi/settings.shipped.json"
 cp "$ROOT/.pi/npm/package.json" "$ROOT/.pi/npm/package-lock.json" "$STAGE/.pi/npm/"
+# kernal's vendored fork of pi-listen (#250), loaded from ./npm/vendor/pi-listen in settings.json.
+cp -R "$ROOT/.pi/npm/vendor" "$STAGE/.pi/npm/vendor"
 cp "$ROOT"/bin/* "$STAGE/bin/"; chmod +x "$STAGE"/bin/*
 cp "$ROOT/README.md" "$STAGE/"; cp -R "$ROOT/docs" "$STAGE/docs"
 cp "$ROOT/../.env.example" "$STAGE/.env.example" 2>/dev/null || cp "$ROOT/.env.example" "$STAGE/.env.example"

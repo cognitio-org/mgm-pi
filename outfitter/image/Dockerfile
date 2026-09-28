@@ -88,7 +88,7 @@ RUN npm ci --legacy-peer-deps --omit=dev --no-audit --no-fund --loglevel=error \
   # Uninstall (not rm -rf) so each excluded package's own dependency subtree goes with it. The list
   # must match render-settings.sh's default EXCLUDE; the settings file only stops pi loading them.
   && npm uninstall --no-save --legacy-peer-deps --omit=dev --no-audit --no-fund --loglevel=error \
-       pi-lsp pi-powerline-footer @codexstar/pi-listen open-codebase-index \
+       pi-lsp pi-powerline-footer sherpa-onnx-node open-codebase-index \
   && rm -rf node_modules/recheck-jar
 
 # pi-subagents and pi-mcp-adapter bundled (#142, #222): pi's loader evaluates each module one by

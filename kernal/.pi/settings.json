@@ -8,7 +8,7 @@
     "npm:pi-powerline-footer",
     "npm:pi-memory",
     "npm:pi-lsp",
-    "npm:@codexstar/pi-listen"
+    "./npm/vendor/pi-listen"
   ],
   "lastChangelogVersion": "0.87.0",
   "theme": "dark",

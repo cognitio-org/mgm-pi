@@ -623,10 +623,9 @@ describe("#267 choosing the microphone", () => {
     await mount();
     await openMenu();
     const unnamed = items().find((b) => /^Microphone \d/.test(b.textContent ?? ""));
-    if (unnamed) {
-      await act(async () => unnamed.click());
-      expect(window.localStorage.getItem("outfitter.voice.micLabel")).toBeNull();
-    }
+    expect(unnamed).toBeDefined();
+    await act(async () => unnamed!.click());
+    expect(window.localStorage.getItem("outfitter.voice.micLabel")).toBeNull();
   });
 
   it("a chosen mic that isn't connected shows as such", async () => {

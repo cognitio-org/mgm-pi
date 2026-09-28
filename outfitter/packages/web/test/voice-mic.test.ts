@@ -52,8 +52,9 @@ describe("saved choice", () => {
 
 describe("resolveMic", () => {
   const mics = [{ id: "new-1", label: "MacBook Pro Microphone" }, { id: "new-2", label: "Shure MV7" }];
-  it("keeps an id that's connected", () => {
+  it("keeps an id that's connected, filling in a name it was saved without", () => {
     expect(resolveMic({ id: "new-2", label: "Shure MV7" }, mics)).toEqual({ id: "new-2", label: "Shure MV7" });
+    expect(resolveMic({ id: "new-2" }, mics)).toEqual({ id: "new-2", label: "Shure MV7" });
   });
   it("finds the same mic by name when the browser issued new ids", () => {
     expect(resolveMic({ id: "old-2", label: "Shure MV7" }, mics)).toEqual({ id: "new-2", label: "Shure MV7" });

@@ -65,7 +65,10 @@ export function saveMicChoice(choice: MicChoice | undefined, storage: Pick<Stora
  * its name (the browser issued new ids), else the id as saved (not connected). Two mics with the same
  * name are never guessed between: unplugging one of a pair mustn't move the choice to its twin. */
 export function resolveMic(choice: MicChoice | undefined, mics: Mic[]): MicChoice | undefined {
-  if (!choice || mics.some((m) => m.id === choice.id)) return choice;
+  if (!choice) return choice;
+  const same = mics.find((m) => m.id === choice.id);
+  // Picked before permission (no name then): take its real name now, so it can be followed later.
+  if (same) return choice.label ? choice : { id: same.id, label: same.label };
   const named = choice.label ? mics.filter((m) => m.label === choice.label) : [];
   return named.length === 1 ? { id: named[0].id, label: named[0].label } : choice;
 }

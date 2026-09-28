@@ -395,6 +395,30 @@ export interface VoiceTokenResponse {
   tag: string;
 }
 
+/** #257: GET /api/me/voice/spend. */
+export interface SpendFigure {
+  minutes: number;
+  ttsCharacters: number;
+  usd: number;
+}
+
+export type VoiceSpend =
+  | { available: false }
+  | { available: true; currency: "USD"; today: SpendFigure; week: SpendFigure; month: SpendFigure; asOf: string; capUsd?: number };
+
+/** #257: GET /api/operator/voice/spend (sysops). */
+export type ProjectVoiceSpend =
+  | { available: false }
+  | {
+      available: true;
+      currency: "USD";
+      users: Array<SpendFigure & { tag: string; email?: string }>;
+      untagged: SpendFigure;
+      total: SpendFigure;
+      asOf: string;
+      rates: { sttUsdPerMinute: number; ttsUsdPer1kChars: number };
+    };
+
 export const api = {
   version(): Promise<AppVersion> {
     return request("/api/version");
@@ -520,6 +544,14 @@ export const api = {
   /** A 30 s Deepgram token: 404 when voice is off here, 429 past the per-person limit. */
   voiceToken(): Promise<VoiceTokenResponse> {
     return request("/api/voice/token", { method: "POST" });
+  },
+
+  voiceSpend(): Promise<VoiceSpend> {
+    return request("/api/me/voice/spend");
+  },
+
+  operatorVoiceSpend(): Promise<ProjectVoiceSpend> {
+    return request("/api/operator/voice/spend");
   },
 
   setSessionVoiceEngine(id: string, engine: "deepgram" | "builtin"): Promise<{ voiceEngine: "deepgram" | "builtin" }> {

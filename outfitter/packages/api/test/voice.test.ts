@@ -216,4 +216,11 @@ describe("MongoUsers.setVoicePrefs against a real MongoDB", () => {
     assert.deepEqual((await store.users.findByEmail("seen@example.com"))?.voice, { afterSpeaking: "send" });
     assert.equal((updated as { _id?: unknown })._id, undefined);
   });
+
+  test("#257: list returns every user row without _id", async () => {
+    const all = await store.users.list();
+    const emails = all.map((u) => u.email).sort();
+    assert.ok(emails.includes("new@example.com") && emails.includes("seen@example.com"));
+    assert.ok(all.every((u) => (u as { _id?: unknown })._id === undefined));
+  });
 });

@@ -1,7 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import type { RouteContext } from "./context.ts";
 import { getSessionOr404 } from "./sessions.ts";
-import { AFTER_SPEAKING, DEFAULT_VOICE_PREFS, VOICE_ENGINES, type AfterSpeaking, type VoiceEngine } from "../voice.ts";
+import { AFTER_SPEAKING, DEFAULT_VOICE_PREFS, VOICE_ENGINES, voiceTag, type AfterSpeaking, type VoiceEngine } from "../voice.ts";
+import { requireOperator } from "../auth.ts";
+
+/** How long a token request waits on Deepgram's usage for the cap check before minting anyway. */
+const CAP_CHECK_MS = 1_500;
 
 /** Web voice (#252, epic #256), "web"/"all" role. The browser streams the mic straight to Deepgram
  * with a token from POST /api/voice/token; the transcript goes out through the ordinary
@@ -34,6 +38,29 @@ export async function registerVoiceRoutes(app: FastifyInstance, ctx: RouteContex
   app.post("/api/voice/token", async (req, reply) => {
     const email = req.identity!.email;
     reply.header("cache-control", "no-store");
+    // #257's optional cap, checked when a stream starts (a soft cap: an open stream runs on). If
+    // Deepgram's usage can't be read quickly, voice carries on: a usage outage mustn't take the mic
+    // away, or make every press wait out a hanging request.
+    const cap = ctx.config.voiceMonthlyCapUsd;
+    if (cap > 0 && ctx.voice.enabled && ctx.voiceUsage.enabled) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const spend = await Promise.race([
+          ctx.voiceUsage.forUser(email),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`usage read took over ${CAP_CHECK_MS} ms`)), CAP_CHECK_MS);
+          }),
+        ]);
+        // In cents, as shown: "$5.00 of $5.00" must mean refused.
+        if (Math.round(spend.month.usd * 100) >= Math.round(cap * 100)) {
+          return reply.code(403).send({ error: "voice_cap_reached", capUsd: cap, monthUsd: spend.month.usd });
+        }
+      } catch (err) {
+        req.log.warn({ email, err: err instanceof Error ? err.message : String(err) }, "voice cap check skipped: usage unreadable");
+      } finally {
+        clearTimeout(timer);
+      }
+    }
     const result = await ctx.voice.mint(email);
     if (result.ok) {
       req.log.info({ email, expiresAt: result.token.expiresAt }, "voice token minted");
@@ -63,5 +90,39 @@ export async function registerVoiceRoutes(app: FastifyInstance, ctx: RouteContex
     const updated = await ctx.store.sessions.update(session.id, { voiceEngine: body.engine as VoiceEngine });
     if (!updated) return reply.code(404).send({ error: "session not found" });
     return { voiceEngine: updated.voiceEngine ?? "deepgram" };
+  });
+
+  // #257: the caller's own Deepgram spend, today, this ISO week and this calendar month (UTC days,
+  // as Deepgram buckets them). Built-in speech is free and isn't here.
+  app.get("/api/me/voice/spend", async (req, reply) => {
+    if (!ctx.voiceUsage.enabled) return { available: false };
+    try {
+      const spend = await ctx.voiceUsage.forUser(req.identity!.email);
+      return {
+        available: true,
+        currency: "USD",
+        ...spend,
+        rates: ctx.voiceUsage.rates,
+        ...(ctx.config.voiceMonthlyCapUsd > 0 ? { capUsd: ctx.config.voiceMonthlyCapUsd } : {}),
+      };
+    } catch (err) {
+      req.log.warn({ err: err instanceof Error ? err.message : String(err) }, "voice spend unreadable");
+      return reply.code(502).send({ error: "voice_usage_upstream" });
+    }
+  });
+
+  // #257: sysops' view of the month: each person's spend, and the untagged use (the laptop, whose
+  // pi-listen shares the Deepgram project) that can't be put on anyone.
+  app.get("/api/operator/voice/spend", { preHandler: requireOperator }, async (req, reply) => {
+    if (!ctx.voiceUsage.enabled) return { available: false };
+    const users = await ctx.store.users.list();
+    const byTag = new Map(users.map((u) => [voiceTag(u.email), u.email]));
+    try {
+      const project = await ctx.voiceUsage.forProject((tag) => byTag.get(tag));
+      return { available: true, currency: "USD", ...project, rates: ctx.voiceUsage.rates };
+    } catch (err) {
+      req.log.warn({ err: err instanceof Error ? err.message : String(err) }, "voice project spend unreadable");
+      return reply.code(502).send({ error: "voice_usage_upstream" });
+    }
   });
 }

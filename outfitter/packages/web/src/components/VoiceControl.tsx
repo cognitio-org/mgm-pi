@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, 
 import type { Voice } from "../hooks/useVoice.ts";
 import { isVoiceShortcut, VOICE_SHORTCUT_LABEL } from "../lib/voice-gesture.ts";
 import { isTouchDeviceHere } from "../lib/touch.ts";
+import { VoiceSpendView } from "./VoiceSpend.tsx";
 
 /** #253: the Composer's mic. One button, two behaviours (owner decision on #251): a quick press
  * latches it on until the next press, press-and-hold talks until release. ⌥/Alt+Space does the same
@@ -158,7 +159,10 @@ export function VoiceControl({ voice }: { voice: Voice }) {
         <span aria-hidden="true">▾</span>
       </button>
       {menuOpen && (
-        <div ref={menuRef} className="enter-mode-menu voice-menu" role="menu" aria-label="Voice settings" onKeyDown={menuKeys}>
+        // The popover holds the menu proper, then plain text (spend, hint) outside role="menu" so a
+        // screen reader reads it rather than skipping non-items.
+        <div ref={menuRef} className="enter-mode-menu voice-menu" onKeyDown={menuKeys}>
+          <div role="menu" aria-label="Voice settings" className="voice-menu-items">
           <div role="group" aria-labelledby="voice-menu-engine" className="voice-menu-group">
           <div className="voice-menu-heading" id="voice-menu-engine">
             Engine (this floppy)
@@ -193,6 +197,15 @@ export function VoiceControl({ voice }: { voice: Voice }) {
             Leave it to review
           </button>
           </div>
+          </div>
+          {voice.deepgramAvailable && (
+            <section className="voice-menu-group" aria-labelledby="voice-menu-spend">
+              <h4 className="voice-menu-heading" id="voice-menu-spend">
+                Your Deepgram spend
+              </h4>
+              <VoiceSpendView compact />
+            </section>
+          )}
           <div className="voice-menu-hint" aria-hidden="true">
             {hint}
           </div>

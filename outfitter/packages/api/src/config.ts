@@ -173,6 +173,16 @@ export interface Config {
   voiceTokenTtlSeconds: number;
   /** VOICE_TOKENS_PER_MINUTE (default 20): tokens one person may mint per minute, per instance. */
   voiceTokensPerMinute: number;
+  /** #257: rates that turn Deepgram's usage (audio minutes, TTS characters) into dollars. Defaults
+   * are Deepgram's regular pay-as-you-go list prices as of 2026-09 (nova-3 streaming $0.0077/min,
+   * Aura-2 $0.030 per 1,000 characters); a promotion or plan discount makes the real bill lower. */
+  voiceSttUsdPerMinute: number;
+  voiceTtsUsdPer1kChars: number;
+  /** VOICE_MONTHLY_CAP_USD: a person's Deepgram spend this month at which POST /api/voice/token
+   * refuses (voice_cap_reached) and the mic uses the browser's built-in speech. 0 (default): no cap.
+   * Soft: checked when a stream starts, against usage up to a minute or two old, so one long session
+   * can run past it. Plain dollars ("5", not "$5"). */
+  voiceMonthlyCapUsd: number;
 }
 
 const OUTFITTER_ROLES: readonly OutfitterRole[] = ["all", "web", "link"];
@@ -207,6 +217,17 @@ function envInt(name: string, fallback: number, env: NodeJS.ProcessEnv = process
   if (!raw) return fallback;
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) ? n : fallback;
+}
+
+/** A non-negative decimal (a price, a cap); anything else falls back. */
+function envNonNegative(name: string, fallback: number, env: NodeJS.ProcessEnv): number {
+  const raw = env[name];
+  if (!raw) return fallback;
+  const n = Number(raw);
+  if (Number.isFinite(n) && n >= 0) return n;
+  // Loud, because for VOICE_MONTHLY_CAP_USD the fallback (0) means "no cap".
+  console.warn(`[config] ${name}=${JSON.stringify(raw)} isn't a non-negative number; using ${fallback}`);
+  return fallback;
 }
 
 function envList(name: string, fallback: string[], env: NodeJS.ProcessEnv): string[] {
@@ -360,5 +381,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // Deepgram accepts 1..3600 s; a limit below 1 would refuse everyone with a meaningless retry-after.
     voiceTokenTtlSeconds: Math.min(3600, Math.max(1, envInt("VOICE_TOKEN_TTL_SECONDS", 30, env))),
     voiceTokensPerMinute: Math.max(1, envInt("VOICE_TOKENS_PER_MINUTE", 20, env)),
+    voiceSttUsdPerMinute: envNonNegative("VOICE_STT_USD_PER_MINUTE", 0.0077, env),
+    voiceTtsUsdPer1kChars: envNonNegative("VOICE_TTS_USD_PER_1K_CHARS", 0.03, env),
+    voiceMonthlyCapUsd: envNonNegative("VOICE_MONTHLY_CAP_USD", 0, env),
   };
 }

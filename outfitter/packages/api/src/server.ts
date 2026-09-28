@@ -5,6 +5,7 @@
 import { createNgrokApi, type NgrokApi } from "./ngrok-api.ts";
 import { PreviewService } from "./previews.ts";
 import { VoiceService } from "./voice.ts";
+import { VoiceUsage } from "./voice-usage.ts";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyWebsocket from "@fastify/websocket";
 import type { Store } from "./store/types.ts";
@@ -48,6 +49,8 @@ export interface BuildAppOptions {
   ngrok?: NgrokApi;
   /** #252 web voice. Tests inject one with a fake fetch; production builds one from config. */
   voice?: VoiceService;
+  /** #257. Tests inject one with a fake fetch; production builds one from config. */
+  voiceUsage?: VoiceUsage;
 }
 
 export interface App {
@@ -185,6 +188,13 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
         language: config.voiceLanguage,
         ttlSeconds: config.voiceTokenTtlSeconds,
         perMinute: config.voiceTokensPerMinute,
+      }),
+    voiceUsage:
+      opts.voiceUsage ??
+      new VoiceUsage({
+        apiKey: config.deepgramApiKey,
+        projectId: config.deepgramProjectId,
+        rates: { sttUsdPerMinute: config.voiceSttUsdPerMinute, ttsUsdPer1kChars: config.voiceTtsUsdPer1kChars },
       }),
     telemetry:
       opts.telemetry ??

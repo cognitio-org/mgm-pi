@@ -6,6 +6,7 @@ import { SyntaxError } from "../components/SyntaxError.tsx";
 import { withFloppySound } from "../lib/floppy-sound.ts";
 import { toApiErrorState } from "../lib/api-error.ts";
 import { vocabSubtitle, vocabulary } from "../lib/vocabulary.ts";
+import { VoiceSpendView } from "../components/VoiceSpend.tsx";
 
 function envLines(linkOrigin: string, token: string): string {
   const api = linkOrigin || "<ask your operator for the link URL>";
@@ -183,6 +184,10 @@ export function TokensPage() {
         </table>
         </div>
       )}
+
+      {/* #257: the one per-person page, so your voice spend lives here too (also in the mic's menu). */}
+      <h3>Voice spend</h3>
+      <VoiceSpendView />
     </div>
   );
 }

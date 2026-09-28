@@ -10,16 +10,25 @@ import type { PiEntry } from "../api/client.ts";
 
 export type UserImage = { mimeType: string; data: string };
 
+export type RetryState = "retried" | "retrying" | "cancelled";
+
 export type EntryView =
   | { kind: "user"; id: string; text: string; images?: UserImage[] }
   | { kind: "assistant-text"; id: string; text: string }
   | { kind: "assistant-thinking"; id: string; text: string }
-  | { kind: "tool-call"; id: string; toolName: string; toolCallId: string; input: unknown }
+  | { kind: "tool-call"; id: string; toolName: string; toolCallId: string; input: unknown; interrupted?: boolean }
   | { kind: "tool-result"; id: string; toolName: string; toolCallId: string; text: string; isError: boolean }
   | { kind: "system"; id: string; text: string }
   | { kind: "model-change"; id: string; provider: string; modelId: string }
   | { kind: "thinking-level-change"; id: string; thinkingLevel: string }
   | { kind: "compaction"; id: string; summary: string }
+  /** An assistant message that ended in an error or was aborted. `retry` is set when pi hid it from
+   * the model with a context_edit, which it writes before a retry's backoff: "retried" once a later
+   * reply exists, "retrying" while the run is still going, "cancelled" when it stopped without one. */
+  | { kind: "assistant-failed"; id: string; stopReason: "error" | "aborted"; errorMessage: string; retry?: RetryState }
+  /** Context edits that aren't a failed attempt's retry: pi's own overflow recovery (a cut-off reply
+   * and its tool results) or an extension's. Consecutive ones are one line; `count` of them. */
+  | { kind: "context-edit"; id: string; count: number; replaced: boolean }
   | { kind: "custom"; id: string; customType: string; captureId?: string; title?: string; url?: string; text?: string }
   | { kind: "label"; id: string; targetId: string; label?: string }
   | { kind: "session-info"; id: string; name?: string }
@@ -106,6 +115,8 @@ export function entryToViews(entry: PiEntry): EntryView[] {
           ];
         case "assistant": {
           const blocks = Array.isArray(message.content) ? message.content : [];
+          const { stopReason, errorMessage } = message as { stopReason?: string; errorMessage?: string };
+          const failed = stopReason === "error" || stopReason === "aborted";
           const views: EntryView[] = [];
           blocks.forEach((block, i) => {
             // pi's persisted content blocks (pi-ai's AssistantMessage content): text {text},
@@ -121,8 +132,13 @@ export function entryToViews(entry: PiEntry): EntryView[] {
                 toolName: b.name ?? "unknown",
                 toolCallId: b.id ?? blockId,
                 input: b.arguments ?? {},
+                // A call in a reply that failed or was stopped never ran: pi executes no tool calls
+                // from such a message, and its arguments may be cut off mid-stream.
+                ...(failed ? { interrupted: true } : {}),
               });
           });
+          if (failed)
+            views.push({ kind: "assistant-failed", id: `${id}#failed`, stopReason: stopReason as "error" | "aborted", errorMessage: errorMessage ?? "" });
           return views;
         }
         default:
@@ -139,6 +155,10 @@ export function entryToViews(entry: PiEntry): EntryView[] {
       return [{ kind: "thinking-level-change", id, thinkingLevel: String(entry.thinkingLevel ?? "") }];
     case "compaction":
       return [{ kind: "compaction", id, summary: String(entry.summary ?? "") }];
+    // pi 0.87: hides (replacement null) or replaces an earlier message in the model's context only;
+    // the transcript keeps the message. entriesToViews folds a retry's edit into the failed row.
+    case "context_edit":
+      return [{ kind: "context-edit", id, count: 1, replaced: entry.replacement != null }];
     case "custom": {
       const customType = String(entry.customType ?? "");
       // GroupedEntry is this view unchanged (thinking.ts). The jpeg route needs captureId;
@@ -171,6 +191,68 @@ export function entryToViews(entry: PiEntry): EntryView[] {
   }
 }
 
-export function entriesToViews(entries: PiEntry[]): EntryView[] {
-  return entries.flatMap(entryToViews);
+// LiteLLM's and undici's wording for a stream that closed partway (#278: a local model behind
+// ngrok dropped every reply that ran past about five minutes). undici's is exactly "terminated".
+const DROPPED = /APIConnectionError|payload is not completed|ECONNRESET|socket hang up|^(?:TypeError: )?terminated$|SSLError/i;
+
+/** The failed row's headline and one-line explanation. */
+export function failedAttemptCopy(view: Extract<EntryView, { kind: "assistant-failed" }>): { headline: string; note: string } {
+  if (view.stopReason === "aborted") return { headline: "Reply stopped", note: "The reply was stopped before it finished." };
+  const cause = DROPPED.test(view.errorMessage) ? "The connection to the model dropped" : "The model call failed";
+  switch (view.retry) {
+    case "retried":
+      return { headline: "Attempt failed, retried", note: `${cause}. pi hid this attempt from the model and tried again.` };
+    case "retrying":
+      return { headline: "Attempt failed, retrying", note: `${cause}. pi hid this attempt from the model and is trying again.` };
+    case "cancelled":
+      return { headline: "Attempt failed", note: `${cause}. pi hid this attempt from the model, but the retry was stopped.` };
+    default:
+      return { headline: "Model call failed", note: `${cause}.` };
+  }
+}
+
+function isAssistantEntry(entry: PiEntry): boolean {
+  return entry.type === "message" && (entry.message as { role?: string } | undefined)?.role === "assistant";
+}
+
+/** Ids of entries a later context_edit hid from the model (replacement null). */
+export function hiddenEntryIds(entries: PiEntry[]): Set<string> {
+  const ids = new Set<string>();
+  for (const entry of entries) if (entry.type === "context_edit" && entry.replacement == null) ids.add(String(entry.targetId ?? ""));
+  return ids;
+}
+
+/** `runSettled`: the run is idle, stopped, or failed, so a hidden attempt with no later reply was
+ * not retried after all (Stop during pi's backoff). */
+export function entriesToViews(entries: PiEntry[], options?: { runSettled?: boolean }): EntryView[] {
+  // pi retries a failed model call after hiding the failed attempt from the model with a
+  // context_edit. That edit is the failed row's retry state, not a line of its own.
+  const hidden = hiddenEntryIds(entries);
+  const retryOf = new Map<string, RetryState>();
+  const failedIds = new Set<string>();
+  let laterReply = false;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (!isAssistantEntry(entry)) continue;
+    const stopReason = (entry.message as { stopReason?: string }).stopReason;
+    if (stopReason === "error" || stopReason === "aborted") {
+      failedIds.add(entry.id);
+      if (hidden.has(entry.id)) retryOf.set(entry.id, laterReply ? "retried" : options?.runSettled ? "cancelled" : "retrying");
+    }
+    laterReply = true;
+  }
+  const out: EntryView[] = [];
+  for (const entry of entries) {
+    if (entry.type === "context_edit" && entry.replacement == null && failedIds.has(String(entry.targetId ?? ""))) continue;
+    for (const view of entryToViews(entry)) {
+      const last = out.at(-1);
+      if (view.kind === "context-edit" && last?.kind === "context-edit" && last.replaced === view.replaced) {
+        out[out.length - 1] = { ...last, count: last.count + 1 };
+        continue;
+      }
+      const retry = retryOf.get(entry.id);
+      out.push(view.kind === "assistant-failed" && retry ? { ...view, retry } : view);
+    }
+  }
+  return out;
 }

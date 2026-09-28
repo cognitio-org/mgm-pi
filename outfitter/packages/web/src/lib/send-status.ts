@@ -8,6 +8,7 @@
 // them look at runState on their own any more.
 
 import type { PiEntry } from "../api/client.ts";
+import { hiddenEntryIds } from "./entry-view.ts";
 
 /** Waking a drive (a Cloud Run Job cold start) normally takes about a minute. */
 export const WAKE_TIMEOUT_MS = 3 * 60_000;
@@ -116,11 +117,18 @@ function userText(e: PiEntry): string | null {
 /** An assistant entry that ends the turn. Not one that stopped to call tools (stopReason "toolUse")
  * or is still streaming ("pending"): in a tool-using turn that is the *first* assistant entry, and
  * the run keeps working for minutes after it -- counting it as the reply dropped the status line
- * (and the work timeout) right at the start of the long part of the turn. */
-export function isFinalAssistant(e: PiEntry): boolean {
+ * (and the work timeout) right at the start of the long part of the turn.
+ *
+ * Nor, #278, an attempt pi is retrying. pi hides it from the model (a context_edit in `hidden`, see
+ * entry-view's hiddenEntryIds) before retrying, but writes that edit after the message, so a failed
+ * message alone is not final while the run is still running either: it is once the run settles. */
+export function isFinalAssistant(e: PiEntry, context?: { hidden?: ReadonlySet<string>; runState?: string }): boolean {
   if (e.type !== "message") return false;
   const m = e.message as { role?: string; stopReason?: string } | undefined;
-  return m?.role === "assistant" && m.stopReason !== "toolUse" && m.stopReason !== "pending";
+  if (m?.role !== "assistant" || m.stopReason === "toolUse" || m.stopReason === "pending") return false;
+  if (context?.hidden?.has(e.id)) return false;
+  if (m.stopReason === "error" && context?.runState === "running") return false;
+  return true;
 }
 
 /** Index (into entries) of the stored entry that echoes the pending message, or -1: the first user
@@ -161,7 +169,8 @@ export function isAnswered(input: Pick<ActivityInput, "entries" | "runState">, p
   if (pending.acceptedAt === undefined || pending.error !== undefined) return false;
   const echo = findEcho(input.entries, pending);
   const from = echo >= 0 ? echo + 1 : pending.baseline;
-  for (let i = from; i < input.entries.length; i++) if (isFinalAssistant(input.entries[i])) return true;
+  const context = { hidden: hiddenEntryIds(input.entries), runState: input.runState };
+  for (let i = from; i < input.entries.length; i++) if (isFinalAssistant(input.entries[i]!, context)) return true;
   return input.runState === "idle" && pending.sawRunning;
 }
 

@@ -1,0 +1,34 @@
+.github/workflows/code-server-release.yml
+  s_885dde90a8ec58::t_d7c07c9a620c39 25,56
+outfitter/packages/agentd/test/ide-install.test.ts
+  s_885dde90a8ec58::t_3966dceb036508 108-115,118-128,130-147
+outfitter/packages/agentd/src/run.ts
+  s_885dde90a8ec58::t_d7c07c9a620c39 1041-1043
+outfitter/packages/api/src/agentlink.ts
+  s_885dde90a8ec58::t_d7c07c9a620c39 1124-1130
+outfitter/packages/api/src/store/types.ts
+  s_885dde90a8ec58::t_d7c07c9a620c39 197-199
+outfitter/packages/api/test/browser-ide.test.ts
+  s_885dde90a8ec58::t_52b473fc23934e 63,66,68,73-81
+  s_885dde90a8ec58::t_62c0a81c24716e 82
+outfitter/packages/agentd/src/ide-install.ts
+  s_885dde90a8ec58::t_f12d0c2754eff3 12-13,173-178
+  s_885dde90a8ec58::t_5ef39afca5c8bd 6-11,14-18,21,25-26,33-34,67-71,86-87,121,137-138,140-141,146-147,150,153-154,156-165,167-169,172,179-183,185-187,189-191,193,198-199,203-205,208-210,212-213,215,219-220
+  s_885dde90a8ec58::t_f8c5105549f145 166,170-171,184
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "5f083dd5e19678d4f97459fa985ccb80417bbf4a",
+  "prompts": {},
+  "sessions": {
+    "s_885dde90a8ec58": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fc9bab2f-409c-4e9c-9cd5-ff15ccd352cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

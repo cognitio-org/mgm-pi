@@ -1,0 +1,21 @@
+outfitter/packages/web/src/lib/voice-engines.ts
+  s_fd47f462159c85::t_60816023ee186d 127-130,134-138,141-142,285-293
+outfitter/packages/web/test/voice-engines.test.ts
+  s_fd47f462159c85::t_60816023ee186d 259-278
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "106f97e60da75d1113e18115fff27652aaece1d0",
+  "prompts": {},
+  "sessions": {
+    "s_fd47f462159c85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4302a461-a7ca-4bcd-bca6-85c286e60f99",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

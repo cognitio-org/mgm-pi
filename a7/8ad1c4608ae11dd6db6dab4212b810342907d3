@@ -1,0 +1,64 @@
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_fd47f462159c85::t_1a33e0afa9d661 748-750
+outfitter/packages/web/src/hooks/useVoice.ts
+  s_fd47f462159c85::t_8157e61e5a00d2 159,267-269,273,323
+  s_fd47f462159c85::t_e6fc47fd51cdb2 7,109-117,120-125,149-158,184-185,222-223,266,270-272,274-275,303-304,322,324-326,392-418,466-492,495,502
+outfitter/packages/web/src/lib/voice-tts.ts
+  s_fd47f462159c85::t_15fb575aa1a338 1-190
+outfitter/packages/api/src/store/types.ts
+  s_fd47f462159c85::t_2f8024f2ec8db0 24-25
+outfitter/packages/api/src/voice.ts
+  s_fd47f462159c85::t_2f8024f2ec8db0 14-15,18-21,24-31
+outfitter/packages/web/src/lib/speech-text.ts
+  s_fd47f462159c85::t_8c3a333f3c54f5 20-21,34
+  s_fd47f462159c85::t_81fa723c3bddce 1-19,22-33,35-85
+outfitter/packages/web/src/components/VoiceControl.tsx
+  s_fd47f462159c85::t_3277d9ed63b721 3-4,13,20-21,42-48,161-172,244-265,278-290,326-337
+  s_fd47f462159c85::t_d9446ff148f2e6 108
+  s_fd47f462159c85::t_42893d973d7b75 338
+outfitter/packages/api/test/voice.test.ts
+  s_fd47f462159c85::t_f367e3e63ce571 142,154,162-198,205,244,247,250,253
+outfitter/packages/web/src/styles/layout.css
+  s_fd47f462159c85::t_3277d9ed63b721 722-743
+outfitter/packages/api/src/routes/voice.ts
+  s_fd47f462159c85::t_2f8024f2ec8db0 4,26,28-29,32-48,98-100,104-105,108-116,118
+outfitter/packages/web/test/speech-text.test.ts
+  s_fd47f462159c85::t_0ef69479bf4afe 1-10,12-59
+  s_fd47f462159c85::t_8c3a333f3c54f5 11
+outfitter/packages/web/src/hooks/useSpeaker.ts
+  s_fd47f462159c85::t_1a33e0afa9d661 54-55,68,154-166
+  s_fd47f462159c85::t_766cbe792e73e6 1-53,56-67,69-153,167-184
+outfitter/packages/web/src/api/client.ts
+  s_fd47f462159c85::t_e6fc47fd51cdb2 70-71,392,545-546,567-569
+  s_fd47f462159c85::t_2fa69f98213c35 570-571
+outfitter/packages/web/src/components/Composer.tsx
+  s_fd47f462159c85::t_1a33e0afa9d661 8-9,31-36,41-42,56-69,94-106,259,304,306
+outfitter/packages/web/test/voice-tts.test.ts
+  s_fd47f462159c85::t_0ef69479bf4afe 1-178
+outfitter/packages/web/src/lib/tts-voices.ts
+  s_fd47f462159c85::t_13cf0c6e5b0a85 1-4,8-57
+  s_fd47f462159c85::t_e6fc47fd51cdb2 5-7
+outfitter/packages/web/test/voice-speak.test.tsx
+  s_fd47f462159c85::t_1981efaa9646be 1-268,284-319
+  s_fd47f462159c85::t_8157e61e5a00d2 269-283
+outfitter/docs/protocol.md
+  s_fd47f462159c85::t_5bfa88bc45df19 450-464
+outfitter/docs/specs/web-voice.md
+  s_fd47f462159c85::t_a094023c2299b0 3,11-12,184-223
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "a78ad1c4608ae11dd6db6dab4212b810342907d3",
+  "prompts": {},
+  "sessions": {
+    "s_fd47f462159c85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4302a461-a7ca-4bcd-bca6-85c286e60f99",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

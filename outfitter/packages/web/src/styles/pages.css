@@ -88,6 +88,29 @@ a.preview-chip:focus-visible {
   color: var(--text-dim);
 }
 
+/* Browser IDE (IdeChip.tsx, #243): the same footprint as a preview chip; only the owner and sysops
+ * see it. The open button reads as an action, the note as a quiet fact. */
+.ide-open-btn {
+  color: var(--text);
+}
+
+.ide-chip-starting {
+  color: var(--text-dim);
+}
+
+.ide-note {
+  color: var(--text-dim);
+  font-size: 0.9em;
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ide-open-btn[aria-disabled="true"] {
+  cursor: progress;
+}
+
 .chip-btn {
   padding: 0 0.35rem;
   border: 1px solid var(--border);

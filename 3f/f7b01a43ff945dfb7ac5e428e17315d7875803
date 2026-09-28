@@ -1,0 +1,42 @@
+outfitter/packages/web/test/failed-attempts.test.tsx
+  s_885dde90a8ec58::t_89916ca5e379c6 1,6-8,39-57,81,86-90
+  s_885dde90a8ec58::t_1693eefa2dad6d 2-5,9-38,58-80,82-85,91-130
+outfitter/packages/web/src/hooks/useSpeaker.ts
+  s_885dde90a8ec58::t_973129f836f79f 144,149-151
+outfitter/packages/web/src/lib/entry-view.ts
+  s_885dde90a8ec58::t_daad71ae0584e6 17,23-27,117-118,134-136,139,157-160,207-210,213-218
+  s_885dde90a8ec58::t_3e4ddedcbe705c 33-35,140,211
+  s_885dde90a8ec58::t_eebe2b30139079 193-205
+  s_885dde90a8ec58::t_f0f1e607286a42 212
+outfitter/packages/web/src/components/TranscriptRail.tsx
+  s_885dde90a8ec58::t_eebe2b30139079 53,131-133,301,376
+outfitter/packages/web/src/styles/layout.css
+  s_885dde90a8ec58::t_05b64679707cdf 902
+  s_885dde90a8ec58::t_eebe2b30139079 568,901,903-915
+  s_885dde90a8ec58::t_cd2fdb2435c765 916
+outfitter/packages/web/src/lib/beats.ts
+  s_885dde90a8ec58::t_3e4ddedcbe705c 26-27,42-43,146-147,175-176,179
+  s_885dde90a8ec58::t_af5ba7c77fe1bc 86,90
+outfitter/packages/web/src/lib/send-status.ts
+  s_885dde90a8ec58::t_05b64679707cdf 116-117,120,123-127,168
+outfitter/packages/web/src/components/EntryItem.tsx
+  s_885dde90a8ec58::t_eebe2b30139079 5,141-161
+outfitter/docs/reports/cloud-fixes.md
+  s_885dde90a8ec58::t_5d423c9eb33998 364-387
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "3ff7b01a43ff945dfb7ac5e428e17315d7875803",
+  "prompts": {},
+  "sessions": {
+    "s_885dde90a8ec58": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fc9bab2f-409c-4e9c-9cd5-ff15ccd352cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+kernal/tests/voice.test.ts
+  s_fd47f462159c85::t_9ab28c49306c33 6,44-48,50-73,75-76,78-95,110-111,124-136,138-160,162,164-190,193-198
+kernal/.pi/extensions/kernal-voice/index.ts
+  s_fd47f462159c85::t_edf71109ada9d1 13,27-32,39-41,44-55,65-73,77-80
+kernal/README.md
+  s_fd47f462159c85::t_aa3bfb6554557c 558-564
+kernal/.pi/extensions/kernal-voice/lib.ts
+  s_fd47f462159c85::t_edf71109ada9d1 10-12,37-42,44-56,59-63,65,67-68,70,72-94,96-98
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "0809bf693a397b3346ac44e48ba2139ffe731d34",
+  "prompts": {},
+  "sessions": {
+    "s_fd47f462159c85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4302a461-a7ca-4bcd-bca6-85c286e60f99",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

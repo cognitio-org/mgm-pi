@@ -2,7 +2,7 @@
 // recording (voice-engines.ts), the draft while speaking, and the two settings: the floppy's
 // engine (PUT /api/sessions/:id/voice) and the person's "after speaking" (PUT /api/me/voice).
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { api, ApiError, type VoiceConfig } from "../api/client.ts";
 import { composeDraft, IDLE, stepGesture, type GestureEvent, type GestureState } from "../lib/voice-gesture.ts";
 import {
@@ -69,7 +69,8 @@ export interface Voice {
   status: VoiceStatus;
   /** A tap latched the mic on (aria-pressed stays true between presses). */
   latched: boolean;
-  level: number;
+  /** The element whose `--voice-level` (0..1) the level meter writes, without re-rendering. */
+  levelTarget: RefObject<HTMLElement | null>;
   /** A one-line note for the person: an error, or why the engine switched. */
   note: string | null;
   engine: VoiceEngineName;
@@ -104,24 +105,29 @@ export function useVoice(opts: UseVoiceOptions): Voice {
   const now = opts.now ?? Date.now;
   const [status, setStatus] = useState<VoiceStatus>("idle");
   const [latched, setLatched] = useState(false);
-  const [level, setLevel] = useState(0);
+  const levelTarget = useRef<HTMLElement | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [engine, setEngineState] = useState<VoiceEngineName>(opts.initialEngine ?? "deepgram");
   const [afterSpeaking, setAfterSpeakingState] = useState<AfterSpeaking>("send");
   const [deepgramAvailable, setDeepgramAvailable] = useState(false);
+  const [configLoaded, setConfigLoaded] = useState(false);
 
   const gesture = useRef<GestureState>(IDLE);
   const recording = useRef<VoiceRecording | null>(null);
   const base = useRef("");
   // A stop that arrived while the engine was still starting (a very short hold).
   const stopWhenStarted = useRef(false);
-  const cancelled = useRef(false);
+  // Each start gets a number; cancelling, a mid-start error, or unmounting bumps it, and a start
+  // that finds its number stale when the engine resolves cancels what it got. Otherwise a
+  // recording that finished starting after the person gave up would stream on with no UI.
+  const attempt = useRef(0);
+  const disposed = useRef(false);
   // From a start until the recording is fully done (including "finishing"): a new press then is
   // ignored, or its recording would replace this one and lose its transcript.
   const busy = useRef(false);
   // Latest values for callbacks that outlive a render.
-  const live = useRef({ opts, afterSpeaking, engine, deepgramAvailable });
-  live.current = { opts, afterSpeaking, engine, deepgramAvailable };
+  const live = useRef({ opts, afterSpeaking, engine, deepgramAvailable, configLoaded });
+  live.current = { opts, afterSpeaking, engine, deepgramAvailable, configLoaded };
 
   useEffect(() => {
     let gone = false;
@@ -131,9 +137,12 @@ export function useVoice(opts: UseVoiceOptions): Voice {
         if (gone) return;
         setDeepgramAvailable(cfg.deepgram);
         setAfterSpeakingState(cfg.prefs.afterSpeaking);
+        setConfigLoaded(true);
       })
       .catch(() => {
-        if (!gone) setDeepgramAvailable(false);
+        if (gone) return;
+        setDeepgramAvailable(false);
+        setConfigLoaded(true);
       });
     return () => {
       gone = true;
@@ -147,11 +156,17 @@ export function useVoice(opts: UseVoiceOptions): Voice {
   // Leaving the page mid-recording must not leave the mic on.
   useEffect(
     () => () => {
+      disposed.current = true;
+      attempt.current++;
       recording.current?.cancel();
       recording.current = null;
     },
     [],
   );
+
+  const setLevel = useCallback((value: number) => {
+    levelTarget.current?.style.setProperty("--voice-level", String(value));
+  }, []);
 
   const reset = useCallback(() => {
     busy.current = false;
@@ -161,13 +176,16 @@ export function useVoice(opts: UseVoiceOptions): Voice {
     setLatched(false);
     setLevel(0);
     setStatus("idle");
-  }, []);
+  }, [setLevel]);
 
   const callbacks: VoiceCallbacks = {
     onTranscript: (text) => live.current.opts.setDraft(composeDraft(base.current, text)),
     onLevel: setLevel,
     onError: (err) => {
-      // Mid-recording failure (the connection dropped): keep what was heard, never send it.
+      // Mid-recording failure (the connection dropped): keep what was heard, never send it. A
+      // start still in flight is stale now and cancels what it gets.
+      attempt.current++;
+      recording.current?.cancel();
       setNote(ERROR_NOTES[err.kind]);
       reset();
     },
@@ -191,37 +209,47 @@ export function useVoice(opts: UseVoiceOptions): Voice {
     if (after === "send" && result.transcript.trim() && !o.disabled) await o.send(draft);
   }, [reset]);
 
+  /** Which engine to try first. The floppy's choice, unless it can't work here: Deepgram off (once
+   * the server has said so) means built-in, and built-in missing from this browser means Deepgram. */
+  function firstEngine(): VoiceEngineName {
+    const { engine: chosen, deepgramAvailable: dg, configLoaded: loaded } = live.current;
+    if (chosen === "deepgram" && loaded && !dg && engines.builtinAvailable) return "builtin";
+    if (chosen === "builtin" && !engines.builtinAvailable) return "deepgram";
+    return chosen;
+  }
+
   const begin = useCallback(async () => {
-    const { opts: o, engine: chosen, deepgramAvailable: dg } = live.current;
+    const id = ++attempt.current;
+    const stale = () => attempt.current !== id || disposed.current;
+    const o = live.current.opts;
     setNote(null);
     busy.current = true;
-    cancelled.current = false;
     base.current = o.getDraft();
     setStatus("starting");
-    const first: VoiceEngineName = chosen === "deepgram" && !dg && engines.builtinAvailable ? "builtin" : chosen;
+    const first = firstEngine();
     let rec: VoiceRecording;
     try {
       rec = await engines[first](callbacks);
     } catch (err) {
+      if (stale()) return;
       const e = err instanceof VoiceError ? err : new VoiceError("upstream", String(err));
-      if (first === "deepgram" && FALLBACK_KINDS.has(e.kind) && engines.builtinAvailable && !cancelled.current) {
-        try {
-          rec = await engines.builtin(callbacks);
-          setNote(`${ERROR_NOTES[e.kind]} Using the browser's built-in speech instead.`);
-        } catch (err2) {
-          setNote(ERROR_NOTES[err2 instanceof VoiceError ? err2.kind : "upstream"]);
-          reset();
-          return;
-        }
-      } else {
+      if (!(first === "deepgram" && FALLBACK_KINDS.has(e.kind) && engines.builtinAvailable)) {
         setNote(ERROR_NOTES[e.kind]);
         reset();
         return;
       }
+      try {
+        rec = await engines.builtin(callbacks);
+      } catch (err2) {
+        if (stale()) return;
+        setNote(ERROR_NOTES[err2 instanceof VoiceError ? err2.kind : "upstream"]);
+        reset();
+        return;
+      }
+      if (!stale()) setNote(`${ERROR_NOTES[e.kind]} Using the browser's built-in speech instead.`);
     }
-    if (cancelled.current) {
+    if (stale()) {
       rec.cancel();
-      busy.current = false;
       return;
     }
     recording.current = rec;
@@ -231,6 +259,17 @@ export function useVoice(opts: UseVoiceOptions): Voice {
       await finish();
     }
   }, [engines, finish, reset]);
+
+  /** Esc: throw away what's being heard and put the draft back, whatever state the mic is in,
+   * including "finishing" (the person may be stopping an auto-send). */
+  const abort = useCallback(() => {
+    attempt.current++;
+    const rec = recording.current;
+    recording.current = null; // finish() sees this and doesn't apply or send its result
+    rec?.cancel();
+    live.current.opts.setDraft(base.current);
+    reset();
+  }, [reset]);
 
   const dispatch = useCallback(
     (event: GestureEvent) => {
@@ -242,13 +281,10 @@ export function useVoice(opts: UseVoiceOptions): Voice {
         if (recording.current) void finish();
         else stopWhenStarted.current = true;
       } else if (action === "cancel") {
-        cancelled.current = true;
-        recording.current?.cancel();
-        live.current.opts.setDraft(base.current);
-        reset();
+        abort();
       }
     },
-    [begin, finish, reset],
+    [begin, finish, abort],
   );
 
   const usable = !opts.disabled && (deepgramAvailable || engines.builtinAvailable);
@@ -256,7 +292,7 @@ export function useVoice(opts: UseVoiceOptions): Voice {
   return {
     status,
     latched,
-    level,
+    levelTarget,
     note,
     engine,
     setEngine(next) {
@@ -287,7 +323,10 @@ export function useVoice(opts: UseVoiceOptions): Voice {
       dispatch({ type: "release", at: now() });
     },
     cancel() {
-      dispatch({ type: "cancel" });
+      // Finishing: the gesture is already over (or only its stopping press is down), so it has
+      // nothing to cancel; the recording still does.
+      if (busy.current && (gesture.current.kind === "idle" || gesture.current.kind === "stopping")) abort();
+      else dispatch({ type: "cancel" });
     },
   };
 }

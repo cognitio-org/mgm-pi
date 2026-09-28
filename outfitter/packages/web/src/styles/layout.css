@@ -728,6 +728,11 @@
   min-width: 15rem;
 }
 
+.voice-menu-group {
+  display: flex;
+  flex-direction: column;
+}
+
 .voice-menu-heading {
   padding: 0.35rem 0.45rem 0.1rem;
   font-size: 0.68rem;

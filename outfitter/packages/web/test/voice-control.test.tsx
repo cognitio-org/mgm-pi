@@ -27,15 +27,21 @@ let calls: Array<{ method: string; path: string; body?: unknown }>;
 let config: { deepgram: boolean; model: string; language: string; prefs: { afterSpeaking: "send" | "review" } };
 let clock: number;
 let deepgramFailure: VoiceError | undefined;
+/** When set, engine starts (and stops) wait for the test to release them. */
+let deferred: boolean;
+let pendingStarts: Array<() => void>;
+let pendingStops: Array<() => void>;
 
 function engines(builtinAvailable = true): VoiceEngines {
   const make = (engine: "deepgram" | "builtin") => async (cb: VoiceCallbacks) => {
+    if (deferred) await new Promise<void>((r) => pendingStarts.push(r));
     if (engine === "deepgram" && deepgramFailure) throw deepgramFailure;
     const run: FakeRun = { engine, cb, stopped: false, cancelled: false, result: { transcript: "", complete: true } };
     runs.push(run);
     return {
       async stop() {
         run.stopped = true;
+        if (deferred) await new Promise<void>((r) => pendingStops.push(r));
         return run.result;
       },
       cancel() {
@@ -52,6 +58,9 @@ beforeEach(() => {
   calls = [];
   clock = 1_000_000;
   deepgramFailure = undefined;
+  deferred = false;
+  pendingStarts = [];
+  pendingStops = [];
   config = { deepgram: true, model: "nova-3", language: "en", prefs: { afterSpeaking: "send" } };
   vi.spyOn(Date, "now").mockImplementation(() => clock);
   vi.stubGlobal(
@@ -360,5 +369,142 @@ describe("Send while the mic is live", () => {
     expect(send.getAttribute("aria-disabled")).toBe("true");
     await act(async () => send.click());
     expect(sent).toEqual([]);
+  });
+});
+
+describe("races (engines that take their time)", () => {
+  async function releaseStart() {
+    await act(async () => pendingStarts.shift()!());
+    await flush();
+  }
+
+  it("leaving the page while the engine is starting cancels it once it has started", async () => {
+    deferred = true;
+    await mount();
+    await pointer("pointerdown");
+    act(() => root.unmount());
+    await act(async () => pendingStarts.shift()!());
+    await flush();
+    expect(runs).toHaveLength(1);
+    expect(runs[0].cancelled).toBe(true);
+    root = createRoot(host); // afterEach unmounts again
+  });
+
+  it("Esc while starting, then a new press: the first start is cancelled, the second records", async () => {
+    deferred = true;
+    await mount();
+    await key("keydown", { code: "Space", key: " ", altKey: true });
+    await key("keydown", { key: "Escape" });
+    await key("keyup", { code: "Space", key: " " }, 50);
+    await key("keydown", { code: "Space", key: " ", altKey: true }, 100);
+    await releaseStart(); // the first, abandoned start
+    await releaseStart(); // the second
+    expect(runs).toHaveLength(2);
+    expect(runs[0].cancelled).toBe(true);
+    expect(runs[1].cancelled).toBe(false);
+    expect(mic().getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("a hold released before the engine started still stops (and sends) once it has", async () => {
+    deferred = true;
+    await mount();
+    await pointer("pointerdown");
+    await pointer("pointerup", 1000);
+    await releaseStart();
+    expect(runs[0].stopped).toBe(true);
+    runs[0].result = { transcript: "quick one", complete: true };
+    await act(async () => pendingStops.shift()!());
+    await flush();
+    expect(sent.map((x) => x.text)).toEqual(["quick one"]);
+  });
+
+  it("Esc while finishing stops the auto-send and puts the draft back", async () => {
+    deferred = true;
+    await mount();
+    await typeDraft("typed");
+    await pointer("pointerdown");
+    await releaseStart();
+    await hear("then spoken");
+    await pointer("pointerup", 1000); // finishing: stop() is pending
+    expect(host.querySelector(".voice-mic")!.classList.contains("is-finishing")).toBe(true);
+    await key("keydown", { key: "Escape" });
+    await act(async () => pendingStops.shift()!());
+    await flush();
+    expect(sent).toEqual([]);
+    expect(ta().value).toBe("typed");
+    expect(runs[0].cancelled).toBe(true);
+  });
+
+  it("a press while the last recording is finishing is ignored", async () => {
+    deferred = true;
+    await mount();
+    await pointer("pointerdown");
+    await releaseStart();
+    await hear("first");
+    await pointer("pointerup", 1000); // finishing
+    await pointer("pointerdown", 50);
+    expect(pendingStarts).toHaveLength(0);
+    await act(async () => pendingStops.shift()!());
+    await flush();
+    expect(sent.map((x) => x.text)).toEqual(["first"]);
+  });
+
+  it("a press before the voice settings arrive tries Deepgram, not built-in", async () => {
+    let answer!: (r: Response) => void;
+    (globalThis.fetch as unknown as { mockImplementationOnce: (f: () => Promise<Response>) => void }).mockImplementationOnce(
+      () => new Promise<Response>((r) => (answer = r)),
+    );
+    await mount();
+    await pointer("pointerdown");
+    expect(runs[0].engine).toBe("deepgram");
+    answer(new Response(JSON.stringify(config), { status: 200 }));
+  });
+});
+
+describe("more ways in", () => {
+  it("a floppy set to built-in uses Deepgram in a browser without built-in speech", async () => {
+    await mount({ voiceEngine: "builtin", builtinAvailable: false });
+    await pointer("pointerdown");
+    expect(runs[0].engine).toBe("deepgram");
+  });
+
+  it("keyboard activation of the focused button is a tap (latch, then stop)", async () => {
+    await mount();
+    await act(async () => mic().dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 })));
+    await flush();
+    expect(mic().getAttribute("aria-pressed")).toBe("true");
+    await hear("by keyboard");
+    await act(async () => mic().dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 })));
+    await flush();
+    expect(sent.map((x) => x.text)).toEqual(["by keyboard"]);
+  });
+
+  it("leaving the window mid-hold ends the hold", async () => {
+    await mount();
+    await key("keydown", { code: "Space", key: " ", altKey: true });
+    await hear("then I switched apps");
+    clock += 1000;
+    await act(async () => void window.dispatchEvent(new Event("blur")));
+    await flush();
+    expect(sent.map((x) => x.text)).toEqual(["then I switched apps"]);
+  });
+
+  it("⌥/Alt+Space in another text field on the page is left alone", async () => {
+    await mount();
+    const other = document.createElement("input");
+    document.body.appendChild(other);
+    const e = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, code: "Space", key: " ", altKey: true });
+    await act(async () => void other.dispatchEvent(e));
+    await flush();
+    expect(e.defaultPrevented).toBe(false);
+    expect(runs).toHaveLength(0);
+    other.remove();
+  });
+
+  it("the level meter writes the button's --voice-level", async () => {
+    await mount();
+    await pointer("pointerdown");
+    await act(async () => runs[0].cb.onLevel?.(0.5));
+    expect(mic().style.getPropertyValue("--voice-level")).toBe("0.5");
   });
 });

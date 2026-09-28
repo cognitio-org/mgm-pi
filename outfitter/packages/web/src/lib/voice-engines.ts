@@ -64,6 +64,8 @@ export interface DeepgramDeps {
   AudioContext?: typeof AudioContext;
   /** How long stop() waits for Deepgram's last results before giving up. */
   finishTimeoutMs?: number;
+  /** How long start() waits for the socket to open. */
+  openTimeoutMs?: number;
 }
 
 const LISTEN_URL = "wss://api.deepgram.com/v1/listen";
@@ -124,9 +126,18 @@ export async function startDeepgram(callbacks: VoiceCallbacks, deps: DeepgramDep
   const ws = new deps.WebSocket(listenUrl(token), ["bearer", token.token]);
   const queue: Blob[] = [];
   const recorder = new deps.MediaRecorder(stream, { mimeType });
+  let opened = false;
+  let recorderStopped = false;
+  let closeSent = false;
 
   let closed!: () => void;
   const closedPromise = new Promise<void>((resolve) => (closed = resolve));
+  let openOk!: () => void;
+  let openFailed!: (err: VoiceError) => void;
+  const openPromise = new Promise<void>((resolve, reject) => {
+    openOk = resolve;
+    openFailed = reject;
+  });
 
   const level = startLevelMeter(stream, callbacks.onLevel, deps.AudioContext);
 
@@ -135,19 +146,28 @@ export async function startDeepgram(callbacks: VoiceCallbacks, deps: DeepgramDep
     stream.getTracks().forEach((t) => t.stop());
   }
 
+  /** Once, and only after the recorder has handed over its last chunk. */
+  function sendClose() {
+    if (closeSent || !recorderStopped || ws.readyState !== deps.WebSocket.OPEN) return;
+    closeSent = true;
+    ws.send(JSON.stringify({ type: "CloseStream" }));
+  }
+
   recorder.ondataavailable = (e: BlobEvent) => {
     if (!e.data || e.data.size === 0) return;
     if (ws.readyState === deps.WebSocket.OPEN) ws.send(e.data);
     else if (ws.readyState === deps.WebSocket.CONNECTING) queue.push(e.data);
   };
   recorder.onstop = () => {
-    // The recorder hands over its last chunk before `stop`; now tell Deepgram that was all.
-    if (ws.readyState === deps.WebSocket.OPEN) ws.send(JSON.stringify({ type: "CloseStream" }));
+    recorderStopped = true;
+    sendClose();
   };
 
   ws.onopen = () => {
+    opened = true;
     for (const chunk of queue.splice(0)) ws.send(chunk);
-    if (stopping && recorder.state === "inactive") ws.send(JSON.stringify({ type: "CloseStream" }));
+    sendClose();
+    openOk();
   };
   ws.onmessage = (e: MessageEvent) => {
     let msg: DeepgramMessage;
@@ -167,43 +187,63 @@ export async function startDeepgram(callbacks: VoiceCallbacks, deps: DeepgramDep
     callbacks.onTranscript(joined());
   };
   ws.onclose = () => {
+    closed();
+    if (!opened) {
+      // Refused at the handshake (a bad or expired token, no credit): Deepgram's side, not the
+      // network, so start() rejects and the caller can fall back to the built-in engine.
+      openFailed(new VoiceError("upstream", "Deepgram refused the connection"));
+      return;
+    }
     if (!stopping && !finished) {
       dropped = true;
       if (recorder.state !== "inactive") recorder.stop();
       release();
       callbacks.onError(new VoiceError("network", "The connection to Deepgram dropped"));
     }
-    closed();
   };
   ws.onerror = () => {
     // onclose follows with the details that matter; nothing to do here.
   };
 
-  recorder.start(250);
+  function abandon() {
+    finished = true;
+    stopping = true;
+    recorder.ondataavailable = null;
+    recorder.onstop = null;
+    if (recorder.state !== "inactive") recorder.stop();
+    ws.close();
+    release();
+  }
+
+  try {
+    // Recording starts now so the first words are queued while the socket opens.
+    recorder.start(250);
+    await Promise.race([
+      openPromise,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new VoiceError("upstream", "Deepgram didn't answer")), deps.openTimeoutMs ?? 8000)),
+    ]);
+  } catch (err) {
+    abandon();
+    throw err instanceof VoiceError ? err : new VoiceError("upstream", String(err));
+  }
 
   return {
     async stop() {
       if (finished) return { transcript: joined(), complete: !dropped };
       stopping = true;
       if (recorder.state !== "inactive") recorder.stop();
+      let timedOut = false;
       if (!dropped) {
-        await Promise.race([closedPromise, new Promise((r) => setTimeout(r, deps.finishTimeoutMs ?? 4000))]);
+        await Promise.race([closedPromise, new Promise((r) => setTimeout(r, deps.finishTimeoutMs ?? 4000)).then(() => (timedOut = true))]);
       }
       finished = true;
       if (ws.readyState === deps.WebSocket.OPEN || ws.readyState === deps.WebSocket.CONNECTING) ws.close();
       release();
-      // Whatever Deepgram didn't get to finalize in time still counts: it was heard.
-      return { transcript: joined(), complete: !dropped };
+      // Whatever Deepgram didn't finalize in time is still shown, but a stop that never heard back
+      // (a dead link swallows CloseStream) may be missing the last words: not complete, not sent.
+      return { transcript: joined(), complete: !dropped && !timedOut };
     },
-    cancel() {
-      finished = true;
-      stopping = true;
-      recorder.ondataavailable = null;
-      recorder.onstop = null;
-      if (recorder.state !== "inactive") recorder.stop();
-      ws.close();
-      release();
-    },
+    cancel: abandon,
   };
 }
 
@@ -215,6 +255,7 @@ function startLevelMeter(stream: MediaStream, onLevel: ((level: number) => void)
   } catch {
     return { stop() {} };
   }
+  void ctx.resume?.().catch(() => {}); // Safari creates it suspended after an await
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 512;
   ctx.createMediaStreamSource(stream).connect(analyser);
@@ -351,12 +392,13 @@ export async function startBuiltin(callbacks: VoiceCallbacks, deps: BuiltinDeps)
       if (finished) return { transcript: joined(), complete: !failed };
       stopping = true;
       rec.stop();
-      await Promise.race([endedPromise, new Promise((r) => setTimeout(r, deps.finishTimeoutMs ?? 3000))]);
+      let timedOut = false;
+      await Promise.race([endedPromise, new Promise((r) => setTimeout(r, deps.finishTimeoutMs ?? 3000)).then(() => (timedOut = true))]);
       finished = true;
       committed.push(...round);
       round = [];
       const transcript = [...committed, interim].filter(Boolean).join(" ");
-      return { transcript, complete: !failed };
+      return { transcript, complete: !failed && !timedOut };
     },
     cancel() {
       finished = true;

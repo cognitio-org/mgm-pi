@@ -114,6 +114,15 @@ function deps(over: Partial<DeepgramDeps> = {}) {
   return { d, track };
 }
 
+/** Starts the engine and opens the socket the way Deepgram would once the handshake succeeds. */
+async function startOpen(cb: VoiceCallbacks, d: DeepgramDeps, beforeOpen?: () => void) {
+  const p = startDeepgram(cb, d);
+  await vi.waitFor(() => expect(FakeSocket.last).toBeDefined());
+  beforeOpen?.();
+  FakeSocket.last!.open();
+  return p;
+}
+
 beforeEach(() => {
   FakeRecorder.supported = new Set(["audio/webm;codecs=opus"]);
   FakeRecorder.last = undefined;
@@ -125,7 +134,7 @@ beforeEach(() => {
 describe("startDeepgram", () => {
   it("opens the listen socket with the token as a bearer subprotocol, the tag, and no encoding", async () => {
     const { d } = deps();
-    await startDeepgram(callbacks().cb, d);
+    await startOpen(callbacks().cb, d);
     const ws = FakeSocket.last!;
     expect(ws.protocols).toEqual(["bearer", "jwt-1"]);
     const url = new URL(ws.url);
@@ -144,29 +153,44 @@ describe("startDeepgram", () => {
 
   it("records Safari's mp4 when webm isn't there", async () => {
     FakeRecorder.supported = new Set(["audio/mp4"]);
-    await startDeepgram(callbacks().cb, deps().d);
+    await startOpen(callbacks().cb, deps().d);
     expect(FakeRecorder.last!.options.mimeType).toBe("audio/mp4");
   });
 
   it("queues audio until the socket opens, then streams it", async () => {
-    await startDeepgram(callbacks().cb, deps().d);
-    const rec = FakeRecorder.last!;
+    await startOpen(callbacks().cb, deps().d, () => {
+      FakeRecorder.last!.chunk("a");
+      FakeRecorder.last!.chunk("b");
+      expect(FakeSocket.last!.sentChunks()).toBe(0);
+    });
     const ws = FakeSocket.last!;
-    rec.chunk("a");
-    rec.chunk("b");
-    expect(ws.sentChunks()).toBe(0);
-    ws.open();
     expect(ws.sentChunks()).toBe(2);
-    rec.chunk("c");
+    FakeRecorder.last!.chunk("c");
     expect(ws.sentChunks()).toBe(3);
+  });
+
+  it("a refused handshake rejects as upstream (so the caller can fall back) and frees the mic", async () => {
+    const { d, track } = deps();
+    const p = startDeepgram(callbacks().cb, d);
+    await vi.waitFor(() => expect(FakeSocket.last).toBeDefined());
+    FakeSocket.last!.close(); // closed before it ever opened
+    await expect(p).rejects.toMatchObject({ kind: "upstream" });
+    expect(track.stopped).toBe(true);
+    expect(FakeRecorder.last!.state).toBe("inactive");
+  });
+
+  it("a socket that never opens times out as upstream", async () => {
+    const { d, track } = deps({ openTimeoutMs: 20 });
+    await expect(startDeepgram(callbacks().cb, d)).rejects.toMatchObject({ kind: "upstream" });
+    expect(track.stopped).toBe(true);
+    expect(FakeSocket.last!.readyState).toBe(FakeSocket.CLOSED);
   });
 
   it("reports interim and final text, sends CloseStream after the last chunk, and resolves on close", async () => {
     const { cb, transcripts } = callbacks();
     const { d, track } = deps();
-    const recording = await startDeepgram(cb, d);
+    const recording = await startOpen(cb, d);
     const ws = FakeSocket.last!;
-    ws.open();
     ws.result("hello", false);
     ws.result("hello world", true);
     ws.result("how are", false);
@@ -182,22 +206,20 @@ describe("startDeepgram", () => {
     expect(track.stopped).toBe(true);
   });
 
-  it("keeps unfinalized words if Deepgram doesn't close in time", async () => {
-    const recording = await startDeepgram(callbacks().cb, deps().d);
+  it("keeps unfinalized words if Deepgram doesn't close in time, but calls it incomplete (never auto-sent)", async () => {
+    const recording = await startOpen(callbacks().cb, deps().d);
     const ws = FakeSocket.last!;
-    ws.open();
     ws.result("one", true);
     ws.result("two", false);
-    await expect(recording.stop()).resolves.toEqual({ transcript: "one two", complete: true });
+    await expect(recording.stop()).resolves.toEqual({ transcript: "one two", complete: false });
     expect(ws.readyState).toBe(FakeSocket.CLOSED);
   });
 
   it("a dropped connection is reported, frees the mic, and the result is never complete", async () => {
     const { cb, errors } = callbacks();
     const { d, track } = deps();
-    const recording = await startDeepgram(cb, d);
+    const recording = await startOpen(cb, d);
     const ws = FakeSocket.last!;
-    ws.open();
     ws.result("half a", true);
     ws.close(); // server-side drop while recording
     expect(errors.map((e) => e.kind)).toEqual(["network"]);
@@ -207,9 +229,8 @@ describe("startDeepgram", () => {
 
   it("cancel closes everything and sends no CloseStream", async () => {
     const { d, track } = deps();
-    const recording = await startDeepgram(callbacks().cb, d);
+    const recording = await startOpen(callbacks().cb, d);
     const ws = FakeSocket.last!;
-    ws.open();
     recording.cancel();
     expect(ws.readyState).toBe(FakeSocket.CLOSED);
     expect(ws.sentText()).toEqual([]);
@@ -331,6 +352,16 @@ describe("startBuiltin", () => {
     const done = recording.stop();
     await vi.advanceTimersByTimeAsync(50);
     await expect(done).resolves.toEqual({ transcript: "partial", complete: false });
+  });
+
+  it("a stop that never hears back from the recognizer is incomplete", async () => {
+    const recording = await started(callbacks().cb);
+    const rec = FakeRecognition.last!;
+    rec.stop = () => {}; // onend never comes
+    rec.results(["maybe cut off", true]);
+    const done = recording.stop();
+    await vi.advanceTimersByTimeAsync(50);
+    await expect(done).resolves.toEqual({ transcript: "maybe cut off", complete: false });
   });
 
   it("no SpeechRecognition here is unsupported", async () => {

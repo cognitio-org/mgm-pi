@@ -1,0 +1,23 @@
+outfitter/docs/specs/browser-ide.md
+  s_885dde90a8ec58::t_7d9a8a16845df2 4,309
+  s_885dde90a8ec58::t_9971220f10275a 25-28,44-45,193-204,218-220,295-296,306-308
+  s_885dde90a8ec58::t_93008c1fd44dea 283
+outfitter/EPIC.md
+  s_885dde90a8ec58::t_74cb000db3b459 435-437
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "9f7be797a6fc8b0e5f1db195a053d4340bf51277",
+  "prompts": {},
+  "sessions": {
+    "s_885dde90a8ec58": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fc9bab2f-409c-4e9c-9cd5-ff15ccd352cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

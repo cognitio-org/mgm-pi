@@ -119,6 +119,19 @@ jobs:
             # Drive previews (#217): agentd starts the ngrok agent; it must be the pinned version.
             su agent -s /bin/sh -c "ngrok version" | tee /dev/stderr | grep -q "ngrok version 3\."
           '
+      - name: code root runs isn't writable by agent; pi's agent dir is (#266)
+        run: |
+          docker run --rm --entrypoint sh outfitter-agent:ci -c '
+            set -e
+            for p in /opt/outfitter/agentd /opt/outfitter/agentd/dist/src /opt/kernal /opt/kernal/node_modules \
+                     /opt/kernal/node_modules/@earendil-works/pi-coding-agent/dist; do
+              if su agent -s /bin/sh -c "touch $p/.agent-write-test" 2>/dev/null; then echo "agent can write $p"; exit 1; fi
+              test "$(stat -c %U "$p")" = root || { echo "$p is not root-owned"; exit 1; }
+            done
+            if su agent -s /bin/sh -c "echo x >> /opt/outfitter/agentd/dist/src/main.js" 2>/dev/null; then echo "agent can change agentd"; exit 1; fi
+            su agent -s /bin/sh -c "touch /opt/kernal/.pi/.agent-write-test && rm /opt/kernal/.pi/.agent-write-test"
+            echo "ok: agentd and pi-coding-agent are root-owned; /opt/kernal/.pi stays agent-writable"
+          '
       - name: pi-subagents loads as a bundle and still finds its own files (#142)
         run: |
           docker run --rm --entrypoint sh outfitter-agent:ci -c '

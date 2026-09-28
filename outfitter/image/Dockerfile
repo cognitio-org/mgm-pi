@@ -116,6 +116,11 @@ RUN bash /tmp/strip-native-binaries.sh /opt/kernal/node_modules "$(dpkg --print-
             /opt/kernal/node_modules/@earendil-works/pi-coding-agent/examples \
             /opt/kernal/node_modules/@earendil-works/pi-coding-agent/CHANGELOG.md
 
+# #266: pi's agent dir (.pi: settings, MCP config, extensions and their packages, and whatever pi
+# writes at run time) moves out of the tree here, so the runtime stage can copy the rest of
+# /opt/kernal root-owned and .pi alone agent-owned, each file still copied exactly once.
+RUN mv /opt/kernal/.pi /opt/kernal-pi
+
 # ---------------------------------------------------------------------------
 # Stage: agentd-builder -- compiles agentd to plain JS and keeps only its runtime dependency (ws).
 # `npx tsc` directly (not `npm run build`) so this doesn't trip package.json's `postbuild` hook,
@@ -189,8 +194,14 @@ RUN mkdir -p /opt/outfitter/playwright \
   && rm -rf /var/lib/apt/lists/* /root/.npm \
   && chmod -R a+rX /opt/outfitter/playwright /opt/ms-playwright
 
-COPY --from=kernal-builder --chown=agent:agent /opt/kernal /opt/kernal
-COPY --from=agentd-builder --chown=agent:agent /opt/outfitter/agentd /opt/outfitter/agentd
+# #266: code root runs is root's. agentd runs as root from /opt/outfitter/agentd and loads pi's own
+# package from /opt/kernal/node_modules (session.ts's import, `pi --version` at boot), so neither
+# tree may be writable by `agent`, the user the model's shell runs as. Only pi's agent dir is: pi
+# (as `agent`) writes there, and root loads no code from it. Plain COPY is root-owned at no extra
+# layer cost (the image-trim concern above).
+COPY --from=kernal-builder /opt/kernal /opt/kernal
+COPY --from=kernal-builder --chown=agent:agent /opt/kernal-pi /opt/kernal/.pi
+COPY --from=agentd-builder /opt/outfitter/agentd /opt/outfitter/agentd
 
 # session.ts dynamic-`import()`s @earendil-works/pi-coding-agent (SessionManager.forkFrom) at
 # runtime instead of declaring it as an agentd dependency -- it's kernal's package, not agentd's, and
@@ -249,8 +260,8 @@ ENV PI_CODING_AGENT_DIR=/opt/kernal/.pi \
 # kernal-report (kernal/.pi/extensions/kernal-report) is left in: at startup it only calls
 # pi.registerCommand/pi.on, no network or `gh` call happens until a human actually runs /report
 # inside a live session, which a headless Cloud Run Job execution never does. Its writes
-# (`$PI_CODING_AGENT_DIR/bug-reports`, i.e. /opt/kernal/.pi/bug-reports) land under /opt/kernal, which is
-# `COPY --chown=agent:agent` above -- already writable by `agent`, the same user pi runs as -- so no
+# (`$PI_CODING_AGENT_DIR/bug-reports`, i.e. /opt/kernal/.pi/bug-reports) land under /opt/kernal/.pi,
+# which is `COPY --chown=agent:agent` above -- writable by `agent`, the same user pi runs as -- so no
 # extra directory or chmod is needed for it here. If /report is ever wired into the guru flow, gh
 # also needs to be authenticated inside the sandbox, which is out of scope for this trim.
 #

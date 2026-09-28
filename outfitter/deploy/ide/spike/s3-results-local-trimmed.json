@@ -1,0 +1,51 @@
+{
+  "checks": {
+    "s3.load": {
+      "ok": true,
+      "ms": 1404
+    },
+    "s3.ripgrep": {
+      "ok": true,
+      "ms": 63,
+      "detail": "97 files in 6 ms"
+    },
+    "s3.edit-and-save": {
+      "ok": true,
+      "ms": 1852,
+      "detail": "agent"
+    },
+    "s3.terminal": {
+      "ok": true,
+      "ms": 7593,
+      "detail": "from-terminal agent\nagent"
+    },
+    "s3.file-watcher": {
+      "ok": true,
+      "ms": 823
+    },
+    "s3.quick-open": {
+      "ok": true,
+      "ms": 337
+    },
+    "s3.webview-markdown-preview": {
+      "ok": true,
+      "ms": 1487,
+      "detail": "http://ide-test.kernal.run:64462/stable-53c2f3253bcf32886706fc023e794bbeb253c90f/static/out/vs/workbench/contrib/webview/browser/pre/fake.html"
+    },
+    "s3.openvsx-cli-install": {
+      "ok": true,
+      "ms": 265,
+      "detail": "Installing extensions...\nExtension 'redhat.vscode-yaml' v1.24.0 is already installed. Use '--force' option to update to latest version or provide '@<version>' to install a specific version, for example: 'redhat.vscode-yaml@1.2.3'."
+    },
+    "s3.openvsx-ui-search": {
+      "ok": true,
+      "ms": 1870
+    }
+  },
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "%c  ERR color: #f33 [Extension Host] (node:16679) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API i",
+    "%c[Extension Host] %c(node:16679) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are"
+  ]
+}

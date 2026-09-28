@@ -1,0 +1,40 @@
+{
+  "checks": {
+    "s3.load": {
+      "ok": true,
+      "ms": 2253
+    },
+    "s3.edit-and-save": {
+      "ok": true,
+      "ms": 2781,
+      "detail": "agent"
+    },
+    "s3.terminal": {
+      "ok": true,
+      "ms": 8074,
+      "detail": "from-terminal agent\nagent"
+    },
+    "s3.file-watcher": {
+      "ok": true,
+      "ms": 860
+    },
+    "s3.webview-markdown-preview": {
+      "ok": true,
+      "ms": 3189,
+      "detail": "http://ide-test.kernal.run:61264/stable-53c2f3253bcf32886706fc023e794bbeb253c90f/static/out/vs/workbench/contrib/webview/browser/pre/fake.html"
+    },
+    "s3.openvsx-cli-install": {
+      "ok": true,
+      "ms": 526,
+      "detail": "Installing extensions...\nExtension 'redhat.vscode-yaml' v1.24.0 is already installed. Use '--force' option to update to latest version or provide '@<version>' to install a specific version, for example: 'redhat.vscode-yaml@1.2.3'."
+    },
+    "s3.openvsx-ui-search": {
+      "ok": true,
+      "ms": 1891
+    }
+  },
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ]
+}

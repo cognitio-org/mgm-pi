@@ -1,0 +1,6 @@
+{"phase":"idle-focused","seconds":30.002,"c2sBytes":652,"s2cBytes":297,"frames":{"binary":23},"dataFrames":23,"dataBytes":512,"heartbeatAgeStart":22,"heartbeatAgeEnd":52,"memory":{"cgroupMb":793,"agentRssMb":809}}
+{"phase":"typing","seconds":30.461,"c2sBytes":30679,"s2cBytes":2086424,"frames":{"binary":716},"dataFrames":716,"dataBytes":26381,"heartbeatAgeStart":52,"heartbeatAgeEnd":22,"memory":{"cgroupMb":895,"agentRssMb":907}}
+{"phase":"idle-after-typing","seconds":30.002,"c2sBytes":22420,"s2cBytes":5000,"frames":{"binary":45},"dataFrames":45,"dataBytes":22138,"heartbeatAgeStart":22,"heartbeatAgeEnd":52,"memory":{"cgroupMb":885,"agentRssMb":900}}
+{"phase":"scrolling-reading","seconds":30.192,"c2sBytes":1408,"s2cBytes":965,"frames":{"binary":53},"dataFrames":53,"dataBytes":1090,"heartbeatAgeStart":53,"heartbeatAgeEnd":23,"memory":{"cgroupMb":796,"agentRssMb":811}}
+{"phase":"terminal-command","seconds":31.972,"c2sBytes":3836,"s2cBytes":80537,"frames":{"binary":116},"dataFrames":116,"dataBytes":2485,"heartbeatAgeStart":23,"heartbeatAgeEnd":55,"memory":{"cgroupMb":753,"agentRssMb":768}}
+{"phase":"idle-background-tab","seconds":30.002,"c2sBytes":122,"s2cBytes":78,"frames":{"binary":12},"dataFrames":12,"dataBytes":50,"heartbeatAgeStart":55,"heartbeatAgeEnd":25,"memory":{"cgroupMb":652,"agentRssMb":667}}

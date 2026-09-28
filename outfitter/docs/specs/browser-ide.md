@@ -8,8 +8,7 @@ Status: design, not built (epic #245). Builds on Drive previews (`docs/specs/dri
 A person watching a Drive can read files through the session page's file viewer (agentd `read`,
 `diff`), but can't browse the tree freely, edit a file, or run a command next to the model. On the
 laptop that's just opening the folder in an editor. In a Drive there is no way in: the GKE sandbox
-has no ingress (`deploy/gke/sandbox-template.yaml:27-28`, `networkPolicy.ingress: []`) and the
-Cloud Run job has no inbound port.
+has no ingress (`deploy/gke/sandbox-template.yaml:27-28`, `networkPolicy.ingress: []`).
 
 The goal is **VS Code in the browser** (code-server) on the Drive's own `/workspace`, opened from
 the session page, with the same safety properties Drive previews already have.
@@ -19,13 +18,18 @@ the session page, with the same safety properties Drive previews already have.
 - **Engine:** code-server (Coder's build of VS Code for the browser), not a separate product.
 - **A Tape option, off by default.** A Tape that doesn't ask for the IDE starts exactly as it does
   today. The owner's concern: code-server must not slow down Drives that don't use it.
-- **One image, installed on demand; no second image.** A separate `outfitter-agent-ide` image was
-  considered and set aside (see "Options considered"). The spike (phase 0) measures whether baking
-  it into the one image is cheap enough to skip the on-demand install.
+- **One image, one template; code-server downloaded into IDE Drives.** A separate IDE image was
+  set aside, and so was baking code-server into the shared image (every Tape would carry it). See
+  "Options considered".
 - **Who:** the floppy's owner and sysops (admins) open the IDE; nobody else, and no share links.
 - **Idle:** editing keeps a Drive running for as long as someone keeps editing. IDE activity is not
   capped by time since the last chat turn. An open but untouched tab doesn't count (§5).
 - **Extensions:** allowed, from Open VSX.
+- **Memory (after the spike):** IDE Drives use **today's 4 GiB template and warm pool**, like every
+  other Drive (`deploy/config.env` `GKE_SANDBOX_MEMORY=4Gi`, since #187). code-server needs about
+  1 GB under gVisor (spike S5), which leaves about 2.8 GiB for pi and the model's commands, more than
+  the ~1.8 GiB that 2 GiB Drives had when builds were OOM-killed (#187). No second template, and IDE
+  Drives start warm. The spike's S1 (bake-in cost) wasn't needed.
 
 ## Requirements
 
@@ -39,8 +43,8 @@ the session page, with the same safety properties Drive previews already have.
    through agentd or the api. It *can* reach code-server on loopback, as the same user; that is no
    more than the shell it already has (see "Security notes", which says what that does and doesn't
    close).
-5. **Works on both providers** (GKE and Cloud Run), since it rides on the preview path, which only
-   needs outbound 443.
+5. **GKE only.** The fleet is moving fully to GKE (owner decision, 2026-09-27); Cloud Run isn't a
+   target.
 6. **Lives as long as someone uses it.** The IDE dies with its Drive. Real editing keeps the Drive
    up; an open tab nobody touches doesn't.
 
@@ -82,32 +86,43 @@ case, and the session page shows no IDE button otherwise.
 
 ### 2. Getting code-server into the sandbox
 
-**Default (pending the spike): download on demand.**
+**Downloaded at Drive start, for IDE Drives only.**
 
-- **When:** not at Drive start. The api sends `ide.prepare` when the floppy's owner or a sysop opens
-  the session page of a running IDE Drive, and `ide.open` (§3) starts it too if it hasn't run. A
-  Drive nobody opens the IDE on never downloads anything. That matters on Cloud Run, where the
-  writable filesystem is in memory and counts against the 2 GiB.
+- **When:** agentd starts the install as soon as a run's `run.spec` carries `ide` (a warm pod gets it
+  at assignment), niced, in parallel with pi's start. It takes about 20 s on GKE (spike S2: 18.8 to
+  23.3 s over six installs), so it's usually done before anyone clicks. `ide.open` (§3) waits for it
+  or retries it. Other Drives never download anything.
 - **What:** the pinned code-server release for the pod's architecture
   (`https://github.com/coder/code-server/releases/download/v<version>/code-server-<version>-linux-<arch>.tar.gz`).
-- **How:** as root, niced, streamed straight into `tar` (no tarball on disk) through a hashing
-  stream; the unpacked tree lands in a temp dir and is renamed to `/opt/code-server` only if the
-  SHA-256 of the stream matches `run.spec.ide.artifacts[arch]`. Root-owned: `agent` can run it but
-  not replace it. One attempt at a time; a failure is reported and the next `ide.prepare`/`ide.open`
-  retries.
+- **How:** as root, niced. The HTTP body goes through a SHA-256 hash and then into GNU `tar`, so
+  there's no tarball on disk:
+  - **Copilot excluded:** `--exclude` for the bundled Copilot extension and SDK
+    (`*/lib/vscode/extensions/copilot`, `*/lib/vscode/node_modules/@github`; GNU tar matches
+    excludes before `--strip-components`). That's about 270 MB, some 40% of the unpacked tree, for AI features the IDE
+    turns off. The spike found everything works without them, though it tested the trim by deleting
+    after unpacking, not with `--exclude`; phase 1's test covers that.
+  - **The hash covers the whole download,** excluded entries included, because it sits before tar.
+    The whole body is read and hashed even if tar stops early, and a tar or pipe error fails the
+    install.
+  - **Owned by root:** `--no-same-owner --no-same-permissions`, then mode 755 on the top directory,
+    so `agent` can run code-server but not change it.
+  - **Unverified bytes stay in a root-only temp dir.** tar unpacks before the hash is known; that's
+    acceptable only because nothing runs from the temp dir. It's renamed to `/opt/code-server` only if
+    the hash matches `run.spec.ide.artifacts[arch]`.
+  - One attempt at a time; a failure is reported and `ide.open` retries.
 - **Pin:** version and per-arch checksums live in api config (`IDE_CODE_SERVER_VERSION`,
   `IDE_CODE_SERVER_SHA256_AMD64`, `_ARM64`), so a bump is a config change, not an image rebuild.
   Dependabot can't see it; phase 1 adds a small scheduled CI job that opens an issue when a newer
   code-server release exists (nothing like it exists for the ngrok pin yet, `Dockerfile:149-155` just
   says "bump deliberately").
-- **Egress:** TCP 443 to public addresses is already allowed on both providers.
-- **UNVERIFIED:** size (about 100 MB compressed from memory; unpacked is larger) and download plus
-  unpack time in a 1-vCPU sandbox (spike S2); in-memory footprint on Cloud Run (S5).
+- **Egress:** TCP 443 to public addresses is already allowed by the sandbox network policy.
+- **Size (spike, 4.139.1, amd64):** 222 MB compressed, 670 MB unpacked (arm64: 217 and 641 MB).
+  Without Copilot, about 350 MB unpacked.
+- **Checksums are ours:** the release publishes none, so the pin records SHA-256s we compute when we
+  bump it (`docs/reports/browser-ide-spike.md`).
 
-**Alternative, if the spike shows it's cheap: bake it in.** Add code-server to `image/Dockerfile`
-under the same pin. The Tape option then only gates the button, and `ide.prepare` goes away. Pick
-this if the measured cold-start cost of the bigger image is under about a second on both providers
-(spike S1).
+Hosting a trimmed tarball ourselves (about 112 MB instead of 222) would halve the download, at the cost of
+a mirror to maintain; not in v1. It's also the fallback if GitHub rate-limits us.
 
 ### 3. Starting the IDE (agentd)
 
@@ -115,7 +130,6 @@ A person clicks **"Open in VS Code"** on the session page. The model never start
 
 **Frames** (not seq/ack-replayed, like `read`, which correlates on `reqId`, `protocol.ts:407`):
 
-- down `ide.prepare {}`: start the install if it hasn't run. No answer.
 - down `ide.open {reqId}`: start (or reuse) the IDE.
 - up `ide.status {reqId?, state, detail?, internalUrl?}`, sent as it progresses:
   `installing` → `starting` → `ready` (with `internalUrl`) or `error` (with `detail`). Also sent
@@ -135,11 +149,18 @@ install without an HTTP timeout.
    them:
    - `--auth none`: sign-in happens at ngrok's edge (§4);
    - `--disable-telemetry`, `--disable-update-check`;
-   - `--disable-proxy` if the pinned version has it (**UNVERIFIED**): code-server's `/proxy/<port>`
-     would otherwise forward to any loopback port, agentd's listeners included;
+   - `--disable-proxy` (present in 4.139.1, spike): code-server's `/proxy/<port>` would otherwise
+     forward to any loopback port, agentd's listeners included;
+   - `--disable-workspace-trust`: the workspace is the Drive's own; without it the IDE opens in
+     Restricted Mode behind a trust dialog (spike);
    - `--user-data-dir` and `--extensions-dir` under the `agent` home;
-   - `/workspace` as the folder to open.
-3. Starts its own `LocalPreviewProxy` and ngrok tunnel on `https://ide.<run label>.internal` (a
+   - `/workspace` as the folder to open;
+   - default machine settings (`<user-data-dir>/Machine/settings.json`) that turn off VS Code's AI
+     Chat panel, which is open by default in 1.139 and wired to nothing here, and telemetry.
+3. Starts its own `LocalPreviewProxy`, **in a mode that leaves `Origin` alone** (spike S3: the
+   dev-server rewrite of `Origin` to localhost, `preview-proxy.ts:55-59`, makes code-server refuse
+   every WebSocket with 403; kept, `Origin` is checked against `X-Forwarded-Host` and the check
+   still guards against cross-site WebSocket hijacking), and an ngrok tunnel on `https://ide.<run label>.internal` (a
    name the run's credential can bind, `bind:*.<label>.internal`, and one the preview tool never
    uses, since previews are `p<port>.…`). These live in an `IdeManager` beside the
    `PreviewListener`, not in its `open` map, so the tool's `GET /previews` doesn't list the IDE and
@@ -186,8 +207,10 @@ The preview proxy counts only page navigations as activity (`preview-proxy.ts:9-
 a single-page app on a WebSocket: after the first load, editing makes no page requests, so a person
 typing in the IDE would look idle and the Drive would stop under them.
 
-- The IDE's proxy counts **client-to-server WebSocket traffic** as activity, above a floor that
-  excludes code-server's own keepalives (the floor is measured in spike S4). Measured there, not
+- The IDE's proxy counts **client-to-server WebSocket traffic** as activity: a minute counts when
+  the client sent at least **60 frames or 2 KB** in it. Spike S4 under gVisor: an idle tab, focused
+  or in the background, sends 31 to 39 frames and under 740 bytes a minute; scrolling 111 frames, a
+  terminal 219, typing 845 (the laptop run agreed). Measured there, not
   from code-server's heartbeat file: that file sits in the agent-writable data dir, so the model
   could touch it; traffic through the proxy can only come from someone past ngrok's sign-in.
 - It re-arms idle-stop **without** the preview cap (owner decision): dev-server page loads count
@@ -198,10 +221,9 @@ typing in the IDE would look idle and the Drive would stop under them.
 - This is safe to leave uncapped only because the signal can't be faked from inside the sandbox:
   it's traffic that came through ngrok's sign-in, above the keepalive floor. An idle tab stops
   counting; the Drive then idle-stops on its normal timer.
-- **The Drive's hard timeout still applies.** Every run has one: 24 h (Cloud Run
-  `--task-timeout=24h`; GKE claim `lifecycle.shutdownTime`, `gke-sandbox-provider.md` §3.6). A person
-  editing past it loses the Drive at that point, like any run. Lifting or extending it for IDE runs
-  is a separate change to both providers, not part of this work.
+- **The Drive's hard timeout still applies:** 24 h (the GKE claim's `lifecycle.shutdownTime`,
+  `gke-sandbox-provider.md` §3.6). A person editing past it loses the Drive at that point, like any
+  run. Lifting or extending it for IDE runs is a separate change, not part of this work.
 
 ### 6. Working next to the model
 
@@ -223,12 +245,13 @@ the same access the terminal does, and no more.
 
 | Option | Verdict |
 |---|---|
-| **Separate image with code-server, picked by the Tape** | Set aside. A warm pool belongs to one SandboxTemplate, so a second image needs a second pool: the default warm schedule is about $23.40 of the $25/month budget (`gke-sandbox-provider.md` §3.7), or IDE Tapes always start cold. It doubles builds and deploy targets (a second SandboxTemplate and a second Cloud Run job), and each must move in the same release as link, the image-skew failure spike S2 hit (`gke-spike.md`, refused 4409). And image size costs less than it looks: warm pods have already pulled it, a cached node starts in about 3 s (spike S4), and image streaming fetches only bytes a pod reads. |
-| **Download on demand (above)** | **Default.** Zero cost to Tapes without it, and to IDE Drives nobody opens the IDE on; one image, one pool, one release path. Costs a download on first open, mostly hidden by `ide.prepare` on page load. |
-| **Bake into the one image** | Chosen instead if spike S1 shows under about 1 s of extra cold start on both providers. Simplest; the Tape option then gates only the button. |
-| Prefetch at Drive start | Rejected: every IDE-Tape Drive pays the download and, on Cloud Run, a few hundred MB of in-memory filesystem, whether or not anyone opens the IDE. |
+| **A separate IDE template** (more memory, or its own pool) | Not needed: Drives are already 4 GiB (#187), which leaves about 2.8 GiB beside code-server. A second template would need a template-name placeholder in `gke-template.sh`, both templates labelled and checked for image skew in the release, a `browserIde` field on `RunLaunch` and a second pool name in the GKE provider config, and either a second warm pod (about $21.60 a month) or cold starts for IDE Drives. The lever if 4 GiB proves too small. |
+| **Separate image with code-server, picked by the Tape** | Set aside. A second image needs a second template and pool: a second warm pod (the default warm schedule is already about $23.40 of the $25/month budget, `gke-sandbox-provider.md` §3.7) or cold starts. It doubles builds and deploy targets, and each template must move in the same release as link, the image-skew failure the GKE spike's S2 hit (`gke-spike.md`, refused 4409). |
+| **Download into IDE Drives at start (above)** | **Chosen.** Zero cost to other Tapes; one image, one template, one release path. About 20 s, in parallel with pi's start. |
+| Bake into the shared image | Not chosen: every Tape would carry about 350 MB (trimmed) it doesn't use. The spike's S1, which would have measured the cold-start cost, was dropped. |
+| Download on first page view (`ide.prepare`) | Dropped: it existed to spare Cloud Run's in-memory filesystem, and Cloud Run is out. |
 | Route the IDE through `preview.open` with a `kind` field | Rejected: the frame comes from the sandbox, the model's tool shares the listener, and `preview.ts:260` mints a fresh request id per open, so nothing ties it to the person's click. A separate `ide.*` exchange keyed on agentlink's own request does. |
-| Sidecar container in the pod | Needs `/workspace` on a shared `emptyDir`, reserves memory on every run, changes the template, and sidecars on Cloud Run jobs are unverified. Only worth it if code-server in the agent container misbehaves. |
+| Sidecar container in the pod | Needs `/workspace` on a shared `emptyDir`, reserves memory on every run and changes the template. Only worth it if code-server in the agent container misbehaves. |
 | A second sandbox for the IDE | No shared storage between pods (no PVCs, §3.8 of the GKE spec), so it can't see the Drive's files. |
 | code-server's own password auth | One more secret, readable by `agent` (process environment, files in its home), so the model could read it; and it would sit behind ngrok's sign-in anyway. |
 
@@ -254,29 +277,20 @@ the same access the terminal does, and no more.
 - **Who gets the IDE's own endpoint:** owner and sysops only, checked at ngrok's edge by a policy
   only the api writes. No share links.
 - **Origin:** the IDE is on its own `https://<id>.kernal.run` host, cross-site to `app.kernal.one`,
-  like every preview. code-server's webviews run on the same host; **UNVERIFIED** that they work
-  through the proxy's `Host`/`Origin` rewriting (`preview-proxy.ts:55-59`), spike S3.
+  like every preview. With `Origin` passed through (§3), code-server's own origin check still
+  refuses a WebSocket opened from any other site. Webviews render (spike S3, local and gVisor).
 - **Supply chain:** pinned version, per-arch SHA-256 checked before the tree is moved into place,
   root-owned.
 
 ## Phases
 
-0. **Spike** (no merge needed; a report under `docs/reports/browser-ide-spike.md`):
-   - **S1** image cost: build the image with code-server baked in; measure cold start on GKE (node
-     with the image cached, and a new tag's first pull) and on Cloud Run, against today's image.
-   - **S2** download cost: stream, verify and unpack the tarball in a real 1-vCPU Drive; time it,
-     with and without pi busy.
-   - **S3** through the preview pieces: code-server behind `LocalPreviewProxy` and an ngrok cloud
-     endpoint with Google sign-in; editor, terminal, file watcher, webviews, and Open VSX installs
-     work under gVisor. Check `--disable-proxy` and `--config` in the pinned version.
-   - **S4** activity: client-to-server WebSocket traffic of an active versus an idle tab; pick the
-     floor.
-   - **S5** memory: code-server plus pi plus a dev server inside 2 GiB, and the unpacked tree's
-     in-memory cost on Cloud Run.
-   - Outcome: download or bake in (§2), and any change to §3-§5.
+0. **Spike: done** (`docs/reports/browser-ide-spike.md`, #240). It changed §2 (the download is
+   222 MB; the Copilot trim), §3 (`Origin` passed through; workspace trust and AI chat off; `SHELL`
+   required) and §5 (the 60 frames / 2 KB rule), and confirmed the 4 GiB template is enough.
 1. **Tape option and install (api, agentd, web form, CI):** `Guru.browserIde`, `Run.browserIde`,
-   `run.spec.ide` (only with previews on), `ide.prepare`, the streamed verified install (or the
-   Dockerfile change), and the scheduled "newer code-server" check.
+   `run.spec.ide` (only with previews on), the streamed, verified, Copilot-excluding install at Drive
+   start (with a test that the excludes match and the hash still covers the whole body), and the
+   scheduled "newer code-server" check.
 2. **Start and open (agentd, api):** `ide.open`/`ide.status`, `IdeManager` (code-server as `agent`
    in its own process group, root-owned config, listed environment, own proxy and tunnel, reserved
    port), agentlink's request matching, `Preview.kind`, owner-and-sysop allowlist, share refusal,
@@ -292,20 +306,21 @@ the same access the terminal does, and no more.
 
 ## Open decisions
 
-None left from the design; the spike may raise new ones. The 24 h hard timeout (§5) stays as it is
-unless the owner asks to change it.
+None. The 24 h hard timeout (§5) stays as it is unless the owner asks to change it.
 
 ## Risks
 
-- **Memory.** code-server's server and extension host plus pi in 2 GiB may be tight, and on Cloud
-  Run the unpacked tree lives in memory too; S5 decides whether IDE Tapes need a bigger shape
-  (which would be a template change on GKE after all).
+- **Memory.** 4 GiB leaves about 2.8 GiB beside code-server's ~1 GB (spike S5, gVisor). A heavy dev
+  server or test run can still exhaust it; the Drive then fails like any OOM. The levers are a
+  larger `GKE_SANDBOX_MEMORY` for everyone (Autopilot allows up to 6.5 GiB on 1 vCPU) or a separate,
+  larger IDE template.
 - **Download failures** (GitHub rate limits or outages) leave the IDE unavailable for that Drive;
   the button says so, and the Drive itself is unaffected. Mirroring the tarball to our Artifact
   Registry is the fallback.
 - **Idle drift:** with no cap, the floor is the only thing between an idle tab and a Drive that
   never stops. If WebSocket traffic doesn't separate active from idle tabs cleanly, IDE users either
-  get stopped mid-edit or keep Drives up until the 24 h timeout; S4 decides, and the fallback is a
-  generous cap (say 8 h of IDE activity with no chat turn) rather than none.
+  get stopped mid-edit or keep Drives up until the 24 h timeout. S4 showed a clear gap (idle 31-39
+  frames a minute, active 111 or more); if real use proves otherwise, the fallback is a generous cap
+  (say 8 h of IDE activity with no chat turn) rather than none.
 - **Two editors, one tree:** a person and the model can overwrite each other's changes. VS Code's
   "file changed on disk" prompt is the only guard in v1.

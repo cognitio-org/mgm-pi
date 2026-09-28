@@ -1,0 +1,11 @@
+proxy 23806 relay 39613 http://ide-test.kernal.run:39613/?folder=/workspace
+baseline memory (no client) {"cgroupMb":685,"agentRssMb":243}
+s3.load PASS 
+s3.ripgrep PASS 97 files in 197 ms
+s3.edit-and-save FAIL the saved file has no marker
+s3.terminal FAIL Command failed: env sh -c cat /workspace/t.txt 2>&1; stat -c %U /workspace/t.txt 2>&1
+s3.file-watcher PASS 
+s3.quick-open PASS 
+s3.webview-markdown-preview PASS http://ide-test.kernal.run:39613/stable-53c2f3253bcf32886706fc023e794bbeb253c90f/static/out/vs/workbench/contrib/webview/browser/pre/fake.html
+s3.openvsx-cli-install PASS Installing extension 'redhat.vscode-yaml'...
+Extension 'redhat.vscode-yaml' v1.24.0 was successfully installed.

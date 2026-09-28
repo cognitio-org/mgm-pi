@@ -1,0 +1,41 @@
+{
+  "checks": {
+    "s3.load": {
+      "ok": true,
+      "ms": 14076
+    },
+    "s3.edit-and-save": {
+      "ok": false,
+      "ms": 32404,
+      "error": "locator.waitFor: Timeout 30000ms exceeded.\nCall log:\n  - waiting for locator('.monaco-editor .view-lines').first() to be visible\n"
+    },
+    "s3.terminal": {
+      "ok": true,
+      "ms": 14443,
+      "detail": "from-terminal agent\nagent"
+    },
+    "s3.file-watcher": {
+      "ok": true,
+      "ms": 874
+    },
+    "s3.webview-markdown-preview": {
+      "ok": false,
+      "ms": 41961,
+      "error": "no webview frame rendered the file; frames: http://ide-test.kernal.run:58399/?folder=/workspace | http://ide-test.kernal.run:58399/stable-53c2f3253bcf32886706fc023e794bbeb253c90f | http://ide-test.kernal.run:58399/stable-53c2f3253bcf32886706fc023e794bbeb253c90f | http://ide-test.kernal.run:58399/stable-53c2f3253bcf32886706fc023e794bbeb253c90f"
+    },
+    "s3.openvsx-cli-install": {
+      "ok": true,
+      "ms": 2689,
+      "detail": "Installing extension 'redhat.vscode-yaml'...\nExtension 'redhat.vscode-yaml' v1.24.0 was successfully installed."
+    },
+    "s3.openvsx-ui-search": {
+      "ok": true,
+      "ms": 7903
+    }
+  },
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "%c  ERR color: #f33 Error: Timed out waiting for authentication provider 'github' to register.\n    at ppt.tryActivateProvider (http://ide-test.kernal.run:58399/stable-53c2f3253bcf32886706fc023e794bbeb"
+  ]
+}

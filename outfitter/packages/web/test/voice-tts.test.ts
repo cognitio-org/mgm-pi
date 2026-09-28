@@ -99,10 +99,31 @@ describe("speakDeepgram", () => {
     let outcome: string | undefined;
     void speech.done.then((o) => (outcome = o));
     await flush();
-    expect(outcome).toBeUndefined(); // still playing
-    sources[1].onended!();
-    await flush();
+    expect(outcome).toBeUndefined(); // 0.3 s of audio still to play
+    await new Promise((r) => setTimeout(r, 400));
     expect(outcome).toBe("done");
+  });
+
+  it("settles by the clock: at once when the audio has already played out, soon on a suspended context", async () => {
+    const played = fakeAudio();
+    const a = speakDeepgram(["x"], "v", { getToken: async () => ({ token: "t", tag: "g" }), WebSocket: FakeSocket as unknown as typeof WebSocket, audio: played.ctx });
+    await flush();
+    FakeSocket.last!.open();
+    FakeSocket.last!.audio([1, 2]);
+    (played.ctx as { currentTime: number }).currentTime = 99; // playback caught up
+    FakeSocket.last!.text({ type: "Flushed" });
+    await expect(a.done).resolves.toBe("done");
+
+    const suspended = fakeAudio();
+    Object.assign(suspended.ctx, { state: "suspended" });
+    const b = speakDeepgram(["x"], "v", { getToken: async () => ({ token: "t", tag: "g" }), WebSocket: FakeSocket as unknown as typeof WebSocket, audio: suspended.ctx });
+    await flush();
+    FakeSocket.last!.open();
+    FakeSocket.last!.audio(new Array(24000 * 5).fill(1)); // 5 s that a suspended context won't play
+    FakeSocket.last!.text({ type: "Flushed" });
+    const t0 = Date.now();
+    await expect(b.done).resolves.toBe("done");
+    expect(Date.now() - t0).toBeLessThan(1500);
   });
 
   it("an odd byte split across frames is carried over", async () => {

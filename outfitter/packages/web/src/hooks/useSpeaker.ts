@@ -81,8 +81,10 @@ export function useSpeaker(opts: UseSpeakerOptions): Speaker {
   const seen = useRef<Set<string> | null>(null);
   const queue = useRef<string[][]>([]);
   const current = useRef<Speech | null>(null);
-  // A reply was read during this turn: once the agent goes idle, the turn counts as spoken.
-  const spokeThisTurn = useRef(false);
+  // A reply arrived this turn (read or not: all code, tool calls only, the speaker off). Once the
+  // agent is idle and nothing is left to read, it's the person's turn again.
+  const replyThisTurn = useRef(false);
+  const disposed = useRef(false);
   const live = useRef(opts);
   live.current = opts;
 
@@ -99,14 +101,15 @@ export function useSpeaker(opts: UseSpeakerOptions): Speaker {
 
   const maybeTurnSpoken = useCallback(() => {
     const o = live.current;
-    if (spokeThisTurn.current && !current.current && queue.current.length === 0 && !o.agentBusy && !o.micBusy) {
-      spokeThisTurn.current = false;
+    if (disposed.current) return;
+    if (replyThisTurn.current && !current.current && queue.current.length === 0 && !o.agentBusy && !o.micBusy) {
+      replyThisTurn.current = false;
       o.onTurnSpoken?.();
     }
   }, []);
 
   const playNext = useCallback(() => {
-    if (current.current || live.current.micBusy) return;
+    if (disposed.current || current.current || live.current.micBusy) return;
     const next = queue.current.shift();
     if (!next) {
       setSpeaking(false);
@@ -117,7 +120,6 @@ export function useSpeaker(opts: UseSpeakerOptions): Speaker {
     const speech = start(next, o.engine, o.voice);
     current.current = speech;
     setSpeaking(true);
-    spokeThisTurn.current = true;
     void speech.done.then((outcome) => {
       if (current.current !== speech) return; // stopped and replaced
       current.current = null;
@@ -128,7 +130,12 @@ export function useSpeaker(opts: UseSpeakerOptions): Speaker {
 
   // New replies: read the ones that arrived after the page had its history, while the speaker is on.
   useEffect(() => {
-    if (!opts.entriesLoaded) return;
+    // Not loaded (a fresh page, or this floppy's history is being fetched after a switch): forget
+    // what was seen, so whatever is on the page once it has loaded counts as history.
+    if (!opts.entriesLoaded) {
+      seen.current = null;
+      return;
+    }
     if (!seen.current) {
       seen.current = new Set(opts.entries.map((e) => e.id));
       return;
@@ -136,8 +143,11 @@ export function useSpeaker(opts: UseSpeakerOptions): Speaker {
     for (const entry of opts.entries) {
       if (seen.current.has(entry.id)) continue;
       seen.current.add(entry.id);
+      const text = replyText(entry);
+      if (!text && !isAssistant(entry)) continue;
+      replyThisTurn.current = true;
       if (!on) continue;
-      const sentences = splitSentences(prepareForSpeech(replyText(entry)));
+      const sentences = splitSentences(prepareForSpeech(text));
       if (sentences.length > 0) queue.current.push(sentences);
     }
     playNext();
@@ -154,7 +164,18 @@ export function useSpeaker(opts: UseSpeakerOptions): Speaker {
     if (!opts.agentBusy) maybeTurnSpoken();
   }, [opts.agentBusy, maybeTurnSpoken]);
 
-  useEffect(() => () => current.current?.stop(), []);
+  // Leaving the page (or switching floppy: the Composer is keyed by session): nothing more plays,
+  // and hands-free doesn't reopen a mic nobody is looking at.
+  useEffect(
+    () => () => {
+      disposed.current = true;
+      queue.current = [];
+      const speech = current.current;
+      current.current = null;
+      speech?.stop();
+    },
+    [],
+  );
 
   // Speaker already on when the page loads (it's saved per floppy): the browser only lets audio
   // start after a click or key on the page, so the first one unlocks it.
@@ -185,4 +206,8 @@ export function useSpeaker(opts: UseSpeakerOptions): Speaker {
     stop,
     note,
   };
+}
+
+function isAssistant(entry: PiEntry): boolean {
+  return entry.type === "message" && (entry.message as { role?: unknown } | undefined)?.role === "assistant";
 }

@@ -24,11 +24,14 @@ export function prepareForSpeech(markdown: string): string {
   // HTML tags, headings, emphasis, list markers, block quotes, rules.
   t = t.replace(/<\/?[a-z][^>]*>/gi, "");
   t = t.replace(/^\s{0,3}#{1,6}\s+/gm, "");
-  t = t.replace(/(\*\*|__)(.+?)\1/g, "$2").replace(/(\*|_)(\S.*?\S|\S)\1/g, "$2");
+  // Emphasis; underscores only at word edges, so my_var_name keeps its underscores.
+  t = t.replace(/\*\*(.+?)\*\*/g, "$1").replace(/(?<!\w)__(.+?)__(?!\w)/g, "$1");
+  t = t.replace(/\*(\S.*?\S|\S)\*/g, "$1").replace(/(?<!\w)_(\S.*?\S|\S)_(?!\w)/g, "$1");
   t = t.replace(/~~(.+?)~~/g, "$1");
+  // Rules before list markers: "* * *" would otherwise lose one star and read as "* *".
+  t = t.replace(/^\s*([-*_]\s*){3,}$/gm, "");
   t = t.replace(/^\s*[-*+]\s+/gm, "").replace(/^\s*\d+[.)]\s+/gm, "");
   t = t.replace(/^\s*>\s?/gm, "");
-  t = t.replace(/^\s*([-*_]\s*){3,}$/gm, "");
   // A list item or heading without a full stop still ends a sentence when read aloud.
   t = t.replace(/([^.!?:;,\s])\n+/g, "$1.\n");
   t = t.replace(/\s+/g, " ").replace(/\s+([.,;:!?])/g, "$1").trim();

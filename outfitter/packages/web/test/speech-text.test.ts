@@ -17,7 +17,11 @@ describe("prepareForSpeech", () => {
     const md = "## Summary\n- **Fixed** the _login_ bug\n- Added a test\n> quoted\n| a | b |\n|---|---|\n---\nDone.";
     expect(prepareForSpeech(md)).toBe("Summary. Fixed the login bug. Added a test. quoted. Done.");
   });
-  it("an all-code reply says nothing; an unterminated fence still counts as code", () => {
+  it("keeps underscores inside identifiers; a * * * rule disappears", () => {
+    expect(prepareForSpeech("Rename my_var_name in src/foo_bar.ts, it's _really_ confusing.")).toBe("Rename my_var_name in src/foo_bar.ts, it's really confusing.");
+    expect(prepareForSpeech("Before.\n\n* * *\n\nAfter.")).toBe("Before. After.");
+  });
+    it("an all-code reply says nothing; an unterminated fence still counts as code", () => {
     expect(prepareForSpeech("```\nls -la\n```")).toBe("");
     expect(prepareForSpeech("Here:\n```js\nstill streaming")).toBe("Here: (code omitted)");
   });

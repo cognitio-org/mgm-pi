@@ -88,10 +88,14 @@ export function speakDeepgram(sentences: string[], voice: string, deps: Deepgram
     sources.push(src);
   }
 
+  /** Settles once the scheduled audio has played out: by the clock, not onended, which never
+   * fires for a source that already finished, or on a suspended context. */
   function endWhenPlayed() {
-    const last = sources[sources.length - 1];
-    if (!last) return settle("done");
-    last.onended = () => settle(stopped ? "stopped" : "done");
+    const remaining = Math.max(0, nextAt - deps.audio.currentTime);
+    if (remaining === 0 || sources.length === 0) return settle(stopped ? "stopped" : "done");
+    const wait = remaining * 1000 + 50;
+    // A suspended context doesn't advance; don't wait on it for ever.
+    setTimeout(() => settle(stopped ? "stopped" : "done"), deps.audio.state === "suspended" ? Math.min(wait, 1000) : wait);
   }
 
   (async () => {
@@ -173,10 +177,16 @@ export function speakBuiltin(sentences: string[], deps: BuiltinSpeechDeps): Spee
   const done = new Promise<SpeechOutcome>((r) => (finish = r));
   if (sentences.length === 0) finish("done");
   sentences.forEach((text, i) => {
+    const last = i === sentences.length - 1;
     const u = new deps.Utterance(text);
     u.lang = deps.lang;
-    if (i === sentences.length - 1) u.onend = () => finish(stopped ? "stopped" : "done");
-    u.onerror = (e: SpeechSynthesisErrorEvent) => finish(e.error === "interrupted" || e.error === "canceled" || stopped ? "stopped" : "error");
+    if (last) u.onend = () => finish(stopped ? "stopped" : "done");
+    // One sentence failing doesn't end the reply while the rest are still queued in the synth;
+    // only the last one's outcome settles it, and a cancel settles at once.
+    u.onerror = (e: SpeechSynthesisErrorEvent) => {
+      if (e.error === "interrupted" || e.error === "canceled" || stopped) finish("stopped");
+      else if (last) finish("error");
+    };
     deps.synth.speak(u);
   });
   return {

@@ -179,6 +179,30 @@ describe("reading replies aloud", () => {
     expect(spoken.map((x) => x.sentences)).toEqual([["A new answer."]]);
   });
 
+  it("switching floppy: the new one's history, landing after a not-loaded render, isn't read", async () => {
+    await mount({ entries: [reply("a0", "Floppy A's old answer.")], voiceSpeak: true });
+    // The switch: A's entries still on screen for a render, then reset, then B's history arrives.
+    await render({ entriesLoaded: false, entries: [] });
+    await render({ entries: [user("b0", "B question"), reply("b1", "Floppy B's old answer.")] });
+    await render({ entriesLoaded: true });
+    expect(spoken).toHaveLength(0);
+    await render({ entries: [...props.entries, reply("b2", "Floppy B's new answer.")] });
+    expect(spoken.map((x) => x.sentences)).toEqual([["Floppy B's new answer."]]);
+  });
+
+  it("leaving the page mid-reply: nothing queued plays afterwards, and hands-free doesn't reopen", async () => {
+    prefs.handsFree = true;
+    await mount({ voiceSpeak: true });
+    await render({ entries: [reply("a1", "First reply here."), reply("a2", "Second reply queued.")] });
+    expect(spoken).toHaveLength(1);
+    act(() => root.unmount());
+    await flush();
+    expect(spoken[0].stopped).toBe(true);
+    expect(spoken).toHaveLength(1);
+    expect(recs).toHaveLength(0);
+    root = createRoot(host); // afterEach unmounts again
+  });
+
   it("the speaker off reads nothing, and turning it on doesn't read what already arrived", async () => {
     await mount();
     await render({ entries: [reply("a1", "Arrived while off.")] });
@@ -318,6 +342,36 @@ describe("hands-free", () => {
     expect(spoken[0].stopped).toBe(true);
     await flush();
     expect(recs).toHaveLength(0); // no reopen
+  });
+
+  it("a reply with nothing to read (all code) still hands the turn back", async () => {
+    prefs.handsFree = true;
+    await mount({ voiceSpeak: true });
+    await render({ entries: [reply("a1", "```\nonly code\n```")] });
+    expect(spoken).toHaveLength(0);
+    expect(recs).toHaveLength(1);
+  });
+
+  it("with the speaker off on this floppy, hands-free still reopens the mic after the agent's turn", async () => {
+    prefs.handsFree = true;
+    await mount({ voiceSpeak: false });
+    await render({ agentBusy: true, entries: [reply("a1", "Not read: speaker off.")] });
+    expect(recs).toHaveLength(0);
+    await render({ agentBusy: false });
+    expect(spoken).toHaveLength(0);
+    expect(recs).toHaveLength(1);
+  });
+
+  it("a hold that pauses mid-sentence isn't cut off: only latched recordings end on a pause", async () => {
+    prefs.handsFree = true;
+    await mount({ voiceSpeak: true });
+    await pointer("pointerdown");
+    await act(async () => recs[0].cb.onTranscript("let me think"));
+    recs[0].result = { transcript: "let me think about it", complete: true };
+    await advance(HANDS_FREE_SILENCE_MS + 500); // still holding
+    expect(sent).toEqual([]);
+    await pointer("pointerup", 10);
+    expect(sent).toEqual(["let me think about it"]);
   });
 
   it("without hands-free, a spoken reply never opens the mic", async () => {

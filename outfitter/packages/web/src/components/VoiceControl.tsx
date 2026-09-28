@@ -42,6 +42,7 @@ export function VoiceControl({ voice, speaker }: { voice: Voice; speaker?: Speak
       // Esc while a reply is being read: stop it (and step out of hands-free).
       if (e.key === "Escape" && liveSpeaker.current?.speaking && live.current.status === "idle" && !live.current.latched) {
         e.preventDefault();
+        e.stopPropagation();
         liveSpeaker.current.stop();
         if (live.current.handsFree) live.current.cancel();
         return;

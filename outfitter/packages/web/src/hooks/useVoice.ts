@@ -403,7 +403,9 @@ export function useVoice(opts: UseVoiceOptions): Voice {
     if (status !== "recording" || !handsFree) return;
     const timer = setInterval(() => {
       const t = now();
-      if (heard.current && t - heardAt.current >= HANDS_FREE_SILENCE_MS) {
+      // Only a latched recording (hands-free's own, or a tap): a hold ends when you let go, and
+      // pausing mid-hold to think mustn't send it.
+      if (heard.current && gesture.current.kind === "latched" && t - heardAt.current >= HANDS_FREE_SILENCE_MS) {
         clearInterval(timer);
         stopNow();
       } else if (!heard.current && autoOpened.current && t - startedAt.current >= HANDS_FREE_NO_SPEECH_MS) {

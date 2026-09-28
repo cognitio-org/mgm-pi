@@ -1,0 +1,58 @@
+outfitter/packages/agentd/test/ide-server.test.ts
+  s_885dde90a8ec58::t_e09d2e42c95b9a 1-231
+outfitter/packages/agentd/src/ide-activity.ts
+  s_885dde90a8ec58::t_82fe4bca86cacb 1-96
+outfitter/packages/agentd/src/ide-server.ts
+  s_885dde90a8ec58::t_4ec8a65f18f030 1-294
+outfitter/packages/agentd/test/fake-code-server.ts
+  s_885dde90a8ec58::t_41b51d88374758 1-43
+outfitter/docs/protocol.md
+  s_885dde90a8ec58::t_770b3272b35e47 191,216
+outfitter/packages/agentd/src/run.ts
+  s_885dde90a8ec58::t_2b2ce850055174 15,199-203,316-317,459-462,769-770,782-799,801-803,1078-1080,1090,1125-1136
+  s_885dde90a8ec58::t_e6e2df6c65e3b2 204,800
+outfitter/packages/api/src/previews.ts
+  s_885dde90a8ec58::t_52739f5d31ca39 52-59,290-292,328-382
+  s_885dde90a8ec58::t_dbeb74b84846c0 383
+outfitter/packages/agentd/src/protocol.ts
+  s_885dde90a8ec58::t_c2a1a0645ab23d 224-236,255,436-442,541-542
+outfitter/packages/api/src/routes/index.ts
+  s_885dde90a8ec58::t_f8593270f4ecde 16,33
+outfitter/packages/api/test/browser-ide-open.test.ts
+  s_885dde90a8ec58::t_07cb8176521741 127
+  s_885dde90a8ec58::t_705cdbdac5ffe4 1-34,36-68,70-126,128-200
+  s_885dde90a8ec58::t_338c7bdba09e6f 35,69
+outfitter/docs/specs/browser-ide.md
+  s_885dde90a8ec58::t_770b3272b35e47 297
+outfitter/packages/api/src/routes/previews.ts
+  s_885dde90a8ec58::t_ea046075d5c59d 32-36,59-60
+  s_885dde90a8ec58::t_9abf33b7f556b0 86-87
+outfitter/packages/api/src/store/types.ts
+  s_885dde90a8ec58::t_978f22d57148c6 104-105,121-131,215-218,617-619
+outfitter/packages/agentd/test/run.test.ts
+  s_885dde90a8ec58::t_e6e2df6c65e3b2 1705-1756
+outfitter/packages/api/src/agentlink.ts
+  s_885dde90a8ec58::t_9abf33b7f556b0 1250-1286,1655-1660,1662
+  s_885dde90a8ec58::t_997aa9bc7cff08 1661
+outfitter/packages/agentd/src/preview-proxy.ts
+  s_885dde90a8ec58::t_f5ca6d8a2fd859 12-16,34-35,51-56,74-76,133
+  s_885dde90a8ec58::t_3fb9b44296dbea 17-19,36-37,137-138,140
+outfitter/packages/api/src/routes/ide.ts
+  s_885dde90a8ec58::t_f3792a3dc1cb16 1-68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "411ecd164d9a887f4ec2f418380f15122aec0061",
+  "prompts": {},
+  "sessions": {
+    "s_885dde90a8ec58": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fc9bab2f-409c-4e9c-9cd5-ff15ccd352cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

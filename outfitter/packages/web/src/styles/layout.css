@@ -683,6 +683,78 @@
   flex: none;
 }
 
+/* ---------- #253 web voice: the mic next to Send, its settings menu and note ---------- */
+
+.voice-wrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  margin-left: auto;
+}
+
+.voice-mic,
+.voice-options {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none; /* a hold on a phone must not scroll or open the callout */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.voice-mic {
+  min-width: 2.4rem;
+  /* The level meter: a ring that grows with the input level while live. */
+  --voice-level: 0;
+}
+
+.voice-mic.is-live {
+  color: var(--ok-contrast);
+  background: var(--ok);
+  box-shadow: 0 0 0 calc(2px + var(--voice-level) * 6px) color-mix(in srgb, var(--ok) 35%, transparent);
+}
+
+.voice-mic.is-finishing {
+  opacity: 0.7;
+}
+
+.voice-options {
+  min-width: 1.4rem;
+  padding-inline: 0.2rem;
+}
+
+.voice-menu {
+  min-width: 15rem;
+}
+
+.voice-menu-heading {
+  padding: 0.35rem 0.45rem 0.1rem;
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.voice-menu-hint {
+  padding: 0.35rem 0.45rem 0.2rem;
+  max-width: 15rem;
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  white-space: normal;
+}
+
+.voice-note {
+  font-size: 0.75rem;
+  color: var(--warn);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-mic.is-live {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok) 35%, transparent);
+  }
+}
+
 .enter-mode-menu {
   position: absolute;
   right: 0;

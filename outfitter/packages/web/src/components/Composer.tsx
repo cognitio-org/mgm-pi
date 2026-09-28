@@ -4,6 +4,8 @@ import { MarkdownEditor } from "./MarkdownEditor.tsx";
 import { withFloppySound } from "../lib/floppy-sound.ts";
 import { isTouchDeviceHere } from "../lib/touch.ts";
 import { loadEnterMode, saveEnterMode, type EnterMode } from "../lib/composer-keys.ts";
+import { useVoice, type VoiceEngines } from "../hooks/useVoice.ts";
+import { VoiceControl } from "./VoiceControl.tsx";
 
 interface Props {
   /** The page's own "Sending…" phase (deriveSessionActivity) -- shown on the Send button too. */
@@ -19,6 +21,11 @@ interface Props {
    * (docs/reports/mobile-desk.md's retro status vocabulary), so the empty composer reads the same
    * "nothing is running, go ahead" cue as the session header's blinking-cursor status line. */
   placeholderOverride?: string;
+  /** #253 web voice: the floppy the mic's engine choice is saved on, and its current choice. */
+  sessionId: string;
+  voiceEngine?: "deepgram" | "builtin";
+  /** Tests inject fake engines; production uses the browser's. */
+  voiceEngines?: VoiceEngines;
 }
 
 type Behavior = "" | "steer" | "followUp";
@@ -36,9 +43,31 @@ const MODES: Array<{ value: Behavior; label: string; short: string }> = [
  * `prompt.behavior`). The mode picker is a `<select>` on desktop and a compact segmented control
  * on phones (styles/mobile.css toggles which one is visible) -- both drive the same `behavior`
  * state, so nothing about the send logic differs between them. */
-export function Composer({ onSend, disabled, sending, placeholderOverride, status }: Props) {
+export function Composer({ onSend, disabled, sending, placeholderOverride, status, sessionId, voiceEngine, voiceEngines }: Props) {
   const [text, setText] = useState("");
   const [behavior, setBehavior] = useState<Behavior>("");
+  const textRef = useRef(text);
+  textRef.current = text;
+  const behaviorRef = useRef(behavior);
+  behaviorRef.current = behavior;
+  const voice = useVoice({
+    sessionId,
+    initialEngine: voiceEngine,
+    disabled,
+    engines: voiceEngines,
+    getDraft: () => textRef.current,
+    setDraft: (next) => {
+      textRef.current = next;
+      setText(next);
+    },
+    // After speaking = send: the same path as the Send button, with the mode picked below.
+    send: async (spoken) => {
+      textRef.current = "";
+      setText("");
+      await withFloppySound(onSend(spoken, behaviorRef.current || undefined));
+    },
+  });
+  const voiceBusy = voice.status !== "idle";
   // Read once per mount, not per render -- the device class doesn't change mid-session, and this
   // avoids calling matchMedia on every keystroke.
   const [touch] = useState(() => isTouchDeviceHere());
@@ -126,7 +155,8 @@ export function Composer({ onSend, disabled, sending, placeholderOverride, statu
   }
 
   async function send() {
-    if (!text.trim() || disabled) return;
+    // While the mic is live the transcript is still arriving; sending now would cut it off.
+    if (!text.trim() || disabled || voiceBusy) return;
     const sent = text;
     setText("");
     await withFloppySound(onSend(sent, behavior || undefined));
@@ -157,6 +187,7 @@ export function Composer({ onSend, disabled, sending, placeholderOverride, statu
         enterMode={enterMode}
         placeholder={placeholderOverride ?? (touch ? "Message…" : `Message... (${sendKeyHint})`)}
         disabled={disabled}
+        readOnly={voiceBusy}
         toolsOpen={toolsOpen}
         toolbarId={toolbarId}
       />
@@ -189,6 +220,7 @@ export function Composer({ onSend, disabled, sending, placeholderOverride, statu
             </button>
           ))}
         </div>
+        <VoiceControl voice={voice} />
         <span
           className="send-wrap"
           data-enter-mode={enterMode}
@@ -204,7 +236,7 @@ export function Composer({ onSend, disabled, sending, placeholderOverride, statu
             className="btn btn-primary"
             aria-haspopup="menu"
             aria-expanded={enterMenu}
-            aria-disabled={disabled || !text.trim() ? true : undefined}
+            aria-disabled={disabled || voiceBusy || !text.trim() ? true : undefined}
             onClick={(event) => {
               if (ignoreClick.current || event.ctrlKey || event.button !== 0) {
                 ignoreClick.current = false;
@@ -233,6 +265,11 @@ export function Composer({ onSend, disabled, sending, placeholderOverride, statu
           )}
         </span>
       </div>
+      {voice.note && (
+        <div className="voice-note" role="status">
+          {voice.note}
+        </div>
+      )}
     </div>
   );
 }

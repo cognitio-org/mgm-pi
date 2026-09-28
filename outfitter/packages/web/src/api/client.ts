@@ -65,6 +65,8 @@ export interface StartupSummary {
 export interface SessionDetail {
   id: string;
   name?: string;
+  /** #253: the floppy's speech engine; absent means "deepgram". */
+  voiceEngine?: "deepgram" | "builtin";
   ownerEmail?: string;
   guruId: string;
   repo: string | null;
@@ -376,6 +378,23 @@ async function requestBlob(path: string): Promise<Blob> {
   return res.blob();
 }
 
+/** #252/#253 web voice: GET /api/me/voice. */
+export interface VoiceConfig {
+  /** Whether the server can mint Deepgram tokens; without it only the built-in engine works. */
+  deepgram: boolean;
+  model: string;
+  language: string;
+  prefs: { afterSpeaking: "send" | "review" };
+}
+
+export interface VoiceTokenResponse {
+  token: string;
+  expiresAt: string;
+  model: string;
+  language: string;
+  tag: string;
+}
+
 export const api = {
   version(): Promise<AppVersion> {
     return request("/api/version");
@@ -490,6 +509,23 @@ export const api = {
   },
 
   /** 202 with `run: null` means the message is queued but no run could start yet; don't resend it. */
+  voiceConfig(): Promise<VoiceConfig> {
+    return request("/api/me/voice");
+  },
+
+  setVoicePrefs(prefs: VoiceConfig["prefs"]): Promise<{ prefs: VoiceConfig["prefs"] }> {
+    return request("/api/me/voice", { method: "PUT", body: JSON.stringify(prefs) });
+  },
+
+  /** A 30 s Deepgram token: 404 when voice is off here, 429 past the per-person limit. */
+  voiceToken(): Promise<VoiceTokenResponse> {
+    return request("/api/voice/token", { method: "POST" });
+  },
+
+  setSessionVoiceEngine(id: string, engine: "deepgram" | "builtin"): Promise<{ voiceEngine: "deepgram" | "builtin" }> {
+    return request(`/api/sessions/${id}/voice`, { method: "PUT", body: JSON.stringify({ engine }) });
+  },
+
   sendMessage(id: string, text: string, behavior?: "steer" | "followUp"): Promise<{ run: RunLike | null }> {
     return request(`/api/sessions/${id}/messages`, { method: "POST", body: JSON.stringify({ text, behavior }) });
   },

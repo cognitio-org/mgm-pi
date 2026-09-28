@@ -20,7 +20,7 @@ function mount(mode: "send" | "newline") {
   document.body.appendChild(host);
   root = createRoot(host);
   act(() => {
-    root.render(<Composer onSend={async (t) => void sent.push(t)} />);
+    root.render(<Composer sessionId="s1" onSend={async (t) => void sent.push(t)} />);
   });
   // Enter mode lives on a right-click menu on Send (storage may be unavailable here).
   const wrap = host.querySelector<HTMLElement>(".send-wrap")!;

@@ -21,6 +21,8 @@ interface Props {
   enterMode: EnterMode;
   placeholder: string;
   disabled?: boolean;
+  /** #253: while the mic is live the transcript owns the text; the box stays focusable but can't be typed in. */
+  readOnly?: boolean;
   /** Phones: the toolbar shows only after the composer's "Aa" button opens it. */
   toolsOpen: boolean;
   toolbarId: string;
@@ -108,7 +110,7 @@ function fitBox(ta: HTMLTextAreaElement, pre: HTMLPreElement, skipIfFull: boolea
   pre.scrollLeft = ta.scrollLeft;
 }
 
-export function MarkdownEditor({ value, onChange, onSend, enterMode, placeholder, disabled, toolsOpen, toolbarId }: Props) {
+export function MarkdownEditor({ value, onChange, onSend, enterMode, placeholder, disabled, readOnly, toolsOpen, toolbarId }: Props) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const mirrorRef = useRef<HTMLPreElement>(null);
   const [preview, setPreview] = useState(false);
@@ -320,6 +322,7 @@ export function MarkdownEditor({ value, onChange, onSend, enterMode, placeholder
           placeholder={placeholder}
           aria-label="Message"
           disabled={disabled}
+          readOnly={readOnly}
           spellCheck
         />
       </div>

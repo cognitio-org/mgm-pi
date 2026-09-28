@@ -28,9 +28,12 @@ export async function registerVoiceRoutes(app: FastifyInstance, ctx: RouteContex
     return { prefs: { ...DEFAULT_VOICE_PREFS, ...user.voice } };
   });
 
+  // Any signed-in identity, including the live tests' service account (#219): the suite may exercise
+  // this route, and what it can spend is bounded by the 30 s token, the rate limit and its own tag.
   app.post("/api/voice/token", async (req, reply) => {
     const email = req.identity!.email;
     const result = await ctx.voice.mint(email);
+    reply.header("cache-control", "no-store");
     if (result.ok) {
       req.log.info({ email, expiresAt: result.token.expiresAt }, "voice token minted");
       return result.token;
@@ -57,6 +60,7 @@ export async function registerVoiceRoutes(app: FastifyInstance, ctx: RouteContex
       return reply.code(400).send({ error: `engine must be one of ${VOICE_ENGINES.join(", ")}` });
     }
     const updated = await ctx.store.sessions.update(session.id, { voiceEngine: body.engine as VoiceEngine });
-    return { voiceEngine: updated?.voiceEngine ?? "deepgram" };
+    if (!updated) return reply.code(404).send({ error: "session not found" });
+    return { voiceEngine: updated.voiceEngine ?? "deepgram" };
   });
 }

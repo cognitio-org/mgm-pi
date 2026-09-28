@@ -57,6 +57,7 @@ describe("POST /api/voice/token", () => {
     assert.equal(body.model, "nova-3");
     assert.equal(body.language, "en");
     assert.equal(body.tag, voiceTag("dev@localhost"));
+    assert.equal(res.headers["cache-control"], "no-store");
     assert.ok(Date.parse(body.expiresAt) > Date.now());
     assert.equal(dg.calls.length, 1);
     assert.equal(dg.calls[0].url, "https://api.deepgram.com/v1/auth/grant");

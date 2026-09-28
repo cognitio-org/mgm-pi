@@ -357,7 +357,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     deepgramProjectId: (env.DEEPGRAM_PROJECT_ID ?? "").trim(),
     voiceModel: env.VOICE_MODEL || "nova-3",
     voiceLanguage: env.VOICE_LANGUAGE || "en",
-    voiceTokenTtlSeconds: envInt("VOICE_TOKEN_TTL_SECONDS", 30, env),
-    voiceTokensPerMinute: envInt("VOICE_TOKENS_PER_MINUTE", 20, env),
+    // Deepgram accepts 1..3600 s; a limit below 1 would refuse everyone with a meaningless retry-after.
+    voiceTokenTtlSeconds: Math.min(3600, Math.max(1, envInt("VOICE_TOKEN_TTL_SECONDS", 30, env))),
+    voiceTokensPerMinute: Math.max(1, envInt("VOICE_TOKENS_PER_MINUTE", 20, env)),
   };
 }

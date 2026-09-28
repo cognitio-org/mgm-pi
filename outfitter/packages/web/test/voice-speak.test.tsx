@@ -355,7 +355,7 @@ describe("hands-free", () => {
   it("a mid-turn message that calls tools doesn't hand the turn back", async () => {
     prefs.handsFree = true;
     await mount({ voiceSpeak: true });
-    const midTurn: PiEntry = { id: "m1", type: "message", message: { role: "assistant", content: [{ type: "text", text: "Let me check." }, { type: "toolCall", name: "bash" }] } };
+    const midTurn: PiEntry = { id: "m1", type: "message", message: { role: "assistant", stopReason: "toolUse", content: [{ type: "text", text: "Let me check." }, { type: "toolCall", name: "bash" }] } };
     await render({ entries: [midTurn] });
     await act(async () => spoken[0].end());
     await flush();

@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type PiEntry } from "../api/client.ts";
 import { prepareForSpeech, replyText, splitSentences } from "../lib/speech-text.ts";
 import { speakBuiltin, speakDeepgram, type Speech } from "../lib/voice-tts.ts";
+import { isFinalAssistant } from "../lib/send-status.ts";
 
 export type SpeakEngine = "deepgram" | "builtin";
 
@@ -144,8 +145,9 @@ export function useSpeaker(opts: UseSpeakerOptions): Speaker {
       if (seen.current.has(entry.id)) continue;
       seen.current.add(entry.id);
       if (!isAssistant(entry)) continue;
-      // Only the turn's final reply hands the turn back; one that also calls tools is mid-turn.
-      if (!callsTools(entry)) replyThisTurn.current = true;
+      // Only the turn's final reply hands the turn back (the status line's own test: not one that
+      // stopped to call tools or is still streaming; an aborted or errored reply does count).
+      if (isFinalAssistant(entry)) replyThisTurn.current = true;
       if (!on) continue;
       const text = replyText(entry);
       const sentences = splitSentences(prepareForSpeech(text));
@@ -214,9 +216,4 @@ export function useSpeaker(opts: UseSpeakerOptions): Speaker {
 
 function isAssistant(entry: PiEntry): boolean {
   return entry.type === "message" && (entry.message as { role?: unknown } | undefined)?.role === "assistant";
-}
-
-function callsTools(entry: PiEntry): boolean {
-  const content = (entry.message as { content?: unknown } | undefined)?.content;
-  return Array.isArray(content) && content.some((b) => typeof b === "object" && b !== null && (b as { type?: unknown }).type === "toolCall");
 }

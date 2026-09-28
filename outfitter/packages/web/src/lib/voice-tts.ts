@@ -98,6 +98,8 @@ export function speakDeepgram(sentences: string[], voice: string, deps: Deepgram
       // A suspended context doesn't advance, so don't wait on it for ever, and don't leave its audio
       // scheduled: it would burst out on the next click, over the next reply or an open mic.
       setTimeout(() => {
+        // A click may have resumed it meanwhile: then let the audio play out as usual.
+        if (deps.audio.state === "running") return endWhenPlayed();
         for (const s of sources) {
           try {
             s.stop();

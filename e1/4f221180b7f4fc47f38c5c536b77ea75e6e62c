@@ -1,0 +1,30 @@
+outfitter/packages/web/test/voice-control.test.tsx
+  s_fd47f462159c85::t_18bb942c04054a 591-631
+outfitter/packages/web/src/hooks/useVoice.ts
+  s_fd47f462159c85::t_8a0ba69030f175 8,96-97,137-140,164-169,369,372-374,384-386
+outfitter/packages/web/src/components/VoiceControl.tsx
+  s_fd47f462159c85::t_8a0ba69030f175 97,215,241
+outfitter/packages/web/test/voice-mic.test.ts
+  s_fd47f462159c85::t_18bb942c04054a 3,38,41-46,48-63
+outfitter/packages/web/src/lib/voice-mic.ts
+  s_fd47f462159c85::t_8a0ba69030f175 12-14,32-36,38,40-43,49,51-58,64-70
+  s_fd47f462159c85::t_4f57266c548aed 71
+outfitter/packages/web/src/styles/layout.css
+  s_fd47f462159c85::t_8a0ba69030f175 737,743
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "e14f221180b7f4fc47f38c5c536b77ea75e6e62c",
+  "prompts": {},
+  "sessions": {
+    "s_fd47f462159c85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4302a461-a7ca-4bcd-bca6-85c286e60f99",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

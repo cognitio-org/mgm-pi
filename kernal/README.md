@@ -547,6 +547,10 @@ Notes from setting this up:
 
 ## Voice input (pi-listen)
 
+Voice comes from **pi-listen**, vendored in this repo at `.pi/npm/vendor/pi-listen` as Kernal's own
+fork of 7.2.2 (MIT). Upstream has been unmaintained since May 2026, so fixes land here;
+`VENDORED.md` there lists what's changed (#250).
+
 **Hold Space** for a moment and talk; let go to transcribe into the prompt (a quick tap still types
 a space). Or press **ctrl+shift+v** to start and again to stop; that shortcut needs a terminal that
 reports ctrl+shift+letter, through the Kitty keyboard protocol or modifyOtherKeys (Ghostty, Kitty,

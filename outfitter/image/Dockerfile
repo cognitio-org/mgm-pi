@@ -86,9 +86,11 @@ COPY kernal/.pi/npm/package.json kernal/.pi/npm/package-lock.json ./
 RUN npm ci --legacy-peer-deps --omit=dev --no-audit --no-fund --loglevel=error \
   && bash /tmp/strip-native-binaries.sh /opt/kernal/.pi/npm/node_modules "$(dpkg --print-architecture)" \
   # Uninstall (not rm -rf) so each excluded package's own dependency subtree goes with it. The list
-  # must match render-settings.sh's default EXCLUDE; the settings file only stops pi loading them.
+  # follows render-settings.sh's default EXCLUDE, except voice: pi-listen is vendored (kernal/.pi/npm/
+  # vendor, never copied into the image), so what's uninstalled here is its native dependency,
+  # sherpa-onnx-node. The settings file only stops pi loading them.
   && npm uninstall --no-save --legacy-peer-deps --omit=dev --no-audit --no-fund --loglevel=error \
-       pi-lsp pi-powerline-footer @codexstar/pi-listen open-codebase-index \
+       pi-lsp pi-powerline-footer sherpa-onnx-node open-codebase-index \
   && rm -rf node_modules/recheck-jar
 
 # pi-subagents and pi-mcp-adapter bundled (#142, #222): pi's loader evaluates each module one by

@@ -135,3 +135,20 @@ describe("updateSettings", () => {
     assert.equal(readFileSync(file, "utf8"), "{ half an edit");
   });
 });
+
+describe("#250: upgrading to the vendored pi-listen", () => {
+  const oldShipped = { packages: ["npm:pi-mcp-adapter@2.37.0", "npm:@codexstar/pi-listen@7.2.2"] };
+  const newShipped = { packages: ["npm:pi-mcp-adapter@2.37.0", "./npm/vendor/pi-listen"] };
+  test("an untouched package list takes the vendored path and drops the npm one", () => {
+    const { settings } = mergeSettings(oldShipped, oldShipped, newShipped);
+    assert.deepEqual(settings.packages, newShipped.packages);
+  });
+  test("packages the person added stay; the npm pi-listen still goes (it was the release's, not theirs)", () => {
+    const user = { packages: [...oldShipped.packages, "npm:my-extra@1.0.0"] };
+    const { settings } = mergeSettings(oldShipped, user, newShipped);
+    const packages = settings.packages as string[];
+    assert.ok(packages.includes("./npm/vendor/pi-listen"));
+    assert.ok(packages.includes("npm:my-extra@1.0.0"));
+    assert.ok(!packages.some((p) => p.includes("@codexstar/pi-listen")), `pi-listen from npm must not stay: ${packages.join(", ")}`);
+  });
+});

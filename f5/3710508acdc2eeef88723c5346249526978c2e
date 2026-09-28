@@ -1,0 +1,40 @@
+outfitter/packages/agentd/test/run.test.ts
+  s_885dde90a8ec58::t_e5b4e4cb07bf04 1804
+outfitter/packages/web/src/components/IdeChip.tsx
+  s_885dde90a8ec58::t_ccaa223164fe22 65-67
+outfitter/packages/web/test/ide-chip.test.tsx
+  s_885dde90a8ec58::t_bf6505e68aa443 242-278
+outfitter/packages/web/src/components/VsCodeCard.tsx
+  s_885dde90a8ec58::t_ccaa223164fe22 12,22-25
+outfitter/packages/agentd/src/run.ts
+  s_885dde90a8ec58::t_e5b4e4cb07bf04 811-812
+outfitter/packages/api/test/browser-ide-open.test.ts
+  s_885dde90a8ec58::t_1c47473e555fcc 353-354,356-358
+  s_885dde90a8ec58::t_e24633b1792fd9 345-352,355,359-361
+outfitter/packages/web/src/components/TranscriptRail.tsx
+  s_885dde90a8ec58::t_ccaa223164fe22 425-429,433,437-438,442
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_885dde90a8ec58::t_ccaa223164fe22 21,390-391,706
+outfitter/packages/web/src/components/IdeProvider.tsx
+  s_885dde90a8ec58::t_ccaa223164fe22 20-21,57,68-71,77,87,148-149
+outfitter/packages/api/src/agentlink.ts
+  s_885dde90a8ec58::t_e5b4e4cb07bf04 1266-1271,1276,1329
+outfitter/docs/specs/browser-ide.md
+  s_885dde90a8ec58::t_449637a1d7523a 201-203
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "f53710508acdc2eeef88723c5346249526978c2e",
+  "prompts": {},
+  "sessions": {
+    "s_885dde90a8ec58": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fc9bab2f-409c-4e9c-9cd5-ff15ccd352cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

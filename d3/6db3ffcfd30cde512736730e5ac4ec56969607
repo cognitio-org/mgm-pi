@@ -1,0 +1,41 @@
+outfitter/deploy/ide/spike/gke-pod.jsonl
+  s_885dde90a8ec58::t_aa17fd5c46e2ee 101
+  s_885dde90a8ec58::t_bc7e04abadfa1c 100
+  s_885dde90a8ec58::t_b4fb6175d89b0c 106-120
+  s_885dde90a8ec58::t_5ad8b57b4b35c3 121
+  s_885dde90a8ec58::t_eff450e6cbf6d2 97-99
+  s_885dde90a8ec58::t_55bf376eb0aa13 102-105
+  s_885dde90a8ec58::t_9e9fb69a486b47 122-124
+  s_885dde90a8ec58::t_43d0614157be69 1-96
+outfitter/deploy/ide/spike/.gitignore
+  s_885dde90a8ec58::t_1b73098125ccec 2
+outfitter/deploy/ide/spike/s4-results-local-trimmed.jsonl
+  s_885dde90a8ec58::t_b4fb6175d89b0c 1-6
+outfitter/docs/reports/browser-ide-spike.md
+  s_885dde90a8ec58::t_4c6a8ae03d7776 6-8,14-17,97-100,120-137,159-171,185-196
+  s_885dde90a8ec58::t_6fab8563ff0a99 219-254,257-258
+outfitter/deploy/ide/spike/Dockerfile.s1
+  s_885dde90a8ec58::t_1b73098125ccec 1-3,7
+outfitter/deploy/ide/spike/s1-run.sh
+  s_885dde90a8ec58::t_1b73098125ccec 30-32
+outfitter/deploy/ide/spike/s3-results-local-trimmed.json
+  s_885dde90a8ec58::t_b4fb6175d89b0c 1-51
+outfitter/deploy/ide/spike/gke-pod-run3.jsonl
+  s_885dde90a8ec58::t_aa17fd5c46e2ee 1-101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "d36db3ffcfd30cde512736730e5ac4ec56969607",
+  "prompts": {},
+  "sessions": {
+    "s_885dde90a8ec58": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fc9bab2f-409c-4e9c-9cd5-ff15ccd352cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

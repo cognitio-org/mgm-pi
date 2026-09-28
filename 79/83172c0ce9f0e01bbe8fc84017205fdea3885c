@@ -1,0 +1,28 @@
+outfitter/packages/web/src/hooks/useSessionStream.ts
+  s_fd47f462159c85::t_d5bc6b7e383ede 6-7,108-110,116,126-136,196
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_fd47f462159c85::t_2adf66b45e7ff1 71,751
+outfitter/packages/web/test/voice-speak.test.tsx
+  s_fd47f462159c85::t_2adf66b45e7ff1 115,126,140,172-179
+  s_fd47f462159c85::t_14cd71809ead4c 180-181
+outfitter/packages/web/src/hooks/useSpeaker.ts
+  s_fd47f462159c85::t_d5bc6b7e383ede 20-22,131,144
+outfitter/packages/web/src/components/Composer.tsx
+  s_fd47f462159c85::t_d5bc6b7e383ede 34-35,68,100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "7983172c0ce9f0e01bbe8fc84017205fdea3885c",
+  "prompts": {},
+  "sessions": {
+    "s_fd47f462159c85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4302a461-a7ca-4bcd-bca6-85c286e60f99",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

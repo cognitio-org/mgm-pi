@@ -172,6 +172,10 @@ describe("voice config (#252)", () => {
     assert.equal(d.voiceModel, "nova-3");
     assert.equal(d.voiceTokenTtlSeconds, 30);
     assert.equal(d.voiceTokensPerMinute, 20);
+    // The owner's rate (2026-09-28): Pay As You Go's current nova-3 price; Aura-2 at list.
+    assert.equal(d.voiceSttUsdPerMinute, 0.0048);
+    assert.equal(d.voiceTtsUsdPer1kChars, 0.03);
+    assert.equal(loadConfig({ VOICE_STT_USD_PER_MINUTE: "0.0077" } as NodeJS.ProcessEnv).voiceSttUsdPerMinute, 0.0077);
     const low = loadConfig({ VOICE_TOKEN_TTL_SECONDS: "0", VOICE_TOKENS_PER_MINUTE: "-3" } as NodeJS.ProcessEnv);
     assert.equal(low.voiceTokenTtlSeconds, 1);
     assert.equal(low.voiceTokensPerMinute, 1);

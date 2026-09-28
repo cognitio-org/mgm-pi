@@ -119,9 +119,8 @@ The routes are on the web role only; link registers none of them.
 - **Periods:** UTC days, ISO weeks from Monday and calendar months, which is how Deepgram buckets
   usage.
 - **Dollars:** Deepgram reports units, so dollars come from `VOICE_STT_USD_PER_MINUTE` (default
-  0.0077) and `VOICE_TTS_USD_PER_1K_CHARS` (default 0.03). Those are Deepgram's regular pay-as-you-go
-  list prices; a plan discount or promotion (nova-3 streaming was $0.0048 in 2026-09) makes the real
-  bill lower.
+  0.0048) and `VOICE_TTS_USD_PER_1K_CHARS` (default 0.03). The owner set nova-3 to Pay As You Go's
+  current price on 2026-09-28; it's a promotion (regular $0.0077), so raise it when that ends.
 - **Where it shows:**
   - the mic's menu, when Deepgram is on: "$0.02 today · $0.08 week · $0.46 month";
   - the Tokens page (the one per-person page): a table;

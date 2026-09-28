@@ -469,8 +469,8 @@ wake -> ready summary. Runs created before `Run.startup` existed get no stamps a
   - `GET /api/me/voice/spend` (#257) → `{available: false}` without the key and `DEEPGRAM_PROJECT_ID`,
     else `{available: true, currency: "USD", today, week, month, asOf, rates, capUsd?}`, each period
     `{minutes, ttsCharacters, usd}`: the caller's Deepgram use, read from Deepgram's usage API by their
-    tag (cached 60 s per instance) and priced at `VOICE_STT_USD_PER_MINUTE` (default 0.0077) and
-    `VOICE_TTS_USD_PER_1K_CHARS` (default 0.03), Deepgram's list prices. Periods are UTC: today, the
+    tag (cached 60 s per instance) and priced at `VOICE_STT_USD_PER_MINUTE` (default 0.0048, Pay As You Go's current nova-3
+    price, a promotion; regular 0.0077) and `VOICE_TTS_USD_PER_1K_CHARS` (default 0.03). Periods are UTC: today, the
     week from Monday, the calendar month. 502 `voice_usage_upstream` when Deepgram can't be read.
   - `GET /api/operator/voice/spend` (#257, sysops) → `{available: false}` when not configured, else
     `{available: true, currency: "USD", users, untagged, total, asOf, rates}`: the month so far per tag

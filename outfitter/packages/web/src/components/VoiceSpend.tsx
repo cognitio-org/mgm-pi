@@ -61,7 +61,7 @@ export function VoiceSpendView({ compact = false }: { compact?: boolean }) {
         </table>
       </div>
       <p className="session-meta">
-        Deepgram voice input from the web app, at list price{spend.capUsd ? `, capped at ${formatUsd(spend.capUsd)} a month` : ""}. Days are UTC
+        Deepgram voice input from the web app, at Deepgram's Pay As You Go rate{spend.capUsd ? `, capped at ${formatUsd(spend.capUsd)} a month` : ""}. Days are UTC
         days and weeks start on Monday. The browser's built-in speech is free and not counted.
       </p>
     </>
@@ -126,8 +126,8 @@ export function ProjectVoiceSpendView() {
       </div>
       <p className="session-meta">
         This calendar month (UTC), at ${spend.rates.sttUsdPerMinute}/min for streaming and ${spend.rates.ttsUsdPer1kChars} per 1,000
-        characters of speech (<code>VOICE_STT_USD_PER_MINUTE</code>, <code>VOICE_TTS_USD_PER_1K_CHARS</code>). A plan discount or
-        promotion makes the actual bill lower.
+        characters of speech (<code>VOICE_STT_USD_PER_MINUTE</code>, <code>VOICE_TTS_USD_PER_1K_CHARS</code>). Those are Deepgram's current Pay As You Go prices;
+        a plan discount may make the actual bill lower.
       </p>
     </>
   );

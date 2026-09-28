@@ -178,9 +178,10 @@ export interface Config {
   voiceTokenTtlSeconds: number;
   /** VOICE_TOKENS_PER_MINUTE (default 20): tokens one person may mint per minute, per instance. */
   voiceTokensPerMinute: number;
-  /** #257: rates that turn Deepgram's usage (audio minutes, TTS characters) into dollars. Defaults
-   * are Deepgram's regular pay-as-you-go list prices as of 2026-09 (nova-3 streaming $0.0077/min,
-   * Aura-2 $0.030 per 1,000 characters); a promotion or plan discount makes the real bill lower. */
+  /** #257: rates that turn Deepgram's usage (audio minutes, TTS characters) into dollars. The owner
+   * set nova-3 streaming to Pay As You Go's current price, $0.0048/min (2026-09-28). That's a
+   * promotion: the regular price is $0.0077, so raise it when the promotion ends
+   * (deepgram.com/pricing, "Nova-3 Monolingual"). Aura-2 is $0.030 per 1,000 characters. */
   voiceSttUsdPerMinute: number;
   voiceTtsUsdPer1kChars: number;
   /** VOICE_MONTHLY_CAP_USD: a person's Deepgram spend this month at which POST /api/voice/token
@@ -404,7 +405,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // Deepgram accepts 1..3600 s; a limit below 1 would refuse everyone with a meaningless retry-after.
     voiceTokenTtlSeconds: Math.min(3600, Math.max(1, envInt("VOICE_TOKEN_TTL_SECONDS", 30, env))),
     voiceTokensPerMinute: Math.max(1, envInt("VOICE_TOKENS_PER_MINUTE", 20, env)),
-    voiceSttUsdPerMinute: envNonNegative("VOICE_STT_USD_PER_MINUTE", 0.0077, env),
+    voiceSttUsdPerMinute: envNonNegative("VOICE_STT_USD_PER_MINUTE", 0.0048, env),
     voiceTtsUsdPer1kChars: envNonNegative("VOICE_TTS_USD_PER_1K_CHARS", 0.03, env),
     voiceMonthlyCapUsd: envNonNegative("VOICE_MONTHLY_CAP_USD", 0, env),
   };

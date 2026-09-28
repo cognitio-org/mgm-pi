@@ -43,10 +43,13 @@ export async function registerVoiceRoutes(app: FastifyInstance, ctx: RouteContex
     // away, or make every press wait out a hanging request.
     const cap = ctx.config.voiceMonthlyCapUsd;
     if (cap > 0 && ctx.voice.enabled && ctx.voiceUsage.enabled) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const spend = await Promise.race([
           ctx.voiceUsage.forUser(email),
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("usage read took over 1.5 s")), CAP_CHECK_MS).unref()),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`usage read took over ${CAP_CHECK_MS} ms`)), CAP_CHECK_MS);
+          }),
         ]);
         // In cents, as shown: "$5.00 of $5.00" must mean refused.
         if (Math.round(spend.month.usd * 100) >= Math.round(cap * 100)) {
@@ -54,6 +57,8 @@ export async function registerVoiceRoutes(app: FastifyInstance, ctx: RouteContex
         }
       } catch (err) {
         req.log.warn({ email, err: err instanceof Error ? err.message : String(err) }, "voice cap check skipped: usage unreadable");
+      } finally {
+        clearTimeout(timer);
       }
     }
     const result = await ctx.voice.mint(email);

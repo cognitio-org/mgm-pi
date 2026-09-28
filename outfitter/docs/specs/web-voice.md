@@ -101,10 +101,11 @@ browser (session page)                          outfitter-api (web role)        
 | Route | What |
 |---|---|
 | `POST /api/voice/token` | `{token, expiresAt, model, language, tag}`. 404 `voice_disabled` (no key), 429 `voice_rate_limited` (20 a minute per person, per instance), 403 `voice_cap_reached`, 502 `voice_upstream`. Responses are `no-store`. |
-| `GET/PUT /api/me/voice` | `{deepgram, model, language, prefs: {afterSpeaking}}` |
+| `GET /api/me/voice` | `{deepgram, model, language, prefs: {afterSpeaking}}` |
+| `PUT /api/me/voice` | `{afterSpeaking: "send"\|"review"}` → `{prefs}` |
 | `PUT /api/sessions/:id/voice` | `{engine: "deepgram"\|"builtin"}` |
-| `GET /api/me/voice/spend` | today, week and month: `{minutes, ttsCharacters, usd}` |
-| `GET /api/operator/voice/spend` | sysops: the month per person, the untagged use, the total |
+| `GET /api/me/voice/spend` | today, week and month: `{minutes, ttsCharacters, usd}`; `{available: false}` without the key and `DEEPGRAM_PROJECT_ID`; 502 `voice_usage_upstream` |
+| `GET /api/operator/voice/spend` | sysops: the month per person, the untagged use, the total (same `available` and 502) |
 
 The routes are on the web role only; link registers none of them.
 
@@ -121,7 +122,7 @@ The routes are on the web role only; link registers none of them.
   list prices; a plan discount or promotion (nova-3 streaming was $0.0048 in 2026-09) makes the real
   bill lower.
 - **Where it shows:**
-  - the mic's menu: "$0.02 today · $0.08 week · $0.46 month";
+  - the mic's menu, when Deepgram is on: "$0.02 today · $0.08 week · $0.46 month";
   - the Tokens page (the one per-person page): a table;
   - Settings (sysops): per person, then "Laptop (kernal, untagged)" (pi-listen shares the project and
     tags nothing), then the total.
@@ -129,15 +130,19 @@ The routes are on the web role only; link registers none of them.
   - checked when a stream starts, and compared in cents;
   - against usage up to a minute or two old, so one long session can run past it;
   - if usage can't be read within 1.5 s, the token is minted anyway, so a usage outage never takes
-    the mic away.
+    the mic away;
+  - it needs `DEEPGRAM_PROJECT_ID` as well as the key: without the project, spend reads
+    `available: false` and the cap isn't checked.
 
 ### Deploy
 
 - **Secret:** `outfitter-deepgram-key` in Secret Manager (a Member key with `usage:read`, created
   2026-09-28), mounted as `DEEPGRAM_API_KEY` on the web role only (`deploy/service.sh`).
 - **Project:** `DEEPGRAM_PROJECT_ID` in `deploy/config.env`. It isn't secret.
-- **Web-role env vars:** the rate and cap variables above, all with code defaults.
-- **Unset key:** Deepgram voice is off, and the mic offers only built-in speech.
+- **Rates and cap:** the `VOICE_*` variables above aren't set by the deploy; their code defaults apply
+  unless someone adds them.
+- **Unset key:** Deepgram voice is off, and the mic offers only built-in speech. Unset project id:
+  voice works, but spend and the cap are off.
 
 ## Tests
 
@@ -208,6 +213,6 @@ Open for the owner:
 ## The laptop side
 
 kernal keeps pi-listen: hold Space, or toggle with ctrl+shift+v in terminals that report it. Its
-`kernal-voice` extension seeds an offline model when there's no Deepgram key and takes that seed back
-out once a key exists (#248, #249, PR #263). pi-listen findings that don't block anything are tracked
+`kernal-voice` extension seeds an offline model when there's no Deepgram key. PR #263 (in review for
+#248 and #249) fixes the docs and has it take that seed back out once a key exists. pi-listen findings that don't block anything are tracked
 in #250.

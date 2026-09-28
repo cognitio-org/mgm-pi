@@ -1260,27 +1260,36 @@ export class AgentLink {
     if (!run?.ide || run.browserIde !== true) return;
     const now = () => new Date().toISOString();
     const detail = typeof frame.detail === "string" ? frame.detail.slice(0, 300) : undefined;
+    const PENDING = new Set(["requested", "installing", "starting"]);
     if (state === "stopped") {
       await this.previews?.closeIde(runId, "code-server stopped");
-      if (run.ide.state === "ready" || run.ide.state === "starting" || run.ide.state === "installing") {
+      if (PENDING.has(run.ide.state) || run.ide.state === "ready") {
         await this.store.runs.update(runId, { ide: { reqId: run.ide.reqId, state: "stopped", ...(detail ? { detail } : {}), updatedAt: now() } });
       }
       return;
     }
-    if (typeof frame.reqId !== "string" || frame.reqId !== run.ide.reqId) return;
+    // Only the pending request's own frames move it on; a closed, stopped or failed one stays so.
+    if (typeof frame.reqId !== "string" || frame.reqId !== run.ide.reqId || !PENDING.has(run.ide.state)) return;
+    const reqId = run.ide.reqId;
     if (state === "installing" || state === "starting" || state === "error") {
-      await this.store.runs.update(runId, { ide: { reqId: run.ide.reqId, state, ...(detail ? { detail } : {}), updatedAt: now() } });
+      await this.store.runs.update(runId, { ide: { reqId, state, ...(detail ? { detail } : {}), updatedAt: now() } });
       return;
     }
     if (state !== "ready" || typeof frame.internalUrl !== "string") return;
     const result = this.previews ? await this.previews.openIde(runId, frame.internalUrl) : { error: "not-configured" };
-    // A newer click may have replaced the request while the endpoint was being made.
-    const latest = await this.store.runs.findById(runId);
-    if (latest?.ide?.reqId !== run.ide.reqId) return;
+    // Settle against the run as it is now: a person may have closed it, or clicked again, meanwhile.
+    const latest = (await this.store.runs.findById(runId))?.ide;
+    if (!latest || latest.reqId !== reqId || !PENDING.has(latest.state)) {
+      // Superseded by a newer click: that request will use the same (one-per-run) endpoint. Closed,
+      // stopped or failed instead: nobody wants the endpoint just made, so it goes.
+      const wanted = latest && PENDING.has(latest.state);
+      if (!wanted && !("error" in result)) await this.previews?.closeIde(runId, "closed while it was being made");
+      return;
+    }
     await this.store.runs.update(runId, {
       ide: "error" in result
-        ? { reqId: run.ide.reqId, state: "error", detail: `couldn't make the IDE's address: ${result.error}`, updatedAt: now() }
-        : { reqId: run.ide.reqId, state: "ready", url: result.url, updatedAt: now() },
+        ? { reqId, state: "error", detail: `couldn't make the IDE's address: ${result.error}`, updatedAt: now() }
+        : { reqId, state: "ready", url: result.url, updatedAt: now() },
     });
   }
 

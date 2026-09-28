@@ -199,8 +199,24 @@ describe("IdeManager (#242)", () => {
     assert.equal(stopped.reqId, undefined);
     assert.match(stopped.detail ?? "", /code-server exited/);
     assert.equal(h.tunnels[0]!.stopped, true, "its tunnel goes with it");
+    const firstGrandchild = h.fake().grandchild;
+    await waitFor(() => !alive(firstGrandchild), 5000); // the whole group, though its top process had already exited
     h.mgr.open("r2");
-    await waitFor(() => h.frames.some((f) => f.reqId === "r2" && (f.state === "ready" || f.state === "stopped" || f.state === "error")));
+    await waitFor(() => h.frames.some((f) => f.reqId === "r2" && (f.state === "ready" || f.state === "error")));
+    assert.equal(h.frames.filter((f) => f.reqId === "r2").at(-1)!.state, "ready", "it starts again");
+  });
+
+  test("stop() during a slow start returns promptly instead of waiting out the startup timeout", async () => {
+    const h = harness({ startTimeoutMs: 30_000 }, "never-listen");
+    h.mgr.open("r1");
+    await waitFor(() => h.frames.some((f) => f.state === "starting"));
+    await sleep(300);
+    const t0 = Date.now();
+    await h.mgr.stop();
+    assert.ok(Date.now() - t0 < 5000, `stop took ${Date.now() - t0} ms`);
+    await waitFor(() => h.frames.some((f) => f.state === "error"));
+    const { grandchild } = h.fake();
+    await waitFor(() => !alive(grandchild), 5000);
   });
 
   test("stop() kills the whole process group, the tunnel and the proxy", async () => {
@@ -227,5 +243,33 @@ describe("IdeManager (#242)", () => {
     await waitFor(() => h.frames.some((f) => f.state === "ready"));
     assert.ok(existsSync(join(h.configDir, "config.yaml")));
     assert.equal(statSync(join(h.configDir, "config.yaml")).mode & 0o022, 0, "not group- or world-writable");
+  });
+});
+
+describe("IdeManager peer check (#242)", () => {
+  test("a refused peer gets 403 on HTTP, its WebSocket is dropped, and nothing counts as activity", async (t) => {
+    const h = harness({ peerAllowed: async () => false });
+    t.after(() => h.mgr.stop());
+    h.mgr.open("r1");
+    await waitFor(() => h.frames.some((f) => f.state === "ready"));
+    const proxyPort = Number(new URL(h.tunnels[0]!.upstream).port);
+    const http = await new Promise<string>((resolve) => {
+      const s = connect(proxyPort, "127.0.0.1", () => s.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n"));
+      s.once("data", (d) => { resolve(d.toString().split("\r\n")[0]!); s.destroy(); });
+    });
+    assert.match(http, /403/);
+    const closed = await new Promise<boolean>((resolve) => {
+      const s = connect(proxyPort, "127.0.0.1", () => {
+        s.write("GET /ws HTTP/1.1\r\nHost: x\r\nOrigin: https://x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n");
+        for (let i = 0; i < 100; i++) s.write(frame(Buffer.alloc(16)));
+      });
+      s.on("error", () => {});
+      s.once("close", () => resolve(true));
+      setTimeout(() => resolve(false), 3000);
+    });
+    assert.ok(closed, "the upgrade is dropped");
+    await sleep(100);
+    assert.equal(h.activity(), 0);
+    assert.deepEqual(h.fake().origins, [], "nothing reached code-server");
   });
 });

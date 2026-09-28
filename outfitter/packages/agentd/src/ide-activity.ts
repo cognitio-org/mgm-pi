@@ -16,40 +16,56 @@ export const IDE_ACTIVE_BYTES = 2048;
 export const IDE_WINDOW_MS = 60_000;
 
 /** Counts WebSocket frames in the client's byte stream for one connection. Client frames are always
- * masked (RFC 6455 §5.3). Only data frames (text, binary, continuation) count; pings, pongs and
- * closes don't, so a browser's own keepalive pings can't tip a minute over. */
+ * masked (RFC 6455 §5.3); an unmasked frame means this isn't a browser's WebSocket, and the stream
+ * stops counting. Only data frames (text, binary, continuation) count; pings, pongs and closes
+ * don't, so a browser's own keepalive pings can't tip a minute over. Only headers are kept: payload
+ * bytes are skipped, not buffered. */
 export class ClientFrameCounter {
-  private buf: Buffer = Buffer.alloc(0);
+  private header: Buffer = Buffer.alloc(0);
+  private skip = 0;
+  private broken = false;
 
-  /** Returns how many complete data frames `chunk` finished, and its size. */
+  /** Returns how many data frames `chunk` started, and its size. */
   push(chunk: Buffer): { frames: number; bytes: number } {
-    this.buf = this.buf.length ? Buffer.concat([this.buf, chunk]) : chunk;
+    const bytes = chunk.length;
     let frames = 0;
-    for (;;) {
-      if (this.buf.length < 2) break;
-      const opcode = this.buf[0]! & 0x0f;
-      let len = this.buf[1]! & 0x7f;
+    let buf = chunk;
+    while (!this.broken && buf.length > 0) {
+      if (this.skip > 0) {
+        const n = Math.min(this.skip, buf.length);
+        this.skip -= n;
+        buf = buf.subarray(n);
+        continue;
+      }
+      this.header = this.header.length ? Buffer.concat([this.header, buf]) : buf;
+      buf = Buffer.alloc(0);
+      const h = this.header;
+      if (h.length < 2) break;
+      if (!(h[1]! & 0x80)) { this.broken = true; break; } // unmasked: not a browser client
+      let len = h[1]! & 0x7f;
       let off = 2;
       if (len === 126) {
-        if (this.buf.length < 4) break;
-        len = this.buf.readUInt16BE(2);
+        if (h.length < 4) break;
+        len = h.readUInt16BE(2);
         off = 4;
       } else if (len === 127) {
-        if (this.buf.length < 10) break;
-        const big = this.buf.readBigUInt64BE(2);
-        // Anything past 2^53 isn't a real frame from a browser; drop the stream's framing.
-        if (big > BigInt(Number.MAX_SAFE_INTEGER)) { this.buf = Buffer.alloc(0); break; }
+        if (h.length < 10) break;
+        const big = h.readBigUInt64BE(2);
+        if (big > BigInt(Number.MAX_SAFE_INTEGER)) { this.broken = true; break; }
         len = Number(big);
         off = 10;
       }
-      if (this.buf[1]! & 0x80) off += 4;
-      if (this.buf.length < off + len) break;
+      off += 4; // mask key
+      if (h.length < off) break;
+      const opcode = h[0]! & 0x0f;
       if (opcode === 0 || opcode === 1 || opcode === 2) frames++;
-      this.buf = this.buf.subarray(off + len);
+      // Whatever followed the header in this buffer is payload (and maybe the next frame).
+      const rest = h.subarray(off);
+      this.header = Buffer.alloc(0);
+      this.skip = len;
+      buf = rest;
     }
-    // Keep only what an incomplete frame needs; a huge partial frame is counted in bytes anyway.
-    if (this.buf.length > 1 << 20) this.buf = Buffer.alloc(0);
-    return { frames, bytes: chunk.length };
+    return { frames, bytes };
   }
 }
 

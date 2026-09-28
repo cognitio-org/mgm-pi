@@ -15,8 +15,11 @@
  *   localhost. code-server compares it with `X-Forwarded-Host` and refuses every WebSocket when they
  *   differ (spike S3); left alone, that check keeps guarding against cross-site WebSocket hijacking.
  * - `clientData`: called once per upgraded (WebSocket) connection; the function it returns gets every
- *   chunk the browser sends up it, for the IDE's activity meter (ide-activity.ts). It only ever sees
- *   traffic that came through ngrok's sign-in.
+ *   chunk the browser sends up it, for the IDE's activity meter (ide-activity.ts).
+ * - `peerAllowed`: checked before anything is forwarded; a refused peer gets nothing. The IDE only
+ *   accepts root's connections (the ngrok agent runs as root), so the model's shell, on the same
+ *   loopback, can't push traffic through to fake activity: only traffic that came through ngrok's
+ *   sign-in reaches code-server this way, or counts.
  */
 import { createServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type Server } from "node:http";
 import { connect, type Socket } from "node:net";
@@ -35,6 +38,8 @@ export interface LocalPreviewProxyOptions {
   keepOrigin?: boolean;
   /** #242: per upgraded connection, a sink for each chunk the client sends up it. */
   clientData?: () => (chunk: Buffer) => void;
+  /** #242: whether this client connection may be proxied at all (checked per request/upgrade). */
+  peerAllowed?: (socket: Socket) => Promise<boolean>;
 }
 
 /** Whether a request is someone looking at a page, as opposed to the page's own background traffic. */
@@ -105,7 +110,13 @@ export class LocalPreviewProxy {
     if (this.server) return;
     const target = this.opts.port;
     const onLog = this.opts.onLog ?? (() => {});
-    const server = createServer((req, res) => {
+    const peerAllowed = this.opts.peerAllowed;
+    const server = createServer(async (req, res) => {
+      if (peerAllowed && !(await peerAllowed(req.socket).catch(() => false))) {
+        res.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
+        res.end("forbidden\n");
+        return;
+      }
       if (isPageRequest(req)) this.opts.onActivity?.();
       const up = httpRequest(
         { host: "127.0.0.1", port: target, method: req.method, path: req.url ?? "/", headers: upstreamHeaders(req.headers, target, false) },
@@ -125,8 +136,12 @@ export class LocalPreviewProxy {
       });
       req.pipe(up);
     });
-    server.on("upgrade", (req, client: Socket, head: Buffer) => {
+    server.on("upgrade", async (req, client: Socket, head: Buffer) => {
       this.track(client);
+      if (peerAllowed && !(await peerAllowed(client).catch(() => false))) {
+        client.destroy();
+        return;
+      }
       const upstream = connect(target, "127.0.0.1");
       this.track(upstream);
       upstream.once("connect", () => {
@@ -134,10 +149,18 @@ export class LocalPreviewProxy {
         let raw = `${req.method ?? "GET"} ${req.url ?? "/"} HTTP/1.1\r\n`;
         for (const [k, v] of Object.entries(headers)) for (const one of Array.isArray(v) ? v : [v]) raw += `${k}: ${one}\r\n`;
         upstream.write(`${raw}\r\n`);
-        const sink = this.opts.clientData?.();
-        if (head.length) { sink?.(head); upstream.write(head); }
+        // #242: the activity sink starts only once the server has accepted the upgrade (101), so a
+        // refused socket's junk never counts.
+        const makeSink = this.opts.clientData;
+        let sink: ((chunk: Buffer) => void) | undefined;
+        if (makeSink) {
+          upstream.once("data", (first: Buffer) => {
+            if (first.subarray(0, 12).toString("latin1").startsWith("HTTP/1.1 101")) sink = makeSink();
+          });
+        }
+        if (head.length) upstream.write(head);
         upstream.pipe(client);
-        if (sink) client.on("data", (chunk: Buffer) => sink(chunk));
+        if (makeSink) client.on("data", (chunk: Buffer) => sink?.(chunk));
         client.pipe(upstream);
       });
       const close = () => { client.destroy(); upstream.destroy(); };

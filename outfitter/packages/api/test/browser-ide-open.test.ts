@@ -198,3 +198,103 @@ describe("the ide.status exchange (#242)", () => {
     await done(app, agent);
   });
 });
+
+/** An ngrok API whose endpoint creation waits until released, to line up races. */
+class GatedNgrok extends FakeNgrok {
+  private gate: Promise<void> | undefined;
+  private release: (() => void) | undefined;
+  hold() { this.gate = new Promise((r) => { this.release = r; }); }
+  open() { this.release?.(); this.gate = undefined; }
+  override async createCloudEndpoint(input: Parameters<FakeNgrok["createCloudEndpoint"]>[0]) {
+    if (this.gate) await this.gate;
+    return super.createCloudEndpoint(input);
+  }
+}
+async function gatedSetup(env: Record<string, string> = ENV) {
+  const ngrok = new GatedNgrok();
+  const app = await buildTestApp(env, { ngrok });
+  const { session, runId, runToken } = await makeRunningSession(app, { ownerEmail: "owner@example.com" });
+  await app.store.gurus.update("test-guru", { browserIde: true });
+  const agent = await openAgentSocket(app, runId);
+  sendHello(agent, runId, session.id, runToken);
+  await agent.nextMessage();
+  agent.send({ t: "status", state: "idle" });
+  await eventually(() => app.store.runs.findById(runId), (r) => r?.state === "idle");
+  return { app, ngrok, agent, runId, internalUrl: ideInternalUrlFor(runLabel(runId)) };
+}
+
+describe("IDE races (#242 review)", () => {
+  test("a ready that arrives after the person closed it makes nothing", async () => {
+    const { app, ngrok, agent, internalUrl } = await gatedSetup();
+    const reqId = await openAndGetReq(app, agent);
+    agent.send({ t: "ide.status", reqId, state: "installing" });
+    await eventually(() => ideState(app), (s) => s.state === "installing");
+    assert.equal((await app.fastify.inject({ method: "DELETE", url: "/api/sessions/s1/ide" })).statusCode, 204);
+    agent.send({ t: "ide.status", reqId, state: "starting" });
+    agent.send({ t: "ide.status", reqId, state: "ready", internalUrl });
+    await sleep(150);
+    assert.equal(ngrok.endpoints.size, 0);
+    assert.equal((await ideState(app)).state, "closed", "late frames don't reopen it");
+    await done(app, agent);
+  });
+
+  test("closing while the endpoint is being made removes it once made", async () => {
+    const { app, ngrok, agent, internalUrl } = await gatedSetup();
+    const reqId = await openAndGetReq(app, agent);
+    ngrok.hold();
+    agent.send({ t: "ide.status", reqId, state: "ready", internalUrl });
+    await sleep(100);
+    assert.equal((await app.fastify.inject({ method: "DELETE", url: "/api/sessions/s1/ide" })).statusCode, 204);
+    ngrok.open();
+    await eventually(async () => ngrok.endpoints.size, (n) => n === 0);
+    await sleep(100);
+    assert.equal(ngrok.endpoints.size, 0, "no orphan endpoint");
+    const s = await ideState(app);
+    assert.equal(s.state, "closed");
+    assert.equal(s.url, undefined, "no dead URL");
+    await done(app, agent);
+  });
+
+  test("two clicks answered together share one endpoint", async () => {
+    const { app, ngrok, agent, runId, internalUrl } = await gatedSetup();
+    const reqA = await openAndGetReq(app, agent);
+    ngrok.hold();
+    agent.send({ t: "ide.status", reqId: reqA, state: "ready", internalUrl });
+    await sleep(80);
+    const reqB = await openAndGetReq(app, agent);
+    agent.send({ t: "ide.status", reqId: reqB, state: "ready", internalUrl });
+    await sleep(80);
+    ngrok.open();
+    const ready = await eventually(() => ideState(app), (s) => s.state === "ready");
+    await sleep(100);
+    assert.equal(ngrok.endpoints.size, 1, "one endpoint for the run");
+    assert.equal([...ngrok.endpoints.values()][0]!.url, ready.url);
+    assert.equal((await app.store.previews.listOpenForRun(runId)).filter((p) => p.kind === "ide").length, 1);
+    await done(app, agent);
+  });
+
+  test("a domain: entry on the operators list doesn't let a domain into the IDE", async () => {
+    const { app, ngrok, agent, internalUrl } = await gatedSetup({ ...ENV, OUTFITTER_OPERATORS: "sysop@example.com,domain:evil.example" });
+    const reqId = await openAndGetReq(app, agent);
+    agent.send({ t: "ide.status", reqId, state: "ready", internalUrl });
+    await eventually(() => ideState(app), (s) => s.state === "ready");
+    const policy = [...ngrok.endpoints.values()][0]!.trafficPolicy;
+    assert.ok(policy.includes("sysop@example.com") && policy.includes("owner@example.com"));
+    assert.ok(!policy.includes("evil.example"), "no domain rule from the operators list");
+    await done(app, agent);
+  });
+
+  test("an open click asks again when the recorded endpoint is gone", async () => {
+    const { app, ngrok, agent, runId, internalUrl } = await gatedSetup();
+    const reqId = await openAndGetReq(app, agent);
+    agent.send({ t: "ide.status", reqId, state: "ready", internalUrl });
+    await eventually(() => ideState(app), (s) => s.state === "ready");
+    // The endpoint disappears behind the run's back (as a sweep or an ngrok-side delete would).
+    for (const p of await app.store.previews.listOpenForRun(runId)) await app.store.previews.markClosed(p.id, new Date().toISOString(), "gone");
+    ngrok.endpoints.clear();
+    const res = await app.fastify.inject({ method: "POST", url: "/api/sessions/s1/ide" });
+    assert.equal(res.statusCode, 202, "not the dead URL");
+    assert.equal((await agent.nextMessage()).t, "ide.open");
+    await done(app, agent);
+  });
+});

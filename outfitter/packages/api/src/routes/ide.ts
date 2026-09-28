@@ -7,11 +7,14 @@
 // - DELETE .../ide closes the public endpoint; code-server keeps running in the Drive, and the next
 //   open makes a new endpoint (with the owner and sysops as they are then).
 // All three are the floppy's owner's or a sysop's (canManageSession): the IDE is a shell.
+// ide.status isn't replayed, so a frame lost to a dropped link can leave the state at "starting";
+// another click (allowed whenever it isn't ready) asks again, and a running IDE answers at once.
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { RouteContext } from "./context.ts";
 import type { Run } from "../store/types.ts";
 import { canManageSession, getSessionOr404 } from "./sessions.ts";
+import { IDE_PREVIEW_PORT } from "../previews.ts";
 
 /** An IDE can be opened only on a Drive that's up for good (as for share links). */
 const OPENABLE = new Set(["running", "idle"]);
@@ -46,7 +49,11 @@ export async function registerIdeRoutes(app: FastifyInstance, ctx: RouteContext)
     const run = await ctx.store.runs.findActiveForSession(session.id);
     if (!run || !OPENABLE.has(run.state)) return reply.code(409).send({ error: "the Drive isn't running" });
     if (run.browserIde !== true) return reply.code(409).send({ error: "this Drive has no IDE: turn on \"VS Code in the browser\" on its Tape, then start a new Drive" });
-    if (run.ide?.state === "ready" && run.ide.url) return reply.code(200).send(view(run));
+    // Already open: answer with it, if its endpoint really is still there.
+    if (run.ide?.state === "ready" && run.ide.url) {
+      const open = await ctx.store.previews.findOpen(run.id, IDE_PREVIEW_PORT, false);
+      if (open?.kind === "ide" && open.url === run.ide.url) return reply.code(200).send(view(run));
+    }
     const reqId = randomUUID();
     const updated = await ctx.store.runs.update(run.id, { ide: { reqId, state: "requested", updatedAt: new Date().toISOString() } });
     await ctx.agentLink.send(run.id, { t: "ide.open", reqId });

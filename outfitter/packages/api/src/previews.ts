@@ -333,6 +333,16 @@ export class PreviewService {
    * fixed when the endpoint is made; closeIde() then a new open re-makes it. At most one per run.
    */
   async openIde(runId: string, internalUrlFromAgent: string): Promise<OpenResult> {
+    // One at a time per run: two clicks answered together share one endpoint.
+    const key = `ide:${runId}`;
+    const inflight = this.opening.get(key);
+    if (inflight) return inflight;
+    const p = this.openIdeOnce(runId, internalUrlFromAgent).finally(() => this.opening.delete(key));
+    this.opening.set(key, p);
+    return p;
+  }
+
+  private async openIdeOnce(runId: string, internalUrlFromAgent: string): Promise<OpenResult> {
     if (!this.enabled) return { error: "not-configured" };
     const run = await this.store.runs.findById(runId);
     if (!run?.preview || !LIVE_RUN_STATES.has(run.state)) return { error: "not-configured" };
@@ -342,8 +352,10 @@ export class PreviewService {
     if (existing?.kind === "ide") return { url: existing.url };
     const session = await this.store.sessions.findById(run.sessionId);
     if (!session?.ownerEmail) return { error: "no-owner" };
-    if (this.overBudget(runId)) return { error: "too-many" };
-    const allow = parseAllowlist([session.ownerEmail, ...this.config.operators]);
+    // Exact emails only: a `domain:` entry on the operators list makes nobody a sysop in the app
+    // (isOperator matches emails), so it mustn't let a whole domain into the IDE here. Not on the
+    // model's preview budget either: this is a person's click, and there's one IDE per run.
+    const allow = { emails: parseAllowlist([session.ownerEmail, ...this.config.operators]).emails, domains: [] as string[] };
     const id = randomBytes(16).toString("hex");
     const url = `https://${id}.${this.config.previewDomain}`;
     const now = this.now();
@@ -387,10 +399,10 @@ export class PreviewService {
     return p ? this.closeOne(p, reason) : false;
   }
 
-  /** preview.close: every open preview of `port` in the run (secure and share). */
+  /** preview.close: every open preview of `port` in the run (secure and share). Never the IDE's. */
   async close(runId: string, port: number, reason = "closed"): Promise<void> {
     for (const p of await this.store.previews.listOpenForRun(runId)) {
-      if (p.port === port) await this.closeOne(p, reason);
+      if (p.port === port && p.kind !== "ide") await this.closeOne(p, reason);
     }
   }
 

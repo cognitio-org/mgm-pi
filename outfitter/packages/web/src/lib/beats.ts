@@ -23,6 +23,8 @@ export interface RailTool {
   output?: string;
   isError: boolean;
   running: boolean;
+  /** The reply carrying this call failed or was stopped, so the call never ran. */
+  interrupted?: boolean;
 }
 
 export type RailItem = RailThinking | RailTool;
@@ -37,6 +39,8 @@ type PassView = Extract<
       | "model-change"
       | "thinking-level-change"
       | "compaction"
+      | "assistant-failed"
+      | "context-edit"
       | "custom"
       | "label"
       | "session-info"
@@ -79,11 +83,11 @@ export type RailGlyph =
   | { kind: "single"; item: RailItem }
   | { kind: "batch"; id: string; tools: RailTool[] };
 
-/** Finished non-error tools beyond this stay as one glyph. Thinking, errors, and running calls do not count. */
+/** Finished non-error tools beyond this stay as one glyph. Thinking, errors, and running or interrupted calls do not count. */
 const COLLAPSE_AT = 4;
 
 function isFinishedTool(item: RailItem): item is RailTool {
-  return item.kind === "tool" && !item.running && !item.isError;
+  return item.kind === "tool" && !item.running && !item.isError && !item.interrupted;
 }
 
 export function collapseRail(items: RailItem[]): RailGlyph[] {
@@ -139,6 +143,8 @@ export function groupBeats(views: GroupedEntry[], options?: { runSettled?: boole
       case "model-change":
       case "thinking-level-change":
       case "compaction":
+      case "assistant-failed":
+      case "context-edit":
       case "custom":
       case "label":
       case "session-info":
@@ -166,10 +172,11 @@ export function groupBeats(views: GroupedEntry[], options?: { runSettled?: boole
           toolCallId: view.toolCallId,
           input: view.input,
           isError: false,
-          running: true,
+          running: !view.interrupted,
+          ...(view.interrupted ? { interrupted: true } : {}),
         };
         rail.push(item);
-        pending.set(view.toolCallId, item);
+        if (!view.interrupted) pending.set(view.toolCallId, item);
         break;
       }
       case "tool-result": {

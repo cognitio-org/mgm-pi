@@ -50,7 +50,7 @@ function glyphIdOf(glyph: RailGlyph): string {
 }
 
 function toolLabel(tool: RailTool): string {
-  const state = tool.running ? ", running" : tool.isError ? ", error" : "";
+  const state = tool.running ? ", running" : tool.interrupted ? ", interrupted" : tool.isError ? ", error" : "";
   return `Show tool ${tool.toolName}${state}`;
 }
 
@@ -128,7 +128,9 @@ function ToolBody({ tool }: { tool: RailTool }) {
       <div className="rail-block-label">Input</div>
       <pre>{formatInput(tool.input)}</pre>
       <div className="rail-block-label">Output</div>
-      {tool.running ? (
+      {tool.interrupted ? (
+        <div className="rail-pending">Interrupted: the reply was cut off, so this call never ran.</div>
+      ) : tool.running ? (
         <div className="rail-pending">
           <span className="rail-led" aria-hidden="true" />
           still running
@@ -296,7 +298,7 @@ export function TranscriptRail({
     const showList = active.kind === "batch" && !drilled;
     const title = showList ? "Tools" : tool ? tool.toolName : "Thinking";
     const meta = showList ? `×${active.tools.length}` : singleThinking ? thinkingWordLabel(thinkingText(singleThinking)) : undefined;
-    const isError = Boolean(tool?.isError);
+    const isError = Boolean(tool?.isError || tool?.interrupted);
     const isRunning = Boolean(tool?.running);
     card = (
       <div
@@ -371,7 +373,7 @@ export function TranscriptRail({
             <button
               key={id}
               type="button"
-              className={["rail-glyph", thinkingItem ? "is-thinking" : "", toolItem?.isError ? "is-error" : "", toolItem?.running ? "is-running" : ""]
+              className={["rail-glyph", thinkingItem ? "is-thinking" : "", toolItem?.isError || toolItem?.interrupted ? "is-error" : "", toolItem?.running ? "is-running" : ""]
                 .filter(Boolean)
                 .join(" ")}
               aria-label={label}

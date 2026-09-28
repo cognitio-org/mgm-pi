@@ -113,14 +113,18 @@ function userText(e: PiEntry): string | null {
     .join("\n");
 }
 
-/** An assistant entry that ends the turn. Not one that stopped to call tools (stopReason "toolUse")
- * or is still streaming ("pending"): in a tool-using turn that is the *first* assistant entry, and
+/** An assistant entry that ends the turn. Not one that stopped to call tools (stopReason "toolUse"),
+ * is still streaming ("pending"), or failed and is being retried (see below): in a tool-using turn that is the *first* assistant entry, and
  * the run keeps working for minutes after it -- counting it as the reply dropped the status line
  * (and the work timeout) right at the start of the long part of the turn. */
-export function isFinalAssistant(e: PiEntry): boolean {
+export function isFinalAssistant(e: PiEntry, later: PiEntry[] = []): boolean {
   if (e.type !== "message") return false;
   const m = e.message as { role?: string; stopReason?: string } | undefined;
-  return m?.role === "assistant" && m.stopReason !== "toolUse" && m.stopReason !== "pending";
+  if (m?.role !== "assistant" || m.stopReason === "toolUse" || m.stopReason === "pending") return false;
+  // A failed attempt pi is retrying: it hides the attempt from the model (a context_edit) first.
+  // Counting it as the reply dropped the status line for the whole retry.
+  if (m.stopReason === "error" && later.some((x) => x.type === "context_edit" && x.targetId === e.id && x.replacement == null)) return false;
+  return true;
 }
 
 /** Index (into entries) of the stored entry that echoes the pending message, or -1: the first user
@@ -161,7 +165,7 @@ export function isAnswered(input: Pick<ActivityInput, "entries" | "runState">, p
   if (pending.acceptedAt === undefined || pending.error !== undefined) return false;
   const echo = findEcho(input.entries, pending);
   const from = echo >= 0 ? echo + 1 : pending.baseline;
-  for (let i = from; i < input.entries.length; i++) if (isFinalAssistant(input.entries[i])) return true;
+  for (let i = from; i < input.entries.length; i++) if (isFinalAssistant(input.entries[i], input.entries.slice(i + 1))) return true;
   return input.runState === "idle" && pending.sawRunning;
 }
 

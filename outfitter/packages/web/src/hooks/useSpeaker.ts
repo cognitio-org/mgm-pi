@@ -141,13 +141,14 @@ export function useSpeaker(opts: UseSpeakerOptions): Speaker {
       seen.current = new Set(opts.entries.map((e) => e.id));
       return;
     }
-    for (const entry of opts.entries) {
+    for (const [i, entry] of opts.entries.entries()) {
       if (seen.current.has(entry.id)) continue;
       seen.current.add(entry.id);
       if (!isAssistant(entry)) continue;
       // Only the turn's final reply hands the turn back (the status line's own test: not one that
-      // stopped to call tools or is still streaming; an aborted or errored reply does count).
-      if (isFinalAssistant(entry)) replyThisTurn.current = true;
+      // stopped to call tools, is still streaming, or failed and is being retried; an aborted or
+      // errored reply otherwise does count).
+      if (isFinalAssistant(entry, opts.entries.slice(i + 1))) replyThisTurn.current = true;
       if (!on) continue;
       const text = replyText(entry);
       const sentences = splitSentences(prepareForSpeech(text));

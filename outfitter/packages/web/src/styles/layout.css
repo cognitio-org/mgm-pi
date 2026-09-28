@@ -565,6 +565,7 @@
 .entry.custom,
 .entry.label,
 .entry.session-info,
+.entry.context-edit,
 .entry.unknown {
   color: var(--text-dim);
   font-size: 0.78rem;
@@ -895,6 +896,22 @@ h4.voice-menu-heading {
 .entry.entry-failed {
   opacity: 1;
   border-color: var(--danger);
+}
+
+.entry.assistant-failed {
+  border: 1px dashed var(--danger);
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.entry.assistant-failed .entry-label {
+  color: var(--danger);
+}
+
+.entry.assistant-failed pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.75rem;
 }
 
 .entry-failed-note {

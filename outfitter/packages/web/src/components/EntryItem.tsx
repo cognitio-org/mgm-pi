@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api/client.ts";
 import type { GroupedEntry } from "../lib/thinking.ts";
 import { groupBeats } from "../lib/beats.ts";
-import { BROWSER_CAPTURE_TYPE, PLAYWRIGHT_CHECK_TYPE } from "../lib/entry-view.ts";
+import { BROWSER_CAPTURE_TYPE, PLAYWRIGHT_CHECK_TYPE, failedAttemptCopy } from "../lib/entry-view.ts";
 import { apiErrorKind, noticeContent, systemErrorContent } from "../lib/retro-errors.ts";
 import { toApiErrorState } from "../lib/api-error.ts";
 import type { ApiErrorState } from "./SystemErrorDialog.tsx";
@@ -136,6 +136,27 @@ export function EntryItem({
         <div className="entry compaction">
           <div className="entry-label">Compacted</div>
           <Markdown text={view.summary} />
+        </div>
+      );
+    case "assistant-failed": {
+      const copy = failedAttemptCopy(view);
+      return (
+        <div className="entry assistant-failed" role="status">
+          <div className="entry-label">{copy.headline}</div>
+          <div>{copy.note}</div>
+          {view.errorMessage ? (
+            <details>
+              <summary>Error</summary>
+              <pre>{view.errorMessage}</pre>
+            </details>
+          ) : null}
+        </div>
+      );
+    }
+    case "context-edit":
+      return (
+        <div className="entry context-edit">
+          {view.replaced ? "An earlier message was replaced in the model's context" : "An earlier message was hidden from the model"}
         </div>
       );
     case "custom":

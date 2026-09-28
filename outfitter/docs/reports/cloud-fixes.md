@@ -361,3 +361,27 @@ idle mail whatever its attempts, and any release gives the mail a fresh budget (
 releases everyone's held mail, and a still-broken session then spends up to three more wakes
 before holding again. That's bounded, but it isn't zero. There is no alert yet when mail is held;
 the session notice and an `info` log line are the only signals.
+
+## 14. A retried model call looked stuck (#278)
+
+**Cause**: pi 0.87 retries a failed model call on its own. Before each retry it appends a
+`context_edit` entry that hides the failed attempt from the model; the session file keeps it. The
+web had no case for any of this. A session on a local model behind ngrok lost each long reply at
+about five minutes (`APIConnectionError … Response payload is not completed`). For 20 minutes it
+showed the attempt's prose, an empty tool box, and "unrecognized entry: context_edit", three times,
+and never the error. The fourth attempt succeeded.
+
+**Fix** (`web/src/lib/entry-view.ts`): an assistant message with `stopReason` `error` or `aborted`
+ends with an `assistant-failed` row: "Attempt failed, retrying" when a `context_edit` hides it (pi's
+retry), "Model call failed" otherwise, "Reply stopped" for an abort, with the raw error behind a
+disclosure. The retry's `context_edit` folds into that row. Any other `context_edit` is a quiet
+"An earlier message was hidden from the model" line. A tool call in a failed message is
+`interrupted`: never running, not batched, and its card says it never ran. `isFinalAssistant` no
+longer counts a failed attempt that pi is retrying as the reply, so the status line stays up
+through the retry, and so does voice's turn hand-back.
+
+**Test**: `packages/web/test/failed-attempts.test.tsx`, built from the real session's entries.
+Screenshots: `docs/design/screenshots/failed-attempt-*.png`.
+
+**Left open**: the roughly five-minute stream cap is between LiteLLM and the tunnel, outside this
+repo.

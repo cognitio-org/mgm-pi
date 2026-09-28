@@ -1,0 +1,40 @@
+outfitter/deploy/ide/spike/harness.mjs
+  s_885dde90a8ec58::t_a0d4af8b428d7f 201,203
+  s_885dde90a8ec58::t_48418a74c1ddbe 13-15,22-24,45-48,109-110,148-153,155
+  s_885dde90a8ec58::t_bf1dbd8479e000 154
+outfitter/deploy/ide/spike/gke-run.sh
+  s_885dde90a8ec58::t_044915bfd3b6fc 9-10,24-26,39,72-80
+outfitter/deploy/ide/spike/gke-ide.yaml
+  s_885dde90a8ec58::t_044915bfd3b6fc 7-9,47
+outfitter/deploy/ide/spike/run-in-pod.sh
+  s_885dde90a8ec58::t_a0d4af8b428d7f 33,37
+  s_885dde90a8ec58::t_f142bfd80e7764 7-9,31-32,34-36,38-45
+outfitter/deploy/ide/spike/gke-pod.jsonl
+  s_fd47f462159c85::t_e62b198db053b2 1-6
+outfitter/docs/reports/browser-ide-spike.md
+  s_885dde90a8ec58::t_fab018b53e68ce 14,67-75,97-101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "099cd43cd412f68eff028302aa85c64a637e25f8",
+  "prompts": {},
+  "sessions": {
+    "s_885dde90a8ec58": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fc9bab2f-409c-4e9c-9cd5-ff15ccd352cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_fd47f462159c85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4302a461-a7ca-4bcd-bca6-85c286e60f99",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

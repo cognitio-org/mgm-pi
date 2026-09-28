@@ -29,11 +29,12 @@ export async function registerVoiceRoutes(app: FastifyInstance, ctx: RouteContex
   });
 
   // Any signed-in identity, including the live tests' service account (#219): the suite may exercise
-  // this route, and what it can spend is bounded by the 30 s token, the rate limit and its own tag.
+  // this route, and what it can spend is bounded by the short-lived token (default 30 s), the rate
+  // limit and its own tag.
   app.post("/api/voice/token", async (req, reply) => {
     const email = req.identity!.email;
-    const result = await ctx.voice.mint(email);
     reply.header("cache-control", "no-store");
+    const result = await ctx.voice.mint(email);
     if (result.ok) {
       req.log.info({ email, expiresAt: result.token.expiresAt }, "voice token minted");
       return result.token;

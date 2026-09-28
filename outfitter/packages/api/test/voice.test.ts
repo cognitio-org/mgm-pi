@@ -115,6 +115,7 @@ describe("POST /api/voice/token", () => {
     assert.equal(limited.statusCode, 429);
     assert.equal(limited.json().error, "voice_rate_limited");
     assert.equal(limited.headers["retry-after"], "50");
+    assert.equal(limited.headers["cache-control"], "no-store");
     assert.equal(dg.calls.length, 2);
     // Someone else still gets one.
     assert.equal((await voice.mint("bob@example.com")).ok, true);

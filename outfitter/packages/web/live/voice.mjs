@@ -1,8 +1,9 @@
 // Web voice live checks (#254, epic #256): the Composer's mic against real Deepgram, with Chrome's
 // fake mic playing a spoken sentence. Run from the lifecycle test in app.live.mjs on the floppy it
 // already made (a session page needs a floppy, and a floppy needs a Drive), with "after speaking"
-// set to review, so nothing is sent and no model runs. The sentence is generated at run time, not
-// committed: `say` on macOS, `espeak-ng` on the Linux runners (the workflow installs it).
+// set to review through the mic's own menu, so nothing is sent and no model runs. The sentence is
+// generated, not committed: `say` on macOS; in CI a separate job with no token rights makes it with
+// espeak-ng and hands it over as E2E_MIC_FIXTURE.
 
 import { execFile } from "node:child_process";
 import { mkdir, stat } from "node:fs/promises";
@@ -15,8 +16,10 @@ export const SENTENCE = "Please fix the login bug and add a test.";
 /** What must come back: Deepgram's wording of a synthetic voice varies, but these words make it. */
 export const HEARD = /login|bug|test/i;
 
-/** The spoken sentence as a WAV, or undefined when neither speech tool is here. */
+/** The spoken sentence as a WAV, or undefined when there's none and no speech tool to make one. */
 export async function speechFixture(dir) {
+  const given = process.env.E2E_MIC_FIXTURE;
+  if (given) return (await stat(given).catch(() => undefined))?.size > 1000 ? given : undefined;
   await mkdir(dir, { recursive: true });
   const path = `${dir}/voice-fixture.wav`;
   try {
@@ -55,12 +58,27 @@ export async function voiceChecks({ page, api, snap }) {
   assert.equal(cfg.status, 200, `GET /api/me/voice: ${cfg.status}`);
   if (!cfg.body.deepgram) return "Deepgram voice is off on this deployment";
   const before = cfg.body.prefs.afterSpeaking;
-  const review = await api("PUT", "/api/me/voice", { afterSpeaking: "review" });
-  assert.equal(review.status, 200);
   const mic = page.locator(".voice-mic");
   const box = page.locator(".composer textarea");
+  // Nothing here may send: a message would start a real turn on the floppy.
+  const sends = [];
+  const onRequest = (req) => {
+    if (req.method() === "POST" && /\/api\/sessions\/[^/]+\/messages$/.test(new URL(req.url()).pathname)) sends.push(req.url());
+  };
+  page.on("request", onRequest);
   try {
     await mic.waitFor();
+    // Review, through the menu: the open page reads the setting once, when it loads, so changing
+    // it through the API now wouldn't reach it, and "send" would start a real turn.
+    await page.locator(".voice-options").click();
+    // The Deepgram item turns enabled once the page has its voice settings; clicking before that
+    // could be undone when they arrive.
+    await page.locator(".voice-menu [role='menuitemradio']:not([disabled])", { hasText: /^Deepgram$/ }).waitFor({ timeout: 10_000 });
+    const reviewItem = page.locator(".voice-menu [role='menuitemradio']", { hasText: "Leave it to review" });
+    await reviewItem.click();
+    await page.waitForFunction((el) => el?.getAttribute("aria-checked") === "true", await reviewItem.elementHandle(), { timeout: 10_000 });
+    assert.equal(await reviewItem.getAttribute("aria-checked"), "true", "after speaking is set to review");
+    await page.keyboard.press("Escape");
     await box.fill("");
 
     // Hold the button: recording while held, the transcript in the box on release.
@@ -90,6 +108,7 @@ export async function voiceChecks({ page, api, snap }) {
     await page.keyboard.down("Alt");
     await page.keyboard.down("Space");
     await page.waitForTimeout(4_000);
+    assert.equal(await mic.getAttribute("aria-pressed"), "true", "the mic is live while Alt+Space is held");
     await page.keyboard.up("Space");
     await page.keyboard.up("Alt");
     await idle(page);
@@ -113,8 +132,13 @@ export async function voiceChecks({ page, api, snap }) {
     await snap("Voice: settings menu with spend");
     await page.keyboard.press("Escape");
     await box.fill("");
+    assert.deepEqual(sends, [], "the voice checks sent nothing");
   } finally {
-    if (before !== "review") await api("PUT", "/api/me/voice", { afterSpeaking: before });
+    page.off("request", onRequest);
+    if (before !== "review") {
+      const restored = await api("PUT", "/api/me/voice", { afterSpeaking: before }).catch((err) => ({ status: String(err) }));
+      if (restored.status !== 200) console.warn(`voice checks: couldn't put "after speaking" back to ${before} (${restored.status})`);
+    }
   }
   return undefined;
 }

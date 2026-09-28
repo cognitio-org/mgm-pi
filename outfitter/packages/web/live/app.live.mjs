@@ -180,8 +180,13 @@ test("a floppy: create, get a reply, talk to it, archive, format", { skip: proce
     await snap("The reply arrived");
 
     // #254: the mic, on this floppy's page, in review mode (nothing is sent).
-    const skipped = micFixture ? await voiceChecks({ page, api, snap }) : "no speech tool to make the mic fixture (say / espeak-ng)";
-    if (skipped) t.diagnostic(`voice checks skipped: ${skipped}`);
+    const skipped = micFixture ? await voiceChecks({ page, api, snap }) : "no mic fixture (E2E_MIC_FIXTURE, say or espeak-ng)";
+    if (skipped) {
+      // In CI a skip would hide a regression (voice off by mistake, the fixture job broken): fail.
+      assert.ok(!(process.env.CI && !micFixture), `voice checks can't run in CI: ${skipped}`);
+      assert.ok(process.env.E2E_EXPECT_DEEPGRAM !== "1", `voice checks: ${skipped}, but E2E_EXPECT_DEEPGRAM=1`);
+      t.diagnostic(`voice checks skipped: ${skipped}`);
+    }
 
     await page.locator(".run-controls").getByRole("button", { name: "Archive" }).click();
     await page.locator(".archived-note").waitFor();

@@ -1,4 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { VsCodeCard } from "./VsCodeCard.tsx";
 import {
   collapseRail,
   type Beat,
@@ -429,10 +430,13 @@ export function BeatView({
   defaultThinkingExpanded?: boolean;
 }) {
   if (beat.kind === "user") return <UserEntry view={beat.view} />;
+  // #273: a beat where the model opened VS Code gets one chip for it, in the chat, not in the rail.
+  const vscode = beat.rail.some((item) => item.kind === "tool" && item.toolName === "vscode" && !item.isError) ? <VsCodeCard /> : null;
   if (beat.kind === "tools-only") {
     return (
       <div className="beat tools-only">
         <TranscriptRail items={beat.rail} defaultThinkingExpanded={defaultThinkingExpanded} />
+        {vscode}
       </div>
     );
   }
@@ -443,6 +447,7 @@ export function BeatView({
         <Markdown text={beat.prose} />
       </div>
       <TranscriptRail items={beat.rail} defaultThinkingExpanded={defaultThinkingExpanded} />
+      {vscode}
     </div>
   );
 }

@@ -452,6 +452,12 @@ sign-in); agentd runs the tunnel and the Outfitter api issues the link
 make from the session page, never the agent's. A preview closes when its job ends,
 and the end-of-job message says so.
 
+**VS Code.** In a Drive whose Tape has "VS Code in the browser", ask the agent to open VS Code and it
+calls `vscode`: about half a minute later the floppy's owner gets an **Open VS Code** chip in the
+chat (only they and sysops can open it). The agent never sees the link
+(`outfitter/docs/specs/browser-ide.md`). On the desktop there's no such tool: you already have
+your editor.
+
 ## Subagents (`pi-subagents`)
 
 Delegation to focused child sessions, which the model uses when your wording invites it: "use

@@ -3,7 +3,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { IdeChip, IDE_REFRESH_MS, IDE_STALE_START_MS, IDE_STARTING_REFRESH_MS } from "../src/components/IdeChip.tsx";
+import { IdeChip } from "../src/components/IdeChip.tsx";
+import { IdeProvider, IDE_REFRESH_MS, IDE_STALE_START_MS, IDE_STARTING_REFRESH_MS } from "../src/components/IdeProvider.tsx";
+import { VsCodeCard } from "../src/components/VsCodeCard.tsx";
 import type { IdeState } from "../src/api/client.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -56,12 +58,20 @@ async function render(runState = "idle", now = () => T0) {
   document.body.appendChild(container);
   root = createRoot(container);
   const onError = vi.fn();
-  await act(async () => root!.render(<IdeChip sessionId="s1" runState={runState} onError={onError} now={now} />));
+  await act(async () => root!.render(
+    <IdeProvider sessionId="s1" runState={runState} onError={onError} now={now}>
+      <IdeChip />
+      <div className="chat">
+        <VsCodeCard />
+      </div>
+    </IdeProvider>,
+  ));
   await act(async () => {});
   return onError;
 }
 const gets = () => calls.filter((c) => c.method === "GET").length;
-const openBtn = () => container!.querySelector<HTMLButtonElement>("button.ide-open-btn");
+const openBtn = () => container!.querySelector<HTMLButtonElement>(".ide-cluster button.ide-open-btn");
+const card = () => container!.querySelector<HTMLElement>(".chat .vscode-card");
 const tick = async (ms: number) => {
   await act(async () => { vi.advanceTimersByTime(ms); });
   await act(async () => {});
@@ -72,7 +82,9 @@ describe("IdeChip (#243)", () => {
     vi.useFakeTimers({ shouldAdvanceTime: false });
     getStatus = 403;
     await render();
-    expect(container!.textContent).toBe("");
+    expect(container!.querySelector(".ide-cluster")).toBeNull();
+    expect(card()!.textContent).toContain("opened for this floppy's owner");
+    expect(card()!.querySelector("a, button")).toBeNull();
     const after = gets();
     await tick(IDE_REFRESH_MS * 3);
     expect(gets()).toBe(after);
@@ -81,11 +93,11 @@ describe("IdeChip (#243)", () => {
   it("stays hidden on a Drive without the IDE, or one that isn't live", async () => {
     state = { available: false, state: "none" };
     await render();
-    expect(container!.textContent).toBe("");
+    expect(container!.querySelector(".ide-cluster")).toBeNull();
     act(() => root?.unmount());
     state = { available: true, state: "none" };
     await render("stopped");
-    expect(container!.textContent).toBe("");
+    expect(container!.querySelector(".ide-cluster")).toBeNull();
     expect(gets()).toBe(1);
   });
 
@@ -117,6 +129,7 @@ describe("IdeChip (#243)", () => {
     state = { available: true, state: "ready", url: URL_READY };
     await tick(IDE_STARTING_REFRESH_MS);
     const link = container!.querySelector<HTMLAnchorElement>("a.ide-chip")!;
+    expect(link.querySelector("svg.vscode-icon")).not.toBeNull();
     expect(link.href).toBe(`${URL_READY}/`);
     expect(link.target).toBe("_blank");
     expect(link.rel).toContain("noopener");
@@ -171,5 +184,58 @@ describe("IdeChip (#243)", () => {
     expect(onError).toHaveBeenCalled();
     expect(openBtn()!.getAttribute("aria-busy")).toBeNull();
     expect(openBtn()!.textContent).toBe("Open in VS Code");
+  });
+});
+
+describe("VsCodeCard: the chat's chip for the vscode tool (#273)", () => {
+  it("follows the Drive's IDE: busy while starting, then a link with the VS Code mark", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    state = { available: true, state: "installing", updatedAt: new Date(T0).toISOString() };
+    await render();
+    expect(card()!.textContent).toContain("Installing VS Code");
+    expect(card()!.querySelector("svg.vscode-icon")).not.toBeNull();
+    state = { available: true, state: "ready", url: URL_READY };
+    await tick(IDE_STARTING_REFRESH_MS);
+    const link = container!.querySelector<HTMLAnchorElement>(".chat a.vscode-card")!;
+    expect(link.href).toBe(`${URL_READY}/`);
+    expect(link.target).toBe("_blank");
+    expect(link.rel).toContain("noopener");
+    expect(link.textContent).toContain("Open VS Code");
+    expect(link.textContent).toContain("opens in a new tab");
+  });
+
+  it("one poller however many chips show it", async () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => root!.render(
+      <IdeProvider sessionId="s1" runState="idle" onError={vi.fn()} now={() => T0}>
+        <IdeChip />
+        <VsCodeCard />
+        <VsCodeCard />
+        <VsCodeCard />
+      </IdeProvider>,
+    ));
+    await act(async () => {});
+    expect(container.querySelectorAll(".vscode-card")).toHaveLength(3);
+    expect(gets()).toBe(1);
+  });
+
+  it("offers to open it again when it was closed or failed", async () => {
+    state = { available: true, state: "error", detail: "checksum mismatch" };
+    await render();
+    expect(card()!.textContent).toContain("didn't start");
+    expect(card()!.textContent).toContain("checksum mismatch");
+    const again = card()!.querySelector("button")!;
+    expect(again.textContent).toBe("Try again");
+    await act(async () => again.click());
+    expect(calls.some((c) => c.method === "POST")).toBe(true);
+  });
+
+  it("says the Drive isn't running when there's no IDE to show", async () => {
+    state = { available: false, state: "none" };
+    await render();
+    expect(card()!.textContent).toContain("isn't running");
+    expect(card()!.querySelector("a, button")).toBeNull();
   });
 });

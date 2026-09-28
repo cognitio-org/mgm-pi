@@ -226,6 +226,13 @@ export interface UpPreviewClose {
  * `error` (with `detail`); each carries the request's `reqId`. `stopped` is sent unprompted, without
  * one, when code-server or its tunnel dies. Not seq/ack-replayed. */
 export type IdeStatusState = "installing" | "starting" | "ready" | "error" | "stopped";
+
+/** Browser IDE (#273): the model called the `vscode` tool (the person asked it to open VS Code).
+ * The api treats it like the floppy's owner clicking "Open in VS Code": the same checks, the same
+ * owner-and-sysops endpoint, and a limit per run. Not seq/ack-replayed. */
+export interface UpIdeRequest {
+  t: "ide.request";
+}
 export interface UpIdeStatus {
   t: "ide.status";
   reqId?: string;
@@ -253,6 +260,7 @@ export type UpMessage =
   | UpPreviewOpen
   | UpPreviewClose
   | UpIdeStatus
+  | UpIdeRequest
   | UpStartup;
 
 /** Up-messages that carry a `seq` and are subject to the buffer-until-ack contract. */

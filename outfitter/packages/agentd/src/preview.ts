@@ -7,6 +7,7 @@
  *   POST   /previews        {port, jobId?, share?} -> 200 {url, port, expiresAt?}
  *   DELETE /previews/<port>                       -> 200 {closed: true}   (idempotent)
  *   GET    /previews                              -> 200 {previews: [...]}
+ *   POST   /ide                                   -> 202 {requested: true}   (#273, the `vscode` tool)
  *
  * Errors are `{error, detail}`: nothing-listening 409, port-not-allowed 400, not-configured 503,
  * timeout 504, failed 502 (and forbidden 403 / not_found 404 / rejected 400 for bad calls).
@@ -57,6 +58,9 @@ export interface PreviewListenerOptions {
   peerUid?: number;
   waitMs?: number;
   onLog?: (line: string) => void;
+  /** #273: the `vscode` tool asked for the browser IDE. No handler, or it answers undefined: this
+   * Drive has none (404). */
+  onIdeRequest?: () => { ok: true } | { error: "not-configured" | "too-many"; detail: string } | undefined;
   /** Tests: replaces the real ngrok agent. */
   startTunnel?: StartTunnel;
   /** The ngrok binary for the default startTunnel. */
@@ -305,6 +309,12 @@ export class PreviewListener {
       if (!(await this.peerAllowed(req))) return this.fail(res, "forbidden", "wrong peer");
       const path = (req.url ?? "").split("?")[0] ?? "";
       if (req.method === "GET" && path === "/previews") return this.json(res, 200, { previews: this.list() });
+      if (req.method === "POST" && path === "/ide") {
+        const outcome = this.opts.onIdeRequest?.();
+        if (!outcome) return this.fail(res, "not_found", "this Drive has no IDE");
+        if ("error" in outcome) return this.json(res, outcome.error === "too-many" ? 429 : 503, outcome);
+        return this.json(res, 202, { requested: true });
+      }
       const del = /^\/previews\/(\d{1,5})$/.exec(path);
       if (req.method === "DELETE" && del) {
         await this.close(Number(del[1]));

@@ -6,6 +6,10 @@
 // reconnect's "hello" if it was already ready).
 
 import type { PreviewService } from "./previews.ts";
+import { askForIde } from "./ide.ts";
+
+/** #273: how many times a run's model may ask for the IDE in an hour. */
+export const IDE_REQUESTS_PER_RUN_PER_HOUR = 6;
 import { randomUUID, createHash, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { WebSocket } from "@fastify/websocket";
@@ -1247,6 +1251,24 @@ export class AgentLink {
     };
   }
 
+  /** #273: model-made IDE requests per run in the last hour (per instance: a run's socket lives on
+   * one link instance at a time, which is enough to stop a loop). */
+  private readonly ideRequests = new Map<string, number[]>();
+
+  private async handleIdeRequest(runId: string, sessionId: string, socket: WebSocket): Promise<void> {
+    const now = Date.now();
+    const recent = (this.ideRequests.get(runId) ?? []).filter((t) => t > now - 3_600_000);
+    if (recent.length >= IDE_REQUESTS_PER_RUN_PER_HOUR) return;
+    recent.push(now);
+    this.ideRequests.set(runId, recent);
+    const [run, session] = await Promise.all([this.store.runs.findById(runId), this.store.sessions.findById(sessionId)]);
+    if (!run || !session || !this.previews) return;
+    const outcome = await askForIde({ store: this.store, previews: this.previews }, session, run, (message) => {
+      if (socket.readyState === 1) socket.send(JSON.stringify(message));
+    });
+    if ("error" in outcome) console.info(`[agentlink] ide.request for run ${runId} refused: ${outcome.error}`);
+  }
+
   /**
    * `ide.status` from agentd (#242). The run's `ide.reqId` is what the web role wrote when a person
    * clicked "Open in VS Code"; a frame for any other request (stale, or made up by the sandbox) is
@@ -1663,6 +1685,14 @@ export class AgentLink {
       }
       // Browser IDE (#242, docs/specs/browser-ide.md §4). Off the chain's critical path like
       // preview.open: an ngrok API call mustn't hold up heartbeats.
+      // #273: the model called the `vscode` tool (the person asked it to open VS Code). The same
+      // ask as the owner's click (ide.ts), on this socket, within a limit per run.
+      case "ide.request": {
+        void this.handleIdeRequest(runId, sessionId, socket).catch((err) => {
+          console.warn(`[agentlink] ide.request failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+        break;
+      }
       case "ide.status": {
         void this.handleIdeStatus(runId, frame).catch((err) => {
           console.warn(`[agentlink] ide.status failed: ${err instanceof Error ? err.message : String(err)}`);

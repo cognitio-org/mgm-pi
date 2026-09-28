@@ -15,7 +15,7 @@ import extension, { endNotice } from "../.pi/extensions/kernal-background/index.
 
 const servers: Array<Server | TcpServer> = [];
 after(() => { for (const s of servers) s.close(); });
-const ENV_KEYS = ["OUTFITTER_PREVIEW_PORT", "OUTFITTER_PREVIEW_TOKEN", "OUTFITTER_RUN_ID", "OUTFITTER_SESSION_ID"];
+const ENV_KEYS = ["OUTFITTER_PREVIEW_PORT", "OUTFITTER_PREVIEW_TOKEN", "OUTFITTER_RUN_ID", "OUTFITTER_SESSION_ID", "OUTFITTER_IDE"];
 afterEach(() => { for (const k of ENV_KEYS) delete process.env[k]; });
 
 function listen(server: Server | TcpServer): Promise<number> {
@@ -181,4 +181,48 @@ describe("the preview tool", () => {
 test("endNotice mentions a closed preview", () => {
   const job: any = { id: "bg1", name: "vite", kind: "server", status: "killed", startedAt: 0, endedAt: 1000, logPath: "/l", pid: 1, deadlineAt: 0 };
   assert.match(endNotice(job, "", "https://x.kernal.run/"), /Its preview \(https:\/\/x\.kernal\.run\/\) was closed\./);
+});
+
+describe("vscode tool (#273)", () => {
+  test("only offered in a Drive with the IDE (OUTFITTER_IDE=1 and the listener)", async () => {
+    assert.equal(loadExtension().tools.has("vscode"), false, "desktop");
+    process.env.OUTFITTER_PREVIEW_PORT = "4000";
+    process.env.OUTFITTER_PREVIEW_TOKEN = "t";
+    assert.equal(loadExtension().tools.has("vscode"), false, "a Drive without the IDE");
+    process.env.OUTFITTER_IDE = "1";
+    assert.equal(loadExtension().tools.has("vscode"), true);
+  });
+
+  test("asks agentd with its token, and tells the model the link is the person's", async () => {
+    const agentd = await fakeAgentd({ token: "tok", reply: () => ({ status: 202, json: { requested: true } }) });
+    process.env.OUTFITTER_PREVIEW_PORT = String(agentd.port);
+    process.env.OUTFITTER_PREVIEW_TOKEN = "tok";
+    process.env.OUTFITTER_IDE = "1";
+    const { call } = loadExtension();
+    const r = await call("vscode", {});
+    assert.equal(r.isError, false);
+    assert.match(r.text, /VS Code is starting/);
+    assert.match(r.text, /owner/);
+    assert.doesNotMatch(r.text, /https?:\/\//, "no link for the model");
+    assert.deepEqual(agentd.calls.map((c) => [c.method, c.url, c.token]), [["POST", "/ide", "tok"]]);
+  });
+
+  test("a repeat inside agentd's window, and a Drive without the IDE, answer in plain words", async () => {
+    let status = 429;
+    const agentd = await fakeAgentd({
+      token: "tok",
+      reply: () => (status === 429 ? { status, json: { error: "too-many", detail: "asked a moment ago" } } : { status, json: { error: "not_found", detail: "this Drive has no IDE" } }),
+    });
+    process.env.OUTFITTER_PREVIEW_PORT = String(agentd.port);
+    process.env.OUTFITTER_PREVIEW_TOKEN = "tok";
+    process.env.OUTFITTER_IDE = "1";
+    const { call } = loadExtension();
+    const again = await call("vscode", {});
+    assert.equal(again.isError, false);
+    assert.match(again.text, /already on its way/);
+    status = 404;
+    const none = await call("vscode", {});
+    assert.equal(none.isError, true);
+    assert.match(none.text, /no VS Code/);
+  });
 });

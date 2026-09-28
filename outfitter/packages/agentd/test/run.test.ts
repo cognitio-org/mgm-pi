@@ -1754,3 +1754,57 @@ test("RunController: #242 ide.open with the IDE and previews starts it and answe
   await waitFor(() => link.sent.some((m) => m.t === "bye"));
   assert.equal(tunnels[0]?.stopped, true, "the IDE goes with the run");
 });
+
+// ---- Browser IDE (#273): the model's `vscode` tool, through the preview listener ----
+
+test("RunController: #273 a Drive with the IDE tells Kernal (OUTFITTER_IDE) and forwards the tool's request once per 20 s", async (t) => {
+  for (const withIde of [true, false]) {
+    const workspace = await mkdtemp(join(tmpdir(), "outfitter-run-test-"));
+    const link = new FakeLink();
+    let spawnEnv: Record<string, string> | undefined;
+    const controller = new RunController({
+      link,
+      gitOps: fakeGitOps(),
+      workspace,
+      piBin: "unused-in-test",
+      agentdVersion: "test",
+      piVersion: "test",
+      heartbeatIntervalMs: 60_000,
+      spawnPi: (opts) => { spawnEnv = opts.env; return makeControllablePi(); },
+      importSession: async (_snapshotFile, _cwd, sessionId) => join(workspace, `${sessionId}.jsonl`),
+      writeSnapshotFile,
+      createTailer: () => ({ start() {}, stop() {}, poll: async () => {} }),
+      onLog: () => {},
+      ideInstaller: () => ({ state: "ready", start: async () => ({ ok: true, seconds: 0 }), abort: () => {} }),
+    });
+    t.after(() => controller.dispose());
+    link.deliver({
+      t: "run.spec",
+      session: { id: "sess-ide", name: "ide", cwd: "/workspace" },
+      guru: { model: "fake/model", env: { OUTFITTER_IDE: "spoofed" } },
+      snapshot: { jsonl: emptySessionJsonl("sess-ide", "/workspace") },
+      secrets: { ngrokAuthtoken: "tok" },
+      preview: { internalDomain: "rtest.internal" },
+      ...(withIde ? { ide: { version: "4.139.1", artifacts: { amd64: "a".repeat(64), arm64: "b".repeat(64) } } } : {}),
+      idleStopSeconds: 3600,
+      checkpointEvery: "turn",
+    });
+    await waitFor(() => spawnEnv !== undefined);
+    const env = spawnEnv!;
+    const post = () => fetch(`http://127.0.0.1:${env.OUTFITTER_PREVIEW_PORT}/ide`, { method: "POST", headers: { "x-outfitter-preview-token": env.OUTFITTER_PREVIEW_TOKEN! } });
+    if (withIde) {
+      assert.equal(env.OUTFITTER_IDE, "1");
+      const first = await post();
+      assert.equal(first.status, 202);
+      assert.equal(link.sent.filter((m) => m.t === "ide.request").length, 1);
+      const again = await post();
+      assert.equal(again.status, 429, "a looping model can't flood the link");
+      assert.equal(link.sent.filter((m) => m.t === "ide.request").length, 1);
+    } else {
+      assert.equal(env.OUTFITTER_IDE, "spoofed", "only guru.env's own value; agentd sets nothing");
+      assert.equal((await post()).status, 404);
+      assert.equal(link.sent.filter((m) => m.t === "ide.request").length, 0);
+    }
+    controller.dispose();
+  }
+});

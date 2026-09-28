@@ -24,6 +24,7 @@ import { StatusPill } from "../components/StatusPill.tsx";
 import { GithubChip } from "../components/GithubChip.tsx";
 import { PreviewChips } from "../components/PreviewChips.tsx";
 import { IdeChip } from "../components/IdeChip.tsx";
+import { IdeProvider } from "../components/IdeProvider.tsx";
 import { StartupTime } from "../components/StartupTime.tsx";
 import { NerdOutPanel } from "../components/NerdOutPanel.tsx";
 import { TransportDot } from "../components/TransportDot.tsx";
@@ -451,6 +452,8 @@ export function SessionPage() {
   }
 
   return (
+    // #273: one view of the Drive's IDE for the status-bar chip and any chat chips (the vscode tool).
+    <IdeProvider sessionId={sessionId} runState={runState} onError={setApiError}>
     <div className="session-view">
       {apiError && (
         <SystemErrorDialog
@@ -599,7 +602,7 @@ export function SessionPage() {
             />
             {cluster && <GithubChip cluster={cluster} />}
             <PreviewChips sessionId={sessionId} runState={runState} onError={setApiError} />
-            <IdeChip sessionId={sessionId} runState={runState} onError={setApiError} />
+            <IdeChip />
             <span className="session-model-info">
               {header.model ? <span className="mono">{header.model}</span> : "model unknown yet"}
               {header.thinking ? <span>thinking {header.thinking}</span> : null}
@@ -759,5 +762,6 @@ export function SessionPage() {
         placeholderOverride={statusLine === "READY." ? "READY." : undefined}
       />
     </div>
+    </IdeProvider>
   );
 }

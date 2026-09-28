@@ -1,0 +1,21 @@
+outfitter/docs/specs/web-voice.md
+  s_fd47f462159c85::t_9fe4b46a2eaae9 1-213
+outfitter/EPIC.md
+  s_fd47f462159c85::t_a69e168a4753e6 438-445
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "a15282c9870f58be37cd04e8b965890b8af0bff4",
+  "prompts": {},
+  "sessions": {
+    "s_fd47f462159c85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4302a461-a7ca-4bcd-bca6-85c286e60f99",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

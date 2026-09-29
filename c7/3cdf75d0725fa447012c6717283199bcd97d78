@@ -1,0 +1,22 @@
+tunnel.sh
+  s_885dde90a8ec58::t_b48963e623a3af 22-24
+keepalive.mjs
+  s_885dde90a8ec58::t_5fa69cfc14b43c 82-85
+  s_885dde90a8ec58::t_b48963e623a3af 22-28,53,79-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "c73cdf75d0725fa447012c6717283199bcd97d78",
+  "prompts": {},
+  "sessions": {
+    "s_885dde90a8ec58": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fc9bab2f-409c-4e9c-9cd5-ff15ccd352cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -58,7 +58,7 @@ Qwen 3.6 reasons by default and spends 400-1600 tokens on trivial prompts. Send
 ## Exposing the model to the cloud LiteLLM router
 
 LiteLLM (`litellm.augment-code.support`, GCP Cloud Run) reaches the laptop through ngrok on a
-stable domain (`TUNNEL_DOMAIN_LMSTUDIO` in `.env`, Hobbyist plan). A bearer token
+stable domain (`TUNNEL_DOMAIN_LMSTUDIO` in `.env`, pay-as-you-go plan). A bearer token
 (`LOCAL_TUNNEL_TOKEN`) is enforced by an ngrok traffic policy, so unauthenticated requests never
 reach the laptop. The router model is `local-qwen-mlx`; its payload lives in
 `~/code/openllm/litellm-config/deployments/local-qwen-mlx.json`.
@@ -69,3 +69,11 @@ cd ~/code/openllm/litellm-config && LITELLM_MASTER_KEY=... ./apply-local.sh   # 
 ```
 
 Keep the laptop awake (`caffeinate -s`) while the model should be reachable.
+
+`tunnel.sh` also starts `keepalive.mjs` and points ngrok at it (port 1235), not at LM Studio (1234)
+directly. ngrok drops a stream that has carried no data for 300 s. LM Studio sends a tool call's
+arguments in one chunk once the call is complete, so a long tool call (a report written in one
+`write`) leaves the stream silent for minutes, and every such call used to fail at five minutes
+with LiteLLM's `Response payload is not completed … SSLError record layer failure`
+(mgmonteleone/openllm#10). The shim passes everything through and, while a stream is silent,
+writes an SSE comment (`: keep-alive`) every 15 s, which OpenAI-compatible clients ignore.

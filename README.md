@@ -69,3 +69,11 @@ cd ~/code/openllm/litellm-config && LITELLM_MASTER_KEY=... ./apply-local.sh   # 
 ```
 
 Keep the laptop awake (`caffeinate -s`) while the model should be reachable.
+
+`tunnel.sh` also starts `keepalive.mjs` and points ngrok at it (port 1235), not at LM Studio (1234)
+directly. ngrok drops a stream that has carried no data for 300 s. LM Studio sends a tool call's
+arguments in one chunk once the call is complete, so a long tool call (a report written in one
+`write`) leaves the stream silent for minutes, and every such call used to fail at five minutes
+with LiteLLM's `Response payload is not completed … SSLError record layer failure`
+(mgmonteleone/openllm#10). The shim passes everything through and, while a stream is silent,
+writes an SSE comment (`: keep-alive`) every 15 s, which OpenAI-compatible clients ignore.

@@ -19,6 +19,9 @@ for _ in $(seq 50); do
   kill -0 "$shim" 2>/dev/null || { echo "keepalive.mjs failed to start" >&2; exit 1; }
   sleep 0.1
 done
+# Something else already on 1235 answers the probe while the shim dies of EADDRINUSE.
+sleep 0.3
+kill -0 "$shim" 2>/dev/null || { echo "keepalive.mjs exited (port 1235 in use?)" >&2; exit 1; }
 
 ngrok http 1235 --url "https://$TUNNEL_DOMAIN_LMSTUDIO" --host-header=localhost:1234 \
   --traffic-policy-file <(cat <<YAML

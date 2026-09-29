@@ -19,6 +19,13 @@ const COMMENT = Buffer.from(": keep-alive\n\n");
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
+/** Whether a chunk ends an SSE event: a blank line, "\n\n" or "\r\n\r\n". A chunk that ends
+ * mid-event returns false, and the next one decides. */
+function endsEvent(chunk) {
+  const tail = chunk.subarray(-4).toString("latin1");
+  return tail.endsWith("\n\n") || tail.endsWith("\r\n\r\n");
+}
+
 const server = http.createServer((req, res) => {
   const started = Date.now();
   const upstream = http.request(
@@ -43,7 +50,7 @@ const server = http.createServer((req, res) => {
       up.on("data", (chunk) => {
         res.write(chunk);
         lastWrite = Date.now();
-        atBoundary = chunk.length >= 2 && chunk[chunk.length - 1] === 0x0a && chunk[chunk.length - 2] === 0x0a;
+        atBoundary = endsEvent(chunk);
       });
       up.on("end", () => {
         clearInterval(timer);
@@ -69,4 +76,11 @@ const server = http.createServer((req, res) => {
 });
 
 server.requestTimeout = 0; // a long generation is the point; Node's default would cut it at 300 s
+// ngrok's agent pools connections to us. Node's 5 s idle close can race a request ngrok just sent
+// on that socket, and a POST that meets a closed socket comes back as a 502. Outlast its pool.
+server.keepAliveTimeout = 120_000;
+server.on("error", (err) => {
+  console.error(`keepalive.mjs: ${err.message}`);
+  process.exit(1);
+});
 server.listen(PORT, "127.0.0.1", () => log(`keep-alive shim on 127.0.0.1:${PORT} -> 127.0.0.1:${UPSTREAM}, every ${EVERY_MS / 1000}s`));

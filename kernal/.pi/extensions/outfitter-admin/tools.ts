@@ -10,8 +10,8 @@ import type { AdminReply, AdminTransport } from "./transport.ts";
 
 export type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
-/** Asks the person to approve a delete (laptop TUI). Undefined when nobody can be asked. */
-export type Confirm = (title: string, message: string) => Promise<boolean>;
+/** Asks the person at the laptop TUI to approve. Undefined when nobody is there to ask. */
+export type Confirm = (title: string, message: string, signal?: AbortSignal) => Promise<boolean>;
 
 const TAPE_FIELDS =
   "Tape fields: name, model (provider/id), fallbackModel, thinking, systemPrompt, appendSystemPrompt, tools[], excludeTools[], env{}, branchPrefix, mergeFromCloud, browserIde, playwrightBeforeCheckpoint, allowExternalHtmlResources.";
@@ -30,12 +30,26 @@ function actionOf(params: Record<string, any>, allowed: readonly string[]): stri
   return allowed.includes(a) ? a : undefined;
 }
 
-function withFields(params: Record<string, any>, keys: string[]): Record<string, unknown> {
-  const args: Record<string, unknown> = {};
-  for (const k of keys) if (params[k] !== undefined) args[k] = params[k];
-  const fields = params.fields;
-  if (fields && typeof fields === "object" && !Array.isArray(fields)) Object.assign(args, fields);
-  return args;
+/**
+ * The op's args: the listed top-level params, then `fields` (a JSON string is parsed, since some
+ * models send one). `id` and the other top-level keys always win over the same key in `fields`.
+ */
+function toOp(op: string, params: Record<string, any>, keys: string[]): { op: string; args: Record<string, unknown> } | { error: string } {
+  let fields = params.fields;
+  if (typeof fields === "string") {
+    try {
+      fields = JSON.parse(fields);
+    } catch {
+      return { error: "fields must be an object" };
+    }
+  }
+  if (fields !== undefined && (!fields || typeof fields !== "object" || Array.isArray(fields))) return { error: "fields must be an object" };
+  const args: Record<string, unknown> = { ...(fields ?? {}) };
+  for (const k of keys) {
+    if (params[k] !== undefined) args[k] = params[k];
+    else if (k === "id") delete args.id;
+  }
+  return { op, args };
 }
 
 const TAPE_ACTIONS = ["list", "get", "meta", "create", "update", "delete"] as const;
@@ -46,7 +60,7 @@ export const ADMIN_TOOLS: AdminToolDef[] = [
   {
     name: "outfitter_tapes",
     label: "Outfitter tapes",
-    description: "Manage Outfitter tapes (saved agent setups). meta lists models and limits. delete asks the user.",
+    description: "Manage Outfitter tapes (saved agent setups). meta lists models and limits. Deletes and admin-tape changes ask the user.",
     parameters: {
       type: "object",
       required: ["action"],
@@ -56,13 +70,13 @@ export const ADMIN_TOOLS: AdminToolDef[] = [
         fields: { type: "object", description: `create/update only. ${TAPE_FIELDS}` },
         query: { type: "string", description: "list: filter by id, name or model." },
         models: { type: "string", description: "meta: filter the model list." },
-        limit: { type: "number" },
+        limit: { type: "integer" },
       },
     },
     toOp(p) {
       const action = actionOf(p, TAPE_ACTIONS);
       if (!action) return { error: `action must be one of: ${TAPE_ACTIONS.join(", ")}` };
-      return { op: `tapes.${action}`, args: withFields(p, ["id", "query", "models", "limit"]) };
+      return toOp(`tapes.${action}`, p, ["id", "query", "models", "limit"]);
     },
   },
   {
@@ -76,13 +90,13 @@ export const ADMIN_TOOLS: AdminToolDef[] = [
         action: { type: "string", enum: ENV_ACTIONS },
         id: { type: "string", description: "Environment id or unique prefix." },
         fields: { type: "object", description: "create/update only: name, repo (owner/name), baseBranch, env{}." },
-        limit: { type: "number" },
+        limit: { type: "integer" },
       },
     },
     toOp(p) {
       const action = actionOf(p, ENV_ACTIONS);
       if (!action) return { error: `action must be one of: ${ENV_ACTIONS.join(", ")}` };
-      return { op: `environments.${action}`, args: withFields(p, ["id", "limit"]) };
+      return toOp(`environments.${action}`, p, ["id", "limit"]);
     },
   },
   {
@@ -97,32 +111,46 @@ export const ADMIN_TOOLS: AdminToolDef[] = [
         id: { type: "string", description: "get: session id or 8+ char prefix." },
         tape: { type: "string", description: "list: only this tape's sessions." },
         owner: { type: "string", enum: ["me"], description: "list: only mine." },
-        status: { type: "string", enum: ["open", "closed"] },
+        status: { type: "string", enum: ["open", "closed"], description: "list: filter." },
         archived: { type: "boolean", description: "list: archived sessions instead." },
-        limit: { type: "number" },
+        limit: { type: "integer" },
       },
     },
     toOp(p) {
       const action = actionOf(p, SESSION_ACTIONS);
       if (!action) return { error: `action must be one of: ${SESSION_ACTIONS.join(", ")}` };
-      return { op: `sessions.${action}`, args: withFields(p, ["id", "tape", "owner", "status", "archived", "limit"]) };
+      return toOp(`sessions.${action}`, p, ["id", "tape", "owner", "status", "archived", "limit"]);
     },
   },
 ];
 
 export const PROMPT_SNIPPET = "outfitter_*: administer Outfitter (tapes, environments, sessions) without calling its API.";
-export const PROMPT_GUIDELINES = [
-  "outfitter_*: use these, not curl or the web API. Load the outfitter-admin skill before building or changing a tape.",
-];
+export const PROMPT_GUIDELINES = ["outfitter_*: use these, not curl or the web API."];
 
 function text(reply: AdminReply): ToolResult {
   return reply.ok ? { content: [{ type: "text", text: reply.text }] } : { content: [{ type: "text", text: reply.error }], isError: true };
 }
 
+/** What the TUI confirm shows: the op, its target, the fields it changes, and the start of a new
+ * prompt, so the person approves the change itself. Env values are never shown. */
+export function confirmText(op: string, args: Record<string, unknown>): { title: string; message: string } {
+  const target = typeof args.id === "string" ? ` ${args.id.slice(0, 60)}` : "";
+  const title = op.endsWith(".delete") ? `Outfitter: delete${op.startsWith("tapes.") ? " tape" : ""}${target}?` : `Outfitter: ${op}${target}?`;
+  const lines = [`The agent asked for ${op}${target}.`];
+  const names = Object.keys(args).filter((k) => k !== "id");
+  if (names.length) lines.push(`Fields: ${names.join(", ").slice(0, 200)}`);
+  for (const key of ["systemPrompt", "appendSystemPrompt"]) {
+    const v = args[key];
+    if (typeof v === "string") lines.push(`${key}: ${v.replace(/\s+/g, " ").slice(0, 200)}${v.length > 200 ? "…" : ""}`);
+  }
+  if (args.env && typeof args.env === "object") lines.push(`env: ${Object.keys(args.env).join(", ")} (values not shown)`);
+  return { title, message: lines.join("\n") };
+}
+
 /**
- * Runs one tool call. A delete that needs approval is asked in the TUI on a laptop and sent again
- * confirmed; in a Drive the API itself waits for the web approval, so it never comes back here
- * with needsApproval unless it was denied or timed out.
+ * Runs one tool call. A call that needs approval is asked in the TUI on a laptop and sent again
+ * confirmed; in a Drive the API itself waits for the web approval, so it only comes back here with
+ * needsApproval when the owner declined or did not answer.
  */
 export async function runTool(
   def: AdminToolDef,
@@ -132,14 +160,13 @@ export async function runTool(
   signal?: AbortSignal,
 ): Promise<ToolResult> {
   const mapped = def.toOp(params ?? {});
-  if ("error" in mapped) return { content: [{ type: "text", text: mapped.error }], isError: true };
+  if (!("op" in mapped)) return { content: [{ type: "text", text: mapped.error }], isError: true };
   const first = await transport.call(mapped.op, mapped.args, { signal });
   if (first.ok || !first.needsApproval) return text(first);
-  if (transport.kind !== "laptop" || !confirm) {
-    return text({ ok: false, error: "needs approval: ask the user to run this in the Kernal TUI or the Outfitter web UI" });
-  }
-  const target = typeof mapped.args.id === "string" ? ` ${mapped.args.id}` : "";
-  const yes = await confirm(`Outfitter: ${mapped.op}${target}?`, `The agent wants to run ${mapped.op}${target}.`);
+  if (transport.kind === "drive") return text({ ok: false, error: `not approved: ${first.error}` });
+  if (!confirm) return text({ ok: false, error: "needs approval: run this in the Kernal TUI, where the user can confirm it" });
+  const { title, message } = confirmText(mapped.op, mapped.args);
+  const yes = await confirm(title, message, signal);
   if (!yes) return text({ ok: false, error: "the user declined" });
   return text(await transport.call(mapped.op, mapped.args, { confirmed: true, signal }));
 }

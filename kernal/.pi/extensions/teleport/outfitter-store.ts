@@ -28,6 +28,7 @@
  * polls GET /api/sessions/:id until the run is no longer active, so the exported transcript is
  * complete. --force (opts.force) skips this and pulls whatever has been persisted so far.
  */
+import { outfitterCredentials } from "../_shared/outfitter-env.ts";
 import type { Manifest, SessionRef, Store, Warn } from "./lib.ts";
 
 // Run states the API considers "active" -- mirrors ACTIVE_RUN_STATES / memory.ts's findActiveForSession.
@@ -77,10 +78,10 @@ export class OutfitterStore implements Store {
   private now: () => number;
 
   constructor(opts: OutfitterStoreOptions = {}) {
-    const apiBase = opts.apiBase ?? process.env.OUTFITTER_API;
+    const apiBase = opts.apiBase ?? outfitterCredentials().api;
     if (!apiBase) throw new Error("teleport: KERNAL_TELEPORT_STORE=outfitter requires OUTFITTER_API (the Outfitter link service's origin) to be set.");
     this.apiBase = apiBase.replace(/\/+$/, "");
-    const token = opts.token ?? process.env.OUTFITTER_TOKEN;
+    const token = opts.token ?? outfitterCredentials().token;
     if (!token) {
       throw new Error(
         "teleport: KERNAL_TELEPORT_STORE=outfitter requires OUTFITTER_TOKEN (a personal API token -- create one on the Outfitter web UI's Tokens page).",

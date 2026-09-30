@@ -12,6 +12,15 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { ADMIN_TOOLS, PROMPT_GUIDELINES, PROMPT_SNIPPET, runTool, type Confirm } from "./tools.ts";
 import { adminTransport, type AdminTransport } from "./transport.ts";
 
+const CONFIRM_TIMEOUT_MS = 5 * 60_000;
+
+/** A person is at the terminal (as kernal-github decides it): RPC mode has a UI that may have
+ * nobody watching, and a Drive's approvals are the API's, not this dialog's. */
+export function personHere(ctx: any): boolean {
+  if (process.env.OUTFITTER_SESSION_ID) return false;
+  return ctx?.mode === "tui";
+}
+
 export default function (pi: ExtensionAPI, transport: AdminTransport | undefined = adminTransport()) {
   if (!transport) return;
   ADMIN_TOOLS.forEach((def, i) => {
@@ -24,7 +33,9 @@ export default function (pi: ExtensionAPI, transport: AdminTransport | undefined
       parameters: def.parameters,
       execute: async (_id: string, params: any, signal: AbortSignal | undefined, _update: unknown, ctx: any) => {
         const confirm: Confirm | undefined =
-          ctx?.hasUI && typeof ctx.ui?.confirm === "function" ? (title, message) => ctx.ui.confirm(title, message) : undefined;
+          personHere(ctx) && typeof ctx.ui?.confirm === "function"
+            ? (title, message, signal) => ctx.ui.confirm(title, message, { signal, timeout: CONFIRM_TIMEOUT_MS })
+            : undefined;
         try {
           return await runTool(def, params, transport, confirm, signal);
         } catch (err) {

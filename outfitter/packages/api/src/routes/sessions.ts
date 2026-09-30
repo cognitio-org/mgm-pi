@@ -318,6 +318,8 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
       if (inserted) leafId = entry.id;
     }
     await ctx.store.sessions.update(id, { leafId, updatedAt: now, ...(existing && carried.patch ? carried.patch : {}) });
+    // Session search (#289): an imported (teleported or synced) session is searchable like any other.
+    void ctx.indexer.reindexSession(id).catch((err) => req.log.warn({ err }, "session index failed"));
 
     return { id, imported: lines.length - 1 };
   });
@@ -551,6 +553,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
       ctx.store.browserShares.deleteForSession(session.id),
       ctx.store.browserRequests.deleteForSession(session.id),
       ctx.store.browserCaptures.deleteForSession(session.id),
+      ctx.indexer.removeSession(session.id),
     ]);
     await ctx.store.sessions.delete(session.id);
     ctx.sse.close(session.id);

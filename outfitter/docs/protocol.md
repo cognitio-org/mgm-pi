@@ -601,7 +601,10 @@ Drive reaches the same registry through agentd's admin socket (#287), not this r
 Request: `{op, args?, confirmed?}`. Reply, always `200` for an authenticated call:
 `{ok: true, text}` or `{ok: false, error, needsApproval?}`. `text` is compact, capped text meant
 for a model, not JSON to parse. Ops so far: `tapes.list|get|meta|create|update|delete`,
-`environments.list|get|create|update`, `sessions.list|get`.
+`environments.list|get|create|update`, `sessions.list|get|search|transcript` (#289: session search
+and compact transcripts; `search` takes `query`, `mode` hybrid|text|semantic, `owner:"me"`, `tape`,
+`repo`, `role`, `session`, `since`/`until` such as `7d`, `limit`; `transcript` takes `id`, `view`
+outline|text, `around`, `window`, `from`, `maxChars`, `toolOutput` none|trimmed|full, `roles`).
 
 - A token caller is never a sysop, so operator ops are refused on both origins.
 - `delete`s, and writes to a tape that has `adminTools`, return `needsApproval: true` unless

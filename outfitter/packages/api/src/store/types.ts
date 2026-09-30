@@ -505,6 +505,48 @@ export interface AdminAuditEntry {
   approvalId?: string;
 }
 
+/** One searchable piece of a session (Sysop tools, #289; search/chunker.ts): the words of one entry,
+ * redacted and cut short, or the session's own name and prompt. */
+export interface SessionChunk {
+  /** `<sessionId>:<entryId>`, or `<sessionId>:session`. */
+  id: string;
+  sessionId: string;
+  entryId: string;
+  /** Lowercased. */
+  ownerEmail?: string;
+  guruId: string;
+  repo?: string;
+  role: "user" | "assistant" | "tool" | "summary" | "session";
+  tool?: string;
+  isError?: boolean;
+  createdAt: string;
+  text: string;
+}
+
+export type ChunkSearchMode = "text" | "semantic" | "hybrid";
+
+export interface ChunkQuery {
+  text: string;
+  mode: ChunkSearchMode;
+  filter: { ownerEmail?: string; guruId?: string; repo?: string; role?: SessionChunk["role"]; sessionId?: string; since?: string; until?: string };
+  limit: number;
+}
+
+export interface ChunkHit {
+  chunk: SessionChunk;
+  score?: number;
+}
+
+/** Thrown by a store that can't run the asked-for search mode (the memory store: no Atlas). */
+export class SearchUnavailableError extends Error {}
+
+export interface SessionChunksCollection {
+  /** Inserts or replaces by id. */
+  upsertMany(chunks: SessionChunk[]): Promise<void>;
+  deleteForSession(sessionId: string): Promise<number>;
+  search(query: ChunkQuery): Promise<ChunkHit[]>;
+}
+
 export interface AdminApprovalsCollection {
   /** The run's approval, pending or answered, or null. */
   get(runId: string): Promise<AdminApproval | null>;
@@ -974,5 +1016,6 @@ export interface Store {
   previews: PreviewsCollection;
   adminAudit: AdminAuditCollection;
   adminApprovals: AdminApprovalsCollection;
+  sessionChunks: SessionChunksCollection;
   close(): Promise<void>;
 }

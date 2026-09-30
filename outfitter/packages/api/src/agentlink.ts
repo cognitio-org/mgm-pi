@@ -5,6 +5,7 @@
 // queue drains once agentd reports the run running/idle — on that first "status", or on a later
 // reconnect's "hello" if it was already ready).
 
+import type { SessionIndexer } from "./search/service.ts";
 import type { DriveAdmin } from "./admin/drive.ts";
 import type { PreviewService } from "./previews.ts";
 import { askForIde } from "./ide.ts";
@@ -365,6 +366,8 @@ export class AgentLink {
   private previews: PreviewService | undefined;
   /** Sysop tools (#287): the Drive side of the admin op registry; unset until setDriveAdmin. */
   private driveAdmin: DriveAdmin | undefined;
+  /** Session search (#289): indexes each new entry; unset in apps built without one. */
+  private indexer: SessionIndexer | undefined;
   /** Admin requests being handled per run, capped at MAX_ADMIN_IN_FLIGHT. */
   private readonly adminInFlight = new Map<string, number>();
   /** Installation-token refresh timers, one per run. Cleared only when that run's current socket closes. */
@@ -398,6 +401,10 @@ export class AgentLink {
     this.mail = mail;
     this.github = github ?? new GithubBroker(store, secretsBroker);
     this.githubRefreshTiming = refreshTiming ?? {};
+  }
+
+  setIndexer(indexer: SessionIndexer): void {
+    this.indexer = indexer;
   }
 
   /** Sysop tools (#287): server.ts wires this once the models service exists. */
@@ -1525,6 +1532,8 @@ export class AgentLink {
         const seq = Number(frame.seq);
         const entry = frame.entry as PiEntry;
         const inserted = await this.store.entries.insertIfNew(sessionId, seq, entry, { runId });
+        // Off the ack path: search indexing must never hold up or fail an entry.
+        if (inserted) void this.indexer?.indexEntry(sessionId, entry);
         if (inserted) {
           await this.store.sessions.update(sessionId, { leafId: entry.id, updatedAt: now });
           this.sse.publish(sessionId, { type: "entry", data: entryForWire({ entry, runId }) });

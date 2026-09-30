@@ -47,11 +47,17 @@ import type {
   AdminAuditCollection,
   AdminApproval,
   AdminApprovalsCollection,
+  ChunkHit,
+  ChunkQuery,
+  SessionChunk,
+  SessionChunksCollection,
   AdminAuditEntry,
 } from "./types.ts";
 import type { VoicePrefs } from "../voice.ts";
 import { BROWSER_CAPTURES_PER_SESSION, entryInsertFields, type EntryInsertOptions } from "./types.ts";
 import { TOKEN_TTL_MS } from "../tokens.ts";
+import { SearchUnavailableError } from "./types.ts";
+import { CHUNKS_COLLECTION, CHUNKS_TEXT_INDEX, CHUNKS_VECTOR_INDEX } from "../search/indexes.ts";
 
 // Typed as RunState[], not inferred as string[]: used in a Mongo `$in` filter against Run.state,
 // which the mongodb driver's Filter<T> types as a union of the literal RunState strings.
@@ -1076,6 +1082,87 @@ class MongoFormattedSessions implements FormattedSessionsCollection {
   }
 }
 
+type ChunkDoc = SessionChunk & { _id: string; at: Date };
+
+/**
+ * Session search (Sysop tools, #289) on Atlas: `$search` on chunks_text, `$vectorSearch` on the
+ * auto-embedded chunks_vec (Atlas embeds the query text too), and `$rankFusion` of both for hybrid
+ * (MongoDB 8.0+). A missing index is a SearchUnavailableError naming the script that makes it.
+ */
+class MongoSessionChunks implements SessionChunksCollection {
+  private readonly col: MongoCollection<ChunkDoc>;
+
+  constructor(col: MongoCollection<ChunkDoc>) {
+    this.col = col;
+  }
+
+  async upsertMany(chunks: SessionChunk[]): Promise<void> {
+    if (!chunks.length) return;
+    await this.col.bulkWrite(
+      chunks.map((c) => {
+        const doc = { ...c, _id: c.id, at: new Date(c.createdAt) } as ChunkDoc;
+        return { replaceOne: { filter: { _id: c.id }, replacement: doc, upsert: true } };
+      }),
+      { ordered: false },
+    );
+  }
+
+  async deleteForSession(sessionId: string): Promise<number> {
+    return (await this.col.deleteMany({ sessionId })).deletedCount;
+  }
+
+  async search(query: ChunkQuery): Promise<ChunkHit[]> {
+    const limit = Math.min(Math.max(query.limit, 1), 100);
+    const f = query.filter;
+    const equals = Object.entries({ ownerEmail: f.ownerEmail, guruId: f.guruId, repo: f.repo, role: f.role, sessionId: f.sessionId }).filter(
+      (e): e is [string, string] => typeof e[1] === "string" && e[1].length > 0,
+    );
+    const range = f.since || f.until ? { ...(f.since ? { gte: new Date(f.since) } : {}), ...(f.until ? { lte: new Date(f.until) } : {}) } : undefined;
+    const searchStage = {
+      $search: {
+        index: CHUNKS_TEXT_INDEX,
+        compound: {
+          must: [{ text: { query: query.text, path: "text" } }],
+          filter: [...equals.map(([path, value]) => ({ equals: { path, value } })), ...(range ? [{ range: { path: "at", ...range } }] : [])],
+        },
+      },
+    };
+    const vectorFilter: Record<string, unknown> = Object.fromEntries(equals);
+    if (range) vectorFilter.at = { ...(range.gte ? { $gte: range.gte } : {}), ...(range.lte ? { $lte: range.lte } : {}) };
+    const vectorStage = {
+      $vectorSearch: {
+        index: CHUNKS_VECTOR_INDEX,
+        path: "text",
+        query: query.text,
+        numCandidates: limit * 10,
+        limit,
+        ...(Object.keys(vectorFilter).length ? { filter: vectorFilter } : {}),
+      },
+    };
+    let pipeline: Record<string, unknown>[];
+    if (query.mode === "text") pipeline = [searchStage, { $limit: limit }, { $addFields: { score: { $meta: "searchScore" } } }];
+    else if (query.mode === "semantic") pipeline = [vectorStage, { $addFields: { score: { $meta: "vectorSearchScore" } } }];
+    else {
+      pipeline = [
+        { $rankFusion: { input: { pipelines: { vector: [vectorStage], text: [searchStage, { $limit: limit }] } } } },
+        { $limit: limit },
+        { $addFields: { score: { $meta: "score" } } },
+      ];
+    }
+    let rows: Array<ChunkDoc & { score?: number }>;
+    try {
+      rows = (await this.col.aggregate(pipeline).toArray()) as Array<ChunkDoc & { score?: number }>;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (/index|\$search|\$vectorSearch|\$rankFusion|autoEmbed|not supported|Unrecognized/i.test(message)) {
+        throw new SearchUnavailableError(`${query.mode} search is not set up on this cluster (run deploy/atlas-search.sh): ${message.slice(0, 160)}`);
+      }
+      throw err;
+    }
+    return rows.map(({ _id: _ignored, at: _at, score, ...chunk }) => ({ chunk: chunk as SessionChunk, ...(typeof score === "number" ? { score } : {}) }));
+  }
+}
+
 class MongoAdminApprovals implements AdminApprovalsCollection {
   private readonly col: MongoCollection<AdminApproval & { _id: string }>;
 
@@ -1190,6 +1277,7 @@ export class MongoStore implements Store {
   readonly previews: PreviewsCollection;
   readonly adminAudit: AdminAuditCollection;
   readonly adminApprovals: AdminApprovalsCollection;
+  readonly sessionChunks: SessionChunksCollection;
   private readonly client: MongoClient;
 
   private constructor(client: MongoClient, db: Db) {
@@ -1212,6 +1300,7 @@ export class MongoStore implements Store {
     this.previews = new MongoPreviews(db.collection("previews"));
     this.adminAudit = new MongoAdminAudit(db.collection("adminAudit"));
     this.adminApprovals = new MongoAdminApprovals(db.collection("adminApprovals"));
+    this.sessionChunks = new MongoSessionChunks(db.collection(CHUNKS_COLLECTION));
   }
 
   /** `dbName` wins over the database in the URI; the stored URI has none, so the default keeps
@@ -1236,6 +1325,7 @@ export class MongoStore implements Store {
       db.collection("previews").createIndex({ sessionId: 1, closedAt: 1 }),
       db.collection("tokens").createIndex({ hash: 1 }, { unique: true }),
       db.collection("tokens").createIndex({ ownerEmail: 1 }),
+      db.collection(CHUNKS_COLLECTION).createIndex({ sessionId: 1 }),
       db.collection("mail").createIndex({ sessionId: 1, status: 1, createdAt: 1 }),
       db.collection("mail").createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
       db.collection("mail").createIndex({ "from.sessionId": 1, createdAt: 1 }),

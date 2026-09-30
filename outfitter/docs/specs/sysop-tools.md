@@ -42,6 +42,20 @@ Decisions (confirmed with the owner):
 - **Agent-created tape ids** are slugs (`[a-z0-9-]`), so later calls stay short; UUID ids print
   as 8-character prefixes and any unique prefix of 4+ characters resolves.
 
+## Changes since the plan (PR4: session search)
+- **Ops only, no new REST routes:** `sessions.search` and `sessions.transcript` join the op registry,
+  so the laptop (`POST /api/admin/ops`) and a Drive (admin socket) share them. The web UI has its own
+  transcript view and doesn't need them.
+- **Spike (2026-09-30):** the live cluster is MongoDB 8.0.32 (so `$rankFusion` works), with 26
+  sessions and 1,534 entries (~8 MB) and no search indexes yet. `deploy/atlas-search.sh` (owner-run;
+  `DRY_RUN=1` is safe) creates both indexes and, with `BACKFILL=1`, chunks every session.
+- **Embedding:** `voyage-4-lite`, 512 dimensions, scalar quantization, to keep Voyage cost and M0
+  storage low; `SESSION_SEARCH_EMBED_MODEL` picks another model.
+- **No `entries.listPage` yet:** the transcript walks the active branch from `leafId`, which needs
+  the session's entries; sessions are small today. Revisit if one grows past a few thousand entries.
+- **One pi entry parser:** the chunker reuses the transcript renderer's `readableEntry`, and
+  `transcript.ts` has no api imports so Kernal can copy it unchanged.
+
 ## Changes since the plan (PR2)
 - **Approvals reuse the session's confirm card,** answered through `POST /api/sessions/:id/ui-response`
   (the api handles the run's own `admin:<id>` itself). There is no `/admin-approvals` route. The card

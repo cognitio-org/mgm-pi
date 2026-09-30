@@ -22,6 +22,7 @@ import {
 import type { ModelsService } from "../models.ts";
 import type { Environment, Guru, Session, Store } from "../store/types.ts";
 import { ago, capText, clip, diffFields, fields, resolveRef, row, shortId } from "./render.ts";
+import { searchSessions, sessionTranscript } from "../search/service.ts";
 
 export type AdminOpClass = "read" | "write" | "delete" | "operator";
 
@@ -171,6 +172,17 @@ function diffWithEnv(before: { env?: Record<string, string> }, after: { env?: Re
 /** The service speaks of gurus (its REST routes' word); agents see tapes. */
 function asTape(error: string): string {
   return error.replace(/\bguru\.env\b/g, "tape env").replace(/\bguru\b/g, "tape");
+}
+
+/** A session by id or a unique prefix of 8+ characters. The error names no other sessions: their
+ * ids don't help a retry. */
+async function findSession(ctx: AdminContext, ref: unknown): Promise<{ ok: true; item: Session } | { ok: false; error: string }> {
+  const id = typeof ref === "string" ? ref.trim() : "";
+  if (id.length < 8) return { ok: false, error: "session id needs at least 8 characters" };
+  const direct = await ctx.store.sessions.findById(id);
+  if (direct) return { ok: true, item: direct };
+  const found = resolveRef(await ctx.store.sessions.list({ archived: "all" }), id, "session");
+  return found.ok ? found : { ok: false, error: found.error.split(";")[0] };
 }
 
 async function resolveTape(ctx: AdminContext, ref: unknown) {
@@ -393,15 +405,27 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
     },
   },
 
+  "sessions.search": {
+    kind: "read",
+    async run(ctx, caller, args) {
+      return searchSessions(ctx.store, caller.email, args, nowOf(ctx));
+    },
+  },
+
+  "sessions.transcript": {
+    kind: "read",
+    async run(ctx, _caller, args) {
+      const found = await findSession(ctx, args.id);
+      if (!found.ok) return found;
+      return sessionTranscript(ctx.store, found.item, args, nowOf(ctx));
+    },
+  },
+
   "sessions.get": {
     kind: "read",
     async run(ctx, _caller, args) {
-      const ref = typeof args.id === "string" ? args.id.trim() : "";
-      if (ref.length < 8) return { ok: false, error: "session id needs at least 8 characters" };
-      const direct = await ctx.store.sessions.findById(ref);
-      let found = direct ? { ok: true as const, item: direct } : resolveRef(await ctx.store.sessions.list({ archived: "all" }), ref, "session");
-      // Other people's session ids don't help a retry; say only what went wrong.
-      if (!found.ok) return { ok: false, error: found.error.split(";")[0] };
+      const found = await findSession(ctx, args.id);
+      if (!found.ok) return found;
       const s = found.item;
       const run = (await ctx.store.runs.findActiveForSession(s.id)) ?? (await ctx.store.runs.findLatestForSession(s.id));
       return {

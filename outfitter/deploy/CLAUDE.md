@@ -15,6 +15,8 @@
   principal: its only write is the live-test account's own user record, which `GET /api/me` makes on
   every sign-in. Never create
   a GitHub Release for Outfitter: Releases here are Kernal's, and `kernal update` reads the latest.
+- `atlas-search.sh` (session search indexes, #289) is owner-run without `DRY_RUN=1`: its vector
+  index makes Atlas embed every chunk through Voyage (billed). `DRY_RUN=1` is safe.
 - GKE (README.md "GKE provider (optional)"): `gke-cluster.sh` (without `DRY_RUN=1`), `gke-iam.sh`
   (without `DRY_RUN=1`), `gke-schedule.sh` and `gke-teardown.sh` (without `DRY_RUN=1`, and
   `--force`) are owner-run, same footing as `access.sh`/`ci-setup.sh` -- they start GKE billing,

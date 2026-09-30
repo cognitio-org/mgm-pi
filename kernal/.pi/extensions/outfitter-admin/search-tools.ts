@@ -3,7 +3,7 @@
  * transcripts"): find past sessions and read them compactly, for debugging a Drive or mining
  * sessions to write a tape.
  *
- * - Cloud: the op registry's sessions.search (hybrid by default) and sessions.transcript, over the
+ * - Cloud: the op registry's sessions.search (keyword by default; hybrid and semantic on request) and sessions.transcript, over the
  *   same transport as the admin tools.
  * - Laptop: also this machine's own sessions (local-sessions.ts), keyword only. With both, results
  *   come in two short sections, and a local session that is also in the cloud's results is shown once.
@@ -30,7 +30,7 @@ export const SEARCH_TOOLS = [
       required: ["query"],
       properties: {
         query: { type: "string" },
-        mode: { type: "string", enum: MODES, description: "Cloud only; default hybrid." },
+        mode: { type: "string", enum: MODES, description: "Cloud only; default text. hybrid/semantic match meaning." },
         scope: { type: "string", enum: ["all", "cloud", "local"] },
         owner: { type: "string", enum: ["me"] },
         tape: { type: "string" },

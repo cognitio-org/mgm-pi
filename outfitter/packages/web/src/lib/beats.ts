@@ -231,11 +231,17 @@ export function groupBeats(views: GroupedEntry[], options?: { runSettled?: boole
   return beats;
 }
 
-/** The open thinking round (#285). The thought stays on the rail after the round ends. */
+/** The open turn's thought (#285). A tool call is often in the same message as the thinking,
+ * and on the web role that message arrives after the tokens, so hiding the bubble as soon as
+ * a tool is on the rail means the words never appear. The bubble keeps the latest thought on
+ * this tools-only beat until the model writes a sentence or the run leaves `running`. */
 export function liveThinkingItem(beats: Beat[], runLive: boolean): RailThinking | null {
   if (!runLive) return null;
   const last = beats[beats.length - 1];
   if (!last || last.kind !== "tools-only") return null;
-  const tail = last.rail[last.rail.length - 1];
-  return tail?.kind === "thinking" ? tail : null;
+  for (let i = last.rail.length - 1; i >= 0; i--) {
+    const item = last.rail[i];
+    if (item?.kind === "thinking") return item;
+  }
+  return null;
 }

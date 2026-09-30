@@ -1,0 +1,19 @@
+kernal/.pi/extensions/outfitter-admin/search-tools.ts
+  s_89f239d3945616::t_364125dceeb5c5 6,33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "8ea9b93dbf315362d7e6b71dc6341ea967c1f5b7",
+  "prompts": {},
+  "sessions": {
+    "s_89f239d3945616": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b3b2a115-86e8-4751-b3c1-916d3ff8cc0e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

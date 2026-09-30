@@ -871,9 +871,12 @@ button.danger {
   color: var(--warn);
 }
 
+/* A 22rem list left the name whatever the chips did not use, so "outfitter" drew
+   as "outfit…". The wider column keeps a name and its chips on one line. The
+   11rem floor makes the chips wrap before a name is clipped that far again. */
 .github-layout {
   display: grid;
-  grid-template-columns: minmax(16rem, 22rem) 1fr;
+  grid-template-columns: minmax(22rem, 32rem) 1fr;
   gap: 1rem;
   align-items: start;
 }
@@ -904,6 +907,7 @@ button.danger {
 
 .github-repo-list button .github-glyph {
   color: var(--text-dim);
+  flex: none;
 }
 
 .github-repo-list button.is-selected {
@@ -926,9 +930,9 @@ button.danger {
 }
 
 .github-repo-name {
-  flex: 1;
+  flex: 1 1 auto;
   font-weight: 600;
-  min-width: 0;
+  min-width: 11rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1072,6 +1076,12 @@ a.chip.github-fact {
 @media (max-width: 800px) {
   .github-layout {
     grid-template-columns: 1fr;
+  }
+
+  /* The column is already the full screen, and an 11rem floor wraps the chips
+     under every short name. Let the name shrink again so the row stays one line. */
+  .github-repo-name {
+    min-width: 0;
   }
 }
 

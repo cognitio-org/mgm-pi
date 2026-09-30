@@ -1,0 +1,33 @@
+kernal/skills/outfitter-admin/SKILL.md
+  s_89f239d3945616::t_fb1c3006f47974 56-60
+outfitter/docs/protocol.md
+  s_89f239d3945616::t_5204eff223bb7b 610-613
+outfitter/docs/specs/sysop-tools.md
+  s_89f239d3945616::t_26759387cab47b 57-61
+outfitter/packages/api/src/admin/ops.ts
+  s_89f239d3945616::t_b5a7b299bcdd32 59-61,226,228,299,316,505,509,533-536
+outfitter/packages/api/src/gurus-service.ts
+  s_89f239d3945616::t_f2baf49804710b 90-91,204-207,219-225,227-228
+outfitter/packages/api/test/admin-ops.test.ts
+  s_89f239d3945616::t_29a5c07da15921 11,117,120-123,184,190,279,282-293,342-343
+outfitter/packages/web/src/components/GuruForm.tsx
+  s_89f239d3945616::t_de20bd91988caa 62-65,118,191,194,198-199
+outfitter/packages/web/test/guru-form.test.tsx
+  s_89f239d3945616::t_25bcf7b508ad02 100,103-104,110,112,121,123-124
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "8e99eb7aa41279912c19c3407b95fa92ad8014d6",
+  "prompts": {},
+  "sessions": {
+    "s_89f239d3945616": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b3b2a115-86e8-4751-b3c1-916d3ff8cc0e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -15,6 +15,7 @@ import type { GithubRefreshTiming } from "../src/agentlink.ts";
 import type { SandboxTelemetry } from "../src/sandbox-telemetry.ts";
 import type { VoiceService } from "../src/voice.ts";
 import type { VoiceUsage } from "../src/voice-usage.ts";
+import type { GithubCatalog } from "../src/github-catalog.ts";
 
 export interface TestApp extends App {
   store: Store;
@@ -48,6 +49,8 @@ export interface BuildTestAppOptions {
   voice?: VoiceService;
   /** #257: a VoiceUsage with a fake fetch. */
   voiceUsage?: VoiceUsage;
+  /** GitHub catalog. Defaults to one that reads `secretAdmin` (empty in tests → not configured). */
+  githubCatalog?: GithubCatalog;
 }
 
 export async function buildTestApp(
@@ -83,6 +86,7 @@ export async function buildTestApp(
     ngrok: opts.ngrok,
     voice: opts.voice,
     voiceUsage: opts.voiceUsage,
+    githubCatalog: opts.githubCatalog,
   });
   await app.fastify.ready();
   return { ...app, store, provider, secretAdmin };

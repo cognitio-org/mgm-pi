@@ -23,6 +23,7 @@ import { ModelsService } from "./models.ts";
 import { registerRoutes } from "./routes/index.ts";
 import { MailService, CloudTasksWakeScheduler, NoopWakeScheduler, type WakeScheduler } from "./mail.ts";
 import type { GithubBroker } from "./github-broker.ts";
+import { GithubCatalog } from "./github-catalog.ts";
 import { CachedSandboxTelemetry, GcpSandboxTelemetry, NoSandboxTelemetry, type SandboxTelemetry } from "./sandbox-telemetry.ts";
 
 export interface BuildAppOptions {
@@ -51,6 +52,10 @@ export interface BuildAppOptions {
   voice?: VoiceService;
   /** #257. Tests inject one with a fake fetch; production builds one from config. */
   voiceUsage?: VoiceUsage;
+  /** Repository catalog for the browser. Tests inject one with a scripted fetch; production
+   * reads the GitHub App id and key. Omitted installation id is fine: the catalog discovers
+   * every installation itself. */
+  githubCatalog?: GithubCatalog;
 }
 
 export interface App {
@@ -201,6 +206,8 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
       (config.devMode || !config.gcpProject
         ? new NoSandboxTelemetry()
         : new CachedSandboxTelemetry(new GcpSandboxTelemetry(config.gcpProject, config.gkeNamespace))),
+    githubCatalog:
+      opts.githubCatalog ?? new GithubCatalog(async (name) => (await secretAdmin.accessLatest(name)) ?? ""),
   });
   // The down-queue poller only makes sense where AgentLink sockets actually live (role "link" or
   // "all", same condition as registering /agent/ws itself) — see agentLink.startDownQueuePoller's

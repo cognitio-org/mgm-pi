@@ -22,6 +22,7 @@ import { BeatView, YouMark, beatOpensVsCode } from "../components/TranscriptRail
 import { Composer } from "../components/Composer.tsx";
 import { StatusPill } from "../components/StatusPill.tsx";
 import { GithubChip } from "../components/GithubChip.tsx";
+import { GithubStatus } from "../components/GithubStatus.tsx";
 import { PreviewChips } from "../components/PreviewChips.tsx";
 import { IdeChip } from "../components/IdeChip.tsx";
 import { IdeProvider } from "../components/IdeProvider.tsx";
@@ -603,6 +604,7 @@ export function SessionPage() {
               collapsed={compact}
             />
             {cluster && <GithubChip cluster={cluster} />}
+            {session?.repo && <GithubStatus sessionId={sessionId} repo={session.repo} />}
             <PreviewChips sessionId={sessionId} runState={runState} onError={setApiError} />
             <IdeChip />
             <span className="session-model-info">

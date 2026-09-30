@@ -16,6 +16,7 @@ import {
   DiskBoxIcon,
   DonglesIcon,
   DriveIcon,
+  GithubIcon,
   ManualIcon,
   NewFloppyIcon,
   PeripheralsIcon,
@@ -107,6 +108,13 @@ export function DeskPage() {
         hint: vocabulary.guru.hint,
         icon: (size) => <TapesIcon size={size} />,
         onOpen: () => navigate("/gurus"),
+      },
+      {
+        id: "github",
+        label: vocabulary.github.one,
+        hint: vocabulary.github.hint,
+        icon: (size) => <GithubIcon size={size} />,
+        onOpen: () => navigate("/github"),
       },
       {
         id: "peripherals",
@@ -262,6 +270,11 @@ export function DeskPage() {
               <li role="menuitem">
                 <button type="button" onClick={() => navigate("/gurus")}>
                   {vocabulary.guru.many}
+                </button>
+              </li>
+              <li role="menuitem">
+                <button type="button" onClick={() => navigate("/github")}>
+                  {vocabulary.github.one}
                 </button>
               </li>
               <li role="menuitem">

@@ -4,6 +4,7 @@ import { toApiErrorState } from "../lib/api-error.ts";
 import { Working } from "./Working.tsx";
 import { SystemErrorDialog, type ApiErrorState } from "./SystemErrorDialog.tsx";
 import { withFloppySound } from "../lib/floppy-sound.ts";
+import { RepoField } from "./RepoField.tsx";
 
 interface Props {
   gurus: Guru[];
@@ -89,8 +90,8 @@ export function NewSessionDialog({ gurus, onClose, onCreated, initialGuruId }: P
             </select>
           </div>
           <div className="form-row">
-            <label htmlFor="ns-repo">Repository (owner/repo, empty = no repository)</label>
-            <input id="ns-repo" value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="org/repo" />
+            <label htmlFor="ns-repo">Repository</label>
+            <RepoField id="ns-repo" value={repo} onChange={setRepo} />
           </div>
           {repo.trim() && (
             <>

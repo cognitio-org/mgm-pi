@@ -74,6 +74,23 @@ export function TapesIcon(props: IconProps) {
   );
 }
 
+/** GitHub -- a commit splitting into two branches. Original pixel art, not the octocat. */
+export function GithubIcon(props: IconProps) {
+  return (
+    <Grid {...props}>
+      <rect x="1" y="7" width="5" height="2" />
+      <rect x="5" y="4" width="2" height="4" />
+      <rect x="6" y="3" width="5" height="2" />
+      <rect x="11" y="2" width="3" height="3" />
+      <rect x="12" y="3" width="1" height="1" fill="var(--bg-elevated, #fff)" />
+      <rect x="5" y="8" width="2" height="4" />
+      <rect x="6" y="11" width="5" height="2" />
+      <rect x="11" y="10" width="3" height="3" />
+      <rect x="12" y="11" width="1" height="1" fill="var(--bg-elevated, #fff)" />
+    </Grid>
+  );
+}
+
 /** Peripherals -- providers. A plug/cable connector. */
 export function PeripheralsIcon(props: IconProps) {
   return (

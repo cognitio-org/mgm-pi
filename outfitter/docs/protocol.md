@@ -602,7 +602,7 @@ Request: `{op, args?, confirmed?}`. Reply, always `200` for an authenticated cal
 `{ok: true, text}` or `{ok: false, error, needsApproval?}`. `text` is compact, capped text meant
 for a model, not JSON to parse. Ops so far: `tapes.list|get|meta|create|update|delete`,
 `environments.list|get|create|update`, `sessions.list|get|search|transcript` (#289: session search
-and compact transcripts; `search` takes `query`, `mode` hybrid|text|semantic, `owner:"me"`, `tape`,
+and compact transcripts; `search` takes `query`, `mode` text (default)|hybrid|semantic (these two fall back to text when they can't run), `owner:"me"`, `tape`,
 `repo`, `role`, `session`, `since`/`until` such as `7d`, `limit`; `transcript` takes `id`, `view`
 outline|text, `around`, `window`, `from`, `maxChars`, `toolOutput` none|trimmed|full, `roles`).
 

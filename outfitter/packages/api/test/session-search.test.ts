@@ -273,11 +273,15 @@ describe("sessions.search and sessions.transcript ops (memory store)", () => {
     assert.ok(res.text.length < 5_000, `${res.text.length} chars`);
   });
 
-  test("semantic and hybrid say they need Atlas, and suggest text", async () => {
+  test("text is the default; semantic or hybrid that can't run falls back to text and says why", async () => {
     const store = await seeded();
-    const res = await runAdminOp({ store, models }, caller, "sessions.search", { query: "403" });
-    assert.equal(res.ok, false);
-    assert.match((res as { error: string }).error, /hybrid search needs Atlas.*; mode:text may work$/);
+    const plain = (await runAdminOp({ store, models }, caller, "sessions.search", { query: "403" })) as { ok: boolean; text: string };
+    assert.equal(plain.ok, true);
+    assert.doesNotMatch(plain.text, /unavailable/);
+    const hybrid = (await runAdminOp({ store, models }, caller, "sessions.search", { query: "403", mode: "hybrid" })) as { ok: boolean; text: string };
+    assert.equal(hybrid.ok, true);
+    assert.match(hybrid.text, /^\(hybrid search unavailable, showing keyword matches: hybrid search needs Atlas/);
+    assert.match(hybrid.text, /403 Forbidden/);
   });
 
   test("transcript by 8-char prefix, with a header line", async () => {

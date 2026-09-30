@@ -67,6 +67,9 @@ Decisions (confirmed with the owner):
   snippets, the 12k cap; `around` a hit on an abandoned branch reads that branch.
 - **Imports index only the entries they added,** so repeated syncs don't re-embed a session. An
   import whose body has an unparsable line (a live session read mid-write) is a 400 and stores nothing.
+- **Text is the default search mode (2026-09-30):** the org's Voyage limit is 3 requests and 10k
+  tokens a minute, and semantic/hybrid embed every query. They run when asked for (`mode`), and when
+  they can't (not set up, rate-limited) the search falls back to keyword matches with a one-line note.
 - **Short ids are a UUID's last 8 characters,** not its first: pi's session ids are UUIDv7, whose head
   is a timestamp shared by sessions started in the same minute. Ops accept a unique prefix or the
   printed tail, and an ambiguous one is an error that says so.

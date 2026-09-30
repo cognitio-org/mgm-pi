@@ -135,7 +135,9 @@ export async function searchSessions(store: Store, callerEmail: string, args: Se
   const query = typeof args.query === "string" ? args.query.trim() : "";
   if (!query) return { ok: false, error: "query is required" };
   if (query.length > 500) return { ok: false, error: "query is too long (500 characters at most)" };
-  const mode = (MODES as unknown[]).includes(args.mode) ? (args.mode as ChunkSearchMode) : "hybrid";
+  // Text by default: semantic and hybrid embed the query through Voyage, whose rate limit on this
+  // deployment is a few requests a minute. They are there when asked for, and fall back to text.
+  const mode = (MODES as unknown[]).includes(args.mode) ? (args.mode as ChunkSearchMode) : "text";
   const sessions = Math.min(Math.max(typeof args.limit === "number" ? Math.floor(args.limit) : 10, 1), 25);
   const role = (ROLES as readonly unknown[]).includes(args.role) ? (args.role as (typeof ROLES)[number]) : undefined;
   const owner = args.owner === "me" ? callerEmail.toLowerCase() : typeof args.owner === "string" && args.owner.includes("@") ? args.owner.toLowerCase() : undefined;
@@ -147,10 +149,11 @@ export async function searchSessions(store: Store, callerEmail: string, args: Se
   const perSession = sessions <= 5 ? 3 : 2;
 
   let hits: ChunkHit[];
-  try {
-    hits = await store.sessionChunks.search({
+  let note = "";
+  const run = (m: ChunkSearchMode) =>
+    store.sessionChunks.search({
       text: query,
-      mode,
+      mode: m,
       limit: Math.min(sessions * 5, MAX_CANDIDATES),
       filter: {
         ownerEmail: owner,
@@ -162,11 +165,25 @@ export async function searchSessions(store: Store, callerEmail: string, args: Se
         until,
       },
     });
+  try {
+    hits = await run(mode);
   } catch (err) {
-    if (err instanceof SearchUnavailableError) return { ok: false, error: `${err.message}${mode !== "text" ? "; mode:text may work" : ""}` };
-    throw err;
+    if (mode === "text") {
+      if (err instanceof SearchUnavailableError) return { ok: false, error: err.message };
+      throw err;
+    }
+    // Semantic or hybrid couldn't run (not set up, or the embedding rate limit): keyword results,
+    // and say so, rather than nothing.
+    const why = err instanceof Error ? err.message.split("\n")[0].slice(0, 120) : String(err);
+    try {
+      hits = await run("text");
+    } catch (err2) {
+      if (err2 instanceof SearchUnavailableError) return { ok: false, error: err2.message };
+      throw err2;
+    }
+    note = `(${mode} search unavailable, showing keyword matches: ${why})\n`;
   }
-  if (!hits.length) return { ok: true, text: "no matches" };
+  if (!hits.length) return { ok: true, text: `${note}no matches` };
 
   const order: string[] = [];
   const bySession = new Map<string, ChunkHit[]>();
@@ -192,7 +209,7 @@ export async function searchSessions(store: Store, callerEmail: string, args: Se
       lines.push(`  [${h.chunk.entryId}] ${who}: ${snippet(h.chunk.text, query)}${score}`);
     }
   }
-  return { ok: true, text: lines.length ? capText(lines.join("\n")) : "no matches" };
+  return { ok: true, text: `${note}${lines.length ? capText(lines.join("\n")) : "no matches"}` };
 }
 
 export interface TranscriptArgs {

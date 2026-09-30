@@ -111,6 +111,7 @@ Reusable agent configs (EPIC.md vocabulary: **Guru**, never "Expert").
 | `mergeFromCloud` | boolean? | phase 3: when true, this guru's cloud runs may `github_pr.merge`. Absent or false refuses with "not permitted" |
 | `playwrightBeforeCheckpoint` | boolean? | default off. When true, agentd runs a Playwright spec already in the workspace against a fresh headless Chromium before checkpoint. Absent on existing gurus (not stored as true). |
 | `allowExternalHtmlResources` | boolean? | #132, default off. Picks which HTML preview paragraph agentd appends to pi's system prompt (external CSS and JS allowed, or sealed) and the preview dialog's starting access. Copied onto each run as it starts. A PUT that omits it leaves it as it was. |
+| `adminTools` | `"off" \| "manage" \| "operator"`? | Sysop tools (#286), default off. Whether this tape's runs get the admin tools. `operator` also allows sysop actions, and only when the session's owner is an operator. Only a person in the web UI sets it (`gurus-service.ts`); an agent or a Dongle caller gets 403, and `operator` needs a sysop. |
 | `createdAt`, `updatedAt` | ISO string | |
 
 No indexes beyond `_id` — the guru list is small and read in full (`GET /api/gurus`).
@@ -119,6 +120,13 @@ No indexes beyond `_id` — the guru list is small and read in full (`GET /api/g
 
 Named repo/base-branch/env presets for the "new session" dialog (E3.4). Same shape family as
 `gurus`: `{id, name, repo?, baseBranch?, env?, createdAt, updatedAt}`. No indexes beyond `_id`.
+
+### `adminAudit`
+
+Sysop tools (#286): one row per admin op an agent ran that was not a read (`admin/ops.ts`),
+successful or not. `{id (== _id), at, actor (email the op ran as), via ("token" | "drive"),
+sessionId?, runId?, op, target?, ok, error?, approvalId?}`. No indexes beyond `_id`: it is read
+newest first by a reverse natural-order scan.
 
 ### `users`
 

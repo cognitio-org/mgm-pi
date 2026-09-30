@@ -44,6 +44,8 @@ import type {
   BrowserCaptureSave,
   FormattedSession,
   FormattedSessionsCollection,
+  AdminAuditCollection,
+  AdminAuditEntry,
 } from "./types.ts";
 import type { VoicePrefs } from "../voice.ts";
 import { BROWSER_CAPTURES_PER_SESSION, entryInsertFields, type EntryInsertOptions } from "./types.ts";
@@ -1072,6 +1074,27 @@ class MongoFormattedSessions implements FormattedSessionsCollection {
   }
 }
 
+class MongoAdminAudit implements AdminAuditCollection {
+  private readonly col: MongoCollection<AdminAuditEntry & { _id: string }>;
+
+  constructor(col: MongoCollection<AdminAuditEntry & { _id: string }>) {
+    this.col = col;
+  }
+
+  async insert(entry: AdminAuditEntry): Promise<void> {
+    // Unset optional fields stay absent instead of being stored as null.
+    const row = Object.fromEntries(Object.entries(entry).filter(([, v]) => v !== undefined)) as AdminAuditEntry;
+    await this.col.insertOne({ ...row, _id: entry.id });
+  }
+
+  async listRecent(limit: number): Promise<AdminAuditEntry[]> {
+    // Insertion order, newest first: a reverse scan that stops at `limit`, and no ties within a
+    // millisecond the way sorting on `at` would have.
+    const rows = await this.col.find({}).sort({ $natural: -1 }).limit(limit).toArray();
+    return rows.map((r) => stripIdStrict<AdminAuditEntry>(r));
+  }
+}
+
 class MongoPreviews implements PreviewsCollection {
   private readonly col: MongoCollection<Preview & { _id: string }>;
 
@@ -1124,6 +1147,7 @@ export class MongoStore implements Store {
   readonly browserCaptures: BrowserCapturesCollection;
   readonly formattedSessions: FormattedSessionsCollection;
   readonly previews: PreviewsCollection;
+  readonly adminAudit: AdminAuditCollection;
   private readonly client: MongoClient;
 
   private constructor(client: MongoClient, db: Db) {
@@ -1144,6 +1168,7 @@ export class MongoStore implements Store {
     this.browserCaptures = new MongoBrowserCaptures(db.collection<BrowserCaptureDoc>("browserCaptures"), requestCol);
     this.formattedSessions = new MongoFormattedSessions(db.collection("formattedSessions"));
     this.previews = new MongoPreviews(db.collection("previews"));
+    this.adminAudit = new MongoAdminAudit(db.collection("adminAudit"));
   }
 
   /** `dbName` wins over the database in the URI; the stored URI has none, so the default keeps

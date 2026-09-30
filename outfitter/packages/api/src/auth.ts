@@ -46,6 +46,10 @@ export interface Identity {
    * `operator: false`, even when its owner is on OUTFITTER_OPERATORS, because that role does not
    * register /api/operator/* (see identityFromLinkRequest below). */
   operator: boolean;
+  /** Set when the caller used an `outf_` API token (a Dongle) rather than IAP or dev mode. A
+   * Dongle is how an agent reaches the API from a laptop, so a few writes that only a person may
+   * make (a tape's `adminTools`, gurus-service.ts) refuse it. */
+  viaToken?: boolean;
 }
 
 /** True when `email` (trimmed, case-insensitive) is in `operators`. */
@@ -94,7 +98,7 @@ export async function identityFromApiToken(bearer: string, store: TokenStore): P
       // best-effort; a failed lastUsedAt write must never block auth.
     }
   }
-  return { email: record.ownerEmail, operator: false };
+  return { email: record.ownerEmail, operator: false, viaToken: true };
 }
 
 /** The "link" role's only /api/* credential (see the module doc comment above): a personal API
@@ -121,7 +125,7 @@ export async function identityFromRequest(req: RequestLike, config: Config, stor
   const bearer = bearerFromHeader(req);
   if (bearer?.startsWith(TOKEN_PREFIX)) {
     const identity = await identityFromApiToken(bearer, store);
-    return { email: identity.email, operator: isOperator(identity.email, config.operators) };
+    return { email: identity.email, operator: isOperator(identity.email, config.operators), viaToken: true };
   }
 
   const jwt = headerString(req, "x-goog-iap-jwt-assertion");

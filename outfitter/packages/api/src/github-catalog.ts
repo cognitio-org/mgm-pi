@@ -228,13 +228,32 @@ function commitUrl(value: unknown, owner: string, repo: string, sha: string): st
   return fallback;
 }
 
-function nextLink(res: Response, prefix: string): string | undefined {
+/** One entry, this owner and repo, nothing else. GitHub owner and repo names are case-insensitive.
+ * A same-named repository on another account does not count. */
+function exactlyThisRepo(list: { full_name?: unknown }[] | undefined, owner: string, repo: string): boolean {
+  if (!list || list.length !== 1) return false;
+  const full = list[0]?.full_name;
+  return typeof full === "string" && full.toLowerCase() === `${owner}/${repo}`.toLowerCase();
+}
+
+/** Follow only a next link whose path is the list we asked for. A prefix match would also
+ * accept `/app/installations/1` and a `..` URL that fetch normalizes onto a token route. */
+function nextLink(res: Response, pathname: string): string | undefined {
   const link = res.headers.get("link");
   if (!link) return undefined;
   for (const part of link.split(",")) {
     const match = /<([^>]+)>;\s*rel="next"/.exec(part);
-    const url = match?.[1];
-    if (url?.startsWith(prefix)) return url;
+    const raw = match?.[1];
+    if (!raw || raw.includes("..") || raw.includes("\\")) continue;
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch {
+      continue;
+    }
+    if (url.origin !== "https://api.github.com" || url.pathname !== pathname) continue;
+    if (url.username || url.password) continue;
+    return url.toString();
   }
   return undefined;
 }
@@ -281,7 +300,7 @@ function nameTaken(message: string | undefined): boolean {
 
 export class GithubCatalog {
   private remembered: CachedList | undefined;
-  private listInflight: Promise<GithubCatalogSnapshot> | undefined;
+  private listInflight: Promise<{ snapshot: GithubCatalogSnapshot; installations: InstallationRef[] }> | undefined;
   private epoch = 0;
   private readonly tokens = new Map<string, CachedToken>();
   private readonly details = new Map<string, { at: number; value: GithubDetailResult }>();
@@ -297,19 +316,27 @@ export class GithubCatalog {
   }
 
   async list(opts?: { fresh?: boolean }): Promise<GithubCatalogSnapshot> {
-    if (opts?.fresh) {
+    const loaded = await this.loadListed(opts?.fresh);
+    return loaded.snapshot;
+  }
+
+  /** The snapshot and the installations that produced it, from this call rather than from
+   * `remembered`. A refresh can clear that cache while this call is in flight. */
+  private loadListed(fresh?: boolean): Promise<{ snapshot: GithubCatalogSnapshot; installations: InstallationRef[] }> {
+    if (fresh) {
       this.epoch += 1;
       this.remembered = undefined;
     } else if (this.remembered && this.now() - this.remembered.at < this.remembered.ttl) {
-      return this.remembered.snapshot;
+      return Promise.resolve({ snapshot: this.remembered.snapshot, installations: this.remembered.installations });
     } else if (this.listInflight) {
       return this.listInflight;
     }
     const epoch = this.epoch;
     const run = this.fetchList()
       .then((loaded) => {
+        const result = { snapshot: loaded.snapshot, installations: loaded.installations };
         if (epoch === this.epoch) this.remembered = { ...loaded, at: this.now() };
-        return loaded.snapshot;
+        return result;
       })
       .finally(() => {
         if (this.listInflight === run) this.listInflight = undefined;
@@ -339,13 +366,13 @@ export class GithubCatalog {
       return { ok: false, status: 400, error: "private must be true or false" };
     }
     const description = typeof input.description === "string" ? clipText(input.description, 350) ?? "" : "";
-    const snapshot = await this.list();
-    if (!snapshot.configured) {
-      const reason = snapshot.reason ?? "not-configured";
+    const loaded = await this.loadListed();
+    if (!loaded.snapshot.configured) {
+      const reason = loaded.snapshot.reason ?? "not-configured";
       const mapped = unconfiguredMessage(reason);
       return { ok: false, status: mapped.status, error: mapped.error };
     }
-    const installation = this.remembered?.installations.find((row) => row.login.toLowerCase() === owner.toLowerCase());
+    const installation = loaded.installations.find((row) => row.login.toLowerCase() === owner.toLowerCase());
     if (!installation) {
       return { ok: false, status: 404, error: `the GitHub App isn't installed on ${owner}` };
     }
@@ -412,8 +439,11 @@ export class GithubCatalog {
     }
     const repo = this.readRepo(body, installation);
     if (!repo) return { ok: false, status: 503, error: "GitHub is unavailable" };
+    // The list token's repository set was fixed when it was minted. On a selected-repositories
+    // installation that token cannot see the repository this call just created.
     this.epoch += 1;
     this.remembered = undefined;
+    this.tokens.delete(`${installation.id}:${permissionKey(LIST_PERMISSIONS)}:*`);
     return { ok: true, repo };
   }
 
@@ -434,7 +464,10 @@ export class GithubCatalog {
     const hit = this.statuses.get(key);
     if (hit && this.now() - hit.at < STATUS_TTL_MS) return hit.value;
     const value = await this.fetchStatus(parsed.owner, parsed.repo, branch, baseBranch);
-    this.statuses.set(key, { at: this.now(), value });
+    // A blip is not "the App cannot see this repository". Keep it briefly, same as a detail 503.
+    const transient = !value.connected && value.reason === "unavailable";
+    const ttl = transient ? FAILURE_TTL_MS : STATUS_TTL_MS;
+    this.statuses.set(key, { at: this.now() - (STATUS_TTL_MS - ttl), value });
     return value;
   }
 
@@ -500,7 +533,7 @@ export class GithubCatalog {
   }
 
   private async fetchDetail(owner: string, name: string): Promise<GithubDetailResult> {
-    const opened = await this.openRepo(owner, name, READ_PERMISSIONS, name);
+    const opened = await this.openRepo(owner, name, READ_PERMISSIONS);
     if (!opened.ok) return opened;
     const { token, installation } = opened;
     const [repoRes, pullsRes, commitsRes, statsRes] = await Promise.all([
@@ -527,7 +560,10 @@ export class GithubCatalog {
     }
     const summary = this.readRepo(repoBody, installation);
     if (!summary) return { ok: false, status: 404, error: "the GitHub App can't reach this repository" };
-    const openPulls = pullsRes?.ok ? await this.readPulls(pullsRes, owner, name) : [];
+    if (!pullsRes?.ok) return { ok: false, status: 503, error: "GitHub is unavailable" };
+    const listed = await this.readPulls(pullsRes, owner, name);
+    if (!listed) return { ok: false, status: 503, error: "GitHub is unavailable" };
+    const openPulls = await Promise.all(listed.map((pull) => this.pullCounts(token, owner, name, pull)));
     const lastCommit = commitsRes?.ok ? await this.readCommit(commitsRes, owner, name) : null;
     const contributions = await this.readContributions(statsRes);
     return { ok: true, repo: { ...summary, openPulls, lastCommit, contributions } };
@@ -535,14 +571,19 @@ export class GithubCatalog {
 
   private async fetchStatus(owner: string, name: string, branch: string | null, baseBranch: string | null): Promise<GithubSessionStatus> {
     const repo = `${owner}/${name}`;
-    const opened = await this.openRepo(owner, name, READ_PERMISSIONS, name);
+    const opened = await this.openRepo(owner, name, READ_PERMISSIONS);
     if (!opened.ok) return emptyStatus(opened.reason, repo, branch, baseBranch);
     const pullsRes = await this.call(
       `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls?state=open&per_page=${MAX_PULLS}&sort=updated&direction=desc`,
       opened.token,
     );
-    const pulls = pullsRes?.ok ? await this.readPulls(pullsRes, owner, name) : [];
-    const branchPull = branch ? (pulls.find((pull) => pull.head === branch) ?? null) : null;
+    if (!pullsRes?.ok) return emptyStatus("unavailable", repo, branch, baseBranch);
+    const listed = await this.readPulls(pullsRes, owner, name);
+    if (!listed) return emptyStatus("unavailable", repo, branch, baseBranch);
+    const match = branch ? listed.find((pull) => pull.head === branch) : undefined;
+    const counted = match ? await this.pullCounts(opened.token, owner, name, match) : undefined;
+    const pulls = counted ? listed.map((pull) => (pull.number === counted.number ? counted : pull)) : listed;
+    const branchPull = counted ?? null;
     const ordered = branchPull ? [branchPull, ...pulls.filter((pull) => pull.number !== branchPull.number)] : pulls;
     let diff: GithubDiff | null = null;
     if (branchPull && branchPull.additions !== null && branchPull.deletions !== null) {
@@ -592,12 +633,11 @@ export class GithubCatalog {
     };
   }
 
-  /** App JWT plus an installation token that can read this repository. */
+  /** App JWT plus an installation token scoped to this one repository. */
   private async openRepo(
     owner: string,
     name: string,
     permissions: PermissionSet,
-    repository?: string,
   ): Promise<
     | { ok: true; token: string; installation: InstallationRef }
     | { ok: false; status: 404 | 503; error: string; reason: GithubStatusReason }
@@ -621,9 +661,14 @@ export class GithubCatalog {
         : { ok: false, status: 404, error: "the GitHub App can't reach this repository", reason: "not-installed" };
     }
     const installation = lookedUp.installation;
-    const minted = await this.installationToken(installation.id, jwt, permissions, repository);
+    const minted = await this.installationToken(installation.id, jwt, permissions, { owner, name });
     if (!minted.ok && minted.reason === "permissions") {
-      const reduced = await this.installationToken(installation.id, jwt, { metadata: "read", pull_requests: "read" }, repository);
+      const reduced = await this.installationToken(
+        installation.id,
+        jwt,
+        { metadata: "read", pull_requests: "read" },
+        { owner, name },
+      );
       if (reduced.ok) return { ok: true, token: reduced.token, installation };
     }
     if (!minted.ok) {
@@ -670,7 +715,7 @@ export class GithubCatalog {
         const parsed = this.readInstallation(row);
         if (parsed) installations.push(parsed);
       }
-      url = nextLink(res, "https://api.github.com/app/installations");
+      url = nextLink(res, "/app/installations");
     }
     return { installations, truncated: Boolean(url) };
   }
@@ -712,7 +757,7 @@ export class GithubCatalog {
         const repo = this.readRepo(row, installation);
         if (repo) repos.push(repo);
       }
-      url = nextLink(res, "https://api.github.com/installation/repositories");
+      url = nextLink(res, "/installation/repositories");
     }
     return { repos, truncated: Boolean(url) };
   }
@@ -746,14 +791,15 @@ export class GithubCatalog {
     };
   }
 
-  private async readPulls(res: Response, owner: string, name: string): Promise<GithubPull[]> {
+  /** Undefined when the body is not a list. An empty list is a real "no open pull requests". */
+  private async readPulls(res: Response, owner: string, name: string): Promise<GithubPull[] | undefined> {
     let body: unknown;
     try {
       body = await res.json();
     } catch {
-      return [];
+      return undefined;
     }
-    if (!Array.isArray(body)) return [];
+    if (!Array.isArray(body)) return undefined;
     const pulls: GithubPull[] = [];
     for (const row of body) {
       const pull = this.readPull(row, owner, name);
@@ -761,6 +807,25 @@ export class GithubCatalog {
       if (pulls.length >= MAX_PULLS) break;
     }
     return pulls;
+  }
+
+  /** The list route omits additions and deletions. They are on the single pull request. */
+  private async pullCounts(token: string, owner: string, name: string, pull: GithubPull): Promise<GithubPull> {
+    const res = await this.call(
+      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${pull.number}`,
+      token,
+    );
+    if (!res?.ok) return pull;
+    let body: { additions?: unknown; deletions?: unknown };
+    try {
+      body = (await res.json()) as { additions?: unknown; deletions?: unknown };
+    } catch {
+      return pull;
+    }
+    const additions = countOf(body.additions);
+    const deletions = countOf(body.deletions);
+    if (additions === null || deletions === null) return pull;
+    return { ...pull, additions, deletions };
   }
 
   private readPull(row: unknown, owner: string, name: string): GithubPull | undefined {
@@ -774,8 +839,6 @@ export class GithubCatalog {
       updated_at?: unknown;
       head?: { ref?: unknown; repo?: { full_name?: unknown } | null };
       base?: { ref?: unknown };
-      additions?: unknown;
-      deletions?: unknown;
     };
     if (typeof item.number !== "number" || !Number.isSafeInteger(item.number) || item.number <= 0) return undefined;
     const title = clipText(item.title, 200);
@@ -793,8 +856,8 @@ export class GithubCatalog {
       updatedAt: iso(item.updated_at),
       head,
       base,
-      additions: countOf(item.additions),
-      deletions: countOf(item.deletions),
+      additions: null,
+      deletions: null,
     };
   }
 
@@ -876,13 +939,14 @@ export class GithubCatalog {
     installationId: number,
     jwt: string,
     permissions: PermissionSet,
-    repository?: string,
+    repository?: { owner: string; name: string },
   ): Promise<{ ok: true; token: string } | { ok: false; reason: "permissions" | "not-installed" | "unavailable"; message?: string }> {
-    const key = `${installationId}:${permissionKey(permissions)}:${repository ?? "*"}`;
+    const scope = repository ? `${repository.owner}/${repository.name}`.toLowerCase() : "*";
+    const key = `${installationId}:${permissionKey(permissions)}:${scope}`;
     const hit = this.tokens.get(key);
     if (hit && hit.expiresAtMs - this.now() > REFRESH_EARLY_MS) return { ok: true, token: hit.token };
     const body: { permissions: PermissionSet; repositories?: string[] } = { permissions };
-    if (repository) body.repositories = [repository];
+    if (repository) body.repositories = [repository.name];
     const res = await this.call(`https://api.github.com/app/installations/${installationId}/access_tokens`, jwt, {
       method: "POST",
       body: JSON.stringify(body),
@@ -912,17 +976,30 @@ export class GithubCatalog {
     }
     const expiresAtMs = Date.parse(parsed.expires_at);
     if (!Number.isFinite(expiresAtMs)) return { ok: false, reason: "unavailable" };
-    if (repository && Array.isArray(parsed.repositories)) {
-      const want = repository.toLowerCase();
-      const covers = parsed.repositories.some((row) => {
-        if (typeof row.full_name !== "string") return false;
-        const repoName = row.full_name.split("/")[1];
-        return repoName?.toLowerCase() === want;
-      });
-      if (!covers) return { ok: false, reason: "not-installed" };
+    // An omitted `repositories` array is how an all-repositories token shows up. Keep a scoped
+    // token only when it is exactly this owner and repo, checking the installation list if
+    // GitHub left the array off the token response.
+    if (repository) {
+      const listed = Array.isArray(parsed.repositories) ? parsed.repositories : undefined;
+      const covers = listed
+        ? exactlyThisRepo(listed, repository.owner, repository.name)
+        : await this.tokenCovers(parsed.token, repository.owner, repository.name);
+      if (covers !== true) return { ok: false, reason: covers === "unavailable" ? "unavailable" : "not-installed" };
     }
     this.tokens.set(key, { token: parsed.token, expiresAtMs });
     return { ok: true, token: parsed.token };
+  }
+
+  private async tokenCovers(token: string, owner: string, repo: string): Promise<boolean | "unavailable"> {
+    const res = await this.call("https://api.github.com/installation/repositories?per_page=100", token);
+    if (!res?.ok) return "unavailable";
+    let body: { repositories?: { full_name?: unknown }[] };
+    try {
+      body = (await res.json()) as { repositories?: { full_name?: unknown }[] };
+    } catch {
+      return "unavailable";
+    }
+    return exactlyThisRepo(body.repositories, owner, repo);
   }
 
   private async call(url: string, token: string, init?: { method?: string; body?: string }): Promise<Response | undefined> {

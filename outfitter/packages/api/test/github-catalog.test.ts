@@ -24,8 +24,15 @@ function json(body: unknown, status = 200, headers?: Record<string, string>): Re
   return new Response(JSON.stringify(body), { status, headers });
 }
 
-function token(value: string): Response {
-  return json({ token: value, expires_at: EXPIRES }, 201);
+function token(value: string, fullName?: string): Response {
+  return json(
+    {
+      token: value,
+      expires_at: EXPIRES,
+      ...(fullName ? { repositories: [{ full_name: fullName }] } : {}),
+    },
+    201,
+  );
 }
 
 function installation(id: number, login: string, type: "Organization" | "User", suspended = false) {
@@ -241,8 +248,13 @@ test("create posts a private repository on the organization and drops the list c
   assert.deepEqual(created, { name: "widget", private: true, auto_init: true });
   assert.equal(calls.some((call) => call.auth.includes("ghs_CREATE") && call.method === "POST"), true);
   const before = installs;
+  const listMints = () =>
+    calls.filter((call) => call.url.endsWith("/access_tokens") && call.body?.permissions?.administration !== "write").length;
+  const mints = listMints();
   await catalog.list();
   assert.equal(installs, before + 1);
+  // The pre-create list token cannot see a repository minted onto a selected installation.
+  assert.equal(listMints(), mints + 1);
 });
 
 test("create on a user installation uses POST /user/repos", async () => {
@@ -308,15 +320,16 @@ test("floppy status prefers the pull request's line counts and puts that pull fi
     if (call.url === "https://api.github.com/repos/acme/widget/installation") return json(installation(1, "acme", "Organization"));
     if (call.url.endsWith("/access_tokens")) {
       assert.deepEqual(call.body?.repositories, ["widget"]);
-      return token("ghs_READ");
+      return token("ghs_READ", "acme/widget");
     }
     if (call.url.includes("/pulls?")) {
       return json([
-        pull(4, "other"),
-        pull(9, "outfitter/abc", { additions: 3, deletions: 1, html_url: "https://evil.example/pr" }),
+        pull(4, "other", { additions: 99, deletions: 99 }),
+        pull(9, "outfitter/abc", { additions: 99, deletions: 99, html_url: "https://evil.example/pr" }),
         { ...pull(11, "forked"), head: { ref: "forked", repo: { full_name: "elsewhere/widget" } } },
       ]);
     }
+    if (call.url.endsWith("/pulls/9")) return json({ additions: 3, deletions: 1 });
     return new Response("no", { status: 500 });
   });
   const status = await catalog.sessionStatus({ repo: "https://github.com/acme/widget.git", branch: "outfitter/abc", baseBranch: "main" });
@@ -326,6 +339,7 @@ test("floppy status prefers the pull request's line counts and puts that pull fi
   assert.equal(status.pulls.some((row) => row.number === 11), false);
   assert.equal(status.branchPull?.url, "https://github.com/acme/widget/pull/9");
   assert.deepEqual(status.diff, { additions: 3, deletions: 1, source: "pull" });
+  assert.equal(calls.some((call) => call.url.endsWith("/pulls/9")), true);
   assert.equal(calls.some((call) => call.url.includes("/compare/")), false);
 });
 
@@ -333,8 +347,9 @@ test("floppy status sums a compare when the pull request has no line counts", as
   const head = encodeURIComponent("outfitter/abc");
   const { catalog, calls } = harness(appRead, (call) => {
     if (call.url === "https://api.github.com/repos/acme/widget/installation") return json(installation(1, "acme", "Organization"));
-    if (call.url.endsWith("/access_tokens")) return token("ghs_READ");
-    if (call.url.includes("/pulls?")) return json([pull(9, "outfitter/abc")]);
+    if (call.url.endsWith("/access_tokens")) return token("ghs_READ", "acme/widget");
+    if (call.url.includes("/pulls?")) return json([pull(9, "outfitter/abc", { additions: 1, deletions: 1 })]);
+    if (call.url.endsWith("/pulls/9")) return json({ additions: null, deletions: null });
     if (call.url.includes("/compare/")) {
       const files = [
         { additions: 4, deletions: 1 },
@@ -356,7 +371,7 @@ test("floppy status sums a compare when the pull request has no line counts", as
 test("a compare that GitHub truncated is marked partial, and an unsafe ref is skipped", async () => {
   const { catalog, calls } = harness(appRead, (call) => {
     if (call.url.endsWith("/installation")) return json(installation(1, "acme", "Organization"));
-    if (call.url.endsWith("/access_tokens")) return token("ghs_READ");
+    if (call.url.endsWith("/access_tokens")) return token("ghs_READ", "acme/widget");
     if (call.url.includes("/pulls?")) return json([]);
     if (call.url.includes("/compare/")) {
       return json({ files: Array.from({ length: 300 }, () => ({ additions: 1, deletions: 0 })) });
@@ -403,12 +418,13 @@ test("repository detail maps the pull, the commit's first line, and a pending co
     if (call.url === "https://api.github.com/repos/acme/widget/installation") return json(installation(1, "acme", "Organization"));
     if (call.url.endsWith("/access_tokens")) {
       assert.deepEqual(call.body?.repositories, ["widget"]);
-      return token("ghs_READ");
+      return token("ghs_READ", "acme/widget");
     }
     if (call.url === "https://api.github.com/repos/acme/widget") {
       return json({ ...repo("acme/widget", "2026-09-23T00:00:00Z"), html_url: "javascript:alert(1)" });
     }
-    if (call.url.includes("/pulls?")) return json([pull(7, "fix", { title: "Fix the widget", additions: 10, deletions: 2 })]);
+    if (call.url.includes("/pulls?")) return json([pull(7, "fix", { title: "Fix the widget", additions: 99, deletions: 99 })]);
+    if (call.url.endsWith("/pulls/7")) return json(pull(7, "fix", { title: "Fix the widget", additions: 10, deletions: 2 }));
     if (call.url.includes("/commits?")) {
       return json([
         {
@@ -434,6 +450,112 @@ test("repository detail maps the pull, the commit's first line, and a pending co
   const bad = await catalog.detail("acme", "bad name");
   assert.equal(bad.ok, false);
   if (!bad.ok) assert.equal(bad.status, 400);
+});
+
+test("a scoped token is kept only when it is exactly this repository", async () => {
+  const wide = harness(appRead, (call) => {
+    if (call.url.endsWith("/installation")) return json(installation(1, "acme", "Organization"));
+    if (call.url.endsWith("/access_tokens")) {
+      return json(
+        {
+          token: "ghs_WIDE",
+          expires_at: EXPIRES,
+          repositories: [{ full_name: "acme/widget" }, { full_name: "acme/other" }],
+        },
+        201,
+      );
+    }
+    return new Response("should not be called: " + call.url, { status: 500 });
+  });
+  const rejected = await wide.catalog.sessionStatus({ repo: "acme/widget", branch: "main", baseBranch: "main" });
+  assert.equal(rejected.connected, false);
+  assert.equal(rejected.reason, "not-installed");
+  assert.equal(wide.calls.some((call) => call.url.includes("/pulls")), false);
+
+  const followed = harness(appRead, (call) => {
+    if (call.url.endsWith("/installation") && !call.url.includes("/repositories")) {
+      return json(installation(1, "acme", "Organization"));
+    }
+    if (call.url.endsWith("/access_tokens")) return token("ghs_BARE");
+    if (call.url.startsWith("https://api.github.com/installation/repositories")) {
+      const fullName = call.auth.includes("ghs_BARE") ? "acme/widget" : "other/widget";
+      return json({ repositories: [repo(fullName, null)] });
+    }
+    if (call.url.includes("/pulls?")) return json([]);
+    return new Response("no " + call.url, { status: 500 });
+  });
+  const accepted = await followed.catalog.sessionStatus({ repo: "acme/widget", branch: "main", baseBranch: "main" });
+  assert.equal(accepted.connected, true);
+  assert.equal(followed.calls.some((call) => call.auth.includes("ghs_BARE") && call.url.includes("/installation/repositories")), true);
+
+  const other = harness(appRead, (call) => {
+    if (call.url.endsWith("/installation") && !call.url.includes("/repositories")) {
+      return json(installation(1, "acme", "Organization"));
+    }
+    if (call.url.endsWith("/access_tokens")) return token("ghs_BARE");
+    if (call.url.startsWith("https://api.github.com/installation/repositories")) {
+      return json({ repositories: [repo("acme/widget", null), repo("acme/other", null)] });
+    }
+    return new Response("should not be called: " + call.url, { status: 500 });
+  });
+  const several = await other.catalog.sessionStatus({ repo: "acme/widget", branch: "main", baseBranch: "main" });
+  assert.equal(several.connected, false);
+  assert.equal(several.reason, "not-installed");
+});
+
+test("pagination ignores a link that is not the list itself", async () => {
+  const urls: string[] = [];
+  const { catalog } = harness(appRead, (call) => {
+    urls.push(call.url);
+    if (call.url.endsWith("/access_tokens")) return token("ghs_PAGE");
+    if (call.url === "https://api.github.com/app/installations?per_page=100") {
+      return json([installation(1, "acme", "Organization")], 200, {
+        link: `<https://api.github.com/app/installations/../../app/installations/1/access_tokens>; rel="next"`,
+      });
+    }
+    if (call.url.startsWith("https://api.github.com/installation/repositories")) {
+      return json({ repositories: [repo("acme/widget", "2026-09-01T00:00:00Z")] }, 200, {
+        link: `<https://api.github.com/installation/repositories/../app/installations/1/access_tokens>; rel="next"`,
+      });
+    }
+    return new Response("no", { status: 500 });
+  });
+  const snapshot = await catalog.list();
+  assert.equal(snapshot.configured, true);
+  assert.equal(snapshot.repos[0]?.fullName, "acme/widget");
+  assert.equal(urls.some((url) => url.includes("..")), false);
+  assert.equal(urls.filter((url) => url.includes("/access_tokens")).length, 1);
+});
+
+test("a failed pulls list is not stored as no open pull requests", async () => {
+  let pulls = 0;
+  const { catalog } = harness(appRead, (call) => {
+    if (call.url.endsWith("/installation")) return json(installation(1, "acme", "Organization"));
+    if (call.url.endsWith("/access_tokens")) return token("ghs_READ", "acme/widget");
+    if (call.url.includes("/pulls?")) {
+      pulls += 1;
+      return new Response("no", { status: 500 });
+    }
+    return new Response("no", { status: 500 });
+  });
+  const status = await catalog.sessionStatus({ repo: "acme/widget", branch: "main", baseBranch: "main" });
+  assert.equal(status.connected, false);
+  assert.equal(status.reason, "unavailable");
+  await catalog.sessionStatus({ repo: "acme/widget", branch: "main", baseBranch: "main" });
+  assert.equal(pulls, 1);
+
+  const detail = harness(appRead, (call) => {
+    if (call.url.endsWith("/installation")) return json(installation(1, "acme", "Organization"));
+    if (call.url.endsWith("/access_tokens")) return token("ghs_READ", "acme/widget");
+    if (call.url === "https://api.github.com/repos/acme/widget") return json(repo("acme/widget", "2026-09-01T00:00:00Z"));
+    if (call.url.includes("/pulls?")) return new Response("no", { status: 502 });
+    if (call.url.includes("/commits?")) return json([]);
+    if (call.url.endsWith("/stats/participation")) return new Response(null, { status: 202 });
+    return new Response("no", { status: 500 });
+  });
+  const result = await detail.catalog.detail("acme", "widget");
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.status, 503);
 });
 
 test("the list snapshot type stays free of installation ids", () => {

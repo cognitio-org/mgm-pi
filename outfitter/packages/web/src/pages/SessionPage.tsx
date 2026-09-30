@@ -604,7 +604,9 @@ export function SessionPage() {
               collapsed={compact}
             />
             {cluster && <GithubChip cluster={cluster} />}
-            {session?.repo && <GithubStatus sessionId={sessionId} repo={session.repo} />}
+            {session?.repo && (
+              <GithubStatus key={`${sessionId}:${session.repo}`} sessionId={sessionId} repo={session.repo} />
+            )}
             <PreviewChips sessionId={sessionId} runState={runState} onError={setApiError} />
             <IdeChip />
             <span className="session-model-info">

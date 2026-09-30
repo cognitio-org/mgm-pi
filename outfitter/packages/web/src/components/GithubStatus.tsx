@@ -102,40 +102,50 @@ export function GithubStatusView({ status }: { status: GithubSessionStatus }) {
 }
 
 /** Polls while the Floppy has a repository and the tab is visible. A miss, or a repository
- * the App cannot see, renders nothing. */
+ * the App cannot see, renders nothing. SessionPage stays mounted across Floppies, so a change
+ * clears the previous repository before the next fetch, and a slow response cannot replace a newer one. */
 export function GithubStatus({ sessionId, repo }: { sessionId: string; repo?: string | null }) {
   const [status, setStatus] = useState<GithubSessionStatus | null>(null);
   useEffect(() => {
-    if (!repo) return;
+    if (!repo) {
+      setStatus(null);
+      return;
+    }
     let cancelled = false;
+    let generation = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    async function load() {
+    setStatus(null);
+    async function load(gen: number) {
       try {
         const next = await api.githubStatus(sessionId);
-        if (!cancelled) setStatus(next);
+        if (!cancelled && gen === generation) setStatus(next);
       } catch {
-        if (!cancelled) setStatus(null);
+        if (!cancelled && gen === generation) setStatus(null);
       }
     }
-    function arm() {
+    function arm(gen: number) {
       if (document.visibilityState === "hidden") return;
       timer = setTimeout(() => {
-        void load().finally(() => {
-          if (!cancelled) arm();
+        const nextGen = ++generation;
+        void load(nextGen).finally(() => {
+          if (!cancelled && nextGen === generation) arm(nextGen);
         });
       }, POLL_MS);
     }
-    void load();
-    arm();
+    const gen = ++generation;
+    void load(gen);
+    arm(gen);
     function onVisible() {
       clearTimeout(timer);
-      if (document.visibilityState === "hidden") return;
-      void load();
-      arm();
+      if (document.visibilityState === "hidden" || cancelled) return;
+      const nextGen = ++generation;
+      void load(nextGen);
+      arm(nextGen);
     }
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
+      generation += 1;
       clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };

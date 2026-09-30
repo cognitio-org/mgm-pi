@@ -72,6 +72,52 @@ describe("GithubStatusView", () => {
 });
 
 describe("GithubStatus", () => {
+  it("clears the previous floppy before the next fetch, and ignores that fetch if it arrives late", async () => {
+    let releaseFirst: (value: Response) => void = () => {};
+    const first = new Promise<Response>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let releaseSecond: (value: Response) => void = () => {};
+    const second = new Promise<Response>((resolve) => {
+      releaseSecond = resolve;
+    });
+    const body = (branch: string) =>
+      new Response(
+        JSON.stringify({
+          connected: true,
+          repo: "acme/widget",
+          branch,
+          baseBranch: "main",
+          pulls: [],
+          branchPull: null,
+          diff: null,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => (String(input).includes("/sessions/s1/") ? first : second)),
+    );
+    await act(async () => {
+      mount(<GithubStatus sessionId="s1" repo="acme/widget" />);
+    });
+    await act(async () => {
+      releaseFirst(body("first-branch"));
+    });
+    expect(container!.textContent).toContain("first-branch");
+    await act(async () => {
+      root!.render(<GithubStatus sessionId="s2" repo="acme/widget" />);
+    });
+    expect(container!.querySelector(".github-status")).toBeNull();
+    await act(async () => {
+      releaseFirst(body("stale-branch"));
+      releaseSecond(body("second-branch"));
+    });
+    expect(container!.textContent).toContain("second-branch");
+    expect(container!.textContent).not.toContain("stale-branch");
+    expect(container!.textContent).not.toContain("first-branch");
+  });
+
   it("hides itself when the status says the App is not connected", async () => {
     vi.stubGlobal(
       "fetch",

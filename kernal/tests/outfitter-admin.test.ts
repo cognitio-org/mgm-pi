@@ -14,7 +14,7 @@ import { adminTransport, httpTransport, socketTransport, type AdminTransport } f
 
 function fakePi() {
   const tools: any[] = [];
-  return { pi: { registerTool: (t: any) => tools.push(t) } as any, tools };
+  return { pi: { registerTool: (t: any) => tools.push(t), registerCommand() {}, on() {} } as any, tools };
 }
 
 function recorder(replies: Array<Record<string, unknown>>, kind: "laptop" | "drive" = "laptop") {
@@ -34,25 +34,31 @@ const tapes = ADMIN_TOOLS.find((t) => t.name === "outfitter_tapes")!;
 describe("registration", () => {
   test("no transport, no tools", () => {
     const { pi, tools } = fakePi();
-    register(pi, undefined);
+    register(pi, {});
     assert.equal(tools.length, 0);
   });
 
-  test("with a transport: three tools, one snippet and guideline in total", () => {
+  test("with a transport: the admin and search tools, one snippet and guideline in total", () => {
     const { pi, tools } = fakePi();
-    register(pi, recorder([]).transport);
-    assert.deepEqual(tools.map((t) => t.name), ["outfitter_tapes", "outfitter_environments", "outfitter_sessions"]);
+    register(pi, { transport: recorder([]).transport });
+    assert.deepEqual(tools.map((t) => t.name), ["session_search", "session_transcript", "outfitter_tapes", "outfitter_environments", "outfitter_sessions"]);
     assert.equal(tools.filter((t) => t.promptSnippet).length, 1);
     assert.equal(tools.flatMap((t) => t.promptGuidelines ?? []).length, 1);
   });
 
-  test("token budget: every definition together stays under ~800 tokens (4 chars per token)", () => {
+  test("local sessions alone: only the two search tools", () => {
     const { pi, tools } = fakePi();
-    register(pi, recorder([]).transport);
+    register(pi, { localDir: "/tmp/nowhere" });
+    assert.deepEqual(tools.map((t) => t.name), ["session_search", "session_transcript"]);
+  });
+
+  test("token budget: every definition together stays under ~1,000 tokens (4 chars per token)", () => {
+    const { pi, tools } = fakePi();
+    register(pi, { transport: recorder([]).transport, localDir: "/tmp/nowhere" });
     const chars = tools
       .map((t) => JSON.stringify({ name: t.name, description: t.description, parameters: t.parameters, promptSnippet: t.promptSnippet, promptGuidelines: t.promptGuidelines }))
       .join("").length;
-    assert.ok(chars / 4 <= 800, `definitions are ~${Math.round(chars / 4)} tokens`);
+    assert.ok(chars / 4 <= 1000, `definitions are ~${Math.round(chars / 4)} tokens`);
     for (const t of tools) assert.ok(t.description.length <= 160, `${t.name} description is ${t.description.length} chars`);
   });
 

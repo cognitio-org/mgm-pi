@@ -9,8 +9,12 @@
  * the person before a delete on a laptop.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { join } from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { ADMIN_TOOLS, PROMPT_GUIDELINES, PROMPT_SNIPPET, runTool, type Confirm } from "./tools.ts";
 import { adminTransport, type AdminTransport } from "./transport.ts";
+import { SEARCH_TOOLS, runSessionSearch, runSessionTranscript, type SearchToolDeps } from "./search-tools.ts";
+import { syncSessions } from "./sync.ts";
 
 const CONFIRM_TIMEOUT_MS = 5 * 60_000;
 
@@ -21,7 +25,18 @@ export function personHere(ctx: any): boolean {
   return ctx?.mode === "tui";
 }
 
-export default function (pi: ExtensionAPI, transport: AdminTransport | undefined = adminTransport()) {
+/** The laptop's sessions directory; none inside a Drive, whose only local session is itself. */
+function localSessionsDir(): string | undefined {
+  if (process.env.OUTFITTER_SESSION_ID) return undefined;
+  return process.env.KERNAL_SESSIONS_DIR || join(getAgentDir(), "sessions");
+}
+
+/** Tests pass `deps`; pi calls this with `pi` alone, and the environment decides. */
+export default function (pi: ExtensionAPI, deps?: { transport?: AdminTransport; localDir?: string }) {
+  const transport = deps ? deps.transport : adminTransport();
+  const localDir = deps ? deps.localDir : localSessionsDir();
+  registerSearch(pi, { transport, localDir });
+  if (transport?.kind === "laptop") registerSync(pi, localDir);
   if (!transport) return;
   ADMIN_TOOLS.forEach((def, i) => {
     pi.registerTool({
@@ -44,4 +59,50 @@ export default function (pi: ExtensionAPI, transport: AdminTransport | undefined
       },
     } as any);
   });
+}
+
+/** session_search and session_transcript: whenever there is anything to search (cloud or local). */
+function registerSearch(pi: ExtensionAPI, deps: SearchToolDeps) {
+  if (!deps.transport && !deps.localDir) return;
+  const run = { session_search: runSessionSearch, session_transcript: runSessionTranscript };
+  for (const def of SEARCH_TOOLS) {
+    pi.registerTool({
+      name: def.name,
+      label: def.label,
+      description: def.description,
+      parameters: def.parameters,
+      execute: async (_id: string, params: any, signal: AbortSignal | undefined) => {
+        try {
+          return await run[def.name](params ?? {}, deps, signal);
+        } catch (err) {
+          return { content: [{ type: "text" as const, text: `${def.name}: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+        }
+      },
+    } as any);
+  }
+}
+
+/** `/sessions sync`: upload local sessions to Outfitter's search index, only when asked. */
+function registerSync(pi: ExtensionAPI, localDir: string | undefined) {
+  if (!localDir) return;
+  pi.registerCommand("sessions", {
+    description: "sessions sync [<id> | --since 7d] -- upload local sessions to Outfitter so session_search finds them",
+    handler: async (args: string, ctx: any) => {
+      const parts = args.trim().split(/\s+/).filter(Boolean);
+      if (parts[0] !== "sync") {
+        ctx.ui.notify("usage: /sessions sync [<session id> | --since 7d]", "info");
+        return;
+      }
+      const sinceAt = parts.indexOf("--since");
+      const report = await syncSessions(localDir, { id: sinceAt < 0 ? parts[1] : undefined, since: sinceAt >= 0 ? parts[sinceAt + 1] : undefined });
+      ctx.ui.notify(report, "info");
+    },
+  } as any);
+  // KERNAL_SESSION_SYNC=1: the session just worked on goes up after each turn.
+  if (process.env.KERNAL_SESSION_SYNC === "1") {
+    pi.on("agent_end", async (_event: unknown, ctx: any) => {
+      const id = ctx?.sessionManager?.getSessionId?.();
+      if (typeof id === "string") await syncSessions(localDir, { id, quiet: true }).catch(() => {});
+    });
+  }
 }

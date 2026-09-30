@@ -1091,9 +1091,25 @@ type ChunkDoc = SessionChunk & { _id: string; at: Date };
  */
 class MongoSessionChunks implements SessionChunksCollection {
   private readonly col: MongoCollection<ChunkDoc>;
+  /** Names of the collection's queryable search indexes, re-read at most once a minute: Atlas
+   * answers a search on a missing index with no results, not an error. */
+  private ready: { names: Set<string>; at: number } | undefined;
 
   constructor(col: MongoCollection<ChunkDoc>) {
     this.col = col;
+  }
+
+  private async readyIndexes(): Promise<Set<string>> {
+    if (this.ready && Date.now() - this.ready.at < 60_000) return this.ready.names;
+    let names = new Set<string>();
+    try {
+      const list = (await this.col.listSearchIndexes().toArray()) as Array<{ name: string; queryable?: boolean; status?: string }>;
+      names = new Set(list.filter((i) => i.queryable === true || i.status === "READY").map((i) => i.name));
+    } catch {
+      // Not Atlas (no search index API): nothing is ready.
+    }
+    this.ready = { names, at: Date.now() };
+    return names;
   }
 
   async upsertMany(chunks: SessionChunk[]): Promise<void> {
@@ -1112,6 +1128,12 @@ class MongoSessionChunks implements SessionChunksCollection {
   }
 
   async search(query: ChunkQuery): Promise<ChunkHit[]> {
+    const needed = query.mode === "text" ? [CHUNKS_TEXT_INDEX] : query.mode === "semantic" ? [CHUNKS_VECTOR_INDEX] : [CHUNKS_TEXT_INDEX, CHUNKS_VECTOR_INDEX];
+    const ready = await this.readyIndexes();
+    const missing = needed.filter((n) => !ready.has(n));
+    if (missing.length) {
+      throw new SearchUnavailableError(`${query.mode} search is not set up on this cluster (${missing.join(", ")} not ready; run deploy/atlas-search.sh)`);
+    }
     const limit = Math.min(Math.max(query.limit, 1), 100);
     const f = query.filter;
     const equals = Object.entries({ ownerEmail: f.ownerEmail, guruId: f.guruId, repo: f.repo, role: f.role, sessionId: f.sessionId }).filter(
@@ -1153,9 +1175,10 @@ class MongoSessionChunks implements SessionChunksCollection {
     try {
       rows = (await this.col.aggregate(pipeline).toArray()) as Array<ChunkDoc & { score?: number }>;
     } catch (err) {
+      // An older server without $rankFusion, or a stage this deployment doesn't have.
       const message = err instanceof Error ? err.message : String(err);
-      if (/index|\$search|\$vectorSearch|\$rankFusion|autoEmbed|not supported|Unrecognized/i.test(message)) {
-        throw new SearchUnavailableError(`${query.mode} search is not set up on this cluster (run deploy/atlas-search.sh): ${message.slice(0, 160)}`);
+      if (/Unrecognized pipeline stage name|\$rankFusion is not (allowed|supported)/i.test(message)) {
+        throw new SearchUnavailableError(`${query.mode} search is not supported here: ${message.slice(0, 160)}`);
       }
       throw err;
     }

@@ -48,6 +48,25 @@ describe("redact", () => {
   });
 });
 
+describe("redact: more providers, any URI, and never split by a cut", () => {
+  test("Token auth, Stripe, Hugging Face, GitLab, npm, and userinfo on any scheme", () => {
+    const out = redact("Authorization: Token dg_abcdef123456 sk_live_0123456789abcdefABCD hf_abcdefghijklmnopqrstuv glpat-abcdefghijklmnopqrst npm_abcdefghijklmnopqrstuvwxyz0123456789 https://oauth2:glpat-xyzxyzxyzxyzxyzxyzxy@gitlab.com/x");
+    for (const secret of ["dg_abcdef", "sk_live_", "hf_abc", "glpat-abc", "npm_abc", "oauth2:glpat"]) assert.ok(!out.includes(secret), `${secret}: ${out}`);
+  });
+
+  test("a token straddling the tool-output cut is redacted whole first", () => {
+    const token = `ghp_${"A".repeat(36)}`;
+    const text = `${"x".repeat(TOOL_OUTPUT_CHARS - 20)} ${token} tail`;
+    const c = chunkEntry(session, tool("bash", text))!;
+    assert.doesNotMatch(c.text, /ghp_A/);
+  });
+
+  test("secrets in tool-call arguments are redacted before the arguments are clipped", () => {
+    const c = chunkEntry(session, assistant("", [["bash", { command: `curl -H "Authorization: Bearer ${"b".repeat(50)}" https://api.example.com/very/long/path/that/goes/on` }]]))!;
+    assert.doesNotMatch(c.text, /bbbbbbbb/);
+  });
+});
+
 describe("chunker", () => {
   test("user and assistant words, tool calls, no thinking; owner lowercased", () => {
     const c = chunkEntry(session, assistant("Looking at the handler.", [["read", { path: "src/login.ts" }]]))!;
@@ -138,6 +157,23 @@ describe("renderTranscript", () => {
     assert.match(lines[2], /^\[e\d+\] assistant: done$/);
   });
 
+  test("around an entry on an earlier branch reads that branch, and says so", () => {
+    const root = user("start");
+    const old = assistant("the old approach failed", [], root.id);
+    const kept = assistant("new approach", [], root.id);
+    const out = renderTranscript([root, old, kept], { view: "text", leafId: kept.id, around: old.id }) as { text: string };
+    assert.match(out.text, /^\(this entry is on an earlier branch of the session\)/);
+    assert.match(out.text, /the old approach failed/);
+    assert.doesNotMatch(out.text, /new approach/);
+  });
+
+  test("around with from is an error; maxChars is a hard cap even for one long entry", () => {
+    assert.deepEqual(renderTranscript(entries, { around: "x", from: "y" }), { error: "use around or from, not both" });
+    const huge = [tool("bash", "y".repeat(20_000))];
+    const out = renderTranscript(huge, { view: "text", toolOutput: "full", maxChars: 500 }) as { text: string };
+    assert.ok(out.text.length <= 500, `${out.text.length}`);
+  });
+
   test("an unknown entry reference is a one-line error", () => {
     assert.deepEqual(renderTranscript(entries, { around: "zzzz" }), { error: 'no entry "zzzz" in this session\'s transcript' });
   });
@@ -184,6 +220,39 @@ describe("sessions.search and sessions.transcript ops (memory store)", () => {
     assert.match(all.text, /^22222222 /m);
     const mine = (await runAdminOp({ store, models }, caller, "sessions.search", { query: "403", mode: "text", owner: "me" })) as { text: string };
     assert.doesNotMatch(mine.text, /22222222/);
+  });
+
+  test("a printed 8-char session prefix works as the session filter; a bad since is an error", async () => {
+    const store = await seeded();
+    const res = (await runAdminOp({ store, models }, caller, "sessions.search", { query: "403", mode: "text", session: "22222222" })) as { ok: boolean; text: string };
+    assert.equal(res.ok, true);
+    assert.match(res.text, /^22222222 /);
+    assert.doesNotMatch(res.text, /11111111/);
+    const bad = await runAdminOp({ store, models }, caller, "sessions.search", { query: "403", mode: "text", since: "last week" });
+    assert.deepEqual(bad, { ok: false, error: "since: use 7d, 12h or an ISO date" });
+  });
+
+  test("a Drive searches and reads only its owner's sessions", async () => {
+    const store = await seeded();
+    const drive: AdminCaller = { email: "ada@example.com", via: "drive", operator: false };
+    const res = (await runAdminOp({ store, models }, drive, "sessions.search", { query: "403", mode: "text" })) as { text: string };
+    assert.doesNotMatch(res.text, /22222222/);
+    const other = await runAdminOp({ store, models }, drive, "sessions.transcript", { id: "22222222" });
+    assert.deepEqual(other, { ok: false, error: "a Drive can read only its owner's sessions" });
+  });
+
+  test("a ten-session page stays small", async () => {
+    const store = new MemoryStore();
+    const indexer = new SessionIndexer(store);
+    for (let i = 0; i < 12; i++) {
+      const sid = `${String(i).padStart(8, "0")}-aaaa-4aaa-8aaa-00000000000${i % 10}`;
+      await store.sessions.insert({ ...session, id: sid, name: `session number ${i} about the flaky deploy` });
+      for (let j = 0; j < 4; j++) await store.entries.insertIfNew(sid, j + 1, tool("bash", `deploy failed with a flaky timeout ${"z".repeat(400)} step ${j}`, true));
+      await indexer.reindexSession(sid);
+    }
+    const res = (await runAdminOp({ store, models }, caller, "sessions.search", { query: "flaky deploy", mode: "text" })) as { text: string };
+    assert.equal(res.text.split("\n").filter((l) => !l.startsWith(" ")).length, 10);
+    assert.ok(res.text.length < 5_000, `${res.text.length} chars`);
   });
 
   test("semantic and hybrid say they need Atlas, and suggest text", async () => {

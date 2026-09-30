@@ -5,16 +5,15 @@
 // search matches on (Atlas Search and the auto-embedded vector index, deploy/atlas-search.sh).
 
 import type { PiEntry, Session, SessionChunk } from "../store/types.ts";
+import { readableEntry } from "./transcript.ts";
+import { redact } from "./redact.ts";
 
 export type { SessionChunk };
-import { readableEntry, type EntryRole } from "./transcript.ts";
-import { redact } from "./redact.ts";
 
 /** How much of a tool's output is indexed: errors and their context, not whole file dumps. */
 export const TOOL_OUTPUT_CHARS = 2_000;
 /** Cap on any one chunk, which also bounds embedding cost per entry. */
 export const CHUNK_CHARS = 4_000;
-
 
 function cut(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
@@ -33,7 +32,8 @@ function base(session: SessionMeta) {
 
 /** The chunk for one entry, or undefined when the entry carries nothing worth searching. */
 export function chunkEntry(session: SessionMeta, entry: PiEntry, fallbackTime?: string): SessionChunk | undefined {
-  const parts = readableEntry(entry);
+  // Redacted whole, before any cut, so a secret can't be split into an unmatched piece.
+  const parts = readableEntry(entry, redact);
   if (!parts) return undefined;
   let text: string;
   if (parts.role === "tool") {
@@ -42,7 +42,7 @@ export function chunkEntry(session: SessionMeta, entry: PiEntry, fallbackTime?: 
     const calls = parts.calls.map((c) => `→ ${c.name}(${c.args})`).join("\n");
     text = [parts.text, calls, parts.failed ? `failed: ${parts.failed}` : ""].filter(Boolean).join("\n");
   }
-  text = cut(redact(text).trim(), CHUNK_CHARS);
+  text = cut(text.trim(), CHUNK_CHARS);
   if (!text) return undefined;
   return {
     id: `${session.id}:${entry.id}`,

@@ -39,9 +39,33 @@ const wanted = [
 ];
 type SearchIndexInfo = { name: string; status?: string; definition?: unknown; latestDefinition?: unknown };
 const existing = (dryRun && !(await db.listCollections({ name: CHUNKS_COLLECTION }).hasNext()) ? [] : await col.listSearchIndexes().toArray()) as SearchIndexInfo[];
+/** Every value we set is what Atlas has, ignoring key order and the defaults Atlas fills in. */
+function covers(have: unknown, want: unknown): boolean {
+  if (Array.isArray(want)) {
+    if (!Array.isArray(have) || have.length !== want.length) return false;
+    return want.every((w) => have.some((h) => covers(h, w)));
+  }
+  if (want && typeof want === "object") {
+    if (!have || typeof have !== "object") return false;
+    return Object.entries(want).every(([k, v]) => covers((have as Record<string, unknown>)[k], v));
+  }
+  return have === want;
+}
+
+function modelOf(def: unknown): string | undefined {
+  const fields = (def as { fields?: Array<{ type?: string; model?: string }> } | undefined)?.fields ?? [];
+  return fields.find((f) => f.type === "autoEmbed")?.model;
+}
+
 for (const idx of wanted) {
   const have = existing.find((e) => e.name === idx.name);
-  const same = have && JSON.stringify(have.latestDefinition ?? have.definition) === JSON.stringify(idx.definition);
+  const current = have?.latestDefinition ?? have?.definition;
+  const same = have && covers(current, idx.definition);
+  if (have && idx.type === "vectorSearch" && modelOf(current) && modelOf(current) !== modelOf(idx.definition)) {
+    console.error(`${idx.name}: embeds with ${modelOf(current)}, asked for ${modelOf(idx.definition)}; a model can't change in place. Drop ${idx.name} first (everything is re-embedded).`);
+    process.exitCode = 1;
+    continue;
+  }
   if (same) {
     console.log(`${idx.name}: up to date (${have.status ?? "unknown status"})`);
   } else if (dryRun) {

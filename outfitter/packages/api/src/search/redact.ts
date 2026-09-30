@@ -13,8 +13,13 @@ const PATTERNS: RegExp[] = [
   /\bAKIA[0-9A-Z]{16}\b/g, // AWS access key ids
   /\bxox[abprs]-[A-Za-z0-9-]{10,}/g, // Slack
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, // JWTs
-  /\b((?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis|amqp):\/\/)[^\s:@/]+:[^\s@/]+@/g, // URIs with a password
-  /(authorization:\s*(?:bearer|basic)\s+)[^\s"']+/gi,
+  /\bsk_(?:live|test)_[A-Za-z0-9]{16,}/g, // Stripe
+  /\brk_(?:live|test)_[A-Za-z0-9]{16,}/g,
+  /\bhf_[A-Za-z0-9]{20,}/g, // Hugging Face
+  /\bglpat-[A-Za-z0-9_-]{20,}/g, // GitLab
+  /\bnpm_[A-Za-z0-9]{30,}/g,
+  /\b([a-z][a-z0-9+.-]*:\/\/)[^\s:@/]+:[^\s@/]+@/gi, // any URI with a user:password (agentd's logger does the same)
+  /(authorization:\s*(?:bearer|basic|token)\s+)[^\s"']+/gi,
   /((?:api[_-]?key|secret|password|passwd|token|access[_-]?key)["']?\s*[:=]\s*)(["'])[^"'\n]{4,}\2/gi, // quoted, may hold spaces
   /\b((?:api[_-]?key|secret|password|passwd|token|access[_-]?key)["']?\s*[:=]\s*["']?)[^\s"',;]{8,}/gi,
 ];

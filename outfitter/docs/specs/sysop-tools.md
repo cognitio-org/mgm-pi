@@ -55,6 +55,17 @@ Decisions (confirmed with the owner):
   the session's entries; sessions are small today. Revisit if one grows past a few thousand entries.
 - **One pi entry parser:** the chunker reuses the transcript renderer's `readableEntry`, and
   `transcript.ts` has no api imports so Kernal can copy it unchanged.
+- **Redaction** runs over whole texts and tool-call arguments before anything is cut (a
+  `scrub` hook on `readableEntry`), and over every rendered transcript. Pattern-based only; scrubbing
+  a session's known secret values is a follow-up.
+- **A Drive reads its owner's sessions only** (`sessions.search` forces `owner:"me"`,
+  `sessions.transcript` refuses others'), so a prompt-injected agent can't pull someone else's
+  transcript. A laptop Dongle keeps today's REST reach.
+- **Missing indexes are an error, not "no matches":** the store checks that the needed Atlas indexes
+  are queryable (cached a minute) before searching.
+- **Results:** printed prefixes work as filters; 2 hits per session on pages over 5 sessions, 150-char
+  snippets, the 12k cap; `around` a hit on an abandoned branch reads that branch.
+- **Imports index only the entries they added,** so repeated syncs don't re-embed a session.
 
 ## Changes since the plan (PR2)
 - **Approvals reuse the session's confirm card,** answered through `POST /api/sessions/:id/ui-response`

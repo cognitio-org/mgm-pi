@@ -312,14 +312,19 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
 
     let seq = await ctx.store.entries.maxSeq(id);
     let leafId = session.leafId;
+    const added: PiEntry[] = [];
     for (const line of lines.slice(1)) {
       const entry = JSON.parse(line) as PiEntry;
       const inserted = await ctx.store.entries.insertIfNew(id, ++seq, entry);
-      if (inserted) leafId = entry.id;
+      if (inserted) {
+        leafId = entry.id;
+        added.push(entry);
+      }
     }
     await ctx.store.sessions.update(id, { leafId, updatedAt: now, ...(existing && carried.patch ? carried.patch : {}) });
     // Session search (#289): an imported (teleported or synced) session is searchable like any other.
-    void ctx.indexer.reindexSession(id).catch((err) => req.log.warn({ err }, "session index failed"));
+    // Only the entries this import added: a re-sync doesn't re-embed what is already indexed.
+    void ctx.indexer.indexEntries(id, added);
 
     return { id, imported: lines.length - 1 };
   });

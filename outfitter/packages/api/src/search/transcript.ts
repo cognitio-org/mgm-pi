@@ -82,7 +82,15 @@ function textOf(content: unknown): string {
     .join("\n");
 }
 
-function compactArgs(args: unknown, max = 120): string {
+function compactArgs(args: unknown, max = 120, scrub?: (s: string) => string): string {
+  if (scrub && args !== undefined) {
+    // Scrub the whole value before anything is cut, so a secret can't be split past the pattern.
+    try {
+      args = JSON.parse(scrub(JSON.stringify(args)));
+    } catch {
+      args = scrub(String(args));
+    }
+  }
   let text: string;
   if (args && typeof args === "object" && !Array.isArray(args)) {
     text = Object.entries(args as Record<string, unknown>)
@@ -101,16 +109,23 @@ function isoOf(ts: unknown): string | undefined {
 }
 
 /** The readable part of one entry, or undefined for entries without any (model changes, labels,
- * custom data, the system prompt). Thinking is dropped. */
-export function readableEntry(entry: TranscriptEntry): ReadableEntry | undefined {
-  const row = rowOf(entry);
+ * custom data, the system prompt). Thinking is dropped. `scrub` (the search chunker's redaction)
+ * runs over whole texts and arguments before anything is cut. */
+export function readableEntry(entry: TranscriptEntry, scrub?: (s: string) => string): ReadableEntry | undefined {
+  const row = rowOf(entry, scrub);
   if (!row) return undefined;
   const m = (entry.message ?? {}) as Record<string, unknown>;
   const timestamp = isoOf(entry.timestamp) ?? isoOf(m.timestamp);
   return timestamp ? { ...row, timestamp } : row;
 }
 
-function rowOf(entry: TranscriptEntry): Row | undefined {
+function rowOf(entry: TranscriptEntry, scrub?: (s: string) => string): Row | undefined {
+  const row = rawRow(entry, scrub);
+  if (!row || !scrub) return row;
+  return { ...row, text: scrub(row.text), ...(row.failed ? { failed: scrub(row.failed) } : {}) };
+}
+
+function rawRow(entry: TranscriptEntry, scrub?: (s: string) => string): Row | undefined {
   if (entry.type === "compaction" || entry.type === "branch_summary") {
     return typeof entry.summary === "string" && entry.summary ? { id: entry.id, role: "summary", text: entry.summary, calls: [] } : undefined;
   }
@@ -122,7 +137,7 @@ function rowOf(entry: TranscriptEntry): Row | undefined {
     case "assistant": {
       const blocks = Array.isArray(m.content) ? (m.content as Array<Record<string, unknown>>) : [];
       const text = blocks.filter((b) => b.type === "text" && typeof b.text === "string").map((b) => b.text as string).join("\n");
-      const calls = blocks.filter((b) => b.type === "toolCall").map((b) => ({ name: String(b.name ?? "tool"), args: compactArgs(b.arguments) }));
+      const calls = blocks.filter((b) => b.type === "toolCall").map((b) => ({ name: String(b.name ?? "tool"), args: compactArgs(b.arguments, 120, scrub) }));
       const failed = m.stopReason === "error" || m.stopReason === "aborted" ? String(m.errorMessage || m.stopReason) : undefined;
       if (!text && !calls.length && !failed) return undefined;
       return { id: entry.id, role: "assistant", text, calls, ...(failed ? { failed } : {}) };
@@ -192,9 +207,19 @@ export function renderTranscript(entries: TranscriptEntry[], opts: TranscriptOpt
   const maxChars = Math.min(Math.max(opts.maxChars ?? DEFAULT_MAX, 500), 50_000);
   const roles = opts.roles?.length ? new Set(opts.roles) : undefined;
 
-  let rows = branch(entries, opts.leafId)
-    .map(rowOf)
-    .filter((r): r is Row => !!r);
+  if (opts.around && opts.from) return { error: "use around or from, not both" };
+  const readable = (list: TranscriptEntry[]) => list.map((e) => rowOf(e)).filter((r): r is Row => !!r);
+  let rows = readable(branch(entries, opts.leafId));
+  let note: string | undefined;
+  // A search hit can sit on a branch the session later left: read that branch up to it instead.
+  if (opts.around && findIndex(rows, opts.around) !== undefined && typeof findIndex(rows, opts.around) === "object") {
+    const all = readable(entries);
+    const hit = findIndex(all, opts.around);
+    if (typeof hit === "number") {
+      rows = readable(branch(entries, all[hit].id));
+      note = "(this entry is on an earlier branch of the session)";
+    }
+  }
 
   const around = findIndex(rows, opts.around);
   if (around && typeof around === "object") return around;
@@ -208,8 +233,8 @@ export function renderTranscript(entries: TranscriptEntry[], opts: TranscriptOpt
   }
   if (roles) rows = rows.filter((r) => roles.has(r.role));
 
-  const out: string[] = [];
-  let used = 0;
+  const out: string[] = note ? [note] : [];
+  let used = note ? note.length + 1 : 0;
   let next: string | undefined;
   let lastTool: { key: string; count: number; index: number } | undefined;
   let hiddenTools = 0;
@@ -247,7 +272,9 @@ export function renderTranscript(entries: TranscriptEntry[], opts: TranscriptOpt
         const key = `${r.tool}\u0000${r.isError}\u0000${r.text}`;
         if (lastTool && lastTool.key === key) {
           lastTool.count++;
-          out[lastTool.index] = out[lastTool.index].replace(/ \(×\d+\)$/, "") + ` (×${lastTool.count})`;
+          const folded = out[lastTool.index].replace(/ \(×\d+\)$/, "") + ` (×${lastTool.count})`;
+          used += folded.length - out[lastTool.index].length;
+          out[lastTool.index] = folded;
           continue;
         }
         lastTool = { key, count: 1, index: out.length };
@@ -256,6 +283,8 @@ export function renderTranscript(entries: TranscriptEntry[], opts: TranscriptOpt
       }
     }
     if (!line) continue;
+    // Even a first line longer than the cap is cut to it.
+    if (line.length > maxChars) line = `${line.slice(0, maxChars - 1)}…`;
     if (used + line.length + 1 > maxChars && out.length > 0) {
       steps = undefined;
       next = out.length ? rows[rows.indexOf(r) - 1]?.id : undefined;

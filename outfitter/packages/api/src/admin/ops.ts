@@ -408,15 +408,32 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
   "sessions.search": {
     kind: "read",
     async run(ctx, caller, args) {
-      return searchSessions(ctx.store, caller.email, args, nowOf(ctx));
+      const a = { ...args };
+      // Printed ids are prefixes; the store filters on full ones.
+      if (a.session !== undefined) {
+        const s = await findSession(ctx, a.session);
+        if (!s.ok) return s;
+        a.session = s.item.id;
+      }
+      if (a.tape !== undefined) {
+        const t = await resolveTape(ctx, a.tape);
+        if (!t.ok) return t;
+        a.tape = t.item.id;
+      }
+      // A Drive reads its owner's sessions only: a prompt-injected agent shouldn't pull other people's.
+      if (caller.via === "drive") a.owner = "me";
+      return searchSessions(ctx.store, caller.email, a, nowOf(ctx));
     },
   },
 
   "sessions.transcript": {
     kind: "read",
-    async run(ctx, _caller, args) {
+    async run(ctx, caller, args) {
       const found = await findSession(ctx, args.id);
       if (!found.ok) return found;
+      if (caller.via === "drive" && found.item.ownerEmail?.toLowerCase() !== caller.email.toLowerCase()) {
+        return { ok: false, error: "a Drive can read only its owner's sessions" };
+      }
       return sessionTranscript(ctx.store, found.item, args, nowOf(ctx));
     },
   },

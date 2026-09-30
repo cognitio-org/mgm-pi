@@ -1,0 +1,47 @@
+kernal/.pi/settings.json
+  s_89f239d3945616::t_bdf35e0636eae1 13-15
+kernal/README.md
+  s_89f239d3945616::t_62f6c3f1429845 725-750
+kernal/scripts/package.sh
+  s_89f239d3945616::t_b150b7fa1a911c 57-58
+kernal/skills/outfitter-admin/SKILL.md
+  s_89f239d3945616::t_80765b452f413f 1-64
+kernal/tests/skills.test.ts
+  s_89f239d3945616::t_b681826a7e9df2 1-25
+outfitter/EPIC.md
+  s_89f239d3945616::t_5be692f884e74d 617-635
+outfitter/docs/specs/sysop-tools.md
+  s_89f239d3945616::t_2a3257d703d99f 45-53
+outfitter/image/Dockerfile
+  s_89f239d3945616::t_082c2c09b28ea9 47-48
+outfitter/packages/api/src/gurus-service.ts
+  s_89f239d3945616::t_0402472cd4fd65 297-320
+outfitter/packages/api/src/main.ts
+  s_89f239d3945616::t_7a0a2a354bf224 2,36-39
+outfitter/packages/api/test/admin-ops.test.ts
+  s_89f239d3945616::t_b36202baf7a4be 11,315-327
+outfitter/packages/web/src/api/client.ts
+  s_89f239d3945616::t_19c2cde414703f 144-147
+outfitter/packages/web/src/components/GuruForm.tsx
+  s_89f239d3945616::t_428997b70288b8 17-18,49,61,93,178-194
+outfitter/packages/web/src/pages/GurusPage.tsx
+  s_89f239d3945616::t_c366718b2a31fb 24,29-30,117
+outfitter/packages/web/test/guru-form.test.tsx
+  s_89f239d3945616::t_d8b638db9c822f 85-125
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "a1a510334df94b9c2db4a2c8d2d0d24dce964fca",
+  "prompts": {},
+  "sessions": {
+    "s_89f239d3945616": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b3b2a115-86e8-4751-b3c1-916d3ff8cc0e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -38,6 +38,7 @@ const SessionPage = lazyRoute(() => import("./pages/SessionPage.tsx").then((m) =
 const GurusPage = lazyRoute(() => import("./pages/GurusPage.tsx").then((m) => ({ default: m.GurusPage })));
 const SettingsPage = lazyRoute(() => import("./pages/SettingsPage.tsx").then((m) => ({ default: m.SettingsPage })));
 const ManualPage = lazyRoute(() => import("./pages/ManualPage.tsx").then((m) => ({ default: m.ManualPage })));
+const GithubPage = lazyRoute(() => import("./pages/GithubPage.tsx").then((m) => ({ default: m.GithubPage })));
 
 const PANIC_TEST_ENABLED = Boolean(import.meta.env.DEV || import.meta.env.OUTFITTER_DEV);
 
@@ -45,6 +46,7 @@ const NAV_ITEMS: Array<{ to: string; end?: boolean; label: string; hint: string;
   { to: "/", end: true, label: vocabulary.desk.one, hint: "the Outfitter desktop" },
   { to: "/fleet", label: vocabulary.sessionList.one, hint: vocabulary.sessionList.hint },
   { to: "/gurus", label: vocabulary.guru.many, hint: vocabulary.guru.hint },
+  { to: "/github", label: vocabulary.github.one, hint: vocabulary.github.hint },
   { to: "/providers", label: vocabulary.provider.many, hint: vocabulary.provider.hint },
   { to: "/tokens", label: vocabulary.token.many, hint: vocabulary.token.hint },
   { to: "/settings", label: vocabulary.settings.one, hint: `${vocabulary.settings.hint} — ${vocabulary.operator.hint}`, operatorOnly: true },
@@ -224,6 +226,7 @@ export function App() {
             <Route path="/fleet" element={<FleetPage />} />
             <Route path="/sessions/:id" element={<SessionPage />} />
             <Route path="/gurus" element={<GurusPage />} />
+            <Route path="/github" element={<GithubPage />} />
             <Route path="/providers" element={<ProvidersPage />} />
             <Route path="/tokens" element={<TokensPage />} />
             <Route path="/settings" element={<SettingsPage />} />

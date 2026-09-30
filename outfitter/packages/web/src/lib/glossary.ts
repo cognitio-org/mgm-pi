@@ -123,6 +123,14 @@ export const GLOSSARY_TERMS: GlossaryTerm[] = [
     linkTo: "/tokens",
   },
   {
+    id: "github",
+    label: "GitHub",
+    meaning: "Repositories the GitHub App can reach, with their latest commit and open pull requests.",
+    codeName: "GitHub App catalog",
+    glyph: "⎇", // ⎇
+    linkTo: "/github",
+  },
+  {
     id: "control-panel",
     label: "Control Panel",
     meaning: "Keys and deployment settings.",

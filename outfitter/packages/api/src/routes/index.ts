@@ -15,6 +15,7 @@ import { registerSandboxRoutes } from "./sandbox.ts";
 import { registerPreviewRoutes } from "./previews.ts";
 import { registerIdeRoutes } from "./ide.ts";
 import { registerVoiceRoutes } from "./voice.ts";
+import { registerGithubRoutes } from "./github.ts";
 import { registerAdminRoutes } from "./admin.ts";
 
 export type { RouteContext } from "./context.ts";
@@ -41,6 +42,7 @@ export async function registerRoutes(app: FastifyInstance, ctx: RouteContext): P
     await registerProviderRoutes(app, ctx);
     await registerOperatorRoutes(app, ctx);
     await registerVoiceRoutes(app, ctx);
+    await registerGithubRoutes(app, ctx);
     await registerAdminRoutes(app, ctx);
     await registerStaticRoutes(app);
   } else {

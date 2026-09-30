@@ -15,6 +15,7 @@ export interface VocabEntry {
 
 export const vocabulary = {
   guru: { one: "Tape", many: "Tapes", hint: "reusable agent configurations: model, prompt, tools" },
+  github: { one: "GitHub", many: "GitHub", hint: "repositories the GitHub App can reach" },
   session: {
     one: "Floppy",
     many: "Floppies",

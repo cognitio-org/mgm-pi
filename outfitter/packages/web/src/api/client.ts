@@ -440,6 +440,71 @@ export type ProjectVoiceSpend =
       rates: { sttUsdPerMinute: number; ttsUsdPer1kChars: number };
     };
 
+/** One account the GitHub App is installed on. Installation ids stay on the server. */
+export interface GithubAccount {
+  login: string;
+  type: "Organization" | "User";
+}
+
+export interface GithubRepoSummary {
+  fullName: string;
+  owner: string;
+  name: string;
+  private: boolean;
+  description: string | null;
+  defaultBranch: string | null;
+  pushedAt: string | null;
+  htmlUrl: string;
+  language: string | null;
+  account: string;
+  accountType: "Organization" | "User";
+}
+
+export interface GithubCatalogSnapshot {
+  configured: boolean;
+  reason?: "not-configured" | "misconfigured" | "unavailable";
+  truncated: boolean;
+  accounts: GithubAccount[];
+  repos: GithubRepoSummary[];
+}
+
+export interface GithubPull {
+  number: number;
+  title: string;
+  url: string;
+  draft: boolean;
+  author: string | null;
+  updatedAt: string | null;
+  head: string;
+  base: string;
+  additions: number | null;
+  deletions: number | null;
+}
+
+export interface GithubRepoDetail extends GithubRepoSummary {
+  openPulls: GithubPull[];
+  lastCommit: { sha: string; url: string; message: string; author: string | null; date: string | null } | null;
+  contributions: { weeks: number[] } | { pending: true } | null;
+}
+
+export interface GithubSessionStatus {
+  connected: boolean;
+  reason?: string;
+  repo: string | null;
+  branch: string | null;
+  baseBranch: string | null;
+  pulls: GithubPull[];
+  branchPull: GithubPull | null;
+  diff: {
+    additions: number;
+    deletions: number;
+    ahead?: number;
+    behind?: number;
+    source: "pull" | "compare";
+    partial?: boolean;
+  } | null;
+}
+
 export const api = {
   version(): Promise<AppVersion> {
     return request("/api/version");
@@ -677,6 +742,26 @@ export const api = {
   /** Per-minute history over the run's lifetime. 501 for a provider other than GKE. */
   sandboxMetrics(id: string, runId: string): Promise<SandboxMetrics> {
     return request(`/api/sessions/${id}/sandbox/metrics?runId=${encodeURIComponent(runId)}`);
+  },
+
+  /** Repositories the GitHub App can reach. `fresh` skips the short server cache. */
+  githubRepos(fresh = false): Promise<GithubCatalogSnapshot> {
+    return request(`/api/github/repos${fresh ? "?fresh=1" : ""}`);
+  },
+
+  /** One repository: open pull requests, the latest commit, and weekly commit counts. */
+  githubRepo(owner: string, name: string): Promise<GithubRepoDetail> {
+    return request(`/api/github/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`);
+  },
+
+  /** Create a repository on an account the App is installed on. Private unless `private` is false. */
+  createGithubRepo(input: { owner: string; name: string; private?: boolean; description?: string }): Promise<{ repo: GithubRepoSummary }> {
+    return request("/api/github/repos", { method: "POST", body: JSON.stringify(input) });
+  },
+
+  /** Branch, open pull requests, and line counts for a Floppy whose repository the App can see. */
+  githubStatus(sessionId: string): Promise<GithubSessionStatus> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/github-status`);
   },
 
   streamUrl(id: string): string {

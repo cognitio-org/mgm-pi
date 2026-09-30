@@ -7,7 +7,7 @@ import type { Store } from "./store/types.ts";
 import { entryForWire } from "./entry-wire.ts";
 import { summarizeStartup } from "./startup.ts";
 
-export type SseEventType = "entry" | "event" | "status" | "spend" | "checkpoint" | "liveness";
+export type SseEventType = "entry" | "event" | "status" | "spend" | "checkpoint" | "liveness" | "live_thought";
 
 export interface SseEvent {
   type: SseEventType;
@@ -96,6 +96,10 @@ const SSE_KEEPALIVE_MS = 25_000;
  * explicitly "not persisted" in the protocol and the reported bug is about status/entries going
  * stale, not about losing token-by-token streaming.
  *
+ * One exception (#285): the open message's thinking text is throttled onto Run.liveThought and
+ * republished here as `live_thought`, because a thought that only exists inside message_update
+ * never becomes an entry until the message ends -- which is the whole wait the bubble is for.
+ *
  * Why polling and not a Mongo change stream: change streams need a replica set (Atlas M0 is one,
  * so they'd technically work), but they hold a permanent server-side cursor per watcher and need
  * their own reconnect/resume-token handling -- real operational surface for a fleet UI likely to
@@ -124,6 +128,8 @@ export class SsePoller {
       lastRunId?: string;
       /** The active run's lastSeenAt/lastActivityAt as last published in a `liveness` frame. */
       lastLivenessKey?: string;
+      /** Last `live_thought` text published. Null once cleared; absent until the first one. */
+      lastLiveThought?: string | null;
     }
   >();
   private timer?: ReturnType<typeof setInterval>;
@@ -263,6 +269,14 @@ export class SsePoller {
     if (run && typeof run.costEstimate === "number" && run.costEstimate !== cursor.lastCostEstimate) {
       this.hub.publish(sessionId, { type: "spend", data: { t: "spend", estimate: run.costEstimate } });
       cursor.lastCostEstimate = run.costEstimate;
+    }
+    // #285: the open thought, for a browser that is not on the link process. Only while the run
+    // is actually running -- an idle run's leftover text is a clear, not another bubble. The
+    // first poll of a session with no thought publishes nothing.
+    const liveThought = run?.state === "running" && typeof run.liveThought === "string" ? run.liveThought : null;
+    if (liveThought !== cursor.lastLiveThought && !(liveThought === null && cursor.lastLiveThought === undefined)) {
+      this.hub.publish(sessionId, { type: "live_thought", data: { text: liveThought } });
+      cursor.lastLiveThought = liveThought;
     }
     const uiKey = run?.pendingUiRequest ? JSON.stringify(run.pendingUiRequest) : undefined;
     if (uiKey && uiKey !== cursor.lastUiRequestKey) {

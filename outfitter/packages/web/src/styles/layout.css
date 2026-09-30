@@ -322,6 +322,28 @@
   font-size: 0.75rem;
 }
 
+/* #285: Thoughts, next to Nerd out. A preference, not a disclosure, so no twist triangle. */
+.thought-bubble-toggle {
+  box-shadow: none;
+  border: 1px solid var(--border);
+  padding: 0.05rem 0.45rem;
+  min-height: 32px;
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  font-family: var(--font-display);
+  font-size: 0.66rem;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.thought-bubble-toggle.is-on {
+  color: var(--title-label-text);
+  background: var(--accent);
+  border-color: var(--border-strong);
+}
+
 .session-header {
   display: flex;
   justify-content: space-between;
@@ -971,6 +993,40 @@ h4.voice-menu-heading {
   justify-content: flex-start;
 }
 
+/* #285: while a thought is on screen, an assistant beat keeps the rail in its right column,
+ * which is where that bubble shrinks to. A tools-only beat's rail already rests as a row at
+ * the start, so the bubble sits under it and shrinks upward -- forcing the glyph into the
+ * right column made it jump back left when the bubble unmounted. Settled beats do not get
+ * this class, so a finished reply stays a direct .entry stretched to the rail. */
+.beat-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.beat.has-thought-bubble {
+  grid-template-columns: minmax(0, 1fr) 36px;
+}
+
+.beat.tools-only.has-thought-bubble {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.beat.tools-only.has-thought-bubble .rail {
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.beat.tools-only .thought-bubble {
+  transform-origin: left top;
+}
+
+.beat.tools-only .thought-bubble-slot.is-collapsing .thought-bubble {
+  transform: translateY(-12px) scale(0.2);
+}
+
 .who {
   position: absolute;
   top: -11px;
@@ -1030,6 +1086,11 @@ h4.voice-menu-heading {
   border-style: dashed;
 }
 
+.rail-glyph.is-receiving {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
 .rail-glyph.is-error,
 .rail-glyph.is-error:hover {
   color: var(--danger);
@@ -1078,6 +1139,12 @@ h4.voice-menu-heading {
 
 @media (prefers-reduced-motion: reduce) {
   .rail-led {
+    animation: none;
+  }
+
+  .thought-bubble-slot,
+  .thought-bubble {
+    transition: none;
     animation: none;
   }
 }
@@ -1177,6 +1244,61 @@ h4.voice-menu-heading {
 
 .rail-thinking-expanded .rail-thinking-body + .rail-thinking-body {
   margin-top: 0.6rem;
+}
+
+/* #285: the open thought. The slot's grid row is what shrinks; 220ms matches the hold in
+ * TranscriptRail.tsx (THOUGHT_BUBBLE_COLLAPSE_MS is 240, so the shrink finishes first). */
+.thought-bubble-slot {
+  display: grid;
+  grid-template-rows: 1fr;
+  min-width: 0;
+  transition: grid-template-rows 220ms ease;
+}
+
+.thought-bubble-slot.is-collapsing {
+  grid-template-rows: 0fr;
+}
+
+.thought-bubble {
+  min-height: 0;
+  overflow: hidden;
+  border: 1px dashed var(--border);
+  background: var(--bg-inset);
+  color: var(--text-dim);
+  padding: 0.55rem 0.75rem 0.65rem;
+  transform-origin: right top;
+  transition: transform 220ms ease, opacity 220ms ease;
+  animation: thought-bubble-in 160ms ease;
+}
+
+.thought-bubble-slot.is-collapsing .thought-bubble {
+  animation: none;
+  transform: translate(14px, -4px) scale(0.08);
+  opacity: 0;
+}
+
+.thought-bubble-kicker {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.35rem;
+  font-family: var(--font-display);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.thought-bubble-body {
+  max-height: min(36vh, 16rem);
+  overflow: auto;
+  font-style: italic;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@keyframes thought-bubble-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .rail-block-label {

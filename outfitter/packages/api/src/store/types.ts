@@ -151,6 +151,11 @@ export interface Run {
   /** Last pi entry or event (a streamed token, a tool starting) -- the model doing something, as
    * opposed to agentd merely being alive. The session page counts it as progress (sse.ts). */
   lastActivityAt?: string;
+  /** #285: the open assistant message's thinking text, so a browser on the web role can show it
+   * before that message is an entry. Written at most about once a second (the text can be long);
+   * null once the message is stored or the run leaves `running`. Absent when this run has not
+   * streamed a thought. */
+  liveThought?: string | null;
   lastAckedSeq: number;
   pending: DownMessage[];
   /** Opaque provider handle (SandboxProvider.start's return; a plain string per @outfitter/

@@ -385,6 +385,23 @@ select {
     display: none;
   }
 
+  /* The rail sits above the paragraph on a phone, so the bubble collapses upward into it. */
+  .beat.has-thought-bubble {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .beat.tools-only.has-thought-bubble .rail {
+    flex-direction: row;
+  }
+
+  .thought-bubble {
+    transform-origin: center top;
+  }
+
+  .thought-bubble-slot.is-collapsing .thought-bubble {
+    transform: translateY(-12px) scale(0.2);
+  }
+
   .composer {
     position: sticky;
     bottom: 0;

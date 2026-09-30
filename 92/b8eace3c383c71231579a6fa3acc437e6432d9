@@ -1,0 +1,20 @@
+outfitter/packages/web/src/hooks/useSpeaker.ts
+  h_69b863911ebf05 11,151-154,156-159
+outfitter/packages/web/src/lib/send-status.ts
+  h_69b863911ebf05 117-129,137-141,144,148
+outfitter/packages/web/test/send-status.test.ts
+  h_69b863911ebf05 6,25-32,106-155
+outfitter/packages/web/test/voice-speak.test.tsx
+  h_69b863911ebf05 13,390-448
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "92b8eace3c383c71231579a6fa3acc437e6432d9",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -1,0 +1,165 @@
+kernal/.pi/extensions/_shared/outfitter-env.ts
+  s_89f239d3945616::t_4eaf29ec56bf92 1-29
+kernal/.pi/extensions/outfitter-admin/index.ts
+  s_89f239d3945616::t_7d138f61ab4708 1-47
+kernal/.pi/extensions/outfitter-admin/tools.ts
+  s_89f239d3945616::t_ed88d20e9a3bbe 1-172
+kernal/.pi/extensions/outfitter-admin/transport.ts
+  s_89f239d3945616::t_25e2707e912d81 1-218
+kernal/.pi/extensions/teleport/outfitter-store.ts
+  s_89f239d3945616::t_b2e958d4be2a87 31,81,84
+kernal/.pi/settings.json
+  s_89f239d3945616::t_a9b83fedf875e2 13-15
+kernal/README.md
+  s_89f239d3945616::t_3d7fa6b7296cb3 725-750
+kernal/scripts/package.sh
+  s_89f239d3945616::t_356e092d36ba0d 57-58
+kernal/skills/outfitter-admin/SKILL.md
+  s_89f239d3945616::t_12dca2a5a40bb1 1-67
+kernal/tests/outfitter-admin.test.ts
+  s_89f239d3945616::t_2a58f0368d6de3 1-283
+kernal/tests/skills.test.ts
+  s_89f239d3945616::t_b4adf3df12d5cf 1-25
+outfitter/EPIC.md
+  s_89f239d3945616::t_64f7c762a722b9 617-635
+outfitter/deploy/CLAUDE.md
+  s_89f239d3945616::t_c7c8672c940647 18-19
+outfitter/deploy/atlas-search.sh
+  s_89f239d3945616::t_8fbc2ed9098661 1-22
+outfitter/docs/protocol.md
+  s_89f239d3945616::t_650ccc9de9ceb0 252-284,447,595-615
+outfitter/docs/specs/sysop-tools.md
+  s_89f239d3945616::t_e7b4635112493e 1-343
+outfitter/image/Dockerfile
+  s_89f239d3945616::t_f1b4274df5eafb 47-48
+outfitter/packages/agentd/src/broker-socket.ts
+  s_89f239d3945616::t_1864108eb3f614 1-377
+outfitter/packages/agentd/src/github-socket.ts
+  s_89f239d3945616::t_09718a7cdaf88c 2-4,6,9,14,19-25
+outfitter/packages/agentd/src/main.ts
+  s_89f239d3945616::t_03a9f69d1243f3 48-56,272
+outfitter/packages/agentd/src/protocol.ts
+  s_89f239d3945616::t_4a526c28991d4d 188-198,269,318-320,505-510,567
+outfitter/packages/agentd/src/run.ts
+  s_89f239d3945616::t_3d508ff9082357 22,55,189-191,367-368,393,399,423,487-489,832-838,958-992,1171
+outfitter/packages/agentd/test/admin-socket.test.ts
+  s_89f239d3945616::t_013ef4ef91c1cb 1-257
+outfitter/packages/api/docs/data-model.md
+  s_89f239d3945616::t_9fc59d58b48acb 114,124-154
+outfitter/packages/api/src/admin/approvals.ts
+  s_89f239d3945616::t_cae606759f5283 1-116
+outfitter/packages/api/src/admin/drive.ts
+  s_89f239d3945616::t_1a30d9963146cf 1-151
+outfitter/packages/api/src/admin/ops.ts
+  s_89f239d3945616::t_7be48143ff50f2 1-573
+outfitter/packages/api/src/admin/render.ts
+  s_89f239d3945616::t_e636b933a055dd 1-145
+outfitter/packages/api/src/agentlink.ts
+  s_89f239d3945616::t_e5d40e61eea674 8-9,41,44-47,245-247,347-349,367-372,377-383,406-414,1270,1506-1508,1535-1536,1545-1547,1553-1555,1568-1569,1709-1736,1821-1873
+outfitter/packages/api/src/auth.ts
+  s_89f239d3945616::t_e814dbcdaaf7ca 31-34,50-53,102,129
+outfitter/packages/api/src/gurus-service.ts
+  s_89f239d3945616::t_3492a4386901be 1-324
+outfitter/packages/api/src/live-thought.ts
+  s_89f239d3945616::t_e0ba432aa43886 1-33
+outfitter/packages/api/src/main.ts
+  s_89f239d3945616::t_fd391302d56156 2,36-39
+outfitter/packages/api/src/routes/admin.ts
+  s_89f239d3945616::t_a7fa8f0ebbcd0b 1-30
+outfitter/packages/api/src/routes/context.ts
+  s_89f239d3945616::t_2b975e3163a794 3,22-23
+outfitter/packages/api/src/routes/gurus.ts
+  s_89f239d3945616::t_79761fceea3792 1,3-11,13-20,22-26,38,43-45,50-52,57-60
+outfitter/packages/api/src/routes/sessions.ts
+  s_89f239d3945616::t_cc4045bcc9a6a7 3,203-209,284-292,323-325,327-330,333-335,383-393,463,474-477,569
+outfitter/packages/api/src/search/chunker.ts
+  s_89f239d3945616::t_00287b578f5e45 1-70
+outfitter/packages/api/src/search/ensure-indexes.ts
+  s_89f239d3945616::t_7d36ecd76ef1d3 1-99
+outfitter/packages/api/src/search/indexes.ts
+  s_89f239d3945616::t_a29702fd85e9c3 1-41
+outfitter/packages/api/src/search/redact.ts
+  s_89f239d3945616::t_18398479bde204 1-33
+outfitter/packages/api/src/search/service.ts
+  s_89f239d3945616::t_93ef856df627c0 1-243
+outfitter/packages/api/src/search/transcript.ts
+  s_89f239d3945616::t_7ed466ed952a02 1-299
+outfitter/packages/api/src/server.ts
+  s_89f239d3945616::t_a29f5109482045 5-6,102-104,142-143,183
+outfitter/packages/api/src/sse.ts
+  s_89f239d3945616::t_7bb82afa758915 5,11,22-28,31,34-35,58-59,63-66,113-116,128-149,151,158,161,290-301,303-307,311-332
+outfitter/packages/api/src/store/memory.ts
+  s_89f239d3945616::t_e1b885777f9b34 46-53,56,874-953,1003-1005
+outfitter/packages/api/src/store/mongo.ts
+  s_89f239d3945616::t_3a3d90d8fa7326 47-54,59-60,1085-1248,1301-1303,1324-1326,1351
+outfitter/packages/api/src/store/types.ts
+  s_89f239d3945616::t_d678b6120c6c17 154-158,454-458,463-567,1017-1019
+outfitter/packages/api/test/admin-drive.test.ts
+  s_89f239d3945616::t_696355aaf8561c 1-265
+outfitter/packages/api/test/admin-ops.test.ts
+  s_89f239d3945616::t_79bdc429ff6fb8 1-364
+outfitter/packages/api/test/agentlink.test.ts
+  s_89f239d3945616::t_02305742a07864 461-501
+outfitter/packages/api/test/live-thought.test.ts
+  s_89f239d3945616::t_a5f44c136154ff 1-38
+outfitter/packages/api/test/mongo-admin-audit.test.ts
+  s_89f239d3945616::t_87fbf4e51fc61c 1-75
+outfitter/packages/api/test/mongo-session-chunks.test.ts
+  s_89f239d3945616::t_9e722fe93d0ecf 1-67
+outfitter/packages/api/test/session-search.test.ts
+  s_89f239d3945616::t_6a961d2e045df1 1-347
+outfitter/packages/api/test/sse-poller.test.ts
+  s_89f239d3945616::t_158d1ce2981e83 194-236
+outfitter/packages/api/test/stop.test.ts
+  s_89f239d3945616::t_152699e503c9f5 323-325
+outfitter/packages/web/src/api/client.ts
+  s_89f239d3945616::t_a2dc3f54d124b7 144-147
+outfitter/packages/web/src/components/GuruForm.tsx
+  s_89f239d3945616::t_c95b7da4bbee04 17-18,49,61-65,82,98,118-119,185-201,272,277
+outfitter/packages/web/src/components/ThoughtBubbleToggle.tsx
+  s_89f239d3945616::t_2896d6707d28c4 1-26
+outfitter/packages/web/src/components/TranscriptRail.tsx
+  s_89f239d3945616::t_db603a636a8285 5-6,22-24,29,167,171-172,384-390,429-535,557,563-564,566-573,577-587,589-590,592-594,599-604,606-615
+outfitter/packages/web/src/components/UiRequestPanel.tsx
+  s_89f239d3945616::t_f63b622e72da0f 1,17,35-42,46-53,70,79-96,103,106,123,125
+outfitter/packages/web/src/hooks/useSessionStream.ts
+  s_89f239d3945616::t_2818dd4bc5d5b7 25-28,93-131,150,152-154,172-173,180-184,201-202,217-229,263
+outfitter/packages/web/src/lib/beats.ts
+  s_89f239d3945616::t_df5bce2319c896 32-43,233-247
+outfitter/packages/web/src/lib/thought-bubble.ts
+  s_89f239d3945616::t_7bb302bee69c7a 1-21
+outfitter/packages/web/src/pages/GurusPage.tsx
+  s_89f239d3945616::t_c6946a610be1e9 24,29-33,120
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_89f239d3945616::t_e44686c5577f00 7-8,22-23,85,95-96,112-114,243-255,267,270-280,480-481,484-486,610-616,740,750-755,760
+outfitter/packages/web/src/styles/layout.css
+  s_89f239d3945616::t_f1f11a65fc8b94 325-346,996-1029,1089-1093,1144-1149,1249-1303,1411-1423
+outfitter/packages/web/src/styles/mobile.css
+  s_89f239d3945616::t_1379ea0520b075 388-404
+outfitter/packages/web/test/beats.test.ts
+  s_89f239d3945616::t_c654eae849d283 2,204-250
+outfitter/packages/web/test/guru-form.test.tsx
+  s_89f239d3945616::t_b03cb0c7498a24 85-152
+outfitter/packages/web/test/session-stream.test.ts
+  s_89f239d3945616::t_1a617e6d873812 2,112-130
+outfitter/packages/web/test/thought-bubble.test.tsx
+  s_89f239d3945616::t_4fb0d6e27ea7d2 1-160
+outfitter/packages/web/test/ui-request-panel.test.tsx
+  s_89f239d3945616::t_3969995af69591 1-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "854df32be869e8ca47eaa74abf0eede7c65d9ca0",
+  "prompts": {},
+  "sessions": {
+    "s_89f239d3945616": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b3b2a115-86e8-4751-b3c1-916d3ff8cc0e",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -117,9 +117,35 @@ describe("GuruForm: #290 Admin tools", () => {
     expect(update.mock.calls[0]![1].adminTools).toBe("manage");
   });
 
-  it("an operator tape is shown to a non-sysop, but they can't change the setting", () => {
+  it("an operator tape is read-only for a non-sysop, and says why", async () => {
+    const update = vi.spyOn(api, "updateGuru");
     const select = renderWith({ ...guru, adminTools: "operator" }, false);
     expect(select.value).toBe("operator");
     expect(select.disabled).toBe(true);
+    expect(container!.textContent).toContain("Only a sysop can change this tape");
+    expect(container!.querySelector<HTMLFieldSetElement>("fieldset")!.disabled).toBe(true);
+    expect(container!.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(true);
+    await submit();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("on a new tape, a sysop can choose operator", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => root!.render(<GuruForm models={[]} meta={null} isSysop onClose={vi.fn()} onSaved={vi.fn()} />));
+    act(() => {
+      const name = container!.querySelector<HTMLInputElement>("#guru-name")!;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(name, "Ops");
+      name.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const select = container!.querySelector<HTMLSelectElement>("#guru-admin-tools")!;
+    act(() => {
+      select.value = "operator";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect([...select.options].map((o) => o.value)).toContain("operator");
+    expect(select.value).toBe("operator");
   });
 });

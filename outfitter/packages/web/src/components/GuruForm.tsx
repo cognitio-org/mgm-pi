@@ -59,6 +59,8 @@ export function GuruForm({ guru, models, meta, isSysop = false, onClose, onSaved
   const [allowExternalHtmlResources, setAllowExternalHtmlResources] = useState(guru?.allowExternalHtmlResources === true);
   const [browserIde, setBrowserIde] = useState(guru?.browserIde === true);
   const [adminTools, setAdminTools] = useState<NonNullable<Guru["adminTools"]>>(guru?.adminTools ?? "off");
+  // The server refuses any change to an operator tape from anyone but a sysop; don't let edits pile up.
+  const readOnly = guru?.adminTools === "operator" && !isSysop;
   const [branchPrefix, setBranchPrefix] = useState(guru?.branchPrefix ?? "outfitter/");
   const [envRows, setEnvRows] = useState<EnvRow[]>(envToRows(guru?.env).length > 0 ? envToRows(guru?.env) : [{ key: "", value: "" }]);
   const [submitting, setSubmitting] = useState(false);
@@ -75,6 +77,7 @@ export function GuruForm({ guru, models, meta, isSysop = false, onClose, onSaved
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (readOnly) return;
     setSubmitAttempted(true);
     if (!name.trim() || !model.trim()) return;
     setSubmitting(true);
@@ -110,6 +113,8 @@ export function GuruForm({ guru, models, meta, isSysop = false, onClose, onSaved
         <h2>{guru ? `Edit ${guru.name}` : "New guru"}</h2>
         {apiError && <SystemErrorDialog error={apiError} onResume={() => setApiError(null)} />}
         <form onSubmit={submit}>
+          {readOnly && <p className="session-meta">Only a sysop can change this tape: it has operator admin tools.</p>}
+          <fieldset disabled={readOnly} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
           <div className="form-row">
             <label htmlFor="guru-name">Name</label>
             <input
@@ -181,7 +186,7 @@ export function GuruForm({ guru, models, meta, isSysop = false, onClose, onSaved
               id="guru-admin-tools"
               value={adminTools}
               onChange={(e) => setAdminTools(e.target.value as NonNullable<Guru["adminTools"]>)}
-              disabled={adminTools === "operator" && !isSysop}
+              disabled={readOnly}
             >
               <option value="off">Off</option>
               <option value="manage">Manage tapes, environments and sessions</option>
@@ -262,11 +267,12 @@ export function GuruForm({ guru, models, meta, isSysop = false, onClose, onSaved
             )}
           </div>
 
+          </fieldset>
           <div className="form-actions">
             <button type="button" onClick={onClose} disabled={submitting}>
               Cancel
             </button>
-            <button type="submit" disabled={submitting || !name.trim() || !model.trim()}>
+            <button type="submit" disabled={readOnly || submitting || !name.trim() || !model.trim()}>
               {submitting ? "Saving..." : "Save guru"}
             </button>
           </div>

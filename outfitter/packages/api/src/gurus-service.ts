@@ -280,6 +280,8 @@ export async function deleteGuru(store: Store, id: string, writer: GuruWriter): 
   const guru = await store.gurus.findById(id);
   if (!guru) return { ok: false, status: 404, error: "guru not found" };
   if (id === UNDELETABLE_GURU_ID) return { ok: false, status: 400, error: "the default guru cannot be deleted" };
+  // The Sysop tape is seeded at start-up whenever it is missing; turn it off with Admin tools: Off.
+  if (id === SYSOP_TAPE_ID) return { ok: false, status: 400, error: "the sysop tape cannot be deleted; set its admin tools to Off instead" };
   const approval = guardError(guru, writer, "delete");
   if (approval) return approval;
   const referencing = await store.sessions.list({ guruId: id });
@@ -314,7 +316,8 @@ export async function ensureSysopTape(store: Store, model: string): Promise<bool
   try {
     await store.gurus.insert({ id: SYSOP_TAPE_ID, name: "Sysop", model, appendSystemPrompt: SYSOP_PROMPT, adminTools: "manage", createdAt: now, updatedAt: now });
     return true;
-  } catch {
-    return false; // another instance seeded it first
+  } catch (err) {
+    if (await store.gurus.findById(SYSOP_TAPE_ID)) return false; // another instance seeded it first
+    throw err;
   }
 }

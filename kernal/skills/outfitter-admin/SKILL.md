@@ -1,13 +1,15 @@
 ---
 name: outfitter-admin
-description: Administer Outfitter (Kernal's cloud) with the outfitter_* and session_* tools. Use to build, save or test a tape (guru), manage environments, find and read past sessions to debug a Drive, or draft a tape from sessions that went well.
+description: Administer Outfitter with the outfitter_* and session_* tools - build or edit a tape, manage environments, debug a Drive from past sessions, draft a tape from them.
 ---
 
 # Outfitter admin
 
 Outfitter runs Kernal agents in the cloud. Its words: a **Tape** is a saved agent setup (code and API
 name: guru), a **Floppy** is a session, a **Drive** is one run of it, a **Dongle** is a personal API
-token, a **Sysop** is an operator. Use the tools below, never curl or the web API.
+token, a **Sysop** is an operator. Use the tools below, never curl or the web API. If they aren't
+available, this tape has admin tools off, or no Dongle (OUTFITTER_API and OUTFITTER_TOKEN) is set:
+say so and stop.
 
 ## Tools
 
@@ -20,8 +22,8 @@ token, a **Sysop** is an operator. Use the tools below, never curl or the web AP
 - `session_transcript` — read one session. Start with `view: outline`; then `around: <entryId>` from a
   hit, or `view: text` and `from:` to page. `toolOutput: full` only when you need a whole result.
 
-Ids: any unique prefix works (8+ characters for sessions). Results are short on purpose; ask for
-more (limit, around, from) rather than guessing.
+Ids: a unique prefix of 4+ characters (8+ for sessions), or the 8-character id the tools print. Results
+are short on purpose; ask for more (limit, around, from) rather than guessing.
 
 ## Build a tape
 

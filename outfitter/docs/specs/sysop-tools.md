@@ -48,8 +48,16 @@ Decisions (confirmed with the owner):
   copy the directory.
 - **The Sysop tape** (`sysop`, `adminTools: manage`, model `DEFAULT_CLOUD_MODEL`) is seeded by
   `main.ts` on the web role at start-up, only when missing, and never overwritten.
-- **The tape editor** has an Admin tools select. Operator appears only to sysops; a non-sysop sees an
-  operator tape's setting but can't change it.
+- **The Sysop tape can't be deleted** (like `default`): it would come back at the next start-up.
+  Admin tools: Off turns it off.
+- **The tape editor** has an Admin tools select. Operator appears only to sysops; for a non-sysop an
+  operator tape is read-only, since the server refuses any change to it from them.
+- **Testing a new tape** is done by the person starting a floppy on it (or by reading one they ran):
+  `outfitter_sessions` has no `start` action.
+- **Trust assumption:** any signed-in person may edit a `manage` tape's prompt, tools and env in the
+  web UI (tapes have no owners), so someone could change the Sysop tape's prompt for the next person
+  who uses it. Admin ops still act only with that person's own rights, and deletes and admin-tape
+  changes still need their approval.
 
 ## Changes since the plan (PR4: session search)
 - **Ops only, no new REST routes:** `sessions.search` and `sessions.transcript` join the op registry,

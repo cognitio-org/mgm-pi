@@ -26,7 +26,10 @@ export function GurusPage() {
   async function load() {
     setLoading(true);
     try {
-      const [guruList, modelList, guruMeta, me] = await Promise.all([api.gurus(), api.models(), api.guruMeta(), api.me().catch(() => null)]);
+      const [guruList, modelList, guruMeta, me] = await Promise.all([api.gurus(), api.models(), api.guruMeta(), api.me().catch((err) => {
+        console.warn("GET /api/me failed; treating this person as not a sysop", err);
+        return null;
+      })]);
       setIsSysop(me?.operator === true);
       setGurus(guruList);
       setModels(modelList);

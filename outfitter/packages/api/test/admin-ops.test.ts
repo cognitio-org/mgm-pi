@@ -8,7 +8,7 @@ import { buildTestApp, seedGuru, type TestApp } from "./helpers.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { hashToken } from "../src/tokens.ts";
 import { runAdminOp, type AdminCaller } from "../src/admin/ops.ts";
-import { ensureSysopTape, updateGuru } from "../src/gurus-service.ts";
+import { deleteGuru, ensureSysopTape, updateGuru } from "../src/gurus-service.ts";
 import { diffFields, resolveRef, shortId } from "../src/admin/render.ts";
 
 const TOKEN = "outf_admin-ops-test";
@@ -322,6 +322,15 @@ describe("the Sysop tape", () => {
     await store.gurus.update("sysop", { model: "a/b" });
     assert.equal(await ensureSysopTape(store, "litellm/other"), false);
     assert.equal((await store.gurus.findById("sysop"))!.model, "a/b");
+  });
+
+  test("can't be deleted (it would come back at the next start-up); Off turns it off", async () => {
+    const store = new MemoryStore();
+    await ensureSysopTape(store, "a/b");
+    const del = await deleteGuru(store, "sysop", { kind: "human", operator: true });
+    assert.deepEqual(del, { ok: false, status: 400, error: "the sysop tape cannot be deleted; set its admin tools to Off instead" });
+    const off = await updateGuru(store, "sysop", { adminTools: "off" }, { kind: "human", operator: false });
+    assert.equal(off.ok, true);
   });
 });
 

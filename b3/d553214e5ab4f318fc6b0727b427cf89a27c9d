@@ -1,0 +1,25 @@
+outfitter/docs/protocol.md
+  s_89f239d3945616::t_9583f6ae218285 605
+outfitter/docs/specs/sysop-tools.md
+  s_89f239d3945616::t_fe8cb910697ca6 70-72
+outfitter/packages/api/src/search/service.ts
+  s_89f239d3945616::t_376ae64f6830b9 138-140,152-154,156,168-169,171-184,186,212
+outfitter/packages/api/test/session-search.test.ts
+  s_89f239d3945616::t_e34a24bb3c7a2a 276,278-284
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "b3d553214e5ab4f318fc6b0727b427cf89a27c9d",
+  "prompts": {},
+  "sessions": {
+    "s_89f239d3945616": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b3b2a115-86e8-4751-b3c1-916d3ff8cc0e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

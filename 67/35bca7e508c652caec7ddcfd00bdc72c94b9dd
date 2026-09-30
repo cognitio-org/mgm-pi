@@ -1,0 +1,37 @@
+outfitter/packages/api/src/admin/ops.ts
+  s_89f239d3945616::t_95b658b31be3cc 411-425,431,434-436
+outfitter/packages/api/src/routes/sessions.ts
+  s_89f239d3945616::t_2582dc609fce5e 315,319-322,326-327
+outfitter/packages/api/src/search/chunker.ts
+  s_89f239d3945616::t_f61ab3ca63518e 8-9,35-36,45
+outfitter/packages/api/src/search/ensure-indexes.ts
+  s_89f239d3945616::t_ab7ee77ed06dd1 42-59,62-68
+outfitter/packages/api/src/search/redact.ts
+  s_89f239d3945616::t_c5715da87dca8f 16-22
+outfitter/packages/api/src/search/service.ts
+  s_89f239d3945616::t_7dc866a2b3884f 10-11,14-16,33-34,36-37,43-47,50-52,54,61,79-85,93-95,142-147,154,161-162,178-182,187-188,195,223-225
+outfitter/packages/api/src/search/transcript.ts
+  s_89f239d3945616::t_8cde8a10cd6a7a 85-93,112-115,122-128,140,210-222,236-237,275-277,286-287
+outfitter/packages/api/src/store/mongo.ts
+  s_89f239d3945616::t_102f77f31ae9f6 1094-1096,1102-1114,1131-1136,1178,1180-1181
+outfitter/packages/api/test/session-search.test.ts
+  s_89f239d3945616::t_f38ebb81b96605 51-69,160-176,225-257
+outfitter/docs/specs/sysop-tools.md
+  s_89f239d3945616::t_b0a8c88436cc3a 58-68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "6735bca7e508c652caec7ddcfd00bdc72c94b9dd",
+  "prompts": {},
+  "sessions": {
+    "s_89f239d3945616": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b3b2a115-86e8-4751-b3c1-916d3ff8cc0e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -3,6 +3,7 @@ import { api } from "../api/client.ts";
 import type { GroupedEntry } from "../lib/thinking.ts";
 import { groupBeats } from "../lib/beats.ts";
 import { BROWSER_CAPTURE_TYPE, PLAYWRIGHT_CHECK_TYPE, failedAttemptCopy } from "../lib/entry-view.ts";
+import { GEMINI_EMPTY_STOP_TYPE } from "../lib/gemini-empty-stop.ts";
 import { apiErrorKind, noticeContent, systemErrorContent } from "../lib/retro-errors.ts";
 import { toApiErrorState } from "../lib/api-error.ts";
 import type { ApiErrorState } from "./SystemErrorDialog.tsx";
@@ -178,6 +179,9 @@ export function EntryItem({
             <pre>{view.text ?? ""}</pre>
           </div>
         );
+      }
+      if (view.customType === GEMINI_EMPTY_STOP_TYPE) {
+        return <div className="entry gemini-empty-stop">{view.text ?? ""}</div>;
       }
       return <div className="entry custom">custom: {view.customType}</div>;
     case "label":

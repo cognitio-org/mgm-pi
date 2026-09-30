@@ -914,6 +914,12 @@ h4.voice-menu-heading {
   font-size: 0.75rem;
 }
 
+.entry.gemini-empty-stop {
+  border: 1px dashed var(--warn);
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
 .entry-failed-note {
   display: block;
   margin-top: 0.35rem;

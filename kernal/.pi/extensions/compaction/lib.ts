@@ -178,7 +178,9 @@ export function collectPins(entries: any[], firstKeptIndex: number, maxChars = 4
   const first = entries.find((e) => e?.type === "message" && e.message?.role === "user");
   if (first) pins.push({ label: "original request", text: textOf(first.message.content) });
   for (const e of entries.slice(0, firstKeptIndex)) {
-    if (e?.type === "custom_message" && e.customType !== "compaction") pins.push({ label: e.customType, text: textOf(e.content) });
+    // The Gemini empty-stop nudge is a one-shot "please continue", not a fact to carry into every
+    // later summary. Pinning it would keep telling the model it stopped and must call a tool.
+    if (e?.type === "custom_message" && e.customType !== "compaction" && e.customType !== "kernal.gemini-empty-stop") pins.push({ label: e.customType, text: textOf(e.content) });
     // "mgm-pin": legacy tag from sessions pinned before the mgm→kernal rename; still read so old pins survive.
     else if (e?.type === "custom" && (e.customType === "kernal-pin" || e.customType === "mgm-pin") && e.data?.text) pins.push({ label: "pinned", text: String(e.data.text) });
   }

@@ -193,6 +193,9 @@ export interface Run {
   // that reconnects (or opens the session fresh) still sees a question the run is waiting on;
   // cleared when a ui_response down-message is sent for this run.
   pendingUiRequest?: unknown;
+  /** Sysop tools (#287): an admin op from this run's agent waiting for the session owner's yes or
+   * no in the web UI (admin/approvals.ts). One at a time; null or absent when there is none. */
+  pendingAdminApproval?: AdminApproval | null;
   // Bug 7 (docs/reports/cloud-fixes.md): the most recent `status` frame's `detail` field
   // (protocol.md), which agentd now also uses to surface a rejected pi RPC response ("pi rejected
   // prompt: <error>") -- prompt/steer/follow_up used to vanish silently when pi's own `response`
@@ -461,6 +464,20 @@ export interface Guru {
 }
 
 export type AdminToolsLevel = "off" | "manage" | "operator";
+
+/** An admin op held for the session owner's decision (Run.pendingAdminApproval). */
+export interface AdminApproval {
+  id: string;
+  op: string;
+  /** Shown on the card: what the agent wants to do, in one line each. */
+  title: string;
+  message: string;
+  requestedAt: string;
+  expiresAt: string;
+  decision?: "approved" | "denied";
+  decidedBy?: string;
+  decidedAt?: string;
+}
 
 /** One admin op an agent called (Sysop tools, #286): admin/ops.ts writes a row for every op that is
  * not a read, including calls refused for rights or approval. */

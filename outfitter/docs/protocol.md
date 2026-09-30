@@ -249,6 +249,33 @@ Reads (`github_pr.view`, `github_pr.list`, `github_pr.checks`, `github_issue.lis
 
 `data` matches the local github tools' result objects (`normalizePr`, `normalizeIssue`, repo view, search) so a broker can pass the fields through. `github_pr.list` is `{ pullRequests }`, `github_issue.list` is `{ issues }`, and `github_repo.releases` is `{ releases }`, because `data` on this frame is an object. `github_repo.search` is `{ issues, pullRequests }`. When GitHub sent `X-RateLimit-Remaining` and `X-RateLimit-Reset`, `data.rateLimit` is `{ remaining, reset }` (`reset` is the header's unix seconds). The api backs off when that remaining budget is at or below 10, and never sleeps inside one request for more than 3 seconds. Pull request and issue `state` is the uppercase `OPEN` / `CLOSED` / `MERGED` the local tools report; search rows keep the search API's lowercase state. Bodies the api posts carry `Outfitter, on behalf of @login` when the session owner has a `githubLogin`. `github_pr.create`'s `closes` are issues named by the session branch (and `args.closes`, if sent), not by commit messages — those stay in the sandbox. A pull-request view still returns the pull request when the checks or reviews endpoint is not permitted; `github_pr.checks` itself reports `not permitted`.
 
+### Admin broker (Sysop tools, #287)
+
+Kernal's `outfitter-admin` tools in a Drive reach the admin op registry through agentd's admin
+socket (`OUTFITTER_ADMIN_SOCKET`, `/run/outfitter/admin.sock` in the image). It is the `admin` kind
+of `agentd/src/broker-socket.ts`, which has the GitHub socket's wire rules: one JSON line per
+request, reads resent once after a link drop, writes (with `idempotencyKey`) sent at most once.
+
+| Direction | Frame |
+|---|---|
+| up | `{t: "admin.request", reqId, op, args, idempotencyKey?}` |
+| down | `{t: "admin.result", reqId, ok: true, text}` or `{..., ok: false, error, needsApproval?}` |
+
+- agentd opens the socket only when `run.spec.guru.adminTools` is `manage` or `operator`, and pins
+  `OUTFITTER_ADMIN_SOCKET` after the tape's env (empty otherwise), like the GitHub socket.
+- The model's shell can reach the socket, so the api decides everything. It reads the tape again on
+  every call: with admin tools off, every op is `admin tools are off for this tape`. Ops run as the
+  session's owner, with sysop rights only when the owner is an operator and the tape says
+  `operator`.
+- A delete, an operator op, or a change to a tape with admin tools waits for the owner. The api
+  stores `Run.pendingAdminApproval`; the web session page shows it as a confirm card, through the
+  `pendingUiRequest` channel with id `admin:<approvalId>`; the owner's `POST
+  /api/sessions/:id/ui-response` records the decision (a person only: a Dongle caller is refused and
+  doesn't see the card). The request waits up to 10 minutes; `needsApproval: true` on the result
+  means declined or unanswered. One approval per run at a time.
+- No `API_PROTOCOL_VERSION` bump: an older api never sends `adminTools`, so an agentd never opens
+  the socket against it.
+
 ### Mailbox (E5.5)
 
 Every message for a session's agent — the browser's first prompt, `POST /messages`, and agent

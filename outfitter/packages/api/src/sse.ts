@@ -2,6 +2,7 @@
 // dependency beyond Fastify's raw response). See protocol.md "browser <-> api": GET
 // /api/sessions/:id/stream sends `status` on connect, then live entry|event|status|spend|checkpoint|liveness.
 
+import { approvalUiRequest } from "./admin/approvals.ts";
 import type { FastifyReply } from "fastify";
 import type { Store } from "./store/types.ts";
 import { entryForWire } from "./entry-wire.ts";
@@ -278,9 +279,12 @@ export class SsePoller {
       this.hub.publish(sessionId, { type: "live_thought", data: { text: liveThought } });
       cursor.lastLiveThought = liveThought;
     }
-    const uiKey = run?.pendingUiRequest ? JSON.stringify(run.pendingUiRequest) : undefined;
+    // Sysop tools (#287): an admin approval held for the owner rides the same card (this stream is
+    // web-role only, so it is a person watching).
+    const uiRequest = run?.pendingUiRequest ?? approvalUiRequest(run);
+    const uiKey = uiRequest ? JSON.stringify(uiRequest) : undefined;
     if (uiKey && uiKey !== cursor.lastUiRequestKey) {
-      this.hub.publish(sessionId, { type: "event", data: run?.pendingUiRequest });
+      this.hub.publish(sessionId, { type: "event", data: uiRequest });
       cursor.lastUiRequestKey = uiKey;
     } else if (!uiKey && cursor.lastUiRequestKey) {
       // The question was published and is now gone (answered, or the run left the active set).

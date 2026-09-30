@@ -185,6 +185,17 @@ export interface UpGithubRequest {
   idempotencyKey?: string;
 }
 
+/** Sysop tools (#287): an outfitter-admin tool call from the model, through agentd's admin socket.
+ * The API runs `op` from its admin op registry as the session's owner. Not seq/ack'd; a write
+ * carries `idempotencyKey` and is sent at most once (broker-socket.ts). */
+export interface UpAdminRequest {
+  t: "admin.request";
+  reqId: string;
+  op: string;
+  args: Record<string, unknown>;
+  idempotencyKey?: string;
+}
+
 /** The Drive `browser_action` tool asked to click or type in the session's one shared tab.
  * `requestId` is minted once per tool call. The selector is CSS, not JavaScript. */
 export interface UpBrowserActionRequest {
@@ -255,6 +266,7 @@ export type UpMessage =
   | UpMailAck
   | UpBrowserCaptureRequest
   | UpGithubRequest
+  | UpAdminRequest
   | UpBrowserActionRequest
   | UpBrowserInspectRequest
   | UpPreviewOpen
@@ -303,6 +315,9 @@ export interface RunSpecGuru {
    * to pi's system prompt: external CSS and JS allowed when true, sealed otherwise. Absent means
    * off. */
   allowExternalHtmlResources?: boolean;
+  /** Sysop tools (#287): the tape's admin tools. "manage" or "operator" makes agentd open the admin
+   * socket; the API still checks every call. Absent means off. */
+  adminTools?: "off" | "manage" | "operator";
 }
 
 export interface RunSpecSnapshot {
@@ -487,6 +502,12 @@ export type DownGithubResult =
   | { t: "github.result"; reqId: string; ok: true; data: Record<string, unknown> }
   | { t: "github.result"; reqId: string; ok: false; error: string };
 
+/** The API's answer to `admin.request`: the op's compact text, or a one-line error.
+ * `needsApproval` means the owner denied it or did not answer in time. Not seq/ack'd. */
+export type DownAdminResult =
+  | { t: "admin.result"; reqId: string; ok: true; text: string }
+  | { t: "admin.result"; reqId: string; ok: false; error: string; needsApproval?: boolean };
+
 /** A replacement GitHub credential for the git proxy and later checkpoint pushes.
  * Installation tokens expire; the api sends this before they do. Not seq/ack replayed. */
 export interface DownGithubCredential {
@@ -543,6 +564,7 @@ export type DownMessage =
   | DownBrowserCaptureEntry
   | DownBrowserCaptureResult
   | DownGithubResult
+  | DownAdminResult
   | DownGithubCredential
   | DownBrowserActionResult
   | DownBrowserInspectResult

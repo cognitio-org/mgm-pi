@@ -426,6 +426,22 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
   },
 };
 
+/** Whether this call would need the person's approval, without running or auditing it: a Drive asks
+ * the owner first (drive.ts), then runs the op once with `approved`. Unknown ops say no; running
+ * them reports the error. */
+export async function approvalNeeded(ctx: AdminContext, caller: AdminCaller, op: unknown, args: unknown): Promise<boolean> {
+  if (typeof op !== "string" || !Object.hasOwn(ADMIN_OPS, op)) return false;
+  const def = ADMIN_OPS[op];
+  if (def.kind === "operator" && !caller.operator) return false;
+  if (def.kind === "delete" || def.kind === "operator") return true;
+  const a: Args = args && typeof args === "object" && !Array.isArray(args) ? (args as Args) : {};
+  try {
+    return def.guarded ? await def.guarded(ctx, a) : false;
+  } catch {
+    return false;
+  }
+}
+
 /** One line per op, for an unknown-op error: short enough to retry from. */
 function knownOps(): string {
   return Object.keys(ADMIN_OPS).join(", ");

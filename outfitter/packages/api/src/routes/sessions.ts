@@ -1,5 +1,6 @@
 // Session and run-control REST routes plus the SSE stream. See docs/protocol.md "browser <-> api".
 
+import { APPROVAL_UI_PREFIX, approvalUiRequest, decideApproval } from "../admin/approvals.ts";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { RouteContext } from "./context.ts";
@@ -199,8 +200,12 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
     // what the list's summarize() uses) but only while that run is active — sse.ts publishes
     // pendingUiRequest from findActiveForSession and drops it once the run is terminal. null, not
     // omitted, when there is nothing to answer.
-    const pendingUiRequest =
-      run && run.state !== "stopped" && run.state !== "failed" ? (run.pendingUiRequest ?? null) : null;
+    // Sysop tools (#287): an admin op held for the owner shows as the same confirm card, but only
+    // to a person (not a Dongle caller such as the side panel), since only they can answer it.
+    const active = run && run.state !== "stopped" && run.state !== "failed";
+    const pendingUiRequest = active
+      ? (run.pendingUiRequest ?? (req.identity?.viaToken ? undefined : approvalUiRequest(run)) ?? null)
+      : null;
     const guru = await ctx.store.gurus.findById(session.guruId);
     const owner = session.ownerEmail ? await ctx.store.users.findByEmail(session.ownerEmail) : null;
     const login = owner?.githubLogin?.replace(/^@/, "").trim() ?? "";
@@ -359,6 +364,19 @@ export async function registerPanelRoutes(app: FastifyInstance, ctx: RouteContex
     if (!body?.id) return reply.code(400).send({ error: "id is required" });
     const run = await ctx.store.runs.findActiveForSession(session.id);
     if (!run) return reply.code(404).send({ error: "no active run" });
+    // Sysop tools (#287): the answer to an admin approval card is the API's, never agentd's.
+    if (typeof body.id === "string" && body.id.startsWith(APPROVAL_UI_PREFIX)) {
+      const decided = await decideApproval(
+        ctx.store,
+        run,
+        body.id.slice(APPROVAL_UI_PREFIX.length),
+        req.identity ?? { email: "" },
+        session.ownerEmail,
+        body.value === true,
+      );
+      if (!decided.ok) return reply.code(decided.status).send({ error: decided.error });
+      return { run };
+    }
     await ctx.agentLink.send(run.id, { t: "ui_response", id: body.id, value: body.value });
     await ctx.store.runs.update(run.id, { pendingUiRequest: undefined, updatedAt: new Date().toISOString() });
     return { run };

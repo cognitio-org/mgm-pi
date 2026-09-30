@@ -42,6 +42,14 @@ Decisions (confirmed with the owner):
 - **Agent-created tape ids** are slugs (`[a-z0-9-]`), so later calls stay short; UUID ids print
   as 8-character prefixes and any unique prefix of 4+ characters resolves.
 
+## Changes since the plan (PR2)
+- **Approvals reuse the session's confirm card.** `Run.pendingAdminApproval` is shown through the
+  existing `pendingUiRequest` channel (id `admin:<approvalId>`) and answered through
+  `POST /api/sessions/:id/ui-response`, which the api handles itself for that prefix. There is no
+  new web component and no `/admin-approvals` route. Only the owner, as a person, may answer.
+- **A Drive asks first, then runs once** (`approvalNeeded`), so an approved op writes one audit row.
+- **No protocol version bump:** an older api never sends `adminTools`, so agentd never opens the socket.
+
 ## Design
 
 ### Tools (one Kernal extension, two transports)

@@ -36,8 +36,13 @@ import {
 } from "./github-app.ts";
 import { parseSessionRepo } from "./session-repo.ts";
 import { parseBootTimings, parseStartupPhases, startupLogLine, summarizeStartup, type StartupSummary } from "./startup.ts";
+import { isAssistantMessageEntry, liveThoughtTextFromEvent } from "./live-thought.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
+/** #285: how often the open thought is written onto the run. The poller already lags by its
+ * interval, and the text can be long, so this is not once per token. The in-process hub still
+ * gets every change for a single-process deployment. */
+const LIVE_THOUGHT_PERSIST_MS = 1_000;
 const GITHUB_REFRESH_RETRY_MS = 60_000;
 const GITHUB_REFRESH_MAX_ATTEMPTS = 5;
 
@@ -355,6 +360,13 @@ export class AgentLink {
   private readonly githubRefresh = new Map<string, ReturnType<typeof setTimeout>>();
   /** Failed mint attempts since the last token was delivered. Capped, then the current token stays. */
   private readonly githubRefreshAttempts = new Map<string, number>();
+  /** #285: thinking text not yet on Run.liveThought, what was last stored, and when. */
+  private readonly pendingLiveThought = new Map<string, string>();
+  private readonly persistedLiveThought = new Map<string, string>();
+  private readonly persistedLiveThoughtAt = new Map<string, number>();
+  private readonly liveThoughtTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Bumped on clear so a flush already in flight cannot put the old text back afterwards. */
+  private readonly liveThoughtEpoch = new Map<string, number>();
   private readonly githubRefreshTiming: GithubRefreshTiming;
 
   constructor(
@@ -1467,6 +1479,9 @@ export class AgentLink {
         const patch: Partial<Run> = { state, lastSeenAt: now, updatedAt: now };
         if (typeof frame.detail === "string") patch.statusDetail = frame.detail;
         await this.store.runs.update(runId, patch);
+        // Leaving `running` ends the open thought. The entry usually already cleared it; this
+        // covers a turn that stops without one (abort, failure) so a later poll doesn't reopen it.
+        if (state !== "running") await this.clearLiveThought(runId, sessionId, now);
         // `startup` on a browser status event is the api's own summary, never something agentd put
         // on its frame.
         const { startup: _agentStartup, ...statusData } = frame;
@@ -1501,6 +1516,9 @@ export class AgentLink {
         // and a send that threw on the first delivery (entry stored, no ack) is retried on replay.
         const recipient = await this.mail.handleAgentSend(sessionId, entry);
         if (recipient) await this.deliverMailForSession(recipient);
+        // The open thought is this message now. A tool result is not: the next thought may
+        // already be streaming.
+        if (inserted && isAssistantMessageEntry(entry)) await this.clearLiveThought(runId, sessionId, now);
         await this.ack(runId, socket, seq, now);
         break;
       }
@@ -1519,6 +1537,8 @@ export class AgentLink {
         if (eventType === "extension_ui_request" && INTERACTIVE_UI_METHODS.has(String(event.method))) {
           await this.store.runs.update(runId, { pendingUiRequest: event, updatedAt: now });
         }
+        const thought = liveThoughtTextFromEvent(event);
+        if (thought !== null) await this.noteLiveThought(sessionId, runId, thought);
         await this.ack(runId, socket, seq, now);
         break;
       }
@@ -1740,6 +1760,59 @@ export class AgentLink {
       default:
         break; // unknown frame type: ignore, forward-compatible
     }
+  }
+
+  /** Publish the open thought immediately, and store it at most about once a second (#285).
+   * The store copy is what the web role's poller can see; the publish is for role "all", where
+   * the browser is on this process. */
+  private async noteLiveThought(sessionId: string, runId: string, text: string): Promise<void> {
+    if (this.pendingLiveThought.get(runId) === text) return;
+    this.pendingLiveThought.set(runId, text);
+    this.sse.publish(sessionId, { type: "live_thought", data: { text } });
+    const last = this.persistedLiveThought.get(runId);
+    const at = this.persistedLiveThoughtAt.get(runId) ?? 0;
+    if (last === undefined || Date.now() - at >= LIVE_THOUGHT_PERSIST_MS) {
+      await this.flushLiveThought(runId);
+      return;
+    }
+    this.scheduleLiveThoughtFlush(runId);
+  }
+
+  private scheduleLiveThoughtFlush(runId: string): void {
+    if (this.liveThoughtTimers.has(runId)) return;
+    const timer = setTimeout(() => {
+      this.liveThoughtTimers.delete(runId);
+      void this.flushLiveThought(runId).catch(() => {});
+    }, LIVE_THOUGHT_PERSIST_MS);
+    timer.unref?.();
+    this.liveThoughtTimers.set(runId, timer);
+  }
+
+  private async flushLiveThought(runId: string): Promise<void> {
+    const epoch = this.liveThoughtEpoch.get(runId) ?? 0;
+    const pending = this.pendingLiveThought.get(runId);
+    if (pending === undefined || pending === this.persistedLiveThought.get(runId)) return;
+    this.persistedLiveThought.set(runId, pending);
+    this.persistedLiveThoughtAt.set(runId, Date.now());
+    await this.store.runs.update(runId, { liveThought: pending, updatedAt: new Date().toISOString() });
+    // clearLiveThought bumped the epoch and removed the pending text while this write was in flight.
+    if ((this.liveThoughtEpoch.get(runId) ?? 0) !== epoch && !this.pendingLiveThought.has(runId)) {
+      await this.store.runs.update(runId, { liveThought: null, updatedAt: new Date().toISOString() });
+    }
+  }
+
+  private async clearLiveThought(runId: string, sessionId: string, now: string): Promise<void> {
+    const timer = this.liveThoughtTimers.get(runId);
+    if (timer) clearTimeout(timer);
+    this.liveThoughtTimers.delete(runId);
+    const had = this.pendingLiveThought.has(runId) || this.persistedLiveThought.has(runId);
+    this.liveThoughtEpoch.set(runId, (this.liveThoughtEpoch.get(runId) ?? 0) + 1);
+    this.pendingLiveThought.delete(runId);
+    this.persistedLiveThought.delete(runId);
+    this.persistedLiveThoughtAt.delete(runId);
+    if (!had) return;
+    this.sse.publish(sessionId, { type: "live_thought", data: { text: null } });
+    await this.store.runs.update(runId, { liveThought: null, updatedAt: now });
   }
 
   /** Only `entry` and `event` frames carry a seq, and both are pi at work, so the same write records

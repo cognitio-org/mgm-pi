@@ -22,6 +22,10 @@ export interface StreamState {
   agentSeenAt?: number;
   /** When (this browser's clock, ms) pi last wrote an entry or streamed an event -- from `liveness`. */
   piActiveAt?: number;
+  /** #285: the open message's thinking text, or null when there isn't one. Empty string means
+   * a thinking block has started and no words have arrived yet. Not an entry: the message
+   * hasn't been stored. */
+  liveThought: string | null;
 }
 
 /** One `liveness` frame (sse.ts) on this browser's clock. The api sends ages, not timestamps, so
@@ -86,6 +90,45 @@ export function nextPendingUiRequest(
   return current;
 }
 
+/** Joined thinking text of the latest assistant message, or null when that message has no
+ * thinking block (or there isn't one). Matches the api's live-thought join. */
+function latestAssistantThinking(entries: PiEntry[]): string | null {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (entry.type !== "message") continue;
+    const message = entry.message;
+    if (!message || typeof message !== "object" || (message as { role?: unknown }).role !== "assistant") continue;
+    const content = (message as { content?: unknown }).content;
+    if (!Array.isArray(content)) return null;
+    const parts: string[] = [];
+    let saw = false;
+    for (const block of content) {
+      if (!block || typeof block !== "object" || (block as { type?: unknown }).type !== "thinking") continue;
+      saw = true;
+      const text = (block as { thinking?: unknown }).thinking;
+      if (typeof text === "string" && text.length > 0) parts.push(text);
+    }
+    return saw ? parts.join("\n\n") : null;
+  }
+  return null;
+}
+
+/** The streamed thought after one `live_thought` frame. Null clears it. A snapshot equal to
+ * the thinking already stored on the latest assistant message is that round landing, not a
+ * new one -- otherwise a poll that races the entry would reopen the bubble. */
+export function nextLiveThought(incoming: string | null, entries: PiEntry[]): string | null {
+  if (incoming === null) return null;
+  const persisted = latestAssistantThinking(entries);
+  if (persisted !== null && persisted === incoming) return null;
+  return incoming;
+}
+
+export function isAssistantMessage(entry: PiEntry): boolean {
+  if (entry.type !== "message") return false;
+  const message = entry.message;
+  return typeof message === "object" && message !== null && (message as { role?: unknown }).role === "assistant";
+}
+
 /** A stopped or failed run is not waiting on an answer. Any other state leaves the question. */
 export function nextPendingOnStatus(current: RawUiRequest | null, state: string | undefined): RawUiRequest | null {
   if (state === "stopped" || state === "failed") return null;
@@ -104,7 +147,11 @@ export function useSessionStream(sessionId: string): StreamState {
   const [startup, setStartup] = useState<StartupSummary | null | undefined>(undefined);
   const [agentSeenAt, setAgentSeenAt] = useState<number | undefined>(undefined);
   const [piActiveAt, setPiActiveAt] = useState<number | undefined>(undefined);
+  const [liveThought, setLiveThought] = useState<string | null>(null);
   const entryIds = useRef<Set<string>>(new Set());
+  // Event handlers read this. A setState updater writes it before the handler returns, so a
+  // live_thought frame that arrives in the same tick as its entry still sees that entry.
+  const entriesRef = useRef<PiEntry[]>([]);
   // #255: the history has been fetched (or the fetch failed). Until then `entries` is only what
   // SSE has sent, so nothing can tell history from new replies yet.
   const [loaded, setLoaded] = useState(false);
@@ -122,13 +169,19 @@ export function useSessionStream(sessionId: string): StreamState {
     setStartup(undefined);
     setAgentSeenAt(undefined);
     setPiActiveAt(undefined);
+    setLiveThought(null);
+    entriesRef.current = [];
 
     api
       .entries(sessionId)
       .then((initial) => {
         if (cancelled) return;
         for (const e of initial) entryIds.current.add(e.id);
-        setEntries((prev) => mergeEntries(prev, initial));
+        setEntries((prev) => {
+          const next = mergeEntries(prev, initial);
+          entriesRef.current = next;
+          return next;
+        });
         setLoaded(true);
       })
       .catch(() => {
@@ -145,6 +198,8 @@ export function useSessionStream(sessionId: string): StreamState {
         startup?: StartupSummary | null;
       };
       if (data.state) setRunState(data.state);
+      // The bubble is only for a running turn. Idle, stopped, and failed drop whatever was streaming.
+      if (data.state && data.state !== "running") setLiveThought(null);
       setRunStateReason(data.reason);
       // Three cases, not two: absent means "nothing new to say" and the last note stands (agentd
       // sends state-only status frames all the time), an explicit null means "this is a different
@@ -159,7 +214,19 @@ export function useSessionStream(sessionId: string): StreamState {
       const entry = JSON.parse((ev as MessageEvent).data) as PiEntry;
       if (entryIds.current.has(entry.id)) return;
       entryIds.current.add(entry.id);
-      setEntries((prev) => [...prev, entry]);
+      setEntries((prev) => {
+        const next = [...prev, entry];
+        entriesRef.current = next;
+        return next;
+      });
+      // This message is the transcript's now. The streamed copy would sit beside it.
+      if (isAssistantMessage(entry)) setLiveThought(null);
+    });
+
+    source.addEventListener("live_thought", (ev) => {
+      const data = JSON.parse((ev as MessageEvent).data) as { text?: unknown };
+      const text = typeof data.text === "string" ? data.text : null;
+      setLiveThought(nextLiveThought(text, entriesRef.current));
     });
 
     source.addEventListener("event", (ev) => {
@@ -193,5 +260,5 @@ export function useSessionStream(sessionId: string): StreamState {
     };
   }, [sessionId]);
 
-  return { entries, entriesLoaded: loaded, runState, runStateReason, statusDetail, pendingUiRequest, costEstimate, startup, agentSeenAt, piActiveAt };
+  return { entries, entriesLoaded: loaded, runState, runStateReason, statusDetail, pendingUiRequest, costEstimate, startup, agentSeenAt, piActiveAt, liveThought };
 }

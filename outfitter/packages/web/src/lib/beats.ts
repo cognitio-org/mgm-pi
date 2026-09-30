@@ -29,6 +29,18 @@ export interface RailTool {
 
 export type RailItem = RailThinking | RailTool;
 
+/** Id of the row that shows a thought before its message is an entry (#285). */
+export const STREAMED_THOUGHT_ID = "live-thought";
+
+export function railThinkingText(item: RailThinking): string {
+  return item.blocks.map((block) => block.text).join("\n\n");
+}
+
+/** A thinking rail item for text that is still streaming and not in the transcript yet. */
+export function streamedThoughtItem(text: string): RailThinking {
+  return { kind: "thinking", id: STREAMED_THOUGHT_ID, blocks: [{ id: STREAMED_THOUGHT_ID, text }] };
+}
+
 type UserView = Extract<GroupedEntry, { kind: "user" }>;
 
 type PassView = Extract<
@@ -217,4 +229,13 @@ export function groupBeats(views: GroupedEntry[], options?: { runSettled?: boole
   if (options?.runSettled) finishOpenCalls();
   flushTools();
   return beats;
+}
+
+/** The open thinking round (#285). The thought stays on the rail after the round ends. */
+export function liveThinkingItem(beats: Beat[], runLive: boolean): RailThinking | null {
+  if (!runLive) return null;
+  const last = beats[beats.length - 1];
+  if (!last || last.kind !== "tools-only") return null;
+  const tail = last.rail[last.rail.length - 1];
+  return tail?.kind === "thinking" ? tail : null;
 }

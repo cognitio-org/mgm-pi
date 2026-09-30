@@ -439,6 +439,10 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
       type: "status",
       data: { t: "status", state: latest?.state ?? "stopped", reason: latest?.reason, startup: latest ? summarizeStartup(latest) : null },
     });
+    // #285: a reload mid-thought shouldn't wait out the poll interval for text already on the run.
+    if (run?.state === "running" && typeof run.liveThought === "string") {
+      ctx.sse.publish(session.id, { type: "live_thought", data: { text: run.liveThought } });
+    }
     // Bug 2 (docs/reports/cloud-fixes.md): in a split web/link deployment, entries and status
     // changes land on the "link" role's process (the agentd WebSocket) while this subscriber is on
     // the "web" role's process -- AgentLink's in-process publish never reaches it. ssePoller polls

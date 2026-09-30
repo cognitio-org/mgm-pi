@@ -1,0 +1,87 @@
+outfitter/packages/web/src/components/GithubGlyphs.tsx
+  s_3e568d57c67985::t_9096d6c3e771ca 1-162
+outfitter/packages/api/src/github-catalog.ts
+  s_3e568d57c67985::t_d4c7ef0177d5f5 1-933
+  s_3e568d57c67985::t_fdbb5bd14bd205 934-936
+  s_104429d46e350b::t_7e5ea43450f6e1 937-947
+outfitter/packages/api/test/github-catalog.test.ts
+  s_89f239d3945616::t_af1620616a8178 1-447
+outfitter/packages/api/test/github-routes.test.ts
+  s_89f239d3945616::t_1f58f3424bb650 1-91
+outfitter/packages/web/src/components/GithubStatus.tsx
+  s_89f239d3945616::t_c851df93bf129f 1-145
+outfitter/packages/web/src/styles/pages.css
+  s_89f239d3945616::t_deccda424db1f4 702-1077
+outfitter/packages/api/src/routes/context.ts
+  s_89f239d3945616::t_6218d7a2f45f0b 16,49-51
+outfitter/packages/api/src/routes/github.ts
+  s_89f239d3945616::t_32ea446a1e920c 1-49
+outfitter/packages/api/src/routes/index.ts
+  s_89f239d3945616::t_71c0048f732597 18,43
+outfitter/packages/api/src/server.ts
+  s_89f239d3945616::t_aa08500e76782a 26,55-58,209-210
+outfitter/packages/api/test/helpers.ts
+  s_89f239d3945616::t_0023dae1438418 18,52-53,89
+outfitter/packages/web/src/App.tsx
+  s_89f239d3945616::t_589bf46f74f1e4 41,49,229
+outfitter/packages/web/src/api/client.ts
+  s_89f239d3945616::t_2d00d54fe0c402 439-503,743-762
+outfitter/packages/web/src/components/DeskIcons.tsx
+  s_89f239d3945616::t_4044bfc299dd12 77-93
+outfitter/packages/web/src/components/NewSessionDialog.tsx
+  s_89f239d3945616::t_ecff47fa18f851 7,93-94
+outfitter/packages/web/src/components/RepoField.tsx
+  s_89f239d3945616::t_c696888ac06632 1-227
+outfitter/packages/web/src/lib/github-link.ts
+  s_89f239d3945616::t_09f1bc5881c300 1-11
+outfitter/packages/web/src/lib/glossary.ts
+  s_89f239d3945616::t_4813bbb926723d 125-132
+outfitter/packages/web/src/lib/repo-choice.ts
+  s_89f239d3945616::t_d4e40c8d6cc54c 1-74
+outfitter/packages/web/src/lib/vocabulary.ts
+  s_89f239d3945616::t_8fe026f3de653c 18
+outfitter/packages/web/src/pages/DeskPage.tsx
+  s_89f239d3945616::t_62dc8739a10c49 19,112-118,275-279
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_89f239d3945616::t_6b6aee9d0f0286 25,607
+outfitter/packages/web/test/github-page.test.tsx
+  s_89f239d3945616::t_9d4bd6fa8d659f 1-111
+outfitter/packages/web/test/github-status.test.tsx
+  s_89f239d3945616::t_fa574b3737955d 1-91
+outfitter/packages/web/test/repo-choice.test.ts
+  s_89f239d3945616::t_23ca6091d6c01e 1-66
+outfitter/packages/web/test/repo-field.test.tsx
+  s_89f239d3945616::t_b35c8cab7cbc3d 1-177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "fb894245090598a48944b4c9afea00d404109aa7",
+  "prompts": {},
+  "sessions": {
+    "s_104429d46e350b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a59cbac585eb2e589",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_3e568d57c67985": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a0f1dc-398b-7f80-92f6-f76207750e9b",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_89f239d3945616": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b3b2a115-86e8-4751-b3c1-916d3ff8cc0e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

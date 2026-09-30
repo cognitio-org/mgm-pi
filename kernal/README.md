@@ -722,6 +722,32 @@ Off by default. Set `teleport.autoPush: true` in `.pi/settings.json` to push aft
 (`agent_end`) when the tree is clean. It's silent about "not ready to push yet" (dirty tree, no repo,
 ephemeral `--no-session`) and only notifies on a real failure; it never blocks or throws.
 
+
+## Outfitter admin tools
+
+With `OUTFITTER_API` and `OUTFITTER_TOKEN` set (the same pair as the Outfitter store above), Kernal
+can administer Outfitter itself: build and save a tape, manage environments, find and read past
+sessions. In a Drive whose tape has **Admin tools** turned on, the same tools work through agentd.
+The design is in `outfitter/docs/specs/sysop-tools.md`.
+
+| Tool | Does |
+|---|---|
+| `outfitter_tapes` | list, get, meta (models, thinking levels, env limits), create, update, delete |
+| `outfitter_environments` | list, get, create, update |
+| `outfitter_sessions` | list, get |
+| `session_search` | search Outfitter's sessions (hybrid by default) and this laptop's own |
+| `session_transcript` | read a session compactly: outline, `around` a hit, pages |
+
+- The `outfitter-admin` skill (`kernal/skills`) walks through building a tape, debugging a Drive, and
+  drafting a tape from past sessions. pi loads it only when it is needed.
+- Deletes, and changes to a tape that has admin tools, ask you first in the terminal. In a Drive
+  they wait for the owner's approval on the floppy page.
+- Kernal reads the token once and removes it from the environment, so the agent's shell can't use
+  it to skip that question.
+- `/sessions sync <id>` or `/sessions sync --since 7d` uploads local sessions to Outfitter so its
+  semantic search finds them too; `KERNAL_SESSION_SYNC=1` does it after every turn. Nothing is
+  uploaded otherwise.
+
 ## HTML previews: what the model is told
 
 Outfitter's transcript can preview an ` ```html ` fence. By default that preview is sealed: inline CSS

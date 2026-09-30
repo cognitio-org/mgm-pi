@@ -294,3 +294,27 @@ export async function deleteGuru(store: Store, id: string, writer: GuruWriter): 
   await store.gurus.delete(id);
   return { ok: true, guru };
 }
+
+/** The built-in admin tape (Sysop tools, #290): the "specific tape" for administering Outfitter.
+ * Seeded once by the web role at start-up and never overwritten, so people can edit it. */
+export const SYSOP_TAPE_ID = "sysop";
+
+const SYSOP_PROMPT = [
+  "You administer this Outfitter deployment for the person who started this floppy, acting with their rights.",
+  "Load the outfitter-admin skill before anything else, and use its tools (outfitter_tapes, outfitter_environments,",
+  "outfitter_sessions, session_search, session_transcript), never curl or the web API.",
+  "Ask before changing or deleting anything. Deletes wait for the owner's approval on the floppy page.",
+  "Never deploy, push an outfitter-v* tag, or publish a Kernal release.",
+].join(" ");
+
+/** Creates the Sysop tape if it doesn't exist. True when it was created now. */
+export async function ensureSysopTape(store: Store, model: string): Promise<boolean> {
+  if (await store.gurus.findById(SYSOP_TAPE_ID)) return false;
+  const now = new Date().toISOString();
+  try {
+    await store.gurus.insert({ id: SYSOP_TAPE_ID, name: "Sysop", model, appendSystemPrompt: SYSOP_PROMPT, adminTools: "manage", createdAt: now, updatedAt: now });
+    return true;
+  } catch {
+    return false; // another instance seeded it first
+  }
+}

@@ -21,11 +21,13 @@ export function GurusPage() {
   const [apiError, setApiError] = useState<ApiErrorState | null>(null);
   const [editing, setEditing] = useState<Guru | "new" | null>(null);
   const [sessionFor, setSessionFor] = useState<Guru | null>(null);
+  const [isSysop, setIsSysop] = useState(false);
 
   async function load() {
     setLoading(true);
     try {
-      const [guruList, modelList, guruMeta] = await Promise.all([api.gurus(), api.models(), api.guruMeta()]);
+      const [guruList, modelList, guruMeta, me] = await Promise.all([api.gurus(), api.models(), api.guruMeta(), api.me().catch(() => null)]);
+      setIsSysop(me?.operator === true);
       setGurus(guruList);
       setModels(modelList);
       setMeta(guruMeta);
@@ -112,6 +114,7 @@ export function GurusPage() {
           guru={editing === "new" ? undefined : editing}
           models={models}
           meta={meta}
+          isSysop={isSysop}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);

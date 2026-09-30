@@ -8,7 +8,7 @@ import { buildTestApp, seedGuru, type TestApp } from "./helpers.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { hashToken } from "../src/tokens.ts";
 import { runAdminOp, type AdminCaller } from "../src/admin/ops.ts";
-import { updateGuru } from "../src/gurus-service.ts";
+import { ensureSysopTape, updateGuru } from "../src/gurus-service.ts";
 import { diffFields, resolveRef, shortId } from "../src/admin/render.ts";
 
 const TOKEN = "outf_admin-ops-test";
@@ -309,6 +309,19 @@ describe("adminTools from a person", () => {
     assert.equal(res.statusCode, 200);
     assert.equal(res.json().adminTools, "operator");
     await app.fastify.close();
+  });
+});
+
+describe("the Sysop tape", () => {
+  test("seeded once with manage admin tools, and never overwritten", async () => {
+    const store = new MemoryStore();
+    assert.equal(await ensureSysopTape(store, "litellm/claude-auto-llm"), true);
+    const tape = (await store.gurus.findById("sysop"))!;
+    assert.deepEqual([tape.name, tape.model, tape.adminTools], ["Sysop", "litellm/claude-auto-llm", "manage"]);
+    assert.match(tape.appendSystemPrompt!, /outfitter-admin skill/);
+    await store.gurus.update("sysop", { model: "a/b" });
+    assert.equal(await ensureSysopTape(store, "litellm/other"), false);
+    assert.equal((await store.gurus.findById("sysop"))!.model, "a/b");
   });
 });
 

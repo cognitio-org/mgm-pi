@@ -1,4 +1,5 @@
 import { assertGkeConfigured, assertSandboxOrigin, loadConfig, mailboxWarning } from "./config.ts";
+import { ensureSysopTape } from "./gurus-service.ts";
 import { openStore } from "./store/index.ts";
 import { createProviders } from "./providers/index.ts";
 import {
@@ -32,6 +33,10 @@ const secretAdmin: SecretAdmin = new AppSecretCache(
 );
 
 const app = await buildApp({ store, config, provider: providers, secretsBroker, secretAdmin });
+// Sysop tools (#290): the built-in admin tape, once, on the web role. Never overwrites an edited one.
+if (config.role !== "link") {
+  await ensureSysopTape(store, config.defaultCloudModel).catch((err) => app.fastify.log.warn({ err }, "sysop tape seed failed"));
+}
 
 const port = Number.parseInt(process.env.PORT ?? "8080", 10);
 await app.fastify.listen({ port, host: "0.0.0.0" });

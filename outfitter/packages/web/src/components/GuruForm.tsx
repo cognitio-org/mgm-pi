@@ -14,6 +14,8 @@ interface Props {
   guru?: Guru;
   models: ModelRow[];
   meta: GuruMeta | null;
+  /** The signed-in person is a sysop: only they may give a tape operator admin tools. */
+  isSysop?: boolean;
   onClose: () => void;
   onSaved: (guru: Guru) => void;
 }
@@ -44,7 +46,7 @@ function textToList(text: string): string[] | undefined {
  * pickers and the env denylist come from GET /api/models and GET /api/gurus/meta respectively
  * (fetched once by GurusPage and passed down, so opening several forms in a session doesn't
  * refetch either). */
-export function GuruForm({ guru, models, meta, onClose, onSaved }: Props) {
+export function GuruForm({ guru, models, meta, isSysop = false, onClose, onSaved }: Props) {
   const [name, setName] = useState(guru?.name ?? "");
   const [model, setModel] = useState(guru?.model ?? "");
   const [fallbackModel, setFallbackModel] = useState(guru?.fallbackModel ?? "");
@@ -56,6 +58,7 @@ export function GuruForm({ guru, models, meta, onClose, onSaved }: Props) {
   const [playwrightBeforeCheckpoint, setPlaywrightBeforeCheckpoint] = useState(guru?.playwrightBeforeCheckpoint === true);
   const [allowExternalHtmlResources, setAllowExternalHtmlResources] = useState(guru?.allowExternalHtmlResources === true);
   const [browserIde, setBrowserIde] = useState(guru?.browserIde === true);
+  const [adminTools, setAdminTools] = useState<NonNullable<Guru["adminTools"]>>(guru?.adminTools ?? "off");
   const [branchPrefix, setBranchPrefix] = useState(guru?.branchPrefix ?? "outfitter/");
   const [envRows, setEnvRows] = useState<EnvRow[]>(envToRows(guru?.env).length > 0 ? envToRows(guru?.env) : [{ key: "", value: "" }]);
   const [submitting, setSubmitting] = useState(false);
@@ -87,6 +90,7 @@ export function GuruForm({ guru, models, meta, onClose, onSaved }: Props) {
       playwrightBeforeCheckpoint,
       allowExternalHtmlResources,
       browserIde,
+      adminTools,
       branchPrefix: branchPrefix.trim() || undefined,
       env: rowsToEnv(envRows),
     };
@@ -169,6 +173,23 @@ export function GuruForm({ guru, models, meta, onClose, onSaved }: Props) {
             </label>
             <p className="session-meta">
               Off by default. Lets the floppy&apos;s owner open this Drive&apos;s files in an editor with a terminal.
+            </p>
+          </div>
+          <div className="form-row">
+            <label htmlFor="guru-admin-tools">Admin tools</label>
+            <select
+              id="guru-admin-tools"
+              value={adminTools}
+              onChange={(e) => setAdminTools(e.target.value as NonNullable<Guru["adminTools"]>)}
+              disabled={adminTools === "operator" && !isSysop}
+            >
+              <option value="off">Off</option>
+              <option value="manage">Manage tapes, environments and sessions</option>
+              {(isSysop || adminTools === "operator") && <option value="operator">Operator (sysop actions too)</option>}
+            </select>
+            <p className="session-meta">
+              Off by default. Runs on this tape can administer Outfitter as the floppy&apos;s owner. Deletes and changes to
+              admin tapes wait for the owner&apos;s approval on the floppy page. Only sysops can choose Operator.
             </p>
           </div>
 

@@ -82,3 +82,44 @@ describe("GuruForm: #241 VS Code in the browser", () => {
     expect(ideBox().checked).toBe(true);
   });
 });
+
+describe("GuruForm: #290 Admin tools", () => {
+  function renderWith(existing: Guru, isSysop: boolean) {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => root!.render(<GuruForm guru={existing} models={[]} meta={null} isSysop={isSysop} onClose={vi.fn()} onSaved={vi.fn()} />));
+    return container.querySelector<HTMLSelectElement>("#guru-admin-tools")!;
+  }
+  const submit = async () => {
+    await act(async () => {
+      container!.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+  };
+
+  it("is Off by default and offers Operator only to a sysop", () => {
+    const select = renderWith(guru, false);
+    expect(select.value).toBe("off");
+    expect([...select.options].map((o) => o.value)).toEqual(["off", "manage"]);
+    act(() => root!.unmount());
+    const sysop = renderWith(guru, true);
+    expect([...sysop.options].map((o) => o.value)).toEqual(["off", "manage", "operator"]);
+  });
+
+  it("saving sends the choice", async () => {
+    const update = vi.spyOn(api, "updateGuru").mockResolvedValue({ ...guru, adminTools: "manage" });
+    const select = renderWith(guru, false);
+    act(() => {
+      select.value = "manage";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await submit();
+    expect(update.mock.calls[0]![1].adminTools).toBe("manage");
+  });
+
+  it("an operator tape is shown to a non-sysop, but they can't change the setting", () => {
+    const select = renderWith({ ...guru, adminTools: "operator" }, false);
+    expect(select.value).toBe("operator");
+    expect(select.disabled).toBe(true);
+  });
+});

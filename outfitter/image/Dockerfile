@@ -44,6 +44,8 @@ COPY kernal/.pi/mcp.json /tmp/mcp.full.json
 COPY outfitter/image/render-mcp.sh /tmp/render-mcp.sh
 RUN mkdir -p ./.pi && bash /tmp/render-mcp.sh /tmp/mcp.full.json /opt/kernal/.pi/mcp.json
 COPY kernal/.pi/extensions/ ./.pi/extensions/
+# Kernal's own skills (outfitter-admin, #290): settings.json loads them from ../skills.
+COPY kernal/skills/ ./skills/
 # Laptop-only kernal extensions stay out of the cloud image: kernal-voice (microphone; it also creates
 # ~/.pi/agent at load and was the first thing to trip on the agent user's HOME) and kernal-update
 # (checks GitHub releases at session start; a sandbox is replaced by redeploying the image), and

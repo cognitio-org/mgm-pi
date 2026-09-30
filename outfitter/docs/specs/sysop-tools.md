@@ -42,6 +42,15 @@ Decisions (confirmed with the owner):
 - **Agent-created tape ids** are slugs (`[a-z0-9-]`), so later calls stay short; UUID ids print
   as 8-character prefixes and any unique prefix of 4+ characters resolves.
 
+## Changes since the plan (PR5: skill, Sysop tape, UI)
+- **The skill lives in `kernal/skills/`** (committed), not `.pi/skills/` (generated and gitignored).
+  Kernal's `settings.json` loads it with `"skills": ["../skills"]`; the release bundle and the image
+  copy the directory.
+- **The Sysop tape** (`sysop`, `adminTools: manage`, model `DEFAULT_CLOUD_MODEL`) is seeded by
+  `main.ts` on the web role at start-up, only when missing, and never overwritten.
+- **The tape editor** has an Admin tools select. Operator appears only to sysops; a non-sysop sees an
+  operator tape's setting but can't change it.
+
 ## Changes since the plan (PR4: session search)
 - **Ops only, no new REST routes:** `sessions.search` and `sessions.transcript` join the op registry,
   so the laptop (`POST /api/admin/ops`) and a Drive (admin socket) share them. The web UI has its own

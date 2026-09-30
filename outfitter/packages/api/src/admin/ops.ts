@@ -426,6 +426,30 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
   },
 };
 
+/** Field names an approval card may show: the ones an op actually reads. Anything else in args is
+ * ignored by the op, so naming it would only let the caller write its own words onto the card. */
+export const CARD_FIELDS: readonly string[] = [...new Set<string>([...TAPE_FIELDS, ...ENVIRONMENT_FIELDS, "adminTools"])];
+
+/**
+ * The record an op would act on, resolved now: its full id and a label for the approval card. A
+ * Drive passes the full id back into the op after the owner approves, so a prefix can't come to
+ * mean another record during the wait. Undefined for ops without a target.
+ */
+export async function resolveTarget(ctx: AdminContext, op: unknown, args: unknown): Promise<{ id: string; label: string } | { error: string } | undefined> {
+  const a: Args = args && typeof args === "object" && !Array.isArray(args) ? (args as Args) : {};
+  if (op === "tapes.update" || op === "tapes.delete") {
+    const tape = await resolveTape(ctx, a.id);
+    if (!tape.ok) return { error: tape.error };
+    return { id: tape.item.id, label: `tape "${clip(tape.item.name, 60)}" (${tape.item.id})` };
+  }
+  if (op === "environments.update") {
+    const env = resolveRef(await ctx.store.environments.list(), a.id, "environment");
+    if (!env.ok) return { error: env.error };
+    return { id: env.item.id, label: `environment "${clip(env.item.name, 60)}" (${env.item.id})` };
+  }
+  return undefined;
+}
+
 /** Whether this call would need the person's approval, without running or auditing it: a Drive asks
  * the owner first (drive.ts), then runs the op once with `approved`. Unknown ops say no; running
  * them reports the error. */

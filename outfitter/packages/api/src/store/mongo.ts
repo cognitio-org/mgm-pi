@@ -45,6 +45,8 @@ import type {
   FormattedSession,
   FormattedSessionsCollection,
   AdminAuditCollection,
+  AdminApproval,
+  AdminApprovalsCollection,
   AdminAuditEntry,
 } from "./types.ts";
 import type { VoicePrefs } from "../voice.ts";
@@ -1074,6 +1076,46 @@ class MongoFormattedSessions implements FormattedSessionsCollection {
   }
 }
 
+class MongoAdminApprovals implements AdminApprovalsCollection {
+  private readonly col: MongoCollection<AdminApproval & { _id: string }>;
+
+  constructor(col: MongoCollection<AdminApproval & { _id: string }>) {
+    this.col = col;
+  }
+
+  async get(runId: string): Promise<AdminApproval | null> {
+    return stripId<AdminApproval>(await this.col.findOne({ _id: runId }));
+  }
+
+  async claim(approval: AdminApproval, nowIso: string): Promise<boolean> {
+    const doc = { ...approval, _id: approval.runId };
+    try {
+      await this.col.insertOne(doc);
+      return true;
+    } catch (err) {
+      if ((err as { code?: number }).code !== 11000) throw err;
+    }
+    // One exists: replace it only if it is answered or expired.
+    const replaced = await this.col.findOneAndReplace(
+      { _id: approval.runId, $or: [{ decision: { $exists: true } }, { expiresAt: { $lte: nowIso } }] },
+      doc,
+    );
+    return replaced !== null;
+  }
+
+  async decide(runId: string, approvalId: string, decision: "approved" | "denied", by: string, nowIso: string): Promise<boolean> {
+    const result = await this.col.updateOne(
+      { _id: runId, id: approvalId, decision: { $exists: false }, expiresAt: { $gt: nowIso } },
+      { $set: { decision, decidedBy: by, decidedAt: nowIso } },
+    );
+    return result.modifiedCount === 1;
+  }
+
+  async clear(runId: string, approvalId: string): Promise<void> {
+    await this.col.deleteOne({ _id: runId, id: approvalId });
+  }
+}
+
 class MongoAdminAudit implements AdminAuditCollection {
   private readonly col: MongoCollection<AdminAuditEntry & { _id: string }>;
 
@@ -1147,6 +1189,7 @@ export class MongoStore implements Store {
   readonly formattedSessions: FormattedSessionsCollection;
   readonly previews: PreviewsCollection;
   readonly adminAudit: AdminAuditCollection;
+  readonly adminApprovals: AdminApprovalsCollection;
   private readonly client: MongoClient;
 
   private constructor(client: MongoClient, db: Db) {
@@ -1168,6 +1211,7 @@ export class MongoStore implements Store {
     this.formattedSessions = new MongoFormattedSessions(db.collection("formattedSessions"));
     this.previews = new MongoPreviews(db.collection("previews"));
     this.adminAudit = new MongoAdminAudit(db.collection("adminAudit"));
+    this.adminApprovals = new MongoAdminApprovals(db.collection("adminApprovals"));
   }
 
   /** `dbName` wins over the database in the URI; the stored URI has none, so the default keeps

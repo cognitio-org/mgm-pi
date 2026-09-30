@@ -267,12 +267,18 @@ request, reads resent once after a link drop, writes (with `idempotencyKey`) sen
   every call: with admin tools off, every op is `admin tools are off for this tape`. Ops run as the
   session's owner, with sysop rights only when the owner is an operator and the tape says
   `operator`.
-- A delete, an operator op, or a change to a tape with admin tools waits for the owner. The api
-  stores `Run.pendingAdminApproval`; the web session page shows it as a confirm card, through the
-  `pendingUiRequest` channel with id `admin:<approvalId>`; the owner's `POST
-  /api/sessions/:id/ui-response` records the decision (a person only: a Dongle caller is refused and
-  doesn't see the card). The request waits up to 10 minutes; `needsApproval: true` on the result
-  means declined or unanswered. One approval per run at a time.
+- A delete, an operator op, or a change to a tape with admin tools waits for the owner, up to 10
+  minutes. The api resolves the target first and names it on the card (name and full id), then acts
+  on that exact record. The request is a row in `adminApprovals` (one per run; claim, decide and
+  clear are conditional writes). The owner's session page shows it as a confirm card through the
+  `pendingUiRequest` channel, ahead of pi's own question, with id `admin:<approvalId>` and
+  `source: "outfitter"` (agentlink strips `source` from pi's events, and the page draws these cards
+  differently). Only the session's owner, as a person, sees it (GET and SSE) or can answer it (`POST
+  /api/sessions/:id/ui-response`); a Dongle caller and other viewers see pi's question only. After a
+  yes the api reads the tape and rights again before running the op. `needsApproval: true` on the
+  result means declined, unanswered, or replaced.
+- A write's `idempotencyKey` is remembered on the run (hashed, next to the GitHub keys), so a replay
+  returns the first result. At most 8 admin requests per run are handled at once.
 - No `API_PROTOCOL_VERSION` bump: an older api never sends `adminTools`, so an agentd never opens
   the socket against it.
 

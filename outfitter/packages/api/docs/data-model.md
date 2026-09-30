@@ -80,7 +80,6 @@ active run instead of creating a second one.
 | `pending` | `DownMessage[]` | down-messages queued while no agentd socket is connected (REST calls that need to reach agentd write here; drained on `hello`) |
 | `providerHandle` | unknown | opaque `SandboxProvider` handle (Cloud Run execution name, child PID, ...) |
 | `pendingUiRequest` | unknown? | **not in protocol.md**: the last `extension_ui_request` event, so a browser that (re)opens the session still sees a question the run is waiting on; cleared on `ui_response` |
-| `pendingAdminApproval` | object? \| null | Sysop tools (#287): an admin op from this run's agent held for the owner's decision (`admin/approvals.ts`): `{id, op, title, message, requestedAt, expiresAt, decision?, decidedBy?, decidedAt?}`. null once answered or expired. Shown as the `pendingUiRequest` card with id `admin:<id>` |
 | `modelFallback` | `{wanted, used}`? | **not in protocol.md**: set by the E2.8 laptop preflight (`src/laptop.ts`) when a laptop-only model was substituted for a cloud one, so the UI can show "running on X instead of Y" |
 | `sandboxExit` | `{reason, exitCode?, finishedAt?}`? | #193: how the sandbox's agent container ended, per the orchestrator (GKE: the pod's `agentd` terminated state, e.g. `OOMKilled`/137). Read shortly after agentd goes quiet (`RunManager.checkSandboxExit`); a clean exit (0/`Completed`) marks the run `stopped`, anything else `failed`. Absent while running, after a clean bye, and on Cloud Run. Kubernetes' termination `message` is not kept: the container writes it |
 | `allowExternalHtmlResources` | boolean? | #132: the guru's flag as it was when this run's first `run.spec` was built, written once and reused by later specs on reconnect. `GET /api/sessions/:id` returns it so a session opened later previews HTML the way that run's prompt said; a Tape changed mid-run applies to the next run |
@@ -129,6 +128,15 @@ whatever the outcome. `{id (== _id), at, actor (email the op ran as), via ("toke
 sessionId?, runId?, op, target?, ok, error?, approved, approvalId?}`, including calls refused for
 rights or approval. `id` sorts by time (base-36 ms, then a per-process counter), so newest first is
 an `_id` sort and there are no other indexes.
+
+### `adminApprovals`
+
+Sysop tools (#287): an admin op from a Drive's agent held for the session owner's decision
+(`admin/approvals.ts`). One row per run (`_id` = runId): `{id, runId, sessionId, ownerEmail
+(lowercased), op, title, message, requestedAt, expiresAt, decision?, decidedBy?, decidedAt?}`.
+`claim` inserts, or replaces a row that is decided or expired; `decide` updates only the matching,
+undecided, unexpired row; `clear` deletes only the matching row. Kept off the run document because
+several routes return runs whole.
 
 ### `users`
 

@@ -193,9 +193,6 @@ export interface Run {
   // that reconnects (or opens the session fresh) still sees a question the run is waiting on;
   // cleared when a ui_response down-message is sent for this run.
   pendingUiRequest?: unknown;
-  /** Sysop tools (#287): an admin op from this run's agent waiting for the session owner's yes or
-   * no in the web UI (admin/approvals.ts). One at a time; null or absent when there is none. */
-  pendingAdminApproval?: AdminApproval | null;
   // Bug 7 (docs/reports/cloud-fixes.md): the most recent `status` frame's `detail` field
   // (protocol.md), which agentd now also uses to surface a rejected pi RPC response ("pi rejected
   // prompt: <error>") -- prompt/steer/follow_up used to vanish silently when pi's own `response`
@@ -465,9 +462,15 @@ export interface Guru {
 
 export type AdminToolsLevel = "off" | "manage" | "operator";
 
-/** An admin op held for the session owner's decision (Run.pendingAdminApproval). */
+/** An admin op from a run's agent held for the session owner's decision (Sysop tools, #287;
+ * admin/approvals.ts). At most one per run, in its own collection so Run documents -- which several
+ * routes return whole -- never carry it. */
 export interface AdminApproval {
   id: string;
+  runId: string;
+  sessionId: string;
+  /** Lowercased; only this person, in the web UI, may answer or see it. */
+  ownerEmail: string;
   op: string;
   /** Shown on the card: what the agent wants to do, in one line each. */
   title: string;
@@ -500,6 +503,18 @@ export interface AdminAuditEntry {
    * approval card, then `approvalId`). */
   approved: boolean;
   approvalId?: string;
+}
+
+export interface AdminApprovalsCollection {
+  /** The run's approval, pending or answered, or null. */
+  get(runId: string): Promise<AdminApproval | null>;
+  /** Stores `approval` for its run unless one is still pending there (undecided and unexpired).
+   * False when one is. */
+  claim(approval: AdminApproval, nowIso: string): Promise<boolean>;
+  /** Records the decision on the run's approval if it is this one, undecided and unexpired. */
+  decide(runId: string, approvalId: string, decision: "approved" | "denied", by: string, nowIso: string): Promise<boolean>;
+  /** Removes the run's approval only if it is still this one. */
+  clear(runId: string, approvalId: string): Promise<void>;
 }
 
 export interface AdminAuditCollection {
@@ -958,5 +973,6 @@ export interface Store {
   formattedSessions: FormattedSessionsCollection;
   previews: PreviewsCollection;
   adminAudit: AdminAuditCollection;
+  adminApprovals: AdminApprovalsCollection;
   close(): Promise<void>;
 }

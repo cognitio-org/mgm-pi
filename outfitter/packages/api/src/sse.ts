@@ -2,7 +2,7 @@
 // dependency beyond Fastify's raw response). See protocol.md "browser <-> api": GET
 // /api/sessions/:id/stream sends `status` on connect, then live entry|event|status|spend|checkpoint|liveness.
 
-import { approvalUiRequest } from "./admin/approvals.ts";
+import { approvalUiRequest, mayAnswer } from "./admin/approvals.ts";
 import type { FastifyReply } from "fastify";
 import type { Store } from "./store/types.ts";
 import { entryForWire } from "./entry-wire.ts";
@@ -19,11 +19,20 @@ function formatFrame({ type, data }: SseEvent): string {
   return `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
+/** Who is on the other end of one stream, for events only some viewers may see (Sysop tools #287:
+ * an admin approval card goes to the session's owner, as a person, only). */
+export interface SseViewer {
+  email?: string;
+  viaToken?: boolean;
+}
+
 export class SseHub {
   private readonly subscribers = new Map<string, Set<FastifyReply>>();
+  private readonly viewers = new WeakMap<FastifyReply, SseViewer>();
 
   /** Starts the SSE response and registers it for the channel until the client disconnects. */
-  subscribe(channel: string, reply: FastifyReply): void {
+  subscribe(channel: string, reply: FastifyReply, viewer: SseViewer = {}): void {
+    this.viewers.set(reply, viewer);
     reply.raw.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
@@ -46,11 +55,15 @@ export class SseHub {
     });
   }
 
-  publish(channel: string, event: SseEvent): void {
+  /** Sends to every subscriber on the channel, or only to those `only` accepts. */
+  publish(channel: string, event: SseEvent, only?: (viewer: SseViewer) => boolean): void {
     const set = this.subscribers.get(channel);
     if (!set || set.size === 0) return;
     const frame = formatFrame(event);
-    for (const reply of set) reply.raw.write(frame);
+    for (const reply of set) {
+      if (only && !only(this.viewers.get(reply) ?? {})) continue;
+      reply.raw.write(frame);
+    }
   }
 
   /** Ends every stream on the channel (#208: its session was formatted). The browser's reconnect
@@ -112,37 +125,40 @@ const SSE_KEEPALIVE_MS = 25_000;
  * also transparently keeps working for role "all" (single process): the poller and the existing
  * AgentLink push both fire, the browser just dedupes (mergeEntries by id, spend/status are
  * idempotent overwrites). */
+interface PollCursor {
+  /** Ids in the last polled recent-entries window (already published or already known). */
+  seenEntryIds?: Set<string>;
+  lastState?: string;
+  lastCostEstimate?: number;
+  lastUiRequestKey?: string;
+  /** Sysop tools (#287): the card the session's owner sees (an admin approval, else pi's). */
+  lastOwnerCardKey?: string;
+  /** The session's owner, lowercased, read once ("" when it has none). */
+  ownerEmail?: string;
+  lastStatusDetail?: string;
+  /** JSON of the last startup summary published (startup.ts), so it goes out only on change. */
+  lastStartupKey?: string;
+  /** Which run the fields above describe, so a note belonging to the previous run isn't left
+   * standing over a new one -- see the `detail` handling in pollOne. */
+  lastRunId?: string;
+  /** The active run's lastSeenAt/lastActivityAt as last published in a `liveness` frame. */
+  lastLivenessKey?: string;
+  /** Last `live_thought` text published. Null once cleared; absent until the first one. */
+  lastLiveThought?: string | null;
+}
+
 export class SsePoller {
-  private readonly cursors = new Map<
-    string,
-    {
-      /** Ids in the last polled recent-entries window (already published or already known). */
-      seenEntryIds?: Set<string>;
-      lastState?: string;
-      lastCostEstimate?: number;
-      lastUiRequestKey?: string;
-      lastStatusDetail?: string;
-      /** JSON of the last startup summary published (startup.ts), so it goes out only on change. */
-      lastStartupKey?: string;
-      /** Which run the fields above describe, so a note belonging to the previous run isn't left
-       * standing over a new one -- see the `detail` handling in pollOne. */
-      lastRunId?: string;
-      /** The active run's lastSeenAt/lastActivityAt as last published in a `liveness` frame. */
-      lastLivenessKey?: string;
-      /** Last `live_thought` text published. Null once cleared; absent until the first one. */
-      lastLiveThought?: string | null;
-    }
-  >();
+  private readonly cursors = new Map<string, PollCursor>();
   private timer?: ReturnType<typeof setInterval>;
   /** A pollAll still running when the next tick fires is not overlapped by a second one: two
    * concurrent polls would read the same cursor and publish the same frames twice. */
   private polling = false;
   private lastKeepaliveAt = Date.now();
   private readonly hub: SseHub;
-  private readonly store: Pick<Store, "entries" | "runs">;
+  private readonly store: Pick<Store, "entries" | "runs"> & Partial<Pick<Store, "sessions" | "adminApprovals">>;
   private readonly intervalMs: number;
 
-  constructor(hub: SseHub, store: Pick<Store, "entries" | "runs">, intervalMs = 1500) {
+  constructor(hub: SseHub, store: Pick<Store, "entries" | "runs"> & Partial<Pick<Store, "sessions" | "adminApprovals">>, intervalMs = 1500) {
     this.hub = hub;
     this.store = store;
     this.intervalMs = intervalMs;
@@ -279,21 +295,39 @@ export class SsePoller {
       this.hub.publish(sessionId, { type: "live_thought", data: { text: liveThought } });
       cursor.lastLiveThought = liveThought;
     }
-    // Sysop tools (#287): an admin approval held for the owner rides the same card (this stream is
-    // web-role only, so it is a person watching).
-    const uiRequest = run?.pendingUiRequest ?? approvalUiRequest(run);
-    const uiKey = uiRequest ? JSON.stringify(uiRequest) : undefined;
-    if (uiKey && uiKey !== cursor.lastUiRequestKey) {
-      this.hub.publish(sessionId, { type: "event", data: uiRequest });
-      cursor.lastUiRequestKey = uiKey;
-    } else if (!uiKey && cursor.lastUiRequestKey) {
-      // The question was published and is now gone (answered, or the run left the active set).
-      // Resetting the cursor alone left the browser's lamp blue. One clear frame; a session that
-      // never had a question has no lastUiRequestKey, so its first poll sends nothing.
-      this.hub.publish(sessionId, { type: "event", data: { type: "extension_ui_request", cleared: true } });
-      cursor.lastUiRequestKey = undefined;
+    // Sysop tools (#287): an admin approval held for the owner rides the same card, ahead of pi's,
+    // but only on the owner's own streams as a person. Everyone else keeps seeing pi's question.
+    if (cursor.ownerEmail === undefined) {
+      cursor.ownerEmail = (await this.store.sessions?.findById(sessionId))?.ownerEmail?.toLowerCase() ?? "";
     }
+    const owner = { ownerEmail: cursor.ownerEmail ?? "" };
+    const isOwner = (viewer: SseViewer) => !!owner.ownerEmail && mayAnswer(owner, viewer);
+    const adminCard = run && this.store.adminApprovals ? approvalUiRequest(await this.store.adminApprovals.get(run.id)) : undefined;
+    this.publishCard(sessionId, cursor, "lastUiRequestKey", run?.pendingUiRequest, (v) => !isOwner(v));
+    this.publishCard(sessionId, cursor, "lastOwnerCardKey", adminCard ?? run?.pendingUiRequest, isOwner);
 
     this.cursors.set(sessionId, cursor);
+  }
+
+  /**
+   * Publishes `request` when it changed since `key` last saw it, or one clear frame when it went
+   * away (answered, or the run left the active set -- resetting the cursor alone left the browser's
+   * lamp blue). A session that never had a question has no key, so its first poll sends nothing.
+   */
+  private publishCard(
+    sessionId: string,
+    cursor: PollCursor,
+    key: "lastUiRequestKey" | "lastOwnerCardKey",
+    request: unknown,
+    only: (viewer: SseViewer) => boolean,
+  ): void {
+    const next = request ? JSON.stringify(request) : undefined;
+    if (next && next !== cursor[key]) {
+      this.hub.publish(sessionId, { type: "event", data: request }, only);
+      cursor[key] = next;
+    } else if (!next && cursor[key]) {
+      this.hub.publish(sessionId, { type: "event", data: { type: "extension_ui_request", cleared: true } }, only);
+      cursor[key] = undefined;
+    }
   }
 }

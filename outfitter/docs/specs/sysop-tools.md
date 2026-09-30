@@ -43,6 +43,43 @@ Decisions (confirmed with the owner):
   as 8-character prefixes and any unique prefix of 4+ characters resolves.
 
 ## Changes since the plan (PR2)
+- **Approvals reuse the session's confirm card,** answered through `POST /api/sessions/:id/ui-response`
+  (the api handles the run's own `admin:<id>` itself). There is no `/admin-approvals` route. The card
+  carries `source: "outfitter"`, which pi events can't claim, so the page draws it as "Outfitter asks
+  you (not the agent)" with Allow/Deny; every card's buttons wake 1 s after it appears.
+- **Approvals live in `adminApprovals`,** one per run, with conditional claim/decide/clear, not on
+  the run document (which several routes return whole).
+- **Only the owner, as a person, sees the card:** GET filters by identity; SSE filters per stream.
+- **The card is all api words:** the resolved target's name and full id, the known field names, the
+  start of a new prompt. The approved op acts on that full id, after re-reading the tape and rights.
+- **A Drive asks first, then runs once** (`approvalNeeded`), so an approved op writes one audit row.
+  Write replays are deduplicated by idempotency key; 8 admin requests per run at most.
+- **No protocol version bump:** an older api never sends `adminTools`, so agentd never opens the socket.
+
+## Changes since the plan (PR1)
+- **One op endpoint, not REST routes on link.** The laptop reaches the op registry through
+  `POST /api/admin/ops {op, args, confirmed?}` (routes/admin.ts), registered on web and link. The
+  gurus/environments REST routes stay web-only. A Drive's admin socket (#287) calls the same
+  `runAdminOp`, so there is one set of checks and one text renderer for both transports.
+- **`adminTools` from an agent is refused, not stripped:** a one-line 403 ("adminTools can only be
+  set in the web UI") tells the agent why, where silently dropping it would not. A Dongle caller
+  counts as an agent on every route (`Identity.viaToken`).
+- **A write to a tape that already has admin tools needs approval,** like a delete, so an agent
+  can't rewrite the Sysop tape's prompt unseen.
+- **Laptop approval** is `confirmed: true` after Kernal's TUI confirm; the Dongle's holder is the
+  person at the keyboard. A Drive never gets this shortcut: its approval is the web card (#287).
+- **Only a sysop may change or delete a tape with `adminTools: operator`**, a person in the web UI
+  included; a Dongle never can. An agent's delete always needs approval, on the op path and on the
+  REST route alike.
+- **Env values never reach an agent:** `get` prints env names with "(values hidden)", and an update
+  prints `env: +NEW, -OLD, ~CHANGED`.
+- **Stricter tape types** (strings, string lists, a string map for env), and create/update keep only
+  known fields, so a dotted key such as `env.LD_PRELOAD` can't reach Mongo's `$set`.
+- **Reserved ids:** agents can't create `default` or `sysop`.
+- **Agent-created tape ids** are slugs (`[a-z0-9-]`), so later calls stay short; UUID ids print
+  as 8-character prefixes and any unique prefix of 4+ characters resolves.
+
+## Changes since the plan (PR2)
 - **Approvals reuse the session's confirm card.** `Run.pendingAdminApproval` is shown through the
   existing `pendingUiRequest` channel (id `admin:<approvalId>`) and answered through
   `POST /api/sessions/:id/ui-response`, which the api handles itself for that prefix. There is no

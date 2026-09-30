@@ -1,23 +1,28 @@
-// Approvals for a Drive's admin ops (Sysop tools, #287). A delete or an operator op from a Drive's
-// agent waits here until the session's owner says yes or no in the web UI. The decision is made
-// outside the sandbox (the web role, under IAP), so nothing the model or its shell does can answer
-// it: pi's own ui.confirm would come back through agentd, which the sandbox controls.
+// Approvals for a Drive's admin ops (Sysop tools, #287). A delete, an operator op, or a change to an
+// admin tape from a Drive's agent waits here until the session's owner says yes or no in the web UI.
+// The decision is made outside the sandbox (the web role, under IAP), so nothing the model or its
+// shell does can answer it: pi's own ui.confirm would come back through agentd, which the sandbox
+// controls.
 //
-// The request lives on the run (Run.pendingAdminApproval), because the agent's socket is on the
-// link role and the owner's click lands on the web role: they share only the store. The waiting side
-// polls the run; the web side shows it as a confirm card through the same channel pi's own
-// questions use (sse.ts, GET /api/sessions/:id), with id `admin:<approvalId>`, and
-// POST /api/sessions/:id/ui-response records the decision (routes/sessions.ts).
+// The request lives in the `adminApprovals` collection, one per run, because the agent's socket is
+// on the link role and the owner's click lands on the web role: they share only the store. Claim,
+// decide and clear are conditional writes, so two requests or a late click can't overwrite each
+// other. The waiting side polls; the web side shows it to the owner as a confirm card through the
+// channel pi's own questions use (sse.ts, GET /api/sessions/:id), marked `source: "outfitter"` so the
+// page can tell it from a card the model raised, with id `admin:<approvalId>`; POST
+// /api/sessions/:id/ui-response records the decision (routes/sessions.ts).
 
 import { randomUUID } from "node:crypto";
-import type { AdminApproval, Run, Store } from "../store/types.ts";
+import type { AdminApproval, Store } from "../store/types.ts";
 
 export const APPROVAL_UI_PREFIX = "admin:";
 export const APPROVAL_TIMEOUT_MS = 10 * 60_000;
+/** Set by the api on its own cards; agentlink.ts strips it from every pi event. */
+export const APPROVAL_SOURCE = "outfitter";
 
 export type ApprovalOutcome =
   | { approved: true; approvalId: string; by: string }
-  | { approved: false; reason: "denied" | "expired" | "busy" | "run ended" };
+  | { approved: false; reason: "denied" | "expired" | "busy" | "run ended" | "superseded" };
 
 export interface ApprovalDeps {
   store: Store;
@@ -27,82 +32,85 @@ export interface ApprovalDeps {
   now?: () => number;
 }
 
-/** Holds the op on the run and waits for the owner's decision, the timeout, or the run ending. */
-export async function requestApproval(
-  deps: ApprovalDeps,
-  runId: string,
-  ask: { op: string; title: string; message: string },
-): Promise<ApprovalOutcome> {
+export interface ApprovalAsk {
+  sessionId: string;
+  ownerEmail: string;
+  op: string;
+  title: string;
+  message: string;
+}
+
+/** Holds the op for the run and waits for the owner's decision, the timeout, or the run ending. */
+export async function requestApproval(deps: ApprovalDeps, runId: string, ask: ApprovalAsk): Promise<ApprovalOutcome> {
   const now = deps.now ?? Date.now;
+  const iso = () => new Date(now()).toISOString();
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const timeoutMs = deps.timeoutMs ?? APPROVAL_TIMEOUT_MS;
   const pollMs = deps.pollMs ?? 1500;
 
-  const run = await deps.store.runs.findById(runId);
-  if (!run) return { approved: false, reason: "run ended" };
-  if (run.pendingAdminApproval && !run.pendingAdminApproval.decision && Date.parse(run.pendingAdminApproval.expiresAt) > now()) {
-    return { approved: false, reason: "busy" };
-  }
   const approval: AdminApproval = {
     id: randomUUID(),
+    runId,
+    sessionId: ask.sessionId,
+    ownerEmail: ask.ownerEmail.toLowerCase(),
     op: ask.op,
     title: ask.title,
     message: ask.message,
-    requestedAt: new Date(now()).toISOString(),
+    requestedAt: iso(),
     expiresAt: new Date(now() + timeoutMs).toISOString(),
   };
-  await deps.store.runs.update(runId, { pendingAdminApproval: approval, updatedAt: approval.requestedAt });
+  if (!(await deps.store.adminApprovals.claim(approval, approval.requestedAt))) return { approved: false, reason: "busy" };
 
-  const clear = () => deps.store.runs.update(runId, { pendingAdminApproval: null, updatedAt: new Date(now()).toISOString() });
+  const clear = () => deps.store.adminApprovals.clear(runId, approval.id);
   for (;;) {
     await sleep(pollMs);
-    const current = await deps.store.runs.findById(runId);
-    const held = current?.pendingAdminApproval;
-    if (!current || current.state === "stopped" || current.state === "failed" || held?.id !== approval.id) {
-      if (held?.id === approval.id) await clear();
+    const [held, run] = await Promise.all([deps.store.adminApprovals.get(runId), deps.store.runs.findById(runId)]);
+    if (held?.id !== approval.id) return { approved: false, reason: "superseded" };
+    if (!run || run.state === "stopped" || run.state === "failed") {
+      await clear();
       return { approved: false, reason: "run ended" };
     }
     if (held.decision) {
       await clear();
-      return held.decision === "approved"
-        ? { approved: true, approvalId: approval.id, by: held.decidedBy ?? "" }
-        : { approved: false, reason: "denied" };
+      return held.decision === "approved" ? { approved: true, approvalId: approval.id, by: held.decidedBy ?? "" } : { approved: false, reason: "denied" };
     }
-    if (now() >= Date.parse(approval.expiresAt)) {
+    if (iso() >= approval.expiresAt) {
       await clear();
       return { approved: false, reason: "expired" };
     }
   }
 }
 
-/** The pending approval as pi's confirm request, for the web session page's existing card. */
-export function approvalUiRequest(run: Pick<Run, "pendingAdminApproval"> | null | undefined): Record<string, unknown> | undefined {
-  const a = run?.pendingAdminApproval;
-  if (!a || a.decision) return undefined;
-  return { type: "extension_ui_request", id: `${APPROVAL_UI_PREFIX}${a.id}`, method: "confirm", title: a.title, message: a.message };
+/** A pending, unexpired approval as pi's confirm request, for the owner's session page. */
+export function approvalUiRequest(approval: AdminApproval | null | undefined, nowIso = new Date().toISOString()): Record<string, unknown> | undefined {
+  if (!approval || approval.decision || approval.expiresAt <= nowIso) return undefined;
+  return {
+    type: "extension_ui_request",
+    id: `${APPROVAL_UI_PREFIX}${approval.id}`,
+    method: "confirm",
+    title: approval.title,
+    message: approval.message,
+    source: APPROVAL_SOURCE,
+  };
 }
 
-/**
- * Records the owner's answer from the web UI. Only the session's owner, as a person (not a Dongle),
- * may answer, and only a pending approval with this id.
- */
+/** Whether this viewer may see and answer the run's approval: its owner, as a person. */
+export function mayAnswer(approval: Pick<AdminApproval, "ownerEmail">, viewer: { email?: string; viaToken?: boolean } | undefined): boolean {
+  return !!viewer?.email && !viewer.viaToken && viewer.email.toLowerCase() === approval.ownerEmail;
+}
+
+/** Records the owner's answer from the web UI. */
 export async function decideApproval(
   store: Store,
-  run: Run,
+  runId: string,
   approvalId: string,
   decider: { email: string; viaToken?: boolean },
-  ownerEmail: string | undefined,
   approved: boolean,
 ): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
   if (decider.viaToken) return { ok: false, status: 403, error: "approve admin actions in the Outfitter web UI" };
-  if (!ownerEmail || ownerEmail.toLowerCase() !== decider.email.toLowerCase()) {
-    return { ok: false, status: 403, error: "only the session's owner can approve its admin actions" };
-  }
-  const held = run.pendingAdminApproval;
-  if (!held || held.id !== approvalId || held.decision) return { ok: false, status: 409, error: "that approval is no longer pending" };
-  await store.runs.update(run.id, {
-    pendingAdminApproval: { ...held, decision: approved ? "approved" : "denied", decidedBy: decider.email, decidedAt: new Date().toISOString() },
-    updatedAt: new Date().toISOString(),
-  });
-  return { ok: true };
+  const held = await store.adminApprovals.get(runId);
+  if (!held || held.id !== approvalId) return { ok: false, status: 409, error: "that approval is no longer pending" };
+  if (!mayAnswer(held, decider)) return { ok: false, status: 403, error: "only the session's owner can approve its admin actions" };
+  const decided = await store.adminApprovals.decide(runId, approvalId, approved ? "approved" : "denied", decider.email, new Date().toISOString());
+  return decided ? { ok: true } : { ok: false, status: 409, error: "that approval is no longer pending" };
 }

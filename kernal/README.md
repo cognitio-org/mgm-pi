@@ -735,7 +735,7 @@ The design is in `outfitter/docs/specs/sysop-tools.md`.
 | `outfitter_tapes` | list, get, meta (models, thinking levels, env limits), create, update, delete |
 | `outfitter_environments` | list, get, create, update |
 | `outfitter_sessions` | list, get |
-| `session_search` | search Outfitter's sessions (hybrid by default) and this laptop's own |
+| `session_search` | search Outfitter's sessions (keywords; `mode: hybrid` for meaning) and this laptop's own |
 | `session_transcript` | read a session compactly: outline, `around` a hit, pages |
 
 - The `outfitter-admin` skill (`kernal/skills`) walks through building a tape, debugging a Drive, and

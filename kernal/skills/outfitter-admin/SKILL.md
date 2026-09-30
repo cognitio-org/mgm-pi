@@ -17,8 +17,8 @@ say so and stop.
   thinking levels and env names a tape may not set. `update` returns only what changed.
 - `outfitter_environments` — list, get, create, update (repo, base branch, env presets).
 - `outfitter_sessions` — list, get: tape, owner, repo, status, run state, cost.
-- `session_search` — find sessions by meaning or words (cloud: hybrid by default; laptop: also local
-  sessions). Hits carry `[entryId]`s.
+- `session_search` — find sessions by words (cloud default), or by meaning with `mode: hybrid`
+  (it falls back to words when the embedding limit is hit); on a laptop, also local sessions. Hits carry `[entryId]`s.
 - `session_transcript` — read one session. Start with `view: outline`; then `around: <entryId>` from a
   hit, or `view: text` and `from:` to page. `toolOutput: full` only when you need a whole result.
 
@@ -39,8 +39,8 @@ are short on purpose; ask for more (limit, around, from) rather than guessing.
 
 ## Debug a Drive
 
-1. `session_search` for the symptom (an error string works well with `mode: text`; a description with
-   the default hybrid). Narrow with `tape`, `owner: "me"`, `since: "7d"`.
+1. `session_search` for the symptom: an exact error string with the default text mode, a description
+   with `mode: hybrid`. Narrow with `tape`, `owner: "me"`, `since: "7d"`.
 2. `session_transcript` on the best hit, `view: outline`: failed tool calls show as `✗`.
 3. `around: <entryId>` with `view: text` to read the few entries around the failure.
 4. Say what failed, the evidence (entry ids), and the fix. Change nothing without the user's go-ahead.

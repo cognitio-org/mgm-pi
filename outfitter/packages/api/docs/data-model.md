@@ -124,9 +124,10 @@ Named repo/base-branch/env presets for the "new session" dialog (E3.4). Same sha
 ### `adminAudit`
 
 Sysop tools (#286): one row per admin op an agent ran that was not a read (`admin/ops.ts`),
-successful or not. `{id (== _id), at, actor (email the op ran as), via ("token" | "drive"),
-sessionId?, runId?, op, target?, ok, error?, approvalId?}`. No indexes beyond `_id`: it is read
-newest first by a reverse natural-order scan.
+whatever the outcome. `{id (== _id), at, actor (email the op ran as), via ("token" | "drive"),
+sessionId?, runId?, op, target?, ok, error?, approved, approvalId?}`, including calls refused for
+rights or approval. `id` sorts by time (base-36 ms, then a per-process counter), so newest first is
+an `_id` sort and there are no other indexes.
 
 ### `users`
 

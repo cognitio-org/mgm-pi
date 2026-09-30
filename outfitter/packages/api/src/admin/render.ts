@@ -46,9 +46,9 @@ export function ago(iso: string | undefined, now = Date.now()): string {
 }
 
 /** One line, at most `max` characters, with an ellipsis when cut. */
-export function clip(text: string | undefined, max: number): string {
-  if (!text) return "";
-  const flat = text.replace(/\s+/g, " ").trim();
+export function clip(text: unknown, max: number): string {
+  if (text === undefined || text === null || text === "") return "";
+  const flat = String(text).replace(/\s+/g, " ").trim();
   return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
 }
 

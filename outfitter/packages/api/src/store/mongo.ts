@@ -1088,9 +1088,8 @@ class MongoAdminAudit implements AdminAuditCollection {
   }
 
   async listRecent(limit: number): Promise<AdminAuditEntry[]> {
-    // Insertion order, newest first: a reverse scan that stops at `limit`, and no ties within a
-    // millisecond the way sorting on `at` would have.
-    const rows = await this.col.find({}).sort({ $natural: -1 }).limit(limit).toArray();
+    // Ids sort by time, then by order within a process (admin/ops.ts auditId): newest first on _id.
+    const rows = await this.col.find({}).sort({ _id: -1 }).limit(limit).toArray();
     return rows.map((r) => stripIdStrict<AdminAuditEntry>(r));
   }
 }

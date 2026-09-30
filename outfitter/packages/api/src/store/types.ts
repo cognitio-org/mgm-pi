@@ -462,8 +462,8 @@ export interface Guru {
 
 export type AdminToolsLevel = "off" | "manage" | "operator";
 
-/** One admin op an agent ran (Sysop tools, #286): admin/ops.ts writes a row for every op that is
- * not a read and got past the rights and approval checks, whether it then succeeded or failed. */
+/** One admin op an agent called (Sysop tools, #286): admin/ops.ts writes a row for every op that is
+ * not a read, including calls refused for rights or approval. */
 export interface AdminAuditEntry {
   id: string;
   at: string;
@@ -479,6 +479,9 @@ export interface AdminAuditEntry {
   ok: boolean;
   /** The one-line error, when `ok` is false. */
   error?: string;
+  /** Whether the caller came with the person's approval (laptop TUI confirm, or a Drive's web
+   * approval card, then `approvalId`). */
+  approved: boolean;
   approvalId?: string;
 }
 

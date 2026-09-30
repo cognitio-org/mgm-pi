@@ -28,9 +28,10 @@
 // with verifyIdToken and require the token's email to match AGENT_SA_EMAIL.
 //
 // OUTFITTER_DEV=1 replaces the IAP/agentd checks with fixed dev values so the stack runs with no
-// GCP project; personal API tokens are verified the same way in dev and prod (identityFromRequest
-// only takes the devMode shortcut when no `outf_` bearer is present, and identityFromLinkRequest
-// never takes it at all -- OUTFITTER_TOKEN is meant to behave identically everywhere).
+// GCP project. On the web/all role dev mode wins over any bearer, a Dongle included (tokens.test.ts
+// pins this), so there every caller is the dev person -- a human writer for gurus-service.ts.
+// identityFromLinkRequest never takes the shortcut: on the link role a token is verified the same
+// way in dev and prod.
 
 import { OAuth2Client } from "google-auth-library";
 import type { FastifyReply, FastifyRequest } from "fastify";

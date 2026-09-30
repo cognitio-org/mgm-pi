@@ -87,7 +87,7 @@ describe("POST /api/admin/ops on the link role", () => {
     const bad = await op(app, "tapes.create", { name: "x", model: "claude" });
     assert.deepEqual(bad, { ok: false, error: "model must look like provider/id, got: claude" });
     const env = await op(app, "tapes.create", { name: "x", model: "a/b", env: { PATH: "/tmp" } });
-    assert.equal(env.error, "guru.env may not set: PATH");
+    assert.equal(env.error, "tape env may not set: PATH");
     await app.fastify.close();
   });
 
@@ -128,6 +128,96 @@ describe("POST /api/admin/ops on the link role", () => {
     const res = await op(app, "tapes.nuke");
     assert.equal(res.ok, false);
     assert.match(res.error!, /^unknown op; ops: tapes\.list, /);
+    await app.fastify.close();
+  });
+});
+
+describe("review fixes", () => {
+  test("wrong field types are refused, so one bad tape can't break tapes.list", async () => {
+    const app = await linkApp();
+    assert.equal((await op(app, "tapes.create", { name: 123, model: "a/b" })).error, "name must be a string");
+    assert.equal((await op(app, "tapes.create", { name: "x", model: ["a/b"] })).error, "model must be a string");
+    assert.equal((await op(app, "tapes.create", { name: "x", model: "a/b", tools: "read" })).error, "tools must be a list of strings");
+    assert.equal((await op(app, "tapes.create", { name: "x", model: "a/b", env: { A: 1 } })).error, "env must map names to string values");
+    assert.equal((await op(app, "tapes.list")).text, "no tapes");
+    await app.fastify.close();
+  });
+
+  test("env values never reach the agent: get shows names, update shows +/-/~", async () => {
+    const app = await linkApp();
+    await seedGuru(app.store, { id: "t", env: { API_KEY: "sekret", KEEP: "1", OLD: "x" } });
+    const got = await op(app, "tapes.get", { id: "t" });
+    assert.match(got.text!, /^env: API_KEY, KEEP, OLD \(values hidden\)$/m);
+    const updated = await op(app, "tapes.update", { id: "t", env: { API_KEY: "rotated", KEEP: "1", NEW: "y" } });
+    assert.equal(updated.text, "updated t\nenv: ~API_KEY, +NEW, -OLD");
+    assert.doesNotMatch(JSON.stringify([got, updated]), /sekret|rotated/);
+    await app.fastify.close();
+  });
+
+  test("refused calls are audited, with approved false", async () => {
+    const app = await linkApp();
+    await seedGuru(app.store, { id: "old" });
+    await op(app, "tapes.delete", { id: "old" });
+    await op(app, "tapes.delete", { id: "old" }, true);
+    const rows = await app.store.adminAudit.listRecent(5);
+    assert.deepEqual(rows.map((r) => [r.op, r.ok, r.approved, r.error]), [
+      ["tapes.delete", true, true, undefined],
+      ["tapes.delete", false, false, "needs approval"],
+    ]);
+    await app.fastify.close();
+  });
+
+  test("agents can't take reserved ids; errors say tape, not guru", async () => {
+    const app = await linkApp();
+    assert.equal((await op(app, "tapes.create", { id: "sysop", name: "s", model: "a/b" })).error, "tape id sysop is reserved");
+    assert.equal((await op(app, "tapes.create", { id: "default", name: "d", model: "a/b" })).error, "tape id default is reserved");
+    assert.equal((await op(app, "tapes.create", { name: "x", model: "a/b", env: { PATH: "/x" } })).error, "tape env may not set: PATH");
+    await app.fastify.close();
+  });
+
+  test("an operator tape: only a sysop may change it; a Dongle never can, even confirmed", async () => {
+    const store = new MemoryStore();
+    await seedGuru(store, { id: "ops", adminTools: "operator" });
+    const person = await updateGuru(store, "ops", { systemPrompt: "x" }, { kind: "human", operator: false });
+    assert.deepEqual(person, { ok: false, status: 403, error: "only a sysop can change tape ops" });
+    const sysop = await updateGuru(store, "ops", { systemPrompt: "x", adminTools: "operator" }, { kind: "human", operator: true });
+    assert.equal(sysop.ok, true);
+    const unchanged = await updateGuru(store, "ops", { adminTools: "operator" }, { kind: "human", operator: true });
+    assert.equal(unchanged.ok, true);
+    const app = await linkApp(store);
+    assert.equal((await op(app, "tapes.update", { id: "ops", name: "y" }, true)).error, "only a sysop can change tape ops");
+    await app.fastify.close();
+  });
+
+  test("REST: unknown and dotted keys are dropped, and a PUT body id is ignored", async () => {
+    const app = await buildTestApp();
+    await seedGuru(app.store, { id: "t" });
+    const res = await app.fastify.inject({ method: "PUT", url: "/api/gurus/t", payload: { "env.LD_PRELOAD": "/x.so", id: "other", createdAt: "1970" } });
+    assert.equal(res.statusCode, 200);
+    const stored = (await app.store.gurus.findById("t"))!;
+    assert.equal(stored.id, "t");
+    assert.equal((stored as unknown as Record<string, unknown>)["env.LD_PRELOAD"], undefined);
+    assert.notEqual(stored.createdAt, "1970");
+    await app.fastify.close();
+  });
+
+  test("REST: a Dongle's DELETE needs approval (use the tool)", async () => {
+    const store = new MemoryStore();
+    await store.tokens.insert({ id: "tok-1", ownerEmail: "ada@example.com", name: "l", prefix: TOKEN.slice(0, 8), hash: hashToken(TOKEN), createdAt: new Date().toISOString() });
+    await seedGuru(store, { id: "t" });
+    const app = await buildTestApp({ OUTFITTER_DEV: "0" }, { store });
+    const res = await app.fastify.inject({ method: "DELETE", url: "/api/gurus/t", headers: { authorization: `Bearer ${TOKEN}` } });
+    assert.equal(res.statusCode, 403);
+    assert.ok(await store.gurus.findById("t"));
+    await app.fastify.close();
+  });
+
+  test("environments: types and repo shape are checked; env values hidden", async () => {
+    const app = await linkApp();
+    assert.equal((await op(app, "environments.create", { name: "e", repo: "not a repo" })).error, "repo must look like owner/name");
+    const created = await op(app, "environments.create", { name: "e", repo: "o/r", env: { TOKEN_X: "v" } });
+    const id = created.text!.split(" ")[1];
+    assert.match((await op(app, "environments.get", { id })).text!, /^env: TOKEN_X \(values hidden\)$/m);
     await app.fastify.close();
   });
 });

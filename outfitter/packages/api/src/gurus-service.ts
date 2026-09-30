@@ -86,13 +86,14 @@ export function hasAdminTools(guru: Pick<Guru, "adminTools">): boolean {
 /**
  * Who is writing. Only a person in the web UI (IAP, or dev mode) may set `adminTools`, and only an
  * operator may set it to `operator`. An agent -- a Drive's broker call or anything holding a
- * Dongle -- can never raise a tape's rights, so it cannot build itself a stronger tape. Changing or
- * deleting a tape that already has admin tools needs `approved` from an agent: the Drive's web
- * approval card, or the laptop's TUI confirm.
+ * Dongle -- can never raise a tape's rights, so it cannot build itself a stronger tape. From an
+ * agent, any delete and any change to a tape that already has admin tools needs `approved`: the
+ * Drive's web approval card, or the laptop's TUI confirm. A tape with operator admin tools can only
+ * be changed by a sysop: a person who is one, or an agent call that carries sysop rights.
  */
 export type GuruWriter =
   | { kind: "human"; operator: boolean }
-  | { kind: "agent"; approved?: boolean };
+  | { kind: "agent"; approved?: boolean; operator?: boolean };
 
 export type GuruWriteResult =
   | { ok: true; guru: Guru }
@@ -105,10 +106,68 @@ function denylistedGuruEnvKeys(env: Record<string, string> | undefined): string[
   );
 }
 
+/** The fields a create or update may carry. Anything else in a body (createdAt, a dotted Mongo
+ * path such as `env.LD_PRELOAD`) is dropped before it can reach `$set`. */
+const WRITABLE_FIELDS = [
+  "name",
+  "systemPrompt",
+  "appendSystemPrompt",
+  "model",
+  "fallbackModel",
+  "thinking",
+  "tools",
+  "excludeTools",
+  "packages",
+  "env",
+  "mergeFromCloud",
+  "branchPrefix",
+  "playwrightBeforeCheckpoint",
+  "allowExternalHtmlResources",
+  "browserIde",
+  "adminTools",
+] as const;
+
+const STRING_FIELDS = ["name", "systemPrompt", "appendSystemPrompt", "model", "fallbackModel", "thinking", "branchPrefix"] as const;
+const LIST_FIELDS = ["tools", "excludeTools", "packages"] as const;
+const BOOLEAN_FIELDS = ["mergeFromCloud", "playwrightBeforeCheckpoint", "allowExternalHtmlResources", "browserIde"] as const;
+
+/** Tape ids an agent may not take: `default` is the fleet's undeletable fallback, and `sysop` is
+ * the built-in admin tape a person turns admin tools on for. */
+const RESERVED_AGENT_IDS = new Set([UNDELETABLE_GURU_ID, "sysop"]);
+
+function writable(body: unknown): Partial<GuruInput> {
+  const out: Record<string, unknown> = {};
+  if (!body || typeof body !== "object") return out;
+  for (const key of WRITABLE_FIELDS) {
+    if (Object.hasOwn(body, key) && (body as Record<string, unknown>)[key] !== undefined) {
+      out[key] = (body as Record<string, unknown>)[key];
+    }
+  }
+  return out as Partial<GuruInput>;
+}
+
 /** Shared create/update validation beyond "name and model are required" (that check stays with
  * create since update bodies are partial). Returns an error message, or undefined if the input is
  * fine. Checks fields only when present. Normalises `branchPrefix` in place. */
 export function guruValidationError(body: Partial<GuruInput>): string | undefined {
+  for (const key of STRING_FIELDS) {
+    if (body[key] !== undefined && typeof body[key] !== "string") return `${key} must be a string`;
+  }
+  for (const key of LIST_FIELDS) {
+    const v = body[key];
+    if (v !== undefined && (!Array.isArray(v) || v.some((x) => typeof x !== "string"))) return `${key} must be a list of strings`;
+  }
+  for (const key of BOOLEAN_FIELDS) {
+    // Absent stays absent (existing gurus are off). Only a real boolean is stored; anything else
+    // would be easy to mistake for "on" later.
+    if (body[key] !== undefined && typeof body[key] !== "boolean") return `${key} must be a boolean`;
+  }
+  if (body.env !== undefined) {
+    const env = body.env as unknown;
+    if (!env || typeof env !== "object" || Array.isArray(env) || Object.values(env).some((v) => typeof v !== "string")) {
+      return "env must map names to string values";
+    }
+  }
   const denied = denylistedGuruEnvKeys(body.env);
   if (denied.length > 0) return `guru.env may not set: ${denied.join(", ")}`;
   if (body.model !== undefined && !isValidModelRef(body.model)) {
@@ -119,20 +178,6 @@ export function guruValidationError(body: Partial<GuruInput>): string | undefine
   }
   if (body.thinking !== undefined && body.thinking !== "" && !isValidThinkingLevel(body.thinking)) {
     return `thinking must be one of: ${THINKING_LEVELS.join(", ")}`;
-  }
-  if (body.mergeFromCloud !== undefined && typeof body.mergeFromCloud !== "boolean") {
-    return "mergeFromCloud must be a boolean";
-  }
-  // Absent stays absent (existing gurus are off). Only a real boolean is stored; anything else
-  // would be easy to mistake for "on" later.
-  if (body.playwrightBeforeCheckpoint !== undefined && typeof body.playwrightBeforeCheckpoint !== "boolean") {
-    return "playwrightBeforeCheckpoint must be a boolean";
-  }
-  if (body.allowExternalHtmlResources !== undefined && typeof body.allowExternalHtmlResources !== "boolean") {
-    return "allowExternalHtmlResources must be a boolean";
-  }
-  if (body.browserIde !== undefined && typeof body.browserIde !== "boolean") {
-    return "browserIde must be a boolean";
   }
   if (body.adminTools !== undefined && !(ADMIN_TOOLS_LEVELS as readonly unknown[]).includes(body.adminTools)) {
     return `adminTools must be one of: ${ADMIN_TOOLS_LEVELS.join(", ")}`;
@@ -146,9 +191,14 @@ export function guruValidationError(body: Partial<GuruInput>): string | undefine
   return undefined;
 }
 
-/** The `adminTools` rules for this writer, or undefined when the write may go ahead. */
-function adminToolsError(body: Partial<GuruInput>, writer: GuruWriter): GuruWriteResult | undefined {
+/**
+ * The `adminTools` rules for this writer, or undefined when the write may go ahead. A body that
+ * repeats the tape's current value changes nothing and passes, so a form that always sends the
+ * field keeps working for someone who may not change it.
+ */
+function adminToolsError(body: Partial<GuruInput>, writer: GuruWriter, existing?: Guru): GuruWriteResult | undefined {
   if (body.adminTools === undefined) return undefined;
+  if ((existing?.adminTools ?? "off") === body.adminTools) return undefined;
   if (writer.kind === "agent") {
     return { ok: false, status: 403, error: "adminTools can only be set in the web UI" };
   }
@@ -158,13 +208,29 @@ function adminToolsError(body: Partial<GuruInput>, writer: GuruWriter): GuruWrit
   return undefined;
 }
 
-function needsApproval(existing: Guru, writer: GuruWriter): GuruWriteResult | undefined {
-  if (writer.kind !== "agent" || writer.approved || !hasAdminTools(existing)) return undefined;
-  return { ok: false, status: 403, error: `tape ${existing.id} has admin tools; changing it needs approval` };
+/**
+ * Who may change a tape as it stands. An agent needs approval for any delete and for any change to
+ * a tape that has admin tools. A tape with operator admin tools runs with sysop rights, so only a
+ * sysop may change or delete it at all -- otherwise anyone could rewrite the prompt a sysop's next
+ * session runs.
+ */
+function guardError(existing: Guru, writer: GuruWriter, action: "update" | "delete"): GuruWriteResult | undefined {
+  const sysopOnly = existing.adminTools === "operator";
+  if (writer.kind === "human") {
+    return sysopOnly && !writer.operator ? { ok: false, status: 403, error: `only a sysop can change tape ${existing.id}` } : undefined;
+  }
+  if (sysopOnly && !writer.operator) return { ok: false, status: 403, error: `only a sysop can change tape ${existing.id}` };
+  if (writer.approved) return undefined;
+  if (action === "delete" || hasAdminTools(existing)) {
+    return { ok: false, status: 403, error: `${action === "delete" ? "deleting" : "changing"} tape ${existing.id} needs approval` };
+  }
+  return undefined;
 }
 
-export async function createGuru(store: Store, body: GuruInput, writer: GuruWriter): Promise<GuruWriteResult> {
-  if (!body?.name || !body?.model) return { ok: false, status: 400, error: "name and model are required" };
+export async function createGuru(store: Store, raw: GuruInput, writer: GuruWriter): Promise<GuruWriteResult> {
+  const body = writable(raw) as GuruInput;
+  if (raw?.id !== undefined) body.id = raw.id;
+  if (!body.name || !body.model) return { ok: false, status: 400, error: "name and model are required" };
   const invalid = guruValidationError(body);
   if (invalid) return { ok: false, status: 400, error: invalid };
   const denied = adminToolsError(body, writer);
@@ -173,6 +239,10 @@ export async function createGuru(store: Store, body: GuruInput, writer: GuruWrit
   if (writer.kind === "agent" && body.id !== undefined && (typeof body.id !== "string" || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(body.id))) {
     return { ok: false, status: 400, error: "id must be lowercase letters, digits and dashes" };
   }
+  if (writer.kind === "agent" && typeof body.id === "string" && RESERVED_AGENT_IDS.has(body.id)) {
+    return { ok: false, status: 403, error: `tape id ${body.id} is reserved` };
+  }
+  if (body.id !== undefined && typeof body.id !== "string") return { ok: false, status: 400, error: "id must be a string" };
   if (body.id && (await store.gurus.findById(body.id))) {
     return { ok: false, status: 409, error: `tape ${body.id} already exists` };
   }
@@ -188,15 +258,14 @@ export async function updateGuru(
   body: Partial<GuruInput>,
   writer: GuruWriter,
 ): Promise<GuruWriteResult> {
-  const patch: Partial<GuruInput> = { ...body };
-  delete patch.id;
+  const patch = writable(body);
   const invalid = guruValidationError(patch);
   if (invalid) return { ok: false, status: 400, error: invalid };
-  const denied = adminToolsError(patch, writer);
-  if (denied) return denied;
   const existing = await store.gurus.findById(id);
   if (!existing) return { ok: false, status: 404, error: "guru not found" };
-  const approval = needsApproval(existing, writer);
+  const denied = adminToolsError(patch, writer, existing);
+  if (denied) return denied;
+  const approval = guardError(existing, writer, "update");
   if (approval) return approval;
   const updated = await store.gurus.update(id, { ...patch, updatedAt: new Date().toISOString() });
   if (!updated) return { ok: false, status: 404, error: "guru not found" };
@@ -211,7 +280,7 @@ export async function deleteGuru(store: Store, id: string, writer: GuruWriter): 
   const guru = await store.gurus.findById(id);
   if (!guru) return { ok: false, status: 404, error: "guru not found" };
   if (id === UNDELETABLE_GURU_ID) return { ok: false, status: 400, error: "the default guru cannot be deleted" };
-  const approval = needsApproval(guru, writer);
+  const approval = guardError(guru, writer, "delete");
   if (approval) return approval;
   const referencing = await store.sessions.list({ guruId: id });
   if (referencing.length > 0) {

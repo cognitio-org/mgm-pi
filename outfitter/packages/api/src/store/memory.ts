@@ -873,7 +873,7 @@ class MemoryAdminAudit implements AdminAuditCollection {
   }
 
   async listRecent(limit: number): Promise<AdminAuditEntry[]> {
-    return this.rows.slice(-limit).reverse().map(clone);
+    return [...this.rows].sort((a, b) => b.id.localeCompare(a.id)).slice(0, limit).map(clone);
   }
 }
 

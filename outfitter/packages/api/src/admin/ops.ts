@@ -110,7 +110,7 @@ function tapeDetail(g: Guru): string {
     ["adminTools", hasAdminTools(g) ? g.adminTools : undefined],
     ["tools", g.tools],
     ["excludeTools", g.excludeTools],
-    ["env", g.env && Object.keys(g.env).length ? g.env : undefined],
+    ["env", envKeys(g.env)],
     ["mergeFromCloud", g.mergeFromCloud],
     ["branchPrefix", g.branchPrefix],
     ["playwrightBeforeCheckpoint", g.playwrightBeforeCheckpoint],
@@ -142,6 +142,37 @@ function sessionLine(s: Session, now: number): string {
   );
 }
 
+/** Env names only: values often hold keys, and a transcript is no place for them (the web UI shows
+ * them to people). */
+function envKeys(env: Record<string, string> | undefined): string | undefined {
+  const keys = env ? Object.keys(env) : [];
+  return keys.length ? `${keys.join(", ")} (values hidden)` : undefined;
+}
+
+/** An env change as names: `+NEW, -OLD, ~CHANGED`. Never the values. */
+function envDiff(before: Record<string, string> | undefined, after: Record<string, string> | undefined): string | undefined {
+  const a = before ?? {};
+  const b = after ?? {};
+  const out: string[] = [];
+  for (const k of Object.keys(b)) out.push(!(k in a) ? `+${k}` : a[k] !== b[k] ? `~${k}` : "");
+  for (const k of Object.keys(a)) if (!(k in b)) out.push(`-${k}`);
+  const changes = out.filter(Boolean);
+  return changes.length ? `env: ${changes.join(", ")}` : undefined;
+}
+
+/** A diff of the given fields, with env shown as names only. */
+function diffWithEnv(before: { env?: Record<string, string> }, after: { env?: Record<string, string> }, keys: readonly string[]): string {
+  const env = envDiff(before.env, after.env);
+  const rest = diffFields(before as Record<string, unknown>, after as Record<string, unknown>, keys.filter((k) => k !== "env"));
+  if (!env) return rest;
+  return rest === "no changes" ? env : `${rest}\n${env}`;
+}
+
+/** The service speaks of gurus (its REST routes' word); agents see tapes. */
+function asTape(error: string): string {
+  return error.replace(/\bguru\.env\b/g, "tape env").replace(/\bguru\b/g, "tape");
+}
+
 async function resolveTape(ctx: AdminContext, ref: unknown) {
   return resolveRef(await ctx.store.gurus.list(), ref, "tape");
 }
@@ -160,6 +191,18 @@ async function modelNote(ctx: AdminContext, models: Array<string | undefined>): 
   if (known.size === 0) return "";
   const unknown = wanted.filter((m) => !known.has(m));
   return unknown.length ? `\nnote: not in the router's model list: ${unknown.join(", ")}` : "";
+}
+
+function environmentError(body: Partial<Environment>): string | undefined {
+  for (const key of ["name", "repo", "baseBranch"] as const) {
+    if (body[key] !== undefined && typeof body[key] !== "string") return `${key} must be a string`;
+  }
+  if (body.repo !== undefined && body.repo !== "" && !/^[\w.-]+\/[\w.-]+$/.test(body.repo)) return "repo must look like owner/name";
+  const env = body.env as unknown;
+  if (env !== undefined && (!env || typeof env !== "object" || Array.isArray(env) || Object.values(env).some((v) => typeof v !== "string"))) {
+    return "env must map names to string values";
+  }
+  return undefined;
 }
 
 function limitOf(args: Args, fallback: number, max: number): number {
@@ -232,7 +275,7 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
       const body = { ...pick(args, TAPE_FIELDS), ...(args.id !== undefined ? { id: args.id } : {}) } as GuruInput;
       if (args.adminTools !== undefined) (body as Partial<Guru>).adminTools = args.adminTools as Guru["adminTools"];
       const result = await createGuru(ctx.store, body, { kind: "agent" });
-      if (!result.ok) return { ok: false, error: result.error };
+      if (!result.ok) return { ok: false, error: asTape(result.error), target: typeof body.id === "string" ? body.id : undefined };
       const note = await modelNote(ctx, [result.guru.model, result.guru.fallbackModel]);
       return { ok: true, text: `created ${shortId(result.guru.id)}${note}`, target: result.guru.id };
     },
@@ -247,9 +290,9 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
       const patch = pick(args, TAPE_FIELDS) as Partial<GuruInput>;
       if (args.adminTools !== undefined) (patch as Partial<Guru>).adminTools = args.adminTools as Guru["adminTools"];
       if (Object.keys(patch).length === 0) return { ok: false, error: "nothing to update" };
-      const result = await updateGuru(ctx.store, tape.item.id, patch, { kind: "agent", approved: caller.approved });
-      if (!result.ok) return { ok: false, error: result.error };
-      const diff = diffFields(tape.item as unknown as Record<string, unknown>, result.guru as unknown as Record<string, unknown>, [...TAPE_FIELDS]);
+      const result = await updateGuru(ctx.store, tape.item.id, patch, { kind: "agent", approved: caller.approved, operator: caller.operator });
+      if (!result.ok) return { ok: false, error: asTape(result.error), target: tape.item.id };
+      const diff = diffWithEnv(tape.item, result.guru, TAPE_FIELDS);
       const note = await modelNote(ctx, [patch.model, patch.fallbackModel]);
       return { ok: true, text: capText(`updated ${shortId(tape.item.id)}\n${diff}${note}`), target: tape.item.id };
     },
@@ -260,8 +303,8 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
     async run(ctx, caller, args) {
       const tape = await resolveTape(ctx, args.id);
       if (!tape.ok) return tape;
-      const result = await deleteGuru(ctx.store, tape.item.id, { kind: "agent", approved: caller.approved });
-      if (!result.ok) return { ok: false, error: result.error, target: tape.item.id };
+      const result = await deleteGuru(ctx.store, tape.item.id, { kind: "agent", approved: caller.approved, operator: caller.operator });
+      if (!result.ok) return { ok: false, error: asTape(result.error), target: tape.item.id };
       return { ok: true, text: `deleted ${shortId(tape.item.id)}`, target: tape.item.id };
     },
   },
@@ -286,13 +329,13 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
       const e = env.item;
       return {
         ok: true,
-        text: fields([
+        text: capText(fields([
           ["id", e.id],
           ["name", e.name],
           ["repo", e.repo],
           ["baseBranch", e.baseBranch],
-          ["env", e.env && Object.keys(e.env).length ? e.env : undefined],
-        ]),
+          ["env", envKeys(e.env)],
+        ])),
         target: e.id,
       };
     },
@@ -303,6 +346,8 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
     async run(ctx, _caller, args) {
       const body = pick(args, ENVIRONMENT_FIELDS) as Partial<Environment>;
       if (typeof body.name !== "string" || !body.name) return { ok: false, error: "name is required" };
+      const invalid = environmentError(body);
+      if (invalid) return { ok: false, error: invalid };
       const now = new Date(nowOf(ctx)).toISOString();
       const environment: Environment = { ...(body as Environment), id: randomUUID(), createdAt: now, updatedAt: now };
       await ctx.store.environments.insert(environment);
@@ -317,10 +362,12 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
       if (!env.ok) return env;
       const patch = pick(args, ENVIRONMENT_FIELDS);
       if (Object.keys(patch).length === 0) return { ok: false, error: "nothing to update" };
+      const invalid = environmentError(patch as Partial<Environment>);
+      if (invalid) return { ok: false, error: invalid, target: env.item.id };
       const updated = await ctx.store.environments.update(env.item.id, { ...patch, updatedAt: new Date(nowOf(ctx)).toISOString() });
       if (!updated) return { ok: false, error: "environment not found" };
-      const diff = diffFields(env.item as unknown as Record<string, unknown>, updated as unknown as Record<string, unknown>, [...ENVIRONMENT_FIELDS]);
-      return { ok: true, text: `updated ${shortId(env.item.id)}\n${diff}`, target: env.item.id };
+      const diff = diffWithEnv(env.item, updated, ENVIRONMENT_FIELDS);
+      return { ok: true, text: capText(`updated ${shortId(env.item.id)}\n${diff}`), target: env.item.id };
     },
   },
 
@@ -352,15 +399,16 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
       const ref = typeof args.id === "string" ? args.id.trim() : "";
       if (ref.length < 8) return { ok: false, error: "session id needs at least 8 characters" };
       const direct = await ctx.store.sessions.findById(ref);
-      const found = direct ? { ok: true as const, item: direct } : resolveRef(await ctx.store.sessions.list({ archived: "all" }), ref, "session");
-      if (!found.ok) return found;
+      let found = direct ? { ok: true as const, item: direct } : resolveRef(await ctx.store.sessions.list({ archived: "all" }), ref, "session");
+      // Other people's session ids don't help a retry; say only what went wrong.
+      if (!found.ok) return { ok: false, error: found.error.split(";")[0] };
       const s = found.item;
       const run = (await ctx.store.runs.findActiveForSession(s.id)) ?? (await ctx.store.runs.findLatestForSession(s.id));
       return {
         ok: true,
         text: fields([
           ["id", s.id],
-          ["name", s.name],
+          ["name", clip(s.name, 80)],
           ["tape", s.guruId],
           ["owner", s.ownerEmail],
           ["repo", s.repo ?? undefined],
@@ -394,21 +442,22 @@ export async function runAdminOp(ctx: AdminContext, caller: AdminCaller, op: unk
   }
   const def = ADMIN_OPS[op];
   const a: Args = args && typeof args === "object" && !Array.isArray(args) ? (args as Args) : {};
-  if (def.kind === "operator" && !caller.operator) return { ok: false, error: "sysop rights required" };
 
   let result: AdminResult & { target?: string };
   try {
-    const needsApproval = def.kind === "delete" || def.kind === "operator" || (def.guarded ? await def.guarded(ctx, a) : false);
-    if (needsApproval && !caller.approved) return { ok: false, error: "needs approval", needsApproval: true };
-    result = await def.run(ctx, caller, a);
+    if (def.kind === "operator" && !caller.operator) result = { ok: false, error: "sysop rights required" };
+    else {
+      const needsApproval = def.kind === "delete" || def.kind === "operator" || (def.guarded ? await def.guarded(ctx, a) : false);
+      result = needsApproval && !caller.approved ? { ok: false, error: "needs approval", needsApproval: true } : await def.run(ctx, caller, a);
+    }
   } catch (err) {
     ctx.log?.(`admin op ${op} failed: ${err instanceof Error ? err.message : String(err)}`);
     result = { ok: false, error: "internal error" };
   }
   if (def.kind !== "read") {
-    await ctx.store.adminAudit
-      .insert({
-        id: randomUUID(),
+    try {
+      await ctx.store.adminAudit.insert({
+        id: auditId(nowOf(ctx)),
         at: new Date(nowOf(ctx)).toISOString(),
         actor: caller.email,
         via: caller.via,
@@ -418,12 +467,22 @@ export async function runAdminOp(ctx: AdminContext, caller: AdminCaller, op: unk
         target: result.target ?? (typeof a.id === "string" ? a.id : undefined),
         ok: result.ok,
         error: result.ok ? undefined : result.error,
+        approved: caller.approved === true,
         approvalId: caller.approvalId,
-      })
-      .catch(() => {
-        // The audit row is best effort; the op already ran.
       });
+    } catch (err) {
+      // The audit row is best effort; the op already ran.
+      ctx.log?.(`admin audit insert failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
-  const { target: _target, ...out } = result as AdminResult & { target?: string };
+  const { target: _target, ...out } = result;
   return out;
+}
+
+let auditSeq = 0;
+
+/** Sorts by time, then by order within this process, so newest-first is an `_id` sort. */
+function auditId(now: number): string {
+  auditSeq = (auditSeq + 1) % 1_679_616;
+  return `${now.toString(36).padStart(9, "0")}-${auditSeq.toString(36).padStart(4, "0")}-${randomUUID().slice(0, 8)}`;
 }

@@ -31,6 +31,14 @@ Decisions (confirmed with the owner):
   can't rewrite the Sysop tape's prompt unseen.
 - **Laptop approval** is `confirmed: true` after Kernal's TUI confirm; the Dongle's holder is the
   person at the keyboard. A Drive never gets this shortcut: its approval is the web card (#287).
+- **Only a sysop may change or delete a tape with `adminTools: operator`**, a person in the web UI
+  included; a Dongle never can. An agent's delete always needs approval, on the op path and on the
+  REST route alike.
+- **Env values never reach an agent:** `get` prints env names with "(values hidden)", and an update
+  prints `env: +NEW, -OLD, ~CHANGED`.
+- **Stricter tape types** (strings, string lists, a string map for env), and create/update keep only
+  known fields, so a dotted key such as `env.LD_PRELOAD` can't reach Mongo's `$set`.
+- **Reserved ids:** agents can't create `default` or `sysop`.
 - **Agent-created tape ids** are slugs (`[a-z0-9-]`), so later calls stay short; UUID ids print
   as 8-character prefixes and any unique prefix of 4+ characters resolves.
 
@@ -171,7 +179,7 @@ to write a Tape's prompt.
   2. The web session view shows an approval card. The owner approves or denies it with `POST /api/sessions/:id/admin-approvals/:approvalId`, a web-role route under IAP.
   3. The API runs the op on approve. On deny or after a 10-minute timeout it returns an error to the tool.
   4. Approval happens outside the sandbox's trust boundary, so pi-side `ui.confirm` is not relied on in Drives.
-- **Audit:** a new `admin_audit` Mongo collection records `{at, sessionId, runId, owner, op, target, result, approvalId?}`. Add it to both the memory and Mongo stores.
+- **Audit:** a new `adminAudit` Mongo collection records `{id, at, actor, via, sessionId?, runId?, op, target?, ok, error?, approved, approvalId?}` for every non-read call, refused ones included. It exists in both the memory and Mongo stores.
 - **Link role:** register the Tape and environment routes, plus `GET /api/models`, when `role === "link"`. Operator and token routes stay off link. Update the comment at `routes/index.ts:22-27`.
 - **Run spec:** add `adminTools` to `RunSpecGuru` (`agentd/src/protocol.ts:290-306`, set in `agentlink.ts:1224-1235`). This tells agentd whether to open the socket; it is not a security boundary.
 
@@ -231,4 +239,4 @@ to write a Tape's prompt.
 - **End to end:**
   - **Live suite (`web/live`):** start a Drive on the `sysop` Tape and ask it to create a Tape. Assert the Tape appears in `GET /api/gurus`, and that a session started on it runs.
   - **Locally:** `OUTFITTER_API=… OUTFITTER_TOKEN=… kernal -p "create a tape named X using model Y" </dev/null`, then confirm the Tape shows in the web UI.
-  - **Audit:** check that `admin_audit` rows exist for each case.
+  - **Audit:** check that `adminAudit` rows exist for each case, refusals included.

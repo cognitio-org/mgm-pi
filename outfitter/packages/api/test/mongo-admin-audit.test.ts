@@ -50,6 +50,23 @@ describe("MongoAdminAudit", () => {
     assert.equal((rows[0] as { _id?: unknown })._id, undefined);
   });
 
+  test("adminApprovals: claim, decide and clear are conditional", async () => {
+    const t = (ms: number) => new Date(Date.now() + ms).toISOString();
+    const base = { runId: "run-a", sessionId: "s", ownerEmail: "ada@example.com", op: "tapes.delete", title: "t", message: "m", requestedAt: t(0) };
+    assert.equal(await store.adminApprovals.claim({ ...base, id: "a1", expiresAt: t(60_000) }, t(0)), true);
+    assert.equal(await store.adminApprovals.claim({ ...base, id: "a2", expiresAt: t(60_000) }, t(0)), false, "busy while a1 is pending");
+    assert.equal(await store.adminApprovals.decide("run-a", "a2", "approved", "ada@example.com", t(0)), false, "wrong id");
+    assert.equal(await store.adminApprovals.decide("run-a", "a1", "approved", "ada@example.com", t(120_000)), false, "after expiry");
+    assert.equal(await store.adminApprovals.decide("run-a", "a1", "denied", "ada@example.com", t(0)), true);
+    assert.equal(await store.adminApprovals.decide("run-a", "a1", "approved", "ada@example.com", t(0)), false, "already decided");
+    assert.equal((await store.adminApprovals.get("run-a"))!.decision, "denied");
+    assert.equal(await store.adminApprovals.claim({ ...base, id: "a3", expiresAt: t(60_000) }, t(0)), true, "a decided one can be replaced");
+    await store.adminApprovals.clear("run-a", "a1");
+    assert.equal((await store.adminApprovals.get("run-a"))!.id, "a3", "clear only removes its own");
+    await store.adminApprovals.clear("run-a", "a3");
+    assert.equal(await store.adminApprovals.get("run-a"), null);
+  });
+
   test("adminTools round-trips on a tape", async () => {
     const now = new Date().toISOString();
     await store.gurus.insert({ id: "sysop", name: "Sysop", model: "a/b", adminTools: "manage", createdAt: now, updatedAt: now });

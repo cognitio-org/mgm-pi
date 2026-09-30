@@ -45,6 +45,15 @@ function githubSocketPath(): string | undefined {
   return undefined;
 }
 
+/** Sysop tools (#287): `$OUTFITTER_ADMIN_SOCKET`, or `/run/outfitter/admin.sock` in the image.
+ * run.ts opens it only for a tape with admin tools. */
+function adminSocketPath(): string | undefined {
+  const configured = process.env.OUTFITTER_ADMIN_SOCKET;
+  if (configured) return configured;
+  if (existsSync("/run/outfitter")) return "/run/outfitter/admin.sock";
+  return undefined;
+}
+
 /** `https://api.example.com` -> `wss://api.example.com/agent/ws?run=<runId>` (and http -> ws for
  * local dev). */
 /** A positive integer number of milliseconds from the environment, or undefined (use the default). */
@@ -260,6 +269,7 @@ async function main(): Promise<void> {
     },
     startupPhases: true,
     githubSocketPath: githubSocketPath(),
+    adminSocketPath: adminSocketPath(),
     // Drive previews (#217): the listener itself only starts when run.spec carries preview config.
     previewIdleCapMs: positiveMs(process.env.PREVIEW_IDLE_CAP_MS),
     ngrokBin: process.env.OUTFITTER_NGROK_BIN || undefined,

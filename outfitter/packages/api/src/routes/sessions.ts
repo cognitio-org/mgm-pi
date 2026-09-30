@@ -1,5 +1,6 @@
 // Session and run-control REST routes plus the SSE stream. See docs/protocol.md "browser <-> api".
 
+import { APPROVAL_UI_PREFIX, approvalUiRequest, decideApproval, mayAnswer } from "../admin/approvals.ts";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { RouteContext } from "./context.ts";
@@ -199,8 +200,13 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
     // what the list's summarize() uses) but only while that run is active — sse.ts publishes
     // pendingUiRequest from findActiveForSession and drops it once the run is terminal. null, not
     // omitted, when there is nothing to answer.
-    const pendingUiRequest =
-      run && run.state !== "stopped" && run.state !== "failed" ? (run.pendingUiRequest ?? null) : null;
+    // Sysop tools (#287): an admin op held for the owner shows as the same confirm card, ahead of
+    // pi's, but only to the owner as a person (not a Dongle caller such as the side panel, and not
+    // other viewers), since only they can answer it.
+    const active = run && run.state !== "stopped" && run.state !== "failed";
+    const approval = active ? await ctx.store.adminApprovals.get(run.id) : null;
+    const adminCard = approval && mayAnswer(approval, req.identity) ? approvalUiRequest(approval) : undefined;
+    const pendingUiRequest = active ? (adminCard ?? run.pendingUiRequest ?? null) : null;
     const guru = await ctx.store.gurus.findById(session.guruId);
     const owner = session.ownerEmail ? await ctx.store.users.findByEmail(session.ownerEmail) : null;
     const login = owner?.githubLogin?.replace(/^@/, "").trim() ?? "";
@@ -359,6 +365,17 @@ export async function registerPanelRoutes(app: FastifyInstance, ctx: RouteContex
     if (!body?.id) return reply.code(400).send({ error: "id is required" });
     const run = await ctx.store.runs.findActiveForSession(session.id);
     if (!run) return reply.code(404).send({ error: "no active run" });
+    // Sysop tools (#287): the answer to the run's admin approval card is the API's, never agentd's.
+    // Any other id, even one that looks like it, goes to pi as before.
+    if (typeof body.id === "string" && body.id.startsWith(APPROVAL_UI_PREFIX)) {
+      const approvalId = body.id.slice(APPROVAL_UI_PREFIX.length);
+      const held = await ctx.store.adminApprovals.get(run.id);
+      if (held?.id === approvalId) {
+        const decided = await decideApproval(ctx.store, run.id, approvalId, req.identity ?? { email: "" }, body.value === true);
+        if (!decided.ok) return reply.code(decided.status).send({ error: decided.error });
+        return { run };
+      }
+    }
     await ctx.agentLink.send(run.id, { t: "ui_response", id: body.id, value: body.value });
     await ctx.store.runs.update(run.id, { pendingUiRequest: undefined, updatedAt: new Date().toISOString() });
     return { run };
@@ -428,7 +445,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     const session = await getSessionOr404(ctx, req, reply);
     if (!session) return;
     reply.hijack(); // we own the raw response now; Fastify must not also try to send it
-    ctx.sse.subscribe(session.id, reply);
+    ctx.sse.subscribe(session.id, reply, { email: req.identity?.email, viaToken: req.identity?.viaToken });
     const run = await ctx.store.runs.findActiveForSession(session.id);
     // Bug 3 (docs/reports/cloud-fixes.md): a hardcoded "stopped" here used to hide the difference
     // between a cleanly stopped run and a failed one (both have no *active* run) -- fall back to

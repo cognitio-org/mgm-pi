@@ -44,6 +44,8 @@ import type {
   FormattedSession,
   FormattedSessionsCollection,
   AdminAuditCollection,
+  AdminApproval,
+  AdminApprovalsCollection,
   AdminAuditEntry,
 } from "./types.ts";
 import type { VoicePrefs } from "../voice.ts";
@@ -865,6 +867,33 @@ class MemoryFormattedSessions implements FormattedSessionsCollection {
   }
 }
 
+class MemoryAdminApprovals implements AdminApprovalsCollection {
+  private readonly rows = new Map<string, AdminApproval>();
+
+  async get(runId: string): Promise<AdminApproval | null> {
+    const row = this.rows.get(runId);
+    return row ? clone(row) : null;
+  }
+
+  async claim(approval: AdminApproval, nowIso: string): Promise<boolean> {
+    const held = this.rows.get(approval.runId);
+    if (held && !held.decision && held.expiresAt > nowIso) return false;
+    this.rows.set(approval.runId, clone(approval));
+    return true;
+  }
+
+  async decide(runId: string, approvalId: string, decision: "approved" | "denied", by: string, nowIso: string): Promise<boolean> {
+    const held = this.rows.get(runId);
+    if (!held || held.id !== approvalId || held.decision || held.expiresAt <= nowIso) return false;
+    this.rows.set(runId, { ...held, decision, decidedBy: by, decidedAt: nowIso });
+    return true;
+  }
+
+  async clear(runId: string, approvalId: string): Promise<void> {
+    if (this.rows.get(runId)?.id === approvalId) this.rows.delete(runId);
+  }
+}
+
 class MemoryAdminAudit implements AdminAuditCollection {
   private readonly rows: AdminAuditEntry[] = [];
 
@@ -927,6 +956,7 @@ export class MemoryStore implements Store {
   readonly browserCaptures: BrowserCapturesCollection;
   readonly formattedSessions = new MemoryFormattedSessions();
   readonly adminAudit = new MemoryAdminAudit();
+  readonly adminApprovals = new MemoryAdminApprovals();
   readonly previews = new MemoryPreviews();
 
   constructor() {

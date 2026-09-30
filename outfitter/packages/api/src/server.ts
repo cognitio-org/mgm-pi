@@ -2,6 +2,7 @@
 // agentd, and the run reconciler. Kept separate from main.ts so tests can build an app in-process
 // (light-my-request) without binding a port.
 
+import { DriveAdmin } from "./admin/drive.ts";
 import { createNgrokApi, type NgrokApi } from "./ngrok-api.ts";
 import { PreviewService } from "./previews.ts";
 import { VoiceService } from "./voice.ts";
@@ -129,6 +130,8 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     litellmKey,
     localModels: config.localModels,
   });
+  // Sysop tools (#287): admin.request frames from a Drive run through the admin op registry.
+  agentLink.setDriveAdmin(new DriveAdmin({ store, config, models: modelsService, log: (msg) => fastify.log.warn(msg) }));
 
   // Auth guards every /api/* route except /api/hooks/* (called by an external service with no IAP
   // session and no agentd identity token; it authenticates itself via its own HMAC signature

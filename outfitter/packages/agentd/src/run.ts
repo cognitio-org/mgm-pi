@@ -19,6 +19,7 @@ import { discoverAppendSystemPromptFile } from "./append-system.js";
 import { attributionTrailers, authHeaderSecret, botIdentityEnv, sanitizeAuthor, type GitOps } from "./git.js";
 import { githubRepoHttps, gitProxyInsteadOfEnv, parseGithubCloneUrl, startGitProxy, type GitProxy } from "./git-proxy.js";
 import { listenGithubSocket, type GithubSocket } from "./github-socket.js";
+import { listenBrokerSocket, type BrokerSocket } from "./broker-socket.js";
 import { createAsyncLock } from "./lock.js";
 import { spawnPi, SessionTailer, SpendTailer, validateSpendLine, type PiProcess, type SpendLogLine } from "./pi.js";
 import { importSession, writeSnapshotFile, emptySessionJsonl, lastKnownModelState } from "./session.js";
@@ -51,6 +52,7 @@ import type {
   RunSpecIde,
   RunState,
   UpMessage,
+  UpAdminRequest,
 } from "./protocol.js";
 
 /** The start-up phases the `startup` frame carries: run.spec through pi ready. Later "first ..."
@@ -184,6 +186,9 @@ export interface RunControllerDeps {
   startupPhases?: boolean;
   /** Unix socket for GitHub API calls (`$OUTFITTER_GITHUB_SOCKET`). Unset: no socket, nothing pinned. */
   githubSocketPath?: string;
+  /** Sysop tools (#287): Unix socket for admin ops (`$OUTFITTER_ADMIN_SOCKET`). Opened only for a
+   * run whose tape has admin tools; unset or off: no socket, and the env var is pinned empty. */
+  adminSocketPath?: string;
   /** Injected by tests. Production uses playwright-check.ts's own spawn, which never throws. */
   spawnPlaywright?: PlaywrightSpawn;
   /** Drive previews (#217): browsing a preview re-arms idle-stop only while the last chat turn is
@@ -359,6 +364,8 @@ export class RunController {
   private gitProxy: GitProxy | undefined;
   /** Broker socket for GitHub API calls. Network git does not use it. */
   private githubSocket: GithubSocket | undefined;
+  /** Broker socket for admin ops (Sysop tools), only when the tape has admin tools. */
+  private adminSocket: BrokerSocket<"admin"> | undefined;
   /** True once the API link has opened, false after it drops, until the next open. */
   private apiLinkUp = true;
   /** Serializes git-proxy forwards with the phase-0 checkpoint push. */
@@ -383,11 +390,13 @@ export class RunController {
     this.deps.link.onOpen?.(() => {
       this.apiLinkUp = true;
       this.githubSocket?.onLinkUp();
+      this.adminSocket?.onLinkUp();
       if (this.startupFrame && !this.stopping && !this.disposed) this.deps.link.send(this.startupFrame);
     });
     this.deps.link.onClose?.(() => {
       this.apiLinkUp = false;
       this.githubSocket?.onLinkDown();
+      this.adminSocket?.onLinkDown();
     });
   }
 
@@ -411,6 +420,7 @@ export class RunController {
     void this.stopGitProxy();
     void this.stopCaptureListener();
     void this.stopGithubSocket();
+    void this.stopAdminSocket();
   }
 
   private setState(state: RunState, detail?: string): void {
@@ -473,6 +483,9 @@ export class RunController {
         return;
       case "github.result":
         this.githubSocket?.deliver(msg);
+        return;
+      case "admin.result":
+        this.adminSocket?.deliver(msg);
         return;
       case "github.credential":
         this.replaceGithubToken(msg.token);
@@ -816,6 +829,13 @@ export class RunController {
       secretEnv.OUTFITTER_GITHUB_SOCKET = this.deps.githubSocketPath;
       await this.startGithubSocket(this.deps.githubSocketPath);
     }
+    // Sysop tools (#287): pinned after guru.env like the GitHub socket. Empty unless the tape has
+    // admin tools, so Kernal's outfitter-admin registers nothing on an ordinary Drive.
+    secretEnv.OUTFITTER_ADMIN_SOCKET = "";
+    const adminTools = this.spec.guru.adminTools;
+    if (this.deps.adminSocketPath && (adminTools === "manage" || adminTools === "operator")) {
+      if (await this.startAdminSocket(this.deps.adminSocketPath)) secretEnv.OUTFITTER_ADMIN_SOCKET = this.deps.adminSocketPath;
+    }
     if (this.spec.repo) {
       secretEnv.OUTFITTER_SESSION_BRANCH = this.spec.repo.branch;
       secretEnv.OUTFITTER_BRANCH_PREFIX = normalizeBranchPrefix(this.spec.repo.branchPrefix) ?? DEFAULT_BRANCH_PREFIX;
@@ -932,6 +952,41 @@ export class RunController {
     } catch (err) {
       this.githubSocket = undefined;
       this.onLog(`github socket listen failed: ${codeOf(err)}`);
+    }
+  }
+
+  /** Same ownership and link handling as the GitHub socket. True once it is listening. */
+  private async startAdminSocket(path: string): Promise<boolean> {
+    try {
+      await listenBrokerSocket({
+        kind: "admin",
+        path,
+        group: this.deps.runAsUser?.gid,
+        linkOpen: this.apiLinkUp,
+        log: (line) => this.onLog(line),
+        send: (msg) => this.deps.link.send(msg as UpAdminRequest),
+        attach: (socket) => {
+          this.adminSocket = socket;
+          if (this.apiLinkUp) socket.onLinkUp();
+          else socket.onLinkDown();
+        },
+      });
+      return true;
+    } catch (err) {
+      this.adminSocket = undefined;
+      this.onLog(`admin socket listen failed: ${codeOf(err)}`);
+      return false;
+    }
+  }
+
+  private async stopAdminSocket(): Promise<void> {
+    const socket = this.adminSocket;
+    this.adminSocket = undefined;
+    if (!socket) return;
+    try {
+      await socket.close();
+    } catch (err) {
+      this.onLog(`admin socket stop failed: ${codeOf(err)}`);
     }
   }
 
@@ -1113,6 +1168,7 @@ export class RunController {
     await this.stopGitProxy();
     await this.stopCaptureListener();
     await this.stopGithubSocket();
+    await this.stopAdminSocket();
     const msg = { t: "bye" as const, reason, message };
     if (this.deps.link.sendFinal) {
       await waitAtMost(this.deps.link.sendFinal(msg), waitMs);

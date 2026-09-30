@@ -1408,6 +1408,19 @@ h4.voice-menu-heading {
   font-size: 0.78rem;
 }
 
+/* Sysop tools (#287): an approval the api asks for itself, not a question from the model. */
+.ui-request-outfitter {
+  border: 2px solid var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, var(--bg-elevated));
+}
+
+.ui-request-source {
+  display: block;
+  margin-bottom: 0.3rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 /* ---------- responsive: no horizontal scroll down to phone width ---------- */
 
 @media (max-width: 600px) {

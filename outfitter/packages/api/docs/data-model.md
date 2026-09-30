@@ -129,6 +129,15 @@ sessionId?, runId?, op, target?, ok, error?, approved, approvalId?}`, including 
 rights or approval. `id` sorts by time (base-36 ms, then a per-process counter), so newest first is
 an `_id` sort and there are no other indexes.
 
+### `adminApprovals`
+
+Sysop tools (#287): an admin op from a Drive's agent held for the session owner's decision
+(`admin/approvals.ts`). One row per run (`_id` = runId): `{id, runId, sessionId, ownerEmail
+(lowercased), op, title, message, requestedAt, expiresAt, decision?, decidedBy?, decidedAt?}`.
+`claim` inserts, or replaces a row that is decided or expired; `decide` updates only the matching,
+undecided, unexpired row; `clear` deletes only the matching row. Kept off the run document because
+several routes return runs whole.
+
 ### `users`
 
 Every distinct IAP identity seen, upserted on `GET /api/me`. `{email (== _id), createdAt,

@@ -5,6 +5,7 @@
 // queue drains once agentd reports the run running/idle — on that first "status", or on a later
 // reconnect's "hello" if it was already ready).
 
+import type { DriveAdmin } from "./admin/drive.ts";
 import type { PreviewService } from "./previews.ts";
 import { askForIde } from "./ide.ts";
 
@@ -240,6 +241,9 @@ export interface RunSpecMessage {
     /** The run's recorded value (Run.allowExternalHtmlResources), sent only when true. Absent means
      * agentd appends the sealed HTML preview paragraph. */
     allowExternalHtmlResources?: boolean;
+    /** Sysop tools (#287): sent only when on; tells agentd to open its admin socket. The API checks
+     * the tape again on every admin.request, so this is not the security boundary. */
+    adminTools?: "manage" | "operator";
   };
   snapshot: { url?: string; jsonl?: string };
   // litellmBaseUrl is server-controlled (config.litellmBaseUrl), never guru-editable -- see
@@ -339,6 +343,9 @@ function acceptsMail(state: Run["state"]): boolean {
   return state === "running" || state === "idle";
 }
 
+/** Sysop tools (#287): concurrent admin.request frames one run may have open. */
+const MAX_ADMIN_IN_FLIGHT = 8;
+
 export class AgentLink {
   private readonly sockets = new Map<string, WebSocket>();
   /** Last time each live agent socket was heard from (its `hello`, then every up-frame). Feeds the
@@ -356,6 +363,10 @@ export class AgentLink {
   private readonly github: GithubBroker;
   /** Drive previews (#217); unset in apps built without one (setPreviews). */
   private previews: PreviewService | undefined;
+  /** Sysop tools (#287): the Drive side of the admin op registry; unset until setDriveAdmin. */
+  private driveAdmin: DriveAdmin | undefined;
+  /** Admin requests being handled per run, capped at MAX_ADMIN_IN_FLIGHT. */
+  private readonly adminInFlight = new Map<string, number>();
   /** Installation-token refresh timers, one per run. Cleared only when that run's current socket closes. */
   private readonly githubRefresh = new Map<string, ReturnType<typeof setTimeout>>();
   /** Failed mint attempts since the last token was delivered. Capped, then the current token stays. */
@@ -387,6 +398,11 @@ export class AgentLink {
     this.mail = mail;
     this.github = github ?? new GithubBroker(store, secretsBroker);
     this.githubRefreshTiming = refreshTiming ?? {};
+  }
+
+  /** Sysop tools (#287): server.ts wires this once the models service exists. */
+  setDriveAdmin(driveAdmin: DriveAdmin): void {
+    this.driveAdmin = driveAdmin;
   }
 
   register(app: FastifyInstance): void {
@@ -1244,6 +1260,7 @@ export class AgentLink {
         env: guru.env,
         ...(guru.playwrightBeforeCheckpoint === true ? { playwrightBeforeCheckpoint: true } : {}),
         ...(allowExternalHtmlResources ? { allowExternalHtmlResources: true } : {}),
+        ...(guru.adminTools === "manage" || guru.adminTools === "operator" ? { adminTools: guru.adminTools } : {}),
       },
       snapshot: { url: session.checkpoint?.snapshotUrl, ...(jsonl ? { jsonl } : {}) },
       secrets: {
@@ -1524,7 +1541,9 @@ export class AgentLink {
       }
       case "event": {
         const seq = Number(frame.seq);
-        const event = frame.event as { type?: string; t?: string; method?: string; [key: string]: unknown };
+        const event = { ...(frame.event as { type?: string; t?: string; method?: string; [key: string]: unknown }) };
+        // Sysop tools (#287): `source` marks the api's own approval cards; a pi event can't claim it.
+        delete event.source;
         this.sse.publish(sessionId, { type: "event", data: event });
         const eventType = event.type ?? event.t;
         // Bug 6 (docs/reports/cloud-fixes.md): pi's rpc.md distinguishes dialog methods (select,
@@ -1676,6 +1695,34 @@ export class AgentLink {
         }).then((result) => {
           if (socket.readyState === 1) socket.send(JSON.stringify({ t: "github.result", reqId, ...result }));
         }).catch(() => {});
+        break;
+      }
+      case "admin.request": {
+        // Sysop tools (#287). Like github.request: not seq/ack replayed and off this chain, since
+        // an op may wait up to 10 minutes for the owner's approval.
+        const reqId = typeof frame.reqId === "string" ? frame.reqId.slice(0, 200) : "";
+        const reply = (result: object) => {
+          if (socket.readyState === 1) socket.send(JSON.stringify({ t: "admin.result", reqId, ...result }));
+        };
+        if (!this.driveAdmin) {
+          reply({ ok: false, error: "admin tools are not available here" });
+          break;
+        }
+        const inFlight = this.adminInFlight.get(runId) ?? 0;
+        if (inFlight >= MAX_ADMIN_IN_FLIGHT) {
+          reply({ ok: false, error: "too many admin requests at once; wait for one to finish" });
+          break;
+        }
+        this.adminInFlight.set(runId, inFlight + 1);
+        void this.driveAdmin
+          .handle(runId, frame.op, frame.args, frame.idempotencyKey)
+          .then(reply)
+          .catch(() => reply({ ok: false, error: "internal error" }))
+          .finally(() => {
+            const left = (this.adminInFlight.get(runId) ?? 1) - 1;
+            if (left > 0) this.adminInFlight.set(runId, left);
+            else this.adminInFlight.delete(runId);
+          });
         break;
       }
       case "browser.action.request": {

@@ -245,7 +245,7 @@ export function SessionPage() {
   const beats = groupBeats(groupThinkingBlocks(entriesToViews(entries, { runSettled })), { runSettled });
   // #285. The streamed text is the open message, which is not in the transcript yet, so it
   // wins over a persisted tail from earlier in the turn. Once that message is stored the
-  // stream clears; if the tail is still the thought, the beat's own bubble keeps it.
+  // stream clears; the beat keeps the bubble up while later tool calls from the same turn run.
   const runLive = thoughtBubbles && runState === "running";
   const persistedThought = runLive ? liveThinkingItem(beats, true) : null;
   const showStreamedThought =

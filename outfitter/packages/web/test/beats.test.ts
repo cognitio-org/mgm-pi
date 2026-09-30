@@ -220,9 +220,19 @@ describe("liveThinkingItem", () => {
     expect(item).toMatchObject({ id: "thinking-group:t2", blocks: [{ id: "t2", text: "second" }] });
   });
 
-  it("returns nothing once prose or a tool follows, or the run is not running", () => {
+  it("keeps the thought up while tools from that turn are still running", () => {
+    expect(open([thinking("t1", "planning the edit"), call("c1", "tc")])).toMatchObject({
+      id: "thinking-group:t1",
+      blocks: [{ text: "planning the edit" }],
+    });
+    expect(open([thinking("t1", "planning the edit"), call("c1", "tc"), result("r1", "tc", "out"), call("c2", "tc2")])).toMatchObject({
+      blocks: [{ text: "planning the edit" }],
+    });
+  });
+
+  it("returns nothing once the model writes, or the run is not running", () => {
     expect(open([thinking("t1"), text("a1", "done")])).toBeNull();
-    expect(open([thinking("t1"), call("c1", "tc")])).toBeNull();
+    expect(open([thinking("t1"), call("c1", "tc"), text("a1", "done")])).toBeNull();
     expect(open([thinking("t1", "done thinking")], false)).toBeNull();
     expect(liveThinkingItem([], true)).toBeNull();
   });

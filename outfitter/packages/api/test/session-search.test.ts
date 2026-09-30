@@ -84,7 +84,7 @@ describe("renderTranscript", () => {
     const out = renderTranscript(entries) as { text: string };
     const lines = out.text.split("\n");
     assert.match(lines[0], /^\[e\d+\] user: Why does login 500\?$/);
-    assert.match(lines[1], /^\[e\d+\] assistant: \(tools only\) → bash$/);
+    assert.match(lines[1], /^\[e\d+\] 1 tool step: bash$/);
     assert.match(lines[2], /^\[e\d+\] ✗ bash: 1 failing: login\.test\.ts$/);
     assert.match(lines[3], /^\[e\d+\] assistant: The redirect is wrong\. → edit$/);
     assert.equal(lines[4], "(2 ok tool results not shown; view text for them)");
@@ -127,7 +127,15 @@ describe("renderTranscript", () => {
     const big: PiEntry[] = [];
     for (let i = 0; i < 50; i++) big.push(user(`step ${i}`), assistant("", [["read", { path: `f${i}.ts` }]]), tool("read", "x".repeat(3000)), assistant(`done ${i}`));
     const out = renderTranscript(big) as { text: string };
-    assert.ok(out.text.length < 12_000, `${out.text.length} chars`);
+    // 150 turns of words; tool steps fold. Real sessions have far more tool steps per turn.
+    assert.ok(out.text.length < 5_000, `${out.text.length} chars`);
+  });
+
+  test("outline folds a run of tool-only steps into one line", () => {
+    const run = [user("go"), assistant("", [["bash", {}]]), tool("bash", "ok"), assistant("", [["bash", {}]]), tool("bash", "ok"), assistant("", [["read", {}], ["read", {}]]), tool("read", "ok"), assistant("done")];
+    const lines = (renderTranscript(run) as { text: string }).text.split("\n");
+    assert.match(lines[1], /^\[e\d+\.\.e\d+\] 3 tool steps: bash×2, read×2$/);
+    assert.match(lines[2], /^\[e\d+\] assistant: done$/);
   });
 
   test("an unknown entry reference is a one-line error", () => {

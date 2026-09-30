@@ -213,11 +213,33 @@ export function renderTranscript(entries: TranscriptEntry[], opts: TranscriptOpt
   let next: string | undefined;
   let lastTool: { key: string; count: number; index: number } | undefined;
   let hiddenTools = 0;
+  // Outline: a run of tool-only steps (assistant calls with no words, and their ok results) is one
+  // line -- `[first..last] 9 tool steps: bash×5, read×2, git` -- instead of a line per step.
+  let steps: { first: string; last: string; count: number; tools: Map<string, number>; index: number } | undefined;
+  const stepsLine = (st: NonNullable<typeof steps>) =>
+    `[${st.first}${st.count > 1 ? `..${st.last}` : ""}] ${st.count} tool step${st.count === 1 ? "" : "s"}: ${[...st.tools].map(([n, c]) => (c > 1 ? `${n}×${c}` : n)).join(", ")}`;
   for (const r of rows) {
     let line: string | undefined;
     if (view === "outline") {
-      line = outlineLine(r);
-      if (!line && r.role === "tool") hiddenTools++;
+      const toolsOnly = r.role === "assistant" && !r.text && !r.failed && r.calls.length > 0;
+      if (toolsOnly) {
+        if (steps && out[steps.index] === stepsLine(steps)) {
+          steps.count++;
+          steps.last = r.id;
+          for (const c of r.calls) steps.tools.set(c.name, (steps.tools.get(c.name) ?? 0) + 1);
+          const updated = stepsLine(steps);
+          used += updated.length - out[steps.index].length;
+          out[steps.index] = updated;
+          continue;
+        }
+        steps = { first: r.id, last: r.id, count: 1, tools: new Map(), index: out.length };
+        for (const c of r.calls) steps.tools.set(c.name, (steps.tools.get(c.name) ?? 0) + 1);
+        line = stepsLine(steps);
+      } else {
+        line = outlineLine(r);
+        if (!line && r.role === "tool") hiddenTools++;
+        else if (line) steps = undefined;
+      }
     } else {
       line = textBlock(r, toolOutput);
       // Fold a tool result identical to the previous one into a count.
@@ -235,6 +257,7 @@ export function renderTranscript(entries: TranscriptEntry[], opts: TranscriptOpt
     }
     if (!line) continue;
     if (used + line.length + 1 > maxChars && out.length > 0) {
+      steps = undefined;
       next = out.length ? rows[rows.indexOf(r) - 1]?.id : undefined;
       break;
     }

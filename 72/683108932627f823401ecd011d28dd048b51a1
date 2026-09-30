@@ -1,0 +1,25 @@
+kernal/tests/outfitter-admin.test.ts
+  s_89f239d3945616::t_89d034c4098b46 1-187
+kernal/.pi/extensions/outfitter-admin/index.ts
+  s_89f239d3945616::t_4fc1f19a7a026a 1-36
+kernal/.pi/extensions/outfitter-admin/tools.ts
+  s_89f239d3945616::t_b24a15be146e8c 1-145
+kernal/.pi/extensions/outfitter-admin/transport.ts
+  s_89f239d3945616::t_cc8d9fd20fd19a 1-151
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "72683108932627f823401ecd011d28dd048b51a1",
+  "prompts": {},
+  "sessions": {
+    "s_89f239d3945616": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b3b2a115-86e8-4751-b3c1-916d3ff8cc0e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -1,0 +1,52 @@
+outfitter/packages/api/test/admin-ops.test.ts
+  s_89f239d3945616::t_09f96c00438477 1-201
+  s_89f239d3945616::t_590cb3e2d638ae 202-242
+outfitter/packages/api/src/admin/ops.ts
+  s_89f239d3945616::t_73acda331a1732 1-422,424,426-427
+  s_89f239d3945616::t_980915f896e86b 423,425,428-429
+outfitter/packages/api/src/gurus-service.ts
+  s_89f239d3945616::t_1c8ff6833c7218 172-173
+  s_89f239d3945616::t_94054f0e532519 1-171,174-227
+outfitter/packages/api/src/admin/render.ts
+  s_89f239d3945616::t_bd2ebcead6f358 1-136
+outfitter/docs/protocol.md
+  s_89f239d3945616::t_d80ccb2b87cb25 562-578
+outfitter/docs/specs/sysop-tools.md
+  s_89f239d3945616::t_c979786c6dab72 1-234
+outfitter/packages/api/docs/data-model.md
+  s_89f239d3945616::t_d409028db29de5 114,124-130
+outfitter/packages/api/src/auth.ts
+  s_89f239d3945616::t_deed66cdf4ed63 49-52,101,128
+outfitter/packages/api/src/routes/admin.ts
+  s_89f239d3945616::t_067000d456c99b 1-30
+outfitter/packages/api/src/routes/gurus.ts
+  s_89f239d3945616::t_0cb3f3da6863cf 1,3-11,13-20,22-26,38,43-45,50-52,57-60
+outfitter/packages/api/src/routes/index.ts
+  s_89f239d3945616::t_2576e3e2cef8ec 18,25-26,44,52-54
+outfitter/packages/api/src/store/memory.ts
+  s_89f239d3945616::t_d450038c74ba5c 46-47,868-879,929
+outfitter/packages/api/src/store/mongo.ts
+  s_89f239d3945616::t_ed40e6227b986a 47-48,1077-1097,1150,1171
+outfitter/packages/api/src/store/types.ts
+  s_89f239d3945616::t_11d3676c567786 449-453,458-485,935
+outfitter/packages/api/test/mongo-admin-audit.test.ts
+  s_89f239d3945616::t_0c8f7dbb2abe6e 1-58
+outfitter/packages/api/test/stop.test.ts
+  s_89f239d3945616::t_71df1ec55a90f6 323
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "4c444660db188477316ef002291bbbc2183c971d",
+  "prompts": {},
+  "sessions": {
+    "s_89f239d3945616": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b3b2a115-86e8-4751-b3c1-916d3ff8cc0e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

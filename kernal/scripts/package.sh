@@ -54,6 +54,8 @@ find "$STAGE/.pi/npm/vendor" \( -name node_modules -o -name .DS_Store -o -name .
 test -f "$STAGE/.pi/npm/vendor/pi-listen/extensions/voice.ts" || { echo "vendored pi-listen missing from the bundle" >&2; exit 1; }
 cp "$ROOT"/bin/* "$STAGE/bin/"; chmod +x "$STAGE"/bin/*
 cp "$ROOT/README.md" "$STAGE/"; cp -R "$ROOT/docs" "$STAGE/docs"
+# Kernal's own skills (outfitter-admin, #290), loaded through settings.json's "skills": ["../skills"].
+cp -R "$ROOT/skills" "$STAGE/skills"
 cp "$ROOT/../.env.example" "$STAGE/.env.example" 2>/dev/null || cp "$ROOT/.env.example" "$STAGE/.env.example"
 mkdir -p "$STAGE/.codebase-index"; cp "$ROOT/.codebase-index/config.json" "$STAGE/.codebase-index/config.json"
 echo "$VERSION" > "$STAGE/VERSION"; echo "pi $PI_VERSION" >> "$STAGE/VERSION"

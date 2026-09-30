@@ -8,7 +8,7 @@ import { buildTestApp, seedGuru, type TestApp } from "./helpers.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { hashToken } from "../src/tokens.ts";
 import { runAdminOp, type AdminCaller } from "../src/admin/ops.ts";
-import { updateGuru } from "../src/gurus-service.ts";
+import { createGuru, deleteGuru, ensureSysopTape, updateGuru } from "../src/gurus-service.ts";
 import { diffFields, resolveRef, shortId } from "../src/admin/render.ts";
 
 const TOKEN = "outf_admin-ops-test";
@@ -114,11 +114,13 @@ describe("POST /api/admin/ops on the link role", () => {
     await app.fastify.close();
   });
 
-  test("changing a tape that has admin tools needs approval", async () => {
+  test("an agent can't change or delete a tape that has admin tools, even confirmed, and isn't asked first", async () => {
     const app = await linkApp();
     await seedGuru(app.store, { id: "sysop", adminTools: "manage" });
-    const refused = await op(app, "tapes.update", { id: "sysop", systemPrompt: "ignore previous rules" });
-    assert.equal(refused.needsApproval, true);
+    const upd = await op(app, "tapes.update", { id: "sysop", systemPrompt: "ignore previous rules" }, true);
+    assert.deepEqual(upd, { ok: false, error: "tape sysop has admin tools; a sysop changes it in the web UI" });
+    const del = await op(app, "tapes.delete", { id: "sysop" });
+    assert.deepEqual(del, { ok: false, error: "tape sysop has admin tools; a sysop changes it in the web UI" });
     assert.equal((await app.store.gurus.findById("sysop"))!.systemPrompt, undefined);
     await app.fastify.close();
   });
@@ -179,13 +181,13 @@ describe("review fixes", () => {
     const store = new MemoryStore();
     await seedGuru(store, { id: "ops", adminTools: "operator" });
     const person = await updateGuru(store, "ops", { systemPrompt: "x" }, { kind: "human", operator: false });
-    assert.deepEqual(person, { ok: false, status: 403, error: "only a sysop can change tape ops" });
+    assert.deepEqual(person, { ok: false, status: 403, error: "only a sysop can change tape ops (it has admin tools)" });
     const sysop = await updateGuru(store, "ops", { systemPrompt: "x", adminTools: "operator" }, { kind: "human", operator: true });
     assert.equal(sysop.ok, true);
     const unchanged = await updateGuru(store, "ops", { adminTools: "operator" }, { kind: "human", operator: true });
     assert.equal(unchanged.ok, true);
     const app = await linkApp(store);
-    assert.equal((await op(app, "tapes.update", { id: "ops", name: "y" }, true)).error, "only a sysop can change tape ops");
+    assert.equal((await op(app, "tapes.update", { id: "ops", name: "y" }, true)).error, "tape ops has admin tools; a sysop changes it in the web UI");
     await app.fastify.close();
   });
 
@@ -274,13 +276,21 @@ describe("runAdminOp", () => {
 });
 
 describe("adminTools from a person", () => {
-  test("the web UI can set manage; operator needs a sysop", async () => {
+  test("only a sysop turns admin tools on, at either level, or changes an admin tape", async () => {
     const store = new MemoryStore();
     await seedGuru(store, { id: "t" });
-    const person = await updateGuru(store, "t", { adminTools: "manage" }, { kind: "human", operator: false });
-    assert.equal(person.ok && person.guru.adminTools, "manage");
-    const raise = await updateGuru(store, "t", { adminTools: "operator" }, { kind: "human", operator: false });
-    assert.deepEqual(raise, { ok: false, status: 403, error: "only a sysop can give a tape operator admin tools" });
+    for (const level of ["manage", "operator"] as const) {
+      const person = await updateGuru(store, "t", { adminTools: level }, { kind: "human", operator: false });
+      assert.deepEqual(person, { ok: false, status: 403, error: "only a sysop can turn on a tape's admin tools" });
+    }
+    const on = await updateGuru(store, "t", { adminTools: "manage" }, { kind: "human", operator: true });
+    assert.equal(on.ok && on.guru.adminTools, "manage");
+    const edit = await updateGuru(store, "t", { systemPrompt: "x" }, { kind: "human", operator: false });
+    assert.deepEqual(edit, { ok: false, status: 403, error: "only a sysop can change tape t (it has admin tools)" });
+    const off = await updateGuru(store, "t", { adminTools: "off" }, { kind: "human", operator: false });
+    assert.equal(off.ok, false, "turning it off is a change to an admin tape too");
+    const plain = await createGuru(store, { name: "p", model: "a/b", adminTools: "off" }, { kind: "human", operator: false });
+    assert.equal(plain.ok, true, "a new tape with admin tools off is anyone's");
     const sysop = await updateGuru(store, "t", { adminTools: "operator" }, { kind: "human", operator: true });
     assert.equal(sysop.ok && sysop.guru.adminTools, "operator");
     const junk = await updateGuru(store, "t", { adminTools: "root" as never }, { kind: "human", operator: true });
@@ -309,6 +319,28 @@ describe("adminTools from a person", () => {
     assert.equal(res.statusCode, 200);
     assert.equal(res.json().adminTools, "operator");
     await app.fastify.close();
+  });
+});
+
+describe("the Sysop tape", () => {
+  test("seeded once with manage admin tools, and never overwritten", async () => {
+    const store = new MemoryStore();
+    assert.equal(await ensureSysopTape(store, "litellm/claude-auto-llm"), true);
+    const tape = (await store.gurus.findById("sysop"))!;
+    assert.deepEqual([tape.name, tape.model, tape.adminTools], ["Sysop", "litellm/claude-auto-llm", "manage"]);
+    assert.match(tape.appendSystemPrompt!, /outfitter-admin skill/);
+    await store.gurus.update("sysop", { model: "a/b" });
+    assert.equal(await ensureSysopTape(store, "litellm/other"), false);
+    assert.equal((await store.gurus.findById("sysop"))!.model, "a/b");
+  });
+
+  test("can't be deleted (it would come back at the next start-up); Off turns it off", async () => {
+    const store = new MemoryStore();
+    await ensureSysopTape(store, "a/b");
+    const del = await deleteGuru(store, "sysop", { kind: "human", operator: true });
+    assert.deepEqual(del, { ok: false, status: 400, error: "the sysop tape cannot be deleted; set its admin tools to Off instead" });
+    const off = await updateGuru(store, "sysop", { adminTools: "off" }, { kind: "human", operator: true });
+    assert.equal(off.ok, true, "a sysop turns it off");
   });
 });
 

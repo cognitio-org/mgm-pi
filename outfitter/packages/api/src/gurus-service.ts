@@ -87,9 +87,8 @@ export function hasAdminTools(guru: Pick<Guru, "adminTools">): boolean {
  * Who is writing. Only a person in the web UI (IAP, or dev mode) may set `adminTools`, and only an
  * operator may set it to `operator`. An agent -- a Drive's broker call or anything holding a
  * Dongle -- can never raise a tape's rights, so it cannot build itself a stronger tape. From an
- * agent, any delete and any change to a tape that already has admin tools needs `approved`: the
- * Drive's web approval card, or the laptop's TUI confirm. A tape with operator admin tools can only
- * be changed by a sysop: a person who is one, or an agent call that carries sysop rights.
+ * agent, a delete needs `approved`: the Drive's web approval card, or the laptop's TUI confirm. Only a
+ * sysop, in the web UI, turns admin tools on or changes or deletes a tape that has them.
  */
 export type GuruWriter =
   | { kind: "human"; operator: boolean }
@@ -202,8 +201,10 @@ function adminToolsError(body: Partial<GuruInput>, writer: GuruWriter, existing?
   if (writer.kind === "agent") {
     return { ok: false, status: 403, error: "adminTools can only be set in the web UI" };
   }
-  if (body.adminTools === "operator" && !writer.operator) {
-    return { ok: false, status: 403, error: "only a sysop can give a tape operator admin tools" };
+  // Owner decision (2026-09-30): turning admin tools on, at either level, is a sysop's call. Turning
+  // them off is a change to an admin tape, which guardError leaves to sysops too.
+  if (body.adminTools !== "off" && !writer.operator) {
+    return { ok: false, status: 403, error: "only a sysop can turn on a tape's admin tools" };
   }
   return undefined;
 }
@@ -215,16 +216,16 @@ function adminToolsError(body: Partial<GuruInput>, writer: GuruWriter, existing?
  * session runs.
  */
 function guardError(existing: Guru, writer: GuruWriter, action: "update" | "delete"): GuruWriteResult | undefined {
-  const sysopOnly = existing.adminTools === "operator";
-  if (writer.kind === "human") {
-    return sysopOnly && !writer.operator ? { ok: false, status: 403, error: `only a sysop can change tape ${existing.id}` } : undefined;
+  // Owner decision (2026-09-30): a tape with admin tools is changed or deleted only by a sysop, in the
+  // web UI. No agent call may touch one, approved or not, so a Drive can't be steered into rewriting
+  // the prompt the next admin session runs.
+  if (hasAdminTools(existing)) {
+    if (writer.kind === "agent") return { ok: false, status: 403, error: `tape ${existing.id} has admin tools; a sysop changes it in the web UI` };
+    if (!writer.operator) return { ok: false, status: 403, error: `only a sysop can change tape ${existing.id} (it has admin tools)` };
+    return undefined;
   }
-  if (sysopOnly && !writer.operator) return { ok: false, status: 403, error: `only a sysop can change tape ${existing.id}` };
-  if (writer.approved) return undefined;
-  if (action === "delete" || hasAdminTools(existing)) {
-    return { ok: false, status: 403, error: `${action === "delete" ? "deleting" : "changing"} tape ${existing.id} needs approval` };
-  }
-  return undefined;
+  if (writer.kind === "human" || writer.approved || action !== "delete") return undefined;
+  return { ok: false, status: 403, error: `deleting tape ${existing.id} needs approval` };
 }
 
 export async function createGuru(store: Store, raw: GuruInput, writer: GuruWriter): Promise<GuruWriteResult> {
@@ -280,6 +281,8 @@ export async function deleteGuru(store: Store, id: string, writer: GuruWriter): 
   const guru = await store.gurus.findById(id);
   if (!guru) return { ok: false, status: 404, error: "guru not found" };
   if (id === UNDELETABLE_GURU_ID) return { ok: false, status: 400, error: "the default guru cannot be deleted" };
+  // The Sysop tape is seeded at start-up whenever it is missing; turn it off with Admin tools: Off.
+  if (id === SYSOP_TAPE_ID) return { ok: false, status: 400, error: "the sysop tape cannot be deleted; set its admin tools to Off instead" };
   const approval = guardError(guru, writer, "delete");
   if (approval) return approval;
   const referencing = await store.sessions.list({ guruId: id });
@@ -293,4 +296,29 @@ export async function deleteGuru(store: Store, id: string, writer: GuruWriter): 
   }
   await store.gurus.delete(id);
   return { ok: true, guru };
+}
+
+/** The built-in admin tape (Sysop tools, #290): the "specific tape" for administering Outfitter.
+ * Seeded once by the web role at start-up and never overwritten, so people can edit it. */
+export const SYSOP_TAPE_ID = "sysop";
+
+const SYSOP_PROMPT = [
+  "You administer this Outfitter deployment for the person who started this floppy, acting with their rights.",
+  "Load the outfitter-admin skill before anything else, and use its tools (outfitter_tapes, outfitter_environments,",
+  "outfitter_sessions, session_search, session_transcript), never curl or the web API.",
+  "Ask before changing or deleting anything. Deletes wait for the owner's approval on the floppy page.",
+  "Never deploy, push an outfitter-v* tag, or publish a Kernal release.",
+].join(" ");
+
+/** Creates the Sysop tape if it doesn't exist. True when it was created now. */
+export async function ensureSysopTape(store: Store, model: string): Promise<boolean> {
+  if (await store.gurus.findById(SYSOP_TAPE_ID)) return false;
+  const now = new Date().toISOString();
+  try {
+    await store.gurus.insert({ id: SYSOP_TAPE_ID, name: "Sysop", model, appendSystemPrompt: SYSOP_PROMPT, adminTools: "manage", createdAt: now, updatedAt: now });
+    return true;
+  } catch (err) {
+    if (await store.gurus.findById(SYSOP_TAPE_ID)) return false; // another instance seeded it first
+    throw err;
+  }
 }

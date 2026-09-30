@@ -42,6 +42,24 @@ Decisions (confirmed with the owner):
 - **Agent-created tape ids** are slugs (`[a-z0-9-]`), so later calls stay short; UUID ids print
   as 8-character prefixes and any unique prefix of 4+ characters resolves.
 
+## Changes since the plan (PR5: skill, Sysop tape, UI)
+- **The skill lives in `kernal/skills/`** (committed), not `.pi/skills/` (generated and gitignored).
+  Kernal's `settings.json` loads it with `"skills": ["../skills"]`; the release bundle and the image
+  copy the directory.
+- **The Sysop tape** (`sysop`, `adminTools: manage`, model `DEFAULT_CLOUD_MODEL`) is seeded by
+  `main.ts` on the web role at start-up, only when missing, and never overwritten.
+- **The Sysop tape can't be deleted** (like `default`): it would come back at the next start-up.
+  Admin tools: Off turns it off.
+- **The tape editor** has an Admin tools select. Operator appears only to sysops; for a non-sysop an
+  operator tape is read-only, since the server refuses any change to it from them.
+- **Testing a new tape** is done by the person starting a floppy on it (or by reading one they ran):
+  `outfitter_sessions` has no `start` action.
+- **Admin tapes are sysop-only (owner decision, 2026-09-30).** Only a sysop, as a person in the web
+  UI, turns a tape's admin tools on (either level) or changes or deletes a tape that has them. No
+  agent call may touch an admin tape, approved or not (refused before any approval is asked), so a
+  Drive can't be steered into rewriting the prompt the next admin session runs. For a non-sysop the
+  tape editor shows admin tapes read-only and the Admin tools select stays at Off.
+
 ## Changes since the plan (PR4: session search)
 - **Ops only, no new REST routes:** `sessions.search` and `sessions.transcript` join the op registry,
   so the laptop (`POST /api/admin/ops`) and a Drive (admin socket) share them. The web UI has its own

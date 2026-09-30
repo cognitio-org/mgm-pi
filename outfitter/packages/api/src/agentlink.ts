@@ -5,6 +5,8 @@
 // queue drains once agentd reports the run running/idle — on that first "status", or on a later
 // reconnect's "hello" if it was already ready).
 
+import type { SessionIndexer } from "./search/service.ts";
+import type { DriveAdmin } from "./admin/drive.ts";
 import type { PreviewService } from "./previews.ts";
 import { askForIde } from "./ide.ts";
 
@@ -36,8 +38,13 @@ import {
 } from "./github-app.ts";
 import { parseSessionRepo } from "./session-repo.ts";
 import { parseBootTimings, parseStartupPhases, startupLogLine, summarizeStartup, type StartupSummary } from "./startup.ts";
+import { isAssistantMessageEntry, liveThoughtTextFromEvent } from "./live-thought.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
+/** #285: how often the open thought is written onto the run. The poller already lags by its
+ * interval, and the text can be long, so this is not once per token. The in-process hub still
+ * gets every change for a single-process deployment. */
+const LIVE_THOUGHT_PERSIST_MS = 1_000;
 const GITHUB_REFRESH_RETRY_MS = 60_000;
 const GITHUB_REFRESH_MAX_ATTEMPTS = 5;
 
@@ -235,6 +242,9 @@ export interface RunSpecMessage {
     /** The run's recorded value (Run.allowExternalHtmlResources), sent only when true. Absent means
      * agentd appends the sealed HTML preview paragraph. */
     allowExternalHtmlResources?: boolean;
+    /** Sysop tools (#287): sent only when on; tells agentd to open its admin socket. The API checks
+     * the tape again on every admin.request, so this is not the security boundary. */
+    adminTools?: "manage" | "operator";
   };
   snapshot: { url?: string; jsonl?: string };
   // litellmBaseUrl is server-controlled (config.litellmBaseUrl), never guru-editable -- see
@@ -334,6 +344,9 @@ function acceptsMail(state: Run["state"]): boolean {
   return state === "running" || state === "idle";
 }
 
+/** Sysop tools (#287): concurrent admin.request frames one run may have open. */
+const MAX_ADMIN_IN_FLIGHT = 8;
+
 export class AgentLink {
   private readonly sockets = new Map<string, WebSocket>();
   /** Last time each live agent socket was heard from (its `hello`, then every up-frame). Feeds the
@@ -351,10 +364,23 @@ export class AgentLink {
   private readonly github: GithubBroker;
   /** Drive previews (#217); unset in apps built without one (setPreviews). */
   private previews: PreviewService | undefined;
+  /** Sysop tools (#287): the Drive side of the admin op registry; unset until setDriveAdmin. */
+  private driveAdmin: DriveAdmin | undefined;
+  /** Session search (#289): indexes each new entry; unset in apps built without one. */
+  private indexer: SessionIndexer | undefined;
+  /** Admin requests being handled per run, capped at MAX_ADMIN_IN_FLIGHT. */
+  private readonly adminInFlight = new Map<string, number>();
   /** Installation-token refresh timers, one per run. Cleared only when that run's current socket closes. */
   private readonly githubRefresh = new Map<string, ReturnType<typeof setTimeout>>();
   /** Failed mint attempts since the last token was delivered. Capped, then the current token stays. */
   private readonly githubRefreshAttempts = new Map<string, number>();
+  /** #285: thinking text not yet on Run.liveThought, what was last stored, and when. */
+  private readonly pendingLiveThought = new Map<string, string>();
+  private readonly persistedLiveThought = new Map<string, string>();
+  private readonly persistedLiveThoughtAt = new Map<string, number>();
+  private readonly liveThoughtTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Bumped on clear so a flush already in flight cannot put the old text back afterwards. */
+  private readonly liveThoughtEpoch = new Map<string, number>();
   private readonly githubRefreshTiming: GithubRefreshTiming;
 
   constructor(
@@ -375,6 +401,15 @@ export class AgentLink {
     this.mail = mail;
     this.github = github ?? new GithubBroker(store, secretsBroker);
     this.githubRefreshTiming = refreshTiming ?? {};
+  }
+
+  setIndexer(indexer: SessionIndexer): void {
+    this.indexer = indexer;
+  }
+
+  /** Sysop tools (#287): server.ts wires this once the models service exists. */
+  setDriveAdmin(driveAdmin: DriveAdmin): void {
+    this.driveAdmin = driveAdmin;
   }
 
   register(app: FastifyInstance): void {
@@ -1232,6 +1267,7 @@ export class AgentLink {
         env: guru.env,
         ...(guru.playwrightBeforeCheckpoint === true ? { playwrightBeforeCheckpoint: true } : {}),
         ...(allowExternalHtmlResources ? { allowExternalHtmlResources: true } : {}),
+        ...(guru.adminTools === "manage" || guru.adminTools === "operator" ? { adminTools: guru.adminTools } : {}),
       },
       snapshot: { url: session.checkpoint?.snapshotUrl, ...(jsonl ? { jsonl } : {}) },
       secrets: {
@@ -1467,6 +1503,9 @@ export class AgentLink {
         const patch: Partial<Run> = { state, lastSeenAt: now, updatedAt: now };
         if (typeof frame.detail === "string") patch.statusDetail = frame.detail;
         await this.store.runs.update(runId, patch);
+        // Leaving `running` ends the open thought. The entry usually already cleared it; this
+        // covers a turn that stops without one (abort, failure) so a later poll doesn't reopen it.
+        if (state !== "running") await this.clearLiveThought(runId, sessionId, now);
         // `startup` on a browser status event is the api's own summary, never something agentd put
         // on its frame.
         const { startup: _agentStartup, ...statusData } = frame;
@@ -1493,6 +1532,8 @@ export class AgentLink {
         const seq = Number(frame.seq);
         const entry = frame.entry as PiEntry;
         const inserted = await this.store.entries.insertIfNew(sessionId, seq, entry, { runId });
+        // Off the ack path: search indexing must never hold up or fail an entry.
+        if (inserted) void this.indexer?.indexEntry(sessionId, entry);
         if (inserted) {
           await this.store.sessions.update(sessionId, { leafId: entry.id, updatedAt: now });
           this.sse.publish(sessionId, { type: "entry", data: entryForWire({ entry, runId }) });
@@ -1501,12 +1542,17 @@ export class AgentLink {
         // and a send that threw on the first delivery (entry stored, no ack) is retried on replay.
         const recipient = await this.mail.handleAgentSend(sessionId, entry);
         if (recipient) await this.deliverMailForSession(recipient);
+        // The open thought is this message now. A tool result is not: the next thought may
+        // already be streaming.
+        if (inserted && isAssistantMessageEntry(entry)) await this.clearLiveThought(runId, sessionId, now);
         await this.ack(runId, socket, seq, now);
         break;
       }
       case "event": {
         const seq = Number(frame.seq);
-        const event = frame.event as { type?: string; t?: string; method?: string; [key: string]: unknown };
+        const event = { ...(frame.event as { type?: string; t?: string; method?: string; [key: string]: unknown }) };
+        // Sysop tools (#287): `source` marks the api's own approval cards; a pi event can't claim it.
+        delete event.source;
         this.sse.publish(sessionId, { type: "event", data: event });
         const eventType = event.type ?? event.t;
         // Bug 6 (docs/reports/cloud-fixes.md): pi's rpc.md distinguishes dialog methods (select,
@@ -1519,6 +1565,8 @@ export class AgentLink {
         if (eventType === "extension_ui_request" && INTERACTIVE_UI_METHODS.has(String(event.method))) {
           await this.store.runs.update(runId, { pendingUiRequest: event, updatedAt: now });
         }
+        const thought = liveThoughtTextFromEvent(event);
+        if (thought !== null) await this.noteLiveThought(sessionId, runId, thought);
         await this.ack(runId, socket, seq, now);
         break;
       }
@@ -1658,6 +1706,34 @@ export class AgentLink {
         }).catch(() => {});
         break;
       }
+      case "admin.request": {
+        // Sysop tools (#287). Like github.request: not seq/ack replayed and off this chain, since
+        // an op may wait up to 10 minutes for the owner's approval.
+        const reqId = typeof frame.reqId === "string" ? frame.reqId.slice(0, 200) : "";
+        const reply = (result: object) => {
+          if (socket.readyState === 1) socket.send(JSON.stringify({ t: "admin.result", reqId, ...result }));
+        };
+        if (!this.driveAdmin) {
+          reply({ ok: false, error: "admin tools are not available here" });
+          break;
+        }
+        const inFlight = this.adminInFlight.get(runId) ?? 0;
+        if (inFlight >= MAX_ADMIN_IN_FLIGHT) {
+          reply({ ok: false, error: "too many admin requests at once; wait for one to finish" });
+          break;
+        }
+        this.adminInFlight.set(runId, inFlight + 1);
+        void this.driveAdmin
+          .handle(runId, frame.op, frame.args, frame.idempotencyKey)
+          .then(reply)
+          .catch(() => reply({ ok: false, error: "internal error" }))
+          .finally(() => {
+            const left = (this.adminInFlight.get(runId) ?? 1) - 1;
+            if (left > 0) this.adminInFlight.set(runId, left);
+            else this.adminInFlight.delete(runId);
+          });
+        break;
+      }
       case "browser.action.request": {
         await this.handleBrowserActionRequest(sessionId, frame);
         break;
@@ -1740,6 +1816,59 @@ export class AgentLink {
       default:
         break; // unknown frame type: ignore, forward-compatible
     }
+  }
+
+  /** Publish the open thought immediately, and store it at most about once a second (#285).
+   * The store copy is what the web role's poller can see; the publish is for role "all", where
+   * the browser is on this process. */
+  private async noteLiveThought(sessionId: string, runId: string, text: string): Promise<void> {
+    if (this.pendingLiveThought.get(runId) === text) return;
+    this.pendingLiveThought.set(runId, text);
+    this.sse.publish(sessionId, { type: "live_thought", data: { text } });
+    const last = this.persistedLiveThought.get(runId);
+    const at = this.persistedLiveThoughtAt.get(runId) ?? 0;
+    if (last === undefined || Date.now() - at >= LIVE_THOUGHT_PERSIST_MS) {
+      await this.flushLiveThought(runId);
+      return;
+    }
+    this.scheduleLiveThoughtFlush(runId);
+  }
+
+  private scheduleLiveThoughtFlush(runId: string): void {
+    if (this.liveThoughtTimers.has(runId)) return;
+    const timer = setTimeout(() => {
+      this.liveThoughtTimers.delete(runId);
+      void this.flushLiveThought(runId).catch(() => {});
+    }, LIVE_THOUGHT_PERSIST_MS);
+    timer.unref?.();
+    this.liveThoughtTimers.set(runId, timer);
+  }
+
+  private async flushLiveThought(runId: string): Promise<void> {
+    const epoch = this.liveThoughtEpoch.get(runId) ?? 0;
+    const pending = this.pendingLiveThought.get(runId);
+    if (pending === undefined || pending === this.persistedLiveThought.get(runId)) return;
+    this.persistedLiveThought.set(runId, pending);
+    this.persistedLiveThoughtAt.set(runId, Date.now());
+    await this.store.runs.update(runId, { liveThought: pending, updatedAt: new Date().toISOString() });
+    // clearLiveThought bumped the epoch and removed the pending text while this write was in flight.
+    if ((this.liveThoughtEpoch.get(runId) ?? 0) !== epoch && !this.pendingLiveThought.has(runId)) {
+      await this.store.runs.update(runId, { liveThought: null, updatedAt: new Date().toISOString() });
+    }
+  }
+
+  private async clearLiveThought(runId: string, sessionId: string, now: string): Promise<void> {
+    const timer = this.liveThoughtTimers.get(runId);
+    if (timer) clearTimeout(timer);
+    this.liveThoughtTimers.delete(runId);
+    const had = this.pendingLiveThought.has(runId) || this.persistedLiveThought.has(runId);
+    this.liveThoughtEpoch.set(runId, (this.liveThoughtEpoch.get(runId) ?? 0) + 1);
+    this.pendingLiveThought.delete(runId);
+    this.persistedLiveThought.delete(runId);
+    this.persistedLiveThoughtAt.delete(runId);
+    if (!had) return;
+    this.sse.publish(sessionId, { type: "live_thought", data: { text: null } });
+    await this.store.runs.update(runId, { liveThought: null, updatedAt: now });
   }
 
   /** Only `entry` and `event` frames carry a seq, and both are pi at work, so the same write records

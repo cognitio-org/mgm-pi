@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { collapseRail, groupBeats, type AssistantBeat, type RailThinking, type RailTool, type ToolsOnlyBeat } from "../src/lib/beats.ts";
+import { collapseRail, groupBeats, liveThinkingItem, type AssistantBeat, type RailThinking, type RailTool, type ToolsOnlyBeat } from "../src/lib/beats.ts";
 import type { GroupedEntry } from "../src/lib/thinking.ts";
 import { groupThinkingBlocks } from "../src/lib/thinking.ts";
 import type { EntryView } from "../src/lib/entry-view.ts";
@@ -198,6 +198,53 @@ describe("groupBeats", () => {
     expect(after[0]?.id).toBe(before[0]?.id);
     expect((before[0] as ToolsOnlyBeat).rail[1]).toMatchObject({ id: "c1", running: true });
     expect((after[0] as AssistantBeat).rail[1]).toMatchObject({ id: "c1", running: false, output: "out" });
+  });
+});
+
+describe("liveThinkingItem", () => {
+  function open(views: EntryView[], runLive = true) {
+    return liveThinkingItem(groupBeats(groupThinkingBlocks(views)), runLive);
+  }
+
+  it("returns the trailing thought while the run is still running", () => {
+    expect(open([thinking("t1", "planning the edit")])).toMatchObject({
+      kind: "thinking",
+      id: "thinking-group:t1",
+      blocks: [{ id: "t1", text: "planning the edit" }],
+    });
+    expect(open([thinking("t1", "")])).toMatchObject({ id: "thinking-group:t1", blocks: [{ text: "" }] });
+  });
+
+  it("returns the latest thought when a tool already finished earlier in the turn", () => {
+    const item = open([thinking("t1", "first"), call("c1", "tc"), result("r1", "tc", "out"), thinking("t2", "second")]);
+    expect(item).toMatchObject({ id: "thinking-group:t2", blocks: [{ id: "t2", text: "second" }] });
+  });
+
+  it("keeps the thought up while tools from that turn are still running", () => {
+    expect(open([thinking("t1", "planning the edit"), call("c1", "tc")])).toMatchObject({
+      id: "thinking-group:t1",
+      blocks: [{ text: "planning the edit" }],
+    });
+    expect(open([thinking("t1", "planning the edit"), call("c1", "tc"), result("r1", "tc", "out"), call("c2", "tc2")])).toMatchObject({
+      blocks: [{ text: "planning the edit" }],
+    });
+  });
+
+  it("returns nothing once the model writes, or the run is not running", () => {
+    expect(open([thinking("t1"), text("a1", "done")])).toBeNull();
+    expect(open([thinking("t1"), call("c1", "tc"), text("a1", "done")])).toBeNull();
+    expect(open([thinking("t1", "done thinking")], false)).toBeNull();
+    expect(liveThinkingItem([], true)).toBeNull();
+  });
+
+  it("returns nothing when a later beat follows the thought", () => {
+    const user: GroupedEntry = { kind: "user", id: "u1", text: "go on" };
+    const beats = groupBeats([
+      user,
+      ...groupThinkingBlocks([thinking("t1", "hmm")]),
+      { kind: "system", id: "s1", text: "note" },
+    ]);
+    expect(liveThinkingItem(beats, true)).toBeNull();
   });
 });
 

@@ -4,7 +4,8 @@ import { api, type ModelRow, type SessionDetail } from "../api/client.ts";
 import { useSessionStream } from "../hooks/useSessionStream.ts";
 import { useProviders } from "../hooks/useProviders.ts";
 import { entriesToViews } from "../lib/entry-view.ts";
-import { groupBeats } from "../lib/beats.ts";
+import { groupBeats, liveThinkingItem, railThinkingText } from "../lib/beats.ts";
+import { isThoughtBubbleEnabled, setThoughtBubbleEnabled } from "../lib/thought-bubble.ts";
 import { groupThinkingBlocks } from "../lib/thinking.ts";
 import { deriveSessionHeader } from "../lib/session-header.ts";
 import {
@@ -18,7 +19,8 @@ import { sessionLamp } from "../lib/session-lamp.ts";
 import { githubCluster, looseRepoClause } from "../lib/session-facts.ts";
 import { toApiErrorState } from "../lib/api-error.ts";
 import { EntryItem } from "../components/EntryItem.tsx";
-import { BeatView, YouMark, beatOpensVsCode } from "../components/TranscriptRail.tsx";
+import { BeatView, StreamedThought, YouMark, beatOpensVsCode } from "../components/TranscriptRail.tsx";
+import { ThoughtBubbleToggle } from "../components/ThoughtBubbleToggle.tsx";
 import { Composer } from "../components/Composer.tsx";
 import { StatusPill } from "../components/StatusPill.tsx";
 import { GithubChip } from "../components/GithubChip.tsx";
@@ -80,6 +82,7 @@ export function SessionPage() {
     startup: streamStartup,
     agentSeenAt,
     piActiveAt,
+    liveThought: streamedThought,
   } = useSessionStream(sessionId);
   const { providers } = useProviders();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -89,6 +92,8 @@ export function SessionPage() {
   // Scroll position the page jumped to on its own. Events that only report that spot
   // are not the person scrolling, so they must not tuck the status line away.
   const landedAt = useRef<number | null>(null);
+  // #285: follow a growing thought only when the reader was already at the bottom.
+  const followThought = useRef(true);
   // Cloud-fixes 11: the message just sent, until its stored entry and reply arrive.
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(null);
   // Last time the page saw progress (a new entry, a run state change, or pi activity from the
@@ -104,6 +109,9 @@ export function SessionPage() {
   // it never renders, or fetches, with one session's id and the other's run.
   const [nerdOutFor, setNerdOutFor] = useState<string | null>(null);
   const nerdOut = nerdOutFor === sessionId;
+  // #285: optional live thought bubble. A display choice on this browser, remembered like the
+  // floppy-drive sound. Off leaves thinking on the rail glyph only.
+  const [thoughtBubbles, setThoughtBubbles] = useState(() => isThoughtBubbleEnabled());
   const navigate = useNavigate();
   // #209: Archive, Restore and Format. Archived floppies are read-only (api 409s wake and send).
   const [shelving, setShelving] = useState<"archive" | "restore" | null>(null);
@@ -232,6 +240,19 @@ export function SessionPage() {
     };
   }, [session?.name, sessionId]);
 
+  // idle/stopped/failed means pi is not inside a tool. A newer user message settles the
+  // previous turn even when the next run is already "running" again.
+  const runSettled = runState === "idle" || runState === "stopped" || runState === "failed";
+  const beats = groupBeats(groupThinkingBlocks(entriesToViews(entries, { runSettled })), { runSettled });
+  // #285. The streamed text is the open message, which is not in the transcript yet, so it
+  // wins over a persisted tail from earlier in the turn. Once that message is stored the
+  // stream clears; the beat keeps the bubble up while later tool calls from the same turn run.
+  const runLive = thoughtBubbles && runState === "running";
+  const persistedThought = runLive ? liveThinkingItem(beats, true) : null;
+  const showStreamedThought =
+    runLive && streamedThought !== null && !(persistedThought && railThinkingText(persistedThought) === streamedThought);
+  const liveThoughtText = showStreamedThought ? streamedThought : persistedThought ? railThinkingText(persistedThought) : "";
+
   // Follow the latest entry. Remember where that jump landed so its scroll event does
   // not tuck the status line away before it has been seen.
   useEffect(() => {
@@ -243,7 +264,19 @@ export function SessionPage() {
     }
     el.scrollTo({ top: el.scrollHeight });
     landedAt.current = el.scrollTop;
+    followThought.current = true;
   }, [entries.length, pendingSend?.localId]);
+
+  // A live thought grows inside one entry, so the entry-count follow above never sees it.
+  // Stay with the newest line only when the reader was already at the bottom.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !liveThoughtText) return;
+    if (getComputedStyle(el).overflowY === "visible") return;
+    if (!followThought.current) return;
+    el.scrollTo({ top: el.scrollHeight });
+    landedAt.current = el.scrollTop;
+  }, [liveThoughtText]);
 
   // Phones scroll the page, not the conversation panel, so the same shrink follows window scroll.
   useEffect(() => {
@@ -384,10 +417,6 @@ export function SessionPage() {
 
   const archived = Boolean(session?.archivedAt);
 
-  // idle/stopped/failed means pi is not inside a tool. A newer user message settles the
-  // previous turn even when the next run is already "running" again.
-  const runSettled = runState === "idle" || runState === "stopped" || runState === "failed";
-  const beats = groupBeats(groupThinkingBlocks(entriesToViews(entries, { runSettled })), { runSettled });
   // #273: only the latest VS Code chip in the conversation is live.
   const lastVsCodeBeat = [...beats].reverse().find((b) => b.kind !== "passthrough" && b.kind !== "user" && beatOpensVsCode(b))?.id;
   const previewAccess = previewAccessByEntry(
@@ -448,9 +477,13 @@ export function SessionPage() {
     : false;
 
   function onSessionScroll(event: UIEvent<HTMLDivElement>) {
-    const top = event.currentTarget.scrollTop;
+    const el = event.currentTarget;
+    const top = el.scrollTop;
     if (landedAt.current !== null && Math.abs(top - landedAt.current) < 2) return;
     landedAt.current = null;
+    // Same slop as the jump recorded above. A short scroll up is the reader, and the next
+    // thought line must not pull them back to the bottom.
+    followThought.current = el.scrollHeight - top - el.clientHeight < 2;
     setCompact((prev) => (top > 16 ? true : top < 4 ? false : prev));
   }
 
@@ -574,6 +607,13 @@ export function SessionPage() {
             >
               Nerd out
             </button>
+            <ThoughtBubbleToggle
+              on={thoughtBubbles}
+              onChange={(next) => {
+                setThoughtBubbleEnabled(next);
+                setThoughtBubbles(next);
+              }}
+            />
             {session?.guruId && (
               <span className="session-guru-id">
                 <span className="mono" title={session.guruId}>
@@ -697,7 +737,7 @@ export function SessionPage() {
         )}
         <div className="session-scroll" ref={scrollRef} onScroll={onSessionScroll}>
         <div className="transcript">
-          {beats.length === 0 && !activity.showOptimistic ? (
+          {beats.length === 0 && !activity.showOptimistic && !showStreamedThought ? (
             <p className="empty-state">No entries yet. Send a message below to start the run.</p>
           ) : (
             // #132/#147: each beat's HTML previews start the way the prompt of the run that wrote
@@ -707,11 +747,17 @@ export function SessionPage() {
                 {beat.kind === "passthrough" ? (
                   <EntryItem view={beat.view} sessionId={sessionId} />
                 ) : (
-                  <BeatView beat={beat} defaultThinkingExpanded={defaultThinkingExpanded} vscodeLive={beat.id === lastVsCodeBeat} />
+                  <BeatView
+                    beat={beat}
+                    defaultThinkingExpanded={defaultThinkingExpanded}
+                    vscodeLive={beat.id === lastVsCodeBeat}
+                    liveThinkingId={showStreamedThought ? undefined : persistedThought?.id}
+                  />
                 )}
               </HtmlPreviewAccessContext.Provider>
             ))
           )}
+          <StreamedThought text={showStreamedThought ? streamedThought : null} drop={persistedThought !== null} />
           {activity.showOptimistic && pendingSend && (
             <div
               className={`entry user entry-optimistic${pendingSend.error !== undefined ? " entry-failed" : ""}`}

@@ -1,5 +1,6 @@
 import type { PreviewService } from "../previews.ts";
 import type { Store } from "../store/types.ts";
+import type { SessionIndexer } from "../search/service.ts";
 import type { Config } from "../config.ts";
 import type { RunManager } from "../runs.ts";
 import type { AgentLink } from "../agentlink.ts";
@@ -18,6 +19,8 @@ import type { GithubCatalog } from "../github-catalog.ts";
 /** Dependencies every route module needs; built once in server.ts and threaded through. */
 export interface RouteContext {
   store: Store;
+  /** Session search (#289): keeps sessionChunks in step with imports and formats. */
+  indexer: SessionIndexer;
   config: Config;
   runs: RunManager;
   agentLink: AgentLink;

@@ -1,0 +1,257 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import net from "node:net";
+import { mkdtemp, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { RunController, type LinkPort } from "../src/run.js";
+import { listenBrokerSocket } from "../src/broker-socket.js";
+import { emptySessionJsonl } from "../src/session.js";
+import type { GitOps } from "../src/git.js";
+import type { DownMessage, DownRunSpec, UpAdminRequest, UpMessage } from "../src/protocol.js";
+import type { PiProcess } from "../src/pi.js";
+
+
+class FakeLink implements LinkPort {
+  sent: UpMessage[] = [];
+  private handler: ((msg: DownMessage) => void) | undefined;
+  private closeHandlers: Array<() => void> = [];
+  private openHandlers: Array<() => void> = [];
+
+  sendSeq(build: (seq: number) => UpMessage): number {
+    const msg = build(1);
+    this.sent.push(msg);
+    return 1;
+  }
+
+  send(msg: UpMessage): void {
+    this.sent.push(msg);
+  }
+
+  onMessage(handler: (msg: DownMessage) => void): void {
+    this.handler = handler;
+  }
+
+  setSessionId(): void {}
+
+  onClose(handler: () => void): void {
+    this.closeHandlers.push(handler);
+  }
+
+  onOpen(handler: () => void): void {
+    this.openHandlers.push(handler);
+  }
+
+  deliver(msg: DownMessage): void {
+    this.handler?.(msg);
+  }
+
+  drop(): void {
+    for (const handler of this.closeHandlers) handler();
+  }
+
+  reopen(): void {
+    for (const handler of this.openHandlers) handler();
+  }
+}
+
+function adminFrames(link: FakeLink): UpAdminRequest[] {
+  return link.sent.filter((msg): msg is UpAdminRequest => msg.t === "admin.request");
+}
+
+function idlePi(): PiProcess {
+  return { send() {}, onEvent() {}, onStderr() {}, onExit() {}, kill() {}, pid: 1 };
+}
+
+function fakeGit(): GitOps {
+  return {
+    async clone() {},
+    async commitAll() {
+      return { committed: false };
+    },
+    async push() {
+      return { head: "abc", pushed: false };
+    },
+    async diff() {
+      return "";
+    },
+  };
+}
+
+async function socketDir(): Promise<{ dir: string; path: string }> {
+  let dir = await mkdtemp(join(tmpdir(), "adm-"));
+  let path = join(dir, "s");
+  // macOS sun_path is 104 bytes. A long tmpdir would make listen fail.
+  if (Buffer.byteLength(path) > 100) {
+    await rm(dir, { recursive: true, force: true });
+    dir = await mkdtemp("/tmp/adm-");
+    path = join(dir, "s");
+  }
+  return { dir, path };
+}
+
+function connect(path: string): Promise<net.Socket> {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(path);
+    socket.once("connect", () => resolve(socket));
+    socket.once("error", reject);
+  });
+}
+
+/** Lines from `socket`, including any that arrived before `next()` was called. */
+function lineReader(socket: net.Socket): { next(): Promise<string> } {
+  let buf = "";
+  const lines: string[] = [];
+  const waiters: Array<(line: string) => void> = [];
+  socket.on("data", (chunk: Buffer | string) => {
+    buf += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    let idx = buf.indexOf("\n");
+    while (idx !== -1) {
+      const line = buf.slice(0, idx);
+      buf = buf.slice(idx + 1);
+      const waiter = waiters.shift();
+      if (waiter) waiter(line);
+      else lines.push(line);
+      idx = buf.indexOf("\n");
+    }
+  });
+  return {
+    next() {
+      const queued = lines.shift();
+      if (queued !== undefined) return Promise.resolve(queued);
+      return new Promise((resolve) => waiters.push(resolve));
+    },
+  };
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) throw new Error("waitFor: timed out");
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+async function settledSoon(pending: Promise<unknown>, ms = 40): Promise<boolean> {
+  const winner = await Promise.race([
+    pending.then(() => "done"),
+    new Promise((resolve) => setTimeout(() => resolve("timeout"), ms)),
+  ]);
+  return winner === "done";
+}
+
+
+// Sysop tools (#287): the admin kind of broker-socket.ts, and RunController opening it only for a
+// tape with admin tools.
+
+function controllerFor(path: string, link: FakeLink, workspace: string, env: { value?: Record<string, string> }) {
+  return new RunController({
+    link,
+    gitOps: fakeGit(),
+    workspace,
+    piBin: "unused-in-test",
+    agentdVersion: "test",
+    piVersion: "test",
+    heartbeatIntervalMs: 60_000,
+    adminSocketPath: path,
+    spawnPi: (opts) => {
+      env.value = opts.env;
+      return idlePi();
+    },
+    importSession: async () => join(workspace, "session.jsonl"),
+    writeSnapshotFile: async () => join(workspace, "snap.jsonl"),
+    onExit: () => {},
+    onLog: () => {},
+  });
+}
+
+function specFor(adminTools: "off" | "manage" | undefined): DownRunSpec {
+  return {
+    t: "run.spec",
+    session: { id: "sess-adm", name: "adm", cwd: "/workspace" },
+    guru: { model: "fake/model", adminTools, env: { OUTFITTER_ADMIN_SOCKET: "/tmp/spoofed.sock" } },
+    snapshot: { jsonl: emptySessionJsonl("sess-adm", "/workspace") },
+    secrets: {},
+    idleStopSeconds: 3600,
+    checkpointEvery: "turn",
+  } as DownRunSpec;
+}
+
+test("admin socket: opened for a tape with admin tools, pinned, forwards frames and results", async (t) => {
+  const { dir, path } = await socketDir();
+  const link = new FakeLink();
+  const env: { value?: Record<string, string> } = {};
+  const workspace = await mkdtemp(join(tmpdir(), "adm-ws-"));
+  const controller = controllerFor(path, link, workspace, env);
+  const clients: net.Socket[] = [];
+  t.after(async () => {
+    for (const c of clients) c.destroy();
+    controller.dispose();
+    await new Promise((r) => setTimeout(r, 50));
+    await rm(dir, { recursive: true, force: true });
+    await rm(workspace, { recursive: true, force: true });
+  });
+  link.deliver(specFor("manage"));
+  await waitFor(() => env.value !== undefined);
+  assert.equal(env.value!.OUTFITTER_ADMIN_SOCKET, path, "guru.env cannot retarget the socket");
+  assert.equal(((await stat(path)).mode & 0o777), 0o660);
+
+  const client = await connect(path);
+  clients.push(client);
+  const lines = lineReader(client);
+  client.write(`${JSON.stringify({ t: "admin.request", reqId: "r1", op: "tapes.list", args: {} })}\n`);
+  client.write(`${JSON.stringify({ t: "admin.request", reqId: "r2", op: "tapes.delete", args: { id: "x" }, idempotencyKey: "k" })}\n`);
+  await waitFor(() => adminFrames(link).length >= 2);
+  assert.deepEqual(adminFrames(link).map((f) => [f.reqId, f.op, f.idempotencyKey]), [["r1", "tapes.list", undefined], ["r2", "tapes.delete", "k"]]);
+
+  link.deliver({ t: "admin.result", reqId: "r1", ok: true, text: "reviewer  Reviewer  a/b" } as DownMessage);
+  assert.deepEqual(JSON.parse(await lines.next()), { t: "admin.result", reqId: "r1", ok: true, text: "reviewer  Reviewer  a/b" });
+  link.deliver({ t: "admin.result", reqId: "r2", ok: false, error: "the owner declined", needsApproval: true, extra: "dropped" } as unknown as DownMessage);
+  assert.deepEqual(JSON.parse(await lines.next()), { t: "admin.result", reqId: "r2", ok: false, error: "the owner declined", needsApproval: true });
+
+  // A github frame on the admin socket is invalid, not forwarded.
+  client.write(`${JSON.stringify({ t: "github.request", reqId: "r3", op: "issues.list", args: {} })}\n`);
+  assert.deepEqual(JSON.parse(await lines.next()), { t: "admin.result", reqId: "r3", ok: false, error: "invalid admin request" });
+  assert.equal(adminFrames(link).length, 2);
+});
+
+for (const adminTools of ["off", undefined] as const) {
+  test(`admin socket: not opened, and pinned empty, when admin tools are ${adminTools ?? "absent"}`, async (t) => {
+    const { dir, path } = await socketDir();
+    const link = new FakeLink();
+    const env: { value?: Record<string, string> } = {};
+    const workspace = await mkdtemp(join(tmpdir(), "adm-ws-"));
+    const controller = controllerFor(path, link, workspace, env);
+    t.after(async () => {
+      controller.dispose();
+      await new Promise((r) => setTimeout(r, 50));
+      await rm(dir, { recursive: true, force: true });
+      await rm(workspace, { recursive: true, force: true });
+    });
+    link.deliver(specFor(adminTools));
+    await waitFor(() => env.value !== undefined);
+    assert.equal(env.value!.OUTFITTER_ADMIN_SOCKET, "");
+    await assert.rejects(stat(path), { code: "ENOENT" });
+  });
+}
+
+test("admin broker: a write fails on link drop and is never resent; a read is resent once", async (t) => {
+  const { dir, path } = await socketDir();
+  const sent: UpAdminRequest[] = [];
+  const broker = await listenBrokerSocket({ kind: "admin", path, send: (m) => sent.push(m as UpAdminRequest) });
+  const client = await connect(path);
+  t.after(async () => {
+    client.destroy();
+    await broker.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+  const lines = lineReader(client);
+  client.write(`${JSON.stringify({ t: "admin.request", reqId: "w", op: "tapes.create", args: {}, idempotencyKey: "k" })}\n`);
+  client.write(`${JSON.stringify({ t: "admin.request", reqId: "r", op: "tapes.list", args: {} })}\n`);
+  await waitFor(() => sent.length >= 2);
+  broker.onLinkDown();
+  assert.deepEqual(JSON.parse(await lines.next()), { t: "admin.result", reqId: "w", ok: false, error: "api link dropped" });
+  broker.onLinkUp();
+  await waitFor(() => sent.length >= 3);
+  assert.deepEqual(sent.map((f) => f.reqId), ["w", "r", "r"]);
+});

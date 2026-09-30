@@ -1,5 +1,6 @@
 // Session and run-control REST routes plus the SSE stream. See docs/protocol.md "browser <-> api".
 
+import { APPROVAL_UI_PREFIX, approvalUiRequest, decideApproval, mayAnswer } from "../admin/approvals.ts";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { RouteContext } from "./context.ts";
@@ -199,8 +200,13 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
     // what the list's summarize() uses) but only while that run is active — sse.ts publishes
     // pendingUiRequest from findActiveForSession and drops it once the run is terminal. null, not
     // omitted, when there is nothing to answer.
-    const pendingUiRequest =
-      run && run.state !== "stopped" && run.state !== "failed" ? (run.pendingUiRequest ?? null) : null;
+    // Sysop tools (#287): an admin op held for the owner shows as the same confirm card, ahead of
+    // pi's, but only to the owner as a person (not a Dongle caller such as the side panel, and not
+    // other viewers), since only they can answer it.
+    const active = run && run.state !== "stopped" && run.state !== "failed";
+    const approval = active ? await ctx.store.adminApprovals.get(run.id) : null;
+    const adminCard = approval && mayAnswer(approval, req.identity) ? approvalUiRequest(approval) : undefined;
+    const pendingUiRequest = active ? (adminCard ?? run.pendingUiRequest ?? null) : null;
     const guru = await ctx.store.gurus.findById(session.guruId);
     const owner = session.ownerEmail ? await ctx.store.users.findByEmail(session.ownerEmail) : null;
     const login = owner?.githubLogin?.replace(/^@/, "").trim() ?? "";
@@ -275,7 +281,15 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
     const lines = body.split("\n").filter((l) => l.trim().length > 0);
     if (lines.length === 0) return reply.code(400).send({ error: "empty JSONL body" });
 
-    const header = JSON.parse(lines[0]) as { type: string; id: string; cwd?: string; timestamp?: string };
+    // Every line parses before anything is stored: a torn last line (a live session read mid-write)
+    // is a 400, not a 500 halfway through the import.
+    let parsed: unknown[];
+    try {
+      parsed = lines.map((l) => JSON.parse(l));
+    } catch {
+      return reply.code(400).send({ error: "a line is not valid JSON (was the session still being written?)" });
+    }
+    const header = parsed[0] as { type: string; id: string; cwd?: string; timestamp?: string };
     if (header.type !== "session") return reply.code(400).send({ error: "first line must be a session header" });
     if (header.id !== id) return reply.code(400).send({ error: "header id does not match :id" });
 
@@ -306,12 +320,19 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
 
     let seq = await ctx.store.entries.maxSeq(id);
     let leafId = session.leafId;
-    for (const line of lines.slice(1)) {
-      const entry = JSON.parse(line) as PiEntry;
+    const added: PiEntry[] = [];
+    for (const value of parsed.slice(1)) {
+      const entry = value as PiEntry;
       const inserted = await ctx.store.entries.insertIfNew(id, ++seq, entry);
-      if (inserted) leafId = entry.id;
+      if (inserted) {
+        leafId = entry.id;
+        added.push(entry);
+      }
     }
     await ctx.store.sessions.update(id, { leafId, updatedAt: now, ...(existing && carried.patch ? carried.patch : {}) });
+    // Session search (#289): an imported (teleported or synced) session is searchable like any other.
+    // Only the entries this import added: a re-sync doesn't re-embed what is already indexed.
+    void ctx.indexer.indexEntries(id, added);
 
     return { id, imported: lines.length - 1 };
   });
@@ -359,6 +380,17 @@ export async function registerPanelRoutes(app: FastifyInstance, ctx: RouteContex
     if (!body?.id) return reply.code(400).send({ error: "id is required" });
     const run = await ctx.store.runs.findActiveForSession(session.id);
     if (!run) return reply.code(404).send({ error: "no active run" });
+    // Sysop tools (#287): the answer to the run's admin approval card is the API's, never agentd's.
+    // Any other id, even one that looks like it, goes to pi as before.
+    if (typeof body.id === "string" && body.id.startsWith(APPROVAL_UI_PREFIX)) {
+      const approvalId = body.id.slice(APPROVAL_UI_PREFIX.length);
+      const held = await ctx.store.adminApprovals.get(run.id);
+      if (held?.id === approvalId) {
+        const decided = await decideApproval(ctx.store, run.id, approvalId, req.identity ?? { email: "" }, body.value === true);
+        if (!decided.ok) return reply.code(decided.status).send({ error: decided.error });
+        return { run };
+      }
+    }
     await ctx.agentLink.send(run.id, { t: "ui_response", id: body.id, value: body.value });
     await ctx.store.runs.update(run.id, { pendingUiRequest: undefined, updatedAt: new Date().toISOString() });
     return { run };
@@ -428,7 +460,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     const session = await getSessionOr404(ctx, req, reply);
     if (!session) return;
     reply.hijack(); // we own the raw response now; Fastify must not also try to send it
-    ctx.sse.subscribe(session.id, reply);
+    ctx.sse.subscribe(session.id, reply, { email: req.identity?.email, viaToken: req.identity?.viaToken });
     const run = await ctx.store.runs.findActiveForSession(session.id);
     // Bug 3 (docs/reports/cloud-fixes.md): a hardcoded "stopped" here used to hide the difference
     // between a cleanly stopped run and a failed one (both have no *active* run) -- fall back to
@@ -439,6 +471,10 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
       type: "status",
       data: { t: "status", state: latest?.state ?? "stopped", reason: latest?.reason, startup: latest ? summarizeStartup(latest) : null },
     });
+    // #285: a reload mid-thought shouldn't wait out the poll interval for text already on the run.
+    if (run?.state === "running" && typeof run.liveThought === "string") {
+      ctx.sse.publish(session.id, { type: "live_thought", data: { text: run.liveThought } });
+    }
     // Bug 2 (docs/reports/cloud-fixes.md): in a split web/link deployment, entries and status
     // changes land on the "link" role's process (the agentd WebSocket) while this subscriber is on
     // the "web" role's process -- AgentLink's in-process publish never reaches it. ssePoller polls
@@ -530,6 +566,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
       ctx.store.browserShares.deleteForSession(session.id),
       ctx.store.browserRequests.deleteForSession(session.id),
       ctx.store.browserCaptures.deleteForSession(session.id),
+      ctx.indexer.removeSession(session.id),
     ]);
     await ctx.store.sessions.delete(session.id);
     ctx.sse.close(session.id);

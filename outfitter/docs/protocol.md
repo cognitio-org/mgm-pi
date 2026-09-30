@@ -249,6 +249,39 @@ Reads (`github_pr.view`, `github_pr.list`, `github_pr.checks`, `github_issue.lis
 
 `data` matches the local github tools' result objects (`normalizePr`, `normalizeIssue`, repo view, search) so a broker can pass the fields through. `github_pr.list` is `{ pullRequests }`, `github_issue.list` is `{ issues }`, and `github_repo.releases` is `{ releases }`, because `data` on this frame is an object. `github_repo.search` is `{ issues, pullRequests }`. When GitHub sent `X-RateLimit-Remaining` and `X-RateLimit-Reset`, `data.rateLimit` is `{ remaining, reset }` (`reset` is the header's unix seconds). The api backs off when that remaining budget is at or below 10, and never sleeps inside one request for more than 3 seconds. Pull request and issue `state` is the uppercase `OPEN` / `CLOSED` / `MERGED` the local tools report; search rows keep the search API's lowercase state. Bodies the api posts carry `Outfitter, on behalf of @login` when the session owner has a `githubLogin`. `github_pr.create`'s `closes` are issues named by the session branch (and `args.closes`, if sent), not by commit messages — those stay in the sandbox. A pull-request view still returns the pull request when the checks or reviews endpoint is not permitted; `github_pr.checks` itself reports `not permitted`.
 
+### Admin broker (Sysop tools, #287)
+
+Kernal's `outfitter-admin` tools in a Drive reach the admin op registry through agentd's admin
+socket (`OUTFITTER_ADMIN_SOCKET`, `/run/outfitter/admin.sock` in the image). It is the `admin` kind
+of `agentd/src/broker-socket.ts`, which has the GitHub socket's wire rules: one JSON line per
+request, reads resent once after a link drop, writes (with `idempotencyKey`) sent at most once.
+
+| Direction | Frame |
+|---|---|
+| up | `{t: "admin.request", reqId, op, args, idempotencyKey?}` |
+| down | `{t: "admin.result", reqId, ok: true, text}` or `{..., ok: false, error, needsApproval?}` |
+
+- agentd opens the socket only when `run.spec.guru.adminTools` is `manage` or `operator`, and pins
+  `OUTFITTER_ADMIN_SOCKET` after the tape's env (empty otherwise), like the GitHub socket.
+- The model's shell can reach the socket, so the api decides everything. It reads the tape again on
+  every call: with admin tools off, every op is `admin tools are off for this tape`. Ops run as the
+  session's owner, with sysop rights only when the owner is an operator and the tape says
+  `operator`.
+- A delete, an operator op, or a change to a tape with admin tools waits for the owner, up to 10
+  minutes. The api resolves the target first and names it on the card (name and full id), then acts
+  on that exact record. The request is a row in `adminApprovals` (one per run; claim, decide and
+  clear are conditional writes). The owner's session page shows it as a confirm card through the
+  `pendingUiRequest` channel, ahead of pi's own question, with id `admin:<approvalId>` and
+  `source: "outfitter"` (agentlink strips `source` from pi's events, and the page draws these cards
+  differently). Only the session's owner, as a person, sees it (GET and SSE) or can answer it (`POST
+  /api/sessions/:id/ui-response`); a Dongle caller and other viewers see pi's question only. After a
+  yes the api reads the tape and rights again before running the op. `needsApproval: true` on the
+  result means declined, unanswered, or replaced.
+- A write's `idempotencyKey` is remembered on the run (hashed, next to the GitHub keys), so a replay
+  returns the first result. At most 8 admin requests per run are handled at once.
+- No `API_PROTOCOL_VERSION` bump: an older api never sends `adminTools`, so an agentd never opens
+  the socket against it.
+
 ### Mailbox (E5.5)
 
 Every message for a session's agent — the browser's first prompt, `POST /messages`, and agent
@@ -411,7 +444,7 @@ wake -> ready summary. Runs created before `Run.startup` existed get no stamps a
 - `POST /api/sessions/:id/previews/:port/share` `{ttlSeconds?}` (#217) → a public, time-limited link for a port the model already previewed (the private preview must be open, which also proves the tunnel is up): `{id, port, share: true, url, createdAt, expiresAt}`. The only way a share link is made; agentlink refuses `share` from a sandbox. Owner or sysop (403 otherwise); 409 with no running Drive or no preview of that port; 503 when previews are off; 429 at the per-run limits. `ttlSeconds` defaults to `PREVIEW_SHARE_TTL_SECONDS` and is clamped to `PREVIEW_SHARE_MAX_SECONDS`.
 - `DELETE /api/sessions/:id/previews/:previewId` (#217) → 204: closes one preview (its ngrok endpoint goes). Owner or sysop; 404 when it's already gone.
 - The three answer `501 {unavailable: "not-configured"}` where telemetry isn't set up (dev), `503 {unavailable: "forbidden"}` until `gke-iam.sh` has granted access, and `502 {unavailable: "failed"}` if Google fails, and `400 {unavailable: "bad-request"}` for a malformed page token. Audience: anyone who can open the session (owner decision on #196).
-- `GET /api/sessions/:id/stream` → SSE: `event: entry|event|status|spend|checkpoint|liveness`, `data: <json>`. A `status` event may carry `startup` (the run's start-up summary, see "Start-up timing"): absent means unchanged, `null` means the current run has none (yet), an object replaces it. `liveness` (#182) is `{seenAgoMs?, activityAgoMs?}` for the active run, sent whenever either changes: how long ago agentd last sent any frame (`Run.lastSeenAt`, heartbeats every 15 s) and how long ago pi last wrote an entry or streamed an event (`Run.lastActivityAt`, stamped by the same write that acks a seq frame). Ages, not timestamps, so the browser's clock doesn't matter. Each frame replaces both: an absent age clears the page's copy, so a new run's first frame drops the previous run's activity. Raw `event` frames never cross from the link role to the web role, so this is how the page tells a long LLM call or tool run (quiet, agentd alive: "Working, no output for N min") from a dead sandbox (agentd silent for 60 s: LOAD ERROR). A pi that hangs while agentd keeps heartbeating also reads as quiet; the minutes keep counting and Break stays available.
+- `GET /api/sessions/:id/stream` → SSE: `event: entry|event|status|spend|checkpoint|liveness|live_thought`, `data: <json>`. A `status` event may carry `startup` (the run's start-up summary, see "Start-up timing"): absent means unchanged, `null` means the current run has none (yet), an object replaces it. `liveness` (#182) is `{seenAgoMs?, activityAgoMs?}` for the active run, sent whenever either changes: how long ago agentd last sent any frame (`Run.lastSeenAt`, heartbeats every 15 s) and how long ago pi last wrote an entry or streamed an event (`Run.lastActivityAt`, stamped by the same write that acks a seq frame). Ages, not timestamps, so the browser's clock doesn't matter. Each frame replaces both: an absent age clears the page's copy, so a new run's first frame drops the previous run's activity. Raw `event` frames never cross from the link role to the web role, except `live_thought` (#285): `{text: string | null}`, the open message's thinking text, throttled onto `Run.liveThought` (null once that message is stored or the run leaves `running`). Liveness is how the page tells a long LLM call or tool run (quiet, agentd alive: "Working, no output for N min") from a dead sandbox (agentd silent for 60 s: LOAD ERROR). A pi that hangs while agentd keeps heartbeating also reads as quiet; the minutes keep counting and Break stays available.
 - `POST /api/sessions/:id/messages` `{text, behavior?}` → stores the text as mail (see "Mailbox"), wakes a run if none is running, returns `{run}`; `behavior` defaults to `followUp`. If the wake fails it returns **202 `{run: null}`**: the mail is queued for Cloud Tasks and `/tick`, so the client must not resend. Text over 32,000 characters is a 413. `POST /api/sessions` behaves the same way for its `prompt` (201 with `run: null` if the first wake failed)
 - `POST /api/sessions/:id/abort` · `/stop` (graceful for a `running`/`idle` run: enqueues a `stop`
   down-message through the store and sets `stopping` — see "Run state machine" above; cancels via
@@ -558,6 +591,27 @@ removed from `outfitter-store.ts` entirely, not left in as a fallback.
 (#219: since IAP moved to the custom OAuth client in `deploy/config.env`, a service account's OIDC
 token for that client ID *is* accepted, in `Proxy-Authorization`. The live-test identity uses it;
 see `deploy/README.md` "Live-test identity". Laptop clients still use personal tokens on link.)
+
+## Admin ops (Sysop tools, #286)
+
+`POST /api/admin/ops`, on both origins, with a personal API token (dev mode also accepts the dev
+identity). It is the laptop's way into the admin op registry (`packages/api/src/admin/ops.ts`); a
+Drive reaches the same registry through agentd's admin socket (#287), not this route.
+
+Request: `{op, args?, confirmed?}`. Reply, always `200` for an authenticated call:
+`{ok: true, text}` or `{ok: false, error, needsApproval?}`. `text` is compact, capped text meant
+for a model, not JSON to parse. Ops so far: `tapes.list|get|meta|create|update|delete`,
+`environments.list|get|create|update`, `sessions.list|get|search|transcript` (#289: session search
+and compact transcripts; `search` takes `query`, `mode` text (default)|hybrid|semantic (these two fall back to text when they can't run), `owner:"me"`, `tape`,
+`repo`, `role`, `session`, `since`/`until` such as `7d`, `limit`; `transcript` takes `id`, `view`
+outline|text, `around`, `window`, `from`, `maxChars`, `toolOutput` none|trimmed|full, `roles`).
+
+- A token caller is never a sysop, so operator ops are refused on both origins.
+- `delete`s return `needsApproval: true` unless `confirmed` is true (Kernal sends it after the person
+  confirms in the TUI).
+- Setting a tape's `adminTools`, or changing or deleting a tape that has them, is refused: only a
+  sysop does that, in the web UI.
+- Every non-read op that passes those checks writes an `adminAudit` row.
 
 ## Browser companion
 

@@ -2,6 +2,8 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } f
 import { VsCodeCard } from "./VsCodeCard.tsx";
 import {
   collapseRail,
+  railThinkingText,
+  streamedThoughtItem,
   type Beat,
   type RailGlyph,
   type RailItem,
@@ -17,11 +19,14 @@ import { UserAttachments } from "./UserAttachments.tsx";
 const HOVER_MS = 80;
 // The card opens beside the glyph; this covers the gap so a peek can be reached.
 const HIDE_MS = 120;
+// How long the live bubble stays mounted while it shrinks into the rail glyph (#285).
+// CSS transition is a little shorter so the shrink finishes before the node leaves.
+export const THOUGHT_BUBBLE_COLLAPSE_MS = 240;
 
 type OpenCard = { glyphId: string; pinned: boolean; toolId?: string };
 
 function thinkingText(item: RailThinking): string {
-  return item.blocks.map((block) => block.text).join("\n\n");
+  return railThinkingText(item);
 }
 
 function formatInput(input: unknown): string {
@@ -159,9 +164,12 @@ function ExpandedThinking({ items }: { items: RailItem[] }) {
 export function TranscriptRail({
   items,
   defaultThinkingExpanded = false,
+  collapsingThinkingId,
 }: {
   items: RailItem[];
   defaultThinkingExpanded?: boolean;
+  /** The thinking glyph the live bubble is shrinking into. */
+  collapsingThinkingId?: string;
 }) {
   const glyphs = collapseRail(items);
   const glyphKey = glyphs.map(glyphIdOf).join("\0");
@@ -373,7 +381,13 @@ export function TranscriptRail({
             <button
               key={id}
               type="button"
-              className={["rail-glyph", thinkingItem ? "is-thinking" : "", toolItem?.isError || toolItem?.interrupted ? "is-error" : "", toolItem?.running ? "is-running" : ""]
+              className={[
+                "rail-glyph",
+                thinkingItem ? "is-thinking" : "",
+                thinkingItem && thinkingItem.id === collapsingThinkingId ? "is-receiving" : "",
+                toolItem?.isError || toolItem?.interrupted ? "is-error" : "",
+                toolItem?.running ? "is-running" : "",
+              ]
                 .filter(Boolean)
                 .join(" ")}
               aria-label={label}
@@ -412,6 +426,113 @@ export function TranscriptRail({
   );
 }
 
+function prefersReducedMotion(): boolean {
+  return typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+interface BubbleState {
+  item: RailThinking;
+  collapsing: boolean;
+}
+
+/** Keeps the open thought on screen, then holds it for one shrink into the rail glyph after the
+ * round finishes (#285). The id and the text are the effect deps: a new object with the same
+ * words must not restart the shrink.
+ *
+ * `settleInto` is the beat's thinking items this frame. When the round ends in the same render
+ * that replaces the group, the previous snapshot still says the old words; the rail's copy is
+ * the one the shrink should show. `drop` removes it with no shrink: the transcript's own bubble
+ * has taken over, and a second one would be the same thought twice. */
+function useCollapsingThought(live: RailThinking | null, settleInto: readonly RailThinking[], drop = false): BubbleState | null {
+  const liveRef = useRef(live);
+  liveRef.current = live;
+  const settleRef = useRef(settleInto);
+  settleRef.current = settleInto;
+  const dropRef = useRef(drop);
+  dropRef.current = drop;
+  const [bubble, setBubble] = useState<BubbleState | null>(() => (live && !drop ? { item: live, collapsing: false } : null));
+  // The effect reads this instead of a setState updater: updaters run on the next render, too late
+  // to decide whether a shrink timer is needed. Updated during render so it matches what's on screen.
+  const bubbleRef = useRef(bubble);
+  bubbleRef.current = bubble;
+  const liveId = live?.id ?? null;
+  const liveText = live ? thinkingText(live) : "";
+
+  useEffect(() => {
+    if (dropRef.current && !liveId) {
+      if (bubbleRef.current) setBubble(null);
+      return;
+    }
+    const current = liveRef.current;
+    if (liveId && current && current.id === liveId) {
+      setBubble({ item: current, collapsing: false });
+      return;
+    }
+    const existing = bubbleRef.current;
+    if (!existing) return;
+    const match = settleRef.current.find((item) => item.id === existing.item.id);
+    const item = match ?? existing.item;
+    if (prefersReducedMotion()) {
+      setBubble(null);
+      return;
+    }
+    setBubble({ item, collapsing: true });
+    const timer = window.setTimeout(() => setBubble(null), THOUGHT_BUBBLE_COLLAPSE_MS);
+    return () => window.clearTimeout(timer);
+  }, [liveId, liveText, drop]);
+
+  return bubble;
+}
+
+function ThoughtBubble({ item, collapsing }: { item: RailThinking; collapsing: boolean }) {
+  const text = thinkingText(item);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  // A reader who scrolled up inside the thought stays there. The pin only runs when they
+  // were already at the bottom; the same few pixels as the transcript's own follow.
+  const stickRef = useRef(true);
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!el || collapsing || !stickRef.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [text, collapsing]);
+  return (
+    <div className={`thought-bubble-slot${collapsing ? " is-collapsing" : ""}`} data-thinking-id={item.id}>
+      <div className="thought-bubble" role="region" aria-label="Thinking" aria-hidden={collapsing ? true : undefined}>
+        <div className="thought-bubble-kicker" aria-hidden="true">
+          <ThinkingIcon size={16} />
+          <span>Thinking</span>
+        </div>
+        <div
+          className="thought-bubble-body"
+          ref={bodyRef}
+          onScroll={(event) => {
+            const el = event.currentTarget;
+            stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 2;
+          }}
+        >
+          {text.trim() ? text : "…"}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** The open message is not an entry yet, so the thought has no rail glyph to sit beside (#285).
+ * This row is that wait. `drop` is set once the transcript's own bubble has the thought: the
+ * row disappears instead of shrinking a second copy. */
+export function StreamedThought({ text, drop }: { text: string | null; drop: boolean }) {
+  const live = text !== null ? streamedThoughtItem(text) : null;
+  const bubble = useCollapsingThought(live, [], drop);
+  if (!bubble) return null;
+  return (
+    <div className="beat tools-only has-thought-bubble">
+      <div className="beat-copy">
+        <ThoughtBubble item={bubble.item} collapsing={bubble.collapsing} />
+      </div>
+    </div>
+  );
+}
+
 type VisibleBeat = Exclude<Beat, { kind: "passthrough" }>;
 
 export function UserEntry({ view }: { view: Extract<GroupedEntry, { kind: "user" }> }) {
@@ -433,30 +554,65 @@ export function BeatView({
   beat,
   defaultThinkingExpanded = false,
   vscodeLive = true,
+  liveThinkingId,
 }: {
   beat: VisibleBeat;
   defaultThinkingExpanded?: boolean;
   /** #273: whether this beat's VS Code chip is the conversation's latest (live) one. */
   vscodeLive?: boolean;
+  /** Id of the thinking round still in progress (#285). Absent once that round has finished. */
+  liveThinkingId?: string;
 }) {
+  const live =
+    beat.kind !== "user" && liveThinkingId
+      ? (beat.rail.find((item): item is RailThinking => item.kind === "thinking" && item.id === liveThinkingId) ?? null)
+      : null;
+  // The rail's current copy of every thought on this beat, so the shrink can use words that
+  // arrived in the same render that ended the round.
+  const settle = beat.kind === "user" ? [] : beat.rail.filter((item): item is RailThinking => item.kind === "thinking");
+  const bubble = useCollapsingThought(live, settle);
   if (beat.kind === "user") return <UserEntry view={beat.view} />;
   // #273: a beat where the model opened VS Code gets one chip for it, in the chat, not in the rail.
   const vscode = beatOpensVsCode(beat) ? <VsCodeCard live={vscodeLive} /> : null;
+  const bubbleNode = bubble ? <ThoughtBubble item={bubble.item} collapsing={bubble.collapsing} /> : null;
+  const collapsingThinkingId = bubble?.collapsing ? bubble.item.id : undefined;
+  // The wrapper exists only while the bubble does, so a settled reply stays a direct .entry
+  // (that is what stretches to the rail). The bubble is the conversation column; the glyph stays.
+  const rail = (
+    <TranscriptRail
+      items={beat.rail}
+      defaultThinkingExpanded={defaultThinkingExpanded}
+      collapsingThinkingId={collapsingThinkingId}
+    />
+  );
   if (beat.kind === "tools-only") {
+    // The resting tools-only rail is a row at the start of the beat. The bubble sits under it
+    // and shrinks upward, so the glyph is already where it will be when the bubble unmounts.
     return (
-      <div className="beat tools-only">
-        <TranscriptRail items={beat.rail} defaultThinkingExpanded={defaultThinkingExpanded} />
+      <div className={`beat tools-only${bubbleNode ? " has-thought-bubble" : ""}`}>
+        {rail}
+        {bubbleNode ? <div className="beat-copy">{bubbleNode}</div> : null}
         {vscode}
       </div>
     );
   }
+  const prose = (
+    <div className="entry assistant-text">
+      <AssistantMark />
+      <Markdown text={beat.prose} />
+    </div>
+  );
   return (
-    <div className="beat">
-      <div className="entry assistant-text">
-        <AssistantMark />
-        <Markdown text={beat.prose} />
-      </div>
-      <TranscriptRail items={beat.rail} defaultThinkingExpanded={defaultThinkingExpanded} />
+    <div className={`beat${bubbleNode ? " has-thought-bubble" : ""}`}>
+      {bubbleNode ? (
+        <div className="beat-copy">
+          {bubbleNode}
+          {prose}
+        </div>
+      ) : (
+        prose
+      )}
+      {rail}
       {vscode}
     </div>
   );

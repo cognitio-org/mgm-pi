@@ -141,6 +141,10 @@ export interface Guru {
   browserIde?: boolean;
   /** Branches under this prefix may be pushed besides the session branch. Absent means outfitter/. */
   branchPrefix?: string;
+  /** Tape option, default off (Sysop tools, #290). Whether its runs get the admin tools; "operator"
+   * also allows sysop actions for a sysop's own sessions. Only a person sets it here; only a sysop
+   * may choose operator. */
+  adminTools?: "off" | "manage" | "operator";
   createdAt: string;
   updatedAt: string;
 }

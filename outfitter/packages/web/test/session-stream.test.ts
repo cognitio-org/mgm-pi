@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { livenessTimes, mergeEntries, nextPendingOnStatus, nextPendingUiRequest, nextStatusDetail } from "../src/hooks/useSessionStream.ts";
+import { livenessTimes, mergeEntries, nextLiveThought, nextPendingOnStatus, nextPendingUiRequest, nextStatusDetail } from "../src/hooks/useSessionStream.ts";
 import type { PiEntry } from "../src/api/client.ts";
 
 describe("livenessTimes (#182)", () => {
@@ -107,5 +107,24 @@ describe("nextPendingOnStatus", () => {
     expect(nextPendingOnStatus(question, "idle")).toBe(question);
     expect(nextPendingOnStatus(question, "stopping")).toBe(question);
     expect(nextPendingOnStatus(question, undefined)).toBe(question);
+  });
+});
+
+describe("nextLiveThought (#285)", () => {
+  function assistant(thinking: string | null): PiEntry {
+    const content = thinking === null ? [{ type: "text", text: "done" }] : [{ type: "thinking", thinking }];
+    return { id: "a", type: "message", message: { role: "assistant", content } };
+  }
+
+  it("keeps a thought that is not in the transcript yet", () => {
+    expect(nextLiveThought("planning", [])).toBe("planning");
+    expect(nextLiveThought("", [])).toBe("");
+    expect(nextLiveThought(null, [])).toBeNull();
+  });
+
+  it("drops a snapshot that the latest assistant message already stored", () => {
+    expect(nextLiveThought("planning", [assistant("planning")])).toBeNull();
+    expect(nextLiveThought("still going", [assistant("planning")])).toBe("still going");
+    expect(nextLiveThought("planning", [assistant(null)])).toBe("planning");
   });
 });

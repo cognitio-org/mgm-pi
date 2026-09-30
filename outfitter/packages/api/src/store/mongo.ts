@@ -44,10 +44,20 @@ import type {
   BrowserCaptureSave,
   FormattedSession,
   FormattedSessionsCollection,
+  AdminAuditCollection,
+  AdminApproval,
+  AdminApprovalsCollection,
+  ChunkHit,
+  ChunkQuery,
+  SessionChunk,
+  SessionChunksCollection,
+  AdminAuditEntry,
 } from "./types.ts";
 import type { VoicePrefs } from "../voice.ts";
 import { BROWSER_CAPTURES_PER_SESSION, entryInsertFields, type EntryInsertOptions } from "./types.ts";
 import { TOKEN_TTL_MS } from "../tokens.ts";
+import { SearchUnavailableError } from "./types.ts";
+import { CHUNKS_COLLECTION, CHUNKS_TEXT_INDEX, CHUNKS_VECTOR_INDEX } from "../search/indexes.ts";
 
 // Typed as RunState[], not inferred as string[]: used in a Mongo `$in` filter against Run.state,
 // which the mongodb driver's Filter<T> types as a union of the literal RunState strings.
@@ -1072,6 +1082,170 @@ class MongoFormattedSessions implements FormattedSessionsCollection {
   }
 }
 
+type ChunkDoc = SessionChunk & { _id: string; at: Date };
+
+/**
+ * Session search (Sysop tools, #289) on Atlas: `$search` on chunks_text, `$vectorSearch` on the
+ * auto-embedded chunks_vec (Atlas embeds the query text too), and `$rankFusion` of both for hybrid
+ * (MongoDB 8.0+). A missing index is a SearchUnavailableError naming the script that makes it.
+ */
+class MongoSessionChunks implements SessionChunksCollection {
+  private readonly col: MongoCollection<ChunkDoc>;
+  /** Names of the collection's queryable search indexes, re-read at most once a minute: Atlas
+   * answers a search on a missing index with no results, not an error. */
+  private ready: { names: Set<string>; at: number } | undefined;
+
+  constructor(col: MongoCollection<ChunkDoc>) {
+    this.col = col;
+  }
+
+  private async readyIndexes(): Promise<Set<string>> {
+    if (this.ready && Date.now() - this.ready.at < 60_000) return this.ready.names;
+    let names = new Set<string>();
+    try {
+      const list = (await this.col.listSearchIndexes().toArray()) as Array<{ name: string; queryable?: boolean; status?: string }>;
+      names = new Set(list.filter((i) => i.queryable === true || i.status === "READY").map((i) => i.name));
+    } catch {
+      // Not Atlas (no search index API): nothing is ready.
+    }
+    this.ready = { names, at: Date.now() };
+    return names;
+  }
+
+  async upsertMany(chunks: SessionChunk[]): Promise<void> {
+    if (!chunks.length) return;
+    await this.col.bulkWrite(
+      chunks.map((c) => {
+        const doc = { ...c, _id: c.id, at: new Date(c.createdAt) } as ChunkDoc;
+        return { replaceOne: { filter: { _id: c.id }, replacement: doc, upsert: true } };
+      }),
+      { ordered: false },
+    );
+  }
+
+  async deleteForSession(sessionId: string): Promise<number> {
+    return (await this.col.deleteMany({ sessionId })).deletedCount;
+  }
+
+  async search(query: ChunkQuery): Promise<ChunkHit[]> {
+    const needed = query.mode === "text" ? [CHUNKS_TEXT_INDEX] : query.mode === "semantic" ? [CHUNKS_VECTOR_INDEX] : [CHUNKS_TEXT_INDEX, CHUNKS_VECTOR_INDEX];
+    const ready = await this.readyIndexes();
+    const missing = needed.filter((n) => !ready.has(n));
+    if (missing.length) {
+      throw new SearchUnavailableError(`${query.mode} search is not set up on this cluster (${missing.join(", ")} not ready; run deploy/atlas-search.sh)`);
+    }
+    const limit = Math.min(Math.max(query.limit, 1), 100);
+    const f = query.filter;
+    const equals = Object.entries({ ownerEmail: f.ownerEmail, guruId: f.guruId, repo: f.repo, role: f.role, sessionId: f.sessionId }).filter(
+      (e): e is [string, string] => typeof e[1] === "string" && e[1].length > 0,
+    );
+    const range = f.since || f.until ? { ...(f.since ? { gte: new Date(f.since) } : {}), ...(f.until ? { lte: new Date(f.until) } : {}) } : undefined;
+    const searchStage = {
+      $search: {
+        index: CHUNKS_TEXT_INDEX,
+        compound: {
+          must: [{ text: { query: query.text, path: "text" } }],
+          filter: [...equals.map(([path, value]) => ({ equals: { path, value } })), ...(range ? [{ range: { path: "at", ...range } }] : [])],
+        },
+      },
+    };
+    const vectorFilter: Record<string, unknown> = Object.fromEntries(equals);
+    if (range) vectorFilter.at = { ...(range.gte ? { $gte: range.gte } : {}), ...(range.lte ? { $lte: range.lte } : {}) };
+    const vectorStage = {
+      $vectorSearch: {
+        index: CHUNKS_VECTOR_INDEX,
+        path: "text",
+        query: query.text,
+        numCandidates: limit * 10,
+        limit,
+        ...(Object.keys(vectorFilter).length ? { filter: vectorFilter } : {}),
+      },
+    };
+    let pipeline: Record<string, unknown>[];
+    if (query.mode === "text") pipeline = [searchStage, { $limit: limit }, { $addFields: { score: { $meta: "searchScore" } } }];
+    else if (query.mode === "semantic") pipeline = [vectorStage, { $addFields: { score: { $meta: "vectorSearchScore" } } }];
+    else {
+      pipeline = [
+        { $rankFusion: { input: { pipelines: { vector: [vectorStage], text: [searchStage, { $limit: limit }] } } } },
+        { $limit: limit },
+        { $addFields: { score: { $meta: "score" } } },
+      ];
+    }
+    let rows: Array<ChunkDoc & { score?: number }>;
+    try {
+      rows = (await this.col.aggregate(pipeline).toArray()) as Array<ChunkDoc & { score?: number }>;
+    } catch (err) {
+      // An older server without $rankFusion, or a stage this deployment doesn't have.
+      const message = err instanceof Error ? err.message : String(err);
+      if (/Unrecognized pipeline stage name|\$rankFusion is not (allowed|supported)/i.test(message)) {
+        throw new SearchUnavailableError(`${query.mode} search is not supported here: ${message.slice(0, 160)}`);
+      }
+      throw err;
+    }
+    return rows.map(({ _id: _ignored, at: _at, score, ...chunk }) => ({ chunk: chunk as SessionChunk, ...(typeof score === "number" ? { score } : {}) }));
+  }
+}
+
+class MongoAdminApprovals implements AdminApprovalsCollection {
+  private readonly col: MongoCollection<AdminApproval & { _id: string }>;
+
+  constructor(col: MongoCollection<AdminApproval & { _id: string }>) {
+    this.col = col;
+  }
+
+  async get(runId: string): Promise<AdminApproval | null> {
+    return stripId<AdminApproval>(await this.col.findOne({ _id: runId }));
+  }
+
+  async claim(approval: AdminApproval, nowIso: string): Promise<boolean> {
+    const doc = { ...approval, _id: approval.runId };
+    try {
+      await this.col.insertOne(doc);
+      return true;
+    } catch (err) {
+      if ((err as { code?: number }).code !== 11000) throw err;
+    }
+    // One exists: replace it only if it is answered or expired.
+    const replaced = await this.col.findOneAndReplace(
+      { _id: approval.runId, $or: [{ decision: { $exists: true } }, { expiresAt: { $lte: nowIso } }] },
+      doc,
+    );
+    return replaced !== null;
+  }
+
+  async decide(runId: string, approvalId: string, decision: "approved" | "denied", by: string, nowIso: string): Promise<boolean> {
+    const result = await this.col.updateOne(
+      { _id: runId, id: approvalId, decision: { $exists: false }, expiresAt: { $gt: nowIso } },
+      { $set: { decision, decidedBy: by, decidedAt: nowIso } },
+    );
+    return result.modifiedCount === 1;
+  }
+
+  async clear(runId: string, approvalId: string): Promise<void> {
+    await this.col.deleteOne({ _id: runId, id: approvalId });
+  }
+}
+
+class MongoAdminAudit implements AdminAuditCollection {
+  private readonly col: MongoCollection<AdminAuditEntry & { _id: string }>;
+
+  constructor(col: MongoCollection<AdminAuditEntry & { _id: string }>) {
+    this.col = col;
+  }
+
+  async insert(entry: AdminAuditEntry): Promise<void> {
+    // Unset optional fields stay absent instead of being stored as null.
+    const row = Object.fromEntries(Object.entries(entry).filter(([, v]) => v !== undefined)) as AdminAuditEntry;
+    await this.col.insertOne({ ...row, _id: entry.id });
+  }
+
+  async listRecent(limit: number): Promise<AdminAuditEntry[]> {
+    // Ids sort by time, then by order within a process (admin/ops.ts auditId): newest first on _id.
+    const rows = await this.col.find({}).sort({ _id: -1 }).limit(limit).toArray();
+    return rows.map((r) => stripIdStrict<AdminAuditEntry>(r));
+  }
+}
+
 class MongoPreviews implements PreviewsCollection {
   private readonly col: MongoCollection<Preview & { _id: string }>;
 
@@ -1124,6 +1298,9 @@ export class MongoStore implements Store {
   readonly browserCaptures: BrowserCapturesCollection;
   readonly formattedSessions: FormattedSessionsCollection;
   readonly previews: PreviewsCollection;
+  readonly adminAudit: AdminAuditCollection;
+  readonly adminApprovals: AdminApprovalsCollection;
+  readonly sessionChunks: SessionChunksCollection;
   private readonly client: MongoClient;
 
   private constructor(client: MongoClient, db: Db) {
@@ -1144,6 +1321,9 @@ export class MongoStore implements Store {
     this.browserCaptures = new MongoBrowserCaptures(db.collection<BrowserCaptureDoc>("browserCaptures"), requestCol);
     this.formattedSessions = new MongoFormattedSessions(db.collection("formattedSessions"));
     this.previews = new MongoPreviews(db.collection("previews"));
+    this.adminAudit = new MongoAdminAudit(db.collection("adminAudit"));
+    this.adminApprovals = new MongoAdminApprovals(db.collection("adminApprovals"));
+    this.sessionChunks = new MongoSessionChunks(db.collection(CHUNKS_COLLECTION));
   }
 
   /** `dbName` wins over the database in the URI; the stored URI has none, so the default keeps
@@ -1168,6 +1348,7 @@ export class MongoStore implements Store {
       db.collection("previews").createIndex({ sessionId: 1, closedAt: 1 }),
       db.collection("tokens").createIndex({ hash: 1 }, { unique: true }),
       db.collection("tokens").createIndex({ ownerEmail: 1 }),
+      db.collection(CHUNKS_COLLECTION).createIndex({ sessionId: 1 }),
       db.collection("mail").createIndex({ sessionId: 1, status: 1, createdAt: 1 }),
       db.collection("mail").createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
       db.collection("mail").createIndex({ "from.sessionId": 1, createdAt: 1 }),

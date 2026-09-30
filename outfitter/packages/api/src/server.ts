@@ -2,6 +2,8 @@
 // agentd, and the run reconciler. Kept separate from main.ts so tests can build an app in-process
 // (light-my-request) without binding a port.
 
+import { SessionIndexer } from "./search/service.ts";
+import { DriveAdmin } from "./admin/drive.ts";
 import { createNgrokApi, type NgrokApi } from "./ngrok-api.ts";
 import { PreviewService } from "./previews.ts";
 import { VoiceService } from "./voice.ts";
@@ -97,6 +99,9 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   });
   const mail = new MailService(store, runs, wakeSchedulerFor(config), (msg, err) => fastify.log.warn({ err }, msg));
   const agentLink = new AgentLink(store, config, secretsBroker, sse, laptopProbe, mail, opts.github, opts.githubRefresh);
+  // Session search (#289): chunks follow entries as they arrive, and imports and formats.
+  const indexer = new SessionIndexer(store, (msg) => fastify.log.warn(msg));
+  agentLink.setIndexer(indexer);
   // #217 Drive previews: on when PREVIEW_DOMAIN and NGROK_API_KEY are set (tests inject opts.ngrok).
   const ngrok = opts.ngrok ?? (config.ngrokApiKey && config.previewDomain ? createNgrokApi(config.ngrokApiKey) : undefined);
   const previews = new PreviewService({ store, config, ngrok, log: (msg, detail) => fastify.log.warn(detail ?? {}, msg) });
@@ -134,6 +139,8 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     litellmKey,
     localModels: config.localModels,
   });
+  // Sysop tools (#287): admin.request frames from a Drive run through the admin op registry.
+  agentLink.setDriveAdmin(new DriveAdmin({ store, config, models: modelsService, log: (msg) => fastify.log.warn(msg) }));
 
   // Auth guards every /api/* route except /api/hooks/* (called by an external service with no IAP
   // session and no agentd identity token; it authenticates itself via its own HMAC signature
@@ -173,6 +180,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
 
   await registerRoutes(fastify, {
     store,
+    indexer,
     config,
     runs,
     agentLink,

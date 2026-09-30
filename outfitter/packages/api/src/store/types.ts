@@ -151,6 +151,11 @@ export interface Run {
   /** Last pi entry or event (a streamed token, a tool starting) -- the model doing something, as
    * opposed to agentd merely being alive. The session page counts it as progress (sse.ts). */
   lastActivityAt?: string;
+  /** #285: the open assistant message's thinking text, so a browser on the web role can show it
+   * before that message is an entry. Written at most about once a second (the text can be long);
+   * null once the message is stored or the run leaves `running`. Absent when this run has not
+   * streamed a thought. */
+  liveThought?: string | null;
   lastAckedSeq: number;
   pending: DownMessage[];
   /** Opaque provider handle (SandboxProvider.start's return; a plain string per @outfitter/
@@ -446,8 +451,118 @@ export interface Guru {
    * spec asks agentd to download code-server so the floppy's owner can open the Drive in VS Code in
    * the browser. Copied onto each run as it starts (Run.browserIde). */
   browserIde?: boolean;
+  /** Tape option, default off (Sysop tools, #286). Whether this tape's runs get the admin tools
+   * (outfitter_tapes and friends, through agentd's admin socket). "operator" also allows the
+   * sysop actions, and only when the session's owner is an operator. Set only by a person in the
+   * web UI (gurus-service.ts); an agent can never set or raise it. */
+  adminTools?: AdminToolsLevel;
   createdAt: string;
   updatedAt: string;
+}
+
+export type AdminToolsLevel = "off" | "manage" | "operator";
+
+/** An admin op from a run's agent held for the session owner's decision (Sysop tools, #287;
+ * admin/approvals.ts). At most one per run, in its own collection so Run documents -- which several
+ * routes return whole -- never carry it. */
+export interface AdminApproval {
+  id: string;
+  runId: string;
+  sessionId: string;
+  /** Lowercased; only this person, in the web UI, may answer or see it. */
+  ownerEmail: string;
+  op: string;
+  /** Shown on the card: what the agent wants to do, in one line each. */
+  title: string;
+  message: string;
+  requestedAt: string;
+  expiresAt: string;
+  decision?: "approved" | "denied";
+  decidedBy?: string;
+  decidedAt?: string;
+}
+
+/** One admin op an agent called (Sysop tools, #286): admin/ops.ts writes a row for every op that is
+ * not a read, including calls refused for rights or approval. */
+export interface AdminAuditEntry {
+  id: string;
+  at: string;
+  /** Email the op ran as: the Dongle's owner, or the Drive session's owner. */
+  actor: string;
+  /** "token" for a Dongle caller (laptop), "drive" for a Drive's broker call. */
+  via: "token" | "drive";
+  sessionId?: string;
+  runId?: string;
+  op: string;
+  /** The object the op named (a tape or environment id), when it has one. */
+  target?: string;
+  ok: boolean;
+  /** The one-line error, when `ok` is false. */
+  error?: string;
+  /** Whether the caller came with the person's approval (laptop TUI confirm, or a Drive's web
+   * approval card, then `approvalId`). */
+  approved: boolean;
+  approvalId?: string;
+}
+
+/** One searchable piece of a session (Sysop tools, #289; search/chunker.ts): the words of one entry,
+ * redacted and cut short, or the session's own name and prompt. */
+export interface SessionChunk {
+  /** `<sessionId>:<entryId>`, or `<sessionId>:session`. */
+  id: string;
+  sessionId: string;
+  entryId: string;
+  /** Lowercased. */
+  ownerEmail?: string;
+  guruId: string;
+  repo?: string;
+  role: "user" | "assistant" | "tool" | "summary" | "session";
+  tool?: string;
+  isError?: boolean;
+  createdAt: string;
+  text: string;
+}
+
+export type ChunkSearchMode = "text" | "semantic" | "hybrid";
+
+export interface ChunkQuery {
+  text: string;
+  mode: ChunkSearchMode;
+  filter: { ownerEmail?: string; guruId?: string; repo?: string; role?: SessionChunk["role"]; sessionId?: string; since?: string; until?: string };
+  limit: number;
+}
+
+export interface ChunkHit {
+  chunk: SessionChunk;
+  score?: number;
+}
+
+/** Thrown by a store that can't run the asked-for search mode (the memory store: no Atlas). */
+export class SearchUnavailableError extends Error {}
+
+export interface SessionChunksCollection {
+  /** Inserts or replaces by id. */
+  upsertMany(chunks: SessionChunk[]): Promise<void>;
+  deleteForSession(sessionId: string): Promise<number>;
+  search(query: ChunkQuery): Promise<ChunkHit[]>;
+}
+
+export interface AdminApprovalsCollection {
+  /** The run's approval, pending or answered, or null. */
+  get(runId: string): Promise<AdminApproval | null>;
+  /** Stores `approval` for its run unless one is still pending there (undecided and unexpired).
+   * False when one is. */
+  claim(approval: AdminApproval, nowIso: string): Promise<boolean>;
+  /** Records the decision on the run's approval if it is this one, undecided and unexpired. */
+  decide(runId: string, approvalId: string, decision: "approved" | "denied", by: string, nowIso: string): Promise<boolean>;
+  /** Removes the run's approval only if it is still this one. */
+  clear(runId: string, approvalId: string): Promise<void>;
+}
+
+export interface AdminAuditCollection {
+  insert(entry: AdminAuditEntry): Promise<void>;
+  /** Newest first. */
+  listRecent(limit: number): Promise<AdminAuditEntry[]>;
 }
 
 export interface Environment {
@@ -899,5 +1014,8 @@ export interface Store {
   browserCaptures: BrowserCapturesCollection;
   formattedSessions: FormattedSessionsCollection;
   previews: PreviewsCollection;
+  adminAudit: AdminAuditCollection;
+  adminApprovals: AdminApprovalsCollection;
+  sessionChunks: SessionChunksCollection;
   close(): Promise<void>;
 }

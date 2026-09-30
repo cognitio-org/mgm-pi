@@ -614,6 +614,25 @@ research on Sonnet; review on Opus).
   `gh` until every caller has moved.
 - **E6.3 Slack** (optional): incoming slash command to start a session, outgoing summary on finish.
 
+### E8 Sysop tools: self-administration, session search and transcripts (epic #291)
+
+Spec: `docs/specs/sysop-tools.md`. Agents administer and develop Outfitter and Kernal through a few
+built-in tools instead of working out the API.
+
+- **E8.1 Op registry** (#286, PR #292): `admin/ops.ts`, `POST /api/admin/ops` for a Dongle, the
+  tape field `adminTools` (off, manage, operator; set only by a person in the web UI), and the
+  `adminAudit` collection.
+- **E8.2 Drive broker and approvals** (#287, PR #295): agentd's admin socket and the
+  `admin.request` / `admin.result` frames; deletes and admin-tape changes wait for the owner's card
+  on the floppy page.
+- **E8.3 Kernal tools** (#288, PR #293): `outfitter_tapes`, `outfitter_environments`,
+  `outfitter_sessions`, under a token budget.
+- **E8.4 Session search and transcripts** (#289, PRs #298 and the Kernal PR): `sessionChunks`, Atlas
+  Search plus an auto-embedded vector index plus `$rankFusion`, `session_search` and
+  `session_transcript`, local laptop search, and opt-in `/sessions sync`.
+- **E8.5 Skill, Sysop tape and UI** (#290): the `outfitter-admin` skill (`kernal/skills`), the
+  seeded `sysop` tape, and the Admin tools setting in the tape editor.
+
 ### E7 Hardening and cost tuning
 
 - Pub/Sub transport option (agentd publishes events, API consumes via push) to remove held sockets.

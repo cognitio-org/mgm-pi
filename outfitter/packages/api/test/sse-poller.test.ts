@@ -191,6 +191,49 @@ describe("SsePoller liveness (#182)", () => {
   });
 });
 
+describe("SsePoller live thought (#285)", () => {
+  function thoughtFrames(frames: string[]): Array<{ text: string | null }> {
+    return frames
+      .filter((f) => f.startsWith("event: live_thought"))
+      .map((f) => JSON.parse(f.slice(f.indexOf("data:") + 5).trim()) as { text: string | null });
+  }
+
+  test("publishes the open thought from the store, then one clear", async () => {
+    const store = new MemoryStore();
+    const webHub = new SseHub();
+    const poller = new SsePoller(webHub, store, 5);
+    await seedSession(store, "st");
+    const { reply, frames } = fakeSubscriber();
+    webHub.subscribe("st", reply);
+    poller.watch("st");
+
+    const now = new Date().toISOString();
+    await store.runs.insert({
+      id: "rt",
+      sessionId: "st",
+      state: "running",
+      lastAckedSeq: 0,
+      pending: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+    await poller.pollOne("st");
+    assert.equal(thoughtFrames(frames).length, 0, "a running run with no thought publishes nothing");
+
+    await store.runs.update("rt", { liveThought: "planning the edit" });
+    await poller.pollOne("st");
+    await poller.pollOne("st");
+    assert.deepEqual(thoughtFrames(frames), [{ text: "planning the edit" }]);
+
+    await store.runs.update("rt", { liveThought: null });
+    frames.length = 0;
+    await poller.pollOne("st");
+    await poller.pollOne("st");
+    assert.deepEqual(thoughtFrames(frames), [{ text: null }]);
+    poller.stop();
+  });
+});
+
 describe("SsePoller entry window (review fix)", () => {
   test("publishes a later run's entries even though agentd's seq restarted below the last one seen", async () => {
     const store = new MemoryStore();

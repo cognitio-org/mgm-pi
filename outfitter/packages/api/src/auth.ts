@@ -28,9 +28,10 @@
 // with verifyIdToken and require the token's email to match AGENT_SA_EMAIL.
 //
 // OUTFITTER_DEV=1 replaces the IAP/agentd checks with fixed dev values so the stack runs with no
-// GCP project; personal API tokens are verified the same way in dev and prod (identityFromRequest
-// only takes the devMode shortcut when no `outf_` bearer is present, and identityFromLinkRequest
-// never takes it at all -- OUTFITTER_TOKEN is meant to behave identically everywhere).
+// GCP project. On the web/all role dev mode wins over any bearer, a Dongle included (tokens.test.ts
+// pins this), so there every caller is the dev person -- a human writer for gurus-service.ts.
+// identityFromLinkRequest never takes the shortcut: on the link role a token is verified the same
+// way in dev and prod.
 
 import { OAuth2Client } from "google-auth-library";
 import type { FastifyReply, FastifyRequest } from "fastify";
@@ -46,6 +47,10 @@ export interface Identity {
    * `operator: false`, even when its owner is on OUTFITTER_OPERATORS, because that role does not
    * register /api/operator/* (see identityFromLinkRequest below). */
   operator: boolean;
+  /** Set when the caller used an `outf_` API token (a Dongle) rather than IAP or dev mode. A
+   * Dongle is how an agent reaches the API from a laptop, so a few writes that only a person may
+   * make (a tape's `adminTools`, gurus-service.ts) refuse it. */
+  viaToken?: boolean;
 }
 
 /** True when `email` (trimmed, case-insensitive) is in `operators`. */
@@ -94,7 +99,7 @@ export async function identityFromApiToken(bearer: string, store: TokenStore): P
       // best-effort; a failed lastUsedAt write must never block auth.
     }
   }
-  return { email: record.ownerEmail, operator: false };
+  return { email: record.ownerEmail, operator: false, viaToken: true };
 }
 
 /** The "link" role's only /api/* credential (see the module doc comment above): a personal API
@@ -121,7 +126,7 @@ export async function identityFromRequest(req: RequestLike, config: Config, stor
   const bearer = bearerFromHeader(req);
   if (bearer?.startsWith(TOKEN_PREFIX)) {
     const identity = await identityFromApiToken(bearer, store);
-    return { email: identity.email, operator: isOperator(identity.email, config.operators) };
+    return { email: identity.email, operator: isOperator(identity.email, config.operators), viaToken: true };
   }
 
   const jwt = headerString(req, "x-goog-iap-jwt-assertion");

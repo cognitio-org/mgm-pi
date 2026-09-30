@@ -458,6 +458,47 @@ describe("agentd <-> api WebSocket", () => {
     await app.fastify.close();
   });
 
+  test("a thinking delta is stored on the run, and the assistant entry clears it (#285)", async () => {
+    const app = await buildTestApp();
+    const { session, runId, runToken } = await makeRunningSession(app);
+    const agent = await openAgentSocket(app, runId);
+    sendHello(agent, runId, session.id, runToken);
+    await agent.nextMessage(); // run.spec
+
+    agent.send({
+      t: "event",
+      seq: 1,
+      event: {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_delta",
+          contentIndex: 0,
+          delta: "plan",
+          partial: { role: "assistant", content: [{ type: "thinking", thinking: "planning the edit" }] },
+        },
+      },
+    });
+    assert.deepEqual(await agent.nextMessage(), { t: "ack", seq: 1 });
+    assert.equal((await app.store.runs.findById(runId))?.liveThought, "planning the edit");
+
+    agent.send({
+      t: "entry",
+      seq: 2,
+      entry: {
+        id: "a1",
+        type: "message",
+        message: { role: "assistant", content: [{ type: "thinking", thinking: "planning the edit" }, { type: "text", text: "done" }] },
+      },
+    });
+    assert.deepEqual(await agent.nextMessage(), { t: "ack", seq: 2 });
+    assert.equal((await app.store.runs.findById(runId))?.liveThought, null);
+
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
   test("pi entries and events stamp lastActivityAt; a heartbeat moves only lastSeenAt (#182)", async () => {
     const app = await buildTestApp();
     const { session, runId, runToken } = await makeRunningSession(app);

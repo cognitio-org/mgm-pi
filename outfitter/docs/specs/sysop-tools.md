@@ -65,7 +65,17 @@ Decisions (confirmed with the owner):
   are queryable (cached a minute) before searching.
 - **Results:** printed prefixes work as filters; 2 hits per session on pages over 5 sessions, 150-char
   snippets, the 12k cap; `around` a hit on an abandoned branch reads that branch.
-- **Imports index only the entries they added,** so repeated syncs don't re-embed a session.
+- **Imports index only the entries they added,** so repeated syncs don't re-embed a session. An
+  import whose body has an unparsable line (a live session read mid-write) is a 400 and stores nothing.
+- **Short ids are a UUID's last 8 characters,** not its first: pi's session ids are UUIDv7, whose head
+  is a timestamp shared by sessions started in the same minute. Ops accept a unique prefix or the
+  printed tail, and an ambiguous one is an error that says so.
+- **Kernal side (PR4b):** cloud and local results come in two short sections rather than one
+  rank-fused list; local search is an in-process cache keyed by file mtime and size (no index file);
+  `/sessions sync` is a slash command (no `kernal sessions` CLI); uploaded sessions aren't marked
+  `origin: "laptop"`; the tools leave out `until`, `role`, `explain` and `roles` to keep definitions
+  small. Local search scans `<agent dir>/sessions/<cwd>/*.jsonl` only, not subagents' nested runs or
+  a custom `sessionDir`.
 
 ## Changes since the plan (PR2)
 - **Approvals reuse the session's confirm card,** answered through `POST /api/sessions/:id/ui-response`

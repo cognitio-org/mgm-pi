@@ -215,28 +215,46 @@ describe("sessions.search and sessions.transcript ops (memory store)", () => {
     const store = await seeded();
     const all = (await runAdminOp({ store, models }, caller, "sessions.search", { query: "403", mode: "text" })) as { ok: boolean; text: string };
     assert.equal(all.ok, true);
-    assert.match(all.text, /^11111111 {2}fix login {2}tape=coder {2}o\/r {2}/m);
+    assert.match(all.text, /^00000001 {2}fix login {2}tape=coder {2}o\/r {2}/m);
     assert.match(all.text, /^ {2}\[e\d+\] bash ✗: bash \(error\): error: 403 Forbidden$/m);
-    assert.match(all.text, /^22222222 /m);
+    assert.match(all.text, /^00000002 /m);
     const mine = (await runAdminOp({ store, models }, caller, "sessions.search", { query: "403", mode: "text", owner: "me" })) as { text: string };
-    assert.doesNotMatch(mine.text, /22222222/);
+    assert.doesNotMatch(mine.text, /00000002/);
   });
 
   test("a printed 8-char session prefix works as the session filter; a bad since is an error", async () => {
     const store = await seeded();
     const res = (await runAdminOp({ store, models }, caller, "sessions.search", { query: "403", mode: "text", session: "22222222" })) as { ok: boolean; text: string };
     assert.equal(res.ok, true);
-    assert.match(res.text, /^22222222 /);
-    assert.doesNotMatch(res.text, /11111111/);
+    assert.match(res.text, /^00000002 /);
+    assert.doesNotMatch(res.text, /00000001/);
     const bad = await runAdminOp({ store, models }, caller, "sessions.search", { query: "403", mode: "text", since: "last week" });
     assert.deepEqual(bad, { ok: false, error: "since: use 7d, 12h or an ISO date" });
+  });
+
+  test("UUIDv7 sessions started together print distinct tails, and a tail reads the right one", async () => {
+    const store = await seeded();
+    const a = "01a0f23e-5392-7000-8000-00000000aaaa";
+    const b = "01a0f23e-5b68-7000-8000-00000000bbbb";
+    for (const [sid, word] of [[a, "alpha"], [b, "bravo"]]) {
+      await store.sessions.insert({ ...session, id: sid, name: word });
+      await store.entries.insertIfNew(sid, 1, user(`${word} rollout`));
+      await new SessionIndexer(store).reindexSession(sid);
+    }
+    const res = (await runAdminOp({ store, models }, caller, "sessions.search", { query: "rollout", mode: "text" })) as { text: string };
+    assert.match(res.text, /^0000aaaa {2}alpha/m);
+    assert.match(res.text, /^0000bbbb {2}bravo/m);
+    const tr = (await runAdminOp({ store, models }, caller, "sessions.transcript", { id: "0000bbbb" })) as { text: string };
+    assert.match(tr.text, /bravo rollout/);
+    const ambiguous = await runAdminOp({ store, models }, caller, "sessions.transcript", { id: "01a0f23e" });
+    assert.match((ambiguous as { error: string }).error, /ambiguous/);
   });
 
   test("a Drive searches and reads only its owner's sessions", async () => {
     const store = await seeded();
     const drive: AdminCaller = { email: "ada@example.com", via: "drive", operator: false };
     const res = (await runAdminOp({ store, models }, drive, "sessions.search", { query: "403", mode: "text" })) as { text: string };
-    assert.doesNotMatch(res.text, /22222222/);
+    assert.doesNotMatch(res.text, /00000002/);
     const other = await runAdminOp({ store, models }, drive, "sessions.transcript", { id: "22222222" });
     assert.deepEqual(other, { ok: false, error: "a Drive can read only its owner's sessions" });
   });
@@ -266,7 +284,7 @@ describe("sessions.search and sessions.transcript ops (memory store)", () => {
     const store = await seeded();
     const res = (await runAdminOp({ store, models }, caller, "sessions.transcript", { id: "11111111" })) as { ok: boolean; text: string };
     assert.equal(res.ok, true);
-    assert.match(res.text.split("\n")[0], /^session 11111111 {2}"fix login" {2}tape=coder {2}o\/r {2}.* {2}3 entries$/);
+    assert.match(res.text.split("\n")[0], /^session 00000001 {2}"fix login" {2}tape=coder {2}o\/r {2}.* {2}3 entries$/);
     assert.match(res.text, /✗ bash: error: 403 Forbidden/);
     const missing = await runAdminOp({ store, models }, caller, "sessions.transcript", { id: "99999999" });
     assert.deepEqual(missing, { ok: false, error: 'no session "99999999"' });
@@ -289,6 +307,25 @@ describe("the index follows entries, imports and formats", () => {
     }
     assert.equal(hits.length, 1);
     agent.close();
+    await app.fastify.close();
+  });
+
+  test("an import with a torn last line is a 400 and stores nothing; a good one is indexed", async () => {
+    const app = await buildTestApp();
+    const sid = "01a0f23e-0000-7000-8000-00000000cccc";
+    const header = JSON.stringify({ type: "session", version: "3", id: sid, timestamp: now, cwd: "/w" });
+    const good = JSON.stringify(user("importable words here"));
+    const torn = await app.fastify.inject({ method: "PUT", url: `/api/sessions/${sid}/import`, payload: `${header}\n${good}\n{"type":"mess`, headers: { "content-type": "application/x-ndjson" } });
+    assert.equal(torn.statusCode, 400);
+    assert.equal(await app.store.sessions.findById(sid), null);
+    const ok = await app.fastify.inject({ method: "PUT", url: `/api/sessions/${sid}/import`, payload: `${header}\n${good}\n`, headers: { "content-type": "application/x-ndjson" } });
+    assert.equal(ok.statusCode, 200);
+    let hits: unknown[] = [];
+    for (let i = 0; i < 100 && !hits.length; i++) {
+      hits = await app.store.sessionChunks.search({ text: "importable", mode: "text", filter: {}, limit: 5 });
+      if (!hits.length) await new Promise((r) => setTimeout(r, 10));
+    }
+    assert.equal(hits.length, 1);
     await app.fastify.close();
   });
 

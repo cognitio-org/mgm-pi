@@ -1,0 +1,80 @@
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_89f239d3945616::t_9f0749f7f1f01a 7-8,22-23,84,94-95,111-113,242-254,266,269-279,479-480,483-485,609-615,736,746-751,756
+outfitter/packages/web/src/components/TranscriptRail.tsx
+  s_89f239d3945616::t_88b484acd7be38 5-6,22-24,29,167,171-172,384-390,429-512,570-573,577-587,589-590,592-594
+  s_89f239d3945616::t_9f0749f7f1f01a 515-518,520-535,603-604
+  s_89f239d3945616::t_ab69ef38cbd1a9 513-514,519,557,563-564,566-569,599-602,606-615
+outfitter/packages/web/src/components/ThoughtBubbleToggle.tsx
+  s_89f239d3945616::t_9f0749f7f1f01a 1-24
+  s_89f239d3945616::t_499f63c716ad28 25-26
+outfitter/packages/api/test/live-thought.test.ts
+  s_75030827a6b9cd::t_adaec51f7faedd 1-38
+outfitter/packages/web/src/styles/layout.css
+  s_89f239d3945616::t_9f0749f7f1f01a 339,345,996-1028,1092,1256,1260,1272,1278,1289,1297,1302
+  s_89f239d3945616::t_78360921ccbdfa 325-338,340-344,346,1029,1089-1091,1093,1144-1149,1249-1255,1257-1259,1261-1271,1273-1277,1279-1288,1290-1296,1298-1301,1303
+outfitter/packages/web/test/thought-bubble.test.tsx
+  s_89f239d3945616::t_472a163270a683 69,76-150,157,159
+  s_89f239d3945616::t_e16c92d2d23daf 1-68,70-75,151-156,158,160
+outfitter/packages/api/src/live-thought.ts
+  s_75030827a6b9cd::t_7525b3d50022ce 1-33
+outfitter/docs/protocol.md
+  s_89f239d3945616::t_0c8950e6f7f99d 414
+outfitter/packages/web/src/hooks/useSessionStream.ts
+  s_89f239d3945616::t_dd3c704efba780 25-28,93-131,150,152-154,172-173,180-184,201-202,217-229,263
+outfitter/packages/web/src/lib/beats.ts
+  s_89f239d3945616::t_a43a2627c5baea 32-43,233-241
+outfitter/packages/api/src/agentlink.ts
+  s_cb45f2d4b61e50::t_1df95be564646f 39,42-45,363-369,1482-1484,1519-1521,1540-1541,1765-1817
+outfitter/packages/api/src/routes/sessions.ts
+  s_cb45f2d4b61e50::t_420e6a11f847d8 442-445
+outfitter/packages/api/src/sse.ts
+  s_cb45f2d4b61e50::t_b9a817b7b4e9fb 10,99-102,131-132,273-280
+outfitter/packages/api/src/store/types.ts
+  s_cb45f2d4b61e50::t_341aa983e9d3ec 154-158
+outfitter/packages/web/src/lib/thought-bubble.ts
+  s_29f86cb94f6ba7::t_222e622f790d75 1-21
+outfitter/packages/web/test/beats.test.ts
+  s_89f239d3945616::t_1092918ae49194 2,204-240
+outfitter/packages/web/test/session-stream.test.ts
+  s_89f239d3945616::t_05baa0ef7cad71 2,112-130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "fc40d72627c8d2c455e67ba256500ceca7f95275",
+  "prompts": {},
+  "sessions": {
+    "s_29f86cb94f6ba7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a551dfbd676333251",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_75030827a6b9cd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a0f1d9-46ca-7e41-b680-4b8de421506e",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_89f239d3945616": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b3b2a115-86e8-4751-b3c1-916d3ff8cc0e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_cb45f2d4b61e50": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ab16cfde9abd09e4e",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

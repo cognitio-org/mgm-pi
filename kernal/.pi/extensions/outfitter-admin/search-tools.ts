@@ -10,7 +10,7 @@
  */
 import type { ToolResult } from "./tools.ts";
 import type { AdminTransport } from "./transport.ts";
-import { loadAll, localTranscript, renderLocal, searchLocal, type LocalSession } from "./local-sessions.ts";
+import { capText, loadAll, localTranscript, renderLocal, searchLocal, shortSid, sidMatches, type LocalSession } from "./local-sessions.ts";
 
 export interface SearchToolDeps {
   transport?: AdminTransport;
@@ -64,10 +64,12 @@ function text(t: string, isError = false): ToolResult {
   return isError ? { content: [{ type: "text", text: t }], isError: true } : { content: [{ type: "text", text: t }] };
 }
 
-function sinceIso(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
+/** `30m`, `12h`, `7d`, `2w`, or an ISO date, as an ISO time; undefined when it is none of these. The
+ * same forms Outfitter accepts, and /sessions sync uses this too. */
+export function sinceIso(value: unknown, now = Date.now()): string | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
   const rel = /^(\d+)\s*([mhdw])$/i.exec(value.trim());
-  if (rel) return new Date(Date.now() - Number(rel[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 }[rel[2].toLowerCase() as "m"]).toISOString();
+  if (rel) return new Date(now - Number(rel[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 }[rel[2].toLowerCase() as "m"]).toISOString();
   const t = Date.parse(value);
   return Number.isFinite(t) ? new Date(t).toISOString() : undefined;
 }
@@ -80,7 +82,11 @@ export async function runSessionSearch(p: Record<string, any>, deps: SearchToolD
   const wantLocal = scope !== "cloud" && !!deps.localDir;
   if (!wantCloud && !wantLocal) return text(scope === "local" ? "no local sessions here" : "no Outfitter connection: set OUTFITTER_API and OUTFITTER_TOKEN", true);
   const limit = typeof p.limit === "number" ? Math.min(Math.max(Math.floor(p.limit), 1), 25) : 10;
+  const since = sinceIso(p.since);
+  if (p.since !== undefined && !since) return text("since: use 7d, 12h or an ISO date", true);
 
+  // The local scan runs while the cloud answers.
+  const localSessions = wantLocal ? loadAll(deps.localDir!) : undefined;
   const cloud = wantCloud
     ? await deps.transport!.call(
         "sessions.search",
@@ -89,29 +95,29 @@ export async function runSessionSearch(p: Record<string, any>, deps: SearchToolD
       )
     : undefined;
   let local = "";
-  if (wantLocal) {
-    // Sessions the cloud already listed (teleported or synced) are shown once, from the cloud.
+  if (localSessions) {
+    // Sessions the cloud already listed (teleported or synced) are shown once, from the cloud. Both
+    // sides print a UUID's random tail, so equal short ids are the same session.
     const shown = new Set<string>();
-    if (cloud?.ok) for (const m of cloud.text.matchAll(/^([0-9a-f]{8})\b/gm)) shown.add(m[1]);
-    const sessions = await loadAll(deps.localDir!);
-    const hits = searchLocal(sessions, query, { limit, since: sinceIso(p.since) }).filter((h) => !shown.has(h.session.id.slice(0, 8)));
-    local = renderLocal(hits, query);
+    if (cloud?.ok) for (const m of cloud.text.matchAll(/^(\S{8})\s/gm)) shown.add(m[1]);
+    local = renderLocal(searchLocal(await localSessions, query, { limit, since, exclude: shown }), query);
   }
   if (!wantLocal) return cloud!.ok ? text(cloud!.text) : text(cloud!.error, true);
   if (!wantCloud) return text(local || "no matches");
   const parts: string[] = [];
   parts.push(cloud!.ok ? `cloud:\n${cloud!.text}` : `cloud: ${cloud!.error}`);
   parts.push(`local:\n${local || "no matches"}`);
-  return text(parts.join("\n"));
+  return text(capText(parts.join("\n")));
 }
 
-async function findLocal(dir: string | undefined, id: string): Promise<LocalSession | undefined> {
+async function findLocal(dir: string | undefined, id: string): Promise<LocalSession | { error: string } | undefined> {
   if (!dir || id.length < 8) return undefined;
   const all = await loadAll(dir);
   const exact = all.find((s) => s.id === id);
   if (exact) return exact;
-  const prefixed = all.filter((s) => s.id.startsWith(id));
-  return prefixed.length === 1 ? prefixed[0] : undefined;
+  const matches = all.filter((s) => sidMatches(s.id, id));
+  if (matches.length > 1) return { error: `session "${id}" is ambiguous here: ${matches.slice(0, 5).map((s) => shortSid(s.id)).join(", ")}` };
+  return matches[0];
 }
 
 export async function runSessionTranscript(p: Record<string, any>, deps: SearchToolDeps, signal?: AbortSignal): Promise<ToolResult> {
@@ -126,9 +132,12 @@ export async function runSessionTranscript(p: Record<string, any>, deps: SearchT
     maxChars: typeof p.maxChars === "number" ? p.maxChars : undefined,
   };
   const local = await findLocal(deps.localDir, id);
+  if (local && "error" in local) return text(local.error, true);
   if (local) {
     const out = await localTranscript(local, opts);
-    return "error" in out ? text(out.error, true) : text(out.text);
+    if (!("error" in out)) return text(out.text);
+    // A teleported session goes on in the cloud: an entry the local copy lacks may be there.
+    if (!deps.transport || !/^no entry /.test(out.error)) return text(out.error, true);
   }
   if (!deps.transport) return text(`no local session "${id}", and no Outfitter connection`, true);
   const res = await deps.transport.call("sessions.transcript", { id, ...Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined)) }, { signal });

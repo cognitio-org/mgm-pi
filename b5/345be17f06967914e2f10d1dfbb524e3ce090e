@@ -1,0 +1,14 @@
+outfitter/packages/web/src/styles/pages.css
+  h_69b863911ebf05 874-876,879,910,933,935,1080-1085
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "b5345be17f06967914e2f10d1dfbb524e3ce090e",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

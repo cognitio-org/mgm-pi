@@ -7,6 +7,7 @@
 // for SessionTranscript's minimal components (see ../components/entries).
 
 import type { PiEntry } from "../api/client.ts";
+import { GEMINI_EMPTY_STOP_TYPE, geminiEmptyStopAction, geminiEmptyStopNote } from "./gemini-empty-stop.ts";
 
 export type UserImage = { mimeType: string; data: string };
 
@@ -178,9 +179,13 @@ export function entryToViews(entry: PiEntry): EntryView[] {
       if (customType === PLAYWRIGHT_CHECK_TYPE) {
         return [{ kind: "custom", id, customType, text: textField(entry.data, "text") }];
       }
+      if (customType === GEMINI_EMPTY_STOP_TYPE) return [geminiEmptyStopView(entry)];
       return [{ kind: "custom", id, customType }];
     }
     case "custom_message":
+      // display is otherwise ignored, so a hidden continuation would show up as a system line
+      // of the model instruction. Only this marker is special-cased.
+      if (String(entry.customType ?? "") === GEMINI_EMPTY_STOP_TYPE) return [geminiEmptyStopView(entry)];
       return [{ kind: "system", id, text: textOf(entry.content) }];
     case "label":
       return [{ kind: "label", id, targetId: String(entry.targetId ?? ""), label: entry.label as string | undefined }];
@@ -209,6 +214,11 @@ export function failedAttemptCopy(view: Extract<EntryView, { kind: "assistant-fa
     default:
       return { headline: "Model call failed", note: `${cause}.` };
   }
+}
+
+function geminiEmptyStopView(entry: PiEntry): EntryView {
+  const text = geminiEmptyStopNote(geminiEmptyStopAction(entry));
+  return { kind: "custom", id: entry.id, customType: GEMINI_EMPTY_STOP_TYPE, ...(text ? { text } : {}) };
 }
 
 function isAssistantEntry(entry: PiEntry): boolean {

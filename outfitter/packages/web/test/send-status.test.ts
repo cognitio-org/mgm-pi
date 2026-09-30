@@ -3,6 +3,7 @@ import type { PiEntry } from "../src/api/client.ts";
 import {
   deriveSessionActivity,
   findEcho,
+  isFinalAssistant,
   nextSendAnchor,
   notePendingRunState,
   quietLabel,
@@ -20,6 +21,14 @@ function user(id: string, text: string): PiEntry {
 }
 function assistant(id: string, text: string): PiEntry {
   return { id, type: "message", message: { role: "assistant", content: [{ type: "text", text }] } };
+}
+/** Gemini thought-only STOP: stopReason stop, a thinking block, no text and no tool call. */
+function thoughtOnly(id: string, extra?: Record<string, unknown>): PiEntry {
+  return {
+    id,
+    type: "message",
+    message: { role: "assistant", stopReason: "stop", content: [{ type: "thinking", thinking: "still pinging" }], ...extra },
+  };
 }
 
 const history = [user("u0", "earlier"), assistant("a0", "earlier reply")];
@@ -92,6 +101,56 @@ describe("deriveSessionActivity", () => {
     expect(a.phase).toBe("none");
     expect(a.label).toBeNull();
     expect(a.showOptimistic).toBe(false);
+  });
+
+  it("a thought-only stop is not the reply while the run is still going", () => {
+    const p = notePendingRunState(pending({ acceptedAt: T0 }), "running")!;
+    const entries = [...history, user("u1", "fix the bug"), thoughtOnly("a1")];
+    const a = derive({ runState: "running", pending: p, entries });
+    expect(a.phase).toBe("working");
+    expect(a.label).toBe("Working…");
+    // #278: a failed attempt while running is still not the reply, text or not.
+    const failed: PiEntry = {
+      id: "f1",
+      type: "message",
+      message: { role: "assistant", stopReason: "error", errorMessage: "terminated", content: [{ type: "text", text: "Let me write the report." }] },
+    };
+    expect(derive({ runState: "running", pending: p, entries: [...history, user("u1", "fix the bug"), failed] }).phase).toBe("working");
+  });
+
+  it("a thought-only stop answers the send once the run has settled", () => {
+    let p = notePendingRunState(pending({ acceptedAt: T0 }), "running");
+    p = notePendingRunState(p, "idle")!;
+    const entries = [...history, user("u1", "fix the bug"), thoughtOnly("a1")];
+    expect(derive({ runState: "idle", pending: p, entries }).phase).toBe("none");
+    const failedRun = notePendingRunState(p, "failed")!;
+    expect(derive({ runState: "failed", pending: failedRun, entries }).phase).toBe("none");
+    expect(derive({ runState: "stopped", pending: notePendingRunState(p, "stopped")!, entries }).phase).toBe("none");
+    expect(derive({ runState: undefined, pending: failedRun, entries }).phase).toBe("none");
+  });
+
+  it("visible text or a tool call stays final while running; whitespace and a thought do not", () => {
+    expect(isFinalAssistant(thoughtOnly("a1"), { runState: "running" })).toBe(false);
+    expect(isFinalAssistant(thoughtOnly("a1"), { runState: "idle" })).toBe(true);
+    expect(isFinalAssistant(thoughtOnly("a1"), { runState: "failed" })).toBe(true);
+    expect(isFinalAssistant(thoughtOnly("a1"), { runState: "stopped" })).toBe(true);
+    expect(isFinalAssistant(thoughtOnly("a1"))).toBe(true);
+    const blank = thoughtOnly("a2", { content: [{ type: "thinking", thinking: "x" }, { type: "text", text: " \n\t" }] });
+    expect(isFinalAssistant(blank, { runState: "running" })).toBe(false);
+    expect(isFinalAssistant(thoughtOnly("a3", { content: "   " }), { runState: "running" })).toBe(false);
+    expect(isFinalAssistant(assistant("a4", "done"), { runState: "running" })).toBe(true);
+    expect(isFinalAssistant(thoughtOnly("a5", { content: "done" }), { runState: "running" })).toBe(true);
+    const withCall = thoughtOnly("a6", { content: [{ type: "toolCall", id: "t1", name: "bash", arguments: {} }] });
+    expect(isFinalAssistant(withCall, { runState: "running" })).toBe(true);
+    expect(isFinalAssistant(thoughtOnly("a7", { stopReason: "toolUse" }), { runState: "idle" })).toBe(false);
+    expect(isFinalAssistant(thoughtOnly("a8", { stopReason: "pending" }), { runState: "idle" })).toBe(false);
+    const failed: PiEntry = {
+      id: "f1",
+      type: "message",
+      message: { role: "assistant", stopReason: "error", content: [{ type: "text", text: "half a reply" }] },
+    };
+    expect(isFinalAssistant(failed, { runState: "running" })).toBe(false);
+    expect(isFinalAssistant(failed, { runState: "failed" })).toBe(true);
   });
 
   it("an assistant entry that only calls tools is not the reply: still working", () => {

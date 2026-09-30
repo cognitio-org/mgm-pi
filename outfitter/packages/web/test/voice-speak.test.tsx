@@ -10,6 +10,7 @@ import type { PiEntry } from "../src/api/client.ts";
 import type { VoiceEngines } from "../src/hooks/useVoice.ts";
 import { HANDS_FREE_NO_SPEECH_MS, HANDS_FREE_SILENCE_MS } from "../src/hooks/useVoice.ts";
 import type { SpeechStarter } from "../src/hooks/useSpeaker.ts";
+import { deriveSessionActivity, notePendingRunState, type PendingSend } from "../src/lib/send-status.ts";
 import type { SpeechOutcome } from "../src/lib/voice-tts.ts";
 import type { VoiceCallbacks, VoiceResult } from "../src/lib/voice-engines.ts";
 
@@ -383,6 +384,65 @@ describe("hands-free", () => {
     expect(recs).toHaveLength(0); // still reading the retry's reply
     await act(async () => spoken[0].end());
     await flush();
+    expect(recs).toHaveLength(1);
+  });
+
+  const thoughtOnly = (id: string): PiEntry => ({
+    id,
+    type: "message",
+    message: { role: "assistant", stopReason: "stop", content: [{ type: "thinking", thinking: "still pinging" }] },
+  });
+
+  it("a thought-only stop is not the reply while the run is still going, and does not hand the turn back", async () => {
+    const thought = thoughtOnly("a1");
+    const sentByUser = user("u1", "fix the bug");
+    const pending = notePendingRunState(
+      { localId: "l", text: "fix the bug", sentAt: 0, acceptedAt: 0, baseline: 0, runStateAtSend: "stopped", sawChange: false, sawRunning: false } satisfies PendingSend,
+      "running",
+    )!;
+    expect(deriveSessionActivity({ runState: "running", pending, entries: [sentByUser, thought], now: 1000, lastProgressAt: 1000 }).phase).toBe("working");
+
+    prefs.handsFree = true;
+    await mount({ voiceSpeak: true });
+    await render({ agentBusy: true, entries: [sentByUser, thought] });
+    await flush();
+    expect(spoken).toHaveLength(0);
+    expect(recs).toHaveLength(0);
+  });
+
+  it("once the run is idle, a capped thought-only stop answers the send and hands the turn back", async () => {
+    const thought = thoughtOnly("a1");
+    const sentByUser = user("u1", "fix the bug");
+    let pending = notePendingRunState(
+      { localId: "l", text: "fix the bug", sentAt: 0, acceptedAt: 0, baseline: 0, runStateAtSend: "stopped", sawChange: false, sawRunning: false } satisfies PendingSend,
+      "running",
+    );
+    pending = notePendingRunState(pending, "idle");
+    expect(deriveSessionActivity({ runState: "idle", pending, entries: [sentByUser, thought], now: 1000, lastProgressAt: 1000 }).phase).toBe("none");
+
+    prefs.handsFree = true;
+    await mount({ voiceSpeak: true });
+    await render({ agentBusy: true, entries: [sentByUser, thought] });
+    expect(recs).toHaveLength(0);
+    await render({ agentBusy: false });
+    await flush();
+    expect(spoken).toHaveLength(0);
+    expect(recs).toHaveLength(1);
+  });
+
+  it("a real reply after a thought-only stop is read, and the mic waits until the agent is idle", async () => {
+    prefs.handsFree = true;
+    await mount({ voiceSpeak: true });
+    const thought = thoughtOnly("a1");
+    await render({ agentBusy: true, entries: [thought] });
+    expect(recs).toHaveLength(0);
+    await render({ agentBusy: true, entries: [thought, reply("a2", "Here is the answer.")] });
+    expect(spoken.map((s) => s.sentences)).toEqual([["Here is the answer."]]);
+    expect(recs).toHaveLength(0);
+    await act(async () => spoken[0].end());
+    await flush();
+    expect(recs).toHaveLength(0);
+    await render({ agentBusy: false });
     expect(recs).toHaveLength(1);
   });
 

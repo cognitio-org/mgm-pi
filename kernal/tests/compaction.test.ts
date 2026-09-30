@@ -150,12 +150,13 @@ describe("pinned content", async () => {
     { type: "message", message: { role: "assistant", content: [{ type: "text", text: "ok" }] } },
     { type: "custom_message", customType: "pi-memory", content: "remember: use pnpm" },
     { type: "custom", customType: "kernal-pin", data: { text: "API base is https://x/v1" } },
+    { type: "custom_message", customType: "kernal.gemini-empty-stop", content: "You stopped after a thought and sent no reply. Call the next tool or write the reply.", display: false },
     { type: "custom_message", customType: "compaction", content: "old summary" },
     { type: "message", message: { role: "user", content: "later question" } },
     { type: "custom", customType: "kernal-pin", data: { text: "in kept tail, not collected" } },
   ];
   test("collects the original request, extension messages and pins before the kept tail", () => {
-    const pins = collectPins(entries, 5);
+    const pins = collectPins(entries, 6);
     assert.deepEqual(pins, [
       { label: "original request", text: "Refactor the auth module" },
       { label: "pi-memory", text: "remember: use pnpm" },
@@ -165,7 +166,7 @@ describe("pinned content", async () => {
     assert.match(collectPins([{ type: "message", message: { role: "user", content: "x".repeat(5000) } }], 1)[0].text, /…\[truncated\]$/);
   });
   test("compose and strip round-trip so the model never sees the block", () => {
-    const pins = collectPins(entries, 5);
+    const pins = collectPins(entries, 6);
     const full = composeSummary(pins, "## Goal\nrefactor");
     assert.ok(full.startsWith("<pinned-context>\n[original request]\nRefactor the auth module"));
     assert.ok(full.endsWith("</pinned-context>\n\n## Goal\nrefactor"));

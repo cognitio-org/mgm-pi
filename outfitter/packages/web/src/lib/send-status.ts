@@ -114,6 +114,19 @@ function userText(e: PiEntry): string | null {
     .join("\n");
 }
 
+/** Text a person can read, or a tool call. A thinking block is neither. Visible text is string
+ * content, or a `text` block with a non-whitespace character. */
+export function hasVisibleReply(content: unknown): boolean {
+  if (typeof content === "string") return content.trim().length > 0;
+  if (!Array.isArray(content)) return false;
+  return content.some((block) => {
+    if (!block || typeof block !== "object") return false;
+    const b = block as { type?: unknown; text?: unknown };
+    if (b.type === "toolCall") return true;
+    return b.type === "text" && typeof b.text === "string" && b.text.trim().length > 0;
+  });
+}
+
 /** An assistant entry that ends the turn. Not one that stopped to call tools (stopReason "toolUse")
  * or is still streaming ("pending"): in a tool-using turn that is the *first* assistant entry, and
  * the run keeps working for minutes after it -- counting it as the reply dropped the status line
@@ -121,13 +134,18 @@ function userText(e: PiEntry): string | null {
  *
  * Nor, #278, an attempt pi is retrying. pi hides it from the model (a context_edit in `hidden`, see
  * entry-view's hiddenEntryIds) before retrying, but writes that edit after the message, so a failed
- * message alone is not final while the run is still running either: it is once the run settles. */
+ * message alone is not final while the run is still running either: it is once the run settles.
+ *
+ * Nor a stop with no visible text and no tool call while the run is still running. Gemini can finish
+ * on a thought and the turn continues; counting that as the reply idles the page in the middle of it.
+ * Once the run is idle, failed, stopped, or the state is unknown, that stop is final again. */
 export function isFinalAssistant(e: PiEntry, context?: { hidden?: ReadonlySet<string>; runState?: string }): boolean {
   if (e.type !== "message") return false;
-  const m = e.message as { role?: string; stopReason?: string } | undefined;
+  const m = e.message as { role?: string; stopReason?: string; content?: unknown } | undefined;
   if (m?.role !== "assistant" || m.stopReason === "toolUse" || m.stopReason === "pending") return false;
   if (context?.hidden?.has(e.id)) return false;
   if (m.stopReason === "error" && context?.runState === "running") return false;
+  if (context?.runState === "running" && !hasVisibleReply(m.content)) return false;
   return true;
 }
 

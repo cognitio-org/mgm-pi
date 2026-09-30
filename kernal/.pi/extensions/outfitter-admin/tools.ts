@@ -60,7 +60,7 @@ export const ADMIN_TOOLS: AdminToolDef[] = [
   {
     name: "outfitter_tapes",
     label: "Outfitter tapes",
-    description: "Manage Outfitter tapes (saved agent setups). meta lists models and limits. Deletes and admin-tape changes ask the user.",
+    description: "Manage Outfitter tapes (saved agent setups). meta lists models and limits. Deletes ask the user; admin tapes are a sysop's.",
     parameters: {
       type: "object",
       required: ["action"],

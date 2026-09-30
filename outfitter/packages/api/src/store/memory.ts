@@ -43,6 +43,8 @@ import type {
   BrowserCaptureSave,
   FormattedSession,
   FormattedSessionsCollection,
+  AdminAuditCollection,
+  AdminAuditEntry,
 } from "./types.ts";
 import type { VoicePrefs } from "../voice.ts";
 import { BROWSER_CAPTURES_PER_SESSION, entryInsertFields, type EntryInsertOptions } from "./types.ts";
@@ -863,6 +865,18 @@ class MemoryFormattedSessions implements FormattedSessionsCollection {
   }
 }
 
+class MemoryAdminAudit implements AdminAuditCollection {
+  private readonly rows: AdminAuditEntry[] = [];
+
+  async insert(entry: AdminAuditEntry): Promise<void> {
+    this.rows.push(clone(entry));
+  }
+
+  async listRecent(limit: number): Promise<AdminAuditEntry[]> {
+    return [...this.rows].sort((a, b) => b.id.localeCompare(a.id)).slice(0, limit).map(clone);
+  }
+}
+
 class MemoryPreviews implements PreviewsCollection {
   private readonly rows = new Map<string, Preview>();
 
@@ -912,6 +926,7 @@ export class MemoryStore implements Store {
   readonly browserRequests: BrowserRequestsCollection;
   readonly browserCaptures: BrowserCapturesCollection;
   readonly formattedSessions = new MemoryFormattedSessions();
+  readonly adminAudit = new MemoryAdminAudit();
   readonly previews = new MemoryPreviews();
 
   constructor() {

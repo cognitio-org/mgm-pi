@@ -15,13 +15,15 @@ import { registerSandboxRoutes } from "./sandbox.ts";
 import { registerPreviewRoutes } from "./previews.ts";
 import { registerIdeRoutes } from "./ide.ts";
 import { registerVoiceRoutes } from "./voice.ts";
+import { registerAdminRoutes } from "./admin.ts";
 
 export type { RouteContext } from "./context.ts";
 
 /** Which routes register depends on OutfitterRole (config.ts): "web" registers browser REST/SSE
  * plus token management, "link" registers teleport (registerTeleportRoutes), the side-panel
  * session routes (registerPanelRoutes), the browser companion (registerBrowserRoutes), and
- * GET /api/me — not gurus, operator, or token management — plus the ngrok hook (agentLink.register
+ * GET /api/me and POST /api/admin/ops (the Sysop tools' op registry, never operator ops on this
+ * role) — not the gurus REST routes, operator, or token management — plus the ngrok hook (agentLink.register
  * in server.ts adds /agent/ws separately), "all" (default, dev) registers everything. Every
  * /api/* route here (except /api/hooks/*) is gated by server.ts's auth preHandler: IAP-or-token
  * on "web"/"all", token-only on "link". */
@@ -39,6 +41,7 @@ export async function registerRoutes(app: FastifyInstance, ctx: RouteContext): P
     await registerProviderRoutes(app, ctx);
     await registerOperatorRoutes(app, ctx);
     await registerVoiceRoutes(app, ctx);
+    await registerAdminRoutes(app, ctx);
     await registerStaticRoutes(app);
   } else {
     // Teleport, plus the side panel and browser companion (docs/protocol.md "Browser companion").
@@ -46,6 +49,9 @@ export async function registerRoutes(app: FastifyInstance, ctx: RouteContext): P
     await registerTeleportRoutes(app, ctx);
     await registerPanelRoutes(app, ctx);
     await registerMeRoute(app, ctx);
+    // Sysop tools (#286): the admin op registry, for Kernal with a Dongle. Tokens are never
+    // operators here, so the registry's operator ops stay out of reach on this origin.
+    await registerAdminRoutes(app, ctx);
   }
   await registerBrowserRoutes(app, ctx);
   if (ctx.config.role !== "web") {

@@ -559,6 +559,23 @@ removed from `outfitter-store.ts` entirely, not left in as a fallback.
 token for that client ID *is* accepted, in `Proxy-Authorization`. The live-test identity uses it;
 see `deploy/README.md` "Live-test identity". Laptop clients still use personal tokens on link.)
 
+## Admin ops (Sysop tools, #286)
+
+`POST /api/admin/ops`, on both origins, with a personal API token (dev mode also accepts the dev
+identity). It is the laptop's way into the admin op registry (`packages/api/src/admin/ops.ts`); a
+Drive reaches the same registry through agentd's admin socket (#287), not this route.
+
+Request: `{op, args?, confirmed?}`. Reply, always `200` for an authenticated call:
+`{ok: true, text}` or `{ok: false, error, needsApproval?}`. `text` is compact, capped text meant
+for a model, not JSON to parse. Ops so far: `tapes.list|get|meta|create|update|delete`,
+`environments.list|get|create|update`, `sessions.list|get`.
+
+- A token caller is never a sysop, so operator ops are refused on both origins.
+- `delete`s, and writes to a tape that has `adminTools`, return `needsApproval: true` unless
+  `confirmed` is true (Kernal sends it after the person confirms in the TUI).
+- Setting a tape's `adminTools` is refused: only a person in the web UI sets it.
+- Every non-read op that passes those checks writes an `adminAudit` row.
+
 ## Browser companion
 
 The Chrome companion (`docs/specs/chrome-companion.md`) calls the **link** role with a Dongle

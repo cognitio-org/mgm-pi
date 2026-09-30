@@ -451,8 +451,44 @@ export interface Guru {
    * spec asks agentd to download code-server so the floppy's owner can open the Drive in VS Code in
    * the browser. Copied onto each run as it starts (Run.browserIde). */
   browserIde?: boolean;
+  /** Tape option, default off (Sysop tools, #286). Whether this tape's runs get the admin tools
+   * (outfitter_tapes and friends, through agentd's admin socket). "operator" also allows the
+   * sysop actions, and only when the session's owner is an operator. Set only by a person in the
+   * web UI (gurus-service.ts); an agent can never set or raise it. */
+  adminTools?: AdminToolsLevel;
   createdAt: string;
   updatedAt: string;
+}
+
+export type AdminToolsLevel = "off" | "manage" | "operator";
+
+/** One admin op an agent called (Sysop tools, #286): admin/ops.ts writes a row for every op that is
+ * not a read, including calls refused for rights or approval. */
+export interface AdminAuditEntry {
+  id: string;
+  at: string;
+  /** Email the op ran as: the Dongle's owner, or the Drive session's owner. */
+  actor: string;
+  /** "token" for a Dongle caller (laptop), "drive" for a Drive's broker call. */
+  via: "token" | "drive";
+  sessionId?: string;
+  runId?: string;
+  op: string;
+  /** The object the op named (a tape or environment id), when it has one. */
+  target?: string;
+  ok: boolean;
+  /** The one-line error, when `ok` is false. */
+  error?: string;
+  /** Whether the caller came with the person's approval (laptop TUI confirm, or a Drive's web
+   * approval card, then `approvalId`). */
+  approved: boolean;
+  approvalId?: string;
+}
+
+export interface AdminAuditCollection {
+  insert(entry: AdminAuditEntry): Promise<void>;
+  /** Newest first. */
+  listRecent(limit: number): Promise<AdminAuditEntry[]>;
 }
 
 export interface Environment {
@@ -904,5 +940,6 @@ export interface Store {
   browserCaptures: BrowserCapturesCollection;
   formattedSessions: FormattedSessionsCollection;
   previews: PreviewsCollection;
+  adminAudit: AdminAuditCollection;
   close(): Promise<void>;
 }

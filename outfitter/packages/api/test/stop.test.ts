@@ -320,6 +320,7 @@ describe("agentlink up-frame ordering", () => {
       browserRequests: inner.browserRequests,
       browserCaptures: inner.browserCaptures,
       formattedSessions: inner.formattedSessions,
+      adminAudit: inner.adminAudit,
       close: () => inner.close(),
     };
 

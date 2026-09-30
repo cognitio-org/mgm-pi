@@ -74,7 +74,7 @@ describe("DriveAdmin", () => {
     // A tape created during the wait with the exact prefix as its id must not become the target.
     await seedGuru(store, { id: "0f8e", name: "Innocent" });
     assert.deepEqual(await decideApproval(store, "r1", held.id, { email: OWNER }, true), { ok: true });
-    assert.deepEqual(await result, { ok: true, text: "deleted 0f8e2a3b" });
+    assert.deepEqual(await result, { ok: true, text: "deleted 2e3f4a5b" });
     assert.ok(await store.gurus.findById("0f8e"), "the tape created during the wait is untouched");
     const rows = await store.adminAudit.listRecent(5);
     assert.equal(rows.length, 1, "no audit row for the wait itself");

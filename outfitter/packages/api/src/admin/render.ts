@@ -5,11 +5,20 @@
 /** Default cap on one op's text, in characters (~3k tokens). */
 export const RESULT_CAP = 12_000;
 
-const UUID_HEAD = /^[0-9a-f]{8}-[0-9a-f]{4}-/i;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** UUIDs print as their first 8 characters, which ops accept back as a prefix; slugs stay whole. */
+/**
+ * UUIDs print as their last 8 characters, which ops accept back; slugs stay whole. The tail, not the
+ * head: pi's session ids are UUIDv7, whose first 8 characters are a timestamp shared by every session
+ * started in the same minute or so, while the tail is random.
+ */
 export function shortId(id: string): string {
-  return UUID_HEAD.test(id) ? id.slice(0, 8) : id;
+  return UUID.test(id) ? id.slice(-8) : id;
+}
+
+/** Whether `ref` names `id`: a unique prefix (4+ characters), or a UUID's printed tail. */
+function refMatches(id: string, ref: string): boolean {
+  return id.startsWith(ref) || (UUID.test(id) && ref.length >= 8 && id.endsWith(ref));
 }
 
 export type Resolved<T> = { ok: true; item: T } | { ok: false; error: string };
@@ -23,7 +32,7 @@ export function resolveRef<T extends { id: string }>(items: T[], ref: unknown, w
   const needle = ref.trim();
   const exact = items.find((t) => t.id === needle);
   if (exact) return { ok: true, item: exact };
-  const matches = needle.length >= 4 ? items.filter((t) => t.id.startsWith(needle)) : [];
+  const matches = needle.length >= 4 ? items.filter((t) => refMatches(t.id, needle)) : [];
   if (matches.length === 1) return { ok: true, item: matches[0] };
   if (matches.length > 1) {
     return { ok: false, error: `${what} "${needle}" is ambiguous: ${matches.slice(0, 5).map(label).join(", ")}` };

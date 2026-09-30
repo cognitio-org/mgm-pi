@@ -42,6 +42,44 @@ Decisions (confirmed with the owner):
 - **Agent-created tape ids** are slugs (`[a-z0-9-]`), so later calls stay short; UUID ids print
   as 8-character prefixes and any unique prefix of 4+ characters resolves.
 
+## Changes since the plan (PR4: session search)
+- **Ops only, no new REST routes:** `sessions.search` and `sessions.transcript` join the op registry,
+  so the laptop (`POST /api/admin/ops`) and a Drive (admin socket) share them. The web UI has its own
+  transcript view and doesn't need them.
+- **Spike (2026-09-30):** the live cluster is MongoDB 8.0.32 (so `$rankFusion` works), with 26
+  sessions and 1,534 entries (~8 MB) and no search indexes yet. `deploy/atlas-search.sh` (owner-run;
+  `DRY_RUN=1` is safe) creates both indexes and, with `BACKFILL=1`, chunks every session.
+- **Embedding:** `voyage-4-lite`, 512 dimensions, scalar quantization, to keep Voyage cost and M0
+  storage low; `SESSION_SEARCH_EMBED_MODEL` picks another model.
+- **No `entries.listPage` yet:** the transcript walks the active branch from `leafId`, which needs
+  the session's entries; sessions are small today. Revisit if one grows past a few thousand entries.
+- **One pi entry parser:** the chunker reuses the transcript renderer's `readableEntry`, and
+  `transcript.ts` has no api imports so Kernal can copy it unchanged.
+- **Redaction** runs over whole texts and tool-call arguments before anything is cut (a
+  `scrub` hook on `readableEntry`), and over every rendered transcript. Pattern-based only; scrubbing
+  a session's known secret values is a follow-up.
+- **A Drive reads its owner's sessions only** (`sessions.search` forces `owner:"me"`,
+  `sessions.transcript` refuses others'), so a prompt-injected agent can't pull someone else's
+  transcript. A laptop Dongle keeps today's REST reach.
+- **Missing indexes are an error, not "no matches":** the store checks that the needed Atlas indexes
+  are queryable (cached a minute) before searching.
+- **Results:** printed prefixes work as filters; 2 hits per session on pages over 5 sessions, 150-char
+  snippets, the 12k cap; `around` a hit on an abandoned branch reads that branch.
+- **Imports index only the entries they added,** so repeated syncs don't re-embed a session. An
+  import whose body has an unparsable line (a live session read mid-write) is a 400 and stores nothing.
+- **Text is the default search mode (2026-09-30):** the org's Voyage limit is 3 requests and 10k
+  tokens a minute, and semantic/hybrid embed every query. They run when asked for (`mode`), and when
+  they can't (not set up, rate-limited) the search falls back to keyword matches with a one-line note.
+- **Short ids are a UUID's last 8 characters,** not its first: pi's session ids are UUIDv7, whose head
+  is a timestamp shared by sessions started in the same minute. Ops accept a unique prefix or the
+  printed tail, and an ambiguous one is an error that says so.
+- **Kernal side (PR4b):** cloud and local results come in two short sections rather than one
+  rank-fused list; local search is an in-process cache keyed by file mtime and size (no index file);
+  `/sessions sync` is a slash command (no `kernal sessions` CLI); uploaded sessions aren't marked
+  `origin: "laptop"`; the tools leave out `until`, `role`, `explain` and `roles` to keep definitions
+  small. Local search scans `<agent dir>/sessions/<cwd>/*.jsonl` only, not subagents' nested runs or
+  a custom `sessionDir`.
+
 ## Changes since the plan (PR2)
 - **Approvals reuse the session's confirm card,** answered through `POST /api/sessions/:id/ui-response`
   (the api handles the run's own `admin:<id>` itself). There is no `/admin-approvals` route. The card

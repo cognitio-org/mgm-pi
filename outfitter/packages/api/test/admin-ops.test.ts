@@ -261,7 +261,7 @@ describe("runAdminOp", () => {
     await store.sessions.insert({ ...base, id: "11111111-aaaa-4aaa-8aaa-000000000001", name: "fix login", ownerEmail: "ada@example.com" });
     await store.sessions.insert({ ...base, id: "22222222-aaaa-4aaa-8aaa-000000000002", name: "other", ownerEmail: "bob@example.com" });
     const res = await runAdminOp({ store, models }, caller, "sessions.list", { owner: "me" });
-    assert.deepEqual(res, { ok: true, text: "11111111  fix login  tape=coder  o/r  open  just now" });
+    assert.deepEqual(res, { ok: true, text: "00000001  fix login  tape=coder  o/r  open  just now" });
     const one = await runAdminOp({ store, models }, caller, "sessions.get", { id: "22222222" });
     assert.match((one as { text: string }).text, /^owner: bob@example\.com$/m);
   });
@@ -315,7 +315,7 @@ describe("adminTools from a person", () => {
 describe("render helpers", () => {
   test("shortId keeps slugs and shortens UUIDs", () => {
     assert.equal(shortId("reviewer"), "reviewer");
-    assert.equal(shortId("0f8e2a3b-1c2d-4e5f-8a9b-0c1d2e3f4a5b"), "0f8e2a3b");
+    assert.equal(shortId("0f8e2a3b-1c2d-4e5f-8a9b-0c1d2e3f4a5b"), "2e3f4a5b", "the random tail, not the v7 timestamp head");
   });
 
   test("resolveRef: exact, unique prefix, ambiguous, missing", () => {

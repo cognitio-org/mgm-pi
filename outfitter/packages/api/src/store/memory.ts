@@ -46,10 +46,14 @@ import type {
   AdminAuditCollection,
   AdminApproval,
   AdminApprovalsCollection,
+  ChunkHit,
+  ChunkQuery,
+  SessionChunk,
+  SessionChunksCollection,
   AdminAuditEntry,
 } from "./types.ts";
 import type { VoicePrefs } from "../voice.ts";
-import { BROWSER_CAPTURES_PER_SESSION, entryInsertFields, type EntryInsertOptions } from "./types.ts";
+import { BROWSER_CAPTURES_PER_SESSION, SearchUnavailableError, entryInsertFields, type EntryInsertOptions } from "./types.ts";
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -867,6 +871,47 @@ class MemoryFormattedSessions implements FormattedSessionsCollection {
   }
 }
 
+/** Keyword search only: counts query words in each chunk. Semantic and hybrid need Atlas. */
+class MemorySessionChunks implements SessionChunksCollection {
+  private readonly rows = new Map<string, SessionChunk>();
+
+  async upsertMany(chunks: SessionChunk[]): Promise<void> {
+    for (const c of chunks) this.rows.set(c.id, clone(c));
+  }
+
+  async deleteForSession(sessionId: string): Promise<number> {
+    let n = 0;
+    for (const [id, c] of this.rows) {
+      if (c.sessionId === sessionId) {
+        this.rows.delete(id);
+        n++;
+      }
+    }
+    return n;
+  }
+
+  async search(query: ChunkQuery): Promise<ChunkHit[]> {
+    if (query.mode !== "text") throw new SearchUnavailableError(`${query.mode} search needs Atlas (Mongo with the session search indexes)`);
+    const words = query.text.toLowerCase().split(/\W+/).filter((w) => w.length >= 2);
+    if (!words.length) return [];
+    const f = query.filter;
+    const hits: ChunkHit[] = [];
+    for (const c of this.rows.values()) {
+      if (f.ownerEmail && c.ownerEmail !== f.ownerEmail) continue;
+      if (f.guruId && c.guruId !== f.guruId) continue;
+      if (f.repo && c.repo !== f.repo) continue;
+      if (f.role && c.role !== f.role) continue;
+      if (f.sessionId && c.sessionId !== f.sessionId) continue;
+      if (f.since && c.createdAt < f.since) continue;
+      if (f.until && c.createdAt > f.until) continue;
+      const text = c.text.toLowerCase();
+      const score = words.reduce((n, w) => n + (text.split(w).length - 1), 0);
+      if (score > 0) hits.push({ chunk: clone(c), score });
+    }
+    return hits.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || b.chunk.createdAt.localeCompare(a.chunk.createdAt)).slice(0, query.limit);
+  }
+}
+
 class MemoryAdminApprovals implements AdminApprovalsCollection {
   private readonly rows = new Map<string, AdminApproval>();
 
@@ -957,6 +1002,7 @@ export class MemoryStore implements Store {
   readonly formattedSessions = new MemoryFormattedSessions();
   readonly adminAudit = new MemoryAdminAudit();
   readonly adminApprovals = new MemoryAdminApprovals();
+  readonly sessionChunks = new MemorySessionChunks();
   readonly previews = new MemoryPreviews();
 
   constructor() {

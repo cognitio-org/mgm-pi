@@ -281,7 +281,15 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
     const lines = body.split("\n").filter((l) => l.trim().length > 0);
     if (lines.length === 0) return reply.code(400).send({ error: "empty JSONL body" });
 
-    const header = JSON.parse(lines[0]) as { type: string; id: string; cwd?: string; timestamp?: string };
+    // Every line parses before anything is stored: a torn last line (a live session read mid-write)
+    // is a 400, not a 500 halfway through the import.
+    let parsed: unknown[];
+    try {
+      parsed = lines.map((l) => JSON.parse(l));
+    } catch {
+      return reply.code(400).send({ error: "a line is not valid JSON (was the session still being written?)" });
+    }
+    const header = parsed[0] as { type: string; id: string; cwd?: string; timestamp?: string };
     if (header.type !== "session") return reply.code(400).send({ error: "first line must be a session header" });
     if (header.id !== id) return reply.code(400).send({ error: "header id does not match :id" });
 
@@ -312,12 +320,19 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
 
     let seq = await ctx.store.entries.maxSeq(id);
     let leafId = session.leafId;
-    for (const line of lines.slice(1)) {
-      const entry = JSON.parse(line) as PiEntry;
+    const added: PiEntry[] = [];
+    for (const value of parsed.slice(1)) {
+      const entry = value as PiEntry;
       const inserted = await ctx.store.entries.insertIfNew(id, ++seq, entry);
-      if (inserted) leafId = entry.id;
+      if (inserted) {
+        leafId = entry.id;
+        added.push(entry);
+      }
     }
     await ctx.store.sessions.update(id, { leafId, updatedAt: now, ...(existing && carried.patch ? carried.patch : {}) });
+    // Session search (#289): an imported (teleported or synced) session is searchable like any other.
+    // Only the entries this import added: a re-sync doesn't re-embed what is already indexed.
+    void ctx.indexer.indexEntries(id, added);
 
     return { id, imported: lines.length - 1 };
   });
@@ -551,6 +566,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
       ctx.store.browserShares.deleteForSession(session.id),
       ctx.store.browserRequests.deleteForSession(session.id),
       ctx.store.browserCaptures.deleteForSession(session.id),
+      ctx.indexer.removeSession(session.id),
     ]);
     await ctx.store.sessions.delete(session.id);
     ctx.sse.close(session.id);

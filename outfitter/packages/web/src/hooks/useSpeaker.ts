@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type PiEntry } from "../api/client.ts";
 import { prepareForSpeech, replyText, splitSentences } from "../lib/speech-text.ts";
 import { speakBuiltin, speakDeepgram, type Speech } from "../lib/voice-tts.ts";
-import { isFinalAssistant } from "../lib/send-status.ts";
+import { hasVisibleReply, isFinalAssistant } from "../lib/send-status.ts";
 import { hiddenEntryIds } from "../lib/entry-view.ts";
 
 export type SpeakEngine = "deepgram" | "builtin";
@@ -148,8 +148,15 @@ export function useSpeaker(opts: UseSpeakerOptions): Speaker {
       // #278: a failed attempt may be retried, and pi says so (a context_edit) only after the message
       // lands. Decide once the agent isn't busy; until then leave it unseen. It is never read aloud:
       // its prose is a half-written reply the retry usually repeats.
-      const failed = isAssistant(entry) && (entry.message as { stopReason?: string }).stopReason === "error";
+      const assistantMessage = isAssistant(entry)
+        ? (entry.message as { stopReason?: string; content?: unknown })
+        : undefined;
+      const failed = assistantMessage?.stopReason === "error";
       if (failed && opts.agentBusy) continue;
+      // No visible text and no tool call: not the reply while the agent is still going (the turn
+      // continues). Leave it unseen so it can hand the turn back once the agent is idle. Marking it
+      // seen now would open the mic in the middle of the continuation.
+      if (assistantMessage && opts.agentBusy && !hasVisibleReply(assistantMessage.content)) continue;
       seen.current.add(entry.id);
       if (!isAssistant(entry)) continue;
       // Only the turn's final reply hands the turn back (the status line's own test: not one that

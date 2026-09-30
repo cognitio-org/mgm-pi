@@ -1,0 +1,28 @@
+outfitter/packages/web/src/lib/gemini-empty-stop.ts
+  s_afd8f2210c2caa::t_32d6af3f0159f5 1-26
+outfitter/packages/web/test/gemini-empty-stop.test.tsx
+  s_afd8f2210c2caa::t_f1a8504a6a28f0 1-103
+  s_afd8f2210c2caa::t_a2ff17511edabc 104-106
+kernal/tests/gemini-empty-stop.test.ts
+  s_afd8f2210c2caa::t_dcabf7fef5eb0c 1-195
+kernal/.pi/extensions/kernal-gemini-stop/index.ts
+  s_afd8f2210c2caa::t_efd27e35efea8e 1-50
+kernal/.pi/extensions/kernal-gemini-stop/lib.ts
+  s_afd8f2210c2caa::t_feb527a1f3a4eb 1-141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "189ec97f1aa83934d0da868156a48fe60b4d60f1",
+  "prompts": {},
+  "sessions": {
+    "s_afd8f2210c2caa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a0f147-4aaa-7413-9ba4-f9e016224ace",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

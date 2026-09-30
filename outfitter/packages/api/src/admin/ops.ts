@@ -56,8 +56,9 @@ type Args = Record<string, unknown>;
 
 interface AdminOp {
   kind: AdminOpClass;
-  /** Whether this call needs approval beyond what `kind` says (a write to an admin tape). */
-  guarded?: (ctx: AdminContext, args: Args) => Promise<boolean>;
+  /** A reason this call is refused outright, checked before any approval is asked for (an agent
+   * may never change an admin tape, so asking the owner first would only waste their yes). */
+  refused?: (ctx: AdminContext, args: Args) => Promise<string | undefined>;
   run: (ctx: AdminContext, caller: AdminCaller, args: Args) => Promise<AdminResult & { target?: string }>;
 }
 
@@ -222,9 +223,9 @@ function limitOf(args: Args, fallback: number, max: number): number {
   return Math.min(Math.max(n, 1), max);
 }
 
-async function tapeGuarded(ctx: AdminContext, args: Args): Promise<boolean> {
+async function adminTapeRefusal(ctx: AdminContext, args: Args): Promise<string | undefined> {
   const tape = await resolveTape(ctx, args.id);
-  return tape.ok && hasAdminTools(tape.item);
+  return tape.ok && hasAdminTools(tape.item) ? `tape ${tape.item.id} has admin tools; a sysop changes it in the web UI` : undefined;
 }
 
 export const ADMIN_OPS: Record<string, AdminOp> = {
@@ -295,7 +296,7 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
 
   "tapes.update": {
     kind: "write",
-    guarded: tapeGuarded,
+    refused: adminTapeRefusal,
     async run(ctx, caller, args) {
       const tape = await resolveTape(ctx, args.id);
       if (!tape.ok) return tape;
@@ -312,6 +313,7 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
 
   "tapes.delete": {
     kind: "delete",
+    refused: adminTapeRefusal,
     async run(ctx, caller, args) {
       const tape = await resolveTape(ctx, args.id);
       if (!tape.ok) return tape;
@@ -498,13 +500,13 @@ export async function approvalNeeded(ctx: AdminContext, caller: AdminCaller, op:
   if (typeof op !== "string" || !Object.hasOwn(ADMIN_OPS, op)) return false;
   const def = ADMIN_OPS[op];
   if (def.kind === "operator" && !caller.operator) return false;
-  if (def.kind === "delete" || def.kind === "operator") return true;
   const a: Args = args && typeof args === "object" && !Array.isArray(args) ? (args as Args) : {};
   try {
-    return def.guarded ? await def.guarded(ctx, a) : false;
+    if (def.refused && (await def.refused(ctx, a))) return false;
   } catch {
     return false;
   }
+  return def.kind === "delete" || def.kind === "operator";
 }
 
 /** One line per op, for an unknown-op error: short enough to retry from. */
@@ -528,8 +530,10 @@ export async function runAdminOp(ctx: AdminContext, caller: AdminCaller, op: unk
   try {
     if (def.kind === "operator" && !caller.operator) result = { ok: false, error: "sysop rights required" };
     else {
-      const needsApproval = def.kind === "delete" || def.kind === "operator" || (def.guarded ? await def.guarded(ctx, a) : false);
-      result = needsApproval && !caller.approved ? { ok: false, error: "needs approval", needsApproval: true } : await def.run(ctx, caller, a);
+      const refusal = def.refused ? await def.refused(ctx, a) : undefined;
+      const needsApproval = def.kind === "delete" || def.kind === "operator";
+      if (refusal) result = { ok: false, error: refusal };
+      else result = needsApproval && !caller.approved ? { ok: false, error: "needs approval", needsApproval: true } : await def.run(ctx, caller, a);
     }
   } catch (err) {
     ctx.log?.(`admin op ${op} failed: ${err instanceof Error ? err.message : String(err)}`);

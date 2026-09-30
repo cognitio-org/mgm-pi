@@ -87,9 +87,8 @@ export function hasAdminTools(guru: Pick<Guru, "adminTools">): boolean {
  * Who is writing. Only a person in the web UI (IAP, or dev mode) may set `adminTools`, and only an
  * operator may set it to `operator`. An agent -- a Drive's broker call or anything holding a
  * Dongle -- can never raise a tape's rights, so it cannot build itself a stronger tape. From an
- * agent, any delete and any change to a tape that already has admin tools needs `approved`: the
- * Drive's web approval card, or the laptop's TUI confirm. A tape with operator admin tools can only
- * be changed by a sysop: a person who is one, or an agent call that carries sysop rights.
+ * agent, a delete needs `approved`: the Drive's web approval card, or the laptop's TUI confirm. Only a
+ * sysop, in the web UI, turns admin tools on or changes or deletes a tape that has them.
  */
 export type GuruWriter =
   | { kind: "human"; operator: boolean }
@@ -202,8 +201,10 @@ function adminToolsError(body: Partial<GuruInput>, writer: GuruWriter, existing?
   if (writer.kind === "agent") {
     return { ok: false, status: 403, error: "adminTools can only be set in the web UI" };
   }
-  if (body.adminTools === "operator" && !writer.operator) {
-    return { ok: false, status: 403, error: "only a sysop can give a tape operator admin tools" };
+  // Owner decision (2026-09-30): turning admin tools on, at either level, is a sysop's call. Turning
+  // them off is a change to an admin tape, which guardError leaves to sysops too.
+  if (body.adminTools !== "off" && !writer.operator) {
+    return { ok: false, status: 403, error: "only a sysop can turn on a tape's admin tools" };
   }
   return undefined;
 }
@@ -215,16 +216,16 @@ function adminToolsError(body: Partial<GuruInput>, writer: GuruWriter, existing?
  * session runs.
  */
 function guardError(existing: Guru, writer: GuruWriter, action: "update" | "delete"): GuruWriteResult | undefined {
-  const sysopOnly = existing.adminTools === "operator";
-  if (writer.kind === "human") {
-    return sysopOnly && !writer.operator ? { ok: false, status: 403, error: `only a sysop can change tape ${existing.id}` } : undefined;
+  // Owner decision (2026-09-30): a tape with admin tools is changed or deleted only by a sysop, in the
+  // web UI. No agent call may touch one, approved or not, so a Drive can't be steered into rewriting
+  // the prompt the next admin session runs.
+  if (hasAdminTools(existing)) {
+    if (writer.kind === "agent") return { ok: false, status: 403, error: `tape ${existing.id} has admin tools; a sysop changes it in the web UI` };
+    if (!writer.operator) return { ok: false, status: 403, error: `only a sysop can change tape ${existing.id} (it has admin tools)` };
+    return undefined;
   }
-  if (sysopOnly && !writer.operator) return { ok: false, status: 403, error: `only a sysop can change tape ${existing.id}` };
-  if (writer.approved) return undefined;
-  if (action === "delete" || hasAdminTools(existing)) {
-    return { ok: false, status: 403, error: `${action === "delete" ? "deleting" : "changing"} tape ${existing.id} needs approval` };
-  }
-  return undefined;
+  if (writer.kind === "human" || writer.approved || action !== "delete") return undefined;
+  return { ok: false, status: 403, error: `deleting tape ${existing.id} needs approval` };
 }
 
 export async function createGuru(store: Store, raw: GuruInput, writer: GuruWriter): Promise<GuruWriteResult> {

@@ -97,18 +97,19 @@ describe("GuruForm: #290 Admin tools", () => {
     });
   };
 
-  it("is Off by default and offers Operator only to a sysop", () => {
+  it("is Off by default; only a sysop can turn it on", () => {
     const select = renderWith(guru, false);
     expect(select.value).toBe("off");
-    expect([...select.options].map((o) => o.value)).toEqual(["off", "manage"]);
+    expect(select.disabled).toBe(true);
+    expect([...select.options].map((o) => o.value)).toEqual(["off"]);
     act(() => root!.unmount());
     const sysop = renderWith(guru, true);
     expect([...sysop.options].map((o) => o.value)).toEqual(["off", "manage", "operator"]);
   });
 
-  it("saving sends the choice", async () => {
+  it("saving sends a sysop's choice", async () => {
     const update = vi.spyOn(api, "updateGuru").mockResolvedValue({ ...guru, adminTools: "manage" });
-    const select = renderWith(guru, false);
+    const select = renderWith(guru, true);
     act(() => {
       select.value = "manage";
       select.dispatchEvent(new Event("change", { bubbles: true }));
@@ -117,10 +118,10 @@ describe("GuruForm: #290 Admin tools", () => {
     expect(update.mock.calls[0]![1].adminTools).toBe("manage");
   });
 
-  it("an operator tape is read-only for a non-sysop, and says why", async () => {
+  it("a tape with admin tools is read-only for a non-sysop, and says why", async () => {
     const update = vi.spyOn(api, "updateGuru");
-    const select = renderWith({ ...guru, adminTools: "operator" }, false);
-    expect(select.value).toBe("operator");
+    const select = renderWith({ ...guru, adminTools: "manage" }, false);
+    expect(select.value).toBe("manage");
     expect(select.disabled).toBe(true);
     expect(container!.textContent).toContain("Only a sysop can change this tape");
     expect(container!.querySelector<HTMLFieldSetElement>("fieldset")!.disabled).toBe(true);

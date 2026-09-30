@@ -54,10 +54,11 @@ Decisions (confirmed with the owner):
   operator tape is read-only, since the server refuses any change to it from them.
 - **Testing a new tape** is done by the person starting a floppy on it (or by reading one they ran):
   `outfitter_sessions` has no `start` action.
-- **Trust assumption:** any signed-in person may edit a `manage` tape's prompt, tools and env in the
-  web UI (tapes have no owners), so someone could change the Sysop tape's prompt for the next person
-  who uses it. Admin ops still act only with that person's own rights, and deletes and admin-tape
-  changes still need their approval.
+- **Admin tapes are sysop-only (owner decision, 2026-09-30).** Only a sysop, as a person in the web
+  UI, turns a tape's admin tools on (either level) or changes or deletes a tape that has them. No
+  agent call may touch an admin tape, approved or not (refused before any approval is asked), so a
+  Drive can't be steered into rewriting the prompt the next admin session runs. For a non-sysop the
+  tape editor shows admin tapes read-only and the Admin tools select stays at Off.
 
 ## Changes since the plan (PR4: session search)
 - **Ops only, no new REST routes:** `sessions.search` and `sessions.transcript` join the op registry,

@@ -59,8 +59,10 @@ export function GuruForm({ guru, models, meta, isSysop = false, onClose, onSaved
   const [allowExternalHtmlResources, setAllowExternalHtmlResources] = useState(guru?.allowExternalHtmlResources === true);
   const [browserIde, setBrowserIde] = useState(guru?.browserIde === true);
   const [adminTools, setAdminTools] = useState<NonNullable<Guru["adminTools"]>>(guru?.adminTools ?? "off");
-  // The server refuses any change to an operator tape from anyone but a sysop; don't let edits pile up.
-  const readOnly = guru?.adminTools === "operator" && !isSysop;
+  // Only a sysop turns admin tools on or changes a tape that has them (owner decision, 2026-09-30);
+  // the server refuses the rest, so don't let edits pile up.
+  const hasAdmin = guru?.adminTools === "manage" || guru?.adminTools === "operator";
+  const readOnly = hasAdmin && !isSysop;
   const [branchPrefix, setBranchPrefix] = useState(guru?.branchPrefix ?? "outfitter/");
   const [envRows, setEnvRows] = useState<EnvRow[]>(envToRows(guru?.env).length > 0 ? envToRows(guru?.env) : [{ key: "", value: "" }]);
   const [submitting, setSubmitting] = useState(false);
@@ -113,7 +115,7 @@ export function GuruForm({ guru, models, meta, isSysop = false, onClose, onSaved
         <h2>{guru ? `Edit ${guru.name}` : "New guru"}</h2>
         {apiError && <SystemErrorDialog error={apiError} onResume={() => setApiError(null)} />}
         <form onSubmit={submit}>
-          {readOnly && <p className="session-meta">Only a sysop can change this tape: it has operator admin tools.</p>}
+          {readOnly && <p className="session-meta">Only a sysop can change this tape: it has admin tools.</p>}
           <fieldset disabled={readOnly} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
           <div className="form-row">
             <label htmlFor="guru-name">Name</label>
@@ -186,15 +188,15 @@ export function GuruForm({ guru, models, meta, isSysop = false, onClose, onSaved
               id="guru-admin-tools"
               value={adminTools}
               onChange={(e) => setAdminTools(e.target.value as NonNullable<Guru["adminTools"]>)}
-              disabled={readOnly}
+              disabled={!isSysop}
             >
               <option value="off">Off</option>
-              <option value="manage">Manage tapes, environments and sessions</option>
+              {(isSysop || adminTools === "manage") && <option value="manage">Manage tapes, environments and sessions</option>}
               {(isSysop || adminTools === "operator") && <option value="operator">Operator (sysop actions too)</option>}
             </select>
             <p className="session-meta">
-              Off by default. Runs on this tape can administer Outfitter as the floppy&apos;s owner. Deletes and changes to
-              admin tapes wait for the owner&apos;s approval on the floppy page. Only sysops can choose Operator.
+              Off by default. Runs on this tape can administer Outfitter as the floppy&apos;s owner; deletes wait for the
+              owner&apos;s approval on the floppy page. Only a sysop can turn this on or change a tape that has it.
             </p>
           </div>
 

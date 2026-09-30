@@ -607,9 +607,10 @@ and compact transcripts; `search` takes `query`, `mode` text (default)|hybrid|se
 outline|text, `around`, `window`, `from`, `maxChars`, `toolOutput` none|trimmed|full, `roles`).
 
 - A token caller is never a sysop, so operator ops are refused on both origins.
-- `delete`s, and writes to a tape that has `adminTools`, return `needsApproval: true` unless
-  `confirmed` is true (Kernal sends it after the person confirms in the TUI).
-- Setting a tape's `adminTools` is refused: only a person in the web UI sets it.
+- `delete`s return `needsApproval: true` unless `confirmed` is true (Kernal sends it after the person
+  confirms in the TUI).
+- Setting a tape's `adminTools`, or changing or deleting a tape that has them, is refused: only a
+  sysop does that, in the web UI.
 - Every non-read op that passes those checks writes an `adminAudit` row.
 
 ## Browser companion

@@ -53,10 +53,11 @@ are short on purpose; ask for more (limit, around, from) rather than guessing.
 
 ## Rules
 
-- **Approvals.** Deleting anything, and changing a tape that has admin tools, needs the person's yes:
-  in a Drive a card on the floppy page (it can take minutes, or be declined; don't retry a decline),
-  on a laptop a prompt in the terminal. Admin tools on a tape (`adminTools`) are set only in the web
-  UI, by a person.
+- **Approvals.** Deleting anything needs the person's yes: in a Drive a card on the floppy page (it
+  can take minutes, or be declined; don't retry a decline), on a laptop a prompt in the terminal.
+- **Admin tapes are a sysop's.** Turning a tape's admin tools on, or changing or deleting a tape that
+  has them (the Sysop tape included), is done by a sysop in the web UI; these tools refuse it. Say
+  what should change and let them do it.
 - **Secrets never go through these tools.** A key or token belongs in the web UI (Sysop settings,
   or the tape's env there); never ask for one in chat or put one in a tool argument.
 - **Developing Outfitter or Kernal itself** is ordinary work on its repo: a branch, commits, a pull

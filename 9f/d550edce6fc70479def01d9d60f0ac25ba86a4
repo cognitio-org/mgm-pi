@@ -1,0 +1,70 @@
+kernal/.pi/extensions/outfitter-agentengine/memory.ts
+  s_1d3bdd6f362f9b::t_68481441e6eb2d 10-13,15,18-24,77-79,81-101,104-105,108,110-111
+kernal/.pi/extensions/outfitter-agentengine/pi-memory.ts
+  s_1d3bdd6f362f9b::t_987a4c3a094123 1-115
+outfitter/packages/api/src/server.ts
+  s_1d3bdd6f362f9b::t_6389ebd92ebba0 249
+outfitter/packages/api/src/agentengine/identity.ts
+  s_1d3bdd6f362f9b::t_7707c6f0d72499 5-6,56-73
+  s_1d3bdd6f362f9b::t_89d344f00304da 74-75
+outfitter/packages/api/src/admin/ops.ts
+  s_1d3bdd6f362f9b::t_d495557dcfdd26 15-18,45-52,68-69,75-76,91-92,94-99,579,582-587,613,710
+kernal/.pi/extensions/outfitter-admin/transport.ts
+  s_1d3bdd6f362f9b::t_864335b59a10fe 11,24-31,34-35,189
+kernal/.pi/extensions/outfitter-agentengine/laptop.ts
+  s_1d3bdd6f362f9b::t_0fea5ec93f8d4c 1-311
+kernal/.pi/extensions/outfitter-agentengine/record.ts
+  s_1d3bdd6f362f9b::t_2dc1492ad77634 1-49,51-54,59-80,83,88-136
+  s_1d3bdd6f362f9b::t_89d767652ae145 50,55-58
+  s_1d3bdd6f362f9b::t_be0fb2eb272b4e 81-82,84-87
+outfitter/packages/api/test/laptop-memory.test.ts
+  s_1d3bdd6f362f9b::t_725c817226c83f 83,85
+  s_1d3bdd6f362f9b::t_2173556b278d54 197
+  s_1d3bdd6f362f9b::t_4664940c99dabf 1-82,84,86-196,198-232
+kernal/bin/kernal
+  s_1d3bdd6f362f9b::t_6ca05299fe22fe 406,425
+  s_1d3bdd6f362f9b::t_66242d0268487e 164-180
+kernal/.pi/extensions/outfitter-agentengine/index.ts
+  s_1d3bdd6f362f9b::t_3ea34ebd0c3c21 2-3,5-12,18,21,23-29
+kernal/tests/outfitter-memory.test.ts
+  s_1d3bdd6f362f9b::t_e59e63cbc03668 1-3,35,42,51,55-57,59-63
+outfitter/packages/api/src/routes/admin.ts
+  s_1d3bdd6f362f9b::t_b192e468b6dfb1 10-13,18,27-29,31-32
+kernal/README.md
+  s_1d3bdd6f362f9b::t_4bdbd288e7ada6 751-777
+outfitter/docs/specs/atlas-agent-engine-and-a2a.md
+  s_1d3bdd6f362f9b::t_405654fec00f4f 435,452-547
+  s_1d3bdd6f362f9b::t_b9f55098a376a5 548
+kernal/.pi/extensions/outfitter-agentengine/recall.ts
+  s_1d3bdd6f362f9b::t_1468bfeb4b57a3 1-81
+outfitter/packages/api/src/agentengine/recorder.ts
+  s_1d3bdd6f362f9b::t_268e8074943d09 53-63,65,68
+outfitter/packages/api/src/routes/context.ts
+  s_1d3bdd6f362f9b::t_b192e468b6dfb1 22
+  s_1d3bdd6f362f9b::t_1560d016192451 54-56
+outfitter/docs/protocol.md
+  s_1d3bdd6f362f9b::t_353aecd0b3c4d9 759,775-792
+kernal/tests/laptop-memory.test.ts
+  s_1d3bdd6f362f9b::t_eb82139854e82c 1-461,465-483
+  s_1d3bdd6f362f9b::t_21761be408ba6c 462-464
+outfitter/packages/api/src/admin/memory-ops.ts
+  s_1d3bdd6f362f9b::t_b192e468b6dfb1 448-449
+  s_1d3bdd6f362f9b::t_943b3aa3eddf24 17-22,26-27,31,54-73,78-84,305,313,335,339-344,367-370,374-375,395-447,450-452
+  s_1d3bdd6f362f9b::t_bc20ebc93121e7 453-454
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "9fd550edce6fc70479def01d9d60f0ac25ba86a4",
+  "prompts": {},
+  "sessions": {
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

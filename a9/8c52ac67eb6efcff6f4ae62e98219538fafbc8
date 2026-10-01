@@ -1,0 +1,19 @@
+outfitter/package-lock.json
+  s_1d3bdd6f362f9b::t_212740bc902b87 905-1432,1465-1476,1807-1983,1995-2003,2318-2326,2336-2355,2375-2389,2488-2508,2918-2923,3767-3775,4114-4119,4135-4143,4252-4263,4304-4312,4394-4405,4470-4484,6051-6056,6418-6423,6447-6477,6606-6644,6742-6747,6920-6954,7174-7179,7349-7360,8022-8030,8103,8129,8158,8184-8216
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "a98c52ac67eb6efcff6f4ae62e98219538fafbc8",
+  "prompts": {},
+  "sessions": {
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

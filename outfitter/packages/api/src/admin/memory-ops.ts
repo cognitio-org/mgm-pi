@@ -14,14 +14,21 @@
 // - Recalled text is untrusted (another user's org memory, or something a page once said): it is
 //   framed as notes that may be wrong, never instructions, and can't close its own frame.
 // - Saved text, labels and queries go through search/redact.ts first.
+// - E9.9 laptops: a Dongle reaches these ops too (`laptop: true`), as the token's owner: the same
+//   user hash as their Drives, sessionId `laptop:<pi session id>`, and the repo Kernal read from the
+//   working directory's git remote (routes/admin.ts validates both; they scope, never authorise).
+//   A shared or taxonomic save needs `confirmed` (the laptop's TUI confirm) in place of the Drive's
+//   card. `memory.record` takes a laptop's own turns when the person opted in; a Drive's are recorded
+//   by the api (agentengine/recorder.ts), so it is laptop only.
 
 import { redact } from "../search/redact.ts";
 import { toAgentEngineError, type MemoryService, type MemoryType } from "../agentengine/index.ts";
-import { memoryIdentity, namespacedKey, namespacedRepos, repoSlug, stripNamespaces, type MemoryIdentity } from "../agentengine/identity.ts";
+import { LAPTOP_REPO, LAPTOP_SESSION, laptopIdentity, memoryIdentity, namespacedKey, namespacedRepos, repoSlug, stripNamespaces, type MemoryIdentity } from "../agentengine/identity.ts";
+import { recordableText } from "../agentengine/recorder.ts";
 import type { Session } from "../store/types.ts";
 import { capText, clip } from "./render.ts";
 import { memoryUsage } from "../agentengine/usage.ts";
-import { registerAdminOp, type AdminCaller, type AdminContext, type AdminResult } from "./ops.ts";
+import { registerAdminOp, type AdminCaller, type AdminContext, type AdminResult, type LaptopContext } from "./ops.ts";
 
 /** Token budgets for the two reads (E9 §3.3); each loses the server's 500-token formatting reserve. */
 export const OWN_TOKENS = 1400;
@@ -44,11 +51,37 @@ export const RECALL_FRAME =
 
 // ---------- the session, its identity, and the service ----------
 
-type Ready = { ok: true; memory: MemoryService; id: MemoryIdentity; session: Session };
+/** `session` is the Drive's; a laptop has none (E9.9). */
+type Ready = { ok: true; memory: MemoryService; id: MemoryIdentity; session?: Session };
+
+const LAPTOP_UPGRADE = "memory from a laptop needs a newer Kernal (no session id was sent)";
+
+/**
+ * The `laptop` field of a POST /api/admin/ops body (E9.9), checked: `sessionId` is `laptop:<pi
+ * session id>`, `repo` a lowercased GitHub `owner/name` or absent. Undefined when the body has none.
+ */
+export function laptopContext(raw: unknown): { ok: true; value?: LaptopContext } | { ok: false; error: string } {
+  if (raw === undefined || raw === null) return { ok: true };
+  if (typeof raw !== "object" || Array.isArray(raw)) return { ok: false, error: "laptop must be an object" };
+  const { sessionId, repo } = raw as { sessionId?: unknown; repo?: unknown };
+  if (typeof sessionId !== "string" || !LAPTOP_SESSION.test(sessionId)) return { ok: false, error: "laptop.sessionId must be laptop:<pi session id>" };
+  if (repo !== undefined && repo !== null && repo !== "") {
+    if (typeof repo !== "string" || !LAPTOP_REPO.test(repo.trim().toLowerCase())) return { ok: false, error: "laptop.repo must be a GitHub owner/name" };
+    return { ok: true, value: { sessionId, repo: repo.trim().toLowerCase() } };
+  }
+  return { ok: true, value: { sessionId } };
+}
 
 async function ready(ctx: AdminContext, caller: AdminCaller): Promise<Ready | { ok: false; error: string }> {
   const memory = ctx.agentEngine?.memory;
   if (!memory) return { ok: false, error: "Agent Engine memory is not configured on this Outfitter" };
+  // E9.9: a Dongle is its owner, bound to the session id its Kernal sent; never a Drive's session.
+  if (caller.via === "token") {
+    if (!caller.laptop) return { ok: false, error: LAPTOP_UPGRADE };
+    const id = laptopIdentity(caller.email, caller.laptop);
+    if (!id) return { ok: false, error: "this laptop call has no memory identity" };
+    return { ok: true, memory, id };
+  }
   if (!caller.sessionId) return { ok: false, error: "memory works only in a Drive" };
   const session = await ctx.store.sessions.findById(caller.sessionId);
   if (!session) return { ok: false, error: "this run has no session" };
@@ -269,7 +302,7 @@ function limitOf(args: Record<string, unknown>, fallback: number, max: number): 
 
 // ---------- registration ----------
 
-export const MEMORY_OPS = ["memory.search", "memory.context", "memory.save"] as const;
+export const MEMORY_OPS = ["memory.search", "memory.context", "memory.save", "memory.record"] as const;
 
 /** Tests shorten the memory.context deadline. */
 export const deadlines = { contextMs: CONTEXT_DEADLINE_MS };
@@ -277,6 +310,7 @@ export const deadlines = { contextMs: CONTEXT_DEADLINE_MS };
 registerAdminOp("memory.search", {
   kind: "read",
   capability: "memory",
+  laptop: true,
   async run(ctx, caller, args) {
     const r = await ready(ctx, caller);
     if (!r.ok) return r;
@@ -298,12 +332,16 @@ registerAdminOp("memory.search", {
 registerAdminOp("memory.context", {
   kind: "read",
   capability: "memory",
+  laptop: true,
   async run(ctx, caller, args) {
     const r = await ready(ctx, caller);
     if (!r.ok) return r;
-    // Recall is for `auto` tapes only (the tape as it stands now, as the gate reads it).
-    const guru = await ctx.store.gurus.findById(r.session.guruId);
-    if (guru?.memory !== "auto") return { ok: true, text: "" };
+    // Recall is for `auto` tapes only (the tape as it stands now, as the gate reads it). A laptop
+    // has no tape: its Kernal asks only in `auto` (its own setting).
+    if (r.session) {
+      const guru = await ctx.store.gurus.findById(r.session.guruId);
+      if (guru?.memory !== "auto") return { ok: true, text: "" };
+    }
     const query = queryOf(args);
     if (typeof query !== "string") return { ok: false, ...query };
     try {
@@ -326,11 +364,15 @@ registerAdminOp("memory.context", {
 registerAdminOp("memory.save", {
   kind: "write",
   capability: "memory",
-  // Shared memory reaches the other users' prompts (their recall): the owner approves each one. An
-  // A2A session may never write it (§5.4), so it is refused before anyone is asked.
+  laptop: true,
+  // Shared memory reaches the other users' prompts (their recall): the owner approves each one (a
+  // laptop sends `confirmed` after its TUI confirm). An A2A session may never write it (§5.4), so it
+  // is refused before anyone is asked.
   asks: async (_ctx, args) => args.shared === true || args.type === "taxonomic",
   async refused(ctx, args, caller) {
     if (args.shared !== true && args.type !== "taxonomic") return undefined;
+    // A Dongle is the owner at the keyboard, never an A2A session.
+    if (caller.via === "token") return undefined;
     const session = caller.sessionId ? await ctx.store.sessions.findById(caller.sessionId) : null;
     const id = session ? memoryIdentity(session) : undefined;
     return !id || id.a2a ? A2A_SHARED_REFUSAL : undefined;
@@ -348,5 +390,65 @@ registerAdminOp("memory.save", {
       memoryUsage.note("save", 0, true);
       return failure(err, "save");
     }
+  },
+});
+
+// ---------- laptop turn recording (E9.9) ----------
+
+const MAX_RECORD_TURNS = 20;
+const ENTRY_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+type RecordTurn = { entryId: string; role: "user" | "assistant"; text: string };
+
+function recordArgs(args: Record<string, unknown>): RecordTurn[] | { error: string } {
+  const turns = args.turns;
+  if (!Array.isArray(turns) || turns.length === 0) return { error: "turns is required: [{entryId, role, text}]" };
+  if (turns.length > MAX_RECORD_TURNS) return { error: `at most ${MAX_RECORD_TURNS} turns a call` };
+  const out: RecordTurn[] = [];
+  for (const t of turns) {
+    const { entryId, role, text } = (t ?? {}) as { entryId?: unknown; role?: unknown; text?: unknown };
+    if (typeof entryId !== "string" || !ENTRY_ID.test(entryId)) return { error: "each turn needs an entryId (pi's entry id)" };
+    if (role !== "user" && role !== "assistant") return { error: "role must be user or assistant" };
+    if (typeof text !== "string") return { error: "text must be a string" };
+    out.push({ entryId, role, text });
+  }
+  return out;
+}
+
+/**
+ * A laptop's own turns into its owner's memory, when the person opted in (Kernal's
+ * `memoryRecord`): user prompts and final assistant messages, never tool output (Kernal sends
+ * neither tool calls nor results, and this op takes text only). Redacted and capped here as well,
+ * keyed `laptop:<pi session id>:<entry id>` so a resend dedupes. Not audited: it is the person's own
+ * transcript going into their own private memory, many times a session (usage.ts counts it).
+ */
+registerAdminOp("memory.record", {
+  kind: "write",
+  capability: "memory",
+  laptop: true,
+  audit: false,
+  async run(ctx, caller, args) {
+    // A Drive's turns are recorded by the api itself (recorder.ts), from the stored entries.
+    if (caller.via !== "token") return { ok: false, error: "a Drive records its turns itself" };
+    const r = await ready(ctx, caller);
+    if (!r.ok) return r;
+    const turns = recordArgs(args);
+    if ("error" in turns) return { ok: false, error: turns.error };
+    const bound = r.memory.bind({ userId: r.id.userId, sessionId: r.id.sessionId });
+    let recorded = 0;
+    for (const t of turns) {
+      const content = recordableText(t.role, t.text);
+      if (content === undefined) continue;
+      try {
+        await bound.recordTurn({ role: t.role, content, idempotencyKey: `${r.id.sessionId}:${t.entryId}` });
+        memoryUsage.note("recordTurn");
+        recorded += 1;
+      } catch (err) {
+        memoryUsage.note("recordTurn", 0, true);
+        const f = failure(err, "record");
+        return recorded ? { ok: false, error: `${f.error} (after ${recorded} recorded)` } : f;
+      }
+    }
+    return { ok: true, text: `recorded ${recorded} of ${turns.length} turn${turns.length === 1 ? "" : "s"}` };
   },
 });

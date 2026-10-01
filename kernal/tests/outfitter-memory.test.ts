@@ -1,5 +1,6 @@
-// E9 §3.3: the outfitter-agentengine extension's `memory` tool -- registered only in a Drive whose
-// tape has memory, the action -> op mapping, and the token budget for its definition.
+// E9 §3.3: the outfitter-agentengine extension's `memory` tool -- registered in a Drive whose tape
+// has memory (and, since E9.9, on a laptop with a Dongle unless `kernal.memory` is off: see
+// laptop-memory.test.ts), the action -> op mapping, and the token budget for its definition.
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -31,14 +32,14 @@ describe("registration", () => {
     assert.deepEqual(tools.map((t) => t.name), ["memory"]);
   });
 
-  test("without the capability, on a laptop, or with no socket: nothing", () => {
+  test("without the capability, on a laptop with memory off, or with no socket: nothing", () => {
     for (const [env, kind] of [
       [{ OUTFITTER_ADMIN_CAPS: "admin,agentEngine" }, "drive"],
       [{}, "drive"],
       [{ OUTFITTER_ADMIN_CAPS: "memory" }, "laptop"],
     ] as const) {
       const { pi, tools } = fakePi();
-      register(pi, { env, transport: recorder([], kind).transport });
+      register(pi, { env, transport: recorder([], kind).transport, settings: { kernal: { memory: "off" } } });
       // Count only memory: the extension also registers `agent_engine` (E9 PR4) for its own capability.
       assert.equal(tools.filter((t) => t.name === "memory").length, 0, JSON.stringify(env));
     }
@@ -47,13 +48,19 @@ describe("registration", () => {
     assert.equal(tools.length, 0);
   });
 
-  test("from the environment: the Drive's socket, never a Dongle", () => {
+  test("from the environment: the Drive's socket; a Dongle only as the laptop's own setting says", () => {
     const drive = fakePi();
     register(drive.pi, { env: { OUTFITTER_ADMIN_SOCKET: "/run/outfitter/admin.sock", OUTFITTER_ADMIN_CAPS: "memory" } });
     assert.deepEqual(drive.tools.map((t) => t.name), ["memory"]);
+    const off = fakePi();
+    register(off.pi, { env: { OUTFITTER_API: "https://x", OUTFITTER_TOKEN: "t" }, settings: { kernal: { memory: "off" } } });
+    assert.equal(off.tools.length, 0);
     const laptop = fakePi();
-    register(laptop.pi, { env: { OUTFITTER_API: "https://x", OUTFITTER_TOKEN: "t", OUTFITTER_ADMIN_CAPS: "memory" } });
-    assert.equal(laptop.tools.length, 0);
+    register(laptop.pi, { env: { OUTFITTER_API: "https://x", OUTFITTER_TOKEN: "t" }, settings: {} });
+    assert.deepEqual(laptop.tools.map((t) => t.name), ["memory"], "a Dongle's default is auto: the tool, never agent_engine");
+    const inDrive = fakePi();
+    register(inDrive.pi, { env: { OUTFITTER_SESSION_ID: "s1", OUTFITTER_API: "https://x", OUTFITTER_TOKEN: "t" }, settings: {} });
+    assert.equal(inDrive.tools.length, 0, "inside a Drive it is the socket or nothing");
   });
 
   test("token budget: the definition stays under ~250 tokens, one-line description", () => {

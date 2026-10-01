@@ -8,7 +8,7 @@
  *   delete until the owner approves it in the web UI, so a write may wait minutes.
  * - On a laptop: POST /api/admin/ops on OUTFITTER_API with OUTFITTER_TOKEN (a Dongle), the same
  *   pair teleport uses (_shared/outfitter-env.ts). `confirmed` is sent only after the person said
- *   yes in the TUI.
+ *   yes in the TUI. E9.9: a `memory.*` call also sends `laptop: {sessionId, repo?}`.
  * - Neither: no transport, and the extension registers no admin tools. Inside a Drive
  *   (OUTFITTER_SESSION_ID) it is the socket or nothing, never HTTP.
  *
@@ -21,9 +21,18 @@ import { outfitterCredentials } from "../_shared/outfitter-env.ts";
 
 export type AdminReply = { ok: true; text: string } | { ok: false; error: string; needsApproval?: boolean };
 
+/** E9.9: what a laptop's `memory.*` call is bound to (the API validates both; they only scope). */
+export interface LaptopContext {
+  /** `laptop:<pi session id>`. */
+  sessionId: string;
+  /** The working directory's GitHub `owner/name`, lowercased. */
+  repo?: string;
+}
+
 export interface AdminTransport {
   kind: "drive" | "laptop";
-  call(op: string, args: Record<string, unknown>, opts?: { confirmed?: boolean; signal?: AbortSignal }): Promise<AdminReply>;
+  /** `laptop` goes in the request body next to `args` (HTTP only; a Drive's identity is its session). */
+  call(op: string, args: Record<string, unknown>, opts?: { confirmed?: boolean; signal?: AbortSignal; laptop?: LaptopContext }): Promise<AdminReply>;
 }
 
 export type FetchFn = typeof fetch;
@@ -177,7 +186,7 @@ export function httpTransport(apiBase: string, token: string, fetchFn: FetchFn =
         res = await fetchFn(`${base}/api/admin/ops`, {
           method: "POST",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ op, args, ...(opts.confirmed ? { confirmed: true } : {}) }),
+          body: JSON.stringify({ op, args, ...(opts.confirmed ? { confirmed: true } : {}), ...(opts.laptop ? { laptop: opts.laptop } : {}) }),
           signal,
           redirect: "manual",
         });

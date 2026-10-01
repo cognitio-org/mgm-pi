@@ -12,9 +12,10 @@
 //
 // Capabilities (E9 §3.3): every op names the tape capability it needs -- `admin` (the Sysop tools),
 // `memory` or `agentEngine` -- and a Drive's call is refused unless its tape has it, so agentd
-// opening the socket for memory doesn't hand the model `tapes.*`. Only `admin` ops work from a
-// laptop (a Dongle has no tape or session); the others say "Drive only". Later PRs add their ops
-// with registerAdminOp.
+// opening the socket for memory doesn't hand the model `tapes.*`. From a laptop (a Dongle, which has
+// no tape) `admin` ops work, and so do the ops registered with `laptop: true` (E9.9: `memory.*`, for
+// the token's owner, bound to the `laptop:<pi session id>` the route validated); everything else
+// (`ae.*`) says "Drive only". Later PRs add their ops with registerAdminOp.
 
 import { randomUUID } from "node:crypto";
 import {
@@ -41,6 +42,14 @@ export type AdminOpClass = "read" | "write" | "delete" | "operator" | "approve";
 /** The tape capability an op needs (see the module doc). */
 export type AdminCapability = TapeCapability;
 
+/** E9.9: a laptop's memory call (routes/admin.ts validated both; neither authorises anything). */
+export interface LaptopContext {
+  /** `laptop:<pi session id>`. */
+  sessionId: string;
+  /** The working directory's GitHub repo, `owner/name` lowercased; it only scopes the reads. */
+  repo?: string;
+}
+
 export interface AdminCaller {
   email: string;
   /** "token": a Dongle (laptop). "drive": a Drive's broker call, acting as the session's owner. */
@@ -56,13 +65,15 @@ export interface AdminCaller {
   /** The person approved this call (see the module doc). */
   approved?: boolean;
   approvalId?: string;
+  /** A Dongle's `laptop` context (E9.9); never set for a Drive. */
+  laptop?: LaptopContext;
 }
 
 export interface AdminContext {
   store: Store;
   models: Pick<ModelsService, "list">;
-  /** E9: the Agent Engine parts configured here; a part is undefined while it's off. Only a
-   * Drive's calls carry it (memory and agentEngine ops are Drive only). */
+  /** E9: the Agent Engine parts configured here; a part is undefined while it's off. A Drive's
+   * calls carry it, and since E9.9 the laptop route's too (`memory.*` from a Dongle). */
   agentEngine?: AgentEngine;
   now?: () => number;
   /** Where a handler's thrown error goes; the caller only sees "internal error". */
@@ -77,8 +88,15 @@ type Args = Record<string, unknown>;
 
 export interface AdminOp {
   kind: AdminOpClass;
-  /** The tape capability a Drive needs to call this op. Anything but `admin` is Drive only. */
+  /** The tape capability a Drive needs to call this op. Anything but `admin` is Drive only, unless
+   * `laptop` says otherwise. */
   capability: AdminCapability;
+  /** E9.9: a Dongle may call this op too, as its owner (memory reads and writes only; checked at
+   * registration). The op binds the caller's `laptop` context itself. */
+  laptop?: boolean;
+  /** False: never written to adminAudit, although not a read (E9.9 `memory.record`, a laptop's own
+   * turns into its own private memory, many a session; the usage log counts them instead). */
+  audit?: false;
   /** The approval card for this op, when the default (drive.ts approvalText) says too little: an
    * `approve` op shows what it answers. Every word must come from the api or be clipped, escaped
    * and labelled as remote text. */
@@ -558,9 +576,15 @@ export function registerAdminOp(name: string, op: AdminOp): () => void {
   }
   // An approve op answers something remote on the owner's behalf: it must say on the card what it
   // answers, and it must never be reachable from a laptop, where `confirmed` is the caller's own word.
-  if (op.kind === "approve" && (!op.card || op.capability === "admin")) {
+  if (op.kind === "approve" && (!op.card || op.capability === "admin" || op.laptop)) {
     throw new Error(`admin op ${name}: an approve op needs its own card and a Drive-only capability`);
   }
+  // E9.9: only memory reads and writes reach a laptop; Agent Engine agents and anything that waits
+  // for the owner's yes stay Drive only.
+  if (op.laptop && (op.capability !== "memory" || (op.kind !== "read" && op.kind !== "write"))) {
+    throw new Error(`admin op ${name}: only a memory read or write may be laptop-callable`);
+  }
+  if (op.audit === false && op.kind !== "write") throw new Error(`admin op ${name}: only a write may skip the audit`);
   ADMIN_OPS[name] = op;
   return () => {
     if (ADMIN_OPS[name] === op) delete ADMIN_OPS[name];
@@ -586,7 +610,7 @@ export function capabilityOff(op: unknown): string {
 
 /** Why this caller may not reach this op's capability, or undefined when it may. */
 function capabilityRefusal(def: AdminOp, caller: AdminCaller, op: string): string | undefined {
-  if (caller.via === "token") return def.capability === "admin" ? undefined : `${op} works only in a Drive`;
+  if (caller.via === "token") return def.capability === "admin" || def.laptop === true ? undefined : `${op} works only in a Drive`;
   return caller.capabilities?.includes(def.capability) ? undefined : CAPABILITY_OFF[def.capability];
 }
 
@@ -683,7 +707,7 @@ export async function runAdminOp(ctx: AdminContext, caller: AdminCaller, op: unk
     ctx.log?.(`admin op ${op} failed: ${err instanceof Error ? err.message : String(err)}`);
     result = { ok: false, error: "internal error" };
   }
-  if (def.kind !== "read") {
+  if (def.kind !== "read" && def.audit !== false) {
     try {
       await ctx.store.adminAudit.insert({
         id: auditId(nowOf(ctx)),

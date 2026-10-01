@@ -19,6 +19,7 @@ import type { SandboxTelemetry } from "../sandbox-telemetry.ts";
 import type { VoiceService } from "../voice.ts";
 import type { VoiceUsage } from "../voice-usage.ts";
 import type { GithubCatalog } from "../github-catalog.ts";
+import type { AgentEngine } from "../agentengine/index.ts";
 
 /** Dependencies every route module needs; built once in server.ts and threaded through. */
 export interface RouteContext {
@@ -50,6 +51,9 @@ export interface RouteContext {
   turns: TurnWaiters;
   /** E9 §4: the tick, archive and format stop the Agent Engine sessions a closed session opened. */
   aeSessions: AeSessions;
+  /** E9: the Agent Engine clients (a part is undefined while it's off). E9.9: POST /api/admin/ops
+   * hands them to a laptop's `memory.*` ops. */
+  agentEngine: AgentEngine;
   /** E9 §5.3 A2A tasks (routes/a2a.ts); the tick refreshes the open ones. */
   a2a: A2ATasks;
   /** E9 PR6 test seam: builds the A2A handler (the TCK build's scripted one). Absent: OutfitterA2AHandler. */

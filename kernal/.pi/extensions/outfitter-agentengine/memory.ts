@@ -7,10 +7,21 @@
  * API decides who the memory belongs to and which repo it is about, from the session; nothing here
  * names a user or a repo. Results are the API's compact text, passed through unchanged; recalled
  * text comes back already labelled as notes that may be wrong.
+ *
+ * On a laptop (E9.9, laptop.ts) the same tool goes over the Dongle's HTTP transport with a `laptop`
+ * context, and a shared or taxonomic save asks the person in the TUI first (the API takes
+ * `confirmed` as their yes); with nobody at the terminal it is refused here.
  */
-import type { AdminReply, AdminTransport } from "../outfitter-admin/transport.ts";
+import type { AdminReply, AdminTransport, LaptopContext } from "../outfitter-admin/transport.ts";
 
 export type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean; details?: unknown };
+export type Confirm = (title: string, message: string, signal?: AbortSignal) => Promise<boolean>;
+
+/** A laptop call's extras: its context, and the person's confirm when one is at the terminal. */
+export interface LaptopCall {
+  laptop?: LaptopContext;
+  confirm?: Confirm;
+}
 
 const ACTIONS = ["search", "save"] as const;
 const TYPES = ["semantic", "episodic", "procedural", "taxonomic"] as const;
@@ -63,19 +74,41 @@ function result(reply: AdminReply): ToolResult {
     : { content: [{ type: "text", text: `memory: ${reply.error}` }], isError: true, details: undefined };
 }
 
-export async function runMemory(params: Record<string, any>, transport: AdminTransport, signal?: AbortSignal): Promise<ToolResult> {
+const fail = (text: string): ToolResult => ({ content: [{ type: "text", text }], isError: true, details: undefined });
+
+export async function runMemory(params: Record<string, any>, transport: AdminTransport, signal?: AbortSignal, laptop: LaptopCall = {}): Promise<ToolResult> {
   const mapped = memoryOp(params ?? {});
-  if ("error" in mapped) return { content: [{ type: "text", text: mapped.error }], isError: true, details: undefined };
-  return result(await transport.call(mapped.op, mapped.args, { signal }));
+  if ("error" in mapped) return fail(mapped.error);
+  if (transport.kind !== "laptop") return result(await transport.call(mapped.op, mapped.args, { signal }));
+  if (!laptop.laptop) return fail("memory: this session has no id yet; try again after the first prompt");
+  const shared = mapped.op === "memory.save" && (mapped.args.shared === true || mapped.args.type === "taxonomic");
+  if (!shared) return result(await transport.call(mapped.op, mapped.args, { signal, laptop: laptop.laptop }));
+  // Shared memory is recalled into the other users' prompts: the person says yes first.
+  if (!laptop.confirm) return fail("memory: a shared memory needs your yes at the terminal; save it privately, or run Kernal in the TUI");
+  const text = String(mapped.args.text);
+  const yes = await laptop.confirm(
+    "Save a shared memory?",
+    `Everyone on your Outfitter will have this recalled into their prompts:\n\n${text.length > 600 ? `${text.slice(0, 599)}…` : text}`,
+    signal,
+  );
+  if (!yes) return fail("memory: not saved (you said no)");
+  return result(await transport.call(mapped.op, mapped.args, { signal, laptop: laptop.laptop, confirmed: true }));
 }
 
-/** Registers the tool on `pi` over `transport` (index.ts decides whether to). */
-export function registerMemoryTool(pi: { registerTool(tool: any): void }, transport: AdminTransport): void {
+/** On a laptop: how to get each call's context and confirm (laptop.ts). */
+export interface LaptopTool {
+  laptop: (ctx: any) => Promise<LaptopContext | undefined>;
+  confirm: (ctx: any) => Confirm | undefined;
+}
+
+/** Registers the tool on `pi` over `transport` (index.ts and laptop.ts decide whether to). */
+export function registerMemoryTool(pi: { registerTool(tool: any): void }, transport: AdminTransport, laptop?: LaptopTool): void {
   pi.registerTool({
     ...MEMORY_TOOL,
-    execute: async (_id: string, params: any, signal: AbortSignal | undefined) => {
+    execute: async (_id: string, params: any, signal: AbortSignal | undefined, _update?: unknown, ctx?: any) => {
       try {
-        return await runMemory(params, transport, signal);
+        const call: LaptopCall = laptop ? { laptop: await laptop.laptop(ctx), confirm: laptop.confirm(ctx) } : {};
+        return await runMemory(params, transport, signal, call);
       } catch (err) {
         return { content: [{ type: "text" as const, text: `memory: ${err instanceof Error ? err.message : String(err)}` }], isError: true, details: undefined };
       }

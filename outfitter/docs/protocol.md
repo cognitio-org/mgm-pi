@@ -756,7 +756,7 @@ see `deploy/README.md` "Live-test identity". Laptop clients still use personal t
 identity). It is the laptop's way into the admin op registry (`packages/api/src/admin/ops.ts`); a
 Drive reaches the same registry through agentd's admin socket (#287), not this route.
 
-Request: `{op, args?, confirmed?}`. Reply, always `200` for an authenticated call:
+Request: `{op, args?, confirmed?, laptop?}`. Reply, always `200` for an authenticated call:
 `{ok: true, text}` or `{ok: false, error, needsApproval?}`. `text` is compact, capped text meant
 for a model, not JSON to parse. Ops so far: `tapes.list|get|meta|create|update|delete`,
 `environments.list|get|create|update`, `sessions.list|get|search|transcript` (#289: session search
@@ -772,9 +772,24 @@ outline|text, `around`, `window`, `from`, `maxChars`, `toolOutput` none|trimmed|
 - Setting or changing a tape's `memory` (`off|tool|auto`) or `agentEngine` (boolean) is refused
   (`memory can only be set in the web UI`): a person sets them in the web UI. A body repeating the
   current value passes. Any other change to a tape that has one of them needs `confirmed`.
-- `memory.*` and `ae.*` ops (capabilities `memory`, `agentEngine`) answer `<op> works only in a
-  Drive`: a Dongle has no tape or session to bind them to.
-- Every non-read op that passes those checks writes an `adminAudit` row.
+- `ae.*` ops (capability `agentEngine`) answer `<op> works only in a Drive`.
+- `memory.*` (E9.9, docs/specs/atlas-agent-engine-and-a2a.md §3.5) runs as the token's owner: the
+  same identity as their Drives (`sha256(ownerEmail)[:16]`), so laptop and cloud share one memory.
+  The body's `laptop: {sessionId, repo?}` binds the call: `sessionId` is `laptop:<pi session id>`
+  (`^laptop:[A-Za-z0-9][A-Za-z0-9_-]{7,99}$`), `repo` the working directory's GitHub `owner/name`,
+  lowercased. Both are checked before any op runs (`laptop.sessionId must be …`, `laptop.repo must
+  be …`) and only scope the owner's own memory. A memory op without it answers `memory from a laptop
+  needs a newer Kernal`. Without Agent Engine memory configured, `Agent Engine memory is not
+  configured on this Outfitter`.
+  - `memory.search {query, type?, limit?}`, `memory.context {query}`: reads, as in a Drive. There is
+    no tape, so `context` always answers; Kernal sends it only in its `auto` mode.
+  - `memory.save {type, text, label?, shared?}`: audited (`via: "token"`). `shared: true` or
+    `type: "taxonomic"` returns `needsApproval: true` unless `confirmed` is true (Kernal's TUI yes).
+  - `memory.record {turns: [{entryId, role: "user"|"assistant", text}]}`: 1 to 20 turns, laptop
+    only (a Drive is refused). Each text is redacted and capped; relayed mail and Outfitter notices
+    are skipped. It calls `recordTurn` with `idempotencyKey = laptop:<pi session id>:<entry id>`.
+    Not audited. Kernal sends it only when the person opted in (`kernal.memoryRecord`).
+- Every non-read op that passes those checks writes an `adminAudit` row, except `memory.record`.
 
 ## Browser companion
 

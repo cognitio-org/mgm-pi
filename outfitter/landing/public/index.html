@@ -66,11 +66,32 @@
     </section>
 
     <section class="hero">
-      <h1>Coding agents,<br>outfitted for the expedition.</h1>
-      <p class="tagline">For those of us who need to watch our tokens, and still want to build cool stuff.</p>
-      <p class="lede">Kernal is a coding agent that runs in your terminal, or straight off a floppy. Outfitter is where a fleet of
-        them lives in the cloud: they work on their own, sleep when idle, and hand a session back
-        to your laptop whenever you want it.</p>
+      <div class="hero-text">
+        <h1>Coding agents,<br>outfitted for the expedition.</h1>
+        <p class="tagline">For those of us who need to watch our tokens, and still want to build cool stuff.</p>
+        <p class="lede">Kernal is a coding agent that runs in your terminal, or straight off a floppy. Outfitter is where a fleet of
+          them lives in the cloud: they work on their own, sleep when idle, and hand a session back
+          to your laptop whenever you want it.</p>
+      </div>
+
+      <figure class="tv" id="tv" hidden data-no-greet>
+        <button type="button" class="tv-set" id="tv-set"
+          aria-label="Play Dear Sysop, the Outfitter intro video, with sound">
+          <span class="tv-tube-small">
+            <img class="tv-picture" id="tv-still" alt="" width="640" height="480" decoding="async">
+            <video class="tv-picture" id="tv-small" muted loop playsinline preload="metadata" hidden aria-hidden="true"></video>
+            <span class="tv-osd tv-osd-play" aria-hidden="true">PLAY &#9654;</span>
+            <span class="tv-osd tv-osd-ch" aria-hidden="true">CH 03</span>
+          </span>
+          <span class="tv-side" aria-hidden="true">
+            <span class="tv-grille"></span>
+            <span class="tv-knob"></span>
+            <span class="tv-knob"></span>
+            <span class="tv-led"></span>
+          </span>
+        </button>
+        <figcaption class="tv-caption">&#9654; Watch &ldquo;Dear Sysop&rdquo; <span id="tv-length"></span></figcaption>
+      </figure>
     </section>
 
     <section class="panels">
@@ -108,8 +129,24 @@
     </footer>
   </main>
 </div>
+<dialog class="tv-dialog" id="tv-dialog" aria-label="Dear Sysop, the Outfitter intro" data-no-greet>
+  <div class="tv-big-set">
+    <div class="tv-tube" id="tv-tube">
+      <video id="tv-big" controls playsinline preload="none"></video>
+      <p class="tv-credit" id="tv-credit" aria-hidden="true">
+        <span class="tv-credit-artist">Outfitter</span>
+        <span>&ldquo;Dear Sysop&rdquo;</span>
+        <span>Fan Letters, Vol. 1</span>
+        <span>Kernal Records</span>
+      </p>
+      <button type="button" class="tv-unmute" id="tv-unmute" hidden>&#128264; Sound on</button>
+    </div>
+  </div>
+  <button type="button" class="tv-close" id="tv-close" aria-label="Switch off">&#10005;</button>
+</dialog>
 <script src="/floppy.js" defer></script>
 <script src="/basic.js" defer></script>
+<script src="/tv.js" defer></script>
 <script src="/app.js" defer></script>
 <script src="/welcome.js" defer></script>
 </body>

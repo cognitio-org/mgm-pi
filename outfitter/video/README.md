@@ -121,6 +121,17 @@ source video (local only) --extract-frames.sh--> reference/*.png (gitignored)
    `assemble.py` runs it on the finished cut, so the same env vars work there:
    `VHS_GLITCH=0.12 uv run assemble.py`.
 
+7. **Put it on kernal.one.** The home page's little TV (`landing/public/tv.js`) plays it:
+
+   ```bash
+   ./web.sh                     # -> ../landing/public/video/: dear-sysop.mp4, -preview.mp4, .jpg
+   git add ../landing/public/video && git commit -m "kernal.one: Dear Sysop video" && git push
+   ```
+
+   The TV stays hidden until those files are on the site, then plays the small silent copy on a
+   loop; a click opens the big set with sound. `LOAD "DEAR SYSOP",8,1` at the page's prompt does
+   the same. The next release deploys the page (`deploy/landing.sh`).
+
 ## Guardrails
 
 - Source footage and frames stay local (`reference/`, `*.mp4` are gitignored) and never appear in

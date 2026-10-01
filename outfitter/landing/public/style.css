@@ -420,3 +420,202 @@ code {
   .cursor, .mark .cursor-px { animation: none; }
   .border.loading { animation: none; }
 }
+
+/* ---------- "Dear Sysop" on a little TV (tv.js) ---------- */
+/* An 80s portable set: beige cabinet, the picture tube on the left, grille and knobs on the right.
+ * The cabinet is an object, not UI, so it keeps its beige in both themes; the outline and hard
+ * shadow follow the theme like the panels. The tube is the one rounded thing: it's glass. */
+
+@media (min-width: 760px) {
+  .hero:has(.tv:not([hidden])) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(250px, 330px);
+    gap: 2rem;
+    align-items: center;
+  }
+  .hero:has(.tv:not([hidden])) .lede { margin-bottom: 0; }
+}
+
+.tv { margin: 0 auto 1.75rem; width: min(100%, 360px); }
+.tv[hidden] { display: none; }
+
+.tv-set {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  padding: 10px;
+  font: inherit;
+  text-align: left;
+  color: #1a1712;
+  background: #d9ceb2;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-offset) var(--shadow-offset) 0 0 var(--border);
+  cursor: pointer;
+}
+.tv-set:hover { box-shadow: 5px 5px 0 0 var(--border); transform: translate(-2px, -2px); }
+.tv-set:active { box-shadow: none; transform: translate(var(--shadow-offset), var(--shadow-offset)); }
+
+.tv-tube-small {
+  position: relative;
+  flex: 1;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  background: #0b0b0b;
+  border: 6px solid #2b2722;
+  border-radius: 10px;
+}
+.tv-picture {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.tv-picture[hidden] { display: none; }
+
+/* The VCR's on-screen display. */
+.tv-osd {
+  position: absolute;
+  top: 6%;
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: #5cff8a;
+  text-shadow: 1px 1px 0 #000;
+}
+.tv-osd-play { left: 7%; animation: blink 1.2s steps(2, start) infinite; }
+.tv-osd-ch { right: 7%; }
+
+.tv-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 44px;
+  padding-top: 4px;
+}
+.tv-grille {
+  width: 100%;
+  height: 46px;
+  background: repeating-linear-gradient(to bottom, #2b2722 0, #2b2722 2px, transparent 2px, transparent 5px);
+}
+.tv-knob {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #2b2722;
+  border: 3px solid #8c8270;
+}
+.tv-led { width: 6px; height: 6px; margin-top: auto; margin-bottom: 4px; background: #e2402f; }
+
+.tv-caption {
+  margin-top: 0.7rem;
+  font-family: var(--font-display);
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-align: center;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* ---------- the big set ---------- */
+
+.tv-dialog {
+  width: 100vw;
+  max-width: none;
+  height: 100vh;
+  height: 100dvh;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: hidden;
+}
+.tv-dialog[open] { display: grid; place-items: center; }
+.tv-dialog::backdrop { background: rgba(8, 6, 20, 0.9); }
+
+.tv-big-set {
+  width: min(94vw, calc((100dvh - 5rem) * 4 / 3));
+  padding: clamp(8px, 1.6vw, 18px);
+  background: #d9ceb2;
+  border: 1px solid #1a1712;
+  box-shadow: 5px 5px 0 0 #000;
+}
+.tv-tube {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  background: #000;
+  border: clamp(6px, 1.1vw, 14px) solid #2b2722;
+  border-radius: 14px;
+}
+.tv-tube video { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
+
+/* Switching on: a bright line opens into the picture. Switching off: line, dot, dark. */
+.tv-tube.power-on video { animation: tv-on 0.65s ease-out; }
+.tv-tube.power-off video { animation: tv-off 0.45s ease-in forwards; }
+@keyframes tv-on {
+  0% { transform: scale(0.6, 0.006); filter: brightness(6); }
+  45% { transform: scale(1, 0.006); filter: brightness(6); }
+  100% { transform: none; filter: none; }
+}
+@keyframes tv-off {
+  0% { transform: none; filter: none; }
+  55% { transform: scale(1, 0.006); filter: brightness(5); }
+  85% { transform: scale(0.01, 0.006); filter: brightness(5); }
+  100% { transform: scale(0, 0); }
+}
+
+/* MTV-style credit block, bottom left, above the player controls. */
+.tv-credit {
+  position: absolute;
+  left: 6%;
+  bottom: 17%;
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: clamp(0.72rem, 2.1vw, 1.15rem);
+  line-height: 1.3;
+  color: #fff;
+  text-shadow: 2px 2px 0 #000;
+  opacity: 0;
+  transform: translateX(-10px);
+  transition: opacity 0.4s, transform 0.4s;
+  pointer-events: none;
+}
+.tv-credit span { display: block; }
+.tv-credit-artist { font-weight: 600; }
+.tv-credit.on { opacity: 1; transform: none; }
+
+.tv-unmute, .tv-close {
+  font-family: var(--font-display);
+  color: #1a1712;
+  background: #d9ceb2;
+  border: 1px solid #1a1712;
+  box-shadow: 2px 2px 0 0 #000;
+  cursor: pointer;
+}
+.tv-unmute { position: absolute; top: 4%; left: 4%; padding: 0.5em 0.8em; font-size: 0.85rem; }
+.tv-unmute[hidden] { display: none; }
+.tv-close {
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top));
+  right: max(12px, env(safe-area-inset-right));
+  width: 44px;
+  height: 44px;
+  font-size: 1.1rem;
+}
+.tv-unmute:active, .tv-close:active { transform: translate(2px, 2px); box-shadow: none; }
+
+/* Phones: the picture takes the whole width, no cabinet. */
+@media (max-width: 640px), (max-height: 500px) {
+  .tv-big-set { width: min(100vw, calc(100dvh * 4 / 3)); padding: 0; border: 0; box-shadow: none; }
+  .tv-tube { border: 0; border-radius: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tv-osd-play { animation: none; }
+  .tv-credit { transition: none; }
+  .tv-set:hover { transform: none; }
+}

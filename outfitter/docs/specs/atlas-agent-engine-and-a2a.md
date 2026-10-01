@@ -653,8 +653,8 @@ Don't use run state `idle` (EPIC.md:517-519: agentd is idle before any prompt).
 An Agent Engine agent reaches Outfitter as an A2A client of §5. No Outfitter code runs in Agent
 Engine beyond one tool module.
 - **Deliverable:** `outfitter/integrations/agent-engine/`, containing:
-  - `outfitter_tools.py`: `@app.tool` functions `outfitter_start(task, skill, repo?)` and
-    `outfitter_status(task_id)`. A coding task runs far longer than one tool call should hold a
+  - `outfitter_tools.py`: `@app.tool` functions `outfitter_start(task, skill?, repo?, base_branch?)` and
+    `outfitter_status(task_id)` (built in PR #320). Neither raises: failures return `{error: {kind, message}}`. A coding task runs far longer than one tool call should hold a
     sandbox. They use `a2a-sdk` 1.2.x, which sends `A2A-Version: 1.0` and v1.0 method names by
     default (spike), with:
     - `ClientConfig(streaming=False)` and `returnImmediately`. Otherwise it streams, since the card
@@ -664,7 +664,13 @@ Engine beyond one tool module.
       `message.metadata[uri]`.
   - A sample LangGraph agent `outfitter-delegate`. Its `agent.yaml` lists both tools under
     `sandboxes.tool.tools` (tools run in the agent sandbox otherwise). The tool sandbox gets
-    `network.egress_mode: allow_list` for the link host and `secrets: [OUTFITTER_A2A_KEY]`.
+    `network.egress_mode: allow_list` for the link host (`link.kernal.one:443`), and `secrets:
+    [OUTFITTER_A2A_KEY, OUTFITTER_A2A_URL]`. The agent sandbox reaches only `router.kernal.one`.
+  - The checkpointer needs the agents project's `MONGODB_URI`, which also reaches the tool sandbox. Use
+    a tightly scoped database user on a cluster linked to that workspace. The cluster choice is open for the
+    owner (PR4/PR7). The spec's "never `atlas setup`" rule covers the memory project only.
+  - **Client contract the server (PR5/PR6) must honour:** see the "Server contract" section of
+    `outfitter/integrations/agent-engine/README.md` (PR #320).
   - A README.
 - **Secret scope:** the key is set with `agentengine secret set --workspace-scope`
   (`D/reference/limitations.md`), so other agents in the agents project can't read it.

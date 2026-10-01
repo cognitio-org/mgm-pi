@@ -54,7 +54,12 @@ import type {
   TurnWaiter,
   TurnWaiterFinish,
   TurnWaitersCollection,
+  AeAgent,
+  AeAgentsCollection,
+  AeSession,
+  AeSessionsCollection,
 } from "./types.ts";
+import { AE_SESSION_EXECUTIONS } from "./types.ts";
 import type { VoicePrefs } from "../voice.ts";
 import { BROWSER_CAPTURES_PER_SESSION, SearchUnavailableError, entryInsertFields, type EntryInsertOptions } from "./types.ts";
 
@@ -1049,6 +1054,94 @@ class MemoryTurnWaiters implements TurnWaitersCollection {
   }
 }
 
+class MemoryAeAgents implements AeAgentsCollection {
+  private readonly rows = new Map<string, AeAgent>();
+
+  async list(): Promise<AeAgent[]> {
+    return [...this.rows.values()].sort((a, b) => a.id.localeCompare(b.id)).map(clone);
+  }
+
+  async findById(id: string): Promise<AeAgent | null> {
+    const a = this.rows.get(id);
+    return a ? clone(a) : null;
+  }
+
+  async insert(agent: AeAgent): Promise<boolean> {
+    if (this.rows.has(agent.id) || [...this.rows.values()].some((a) => a.workspaceId === agent.workspaceId)) return false;
+    this.rows.set(agent.id, clone(agent));
+    return true;
+  }
+
+  async update(id: string, patch: Partial<Omit<AeAgent, "id" | "createdAt">>): Promise<AeAgent | null | "duplicate"> {
+    const a = this.rows.get(id);
+    if (!a) return null;
+    if (patch.workspaceId !== undefined && [...this.rows.values()].some((o) => o.id !== id && o.workspaceId === patch.workspaceId)) return "duplicate";
+    Object.assign(a, Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)));
+    return clone(a);
+  }
+
+  async delete(id: string): Promise<boolean> {
+    return this.rows.delete(id);
+  }
+}
+
+class MemoryAeSessions implements AeSessionsCollection {
+  private readonly rows = new Map<string, AeSession>();
+
+  async recordInvoke(
+    row: Pick<AeSession, "outfitterSessionId" | "agentId" | "workspaceId" | "aeSessionId">,
+    executionId: string | undefined,
+    nowIso: string,
+  ): Promise<AeSession> {
+    const id = `${row.outfitterSessionId}:${row.agentId}`;
+    const held = this.rows.get(id) ?? { ...row, id, executions: [], openedAt: nowIso, lastUsedAt: nowIso };
+    Object.assign(held, row, { lastUsedAt: nowIso });
+    delete held.stoppedAt;
+    delete held.stopAttempts;
+    delete held.stopError;
+    if (executionId && !held.executions.includes(executionId)) held.executions = [...held.executions, executionId].slice(-AE_SESSION_EXECUTIONS);
+    this.rows.set(id, held);
+    return clone(held);
+  }
+
+  async findByExecution(outfitterSessionId: string, executionId: string): Promise<AeSession | null> {
+    for (const r of this.rows.values()) if (r.outfitterSessionId === outfitterSessionId && r.executions.includes(executionId)) return clone(r);
+    return null;
+  }
+
+  async listOpen(limit: number, usedBefore?: string): Promise<AeSession[]> {
+    return [...this.rows.values()]
+      .filter((r) => !r.stoppedAt && (usedBefore === undefined || r.lastUsedAt < usedBefore))
+      .sort((a, b) => a.lastUsedAt.localeCompare(b.lastUsedAt))
+      .slice(0, limit)
+      .map(clone);
+  }
+
+  async listOpenForSession(outfitterSessionId: string): Promise<AeSession[]> {
+    return [...this.rows.values()].filter((r) => r.outfitterSessionId === outfitterSessionId && !r.stoppedAt).map(clone);
+  }
+
+  async markStopped(id: string, lastUsedAt: string, nowIso: string, error?: string): Promise<boolean> {
+    const r = this.rows.get(id);
+    if (!r || r.stoppedAt || r.lastUsedAt !== lastUsedAt) return false;
+    r.stoppedAt = nowIso;
+    if (error) r.stopError = error;
+    return true;
+  }
+
+  async recordStopFailure(id: string, lastUsedAt: string, error: string): Promise<number | null> {
+    const r = this.rows.get(id);
+    if (!r || r.stoppedAt || r.lastUsedAt !== lastUsedAt) return null;
+    r.stopAttempts = (r.stopAttempts ?? 0) + 1;
+    r.stopError = error;
+    return r.stopAttempts;
+  }
+
+  async deleteForSession(outfitterSessionId: string): Promise<number> {
+    return deleteWhere(this.rows, (r) => r.outfitterSessionId === outfitterSessionId);
+  }
+}
+
 export class MemoryStore implements Store {
   readonly sessions = new MemorySessions();
   readonly entries = new MemoryEntries();
@@ -1068,6 +1161,8 @@ export class MemoryStore implements Store {
   readonly sessionChunks = new MemorySessionChunks();
   readonly previews = new MemoryPreviews();
   readonly turnWaiters = new MemoryTurnWaiters();
+  readonly aeAgents = new MemoryAeAgents();
+  readonly aeSessions = new MemoryAeSessions();
 
   constructor() {
     const tables: BrowserTables = {

@@ -126,5 +126,21 @@ it stays at 3 RPM), new GSM version, `secret set VOYAGE_API_KEY --stdin`, re-app
 
 ## Agents project (PR4)
 
-PR4 documents the agents project (`outfitter-agents`), its service account and the
-`outfitter-agentengine-agents-sa` secret here.
+The agents project holds the Agent Engine agents Outfitter calls (`agent_engine` tool, spec §4).
+It is separate from the memory project, because agents read every project secret.
+
+1. **Create the Atlas project `outfitter-agents`.** Keep it free of clusters and Outfitter data: its
+   service account may need `PROJECT_OWNER`, which pairs with Atlas Project Owner.
+2. **Create a project-scoped service account.** Try role `AGENT_DEVELOPER` first (enough for memory,
+   and it has no Atlas equivalent). If invoke or resume answers 403, use `PROJECT_OWNER`, which the
+   docs list for both.
+3. **Store `{client_id, client_secret}` as Secret Manager `outfitter-agentengine-agents-sa`.** Pipe
+   it, never print it. Record `service_account.active_secret.expires_at`.
+4. **Set `AGENT_ENGINE_AGENTS_PROJECT_ID` (the project's 24-hex id, not its name) and `AGENT_ENGINE_AGENTS_SA_EXPIRES_AT` in `config.env`.**
+   The link role picks them up at the next release.
+5. **Deploy agents only into this project,** then list each one in Settings → Agent Engine agents
+   (id slug, workspace id). Agents can call only listed, enabled entries.
+6. **Check once that `POST …/workspaces/{w}/runtime-sessions/{id}/stop` answers 202** with the
+   service-account token. Until that's confirmed, sessions are released by the 600 s idle TTL, and
+   the api logs a failed stop.
+7. **Rotate the secret every 90 days,** as for memory.

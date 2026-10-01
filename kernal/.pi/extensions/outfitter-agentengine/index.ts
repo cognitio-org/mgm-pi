@@ -10,7 +10,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { adminTransport, hasAdminCapability, type AdminTransport } from "../outfitter-admin/transport.ts";
 import { registerMemoryTool } from "./memory.ts";
-// E9 PR4 seam: import { registerAgentEngineTool } from "./agents.ts";
+import { registerAgentEngineTool } from "./agents.ts";
 
 /** Tests pass `deps`; pi calls this with `pi` alone, and the environment decides. */
 export default function (pi: ExtensionAPI, deps?: { env?: NodeJS.ProcessEnv; transport?: AdminTransport }) {
@@ -21,5 +21,5 @@ export default function (pi: ExtensionAPI, deps?: { env?: NodeJS.ProcessEnv; tra
 
   // ---- one line per tool, each behind its own tape capability ----
   if (hasAdminCapability("memory", env)) registerMemoryTool(pi, transport);
-  // E9 PR4 seam: if (hasAdminCapability("agentEngine", env)) registerAgentEngineTool(pi);
+  if (hasAdminCapability("agentEngine", env)) registerAgentEngineTool(pi, transport);
 }

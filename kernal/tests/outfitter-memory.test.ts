@@ -39,7 +39,8 @@ describe("registration", () => {
     ] as const) {
       const { pi, tools } = fakePi();
       register(pi, { env, transport: recorder([], kind).transport });
-      assert.equal(tools.length, 0, JSON.stringify(env));
+      // Count only memory: the extension also registers `agent_engine` (E9 PR4) for its own capability.
+      assert.equal(tools.filter((t) => t.name === "memory").length, 0, JSON.stringify(env));
     }
     const { pi, tools } = fakePi();
     register(pi, { env: { OUTFITTER_ADMIN_CAPS: "memory" }, transport: undefined });

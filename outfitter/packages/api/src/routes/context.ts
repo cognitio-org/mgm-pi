@@ -1,5 +1,6 @@
 import type { PreviewService } from "../previews.ts";
 import type { TurnWaiters } from "../turns.ts";
+import type { AeSessions } from "../ae-sessions.ts";
 import type { Store } from "../store/types.ts";
 import type { SessionIndexer } from "../search/service.ts";
 import type { Config } from "../config.ts";
@@ -45,6 +46,8 @@ export interface RouteContext {
   previews: PreviewService;
   /** E9 §1 turn waiters: the tick sweeps their deadlines and runs that ended without a bye. */
   turns: TurnWaiters;
+  /** E9 §4: the tick, archive and format stop the Agent Engine sessions a closed session opened. */
+  aeSessions: AeSessions;
   /** #197: sandbox logs (Cloud Logging, through the scoped log view) and stats (Cloud Monitoring).
    * NoSandboxTelemetry in dev and tests unless one injects a fake. */
   telemetry: SandboxTelemetry;

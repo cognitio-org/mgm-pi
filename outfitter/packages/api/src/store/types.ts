@@ -515,8 +515,9 @@ export interface AdminAuditEntry {
   at: string;
   /** Email the op ran as: the Dongle's owner, or the Drive session's owner. */
   actor: string;
-  /** "token" for a Dongle caller (laptop), "drive" for a Drive's broker call. */
-  via: "token" | "drive";
+  /** "token" for a Dongle caller (laptop), "drive" for a Drive's broker call, "web" for a sysop's
+   * change in the web UI (E9 §8: the Agent Engine agents allowlist). */
+  via: "token" | "drive" | "web";
   sessionId?: string;
   runId?: string;
   op: string;
@@ -1093,6 +1094,81 @@ export interface TurnWaitersCollection {
   deleteForSession(sessionId: string): Promise<number>;
 }
 
+/** E9 §4: one Agent Engine agent Drives may call, set by a sysop (Settings → Agent Engine agents).
+ * Agents call only listed, enabled entries; nothing is discovered from Agent Engine. */
+export interface AeAgent {
+  /** Slug: what the `agent_engine` tool names, and part of the Agent Engine session id. */
+  id: string;
+  /** The agents project's workspace that hosts it. One entry per workspace. */
+  workspaceId: string;
+  name: string;
+  /** What the agent does, for the model choosing one (ae.list). */
+  description: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  /** The sysop who last changed it. */
+  updatedBy?: string;
+}
+
+export interface AeAgentsCollection {
+  list(): Promise<AeAgent[]>;
+  findById(id: string): Promise<AeAgent | null>;
+  /** False when the id or the workspace is already listed. */
+  insert(agent: AeAgent): Promise<boolean>;
+  /** Null when there is no such agent; "duplicate" when the new workspace is another entry's. */
+  update(id: string, patch: Partial<Omit<AeAgent, "id" | "createdAt">>): Promise<AeAgent | null | "duplicate">;
+  delete(id: string): Promise<boolean>;
+}
+
+/** E9 §4: the Agent Engine runtime session one Outfitter session opened with one agent, so the api
+ * can stop it when the Outfitter session closes, and so `ae.get`/`ae.resume` reach only executions
+ * this Outfitter session started. */
+export interface AeSession {
+  /** `<outfitterSessionId>:<agentId>`. */
+  id: string;
+  outfitterSessionId: string;
+  agentId: string;
+  /** The workspace the calls went to (an allowlist edit later doesn't move them). */
+  workspaceId: string;
+  /** The Agent Engine session id sent as X-Session-ID (`outf-<session8>-<agent>`). */
+  aeSessionId: string;
+  /** Executions started from this session, oldest first, at most AE_SESSION_EXECUTIONS. */
+  executions: string[];
+  openedAt: string;
+  lastUsedAt: string;
+  /** Set once the stop was accepted or given up on; the next invoke clears it. */
+  stoppedAt?: string;
+  stopAttempts?: number;
+  /** Why the last stop failed (one line). */
+  stopError?: string;
+}
+
+export const AE_SESSION_EXECUTIONS = 50;
+
+export interface AeSessionsCollection {
+  /** Upserts the row for this session and agent, appends `executionId` (when there is one), and
+   * reopens it (clears stoppedAt and the stop attempts). */
+  recordInvoke(
+    row: Pick<AeSession, "outfitterSessionId" | "agentId" | "workspaceId" | "aeSessionId">,
+    executionId: string | undefined,
+    nowIso: string,
+  ): Promise<AeSession>;
+  /** The row of this Outfitter session that started `executionId`, if any. */
+  findByExecution(outfitterSessionId: string, executionId: string): Promise<AeSession | null>;
+  /** Rows not yet stopped, least recently used first; with `usedBefore`, only rows last used
+   * before it (the sweep skips fresh ones in the query, so they can't crowd out closed ones). */
+  listOpen(limit: number, usedBefore?: string): Promise<AeSession[]>;
+  listOpenForSession(outfitterSessionId: string): Promise<AeSession[]>;
+  /** Marks it stopped, only if it is still open and unused since `lastUsedAt` (an invoke that
+   * raced the stop keeps its session). */
+  markStopped(id: string, lastUsedAt: string, nowIso: string, error?: string): Promise<boolean>;
+  /** Counts one failed stop on an open row unused since `lastUsedAt`; the new count, or null. */
+  recordStopFailure(id: string, lastUsedAt: string, error: string): Promise<number | null>;
+  /** #208: removes every row of this session (format). Returns how many were removed. */
+  deleteForSession(outfitterSessionId: string): Promise<number>;
+}
+
 export interface Store {
   sessions: SessionsCollection;
   entries: EntriesCollection;
@@ -1112,5 +1188,7 @@ export interface Store {
   adminApprovals: AdminApprovalsCollection;
   sessionChunks: SessionChunksCollection;
   turnWaiters: TurnWaitersCollection;
+  aeAgents: AeAgentsCollection;
+  aeSessions: AeSessionsCollection;
   close(): Promise<void>;
 }

@@ -52,7 +52,7 @@ export interface BuildTestAppOptions {
   voiceUsage?: VoiceUsage;
   /** GitHub catalog. Defaults to one that reads `secretAdmin` (empty in tests → not configured). */
   githubCatalog?: GithubCatalog;
-  /** E9: Agent Engine clients (e.g. over test/fake-agent-engine.ts). Defaults to config's (none). */
+  /** E9: Agent Engine clients, e.g. createAgentEngine(fake.config(), { fetch: fake.fetch }). */
   agentEngine?: AgentEngine;
 }
 

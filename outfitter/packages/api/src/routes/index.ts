@@ -17,6 +17,7 @@ import { registerIdeRoutes } from "./ide.ts";
 import { registerVoiceRoutes } from "./voice.ts";
 import { registerGithubRoutes } from "./github.ts";
 import { registerAdminRoutes } from "./admin.ts";
+import { registerAgentEngineRoutes } from "./agent-engine.ts";
 
 export type { RouteContext } from "./context.ts";
 
@@ -41,6 +42,7 @@ export async function registerRoutes(app: FastifyInstance, ctx: RouteContext): P
     await registerTokenRoutes(app, ctx);
     await registerProviderRoutes(app, ctx);
     await registerOperatorRoutes(app, ctx);
+    await registerAgentEngineRoutes(app, ctx);
     await registerVoiceRoutes(app, ctx);
     await registerGithubRoutes(app, ctx);
     await registerAdminRoutes(app, ctx);

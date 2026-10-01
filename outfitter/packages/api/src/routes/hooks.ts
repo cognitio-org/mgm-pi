@@ -113,7 +113,9 @@ export async function registerHookRoutes(app: FastifyInstance, ctx: RouteContext
     // E9 §1: turn waiters whose run ended without a bye, whose mail can't be delivered, or whose
     // deadline passed. Never fails the tick.
     const turns = await ctx.turns.sweep().catch(() => undefined);
-    return { woken, ...(previews ? { previews } : {}), ...(turns ? { turns } : {}) };
+    // E9 §4: Agent Engine sessions whose Outfitter session closed. Never fails the tick.
+    const agentEngine = await ctx.aeSessions.sweep().catch(() => undefined);
+    return { woken, ...(previews ? { previews } : {}), ...(turns ? { turns } : {}), ...(agentEngine ? { agentEngine } : {}) };
   });
 
   // §5.3 guardrail 1 (gke-sandbox-provider.md): two Cloud Scheduler HTTP jobs (warm-up/warm-down)

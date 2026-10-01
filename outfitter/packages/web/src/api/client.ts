@@ -167,6 +167,20 @@ export interface TokenRecord {
   expiresAt?: string;
 }
 
+/** E9 §4: one Agent Engine agent Drives may call (Settings → Agent Engine agents, sysops only). */
+export interface AeAgent {
+  id: string;
+  workspaceId: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  updatedBy?: string;
+}
+
+export type AeAgentInput = Pick<AeAgent, "workspaceId" | "name" | "description" | "enabled">;
+
 /** POST /api/operator/tokens/revoke's body: one owner's email, or every owner under an @domain. */
 export type TokenOwnerMatch = { email: string } | { domain: string };
 
@@ -544,6 +558,23 @@ export const api = {
 
   revokeTokensForOwners(match: TokenOwnerMatch): Promise<RevokeTokensResult> {
     return request("/api/operator/tokens/revoke", { method: "POST", body: JSON.stringify(match) });
+  },
+
+  /** E9 §4: the Agent Engine agents Drives may call (sysops). */
+  listAeAgents(): Promise<{ agents: AeAgent[] }> {
+    return request("/api/operator/agent-engine/agents");
+  },
+
+  createAeAgent(agent: AeAgentInput & { id: string }): Promise<{ agent: AeAgent }> {
+    return request("/api/operator/agent-engine/agents", { method: "POST", body: JSON.stringify(agent) });
+  },
+
+  updateAeAgent(id: string, patch: Partial<AeAgentInput>): Promise<{ agent: AeAgent }> {
+    return request(`/api/operator/agent-engine/agents/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(patch) });
+  },
+
+  deleteAeAgent(id: string): Promise<void> {
+    return request(`/api/operator/agent-engine/agents/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 
   listTokens(): Promise<TokenRecord[]> {

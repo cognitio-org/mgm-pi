@@ -4,6 +4,9 @@
 
 import { SessionIndexer } from "./search/service.ts";
 import { DriveAdmin } from "./admin/drive.ts";
+// E9 PR4: registers the ae.* admin ops.
+import "./admin/ae-ops.ts";
+import { AeSessions } from "./ae-sessions.ts";
 import { createNgrokApi, type NgrokApi } from "./ngrok-api.ts";
 import { PreviewService } from "./previews.ts";
 import { TurnWaiters } from "./turns.ts";
@@ -79,6 +82,8 @@ export interface App {
   mail: MailService;
   previews: PreviewService;
   turns: TurnWaiters;
+  /** E9 §4: stops the Agent Engine sessions of closed Outfitter sessions. */
+  aeSessions: AeSessions;
   /** Stops the run reconciler interval, (role link/all) the down-queue poller, and (role web/all)
    * the provider status poller; call from tests and from main.ts on shutdown. */
   stopBackgroundTasks: () => void;
@@ -157,6 +162,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   // per project per instance.
   const agentEngine = opts.agentEngine ?? createAgentEngine(config.agentEngine, { log: (msg) => fastify.log.warn(msg) });
   agentLink.setDriveAdmin(new DriveAdmin({ store, config, models: modelsService, agentEngine, log: (msg) => fastify.log.warn(msg) }));
+  const aeSessions = new AeSessions({ store, agents: agentEngine.agents, log: (msg) => fastify.log.warn(msg) });
   // E9 §3.3: `memory: auto` tapes record user prompts as they arrive and each settled turn's final
   // assistant message (the settle comes after agentd flushed the turn's entries).
   if (agentEngine.memory) {
@@ -218,6 +224,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     mail,
     previews,
     turns,
+    aeSessions,
     providers,
     voice:
       opts.voice ??
@@ -263,7 +270,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     ssePoller.stop();
   };
 
-  return { fastify, runs, agentLink, sse, laptopProbe, providerStatus, mail, previews, turns, stopBackgroundTasks };
+  return { fastify, runs, agentLink, sse, laptopProbe, providerStatus, mail, previews, turns, aeSessions, stopBackgroundTasks };
 }
 
 /** GET /api/sessions/:id/browser/captures/:captureId, or undefined. Query strings are ignored. */

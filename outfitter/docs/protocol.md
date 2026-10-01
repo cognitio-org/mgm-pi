@@ -306,6 +306,23 @@ request, reads resent once after a link drop, writes (with `idempotencyKey`) sen
   /api/sessions/:id/ui-response`); a Dongle caller and other viewers see pi's question only. After a
   yes the api reads the tape and rights again before running the op. `needsApproval: true` on the
   result means declined, unanswered, or replaced.
+- `ae.*` (E9 PR4, Kernal's `agent_engine` tool; `src/admin/ae-ops.ts`): `ae.list` (read: the
+  allowlist's enabled agents), `ae.invoke {agent, message, wait?}` (write, audited as
+  `<agent>/<executionId>`; streams `invokeStream` for up to `wait` seconds, default 120, max 280,
+  then reports `completed|running|suspended|failed`), `ae.get {executionId}` (read) and `ae.resume
+  {executionId, decision, notes?}` (`approve`: the card names the agent and execution, quotes the
+  pause's reason and context JSON-escaped and clipped as the remote agent's words, and shows the
+  decision, which must be one of its `allowed_decisions`). Only agents listed and enabled in
+  `aeAgents` (Settings → Agent Engine agents: `GET|POST /api/operator/agent-engine/agents`,
+  `PUT|DELETE …/:id`, sysops on the web role, changes by a person only, audited `via: "web"`) are
+  callable, and `get`/`resume` reach only executions the same session started (`aeSessions`).
+  Requests carry `X-Session-ID: outf-<session8>-<agent>` and
+  `X-Mdb-Agent-Engine-Custom-Outfitter-Session: <session8>` (a UUID's last 8 characters), never an
+  email or the CLI's test-session headers. Results are capped at 8 KB, with the remote part between
+  `[from Agent Engine agent <id>]` and `[end of Agent Engine agent <id>]`. When the session has no
+  active run, is archived or is formatted, the link role's tick stops the Agent Engine sessions it
+  opened (`runtime-sessions/{id}/stop`, best effort; a refusal leaves the agent's idle TTL to
+  release it).
 - A write's `idempotencyKey` is remembered on the run (hashed, next to the GitHub keys), so a replay
   returns the first result. At most 8 admin requests per run are handled at once.
 - No `API_PROTOCOL_VERSION` bump: an older api never sends `adminTools`, `memory` or `agentEngine`,

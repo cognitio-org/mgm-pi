@@ -1,5 +1,5 @@
 {
-  "lead": "a person in their mid-50s with short grey hair, wearing a powder-blue polo shirt",
+  "lead": "a man in his mid-40s with short, neat, side-parted blond hair, clean-shaven, wearing a powder-blue polo shirt",
   "suffix": "1990 corporate promotional video shot on Betacam and dubbed to VHS, soft and slightly blurry, low saturation, lifted blacks, warm skin, mild tape grain, no logos, no brand names, no readable text. Keep all important action inside the central 4:3 area of the frame.",
   "negative": "logos, brand names, trademarks, apple logo, readable text, captions, watermark, children, modern devices, smartphones, flat-screen monitors",
   "stills": [
@@ -20,6 +20,17 @@
         "lead-side"
       ],
       "prompt": "Photograph. The exact same person, clothes, room, lighting, camera position and framing as the reference image, but now they have turned their head toward the camera with a quietly proud, slightly smug, self-satisfied look: closed mouth, the faintest knowing half-smile, chin raised a little, eyes steady on the lens. They hold one firm thumbs-up close beside their face. Not a grin, no teeth. The out-of-focus monitor edge still fills the right third of the frame. {suffix}"
+    },
+    {
+      "id": "rocky-lab",
+      "prompt": "Photograph. {set} {lead} sits at one of the computers, seen three-quarter from behind its monitor, whose edge fills the right fifth of the frame, soft and out of focus. Earnest, calm expression, looking at the screen. Another person works at a second computer in the soft background. Soft warm light. {suffix}"
+    },
+    {
+      "id": "rocky-side",
+      "prompt": "Photograph. {set} The same person as the reference image, now seen almost in profile from their left side at eye level, in a tight head-and-shoulders close-up. They face a beige CRT monitor at the right of the frame; the back edge of that monitor fills the right third of the frame as a large, soft, out-of-focus wedge close to the lens. Behind them, a mustard-yellow wall with one soft out-of-focus poster. Earnest, calm expression, looking at the screen. Head and monitor edge both inside the central 4:3 area. {suffix}",
+      "refs": [
+        "rocky-lab"
+      ]
     },
     {
       "id": "lead-glow",
@@ -106,6 +117,13 @@
       "start": "lead-side",
       "end": "lead-side-proud",
       "takes": 3,
+      "prompt": "The person reads the screen and nods slowly twice with an earnest deadpan expression, then turns their head toward the camera and raises one firm thumbs-up close beside their face, settling into a quietly proud, slightly smug, self-satisfied look: closed mouth, faint knowing half-smile, chin up a little. No grin. Holds the look and the thumbs-up completely still for the last second. Locked-off camera, no cuts, no zoom. {set} {suffix}"
+    },
+    {
+      "id": "12-rocky",
+      "seconds": 8,
+      "start": "rocky-side",
+      "takes": 2,
       "prompt": "The person reads the screen and nods slowly twice with an earnest deadpan expression, then turns their head toward the camera and raises one firm thumbs-up close beside their face, settling into a quietly proud, slightly smug, self-satisfied look: closed mouth, faint knowing half-smile, chin up a little. No grin. Holds the look and the thumbs-up completely still for the last second. Locked-off camera, no cuts, no zoom. {set} {suffix}"
     }
   ],

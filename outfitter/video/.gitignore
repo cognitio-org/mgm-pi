@@ -5,3 +5,4 @@ reference/
 *.webm
 out/
 *.wav
+__pycache__/

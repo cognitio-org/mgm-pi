@@ -1,76 +1,74 @@
-# "Dear Sysop" -- Outfitter intro (draft 2: 75 s cut + 30 s teaser)
+# "Dear Sysop" -- Outfitter intro (draft 3: 75 s cut + 30 s teaser)
 
-The format: people write wish letters to the company, mail them, and Outfitter answers each wish
-on screen. The letters are addressed to **"Sysop, Outfitter, U.S.A."** (Sysop is Outfitter's own
-word for an admin), never to a real person. Every term below is Outfitter's own vocabulary (see
-`docs/glossary.md`): Tape, Floppy, Disk Box, Drive, ▶ Play, ⏏ Eject.
+Built on the reference promo's structure (from the beat sheet, kept private): a title over a
+mailbox montage, then a parade of fan letters, each read aloud by its writer over pictures of the
+wish, ending on one short punchline letter with a thumbs-up and a thank-you card. Our version
+keeps the *shape* and the music, but every word, person and picture is ours, and the joke is
+inverted: the letter writers are grown-ups, not kids.
+
+Letters go to **"Sysop, Outfitter, U.S.A."** (Sysop is Outfitter's own word for an admin), never
+to a real person. Every product term is Outfitter's own (see `docs/glossary.md`): Tape, Floppy,
+Disk Box, Drive, ▶ Play, ⏏ Eject, Control Panel.
 
 ## Decisions
-- **Casting: grown-ups writing like kids.** Engineers in polos write crayon wish letters signed
-  "Age 54", "Age 41". No children on screen or in the voices.
-- **Length: both.** The 75 s cut below, then a 30 s teaser re-edited from the same shots.
+- **Casting: grown-ups writing like kids.** No children on screen or in the voices.
+- **Length: both.** The 75 s cut, then a 30 s teaser re-cut from the same material.
 - **Voices: all generated** (see "Voices"). Nobody records anything.
+- **Lead:** `[LEAD]` = "a person in their mid-50s with short grey hair, wearing a powder-blue polo
+  shirt" -- an original generated character, not modeled on anyone real. Same description and
+  reference still everywhere. Signs the punchline letter as **MGM**, Age 54.
 
-`[LEAD]` = "a person in their mid-50s with short grey hair and a powder-blue polo shirt" -- an
-original generated character, not modeled on anyone real. Use the same one-line description and
-the same generated reference still in every prompt. The lead is the hero letter writer and signs
-the ending as **MGM** (Age 54).
+## Structure (mirrors the reference, at its ~84 BPM: 1 bar = 2.86 s)
+| Part | Bars | Time | Reference did | We do |
+|---|---|---|---|---|
+| A Open | 1-3 | 0:00-0:08.6 | Title "Dear Mr. ___" over a mailbox montage | "Dear Sysop," writes on over adults running to the mailbox |
+| B Letter 1 | 4-9 | 0:08.6-0:25.7 | Small child learning to program, sends a picture of their first program | **Lee, 61**, learning to program with agents; sends a crayon picture of the first *bug* it fixed |
+| C Letter 2 | 10-17 | 0:25.7-0:48.6 | Asks the CEO to persuade a parent; reads an absurd spec list off a printout; "how much will all this cost?" | **Pat, 41**, asks Sysop to write to their *boss*; reads the Outfitter feature list off a dot-matrix printout |
+| D Letter 3 | 18-21 | 0:48.6-1:00 | A dream wish (talking to dolphins) over a paint-program beach | **Jo, 47**: a computer you can just talk to, and take your work home -- over a pixel-art beach |
+| E Punchline | 22-24 | 1:00-1:08.6 | One-line letter, nod, thumbs-up | **MGM, 54**: "Outfitter rules the fleet." Nod, thumbs-up, freeze, signature |
+| F Close | 25-26 | 1:08.6-1:15 | Thank-you card, logo | Thank-you card, `READY.`, logo |
+
+(The reference's reflective "computers are only tools" letter is dropped from the 75 s cut.)
 
 ## Shot list
-Source key: **VEO** = generated clip (prompt below + style-bible prompt suffix), **UI** = real
-Outfitter screen recording, **MADE** = built by us (HTML/ffmpeg/hand drawing), **TOUR** = the
-existing pixel-art Manual tour (`packages/web/src/components/tour/scenes.tsx`).
-Every shot then goes through `vhs.sh ... grade.cube`. Transitions are 1-1.5 s dissolves.
+Source key: **VEO** = generated clip (`spec.json`), **UI** = real Outfitter screen recording,
+**MADE** = built by us (HTML/ffmpeg + generated drawings), **TOUR** = the pixel-art Manual tour
+(`packages/web/src/components/tour/scenes.tsx`). Every shot goes through `vhs.sh ... grade.cube`.
+Cuts land on bar lines; transitions are 1-1.5 s dissolves, montage beats double-exposed.
 
-| # | Time | Shot (style-bible device) | Source | Picture | Audio / VO |
-|---|---|---|---|---|---|
-| 1 | 0:00-0:06 | Printout pan (5) | MADE | Tractor-feed paper scrolls past: **MY WISH LIST** • An agent that codes while I sleep • Twelve of them at once • It remembers where we left off • I can take it home • I can just talk to it | Dot-matrix printer screech; synth pad fades up |
-| 2 | 0:06-0:10 | Sidewalk (9) | VEO | Four adults in office casual run down a suburban sidewalk toward a curbside mailbox, waving envelopes | Running feet, kids-show synth sting |
-| 3 | 0:10-0:14 | Envelope (9) | MADE + VEO | Hand-lettered envelope "Sysop / Outfitter / U.S.A." slides into the mailbox; flag goes up | VO (deadpan): "Dear Sysop..." |
-| 4 | 0:14-0:20 | Wish card (6) | MADE | Crayon drawing of a robot at a desk eating a sandwich. Quote: *"Could you make a computer that writes the code while I eat lunch?"* -- signature "MGM", **Age 54** | VO reads the quote |
-| 5 | 0:20-0:27 | Lab hero setup (1) | VEO + UI | [LEAD] at a beige computer, monitor edge foreground right; the CRT shows the **Disk Box**. Slow nod | VO: "I picked a Tape. I started a Floppy." |
-| 6 | 0:27-0:32 | CRT macro (4) | UI | Extreme close-up of the Outfitter menu, "New Floppy..." row highlights; scanlines and glow | Click, floppy-drive sound (`landing/public/sounds`) |
-| 7 | 0:32-0:38 | Overhead mouse (3) + double exposure | VEO + UI | Hand clicks the mouse; dissolve/overlay to **▶ Play** and a Drive streaming its work | VO: "I pressed Play..." |
-| 8 | 0:38-0:45 | Thought glow (7) | VEO | Above [LEAD]'s head, a ring of small beige computers floats in a white glow, each screen flickering with text | VO: "...and a Drive in the cloud did it while I slept." |
-| 9 | 0:45-0:52 | Paint fantasy (8) | TOUR + UI | Pixel-art beach; a floppy pops out of a computer and flies to a little laptop on a beach towel | VO: "Then I ejected it and finished it on my laptop." |
-| 10 | 0:52-0:58 | Wish card (6) | MADE | Crayon drawing of a computer with a speech bubble and an ear. *"Could you make a computer you can talk to?"* -- signature "Pat", **Age 41** | VO reads it; beat; a mic click |
-| 11 | 0:58-1:08 | Hero thumbs-up (1, 10) | VEO | [LEAD] reads the screen, nods, turns to camera, single thumbs-up, hold; freeze frame; white-chrome cursive signature writes on: "Your Outfitter friend, MGM" | VO: "Outfitter rules the fleet. Your Outfitter friend... MGM." |
-| 12 | 1:08-1:15 | End card | UI/MADE | Blue screen, `READY.` and a blinking cursor, dissolves to the Outfitter logo | One warm synth chord |
+| # | Time | Picture | Source | Voice |
+|---|---|---|---|---|
+| 1 | 0:00-0:05.7 | Handwritten "Dear Sysop," writes on over four adults running down a sidewalk to a mailbox | MADE over VEO `02-sidewalk` | -- (music up) |
+| 2 | 0:05.7-0:08.6 | Envelope "Sysop / Outfitter / U.S.A." into the mailbox, flag up | VEO `03-envelope` + MADE lettering | -- |
+| 3 | 0:08.6-0:14.3 | Overhead hand on the mouse, double-exposed with the CRT macro of "New Floppy..." | VEO `07-mouse` + UI | LEE-a, LEE-b |
+| 4 | 0:14.3-0:20.0 | ▶ Play; a Drive streams its work (CRT macro, scanlines) | UI | (LEE-b continues) |
+| 5 | 0:20.0-0:25.7 | Wish card: crayon bug with a bandage. "Lee, Age 61" | MADE `card-bug` | LEE-c |
+| 6 | 0:25.7-0:31.4 | CRT macro: the Disk Box with one lonely Floppy | UI | PAT-a |
+| 7 | 0:31.4-0:42.9 | Dot-matrix printout pans down: the wish list (below) | MADE | PAT-b, PAT-c |
+| 8 | 0:42.9-0:48.6 | Thought glow: a ring of small beige computers (twelve Drives) | VEO `08-glow` | PAT-d, PAT-e |
+| 9 | 0:48.6-0:52.9 | Wish card: crayon computer with a speech bubble and an ear. "Jo, Age 47" | MADE `card-talk` | JO |
+| 10 | 0:52.9-1:00.0 | Pixel-art beach; a floppy ejects and flies to a laptop on a towel | TOUR + UI | (JO continues) |
+| 11 | 1:00.0-1:02.9 | [LEAD] at the beige computer, reads, nods | VEO `05-lab` | MGM |
+| 12 | 1:02.9-1:08.6 | Turns to camera, one thumbs-up, freeze; cursive "Your Outfitter friend, MGM" writes on | VEO `11-thumbsup` + MADE | (MGM ends) |
+| 13 | 1:08.6-1:15.0 | White serif on blue: "Thanks for all your letters. Our grown-up fans keep us going." Dissolve to `READY.` and the logo | MADE + UI | -- (music button) |
 
-## VEO prompts
-Append the style-bible prompt suffix to each. Generate a reference still of [LEAD] and the lab
-set first (image model), then use them as Veo image/reference inputs for 5, 7, 8 and 11 so the
-person and room match. Keep every prompt free of brand names and readable text.
+**Printout (7) text**, matching PAT-c: MY WISH LIST / • Twelve Drives at once / • A Tape for every
+job / • MongoDB Atlas memory (remembers where we left off) / • Atlas agents <-> my agents (A2A) /
+• Eject to my laptop / • A Control Panel with all the keys.
 
-- **2 Sidewalk:** Handheld camera at hip height, four adults in 1990 office casual (polos, khakis,
-  sneakers) run laughing down a suburban sidewalk past hedges and beige stucco houses toward a
-  white curbside mailbox with a red flag in the right foreground, each holding a white envelope.
-  Overcast late afternoon. 6 seconds.
-- **3 Envelope (plate only):** Close-up of a hand pushing a plain white envelope into an open
-  white curbside mailbox, blurred green hedge behind; the envelope's face is blank. *(We add the
-  hand lettering in post, or shoot a real envelope on a phone; video models garble text.)*
-- **5 Lab hero setup:** Computer lab with mustard-yellow walls and a few posters. [LEAD] sits at
-  a beige desktop computer, seen three-quarter from behind the monitor, whose edge fills the
-  right fifth of the frame, soft and out of focus. [LEAD] reads the screen and nods slowly. Another
-  person works at a second beige computer in the background. Locked-off camera. 7 seconds.
-- **7 Overhead mouse:** Top-down insert of a hand clicking a beige one-button mouse on a
-  light-wood desk, corner of a beige keyboard and its coiled cable at frame left. 4 seconds.
-- **8 Thought glow:** Plain pale blue-grey studio backdrop. The top of [LEAD]'s head at the bottom
-  of frame; above it, inside a soft white elliptical glow, a ring of six small beige desktop
-  computers float and slowly rotate, their screens flickering with green text. 6 seconds.
-- **11 Hero thumbs-up:** Same lab and framing as shot 5. [LEAD] reads the screen, nods slowly
-  with an earnest deadpan expression, turns their head toward camera and gives one firm thumbs-up,
-  holds it still for a full second. Locked-off camera. 8 seconds.
+**Atlas** is the centerpiece of Pat's list: Drives share long-term memory through MongoDB Atlas
+Agent Engine, call its hosted agents, and take coding tasks from Atlas agents over A2A (epic E9,
+`docs/specs/atlas-agent-engine-and-a2a.md`). It's a third-party product: name it in words, and only
+use its logo with MongoDB's permission.
 
 ## MADE assets
-- **Printout (1):** an HTML page (tractor-feed paper, sprocket holes, a dot-matrix web font)
+- **Printout (7):** an HTML page (tractor-feed paper, sprocket holes, a dot-matrix web font)
   recorded with Playwright while it scrolls, like `packages/web/scripts/record-tour.mjs`.
-- **Envelope lettering (3):** hand-letter it for real and photograph it, or composite marker
+- **Envelope lettering (2):** hand-letter it for real and photograph it, or composite marker
   lettering onto the Veo plate.
-- **Wish cards (4, 10):** crayon pictures generated with an image model ("a child's crayon drawing
-  on off-white paper of ..."; or drawn by hand if anyone wants to), and set the quote in a bold white serif with a grey drop shadow plus a blue-ink signature
+- **Wish cards (5, 9):** crayon pictures generated by `generate.py stills`, with the quote in a bold white serif with a grey drop shadow plus a blue-ink signature
   and "Age N" (HTML or ffmpeg `drawtext`).
-- **Signature write-on (11):** "MGM" in a cursive font, white fill, chrome/purple outline, revealed left
+- **Title write-on (1)** and **signature write-on (12):** "Dear Sysop," / "Your Outfitter friend, MGM" in a cursive font, white fill, chrome/purple outline, revealed left
   to right with an animated mask.
 
 ## UI captures needed
@@ -94,11 +92,12 @@ visual guardrails in the README still apply to the footage.
   demucs --two-stems=vocals -o reference/stems reference/source-audio.wav
   # music bed: reference/stems/htdemucs/source-audio/no_vocals.wav
   ```
-- Retime to our cut using the beat sheet's shot times: the swell should land on shot 11.
+- Retime to our cut using the beat sheet's shot times: the swell should land on shot 11 (1:00),
+  where the reference swells into its punchline letter.
 
 **Option 2: an original soundalike** (if the master or paperwork doesn't come through). Fill the
 blanks from `beat-sheet.sh` (tempo, where the music swells and drops) and a listen:
-- Tempo: ___ BPM (beat sheet). Length 75 s; swell into shot 11, button on the end card.
+- Tempo: ~84 BPM (beat sheet). Length 75 s; swell into shot 11, button on the end card.
 - Feel: earnest, optimistic early-90s corporate: warm synth pads, bright digital (FM) electric
   piano and bells, soft gated-reverb snare, fretless-style synth bass, light shaker. A simple
   hopeful melody that "lifts" when the letters are read.
@@ -108,45 +107,40 @@ blanks from `beat-sheet.sh` (tempo, where the music swells and drops) and a list
   musician, or license from a stock library. Keep the license with the project.
 
 ## Voices (all generated)
-Text-to-speech with a natural-language style direction, so the delivery can be steered without a
-human read. Good fits: **Gemini TTS on Vertex** (same GCP project as Veo; takes a style prompt
-and does multi-speaker), Google Cloud TTS's HD voices, or ElevenLabs. Use stock or designed
-voices only -- never clone a real person's voice, including anyone from the reference video.
+Gemini-TTS (Cloud Text-to-Speech, project `outfitter-509211`) with a natural-language style
+direction per voice; `generate.py voices` renders every line in `spec.json`. Prebuilt voices only --
+never a clone of a real person, including anyone in the reference video.
 
-| Voice | Who | Direction for the TTS style prompt |
+| Voice | Who | Direction |
 |---|---|---|
-| **MGM** | the lead, "Age 54" | Adult in their 50s, mid-range, reads flat and completely earnest, like a kid reading their own letter aloud at school; small pauses between sentences; no irony in the voice. Say "MGM" as three letters (em-gee-em); spell it that way in the TTS input if needed. |
-| **PAT** | wish card 2, "Age 41" | A different adult voice (contrast MGM's pitch), same earnest, slightly too careful delivery. |
-| **ANNOUNCER** | end card only (optional) | Warm, unhurried early-90s corporate narrator; one line. |
+| **LEE** | letter 1, Age 61 | Older adult, gentle, proud and a little slow, reading their own letter aloud like a kid at school. |
+| **PAT** | letter 2, Age 41 | Adult, earnest and slightly breathless, reading a long list very seriously; the list gets faster. |
+| **JO** | letter 3, Age 47 | Adult, soft and dreamy, wistful pauses. |
+| **MGM** | punchline, Age 54 | Adult in their 50s, mid-range, flat and completely earnest. "MGM" is said as three letters. |
 
-### Lines (75 s cut)
-Target lengths are the time the line may take on screen; regenerate or adjust pace to fit.
+### Lines
+Split so the teaser can reuse pieces. Times are what each piece may take on screen.
 
-| Shot | Voice | Line | Target |
+| Id | Voice | Line | Max |
 |---|---|---|---|
-| 3 | MGM | "Dear Sysop..." | 1.5 s |
-| 4 | MGM | "Could you make a computer that writes the code while I eat lunch?" | 4 s |
-| 5 | MGM | "I picked a Tape. I started a Floppy." | 3 s |
-| 7 | MGM | "I pressed Play..." | 1.5 s |
-| 8 | MGM | "...and a Drive in the cloud did it while I slept." | 3.5 s |
-| 9 | MGM | "Then I ejected it, and finished it on my laptop." | 3.5 s |
-| 10 | PAT | "Could you make a computer you can talk to?" | 3 s |
-| 11 | MGM | "Outfitter rules the fleet. Your Outfitter friend... MGM." | 5 s |
-| 12 | ANNOUNCER | "Outfitter. Ready when you are." (optional) | 2.5 s |
+| LEE-a | LEE | "Dear Sysop. My name is Lee, and I am sixty-one years old." | 4 s |
+| LEE-b | LEE | "I am learning to program with agents. I pick a Tape, I start a Floppy, and a Drive does the work." | 7 s |
+| LEE-c | LEE | "I am sending you a picture of the first bug it fixed. Your friend, Lee." | 5 s |
+| PAT-a | PAT | "Dear Sysop. My boss won't let me run more than one agent. So please write a letter to my boss." | 5.5 s |
+| PAT-b | PAT | "Here is what I would like:" | 1.5 s |
+| PAT-c | PAT | "Twelve Drives at once. A Tape for every job. Atlas memory, so it remembers where we left off. Atlas agents that hand my agents work, and back again. Eject to my laptop. And a Control Panel with all the keys." | 10 s |
+| PAT-d | PAT | "How much will all this cost?" | 2 s |
+| PAT-e | PAT | "Make it sound official, okay? Sincerely, Pat." | 3.5 s |
+| JO | JO | "Dear Sysop. Maybe someday you can make a computer I can just talk to. And when I'm done, I can take my work home. Sincerely, Jo." | 10 s |
+| MGM | MGM | "Dear Sysop. Outfitter rules the fleet. Your Outfitter friend, MGM." | 7 s |
 
-Finish every voice line with the same tape treatment as the picture (`vhs.sh` band-limits audio),
+Finish every voice line with the same tape treatment as the picture (`vhs.sh` band-limits audio)
 plus a touch of room reverb, so it doesn't sound too clean against the 1990 picture.
 
-## 30 s teaser
-Re-cut from the same shots and voice lines, no new generation:
-
-| Time | Shot | Voice |
+## 30 s teaser (10.5 bars)
+| Time | Picture | Voice |
 |---|---|---|
-| 0:00-0:04 | 1 Printout (first 4 s) | -- |
-| 0:04-0:09 | 4 Wish card 1 | MGM: "Could you make a computer that writes the code while I eat lunch?" |
-| 0:09-0:14 | 5 Lab hero setup | MGM: "I picked a Tape. I started a Floppy." |
-| 0:14-0:19 | 8 Thought glow | MGM: "...and a Drive in the cloud did it while I slept." |
-| 0:19-0:27 | 11 Hero thumbs-up | MGM: "Outfitter rules the fleet. Your Outfitter friend... MGM." |
-| 0:27-0:30 | 12 End card | music button |
-
-Music for the teaser: the same track, cut so the swell lands on the thumbs-up at 0:19.
+| 0:00-0:05.7 | 1 "Dear Sysop," over the sidewalk run | -- |
+| 0:05.7-0:17.1 | 7 Printout pan | PAT-b, PAT-c (first four items, through the Atlas agents), PAT-d |
+| 0:17.1-0:25.7 | 11 + 12 Nod, thumbs-up, signature | MGM |
+| 0:25.7-0:30.0 | 13 Thank-you card, logo | -- |

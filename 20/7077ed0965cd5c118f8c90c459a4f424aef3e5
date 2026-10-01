@@ -1,0 +1,56 @@
+outfitter/packages/api/src/auth.ts
+  s_1d3bdd6f362f9b::t_5b82b7923ce147 108-111
+outfitter/packages/api/src/a2a/card.ts
+  s_1d3bdd6f362f9b::t_5b82b7923ce147 30
+outfitter/packages/api/test/github-broker.test.ts
+  s_1d3bdd6f362f9b::t_4e96a8dfb70f86 242-247,253-259
+  s_1d3bdd6f362f9b::t_e5a276c0782c02 103
+  s_1d3bdd6f362f9b::t_2d81e75d62f49c 241,248-252
+  s_1d3bdd6f362f9b::t_3530c79ae06456 120
+outfitter/packages/api/src/session-create.ts
+  s_1d3bdd6f362f9b::t_034b6384c5d370 92-95
+  s_1d3bdd6f362f9b::t_5b82b7923ce147 2
+outfitter/packages/api/src/routes/a2a.ts
+  s_1d3bdd6f362f9b::t_70ca1da87601ba 51-60,71-72,112-135,153-154,173,196,216
+outfitter/packages/api/src/store/mongo.ts
+  s_1d3bdd6f362f9b::t_5b82b7923ce147 1383-1385,1391,1395-1400,1414,1468-1471,1612
+outfitter/packages/api/test/a2a.test.ts
+  s_1d3bdd6f362f9b::t_2d81e75d62f49c 256-264,469,528,535-542,549-604,646-656,716-718,720-729
+outfitter/packages/web/test/tokens-page.test.tsx
+  s_1d3bdd6f362f9b::t_b830a6cc2c1b87 114-129
+outfitter/docs/protocol.md
+  s_1d3bdd6f362f9b::t_f4c8ec94228cc6 684-689
+outfitter/packages/api/src/a2a/handler.ts
+  s_1d3bdd6f362f9b::t_70ca1da87601ba 68-70,72-74,85,111,142,147,149,156-172,332-335
+  s_1d3bdd6f362f9b::t_af3a513ab8f7b2 144-145,148
+  s_1d3bdd6f362f9b::t_b5ca5985922375 336-337
+outfitter/packages/api/src/a2a/tasks.ts
+  s_1d3bdd6f362f9b::t_55ebf395368cf4 125-128,140,146,151-156,165-167,177,179-182,185,188,190,195,197-200,203,206,210,212,215,217,227,235,237,239,241-264,270,286-288,302-304,317-320,325-339,342,344,351,355-358,360-363,366-378,380-389,420-421,446-448,450-451,455-465,467-470,476,478-479,493-503
+  s_1d3bdd6f362f9b::t_af3a513ab8f7b2 130,132-136
+  s_1d3bdd6f362f9b::t_15fb049dd0b444 196
+  s_1d3bdd6f362f9b::t_8402206cd01612 204-205
+  s_1d3bdd6f362f9b::t_f47a129f8cd549 504
+outfitter/packages/api/src/github-broker.ts
+  s_1d3bdd6f362f9b::t_5b82b7923ce147 165-178,278-283
+  s_1d3bdd6f362f9b::t_db3a146003e285 275-277
+outfitter/packages/web/src/pages/TokensPage.tsx
+  s_1d3bdd6f362f9b::t_9db62c5919f93b 101-111,114
+outfitter/packages/api/src/store/types.ts
+  s_1d3bdd6f362f9b::t_5b82b7923ce147 58,653
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "207077ed0965cd5c118f8c90c459a4f424aef3e5",
+  "prompts": {},
+  "sessions": {
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

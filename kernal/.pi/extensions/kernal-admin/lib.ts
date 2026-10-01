@@ -71,7 +71,7 @@ export function secretValues(env: Record<string, string | undefined>): string[] 
 export const leaksSecret = (text: string, secrets: string[]) => secrets.some((s) => s.length >= 8 && text.includes(s));
 
 // ---------- connections ----------
-export const DEFAULT_ROUTER = "https://litellm.augment-code.support/v1";
+export const DEFAULT_ROUTER = "https://router.kernal.one/v1";
 export const DEFAULT_LOCAL = "http://localhost:1234/v1";
 
 /** What the Connections page shows: URLs as they are, keys only as `set (…1234)`. */

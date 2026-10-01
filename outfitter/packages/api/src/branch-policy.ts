@@ -47,3 +47,35 @@ export function branchAllowed(branch: string, sessionBranch: string, prefix: str
   if (!prefix) return false;
   return branch.startsWith(prefix);
 }
+
+/** E9 §5.3: the only branch shape an A2A task's session may have (a2a/tasks.ts a2aBranchFor: at
+ * least 12 hex characters of the task id). */
+export const A2A_BRANCH_RE = /^outfitter\/a2a-[0-9a-f]{12,}$/;
+
+/** True when `branch` is an A2A task branch. */
+export function isA2ABranch(branch: string | undefined): boolean {
+  return typeof branch === "string" && A2A_BRANCH_RE.test(branch);
+}
+
+/** A prefix no safe branch starts with (safeBranch refuses NUL), so only an exact match with the
+ * session branch could pass, and an A2A session with a bad branch gets no run (agentlink.ts). */
+const NO_PREFIX = "\0";
+
+/**
+ * E9 §5.3/§8: the prefix a session's runs may push under. An A2A task's session may push only its
+ * own `outfitter/a2a-<task12>` branch, whatever its tape's prefix: `branchAllowed` always allows the
+ * session branch, and the prefix becomes that branch plus `/`, which git can't hold alongside the
+ * branch itself and which no other session's branch starts with. An A2A session whose branch isn't
+ * that shape (a teleport import rewrote it, or a repo-less one) fails closed: no prefix at all.
+ * Every other session keeps its tape's prefix (branchPrefixOf).
+ */
+export function branchPrefixForSession(
+  session: { origin?: string; a2aTokenId?: string; branch?: string } | null | undefined,
+  guruPrefix: unknown,
+): string {
+  // The same test as secrets.ts's isA2ASession (this module has no imports).
+  if ((session?.origin ?? "") !== "" || (session?.a2aTokenId ?? "") !== "") {
+    return isA2ABranch(session?.branch) ? `${session?.branch}/` : NO_PREFIX;
+  }
+  return branchPrefixOf(guruPrefix);
+}

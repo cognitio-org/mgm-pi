@@ -52,9 +52,21 @@ import type {
   SessionChunk,
   SessionChunksCollection,
   AdminAuditEntry,
+  TurnWaiter,
+  TurnWaiterFinish,
+  TurnWaitersCollection,
+  AeAgent,
+  AeAgentsCollection,
+  AeSession,
+  AeSessionsCollection,
+  A2ATask,
+  A2ATaskListQuery,
+  A2ATaskState,
+  A2ATasksCollection,
 } from "./types.ts";
+import { A2A_OPEN_STATES } from "./types.ts";
 import type { VoicePrefs } from "../voice.ts";
-import { BROWSER_CAPTURES_PER_SESSION, entryInsertFields, type EntryInsertOptions } from "./types.ts";
+import { AE_SESSION_EXECUTIONS, BROWSER_CAPTURES_PER_SESSION, entryInsertFields, type EntryInsertOptions } from "./types.ts";
 import { TOKEN_TTL_MS } from "../tokens.ts";
 import { SearchUnavailableError } from "./types.ts";
 import { CHUNKS_COLLECTION, CHUNKS_TEXT_INDEX, CHUNKS_VECTOR_INDEX } from "../search/indexes.ts";
@@ -695,6 +707,14 @@ class MongoMail implements MailCollection {
     return stripMail(await this.col.findOne({ _id: id }));
   }
 
+  async markDead(id: string, nowIso: string): Promise<boolean> {
+    const result = await this.col.updateOne(
+      { _id: id, status: { $in: ["queued", "delivered", "held"] } },
+      { $set: { status: "dead", deadAt: nowIso, expireAt: new Date(Date.parse(nowIso) + ACKED_MAIL_TTL_MS) } },
+    );
+    return result.modifiedCount === 1;
+  }
+
   async deleteForSession(sessionId: string): Promise<number> {
     return (await this.col.deleteMany({ sessionId })).deletedCount;
   }
@@ -1283,6 +1303,335 @@ class MongoPreviews implements PreviewsCollection {
   }
 }
 
+/** A finished turn waiter is kept a week (for the caller to read its outcome), then TTL-deleted. */
+const FINISHED_TURN_WAITER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+type TurnWaiterDoc = TurnWaiter & { _id: string; expireAt?: Date };
+
+function stripTurnWaiter(doc: TurnWaiterDoc | null): TurnWaiter | null {
+  if (!doc) return null;
+  const { _id, expireAt, ...rest } = doc;
+  return rest;
+}
+
+class MongoTurnWaiters implements TurnWaitersCollection {
+  private readonly col: MongoCollection<TurnWaiterDoc>;
+
+  constructor(col: MongoCollection<TurnWaiterDoc>) {
+    this.col = col;
+  }
+
+  async insert(waiter: TurnWaiter): Promise<void> {
+    await this.col.insertOne({ ...waiter, _id: waiter.id });
+  }
+
+  async findById(id: string): Promise<TurnWaiter | null> {
+    return stripTurnWaiter(await this.col.findOne({ _id: id }));
+  }
+
+  async markAcked(sessionId: string, mailId: string, runId: string, seq: number, nowIso: string, fromMail = false): Promise<number> {
+    const set = { ackRunId: runId, ackSeq: seq, ackedAt: nowIso, updatedAt: nowIso };
+    const result = fromMail
+      ? await this.col.updateMany(
+          { sessionId, mailId, status: "open", ackRunId: { $exists: false } },
+          { $set: { ...set, ackFromMail: true } },
+        )
+      : await this.col.updateMany(
+          { sessionId, mailId, status: "open", $or: [{ ackRunId: { $exists: false } }, { ackFromMail: true }] },
+          { $set: set, $unset: { ackFromMail: "" } },
+        );
+    return result.modifiedCount;
+  }
+
+  async finish(id: string, outcome: TurnWaiterFinish, nowIso: string): Promise<TurnWaiter | null> {
+    // expireAt is Mongo-only, as on mail: the TTL index needs a BSON date.
+    const doc = await this.col.findOneAndUpdate(
+      { _id: id, status: "open" },
+      {
+        $set: {
+          // Unset optional fields stay absent instead of being stored as null.
+          ...Object.fromEntries(Object.entries(outcome).filter(([, v]) => v !== undefined)),
+          finishedAt: nowIso,
+          updatedAt: nowIso,
+          expireAt: new Date(Date.parse(nowIso) + FINISHED_TURN_WAITER_TTL_MS),
+        },
+      },
+      { returnDocument: "after" },
+    );
+    return stripTurnWaiter(doc);
+  }
+
+  async extendDeadline(id: string, deadlineAt: string, nowIso: string): Promise<boolean> {
+    const result = await this.col.updateOne(
+      { _id: id, status: "open", deadlineAt: { $lt: deadlineAt } },
+      { $set: { deadlineAt, updatedAt: nowIso } },
+    );
+    return result.matchedCount === 1;
+  }
+
+  async listOpenForSession(sessionId: string): Promise<TurnWaiter[]> {
+    const rows = await this.col.find({ sessionId, status: "open" }).sort({ createdAt: 1 }).toArray();
+    return rows.map((d) => stripTurnWaiter(d)!);
+  }
+
+  async listOpen(limit: number): Promise<TurnWaiter[]> {
+    const rows = await this.col.find({ status: "open" }).sort({ deadlineAt: 1 }).limit(limit).toArray();
+    return rows.map((d) => stripTurnWaiter(d)!);
+  }
+
+  async deleteForSession(sessionId: string): Promise<number> {
+    return (await this.col.deleteMany({ sessionId })).deletedCount;
+  }
+}
+
+function isDuplicateKey(err: unknown): boolean {
+  return (err as { code?: number } | null)?.code === 11000;
+}
+
+/** Unique on `workspaceId` too (ensureIndexes): one entry per workspace. */
+class MongoAeAgents implements AeAgentsCollection {
+  private readonly col: MongoCollection<AeAgent & { _id: string }>;
+
+  constructor(col: MongoCollection<AeAgent & { _id: string }>) {
+    this.col = col;
+  }
+
+  async list(): Promise<AeAgent[]> {
+    const rows = await this.col.find({}).sort({ _id: 1 }).toArray();
+    return rows.map((r) => stripIdStrict<AeAgent>(r));
+  }
+
+  async findById(id: string): Promise<AeAgent | null> {
+    return stripId<AeAgent>(await this.col.findOne({ _id: id }));
+  }
+
+  async insert(agent: AeAgent): Promise<boolean> {
+    try {
+      const row = Object.fromEntries(Object.entries(agent).filter(([, v]) => v !== undefined)) as AeAgent;
+      await this.col.insertOne({ ...row, _id: agent.id });
+      return true;
+    } catch (err) {
+      if (isDuplicateKey(err)) return false;
+      throw err;
+    }
+  }
+
+  async update(id: string, patch: Partial<Omit<AeAgent, "id" | "createdAt">>): Promise<AeAgent | null | "duplicate"> {
+    const set = Object.fromEntries(Object.entries(patch).filter(([k, v]) => v !== undefined && k !== "id" && k !== "_id"));
+    try {
+      return stripId<AeAgent>(await this.col.findOneAndUpdate({ _id: id }, { $set: set }, { returnDocument: "after" }));
+    } catch (err) {
+      if (isDuplicateKey(err)) return "duplicate";
+      throw err;
+    }
+  }
+
+  async delete(id: string): Promise<boolean> {
+    return (await this.col.deleteOne({ _id: id })).deletedCount === 1;
+  }
+}
+
+class MongoAeSessions implements AeSessionsCollection {
+  private readonly col: MongoCollection<AeSession & { _id: string }>;
+
+  constructor(col: MongoCollection<AeSession & { _id: string }>) {
+    this.col = col;
+  }
+
+  async recordInvoke(
+    row: Pick<AeSession, "outfitterSessionId" | "agentId" | "workspaceId" | "aeSessionId">,
+    executionId: string | undefined,
+    nowIso: string,
+  ): Promise<AeSession> {
+    const id = `${row.outfitterSessionId}:${row.agentId}`;
+    const doc = await this.col.findOneAndUpdate(
+      { _id: id },
+      {
+        $set: { outfitterSessionId: row.outfitterSessionId, agentId: row.agentId, workspaceId: row.workspaceId, aeSessionId: row.aeSessionId, lastUsedAt: nowIso },
+        $unset: { stoppedAt: "", stopAttempts: "", stopError: "" },
+        // An insert without an execution still needs the array; with one, $push creates it.
+        ...(executionId
+          ? { $setOnInsert: { id, openedAt: nowIso }, $push: { executions: { $each: [executionId], $slice: -AE_SESSION_EXECUTIONS } } }
+          : { $setOnInsert: { id, openedAt: nowIso, executions: [] } }),
+      },
+      { upsert: true, returnDocument: "after" },
+    );
+    return stripIdStrict<AeSession>(doc!);
+  }
+
+  async findByExecution(outfitterSessionId: string, executionId: string): Promise<AeSession | null> {
+    return stripId<AeSession>(await this.col.findOne({ outfitterSessionId, executions: executionId }));
+  }
+
+  async listOpen(limit: number, usedBefore?: string): Promise<AeSession[]> {
+    const rows = await this.col.find({ stoppedAt: { $exists: false }, ...(usedBefore !== undefined ? { lastUsedAt: { $lt: usedBefore } } : {}) }).sort({ lastUsedAt: 1 }).limit(limit).toArray();
+    return rows.map((r) => stripIdStrict<AeSession>(r));
+  }
+
+  async listOpenForSession(outfitterSessionId: string): Promise<AeSession[]> {
+    const rows = await this.col.find({ outfitterSessionId, stoppedAt: { $exists: false } }).toArray();
+    return rows.map((r) => stripIdStrict<AeSession>(r));
+  }
+
+  async markStopped(id: string, lastUsedAt: string, nowIso: string, error?: string): Promise<boolean> {
+    const result = await this.col.updateOne(
+      { _id: id, lastUsedAt, stoppedAt: { $exists: false } },
+      { $set: { stoppedAt: nowIso, ...(error ? { stopError: error } : {}) } },
+    );
+    return result.matchedCount === 1;
+  }
+
+  async recordStopFailure(id: string, lastUsedAt: string, error: string): Promise<number | null> {
+    const doc = await this.col.findOneAndUpdate(
+      { _id: id, lastUsedAt, stoppedAt: { $exists: false } },
+      { $inc: { stopAttempts: 1 }, $set: { stopError: error } },
+      { returnDocument: "after" },
+    );
+    return doc ? (doc.stopAttempts ?? 1) : null;
+  }
+
+  async deleteForSession(outfitterSessionId: string): Promise<number> {
+    return (await this.col.deleteMany({ outfitterSessionId })).deletedCount;
+  }
+}
+
+type A2ATaskDoc = A2ATask & { _id: string; expireAt?: Date };
+/** Finished A2A tasks are kept this long (the TTL index on expireAt), then dropped. */
+const FINISHED_A2A_TASK_TTL_MS = 30 * 24 * 60 * 60_000;
+type A2ASlotsDoc = { _id: string; tasks: string[] };
+type A2ARequestsDoc = { _id: string; count: number; expireAt: Date };
+
+function stripA2ATask(doc: A2ATaskDoc | null): A2ATask | null {
+  if (!doc) return null;
+  const { _id, expireAt, ...rest } = doc;
+  return rest;
+}
+
+/** A row that is terminal from the start (a rejection) expires like one that became so. */
+function a2aExpiry(task: Pick<A2ATask, "state" | "updatedAt">): { expireAt: Date } | Record<string, never> {
+  if (A2A_OPEN_STATES.includes(task.state)) return {};
+  return { expireAt: new Date(Date.parse(task.updatedAt) + FINISHED_A2A_TASK_TTL_MS) };
+}
+
+class MongoA2ATasks implements A2ATasksCollection {
+  private readonly col: MongoCollection<A2ATaskDoc>;
+  private readonly slots: MongoCollection<A2ASlotsDoc>;
+  private readonly requests: MongoCollection<A2ARequestsDoc>;
+
+  constructor(col: MongoCollection<A2ATaskDoc>, slots: MongoCollection<A2ASlotsDoc>, requests: MongoCollection<A2ARequestsDoc>) {
+    this.col = col;
+    this.slots = slots;
+    this.requests = requests;
+  }
+
+  async insert(task: A2ATask): Promise<boolean> {
+    try {
+      await this.col.insertOne({ ...task, ...a2aExpiry(task), _id: task.id });
+      return true;
+    } catch (err) {
+      // The unique {tokenId, messageId} index: a retried SendMessage, possibly racing the first.
+      if (isDuplicateKeyError(err)) return false;
+      throw err;
+    }
+  }
+
+  async findForToken(tokenId: string, id: string): Promise<A2ATask | null> {
+    return stripA2ATask(await this.col.findOne({ _id: id, tokenId }));
+  }
+
+  async findByMessageId(tokenId: string, messageId: string): Promise<A2ATask | null> {
+    return stripA2ATask(await this.col.findOne({ tokenId, messageId }));
+  }
+
+  async latestInContext(tokenId: string, contextId: string): Promise<A2ATask | null> {
+    return stripA2ATask(await this.col.findOne({ tokenId, contextId }, { sort: { createdAt: -1, _id: -1 } }));
+  }
+
+  async sessionForContext(tokenId: string, contextId: string): Promise<string | undefined> {
+    const doc = await this.col.findOne({ tokenId, contextId, sessionId: { $type: "string" } }, { projection: { sessionId: 1 } });
+    return doc?.sessionId;
+  }
+
+  async list(tokenId: string, query: A2ATaskListQuery): Promise<{ tasks: A2ATask[]; total: number }> {
+    const filter: Filter<A2ATaskDoc> = { tokenId };
+    if (query.contextId !== undefined) filter.contextId = query.contextId;
+    if (query.state !== undefined) filter.state = query.state;
+    if (query.updatedAfter !== undefined) filter.updatedAt = { $gt: query.updatedAfter };
+    const total = await this.col.countDocuments(filter);
+    const page: Filter<A2ATaskDoc> = query.before
+      ? {
+          ...filter,
+          $or: [
+            { createdAt: { $lt: query.before.createdAt } },
+            { createdAt: query.before.createdAt, _id: { $lt: query.before.id } },
+          ],
+        }
+      : filter;
+    const rows = await this.col.find(page).sort({ createdAt: -1, _id: -1 }).limit(query.limit).toArray();
+    return { tasks: rows.map((d) => stripA2ATask(d)!), total };
+  }
+
+  async listOpen(limit: number, tokenId?: string): Promise<A2ATask[]> {
+    const filter: Filter<A2ATaskDoc> = { state: { $in: [...A2A_OPEN_STATES] } };
+    if (tokenId !== undefined) filter.tokenId = tokenId;
+    const rows = await this.col.find(filter).sort({ createdAt: 1 }).limit(limit).toArray();
+    return rows.map((d) => stripA2ATask(d)!);
+  }
+
+  async transition(id: string, from: readonly A2ATaskState[], patch: Partial<A2ATask>): Promise<A2ATask | null> {
+    const { id: _id, tokenId: _tokenId, ...rest } = patch;
+    const set: Record<string, unknown> = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined));
+    if (rest.state && !A2A_OPEN_STATES.includes(rest.state)) {
+      set.expireAt = new Date((rest.updatedAt ? Date.parse(rest.updatedAt) : Date.now()) + FINISHED_A2A_TASK_TTL_MS);
+    }
+    const doc = await this.col.findOneAndUpdate({ _id: id, state: { $in: [...from] } }, { $set: set }, { returnDocument: "after" });
+    return stripA2ATask(doc);
+  }
+
+  async claimSlot(tokenId: string, taskId: string, max: number): Promise<boolean> {
+    if (max < 1) return false;
+    // Matches only while the key holds fewer than `max` slots (no element at index max-1). When it
+    // is full the upsert tries to insert a second {_id: tokenId} and fails on the unique _id.
+    const filter = { _id: tokenId, [`tasks.${max - 1}`]: { $exists: false } };
+    try {
+      const result = await this.slots.updateOne(filter, { $addToSet: { tasks: taskId } }, { upsert: true });
+      if (result.matchedCount === 1 || result.upsertedCount === 1) return true;
+    } catch (err) {
+      if (!isDuplicateKeyError(err)) throw err;
+      // Also what two first-ever claims racing to create the document look like: try once more
+      // against the document the other one created.
+      const retry = await this.slots.updateOne(filter, { $addToSet: { tasks: taskId } });
+      if (retry.matchedCount === 1) return true;
+    }
+    // Full, unless this task already holds one.
+    return (await this.slots.countDocuments({ _id: tokenId, tasks: taskId })) === 1;
+  }
+
+  async releaseSlot(tokenId: string, taskId: string): Promise<void> {
+    await this.slots.updateOne({ _id: tokenId }, { $pull: { tasks: taskId } });
+  }
+
+  async listSlots(tokenId: string): Promise<string[]> {
+    return (await this.slots.findOne({ _id: tokenId }))?.tasks ?? [];
+  }
+
+  async countRequest(tokenId: string, windowId: string, expireAtIso: string): Promise<number> {
+    const bump = () =>
+      this.requests.findOneAndUpdate(
+        { _id: `${tokenId}:${windowId}` },
+        { $inc: { count: 1 }, $setOnInsert: { expireAt: new Date(expireAtIso) } },
+        { upsert: true, returnDocument: "after" },
+      );
+    try {
+      return (await bump())?.count ?? 1;
+    } catch (err) {
+      // Two first requests of a window racing to create its document: the loser counts again.
+      if (!isDuplicateKeyError(err)) throw err;
+      return (await bump())?.count ?? 1;
+    }
+  }
+}
+
 export class MongoStore implements Store {
   readonly sessions: SessionsCollection;
   readonly entries: EntriesCollection;
@@ -1301,6 +1650,10 @@ export class MongoStore implements Store {
   readonly adminAudit: AdminAuditCollection;
   readonly adminApprovals: AdminApprovalsCollection;
   readonly sessionChunks: SessionChunksCollection;
+  readonly turnWaiters: TurnWaitersCollection;
+  readonly aeAgents: AeAgentsCollection;
+  readonly aeSessions: AeSessionsCollection;
+  readonly a2aTasks: A2ATasksCollection;
   private readonly client: MongoClient;
 
   private constructor(client: MongoClient, db: Db) {
@@ -1324,6 +1677,14 @@ export class MongoStore implements Store {
     this.adminAudit = new MongoAdminAudit(db.collection("adminAudit"));
     this.adminApprovals = new MongoAdminApprovals(db.collection("adminApprovals"));
     this.sessionChunks = new MongoSessionChunks(db.collection(CHUNKS_COLLECTION));
+    this.turnWaiters = new MongoTurnWaiters(db.collection<TurnWaiterDoc>("turnWaiters"));
+    this.aeAgents = new MongoAeAgents(db.collection("aeAgents"));
+    this.aeSessions = new MongoAeSessions(db.collection("aeSessions"));
+    this.a2aTasks = new MongoA2ATasks(
+      db.collection<A2ATaskDoc>("a2aTasks"),
+      db.collection<A2ASlotsDoc>("a2aSlots"),
+      db.collection<A2ARequestsDoc>("a2aRequests"),
+    );
   }
 
   /** `dbName` wins over the database in the URI; the stored URI has none, so the default keeps
@@ -1355,6 +1716,24 @@ export class MongoStore implements Store {
       db.collection("browserRequests").createIndex({ sessionId: 1, status: 1, createdAt: 1 }),
       db.collection("browserCaptures").createIndex({ sessionId: 1, requestId: 1 }, { unique: true }),
       db.collection("browserCaptures").createIndex({ sessionId: 1, createdAt: -1 }),
+      db.collection("turnWaiters").createIndex({ sessionId: 1, status: 1, createdAt: 1 }),
+      db.collection("turnWaiters").createIndex({ status: 1, deadlineAt: 1 }),
+      db.collection("turnWaiters").createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
+      // E9 §4: one allowlist entry per workspace; the session-close sweep; ae.get/ae.resume lookups.
+      db.collection("aeAgents").createIndex({ workspaceId: 1 }, { unique: true }),
+      db.collection("aeSessions").createIndex({ stoppedAt: 1, lastUsedAt: 1 }),
+      db.collection("aeSessions").createIndex({ outfitterSessionId: 1, executions: 1 }),
+      // E9 §5.3: every A2A lookup is per key.
+      db.collection("a2aTasks").createIndex({ tokenId: 1, state: 1 }),
+      db.collection("a2aTasks").createIndex({ tokenId: 1, contextId: 1, createdAt: -1 }),
+      db.collection("a2aTasks").createIndex({ tokenId: 1, createdAt: -1 }),
+      db.collection("a2aTasks").createIndex(
+        { tokenId: 1, messageId: 1 },
+        { name: "a2a_message_dedupe", unique: true, partialFilterExpression: { messageId: { $type: "string" } } },
+      ),
+      db.collection("a2aTasks").createIndex({ state: 1, createdAt: 1 }),
+      db.collection("a2aTasks").createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
+      db.collection("a2aRequests").createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
     ]);
     // Non-fatal: a deployment that already holds two active runs for one session (the race this
     // index closes) would otherwise fail every boot. Until the duplicates are cleaned up,

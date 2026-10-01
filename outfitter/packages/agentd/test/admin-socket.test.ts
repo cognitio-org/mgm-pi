@@ -1,11 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import net from "node:net";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RunController, type LinkPort } from "../src/run.js";
 import { listenBrokerSocket } from "../src/broker-socket.js";
+import { adminCapabilities, type RunSpecGuru } from "../src/protocol.js";
 import { emptySessionJsonl } from "../src/session.js";
 import type { GitOps } from "../src/git.js";
 import type { DownMessage, DownRunSpec, UpAdminRequest, UpMessage } from "../src/protocol.js";
@@ -165,11 +166,11 @@ function controllerFor(path: string, link: FakeLink, workspace: string, env: { v
   });
 }
 
-function specFor(adminTools: "off" | "manage" | undefined): DownRunSpec {
+function specFor(adminTools: "off" | "manage" | undefined, more: Partial<RunSpecGuru> = {}): DownRunSpec {
   return {
     t: "run.spec",
     session: { id: "sess-adm", name: "adm", cwd: "/workspace" },
-    guru: { model: "fake/model", adminTools, env: { OUTFITTER_ADMIN_SOCKET: "/tmp/spoofed.sock" } },
+    guru: { model: "fake/model", adminTools, ...more, env: { OUTFITTER_ADMIN_SOCKET: "/tmp/spoofed.sock", OUTFITTER_ADMIN_CAPS: "admin" } },
     snapshot: { jsonl: emptySessionJsonl("sess-adm", "/workspace") },
     secrets: {},
     idleStopSeconds: 3600,
@@ -194,6 +195,7 @@ test("admin socket: opened for a tape with admin tools, pinned, forwards frames 
   link.deliver(specFor("manage"));
   await waitFor(() => env.value !== undefined);
   assert.equal(env.value!.OUTFITTER_ADMIN_SOCKET, path, "guru.env cannot retarget the socket");
+  assert.equal(env.value!.OUTFITTER_ADMIN_CAPS, "admin");
   assert.equal(((await stat(path)).mode & 0o777), 0o660);
 
   const client = await connect(path);
@@ -228,12 +230,64 @@ for (const adminTools of ["off", undefined] as const) {
       await rm(dir, { recursive: true, force: true });
       await rm(workspace, { recursive: true, force: true });
     });
-    link.deliver(specFor(adminTools));
+    link.deliver(specFor(adminTools, { memory: "off", agentEngine: false }));
     await waitFor(() => env.value !== undefined);
     assert.equal(env.value!.OUTFITTER_ADMIN_SOCKET, "");
+    assert.equal(env.value!.OUTFITTER_ADMIN_CAPS, "", "guru.env cannot claim capabilities");
     await assert.rejects(stat(path), { code: "ENOENT" });
   });
 }
+
+// E9 (docs/specs/atlas-agent-engine-and-a2a.md §3.3): memory and Agent Engine ops go through the
+// same socket, so it opens for either; OUTFITTER_ADMIN_CAPS tells Kernal which tools to register.
+for (const [label, more, caps] of [
+  ["memory tool", { memory: "tool" }, "memory"],
+  ["memory auto", { memory: "auto" }, "memory"],
+  ["agentEngine", { agentEngine: true }, "agentEngine"],
+  ["admin, memory and agentEngine", { adminTools: "operator", memory: "auto", agentEngine: true }, "admin,memory,agentEngine"],
+] as const) {
+  test(`admin socket: opened for ${label}, with OUTFITTER_ADMIN_CAPS=${caps}`, async (t) => {
+    const { dir, path } = await socketDir();
+    const link = new FakeLink();
+    const env: { value?: Record<string, string> } = {};
+    const workspace = await mkdtemp(join(tmpdir(), "adm-ws-"));
+    const controller = controllerFor(path, link, workspace, env);
+    t.after(async () => {
+      controller.dispose();
+      await new Promise((r) => setTimeout(r, 50));
+      await rm(dir, { recursive: true, force: true });
+      await rm(workspace, { recursive: true, force: true });
+    });
+    link.deliver(specFor(undefined, more as Partial<RunSpecGuru>));
+    await waitFor(() => env.value !== undefined);
+    assert.equal(env.value!.OUTFITTER_ADMIN_SOCKET, path);
+    assert.equal(env.value!.OUTFITTER_ADMIN_CAPS, caps);
+    assert.equal(((await stat(path)).mode & 0o777), 0o660);
+  });
+}
+
+test("admin socket: a failed listen leaves both the socket and OUTFITTER_ADMIN_CAPS empty", async (t) => {
+  const link = new FakeLink();
+  const env: { value?: Record<string, string> } = {};
+  const workspace = await mkdtemp(join(tmpdir(), "adm-ws-"));
+  const controller = controllerFor("/dev/null/admin.sock", link, workspace, env);
+  t.after(async () => {
+    controller.dispose();
+    await new Promise((r) => setTimeout(r, 50));
+    await rm(workspace, { recursive: true, force: true });
+  });
+  link.deliver(specFor("manage", { memory: "auto" }));
+  await waitFor(() => env.value !== undefined);
+  assert.equal(env.value!.OUTFITTER_ADMIN_SOCKET, "");
+  assert.equal(env.value!.OUTFITTER_ADMIN_CAPS, "");
+});
+
+test("adminCapabilities: only exact values count, in a fixed order", () => {
+  assert.deepEqual(adminCapabilities({}), []);
+  assert.deepEqual(adminCapabilities({ adminTools: "off", memory: "off", agentEngine: false }), []);
+  assert.deepEqual(adminCapabilities({ memory: "bogus" as never, agentEngine: "true" as never }), []);
+  assert.deepEqual(adminCapabilities({ agentEngine: true, memory: "tool", adminTools: "manage" }), ["admin", "memory", "agentEngine"]);
+});
 
 test("admin broker: a write fails on link drop and is never resent; a read is resent once", async (t) => {
   const { dir, path } = await socketDir();
@@ -255,3 +309,62 @@ test("admin broker: a write fails on link drop and is never resent; a read is re
   await waitFor(() => sent.length >= 3);
   assert.deepEqual(sent.map((f) => f.reqId), ["w", "r", "r"]);
 });
+
+// E9 §3.3: with Agent Engine memory on, pi-memory is off: its tools excluded, PI_MEMORY_DIR an
+// empty directory pinned over guru.env, no exit summary. Off: none of that.
+for (const memory of ["tool", "auto", "off"] as const) {
+  test(`pi-memory with memory ${memory}: ${memory === "off" ? "left alone" : "excluded, empty dir, no exit summary"}`, async (t) => {
+    const { dir, path } = await socketDir();
+    const link = new FakeLink();
+    const env: { value?: Record<string, string> } = {};
+    const args: { value?: string[] } = {};
+    const workspace = await mkdtemp(join(tmpdir(), "adm-ws-"));
+    const memRoot = await mkdtemp(join(tmpdir(), "adm-mem-"));
+    const controller = new RunController({
+      link,
+      gitOps: fakeGit(),
+      workspace,
+      piBin: "unused-in-test",
+      agentdVersion: "test",
+      piVersion: "test",
+      heartbeatIntervalMs: 60_000,
+      adminSocketPath: path,
+      piMemoryTmpRoot: memRoot,
+      memoryExtensionPath: "/opt/outfitter-memory.js",
+      spawnPi: (opts) => {
+        env.value = opts.env;
+        args.value = opts.args;
+        return idlePi();
+      },
+      importSession: async () => join(workspace, "session.jsonl"),
+      writeSnapshotFile: async () => join(workspace, "snap.jsonl"),
+      onExit: () => {},
+      onLog: () => {},
+    });
+    t.after(async () => {
+      controller.dispose();
+      await new Promise((r) => setTimeout(r, 50));
+      await rm(dir, { recursive: true, force: true });
+      await rm(workspace, { recursive: true, force: true });
+      await rm(memRoot, { recursive: true, force: true });
+    });
+    const spec = specFor(undefined, { memory, excludeTools: ["web_search"] });
+    spec.guru.env = { PI_MEMORY_DIR: "/home/agent/.pi/memory", PI_MEMORY_EXIT_SUMMARY: "1" };
+    link.deliver(spec);
+    await waitFor(() => env.value !== undefined);
+    const a = args.value!;
+    const exclude = a[a.indexOf("--exclude-tools") + 1].split(",");
+    const extensions = a.filter((_, i) => a[i - 1] === "--extension");
+    if (memory === "off") {
+      assert.deepEqual(exclude, ["web_search"]);
+      assert.equal(env.value!.PI_MEMORY_DIR, "/home/agent/.pi/memory");
+      assert.deepEqual(extensions, []);
+      return;
+    }
+    assert.deepEqual(exclude, ["web_search", "memory_write", "memory_read", "memory_search", "memory_forget", "memory_restore", "memory_status", "scratchpad"]);
+    assert.equal(env.value!.PI_MEMORY_EXIT_SUMMARY, "0");
+    assert.ok(env.value!.PI_MEMORY_DIR.startsWith(join(memRoot, "pi-memory-off-")), "a tape can't point it at real memory");
+    assert.deepEqual(await readdir(env.value!.PI_MEMORY_DIR), []);
+    assert.deepEqual(extensions, memory === "auto" ? ["/opt/outfitter-memory.js"] : [], "recall only for auto");
+  });
+}

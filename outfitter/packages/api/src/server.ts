@@ -4,8 +4,13 @@
 
 import { SessionIndexer } from "./search/service.ts";
 import { DriveAdmin } from "./admin/drive.ts";
+// E9 PR4: registers the ae.* admin ops.
+import "./admin/ae-ops.ts";
+import { AeSessions } from "./ae-sessions.ts";
 import { createNgrokApi, type NgrokApi } from "./ngrok-api.ts";
 import { PreviewService } from "./previews.ts";
+import { TurnWaiters } from "./turns.ts";
+import { A2ATasks } from "./a2a/tasks.ts";
 import { VoiceService } from "./voice.ts";
 import { VoiceUsage } from "./voice-usage.ts";
 import Fastify, { type FastifyInstance } from "fastify";
@@ -26,6 +31,11 @@ import { registerRoutes } from "./routes/index.ts";
 import { MailService, CloudTasksWakeScheduler, NoopWakeScheduler, type WakeScheduler } from "./mail.ts";
 import type { GithubBroker } from "./github-broker.ts";
 import { GithubCatalog } from "./github-catalog.ts";
+import { createAgentEngine, type AgentEngine } from "./agentengine/index.ts";
+import { MemoryRecorder } from "./agentengine/recorder.ts";
+import { memoryUsage } from "./agentengine/usage.ts";
+// E9 PR3: registers the memory.* admin ops (side effect only).
+import "./admin/memory-ops.ts";
 import { CachedSandboxTelemetry, GcpSandboxTelemetry, NoSandboxTelemetry, type SandboxTelemetry } from "./sandbox-telemetry.ts";
 
 export interface BuildAppOptions {
@@ -50,6 +60,9 @@ export interface BuildAppOptions {
   /** #217 Drive previews' ngrok API. Tests inject a fake; production builds one from NGROK_API_KEY
    * when PREVIEW_DOMAIN is set. */
   ngrok?: NgrokApi;
+  /** E9 Agent Engine. Tests inject one on a FakeAgentEngine; production builds one from config
+   * (each part off while its project id is unset). */
+  agentEngine?: AgentEngine;
   /** #252 web voice. Tests inject one with a fake fetch; production builds one from config. */
   voice?: VoiceService;
   /** #257. Tests inject one with a fake fetch; production builds one from config. */
@@ -69,6 +82,11 @@ export interface App {
   providerStatus: ProviderStatusService;
   mail: MailService;
   previews: PreviewService;
+  turns: TurnWaiters;
+  /** E9 §4: stops the Agent Engine sessions of closed Outfitter sessions. */
+  aeSessions: AeSessions;
+  /** E9 §5.3 A2A tasks (tests reach endForKey and get through it). */
+  a2a: A2ATasks;
   /** Stops the run reconciler interval, (role link/all) the down-queue poller, and (role web/all)
    * the provider status poller; call from tests and from main.ts on shutdown. */
   stopBackgroundTasks: () => void;
@@ -106,6 +124,11 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   const ngrok = opts.ngrok ?? (config.ngrokApiKey && config.previewDomain ? createNgrokApi(config.ngrokApiKey) : undefined);
   const previews = new PreviewService({ store, config, ngrok, log: (msg, detail) => fastify.log.warn(detail ?? {}, msg) });
   agentLink.setPreviews(previews);
+  // E9 §1: turn waiters (settle, run end, deadline) for A2A tasks and delegation.
+  const turns = new TurnWaiters(store, runs, (msg, err) => fastify.log.warn({ err }, msg));
+  agentLink.setTurnWaiters(turns);
+  // E9 §5.3: A2A tasks, on the store, read through their sessions' runs and turn waiters.
+  const a2a = new A2ATasks({ store, runs, turns, mail, agentLink, secrets: secretsBroker, log: (msg, err) => fastify.log.warn({ err }, msg) });
   // #193: a run whose agent vanished without a bye gets its sandbox's exit reason read promptly.
   agentLink.onAgentLost((runId) => runs.noteAgentLost(runId));
 
@@ -140,7 +163,20 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     localModels: config.localModels,
   });
   // Sysop tools (#287): admin.request frames from a Drive run through the admin op registry.
-  agentLink.setDriveAdmin(new DriveAdmin({ store, config, models: modelsService, log: (msg) => fastify.log.warn(msg) }));
+  // E9: the Agent Engine clients the memory and ae ops use (PR3/PR4); token caches live here, one
+  // per project per instance.
+  const agentEngine = opts.agentEngine ?? createAgentEngine(config.agentEngine, { log: (msg) => fastify.log.warn(msg) });
+  agentLink.setDriveAdmin(new DriveAdmin({ store, config, models: modelsService, agentEngine, log: (msg) => fastify.log.warn(msg) }));
+  const aeSessions = new AeSessions({ store, agents: agentEngine.agents, log: (msg) => fastify.log.warn(msg) });
+  // E9 §3.3: `memory: auto` tapes record user prompts as they arrive and each settled turn's final
+  // assistant message (the settle comes after agentd flushed the turn's entries).
+  if (agentEngine.memory) {
+    const recorder = new MemoryRecorder({ store, memory: () => agentEngine.memory, usage: memoryUsage, log: (msg) => fastify.log.warn(msg) });
+    agentLink.setMemoryRecorder(recorder);
+    turns.onSettled((sessionId, lastEntryId) => void recorder.noteSettled(sessionId, lastEntryId));
+    // The usage counts this instance still holds go out with it (agentengine/usage.ts).
+    fastify.addHook("onClose", async () => memoryUsage.flush());
+  }
 
   // Auth guards every /api/* route except /api/hooks/* (called by an external service with no IAP
   // session and no agentd identity token; it authenticates itself via its own HMAC signature
@@ -192,6 +228,9 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     secretAdmin,
     mail,
     previews,
+    turns,
+    aeSessions,
+    a2a,
     providers,
     voice:
       opts.voice ??
@@ -237,7 +276,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     ssePoller.stop();
   };
 
-  return { fastify, runs, agentLink, sse, laptopProbe, providerStatus, mail, previews, stopBackgroundTasks };
+  return { fastify, runs, agentLink, sse, laptopProbe, providerStatus, mail, previews, turns, aeSessions, a2a, stopBackgroundTasks };
 }
 
 /** GET /api/sessions/:id/browser/captures/:captureId, or undefined. Query strings are ignored. */

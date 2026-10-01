@@ -5,8 +5,9 @@
  * `abort`, `ui_response`, `rpc`, `checkpoint`, `diff`, `read`, `stop`, `browser.capture.entry`,
  * `browser.capture.result`, `browser.action.result`, `browser.inspect.result`, `github.result`).
  */
-import { mkdir, readFile, open as openFile, chown, stat } from "node:fs/promises";
-import { resolve, sep } from "node:path";
+import { mkdir, mkdtemp, readFile, open as openFile, chown, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve, sep } from "node:path";
 import { branchAllowed, DEFAULT_BRANCH_PREFIX, normalizeBranchPrefix } from "./branch-policy.js";
 import { ActionListener } from "./browser-action.js";
 import { CaptureListener } from "./browser-capture.js";
@@ -14,7 +15,7 @@ import { InspectListener } from "./browser-inspect.js";
 import { PreviewListener } from "./preview.js";
 import { IdeManager, type IdeManagerOptions } from "./ide-server.js";
 import { CodeServerInstaller, type IdeInstallResult, type IdeInstallState } from "./ide-install.js";
-import { renderGuru } from "./guru.js";
+import { agentEngineMemoryOn, renderGuru } from "./guru.js";
 import { discoverAppendSystemPromptFile } from "./append-system.js";
 import { attributionTrailers, authHeaderSecret, botIdentityEnv, sanitizeAuthor, type GitOps } from "./git.js";
 import { githubRepoHttps, gitProxyInsteadOfEnv, parseGithubCloneUrl, startGitProxy, type GitProxy } from "./git-proxy.js";
@@ -54,6 +55,7 @@ import type {
   UpMessage,
   UpAdminRequest,
 } from "./protocol.js";
+import { adminCapabilities } from "./protocol.js";
 
 /** The start-up phases the `startup` frame carries: run.spec through pi ready. Later "first ..."
  * milestones depend on the person's prompt, not on starting up. */
@@ -145,6 +147,12 @@ export interface RunControllerDeps {
   /** Chrome companion §13 (OUTFITTER_BROWSER_EXTENSION): path to pi-extension/outfitter-browser.ts.
    * Set together with `downloadCapture`: the loopback listener starts only while the extension loads. */
   browserExtensionPath?: string;
+  /** E9 §3.3 (OUTFITTER_MEMORY_EXTENSION): path to pi-extension/outfitter-memory.ts (or its built
+   * .js), the recall extension; renderGuru loads it only for a `memory: auto` tape. */
+  memoryExtensionPath?: string;
+  /** E9 §3.3: where the empty PI_MEMORY_DIR for a tape with Agent Engine memory is made. Default
+   * os.tmpdir(); tests pass their own. */
+  piMemoryTmpRoot?: string;
   /** GET the capture jpeg with the run's API credential (the socket's bearer plus the run token).
    * Not a user Dongle, and not passed into the sandbox. */
   downloadCapture?: (sessionId: string, captureId: string) => Promise<Buffer>;
@@ -354,6 +362,13 @@ export class RunController {
   /** Mail pi has already accepted this run. A redelivery (the ack was lost, the lease expired) is
    * re-acked without prompting pi a second time. */
   private readonly mailAccepted = new Set<string>();
+  /** The id of the last transcript entry the tailer forwarded this run; `agent_settled` carries it
+   * as `lastEntryId` (protocol.md). Unset until pi appends one after the restored transcript. */
+  private lastEntryId: string | undefined;
+  /** Set while an `agent_settled` waits for the tailer flush (see `settleAfterFlush`): pi events
+   * that arrive meanwhile wait here, in order, so nothing pi emitted after the settle -- a mail's
+   * `response` and its `mail.ack` above all -- reaches the api ahead of it. */
+  private settleBacklog: PiRpcEvent[] | undefined;
   /** Start-up phase timing; only set when deps.startupPhases is on (startup-phases.ts). */
   private startup: StartupPhases | undefined;
   /** The `startup` frame (phases through "pi ready"), once pi is ready. Sent then, and again after
@@ -366,6 +381,8 @@ export class RunController {
   private githubSocket: GithubSocket | undefined;
   /** Broker socket for admin ops (Sysop tools), only when the tape has admin tools. */
   private adminSocket: BrokerSocket<"admin"> | undefined;
+  /** E9 §3.3: the empty PI_MEMORY_DIR, made once (emptyPiMemoryDir). */
+  private piMemoryDir: string | undefined;
   /** True once the API link has opened, false after it drops, until the next open. */
   private apiLinkUp = true;
   /** Serializes git-proxy forwards with the phase-0 checkpoint push. */
@@ -680,6 +697,7 @@ export class RunController {
       spendExtensionPath: this.deps.spendFile ? this.deps.spendExtensionPath : undefined,
       mailExtensionPath: this.deps.mailExtensionPath,
       browserExtensionPath: this.deps.browserExtensionPath,
+      memoryExtensionPath: this.deps.memoryExtensionPath,
       skipModelArg,
       appendSystemPromptFile: discoverAppendSystemPromptFile(this.deps.workspace, process.env.PI_CODING_AGENT_DIR),
     });
@@ -830,11 +848,24 @@ export class RunController {
       await this.startGithubSocket(this.deps.githubSocketPath);
     }
     // Sysop tools (#287): pinned after guru.env like the GitHub socket. Empty unless the tape has
-    // admin tools, so Kernal's outfitter-admin registers nothing on an ordinary Drive.
+    // admin tools, memory or Agent Engine (E9 §3.3), so Kernal's outfitter-admin registers nothing
+    // on an ordinary Drive. OUTFITTER_ADMIN_CAPS says which of the three, so a memory-only Drive
+    // doesn't get the admin tools; the API refuses an op the tape lacks either way.
     secretEnv.OUTFITTER_ADMIN_SOCKET = "";
-    const adminTools = this.spec.guru.adminTools;
-    if (this.deps.adminSocketPath && (adminTools === "manage" || adminTools === "operator")) {
-      if (await this.startAdminSocket(this.deps.adminSocketPath)) secretEnv.OUTFITTER_ADMIN_SOCKET = this.deps.adminSocketPath;
+    secretEnv.OUTFITTER_ADMIN_CAPS = "";
+    const caps = adminCapabilities(this.spec.guru);
+    if (this.deps.adminSocketPath && caps.length > 0) {
+      if (await this.startAdminSocket(this.deps.adminSocketPath)) {
+        secretEnv.OUTFITTER_ADMIN_SOCKET = this.deps.adminSocketPath;
+        secretEnv.OUTFITTER_ADMIN_CAPS = caps.join(",");
+      }
+    }
+    // E9 §3.3: with Agent Engine memory on, pi-memory is off -- its tools are excluded (renderGuru),
+    // an empty PI_MEMORY_DIR stops its prompt injection, and no LLM exit summary. Pinned after
+    // guru.env so a tape can't point it back at a real memory directory.
+    if (agentEngineMemoryOn(this.spec.guru)) {
+      secretEnv.PI_MEMORY_EXIT_SUMMARY = "0";
+      secretEnv.PI_MEMORY_DIR = await this.emptyPiMemoryDir();
     }
     if (this.spec.repo) {
       secretEnv.OUTFITTER_SESSION_BRANCH = this.spec.repo.branch;
@@ -880,6 +911,7 @@ export class RunController {
     this.tailer = createTailer(
       sessionFile,
       (entry) => {
+        if (typeof entry.id === "string") this.lastEntryId = entry.id;
         this.deps.link.sendSeq((seq) => ({ t: "entry", seq, entry: entry as any }));
       },
       { startOffset: restoredBytes },
@@ -953,6 +985,24 @@ export class RunController {
       this.githubSocket = undefined;
       this.onLog(`github socket listen failed: ${codeOf(err)}`);
     }
+  }
+
+  /** A fresh, empty directory pi-memory may write into (it creates its subdirectories there), owned
+   * by the user pi runs as; one per controller, so a respawned pi reuses it. If it can't be made, a
+   * path under that user's home: pi-memory creates it empty, which still keeps any real memory out
+   * of the prompt, and its parent is not world-writable. */
+  private async emptyPiMemoryDir(): Promise<string> {
+    if (this.piMemoryDir) return this.piMemoryDir;
+    const root = this.deps.piMemoryTmpRoot ?? tmpdir();
+    try {
+      const dir = await mkdtemp(join(root, "pi-memory-off-"));
+      if (this.deps.runAsUser) await chown(dir, this.deps.runAsUser.uid, this.deps.runAsUser.gid);
+      this.piMemoryDir = dir;
+    } catch (err) {
+      this.onLog(`pi-memory dir: ${err instanceof Error ? err.message : String(err)}`);
+      this.piMemoryDir = join(this.deps.runAsUser?.home ?? root, ".pi-memory-off");
+    }
+    return this.piMemoryDir;
   }
 
   /** Same ownership and link handling as the GitHub socket. True once it is listening. */
@@ -1065,6 +1115,50 @@ export class RunController {
       this.reportStartup();
       return;
     }
+    this.routePiEvent(event);
+  }
+
+  private routePiEvent(event: PiRpcEvent): void {
+    if (this.settleBacklog) {
+      this.settleBacklog.push(event);
+      return;
+    }
+    if (event.type === "agent_settled" && this.tailer) {
+      this.settleAfterFlush(event, this.tailer);
+      return;
+    }
+    this.processPiEvent(event);
+  }
+
+  /** E9 turn-settled signal (protocol.md's `event` row): pi writes the turn's last entries to the
+   * session file, but the tailer only reads it every 250 ms, so the final assistant entry can still
+   * be unread when `agent_settled` arrives. Read the file first (as a checkpoint does), then send
+   * the event with `lastEntryId`, so the api has every entry of the turn by the time it sees the
+   * settle. Events that arrive during the read wait in `settleBacklog` and follow in order. */
+  private settleAfterFlush(event: PiRpcEvent, tailer: { poll(): Promise<void> }): void {
+    const backlog: PiRpcEvent[] = [];
+    this.settleBacklog = backlog;
+    void tailer
+      .poll()
+      .catch((err: unknown) => {
+        // Send the settle anyway: a late entry is better than a turn that never reports settling.
+        this.onLog(`tailer flush before agent_settled failed: ${err instanceof Error ? err.message : String(err)}`);
+      })
+      .then(() => {
+        this.settleBacklog = undefined;
+        // dispose() is abrupt by design (no bye either): the settle and anything queued behind it
+        // go with it. Mail whose `response` was queued stays unacked and is redelivered after
+        // its lease, as for any run that dies before acking. The stop paths are not affected:
+        // their own tailer.poll() waits for this read, so all of it goes out before the bye.
+        if (this.disposed) return;
+        this.processPiEvent(this.lastEntryId === undefined ? event : { ...event, lastEntryId: this.lastEntryId });
+        // A second agent_settled in the backlog starts its own flush; routePiEvent then queues
+        // whatever follows it behind that one.
+        for (const next of backlog) this.routePiEvent(next);
+      });
+  }
+
+  private processPiEvent(event: PiRpcEvent): void {
     this.deps.link.sendSeq((seq) => ({ t: "event", seq, event }));
     if (event.type === "response" && typeof event.id === "string" && this.mailInFlight.has(event.id)) {
       const mailId = this.mailInFlight.get(event.id)!;

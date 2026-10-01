@@ -123,6 +123,13 @@ export interface Config {
    * and, for a tagged release, its outfitter-v* tag. GET /api/version; empty in dev. */
   buildCommit: string;
   release: string;
+  /** A2A_BLOCKING_CAP_MS: how long a blocking A2A SendMessage (no returnImmediately) waits for a
+   * terminal or interrupted state before returning the task as it is (E9 §5.3, owner decision
+   * 2026-10-01: 25 s, under the TCK client's 30 s read timeout). Tests shorten it. */
+  a2aBlockingCapMs: number;
+  /** A2A_REQUESTS_PER_MINUTE: per A2A key, across instances (E9 §5.2, default 60). A local TCK run
+   * raises it; the TCK sends far more than a real client. */
+  a2aRequestsPerMinute: number;
   /** NGROK_GOOGLE_OAUTH (Secret Manager outfitter-ngrok-google-oauth): our Google OAuth client for
    * ngrok's sign-in on secure previews, JSON {client_id, client_secret}. Absent or unparseable:
    * ngrok's managed Google app is used instead. */
@@ -189,7 +196,43 @@ export interface Config {
    * Soft: checked when a stream starts, against usage up to a minute or two old, so one long session
    * can run past it. Plain dollars ("5", not "$5"). */
   voiceMonthlyCapUsd: number;
+  /** Atlas Agent Engine (E9, docs/specs/atlas-agent-engine-and-a2a.md §2). See AgentEngineConfig. */
+  agentEngine: AgentEngineConfig;
 }
+
+/** One Agent Engine project and the service account that acts in it. */
+export interface AgentEngineProjectConfig {
+  /** The Atlas project id (Agent Engine projects are Atlas projects). */
+  projectId: string;
+  clientId: string;
+  /** Never logged, never sent anywhere but the token endpoint (agentengine/client.ts). */
+  clientSecret: string;
+  /** AGENT_ENGINE_*_SA_EXPIRES_AT: the service account secret's expiry, recorded by the owner from
+   * the create or rotate response (a service account can't read its own). Absent: unknown. */
+  expiresAt?: string;
+}
+
+/**
+ * E9 §2. Two projects with a service account each, since a service account acts only on its own
+ * project and agents read every secret of theirs:
+ * - memory: AGENT_ENGINE_MEMORY_PROJECT_ID plus AGENT_ENGINE_MEMORY_SA (Secret Manager
+ *   outfitter-agentengine-memory-sa, JSON {client_id, client_secret}). Memory only; no agent is
+ *   ever deployed there.
+ * - agents: AGENT_ENGINE_AGENTS_PROJECT_ID plus AGENT_ENGINE_AGENTS_SA (outfitter-agentengine-agents-sa).
+ * Each part is off (undefined) while its project id is unset, so dev and CI need no account, and
+ * also while its credentials are missing or unreadable (agentEngineWarnings says so at boot).
+ */
+export interface AgentEngineConfig {
+  /** AGENT_ENGINE_BASE_URL, default https://agentengine.mongodb.com. https only, except a loopback
+   * host for local fakes. */
+  baseUrl: string;
+  memory?: AgentEngineProjectConfig;
+  agents?: AgentEngineProjectConfig;
+}
+
+export const AGENT_ENGINE_DEFAULT_BASE_URL = "https://agentengine.mongodb.com";
+/** How long before a service account secret expires the api starts warning (E9 §2 rotation). */
+export const AGENT_ENGINE_EXPIRY_WARNING_MS = 14 * 24 * 60 * 60_000;
 
 /** The code-server release IDE Drives download (browser IDE, #241). The scheduled check in
  * .github/workflows/code-server-release.yml reads this version and opens an issue when coder/code-server
@@ -279,6 +322,79 @@ function envGoogleOauth(raw: string | undefined): { clientId: string; clientSecr
   } catch {
     return undefined;
   }
+}
+
+/** AGENT_ENGINE_BASE_URL: credentials and bearer tokens go there, so it must be https (a loopback
+ * http URL is allowed for a local fake). Throws at boot otherwise, like envEnum. */
+function envAgentEngineBaseUrl(env: NodeJS.ProcessEnv): string {
+  const raw = (env.AGENT_ENGINE_BASE_URL ?? "").trim() || AGENT_ENGINE_DEFAULT_BASE_URL;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`invalid AGENT_ENGINE_BASE_URL: ${JSON.stringify(raw)}`);
+  }
+  const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
+    throw new Error(`AGENT_ENGINE_BASE_URL must be https: ${JSON.stringify(raw)}`);
+  }
+  if (url.username || url.password || url.search || url.hash) throw new Error("AGENT_ENGINE_BASE_URL must be a bare origin and path");
+  return url.toString().replace(/\/+$/, "");
+}
+
+/** A service account secret as Secret Manager holds it: JSON {client_id, client_secret}. */
+export function parseAgentEngineCredentials(raw: string | undefined): { clientId: string; clientSecret: string } | undefined {
+  // Same shape as NGROK_GOOGLE_OAUTH.
+  return envGoogleOauth(raw);
+}
+
+function envAgentEngineProject(env: NodeJS.ProcessEnv, part: "MEMORY" | "AGENTS"): AgentEngineProjectConfig | undefined {
+  const projectId = (env[`AGENT_ENGINE_${part}_PROJECT_ID`] ?? "").trim();
+  if (!projectId) return undefined;
+  const creds = parseAgentEngineCredentials(env[`AGENT_ENGINE_${part}_SA`]);
+  if (!creds) return undefined;
+  const expiresAt = (env[`AGENT_ENGINE_${part}_SA_EXPIRES_AT`] ?? "").trim();
+  return { projectId, ...creds, ...(expiresAt ? { expiresAt } : {}) };
+}
+
+function envAgentEngine(env: NodeJS.ProcessEnv): AgentEngineConfig {
+  const memory = envAgentEngineProject(env, "MEMORY");
+  const agents = envAgentEngineProject(env, "AGENTS");
+  return { baseUrl: envAgentEngineBaseUrl(env), ...(memory ? { memory } : {}), ...(agents ? { agents } : {}) };
+}
+
+/** The rotation warning for one service account, or undefined (E9 §2: 14 days before). */
+export function agentEngineExpiryWarning(part: "memory" | "agents", expiresAt: string | undefined, nowMs: number): string | undefined {
+  if (!expiresAt) return undefined;
+  const at = Date.parse(expiresAt);
+  const name = `outfitter-agentengine-${part}-sa`;
+  if (!Number.isFinite(at)) return `AGENT_ENGINE_${part.toUpperCase()}_SA_EXPIRES_AT isn't a date (${JSON.stringify(expiresAt)}); can't warn before ${name} expires`;
+  const left = at - nowMs;
+  if (left <= 0) return `Agent Engine ${part} service account secret (${name}) expired at ${expiresAt}; rotate it (deploy/agent-engine.md)`;
+  if (left <= AGENT_ENGINE_EXPIRY_WARNING_MS) {
+    const days = Math.ceil(left / (24 * 60 * 60_000));
+    return `Agent Engine ${part} service account secret (${name}) expires in ${days} day${days === 1 ? "" : "s"} (${expiresAt}); rotate it (deploy/agent-engine.md)`;
+  }
+  return undefined;
+}
+
+/** Startup warnings for E9's config: a project id set without readable credentials (that part
+ * stays off), and secrets close to expiry. Never includes a credential. */
+export function agentEngineWarnings(config: Pick<Config, "agentEngine">, env: NodeJS.ProcessEnv = process.env, nowMs = Date.now()): string[] {
+  const out: string[] = [];
+  for (const part of ["memory", "agents"] as const) {
+    const upper = part.toUpperCase();
+    const project = config.agentEngine[part];
+    if (!project) {
+      if ((env[`AGENT_ENGINE_${upper}_PROJECT_ID`] ?? "").trim()) {
+        out.push(`AGENT_ENGINE_${upper}_PROJECT_ID is set but AGENT_ENGINE_${upper}_SA is missing or isn't JSON {client_id, client_secret}; Agent Engine ${part} is off`);
+      }
+      continue;
+    }
+    const expiry = agentEngineExpiryWarning(part, project.expiresAt, nowMs);
+    if (expiry) out.push(expiry);
+  }
+  return out;
 }
 
 function envOperators(name: string, env: NodeJS.ProcessEnv): string[] {
@@ -389,8 +505,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     },
     buildCommit: (env.OUTFITTER_BUILD_COMMIT ?? "").trim(),
     release: (env.OUTFITTER_RELEASE ?? "").trim(),
+    a2aBlockingCapMs: Math.max(0, Math.min(25_000, envInt("A2A_BLOCKING_CAP_MS", 25_000, env))),
+    a2aRequestsPerMinute: Math.max(1, envInt("A2A_REQUESTS_PER_MINUTE", 60, env)),
     ...(envGoogleOauth(env.NGROK_GOOGLE_OAUTH) ? { ngrokGoogleOauth: envGoogleOauth(env.NGROK_GOOGLE_OAUTH) } : {}),
-    litellmBaseUrl: env.LITELLM_BASE_URL ?? "https://litellm.augment-code.support/v1",
+    litellmBaseUrl: env.LITELLM_BASE_URL ?? "https://router.kernal.one/v1",
     litellmAdminKey: env.LITELLM_ADMIN_KEY ?? "",
     providerPollMs: envInt("PROVIDER_POLL_MS", 5 * 60_000, env),
     linkOrigin: env.OUTFITTER_LINK_ORIGIN ?? "",
@@ -408,5 +526,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     voiceSttUsdPerMinute: envNonNegative("VOICE_STT_USD_PER_MINUTE", 0.0048, env),
     voiceTtsUsdPer1kChars: envNonNegative("VOICE_TTS_USD_PER_1K_CHARS", 0.03, env),
     voiceMonthlyCapUsd: envNonNegative("VOICE_MONTHLY_CAP_USD", 0, env),
+    agentEngine: envAgentEngine(env),
   };
 }

@@ -176,7 +176,7 @@ Up (agentd → api):
 | `hello` | `runId, sessionId, agentdVersion, piVersion, lastAckedSeq, runToken, protocolVersion, boot?` | first frame after connect; `boot` (optional) is this sandbox's boot durations on agentd's own clock -- `bootMs, setupMs, assignmentWaitMs?, sinceAssignedMs, identityTokenMs?, connectMs?, preBooted?` (see "Start-up timing" below), numbers only, never a secret; the api keeps the first accepted hello's and ignores it on a reconnect; `runToken` is `RUN_TOKEN` echoed back (see "Run token" above); `protocolVersion` is agentd's `WIRE_PROTOCOL_VERSION` (`packages/agentd/src/protocol.ts`) -- the api closes with `4409` when it's older than its own copy of the constant (`packages/api/src/agentlink.ts`'s `API_PROTOCOL_VERSION`), so a deploy that updates the API ahead of the agent image fails loudly instead of the agent silently ignoring frames it doesn't understand (bug 9, `docs/reports/cloud-fixes.md`) |
 | `status` | `state: "cloning"\|"restoring"\|"starting"\|"running"\|"idle"\|"checkpointing"\|"stopping", detail?` | on change; the api maps this to `Run.state` (`agentlink.ts`'s `mapStatusToRunState`): `running`/`idle` map straight across, `checkpointing` leaves the run's current state untouched (a mid-turn checkpoint push, not a state change), `stopping` maps to the `Run.state` of the same name, anything else (`cloning`/`restoring`/`starting`) maps to `provisioning`. A `status`/`heartbeat` frame that arrives after the run has already reached a terminal state (`bye` already processed) is ignored — `bye` is final. |
 | `entry` | `seq, entry` (a pi session entry exactly as pi writes it to JSONL: message, model_change, compaction, custom, ...) | whenever pi appends to the session file (agentd tails the file; this is the durable transcript) |
-| `event` | `seq, event` (a raw pi RPC event: agent_start, message_update, tool_execution_start/update/end, agent_end, extension_ui_request, ...) | streamed for live UI; not persisted except `extension_ui_request` |
+| `event` | `seq, event` (a raw pi RPC event: agent_start, message_update, tool_execution_start/update/end, agent_end, agent_settled, extension_ui_request, ...) | streamed for live UI; not persisted except `extension_ui_request`. agentd adds one field of its own: `agent_settled` carries `lastEntryId`, sent only after agentd has read the session file and sent every entry pi wrote before settling (see "Turn settled") |
 | `spend` | `keySpend?, keyMax?, modelGroup?, callId?, estimate?, baseline?` | `keySpend`/`keyMax`/`modelGroup`/`callId` from LiteLLM's `x-litellm-key-spend`/`-max-budget`/`-model-group`/`-call-id` response headers (relayed by the `outfitter-spend` pi extension's `after_provider_response` hook, `packages/agentd/pi-extension/outfitter-spend.ts`, loaded only under agentd -- see E2.11); absent fields mean the response carried no LiteLLM headers at all (non-LiteLLM route) or an incomplete set (e.g. no budget cap, so no `-max-budget`). `estimate` is pi's own cumulative cost estimate for the run so far (agentd's running sum of the extension's own per-response `usage` estimates, `packages/agentd/src/pi.ts`'s `SpendTailer`), independent of LiteLLM's headers -- it is what lets `Run.costEstimate` be real even for a guru whose route never returns spend headers. For an auto-router model group (`claude-auto-llm`, `gemini-auto-llm`, `*-agentic`, `*-affinity`, whose `/model/info` price is all zero because the underlying model is only picked per call), the extension's per-response `usage` estimate is instead computed from the newest assistant message's token counts times the *resolved* model's price (from `x-litellm-model-name`, fetched via `/model/info` at `session_start`) plus `x-litellm-classifier-cost`, rather than pi's own (zero) per-message cost estimate -- see E2.11b. `baseline: true` marks exactly one frame per run, sent from the extension's `session_start` handler before any provider call: `keySpend` on it is the LiteLLM key's balance read from `GET /key/info` *before* this run's first call (rather than a post-call balance from a response header), so the api's "pin `Run.keySpendStart` from the first spend frame seen" logic (`agentlink.ts`) baselines correctly and a one-call run's `cost` is no longer under-reported as 0. If `GET /key/info` fails, no baseline frame is sent and the prior first-response-frame-pins-baseline behaviour applies. |
 | `checkpoint` | `branch?, head?, pushed?: boolean, snapshotUrl?, workspaceUrl?` | after each checkpoint; repo-less runs upload a workspace tarball (`workspaceUrl`) instead of pushing. For a repo run agentd commits any uncommitted changes, then pushes when HEAD is the session branch or a branch under `repo.branchPrefix` (default `outfitter/`). `branch` is that checked-out branch, and the api copies an allowed one onto `session.branch`. A detached HEAD or any other branch is not pushed; the frame keeps the session branch. `pushed` says whether this checkpoint sent anything |
 | `heartbeat` | `idleSeconds, memMb, sandboxMemMb?, sandboxMemLimitMb?` | every 15 s. `memMb` is agentd's own rss. `sandboxMemMb`/`sandboxMemLimitMb` (#187) are the whole sandbox's peak memory since the previous heartbeat (sampled every 5 s) and its limit, in MiB, from the cgroup gVisor emulates inside the sandbox (or `/proc/meminfo`); absent when neither is readable. Usage is the working set: reclaimable file cache (`inactive_file` in `memory.stat`, absent under gVisor) is subtracted. The api keeps the latest report and the run's high-water mark (`Run.sandboxMemLastMb`/`sandboxMemPeakMb`/`sandboxMemLimitMb`), and when the reconciler fails a silent run whose **last** report was at 80% of its limit or more, its note says the sandbox most likely ran out of memory — an OOM kill takes agentd with it, so nothing else reports it. Since #193 that estimate is the fallback: on GKE the api reads the pod's own termination reason (`Run.sandboxExit`, e.g. `OOMKilled` with exit code 137) shortly after agentd goes quiet, and fails the run with it at once. |
@@ -196,7 +196,7 @@ Down (api → agentd):
 
 | t | fields | effect |
 |---|---|---|
-| `run.spec` | `session {id, name, cwd:"/workspace"}, repo? {cloneUrl, branch, baseBranch, createBranch, branchPrefix?} (absent for non-coding sessions: agentd starts with an empty /workspace, or restores `workspace.snapshotUrl`), workspace? {snapshotUrl?}, guru {systemPrompt?, appendSystemPrompt?, model, thinking, tools?, excludeTools?, packages?, env?, playwrightBeforeCheckpoint?, allowExternalHtmlResources?}, snapshot {url?, jsonl?}, secrets {githubToken, litellmKey, litellmBaseUrl?, ngrokAuthtoken?}, author? {name, email, login?}, preview? {internalDomain}, ide? {version, artifacts {amd64?, arm64?}}, idleStopSeconds, checkpointEvery` | start the run. `preview` with `secrets.ngrokAuthtoken` (drive-previews.md, #217): agentd starts the preview listener and pins `OUTFITTER_PREVIEW_PORT`/`OUTFITTER_PREVIEW_TOKEN` for the tool; the credential (ACL `bind:*.<internalDomain>`) stays in a root-only ngrok config, never in pi's env. Absent: no previews. `ide` (browser-ide.md, #241; only with `preview`, for a Tape with `browserIde`): agentd downloads that code-server release from GitHub at once, niced, checks the SHA-256 for its architecture, and moves it root-owned to `/opt/code-server` without the bundled Copilot (`src/ide-install.ts`). A failed install is logged and never fails the run |
+| `run.spec` | `session {id, name, cwd:"/workspace"}, repo? {cloneUrl, branch, baseBranch, createBranch, branchPrefix?} (absent for non-coding sessions: agentd starts with an empty /workspace, or restores `workspace.snapshotUrl`), workspace? {snapshotUrl?}, guru {systemPrompt?, appendSystemPrompt?, model, thinking, tools?, excludeTools?, packages?, env?, playwrightBeforeCheckpoint?, allowExternalHtmlResources?, adminTools?, memory?, agentEngine?}, snapshot {url?, jsonl?}, secrets {githubToken, litellmKey, litellmBaseUrl?, ngrokAuthtoken?}, author? {name, email, login?}, preview? {internalDomain}, ide? {version, artifacts {amd64?, arm64?}}, idleStopSeconds, checkpointEvery` | start the run. `preview` with `secrets.ngrokAuthtoken` (drive-previews.md, #217): agentd starts the preview listener and pins `OUTFITTER_PREVIEW_PORT`/`OUTFITTER_PREVIEW_TOKEN` for the tool; the credential (ACL `bind:*.<internalDomain>`) stays in a root-only ngrok config, never in pi's env. Absent: no previews. `ide` (browser-ide.md, #241; only with `preview`, for a Tape with `browserIde`): agentd downloads that code-server release from GitHub at once, niced, checks the SHA-256 for its architecture, and moves it root-owned to `/opt/code-server` without the bundled Copilot (`src/ide-install.ts`). A failed install is logged and never fails the run |
 | `ack` | `seq` | agentd may drop buffered frames ≤ seq |
 | `prompt` | `text, images?, behavior?: "steer"\|"followUp"` | pi RPC `prompt` (with `streamingBehavior` if pi is busy) |
 | `steer` / `follow_up` | `text` | pi RPC same name |
@@ -261,14 +261,43 @@ request, reads resent once after a link drop, writes (with `idempotencyKey`) sen
 | up | `{t: "admin.request", reqId, op, args, idempotencyKey?}` |
 | down | `{t: "admin.result", reqId, ok: true, text}` or `{..., ok: false, error, needsApproval?}` |
 
-- agentd opens the socket only when `run.spec.guru.adminTools` is `manage` or `operator`, and pins
-  `OUTFITTER_ADMIN_SOCKET` after the tape's env (empty otherwise), like the GitHub socket.
+- agentd opens the socket only when the tape has a capability that uses it: `run.spec.guru.adminTools`
+  is `manage` or `operator`, `memory` is `tool` or `auto`, or `agentEngine` is `true` (E9,
+  docs/specs/atlas-agent-engine-and-a2a.md §3.3). Each of the three is sent only when on. It pins
+  `OUTFITTER_ADMIN_SOCKET` after the tape's env (empty otherwise), like the GitHub socket, and
+  `OUTFITTER_ADMIN_CAPS` to those capabilities, comma-separated in the order `admin,memory,agentEngine`
+  (empty when the socket is closed). Kernal registers its admin and session-search tools only when
+  `admin` is listed (unset means admin only: a laptop, or an agentd from before E9).
+- Every op names the tape capability it needs: `admin` (all of `tapes.*`, `environments.*`,
+  `sessions.*`), `memory` (`memory.*`, E9 PR3) or `agentEngine` (`ae.*`, E9 PR4). The api refuses an
+  op whose capability the tape lacks (`admin tools are off for this tape`, `memory is off for this
+  tape`, `Agent Engine is off for this tape`), so a socket opened for memory never reaches `tapes.*`.
+  Neither refusal is audited. A Kernal from before E9 ignores `OUTFITTER_ADMIN_CAPS` and offers its
+  admin tools on a memory-only Drive; they all fail this way, so ship the E9 Kernal in the image
+  before turning memory on for a tape.
+- Memory (E9 PR3): `memory.search {query, type?, limit?}` and `memory.context {query}` are reads,
+  `memory.save {type, text, label?, shared?}` an audited write. The identity and repo come from the
+  session, never from args. With `memory: auto`, agentd also loads `pi-extension/outfitter-memory.ts`
+  (`OUTFITTER_MEMORY_EXTENSION`), which sends `memory.context` with the prompt before each turn
+  (3 s at most, skipped on any failure) and puts the answer in the system prompt's `memory` section.
+  With `memory` `tool` or `auto`, agentd excludes pi-memory's seven tools and pins
+  `PI_MEMORY_DIR` (an empty directory) and `PI_MEMORY_EXIT_SUMMARY=0` after the tape's env. The api
+  records `auto` sessions' user prompts and settled final assistant messages with `recordTurn`
+  (keyed `<session id>:<entry id>`), never for a session with `origin: "a2a"` or an `a2aTokenId`, and
+  never for mail another session sent or Outfitter's own notices (or the turns they start). pi
+  records each turn's section changes as system patch messages, so the recalled `memory` block is in
+  the session's entries too (session search skips system messages). A `memory.save` with
+  `shared: true`, or of a taxonomic term, waits for the owner's approval: shared memory is recalled
+  into the other users' prompts.
 - The model's shell can reach the socket, so the api decides everything. It reads the tape again on
-  every call: with admin tools off, every op is `admin tools are off for this tape`. Ops run as the
+  every call (and again after an approval wait), so turning a capability off takes effect at once. Ops run as the
   session's owner, with sysop rights only when the owner is an operator and the tape says
   `operator`.
-- A delete, an operator op, or a change to a tape with admin tools waits for the owner, up to 10
-  minutes. The api resolves the target first and names it on the card (name and full id), then acts
+- A delete, an operator op, an `approve` op (E9: answering an Agent Engine execution's review
+  pause, `ae.resume`), or a change to a tape with memory or Agent Engine (E9) waits for the owner,
+  up to 10 minutes; a change to a tape with admin tools is refused outright. `approve` always asks,
+  whoever the owner is; such an op must register its own card (what it answers, with remote text
+  clipped and labelled, never the agent's words) and a Drive-only capability. The api resolves the target first and names it on the card (name and full id), then acts
   on that exact record. The request is a row in `adminApprovals` (one per run; claim, decide and
   clear are conditional writes). The owner's session page shows it as a confirm card through the
   `pendingUiRequest` channel, ahead of pi's own question, with id `admin:<approvalId>` and
@@ -277,10 +306,31 @@ request, reads resent once after a link drop, writes (with `idempotencyKey`) sen
   /api/sessions/:id/ui-response`); a Dongle caller and other viewers see pi's question only. After a
   yes the api reads the tape and rights again before running the op. `needsApproval: true` on the
   result means declined, unanswered, or replaced.
+- `ae.*` (E9 PR4, Kernal's `agent_engine` tool; `src/admin/ae-ops.ts`): `ae.list` (read: the
+  allowlist's enabled agents), `ae.invoke {agent, message, wait?}` (write, audited as
+  `<agent>/<executionId>`; streams `invokeStream` for up to `wait` seconds, default 120, max 280,
+  then reports `completed|running|suspended|failed`), `ae.get {executionId}` (read) and `ae.resume
+  {executionId, decision, notes?}` (`approve`: the card names the agent and execution, quotes the
+  pause's reason and context JSON-escaped and clipped as the remote agent's words, and shows the
+  decision, which must be one of its `allowed_decisions`). Only agents listed and enabled in
+  `aeAgents` (Settings → Agent Engine agents: `GET|POST /api/operator/agent-engine/agents`,
+  `PUT|DELETE …/:id`, sysops on the web role, changes by a person only, audited `via: "web"`) are
+  callable, and `get`/`resume` reach only executions the same session started (`aeSessions`).
+  Requests carry `X-Session-ID: outf-<session8>-<agent>` and
+  `X-Mdb-Agent-Engine-Custom-Outfitter-Session: <session8>` (a UUID's last 8 characters), never an
+  email or the CLI's test-session headers. Results are capped at 8 KB, with the remote part between
+  `[from Agent Engine agent <id>]` and `[end of Agent Engine agent <id>]`. When the session has no
+  active run, is archived or is formatted, the link role's tick stops the Agent Engine sessions it
+  opened (`runtime-sessions/{id}/stop`, best effort; a refusal leaves the agent's idle TTL to
+  release it).
 - A write's `idempotencyKey` is remembered on the run (hashed, next to the GitHub keys), so a replay
   returns the first result. At most 8 admin requests per run are handled at once.
-- No `API_PROTOCOL_VERSION` bump: an older api never sends `adminTools`, so an agentd never opens
-  the socket against it.
+- No `API_PROTOCOL_VERSION` bump: an older api never sends `adminTools`, `memory` or `agentEngine`,
+  so an agentd never opens the socket against it; an older agentd ignores `memory` and
+  `agentEngine` (the socket then opens for admin tools only, as before).
+- Reads (no `idempotencyKey`, resent once) are the ops ending in `.list`, `.get`, `.meta`,
+  `.search`, `.transcript` or `.context` (`memory.context`, the recall before each prompt);
+  everything else is a write. `registerAdminOp` refuses an op whose class disagrees with its name.
 
 ### Mailbox (E5.5)
 
@@ -394,6 +444,41 @@ It is never sent as `--system-prompt`, which would replace pi's own prompt. Beca
 way pi does (the workspace's `.pi/APPEND_SYSTEM.md`, then `$PI_CODING_AGENT_DIR/APPEND_SYSTEM.md`) and,
 when the guru has no `appendSystemPrompt` of its own, passes its path as an earlier
 `--append-system-prompt`. A guru's own text replaces the file, as it did before.
+
+### Turn settled (E9 §1)
+
+pi's `agent_settled` event means the turn is over: no retry, compaction retry or queued message
+remains. agentd tails pi's session file every 250 ms, so the turn's last entry can still be unread
+when the event arrives. agentd therefore reads the file first, the way a checkpoint does, and only
+then sends the event, with `lastEntryId` (the id of the last `entry` it has sent this run; absent
+when pi has written none since the restored transcript). Events pi emits during that read wait
+and follow in order. The field needs no protocol version: an api that doesn't know it forwards the
+event unchanged, and an api that does treats an older agentd's settle, without the field, as a
+settle all the same.
+
+The api records `Session.settledAt` (and `settledEntryId`) and finishes *turn waiters*
+(`turnWaiters` collection, `src/turns.ts`), the completion signal for A2A tasks and delegation
+(EPIC.md E5.2). A waiter is registered for one mail before the mail is posted and finishes once:
+
+1. **settled**: the first `agent_settled` after pi accepted the mail. Acceptance is pi's
+   `response` to `mail:<id>` with `success: true`, taken from the same seq stream as the settle
+   (seq restarts every run, so only a settle of the same run at a higher seq counts). The
+   unsequenced `mail.ack` frame can overtake an earlier settle, so it isn't used for this, except
+   as a provisional fallback two minutes after it, when the `response` never showed (only a settle
+   after the run's last recorded one counts, and a late `response` replaces it). A settle is never
+   matched to a mail id: other mail can settle the same turn. A replayed settle (seq not above the
+   session's `settledSeq` for that run) doesn't rewrite the session.
+2. **ended, run_stopped / run_failed**: the run that accepted the mail reached `stopped` or
+   `failed` first (on its `bye`, or found by the tick for a run that ended without one).
+   **mail_dead / mail_held**: the mail can't reach a run.
+3. **ended, deadline**: `deadlineAt` starts 60 minutes out. `/api/hooks/tick` pushes it to ten
+   minutes past the run's last activity while the run is `provisioning` (counted from its start)
+   or `running` with activity in the last ten minutes, never past four hours from registration.
+   At expiry the api stops the run that accepted the mail (`reason: "deadline"`), then ends the
+   waiter. A mail no run accepted stops nothing; it stays queued.
+
+A finished waiter is never overwritten. Run state `idle` never counts as completion: agentd is
+idle before its first prompt. Finished waiters are TTL-deleted after 7 days.
 
 ### Start-up timing
 
@@ -592,6 +677,79 @@ removed from `outfitter-store.ts` entirely, not left in as a fallback.
 token for that client ID *is* accepted, in `Proxy-Authorization`. The live-test identity uses it;
 see `deploy/README.md` "Live-test identity". Laptop clients still use personal tokens on link.)
 
+## A2A server (E9 §5, PR5)
+
+`docs/specs/atlas-agent-engine-and-a2a.md` §5 is the design; this is what the link role (and
+"all") serves today. The web role serves none of it.
+
+- **A2A keys** are `ApiToken`s with `kind: "a2a"` and `a2a: {tapes, repos, maxConcurrent}`, made on
+  the Dongles page (`POST /api/me/tokens` with `kind: "a2a"`; a person only, never with a token).
+  Same format, hash, 90-day TTL and revocation as a Dongle. **Each kind works on its own routes
+  only** (`auth.ts`'s `verifyApiToken`): an A2A key gets 401 on `/api/*`, a Dongle gets 401 on
+  `/a2a`. A tape with admin tools, `agentEngine`, `memory: "auto"`, `mergeFromCloud`, a non-empty
+  `env`, no `tools` list, or a tool outside `A2A_TAPE_TOOLS` (`read grep find ls bash edit write git
+  github_pr memory`; never `subagent*`, `agent_engine`, `github_issue`) can't be on a key, and is
+  refused again at every task start and every run spec (`a2a/keys.ts`'s `a2aTapeProblem`). Each
+  tape also needs its own `outfitter-litellm-key-<tapeId>` secret: an A2A session never gets the
+  org-wide `outfitter-litellm-key-default` (`secrets.ts`); without one the key can't be made, a task
+  is REJECTED "tape has no dedicated LiteLLM key", and a run is refused (4412).
+- **Revoking** an A2A key (Dongles page, or the operator's offboarding revoke) cancels its open
+  tasks ("the A2A key was revoked") and stops every Drive it still holds; the tick sweep does the
+  same for a key revoked elsewhere (CANCELED) or expired (FAILED "the A2A key has expired"). A
+  bearer that failed lookup is refused from a per-instance cache for 60 s without a store read;
+  per-IP limiting (Cloud Armor in front of link) is an owner follow-up.
+- **`GET /.well-known/agent-card.json`**: public, `Access-Control-Allow-Origin: *`, `Cache-Control`,
+  `ETag`/`Last-Modified` (304 on `If-None-Match`). One generic `coding` skill, never a tape name.
+  `capabilities.streaming` is false until PR6.
+- **`POST /a2a`** (and `/a2a/`): JSON-RPC 2.0, A2A v1.0 method names, `A2A-Version: 1.0` as a
+  header or query parameter (missing → -32009). `Authorization: Bearer <A2A key>`; a bad key is
+  HTTP 401, over 60 requests a minute per key HTTP 429, a body over 64 KB HTTP 413. A wrong
+  content type is -32005, bad JSON -32700.
+- **Methods:** `SendMessage`, `GetTask`, `ListTasks`, `CancelTask`, `GetExtendedAgentCard` (the
+  key's usable tapes as skills). Push-notification methods are -32003; `SendStreamingMessage` and
+  `SubscribeToTask` are -32004 until PR6.
+- **Tasks** live in `a2aTasks` (`store/types.ts`'s `A2ATask`), always looked up by key. A new task
+  creates a session as the key's owner (`session-create.ts`, the same path as `POST
+  /api/sessions`) with `origin: "a2a"`, `a2aTokenId`, name `A2A: <first line>` and branch
+  `outfitter/a2a-<task12>` (12 hex characters of the task id), whatever the client sent; its runs
+  may push only that branch (`branch-policy.ts`'s `branchPrefixForSession`), and an A2A session
+  whose branch isn't `^outfitter/a2a-[0-9a-f]{12,}$` gets no run, no push prefix and no GitHub
+  broker writes (fail closed). `PUT /api/sessions/:id/import` is 409 for an A2A session. The prompt is wrapped as untrusted input. The
+  tape and repo come from `message.metadata["https://kernal.one/a2a/ext/outfitter-task/v1"]`
+  (`{skill?, repo?, baseBranch?}`); outside the key's lists the task is `TASK_STATE_REJECTED` with
+  the reason as `status.message`. `contextId` is server-issued, never a session id.
+- **States** come from the session's run and the task's turn waiter: SUBMITTED until a run takes
+  the mail, WORKING while it works ("waiting for the owner" while a UI request or approval is
+  pending; those are never answered over A2A), COMPLETED on settle (with the final assistant text
+  as an artifact), FAILED when the turn ends otherwise, CANCELED by `CancelTask` (the run stopped
+  with reason `a2a`, unsent mail marked dead). The tick refreshes open tasks.
+- A repeated `messageId` from the same key returns the first task. `maxConcurrent` (default 2)
+  per key counts open tasks and finished ones whose Drive is still up; one open task per context.
+  A blocking `SendMessage` waits at most 25 s (two at once per key per instance), then returns the
+  task as it is. Finished rows expire after 30 days; a rejected one keeps no copy of the message.
+- An A2A session's agent can't merge, and through the GitHub broker may only read and open its
+  own branch's pull request (`github-broker.ts`'s `A2A_GITHUB_OPS`). Internal errors go back as
+  "Internal error" only.
+- An A2A session's run.spec never carries the tape's `env`. Its Drive's admin socket refuses every
+  op when the tape no longer passes `a2aTapeProblem`, and otherwise reaches `memory` only (never
+  `admin` or `agentEngine`, whatever the tape gained since). Result, status and (PR6) question text
+  go through `search/redact.ts`'s `redact()` before they leave over A2A.
+- **What A2A does not isolate (by design):** whatever the owner, or a teammate who can post into
+  the session, writes in an A2A session's web view becomes part of its transcript, and a later
+  task's answer in the same context may draw on it: write there only what the remote caller may
+  read. The caller's answer to an INPUT_REQUIRED question (PR6) reaches pi as plain text, not
+  wrapped as untrusted A2A input like the task prompt. "Private" memory (`a2a:<tokenId>`,
+  `agentengine/identity.ts`) means per key and per owner within a trusted team, not isolation from the
+  team: anyone who can post into the session can steer what is recorded. The tape's own LiteLLM
+  key is in pi's environment, and `redact()` is defence in depth only: the remote caller can read
+  that key (shared with the owner's runs of the tape and every A2A key listing it, and not revoked
+  with the A2A key). Use A2A-only tapes with a budgeted key, and rotate it when you revoke; per-task
+  minted keys are a follow-up.
+- An A2A session can't send or receive `outfitter_send` mail (a send is a session-file entry its
+  `bash` could forge), its run is refused once its key is revoked or expired, it never gets the
+  shared `outfitter-github-token-default` PAT or a per-tape LiteLLM secret that copies the org key,
+  and the owner's shared browser never answers its capture/action/inspect requests.
+
 ## Admin ops (Sysop tools, #286)
 
 `POST /api/admin/ops`, on both origins, with a personal API token (dev mode also accepts the dev
@@ -611,6 +769,11 @@ outline|text, `around`, `window`, `from`, `maxChars`, `toolOutput` none|trimmed|
   confirms in the TUI).
 - Setting a tape's `adminTools`, or changing or deleting a tape that has them, is refused: only a
   sysop does that, in the web UI.
+- Setting or changing a tape's `memory` (`off|tool|auto`) or `agentEngine` (boolean) is refused
+  (`memory can only be set in the web UI`): a person sets them in the web UI. A body repeating the
+  current value passes. Any other change to a tape that has one of them needs `confirmed`.
+- `memory.*` and `ae.*` ops (capabilities `memory`, `agentEngine`) answer `<op> works only in a
+  Drive`: a Dongle has no tape or session to bind them to.
 - Every non-read op that passes those checks writes an `adminAudit` row.
 
 ## Browser companion

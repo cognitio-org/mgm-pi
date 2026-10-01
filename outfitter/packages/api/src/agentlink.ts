@@ -6,8 +6,10 @@
 // reconnect's "hello" if it was already ready).
 
 import type { SessionIndexer } from "./search/service.ts";
+import type { MemoryRecorder } from "./agentengine/recorder.ts";
 import type { DriveAdmin } from "./admin/drive.ts";
 import type { PreviewService } from "./previews.ts";
+import type { TurnWaiters } from "./turns.ts";
 import { askForIde } from "./ide.ts";
 
 /** #273: how many times a run's model may ask for the IDE in an hour. */
@@ -26,7 +28,10 @@ import { validateSnapshotUrl, snapshotHostAllowlist } from "./snapshot-url.ts";
 import { MAIL_LEASE_MS, MAIL_MAX_ATTEMPTS, type MailService } from "./mail.ts";
 import { isBrowserActionKind, parseBrowserAction } from "./browser-action.ts";
 import { GithubBroker } from "./github-broker.ts";
-import { branchAllowed, branchPrefixOf } from "./branch-policy.ts";
+import { branchAllowed, branchPrefixForSession, isA2ABranch } from "./branch-policy.ts";
+import { A2A_NO_DEDICATED_KEY, a2aTapeProblem } from "./a2a/keys.ts";
+import { isA2ASession } from "./secrets.ts";
+import { isTokenActive } from "./tokens.ts";
 import { entryForWire } from "./entry-wire.ts";
 import { sessionJsonl } from "./session-jsonl.ts";
 import {
@@ -84,6 +89,11 @@ export class MissingGithubTokenError extends Error {
     this.detail = detail;
   }
 }
+
+/** E9 security review: an A2A session's run refused at spec time, terminal like a missing GitHub
+ * token (4412, the session's mail held with `detail` as its note). Its tape no longer passes
+ * a2aTapeProblem, it has no LiteLLM key of its own, or its branch isn't `outfitter/a2a-<hex>`. */
+export class A2ARunRefusedError extends MissingGithubTokenError {}
 
 /** #158: the GitHub App is configured but couldn't mint a token just now (network, timeout, a
  * 5xx, a Secret Manager blip). Not terminal: handleConnection's generic catch closes with 1011 so
@@ -245,6 +255,11 @@ export interface RunSpecMessage {
     /** Sysop tools (#287): sent only when on; tells agentd to open its admin socket. The API checks
      * the tape again on every admin.request, so this is not the security boundary. */
     adminTools?: "manage" | "operator";
+    /** E9 (docs/specs/atlas-agent-engine-and-a2a.md §3.3): sent only when on. agentd opens the
+     * admin socket for it too; the API checks the tape's capabilities on every admin.request. */
+    memory?: "tool" | "auto";
+    /** E9 §4: sent only when exactly true; opens the admin socket like `memory`. */
+    agentEngine?: true;
   };
   snapshot: { url?: string; jsonl?: string };
   // litellmBaseUrl is server-controlled (config.litellmBaseUrl), never guru-editable -- see
@@ -364,10 +379,14 @@ export class AgentLink {
   private readonly github: GithubBroker;
   /** Drive previews (#217); unset in apps built without one (setPreviews). */
   private previews: PreviewService | undefined;
+  /** E9 §1: settles and mail acceptance feed the turn waiters; unset in apps built without them. */
+  private turns: TurnWaiters | undefined;
   /** Sysop tools (#287): the Drive side of the admin op registry; unset until setDriveAdmin. */
   private driveAdmin: DriveAdmin | undefined;
   /** Session search (#289): indexes each new entry; unset in apps built without one. */
   private indexer: SessionIndexer | undefined;
+  /** E9 §3.3: recordTurn for `memory: auto` tapes, next to the indexer; unset without memory. */
+  private memoryRecorder: MemoryRecorder | undefined;
   /** Admin requests being handled per run, capped at MAX_ADMIN_IN_FLIGHT. */
   private readonly adminInFlight = new Map<string, number>();
   /** Installation-token refresh timers, one per run. Cleared only when that run's current socket closes. */
@@ -405,6 +424,10 @@ export class AgentLink {
 
   setIndexer(indexer: SessionIndexer): void {
     this.indexer = indexer;
+  }
+
+  setMemoryRecorder(recorder: MemoryRecorder): void {
+    this.memoryRecorder = recorder;
   }
 
   /** Sysop tools (#287): server.ts wires this once the models service exists. */
@@ -583,6 +606,11 @@ export class AgentLink {
     if (typeof requestId !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(requestId)) return;
     const now = new Date().toISOString();
     const session = await this.store.sessions.findById(sessionId);
+    // E9: the owner's browser never reaches a session a remote caller drives.
+    if (isA2ASession(session)) {
+      await this.sendCaptureResult(sessionId, { t: "browser.capture.result", requestId, error: "no_share" });
+      return;
+    }
     const saved = await this.store.browserRequests.insertPendingIfShared(sessionId, {
       id: requestId,
       sessionId,
@@ -642,6 +670,10 @@ export class AgentLink {
     }
     const now = new Date().toISOString();
     const session = await this.store.sessions.findById(sessionId);
+    if (isA2ASession(session)) {
+      await this.sendActionResult(sessionId, { t: "browser.action.result", requestId, error: "no_share" });
+      return;
+    }
     const saved = await this.store.browserRequests.insertPendingIfShared(sessionId, {
       id: requestId,
       sessionId,
@@ -696,6 +728,10 @@ export class AgentLink {
     if (typeof requestId !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(requestId)) return;
     const now = new Date().toISOString();
     const session = await this.store.sessions.findById(sessionId);
+    if (isA2ASession(session)) {
+      await this.sendInspectResult(sessionId, { t: "browser.inspect.result", requestId, error: "no_share" });
+      return;
+    }
     const saved = await this.store.browserRequests.insertPendingIfShared(sessionId, {
       id: requestId,
       sessionId,
@@ -986,7 +1022,12 @@ export class AgentLink {
       built = await this.buildRunSpec(run, session, guru);
     } catch (err) {
       if (err instanceof MissingGithubTokenError) {
-        request.log.warn(err, "run.spec build failed: no usable GitHub token for this repo session");
+        request.log.warn(
+          err,
+          err instanceof A2ARunRefusedError
+            ? "run.spec build refused: this A2A session can't run as it stands"
+            : "run.spec build failed: no usable GitHub token for this repo session",
+        );
         // #172: this won't fix itself, so park the session's mail (with the reason as its notice)
         // instead of letting the /tick sweep start a new run and sandbox for it every few minutes
         // until the mail runs out of attempts. Retry releases it. A run the user started gets the
@@ -1143,6 +1184,22 @@ export class AgentLink {
 
   private async buildRunSpec(run: Run, session: Session, guru: Guru): Promise<BuiltRunSpec> {
     const runId = run.id;
+    // E9 security review: an A2A session's run is checked again here, before anything is minted,
+    // whatever woke it: its key (revoked or expired: no more work in the caller's name), the tape
+    // as it stands now (the web UI may have changed it since the task started), its branch (a
+    // teleport import must not move it off `outfitter/a2a-*`), and below its LiteLLM key.
+    const a2aSession = isA2ASession(session);
+    if (a2aSession) {
+      const token = session.a2aTokenId ? await this.store.tokens.findById(session.a2aTokenId) : null;
+      if (!token || !isTokenActive(token)) {
+        throw new A2ARunRefusedError(`a2a session ${session.id}: key inactive`, "this A2A session's key was revoked or has expired, so it can't run.");
+      }
+      const problem = a2aTapeProblem(guru);
+      if (problem) throw new A2ARunRefusedError(`a2a session ${session.id}: tape refused`, `${problem}, so this A2A session can't run.`);
+      if (session.repo && !isA2ABranch(session.branch)) {
+        throw new A2ARunRefusedError(`a2a session ${session.id}: bad branch`, "this A2A session's branch isn't an outfitter/a2a-* branch, so it can't run.");
+      }
+    }
     // E2.8 laptop model preflight (src/laptop.ts): swap a laptop-only model for the guru's cloud
     // fallback when the laptop tunnel probes offline, and record it on the run for the UI.
     const wanted = session.modelOverride ?? guru.model;
@@ -1175,6 +1232,12 @@ export class AgentLink {
     });
 
     const secrets = await this.secretsBroker.secretsForRun(session, guru);
+    // A remote caller spends the tape's own LiteLLM key (a bounded, revocable budget), never the
+    // org-wide default; GcpSecretsBroker doesn't fall back for an A2A session. Not exempt in dev
+    // mode: MemorySecretsBroker reports every tape's key as its own unless told otherwise.
+    if (a2aSession && (secrets.litellmKeySource !== "guru" || (!secrets.litellmKey && !this.config.devMode))) {
+      throw new A2ARunRefusedError(`a2a session ${session.id}: ${A2A_NO_DEDICATED_KEY}`, `${A2A_NO_DEDICATED_KEY}, so this A2A session can't run.`);
+    }
     // GcpSecretsBroker (secrets.ts) resolves a missing `outfitter-github-token-<sessionId>` secret
     // to "" rather than throwing -- after a GitHub App installation token, then the shared
     // `outfitter-github-token-default` -- so a session with no repo (which needs no GitHub token at
@@ -1249,7 +1312,7 @@ export class AgentLink {
               cloneUrl: cloneUrlFor(session.repo),
               branch: session.branch ?? `outfitter/${session.id}`,
               baseBranch: session.baseBranch ?? "main",
-              branchPrefix: branchPrefixOf(guru.branchPrefix),
+              branchPrefix: branchPrefixForSession(session, guru.branchPrefix),
               // Deviation from protocol.md (createBranch isn't specced further): true only for a
               // session's first run, inferred from having no checkpoint yet.
               createBranch: !session.checkpoint,
@@ -1264,10 +1327,14 @@ export class AgentLink {
         tools: guru.tools,
         excludeTools: guru.excludeTools,
         packages: guru.packages,
-        env: guru.env,
+        // Never for an A2A session (a2aTapeProblem refuses such a tape already): pi's env is
+        // readable by the model, and the model's text goes back to the remote caller.
+        env: a2aSession ? undefined : guru.env,
         ...(guru.playwrightBeforeCheckpoint === true ? { playwrightBeforeCheckpoint: true } : {}),
         ...(allowExternalHtmlResources ? { allowExternalHtmlResources: true } : {}),
         ...(guru.adminTools === "manage" || guru.adminTools === "operator" ? { adminTools: guru.adminTools } : {}),
+        ...(guru.memory === "tool" || guru.memory === "auto" ? { memory: guru.memory } : {}),
+        ...(guru.agentEngine === true ? { agentEngine: true as const } : {}),
       },
       snapshot: { url: session.checkpoint?.snapshotUrl, ...(jsonl ? { jsonl } : {}) },
       secrets: {
@@ -1380,6 +1447,11 @@ export class AgentLink {
   /** Drive previews (#217): wired by buildApp after construction. */
   setPreviews(previews: PreviewService): void {
     this.previews = previews;
+  }
+
+  /** E9 §1 turn waiters: wired by buildApp after construction. */
+  setTurnWaiters(turns: TurnWaiters): void {
+    this.turns = turns;
   }
 
   onAgentLost(listener: (runId: string) => void): void {
@@ -1534,6 +1606,8 @@ export class AgentLink {
         const inserted = await this.store.entries.insertIfNew(sessionId, seq, entry, { runId });
         // Off the ack path: search indexing must never hold up or fail an entry.
         if (inserted) void this.indexer?.indexEntry(sessionId, entry);
+        // E9 §3.3: a user prompt goes to Agent Engine memory the same way (redacted, best effort).
+        if (inserted) void this.memoryRecorder?.noteEntry(sessionId, entry);
         if (inserted) {
           await this.store.sessions.update(sessionId, { leafId: entry.id, updatedAt: now });
           this.sse.publish(sessionId, { type: "entry", data: entryForWire({ entry, runId }) });
@@ -1567,6 +1641,7 @@ export class AgentLink {
         }
         const thought = liveThoughtTextFromEvent(event);
         if (thought !== null) await this.noteLiveThought(sessionId, runId, thought);
+        await this.noteTurnEvent(runId, sessionId, seq, event);
         await this.ack(runId, socket, seq, now);
         break;
       }
@@ -1610,7 +1685,7 @@ export class AgentLink {
         const guru = session ? await this.store.gurus.findById(session.guruId) : null;
         const reported = frame.branch !== undefined ? String(frame.branch) : undefined;
         const current = session?.branch;
-        const prefix = branchPrefixOf(guru?.branchPrefix);
+        const prefix = branchPrefixForSession(session, guru?.branchPrefix);
         const pushed = frame.pushed === true;
         // A pushed:false frame must not walk session.branch back to an earlier allowed name.
         const takeBranch =
@@ -1808,6 +1883,8 @@ export class AgentLink {
         // #217: the run's previews and preview credential go with it (the tick's sweep catches a run
         // that ends without a bye).
         if (stored && this.previews) void this.previews.closeRun(runId).catch(() => {});
+        // E9 §1 layer 2: a turn this run accepted and never settled ends with the run.
+        if (stored && this.turns) await this.turns.noteRunEnded(runId).catch((err) => console.warn(`[agentlink] turn waiters: ${err}`));
         // Then start the next run for it, and for mail held back while this run was stopping --
         // except after an explicit stop, which the /tick sweep may still override later.
         if (reason !== "stop") await this.mail.wakeIfMail(sessionId);
@@ -1815,6 +1892,25 @@ export class AgentLink {
       }
       default:
         break; // unknown frame type: ignore, forward-compatible
+    }
+  }
+
+  /** E9 §1: feeds the turn waiters from the seq stream. pi's `response` to `mail:<id>` is the
+   * mail's acceptance (agentd's `mail.ack` frame follows it unsequenced, so it can't be ordered
+   * against a settle); `agent_settled` is the settle, with agentd's `lastEntryId` when it sent one.
+   * A failure is logged, not thrown: holding back the ack would stall the run's whole stream, and
+   * the tick sweep's deadline covers a lost settle. */
+  private async noteTurnEvent(runId: string, sessionId: string, seq: number, event: { type?: string; [key: string]: unknown }): Promise<void> {
+    if (!this.turns || !Number.isFinite(seq)) return;
+    try {
+      if (event.type === "response" && event.success === true && typeof event.id === "string" && event.id.startsWith("mail:")) {
+        await this.turns.noteMailAccepted(sessionId, runId, event.id.slice("mail:".length), seq);
+      } else if (event.type === "agent_settled") {
+        const lastEntryId = typeof event.lastEntryId === "string" && event.lastEntryId.length <= 256 ? event.lastEntryId : undefined;
+        await this.turns.noteSettled(sessionId, runId, seq, lastEntryId);
+      }
+    } catch (err) {
+      console.warn(`[agentlink] turn waiters (${String(event.type)}): ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

@@ -350,7 +350,8 @@ export type SessionTailerOptions = JsonlTailerOptions;
 export class JsonlTailer {
   private offset = 0;
   private timer: ReturnType<typeof setInterval> | undefined;
-  private reading = false;
+  /** The read in progress, if any (see `poll`). */
+  private inFlight: Promise<void> | undefined;
   private sawHeader = false;
   private readonly intervalMs: number;
   private readonly skipHeader?: (parsed: unknown) => boolean;
@@ -368,10 +369,13 @@ export class JsonlTailer {
 
   start(): void {
     if (this.timer) return;
+    // A failed read (the file gone between stat and open, EMFILE) is retried by the next tick;
+    // never an unhandled rejection.
     this.timer = setInterval(() => {
-      void this.poll();
+      // A tick that lands mid-read skips; it doesn't queue behind it.
+      if (!this.inFlight) this.poll().catch(() => {});
     }, this.intervalMs);
-    void this.poll();
+    this.poll().catch(() => {});
   }
 
   stop(): void {
@@ -379,44 +383,50 @@ export class JsonlTailer {
     this.timer = undefined;
   }
 
-  /** Reads and emits everything currently available; used by tests and by the final drain before
-   * checkpointing so no trailing entry is lost. */
+  /** Reads and emits everything currently available; used by tests, by the final drain before
+   * checkpointing so no trailing entry is lost, and by agentd's flush before forwarding
+   * `agent_settled`. Resolves only once everything written before the call has been emitted: a read
+   * already in progress may have stat()ed the file before the latest append, so a poll that finds
+   * one waits for it and then reads again, instead of returning early as it used to. */
   async poll(): Promise<void> {
-    if (this.reading) return;
-    this.reading = true;
+    while (this.inFlight) await this.inFlight.catch(() => {});
+    const read = this.readAvailable().finally(() => {
+      if (this.inFlight === read) this.inFlight = undefined;
+    });
+    this.inFlight = read;
+    return read;
+  }
+
+  private async readAvailable(): Promise<void> {
+    const st = await stat(this.file).catch(() => undefined);
+    if (!st || st.size <= this.offset) return;
+    const handle = await open(this.file, "r");
     try {
-      const st = await stat(this.file).catch(() => undefined);
-      if (!st || st.size <= this.offset) return;
-      const handle = await open(this.file, "r");
-      try {
-        const length = st.size - this.offset;
-        const buffer = Buffer.alloc(length);
-        await handle.read(buffer, 0, length, this.offset);
-        const text = buffer.toString("utf8");
-        const lastNewline = text.lastIndexOf("\n");
-        if (lastNewline === -1) return; // no complete line yet; wait for more to be appended
-        const consumed = text.slice(0, lastNewline + 1);
-        this.offset += Buffer.byteLength(consumed, "utf8");
-        const { lines } = splitJsonlChunk(consumed);
-        for (const line of lines) {
-          if (line.length === 0) continue;
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(line);
-          } catch {
-            continue;
-          }
-          if (!this.sawHeader && this.skipHeader?.(parsed)) {
-            this.sawHeader = true;
-            continue;
-          }
-          this.onLine(parsed);
+      const length = st.size - this.offset;
+      const buffer = Buffer.alloc(length);
+      await handle.read(buffer, 0, length, this.offset);
+      const text = buffer.toString("utf8");
+      const lastNewline = text.lastIndexOf("\n");
+      if (lastNewline === -1) return; // no complete line yet; wait for more to be appended
+      const consumed = text.slice(0, lastNewline + 1);
+      this.offset += Buffer.byteLength(consumed, "utf8");
+      const { lines } = splitJsonlChunk(consumed);
+      for (const line of lines) {
+        if (line.length === 0) continue;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(line);
+        } catch {
+          continue;
         }
-      } finally {
-        await handle.close();
+        if (!this.sawHeader && this.skipHeader?.(parsed)) {
+          this.sawHeader = true;
+          continue;
+        }
+        this.onLine(parsed);
       }
     } finally {
-      this.reading = false;
+      await handle.close();
     }
   }
 }

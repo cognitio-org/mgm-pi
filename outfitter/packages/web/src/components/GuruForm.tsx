@@ -59,6 +59,8 @@ export function GuruForm({ guru, models, meta, isSysop = false, onClose, onSaved
   const [allowExternalHtmlResources, setAllowExternalHtmlResources] = useState(guru?.allowExternalHtmlResources === true);
   const [browserIde, setBrowserIde] = useState(guru?.browserIde === true);
   const [adminTools, setAdminTools] = useState<NonNullable<Guru["adminTools"]>>(guru?.adminTools ?? "off");
+  const [memory, setMemory] = useState<NonNullable<Guru["memory"]>>(guru?.memory ?? "off");
+  const [agentEngine, setAgentEngine] = useState(guru?.agentEngine === true);
   // Only a sysop turns admin tools on or changes a tape that has them (owner decision, 2026-09-30);
   // the server refuses the rest, so don't let edits pile up.
   const hasAdmin = guru?.adminTools === "manage" || guru?.adminTools === "operator";
@@ -96,6 +98,8 @@ export function GuruForm({ guru, models, meta, isSysop = false, onClose, onSaved
       allowExternalHtmlResources,
       browserIde,
       adminTools,
+      memory,
+      agentEngine,
       branchPrefix: branchPrefix.trim() || undefined,
       env: rowsToEnv(envRows),
     };
@@ -197,6 +201,28 @@ export function GuruForm({ guru, models, meta, isSysop = false, onClose, onSaved
             <p className="session-meta">
               Off by default. Runs on this tape can administer Outfitter as the floppy&apos;s owner; deletes wait for the
               owner&apos;s approval on the floppy page. Only a sysop can turn this on or change a tape that has it.
+            </p>
+          </div>
+          <div className="form-row">
+            <label htmlFor="guru-memory">Memory</label>
+            <select id="guru-memory" value={memory} onChange={(e) => setMemory(e.target.value as NonNullable<Guru["memory"]>)}>
+              <option value="off">Off</option>
+              <option value="tool">Tool: the agent searches and saves when it decides to</option>
+              <option value="auto">Auto: also recalls before each prompt and records the conversation</option>
+            </select>
+            <p className="session-meta">
+              Off by default. Long-term memory in Agent Engine, kept per person across floppies, instead of notes on the
+              Drive&apos;s disk. Auto looks up memory on every prompt, which is billed. Only a person can set this.
+            </p>
+          </div>
+          <div className="form-row">
+            <label className="form-check">
+              <input id="guru-agent-engine" type="checkbox" checked={agentEngine} onChange={(e) => setAgentEngine(e.target.checked)} />
+              Agent Engine agents
+            </label>
+            <p className="session-meta">
+              Off by default. Runs on this tape can ask the Agent Engine agents a sysop has listed for help. Answering an
+              agent&apos;s review pause always waits for the floppy owner&apos;s approval. Only a person can set this.
             </p>
           </div>
 

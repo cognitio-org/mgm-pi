@@ -80,6 +80,17 @@ if [[ "${ROLE}" == "web" ]]; then
   VOICE_SECRET="$(existing_secrets DEEPGRAM_API_KEY=outfitter-deepgram-key:latest)"
   [[ -n "${VOICE_SECRET}" ]] && SECRETS="${SECRETS:+${SECRETS},}${VOICE_SECRET}"
 fi
+# E9 Agent Engine (config.env): link role only, where the admin socket's memory and ae ops run. Each
+# service account secret is mounted only when its project id is set and the secret exists.
+if [[ "${ROLE}" == "link" ]]; then
+  AE_PAIRS=()
+  [[ -n "${AGENT_ENGINE_MEMORY_PROJECT_ID:-}" ]] && AE_PAIRS+=(AGENT_ENGINE_MEMORY_SA=outfitter-agentengine-memory-sa:latest)
+  [[ -n "${AGENT_ENGINE_AGENTS_PROJECT_ID:-}" ]] && AE_PAIRS+=(AGENT_ENGINE_AGENTS_SA=outfitter-agentengine-agents-sa:latest)
+  if (( ${#AE_PAIRS[@]} > 0 )); then
+    AE_SECRET="$(existing_secrets "${AE_PAIRS[@]}")"
+    [[ -n "${AE_SECRET}" ]] && SECRETS="${SECRETS:+${SECRETS},}${AE_SECRET}"
+  fi
+fi
 
 # Both roles run the same image, so whichever deploys second reuses the first one's build.
 if image_exists "${IMAGE}"; then
@@ -234,6 +245,13 @@ if [[ "${ROLE}" == "web" ]]; then
   # #252/#257 web voice (config.env): the Deepgram project the voice key belongs to, for per-person
   # usage. Not secret. Empty leaves it out.
   [[ -n "${DEEPGRAM_PROJECT_ID:-}" ]] && ENV_VARS="${ENV_VARS},DEEPGRAM_PROJECT_ID=${DEEPGRAM_PROJECT_ID}"
+fi
+# E9 Agent Engine (config.env): link role only, each var only when set. Not secret.
+if [[ "${ROLE}" == "link" ]]; then
+  [[ -n "${AGENT_ENGINE_BASE_URL:-}" ]] && ENV_VARS="${ENV_VARS},AGENT_ENGINE_BASE_URL=${AGENT_ENGINE_BASE_URL}"
+  for AE_VAR in AGENT_ENGINE_MEMORY_PROJECT_ID AGENT_ENGINE_MEMORY_SA_EXPIRES_AT AGENT_ENGINE_AGENTS_PROJECT_ID AGENT_ENGINE_AGENTS_SA_EXPIRES_AT; do
+    [[ -n "${!AE_VAR:-}" ]] && ENV_VARS="${ENV_VARS},${AE_VAR}=${!AE_VAR}"
+  done
 fi
 # What's running, for the web app's version indicator (GET /api/version): the commit this deploy
 # ships and, when the deploy came from a release tag (outfitter-deploy.yml sets GITHUB_REF_NAME),

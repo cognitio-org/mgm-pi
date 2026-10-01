@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile, appendFile } from "node:fs/promises";
+import { appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { splitJsonlChunk, JsonlLineReader, SessionTailer, SpendTailer, JsonlTailer, validateSpendLine, spawnPi, baseEnvForPi, PI_ENV_PASSTHROUGH_VAR } from "../src/pi.js";
@@ -60,6 +61,21 @@ test("SessionTailer: emits entries appended after the header, skipping the heade
   await tailer.poll();
   assert.equal(seen.length, 2);
   assert.equal(seen[1].id, "e2");
+  tailer.stop();
+});
+
+test("SessionTailer: a poll made while another is mid-read still emits a line appended after that read began (E9 flush)", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "outfitter-pi-test-"));
+  const file = join(dir, "session.jsonl");
+  await writeFile(file, `${JSON.stringify({ type: "session", version: 3, id: "s1", timestamp: "t", cwd: "/workspace" })}\n`);
+  const seen: any[] = [];
+  const tailer = new SessionTailer(file, (entry) => seen.push(entry), { intervalMs: 60_000 });
+  const first = tailer.poll(); // already reading (stat in flight) when the line below lands
+  appendFileSync(file, `${JSON.stringify({ type: "message", id: "e1", parentId: "s1", timestamp: "t", message: { role: "assistant", content: [] } })}\n`);
+  await tailer.poll(); // used to return at once while `first` was reading, before e1 was emitted
+  assert.deepEqual(seen.map((e) => e.id), ["e1"]);
+  await first;
+  assert.equal(seen.length, 1, "nothing is emitted twice");
   tailer.stop();
 });
 

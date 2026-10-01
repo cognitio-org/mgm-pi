@@ -192,7 +192,7 @@ export default async function (pi: ExtensionAPI) {
       const values: Record<string, string | undefined> = {};
       const name = await ask("Your name (shown in the banner)", cur.KERNAL_USER, process.env.USER); if (name === undefined) return; if (name) values.KERNAL_USER = name;
 
-      const llUrl = await ask("LiteLLM router URL", cur.LITELLM_BASE_URL, "https://litellm.augment-code.support/v1"); if (llUrl === undefined) return; values.LITELLM_BASE_URL = normalizeBaseUrl(llUrl, "https://litellm.augment-code.support/v1");
+      const llUrl = await ask("LiteLLM router URL", cur.LITELLM_BASE_URL, "https://router.kernal.one/v1"); if (llUrl === undefined) return; values.LITELLM_BASE_URL = normalizeBaseUrl(llUrl, "https://router.kernal.one/v1");
       // keys: the prompt shows a masked hint; Enter keeps the existing key, a new value replaces it
       const keyPrompt = async (title: string, current: string | undefined, maskPrefix: string) => {
         const hint = current ? `${maskPrefix}…${current.slice(-4)}` : "";

@@ -12,7 +12,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { ADMIN_TOOLS, PROMPT_GUIDELINES, PROMPT_SNIPPET, runTool, type Confirm } from "./tools.ts";
-import { adminTransport, type AdminTransport } from "./transport.ts";
+import { adminTransport, hasAdminCapability, type AdminTransport } from "./transport.ts";
 import { SEARCH_TOOLS, runSessionSearch, runSessionTranscript, type SearchToolDeps } from "./search-tools.ts";
 import { autoSyncer, pickSessions, uploadSessions } from "./sync.ts";
 
@@ -32,8 +32,11 @@ function localSessionsDir(): string | undefined {
 }
 
 /** Tests pass `deps`; pi calls this with `pi` alone, and the environment decides. */
-export default function (pi: ExtensionAPI, deps?: { transport?: AdminTransport; localDir?: string }) {
-  const transport = deps ? deps.transport : adminTransport();
+export default function (pi: ExtensionAPI, deps?: { transport?: AdminTransport; localDir?: string; admin?: boolean }) {
+  // A Drive whose tape has memory or Agent Engine but no admin tools has the socket too (E9); its
+  // tools are the outfitter-agentengine extension's, not these.
+  const admin = deps ? deps.admin !== false : hasAdminCapability("admin");
+  const transport = admin ? (deps ? deps.transport : adminTransport()) : undefined;
   const localDir = deps ? deps.localDir : localSessionsDir();
   registerSearch(pi, { transport, localDir });
   if (transport?.kind === "laptop") registerSync(pi, localDir);

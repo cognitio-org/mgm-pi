@@ -51,9 +51,21 @@ import type {
   SessionChunk,
   SessionChunksCollection,
   AdminAuditEntry,
+  TurnWaiter,
+  TurnWaiterFinish,
+  TurnWaitersCollection,
+  AeAgent,
+  AeAgentsCollection,
+  AeSession,
+  AeSessionsCollection,
+  A2ATask,
+  A2ATaskListQuery,
+  A2ATaskState,
+  A2ATasksCollection,
 } from "./types.ts";
+import { AE_SESSION_EXECUTIONS } from "./types.ts";
 import type { VoicePrefs } from "../voice.ts";
-import { BROWSER_CAPTURES_PER_SESSION, SearchUnavailableError, entryInsertFields, type EntryInsertOptions } from "./types.ts";
+import { A2A_OPEN_STATES, BROWSER_CAPTURES_PER_SESSION, SearchUnavailableError, entryInsertFields, type EntryInsertOptions } from "./types.ts";
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -590,6 +602,14 @@ class MemoryMail implements MailCollection {
     return row ? clone(row) : null;
   }
 
+  async markDead(id: string, nowIso: string): Promise<boolean> {
+    const row = this.rows.get(id);
+    if (!row || row.status === "acked" || row.status === "dead") return false;
+    row.status = "dead";
+    row.deadAt = nowIso;
+    return true;
+  }
+
   async deleteForSession(sessionId: string): Promise<number> {
     return deleteWhere(this.rows, (row) => row.sessionId === sessionId);
   }
@@ -986,6 +1006,261 @@ class MemoryPreviews implements PreviewsCollection {
   }
 }
 
+class MemoryTurnWaiters implements TurnWaitersCollection {
+  private readonly rows = new Map<string, TurnWaiter>();
+
+  async insert(waiter: TurnWaiter): Promise<void> {
+    this.rows.set(waiter.id, clone(waiter));
+  }
+
+  async findById(id: string): Promise<TurnWaiter | null> {
+    const w = this.rows.get(id);
+    return w ? clone(w) : null;
+  }
+
+  async markAcked(sessionId: string, mailId: string, runId: string, seq: number, nowIso: string, fromMail = false): Promise<number> {
+    let count = 0;
+    for (const w of this.rows.values()) {
+      if (w.sessionId !== sessionId || w.mailId !== mailId || w.status !== "open") continue;
+      if (w.ackRunId !== undefined && (fromMail || !w.ackFromMail)) continue;
+      Object.assign(w, { ackRunId: runId, ackSeq: seq, ackedAt: nowIso, updatedAt: nowIso });
+      if (fromMail) w.ackFromMail = true;
+      else delete w.ackFromMail;
+      count++;
+    }
+    return count;
+  }
+
+  async finish(id: string, outcome: TurnWaiterFinish, nowIso: string): Promise<TurnWaiter | null> {
+    const w = this.rows.get(id);
+    if (!w || w.status !== "open") return null;
+    const fields = Object.fromEntries(Object.entries(outcome).filter(([, v]) => v !== undefined));
+    Object.assign(w, fields, { finishedAt: nowIso, updatedAt: nowIso });
+    return clone(w);
+  }
+
+  async extendDeadline(id: string, deadlineAt: string, nowIso: string): Promise<boolean> {
+    const w = this.rows.get(id);
+    if (!w || w.status !== "open" || w.deadlineAt >= deadlineAt) return false;
+    Object.assign(w, { deadlineAt, updatedAt: nowIso });
+    return true;
+  }
+
+  async listOpenForSession(sessionId: string): Promise<TurnWaiter[]> {
+    return [...this.rows.values()]
+      .filter((w) => w.sessionId === sessionId && w.status === "open")
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map(clone);
+  }
+
+  async listOpen(limit: number): Promise<TurnWaiter[]> {
+    return [...this.rows.values()]
+      .filter((w) => w.status === "open")
+      .sort((a, b) => a.deadlineAt.localeCompare(b.deadlineAt))
+      .slice(0, limit)
+      .map(clone);
+  }
+
+  async deleteForSession(sessionId: string): Promise<number> {
+    return deleteWhere(this.rows, (w) => w.sessionId === sessionId);
+  }
+}
+
+class MemoryAeAgents implements AeAgentsCollection {
+  private readonly rows = new Map<string, AeAgent>();
+
+  async list(): Promise<AeAgent[]> {
+    return [...this.rows.values()].sort((a, b) => a.id.localeCompare(b.id)).map(clone);
+  }
+
+  async findById(id: string): Promise<AeAgent | null> {
+    const a = this.rows.get(id);
+    return a ? clone(a) : null;
+  }
+
+  async insert(agent: AeAgent): Promise<boolean> {
+    if (this.rows.has(agent.id) || [...this.rows.values()].some((a) => a.workspaceId === agent.workspaceId)) return false;
+    this.rows.set(agent.id, clone(agent));
+    return true;
+  }
+
+  async update(id: string, patch: Partial<Omit<AeAgent, "id" | "createdAt">>): Promise<AeAgent | null | "duplicate"> {
+    const a = this.rows.get(id);
+    if (!a) return null;
+    if (patch.workspaceId !== undefined && [...this.rows.values()].some((o) => o.id !== id && o.workspaceId === patch.workspaceId)) return "duplicate";
+    Object.assign(a, Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)));
+    return clone(a);
+  }
+
+  async delete(id: string): Promise<boolean> {
+    return this.rows.delete(id);
+  }
+}
+
+class MemoryAeSessions implements AeSessionsCollection {
+  private readonly rows = new Map<string, AeSession>();
+
+  async recordInvoke(
+    row: Pick<AeSession, "outfitterSessionId" | "agentId" | "workspaceId" | "aeSessionId">,
+    executionId: string | undefined,
+    nowIso: string,
+  ): Promise<AeSession> {
+    const id = `${row.outfitterSessionId}:${row.agentId}`;
+    const held = this.rows.get(id) ?? { ...row, id, executions: [], openedAt: nowIso, lastUsedAt: nowIso };
+    Object.assign(held, row, { lastUsedAt: nowIso });
+    delete held.stoppedAt;
+    delete held.stopAttempts;
+    delete held.stopError;
+    if (executionId && !held.executions.includes(executionId)) held.executions = [...held.executions, executionId].slice(-AE_SESSION_EXECUTIONS);
+    this.rows.set(id, held);
+    return clone(held);
+  }
+
+  async findByExecution(outfitterSessionId: string, executionId: string): Promise<AeSession | null> {
+    for (const r of this.rows.values()) if (r.outfitterSessionId === outfitterSessionId && r.executions.includes(executionId)) return clone(r);
+    return null;
+  }
+
+  async listOpen(limit: number, usedBefore?: string): Promise<AeSession[]> {
+    return [...this.rows.values()]
+      .filter((r) => !r.stoppedAt && (usedBefore === undefined || r.lastUsedAt < usedBefore))
+      .sort((a, b) => a.lastUsedAt.localeCompare(b.lastUsedAt))
+      .slice(0, limit)
+      .map(clone);
+  }
+
+  async listOpenForSession(outfitterSessionId: string): Promise<AeSession[]> {
+    return [...this.rows.values()].filter((r) => r.outfitterSessionId === outfitterSessionId && !r.stoppedAt).map(clone);
+  }
+
+  async markStopped(id: string, lastUsedAt: string, nowIso: string, error?: string): Promise<boolean> {
+    const r = this.rows.get(id);
+    if (!r || r.stoppedAt || r.lastUsedAt !== lastUsedAt) return false;
+    r.stoppedAt = nowIso;
+    if (error) r.stopError = error;
+    return true;
+  }
+
+  async recordStopFailure(id: string, lastUsedAt: string, error: string): Promise<number | null> {
+    const r = this.rows.get(id);
+    if (!r || r.stoppedAt || r.lastUsedAt !== lastUsedAt) return null;
+    r.stopAttempts = (r.stopAttempts ?? 0) + 1;
+    r.stopError = error;
+    return r.stopAttempts;
+  }
+
+  async deleteForSession(outfitterSessionId: string): Promise<number> {
+    return deleteWhere(this.rows, (r) => r.outfitterSessionId === outfitterSessionId);
+  }
+}
+
+/** Newest first: createdAt, then id, both descending (the ListTasks cursor order). */
+function newerFirst(a: A2ATask, b: A2ATask): number {
+  return b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id);
+}
+
+class MemoryA2ATasks implements A2ATasksCollection {
+  private readonly rows = new Map<string, A2ATask>();
+  private readonly slots = new Map<string, Set<string>>();
+  private readonly requests = new Map<string, { count: number; expireAt: string }>();
+
+  async insert(task: A2ATask): Promise<boolean> {
+    if (this.rows.has(task.id)) return false;
+    if (task.messageId !== undefined) {
+      for (const row of this.rows.values()) {
+        if (row.tokenId === task.tokenId && row.messageId === task.messageId) return false;
+      }
+    }
+    this.rows.set(task.id, clone(task));
+    return true;
+  }
+
+  async findForToken(tokenId: string, id: string): Promise<A2ATask | null> {
+    const row = this.rows.get(id);
+    return row && row.tokenId === tokenId ? clone(row) : null;
+  }
+
+  async findByMessageId(tokenId: string, messageId: string): Promise<A2ATask | null> {
+    for (const row of this.rows.values()) {
+      if (row.tokenId === tokenId && row.messageId === messageId) return clone(row);
+    }
+    return null;
+  }
+
+  async latestInContext(tokenId: string, contextId: string): Promise<A2ATask | null> {
+    const row = [...this.rows.values()].filter((t) => t.tokenId === tokenId && t.contextId === contextId).sort(newerFirst)[0];
+    return row ? clone(row) : null;
+  }
+
+  async sessionForContext(tokenId: string, contextId: string): Promise<string | undefined> {
+    for (const row of this.rows.values()) {
+      if (row.tokenId === tokenId && row.contextId === contextId && row.sessionId) return row.sessionId;
+    }
+    return undefined;
+  }
+
+  async list(tokenId: string, query: A2ATaskListQuery): Promise<{ tasks: A2ATask[]; total: number }> {
+    const matching = [...this.rows.values()]
+      .filter(
+        (t) =>
+          t.tokenId === tokenId &&
+          (query.contextId === undefined || t.contextId === query.contextId) &&
+          (query.state === undefined || t.state === query.state) &&
+          (query.updatedAfter === undefined || t.updatedAt > query.updatedAfter),
+      )
+      .sort(newerFirst);
+    const before = query.before;
+    const page = (before
+      ? matching.filter((t) => t.createdAt < before.createdAt || (t.createdAt === before.createdAt && t.id < before.id))
+      : matching
+    ).slice(0, query.limit);
+    return { tasks: page.map(clone), total: matching.length };
+  }
+
+  async listOpen(limit: number, tokenId?: string): Promise<A2ATask[]> {
+    return [...this.rows.values()]
+      .filter((t) => A2A_OPEN_STATES.includes(t.state) && (tokenId === undefined || t.tokenId === tokenId))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .slice(0, limit)
+      .map(clone);
+  }
+
+  async transition(id: string, from: readonly A2ATaskState[], patch: Partial<A2ATask>): Promise<A2ATask | null> {
+    const row = this.rows.get(id);
+    if (!row || !from.includes(row.state)) return null;
+    const { id: _id, tokenId: _tokenId, ...rest } = patch;
+    Object.assign(row, rest);
+    return clone(row);
+  }
+
+  async claimSlot(tokenId: string, taskId: string, max: number): Promise<boolean> {
+    const held = this.slots.get(tokenId) ?? new Set<string>();
+    if (held.has(taskId)) return true;
+    if (held.size >= max) return false;
+    held.add(taskId);
+    this.slots.set(tokenId, held);
+    return true;
+  }
+
+  async releaseSlot(tokenId: string, taskId: string): Promise<void> {
+    this.slots.get(tokenId)?.delete(taskId);
+  }
+
+  async listSlots(tokenId: string): Promise<string[]> {
+    return [...(this.slots.get(tokenId) ?? [])];
+  }
+
+  async countRequest(tokenId: string, windowId: string, expireAtIso: string): Promise<number> {
+    const now = new Date().toISOString();
+    for (const [key, row] of this.requests) if (row.expireAt <= now) this.requests.delete(key);
+    const key = `${tokenId}:${windowId}`;
+    const row = this.requests.get(key) ?? { count: 0, expireAt: expireAtIso };
+    row.count++;
+    this.requests.set(key, row);
+    return row.count;
+  }
+}
+
 export class MemoryStore implements Store {
   readonly sessions = new MemorySessions();
   readonly entries = new MemoryEntries();
@@ -1004,6 +1279,10 @@ export class MemoryStore implements Store {
   readonly adminApprovals = new MemoryAdminApprovals();
   readonly sessionChunks = new MemorySessionChunks();
   readonly previews = new MemoryPreviews();
+  readonly turnWaiters = new MemoryTurnWaiters();
+  readonly aeAgents = new MemoryAeAgents();
+  readonly aeSessions = new MemoryAeSessions();
+  readonly a2aTasks = new MemoryA2ATasks();
 
   constructor() {
     const tables: BrowserTables = {

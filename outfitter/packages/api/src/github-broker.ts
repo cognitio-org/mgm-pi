@@ -4,7 +4,8 @@
 
 import { createHash } from "node:crypto";
 import { Octokit } from "@octokit/rest";
-import type { SecretsBroker } from "./secrets.ts";
+import { isA2ASession, type SecretsBroker } from "./secrets.ts";
+import { isA2ABranch } from "./branch-policy.ts";
 import type { GithubIdempotencyRecord, GithubWriteProgress, Session, Store } from "./store/types.ts";
 import { parseSessionRepo } from "./session-repo.ts";
 
@@ -162,6 +163,20 @@ export function rateLimitFromHeaders(headers: Record<string, string>): RateLimit
   return { remaining, reset };
 }
 
+/** The github.request ops an A2A task's session may use (E9 §8): reads, and creating the pull
+ * request for its own branch (the broker always uses the session branch as head). */
+const A2A_GITHUB_OPS = new Set([
+  "github_pr.view",
+  "github_pr.checks",
+  "github_pr.list",
+  "github_pr.create",
+  "github_issue.list",
+  "github_issue.view",
+  "github_repo.view",
+  "github_repo.search",
+  "github_repo.releases",
+]);
+
 export class GithubBroker {
   private readonly memory = new Map<string, Map<string, GithubIdempotencyRecord>>();
   private readonly inflight = new Map<string, Promise<GithubOpResult>>();
@@ -258,7 +273,17 @@ export class GithubBroker {
     if (!parsed) {
       return this.settle(runId, op, key, write, { ok: false, error: "this session's repository is not a github.com repository" });
     }
-    if (op === "github_pr.merge" && guru.mergeFromCloud !== true) {
+    // E9 §8: an A2A task's session never merges, whatever its tape says now (the tape may have
+    // been edited after the task started; the task start already refuses mergeFromCloud tapes).
+    if (op === "github_pr.merge" && (guru.mergeFromCloud !== true || isA2ASession(session))) {
+      return this.settle(runId, op, key, write, { ok: false, error: "not permitted" });
+    }
+    // E9 §8: a remote caller acts only on its own branch. Reads, and opening this branch's pull
+    // request, are all an A2A session's agent may do; edits, reviews and comments on other pull
+    // requests, and issue writes, go out as the App on the owner's behalf, so they are refused.
+    // And only when that branch is an `outfitter/a2a-*` one: fail closed on a session whose branch
+    // was moved (agentlink.ts refuses such a session's run as well).
+    if (isA2ASession(session) && (!A2A_GITHUB_OPS.has(op) || !isA2ABranch(session.branch))) {
       return this.settle(runId, op, key, write, { ok: false, error: "not permitted" });
     }
     // The broker mints its own installation token (issues, PRs, checks, actions). A stub that

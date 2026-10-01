@@ -35,6 +35,9 @@ export interface RenderOptions {
   /** Chrome companion §13: path to pi-extension/outfitter-browser.ts (or its built .js). The
    * Drive-only `browser_capture` tool. Omitted outside a Drive, same as the mail extension. */
   browserExtensionPath?: string;
+  /** E9 §3.3: path to pi-extension/outfitter-memory.ts (or its built .js), the recall extension.
+   * Loaded only when the tape's memory is `auto`; a `tool` tape has the Kernal tool alone. */
+  memoryExtensionPath?: string;
   /** Bug 8 (docs/reports/cloud-fixes.md): true when the restored session's own last-known model and
    * thinking level (session.ts's lastKnownModelState) already match `guru.model`/`guru.thinking` --
    * omit `--model` entirely rather than reassert an unchanged value, since pi logs a fresh
@@ -80,6 +83,16 @@ function isDenylistedGuruEnvKey(key: string): boolean {
   return DENYLISTED_GURU_ENV_KEYS.has(key) || key.startsWith("GIT_");
 }
 
+/** pi-memory's tools (kernal/.pi/settings.json loads the package). With Agent Engine memory on, a
+ * tape gets one memory, not two: these are excluded, and run.ts points PI_MEMORY_DIR at an empty
+ * directory (no prompt injection) with PI_MEMORY_EXIT_SUMMARY=0 (no exit summary). */
+export const PI_MEMORY_TOOLS = ["memory_write", "memory_read", "memory_search", "memory_forget", "memory_restore", "memory_status", "scratchpad"] as const;
+
+/** True when the tape has Agent Engine memory (`tool` or `auto`). */
+export function agentEngineMemoryOn(guru: Pick<RunSpecGuru, "memory">): boolean {
+  return guru.memory === "tool" || guru.memory === "auto";
+}
+
 /** `provider/id` (+ optional `:thinking`) pi model pattern, per pi 0.87's docs/usage.md: `--model
  * <pattern>` "supports `provider/id` and optional `:<thinking>`", where `<thinking>` is one of
  * `off, minimal, low, medium, high, xhigh, max` -- `off` is a real, explicit level in that list,
@@ -115,6 +128,7 @@ export function renderGuru(guru: RunSpecGuru, opts: RenderOptions): RenderedPi {
   if (opts.spendExtensionPath) args.push("--extension", opts.spendExtensionPath);
   if (opts.mailExtensionPath) args.push("--extension", opts.mailExtensionPath);
   if (opts.browserExtensionPath) args.push("--extension", opts.browserExtensionPath);
+  if (opts.memoryExtensionPath && guru.memory === "auto") args.push("--extension", opts.memoryExtensionPath);
 
   if (!opts.skipModelArg) args.push("--model", renderModelArg(guru.model, guru.thinking));
 
@@ -124,8 +138,10 @@ export function renderGuru(guru: RunSpecGuru, opts: RenderOptions): RenderedPi {
   }
   args.push("--append-system-prompt", renderAppendSystemPrompt(guru));
   if (guru.tools && guru.tools.length > 0) args.push("--tools", guru.tools.join(","));
-  if (guru.excludeTools && guru.excludeTools.length > 0) {
-    args.push("--exclude-tools", guru.excludeTools.join(","));
+  // pi drops an excluded tool even when --tools names it (sdk.js), so this is enough.
+  const excludeTools = [...new Set([...(guru.excludeTools ?? []), ...(agentEngineMemoryOn(guru) ? PI_MEMORY_TOOLS : [])])];
+  if (excludeTools.length > 0) {
+    args.push("--exclude-tools", excludeTools.join(","));
   }
 
   const onLog = opts.onLog ?? (() => {});

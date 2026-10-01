@@ -33,7 +33,8 @@ export interface TransportTimeouts {
   writeMs?: number;
 }
 
-const READ_ACTIONS = /\.(list|get|meta|search|transcript)$/;
+// `context` (E9): memory.context, the recall read before each prompt.
+const READ_ACTIONS = /\.(list|get|meta|search|transcript|context)$/;
 const READ_TIMEOUT_MS = 30_000;
 /** A Drive write can wait for the owner's approval card (10 min on the API side). */
 const DRIVE_WRITE_TIMEOUT_MS = 11 * 60_000;
@@ -203,6 +204,21 @@ export function httpTransport(apiBase: string, token: string, fetchFn: FetchFn =
       }
     },
   };
+}
+
+export type AdminCapability = "admin" | "memory" | "agentEngine";
+
+/**
+ * Whether this process may offer the tools for one capability (E9 §3.3). In a Drive, agentd pins
+ * OUTFITTER_ADMIN_CAPS to what the tape allows, since it opens the admin socket for memory and Agent
+ * Engine too; the API refuses an op the tape lacks either way, so this only keeps tools that would
+ * fail out of the prompt. Unset (a laptop, or an agentd from before E9, which opened the socket only
+ * for admin tools) means admin only.
+ */
+export function hasAdminCapability(cap: AdminCapability, env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.OUTFITTER_ADMIN_CAPS;
+  if (raw === undefined) return cap === "admin";
+  return raw.split(",").map((s) => s.trim()).includes(cap);
 }
 
 /** The transport for this process, or undefined when there is no way in. */

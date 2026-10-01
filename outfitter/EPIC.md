@@ -86,7 +86,9 @@ today behind one adapter so we can move to pi-server when it stabilises.
   outside-org members need IAP's custom OAuth client, `deploy/README.md`); the API reads `x-goog-iap-jwt-assertion` for identity.
 - **Atlas tier by phase.** M0 (free) for phases 0–3 with a SCRAM user whose password is in Secret
   Manager; the connection is a single `MONGODB_URI` seam. Move to M10 and `MONGODB-OIDC` with
-  `ENVIRONMENT:gcp` (Cloud Run supported, no key material) when uptime matters. Atlas org login via
+  `ENVIRONMENT:gcp` (Cloud Run supported, no key material) when uptime matters. Since E9 (2026-10-01)
+  a second cluster, Flex `outfitter-memory`, holds only Agent Engine's memory; the main `outfitter`
+  cluster stays M0. Atlas org login via
   Google Workspace SAML is an org setting with no tier requirement and is done in phase 0. Bill Atlas
   through the GCP Marketplace so it is one invoice.
 - **Guru = pi configuration.** An guru is stored as YAML (also committable to a repo under
@@ -118,7 +120,7 @@ Ten agent-hours a day is roughly $2/day of compute. Set a GCP budget alert at $2
 |---|---|
 | Default sandbox size | 1 vCPU / 2 GiB (~$0.08/h). Gurus that build or test override to 2 vCPU / 4 GiB. |
 | GitHub auth for runs | A per-session fine-grained PAT wins. Otherwise, when the GitHub App secrets are set, the API mints an installation token for that repo (#93): the Drive's token is contents and metadata only, and the broker mints a wider one (issues, pull requests, checks, actions). The shared PAT applies only when the App is not configured: with it, a repo the App can't reach fails at start, and a failed mint is retried, never replaced by the shared PAT (#158). E6 webhooks use this same App. |
-| Atlas | M0 in GCP us-central1 (same region as Cloud Run). GCP Marketplace billing link deferred until leaving M0. |
+| Atlas | M0 in GCP us-central1 (same region as Cloud Run). GCP Marketplace billing link deferred until leaving M0. Update (E9, 2026-10-01): the main `outfitter` cluster stays M0; a Flex cluster `outfitter-memory` in the same project holds only Agent Engine's memory, so the org now has a payment method. |
 | Idle-stop | 30 min for human-driven sessions, 5 min for delegated worker sessions, plus wake-on-open in the UI. Revisit after measuring real wake times (E2.9). |
 | Laptop model in the cloud | Allowed, opt-in per guru or per session, never the default. Guarded by the preflight in E2.8. |
 | Vocabulary | Reusable agent configs are **Gurus** (not "Experts"). |
@@ -524,6 +526,8 @@ research on Sonnet; review on Opus).
        mail the parent when nothing has been reported by then. Covers a settle lost to a dropped
        socket or an API restart, and a child that asks a question instead of finishing (it stays
        unsettled, so layer 1 never fires).
+    - Layers 1–3 are built server-side, without the tool, as E9's turn waiters (`src/turns.ts`,
+      protocol.md "Turn settled"; #307). The delegate tool registers one per child mail.
     - Optional `outfitter_done(summary)` the child may call: better summaries when it does, layer 1
       still correct when it doesn't. Correctness must not depend on the model remembering it.
   - **`outfitter_peers()`** (deferred here from E5.5): answer from a relations snapshot carried in
@@ -536,8 +540,10 @@ research on Sonnet; review on Opus).
   - **Deferred to E5.6**: retrying a failed child, partial-progress reporting, cancellation trees.
 - **E5.3 Fleet limits and budgets**: max concurrent runs per guru and globally; LiteLLM budget per
   guru; refuse wake when exceeded, surface in UI.
-- **E5.4 Shared memory**: reuse `pi-memory` with its directory backed by a GCS bucket mounted read-write
-  (Cloud Run GCS FUSE volume on the Job); org-wide notes that every run sees.
+- **E5.4 Shared memory** — superseded by E9 (E9.3): Drives use Agent Engine's memory service, per
+  user with an explicit `shared` org scope, instead of `pi-memory` on a GCS bucket. The original plan
+  was to reuse `pi-memory` with its directory backed by a GCS bucket mounted read-write (Cloud Run GCS
+  FUSE volume on the Job), for org-wide notes that every run sees.
 - **E5.5 Agent mailbox** — built 2026-09-22 (protocol.md "Mailbox (E5.5)"; research and decisions
   in `docs/reports/agent-messaging.md`). Peer-to-peer messaging between separate sessions, durable on
   Mongo plus Cloud Tasks. Closes four gaps the old wake path had: `Run.pending` died with a run that
@@ -632,6 +638,38 @@ built-in tools instead of working out the API.
   `session_transcript`, local laptop search, and opt-in `/sessions sync`.
 - **E8.5 Skill, Sysop tape and UI** (#290): the `outfitter-admin` skill (`kernal/skills`), the
   seeded `sysop` tape, and the Admin tools setting in the tape editor.
+
+### E9 Agent Engine and A2A: shared memory, delegation both ways, a standard A2A server (epic #315)
+
+Spec: `docs/specs/atlas-agent-engine-and-a2a.md` (PR #316). Drives share long-term memory through
+MongoDB Atlas Agent Engine, call its hosted agents, and take coding tasks from any A2A v1.0 client,
+Agent Engine agents included. Status (2026-10-01): PR0 done; PR1-PR8 open as stacked PRs.
+
+- **E9.0 Spike** (#306, closed): the spec's unverified items, in
+  `docs/reports/agent-engine-spike.md` on the spec branch. Outcomes: two clusters, a 25 s blocking
+  cap, children don't inherit `--tools`, and background children can't push (#317).
+- **E9.1 Turn-settled signal** (#307, PR #321): agentd's flush plus `lastEntryId`, api turn waiters
+  and the deadline sweep. Shared with E5.2.
+- **E9.2 Agent Engine client and tape fields** (#308, PR #322): the client for two projects and its
+  fake; the tape fields `memory` (off, tool, auto) and `agentEngine` (web UI only); op capability
+  gating and the `approve` class.
+- **E9.3 Memory for Drives** (#309, PR #323): `memory.*` ops, Kernal's `memory` tool, agentd's
+  recall extension and `recordTurn`, on Flex cluster `outfitter-memory`. Supersedes E5.4.
+- **E9.4 Outbound to Agent Engine** (#310, PR #324): the `aeAgents` allowlist and web page, `ae.*`
+  ops, the `agent_engine` tool and the resume card.
+- **E9.5 A2A server core** (#311, PR #325): A2A keys scoped by tape and repo, `a2aTasks`, the agent
+  card, JSON-RPC `/a2a`, and branch `outfitter/a2a-*`.
+- **E9.6 A2A streaming and completion** (#312, PR6): streaming, `INPUT_REQUIRED`, checkpoint-gated
+  completion, and the TCK in CI.
+- **E9.7 Agent Engine integration** (#313, PR #320): the `integrations/agent-engine/` tool module and
+  the `outfitter-delegate` sample agent.
+- **E9.8 Tapes** (#314, PR #326): the `foreman` and `a2a-coder` definitions in the
+  `outfitter-admin` skill (`references/e9-tapes.md`), the image's `coder` child agent, `fd` for pi's
+  `find` tool, and `subagents.agentExcludeDirs` (`/workspace`, `/home/agent/.agents`) in the image
+  settings, so a cloned repo's agent files can't shadow the builtins or `coder`. Not covered: the
+  repo's `.pi/settings.json` subagent settings (`agentOverrides`, which reach `coder` too,
+  `disableBuiltins`, `defaultExtensions`, out-of-tree `agentScanDirs`/`packages`) and its
+  `package.json` agents still apply, which is why `a2a-coder` gets no `subagent` tool.
 
 ### E7 Hardening and cost tuning
 

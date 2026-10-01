@@ -3,25 +3,42 @@
 // when the owner is an operator and the tape says `adminTools: "operator"`. The tape is read again
 // on every call, and again after an approval wait, so turning admin tools off in the web UI takes
 // effect at once, and a call from a tape without them is refused even though the model's shell can
-// reach the socket.
+// reach the socket. Since E9 the socket also opens for a tape with `memory` or `agentEngine`; each
+// op names the capability it needs (ops.ts), and the tape's capabilities as they stand now go with
+// every call, so a memory tape still can't reach `tapes.*`.
 //
-// A delete, an operator op, or a change to an admin tape waits for the owner's approval in the web
-// UI (approvals.ts); there is no `confirmed` shortcut from a Drive. A write's idempotencyKey is
-// remembered on the run, so a replay returns the first result instead of running again.
+// A delete, an operator op, an `approve` op, or a change to an admin tape waits for the owner's
+// approval in the web UI (approvals.ts); there is no `confirmed` shortcut from a Drive. A write's
+// idempotencyKey is remembered on the run, so a replay returns the first result instead of running
+// again.
 
 import { createHash } from "node:crypto";
 import { isOperator } from "../auth.ts";
 import type { Config } from "../config.ts";
 import type { Guru, Session, Store } from "../store/types.ts";
-import { hasAdminTools } from "../gurus-service.ts";
+import { tapeCapabilities } from "../gurus-service.ts";
+import { a2aTapeProblem } from "../a2a/keys.ts";
+import { isA2ASession } from "../secrets.ts";
 import { APPROVAL_TIMEOUT_MS, requestApproval, type ApprovalDeps } from "./approvals.ts";
-import { CARD_FIELDS, approvalNeeded, resolveTarget, runAdminOp, type AdminCaller, type AdminContext, type AdminResult } from "./ops.ts";
+import {
+  CARD_FIELDS,
+  adminOp,
+  approvalNeeded,
+  capabilityOff,
+  resolveTarget,
+  runAdminOp,
+  type AdminCaller,
+  type AdminContext,
+  type AdminResult,
+} from "./ops.ts";
 import { clip } from "./render.ts";
 
 export interface DriveAdminDeps {
   store: Store;
   config: Pick<Config, "operators">;
   models: AdminContext["models"];
+  /** E9: handed to every op (AdminContext.agentEngine). */
+  agentEngine?: AdminContext["agentEngine"];
   log?: (message: string) => void;
   /** Tests shorten the approval wait and its poll. */
   approval?: Omit<ApprovalDeps, "store">;
@@ -50,7 +67,16 @@ export function sanitizeArgs(value: unknown, depth = 0): unknown {
  * and never an env value.
  */
 export function approvalText(op: string, args: Record<string, unknown>, target?: string): { title: string; message: string } {
+  const def = adminOp(op);
+  if (def?.card) return def.card(args, target);
   const what = target ? ` ${target}` : "";
+  if (def?.kind === "approve") {
+    // An agent answering a review pause on its own is exactly what this card stops (E9 §4).
+    return {
+      title: `Allow the agent to answer a review with ${op}${what}?`,
+      message: `The agent in this session asked to answer a paused review with ${op}${what}. Nothing is answered unless you approve.`,
+    };
+  }
   const title = op.endsWith(".delete") ? `Allow the agent to delete${what}?` : `Allow the agent to run ${op}${what}?`;
   const parts = [`The agent in this session asked for ${op}${what}.`];
   if (!op.endsWith(".delete")) {
@@ -73,13 +99,21 @@ export class DriveAdmin {
   }
 
   /** The session, tape and caller for this run as they stand now, or the refusal. */
-  private async context(runId: string): Promise<{ session: Session; guru: Guru; caller: AdminCaller } | { error: string }> {
+  private async context(runId: string, op: unknown): Promise<{ session: Session; guru: Guru; caller: AdminCaller } | { error: string }> {
     const { store } = this.deps;
     const run = await store.runs.findById(runId);
     const session = run ? await store.sessions.findById(run.sessionId) : null;
     if (!run || !session) return { error: "this run has no session" };
     const guru = await store.gurus.findById(session.guruId);
-    if (!guru || !hasAdminTools(guru)) return { error: "admin tools are off for this tape" };
+    // E9 security review: an A2A session's Drive never trusts its tape as it stands now. A tape
+    // that stopped passing a2aTapeProblem (it gained admin tools or agentEngine after the task
+    // started) gets nothing; one that passes reaches `memory` at most, scoped to the key (§5.4).
+    const a2a = isA2ASession(session);
+    if (a2a && guru && a2aTapeProblem(guru)) return { error: "not permitted: this A2A session's tape can't use the admin socket" };
+    const capabilities = guru ? tapeCapabilities(guru).filter((c) => !a2a || c === "memory") : [];
+    // No capability at all: refused before anything, unaudited, as before E9. Otherwise runAdminOp
+    // checks the op's own capability against these.
+    if (!guru || capabilities.length === 0) return { error: capabilityOff(op) };
     const owner = session.ownerEmail?.trim();
     if (!owner) return { error: "this session has no owner to act as" };
     return {
@@ -88,9 +122,10 @@ export class DriveAdmin {
       caller: {
         email: owner,
         via: "drive",
-        operator: guru.adminTools === "operator" && isOperator(owner, this.deps.config.operators),
+        operator: !a2a && guru.adminTools === "operator" && isOperator(owner, this.deps.config.operators),
         sessionId: session.id,
         runId,
+        capabilities,
       },
     };
   }
@@ -114,14 +149,14 @@ export class DriveAdmin {
 
   private async run(runId: string, op: unknown, rawArgs: unknown): Promise<AdminResult> {
     const { store } = this.deps;
-    const first = await this.context(runId);
+    const first = await this.context(runId, op);
     if ("error" in first) return { ok: false, error: first.error };
     const args = (sanitizeArgs(rawArgs && typeof rawArgs === "object" && !Array.isArray(rawArgs) ? rawArgs : {}) ?? {}) as Record<string, unknown>;
-    const ctx: AdminContext = { store, models: this.deps.models, log: this.deps.log };
+    const ctx: AdminContext = { store, models: this.deps.models, agentEngine: this.deps.agentEngine, log: this.deps.log };
 
     if (!(await approvalNeeded(ctx, first.caller, op, args))) return runAdminOp(ctx, first.caller, op, args);
 
-    const target = await resolveTarget(ctx, op, args);
+    const target = await resolveTarget(ctx, op, args, first.caller);
     if (target && "error" in target) return { ok: false, error: target.error };
     if (target) args.id = target.id;
     const { title, message } = approvalText(String(op), args, target?.label);
@@ -144,7 +179,7 @@ export class DriveAdmin {
       return { ok: false, error: why, needsApproval: true };
     }
     // The wait can be long: act with the tape and rights as they are now, not as they were.
-    const now = await this.context(runId);
+    const now = await this.context(runId, op);
     if ("error" in now) return { ok: false, error: now.error };
     return runAdminOp(ctx, { ...now.caller, approved: true, approvalId: outcome.approvalId }, op, args);
   }

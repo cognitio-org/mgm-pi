@@ -193,7 +193,7 @@ describe("connect extension", async () => {
   test("/setup writes .env next to the agent dir and re-registers providers with the new keys", async () => {
     const ctx = ctxWith();
     // name, litellm url, litellm key, openrouter key, then the optional local server: yes, unreachable URL (→ typed model id)
-    ctx.answers.push("Matej", "https://litellm.augment-code.support/v1", "sk-new-key", "sk-or-new", "Yes, configure it", "http://127.0.0.1:9/v1", "my-local-model");
+    ctx.answers.push("Matej", "https://router.kernal.one/v1", "sk-new-key", "sk-or-new", "Yes, configure it", "http://127.0.0.1:9/v1", "my-local-model");
     await pi.commands.get("setup")!.handler("", ctx);
     const env = store.env();
     for (const line of ["KERNAL_USER=Matej", "LMSTUDIO_BASE_URL=http://127.0.0.1:9/v1", "LMSTUDIO_MODEL=my-local-model", "LITELLM_AGENT_KEY=sk-new-key", "OPENROUTER_API_KEY=sk-or-new"]) assert.ok(env.includes(line + "\n"), line);
@@ -204,7 +204,7 @@ describe("connect extension", async () => {
     assert.equal(pi.providers.filter((p) => p.name === "openrouter").at(-1)!.config.apiKey, "sk-or-new", "OpenRouter registered once its key exists");
     assert.equal(pi.providers.filter((p) => p.name === "lmstudio").at(-1)!.config.models[0].id, "my-local-model");
     // second run keeps existing keys when left blank and updates only the name
-    ctx.answers.push("Matej Monteleone", "https://litellm.augment-code.support/v1", "", "", "No local model on this machine");
+    ctx.answers.push("Matej Monteleone", "https://router.kernal.one/v1", "", "", "No local model on this machine");
     await pi.commands.get("setup")!.handler("", ctx);
     const env2 = store.env();
     assert.ok(env2.includes("KERNAL_USER=Matej Monteleone\n") && env2.includes("LITELLM_AGENT_KEY=sk-new-key\n") && env2.includes("OPENROUTER_API_KEY=sk-or-new\n"));
@@ -220,7 +220,7 @@ describe("connect extension", async () => {
     });
     try {
       const ctx = ctxWith();
-      ctx.answers.push("Matej", "https://litellm.augment-code.support/v1", "", "", "Yes, configure it", "127.0.0.1:1234", "google/gemma-4-e4b");
+      ctx.answers.push("Matej", "https://router.kernal.one/v1", "", "", "Yes, configure it", "127.0.0.1:1234", "google/gemma-4-e4b");
       await pi.commands.get("setup")!.handler("", ctx);
       assert.ok(store.env().includes("LMSTUDIO_MODEL=google/gemma-4-e4b\n"));
       assert.ok(store.env().includes("LMSTUDIO_BASE_URL=http://127.0.0.1:1234/v1\n"), "typed without scheme or /v1, saved normalised");
@@ -228,7 +228,7 @@ describe("connect extension", async () => {
       const lm = pi.providers.filter((p) => p.name === "lmstudio").at(-1)!.config.models.map((m: any) => m.id);
       assert.deepEqual(lm, ["google/gemma-4-e4b", "nvidia/nemotron-3-nano-omni"], "discovered from the server, embeddings excluded");
       assert.equal(pi.providers.filter((p) => p.name === "lmstudio").at(-1)!.config.models[0].contextWindow, 131072, "served window from the native API");
-      ctx.answers.push("Matej", "https://litellm.augment-code.support/v1", "", "", "Yes, configure it", "http://localhost:1234/v1", "type another id", "my/custom-model");
+      ctx.answers.push("Matej", "https://router.kernal.one/v1", "", "", "Yes, configure it", "http://localhost:1234/v1", "type another id", "my/custom-model");
       await pi.commands.get("setup")!.handler("", ctx);
       assert.ok(store.env().includes("LMSTUDIO_MODEL=my/custom-model\n"));
     } finally { restore(); process.env.KERNAL_NO_DISCOVERY = "1"; delete process.env.KERNAL_USER; delete process.env.LMSTUDIO_MODEL; delete process.env.LMSTUDIO_BASE_URL; }
@@ -266,7 +266,7 @@ describe("connect extension", async () => {
     let openrouterAccepts = false;
     const restore = stubFetch({
       "/auth/key": () => openrouterAccepts ? { data: { label: "matej" } } : { __status: 401, body: { error: { message: "Missing Authentication header", code: 401 } } },
-      "litellm.augment-code.support/v1/models": () => ({ data: [{ id: "gpt-5.4-nano" }] }),
+      "router.kernal.one/v1/models": () => ({ data: [{ id: "gpt-5.4-nano" }] }),
     });
     try {
       const p2 = makePi(); await mod.default(p2 as any);
@@ -283,7 +283,7 @@ describe("connect extension", async () => {
       assert.match(ctx.notices.at(-1)!.msg, /openrouter rejected the key/);
       // /setup with a working key (pasted with quotes, which cleanKey strips) re-registers it
       openrouterAccepts = true;
-      ctx.answers.push("Matej", "https://litellm.augment-code.support/v1", "", '"sk-or-v1-good"', "No local model on this machine");
+      ctx.answers.push("Matej", "https://router.kernal.one/v1", "", '"sk-or-v1-good"', "No local model on this machine");
       await p2.commands.get("setup")!.handler("", ctx);
       assert.ok(store.env().includes("OPENROUTER_API_KEY=sk-or-v1-good\n"), store.env());
       assert.equal(p2.providers.filter((p) => p.name === "openrouter").at(-1)?.config.apiKey, "sk-or-v1-good");
@@ -292,7 +292,7 @@ describe("connect extension", async () => {
       assert.match(ctx.notices[saved].msg, /Connections ready: lmstudio, litellm, openrouter/);
       assert.ok(!ctx.notices.slice(saved).some((n) => n.msg.includes("rejected")), "no rejection after the fix");
       // a key that does not look like an OpenRouter key gets a warning at /setup time
-      ctx.answers.push("Matej", "https://litellm.augment-code.support/v1", "", "sk-proj-openai-key", "No local model on this machine");
+      ctx.answers.push("Matej", "https://router.kernal.one/v1", "", "sk-proj-openai-key", "No local model on this machine");
       await p2.commands.get("setup")!.handler("", ctx);
       assert.ok(ctx.notices.some((n) => n.msg.includes("does not look like an OpenRouter key")));
     } finally { restore(); process.env.KERNAL_NO_DISCOVERY = "1"; delete process.env.OPENROUTER_API_KEY; delete process.env.KERNAL_USER; }
@@ -386,7 +386,7 @@ describe("connect extension", async () => {
       const p2 = makePi(); await mod.default(p2 as any);
       assert.deepEqual(p2.providers.map((p) => p.name).sort(), ["litellm", "lmstudio"]);
       assert.ok(calls.some((u) => u.includes("localhost:1234")), "local server probed");
-      assert.ok(calls.some((u) => u.endsWith("litellm.augment-code.support/v1/models")), "key checked");
+      assert.ok(calls.some((u) => u.endsWith("router.kernal.one/v1/models")), "key checked");
       const ctx = makeCtx({ hasUI: true, model: { provider: "litellm", id: "claude-sonnet-5", contextWindow: 1, maxTokens: 1 } });
       await p2.emit("session_start", {}, ctx);
       assert.match(ctx.statuses.get("budget") ?? "", /key \$1\.00\/\$10\.00/, "footer seeded before session_start returns");

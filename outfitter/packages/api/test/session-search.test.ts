@@ -252,7 +252,7 @@ describe("sessions.search and sessions.transcript ops (memory store)", () => {
 
   test("a Drive searches and reads only its owner's sessions", async () => {
     const store = await seeded();
-    const drive: AdminCaller = { email: "ada@example.com", via: "drive", operator: false };
+    const drive: AdminCaller = { email: "ada@example.com", via: "drive", operator: false, capabilities: ["admin"] };
     const res = (await runAdminOp({ store, models }, drive, "sessions.search", { query: "403", mode: "text" })) as { text: string };
     assert.doesNotMatch(res.text, /00000002/);
     const other = await runAdminOp({ store, models }, drive, "sessions.transcript", { id: "22222222" });

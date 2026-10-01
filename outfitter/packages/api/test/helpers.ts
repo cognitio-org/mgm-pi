@@ -16,6 +16,7 @@ import type { SandboxTelemetry } from "../src/sandbox-telemetry.ts";
 import type { VoiceService } from "../src/voice.ts";
 import type { VoiceUsage } from "../src/voice-usage.ts";
 import type { GithubCatalog } from "../src/github-catalog.ts";
+import type { AgentEngine } from "../src/agentengine/index.ts";
 
 export interface TestApp extends App {
   store: Store;
@@ -51,6 +52,8 @@ export interface BuildTestAppOptions {
   voiceUsage?: VoiceUsage;
   /** GitHub catalog. Defaults to one that reads `secretAdmin` (empty in tests → not configured). */
   githubCatalog?: GithubCatalog;
+  /** E9: Agent Engine clients, e.g. createAgentEngine(fake.config(), { fetch: fake.fetch }). */
+  agentEngine?: AgentEngine;
 }
 
 export async function buildTestApp(
@@ -87,6 +90,7 @@ export async function buildTestApp(
     voice: opts.voice,
     voiceUsage: opts.voiceUsage,
     githubCatalog: opts.githubCatalog,
+    agentEngine: opts.agentEngine,
   });
   await app.fastify.ready();
   return { ...app, store, provider, secretAdmin };

@@ -48,6 +48,7 @@ jobs:
           bash deploy/test/service-env-gke-off.test.sh
           bash deploy/test/gke-workflow-check.test.sh
           bash deploy/test/heredoc-backticks.test.sh
+          bash deploy/test/workflow-sh-quotes.test.sh
 
   # E2.12: the deploy failures of 2026-09-20 were all image or deploy-env problems invisible to
   # `npm test`. Build both images the way deploy/ does and boot each with the environment the deploy
@@ -118,6 +119,11 @@ jobs:
             ! test -e /opt/kernal/.pi/npm/node_modules/open-codebase-index
             # Drive previews (#217): agentd starts the ngrok agent; it must be the pinned version.
             su agent -s /bin/sh -c "ngrok version" | tee /dev/stderr | grep -q "ngrok version 3\."
+            # E9 PR8: the pi find tool needs fd (PI_OFFLINE=1 never downloads it); the foreman coder
+            # child ships as a user agent; agent files from a cloned repo are kept out of discovery.
+            su agent -s /bin/sh -c "fdfind --version"
+            test -f /opt/kernal/.pi/agents/coder.md
+            node -e "const s=require(\"/opt/kernal/.pi/settings.json\"); if (JSON.stringify(s.subagents.agentExcludeDirs)!==JSON.stringify([\"/workspace\",\"/home/agent/.agents\"])) { console.error(s.subagents); process.exit(1); }"
           '
       - name: code root runs isn't writable by agent; pi's agent dir is (#266)
         run: |
@@ -156,8 +162,10 @@ jobs:
             exec 3>&-
             wait || true
             grep -q "agents: total" "$out" || { echo "no doctor report within 60 s:"; tail -40 "$out"; exit 1; }
-            grep -o "agents: total [0-9]* (builtin [0-9]*[^)]*)" "$out" | head -1
-            grep -qE "builtin [1-9]" "$out"
+            line=$(grep -o "agents: total [0-9]* (builtin [0-9]*[^)]*)" "$out" | head -1); echo "$line"
+            echo "$line" | grep -qE "builtin [1-9]"
+            echo "$line" | grep -qE "user [1-9]"     # the coder agent shipped in the image (E9 PR8)
+            echo "$line" | grep -qE "project 0"      # agent files from a cloned repo stay out (E9 PR8)
           '
       - name: pi-mcp-adapter loads as a bundle and still talks MCP (#222)
         # A real round trip through the bundled adapter: pi (RPC mode, no model) with only the bundle

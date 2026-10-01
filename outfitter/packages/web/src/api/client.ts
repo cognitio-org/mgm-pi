@@ -141,10 +141,18 @@ export interface Guru {
   browserIde?: boolean;
   /** Branches under this prefix may be pushed besides the session branch. Absent means outfitter/. */
   branchPrefix?: string;
+  /** When true, this tape's cloud runs may merge pull requests. */
+  mergeFromCloud?: boolean;
   /** Tape option, default off (Sysop tools, #290). Whether its runs get the admin tools; "operator"
    * also allows sysop actions for a sysop's own sessions. Only a person sets it here; only a sysop
    * may choose operator. */
   adminTools?: "off" | "manage" | "operator";
+  /** Tape option, default off (E9). Agent Engine memory for its Drives: "tool" gives the agent a
+   * memory tool, "auto" also recalls before each prompt and records turns. Only a person sets it. */
+  memory?: "off" | "tool" | "auto";
+  /** Tape option, default off (E9). Its Drives may call the listed Agent Engine agents. Only a
+   * person sets it. */
+  agentEngine?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -159,7 +167,33 @@ export interface TokenRecord {
   revokedAt?: string;
   /** When the token stops authenticating (90 days after creation). */
   expiresAt?: string;
+  /** E9: a Dongle (laptop teleport, /api/*) or an A2A key (the link origin's /a2a only). */
+  kind?: TokenKind;
+  /** On an A2A key: the tapes and repositories its tasks may use. */
+  a2a?: A2AKeyScope;
 }
+
+export type TokenKind = "dongle" | "a2a";
+
+export interface A2AKeyScope {
+  tapes: string[];
+  repos: string[];
+  maxConcurrent: number;
+}
+
+/** E9 §4: one Agent Engine agent Drives may call (Settings → Agent Engine agents, sysops only). */
+export interface AeAgent {
+  id: string;
+  workspaceId: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  updatedBy?: string;
+}
+
+export type AeAgentInput = Pick<AeAgent, "workspaceId" | "name" | "description" | "enabled">;
 
 /** POST /api/operator/tokens/revoke's body: one owner's email, or every owner under an @domain. */
 export type TokenOwnerMatch = { email: string } | { domain: string };
@@ -540,12 +574,31 @@ export const api = {
     return request("/api/operator/tokens/revoke", { method: "POST", body: JSON.stringify(match) });
   },
 
+  /** E9 §4: the Agent Engine agents Drives may call (sysops). */
+  listAeAgents(): Promise<{ agents: AeAgent[] }> {
+    return request("/api/operator/agent-engine/agents");
+  },
+
+  createAeAgent(agent: AeAgentInput & { id: string }): Promise<{ agent: AeAgent }> {
+    return request("/api/operator/agent-engine/agents", { method: "POST", body: JSON.stringify(agent) });
+  },
+
+  updateAeAgent(id: string, patch: Partial<AeAgentInput>): Promise<{ agent: AeAgent }> {
+    return request(`/api/operator/agent-engine/agents/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(patch) });
+  },
+
+  deleteAeAgent(id: string): Promise<void> {
+    return request(`/api/operator/agent-engine/agents/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
   listTokens(): Promise<TokenRecord[]> {
     return request("/api/me/tokens");
   },
 
-  createToken(name: string): Promise<{ token: string; record: TokenRecord }> {
-    return request("/api/me/tokens", { method: "POST", body: JSON.stringify({ name }) });
+  /** A Dongle by default; `a2a` makes an A2A key scoped to those tapes and repositories. */
+  createToken(name: string, a2a?: Partial<A2AKeyScope> & { tapes: string[] }): Promise<{ token: string; record: TokenRecord }> {
+    const body = a2a ? { name, kind: "a2a", a2a } : { name };
+    return request("/api/me/tokens", { method: "POST", body: JSON.stringify(body) });
   },
 
   revokeToken(id: string): Promise<{ record: TokenRecord }> {

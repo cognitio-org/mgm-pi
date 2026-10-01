@@ -83,6 +83,49 @@ describe("GuruForm: #241 VS Code in the browser", () => {
   });
 });
 
+describe("GuruForm: E9 memory and Agent Engine", () => {
+  function renderIt(existing?: Guru) {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => root!.render(<GuruForm guru={existing} models={[]} meta={null} onClose={vi.fn()} onSaved={vi.fn()} />));
+    return {
+      memory: container.querySelector<HTMLSelectElement>("#guru-memory")!,
+      agentEngine: container.querySelector<HTMLInputElement>("#guru-agent-engine")!,
+    };
+  }
+
+  it("both are off for a Tape without the fields, and any person can change them", async () => {
+    const update = vi.spyOn(api, "updateGuru").mockResolvedValue({ ...guru, memory: "auto", agentEngine: true });
+    const { memory, agentEngine } = renderIt(guru);
+    expect(memory.value).toBe("off");
+    expect([...memory.options].map((o) => o.value)).toEqual(["off", "tool", "auto"]);
+    expect(memory.disabled).toBe(false);
+    expect(agentEngine.checked).toBe(false);
+    act(() => {
+      memory.value = "auto";
+      memory.dispatchEvent(new Event("change", { bubbles: true }));
+      agentEngine.click();
+    });
+    await act(async () => {
+      container!.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(update.mock.calls[0]![1].memory).toBe("auto");
+    expect(update.mock.calls[0]![1].agentEngine).toBe(true);
+  });
+
+  it("shows a Tape's saved values, and sends them back unchanged", async () => {
+    const update = vi.spyOn(api, "updateGuru").mockResolvedValue(guru);
+    const { memory, agentEngine } = renderIt({ ...guru, memory: "tool", agentEngine: true });
+    expect(memory.value).toBe("tool");
+    expect(agentEngine.checked).toBe(true);
+    await act(async () => {
+      container!.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(update.mock.calls[0]![1]).toMatchObject({ memory: "tool", agentEngine: true });
+  });
+});
+
 describe("GuruForm: #290 Admin tools", () => {
   function renderWith(existing: Guru, isSysop: boolean) {
     container = document.createElement("div");

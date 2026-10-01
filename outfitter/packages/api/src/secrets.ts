@@ -18,6 +18,10 @@ import {
 export interface RunSecrets {
   githubToken: string;
   litellmKey: string;
+  /** Which LiteLLM key `litellmKey` is: the tape's own `outfitter-litellm-key-<guruId>` ("guru"),
+   * the org-wide default ("default"), or none. An A2A session runs only on "guru" (agentlink.ts):
+   * a remote caller gets a bounded, revocable budget, never the org's. */
+  litellmKeySource?: "guru" | "default" | "none";
   /** Set when `githubToken` is a GitHub App installation token, so the run can be refreshed. */
   githubTokenExpiresAt?: string;
   /** #158: why a repo session got no GitHub token although the App is configured. The shared PAT is
@@ -46,6 +50,21 @@ export interface SecretsBroker {
    * status service's LiteLLM probe when config.litellmAdminKey isn't set. Falls back to the same
    * default key a guru with no key of its own would get. */
   defaultLitellmKey(): Promise<string>;
+  /** True when the tape has a LiteLLM key of its own (`outfitter-litellm-key-<guruId>`), which an
+   * A2A key's tapes need (a2a/keys.ts A2ALitellmKeyCheck). Undefined on a broker that can't tell:
+   * A2A then relies on agentlink.ts's run-time refusal alone. */
+  hasDedicatedLitellmKey?(guruId: string): Promise<boolean>;
+}
+
+/** E9: a session an A2A task created. Its runs never get the org-default LiteLLM key, its tape's
+ * env, or a branch other than its own `outfitter/a2a-*` one. */
+export function isA2ASession(session: Pick<Session, "origin" | "a2aTokenId"> | null | undefined): boolean {
+  // Any non-empty origin or token id counts: an unknown origin fails closed, as A2A.
+  return isSet(session?.origin) || isSet(session?.a2aTokenId);
+}
+
+function isSet(value: unknown): boolean {
+  return value !== undefined && value !== null && value !== "";
 }
 
 /** Dev broker: reads fixed values from env so local runs work with no Secret Manager. Defaults to
@@ -57,21 +76,34 @@ export interface SecretsBroker {
 export class MemorySecretsBroker implements SecretsBroker {
   private readonly githubToken: string;
   private readonly litellmKey: string;
+  private readonly dedicatedGurus: ReadonlySet<string> | undefined;
 
+  /** `dedicatedGurus`: the tapes whose key counts as their own (tests of the A2A refusal).
+   * Undefined (dev): every tape's. */
   constructor(
     githubToken = process.env.OUTFITTER_DEV_GITHUB_TOKEN ?? "",
     litellmKey = process.env.OUTFITTER_DEV_LITELLM_KEY ?? "",
+    dedicatedGurus?: ReadonlySet<string>,
   ) {
     this.githubToken = githubToken;
     this.litellmKey = litellmKey;
+    this.dedicatedGurus = dedicatedGurus;
   }
 
-  async secretsForRun(): Promise<RunSecrets> {
+  async secretsForRun(session?: Session, guru?: Guru): Promise<RunSecrets> {
+    const dedicated = !this.dedicatedGurus || (guru !== undefined && this.dedicatedGurus.has(guru.id));
+    // As GcpSecretsBroker: an A2A session never falls back to a shared key.
+    const shareable = dedicated || !isA2ASession(session);
     return {
       githubToken: this.githubToken,
-      litellmKey: this.litellmKey,
+      litellmKey: shareable ? this.litellmKey : "",
+      litellmKeySource: dedicated ? "guru" : shareable ? "default" : "none",
       githubCredential: this.githubToken ? "default" : "none",
     };
+  }
+
+  async hasDedicatedLitellmKey(guruId: string): Promise<boolean> {
+    return !this.dedicatedGurus || this.dedicatedGurus.has(guruId);
   }
 
   async brokerGithubToken(): Promise<{ token: string }> {
@@ -132,13 +164,14 @@ export class GcpSecretsBroker implements SecretsBroker {
   }
 
   async secretsForRun(session: Session, guru: Guru): Promise<RunSecrets> {
-    const [github, litellmKey] = await Promise.all([
+    const [github, litellm] = await Promise.all([
       this.githubTokenForSession(session, DRIVE_PERMISSIONS),
-      this.litellmKeyForGuru(guru.id),
+      this.litellmKeyForGuru(guru.id, !isA2ASession(session)),
     ]);
     return {
       githubToken: github.token,
-      litellmKey,
+      litellmKey: litellm.key,
+      litellmKeySource: litellm.source,
       ...(github.expiresAt ? { githubTokenExpiresAt: github.expiresAt } : {}),
       ...(github.appFailure ? { githubAppFailure: github.appFailure } : {}),
       ...(github.appFailureContext ? { githubAppFailureContext: github.appFailureContext } : {}),
@@ -223,6 +256,12 @@ export class GcpSecretsBroker implements SecretsBroker {
         credential: "none",
       };
     }
+    // E9 security review: a Drive a remote caller drives never holds the org-wide PAT, even behind
+    // agentd's git proxy. buildRunSpec refuses the run (missing GitHub token) instead.
+    if (isA2ASession(session)) {
+      console.warn(`[secrets] session ${session.id}: A2A session, not using ${GITHUB_TOKEN_DEFAULT_SECRET}`);
+      return { token: "", credential: "none" };
+    }
     const shared = await this.accessSecretOrEmpty(GITHUB_TOKEN_DEFAULT_SECRET);
     if (shared) {
       console.log(
@@ -232,10 +271,25 @@ export class GcpSecretsBroker implements SecretsBroker {
     return { token: shared, credential: shared ? "default" : "none" };
   }
 
-  private async litellmKeyForGuru(guruId: string): Promise<string> {
+  /** The tape's own key, else (only when `fallback`) the org-wide default. An A2A session passes
+   * `fallback: false`: a remote caller never spends the org-wide key. */
+  private async litellmKeyForGuru(guruId: string, fallback: boolean): Promise<{ key: string; source: "guru" | "default" | "none" }> {
     const key = await this.accessSecretOrEmpty(`outfitter-litellm-key-${guruId}`);
-    if (key) return key;
-    return this.defaultLitellmKey();
+    if (!fallback) {
+      // A copy of the org-wide key in the tape's secret is still the org-wide key.
+      if (!key || key.trim() === (await this.defaultLitellmKey()).trim()) return { key: "", source: "none" };
+      return { key, source: "guru" };
+    }
+    if (key) return { key, source: "guru" };
+    const shared = await this.defaultLitellmKey();
+    return { key: shared, source: shared ? "default" : "none" };
+  }
+
+  /** A per-tape secret that only copies the org-wide key is not a key of its own. */
+  async hasDedicatedLitellmKey(guruId: string): Promise<boolean> {
+    const own = await this.accessSecretOrEmpty(`outfitter-litellm-key-${guruId}`);
+    if (!own) return false;
+    return own.trim() !== (await this.defaultLitellmKey()).trim();
   }
 
   async defaultLitellmKey(): Promise<string> {

@@ -41,6 +41,23 @@ export interface Session {
    * repo session reports branch/head (and maybe snapshotUrl); a repo-less session reports
    * workspaceUrl instead (protocol.md's agentd<->api `checkpoint` row). */
   checkpoint?: { branch?: string; head?: string; snapshotUrl?: string; workspaceUrl?: string };
+  /** E9 §1: when pi last reported the turn settled (`agent_settled`: nothing queued, no retry
+   * left), and the last entry agentd had sent by then, when it said. Not run state `idle`, which a
+   * run enters before its first prompt. */
+  settledAt?: string;
+  /** null when the settle carried no lastEntryId (an older agentd, or none sent this run). */
+  settledEntryId?: string | null;
+  /** The settle's run and seq: a replayed settle (seq not above the last one of the same run) is
+   * ignored, and a late-registered waiter only counts settles after it. */
+  settledRunId?: string;
+  settledSeq?: number;
+  /** E9 §5/§5.4: "a2a" on a session an inbound A2A task created (src/a2a/tasks.ts). Such a session
+   * runs as its key's owner, but its memory identity is the key's (`a2a:<a2aTokenId>`,
+   * agentengine/identity.ts): no recordTurn, no org reads, no shared or taxonomic saves. It may push
+   * only its own branch (branch-policy.ts's branchPrefixForSession). Absent: an ordinary Drive. */
+  origin?: "a2a";
+  /** E9 §5.4: the A2A key (ApiToken.id) whose task created this session. Set with `origin`. */
+  a2aTokenId?: string;
   /** #207: when the owner or a sysop archived this floppy. An archived session is hidden from
    * GET /api/sessions by default and read-only: no wakes, no new mail, no teleport import, until
    * POST /restore clears it. Only an archived session can be formatted (deleted). */
@@ -417,6 +434,9 @@ export interface MailCollection {
   /** Distinct sessions holding deliverable mail (the /tick sweep's input). */
   sessionsWithDeliverable(nowIso: string, maxAttempts: number): Promise<string[]>;
   findById(id: string): Promise<Mail | null>;
+  /** E9 §5.3 CancelTask: marks one mail dead unless pi already took it (acked) or it is dead
+   * already, so no later wake delivers it. True when this call marked it. */
+  markDead(id: string, nowIso: string): Promise<boolean>;
   /** #208: removes every row of this session (format). Returns how many were removed. */
   deleteForSession(sessionId: string): Promise<number>;
 }
@@ -456,11 +476,21 @@ export interface Guru {
    * sysop actions, and only when the session's owner is an operator. Set only by a person in the
    * web UI (gurus-service.ts); an agent can never set or raise it. */
   adminTools?: AdminToolsLevel;
+  /** Tape option, default off (E9, docs/specs/atlas-agent-engine-and-a2a.md §3.3). Agent Engine
+   * memory for this tape's Drives: "tool" gives the agent a `memory` tool, "auto" also recalls
+   * before each prompt and records turns. Set only by a person in the web UI (gurus-service.ts),
+   * like adminTools. Absent means off. */
+  memory?: MemoryLevel;
+  /** Tape option, default off (E9 §4). When true, this tape's Drives may call the listed Agent
+   * Engine agents (the `agent_engine` tool). Set only by a person in the web UI, like adminTools. */
+  agentEngine?: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
 export type AdminToolsLevel = "off" | "manage" | "operator";
+
+export type MemoryLevel = "off" | "tool" | "auto";
 
 /** An admin op from a run's agent held for the session owner's decision (Sysop tools, #287;
  * admin/approvals.ts). At most one per run, in its own collection so Run documents -- which several
@@ -489,8 +519,9 @@ export interface AdminAuditEntry {
   at: string;
   /** Email the op ran as: the Dongle's owner, or the Drive session's owner. */
   actor: string;
-  /** "token" for a Dongle caller (laptop), "drive" for a Drive's broker call. */
-  via: "token" | "drive";
+  /** "token" for a Dongle caller (laptop), "drive" for a Drive's broker call, "web" for a sysop's
+   * change in the web UI (E9 §8: the Agent Engine agents allowlist). */
+  via: "token" | "drive" | "web";
   sessionId?: string;
   runId?: string;
   op: string;
@@ -618,6 +649,24 @@ export interface ApiToken {
    * createdAt + TOKEN_TTL_MS (src/tokens.ts); tokens minted before this field existed have none,
    * and tokenExpiresAt() falls back to the same TTL from their createdAt. */
   expiresAt?: string;
+  /** E9 §5.2: what the token is for. Absent (every token minted before the field) means
+   * "dongle". A Dongle works on /api/* only; an A2A key on the link role's /a2a only (auth.ts's
+   * verifyApiToken enforces both). */
+  kind?: ApiTokenKind;
+  /** Set exactly when `kind` is "a2a": what the key's tasks may use. Fixed at creation. */
+  a2a?: A2AKeyScope;
+}
+
+export type ApiTokenKind = "dongle" | "a2a";
+
+/** E9 §5.2: an A2A key's scope. Tapes and repos are re-checked at every task start. */
+export interface A2AKeyScope {
+  /** Tape (guru) ids, in the owner's order; the first is the default skill. Never empty. */
+  tapes: string[];
+  /** `owner/name` repos a task may name. Empty: repo-less tasks only. */
+  repos: string[];
+  /** Non-terminal tasks the key may hold at once (default 2). */
+  maxConcurrent: number;
 }
 
 /** Whose tokens POST /api/operator/tokens/revoke targets: one owner's exact email, or every owner
@@ -999,6 +1048,234 @@ export interface BrowserCapturesCollection {
   deleteForSession(sessionId: string): Promise<number>;
 }
 
+/** E9 §1: how a turn waiter finished. `settled`: the first settle after its mail was accepted.
+ * `ended`: anything else, with `endReason`. */
+export type TurnWaiterStatus = "open" | "settled" | "ended";
+/** `run_stopped`/`run_failed`: the run that accepted the mail ended before settling (layer 2).
+ * `mail_dead`/`mail_held`: the mail can't reach a run (attempts ran out, or held). `deadline`:
+ * layer 3. `canceled`: the caller gave up (TurnWaiters.cancel). */
+export type TurnWaiterEndReason = "run_stopped" | "run_failed" | "mail_dead" | "mail_held" | "deadline" | "canceled";
+
+/** E9 §1 (docs/specs/atlas-agent-engine-and-a2a.md, EPIC.md E5.2's completion layers): something
+ * waiting for the turn one mail starts to finish -- an A2A task, a delegation. Durable, because
+ * the settle can arrive on another api instance than the one that registered it; see turns.ts. */
+export interface TurnWaiter {
+  id: string;
+  sessionId: string;
+  /** The mail whose turn this waits for. Only its acceptance is matched by id: a settle never is
+   * (other mail can settle the same turn), so the first settle after acceptance completes it. */
+  mailId: string;
+  /** Who registered it ("a2a", "delegate", ...). Opaque here; for the caller's own lookups. */
+  owner?: string;
+  status: TurnWaiterStatus;
+  createdAt: string;
+  updatedAt: string;
+  /** Layer 3. The tick sweep pushes it forward while the run works, never past `capAt`. */
+  deadlineAt: string;
+  /** Hard cap: createdAt + 4 h. */
+  capAt: string;
+  /** Set when pi accepted the mail: the run, and the seq of pi's `response` event for it. agentd's
+   * seq restarts every run, so a settle completes the waiter only on this run, at a higher seq. */
+  ackRunId?: string;
+  ackSeq?: number;
+  ackedAt?: string;
+  /** The acceptance was taken from the mail's acked state, not pi's `response` (TurnWaiters'
+   * adoptMailAck): provisional, so the real `response`, if it still arrives, replaces it. */
+  ackFromMail?: boolean;
+  /** On `settled`: the settle's `lastEntryId`, when agentd sent one. */
+  settledEntryId?: string;
+  /** On `ended`. */
+  endReason?: TurnWaiterEndReason;
+  /** On `ended`: a sentence for a person (the run's reason, the mail's hold note). */
+  detail?: string;
+  finishedAt?: string;
+}
+
+/** The fields `finish` writes. */
+export type TurnWaiterFinish =
+  | { status: "settled"; settledEntryId?: string }
+  | { status: "ended"; endReason: TurnWaiterEndReason; detail?: string };
+
+export interface TurnWaitersCollection {
+  insert(waiter: TurnWaiter): Promise<void>;
+  findById(id: string): Promise<TurnWaiter | null>;
+  /** Records pi's acceptance of `mailId` on the session's open waiters for it that have none yet,
+   * or only a provisional one (`ackFromMail`); a replayed `response` event is a no-op. With
+   * `fromMail`, marks only waiters with no acceptance at all, provisionally. Returns how many. */
+  markAcked(sessionId: string, mailId: string, runId: string, seq: number, nowIso: string, fromMail?: boolean): Promise<number>;
+  /** Finishes one waiter, only if it is still open: a finished waiter is never overwritten. Null
+   * when it wasn't open (or doesn't exist). */
+  finish(id: string, outcome: TurnWaiterFinish, nowIso: string): Promise<TurnWaiter | null>;
+  /** Moves an open waiter's deadlineAt later; false if it is no longer open or the deadline is
+   * already at or past `deadlineAt` (two sweeps can't move it back). */
+  extendDeadline(id: string, deadlineAt: string, nowIso: string): Promise<boolean>;
+  listOpenForSession(sessionId: string): Promise<TurnWaiter[]>;
+  /** Open waiters, earliest deadline first, at most `limit` (the tick sweep). */
+  listOpen(limit: number): Promise<TurnWaiter[]>;
+  /** #208: removes every row of this session (format). Returns how many were removed. */
+  deleteForSession(sessionId: string): Promise<number>;
+}
+
+/** E9 §4: one Agent Engine agent Drives may call, set by a sysop (Settings → Agent Engine agents).
+ * Agents call only listed, enabled entries; nothing is discovered from Agent Engine. */
+export interface AeAgent {
+  /** Slug: what the `agent_engine` tool names, and part of the Agent Engine session id. */
+  id: string;
+  /** The agents project's workspace that hosts it. One entry per workspace. */
+  workspaceId: string;
+  name: string;
+  /** What the agent does, for the model choosing one (ae.list). */
+  description: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  /** The sysop who last changed it. */
+  updatedBy?: string;
+}
+
+export interface AeAgentsCollection {
+  list(): Promise<AeAgent[]>;
+  findById(id: string): Promise<AeAgent | null>;
+  /** False when the id or the workspace is already listed. */
+  insert(agent: AeAgent): Promise<boolean>;
+  /** Null when there is no such agent; "duplicate" when the new workspace is another entry's. */
+  update(id: string, patch: Partial<Omit<AeAgent, "id" | "createdAt">>): Promise<AeAgent | null | "duplicate">;
+  delete(id: string): Promise<boolean>;
+}
+
+/** E9 §4: the Agent Engine runtime session one Outfitter session opened with one agent, so the api
+ * can stop it when the Outfitter session closes, and so `ae.get`/`ae.resume` reach only executions
+ * this Outfitter session started. */
+export interface AeSession {
+  /** `<outfitterSessionId>:<agentId>`. */
+  id: string;
+  outfitterSessionId: string;
+  agentId: string;
+  /** The workspace the calls went to (an allowlist edit later doesn't move them). */
+  workspaceId: string;
+  /** The Agent Engine session id sent as X-Session-ID (`outf-<session8>-<agent>`). */
+  aeSessionId: string;
+  /** Executions started from this session, oldest first, at most AE_SESSION_EXECUTIONS. */
+  executions: string[];
+  openedAt: string;
+  lastUsedAt: string;
+  /** Set once the stop was accepted or given up on; the next invoke clears it. */
+  stoppedAt?: string;
+  stopAttempts?: number;
+  /** Why the last stop failed (one line). */
+  stopError?: string;
+}
+
+export const AE_SESSION_EXECUTIONS = 50;
+
+export interface AeSessionsCollection {
+  /** Upserts the row for this session and agent, appends `executionId` (when there is one), and
+   * reopens it (clears stoppedAt and the stop attempts). */
+  recordInvoke(
+    row: Pick<AeSession, "outfitterSessionId" | "agentId" | "workspaceId" | "aeSessionId">,
+    executionId: string | undefined,
+    nowIso: string,
+  ): Promise<AeSession>;
+  /** The row of this Outfitter session that started `executionId`, if any. */
+  findByExecution(outfitterSessionId: string, executionId: string): Promise<AeSession | null>;
+  /** Rows not yet stopped, least recently used first; with `usedBefore`, only rows last used
+   * before it (the sweep skips fresh ones in the query, so they can't crowd out closed ones). */
+  listOpen(limit: number, usedBefore?: string): Promise<AeSession[]>;
+  listOpenForSession(outfitterSessionId: string): Promise<AeSession[]>;
+  /** Marks it stopped, only if it is still open and unused since `lastUsedAt` (an invoke that
+   * raced the stop keeps its session). */
+  markStopped(id: string, lastUsedAt: string, nowIso: string, error?: string): Promise<boolean>;
+  /** Counts one failed stop on an open row unused since `lastUsedAt`; the new count, or null. */
+  recordStopFailure(id: string, lastUsedAt: string, error: string): Promise<number | null>;
+  /** #208: removes every row of this session (format). Returns how many were removed. */
+  deleteForSession(outfitterSessionId: string): Promise<number>;
+}
+
+/** E9 §5.3: an A2A task's state, the v1.0 TaskState names lowercased. The first four after
+ * `working` are terminal (A2A_TERMINAL_STATES). */
+export type A2ATaskState = "submitted" | "working" | "input-required" | "completed" | "failed" | "canceled" | "rejected";
+
+export const A2A_TERMINAL_STATES: readonly A2ATaskState[] = ["completed", "failed", "canceled", "rejected"];
+export const A2A_OPEN_STATES: readonly A2ATaskState[] = ["submitted", "working", "input-required"];
+
+/** E9 §5.3: one A2A task (docs/specs/atlas-agent-engine-and-a2a.md). Every lookup filters on
+ * `tokenId`. `contextId` is server-issued and opaque, never a session id. */
+export interface A2ATask {
+  id: string;
+  contextId: string;
+  /** The A2A key (ApiToken.id) that created it. */
+  tokenId: string;
+  /** The key's owner, who the session runs as. */
+  ownerEmail: string;
+  /** The caller's messageId: a retried SendMessage with the same id returns this task. */
+  messageId?: string;
+  /** Absent on a task rejected before it had a session, and briefly while one is created. */
+  sessionId?: string;
+  /** The mail this task's turn starts, and the turn waiter on it (turns.ts). */
+  mailId?: string;
+  waiterId?: string;
+  /** The tape and repo the task was started with (also on the session). */
+  guruId?: string;
+  repo?: string | null;
+  state: A2ATaskState;
+  /** One line for `status.message` (why it was rejected, what it is waiting for). */
+  statusText?: string;
+  /** The caller's message as A2A JSON (Message.toJSON), for `history`. Bounded by the 64 KB body. */
+  message?: unknown;
+  /** On `completed`: the final assistant text (PR6 adds branch/head/compareUrl/prUrl). */
+  result?: A2ATaskResult;
+  createdAt: string;
+  updatedAt: string;
+  /** The turn waiter's deadline when the task started (turns.ts layer 3). */
+  deadlineAt?: string;
+}
+
+export interface A2ATaskResult {
+  text?: string;
+  branch?: string;
+  head?: string;
+  compareUrl?: string;
+  prUrl?: string;
+}
+
+export interface A2ATaskListQuery {
+  contextId?: string;
+  state?: A2ATaskState;
+  /** Only tasks updated after this ISO time. */
+  updatedAfter?: string;
+  /** Exclusive cursor: tasks strictly older (createdAt desc, then id desc) than this one. */
+  before?: { createdAt: string; id: string };
+  limit: number;
+}
+
+export interface A2ATasksCollection {
+  /** false (no-op) when the key already has a task with this messageId (the dedupe). */
+  insert(task: A2ATask): Promise<boolean>;
+  /** The key's own task, or null: another key's task id reads as missing. */
+  findForToken(tokenId: string, id: string): Promise<A2ATask | null>;
+  findByMessageId(tokenId: string, messageId: string): Promise<A2ATask | null>;
+  /** The newest task in the key's context, or null for a context the key doesn't have. */
+  latestInContext(tokenId: string, contextId: string): Promise<A2ATask | null>;
+  /** The session a key's context runs on (any of its tasks that has one), or undefined. */
+  sessionForContext(tokenId: string, contextId: string): Promise<string | undefined>;
+  /** Newest first (createdAt, then id). `total` counts every match, ignoring `before`/`limit`. */
+  list(tokenId: string, query: A2ATaskListQuery): Promise<{ tasks: A2ATask[]; total: number }>;
+  /** Non-terminal tasks: one key's, or everyone's (the tick sweep), oldest first, at most `limit`. */
+  listOpen(limit: number, tokenId?: string): Promise<A2ATask[]>;
+  /** Applies `patch` only while the task is in one of `from` (a terminal state is never left);
+   * null when it wasn't. */
+  transition(id: string, from: readonly A2ATaskState[], patch: Partial<A2ATask>): Promise<A2ATask | null>;
+  /** §5.2 maxConcurrent, atomic across instances: adds `taskId` to the key's slots unless it
+   * already holds `max`. True when claimed (or already held). */
+  claimSlot(tokenId: string, taskId: string, max: number): Promise<boolean>;
+  releaseSlot(tokenId: string, taskId: string): Promise<void>;
+  /** The task ids holding the key's slots (to free ones whose task is gone or finished). */
+  listSlots(tokenId: string): Promise<string[]>;
+  /** §5.2 rate limit, atomic across instances: counts one request in the key's fixed window
+   * `windowId` and returns the count after it. */
+  countRequest(tokenId: string, windowId: string, expireAtIso: string): Promise<number>;
+}
+
 export interface Store {
   sessions: SessionsCollection;
   entries: EntriesCollection;
@@ -1017,5 +1294,9 @@ export interface Store {
   adminAudit: AdminAuditCollection;
   adminApprovals: AdminApprovalsCollection;
   sessionChunks: SessionChunksCollection;
+  turnWaiters: TurnWaitersCollection;
+  aeAgents: AeAgentsCollection;
+  aeSessions: AeSessionsCollection;
+  a2aTasks: A2ATasksCollection;
   close(): Promise<void>;
 }

@@ -1,0 +1,51 @@
+outfitter/packages/api/test/a2a-streaming.test.ts
+  s_1d3bdd6f362f9b::t_0fae1e67220d3e 127-128,134-135,138,145-161,178-182,322-341,475-557,582
+  s_1d3bdd6f362f9b::t_aa7f54de2c8e53 605-606
+  s_1d3bdd6f362f9b::t_be7653e8d866a7 104-108,201,251,277,303,315,372
+  s_1d3bdd6f362f9b::t_816c98f3c7084a 342
+outfitter/packages/api/src/store/mongo.ts
+  s_1d3bdd6f362f9b::t_33ae06f0881976 261-268,1476,1484-1485
+outfitter/packages/api/src/agentlink.ts
+  s_1d3bdd6f362f9b::t_33ae06f0881976 1649-1652
+outfitter/packages/api/src/store/memory.ts
+  s_1d3bdd6f362f9b::t_33ae06f0881976 236-244,1146,1149
+outfitter/packages/api/test/stop.test.ts
+  s_1d3bdd6f362f9b::t_668d6fae3503c7 289
+.github/workflows/outfitter-a2a-tck.yml
+  s_1d3bdd6f362f9b::t_ed23a23c4c28d5 14,21,39-41
+outfitter/packages/api/src/config.ts
+  s_1d3bdd6f362f9b::t_89fbf75a416bd9 139
+outfitter/packages/api/src/a2a/tasks.ts
+  s_1d3bdd6f362f9b::t_550b9a4cc33990 47-52,98-99,104-111,270,474,476,479-482,484-489,494,501-504,507-511,515,518-526,531-533,535,540-543,545-547,550-553,555,559,565,572,575-587,589-591,598-600,607,613-618,621-627,642-646,652-654,663-666,668,672-673,678-688,772,779,784-806
+  s_1d3bdd6f362f9b::t_aa7f54de2c8e53 157-163
+  s_1d3bdd6f362f9b::t_680573f4a059ed 225-226
+  s_1d3bdd6f362f9b::t_119720bf031a63 807
+outfitter/packages/api/src/a2a/handler.ts
+  s_1d3bdd6f362f9b::t_550b9a4cc33990 173,179,322
+  s_1d3bdd6f362f9b::t_aa7f54de2c8e53 167
+  s_1d3bdd6f362f9b::t_89fbf75a416bd9 9,94-95,115-116,229,234,245,249,253-258,260-268,270,273-286,288-292,317
+outfitter/packages/api/test/tck/check_results.py
+  s_1d3bdd6f362f9b::t_ed23a23c4c28d5 70-72
+outfitter/packages/api/src/store/types.ts
+  s_1d3bdd6f362f9b::t_33ae06f0881976 45,55-56,844-845,1180-1188,1231
+outfitter/packages/api/test/a2a.test.ts
+  s_1d3bdd6f362f9b::t_59d751ab05e5e4 517,727-730
+outfitter/packages/api/test/tck/executor.ts
+  s_1d3bdd6f362f9b::t_c88d73a4f83882 101-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "4e858ba897b04c644a482b79c97e8c0b733f9c24",
+  "prompts": {},
+  "sessions": {
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

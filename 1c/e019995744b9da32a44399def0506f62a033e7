@@ -1,0 +1,65 @@
+outfitter/integrations/agent-engine/tests/conftest.py
+  s_1d3bdd6f362f9b::t_e9d63c24b0d11b 1-36
+outfitter/integrations/agent-engine/sample-agent/agents/outfitter-delegate/src/outfitter_delegate/outfitter_tools.py
+  s_1d3bdd6f362f9b::t_5a15e35de85f5e 1-479
+outfitter/integrations/agent-engine/README.md
+  s_1d3bdd6f362f9b::t_bfba6ccd893924 1-127,133-212
+  s_1d3bdd6f362f9b::t_73608c8641312f 128-132
+outfitter/integrations/agent-engine/.gitignore
+  s_1d3bdd6f362f9b::t_779f7270af398f 1-5
+outfitter/integrations/agent-engine/sample-agent/agents/outfitter-delegate/agent.yaml
+  s_1d3bdd6f362f9b::t_4c0e4e7f6ec052 1-42
+outfitter/integrations/agent-engine/sample-agent/agents/outfitter-delegate/src/outfitter_delegate/llm.py
+  s_1d3bdd6f362f9b::t_96d28d65d0c96f 14,30
+  s_1d3bdd6f362f9b::t_1f2800756e2313 1-13,15-29,31-37
+.github/workflows/outfitter-agent-engine.yml
+  s_1d3bdd6f362f9b::t_21b583765789a7 1-32
+outfitter/integrations/agent-engine/sample-agent/agents/outfitter-delegate/.gitignore
+  s_1d3bdd6f362f9b::t_8722d78cc7b0f6 1-10
+  s_1d3bdd6f362f9b::t_a9c4dfb34eafbd 11
+outfitter/integrations/agent-engine/tests/fake_a2a_server.py
+  s_1d3bdd6f362f9b::t_bbd5804291d5c1 1-45,47-57,61-204,206
+  s_1d3bdd6f362f9b::t_779f7270af398f 58-60
+  s_1d3bdd6f362f9b::t_662a7e24828c90 46
+  s_1d3bdd6f362f9b::t_5a15e35de85f5e 205
+outfitter/integrations/agent-engine/tests/test_outfitter_tools.py
+  s_1d3bdd6f362f9b::t_84eb9ea7758809 132-135,137
+  s_1d3bdd6f362f9b::t_315a0c6682a42a 1-131,136,138-230
+outfitter/integrations/agent-engine/outfitter_tools.py
+  s_1d3bdd6f362f9b::t_25aa583db87a42 1-129,131-248,251-346,348-376,378-427,432-464,466-478
+  s_1d3bdd6f362f9b::t_6509ec94b61dfe 130
+  s_1d3bdd6f362f9b::t_50763370052f79 249-250,347,377,428-431,465,479
+outfitter/integrations/agent-engine/tests/test_sample_agent.py
+  s_1d3bdd6f362f9b::t_9d32a3efdf1d0f 1-87
+outfitter/integrations/agent-engine/sample-agent/agents/outfitter-delegate/pyproject.toml
+  s_1d3bdd6f362f9b::t_12c69052fa88dc 1-27
+outfitter/integrations/agent-engine/sample-agent/agents/outfitter-delegate/src/outfitter_delegate/main.py
+  s_1d3bdd6f362f9b::t_8baf19ff5256b9 1-76
+outfitter/integrations/agent-engine/sample-agent/agents/outfitter-delegate/uv.toml
+  s_1d3bdd6f362f9b::t_96d28d65d0c96f 1-2
+outfitter/integrations/agent-engine/pyproject.toml
+  s_1d3bdd6f362f9b::t_f053115886c572 18-24
+  s_1d3bdd6f362f9b::t_779f7270af398f 1-17,25-31
+outfitter/integrations/agent-engine/sample-agent/agents/outfitter-delegate/src/outfitter_delegate/__init__.py
+  s_1d3bdd6f362f9b::t_21428cff00382e 1
+outfitter/integrations/agent-engine/sample-agent/agents/outfitter-delegate/env.example
+  s_1d3bdd6f362f9b::t_3c41652a815254 1-8
+outfitter/integrations/agent-engine/uv.lock
+  s_1d3bdd6f362f9b::t_177dee9c3bc8b7 1-3208
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "1ce019995744b9da32a44399def0506f62a033e7",
+  "prompts": {},
+  "sessions": {
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

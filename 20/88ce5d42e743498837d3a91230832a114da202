@@ -1,0 +1,39 @@
+kernal/.pi/extensions/outfitter-admin/transport.ts
+  s_1d3bdd6f362f9b::t_1e354f4abe0d56 34-35
+kernal/.pi/extensions/outfitter-agentengine/index.ts
+  s_1d3bdd6f362f9b::t_1e354f4abe0d56 7,9-11,18-20,30-40
+kernal/.pi/extensions/outfitter-agentengine/laptop.ts
+  s_1d3bdd6f362f9b::t_7d9dcb65279173 25,96-128
+kernal/.pi/extensions/kernal-tape/cli.ts
+  s_1d3bdd6f362f9b::t_25997dd78ef227 21,23,91-94,97
+kernal/.pi/extensions/kernal-tape/lib.ts
+  s_1d3bdd6f362f9b::t_25997dd78ef227 49-51,77,100,167-169,402-409,436,495
+kernal/.pi/extensions/outfitter-agentengine/agents.ts
+  s_1d3bdd6f362f9b::t_1e354f4abe0d56 16-21,24-25,47-48,95-104,106-108,111-118,129-161
+kernal/.pi/extensions/kernal-admin/index.ts
+  s_1d3bdd6f362f9b::t_25997dd78ef227 70,72,412
+kernal/.pi/extensions/kernal-admin/app.ts
+  s_1d3bdd6f362f9b::t_c30581cb7bf5ac 2037-2038,2158,2207
+kernal/tests/laptop-tapes.test.ts
+  s_1d3bdd6f362f9b::t_1d84fd8653274a 16,24-25,638-774
+kernal/.pi/extensions/kernal-tape/admin.ts
+  s_1d3bdd6f362f9b::t_25997dd78ef227 17,21,32-35,56,100,124,150
+kernal/.pi/extensions/kernal-tape/index.ts
+  s_1d3bdd6f362f9b::t_25997dd78ef227 26,28,40-41,98,142,145-148,160-164,207-208,222
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "2088ce5d42e743498837d3a91230832a114da202",
+  "prompts": {},
+  "sessions": {
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+outfitter/packages/api/test/laptop-tapes.test.ts
+  s_1d3bdd6f362f9b::t_b5b3a3b7cb5524 76
+  s_1d3bdd6f362f9b::t_f3494ccd496ca0 1-75,77-106
+outfitter/packages/api/src/admin/ops.ts
+  s_1d3bdd6f362f9b::t_c4943ec4a3ec6e 201-238,360-366,379
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "1c2ec628ce58fdc04720a69299c766b81089c9de",
+  "prompts": {},
+  "sessions": {
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

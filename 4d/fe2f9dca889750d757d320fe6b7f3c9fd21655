@@ -1,0 +1,26 @@
+kernal/.pi/extensions/_shared/tape-args.ts
+  s_1d3bdd6f362f9b::t_3b5744b5d68f7f 1-116
+outfitter/packages/agentd/test/tape-args.test.ts
+  s_1d3bdd6f362f9b::t_10d6310e1397ce 1-48
+outfitter/packages/agentd/src/guru.ts
+  s_1d3bdd6f362f9b::t_7adf4275cead62 63
+  s_1d3bdd6f362f9b::t_3afadab891e7ba 13,57-62,65-67,88-94,97
+outfitter/packages/agentd/src/tape-args.ts
+  s_1d3bdd6f362f9b::t_3afadab891e7ba 1-116
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "4dfe2f9dca889750d757d320fe6b7f3c9fd21655",
+  "prompts": {},
+  "sessions": {
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

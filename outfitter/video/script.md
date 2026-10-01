@@ -52,7 +52,7 @@ Cuts land on bar lines; transitions are 1-1.5 s dissolves, montage beats double-
 | 9 | 0:48.6-0:52.9 | Wish card: crayon computer with a speech bubble and an ear. "Jo, Age 47" | MADE `card-talk` | JO |
 | 10 | 0:52.9-1:00.0 | Pixel-art beach; a floppy ejects and flies to a laptop on a towel | TOUR + UI | (JO continues) |
 | 11 | 1:00.0-1:05.7 | Wish card: crayon ring of little computers wearing a crown. Quote: "Outfitter rules the fleet." "MGM" writes on, Age 54 | MADE `card-fleet` + `signature.sh` | MGM (recorded by MGM) |
-| 12 | 1:05.7-1:11.4 | **Rocky**, tight side-on close-up (the reference's framing): reads, nods, turns to camera, one thumbs-up beside the face and a huge beaming smile, freeze; "Rocky" writes on, lower right | VEO `11-closeup-smile` (start `lead-side`, end `lead-side-smile`) + `signature.sh` | -- (music swell) |
+| 12 | 1:05.7-1:11.4 | **Rocky**, tight side-on close-up (the reference's framing): reads, nods, turns to camera, one thumbs-up beside the face, settling into a quietly proud, slightly smug look (not a grin), freeze; "Rocky" writes on, lower right | VEO `11-closeup` take 3, or `11-closeup-proud` (start `lead-side`, end `lead-side-proud`) + `signature.sh` | -- (music swell) |
 | 13 | 1:11.4-1:15.0 | White serif on blue: "Thanks for all your letters. Our grown-up fans keep us going." Dissolve to `READY.` and the logo | MADE + UI | -- (music button) |
 
 **Printout (7) text**, matching PAT-c: MY WISH LIST / • Twelve Drives at once / • A Tape for every

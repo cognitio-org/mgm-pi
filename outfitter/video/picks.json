@@ -11,12 +11,18 @@
   "shots": {
     "02-sidewalk": "veo/02-sidewalk-take1.mp4",
     "03-envelope": "veo/03-envelope-take2.mp4",
-    "07-mouse": null,
-    "08-glow": null,
+    "07-mouse": "veo/07-mouse-take1.mp4",
+    "08-glow": "veo/08-glow-take2.mp4",
     "11-closeup": "veo/11-closeup-take3.mp4"
   },
   "signed": {
-    "12-rocky": { "file": "12-rocky.mp4", "from": "veo/11-closeup-take3.mp4", "name": "Rocky", "start": 5.3, "write": 1.2 }
+    "12-rocky": {
+      "file": "12-rocky.mp4",
+      "from": "veo/11-closeup-take3.mp4",
+      "name": "Rocky",
+      "start": 5.3,
+      "write": 1.2
+    }
   },
   "voices": {
     "LEE-a": "voices/LEE-a-take1.wav",

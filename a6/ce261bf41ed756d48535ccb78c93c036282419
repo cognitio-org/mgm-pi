@@ -1,0 +1,23 @@
+outfitter/packages/api/test/a2a.test.ts
+  s_1d3bdd6f362f9b::t_b566874da992c6 14-16
+  s_1d3bdd6f362f9b::t_c718aa9961034d 741-747
+outfitter/packages/api/test/e9-tapes.test.ts
+  s_1d3bdd6f362f9b::t_ffa63e7e712527 12-13
+  s_1d3bdd6f362f9b::t_82a9e16f0509fc 66-67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "a6ce261bf41ed756d48535ccb78c93c036282419",
+  "prompts": {},
+  "sessions": {
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -51,6 +51,12 @@ export interface Session {
    * ignored, and a late-registered waiter only counts settles after it. */
   settledRunId?: string;
   settledSeq?: number;
+  /** E9 §5.4: "a2a" for a session an inbound A2A task started (PR5 sets it at create). Such a
+   * session's memory identity is `a2a:<a2aTokenId>`, never the owner's: no recordTurn, no org
+   * reads, no shared or taxonomic saves (agentengine/identity.ts). Absent: an ordinary Drive. */
+  origin?: "a2a";
+  /** E9 §5.4: the A2A key that started this session (with origin "a2a"). */
+  a2aTokenId?: string;
   /** #207: when the owner or a sysop archived this floppy. An archived session is hidden from
    * GET /api/sessions by default and read-only: no wakes, no new mail, no teleport import, until
    * POST /restore clears it. Only an archived session can be formatted (deleted). */

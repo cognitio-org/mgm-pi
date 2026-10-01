@@ -88,7 +88,7 @@ export interface AdminOp {
   asks?: (ctx: AdminContext, args: Args) => Promise<boolean>;
   /** A reason this call is refused outright, checked before any approval is asked for (an agent
    * may never change an admin tape, so asking the owner first would only waste their yes). */
-  refused?: (ctx: AdminContext, args: Args) => Promise<string | undefined>;
+  refused?: (ctx: AdminContext, args: Args, caller: AdminCaller) => Promise<string | undefined>;
   run: (ctx: AdminContext, caller: AdminCaller, args: Args) => Promise<AdminResult & { target?: string }>;
 }
 
@@ -622,7 +622,7 @@ export async function approvalNeeded(ctx: AdminContext, caller: AdminCaller, op:
   if (def.kind === "operator" && !caller.operator) return false;
   const a: Args = args && typeof args === "object" && !Array.isArray(args) ? (args as Args) : {};
   try {
-    if (def.refused && (await def.refused(ctx, a))) return false;
+    if (def.refused && (await def.refused(ctx, a, caller))) return false;
     return await needsYes(ctx, def, a);
   } catch {
     return false;
@@ -655,7 +655,7 @@ export async function runAdminOp(ctx: AdminContext, caller: AdminCaller, op: unk
   try {
     if (def.kind === "operator" && !caller.operator) result = { ok: false, error: "sysop rights required" };
     else {
-      const refusal = def.refused ? await def.refused(ctx, a) : undefined;
+      const refusal = def.refused ? await def.refused(ctx, a, caller) : undefined;
       if (refusal) result = { ok: false, error: refusal };
       else result = !caller.approved && (await needsYes(ctx, def, a)) ? { ok: false, error: "needs approval", needsApproval: true } : await def.run(ctx, caller, a);
     }

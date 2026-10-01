@@ -275,6 +275,20 @@ request, reads resent once after a link drop, writes (with `idempotencyKey`) sen
   Neither refusal is audited. A Kernal from before E9 ignores `OUTFITTER_ADMIN_CAPS` and offers its
   admin tools on a memory-only Drive; they all fail this way, so ship the E9 Kernal in the image
   before turning memory on for a tape.
+- Memory (E9 PR3): `memory.search {query, type?, limit?}` and `memory.context {query}` are reads,
+  `memory.save {type, text, label?, shared?}` an audited write. The identity and repo come from the
+  session, never from args. With `memory: auto`, agentd also loads `pi-extension/outfitter-memory.ts`
+  (`OUTFITTER_MEMORY_EXTENSION`), which sends `memory.context` with the prompt before each turn
+  (3 s at most, skipped on any failure) and puts the answer in the system prompt's `memory` section.
+  With `memory` `tool` or `auto`, agentd excludes pi-memory's seven tools and pins
+  `PI_MEMORY_DIR` (an empty directory) and `PI_MEMORY_EXIT_SUMMARY=0` after the tape's env. The api
+  records `auto` sessions' user prompts and settled final assistant messages with `recordTurn`
+  (keyed `<session id>:<entry id>`), never for a session with `origin: "a2a"` or an `a2aTokenId`, and
+  never for mail another session sent or Outfitter's own notices (or the turns they start). pi
+  records each turn's section changes as system patch messages, so the recalled `memory` block is in
+  the session's entries too (session search skips system messages). A `memory.save` with
+  `shared: true`, or of a taxonomic term, waits for the owner's approval: shared memory is recalled
+  into the other users' prompts.
 - The model's shell can reach the socket, so the api decides everything. It reads the tape again on
   every call (and again after an approval wait), so turning a capability off takes effect at once. Ops run as the
   session's owner, with sysop rights only when the owner is an operator and the tape says

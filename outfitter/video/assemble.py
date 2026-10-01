@@ -284,13 +284,64 @@ def render_segment(i, seg, length, picks, work):
     return out
 
 
+def prep_voices(cut, edit, picks, work):
+    """Trim each line's leading/trailing silence (TTS pads it), optionally speed it up; return durations."""
+    tempo = edit.get("voice_tempo", 1.0)
+    trim = ("silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.05,areverse,"
+            "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.15,areverse")
+    files, durs = {}, {}
+    for v in cut["voices"]:
+        out = work / f"vox-{v['id']}.wav"
+        af = trim + (f",atempo={tempo}" if tempo != 1.0 else "")
+        ff("-i", pick(picks, f"voices.{v['id']}"), "-af", af, "-ar", 48000, "-ac", 2, out)
+        files[v["id"]], durs[v["id"]] = out, duration(out)
+    return files, durs
+
+
+def plan(cut, edit, durs):
+    """Fit the picture to the voices: each letter's segments stretch (to whole bars, so cuts stay on
+    the beat) until its lines fit; lines are placed one after another from the letter's start."""
+    segs = [dict(s) for s in cut["segments"]]
+    bar, lead, tail, gap = edit.get("bar", 2.857), edit.get("voice_lead", 0.3), edit.get("voice_tail", 0.6), edit["voice_gap"]
+    for letter in dict.fromkeys(s["letter"] for s in segs if s.get("letter")):
+        idx = [i for i, s in enumerate(segs) if s.get("letter") == letter]
+        lines = [v for v in cut["voices"] if v.get("letter") == letter]
+        need = lead + sum(durs[v["id"]] for v in lines) + gap * max(len(lines) - 1, 0) + tail
+        have = sum(segs[i]["slot"] for i in idx)
+        if need > have:
+            target = -(-need // bar) * bar
+            for i in idx:
+                segs[i]["slot"] = round(segs[i]["slot"] * target / have, 3)
+    starts = [0.0]
+    for s in segs[:-1]:
+        starts.append(starts[-1] + s["slot"])
+    placed, end = [], 0.0
+    for v in cut["voices"]:
+        if v.get("letter"):
+            first = next(i for i, s in enumerate(segs) if s.get("letter") == v["letter"])
+            prev = [p for p in placed if p[3] == v["letter"]]
+            at = prev[-1][2] + gap if prev else starts[first] + lead
+        else:
+            at = max(v["at"], end + gap) if end else v["at"]
+        end = at + durs[v["id"]]
+        placed.append((v["id"], at, end, v.get("letter")))
+    for i, s in enumerate(segs):                 # a name written on as its writer says it
+        w = s.get("write")
+        if w and w.get("on_voice"):
+            vend = next(p[2] for p in placed if p[0] == w["on_voice"])
+            s["write"] = {**w, "start": round(min(max(vend - starts[i] - 1.0, 0.3), s["slot"] - w["dur"]), 2)}
+    return segs, placed
+
+
 def build(name, cut, edit, picks, args):
     work = OUT / "cut" / name
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
-    segs, d = cut["segments"], edit["dissolve"]
-    total = sum(s["slot"] for s in segs)
-    print(f"{name}: {len(segs)} segments, {total:.1f} s")
+    vox, durs = prep_voices(cut, edit, picks, work)
+    segs, placed = plan(cut, edit, durs)
+    d = edit["dissolve"]
+    total = round(sum(s["slot"] for s in segs), 3)
+    print(f"{name}: {len(segs)} segments, {total:.1f} s (planned {sum(s['slot'] for s in cut['segments']):.1f} s)")
     files = []
     for i, seg in enumerate(segs):
         length = seg["slot"] + (d if i < len(segs) - 1 else 0)   # overlap feeds the dissolve
@@ -311,13 +362,10 @@ def build(name, cut, edit, picks, args):
     music_file = Path(args.music or edit["music"]["file"])
     music_file = music_file if music_file.is_absolute() else HERE / music_file
     music_start = args.music_start if args.music_start is not None else edit["music"]["start"]
-    a_in, filt, labels, end = [], [], [], 0.0
-    for n, v in enumerate(cut["voices"]):
-        f = pick(picks, f"voices.{v['id']}")
-        at = max(v["at"], end + edit["voice_gap"]) if end else v["at"]
-        end = at + duration(f)
-        print(f"  voice {v['id']:6} {at:6.2f}-{end:6.2f} s")
-        a_in += ["-i", f]
+    a_in, filt, labels = [], [], []
+    for n, (vid, at, end, _letter) in enumerate(placed):
+        print(f"  voice {vid:9} {at:6.2f}-{end:6.2f} s")
+        a_in += ["-i", vox[vid]]
         filt.append(f"[{n + 1}:a]aformat=sample_rates=48000:channel_layouts=stereo,"   # input 0 is the picture
                     f"adelay={int(at * 1000)}:all=1[a{n}]")
         labels.append(f"[a{n}]")

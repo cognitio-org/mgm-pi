@@ -34,7 +34,8 @@
     "PAT-d": "voices/PAT-d-take1.wav",
     "PAT-e": "voices/PAT-e-take2.wav",
     "JO": "voices/JO-take1.wav",
-    "MGM": "voices/MGM-take3.wav"
+    "MGM": "voices/MGM-take3.wav",
+    "PAT-short": "voices/PAT-short-take1.wav"
   },
   "ui": {
     "_about": "Outfitter screenshots, saved by hand into out/ui/",

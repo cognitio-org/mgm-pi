@@ -201,24 +201,41 @@ def run_shots(spec, args):
                 person_generation="allow_adult",
                 negative_prompt=spec["negative"],
             )
+            def submit(m, source=source, config=config):
+                return client.models.generate_videos(model=m, source=source, config=config)
             try:
                 model, op = with_fallback(
-                    [args.video_model] if args.video_model else VIDEO_MODELS,
-                    lambda m: client.models.generate_videos(model=m, source=source, config=config),
-                    "video")
+                    [args.video_model] if args.video_model else VIDEO_MODELS, submit, "video")
             except Exception as e:  # noqa: BLE001
                 skip(path, e)
                 continue
-            pending.append((path, op, model))
+            pending.append({"path": path, "op": op, "model": model, "submit": submit, "tries": 1})
     while pending:                              # all jobs run in parallel server-side
         time.sleep(15)
         still = []
-        for path, op, model in pending:
-            op = client.operations.get(op)
+        for job in pending:
+            path, model = job["path"], job["model"]
+            try:
+                op = job["op"] = with_retry(lambda _m: client.operations.get(job["op"]), model, "video")
+            except Exception as e:  # noqa: BLE001
+                skip(path, e)
+                continue
             if not op.done:
-                still.append((path, op, model))
+                still.append(job)
                 continue
             if op.error:
+                # Veo sometimes fails a job server-side ("Service is currently unavailable");
+                # those aren't billed, so resubmit a couple of times before giving up.
+                if transient(op.error) and job["tries"] < 3:
+                    job["tries"] += 1
+                    print(f"  {path.name}: Veo error ({str(op.error)[:90]}); resubmitting, try {job['tries']} of 3",
+                          file=sys.stderr)
+                    try:
+                        job["op"] = with_retry(job["submit"], model, "video")
+                        still.append(job)
+                    except Exception as e:  # noqa: BLE001
+                        skip(path, e)
+                    continue
                 skip(path, op.error)
                 continue
             vids = op.response.generated_videos if op.response else []

@@ -1,0 +1,37 @@
+.github/workflows/outfitter-ci.yml
+  s_162e2233a4f0f3::t_8d21a1eccf49fa 51,122-126,165-168
+kernal/skills/outfitter-admin/SKILL.md
+  s_162e2233a4f0f3::t_435425b89d4cc6 40-45
+kernal/skills/outfitter-admin/references/e9-tapes.md
+  s_162e2233a4f0f3::t_aaf9322f6f6c86 1-73
+kernal/tests/image-subagents.test.ts
+  s_162e2233a4f0f3::t_652fc9ad3e6098 1-94
+outfitter/EPIC.md
+  s_162e2233a4f0f3::t_2205bf66dd1731 89-91,123,543-546,642-673
+outfitter/deploy/test/workflow-sh-quotes.test.sh
+  s_162e2233a4f0f3::t_47b27ddc096a40 1-41
+outfitter/image/Dockerfile
+  s_162e2233a4f0f3::t_d3bf4400c86304 49-52,157-161,173
+outfitter/image/agents/coder.md
+  s_162e2233a4f0f3::t_9602a5a2129a2f 1-27
+outfitter/image/render-settings.sh
+  s_162e2233a4f0f3::t_54868be596eb0f 9-21,23-24,32,39-40,42,44
+outfitter/packages/api/test/e9-tapes.test.ts
+  s_162e2233a4f0f3::t_c10c7be3f6c402 1-65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "f55589780cfb20adee41d92d315b18b5ba82661b",
+  "prompts": {},
+  "sessions": {
+    "s_162e2233a4f0f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d82cf409-27ab-46f7-b6cd-1549691ef502",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

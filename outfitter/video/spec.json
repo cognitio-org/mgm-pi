@@ -8,6 +8,13 @@
       "prompt": "Photograph. {set} {lead} sits at one of the computers, seen three-quarter from behind its monitor, whose edge fills the right fifth of the frame, soft and out of focus. Earnest, calm expression, looking at the screen. Another person works at a second computer in the soft background. Soft warm light. {suffix}"
     },
     {
+      "id": "lead-side",
+      "prompt": "Photograph. {set} The same person as the reference image, now seen almost in profile from their left side at eye level, in a tight head-and-shoulders close-up. They face a beige CRT monitor at the right of the frame; the back edge of that monitor fills the right third of the frame as a large, soft, out-of-focus wedge close to the lens. Behind them, a mustard-yellow wall with one soft out-of-focus poster. Earnest, calm expression, looking at the screen. Head and monitor edge both inside the central 4:3 area. {suffix}",
+      "refs": [
+        "lead-lab"
+      ]
+    },
+    {
       "id": "lead-glow",
       "prompt": "Photograph against a plain pale blue-grey studio backdrop: the top of the head and forehead of the same person as the reference image at the bottom of the frame; above the head, inside a soft white elliptical glow, a ring of twelve small generic beige desktop computers with CRT screens float, their screens showing green text. {suffix}",
       "refs": [
@@ -57,8 +64,15 @@
       "id": "11-thumbsup",
       "seconds": 8,
       "start": "lead-lab",
-      "takes": 4,
+      "takes": 1,
       "prompt": "The person at the beige computer reads the screen, nods slowly with an earnest deadpan expression, then turns their head toward the camera and gives one firm thumbs-up, holding it completely still for a full second. Locked-off camera, no cuts. {set} {suffix}"
+    },
+    {
+      "id": "11-closeup",
+      "seconds": 8,
+      "start": "lead-side",
+      "takes": 3,
+      "prompt": "The person reads the screen and nods slowly twice with an earnest deadpan expression, then turns their head toward the camera and raises one firm thumbs-up close beside their face, holding it completely still for a full second. Locked-off camera, no cuts, no zoom. {set} {suffix}"
     }
   ],
   "voices": {

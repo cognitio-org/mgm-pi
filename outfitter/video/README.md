@@ -87,6 +87,9 @@ source video (local only) --extract-frames.sh--> reference/*.png (gitignored)
    The `.cube` holds only color statistics, so it's fine to commit.
    `--strength 0.6` if the full match is too heavy.
 
+5b. **Signature** on the punchline close-up (before the VHS pass):
+   `./signature.sh in.mp4 out/12-signed.mp4 "<letter writer's name>" [start-s] [write-s]`.
+
 6. **Finish every shot** with the same pass so AI and screen footage sit together:
 
    ```bash

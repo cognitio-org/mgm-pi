@@ -18,8 +18,8 @@ Nothing billed was created and no Atlas resource was changed. Scratch work staye
 | S1 | Memory SDK token injection (`fetchImpl`) | **Pass** |
 | S2 | One read returning private and org memory | **No such value.** Reads AND `userId` with `visibility`, so two calls are needed |
 | S3 | REST behind `workspace sessions stop` | **Found:** `POST …/workspaces/{w}/runtime-sessions/{id}/stop` (202) |
-| S4 | Extraction LLM via a gateway | Config **supported** (`base_url`, https); runtime egress **open** (live check) |
-| S5 | Delete / forget | Server has soft DELETE; SDK facades don't; gateway proxying **open** |
+| S4 | Extraction LLM via a gateway | Config **supported** (`base_url`, https); runtime egress **verified live** (22 turns extracted via `router.kernal.one`, $0.0042) |
+| S5 | Delete / forget | Server has soft DELETE; SDK facades don't; gateway proxying **verified live** (200) |
 | T1 | `@a2a-js/sdk` 1.3.0 on Fastify | **Pass,** with our own request handler (below) |
 | T2 | Python `a2a-sdk` 1.2.1 speaks v1.0 by default | **Pass** |
 | T3 | TCK at MUST level | **Pass:** 81 passed, 0 failed (toy server, Bearer injected) |
@@ -60,7 +60,7 @@ https://www.mongodb.com/docs/atlas/reference/flex-limitations/):
   - The SRV host stays the same; search index definitions are rebuilt
     (https://www.mongodb.com/docs/atlas/scale-cluster/).
 
-**Owner commands for the decided two-cluster setup** (not run):
+**Owner commands for the decided two-cluster setup** (run 2026-10-01):
 ```sh
 P=(--profile outfitter --projectId 6aafddf75566cf48726735bb)   # zsh array
 # 0. Payment method on org 6aafdde3306e4ae530995071: Atlas UI → Billing (or atlas.md §7 Marketplace)
@@ -69,9 +69,9 @@ atlas clusters create outfitter-memory --provider GCP --region CENTRAL_US --tier
 atlas clusters describe outfitter-memory $P -o json      # wait for IDLE; note its SRV host
 # 2. Scope the api's user to its own cluster and database (check the app after)
 atlas dbusers update outfitter-api --role readWrite@outfitter --scope outfitter:CLUSTER $P
-# 3. After the Agent Engine memory project exists (spec owner step 4), with its project id:
-atlas dbusers create --username agent-engine-memory --password "<from a password manager>" \
-  --role readWrite@mdb_memory_<AE_PROJECT_ID>,readWrite@mdb_store_<AE_PROJECT_ID> \
+# 3. The memory DB user (the CLI prompts for the password):
+atlas dbusers create --username agent-engine-memory \
+  --role readWrite@mdb_memory_6aafddf75566cf48726735bb,readWrite@mdb_store_6aafddf75566cf48726735bb \
   --scope outfitter-memory:CLUSTER --desc "Agent Engine memory service (E9)" $P
 atlas dbusers describe agent-engine-memory $P -o json    # confirm roles and scope
 # 4. As agent-engine-memory, confirm the main cluster is unreachable (expect an auth failure):
@@ -105,7 +105,8 @@ Recall makes two calls and merges them.
 - **Uniqueness:** semantic `(org_id, label)` is unique project-wide, and `saveSemantic` upserts.
   Procedure names are unique project-wide, deleted ones included. So the api namespaces keys.
 - **Idempotency:** `recordTurn` has no `userId` (it comes from `bind`). Its default idempotency key
-  is a random UUID per call, so pass the entry id.
+  is a random UUID per call, so pass `<sessionId>:<entryId>` (pi's entry ids are unique only per
+  session).
 - **Database names** are suffixed: `mdb_memory_<id>`, `mdb_store_<id>`.
 
 **S3 runtime sessions:**
@@ -124,9 +125,11 @@ Recall makes two calls and merges them.
 - `extraction_llm.{provider, model, base_url, api_key_secret, auth_header}` sits under `memory:`.
 - `api_key_secret` must be one of five fixed names (`LLM_API_KEY`, …). `base_url` must be https.
 - The memory server bundles LiteLLM.
-- Egress to an arbitrary https host is undocumented.
+- Egress to an arbitrary https host is undocumented, but works: verified live with
+  `router.kernal.one`.
 
-**S5 delete:** the memory server has soft `DELETE /{type}/{id}`. Gateway proxying needs a live call.
+**S5 delete:** the memory server has soft `DELETE /{type}/{id}`. The gateway proxies it (live check:
+`DELETE …/memory/semantic/{id}` → 200).
 
 ## A2A (T1–T4)
 **T1 Fastify:** reuse `@a2a-js/sdk`'s `JsonRpcTransportHandler`, `validateVersion`, `Extensions`,
@@ -177,14 +180,15 @@ SSE helpers, `AgentCard` and errors, with no Express.
 - **P3 #317:** 0.71.0 runs children in the background by default and strips `GIT_CONFIG_*`, which
   carries agentd's git proxy. So background children can't push. The foreman pushes for them.
 - **Also:** a cloned repo's `.pi/agents/*.md` outranks builtin agents. So tapes reachable over A2A
-  get no `subagent`, and the image sets `agentExcludeDirs` or a capability ceiling.
+  get no `subagent`, and the image sets `agentExcludeDirs` (done in PR8; residual gaps in spec §8).
 
-## Live checks still open
-These need an Agent Engine account, after owner steps 1–5. They are listed in the spec under
-Delivery:
-- memory-runtime egress to LiteLLM
-- service-account tokens on `runtime-sessions`
-- gateway DELETE proxying
-- `buildContext`'s filter on a source without `metadata.repo`
-- the gateway's `context-from-sources` route
-- exactly 10 indexes created on `outfitter-memory`
+## Live checks
+Run 2026-10-01 with the memory service account (spec, Delivery):
+- memory-runtime egress to LiteLLM: **verified**
+- gateway DELETE proxying: **verified**
+- `buildContext`'s filter on a source without `metadata.repo`: **verified** (it matches only through
+  `$exists: false`)
+- the gateway's `context-from-sources` route: **verified**
+- exactly 10 indexes created on `outfitter-memory`: **verified**
+- service-account tokens on `runtime-sessions`: **still open**, moved to PR4 (the memory project has
+  no workspaces)

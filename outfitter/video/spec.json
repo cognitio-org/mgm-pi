@@ -1,0 +1,134 @@
+{
+  "lead": "a person in their mid-50s with short grey hair, wearing a powder-blue polo shirt",
+  "suffix": "1990 corporate promotional video shot on Betacam and dubbed to VHS, soft and slightly blurry, low saturation, lifted blacks, warm skin, mild tape grain, mustard-yellow walls, powder-blue and beige tones, generic unbranded beige desktop computer with separate CRT monitor, no logos, no brand names, no readable text. Keep all important action inside the central 4:3 area of the frame.",
+  "negative": "logos, brand names, trademarks, apple logo, readable text, captions, watermark, children, modern devices, smartphones, flat-screen monitors",
+  "stills": [
+    {
+      "id": "lead-lab",
+      "prompt": "Photograph, 1990 computer lab with mustard-yellow walls and a few generic posters. {lead} sits at a beige desktop computer with a separate CRT monitor, seen three-quarter from behind the monitor, whose edge fills the right fifth of the frame, soft and out of focus. Earnest, calm expression, looking at the screen. Another person works at a second beige computer in the soft background. Soft warm light. {suffix}"
+    },
+    {
+      "id": "lead-glow",
+      "prompt": "Photograph against a plain pale blue-grey studio backdrop: the top of the head and forehead of the same person as the reference image at the bottom of the frame; above the head, inside a soft white elliptical glow, a ring of twelve small beige desktop computers float, their screens showing green text. {suffix}",
+      "refs": [
+        "lead-lab"
+      ]
+    },
+    {
+      "id": "card-bug",
+      "prompt": "A child's crayon drawing on off-white paper, scanned flat: a big friendly cartoon bug (a beetle with six legs) wearing a bandage, with a happy little computer next to it, drawn with wobbly lines in green, brown and red crayon. Lots of empty paper on the left half for text. No text, no letters.",
+      "aspect": "4:3"
+    },
+    {
+      "id": "card-talk",
+      "prompt": "A child's crayon drawing on off-white paper, scanned flat: a smiling boxy computer with a speech bubble and a big drawn ear, little sound lines around it, in green, red and blue crayon. Lots of empty paper on the left half for text. No text, no letters.",
+      "aspect": "4:3"
+    }
+  ],
+  "shots": [
+    {
+      "id": "02-sidewalk",
+      "seconds": 6,
+      "prompt": "Handheld camera at hip height: four adults in their 40s and 50s in 1990 office casual (polos, khakis, white sneakers) run laughing down a suburban sidewalk past hedges and beige stucco houses toward a white curbside mailbox with a red flag in the right foreground, each holding a plain white envelope. Overcast late afternoon. {suffix}"
+    },
+    {
+      "id": "03-envelope",
+      "seconds": 4,
+      "prompt": "Close-up: an adult hand pushes a plain white envelope with a blank face into an open white curbside mailbox, blurred green hedge behind, then raises the small red flag. {suffix}"
+    },
+    {
+      "id": "05-lab",
+      "seconds": 8,
+      "start": "lead-lab",
+      "prompt": "The person at the beige computer reads the screen and nods slowly, earnest and calm. The second person keeps working in the background. Locked-off camera, no cuts. {suffix}"
+    },
+    {
+      "id": "07-mouse",
+      "seconds": 4,
+      "prompt": "Top-down insert shot: an adult hand clicks a beige one-button mouse on a light-wood desk; the corner of a beige keyboard and its coiled cable at frame left. Locked-off camera. {suffix}"
+    },
+    {
+      "id": "08-glow",
+      "seconds": 6,
+      "start": "lead-glow",
+      "prompt": "Twelve small beige computers float in a slow ring inside the soft white glow; their screens flicker with green text; the glow gently pulses. The head below stays still. Locked-off camera. {suffix}"
+    },
+    {
+      "id": "11-thumbsup",
+      "seconds": 8,
+      "start": "lead-lab",
+      "takes": 4,
+      "prompt": "The person at the beige computer reads the screen, nods slowly with an earnest deadpan expression, then turns their head toward the camera and gives one firm thumbs-up, holding it completely still for a full second. Locked-off camera, no cuts. {suffix}"
+    }
+  ],
+  "voices": {
+    "LEE": {
+      "voice": "Iapetus",
+      "direction": "An older adult in their 60s, gentle, proud and a little slow, reading their own handwritten letter aloud like a kid in front of the class. Earnest, no irony."
+    },
+    "PAT": {
+      "voice": "Kore",
+      "direction": "An adult in their 40s, earnest and slightly breathless, reading their own letter aloud like a kid in front of the class, completely serious; when reading a list, speeds up a little item by item."
+    },
+    "JO": {
+      "voice": "Aoede",
+      "direction": "An adult in their 40s, soft and dreamy, reading their own letter aloud with wistful little pauses, like a kid daydreaming."
+    },
+    "MGM": {
+      "voice": "Charon",
+      "direction": "An adult in their 50s, mid-range voice, reading their own letter aloud flat and completely earnest, like a kid in front of the class. Small pauses between sentences. No irony, no smile in the voice."
+    }
+  },
+  "lines": [
+    {
+      "id": "LEE-a",
+      "who": "LEE",
+      "text": "Dear Sysop. My name is Lee, and I am sixty-one years old."
+    },
+    {
+      "id": "LEE-b",
+      "who": "LEE",
+      "text": "I am learning to program with agents. I pick a Tape, I start a Floppy, and a Drive does the work."
+    },
+    {
+      "id": "LEE-c",
+      "who": "LEE",
+      "text": "I am sending you a picture of the first bug it fixed. Your friend, Lee."
+    },
+    {
+      "id": "PAT-a",
+      "who": "PAT",
+      "text": "Dear Sysop. My boss won't let me run more than one agent. So please write a letter to my boss."
+    },
+    {
+      "id": "PAT-b",
+      "who": "PAT",
+      "text": "Here is what I would like:"
+    },
+    {
+      "id": "PAT-c",
+      "who": "PAT",
+      "text": "Twelve Drives at once. A Tape for every job. Atlas memory, so it remembers where we left off. Atlas agents that hand my agents work, and back again. Eject to my laptop. And a Control Panel with all the keys."
+    },
+    {
+      "id": "PAT-d",
+      "who": "PAT",
+      "text": "How much will all this cost?"
+    },
+    {
+      "id": "PAT-e",
+      "who": "PAT",
+      "text": "Make it sound official, okay? Sincerely, Pat."
+    },
+    {
+      "id": "JO",
+      "who": "JO",
+      "text": "Dear Sysop. Maybe someday you can make a computer I can just talk to. And when I'm done, I can take my work home. Sincerely, Jo."
+    },
+    {
+      "id": "MGM",
+      "who": "MGM",
+      "text": "Dear Sysop. Outfitter rules the fleet. Your Outfitter friend, M G M."
+    }
+  ]
+}

@@ -56,9 +56,23 @@ source video (local only) --extract-frames.sh--> reference/*.png (gitignored)
 2. **Style bible.** Fill in `style-bible.md` from the frames (or hand Claude a few face-free frames
    and ask it to). Its "prompt suffix" goes at the end of every Veo / image prompt.
 
-3. **Original reference stills.** Generate the character and set with an image model using the
-   style bible, then hand those (ours, not the source frames) to Veo as image or reference inputs
-   so every shot shows the same original character.
+3. **Generate stills, shots and voices** (Google Cloud project `outfitter-509211`):
+
+   ```bash
+   brew install uv
+   gcloud auth application-default login
+   gcloud auth application-default set-quota-project outfitter-509211
+   uv run generate.py all --dry-run      # see every request, call nothing
+   uv run generate.py stills             # pick the best: cp out/stills/lead-lab-take2.png out/stills/lead-lab.png
+   uv run generate.py shots
+   uv run generate.py voices
+   ```
+
+   Prompts, voices and lines live in `spec.json`. Best models first, with automatic fallback:
+   Gemini 3 Pro Image for stills, Veo 3.1 (1080p, no generated audio) for shots, Gemini-TTS for
+   voices. Output goes to `out/` (gitignored) as numbered takes; existing files are skipped, so
+   re-runs only generate (and bill) what's missing. `--only 11-thumbsup --takes 6` for more takes
+   of one shot.
 
 4. **UI footage.** Record real Outfitter screens, never AI-generated UI: `packages/web/scripts/record-tour.mjs`
    for the Manual tour, or a Playwright script for a specific flow.

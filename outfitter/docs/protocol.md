@@ -176,7 +176,7 @@ Up (agentd → api):
 | `hello` | `runId, sessionId, agentdVersion, piVersion, lastAckedSeq, runToken, protocolVersion, boot?` | first frame after connect; `boot` (optional) is this sandbox's boot durations on agentd's own clock -- `bootMs, setupMs, assignmentWaitMs?, sinceAssignedMs, identityTokenMs?, connectMs?, preBooted?` (see "Start-up timing" below), numbers only, never a secret; the api keeps the first accepted hello's and ignores it on a reconnect; `runToken` is `RUN_TOKEN` echoed back (see "Run token" above); `protocolVersion` is agentd's `WIRE_PROTOCOL_VERSION` (`packages/agentd/src/protocol.ts`) -- the api closes with `4409` when it's older than its own copy of the constant (`packages/api/src/agentlink.ts`'s `API_PROTOCOL_VERSION`), so a deploy that updates the API ahead of the agent image fails loudly instead of the agent silently ignoring frames it doesn't understand (bug 9, `docs/reports/cloud-fixes.md`) |
 | `status` | `state: "cloning"\|"restoring"\|"starting"\|"running"\|"idle"\|"checkpointing"\|"stopping", detail?` | on change; the api maps this to `Run.state` (`agentlink.ts`'s `mapStatusToRunState`): `running`/`idle` map straight across, `checkpointing` leaves the run's current state untouched (a mid-turn checkpoint push, not a state change), `stopping` maps to the `Run.state` of the same name, anything else (`cloning`/`restoring`/`starting`) maps to `provisioning`. A `status`/`heartbeat` frame that arrives after the run has already reached a terminal state (`bye` already processed) is ignored — `bye` is final. |
 | `entry` | `seq, entry` (a pi session entry exactly as pi writes it to JSONL: message, model_change, compaction, custom, ...) | whenever pi appends to the session file (agentd tails the file; this is the durable transcript) |
-| `event` | `seq, event` (a raw pi RPC event: agent_start, message_update, tool_execution_start/update/end, agent_end, extension_ui_request, ...) | streamed for live UI; not persisted except `extension_ui_request` |
+| `event` | `seq, event` (a raw pi RPC event: agent_start, message_update, tool_execution_start/update/end, agent_end, agent_settled, extension_ui_request, ...) | streamed for live UI; not persisted except `extension_ui_request`. agentd adds one field of its own: `agent_settled` carries `lastEntryId`, sent only after agentd has read the session file and sent every entry pi wrote before settling (see "Turn settled") |
 | `spend` | `keySpend?, keyMax?, modelGroup?, callId?, estimate?, baseline?` | `keySpend`/`keyMax`/`modelGroup`/`callId` from LiteLLM's `x-litellm-key-spend`/`-max-budget`/`-model-group`/`-call-id` response headers (relayed by the `outfitter-spend` pi extension's `after_provider_response` hook, `packages/agentd/pi-extension/outfitter-spend.ts`, loaded only under agentd -- see E2.11); absent fields mean the response carried no LiteLLM headers at all (non-LiteLLM route) or an incomplete set (e.g. no budget cap, so no `-max-budget`). `estimate` is pi's own cumulative cost estimate for the run so far (agentd's running sum of the extension's own per-response `usage` estimates, `packages/agentd/src/pi.ts`'s `SpendTailer`), independent of LiteLLM's headers -- it is what lets `Run.costEstimate` be real even for a guru whose route never returns spend headers. For an auto-router model group (`claude-auto-llm`, `gemini-auto-llm`, `*-agentic`, `*-affinity`, whose `/model/info` price is all zero because the underlying model is only picked per call), the extension's per-response `usage` estimate is instead computed from the newest assistant message's token counts times the *resolved* model's price (from `x-litellm-model-name`, fetched via `/model/info` at `session_start`) plus `x-litellm-classifier-cost`, rather than pi's own (zero) per-message cost estimate -- see E2.11b. `baseline: true` marks exactly one frame per run, sent from the extension's `session_start` handler before any provider call: `keySpend` on it is the LiteLLM key's balance read from `GET /key/info` *before* this run's first call (rather than a post-call balance from a response header), so the api's "pin `Run.keySpendStart` from the first spend frame seen" logic (`agentlink.ts`) baselines correctly and a one-call run's `cost` is no longer under-reported as 0. If `GET /key/info` fails, no baseline frame is sent and the prior first-response-frame-pins-baseline behaviour applies. |
 | `checkpoint` | `branch?, head?, pushed?: boolean, snapshotUrl?, workspaceUrl?` | after each checkpoint; repo-less runs upload a workspace tarball (`workspaceUrl`) instead of pushing. For a repo run agentd commits any uncommitted changes, then pushes when HEAD is the session branch or a branch under `repo.branchPrefix` (default `outfitter/`). `branch` is that checked-out branch, and the api copies an allowed one onto `session.branch`. A detached HEAD or any other branch is not pushed; the frame keeps the session branch. `pushed` says whether this checkpoint sent anything |
 | `heartbeat` | `idleSeconds, memMb, sandboxMemMb?, sandboxMemLimitMb?` | every 15 s. `memMb` is agentd's own rss. `sandboxMemMb`/`sandboxMemLimitMb` (#187) are the whole sandbox's peak memory since the previous heartbeat (sampled every 5 s) and its limit, in MiB, from the cgroup gVisor emulates inside the sandbox (or `/proc/meminfo`); absent when neither is readable. Usage is the working set: reclaimable file cache (`inactive_file` in `memory.stat`, absent under gVisor) is subtracted. The api keeps the latest report and the run's high-water mark (`Run.sandboxMemLastMb`/`sandboxMemPeakMb`/`sandboxMemLimitMb`), and when the reconciler fails a silent run whose **last** report was at 80% of its limit or more, its note says the sandbox most likely ran out of memory — an OOM kill takes agentd with it, so nothing else reports it. Since #193 that estimate is the fallback: on GKE the api reads the pod's own termination reason (`Run.sandboxExit`, e.g. `OOMKilled` with exit code 137) shortly after agentd goes quiet, and fails the run with it at once. |
@@ -394,6 +394,41 @@ It is never sent as `--system-prompt`, which would replace pi's own prompt. Beca
 way pi does (the workspace's `.pi/APPEND_SYSTEM.md`, then `$PI_CODING_AGENT_DIR/APPEND_SYSTEM.md`) and,
 when the guru has no `appendSystemPrompt` of its own, passes its path as an earlier
 `--append-system-prompt`. A guru's own text replaces the file, as it did before.
+
+### Turn settled (E9 §1)
+
+pi's `agent_settled` event means the turn is over: no retry, compaction retry or queued message
+remains. agentd tails pi's session file every 250 ms, so the turn's last entry can still be unread
+when the event arrives. agentd therefore reads the file first, the way a checkpoint does, and only
+then sends the event, with `lastEntryId` (the id of the last `entry` it has sent this run; absent
+when pi has written none since the restored transcript). Events pi emits during that read wait
+and follow in order. The field needs no protocol version: an api that doesn't know it forwards the
+event unchanged, and an api that does treats an older agentd's settle, without the field, as a
+settle all the same.
+
+The api records `Session.settledAt` (and `settledEntryId`) and finishes *turn waiters*
+(`turnWaiters` collection, `src/turns.ts`), the completion signal for A2A tasks and delegation
+(EPIC.md E5.2). A waiter is registered for one mail before the mail is posted and finishes once:
+
+1. **settled**: the first `agent_settled` after pi accepted the mail. Acceptance is pi's
+   `response` to `mail:<id>` with `success: true`, taken from the same seq stream as the settle
+   (seq restarts every run, so only a settle of the same run at a higher seq counts). The
+   unsequenced `mail.ack` frame can overtake an earlier settle, so it isn't used for this, except
+   as a provisional fallback two minutes after it, when the `response` never showed (only a settle
+   after the run's last recorded one counts, and a late `response` replaces it). A settle is never
+   matched to a mail id: other mail can settle the same turn. A replayed settle (seq not above the
+   session's `settledSeq` for that run) doesn't rewrite the session.
+2. **ended, run_stopped / run_failed**: the run that accepted the mail reached `stopped` or
+   `failed` first (on its `bye`, or found by the tick for a run that ended without one).
+   **mail_dead / mail_held**: the mail can't reach a run.
+3. **ended, deadline**: `deadlineAt` starts 60 minutes out. `/api/hooks/tick` pushes it to ten
+   minutes past the run's last activity while the run is `provisioning` (counted from its start)
+   or `running` with activity in the last ten minutes, never past four hours from registration.
+   At expiry the api stops the run that accepted the mail (`reason: "deadline"`), then ends the
+   waiter. A mail no run accepted stops nothing; it stays queued.
+
+A finished waiter is never overwritten. Run state `idle` never counts as completion: agentd is
+idle before its first prompt. Finished waiters are TTL-deleted after 7 days.
 
 ### Start-up timing
 

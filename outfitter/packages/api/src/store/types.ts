@@ -41,6 +41,16 @@ export interface Session {
    * repo session reports branch/head (and maybe snapshotUrl); a repo-less session reports
    * workspaceUrl instead (protocol.md's agentd<->api `checkpoint` row). */
   checkpoint?: { branch?: string; head?: string; snapshotUrl?: string; workspaceUrl?: string };
+  /** E9 §1: when pi last reported the turn settled (`agent_settled`: nothing queued, no retry
+   * left), and the last entry agentd had sent by then, when it said. Not run state `idle`, which a
+   * run enters before its first prompt. */
+  settledAt?: string;
+  /** null when the settle carried no lastEntryId (an older agentd, or none sent this run). */
+  settledEntryId?: string | null;
+  /** The settle's run and seq: a replayed settle (seq not above the last one of the same run) is
+   * ignored, and a late-registered waiter only counts settles after it. */
+  settledRunId?: string;
+  settledSeq?: number;
   /** #207: when the owner or a sysop archived this floppy. An archived session is hidden from
    * GET /api/sessions by default and read-only: no wakes, no new mail, no teleport import, until
    * POST /restore clears it. Only an archived session can be formatted (deleted). */
@@ -999,6 +1009,74 @@ export interface BrowserCapturesCollection {
   deleteForSession(sessionId: string): Promise<number>;
 }
 
+/** E9 §1: how a turn waiter finished. `settled`: the first settle after its mail was accepted.
+ * `ended`: anything else, with `endReason`. */
+export type TurnWaiterStatus = "open" | "settled" | "ended";
+/** `run_stopped`/`run_failed`: the run that accepted the mail ended before settling (layer 2).
+ * `mail_dead`/`mail_held`: the mail can't reach a run (attempts ran out, or held). `deadline`:
+ * layer 3. `canceled`: the caller gave up (TurnWaiters.cancel). */
+export type TurnWaiterEndReason = "run_stopped" | "run_failed" | "mail_dead" | "mail_held" | "deadline" | "canceled";
+
+/** E9 §1 (docs/specs/atlas-agent-engine-and-a2a.md, EPIC.md E5.2's completion layers): something
+ * waiting for the turn one mail starts to finish -- an A2A task, a delegation. Durable, because
+ * the settle can arrive on another api instance than the one that registered it; see turns.ts. */
+export interface TurnWaiter {
+  id: string;
+  sessionId: string;
+  /** The mail whose turn this waits for. Only its acceptance is matched by id: a settle never is
+   * (other mail can settle the same turn), so the first settle after acceptance completes it. */
+  mailId: string;
+  /** Who registered it ("a2a", "delegate", ...). Opaque here; for the caller's own lookups. */
+  owner?: string;
+  status: TurnWaiterStatus;
+  createdAt: string;
+  updatedAt: string;
+  /** Layer 3. The tick sweep pushes it forward while the run works, never past `capAt`. */
+  deadlineAt: string;
+  /** Hard cap: createdAt + 4 h. */
+  capAt: string;
+  /** Set when pi accepted the mail: the run, and the seq of pi's `response` event for it. agentd's
+   * seq restarts every run, so a settle completes the waiter only on this run, at a higher seq. */
+  ackRunId?: string;
+  ackSeq?: number;
+  ackedAt?: string;
+  /** The acceptance was taken from the mail's acked state, not pi's `response` (TurnWaiters'
+   * adoptMailAck): provisional, so the real `response`, if it still arrives, replaces it. */
+  ackFromMail?: boolean;
+  /** On `settled`: the settle's `lastEntryId`, when agentd sent one. */
+  settledEntryId?: string;
+  /** On `ended`. */
+  endReason?: TurnWaiterEndReason;
+  /** On `ended`: a sentence for a person (the run's reason, the mail's hold note). */
+  detail?: string;
+  finishedAt?: string;
+}
+
+/** The fields `finish` writes. */
+export type TurnWaiterFinish =
+  | { status: "settled"; settledEntryId?: string }
+  | { status: "ended"; endReason: TurnWaiterEndReason; detail?: string };
+
+export interface TurnWaitersCollection {
+  insert(waiter: TurnWaiter): Promise<void>;
+  findById(id: string): Promise<TurnWaiter | null>;
+  /** Records pi's acceptance of `mailId` on the session's open waiters for it that have none yet,
+   * or only a provisional one (`ackFromMail`); a replayed `response` event is a no-op. With
+   * `fromMail`, marks only waiters with no acceptance at all, provisionally. Returns how many. */
+  markAcked(sessionId: string, mailId: string, runId: string, seq: number, nowIso: string, fromMail?: boolean): Promise<number>;
+  /** Finishes one waiter, only if it is still open: a finished waiter is never overwritten. Null
+   * when it wasn't open (or doesn't exist). */
+  finish(id: string, outcome: TurnWaiterFinish, nowIso: string): Promise<TurnWaiter | null>;
+  /** Moves an open waiter's deadlineAt later; false if it is no longer open or the deadline is
+   * already at or past `deadlineAt` (two sweeps can't move it back). */
+  extendDeadline(id: string, deadlineAt: string, nowIso: string): Promise<boolean>;
+  listOpenForSession(sessionId: string): Promise<TurnWaiter[]>;
+  /** Open waiters, earliest deadline first, at most `limit` (the tick sweep). */
+  listOpen(limit: number): Promise<TurnWaiter[]>;
+  /** #208: removes every row of this session (format). Returns how many were removed. */
+  deleteForSession(sessionId: string): Promise<number>;
+}
+
 export interface Store {
   sessions: SessionsCollection;
   entries: EntriesCollection;
@@ -1017,5 +1095,6 @@ export interface Store {
   adminAudit: AdminAuditCollection;
   adminApprovals: AdminApprovalsCollection;
   sessionChunks: SessionChunksCollection;
+  turnWaiters: TurnWaitersCollection;
   close(): Promise<void>;
 }

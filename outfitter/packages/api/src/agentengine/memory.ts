@@ -15,6 +15,9 @@
 
 import { Memory, MemoryAPIError, MemoryConnectionError } from "@mongodb-js/agent-engine-sdk-memory";
 import { AgentEngineClient, AgentEngineError, clipRemote, kindForStatus, type FetchFn } from "./client.ts";
+import { checkId } from "./agents.ts";
+
+const MEMORY_TYPES: ReadonlySet<string> = new Set(["semantic", "episodic", "procedural", "taxonomic"]);
 
 /** The SDK facade, as PR3 uses it. `bind` returns a handle scoped to one identity. */
 export type MemoryFacade = Pick<Memory, "bind" | "buildContext" | "recordTurn" | "saveSemantic" | "saveEpisode" | "saveProcedure" | "saveTaxonomic" | "search">;
@@ -77,6 +80,9 @@ export function createMemoryService(client: AgentEngineClient): MemoryService {
     bind: ({ userId, sessionId }) => sdk.bind({ userId, ...(sessionId ? { sessionId } : {}) }),
     contextFromSources: (body, opts = {}) => client.request("POST", "/memory/retrieval/context-from-sources", { body, signal: opts.signal }),
     async softDelete(type, id, userId, opts = {}) {
+      // Model-chosen values reach this path in PR3: checked at runtime, not only by the type.
+      if (!MEMORY_TYPES.has(type)) throw new AgentEngineError("bad_request", "unknown memory type");
+      checkId("memory id", id);
       await client.request("DELETE", `/memory/${type}/${encodeURIComponent(id)}`, { query: { soft: "true", user_id: userId }, signal: opts.signal });
     },
   };

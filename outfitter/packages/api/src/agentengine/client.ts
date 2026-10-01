@@ -244,16 +244,46 @@ export class AgentEngineClient {
    * those).
    */
   async fetch(url: string, init: RequestInit = {}): Promise<Response> {
+    // The token is for Agent Engine only, whatever URL the SDK builds.
+    let target: URL;
+    try {
+      target = new URL(url);
+    } catch {
+      throw new AgentEngineError("bad_request", `Agent Engine ${this.part}: not a URL`);
+    }
+    if (target.origin !== new URL(this.baseUrl).origin) throw new AgentEngineError("bad_request", `Agent Engine ${this.part}: refusing to send the token to another origin`);
+    const signal = init.signal ?? undefined;
     const send = async (token: string) => {
       const headers = new Headers(init.headers);
       headers.set("Authorization", `Bearer ${token}`);
       return this.fetchFn(url, { ...init, headers, redirect: "error" });
     };
-    const first = await this.token();
+    const first = await this.waitFor(this.token(), signal);
     const res = await send(first);
     if (res.status !== 401) return res;
     await res.body?.cancel().catch(() => {});
-    return send(await this.token({ force: true, stale: first }));
+    return send(await this.waitFor(this.token({ force: true, stale: first }), signal));
+  }
+
+  /** A shared token wait that this caller can abandon: its abort or timeout ends its own wait,
+   * never the refresh other callers are waiting on. */
+  private waitFor<T>(p: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+    if (!signal) return p;
+    if (signal.aborted) return Promise.reject(signal.reason ?? new DOMException("aborted", "AbortError"));
+    return new Promise<T>((resolve, reject) => {
+      const onAbort = () => reject(signal.reason ?? new DOMException("aborted", "AbortError"));
+      signal.addEventListener("abort", onAbort, { once: true });
+      p.then(
+        (v) => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(v);
+        },
+        (e) => {
+          signal.removeEventListener("abort", onAbort);
+          reject(e);
+        },
+      );
+    });
   }
 
   /**

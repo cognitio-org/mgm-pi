@@ -5,7 +5,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { AgentEngineClient, AgentEngineError, createAgentEngine, toAgentEngineError } from "../src/agentengine/index.ts";
-import { FAKE_PROJECTS, FakeAgentEngine } from "../src/agentengine/fake.ts";
+import { FAKE_PROJECTS, FakeAgentEngine } from "./fake-agent-engine.ts";
 import { sdkFetch } from "../src/agentengine/memory.ts";
 import { AGENT_ENGINE_DEFAULT_BASE_URL, agentEngineExpiryWarning, agentEngineWarnings, loadConfig } from "../src/config.ts";
 
@@ -186,6 +186,26 @@ describe("calls", () => {
     for (const init of seen) assert.equal(init.redirect, "error");
   });
 
+  test("the token is never sent to another origin", async () => {
+    const fake = new FakeAgentEngine();
+    const client = clientFor(fake);
+    await rejectsWith(client.fetch("https://evil.example/api/v1/projects/p/memory/turns", { method: "POST" }), "bad_request");
+    assert.equal(fake.requests.length, 0);
+  });
+
+  test("a caller's abort ends its wait for a slow token without failing other callers", async () => {
+    const fake = new FakeAgentEngine();
+    fake.tokenDelayMs = 50;
+    const client = clientFor(fake);
+    const ac = new AbortController();
+    const mine = client.fetch(client.projectUrl("/executions/e1"), { signal: ac.signal });
+    const theirs = client.token();
+    ac.abort();
+    await assert.rejects(mine, (e: unknown) => (e as Error).name === "AbortError");
+    assert.match(await theirs, /^fake_at_/);
+    assert.equal(fake.tokenRequests(), 1);
+  });
+
   test("status codes map to kinds; error text is clipped to one line", async () => {
     const fake = new FakeAgentEngine();
     const client = clientFor(fake);
@@ -265,6 +285,10 @@ describe("memory (SDK 0.11.7 through our fetchImpl)", () => {
     assert.deepEqual(del.query, { soft: "true", user_id: "u1" });
     assert.equal(fake.semantic[0].deleted, true);
     await assert.rejects(memory!.softDelete("semantic", saved.id, "someone-else"), (e: unknown) => e instanceof AgentEngineError && e.kind === "not_found");
+    const before = fake.requests.length;
+    await rejectsWith(memory!.softDelete("semantic", "..", "u1"), "bad_request");
+    await rejectsWith(memory!.softDelete("../oauth" as never, "x", "u1"), "bad_request");
+    assert.equal(fake.requests.length, before, "refused before any request");
   });
 });
 
@@ -279,6 +303,10 @@ describe("agents (PR4 completes invoke and resume)", () => {
     await agents!.stopRuntimeSession("w1", "outf-12345678-helper");
     assert.equal(fake.runtimeSessions.get("w1")![0].status, "stopping");
     await rejectsWith(agents!.getExecution("w1", "../../oauth/token"), "bad_request");
+    for (const dots of [".", "..", ".hidden"]) {
+      await rejectsWith(agents!.getExecution("w1", dots), "bad_request");
+      await rejectsWith(agents!.stopRuntimeSession(dots, "s"), "bad_request");
+    }
     await rejectsWith(agents!.stopRuntimeSession("w/1", "s"), "bad_request");
     await rejectsWith(agents!.invoke({ workspaceId: "w1", message: "hi", sessionId: "s", outfitterSession: "12345678" }), "not_implemented");
     await rejectsWith(agents!.resume({ workspaceId: "w1", executionId: "e1", decision: "approve", outfitterSession: "12345678" }), "not_implemented");

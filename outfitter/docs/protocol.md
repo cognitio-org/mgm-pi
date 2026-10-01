@@ -272,15 +272,18 @@ request, reads resent once after a link drop, writes (with `idempotencyKey`) sen
   `sessions.*`), `memory` (`memory.*`, E9 PR3) or `agentEngine` (`ae.*`, E9 PR4). The api refuses an
   op whose capability the tape lacks (`admin tools are off for this tape`, `memory is off for this
   tape`, `Agent Engine is off for this tape`), so a socket opened for memory never reaches `tapes.*`.
-  A tape with none of the three is refused before the op is looked at, and not audited.
+  Neither refusal is audited. A Kernal from before E9 ignores `OUTFITTER_ADMIN_CAPS` and offers its
+  admin tools on a memory-only Drive; they all fail this way, so ship the E9 Kernal in the image
+  before turning memory on for a tape.
 - The model's shell can reach the socket, so the api decides everything. It reads the tape again on
   every call (and again after an approval wait), so turning a capability off takes effect at once. Ops run as the
   session's owner, with sysop rights only when the owner is an operator and the tape says
   `operator`.
 - A delete, an operator op, an `approve` op (E9: answering an Agent Engine execution's review
-  pause, `ae.resume`), or a change to a tape with admin tools waits for the owner, up to 10
-  minutes. `approve` always asks, whoever the owner is; its card is the op's own (what it answers,
-  with remote text clipped and labelled), never the agent's words. The api resolves the target first and names it on the card (name and full id), then acts
+  pause, `ae.resume`), or a change to a tape with memory or Agent Engine (E9) waits for the owner,
+  up to 10 minutes; a change to a tape with admin tools is refused outright. `approve` always asks,
+  whoever the owner is; such an op must register its own card (what it answers, with remote text
+  clipped and labelled, never the agent's words) and a Drive-only capability. The api resolves the target first and names it on the card (name and full id), then acts
   on that exact record. The request is a row in `adminApprovals` (one per run; claim, decide and
   clear are conditional writes). The owner's session page shows it as a confirm card through the
   `pendingUiRequest` channel, ahead of pi's own question, with id `admin:<approvalId>` and
@@ -296,7 +299,7 @@ request, reads resent once after a link drop, writes (with `idempotencyKey`) sen
   `agentEngine` (the socket then opens for admin tools only, as before).
 - Reads (no `idempotencyKey`, resent once) are the ops ending in `.list`, `.get`, `.meta`,
   `.search`, `.transcript` or `.context` (`memory.context`, the recall before each prompt);
-  everything else is a write.
+  everything else is a write. `registerAdminOp` refuses an op whose class disagrees with its name.
 
 ### Mailbox (E5.5)
 
@@ -629,7 +632,7 @@ outline|text, `around`, `window`, `from`, `maxChars`, `toolOutput` none|trimmed|
   sysop does that, in the web UI.
 - Setting or changing a tape's `memory` (`off|tool|auto`) or `agentEngine` (boolean) is refused
   (`memory can only be set in the web UI`): a person sets them in the web UI. A body repeating the
-  current value passes.
+  current value passes. Any other change to a tape that has one of them needs `confirmed`.
 - `memory.*` and `ae.*` ops (capabilities `memory`, `agentEngine`) answer `<op> works only in a
   Drive`: a Dongle has no tape or session to bind them to.
 - Every non-read op that passes those checks writes an `adminAudit` row.

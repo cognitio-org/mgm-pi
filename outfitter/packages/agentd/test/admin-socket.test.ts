@@ -266,6 +266,22 @@ for (const [label, more, caps] of [
   });
 }
 
+test("admin socket: a failed listen leaves both the socket and OUTFITTER_ADMIN_CAPS empty", async (t) => {
+  const link = new FakeLink();
+  const env: { value?: Record<string, string> } = {};
+  const workspace = await mkdtemp(join(tmpdir(), "adm-ws-"));
+  const controller = controllerFor("/dev/null/admin.sock", link, workspace, env);
+  t.after(async () => {
+    controller.dispose();
+    await new Promise((r) => setTimeout(r, 50));
+    await rm(workspace, { recursive: true, force: true });
+  });
+  link.deliver(specFor("manage", { memory: "auto" }));
+  await waitFor(() => env.value !== undefined);
+  assert.equal(env.value!.OUTFITTER_ADMIN_SOCKET, "");
+  assert.equal(env.value!.OUTFITTER_ADMIN_CAPS, "");
+});
+
 test("adminCapabilities: only exact values count, in a fixed order", () => {
   assert.deepEqual(adminCapabilities({}), []);
   assert.deepEqual(adminCapabilities({ adminTools: "off", memory: "off", agentEngine: false }), []);

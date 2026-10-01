@@ -54,11 +54,13 @@ export interface AgentsService {
   stopRuntimeSession(workspaceId: string, sessionId: string, opts?: { signal?: AbortSignal }): Promise<void>;
 }
 
-const ID = /^[A-Za-z0-9._:-]{1,128}$/;
+/** Starts with a letter or digit, so `.` and `..` (which URL parsing would resolve away, moving the
+ * request to another route) can never be one. */
+const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 /** Ids go into paths and queries; anything else is refused before a request is made. */
-function checkId(name: string, value: string): string {
-  if (!ID.test(value)) throw new AgentEngineError("bad_request", `${name} must be an Agent Engine id`);
+export function checkId(name: string, value: unknown): string {
+  if (typeof value !== "string" || !ID.test(value)) throw new AgentEngineError("bad_request", `${name} must be an Agent Engine id`);
   return value;
 }
 

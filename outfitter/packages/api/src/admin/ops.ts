@@ -7,7 +7,8 @@
 // need `approved` on the caller: the laptop's TUI confirm (a Dongle's holder is the person at the
 // keyboard), or the Drive's web approval card (#287). A write to a tape that already has admin
 // tools also needs it (gurus-service.ts). `approve` (E9 §4: answering an Agent Engine execution's
-// review pause) is audited and always needs `approved`, whoever the caller is.
+// review pause) is audited and always needs `approved`, whoever the caller is. A change to a tape
+// with memory or Agent Engine needs it too (an op's `asks`).
 //
 // Capabilities (E9 §3.3): every op names the tape capability it needs -- `admin` (the Sysop tools),
 // `memory` or `agentEngine` -- and a Drive's call is refused unless its tape has it, so agentd
@@ -24,6 +25,7 @@ import {
   deleteGuru,
   envDenylist,
   hasAdminTools,
+  tapeCapabilities,
   updateGuru,
   type GuruInput,
   type TapeCapability,
@@ -81,6 +83,9 @@ export interface AdminOp {
    * `approve` op shows what it answers. Every word must come from the api or be clipped, escaped
    * and labelled as remote text. */
   card?: (args: Args, target?: string) => { title: string; message: string };
+  /** For a class that runs directly (`read`, `write`): whether these args need the person's yes
+   * anyway, e.g. a change to a tape with memory or Agent Engine (gurus-service.ts guardError). */
+  asks?: (ctx: AdminContext, args: Args) => Promise<boolean>;
   /** A reason this call is refused outright, checked before any approval is asked for (an agent
    * may never change an admin tape, so asking the owner first would only waste their yes). */
   refused?: (ctx: AdminContext, args: Args) => Promise<string | undefined>;
@@ -256,6 +261,12 @@ function limitOf(args: Args, fallback: number, max: number): number {
   return Math.min(Math.max(n, 1), max);
 }
 
+/** A change to a tape with memory or Agent Engine waits for the person (gurus-service.ts). */
+async function capabilityTapeAsks(ctx: AdminContext, args: Args): Promise<boolean> {
+  const tape = await resolveTape(ctx, args.id);
+  return tape.ok && !hasAdminTools(tape.item) && tapeCapabilities(tape.item).length > 0;
+}
+
 async function adminTapeRefusal(ctx: AdminContext, args: Args): Promise<string | undefined> {
   const tape = await resolveTape(ctx, args.id);
   return tape.ok && hasAdminTools(tape.item) ? `tape ${tape.item.id} has admin tools; a sysop changes it in the web UI` : undefined;
@@ -336,6 +347,7 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
     kind: "write",
     capability: "admin",
     refused: adminTapeRefusal,
+    asks: capabilityTapeAsks,
     async run(ctx, caller, args) {
       const tape = await resolveTape(ctx, args.id);
       if (!tape.ok) return tape;
@@ -522,6 +534,9 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
 export const CARD_FIELDS: readonly string[] = [...new Set<string>([...TAPE_FIELDS, ...ENVIRONMENT_FIELDS, ...WEB_ONLY_FIELDS])];
 
 const OP_NAME = /^[a-z][a-zA-Z]*\.[a-z][a-zA-Z]*$/;
+/** Kernal's transport treats these names as reads (no idempotency key, resent once after a link
+ * drop: outfitter-admin/transport.ts READ_ACTIONS), so an op's class must agree with its name. */
+const READ_NAME = /\.(list|get|meta|search|transcript|context)$/;
 
 /**
  * Adds an op to the registry (E9 PR3/PR4: `memory.*`, `ae.*`). Returns a function that removes it
@@ -533,6 +548,14 @@ export function registerAdminOp(name: string, op: AdminOp): () => void {
   if (Object.hasOwn(ADMIN_OPS, name)) throw new Error(`admin op ${name} is already registered`);
   if (!(["admin", "memory", "agentEngine"] as const).includes(op.capability)) throw new Error(`admin op ${name}: unknown capability ${String(op.capability)}`);
   if (!(["read", "write", "delete", "operator", "approve"] as const).includes(op.kind)) throw new Error(`admin op ${name}: unknown class ${String(op.kind)}`);
+  if ((op.kind === "read") !== READ_NAME.test(name)) {
+    throw new Error(`admin op ${name}: a read must end in .list|.get|.meta|.search|.transcript|.context, and nothing else may (Kernal resends those)`);
+  }
+  // An approve op answers something remote on the owner's behalf: it must say on the card what it
+  // answers, and it must never be reachable from a laptop, where `confirmed` is the caller's own word.
+  if (op.kind === "approve" && (!op.card || op.capability === "admin")) {
+    throw new Error(`admin op ${name}: an approve op needs its own card and a Drive-only capability`);
+  }
   ADMIN_OPS[name] = op;
   return () => {
     if (ADMIN_OPS[name] === op) delete ADMIN_OPS[name];
@@ -562,9 +585,10 @@ function capabilityRefusal(def: AdminOp, caller: AdminCaller, op: string): strin
   return caller.capabilities?.includes(def.capability) ? undefined : CAPABILITY_OFF[def.capability];
 }
 
-/** True for the classes that wait for the person's yes. */
-function needsYes(def: AdminOp): boolean {
-  return def.kind === "delete" || def.kind === "operator" || def.kind === "approve";
+/** True when this call waits for the person's yes: its class, or its args (`asks`). */
+async function needsYes(ctx: AdminContext, def: AdminOp, args: Args): Promise<boolean> {
+  if (def.kind === "delete" || def.kind === "operator" || def.kind === "approve") return true;
+  return def.asks ? await def.asks(ctx, args) : false;
 }
 
 /**
@@ -599,10 +623,10 @@ export async function approvalNeeded(ctx: AdminContext, caller: AdminCaller, op:
   const a: Args = args && typeof args === "object" && !Array.isArray(args) ? (args as Args) : {};
   try {
     if (def.refused && (await def.refused(ctx, a))) return false;
+    return await needsYes(ctx, def, a);
   } catch {
     return false;
   }
-  return needsYes(def);
 }
 
 /** One line per op, for an unknown-op error: short enough to retry from. */
@@ -622,16 +646,18 @@ export async function runAdminOp(ctx: AdminContext, caller: AdminCaller, op: unk
   const def = ADMIN_OPS[op];
   const a: Args = args && typeof args === "object" && !Array.isArray(args) ? (args as Args) : {};
 
+  // The tape lacks what the op needs: refused before anything, and not audited (a model probing
+  // tools it was never given shouldn't fill the audit log).
+  const gated = capabilityRefusal(def, caller, op);
+  if (gated) return { ok: false, error: gated };
+
   let result: AdminResult & { target?: string };
   try {
-    const gated = capabilityRefusal(def, caller, op);
-    if (gated) result = { ok: false, error: gated };
-    else if (def.kind === "operator" && !caller.operator) result = { ok: false, error: "sysop rights required" };
+    if (def.kind === "operator" && !caller.operator) result = { ok: false, error: "sysop rights required" };
     else {
       const refusal = def.refused ? await def.refused(ctx, a) : undefined;
-      const needsApproval = needsYes(def);
       if (refusal) result = { ok: false, error: refusal };
-      else result = needsApproval && !caller.approved ? { ok: false, error: "needs approval", needsApproval: true } : await def.run(ctx, caller, a);
+      else result = !caller.approved && (await needsYes(ctx, def, a)) ? { ok: false, error: "needs approval", needsApproval: true } : await def.run(ctx, caller, a);
     }
   } catch (err) {
     ctx.log?.(`admin op ${op} failed: ${err instanceof Error ? err.message : String(err)}`);

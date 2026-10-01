@@ -268,7 +268,14 @@ function guardError(existing: Guru, writer: GuruWriter, action: "update" | "dele
     if (!writer.operator) return { ok: false, status: 403, error: `only a sysop can change tape ${existing.id} (it has admin tools)` };
     return undefined;
   }
-  if (writer.kind === "human" || writer.approved || action !== "delete") return undefined;
+  if (writer.kind === "human" || writer.approved) return undefined;
+  // E9: a tape with memory or Agent Engine runs its owners' sessions against their memory and the
+  // listed agents, so an agent rewriting its prompt, env or packages waits for the person's yes
+  // (the Drive's card, the laptop's confirm), like a delete.
+  if (action === "update" && tapeCapabilities(existing).length > 0) {
+    return { ok: false, status: 403, error: `changing tape ${existing.id} needs approval (it has memory or Agent Engine)` };
+  }
+  if (action !== "delete") return undefined;
   return { ok: false, status: 403, error: `deleting tape ${existing.id} needs approval` };
 }
 

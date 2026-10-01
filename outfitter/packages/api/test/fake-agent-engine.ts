@@ -1,5 +1,5 @@
-// A fake Agent Engine for tests and local dev (E9): a `fetch` that answers the routes Outfitter
-// uses, with no network. It checks credentials and tokens the way the real gateway does, so the
+// A fake Agent Engine for tests (E9; under test/, so it never ships): a `fetch` that answers the
+// routes Outfitter uses, with no network. It checks credentials and tokens the way the real gateway does, so the
 // client's refresh, 429 and 401 paths can be driven from a test, and it records every request
 // (Authorization included) for asserts.
 //
@@ -11,8 +11,8 @@
 // executions/{id}, workspaces/{w}/runtime-sessions (GET, POST /{id}/stop). Anything else is 404.
 
 import { randomUUID } from "node:crypto";
-import type { AgentEngineConfig, AgentEngineProjectConfig } from "../config.ts";
-import type { FetchFn } from "./client.ts";
+import type { AgentEngineConfig, AgentEngineProjectConfig } from "../src/config.ts";
+import type { FetchFn } from "../src/agentengine/client.ts";
 
 export interface FakeRequest {
   method: string;

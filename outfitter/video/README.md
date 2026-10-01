@@ -40,6 +40,19 @@ source video (local only) --extract-frames.sh--> reference/*.png (gitignored)
    look: set, light, screen glow, wides. Delete or crop out close-ups of faces. `reference/` is
    gitignored; keep it that way.
 
+   For the original's *flow* (shots, words, on-screen text, music), make a beat sheet:
+
+   ```bash
+   brew install whisper-cpp tesseract
+   ./beat-sheet.sh /Users/mgm/localllm/video/source.mp4
+   open reference/beat-sheet.md
+   ```
+
+   One row per shot (dissolves included): time, a mid-shot still, the words spoken or sung over
+   it (whisper.cpp; the model downloads once into `reference/`), a rough OCR of on-screen text,
+   and the music level, plus an overall tempo. It stays in `reference/`: private, never
+   committed. `script.md` is our rewrite of that flow.
+
 2. **Style bible.** Fill in `style-bible.md` from the frames (or hand Claude a few face-free frames
    and ask it to). Its "prompt suffix" goes at the end of every Veo / image prompt.
 

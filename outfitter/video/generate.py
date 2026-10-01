@@ -71,21 +71,33 @@ used):
 """
 
 
-def rate_limited(err):
+TRANSIENT = ("429", "resource_exhausted", "resource has been exhausted",  # per-minute quotas
+             "499", "cancelled", "503", "unavailable", "504", "deadline", "500 internal",
+             "connection reset", "connection aborted", "temporarily")
+FAILED = []  # takes that failed for good this run; a rerun retries just these
+
+
+def transient(err):
     s = str(err).lower()
-    return "429" in s or "resource_exhausted" in s or "resource has been exhausted" in s or "quota" in s and "exceeded" in s
+    return any(t in s for t in TRANSIENT) or ("quota" in s and "exceeded" in s)
 
 
 def with_retry(call, m, label, waits=(15, 30, 60, 120, 240)):
-    """Per-minute quotas (429) clear on their own: wait and retry instead of dying."""
+    """Quotas and server hiccups clear on their own: wait and retry instead of dying."""
     for wait in (*waits, None):
         try:
             return call(m)
         except Exception as e:  # noqa: BLE001
-            if wait is None or not rate_limited(e):
+            if wait is None or not transient(e):
                 raise
-            print(f"  {label}: rate-limited on {m}, retrying in {wait} s", file=sys.stderr)
+            print(f"  {label}: temporary error on {m} ({str(e)[:80]}), retrying in {wait} s", file=sys.stderr)
             time.sleep(wait)
+
+
+def skip(path, err):
+    """One bad take shouldn't stop the run: note it and move on (a rerun retries it)."""
+    FAILED.append(path.name)
+    print(f"  {path.name}: failed, skipped ({str(err)[:200]})", file=sys.stderr)
 
 
 def with_fallback(models, call, label):
@@ -135,10 +147,14 @@ def run_stills(spec, args):
                 response_modalities=["IMAGE"],
                 image_config=types.ImageConfig(aspect_ratio=aspect, image_size="2K"),
             )
-            model, resp = with_fallback(
-                [args.image_model] if args.image_model else IMAGE_MODELS,
-                lambda m: client.models.generate_content(model=m, contents=contents, config=config),
-                "image")
+            try:
+                model, resp = with_fallback(
+                    [args.image_model] if args.image_model else IMAGE_MODELS,
+                    lambda m: client.models.generate_content(model=m, contents=contents, config=config),
+                    "image")
+            except Exception as e:  # noqa: BLE001
+                skip(path, e)
+                continue
             parts = [p for c in (resp.candidates or []) for p in (c.content.parts if c.content else [])]
             img = next((p.inline_data.data for p in parts if p.inline_data and p.inline_data.data), None)
             if img is None:
@@ -185,10 +201,14 @@ def run_shots(spec, args):
                 person_generation="allow_adult",
                 negative_prompt=spec["negative"],
             )
-            model, op = with_fallback(
-                [args.video_model] if args.video_model else VIDEO_MODELS,
-                lambda m: client.models.generate_videos(model=m, source=source, config=config),
-                "video")
+            try:
+                model, op = with_fallback(
+                    [args.video_model] if args.video_model else VIDEO_MODELS,
+                    lambda m: client.models.generate_videos(model=m, source=source, config=config),
+                    "video")
+            except Exception as e:  # noqa: BLE001
+                skip(path, e)
+                continue
             pending.append((path, op, model))
     while pending:                              # all jobs run in parallel server-side
         time.sleep(15)
@@ -199,12 +219,12 @@ def run_shots(spec, args):
                 still.append((path, op, model))
                 continue
             if op.error:
-                print(f"  {path.name}: failed: {op.error}", file=sys.stderr)
+                skip(path, op.error)
                 continue
             vids = op.response.generated_videos if op.response else []
             if not vids:
                 reasons = op.response.rai_media_filtered_reasons if op.response else None
-                print(f"  {path.name}: no video (filtered: {reasons})", file=sys.stderr)
+                skip(path, f"no video returned (safety filter: {reasons}); try rewording the prompt")
                 continue
             path.write_bytes(vids[0].video.video_bytes)
             print(f"  wrote {path} ({model})")
@@ -236,7 +256,11 @@ def run_voices(spec, args):
                     voice=tts.VoiceSelectionParams(language_code="en-US", name=v["voice"], model_name=model),
                     audio_config=tts.AudioConfig(audio_encoding=tts.AudioEncoding.LINEAR16, sample_rate_hertz=24000),
                 )
-            model, resp = with_fallback([args.tts_model] if args.tts_model else TTS_MODELS, call, "tts")
+            try:
+                model, resp = with_fallback([args.tts_model] if args.tts_model else TTS_MODELS, call, "tts")
+            except Exception as e:  # noqa: BLE001
+                skip(path, e)
+                continue
             path.write_bytes(resp.audio_content)
             print(f"  wrote {path} ({model})")
 
@@ -292,6 +316,8 @@ def main():
         run_shots(spec, args)
     if args.what in ("voices", "all"):
         run_voices(spec, args)
+    if FAILED:
+        raise SystemExit(f"{len(FAILED)} take(s) failed: {', '.join(FAILED)}. Run the same command again to retry just those.")
 
 
 if __name__ == "__main__":

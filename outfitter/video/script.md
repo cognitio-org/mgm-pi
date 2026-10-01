@@ -13,10 +13,12 @@ Disk Box, Drive, ▶ Play, ⏏ Eject, Control Panel.
 ## Decisions
 - **Casting: grown-ups writing like kids.** No children on screen or in the voices.
 - **Length: both.** The 75 s cut, then a 30 s teaser re-cut from the same material.
-- **Voices: all generated** (see "Voices"). Nobody records anything.
+- **Voices:** generated for Lee, Pat and Jo; **MGM's letter is MGM's own recorded voice**.
 - **Lead:** `[LEAD]` = "a person in their mid-50s with short grey hair, wearing a powder-blue polo
   shirt" -- an original generated character, not modeled on anyone real. Same description and
-  reference still everywhere. Signs the punchline letter as **MGM**, Age 54.
+  reference still everywhere. This is **Rocky, the last fan**: seen only in the final beat
+  (silent nod and thumbs-up, "Rocky" writes on). MGM, Age 54, is a letter writer heard but not
+  seen: MGM's letter plays over a wish card signed "MGM".
 
 ## Structure (mirrors the reference, at its ~84 BPM: 1 bar = 2.86 s)
 | Part | Bars | Time | Reference did | We do |
@@ -25,8 +27,9 @@ Disk Box, Drive, ▶ Play, ⏏ Eject, Control Panel.
 | B Letter 1 | 4-9 | 0:08.6-0:25.7 | Small child learning to program, sends a picture of their first program | **Lee, 61**, learning to program with agents; sends a crayon picture of the first *bug* it fixed |
 | C Letter 2 | 10-17 | 0:25.7-0:48.6 | Asks the CEO to persuade a parent; reads an absurd spec list off a printout; "how much will all this cost?" | **Pat, 41**, asks Sysop to write to their *boss*; reads the Outfitter feature list off a dot-matrix printout |
 | D Letter 3 | 18-21 | 0:48.6-1:00 | A dream wish (talking to dolphins) over a paint-program beach | **Jo, 47**: a computer you can just talk to, and take your work home -- over a pixel-art beach |
-| E Punchline | 22-24 | 1:00-1:08.6 | One-line letter, nod, thumbs-up | **MGM, 54**: "Outfitter rules the fleet." Nod, thumbs-up, freeze, signature |
-| F Close | 25-26 | 1:08.6-1:15 | Thank-you card, logo | Thank-you card, `READY.`, logo |
+| E Punchline letter | 22-23 | 1:00-1:05.7 | One-line letter: "___ rules the world" | **MGM, 54** (MGM's own voice): "Outfitter rules the fleet." over a wish card; "MGM" writes on |
+| F Last fan | 24-25 | 1:05.7-1:11.4 | Nod, turn, thumbs-up, name writes on | **Rocky**: side-on close-up, nod, thumbs-up, freeze; "Rocky" writes on; music swells |
+| G Close | 26 | 1:11.4-1:15 | Thank-you card, logo | Thank-you card, `READY.`, logo |
 
 (The reference's reflective "computers are only tools" letter is dropped from the 75 s cut.)
 
@@ -48,9 +51,9 @@ Cuts land on bar lines; transitions are 1-1.5 s dissolves, montage beats double-
 | 8 | 0:42.9-0:48.6 | Thought glow: a ring of small beige computers (twelve Drives) | VEO `08-glow` | PAT-d, PAT-e |
 | 9 | 0:48.6-0:52.9 | Wish card: crayon computer with a speech bubble and an ear. "Jo, Age 47" | MADE `card-talk` | JO |
 | 10 | 0:52.9-1:00.0 | Pixel-art beach; a floppy ejects and flies to a laptop on a towel | TOUR + UI | (JO continues) |
-| 11 | 1:00.0-1:02.9 | [LEAD] at the beige computer, reads, nods | VEO `05-lab` | MGM |
-| 12 | 1:02.9-1:08.6 | Tight, side-on close-up (the reference's framing): turns to camera, one thumbs-up beside the face, freeze; the letter writer's name writes on in white cursive, lower right (`signature.sh`) | VEO `11-closeup` + MADE | (MGM ends) |
-| 13 | 1:08.6-1:15.0 | White serif on blue: "Thanks for all your letters. Our grown-up fans keep us going." Dissolve to `READY.` and the logo | MADE + UI | -- (music button) |
+| 11 | 1:00.0-1:05.7 | Wish card: crayon ring of little computers wearing a crown. Quote: "Outfitter rules the fleet." "MGM" writes on, Age 54 | MADE `card-fleet` + `signature.sh` | MGM (recorded by MGM) |
+| 12 | 1:05.7-1:11.4 | **Rocky**, tight side-on close-up (the reference's framing): reads, nods, turns to camera, one thumbs-up beside the face, freeze; "Rocky" writes on, lower right | VEO `11-closeup` + `signature.sh` | -- (music swell) |
+| 13 | 1:11.4-1:15.0 | White serif on blue: "Thanks for all your letters. Our grown-up fans keep us going." Dissolve to `READY.` and the logo | MADE + UI | -- (music button) |
 
 **Printout (7) text**, matching PAT-c: MY WISH LIST / • Twelve Drives at once / • A Tape for every
 job / • MongoDB Atlas memory (remembers where we left off) / • Atlas agents <-> my agents (A2A) /
@@ -71,7 +74,8 @@ use its logo with MongoDB's permission.
 - **Title write-on (1)** and **signature write-on (12, `signature.sh`):** "Dear Sysop," and the punchline letter writer's own name (as
   the reference signs its letter writer) in Sacramento (bundled, SIL OFL), white fill,
   chrome/purple outline, written on left to right. Run before `vhs.sh`:
-  `./signature.sh out/veo/11-closeup-take2.mp4 out/12-signed.mp4 "<name>" 4.0 1.4`.
+  `./signature.sh out/veo/11-closeup-take2.mp4 out/12-rocky.mp4 "Rocky" 5.0 1.2` (time the
+  start to the thumbs-up) and, on MGM's card clip, `... out/11-mgm.mp4 "MGM" 3.5 1.0`.
 
 ## UI captures needed
 Disk Box with a few Floppies; the new-Floppy dialog with a Tape picked; "New Floppy..." in a
@@ -94,12 +98,12 @@ visual guardrails in the README still apply to the footage.
   demucs --two-stems=vocals -o reference/stems reference/source-audio.wav
   # music bed: reference/stems/htdemucs/source-audio/no_vocals.wav
   ```
-- Retime to our cut using the beat sheet's shot times: the swell should land on shot 11 (1:00),
-  where the reference swells into its punchline letter.
+- Retime to our cut using the beat sheet's shot times: the swell should land on Rocky's
+  thumbs-up (shot 12, ~1:06), where the reference swells into its punchline.
 
 **Option 2: an original soundalike** (if the master or paperwork doesn't come through). Fill the
 blanks from `beat-sheet.sh` (tempo, where the music swells and drops) and a listen:
-- Tempo: ~84 BPM (beat sheet). Length 75 s; swell into shot 11, button on the end card.
+- Tempo: ~84 BPM (beat sheet). Length 75 s; swell into Rocky (shot 12), button on the end card.
 - Feel: earnest, optimistic early-90s corporate: warm synth pads, bright digital (FM) electric
   piano and bells, soft gated-reverb snare, fretless-style synth bass, light shaker. A simple
   hopeful melody that "lifts" when the letters are read.
@@ -118,7 +122,7 @@ never a clone of a real person, including anyone in the reference video.
 | **LEE** | letter 1, Age 61 | Older adult, gentle, proud and a little slow, reading their own letter aloud like a kid at school. |
 | **PAT** | letter 2, Age 41 | Adult, earnest and slightly breathless, reading a long list very seriously; the list gets faster. |
 | **JO** | letter 3, Age 47 | Adult, soft and dreamy, wistful pauses. |
-| **MGM** | punchline, Age 54 | Adult in their 50s, mid-range, flat and completely earnest. "MGM" is said as three letters. |
+| **MGM** | punchline letter, Age 54 | **Recorded by MGM** (own voice); the generated MGM takes are spares. |
 
 ### Lines
 Split so the teaser can reuse pieces. Times are what each piece may take on screen.
@@ -144,5 +148,6 @@ plus a touch of room reverb, so it doesn't sound too clean against the 1990 pict
 |---|---|---|
 | 0:00-0:05.7 | 1 "Dear Sysop," over the sidewalk run | -- |
 | 0:05.7-0:17.1 | 7 Printout pan | PAT-b, PAT-c (first four items, through the Atlas agents), PAT-d |
-| 0:17.1-0:25.7 | 11 + 12 Nod, thumbs-up, signature | MGM |
+| 0:17.1-0:21.4 | 11 MGM's wish card, "MGM" writes on | MGM (recorded) |
+| 0:21.4-0:25.7 | 12 Rocky's thumbs-up, "Rocky" writes on | -- |
 | 0:25.7-0:30.0 | 13 Thank-you card, logo | -- |

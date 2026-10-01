@@ -42,6 +42,18 @@
       "id": "card-fleet",
       "aspect": "4:3",
       "prompt": "A child's crayon drawing on off-white paper, scanned flat: a ring of small smiling boxy computers holding hands, with one big gold crown floating above the ring, drawn with wobbly lines in yellow, blue and green crayon. Lots of empty paper on the left half for text. No text, no letters."
+    },
+    {
+      "id": "crt-front",
+      "prompt": "Photograph. {set} A generic unbranded beige desktop computer with a separate beige CRT monitor on a light-wood desk, seen straight on at eye level from about two metres, a beige keyboard and one-button mouse in front of it. The monitor is in the centre of the frame and its screen fills about the middle third of the frame height. The monitor's screen is switched off and filled edge to edge with a perfectly flat, evenly lit, pure chroma-key green (#00FF00): no reflections, no glare, no text, no picture, no gradient, the green reaching right into the rounded corners of the glass. Nobody in the shot. {suffix}"
+    },
+    {
+      "id": "crt-angle",
+      "prompt": "Photograph. {set} A generic unbranded beige CRT monitor on a light-wood desk, seen from a three-quarter angle from the front left at desk height, quite close, so the screen fills about half of the frame height, in the centre of the frame; a coiled keyboard cable and a mug with no print at the edge of the desk. The monitor's screen is switched off and filled edge to edge with a perfectly flat, evenly lit, pure chroma-key green (#00FF00): no reflections, no glare, no text, no picture, no gradient, the green reaching right into the rounded corners of the glass. Nobody in the shot. {suffix}"
+    },
+    {
+      "id": "crt-shoulder",
+      "prompt": "Photograph. {set} Over-the-shoulder shot from behind an adult with short brown hair in a beige cardigan, seen only from behind (back of the head and one shoulder, soft and out of focus at the left edge of the frame), sitting at a light-wood desk facing a generic unbranded beige CRT monitor. The monitor is centred and its screen fills about half of the frame height. The monitor's screen is switched off and filled edge to edge with a perfectly flat, evenly lit, pure chroma-key green (#00FF00): no reflections, no glare, no text, no picture, no gradient, the green reaching right into the rounded corners of the glass. {suffix}"
     }
   ],
   "shots": [

@@ -94,9 +94,13 @@ source video (local only) --extract-frames.sh--> reference/*.png (gitignored)
    uv run assemble.py both --grade grade.cube
    ```
 
-   It makes the title, wish cards, printout and end card itself, pans over the Outfitter
-   screenshots in `out/ui/`, dissolves on the bar lines, places the voices, ducks the music
-   (Demucs `no_vocals.wav` by default) and runs the VHS pass. Edit timings in `cut.json`.
+   It makes the title, wish cards, printout and end card itself, puts the Outfitter screenshots
+   in `out/ui/` on the green screens of the `crt-*` monitor stills (curvature, scanlines, glow;
+   a plain pan until those stills exist), dissolves on the bar lines, loudness-matches the voices
+   (so a home recording sits level with the TTS lines), places them, ducks the music (Demucs
+   `no_vocals.wav` by default) and runs the VHS pass. A clip shorter than its slot ends in a VHS
+   pause glitch instead of a dead freeze (`"fill": "freeze"` for a deliberate one). Edit timings
+   in `cut.json`.
 
 5b. **Signature** on the punchline close-up (before the VHS pass):
    `./signature.sh in.mp4 out/12-signed.mp4 "<letter writer's name>" [start-s] [write-s]`.

@@ -1,0 +1,24 @@
+outfitter/packages/api/test/a2a-security.test.ts
+  s_1d3bdd6f362f9b::t_2913130d8f0611 231-248
+  s_1d3bdd6f362f9b::t_064eef0a74bf71 261-264
+outfitter/packages/api/test/tck/sut.ts
+  s_1d3bdd6f362f9b::t_565fb26b8c7c9a 98-99
+outfitter/packages/api/test/a2a-streaming.test.ts
+  s_1d3bdd6f362f9b::t_565fb26b8c7c9a 19-20,33,672-679
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "93d68693b2813aee99b1545c19bd261f18d7b626",
+  "prompts": {},
+  "sessions": {
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

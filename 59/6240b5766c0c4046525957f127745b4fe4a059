@@ -10,6 +10,7 @@ outfitter/packages/api/src/store/types.ts
   s_1d3bdd6f362f9b::t_50870e79c56ad3 1109-1110,1113
   s_1d3bdd6f362f9b::t_54ddda61161652 652-669,1194-1278,1300
   s_1d3bdd6f362f9b::t_c75d86b9a7333d 437-439
+  s_1d3bdd6f362f9b::t_188fe7c5c23efb 54-57,59
 outfitter/packages/api/src/store/memory.ts
   s_1d3bdd6f362f9b::t_9dc75d895fe198 1009-1020,1022-1023,1026,1029-1036,1039-1043,1045-1058,1060-1068
   s_1d3bdd6f362f9b::t_75ae858d4c7498 1282
@@ -85,6 +86,7 @@ outfitter/packages/api/src/server.ts
 outfitter/packages/api/src/routes/hooks.ts
   s_1d3bdd6f362f9b::t_da29ac05a1961f 113-115
   s_1d3bdd6f362f9b::t_757698b812625d 118-119
+  s_1d3bdd6f362f9b::t_d3dcf24325f5d4 120-126
 outfitter/docs/protocol.md
   s_1d3bdd6f362f9b::t_0d7d22880074a9 179,448-465,471-476,479-481
   s_1d3bdd6f362f9b::t_991fd3f03f1f31 482

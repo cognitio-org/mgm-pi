@@ -1,0 +1,47 @@
+kernal/.pi/extensions/outfitter-agentengine/recall.ts
+  s_1d3bdd6f362f9b::t_35fc8320625f7a 16,43-44,46
+outfitter/packages/api/test/laptop-memory.test.ts
+  s_1d3bdd6f362f9b::t_79b37f291750ea 16,85-86,151,184-185,197-199,220,237-258
+  s_1d3bdd6f362f9b::t_8a6bf78ff9ed82 259
+kernal/.pi/extensions/outfitter-agentengine/record.ts
+  s_1d3bdd6f362f9b::t_69861ecff443d5 45-48,53-54,60-69,73,75,78-79
+kernal/bin/kernal
+  s_1d3bdd6f362f9b::t_a80029a9051183 173-180,182-188
+kernal/tests/laptop-memory.test.ts
+  s_1d3bdd6f362f9b::t_66940d753a876c 183-190,250-259,315-328,414-418,520-546
+  s_1d3bdd6f362f9b::t_bdcd043d51ea93 547
+outfitter/packages/api/src/admin/ops.ts
+  s_1d3bdd6f362f9b::t_755ef2e93f79f1 587-588,718
+outfitter/docs/specs/atlas-agent-engine-and-a2a.md
+  s_1d3bdd6f362f9b::t_df8ecaa102adbd 495-498,515-521,527-531,540-548,562-574
+kernal/.pi/extensions/_shared/outfitter-env.ts
+  s_1d3bdd6f362f9b::t_e26af48a0c39d2 8-11,18-25,35-37,40
+kernal/.pi/extensions/outfitter-agentengine/laptop.ts
+  s_1d3bdd6f362f9b::t_35fc8320625f7a 178-181,239,244-245,309
+kernal/.pi/extensions/outfitter-agentengine/memory.ts
+  s_1d3bdd6f362f9b::t_35fc8320625f7a 15,80-93,99-101,104,107,111
+outfitter/packages/api/src/admin/memory-ops.ts
+  s_1d3bdd6f362f9b::t_d12cacbd7d70a6 75-92,94-109
+  s_1d3bdd6f362f9b::t_d934a7af61e3e7 93
+  s_1d3bdd6f362f9b::t_755ef2e93f79f1 434-435,450,460-462,483
+outfitter/packages/api/src/routes/admin.ts
+  s_1d3bdd6f362f9b::t_d12cacbd7d70a6 18,30-32
+outfitter/docs/protocol.md
+  s_1d3bdd6f362f9b::t_df8ecaa102adbd 790-795
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "cd9bccce29de7b8441b8244b4c2663872c2d4533",
+  "prompts": {},
+  "sessions": {
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

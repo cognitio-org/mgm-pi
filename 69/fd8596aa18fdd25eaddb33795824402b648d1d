@@ -11,6 +11,7 @@ outfitter/packages/api/src/server.ts
 outfitter/packages/api/src/agentengine/identity.ts
   s_1d3bdd6f362f9b::t_7707c6f0d72499 5-6,56-60,97-98,103,105,109
   s_1d3bdd6f362f9b::t_89d344f00304da 111-112
+  s_1d3bdd6f362f9b::t_12e2b361b581dc 68-70,73-75,78-79,84,86-89,92,94
 outfitter/packages/api/src/admin/ops.ts
   s_1d3bdd6f362f9b::t_d495557dcfdd26 17-20,73-74,83-84,99-100,102-107,672,821
   s_1d3bdd6f362f9b::t_755ef2e93f79f1 673-674,828
@@ -32,6 +33,7 @@ outfitter/packages/api/src/admin/ops.ts
   s_1d3bdd6f362f9b::t_7765f0aaf188c3 707-709
   s_1d3bdd6f362f9b::t_637f9908a5c009 66-68,117-119,700-706,710-713,809,813,856,859-869,871-872
   s_1d3bdd6f362f9b::t_7b90a368c9111c 665-670
+  s_1d3bdd6f362f9b::t_487415d0e0e4f1 662
 kernal/.pi/extensions/outfitter-admin/transport.ts
   s_1d3bdd6f362f9b::t_864335b59a10fe 28-33,36-37,40
   s_1d3bdd6f362f9b::t_cf8ff3f16c6b70 41
@@ -76,6 +78,7 @@ kernal/bin/kernal
 kernal/.pi/extensions/outfitter-agentengine/index.ts
   s_1d3bdd6f362f9b::t_3ea34ebd0c3c21 2-3,5,9,13-14,26,28-32,44-45
   s_1d3bdd6f362f9b::t_1e354f4abe0d56 8,10-12,20,23,33-43
+  s_1d3bdd6f362f9b::t_a6c95c28c5a8b6 21-22
 kernal/tests/outfitter-memory.test.ts
   s_1d3bdd6f362f9b::t_e59e63cbc03668 1-3,35,42,51,55-57,59-63
 outfitter/packages/api/src/routes/admin.ts
@@ -252,6 +255,7 @@ kernal/.pi/extensions/kernal-tape/admin.ts
   s_1d3bdd6f362f9b::t_5d58fafb72f0d6 18,138,192
   s_1d3bdd6f362f9b::t_9927b98cfde398 1-16,19-20,22-31,36-55,57-98,100-122,124-137,139-149,151-191,193-216
   s_1d3bdd6f362f9b::t_25997dd78ef227 17,32-35,56,99,123,150
+  s_1d3bdd6f362f9b::t_7260257b2dc4eb 21
 outfitter/packages/api/src/admin/ae-ops.ts
   s_1d3bdd6f362f9b::t_7b90a368c9111c 40,245-247,250-251,256-259,264-279,288,349,372,447
   s_1d3bdd6f362f9b::t_c0a76f726c6281 304-311
@@ -291,6 +295,7 @@ kernal/.pi/extensions/kernal-tape/index.ts
   s_1d3bdd6f362f9b::t_ec35a1a2b3f6ee 1-25,27,30-39,42-69,72-97,99-141,143-144,149-159,165-187,189-191,193-206,209-221,223-249
   s_1d3bdd6f362f9b::t_25997dd78ef227 28,40-41,98,142,145-148,160,162-164,207-208,222
   s_1d3bdd6f362f9b::t_5d58fafb72f0d6 29,161,188,192
+  s_1d3bdd6f362f9b::t_7260257b2dc4eb 26
 outfitter/packages/web/src/components/NewSessionDialog.tsx
   s_1d3bdd6f362f9b::t_4b5d2334d0e34a 31-37,46-54
 kernal/.pi/extensions/kernal-tape/cli.ts
@@ -300,6 +305,7 @@ kernal/.pi/extensions/kernal-tape/cli.ts
   s_1d3bdd6f362f9b::t_685f702b6bbfab 1-7,15-16,18-22,24,27-63,65-77,79-80,83-90,93,101-106,108-115
   s_1d3bdd6f362f9b::t_25997dd78ef227 94-97,100
   s_1d3bdd6f362f9b::t_b35f98ec74b211 26
+  s_1d3bdd6f362f9b::t_7260257b2dc4eb 23
 outfitter/packages/agentd/src/guru.ts
   s_1d3bdd6f362f9b::t_7adf4275cead62 60
   s_1d3bdd6f362f9b::t_3afadab891e7ba 13,54-59,62-64,84-90,93
@@ -308,6 +314,7 @@ kernal/tests/laptop-tapes.test.ts
   s_1d3bdd6f362f9b::t_9960709d791c49 1-9,11-15,18-23,26-198,200,203-205,207-209,244-273,275-283,286-288,301-320,324-392,394-411,417-431,433-441,444-451,453-462,464-635,637-641,643-690
   s_1d3bdd6f362f9b::t_c255a55cb1a751 393,412,432,452,463
   s_1d3bdd6f362f9b::t_588d30e846d021 10,17,199,201-202,206,210-243,274,284-285,289-300,321-323,413-416,442-443,636,642
+  s_1d3bdd6f362f9b::t_7260257b2dc4eb 25
 kernal/.pi/extensions/outfitter-agentengine/agents.ts
   s_1d3bdd6f362f9b::t_1e354f4abe0d56 16-21,24-25,47-48,95-104,106-108,111-118,129-161
 kernal/.pi/extensions/kernal-tape/lib.ts
@@ -322,6 +329,9 @@ outfitter/packages/api/test/ae-agents.test.ts
   s_1d3bdd6f362f9b::t_f58782a7d1eacc 239,244
 outfitter/packages/web/test/guru-form.test.tsx
   s_1d3bdd6f362f9b::t_9b0a4c81576868 196-224
+kernal/.pi/extensions/_shared/repo.ts
+  s_1d3bdd6f362f9b::t_f3427daed5b311 34
+  s_1d3bdd6f362f9b::t_4149a668fb0947 5,9,20-33,35-50
 ---
 {
   "schema_version": "authorship/3.0.0",

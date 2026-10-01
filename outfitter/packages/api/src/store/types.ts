@@ -1248,6 +1248,9 @@ export interface AeSessionsCollection {
     executionId: string | undefined,
     nowIso: string,
   ): Promise<AeSession>;
+  /** Counts as use without a new execution (E9.10: a laptop's get or resume): sets `lastUsedAt` and
+   * reopens the row, as recordInvoke does. No row: nothing. */
+  touch(id: string, nowIso: string): Promise<void>;
   /** The row of this Outfitter session that started `executionId`, if any. */
   findByExecution(outfitterSessionId: string, executionId: string): Promise<AeSession | null>;
   /** Rows not yet stopped, least recently used first; with `usedBefore`, only rows last used

@@ -11,7 +11,7 @@
 // E9.9: `laptop: {sessionId, repo?}` binds a `memory.*` call (admin/memory-ops.ts): sessionId is
 // `laptop:<pi session id>`, repo the working directory's GitHub `owner/name`. Both are checked here
 // and only scope the token owner's own memory; the identity is always the token's owner.
-// `approvalId` names the web approval a rerun of a `webApproval` op (a shared memory.save) claims;
+// `approvalId` names the web approval a rerun of a `laptop: "web"` op (a shared memory.save) claims;
 // for those ops `confirmed` counts for nothing (admin/laptop-approvals.ts).
 // E9.10 (#354): `laptop.tape` names the tape the laptop plays. For an op whose capability is not
 // `admin` or `memory` (the `ae.*` ops), the tape is read here, now, and its capabilities are the
@@ -78,7 +78,7 @@ export async function registerAdminRoutes(app: FastifyInstance, ctx: RouteContex
       capabilities = tape ? tapeCapabilities(tape) : [];
     }
     return runAdminOp(
-      { store: ctx.store, models: ctx.modelsService, agentEngine: ctx.agentEngine, log: (m) => req.log.warn(m) },
+      { store: ctx.store, models: ctx.modelsService, agentEngine: ctx.agentEngine, aeSessions: ctx.aeSessions, log: (m) => req.log.warn(m) },
       {
         email: identity.email,
         via: "token",

@@ -16,9 +16,9 @@
 // part is fenced as `[from Agent Engine agent <id>]` … `[end of Agent Engine agent <id>]`.
 //
 // E9.10 (#354, spec §7.1): a laptop playing a tape whose `agentEngine` is on reaches the same ops
-// with its Dongle (`laptop: true`). routes/admin.ts reads the tape the call names on every call, so
-// turning Agent Engine off on the tape cuts the laptop off at once. Every laptop invoke and resume
-// waits for the owner's yes in the Outfitter web app (`webApproval`; never a `confirmed` the
+// with its Dongle (`laptop: "tape"`). routes/admin.ts reads the tape the call names on every call,
+// so turning Agent Engine off on the tape cuts the laptop off at once. Every laptop invoke and resume
+// waits for the owner's yes in the Outfitter web app (`laptop: "web"`; never a `confirmed` the
 // laptop's own agent could send), a resume bound to the pause the card showed. The Agent Engine
 // session a laptop opens is keyed `laptop:<owner hash>:<pi session id>` (aeSessionKey), so another
 // Dongle holder who learns the pi session id reaches none of its executions, and the X-Session-ID
@@ -43,7 +43,6 @@ import { stripHidden } from "../untrusted.ts";
 import { createHash } from "node:crypto";
 import { memoryUserHash } from "../agentengine/identity.ts";
 import { redact } from "../search/redact.ts";
-import { AeSessions } from "../ae-sessions.ts";
 
 /** Cap on one ae.* result, in UTF-8 bytes. */
 export const AE_RESULT_CAP = 8 * 1024;
@@ -165,13 +164,7 @@ async function ownExecution(
   const row = await ctx.store.aeSessions.findByExecution(key, executionId);
   // E9.10: a laptop's get or resume counts as use, so the idle sweep doesn't stop a session whose
   // execution is still being polled or answered (review). A Drive's sweep goes by its run instead.
-  if (row && key.startsWith("laptop:")) {
-    await ctx.store.aeSessions.recordInvoke(
-      { outfitterSessionId: row.outfitterSessionId, agentId: row.agentId, workspaceId: row.workspaceId, aeSessionId: row.aeSessionId },
-      undefined,
-      new Date(ctx.now?.() ?? Date.now()).toISOString(),
-    );
-  }
+  if (row && key.startsWith("laptop:")) await ctx.store.aeSessions.touch(row.id, new Date(ctx.now?.() ?? Date.now()).toISOString());
   if (!row) return { ok: false, error: `no execution "${clip(executionId, 80)}" started from this session` };
   const agent = await enabledAgent(ctx, row.agentId);
   if (!agent.ok) return { ok: false, error: `Agent Engine agent ${row.agentId} is no longer enabled` };
@@ -261,22 +254,33 @@ function invokeLaptopCard(args: Args): LaptopCard | { error: string } {
   };
 }
 
-/** The widget's card for a laptop resume: the same words as a Drive's card (the pause, quoted as
- * the remote agent's, and the decision), with the exact execution the yes answers. */
+/** A resume's approval card: the decision, the pause it answers (`target`, the remote agent's words
+ * quoted) and the reviewer notes, as asked by `who` (a Drive's agent, or a laptop's). */
+function resumeCard(args: Args, target: string | undefined, who: string): { title: string; message: string } {
+  const decision = decisionOf(args);
+  const notes = typeof args.notes === "string" && args.notes.trim() ? ` Reviewer notes the agent wrote, sent with it: ${cardQuote(args.notes)}.` : "";
+  return {
+    title: `Answer an Agent Engine review with ${cardQuote(decision)}?`,
+    message: `${who} asked to answer a paused review on your behalf with the decision ${cardQuote(decision)}. ${target ?? ""}${notes} Nothing is answered unless you approve.`,
+  };
+}
+
+/** The widget's card for a laptop resume: a Drive's card words (resumeCard), with the exact
+ * execution the yes answers. */
 function resumeLaptopCard(args: Args, target?: string): LaptopCard | { error: string } {
   const decision = decisionOf(args);
   const invalid = resumeArgsError(decision, args.notes);
   if (invalid) return { error: invalid };
   const [execution] = typeof args.id === "string" ? args.id.split("#", 1) : [""];
   if (!execution || !target) return { error: "ae.resume: the execution could not be resolved" };
-  const c = AE_OPS["ae.resume"].card(args, target);
+  const c = resumeCard(args, target, "Your laptop's agent");
   return {
     title: c.title,
     facts: [
       { label: "Execution", value: clip(execution, 120) },
       { label: "Decision", value: clip(decision, MAX_DECISION_CHARS) },
     ],
-    summary: c.message.replace("The agent in this session", "Your laptop's agent"),
+    summary: c.message,
   };
 }
 
@@ -284,8 +288,7 @@ export const AE_OPS = {
   "ae.list": {
     kind: "read",
     capability: "agentEngine",
-    laptop: true,
-    laptopTape: true,
+    laptop: "tape",
     async run(ctx: AdminContext): Promise<AdminResult> {
       if (!agentsOf(ctx)) return { ok: false, error: OFF };
       const agents = (await ctx.store.aeAgents.list()).filter((a) => a.enabled);
@@ -297,9 +300,7 @@ export const AE_OPS = {
   "ae.invoke": {
     kind: "write",
     capability: "agentEngine",
-    laptop: true,
-    webApproval: true,
-    laptopAsks: true,
+    laptop: "web-always",
     laptopCard: invokeLaptopCard,
     /** A laptop isn't asked to approve a call to an agent that isn't there (a Drive's call fails in
      * run, as before). */
@@ -345,8 +346,7 @@ export const AE_OPS = {
   "ae.get": {
     kind: "read",
     capability: "agentEngine",
-    laptop: true,
-    laptopTape: true,
+    laptop: "tape",
     async run(ctx: AdminContext, caller: AdminCaller, args: Args) {
       const agents = agentsOf(ctx);
       if (!agents) return { ok: false, error: OFF };
@@ -367,8 +367,7 @@ export const AE_OPS = {
   "ae.resume": {
     kind: "approve",
     capability: "agentEngine",
-    laptop: true,
-    webApproval: true,
+    laptop: "web",
     laptopCard: resumeLaptopCard,
     /** Read before the card: the execution must be this session's, paused, and allow the decision,
      * or the owner isn't asked at all. The label carries what the card shows; the id carries the
@@ -401,12 +400,7 @@ export const AE_OPS = {
       };
     },
     card(args: Args, target?: string) {
-      const decision = decisionOf(args);
-      const notes = typeof args.notes === "string" && args.notes.trim() ? ` Reviewer notes the agent wrote, sent with it: ${cardQuote(args.notes)}.` : "";
-      return {
-        title: `Answer an Agent Engine review with ${cardQuote(decision)}?`,
-        message: `The agent in this session asked to answer a paused review on your behalf with the decision ${cardQuote(decision)}. ${target ?? ""}${notes} Nothing is answered unless you approve.`,
-      };
+      return resumeCard(args, target, "The agent in this session");
     },
     async run(ctx: AdminContext, caller: AdminCaller, args: Args) {
       const agents = agentsOf(ctx);
@@ -443,18 +437,17 @@ export const AE_OPS = {
   "ae.close": {
     kind: "write",
     capability: "agentEngine",
-    laptop: true,
-    laptopTape: true,
+    laptop: "tape",
     /** E9.10: a laptop session ending (`/tape off`, exit) stops the Agent Engine sessions it opened,
      * best effort. A Drive's stop when its Outfitter session closes (ae-sessions.ts). */
     async run(ctx: AdminContext, caller: AdminCaller) {
       if (caller.via !== "token") return { ok: false, error: "a Drive's Agent Engine sessions stop when its Outfitter session closes" };
       const key = aeSessionKey(caller);
       if (!key) return { ok: false, error: NO_SESSION };
-      const agents = agentsOf(ctx);
       const open = await ctx.store.aeSessions.listOpenForSession(key);
-      if (!agents || !open.length) return { ok: true, text: "no Agent Engine sessions to stop" };
-      await new AeSessions({ store: ctx.store, agents, now: ctx.now }).closeSession(key);
+      if (!agentsOf(ctx) || !open.length) return { ok: true, text: "no Agent Engine sessions to stop" };
+      if (!ctx.aeSessions) return { ok: false, error: "Agent Engine sessions can't be stopped from here" };
+      await ctx.aeSessions.closeSession(key);
       const left = (await ctx.store.aeSessions.listOpenForSession(key)).length;
       return { ok: true, text: `stopped ${open.length - left} of ${open.length} Agent Engine session${open.length === 1 ? "" : "s"}`, target: key };
     },

@@ -297,30 +297,31 @@ describe("laptop approvals: who may see and answer", () => {
 });
 
 describe("laptop approvals: registration", () => {
-  test("webApproval needs laptop; with it, a non-memory or approve op may be laptop-callable", () => {
+  test("a laptop \"web\" op may be any capability or an approve op; it needs a card, and asks", () => {
     const run = async () => ({ ok: true as const, text: "" });
     const laptopCard = () => ({ title: "t", summary: "s" });
     const asks = async () => true;
-    assert.throws(() => registerAdminOp("wtest.write", { kind: "write", capability: "memory", webApproval: true, laptopCard, asks, run }), /webApproval is for laptop-callable/);
-    assert.throws(() => registerAdminOp("wtest.invoke", { kind: "write", capability: "agentEngine", laptop: true, webApproval: true, laptopCard, run }), /needs a laptopCard, and asks/);
-    assert.throws(() => registerAdminOp("wtest.invoke", { kind: "write", capability: "agentEngine", laptop: true, webApproval: true, asks, run }), /needs a laptopCard/);
-    assert.throws(() => registerAdminOp("wtest.list", { kind: "read", capability: "agentEngine", laptop: true, webApproval: true, laptopCard, run }), /needs a laptopCard, and asks/);
-    const off = registerAdminOp("wtest.invoke", { kind: "write", capability: "agentEngine", laptop: true, webApproval: true, laptopCard, asks, run });
-    off();
-    const off2 = registerAdminOp("wtest.resume", { kind: "approve", capability: "agentEngine", laptop: true, webApproval: true, laptopCard, card: () => ({ title: "t", message: "m" }), run });
-    off2();
-    assert.throws(() => registerAdminOp("wtest.resume", { kind: "approve", capability: "agentEngine", laptop: true, card: () => ({ title: "t", message: "m" }), run }), /approve op/);
+    assert.throws(() => registerAdminOp("wtest.invoke", { kind: "write", capability: "agentEngine", laptop: "web", laptopCard, run }), /needs a laptopCard, and asks/);
+    assert.throws(() => registerAdminOp("wtest.invoke", { kind: "write", capability: "agentEngine", laptop: "web", asks, run }), /needs a laptopCard/);
+    assert.throws(() => registerAdminOp("wtest.invoke", { kind: "write", capability: "agentEngine", laptop: "web-always", run }), /needs a laptopCard/);
+    assert.throws(() => registerAdminOp("wtest.list", { kind: "read", capability: "agentEngine", laptop: "web", laptopCard, run }), /needs a laptopCard, and asks/);
+    assert.throws(() => registerAdminOp("wtest.invoke", { kind: "write", capability: "agentEngine", laptop: "always" as never, laptopCard, asks, run }), /unknown laptop access/);
+    registerAdminOp("wtest.invoke", { kind: "write", capability: "agentEngine", laptop: "web", laptopCard, asks, run })();
+    registerAdminOp("wtest.invoke", { kind: "write", capability: "agentEngine", laptop: "web-always", laptopCard, run })();
+    registerAdminOp("wtest.resume", { kind: "approve", capability: "agentEngine", laptop: "web", laptopCard, card: () => ({ title: "t", message: "m" }), run })();
+    for (const laptop of ["memory", "tape"] as const) {
+      assert.throws(() => registerAdminOp("wtest.resume", { kind: "approve", capability: "agentEngine", laptop, card: () => ({ title: "t", message: "m" }), run }), /approve op/);
+    }
   });
 
-  test("a generic webApproval op: a Dongle's `confirmed` never runs it; the web yes does, once", async () => {
+  test("a generic laptop \"web\" op: a Dongle's `confirmed` never runs it; the web yes does, once", async () => {
     const { link, web, close } = await apps();
     let runs = 0;
     const off = registerAdminOp("wtest.fire", {
       kind: "write",
       // memory: a Dongle reaches it without a tape (E9.10: agentEngine needs one, laptop-tapes.test.ts).
       capability: "memory",
-      laptop: true,
-      webApproval: true,
+      laptop: "web",
       asks: async () => true,
       laptopCard: (args) => (args.target === "bad" ? { error: "no such target" } : { title: "Fire the thing", facts: [{ label: "Target", value: String(args.target) }], summary: "" }),
       async run(_ctx, caller) {

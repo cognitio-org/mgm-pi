@@ -4,9 +4,8 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { buildTestApp, seedGuru, type TestApp } from "./helpers.ts";
+import { adminOp, buildTestApp, laptopApp, seedGuru, type TestApp } from "./helpers.ts";
 import { MemoryStore } from "../src/store/memory.ts";
-import { hashToken } from "../src/tokens.ts";
 import { FakeAgentEngine } from "./fake-agent-engine.ts";
 import { createAgentEngine } from "../src/agentengine/index.ts";
 import { AeSessions } from "../src/ae-sessions.ts";
@@ -17,22 +16,15 @@ import { memoryUserHash } from "../src/agentengine/identity.ts";
 const ADA = "ada@example.com";
 const ADA_TOKEN = "outf_laptop-tapes-ada";
 
-async function linkApp(store = new MemoryStore()): Promise<TestApp> {
-  await store.tokens.insert({ id: "tok-ada", ownerEmail: ADA, name: "laptop", prefix: ADA_TOKEN.slice(0, 8), hash: hashToken(ADA_TOKEN), createdAt: new Date().toISOString() });
-  return buildTestApp({ OUTFITTER_ROLE: "link", OUTFITTER_DEV: "0" }, { store });
-}
-
-async function op(a: TestApp, name: string, args: Record<string, unknown>, extra: Record<string, unknown> = {}) {
-  const res = await a.fastify.inject({ method: "POST", url: "/api/admin/ops", headers: { authorization: `Bearer ${ADA_TOKEN}` }, payload: { op: name, args, ...extra } });
-  assert.equal(res.statusCode, 200, res.body);
-  return res.json() as { ok: boolean; text?: string; error?: string; needsApproval?: boolean; approvalId?: string };
-}
+/** The link role with Ada's Dongle. */
+const adaApp = () => laptopApp({ tokens: [[ADA, ADA_TOKEN]] });
+const op = (a: TestApp, name: string, args: Record<string, unknown>) => adminOp(a, ADA_TOKEN, name, args);
 
 const SECRET = "sk-live-0123456789abcdef-never-leaves";
 
 describe("tapes as data for a laptop", () => {
   test("tapes.get format json: every field a Drive reads, env names only, the values never", async () => {
-    const store = new MemoryStore();
+    const { app, store } = await adaApp();
     await seedGuru(store, {
       id: "foreman",
       name: "Foreman",
@@ -52,7 +44,6 @@ describe("tapes as data for a laptop", () => {
       browserIde: true,
       updatedAt: "2026-10-01T10:00:00.000Z",
     });
-    const app = await linkApp(store);
     const got = await op(app, "tapes.get", { id: "foreman", format: "json" });
     assert.equal(got.ok, true);
     assert.ok(!got.text!.includes(SECRET) && !got.text!.includes("a-value"), "no env value, ever");
@@ -86,19 +77,17 @@ describe("tapes as data for a laptop", () => {
   });
 
   test("a long prompt comes whole in the json form (the text form clips)", async () => {
-    const store = new MemoryStore();
+    const { app, store } = await adaApp();
     await seedGuru(store, { id: "long", systemPrompt: "x".repeat(20_000) });
-    const app = await linkApp(store);
     const tape = JSON.parse((await op(app, "tapes.get", { id: "long", format: "json" })).text!);
     assert.equal(tape.systemPrompt.length, 20_000);
     await app.fastify.close();
   });
 
   test("tapes.list format json: one row per tape with its capability flags and updatedAt", async () => {
-    const store = new MemoryStore();
+    const { app, store } = await adaApp();
     await seedGuru(store, { id: "a", name: "A", memory: "tool", updatedAt: "2026-10-01T09:00:00.000Z", env: { K: SECRET } });
     await seedGuru(store, { id: "b", name: "B", agentEngine: true, updatedAt: "2026-10-01T10:00:00.000Z" });
-    const app = await linkApp(store);
     const got = await op(app, "tapes.list", { format: "json" });
     assert.ok(!got.text!.includes(SECRET));
     const list = JSON.parse(got.text!);
@@ -121,23 +110,13 @@ const PI = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
 const LAPTOP_AE = { sessionId: `laptop:${PI}`, repo: "acme/widgets", tape: "foreman" };
 
 async function aeApps(opts: { agentEngine?: boolean } = {}) {
-  const fake = new FakeAgentEngine();
-  const agentEngine = createAgentEngine(fake.config(["agents"]), { fetch: fake.fetch });
-  const store = new MemoryStore();
-  for (const [id, email, token] of [["tok-owner", OWNER, OWNER_TOKEN], ["tok-eve", "eve@example.com", EVE_TOKEN]] as const) {
-    await store.tokens.insert({ id, ownerEmail: email, name: "laptop", prefix: token.slice(0, 8), hash: hashToken(token), createdAt: new Date().toISOString() });
-  }
+  const { app: link, fake, store, agentEngine } = await laptopApp({ tokens: [[OWNER, OWNER_TOKEN], ["eve@example.com", EVE_TOKEN]], parts: ["agents"] });
   await seedGuru(store, { id: "foreman", agentEngine: opts.agentEngine ?? true });
   await seedGuru(store, { id: "plain" });
   const now = new Date().toISOString();
   await store.aeAgents.insert({ id: "researcher", workspaceId: "ws-research", name: "Researcher", description: "Finds papers", enabled: true, createdAt: now, updatedAt: now });
-  const link = await buildTestApp({ OUTFITTER_ROLE: "link", OUTFITTER_DEV: "0" }, { store, agentEngine });
   const web = await buildTestApp({ OUTFITTER_ROLE: "web" }, { store, agentEngine });
-  const call = async (name: string, args: Record<string, unknown>, extra: Record<string, unknown> = {}, token = OWNER_TOKEN) => {
-    const res = await link.fastify.inject({ method: "POST", url: "/api/admin/ops", headers: { authorization: `Bearer ${token}` }, payload: { op: name, args, laptop: LAPTOP_AE, ...extra } });
-    assert.equal(res.statusCode, 200, res.body);
-    return res.json() as { ok: boolean; text?: string; error?: string; needsApproval?: boolean; approvalId?: string; state?: string };
-  };
+  const call = (name: string, args: Record<string, unknown>, extra: Record<string, unknown> = {}, token = OWNER_TOKEN) => adminOp(link, token, name, args, { laptop: LAPTOP_AE, ...extra });
   const widget = async () => (await web.fastify.inject({ method: "GET", url: "/api/laptop-approvals" })).json().approvals as Array<{ id: string; op: string; title: string; summary: string; facts?: Array<{ label: string; value: string }> }>;
   const decide = (id: string, approve: boolean) => web.fastify.inject({ method: "POST", url: `/api/laptop-approvals/${id}`, payload: { approve } });
   const close = async () => {
@@ -301,7 +280,7 @@ describe("the sweep and a laptop's Agent Engine sessions", () => {
 
 describe("a tape's repos hint (E9.10)", () => {
   test("lowercased owner/name, deduplicated; anything else refused; agents may set it; it reaches the data form", async () => {
-    const store = new MemoryStore();
+    const { app, store } = await adaApp();
     const human = { kind: "human" as const, operator: false };
     const made = await createGuru(store, { name: "T", model: "litellm/x", repos: ["Acme/Widgets", "acme/widgets", "acme/gears"] } as never, human);
     assert.ok(made.ok);
@@ -312,7 +291,6 @@ describe("a tape's repos hint (E9.10)", () => {
     }
     const agent = await updateGuru(store, made.guru.id, { repos: ["acme/new"] } as never, { kind: "agent" });
     assert.ok(agent.ok, "not a capability field: an agent may set it");
-    const app = await linkApp(store);
     const tape = JSON.parse((await op(app, "tapes.get", { id: made.guru.id, format: "json" })).text!);
     assert.deepEqual(tape.repos, ["acme/new"]);
     const viaOp = await op(app, "tapes.update", { id: made.guru.id, repos: ["acme/op"] });
@@ -358,17 +336,18 @@ describe("review fixes (E9.10)", () => {
     await a.close();
   });
 
-  test("control characters in a tape's text are refused; package credentials never reach a laptop", async () => {
-    const store = new MemoryStore();
+  test("hidden and control characters in a tape's text are refused; package credentials never reach a laptop", async () => {
+    const { app, store } = await adaApp();
     const human = { kind: "human" as const, operator: false };
-    for (const bad of [{ systemPrompt: "ok\u0000--extension\u0000/x" }, { tools: ["read\u001b[8m"] }, { name: "a\u202eb" }]) {
+    // A zero-width space and a right-to-left mark are format characters: refused too, as Kernal does.
+    const cf = (cp: number) => String.fromCodePoint(cp);
+    for (const bad of [{ systemPrompt: `x${cf(0x200b)}y` }, { name: `a${cf(0x200f)}b` }, { systemPrompt: "ok\u0000--extension\u0000/x" }, { tools: ["read\u001b[8m"] }, { name: "a\u202eb" }]) {
       const r = await createGuru(store, { name: "T", model: "litellm/x", ...bad } as never, human);
       assert.equal(r.ok, false, JSON.stringify(bad));
       assert.match((r as { error: string }).error, /control characters/);
     }
-    assert.equal((await createGuru(store, { name: "T", model: "litellm/x", systemPrompt: "line 1\n\tline 2" } as never, human)).ok, true);
+    assert.equal((await createGuru(store, { name: "T", model: "litellm/x", systemPrompt: "line 1\r\n\tline 2" } as never, human)).ok, true, "tab, newline and CR in a prompt");
     await seedGuru(store, { id: "pk", packages: ["npm:pi-foo", "git+https://x-access-token:ghp_secret123@github.com/a/b"] });
-    const app = await linkApp(store);
     const got = await op(app, "tapes.get", { id: "pk", format: "json" });
     assert.ok(!got.text!.includes("ghp_secret123"));
     assert.deepEqual(JSON.parse(got.text!).packages, ["npm:pi-foo", "git+https://***@github.com/a/b"]);

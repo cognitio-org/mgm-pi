@@ -209,13 +209,13 @@ describe("GuruForm: E9.10 the repos hint", () => {
     return update.mock.calls[0]![1];
   }
 
-  it("shows the saved repos and sends them lowercased", async () => {
+  it("shows the saved repos and sends them as typed (the API lowercases them)", async () => {
     render({ ...guru, repos: ["acme/widgets"] });
     expect(container!.querySelector<HTMLInputElement>("#guru-repos")!.value).toBe("acme/widgets");
     act(() => root?.unmount());
     root = null;
     container?.remove();
-    expect((await save(guru, "Acme/Widgets, acme/gears")).repos).toEqual(["acme/widgets", "acme/gears"]);
+    expect((await save(guru, "Acme/Widgets, acme/gears")).repos).toEqual(["Acme/Widgets", "acme/gears"]);
   });
 
   it("an emptied field clears them", async () => {

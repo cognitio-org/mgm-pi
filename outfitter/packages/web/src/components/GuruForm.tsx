@@ -95,8 +95,8 @@ export function GuruForm({ guru, models, meta, isSysop = false, onClose, onSaved
       appendSystemPrompt: appendSystemPrompt.trim() || undefined,
       tools: textToList(tools),
       excludeTools: textToList(excludeTools),
-      // An empty field clears the hint (the API stores [] as no repos).
-      repos: textToList(repos)?.map((r) => r.toLowerCase()) ?? (guru?.repos?.length ? [] : undefined),
+      // An empty field clears the hint (the API stores [] as no repos, and lowercases the rest).
+      repos: textToList(repos) ?? (guru?.repos?.length ? [] : undefined),
       playwrightBeforeCheckpoint,
       allowExternalHtmlResources,
       browserIde,

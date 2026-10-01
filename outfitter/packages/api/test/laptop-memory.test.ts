@@ -63,18 +63,21 @@ describe("laptop identity and context", () => {
   test("only memory reads and writes may be laptop-callable; record is the one unaudited write", () => {
     assert.deepEqual(
       ["memory.search", "memory.context", "memory.save", "memory.record"].map((n) => [n, ADMIN_OPS[n]?.kind, ADMIN_OPS[n]?.laptop, ADMIN_OPS[n]?.audit]),
-      [["memory.search", "read", true, undefined], ["memory.context", "read", true, undefined], ["memory.save", "write", true, undefined], ["memory.record", "write", true, false]],
+      [["memory.search", "read", "memory", undefined], ["memory.context", "read", "memory", undefined], ["memory.save", "write", "web", undefined], ["memory.record", "write", "memory", false]],
     );
     // E9.10 (#354): ae.* reach a laptop only with a tape that has Agent Engine: invoke and resume
     // through the web yes, the rest (reads, close) acting for nobody.
     assert.deepEqual(
-      Object.entries(ADMIN_OPS).filter(([n]) => n.startsWith("ae.")).map(([n, d]) => [n, d.webApproval === true ? "web" : d.laptopTape === true ? "tape" : "drive"]),
-      [["ae.list", "tape"], ["ae.invoke", "web"], ["ae.get", "tape"], ["ae.resume", "web"], ["ae.close", "tape"]],
+      Object.entries(ADMIN_OPS).filter(([n]) => n.startsWith("ae.")).map(([n, d]) => [n, d.laptop ?? "drive"]),
+      [["ae.list", "tape"], ["ae.invoke", "web-always"], ["ae.get", "tape"], ["ae.resume", "web"], ["ae.close", "tape"]],
     );
     const run = async () => ({ ok: true as const, text: "" });
-    assert.throws(() => registerAdminOp("aetest.fire", { kind: "write", capability: "agentEngine", laptop: true, laptopTape: true, run } as never), /laptopTape is for laptop reads and \.close writes/);
-    assert.throws(() => registerAdminOp("aetest.list", { kind: "read", capability: "agentEngine", laptop: true, run } as never), /only a memory read or write/);
-    assert.throws(() => registerAdminOp("memtest.wipe", { kind: "delete", capability: "memory", laptop: true, run }), /only a memory read or write/);
+    assert.throws(() => registerAdminOp("aetest.fire", { kind: "write", capability: "agentEngine", laptop: "tape", run }), /laptop "tape" is for reads and \.close writes/);
+    assert.throws(() => registerAdminOp("aetest.list", { kind: "read", capability: "memory", laptop: "tape", run }), /laptop "tape" is for reads and \.close writes of a tape capability/);
+    registerAdminOp("aetest.list", { kind: "read", capability: "agentEngine", laptop: "tape", run })();
+    registerAdminOp("aetest.close", { kind: "write", capability: "agentEngine", laptop: "tape", run })();
+    assert.throws(() => registerAdminOp("aetest.list", { kind: "read", capability: "agentEngine", laptop: "memory", run }), /only a memory read or write/);
+    assert.throws(() => registerAdminOp("memtest.wipe", { kind: "delete", capability: "memory", laptop: "memory", run }), /only a memory read or write/);
     assert.throws(() => registerAdminOp("memtest.get", { kind: "read", capability: "memory", audit: false, run } as never), /only a laptop memory write may skip/);
     assert.throws(() => registerAdminOp("memtest.burn", { kind: "write", capability: "memory", audit: false, run } as never), /only a laptop memory write may skip/);
   });

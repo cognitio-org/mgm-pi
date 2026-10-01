@@ -68,7 +68,8 @@ COPY outfitter/image/agents/ ./.pi/agents/
 # could only add a second, possibly contradicting, paragraph. It also returns early under
 # KERNAL_SANDBOX=1, for an image built without this line.
 RUN rm -rf ./.pi/extensions/kernal-voice ./.pi/extensions/kernal-update ./.pi/extensions/kernal-admin \
-           ./.pi/extensions/kernal-codebase-index ./.pi/extensions/kernal-chrome ./.pi/extensions/kernal-html-preview
+           ./.pi/extensions/kernal-codebase-index ./.pi/extensions/kernal-chrome ./.pi/extensions/kernal-html-preview \
+           ./.pi/extensions/sentry
 
 # TUI/laptop-only packages (voice input, terminal footer, editor LSP) make no sense for a cloud
 # guru with no terminal, no editor and no microphone attached; drop them from the image's

@@ -1,0 +1,110 @@
+outfitter/packages/api/src/routes/tokens.ts
+  s_1d3bdd6f362f9b::t_1eaaad91b236f6 98-104
+  s_1d3bdd6f362f9b::t_26f0f70dc9d1c2 53-54
+outfitter/packages/api/src/github-broker.ts
+  s_1d3bdd6f362f9b::t_b2bf37aa12be8a 7-8
+  s_1d3bdd6f362f9b::t_565d19cf878b76 278
+  s_1d3bdd6f362f9b::t_2ea44fc0f6a0a1 284-286
+outfitter/packages/api/src/routes/a2a.ts
+  s_1d3bdd6f362f9b::t_3c1ab73a7008dd 193-194,197-201,203,207,209-210
+  s_1d3bdd6f362f9b::t_4f1448bfc0f3e1 77-79,81-85
+  s_1d3bdd6f362f9b::t_ca1af8696f6aa4 204-206
+  s_1d3bdd6f362f9b::t_ef1e3f9e7ef82a 16
+  s_1d3bdd6f362f9b::t_e554d9bb13d1e0 61-76,80,86-111
+outfitter/packages/api/src/agentlink.ts
+  s_1d3bdd6f362f9b::t_7bc8e6ae1de1d9 1004-1009
+  s_1d3bdd6f362f9b::t_1d0cd25d18d958 30-32
+  s_1d3bdd6f362f9b::t_11fbfcd33dce99 91-95
+  s_1d3bdd6f362f9b::t_e826ed687b19af 1197-1207,1209-1211,1213-1214
+  s_1d3bdd6f362f9b::t_2266f5b218f11f 1212
+  s_1d3bdd6f362f9b::t_1d1de54c8eb6fb 1304-1306
+outfitter/packages/api/src/secrets.ts
+  s_1d3bdd6f362f9b::t_4dfb5ce957042e 21-24
+  s_1d3bdd6f362f9b::t_48bde2a92dcc39 74,76-77,81,85,88-91,94-95,100-101
+  s_1d3bdd6f362f9b::t_7cb7a3e6c67e98 162,164,168-169
+  s_1d3bdd6f362f9b::t_f97e76e3ddeaeb 102,263-265,267-274
+  s_1d3bdd6f362f9b::t_8994c4bfa40d5c 53-62
+  s_162e2233a4f0f3::t_2114cf4d8c397d 103
+outfitter/packages/api/src/routes/sessions.ts
+  s_1d3bdd6f362f9b::t_f2d9950397c31a 299-302
+  s_1d3bdd6f362f9b::t_a269207f560e39 9
+outfitter/packages/api/src/server.ts
+  s_1d3bdd6f362f9b::t_827a36ee38ef50 259
+  s_1d3bdd6f362f9b::t_baeb1a16efde86 79-80
+  s_1d3bdd6f362f9b::t_c0c25cdcb0263b 122
+outfitter/packages/api/src/a2a/keys.ts
+  s_1d3bdd6f362f9b::t_4f00d3e6ad8c80 19-26,34-38,40-42,47-52,56-62
+  s_1d3bdd6f362f9b::t_01cb5e4e27b2ec 75-79
+  s_1d3bdd6f362f9b::t_86b8d77716e8ff 93-94
+  s_1d3bdd6f362f9b::t_70b1d493782503 18
+  s_1d3bdd6f362f9b::t_c4373e24ea15a8 63
+outfitter/packages/api/src/a2a/tasks.ts
+  s_1d3bdd6f362f9b::t_b9bd9f1f1d81cd 29-32
+  s_1d3bdd6f362f9b::t_e087ad7119f882 544-547
+  s_1d3bdd6f362f9b::t_40ace40b5f2f3f 346-407,411,415-419
+  s_1d3bdd6f362f9b::t_bd82904c5ac119 287-288
+  s_1d3bdd6f362f9b::t_a8b98675b41d9f 582-585,588
+  s_1d3bdd6f362f9b::t_de3501c21508a3 87-89
+outfitter/packages/api/test/github-broker.test.ts
+  s_1d3bdd6f362f9b::t_09b4363159bf72 246,250-251
+  s_1d3bdd6f362f9b::t_cae473ea16e1ce 112-116,122
+outfitter/packages/api/src/a2a/handler.ts
+  s_1d3bdd6f362f9b::t_29ca97a983a940 402
+  s_1d3bdd6f362f9b::t_9d66954d5b0942 36
+  s_1d3bdd6f362f9b::t_a6455c151c5e1c 412
+outfitter/packages/api/src/auth.ts
+  s_1d3bdd6f362f9b::t_f6f0d33089b38b 96
+  s_1d3bdd6f362f9b::t_b282dbd2e22826 88-91
+outfitter/packages/api/test/a2a-security.test.ts
+  s_1d3bdd6f362f9b::t_0b87a70f993397 173
+  s_1d3bdd6f362f9b::t_98c5080da1a1bc 254-255,275,287,291,293
+  s_1d3bdd6f362f9b::t_5afc1fa4fec2b4 367-368
+  s_1d3bdd6f362f9b::t_fc29d30c27736f 383-389
+  s_1d3bdd6f362f9b::t_d81fb59d0cc064 53-54
+  s_1d3bdd6f362f9b::t_b2ebd27d7c5017 1-21,23-52,55-172,174-253,256-274,276-286,288-290,292,294-366,369-382,390-439
+  s_1d3bdd6f362f9b::t_46a377272a7e65 22
+outfitter/packages/api/src/search/redact.ts
+  s_1d3bdd6f362f9b::t_2d8f236097b63e 25-26
+outfitter/packages/api/src/routes/operator.ts
+  s_1d3bdd6f362f9b::t_9d06656c44ddff 21
+  s_1d3bdd6f362f9b::t_70726b3cec0354 231-237
+outfitter/docs/protocol.md
+  s_1d3bdd6f362f9b::t_50343d3a8a2ade 683-686
+  s_1d3bdd6f362f9b::t_f59d9ccfd83dc2 658-669
+  s_1d3bdd6f362f9b::t_5954b54289690b 702-712
+outfitter/packages/web/src/pages/TokensPage.tsx
+  s_1d3bdd6f362f9b::t_cf9a465fb590cc 151-153
+outfitter/packages/api/src/admin/drive.ts
+  s_1d3bdd6f362f9b::t_3d5ddd363d8de6 20-21
+  s_1d3bdd6f362f9b::t_436e390e6744bb 108-113,125
+outfitter/packages/api/test/secrets.test.ts
+  s_1d3bdd6f362f9b::t_907c04c3885cc7 43
+outfitter/packages/api/src/branch-policy.ts
+  s_1d3bdd6f362f9b::t_f7e728a2ba06bf 51-63,66,68-70,73,76-78
+outfitter/packages/api/test/a2a.test.ts
+  s_1d3bdd6f362f9b::t_4835bdc00ba056 27-28,358,376,381,743-744
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "2f76bef3ab8e874d389e9038f829998d7f6ae467",
+  "prompts": {},
+  "sessions": {
+    "s_162e2233a4f0f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d82cf409-27ab-46f7-b6cd-1549691ef502",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

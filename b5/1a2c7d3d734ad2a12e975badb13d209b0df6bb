@@ -1,0 +1,68 @@
+outfitter/docs/specs/atlas-agent-engine-and-a2a.md
+  s_1d3bdd6f362f9b::t_def04facb91158 833-834,836,838-846
+  s_1d3bdd6f362f9b::t_d3c125277ee2e0 3
+  s_1d3bdd6f362f9b::t_006f6ec764e3f9 136-142
+  s_1d3bdd6f362f9b::t_6cdeabc558d4af 302-303
+  s_1d3bdd6f362f9b::t_9acc1f81e8e777 493-495
+  s_1d3bdd6f362f9b::t_0970e656fd0c18 256
+  s_1d3bdd6f362f9b::t_42e297354bfe04 398-400
+  s_1d3bdd6f362f9b::t_b2e86b47ecf797 567-568,571-572
+  s_1d3bdd6f362f9b::t_5939e8691a6bed 626-633
+  s_1d3bdd6f362f9b::t_8ad6455b9042f4 6-7
+  s_1d3bdd6f362f9b::t_52552b9f4b137a 639-648
+  s_1d3bdd6f362f9b::t_76dabb8b5f8abc 376
+  s_1d3bdd6f362f9b::t_a7a4746f914158 957-958
+  s_1d3bdd6f362f9b::t_31363af63fc4d8 164-165
+  s_1d3bdd6f362f9b::t_3c4eb1077495f5 905-906
+  s_1d3bdd6f362f9b::t_dbc7e5c8e54b21 992-993
+  s_1d3bdd6f362f9b::t_f4a7939112bee0 451-452
+  s_1d3bdd6f362f9b::t_a42def82a838c5 577-583
+  s_1d3bdd6f362f9b::t_d53a6eec1080e5 414-416
+  s_1d3bdd6f362f9b::t_92f2ffa365feec 308-309
+  s_1d3bdd6f362f9b::t_29ef1e977928ff 477-478
+  s_1d3bdd6f362f9b::t_9c26e84f66802e 850-861
+  s_1d3bdd6f362f9b::t_f11bbb72482bcd 684-686
+  s_1d3bdd6f362f9b::t_880dc2dc9d4d9b 792-801
+  s_1d3bdd6f362f9b::t_ab4afc6b0bc020 814-816
+  s_1d3bdd6f362f9b::t_d67b45e891b7ab 9-11
+  s_1d3bdd6f362f9b::t_92e5a24be43cb7 350-353
+  s_1d3bdd6f362f9b::t_f72d88754a4e6f 779-789
+  s_1d3bdd6f362f9b::t_b809b257c75d42 729-730
+  s_1d3bdd6f362f9b::t_1c7202f8593ae2 918-922
+  s_1d3bdd6f362f9b::t_81287fea95a7e9 823-825
+  s_1d3bdd6f362f9b::t_03ea1e5c14927b 971-973
+  s_1d3bdd6f362f9b::t_e501a968a79dfc 232
+  s_1d3bdd6f362f9b::t_03aa9a22104d63 710-711
+  s_1d3bdd6f362f9b::t_67dfef507210cb 931-944
+  s_1d3bdd6f362f9b::t_629c3e12cd9bf6 960-961,963-964
+  s_1d3bdd6f362f9b::t_d1ecdceb8f07ba 358-360
+  s_1d3bdd6f362f9b::t_5f59a4e796ac9d 383,385,387-389
+  s_1d3bdd6f362f9b::t_81879a594daa32 878
+  s_1d3bdd6f362f9b::t_f4b5bef28d6126 172-178
+  s_1d3bdd6f362f9b::t_e141f250567c0d 69-70
+  s_1d3bdd6f362f9b::t_15a15655c65c19 4-5,143-144
+  s_1d3bdd6f362f9b::t_e523356435a496 409-410
+  s_1d3bdd6f362f9b::t_4c082b3645f14c 439-443
+  s_1d3bdd6f362f9b::t_f95c5be41e2feb 672-678
+  s_1d3bdd6f362f9b::t_df2fdc04978d02 606-611
+  s_1d3bdd6f362f9b::t_4a5ebcc3fce150 354
+  s_1d3bdd6f362f9b::t_b9d0c36e8b1e65 384
+outfitter/docs/reports/agent-engine-spike.md
+  s_1d3bdd6f362f9b::t_edd3ce529b0e92 21-22,63,72-74,108-109,128-129,131-132,183-194
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "b51a2c7d3d734ad2a12e975badb13d209b0df6bb",
+  "prompts": {},
+  "sessions": {
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

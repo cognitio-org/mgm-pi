@@ -44,17 +44,27 @@ export function turnText(entry: PiEntry): { role: "user" | "assistant"; text: st
   if (m.role === "user") {
     if (typeof m.content === "string") text = m.content;
     else if (Array.isArray(m.content)) text = m.content.filter((b) => b?.type === "text" && typeof b.text === "string").map((b) => b.text).join("\n");
-    if (RELAYED.test(text.trimStart())) return undefined;
   } else if (m.role === "assistant") {
     if (m.stopReason === "error" || m.stopReason === "aborted") return undefined;
     const blocks = Array.isArray(m.content) ? (m.content as Array<{ type?: unknown; text?: unknown }>) : [];
     text = blocks.filter((b) => b?.type === "text" && typeof b.text === "string").map((b) => b.text as string).join("\n");
   } else return undefined;
-  text = text.trim();
+  const clean = recordableText(m.role, text);
+  return clean === undefined ? undefined : { role: m.role, text: clean };
+}
+
+/**
+ * One turn's text as it may be recorded, or undefined when it records nothing: empty, or a user
+ * message that is relayed mail or an Outfitter notice. Redacted, then capped. Shared with the
+ * laptop's `memory.record` (E9.9), which gets the text from Kernal rather than from stored entries.
+ */
+export function recordableText(role: "user" | "assistant", raw: string): string | undefined {
+  const text = raw.trim();
   if (!text) return undefined;
+  if (role === "user" && RELAYED.test(text)) return undefined;
   // Redacted whole, then cut, so a secret can't be split into an unmatched piece.
   const clean = redact(text);
-  return { role: m.role, text: clean.length <= MAX_CONTENT ? clean : `${clean.slice(0, MAX_CONTENT - 1)}…` };
+  return clean.length <= MAX_CONTENT ? clean : `${clean.slice(0, MAX_CONTENT - 1)}…`;
 }
 
 function isUserMessage(entry: PiEntry): boolean {
@@ -101,7 +111,7 @@ export class MemoryRecorder {
     const guru = await this.store.gurus.findById(session.guruId);
     if (guru?.memory !== "auto") return undefined;
     const id = memoryIdentity(session);
-    return id && !id.a2a ? { session, userId: id.userId } : undefined;
+    return id ? { session, userId: id.userId } : undefined;
   }
 
   /** Runs `work` after the session's previous note, so records keep the order entries came in. */

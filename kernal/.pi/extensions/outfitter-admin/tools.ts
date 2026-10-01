@@ -8,7 +8,7 @@
  */
 import type { AdminReply, AdminTransport } from "./transport.ts";
 
-export type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
+export type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean; details?: unknown };
 
 /** Asks the person at the laptop TUI to approve. Undefined when nobody is there to ask. */
 export type Confirm = (title: string, message: string, signal?: AbortSignal) => Promise<boolean>;
@@ -127,8 +127,23 @@ export const ADMIN_TOOLS: AdminToolDef[] = [
 export const PROMPT_SNIPPET = "outfitter_*: administer Outfitter (tapes, environments, sessions) without calling its API.";
 export const PROMPT_GUIDELINES = ["outfitter_*: use these, not curl or the web API."];
 
-function text(reply: AdminReply): ToolResult {
-  return reply.ok ? { content: [{ type: "text", text: reply.text }] } : { content: [{ type: "text", text: reply.error }], isError: true };
+/** One text result; `isError` marks a refusal or a failure. */
+export function textResult(text: string, isError = false): ToolResult {
+  return isError ? { content: [{ type: "text", text }], isError: true } : { content: [{ type: "text", text }] };
+}
+
+/** An op's reply as a tool result: its text, or its error after `prefix`. */
+export function replyResult(reply: AdminReply, prefix = ""): ToolResult {
+  return reply.ok ? textResult(reply.text) : textResult(`${prefix}${reply.error}`, true);
+}
+
+/** Runs one tool call for pi: a throw becomes an error result `<name>: <message>`, never a rejection. */
+export async function safeExecute(name: string, run: () => Promise<ToolResult>): Promise<ToolResult> {
+  try {
+    return await run();
+  } catch (err) {
+    return textResult(`${name}: ${err instanceof Error ? err.message : String(err)}`, true);
+  }
 }
 
 /** What the TUI confirm shows: the op, its target, the fields it changes, and the start of a new
@@ -160,13 +175,13 @@ export async function runTool(
   signal?: AbortSignal,
 ): Promise<ToolResult> {
   const mapped = def.toOp(params ?? {});
-  if (!("op" in mapped)) return { content: [{ type: "text", text: mapped.error }], isError: true };
+  if (!("op" in mapped)) return textResult(mapped.error, true);
   const first = await transport.call(mapped.op, mapped.args, { signal });
-  if (first.ok || !first.needsApproval) return text(first);
-  if (transport.kind === "drive") return text({ ok: false, error: `not approved: ${first.error}` });
-  if (!confirm) return text({ ok: false, error: "needs approval: run this in the Kernal TUI, where the user can confirm it" });
+  if (first.ok || !first.needsApproval) return replyResult(first);
+  if (transport.kind === "drive") return textResult(`not approved: ${first.error}`, true);
+  if (!confirm) return textResult("needs approval: run this in the Kernal TUI, where the user can confirm it", true);
   const { title, message } = confirmText(mapped.op, mapped.args);
   const yes = await confirm(title, message, signal);
-  if (!yes) return text({ ok: false, error: "the user declined" });
-  return text(await transport.call(mapped.op, mapped.args, { confirmed: true, signal }));
+  if (!yes) return textResult("the user declined", true);
+  return replyResult(await transport.call(mapped.op, mapped.args, { confirmed: true, signal }));
 }

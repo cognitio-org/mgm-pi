@@ -8,7 +8,7 @@
  * - Laptop: also this machine's own sessions (local-sessions.ts), keyword only. With both, results
  *   come in two short sections, and a local session that is also in the cloud's results is shown once.
  */
-import type { ToolResult } from "./tools.ts";
+import { textResult as text, type ToolResult } from "./tools.ts";
 import type { AdminTransport } from "./transport.ts";
 import { capText, loadAll, localTranscript, renderLocal, searchLocal, shortSid, sidMatches, type LocalSession } from "./local-sessions.ts";
 
@@ -59,10 +59,6 @@ export const SEARCH_TOOLS = [
     },
   },
 ] as const;
-
-function text(t: string, isError = false): ToolResult {
-  return isError ? { content: [{ type: "text", text: t }], isError: true } : { content: [{ type: "text", text: t }] };
-}
 
 /** `30m`, `12h`, `7d`, `2w`, or an ISO date, as an ISO time; undefined when it is none of these. The
  * same forms Outfitter accepts, and /sessions sync uses this too. */

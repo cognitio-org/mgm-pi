@@ -7,10 +7,17 @@
  * API decides who the memory belongs to and which repo it is about, from the session; nothing here
  * names a user or a repo. Results are the API's compact text, passed through unchanged; recalled
  * text comes back already labelled as notes that may be wrong.
+ *
+ * On a laptop (E9.9, laptop.ts) the same tool goes over the Dongle's HTTP transport with a `laptop`
+ * context, and a shared or taxonomic save waits for the owner's yes in the Outfitter web app's
+ * approval widget (laptop-approval.ts). Not a TUI confirm: the agent's own shell could answer that.
  */
-import type { AdminReply, AdminTransport } from "../outfitter-admin/transport.ts";
+import { redact } from "../_shared/redact.ts";
+import type { AdminReply, AdminTransport, LaptopContext } from "../outfitter-admin/transport.ts";
+import { replyResult, safeExecute, textResult, type ToolResult } from "../outfitter-admin/tools.ts";
+import { approvalIdOf, callWithWebApproval, type ApprovalWait, type LaptopCall } from "./laptop-approval.ts";
 
-export type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean; details?: unknown };
+export type { LaptopCall, ToolResult };
 
 const ACTIONS = ["search", "save"] as const;
 const TYPES = ["semantic", "episodic", "procedural", "taxonomic"] as const;
@@ -31,6 +38,8 @@ export const MEMORY_TOOL = {
       text: { type: "string", description: "save: the memory itself." },
       label: { type: "string", description: "save: short name (same label replaces); taxonomic: domain:term." },
       shared: { type: "boolean", description: "save: visible to the team (taxonomic needs it)." },
+      // No description: only a pending-approval reply names it, and says how to use it.
+      approvalId: { type: "string" },
       limit: { type: "integer" },
     },
   },
@@ -57,28 +66,47 @@ export function memoryOp(params: Record<string, any>): { op: string; args: Recor
   return { error: `action must be one of: ${ACTIONS.join(", ")}` };
 }
 
-function result(reply: AdminReply): ToolResult {
-  return reply.ok
-    ? { content: [{ type: "text", text: reply.text }], details: undefined }
-    : { content: [{ type: "text", text: `memory: ${reply.error}` }], isError: true, details: undefined };
+// pi's tool results carry `details`; this tool has none.
+const withDetails = (r: ToolResult): ToolResult => ({ ...r, details: undefined });
+const result = (reply: AdminReply): ToolResult => withDetails(replyResult(reply, "memory: "));
+const fail = (text: string): ToolResult => withDetails(textResult(text, true));
+
+/** A laptop's args with the free text redacted before it leaves the machine (the API does it too). */
+function redacted(args: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...args };
+  for (const key of ["query", "text", "label"]) if (typeof out[key] === "string") out[key] = redact(out[key] as string);
+  return out;
 }
 
-export async function runMemory(params: Record<string, any>, transport: AdminTransport, signal?: AbortSignal): Promise<ToolResult> {
+export async function runMemory(params: Record<string, any>, transport: AdminTransport, signal?: AbortSignal, laptop: LaptopCall = {}): Promise<ToolResult> {
   const mapped = memoryOp(params ?? {});
-  if ("error" in mapped) return { content: [{ type: "text", text: mapped.error }], isError: true, details: undefined };
-  return result(await transport.call(mapped.op, mapped.args, { signal }));
+  if ("error" in mapped) return fail(mapped.error);
+  if (transport.kind !== "laptop") return result(await transport.call(mapped.op, mapped.args, { signal }));
+  if (!laptop.laptop) return fail("memory: this session has no id yet; try again after the first prompt");
+  const args = redacted(mapped.args);
+  const shared = mapped.op === "memory.save" && (args.shared === true || args.type === "taxonomic");
+  if (!shared) return result(await transport.call(mapped.op, args, { signal, laptop: laptop.laptop }));
+  // Shared memory is recalled into the other users' prompts: the owner says yes in the web app,
+  // where this laptop's agent can't. The API asks; this side only waits and reruns.
+  const approvalId = approvalIdOf(params);
+  return result(
+    await callWithWebApproval(transport, mapped.op, args, { laptop: laptop.laptop, signal, ...(approvalId ? { approvalId } : {}) }, laptop.approval ?? { wait: false }),
+  );
 }
 
-/** Registers the tool on `pi` over `transport` (index.ts decides whether to). */
-export function registerMemoryTool(pi: { registerTool(tool: any): void }, transport: AdminTransport): void {
+/** On a laptop: how to get each call's context, and how to wait for a web approval (laptop.ts). */
+export interface LaptopTool {
+  laptop: (ctx: any) => Promise<LaptopContext | undefined>;
+  approval: (ctx: any) => ApprovalWait | undefined;
+}
+
+/** Registers the tool on `pi` over `transport` (index.ts and laptop.ts decide whether to). */
+export function registerMemoryTool(pi: { registerTool(tool: any): void }, transport: AdminTransport, laptop?: LaptopTool): void {
   pi.registerTool({
     ...MEMORY_TOOL,
-    execute: async (_id: string, params: any, signal: AbortSignal | undefined) => {
-      try {
-        return await runMemory(params, transport, signal);
-      } catch (err) {
-        return { content: [{ type: "text" as const, text: `memory: ${err instanceof Error ? err.message : String(err)}` }], isError: true, details: undefined };
-      }
-    },
+    execute: async (_id: string, params: any, signal: AbortSignal | undefined, _update?: unknown, ctx?: any) =>
+      withDetails(
+        await safeExecute("memory", async () => runMemory(params, transport, signal, laptop ? { laptop: await laptop.laptop(ctx), approval: laptop.approval(ctx) } : {})),
+      ),
   });
 }

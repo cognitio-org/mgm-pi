@@ -1421,6 +1421,110 @@ h4.voice-menu-heading {
   letter-spacing: 0.04em;
 }
 
+/* E9.9: the laptop approval widget (LaptopApprovals.tsx): a badge in the corner while the person
+ * has asks from their laptops, opening to one compact card each. */
+.laptop-approvals {
+  position: fixed;
+  right: max(1rem, env(safe-area-inset-right));
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  z-index: 95;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+  max-width: min(24rem, calc(100vw - 2rem));
+}
+
+.laptop-approvals-badge {
+  border-color: var(--danger);
+}
+
+.laptop-approvals-count {
+  display: inline-block;
+  min-width: 1.4em;
+  margin-left: 0.35rem;
+  padding: 0 0.3em;
+  text-align: center;
+  background: var(--danger);
+  color: var(--danger-contrast);
+}
+
+.laptop-approvals-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+  max-height: min(70vh, 32rem);
+  overflow-y: auto;
+  background: var(--bg);
+  box-shadow: var(--shadow-offset) var(--shadow-offset) 0 0 var(--border);
+}
+
+.laptop-approval {
+  font-size: 0.85rem;
+}
+
+.laptop-approval-text {
+  margin: 0.4rem 0 0.2rem;
+  max-height: 14rem;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.78rem;
+  border: 1px dashed var(--border);
+  padding: 0.35rem;
+}
+
+.laptop-approval-facts {
+  margin: 0.35rem 0;
+  font-size: 0.78rem;
+}
+
+.laptop-approval-facts > div {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.laptop-approval-facts dt {
+  min-width: 4.5rem;
+  color: var(--text-dim);
+}
+
+.laptop-approval-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.laptop-approval-from {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--text-dim);
+}
+
+.laptop-approval-more {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--link);
+  font: inherit;
+  font-size: 0.78rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.laptop-approval-where {
+  display: block;
+  margin: 0.3rem 0 0.5rem;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.laptop-approvals-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.8rem;
+}
+
 /* ---------- responsive: no horizontal scroll down to phone width ---------- */
 
 @media (max-width: 600px) {

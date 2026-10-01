@@ -136,3 +136,20 @@ export function updateSettings(change: (s: Obj) => void, file = settingsPath()):
   writeFileSync(file, JSON.stringify(s, null, 2) + "\n");
   return s;
 }
+
+/** The `kernal` section of `settings`, or {} when it is missing or not an object. */
+export function kernalSection(settings: Record<string, unknown>): Record<string, unknown> {
+  return isObj(settings.kernal) ? settings.kernal : {};
+}
+
+/** Sets keys in the `kernal` section (undefined deletes one), through `write` (updateSettings). */
+export function updateKernal(patch: Record<string, unknown>, write: typeof updateSettings = updateSettings): void {
+  write((s) => {
+    const k: Obj = isObj(s.kernal) ? s.kernal : {};
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined) delete k[key];
+      else k[key] = value as Json;
+    }
+    s.kernal = k;
+  });
+}

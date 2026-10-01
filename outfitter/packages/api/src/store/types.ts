@@ -526,6 +526,31 @@ export interface AdminApproval {
   decidedAt?: string;
 }
 
+/** E9.9: a laptop op held for its owner's yes in the web app (admin/laptop-approvals.ts). Owner
+ * scoped, not per run: a laptop has no Outfitter session or run. The laptop reruns the op with
+ * `id` once it is approved; the digest ties the yes to that exact op and args. */
+export interface LaptopApproval {
+  id: string;
+  /** Lowercased; only this person, in the web UI, may see or answer it. */
+  ownerEmail: string;
+  op: string;
+  /** sha256 of the canonical JSON of {op, args}. */
+  argsDigest: string;
+  /** What is asked, one line ("Share a memory with the team"). */
+  title: string;
+  /** The api's own facts about the ask (type, label, who sees it), shown apart from the content. */
+  facts?: Array<{ label: string; value: string }>;
+  /** The exact content the agent sent, redacted and capped. Shown escaped, labelled as the agent's. */
+  summary: string;
+  origin: { laptopSessionId: string; repo?: string };
+  state: "pending" | "approved" | "denied" | "used";
+  createdAt: string;
+  expiresAt: string;
+  decidedAt?: string;
+  decidedBy?: string;
+  usedAt?: string;
+}
+
 /** One admin op an agent called (Sysop tools, #286): admin/ops.ts writes a row for every op that is
  * not a read, including calls refused for rights or approval. */
 export interface AdminAuditEntry {
@@ -544,6 +569,9 @@ export interface AdminAuditEntry {
   ok: boolean;
   /** The one-line error, when `ok` is false. */
   error?: string;
+  /** E9.9: for a laptop approval's decision, what was decided (`<op> <argsDigest>`), since the
+   * approval itself is gone a day later. */
+  detail?: string;
   /** Whether the caller came with the person's approval (laptop TUI confirm, or a Drive's web
    * approval card, then `approvalId`). */
   approved: boolean;
@@ -602,6 +630,30 @@ export interface AdminApprovalsCollection {
   decide(runId: string, approvalId: string, decision: "approved" | "denied", by: string, nowIso: string): Promise<boolean>;
   /** Removes the run's approval only if it is still this one. */
   clear(runId: string, approvalId: string): Promise<void>;
+}
+
+export interface LaptopApprovalsCollection {
+  insert(approval: LaptopApproval): Promise<void>;
+  get(id: string): Promise<LaptopApproval | null>;
+  /** The owner's pending, unexpired approvals, oldest first. */
+  listPending(ownerEmail: string, nowIso: string, limit: number): Promise<LaptopApproval[]>;
+  /** The owner's pending, unexpired approval for this exact op, digest and laptop session, if any. */
+  findPending(match: LaptopApprovalMatch, nowIso: string): Promise<LaptopApproval | null>;
+  /** pending -> approved/denied, if it is the owner's, still pending and unexpired; `expiresAt`
+   * becomes `useBy` (a yes near expiry still leaves the laptop time to rerun). The owner decides,
+   * so `decidedBy` is `ownerEmail`. */
+  decide(id: string, ownerEmail: string, decision: "approved" | "denied", nowIso: string, useBy: string): Promise<boolean>;
+  /** approved -> used, once: only if owner, op, digest and origin match and it is unexpired. */
+  consume(id: string, match: LaptopApprovalMatch, nowIso: string): Promise<boolean>;
+}
+
+/** What an approval must match to be found or used: whose, which op and args, from where. */
+export interface LaptopApprovalMatch {
+  ownerEmail: string;
+  op: string;
+  argsDigest: string;
+  laptopSessionId: string;
+  repo?: string;
 }
 
 export interface AdminAuditCollection {
@@ -1333,6 +1385,7 @@ export interface Store {
   previews: PreviewsCollection;
   adminAudit: AdminAuditCollection;
   adminApprovals: AdminApprovalsCollection;
+  laptopApprovals: LaptopApprovalsCollection;
   sessionChunks: SessionChunksCollection;
   turnWaiters: TurnWaitersCollection;
   aeAgents: AeAgentsCollection;

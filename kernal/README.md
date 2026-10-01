@@ -748,6 +748,38 @@ The design is in `outfitter/docs/specs/sysop-tools.md`.
   semantic search finds them too; `KERNAL_SESSION_SYNC=1` does it after every turn. Nothing is
   uploaded otherwise.
 
+### Agent Engine memory (shared with your Drives)
+
+With the same pair set, Kernal uses your Outfitter's Agent Engine memory, the memory your Drives
+use. A fact saved on the laptop is recalled in a Drive, and the other way round. It is yours alone,
+except memories you save as shared. The design is §3.5 of
+`outfitter/docs/specs/atlas-agent-engine-and-a2a.md`.
+
+| `/memory …` | Does |
+|---|---|
+| `auto` (the default with a Dongle) | the `memory` tool, plus memories recalled before each prompt (3 s at most, skipped on any error) |
+| `tool` | the `memory` tool only, no recall cost per prompt |
+| `off` | neither; pi-memory comes back |
+| `record on` / `record off` | opt in or out of recording this laptop's prompts and Kernal's final answers (redacted, never tool output). Off by default |
+| `import [--dry-run]` | bring pi-memory's `MEMORY.md` notes over as private memories: listed first, saved on your yes; importing again updates them rather than doubling them |
+| `status` (or nothing) | what is on |
+
+- Settings live under `kernal` in `.pi/settings.json` (`memory`, `memoryRecord`) and apply at the next
+  start.
+- While memory is on, pi-memory is off: its tools, its prompt block and its exit summary.
+  `bin/kernal` handles the last two before pi starts. Kernal offers the import once.
+- The repo for a session comes from the working directory's GitHub `origin`. It only narrows which
+  of your memories are recalled.
+- A shared save (the team sees it in their prompts) waits for your yes in the Outfitter web app:
+  the approval widget in the corner of any page shows the exact text, with Approve and Deny.
+  - Kernal waits up to 10 minutes, and Esc stops the wait.
+  - In print mode it doesn't wait. It answers with the pending approval id. The same save with that
+    `approvalId` runs it once you approve, but only in the same session (`kernal -c -p`): the
+    approval is bound to the session it came from.
+  - It's not a terminal confirm because the agent's shell runs as you and could answer that itself.
+- Needs an Outfitter release with E9.9. An older one answers "works only in a Drive", Kernal says
+  so once, and recall is skipped.
+
 ## HTML previews: what the model is told
 
 Outfitter's transcript can preview an ` ```html ` fence. By default that preview is sealed: inline CSS

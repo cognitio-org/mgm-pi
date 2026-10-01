@@ -387,8 +387,10 @@ Don't use run state `idle` (EPIC.md:517-519: agentd is idle before any prompt).
   - **No forget action in v1 (a choice).** The gateway proxies soft DELETE (verified 200), so a later
     PR can add one. Wrong memories are fixed by saving a correction under the same label (semantic
     upserts).
-- **Recall (`auto`):** an agentd pi extension `pi-extension/outfitter-memory.ts`.
-  - On `before_agent_start` it calls op `memory.context {query: prompt}` over the admin socket.
+- **Recall (`auto`):** Kernal's `outfitter-agentengine/recall.ts`, the one recall for Drives and
+  laptops (§3.5). agentd pins `OUTFITTER_MEMORY_RECALL=1` for an `auto` tape (it was an agentd
+  extension, `pi-extension/outfitter-memory.ts`, until the E9.9 cleanup).
+  - On `before_agent_start` it calls op `memory.context {query: prompt}` (redacted) over the admin socket.
     agentd makes the socket group-owned by the agent gid (`run.ts:959-967`).
   - The api runs `buildContext({query, maxTokens, enabledSources: new Set(["semantic", "episodic",
     "procedural"]), metadataFilter})`. `enabledSources` is a `Set`, and the default is episodic and
@@ -432,9 +434,7 @@ Don't use run state `idle` (EPIC.md:517-519: agentd is idle before any prompt).
     `tapes.*`.
   - `transport.ts:36`'s `READ_ACTIONS` gains `context`, so `memory.context` is a read (no
     idempotency key, retried once).
-- **Laptop Kernal: not in v1.** `POST /api/admin/ops` has no tape or session (`routes/admin.ts:
-  23-27`), so `memory.*` and `ae.*` return "Drive only" there. A later PR can add laptop identity
-  (`sessionId = laptop:<pi session id>`).
+- **Laptop Kernal:** E9.9 (§3.5) adds it, sharing the owner's Drive memory. `ae.*` stays Drive only.
 - **Alternative considered:** the api prepends a `<memory>` block to the prompt at mail delivery.
   That needs no pi extension or image change. The chosen sections approach also persists the
   recalled block: pi records each turn's section changes as system patch entries (protocol.md), but
@@ -450,6 +450,177 @@ Don't use run state `idle` (EPIC.md:517-519: agentd is idle before any prompt).
 - **Recall retrieves on every turn**, so `auto` is set per tape.
 - PR3 logs per-UTC-hour counts of `memory.*` calls and retrieved docs, to compare with the bill
   (`agentengine/usage.ts`).
+
+#### 3.5 Laptop memory (E9.9, #349)
+Owner decisions (2026-10-01, #349): laptops get Agent Engine memory too, shared with the owner's
+Drives; recall plus the tool by default; recording laptop turns is opt-in; pi-memory is replaced, with
+a one-time import.
+
+- **Way in:** `POST /api/admin/ops` with the Dongle, the route the Sysop tools use from a laptop.
+  - An op registered with `laptop: true` passes the capability gate for a token caller
+    (`capabilityRefusal`, `admin/ops.ts`). Only `memory.search`, `memory.context`, `memory.save` and
+    `memory.record` have it. `registerAdminOp` refuses `laptop` on anything but a memory read or
+    write, unless the op also has `webApproval` (its every yes is asked in the web app, below). So
+    `ae.*`, `approve`, `delete` and `operator` ops are laptop-callable only that way (#354).
+  - `ae.*` still answers `<op> works only in a Drive`; admin ops are unchanged.
+  - The route now hands the api's Agent Engine clients to the ops (`RouteContext.agentEngine`). When
+    memory isn't configured, every call says `Agent Engine memory is not configured on this
+    Outfitter`.
+- **Identity:** always the token's owner: `userId = sha256(ownerEmail.trim().toLowerCase())[:16]`,
+  the same hash as their Drives (`laptopIdentity`, `agentengine/identity.ts`), so a fact saved in a
+  Drive is recalled on the laptop and the other way round. Nothing the client sends names a user.
+- **Client context:** the body's `laptop: {sessionId, repo?}`, validated by the route
+  (`laptopContext`, `admin/memory-ops.ts`) before any op runs:
+  - `sessionId` must match `^laptop:[A-Za-z0-9][A-Za-z0-9_-]{7,99}$` (pi's session id, a UUIDv7).
+    It never names a Drive session (those have no `laptop:` prefix). It names saved episodes and
+    recorded turns, and scopes recordTurn's idempotency keys.
+  - `repo` (optional) must be a lowercased GitHub `owner/name` (`^[a-z0-9][a-z0-9-]{0,38}/
+    [a-z0-9._-]{1,100}$`), so it can't hold the `:` or `~` that namespaced keys use. Kernal reads it
+    from the working directory's `origin` remote (github.com only).
+  - Both only scope. A client that lies about them reaches nothing but its owner's own memory: a
+    wrong repo only changes which of the owner's memories are read, or which repo a save is filed
+    under. The org reads are the same as from a Drive.
+  - A Dongle call to a memory op without `laptop` gets `memory from a laptop needs a newer Kernal`.
+- **Approval (web-gated; owner decision 2026-10-01):** a `shared: true` or taxonomic `memory.save`
+  from a Dongle waits for the owner's yes in the Outfitter web app's approval widget.
+  - **Why not the TUI confirm:** on a laptop the agent's shell runs as the person, so it can read the
+    Dongle and send `confirmed: true` itself. The confirm was no boundary.
+  - **Why the web app:** in a Drive the boundary is the E8.2 web approval card, which the agent
+    can't answer. A laptop has no Outfitter session or run to hang that card on. So the asks wait,
+    scoped to their owner, in `laptopApprovals` (`admin/laptop-approvals.ts`), and a person under
+    IAP answers them (never a Dongle).
+  - **Flow:** the save answers `{needsApproval: true, approvalId}`. Kernal polls
+    `approvals.get {id}` and then reruns the same op and args with `approvalId`.
+    `consumeLaptopApproval` checks that the approval is approved, unexpired and unused, for the same
+    owner, op, args digest and laptop session and repo. It marks the approval used in one
+    conditional write, and only then does the save run. `confirmed` counts for nothing here.
+    Protocol: docs/protocol.md "Laptop approvals".
+  - **Generic:** any op registered `laptop: true, webApproval: true` gets the same gate. #354's
+    laptop `ae.invoke` and `ae.resume` use it.
+  - The A2A refusal doesn't apply (a Dongle is never an A2A session). Saves are audited as
+    `via: "token"` with the approval id, and each decision as `approvals.approve` or
+    `approvals.deny` (`via: "web"`).
+  - `/memory import` saves private notes only, so it needs no approval.
+- **Widget (web, `LaptopApprovals.tsx`; owner asked for it minimal):**
+  - A badge in the corner of every page, shown only while the signed-in person has pending laptop
+    asks. It polls `GET /api/laptop-approvals` every 10 s while the tab is visible, and on focus.
+  - It opens to one compact card per ask, styled as the Drive's "Outfitter asks you (not the agent)"
+    card:
+    - what is asked (`Share a memory with the team`, `Add a term to the team's shared glossary`);
+    - the api's facts (type, label, who sees it);
+    - the exact text, in a box labelled as the laptop agent's, escaped and clipped at 280
+      characters. A longer text has to be opened with "Show all to approve" before Approve wakes;
+    - where it came from: the laptop session's first 8 characters, the repo, how long ago, and
+      when it expires;
+    - Approve and Deny, which wake 1 s after the card appears and again whenever the stack changes.
+  - There is no page, no setting and no history.
+- **`memory.context`:** a laptop has no tape, so the api doesn't check for `auto`. Kernal only asks
+  when its own setting is `auto`. The answer has the same 2.5 s deadline, budgets, repo filter and
+  framing as in a Drive (§3.3).
+- **`memory.record {turns: [{entryId, role, text}]}`** (laptop only, opt-in):
+  - 1 to 20 turns a call. `role` is `user` or `assistant`, `entryId` is pi's entry id
+    (`^[A-Za-z0-9_-]{1,64}$`), and `text` must be a string.
+  - Each text goes through `recordableText` (`agentengine/recorder.ts`, shared with the Drive
+    recorder): trimmed, relayed mail and Outfitter's notices dropped, `redact.ts`, capped at 8,000
+    characters.
+  - Each turn is sent with `recordTurn` on a handle bound to `{userId, sessionId: "laptop:<id>"}`,
+    `idempotencyKey = <user hash>:laptop:<pi session id>:<entry id>`, so a resend dedupes. The user
+    hash is there because the client chooses the session id. Without it, another Dongle holder who
+    learned the id could claim the keys first, if Agent Engine scopes keys per project rather than
+    per user. Raw text over 32,000 characters is refused.
+  - A Drive caller is refused (`a Drive records its turns itself`): the api records Drive turns from
+    stored entries (§3.3).
+  - **Not audited (decision):** it is the person's own transcript going into their own private
+    memory, several calls a session, and would drown the adminAudit log. The per-hour usage log
+    counts it as `recordTurn` (§3.4). `registerAdminOp` lets only a write set `audit: false`.
+- **Kernal (`kernal/.pi/extensions/outfitter-agentengine/laptop.ts`):**
+  - **Settings:** in the agent settings.json under `kernal`, changed with `/memory` and read at start
+    like every `kernal.*` setting (connect/settings.ts carries them across upgrades):
+    - `memory: "off" | "tool" | "auto"`. Unset means `auto` when OUTFITTER_API and OUTFITTER_TOKEN
+      are set, else off.
+    - `memoryRecord: true` turns recording on (opt-in).
+    - `memoryImported` and `memoryImportOffered` track the import.
+  - **`/memory [status] | off | tool | auto | record on|off | import [--dry-run]`.** `record on`
+    asks in the TUI first, saying what is sent. Changes apply at the next start.
+  - **Tool (`tool`, `auto`):** the Drive's `memory` tool, over the HTTP transport, with `laptop` on
+    every call. A shared or taxonomic save never sends `confirmed`. On `needsApproval` it tells the
+    person "Approve in the Outfitter web app (widget)". It then polls `approvals.get` every 3 s, for
+    at most 10 minutes; Esc aborts the wait. Once approved, it reruns the save with `approvalId`
+    (`laptop-approval.ts`, `callWithWebApproval`, reusable for #354). In print or json mode it
+    doesn't wait: it returns the pending `approvalId`, and a later call with the same arguments plus
+    the tool's `approvalId` parameter runs it once approved. That later call has to be in the same
+    pi session (`kernal -c -p`), since the approval is bound to its laptop session.
+  - **Credentials:** pi loads each extension in its own module instance (jiti, `moduleCache:
+    false`). So the Dongle cache in `_shared/outfitter-env.ts` lives on `globalThis`
+    (`Symbol.for("kernal.outfitterCredentials")`). Otherwise outfitter-admin's scrub would leave
+    outfitter-agentengine with no token.
+  - **Redaction:** the recall query and the tool's `query`, `text` and `label` go through
+    `_shared/redact.ts` before they leave the laptop. The api redacts them again.
+  - **Recall (`auto`):** on `before_agent_start`, `memory.context {query: prompt}`. It gives up after
+    3 s and aborts the request; any error is skipped. "Not configured", "Drive only" and "newer
+    Kernal" errors are told once a process. The answer goes in `sections.memory` (or appended to a
+    forced prompt) with `memoryBlock`'s tag escaping, the same code as agentd's recall extension
+    (`recall.ts`). A test checks the two produce the same block.
+  - **Recording (`memoryRecord`):** after each turn (`agent_end`), text blocks only, from:
+    - the turn's user prompts: the one that started it, and any sent while it ran, back to the
+      previous turn's answer;
+    - its final assistant message: the last assistant entry only, and not if it was aborted or
+      errored.
+    - Never tool calls, tool results, thinking or custom messages.
+    - Redacted with `_shared/redact.ts` (the api redacts again).
+    - Queued (at most 100) and sent in batches of 20, one session per batch, in the background. The
+      first failure is told once; failures are dropped. `session_shutdown` waits up to 2 s.
+  - **pi-memory off (`tool`, `auto`):**
+    - Its seven tools are taken out of the active set at `session_start` (`setActiveTools`).
+    - Prompt injection: pi-memory reads `PI_MEMORY_DIR` when it is imported, possibly before this
+      extension runs, so `bin/kernal` (`pi_memory_env`) works out the same mode from settings.json
+      and the Dongle before it starts pi.
+      - It reads exactly `kernal.memory` with node. Without node, it falls back to `sed` on the
+        line `/memory` writes.
+      - When memory is on, it sets `PI_MEMORY_DIR` to a fresh empty directory and
+        `PI_MEMORY_EXIT_SUMMARY=0`, and keeps the real directory in `KERNAL_PI_MEMORY_SOURCE` (with
+        `KERNAL_PI_MEMORY_OFF=1`).
+      - The empty directory is a new `mktemp -d` under a private `$TMPDIR/kernal-no-pi-memory`
+        (day-old ones are removed), because pi-memory writes compaction handoffs into it.
+      - Never inside a Drive.
+    - The extension also sets `PI_MEMORY_EXIT_SUMMARY=0`, which pi-memory reads at exit.
+  - **Import (`/memory import`, offered once in the TUI when there are notes):**
+    - Reads `MEMORY.md` in the real pi-memory directory. pi-memory's `<!-- time [session] -->` stamps
+      are dropped.
+    - One note per bullet or paragraph, prefixed with its heading. Duplicates by text are dropped,
+      each note is capped at 4,000 characters, 300 notes at most.
+    - The notes are listed first (`--dry-run` stops there). On the person's yes, each is saved with
+      `memory.save {type: semantic, label: "pi-memory <sha256(text)[:10]>"}`, private and repo-less
+      (pi-memory notes were never about one repo).
+    - The label follows the text and the api namespaces it under the owner, so importing again
+      upserts instead of doubling.
+    - Daily logs and the scratchpad are not imported: they are running notes, and Agent Engine
+      extracts episodes from recorded turns.
+- **Rate limit:** a Dongle's `memory.*` calls are capped per owner at 120 a minute
+  (`MemoryRateLimit`, in-process per instance, so it bounds cost rather than setting an exact quota).
+  Past the cap the reply is `too many memory calls from this Dongle; try again in a minute`.
+- **Security limits (owner check):**
+  - **The Dongle is readable by the agent.** The agent's shell runs as the same user, so it can
+    read the Dongle from the `.env` it came from, or from pi's original environment (`ps eww` on
+    macOS). Scrubbing it from `process.env` (`_shared/outfitter-env.ts`) is a speed bump. So a
+    TUI confirm (`confirmed`) is the client's word. It was the first design here, and the owner
+    replaced it with the web widget (2026-10-01) for shared memory. A laptop `delete` still takes
+    `confirmed`.
+  - **What the widget can't stop:**
+    - **A person who approves what they didn't read.** The card shows the exact text and where it
+      came from. Shared text with invisible characters is refused before anyone is asked, and runs
+      of blank lines are squeezed. A long text must be opened in full before Approve wakes, and
+      every card re-arms when the stack changes. A prompt-injected agent can still ask, at most 10
+      pending at a time.
+    - **The same machine.** The agent's shell could drive the person's signed-in browser (OS
+      automation, profile cookies) and click Approve itself. A passkey step-up on the decide route
+      is the follow-up that closes this.
+  - **Repo is unverified.** An approved shared save can be filed under a repo the person can't
+    reach, and it then shows in other users' recall for that repo. The card shows the repo.
+- **Cost:** recall retrieves on every laptop prompt too (§3.4), now the default for every Dongle
+  holder. `/memory tool` keeps the tool without per-prompt recall.
+- **Ships in:** Kernal v0.2.11, after an Outfitter release with this api, since an older api answers
+  `memory.* works only in a Drive`. That error is told once and recall is skipped.
 
 ### 4. Outbound: calling Agent Engine agents
 - **Allowlist:** collection `aeAgents {id (slug), workspaceId, name, description, enabled}` in both

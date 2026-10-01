@@ -19,6 +19,7 @@ import { registerGithubRoutes } from "./github.ts";
 import { registerAdminRoutes } from "./admin.ts";
 import { registerAgentEngineRoutes } from "./agent-engine.ts";
 import { registerA2ARoutes } from "./a2a.ts";
+import { registerLaptopApprovalRoutes } from "./laptop-approvals.ts";
 
 export type { RouteContext } from "./context.ts";
 
@@ -47,6 +48,8 @@ export async function registerRoutes(app: FastifyInstance, ctx: RouteContext): P
     await registerVoiceRoutes(app, ctx);
     await registerGithubRoutes(app, ctx);
     await registerAdminRoutes(app, ctx);
+    // E9.9: the approval widget's list and answer, for a person under IAP (never on link).
+    await registerLaptopApprovalRoutes(app, ctx);
     await registerStaticRoutes(app);
   } else {
     // Teleport, plus the side panel and browser companion (docs/protocol.md "Browser companion").

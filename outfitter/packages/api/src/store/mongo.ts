@@ -47,6 +47,9 @@ import type {
   AdminAuditCollection,
   AdminApproval,
   AdminApprovalsCollection,
+  LaptopApproval,
+  LaptopApprovalMatch,
+  LaptopApprovalsCollection,
   ChunkHit,
   ChunkQuery,
   SessionChunk,
@@ -1254,6 +1257,71 @@ class MongoAdminApprovals implements AdminApprovalsCollection {
   }
 }
 
+/** expireAt is Mongo-only (the TTL index needs a BSON date): a day after the approval's own expiry,
+ * so a laptop polling late still reads "expired" or "used" rather than "not found". */
+type LaptopApprovalDoc = LaptopApproval & { _id: string; expireAt?: Date };
+const LAPTOP_APPROVAL_KEEP_MS = 24 * 60 * 60_000;
+
+function laptopApprovalOf(doc: LaptopApprovalDoc | null): LaptopApproval | null {
+  if (!doc) return null;
+  const { _id, expireAt: _e, ...rest } = doc;
+  return rest;
+}
+
+/** The filter for `m`: owner, op, digest, laptop session, and the same repo or none. */
+function laptopMatchFilter(m: LaptopApprovalMatch): Record<string, unknown> {
+  return {
+    ownerEmail: m.ownerEmail,
+    op: m.op,
+    argsDigest: m.argsDigest,
+    "origin.laptopSessionId": m.laptopSessionId,
+    // `null` matches a missing field and a stored null alike, as the memory store's `?? null` does.
+    "origin.repo": m.repo ?? null,
+  };
+}
+
+class MongoLaptopApprovals implements LaptopApprovalsCollection {
+  private readonly col: MongoCollection<LaptopApprovalDoc>;
+
+  constructor(col: MongoCollection<LaptopApprovalDoc>) {
+    this.col = col;
+  }
+
+  async insert(approval: LaptopApproval): Promise<void> {
+    await this.col.insertOne({ ...approval, _id: approval.id, expireAt: new Date(Date.parse(approval.expiresAt) + LAPTOP_APPROVAL_KEEP_MS) });
+  }
+
+  async get(id: string): Promise<LaptopApproval | null> {
+    return laptopApprovalOf(await this.col.findOne({ _id: id }));
+  }
+
+  async listPending(ownerEmail: string, nowIso: string, limit: number): Promise<LaptopApproval[]> {
+    const rows = await this.col.find({ ownerEmail, state: "pending", expiresAt: { $gt: nowIso } }).sort({ createdAt: 1 }).limit(limit).toArray();
+    return rows.map((r) => laptopApprovalOf(r)!);
+  }
+
+  async findPending(match: LaptopApprovalMatch, nowIso: string): Promise<LaptopApproval | null> {
+    return laptopApprovalOf(await this.col.findOne({ ...laptopMatchFilter(match), state: "pending", expiresAt: { $gt: nowIso } }));
+  }
+
+  async decide(id: string, ownerEmail: string, decision: "approved" | "denied", nowIso: string, useBy: string): Promise<boolean> {
+    const result = await this.col.updateOne(
+      { _id: id, ownerEmail, state: "pending", expiresAt: { $gt: nowIso } },
+      { $set: { state: decision, decidedBy: ownerEmail, decidedAt: nowIso, expiresAt: useBy, expireAt: new Date(Date.parse(useBy) + LAPTOP_APPROVAL_KEEP_MS) } },
+    );
+    return result.modifiedCount === 1;
+  }
+
+  async consume(id: string, match: LaptopApprovalMatch, nowIso: string): Promise<boolean> {
+    // One conditional write: two reruns racing with the same id can't both see "approved".
+    const result = await this.col.updateOne(
+      { _id: id, ...laptopMatchFilter(match), state: "approved", expiresAt: { $gt: nowIso } },
+      { $set: { state: "used", usedAt: nowIso } },
+    );
+    return result.modifiedCount === 1;
+  }
+}
+
 class MongoAdminAudit implements AdminAuditCollection {
   private readonly col: MongoCollection<AdminAuditEntry & { _id: string }>;
 
@@ -1662,6 +1730,7 @@ export class MongoStore implements Store {
   readonly previews: PreviewsCollection;
   readonly adminAudit: AdminAuditCollection;
   readonly adminApprovals: AdminApprovalsCollection;
+  readonly laptopApprovals: LaptopApprovalsCollection;
   readonly sessionChunks: SessionChunksCollection;
   readonly turnWaiters: TurnWaitersCollection;
   readonly aeAgents: AeAgentsCollection;
@@ -1689,6 +1758,7 @@ export class MongoStore implements Store {
     this.previews = new MongoPreviews(db.collection("previews"));
     this.adminAudit = new MongoAdminAudit(db.collection("adminAudit"));
     this.adminApprovals = new MongoAdminApprovals(db.collection("adminApprovals"));
+    this.laptopApprovals = new MongoLaptopApprovals(db.collection("laptopApprovals"));
     this.sessionChunks = new MongoSessionChunks(db.collection(CHUNKS_COLLECTION));
     this.turnWaiters = new MongoTurnWaiters(db.collection<TurnWaiterDoc>("turnWaiters"));
     this.aeAgents = new MongoAeAgents(db.collection("aeAgents"));
@@ -1753,6 +1823,9 @@ export class MongoStore implements Store {
       db.collection("a2aTasks").createIndex({ state: 1, createdAt: 1 }),
       db.collection("a2aTasks").createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
       db.collection("a2aRequests").createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
+      // E9.9: the widget's list (an owner's pending ones) and the dedupe lookup; gone a day on.
+      db.collection("laptopApprovals").createIndex({ ownerEmail: 1, state: 1, createdAt: 1 }),
+      db.collection("laptopApprovals").createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
     ]);
     // Non-fatal: a deployment that already holds two active runs for one session (the race this
     // index closes) would otherwise fail every boot. Until the duplicates are cleaned up,

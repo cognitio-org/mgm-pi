@@ -247,7 +247,6 @@ async function main(): Promise<void> {
     spendExtensionPath: process.env.OUTFITTER_SPEND_EXTENSION,
     mailExtensionPath: process.env.OUTFITTER_MAIL_EXTENSION,
     browserExtensionPath: process.env.OUTFITTER_BROWSER_EXTENSION,
-    memoryExtensionPath: process.env.OUTFITTER_MEMORY_EXTENSION,
     // The socket's credential: the same Google ID token (or OUTFITTER_DEV_TOKEN) plus RUN_TOKEN.
     // Held here, not in pi's environment. A user Dongle is never added.
     downloadCapture: async (sessionId, captureId) => {

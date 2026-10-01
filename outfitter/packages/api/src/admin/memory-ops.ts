@@ -14,14 +14,24 @@
 // - Recalled text is untrusted (another user's org memory, or something a page once said): it is
 //   framed as notes that may be wrong, never instructions, and can't close its own frame.
 // - Saved text, labels and queries go through search/redact.ts first.
+// - E9.9 laptops: a Dongle reaches these ops too (`laptop: true`), as the token's owner: the same
+//   user hash as their Drives, sessionId `laptop:<pi session id>`, and the repo Kernal read from the
+//   working directory's git remote (routes/admin.ts validates both; they scope, never authorise).
+//   A shared or taxonomic save needs the owner's yes in the web app's approval widget in place of
+//   the Drive's card (laptop-approvals.ts); `confirmed` from a Dongle does not count.
+//   `memory.record` takes a laptop's own turns when the person opted in; a Drive's are recorded by
+//   the api (agentengine/recorder.ts), so it is laptop only.
 
 import { redact } from "../search/redact.ts";
 import { toAgentEngineError, type MemoryService, type MemoryType } from "../agentengine/index.ts";
-import { memoryIdentity, namespacedKey, namespacedRepos, repoSlug, stripNamespaces, type MemoryIdentity } from "../agentengine/identity.ts";
+import { laptopIdentity, memoryIdentity, namespacedKey, namespacedRepos, repoSlug, stripNamespaces, type MemoryIdentity } from "../agentengine/identity.ts";
+import { recordableText } from "../agentengine/recorder.ts";
 import type { Session } from "../store/types.ts";
 import { capText, clip } from "./render.ts";
 import { memoryUsage } from "../agentengine/usage.ts";
-import { registerAdminOp, type AdminCaller, type AdminContext, type AdminResult } from "./ops.ts";
+import { NO_LAPTOP_SESSION, registerAdminOp, type AdminCaller, type AdminContext, type AdminResult } from "./ops.ts";
+import type { LaptopCard } from "./laptop-approvals.ts";
+import { hasHidden, stripHidden } from "../untrusted.ts";
 
 /** Token budgets for the two reads (E9 §3.3); each loses the server's 500-token formatting reserve. */
 export const OWN_TOKENS = 1400;
@@ -44,11 +54,19 @@ export const RECALL_FRAME =
 
 // ---------- the session, its identity, and the service ----------
 
-type Ready = { ok: true; memory: MemoryService; id: MemoryIdentity; session: Session };
+/** `session` is the Drive's; a laptop has none (E9.9). */
+type Ready = { ok: true; memory: MemoryService; id: MemoryIdentity; session?: Session };
 
 async function ready(ctx: AdminContext, caller: AdminCaller): Promise<Ready | { ok: false; error: string }> {
   const memory = ctx.agentEngine?.memory;
   if (!memory) return { ok: false, error: "Agent Engine memory is not configured on this Outfitter" };
+  // E9.9: a Dongle is its owner, bound to the session id its Kernal sent; never a Drive's session.
+  if (caller.via === "token") {
+    if (!caller.laptop) return { ok: false, error: `memory ${NO_LAPTOP_SESSION}` };
+    const id = laptopIdentity(caller.email, caller.laptop);
+    if (!id) return { ok: false, error: "this laptop call has no memory identity" };
+    return { ok: true, memory, id };
+  }
   if (!caller.sessionId) return { ok: false, error: "memory works only in a Drive" };
   const session = await ctx.store.sessions.findById(caller.sessionId);
   if (!session) return { ok: false, error: "this run has no session" };
@@ -111,10 +129,10 @@ export function recalledFrom(response: unknown): { items: Recalled[]; docs: numb
   return { items, docs: counted || items.length };
 }
 
-/** Recalled text as it may enter a prompt: no namespace prefixes, no tag that could close or open
- * the memory frame, one line, clipped. */
+/** Recalled text as it may enter a prompt: no hidden characters (untrusted.ts), no namespace
+ * prefixes, no tag that could close or open the memory frame, one line, clipped. */
 export function sanitizeRecalled(text: string): string {
-  const flat = stripNamespaces(text).replace(/<\s*\/?\s*memory\b[^>]*>?/gi, "[memory tag]").replace(/\s+/g, " ").trim();
+  const flat = stripHidden(stripNamespaces(text)).replace(/<\s*\/?\s*memory\b[^>]*>?/gi, "[memory tag]").replace(/\s+/g, " ").trim();
   return clip(flat, MAX_ITEM);
 }
 
@@ -208,13 +226,42 @@ type SaveArgs = { type: MemoryType; text: string; label?: string; shared: boolea
 function saveArgs(args: Record<string, unknown>): SaveArgs | { error: string } {
   const type = args.type;
   if (typeof type !== "string" || !(SEARCH_TYPES as readonly string[]).includes(type)) return { error: `type must be one of: ${SEARCH_TYPES.join(", ")}` };
-  const raw = typeof args.text === "string" ? args.text.trim() : "";
+  let raw = typeof args.text === "string" ? args.text.replace(/\r\n?/g, "\n").trim() : "";
   if (!raw) return { error: "text is required" };
   if (raw.length > MAX_TEXT) return { error: `text is too long (${MAX_TEXT} characters at most)` };
   if (args.label !== undefined && typeof args.label !== "string") return { error: "label must be a string" };
-  const label = typeof args.label === "string" && args.label.trim() ? redact(args.label.trim()).slice(0, MAX_LABEL) : undefined;
   if (args.shared !== undefined && typeof args.shared !== "boolean") return { error: "shared must be true or false" };
+  const shared = args.shared === true || type === "taxonomic";
+  if (shared) {
+    // What the owner approves is what teammates' models read (E9.9 review H1, M2): nothing hidden,
+    // and no run of blank lines to push the rest of the text out of the card's view.
+    if (hasHidden(raw) || (typeof args.label === "string" && hasHidden(args.label))) {
+      return { error: "a shared memory can't hold invisible or control characters (zero-width, bidi, tags); remove them" };
+    }
+    raw = raw.replace(/\n{3,}/g, "\n\n");
+  }
+  const label = typeof args.label === "string" && args.label.trim() ? redact(args.label.trim()).slice(0, MAX_LABEL) : undefined;
   return { type: type as MemoryType, text: redact(raw), ...(label ? { label } : {}), shared: args.shared === true };
+}
+
+/**
+ * The web widget's card for a laptop's shared save (E9.9): what it asks, and the exact text that
+ * would be saved (redacted as saveArgs does). Bad args still get a card that says so; the save
+ * refuses them after the yes, as it would have before.
+ */
+function saveCard(args: Record<string, unknown>): LaptopCard | { error: string } {
+  const a = saveArgs(args);
+  // Refused before anyone is asked: the owner's yes would only meet the same error.
+  if ("error" in a) return a;
+  return {
+    title: a.type === "taxonomic" ? "Add a term to the team's shared glossary" : "Share a memory with the team",
+    facts: [
+      { label: "Type", value: a.type },
+      ...(a.label ? [{ label: "Label", value: a.label }] : []),
+      { label: "Seen by", value: "everyone on this Outfitter, recalled into their prompts" },
+    ],
+    summary: a.text,
+  };
 }
 
 function firstLine(text: string, max: number): string {
@@ -269,7 +316,7 @@ function limitOf(args: Record<string, unknown>, fallback: number, max: number): 
 
 // ---------- registration ----------
 
-export const MEMORY_OPS = ["memory.search", "memory.context", "memory.save"] as const;
+export const MEMORY_OPS = ["memory.search", "memory.context", "memory.save", "memory.record"] as const;
 
 /** Tests shorten the memory.context deadline. */
 export const deadlines = { contextMs: CONTEXT_DEADLINE_MS };
@@ -277,6 +324,7 @@ export const deadlines = { contextMs: CONTEXT_DEADLINE_MS };
 registerAdminOp("memory.search", {
   kind: "read",
   capability: "memory",
+  laptop: true,
   async run(ctx, caller, args) {
     const r = await ready(ctx, caller);
     if (!r.ok) return r;
@@ -298,12 +346,16 @@ registerAdminOp("memory.search", {
 registerAdminOp("memory.context", {
   kind: "read",
   capability: "memory",
+  laptop: true,
   async run(ctx, caller, args) {
     const r = await ready(ctx, caller);
     if (!r.ok) return r;
-    // Recall is for `auto` tapes only (the tape as it stands now, as the gate reads it).
-    const guru = await ctx.store.gurus.findById(r.session.guruId);
-    if (guru?.memory !== "auto") return { ok: true, text: "" };
+    // Recall is for `auto` tapes only (the tape as it stands now, as the gate reads it). A laptop
+    // has no tape: its Kernal asks only in `auto` (its own setting).
+    if (r.session) {
+      const guru = await ctx.store.gurus.findById(r.session.guruId);
+      if (guru?.memory !== "auto") return { ok: true, text: "" };
+    }
     const query = queryOf(args);
     if (typeof query !== "string") return { ok: false, ...query };
     try {
@@ -326,11 +378,18 @@ registerAdminOp("memory.context", {
 registerAdminOp("memory.save", {
   kind: "write",
   capability: "memory",
-  // Shared memory reaches the other users' prompts (their recall): the owner approves each one. An
-  // A2A session may never write it (§5.4), so it is refused before anyone is asked.
+  laptop: true,
+  // Shared memory reaches the other users' prompts (their recall): the owner approves each one, on
+  // the Drive's card or, from a laptop, in the web app's approval widget (`webApproval`; a laptop's
+  // `confirmed` doesn't count, its agent could send it). An A2A session may never write it (§5.4),
+  // so it is refused before anyone is asked.
+  webApproval: true,
+  laptopCard: saveCard,
   asks: async (_ctx, args) => args.shared === true || args.type === "taxonomic",
   async refused(ctx, args, caller) {
     if (args.shared !== true && args.type !== "taxonomic") return undefined;
+    // A Dongle is the owner at the keyboard, never an A2A session.
+    if (caller.via === "token") return undefined;
     const session = caller.sessionId ? await ctx.store.sessions.findById(caller.sessionId) : null;
     const id = session ? memoryIdentity(session) : undefined;
     return !id || id.a2a ? A2A_SHARED_REFUSAL : undefined;
@@ -348,5 +407,71 @@ registerAdminOp("memory.save", {
       memoryUsage.note("save", 0, true);
       return failure(err, "save");
     }
+  },
+});
+
+// ---------- laptop turn recording (E9.9) ----------
+
+const MAX_RECORD_TURNS = 20;
+/** Raw text a turn may bring, before redaction and the recorder's own 8,000-character cap. */
+const MAX_RECORD_RAW = 32_000;
+const ENTRY_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+type RecordTurn = { entryId: string; role: "user" | "assistant"; text: string };
+
+function recordArgs(args: Record<string, unknown>): RecordTurn[] | { error: string } {
+  const turns = args.turns;
+  if (!Array.isArray(turns) || turns.length === 0) return { error: "turns is required: [{entryId, role, text}]" };
+  if (turns.length > MAX_RECORD_TURNS) return { error: `at most ${MAX_RECORD_TURNS} turns a call` };
+  const out: RecordTurn[] = [];
+  for (const t of turns) {
+    const { entryId, role, text } = (t ?? {}) as { entryId?: unknown; role?: unknown; text?: unknown };
+    if (typeof entryId !== "string" || !ENTRY_ID.test(entryId)) return { error: "each turn needs an entryId (pi's entry id)" };
+    if (role !== "user" && role !== "assistant") return { error: "role must be user or assistant" };
+    if (typeof text !== "string") return { error: "text must be a string" };
+    if (text.length > MAX_RECORD_RAW) return { error: `text is too long (${MAX_RECORD_RAW} characters at most)` };
+    out.push({ entryId, role, text });
+  }
+  return out;
+}
+
+/**
+ * A laptop's own turns into its owner's memory, when the person opted in (Kernal's
+ * `memoryRecord`): user prompts and final assistant messages, never tool output (Kernal sends
+ * neither tool calls nor results, and this op takes text only). Redacted and capped here as well,
+ * keyed `<user hash>:laptop:<pi session id>:<entry id>` so a resend dedupes. The user hash is in
+ * the key because the session id is the client's to choose: another Dongle holder who learned it
+ * could otherwise claim the same keys first, in case Agent Engine scopes keys per project. Not
+ * audited: it is the person's own transcript going into their own private memory, many times a
+ * session (usage.ts counts it).
+ */
+registerAdminOp("memory.record", {
+  kind: "write",
+  capability: "memory",
+  laptop: true,
+  audit: false,
+  async run(ctx, caller, args) {
+    // A Drive's turns are recorded by the api itself (recorder.ts), from the stored entries.
+    if (caller.via !== "token") return { ok: false, error: "a Drive records its turns itself" };
+    const r = await ready(ctx, caller);
+    if (!r.ok) return r;
+    const turns = recordArgs(args);
+    if ("error" in turns) return { ok: false, error: turns.error };
+    const bound = r.memory.bind({ userId: r.id.userId, sessionId: r.id.sessionId });
+    let recorded = 0;
+    for (const t of turns) {
+      const content = recordableText(t.role, t.text);
+      if (content === undefined) continue;
+      try {
+        await bound.recordTurn({ role: t.role, content, idempotencyKey: `${r.id.userId}:${r.id.sessionId}:${t.entryId}` });
+        memoryUsage.note("recordTurn");
+        recorded += 1;
+      } catch (err) {
+        memoryUsage.note("recordTurn", 0, true);
+        const f = failure(err, "record");
+        return recorded ? { ok: false, error: `${f.error} (after ${recorded} recorded)` } : f;
+      }
+    }
+    return { ok: true, text: `recorded ${recorded} of ${turns.length} turn${turns.length === 1 ? "" : "s"}` };
   },
 });

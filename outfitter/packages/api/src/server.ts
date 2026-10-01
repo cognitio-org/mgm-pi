@@ -246,6 +246,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     previews,
     turns,
     aeSessions,
+    agentEngine,
     a2a,
     ...(opts.a2aHandler ? { a2aHandler: opts.a2aHandler } : {}),
     providers,

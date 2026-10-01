@@ -15,6 +15,7 @@ import { lazyRoute } from "./lib/chunk-reload.ts";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { Working } from "./components/Working.tsx";
 import { UnhandledRejectionBanner } from "./components/UnhandledRejectionBanner.tsx";
+import { LaptopApprovals } from "./components/LaptopApprovals.tsx";
 import { NotFoundError } from "./components/NotFoundError.tsx";
 import { DeviceNotPresent } from "./components/DeviceNotPresent.tsx";
 import { useOnlineStatus } from "./hooks/useOnlineStatus.ts";
@@ -217,6 +218,7 @@ export function App() {
         </div>
       )}
       <UnhandledRejectionBanner />
+      <LaptopApprovals />
 
       <main className="app-main">
         <ErrorBoundary>

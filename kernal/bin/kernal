@@ -161,6 +161,35 @@ export PI_AGENT_DIR="$ROOT/.pi/agent"
 # Release bundles ship pi's official standalone binary in ./pi; a source checkout uses the npm one.
 if [[ -x "$ROOT/pi/pi" ]]; then PI="$ROOT/pi/pi"; else PI="$ROOT/node_modules/.bin/pi"; fi
 
+# Agent Engine memory on a laptop (#349, .pi/extensions/outfitter-agentengine/laptop.ts): while it is
+# on, pi-memory's prompt injection and exit summary are off. That has to happen here, before pi
+# starts, because pi-memory reads its directory when it is imported. On means `kernal.memory` is
+# "tool" or "auto" in settings.json, or unset with a Dongle (OUTFITTER_API and OUTFITTER_TOKEN)
+# configured; the extension reads the same setting the same way. Never inside a Drive (agentd decides
+# there). The real directory goes on in KERNAL_PI_MEMORY_SOURCE for `/memory import`.
+pi_memory_env() {
+  [[ -z "${OUTFITTER_SESSION_ID:-}" && -z "${OUTFITTER_ADMIN_SOCKET:-}" ]] || return 0
+  [[ -n "${OUTFITTER_API:-}" && -n "${OUTFITTER_TOKEN:-}" ]] || return 0
+  local mode empty parent settings="$PI_CODING_AGENT_DIR/settings.json"
+  # Exactly kernal.memory, the way the extension reads it (unparseable JSON reads as unset there too).
+  # Without node, the first `"memory": "off|tool|auto"` line, which is where /memory writes it.
+  if command -v node >/dev/null 2>&1; then
+    mode="$(node -e 'try { const k = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).kernal; const m = k && k.memory; if (["off", "tool", "auto"].includes(m)) process.stdout.write(m); } catch {}' "$settings" 2>/dev/null || true)"
+  else
+    mode="$(sed -nE 's/^[[:space:]]*"memory":[[:space:]]*"(off|tool|auto)".*/\1/p' "$settings" 2>/dev/null | head -1)"
+  fi
+  [[ "${mode:-auto}" != off ]] || return 0
+  # A fresh empty directory per start (pi-memory writes compaction handoffs into it, which must not
+  # reach another session), under one private parent whose day-old leftovers are cleared here.
+  parent="${TMPDIR:-/tmp}"; parent="${parent%/}/kernal-no-pi-memory"
+  mkdir -p -m 700 "$parent" 2>/dev/null || return 0
+  [[ -d "$parent" && ! -L "$parent" && -O "$parent" ]] || return 0
+  find "$parent" -mindepth 1 -maxdepth 1 -type d -mtime +1 -exec rm -rf {} + 2>/dev/null || true
+  empty="$(mktemp -d "$parent/XXXXXX" 2>/dev/null)" || return 0
+  export KERNAL_PI_MEMORY_SOURCE="${KERNAL_PI_MEMORY_SOURCE:-${PI_MEMORY_DIR:-$HOME/.pi/agent/memory}}"
+  export PI_MEMORY_DIR="$empty" PI_MEMORY_EXIT_SUMMARY=0 KERNAL_PI_MEMORY_OFF=1
+}
+
 # Maintenance:
 #   kernal version                     what is installed
 #   kernal update [x.y.z]              upgrade the kernal bundle itself (release bundles only)
@@ -386,6 +415,7 @@ case "${1:-}" in
     set -- ${rest[@]+"${rest[@]}"}
     session_path="$(node "$ROOT/.pi/extensions/teleport/cli.ts" "$id" ${force[@]+"${force[@]}"})"
     if [[ -x "$ROOT/pi/pi" ]]; then PI="$ROOT/pi/pi"; else PI="$ROOT/node_modules/.bin/pi"; fi
+    pi_memory_env
     exec "$PI" -a --session "$session_path" "$@" ;;
 esac
 
@@ -404,4 +434,5 @@ if [[ "$skip_lms" != 1 && -x "$LMS" && ( "$default_provider" == lmstudio || "$pr
     timeout 180 "$LMS" load "$MODEL" --context-length "${LMSTUDIO_CONTEXT:-32768}" --ttl 86400 -y >/dev/null 2>&1 || echo "kernal: LM Studio load failed or timed out; continuing" >&2
   fi
 fi
+pi_memory_env
 exec "$PI" -a "$@"

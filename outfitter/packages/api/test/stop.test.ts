@@ -323,6 +323,7 @@ describe("agentlink up-frame ordering", () => {
       formattedSessions: inner.formattedSessions,
       adminAudit: inner.adminAudit,
       adminApprovals: inner.adminApprovals,
+      laptopApprovals: inner.laptopApprovals,
       sessionChunks: inner.sessionChunks,
       turnWaiters: inner.turnWaiters,
       aeAgents: inner.aeAgents,

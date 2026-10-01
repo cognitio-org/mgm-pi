@@ -94,9 +94,14 @@ export function approvalUiRequest(approval: AdminApproval | null | undefined, no
   };
 }
 
+/** A signed-in person (IAP or dev), never a token: only a person answers an approval. */
+export function isPerson(viewer: { email?: string; viaToken?: boolean } | undefined): viewer is { email: string; viaToken?: false } {
+  return !!viewer?.email && !viewer.viaToken;
+}
+
 /** Whether this viewer may see and answer the run's approval: its owner, as a person. */
 export function mayAnswer(approval: Pick<AdminApproval, "ownerEmail">, viewer: { email?: string; viaToken?: boolean } | undefined): boolean {
-  return !!viewer?.email && !viewer.viaToken && viewer.email.toLowerCase() === approval.ownerEmail;
+  return isPerson(viewer) && viewer.email.toLowerCase() === approval.ownerEmail;
 }
 
 /** Records the owner's answer from the web UI. */

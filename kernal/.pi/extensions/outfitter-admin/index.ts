@@ -11,19 +11,13 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { ADMIN_TOOLS, PROMPT_GUIDELINES, PROMPT_SNIPPET, runTool, type Confirm } from "./tools.ts";
+import { ADMIN_TOOLS, PROMPT_GUIDELINES, PROMPT_SNIPPET, runTool, safeExecute, type Confirm } from "./tools.ts";
 import { adminTransport, hasAdminCapability, type AdminTransport } from "./transport.ts";
 import { SEARCH_TOOLS, runSessionSearch, runSessionTranscript, type SearchToolDeps } from "./search-tools.ts";
 import { autoSyncer, pickSessions, uploadSessions } from "./sync.ts";
+import { personHere } from "../_shared/person.ts";
 
 const CONFIRM_TIMEOUT_MS = 5 * 60_000;
-
-/** A person is at the terminal (as kernal-github decides it): RPC mode has a UI that may have
- * nobody watching, and a Drive's approvals are the API's, not this dialog's. */
-export function personHere(ctx: any): boolean {
-  if (process.env.OUTFITTER_SESSION_ID) return false;
-  return ctx?.mode === "tui";
-}
 
 /** The laptop's sessions directory; none inside a Drive, whose only local session is itself. */
 function localSessionsDir(): string | undefined {
@@ -51,14 +45,10 @@ export default function (pi: ExtensionAPI, deps?: { transport?: AdminTransport; 
       parameters: def.parameters,
       execute: async (_id: string, params: any, signal: AbortSignal | undefined, _update: unknown, ctx: any) => {
         const confirm: Confirm | undefined =
-          personHere(ctx) && typeof ctx.ui?.confirm === "function"
+          personHere(ctx, "confirm")
             ? (title, message, signal) => ctx.ui.confirm(title, message, { signal, timeout: CONFIRM_TIMEOUT_MS })
             : undefined;
-        try {
-          return await runTool(def, params, transport, confirm, signal);
-        } catch (err) {
-          return { content: [{ type: "text" as const, text: `outfitter: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
-        }
+        return safeExecute("outfitter", () => runTool(def, params, transport, confirm, signal));
       },
     } as any);
   });
@@ -74,13 +64,7 @@ function registerSearch(pi: ExtensionAPI, deps: SearchToolDeps) {
       label: def.label,
       description: def.description,
       parameters: def.parameters,
-      execute: async (_id: string, params: any, signal: AbortSignal | undefined) => {
-        try {
-          return await run[def.name](params ?? {}, deps, signal);
-        } catch (err) {
-          return { content: [{ type: "text" as const, text: `${def.name}: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
-        }
-      },
+      execute: (_id: string, params: any, signal: AbortSignal | undefined) => safeExecute(def.name, () => run[def.name](params ?? {}, deps, signal)),
     } as any);
   }
 }
@@ -111,7 +95,7 @@ function registerSync(pi: ExtensionAPI, localDir: string | undefined) {
         return;
       }
       // Show what goes up before it goes, when someone is there to see it.
-      if (personHere(ctx) && typeof ctx.ui?.confirm === "function") {
+      if (personHere(ctx, "confirm")) {
         const list = picked.slice(0, 15).map((s) => `${s.id.slice(-8)}  ${s.name ?? ""}  ${s.cwd}`).join("\n");
         const more = picked.length > 15 ? `\n… and ${picked.length - 15} more` : "";
         const yes = await ctx.ui.confirm(`Upload ${picked.length} session${picked.length === 1 ? "" : "s"} to Outfitter?`, `${list}${more}\n\nOutfitter stores them as they are; its users can read them.`);

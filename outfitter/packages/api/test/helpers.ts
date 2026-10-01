@@ -1,7 +1,11 @@
 // Shared test scaffolding: an app wired to MemoryStore + NoopProvider in dev mode, so route,
 // agentlink and auth tests never touch Mongo, a real provider, or GCP.
 
+import assert from "node:assert/strict";
 import type { NgrokApi } from "../src/ngrok-api.ts";
+import { FakeAgentEngine } from "./fake-agent-engine.ts";
+import { createAgentEngine } from "../src/agentengine/index.ts";
+import { hashToken } from "../src/tokens.ts";
 import { loadConfig, type SandboxProviderName } from "../src/config.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import type { Store, Guru } from "../src/store/types.ts";
@@ -98,6 +102,40 @@ export async function buildTestApp(
   });
   await app.fastify.ready();
   return { ...app, store, provider, secretAdmin };
+}
+
+/**
+ * E9.9: the link role (Dongles only, no dev identity) with Agent Engine on a fake (`parts`, memory
+ * by default) and one Dongle per `[email, token]`. Share `store` and `agentEngine` with more
+ * buildTestApp calls to see the web role's side.
+ */
+export async function laptopApp(opts: { tokens: ReadonlyArray<readonly [email: string, token: string]>; parts?: Array<"memory" | "agents"> }): Promise<{
+  app: TestApp;
+  fake: FakeAgentEngine;
+  store: MemoryStore;
+  agentEngine: AgentEngine;
+}> {
+  const fake = new FakeAgentEngine();
+  const agentEngine = createAgentEngine(fake.config(opts.parts ?? ["memory"]), { fetch: fake.fetch });
+  const store = new MemoryStore();
+  for (const [i, [email, token]] of opts.tokens.entries()) {
+    await store.tokens.insert({ id: `tok-${i}`, ownerEmail: email, name: "laptop", prefix: token.slice(0, 8), hash: hashToken(token), createdAt: new Date().toISOString() });
+  }
+  const app = await buildTestApp({ OUTFITTER_ROLE: "link", OUTFITTER_DEV: "0" }, { store, agentEngine });
+  return { app, fake, store, agentEngine };
+}
+
+/** POST /api/admin/ops with a Dongle: `{op, args, ...extra}`, which must answer 200. */
+export async function adminOp<T = { ok: boolean; text?: string; error?: string; needsApproval?: boolean; approvalId?: string; state?: string }>(
+  app: TestApp,
+  token: string,
+  op: string,
+  args: Record<string, unknown>,
+  extra: Record<string, unknown> = {},
+): Promise<T> {
+  const res = await app.fastify.inject({ method: "POST", url: "/api/admin/ops", headers: { authorization: `Bearer ${token}` }, payload: { op, args, ...extra } });
+  assert.equal(res.statusCode, 200, res.body);
+  return res.json() as T;
 }
 
 export async function seedGuru(store: Store, overrides: Partial<Guru> = {}): Promise<Guru> {

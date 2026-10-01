@@ -28,6 +28,7 @@ import {
 import type { AeAgent, AeSession } from "../store/types.ts";
 import { registerAdminOp, type AdminCaller, type AdminContext, type AdminResult } from "./ops.ts";
 import { clip, shortId } from "./render.ts";
+import { stripHidden } from "../untrusted.ts";
 
 /** Cap on one ae.* result, in UTF-8 bytes. */
 export const AE_RESULT_CAP = 8 * 1024;
@@ -58,12 +59,11 @@ export function aeSessionId(sessionId: string, agentId: string): string {
 /** Remote text for the model: no control characters but newlines and tabs, and none of our own
  * fence markers, so the agent's words can't close the fence and speak as Outfitter. */
 export function cleanRemote(text: string): string {
+  // Fullwidth and other compatibility forms become their ASCII selves, so they can't pass for our
+  // markers after the model reads them; line and paragraph separators become spaces (words stay
+  // apart), then the other hidden characters go (untrusted.ts).
   return (
-    text
-      // Fullwidth and other compatibility forms become their ASCII selves, so they can't pass for
-      // our markers after the model reads them.
-      .normalize("NFKC")
-      .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f​-‏‪-‮⁠-⁩﻿]/g, "")
+    stripHidden(text.normalize("NFKC").replace(/[\u2028\u2029]/g, " "))
       .replace(/[^\S\n\t ]/gu, " ")
       .replace(/\[\s*(from|end\s+of)\s+agent\s+engine\s+agent/giu, "($1 Agent Engine agent")
   );
@@ -183,7 +183,7 @@ function invokeText(agentId: string, result: InvokeResult): string {
 function cardQuote(value: unknown): string {
   const text = asText(value).replace(/\s+/g, " ").trim();
   if (!text) return "(none)";
-  const cleaned = text.replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/g, "");
+  const cleaned = stripHidden(text, false);
   return JSON.stringify(cleaned.length > CARD_CONTEXT_CHARS ? `${cleaned.slice(0, CARD_CONTEXT_CHARS - 1)}…` : cleaned);
 }
 

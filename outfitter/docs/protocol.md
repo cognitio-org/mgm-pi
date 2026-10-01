@@ -277,9 +277,10 @@ request, reads resent once after a link drop, writes (with `idempotencyKey`) sen
   before turning memory on for a tape.
 - Memory (E9 PR3): `memory.search {query, type?, limit?}` and `memory.context {query}` are reads,
   `memory.save {type, text, label?, shared?}` an audited write. The identity and repo come from the
-  session, never from args. With `memory: auto`, agentd also loads `pi-extension/outfitter-memory.ts`
-  (`OUTFITTER_MEMORY_EXTENSION`), which sends `memory.context` with the prompt before each turn
-  (3 s at most, skipped on any failure) and puts the answer in the system prompt's `memory` section.
+  session, never from args. With `memory: auto`, agentd also pins `OUTFITTER_MEMORY_RECALL=1`, and
+  Kernal's `outfitter-agentengine` extension (recall.ts, the same code a laptop uses) sends
+  `memory.context` with the redacted prompt before each turn (3 s at most, skipped on any failure)
+  and puts the answer in the system prompt's `memory` section.
   With `memory` `tool` or `auto`, agentd excludes pi-memory's seven tools and pins
   `PI_MEMORY_DIR` (an empty directory) and `PI_MEMORY_EXIT_SUMMARY=0` after the tape's env. The api
   records `auto` sessions' user prompts and settled final assistant messages with `recordTurn`
@@ -756,8 +757,8 @@ see `deploy/README.md` "Live-test identity". Laptop clients still use personal t
 identity). It is the laptop's way into the admin op registry (`packages/api/src/admin/ops.ts`); a
 Drive reaches the same registry through agentd's admin socket (#287), not this route.
 
-Request: `{op, args?, confirmed?}`. Reply, always `200` for an authenticated call:
-`{ok: true, text}` or `{ok: false, error, needsApproval?}`. `text` is compact, capped text meant
+Request: `{op, args?, confirmed?, laptop?, approvalId?}`. Reply, always `200` for an authenticated
+call: `{ok: true, text, state?}` or `{ok: false, error, needsApproval?, approvalId?}`. `text` is compact, capped text meant
 for a model, not JSON to parse. Ops so far: `tapes.list|get|meta|create|update|delete`,
 `environments.list|get|create|update`, `sessions.list|get|search|transcript` (#289: session search
 and compact transcripts; `search` takes `query`, `mode` text (default)|hybrid|semantic (these two fall back to text when they can't run), `owner:"me"`, `tape`,
@@ -772,9 +773,108 @@ outline|text, `around`, `window`, `from`, `maxChars`, `toolOutput` none|trimmed|
 - Setting or changing a tape's `memory` (`off|tool|auto`) or `agentEngine` (boolean) is refused
   (`memory can only be set in the web UI`): a person sets them in the web UI. A body repeating the
   current value passes. Any other change to a tape that has one of them needs `confirmed`.
-- `memory.*` and `ae.*` ops (capabilities `memory`, `agentEngine`) answer `<op> works only in a
-  Drive`: a Dongle has no tape or session to bind them to.
-- Every non-read op that passes those checks writes an `adminAudit` row.
+- `ae.*` ops (capability `agentEngine`) answer `<op> works only in a Drive`.
+- `memory.*` (E9.9, docs/specs/atlas-agent-engine-and-a2a.md §3.5) runs as the token's owner: the
+  same identity as their Drives (`sha256(ownerEmail)[:16]`), so laptop and cloud share one memory.
+  The body's `laptop: {sessionId, repo?}` binds the call: `sessionId` is `laptop:<pi session id>`
+  (`^laptop:[A-Za-z0-9][A-Za-z0-9_-]{7,99}$`), `repo` the working directory's GitHub `owner/name`,
+  lowercased. Both are checked before any op runs (`laptop.sessionId must be …`, `laptop.repo must
+  be …`) and only scope the owner's own memory. A memory op without it answers `memory from a laptop
+  needs a newer Kernal`. Without Agent Engine memory configured, `Agent Engine memory is not
+  configured on this Outfitter`.
+  - `memory.search {query, type?, limit?}`, `memory.context {query}`: reads, as in a Drive. There is
+    no tape, so `context` always answers; Kernal sends it only in its `auto` mode.
+  - `memory.save {type, text, label?, shared?}`: audited (`via: "token"`). `shared: true` or
+    `type: "taxonomic"` waits for the owner's yes in the web app (Laptop approvals, below);
+    `confirmed` doesn't count for it.
+  - `memory.record {turns: [{entryId, role: "user"|"assistant", text}]}`: 1 to 20 turns, laptop
+    only (a Drive is refused). Each text is redacted and capped; relayed mail and Outfitter notices
+    are skipped, and raw text over 32,000 characters is refused. It calls `recordTurn` with
+    `idempotencyKey = <user hash>:laptop:<pi session id>:<entry id>`. Not audited. Kernal sends it
+    only when the person opted in (`kernal.memoryRecord`).
+  - At most 120 `memory.*` calls a minute per owner, per api instance; past that, `too many memory
+    calls from this Dongle; try again in a minute`.
+  - Saves are audited with the laptop's session id.
+- Every non-read op that passes those checks writes an `adminAudit` row, except `memory.record`.
+
+### Laptop approvals (E9.9)
+
+On a laptop the agent's shell runs as the person and can read the Dongle, so `confirmed` is not a
+boundary for anything that reaches other people. An op registered with `webApproval: true` (today
+`memory.save` when shared or taxonomic; #354's laptop `ae.invoke`/`ae.resume` are meant to use the
+same thing) asks the owner in the web app's approval widget instead. A Dongle can't answer it.
+Code: `packages/api/src/admin/laptop-approvals.ts`, collection `laptopApprovals`.
+
+1. **Create.** The Dongle calls the op as usual, with `laptop`. If the call needs a yes, the api
+   stores a pending approval and answers
+   `{ok: false, error: "needs your approval in the Outfitter web app", needsApproval: true, approvalId}`.
+   - The approval is bound to the token's owner, the op, `argsDigest` (sha256 of the canonical JSON of
+     `{op, args}`: keys sorted at every level, `undefined` dropped) and the laptop origin
+     (`laptop.sessionId`, `laptop.repo`).
+   - It expires 10 minutes after it is created.
+   - The same ask while one is still pending gets the same `approvalId`.
+   - At most 10 pending per owner. Past that: `10 approvals are already waiting; answer them in the
+     Outfitter web app first`.
+   - `confirmed: true` is ignored.
+   - An `approvalId` that isn't a string (`null`, say) counts as absent.
+   - When the op's `laptopCard` returns `{error}`, the call is refused and nothing is asked. For
+     `memory.save`, that covers malformed args and shared text or a label holding invisible or
+     control characters (zero-width, bidi, Unicode tags, variation selectors, private use).
+   - The card then shows exactly what is saved. A shared save also squeezes runs of blank lines to
+     one, in the save and on the card alike.
+2. **Poll.** `approvals.get {id}`, a read: `{ok: true, text, state}`, where `state` is
+   `pending | approved | denied | expired | used`. An unanswered or unused approval past its
+   `expiresAt` reads `expired`. A yes moves `expiresAt` to at least 2 minutes after the decision,
+   so a yes in the last seconds can still be used. Another owner's id, or an unknown one, answers `no such approval`. From a
+   Drive it is refused. Kernal polls every 3 s for up to 10 minutes.
+3. **Run.** Repeat the same op, args and `laptop`, adding `approvalId` at the top level of the body
+   (not in `args`). `consumeLaptopApproval(store, {ownerEmail, op, args, approvalId, laptop})`
+   checks, in one conditional write, that the approval:
+   - is `approved`, and unexpired;
+   - belongs to the same owner, with the same op, digest, `laptop.sessionId` and repo (or none).
+
+   It then marks the approval `used` and runs the op once, as approved. The audit row carries
+   `approved: true, approvalId`.
+   - Otherwise nothing runs, and the error says why: `not approved yet; …`, `denied in the Outfitter
+     web app`, `that approval expired; ask again`, `that approval was already used; ask again`,
+     `that approval was for a different request (…)`, or `no such approval`.
+   - A failed check doesn't use up the approval.
+   - If the op itself fails after the check, the approval is still used.
+
+**Widget routes** (web role only, behind IAP; not registered on link). Both need a person: a token
+identity gets `403`.
+- `GET /api/laptop-approvals` → `{approvals: [{id, op, title, facts?: [{label, value}], summary,
+  origin: {laptopSessionId, repo?}, createdAt, expiresAt}]}`: the signed-in person's pending,
+  unexpired asks, oldest first.
+  - `facts` are the api's own words.
+  - `summary` is the content the agent sent, which the widget labels as the agent's.
+- `POST /api/laptop-approvals/:id {approve: boolean}` → `{ok: true, state}`. It must be JSON
+  (`415` otherwise), and `Sec-Fetch-Site`, when sent, must be `same-origin` (`403` otherwise).
+  - Another owner's id: `404`. Already answered or expired: `409`. `approve` not a boolean: `400`.
+  - Audited in `adminAudit` as `approvals.approve` or `approvals.deny`, with `via: "web"`. Target
+    and `approvalId` are the approval id, `sessionId` is the laptop session, and `detail` is
+    `<op> <argsDigest>`, which records what was approved after the row's TTL removes it.
+  - A refused attempt by a signed-in caller is audited too (`ok: false`, plus `detail: "via a
+    token"` for a Dongle).
+
+**For another op.** Register it with `laptop: true, webApproval: true`, an `asks` (or a class that
+always asks: `delete`, `operator`, `approve`), and a `laptopCard(args) → {title, facts?, summary} |
+{error}`. `registerAdminOp` refuses a `webApproval` op without both.
+- The card is one line of what is asked, the api's facts, and the exact content, redacted as the op
+  would act on it.
+- Resolve anything a prefix or name could later mean differently, and put the resolved id in the
+  args the digest covers, or in the card. The Drive path's `resolveTarget` does this before asking.
+- `registerAdminOp` lets a `webApproval` op be laptop-callable whatever its capability, and lets an
+  `approve` op be laptop-callable only with it.
+
+**Limits (owner check):** the widget is a boundary against the agent's API calls, not against
+everything it can do.
+- **Same machine.** The agent's shell runs as the person, often on the machine where their browser
+  is signed in to the web app. With OS automation (AppleScript, Accessibility) or a browser
+  profile's cookies, it could click Approve itself. A WebAuthn or passkey step-up on the decide
+  route would close that; it is a follow-up.
+- **Dev mode.** Dev mode (`OUTFITTER_DEV=1`) treats every caller as `dev@localhost`, a Dongle
+  included, so there anyone can approve.
 
 ## Browser companion
 

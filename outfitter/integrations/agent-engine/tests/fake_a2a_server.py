@@ -14,7 +14,9 @@ Scripted by the task text:
   WORKING ("running tests"), then COMPLETED with the result artifact.
 
 Knobs on the server object: ``send_delay`` (seconds to stall SendMessage), ``card_url`` (where
-the card's interface points), ``fail_status`` (an HTTP status for every JSON-RPC call).
+the card's interface points), ``interfaces`` (replace the card's interface list),
+``card_redirect`` (answer the card with a 301 there), ``fail_status`` (an HTTP status for every
+JSON-RPC call), ``rpc_error_code`` (a JSON-RPC error for every authenticated call).
 """
 
 from __future__ import annotations
@@ -51,6 +53,9 @@ class FakeOutfitter(ThreadingHTTPServer):
         self.card_url = f"{self.base_url}/a2a"
         self.send_delay = 0.0
         self.fail_status: int | None = None
+        self.rpc_error_code: int | None = None
+        self.card_redirect: str | None = None
+        self.interfaces: list[dict[str, Any]] | None = None
         self.requests: list[dict[str, Any]] = []
         self.tasks: dict[str, dict[str, Any]] = {}
         self.lock = threading.Lock()
@@ -64,7 +69,7 @@ class FakeOutfitter(ThreadingHTTPServer):
             "description": "Coding agent. Send returnImmediately: true; poll GetTask or stream.",
             "version": "test",
             "provider": {"organization": "Kernal", "url": "https://kernal.one"},
-            "supportedInterfaces": [
+            "supportedInterfaces": self.interfaces or [
                 {"url": self.card_url, "protocolBinding": "JSONRPC", "protocolVersion": "1.0"}
             ],
             "defaultInputModes": ["text/plain", "application/json"],
@@ -149,7 +154,9 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         self.server.requests.append({"method": "GET", "path": self.path, "headers": dict(self.headers)})
-        if self.path == "/.well-known/agent-card.json":
+        if self.path == "/.well-known/agent-card.json" and self.server.card_redirect:
+            self._reply(301, {}, {"Location": self.server.card_redirect})
+        elif self.path == "/.well-known/agent-card.json":
             self._reply(200, self.server.card(), {"Access-Control-Allow-Origin": "*"})
         else:
             self._reply(404, {"error": "not found"})
@@ -181,6 +188,8 @@ class _Handler(BaseHTTPRequestHandler):
 
         if self.headers.get("A2A-Version") != "1.0":
             return error(-32009, "version not supported")
+        if self.server.rpc_error_code:
+            return error(self.server.rpc_error_code, "scripted error")
         method, params = body.get("method"), body.get("params") or {}
         headers: dict[str, str] = {}
         requested = [e.strip() for e in self.headers.get("A2A-Extensions", "").split(",") if e.strip()]

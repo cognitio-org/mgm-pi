@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 import outfitter_tools as ot
+import fake_a2a_server
 from fake_a2a_server import EXT, KEY
 
 
@@ -49,7 +50,7 @@ def test_extension_params_reach_the_server(config, rpc_posts):
     body = send["body"]
     assert body["jsonrpc"] == "2.0" and body["method"] == "SendMessage"
     params = body["params"]
-    assert params["configuration"]["returnImmediately"] is True
+    assert params["configuration"] == {"returnImmediately": True, "historyLength": 0}
     message = params["message"]
     assert message["role"] == "ROLE_USER"
     assert message["parts"] == [{"text": "Add a test"}]
@@ -74,7 +75,7 @@ def test_status_sends_get_task_with_key(config, rpc_posts):
     ot.outfitter_status(started["task_id"], config=config)
     get = rpc_posts()[-1]
     assert get["body"]["method"] == "GetTask"
-    assert get["body"]["params"]["id"] == started["task_id"]
+    assert get["body"]["params"] == {"id": started["task_id"], "historyLength": 0}
     assert {k.lower(): v for k, v in get["headers"].items()}["authorization"] == f"Bearer {KEY}"
 
 
@@ -106,6 +107,7 @@ def test_send_timeout(server, config):
     assert time.monotonic() - t0 < 2.5
     assert result["error"]["kind"] == "timeout"
     assert "may have been created" in result["error"]["message"]
+    assert KEY not in json.dumps(result)
 
 
 def test_overall_deadline(server, config):
@@ -147,15 +149,63 @@ def test_unreachable(config):
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
     gone = dataclasses.replace(config, base_url=f"http://127.0.0.1:{port}")
-    assert ot.outfitter_start("Fix it", config=gone)["error"]["kind"] == "unavailable"
+    result = ot.outfitter_start("Fix it", config=gone)
+    assert result["error"]["kind"] == "unavailable" and KEY not in json.dumps(result)
 
 
-def test_card_pointing_elsewhere_gets_no_key(server, config, rpc_posts):
-    server.card_url = "http://127.0.0.1:1/a2a"
+@pytest.fixture
+def other_server():
+    srv = fake_a2a_server.start()
+    yield srv
+    srv.shutdown()
+    srv.server_close()
+
+
+@pytest.mark.parametrize("mixed", [False, True])
+def test_card_pointing_elsewhere_gets_no_key(server, other_server, config, rpc_posts, mixed):
+    foreign = {"url": f"{other_server.base_url}/a2a", "protocolBinding": "JSONRPC",
+               "protocolVersion": "1.0"}
+    own = {"url": f"{server.base_url}/a2a", "protocolBinding": "JSONRPC", "protocolVersion": "1.0"}
+    server.interfaces = [own, foreign] if mixed else [foreign]
     result = ot.outfitter_start("Fix it", config=config)
     assert result["error"]["kind"] == "config"
     assert "refusing to send the key" in result["error"]["message"]
     assert rpc_posts() == []
+    assert other_server.requests == []  # a live server on the foreign origin saw nothing
+
+
+def test_card_without_a_v1_interface(server, config, rpc_posts):
+    server.interfaces = [{"url": f"{server.base_url}/a2a", "protocolBinding": "JSONRPC",
+                          "protocolVersion": "0.3"}]
+    assert ot.outfitter_start("Fix it", config=config)["error"]["kind"] == "protocol"
+    assert rpc_posts() == []
+
+
+def test_card_redirect_is_config(server, config):
+    server.card_redirect = "https://example.com/.well-known/agent-card.json"
+    assert ot.outfitter_start("Fix it", config=config)["error"]["kind"] == "config"
+
+
+@pytest.mark.parametrize("code,kind", [(-32600, "invalid"), (-32004, "invalid"), (-32005, "invalid"),
+                                       (-32602, "invalid"), (-32001, "not_found"),
+                                       (-32009, "protocol"), (-32603, "protocol"),
+                                       (-31999, "protocol")])
+def test_jsonrpc_error_codes(server, config, code, kind):
+    server.rpc_error_code = code
+    result = ot.outfitter_start("Fix it", config=config)
+    assert result["error"]["kind"] == kind
+    assert KEY not in json.dumps(result)
+
+
+def test_long_server_text_is_capped(server, config, monkeypatch):
+    started = ot.outfitter_start("Fix it", config=config)
+    server.tasks[started["task_id"]]["status"] = fake_a2a_server._status(
+        "TASK_STATE_WORKING", "y" * 50_000)
+    server.tasks[started["task_id"]]["step"] = 99  # keep it from advancing
+    monkeypatch.setattr(server, "get_task", lambda params: server.task_json(params["id"]))
+    status = ot.outfitter_status(started["task_id"], config=config)
+    assert len(status["status_text"]) < ot.MAX_TEXT_CHARS + 20
+    assert status["status_text"].endswith("(truncated)")
 
 
 def test_card_wrong_path_is_config(config):
@@ -167,6 +217,10 @@ def test_card_wrong_path_is_config(config):
     ({"task": "  "}, "empty"),
     ({"task": "x" * 32_001}, "longer"),
     ({"task": "ok", "repo": "not a repo"}, "owner/name"),
+    ({"task": "ok", "skill": "tape id\n"}, "tape id"),
+    ({"task": "ok", "skill": "x" * 65}, "tape id"),
+    ({"task": "ok", "base_branch": "main..evil"}, "branch"),
+    ({"task": "ok", "base_branch": "has space"}, "branch"),
 ])
 def test_local_validation_makes_no_calls(server, config, kwargs, needle):
     result = ot.outfitter_start(**kwargs, config=config)

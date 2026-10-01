@@ -4,9 +4,10 @@ version = "0.1.0"
 description = "Agent Engine agent that delegates coding tasks to Outfitter over A2A"
 requires-python = ">=3.11"
 dependencies = [
-    # Same floors as the agentengine 0.1.118 hello-world template.
-    "agent-engine-runner-shared[mongodb]>=0.11.3,<1",
-    "agent-engine-sdk-langgraph>=0.11.3,<1",
+    # Pinned to the 0.11.x line the tests ran against (CI: uv sync --group sdk). The image
+    # resolves these fresh at build time, so a looser range would deploy untested versions.
+    "agent-engine-runner-shared[mongodb]~=0.11.7",
+    "agent-engine-sdk-langgraph~=0.11.7",
     "grpcio>=1.76.0",
     "grpcio-health-checking>=1.76.0",
     "langchain>=1.0.0",

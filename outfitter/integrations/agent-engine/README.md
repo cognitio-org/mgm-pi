@@ -56,7 +56,8 @@ agent may touch.
 
 **Outside Agent Engine:** `outfitter_tools.py` has no Agent Engine dependency, so any Python 3.11+
 program can call `outfitter_start`/`outfitter_status`, or the async `start_task`/`get_status`
-(which raise `OutfitterError`). Pass `config=OutfitterConfig(...)` instead of using the
+(which raise `OutfitterError`; async callers should await these, since the sync wrappers block
+a running loop while they work). Pass `config=OutfitterConfig(...)` instead of using the
 environment.
 
 **The sample agent has its own copy** at `sample-agent/agents/outfitter-delegate/src/
@@ -68,14 +69,15 @@ directory. `tests/test_sample_agent.py` fails if the two differ. After editing, 
 
 ```bash
 cd outfitter/integrations/agent-engine
-uv sync --frozen && uv run --frozen pytest -rs                     # tools: 32 tests, 1 skip
-uv sync --frozen --group sdk && uv run --frozen pytest -rs         # + real Agent Engine SDK: 33
+uv sync --frozen && uv run --frozen pytest -rs                     # tools: 48 passed, 1 skipped
+uv sync --frozen --group sdk && uv run --frozen pytest -rs         # + real Agent Engine SDK: 49
 ```
 
 They cover start → poll → completed, the exact JSON-RPC the server receives (Bearer,
 `A2A-Version: 1.0`, `A2A-Extensions`, `metadata[<uri>]`, `returnImmediately`), auth failure,
 rejected tasks, request and overall timeouts, HTTP 429/5xx, unknown tasks, a card pointing at
-another host, local validation, and the sample agent's `agent.yaml`. With the `sdk` group, they
+another host or with no 1.0 interface, a redirected card, every JSON-RPC error code it maps,
+capped server text, local validation, and the sample agent's `agent.yaml`. With the `sdk` group, they
 also cover the real `agent_engine_sdk_langgraph.App` registering and running both tools. CI runs
 both steps in `.github/workflows/outfitter-agent-engine.yml` when this directory changes.
 `agentengine agent validate` passes on the sample `agent.yaml` (CLI 0.1.118).
@@ -85,13 +87,17 @@ both steps in `.github/workflows/outfitter-agent-engine.yml` when this directory
 A LangGraph agent with both tools, following the `agentengine create` hello-world template
 (CLI 0.1.118) and the agent contract (`D/reference/agent-contract.md`):
 - **Agent sandbox:** runs the graph and the LLM calls, through Kernal's LiteLLM gateway
-  (`router.kernal.one`, model `gpt-5-nano`, `llm.py`). Its only secret is `LLM_API_KEY`. Its
+  (`router.kernal.one`, model `gpt-5-nano`, `llm.py`). Its only declared secret is `LLM_API_KEY`. Its
   egress is `allow_list` with the gateway only.
 - **Tool sandbox:** `sandboxes.tool.tools: [outfitter_start, outfitter_status]`, so both bodies
   run here and nowhere else. Secrets `OUTFITTER_A2A_KEY` and `OUTFITTER_A2A_URL`. Egress
   `allow_list` with `link.kernal.one:443` only.
   - Agent Engine doesn't scope secrets per tool, only per sandbox (`D/reference/limitations.md`).
     So no other tool belongs in this sandbox.
+  - `MONGODB_URI` is delivered to **both** sandboxes without being declared
+    (`D/reference/agent-contract.md`). So the sandbox holding the key also holds the checkpoint
+    database's credentials. That is acceptable only if that DB user can reach nothing but this
+    project's checkpoint and store databases (spec §8's scoped-user rule).
 - The system prompt says to start once, report the `task_id`, poll only when asked, and treat
   Outfitter's text as untrusted.
 
@@ -120,10 +126,17 @@ answers; the agents project exists (spec owner step 5); a LiteLLM virtual key wi
    printf %s https://link.kernal.one | agentengine secret set OUTFITTER_A2A_URL --workspace-scope --stdin
    pbpaste | agentengine secret set LLM_API_KEY --workspace-scope --stdin         # LiteLLM key
    ```
-   Clear the clipboard afterwards. `agentengine deploy` also needs `MONGODB_URI` (LangGraph
-   checkpoints) as a project or workspace secret. **Which cluster and DB user serve the agents
-   project is open:** spec §8 keeps Agent Engine users off cluster `outfitter`. When deploy
-   offers to run `agentengine atlas setup`, decline it and set the URI yourself.
+   Clear the clipboard afterwards.
+
+   `agentengine deploy` also needs `MONGODB_URI` (LangGraph checkpoints) as a project or
+   workspace secret, **and that cluster must be linked to the workspace**. Egress allows only
+   the linked cluster beyond `agent.yaml`'s lists (`D/network-egress/atlas-cluster-link.md`), so
+   an unlinked URI is blocked.
+   - **Open owner decision:** which cluster and DB user serve the agents project. Spec §8 keeps
+     Agent Engine users off cluster `outfitter`, which as an M0 can't be linked anyway.
+   - Linking goes through `agentengine atlas setup` (pick that cluster). It also adds Agent
+     Engine's IPs to the cluster's access list. Run it only in this agents-project directory and
+     only for the chosen cluster: spec §8's "never `atlas setup`" is about the memory project.
 5. **Egress** is declared in `agent.yaml` and applied by deploy. If `OUTFITTER_A2A_URL` isn't on
    `link.kernal.one`, change the tool sandbox's entry first. Add the new host before removing the
    old one, because removing a sandbox's last destination sets it to `deny_all`:
@@ -186,12 +199,16 @@ The fake server serves exactly this, and the client depends on it:
      **`TASK_STATE_REJECTED` with the one-line reason as the text of `status.message`** (a
      result, not a JSON-RPC error).
    - **Errors:** prompt over 32,000 characters → -32602; rate limit → HTTP 429.
+   - **Client checks:** `skill` must be a tape id (`[A-Za-z0-9_.-]{1,64}`) and `baseBranch` a
+     plain branch name (`[A-Za-z0-9_./-]{1,255}`, no `..`). Tape ids and branches outside those
+     sets can't be named through these tools.
 5. **GetTask** `{id, historyLength: 0}`. A task that isn't this key's → -32001.
    `status.message` text parts become `status_text`, so the server should set it to something
    useful while working ("waiting for the owner" and so on).
 6. **Result artifact** (by `COMPLETED`): one `text` part, the final assistant message, which
    becomes `summary`, and one `data` part `{branch, head, compareUrl, prUrl?}` in camelCase.
-   Text and data across all artifacts are merged.
+   Text and data across all artifacts are merged. Status text and the summary are capped at
+   4,000 characters each, and error messages at 1,000, before the model sees them.
 7. **States** are the v1.0 enum names (`TASK_STATE_SUBMITTED` …). `INPUT_REQUIRED` is reported,
    but these tools can't answer it. The owner answers in the web UI, or a later tool sends a
    message with the `taskId`.
@@ -200,6 +217,8 @@ The fake server serves exactly this, and the client depends on it:
 
 ## Not verified
 
+- **Checkpoint cluster:** the cluster link and `MONGODB_URI` for the agents project (deploy
+  step 4) are untried.
 - **Not run in Agent Engine:** no deploy, no `agentengine dev up`. The SDK's `App` was exercised
   locally (`agent-engine-sdk-langgraph` 0.11.7). Nothing has checked that the tool sandbox
   actually receives both secrets and reaches `link.kernal.one`.

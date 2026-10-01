@@ -79,6 +79,9 @@ ENV_KEY = "OUTFITTER_A2A_KEY"
 # Outfitter caps prompt text at MAIL_MAX_TEXT (32,000 characters, -32602 beyond); fail fast here.
 MAX_TASK_CHARS = 32_000
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_SKILL_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+# A conservative subset of git ref characters (no space, ~^:?*[\ or controls).
+_BRANCH_RE = re.compile(r"^[A-Za-z0-9_./-]{1,255}$")
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 # Every JSON-RPC call to Outfitter should answer in well under a second (returnImmediately on
@@ -99,6 +102,14 @@ _STATE_NAMES = {
 }
 TERMINAL_STATES = frozenset({"completed", "failed", "canceled", "rejected"})
 
+# Server text goes straight into the model's context: cap it.
+MAX_TEXT_CHARS = 4_000
+MAX_ERROR_CHARS = 1_000
+
+
+def _cap(text: str, limit: int = MAX_TEXT_CHARS) -> str:
+    return text if len(text) <= limit else text[:limit] + " ...(truncated)"
+
 
 class OutfitterError(Exception):
     """A failure talking to Outfitter. ``kind`` is one of:
@@ -115,6 +126,7 @@ class OutfitterError(Exception):
     """
 
     def __init__(self, kind: str, message: str) -> None:
+        message = _cap(message, MAX_ERROR_CHARS)
         super().__init__(message)
         self.kind = kind
         self.message = message
@@ -165,7 +177,7 @@ def _state_name(state: int) -> str:
 
 
 def _text_of(parts: Any) -> str:
-    return "\n".join(p.text for p in parts if p.WhichOneof("content") == "text").strip()
+    return _cap("\n".join(p.text for p in parts if p.WhichOneof("content") == "text").strip())
 
 
 def _task_summary(task: Task) -> dict[str, Any]:
@@ -198,7 +210,7 @@ def _result_of(task: Task) -> dict[str, Any] | None:
                 if isinstance(value, dict):
                     data.update(value)
     result: dict[str, Any] = {
-        "summary": "\n\n".join(texts),
+        "summary": _cap("\n\n".join(texts)),
         "branch": data.get("branch"),
         "head": data.get("head"),
         "compare_url": data.get("compareUrl"),
@@ -246,7 +258,9 @@ def _map_error(exc: BaseException, *, starting: bool) -> OutfitterError:
     if status is not None and status >= 500:
         return OutfitterError("unavailable", f"Outfitter returned HTTP {status}; try later.")
     if isinstance(exc, AgentCardResolutionError):
-        kind = "config" if status == 404 else "unavailable"
+        # A 404 or a redirect means OUTFITTER_A2A_URL is wrong (redirects are never followed).
+        wrong_url = status == 404 or (status is not None and 300 <= status < 400)
+        kind = "config" if wrong_url else "unavailable"
         return OutfitterError(kind, f"Could not read Outfitter's Agent Card: {exc}")
     if isinstance(exc, A2AError) and not isinstance(exc, A2AClientError):
         return OutfitterError("protocol", f"Outfitter returned an error: {exc.message}")
@@ -333,6 +347,10 @@ async def start_task(
         raise OutfitterError("invalid", f"task is longer than {MAX_TASK_CHARS} characters")
     if repo is not None and not _REPO_RE.match(repo):
         raise OutfitterError("invalid", "repo must look like owner/name")
+    if skill is not None and not _SKILL_RE.match(skill):
+        raise OutfitterError("invalid", "skill must be a tape id (letters, digits, _ . -)")
+    if base_branch is not None and (not _BRANCH_RE.match(base_branch) or ".." in base_branch):
+        raise OutfitterError("invalid", "base_branch is not a valid branch name")
     params = {k: v for k, v in (("skill", skill), ("repo", repo), ("baseBranch", base_branch)) if v}
     config = config or OutfitterConfig.from_env()
 
@@ -391,7 +409,9 @@ async def get_status(task_id: str, *, config: OutfitterConfig | None = None) -> 
 
 def _run(coro: Any) -> Any:
     """Run a coroutine to completion from sync code, also when a loop is already running in this
-    thread (then on a private loop in a worker thread)."""
+    thread (then on a private loop in a worker thread, blocking that loop meanwhile: async callers
+    should await ``start_task``/``get_status`` instead). Agent Engine's tool sandbox calls sync
+    tools in a worker thread, so there this is a plain ``asyncio.run``."""
     try:
         asyncio.get_running_loop()
     except RuntimeError:
@@ -414,6 +434,8 @@ def outfitter_start(
         return _run(start_task(task, skill, repo, base_branch, config=config))
     except OutfitterError as exc:
         return exc.to_dict()
+    except Exception as exc:  # noqa: BLE001 - the tool's promise is a result, never a raise
+        return _map_error(exc, starting=True).to_dict()
 
 
 def outfitter_status(task_id: str, *, config: OutfitterConfig | None = None) -> dict[str, Any]:
@@ -423,6 +445,8 @@ def outfitter_status(task_id: str, *, config: OutfitterConfig | None = None) -> 
         return _run(get_status(task_id, config=config))
     except OutfitterError as exc:
         return exc.to_dict()
+    except Exception as exc:  # noqa: BLE001
+        return _map_error(exc, starting=False).to_dict()
 
 
 _plain_start = outfitter_start

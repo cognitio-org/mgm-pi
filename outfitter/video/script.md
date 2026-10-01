@@ -1,18 +1,19 @@
-# "Dear Sysop" -- Outfitter intro (draft 1, ~75 s)
+# "Dear Sysop" -- Outfitter intro (draft 2: 75 s cut + 30 s teaser)
 
 The format: people write wish letters to the company, mail them, and Outfitter answers each wish
 on screen. The letters are addressed to **"Sysop, Outfitter, U.S.A."** (Sysop is Outfitter's own
 word for an admin), never to a real person. Every term below is Outfitter's own vocabulary (see
 `docs/glossary.md`): Tape, Floppy, Disk Box, Drive, ▶ Play, ⏏ Eject.
 
-## Casting (decide before generating)
-- **Option A (recommended): grown-ups, kid energy.** Engineers in polos write crayon wish letters
-  signed "Age 34", "Age 41". Funnier, and it avoids AI-generated children entirely.
-- **Option B: kids**, framed from behind or three-quarter-back, with a voice actor; faces never
-  the subject.
+## Decisions
+- **Casting: grown-ups writing like kids.** Engineers in polos write crayon wish letters signed
+  "Age 34", "Age 41". No children on screen or in the voices.
+- **Length: both.** The 75 s cut below, then a 30 s teaser re-edited from the same shots.
+- **Voices: all generated** (see "Voices"). Nobody records anything.
 
-`[LEAD]` below = option A: "a man in his 30s with a neat side part and a powder-blue polo shirt"
-(or whoever we cast; keep the same description in every prompt, and use the same reference still).
+`[LEAD]` = "a man in his 30s with a neat side part and a powder-blue polo shirt" -- the same
+description in every prompt, plus the same generated reference still. He is Dana, the hero letter
+writer.
 
 ## Shot list
 Source key: **VEO** = generated clip (prompt below + style-bible prompt suffix), **UI** = real
@@ -65,8 +66,8 @@ person and room match. Keep every prompt free of brand names and readable text.
   recorded with Playwright while it scrolls, like `packages/web/scripts/record-tour.mjs`.
 - **Envelope lettering (3):** hand-letter it for real and photograph it, or composite marker
   lettering onto the Veo plate.
-- **Wish cards (4, 10):** have real teammates draw the crayon pictures (that's the charm), scan
-  them, and set the quote in a bold white serif with a grey drop shadow plus a blue-ink signature
+- **Wish cards (4, 10):** crayon pictures generated with an image model ("a child's crayon drawing
+  on off-white paper of ..."; or drawn by hand if anyone wants to), and set the quote in a bold white serif with a grey drop shadow plus a blue-ink signature
   and "Age N" (HTML or ffmpeg `drawtext`).
 - **Signature write-on (11):** a cursive font, white fill, chrome/purple outline, revealed left
   to right with an animated mask.
@@ -105,7 +106,46 @@ blanks from `beat-sheet.sh` (tempo, where the music swells and drops) and a list
 - Sources: generate with a music model (Lyria on Vertex, same GCP project as Veo), commission a
   musician, or license from a stock library. Keep the license with the project.
 
-## Open decisions
-1. Casting: option A or B.
-2. Length: this 75 s cut, or a 30 s teaser (shots 1, 4, 5, 8, 11, 12).
-3. VO: a teammate's deadpan read (best) or TTS.
+## Voices (all generated)
+Text-to-speech with a natural-language style direction, so the delivery can be steered without a
+human read. Good fits: **Gemini TTS on Vertex** (same GCP project as Veo; takes a style prompt
+and does multi-speaker), Google Cloud TTS's HD voices, or ElevenLabs. Use stock or designed
+voices only -- never clone a real person's voice, including anyone from the reference video.
+
+| Voice | Who | Direction for the TTS style prompt |
+|---|---|---|
+| **DANA** | the lead, "Age 34" | Adult, mid-range, reads flat and completely earnest, like a kid reading their own letter aloud at school; small pauses between sentences; no irony in the voice. |
+| **PAT** | wish card 2, "Age 41" | A different adult voice (contrast Dana's pitch), same earnest, slightly too careful delivery. |
+| **ANNOUNCER** | end card only (optional) | Warm, unhurried early-90s corporate narrator; one line. |
+
+### Lines (75 s cut)
+Target lengths are the time the line may take on screen; regenerate or adjust pace to fit.
+
+| Shot | Voice | Line | Target |
+|---|---|---|---|
+| 3 | DANA | "Dear Sysop..." | 1.5 s |
+| 4 | DANA | "Could you make a computer that writes the code while I eat lunch?" | 4 s |
+| 5 | DANA | "I picked a Tape. I started a Floppy." | 3 s |
+| 7 | DANA | "I pressed Play..." | 1.5 s |
+| 8 | DANA | "...and a Drive in the cloud did it while I slept." | 3.5 s |
+| 9 | DANA | "Then I ejected it, and finished it on my laptop." | 3.5 s |
+| 10 | PAT | "Could you make a computer you can talk to?" | 3 s |
+| 11 | DANA | "Outfitter rules the fleet. Your Outfitter friend... Dana." | 5 s |
+| 12 | ANNOUNCER | "Outfitter. Ready when you are." (optional) | 2.5 s |
+
+Finish every voice line with the same tape treatment as the picture (`vhs.sh` band-limits audio),
+plus a touch of room reverb, so it doesn't sound too clean against the 1990 picture.
+
+## 30 s teaser
+Re-cut from the same shots and voice lines, no new generation:
+
+| Time | Shot | Voice |
+|---|---|---|
+| 0:00-0:04 | 1 Printout (first 4 s) | -- |
+| 0:04-0:09 | 4 Wish card 1 | DANA: "Could you make a computer that writes the code while I eat lunch?" |
+| 0:09-0:14 | 5 Lab hero setup | DANA: "I picked a Tape. I started a Floppy." |
+| 0:14-0:19 | 8 Thought glow | DANA: "...and a Drive in the cloud did it while I slept." |
+| 0:19-0:27 | 11 Hero thumbs-up | DANA: "Outfitter rules the fleet. Your Outfitter friend... Dana." |
+| 0:27-0:30 | 12 End card | music button |
+
+Music for the teaser: the same track, cut so the swell lands on the thumbs-up at 0:19.

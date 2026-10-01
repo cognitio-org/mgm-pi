@@ -14,8 +14,9 @@ Disk Box, Drive, ▶ Play, ⏏ Eject, Control Panel.
 - **Casting: grown-ups writing like kids.** No children on screen or in the voices.
 - **Length: both.** The 75 s cut, then a 30 s teaser re-cut from the same material.
 - **Voices:** generated for Lee, Pat and Jo; **MGM's letter is MGM's own recorded voice**.
-- **Lead:** `[LEAD]` = "a man in his mid-50s with a short blond buzz cut, clean-shaven, wearing a
-  powder-blue polo shirt" (stills `rocky-lab` -> `rocky-side`, shot `12-rocky`) -- an original generated character, not modeled on anyone real. Same description and
+- **Lead:** `[LEAD]` = "a rugged, muscular man in his mid-50s in the style of a 1980s jungle
+  action-movie hero ... red cloth headband ... a bandolier of 3.5-inch floppy disks" (see spec.json; the
+  joke is the action hero sitting at a beige computer in the lab, deadpan, giving the smug thumbs-up) (stills `rocky-lab` -> `rocky-side`, shot `12-rocky`) -- an original generated character, not modeled on anyone real. Same description and
   reference still everywhere. This is **Rocky, the last fan**: seen only in the final beat
   (silent nod and thumbs-up, "Rocky" writes on). MGM, Age 54, is a letter writer heard but not
   seen: MGM's letter plays over a wish card signed "MGM".

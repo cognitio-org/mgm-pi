@@ -473,8 +473,9 @@ describe("pi-memory", () => {
 
   test("bin/kernal turns injection and the exit summary off when memory is on", () => {
     const bin = readFileSync(join(import.meta.dirname, "..", "bin", "kernal"), "utf8");
-    const start = bin.indexOf("pi_memory_env() {");
-    const fn = bin.slice(start, bin.indexOf("\n}\n", start) + 3);
+    // pi_memory_env, with read_kernal_settings (the one settings read) before it.
+    const start = bin.indexOf('settings_tape=""; settings_memory=');
+    const fn = bin.slice(start, bin.indexOf("\n}\n", bin.indexOf("pi_memory_env() {", start)) + 3);
     assert.ok(fn.includes("mktemp"), "function extracted");
     const dir = mkdtempSync(join(tmpdir(), "kernal-bin-"));
     const run = (settings: unknown, env: Record<string, string>) => {

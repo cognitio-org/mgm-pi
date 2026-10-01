@@ -31,7 +31,7 @@ export async function repoRemote(
   if (origin) return origin;
   for (const name of await names(cwd)) {
     const r = await lookup(cwd, name);
-    if (githubRepo(r)) return { ...r, name, fallback: true };
+    if (githubRepo(r)) return { ...r, fallback: true };
   }
   return undefined;
 }
@@ -44,6 +44,11 @@ export async function repoInfo(cwd: string, lookup?: Parameters<typeof repoRemot
   if (!r) return { note: "not in a git repository with a GitHub remote" };
   if (!repo) return { note: `origin is not a GitHub repository (${r.host ?? "unknown host"}), so no repo` };
   return r.fallback ? { repo, note: `no origin remote; using ${r.name}` } : { repo };
+}
+
+/** repoInfo for `cwd` (or `lookup`'s answer, in tests) that never throws: "repo unknown" instead. */
+export function repoHere(cwd: string, lookup: (cwd: string) => Promise<{ repo?: string; note?: string }> = (c) => repoInfo(c)): Promise<{ repo?: string; note?: string }> {
+  return lookup(cwd).catch(() => ({ note: "repo unknown" }));
 }
 
 /** The cwd's GitHub repo (repoRemote), cached per directory for this process. */

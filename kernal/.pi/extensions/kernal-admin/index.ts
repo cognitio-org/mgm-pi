@@ -44,7 +44,7 @@ import { startAdminServer, type AdminServer, type Api, type ApiResult } from "./
 import { env } from "../_shared/env.ts";
 import { createTapeApi, type TapeAdminDeps } from "../kernal-tape/admin.ts";
 import { npmRunner, tapeDir } from "../kernal-tape/lib.ts";
-import { adminTransport } from "../outfitter-admin/transport.ts";
+import { laptopTransport } from "../outfitter-admin/transport.ts";
 
 export const ASSETS = {
   "/index.html": { type: "text/html; charset=utf-8", body: INDEX_HTML },
@@ -68,8 +68,7 @@ export type ApiDeps = { pi: ExtensionAPI; ctx: () => ExtensionContext | undefine
 
 /** The Tapes page's deps for this process: the laptop's Dongle (never a Drive's socket). */
 function tapeDeps(cwd: () => string): TapeAdminDeps {
-  const t = adminTransport();
-  return { dir: tapeDir(), transport: t?.kind === "laptop" ? t : undefined, run: npmRunner, cwd };
+  return { dir: tapeDir(), transport: laptopTransport(), run: npmRunner, cwd };
 }
 
 /** The routes. Separate from the server so tests can drive them with a fake pi. */

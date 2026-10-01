@@ -19,9 +19,10 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+// pi-memory 0.4's tools: the one list, in the tape-to-pi translation agentd shares (tape-args.ts).
+import { PI_MEMORY_TOOLS } from "../_shared/tape-args.ts";
 
-/** pi-memory 0.4's tools (agentd/src/guru.ts PI_MEMORY_TOOLS). */
-export const PI_MEMORY_TOOLS = ["memory_write", "memory_read", "memory_search", "memory_forget", "memory_restore", "memory_status", "scratchpad"] as const;
+export { PI_MEMORY_TOOLS };
 
 /** The API's `memory.save` text limit. */
 const MAX_NOTE = 4_000;

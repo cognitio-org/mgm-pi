@@ -13,16 +13,18 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  CLOUD_ONLY_FIELDS, diffTapes, formatDiff, installPackages, launchPlan, lineDiff, listPins, missingEnv, npmSpec, packagePlan, parseTape, playing, readPin, repoWarning, reviewTape,
+  CLOUD_ONLY_FIELDS, diffTapes, formatDiff, installPackages, launchPlan, lineDiff, listPins, missingEnv, npmSpec, packagePlan, parseTape, pinState, readPin, repoWarning, reviewTape,
   summaryLines, tapeHash, tapeNpmDir, transportFetch, writePin, type Reviewer, type Tape,
 } from "../.pi/extensions/kernal-tape/lib.ts";
+import { playing } from "../.pi/extensions/_shared/tape-env.ts";
 import { tapePiArgs } from "../.pi/extensions/_shared/tape-args.ts";
 import { terminalReviewer } from "../.pi/extensions/kernal-tape/cli.ts";
 import { createTapeApi } from "../.pi/extensions/kernal-tape/admin.ts";
-import registerTape, { relaunchEnv } from "../.pi/extensions/kernal-tape/index.ts";
-import type { AdminReply, AdminTransport } from "../.pi/extensions/outfitter-admin/transport.ts";
+import registerTape from "../.pi/extensions/kernal-tape/index.ts";
+import type { AdminReply } from "../.pi/extensions/outfitter-admin/transport.ts";
 import registerAgentEngine from "../.pi/extensions/outfitter-agentengine/index.ts";
 import { repoInfo } from "../.pi/extensions/_shared/repo.ts";
+import { fakeTransport, makePi } from "./harness.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SECRET = "sk-live-secret-value-0123456789";
@@ -49,21 +51,15 @@ function tmp(prefix = "tapes-"): string {
 
 /** A transport that answers tapes.get/tapes.list from `cloud` (format json, like the api). */
 function cloudTransport(cloud: Map<string, Tape | Record<string, unknown>>, opts: { down?: boolean } = {}) {
-  const calls: { op: string; args: Record<string, unknown> }[] = [];
-  const transport: AdminTransport = {
-    kind: "laptop",
-    async call(op, args) {
-      calls.push({ op, args });
-      if (opts.down) return { ok: false, error: "Outfitter unreachable at https://link.example: ECONNREFUSED" } as AdminReply;
-      if (op === "tapes.get") {
-        const t = cloud.get(String(args.id));
-        return t ? { ok: true, text: JSON.stringify({ kind: "tape", format: 1, ...t }) } : { ok: false, error: `no tape "${args.id}"` };
-      }
-      if (op === "tapes.list") return { ok: true, text: JSON.stringify({ kind: "tapes", format: 1, tapes: [...cloud.values()].map((t: any) => ({ id: t.id, name: t.name, model: t.model, updatedAt: t.updatedAt, memory: t.memory, agentEngine: t.agentEngine })), more: 0 }) };
-      return { ok: false, error: "unknown op" };
-    },
-  };
-  return { transport, calls };
+  return fakeTransport(({ op, args }): AdminReply => {
+    if (opts.down) return { ok: false, error: "Outfitter unreachable at https://link.example: ECONNREFUSED" };
+    if (op === "tapes.get") {
+      const t = cloud.get(String(args.id));
+      return t ? { ok: true, text: JSON.stringify({ kind: "tape", format: 1, ...t }) } : { ok: false, error: `no tape "${args.id}"` };
+    }
+    if (op === "tapes.list") return { ok: true, text: JSON.stringify({ kind: "tapes", format: 1, tapes: [...cloud.values()].map((t: any) => ({ id: t.id, name: t.name, model: t.model, updatedAt: t.updatedAt, memory: t.memory, agentEngine: t.agentEngine })), more: 0 }) };
+    return { ok: false, error: "unknown op" };
+  });
 }
 
 const fetchFrom = (cloud: Map<string, Tape>) => async (id: string) => {
@@ -171,7 +167,6 @@ describe("the review", () => {
     const { r, asked } = reviewer({ change: false });
     const got = await reviewTape("foreman", { dir, fetch: fetchFrom(new Map([["foreman", changed]])), reviewer: r });
     assert.equal(got.ok, true);
-    assert.equal(got.behind, true);
     assert.deepEqual(got.tape, FOREMAN, "the pinned version plays");
     assert.equal(asked[0], "change:foreman:tools,packages,systemPrompt");
     const pin = readPin(dir, "foreman")!;
@@ -466,11 +461,7 @@ describe("bin/kernal --tape", () => {
 });
 
 describe("/tape", () => {
-  function fakePi() {
-    const commands = new Map<string, any>();
-    const handlers = new Map<string, any[]>();
-    return { commands, handlers, registerCommand: (n: string, c: any) => commands.set(n, c), on: (e: string, h: any) => handlers.set(e, [...(handlers.get(e) ?? []), h]) };
-  }
+  const fakePi = makePi;
   function tuiCtx(picks: (string | undefined)[], confirms: boolean[] = []) {
     const notes: string[] = [];
     return {
@@ -558,10 +549,23 @@ describe("/tape", () => {
     registerTape(pi as any, { env: { OUTFITTER_SESSION_ID: "s" }, dir: tmp() });
     assert.equal(pi.commands.size, 0);
   });
+});
 
-  test("a restart hands bin/kernal a clean env: no tape markers, pi-memory's real directory back", () => {
-    const env = relaunchEnv({ KERNAL_TAPE: "foreman", KERNAL_TAPE_MEMORY: "auto", KERNAL_PI_MEMORY_OFF: "1", KERNAL_PI_MEMORY_SOURCE: "/real", PI_MEMORY_DIR: "/empty", PI_MEMORY_EXIT_SUMMARY: "0", OTHER: "kept" });
-    assert.deepEqual(env, { KERNAL_PI_MEMORY_SOURCE: "/real", PI_MEMORY_DIR: "/real", OTHER: "kept" });
+describe("pinState", () => {
+  test("the whole tape: its hash decides, not updatedAt; a list row: updatedAt; kept is per version", () => {
+    const dir = tmp();
+    const pin = writePin(dir, FOREMAN);
+    const other = tapeHash({ ...FOREMAN, model: "litellm/x" });
+    assert.equal(pinState(undefined, { hash: pin.hash }), "unpinned");
+    assert.equal(pinState(pin), "offline");
+    assert.equal(pinState(pin, { hash: pin.hash, updatedAt: "2027-01-01T00:00:00.000Z" }), "pinned");
+    assert.equal(pinState(pin, { hash: other }), "changed");
+    assert.equal(pinState(pin, { updatedAt: FOREMAN.updatedAt }), "pinned");
+    assert.equal(pinState(pin, { updatedAt: "2027-01-01T00:00:00.000Z" }), "changed");
+    const kept = { ...pin, seen: { hash: other, updatedAt: "2027-01-01T00:00:00.000Z", at: "", kept: true } };
+    assert.equal(pinState(kept, { hash: other }), "kept");
+    assert.equal(pinState(kept, { updatedAt: "2027-01-01T00:00:00.000Z" }), "kept");
+    assert.equal(pinState(kept, { hash: tapeHash({ ...FOREMAN, model: "litellm/y" }) }), "changed");
   });
 });
 
@@ -693,21 +697,13 @@ describe("agent_engine on a laptop (a tape with Agent Engine)", () => {
   const SID = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
   const APPROVAL = "11111111-2222-4333-8444-555555555555";
   function setup(env: Record<string, string>, reply: (op: string, args: any, opts: any) => AdminReply) {
-    const calls: { op: string; args: any; opts: any }[] = [];
-    const transport: AdminTransport = { kind: "laptop", async call(op, args, opts = {}) { calls.push({ op, args, opts }); return reply(op, args, opts); } };
-    const tools: any[] = [];
-    const handlers = new Map<string, any[]>();
-    const pi: any = {
-      registerTool: (t: any) => tools.push(t),
-      registerCommand: () => {},
-      on: (e: string, h: any) => handlers.set(e, [...(handlers.get(e) ?? []), h]),
-      getActiveTools: () => [],
-      setActiveTools: () => {},
-    };
+    const { transport, calls } = fakeTransport((c) => reply(c.op, c.args, c.opts));
+    const pi = makePi();
+    const { toolDefs: tools, handlers } = pi;
     const saved = process.env.PI_CODING_AGENT_DIR;
     process.env.PI_CODING_AGENT_DIR = tmp("agent-");
     try {
-      registerAgentEngine(pi, { env: { ...env }, transport, settings: { kernal: { memory: "off" } }, repoOf: async () => "acme/widgets" });
+      registerAgentEngine(pi as any, { env: { ...env }, transport, settings: { kernal: { memory: "off" } }, repoOf: async () => "acme/widgets" });
     } finally {
       if (saved === undefined) delete process.env.PI_CODING_AGENT_DIR;
       else process.env.PI_CODING_AGENT_DIR = saved;
@@ -762,7 +758,8 @@ describe("agent_engine on a laptop (a tape with Agent Engine)", () => {
 
 describe("the repo context and a tape's repos hint", () => {
   const remotes = (map: Record<string, { host?: string; owner?: string; repo?: string }>) => ({
-    lookup: async (_cwd: string, name = "origin") => map[name],
+    // As _shared/git.ts remote() answers: the remote's name with its parts.
+    lookup: async (_cwd: string, name = "origin") => (map[name] ? { name, ...map[name] } : undefined),
     names: async () => Object.keys(map),
   });
 

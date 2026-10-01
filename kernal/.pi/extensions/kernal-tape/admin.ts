@@ -10,15 +10,16 @@
  * laptop, which the agent can reach too. They are on Outfitter's own web page. Pinning only protects
  * against other people's edits to a shared tape, so the laptop is the right place for it.
  */
-import { readSettings, updateSettings } from "../connect/settings.ts";
+import { readSettings, updateKernal, updateSettings } from "../connect/settings.ts";
 import { markdownToHtml } from "../kernal-context/report.ts";
 import type { AdminTransport } from "../outfitter-admin/transport.ts";
+import { MODES, RECORD_CONSENT, effectiveMode, memorySettings } from "../outfitter-agentengine/laptop.ts";
 import {
-  CLOUD_ONLY_FIELDS, activeTape, diffTapes, installPackages, listCloudTapes, listPins, missingEnv, noteSeen, packagePlan, playing, readPin, repoWarning, shortHash, summaryLines,
-  tapeExcludeTools, tapeHash, tapeNpmDir, TAPE_ID, transportFetch, writePin, type Pin, type Runner, type Tape,
+  activeTape, cloudOnlyFields, diffTapes, installPackages, listCloudTapes, listPins, missingEnv, noteSeen, ownPackages, packagePlan, pinState, readPin, repoWarning, shortHash,
+  summaryLines, tapeExcludeTools, tapeHash, tapeNpmDir, TAPE_ID, transportFetch, writePin, type Pin, type Runner, type Tape,
 } from "./lib.ts";
-import { join } from "node:path";
-import { repoInfo } from "../_shared/repo.ts";
+import { playing } from "../_shared/tape-env.ts";
+import { repoHere } from "../_shared/repo.ts";
 
 export type Result = { status?: number; body: unknown };
 
@@ -31,7 +32,7 @@ export interface TapeAdminDeps {
   run?: Runner;
   /** The working directory (the session's), for the repo context. */
   cwd?: () => string;
-  /** Tests: the repo of a directory (outfitter-agentengine/laptop.ts repoInfo). */
+  /** Tests: the repo of a directory (_shared/repo.ts repoInfo). */
   repo?: (cwd: string) => Promise<{ repo?: string; note?: string }>;
 }
 
@@ -47,7 +48,6 @@ function view(t: Tape, env: NodeJS.ProcessEnv) {
     thinking: t.thinking,
     tools: t.tools ?? [],
     excludeTools: tapeExcludeTools(t),
-    tapeExcludeTools: t.excludeTools ?? [],
     memory: t.memory ?? "off",
     agentEngine: t.agentEngine === true,
     adminTools: t.adminTools ?? "off",
@@ -56,7 +56,7 @@ function view(t: Tape, env: NodeJS.ProcessEnv) {
     repos: t.repos ?? [],
     missingEnv: missingEnv(t, env),
     allowExternalHtmlResources: t.allowExternalHtmlResources === true,
-    cloudOnly: CLOUD_ONLY_FIELDS.filter((k) => t[k] !== undefined && t[k] !== false).map((k) => ({ field: k, value: t[k] })),
+    cloudOnly: cloudOnlyFields(t).map((k) => ({ field: k, value: t[k] })),
     updatedAt: t.updatedAt,
     hash: tapeHash(t),
     summary: summaryLines(t, env),
@@ -68,35 +68,29 @@ function view(t: Tape, env: NodeJS.ProcessEnv) {
 }
 
 function pinView(p: Pin | undefined) {
-  return p ? { hash: p.hash, short: shortHash(p.hash), pinnedAt: p.pinnedAt, cloudUpdatedAt: p.tape.updatedAt, seen: p.seen } : null;
+  return p ? { hash: p.hash, short: shortHash(p.hash), pinnedAt: p.pinnedAt } : null;
 }
 
-function ownPackages(settings: Record<string, unknown>): string[] {
-  return ((settings.packages as unknown[] | undefined) ?? []).filter((p): p is string => typeof p === "string");
-}
-
+/** The memory card: the same settings /memory reads (laptop.ts), and the consent it asks. */
 function memoryView(settings: Record<string, unknown>, env: NodeJS.ProcessEnv, dongle: boolean) {
-  const k = (settings.kernal ?? {}) as Record<string, unknown>;
-  const setting = ["off", "tool", "auto"].includes(k.memory as string) ? (k.memory as string) : undefined;
-  return { setting: setting ?? "default", mode: dongle ? (setting ?? "auto") : "off", record: k.memoryRecord === true, dongle, tape: playing(env)?.id };
+  const s = memorySettings(settings);
+  return { setting: s.memory ?? "default", mode: effectiveMode(s, dongle), record: s.memoryRecord, dongle, tape: playing(env)?.id, consent: RECORD_CONSENT };
 }
 
 export function createTapeApi(d: TapeAdminDeps): Record<string, (body: any, query: URLSearchParams) => Promise<Result>> {
   const env = () => d.env ?? process.env;
   const settings = () => (d.settings ?? readSettings)();
-  const write = d.writeSettings ?? ((change) => updateSettings(change as any));
-  const setKernal = (patch: Record<string, unknown>) =>
-    write((s) => {
-      const k = s.kernal && typeof s.kernal === "object" && !Array.isArray(s.kernal) ? s.kernal : {};
-      for (const [key, value] of Object.entries(patch)) {
-        if (value === undefined) delete k[key];
-        else k[key] = value;
-      }
-      s.kernal = k;
-    });
+  const setKernal = (patch: Record<string, unknown>) => updateKernal(patch, (d.writeSettings ?? updateSettings) as typeof updateSettings);
   const fetchTape = d.transport ? transportFetch(d.transport) : undefined;
   const validId = (id: unknown): id is string => typeof id === "string" && TAPE_ID.test(id);
-  const here = () => (d.repo ?? ((c: string) => repoInfo(c)))((d.cwd ?? (() => process.cwd()))()).catch(() => ({ note: "repo unknown" }) as { repo?: string; note?: string });
+  const here = () => repoHere((d.cwd ?? (() => process.cwd()))(), d.repo);
+  /** The cloud's tape `id`, if it is still the version the page showed (`hash`). */
+  const currentCloud = async (id: string, hash: string): Promise<{ ok: true; tape: Tape } | { ok: false; result: Result }> => {
+    const cloud = await fetchTape!(id);
+    if (!cloud.ok) return { ok: false, result: fail(502, cloud.error) };
+    if (tapeHash(cloud.tape) !== hash) return { ok: false, result: fail(409, "the tape changed in the cloud again since this page loaded; review the new version") };
+    return cloud;
+  };
 
   return {
     "GET /tapes": async () => {
@@ -106,9 +100,7 @@ export function createTapeApi(d: TapeAdminDeps): Record<string, (body: any, quer
       const rows = (cloud.ok ? cloud.tapes : []).map((t) => {
         const pin = byId.get(t.id);
         byId.delete(t.id);
-        const changed = !!pin && !!t.updatedAt && t.updatedAt !== pin.tape.updatedAt;
-        const kept = changed && pin?.seen?.kept === true && pin.seen.updatedAt === t.updatedAt;
-        return { ...t, pin: pinView(pin), state: !pin ? "unpinned" : changed ? (kept ? "kept" : "changed") : "pinned" };
+        return { ...t, pin: pinView(pin), state: pinState(pin, t) };
       });
       // Pinned here but not in the list: offline, or gone from the cloud.
       for (const pin of byId.values()) rows.push({ id: pin.tape.id, name: pin.tape.name, model: pin.tape.model, updatedAt: pin.tape.updatedAt, pin: pinView(pin), state: cloud.ok ? "gone" : "pinned" } as any);
@@ -134,7 +126,7 @@ export function createTapeApi(d: TapeAdminDeps): Record<string, (body: any, quer
       if (!cloud.ok && !pin) return fail(404, `tape ${id}: ${cloud.error}`);
       const shown = cloud.ok ? cloud.tape : pin!.tape;
       const cloudHash = cloud.ok ? tapeHash(cloud.tape) : undefined;
-      const state = !pin ? "unpinned" : !cloud.ok ? "offline" : cloudHash === pin.hash ? "pinned" : pin.seen?.kept && pin.seen.hash === cloudHash ? "kept" : "changed";
+      const state = pinState(pin, cloudHash ? { hash: cloudHash } : undefined);
       const npmDir = tapeNpmDir(d.dir, id);
       const plan = packagePlan(pin?.tape ?? shown, npmDir, ownPackages(settings()));
       return {
@@ -155,9 +147,8 @@ export function createTapeApi(d: TapeAdminDeps): Record<string, (body: any, quer
     "POST /tapes/pin": async (body: { id?: unknown; hash?: unknown }) => {
       if (!validId(body.id) || typeof body.hash !== "string") return fail(400, "id and hash are required");
       if (!fetchTape) return fail(409, "no Dongle: pinning needs the cloud version");
-      const cloud = await fetchTape(body.id);
-      if (!cloud.ok) return fail(502, cloud.error);
-      if (tapeHash(cloud.tape) !== body.hash) return fail(409, "the tape changed in the cloud again since this page loaded; review the new version");
+      const cloud = await currentCloud(body.id, body.hash);
+      if (!cloud.ok) return cloud.result;
       const pin = writePin(d.dir, cloud.tape);
       return { body: { message: `Pinned ${cloud.tape.id} at ${shortHash(pin.hash)}.`, pin: pinView(pin) } };
     },
@@ -167,9 +158,8 @@ export function createTapeApi(d: TapeAdminDeps): Record<string, (body: any, quer
       const pin = readPin(d.dir, body.id);
       if (!pin) return fail(409, "this tape isn't pinned");
       if (!fetchTape) return fail(409, "no Dongle");
-      const cloud = await fetchTape(body.id);
-      if (!cloud.ok) return fail(502, cloud.error);
-      if (tapeHash(cloud.tape) !== body.hash) return fail(409, "the tape changed in the cloud again since this page loaded; review the new version");
+      const cloud = await currentCloud(body.id, body.hash);
+      if (!cloud.ok) return cloud.result;
       noteSeen(d.dir, pin, cloud.tape, true);
       return { body: { message: `Kept the pinned version ${shortHash(pin.hash)} of ${body.id}.` } };
     },
@@ -201,7 +191,7 @@ export function createTapeApi(d: TapeAdminDeps): Record<string, (body: any, quer
     "POST /tapes/memory": async (body: { memory?: unknown; record?: unknown }) => {
       const patch: Record<string, unknown> = {};
       if (body.memory !== undefined) {
-        if (!["off", "tool", "auto", "default"].includes(body.memory as string)) return fail(400, "memory is off, tool, auto or default");
+        if (body.memory !== "default" && !(MODES as readonly unknown[]).includes(body.memory)) return fail(400, "memory is off, tool, auto or default");
         patch.memory = body.memory === "default" ? undefined : body.memory;
       }
       if (body.record !== undefined) {

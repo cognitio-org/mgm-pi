@@ -21,12 +21,14 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { inSandbox } from "../_shared/env.ts";
-import { readSettings, updateSettings } from "../connect/settings.ts";
-import { adminTransport, type AdminTransport } from "../outfitter-admin/transport.ts";
-import { repoInfo } from "../_shared/repo.ts";
+import { personHere } from "../_shared/person.ts";
+import { readSettings, updateKernal, updateSettings } from "../connect/settings.ts";
+import { laptopTransport, type AdminTransport } from "../outfitter-admin/transport.ts";
+import { repoHere } from "../_shared/repo.ts";
+import { playing } from "../_shared/tape-env.ts";
 import {
-  activeTape, diffTapes, formatDiff, installPackages, launchPlan, listCloudTapes, listPins, npmRunner, packagePlan, playing, promptText, readPin, repoWarning, reviewTape, shortHash,
-  summaryLines, tapeDir, tapeHash, tapeNpmDir, TAPE_ID, transportFetch, type Reviewer, type Runner,
+  activeTape, changeIntro, diffTapes, installPackages, launchPlan, listCloudTapes, listPins, npmRunner, ownPackages, packagePlan, pinIntro, pinState, promptText, readPin, repoWarning,
+  reviewTape, shortHash, summaryLines, tapeDir, tapeHash, tapeNpmDir, TAPE_ID, transportFetch, type Reviewer, type Runner,
 } from "./lib.ts";
 
 const USAGE = "usage: /tape [status] | list | show [id] | <id> | off";
@@ -37,7 +39,7 @@ export interface TapeDeps {
   transport?: AdminTransport;
   dir?: string;
   run?: Runner;
-  /** Tests: the working directory's repo (outfitter-agentengine/laptop.ts repoInfo). */
+  /** Tests: the working directory's repo (_shared/repo.ts repoInfo). */
   repo?: (cwd: string) => Promise<{ repo?: string; note?: string }>;
   /** Tests: what a restart would do, instead of doing it. */
   relaunch?: (args: string[], ctx: any) => void;
@@ -45,30 +47,17 @@ export interface TapeDeps {
   writeSettings?: (change: (s: Record<string, any>) => void) => void;
 }
 
-const personHere = (ctx: any) => ctx?.mode === "tui" && typeof ctx?.ui?.select === "function";
-
-/** The env a relaunch hands bin/kernal: this run's tape markers and pi-memory override gone (bin/kernal
- * works them out again), everything else as it was. The Dongle comes back from .env. */
-export function relaunchEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const out: NodeJS.ProcessEnv = { ...env };
-  for (const k of Object.keys(out)) if (k === "KERNAL_TAPE" || k.startsWith("KERNAL_TAPE_")) delete out[k];
-  if (out.KERNAL_PI_MEMORY_OFF === "1" && out.KERNAL_PI_MEMORY_SOURCE) {
-    out.PI_MEMORY_DIR = out.KERNAL_PI_MEMORY_SOURCE;
-    delete out.KERNAL_PI_MEMORY_OFF;
-    delete out.PI_MEMORY_EXIT_SUMMARY;
-  }
-  return out;
-}
-
 /** Restarts Kernal into this session: bin/kernal again (so the tape is reviewed and applied the one
- * way), after pi has shut down cleanly. Returns false when this pi can't, with nothing done. */
+ * way, and the tape markers and pi-memory override of this run are cleared there before anything
+ * starts), after pi has shut down cleanly. The Dongle comes back from .env. Returns false when this
+ * pi can't, with nothing done. */
 export function restartInto(args: string[], ctx: any, env: NodeJS.ProcessEnv = process.env): boolean {
   const agentDir = env.PI_CODING_AGENT_DIR;
   const bin = agentDir ? join(dirname(agentDir), "bin", "kernal") : "";
   const execve = (process as any).execve as ((file: string, args: string[], env: NodeJS.ProcessEnv) => never) | undefined;
   if (!bin || !existsSync(bin) || typeof execve !== "function" || process.versions.bun || typeof ctx?.shutdown !== "function") return false;
   // The TUI already asked about the packages; cli.ts doesn't ask again.
-  const next = { ...relaunchEnv(env), KERNAL_TAPE_ASKED: "1" };
+  const next = { ...env, KERNAL_TAPE_ASKED: "1" };
   process.once("exit", () => {
     try {
       execve(bin, [bin, ...args], next);
@@ -85,24 +74,11 @@ export default function (pi: ExtensionAPI, deps: TapeDeps = {}) {
   if (inSandbox() || env.OUTFITTER_SESSION_ID || env.OUTFITTER_ADMIN_SOCKET) return;
   const dir = deps.dir ?? tapeDir(env);
   const settings = deps.settings ?? (() => readSettings());
-  const write = deps.writeSettings ?? ((change) => updateSettings(change as any));
+  const setTape = (id: string | undefined) => updateKernal({ tape: id }, (deps.writeSettings ?? updateSettings) as typeof updateSettings);
   let transport: AdminTransport | undefined | null = deps.transport ?? null;
-  const way = () => {
-    if (transport === null) {
-      const t = adminTransport();
-      transport = t?.kind === "laptop" ? t : undefined;
-    }
-    return transport;
-  };
+  const way = () => (transport === null ? (transport = laptopTransport()) : transport);
   const now = playing(env);
-  const here = (ctx: any) => (deps.repo ?? ((cwd: string) => repoInfo(cwd)))(typeof ctx?.cwd === "string" ? ctx.cwd : process.cwd()).catch(() => ({ note: "repo unknown" }) as { repo?: string; note?: string });
-  const setTape = (id: string | undefined) =>
-    write((s) => {
-      const k = s.kernal && typeof s.kernal === "object" && !Array.isArray(s.kernal) ? s.kernal : {};
-      if (id) k.tape = id;
-      else delete k.tape;
-      s.kernal = k;
-    });
+  const here = (ctx: any) => repoHere(typeof ctx?.cwd === "string" ? ctx.cwd : process.cwd(), deps.repo);
 
   pi.on("session_start", async (_e: unknown, ctx: any) => {
     if (now) ctx?.ui?.setStatus?.("tape", `▶ tape ${now.id}`);
@@ -132,10 +108,8 @@ export default function (pi: ExtensionAPI, deps: TapeDeps = {}) {
       }
     };
     return {
-      pin: (tape, summary) =>
-        decide(`Tape ${tape.id} hasn't played on this laptop. It runs here without a sandbox, as you:\n  ${summary.join("\n  ")}`, `Pin this version of ${tape.id} and play it?`, "Pin and play", "Cancel", promptText(tape)),
-      change: (pin, cloud, changes) =>
-        decide(`Tape ${cloud.id} changed in the cloud since you pinned it (${shortHash(pin.hash)}, ${pin.pinnedAt.slice(0, 10)}):\n${formatDiff(changes)}`, `Play the new version of ${cloud.id}?`, "Pin and play the new version", "Keep the pinned version", promptText(cloud)),
+      pin: (tape, summary) => decide(pinIntro(tape, summary), `Pin this version of ${tape.id} and play it?`, "Pin and play", "Cancel", promptText(tape)),
+      change: (pin, cloud, changes) => decide(changeIntro(pin, cloud, changes), `Play the new version of ${cloud.id}?`, "Pin and play the new version", "Keep the pinned version", promptText(cloud)),
     };
   };
 
@@ -154,7 +128,7 @@ export default function (pi: ExtensionAPI, deps: TapeDeps = {}) {
       if (pin && t) {
         const cloud = await transportFetch(t)(id);
         if (!cloud.ok) out.push(`cloud: not reached (${cloud.error}); the pinned version plays`);
-        else if (tapeHash(cloud.tape) === pin.hash) out.push("cloud: same as the pinned version");
+        else if (pinState(pin, { hash: tapeHash(cloud.tape) }) === "pinned") out.push("cloud: same as the pinned version");
         else out.push(`cloud: changed since you pinned it (${diffTapes(pin.tape, cloud.tape).map((c) => c.field).join(", ")}); /tape ${id} reviews it`);
       }
       if (pin) {
@@ -175,7 +149,7 @@ export default function (pi: ExtensionAPI, deps: TapeDeps = {}) {
       for (const c of cloud.tapes) {
         const pin = pins.get(c.id);
         pins.delete(c.id);
-        const state = !pin ? "not pinned" : c.updatedAt && c.updatedAt !== pin.tape.updatedAt ? `pinned ${shortHash(pin.hash)}, changed in the cloud` : `pinned ${shortHash(pin.hash)}`;
+        const state = !pin ? "not pinned" : pinState(pin, c) === "pinned" ? `pinned ${shortHash(pin.hash)}` : `pinned ${shortHash(pin.hash)}, changed in the cloud`;
         rows.push(`${c.id}  ${c.name !== c.id ? `${c.name}  ` : ""}${c.model}  ${state}`);
       }
     } else rows.push(`cloud: ${cloud.error}`);
@@ -190,8 +164,7 @@ export default function (pi: ExtensionAPI, deps: TapeDeps = {}) {
     if (!review.ok || !review.tape) return ctx.ui.notify(review.error ?? "nothing to play", "warning");
     const tape = review.tape;
     const npmDir = tapeNpmDir(dir, tape.id);
-    const own = ((settings().packages as unknown[]) ?? []).filter((p): p is string => typeof p === "string");
-    const plan = packagePlan(tape, npmDir, own);
+    const plan = packagePlan(tape, npmDir, ownPackages(settings()));
     if (plan.missing.length) {
       const yes = await ctx.ui.confirm(
         `Install ${plan.missing.length} npm package${plan.missing.length === 1 ? "" : "s"} for ${tape.id}?`,
@@ -229,17 +202,18 @@ export default function (pi: ExtensionAPI, deps: TapeDeps = {}) {
           const pin = readPin(dir, id);
           const tape = cloud?.ok ? cloud.tape : pin?.tape;
           if (!tape) return notify(`tape ${id}: ${cloud && !cloud.ok ? cloud.error : "not pinned here"}`, "warning");
-          const state = !pin ? "not pinned" : tapeHash(tape) === pin.hash ? `pinned ${shortHash(pin.hash)}` : `changed in the cloud since the pin ${shortHash(pin.hash)}`;
+          const s = pinState(pin, { hash: tapeHash(tape) });
+          const state = !pin ? "not pinned" : s === "pinned" ? `pinned ${shortHash(pin.hash)}` : `changed in the cloud since the pin ${shortHash(pin.hash)}`;
           return notify(`${summaryLines(tape, env).join("\n")}\n(${state})\n\n${promptText(tape)}`);
         }
         if (sub === "off") {
           setTape(undefined);
           if (!now) return notify("New sessions play no tape.");
-          if (!personHere(ctx)) return notify("New sessions play no tape. Restart Kernal to stop this session's tape.");
+          if (!personHere(ctx, "select")) return notify("New sessions play no tape. Restart Kernal to stop this session's tape.");
           return restart(["--tape", "none"], ctx, `Stopped tape ${now.id}.`);
         }
         if (parts.length !== 1 || !TAPE_ID.test(sub)) return notify(USAGE, "warning");
-        if (!personHere(ctx)) return notify("Playing a tape needs your review at the terminal: run /tape in the TUI, or kernal --tape <id>.", "warning");
+        if (!personHere(ctx, "select")) return notify("Playing a tape needs your review at the terminal: run /tape in the TUI, or kernal --tape <id>.", "warning");
         return await play(sub, ctx);
       } catch (err) {
         return notify(`tape: ${err instanceof Error ? err.message : String(err)}`, "warning");

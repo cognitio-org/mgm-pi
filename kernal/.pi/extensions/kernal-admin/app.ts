@@ -2011,6 +2011,12 @@ function capTags(t) {
   return out.length ? el("div", { class: "chips" }, out) : el("span", { class: "note", text: "none" });
 }
 var tapeFlash = null;
+/** POSTs a tapes action from btn: its message shows on the redrawn page; an error re-enables
+ * the button and says why. */
+function act(path, body, btn) {
+  btn.disabled = true;
+  return api("POST", path, body).then(function (r) { tapeFlash = { kind: "info", text: r.message }; show(); }, function (e) { btn.disabled = false; toast(e.message, "error"); });
+}
 
 function renderTapes(view) {
   var id = tapeRoute();
@@ -2029,10 +2035,7 @@ function drawTapes(view, d) {
 
   // ---- now ----
   var stopBtn = d.active ? el("button", { class: "btn sm", type: "button" }, "Play none") : null;
-  if (stopBtn) stopBtn.addEventListener("click", function () {
-    stopBtn.disabled = true;
-    api("POST", "/tapes/play", { id: null }).then(function (r) { tapeFlash = { kind: "info", text: r.message }; show(); }, function (e) { stopBtn.disabled = false; toast(e.message, "error"); });
-  });
+  if (stopBtn) stopBtn.addEventListener("click", function () { act("/tapes/play", { id: null }, stopBtn); });
   add(view, card("Now", null, null, kv([
     ["This session", d.playing ? el("span", {}, "playing ", el("a", { href: tapeHref(d.playing.id), class: "mono", text: d.playing.id }), d.repo && d.repo.repo ? el("span", {}, " in ", el("span", { class: "mono", text: d.repo.repo })) : " (no repo)", " ", el("span", { class: "note", text: "· memory " + d.playing.memory + (d.playing.agentEngine ? " · Agent Engine" : "") })) : el("span", { class: "note", text: "no tape (Kernal's own settings)" })],
     ["Repo", el("span", {}, d.repo && d.repo.repo ? el("span", { class: "mono", text: d.repo.repo }) : el("span", { class: "note", text: "no repo" }), d.repo && d.repo.note ? el("div", { class: "note", text: d.repo.note }) : null, el("div", { class: "note", text: "From the working directory's origin remote. It scopes memory and approvals; Outfitter doesn't check it." }))],
@@ -2046,10 +2049,7 @@ function drawTapes(view, d) {
     var play = null;
     if (t.pin && d.active !== t.id) {
       play = el("button", { class: "btn sm", type: "button", title: "Play this tape in new sessions" }, "Play");
-      play.addEventListener("click", function () {
-        play.disabled = true;
-        api("POST", "/tapes/play", { id: t.id }).then(function (r) { tapeFlash = { kind: "info", text: r.message }; show(); }, function (e) { play.disabled = false; toast(e.message, "error"); });
-      });
+      play.addEventListener("click", function () { act("/tapes/play", { id: t.id }, play); });
     }
     tbody.appendChild(el("tr", {},
       el("td", {}, el("div", { class: "a-name" }, el("a", { href: tapeHref(t.id), text: t.name || t.id }), d.active === t.id ? el("span", { class: "tag accent", text: "new sessions" }) : null, d.playing && d.playing.id === t.id ? el("span", { class: "tag accent", text: "playing" }) : null),
@@ -2082,7 +2082,7 @@ function memoryCard(m) {
   });
   var sw = el("input", { type: "checkbox", checked: m.record, "aria-label": "Record this laptop's turns" });
   sw.addEventListener("change", function () {
-    if (sw.checked && !confirm("Record this laptop's turns in Agent Engine memory?\n\nYour prompts and Kernal's final answers from laptop sessions go to your Outfitter's Agent Engine memory (secrets redacted; never tool output), and are recalled in your Drives and laptop sessions. They stay private to you.")) { sw.checked = false; return; }
+    if (sw.checked && !confirm(m.consent.title + "\n\n" + m.consent.body)) { sw.checked = false; return; }
     save({ record: sw.checked });
   });
   function save(body) {
@@ -2157,10 +2157,6 @@ function drawTape(view, id, d) {
   if (d.cloudError) add(view, callout("warn", "Outfitter not reached (" + d.cloudError + "). Showing the pinned version."));
   if (d.repo && d.repo.warning) add(view, callout("warn", d.repo.warning + ". It's a hint: the tape plays anyway."));
 
-  function act(path, body, btn) {
-    btn.disabled = true;
-    return api("POST", path, body).then(function (r) { tapeFlash = { kind: "info", text: r.message }; show(); }, function (e) { btn.disabled = false; toast(e.message, "error"); });
-  }
   var pinBtn = d.cloud ? el("button", { class: "btn primary", type: "button" }, icon("check", 14), d.state === "unpinned" ? "Pin this version" : "Pin the new version") : null;
   if (pinBtn) pinBtn.addEventListener("click", function () { act("/tapes/pin", { id: id, hash: d.cloud.hash }, pinBtn); });
 

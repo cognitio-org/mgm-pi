@@ -26,11 +26,11 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { tapePiArgs, tapeExcludeTools, PI_MEMORY_TOOLS } from "../_shared/tape-args.ts";
+import { tapePiArgs, tapeExcludeTools } from "../_shared/tape-args.ts";
+import { REPO } from "../_shared/repo.ts";
+import { TAPE_ID, tapeMarkers } from "../_shared/tape-env.ts";
 
-export { PI_MEMORY_TOOLS, tapeExcludeTools };
-
-export type MemoryLevel = "off" | "tool" | "auto";
+export { tapeExcludeTools, TAPE_ID };
 
 /** A tape as Kernal knows it: what tapes.get `format: "json"` sends, checked field by field. */
 export interface Tape {
@@ -94,10 +94,12 @@ const CLOUD_ONLY_WHY: Record<string, string> = {
   playwrightBeforeCheckpoint: "a Drive's checkpoint check",
 };
 
-/** File-name safe, and what Outfitter's tape ids look like (slugs and UUIDs). */
-export const TAPE_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+/** The cloud-only fields `tape` sets (to anything but false). */
+export function cloudOnlyFields(tape: Tape): TapeField[] {
+  return CLOUD_ONLY_FIELDS.filter((k) => tape[k] !== undefined && tape[k] !== false);
+}
+
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
-const REPO_NAME = /^[a-z0-9](?:[a-z0-9-]{0,38})\/[a-z0-9._-]{1,100}$/;
 const MAX_PROMPT = 200_000;
 const MAX_LIST = 200;
 const MAX_SHORT = 300;
@@ -175,7 +177,7 @@ export function parseTape(raw: unknown): { ok: true; tape: Tape } | { ok: false;
   const envNames = list(v.envNames, "envNames", (s) => ENV_NAME.test(s));
   if (envNames && !Array.isArray(envNames)) return { ok: false, error: envNames.error };
   if (envNames) tape.envNames = [...envNames].sort();
-  const repos = list(v.repos, "repos", (s) => REPO_NAME.test(s));
+  const repos = list(v.repos, "repos", (s) => REPO.test(s));
   if (repos && !Array.isArray(repos)) return { ok: false, error: repos.error };
   if (repos) tape.repos = repos;
   // A field called `env` would be values: never accepted, whatever sent it.
@@ -410,21 +412,14 @@ export function launchPlan(tape: Tape, packages: PackagePlan, npmDir: string, en
   );
   if (tape.fallbackModel) args.push("--models", [tape.model, tape.fallbackModel].join(","));
   for (const p of packages.ready) args.push("--extension", join(npmDir, "node_modules", p.name));
-  const out: Record<string, string> = {
-    KERNAL_TAPE: tape.id,
-    KERNAL_TAPE_HASH: tapeHash(tape),
-    KERNAL_TAPE_MEMORY: tape.memory ?? "off",
-    KERNAL_TAPE_AGENT_ENGINE: tape.agentEngine ? "1" : "0",
-    KERNAL_TAPE_HTML: tape.allowExternalHtmlResources === true ? "external" : "sealed",
-  };
   const notes: string[] = [];
   const missing = missingEnv(tape, env);
   if (missing.length) notes.push(`env the tape expects is not set here: ${missing.join(", ")} (set it in your .env; Outfitter never sends values)`);
   if (packages.missing.length) notes.push(`not installed, so not loaded: ${packages.missing.map((p) => p.spec).join(", ")}`);
   if (packages.refused.length) notes.push(`never installed on a laptop (only npm: packages with an exact version are): ${packages.refused.join(", ")}`);
-  const ignored = CLOUD_ONLY_FIELDS.filter((k) => tape[k] !== undefined && tape[k] !== false);
+  const ignored = cloudOnlyFields(tape);
   if (ignored.length) notes.push(`cloud only, ignored here: ${ignored.join(", ")}`);
-  return { args, env: out, notes };
+  return { args, env: tapeMarkers(tape, tapeHash(tape)), notes };
 }
 
 /** The warning for playing `tape` in `repo` (the working directory's, or none), when its `repos`
@@ -480,7 +475,7 @@ export function summaryLines(tape: Tape, env: NodeJS.ProcessEnv = process.env): 
   if (tape.allowExternalHtmlResources) out.push("HTML previews: external CSS and JS allowed");
   out.push(tape.systemPrompt ? `system prompt (replaces Kernal's): ${lines(tape.systemPrompt)} lines, "${firstLine(tape.systemPrompt)}"` : "system prompt: Kernal's own");
   if (tape.appendSystemPrompt) out.push(`appended prompt: ${lines(tape.appendSystemPrompt)} lines, "${firstLine(tape.appendSystemPrompt)}"`);
-  const ignored = CLOUD_ONLY_FIELDS.filter((k) => tape[k] !== undefined && tape[k] !== false);
+  const ignored = cloudOnlyFields(tape);
   if (ignored.length) out.push(`ignored here (cloud only): ${ignored.map((k) => `${k} (${CLOUD_ONLY_WHY[k]})`).join("; ")}`);
   return out;
 }
@@ -589,6 +584,16 @@ export type FetchTape = (id: string) => Promise<{ ok: true; tape: Tape } | { ok:
 
 const OFFLINE = /unreachable|did not answer in time|cancelled|no Dongle/;
 
+/** What a reviewer says before asking to pin a tape on its first play (the terminal and /tape). */
+export function pinIntro(tape: Tape, summary: string[]): string {
+  return `Tape ${tape.id} hasn't played on this laptop. It runs here without a sandbox, as you:\n  ${summary.join("\n  ")}`;
+}
+
+/** What a reviewer says before asking whether to play the cloud's changed version. */
+export function changeIntro(pinned: Pin, cloud: Tape, changes: FieldChange[]): string {
+  return `Tape ${cloud.id} changed in the cloud since you pinned it (${shortHash(pinned.hash)}, ${pinned.pinnedAt.slice(0, 10)}):\n${formatDiff(changes)}`;
+}
+
 /** Asks the person. Undefined: nobody to ask (print mode, no terminal). */
 export interface Reviewer {
   /** First play: pin this tape? */
@@ -604,15 +609,8 @@ export interface Review {
   pin?: Pin;
   /** Played from the pin without reaching Outfitter. */
   offline?: boolean;
-  /** The cloud has a newer version that isn't played. */
-  behind?: boolean;
   notes: string[];
   error?: string;
-}
-
-/** The pin for `ref` when Outfitter can't be asked: the exact id only (review). */
-function pinFor(dir: string, ref: string): Pin | undefined {
-  return readPin(dir, ref);
 }
 
 /**
@@ -626,7 +624,8 @@ export async function reviewTape(ref: string, deps: { dir: string; fetch?: Fetch
     ? await deps.fetch(ref).catch((e) => ({ ok: false as const, error: String(e?.message ?? e), offline: true }))
     : { ok: false as const, error: "no Dongle (OUTFITTER_API and OUTFITTER_TOKEN)", offline: true };
   if (!cloud.ok) {
-    const pin = pinFor(deps.dir, ref);
+    // The pin for `ref` when Outfitter can't be asked: the exact id only (review).
+    const pin = readPin(deps.dir, ref);
     if (!cloud.offline) return { ok: false, notes: [], error: `tape ${ref}: ${cloud.error}${pin ? "; the pinned version doesn't play while Outfitter says so" : ""}` };
     if (!pin) return { ok: false, notes: [], error: `tape ${ref}: ${cloud.error}; and it isn't pinned on this laptop, so there is nothing to play` };
     return { ok: true, tape: pin.tape, pin, offline: true, notes: [`Outfitter not reached (${cloud.error}); playing the pinned version ${shortHash(pin.hash)} from ${pin.pinnedAt.slice(0, 10)}`] };
@@ -644,7 +643,7 @@ export async function reviewTape(ref: string, deps: { dir: string; fetch?: Fetch
   const changes = diffTapes(pin.tape, tape);
   // Kept already, for this very version: not asked again at every start (/tape <id> re-asks).
   if (pin.seen?.kept && pin.seen.hash === hash && !deps.reaskKept) {
-    return { ok: true, tape: pin.tape, pin, behind: true, notes: [`tape ${tape.id} changed in the cloud and you kept the pinned version ${shortHash(pin.hash)}; /tape ${tape.id} reviews it again`] };
+    return { ok: true, tape: pin.tape, pin, notes: [`tape ${tape.id} changed in the cloud and you kept the pinned version ${shortHash(pin.hash)}; /tape ${tape.id} reviews it again`] };
   }
   if (deps.reviewer && (await deps.reviewer.change(pin, tape, changes))) {
     const fresh = writePin(deps.dir, tape, now());
@@ -655,7 +654,6 @@ export async function reviewTape(ref: string, deps: { dir: string; fetch?: Fetch
     ok: true,
     tape: pin.tape,
     pin: kept,
-    behind: true,
     notes: [
       deps.reviewer
         ? `kept the pinned version ${shortHash(pin.hash)} of tape ${tape.id}`
@@ -671,6 +669,25 @@ export function transportFetch(transport: { call(op: string, args: Record<string
     if (!reply.ok) return { ok: false, error: reply.error, ...(OFFLINE.test(reply.error) ? { offline: true } : {}) };
     return parseTape(reply.text);
   };
+}
+
+export type PinState = "unpinned" | "offline" | "pinned" | "changed" | "kept";
+
+/**
+ * Where a pin stands against the cloud's version. With the cloud's whole tape (`hash`), the content
+ * hash decides: updatedAt is not part of what a pin pins, so a save that changed nothing is no
+ * change. With only a tapes.list row, which has no hash, a different `updatedAt` counts as a change.
+ * `kept`: changed, and the person kept the pin for that very version. No cloud: `offline`.
+ */
+export function pinState(pin: Pin | undefined, cloud?: { hash?: string; updatedAt?: string }): PinState {
+  if (!pin) return "unpinned";
+  if (!cloud) return "offline";
+  if (cloud.hash !== undefined) {
+    if (cloud.hash === pin.hash) return "pinned";
+    return pin.seen?.kept && pin.seen.hash === cloud.hash ? "kept" : "changed";
+  }
+  if (!cloud.updatedAt || cloud.updatedAt === pin.tape.updatedAt) return "pinned";
+  return pin.seen?.kept && pin.seen.updatedAt === cloud.updatedAt ? "kept" : "changed";
 }
 
 export interface CloudRow {
@@ -708,10 +725,8 @@ export function activeTape(settings: Record<string, unknown>): string | undefine
   return typeof t === "string" && TAPE_ID.test(t) ? t : undefined;
 }
 
-/** The tape this pi process plays (bin/kernal sets KERNAL_TAPE*), if any. */
-export function playing(env: NodeJS.ProcessEnv = process.env): { id: string; hash: string; memory: MemoryLevel; agentEngine: boolean } | undefined {
-  const id = env.KERNAL_TAPE?.trim();
-  if (!id || !TAPE_ID.test(id)) return undefined;
-  const memory = env.KERNAL_TAPE_MEMORY === "tool" || env.KERNAL_TAPE_MEMORY === "auto" ? env.KERNAL_TAPE_MEMORY : "off";
-  return { id, hash: env.KERNAL_TAPE_HASH ?? "", memory, agentEngine: env.KERNAL_TAPE_AGENT_ENGINE === "1" };
+/** Kernal's own package sources (settings.json `packages`): a tape's package of the same name is
+ * Kernal's, never installed again (packagePlan `own`). */
+export function ownPackages(settings: Record<string, unknown>): string[] {
+  return ((settings.packages as unknown[] | undefined) ?? []).filter((p): p is string => typeof p === "string");
 }

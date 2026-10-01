@@ -176,14 +176,30 @@ if [[ -x "$ROOT/pi/pi" ]]; then PI="$ROOT/pi/pi"; else PI="$ROOT/node_modules/.b
 # "tool" or "auto" in settings.json, or unset with a Dongle (OUTFITTER_API and OUTFITTER_TOKEN)
 # configured; the extension reads the same setting the same way. Never inside a Drive (agentd decides
 # there). The real directory goes on in KERNAL_PI_MEMORY_SOURCE for `/memory import`.
+# kernal.tape (the tape new sessions play, #354) and kernal.memory from settings.json, with one node
+# start however many callers ask, outside a Drive only. Unparseable JSON reads as unset, as in the
+# extensions. settings_read=1 when node read them.
+settings_tape=""; settings_memory=""; settings_read=0
+read_kernal_settings() {
+  [[ $settings_read == 0 && -z "${OUTFITTER_SESSION_ID:-}" && -z "${OUTFITTER_ADMIN_SOCKET:-}" ]] || return 0
+  command -v node >/dev/null 2>&1 || return 0
+  local both
+  # `tape<TAB>memory`; a tab or newline in the tape (no tape id has one) becomes a space.
+  both="$(node -e 'try { const k = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).kernal || {}; const t = typeof k.tape === "string" ? k.tape.replace(/[\t\r\n]/g, " ") : ""; const m = ["off", "tool", "auto"].includes(k.memory) ? k.memory : ""; process.stdout.write(t + "\t" + m); } catch {}' "$PI_CODING_AGENT_DIR/settings.json" 2>/dev/null || true)"
+  settings_read=1
+  [[ "$both" == *$'\t'* ]] || return 0
+  settings_tape="${both%%$'\t'*}"; settings_memory="${both#*$'\t'}"
+}
+
 pi_memory_env() {
   [[ -z "${OUTFITTER_SESSION_ID:-}" && -z "${OUTFITTER_ADMIN_SOCKET:-}" ]] || return 0
   [[ -n "${OUTFITTER_API:-}" && -n "${OUTFITTER_TOKEN:-}" ]] || return 0
   local mode empty parent settings="$PI_CODING_AGENT_DIR/settings.json"
-  # Exactly kernal.memory, the way the extension reads it (unparseable JSON reads as unset there too).
-  # Without node, the first `"memory": "off|tool|auto"` line, which is where /memory writes it.
-  if command -v node >/dev/null 2>&1; then
-    mode="$(node -e 'try { const k = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).kernal; const m = k && k.memory; if (["off", "tool", "auto"].includes(m)) process.stdout.write(m); } catch {}' "$settings" 2>/dev/null || true)"
+  # Exactly kernal.memory, the way the extension reads it (read_kernal_settings). Without node, the
+  # first `"memory": "off|tool|auto"` line, which is where /memory writes it.
+  read_kernal_settings
+  if [[ $settings_read == 1 ]]; then
+    mode="$settings_memory"
   else
     mode="$(sed -nE 's/^[[:space:]]*"memory":[[:space:]]*"(off|tool|auto)".*/\1/p' "$settings" 2>/dev/null | head -1)"
   fi
@@ -478,9 +494,7 @@ while [[ $# -gt 0 ]]; do
 done
 set -- ${rest[@]+"${rest[@]}"}
 if [[ -z "${OUTFITTER_SESSION_ID:-}" && -z "${OUTFITTER_ADMIN_SOCKET:-}" && $tape_session == 1 ]]; then
-  if [[ $tape_explicit == 0 ]] && command -v node >/dev/null 2>&1; then
-    tape_ref="$(node -e 'try { const t = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).kernal?.tape; if (typeof t === "string") process.stdout.write(t); } catch {}' "$PI_CODING_AGENT_DIR/settings.json" 2>/dev/null || true)"
-  fi
+  if [[ $tape_explicit == 0 ]]; then read_kernal_settings; tape_ref="$settings_tape"; fi
   if [[ -n "$tape_ref" && "$tape_ref" != none && "$tape_ref" != off ]]; then
     command -v node >/dev/null 2>&1 || { echo "kernal: playing a tape needs node on PATH" >&2; exit 1; }
     tape_out="$(mktemp -d "${TMPDIR:-/tmp}/kernal-tape.XXXXXX")" || exit 1   # private (0700), so nothing else can plant the files

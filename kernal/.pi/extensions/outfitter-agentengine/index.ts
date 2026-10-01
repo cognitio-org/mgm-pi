@@ -18,9 +18,9 @@ import { adminTransport, hasAdminCapability, type AdminTransport } from "../outf
 import { registerMemoryTool } from "./memory.ts";
 import { registerRecall } from "./recall.ts";
 import { registerAgentEngineTool, registerLaptopAgentEngineTool } from "./agents.ts";
-import { laptopContextOf, registerLaptopMemory, waits, type LaptopDeps } from "./laptop.ts";
+import { laptopContextOf, registerLaptopMemory, webApprovalWait, type LaptopDeps } from "./laptop.ts";
 import { cachedRepoOf } from "../_shared/repo.ts";
-import { playing } from "../kernal-tape/lib.ts";
+import { playing } from "../_shared/tape-env.ts";
 
 /** Tests pass `deps`; pi calls this with `pi` alone, and the environment decides. */
 export default function (pi: ExtensionAPI, deps?: { env?: NodeJS.ProcessEnv; transport?: AdminTransport } & Omit<LaptopDeps, "env">) {
@@ -38,7 +38,7 @@ export default function (pi: ExtensionAPI, deps?: { env?: NodeJS.ProcessEnv; tra
           const laptop = await laptopContextOf(ctx, repoOf);
           return laptop ? { ...laptop, tape: tape.id } : undefined;
         },
-        approval: (ctx) => (waits(ctx) ? { wait: true, notify: (m) => ctx?.ui?.notify?.(m, "info") } : undefined),
+        approval: webApprovalWait,
       });
     }
     return;

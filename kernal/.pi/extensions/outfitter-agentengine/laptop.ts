@@ -29,11 +29,11 @@ import type { ApprovalWait } from "./laptop-approval.ts";
 import { registerMemoryTool } from "./memory.ts";
 import { registerRecall } from "./recall.ts";
 import { TurnRecorder } from "./record.ts";
-import { playing } from "../kernal-tape/lib.ts";
+import { playing } from "../_shared/tape-env.ts";
 import { importPlan, piMemoryInjectionOff, piMemorySource, withoutPiMemoryTools, type ImportNote } from "./pi-memory.ts";
 
 export type MemoryMode = "off" | "tool" | "auto";
-const MODES: readonly MemoryMode[] = ["off", "tool", "auto"];
+export const MODES: readonly MemoryMode[] = ["off", "tool", "auto"];
 const CONFIRM_TIMEOUT_MS = 5 * 60_000;
 
 export interface MemorySettings {

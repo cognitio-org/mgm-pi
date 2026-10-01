@@ -262,3 +262,9 @@ export function adminTransport(env?: NodeJS.ProcessEnv, fetchFn?: FetchFn): Admi
   if (api && token) return httpTransport(api, token, fetchFn);
   return undefined;
 }
+
+/** This laptop's Dongle transport, or undefined (none set, or this is a Drive's socket). */
+export function laptopTransport(): AdminTransport | undefined {
+  const t = adminTransport();
+  return t?.kind === "laptop" ? t : undefined;
+}

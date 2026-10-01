@@ -22,7 +22,7 @@ import { httpTransport } from "../outfitter-admin/transport.ts";
 import { readSettings } from "../connect/settings.ts";
 import { repoInfo } from "../_shared/repo.ts";
 import {
-  formatDiff, installPackages, launchPlan, npmRunner, packagePlan, promptText, repoWarning, reviewTape, shortHash, tapeDir, tapeNpmDir, transportFetch,
+  changeIntro, installPackages, launchPlan, npmRunner, ownPackages, packagePlan, pinIntro, promptText, repoWarning, reviewTape, shortHash, tapeDir, tapeNpmDir, transportFetch,
   type Reviewer,
 } from "./lib.ts";
 
@@ -42,11 +42,11 @@ export function terminalReviewer(ask: (q: string) => Promise<string>, out: (m: s
   };
   return {
     async pin(tape, summary) {
-      out(`\nKernal hasn't played this tape on this laptop before. It runs here without a sandbox, as you:\n  ${summary.join("\n  ")}`);
+      out(`\n${pinIntro(tape, summary)}`);
       return yesNo(`Pin this version of tape ${tape.id} and play it?`, promptText(tape));
     },
     async change(pinned, cloud, changes) {
-      out(`\nTape ${cloud.id} changed in the cloud since you pinned it (${shortHash(pinned.hash)}, ${pinned.pinnedAt.slice(0, 10)}):\n${formatDiff(changes)}`);
+      out(`\n${changeIntro(pinned, cloud, changes)}`);
       return yesNo("Pin and play the new version? No keeps the pinned one", promptText(cloud));
     },
   };
@@ -76,7 +76,7 @@ async function main(): Promise<number> {
     }
     const tape = review.tape;
     const npmDir = tapeNpmDir(dir, tape.id);
-    const own = (readSettings().packages as unknown[] | undefined)?.filter((p): p is string => typeof p === "string") ?? [];
+    const own = ownPackages(readSettings());
     let packages = packagePlan(tape, npmDir, own);
     // KERNAL_TAPE_ASKED: a /tape restart, whose TUI already asked about these.
     if (packages.missing.length && interactive && process.env.KERNAL_TAPE_ASKED !== "1") {

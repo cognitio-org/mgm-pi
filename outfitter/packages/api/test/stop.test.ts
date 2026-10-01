@@ -323,6 +323,7 @@ describe("agentlink up-frame ordering", () => {
       adminAudit: inner.adminAudit,
       adminApprovals: inner.adminApprovals,
       sessionChunks: inner.sessionChunks,
+      turnWaiters: inner.turnWaiters,
       close: () => inner.close(),
     };
 

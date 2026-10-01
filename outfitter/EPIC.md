@@ -524,6 +524,8 @@ research on Sonnet; review on Opus).
        mail the parent when nothing has been reported by then. Covers a settle lost to a dropped
        socket or an API restart, and a child that asks a question instead of finishing (it stays
        unsettled, so layer 1 never fires).
+    - Layers 1–3 are built server-side, without the tool, as E9's turn waiters (`src/turns.ts`,
+      protocol.md "Turn settled"; #307). The delegate tool registers one per child mail.
     - Optional `outfitter_done(summary)` the child may call: better summaries when it does, layer 1
       still correct when it doesn't. Correctness must not depend on the model remembering it.
   - **`outfitter_peers()`** (deferred here from E5.5): answer from a relations snapshot carried in

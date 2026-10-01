@@ -794,7 +794,7 @@ function drawConnections(view, d) {
 
   add(view, card("LiteLLM router", "The default backend: every cloud model the agent key's team may use.", headPill("litellm"),
     el("div", { class: "rows" },
-      textRow("LITELLM_BASE_URL", "Router URL", "An OpenAI-compatible base URL; /v1 is added when missing.", "url", "https://litellm.augment-code.support/v1", true),
+      textRow("LITELLM_BASE_URL", "Router URL", "An OpenAI-compatible base URL; /v1 is added when missing.", "url", "https://router.kernal.one/v1", true),
       secretRow("LITELLM_AGENT_KEY", "Agent key", "This agent's own LiteLLM virtual key. Ask Matthew for one.")),
     testFoot("litellm")));
   add(view, card("OpenRouter", "Your own key from openrouter.ai; its models appear only when the key is accepted.", headPill("openrouter"),

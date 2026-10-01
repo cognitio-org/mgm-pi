@@ -1,0 +1,53 @@
+kernal/.pi/extensions/kernal-admin/app.ts
+  s_1d3bdd6f362f9b::t_ee6d3aec6fa004 797
+kernal/.pi/extensions/connect/lib.ts
+  s_1d3bdd6f362f9b::t_ee6d3aec6fa004 144-145
+kernal/README.md
+  s_1d3bdd6f362f9b::t_ee6d3aec6fa004 9
+.env.example
+  s_1d3bdd6f362f9b::t_ee6d3aec6fa004 16
+.github/workflows/live.yml
+  s_1d3bdd6f362f9b::t_ee6d3aec6fa004 19
+kernal/tests/extensions.test.ts
+  s_1d3bdd6f362f9b::t_ee6d3aec6fa004 196,207,223,231,269,286,295,389
+outfitter/deploy/config.env
+  s_1d3bdd6f362f9b::t_ee6d3aec6fa004 12
+.github/workflows/release.yml
+  s_1d3bdd6f362f9b::t_ee6d3aec6fa004 47
+README.md
+  s_1d3bdd6f362f9b::t_ee6d3aec6fa004 60
+outfitter/deploy/test/service-env-gke-off.test.sh
+  s_1d3bdd6f362f9b::t_ee6d3aec6fa004 122
+outfitter/packages/agentd/pi-extension/outfitter-spend.ts
+  s_1d3bdd6f362f9b::t_ee6d3aec6fa004 217
+kernal/tests/live.test.ts
+  s_1d3bdd6f362f9b::t_ee6d3aec6fa004 20
+outfitter/packages/api/src/config.ts
+  s_1d3bdd6f362f9b::t_ee6d3aec6fa004 393
+outfitter/deploy/README.md
+  s_1d3bdd6f362f9b::t_ee6d3aec6fa004 163
+kernal/.pi/mcp.json
+  s_1d3bdd6f362f9b::t_ee6d3aec6fa004 4
+kernal/scratch/abfold.mjs
+  s_1d3bdd6f362f9b::t_ee6d3aec6fa004 15
+kernal/.pi/extensions/kernal-admin/lib.ts
+  s_1d3bdd6f362f9b::t_ee6d3aec6fa004 74
+kernal/.pi/extensions/connect/index.ts
+  s_1d3bdd6f362f9b::t_ee6d3aec6fa004 195
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "4b8bf7e6c340892a0679a7a03a7d3e61016210af",
+  "prompts": {},
+  "sessions": {
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

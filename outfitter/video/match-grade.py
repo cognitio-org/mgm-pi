@@ -7,7 +7,7 @@ Resolve, Premiere, etc.) can apply. Only *statistics* of the reference frames en
 no pixels -- so it is safe to commit and share.
 
 Usage:
-  python3 match-grade.py --ref reference/scene-*.png --src ours/frame-*.png [--out grade.cube]
+  python3 match-grade.py --ref reference/pick-*.png --src ours/frame-*.png [--out grade.cube]
   ffmpeg -i ours.mp4 -vf lut3d=grade.cube graded.mp4
 
   --src: stills from *our* footage (a Veo clip, a screen recording) -- e.g.

@@ -24,8 +24,11 @@ source video (local only) --extract-frames.sh--> reference/*.png (gitignored)
    open reference/contact-sheet.png
    ```
 
-   Keep 10-20 frames that carry the look: set, light, screen glow, wides. Delete or crop out
-   close-ups of faces. `reference/` is gitignored; keep it that way.
+   It deinterlaces, filters out baked-in 4px scanlines (`DESCAN=0` to skip), samples 4 fps into
+   `reference/all/`, and `pick-frames.py` keeps the `COUNT` (default 24) most stable, sharpest
+   frames as `reference/pick-*.png` -- held shots, not mid-dissolve. Keep 10-20 that carry the
+   look: set, light, screen glow, wides. Delete or crop out close-ups of faces. `reference/` is
+   gitignored; keep it that way.
 
 2. **Style bible.** Fill in `style-bible.md` from the frames (or hand Claude a few face-free frames
    and ask it to). Its "prompt suffix" goes at the end of every Veo / image prompt.
@@ -41,7 +44,7 @@ source video (local only) --extract-frames.sh--> reference/*.png (gitignored)
 
    ```bash
    mkdir -p ours && ffmpeg -i some-veo-clip.mp4 -vf fps=1 ours/frame-%04d.png
-   python3 match-grade.py --ref reference/scene-*.png --src ours/frame-*.png --out grade.cube
+   python3 match-grade.py --ref reference/pick-*.png --src ours/frame-*.png --out grade.cube
    ```
 
    (`pip install numpy pillow`.) The `.cube` holds only color statistics, so it's fine to commit.

@@ -37,6 +37,12 @@ are short on purpose; ask for more (limit, around, from) rather than guessing.
 5. Test it only when the user wants: they start a floppy on it from the web UI, or you read one they
    ran with `session_search` / `session_transcript`. Adjust with `outfitter_tapes update`.
 
+## The E9 tapes
+
+To create the `foreman` (plans and delegates to subagents) or `a2a-coder` (inbound A2A tasks) tape,
+read `references/e9-tapes.md` next to this file and follow it exactly: the create calls, then the
+fields the owner sets in the web editor.
+
 ## Debug a Drive
 
 1. `session_search` for the symptom: an exact error string with the default text mode, a description

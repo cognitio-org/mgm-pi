@@ -46,6 +46,10 @@ RUN mkdir -p ./.pi && bash /tmp/render-mcp.sh /tmp/mcp.full.json /opt/kernal/.pi
 COPY kernal/.pi/extensions/ ./.pi/extensions/
 # Kernal's own skills (outfitter-admin, #290): settings.json loads them from ../skills.
 COPY kernal/skills/ ./skills/
+# The foreman tape's `coder` child (E9 PR8): pi-subagents loads user agents from
+# $PI_CODING_AGENT_DIR/agents. Image-only: kernal/.pi/agents is a laptop user's own (gitignored).
+# A repo's agent files can't shadow it: render-settings.sh prunes /workspace from agent discovery.
+COPY outfitter/image/agents/ ./.pi/agents/
 # Laptop-only kernal extensions stay out of the cloud image: kernal-voice (microphone; it also creates
 # ~/.pi/agent at load and was the first thing to trip on the agent user's HOME) and kernal-update
 # (checks GitHub releases at session start; a sandbox is replaced by redeploying the image), and
@@ -150,8 +154,11 @@ RUN npx tsc -p tsconfig.json && npm prune --omit=dev
 # ---------------------------------------------------------------------------
 FROM ${NODE_IMAGE} AS runtime
 
-# git/ripgrep: tools the pi agent's bash/grep tools use. ca-certificates/curl: needed for HTTPS out
-# (LiteLLM, GCE metadata server, GitHub) and to fetch gh's apt key. gh: PR workflows (E6) -- kept
+# git/ripgrep: tools the pi agent's bash/grep tools use. fd-find: pi's `find` tool runs `fd` (as
+# `fdfind`, Debian's name, which pi also looks for) and, with PI_OFFLINE=1, never downloads it, so
+# without it `find` fails in every Drive (E9 PR8: the foreman tape and `coder` child list it).
+# ca-certificates/curl: needed for HTTPS out (LiteLLM, GCE metadata server, GitHub) and to fetch
+# gh's apt key. gh: PR workflows (E6) -- kept
 # even though nothing uses it yet; it is the single largest apt package here (~38 MB installed) so
 # it is worth revisiting if E6 ends up not needing it inside the sandbox (a guru could shell out to
 # the api's own GitHub broker instead of a local gh install).
@@ -163,7 +170,7 @@ FROM ${NODE_IMAGE} AS runtime
 # deploy/gke/sandbox-template.yaml's egress rule for public addresses.
 ARG NGROK_VERSION=3.39.11
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git ripgrep ca-certificates curl gnupg \
+  && apt-get install -y --no-install-recommends git ripgrep fd-find ca-certificates curl gnupg \
   && mkdir -p -m 755 /etc/apt/keyrings \
   && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
   && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \

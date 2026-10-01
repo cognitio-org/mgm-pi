@@ -1,0 +1,259 @@
+{
+  "_about": "The edit: each cut is a list of segments laid end to end (slot = seconds on screen; bars of the ~84 BPM music are 2.857 s) joined by dissolves, plus voice lines placed at times. Sources come from picks.json. Edit timings here and rerun assemble.py.",
+  "dissolve": 1.0,
+  "music": {
+    "file": "reference/stems/htdemucs/source-audio/no_vocals.wav",
+    "start": 0.0,
+    "gain_db": -6,
+    "fade_out": 1.5
+  },
+  "voice_gap": 0.35,
+  "cuts": {
+    "full": {
+      "out": "dear-sysop-75.mp4",
+      "segments": [
+        {
+          "t": "clip",
+          "src": "shots.02-sidewalk",
+          "slot": 5.7,
+          "title": {
+            "text": "Dear Sysop,",
+            "start": 0.6,
+            "write": 1.6
+          }
+        },
+        {
+          "t": "clip",
+          "src": "shots.03-envelope",
+          "in": 0.3,
+          "slot": 2.9
+        },
+        {
+          "t": "clip",
+          "src": "shots.07-mouse",
+          "slot": 5.7,
+          "double": {
+            "ui": "new-floppy-filled",
+            "mix": 0.5
+          }
+        },
+        {
+          "t": "screen",
+          "ui": "agent-answer",
+          "slot": 5.7,
+          "from": [
+            0.5,
+            0.25,
+            0.7
+          ],
+          "to": [
+            0.45,
+            0.55,
+            0.55
+          ]
+        },
+        {
+          "t": "card",
+          "still": "card-bug",
+          "slot": 5.7,
+          "quote": "The first bug it fixed!",
+          "name": "Lee",
+          "age": 61
+        },
+        {
+          "t": "screen",
+          "ui": "disk-box",
+          "slot": 5.7,
+          "from": [
+            0.5,
+            0.3,
+            0.75
+          ],
+          "to": [
+            0.45,
+            0.7,
+            0.6
+          ]
+        },
+        {
+          "t": "printout",
+          "slot": 11.5,
+          "lines": [
+            "MY WISH LIST",
+            "",
+            "* Twelve Drives at once",
+            "* A Tape for every job",
+            "* MongoDB Atlas memory",
+            "  (remembers where we left off)",
+            "* Atlas agents <-> my agents (A2A)",
+            "* Eject to my laptop",
+            "* A Control Panel with all the keys",
+            "",
+            "How much will all this cost?"
+          ]
+        },
+        {
+          "t": "clip",
+          "src": "shots.08-glow",
+          "slot": 5.7
+        },
+        {
+          "t": "card",
+          "still": "card-talk",
+          "slot": 4.3,
+          "quote": "Could you make a computer I can just talk to?",
+          "name": "Jo",
+          "age": 47
+        },
+        {
+          "t": "screen",
+          "ui": "session",
+          "slot": 7.1,
+          "from": [
+            0.5,
+            0.45,
+            1.0
+          ],
+          "to": [
+            0.8,
+            0.85,
+            0.4
+          ]
+        },
+        {
+          "t": "card",
+          "still": "card-fleet",
+          "slot": 5.7,
+          "quote": "Outfitter rules the fleet.",
+          "name": "MGM",
+          "age": 54,
+          "write": {
+            "start": 3.4,
+            "dur": 1.2
+          }
+        },
+        {
+          "t": "file",
+          "src": "signed.12-rocky",
+          "in": 1.6,
+          "slot": 5.7,
+          "freeze": 1.0
+        },
+        {
+          "t": "endcard",
+          "slot": 3.6,
+          "thanks": "Thanks for all your letters.\nOur grown-up fans keep us going."
+        }
+      ],
+      "voices": [
+        {
+          "id": "LEE-a",
+          "at": 8.9
+        },
+        {
+          "id": "LEE-b",
+          "at": 9.0
+        },
+        {
+          "id": "LEE-c",
+          "at": 20.3
+        },
+        {
+          "id": "PAT-a",
+          "at": 25.9
+        },
+        {
+          "id": "PAT-b",
+          "at": 31.6
+        },
+        {
+          "id": "PAT-c",
+          "at": 31.7
+        },
+        {
+          "id": "PAT-d",
+          "at": 43.0
+        },
+        {
+          "id": "PAT-e",
+          "at": 43.1
+        },
+        {
+          "id": "JO",
+          "at": 48.8
+        },
+        {
+          "id": "MGM",
+          "at": 60.2
+        }
+      ]
+    },
+    "teaser": {
+      "out": "dear-sysop-30.mp4",
+      "segments": [
+        {
+          "t": "clip",
+          "src": "shots.02-sidewalk",
+          "slot": 5.7,
+          "title": {
+            "text": "Dear Sysop,",
+            "start": 0.6,
+            "write": 1.6
+          }
+        },
+        {
+          "t": "printout",
+          "slot": 11.4,
+          "lines": [
+            "MY WISH LIST",
+            "",
+            "* Twelve Drives at once",
+            "* A Tape for every job",
+            "* MongoDB Atlas memory",
+            "* Atlas agents <-> my agents (A2A)",
+            "",
+            "How much will all this cost?"
+          ]
+        },
+        {
+          "t": "card",
+          "still": "card-fleet",
+          "slot": 5.0,
+          "quote": "Outfitter rules the fleet.",
+          "name": "MGM",
+          "age": 54,
+          "write": {
+            "start": 3.0,
+            "dur": 1.2
+          }
+        },
+        {
+          "t": "file",
+          "src": "signed.12-rocky",
+          "in": 2.0,
+          "slot": 4.3,
+          "freeze": 0.8
+        },
+        {
+          "t": "endcard",
+          "slot": 3.6,
+          "thanks": "Thanks for all your letters.\nOur grown-up fans keep us going."
+        }
+      ],
+      "voices": [
+        {
+          "id": "PAT-b",
+          "at": 5.9
+        },
+        {
+          "id": "PAT-c",
+          "at": 6.0
+        },
+        {
+          "id": "MGM",
+          "at": 17.3
+        }
+      ]
+    }
+  }
+}

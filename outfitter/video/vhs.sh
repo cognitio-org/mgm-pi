@@ -4,14 +4,15 @@
 # LUT from match-grade.py. Apply it to *every* shot so AI footage and real UI footage sit together.
 #
 # Usage: ./vhs.sh <in> <out.mp4> [grade.cube]
-#   env: VHS_NOISE (default 10), VHS_FILL=crop|pad (default crop: center-crop 16:9 to 4:3)
+#   env: VHS_NOISE (default 7), VHS_SIZE (default 960:720), VHS_FILL=crop|pad (default crop: center-crop 16:9 to 4:3)
 set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/deps.sh"
 
 IN="${1:?usage: vhs.sh <in> <out.mp4> [grade.cube]}"
 OUT="${2:?usage: vhs.sh <in> <out.mp4> [grade.cube]}"
 LUT="${3:-}"
-NOISE="${VHS_NOISE:-10}"
+NOISE="${VHS_NOISE:-7}"
+SIZE="${VHS_SIZE:-960:720}"   # output 4:3 size; the picture holds ~480 lines anyway
 FILL="${VHS_FILL:-crop}"
 
 if [ "$FILL" = pad ]; then
@@ -37,12 +38,12 @@ split[l][c];\
 [l][cs]mergeplanes=0x001112:yuv444p,\
 noise=alls=${NOISE}:allf=t,\
 unsharp=5:5:0.6:5:5:0,\
-scale=1440:1080:flags=neighbor,\
+scale=${SIZE}:flags=neighbor,\
 format=yuv420p"
 
 ffmpeg -hide_banner -loglevel error -y -i "$IN" \
   -filter_complex "[0:v]${VF}[v]" -map "[v]" -map "0:a?" \
-  -c:v libx264 -crf 18 -preset medium \
+  -c:v libx264 -crf 23 -preset medium -x264-params aq-mode=3 \
   -c:a aac -b:a 128k -af "highpass=f=80,lowpass=f=10000" \
   "$OUT"
 echo "wrote $OUT"

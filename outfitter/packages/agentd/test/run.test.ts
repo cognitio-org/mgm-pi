@@ -12,6 +12,7 @@ import { SandboxMemoryPeak } from "../src/sandbox-memory.js";
 import type { DownMessage, DownRunSpec, PiRpcCommand, PiRpcEvent, RunSpecIde, RunState, UpMessage } from "../src/protocol.js";
 import { OUTFITTER_BOT_IDENTITY, type GitOps, type CloneSpec, type PushSpec } from "../src/git.js";
 import type { PiProcess } from "../src/pi.js";
+import { initSentry, resetSentryForTests, Sentry } from "../src/sentry.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fakePiPath = join(here, "fake-pi.js");
@@ -847,6 +848,40 @@ test("RunController: a non-2xx snapshot fetch fails the run with a clear, status
   assert.match(bye.message, /Not Found/);
   await waitFor(() => getExitCode() === 1);
   assert.ok(!states.includes("idle"));
+});
+
+test("RunController: a failed run (fail(), same 404 scenario above) reports the error to Sentry (sentry.ts)", async (t) => {
+  const previousAllowlist = process.env.SNAPSHOT_HOST_ALLOWLIST;
+  process.env.SNAPSHOT_HOST_ALLOWLIST = "example.test";
+  t.after(() => {
+    if (previousAllowlist === undefined) delete process.env.SNAPSHOT_HOST_ALLOWLIST;
+    else process.env.SNAPSHOT_HOST_ALLOWLIST = previousAllowlist;
+    resetSentryForTests();
+  });
+
+  const captured: Array<{ exception?: { values?: Array<{ value?: string }> } }> = [];
+  initSentry("https://examplePublicKey@o0.ingest.sentry.io/0");
+  Sentry.init({
+    dsn: "https://examplePublicKey@o0.ingest.sentry.io/0",
+    tracesSampleRate: 0.05,
+    beforeSend(event) {
+      captured.push(event);
+      return null; // swallow -- no network call
+    },
+  });
+
+  const { controller, link, spec, getExitCode } = await setupController(
+    { snapshot: { url: "https://example.test/missing-snapshot.jsonl" } },
+    { fetchFn: (async () => new Response("not found", { status: 404, statusText: "Not Found" })) as any },
+  );
+  t.after(() => controller.dispose());
+
+  link.deliver(spec);
+
+  await waitFor(() => getExitCode() === 1);
+  await Sentry.flush(1000);
+  assert.equal(captured.length, 1);
+  assert.match(captured[0]?.exception?.values?.[0]?.value ?? "", /404/);
 });
 
 test("RunController: E2.11 spend tailer lines become `spend` up-frames with an accumulated `estimate`", async (t) => {

@@ -1708,6 +1708,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "a2a-sdk" },
     { name = "httpx" },
+    { name = "sentry-sdk" },
 ]
 
 [package.dev-dependencies]
@@ -1726,6 +1727,7 @@ sdk = [
 requires-dist = [
     { name = "a2a-sdk", specifier = "==1.2.1" },
     { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "sentry-sdk", specifier = ">=2.0,<3" },
 ]
 
 [package.metadata.requires-dev]

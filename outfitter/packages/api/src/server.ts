@@ -38,6 +38,7 @@ import { memoryUsage } from "./agentengine/usage.ts";
 // E9 PR3: registers the memory.* admin ops (side effect only).
 import "./admin/memory-ops.ts";
 import { CachedSandboxTelemetry, GcpSandboxTelemetry, NoSandboxTelemetry, type SandboxTelemetry } from "./sandbox-telemetry.ts";
+import { installSentryErrorHandler, sentryEnabled, Sentry } from "./sentry.ts";
 
 export interface BuildAppOptions {
   store: Store;
@@ -104,6 +105,24 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   // as long as they're open (observed in tests: ~30s before a lingering ws finally times out).
   const fastify = Fastify({ logger: true, forceCloseConnections: true });
   await fastify.register(fastifyWebsocket);
+
+  // Sentry (sentry.ts): a no-op pair when SENTRY_DSN is unset. The error handler hooks
+  // fastify's own onError (alongside, not instead of, any route-level error handling); the
+  // onRequest/onResponse pair below gives every request a trace span at the 5% sample rate
+  // initSentry() configured.
+  installSentryErrorHandler(fastify);
+  if (sentryEnabled()) {
+    fastify.addHook("onRequest", async (req) => {
+      req.sentrySpan = Sentry.startInactiveSpan({
+        name: `${req.method} ${req.routeOptions?.url ?? req.url}`,
+        op: "http.server",
+      });
+    });
+    fastify.addHook("onResponse", async (req, reply) => {
+      req.sentrySpan?.setStatus(Sentry.getSpanStatusFromHttpCode(reply.statusCode));
+      req.sentrySpan?.end();
+    });
+  }
 
   // PUT /import sends a raw JSONL body; treat it as text instead of trying to JSON-parse it whole.
   fastify.addContentTypeParser(

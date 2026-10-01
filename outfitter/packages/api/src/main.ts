@@ -1,4 +1,5 @@
 import { agentEngineWarnings, assertGkeConfigured, assertSandboxOrigin, loadConfig, mailboxWarning } from "./config.ts";
+import { initSentry } from "./sentry.ts";
 import { ensureSysopTape } from "./gurus-service.ts";
 import { openStore } from "./store/index.ts";
 import { createProviders } from "./providers/index.ts";
@@ -14,6 +15,9 @@ import {
 import { buildApp } from "./server.ts";
 
 const config = loadConfig();
+// Before anything else can throw: a boot-time error (e.g. assertGkeConfigured below) should still
+// reach Sentry if a DSN is configured.
+initSentry(config);
 assertSandboxOrigin(config);
 assertGkeConfigured(config);
 const mailboxProblem = mailboxWarning(config);

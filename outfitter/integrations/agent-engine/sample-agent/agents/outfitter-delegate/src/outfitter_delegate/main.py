@@ -18,8 +18,15 @@ from langgraph.prebuilt import ToolNode
 
 from outfitter_delegate.llm import build_llm
 from outfitter_delegate.outfitter_tools import register_tools
+from outfitter_delegate.sentry_config import capture_exception, init_sentry
 
 logger = logging.getLogger(__name__)
+
+# Starts Sentry as early as possible: this module is the AGENT_ENTRYPOINT the launcher imports
+# for both sandboxes (agent.yaml's single `entrypoint: outfitter_delegate.main:app`, dispatched to
+# AER or tool mode by RUNNER_MODE), so importing it here covers the agent graph below and the
+# outfitter_start/outfitter_status tool bodies (outfitter_tools.py) alike.
+init_sentry()
 
 SYSTEM_PROMPT = """\
 You delegate coding work to Outfitter, a service that runs coding agents on GitHub repositories.
@@ -53,7 +60,15 @@ def build_agent():
 
     def agent_node(state: State) -> dict:
         history = [m for m in state["messages"] if not isinstance(m, SystemMessage)]
-        return {"messages": [llm_with_tools.invoke([SystemMessage(content=SYSTEM_PROMPT), *history])]}
+        try:
+            reply = llm_with_tools.invoke([SystemMessage(content=SYSTEM_PROMPT), *history])
+        except Exception as exc:
+            # The LLM call is the one part of the graph not already wrapped in a tool's
+            # never-raise contract (outfitter_tools.py); report it to Sentry before the
+            # runtime's own unhandled-exception handling takes over.
+            capture_exception(exc)
+            raise
+        return {"messages": [reply]}
 
     def route(state: State) -> Literal["tools", "end"]:
         last = state["messages"][-1]

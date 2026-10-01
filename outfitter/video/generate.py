@@ -71,11 +71,28 @@ used):
 """
 
 
+def rate_limited(err):
+    s = str(err).lower()
+    return "429" in s or "resource_exhausted" in s or "resource has been exhausted" in s or "quota" in s and "exceeded" in s
+
+
+def with_retry(call, m, label, waits=(15, 30, 60, 120, 240)):
+    """Per-minute quotas (429) clear on their own: wait and retry instead of dying."""
+    for wait in (*waits, None):
+        try:
+            return call(m)
+        except Exception as e:  # noqa: BLE001
+            if wait is None or not rate_limited(e):
+                raise
+            print(f"  {label}: rate-limited on {m}, retrying in {wait} s", file=sys.stderr)
+            time.sleep(wait)
+
+
 def with_fallback(models, call, label):
     errors = []
     for m in models:
         try:
-            return m, call(m)
+            return m, with_retry(call, m, label)
         except Exception as e:  # noqa: BLE001 -- surfaced below
             if not not_found(e):
                 raise

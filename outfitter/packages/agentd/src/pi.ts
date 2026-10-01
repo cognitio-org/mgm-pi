@@ -369,11 +369,13 @@ export class JsonlTailer {
 
   start(): void {
     if (this.timer) return;
+    // A failed read (the file gone between stat and open, EMFILE) is retried by the next tick;
+    // never an unhandled rejection.
     this.timer = setInterval(() => {
       // A tick that lands mid-read skips; it doesn't queue behind it.
-      if (!this.inFlight) void this.poll();
+      if (!this.inFlight) this.poll().catch(() => {});
     }, this.intervalMs);
-    void this.poll();
+    this.poll().catch(() => {});
   }
 
   stop(): void {

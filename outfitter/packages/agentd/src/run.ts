@@ -1104,6 +1104,10 @@ export class RunController {
       })
       .then(() => {
         this.settleBacklog = undefined;
+        // dispose() is abrupt by design (no bye either): the settle and anything queued behind it
+        // go with it. Mail whose `response` was queued stays unacked and is redelivered after
+        // its lease, as for any run that dies before acking. The stop paths are not affected:
+        // their own tailer.poll() waits for this read, so all of it goes out before the bye.
         if (this.disposed) return;
         this.processPiEvent(this.lastEntryId === undefined ? event : { ...event, lastEntryId: this.lastEntryId });
         // A second agent_settled in the backlog starts its own flush; routePiEvent then queues

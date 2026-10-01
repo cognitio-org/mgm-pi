@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { MemoryStore } from "../src/store/memory.ts";
 import { MongoStore } from "../src/store/mongo.ts";
 import type { Mail, Run, Session, Store, TurnWaiter } from "../src/store/types.ts";
-import { TURN_WAITER_ACTIVITY_MS, TURN_WAITER_CAP_MS, TURN_WAITER_DEADLINE_MS, TurnWaiters } from "../src/turns.ts";
+import { TURN_WAITER_ACTIVITY_MS, TURN_WAITER_ADOPT_AFTER_MS, TURN_WAITER_CAP_MS, TURN_WAITER_DEADLINE_MS, TurnWaiters } from "../src/turns.ts";
 import { buildTestApp } from "./helpers.ts";
 import { makeRunningSession, openAgentSocket, sendHello } from "./agent-socket.ts";
 
@@ -89,21 +89,48 @@ describe("TurnWaiters: layer 1, settle", () => {
     assert.equal(settles.length, 4, "every settle is signalled, matched to a waiter or not");
   });
 
-  test("a mail accepted without the waiter seeing it is taken from the mail; a turn that already settled settles at once", async () => {
-    const { store, turns, advance, insertMail } = await setup();
-    await insertMail({ id: "late", status: "acked", deliveredRunId: "r1", ackedAt: iso(T0) });
-    advance(1000);
-    await store.sessions.update("s1", { settledAt: iso(T0 + 500), settledEntryId: "e1" });
-    const waiter = await turns.register({ sessionId: "s1", mailId: "late" });
-    assert.equal(waiter.status, "settled");
-    assert.equal(waiter.settledEntryId, "e1");
+  test("a replayed settle completes nothing new, doesn't rewrite the session, and isn't signalled twice", async () => {
+    const { store, turns } = await setup();
+    const settles: string[] = [];
+    turns.onSettled((_s, lastEntryId) => settles.push(lastEntryId ?? "-"));
+    await turns.noteSettled("s1", "r1", 9, "e9");
+    const first = await store.sessions.findById("s1");
+    await turns.noteSettled("s1", "r1", 9, "e9");
+    await turns.noteSettled("s1", "r1", 4);
+    assert.deepEqual(settles, ["e9"]);
+    assert.deepEqual(await store.sessions.findById("s1"), first);
+    await turns.noteSettled("s1", "r1", 12);
+    const after = await store.sessions.findById("s1");
+    assert.equal(after?.settledSeq, 12);
+    assert.equal(after?.settledEntryId, null, "a settle without lastEntryId clears the old one");
+  });
 
-    await insertMail({ id: "running", status: "acked", deliveredRunId: "r1", ackedAt: iso(T0 + 900) });
-    const open = await turns.register({ sessionId: "s1", mailId: "running" });
-    assert.equal(open.status, "open", "the session's last settle came before this mail was acked");
-    assert.equal(open.ackRunId, "r1");
-    await turns.noteSettled("s1", "r1", 1);
-    assert.equal((await turns.get(open.id))?.status, "settled");
+  test("an acceptance the stream missed is taken from the mail only after a while, provisionally, and the real response replaces it", async () => {
+    const { store, turns, advance, insertRun, insertMail } = await setup();
+    await insertRun("r1");
+    await turns.noteSettled("s1", "r1", 5, "e5"); // the last settle recorded before the mail
+    await insertMail({ id: "late", status: "acked", deliveredRunId: "r1", ackedAt: iso(T0) });
+    const waiter = await turns.register({ sessionId: "s1", mailId: "late" });
+    assert.equal(waiter.ackRunId, undefined, "a fresh mail.ack may have overtaken the stream: wait for it");
+
+    advance(TURN_WAITER_ADOPT_AFTER_MS);
+    await turns.sweep();
+    const adopted = await turns.get(waiter.id);
+    assert.equal(adopted?.ackRunId, "r1");
+    assert.equal(adopted?.ackSeq, 5, "only a settle after the last recorded one counts");
+    assert.equal(adopted?.ackFromMail, true);
+    await turns.noteSettled("s1", "r1", 5);
+    assert.equal((await turns.get(waiter.id))?.status, "open");
+
+    await turns.noteMailAccepted("s1", "r1", "late", 7); // the response, late
+    const real = await turns.get(waiter.id);
+    assert.equal(real?.ackSeq, 7);
+    assert.equal(real?.ackFromMail, undefined);
+    await turns.noteSettled("s1", "r1", 6); // queued ahead of the response
+    assert.equal((await turns.get(waiter.id))?.status, "open");
+    await turns.noteSettled("s1", "r1", 8, "e8");
+    assert.equal((await turns.get(waiter.id))?.settledEntryId, "e8");
+    assert.equal((await store.turnWaiters.findById(waiter.id))?.status, "settled");
   });
 });
 
@@ -163,11 +190,11 @@ describe("TurnWaiters: layer 3, the deadline", () => {
     await turns.noteMailAccepted("s1", "r1", "m1", 1);
 
     advance(TURN_WAITER_DEADLINE_MS - MIN);
-    assert.deepEqual(await turns.sweep(), { settled: 0, ended: 0, extended: 0 }, "not due yet");
+    assert.deepEqual(await turns.sweep(), { ended: 0, extended: 0 }, "not due yet");
 
     advance(2 * MIN);
     await store.runs.update("r1", { lastActivityAt: iso(now() - 2 * MIN) });
-    assert.deepEqual(await turns.sweep(), { settled: 0, ended: 0, extended: 1 });
+    assert.deepEqual(await turns.sweep(), { ended: 0, extended: 1 });
     assert.equal((await turns.get(waiter.id))?.deadlineAt, iso(now() - 2 * MIN + TURN_WAITER_ACTIVITY_MS));
     assert.equal(stops.length, 0);
 
@@ -209,13 +236,13 @@ describe("TurnWaiters: layer 3, the deadline", () => {
     const ended = await turns.get(waking.id);
     assert.equal(ended?.endReason, "deadline");
     assert.match(ended?.detail ?? "", /not picked up/);
-    assert.equal(stops.at(-1)?.runId, "r2");
+    assert.equal(stops.length, 1, "no run accepted the mail: the session's run is left alone");
   });
 });
 
 describe("TurnWaiters: the sweep", () => {
   test("ends waiters whose run ended without a bye or whose mail is dead or held, and adopts a missed acceptance", async () => {
-    const { store, turns, insertRun, insertMail } = await setup();
+    const { store, turns, advance, insertRun, insertMail } = await setup();
     await insertRun("r1");
     const lost = await turns.register({ sessionId: "s1", mailId: "m1" });
     await turns.noteMailAccepted("s1", "r1", "m1", 1);
@@ -230,8 +257,9 @@ describe("TurnWaiters: the sweep", () => {
     await insertRun("r2", { state: "idle" });
     await store.mail.claimNext("s1", "r2", iso(T0), iso(T0 + MIN), 6);
     await store.mail.ack("queued", "r2", iso(T0));
+    advance(TURN_WAITER_ADOPT_AFTER_MS);
 
-    assert.deepEqual(await turns.sweep(), { settled: 0, ended: 3, extended: 0 });
+    assert.deepEqual(await turns.sweep(), { ended: 3, extended: 0 });
     assert.equal((await turns.get(lost.id))?.endReason, "run_failed");
     assert.equal((await turns.get(dead.id))?.endReason, "mail_dead");
     assert.equal((await turns.get(held.id))?.detail, "no GitHub credential");
@@ -265,6 +293,16 @@ function contract(name: string, getStore: () => Store) {
       assert.deepEqual((await store.turnWaiters.listOpenForSession(sessionId)).map((w) => w.id), [`${sessionId}-a`, `${sessionId}-b`]);
       assert.equal(await store.turnWaiters.extendDeadline(`${sessionId}-b`, "2026-10-01T01:00:00.000Z", "2026-10-01T00:03:00.000Z"), true);
       assert.equal((await store.turnWaiters.findById(`${sessionId}-b`))?.deadlineAt, "2026-10-01T01:00:00.000Z");
+      assert.equal(await store.turnWaiters.extendDeadline(`${sessionId}-b`, "2026-10-01T00:30:00.000Z", "2026-10-01T00:03:00.000Z"), false, "never backwards");
+
+      // A provisional acceptance (from the mail) yields to pi's response, never the other way.
+      assert.equal(await store.turnWaiters.markAcked(sessionId, `mail-${sessionId}-b`, "r1", 2, "2026-10-01T00:03:00.000Z", true), 1);
+      assert.equal(await store.turnWaiters.markAcked(sessionId, `mail-${sessionId}-b`, "r1", 3, "2026-10-01T00:03:00.000Z", true), 0);
+      assert.equal((await store.turnWaiters.findById(`${sessionId}-b`))?.ackFromMail, true);
+      assert.equal(await store.turnWaiters.markAcked(sessionId, `mail-${sessionId}-b`, "r1", 6, "2026-10-01T00:03:00.000Z"), 1);
+      const real = await store.turnWaiters.findById(`${sessionId}-b`);
+      assert.equal(real?.ackSeq, 6);
+      assert.equal("ackFromMail" in real!, false);
 
       const settled = await store.turnWaiters.finish(`${sessionId}-a`, { status: "settled", settledEntryId: undefined }, "2026-10-01T00:04:00.000Z");
       assert.equal(settled?.status, "settled");
@@ -375,15 +413,16 @@ describe("turn waiters over the agentd socket and /api/hooks/tick", () => {
     await app.fastify.close();
   });
 
-  test("the tick sweeps an expired waiter, stopping its session's run", async () => {
+  test("the tick sweeps an expired waiter, stopping the run that accepted its mail", async () => {
     const app = await buildTestApp();
     const { session, runId } = await makeRunningSession(app, { repo: null });
     const waiter = await app.turns.register({ sessionId: session.id, mailId: "never-posted", deadlineMs: 0 });
+    await app.turns.noteMailAccepted(session.id, runId, "never-posted", 1);
     await app.store.mail.insertIfNew({ id: "never-posted", sessionId: session.id, from: { kind: "system" }, text: "x", behavior: "followUp", status: "queued", attempts: 0, createdAt: new Date().toISOString() });
     await app.store.runs.update(runId, { state: "running", lastSeenAt: new Date().toISOString(), lastActivityAt: new Date(Date.now() - 20 * MIN).toISOString() });
     const tick = await app.fastify.inject({ method: "POST", url: "/api/hooks/tick", headers: TASKS_AUTH });
     assert.equal(tick.statusCode, 200);
-    assert.deepEqual(tick.json().turns, { settled: 0, ended: 1, extended: 0 });
+    assert.deepEqual(tick.json().turns, { ended: 1, extended: 0 });
     assert.equal((await app.turns.get(waiter.id))?.endReason, "deadline");
     const run = await app.store.runs.findById(runId);
     assert.equal(run?.state, "stopped");

@@ -413,15 +413,19 @@ The api records `Session.settledAt` (and `settledEntryId`) and finishes *turn wa
 1. **settled**: the first `agent_settled` after pi accepted the mail. Acceptance is pi's
    `response` to `mail:<id>` with `success: true`, taken from the same seq stream as the settle
    (seq restarts every run, so only a settle of the same run at a higher seq counts). The
-   unsequenced `mail.ack` frame can overtake an earlier settle, so it isn't used for this. A
-   settle is never matched to a mail id: other mail can settle the same turn.
+   unsequenced `mail.ack` frame can overtake an earlier settle, so it isn't used for this, except
+   as a provisional fallback two minutes after it, when the `response` never showed (only a settle
+   after the run's last recorded one counts, and a late `response` replaces it). A settle is never
+   matched to a mail id: other mail can settle the same turn. A replayed settle (seq not above the
+   session's `settledSeq` for that run) doesn't rewrite the session.
 2. **ended, run_stopped / run_failed**: the run that accepted the mail reached `stopped` or
    `failed` first (on its `bye`, or found by the tick for a run that ended without one).
    **mail_dead / mail_held**: the mail can't reach a run.
 3. **ended, deadline**: `deadlineAt` starts 60 minutes out. `/api/hooks/tick` pushes it to ten
    minutes past the run's last activity while the run is `provisioning` (counted from its start)
    or `running` with activity in the last ten minutes, never past four hours from registration.
-   At expiry the api stops the run (`reason: "deadline"`), then ends the waiter.
+   At expiry the api stops the run that accepted the mail (`reason: "deadline"`), then ends the
+   waiter. A mail no run accepted stops nothing; it stays queued.
 
 A finished waiter is never overwritten. Run state `idle` never counts as completion: agentd is
 idle before its first prompt. Finished waiters are TTL-deleted after 7 days.

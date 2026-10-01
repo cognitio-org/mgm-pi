@@ -1001,11 +1001,14 @@ class MemoryTurnWaiters implements TurnWaitersCollection {
     return w ? clone(w) : null;
   }
 
-  async markAcked(sessionId: string, mailId: string, runId: string, seq: number, nowIso: string): Promise<number> {
+  async markAcked(sessionId: string, mailId: string, runId: string, seq: number, nowIso: string, fromMail = false): Promise<number> {
     let count = 0;
     for (const w of this.rows.values()) {
-      if (w.sessionId !== sessionId || w.mailId !== mailId || w.status !== "open" || w.ackRunId !== undefined) continue;
+      if (w.sessionId !== sessionId || w.mailId !== mailId || w.status !== "open") continue;
+      if (w.ackRunId !== undefined && (fromMail || !w.ackFromMail)) continue;
       Object.assign(w, { ackRunId: runId, ackSeq: seq, ackedAt: nowIso, updatedAt: nowIso });
+      if (fromMail) w.ackFromMail = true;
+      else delete w.ackFromMail;
       count++;
     }
     return count;
@@ -1021,7 +1024,7 @@ class MemoryTurnWaiters implements TurnWaitersCollection {
 
   async extendDeadline(id: string, deadlineAt: string, nowIso: string): Promise<boolean> {
     const w = this.rows.get(id);
-    if (!w || w.status !== "open") return false;
+    if (!w || w.status !== "open" || w.deadlineAt >= deadlineAt) return false;
     Object.assign(w, { deadlineAt, updatedAt: nowIso });
     return true;
   }
@@ -1036,7 +1039,7 @@ class MemoryTurnWaiters implements TurnWaitersCollection {
   async listOpen(limit: number): Promise<TurnWaiter[]> {
     return [...this.rows.values()]
       .filter((w) => w.status === "open")
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .sort((a, b) => a.deadlineAt.localeCompare(b.deadlineAt))
       .slice(0, limit)
       .map(clone);
   }

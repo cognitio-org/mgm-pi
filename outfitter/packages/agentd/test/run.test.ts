@@ -1914,6 +1914,17 @@ test("RunController: events pi emits during the settle flush follow the settle, 
   assert.deepEqual(settles.map((m) => m.event.lastEntryId), ["e1", "e2"]);
 });
 
+test("RunController: a stop during the settle flush still sends the settle, and the events behind it, before bye (E9)", async (t) => {
+  const { link, pi, unread, release } = await setupSettleRun(t);
+  unread.push({ type: "message", id: "e1", parentId: null, message: { role: "assistant", content: [] } });
+  pi.emit({ type: "agent_settled" });
+  pi.emit({ type: "agent_start" });
+  link.deliver({ t: "stop", reason: "user" });
+  for (let i = 0; i < 10 && !link.sent.some((m) => m.t === "bye"); i++) await release();
+  const order = link.sent.flatMap((m) => (m.t === "bye" ? ["bye"] : seqKinds([m])));
+  assert.deepEqual(order, ["entry:e1", "event:agent_settled", "event:agent_start", "bye"]);
+});
+
 test("RunController: a settle before any new entry this run carries no lastEntryId (E9)", async (t) => {
   const { link, pi, release } = await setupSettleRun(t);
   pi.emit({ type: "agent_settled" });

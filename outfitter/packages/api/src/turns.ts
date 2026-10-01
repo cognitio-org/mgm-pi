@@ -24,15 +24,19 @@ export const TURN_WAITER_DEADLINE_MS = 60 * 60_000;
 export const TURN_WAITER_CAP_MS = 4 * 60 * 60_000;
 /** The sweep extends an expired deadline while the run has shown activity this recently. */
 export const TURN_WAITER_ACTIVITY_MS = 10 * 60_000;
-/** Open waiters looked at per sweep, oldest first. */
+/** Open waiters looked at per sweep, earliest deadline first. */
 const SWEEP_LIMIT = 500;
+/** How long after a mail's `mail.ack` before its acceptance is taken from the mail itself. The
+ * unsequenced `mail.ack` can overtake the seq stream (a full window); by then pi's `response`, and
+ * any settle queued ahead of it, has arrived. */
+export const TURN_WAITER_ADOPT_AFTER_MS = 2 * 60_000;
 
 export interface RegisterTurnWaiter {
   sessionId: string;
   /** The mail whose turn to wait for. Choose the id (MailService.post's `id`), register, then
-   * post, so its acceptance can't be missed; registering later still works, from the mail's own
-   * acked state, but a turn that already settled by then is only caught when the session's
-   * `settledAt` is after the mail's `ackedAt`. */
+   * post, so its acceptance can't be missed. Registering later still works for a turn that hasn't
+   * settled (the acceptance is then taken from the mail, see TURN_WAITER_ADOPT_AFTER_MS); a turn
+   * that settled before registration is not seen, and the waiter ends at its deadline. */
   mailId: string;
   /** Who is waiting ("a2a", "delegate", ...), stored as-is. */
   owner?: string;
@@ -41,7 +45,6 @@ export interface RegisterTurnWaiter {
 }
 
 export interface TurnSweepResult {
-  settled: number;
   ended: number;
   extended: number;
 }
@@ -124,14 +127,21 @@ export class TurnWaiters {
 
   /** agentlink: an `agent_settled` event, seq `seq`, from `runId`. Records it on the session,
    * completes the waiters whose mail this run accepted earlier in its stream, then tells the
-   * in-process listeners. */
+   * in-process listeners. A replayed settle (a reconnect resends unacked frames) still completes
+   * waiters, which is safe because replay keeps stream order, but neither rewrites the session
+   * nor signals again. */
   async noteSettled(sessionId: string, runId: string, seq: number, lastEntryId?: string): Promise<void> {
     const nowIso = this.nowIso();
-    await this.store.sessions.update(sessionId, { settledAt: nowIso, ...(lastEntryId ? { settledEntryId: lastEntryId } : {}) });
+    const session = await this.store.sessions.findById(sessionId);
+    const replayed = session?.settledRunId === runId && (session.settledSeq ?? 0) >= seq;
+    if (!replayed) {
+      await this.store.sessions.update(sessionId, { settledAt: nowIso, settledEntryId: lastEntryId ?? null, settledRunId: runId, settledSeq: seq });
+    }
     for (const waiter of await this.store.turnWaiters.listOpenForSession(sessionId)) {
       if (waiter.ackRunId !== runId || waiter.ackSeq === undefined || waiter.ackSeq >= seq) continue;
       await this.finish(waiter.id, { status: "settled", ...(lastEntryId ? { settledEntryId: lastEntryId } : {}) });
     }
+    if (replayed) return;
     for (const listener of this.settledListeners) {
       try {
         listener(sessionId, lastEntryId);
@@ -154,7 +164,7 @@ export class TurnWaiters {
   /** /api/hooks/tick: layer 2 for runs that ended without a bye, mail that can't be delivered,
    * acceptance the stream missed, and layer 3's deadlines. */
   async sweep(): Promise<TurnSweepResult> {
-    const result: TurnSweepResult = { settled: 0, ended: 0, extended: 0 };
+    const result: TurnSweepResult = { ended: 0, extended: 0 };
     for (const open of await this.store.turnWaiters.listOpen(SWEEP_LIMIT)) {
       try {
         await this.sweepOne(open, result);
@@ -180,12 +190,7 @@ export class TurnWaiters {
         if (await this.finish(waiter.id, { status: "ended", endReason: "mail_held", detail })) result.ended++;
         return;
       }
-      const caughtUp = mail ? await this.adoptMailAck(waiter, mail) : null;
-      if (caughtUp && caughtUp.status !== "open") {
-        result.settled++;
-        return;
-      }
-      waiter = caughtUp ?? waiter;
+      waiter = (mail ? await this.adoptMailAck(waiter, mail) : null) ?? waiter;
     }
 
     const run = waiter.ackRunId
@@ -200,6 +205,7 @@ export class TurnWaiters {
     if (Date.parse(waiter.deadlineAt) > now) return;
     const capAt = Date.parse(waiter.capAt);
     if (now < capAt && run && (run.state === "provisioning" || run.state === "running")) {
+      // A running run without lastActivityAt counts as quiet: every acked entry or event sets it.
       const activeAt = Date.parse(run.lastActivityAt ?? (run.state === "provisioning" ? run.createdAt : "")) || 0;
       if (now - activeAt < TURN_WAITER_ACTIVITY_MS) {
         const deadlineAt = new Date(Math.min(activeAt + TURN_WAITER_ACTIVITY_MS, capAt)).toISOString();
@@ -207,9 +213,11 @@ export class TurnWaiters {
         return;
       }
     }
-    // Expired. Stop the run first, so nothing the waiter's caller reports as given up keeps
-    // running (and billing); then end the waiter.
-    if (run && !isTerminal(run)) await this.runs.stop(run.id, "deadline");
+    // Expired. Stop the run working on this turn first, so nothing the caller reports as given up
+    // keeps running (and billing); then end the waiter. A mail no run accepted has no such run:
+    // the session's current run is busy with something else, if anything, and is left alone. The
+    // mail itself stays queued; its turn may still run later, with nobody waiting on it.
+    if (waiter.ackRunId && run && !isTerminal(run)) await this.runs.stop(run.id, "deadline");
     const detail =
       now >= capAt
         ? "the turn ran past the 4 hour limit"
@@ -220,24 +228,19 @@ export class TurnWaiters {
   }
 
   /** The mail was accepted without this waiter seeing pi's `response` (it was registered after,
-   * or the event was lost): take the acceptance from the mail itself, as seq 0 of the run it was
-   * delivered to, so any settle of that run after now completes it. If the session already
-   * settled after the mail was acked, the turn is done: settle the waiter now. Returns the waiter
-   * as it now is, or null when the mail isn't acked. */
+   * or the event was lost): once the mail has been acked for TURN_WAITER_ADOPT_AFTER_MS, take the
+   * acceptance from it, provisionally, as the run it was delivered to at the seq of that run's
+   * last recorded settle, so only a later settle completes the waiter. A `response` that still
+   * arrives replaces it. Returns the waiter as it now is, or null when nothing was adopted. */
   private async adoptMailAck(waiter: TurnWaiter, mail: Mail): Promise<TurnWaiter | null> {
     if (mail.sessionId !== waiter.sessionId || mail.status !== "acked" || !mail.deliveredRunId || !mail.ackedAt) {
       return null;
     }
-    await this.store.turnWaiters.markAcked(waiter.sessionId, waiter.mailId, mail.deliveredRunId, 0, this.nowIso());
+    if (this.now() - Date.parse(mail.ackedAt) < TURN_WAITER_ADOPT_AFTER_MS) return null;
     const session = await this.store.sessions.findById(waiter.sessionId);
-    if (session?.settledAt && session.settledAt >= mail.ackedAt) {
-      const settled = await this.finish(waiter.id, {
-        status: "settled",
-        ...(session.settledEntryId ? { settledEntryId: session.settledEntryId } : {}),
-      });
-      if (settled) return settled;
-    }
-    return this.store.turnWaiters.findById(waiter.id);
+    const seq = session?.settledRunId === mail.deliveredRunId ? (session.settledSeq ?? 0) : 0;
+    const marked = await this.store.turnWaiters.markAcked(waiter.sessionId, waiter.mailId, mail.deliveredRunId, seq, this.nowIso(), true);
+    return marked ? this.store.turnWaiters.findById(waiter.id) : null;
   }
 
   private async endForRun(waiter: TurnWaiter, run: Run | null): Promise<TurnWaiter | null> {

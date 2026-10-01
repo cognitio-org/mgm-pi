@@ -1312,11 +1312,17 @@ class MongoTurnWaiters implements TurnWaitersCollection {
     return stripTurnWaiter(await this.col.findOne({ _id: id }));
   }
 
-  async markAcked(sessionId: string, mailId: string, runId: string, seq: number, nowIso: string): Promise<number> {
-    const result = await this.col.updateMany(
-      { sessionId, mailId, status: "open", ackRunId: { $exists: false } },
-      { $set: { ackRunId: runId, ackSeq: seq, ackedAt: nowIso, updatedAt: nowIso } },
-    );
+  async markAcked(sessionId: string, mailId: string, runId: string, seq: number, nowIso: string, fromMail = false): Promise<number> {
+    const set = { ackRunId: runId, ackSeq: seq, ackedAt: nowIso, updatedAt: nowIso };
+    const result = fromMail
+      ? await this.col.updateMany(
+          { sessionId, mailId, status: "open", ackRunId: { $exists: false } },
+          { $set: { ...set, ackFromMail: true } },
+        )
+      : await this.col.updateMany(
+          { sessionId, mailId, status: "open", $or: [{ ackRunId: { $exists: false } }, { ackFromMail: true }] },
+          { $set: set, $unset: { ackFromMail: "" } },
+        );
     return result.modifiedCount;
   }
 
@@ -1339,7 +1345,10 @@ class MongoTurnWaiters implements TurnWaitersCollection {
   }
 
   async extendDeadline(id: string, deadlineAt: string, nowIso: string): Promise<boolean> {
-    const result = await this.col.updateOne({ _id: id, status: "open" }, { $set: { deadlineAt, updatedAt: nowIso } });
+    const result = await this.col.updateOne(
+      { _id: id, status: "open", deadlineAt: { $lt: deadlineAt } },
+      { $set: { deadlineAt, updatedAt: nowIso } },
+    );
     return result.matchedCount === 1;
   }
 
@@ -1349,7 +1358,7 @@ class MongoTurnWaiters implements TurnWaitersCollection {
   }
 
   async listOpen(limit: number): Promise<TurnWaiter[]> {
-    const rows = await this.col.find({ status: "open" }).sort({ createdAt: 1 }).limit(limit).toArray();
+    const rows = await this.col.find({ status: "open" }).sort({ deadlineAt: 1 }).limit(limit).toArray();
     return rows.map((d) => stripTurnWaiter(d)!);
   }
 
@@ -1433,7 +1442,7 @@ export class MongoStore implements Store {
       db.collection("browserCaptures").createIndex({ sessionId: 1, requestId: 1 }, { unique: true }),
       db.collection("browserCaptures").createIndex({ sessionId: 1, createdAt: -1 }),
       db.collection("turnWaiters").createIndex({ sessionId: 1, status: 1, createdAt: 1 }),
-      db.collection("turnWaiters").createIndex({ status: 1, createdAt: 1 }),
+      db.collection("turnWaiters").createIndex({ status: 1, deadlineAt: 1 }),
       db.collection("turnWaiters").createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
     ]);
     // Non-fatal: a deployment that already holds two active runs for one session (the race this

@@ -1,0 +1,332 @@
+outfitter/packages/api/src/store/types.ts
+  s_1d3bdd6f362f9b::t_fb58a84cd60dc3 1029-1059,1063-1079,1084-1086,1089-1090,1092-1096
+  s_1d3bdd6f362f9b::t_404341b29330ff 44-47
+  s_1d3bdd6f362f9b::t_f9bcc2bf863cf6 1190
+  s_1d3bdd6f362f9b::t_89aa803f26cf85 475-482,489
+  s_1d3bdd6f362f9b::t_609fc3e70c7749 490
+  s_1d3bdd6f362f9b::t_8fa4a0abb4d98e 1080-1083
+  s_1d3bdd6f362f9b::t_548746c524af46 1060-1062
+  s_1d3bdd6f362f9b::t_5cdc807d36bf3e 48-53
+  s_1d3bdd6f362f9b::t_50870e79c56ad3 1087-1088,1091
+  s_1d3bdd6f362f9b::t_b91b106f6dfcf3 54-59
+  s_1d3bdd6f362f9b::t_4c6e53b990a8f1 518-520,1097-1171,1191-1192
+outfitter/packages/api/src/store/memory.ts
+  s_1d3bdd6f362f9b::t_9dc75d895fe198 997-1008,1010-1011,1014,1017-1024,1027-1031,1033-1046,1048-1056
+  s_1d3bdd6f362f9b::t_75ae858d4c7498 1163
+  s_1d3bdd6f362f9b::t_7d3f3e1592653a 54-56
+  s_1d3bdd6f362f9b::t_3ecff0132a9888 1025-1026
+  s_1d3bdd6f362f9b::t_9abbef7f02243a 1047
+  s_1d3bdd6f362f9b::t_f4763a72396b08 1032
+  s_1d3bdd6f362f9b::t_8b66faa9870bd3 1009,1012-1013,1015-1016
+  s_1d3bdd6f362f9b::t_b0469b481c8908 57-60,62,1057-1144,1164-1165
+outfitter/EPIC.md
+  s_1d3bdd6f362f9b::t_9d1200fbc25dd9 529-530
+  s_162e2233a4f0f3::t_2205bf66dd1731 89-91,123,543-546,642-673
+outfitter/packages/api/test/stop.test.ts
+  s_1d3bdd6f362f9b::t_b904d49d7dbe52 326
+  s_1d3bdd6f362f9b::t_0671a269184a2a 327-328
+outfitter/packages/api/src/store/mongo.ts
+  s_1d3bdd6f362f9b::t_a232f38c34bfb4 1529
+  s_1d3bdd6f362f9b::t_8b74917be276a9 1563,1565
+  s_1d3bdd6f362f9b::t_0c09cd9b444e44 55-57
+  s_1d3bdd6f362f9b::t_f0038085df07d9 1339-1340
+  s_1d3bdd6f362f9b::t_24b04b1b8d2dea 1293-1318,1330-1338,1341-1351,1356-1364,1366-1373
+  s_1d3bdd6f362f9b::t_26ec01229d33d5 1503
+  s_1d3bdd6f362f9b::t_e7ce3cbc57b6c8 1564
+  s_1d3bdd6f362f9b::t_b94553e26c194f 1319-1329
+  s_1d3bdd6f362f9b::t_df02782463f40e 1352-1355
+  s_1d3bdd6f362f9b::t_7324f2f4afd18d 1365
+  s_1d3bdd6f362f9b::t_315e3c2c5e36e6 58-61,64,1374-1484,1504-1505,1530-1531,1566-1569
+outfitter/packages/api/src/routes/sessions.ts
+  s_1d3bdd6f362f9b::t_da29ac05a1961f 571
+  s_1d3bdd6f362f9b::t_50c4ae6e7ce55c 526-527,572-573
+outfitter/packages/agentd/src/pi.ts
+  s_1d3bdd6f362f9b::t_076e821223747f 353-354,375,386-390,392-400
+  s_1d3bdd6f362f9b::t_c50777437c7a62 401-403,405-424,426,429
+  s_1d3bdd6f362f9b::t_a94a74465c0a15 372-373,376,378
+outfitter/packages/api/src/agentlink.ts
+  s_1d3bdd6f362f9b::t_4e4b3caa58a04e 374-375
+  s_1d3bdd6f362f9b::t_c94d076f9da134 12
+  s_1d3bdd6f362f9b::t_f18e237cced660 1848-1866
+  s_1d3bdd6f362f9b::t_c63a399fcc63fb 1402-1406
+  s_1d3bdd6f362f9b::t_282cd3d0ad6211 1836-1837
+  s_1d3bdd6f362f9b::t_9461c4bda33c6f 1594
+  s_1d3bdd6f362f9b::t_1905c299b1b5df 250-254,1286-1287
+  s_1d3bdd6f362f9b::t_d8ee996cd8b7a3 9,380-381,421-424,1559-1560
+outfitter/packages/api/test/turns.test.ts
+  s_1d3bdd6f362f9b::t_7c5dccf7c17cda 219
+  s_1d3bdd6f362f9b::t_813a02b68ad528 1-10,12-91,112,113,134-192,194-196,198-218,220-229,231-238,240-244,246-259,261,263-295,306-415,417-419,421,423-424,426-432
+  s_1d3bdd6f362f9b::t_854c92bdfa6a32 230,422
+  s_1d3bdd6f362f9b::t_29d379ede21c56 109-110,245
+  s_1d3bdd6f362f9b::t_924ea9ff1157b3 193,197,262,425
+  s_1d3bdd6f362f9b::t_adf06e89f05d4a 11,92-108,111,114-133,239,260,296-305,416,420
+outfitter/packages/api/src/turns.ts
+  s_1d3bdd6f362f9b::t_106adcf1e98372 67-70,72-77
+  s_1d3bdd6f362f9b::t_07a103bb8ab0be 36
+  s_1d3bdd6f362f9b::t_cb19a4d88f179f 1-18,20-26,28,33-35,40-47,48-66,71,78-96,99-129,133-134,140-143,145-166,168-180,183,185-187,189-192,194-207,209-215,227-230,237-238,240,244-269
+  s_1d3bdd6f362f9b::t_6036b2fb88ddbb 221-226
+  s_1d3bdd6f362f9b::t_6639a59c3e27c5 19,97-98,181-182,184,188,235-236
+  s_1d3bdd6f362f9b::t_d9185a9ab904f2 27,29-32,37-39,130-132,135-139,144,193,208,216-220,231-234,239,241-243
+  s_1d3bdd6f362f9b::t_924ea9ff1157b3 167
+outfitter/packages/agentd/src/protocol.ts
+  s_1d3bdd6f362f9b::t_2142a5d60bed50 107-108
+  s_1d3bdd6f362f9b::t_65461429693623 323-341
+outfitter/packages/agentd/test/run.test.ts
+  s_1d3bdd6f362f9b::t_a6847c44781f64 1811-1916,1928-1935
+  s_1d3bdd6f362f9b::t_89c5bee81abf42 1917-1927
+outfitter/packages/agentd/test/pi.test.ts
+  s_1d3bdd6f362f9b::t_42e7b00e412ab9 67-81
+  s_1d3bdd6f362f9b::t_0e78c94c68007e 4
+outfitter/packages/api/src/server.ts
+  s_1d3bdd6f362f9b::t_da29ac05a1961f 12,84,124-126,226
+  s_1d3bdd6f362f9b::t_c241006cb08b51 33,62-64,161-164
+  s_1d3bdd6f362f9b::t_bfa7d4770a4272 34-37
+  s_1d3bdd6f362f9b::t_d8ee996cd8b7a3 166-171,174
+  s_1d3bdd6f362f9b::t_b292b383814466 172-173
+  s_1d3bdd6f362f9b::t_cacca003daecea 7-9,85-86,165,227,273
+outfitter/packages/api/src/routes/hooks.ts
+  s_1d3bdd6f362f9b::t_da29ac05a1961f 113-115
+  s_1d3bdd6f362f9b::t_d823dbd3c02b84 116-118
+outfitter/docs/protocol.md
+  s_1d3bdd6f362f9b::t_0d7d22880074a9 179,448-465,471-476,479-481
+  s_1d3bdd6f362f9b::t_991fd3f03f1f31 482
+  s_1d3bdd6f362f9b::t_0d5b5278725393 199,264-274,293,296,328-332,699-700,702-703
+  s_1d3bdd6f362f9b::t_b8aacd7770650c 466-470,477-478
+  s_1d3bdd6f362f9b::t_fa9e15cac087c1 275-277,297-300,333,701
+  s_1d3bdd6f362f9b::t_34a3267ececab8 278-285
+  s_1d3bdd6f362f9b::t_796bdc79e1ca07 286-291
+  s_1d3bdd6f362f9b::t_5b3a14b64965ef 309-325
+outfitter/packages/api/src/routes/context.ts
+  s_1d3bdd6f362f9b::t_da29ac05a1961f 2,47-48
+  s_1d3bdd6f362f9b::t_1ca76b2809f54c 3,49-50
+outfitter/packages/agentd/src/run.ts
+  s_1d3bdd6f362f9b::t_0dcd1b6b974de7 365-371
+  s_1d3bdd6f362f9b::t_20d95fa603909f 1118-1121
+  s_1d3bdd6f362f9b::t_9de0d5b2a810c9 1122-1148,1153-1154,1156,1158-1161
+  s_1d3bdd6f362f9b::t_0b792fdef7a1ec 1155,1157
+  s_1d3bdd6f362f9b::t_050cdd4032205e 914
+  s_1d3bdd6f362f9b::t_dd4a83262de384 58
+  s_1d3bdd6f362f9b::t_65461429693623 851-853,855-861
+  s_1d3bdd6f362f9b::t_5608b4e9bef272 1149-1152
+  s_1d3bdd6f362f9b::t_89fd9b6f812892 8-10,18,150-155,700,863-865,867-868
+  s_1d3bdd6f362f9b::t_4248d12f61cf79 869,990,994,996-999,1001-1002,1004,1006-1007
+  s_1d3bdd6f362f9b::t_9414cc063b42c9 384-385,866,991-993,995,1000,1003,1005,1008
+outfitter/deploy/service.sh
+  s_1d3bdd6f362f9b::t_9836af16781d2c 83-93,249-255
+outfitter/deploy/README.md
+  s_1d3bdd6f362f9b::t_d47edeac560ba6 150-151
+outfitter/packages/api/src/admin/ops.ts
+  s_1d3bdd6f362f9b::t_45c1736ac226c3 581-586
+  s_1d3bdd6f362f9b::t_1ac3f58fde7b0e 9,12-17,22,31,34,39-42,53-55,64-66,78,80-85,119-122,140-141,154-155,283,298,308,331,340,343,353,360,372,385,398,419,434,451,474,496,509,539-541,545-555,564-580,587-592,597,638-641
+  s_1d3bdd6f362f9b::t_712173ca627511 10-11
+  s_1d3bdd6f362f9b::t_af3f2582f9a5af 28,86-88,269-274,355,542-544,556-563,593-596,646,669-673,676,680
+  s_1d3bdd6f362f9b::t_04663a6ca5837c 91,645,678
+  s_1d3bdd6f362f9b::t_149ea13322680b 92-96,604-609,611-620,714
+outfitter/packages/api/src/agentengine/agents.ts
+  s_1d3bdd6f362f9b::t_f93c80688255dd 1,3,33,38-53,55,62-67,69-70,72-82,102-105,109-113,125-126,129-131,260,269-270,402,404,406-411,413-421
+  s_1d3bdd6f362f9b::t_adc801e2750bee 114-116,127-128
+  s_1d3bdd6f362f9b::t_9e14b75b677bba 2,4-32,34-37,54,56-61,68,71,83-101,106-108,117-124,132-259,261-268,271-401,403,405,412
+outfitter/packages/api/src/gurus-service.ts
+  s_1d3bdd6f362f9b::t_2f0ea1efab1b3e 7,86-107,149-150,155,208-210,239-255,288,318
+  s_1d3bdd6f362f9b::t_83a25c03f72d14 271-278
+outfitter/packages/api/test/tape-capabilities.test.ts
+  s_1d3bdd6f362f9b::t_baf6ee5b1daf5a 1-33,35-85,93,95-159,161-162,166-206,208-221,242-249,252,254-263,265-291,293,313-314
+  s_1d3bdd6f362f9b::t_5b02026c03c644 34,86-92,94,207,222-230,233-237,240-241,264,292,294-312
+  s_1d3bdd6f362f9b::t_ecb323d4f13161 231-232,250-251,253
+  s_1d3bdd6f362f9b::t_30ec8de70a85d0 160,163-165
+  s_1d3bdd6f362f9b::t_f3fe30cc70d720 238-239
+outfitter/packages/api/test/session-search.test.ts
+  s_1d3bdd6f362f9b::t_43ba58e4372fc6 255
+outfitter/packages/api/package.json
+  s_1d3bdd6f362f9b::t_5c97a2fd51ec3d 18
+outfitter/packages/api/src/agentengine/memory.ts
+  s_1d3bdd6f362f9b::t_86df6c0af70e9d 1-17,21-82,86-101
+  s_1d3bdd6f362f9b::t_adc801e2750bee 18-20,83-85
+outfitter/packages/api/src/admin/drive.ts
+  s_1d3bdd6f362f9b::t_efd124b6a55f6d 11-13
+  s_1d3bdd6f362f9b::t_d07751162497e5 6-8,10,19,21-31,38-39,68-69,71-77,100,106-109,121,145,148,175
+  s_1d3bdd6f362f9b::t_895bebffb6a163 152
+outfitter/packages/api/src/agentengine/client.ts
+  s_1d3bdd6f362f9b::t_a30f06f5cc98db 1-17,19-246,256-260,262-264,287-339
+  s_1d3bdd6f362f9b::t_27661f2d9e027e 18
+  s_1d3bdd6f362f9b::t_adc801e2750bee 247-255,261,265-286
+outfitter/packages/api/src/agentengine/index.ts
+  s_1d3bdd6f362f9b::t_4bab6e53d89611 1-28,31
+  s_1d3bdd6f362f9b::t_13af1dbfb683e1 29-30
+outfitter/packages/api/test/fake-agent-engine.ts
+  s_1d3bdd6f362f9b::t_d875b441f28d0b 3-9,14-15,18-35,40-41,55-82,87-88,95-149,152-154,202-225,227-231,241-248,262-266,279-289,292-304,317-319
+  s_1d3bdd6f362f9b::t_f8cc5b30729c7f 1-2
+  s_1d3bdd6f362f9b::t_6e605e2d7e6d92 3-9,14-35,40-41,55-82,87-88,95-149,152-154,202-225,227-231,241-248,262-266,279-289,292-304,317-319
+  s_1d3bdd6f362f9b::t_dba976fa86970b 10,36-39,83-86,232-240,249-261,305-314
+  s_1d3bdd6f362f9b::t_4cd13c03d5bcdd 226
+  s_1d3bdd6f362f9b::t_94892cc67cda95 315-316
+  s_1d3bdd6f362f9b::t_6cff0fbe81d766 11-13,42-54,89-94,150-151,155-201,267-278,290-291
+outfitter/packages/api/test/agentengine.test.ts
+  s_1d3bdd6f362f9b::t_8e4dec5ee9ac6e 1-7,9-188,209-287,292-305,310,316-368,370-393
+  s_1d3bdd6f362f9b::t_f9416a5d3f393a 369
+  s_1d3bdd6f362f9b::t_5b02026c03c644 189-208,288-291,306-309
+  s_1d3bdd6f362f9b::t_6e605e2d7e6d92 8
+  s_1d3bdd6f362f9b::t_0e87cc50882150 311-315
+outfitter/deploy/config.env
+  s_1d3bdd6f362f9b::t_9836af16781d2c 69-84
+kernal/.pi/extensions/outfitter-admin/index.ts
+  s_1d3bdd6f362f9b::t_8c43699a67b8e3 15,35-39
+kernal/.pi/extensions/outfitter-admin/transport.ts
+  s_1d3bdd6f362f9b::t_251970caa5be74 36-37,209-223
+kernal/tests/outfitter-admin.test.ts
+  s_1d3bdd6f362f9b::t_cf771631270767 13,49-69
+outfitter/package-lock.json
+  s_1d3bdd6f362f9b::t_ff8c843be52a92 628-654,7005-7013,7049
+outfitter/packages/agentd/test/admin-socket.test.ts
+  s_1d3bdd6f362f9b::t_df21a1076da19e 9,169,173,198,233,236,241-268,285-291
+  s_1d3bdd6f362f9b::t_0194562106f30e 269-284
+  s_1d3bdd6f362f9b::t_927089461dbaff 4
+  s_1d3bdd6f362f9b::t_86227e0ae41965 312-370
+outfitter/packages/api/src/config.ts
+  s_1d3bdd6f362f9b::t_6a0eecf2653196 192-193,196-229,320-392,520
+outfitter/packages/api/src/main.ts
+  s_1d3bdd6f362f9b::t_522adeb3ebf46c 1,21-23
+outfitter/packages/web/src/api/client.ts
+  s_1d3bdd6f362f9b::t_77f524413b495f 148-153
+  s_1d3bdd6f362f9b::t_ec42b4739f3d7a 170-183,563-579
+outfitter/packages/web/src/components/GuruForm.tsx
+  s_1d3bdd6f362f9b::t_3ee82bcc5b6735 62-63,101-102,206-227
+outfitter/packages/web/test/guru-form.test.tsx
+  s_1d3bdd6f362f9b::t_6a5ffa61c3c97f 86-128
+outfitter/packages/api/src/agentengine/usage.ts
+  s_1d3bdd6f362f9b::t_99c6f8a625cbfc 7-8,10,13-21,24-25,26-33,35-36,39-41,46-51,64-69
+  s_1d3bdd6f362f9b::t_de4eeb13cd22f2 1-6,9,11-12,22-23,34,37-38,42-45,52-61
+  s_1d3bdd6f362f9b::t_bf948ced4c980a 62-63
+kernal/.pi/extensions/outfitter-agentengine/memory.ts
+  s_1d3bdd6f362f9b::t_9d06b698e9e6b3 21-23,32-33
+  s_1d3bdd6f362f9b::t_372c450cc8a7dc 1-20,24-31,34-84
+outfitter/image/Dockerfile
+  s_1d3bdd6f362f9b::t_4248d12f61cf79 251,326
+  s_162e2233a4f0f3::t_d3bf4400c86304 49-52,157-161,173
+kernal/tests/outfitter-memory.test.ts
+  s_1d3bdd6f362f9b::t_989e1d6124d2fe 1-41,44-99
+  s_1d3bdd6f362f9b::t_ec8b47447fae3e 42-43
+outfitter/packages/api/test/memory-ops.test.ts
+  s_1d3bdd6f362f9b::t_8d5063ed4b38c8 8-9,531-552,555-559
+  s_1d3bdd6f362f9b::t_d8219e10eb0823 1-7,10-12,14,17-39,50-74,76-142,147-153,161,171-275,324-325,327,329-347,350-354,360-408,411-424,426-433,469-490,508,512-514,517-525,560-561
+  s_1d3bdd6f362f9b::t_45eefddec46601 491-507,510-511
+  s_1d3bdd6f362f9b::t_11944d11b9d259 145
+  s_1d3bdd6f362f9b::t_1dccbe0aa19ad1 75,144
+  s_1d3bdd6f362f9b::t_bb408391ce6548 13,15-16,40-49,143,146,154-160,162-170,276-279,281-284,286-323,326,328,348-349,355-359,409-410,425,434-468,509,515-516,526-530,553-554
+  s_1d3bdd6f362f9b::t_93c6fea4ad71f5 280,285
+outfitter/packages/api/src/admin/memory-ops.ts
+  s_1d3bdd6f362f9b::t_bae11c3180c370 1-19,24-35,41-46,48-56,58-61,65-77,79-87,89,97-103,106,109,111-120,139-164,166-172,181,195-199,202-214,216-225,227-273,277-304,307-309,317-328,338-345,347-352
+  s_1d3bdd6f362f9b::t_4cd13c03d5bcdd 173-174
+  s_1d3bdd6f362f9b::t_d1281d3e56309c 346
+  s_1d3bdd6f362f9b::t_d8ee996cd8b7a3 306
+  s_1d3bdd6f362f9b::t_1dccbe0aa19ad1 22,165
+  s_1d3bdd6f362f9b::t_99c6f8a625cbfc 23
+  s_1d3bdd6f362f9b::t_58012b31fd849f 20-21,36-38,47,57,62-64,78,88,90-96,104-105,107-108,110,121-138,175-180,182-194,200-201,215,274-276,305,310-316,331
+  s_1d3bdd6f362f9b::t_04663a6ca5837c 40,226,329-330,332-337
+  s_1d3bdd6f362f9b::t_3828322e943075 39
+outfitter/packages/agentd/test/outfitter-memory.test.ts
+  s_1d3bdd6f362f9b::t_0a70674af8cce1 1-65,72-152
+  s_1d3bdd6f362f9b::t_1a69ac08fbf538 66-71
+outfitter/packages/api/test/helpers.ts
+  s_1d3bdd6f362f9b::t_3e3c3829c236f2 56,93
+  s_1d3bdd6f362f9b::t_8d5063ed4b38c8 19
+  s_1d3bdd6f362f9b::t_e0b7c0e33046b6 55
+outfitter/packages/api/src/agentengine/recorder.ts
+  s_1d3bdd6f362f9b::t_99c6f8a625cbfc 21
+  s_1d3bdd6f362f9b::t_ef07ad20545dc8 1-7,10,14-16,18-20,22-25,30-46,48-59,64-68,75-86,89-92,93,95-96,99,103-106,117,128,130,133-140,142-144,152,158,160,163-175,179-180,182,187-189,192-195,197-198,200-206,208-221
+  s_1d3bdd6f362f9b::t_0bfd6c0ea9a1a7 8-9,11-13,17,28-29,47,69,73-74,87-88,94,97-98,100-102,107-116,118-127,141,181,183-186,199
+  s_1d3bdd6f362f9b::t_ced4581fb57cbf 176-178,196,207
+  s_1d3bdd6f362f9b::t_ac514c2ddefdfd 70-72,129,131-132,161-162
+  s_1d3bdd6f362f9b::t_78985c1923fb94 190-191
+  s_1d3bdd6f362f9b::t_d5255a9e951d9f 26-27,60-63,145-151,153-157,159
+outfitter/packages/agentd/src/main.ts
+  s_1d3bdd6f362f9b::t_4248d12f61cf79 250
+kernal/.pi/extensions/outfitter-agentengine/index.ts
+  s_1d3bdd6f362f9b::t_24e586712fe85c 1-12,14-23,25
+  s_1d3bdd6f362f9b::t_4a0d1103d13bd3 13,24
+outfitter/packages/api/src/agentengine/identity.ts
+  s_1d3bdd6f362f9b::t_95f0a096a346af 1-38,42-83,90-94
+  s_1d3bdd6f362f9b::t_58012b31fd849f 39-41,84-89
+outfitter/packages/agentd/pi-extension/outfitter-memory.ts
+  s_1d3bdd6f362f9b::t_53ebd261825098 1-71,84-106,111-126
+  s_1d3bdd6f362f9b::t_9414cc063b42c9 72-83,107-110
+outfitter/packages/agentd/src/guru.ts
+  s_1d3bdd6f362f9b::t_b4edba0ab79484 141-142
+  s_1d3bdd6f362f9b::t_576c00e5ee72d2 38-40,86-95,131,143-144
+outfitter/deploy/agent-engine.md
+  s_1d3bdd6f362f9b::t_e9b01af038a397 1-11,14-81,83-105,109-120,125-128
+  s_1d3bdd6f362f9b::t_059d68ab01b494 12-13,82
+  s_1d3bdd6f362f9b::t_c5b20645857097 106-108
+  s_1d3bdd6f362f9b::t_e8dd769435c94d 121-124
+  s_1d3bdd6f362f9b::t_e70eb7677002af 129-146
+outfitter/deploy/agent-engine/memory/project-config.yaml
+  s_1d3bdd6f362f9b::t_059d68ab01b494 1-52
+kernal/.pi/extensions/_shared/redact.ts
+  s_1d3bdd6f362f9b::t_3c8a8e07d69e13 24-26
+outfitter/packages/api/src/search/redact.ts
+  s_1d3bdd6f362f9b::t_37fa64f819b94e 24-26
+kernal/.pi/extensions/outfitter-agentengine/agents.ts
+  s_1d3bdd6f362f9b::t_0beac1e155faf3 1-115
+kernal/tests/agent-engine-tool.test.ts
+  s_1d3bdd6f362f9b::t_ece8d55b53e2f3 1-106
+outfitter/packages/api/docs/data-model.md
+  s_1d3bdd6f362f9b::t_17fecf6b6b1ffe 127
+outfitter/packages/api/src/admin/ae-ops.ts
+  s_1d3bdd6f362f9b::t_2f80cfcd196bd8 1-352
+outfitter/packages/api/src/ae-sessions.ts
+  s_1d3bdd6f362f9b::t_bd406430ff1766 1-127
+outfitter/packages/api/src/routes/agent-engine.ts
+  s_1d3bdd6f362f9b::t_d0668fde5a0517 1-128
+outfitter/packages/api/src/routes/index.ts
+  s_1d3bdd6f362f9b::t_28bf132e00de5e 20,45
+outfitter/packages/api/test/ae-agents.test.ts
+  s_1d3bdd6f362f9b::t_e91b594793b6c2 1-558
+outfitter/packages/api/test/mongo-ae.test.ts
+  s_1d3bdd6f362f9b::t_ab2febbc71fa50 1-78
+outfitter/packages/web/src/components/AeAgentsPanel.tsx
+  s_1d3bdd6f362f9b::t_18794b49506810 1-237
+outfitter/packages/web/src/pages/SettingsPage.tsx
+  s_1d3bdd6f362f9b::t_4d6a5d58326957 18,387-389
+outfitter/packages/web/test/ae-agents-panel.test.tsx
+  s_1d3bdd6f362f9b::t_7d5530d0586f0a 1-152
+.github/workflows/outfitter-ci.yml
+  s_162e2233a4f0f3::t_8d21a1eccf49fa 51,122-126,165-168
+kernal/skills/outfitter-admin/SKILL.md
+  s_162e2233a4f0f3::t_435425b89d4cc6 40-45
+kernal/skills/outfitter-admin/references/e9-tapes.md
+  s_162e2233a4f0f3::t_aaf9322f6f6c86 1-73
+kernal/tests/image-subagents.test.ts
+  s_162e2233a4f0f3::t_652fc9ad3e6098 1-94
+outfitter/deploy/test/workflow-sh-quotes.test.sh
+  s_162e2233a4f0f3::t_47b27ddc096a40 1-41
+outfitter/image/agents/coder.md
+  s_162e2233a4f0f3::t_9602a5a2129a2f 1-27
+outfitter/image/render-settings.sh
+  s_162e2233a4f0f3::t_54868be596eb0f 9-21,23-24,32,39-40,42,44
+outfitter/packages/api/test/e9-tapes.test.ts
+  s_162e2233a4f0f3::t_c10c7be3f6c402 1-65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "d4a11bcdccfb2be53c9b935d286a279b8692552e",
+  "prompts": {},
+  "sessions": {
+    "s_162e2233a4f0f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d82cf409-27ab-46f7-b6cd-1549691ef502",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

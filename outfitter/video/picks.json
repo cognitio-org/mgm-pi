@@ -25,17 +25,17 @@
     }
   },
   "voices": {
-    "LEE-a": "voices/LEE-a-take1.wav",
-    "LEE-b": "voices/LEE-b-take1.wav",
-    "LEE-c": "voices/LEE-c-take1.wav",
-    "PAT-a": "voices/PAT-a-take1.wav",
-    "PAT-b": "voices/PAT-b-take1.wav",
-    "PAT-c": "voices/PAT-c-take2.wav",
-    "PAT-d": "voices/PAT-d-take1.wav",
-    "PAT-e": "voices/PAT-e-take2.wav",
-    "JO": "voices/JO-take1.wav",
+    "LEE-1": "voices/LEE-1-take1.wav",
+    "LEE-2": "voices/LEE-2-take1.wav",
+    "LEE-3": "voices/LEE-3-take1.wav",
+    "PAT-1": "voices/PAT-1-take1.wav",
+    "PAT-2": "voices/PAT-2-take1.wav",
+    "PAT-3": "voices/PAT-3-take1.wav",
+    "PAT-4": "voices/PAT-4-take1.wav",
+    "JO-1": "voices/JO-1-take1.wav",
     "MGM": "voices/MGM-take3.wav",
-    "PAT-short": "voices/PAT-short-take1.wav"
+    "PAT-short": "voices/PAT-short-take1.wav",
+    "_note": "take1 by default for the trimmed lines; change to your favourite take"
   },
   "ui": {
     "_about": "Outfitter screenshots, saved by hand into out/ui/",

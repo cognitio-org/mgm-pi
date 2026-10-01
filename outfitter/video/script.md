@@ -124,21 +124,22 @@ never a clone of a real person, including anyone in the reference video.
 | **JO** | letter 3, Age 47 | Adult, soft and dreamy, wistful pauses. |
 | **MGM** | punchline letter, Age 54 | **Recorded by MGM** (own voice); the generated MGM takes are spares. |
 
-### Lines
-Split so the teaser can reuse pieces. Times are what each piece may take on screen.
+### Lines (trimmed: the slow, earnest read stays; fewer words)
 
-| Id | Voice | Line | Max |
-|---|---|---|---|
-| LEE-a | LEE | "Dear Sysop. My name is Lee, and I am sixty-one years old." | 4 s |
-| LEE-b | LEE | "I am learning to program with agents. I pick a Tape, I start a Floppy, and a Drive does the work." | 7 s |
-| LEE-c | LEE | "I am sending you a picture of the first bug it fixed. Your friend, Lee." | 5 s |
-| PAT-a | PAT | "Dear Sysop. My boss won't let me run more than one agent. So please write a letter to my boss." | 5.5 s |
-| PAT-b | PAT | "Here is what I would like:" | 1.5 s |
-| PAT-c | PAT | "Twelve Drives at once. A Tape for every job. Atlas memory, so it remembers where we left off. Atlas agents that hand my agents work, and back again. Eject to my laptop. And a Control Panel with all the keys." | 10 s |
-| PAT-d | PAT | "How much will all this cost?" | 2 s |
-| PAT-e | PAT | "Make it sound official, okay? Sincerely, Pat." | 3.5 s |
-| JO | JO | "Dear Sysop. Maybe someday you can make a computer I can just talk to. And when I'm done, I can take my work home. Sincerely, Jo." | 10 s |
-| MGM | MGM | "Dear Sysop. Outfitter rules the fleet. Your Outfitter friend, MGM." | 7 s |
+| Id | Voice | Line |
+|---|---|---|
+| LEE-1 | LEE | "Dear Sysop. I'm Lee. I'm sixty-one." |
+| LEE-2 | LEE | "I'm learning to code with agents. I pick a Tape, and a Drive does the work." |
+| LEE-3 | LEE | "Here is the first bug it fixed. Your friend, Lee." |
+| PAT-1 | PAT | "Dear Sysop. Please write a letter to my boss." |
+| PAT-2 | PAT | "Twelve Drives at once. Atlas memory. And Atlas agents that hand my agents work." |
+| PAT-3 | PAT | "How much will all this cost?" |
+| PAT-4 | PAT | "Make it official, okay? Sincerely, Pat." |
+| JO-1 | JO | "Dear Sysop. Could you make a computer I can just talk to? Sincerely, Jo." |
+| MGM | MGM (recorded) | "Dear Sysop. Outfitter rules the fleet. Your Outfitter friend, MGM." |
+| PAT-short | PAT | teaser only: "Twelve Drives at once. Atlas memory. And Atlas agents that hand my agents work!" |
+
+The picture stretches to fit these (assemble.py), so the full cut runs about 1:30.
 
 Finish every voice line with the same tape treatment as the picture (`vhs.sh` band-limits audio)
 plus a touch of room reverb, so it doesn't sound too clean against the 1990 picture.

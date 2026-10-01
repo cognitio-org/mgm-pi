@@ -10,7 +10,7 @@
   "voice_gap": 0.35,
   "cuts": {
     "full": {
-      "out": "dear-sysop-75.mp4",
+      "out": "dear-sysop.mp4",
       "segments": [
         {
           "t": "clip",
@@ -156,39 +156,35 @@
       ],
       "voices": [
         {
-          "id": "LEE-a",
+          "id": "LEE-1",
           "letter": "LEE"
         },
         {
-          "id": "LEE-b",
+          "id": "LEE-2",
           "letter": "LEE"
         },
         {
-          "id": "LEE-c",
+          "id": "LEE-3",
           "letter": "LEE"
         },
         {
-          "id": "PAT-a",
+          "id": "PAT-1",
           "letter": "PAT"
         },
         {
-          "id": "PAT-b",
+          "id": "PAT-2",
           "letter": "PAT"
         },
         {
-          "id": "PAT-c",
+          "id": "PAT-3",
           "letter": "PAT"
         },
         {
-          "id": "PAT-d",
+          "id": "PAT-4",
           "letter": "PAT"
         },
         {
-          "id": "PAT-e",
-          "letter": "PAT"
-        },
-        {
-          "id": "JO",
+          "id": "JO-1",
           "letter": "JO"
         },
         {
@@ -198,7 +194,7 @@
       ]
     },
     "teaser": {
-      "out": "dear-sysop-30.mp4",
+      "out": "dear-sysop-teaser.mp4",
       "segments": [
         {
           "t": "clip",

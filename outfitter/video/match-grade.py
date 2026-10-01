@@ -7,20 +7,24 @@ Resolve, Premiere, etc.) can apply. Only *statistics* of the reference frames en
 no pixels -- so it is safe to commit and share.
 
 Usage:
-  python3 match-grade.py --ref reference/pick-*.png --src ours/frame-*.png [--out grade.cube]
+  $(brew --prefix)/bin/python3 match-grade.py --ref reference/pick-*.png --src ours/frame-*.png [--out grade.cube]
   ffmpeg -i ours.mp4 -vf lut3d=grade.cube graded.mp4
 
   --src: stills from *our* footage (a Veo clip, a screen recording) -- e.g.
          ffmpeg -i clip.mp4 -vf fps=1 ours/frame-%04d.png
   --strength 0..1 blends the curves toward identity (default 1.0).
 
-Requires numpy and Pillow.
+Requires numpy and Pillow: brew install numpy pillow (then use Homebrew's python3).
 """
 import argparse
 import sys
 
-import numpy as np
-from PIL import Image
+try:
+    import numpy as np
+    from PIL import Image
+except ImportError:
+    sys.exit("numpy/Pillow missing. Install with: brew install numpy pillow\n"
+             "then run with Homebrew's Python: $(brew --prefix)/bin/python3 " + sys.argv[0])
 
 SAMPLE_PX = 200_000  # pixels sampled per image set; plenty for stable CDFs
 

@@ -9,15 +9,20 @@ lot" (ffmpeg scene detection) lands mid-transition. Instead, score every frame o
 then greedily keep the best frames, at least --gap seconds apart and not near-duplicates of a frame
 already kept.
 
-Usage: python3 pick-frames.py <frames-dir> <out-dir> [--fps 4] [--count 24] [--gap 1.5]
+Usage: $(brew --prefix)/bin/python3 pick-frames.py <frames-dir> <out-dir> [--fps 4] [--count 24] [--gap 1.5]
   <frames-dir> holds frame-%05d.png sampled at --fps (extract-frames.sh writes these).
 """
 import argparse
+import sys
 import shutil
 from pathlib import Path
 
-import numpy as np
-from PIL import Image
+try:
+    import numpy as np
+    from PIL import Image
+except ImportError:
+    sys.exit("numpy/Pillow missing. Install with: brew install numpy pillow\n"
+             "then run with Homebrew's Python: $(brew --prefix)/bin/python3 " + sys.argv[0])
 
 
 def load_small(path):

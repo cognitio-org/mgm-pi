@@ -23,6 +23,8 @@ SRC="${1:?usage: extract-frames.sh <video> [out-dir]}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="${2:-$HERE/reference}"
 COUNT="${COUNT:-24}"
+NEED_PYTHON=1
+. "$HERE/deps.sh"
 FPS=4
 
 CLEAN="bwdif=mode=send_frame:deint=interlaced"
@@ -34,7 +36,7 @@ rm -rf "$OUT/all"
 mkdir -p "$OUT/all"
 ffmpeg -hide_banner -loglevel error -y -i "$SRC" -vf "$CLEAN,fps=$FPS" "$OUT/all/frame-%05d.png"
 
-python3 "$HERE/pick-frames.py" "$OUT/all" "$OUT" --fps "$FPS" --count "$COUNT"
+"$PYTHON" "$HERE/pick-frames.py" "$OUT/all" "$OUT" --fps "$FPS" --count "$COUNT"
 
 ffmpeg -hide_banner -loglevel error -y -pattern_type glob -i "$OUT/pick-*.png" \
   -vf "scale=320:-2,tile=6x4:padding=4:color=black" -frames:v 1 "$OUT/contact-sheet.png"

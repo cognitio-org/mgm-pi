@@ -1,0 +1,42 @@
+# outfitter-delegate: an Agent Engine agent that hands coding tasks to Outfitter over A2A v1.0.
+# Schema: https://www.mongodb.com/docs/agentengine/reference/agent-contract.md, checked with
+# `agentengine agent validate` (CLI 0.1.118). Deploy steps: ../../../README.md.
+name: outfitter-delegate
+description: Delegates coding tasks to Outfitter (Kernal's cloud coding agents) over A2A and reports the branch and pull request it produces.
+entrypoint: outfitter_delegate.main:app
+framework: langgraph
+version: 0.1.0
+
+agent_card:
+  summary: Hands a coding task to Outfitter and reports the branch and PR it produces.
+  capabilities: [coding, delegation, a2a]
+
+features:
+  memory: false
+
+sandboxes:
+  # The agent sandbox runs the graph and the LLM calls. It never sees the Outfitter key.
+  agent:
+    secrets:
+      - LLM_API_KEY
+    tools: []
+    network:
+      egress_mode: allow_list
+      egress:
+        - fqdn: router.kernal.one   # the LiteLLM gateway (llm.py)
+          ports: [443]
+  # The tool sandbox runs both tool bodies, holds the key, and can reach only Outfitter.
+  tool:
+    secrets:
+      - OUTFITTER_A2A_KEY   # workspace-scoped: agentengine secret set ... --workspace-scope
+      - OUTFITTER_A2A_URL   # https://link.kernal.one; not secret, but secrets are the sandbox env
+    tools:
+      - outfitter_start
+      - outfitter_status
+    network:
+      egress_mode: allow_list
+      egress:
+        # Outfitter's public link origin. If OUTFITTER_A2A_URL names another host, change this
+        # to match (agentengine agent egress add/remove --component tool) and redeploy.
+        - fqdn: link.kernal.one
+          ports: [443]

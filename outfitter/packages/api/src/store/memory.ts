@@ -58,10 +58,14 @@ import type {
   AeAgentsCollection,
   AeSession,
   AeSessionsCollection,
+  A2ATask,
+  A2ATaskListQuery,
+  A2ATaskState,
+  A2ATasksCollection,
 } from "./types.ts";
 import { AE_SESSION_EXECUTIONS } from "./types.ts";
 import type { VoicePrefs } from "../voice.ts";
-import { BROWSER_CAPTURES_PER_SESSION, SearchUnavailableError, entryInsertFields, type EntryInsertOptions } from "./types.ts";
+import { A2A_OPEN_STATES, BROWSER_CAPTURES_PER_SESSION, SearchUnavailableError, entryInsertFields, type EntryInsertOptions } from "./types.ts";
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -596,6 +600,14 @@ class MemoryMail implements MailCollection {
   async findById(id: string): Promise<Mail | null> {
     const row = this.rows.get(id);
     return row ? clone(row) : null;
+  }
+
+  async markDead(id: string, nowIso: string): Promise<boolean> {
+    const row = this.rows.get(id);
+    if (!row || row.status === "acked" || row.status === "dead") return false;
+    row.status = "dead";
+    row.deadAt = nowIso;
+    return true;
   }
 
   async deleteForSession(sessionId: string): Promise<number> {
@@ -1142,6 +1154,113 @@ class MemoryAeSessions implements AeSessionsCollection {
   }
 }
 
+/** Newest first: createdAt, then id, both descending (the ListTasks cursor order). */
+function newerFirst(a: A2ATask, b: A2ATask): number {
+  return b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id);
+}
+
+class MemoryA2ATasks implements A2ATasksCollection {
+  private readonly rows = new Map<string, A2ATask>();
+  private readonly slots = new Map<string, Set<string>>();
+  private readonly requests = new Map<string, { count: number; expireAt: string }>();
+
+  async insert(task: A2ATask): Promise<boolean> {
+    if (this.rows.has(task.id)) return false;
+    if (task.messageId !== undefined) {
+      for (const row of this.rows.values()) {
+        if (row.tokenId === task.tokenId && row.messageId === task.messageId) return false;
+      }
+    }
+    this.rows.set(task.id, clone(task));
+    return true;
+  }
+
+  async findForToken(tokenId: string, id: string): Promise<A2ATask | null> {
+    const row = this.rows.get(id);
+    return row && row.tokenId === tokenId ? clone(row) : null;
+  }
+
+  async findByMessageId(tokenId: string, messageId: string): Promise<A2ATask | null> {
+    for (const row of this.rows.values()) {
+      if (row.tokenId === tokenId && row.messageId === messageId) return clone(row);
+    }
+    return null;
+  }
+
+  async latestInContext(tokenId: string, contextId: string): Promise<A2ATask | null> {
+    const row = [...this.rows.values()].filter((t) => t.tokenId === tokenId && t.contextId === contextId).sort(newerFirst)[0];
+    return row ? clone(row) : null;
+  }
+
+  async sessionForContext(tokenId: string, contextId: string): Promise<string | undefined> {
+    for (const row of this.rows.values()) {
+      if (row.tokenId === tokenId && row.contextId === contextId && row.sessionId) return row.sessionId;
+    }
+    return undefined;
+  }
+
+  async list(tokenId: string, query: A2ATaskListQuery): Promise<{ tasks: A2ATask[]; total: number }> {
+    const matching = [...this.rows.values()]
+      .filter(
+        (t) =>
+          t.tokenId === tokenId &&
+          (query.contextId === undefined || t.contextId === query.contextId) &&
+          (query.state === undefined || t.state === query.state) &&
+          (query.updatedAfter === undefined || t.updatedAt > query.updatedAfter),
+      )
+      .sort(newerFirst);
+    const before = query.before;
+    const page = (before
+      ? matching.filter((t) => t.createdAt < before.createdAt || (t.createdAt === before.createdAt && t.id < before.id))
+      : matching
+    ).slice(0, query.limit);
+    return { tasks: page.map(clone), total: matching.length };
+  }
+
+  async listOpen(limit: number, tokenId?: string): Promise<A2ATask[]> {
+    return [...this.rows.values()]
+      .filter((t) => A2A_OPEN_STATES.includes(t.state) && (tokenId === undefined || t.tokenId === tokenId))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .slice(0, limit)
+      .map(clone);
+  }
+
+  async transition(id: string, from: readonly A2ATaskState[], patch: Partial<A2ATask>): Promise<A2ATask | null> {
+    const row = this.rows.get(id);
+    if (!row || !from.includes(row.state)) return null;
+    const { id: _id, tokenId: _tokenId, ...rest } = patch;
+    Object.assign(row, rest);
+    return clone(row);
+  }
+
+  async claimSlot(tokenId: string, taskId: string, max: number): Promise<boolean> {
+    const held = this.slots.get(tokenId) ?? new Set<string>();
+    if (held.has(taskId)) return true;
+    if (held.size >= max) return false;
+    held.add(taskId);
+    this.slots.set(tokenId, held);
+    return true;
+  }
+
+  async releaseSlot(tokenId: string, taskId: string): Promise<void> {
+    this.slots.get(tokenId)?.delete(taskId);
+  }
+
+  async listSlots(tokenId: string): Promise<string[]> {
+    return [...(this.slots.get(tokenId) ?? [])];
+  }
+
+  async countRequest(tokenId: string, windowId: string, expireAtIso: string): Promise<number> {
+    const now = new Date().toISOString();
+    for (const [key, row] of this.requests) if (row.expireAt <= now) this.requests.delete(key);
+    const key = `${tokenId}:${windowId}`;
+    const row = this.requests.get(key) ?? { count: 0, expireAt: expireAtIso };
+    row.count++;
+    this.requests.set(key, row);
+    return row.count;
+  }
+}
+
 export class MemoryStore implements Store {
   readonly sessions = new MemorySessions();
   readonly entries = new MemoryEntries();
@@ -1163,6 +1282,7 @@ export class MemoryStore implements Store {
   readonly turnWaiters = new MemoryTurnWaiters();
   readonly aeAgents = new MemoryAeAgents();
   readonly aeSessions = new MemoryAeSessions();
+  readonly a2aTasks = new MemoryA2ATasks();
 
   constructor() {
     const tables: BrowserTables = {

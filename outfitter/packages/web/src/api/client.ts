@@ -141,6 +141,8 @@ export interface Guru {
   browserIde?: boolean;
   /** Branches under this prefix may be pushed besides the session branch. Absent means outfitter/. */
   branchPrefix?: string;
+  /** When true, this tape's cloud runs may merge pull requests. */
+  mergeFromCloud?: boolean;
   /** Tape option, default off (Sysop tools, #290). Whether its runs get the admin tools; "operator"
    * also allows sysop actions for a sysop's own sessions. Only a person sets it here; only a sysop
    * may choose operator. */
@@ -165,6 +167,18 @@ export interface TokenRecord {
   revokedAt?: string;
   /** When the token stops authenticating (90 days after creation). */
   expiresAt?: string;
+  /** E9: a Dongle (laptop teleport, /api/*) or an A2A key (the link origin's /a2a only). */
+  kind?: TokenKind;
+  /** On an A2A key: the tapes and repositories its tasks may use. */
+  a2a?: A2AKeyScope;
+}
+
+export type TokenKind = "dongle" | "a2a";
+
+export interface A2AKeyScope {
+  tapes: string[];
+  repos: string[];
+  maxConcurrent: number;
 }
 
 /** E9 §4: one Agent Engine agent Drives may call (Settings → Agent Engine agents, sysops only). */
@@ -581,8 +595,10 @@ export const api = {
     return request("/api/me/tokens");
   },
 
-  createToken(name: string): Promise<{ token: string; record: TokenRecord }> {
-    return request("/api/me/tokens", { method: "POST", body: JSON.stringify({ name }) });
+  /** A Dongle by default; `a2a` makes an A2A key scoped to those tapes and repositories. */
+  createToken(name: string, a2a?: Partial<A2AKeyScope> & { tapes: string[] }): Promise<{ token: string; record: TokenRecord }> {
+    const body = a2a ? { name, kind: "a2a", a2a } : { name };
+    return request("/api/me/tokens", { method: "POST", body: JSON.stringify(body) });
   },
 
   revokeToken(id: string): Promise<{ record: TokenRecord }> {

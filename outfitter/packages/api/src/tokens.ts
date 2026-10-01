@@ -4,7 +4,7 @@
 // its sha256 hash and an 8-char display prefix persist.
 
 import { randomBytes, createHash } from "node:crypto";
-import type { ApiToken, TokenOwnerMatch } from "./store/types.ts";
+import type { ApiToken, ApiTokenKind, TokenOwnerMatch } from "./store/types.ts";
 
 export const TOKEN_PREFIX = "outf_";
 
@@ -40,6 +40,15 @@ export function tokenExpiresAt(token: Pick<ApiToken, "createdAt" | "expiresAt">)
  * rather than `now >= …` so an unparsable date (NaN) counts as expired, never as live. */
 export function isTokenActive(token: Pick<ApiToken, "revokedAt" | "createdAt" | "expiresAt">, now = Date.now()): boolean {
   return !token.revokedAt && now < tokenExpiresAt(token);
+}
+
+/** E9 §5.2: a token's kind. Absent (every token minted before the field) is a Dongle. Anything
+ * else stored there reads as "a2a" only when it is exactly that, so an unknown value never widens
+ * what a token can reach: it is neither kind and fails both checks in auth.ts. */
+export function tokenKind(token: Pick<ApiToken, "kind">): ApiTokenKind | undefined {
+  if (token.kind === undefined || token.kind === "dongle") return "dongle";
+  if (token.kind === "a2a") return "a2a";
+  return undefined;
 }
 
 /** Consumer mail providers: a domain revoke there would hit every unrelated user who signed in

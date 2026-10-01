@@ -13,6 +13,7 @@ import { entryForWire } from "../entry-wire.ts";
 import { summarizeStartup } from "../startup.ts";
 import { sessionJsonl } from "../session-jsonl.ts";
 import { SessionArchivedError, SessionFormattedError } from "../runs.ts";
+import { createSession, postUserMail } from "../session-create.ts";
 import type { Identity } from "../auth.ts";
 
 /** Same checks `GithubAppTokens.mint` uses before it calls GitHub. Existence of a secret version is not enough. */
@@ -431,28 +432,16 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     const guru = await ctx.store.gurus.findById(body.guruId);
     if (!guru) return reply.code(400).send({ error: `unknown guruId: ${body.guruId}` });
 
-    const now = new Date().toISOString();
-    const session: Session = {
-      id: randomUUID(),
-      name: body.name,
-      // Only archive, restore and format check it -- see Session.ownerEmail's doc comment and
-      // EPIC.md's E2.2 note (finding #5, docs/reports/security-review-pr1.md).
+    const { session, run } = await createSession(ctx, {
       ownerEmail: req.identity?.email,
       guruId: body.guruId,
-      // repo omitted = non-coding session (protocol.md): no clone, no branch.
-      repo: body.repo ?? null,
-      baseBranch: body.repo ? body.baseBranch : undefined,
-      branch: body.repo ? (body.branch ?? `outfitter/${randomUUID().slice(0, 8)}`) : undefined,
+      repo: body.repo,
+      baseBranch: body.baseBranch,
+      branch: body.branch,
       prompt: body.prompt,
-      modelOverride: body.model,
-      status: "open",
-      cost: 0,
-      createdAt: now,
-      updatedAt: now,
-    };
-    await ctx.store.sessions.insert(session);
-
-    const run = await postUserMail(ctx, session.id, req.identity?.email, body.prompt);
+      name: body.name,
+      model: body.model,
+    });
     return reply.code(201).send({ session, run });
   });
 
@@ -614,18 +603,6 @@ async function stopRun(ctx: RouteContext, run: Run): Promise<Run | null> {
  * lose it); MailService.post also makes the one inline wake attempt. Returns the session's run, or
  * null when that wake failed -- the message is queued either way and Cloud Tasks / the /tick sweep
  * keep trying, so the caller must not retry (it would enqueue the text twice). */
-async function postUserMail(
-  ctx: RouteContext,
-  sessionId: string,
-  email: string | undefined,
-  text: string,
-  behavior?: "steer" | "followUp",
-) {
-  await ctx.mail.post({ sessionId, from: { kind: "user", email }, text, behavior });
-  await ctx.agentLink.deliverMailForSession(sessionId);
-  return ctx.store.runs.findActiveForSession(sessionId);
-}
-
 export const ARCHIVED_ERROR = "this floppy is archived; restore it first";
 
 /** #207: who may archive, restore or format a floppy: its owner, or a sysop. A session with no

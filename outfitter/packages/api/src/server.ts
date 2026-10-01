@@ -10,6 +10,7 @@ import { AeSessions } from "./ae-sessions.ts";
 import { createNgrokApi, type NgrokApi } from "./ngrok-api.ts";
 import { PreviewService } from "./previews.ts";
 import { TurnWaiters } from "./turns.ts";
+import { A2ATasks } from "./a2a/tasks.ts";
 import { VoiceService } from "./voice.ts";
 import { VoiceUsage } from "./voice-usage.ts";
 import Fastify, { type FastifyInstance } from "fastify";
@@ -124,6 +125,8 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   // E9 §1: turn waiters (settle, run end, deadline) for A2A tasks and delegation.
   const turns = new TurnWaiters(store, runs, (msg, err) => fastify.log.warn({ err }, msg));
   agentLink.setTurnWaiters(turns);
+  // E9 §5.3: A2A tasks, on the store, read through their sessions' runs and turn waiters.
+  const a2a = new A2ATasks({ store, runs, turns, mail, agentLink, log: (msg, err) => fastify.log.warn({ err }, msg) });
   // #193: a run whose agent vanished without a bye gets its sandbox's exit reason read promptly.
   agentLink.onAgentLost((runId) => runs.noteAgentLost(runId));
 
@@ -225,6 +228,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     previews,
     turns,
     aeSessions,
+    a2a,
     providers,
     voice:
       opts.voice ??

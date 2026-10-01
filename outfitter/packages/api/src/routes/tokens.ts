@@ -7,7 +7,8 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { RouteContext } from "./context.ts";
 import type { ApiToken } from "../store/types.ts";
-import { generateToken, hashToken, tokenPrefix, tokenExpiresAt, TOKEN_TTL_MS } from "../tokens.ts";
+import { generateToken, hashToken, tokenPrefix, tokenExpiresAt, tokenKind, TOKEN_TTL_MS } from "../tokens.ts";
+import { parseA2AKeyScope } from "../a2a/keys.ts";
 
 /** Cap on non-revoked tokens per owner (design decision, E4.1b). */
 const MAX_ACTIVE_TOKENS = 10;
@@ -17,9 +18,11 @@ const MAX_ACTIVE_TOKENS = 10;
  * out if the stored dates don't parse (such a token already fails auth -- see isTokenActive). */
 export function publicToken(token: ApiToken): Omit<ApiToken, "hash"> {
   const { hash: _hash, ...rest } = token;
+  // E9 §5.2: every token shows its kind; one minted before the field is a Dongle.
+  const withKind = { ...rest, kind: tokenKind(token) ?? token.kind };
   const expires = tokenExpiresAt(token);
-  if (!Number.isFinite(expires)) return rest;
-  return { ...rest, expiresAt: new Date(expires).toISOString() };
+  if (!Number.isFinite(expires)) return withKind;
+  return { ...withKind, expiresAt: new Date(expires).toISOString() };
 }
 
 export async function registerTokenRoutes(app: FastifyInstance, ctx: RouteContext): Promise<void> {
@@ -37,9 +40,22 @@ export async function registerTokenRoutes(app: FastifyInstance, ctx: RouteContex
     if (email.toLowerCase().endsWith(".gserviceaccount.com")) {
       return reply.code(403).send({ error: "service accounts can't create personal tokens" });
     }
-    const body = req.body as { name?: string };
-    const name = body?.name?.trim();
+    const body = req.body as { name?: string; kind?: unknown; a2a?: unknown };
+    const name = typeof body?.name === "string" ? body.name.trim() : "";
     if (!name) return reply.code(400).send({ error: "name is required" });
+    const kind = body.kind ?? "dongle";
+    if (kind !== "dongle" && kind !== "a2a") return reply.code(400).send({ error: 'kind must be "dongle" or "a2a"' });
+    let a2a: ApiToken["a2a"];
+    if (kind === "a2a") {
+      // E9 §5.2: the owner makes A2A keys in the web UI. A Dongle (an agent on a laptop) can't
+      // mint one: that would hand a remote caller tasks in the owner's name.
+      if (req.identity?.viaToken) return reply.code(403).send({ error: "A2A keys are created in the web UI, not with a token" });
+      const scope = await parseA2AKeyScope(ctx.store, body.a2a);
+      if ("error" in scope) return reply.code(400).send({ error: scope.error });
+      a2a = scope;
+    } else if (body.a2a !== undefined) {
+      return reply.code(400).send({ error: "a2a is only for kind \"a2a\"" });
+    }
 
     // Count-then-insert with no transaction: concurrent creates by the same owner can overshoot the
     // cap (docs/reports/security-review-api-tokens.md #1). The cap is hygiene, not a security
@@ -60,6 +76,8 @@ export async function registerTokenRoutes(app: FastifyInstance, ctx: RouteContex
       hash: hashToken(plaintext),
       createdAt: now,
       expiresAt: new Date(createdMs + TOKEN_TTL_MS).toISOString(),
+      kind,
+      ...(a2a ? { a2a } : {}),
     };
     await ctx.store.tokens.insert(record);
     // The only point the plaintext ever exists outside the client's own memory -- never logged,

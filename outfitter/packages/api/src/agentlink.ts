@@ -28,7 +28,7 @@ import { validateSnapshotUrl, snapshotHostAllowlist } from "./snapshot-url.ts";
 import { MAIL_LEASE_MS, MAIL_MAX_ATTEMPTS, type MailService } from "./mail.ts";
 import { isBrowserActionKind, parseBrowserAction } from "./browser-action.ts";
 import { GithubBroker } from "./github-broker.ts";
-import { branchAllowed, branchPrefixOf } from "./branch-policy.ts";
+import { branchAllowed, branchPrefixForSession } from "./branch-policy.ts";
 import { entryForWire } from "./entry-wire.ts";
 import { sessionJsonl } from "./session-jsonl.ts";
 import {
@@ -1264,7 +1264,7 @@ export class AgentLink {
               cloneUrl: cloneUrlFor(session.repo),
               branch: session.branch ?? `outfitter/${session.id}`,
               baseBranch: session.baseBranch ?? "main",
-              branchPrefix: branchPrefixOf(guru.branchPrefix),
+              branchPrefix: branchPrefixForSession(session, guru.branchPrefix),
               // Deviation from protocol.md (createBranch isn't specced further): true only for a
               // session's first run, inferred from having no checkpoint yet.
               createBranch: !session.checkpoint,
@@ -1635,7 +1635,7 @@ export class AgentLink {
         const guru = session ? await this.store.gurus.findById(session.guruId) : null;
         const reported = frame.branch !== undefined ? String(frame.branch) : undefined;
         const current = session?.branch;
-        const prefix = branchPrefixOf(guru?.branchPrefix);
+        const prefix = branchPrefixForSession(session, guru?.branchPrefix);
         const pushed = frame.pushed === true;
         // A pushed:false frame must not walk session.branch back to an earlier allowed name.
         const takeBranch =

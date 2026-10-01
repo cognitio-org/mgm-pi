@@ -677,6 +677,43 @@ removed from `outfitter-store.ts` entirely, not left in as a fallback.
 token for that client ID *is* accepted, in `Proxy-Authorization`. The live-test identity uses it;
 see `deploy/README.md` "Live-test identity". Laptop clients still use personal tokens on link.)
 
+## A2A server (E9 §5, PR5)
+
+`docs/specs/atlas-agent-engine-and-a2a.md` §5 is the design; this is what the link role (and
+"all") serves today. The web role serves none of it.
+
+- **A2A keys** are `ApiToken`s with `kind: "a2a"` and `a2a: {tapes, repos, maxConcurrent}`, made on
+  the Dongles page (`POST /api/me/tokens` with `kind: "a2a"`; a person only, never with a token).
+  Same format, hash, 90-day TTL and revocation as a Dongle. **Each kind works on its own routes
+  only** (`auth.ts`'s `verifyApiToken`): an A2A key gets 401 on `/api/*`, a Dongle gets 401 on
+  `/a2a`. A tape with admin tools, `agentEngine`, `memory: "auto"` or `mergeFromCloud` can't be on
+  a key, and is refused again at every task start.
+- **`GET /.well-known/agent-card.json`**: public, `Access-Control-Allow-Origin: *`, `Cache-Control`,
+  `ETag`/`Last-Modified` (304 on `If-None-Match`). One generic `coding` skill, never a tape name.
+  `capabilities.streaming` is false until PR6.
+- **`POST /a2a`** (and `/a2a/`): JSON-RPC 2.0, A2A v1.0 method names, `A2A-Version: 1.0` as a
+  header or query parameter (missing → -32009). `Authorization: Bearer <A2A key>`; a bad key is
+  HTTP 401, over 60 requests a minute per key HTTP 429, a body over 64 KB HTTP 413. A wrong
+  content type is -32005, bad JSON -32700.
+- **Methods:** `SendMessage`, `GetTask`, `ListTasks`, `CancelTask`, `GetExtendedAgentCard` (the
+  key's usable tapes as skills). Push-notification methods are -32003; `SendStreamingMessage` and
+  `SubscribeToTask` are -32004 until PR6.
+- **Tasks** live in `a2aTasks` (`store/types.ts`'s `A2ATask`), always looked up by key. A new task
+  creates a session as the key's owner (`session-create.ts`, the same path as `POST
+  /api/sessions`) with `origin: "a2a"`, `a2aTokenId`, name `A2A: <first line>` and branch
+  `outfitter/a2a-<task8>`, whatever the client sent; its runs may push only that branch
+  (`branch-policy.ts`'s `branchPrefixForSession`). The prompt is wrapped as untrusted input. The
+  tape and repo come from `message.metadata["https://kernal.one/a2a/ext/outfitter-task/v1"]`
+  (`{skill?, repo?, baseBranch?}`); outside the key's lists the task is `TASK_STATE_REJECTED` with
+  the reason as `status.message`. `contextId` is server-issued, never a session id.
+- **States** come from the session's run and the task's turn waiter: SUBMITTED until a run takes
+  the mail, WORKING while it works ("waiting for the owner" while a UI request or approval is
+  pending; those are never answered over A2A), COMPLETED on settle (with the final assistant text
+  as an artifact), FAILED when the turn ends otherwise, CANCELED by `CancelTask` (the run stopped
+  with reason `a2a`, unsent mail marked dead). The tick refreshes open tasks.
+- A repeated `messageId` from the same key returns the first task. `maxConcurrent` (default 2)
+  open tasks per key. A blocking `SendMessage` waits at most 25 s, then returns the task as it is.
+
 ## Admin ops (Sysop tools, #286)
 
 `POST /api/admin/ops`, on both origins, with a personal API token (dev mode also accepts the dev

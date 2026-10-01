@@ -123,6 +123,13 @@ export interface Config {
    * and, for a tagged release, its outfitter-v* tag. GET /api/version; empty in dev. */
   buildCommit: string;
   release: string;
+  /** A2A_BLOCKING_CAP_MS: how long a blocking A2A SendMessage (no returnImmediately) waits for a
+   * terminal or interrupted state before returning the task as it is (E9 §5.3, owner decision
+   * 2026-10-01: 25 s, under the TCK client's 30 s read timeout). Tests shorten it. */
+  a2aBlockingCapMs: number;
+  /** A2A_REQUESTS_PER_MINUTE: per A2A key, across instances (E9 §5.2, default 60). A local TCK run
+   * raises it; the TCK sends far more than a real client. */
+  a2aRequestsPerMinute: number;
   /** NGROK_GOOGLE_OAUTH (Secret Manager outfitter-ngrok-google-oauth): our Google OAuth client for
    * ngrok's sign-in on secure previews, JSON {client_id, client_secret}. Absent or unparseable:
    * ngrok's managed Google app is used instead. */
@@ -498,6 +505,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     },
     buildCommit: (env.OUTFITTER_BUILD_COMMIT ?? "").trim(),
     release: (env.OUTFITTER_RELEASE ?? "").trim(),
+    a2aBlockingCapMs: Math.max(0, Math.min(25_000, envInt("A2A_BLOCKING_CAP_MS", 25_000, env))),
+    a2aRequestsPerMinute: Math.max(1, envInt("A2A_REQUESTS_PER_MINUTE", 60, env)),
     ...(envGoogleOauth(env.NGROK_GOOGLE_OAUTH) ? { ngrokGoogleOauth: envGoogleOauth(env.NGROK_GOOGLE_OAUTH) } : {}),
     litellmBaseUrl: env.LITELLM_BASE_URL ?? "https://router.kernal.one/v1",
     litellmAdminKey: env.LITELLM_ADMIN_KEY ?? "",

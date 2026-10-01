@@ -47,3 +47,18 @@ export function branchAllowed(branch: string, sessionBranch: string, prefix: str
   if (!prefix) return false;
   return branch.startsWith(prefix);
 }
+
+/**
+ * E9 §5.3/§8: the prefix a session's runs may push under. An A2A task's session may push only its
+ * own `outfitter/a2a-<task8>` branch, whatever its tape's prefix: `branchAllowed` always allows the
+ * session branch, and the prefix becomes that branch plus `/`, which git can't hold alongside the
+ * branch itself and which no other session's branch starts with. Every other session keeps its
+ * tape's prefix (branchPrefixOf).
+ */
+export function branchPrefixForSession(
+  session: { origin?: string; branch?: string } | null | undefined,
+  guruPrefix: unknown,
+): string {
+  if (session?.origin === "a2a" && session.branch) return `${session.branch}/`;
+  return branchPrefixOf(guruPrefix);
+}

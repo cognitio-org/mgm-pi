@@ -1,15 +1,15 @@
 {
   "lead": "a person in their mid-50s with short grey hair, wearing a powder-blue polo shirt",
-  "suffix": "1990 corporate promotional video shot on Betacam and dubbed to VHS, soft and slightly blurry, low saturation, lifted blacks, warm skin, mild tape grain, mustard-yellow walls, powder-blue and beige tones, generic unbranded beige desktop computer with separate CRT monitor, no logos, no brand names, no readable text. Keep all important action inside the central 4:3 area of the frame.",
+  "suffix": "1990 corporate promotional video shot on Betacam and dubbed to VHS, soft and slightly blurry, low saturation, lifted blacks, warm skin, mild tape grain, no logos, no brand names, no readable text. Keep all important action inside the central 4:3 area of the frame.",
   "negative": "logos, brand names, trademarks, apple logo, readable text, captions, watermark, children, modern devices, smartphones, flat-screen monitors",
   "stills": [
     {
       "id": "lead-lab",
-      "prompt": "Photograph, 1990 computer lab with mustard-yellow walls and a few generic posters. {lead} sits at a beige desktop computer with a separate CRT monitor, seen three-quarter from behind the monitor, whose edge fills the right fifth of the frame, soft and out of focus. Earnest, calm expression, looking at the screen. Another person works at a second beige computer in the soft background. Soft warm light. {suffix}"
+      "prompt": "Photograph. {set} {lead} sits at one of the computers, seen three-quarter from behind its monitor, whose edge fills the right fifth of the frame, soft and out of focus. Earnest, calm expression, looking at the screen. Another person works at a second computer in the soft background. Soft warm light. {suffix}"
     },
     {
       "id": "lead-glow",
-      "prompt": "Photograph against a plain pale blue-grey studio backdrop: the top of the head and forehead of the same person as the reference image at the bottom of the frame; above the head, inside a soft white elliptical glow, a ring of twelve small beige desktop computers float, their screens showing green text. {suffix}",
+      "prompt": "Photograph against a plain pale blue-grey studio backdrop: the top of the head and forehead of the same person as the reference image at the bottom of the frame; above the head, inside a soft white elliptical glow, a ring of twelve small generic beige desktop computers with CRT screens float, their screens showing green text. {suffix}",
       "refs": [
         "lead-lab"
       ]
@@ -40,12 +40,12 @@
       "id": "05-lab",
       "seconds": 8,
       "start": "lead-lab",
-      "prompt": "The person at the beige computer reads the screen and nods slowly, earnest and calm. The second person keeps working in the background. Locked-off camera, no cuts. {suffix}"
+      "prompt": "The person at the beige computer reads the screen and nods slowly, earnest and calm. The second person keeps working in the background. Locked-off camera, no cuts. {set} {suffix}"
     },
     {
       "id": "07-mouse",
       "seconds": 4,
-      "prompt": "Top-down insert shot: an adult hand clicks a beige one-button mouse on a light-wood desk; the corner of a beige keyboard and its coiled cable at frame left. Locked-off camera. {suffix}"
+      "prompt": "Top-down insert shot: an adult hand clicks a beige one-button mouse on a light-wood desk; the corner of a beige keyboard and its coiled cable at frame left. Locked-off camera. Beige and light-wood tones. {suffix}"
     },
     {
       "id": "08-glow",
@@ -58,7 +58,7 @@
       "seconds": 8,
       "start": "lead-lab",
       "takes": 4,
-      "prompt": "The person at the beige computer reads the screen, nods slowly with an earnest deadpan expression, then turns their head toward the camera and gives one firm thumbs-up, holding it completely still for a full second. Locked-off camera, no cuts. {suffix}"
+      "prompt": "The person at the beige computer reads the screen, nods slowly with an earnest deadpan expression, then turns their head toward the camera and gives one firm thumbs-up, holding it completely still for a full second. Locked-off camera, no cuts. {set} {suffix}"
     }
   ],
   "voices": {
@@ -130,5 +130,6 @@
       "who": "MGM",
       "text": "Dear Sysop. Outfitter rules the fleet. Your Outfitter friend, M G M."
     }
-  ]
+  ],
+  "set": "The room: a 1990 computer lab with mustard-yellow walls, powder-blue and beige tones, generic unbranded beige desktop computers with separate CRT monitors."
 }

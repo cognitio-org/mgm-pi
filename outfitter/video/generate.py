@@ -38,7 +38,8 @@ TTS_MODELS = ["gemini-2.5-pro-tts", "gemini-3.1-flash-tts-preview", "gemini-2.5-
 
 
 def fill(text, spec):
-    return text.replace("{lead}", spec["lead"]).replace("{suffix}", spec["suffix"])
+    out = text.replace("{lead}", spec["lead"]).replace("{set}", spec.get("set", "")).replace("{suffix}", spec["suffix"])
+    return out[:1].upper() + out[1:]
 
 
 def selected(items, only):

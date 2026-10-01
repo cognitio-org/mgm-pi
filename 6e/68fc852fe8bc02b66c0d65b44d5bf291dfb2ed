@@ -1,0 +1,237 @@
+outfitter/packages/api/src/store/types.ts
+  s_1d3bdd6f362f9b::t_fb58a84cd60dc3 1028-1058,1062-1078,1083-1085,1088-1089,1091-1095
+  s_1d3bdd6f362f9b::t_404341b29330ff 44-47
+  s_1d3bdd6f362f9b::t_f9bcc2bf863cf6 1114
+  s_1d3bdd6f362f9b::t_89aa803f26cf85 475-482,489
+  s_1d3bdd6f362f9b::t_609fc3e70c7749 490
+  s_1d3bdd6f362f9b::t_8fa4a0abb4d98e 1079-1082
+  s_1d3bdd6f362f9b::t_548746c524af46 1059-1061
+  s_1d3bdd6f362f9b::t_5cdc807d36bf3e 48-53
+  s_1d3bdd6f362f9b::t_50870e79c56ad3 1086-1087,1090
+  s_1d3bdd6f362f9b::t_b91b106f6dfcf3 54-59
+outfitter/packages/api/src/store/memory.ts
+  s_1d3bdd6f362f9b::t_9dc75d895fe198 992-1003,1005-1006,1009,1012-1019,1022-1026,1028-1041,1043-1051
+  s_1d3bdd6f362f9b::t_75ae858d4c7498 1070
+  s_1d3bdd6f362f9b::t_7d3f3e1592653a 54-56
+  s_1d3bdd6f362f9b::t_3ecff0132a9888 1020-1021
+  s_1d3bdd6f362f9b::t_9abbef7f02243a 1042
+  s_1d3bdd6f362f9b::t_f4763a72396b08 1027
+  s_1d3bdd6f362f9b::t_8b66faa9870bd3 1004,1007-1008,1010-1011
+outfitter/EPIC.md
+  s_1d3bdd6f362f9b::t_9d1200fbc25dd9 527-528
+outfitter/packages/api/test/stop.test.ts
+  s_1d3bdd6f362f9b::t_b904d49d7dbe52 326
+outfitter/packages/api/src/store/mongo.ts
+  s_1d3bdd6f362f9b::t_a232f38c34bfb4 1412
+  s_1d3bdd6f362f9b::t_8b74917be276a9 1444,1446
+  s_1d3bdd6f362f9b::t_0c09cd9b444e44 55-57
+  s_1d3bdd6f362f9b::t_f0038085df07d9 1335-1336
+  s_1d3bdd6f362f9b::t_24b04b1b8d2dea 1289-1314,1326-1334,1337-1347,1352-1360,1362-1369
+  s_1d3bdd6f362f9b::t_26ec01229d33d5 1388
+  s_1d3bdd6f362f9b::t_e7ce3cbc57b6c8 1445
+  s_1d3bdd6f362f9b::t_b94553e26c194f 1315-1325
+  s_1d3bdd6f362f9b::t_df02782463f40e 1348-1351
+  s_1d3bdd6f362f9b::t_7324f2f4afd18d 1361
+outfitter/packages/api/src/routes/sessions.ts
+  s_1d3bdd6f362f9b::t_da29ac05a1961f 569
+outfitter/packages/agentd/src/pi.ts
+  s_1d3bdd6f362f9b::t_076e821223747f 353-354,375,386-390,392-400
+  s_1d3bdd6f362f9b::t_c50777437c7a62 401-403,405-424,426,429
+  s_1d3bdd6f362f9b::t_a94a74465c0a15 372-373,376,378
+outfitter/packages/api/src/agentlink.ts
+  s_1d3bdd6f362f9b::t_4e4b3caa58a04e 374-375
+  s_1d3bdd6f362f9b::t_c94d076f9da134 12
+  s_1d3bdd6f362f9b::t_f18e237cced660 1848-1866
+  s_1d3bdd6f362f9b::t_c63a399fcc63fb 1402-1406
+  s_1d3bdd6f362f9b::t_282cd3d0ad6211 1836-1837
+  s_1d3bdd6f362f9b::t_9461c4bda33c6f 1594
+  s_1d3bdd6f362f9b::t_1905c299b1b5df 250-254,1286-1287
+  s_1d3bdd6f362f9b::t_d8ee996cd8b7a3 9,380-381,421-424,1559-1560
+outfitter/packages/api/test/turns.test.ts
+  s_1d3bdd6f362f9b::t_7c5dccf7c17cda 219
+  s_1d3bdd6f362f9b::t_813a02b68ad528 1-10,12-91,112,113,134-192,194-196,198-218,220-229,231-238,240-244,246-259,261,263-295,306-415,417-419,421,423-424,426-432
+  s_1d3bdd6f362f9b::t_854c92bdfa6a32 230,422
+  s_1d3bdd6f362f9b::t_29d379ede21c56 109-110,245
+  s_1d3bdd6f362f9b::t_924ea9ff1157b3 193,197,262,425
+  s_1d3bdd6f362f9b::t_adf06e89f05d4a 11,92-108,111,114-133,239,260,296-305,416,420
+outfitter/packages/api/src/turns.ts
+  s_1d3bdd6f362f9b::t_106adcf1e98372 67-70,72-77
+  s_1d3bdd6f362f9b::t_07a103bb8ab0be 36
+  s_1d3bdd6f362f9b::t_cb19a4d88f179f 1-18,20-26,28,33-35,40-47,48-66,71,78-96,99-129,133-134,140-143,145-166,168-180,183,185-187,189-192,194-207,209-215,227-230,237-238,240,244-269
+  s_1d3bdd6f362f9b::t_6036b2fb88ddbb 221-226
+  s_1d3bdd6f362f9b::t_6639a59c3e27c5 19,97-98,181-182,184,188,235-236
+  s_1d3bdd6f362f9b::t_d9185a9ab904f2 27,29-32,37-39,130-132,135-139,144,193,208,216-220,231-234,239,241-243
+  s_1d3bdd6f362f9b::t_924ea9ff1157b3 167
+outfitter/packages/agentd/src/protocol.ts
+  s_1d3bdd6f362f9b::t_2142a5d60bed50 107-108
+  s_1d3bdd6f362f9b::t_65461429693623 323-341
+outfitter/packages/agentd/test/run.test.ts
+  s_1d3bdd6f362f9b::t_a6847c44781f64 1811-1916,1928-1935
+  s_1d3bdd6f362f9b::t_89c5bee81abf42 1917-1927
+outfitter/packages/agentd/test/pi.test.ts
+  s_1d3bdd6f362f9b::t_42e7b00e412ab9 67-81
+  s_1d3bdd6f362f9b::t_0e78c94c68007e 4
+outfitter/packages/api/src/server.ts
+  s_1d3bdd6f362f9b::t_da29ac05a1961f 9,81,119-121,218,264
+  s_1d3bdd6f362f9b::t_c241006cb08b51 30,59-61,156-159
+  s_1d3bdd6f362f9b::t_bfa7d4770a4272 31-34
+  s_1d3bdd6f362f9b::t_d8ee996cd8b7a3 160-166
+outfitter/packages/api/src/routes/hooks.ts
+  s_1d3bdd6f362f9b::t_da29ac05a1961f 113-116
+outfitter/docs/protocol.md
+  s_1d3bdd6f362f9b::t_0d7d22880074a9 179,426-443,449-454,457-459
+  s_1d3bdd6f362f9b::t_991fd3f03f1f31 460
+  s_1d3bdd6f362f9b::t_0d5b5278725393 199,264-274,288,291,306-310,677-678,680-681
+  s_1d3bdd6f362f9b::t_b8aacd7770650c 444-448,455-456
+  s_1d3bdd6f362f9b::t_fa9e15cac087c1 275-277,292-295,311,679
+  s_1d3bdd6f362f9b::t_34a3267ececab8 278-286
+outfitter/packages/api/src/routes/context.ts
+  s_1d3bdd6f362f9b::t_da29ac05a1961f 2,46-47
+outfitter/packages/agentd/src/run.ts
+  s_1d3bdd6f362f9b::t_0dcd1b6b974de7 365-371
+  s_1d3bdd6f362f9b::t_20d95fa603909f 1113-1116
+  s_1d3bdd6f362f9b::t_9de0d5b2a810c9 1117-1143,1148-1149,1151,1153-1156
+  s_1d3bdd6f362f9b::t_0b792fdef7a1ec 1150,1152
+  s_1d3bdd6f362f9b::t_050cdd4032205e 912
+  s_1d3bdd6f362f9b::t_dd4a83262de384 58
+  s_1d3bdd6f362f9b::t_65461429693623 849-851,853-859
+  s_1d3bdd6f362f9b::t_5608b4e9bef272 1144-1147
+  s_1d3bdd6f362f9b::t_89fd9b6f812892 8-10,18,150-155,698,861-866
+  s_1d3bdd6f362f9b::t_4248d12f61cf79 867,989-1003
+outfitter/deploy/service.sh
+  s_1d3bdd6f362f9b::t_9836af16781d2c 83-93,249-255
+outfitter/deploy/README.md
+  s_1d3bdd6f362f9b::t_d47edeac560ba6 150-151
+outfitter/packages/api/src/admin/ops.ts
+  s_1d3bdd6f362f9b::t_45c1736ac226c3 576-581
+  s_1d3bdd6f362f9b::t_1ac3f58fde7b0e 9,12-17,22,31,34,39-42,53-55,64-66,78,80-85,114-117,135-136,149-150,278,293,303,326,335,338,348,355,367,380,393,414,429,446,469,491,504,534-536,540-550,559-575,582-587,592,618-621
+  s_1d3bdd6f362f9b::t_712173ca627511 10-11
+  s_1d3bdd6f362f9b::t_af3f2582f9a5af 28,86-88,264-269,350,537-539,551-558,588-591,626,649-653,656,660
+outfitter/packages/api/src/agentengine/agents.ts
+  s_1d3bdd6f362f9b::t_f93c80688255dd 1-56,60-61,64-93
+  s_1d3bdd6f362f9b::t_adc801e2750bee 57-59,62-63
+outfitter/packages/api/src/gurus-service.ts
+  s_1d3bdd6f362f9b::t_2f0ea1efab1b3e 7,86-107,149-150,155,208-210,239-255,288,318
+  s_1d3bdd6f362f9b::t_83a25c03f72d14 271-278
+outfitter/packages/api/test/tape-capabilities.test.ts
+  s_1d3bdd6f362f9b::t_baf6ee5b1daf5a 1-33,35-85,93,95-159,161-162,166-206,208-221,242-249,252,254-263,265-291,293,313-314
+  s_1d3bdd6f362f9b::t_5b02026c03c644 34,86-92,94,207,222-230,233-237,240-241,264,292,294-312
+  s_1d3bdd6f362f9b::t_ecb323d4f13161 231-232,250-251,253
+  s_1d3bdd6f362f9b::t_30ec8de70a85d0 160,163-165
+  s_1d3bdd6f362f9b::t_f3fe30cc70d720 238-239
+outfitter/packages/api/test/session-search.test.ts
+  s_1d3bdd6f362f9b::t_43ba58e4372fc6 255
+outfitter/packages/api/package.json
+  s_1d3bdd6f362f9b::t_5c97a2fd51ec3d 18
+outfitter/packages/api/src/agentengine/memory.ts
+  s_1d3bdd6f362f9b::t_86df6c0af70e9d 1-17,21-82,86-101
+  s_1d3bdd6f362f9b::t_adc801e2750bee 18-20,83-85
+outfitter/packages/api/src/admin/drive.ts
+  s_1d3bdd6f362f9b::t_efd124b6a55f6d 11-13
+  s_1d3bdd6f362f9b::t_d07751162497e5 6-8,10,19,21-31,38-39,68-69,71-77,100,106-109,121,145,148,175
+outfitter/packages/api/src/agentengine/client.ts
+  s_1d3bdd6f362f9b::t_a30f06f5cc98db 1-17,19-246,256-260,262-264,287-339
+  s_1d3bdd6f362f9b::t_27661f2d9e027e 18
+  s_1d3bdd6f362f9b::t_adc801e2750bee 247-255,261,265-286
+outfitter/packages/api/src/agentengine/index.ts
+  s_1d3bdd6f362f9b::t_4bab6e53d89611 1-30
+outfitter/packages/api/test/fake-agent-engine.ts
+  s_1d3bdd6f362f9b::t_d875b441f28d0b 3-9,12-14,17-34,39-68,73-156,158-162,172-179,193-221,234-236
+  s_1d3bdd6f362f9b::t_f8cc5b30729c7f 1-2
+  s_1d3bdd6f362f9b::t_6e605e2d7e6d92 3-9,12-34,39-68,73-156,158-162,172-179,193-221,234-236
+  s_1d3bdd6f362f9b::t_dba976fa86970b 10-11,35-38,69-72,163-171,180-192,222-231
+  s_1d3bdd6f362f9b::t_4cd13c03d5bcdd 157
+  s_1d3bdd6f362f9b::t_94892cc67cda95 232-233
+outfitter/packages/api/test/agentengine.test.ts
+  s_1d3bdd6f362f9b::t_8e4dec5ee9ac6e 1-7,9-188,209-287,292-305,310-365,367-390
+  s_1d3bdd6f362f9b::t_f9416a5d3f393a 366
+  s_1d3bdd6f362f9b::t_5b02026c03c644 189-208,288-291,306-309
+  s_1d3bdd6f362f9b::t_6e605e2d7e6d92 8
+outfitter/deploy/config.env
+  s_1d3bdd6f362f9b::t_9836af16781d2c 69-84
+kernal/.pi/extensions/outfitter-admin/index.ts
+  s_1d3bdd6f362f9b::t_8c43699a67b8e3 15,35-39
+kernal/.pi/extensions/outfitter-admin/transport.ts
+  s_1d3bdd6f362f9b::t_251970caa5be74 36-37,209-223
+kernal/tests/outfitter-admin.test.ts
+  s_1d3bdd6f362f9b::t_cf771631270767 13,49-69
+outfitter/package-lock.json
+  s_1d3bdd6f362f9b::t_ff8c843be52a92 628-654,7005-7013,7049
+outfitter/packages/agentd/test/admin-socket.test.ts
+  s_1d3bdd6f362f9b::t_df21a1076da19e 9,169,173,198,233,236,241-268,285-291
+  s_1d3bdd6f362f9b::t_0194562106f30e 269-284
+  s_1d3bdd6f362f9b::t_927089461dbaff 4
+  s_1d3bdd6f362f9b::t_86227e0ae41965 312-370
+outfitter/packages/api/src/config.ts
+  s_1d3bdd6f362f9b::t_6a0eecf2653196 192-193,196-229,320-392,520
+outfitter/packages/api/src/main.ts
+  s_1d3bdd6f362f9b::t_522adeb3ebf46c 1,21-23
+outfitter/packages/web/src/api/client.ts
+  s_1d3bdd6f362f9b::t_77f524413b495f 148-153
+outfitter/packages/web/src/components/GuruForm.tsx
+  s_1d3bdd6f362f9b::t_3ee82bcc5b6735 62-63,101-102,206-227
+outfitter/packages/web/test/guru-form.test.tsx
+  s_1d3bdd6f362f9b::t_6a5ffa61c3c97f 86-128
+outfitter/packages/api/src/agentengine/usage.ts
+  s_1d3bdd6f362f9b::t_99c6f8a625cbfc 1-58
+kernal/.pi/extensions/outfitter-agentengine/memory.ts
+  s_1d3bdd6f362f9b::t_9d06b698e9e6b3 21-23,32-33
+  s_1d3bdd6f362f9b::t_372c450cc8a7dc 1-20,24-31,34-84
+outfitter/image/Dockerfile
+  s_1d3bdd6f362f9b::t_4248d12f61cf79 244,319
+kernal/tests/outfitter-memory.test.ts
+  s_1d3bdd6f362f9b::t_989e1d6124d2fe 1-98
+outfitter/packages/api/test/memory-ops.test.ts
+  s_1d3bdd6f362f9b::t_8d5063ed4b38c8 8-9,416-444
+  s_1d3bdd6f362f9b::t_d8219e10eb0823 1-7,10-62,64-131,134-378,396,400-415,445-446
+  s_1d3bdd6f362f9b::t_45eefddec46601 379-395,397-399
+  s_1d3bdd6f362f9b::t_11944d11b9d259 133
+  s_1d3bdd6f362f9b::t_1dccbe0aa19ad1 63,132
+outfitter/packages/api/src/admin/memory-ops.ts
+  s_1d3bdd6f362f9b::t_bae11c3180c370 1-20,23-129,131-137,141-253,255-278,280-285
+  s_1d3bdd6f362f9b::t_4cd13c03d5bcdd 138-140
+  s_1d3bdd6f362f9b::t_d1281d3e56309c 279
+  s_1d3bdd6f362f9b::t_d8ee996cd8b7a3 254
+  s_1d3bdd6f362f9b::t_1dccbe0aa19ad1 21,130
+  s_1d3bdd6f362f9b::t_99c6f8a625cbfc 22
+outfitter/packages/agentd/test/outfitter-memory.test.ts
+  s_1d3bdd6f362f9b::t_0a70674af8cce1 1-146
+outfitter/packages/api/test/helpers.ts
+  s_1d3bdd6f362f9b::t_3e3c3829c236f2 55-56,93
+  s_1d3bdd6f362f9b::t_8d5063ed4b38c8 19
+outfitter/packages/api/src/agentengine/recorder.ts
+  s_1d3bdd6f362f9b::t_99c6f8a625cbfc 17
+  s_1d3bdd6f362f9b::t_ef07ad20545dc8 1-16,18-173
+outfitter/packages/agentd/src/main.ts
+  s_1d3bdd6f362f9b::t_4248d12f61cf79 250
+kernal/.pi/extensions/outfitter-agentengine/index.ts
+  s_1d3bdd6f362f9b::t_24e586712fe85c 1-25
+outfitter/packages/api/src/agentengine/identity.ts
+  s_1d3bdd6f362f9b::t_95f0a096a346af 1-87
+outfitter/packages/agentd/pi-extension/outfitter-memory.ts
+  s_1d3bdd6f362f9b::t_53ebd261825098 1-118
+outfitter/packages/agentd/src/guru.ts
+  s_1d3bdd6f362f9b::t_b4edba0ab79484 141-142
+  s_1d3bdd6f362f9b::t_576c00e5ee72d2 38-40,86-95,131,143-144
+outfitter/deploy/agent-engine.md
+  s_1d3bdd6f362f9b::t_e9b01af038a397 1-11,14-81,83-127
+  s_1d3bdd6f362f9b::t_059d68ab01b494 12-13,82
+outfitter/deploy/agent-engine/memory/project-config.yaml
+  s_1d3bdd6f362f9b::t_059d68ab01b494 1-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "6e68fc852fe8bc02b66c0d65b44d5bf291dfb2ed",
+  "prompts": {},
+  "sessions": {
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

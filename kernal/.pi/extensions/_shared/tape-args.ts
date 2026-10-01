@@ -4,10 +4,10 @@
  * a tape means the same thing in both places (outfitter/docs/specs/atlas-agent-engine-and-a2a.md
  * §7.1, #354).
  *
- * outfitter/packages/agentd/src/tape-args.ts is a byte-for-byte copy of this file: agentd builds on
- * its own (image/Dockerfile's agentd-builder stage) and cannot import from kernal.
- * agentd's test/tape-args.test.ts fails if the two differ. Change both together. No imports, so the
- * one text compiles under agentd's tsc and runs under node's type stripping in Kernal.
+ * This file is the only source. agentd compiles a copy of it as its src/tape-args.ts (git-ignored),
+ * made at build time: package.json's prebuild, and outfitter/image/Dockerfile's agentd-builder
+ * stage. No imports, so the one text compiles under agentd's tsc and runs under node's type
+ * stripping in Kernal.
  *
  * Only the pure part lives here. Each side adds its own frame: agentd its fixed `--mode rpc -a
  * --session` prefix, its `--extension` files and the HTML preview paragraph; Kernal its package

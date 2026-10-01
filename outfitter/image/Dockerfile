@@ -141,6 +141,9 @@ COPY outfitter/packages/agentd/package.json ./
 RUN npm install
 COPY outfitter/packages/agentd/tsconfig.json ./
 COPY outfitter/packages/agentd/src/ ./src/
+# The tape-to-pi translation agentd shares with laptop Kernal (#354): Kernal's file is the source, and
+# agentd's src/tape-args.ts is this copy (git-ignored; package.json's prebuild makes it outside the image).
+COPY kernal/.pi/extensions/_shared/tape-args.ts ./src/tape-args.ts
 # E2.11 (docs/reports/cost-and-logs.md "Follow-up"): pi-extension/outfitter-spend.ts is loaded by
 # pi itself via `-e <path>` (renderGuru, guru.ts) to relay LiteLLM spend headers back to agentd as
 # `spend` frames; tsconfig.json's `include` already covers pi-extension/**/*.ts, so building it here

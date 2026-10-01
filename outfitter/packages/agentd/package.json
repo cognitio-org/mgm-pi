@@ -8,6 +8,7 @@
     "agentd": "dist/src/main.js"
   },
   "scripts": {
+    "prebuild": "cp ../../../kernal/.pi/extensions/_shared/tape-args.ts src/",
     "build": "tsc -p tsconfig.json",
     "postbuild": "chmod +x dist/test/fake-pi.js",
     "pretest": "npm run build",

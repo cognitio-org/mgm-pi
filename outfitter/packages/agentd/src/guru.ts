@@ -50,15 +50,6 @@ export interface RenderOptions {
   appendSystemPromptFile?: string;
 }
 
-/** guru.env keys that would let a guru author plant persistent code-exec or credential leakage into
- * every future run of a guru other people also use (finding #6, docs/reports/security-review-pr1.md;
- * finding #1, docs/reports/security-review-pr15.md). The list and the check live in tape-args.ts,
- * shared with laptop Kernal (#354). The API's POST/PUT /api/gurus routes reject these keys outright
- * (belt and suspenders); this is agentd's own last line of defense in case a guru predating that
- * check, or written directly into the store, still has one set. run.ts also pins LITELLM_BASE_URL
- * itself in secretEnv, spread after this rendered env, so even a future denylist gap here can't
- * redirect the outbound call. (tapeEnv, in renderGuru, applies it.) */
-
 /** pi-memory's tools, `agentEngineMemoryOn` and `renderModelArg` (bug 5a: `off` renders `:off`) are
  * in tape-args.ts, the translation shared with laptop Kernal (#354). */
 export { PI_MEMORY_TOOLS, agentEngineMemoryOn, renderModelArg } from "./tape-args.js";
@@ -90,7 +81,14 @@ export function renderGuru(guru: RunSpecGuru, opts: RenderOptions): RenderedPi {
   );
 
   const onLog = opts.onLog ?? (() => {});
-  const env = tapeEnv(guru.env, (key) => onLog(`renderGuru: dropping guru.env key "${key}" (not allowed -- see denylist in guru.ts)`));
+  // guru.env keys that would let a guru author plant persistent code execution or credential leakage
+  // into every future run of a guru other people also use (finding #6, docs/reports/security-review-
+  // pr1.md; finding #1, docs/reports/security-review-pr15.md) are dropped: the denylist is
+  // tape-args.ts's, shared with laptop Kernal (#354). The API's POST/PUT /api/gurus routes reject
+  // them outright; this is agentd's own last line of defense for a guru predating that check, or
+  // written directly into the store. run.ts also pins LITELLM_BASE_URL itself in secretEnv, spread
+  // after this rendered env, so even a gap in the list can't redirect the outbound call.
+  const env = tapeEnv(guru.env, (key) => onLog(`renderGuru: dropping guru.env key "${key}" (not allowed -- see the denylist in tape-args.ts)`));
   if (guru.packages && guru.packages.length > 0) {
     env.OUTFITTER_GURU_PACKAGES = guru.packages.join(",");
   }

@@ -458,11 +458,12 @@ Drives; recall plus the tool by default; recording laptop turns is opt-in; pi-me
 a one-time import.
 
 - **Way in:** `POST /api/admin/ops` with the Dongle, the route the Sysop tools use from a laptop.
-  - An op registered with `laptop: true` passes the capability gate for a token caller
-    (`capabilityRefusal`, `admin/ops.ts`). Only `memory.search`, `memory.context`, `memory.save` and
-    `memory.record` have it. `registerAdminOp` refuses `laptop` on anything but a memory read or
-    write, unless the op also has `webApproval` (its every yes is asked in the web app, below). So
-    `ae.*`, `approve`, `delete` and `operator` ops are laptop-callable only that way (#354).
+  - An op registered with a `laptop` access passes the capability gate for a token caller
+    (`capabilityRefusal`, `admin/ops.ts`): `"memory"` (`memory.search`, `memory.context`,
+    `memory.record`), `"web"` (`memory.save`; its every yes is asked in the web app, below),
+    and E9.10's `"tape"` and `"web-always"` (§7.1). `registerAdminOp` refuses `"memory"` on anything
+    but a memory read or write, so `approve`, `delete` and `operator` ops are laptop-callable only
+    as `"web"` (#354).
   - `ae.*` from a laptop needs a tape with Agent Engine on (E9.10, §7.1); admin ops are unchanged.
   - The route now hands the api's Agent Engine clients to the ops (`RouteContext.agentEngine`). When
     memory isn't configured, every call says `Agent Engine memory is not configured on this
@@ -496,7 +497,7 @@ a one-time import.
     owner, op, args digest and laptop session and repo. It marks the approval used in one
     conditional write, and only then does the save run. `confirmed` counts for nothing here.
     Protocol: docs/protocol.md "Laptop approvals".
-  - **Generic:** any op registered `laptop: true, webApproval: true` gets the same gate. #354's
+  - **Generic:** any op registered `laptop: "web"` gets the same gate. #354's
     laptop `ae.invoke` and `ae.resume` use it.
   - The A2A refusal doesn't apply (a Dongle is never an A2A session). Saves are audited as
     `via: "token"` with the approval id, and each decision as `approvals.approve` or
@@ -987,10 +988,10 @@ and resume on the owner's yes in the Outfitter web app; the image's `coder` ship
 - **One translation.** `kernal/.pi/extensions/_shared/tape-args.ts` is the pure part of
   `renderGuru`: the model flag (`renderModelArg`), `--system-prompt`, the append prompts, `--tools`,
   `--exclude-tools` (pi-memory's seven tools added when Agent Engine memory is on), and the env
-  denylist (`tapeEnv`). agentd keeps a byte-identical copy, `agentd/src/tape-args.ts` (agentd builds
-  alone and can't import from kernal); `agentd/test/tape-args.test.ts` fails if the two differ and
-  checks that the kernal module renders every test tape as `renderGuru` does. agentd's behaviour and
-  its tests are unchanged. Each side adds its own frame: agentd its `--mode rpc -a --session`
+  denylist (`tapeEnv`). It is the only source: agentd compiles a copy made at build time
+  (`agentd/src/tape-args.ts`, git-ignored; agentd's `prebuild`, and the image's `agentd-builder`
+  stage), and `agentd/test/tape-args.test.ts` checks that it renders every test tape as
+  `renderGuru` does. agentd's behaviour is unchanged. Each side adds its own frame: agentd its `--mode rpc -a --session`
   prefix, its `--extension` files and the HTML preview paragraph; Kernal the rest of this section.
 - **The data form.** `tapes.get {id, format: "json"}` and `tapes.list {format: "json"}` (`admin`
   ops, so a Dongle may call them) answer the tape as JSON: every field a Drive reads, the prompts
@@ -1084,11 +1085,11 @@ and resume on the owner's yes in the Outfitter web app; the image's `coder` ship
     `agentEngine` off on the tape cuts the laptop off at the next call. Without a tape: `<op> from a
     laptop needs a tape with Agent Engine on (kernal --tape <id>)`.
   - `ae.list`, `ae.get`, and `ae.close` (stops the Agent Engine sessions this laptop session opened)
-    are `laptopTape` ops: no yes, they act for nobody. `registerAdminOp` allows `laptopTape` only on
+    are `laptop: "tape"` ops: no yes, they act for nobody. `registerAdminOp` allows `"tape"` only on
     reads and `.close` writes of a tape capability.
-  - `ae.invoke` and `ae.resume` are `webApproval` ops: every laptop call waits for the owner's yes in
-    the web app's approval widget (§3.5), never `confirmed`. `ae.invoke` asks every time
-    (`laptopAsks`, which leaves a Drive's invoke as it was); its card names the agent and shows the
+  - `ae.invoke` and `ae.resume` are `laptop: "web"` ops: every laptop call waits for the owner's yes
+    in the web app's approval widget (§3.5), never `confirmed`. `ae.invoke` asks every time
+    (`"web-always"`, which leaves a Drive's invoke as it was); its card names the agent and shows the
     message, secrets masked; an unknown agent or an empty message is refused before anyone is
     asked. `ae.resume`'s card has a Drive card's words plus the execution and the decision as
     facts. Its target (the execution and the pause's fingerprint) is resolved on the ask and on the

@@ -6,6 +6,7 @@ import { SessionIndexer } from "./search/service.ts";
 import { DriveAdmin } from "./admin/drive.ts";
 import { createNgrokApi, type NgrokApi } from "./ngrok-api.ts";
 import { PreviewService } from "./previews.ts";
+import { TurnWaiters } from "./turns.ts";
 import { VoiceService } from "./voice.ts";
 import { VoiceUsage } from "./voice-usage.ts";
 import Fastify, { type FastifyInstance } from "fastify";
@@ -69,6 +70,7 @@ export interface App {
   providerStatus: ProviderStatusService;
   mail: MailService;
   previews: PreviewService;
+  turns: TurnWaiters;
   /** Stops the run reconciler interval, (role link/all) the down-queue poller, and (role web/all)
    * the provider status poller; call from tests and from main.ts on shutdown. */
   stopBackgroundTasks: () => void;
@@ -106,6 +108,9 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   const ngrok = opts.ngrok ?? (config.ngrokApiKey && config.previewDomain ? createNgrokApi(config.ngrokApiKey) : undefined);
   const previews = new PreviewService({ store, config, ngrok, log: (msg, detail) => fastify.log.warn(detail ?? {}, msg) });
   agentLink.setPreviews(previews);
+  // E9 §1: turn waiters (settle, run end, deadline) for A2A tasks and delegation.
+  const turns = new TurnWaiters(store, runs, (msg, err) => fastify.log.warn({ err }, msg));
+  agentLink.setTurnWaiters(turns);
   // #193: a run whose agent vanished without a bye gets its sandbox's exit reason read promptly.
   agentLink.onAgentLost((runId) => runs.noteAgentLost(runId));
 
@@ -192,6 +197,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     secretAdmin,
     mail,
     previews,
+    turns,
     providers,
     voice:
       opts.voice ??
@@ -237,7 +243,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     ssePoller.stop();
   };
 
-  return { fastify, runs, agentLink, sse, laptopProbe, providerStatus, mail, previews, stopBackgroundTasks };
+  return { fastify, runs, agentLink, sse, laptopProbe, providerStatus, mail, previews, turns, stopBackgroundTasks };
 }
 
 /** GET /api/sessions/:id/browser/captures/:captureId, or undefined. Query strings are ignored. */

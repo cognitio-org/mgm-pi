@@ -52,6 +52,9 @@ import type {
   SessionChunk,
   SessionChunksCollection,
   AdminAuditEntry,
+  TurnWaiter,
+  TurnWaiterFinish,
+  TurnWaitersCollection,
 } from "./types.ts";
 import type { VoicePrefs } from "../voice.ts";
 import { BROWSER_CAPTURES_PER_SESSION, entryInsertFields, type EntryInsertOptions } from "./types.ts";
@@ -1283,6 +1286,78 @@ class MongoPreviews implements PreviewsCollection {
   }
 }
 
+/** A finished turn waiter is kept a week (for the caller to read its outcome), then TTL-deleted. */
+const FINISHED_TURN_WAITER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+type TurnWaiterDoc = TurnWaiter & { _id: string; expireAt?: Date };
+
+function stripTurnWaiter(doc: TurnWaiterDoc | null): TurnWaiter | null {
+  if (!doc) return null;
+  const { _id, expireAt, ...rest } = doc;
+  return rest;
+}
+
+class MongoTurnWaiters implements TurnWaitersCollection {
+  private readonly col: MongoCollection<TurnWaiterDoc>;
+
+  constructor(col: MongoCollection<TurnWaiterDoc>) {
+    this.col = col;
+  }
+
+  async insert(waiter: TurnWaiter): Promise<void> {
+    await this.col.insertOne({ ...waiter, _id: waiter.id });
+  }
+
+  async findById(id: string): Promise<TurnWaiter | null> {
+    return stripTurnWaiter(await this.col.findOne({ _id: id }));
+  }
+
+  async markAcked(sessionId: string, mailId: string, runId: string, seq: number, nowIso: string): Promise<number> {
+    const result = await this.col.updateMany(
+      { sessionId, mailId, status: "open", ackRunId: { $exists: false } },
+      { $set: { ackRunId: runId, ackSeq: seq, ackedAt: nowIso, updatedAt: nowIso } },
+    );
+    return result.modifiedCount;
+  }
+
+  async finish(id: string, outcome: TurnWaiterFinish, nowIso: string): Promise<TurnWaiter | null> {
+    // expireAt is Mongo-only, as on mail: the TTL index needs a BSON date.
+    const doc = await this.col.findOneAndUpdate(
+      { _id: id, status: "open" },
+      {
+        $set: {
+          // Unset optional fields stay absent instead of being stored as null.
+          ...Object.fromEntries(Object.entries(outcome).filter(([, v]) => v !== undefined)),
+          finishedAt: nowIso,
+          updatedAt: nowIso,
+          expireAt: new Date(Date.parse(nowIso) + FINISHED_TURN_WAITER_TTL_MS),
+        },
+      },
+      { returnDocument: "after" },
+    );
+    return stripTurnWaiter(doc);
+  }
+
+  async extendDeadline(id: string, deadlineAt: string, nowIso: string): Promise<boolean> {
+    const result = await this.col.updateOne({ _id: id, status: "open" }, { $set: { deadlineAt, updatedAt: nowIso } });
+    return result.matchedCount === 1;
+  }
+
+  async listOpenForSession(sessionId: string): Promise<TurnWaiter[]> {
+    const rows = await this.col.find({ sessionId, status: "open" }).sort({ createdAt: 1 }).toArray();
+    return rows.map((d) => stripTurnWaiter(d)!);
+  }
+
+  async listOpen(limit: number): Promise<TurnWaiter[]> {
+    const rows = await this.col.find({ status: "open" }).sort({ createdAt: 1 }).limit(limit).toArray();
+    return rows.map((d) => stripTurnWaiter(d)!);
+  }
+
+  async deleteForSession(sessionId: string): Promise<number> {
+    return (await this.col.deleteMany({ sessionId })).deletedCount;
+  }
+}
+
 export class MongoStore implements Store {
   readonly sessions: SessionsCollection;
   readonly entries: EntriesCollection;
@@ -1301,6 +1376,7 @@ export class MongoStore implements Store {
   readonly adminAudit: AdminAuditCollection;
   readonly adminApprovals: AdminApprovalsCollection;
   readonly sessionChunks: SessionChunksCollection;
+  readonly turnWaiters: TurnWaitersCollection;
   private readonly client: MongoClient;
 
   private constructor(client: MongoClient, db: Db) {
@@ -1324,6 +1400,7 @@ export class MongoStore implements Store {
     this.adminAudit = new MongoAdminAudit(db.collection("adminAudit"));
     this.adminApprovals = new MongoAdminApprovals(db.collection("adminApprovals"));
     this.sessionChunks = new MongoSessionChunks(db.collection(CHUNKS_COLLECTION));
+    this.turnWaiters = new MongoTurnWaiters(db.collection<TurnWaiterDoc>("turnWaiters"));
   }
 
   /** `dbName` wins over the database in the URI; the stored URI has none, so the default keeps
@@ -1355,6 +1432,9 @@ export class MongoStore implements Store {
       db.collection("browserRequests").createIndex({ sessionId: 1, status: 1, createdAt: 1 }),
       db.collection("browserCaptures").createIndex({ sessionId: 1, requestId: 1 }, { unique: true }),
       db.collection("browserCaptures").createIndex({ sessionId: 1, createdAt: -1 }),
+      db.collection("turnWaiters").createIndex({ sessionId: 1, status: 1, createdAt: 1 }),
+      db.collection("turnWaiters").createIndex({ status: 1, createdAt: 1 }),
+      db.collection("turnWaiters").createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
     ]);
     // Non-fatal: a deployment that already holds two active runs for one session (the race this
     // index closes) would otherwise fail every boot. Until the duplicates are cleaned up,

@@ -1808,3 +1808,117 @@ test("RunController: #273 a Drive with the IDE tells Kernal (OUTFITTER_IDE) and 
     controller.dispose();
   }
 });
+
+/** E9 turn-settled signal: a tailer whose poll the test releases by hand, emitting `unread` when
+ * it does -- the final assistant entry still unread when pi's agent_settled arrives. */
+async function setupSettleRun(t: { after: (fn: () => void) => void }) {
+  const workspace = await mkdtemp(join(tmpdir(), "outfitter-run-test-"));
+  const link = new FakeLink();
+  let pi: ReturnType<typeof makeControllablePi> | undefined;
+  let onEntry: ((entry: Record<string, unknown>) => void) | undefined;
+  const unread: Record<string, unknown>[] = [];
+  const gates: Array<() => void> = [];
+  const controller = new RunController({
+    link,
+    gitOps: fakeGitOps(),
+    workspace,
+    piBin: "unused-in-test",
+    agentdVersion: "test",
+    piVersion: "test",
+    heartbeatIntervalMs: 60_000,
+    spawnPi: () => {
+      pi = makeControllablePi();
+      return pi;
+    },
+    importSession: async (_snapshotFile, _cwd, sessionId) => join(workspace, `${sessionId}.jsonl`),
+    writeSnapshotFile,
+    createTailer: (_file, emit) => {
+      onEntry = emit;
+      return {
+        start() {},
+        stop() {},
+        poll: () =>
+          new Promise<void>((resolve) => {
+            gates.push(() => {
+              for (const entry of unread.splice(0)) onEntry!(entry);
+              resolve();
+            });
+          }),
+      };
+    },
+    onLog: () => {},
+    onExit: () => {},
+  });
+  t.after(() => controller.dispose());
+  link.deliver({
+    t: "run.spec",
+    session: { id: "sess-settle", name: "settle", cwd: "/workspace" },
+    guru: { model: "fake/model" },
+    snapshot: { jsonl: emptySessionJsonl("sess-settle", "/workspace") },
+    secrets: {},
+    idleStopSeconds: 3600,
+    checkpointEvery: "turn",
+  });
+  await waitFor(() => pi !== undefined && onEntry !== undefined);
+  return {
+    link,
+    pi: pi!,
+    unread,
+    /** Lets the oldest pending poll finish, then gives its continuation a turn to run. */
+    release: async () => {
+      await waitFor(() => gates.length > 0);
+      gates.shift()!();
+      await new Promise((r) => setTimeout(r, 0));
+    },
+  };
+}
+
+/** The seq stream (entries and events) plus mail acks, in send order. */
+function seqKinds(sent: UpMessage[]): string[] {
+  return sent.flatMap((m) => {
+    if (m.t === "entry") return [`entry:${(m as any).entry.id}`];
+    if (m.t === "event") return [`event:${(m as any).event.type}`];
+    if (m.t === "mail.ack") return [`ack:${(m as any).id}`];
+    return [];
+  });
+}
+
+test("RunController: agent_settled is forwarded only after the tailer flush, carrying the last entry id (E9)", async (t) => {
+  const { link, pi, unread, release } = await setupSettleRun(t);
+  pi.emit({ type: "agent_start" });
+  unread.push({ type: "message", id: "e-final", parentId: null, message: { role: "assistant", content: [] } });
+  pi.emit({ type: "agent_settled" });
+  assert.ok(!seqKinds(link.sent).includes("event:agent_settled"), "held until the flush finishes");
+  await release();
+  assert.deepEqual(seqKinds(link.sent), ["event:agent_start", "entry:e-final", "event:agent_settled"]);
+  const settled = link.sent.find((m) => m.t === "event" && (m as any).event.type === "agent_settled") as any;
+  assert.equal(settled.event.lastEntryId, "e-final");
+});
+
+test("RunController: events pi emits during the settle flush follow the settle, in order, mail.ack included (E9)", async (t) => {
+  const { link, pi, unread, release } = await setupSettleRun(t);
+  unread.push({ type: "message", id: "e1", parentId: null, message: { role: "assistant", content: [] } });
+  pi.emit({ type: "agent_settled" });
+  link.deliver({ t: "mail", id: "m1", text: "next" });
+  pi.emit({ type: "response", id: "mail:m1", command: "prompt", success: true });
+  pi.emit({ type: "agent_start" });
+  pi.emit({ type: "agent_settled" }); // the mail's turn: a second flush, queued behind the first
+  pi.emit({ type: "agent_start" });
+  assert.deepEqual(seqKinds(link.sent), [], "nothing overtakes the pending settle");
+  await release();
+  assert.deepEqual(seqKinds(link.sent), ["entry:e1", "event:agent_settled", "event:response", "ack:m1", "event:agent_start"]);
+  unread.push({ type: "message", id: "e2", parentId: "e1", message: { role: "assistant", content: [] } });
+  await release();
+  assert.deepEqual(seqKinds(link.sent).slice(5), ["entry:e2", "event:agent_settled", "event:agent_start"]);
+  const settles = link.sent.filter((m) => m.t === "event" && (m as any).event.type === "agent_settled") as any[];
+  assert.deepEqual(settles.map((m) => m.event.lastEntryId), ["e1", "e2"]);
+});
+
+test("RunController: a settle before any new entry this run carries no lastEntryId (E9)", async (t) => {
+  const { link, pi, release } = await setupSettleRun(t);
+  pi.emit({ type: "agent_settled" });
+  await release();
+  const settled = link.sent.find((m) => m.t === "event" && (m as any).event.type === "agent_settled") as any;
+  assert.ok(settled);
+  assert.equal("lastEntryId" in settled.event, false);
+});

@@ -354,6 +354,13 @@ export class RunController {
   /** Mail pi has already accepted this run. A redelivery (the ack was lost, the lease expired) is
    * re-acked without prompting pi a second time. */
   private readonly mailAccepted = new Set<string>();
+  /** The id of the last transcript entry the tailer forwarded this run; `agent_settled` carries it
+   * as `lastEntryId` (protocol.md). Unset until pi appends one after the restored transcript. */
+  private lastEntryId: string | undefined;
+  /** Set while an `agent_settled` waits for the tailer flush (see `settleAfterFlush`): pi events
+   * that arrive meanwhile wait here, in order, so nothing pi emitted after the settle -- a mail's
+   * `response` and its `mail.ack` above all -- reaches the api ahead of it. */
+  private settleBacklog: PiRpcEvent[] | undefined;
   /** Start-up phase timing; only set when deps.startupPhases is on (startup-phases.ts). */
   private startup: StartupPhases | undefined;
   /** The `startup` frame (phases through "pi ready"), once pi is ready. Sent then, and again after
@@ -880,6 +887,7 @@ export class RunController {
     this.tailer = createTailer(
       sessionFile,
       (entry) => {
+        if (typeof entry.id === "string") this.lastEntryId = entry.id;
         this.deps.link.sendSeq((seq) => ({ t: "entry", seq, entry: entry as any }));
       },
       { startOffset: restoredBytes },
@@ -1065,6 +1073,46 @@ export class RunController {
       this.reportStartup();
       return;
     }
+    this.routePiEvent(event);
+  }
+
+  private routePiEvent(event: PiRpcEvent): void {
+    if (this.settleBacklog) {
+      this.settleBacklog.push(event);
+      return;
+    }
+    if (event.type === "agent_settled" && this.tailer) {
+      this.settleAfterFlush(event, this.tailer);
+      return;
+    }
+    this.processPiEvent(event);
+  }
+
+  /** E9 turn-settled signal (protocol.md's `event` row): pi writes the turn's last entries to the
+   * session file, but the tailer only reads it every 250 ms, so the final assistant entry can still
+   * be unread when `agent_settled` arrives. Read the file first (as a checkpoint does), then send
+   * the event with `lastEntryId`, so the api has every entry of the turn by the time it sees the
+   * settle. Events that arrive during the read wait in `settleBacklog` and follow in order. */
+  private settleAfterFlush(event: PiRpcEvent, tailer: { poll(): Promise<void> }): void {
+    const backlog: PiRpcEvent[] = [];
+    this.settleBacklog = backlog;
+    void tailer
+      .poll()
+      .catch((err: unknown) => {
+        // Send the settle anyway: a late entry is better than a turn that never reports settling.
+        this.onLog(`tailer flush before agent_settled failed: ${err instanceof Error ? err.message : String(err)}`);
+      })
+      .then(() => {
+        this.settleBacklog = undefined;
+        if (this.disposed) return;
+        this.processPiEvent(this.lastEntryId === undefined ? event : { ...event, lastEntryId: this.lastEntryId });
+        // A second agent_settled in the backlog starts its own flush; routePiEvent then queues
+        // whatever follows it behind that one.
+        for (const next of backlog) this.routePiEvent(next);
+      });
+  }
+
+  private processPiEvent(event: PiRpcEvent): void {
     this.deps.link.sendSeq((seq) => ({ t: "event", seq, event }));
     if (event.type === "response" && typeof event.id === "string" && this.mailInFlight.has(event.id)) {
       const mailId = this.mailInFlight.get(event.id)!;

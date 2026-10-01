@@ -51,6 +51,9 @@ import type {
   SessionChunk,
   SessionChunksCollection,
   AdminAuditEntry,
+  TurnWaiter,
+  TurnWaiterFinish,
+  TurnWaitersCollection,
 } from "./types.ts";
 import type { VoicePrefs } from "../voice.ts";
 import { BROWSER_CAPTURES_PER_SESSION, SearchUnavailableError, entryInsertFields, type EntryInsertOptions } from "./types.ts";
@@ -986,6 +989,63 @@ class MemoryPreviews implements PreviewsCollection {
   }
 }
 
+class MemoryTurnWaiters implements TurnWaitersCollection {
+  private readonly rows = new Map<string, TurnWaiter>();
+
+  async insert(waiter: TurnWaiter): Promise<void> {
+    this.rows.set(waiter.id, clone(waiter));
+  }
+
+  async findById(id: string): Promise<TurnWaiter | null> {
+    const w = this.rows.get(id);
+    return w ? clone(w) : null;
+  }
+
+  async markAcked(sessionId: string, mailId: string, runId: string, seq: number, nowIso: string): Promise<number> {
+    let count = 0;
+    for (const w of this.rows.values()) {
+      if (w.sessionId !== sessionId || w.mailId !== mailId || w.status !== "open" || w.ackRunId !== undefined) continue;
+      Object.assign(w, { ackRunId: runId, ackSeq: seq, ackedAt: nowIso, updatedAt: nowIso });
+      count++;
+    }
+    return count;
+  }
+
+  async finish(id: string, outcome: TurnWaiterFinish, nowIso: string): Promise<TurnWaiter | null> {
+    const w = this.rows.get(id);
+    if (!w || w.status !== "open") return null;
+    const fields = Object.fromEntries(Object.entries(outcome).filter(([, v]) => v !== undefined));
+    Object.assign(w, fields, { finishedAt: nowIso, updatedAt: nowIso });
+    return clone(w);
+  }
+
+  async extendDeadline(id: string, deadlineAt: string, nowIso: string): Promise<boolean> {
+    const w = this.rows.get(id);
+    if (!w || w.status !== "open") return false;
+    Object.assign(w, { deadlineAt, updatedAt: nowIso });
+    return true;
+  }
+
+  async listOpenForSession(sessionId: string): Promise<TurnWaiter[]> {
+    return [...this.rows.values()]
+      .filter((w) => w.sessionId === sessionId && w.status === "open")
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map(clone);
+  }
+
+  async listOpen(limit: number): Promise<TurnWaiter[]> {
+    return [...this.rows.values()]
+      .filter((w) => w.status === "open")
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .slice(0, limit)
+      .map(clone);
+  }
+
+  async deleteForSession(sessionId: string): Promise<number> {
+    return deleteWhere(this.rows, (w) => w.sessionId === sessionId);
+  }
+}
+
 export class MemoryStore implements Store {
   readonly sessions = new MemorySessions();
   readonly entries = new MemoryEntries();
@@ -1004,6 +1064,7 @@ export class MemoryStore implements Store {
   readonly adminApprovals = new MemoryAdminApprovals();
   readonly sessionChunks = new MemorySessionChunks();
   readonly previews = new MemoryPreviews();
+  readonly turnWaiters = new MemoryTurnWaiters();
 
   constructor() {
     const tables: BrowserTables = {

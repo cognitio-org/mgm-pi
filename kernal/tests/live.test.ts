@@ -17,7 +17,7 @@ import { summaryPrompt as compactionPrompt, wordBudget, SUMMARY_SYSTEM_PROMPT as
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const KEY = process.env.LITELLM_AGENT_KEY ?? "";
-const BASE = (process.env.LITELLM_BASE_URL ?? "https://litellm.augment-code.support/v1").replace(/\/$/, "");
+const BASE = (process.env.LITELLM_BASE_URL ?? "https://router.kernal.one/v1").replace(/\/$/, "");
 const MODEL = process.env.KERNAL_LIVE_MODEL ?? "gpt-5.4-nano";
 const enabled = process.env.KERNAL_LIVE === "1" && !!KEY;
 const MAX_COST_USD = 0.02;   // hard ceiling for the whole suite, checked from the router's own cost headers

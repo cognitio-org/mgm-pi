@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "litellm": {
-      "url": "https://litellm.augment-code.support/mcp/",
+      "url": "https://router.kernal.one/mcp/",
       "headers": {
         "x-litellm-api-key": "Bearer ${LITELLM_AGENT_KEY}",
         "x-mcp-servers": "ce_knowledge_base,headroom"

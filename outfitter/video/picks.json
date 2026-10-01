@@ -1,0 +1,47 @@
+{
+  "_about": "The chosen take of every generated or recorded piece (paths under out/). The assembly step builds the cut from this file; null = not picked yet.",
+  "stills": {
+    "lead-lab": "stills/lead-lab-take2.png",
+    "lead-glow": "stills/lead-glow-take1.png",
+    "lead-side": "stills/lead-side-take3.png",
+    "card-bug": "stills/card-bug-take1.png",
+    "card-talk": "stills/card-talk-take2.png",
+    "card-fleet": "stills/card-fleet-take3.png"
+  },
+  "shots": {
+    "02-sidewalk": "veo/02-sidewalk-take1.mp4",
+    "03-envelope": "veo/03-envelope-take2.mp4",
+    "07-mouse": "veo/07-mouse-take1.mp4",
+    "08-glow": "veo/08-glow-take2.mp4",
+    "11-closeup": "veo/11-closeup-take3.mp4"
+  },
+  "signed": {
+    "12-rocky": {
+      "file": "12-rocky.mp4",
+      "from": "veo/11-closeup-take3.mp4",
+      "name": "Rocky",
+      "start": 5.3,
+      "write": 1.2
+    }
+  },
+  "voices": {
+    "LEE-a": "voices/LEE-a-take1.wav",
+    "LEE-b": "voices/LEE-b-take1.wav",
+    "LEE-c": "voices/LEE-c-take1.wav",
+    "PAT-a": "voices/PAT-a-take1.wav",
+    "PAT-b": "voices/PAT-b-take1.wav",
+    "PAT-c": "voices/PAT-c-take2.wav",
+    "PAT-d": "voices/PAT-d-take1.wav",
+    "PAT-e": "voices/PAT-e-take2.wav",
+    "JO": "voices/JO-take1.wav",
+    "MGM": "voices/MGM-take3.wav"
+  },
+  "ui": {
+    "_about": "Outfitter screenshots, saved by hand into out/ui/",
+    "new-floppy-filled": "ui/new-floppy-filled.png",
+    "agent-answer": "ui/agent-answer.png",
+    "disk-box": "ui/disk-box.png",
+    "session": "ui/session.png",
+    "new-floppy": "ui/new-floppy.png"
+  }
+}

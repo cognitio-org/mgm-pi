@@ -75,11 +75,26 @@ person and room match. Keep every prompt free of brand names and readable text.
 Disk Box with a few Floppies; the new-Floppy dialog with a Tape picked; "New Floppy..." in a
 menu (for the macro); ▶ Play and a Drive streaming output; ⏏ Eject; `READY.`; the voice mic.
 
-## Music brief
-Original track that only *feels* like the reference. The source's music is still under copyright
-(a ~1990 commissioned recording is protected for decades yet), so no sampling, no recreating its
-melody. Fill the blanks from `beat-sheet.sh` (tempo, where the music swells and drops) and a
-listen:
+## Music
+**Option 1: the original track.** The project owner holds the rights to the reference's music.
+Keep the proof (license or assignment covering this use: online, commercial, sync to new
+picture) with the project files before anything ships. The rights cover the music only; the
+visual guardrails in the README still apply to the footage.
+- **Use the master, not the YouTube rip.** The rip has the narration and kids' voices mixed on
+  top and a generation of tape loss. Ask for the original master or stems (music-only mix).
+- **Rip only, as a fallback:** split music from voices with Demucs, then cut to picture. Expect
+  artifacts where voices sat on the music; fine for a temp track, not for the final.
+
+  ```bash
+  brew install pipx && pipx install demucs
+  ffmpeg -i /Users/mgm/localllm/video/source.mp4 -vn -ac 2 -ar 44100 reference/source-audio.wav
+  demucs --two-stems=vocals -o reference/stems reference/source-audio.wav
+  # music bed: reference/stems/htdemucs/source-audio/no_vocals.wav
+  ```
+- Retime to our cut using the beat sheet's shot times: the swell should land on shot 11.
+
+**Option 2: an original soundalike** (if the master or paperwork doesn't come through). Fill the
+blanks from `beat-sheet.sh` (tempo, where the music swells and drops) and a listen:
 - Tempo: ___ BPM (beat sheet). Length 75 s; swell into shot 11, button on the end card.
 - Feel: earnest, optimistic early-90s corporate: warm synth pads, bright digital (FM) electric
   piano and bells, soft gated-reverb snare, fretless-style synth bass, light shaker. A simple

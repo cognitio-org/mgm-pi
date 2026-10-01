@@ -157,9 +157,11 @@ Don't use run state `idle` (EPIC.md:517-519: agentd is idle before any prompt).
     `outfitter-agentengine-memory-sa`.
     - It's memory-only. **No Agent Engine agent is ever deployed in `outfitter`**, because agents
       read every project secret (`MONGODB_URI`, `VOYAGE_API_KEY`, `LLM_API_KEY`).
-    - **UNVERIFIED:** whether the memory service account's Agent Engine `PROJECT_OWNER` role carries
-      Atlas admin rights on this project's clusters. Check before PR2 merges. If it does, the
-      service account's secret gets the same care as an Atlas admin key.
+    - **Role `AGENT_DEVELOPER`, not `PROJECT_OWNER`** (live check 2026-10-01). It is enough for
+      every memory route. Per the CLI, `PROJECT_OWNER` pairs with Atlas Project Owner and
+      `AGENT_DEVELOPER` has no Atlas equivalent, so a leaked memory credential can't touch clusters.
+    - The account is `outfitter-memory-api` (`ae_sa_id_6abdbcb4fa2e755f0652dd29`). Its secret
+      expires 2026-12-30T01:51:48Z.
   - **Agents:** `AGENT_ENGINE_AGENTS_PROJECT_ID` plus secret `outfitter-agentengine-agents-sa`. This
     is a separate Atlas project (`outfitter-agents`, created for PR4). It holds the agents Outfitter
     calls, and `outfitter-delegate` (§6).
@@ -788,16 +790,27 @@ secrets lands with the PR that reads them.
 **PR0 spike (2026-10-01):** all code-side items are resolved and folded in above. Results:
 `docs/reports/agent-engine-spike.md`.
 
-**Live checks still open**, needing an Agent Engine account. They're run after owner steps 1–5,
-before PR2 merges:
-- Memory-runtime egress to the LiteLLM gateway.
-- Service-account tokens on `runtime-sessions` list and stop.
-- Whether the gateway proxies the memory server's DELETE routes.
-- How `buildContext`'s single filter treats a source without `metadata.repo`.
-- Whether the gateway exposes `POST …/memory/retrieval/context-from-sources`.
-- ~~That the memory server creates exactly 10 indexes on `outfitter-memory`.~~ Done 2026-10-01:
-  10, all READY.
-- Whether the memory service account's `PROJECT_OWNER` carries Atlas cluster rights (§2).
+**Live checks (2026-10-01)**, run with the memory service account `outfitter-memory-api` against the
+live memory server. Test data is under user `e9-livecheck`, deleted afterwards.
+- **Memory-runtime egress to the LiteLLM gateway: works.**
+  - 22 recorded turns produced one episode ("Deployment steps for e9-demo to staging") and semantic
+    facts.
+  - The extraction key spent $0.0042 on `gpt-5-nano` via `router.kernal.one`.
+- **Gateway DELETE proxying: works** (`DELETE …/memory/semantic/{id}` → 200, `deleted_count: 1`).
+  A forget action is possible later.
+- **`buildContext` filter:**
+  - `metadata_filter` on `metadata.repo` returns only that repo's memories.
+  - The `$or` with `$exists: false` keeps memories that have no repo.
+  - Both behave correctly with semantic, episodic and procedural enabled.
+- **`POST …/memory/retrieval/context-from-sources`: exposed.** It takes `sources: [{source:
+  "semantic", metadata_filter}]`.
+- **Indexes:** 10 on `outfitter-memory`, all READY, with the `repo` partition on semantic,
+  episodic and procedural.
+- **Role:** `AGENT_DEVELOPER` (no Atlas-equivalent role) is enough for every memory route.
+  `PROJECT_OWNER` pairs with Atlas Project Owner (CLI help), so the memory service account uses
+  `AGENT_DEVELOPER`.
+- **Still open:** service-account tokens on `runtime-sessions`. The memory project has no
+  workspaces, so this moves to PR4 and the agents project.
 
 ### Owner steps (billed or console)
 1. **Atlas** (exact commands in `docs/reports/agent-engine-spike.md`):
@@ -821,7 +834,7 @@ before PR2 merges:
    - The `agentengine` CLI is a Go binary from the GitHub Releases of
      `mongodb/agent-engine-client-libraries`, v0.1.118 at the time of writing. PyPI's `agentengine`
      is an unrelated package.
-5. **Agents project:** create it. Create one `PROJECT_OWNER` service account per project, store
+5. **Agents project:** create it. Create one service account per project, with the least role that works (`AGENT_DEVELOPER` for memory, done; the agents project needs whatever invoking requires, checked in PR4), store
    them in `outfitter-agentengine-memory-sa` and `outfitter-agentengine-agents-sa`, and record each
    `active_secret.expires_at` (§2).
 6. **For PR4:** deploy at least one agent in the agents project, and list it on the Agent Engine

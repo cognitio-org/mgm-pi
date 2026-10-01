@@ -111,9 +111,15 @@ source video (local only) --extract-frames.sh--> reference/*.png (gitignored)
    ./vhs.sh shot01.mp4 out/shot01.mp4 grade.cube
    VHS_FILL=pad ./vhs.sh ui-recording.webm out/ui.mp4 grade.cube   # letterbox instead of crop
    VHS_NOISE=6 ./vhs.sh ...                                          # lighter grain
+   VHS_GLITCH=0.12 ./vhs.sh ...                                      # more tracking glitches (0 = none)
+   VHS_LINES=0.4 ./vhs.sh ...                                        # darker scanlines (0 = none)
    ```
 
-   Output is 1440x1080 (4:3), 29.97 fps, H.264, with a band-limited audio track.
+   Output is 1280x960 (4:3, two pixels per tape line), 29.97 fps, H.264, with a band-limited audio
+   track. Besides the softness and chroma smear it adds interlaced scanlines, timebase wobble, the
+   head-switching band at the bottom edge, dropouts, and a short tracking glitch every few seconds.
+   `assemble.py` runs it on the finished cut, so the same env vars work there:
+   `VHS_GLITCH=0.12 uv run assemble.py both`.
 
 ## Guardrails
 

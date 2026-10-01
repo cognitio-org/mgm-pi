@@ -1535,6 +1535,10 @@ class MongoAeSessions implements AeSessionsCollection {
     return stripIdStrict<AeSession>(doc!);
   }
 
+  async touch(id: string, nowIso: string): Promise<void> {
+    await this.col.updateOne({ _id: id }, { $set: { lastUsedAt: nowIso }, $unset: { stoppedAt: "", stopAttempts: "", stopError: "" } });
+  }
+
   async findByExecution(outfitterSessionId: string, executionId: string): Promise<AeSession | null> {
     return stripId<AeSession>(await this.col.findOne({ outfitterSessionId, executions: executionId }));
   }

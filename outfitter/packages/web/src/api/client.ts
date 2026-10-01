@@ -131,6 +131,9 @@ export interface Guru {
   excludeTools?: string[];
   packages?: string[];
   env?: Record<string, string>;
+  /** E9.10: the repos this tape is meant for (lowercased owner/name). A hint: New Floppy pre-selects
+   * the first, a laptop warns elsewhere; nothing is restricted. */
+  repos?: string[];
   /** Tape option, default off. When true, checkpoint runs a Playwright spec in the Drive. */
   playwrightBeforeCheckpoint?: boolean;
   /** Tape option, default off (#132). Tells the agent external CSS and JS are allowed in HTML it

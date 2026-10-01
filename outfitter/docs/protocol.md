@@ -773,7 +773,46 @@ outline|text, `around`, `window`, `from`, `maxChars`, `toolOutput` none|trimmed|
 - Setting or changing a tape's `memory` (`off|tool|auto`) or `agentEngine` (boolean) is refused
   (`memory can only be set in the web UI`): a person sets them in the web UI. A body repeating the
   current value passes. Any other change to a tape that has one of them needs `confirmed`.
-- `ae.*` ops (capability `agentEngine`) answer `<op> works only in a Drive`.
+- `tapes.get {id, format: "json"}` and `tapes.list {format: "json"}` (E9.10, #354): the data form a
+  laptop playing a tape reads. `get` answers `text` = JSON `{kind: "tape", format: 1, id, name,
+  model, fallbackModel?, thinking?, systemPrompt?, appendSystemPrompt?, tools?, excludeTools?,
+  packages?, envNames?, repos?, adminTools?, memory?, agentEngine?, mergeFromCloud?, branchPrefix?,
+  playwrightBeforeCheckpoint?, allowExternalHtmlResources?, browserIde?, updatedAt}`: every field a
+  Drive reads, prompts whole (not clipped). `envNames` are the env keys, sorted; the values never
+  leave the api. `list` answers `{kind: "tapes", format: 1, tapes: [{id, name, model, thinking?,
+  adminTools?, memory?, agentEngine?, updatedAt}], more}`. Without `format` both are the compact text
+  as before.
+- A tape's `repos` (E9.10): lowercased GitHub `owner/name`, a hint that restricts nothing. Any writer
+  may set it (`tapes.create|update`, the web editor); it is not in run.spec.
+- `ae.*` ops (capability `agentEngine`, E9.10): from a Dongle only for a laptop playing a tape whose
+  `agentEngine` is on. The body's `laptop` then carries `tape` (a tape id,
+  `^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`): the route reads that tape on every call, and its
+  capabilities are the caller's. Without a tape: `<op> from a laptop needs a tape with Agent Engine
+  on (kernal --tape <id>)`; with one that lacks it: `… tape <id> doesn't have it`. An op not
+  registered `laptop` still answers `<op> works only in a Drive`.
+  - `ae.list`, `ae.get {executionId}`: reads, as in a Drive.
+  - `ae.invoke {agent, message, wait?}`: every call waits for the owner's yes in the web app (Laptop
+    approvals, below; `laptop: "web-always"`), whatever `confirmed` says. The card names the agent and shows
+    the whole message, secrets masked; from a laptop the message is capped at 5,000 characters, and
+    an unknown agent is refused before anyone is asked.
+  - `ae.resume {executionId, decision, notes?}`: the same, with a Drive's card text. The yes is
+    bound to the pause: the api reads the execution on the ask and on the rerun and binds the
+    approval to `{...args, id: "<executionId>#<pause fingerprint>"}`, so a pause that changed in
+    between needs a new yes.
+  - `ae.close {}` (write, laptop only): stops the Agent Engine sessions this laptop session opened.
+    Kernal calls it when the session ends; the tick sweep stops a laptop's sessions after 15 idle
+    minutes and keeps their rows, so `ae.get` still reaches the executions.
+  - A laptop's executions are recorded under `laptop:<sha256(ownerEmail)[:16]>:<pi session id>`, so
+    `get`/`resume` reach only this owner's own laptop session's executions (and count as use for the
+    sweep). `X-Session-ID` keeps the Drives' `outf-<session8>-<agent>` shape; for a laptop
+    `session8` is `L` + 7 base64url characters of sha256 of that key, never the client's pi id.
+  - `ae.close` works even after the tape lost Agent Engine.
+- A tape's text (names, model, prompts, list items) may not hold a character a person can't see
+  (`src/untrusted.ts` hasHidden: controls other than tab and newline, format characters such as bidi
+  marks, zero-width joiners and spaces, private use, tags, variation selectors), the same set Kernal
+  refuses on a laptop; a carriage return only in a prompt. So an emoji built with a joiner or a
+  variation selector is refused too: `<field> contains hidden or control characters`. `tapes.get` json masks
+  credentials in URL-form package sources (`https://***@…`).
 - `memory.*` (E9.9, docs/specs/atlas-agent-engine-and-a2a.md §3.5) runs as the token's owner: the
   same identity as their Drives (`sha256(ownerEmail)[:16]`), so laptop and cloud share one memory.
   The body's `laptop: {sessionId, repo?}` binds the call: `sessionId` is `laptop:<pi session id>`
@@ -800,9 +839,9 @@ outline|text, `around`, `window`, `from`, `maxChars`, `toolOutput` none|trimmed|
 ### Laptop approvals (E9.9)
 
 On a laptop the agent's shell runs as the person and can read the Dongle, so `confirmed` is not a
-boundary for anything that reaches other people. An op registered with `webApproval: true` (today
-`memory.save` when shared or taxonomic; #354's laptop `ae.invoke`/`ae.resume` are meant to use the
-same thing) asks the owner in the web app's approval widget instead. A Dongle can't answer it.
+boundary for anything that reaches other people. An op registered with `laptop: "web"`
+(`memory.save` when shared or taxonomic, and E9.10's laptop `ae.invoke`/`ae.resume`) asks the owner
+in the web app's approval widget instead. A Dongle can't answer it.
 Code: `packages/api/src/admin/laptop-approvals.ts`, collection `laptopApprovals`.
 
 1. **Create.** The Dongle calls the op as usual, with `laptop`. If the call needs a yes, the api
@@ -857,15 +896,20 @@ identity gets `403`.
   - A refused attempt by a signed-in caller is audited too (`ok: false`, plus `detail: "via a
     token"` for a Dongle).
 
-**For another op.** Register it with `laptop: true, webApproval: true`, an `asks` (or a class that
-always asks: `delete`, `operator`, `approve`), and a `laptopCard(args) → {title, facts?, summary} |
-{error}`. `registerAdminOp` refuses a `webApproval` op without both.
+**For another op.** Register it with `laptop: "web"`, an `asks` (or a class that always asks:
+`delete`, `operator`, `approve`; or `laptop: "web-always"` to ask a Dongle every time without
+changing a Drive), and a `laptopCard(args, target?) → {title, facts?, summary} | {error}`.
+`registerAdminOp` refuses a `"web"` op without both.
 - The card is one line of what is asked, the api's facts, and the exact content, redacted as the op
   would act on it.
 - Resolve anything a prefix or name could later mean differently, and put the resolved id in the
-  args the digest covers, or in the card. The Drive path's `resolveTarget` does this before asking.
-- `registerAdminOp` lets a `webApproval` op be laptop-callable whatever its capability, and lets an
-  `approve` op be laptop-callable only with it.
+  args the digest covers, or in the card. The Drive path's `resolveTarget` does this before asking;
+  for a laptop, an op with a `target` (ae.resume, E9.10) has it resolved on the ask and on the rerun,
+  and the approval binds `args.id` to it.
+- A laptop op that acts for nobody (E9.10's `ae.list`, `ae.get`, `ae.close`) is `laptop: "tape"`
+  instead: callable while the tape `laptop.tape` names has its capability, with no yes.
+- `registerAdminOp` lets a `"web"` op be laptop-callable whatever its capability, and lets an
+  `approve` op be laptop-callable only that way.
 
 **Limits (owner check):** the widget is a boundary against the agent's API calls, not against
 everything it can do.

@@ -72,6 +72,13 @@ describe("Mongo aeAgents and aeSessions", () => {
     assert.equal(open.executions.length, AE_SESSION_EXECUTIONS);
     assert.equal(open.executions.at(-1), `x${AE_SESSION_EXECUTIONS + 4}`);
     assert.equal((open as { _id?: unknown })._id, undefined);
+    // touch (E9.10: a laptop's get counts as use): lastUsedAt moves, the row reopens, executions stay.
+    assert.equal(await store.aeSessions.markStopped("s1:researcher", open.lastUsedAt, "2026-10-01T00:05:00.000Z"), true);
+    await store.aeSessions.touch("s1:researcher", "2026-10-01T00:06:00.000Z");
+    await store.aeSessions.touch("s9:nobody", "2026-10-01T00:06:00.000Z");
+    const [touched] = await store.aeSessions.listOpenForSession("s1");
+    assert.deepEqual([touched.lastUsedAt, touched.stoppedAt, touched.executions.length], ["2026-10-01T00:06:00.000Z", undefined, AE_SESSION_EXECUTIONS]);
+    assert.equal((await store.aeSessions.listOpen(10)).length, 1, "no row made for an unknown id");
     assert.equal(await store.aeSessions.deleteForSession("s1"), 1);
     assert.deepEqual(await store.aeSessions.listOpen(10), []);
   });

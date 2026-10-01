@@ -236,12 +236,12 @@ async function pending(store: Store): Promise<AdminApproval> {
 }
 
 describe("ae.* ops in a Drive", () => {
-  test("off for a tape without agentEngine; Drive only (a Dongle is told so)", async () => {
+  test("off for a tape without agentEngine; a Dongle without a tape is told so", async () => {
     const { admin, store, agentEngine } = await driveFixture({ agentEngine: false });
     await seedGuru(store, { id: "admin-tape", adminTools: "manage" });
     assert.deepEqual(await admin.handle("r1", "ae.list", {}), { ok: false, error: "Agent Engine is off for this tape" });
     const r = await runAdminOp({ store, models, agentEngine }, { email: OWNER, via: "token", operator: false, approved: true }, "ae.resume", { executionId: "e1", decision: "approve" });
-    assert.deepEqual(r, { ok: false, error: "ae.resume works only in a Drive" });
+    assert.deepEqual(r, { ok: false, error: "ae.resume from a laptop needs a tape with Agent Engine on (kernal --tape <id>)" });
   });
 
   test("ae.list shows the enabled agents only; nothing when the agents project is off", async () => {

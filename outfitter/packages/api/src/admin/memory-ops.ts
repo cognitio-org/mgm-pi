@@ -14,7 +14,7 @@
 // - Recalled text is untrusted (another user's org memory, or something a page once said): it is
 //   framed as notes that may be wrong, never instructions, and can't close its own frame.
 // - Saved text, labels and queries go through search/redact.ts first.
-// - E9.9 laptops: a Dongle reaches these ops too (`laptop: true`), as the token's owner: the same
+// - E9.9 laptops: a Dongle reaches these ops too (`laptop`), as the token's owner: the same
 //   user hash as their Drives, sessionId `laptop:<pi session id>`, and the repo Kernal read from the
 //   working directory's git remote (routes/admin.ts validates both; they scope, never authorise).
 //   A shared or taxonomic save needs the owner's yes in the web app's approval widget in place of
@@ -324,7 +324,7 @@ export const deadlines = { contextMs: CONTEXT_DEADLINE_MS };
 registerAdminOp("memory.search", {
   kind: "read",
   capability: "memory",
-  laptop: true,
+  laptop: "memory",
   async run(ctx, caller, args) {
     const r = await ready(ctx, caller);
     if (!r.ok) return r;
@@ -346,7 +346,7 @@ registerAdminOp("memory.search", {
 registerAdminOp("memory.context", {
   kind: "read",
   capability: "memory",
-  laptop: true,
+  laptop: "memory",
   async run(ctx, caller, args) {
     const r = await ready(ctx, caller);
     if (!r.ok) return r;
@@ -378,12 +378,11 @@ registerAdminOp("memory.context", {
 registerAdminOp("memory.save", {
   kind: "write",
   capability: "memory",
-  laptop: true,
   // Shared memory reaches the other users' prompts (their recall): the owner approves each one, on
-  // the Drive's card or, from a laptop, in the web app's approval widget (`webApproval`; a laptop's
-  // `confirmed` doesn't count, its agent could send it). An A2A session may never write it (§5.4),
-  // so it is refused before anyone is asked.
-  webApproval: true,
+  // the Drive's card or, from a laptop, in the web app's approval widget (`laptop: "web"`; a
+  // laptop's `confirmed` doesn't count, its agent could send it). An A2A session may never write it
+  // (§5.4), so it is refused before anyone is asked.
+  laptop: "web",
   laptopCard: saveCard,
   asks: async (_ctx, args) => args.shared === true || args.type === "taxonomic",
   async refused(ctx, args, caller) {
@@ -448,7 +447,7 @@ function recordArgs(args: Record<string, unknown>): RecordTurn[] | { error: stri
 registerAdminOp("memory.record", {
   kind: "write",
   capability: "memory",
-  laptop: true,
+  laptop: "memory",
   audit: false,
   async run(ctx, caller, args) {
     // A Drive's turns are recorded by the api itself (recorder.ts), from the stored entries.

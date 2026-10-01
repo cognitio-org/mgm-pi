@@ -56,6 +56,8 @@ cp "$ROOT"/bin/* "$STAGE/bin/"; chmod +x "$STAGE"/bin/*
 cp "$ROOT/README.md" "$STAGE/"; cp -R "$ROOT/docs" "$STAGE/docs"
 # Kernal's own skills (outfitter-admin, #290), loaded through settings.json's "skills": ["../skills"].
 cp -R "$ROOT/skills" "$STAGE/skills"
+# Kernal's own subagents (the foreman tape's `coder`, #354), found through PI_SUBAGENT_EXTRA_AGENT_DIRS (bin/kernal).
+cp -R "$ROOT/agents" "$STAGE/agents"
 cp "$ROOT/../.env.example" "$STAGE/.env.example" 2>/dev/null || cp "$ROOT/.env.example" "$STAGE/.env.example"
 mkdir -p "$STAGE/.codebase-index"; cp "$ROOT/.codebase-index/config.json" "$STAGE/.codebase-index/config.json"
 echo "$VERSION" > "$STAGE/VERSION"; echo "pi $PI_VERSION" >> "$STAGE/VERSION"

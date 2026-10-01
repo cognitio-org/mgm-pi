@@ -1,0 +1,3 @@
+# Copied from kernal/.pi/extensions/_shared/tape-args.ts at build time (package.json prebuild, and
+# image/Dockerfile's agentd-builder stage): Kernal's file is the one source (#354).
+src/tape-args.ts

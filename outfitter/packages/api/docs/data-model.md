@@ -108,6 +108,7 @@ Reusable agent configs (EPIC.md vocabulary: **Guru**, never "Expert").
 | `tools`, `excludeTools` | string[]? | |
 | `packages` | string[]? | pi packages/skills for the run's `PI_CODING_AGENT_DIR` |
 | `env` | object? | |
+| `repos` | string[]? | E9.10 (#354): the repos the tape is meant for, lowercased GitHub `owner/name`, deduplicated. A hint that never restricts: New Floppy pre-selects the first, and a laptop playing the tape in another repo warns. Anyone may set it, agents included. Not part of run.spec. |
 | `mergeFromCloud` | boolean? | phase 3: when true, this guru's cloud runs may `github_pr.merge`. Absent or false refuses with "not permitted" |
 | `playwrightBeforeCheckpoint` | boolean? | default off. When true, agentd runs a Playwright spec already in the workspace against a fresh headless Chromium before checkpoint. Absent on existing gurus (not stored as true). |
 | `allowExternalHtmlResources` | boolean? | #132, default off. Picks which HTML preview paragraph agentd appends to pi's system prompt (external CSS and JS allowed, or sealed) and the preview dialog's starting access. Copied onto each run as it starts. A PUT that omits it leaves it as it was. |

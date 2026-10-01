@@ -396,6 +396,39 @@ kbd { font: 11px/1.5 var(--mono); border: 1px solid var(--line); border-bottom-w
   .card-head, .card-body, .card-foot { padding-left: 16px; padding-right: 16px; }
 }
 @media (max-width: 460px) { .nav a svg { display: none; } }
+
+/* ---------- tapes ---------- */
+table.t.tapes td.act { white-space: nowrap; text-align: right; }
+table.t.tapes td.act .btn + .btn { margin-left: 6px; }
+.chip-t.flat { padding: 2px 8px; }
+.chip-t.flat.warn { background: var(--warn-soft); color: var(--warn); }
+.chip-t.flat.add { background: var(--ok-soft); color: var(--ok); }
+.chip-t.flat.del { background: var(--err-soft); color: var(--err); }
+.card-body .actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+ul.summary { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 13.5px; }
+ul.capl { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.changes { display: grid; gap: 14px; }
+.chg { border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; }
+.chg-h { display: flex; align-items: center; gap: 8px; padding: 7px 12px; background: var(--hover); border-bottom: 1px solid var(--line); font-weight: 600; font-size: 13px; }
+.chg > .chips, .chg > .ba { padding: 10px 12px; }
+.ba { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ba .b { text-decoration: line-through; text-decoration-color: var(--err); opacity: .8; }
+.ba .arrow { color: var(--muted); }
+.diff { font-family: var(--mono); font-size: 12.5px; line-height: 1.55; max-height: 520px; overflow: auto; }
+.diff .dl { display: grid; grid-template-columns: 22px 1fr; padding: 0 12px 0 0; }
+.diff .dl .sign { text-align: center; color: var(--muted); user-select: none; }
+.diff .dl .txt { white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff .dl.add { background: var(--ok-soft); }
+.diff .dl.add .sign { color: var(--ok); }
+.diff .dl.del { background: var(--err-soft); }
+.diff .dl.del .sign { color: var(--err); }
+.diff .dl.del .txt { text-decoration: line-through; text-decoration-color: rgba(180, 35, 42, .45); }
+.diff-fold { display: block; width: 100%; text-align: left; border: 0; border-top: 1px dashed var(--line); border-bottom: 1px dashed var(--line); background: transparent; color: var(--muted); font: inherit; font-size: 12px; padding: 3px 12px 3px 22px; cursor: pointer; }
+.diff-fold:hover { color: var(--accent-ink); background: var(--hover); }
+.prompts { display: grid; gap: 18px; }
+.prompt-block .group-h { margin-bottom: 8px; }
+.prompt-md { border: 1px solid var(--line); border-radius: var(--r-sm); padding: 14px 18px; max-height: 560px; overflow: auto; background: var(--field); }
+.prompt-raw { border: 1px solid var(--line); border-radius: var(--r-sm); padding: 12px 14px; max-height: 560px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 12.5px; margin: 0; background: var(--field); }
 `;
 
 export const APP_JS = String.raw`(function () {
@@ -459,7 +492,8 @@ var ICONS = {
   edit: '<path d="M13.5 3.5l3 3L7 16H4v-3z"/>',
   copy: '<rect x="7" y="7" width="10" height="10" rx="2"/><path d="M13 7V4.5A1.5 1.5 0 0 0 11.5 3h-7A1.5 1.5 0 0 0 3 4.5v7A1.5 1.5 0 0 0 4.5 13H7"/>',
   trash: '<path d="M3.5 5.5h13M8 5.5V3.5h4v2M5.5 5.5l.8 11h7.4l.8-11"/>',
-  eye: '<path d="M1.5 10s3-6 8.5-6 8.5 6 8.5 6-3 6-8.5 6-8.5-6-8.5-6z"/><circle cx="10" cy="10" r="2.5"/>'
+  eye: '<path d="M1.5 10s3-6 8.5-6 8.5 6 8.5 6-3 6-8.5 6-8.5-6-8.5-6z"/><circle cx="10" cy="10" r="2.5"/>',
+  tape: '<rect x="1.5" y="4.5" width="17" height="11" rx="2"/><circle cx="6.5" cy="10" r="2"/><circle cx="13.5" cy="10" r="2"/><path d="M6.5 12h7"/>'
 };
 function icon(name, size) {
   var s = size || 16;
@@ -518,7 +552,8 @@ var PAGES = [
   { id: "model", label: "Model", icon: "model", render: renderModel },
   { id: "index", label: "Codebase index", short: "Index", icon: "index", render: renderIndex },
   { id: "subagents", label: "Subagents", icon: "subagents", render: renderSubagents },
-  { id: "github", label: "GitHub", icon: "github", render: renderGithub }
+  { id: "github", label: "GitHub", icon: "github", render: renderGithub },
+  { id: "tapes", label: "Tapes", icon: "tape", render: renderTapes }
 ];
 var dirty = null;   // a function returning the number of unsaved changes on the current page
 var cleanup = [];
@@ -1951,6 +1986,236 @@ function safeHtml(html) {
     return out;
   }
   return Array.prototype.map.call(doc.body.childNodes, copy).filter(Boolean);
+}
+
+// =====================================================================================
+// Tapes: cloud tapes played on this laptop, pinned by version (kernal-tape/admin.ts)
+// =====================================================================================
+var TAPE_STATE = {
+  pinned: ["ok", "pinned"],
+  changed: ["warn", "changed in the cloud"],
+  kept: ["off", "change kept out"],
+  unpinned: ["off", "not pinned"],
+  offline: ["off", "pinned (offline)"],
+  gone: ["error", "gone from the cloud"]
+};
+function tapeState(s) { var x = TAPE_STATE[s] || ["off", s]; return pill(x[0], x[1]); }
+function tapeHref(id) { return "#/tapes/" + encodeURIComponent(id); }
+function tapeRoute() { var m = location.hash.match(/^#\/tapes\/([^\/?#]+)/); return m ? decodeURIComponent(m[1]) : null; }
+function when(iso) { if (!iso) return "—"; var d = new Date(iso); return isNaN(d.getTime()) ? iso : d.toLocaleString([], { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }); }
+function capTags(t) {
+  var out = [];
+  if (t.memory && t.memory !== "off") out.push(el("span", { class: "tag accent", title: "Agent Engine memory, shared with your Drives", text: "memory " + t.memory }));
+  if (t.agentEngine) out.push(el("span", { class: "tag accent", title: "The agent_engine tool; every call waits for your yes on Outfitter", text: "Agent Engine" }));
+  if (t.adminTools && t.adminTools !== "off") out.push(el("span", { class: "tag", title: "Your Dongle's admin tools; Outfitter checks every call", text: "admin " + t.adminTools }));
+  return out.length ? el("div", { class: "chips" }, out) : el("span", { class: "note", text: "none" });
+}
+var tapeFlash = null;
+/** POSTs a tapes action from btn: its message shows on the redrawn page; an error re-enables
+ * the button and says why. */
+function act(path, body, btn) {
+  btn.disabled = true;
+  return api("POST", path, body).then(function (r) { tapeFlash = { kind: "info", text: r.message }; show(); }, function (e) { btn.disabled = false; toast(e.message, "error"); });
+}
+
+function renderTapes(view) {
+  var id = tapeRoute();
+  if (id) { renderTape(view, id); return; }
+  add(view, head("Tapes", "Cloud tapes you can play on this laptop."));
+  loading(view);
+  api("GET", "/tapes").then(function (d) { drawTapes(view, d); }, function (e) { failed(view, e); });
+}
+
+function drawTapes(view, d) {
+  clear(view);
+  var flash = tapeFlash; tapeFlash = null;
+  add(view, head("Tapes", "Cloud tapes you can play on this laptop. A tape runs here without a sandbox, as you, so it plays only in a version you pinned. When a teammate changes it, you see what changed before it plays again."));
+  if (flash) add(view, callout(flash.kind || "info", flash.text));
+  if (!d.connected) add(view, callout("warn", "Outfitter not reached: " + (d.cloudError || "unknown error") + ". Pinned tapes still play offline."));
+
+  // ---- now ----
+  var stopBtn = d.active ? el("button", { class: "btn sm", type: "button" }, "Play none") : null;
+  if (stopBtn) stopBtn.addEventListener("click", function () { act("/tapes/play", { id: null }, stopBtn); });
+  add(view, card("Now", null, null, kv([
+    ["This session", d.playing ? el("span", {}, "playing ", el("a", { href: tapeHref(d.playing.id), class: "mono", text: d.playing.id }), d.repo && d.repo.repo ? el("span", {}, " in ", el("span", { class: "mono", text: d.repo.repo })) : " (no repo)", " ", el("span", { class: "note", text: "· memory " + d.playing.memory + (d.playing.agentEngine ? " · Agent Engine" : "") })) : el("span", { class: "note", text: "no tape (Kernal's own settings)" })],
+    ["Repo", el("span", {}, d.repo && d.repo.repo ? el("span", { class: "mono", text: d.repo.repo }) : el("span", { class: "note", text: "no repo" }), d.repo && d.repo.note ? el("div", { class: "note", text: d.repo.note }) : null, el("div", { class: "note", text: "From the working directory's origin remote. It scopes memory and approvals; Outfitter doesn't check it." }))],
+    ["New sessions", d.active ? el("span", { class: "inline" }, el("a", { href: tapeHref(d.active), class: "mono", text: d.active }), stopBtn) : el("span", { class: "note", text: "no tape" })],
+    ["In the terminal", el("span", { class: "note" }, el("code", { text: "kernal --tape <id>" }), " for one run, ", el("code", { text: "/tape <id>" }), " to switch this session, ", el("code", { text: "/tape off" }), " to stop.")]
+  ])));
+
+  // ---- the list ----
+  var tbody = el("tbody");
+  (d.tapes || []).forEach(function (t) {
+    var play = null;
+    if (t.pin && d.active !== t.id) {
+      play = el("button", { class: "btn sm", type: "button", title: "Play this tape in new sessions" }, "Play");
+      play.addEventListener("click", function () { act("/tapes/play", { id: t.id }, play); });
+    }
+    tbody.appendChild(el("tr", {},
+      el("td", {}, el("div", { class: "a-name" }, el("a", { href: tapeHref(t.id), text: t.name || t.id }), d.active === t.id ? el("span", { class: "tag accent", text: "new sessions" }) : null, d.playing && d.playing.id === t.id ? el("span", { class: "tag accent", text: "playing" }) : null),
+        el("div", { class: "a-desc mono", text: t.id })),
+      el("td", {}, el("div", { class: "mono small", text: t.model }), el("div", { class: "note", text: t.updatedAt ? "cloud: " + when(t.updatedAt) : "" })),
+      el("td", {}, capTags(t)),
+      el("td", {}, tapeState(t.state), t.pin ? el("div", { class: "note mono", title: t.pin.hash, text: t.pin.short + " · " + when(t.pin.pinnedAt) }) : null),
+      el("td", { class: "act" }, el("a", { class: "btn sm" + (t.state === "changed" || t.state === "unpinned" ? " primary" : ""), href: tapeHref(t.id) }, icon("eye", 13), t.state === "changed" ? "Review change" : t.state === "unpinned" ? "Review" : "Open"), play)));
+  });
+  var counts = { changed: 0 }; (d.tapes || []).forEach(function (t) { if (t.state === "changed") counts.changed++; });
+  add(view, card("Cloud tapes", "Pinned versions are kept in " + d.dir + ".",
+    counts.changed ? el("span", { class: "tag warn", text: counts.changed + " changed" }) : null,
+    (d.tapes || []).length
+      ? el("div", { class: "table-wrap" }, el("table", { class: "t tapes" }, el("thead", {}, el("tr", {}, el("th", { text: "Tape" }), el("th", { text: "Model" }), el("th", { text: "Capabilities" }), el("th", { text: "Pinned here" }), el("th", { class: "act", text: "" }))), tbody))
+      : el("div", { class: "empty", text: d.connected ? "No tapes in this Outfitter yet." : "No tapes pinned on this laptop yet." })));
+
+  add(view, memoryCard(d.memory));
+  view.setAttribute("aria-busy", "false");
+}
+
+/** Agent Engine memory on this laptop, the same settings as /memory. */
+function memoryCard(m) {
+  if (!m) return null;
+  var modes = [["default", "Default"], ["off", "Off"], ["tool", "Tool"], ["auto", "Tool and recall"]];
+  var seg = el("div", { class: "seg sm", role: "group", "aria-label": "Memory" });
+  modes.forEach(function (x) {
+    var b = el("button", { type: "button", "aria-pressed": m.setting === x[0] ? "true" : "false", text: x[1] });
+    b.addEventListener("click", function () { save({ memory: x[0] }); });
+    seg.appendChild(b);
+  });
+  var sw = el("input", { type: "checkbox", checked: m.record, "aria-label": "Record this laptop's turns" });
+  sw.addEventListener("change", function () {
+    if (sw.checked && !confirm(m.consent.title + "\n\n" + m.consent.body)) { sw.checked = false; return; }
+    save({ record: sw.checked });
+  });
+  function save(body) {
+    api("POST", "/tapes/memory", body).then(function (r) { toast(r.message, "ok"); show(); }, function (e) { toast(e.message, "error"); show(); });
+  }
+  return card("Memory on this laptop", "Agent Engine memory, shared with your Drives. The same settings as /memory in Kernal; they apply when Kernal next starts.",
+    m.dongle ? pill(m.mode === "off" ? "off" : "ok", "now " + m.mode) : pill("off", "no Dongle"),
+    el("div", { class: "rows" },
+      frow("f-mem-mode", "Memory", "Default is tool and recall when a Dongle is set. A playing tape decides for its own session", seg, m.tape ? el("div", { class: "note", text: "This session plays tape " + m.tape + ", whose memory setting applies to it." }) : null),
+      frow("f-mem-rec", "Record laptop turns", "Opt-in", el("label", { class: "switch" }, sw, el("span", { class: "track" })))));
+}
+
+function renderTape(view, id) {
+  add(view, head(id, "Loading…"));
+  loading(view);
+  api("GET", "/tapes/tape?id=" + encodeURIComponent(id)).then(function (d) { drawTape(view, id, d); }, function (e) { failed(view, e); });
+}
+
+function fieldValue(v) {
+  if (v === undefined || v === null || v === "") return el("span", { class: "note", text: "(unset)" });
+  if (Array.isArray(v)) return v.length ? el("div", { class: "chips" }, v.map(function (x) { return el("span", { class: "chip-t flat", text: x }); })) : el("span", { class: "note", text: "(none)" });
+  return el("span", { class: "mono", text: String(v) });
+}
+
+/** A prompt's line diff, unchanged runs folded to two lines of context. */
+function lineDiffView(lines) {
+  var box = el("div", { class: "diff", role: "group", "aria-label": "Line changes" });
+  var hidden = [];
+  function flush() {
+    if (!hidden.length) return;
+    var n = hidden.length, rows = hidden; hidden = [];
+    var more = el("button", { class: "diff-fold", type: "button", text: "⋯ " + n + " unchanged line" + (n === 1 ? "" : "s") });
+    more.addEventListener("click", function () { var frag = document.createDocumentFragment(); rows.forEach(function (r) { frag.appendChild(r); }); more.replaceWith(frag); });
+    box.appendChild(more);
+  }
+  lines.forEach(function (l, i) {
+    var row = el("div", { class: "dl " + (l.op === "+" ? "add" : l.op === "-" ? "del" : "ctx") }, el("span", { class: "sign", "aria-hidden": "true", text: l.op === " " ? "" : l.op }), el("span", { class: "sr", text: l.op === "+" ? "added: " : l.op === "-" ? "removed: " : "" }), el("span", { class: "txt", text: l.text || " " }));
+    var near = lines.slice(Math.max(0, i - 2), i + 3).some(function (x) { return x.op !== " "; });
+    if (l.op === " " && !near) { hidden.push(row); return; }
+    flush(); box.appendChild(row);
+  });
+  flush();
+  return box;
+}
+
+function changeRow(c) {
+  var body;
+  if (c.lines) body = lineDiffView(c.lines);
+  else if (c.added || c.removed) body = el("div", { class: "chips" }, (c.added || []).map(function (x) { return el("span", { class: "chip-t flat add", text: "+ " + x }); }), (c.removed || []).map(function (x) { return el("span", { class: "chip-t flat del", text: "− " + x }); }));
+  else body = el("div", { class: "ba" }, el("div", { class: "b" }, fieldValue(c.before)), el("span", { class: "arrow", "aria-label": "becomes", text: "→" }), el("div", { class: "a" }, fieldValue(c.after)));
+  return el("div", { class: "chg" }, el("div", { class: "chg-h" }, el("span", { class: "mono", text: c.field }), c.cloudOnly ? el("span", { class: "tag", text: "cloud only, ignored here" }) : null), body);
+}
+
+function promptView(title, text, html) {
+  if (!text) return el("div", { class: "prompt-block" }, el("h3", { text: title }), el("p", { class: "note", text: title === "System prompt" ? "Kernal's own: the tape doesn't replace it." : "None." }));
+  var formatted = el("div", { class: "md-preview prompt-md" }, safeHtml(html));
+  var plain = el("pre", { class: "prompt-raw", text: text, hidden: true });
+  var bF = el("button", { type: "button", "aria-pressed": "true", text: "Formatted" }), bP = el("button", { type: "button", "aria-pressed": "false", text: "Plain text" });
+  bF.addEventListener("click", function () { formatted.hidden = false; plain.hidden = true; bF.setAttribute("aria-pressed", "true"); bP.setAttribute("aria-pressed", "false"); });
+  bP.addEventListener("click", function () { formatted.hidden = true; plain.hidden = false; bF.setAttribute("aria-pressed", "false"); bP.setAttribute("aria-pressed", "true"); });
+  return el("div", { class: "prompt-block" }, el("div", { class: "group-h" }, el("h3", { text: title }), el("span", { class: "n", text: text.split("\n").length + " lines" }), el("div", { class: "grow" }), el("div", { class: "seg sm", role: "group", "aria-label": title + " view" }, bF, bP)), formatted, plain);
+}
+
+function drawTape(view, id, d) {
+  clear(view);
+  var flash = tapeFlash; tapeFlash = null;
+  var t = d.cloud || (d.pinned && d.pinned.tape);
+  var crumb = el("a", { class: "crumb", href: "#/tapes" }, icon("back", 13), "Tapes");
+  add(view, el("div", {}, crumb));
+  add(view, el("div", { class: "head" }, el("div", {}, el("h1", { text: t.name || id }), el("p", { class: "meta" }, el("span", { class: "mono", text: id }), tapeState(d.state), d.playing ? el("span", { class: "tag accent", text: "playing" }) : null, d.active ? el("span", { class: "tag accent", text: "new sessions" }) : null))));
+  if (flash) add(view, callout(flash.kind || "info", flash.text));
+  if (d.cloudError) add(view, callout("warn", "Outfitter not reached (" + d.cloudError + "). Showing the pinned version."));
+  if (d.repo && d.repo.warning) add(view, callout("warn", d.repo.warning + ". It's a hint: the tape plays anyway."));
+
+  var pinBtn = d.cloud ? el("button", { class: "btn primary", type: "button" }, icon("check", 14), d.state === "unpinned" ? "Pin this version" : "Pin the new version") : null;
+  if (pinBtn) pinBtn.addEventListener("click", function () { act("/tapes/pin", { id: id, hash: d.cloud.hash }, pinBtn); });
+
+  // ---- review ----
+  if (d.state === "unpinned") {
+    add(view, card("Review before it plays", "Kernal hasn't played this tape on this laptop. It would run here without a sandbox, as you. Read what it does below, then pin this version.", null,
+      el("ul", { class: "summary" }, (t.summary || []).map(function (s) { return el("li", { text: s }); })),
+      el("div", { class: "actions" }, pinBtn)));
+  } else if (d.state === "changed" || d.state === "kept") {
+    var keepBtn = el("button", { class: "btn", type: "button" }, "Keep pinned");
+    keepBtn.addEventListener("click", function () { act("/tapes/keep", { id: id, hash: d.cloud.hash }, keepBtn); });
+    add(view, card("What changed", "Pinned " + when(d.pinned.pinnedAt) + " (" + d.pinned.short + "); the cloud changed it " + when(d.cloud.updatedAt) + ". Until you pin the new version, the pinned one keeps playing.",
+      el("span", { class: "tag warn", text: d.changes.length + " field" + (d.changes.length === 1 ? "" : "s") }),
+      el("div", { class: "changes" }, d.changes.map(changeRow)),
+      el("div", { class: "actions" }, d.state === "kept" ? el("span", { class: "note", text: "You kept the pinned version for this change." }) : keepBtn, pinBtn)));
+  }
+
+  // ---- what it does ----
+  var pk = d.packages;
+  var installBtn = d.pinned && pk.missing.length ? el("button", { class: "btn sm", type: "button" }, "Install " + pk.missing.length) : null;
+  if (installBtn) installBtn.addEventListener("click", function () {
+    if (!confirm("Install " + pk.missing.join(", ") + " into " + pk.dir + "?\n\nnpm installs them with install scripts off. They run as you in sessions that play this tape.")) return;
+    installBtn.replaceChildren(spinner(), "Installing");
+    act("/tapes/install", { id: id }, installBtn);
+  });
+  var pkgList = (t.packages || []).length ? el("div", {},
+    el("div", { class: "chips" },
+      pk.ready.map(function (s) { return el("span", { class: "chip-t flat", title: "installed", text: s + " ✓" }); }),
+      pk.missing.map(function (s) { return el("span", { class: "chip-t flat warn", title: "not installed yet", text: s }); }),
+      pk.builtin.map(function (s) { return el("span", { class: "chip-t flat", title: "Kernal loads it already", text: s + " (Kernal's)" }); }),
+      pk.refused.map(function (s) { return el("span", { class: "chip-t flat del", title: "only npm: packages install on a laptop", text: s + " (not installed here)" }); })),
+    installBtn) : el("span", { class: "note", text: "none" });
+  var caps = el("ul", { class: "capl" },
+    el("li", {}, el("strong", { text: "Memory " + t.memory }), " ", el("span", { class: "note", text: t.memory === "off" ? "Agent Engine memory is off for sessions playing it, and pi-memory stays on." : "Agent Engine memory, shared with your Drives, for sessions playing it; pi-memory is off." })),
+    el("li", {}, el("strong", { text: "Agent Engine " + (t.agentEngine ? "on" : "off") }), " ", el("span", { class: "note", text: t.agentEngine ? "The agent_engine tool. Every invoke and resume waits for your yes on Outfitter's web page." : "No agent_engine tool." })),
+    t.adminTools !== "off" ? el("li", {}, el("strong", { text: "Admin tools " + t.adminTools }), " ", el("span", { class: "note", text: "Nothing extra: your Dongle's admin tools, checked by Outfitter." })) : null);
+  add(view, card(d.cloud ? (d.state === "changed" ? "The cloud version" : "What it does") : "The pinned version", null, null, kv([
+    ["Model", el("span", {}, el("span", { class: "mono", text: t.model }), t.thinking ? el("span", { class: "note", text: " · thinking " + t.thinking }) : null, t.fallbackModel ? el("div", { class: "note" }, "Fallback ", el("span", { class: "mono", text: t.fallbackModel }), ", on Ctrl+P") : null)],
+    ["Tools", t.tools.length ? fieldValue(t.tools) : el("span", { class: "note", text: "all of Kernal's" })],
+    ["Excluded tools", t.excludeTools.length ? fieldValue(t.excludeTools) : el("span", { class: "note", text: "none" })],
+    ["Capabilities", caps],
+    ["Packages", pkgList],
+    ["Env it expects", t.envNames.length ? el("div", {}, el("div", { class: "chips" }, t.envNames.map(function (n) { var miss = t.missingEnv.indexOf(n) !== -1; return el("span", { class: "chip-t flat" + (miss ? " warn" : ""), title: miss ? "not set on this laptop" : "set here", text: n + (miss ? " (not set)" : "") }); })), el("div", { class: "note", text: "Names only: Outfitter never sends the values. Set missing ones in your .env." })) : el("span", { class: "note", text: "none" })],
+    ["Meant for", t.repos.length ? el("div", {}, fieldValue(t.repos), el("div", { class: "note", text: "A hint, never a limit: it plays in any repo. Here: " + (d.repo && d.repo.repo ? d.repo.repo : "no repo") + "." })) : el("span", { class: "note", text: "any repo" })],
+    ["HTML previews", el("span", { class: "note", text: t.allowExternalHtmlResources ? "external CSS and JS allowed" : "sealed (inline CSS only)" })],
+    ["Ignored here", t.cloudOnly.length ? el("div", { class: "chips" }, t.cloudOnly.map(function (c) { return el("span", { class: "tag", title: "cloud only: a laptop ignores it", text: c.field + (c.value === true ? "" : " " + c.value) }); })) : el("span", { class: "note", text: "nothing" })],
+    ["Version", el("span", { class: "mono small", title: t.hash, text: t.hash.slice(0, 12) + (t.updatedAt ? " · cloud " + when(t.updatedAt) : "") })]
+  ])));
+
+  add(view, card("Prompts", "What the model is told. A system prompt replaces Kernal's own; the appended prompt is added after it.", null,
+    el("div", { class: "prompts" }, promptView("System prompt", t.systemPrompt, t.systemPromptHtml), promptView("Appended prompt", t.appendSystemPrompt, t.appendSystemPromptHtml))));
+
+  // ---- play ----
+  if (d.pinned) {
+    var playBtn = el("button", { class: "btn" + (d.active ? "" : " primary"), type: "button" }, d.active ? "Play none in new sessions" : "Play in new sessions");
+    playBtn.addEventListener("click", function () { act("/tapes/play", { id: d.active ? null : id }, playBtn); });
+    add(view, card("Play", "New sessions start with this tape" + (d.state === "changed" ? ", in the pinned version" : "") + ". To switch the running session, run /tape " + id + " in Kernal: it restarts into the same session.", null, el("div", { class: "actions" }, playBtn)));
+  }
+  view.setAttribute("aria-busy", "false");
 }
 
 // ---------- start ----------

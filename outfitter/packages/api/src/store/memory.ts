@@ -1180,6 +1180,15 @@ class MemoryAeSessions implements AeSessionsCollection {
     return clone(held);
   }
 
+  async touch(id: string, nowIso: string): Promise<void> {
+    const held = this.rows.get(id);
+    if (!held) return;
+    held.lastUsedAt = nowIso;
+    delete held.stoppedAt;
+    delete held.stopAttempts;
+    delete held.stopError;
+  }
+
   async findByExecution(outfitterSessionId: string, executionId: string): Promise<AeSession | null> {
     for (const r of this.rows.values()) if (r.outfitterSessionId === outfitterSessionId && r.executions.includes(executionId)) return clone(r);
     return null;

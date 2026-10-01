@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { NewSessionDialog, resolveGuruId } from "../src/components/NewSessionDialog.tsx";
+import { NewSessionDialog, preselectRepo, resolveGuruId } from "../src/components/NewSessionDialog.tsx";
 import type { Guru } from "../src/api/client.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -87,6 +87,32 @@ describe("NewSessionDialog: Start button stays usable once gurus load late", () 
     const startAfter = container.querySelector("button.btn-primary") as HTMLButtonElement;
     expect(startAfter.disabled).toBe(false);
 
+    unmount();
+  });
+});
+
+describe("NewSessionDialog: a tape's repos hint (E9.10)", () => {
+  it("preselectRepo: the tape's first repo until the person picks one", () => {
+    expect(preselectRepo("", false, { repos: ["acme/widgets", "acme/gears"] })).toBe("acme/widgets");
+    expect(preselectRepo("acme/widgets", false, { repos: undefined })).toBe("");
+    expect(preselectRepo("ada/notes", true, { repos: ["acme/widgets"] })).toBe("ada/notes");
+  });
+
+  it("pre-selects the first repo of the chosen tape, and follows a tape change", () => {
+    const gurus = [{ ...guru("a"), repos: ["acme/widgets"] }, { ...guru("b"), repos: ["acme/gears", "acme/x"] }, guru("c")];
+    const { container, unmount } = mount(<NewSessionDialog gurus={gurus} onClose={() => {}} onCreated={() => {}} />);
+    const repoInput = () => container.querySelector("#ns-repo") as HTMLInputElement;
+    expect(repoInput().value).toBe("acme/widgets");
+    const select = container.querySelector("#ns-guru") as HTMLSelectElement;
+    const pick = (id: string) =>
+      act(() => {
+        Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")!.set!.call(select, id);
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    pick("b");
+    expect(repoInput().value).toBe("acme/gears");
+    pick("c");
+    expect(repoInput().value).toBe("");
     unmount();
   });
 });

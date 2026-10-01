@@ -193,3 +193,32 @@ describe("GuruForm: #290 Admin tools", () => {
     expect(select.value).toBe("operator");
   });
 });
+
+describe("GuruForm: E9.10 the repos hint", () => {
+  async function save(existing: Guru, value: string) {
+    const update = vi.spyOn(api, "updateGuru").mockResolvedValue(existing);
+    render(existing);
+    const input = container!.querySelector<HTMLInputElement>("#guru-repos")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      container!.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    return update.mock.calls[0]![1];
+  }
+
+  it("shows the saved repos and sends them as typed (the API lowercases them)", async () => {
+    render({ ...guru, repos: ["acme/widgets"] });
+    expect(container!.querySelector<HTMLInputElement>("#guru-repos")!.value).toBe("acme/widgets");
+    act(() => root?.unmount());
+    root = null;
+    container?.remove();
+    expect((await save(guru, "Acme/Widgets, acme/gears")).repos).toEqual(["Acme/Widgets", "acme/gears"]);
+  });
+
+  it("an emptied field clears them", async () => {
+    expect((await save({ ...guru, repos: ["acme/widgets"] }, "")).repos).toEqual([]);
+  });
+});

@@ -19,6 +19,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readSettings } from "../connect/settings.ts";
 import { htmlPreviewPrompt } from "../_shared/html-preview-prompt.ts";
 import { inSandbox } from "../_shared/env.ts";
+import { playingHtmlExternal } from "../_shared/tape-env.ts";
 
 /** `kernal.allowExternalHtmlResources` in the agent settings.json. Anything but `true` is off. */
 export function allowExternalHtmlResources(settings: Record<string, unknown> = readSettings()): boolean {
@@ -34,7 +35,8 @@ export function withHtmlPreviewPrompt(appendSystemPrompt: string | undefined, al
 
 export default function (pi: ExtensionAPI) {
   if (inSandbox()) return;
-  const allowExternal = allowExternalHtmlResources();
+  // A tape being played (#354, kernal-tape) decides for its session, as it does in a Drive.
+  const allowExternal = playingHtmlExternal() ?? allowExternalHtmlResources();
   pi.on("before_agent_start", async (event) => {
     // pi rebuilds these options from its base prompt for every turn, so this appends once per turn,
     // not once more each turn.

@@ -19,6 +19,10 @@ const GRACE_MS = 2 * 60_000;
 const MAX_STOP_ATTEMPTS = 3;
 const STOP_TIMEOUT_MS = 10_000;
 const SWEEP_LIMIT = 500;
+/** E9.10: a laptop's Agent Engine session (keyed `laptop:…`, admin/ae-ops.ts aeSessionKey) has no
+ * Outfitter session or run to close: it counts as closed once unused this long. Kernal also stops
+ * it itself (`ae.close`) when the laptop session ends. */
+const LAPTOP_IDLE_MS = 15 * 60_000;
 
 export interface AeSessionsDeps {
   store: Store;
@@ -54,7 +58,8 @@ export class AeSessions {
     const out: AeSweepResult = { stopped: 0, failed: 0 };
     const open = new Map<string, boolean>();
     for (const row of rows) {
-      let isOpen = open.get(row.outfitterSessionId);
+      const laptop = row.outfitterSessionId.startsWith("laptop:");
+      let isOpen = laptop ? Date.parse(row.lastUsedAt) > this.now() - LAPTOP_IDLE_MS : open.get(row.outfitterSessionId);
       if (isOpen === undefined) {
         isOpen = await this.sessionOpen(row.outfitterSessionId);
         open.set(row.outfitterSessionId, isOpen);
@@ -62,6 +67,9 @@ export class AeSessions {
       if (isOpen) continue;
       if (await this.stop(row)) out.stopped++;
       else out.failed++;
+      // A laptop's rows stay (stopped) so its executions remain reachable with get; the next
+      // invoke reopens them.
+      if (laptop) continue;
       // A formatted session's rows go once nothing is left to stop (forgetSession).
       if (!(await this.deps.store.sessions.findById(row.outfitterSessionId)) && !(await this.deps.store.aeSessions.listOpenForSession(row.outfitterSessionId)).length) {
         await this.deps.store.aeSessions.deleteForSession(row.outfitterSessionId);

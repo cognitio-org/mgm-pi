@@ -31,6 +31,8 @@ export interface LaptopContext {
   sessionId: string;
   /** The working directory's GitHub `owner/name`, lowercased. */
   repo?: string;
+  /** E9.10: the tape this laptop session plays (kernal-tape); `ae.*` need one with Agent Engine. */
+  tape?: string;
 }
 
 export interface AdminTransport {
@@ -259,4 +261,10 @@ export function adminTransport(env?: NodeJS.ProcessEnv, fetchFn?: FetchFn): Admi
   const { api, token } = outfitterCredentials(env);
   if (api && token) return httpTransport(api, token, fetchFn);
   return undefined;
+}
+
+/** This laptop's Dongle transport, or undefined (none set, or this is a Drive's socket). */
+export function laptopTransport(): AdminTransport | undefined {
+  const t = adminTransport();
+  return t?.kind === "laptop" ? t : undefined;
 }

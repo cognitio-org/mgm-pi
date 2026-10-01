@@ -157,6 +157,15 @@ export PI_CODING_AGENT_DIR="$ROOT/.pi"
 # rejected outright in -p mode. One level below .pi/ so that running kernal inside this folder does
 # not also find it by walking up for a project-local .pi/lsp.json.
 export PI_AGENT_DIR="$ROOT/.pi/agent"
+# Kernal's own subagents (#354: the foreman tape's `coder`, as the Outfitter image ships it). The
+# person's agents dir (.pi/agents) is theirs, and git-ignored, so these come from ./agents, through
+# pi-subagents' own variable for bundled agents: read-only, below the person's agents of the same name.
+if [[ -d "$ROOT/agents" ]]; then
+  case ":${PI_SUBAGENT_EXTRA_AGENT_DIRS:-}:" in
+    *":$ROOT/agents:"*) ;;    # a /tape restart: already there
+    *) export PI_SUBAGENT_EXTRA_AGENT_DIRS="$ROOT/agents${PI_SUBAGENT_EXTRA_AGENT_DIRS:+:$PI_SUBAGENT_EXTRA_AGENT_DIRS}" ;;
+  esac
+fi
 
 # Release bundles ship pi's official standalone binary in ./pi; a source checkout uses the npm one.
 if [[ -x "$ROOT/pi/pi" ]]; then PI="$ROOT/pi/pi"; else PI="$ROOT/node_modules/.bin/pi"; fi
@@ -167,17 +176,35 @@ if [[ -x "$ROOT/pi/pi" ]]; then PI="$ROOT/pi/pi"; else PI="$ROOT/node_modules/.b
 # "tool" or "auto" in settings.json, or unset with a Dongle (OUTFITTER_API and OUTFITTER_TOKEN)
 # configured; the extension reads the same setting the same way. Never inside a Drive (agentd decides
 # there). The real directory goes on in KERNAL_PI_MEMORY_SOURCE for `/memory import`.
+# kernal.tape (the tape new sessions play, #354) and kernal.memory from settings.json, with one node
+# start however many callers ask, outside a Drive only. Unparseable JSON reads as unset, as in the
+# extensions. settings_read=1 when node read them.
+settings_tape=""; settings_memory=""; settings_read=0
+read_kernal_settings() {
+  [[ $settings_read == 0 && -z "${OUTFITTER_SESSION_ID:-}" && -z "${OUTFITTER_ADMIN_SOCKET:-}" ]] || return 0
+  command -v node >/dev/null 2>&1 || return 0
+  local both
+  # `tape<TAB>memory`; a tab or newline in the tape (no tape id has one) becomes a space.
+  both="$(node -e 'try { const k = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).kernal || {}; const t = typeof k.tape === "string" ? k.tape.replace(/[\t\r\n]/g, " ") : ""; const m = ["off", "tool", "auto"].includes(k.memory) ? k.memory : ""; process.stdout.write(t + "\t" + m); } catch {}' "$PI_CODING_AGENT_DIR/settings.json" 2>/dev/null || true)"
+  settings_read=1
+  [[ "$both" == *$'\t'* ]] || return 0
+  settings_tape="${both%%$'\t'*}"; settings_memory="${both#*$'\t'}"
+}
+
 pi_memory_env() {
   [[ -z "${OUTFITTER_SESSION_ID:-}" && -z "${OUTFITTER_ADMIN_SOCKET:-}" ]] || return 0
   [[ -n "${OUTFITTER_API:-}" && -n "${OUTFITTER_TOKEN:-}" ]] || return 0
   local mode empty parent settings="$PI_CODING_AGENT_DIR/settings.json"
-  # Exactly kernal.memory, the way the extension reads it (unparseable JSON reads as unset there too).
-  # Without node, the first `"memory": "off|tool|auto"` line, which is where /memory writes it.
-  if command -v node >/dev/null 2>&1; then
-    mode="$(node -e 'try { const k = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).kernal; const m = k && k.memory; if (["off", "tool", "auto"].includes(m)) process.stdout.write(m); } catch {}' "$settings" 2>/dev/null || true)"
+  # Exactly kernal.memory, the way the extension reads it (read_kernal_settings). Without node, the
+  # first `"memory": "off|tool|auto"` line, which is where /memory writes it.
+  read_kernal_settings
+  if [[ $settings_read == 1 ]]; then
+    mode="$settings_memory"
   else
     mode="$(sed -nE 's/^[[:space:]]*"memory":[[:space:]]*"(off|tool|auto)".*/\1/p' "$settings" 2>/dev/null | head -1)"
   fi
+  # A tape being played decides for its session (#354): its `memory`, off when it has none.
+  [[ -n "${KERNAL_TAPE:-}" ]] && mode="${KERNAL_TAPE_MEMORY:-off}"
   [[ "${mode:-auto}" != off ]] || return 0
   # A fresh empty directory per start (pi-memory writes compaction handoffs into it, which must not
   # reach another session), under one private parent whose day-old leftovers are cleared here.
@@ -320,6 +347,14 @@ KERNAL_OWN_BIN="${KERNAL_HOME:-$HOME/.kernal}/bin"
 [[ -f "$ROOT/VERSION" ]] || KERNAL_OWN_BIN="$ROOT/.pi/bin"     # a source checkout keeps it out of $HOME
 [[ -d "$KERNAL_OWN_BIN" ]] && export PATH="$PATH:$KERNAL_OWN_BIN"
 
+# Tape markers and pi-memory's override belong to one pi process: a /tape restart, or a kernal
+# started from an agent's shell, comes back through here, so whatever an earlier run set is cleared
+# before anything (teleport included) starts pi. #354.
+unset KERNAL_TAPE KERNAL_TAPE_HASH KERNAL_TAPE_MEMORY KERNAL_TAPE_AGENT_ENGINE KERNAL_TAPE_HTML
+if [[ "${KERNAL_PI_MEMORY_OFF:-}" == 1 && -n "${KERNAL_PI_MEMORY_SOURCE:-}" ]]; then
+  export PI_MEMORY_DIR="$KERNAL_PI_MEMORY_SOURCE"; unset KERNAL_PI_MEMORY_OFF PI_MEMORY_EXIT_SUMMARY
+fi
+
 case "${1:-}" in
   github)
     # The same setup /github runs inside the agent, from a plain terminal.
@@ -434,5 +469,51 @@ if [[ "$skip_lms" != 1 && -x "$LMS" && ( "$default_provider" == lmstudio || "$pr
     timeout 180 "$LMS" load "$MODEL" --context-length "${LMSTUDIO_CONTEXT:-32768}" --ttl 86400 -y >/dev/null 2>&1 || echo "kernal: LM Studio load failed or timed out; continuing" >&2
   fi
 fi
+# Tapes on a laptop (#354, .pi/extensions/kernal-tape): `--tape <id>` plays a cloud tape for this
+# run; without it, `kernal.tape` in settings.json (set by /tape or /admin tapes) does, and
+# `--tape none` skips that once. cli.ts fetches it with the Dongle, has the person pin it (first play)
+# or review a cloud change (a diff), installs its npm packages on their yes, and writes the pi flags
+# (before the person's own, so theirs win) and Kernal's KERNAL_TAPE* markers. Nothing is asked in
+# print mode or without a terminal: the pinned version plays. Never inside a Drive (agentd plays the
+# tape there). The markers an earlier run set were cleared above, before `--teleport` too.
+tape_args=()
+tape_ref=""; tape_explicit=0; tape_ask=1; tape_session=1; dashdash=0; rest=()
+while [[ $# -gt 0 ]]; do
+  if [[ $dashdash == 0 ]]; then
+    case "$1" in
+      --tape) [[ $# -ge 2 && -n "$2" ]] || { echo "Usage: kernal --tape <id>|none [pi args...]" >&2; exit 2; }
+              tape_ref="$2"; tape_explicit=1; shift 2; continue ;;
+      --tape=?*) tape_ref="${1#--tape=}"; tape_explicit=1; shift; continue ;;
+      --tape=) echo "Usage: kernal --tape <id>|none [pi args...]" >&2; exit 2 ;;
+      --) dashdash=1 ;;
+      -p|--print|--print=*|--mode|--mode=*) tape_ask=0 ;;
+      --help|-h|--version|-v|--list-models|--export) tape_session=0 ;;
+    esac
+  fi
+  rest+=("$1"); shift
+done
+set -- ${rest[@]+"${rest[@]}"}
+if [[ -z "${OUTFITTER_SESSION_ID:-}" && -z "${OUTFITTER_ADMIN_SOCKET:-}" && $tape_session == 1 ]]; then
+  if [[ $tape_explicit == 0 ]]; then read_kernal_settings; tape_ref="$settings_tape"; fi
+  if [[ -n "$tape_ref" && "$tape_ref" != none && "$tape_ref" != off ]]; then
+    command -v node >/dev/null 2>&1 || { echo "kernal: playing a tape needs node on PATH" >&2; exit 1; }
+    tape_out="$(mktemp -d "${TMPDIR:-/tmp}/kernal-tape.XXXXXX")" || exit 1   # private (0700), so nothing else can plant the files
+    tape_flags=(); [[ $tape_ask == 1 ]] || tape_flags=(--no-ask)
+    if node "$ROOT/.pi/extensions/kernal-tape/cli.ts" play "$tape_ref" "$tape_out" ${tape_flags[@]+"${tape_flags[@]}"}; then
+      while IFS= read -r -d '' a; do tape_args+=("$a"); done < "$tape_out/args"
+      while IFS= read -r -d '' kv; do
+        # Only Kernal's own markers, whatever the file says.
+        [[ "$kv" =~ ^KERNAL_TAPE(_[A-Z]+)*=[A-Za-z0-9._:-]*$ ]] && export "$kv"
+      done < "$tape_out/env"
+      rm -rf "$tape_out"
+    else
+      rm -rf "$tape_out"
+      # Asked for on the command line: stop. The setting: start without it, having said why.
+      [[ $tape_explicit == 0 ]] || exit 1
+      echo "kernal: starting without tape $tape_ref (kernal.tape in settings.json; /tape off clears it)" >&2
+    fi
+  fi
+fi
+unset KERNAL_TAPE_ASKED    # a /tape restart's "already asked", for cli.ts only
 pi_memory_env
-exec "$PI" -a "$@"
+exec "$PI" -a ${tape_args[@]+"${tape_args[@]}"} "$@"

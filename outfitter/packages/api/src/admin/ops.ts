@@ -9,15 +9,16 @@
 // tools also needs it (gurus-service.ts). `approve` (E9 §4: answering an Agent Engine execution's
 // review pause) is audited and always needs `approved`, whoever the caller is. A change to a tape
 // with memory or Agent Engine needs it too (an op's `asks`). E9.9: for an op registered with
-// `webApproval` a Dongle's `confirmed` counts for nothing; its yes comes from the web app's approval
-// widget (laptop-approvals.ts, runAdminOp's laptopGate).
+// `laptop: "web"` a Dongle's `confirmed` counts for nothing; its yes comes from the web app's
+// approval widget (laptop-approvals.ts, runAdminOp's laptopGate).
 //
 // Capabilities (E9 §3.3): every op names the tape capability it needs -- `admin` (the Sysop tools),
 // `memory` or `agentEngine` -- and a Drive's call is refused unless its tape has it, so agentd
-// opening the socket for memory doesn't hand the model `tapes.*`. From a laptop (a Dongle, which has
-// no tape) `admin` ops work, and so do the ops registered with `laptop: true` (E9.9: `memory.*`, for
-// the token's owner, bound to the `laptop:<pi session id>` the route validated); everything else
-// (`ae.*`) says "Drive only". Later PRs add their ops with registerAdminOp.
+// opening the socket for memory doesn't hand the model `tapes.*`. From a laptop (a Dongle) `admin`
+// ops work, and so do the ops registered with a `laptop` access (E9.9 `memory.*`, for the token's
+// owner, bound to the `laptop:<pi session id>` the route validated; E9.10 `ae.*`, for a laptop
+// playing a tape with Agent Engine); everything else says "Drive only". Later PRs add their ops
+// with registerAdminOp.
 
 import { randomUUID } from "node:crypto";
 import {
@@ -35,6 +36,7 @@ import {
 } from "../gurus-service.ts";
 import type { ModelsService } from "../models.ts";
 import type { AgentEngine } from "../agentengine/index.ts";
+import type { AeSessions } from "../ae-sessions.ts";
 import type { Environment, Guru, Session, Store } from "../store/types.ts";
 import { ago, capText, clip, diffFields, fields, resolveRef, row, shortId } from "./render.ts";
 import { searchSessions, sessionTranscript } from "../search/service.ts";
@@ -63,8 +65,9 @@ export interface AdminCaller {
   operator: boolean;
   sessionId?: string;
   runId?: string;
-  /** For a Drive: what its tape allows now (gurus-service.ts tapeCapabilities). Unused for a
-   * Dongle, which reaches `admin` ops only. */
+  /** For a Drive: what its tape allows now (gurus-service.ts tapeCapabilities). For a Dongle
+   * (E9.10): what the tape its `laptop.tape` names allows now, read by the route; only `ae.*` uses
+   * it. */
   capabilities?: readonly AdminCapability[];
   /** The person approved this call (see the module doc). */
   approved?: boolean;
@@ -72,7 +75,7 @@ export interface AdminCaller {
   /** A Dongle's `laptop` context (E9.9); never set for a Drive. */
   laptop?: LaptopContext;
   /** E9.9: the `approvalId` a Dongle's rerun names (POST body). Unchecked as sent: runAdminOp uses
-   * it only through consumeLaptopApproval, and only for a `webApproval` op. */
+   * it only through consumeLaptopApproval, and only for a `laptop: "web"` op. */
   laptopApprovalId?: unknown;
 }
 
@@ -82,6 +85,8 @@ export interface AdminContext {
   /** E9: the Agent Engine parts configured here; a part is undefined while it's off. A Drive's
    * calls carry it, and since E9.9 the laptop route's too (`memory.*` from a Dongle). */
   agentEngine?: AgentEngine;
+  /** E9.10: the process's Agent Engine session stopper (server.ts), for a laptop's `ae.close`. */
+  aeSessions?: AeSessions;
   now?: () => number;
   /** Where a handler's thrown error goes; the caller only sees "internal error". */
   log?: (message: string) => void;
@@ -93,25 +98,38 @@ export type AdminResult =
 
 type Args = Record<string, unknown>;
 
+/**
+ * How a Dongle (a laptop) may call an op, as its owner; checked at registration (registerAdminOp):
+ * - "memory" (E9.9): a memory read or write. The op binds the caller's `laptop` context itself.
+ * - "tape" (E9.10, #354): while the tape its `laptop.tape` names has the op's capability
+ *   (routes/admin.ts reads it on every call). Only reads, and `.close` writes that stop what the
+ *   caller itself opened: anything that acts on someone's behalf is "web".
+ * - "web" (E9.9): a call that needs the person's yes waits for it in the web app's approval widget
+ *   (laptop-approvals.ts), never on `confirmed`, which the laptop's agent could send itself.
+ *   `laptopCard` says what the widget shows.
+ * - "web-always" (E9.10): "web", and every call from a Dongle waits for that yes, whatever `asks`
+ *   says (laptop `ae.invoke`: an outside agent acting on the laptop's words). A Drive is unaffected.
+ */
+export type LaptopAccess = "memory" | "tape" | "web" | "web-always";
+
+/** True for an op whose Dongle yes is the web widget's. */
+const webApproved = (op: AdminOp): boolean => op.laptop === "web" || op.laptop === "web-always";
+
 export interface AdminOp {
   kind: AdminOpClass;
   /** The tape capability a Drive needs to call this op. Anything but `admin` is Drive only, unless
    * `laptop` says otherwise. */
   capability: AdminCapability;
-  /** E9.9: a Dongle may call this op too, as its owner (memory reads and writes only; checked at
-   * registration). The op binds the caller's `laptop` context itself. */
-  laptop?: boolean;
+  /** A Dongle may call this op too (see LaptopAccess); absent: Drive only (unless `admin`). */
+  laptop?: LaptopAccess;
   /** False: never written to adminAudit, although not a read (E9.9 `memory.record`, a laptop's own
    * turns into its own private memory, many a session; the usage log counts them instead). */
   audit?: false;
-  /** E9.9: from a Dongle, a call that needs the person's yes waits for it in the web app's approval
-   * widget (laptop-approvals.ts), never on `confirmed`, which the laptop's agent could send itself.
-   * Needs `laptop`. `laptopCard` says what the widget shows. */
-  webApproval?: true;
-  /** The widget's card for a `webApproval` op (required with it): one line of what is asked, the
+  /** The widget's card for a `laptop: "web"` op (required with it): one line of what is asked, the
    * api's facts, and the exact content (redacted as it would be acted on). `{error}` refuses the
-   * call before anyone is asked (malformed args, text with hidden characters). */
-  laptopCard?: (args: Args) => LaptopCard | { error: string };
+   * call before anyone is asked (malformed args, text with hidden characters). E9.10: `target` is
+   * the label of the op's resolved target (ae.resume: the pause), when it has one. */
+  laptopCard?: (args: Args, target?: string) => LaptopCard | { error: string };
   /** The approval card for this op, when the default (drive.ts approvalText) says too little: an
    * `approve` op shows what it answers. Every word must come from the api or be clipped, escaped
    * and labelled as remote text. */
@@ -139,6 +157,7 @@ const TAPE_FIELDS = [
   "appendSystemPrompt",
   "tools",
   "excludeTools",
+  "repos",
   "env",
   "mergeFromCloud",
   "branchPrefix",
@@ -188,6 +207,7 @@ function tapeDetail(g: Guru): string {
     ["agentEngine", g.agentEngine === true ? true : undefined],
     ["tools", g.tools],
     ["excludeTools", g.excludeTools],
+    ["repos", g.repos],
     ["env", envKeys(g.env)],
     ["mergeFromCloud", g.mergeFromCloud],
     ["branchPrefix", g.branchPrefix],
@@ -197,6 +217,46 @@ function tapeDetail(g: Guru): string {
     ["systemPrompt", g.systemPrompt],
     ["appendSystemPrompt", g.appendSystemPrompt],
   ]);
+}
+
+/** E9.10 (#354): a tape as data, for a laptop that plays it (Kernal's kernal-tape). Every field a
+ * Drive reads, plus `updatedAt`, so Kernal can pin a version and diff the next one. Env as NAMES
+ * only, sorted: the values often hold keys and never leave the server (a laptop only warns about
+ * names it doesn't have set). Prompts are whole, not clipped: Kernal shows and pins them. */
+export function tapeJson(g: Guru): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    kind: "tape",
+    format: 1,
+    id: g.id,
+    name: g.name,
+    model: g.model,
+    fallbackModel: g.fallbackModel,
+    thinking: g.thinking,
+    systemPrompt: g.systemPrompt,
+    appendSystemPrompt: g.appendSystemPrompt,
+    tools: g.tools,
+    excludeTools: g.excludeTools,
+    // A URL-form package source may carry credentials (`https://user:token@…`); never to a laptop.
+    packages: g.packages?.map((p) => p.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@\s]*@/i, "$1***@")),
+    envNames: g.env ? Object.keys(g.env).sort() : undefined,
+    repos: g.repos?.length ? g.repos : undefined,
+    adminTools: hasAdminTools(g) ? g.adminTools : undefined,
+    memory: g.memory && g.memory !== "off" ? g.memory : undefined,
+    agentEngine: g.agentEngine === true ? true : undefined,
+    mergeFromCloud: g.mergeFromCloud,
+    branchPrefix: g.branchPrefix,
+    playwrightBeforeCheckpoint: g.playwrightBeforeCheckpoint,
+    allowExternalHtmlResources: g.allowExternalHtmlResources,
+    browserIde: g.browserIde,
+    updatedAt: g.updatedAt,
+  };
+  for (const k of Object.keys(out)) if (out[k] === undefined) delete out[k];
+  return out;
+}
+
+/** `format: "json"` on tapes.get/tapes.list: the data form above instead of text. */
+function wantsJson(args: Args): boolean {
+  return args.format === "json";
 }
 
 function environmentLine(e: Environment, now: number): string {
@@ -320,6 +380,20 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
       const q = typeof args.query === "string" ? args.query.toLowerCase() : "";
       const hits = q ? tapes.filter((g) => `${g.id} ${g.name} ${g.model}`.toLowerCase().includes(q)) : tapes;
       const limit = limitOf(args, 20, 100);
+      if (wantsJson(args)) {
+        // tapeJson's rules for the flags (unset when off); JSON.stringify drops what is undefined.
+        const rows = hits.slice(0, limit).map((g) => ({
+          id: g.id,
+          name: g.name,
+          model: g.model,
+          thinking: g.thinking,
+          adminTools: hasAdminTools(g) ? g.adminTools : undefined,
+          memory: g.memory && g.memory !== "off" ? g.memory : undefined,
+          agentEngine: g.agentEngine === true ? true : undefined,
+          updatedAt: g.updatedAt,
+        }));
+        return { ok: true, text: JSON.stringify({ kind: "tapes", format: 1, tapes: rows, more: Math.max(0, hits.length - limit) }) };
+      }
       const lines = hits.slice(0, limit).map((g) => tapeLine(g, now));
       if (hits.length > limit) lines.push(`… ${hits.length - limit} more; pass limit or query`);
       return { ok: true, text: lines.join("\n") || "no tapes" };
@@ -332,6 +406,7 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
     async run(ctx, _caller, args) {
       const tape = await resolveTape(ctx, args.id);
       if (!tape.ok) return tape;
+      if (wantsJson(args)) return { ok: true, text: JSON.stringify(tapeJson(tape.item)), target: tape.item.id };
       return { ok: true, text: capText(tapeDetail(tape.item)), target: tape.item.id };
     },
   },
@@ -591,20 +666,33 @@ export function registerAdminOp(name: string, op: AdminOp): () => void {
   }
   // An approve op answers something remote on the owner's behalf: it must say on the card what it
   // answers, and it must never be reachable from a laptop, where `confirmed` is the caller's own word.
-  // E9.9: unless its yes comes from the web approval widget (`webApproval`), which it can't answer.
-  if (op.kind === "approve" && (!op.card || op.capability === "admin" || (op.laptop && !op.webApproval))) {
+  // E9.9: unless its yes comes from the web approval widget (`laptop: "web"`), which it can't answer.
+  if (op.kind === "approve" && (!op.card || op.capability === "admin" || (op.laptop && !webApproved(op)))) {
     throw new Error(`admin op ${name}: an approve op needs its own card and a Drive-only capability`);
   }
-  // E9.9: a laptop reaches memory reads and writes, and ops whose every yes is asked in the web
-  // app (`webApproval`, for #354's laptop `ae.*`); everything else stays Drive only.
-  if (op.webApproval && !op.laptop) throw new Error(`admin op ${name}: webApproval is for laptop-callable ops`);
-  // A webApproval op lifts the memory-only rule, so it must actually ask (review): a class that
-  // always asks, or `asks`; and say on its card what it asks.
-  if (op.webApproval && (!op.laptopCard || (!op.asks && !ALWAYS_ASKS.has(op.kind)))) {
-    throw new Error(`admin op ${name}: a webApproval op needs a laptopCard, and asks (or a class that always asks)`);
-  }
-  if (op.laptop && !op.webApproval && (op.capability !== "memory" || (op.kind !== "read" && op.kind !== "write"))) {
-    throw new Error(`admin op ${name}: only a memory read or write (or a webApproval op) may be laptop-callable`);
+  switch (op.laptop) {
+    case undefined:
+      break;
+    case "memory":
+      if (op.capability !== "memory" || (op.kind !== "read" && op.kind !== "write")) throw new Error(`admin op ${name}: only a memory read or write may be laptop "memory"`);
+      break;
+    case "tape":
+      // E9.10: a tape-gated laptop op (ae.list, ae.get, ae.close) acts for nobody: a read, or a
+      // `.close` that stops what the caller opened. Its capability is the tape's, checked per call.
+      if (op.capability === "admin" || op.capability === "memory" || !(op.kind === "read" || (op.kind === "write" && /\.close$/.test(name)))) {
+        throw new Error(`admin op ${name}: laptop "tape" is for reads and .close writes of a tape capability`);
+      }
+      break;
+    case "web":
+    case "web-always":
+      // A web op lifts the memory-only rule, so it must actually ask (review): a class that always
+      // asks, `asks`, or "web-always"; and say on its card what it asks.
+      if (!op.laptopCard || (op.laptop === "web" && !op.asks && !ALWAYS_ASKS.has(op.kind))) {
+        throw new Error(`admin op ${name}: a laptop "web" op needs a laptopCard, and asks (or a class that always asks)`);
+      }
+      break;
+    default:
+      throw new Error(`admin op ${name}: unknown laptop access ${String(op.laptop)}`);
   }
   // Skipping the audit is for a laptop's own memory writes (memory.record) only.
   if (op.audit === false && (op.kind !== "write" || !op.laptop)) throw new Error(`admin op ${name}: only a laptop memory write may skip the audit`);
@@ -633,7 +721,19 @@ export function capabilityOff(op: unknown): string {
 
 /** Why this caller may not reach this op's capability, or undefined when it may. */
 function capabilityRefusal(def: AdminOp, caller: AdminCaller, op: string): string | undefined {
-  if (caller.via === "token") return def.capability === "admin" || def.laptop === true ? undefined : `${op} works only in a Drive`;
+  if (caller.via === "token") {
+    if (def.capability === "admin") return undefined;
+    if (!def.laptop) return `${op} works only in a Drive`;
+    if (def.capability === "memory") return undefined;
+    // E9.10 (#354): anything else (Agent Engine agents) only for a laptop playing a tape that has
+    // the capability now, as the route read it.
+    if (caller.capabilities?.includes(def.capability)) return undefined;
+    // A `.close` (the only tape-gated write) stops only what the caller opened: it still works after
+    // the tape lost the capability, so the laptop can clean up (review).
+    if (def.laptop === "tape" && def.kind === "write" && caller.laptop?.tape) return undefined;
+    const needs = `${op} from a laptop needs a tape with ${def.capability === "agentEngine" ? "Agent Engine" : def.capability} on`;
+    return caller.laptop?.tape ? `${needs}; tape ${caller.laptop.tape} doesn't have it` : `${needs} (kernal --tape <id>)`;
+  }
   return caller.capabilities?.includes(def.capability) ? undefined : CAPABILITY_OFF[def.capability];
 }
 
@@ -718,9 +818,9 @@ export async function runAdminOp(ctx: AdminContext, caller: AdminCaller, op: unk
   const gated = capabilityRefusal(def, caller, op);
   if (gated) return { ok: false, error: gated };
 
-  // E9.9: a Dongle's yes for a webApproval op is only ever the web widget's (laptopGate below); its
-  // own `confirmed` and any approval id it names count for nothing until consumed.
-  const webGated = caller.via === "token" && def.webApproval === true;
+  // E9.9: a Dongle's yes for a `laptop: "web"` op is only ever the web widget's (laptopGate below);
+  // its own `confirmed` and any approval id it names count for nothing until consumed.
+  const webGated = caller.via === "token" && webApproved(def);
   if (webGated) caller = { ...caller, approved: false, approvalId: undefined };
 
   let result: AdminResult & { target?: string };
@@ -729,11 +829,11 @@ export async function runAdminOp(ctx: AdminContext, caller: AdminCaller, op: unk
     else {
       const refusal = def.refused ? await def.refused(ctx, a, caller) : undefined;
       if (refusal) result = { ok: false, error: refusal };
-      else if (webGated && (await needsYes(ctx, def, a))) {
+      else if (webGated && (def.laptop === "web-always" || (await needsYes(ctx, def, a)))) {
         const gate = await laptopGate(ctx, def, caller, op, a);
         if (gate.ok) {
           caller = { ...caller, approved: true, approvalId: gate.approvalId };
-          result = await def.run(ctx, caller, a);
+          result = await def.run(ctx, caller, gate.args);
         } else result = gate.result;
       } else result = !caller.approved && (await needsYes(ctx, def, a)) ? { ok: false, error: "needs approval", needsApproval: true } : await def.run(ctx, caller, a);
     }
@@ -767,7 +867,7 @@ export async function runAdminOp(ctx: AdminContext, caller: AdminCaller, op: unk
 }
 
 /**
- * E9.9: a Dongle's call to a webApproval op that needs a yes. With an `approvalId`: consume it (the
+ * E9.9: a Dongle's call to a `laptop: "web"` op that needs a yes. With an `approvalId`: consume it (the
  * one check, consumeLaptopApproval) and run. Without: ask in the web widget, and say so.
  */
 async function laptopGate(
@@ -776,16 +876,27 @@ async function laptopGate(
   caller: AdminCaller,
   op: string,
   args: Args,
-): Promise<{ ok: true; approvalId: string } | { ok: false; result: AdminResult & { target?: string } }> {
+): Promise<{ ok: true; approvalId: string; args: Args } | { ok: false; result: AdminResult & { target?: string } }> {
   if (!caller.laptop) return { ok: false, result: { ok: false, error: `${op} ${NO_LAPTOP_SESSION}` } };
   const now = nowOf(ctx);
-  if (caller.laptopApprovalId !== undefined) {
-    const used = await consumeLaptopApproval(ctx.store, { ownerEmail: caller.email, op, args, approvalId: caller.laptopApprovalId, laptop: caller.laptop, now });
-    return used.ok ? used : { ok: false, result: { ok: false, error: used.error } };
+  // E9.10: an op with a `target` (ae.resume: the execution and its pause's fingerprint) is resolved
+  // now, on the ask and again on the rerun, and the yes is bound to it: a pause that changed in
+  // between digests differently, so the yes can't answer a pause the card didn't show.
+  let bound = args;
+  let label: string | undefined;
+  if (def.target) {
+    const target = await def.target(ctx, args, caller);
+    if ("error" in target) return { ok: false, result: { ok: false, error: target.error } };
+    bound = { ...args, id: target.id };
+    label = target.label;
   }
-  const card = def.laptopCard?.(args) ?? { error: `${op} has no approval card` };
+  if (caller.laptopApprovalId !== undefined) {
+    const used = await consumeLaptopApproval(ctx.store, { ownerEmail: caller.email, op, args: bound, approvalId: caller.laptopApprovalId, laptop: caller.laptop, now });
+    return used.ok ? { ...used, args: bound } : { ok: false, result: { ok: false, error: used.error } };
+  }
+  const card = def.laptopCard?.(bound, label) ?? { error: `${op} has no approval card` };
   if ("error" in card) return { ok: false, result: { ok: false, error: card.error } };
-  const made = await createLaptopApproval(ctx.store, { ownerEmail: caller.email, op, args, laptop: caller.laptop, ...card, now });
+  const made = await createLaptopApproval(ctx.store, { ownerEmail: caller.email, op, args: bound, laptop: caller.laptop, ...card, now });
   if (!made.ok) return { ok: false, result: { ok: false, error: made.error } };
   return {
     ok: false,

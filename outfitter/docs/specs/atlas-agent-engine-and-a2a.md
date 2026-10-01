@@ -434,7 +434,8 @@ Don't use run state `idle` (EPIC.md:517-519: agentd is idle before any prompt).
     `tapes.*`.
   - `transport.ts:36`'s `READ_ACTIONS` gains `context`, so `memory.context` is a read (no
     idempotency key, retried once).
-- **Laptop Kernal:** E9.9 (§3.5) adds it, sharing the owner's Drive memory. `ae.*` stays Drive only.
+- **Laptop Kernal:** E9.9 (§3.5) adds it, sharing the owner's Drive memory. E9.10 (§7.1) adds
+  `ae.*` for a laptop playing a tape with Agent Engine on.
 - **Alternative considered:** the api prepends a `<memory>` block to the prompt at mail delivery.
   That needs no pi extension or image change. The chosen sections approach also persists the
   recalled block: pi records each turn's section changes as system patch entries (protocol.md), but
@@ -457,12 +458,13 @@ Drives; recall plus the tool by default; recording laptop turns is opt-in; pi-me
 a one-time import.
 
 - **Way in:** `POST /api/admin/ops` with the Dongle, the route the Sysop tools use from a laptop.
-  - An op registered with `laptop: true` passes the capability gate for a token caller
-    (`capabilityRefusal`, `admin/ops.ts`). Only `memory.search`, `memory.context`, `memory.save` and
-    `memory.record` have it. `registerAdminOp` refuses `laptop` on anything but a memory read or
-    write, unless the op also has `webApproval` (its every yes is asked in the web app, below). So
-    `ae.*`, `approve`, `delete` and `operator` ops are laptop-callable only that way (#354).
-  - `ae.*` still answers `<op> works only in a Drive`; admin ops are unchanged.
+  - An op registered with a `laptop` access passes the capability gate for a token caller
+    (`capabilityRefusal`, `admin/ops.ts`): `"memory"` (`memory.search`, `memory.context`,
+    `memory.record`), `"web"` (`memory.save`; its every yes is asked in the web app, below),
+    and E9.10's `"tape"` and `"web-always"` (§7.1). `registerAdminOp` refuses `"memory"` on anything
+    but a memory read or write, so `approve`, `delete` and `operator` ops are laptop-callable only
+    as `"web"` (#354).
+  - `ae.*` from a laptop needs a tape with Agent Engine on (E9.10, §7.1); admin ops are unchanged.
   - The route now hands the api's Agent Engine clients to the ops (`RouteContext.agentEngine`). When
     memory isn't configured, every call says `Agent Engine memory is not configured on this
     Outfitter`.
@@ -495,7 +497,7 @@ a one-time import.
     owner, op, args digest and laptop session and repo. It marks the approval used in one
     conditional write, and only then does the save run. `confirmed` counts for nothing here.
     Protocol: docs/protocol.md "Laptop approvals".
-  - **Generic:** any op registered `laptop: true, webApproval: true` gets the same gate. #354's
+  - **Generic:** any op registered `laptop: "web"` gets the same gate. #354's
     laptop `ae.invoke` and `ae.resume` use it.
   - The A2A refusal doesn't apply (a Dongle is never an A2A session). Saves are audited as
     `via: "token"` with the approval id, and each decision as `approvals.approve` or
@@ -949,7 +951,8 @@ the `outfitter-admin` skill's references.
       spawn budget is unlimited unless configured. So the foreman runs unattended in a Drive.
   - **Agent definition `coder`** at `outfitter/image/agents/coder.md`, copied to
     `/opt/kernal/.pi/agents/coder.md` (`$PI_CODING_AGENT_DIR/agents`, `image/Dockerfile:50-52`).
-    Image-only: `kernal/.pi/agents` is a laptop user's own, gitignored directory.
+    `kernal/.pi/agents` is a laptop user's own, gitignored directory; laptops get the same agent
+    from `kernal/agents/coder.md` (§7.1).
     - Frontmatter: `model: litellm/claude-sonnet-5`, `thinking: high`, `tools: read, grep, find, ls,
       bash, edit, write, contact_supervisor`, `defaultContext: fresh`, `inheritProjectContext: true`.
     - Prompt gist: one bounded package from the foreman; read the repo's conventions first; smallest
@@ -975,6 +978,155 @@ the `outfitter-admin` skill's references.
   - `atlas_cluster`/`atlas_vector` (the MongoDB MCP server does this for people)
   - `atlas_governance` (no Agent Engine API governs outside agents)
   - `atlas_a2a`/`a2a_delegate` (replaced by `agent_engine` and §5)
+
+#### 7.1 Tapes on laptops (E9.10, #354)
+Owner decisions (2026-10-01, #354): the cloud is the source of truth, one set of tapes for laptops
+and Drives; a laptop plays a tape only in a version the person pinned, and asks again, with a diff,
+when the cloud changes it; Agent Engine works from a laptop playing a tape with it on, every invoke
+and resume on the owner's yes in the Outfitter web app; the image's `coder` ships with Kernal too.
+
+- **One translation.** `kernal/.pi/extensions/_shared/tape-args.ts` is the pure part of
+  `renderGuru`: the model flag (`renderModelArg`), `--system-prompt`, the append prompts, `--tools`,
+  `--exclude-tools` (pi-memory's seven tools added when Agent Engine memory is on), and the env
+  denylist (`tapeEnv`). It is the only source: agentd compiles a copy made at build time
+  (`agentd/src/tape-args.ts`, git-ignored; agentd's `prebuild`, and the image's `agentd-builder`
+  stage), and `agentd/test/tape-args.test.ts` checks that it renders every test tape as
+  `renderGuru` does. agentd's behaviour is unchanged. Each side adds its own frame: agentd its `--mode rpc -a --session`
+  prefix, its `--extension` files and the HTML preview paragraph; Kernal the rest of this section.
+- **The data form.** `tapes.get {id, format: "json"}` and `tapes.list {format: "json"}` (`admin`
+  ops, so a Dongle may call them) answer the tape as JSON: every field a Drive reads, the prompts
+  whole, `updatedAt`, and the env as `envNames`, sorted. The values never leave the api.
+- **Pins** (`kernal-tape/lib.ts`): `~/.kernal/tapes/pins/<id>.json` = `{tape, hash, pinnedAt,
+  seen?}`, mode 0600 (`KERNAL_TAPE_DIR` moves the directory). The hash is sha256 over the tape's
+  fields in a fixed order, without `updatedAt`. A pin whose content no longer matches its hash, or
+  whose id isn't file-name safe (`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`), counts as no pin.
+  - **Only readable text.** A tape whose strings hold control, format (bidi, zero-width),
+    private-use or line-separator characters is refused (prompts may hold tab and newline), so
+    nothing pinned can hide from the review or split `bin/kernal`'s NUL-separated argv file. The api
+    refuses control and bidi characters in a tape's text on write too.
+  - **First play:** a summary (model, thinking, fallback, tools and excluded tools, memory,
+    agentEngine, adminTools, packages, the env names it expects and which are unset here, the repos
+    hint, the system and appended prompts' first lines, the cloud-only fields it ignores), the full
+    prompts on request, then "pin this version?". No pins nothing and plays nothing.
+  - **Changed in the cloud** (its hash differs from the pin): a field-level diff, lists as added and
+    removed names, prompts line by line (LCS, unchanged runs folded), then "pin the new version?".
+    No keeps playing the pinned version and records that it was kept (`seen.kept`); that same cloud
+    version isn't asked about again at each start (`/tape <id>` asks again).
+  - **Nobody to ask** (print mode, `--mode rpc|json`, no terminal): the pinned version plays, with a
+    note when the cloud has changed it; an unpinned tape doesn't play.
+  - **Offline** (Outfitter unreachable, or no Dongle): the pinned version plays, by its exact id.
+    When Outfitter answers but refuses (the tape is gone, the Dongle is revoked) or sends a tape
+    Kernal can't read, nothing plays: the cloud is the source of truth.
+- **Ways in, one store:**
+  - `kernal --tape <id> [pi args…]`: `bin/kernal` runs `kernal-tape/cli.ts`, which reviews on the
+    terminal (`/dev/tty`), installs packages on a yes, and writes the pi flags (NUL-separated) and
+    Kernal's `KERNAL_TAPE*` markers; `bin/kernal` exports only names matching
+    `^KERNAL_TAPE(_[A-Z]+)*=` and puts the tape's flags before the person's own, so theirs win. The
+    two files are created (`wx`) in a private `mktemp -d`.
+    Without `--tape`, `kernal.tape` in settings.json (the tape new sessions play) does the same;
+    `--tape none` skips it once. An explicit tape that can't play stops Kernal; the setting only
+    warns. Never inside a Drive.
+  - `/tape [status] | list | show [id] | <id> | off` in the TUI. `/tape <id>` reviews in the TUI
+    (a select, with "show the full prompts"), asks about packages, sets `kernal.tape`, and restarts
+    into the same session file. A tape's flags are pi start-up flags, so switching is a restart:
+    `process.execve` of `bin/kernal --tape <id> --session <file>` once pi has shut down (node). pi's
+    compiled binary has no `execve`; there Kernal prints the command to run. `/tape off` clears the
+    setting and restarts with `--tape none`. The restart's env drops this run's markers and gives
+    pi-memory its real directory back; `bin/kernal` works them out again.
+  - `/admin` → Tapes (`kernal-tape/admin.ts`, `kernal-admin/app.ts`): the cloud's tapes with their
+    pin state and a changed badge; a tape's page with what it does, its prompts (formatted or plain),
+    the field-level diff with the prompt's lines, and Pin this version / Keep pinned. A pin names the
+    hash the page showed, so a cloud change landing in between is refused, not pinned unseen. Play
+    sets `kernal.tape`; Install installs a pinned tape's missing packages. The page also has the
+    `/memory` settings (mode and the recording opt-in). Approvals are not here: the page is served by
+    the laptop, which the agent can reach.
+- **Field by field on a laptop:**
+  - `model`, `thinking`, `systemPrompt`, `appendSystemPrompt`, `tools`, `excludeTools`: the shared
+    translation. The append prompt is passed only when the tape has one, so pi still finds
+    `APPEND_SYSTEM.md` otherwise (as in a Drive, a tape's own text replaces it). On a laptop the
+    prompts go to pi as paths of 0600 files holding the reviewed text (`~/.kernal/tapes/run/<hash>/`):
+    pi reads a prompt argument that names an existing file as that file, so a prompt of `.env` would
+    otherwise send the file to the model. (A Drive passes the text; its workspace is the sandbox's.
+    Owner check: the same file rule applies there.)
+  - `fallbackModel`: added to pi's Ctrl+P cycle (`--models <model>,<fallback>`); a laptop has no
+    preflight to substitute it.
+  - `allowExternalHtmlResources`: `kernal-html-preview` appends the paragraph the tape picks
+    (`KERNAL_TAPE_HTML`), instead of `kernal.allowExternalHtmlResources`.
+  - `memory`: decides laptop memory (§3.5) for the session: `tool`, `auto`, or off when unset,
+    whatever `kernal.memory` says. `bin/kernal`'s `pi_memory_env` and `laptop.ts` read
+    `KERNAL_TAPE_MEMORY`.
+  - `adminTools`: nothing extra. The laptop's admin tools are the Dongle's, checked by Outfitter.
+  - `agentEngine`: Kernal registers `agent_engine` over the Dongle (below).
+  - `packages`: `npm:<name>@<exact version>` only (a range, a tag, a git URL or a path is never
+    installed: they would install code nobody reviewed), into `~/.kernal/tapes/npm/<tape id>` (one
+    directory per tape, so one tape's install can't change another's) with `npm install
+    --ignore-scripts --save-exact`, on a yes, then loaded with `--extension <dir>`. Packages Kernal
+    already loads are skipped. The pin covers the name and version, not the package's dependencies. Not Kernal's own `.pi/npm`: its
+    package.json is tracked, a release bundle replaces it on upgrade, and pi's updater would prune
+    the extras.
+  - `env`: the names only. Kernal warns about each name not set locally; values never reach a
+    laptop.
+  - `repos`: a hint (below).
+  - `branchPrefix`, `mergeFromCloud`, `browserIde`, `playwrightBeforeCheckpoint`: cloud only,
+    ignored, with a note.
+- **Repo context** (owner decision): the working directory's git repo. Its `origin` remote,
+  lowercased GitHub `owner/name` (git finds the repo from any subdirectory); a non-GitHub `origin`
+  means no repo; no `origin`, the first GitHub remote, with a note; not a repo, none. It is
+  `laptop.repo` on every memory and `ae.*` call, so web approvals bind to it, and `/tape status` and
+  the Tapes page show it. The api does not verify it (owner: not now).
+- **`repos`** (tape field, `Guru.repos`): lowercased `owner/name` entries the tape is meant for. A
+  hint that restricts nothing; anyone may set it, agents included. New Floppy pre-selects the first
+  one until the person picks a repo; a laptop playing the tape in another repo, or outside one, warns
+  in the terminal, the TUI and the Tapes page. Not part of run.spec. It is in the pinned content, so
+  a change shows in the diff.
+- **Agent Engine from a laptop** (`admin/ae-ops.ts`, `outfitter-agentengine/agents.ts`):
+  - The body's `laptop` carries `tape`. For an op whose capability isn't `admin` or `memory`, the
+    route reads that tape on every call and its capabilities are the caller's; turning
+    `agentEngine` off on the tape cuts the laptop off at the next call. Without a tape: `<op> from a
+    laptop needs a tape with Agent Engine on (kernal --tape <id>)`.
+  - `ae.list`, `ae.get`, and `ae.close` (stops the Agent Engine sessions this laptop session opened)
+    are `laptop: "tape"` ops: no yes, they act for nobody. `registerAdminOp` allows `"tape"` only on
+    reads and `.close` writes of a tape capability.
+  - `ae.invoke` and `ae.resume` are `laptop: "web"` ops: every laptop call waits for the owner's yes
+    in the web app's approval widget (§3.5), never `confirmed`. `ae.invoke` asks every time
+    (`"web-always"`, which leaves a Drive's invoke as it was); its card names the agent and shows the
+    message, secrets masked; an unknown agent or an empty message is refused before anyone is
+    asked. `ae.resume`'s card has a Drive card's words plus the execution and the decision as
+    facts. Its target (the execution and the pause's fingerprint) is resolved on the ask and on the
+    rerun, and the approval binds `args.id` to it: a pause that changed in between needs a new yes.
+  - Kernal registers `agent_engine` only while it plays a tape with `agentEngine` on, and waits for
+    the web yes with `callWithWebApproval` (print mode gets the pending approval id back).
+  - The Agent Engine session key is `laptop:<owner hash>:<pi session id>`, so `get` and `resume`
+    reach only this owner's own laptop session's executions, and another Dongle holder who learns
+    the pi session id reaches none of them. `X-Session-ID` keeps the Drives' `outf-<session8>-<agent>`
+    shape, with `session8` = `L` + 7 base64url characters of sha256(key): the pi id's tail is the
+    client's choice and could otherwise be picked to land in someone else's Agent Engine session.
+  - A laptop invoke's message is capped at 5,000 characters, all of which the card shows.
+  - Kernal calls `ae.close` when the session ends (`/tape off`, a switch, exit; 3 s, best effort);
+    it works even after the tape lost Agent Engine. A laptop `get` or `resume` counts as use. The
+    tick sweep counts a laptop row as closed after 15 idle minutes, stops it, and keeps the row so
+    `ae.get` still works; the next invoke reopens it. (Laptop rows are not deleted yet: a retention
+    sweep is a follow-up.)
+- **`coder` on laptops:** `kernal/agents/coder.md`, the image's frontmatter (a test compares them)
+  with a laptop prompt (the person's own checkout; never push, pull or fetch). `bin/kernal` exports
+  `PI_SUBAGENT_EXTRA_AGENT_DIRS=<bundle>/agents`, pi-subagents' own variable for bundled agents: read
+  as user agents, below the person's own `coder.md` if they have one, so `.pi/agents` (theirs, and
+  git-ignored) is never written. `scripts/package.sh` ships the directory.
+- **Security limits (owner check):**
+  - **No sandbox.** A played tape runs as the person, with their files and credentials. The pin is
+    what stands between a teammate's edit (a prompt that says "push to main", a new tool, a package)
+    and the next start; the diff is the review.
+  - **Packages are code.** `--ignore-scripts` stops install-time code; the package still runs in
+    every session playing the tape. Only `npm:` names are installed, and only on a yes.
+  - **The pin store is the laptop's.** The agent's shell runs as the same user and could edit a pin
+    file (the hash would have to be recomputed too). That gains it nothing it couldn't do with its
+    own tools.
+  - **`laptop.tape` is the client's word,** but it authorises only what the named tape has now, and
+    `invoke`/`resume` still need the owner's web yes. Any Dongle holder can name any tape with Agent
+    Engine on and reach `list`, their own `get`, and `close`. The approval binds the laptop session
+    and repo, not the tape. The repo is unverified, as in §3.5.
+  - **Same machine.** As for laptop memory (§3.5): the agent could, with OS automation or a browser
+    profile, click Approve in the web app itself. A step-up on the decide route would close that.
 
 ### 8. Security
 - **Credentials:**
@@ -1037,7 +1189,6 @@ the `outfitter-admin` skill's references.
   A2A #2028 lands.
 - A2A push notifications (the webhook SSRF surface), gRPC and HTTP+JSON bindings, and card signing.
 - Outbound calls to arbitrary A2A agents. `agent_engine` could grow an `a2a` target later.
-- `memory` and `agent_engine` on laptop Kernal (later PR).
 - Dollar spend caps (E5.3).
 
 ## Delivery

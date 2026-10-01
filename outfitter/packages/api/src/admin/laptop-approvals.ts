@@ -7,7 +7,7 @@
 // here, keyed by owner, and the owner answers them in the web app's approval widget (a person under
 // IAP, never a Dongle: decideLaptopApproval).
 //
-// The flow, for any op registered with `webApproval: true` (ops.ts runAdminOp):
+// The flow, for any op registered with `laptop: "web"` (ops.ts runAdminOp):
 //   1. The Dongle calls the op. It needs a yes, so the api stores a pending approval bound to the
 //      owner, the op, a digest of the exact args, and the laptop session (and repo) it came from,
 //      and answers {ok:false, needsApproval:true, approvalId}. The same ask again reuses it.

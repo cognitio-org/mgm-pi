@@ -55,6 +55,7 @@ export function GuruForm({ guru, models, meta, isSysop = false, onClose, onSaved
   const [appendSystemPrompt, setAppendSystemPrompt] = useState(guru?.appendSystemPrompt ?? "");
   const [tools, setTools] = useState(listToText(guru?.tools));
   const [excludeTools, setExcludeTools] = useState(listToText(guru?.excludeTools));
+  const [repos, setRepos] = useState(listToText(guru?.repos));
   const [playwrightBeforeCheckpoint, setPlaywrightBeforeCheckpoint] = useState(guru?.playwrightBeforeCheckpoint === true);
   const [allowExternalHtmlResources, setAllowExternalHtmlResources] = useState(guru?.allowExternalHtmlResources === true);
   const [browserIde, setBrowserIde] = useState(guru?.browserIde === true);
@@ -94,6 +95,8 @@ export function GuruForm({ guru, models, meta, isSysop = false, onClose, onSaved
       appendSystemPrompt: appendSystemPrompt.trim() || undefined,
       tools: textToList(tools),
       excludeTools: textToList(excludeTools),
+      // An empty field clears the hint (the API stores [] as no repos, and lowercases the rest).
+      repos: textToList(repos) ?? (guru?.repos?.length ? [] : undefined),
       playwrightBeforeCheckpoint,
       allowExternalHtmlResources,
       browserIde,
@@ -233,6 +236,15 @@ export function GuruForm({ guru, models, meta, isSysop = false, onClose, onSaved
           <div className="form-row">
             <label htmlFor="guru-exclude-tools">Exclude tools (comma-separated)</label>
             <input id="guru-exclude-tools" value={excludeTools} onChange={(e) => setExcludeTools(e.target.value)} />
+          </div>
+
+          <div className="form-row">
+            <label htmlFor="guru-repos">Meant for repos (comma-separated owner/name)</label>
+            <input id="guru-repos" value={repos} onChange={(e) => setRepos(e.target.value)} placeholder="acme/widgets" />
+            <p className="session-meta">
+              A hint, not a limit. New Floppy picks the first one for you, and Kernal on a laptop warns when the tape plays in
+              another repo.
+            </p>
           </div>
 
           <div className="form-row">

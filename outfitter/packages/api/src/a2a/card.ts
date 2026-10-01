@@ -11,7 +11,7 @@ export const OUTFITTER_TASK_EXTENSION = "https://kernal.one/a2a/ext/outfitter-ta
 export const A2A_PROTOCOL_VERSION = "1.0";
 
 const BLOCKING_NOTE =
-  "Send returnImmediately: true, then poll GetTask; a blocking SendMessage returns after at most 25 s with the task as it is.";
+  "Send returnImmediately: true, then poll GetTask or stream (SendStreamingMessage, SubscribeToTask); a blocking SendMessage returns after at most 25 s with the task as it is.";
 
 /** The link origin the card points callers at: the link role's own origin, or (role "all") the
  * configured link origin, else this process's. */
@@ -33,10 +33,9 @@ export function publicCardJson(config: Pick<Config, "role" | "origin" | "linkOri
     defaultInputModes: ["text/plain", "application/json"],
     defaultOutputModes: ["text/plain", "application/json"],
     capabilities: {
-      // PR6 turns streaming on with SendStreamingMessage/SubscribeToTask; until then both return
-      // UnsupportedOperation, and clients (the Python a2a-sdk streams whenever this is true) must
-      // not be told otherwise.
-      streaming: false,
+      // §5.3: SendStreamingMessage and SubscribeToTask poll the task row. The Python a2a-sdk streams
+      // whenever this is true; ClientConfig(streaming=False) gives request/response.
+      streaming: true,
       pushNotifications: false,
       extendedAgentCard: true,
       extensions: [

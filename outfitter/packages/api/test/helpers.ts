@@ -17,6 +17,7 @@ import type { VoiceService } from "../src/voice.ts";
 import type { VoiceUsage } from "../src/voice-usage.ts";
 import type { GithubCatalog } from "../src/github-catalog.ts";
 import type { AgentEngine } from "../src/agentengine/index.ts";
+import type { A2AHandlerFactory } from "../src/a2a/handler.ts";
 
 export interface TestApp extends App {
   store: Store;
@@ -54,6 +55,8 @@ export interface BuildTestAppOptions {
   githubCatalog?: GithubCatalog;
   /** E9: Agent Engine clients, e.g. createAgentEngine(fake.config(), { fetch: fake.fetch }). */
   agentEngine?: AgentEngine;
+  /** E9 PR6: the A2A handler (the TCK build's scripted one, test/tck/sut.ts). */
+  a2aHandler?: A2AHandlerFactory;
 }
 
 export async function buildTestApp(
@@ -91,6 +94,7 @@ export async function buildTestApp(
     voiceUsage: opts.voiceUsage,
     githubCatalog: opts.githubCatalog,
     agentEngine: opts.agentEngine,
+    a2aHandler: opts.a2aHandler,
   });
   await app.fastify.ready();
   return { ...app, store, provider, secretAdmin };

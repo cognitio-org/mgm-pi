@@ -15,13 +15,16 @@ import { ContentTypeNotSupportedError } from "@a2a-js/sdk/errors";
 import type { RouteContext } from "./context.ts";
 import { InvalidApiTokenError, bearerFromHeader, verifyApiToken } from "../auth.ts";
 import { TOKEN_PREFIX } from "../tokens.ts";
-import { A2AKeyUser, OutfitterA2AHandler } from "../a2a/handler.ts";
+import { A2AKeyUser, A2AStreamLimitError, OutfitterA2AHandler } from "../a2a/handler.ts";
 import { a2aKeyOf, type A2AKey } from "../a2a/tasks.ts";
 
 /** §5.2: request body cap; bigger is HTTP 413. */
 export const A2A_BODY_LIMIT = 64 * 1024;
 const CARD_PATH = "/.well-known/agent-card.json";
 const JSON_TYPES = ["application/json", "application/a2a+json"];
+/** An SSE comment this often keeps an idle stream's connection open through proxies, and finds a
+ * client that went away. */
+const SSE_KEEPALIVE_MS = 15_000;
 
 type RpcError = { code: number; message: string; data?: unknown };
 
@@ -113,7 +116,8 @@ class RpcParseError extends Error {}
 class RpcContentTypeError extends Error {}
 
 export async function registerA2ARoutes(app: FastifyInstance, ctx: RouteContext): Promise<void> {
-  const handler = new OutfitterA2AHandler({ store: ctx.store, config: ctx.config, tasks: ctx.a2a });
+  const handlerOptions = { store: ctx.store, config: ctx.config, tasks: ctx.a2a };
+  const handler = ctx.a2aHandler ? ctx.a2aHandler(handlerOptions) : new OutfitterA2AHandler(handlerOptions);
   const rpc = new JsonRpcTransportHandler(handler);
   const card = await handler.getAgentCard();
   const cardBody = JSON.stringify(AgentCard.toJSON(card));
@@ -218,9 +222,12 @@ export async function registerA2ARoutes(app: FastifyInstance, ctx: RouteContext)
       return reply.code(200).send(rpcError(null, { code: -32600, message: "Invalid Request" }));
     }
 
+    // Aborted when the client goes away (or the response ends): a stream stops polling at once.
+    const lifetime = new AbortController();
+    reply.raw.once("close", () => lifetime.abort());
     const callContext = new ServerCallContext({
       requestedExtensions: Extensions.parseServiceParameter(header(req, "a2a-extensions")),
-      user: new A2AKeyUser(key),
+      user: new A2AKeyUser(key, lifetime.signal),
       requestedVersion: requestedVersion(req),
     });
     try {
@@ -245,8 +252,8 @@ export async function registerA2ARoutes(app: FastifyInstance, ctx: RouteContext)
 
 /**
  * SSE for SendStreamingMessage/SubscribeToTask. The first event is pulled before committing to
- * SSE, so an early error (PR5: both methods are UnsupportedOperation) goes back as plain JSON.
- * PR6's polling streams use the rest.
+ * SSE, so an early error (a terminal task's SubscribeToTask, a bad message) goes back as plain
+ * JSON, and a key over its open-stream limit as HTTP 429.
  */
 async function streamOut(req: FastifyRequest, reply: FastifyReply, out: AsyncGenerator<unknown, void, undefined>, extHeader: string | undefined) {
   const it = out[Symbol.asyncIterator]();
@@ -254,6 +261,7 @@ async function streamOut(req: FastifyRequest, reply: FastifyReply, out: AsyncGen
   try {
     first = await it.next();
   } catch (err) {
+    if (err instanceof A2AStreamLimitError) return reply.code(429).send(rpcError(requestId(req), { code: -32600, message: err.message }));
     return reply.code(200).send(maskInternal(req, rpcError(requestId(req), JsonRpcTransportHandler.mapToJSONRPCError(err))));
   }
   const firstValue = first.value as { error?: unknown } | undefined;
@@ -268,14 +276,21 @@ async function streamOut(req: FastifyRequest, reply: FastifyReply, out: AsyncGen
   let closed = false;
   raw.on("close", () => {
     closed = true;
-    void it.return?.(undefined);
   });
+  const keepalive = setInterval(() => {
+    if (!closed && !raw.writableEnded) raw.write(": keepalive\n\n");
+  }, SSE_KEEPALIVE_MS);
+  keepalive.unref?.();
   try {
     raw.write(formatSSEEvent(first.value));
     for (let n = await it.next(); !n.done && !closed; n = await it.next()) raw.write(formatSSEEvent(n.value));
   } catch (err) {
     if (!closed) raw.write(formatSSEErrorEvent(maskInternal(req, rpcError(requestId(req), JsonRpcTransportHandler.mapToJSONRPCError(err)))));
   } finally {
+    clearInterval(keepalive);
+    // Runs the generator's finally (the stream's slot) when the client left mid-stream; the
+    // request's abort signal has already woken its poll.
+    await it.return?.(undefined).catch(() => undefined);
     if (!raw.writableEnded) raw.end();
   }
 }

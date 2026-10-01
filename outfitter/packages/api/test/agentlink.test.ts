@@ -696,6 +696,25 @@ describe("agentd <-> api WebSocket", () => {
     assert.equal(stayed?.branch, "outfitter/issue-4");
     assert.equal(stayed?.checkpoint?.branch, "outfitter/issue-4");
     assert.equal(stayed?.checkpoint?.head, next);
+    assert.equal(stayed?.checkpoint?.landed, false, "another branch's frame never says the session's branch landed");
+    assert.ok(stayed?.checkpoint?.at);
+
+    // E9 §5.3: pushed:false with a head is agentd finding the remote already at that head.
+    const already = "d".repeat(40);
+    agent.send({ t: "checkpoint", branch: "outfitter/issue-4", head: already, pushed: false });
+    let landed = await app.store.sessions.findById(session.id);
+    for (let i = 0; i < 20 && landed?.checkpoint?.head !== already; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      landed = await app.store.sessions.findById(session.id);
+    }
+    assert.equal(landed?.checkpoint?.head, already);
+    assert.equal(landed?.checkpoint?.landed, true);
+    // No head (nothing could be pushed): not landed, the last head kept.
+    agent.send({ t: "checkpoint", branch: "outfitter/issue-4", pushed: false });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const failed = await app.store.sessions.findById(session.id);
+    assert.equal(failed?.checkpoint?.landed, false);
+    assert.equal(failed?.checkpoint?.head, already);
 
     agent.send({ t: "bye", reason: "stop" });
     await agent.nextClose();

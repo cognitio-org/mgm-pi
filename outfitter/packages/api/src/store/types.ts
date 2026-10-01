@@ -40,7 +40,18 @@ export interface Session {
   /** The most recent checkpoint frame's fields, replaced wholesale by each new checkpoint: a
    * repo session reports branch/head (and maybe snapshotUrl); a repo-less session reports
    * workspaceUrl instead (protocol.md's agentd<->api `checkpoint` row). */
-  checkpoint?: { branch?: string; head?: string; snapshotUrl?: string; workspaceUrl?: string };
+  checkpoint?: {
+    branch?: string;
+    head?: string;
+    snapshotUrl?: string;
+    workspaceUrl?: string;
+    /** E9 §5.3: when the api stored this frame (agentlink.ts, on the instance holding the run's
+     * socket, the same clock that records the turn's settle). Absent on rows from before it. */
+    at?: string;
+    /** E9 §5.3: the frame said the remote branch is at `head`, whether this checkpoint pushed it
+     * (`pushed: true`) or found it there already (`pushed: false` with a head; agentd's push()). */
+    landed?: boolean;
+  };
   /** E9 §1: when pi last reported the turn settled (`agent_settled`: nothing queued, no retry
    * left), and the last entry agentd had sent by then, when it said. Not run state `idle`, which a
    * run enters before its first prompt. */
@@ -1207,8 +1218,13 @@ export interface A2ATask {
   tokenId: string;
   /** The key's owner, who the session runs as. */
   ownerEmail: string;
-  /** The caller's messageId: a retried SendMessage with the same id returns this task. */
+  /** The caller's messageId. */
   messageId?: string;
+  /** Store-managed: `messageId` while the task is open, removed when it becomes terminal. The
+   * dedupe (one open task per key and messageId) is on this, so a retried SendMessage returns the
+   * task its first send made while that task runs, and a messageId reused after it finished (the
+   * TCK reuses one per test session) starts a new one. */
+  openMessageId?: string;
   /** Absent on a task rejected before it had a session, and briefly while one is created. */
   sessionId?: string;
   /** The mail this task's turn starts, and the turn waiter on it (turns.ts). */
@@ -1222,8 +1238,16 @@ export interface A2ATask {
   statusText?: string;
   /** The caller's message as A2A JSON (Message.toJSON), for `history`. Bounded by the 64 KB body. */
   message?: unknown;
-  /** On `completed`: the final assistant text (PR6 adds branch/head/compareUrl/prUrl). */
+  /** On `completed`: the final assistant text, and for a repo task the pushed branch. */
   result?: A2ATaskResult;
+  /** E9 §5.3 completion: when the settled turn's checkpoint was asked for (the `{t: "checkpoint"}`
+   * down-frame). COMPLETED waits for a landed checkpoint; FAILED after A2A_CHECKPOINT_TIMEOUT_MS. */
+  checkpointRequestedAt?: string;
+  /** The caller's answers to INPUT_REQUIRED as `<messageId>#<hash of the text>`, newest last
+   * (capped): a retried answer (same id, same text) is never applied to the next question. */
+  answerKeys?: string[];
+  /** Those answers as A2A JSON (text capped like `message`), for `history` after `message`. */
+  replies?: unknown[];
   createdAt: string;
   updatedAt: string;
   /** The turn waiter's deadline when the task started (turns.ts layer 3). */
@@ -1249,10 +1273,12 @@ export interface A2ATaskListQuery {
 }
 
 export interface A2ATasksCollection {
-  /** false (no-op) when the key already has a task with this messageId (the dedupe). */
+  /** false (no-op) when the key already has an open task with this messageId (the dedupe). Sets
+   * `openMessageId` on an open task with a messageId. */
   insert(task: A2ATask): Promise<boolean>;
   /** The key's own task, or null: another key's task id reads as missing. */
   findForToken(tokenId: string, id: string): Promise<A2ATask | null>;
+  /** The key's open task with this messageId (the dedupe), or null. */
   findByMessageId(tokenId: string, messageId: string): Promise<A2ATask | null>;
   /** The newest task in the key's context, or null for a context the key doesn't have. */
   latestInContext(tokenId: string, contextId: string): Promise<A2ATask | null>;
@@ -1263,7 +1289,7 @@ export interface A2ATasksCollection {
   /** Non-terminal tasks: one key's, or everyone's (the tick sweep), oldest first, at most `limit`. */
   listOpen(limit: number, tokenId?: string): Promise<A2ATask[]>;
   /** Applies `patch` only while the task is in one of `from` (a terminal state is never left);
-   * null when it wasn't. */
+   * null when it wasn't. Moving to a terminal state removes `openMessageId`. */
   transition(id: string, from: readonly A2ATaskState[], patch: Partial<A2ATask>): Promise<A2ATask | null>;
   /** §5.2 maxConcurrent, atomic across instances: adds `taskId` to the key's slots unless it
    * already holds `max`. True when claimed (or already held). */

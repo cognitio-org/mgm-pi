@@ -31,6 +31,7 @@ outfitter/packages/api/src/routes/sessions.ts
 outfitter/packages/api/src/server.ts
   s_1d3bdd6f362f9b::t_baeb1a16efde86 88-89
   s_1d3bdd6f362f9b::t_c0c25cdcb0263b 131
+  s_1d3bdd6f362f9b::t_b66d83ebe651a9 279
 outfitter/packages/api/src/a2a/keys.ts
   s_1d3bdd6f362f9b::t_4f00d3e6ad8c80 19-26,34-38,40-42,47-52,56-62
   s_1d3bdd6f362f9b::t_01cb5e4e27b2ec 75-79
@@ -80,6 +81,9 @@ outfitter/packages/api/src/branch-policy.ts
   s_1d3bdd6f362f9b::t_f7e728a2ba06bf 51-63,66,68-70,73,76-78
 outfitter/packages/api/test/a2a.test.ts
   s_1d3bdd6f362f9b::t_4835bdc00ba056 27-28,358,376,381,743-744
+outfitter/packages/api/src/search/redact.ts
+  s_1d3bdd6f362f9b::t_b66d83ebe651a9 27-28
+  s_1d3bdd6f362f9b::t_f92ff719fd349e 29
 ---
 {
   "schema_version": "authorship/3.0.0",

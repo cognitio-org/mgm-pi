@@ -87,6 +87,7 @@ visual guardrails in the README still apply to the footage.
 
   ```bash
   brew install pipx && pipx install demucs
+  pipx inject demucs numpy        # demucs 4.1 on Python 3.14 doesn't pull numpy in itself
   ffmpeg -i /Users/mgm/localllm/video/source.mp4 -vn -ac 2 -ar 44100 reference/source-audio.wav
   demucs --two-stems=vocals -o reference/stems reference/source-audio.wav
   # music bed: reference/stems/htdemucs/source-audio/no_vocals.wav

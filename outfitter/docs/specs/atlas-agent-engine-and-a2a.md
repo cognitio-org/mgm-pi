@@ -150,11 +150,19 @@ Don't use run state `idle` (EPIC.md:517-519: agentd is idle before any prompt).
 - **Two Agent Engine projects, two service accounts.** A service account acts only on its own
   project, and agents in a project read all its secrets by default (`D/reference/limitations.md`
   "Secret Access").
-  - **Memory:** `AGENT_ENGINE_MEMORY_PROJECT_ID` plus secret `outfitter-agentengine-memory-sa`. A
-    memory-only project, with no agents, so nothing hosted can read its `MONGODB_URI`/Voyage/LLM
-    secrets.
+  - **Agent Engine projects are Atlas projects.** `agentengine project create` is deprecated:
+    "manage projects in Atlas".
+  - **Memory:** `AGENT_ENGINE_MEMORY_PROJECT_ID` = **the existing Atlas project `outfitter`**
+    (`6aafddf75566cf48726735bb`; owner decision 2026-10-01, option A), plus secret
+    `outfitter-agentengine-memory-sa`.
+    - It's memory-only. **No Agent Engine agent is ever deployed in `outfitter`**, because agents
+      read every project secret (`MONGODB_URI`, `VOYAGE_API_KEY`, `LLM_API_KEY`).
+    - **UNVERIFIED:** whether the memory service account's Agent Engine `PROJECT_OWNER` role carries
+      Atlas admin rights on this project's clusters. Check before PR2 merges. If it does, the
+      service account's secret gets the same care as an Atlas admin key.
   - **Agents:** `AGENT_ENGINE_AGENTS_PROJECT_ID` plus secret `outfitter-agentengine-agents-sa`. This
-    project holds the agents Outfitter calls, and `outfitter-delegate` (§6).
+    is a separate Atlas project (`outfitter-agents`, created for PR4). It holds the agents Outfitter
+    calls, and `outfitter-delegate` (§6).
   - Each secret holds the client id and secret (`ae_sa_id_`/`ae_sa_sk_`, 2160 h default expiry).
   - Each part is off while its project id is unset, so dev and CI need no account.
 - **Base URL:** `AGENT_ENGINE_BASE_URL`, default `https://agentengine.mongodb.com`.
@@ -185,8 +193,11 @@ Don't use run state `idle` (EPIC.md:517-519: agentd is idle before any prompt).
 
 ### 3. Memory
 #### 3.1 Where it lives
-- **One memory-only Agent Engine project** (`agentengine create --memory-only`,
-  `D/add-features/memory-only.md`).
+- **One memory-only Agent Engine project**, the Atlas project `outfitter` (§2).
+  - Set up 2026-10-01: `agentengine create --memory-only`, CLI context `outfitter-memory`.
+  - Config committed at `deploy/agent-engine/memory/project-config.yaml`.
+  - Memory server `v0.11.7` ready. Its 10 search indexes are READY, with the `repo` partition on
+    semantic, episodic and procedural.
 - **Its data sits in an Atlas cluster we supply** (`MONGODB_URI`), Flex at minimum
   (`D/add-features/memory.md`).
 - **Decision: two clusters in the existing Atlas project** (revised 2026-10-01 after the spike).
@@ -236,6 +247,15 @@ Don't use run state `idle` (EPIC.md:517-519: agentd is idle before any prompt).
     (https://www.mongodb.com/docs/vector-search/crud-embeddings/automated-embedding/models/). That
     lifts session search's rate-limit problem (sysop-tools.md:88) as a side effect.
   - EPIC.md:87,121 ("Flex/M10 deferred") is updated.
+- **Secrets (all GSM in `outfitter-509211`, piped into Agent Engine with `secret set --stdin`, never
+  printed):**
+
+| Agent Engine secret | GSM secret | Holds |
+|---|---|---|
+| `MONGODB_URI` | `outfitter-agentengine-mongodb-uri` | `agent-engine-memory` on `outfitter-memory` |
+| `VOYAGE_API_KEY` | `ATLAS_AGENTS_KEY` | the Voyage key (owner-created) |
+| `LLM_API_KEY` | `outfitter-agentengine-extraction-key` | the LiteLLM extraction key |
+
 - **Embeddings:**
   - Voyage, through our own `VOYAGE_API_KEY` project secret (default `voyage-4-large`, 1024 dims).
     This is not Atlas autoEmbed.
@@ -247,9 +267,15 @@ Don't use run state `idle` (EPIC.md:517-519: agentd is idle before any prompt).
   - Taxonomic is left out, because extracted taxonomic memories default to `org` visibility
     (`D/add-features/memory-types.md`).
 - **Extraction LLM:**
-  - Under `memory:` in `project-config.yaml`: `extraction_llm: {provider: openai, base_url: <LiteLLM
-    gateway>, auth_header: authorization, api_key_secret: LLM_API_KEY, model: <LiteLLM model
-    group>}`.
+  - Under `memory:` in `project-config.yaml`: `extraction_llm: {provider: openai, base_url:
+    "https://router.kernal.one/v1", auth_header: authorization, api_key_secret: LLM_API_KEY, model:
+    "gpt-5-nano"}`.
+    - `gpt-5-nano` costs $0.05/$0.40 per 1M tokens, about $0.001 per extraction (owner chose cheap,
+      2026-10-01). Move up a tier if memories come out thin.
+    - `router.kernal.one` is the gateway's new hostname (#318).
+  - **Key:** a LiteLLM virtual key `outfitter-agentengine-extraction`, minted 2026-10-01.
+    - `models: [gpt-5-nano]`, `max_budget: 5`, `budget_duration: 30d`.
+    - Smoke-tested: `gpt-5-nano` returns 200, other models 403.
   - `api_key_secret` must be one of the fixed names `LLM_API_KEY | OPENAI_API_KEY |
     ANTHROPIC_API_KEY | GEMINI_API_KEY | CEREBRAS_API_KEY`.
   - `base_url` must be public `https` (no credentials, query or fragment; a trailing `/v1` is
@@ -769,7 +795,9 @@ before PR2 merges:
 - Whether the gateway proxies the memory server's DELETE routes.
 - How `buildContext`'s single filter treats a source without `metadata.repo`.
 - Whether the gateway exposes `POST …/memory/retrieval/context-from-sources`.
-- That the memory server creates exactly 10 indexes on `outfitter-memory`.
+- ~~That the memory server creates exactly 10 indexes on `outfitter-memory`.~~ Done 2026-10-01:
+  10, all READY.
+- Whether the memory service account's `PROJECT_OWNER` carries Atlas cluster rights (§2).
 
 ### Owner steps (billed or console)
 1. **Atlas** (exact commands in `docs/reports/agent-engine-spike.md`):

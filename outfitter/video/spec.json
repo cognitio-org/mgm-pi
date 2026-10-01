@@ -15,11 +15,11 @@
       ]
     },
     {
-      "id": "lead-side-smile",
+      "id": "lead-side-proud",
       "refs": [
         "lead-side"
       ],
-      "prompt": "Photograph. The exact same person, clothes, room, lighting, camera position and framing as the reference image, but now they have turned their head toward the camera with a huge, beaming, delighted open-mouth smile, and hold one firm thumbs-up close beside their face. The out-of-focus monitor edge still fills the right third of the frame. {suffix}"
+      "prompt": "Photograph. The exact same person, clothes, room, lighting, camera position and framing as the reference image, but now they have turned their head toward the camera with a quietly proud, slightly smug, self-satisfied look: closed mouth, the faintest knowing half-smile, chin raised a little, eyes steady on the lens. They hold one firm thumbs-up close beside their face. Not a grin, no teeth. The out-of-focus monitor edge still fills the right third of the frame. {suffix}"
     },
     {
       "id": "lead-glow",
@@ -86,15 +86,15 @@
       "seconds": 8,
       "start": "lead-side",
       "takes": 3,
-      "prompt": "The person reads the screen and nods slowly twice with an earnest deadpan expression, then turns their head toward the camera, raises one firm thumbs-up close beside their face and breaks into a huge, beaming smile, holding the smile and the thumbs-up completely still for the last second. Locked-off camera, no cuts, no zoom. {set} {suffix}"
+      "prompt": "The person reads the screen and nods slowly twice with an earnest deadpan expression, then turns their head toward the camera and raises one firm thumbs-up close beside their face, settling into a quietly proud, slightly smug, self-satisfied look: closed mouth, faint knowing half-smile, chin up a little. No grin. Holds the look and the thumbs-up completely still for the last second. Locked-off camera, no cuts, no zoom. {set} {suffix}"
     },
     {
-      "id": "11-closeup-smile",
+      "id": "11-closeup-proud",
       "seconds": 8,
       "start": "lead-side",
-      "end": "lead-side-smile",
+      "end": "lead-side-proud",
       "takes": 3,
-      "prompt": "The person reads the screen and nods slowly twice with an earnest deadpan expression, then turns their head toward the camera, raises one firm thumbs-up close beside their face and breaks into a huge, beaming smile, holding the smile and the thumbs-up completely still for the last second. Locked-off camera, no cuts, no zoom. {set} {suffix}"
+      "prompt": "The person reads the screen and nods slowly twice with an earnest deadpan expression, then turns their head toward the camera and raises one firm thumbs-up close beside their face, settling into a quietly proud, slightly smug, self-satisfied look: closed mouth, faint knowing half-smile, chin up a little. No grin. Holds the look and the thumbs-up completely still for the last second. Locked-off camera, no cuts, no zoom. {set} {suffix}"
     }
   ],
   "voices": {

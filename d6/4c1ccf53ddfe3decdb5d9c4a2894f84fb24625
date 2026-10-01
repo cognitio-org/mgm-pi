@@ -1,0 +1,51 @@
+outfitter/packages/api/src/agentengine/agents.ts
+  s_1d3bdd6f362f9b::t_0ac082597c0c14 20
+  s_1d3bdd6f362f9b::t_c6ecd257ed4b78 343-346
+  s_1d3bdd6f362f9b::t_912e7bec182bf6 89-90,94-99
+  s_1d3bdd6f362f9b::t_de2d95383526b0 382,384-388
+  s_1d3bdd6f362f9b::t_42b529a791de1e 390
+  s_1d3bdd6f362f9b::t_81438619a65700 395
+  s_1d3bdd6f362f9b::t_d1a91e6c47e28d 100-101
+outfitter/packages/api/src/agentengine/index.ts
+  s_1d3bdd6f362f9b::t_427681b22b895a 30
+outfitter/packages/api/src/store/types.ts
+  s_1d3bdd6f362f9b::t_cf2024fefa3566 1153-1155
+outfitter/packages/api/src/ae-sessions.ts
+  s_1d3bdd6f362f9b::t_cfb62ffaa83a78 21
+  s_1d3bdd6f362f9b::t_a4473f9156987a 53
+outfitter/packages/web/src/components/AeAgentsPanel.tsx
+  s_1d3bdd6f362f9b::t_d5069e3187ccd0 202
+outfitter/packages/api/test/ae-agents.test.ts
+  s_1d3bdd6f362f9b::t_ddafb1c2d3871b 201-207
+  s_1d3bdd6f362f9b::t_d79d2aed6c4bac 352-391
+  s_1d3bdd6f362f9b::t_202cbe775b30f8 339-342
+  s_1d3bdd6f362f9b::t_2458088ec82f00 551
+outfitter/packages/api/src/admin/ae-ops.ts
+  s_1d3bdd6f362f9b::t_d84d95219539dd 18-27
+  s_1d3bdd6f362f9b::t_7262431857502f 60-69
+  s_1d3bdd6f362f9b::t_8681be0434ed0b 35-36,190-197,273-274,281-282,289,292,295,298-299,304,313-316,320-322,331
+  s_1d3bdd6f362f9b::t_241444d06c3c9d 139-141,144-145
+  s_1d3bdd6f362f9b::t_6841f5a97d8d6b 242,261,287,334
+outfitter/packages/api/src/store/mongo.ts
+  s_1d3bdd6f362f9b::t_cf2024fefa3566 1453-1454
+outfitter/packages/api/src/store/memory.ts
+  s_1d3bdd6f362f9b::t_cf2024fefa3566 1112,1114
+outfitter/packages/api/src/routes/agent-engine.ts
+  s_1d3bdd6f362f9b::t_e9ac7bf6b79687 113-117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "d64c1ccf53ddfe3decdb5d9c4a2894f84fb24625",
+  "prompts": {},
+  "sessions": {
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

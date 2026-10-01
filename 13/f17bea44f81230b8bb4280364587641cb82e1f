@@ -1,0 +1,54 @@
+outfitter/packages/web/src/components/GuruForm.tsx
+  s_1d3bdd6f362f9b::t_7c527dac21ed6d 98-99
+outfitter/packages/api/src/admin/laptop-approvals.ts
+  s_1d3bdd6f362f9b::t_76acd742b17050 10
+outfitter/packages/api/test/laptop-memory.test.ts
+  s_1d3bdd6f362f9b::t_611dc8445202b5 66,71-72,75-80
+outfitter/packages/api/test/laptop-approvals.test.ts
+  s_1d3bdd6f362f9b::t_bd386e5632b3d9 300,304-314,317,324
+outfitter/packages/api/src/admin/ae-ops.ts
+  s_1d3bdd6f362f9b::t_9d5c567327a58c 167,257-269,276,283,403,448-450
+  s_1d3bdd6f362f9b::t_76acd742b17050 19-21,291,303,349,370,440
+outfitter/packages/api/src/store/mongo.ts
+  s_1d3bdd6f362f9b::t_9d5c567327a58c 1538-1541
+outfitter/packages/api/src/store/memory.ts
+  s_1d3bdd6f362f9b::t_9d5c567327a58c 1183-1191
+outfitter/packages/api/test/laptop-tapes.test.ts
+  s_1d3bdd6f362f9b::t_64dab0d276376a 342-344
+  s_1d3bdd6f362f9b::t_35f6749e957cfa 7,19-21,27,80,88,113,119,283,339-340,349
+outfitter/packages/api/src/store/types.ts
+  s_1d3bdd6f362f9b::t_9d5c567327a58c 1251-1253
+outfitter/packages/api/src/gurus-service.ts
+  s_1d3bdd6f362f9b::t_9d5c567327a58c 8-9,186-189,193-194,209
+outfitter/docs/protocol.md
+  s_1d3bdd6f362f9b::t_480ab902d5a327 795,810-814,842,899-902,909,911-912
+outfitter/packages/web/test/guru-form.test.tsx
+  s_1d3bdd6f362f9b::t_36aca5cd234dae 212,218
+outfitter/packages/api/src/admin/memory-ops.ts
+  s_1d3bdd6f362f9b::t_76acd742b17050 17,327,349,382-385,450
+outfitter/packages/api/test/mongo-ae.test.ts
+  s_1d3bdd6f362f9b::t_8174e011145a6c 75-81
+outfitter/packages/api/src/admin/ops.ts
+  s_1d3bdd6f362f9b::t_76acd742b17050 78
+  s_1d3bdd6f362f9b::t_134f6c9378cd7b 12-13,17-21,101-117,123-124,128,669-670,673-695,726,733-735,821-823,832,870
+  s_1d3bdd6f362f9b::t_9d5c567327a58c 39,88-89,384-394
+outfitter/packages/api/src/routes/admin.ts
+  s_1d3bdd6f362f9b::t_9d5c567327a58c 81
+  s_1d3bdd6f362f9b::t_76acd742b17050 14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "13f17bea44f81230b8bb4280364587641cb82e1f",
+  "prompts": {},
+  "sessions": {
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

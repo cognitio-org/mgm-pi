@@ -6,6 +6,7 @@
 # Usage: ./vhs.sh <in> <out.mp4> [grade.cube]
 #   env: VHS_NOISE (default 10), VHS_FILL=crop|pad (default crop: center-crop 16:9 to 4:3)
 set -euo pipefail
+. "$(cd "$(dirname "$0")" && pwd)/deps.sh"
 
 IN="${1:?usage: vhs.sh <in> <out.mp4> [grade.cube]}"
 OUT="${2:?usage: vhs.sh <in> <out.mp4> [grade.cube]}"

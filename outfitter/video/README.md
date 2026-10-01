@@ -16,6 +16,16 @@ source video (local only) --extract-frames.sh--> reference/*.png (gitignored)
      Veo clips + Playwright UI recordings --vhs.sh (with grade.cube)--> graded shots --+--> edit
 ```
 
+0. **Setup** (macOS, Homebrew):
+
+   ```bash
+   brew install ffmpeg numpy pillow
+   ```
+
+   Homebrew's numpy/Pillow install into Homebrew's own `python3`, not macOS's `/usr/bin/python3`.
+   The shell scripts find it automatically (`PYTHON=...` to override); run the Python scripts
+   with `$(brew --prefix)/bin/python3` as below.
+
 1. **Reference frames** (on the machine with the video):
 
    ```bash
@@ -44,10 +54,10 @@ source video (local only) --extract-frames.sh--> reference/*.png (gitignored)
 
    ```bash
    mkdir -p ours && ffmpeg -i some-veo-clip.mp4 -vf fps=1 ours/frame-%04d.png
-   python3 match-grade.py --ref reference/pick-*.png --src ours/frame-*.png --out grade.cube
+   $(brew --prefix)/bin/python3 match-grade.py --ref reference/pick-*.png --src ours/frame-*.png --out grade.cube
    ```
 
-   (`pip install numpy pillow`.) The `.cube` holds only color statistics, so it's fine to commit.
+   The `.cube` holds only color statistics, so it's fine to commit.
    `--strength 0.6` if the full match is too heavy.
 
 6. **Finish every shot** with the same pass so AI and screen footage sit together:

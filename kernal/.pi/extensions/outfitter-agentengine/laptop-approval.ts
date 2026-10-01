@@ -43,7 +43,7 @@ export function approvalIdOf(params: Record<string, unknown> | undefined): strin
   return typeof id === "string" && id.trim() ? id.trim() : undefined;
 }
 
-export type WaitOutcome ="approved" | "denied" | "expired" | "used" | "timeout" | "cancelled";
+export type WaitOutcome = "approved" | "denied" | "expired" | "used" | "timeout" | "cancelled";
 
 function sleepFor(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {

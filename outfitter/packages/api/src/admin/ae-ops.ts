@@ -60,9 +60,10 @@ export function aeSessionId(sessionId: string, agentId: string): string {
  * fence markers, so the agent's words can't close the fence and speak as Outfitter. */
 export function cleanRemote(text: string): string {
   // Fullwidth and other compatibility forms become their ASCII selves, so they can't pass for our
-  // markers after the model reads them; then hidden characters go (untrusted.ts).
+  // markers after the model reads them; line and paragraph separators become spaces (words stay
+  // apart), then the other hidden characters go (untrusted.ts).
   return (
-    stripHidden(text.normalize("NFKC"))
+    stripHidden(text.normalize("NFKC").replace(/[\u2028\u2029]/g, " "))
       .replace(/[^\S\n\t ]/gu, " ")
       .replace(/\[\s*(from|end\s+of)\s+agent\s+engine\s+agent/giu, "($1 Agent Engine agent")
   );

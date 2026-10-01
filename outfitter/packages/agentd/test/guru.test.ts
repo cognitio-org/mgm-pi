@@ -1,8 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { renderGuru, renderModelArg } from "../src/guru.js";
+import { PI_MEMORY_TOOLS, renderGuru, renderModelArg } from "../src/guru.js";
 import { EXTERNAL_HTML_PREVIEW_PROMPT, SEALED_HTML_PREVIEW_PROMPT } from "../src/html-preview-prompt.js";
 import type { RunSpecGuru } from "../src/protocol.js";
+
+test("renderGuru: pi-memory's tools excluded for memory tool and auto, once each; no recall extension (Kernal's recall)", () => {
+  const opts = { piBin: "pi", sessionFile: "/s.jsonl" };
+  const excl = (args: string[]) => (args.includes("--exclude-tools") ? args[args.indexOf("--exclude-tools") + 1].split(",") : []);
+  assert.deepEqual(excl(renderGuru({ model: "m", memory: "tool", excludeTools: ["scratchpad", "x"] }, opts).args), ["scratchpad", "x", ...PI_MEMORY_TOOLS.filter((n) => n !== "scratchpad")]);
+  assert.deepEqual(excl(renderGuru({ model: "m", memory: "off" }, opts).args), []);
+  const auto = renderGuru({ model: "m", memory: "auto" }, opts).args;
+  assert.deepEqual(auto.filter((_, i) => auto[i - 1] === "--extension"), []);
+  assert.equal(PI_MEMORY_TOOLS.length, 7);
+});
 
 test("renderModelArg: no thinking level returns the bare model", () => {
   assert.equal(renderModelArg("litellm/local-qwen-mlx"), "litellm/local-qwen-mlx");

@@ -39,7 +39,6 @@
     "PAT-4": "voices/PAT-4-take1.wav",
     "JO-1": "voices/JO-1-take1.wav",
     "MGM": "voices/MGM-take3.wav",
-    "PAT-short": "voices/PAT-short-take1.wav",
     "_note": "take1 by default for the trimmed lines; change to your favourite take"
   },
   "ui": {

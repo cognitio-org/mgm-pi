@@ -1,4 +1,4 @@
-# "Dear Sysop" -- Outfitter intro (draft 3: 75 s cut + 30 s teaser)
+# "Dear Sysop" -- Outfitter intro (draft 4: one cut, about 1:26)
 
 Built on the reference promo's structure (from the beat sheet, kept private): a title over a
 mailbox montage, then a parade of fan letters, each read aloud by its writer over pictures of the
@@ -12,7 +12,8 @@ Disk Box, Drive, ▶ Play, ⏏ Eject, Control Panel.
 
 ## Decisions
 - **Casting: grown-ups writing like kids.** No children on screen or in the voices.
-- **Length: both.** The 75 s cut, then a 30 s teaser re-cut from the same material.
+- **Length:** one cut (the 30 s teaser was dropped). It opens on the Outfitter logo on black, as the
+  reference opened on its logo.
 - **Voices:** generated for Lee, Pat and Jo; **MGM's letter is MGM's own recorded voice**.
 - **Lead:** `[LEAD]` = "a rugged, muscular man in his mid-50s in the style of a 1980s jungle
   action-movie hero ... red cloth headband ... a bandolier of 3.5-inch floppy disks" (see spec.json; the
@@ -138,18 +139,8 @@ never a clone of a real person, including anyone in the reference video.
 | PAT-4 | PAT | "Make it official, okay? Sincerely, Pat." |
 | JO-1 | JO | "Dear Sysop. Could you make a computer I can just talk to? Sincerely, Jo." |
 | MGM | MGM (recorded) | "Dear Sysop. Outfitter rules the fleet. Your Outfitter friend, MGM." |
-| PAT-short | PAT | teaser only: "Twelve Drives at once. Atlas memory. And Atlas agents that hand my agents work!" |
 
 The picture stretches to fit these (assemble.py), so the full cut runs about 1:30.
 
 Finish every voice line with the same tape treatment as the picture (`vhs.sh` band-limits audio)
 plus a touch of room reverb, so it doesn't sound too clean against the 1990 picture.
-
-## 30 s teaser (10.5 bars)
-| Time | Picture | Voice |
-|---|---|---|
-| 0:00-0:05.7 | 1 "Dear Sysop," over the sidewalk run | -- |
-| 0:05.7-0:17.1 | 7 Printout pan | PAT-b, PAT-c (first four items, through the Atlas agents), PAT-d |
-| 0:17.1-0:21.4 | 11 MGM's wish card, "MGM" writes on | MGM (recorded) |
-| 0:21.4-0:25.7 | 12 Rocky's thumbs-up, "Rambo" writes on | -- |
-| 0:25.7-0:30.0 | 13 Thank-you card, logo | -- |

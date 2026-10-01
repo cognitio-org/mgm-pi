@@ -5,9 +5,7 @@
 # ///
 """Builds the finished cuts from picks.json + cut.json.
 
-  uv run assemble.py full            the 75 s cut   -> out/dear-sysop-75.mp4
-  uv run assemble.py teaser          the 30 s cut   -> out/dear-sysop-30.mp4
-  uv run assemble.py both
+  uv run assemble.py                 the cut -> out/dear-sysop.mp4
 
 Options: --grade grade.cube (LUT from match-grade.py, applied in the VHS pass)
          --music PATH / --music-start SECONDS (override cut.json)
@@ -38,6 +36,7 @@ VIS_W = H * 4 // 3
 SERIF = FONTS / "PTSerif-Bold.ttf"
 DOT = FONTS / "VT323-Regular.ttf"
 PEN = FONTS / "Sacramento-Regular.ttf"
+PIXEL = FONTS / "Silkscreen-Regular.ttf"   # the site's display font
 C64_BORDER, C64_SCREEN, C64_TEXT = (120, 105, 196), (64, 49, 141), (160, 150, 230)
 
 
@@ -298,6 +297,37 @@ def monitor_video(seg, picks, seconds, out):
        f"trim=duration={seconds}", *x264("-t", seconds), out)
 
 
+def logo_card(seg, seconds, out):
+    """The opener (the reference opened on its logo, on black): the Outfitter mark -- the pixel
+    rucksack from packages/web/src/components/Logo.tsx -- and wordmark, fading up out of black,
+    with the green cursor pixel blinking."""
+    ink, bg, green = (228, 224, 251), (0, 0, 0), (92, 255, 138)
+    cell = seg.get("cell", 20)                       # screen pixels per logo pixel (16x16 grid)
+    word = lettering(seg.get("text", "OUTFITTER"), PIXEL, seg.get("text_size", 96), ink + (255,))
+    gap = cell * 2
+    top = (H - (16 * cell + gap + word.height)) // 2
+    left = (W - 16 * cell) // 2
+    off = Image.new("RGB", (W, H), bg)
+    d = ImageDraw.Draw(off)
+    px = lambda x, y, w, h, c: d.rectangle((left + x * cell, top + y * cell,
+                                            left + (x + w) * cell - 1, top + (y + h) * cell - 1), fill=c)
+    for r in ((5, 0, 2, 5), (9, 0, 2, 5), (4, 3, 8, 2), (3, 4, 10, 11)):   # straps, flap, body
+        px(*r, ink)
+    px(7, 6, 2, 2, bg)                                                       # buckle (cut out)
+    px(5, 9, 6, 5, tuple(round(c * 0.45) for c in ink))                      # front pocket
+    off.paste(word, ((W - word.width) // 2, top + 16 * cell + gap), word)
+    on = off.copy()
+    d = ImageDraw.Draw(on)
+    px(12, 12, 2, 3, green)                                                  # the cursor
+    a, b = out.with_name(out.stem + "-off.png"), out.with_name(out.stem + "-on.png")
+    off.save(a)
+    on.save(b)
+    fade = seg.get("fade_in", 0.8)
+    ff("-loop", "1", "-framerate", FPS, "-i", a, "-loop", "1", "-framerate", FPS, "-i", b, "-filter_complex",
+       f"[0:v][1:v]overlay=enable='lt(mod(t,1.06),0.53)',fade=t=in:st=0.25:d={fade}",
+       *x264("-t", seconds), out)
+
+
 def endcard(seg, seconds, out):
     thanks = Image.new("RGB", (W, H), (36, 48, 140))
     t = lettering(seg["thanks"], SERIF, 84, (255, 255, 255, 255), outline=(150, 150, 170, 255), outer=2,
@@ -343,6 +373,8 @@ def render_segment(i, seg, length, picks, work):
     elif t == "screen":
         screen_video(ui_canvas(picks, seg["ui"]), length, out, seg.get("from", [0.5, 0.5, 1.0]),
                      seg.get("to", [0.5, 0.5, 0.8]))
+    elif t == "logo":
+        logo_card(seg, length, out)
     elif t == "slate":
         still_video(slate(seg["text"]), length, out, push=0.0)
     elif t == "printout":
@@ -499,7 +531,8 @@ def build(name, cut, edit, picks, args):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("which", choices=["full", "teaser", "both"])
+    ap.add_argument("which", nargs="?", default="full", choices=["full", "both"],
+                    help="optional; there is one cut now ('both' is kept as an alias for old habits)")
     ap.add_argument("--grade")
     ap.add_argument("--music")
     ap.add_argument("--music-start", type=float)
@@ -510,8 +543,7 @@ def main():
             raise SystemExit(f"{tool} not found. Install with: brew install ffmpeg")
     picks = json.loads((HERE / "picks.json").read_text())
     edit = json.loads((HERE / "cut.json").read_text())
-    for name in (["full", "teaser"] if args.which == "both" else [args.which]):
-        build(name, edit["cuts"][name], edit, picks, args)
+    build("full", edit["cuts"]["full"], edit, picks, args)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 {
-  "_about": "The edit: each cut is a list of segments laid end to end (slot = seconds on screen; bars of the ~84 BPM music are 2.857 s) joined by dissolves. Segments and voice lines tagged with the same 'letter' belong together: the letter's lines play one after another from its first segment, and its segments stretch (to whole bars) when the lines need more room. 'voice_tempo' > 1 speeds every line up (1.1 = 10% faster). Edit and rerun assemble.py. 'monitor' segments put a UI screenshot on the green screen of a monitor still (falls back to a plain pan until that still exists); a clip that runs short fills its slot with a VHS pause glitch unless 'fill' is 'freeze'.",
+  "_about": "The edit: each cut is a list of segments laid end to end (slot = seconds on screen; bars of the ~84 BPM music are 2.857 s) joined by dissolves. Segments and voice lines tagged with the same 'letter' belong together: the letter's lines play one after another from its first segment, and its segments stretch (to whole bars) when the lines need more room. 'voice_tempo' > 1 speeds every line up (1.1 = 10% faster). Edit and rerun assemble.py. 'monitor' segments put a UI screenshot on the green screen of a monitor still (falls back to a plain pan until that still exists); a clip that runs short fills its slot with a VHS pause glitch unless 'fill' is 'freeze'. The cut opens on the Outfitter logo on black (segment type 'logo').",
   "dissolve": 1.0,
   "music": {
     "file": "reference/stems/htdemucs/source-audio/no_vocals.wav",
@@ -13,12 +13,16 @@
       "out": "dear-sysop.mp4",
       "segments": [
         {
+          "t": "logo",
+          "slot": 2.857
+        },
+        {
           "t": "clip",
           "src": "shots.02-sidewalk",
           "slot": 5.7,
           "title": {
             "text": "Dear Sysop,",
-            "start": 0.6,
+            "start": 1.2,
             "write": 1.6
           }
         },
@@ -190,72 +194,6 @@
         {
           "id": "JO-1",
           "letter": "JO"
-        },
-        {
-          "id": "MGM",
-          "letter": "MGM"
-        }
-      ]
-    },
-    "teaser": {
-      "out": "dear-sysop-teaser.mp4",
-      "segments": [
-        {
-          "t": "clip",
-          "src": "shots.02-sidewalk",
-          "slot": 5.7,
-          "title": {
-            "text": "Dear Sysop,",
-            "start": 0.6,
-            "write": 1.6
-          }
-        },
-        {
-          "t": "printout",
-          "slot": 5.7,
-          "lines": [
-            "MY WISH LIST",
-            "",
-            "* Twelve Drives at once",
-            "* A Tape for every job",
-            "* MongoDB Atlas memory",
-            "* Atlas agents <-> my agents (A2A)",
-            "",
-            "How much will all this cost?"
-          ],
-          "letter": "PAT"
-        },
-        {
-          "t": "card",
-          "still": "card-fleet",
-          "slot": 5.0,
-          "quote": "Outfitter rules the fleet.",
-          "name": "MGM",
-          "age": 54,
-          "write": {
-            "on_voice": "MGM",
-            "dur": 1.2
-          },
-          "letter": "MGM"
-        },
-        {
-          "t": "file",
-          "src": "signed.12-rocky",
-          "in": 2.0,
-          "slot": 4.3,
-          "freeze": 0.8,
-          "fill": "freeze"
-        },
-        {
-          "t": "endcard",
-          "slot": 3.6,
-          "thanks": "Thanks for all your letters.\nOur grown-up fans keep us going."
-        }
-      ],
-      "voices": [
-        {
-          "id": "PAT-short",
-          "letter": "PAT"
         },
         {
           "id": "MGM",

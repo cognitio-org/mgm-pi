@@ -87,20 +87,20 @@ source video (local only) --extract-frames.sh--> reference/*.png (gitignored)
    The `.cube` holds only color statistics, so it's fine to commit.
    `--strength 0.6` if the full match is too heavy.
 
-5c. **Assemble the cuts** from `picks.json` (the chosen takes) and `cut.json` (the edit):
+5c. **Assemble the cut** from `picks.json` (the chosen takes) and `cut.json` (the edit):
 
    ```bash
-   uv run assemble.py full      # -> out/dear-sysop-75.mp4   (teaser | both)
-   uv run assemble.py both --grade grade.cube
+   uv run assemble.py                    # -> out/dear-sysop.mp4
+   uv run assemble.py --grade grade.cube
    ```
 
-   It makes the title, wish cards, printout and end card itself, puts the Outfitter screenshots
-   in `out/ui/` on the green screens of the `crt-*` monitor stills (curvature, scanlines, glow;
-   a plain pan until those stills exist), dissolves on the bar lines, loudness-matches the voices
-   (so a home recording sits level with the TTS lines), places them, ducks the music (Demucs
-   `no_vocals.wav` by default) and runs the VHS pass. A clip shorter than its slot ends in a VHS
-   pause glitch instead of a dead freeze (`"fill": "freeze"` for a deliberate one). Edit timings
-   in `cut.json`.
+   It opens on the Outfitter logo on black (the reference opened on its logo), then makes the title,
+   wish cards, printout and end card itself, puts the Outfitter screenshots in `out/ui/` on the
+   green screens of the `crt-*` monitor stills (curvature, scanlines, glow; a plain pan until those
+   stills exist), dissolves on the bar lines, loudness-matches the voices (so a home recording sits
+   level with the TTS lines), places them, ducks the music (Demucs `no_vocals.wav` by default) and
+   runs the VHS pass. A clip shorter than its slot ends in a VHS pause glitch instead of a dead
+   freeze (`"fill": "freeze"` for a deliberate one). Edit timings in `cut.json`.
 
 5b. **Signature** on the punchline close-up (before the VHS pass):
    `./signature.sh in.mp4 out/12-signed.mp4 "<letter writer's name>" [start-s] [write-s]`.
@@ -119,7 +119,7 @@ source video (local only) --extract-frames.sh--> reference/*.png (gitignored)
    track. Besides the softness and chroma smear it adds interlaced scanlines, timebase wobble, the
    head-switching band at the bottom edge, dropouts, and a short tracking glitch every few seconds.
    `assemble.py` runs it on the finished cut, so the same env vars work there:
-   `VHS_GLITCH=0.12 uv run assemble.py both`.
+   `VHS_GLITCH=0.12 uv run assemble.py`.
 
 ## Guardrails
 

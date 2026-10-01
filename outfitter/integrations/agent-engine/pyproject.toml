@@ -1,0 +1,31 @@
+# Test project for outfitter_tools.py. Not an Agent Engine workspace and not a uv workspace root:
+# the deployable agent is sample-agent/agents/outfitter-delegate, which has its own pyproject.
+[project]
+name = "outfitter-agent-engine-integration"
+version = "0.1.0"
+description = "Outfitter A2A tools for Agent Engine agents (tests and tooling)"
+requires-python = ">=3.11"
+dependencies = [
+    "a2a-sdk==1.2.1",
+    "httpx>=0.28,<1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pyyaml>=6",
+]
+# The sample agent's runtime, for tests/test_sample_agent.py's real-SDK test (skipped without it).
+sdk = [
+    "agent-engine-runner-shared[mongodb]>=0.11.3,<1",
+    "agent-engine-sdk-langgraph>=0.11.3,<1",
+    "langchain>=1.0.0",
+    "langchain-openai>=1.1.12",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

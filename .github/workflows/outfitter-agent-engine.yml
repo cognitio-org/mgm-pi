@@ -1,0 +1,32 @@
+name: Outfitter Agent Engine integration
+# E9 PR7: the Python A2A tools for Agent Engine (outfitter/integrations/agent-engine), tested
+# against a local fake A2A server. Separate from outfitter-ci.yml: different language, and it only
+# runs when this directory changes. Deploying the sample agent is an owner step, never CI.
+on:
+  push:
+    branches: [main]
+    paths: ["outfitter/integrations/agent-engine/**", ".github/workflows/outfitter-agent-engine.yml"]
+  pull_request:
+    paths: ["outfitter/integrations/agent-engine/**", ".github/workflows/outfitter-agent-engine.yml"]
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults: { run: { working-directory: outfitter/integrations/agent-engine } }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with: { version: "0.12.17", python-version: "3.12" }
+      # The tools alone (a2a-sdk, httpx): what any A2A client of Outfitter needs.
+      - name: Tool tests
+        run: uv sync --frozen && uv run --frozen pytest -rs
+      # Plus the Agent Engine SDK, so the sample agent's App registers and runs the real tools.
+      - name: Sample agent tests with the Agent Engine SDK
+        run: uv sync --frozen --group sdk && uv run --frozen pytest -rs tests/test_sample_agent.py

@@ -67,6 +67,9 @@ def main(argv):
         print(f"  FAILED: {t}: {m}")
     if report_only:
         return 0
+    if not passed and not failed:
+        print("  FAILED: no test ran (collection or plugin error?)")
+        return 1
     return 1 if unexpected else 0
 
 

@@ -517,7 +517,7 @@ describe("SendMessage and tasks", () => {
     await settle(store, record.id, first.id, "first answer");
     // A repo task completes once a checkpoint after its settle reports the branch landed (§5.3).
     const firstSession = (await store.sessions.findById((await store.a2aTasks.findForToken(record.id, first.id))!.sessionId!))!;
-    await store.sessions.update(firstSession.id, { checkpoint: { branch: firstSession.branch, head: "a".repeat(40), at: new Date().toISOString(), landed: true } });
+    await store.sessions.update(firstSession.id, { checkpoint: { branch: firstSession.branch, head: "a".repeat(40), at: new Date().toISOString(), landed: true, landedAt: new Date().toISOString() } });
     const next = (await send(app, token, message("two", { contextId: first.contextId }))).json().result.task;
     assert.equal(next.status.state, "TASK_STATE_SUBMITTED");
     assert.equal(next.contextId, first.contextId);
@@ -726,6 +726,10 @@ async function settle(store: Store, tokenId: string, taskId: string, reply: stri
   const runId = run?.id ?? "r-test";
   let seq = (await store.entries.maxSeq(sessionId)) + 1;
   await store.turnWaiters.markAcked(sessionId, row.mailId!, runId, seq, new Date().toISOString());
+  seq++;
+  // pi stores the task's prompt (the mail's text) as a user entry first.
+  const mail = (await store.mail.findById(row.mailId!))!;
+  await store.entries.insertIfNew(sessionId, seq, { id: `u-${randomUUID()}`, parentId: null, type: "message", message: { role: "user", content: [{ type: "text", text: mail.text }] } }, { runId });
   seq++;
   const entryId = `e-${randomUUID()}`;
   const content = reply === undefined ? [{ type: "toolCall", name: "bash" }] : [{ type: "text", text: reply }];

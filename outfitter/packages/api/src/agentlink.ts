@@ -1705,6 +1705,10 @@ export class AgentLink {
         if (current !== undefined) {
           checkpoint.at = now;
           checkpoint.landed = landed;
+          // A later frame that didn't land (nothing to commit on a detached HEAD, say) must not
+          // hide the push before it.
+          const landedAt = landed ? now : session?.checkpoint?.landedAt;
+          if (landedAt) checkpoint.landedAt = landedAt;
         }
         // Finding #3 (docs/reports/security-review-pr1.md): snapshotUrl/workspaceUrl round-trip
         // back out as run.spec.snapshot.url / run.spec.workspace.snapshotUrl on the *next* run and

@@ -11,12 +11,14 @@ on:
     paths:
       - "outfitter/packages/api/**"
       - "outfitter/packages/provider-local/**"
+      - "outfitter/package.json"
       - "outfitter/package-lock.json"
       - ".github/workflows/outfitter-a2a-tck.yml"
   pull_request:
     paths:
       - "outfitter/packages/api/**"
       - "outfitter/packages/provider-local/**"
+      - "outfitter/package.json"
       - "outfitter/package-lock.json"
       - ".github/workflows/outfitter-a2a-tck.yml"
 concurrency:
@@ -34,6 +36,9 @@ jobs:
       TCK_REF: 263b9cfaf16a554bdfb166a7ba5b67716e946349
     steps:
       - uses: actions/checkout@v5
+        with:
+          # The TCK's own Python code runs in this job; it gets no token to read.
+          persist-credentials: false
       - uses: actions/setup-node@v5
         with: { node-version: 24, cache: npm, cache-dependency-path: outfitter/package-lock.json }
       - name: Install the workspace and build provider-local

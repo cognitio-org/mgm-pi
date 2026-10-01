@@ -42,6 +42,7 @@ export interface Session {
    * workspaceUrl instead (protocol.md's agentd<->api `checkpoint` row). */
   checkpoint?: {
     branch?: string;
+    /** The last head that landed (kept by frames that didn't). */
     head?: string;
     snapshotUrl?: string;
     workspaceUrl?: string;
@@ -51,6 +52,8 @@ export interface Session {
     /** E9 §5.3: the frame said the remote branch is at `head`, whether this checkpoint pushed it
      * (`pushed: true`) or found it there already (`pushed: false` with a head; agentd's push()). */
     landed?: boolean;
+    /** When a frame last landed; a later frame that didn't keeps it (and `head`). */
+    landedAt?: string;
   };
   /** E9 §1: when pi last reported the turn settled (`agent_settled`: nothing queued, no retry
    * left), and the last entry agentd had sent by then, when it said. Not run state `idle`, which a
@@ -839,6 +842,8 @@ export interface RunsCollection {
    * on active runs per session), so two concurrent wakes can't both start a sandbox. */
   insertIfNoActive(run: Run): Promise<{ run: Run; inserted: boolean }>;
   findById(id: string): Promise<Run | null>;
+  /** Removes the run's pendingUiRequest only while it is the request `uiRequestId` (atomic). */
+  clearPendingUiRequest(id: string, uiRequestId: string, nowIso: string): Promise<boolean>;
   /** The run currently occupying a session, if state is queued|provisioning|running|idle. */
   findActiveForSession(sessionId: string): Promise<Run | null>;
   /** The most recently updated run for a session regardless of state, including a terminal one
@@ -1248,6 +1253,15 @@ export interface A2ATask {
   answerKeys?: string[];
   /** Those answers as A2A JSON (text capped like `message`), for `history` after `message`. */
   replies?: unknown[];
+  /** The id of the pi UI request last shown to the caller as INPUT_REQUIRED: an answer applies only
+   * to that question, never to one that replaced it. */
+  questionId?: string;
+  /** The id of the pi UI request the caller answered: until pi drops it, it no longer reads as
+   * INPUT_REQUIRED (no flap back while the answer is on its way). */
+  answeredQuestionId?: string;
+  /** The nonce marker of this task's own prompt (wrapA2APrompt): its turn starts at the user entry
+   * that carries it and ends at the next user entry (an owner's message in the same session). */
+  promptMarker?: string;
   createdAt: string;
   updatedAt: string;
   /** The turn waiter's deadline when the task started (turns.ts layer 3). */
@@ -1290,7 +1304,7 @@ export interface A2ATasksCollection {
   listOpen(limit: number, tokenId?: string): Promise<A2ATask[]>;
   /** Applies `patch` only while the task is in one of `from` (a terminal state is never left);
    * null when it wasn't. Moving to a terminal state removes `openMessageId`. */
-  transition(id: string, from: readonly A2ATaskState[], patch: Partial<A2ATask>): Promise<A2ATask | null>;
+  transition(id: string, from: readonly A2ATaskState[], patch: Partial<A2ATask>, opts?: { unlessSet?: "checkpointRequestedAt" }): Promise<A2ATask | null>;
   /** §5.2 maxConcurrent, atomic across instances: adds `taskId` to the key's slots unless it
    * already holds `max`. True when claimed (or already held). */
   claimSlot(tokenId: string, taskId: string, max: number): Promise<boolean>;

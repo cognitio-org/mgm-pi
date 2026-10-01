@@ -101,6 +101,11 @@ function shape(body: string): string[] {
   });
 }
 
+/** Resolves once the key holds an open stream (its slot is claimed after the first snapshot). */
+async function streamOpen(store: Store, tokenId: string): Promise<void> {
+  await waitFor(async () => (await store.a2aTasks.listSlots(`${tokenId}#streams`)).length > 0);
+}
+
 async function waitFor<T>(fn: () => Promise<T | null | undefined | false>, ms = 3000): Promise<T> {
   const until = Date.now() + ms;
   for (;;) {
@@ -119,19 +124,39 @@ async function row(s: Setup, id?: string): Promise<A2ATask> {
   });
 }
 
-/** agentd's part: the run is up, pi took the task's mail, and called a tool. Returns the run id. */
+/** agentd's part: the run is up, pi took the task's mail, stored its prompt, and called a tool.
+ * Returns the run id. */
 async function accept(s: Setup, task: A2ATask, tool = "bash"): Promise<string> {
   const run = (await s.store.runs.findActiveForSession(task.sessionId!))!;
   await s.store.runs.update(run.id, { state: "running" });
   const seq = (await s.store.entries.maxSeq(task.sessionId!)) + 1;
   await s.app.turns.noteMailAccepted(task.sessionId!, run.id, task.mailId!, seq);
+  const mail = (await s.store.mail.findById(task.mailId!))!;
+  await prompt(s, task.sessionId!, run.id, mail.text, seq + 1);
   await s.store.entries.insertIfNew(
     task.sessionId!,
-    seq + 1,
+    seq + 2,
     { id: `e-${randomUUID()}`, parentId: null, type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: tool }] } },
     { runId: run.id },
   );
   return run.id;
+}
+
+/** A user entry (a prompt) in the session, as pi stores one. */
+async function prompt(s: Setup, sessionId: string, runId: string, text: string, at?: number): Promise<void> {
+  const seq = at ?? (await s.store.entries.maxSeq(sessionId)) + 1;
+  await s.store.entries.insertIfNew(
+    sessionId,
+    seq,
+    { id: `u-${randomUUID()}`, parentId: null, type: "message", message: { role: "user", content: [{ type: "text", text }] } },
+    { runId },
+  );
+}
+
+/** An assistant reply entry. */
+async function reply(s: Setup, sessionId: string, runId: string, content: unknown[]): Promise<void> {
+  const seq = (await s.store.entries.maxSeq(sessionId)) + 1;
+  await s.store.entries.insertIfNew(sessionId, seq, { id: `e-${randomUUID()}`, parentId: null, type: "message", message: { role: "assistant", content } }, { runId });
 }
 
 /** pi's final reply, then the settle. */
@@ -150,7 +175,11 @@ async function settle(s: Setup, task: A2ATask, runId: string, reply: string): Pr
 /** A checkpoint frame as agentlink stores it. */
 async function checkpoint(s: Setup, sessionId: string, landed: boolean, head = SHA): Promise<void> {
   const session = (await s.store.sessions.findById(sessionId))!;
-  await s.store.sessions.update(sessionId, { checkpoint: { branch: session.branch, head, at: new Date().toISOString(), landed } });
+  const at = new Date().toISOString();
+  const landedAt = landed ? at : session.checkpoint?.landedAt;
+  await s.store.sessions.update(sessionId, {
+    checkpoint: { branch: session.branch, head: landed ? head : session.checkpoint?.head, at, landed, ...(landedAt ? { landedAt } : {}) },
+  });
 }
 
 function fakePulls(calls: Array<{ route: string; params: Record<string, unknown> }>, reply: (params: Record<string, unknown>) => GithubResponse): GithubBroker {
@@ -169,7 +198,7 @@ describe("A2A streaming (§5.3)", () => {
     const task = await row(s);
     const runId = await accept(s, task);
     await waitFor(async () => (await s.store.a2aTasks.findForToken(s.record.id, task.id))?.statusText === "working: bash");
-    await new Promise((r) => setTimeout(r, 60));
+    await new Promise((r) => setTimeout(r, 100));
     await settle(s, task, runId, "All fixed.");
     const res = await streaming;
     assert.equal(res.statusCode, 200);
@@ -219,7 +248,7 @@ describe("A2A streaming (§5.3)", () => {
     const task = await start(a, message("one"));
     // Instance A streams; instance B (same store) cancels. Only the row connects them.
     const streaming = a.app.fastify.inject(rpcRequest("SubscribeToTask", { id: task.id }, a.token));
-    await new Promise((r) => setTimeout(r, 60));
+    await streamOpen(store, a.record.id);
     const canceled = await b.fastify.inject(rpcRequest("CancelTask", { id: task.id }, a.token));
     assert.equal(canceled.json().result.status.state, "TASK_STATE_CANCELED");
     const res = await streaming;
@@ -245,7 +274,7 @@ describe("A2A streaming (§5.3)", () => {
     assert.equal(last.status.message.parts[0].text, "Which file?");
 
     const sub = s.app.fastify.inject(rpcRequest("SubscribeToTask", { id: task.id }, s.token));
-    await new Promise((r) => setTimeout(r, 60));
+    await streamOpen(s.store, s.record.id);
     await rpc(s.app, s.token, "SendMessage", { message: message("src/a.ts", { taskId: task.id }), configuration: { returnImmediately: true } });
     await new Promise((r) => setTimeout(r, 60));
     await settle(s, task, runId, "Changed src/a.ts.");
@@ -271,7 +300,7 @@ describe("A2A streaming (§5.3)", () => {
     const other = await setup({}, { store: s.store });
     const task = await start(s, message("one"));
     const first = s.app.fastify.inject(rpcRequest("SubscribeToTask", { id: task.id }, s.token));
-    await new Promise((r) => setTimeout(r, 60));
+    await streamOpen(s.store, s.record.id);
     const second = await rpc(s.app, s.token, "SendStreamingMessage", { message: message("two") });
     assert.equal(second.statusCode, 429);
     assert.equal(second.json().error.code, -32600);
@@ -283,11 +312,32 @@ describe("A2A streaming (§5.3)", () => {
     await first;
     const third = await start(s, message("three"));
     const ok = s.app.fastify.inject(rpcRequest("SubscribeToTask", { id: third.id }, s.token));
-    await new Promise((r) => setTimeout(r, 60));
+    await streamOpen(s.store, s.record.id);
     await rpc(s.app, s.token, "CancelTask", { id: third.id });
     assert.equal((await ok).statusCode, 200);
     await s.app.fastify.close();
     await other.app.fastify.close();
+  });
+
+  test("the open-stream limit holds across instances (counted in the store)", async () => {
+    const store = new MemoryStore();
+    const a = await setup({ A2A_STREAMS_PER_KEY: "1" }, { store });
+    const b = await buildTestApp({ OUTFITTER_ROLE: "link", OUTFITTER_ORIGIN: LINK, A2A_STREAM_POLL_MS: "20", A2A_STREAMS_PER_KEY: "1" }, { store });
+    b.fastify.log.level = "warn";
+    const task = await start(a, message("one"));
+    const first = a.app.fastify.inject(rpcRequest("SubscribeToTask", { id: task.id }, a.token));
+    await waitFor(async () => (await store.a2aTasks.listSlots(`${a.record.id}#streams`)).length === 1);
+    const onB = await b.fastify.inject(rpcRequest("SubscribeToTask", { id: task.id }, a.token));
+    assert.equal(onB.statusCode, 429);
+    await rpc(a.app, a.token, "CancelTask", { id: task.id });
+    await first;
+    assert.deepEqual(await store.a2aTasks.listSlots(`${a.record.id}#streams`), []);
+    // A slot past its expiry (an instance that died mid-stream) is reclaimed.
+    await store.a2aTasks.claimSlot(`${a.record.id}#streams`, `${Date.now() - 1}:dead`, 1);
+    const reclaimed = await rpc(a.app, a.token, "SendStreamingMessage", { message: { ...withRepo(message("x")), metadata: { [OUTFITTER_TASK_EXTENSION]: { repo: "acme/other" } } } });
+    assert.equal(reclaimed.statusCode, 200);
+    await a.app.fastify.close();
+    await b.fastify.close();
   });
 
   test("a client that disconnects frees its stream at once (real HTTP)", async () => {
@@ -319,7 +369,7 @@ describe("A2A streaming (§5.3)", () => {
     const s = await setup({ A2A_STREAM_POLL_MS: "20" });
     const task = await start(s, message("one"));
     const streaming = s.app.fastify.inject(rpcRequest("SubscribeToTask", { id: task.id }, s.token));
-    await new Promise((r) => setTimeout(r, 60));
+    await streamOpen(s.store, s.record.id);
     await s.store.tokens.update(s.record.id, { revokedAt: new Date().toISOString() });
     const started = Date.now();
     const res = await streaming;
@@ -422,6 +472,89 @@ describe("INPUT_REQUIRED and owner-only requests (§5.3 What can be answered)", 
     await s.app.fastify.close();
   });
 
+  test("an owner's message in the task's session ends what the caller sees: no question, no text, no tool names after it", async () => {
+    const s = await setup();
+    const task = await start(s, message("go"));
+    const r = await row(s, task.id);
+    const runId = await accept(s, r);
+    await reply(s, r.sessionId!, runId, [{ type: "text", text: "the task's own answer" }]);
+    // The owner types into the same session; their turn joins the same run before the settle.
+    await prompt(s, r.sessionId!, runId, "owner: set up the router");
+    await reply(s, r.sessionId!, runId, [{ type: "toolCall", name: "bash" }]);
+    await s.store.runs.update(runId, { pendingUiRequest: { type: "extension_ui_request", id: "q-owner", method: "input", title: "LiteLLM URL", placeholder: "https://router.internal" } });
+    const got = await getTask(s, task.id);
+    assert.equal(got.status.state, "TASK_STATE_WORKING");
+    assert.equal(got.status.message.parts[0].text, "waiting for the owner");
+    assert.doesNotMatch(JSON.stringify(got), /router\.internal|LiteLLM/);
+    const answer = await rpc(s.app, s.token, "SendMessage", { message: message("https://evil.example", { taskId: task.id }), configuration: { returnImmediately: true } });
+    assert.equal(answer.json().error.code, -32602);
+    assert.deepEqual((await s.store.runs.findById(runId))!.pending, []);
+    await s.store.runs.update(runId, { pendingUiRequest: undefined });
+    await reply(s, r.sessionId!, runId, [{ type: "text", text: "owner's secret reply" }]);
+    await settle(s, r, runId, "owner's last words");
+    const done = await getTask(s, task.id);
+    assert.equal(done.status.state, "TASK_STATE_COMPLETED");
+    assert.deepEqual(done.artifacts[0].parts, [{ text: "the task's own answer", mediaType: "text/plain" }]);
+    await s.app.fastify.close();
+  });
+
+  test("an answer applies only to the question the caller was shown; once answered it doesn't flap back", async () => {
+    const s = await setup();
+    const task = await start(s, message("go"));
+    const runId = await accept(s, await row(s, task.id));
+    await s.store.runs.update(runId, { pendingUiRequest: { type: "extension_ui_request", id: "q1", method: "input", title: "Which file?" } });
+    assert.equal((await getTask(s, task.id)).status.state, "TASK_STATE_INPUT_REQUIRED");
+    // pi replaced the question before the caller answered (the owner answered q1 in the web UI).
+    await s.store.runs.update(runId, { pendingUiRequest: { type: "extension_ui_request", id: "q2", method: "input", title: "Delete it?" } });
+    const stale = await rpc(s.app, s.token, "SendMessage", { message: message("src/a.ts", { taskId: task.id }), configuration: { returnImmediately: true } });
+    assert.equal(stale.json().error.code, -32602);
+    assert.match(stale.json().error.message, /question changed/);
+    assert.deepEqual((await s.store.runs.findById(runId))!.pending, []);
+    const shown = await getTask(s, task.id);
+    assert.equal(shown.status.message.parts[0].text, "Delete it?");
+    // Now the caller has seen q2. The answer goes out; until pi drops q2 it stays WORKING.
+    const realClear = s.store.runs.clearPendingUiRequest.bind(s.store.runs);
+    s.store.runs.clearPendingUiRequest = async () => false;
+    const ok = await rpc(s.app, s.token, "SendMessage", { message: message("no", { taskId: task.id }), configuration: { returnImmediately: true } });
+    assert.equal(ok.json().result.task.status.state, "TASK_STATE_WORKING");
+    assert.equal((await getTask(s, task.id)).status.state, "TASK_STATE_WORKING", "no flap back to INPUT_REQUIRED");
+    s.store.runs.clearPendingUiRequest = realClear;
+    assert.deepEqual((await s.store.runs.findById(runId))!.pending, [{ t: "ui_response", id: "q2", value: "no" }]);
+    await s.app.fastify.close();
+  });
+
+  test("an answer that can't be sent puts the question back, and the same answer can be sent again", async () => {
+    const s = await setup();
+    const task = await start(s, message("go"));
+    const runId = await accept(s, await row(s, task.id));
+    await s.store.runs.update(runId, { pendingUiRequest: { type: "extension_ui_request", id: "q1", method: "input", title: "Which file?" } });
+    await getTask(s, task.id);
+    const realSend = s.app.agentLink.send.bind(s.app.agentLink);
+    s.app.agentLink.send = async () => {
+      throw new Error("store down");
+    };
+    const answer = message("src/a.ts", { taskId: task.id });
+    const failed = await rpc(s.app, s.token, "SendMessage", { message: answer, configuration: { returnImmediately: true } });
+    assert.equal(failed.json().error.code, -32603);
+    assert.equal((await getTask(s, task.id)).status.state, "TASK_STATE_INPUT_REQUIRED");
+    s.app.agentLink.send = realSend;
+    const again = await rpc(s.app, s.token, "SendMessage", { message: answer, configuration: { returnImmediately: true } });
+    assert.equal(again.json().result.task.status.state, "TASK_STATE_WORKING");
+    assert.deepEqual((await s.store.runs.findById(runId))!.pending, [{ t: "ui_response", id: "q1", value: "src/a.ts" }]);
+    await s.app.fastify.close();
+  });
+
+  test("status text names built-in tools only; an MCP or subagent tool is 'a tool'", async () => {
+    const s = await setup();
+    const task = await start(s, message("go"));
+    const r = await row(s, task.id);
+    const runId = await accept(s, r, "edit");
+    assert.equal((await getTask(s, task.id)).status.message.parts[0].text, "working: edit");
+    await reply(s, r.sessionId!, runId, [{ type: "toolCall", name: "mcp__gmail__send" }]);
+    assert.equal((await getTask(s, task.id)).status.message.parts[0].text, "working: a tool");
+    await s.app.fastify.close();
+  });
+
   test("a reply to a working task is -32602, to a finished one -32004", async () => {
     const s = await setup();
     const task = await start(s, message("go"));
@@ -446,7 +579,7 @@ describe("checkpoint-gated completion and the result artifact (§5.3 Completion)
     const runId = await accept(s, r);
     // A checkpoint from before the settle doesn't count.
     await checkpoint(s, r.sessionId!, true, "f".repeat(40));
-    await new Promise((res) => setTimeout(res, 5));
+    await new Promise((res) => setTimeout(res, 20));
     await settle(s, r, runId, "Fixed the bug.");
     const pushing = await getTask(s, task.id);
     assert.equal(pushing.status.state, "TASK_STATE_WORKING");
@@ -469,7 +602,8 @@ describe("checkpoint-gated completion and the result artifact (§5.3 Completion)
         data: {
           branch: session.branch,
           head: SHA,
-          compareUrl: `https://github.com/acme/widgets/compare/main...${session.branch}`,
+          // No base branch given: GitHub compares against the default branch.
+          compareUrl: `https://github.com/acme/widgets/compare/${session.branch}`,
           prUrl: "https://github.com/acme/widgets/pull/12",
         },
         mediaType: "application/json",

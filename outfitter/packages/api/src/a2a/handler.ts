@@ -6,6 +6,7 @@
 // The caller's key arrives as the call context's user (A2AKeyUser), set by routes/a2a.ts after
 // it verified the bearer.
 
+import { randomUUID } from "node:crypto";
 import {
   Message,
   Role,
@@ -91,8 +92,8 @@ const HISTORY_TEXT_MAX = 4_000;
  * default 2 s): a key revoked or expired since the request closes its streams. */
 const STREAM_KEY_RECHECK_POLLS = 30;
 
-/** A key already holds config.a2aStreamsPerKey open streams on this instance. routes/a2a.ts sends
- * it as HTTP 429, like the request rate limit, before any SSE starts. */
+/** A key already holds config.a2aStreamsPerKey open streams (across instances). routes/a2a.ts
+ * sends it as HTTP 429, like the request rate limit, before any SSE starts. */
 export class A2AStreamLimitError extends Error {
   constructor(limit: number) {
     super(`over ${limit} open streams for this key; close one, or poll GetTask`);
@@ -112,7 +113,8 @@ export class OutfitterA2AHandler implements A2ARequestHandler {
   protected readonly opts: A2AHandlerOptions;
   private readonly card: AgentCard;
   private readonly blockingWaits = new Map<string, number>();
-  private readonly openStreams = new Map<string, number>();
+  /** Stream polls of one task on this instance share one refresh per half poll interval. */
+  private readonly polls = new Map<string, { at: number; task: Promise<A2ATask> }>();
 
   constructor(opts: A2AHandlerOptions) {
     this.opts = opts;
@@ -163,18 +165,19 @@ export class OutfitterA2AHandler implements A2ARequestHandler {
     if (message.taskId) {
       // §5.3 "Message to an existing task": INPUT_REQUIRED takes the text as its answer (input and
       // editor requests only; A2ATasks.answer). Terminal: -32004. Anything else: -32602.
-      const existing = await this.opts.tasks.get(key, message.taskId).catch(rethrowNotFound);
+      const existing = await this.opts.tasks.peek(key, message.taskId).catch(rethrowNotFound);
       if (message.contextId && message.contextId !== existing.contextId) {
         throw new RequestMalformedError("taskId and contextId don't belong together");
       }
       try {
         const answered = await this.opts.tasks.answer(key, existing.id, message.messageId, prompt, historyMessage(message, prompt));
-        return { task: answered, fresh: true };
+        return { task: answered.task, fresh: answered.applied };
       } catch (err) {
         if (!(err instanceof A2ATaskNotAnswerable)) return rethrowNotFound(err);
         if (isTerminal(err.task.state)) {
           throw new UnsupportedOperationError("the task has finished; send a new message with its contextId to continue");
         }
+        if (err.task.state === "input-required") throw new RequestMalformedError(err.message);
         throw new RequestMalformedError("the task is working; wait for it or cancel it");
       }
     }
@@ -224,12 +227,12 @@ export class OutfitterA2AHandler implements A2ARequestHandler {
    */
   async *sendMessageStream(params: SendMessageRequest, context: ServerCallContext): AsyncGenerator<StreamResponse, void, undefined> {
     const key = keyOf(context);
-    const release = this.claimStream(key);
+    const release = await this.claimStream(key);
     try {
       const { task } = await this.accept(params, context);
       yield* this.follow(key, task, context, true, params.configuration?.historyLength);
     } finally {
-      release();
+      await release();
     }
   }
 
@@ -240,28 +243,54 @@ export class OutfitterA2AHandler implements A2ARequestHandler {
     if (!params.id) throw new RequestMalformedError("id is required");
     const task = await this.opts.tasks.get(key, params.id).catch(rethrowNotFound);
     if (isTerminal(task.state)) throw new UnsupportedOperationError("the task has finished; GetTask returns its result");
-    const release = this.claimStream(key);
+    const release = await this.claimStream(key);
     try {
       yield* this.follow(key, task, context, false);
     } finally {
-      release();
+      await release();
     }
   }
 
-  /** One of the key's open streams on this instance, or A2AStreamLimitError. Returns the release. */
-  private claimStream(key: A2AKey): () => void {
+  /**
+   * One of the key's open streams, counted in the store across every link instance (a2aTasks
+   * slots), or A2AStreamLimitError. A slot names its own expiry (the stream's longest life plus a
+   * minute), so one left by a crashed instance is reclaimed. Returns the release.
+   */
+  private async claimStream(key: A2AKey): Promise<() => Promise<void>> {
     const limit = this.opts.config.a2aStreamsPerKey;
-    const held = this.openStreams.get(key.id) ?? 0;
-    if (held >= limit) throw new A2AStreamLimitError(limit);
-    this.openStreams.set(key.id, held + 1);
+    const slots = this.opts.store.a2aTasks;
+    const slotKey = `${key.id}#streams`;
+    const slot = `${Date.now() + this.opts.config.a2aStreamMaxMs + 60_000}:${randomUUID()}`;
+    if (!(await slots.claimSlot(slotKey, slot, limit))) {
+      for (const held of await slots.listSlots(slotKey)) {
+        if (Number(held.split(":")[0]) < Date.now()) await slots.releaseSlot(slotKey, held);
+      }
+      if (!(await slots.claimSlot(slotKey, slot, limit))) throw new A2AStreamLimitError(limit);
+    }
     let released = false;
-    return () => {
+    return async () => {
       if (released) return;
       released = true;
-      const left = (this.openStreams.get(key.id) ?? 1) - 1;
-      if (left <= 0) this.openStreams.delete(key.id);
-      else this.openStreams.set(key.id, left);
+      await slots.releaseSlot(slotKey, slot).catch(() => undefined);
     };
+  }
+
+  /** The task for a stream's poll; streams of one task on this instance share a refresh. */
+  private pollTask(key: A2AKey, id: string): Promise<A2ATask> {
+    const k = `${key.id}:${id}`;
+    const now = Date.now();
+    const shared = this.polls.get(k);
+    if (shared && now - shared.at < this.opts.config.a2aStreamPollMs / 2) return shared.task;
+    const task = this.opts.tasks.get(key, id);
+    this.polls.set(k, { at: now, task });
+    const forget = () => {
+      if (this.polls.get(k)?.task === task) this.polls.delete(k);
+    };
+    task.then(
+      () => setTimeout(forget, this.opts.config.a2aStreamPollMs).unref?.(),
+      forget,
+    );
+    return task;
   }
 
   private async *follow(
@@ -286,12 +315,12 @@ export class OutfitterA2AHandler implements A2ARequestHandler {
       if (++polls % STREAM_KEY_RECHECK_POLLS === 0 && !(await this.keyActive(key))) return;
       let current: A2ATask;
       try {
-        current = await this.opts.tasks.get(key, last.id);
+        current = await this.pollTask(key, last.id);
       } catch (err) {
         if (err instanceof A2ATaskNotFound) return;
         throw err;
       }
-      if (current.state === last.state && current.statusText === last.statusText) continue;
+      if (current.state === last.state && current.statusText === last.statusText && current.questionId === last.questionId) continue;
       if (current.state === "completed") {
         for (const value of this.artifactEvents(current)) yield { payload: { $case: "artifactUpdate", value } };
       }

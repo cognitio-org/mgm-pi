@@ -136,7 +136,7 @@ export interface Config {
   /** A2A_STREAM_MAX_MS: the longest one stream stays open (default 10 min, at most 55 min, under the
    * link service's 1 h request timeout). The client resubscribes for more. */
   a2aStreamMaxMs: number;
-  /** A2A_STREAMS_PER_KEY: open streams one key may hold on one instance (default 4). */
+  /** A2A_STREAMS_PER_KEY: open streams one key may hold, across instances (default 4). */
   a2aStreamsPerKey: number;
   /** A2A_CHECKPOINT_TIMEOUT_MS: how long a settled repo task waits for its checkpoint to report the
    * branch pushed before it is FAILED "result not pushed" (E9 §5.3, 2 min). Tests shorten it. */

@@ -238,6 +238,15 @@ class MemoryRuns implements RunsCollection {
     return clone(next);
   }
 
+  async clearPendingUiRequest(id: string, uiRequestId: string, nowIso: string): Promise<boolean> {
+    const row = this.rows.get(id);
+    const pending = row?.pendingUiRequest as { id?: unknown } | undefined;
+    if (!row || pending?.id !== uiRequestId) return false;
+    const { pendingUiRequest: _cleared, ...rest } = row;
+    this.rows.set(id, { ...rest, updatedAt: nowIso });
+    return true;
+  }
+
   async mergeStartup(id: string, fields: Partial<RunStartup>, unlessSet?: keyof RunStartup): Promise<Run | null> {
     const row = this.rows.get(id);
     if (!row) return null;
@@ -1227,9 +1236,10 @@ class MemoryA2ATasks implements A2ATasksCollection {
       .map(clone);
   }
 
-  async transition(id: string, from: readonly A2ATaskState[], patch: Partial<A2ATask>): Promise<A2ATask | null> {
+  async transition(id: string, from: readonly A2ATaskState[], patch: Partial<A2ATask>, opts: { unlessSet?: "checkpointRequestedAt" } = {}): Promise<A2ATask | null> {
     const row = this.rows.get(id);
     if (!row || !from.includes(row.state)) return null;
+    if (opts.unlessSet && row[opts.unlessSet] !== undefined) return null;
     const { id: _id, tokenId: _tokenId, openMessageId: _open, ...rest } = patch;
     Object.assign(row, rest);
     if (!A2A_OPEN_STATES.includes(row.state)) delete row.openMessageId;

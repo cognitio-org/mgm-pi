@@ -262,6 +262,14 @@ class MongoRuns implements RunsCollection {
     return stripId<Run>(result);
   }
 
+  async clearPendingUiRequest(id: string, uiRequestId: string, nowIso: string): Promise<boolean> {
+    const result = await this.col.updateOne(
+      { _id: id, "pendingUiRequest.id": uiRequestId },
+      { $unset: { pendingUiRequest: "" }, $set: { updatedAt: nowIso } },
+    );
+    return result.modifiedCount === 1;
+  }
+
   async mergeStartup(id: string, fields: Partial<RunStartup>, unlessSet?: keyof RunStartup): Promise<Run | null> {
     const set: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(fields)) {
@@ -1580,7 +1588,7 @@ class MongoA2ATasks implements A2ATasksCollection {
     return rows.map((d) => stripA2ATask(d)!);
   }
 
-  async transition(id: string, from: readonly A2ATaskState[], patch: Partial<A2ATask>): Promise<A2ATask | null> {
+  async transition(id: string, from: readonly A2ATaskState[], patch: Partial<A2ATask>, opts: { unlessSet?: "checkpointRequestedAt" } = {}): Promise<A2ATask | null> {
     const { id: _id, tokenId: _tokenId, openMessageId: _open, ...rest } = patch;
     const set: Record<string, unknown> = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined));
     const terminal = !!rest.state && !A2A_OPEN_STATES.includes(rest.state);
@@ -1588,7 +1596,8 @@ class MongoA2ATasks implements A2ATasksCollection {
       set.expireAt = new Date((rest.updatedAt ? Date.parse(rest.updatedAt) : Date.now()) + FINISHED_A2A_TASK_TTL_MS);
     }
     const update = terminal ? { $set: set, $unset: { openMessageId: "" as const } } : { $set: set };
-    const doc = await this.col.findOneAndUpdate({ _id: id, state: { $in: [...from] } }, update, { returnDocument: "after" });
+    const filter = { _id: id, state: { $in: [...from] }, ...(opts.unlessSet ? { [opts.unlessSet]: { $exists: false } } : {}) };
+    const doc = await this.col.findOneAndUpdate(filter, update, { returnDocument: "after" });
     return stripA2ATask(doc);
   }
 

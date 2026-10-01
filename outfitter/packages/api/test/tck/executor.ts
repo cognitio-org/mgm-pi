@@ -98,6 +98,15 @@ export class TckExecutor {
       script.runId = run.id;
       script.seq = (await store.entries.maxSeq(sessionId)) + 1;
       await this.app.turns.noteMailAccepted(sessionId, run.id, row.mailId!, script.seq);
+      // pi stores the mail's text as the turn's user entry.
+      const mail = await store.mail.findById(row.mailId!);
+      script.seq++;
+      await store.entries.insertIfNew(
+        sessionId,
+        script.seq,
+        { id: `tck-${randomUUID()}`, parentId: null, type: "message", message: { role: "user", content: [{ type: "text", text: mail?.text ?? "" }] } },
+        { runId: run.id },
+      );
       // A tool call, so WORKING carries the latest tool name as its status text.
       await this.entry(sessionId, script, [{ type: "toolCall", id: randomUUID(), name: "bash", arguments: {} }]);
       script.phase = "working";

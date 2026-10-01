@@ -15,6 +15,7 @@ import { Working } from "../components/Working.tsx";
 import { withFloppySound } from "../lib/floppy-sound.ts";
 import { vocabSubtitle, vocabulary } from "../lib/vocabulary.ts";
 import { ProjectVoiceSpendView } from "../components/VoiceSpend.tsx";
+import { AeAgentsPanel } from "../components/AeAgentsPanel.tsx";
 
 /** One managed secret's row: masked value, when it applies, and the Replace/Test/Disable controls
  * (same "no value in URLs, clear the input after save" care as TokensPage.tsx). `replacing` opens
@@ -383,6 +384,9 @@ export function SettingsPage() {
 
       <h3>Voice spend</h3>
       <ProjectVoiceSpendView />
+
+      <h3 id="agent-engine-agents">Agent Engine agents</h3>
+      <AeAgentsPanel />
     </div>
   );
 }

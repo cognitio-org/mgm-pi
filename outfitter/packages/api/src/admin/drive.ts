@@ -149,7 +149,7 @@ export class DriveAdmin {
 
     if (!(await approvalNeeded(ctx, first.caller, op, args))) return runAdminOp(ctx, first.caller, op, args);
 
-    const target = await resolveTarget(ctx, op, args);
+    const target = await resolveTarget(ctx, op, args, first.caller);
     if (target && "error" in target) return { ok: false, error: target.error };
     if (target) args.id = target.id;
     const { title, message } = approvalText(String(op), args, target?.label);

@@ -308,8 +308,11 @@ describe("agents (PR4 completes invoke and resume)", () => {
       await rejectsWith(agents!.stopRuntimeSession(dots, "s"), "bad_request");
     }
     await rejectsWith(agents!.stopRuntimeSession("w/1", "s"), "bad_request");
-    await rejectsWith(agents!.invoke({ workspaceId: "w1", message: "hi", sessionId: "s", outfitterSession: "12345678" }), "not_implemented");
-    await rejectsWith(agents!.resume({ workspaceId: "w1", executionId: "e1", decision: "approve", outfitterSession: "12345678" }), "not_implemented");
+    // PR4: invoke and resume are built (ae-agents.test.ts); their ids are checked the same way.
+    const before = fake.requests.length;
+    await rejectsWith(agents!.invoke({ workspaceId: "..", message: "hi", sessionId: "s", outfitterSession: "12345678" }), "bad_request");
+    await rejectsWith(agents!.resume({ workspaceId: "w1", executionId: "../e1", decision: "approve", outfitterSession: "12345678" }), "bad_request");
+    assert.equal(fake.requests.length, before);
   });
 
   test("off when unconfigured: no part, no requests", () => {

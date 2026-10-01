@@ -26,5 +26,6 @@ export function createAgentEngine(config: AgentEngineConfig, opts: { fetch?: Fet
 }
 
 export { AgentEngineClient, AgentEngineError, type AgentEngineErrorKind, type FetchFn } from "./client.ts";
-export type { AgentsService, Execution, InvokeArgs, InvokeResult, RuntimeSession } from "./agents.ts";
+export type { AgentsService, Execution, InvokeArgs, InvokeResult, ResumeArgs, RuntimeSession } from "./agents.ts";
+export { allowedDecisions, invokeStatus, isAgentEngineId, pauseFingerprint, INVOKE_WAIT_DEFAULT_S, INVOKE_WAIT_MAX_S, MAX_DECISION_CHARS } from "./agents.ts";
 export { toAgentEngineError, type ContextSource, type MemoryFacade, type MemoryService, type MemoryType } from "./memory.ts";

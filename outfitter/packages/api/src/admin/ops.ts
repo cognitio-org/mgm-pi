@@ -89,6 +89,11 @@ export interface AdminOp {
   /** A reason this call is refused outright, checked before any approval is asked for (an agent
    * may never change an admin tape, so asking the owner first would only waste their yes). */
   refused?: (ctx: AdminContext, args: Args, caller: AdminCaller) => Promise<string | undefined>;
+  /** The record a call that waits for the person would act on, resolved before the card is raised
+   * (resolveTarget): its full id and the label the card shows. An error refuses the call without
+   * asking. For ops whose target isn't a tape or environment (E9 `ae.resume`: the execution, read
+   * from Agent Engine as this caller). */
+  target?: (ctx: AdminContext, args: Args, caller: AdminCaller) => Promise<{ id: string; label: string } | { error: string }>;
   run: (ctx: AdminContext, caller: AdminCaller, args: Args) => Promise<AdminResult & { target?: string }>;
 }
 
@@ -596,8 +601,23 @@ async function needsYes(ctx: AdminContext, def: AdminOp, args: Args): Promise<bo
  * Drive passes the full id back into the op after the owner approves, so a prefix can't come to
  * mean another record during the wait. Undefined for ops without a target.
  */
-export async function resolveTarget(ctx: AdminContext, op: unknown, args: unknown): Promise<{ id: string; label: string } | { error: string } | undefined> {
+export async function resolveTarget(
+  ctx: AdminContext,
+  op: unknown,
+  args: unknown,
+  caller?: AdminCaller,
+): Promise<{ id: string; label: string } | { error: string } | undefined> {
   const a: Args = args && typeof args === "object" && !Array.isArray(args) ? (args as Args) : {};
+  const def = adminOp(op);
+  if (def?.target) {
+    if (!caller) return { error: `${String(op)} needs its caller` };
+    try {
+      return await def.target(ctx, a, caller);
+    } catch (err) {
+      ctx.log?.(`admin op ${String(op)} target failed: ${err instanceof Error ? err.message : String(err)}`);
+      return { error: "internal error" };
+    }
+  }
   if (op === "tapes.update" || op === "tapes.delete") {
     const tape = await resolveTape(ctx, a.id);
     if (!tape.ok) return { error: tape.error };
@@ -691,7 +711,7 @@ export async function runAdminOp(ctx: AdminContext, caller: AdminCaller, op: unk
 let auditSeq = 0;
 
 /** Sorts by time, then by order within this process, so newest-first is an `_id` sort. */
-function auditId(now: number): string {
+export function auditId(now: number): string {
   auditSeq = (auditSeq + 1) % 1_679_616;
   return `${now.toString(36).padStart(9, "0")}-${auditSeq.toString(36).padStart(4, "0")}-${randomUUID().slice(0, 8)}`;
 }

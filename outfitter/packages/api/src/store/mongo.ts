@@ -55,9 +55,13 @@ import type {
   TurnWaiter,
   TurnWaiterFinish,
   TurnWaitersCollection,
+  AeAgent,
+  AeAgentsCollection,
+  AeSession,
+  AeSessionsCollection,
 } from "./types.ts";
 import type { VoicePrefs } from "../voice.ts";
-import { BROWSER_CAPTURES_PER_SESSION, entryInsertFields, type EntryInsertOptions } from "./types.ts";
+import { AE_SESSION_EXECUTIONS, BROWSER_CAPTURES_PER_SESSION, entryInsertFields, type EntryInsertOptions } from "./types.ts";
 import { TOKEN_TTL_MS } from "../tokens.ts";
 import { SearchUnavailableError } from "./types.ts";
 import { CHUNKS_COLLECTION, CHUNKS_TEXT_INDEX, CHUNKS_VECTOR_INDEX } from "../search/indexes.ts";
@@ -1367,6 +1371,117 @@ class MongoTurnWaiters implements TurnWaitersCollection {
   }
 }
 
+function isDuplicateKey(err: unknown): boolean {
+  return (err as { code?: number } | null)?.code === 11000;
+}
+
+/** Unique on `workspaceId` too (ensureIndexes): one entry per workspace. */
+class MongoAeAgents implements AeAgentsCollection {
+  private readonly col: MongoCollection<AeAgent & { _id: string }>;
+
+  constructor(col: MongoCollection<AeAgent & { _id: string }>) {
+    this.col = col;
+  }
+
+  async list(): Promise<AeAgent[]> {
+    const rows = await this.col.find({}).sort({ _id: 1 }).toArray();
+    return rows.map((r) => stripIdStrict<AeAgent>(r));
+  }
+
+  async findById(id: string): Promise<AeAgent | null> {
+    return stripId<AeAgent>(await this.col.findOne({ _id: id }));
+  }
+
+  async insert(agent: AeAgent): Promise<boolean> {
+    try {
+      const row = Object.fromEntries(Object.entries(agent).filter(([, v]) => v !== undefined)) as AeAgent;
+      await this.col.insertOne({ ...row, _id: agent.id });
+      return true;
+    } catch (err) {
+      if (isDuplicateKey(err)) return false;
+      throw err;
+    }
+  }
+
+  async update(id: string, patch: Partial<Omit<AeAgent, "id" | "createdAt">>): Promise<AeAgent | null | "duplicate"> {
+    const set = Object.fromEntries(Object.entries(patch).filter(([k, v]) => v !== undefined && k !== "id" && k !== "_id"));
+    try {
+      return stripId<AeAgent>(await this.col.findOneAndUpdate({ _id: id }, { $set: set }, { returnDocument: "after" }));
+    } catch (err) {
+      if (isDuplicateKey(err)) return "duplicate";
+      throw err;
+    }
+  }
+
+  async delete(id: string): Promise<boolean> {
+    return (await this.col.deleteOne({ _id: id })).deletedCount === 1;
+  }
+}
+
+class MongoAeSessions implements AeSessionsCollection {
+  private readonly col: MongoCollection<AeSession & { _id: string }>;
+
+  constructor(col: MongoCollection<AeSession & { _id: string }>) {
+    this.col = col;
+  }
+
+  async recordInvoke(
+    row: Pick<AeSession, "outfitterSessionId" | "agentId" | "workspaceId" | "aeSessionId">,
+    executionId: string | undefined,
+    nowIso: string,
+  ): Promise<AeSession> {
+    const id = `${row.outfitterSessionId}:${row.agentId}`;
+    const doc = await this.col.findOneAndUpdate(
+      { _id: id },
+      {
+        $set: { outfitterSessionId: row.outfitterSessionId, agentId: row.agentId, workspaceId: row.workspaceId, aeSessionId: row.aeSessionId, lastUsedAt: nowIso },
+        $unset: { stoppedAt: "", stopAttempts: "", stopError: "" },
+        // An insert without an execution still needs the array; with one, $push creates it.
+        ...(executionId
+          ? { $setOnInsert: { id, openedAt: nowIso }, $push: { executions: { $each: [executionId], $slice: -AE_SESSION_EXECUTIONS } } }
+          : { $setOnInsert: { id, openedAt: nowIso, executions: [] } }),
+      },
+      { upsert: true, returnDocument: "after" },
+    );
+    return stripIdStrict<AeSession>(doc!);
+  }
+
+  async findByExecution(outfitterSessionId: string, executionId: string): Promise<AeSession | null> {
+    return stripId<AeSession>(await this.col.findOne({ outfitterSessionId, executions: executionId }));
+  }
+
+  async listOpen(limit: number, usedBefore?: string): Promise<AeSession[]> {
+    const rows = await this.col.find({ stoppedAt: { $exists: false }, ...(usedBefore !== undefined ? { lastUsedAt: { $lt: usedBefore } } : {}) }).sort({ lastUsedAt: 1 }).limit(limit).toArray();
+    return rows.map((r) => stripIdStrict<AeSession>(r));
+  }
+
+  async listOpenForSession(outfitterSessionId: string): Promise<AeSession[]> {
+    const rows = await this.col.find({ outfitterSessionId, stoppedAt: { $exists: false } }).toArray();
+    return rows.map((r) => stripIdStrict<AeSession>(r));
+  }
+
+  async markStopped(id: string, lastUsedAt: string, nowIso: string, error?: string): Promise<boolean> {
+    const result = await this.col.updateOne(
+      { _id: id, lastUsedAt, stoppedAt: { $exists: false } },
+      { $set: { stoppedAt: nowIso, ...(error ? { stopError: error } : {}) } },
+    );
+    return result.matchedCount === 1;
+  }
+
+  async recordStopFailure(id: string, lastUsedAt: string, error: string): Promise<number | null> {
+    const doc = await this.col.findOneAndUpdate(
+      { _id: id, lastUsedAt, stoppedAt: { $exists: false } },
+      { $inc: { stopAttempts: 1 }, $set: { stopError: error } },
+      { returnDocument: "after" },
+    );
+    return doc ? (doc.stopAttempts ?? 1) : null;
+  }
+
+  async deleteForSession(outfitterSessionId: string): Promise<number> {
+    return (await this.col.deleteMany({ outfitterSessionId })).deletedCount;
+  }
+}
+
 export class MongoStore implements Store {
   readonly sessions: SessionsCollection;
   readonly entries: EntriesCollection;
@@ -1386,6 +1501,8 @@ export class MongoStore implements Store {
   readonly adminApprovals: AdminApprovalsCollection;
   readonly sessionChunks: SessionChunksCollection;
   readonly turnWaiters: TurnWaitersCollection;
+  readonly aeAgents: AeAgentsCollection;
+  readonly aeSessions: AeSessionsCollection;
   private readonly client: MongoClient;
 
   private constructor(client: MongoClient, db: Db) {
@@ -1410,6 +1527,8 @@ export class MongoStore implements Store {
     this.adminApprovals = new MongoAdminApprovals(db.collection("adminApprovals"));
     this.sessionChunks = new MongoSessionChunks(db.collection(CHUNKS_COLLECTION));
     this.turnWaiters = new MongoTurnWaiters(db.collection<TurnWaiterDoc>("turnWaiters"));
+    this.aeAgents = new MongoAeAgents(db.collection("aeAgents"));
+    this.aeSessions = new MongoAeSessions(db.collection("aeSessions"));
   }
 
   /** `dbName` wins over the database in the URI; the stored URI has none, so the default keeps
@@ -1444,6 +1563,10 @@ export class MongoStore implements Store {
       db.collection("turnWaiters").createIndex({ sessionId: 1, status: 1, createdAt: 1 }),
       db.collection("turnWaiters").createIndex({ status: 1, deadlineAt: 1 }),
       db.collection("turnWaiters").createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
+      // E9 §4: one allowlist entry per workspace; the session-close sweep; ae.get/ae.resume lookups.
+      db.collection("aeAgents").createIndex({ workspaceId: 1 }, { unique: true }),
+      db.collection("aeSessions").createIndex({ stoppedAt: 1, lastUsedAt: 1 }),
+      db.collection("aeSessions").createIndex({ outfitterSessionId: 1, executions: 1 }),
     ]);
     // Non-fatal: a deployment that already holds two active runs for one session (the race this
     // index closes) would otherwise fail every boot. Until the duplicates are cleaned up,

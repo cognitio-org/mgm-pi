@@ -8,8 +8,9 @@
 //
 // Routes: POST /api/v1/oauth/token; under /api/v1/projects/{p}/: memory/turns, memory/context,
 // memory/semantic (POST, DELETE /{id}), memory/{episodic,procedural,taxonomic} (POST, E9 PR3),
-// memory/retrieval/context-from-sources,
-// executions/{id}, workspaces/{w}/runtime-sessions (GET, POST /{id}/stop). Anything else is 404.
+// memory/retrieval/context-from-sources, executions/{id} (GET, POST /resume),
+// workspaces/{w}/invokeStream (SSE, scripted by `invokeScripts`), workspaces/{w}/runtime-sessions
+// (GET, POST /{id}/stop). Anything else is 404.
 
 import { randomUUID } from "node:crypto";
 import type { AgentEngineConfig, AgentEngineProjectConfig } from "../src/config.ts";
@@ -36,6 +37,19 @@ export interface FakeSemantic {
   source?: "semantic" | "episodic" | "procedural" | "taxonomic";
   /** The request body it was saved with (episodic/procedural/taxonomic). */
   body?: Record<string, unknown>;
+}
+
+/** One scripted invokeStream reply. `frames` are sent as `data:` events (a string is sent raw, for
+ * malformed or multi-line input), `delayMs` apart; `hang` keeps the stream open afterwards until the
+ * caller aborts. `status` other than 200 answers with `body` instead of a stream. */
+export interface FakeInvokeScript {
+  frames?: Array<Record<string, unknown> | string>;
+  delayMs?: number;
+  hang?: boolean;
+  status?: number;
+  body?: unknown;
+  /** The X-Session-ID response header; defaults to the request's. */
+  sessionHeader?: string;
 }
 
 interface Issued {
@@ -72,6 +86,12 @@ export class FakeAgentEngine {
   contextFailures = 0;
   readonly executions = new Map<string, Record<string, unknown>>();
   readonly runtimeSessions = new Map<string, Array<{ session_id: string; status: string }>>();
+  /** Replies for the next invokeStream calls, in order; when empty, one text frame then done. */
+  readonly invokeScripts: FakeInvokeScript[] = [];
+  /** Answers for runtime-session stops, in order (e.g. 403 to check the best-effort path). */
+  readonly stopFailures: number[] = [];
+  /** Streams aborted by the caller (its side closed). */
+  aborted = 0;
   private readonly tokens = new Map<string, Issued>();
   private readonly projects: Record<string, AgentEngineProjectConfig>;
 
@@ -127,7 +147,56 @@ export class FakeAgentEngine {
     if (!issued || issued.expiresAt <= this.now()) return json(401, { detail: "invalid or expired token" });
     // A service account acts only on its own project.
     if (this.projects[issued.projectClient]?.projectId !== projectId) return json(403, { detail: "forbidden" });
+    const stream = /^\/workspaces\/([^/]+)\/invokeStream$/.exec(m[2]);
+    if (req.method === "POST" && stream) return this.invokeStream(req, init.signal ?? undefined);
     return this.route(req, m[2]);
+  }
+
+  private invokeStream(req: FakeRequest, signal: AbortSignal | undefined): Response {
+    const script: FakeInvokeScript = this.invokeScripts.shift() ?? {
+      frames: [
+        { chunk_type: "text", content: "hello", execution_id: "exec-1" },
+        { chunk_type: "done", execution_id: "exec-1" },
+      ],
+    };
+    if (script.status && script.status !== 200) return json(script.status, script.body ?? { detail: "refused" });
+    const enc = new TextEncoder();
+    const frames = script.frames ?? [];
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const body = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        let i = 0;
+        let closed = false;
+        const fail = () => {
+          if (closed) return;
+          closed = true;
+          if (timer) clearTimeout(timer);
+          this.aborted++;
+          controller.error(new DOMException("The operation was aborted.", "AbortError"));
+        };
+        if (signal?.aborted) return fail();
+        signal?.addEventListener("abort", fail, { once: true });
+        const next = () => {
+          if (closed) return;
+          if (i < frames.length) {
+            const f = frames[i++];
+            controller.enqueue(enc.encode(typeof f === "string" ? f : `data: ${JSON.stringify(f)}\n\n`));
+            timer = setTimeout(next, script.delayMs ?? 0);
+            return;
+          }
+          if (script.hang) return;
+          closed = true;
+          signal?.removeEventListener("abort", fail);
+          controller.close();
+        };
+        next();
+      },
+      cancel: () => {
+        if (timer) clearTimeout(timer);
+      },
+    });
+    const sid = script.sessionHeader ?? req.headers["x-session-id"];
+    return new Response(body, { status: 200, headers: { "content-type": "text/event-stream", ...(sid ? { "x-session-id": sid } : {}) } });
   }
 
   private async token(req: FakeRequest, raw: string | undefined): Promise<Response> {
@@ -195,6 +264,18 @@ export class FakeAgentEngine {
       const hits = this.visible(b.user_id as string | undefined, b.visibility as string | undefined);
       return json(200, { formatted_context: hits.map((s) => `- ${s.text}`).join("\n"), memories: hits.map((s) => ({ id: s.id, content: s.text, source: "semantic" })) });
     }
+    const resume = /^\/executions\/([^/]+)\/resume$/.exec(rest);
+    if (req.method === "POST" && resume) {
+      const found = this.executions.get(decodeURIComponent(resume[1]));
+      if (!found || req.query.workspace_id === undefined) return json(404, { detail: "execution not found" });
+      if (found.status !== "suspended") return json(409, { detail: `execution is ${String(found.status)}` });
+      const ctx = found.suspend_context as { allowed_decisions?: string[] } | undefined;
+      const allowed = (found.allowed_decisions as string[] | undefined) ?? ctx?.allowed_decisions ?? [];
+      const decision = String(b.decision ?? "");
+      if (allowed.length && !allowed.some((d) => d.toLowerCase() === decision.toLowerCase())) return json(400, { detail: `decision must be one of ${allowed.join(", ")}` });
+      found.status = "resuming";
+      return json(200, { execution_id: found.execution_id ?? resume[1], status: "resuming" });
+    }
     const exec = /^\/executions\/([^/]+)$/.exec(rest);
     if (req.method === "GET" && exec) {
       const found = this.executions.get(decodeURIComponent(exec[1]));
@@ -206,6 +287,8 @@ export class FakeAgentEngine {
     if (req.method === "POST" && stop) {
       const list = this.runtimeSessions.get(decodeURIComponent(stop[1])) ?? [];
       const s = list.find((x) => x.session_id === decodeURIComponent(stop[2]));
+      const failure = this.stopFailures.shift();
+      if (failure) return json(failure, { detail: "stop refused" });
       if (!s) return json(404, { detail: "session not found" });
       s.status = "stopping";
       return new Response(null, { status: 202 });

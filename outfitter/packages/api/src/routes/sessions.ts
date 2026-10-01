@@ -523,6 +523,8 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     const archived = await ctx.store.sessions.setArchivedAt(session.id, now);
     const run = await ctx.store.runs.findActiveForSession(session.id);
     if (run) await stopRun(ctx, run);
+    // E9 §4: release the Agent Engine sessions it opened (best effort; the tick retries).
+    void ctx.aeSessions.closeSession(session.id).catch(() => {});
     return { session: archived };
   });
 
@@ -567,6 +569,8 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
       ctx.store.browserRequests.deleteForSession(session.id),
       ctx.store.browserCaptures.deleteForSession(session.id),
       ctx.store.turnWaiters.deleteForSession(session.id),
+      // E9 §4: stops what it can first; open rows it can't stop stay for the link role's sweep.
+      ctx.aeSessions.forgetSession(session.id).catch(() => {}),
       ctx.indexer.removeSession(session.id),
     ]);
     await ctx.store.sessions.delete(session.id);

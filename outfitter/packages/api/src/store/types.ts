@@ -468,6 +468,10 @@ export interface Guru {
   excludeTools?: string[];
   packages?: string[];
   env?: Record<string, string>;
+  /** E9.10 (#354): the repos this tape is meant for, lowercased `owner/name`. A hint that never
+   * restricts anything: the new-session form pre-selects the first, and a laptop playing the tape
+   * in another repo warns. Not part of run.spec. */
+  repos?: string[];
   /** When true, this guru's cloud runs may `github_pr.merge`. Absent or false refuses with
    * "not permitted" — a cloud run can be started with nobody watching. */
   mergeFromCloud?: boolean;

@@ -28,6 +28,13 @@ export function resolveGuruId(current: string, gurus: Guru[], initialGuruId?: st
   return gurus[0]?.id ?? "";
 }
 
+/** E9.10: the repository field follows the tape's `repos` hint (its first entry) until the person
+ * types or picks one themselves; then it is theirs. Pure, for the tests. */
+export function preselectRepo(current: string, touched: boolean, guru: Pick<Guru, "repos"> | undefined): string {
+  if (touched) return current;
+  return guru?.repos?.[0] ?? "";
+}
+
 export function NewSessionDialog({ gurus, onClose, onCreated, initialGuruId }: Props) {
   const [guruId, setGuruId] = useState(() => resolveGuruId("", gurus, initialGuruId));
 
@@ -36,7 +43,15 @@ export function NewSessionDialog({ gurus, onClose, onCreated, initialGuruId }: P
   useEffect(() => {
     setGuruId((current) => resolveGuruId(current, gurus, initialGuruId));
   }, [gurus, initialGuruId]);
-  const [repo, setRepo] = useState("");
+  const [repo, setRepoValue] = useState("");
+  const [repoTouched, setRepoTouched] = useState(false);
+  const setRepo = (value: string) => {
+    setRepoTouched(true);
+    setRepoValue(value);
+  };
+  useEffect(() => {
+    setRepoValue((current) => preselectRepo(current, repoTouched, gurus.find((g) => g.id === guruId)));
+  }, [guruId, gurus, repoTouched]);
   const [baseBranch, setBaseBranch] = useState("");
   const [branch, setBranch] = useState("");
   const [prompt, setPrompt] = useState("");

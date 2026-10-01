@@ -34,7 +34,9 @@ export function withHtmlPreviewPrompt(appendSystemPrompt: string | undefined, al
 
 export default function (pi: ExtensionAPI) {
   if (inSandbox()) return;
-  const allowExternal = allowExternalHtmlResources();
+  // A tape being played (#354, kernal-tape) decides for its session, as it does in a Drive.
+  const tape = process.env.KERNAL_TAPE ? process.env.KERNAL_TAPE_HTML : undefined;
+  const allowExternal = tape === "external" || tape === "sealed" ? tape === "external" : allowExternalHtmlResources();
   pi.on("before_agent_start", async (event) => {
     // pi rebuilds these options from its base prompt for every turn, so this appends once per turn,
     // not once more each turn.

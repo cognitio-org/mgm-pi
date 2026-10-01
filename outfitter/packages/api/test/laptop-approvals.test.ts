@@ -317,7 +317,8 @@ describe("laptop approvals: registration", () => {
     let runs = 0;
     const off = registerAdminOp("wtest.fire", {
       kind: "write",
-      capability: "agentEngine",
+      // memory: a Dongle reaches it without a tape (E9.10: agentEngine needs one, laptop-tapes.test.ts).
+      capability: "memory",
       laptop: true,
       webApproval: true,
       asks: async () => true,

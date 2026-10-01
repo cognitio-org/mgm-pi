@@ -127,6 +127,12 @@ function denylistedGuruEnvKeys(env: Record<string, string> | undefined): string[
   );
 }
 
+/** C0/C1 controls except tab, newline and carriage return; bidi overrides and isolates. */
+const HIDDEN_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+
+/** A GitHub `owner/name`, lowercased (the laptop context's repo has the same shape). */
+const TAPE_REPO = /^[a-z0-9](?:[a-z0-9-]{0,38})\/[a-z0-9._-]{1,100}$/;
+
 /** The fields a create or update may carry. Anything else in a body (createdAt, a dotted Mongo
  * path such as `env.LD_PRELOAD`) is dropped before it can reach `$set`. */
 const WRITABLE_FIELDS = [
@@ -139,6 +145,7 @@ const WRITABLE_FIELDS = [
   "tools",
   "excludeTools",
   "packages",
+  "repos",
   "env",
   "mergeFromCloud",
   "branchPrefix",
@@ -180,6 +187,13 @@ export function guruValidationError(body: Partial<GuruInput>): string | undefine
     const v = body[key];
     if (v !== undefined && (!Array.isArray(v) || v.some((x) => typeof x !== "string"))) return `${key} must be a list of strings`;
   }
+  // E9.10 (review): no control characters but tab and newline. A laptop shows a tape to the person
+  // before it plays; a NUL or an escape sequence could hide text from that review, or split argv.
+  for (const key of [...STRING_FIELDS, ...LIST_FIELDS] as const) {
+    const v = body[key] as unknown;
+    const values = Array.isArray(v) ? v : [v];
+    if (values.some((x) => typeof x === "string" && HIDDEN_CHARS.test(x))) return `${key} contains control characters`;
+  }
   for (const key of BOOLEAN_FIELDS) {
     // Absent stays absent (existing gurus are off). Only a real boolean is stored; anything else
     // would be easy to mistake for "on" later.
@@ -190,6 +204,13 @@ export function guruValidationError(body: Partial<GuruInput>): string | undefine
     if (!env || typeof env !== "object" || Array.isArray(env) || Object.values(env).some((v) => typeof v !== "string")) {
       return "env must map names to string values";
     }
+  }
+  if (body.repos !== undefined) {
+    // A hint (#354), never a restriction, so anyone may set it; it is stored lowercased.
+    if (!Array.isArray(body.repos) || body.repos.length > 50 || body.repos.some((r) => typeof r !== "string" || !TAPE_REPO.test(r.trim().toLowerCase()))) {
+      return "repos must be a list of GitHub owner/name";
+    }
+    body.repos = [...new Set(body.repos.map((r) => r.trim().toLowerCase()))];
   }
   const denied = denylistedGuruEnvKeys(body.env);
   if (denied.length > 0) return `guru.env may not set: ${denied.join(", ")}`;

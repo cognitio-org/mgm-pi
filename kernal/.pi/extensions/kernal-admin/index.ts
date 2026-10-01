@@ -1,5 +1,6 @@
 /**
- * /admin — a local web admin for kernal: status, connections, model, codebase index, subagents.
+ * /admin — a local web admin for kernal: status, connections, model, codebase index, subagents,
+ * GitHub, and tapes (kernal-tape/admin.ts: review, pin and play cloud tapes; memory settings).
  *
  *   /admin          start the server (if it is not running) and open the page in the browser
  *   /admin index    ...opened at one page (overview, connections, model, index, subagents)
@@ -41,6 +42,9 @@ import { APP_CSS, APP_JS, FAVICON, INDEX_HTML } from "./app.ts";
 import { backendPill, connectionsView, fieldById, idleMs, indexFields, leaksSecret, redactSecrets, secretValues, validateConnections, type ConnectionEdit } from "./lib.ts";
 import { startAdminServer, type AdminServer, type Api, type ApiResult } from "./server.ts";
 import { env } from "../_shared/env.ts";
+import { createTapeApi, type TapeAdminDeps } from "../kernal-tape/admin.ts";
+import { npmRunner, tapeDir } from "../kernal-tape/lib.ts";
+import { adminTransport } from "../outfitter-admin/transport.ts";
 
 export const ASSETS = {
   "/index.html": { type: "text/html; charset=utf-8", body: INDEX_HTML },
@@ -50,7 +54,7 @@ export const ASSETS = {
 };
 
 /** Pages `/admin <page>` can open directly. */
-const PAGES = ["overview", "connections", "model", "index", "subagents", "github"];
+const PAGES = ["overview", "connections", "model", "index", "subagents", "github", "tapes"];
 
 const agentDir = () => process.env.PI_CODING_AGENT_DIR || join(process.env.HOME ?? "", ".pi", "agent");
 const readJson = (f: string) => { try { return JSON.parse(readFileSync(f, "utf8")); } catch { return undefined; } };
@@ -60,7 +64,13 @@ const fail = (status: number, body: Record<string, unknown>): ApiResult => ({ st
 type ConnState = { id: string; label: string; baseUrl: string; hasKey: boolean; registered: boolean; answered: boolean; rejected?: string; models: string[] };
 type IndexState = { status: IndexStatus; knowledgeBases: string[]; toolCount: number; rebuilding: boolean };
 
-export type ApiDeps = { pi: ExtensionAPI; ctx: () => ExtensionContext | undefined; server: () => AdminServer | undefined; stop: () => void };
+export type ApiDeps = { pi: ExtensionAPI; ctx: () => ExtensionContext | undefined; server: () => AdminServer | undefined; stop: () => void; tapes?: TapeAdminDeps };
+
+/** The Tapes page's deps for this process: the laptop's Dongle (never a Drive's socket). */
+function tapeDeps(cwd: () => string): TapeAdminDeps {
+  const t = adminTransport();
+  return { dir: tapeDir(), transport: t?.kind === "laptop" ? t : undefined, run: npmRunner, cwd };
+}
 
 /** The routes. Separate from the server so tests can drive them with a fake pi. */
 export function createApi(d: ApiDeps): Api {
@@ -397,6 +407,9 @@ export function createApi(d: ApiDeps): Api {
     },
 
     "POST /stop": async () => { setTimeout(() => d.stop(), 50); return { body: { stopping: true } }; },
+
+    // ---------- tapes: the same pin store and review as kernal --tape and /tape (kernal-tape) ----------
+    ...createTapeApi(d.tapes ?? tapeDeps(cwd)),
   };
 
   return async (req) => {

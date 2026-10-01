@@ -14,6 +14,16 @@
 //
 // Everything Agent Engine sends back is untrusted text: results are clipped to 8 KB and the remote
 // part is fenced as `[from Agent Engine agent <id>]` … `[end of Agent Engine agent <id>]`.
+//
+// E9.10 (#354, spec §7.1): a laptop playing a tape whose `agentEngine` is on reaches the same ops
+// with its Dongle (`laptop: true`). routes/admin.ts reads the tape the call names on every call, so
+// turning Agent Engine off on the tape cuts the laptop off at once. Every laptop invoke and resume
+// waits for the owner's yes in the Outfitter web app (`webApproval`; never a `confirmed` the
+// laptop's own agent could send), a resume bound to the pause the card showed. The Agent Engine
+// session a laptop opens is keyed `laptop:<owner hash>:<pi session id>` (aeSessionKey), so another
+// Dongle holder who learns the pi session id reaches none of its executions, and the X-Session-ID
+// keeps the Drives' `outf-<session8>-<agent>` shape. `ae.close` stops them when the laptop session
+// ends; the tick sweep stops what an idle laptop left open.
 
 import {
   AgentEngineError,
@@ -27,12 +37,19 @@ import {
 } from "../agentengine/index.ts";
 import type { AeAgent, AeSession } from "../store/types.ts";
 import { registerAdminOp, type AdminCaller, type AdminContext, type AdminResult } from "./ops.ts";
+import type { LaptopCard } from "./laptop-approvals.ts";
 import { clip, shortId } from "./render.ts";
 import { stripHidden } from "../untrusted.ts";
+import { createHash } from "node:crypto";
+import { memoryUserHash } from "../agentengine/identity.ts";
+import { redact } from "../search/redact.ts";
+import { AeSessions } from "../ae-sessions.ts";
 
 /** Cap on one ae.* result, in UTF-8 bytes. */
 export const AE_RESULT_CAP = 8 * 1024;
 const MAX_MESSAGE_CHARS = 32_000;
+/** A laptop's invoke message: what its approval card shows in full (laptop-approvals MAX_SUMMARY). */
+const LAPTOP_MESSAGE_CHARS = 5_000;
 /** Reviewer notes the card shows in full (under CARD_CONTEXT_CHARS). */
 const MAX_NOTES_CHARS = 500;
 /** How much of a review pause's context the approval card shows. */
@@ -43,8 +60,12 @@ type Args = Record<string, unknown>;
 const OFF = "Agent Engine agents are not set up on this Outfitter";
 
 /** The short session id Agent Engine sees: a UUID's random tail (shortId), else the id's last 8
- * safe characters. Never an email. */
+ * safe characters. Never an email. A laptop's key (`laptop:<owner hash>:<pi id>`, E9.10) is
+ * digested whole instead: its tail is the client's pi id, which another Dongle holder could choose
+ * to match someone else's session (security review). `L` + 7 base64url characters of sha256: never
+ * a Drive's (hex, lowercase) and bound to the owner hash. */
 export function session8(sessionId: string): string {
+  if (sessionId.startsWith("laptop:")) return `L${createHash("sha256").update(sessionId).digest("base64url").slice(0, 7)}`;
   const short = shortId(sessionId);
   const safe = (short.length === 8 ? short : sessionId).replace(/[^A-Za-z0-9_-]/g, "");
   return safe.slice(-8) || "session";
@@ -55,6 +76,17 @@ export function session8(sessionId: string): string {
 export function aeSessionId(sessionId: string, agentId: string): string {
   return `outf-${session8(sessionId)}-${agentId}`;
 }
+
+/** The key this caller's Agent Engine sessions are recorded under (aeSessions.outfitterSessionId):
+ * a Drive's Outfitter session; for a laptop playing a tape, `laptop:<owner hash>:<pi session id>`,
+ * bound to the Dongle's owner (the pi id is the client's word). Undefined: no session to act in. */
+export function aeSessionKey(caller: AdminCaller): string | undefined {
+  if (caller.via === "drive") return caller.sessionId;
+  const pi = caller.laptop?.sessionId?.startsWith("laptop:") ? caller.laptop.sessionId.slice("laptop:".length) : undefined;
+  return pi && caller.laptop?.tape ? `laptop:${memoryUserHash(caller.email)}:${pi}` : undefined;
+}
+
+const NO_SESSION = "ae ops work only in a Drive, or on a laptop playing a tape with Agent Engine";
 
 /** Remote text for the model: no control characters but newlines and tabs, and none of our own
  * fence markers, so the agent's words can't close the fence and speak as Outfitter. */
@@ -126,10 +158,20 @@ async function ownExecution(
   caller: AdminCaller,
   ref: unknown,
 ): Promise<{ ok: true; row: AeSession; agent: AeAgent; executionId: string } | { ok: false; error: string }> {
-  if (!caller.sessionId) return { ok: false, error: "ae ops work only in a Drive" };
+  const key = aeSessionKey(caller);
+  if (!key) return { ok: false, error: NO_SESSION };
   const executionId = typeof ref === "string" ? ref.trim() : "";
   if (!executionId) return { ok: false, error: "executionId is required" };
-  const row = await ctx.store.aeSessions.findByExecution(caller.sessionId, executionId);
+  const row = await ctx.store.aeSessions.findByExecution(key, executionId);
+  // E9.10: a laptop's get or resume counts as use, so the idle sweep doesn't stop a session whose
+  // execution is still being polled or answered (review). A Drive's sweep goes by its run instead.
+  if (row && key.startsWith("laptop:")) {
+    await ctx.store.aeSessions.recordInvoke(
+      { outfitterSessionId: row.outfitterSessionId, agentId: row.agentId, workspaceId: row.workspaceId, aeSessionId: row.aeSessionId },
+      undefined,
+      new Date(ctx.now?.() ?? Date.now()).toISOString(),
+    );
+  }
   if (!row) return { ok: false, error: `no execution "${clip(executionId, 80)}" started from this session` };
   const agent = await enabledAgent(ctx, row.agentId);
   if (!agent.ok) return { ok: false, error: `Agent Engine agent ${row.agentId} is no longer enabled` };
@@ -199,10 +241,51 @@ function decisionOf(args: Args): string {
   return typeof args.decision === "string" ? args.decision.trim() : "";
 }
 
+/** The web widget's card for a laptop invoke: the agent and the message as sent (secrets masked
+ * for the card, which is stored; the agent gets the message as written). A call the op would refuse
+ * anyway is refused before anyone is asked. */
+function invokeLaptopCard(args: Args): LaptopCard | { error: string } {
+  const agent = typeof args.agent === "string" ? args.agent.trim() : "";
+  const message = typeof args.message === "string" ? args.message : "";
+  if (!agent) return { error: "agent is required" };
+  if (!message.trim()) return { error: "message is required" };
+  // The card must show all of it (review): a laptop's message is capped at what the card holds.
+  if (message.length > LAPTOP_MESSAGE_CHARS) return { error: `a message to an Agent Engine agent from a laptop is limited to ${LAPTOP_MESSAGE_CHARS} characters, so the approval card can show all of it` };
+  return {
+    title: `Send a message to Agent Engine agent ${clip(agent, 60)} from your laptop?`,
+    facts: [
+      { label: "Agent", value: clip(agent, 60) },
+      ...(typeof args.wait === "number" ? [{ label: "Waits up to", value: `${Math.round(args.wait)} s` }] : []),
+    ],
+    summary: `Your laptop's agent wants to send this to the agent, which may act on it:\n\n${redact(message)}`,
+  };
+}
+
+/** The widget's card for a laptop resume: the same words as a Drive's card (the pause, quoted as
+ * the remote agent's, and the decision), with the exact execution the yes answers. */
+function resumeLaptopCard(args: Args, target?: string): LaptopCard | { error: string } {
+  const decision = decisionOf(args);
+  const invalid = resumeArgsError(decision, args.notes);
+  if (invalid) return { error: invalid };
+  const [execution] = typeof args.id === "string" ? args.id.split("#", 1) : [""];
+  if (!execution || !target) return { error: "ae.resume: the execution could not be resolved" };
+  const c = AE_OPS["ae.resume"].card(args, target);
+  return {
+    title: c.title,
+    facts: [
+      { label: "Execution", value: clip(execution, 120) },
+      { label: "Decision", value: clip(decision, MAX_DECISION_CHARS) },
+    ],
+    summary: c.message.replace("The agent in this session", "Your laptop's agent"),
+  };
+}
+
 export const AE_OPS = {
   "ae.list": {
     kind: "read",
     capability: "agentEngine",
+    laptop: true,
+    laptopTape: true,
     async run(ctx: AdminContext): Promise<AdminResult> {
       if (!agentsOf(ctx)) return { ok: false, error: OFF };
       const agents = (await ctx.store.aeAgents.list()).filter((a) => a.enabled);
@@ -214,10 +297,23 @@ export const AE_OPS = {
   "ae.invoke": {
     kind: "write",
     capability: "agentEngine",
+    laptop: true,
+    webApproval: true,
+    laptopAsks: true,
+    laptopCard: invokeLaptopCard,
+    /** A laptop isn't asked to approve a call to an agent that isn't there (a Drive's call fails in
+     * run, as before). */
+    async refused(ctx: AdminContext, args: Args, caller: AdminCaller) {
+      if (caller.via !== "token") return undefined;
+      if (!agentsOf(ctx)) return OFF;
+      const found = await enabledAgent(ctx, args.agent);
+      return found.ok ? undefined : found.error;
+    },
     async run(ctx: AdminContext, caller: AdminCaller, args: Args) {
       const agents = agentsOf(ctx);
       if (!agents) return { ok: false, error: OFF };
-      if (!caller.sessionId) return { ok: false, error: "ae ops work only in a Drive" };
+      const sessionKey = aeSessionKey(caller);
+      if (!sessionKey) return { ok: false, error: NO_SESSION };
       const found = await enabledAgent(ctx, args.agent);
       if (!found.ok) return found;
       const agent = found.agent;
@@ -225,7 +321,7 @@ export const AE_OPS = {
       if (!message.trim()) return { ok: false, error: "message is required", target: agent.id };
       if (message.length > MAX_MESSAGE_CHARS) return { ok: false, error: `message is over ${MAX_MESSAGE_CHARS} characters`, target: agent.id };
       if (args.wait !== undefined && (typeof args.wait !== "number" || !Number.isFinite(args.wait))) return { ok: false, error: "wait must be a number of seconds", target: agent.id };
-      const key = { outfitterSessionId: caller.sessionId, agentId: agent.id, workspaceId: agent.workspaceId, aeSessionId: aeSessionId(caller.sessionId, agent.id) };
+      const key = { outfitterSessionId: sessionKey, agentId: agent.id, workspaceId: agent.workspaceId, aeSessionId: aeSessionId(sessionKey, agent.id) };
       const iso = () => new Date(ctx.now?.() ?? Date.now()).toISOString();
       // Recorded before the call, so a stream that breaks still leaves the session to stop.
       await ctx.store.aeSessions.recordInvoke(key, undefined, iso());
@@ -235,7 +331,7 @@ export const AE_OPS = {
           workspaceId: agent.workspaceId,
           message,
           sessionId: key.aeSessionId,
-          outfitterSession: session8(caller.sessionId),
+          outfitterSession: session8(sessionKey),
           ...(typeof args.wait === "number" ? { waitSeconds: args.wait } : {}),
         });
       } catch (err) {
@@ -249,6 +345,8 @@ export const AE_OPS = {
   "ae.get": {
     kind: "read",
     capability: "agentEngine",
+    laptop: true,
+    laptopTape: true,
     async run(ctx: AdminContext, caller: AdminCaller, args: Args) {
       const agents = agentsOf(ctx);
       if (!agents) return { ok: false, error: OFF };
@@ -269,6 +367,9 @@ export const AE_OPS = {
   "ae.resume": {
     kind: "approve",
     capability: "agentEngine",
+    laptop: true,
+    webApproval: true,
+    laptopCard: resumeLaptopCard,
     /** Read before the card: the execution must be this session's, paused, and allow the decision,
      * or the owner isn't asked at all. The label carries what the card shows; the id carries the
      * pause's fingerprint, so the yes answers only the pause the card showed. */
@@ -336,6 +437,26 @@ export const AE_OPS = {
       const status = invokeStatus(reply.status);
       const text = aeResult(own.agent.id, [`resumed execution ${own.executionId} with "${clip(decision, 60)}"`, `status: ${status}`, "check the outcome with get"], executionLines(reply));
       return { ok: true, text, target };
+    },
+  },
+
+  "ae.close": {
+    kind: "write",
+    capability: "agentEngine",
+    laptop: true,
+    laptopTape: true,
+    /** E9.10: a laptop session ending (`/tape off`, exit) stops the Agent Engine sessions it opened,
+     * best effort. A Drive's stop when its Outfitter session closes (ae-sessions.ts). */
+    async run(ctx: AdminContext, caller: AdminCaller) {
+      if (caller.via !== "token") return { ok: false, error: "a Drive's Agent Engine sessions stop when its Outfitter session closes" };
+      const key = aeSessionKey(caller);
+      if (!key) return { ok: false, error: NO_SESSION };
+      const agents = agentsOf(ctx);
+      const open = await ctx.store.aeSessions.listOpenForSession(key);
+      if (!agents || !open.length) return { ok: true, text: "no Agent Engine sessions to stop" };
+      await new AeSessions({ store: ctx.store, agents, now: ctx.now }).closeSession(key);
+      const left = (await ctx.store.aeSessions.listOpenForSession(key)).length;
+      return { ok: true, text: `stopped ${open.length - left} of ${open.length} Agent Engine session${open.length === 1 ? "" : "s"}`, target: key };
     },
   },
 } as const;

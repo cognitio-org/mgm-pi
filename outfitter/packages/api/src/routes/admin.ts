@@ -13,10 +13,14 @@
 // and only scope the token owner's own memory; the identity is always the token's owner.
 // `approvalId` names the web approval a rerun of a `webApproval` op (a shared memory.save) claims;
 // for those ops `confirmed` counts for nothing (admin/laptop-approvals.ts).
+// E9.10 (#354): `laptop.tape` names the tape the laptop plays. For an op whose capability is not
+// `admin` or `memory` (the `ae.*` ops), the tape is read here, now, and its capabilities are the
+// caller's: Agent Engine works from a laptop only while that tape has it on.
 
 import type { FastifyInstance } from "fastify";
 import type { RouteContext } from "./context.ts";
-import { runAdminOp } from "../admin/ops.ts";
+import { adminOp, runAdminOp, type AdminCapability } from "../admin/ops.ts";
+import { tapeCapabilities } from "../gurus-service.ts";
 import { laptopContext } from "../agentengine/identity.ts";
 
 /**
@@ -67,6 +71,12 @@ export async function registerAdminRoutes(app: FastifyInstance, ctx: RouteContex
     if (typeof body.op === "string" && body.op.startsWith("memory.") && !laptopMemoryRate.take(identity.email.toLowerCase())) {
       return { ok: false, error: "too many memory calls from this Dongle; try again in a minute" };
     }
+    const def = adminOp(body.op);
+    let capabilities: AdminCapability[] | undefined;
+    if (def?.laptop && def.capability !== "memory" && def.capability !== "admin" && laptop.value?.tape) {
+      const tape = await ctx.store.gurus.findById(laptop.value.tape);
+      capabilities = tape ? tapeCapabilities(tape) : [];
+    }
     return runAdminOp(
       { store: ctx.store, models: ctx.modelsService, agentEngine: ctx.agentEngine, log: (m) => req.log.warn(m) },
       {
@@ -77,6 +87,7 @@ export async function registerAdminRoutes(app: FastifyInstance, ctx: RouteContex
         ...(laptop.value ? { laptop: laptop.value } : {}),
         // A string only: `null` or a number reads as no approval yet, so it asks afresh.
         ...(typeof body.approvalId === "string" ? { laptopApprovalId: body.approvalId } : {}),
+        ...(capabilities ? { capabilities } : {}),
       },
       body.op,
       body.args,

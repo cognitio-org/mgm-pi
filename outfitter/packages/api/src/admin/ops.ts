@@ -63,8 +63,9 @@ export interface AdminCaller {
   operator: boolean;
   sessionId?: string;
   runId?: string;
-  /** For a Drive: what its tape allows now (gurus-service.ts tapeCapabilities). Unused for a
-   * Dongle, which reaches `admin` ops only. */
+  /** For a Drive: what its tape allows now (gurus-service.ts tapeCapabilities). For a Dongle
+   * (E9.10): what the tape its `laptop.tape` names allows now, read by the route; only `ae.*` uses
+   * it. */
   capabilities?: readonly AdminCapability[];
   /** The person approved this call (see the module doc). */
   approved?: boolean;
@@ -110,8 +111,16 @@ export interface AdminOp {
   webApproval?: true;
   /** The widget's card for a `webApproval` op (required with it): one line of what is asked, the
    * api's facts, and the exact content (redacted as it would be acted on). `{error}` refuses the
-   * call before anyone is asked (malformed args, text with hidden characters). */
-  laptopCard?: (args: Args) => LaptopCard | { error: string };
+   * call before anyone is asked (malformed args, text with hidden characters). E9.10: `target` is
+   * the label of the op's resolved target (ae.resume: the pause), when it has one. */
+  laptopCard?: (args: Args, target?: string) => LaptopCard | { error: string };
+  /** E9.10: from a Dongle, every call waits for the web yes, whatever `asks` says (laptop
+   * `ae.invoke`: an outside agent acting on the laptop's words). A Drive is unaffected. */
+  laptopAsks?: true;
+  /** E9.10 (#354): a Dongle may call this op while the tape its `laptop.tape` names has the op's
+   * capability (routes/admin.ts reads it on every call). Only reads, and `.close` writes that stop
+   * what the caller itself opened, may: anything that acts on someone's behalf is `webApproval`. */
+  laptopTape?: true;
   /** The approval card for this op, when the default (drive.ts approvalText) says too little: an
    * `approve` op shows what it answers. Every word must come from the api or be clipped, escaped
    * and labelled as remote text. */
@@ -139,6 +148,7 @@ const TAPE_FIELDS = [
   "appendSystemPrompt",
   "tools",
   "excludeTools",
+  "repos",
   "env",
   "mergeFromCloud",
   "branchPrefix",
@@ -188,6 +198,7 @@ function tapeDetail(g: Guru): string {
     ["agentEngine", g.agentEngine === true ? true : undefined],
     ["tools", g.tools],
     ["excludeTools", g.excludeTools],
+    ["repos", g.repos],
     ["env", envKeys(g.env)],
     ["mergeFromCloud", g.mergeFromCloud],
     ["branchPrefix", g.branchPrefix],
@@ -197,6 +208,46 @@ function tapeDetail(g: Guru): string {
     ["systemPrompt", g.systemPrompt],
     ["appendSystemPrompt", g.appendSystemPrompt],
   ]);
+}
+
+/** E9.10 (#354): a tape as data, for a laptop that plays it (Kernal's kernal-tape). Every field a
+ * Drive reads, plus `updatedAt`, so Kernal can pin a version and diff the next one. Env as NAMES
+ * only, sorted: the values often hold keys and never leave the server (a laptop only warns about
+ * names it doesn't have set). Prompts are whole, not clipped: Kernal shows and pins them. */
+export function tapeJson(g: Guru): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    kind: "tape",
+    format: 1,
+    id: g.id,
+    name: g.name,
+    model: g.model,
+    fallbackModel: g.fallbackModel,
+    thinking: g.thinking,
+    systemPrompt: g.systemPrompt,
+    appendSystemPrompt: g.appendSystemPrompt,
+    tools: g.tools,
+    excludeTools: g.excludeTools,
+    // A URL-form package source may carry credentials (`https://user:token@…`); never to a laptop.
+    packages: g.packages?.map((p) => p.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@\s]*@/i, "$1***@")),
+    envNames: g.env ? Object.keys(g.env).sort() : undefined,
+    repos: g.repos?.length ? g.repos : undefined,
+    adminTools: hasAdminTools(g) ? g.adminTools : undefined,
+    memory: g.memory && g.memory !== "off" ? g.memory : undefined,
+    agentEngine: g.agentEngine === true ? true : undefined,
+    mergeFromCloud: g.mergeFromCloud,
+    branchPrefix: g.branchPrefix,
+    playwrightBeforeCheckpoint: g.playwrightBeforeCheckpoint,
+    allowExternalHtmlResources: g.allowExternalHtmlResources,
+    browserIde: g.browserIde,
+    updatedAt: g.updatedAt,
+  };
+  for (const k of Object.keys(out)) if (out[k] === undefined) delete out[k];
+  return out;
+}
+
+/** `format: "json"` on tapes.get/tapes.list: the data form above instead of text. */
+function wantsJson(args: Args): boolean {
+  return args.format === "json";
 }
 
 function environmentLine(e: Environment, now: number): string {
@@ -320,6 +371,13 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
       const q = typeof args.query === "string" ? args.query.toLowerCase() : "";
       const hits = q ? tapes.filter((g) => `${g.id} ${g.name} ${g.model}`.toLowerCase().includes(q)) : tapes;
       const limit = limitOf(args, 20, 100);
+      if (wantsJson(args)) {
+        const rows = hits.slice(0, limit).map((g) => {
+          const t = tapeJson(g);
+          return { id: t.id, name: t.name, model: t.model, thinking: t.thinking, adminTools: t.adminTools, memory: t.memory, agentEngine: t.agentEngine, updatedAt: t.updatedAt };
+        });
+        return { ok: true, text: JSON.stringify({ kind: "tapes", format: 1, tapes: rows, more: Math.max(0, hits.length - limit) }) };
+      }
       const lines = hits.slice(0, limit).map((g) => tapeLine(g, now));
       if (hits.length > limit) lines.push(`… ${hits.length - limit} more; pass limit or query`);
       return { ok: true, text: lines.join("\n") || "no tapes" };
@@ -332,6 +390,7 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
     async run(ctx, _caller, args) {
       const tape = await resolveTape(ctx, args.id);
       if (!tape.ok) return tape;
+      if (wantsJson(args)) return { ok: true, text: JSON.stringify(tapeJson(tape.item)), target: tape.item.id };
       return { ok: true, text: capText(tapeDetail(tape.item)), target: tape.item.id };
     },
   },
@@ -600,10 +659,15 @@ export function registerAdminOp(name: string, op: AdminOp): () => void {
   if (op.webApproval && !op.laptop) throw new Error(`admin op ${name}: webApproval is for laptop-callable ops`);
   // A webApproval op lifts the memory-only rule, so it must actually ask (review): a class that
   // always asks, or `asks`; and say on its card what it asks.
-  if (op.webApproval && (!op.laptopCard || (!op.asks && !ALWAYS_ASKS.has(op.kind)))) {
+  if (op.webApproval && (!op.laptopCard || (!op.asks && !op.laptopAsks && !ALWAYS_ASKS.has(op.kind)))) {
     throw new Error(`admin op ${name}: a webApproval op needs a laptopCard, and asks (or a class that always asks)`);
   }
-  if (op.laptop && !op.webApproval && (op.capability !== "memory" || (op.kind !== "read" && op.kind !== "write"))) {
+  if (op.laptopAsks && !op.webApproval) throw new Error(`admin op ${name}: laptopAsks is for webApproval ops`);
+  // E9.10: a tape-gated laptop op (ae.list, ae.get, ae.close) acts for nobody: a read, or a
+  // `.close` that stops what the caller opened. Its capability is the tape's, checked per call.
+  const tapeGated = op.laptopTape === true && op.capability !== "admin" && op.capability !== "memory" && (op.kind === "read" || (op.kind === "write" && /\.close$/.test(name)));
+  if (op.laptopTape && (!op.laptop || !tapeGated)) throw new Error(`admin op ${name}: laptopTape is for laptop reads and .close writes of a tape capability`);
+  if (op.laptop && !op.webApproval && !tapeGated && (op.capability !== "memory" || (op.kind !== "read" && op.kind !== "write"))) {
     throw new Error(`admin op ${name}: only a memory read or write (or a webApproval op) may be laptop-callable`);
   }
   // Skipping the audit is for a laptop's own memory writes (memory.record) only.
@@ -633,7 +697,20 @@ export function capabilityOff(op: unknown): string {
 
 /** Why this caller may not reach this op's capability, or undefined when it may. */
 function capabilityRefusal(def: AdminOp, caller: AdminCaller, op: string): string | undefined {
-  if (caller.via === "token") return def.capability === "admin" || def.laptop === true ? undefined : `${op} works only in a Drive`;
+  if (caller.via === "token") {
+    if (def.capability === "admin") return undefined;
+    if (def.laptop !== true) return `${op} works only in a Drive`;
+    if (def.capability === "memory") return undefined;
+    // E9.10 (#354): anything else (Agent Engine agents) only for a laptop playing a tape that has
+    // the capability now, as the route read it.
+    if (caller.capabilities?.includes(def.capability)) return undefined;
+    // A `.close` (the only tape-gated write) stops only what the caller opened: it still works after
+    // the tape lost the capability, so the laptop can clean up (review).
+    if (def.laptopTape && def.kind === "write" && caller.laptop?.tape) return undefined;
+    return caller.laptop?.tape
+      ? `${op} from a laptop needs a tape with ${def.capability === "agentEngine" ? "Agent Engine" : def.capability} on; tape ${caller.laptop.tape} doesn't have it`
+      : `${op} from a laptop needs a tape with ${def.capability === "agentEngine" ? "Agent Engine" : def.capability} on (kernal --tape <id>)`;
+  }
   return caller.capabilities?.includes(def.capability) ? undefined : CAPABILITY_OFF[def.capability];
 }
 
@@ -729,11 +806,11 @@ export async function runAdminOp(ctx: AdminContext, caller: AdminCaller, op: unk
     else {
       const refusal = def.refused ? await def.refused(ctx, a, caller) : undefined;
       if (refusal) result = { ok: false, error: refusal };
-      else if (webGated && (await needsYes(ctx, def, a))) {
+      else if (webGated && (def.laptopAsks === true || (await needsYes(ctx, def, a)))) {
         const gate = await laptopGate(ctx, def, caller, op, a);
         if (gate.ok) {
           caller = { ...caller, approved: true, approvalId: gate.approvalId };
-          result = await def.run(ctx, caller, a);
+          result = await def.run(ctx, caller, gate.args);
         } else result = gate.result;
       } else result = !caller.approved && (await needsYes(ctx, def, a)) ? { ok: false, error: "needs approval", needsApproval: true } : await def.run(ctx, caller, a);
     }
@@ -776,16 +853,27 @@ async function laptopGate(
   caller: AdminCaller,
   op: string,
   args: Args,
-): Promise<{ ok: true; approvalId: string } | { ok: false; result: AdminResult & { target?: string } }> {
+): Promise<{ ok: true; approvalId: string; args: Args } | { ok: false; result: AdminResult & { target?: string } }> {
   if (!caller.laptop) return { ok: false, result: { ok: false, error: `${op} ${NO_LAPTOP_SESSION}` } };
   const now = nowOf(ctx);
-  if (caller.laptopApprovalId !== undefined) {
-    const used = await consumeLaptopApproval(ctx.store, { ownerEmail: caller.email, op, args, approvalId: caller.laptopApprovalId, laptop: caller.laptop, now });
-    return used.ok ? used : { ok: false, result: { ok: false, error: used.error } };
+  // E9.10: an op with a `target` (ae.resume: the execution and its pause's fingerprint) is resolved
+  // now, on the ask and again on the rerun, and the yes is bound to it: a pause that changed in
+  // between digests differently, so the yes can't answer a pause the card didn't show.
+  let bound = args;
+  let label: string | undefined;
+  if (def.target) {
+    const target = await def.target(ctx, args, caller);
+    if ("error" in target) return { ok: false, result: { ok: false, error: target.error } };
+    bound = { ...args, id: target.id };
+    label = target.label;
   }
-  const card = def.laptopCard?.(args) ?? { error: `${op} has no approval card` };
+  if (caller.laptopApprovalId !== undefined) {
+    const used = await consumeLaptopApproval(ctx.store, { ownerEmail: caller.email, op, args: bound, approvalId: caller.laptopApprovalId, laptop: caller.laptop, now });
+    return used.ok ? { ...used, args: bound } : { ok: false, result: { ok: false, error: used.error } };
+  }
+  const card = def.laptopCard?.(bound, label) ?? { error: `${op} has no approval card` };
   if ("error" in card) return { ok: false, result: { ok: false, error: card.error } };
-  const made = await createLaptopApproval(ctx.store, { ownerEmail: caller.email, op, args, laptop: caller.laptop, ...card, now });
+  const made = await createLaptopApproval(ctx.store, { ownerEmail: caller.email, op, args: bound, laptop: caller.laptop, ...card, now });
   if (!made.ok) return { ok: false, result: { ok: false, error: made.error } };
   return {
     ok: false,

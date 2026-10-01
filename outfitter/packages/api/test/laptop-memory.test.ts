@@ -65,8 +65,14 @@ describe("laptop identity and context", () => {
       ["memory.search", "memory.context", "memory.save", "memory.record"].map((n) => [n, ADMIN_OPS[n]?.kind, ADMIN_OPS[n]?.laptop, ADMIN_OPS[n]?.audit]),
       [["memory.search", "read", true, undefined], ["memory.context", "read", true, undefined], ["memory.save", "write", true, undefined], ["memory.record", "write", true, false]],
     );
-    assert.ok(Object.entries(ADMIN_OPS).filter(([n]) => n.startsWith("ae.")).every(([, d]) => !d.laptop), "ae.* stays Drive only");
+    // E9.10 (#354): ae.* reach a laptop only with a tape that has Agent Engine: invoke and resume
+    // through the web yes, the rest (reads, close) acting for nobody.
+    assert.deepEqual(
+      Object.entries(ADMIN_OPS).filter(([n]) => n.startsWith("ae.")).map(([n, d]) => [n, d.webApproval === true ? "web" : d.laptopTape === true ? "tape" : "drive"]),
+      [["ae.list", "tape"], ["ae.invoke", "web"], ["ae.get", "tape"], ["ae.resume", "web"], ["ae.close", "tape"]],
+    );
     const run = async () => ({ ok: true as const, text: "" });
+    assert.throws(() => registerAdminOp("aetest.fire", { kind: "write", capability: "agentEngine", laptop: true, laptopTape: true, run } as never), /laptopTape is for laptop reads and \.close writes/);
     assert.throws(() => registerAdminOp("aetest.list", { kind: "read", capability: "agentEngine", laptop: true, run } as never), /only a memory read or write/);
     assert.throws(() => registerAdminOp("memtest.wipe", { kind: "delete", capability: "memory", laptop: true, run }), /only a memory read or write/);
     assert.throws(() => registerAdminOp("memtest.get", { kind: "read", capability: "memory", audit: false, run } as never), /only a laptop memory write may skip/);
@@ -141,10 +147,10 @@ describe("POST /api/admin/ops memory.* with a Dongle", () => {
     await a.fastify.close();
   });
 
-  test("ae.* and capability-less ops stay Drive only; Agent Engine off says so", async () => {
+  test("ae.* need a tape with Agent Engine (E9.10); Agent Engine off says so", async () => {
     const { app: a } = await app({ parts: ["memory", "agents"] });
-    assert.deepEqual(await op(a, "ae.list", {}), { ok: false, error: "ae.list works only in a Drive" });
-    assert.deepEqual(await op(a, "ae.resume", { executionId: "e1", decision: "approve" }, { laptop: LAPTOP, confirmed: true }), { ok: false, error: "ae.resume works only in a Drive" });
+    assert.deepEqual(await op(a, "ae.list", {}), { ok: false, error: "ae.list from a laptop needs a tape with Agent Engine on (kernal --tape <id>)" });
+    assert.deepEqual(await op(a, "ae.resume", { executionId: "e1", decision: "approve" }, { laptop: LAPTOP, confirmed: true }), { ok: false, error: "ae.resume from a laptop needs a tape with Agent Engine on (kernal --tape <id>)" });
     await a.fastify.close();
     const off = await app({ parts: ["agents"] });
     assert.deepEqual(await op(off.app, "memory.search", { query: "x" }), { ok: false, error: "Agent Engine memory is not configured on this Outfitter" });

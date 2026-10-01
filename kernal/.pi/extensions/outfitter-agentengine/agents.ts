@@ -13,9 +13,16 @@
  * Everything runs on the API through the admin socket (outfitter-admin/transport.ts); it holds the
  * credentials and enforces the allowlist and the approvals. Replies are the API's text, passed
  * through: the remote agent's part is fenced as [from Agent Engine agent <id>] … [end of …].
+ *
+ * On a laptop (E9.10, #354): registered only while Kernal plays a tape with `agentEngine` on
+ * (kernal-tape), over the Dongle, with `laptop: {sessionId, repo, tape}` on every call; the API
+ * reads the tape again each time. Every invoke and resume waits for the owner's yes in the
+ * Outfitter web app's approval widget (laptop-approval.ts), never a TUI confirm, which the agent's
+ * own shell could answer. When the session ends, `ae.close` stops what it opened, best effort.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { adminTransport, type AdminReply, type AdminTransport } from "../outfitter-admin/transport.ts";
+import { adminTransport, type AdminReply, type AdminTransport, type LaptopContext } from "../outfitter-admin/transport.ts";
+import { callWithWebApproval, type ApprovalWait } from "./laptop-approval.ts";
 
 export type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
@@ -37,6 +44,8 @@ export const AGENT_ENGINE_TOOL = {
       executionId: { type: "string", description: "get/resume." },
       decision: { type: "string", description: "resume: one of the pause's allowed decisions, as the user chose." },
       notes: { type: "string", description: "resume: reviewer notes." },
+      // No description: only a laptop's pending-approval reply names it, and says how to use it.
+      approvalId: { type: "string" },
     },
   },
 } as const;
@@ -83,11 +92,30 @@ function text(reply: AdminReply): ToolResult {
   return reply.ok ? { content: [{ type: "text", text: reply.text }] } : { content: [{ type: "text", text: reply.error }], isError: true };
 }
 
+/** A laptop call's extras (E9.10): its context, and how a web approval is waited for. */
+export interface LaptopAeCall {
+  laptop?: LaptopContext;
+  /** Absent: don't wait (print mode); the pending approval id comes back instead. */
+  approval?: ApprovalWait;
+}
+
+/** Ops that wait for the owner's yes on a laptop (the API decides; this only waits for it). */
+const WEB_YES = new Set(["ae.invoke", "ae.resume"]);
+
 /** One call. In a Drive the API holds a resume for the owner's approval card, so needsApproval
- * comes back only when they declined or did not answer. */
-export async function runAgentEngineTool(params: Record<string, any>, transport: AdminTransport, signal?: AbortSignal): Promise<ToolResult> {
+ * comes back only when they declined or did not answer. On a laptop an invoke or resume waits for
+ * the web approval widget. */
+export async function runAgentEngineTool(params: Record<string, any>, transport: AdminTransport, signal?: AbortSignal, laptop?: LaptopAeCall): Promise<ToolResult> {
   const mapped = toAgentEngineOp(params ?? {});
   if (!("op" in mapped)) return text({ ok: false, error: mapped.error });
+  if (transport.kind === "laptop") {
+    if (!laptop?.laptop) return text({ ok: false, error: "agent_engine: this session has no id yet; send a prompt first" });
+    const approvalId = typeof params?.approvalId === "string" && params.approvalId.trim() ? params.approvalId.trim() : undefined;
+    const reply = WEB_YES.has(mapped.op)
+      ? await callWithWebApproval(transport, mapped.op, mapped.args, { laptop: laptop.laptop, signal, ...(approvalId ? { approvalId } : {}) }, laptop.approval ?? { wait: false })
+      : await transport.call(mapped.op, mapped.args, { signal, laptop: laptop.laptop });
+    return text(reply);
+  }
   const reply = await transport.call(mapped.op, mapped.args, { signal });
   if (!reply.ok && reply.needsApproval) return text({ ok: false, error: `not approved: ${reply.error}` });
   return text(reply);
@@ -98,6 +126,39 @@ export async function runAgentEngineTool(params: Record<string, any>, transport:
  * (adminTransport) when none is passed. The caller (index.ts) decides whether the tape has Agent
  * Engine (hasAdminCapability("agentEngine")).
  */
+/**
+ * E9.10: agent_engine on a laptop playing a tape with Agent Engine (index.ts decides). `context`
+ * gives each call its `laptop` (the session, the repo and the tape); `approval` how a web yes is
+ * waited for (undefined in print mode).
+ */
+export function registerLaptopAgentEngineTool(
+  pi: ExtensionAPI,
+  transport: AdminTransport,
+  o: { context: (ctx: any) => Promise<LaptopContext | undefined>; approval: (ctx: any) => ApprovalWait | undefined },
+): void {
+  if (transport.kind !== "laptop") return;
+  let last: LaptopContext | undefined;
+  pi.registerTool({
+    ...AGENT_ENGINE_TOOL,
+    promptGuidelines: [...PROMPT_GUIDELINES, "agent_engine on this laptop: every invoke and resume waits for the user's yes in the Outfitter web app."],
+    execute: async (_id: string, params: any, signal: AbortSignal | undefined, _update?: unknown, ctx?: any) => {
+      try {
+        const laptop = await o.context(ctx);
+        if (laptop) last = laptop;
+        return await runAgentEngineTool(params ?? {}, transport, signal, { laptop, approval: o.approval(ctx) });
+      } catch (err) {
+        return { content: [{ type: "text" as const, text: `agent_engine: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      }
+    },
+  } as any);
+  // The Agent Engine sessions this laptop session opened: stopped when it ends (`/tape off`, a
+  // switch, exit). Best effort and short; the API's sweep stops what is left after 15 idle minutes.
+  pi.on?.("session_shutdown", async () => {
+    if (!last) return;
+    await transport.call("ae.close", {}, { laptop: last, signal: AbortSignal.timeout(3_000) }).catch(() => undefined);
+  });
+}
+
 export function registerAgentEngineTool(pi: ExtensionAPI, transport: AdminTransport | undefined = adminTransport()): void {
   // Ops are Drive only (the API refuses them from a laptop's Dongle), so a laptop gets no tool.
   if (!transport || transport.kind !== "drive") return;

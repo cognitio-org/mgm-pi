@@ -10,6 +10,7 @@
  */
 import { htmlPreviewPrompt } from "./html-preview-prompt.js";
 import type { RunSpecGuru } from "./protocol.js";
+import { tapeEnv, tapePiArgs } from "./tape-args.js";
 
 export interface RenderedPi {
   /** Full argv, not including the binary itself. */
@@ -50,63 +51,17 @@ export interface RenderOptions {
 }
 
 /** guru.env keys that would let a guru author plant persistent code-exec or credential leakage into
- * every future run of a guru other people also use (finding #6, docs/reports/security-review-pr1.md):
- * NODE_OPTIONS/LD_PRELOAD/LD_LIBRARY_PATH can load arbitrary code into the pi process, PATH can
- * shadow `git`/`gh`/etc with a malicious binary, GIT_* can hijack the auth-header env vars git.ts
- * sets per-invocation (see git.ts's module doc), and HOME can redirect where pi/git read config and
- * credentials from. LITELLM_BASE_URL/LITELLM_API_KEY/LITELLM_AGENT_KEY (finding #1,
- * docs/reports/security-review-pr15.md): outfitter-spend.ts sends the real per-run LiteLLM key as a
- * Bearer token to whatever LITELLM_BASE_URL is set, so a guru-controlled base URL is a credential
- * exfiltration + SSRF primitive. The API's POST/PUT /api/gurus routes reject these keys outright
- * (belt and suspenders); this list is agentd's own last line of defense in case a guru predating
- * that check, or written directly into the store, still has one set. run.ts also pins
- * LITELLM_BASE_URL itself in secretEnv, spread after this rendered env, so even a future denylist
- * gap here can't redirect the outbound call. */
-const DENYLISTED_GURU_ENV_KEYS = new Set([
-  "NODE_OPTIONS",
-  "LD_PRELOAD",
-  "LD_LIBRARY_PATH",
-  "PATH",
-  "HOME",
-  "LITELLM_BASE_URL",
-  "LITELLM_API_KEY",
-  "LITELLM_AGENT_KEY",
-  // A user Dongle. The Drive capture tool must not be able to present one, and a guru must not
-  // be able to plant one in the sandbox either (chrome-companion.md §13).
-  "OUTFITTER_TOKEN",
-]);
+ * every future run of a guru other people also use (finding #6, docs/reports/security-review-pr1.md;
+ * finding #1, docs/reports/security-review-pr15.md). The list and the check live in tape-args.ts,
+ * shared with laptop Kernal (#354). The API's POST/PUT /api/gurus routes reject these keys outright
+ * (belt and suspenders); this is agentd's own last line of defense in case a guru predating that
+ * check, or written directly into the store, still has one set. run.ts also pins LITELLM_BASE_URL
+ * itself in secretEnv, spread after this rendered env, so even a future denylist gap here can't
+ * redirect the outbound call. (tapeEnv, in renderGuru, applies it.) */
 
-function isDenylistedGuruEnvKey(key: string): boolean {
-  return DENYLISTED_GURU_ENV_KEYS.has(key) || key.startsWith("GIT_");
-}
-
-/** pi-memory's tools (kernal/.pi/settings.json loads the package). With Agent Engine memory on, a
- * tape gets one memory, not two: these are excluded, and run.ts points PI_MEMORY_DIR at an empty
- * directory (no prompt injection) with PI_MEMORY_EXIT_SUMMARY=0 (no exit summary). */
-export const PI_MEMORY_TOOLS = ["memory_write", "memory_read", "memory_search", "memory_forget", "memory_restore", "memory_status", "scratchpad"] as const;
-
-/** True when the tape has Agent Engine memory (`tool` or `auto`). */
-export function agentEngineMemoryOn(guru: Pick<RunSpecGuru, "memory">): boolean {
-  return guru.memory === "tool" || guru.memory === "auto";
-}
-
-/** `provider/id` (+ optional `:thinking`) pi model pattern, per pi 0.87's docs/usage.md: `--model
- * <pattern>` "supports `provider/id` and optional `:<thinking>`", where `<thinking>` is one of
- * `off, minimal, low, medium, high, xhigh, max` -- `off` is a real, explicit level in that list,
- * not the absence of one. Bug 5a (docs/reports/cloud-fixes.md): this used to special-case "off" as
- * "append nothing", so a Tape configured with `thinking: "off"` never told pi anything at all --
- * pi then fell back to its own startup default (`defaultThinkingLevel` in .pi/settings.json,
- * "medium" in this image), which is exactly the "header says thinking medium" symptom. `off` now
- * renders `:off` like every other level; only a genuinely *unset* guru.thinking renders nothing,
- * leaving pi's own default in place (the guru simply didn't ask for a level). */
-export function renderModelArg(model: string, thinking?: string): string {
-  if (!thinking) return model;
-  // Avoid double-suffixing if the caller already embedded a thinking level in the model string
-  // (also protects a colon-bearing model id with no thinking suffix at all, e.g. a Bedrock
-  // inference-profile ARN).
-  if (model.includes(":")) return model;
-  return `${model}:${thinking}`;
-}
+/** pi-memory's tools, `agentEngineMemoryOn` and `renderModelArg` (bug 5a: `off` renders `:off`) are
+ * in tape-args.ts, the translation shared with laptop Kernal (#354). */
+export { PI_MEMORY_TOOLS, agentEngineMemoryOn, renderModelArg } from "./tape-args.js";
 
 /** The single `--append-system-prompt` value (issue #132): the guru's own append text, a blank line,
  * then the HTML preview paragraph `allowExternalHtmlResources` picks. Always present, so the model
@@ -125,29 +80,17 @@ export function renderGuru(guru: RunSpecGuru, opts: RenderOptions): RenderedPi {
   if (opts.spendExtensionPath) args.push("--extension", opts.spendExtensionPath);
   if (opts.mailExtensionPath) args.push("--extension", opts.mailExtensionPath);
   if (opts.browserExtensionPath) args.push("--extension", opts.browserExtensionPath);
-  if (!opts.skipModelArg) args.push("--model", renderModelArg(guru.model, guru.thinking));
 
-  if (guru.systemPrompt) args.push("--system-prompt", guru.systemPrompt);
-  if (opts.appendSystemPromptFile && !guru.appendSystemPrompt) {
-    args.push("--append-system-prompt", opts.appendSystemPromptFile);
-  }
-  args.push("--append-system-prompt", renderAppendSystemPrompt(guru));
-  if (guru.tools && guru.tools.length > 0) args.push("--tools", guru.tools.join(","));
-  // pi drops an excluded tool even when --tools names it (sdk.js), so this is enough.
-  const excludeTools = [...new Set([...(guru.excludeTools ?? []), ...(agentEngineMemoryOn(guru) ? PI_MEMORY_TOOLS : [])])];
-  if (excludeTools.length > 0) {
-    args.push("--exclude-tools", excludeTools.join(","));
-  }
+  args.push(
+    ...tapePiArgs(guru, {
+      skipModelArg: opts.skipModelArg,
+      appendSystemPromptFile: opts.appendSystemPromptFile,
+      appendSystemPrompt: renderAppendSystemPrompt(guru),
+    }),
+  );
 
   const onLog = opts.onLog ?? (() => {});
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(guru.env ?? {})) {
-    if (isDenylistedGuruEnvKey(key)) {
-      onLog(`renderGuru: dropping guru.env key "${key}" (not allowed -- see denylist in guru.ts)`);
-      continue;
-    }
-    env[key] = value;
-  }
+  const env = tapeEnv(guru.env, (key) => onLog(`renderGuru: dropping guru.env key "${key}" (not allowed -- see denylist in guru.ts)`));
   if (guru.packages && guru.packages.length > 0) {
     env.OUTFITTER_GURU_PACKAGES = guru.packages.join(",");
   }

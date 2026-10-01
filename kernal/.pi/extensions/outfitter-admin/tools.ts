@@ -14,7 +14,7 @@ export type ToolResult = { content: { type: "text"; text: string }[]; isError?: 
 export type Confirm = (title: string, message: string, signal?: AbortSignal) => Promise<boolean>;
 
 const TAPE_FIELDS =
-  "Tape fields: name, model (provider/id), fallbackModel, thinking, systemPrompt, appendSystemPrompt, tools[], excludeTools[], env{}, branchPrefix, mergeFromCloud, browserIde, playwrightBeforeCheckpoint, allowExternalHtmlResources.";
+  "Tape fields: name, model (provider/id), fallbackModel, thinking, systemPrompt, appendSystemPrompt, tools[], excludeTools[], repos[] (owner/name hint), env{}, branchPrefix, mergeFromCloud, browserIde, playwrightBeforeCheckpoint, allowExternalHtmlResources.";
 
 export interface AdminToolDef {
   name: string;

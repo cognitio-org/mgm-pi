@@ -65,23 +65,33 @@ export interface LaptopContext {
   sessionId: string;
   /** The working directory's GitHub repo, `owner/name` lowercased; it only scopes the reads. */
   repo?: string;
+  /** E9.10 (#354): the tape the laptop plays. An `ae.*` call needs it, and needs its agentEngine on
+   * when the call is made (routes/admin.ts reads it into `capabilities`). */
+  tape?: string;
 }
+
+/** A tape id as a laptop names it (Kernal's kernal-tape stores pins under it). */
+const LAPTOP_TAPE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 
 /**
  * The `laptop` field of a POST /api/admin/ops body (E9.9), checked once, at the route: `sessionId`
- * is `laptop:<pi session id>`, `repo` a GitHub `owner/name` (lowercased here) or absent. No value
- * when the body has none.
+ * is `laptop:<pi session id>`, `repo` a GitHub `owner/name` (lowercased here) or absent, `tape` a
+ * tape id or absent. No value when the body has none.
  */
 export function laptopContext(raw: unknown): { ok: true; value?: LaptopContext } | { ok: false; error: string } {
   if (raw === undefined || raw === null) return { ok: true };
   if (typeof raw !== "object" || Array.isArray(raw)) return { ok: false, error: "laptop must be an object" };
-  const { sessionId, repo } = raw as { sessionId?: unknown; repo?: unknown };
+  const { sessionId, repo, tape } = raw as { sessionId?: unknown; repo?: unknown; tape?: unknown };
   if (typeof sessionId !== "string" || !LAPTOP_SESSION.test(sessionId)) return { ok: false, error: "laptop.sessionId must be laptop:<pi session id>" };
+  // E9.10 (#354): the tape the laptop plays. It authorises nothing by itself: an `ae.*` call reads
+  // the tape (routes/admin.ts) and needs its agentEngine on now.
+  if (tape !== undefined && tape !== null && tape !== "" && (typeof tape !== "string" || !LAPTOP_TAPE.test(tape))) return { ok: false, error: "laptop.tape must be a tape id" };
+  const value: LaptopContext = { sessionId, ...(typeof tape === "string" && tape ? { tape } : {}) };
   if (repo !== undefined && repo !== null && repo !== "") {
     if (typeof repo !== "string" || !LAPTOP_REPO.test(repo.trim().toLowerCase())) return { ok: false, error: "laptop.repo must be a GitHub owner/name" };
-    return { ok: true, value: { sessionId, repo: repo.trim().toLowerCase() } };
+    value.repo = repo.trim().toLowerCase();
   }
-  return { ok: true, value: { sessionId } };
+  return { ok: true, value };
 }
 
 /**

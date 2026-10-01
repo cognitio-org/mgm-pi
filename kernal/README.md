@@ -280,7 +280,8 @@ and pi refuses the duplicate tools. Run the installed `kernal` anywhere else, or
 ## Web admin (`/admin`)
 
 `/admin` opens a local web page for the things that are awkward in a terminal: what the agent is
-running, the connections and keys, the model, the codebase index settings and the subagent models.
+running, the connections and keys, the model, the codebase index settings, the subagent models and
+the tapes you play from Outfitter (Tapes: review, pin and play them; see "Tapes" below).
 It is served by the running agent itself, so it sees exactly what the session sees, and it goes away
 with it.
 
@@ -779,6 +780,45 @@ except memories you save as shared. The design is §3.5 of
   - It's not a terminal confirm because the agent's shell runs as you and could answer that itself.
 - Needs an Outfitter release with E9.9. An older one answers "works only in a Drive", Kernal says
   so once, and recall is skipped.
+
+### Tapes: play a cloud tape on this laptop
+
+A tape is a saved agent setup in Outfitter (model, prompts, tools, packages, memory, Agent Engine).
+With the Dongle pair set, Kernal can play the same tapes your Drives use. The design is §7.1 of
+`outfitter/docs/specs/atlas-agent-engine-and-a2a.md`.
+
+| | Does |
+|---|---|
+| `kernal --tape <id> [pi args…]` | plays the tape for this run; your own flags still win |
+| `/tape <id>` | reviews it, makes it the tape new sessions play, and restarts into this session with it |
+| `/tape off` | new sessions play no tape; restarts this session without it |
+| `/tape` or `/tape status` | what this session and new sessions play, in which repo, and whether the cloud changed it |
+| `/tape list`, `/tape show [id]` | the cloud's tapes and your pins; what a tape does and its full prompts |
+| `/admin tapes` | the same in the browser: each tape's details and prompts, a styled diff when it changed, *Pin this version* / *Keep pinned*, *Play*, and the memory settings |
+| `kernal --tape none` | one run without the tape new sessions play |
+
+- **It runs as you, without a sandbox**, so a tape plays only in a version you pinned. The first play
+  shows what it does and asks to pin it. When a teammate changes it, you see a field-by-field diff
+  (prompts line by line) before it plays again; no keeps the version you pinned. Pins live in
+  `~/.kernal/tapes/pins`, and a pinned tape plays offline. If Outfitter answers that the tape is gone
+  (or your Dongle is refused), it doesn't play. A tape with hidden characters in its text is refused.
+- In print mode (`-p`) nothing is asked: the pinned version plays, and an unpinned tape doesn't.
+- **Packages** (`npm:` with an exact version only) install into `~/.kernal/tapes/npm/<tape>` on your
+  yes, with install scripts off.
+- **Env:** Outfitter never sends a tape's env values. Kernal names the ones it expects that aren't
+  set here; put them in your `.env`.
+- **Memory:** the tape's `memory` decides Agent Engine memory for its session (unset means off).
+- **Agent Engine:** a tape with `agentEngine` brings the `agent_engine` tool. Every invoke and resume
+  waits for your yes in the Outfitter web app's approval widget, as shared memory saves do.
+- **Repo:** the working directory's GitHub `origin` (or the first GitHub remote, with a note). A
+  tape's *Meant for repos* is a hint: playing it elsewhere warns, nothing more.
+- `branchPrefix`, `mergeFromCloud`, `browserIde` and the Playwright check are cloud only; Kernal says
+  it ignores them.
+- Switching a tape restarts pi into the same session. Under pi's compiled binary Kernal can't restart
+  itself, so it prints the command to run.
+- Kernal ships the foreman tape's `coder` subagent (`agents/coder.md`). Your own `coder.md` in your
+  agents directory wins over it.
+- Needs an Outfitter release with E9.10 (`tapes.get` json, laptop `ae.*`).
 
 ## HTML previews: what the model is told
 

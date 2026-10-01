@@ -29,6 +29,7 @@ import type { ApprovalWait } from "./laptop-approval.ts";
 import { registerMemoryTool } from "./memory.ts";
 import { registerRecall } from "./recall.ts";
 import { TurnRecorder } from "./record.ts";
+import { playing } from "../kernal-tape/lib.ts";
 import { importPlan, piMemoryInjectionOff, piMemorySource, withoutPiMemoryTools, type ImportNote } from "./pi-memory.ts";
 
 export type MemoryMode = "off" | "tool" | "auto";
@@ -56,8 +57,11 @@ export function memorySettings(settings: Record<string, unknown> = readSettings(
 }
 
 /** The mode in force: the setting, else `auto` with a Dongle configured; always off without one. */
-export function effectiveMode(s: Pick<MemorySettings, "memory">, hasDongle: boolean): MemoryMode {
+export function effectiveMode(s: Pick<MemorySettings, "memory">, hasDongle: boolean, env?: NodeJS.ProcessEnv): MemoryMode {
   if (!hasDongle) return "off";
+  // A tape being played decides for its session (#354, kernal-tape): its `memory`, off when unset.
+  const tape = env ? playing(env) : undefined;
+  if (tape) return tape.memory;
   return s.memory ?? "auto";
 }
 
@@ -116,7 +120,7 @@ export interface LaptopDeps {
 export function registerLaptopMemory(pi: any, transport: AdminTransport, deps: LaptopDeps = {}): { mode: MemoryMode; recording: boolean } {
   const env = deps.env ?? process.env;
   const settings = memorySettings(deps.settings ?? readSettings());
-  const mode = effectiveMode(settings, true);
+  const mode = effectiveMode(settings, true, env);
   const recording = recordingOn(settings, mode);
   const repoOf = deps.repoOf ?? cachedRepoOf();
   const context = (ctx: any) => laptopContextOf(ctx, repoOf);
@@ -198,7 +202,7 @@ const USAGE = "usage: /memory [status] | off | tool | auto | record on|off | imp
 
 function status(settings: MemorySettings, mode: MemoryMode, env: NodeJS.ProcessEnv): string {
   return [
-    `memory: ${mode}${settings.memory ? "" : " (default)"}`,
+    `memory: ${mode}${playing(env) ? ` (tape ${playing(env)!.id} decides for this session)` : settings.memory ? "" : " (default)"}`,
     `  recording laptop turns: ${recordingOn(settings, mode) ? "on" : settings.memoryRecord ? "opted in, but memory is off" : "off (opt in with /memory record on)"}`,
     `  pi-memory: ${mode === "off" ? "on" : piMemoryInjectionOff(env) ? "off (its tools, prompt and exit summary)" : "tools off; restart Kernal to turn its prompt off too"}`,
     `  pi-memory import: ${settings.memoryImported ? `done ${settings.memoryImported.slice(0, 10)}` : "not yet (/memory import)"}`,

@@ -31,6 +31,8 @@ export interface LaptopContext {
   sessionId: string;
   /** The working directory's GitHub `owner/name`, lowercased. */
   repo?: string;
+  /** E9.10: the tape this laptop session plays (kernal-tape); `ae.*` need one with Agent Engine. */
+  tape?: string;
 }
 
 export interface AdminTransport {

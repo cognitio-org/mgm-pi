@@ -1,0 +1,21 @@
+.github/workflows/outfitter-ci.yml
+  s_1d3bdd6f362f9b::t_b2fd9bd0926fa3 51,165-168
+outfitter/deploy/test/workflow-sh-quotes.test.sh
+  s_1d3bdd6f362f9b::t_b2fd9bd0926fa3 1-41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "9a347a1a620999ae3864da3027366043771a05eb",
+  "prompts": {},
+  "sessions": {
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

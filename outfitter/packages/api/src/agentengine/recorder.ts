@@ -44,7 +44,6 @@ export function turnText(entry: PiEntry): { role: "user" | "assistant"; text: st
   if (m.role === "user") {
     if (typeof m.content === "string") text = m.content;
     else if (Array.isArray(m.content)) text = m.content.filter((b) => b?.type === "text" && typeof b.text === "string").map((b) => b.text).join("\n");
-    if (RELAYED.test(text.trimStart())) return undefined;
   } else if (m.role === "assistant") {
     if (m.stopReason === "error" || m.stopReason === "aborted") return undefined;
     const blocks = Array.isArray(m.content) ? (m.content as Array<{ type?: unknown; text?: unknown }>) : [];
@@ -112,7 +111,7 @@ export class MemoryRecorder {
     const guru = await this.store.gurus.findById(session.guruId);
     if (guru?.memory !== "auto") return undefined;
     const id = memoryIdentity(session);
-    return id && !id.a2a ? { session, userId: id.userId } : undefined;
+    return id ? { session, userId: id.userId } : undefined;
   }
 
   /** Runs `work` after the session's previous note, so records keep the order entries came in. */

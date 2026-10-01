@@ -58,19 +58,46 @@ export const LAPTOP_SESSION = /^laptop:[A-Za-z0-9][A-Za-z0-9_-]{7,99}$/;
 /** A GitHub `owner/name`, lowercased: what a laptop may name as its repo. */
 export const LAPTOP_REPO = /^[a-z0-9](?:[a-z0-9-]{0,38})\/[a-z0-9._-]{1,100}$/;
 
+/** E9.9: what a laptop's call is bound to (laptopContext checked it; neither part authorises
+ * anything). */
+export interface LaptopContext {
+  /** `laptop:<pi session id>`. */
+  sessionId: string;
+  /** The working directory's GitHub repo, `owner/name` lowercased; it only scopes the reads. */
+  repo?: string;
+}
+
+/**
+ * The `laptop` field of a POST /api/admin/ops body (E9.9), checked once, at the route: `sessionId`
+ * is `laptop:<pi session id>`, `repo` a GitHub `owner/name` (lowercased here) or absent. No value
+ * when the body has none.
+ */
+export function laptopContext(raw: unknown): { ok: true; value?: LaptopContext } | { ok: false; error: string } {
+  if (raw === undefined || raw === null) return { ok: true };
+  if (typeof raw !== "object" || Array.isArray(raw)) return { ok: false, error: "laptop must be an object" };
+  const { sessionId, repo } = raw as { sessionId?: unknown; repo?: unknown };
+  if (typeof sessionId !== "string" || !LAPTOP_SESSION.test(sessionId)) return { ok: false, error: "laptop.sessionId must be laptop:<pi session id>" };
+  if (repo !== undefined && repo !== null && repo !== "") {
+    if (typeof repo !== "string" || !LAPTOP_REPO.test(repo.trim().toLowerCase())) return { ok: false, error: "laptop.repo must be a GitHub owner/name" };
+    return { ok: true, value: { sessionId, repo: repo.trim().toLowerCase() } };
+  }
+  return { ok: true, value: { sessionId } };
+}
+
 /**
  * A laptop's identity (E9.9): the Dongle owner's, the same hash their Drives use, so laptop and
- * cloud share one memory. The session id and repo come from the client, already validated
- * (routes/admin.ts): the session id only names the episodes and recorded turns, and the repo only
- * scopes reads within the owner's own memory, so neither can reach anyone else's.
+ * cloud share one memory. The session id only names the episodes and recorded turns, and the repo
+ * only scopes reads within the owner's own memory, so neither can reach anyone else's. The route
+ * validated `laptop` (laptopContext); the same check runs once more here, so a caller that didn't
+ * come through the route gets no identity rather than an unchecked one.
  */
-export function laptopIdentity(email: string, laptop: { sessionId: string; repo?: string }): MemoryIdentity | undefined {
+export function laptopIdentity(email: string, laptop: LaptopContext): MemoryIdentity | undefined {
   const clean = email?.trim();
-  if (!clean || !LAPTOP_SESSION.test(laptop.sessionId)) return undefined;
-  const repo = laptop.repo?.trim().toLowerCase() || undefined;
-  if (repo && !LAPTOP_REPO.test(repo)) return undefined;
+  const checked = laptopContext(laptop);
+  if (!clean || !checked.ok || !checked.value) return undefined;
+  const { sessionId, repo } = checked.value;
   const userId = memoryUserHash(clean);
-  return { userId, sessionId: laptop.sessionId, a2a: false, owner: userId, ...(repo ? { repo } : {}) };
+  return { userId, sessionId, a2a: false, owner: userId, ...(repo ? { repo } : {}) };
 }
 
 /** `owner/name` -> `owner~name` (GitHub names never hold `~` or `:`), or `_` without a repo. */

@@ -3,14 +3,18 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
+import type { AdminReply, AdminTransport, LaptopContext } from "../.pi/extensions/outfitter-admin/transport.ts";
 
 export type Handler = (ev: any, ctx: any) => Promise<any> | any;
 
-export function makePi() {
+/** `active`: the tools pi starts with active (getActiveTools / setActiveTools change `pi.active`). */
+export function makePi(opts: { active?: string[] } = {}) {
   const handlers = new Map<string, Handler[]>();
   const commands = new Map<string, { description?: string; handler: (args: string, ctx: any) => Promise<void>; getArgumentCompletions?: (p: string) => any }>();
   const providers: any[] = [];
   const tools: string[] = [];
+  /** The registered tool definitions themselves (`tools` holds their names). */
+  const toolDefs: any[] = [];
   const unregistered: string[] = [];
   const entries: any[] = [];
   const setModelCalls: any[] = [];
@@ -30,14 +34,33 @@ export function makePi() {
     on(ev: string, h: Handler) { handlers.set(ev, [...(handlers.get(ev) ?? []), h]); },
     registerCommand(name: string, def: any) { commands.set(name, def); },
     registerProvider(name: string, config: any) { providers.push({ name, config }); },
-    registerTool(tool: any) { tools.push(tool.name); },
+    registerTool(tool: any) { tools.push(tool.name); toolDefs.push(tool); },
+    active: [...(opts.active ?? [])],
+    getActiveTools(): string[] { return [...pi.active]; },
+    setActiveTools(names: string[]) { pi.active = names; },
     unregisterProvider(name: string) { unregistered.push(name); },
     appendEntry(customType: string, data: any) { entries.push({ type: "custom", customType, data }); },
     async setModel(model: any) { setModelCalls.push(model); return true; },
     async emit(ev: string, event: any, ctx: any) { let result: any; for (const h of handlers.get(ev) ?? []) { const r = await h(event, ctx); if (r !== undefined) result = r; } return result; },
-    handlers, commands, providers, tools, unregistered, entries, setModelCalls,
+    handlers, commands, providers, tools, toolDefs, unregistered, entries, setModelCalls,
   };
   return pi;
+}
+
+export type FakeCall = { op: string; args: Record<string, unknown>; opts: { confirmed?: boolean; laptop?: LaptopContext; signal?: AbortSignal; approvalId?: string } };
+
+/** An admin transport that records each call and answers with `reply` (default: ok "ok"). */
+export function fakeTransport(reply: (call: FakeCall) => AdminReply | Promise<AdminReply> = () => ({ ok: true, text: "ok" }), kind: AdminTransport["kind"] = "laptop") {
+  const calls: FakeCall[] = [];
+  const transport: AdminTransport = {
+    kind,
+    async call(op, args, opts = {}) {
+      const call = { op, args, opts };
+      calls.push(call);
+      return reply(call);
+    },
+  };
+  return { transport, calls };
 }
 
 export function tmpAgentDir(settings: any = {}) {

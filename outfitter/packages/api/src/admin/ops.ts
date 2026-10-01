@@ -39,19 +39,20 @@ import type { Environment, Guru, Session, Store } from "../store/types.ts";
 import { ago, capText, clip, diffFields, fields, resolveRef, row, shortId } from "./render.ts";
 import { searchSessions, sessionTranscript } from "../search/service.ts";
 import { consumeLaptopApproval, createLaptopApproval, laptopApprovalStatus, type LaptopApprovalState, type LaptopCard } from "./laptop-approvals.ts";
+import type { LaptopContext } from "../agentengine/identity.ts";
+
+export type { LaptopContext };
 
 export type AdminOpClass = "read" | "write" | "delete" | "operator" | "approve";
 
+/** The classes whose every call needs the person's yes, whatever the op's `asks` says. */
+const ALWAYS_ASKS: ReadonlySet<AdminOpClass> = new Set(["delete", "operator", "approve"]);
+
+/** E9.9: what a laptop op answers when its Kernal sent no `laptop` context (prefixed with the op). */
+export const NO_LAPTOP_SESSION = "from a laptop needs a newer Kernal (no session id was sent)";
+
 /** The tape capability an op needs (see the module doc). */
 export type AdminCapability = TapeCapability;
-
-/** E9.9: a laptop's memory call (routes/admin.ts validated both; neither authorises anything). */
-export interface LaptopContext {
-  /** `laptop:<pi session id>`. */
-  sessionId: string;
-  /** The working directory's GitHub repo, `owner/name` lowercased; it only scopes the reads. */
-  repo?: string;
-}
 
 export interface AdminCaller {
   email: string;
@@ -599,7 +600,7 @@ export function registerAdminOp(name: string, op: AdminOp): () => void {
   if (op.webApproval && !op.laptop) throw new Error(`admin op ${name}: webApproval is for laptop-callable ops`);
   // A webApproval op lifts the memory-only rule, so it must actually ask (review): a class that
   // always asks, or `asks`; and say on its card what it asks.
-  if (op.webApproval && (!op.laptopCard || (!op.asks && op.kind !== "delete" && op.kind !== "operator" && op.kind !== "approve"))) {
+  if (op.webApproval && (!op.laptopCard || (!op.asks && !ALWAYS_ASKS.has(op.kind)))) {
     throw new Error(`admin op ${name}: a webApproval op needs a laptopCard, and asks (or a class that always asks)`);
   }
   if (op.laptop && !op.webApproval && (op.capability !== "memory" || (op.kind !== "read" && op.kind !== "write"))) {
@@ -638,7 +639,7 @@ function capabilityRefusal(def: AdminOp, caller: AdminCaller, op: string): strin
 
 /** True when this call waits for the person's yes: its class, or its args (`asks`). */
 async function needsYes(ctx: AdminContext, def: AdminOp, args: Args): Promise<boolean> {
-  if (def.kind === "delete" || def.kind === "operator" || def.kind === "approve") return true;
+  if (ALWAYS_ASKS.has(def.kind)) return true;
   return def.asks ? await def.asks(ctx, args) : false;
 }
 
@@ -776,7 +777,7 @@ async function laptopGate(
   op: string,
   args: Args,
 ): Promise<{ ok: true; approvalId: string } | { ok: false; result: AdminResult & { target?: string } }> {
-  if (!caller.laptop) return { ok: false, result: { ok: false, error: `${op} from a laptop needs a newer Kernal (no session id was sent)` } };
+  if (!caller.laptop) return { ok: false, result: { ok: false, error: `${op} ${NO_LAPTOP_SESSION}` } };
   const now = nowOf(ctx);
   if (caller.laptopApprovalId !== undefined) {
     const used = await consumeLaptopApproval(ctx.store, { ownerEmail: caller.email, op, args, approvalId: caller.laptopApprovalId, laptop: caller.laptop, now });

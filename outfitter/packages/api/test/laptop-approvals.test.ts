@@ -5,11 +5,9 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { buildTestApp, type TestApp } from "./helpers.ts";
+import { adminOp, buildTestApp, laptopApp, type TestApp } from "./helpers.ts";
 import { FakeAgentEngine } from "./fake-agent-engine.ts";
 import { MemoryStore } from "../src/store/memory.ts";
-import { hashToken } from "../src/tokens.ts";
-import { createAgentEngine } from "../src/agentengine/index.ts";
 import { registerAdminOp } from "../src/admin/ops.ts";
 import {
   argsDigest,
@@ -33,13 +31,7 @@ const SHARED = { type: "semantic", text: "deploys go through tag-release.sh", la
 type Reply = { ok: boolean; text?: string; error?: string; needsApproval?: boolean; approvalId?: string; state?: string };
 
 async function apps(): Promise<{ link: TestApp; web: TestApp; webIap: TestApp; fake: FakeAgentEngine; store: MemoryStore; close: () => Promise<void> }> {
-  const fake = new FakeAgentEngine();
-  const agentEngine = createAgentEngine(fake.config(["memory"]), { fetch: fake.fetch });
-  const store = new MemoryStore();
-  for (const [id, email, token] of [["tok-owner", OWNER, OWNER_TOKEN], ["tok-other", OTHER, OTHER_TOKEN]] as const) {
-    await store.tokens.insert({ id, ownerEmail: email, name: "laptop", prefix: token.slice(0, 8), hash: hashToken(token), createdAt: new Date().toISOString() });
-  }
-  const link = await buildTestApp({ OUTFITTER_ROLE: "link", OUTFITTER_DEV: "0" }, { store, agentEngine });
+  const { app: link, fake, store, agentEngine } = await laptopApp({ tokens: [[OWNER, OWNER_TOKEN], [OTHER, OTHER_TOKEN]] });
   // The web role as a person (dev mode stands in for IAP) and as a non-dev web role, where a
   // Dongle presented as a bearer token is a token identity.
   const web = await buildTestApp({ OUTFITTER_ROLE: "web" }, { store, agentEngine });
@@ -58,11 +50,8 @@ async function apps(): Promise<{ link: TestApp; web: TestApp; webIap: TestApp; f
   };
 }
 
-async function op(a: TestApp, name: string, args: Record<string, unknown>, extra: Record<string, unknown> = {}, token = OWNER_TOKEN): Promise<Reply> {
-  const res = await a.fastify.inject({ method: "POST", url: "/api/admin/ops", headers: { authorization: `Bearer ${token}` }, payload: { op: name, args, laptop: LAPTOP, ...extra } });
-  assert.equal(res.statusCode, 200, res.body);
-  return res.json() as Reply;
-}
+const op = (a: TestApp, name: string, args: Record<string, unknown>, extra: Record<string, unknown> = {}, token = OWNER_TOKEN) =>
+  adminOp<Reply>(a, token, name, args, { laptop: LAPTOP, ...extra });
 
 async function decide(a: TestApp, id: string, approve: boolean, headers: Record<string, string> = {}) {
   return a.fastify.inject({ method: "POST", url: `/api/laptop-approvals/${id}`, headers, payload: { approve } });

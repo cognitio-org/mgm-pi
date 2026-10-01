@@ -1,11 +1,11 @@
 /**
- * Recall on a laptop (outfitter/docs/specs/atlas-agent-engine-and-a2a.md §3.5): before each prompt,
- * ask Outfitter for memories relevant to it (`memory.context`, over the Dongle's HTTP transport)
- * and put them in the system prompt's `memory` section. The same rules as agentd's recall extension
- * (outfitter/packages/agentd/pi-extension/outfitter-memory.ts, which stays self-contained because a
- * Drive loads it from agentd, not from this bundle; tests/laptop-memory.test.ts checks that the two
- * frame a block the same way):
+ * Recall (outfitter/docs/specs/atlas-agent-engine-and-a2a.md §3.3, §3.5): before each prompt, ask
+ * Outfitter for memories relevant to it (`memory.context`) and put them in the system prompt's
+ * `memory` section. The one implementation for both sides: on a laptop over the Dongle's HTTP
+ * transport (laptop.ts), in a Drive over agentd's admin socket for a `memory: auto` tape (index.ts;
+ * agentd sets OUTFITTER_MEMORY_RECALL=1).
  *
+ * - The query is redacted before it leaves (the API redacts again before embedding).
  * - At most RECALL_TIMEOUT_MS, then the turn goes on without memory. Any failure is skipped
  *   silently: recall must never hold up or break a prompt.
  * - `sections.memory` replaces last turn's block (pi rebuilds the prompt from sections every turn).
@@ -40,8 +40,8 @@ export function applyMemory(options: PromptOptions | undefined, text: string | u
   }
 }
 
-/** The prompt as a recall query, or "" for none: redacted here before it leaves the laptop (the API
- * redacts again before embedding), then cut. */
+/** The prompt as a recall query, or "" for none: redacted here before it leaves (the API redacts
+ * again before embedding), then cut. */
 export function recallQuery(prompt: unknown): string {
   return typeof prompt === "string" ? redact(prompt.trim()).slice(0, MAX_QUERY) : "";
 }
@@ -49,12 +49,12 @@ export function recallQuery(prompt: unknown): string {
 /**
  * One `memory.context` call, answered within `timeoutMs` or not at all. Resolves to the recalled
  * text, or undefined on a refusal, a failure or the timeout (the onError hook hears why). Never
- * rejects.
+ * rejects. `laptop`: the laptop's context (a Drive's identity is its session).
  */
 export async function requestRecall(
   transport: AdminTransport,
   query: string,
-  laptop: LaptopContext,
+  laptop: LaptopContext | undefined,
   opts: { timeoutMs?: number; onError?: (error: string) => void } = {},
 ): Promise<string | undefined> {
   const ms = opts.timeoutMs ?? RECALL_TIMEOUT_MS;
@@ -69,7 +69,7 @@ export async function requestRecall(
   });
   try {
     const call = transport
-      .call("memory.context", { query }, { laptop, signal: abort.signal })
+      .call("memory.context", { query }, { ...(laptop ? { laptop } : {}), signal: abort.signal })
       .then((reply) => {
         if (reply.ok) return reply.text;
         opts.onError?.(reply.error);
@@ -80,4 +80,27 @@ export async function requestRecall(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Recall before each prompt on `pi`. `laptop` gives a laptop call its context (none: no recall that
+ * turn); a Drive passes no `laptop`. `onError` hears a refusal, with the turn's ctx.
+ */
+export function registerRecall(
+  pi: { on(event: "before_agent_start", handler: (event: any, ctx: any) => Promise<void>): void },
+  transport: AdminTransport,
+  opts: { laptop?: (ctx: any) => Promise<LaptopContext | undefined>; timeoutMs?: number; onError?: (error: string, ctx: any) => void } = {},
+): void {
+  pi.on("before_agent_start", async (event, ctx) => {
+    try {
+      const query = recallQuery(event?.prompt);
+      if (!query) return;
+      const laptop = opts.laptop ? await opts.laptop(ctx) : undefined;
+      if (opts.laptop && !laptop) return;
+      const text = await requestRecall(transport, query, laptop, { timeoutMs: opts.timeoutMs, onError: (error) => opts.onError?.(error, ctx) });
+      applyMemory(event?.systemPromptOptions, text);
+    } catch {
+      // Recall is best effort: the prompt goes on without it.
+    }
+  });
 }

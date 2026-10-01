@@ -147,9 +147,6 @@ export interface RunControllerDeps {
   /** Chrome companion §13 (OUTFITTER_BROWSER_EXTENSION): path to pi-extension/outfitter-browser.ts.
    * Set together with `downloadCapture`: the loopback listener starts only while the extension loads. */
   browserExtensionPath?: string;
-  /** E9 §3.3 (OUTFITTER_MEMORY_EXTENSION): path to pi-extension/outfitter-memory.ts (or its built
-   * .js), the recall extension; renderGuru loads it only for a `memory: auto` tape. */
-  memoryExtensionPath?: string;
   /** E9 §3.3: where the empty PI_MEMORY_DIR for a tape with Agent Engine memory is made. Default
    * os.tmpdir(); tests pass their own. */
   piMemoryTmpRoot?: string;
@@ -697,7 +694,6 @@ export class RunController {
       spendExtensionPath: this.deps.spendFile ? this.deps.spendExtensionPath : undefined,
       mailExtensionPath: this.deps.mailExtensionPath,
       browserExtensionPath: this.deps.browserExtensionPath,
-      memoryExtensionPath: this.deps.memoryExtensionPath,
       skipModelArg,
       appendSystemPromptFile: discoverAppendSystemPromptFile(this.deps.workspace, process.env.PI_CODING_AGENT_DIR),
     });
@@ -851,13 +847,17 @@ export class RunController {
     // admin tools, memory or Agent Engine (E9 §3.3), so Kernal's outfitter-admin registers nothing
     // on an ordinary Drive. OUTFITTER_ADMIN_CAPS says which of the three, so a memory-only Drive
     // doesn't get the admin tools; the API refuses an op the tape lacks either way.
+    // E9 §3.3: OUTFITTER_MEMORY_RECALL=1 turns on recall before each prompt (Kernal's
+    // outfitter-agentengine, over this socket) for a `memory: auto` tape; a `tool` tape has the tool alone.
     secretEnv.OUTFITTER_ADMIN_SOCKET = "";
     secretEnv.OUTFITTER_ADMIN_CAPS = "";
+    secretEnv.OUTFITTER_MEMORY_RECALL = "";
     const caps = adminCapabilities(this.spec.guru);
     if (this.deps.adminSocketPath && caps.length > 0) {
       if (await this.startAdminSocket(this.deps.adminSocketPath)) {
         secretEnv.OUTFITTER_ADMIN_SOCKET = this.deps.adminSocketPath;
         secretEnv.OUTFITTER_ADMIN_CAPS = caps.join(",");
+        if (this.spec.guru.memory === "auto") secretEnv.OUTFITTER_MEMORY_RECALL = "1";
       }
     }
     // E9 §3.3: with Agent Engine memory on, pi-memory is off -- its tools are excluded (renderGuru),

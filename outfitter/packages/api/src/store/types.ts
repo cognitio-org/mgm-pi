@@ -640,8 +640,9 @@ export interface LaptopApprovalsCollection {
   /** The owner's pending, unexpired approval for this exact op, digest and laptop session, if any. */
   findPending(match: LaptopApprovalMatch, nowIso: string): Promise<LaptopApproval | null>;
   /** pending -> approved/denied, if it is the owner's, still pending and unexpired; `expiresAt`
-   * becomes `useBy` (a yes near expiry still leaves the laptop time to rerun). */
-  decide(id: string, ownerEmail: string, decision: "approved" | "denied", by: string, nowIso: string, useBy: string): Promise<boolean>;
+   * becomes `useBy` (a yes near expiry still leaves the laptop time to rerun). The owner decides,
+   * so `decidedBy` is `ownerEmail`. */
+  decide(id: string, ownerEmail: string, decision: "approved" | "denied", nowIso: string, useBy: string): Promise<boolean>;
   /** approved -> used, once: only if owner, op, digest and origin match and it is unexpired. */
   consume(id: string, match: LaptopApprovalMatch, nowIso: string): Promise<boolean>;
 }

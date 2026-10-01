@@ -21,11 +21,13 @@
  * this agent's shell runs as the person and could answer a TUI confirm itself, so that is no gate.
  * `/memory import` saves private notes only, so it needs no approval.
  */
-import { readSettings, updateSettings } from "../connect/settings.ts";
-import { remote } from "../_shared/git.ts";
+import { kernalSection, readSettings, updateKernal } from "../connect/settings.ts";
+import { cachedRepoOf, type RepoOf } from "../_shared/repo.ts";
+import { personHere } from "../_shared/person.ts";
 import type { AdminTransport, LaptopContext } from "../outfitter-admin/transport.ts";
+import type { ApprovalWait } from "./laptop-approval.ts";
 import { registerMemoryTool } from "./memory.ts";
-import { applyMemory, recallQuery, requestRecall } from "./recall.ts";
+import { registerRecall } from "./recall.ts";
 import { TurnRecorder } from "./record.ts";
 import { importPlan, piMemoryInjectionOff, piMemorySource, withoutPiMemoryTools, type ImportNote } from "./pi-memory.ts";
 
@@ -43,7 +45,7 @@ export interface MemorySettings {
 
 /** The `kernal` section's memory settings; anything unrecognised reads as unset. */
 export function memorySettings(settings: Record<string, unknown> = readSettings()): MemorySettings {
-  const k = (settings.kernal ?? {}) as Record<string, unknown>;
+  const k = kernalSection(settings);
   const memory = typeof k.memory === "string" && (MODES as readonly string[]).includes(k.memory) ? (k.memory as MemoryMode) : undefined;
   return {
     ...(memory ? { memory } : {}),
@@ -64,43 +66,12 @@ export function recordingOn(s: MemorySettings, mode: MemoryMode): boolean {
   return mode !== "off" && s.memoryRecord;
 }
 
-function writeKernal(patch: Record<string, unknown>): void {
-  updateSettings((s) => {
-    const k = (s.kernal && typeof s.kernal === "object" && !Array.isArray(s.kernal) ? s.kernal : {}) as Record<string, any>;
-    for (const [key, value] of Object.entries(patch)) {
-      if (value === undefined) delete k[key];
-      else k[key] = value;
-    }
-    s.kernal = k;
-  });
-}
-
 // ---------- the laptop context ----------
 
+// Moved to _shared/repo.ts; kept here for the importers that name them from laptop.ts.
+export { cachedRepoOf, githubRepo, type RepoOf } from "../_shared/repo.ts";
+
 const SESSION = /^[A-Za-z0-9][A-Za-z0-9_-]{7,99}$/;
-const REPO = /^[a-z0-9](?:[a-z0-9-]{0,38})\/[a-z0-9._-]{1,100}$/;
-
-/** `owner/name` of a github.com remote, lowercased, or undefined. */
-export function githubRepo(r: { host?: string; owner?: string; repo?: string } | undefined): string | undefined {
-  if (!r?.owner || !r.repo || (r.host ?? "").toLowerCase() !== "github.com") return undefined;
-  const repo = `${r.owner}/${r.repo}`.toLowerCase();
-  return REPO.test(repo) ? repo : undefined;
-}
-
-export type RepoOf = (cwd: string) => Promise<string | undefined>;
-
-/** The cwd's GitHub repo, from `origin`, cached per directory for this process. */
-export function cachedRepoOf(lookup: (cwd: string) => Promise<{ host?: string; owner?: string; repo?: string } | undefined> = remote): RepoOf {
-  const cache = new Map<string, Promise<string | undefined>>();
-  return (cwd) => {
-    let hit = cache.get(cwd);
-    if (!hit) {
-      hit = lookup(cwd).then(githubRepo, () => undefined);
-      cache.set(cwd, hit);
-    }
-    return hit;
-  };
-}
 
 /** The `laptop` context for this call, or undefined when pi has no usable session id. */
 export async function laptopContextOf(ctx: any, repoOf: RepoOf): Promise<LaptopContext | undefined> {
@@ -110,16 +81,23 @@ export async function laptopContextOf(ctx: any, repoOf: RepoOf): Promise<LaptopC
   return { sessionId: `laptop:${id}`, ...(repo ? { repo } : {}) };
 }
 
-/** A person is at the terminal (outfitter-admin's personHere, without its Drive check). */
-function personHere(ctx: any): boolean {
-  return ctx?.mode === "tui" && typeof ctx?.ui?.confirm === "function";
-}
-
 /** Whether a tool call may wait for a web approval: not in print or json mode, which must end. */
 export function waits(ctx: any): boolean {
   const mode = ctx?.mode;
   return typeof mode === "string" && mode !== "print" && mode !== "json";
 }
+
+/** How a tool call in `ctx` waits for a web approval: interactively, telling the person where to
+ * answer; undefined in print mode (`kernal -p`), which gets the pending approval id back at once. */
+export function webApprovalWait(ctx: any): ApprovalWait | undefined {
+  return waits(ctx) ? { wait: true, notify: (m) => ctx?.ui?.notify?.(m, "info") } : undefined;
+}
+
+/** The confirm `/memory record on` asks. */
+export const RECORD_CONSENT = {
+  title: "Record this laptop's turns in Agent Engine memory?",
+  body: "Your prompts and Kernal's final answers from laptop sessions go to your Outfitter's Agent Engine memory (secrets redacted; never tool output), and are recalled in your Drives and laptop sessions. They stay private to you. Turn it off any time with /memory record off.",
+} as const;
 
 // ---------- registration ----------
 
@@ -151,9 +129,8 @@ export function registerLaptopMemory(pi: any, transport: AdminTransport, deps: L
 
   registerMemoryTool(pi, transport, {
     laptop: context,
-    // A shared save waits for the owner's yes in the web app's widget, interactively; print mode
-    // (`kernal -p`) gets the pending approval id back at once instead of blocking.
-    approval: (ctx) => (waits(ctx) ? { wait: true, notify: (m) => ctx?.ui?.notify?.(m, "info") } : undefined),
+    // A shared save waits for the owner's yes in the web app's widget.
+    approval: webApprovalWait,
   });
 
   pi.on("session_start", async (_event: unknown, ctx: any) => {
@@ -171,29 +148,19 @@ export function registerLaptopMemory(pi: any, transport: AdminTransport, deps: L
 
   if (mode === "auto") {
     let told = false;
-    pi.on("before_agent_start", async (event: any, ctx: any) => {
-      try {
-        const query = recallQuery(event?.prompt);
-        if (!query) return;
-        const laptop = await context(ctx);
-        if (!laptop) return;
-        const text = await requestRecall(transport, query, laptop, {
-          timeoutMs: deps.recallTimeoutMs,
-          // Say once when this Outfitter can't recall at all (memory off there, or an old release);
-          // a slow or failed turn is skipped quietly.
-          onError: (error) => {
-            if (told || !/not configured|works only in a Drive|newer Kernal|no admin ops/.test(error)) return;
-            told = true;
-            ctx?.ui?.notify?.(
-              `memory: ${error}. Recall is skipped, and pi-memory is off while memory is on: /memory off, then restart Kernal, brings pi-memory back.`,
-              "warning",
-            );
-          },
-        });
-        applyMemory(event?.systemPromptOptions, text);
-      } catch {
-        // Recall is best effort: the prompt goes on without it.
-      }
+    registerRecall(pi, transport, {
+      laptop: context,
+      timeoutMs: deps.recallTimeoutMs,
+      // Say once when this Outfitter can't recall at all (memory off there, or an old release); a
+      // slow or failed turn is skipped quietly.
+      onError: (error, ctx) => {
+        if (told || !/not configured|works only in a Drive|newer Kernal|no admin ops/.test(error)) return;
+        told = true;
+        ctx?.ui?.notify?.(
+          `memory: ${error}. Recall is skipped, and pi-memory is off while memory is on: /memory off, then restart Kernal, brings pi-memory back.`,
+          "warning",
+        );
+      },
     });
   }
 
@@ -215,10 +182,10 @@ export function registerLaptopMemory(pi: any, transport: AdminTransport, deps: L
 
 /** At most once ever: a person with pi-memory notes hears that /memory import can bring them over. */
 async function offerImport(ctx: any, settings: MemorySettings, env: NodeJS.ProcessEnv): Promise<void> {
-  if (settings.memoryImported || settings.memoryImportOffered || !personHere(ctx)) return;
+  if (settings.memoryImported || settings.memoryImportOffered || !personHere(ctx, "confirm")) return;
   const { notes } = await importPlan(piMemorySource(env));
   if (!notes.length) return;
-  writeKernal({ memoryImportOffered: true });
+  updateKernal({ memoryImportOffered: true });
   ctx.ui.notify?.(
     `Agent Engine memory is on, so pi-memory is off here. You have ${notes.length} pi-memory note${notes.length === 1 ? "" : "s"}: /memory import lists them and brings them over on your yes.`,
     "info",
@@ -278,21 +245,16 @@ function registerMemoryCommand(
       try {
         if (sub === "status") return notify(status(o.settings, o.mode, o.env));
         if ((MODES as readonly string[]).includes(sub)) {
-          writeKernal({ memory: sub });
+          updateKernal({ memory: sub });
           return notify(`memory set to ${sub}; it applies when Kernal next starts.${sub === "off" ? " pi-memory comes back then." : " pi-memory is off from then on."}`);
         }
         if (sub === "record") {
           const on = parts[1];
           if (on !== "on" && on !== "off") return notify("usage: /memory record on|off", "warning");
-          if (on === "on" && personHere(ctx)) {
-            const yes = await ctx.ui.confirm(
-              "Record this laptop's turns in Agent Engine memory?",
-              "Your prompts and Kernal's final answers from laptop sessions go to your Outfitter's Agent Engine memory (secrets redacted; never tool output), and are recalled in your Drives and laptop sessions. They stay private to you. Turn it off any time with /memory record off.",
-              { timeout: CONFIRM_TIMEOUT_MS },
-            );
-            if (!yes) return;
+          if (on === "on" && personHere(ctx, "confirm")) {
+            if (!(await ctx.ui.confirm(RECORD_CONSENT.title, RECORD_CONSENT.body, { timeout: CONFIRM_TIMEOUT_MS }))) return;
           }
-          writeKernal({ memoryRecord: on === "on" ? true : undefined });
+          updateKernal({ memoryRecord: on === "on" ? true : undefined });
           return notify(`recording ${on}; it applies when Kernal next starts${on === "on" && o.mode === "off" ? " (memory is off: /memory auto as well)" : ""}.`);
         }
         if (sub === "import") return await runImport(parts.includes("--dry-run"), ctx, notify);
@@ -309,14 +271,14 @@ function registerMemoryCommand(
     if (!notes.length) return notify(`no pi-memory notes to import (${file} is missing or empty)`);
     const list = `${notes.length} note${notes.length === 1 ? "" : "s"} from ${file}:\n${preview(notes)}`;
     if (dryRun) return notify(`${list}\n\nDry run: nothing was saved. /memory import saves them (private, for every repo).`);
-    if (!personHere(ctx)) return notify(`${list}\n\nImport needs your yes at the terminal; run /memory import in the TUI.`, "warning");
+    if (!personHere(ctx, "confirm")) return notify(`${list}\n\nImport needs your yes at the terminal; run /memory import in the TUI.`, "warning");
     const again = o.settings.memoryImported ? `\n\nAlready imported on ${o.settings.memoryImported.slice(0, 10)}; the same notes update in place, they don't double.` : "";
     const yes = await ctx.ui.confirm(`Import ${notes.length} pi-memory note${notes.length === 1 ? "" : "s"} into Agent Engine memory?`, `${list}\n\nThey are saved as private semantic memories, for every repo.${again}`, { timeout: CONFIRM_TIMEOUT_MS });
     if (!yes) return;
     const laptop = await o.context(ctx);
     if (!laptop) return notify("memory: this session has no id yet; send a prompt first, then /memory import", "warning");
     const { saved, failed } = await importNotes(transport, notes, laptop, (m) => notify(m));
-    if (saved > 0) writeKernal({ memoryImported: new Date().toISOString() });
+    if (saved > 0) updateKernal({ memoryImported: new Date().toISOString() });
     notify([`imported ${saved} of ${notes.length} note${notes.length === 1 ? "" : "s"}`, ...failed.slice(0, 3).map((e) => `  ${e}`)].join("\n"), failed.length ? "warning" : "info");
   }
 }

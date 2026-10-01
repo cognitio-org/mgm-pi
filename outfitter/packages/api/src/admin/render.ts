@@ -5,7 +5,7 @@
 /** Default cap on one op's text, in characters (~3k tokens). */
 export const RESULT_CAP = 12_000;
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * UUIDs print as their last 8 characters, which ops accept back; slugs stay whole. The tail, not the

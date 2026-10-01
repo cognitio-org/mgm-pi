@@ -248,7 +248,6 @@ ENV PI_CODING_AGENT_DIR=/opt/kernal/.pi \
     OUTFITTER_SPEND_FILE=/run/outfitter/spend.jsonl \
     OUTFITTER_MAIL_EXTENSION=/opt/outfitter/agentd/dist/pi-extension/outfitter-mail.js \
     OUTFITTER_BROWSER_EXTENSION=/opt/outfitter/agentd/dist/pi-extension/outfitter-browser.js \
-    OUTFITTER_MEMORY_EXTENSION=/opt/outfitter/agentd/dist/pi-extension/outfitter-memory.js \
     PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
     OUTFITTER_PLAYWRIGHT_CLI=/opt/outfitter/playwright/node_modules/.bin/playwright \
     KERNAL_NO_CODEBASE_INDEX=1 \
@@ -323,7 +322,7 @@ ENV PI_CODING_AGENT_DIR=/opt/kernal/.pi \
 COPY outfitter/image/prewarm-extensions.sh /tmp/prewarm-extensions.sh
 RUN runuser -u agent -- bash /tmp/prewarm-extensions.sh "$PI_BIN" \
       --extension "$OUTFITTER_SPEND_EXTENSION" --extension "$OUTFITTER_MAIL_EXTENSION" \
-      --extension "$OUTFITTER_BROWSER_EXTENSION" --extension "$OUTFITTER_MEMORY_EXTENSION" \
+      --extension "$OUTFITTER_BROWSER_EXTENSION" \
   && rm /tmp/prewarm-extensions.sh
 
 WORKDIR /workspace

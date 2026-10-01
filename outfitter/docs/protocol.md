@@ -277,9 +277,10 @@ request, reads resent once after a link drop, writes (with `idempotencyKey`) sen
   before turning memory on for a tape.
 - Memory (E9 PR3): `memory.search {query, type?, limit?}` and `memory.context {query}` are reads,
   `memory.save {type, text, label?, shared?}` an audited write. The identity and repo come from the
-  session, never from args. With `memory: auto`, agentd also loads `pi-extension/outfitter-memory.ts`
-  (`OUTFITTER_MEMORY_EXTENSION`), which sends `memory.context` with the prompt before each turn
-  (3 s at most, skipped on any failure) and puts the answer in the system prompt's `memory` section.
+  session, never from args. With `memory: auto`, agentd also pins `OUTFITTER_MEMORY_RECALL=1`, and
+  Kernal's `outfitter-agentengine` extension (recall.ts, the same code a laptop uses) sends
+  `memory.context` with the redacted prompt before each turn (3 s at most, skipped on any failure)
+  and puts the answer in the system prompt's `memory` section.
   With `memory` `tool` or `auto`, agentd excludes pi-memory's seven tools and pins
   `PI_MEMORY_DIR` (an empty directory) and `PI_MEMORY_EXIT_SUMMARY=0` after the tape's env. The api
   records `auto` sessions' user prompts and settled final assistant messages with `recordTurn`

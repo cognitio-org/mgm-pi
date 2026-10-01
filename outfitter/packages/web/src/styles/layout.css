@@ -1471,6 +1471,8 @@ h4.voice-menu-heading {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-size: 0.78rem;
+  border: 1px dashed var(--border);
+  padding: 0.35rem;
 }
 
 .laptop-approval-facts {
@@ -1497,11 +1499,6 @@ h4.voice-menu-heading {
   display: block;
   margin-top: 0.35rem;
   color: var(--text-dim);
-}
-
-.laptop-approval-text {
-  border: 1px dashed var(--border);
-  padding: 0.35rem;
 }
 
 .laptop-approval-more {

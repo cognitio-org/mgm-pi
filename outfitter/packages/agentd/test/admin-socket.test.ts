@@ -330,7 +330,6 @@ for (const memory of ["tool", "auto", "off"] as const) {
       heartbeatIntervalMs: 60_000,
       adminSocketPath: path,
       piMemoryTmpRoot: memRoot,
-      memoryExtensionPath: "/opt/outfitter-memory.js",
       spawnPi: (opts) => {
         env.value = opts.env;
         args.value = opts.args;
@@ -349,22 +348,21 @@ for (const memory of ["tool", "auto", "off"] as const) {
       await rm(memRoot, { recursive: true, force: true });
     });
     const spec = specFor(undefined, { memory, excludeTools: ["web_search"] });
-    spec.guru.env = { PI_MEMORY_DIR: "/home/agent/.pi/memory", PI_MEMORY_EXIT_SUMMARY: "1" };
+    spec.guru.env = { PI_MEMORY_DIR: "/home/agent/.pi/memory", PI_MEMORY_EXIT_SUMMARY: "1", OUTFITTER_MEMORY_RECALL: "1" };
     link.deliver(spec);
     await waitFor(() => env.value !== undefined);
     const a = args.value!;
     const exclude = a[a.indexOf("--exclude-tools") + 1].split(",");
-    const extensions = a.filter((_, i) => a[i - 1] === "--extension");
     if (memory === "off") {
       assert.deepEqual(exclude, ["web_search"]);
       assert.equal(env.value!.PI_MEMORY_DIR, "/home/agent/.pi/memory");
-      assert.deepEqual(extensions, []);
+      assert.equal(env.value!.OUTFITTER_MEMORY_RECALL, "", "a tape can't turn recall on");
       return;
     }
     assert.deepEqual(exclude, ["web_search", "memory_write", "memory_read", "memory_search", "memory_forget", "memory_restore", "memory_status", "scratchpad"]);
     assert.equal(env.value!.PI_MEMORY_EXIT_SUMMARY, "0");
     assert.ok(env.value!.PI_MEMORY_DIR.startsWith(join(memRoot, "pi-memory-off-")), "a tape can't point it at real memory");
     assert.deepEqual(await readdir(env.value!.PI_MEMORY_DIR), []);
-    assert.deepEqual(extensions, memory === "auto" ? ["/opt/outfitter-memory.js"] : [], "recall only for auto");
+    assert.equal(env.value!.OUTFITTER_MEMORY_RECALL, memory === "auto" ? "1" : "", "recall only for auto");
   });
 }

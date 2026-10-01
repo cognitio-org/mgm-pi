@@ -18,18 +18,20 @@
 //   user hash as their Drives, sessionId `laptop:<pi session id>`, and the repo Kernal read from the
 //   working directory's git remote (routes/admin.ts validates both; they scope, never authorise).
 //   A shared or taxonomic save needs the owner's yes in the web app's approval widget in place of
-//   the Drive's card (laptop-approvals.ts); `confirmed` from a Dongle does not count. `memory.record` takes a laptop's own turns when the person opted in; a Drive's are recorded
-//   by the api (agentengine/recorder.ts), so it is laptop only.
+//   the Drive's card (laptop-approvals.ts); `confirmed` from a Dongle does not count.
+//   `memory.record` takes a laptop's own turns when the person opted in; a Drive's are recorded by
+//   the api (agentengine/recorder.ts), so it is laptop only.
 
 import { redact } from "../search/redact.ts";
 import { toAgentEngineError, type MemoryService, type MemoryType } from "../agentengine/index.ts";
-import { LAPTOP_REPO, LAPTOP_SESSION, laptopIdentity, memoryIdentity, namespacedKey, namespacedRepos, repoSlug, stripNamespaces, type MemoryIdentity } from "../agentengine/identity.ts";
+import { laptopIdentity, memoryIdentity, namespacedKey, namespacedRepos, repoSlug, stripNamespaces, type MemoryIdentity } from "../agentengine/identity.ts";
 import { recordableText } from "../agentengine/recorder.ts";
 import type { Session } from "../store/types.ts";
 import { capText, clip } from "./render.ts";
 import { memoryUsage } from "../agentengine/usage.ts";
-import { registerAdminOp, type AdminCaller, type AdminContext, type AdminResult, type LaptopContext } from "./ops.ts";
+import { NO_LAPTOP_SESSION, registerAdminOp, type AdminCaller, type AdminContext, type AdminResult } from "./ops.ts";
 import type { LaptopCard } from "./laptop-approvals.ts";
+import { hasHidden, stripHidden } from "../untrusted.ts";
 
 /** Token budgets for the two reads (E9 §3.3); each loses the server's 500-token formatting reserve. */
 export const OWN_TOKENS = 1400;
@@ -55,65 +57,12 @@ export const RECALL_FRAME =
 /** `session` is the Drive's; a laptop has none (E9.9). */
 type Ready = { ok: true; memory: MemoryService; id: MemoryIdentity; session?: Session };
 
-const LAPTOP_UPGRADE = "memory from a laptop needs a newer Kernal (no session id was sent)";
-
-/**
- * The `laptop` field of a POST /api/admin/ops body (E9.9), checked: `sessionId` is `laptop:<pi
- * session id>`, `repo` a lowercased GitHub `owner/name` or absent. Undefined when the body has none.
- */
-export function laptopContext(raw: unknown): { ok: true; value?: LaptopContext } | { ok: false; error: string } {
-  if (raw === undefined || raw === null) return { ok: true };
-  if (typeof raw !== "object" || Array.isArray(raw)) return { ok: false, error: "laptop must be an object" };
-  const { sessionId, repo } = raw as { sessionId?: unknown; repo?: unknown };
-  if (typeof sessionId !== "string" || !LAPTOP_SESSION.test(sessionId)) return { ok: false, error: "laptop.sessionId must be laptop:<pi session id>" };
-  if (repo !== undefined && repo !== null && repo !== "") {
-    if (typeof repo !== "string" || !LAPTOP_REPO.test(repo.trim().toLowerCase())) return { ok: false, error: "laptop.repo must be a GitHub owner/name" };
-    return { ok: true, value: { sessionId, repo: repo.trim().toLowerCase() } };
-  }
-  return { ok: true, value: { sessionId } };
-}
-
-/**
- * A Dongle's `memory.*` calls per minute, per owner (E9.9): recall runs on every laptop prompt and
- * recording after every turn, so this is generous for a person and a ceiling for a runaway client
- * or a leaked Dongle (each call can cost Agent Engine retrieval, embedding and extraction).
- * In-process, per instance: a bound on cost, not an exact quota.
- */
-export class MemoryRateLimit {
-  private readonly windows = new Map<string, { start: number; count: number }>();
-  perMinute: number;
-  private readonly now: () => number;
-
-  constructor(perMinute = 120, now: () => number = Date.now) {
-    this.perMinute = perMinute;
-    this.now = now;
-  }
-
-  /** True when `key` may make one more call now (and counts it). */
-  take(key: string): boolean {
-    if (this.perMinute < 1) return false;
-    const t = this.now();
-    if (this.windows.size > 1_000) for (const [k, w] of this.windows) if (t - w.start >= 60_000) this.windows.delete(k);
-    const w = this.windows.get(key);
-    if (!w || t - w.start >= 60_000) {
-      this.windows.set(key, { start: t, count: 1 });
-      return true;
-    }
-    if (w.count >= this.perMinute) return false;
-    w.count += 1;
-    return true;
-  }
-}
-
-/** The route's limiter (tests lower `perMinute`). */
-export const laptopMemoryRate = new MemoryRateLimit();
-
 async function ready(ctx: AdminContext, caller: AdminCaller): Promise<Ready | { ok: false; error: string }> {
   const memory = ctx.agentEngine?.memory;
   if (!memory) return { ok: false, error: "Agent Engine memory is not configured on this Outfitter" };
   // E9.9: a Dongle is its owner, bound to the session id its Kernal sent; never a Drive's session.
   if (caller.via === "token") {
-    if (!caller.laptop) return { ok: false, error: LAPTOP_UPGRADE };
+    if (!caller.laptop) return { ok: false, error: `memory ${NO_LAPTOP_SESSION}` };
     const id = laptopIdentity(caller.email, caller.laptop);
     if (!id) return { ok: false, error: "this laptop call has no memory identity" };
     return { ok: true, memory, id };
@@ -180,29 +129,10 @@ export function recalledFrom(response: unknown): { items: Recalled[]; docs: numb
   return { items, docs: counted || items.length };
 }
 
-/** Recalled text as it may enter a prompt: no namespace prefixes, no tag that could close or open
- * the memory frame, one line, clipped. */
-/**
- * Characters a person can't see but a model reads (E9.9 review H1): controls bar newline and tab,
- * format characters (zero-width, bidi, soft hyphen), private use, Unicode tags (the "ASCII
- * smuggling" range), variation selectors, line and paragraph separators. A shared save holding one
- * is refused, so the approval card shows exactly what is saved; recalled text has them stripped.
- */
-const HIDDEN = new RegExp("[\\p{Cc}\\p{Cf}\\p{Co}\\u{E0000}-\\u{E007F}\\u{FE00}-\\u{FE0F}\\u{E0100}-\\u{E01EF}\\u{2028}\\u{2029}]", "gu");
-
-export function hasHiddenChars(text: string): boolean {
-  HIDDEN.lastIndex = 0;
-  const found = HIDDEN.test(text.replace(/[\n\t]/g, ""));
-  HIDDEN.lastIndex = 0;
-  return found;
-}
-
-export function stripHiddenChars(text: string): string {
-  return text.replace(HIDDEN, (c) => (c === "\n" || c === "\t" ? c : ""));
-}
-
+/** Recalled text as it may enter a prompt: no hidden characters (untrusted.ts), no namespace
+ * prefixes, no tag that could close or open the memory frame, one line, clipped. */
 export function sanitizeRecalled(text: string): string {
-  const flat = stripHiddenChars(stripNamespaces(text)).replace(/<\s*\/?\s*memory\b[^>]*>?/gi, "[memory tag]").replace(/\s+/g, " ").trim();
+  const flat = stripHidden(stripNamespaces(text)).replace(/<\s*\/?\s*memory\b[^>]*>?/gi, "[memory tag]").replace(/\s+/g, " ").trim();
   return clip(flat, MAX_ITEM);
 }
 
@@ -305,7 +235,7 @@ function saveArgs(args: Record<string, unknown>): SaveArgs | { error: string } {
   if (shared) {
     // What the owner approves is what teammates' models read (E9.9 review H1, M2): nothing hidden,
     // and no run of blank lines to push the rest of the text out of the card's view.
-    if (hasHiddenChars(raw) || (typeof args.label === "string" && hasHiddenChars(args.label))) {
+    if (hasHidden(raw) || (typeof args.label === "string" && hasHidden(args.label))) {
       return { error: "a shared memory can't hold invisible or control characters (zero-width, bidi, tags); remove them" };
     }
     raw = raw.replace(/\n{3,}/g, "\n\n");
@@ -511,8 +441,9 @@ function recordArgs(args: Record<string, unknown>): RecordTurn[] | { error: stri
  * neither tool calls nor results, and this op takes text only). Redacted and capped here as well,
  * keyed `<user hash>:laptop:<pi session id>:<entry id>` so a resend dedupes. The user hash is in
  * the key because the session id is the client's to choose: another Dongle holder who learned it
- * could otherwise claim the same keys first, in case Agent Engine scopes keys per project. Not audited: it is the person's own
- * transcript going into their own private memory, many times a session (usage.ts counts it).
+ * could otherwise claim the same keys first, in case Agent Engine scopes keys per project. Not
+ * audited: it is the person's own transcript going into their own private memory, many times a
+ * session (usage.ts counts it).
  */
 registerAdminOp("memory.record", {
   kind: "write",

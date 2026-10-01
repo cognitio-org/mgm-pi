@@ -17,7 +17,42 @@
 import type { FastifyInstance } from "fastify";
 import type { RouteContext } from "./context.ts";
 import { runAdminOp } from "../admin/ops.ts";
-import { laptopContext, laptopMemoryRate } from "../admin/memory-ops.ts";
+import { laptopContext } from "../agentengine/identity.ts";
+
+/**
+ * A Dongle's `memory.*` calls per minute, per owner (E9.9): recall runs on every laptop prompt and
+ * recording after every turn, so this is generous for a person and a ceiling for a runaway client
+ * or a leaked Dongle (each call can cost Agent Engine retrieval, embedding and extraction).
+ * In-process, per instance: a bound on cost, not an exact quota.
+ */
+export class MemoryRateLimit {
+  private readonly windows = new Map<string, { start: number; count: number }>();
+  perMinute: number;
+  private readonly now: () => number;
+
+  constructor(perMinute = 120, now: () => number = Date.now) {
+    this.perMinute = perMinute;
+    this.now = now;
+  }
+
+  /** True when `key` may make one more call now (and counts it). */
+  take(key: string): boolean {
+    if (this.perMinute < 1) return false;
+    const t = this.now();
+    if (this.windows.size > 1_000) for (const [k, w] of this.windows) if (t - w.start >= 60_000) this.windows.delete(k);
+    const w = this.windows.get(key);
+    if (!w || t - w.start >= 60_000) {
+      this.windows.set(key, { start: t, count: 1 });
+      return true;
+    }
+    if (w.count >= this.perMinute) return false;
+    w.count += 1;
+    return true;
+  }
+}
+
+/** The route's limiter (tests lower `perMinute`). */
+export const laptopMemoryRate = new MemoryRateLimit();
 
 export async function registerAdminRoutes(app: FastifyInstance, ctx: RouteContext): Promise<void> {
   app.post("/api/admin/ops", async (req, reply) => {

@@ -1260,7 +1260,7 @@ class MongoAdminApprovals implements AdminApprovalsCollection {
 /** expireAt is Mongo-only (the TTL index needs a BSON date): a day after the approval's own expiry,
  * so a laptop polling late still reads "expired" or "used" rather than "not found". */
 type LaptopApprovalDoc = LaptopApproval & { _id: string; expireAt?: Date };
-const LAPTOP_APPROVAL_TTL_MS = 24 * 60 * 60_000;
+const LAPTOP_APPROVAL_KEEP_MS = 24 * 60 * 60_000;
 
 function laptopApprovalOf(doc: LaptopApprovalDoc | null): LaptopApproval | null {
   if (!doc) return null;
@@ -1288,7 +1288,7 @@ class MongoLaptopApprovals implements LaptopApprovalsCollection {
   }
 
   async insert(approval: LaptopApproval): Promise<void> {
-    await this.col.insertOne({ ...approval, _id: approval.id, expireAt: new Date(Date.parse(approval.expiresAt) + LAPTOP_APPROVAL_TTL_MS) });
+    await this.col.insertOne({ ...approval, _id: approval.id, expireAt: new Date(Date.parse(approval.expiresAt) + LAPTOP_APPROVAL_KEEP_MS) });
   }
 
   async get(id: string): Promise<LaptopApproval | null> {
@@ -1304,10 +1304,10 @@ class MongoLaptopApprovals implements LaptopApprovalsCollection {
     return laptopApprovalOf(await this.col.findOne({ ...laptopMatchFilter(match), state: "pending", expiresAt: { $gt: nowIso } }));
   }
 
-  async decide(id: string, ownerEmail: string, decision: "approved" | "denied", by: string, nowIso: string, useBy: string): Promise<boolean> {
+  async decide(id: string, ownerEmail: string, decision: "approved" | "denied", nowIso: string, useBy: string): Promise<boolean> {
     const result = await this.col.updateOne(
       { _id: id, ownerEmail, state: "pending", expiresAt: { $gt: nowIso } },
-      { $set: { state: decision, decidedBy: by, decidedAt: nowIso, expiresAt: useBy, expireAt: new Date(Date.parse(useBy) + LAPTOP_APPROVAL_TTL_MS) } },
+      { $set: { state: decision, decidedBy: ownerEmail, decidedAt: nowIso, expiresAt: useBy, expireAt: new Date(Date.parse(useBy) + LAPTOP_APPROVAL_KEEP_MS) } },
     );
     return result.modifiedCount === 1;
   }

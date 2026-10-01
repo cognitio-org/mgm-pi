@@ -19,13 +19,16 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import type { LaptopApproval, LaptopApprovalMatch, Store } from "../store/types.ts";
+import type { LaptopContext } from "../agentengine/identity.ts";
+import { HIDDEN } from "../untrusted.ts";
+import { UUID as APPROVAL_ID } from "./render.ts";
+import { isPerson } from "./approvals.ts";
 
 export const LAPTOP_APPROVAL_TTL_MS = 10 * 60_000;
 /** Pending asks an owner may have at once: a runaway agent can't bury the widget. */
 export const MAX_PENDING_PER_OWNER = 10;
 const MAX_TITLE = 120;
 export const MAX_SUMMARY = 6_000;
-const APPROVAL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export type LaptopApprovalState = "pending" | "approved" | "denied" | "expired" | "used";
 
@@ -53,22 +56,19 @@ export function laptopApprovalState(a: Pick<LaptopApproval, "state" | "expiresAt
 const iso = (now: number) => new Date(now).toISOString();
 const lower = (email: string) => email.trim().toLowerCase();
 
-export interface LaptopOrigin {
-  /** `laptop:<pi session id>` (validated by routes/admin.ts). */
-  sessionId: string;
-  repo?: string;
-}
-
-function matchOf(ownerEmail: string, op: string, args: Record<string, unknown>, laptop: LaptopOrigin): LaptopApprovalMatch {
+function matchOf(ownerEmail: string, op: string, args: Record<string, unknown>, laptop: LaptopContext): LaptopApprovalMatch {
   return { ownerEmail: lower(ownerEmail), op, argsDigest: argsDigest(op, args), laptopSessionId: laptop.sessionId, ...(laptop.repo ? { repo: laptop.repo } : {}) };
 }
 
-/** Controls bar newline and tab, format characters (zero-width, bidi), private use, tags,
- * variation selectors, line and paragraph separators: shown as a visible `�` on the card, so
- * nothing can hide there. An op should refuse such text before it asks (memory.save does). */
-const HIDDEN = new RegExp("[\\p{Cc}\\p{Cf}\\p{Co}\\u{E0000}-\\u{E007F}\\u{FE00}-\\u{FE0F}\\u{E0100}-\\u{E01EF}\\u{2028}\\u{2029}]", "gu");
+/** One of `ownerEmail`'s approvals, or null: another owner's id reads as not found. */
+async function ownApproval(store: Pick<Store, "laptopApprovals">, id: string, ownerEmail: string): Promise<LaptopApproval | null> {
+  const held = await store.laptopApprovals.get(id);
+  return held && held.ownerEmail === lower(ownerEmail) ? held : null;
+}
 
-/** The card's text: hidden characters made visible, capped by code point (never half a pair). */
+/** The card's text: hidden characters (untrusted.ts) shown as a visible `�`, so nothing can hide
+ * there (an op should refuse such text before it asks; memory.save does), capped by code point
+ * (never half a pair). */
 function cardText(text: string, max: number): string {
   const flat = text.replace(/\r\n?/g, "\n").replace(HIDDEN, (c) => (c === "\n" || c === "\t" ? c : "�"));
   const points = [...flat];
@@ -87,7 +87,7 @@ export interface CreateLaptopApproval extends LaptopCard {
   ownerEmail: string;
   op: string;
   args: Record<string, unknown>;
-  laptop: LaptopOrigin;
+  laptop: LaptopContext;
   now?: number;
 }
 
@@ -132,7 +132,7 @@ export interface ConsumeLaptopApproval {
   args: Record<string, unknown>;
   approvalId: unknown;
   /** The rerun's laptop context: it must be the session (and repo) the ask came from. */
-  laptop: LaptopOrigin;
+  laptop: LaptopContext;
   now?: number;
 }
 
@@ -150,8 +150,8 @@ export async function consumeLaptopApproval(
   const match = matchOf(use.ownerEmail, use.op, use.args, use.laptop);
   if (await store.laptopApprovals.consume(use.approvalId, match, iso(now))) return { ok: true, approvalId: use.approvalId };
   // Why not, for the person: read after the failed write, so nothing here decides anything.
-  const held = await store.laptopApprovals.get(use.approvalId);
-  if (!held || held.ownerEmail !== match.ownerEmail) return { ok: false, error: "no such approval" };
+  const held = await ownApproval(store, use.approvalId, match.ownerEmail);
+  if (!held) return { ok: false, error: "no such approval" };
   const state = laptopApprovalState(held, iso(now));
   if (state !== "approved") {
     const why: Record<Exclude<LaptopApprovalState, "approved">, string> = {
@@ -177,22 +177,14 @@ export interface LaptopApprovalView {
   expiresAt: string;
 }
 
-export function laptopApprovalView(a: LaptopApproval): LaptopApprovalView {
-  return {
-    id: a.id,
-    op: a.op,
-    title: a.title,
-    ...(a.facts?.length ? { facts: a.facts.map((f) => ({ ...f })) } : {}),
-    summary: a.summary,
-    origin: { ...a.origin },
-    createdAt: a.createdAt,
-    expiresAt: a.expiresAt,
-  };
+/** Only the fields above: never the owner, the digest or the decision. */
+export function laptopApprovalView({ id, op, title, facts, summary, origin, createdAt, expiresAt }: LaptopApproval): LaptopApprovalView {
+  return { id, op, title, ...(facts?.length ? { facts: facts.map((f) => ({ ...f })) } : {}), summary, origin: { ...origin }, createdAt, expiresAt };
 }
 
 /** The signed-in person's pending asks, for the widget; never a Dongle's (it is the agent's). */
 export async function pendingLaptopApprovals(store: Pick<Store, "laptopApprovals">, viewer: { email?: string; viaToken?: boolean } | undefined, now = Date.now()): Promise<LaptopApprovalView[] | undefined> {
-  if (!viewer?.email || viewer.viaToken) return undefined;
+  if (!isPerson(viewer)) return undefined;
   return (await store.laptopApprovals.listPending(lower(viewer.email), iso(now), MAX_PENDING_PER_OWNER)).map(laptopApprovalView);
 }
 
@@ -207,15 +199,19 @@ export async function decideLaptopApproval(
   approved: boolean,
   now = Date.now(),
 ): Promise<{ ok: true; approval: LaptopApproval } | { ok: false; status: number; error: string }> {
-  if (!decider?.email) return { ok: false, status: 401, error: "sign in to answer approvals" };
-  if (decider.viaToken) return { ok: false, status: 403, error: "approve laptop requests in the Outfitter web app, not with a token" };
+  if (!isPerson(decider)) {
+    return decider?.email
+      ? { ok: false, status: 403, error: "approve laptop requests in the Outfitter web app, not with a token" }
+      : { ok: false, status: 401, error: "sign in to answer approvals" };
+  }
   if (!APPROVAL_ID.test(id)) return { ok: false, status: 404, error: "no such approval" };
-  const held = await store.laptopApprovals.get(id);
   const email = lower(decider.email);
-  if (!held || held.ownerEmail !== email) return { ok: false, status: 404, error: "no such approval" };
+  const held = await ownApproval(store, id, email);
+  if (!held) return { ok: false, status: 404, error: "no such approval" };
   // A yes in the last seconds still leaves the laptop time to poll and rerun (review: near expiry).
-  const useBy = approved ? (iso(now + APPROVED_USE_MS) > held.expiresAt ? iso(now + APPROVED_USE_MS) : held.expiresAt) : held.expiresAt;
-  if (!(await store.laptopApprovals.decide(id, email, approved ? "approved" : "denied", email, iso(now), useBy))) {
+  const soon = iso(now + APPROVED_USE_MS);
+  const useBy = approved && soon > held.expiresAt ? soon : held.expiresAt;
+  if (!(await store.laptopApprovals.decide(id, email, approved ? "approved" : "denied", iso(now), useBy))) {
     return { ok: false, status: 409, error: "that approval is no longer pending" };
   }
   return { ok: true, approval: { ...held, state: approved ? "approved" : "denied", decidedBy: email, decidedAt: iso(now), expiresAt: useBy } };
@@ -224,7 +220,7 @@ export async function decideLaptopApproval(
 /** `approvals.get` for a laptop: the state of one of the caller's own asks. */
 export async function laptopApprovalStatus(store: Pick<Store, "laptopApprovals">, ownerEmail: string, id: unknown, now = Date.now()): Promise<{ ok: true; state: LaptopApprovalState } | { ok: false; error: string }> {
   if (typeof id !== "string" || !APPROVAL_ID.test(id)) return { ok: false, error: "id is required (an approval id)" };
-  const held = await store.laptopApprovals.get(id);
-  if (!held || held.ownerEmail !== lower(ownerEmail)) return { ok: false, error: "no such approval" };
+  const held = await ownApproval(store, id, ownerEmail);
+  if (!held) return { ok: false, error: "no such approval" };
   return { ok: true, state: laptopApprovalState(held, iso(now)) };
 }

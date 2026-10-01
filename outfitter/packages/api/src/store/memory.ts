@@ -1008,10 +1008,10 @@ class MemoryLaptopApprovals implements LaptopApprovalsCollection {
     return hit ? clone(hit) : null;
   }
 
-  async decide(id: string, ownerEmail: string, decision: "approved" | "denied", by: string, nowIso: string, useBy: string): Promise<boolean> {
+  async decide(id: string, ownerEmail: string, decision: "approved" | "denied", nowIso: string, useBy: string): Promise<boolean> {
     const held = this.rows.get(id);
     if (!held || held.ownerEmail !== ownerEmail || held.state !== "pending" || held.expiresAt <= nowIso) return false;
-    this.rows.set(id, { ...held, state: decision, decidedBy: by, decidedAt: nowIso, expiresAt: useBy });
+    this.rows.set(id, { ...held, state: decision, decidedBy: ownerEmail, decidedAt: nowIso, expiresAt: useBy });
     return true;
   }
 

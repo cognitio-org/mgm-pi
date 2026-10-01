@@ -35,9 +35,6 @@ export interface RenderOptions {
   /** Chrome companion §13: path to pi-extension/outfitter-browser.ts (or its built .js). The
    * Drive-only `browser_capture` tool. Omitted outside a Drive, same as the mail extension. */
   browserExtensionPath?: string;
-  /** E9 §3.3: path to pi-extension/outfitter-memory.ts (or its built .js), the recall extension.
-   * Loaded only when the tape's memory is `auto`; a `tool` tape has the Kernal tool alone. */
-  memoryExtensionPath?: string;
   /** Bug 8 (docs/reports/cloud-fixes.md): true when the restored session's own last-known model and
    * thinking level (session.ts's lastKnownModelState) already match `guru.model`/`guru.thinking` --
    * omit `--model` entirely rather than reassert an unchanged value, since pi logs a fresh
@@ -128,8 +125,6 @@ export function renderGuru(guru: RunSpecGuru, opts: RenderOptions): RenderedPi {
   if (opts.spendExtensionPath) args.push("--extension", opts.spendExtensionPath);
   if (opts.mailExtensionPath) args.push("--extension", opts.mailExtensionPath);
   if (opts.browserExtensionPath) args.push("--extension", opts.browserExtensionPath);
-  if (opts.memoryExtensionPath && guru.memory === "auto") args.push("--extension", opts.memoryExtensionPath);
-
   if (!opts.skipModelArg) args.push("--model", renderModelArg(guru.model, guru.thinking));
 
   if (guru.systemPrompt) args.push("--system-prompt", guru.systemPrompt);

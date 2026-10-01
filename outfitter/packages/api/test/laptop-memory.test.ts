@@ -6,14 +6,14 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { buildTestApp, seedGuru, type TestApp } from "./helpers.ts";
+import { adminOp, laptopApp, seedGuru, type TestApp } from "./helpers.ts";
 import { FakeAgentEngine } from "./fake-agent-engine.ts";
 import { MemoryStore } from "../src/store/memory.ts";
-import { hashToken } from "../src/tokens.ts";
 import { createAgentEngine } from "../src/agentengine/index.ts";
-import { laptopIdentity, memoryUserHash } from "../src/agentengine/identity.ts";
+import { laptopContext, laptopIdentity, memoryUserHash } from "../src/agentengine/identity.ts";
 import { ADMIN_OPS, registerAdminOp, runAdminOp } from "../src/admin/ops.ts";
-import { laptopContext, laptopMemoryRate, MemoryRateLimit, RECALL_FRAME } from "../src/admin/memory-ops.ts";
+import { RECALL_FRAME } from "../src/admin/memory-ops.ts";
+import { laptopMemoryRate, MemoryRateLimit } from "../src/routes/admin.ts";
 import { DriveAdmin } from "../src/admin/drive.ts";
 
 const ADA = "Ada@Example.com";
@@ -24,21 +24,8 @@ const HASH = createHash("sha256").update("ada@example.com").digest("hex").slice(
 const SID = "laptop:0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
 const LAPTOP = { sessionId: SID, repo: "Acme/Widgets" };
 
-async function app(opts: { parts?: Array<"memory" | "agents"> } = {}): Promise<{ app: TestApp; fake: FakeAgentEngine; store: MemoryStore }> {
-  const fake = new FakeAgentEngine();
-  const agentEngine = createAgentEngine(fake.config(opts.parts ?? ["memory"]), { fetch: fake.fetch });
-  const store = new MemoryStore();
-  for (const [id, email, token] of [["tok-ada", ADA, ADA_TOKEN], ["tok-bob", BOB, BOB_TOKEN]] as const) {
-    await store.tokens.insert({ id, ownerEmail: email, name: "laptop", prefix: token.slice(0, 8), hash: hashToken(token), createdAt: new Date().toISOString() });
-  }
-  return { app: await buildTestApp({ OUTFITTER_ROLE: "link", OUTFITTER_DEV: "0" }, { store, agentEngine }), fake, store };
-}
-
-async function op(a: TestApp, name: string, args: Record<string, unknown>, extra: Record<string, unknown> = { laptop: LAPTOP }, token = ADA_TOKEN) {
-  const res = await a.fastify.inject({ method: "POST", url: "/api/admin/ops", headers: { authorization: `Bearer ${token}` }, payload: { op: name, args, ...extra } });
-  assert.equal(res.statusCode, 200, res.body);
-  return res.json() as { ok: boolean; text?: string; error?: string; needsApproval?: boolean };
-}
+const app = (opts: { parts?: Array<"memory" | "agents"> } = {}) => laptopApp({ tokens: [[ADA, ADA_TOKEN], [BOB, BOB_TOKEN]], ...opts });
+const op = (a: TestApp, name: string, args: Record<string, unknown>, extra: Record<string, unknown> = { laptop: LAPTOP }, token = ADA_TOKEN) => adminOp(a, token, name, args, extra);
 
 const contextCalls = (fake: FakeAgentEngine) => fake.requests.filter((r) => r.path.endsWith("/memory/context")).map((r) => r.body as Record<string, unknown>);
 
@@ -105,8 +92,7 @@ describe("POST /api/admin/ops memory.* with a Dongle", () => {
   });
 
   test("shares one memory with the owner's Drives: a Drive's save is recalled on the laptop", async () => {
-    const { app: a, fake, store } = await app();
-    const agentEngine = createAgentEngine(fake.config(["memory"]), { fetch: fake.fetch });
+    const { app: a, fake, store, agentEngine } = await app();
     const now = new Date().toISOString();
     await seedGuru(store, { id: "t", memory: "tool" });
     await store.sessions.insert({ id: "s1", guruId: "t", repo: "acme/widgets", status: "open", cost: 0, ownerEmail: ADA.toLowerCase(), createdAt: now, updatedAt: now });

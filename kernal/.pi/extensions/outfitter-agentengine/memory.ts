@@ -14,16 +14,10 @@
  */
 import { redact } from "../_shared/redact.ts";
 import type { AdminReply, AdminTransport, LaptopContext } from "../outfitter-admin/transport.ts";
-import { callWithWebApproval, type ApprovalWait } from "./laptop-approval.ts";
+import { replyResult, safeExecute, textResult, type ToolResult } from "../outfitter-admin/tools.ts";
+import { approvalIdOf, callWithWebApproval, type ApprovalWait, type LaptopCall } from "./laptop-approval.ts";
 
-export type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean; details?: unknown };
-
-/** A laptop call's extras: its context, and how a web approval is waited for. */
-export interface LaptopCall {
-  laptop?: LaptopContext;
-  /** Absent: don't wait (print mode). */
-  approval?: ApprovalWait;
-}
+export type { LaptopCall, ToolResult };
 
 const ACTIONS = ["search", "save"] as const;
 const TYPES = ["semantic", "episodic", "procedural", "taxonomic"] as const;
@@ -72,20 +66,10 @@ export function memoryOp(params: Record<string, any>): { op: string; args: Recor
   return { error: `action must be one of: ${ACTIONS.join(", ")}` };
 }
 
-function result(reply: AdminReply): ToolResult {
-  return reply.ok
-    ? { content: [{ type: "text", text: reply.text }], details: undefined }
-    : { content: [{ type: "text", text: `memory: ${reply.error}` }], isError: true, details: undefined };
-}
-
-const fail = (text: string): ToolResult => ({ content: [{ type: "text", text }], isError: true, details: undefined });
-
-/** Model text as the person sees it in a confirm: no control characters (an escape sequence could
- * hide or redraw what they are agreeing to), clipped. */
-export function shown(text: string, max: number): string {
-  const flat = text.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, " ");
-  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
-}
+// pi's tool results carry `details`; this tool has none.
+const withDetails = (r: ToolResult): ToolResult => ({ ...r, details: undefined });
+const result = (reply: AdminReply): ToolResult => withDetails(replyResult(reply, "memory: "));
+const fail = (text: string): ToolResult => withDetails(textResult(text, true));
 
 /** A laptop's args with the free text redacted before it leaves the machine (the API does it too). */
 function redacted(args: Record<string, unknown>): Record<string, unknown> {
@@ -104,7 +88,7 @@ export async function runMemory(params: Record<string, any>, transport: AdminTra
   if (!shared) return result(await transport.call(mapped.op, args, { signal, laptop: laptop.laptop }));
   // Shared memory is recalled into the other users' prompts: the owner says yes in the web app,
   // where this laptop's agent can't. The API asks; this side only waits and reruns.
-  const approvalId = typeof params?.approvalId === "string" && params.approvalId.trim() ? params.approvalId.trim() : undefined;
+  const approvalId = approvalIdOf(params);
   return result(
     await callWithWebApproval(transport, mapped.op, args, { laptop: laptop.laptop, signal, ...(approvalId ? { approvalId } : {}) }, laptop.approval ?? { wait: false }),
   );
@@ -120,13 +104,9 @@ export interface LaptopTool {
 export function registerMemoryTool(pi: { registerTool(tool: any): void }, transport: AdminTransport, laptop?: LaptopTool): void {
   pi.registerTool({
     ...MEMORY_TOOL,
-    execute: async (_id: string, params: any, signal: AbortSignal | undefined, _update?: unknown, ctx?: any) => {
-      try {
-        const call: LaptopCall = laptop ? { laptop: await laptop.laptop(ctx), approval: laptop.approval(ctx) } : {};
-        return await runMemory(params, transport, signal, call);
-      } catch (err) {
-        return { content: [{ type: "text" as const, text: `memory: ${err instanceof Error ? err.message : String(err)}` }], isError: true, details: undefined };
-      }
-    },
+    execute: async (_id: string, params: any, signal: AbortSignal | undefined, _update?: unknown, ctx?: any) =>
+      withDetails(
+        await safeExecute("memory", async () => runMemory(params, transport, signal, laptop ? { laptop: await laptop.laptop(ctx), approval: laptop.approval(ctx) } : {})),
+      ),
   });
 }

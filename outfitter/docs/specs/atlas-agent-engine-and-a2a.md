@@ -387,8 +387,10 @@ Don't use run state `idle` (EPIC.md:517-519: agentd is idle before any prompt).
   - **No forget action in v1 (a choice).** The gateway proxies soft DELETE (verified 200), so a later
     PR can add one. Wrong memories are fixed by saving a correction under the same label (semantic
     upserts).
-- **Recall (`auto`):** an agentd pi extension `pi-extension/outfitter-memory.ts`.
-  - On `before_agent_start` it calls op `memory.context {query: prompt}` over the admin socket.
+- **Recall (`auto`):** Kernal's `outfitter-agentengine/recall.ts`, the one recall for Drives and
+  laptops (§3.5). agentd pins `OUTFITTER_MEMORY_RECALL=1` for an `auto` tape (it was an agentd
+  extension, `pi-extension/outfitter-memory.ts`, until the E9.9 cleanup).
+  - On `before_agent_start` it calls op `memory.context {query: prompt}` (redacted) over the admin socket.
     agentd makes the socket group-owned by the agent gid (`run.ts:959-967`).
   - The api runs `buildContext({query, maxTokens, enabledSources: new Set(["semantic", "episodic",
     "procedural"]), metadataFilter})`. `enabledSources` is a `Set`, and the default is episodic and

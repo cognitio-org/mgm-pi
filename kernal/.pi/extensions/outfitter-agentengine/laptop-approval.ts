@@ -30,7 +30,20 @@ export interface ApprovalWait {
   now?: () => number;
 }
 
-export type WaitOutcome = "approved" | "denied" | "expired" | "used" | "timeout" | "cancelled";
+/** A laptop tool call's extras: its context, and how a web approval is waited for. */
+export interface LaptopCall {
+  laptop?: LaptopContext;
+  /** Absent: don't wait (print mode); the pending approval id comes back instead. */
+  approval?: ApprovalWait;
+}
+
+/** The `approvalId` a model passed back after a print-mode wait, trimmed, or undefined. */
+export function approvalIdOf(params: Record<string, unknown> | undefined): string | undefined {
+  const id = params?.approvalId;
+  return typeof id === "string" && id.trim() ? id.trim() : undefined;
+}
+
+export type WaitOutcome ="approved" | "denied" | "expired" | "used" | "timeout" | "cancelled";
 
 function sleepFor(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {

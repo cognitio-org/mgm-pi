@@ -5,6 +5,3 @@ reference/
 *.webm
 out/
 *.wav
-
-# reference photos of people (cast); never committed
-cast/

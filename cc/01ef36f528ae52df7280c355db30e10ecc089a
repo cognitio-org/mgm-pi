@@ -95,6 +95,7 @@ outfitter/packages/api/src/server.ts
   s_1d3bdd6f362f9b::t_c241006cb08b51 35,67-69,182-185
   s_1d3bdd6f362f9b::t_757698b812625d 13,136,249
   s_1d3bdd6f362f9b::t_d28c785db7bbc7 32-33,58-60,123-125,137-142,144-147,250
+  s_1d3bdd6f362f9b::t_35a45028fbf2bd 143
 outfitter/packages/api/src/routes/hooks.ts
   s_1d3bdd6f362f9b::t_da29ac05a1961f 113-115
   s_1d3bdd6f362f9b::t_757698b812625d 118-119
@@ -234,6 +235,7 @@ outfitter/packages/api/src/a2a/tasks.ts
   s_1d3bdd6f362f9b::t_95b31b3d428438 15,26,44-47,49-54,94-108,118-121
   s_1d3bdd6f362f9b::t_7510615561a6cc 590,606
   s_1d3bdd6f362f9b::t_4138c2545465a3 810
+  s_1d3bdd6f362f9b::t_a4b41efade92c1 784-786
 outfitter/packages/api/test/a2a.test.ts
   s_1d3bdd6f362f9b::t_e3f079093dd9e8 310,317
   s_1d3bdd6f362f9b::t_c473031feedf50 314-316,318
@@ -266,6 +268,7 @@ outfitter/packages/api/src/a2a/handler.ts
   s_1d3bdd6f362f9b::t_c1240b227ec255 90-92,279,286
   s_1d3bdd6f362f9b::t_bdfb71530a8d09 96
   s_1d3bdd6f362f9b::t_7510615561a6cc 171-172,592-593,596-597
+  s_1d3bdd6f362f9b::t_35a45028fbf2bd 563-565,585-587
 outfitter/packages/api/test/github-broker.test.ts
   s_1d3bdd6f362f9b::t_4e96a8dfb70f86 251-253,256-257,263-269
   s_1d3bdd6f362f9b::t_e5a276c0782c02 103
@@ -275,6 +278,7 @@ outfitter/packages/api/src/github-broker.ts
   s_1d3bdd6f362f9b::t_5b82b7923ce147 166-179,279-283
   s_1d3bdd6f362f9b::t_db3a146003e285 276-277
   s_1d3bdd6f362f9b::t_894b85c5242a7d 334-343,346-371
+  s_1d3bdd6f362f9b::t_714f52b19db57f 344-345
 outfitter/packages/api/test/a2a-streaming.test.ts
   s_1d3bdd6f362f9b::t_6e278352ebdd2f 308-309,311
   s_1d3bdd6f362f9b::t_862a95b6401087 559

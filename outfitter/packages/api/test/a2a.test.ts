@@ -11,7 +11,9 @@ import { MongoStore } from "../src/store/mongo.ts";
 import type { A2AKeyScope, A2ATask, ApiToken, Guru, Store } from "../src/store/types.ts";
 import { generateToken, hashToken, tokenPrefix, TOKEN_TTL_MS } from "../src/tokens.ts";
 import { OUTFITTER_TASK_EXTENSION } from "../src/a2a/card.ts";
-import { memoryUserId, ownerMemoryUserId } from "../src/a2a/memory-identity.ts";
+// PR3's agentengine/identity.ts is the one memory identity (it also fails closed on a token id
+// without the origin marker); PR5's src/a2a/memory-identity.ts copy was removed.
+import { memoryIdentity, memoryUserHash } from "../src/agentengine/identity.ts";
 import { branchAllowed, branchPrefixForSession } from "../src/branch-policy.ts";
 import { a2aTapeProblem } from "../src/a2a/keys.ts";
 import { loadConfig } from "../src/config.ts";
@@ -732,11 +734,13 @@ async function settle(store: Store, tokenId: string, taskId: string, reply: stri
 
 describe("A2A memory identity (§5.4)", () => {
   test("an A2A session uses a2a:<tokenId>, never its owner's hash", () => {
-    assert.equal(memoryUserId({ origin: "a2a", a2aTokenId: "k1", ownerEmail: OWNER }), "a2a:k1");
-    assert.equal(memoryUserId({ origin: "a2a", ownerEmail: OWNER }), undefined);
-    assert.equal(memoryUserId({ ownerEmail: " Owner@MGMS.eu " }), ownerMemoryUserId(OWNER));
-    assert.match(ownerMemoryUserId(OWNER), /^[0-9a-f]{16}$/);
-    assert.equal(memoryUserId({}), undefined);
+    const userId = (s: { origin?: "a2a"; a2aTokenId?: string; ownerEmail?: string }) => memoryIdentity({ id: "s1", repo: null, ...s })?.userId;
+    assert.equal(userId({ origin: "a2a", a2aTokenId: "k1", ownerEmail: OWNER }), "a2a:k1");
+    assert.equal(userId({ origin: "a2a", ownerEmail: OWNER }), undefined);
+    assert.equal(userId({ a2aTokenId: "k1", ownerEmail: OWNER }), undefined, "a token id without the marker never falls back to the owner");
+    assert.equal(userId({ ownerEmail: " Owner@MGMS.eu " }), memoryUserHash(OWNER));
+    assert.match(memoryUserHash(OWNER), /^[0-9a-f]{16}$/);
+    assert.equal(userId({}), undefined);
   });
 
   test("a2aTapeProblem allows memory: tool, refuses auto", () => {

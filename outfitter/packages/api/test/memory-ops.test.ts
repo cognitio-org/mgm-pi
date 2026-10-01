@@ -333,7 +333,10 @@ describe("memory.search and memory.context", () => {
 });
 
 describe("A2A sessions (§5.4)", () => {
-  const a2a = { session: { origin: "a2a" as const, a2aTokenId: "tok1" } };
+  // PR5's A2A tape rule (a2aTapeProblem): an explicit tools list inside A2A_TAPE_TOOLS, or the
+  // Drive admin socket refuses the session before any memory check.
+  const tape = { tools: ["read", "memory"] };
+  const a2a = { session: { origin: "a2a" as const, a2aTokenId: "tok1" }, tape };
 
   test("reads only their own identity: no org call, never the owner's memories", async () => {
     const { fake, admin } = await drive(a2a);
@@ -360,7 +363,7 @@ describe("A2A sessions (§5.4)", () => {
   });
 
   test("an A2A session without its token id gets no memory at all", async () => {
-    const { fake, admin } = await drive({ session: { origin: "a2a" } });
+    const { fake, admin } = await drive({ session: { origin: "a2a" }, tape });
     assert.deepEqual(await admin.handle("r1", "memory.search", { query: "x" }), { ok: false, error: "this session has no memory identity" });
     assert.equal(fake.requests.filter((r) => r.path.includes("/memory/")).length, 0);
   });

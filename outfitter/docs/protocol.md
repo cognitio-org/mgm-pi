@@ -739,7 +739,7 @@ see `deploy/README.md` "Live-test identity". Laptop clients still use personal t
   task's answer in the same context may draw on it: write there only what the remote caller may
   read. The caller's answer to an INPUT_REQUIRED question (PR6) reaches pi as plain text, not
   wrapped as untrusted A2A input like the task prompt. "Private" memory (`a2a:<tokenId>`,
-  `memory-identity.ts`) means per key and per owner within a trusted team, not isolation from the
+  `agentengine/identity.ts`) means per key and per owner within a trusted team, not isolation from the
   team: anyone who can post into the session can steer what is recorded. The tape's own LiteLLM
   key is in pi's environment, and `redact()` is defence in depth only: the remote caller can read
   that key (shared with the owner's runs of the tape and every A2A key listing it, and not revoked

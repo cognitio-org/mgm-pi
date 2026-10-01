@@ -1,0 +1,81 @@
+kernal/.pi/extensions/outfitter-agentengine/agents.ts
+  s_1d3bdd6f362f9b::t_0beac1e155faf3 1-115
+kernal/.pi/extensions/outfitter-agentengine/index.ts
+  s_1d3bdd6f362f9b::t_4a0d1103d13bd3 13,24
+kernal/tests/agent-engine-tool.test.ts
+  s_1d3bdd6f362f9b::t_ece8d55b53e2f3 1-106
+kernal/tests/outfitter-memory.test.ts
+  s_1d3bdd6f362f9b::t_ec8b47447fae3e 42-43
+outfitter/deploy/agent-engine.md
+  s_1d3bdd6f362f9b::t_e70eb7677002af 129-146
+outfitter/docs/protocol.md
+  s_1d3bdd6f362f9b::t_5b3a14b64965ef 309-325
+outfitter/packages/api/docs/data-model.md
+  s_1d3bdd6f362f9b::t_17fecf6b6b1ffe 127
+outfitter/packages/api/src/admin/ae-ops.ts
+  s_1d3bdd6f362f9b::t_2f80cfcd196bd8 1-352
+outfitter/packages/api/src/admin/drive.ts
+  s_1d3bdd6f362f9b::t_895bebffb6a163 152
+outfitter/packages/api/src/admin/ops.ts
+  s_1d3bdd6f362f9b::t_149ea13322680b 92-96,604-609,611-620,714
+outfitter/packages/api/src/ae-sessions.ts
+  s_1d3bdd6f362f9b::t_bd406430ff1766 1-127
+outfitter/packages/api/src/agentengine/agents.ts
+  s_1d3bdd6f362f9b::t_9e14b75b677bba 2,4-32,34-37,54,56-61,68,71,83-101,106-108,117-124,132-259,261-268,271-401,403,405,412
+outfitter/packages/api/src/agentengine/index.ts
+  s_1d3bdd6f362f9b::t_13af1dbfb683e1 29-30
+outfitter/packages/api/src/routes/agent-engine.ts
+  s_1d3bdd6f362f9b::t_d0668fde5a0517 1-128
+outfitter/packages/api/src/routes/context.ts
+  s_1d3bdd6f362f9b::t_1ca76b2809f54c 3,49-50
+outfitter/packages/api/src/routes/hooks.ts
+  s_1d3bdd6f362f9b::t_d823dbd3c02b84 116-118
+outfitter/packages/api/src/routes/index.ts
+  s_1d3bdd6f362f9b::t_28bf132e00de5e 20,45
+outfitter/packages/api/src/routes/sessions.ts
+  s_1d3bdd6f362f9b::t_50c4ae6e7ce55c 526-527,572-573
+outfitter/packages/api/src/server.ts
+  s_1d3bdd6f362f9b::t_cacca003daecea 7-9,85-86,165,227,273
+outfitter/packages/api/src/store/memory.ts
+  s_1d3bdd6f362f9b::t_b0469b481c8908 57-60,62,1057-1144,1164-1165
+outfitter/packages/api/src/store/mongo.ts
+  s_1d3bdd6f362f9b::t_315e3c2c5e36e6 58-61,64,1374-1484,1504-1505,1530-1531,1566-1569
+outfitter/packages/api/src/store/types.ts
+  s_1d3bdd6f362f9b::t_4c6e53b990a8f1 518-520,1097-1171,1191-1192
+outfitter/packages/api/test/ae-agents.test.ts
+  s_1d3bdd6f362f9b::t_e91b594793b6c2 1-558
+outfitter/packages/api/test/agentengine.test.ts
+  s_1d3bdd6f362f9b::t_0e87cc50882150 311-315
+outfitter/packages/api/test/fake-agent-engine.ts
+  s_1d3bdd6f362f9b::t_6cff0fbe81d766 11-13,42-54,89-94,150-151,155-201,267-278,290-291
+outfitter/packages/api/test/helpers.ts
+  s_1d3bdd6f362f9b::t_e0b7c0e33046b6 55
+outfitter/packages/api/test/mongo-ae.test.ts
+  s_1d3bdd6f362f9b::t_ab2febbc71fa50 1-78
+outfitter/packages/api/test/stop.test.ts
+  s_1d3bdd6f362f9b::t_0671a269184a2a 327-328
+outfitter/packages/web/src/api/client.ts
+  s_1d3bdd6f362f9b::t_ec42b4739f3d7a 170-183,563-579
+outfitter/packages/web/src/components/AeAgentsPanel.tsx
+  s_1d3bdd6f362f9b::t_18794b49506810 1-237
+outfitter/packages/web/src/pages/SettingsPage.tsx
+  s_1d3bdd6f362f9b::t_4d6a5d58326957 18,387-389
+outfitter/packages/web/test/ae-agents-panel.test.tsx
+  s_1d3bdd6f362f9b::t_7d5530d0586f0a 1-152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "2b695713652fa7cb01c7de44539d550950044c62",
+  "prompts": {},
+  "sessions": {
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

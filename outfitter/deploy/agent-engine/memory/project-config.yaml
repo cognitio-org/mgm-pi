@@ -1,0 +1,52 @@
+# Agent Engine memory-only project for Outfitter (E9, spec docs/specs/atlas-agent-engine-and-a2a.md §3).
+# Scaffolded with `agentengine create --memory-only`, then edited. No secrets live here.
+#   Target:   Atlas org mgmonteleone (6aafdde3306e4ae530995071), project outfitter
+#             (6aafddf75566cf48726735bb). CLI context: `outfitter-memory`.
+#   Data:     Flex cluster `outfitter-memory`, via DB user agent-engine-memory (scoped to that
+#             cluster). Databases mdb_memory_<projectId> and mdb_store_<projectId>.
+#   Secrets:  MONGODB_URI (GSM outfitter-agentengine-mongodb-uri)
+#             VOYAGE_API_KEY (GSM ATLAS_AGENTS_KEY)
+#             LLM_API_KEY (GSM outfitter-agentengine-extraction-key)
+# Never deploy an Agent Engine agent in this project: agents can read every project secret.
+memory_only: true
+
+memory:
+  # Memory-server log level. One of: debug | info | warning | error | critical.
+  log_level: info
+
+  # Voyage AI embeddings. The key is the VOYAGE_API_KEY project secret.
+  voyage:
+    model: "voyage-4-large"
+    dimension: 1024
+
+  # Background extraction runs through the LiteLLM gateway (owner decision 2026-10-01).
+  # base_url must be public https; a trailing /v1 is normalised. The key is the LLM_API_KEY project secret.
+  extraction_llm:
+    provider: openai
+    model: "gpt-5-nano"            # $0.05/$0.40 per 1M tokens; move up a tier if memories come out thin
+    base_url: "https://router.kernal.one/v1"
+    auth_header: authorization
+    api_key_secret: LLM_API_KEY
+
+  background_extraction:
+    snapshot:
+      max_messages: 20
+      stale_minutes: 3
+
+  # Taxonomic is left out on purpose: extracted taxonomic memories default to org visibility
+  # (spec §3.1). It is saved explicitly, owner-only, with shared: true.
+  extraction:
+    enabled:
+      - semantic
+      - episodic
+      - procedural
+
+  # Repo scoping (spec §3.1-3.2). This must be in place before the memory server first starts:
+  # indexes are create-only. Never add short_term. It adds 2 indexes, and Flex allows 10 in all.
+  metadata_partition_key:
+    - name: repo
+      type: string
+  metadata_partition_index:
+    semantic: [both]
+    episodic: [both]
+    procedural: [both]

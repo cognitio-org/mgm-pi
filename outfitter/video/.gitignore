@@ -1,0 +1,6 @@
+# Third-party reference footage and frames: look reference only, never committed or shipped.
+reference/
+*.mp4
+*.mov
+*.webm
+out/

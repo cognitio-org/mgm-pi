@@ -48,20 +48,41 @@ def selected(items, only):
 
 def not_found(err):
     s = str(err).lower()
-    return "not found" in s or "404" in s or "not supported" in s or "does not exist" in s
+    return ("not found" in s or "404" in s or "not supported" in s or "does not exist" in s
+            # Vertex answers a model id the project can't see with a 403 that "may not exist"
+            or ("permission" in s and "may not exist" in s))
+
+
+def denied(err):
+    s = str(err).lower()
+    return "permission_denied" in s or "permission denied" in s or "403" in s
+
+
+FIX_ACCESS = f"""
+Every model was refused. Check, in order (as the account `gcloud auth application-default login`
+used):
+  1. APIs on:  gcloud services enable aiplatform.googleapis.com texttospeech.googleapis.com --project {{project}}
+  2. Your role: gcloud projects add-iam-policy-binding {{project}} \\
+                  --member=user:YOUR_EMAIL --role=roles/aiplatform.user
+     (and roles/serviceusage.serviceUsageConsumer for the quota project)
+  3. Quota project: gcloud auth application-default set-quota-project {{project}}
+  4. The model is offered in your project/region: Vertex AI > Model Garden, or pass
+     --image-model / --video-model / --tts-model with an id it lists.
+"""
 
 
 def with_fallback(models, call, label):
-    last = None
+    errors = []
     for m in models:
         try:
             return m, call(m)
         except Exception as e:  # noqa: BLE001 -- surfaced below
             if not not_found(e):
                 raise
-            print(f"  {label}: {m} unavailable ({str(e)[:120]}), trying next", file=sys.stderr)
-            last = e
-    raise SystemExit(f"{label}: none of {models} is available in {PROJECT}: {last}")
+            print(f"  {label}: {m} unavailable ({str(e)[:140]}), trying next", file=sys.stderr)
+            errors.append(e)
+    hint = FIX_ACCESS.format(project=PROJECT) if errors and all(denied(e) for e in errors) else ""
+    raise SystemExit(f"{label}: none of {models} is usable in {PROJECT}.{hint}\nLast error: {errors[-1] if errors else ''}")
 
 
 def genai_client(location):
@@ -93,6 +114,7 @@ def run_stills(spec, args):
             contents = [types.Part.from_bytes(data=r.read_bytes(), mime_type="image/png") for r in refs]
             contents.append(prompt)
             config = types.GenerateContentConfig(
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
                 response_modalities=["IMAGE"],
                 image_config=types.ImageConfig(aspect_ratio=aspect, image_size="2K"),
             )

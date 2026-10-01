@@ -12,7 +12,7 @@ console.log(`fold input: ${chunk.length} messages, ${text.length} chars ≈ ${Ma
 const sections = ["## Goal", "## Constraints", "## Progress", "## Key Decisions", "## Next Steps", "## Critical Context", "<read-files>", "<modified-files>"];
 for (const model of models) {
   const t0 = Date.now();
-  const r = await fetch("https://litellm.augment-code.support/v1/chat/completions", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+  const r = await fetch("https://router.kernal.one/v1/chat/completions", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
     body: JSON.stringify({ model, max_tokens: 1638, messages: [{ role: "system", content: SUMMARY_SYSTEM_PROMPT }, { role: "user", content: prompt }] }) });
   const cost = r.headers.get("x-litellm-response-cost");
   const d = await r.json();

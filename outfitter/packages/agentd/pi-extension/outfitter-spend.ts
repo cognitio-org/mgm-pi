@@ -214,7 +214,7 @@ type PiExtensionApi = {
 /** Root LiteLLM URL (management endpoints live at the root, not under /v1) and the agent's key, same
  * env vars and default as kernal/.pi/extensions/connect/lib.ts's `backends()`/`rootUrl`. */
 function litellmRootUrl(): string {
-  const base = (process.env.LITELLM_BASE_URL || "https://litellm.augment-code.support/v1").trim();
+  const base = (process.env.LITELLM_BASE_URL || "https://router.kernal.one/v1").trim();
   return base.replace(/\/v1\/?$/, "");
 }
 function litellmKey(): string {

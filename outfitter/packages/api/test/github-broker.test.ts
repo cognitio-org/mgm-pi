@@ -100,7 +100,7 @@ function owners(calls: Call[]): string[] {
   return calls.map((c) => `${c.params.owner ?? ""}/${c.params.repo ?? ""}`);
 }
 
-async function socketApp(opts: { mergeFromCloud?: boolean } = {}) {
+async function socketApp(opts: { mergeFromCloud?: boolean; a2a?: boolean } = {}) {
   const store = new MemoryStore();
   const secrets = new MemorySecretsBroker("test-github-token", "llm");
   const calls: Call[] = [];
@@ -109,14 +109,23 @@ async function socketApp(opts: { mergeFromCloud?: boolean } = {}) {
     sleeps.push(ms);
   });
   const app = await buildTestApp({}, { store, secretsBroker: secrets, github });
-  await seedGuru(app.store, opts.mergeFromCloud ? { mergeFromCloud: true } : {});
+  await seedGuru(app.store, {
+    ...(opts.mergeFromCloud ? { mergeFromCloud: true } : {}),
+    // An A2A session's run needs a tape that passes a2aTapeProblem (agentlink.ts).
+    ...(opts.a2a ? { tools: ["read", "bash", "github_pr"] } : {}),
+  });
   const now = new Date().toISOString();
+  if (opts.a2a) {
+    // And an active key behind it.
+    await store.tokens.insert({ id: "k1", ownerEmail: "o@x", name: "k", prefix: "outf_x", hash: "h-k1", createdAt: now, expiresAt: new Date(Date.now() + 86_400_000).toISOString(), kind: "a2a", a2a: { tapes: ["test-guru"], repos: ["acme/widgets"], maxConcurrent: 2 } });
+  }
   const session: Session = {
     id: "s1",
     guruId: "test-guru",
     repo: "acme/widgets",
-    branch: "feature",
+    branch: opts.a2a ? "outfitter/a2a-0123456789ab" : "feature",
     baseBranch: "main",
+    ...(opts.a2a ? { origin: "a2a" as const, a2aTokenId: "k1" } : {}),
     status: "open",
     cost: 0,
     createdAt: now,
@@ -235,6 +244,27 @@ describe("github broker", () => {
     const second = await again.handle({ ...req, op: "github_issue.create", args: { title: "nope" } });
     assert.deepEqual(second, first);
     assert.equal(secondCalls.length, 0);
+  });
+
+  test("E9: an A2A task's session never merges (even on a tape that opts in) or writes to others' PRs and issues", async () => {
+    const a2a = await socketApp({ a2a: true });
+    const agent = await openAgentSocket(a2a.app, a2a.runId);
+    sendHello(agent, a2a.runId, a2a.session.id, a2a.runToken);
+    await agent.nextMessage();
+    // The tape opts in after the run started (a run of a mergeFromCloud tape is refused outright).
+    await a2a.store.gurus.update("test-guru", { mergeFromCloud: true });
+    agent.send({ t: "github.request", reqId: "m1", op: "github_pr.merge", args: { number: 7, method: "squash", sha: SHA }, idempotencyKey: "merge-a2a" });
+    assert.deepEqual(await agent.nextMessage(), { t: "github.result", reqId: "m1", ok: false, error: "not permitted" });
+    // Nor reviews, edits or comments on other pull requests, nor issue writes.
+    for (const [i, op] of ["github_pr.review", "github_pr.edit", "github_pr.comment", "github_issue.close", "github_issue.create"].entries()) {
+      agent.send({ t: "github.request", reqId: `w${i}`, op, args: { number: 9, decision: "approve", body: "x", title: "x" }, idempotencyKey: `a2a-${i}` });
+      assert.deepEqual(await agent.nextMessage(), { t: "github.result", reqId: `w${i}`, ok: false, error: "not permitted" }, op);
+    }
+    assert.equal(a2a.calls.length, 0);
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    a2a.app.stopBackgroundTasks();
+    await a2a.app.fastify.close();
   });
 
   test("github_pr.merge is refused unless the guru opts in, and then uses the session repo", async () => {

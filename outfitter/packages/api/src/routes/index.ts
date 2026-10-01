@@ -18,6 +18,7 @@ import { registerVoiceRoutes } from "./voice.ts";
 import { registerGithubRoutes } from "./github.ts";
 import { registerAdminRoutes } from "./admin.ts";
 import { registerAgentEngineRoutes } from "./agent-engine.ts";
+import { registerA2ARoutes } from "./a2a.ts";
 
 export type { RouteContext } from "./context.ts";
 
@@ -60,5 +61,8 @@ export async function registerRoutes(app: FastifyInstance, ctx: RouteContext): P
   await registerBrowserRoutes(app, ctx);
   if (ctx.config.role !== "web") {
     await registerHookRoutes(app, ctx);
+    // E9 §5.1: the A2A server lives on the public link origin (and "all" in dev). The web role is
+    // behind IAP, which no A2A client can pass.
+    await registerA2ARoutes(app, ctx);
   }
 }

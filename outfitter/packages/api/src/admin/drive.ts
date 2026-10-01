@@ -17,6 +17,8 @@ import { isOperator } from "../auth.ts";
 import type { Config } from "../config.ts";
 import type { Guru, Session, Store } from "../store/types.ts";
 import { tapeCapabilities } from "../gurus-service.ts";
+import { a2aTapeProblem } from "../a2a/keys.ts";
+import { isA2ASession } from "../secrets.ts";
 import { APPROVAL_TIMEOUT_MS, requestApproval, type ApprovalDeps } from "./approvals.ts";
 import {
   CARD_FIELDS,
@@ -103,7 +105,12 @@ export class DriveAdmin {
     const session = run ? await store.sessions.findById(run.sessionId) : null;
     if (!run || !session) return { error: "this run has no session" };
     const guru = await store.gurus.findById(session.guruId);
-    const capabilities = guru ? tapeCapabilities(guru) : [];
+    // E9 security review: an A2A session's Drive never trusts its tape as it stands now. A tape
+    // that stopped passing a2aTapeProblem (it gained admin tools or agentEngine after the task
+    // started) gets nothing; one that passes reaches `memory` at most, scoped to the key (§5.4).
+    const a2a = isA2ASession(session);
+    if (a2a && guru && a2aTapeProblem(guru)) return { error: "not permitted: this A2A session's tape can't use the admin socket" };
+    const capabilities = guru ? tapeCapabilities(guru).filter((c) => !a2a || c === "memory") : [];
     // No capability at all: refused before anything, unaudited, as before E9. Otherwise runAdminOp
     // checks the op's own capability against these.
     if (!guru || capabilities.length === 0) return { error: capabilityOff(op) };
@@ -115,7 +122,7 @@ export class DriveAdmin {
       caller: {
         email: owner,
         via: "drive",
-        operator: guru.adminTools === "operator" && isOperator(owner, this.deps.config.operators),
+        operator: !a2a && guru.adminTools === "operator" && isOperator(owner, this.deps.config.operators),
         sessionId: session.id,
         runId,
         capabilities,

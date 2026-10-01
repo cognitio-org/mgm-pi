@@ -677,6 +677,79 @@ removed from `outfitter-store.ts` entirely, not left in as a fallback.
 token for that client ID *is* accepted, in `Proxy-Authorization`. The live-test identity uses it;
 see `deploy/README.md` "Live-test identity". Laptop clients still use personal tokens on link.)
 
+## A2A server (E9 §5, PR5)
+
+`docs/specs/atlas-agent-engine-and-a2a.md` §5 is the design; this is what the link role (and
+"all") serves today. The web role serves none of it.
+
+- **A2A keys** are `ApiToken`s with `kind: "a2a"` and `a2a: {tapes, repos, maxConcurrent}`, made on
+  the Dongles page (`POST /api/me/tokens` with `kind: "a2a"`; a person only, never with a token).
+  Same format, hash, 90-day TTL and revocation as a Dongle. **Each kind works on its own routes
+  only** (`auth.ts`'s `verifyApiToken`): an A2A key gets 401 on `/api/*`, a Dongle gets 401 on
+  `/a2a`. A tape with admin tools, `agentEngine`, `memory: "auto"`, `mergeFromCloud`, a non-empty
+  `env`, no `tools` list, or a tool outside `A2A_TAPE_TOOLS` (`read grep find ls bash edit write git
+  github_pr memory`; never `subagent*`, `agent_engine`, `github_issue`) can't be on a key, and is
+  refused again at every task start and every run spec (`a2a/keys.ts`'s `a2aTapeProblem`). Each
+  tape also needs its own `outfitter-litellm-key-<tapeId>` secret: an A2A session never gets the
+  org-wide `outfitter-litellm-key-default` (`secrets.ts`); without one the key can't be made, a task
+  is REJECTED "tape has no dedicated LiteLLM key", and a run is refused (4412).
+- **Revoking** an A2A key (Dongles page, or the operator's offboarding revoke) cancels its open
+  tasks ("the A2A key was revoked") and stops every Drive it still holds; the tick sweep does the
+  same for a key revoked elsewhere (CANCELED) or expired (FAILED "the A2A key has expired"). A
+  bearer that failed lookup is refused from a per-instance cache for 60 s without a store read;
+  per-IP limiting (Cloud Armor in front of link) is an owner follow-up.
+- **`GET /.well-known/agent-card.json`**: public, `Access-Control-Allow-Origin: *`, `Cache-Control`,
+  `ETag`/`Last-Modified` (304 on `If-None-Match`). One generic `coding` skill, never a tape name.
+  `capabilities.streaming` is false until PR6.
+- **`POST /a2a`** (and `/a2a/`): JSON-RPC 2.0, A2A v1.0 method names, `A2A-Version: 1.0` as a
+  header or query parameter (missing → -32009). `Authorization: Bearer <A2A key>`; a bad key is
+  HTTP 401, over 60 requests a minute per key HTTP 429, a body over 64 KB HTTP 413. A wrong
+  content type is -32005, bad JSON -32700.
+- **Methods:** `SendMessage`, `GetTask`, `ListTasks`, `CancelTask`, `GetExtendedAgentCard` (the
+  key's usable tapes as skills). Push-notification methods are -32003; `SendStreamingMessage` and
+  `SubscribeToTask` are -32004 until PR6.
+- **Tasks** live in `a2aTasks` (`store/types.ts`'s `A2ATask`), always looked up by key. A new task
+  creates a session as the key's owner (`session-create.ts`, the same path as `POST
+  /api/sessions`) with `origin: "a2a"`, `a2aTokenId`, name `A2A: <first line>` and branch
+  `outfitter/a2a-<task12>` (12 hex characters of the task id), whatever the client sent; its runs
+  may push only that branch (`branch-policy.ts`'s `branchPrefixForSession`), and an A2A session
+  whose branch isn't `^outfitter/a2a-[0-9a-f]{12,}$` gets no run, no push prefix and no GitHub
+  broker writes (fail closed). `PUT /api/sessions/:id/import` is 409 for an A2A session. The prompt is wrapped as untrusted input. The
+  tape and repo come from `message.metadata["https://kernal.one/a2a/ext/outfitter-task/v1"]`
+  (`{skill?, repo?, baseBranch?}`); outside the key's lists the task is `TASK_STATE_REJECTED` with
+  the reason as `status.message`. `contextId` is server-issued, never a session id.
+- **States** come from the session's run and the task's turn waiter: SUBMITTED until a run takes
+  the mail, WORKING while it works ("waiting for the owner" while a UI request or approval is
+  pending; those are never answered over A2A), COMPLETED on settle (with the final assistant text
+  as an artifact), FAILED when the turn ends otherwise, CANCELED by `CancelTask` (the run stopped
+  with reason `a2a`, unsent mail marked dead). The tick refreshes open tasks.
+- A repeated `messageId` from the same key returns the first task. `maxConcurrent` (default 2)
+  per key counts open tasks and finished ones whose Drive is still up; one open task per context.
+  A blocking `SendMessage` waits at most 25 s (two at once per key per instance), then returns the
+  task as it is. Finished rows expire after 30 days; a rejected one keeps no copy of the message.
+- An A2A session's agent can't merge, and through the GitHub broker may only read and open its
+  own branch's pull request (`github-broker.ts`'s `A2A_GITHUB_OPS`). Internal errors go back as
+  "Internal error" only.
+- An A2A session's run.spec never carries the tape's `env`. Its Drive's admin socket refuses every
+  op when the tape no longer passes `a2aTapeProblem`, and otherwise reaches `memory` only (never
+  `admin` or `agentEngine`, whatever the tape gained since). Result, status and (PR6) question text
+  go through `search/redact.ts`'s `redact()` before they leave over A2A.
+- **What A2A does not isolate (by design):** whatever the owner, or a teammate who can post into
+  the session, writes in an A2A session's web view becomes part of its transcript, and a later
+  task's answer in the same context may draw on it: write there only what the remote caller may
+  read. The caller's answer to an INPUT_REQUIRED question (PR6) reaches pi as plain text, not
+  wrapped as untrusted A2A input like the task prompt. "Private" memory (`a2a:<tokenId>`,
+  `agentengine/identity.ts`) means per key and per owner within a trusted team, not isolation from the
+  team: anyone who can post into the session can steer what is recorded. The tape's own LiteLLM
+  key is in pi's environment, and `redact()` is defence in depth only: the remote caller can read
+  that key (shared with the owner's runs of the tape and every A2A key listing it, and not revoked
+  with the A2A key). Use A2A-only tapes with a budgeted key, and rotate it when you revoke; per-task
+  minted keys are a follow-up.
+- An A2A session can't send or receive `outfitter_send` mail (a send is a session-file entry its
+  `bash` could forge), its run is refused once its key is revoked or expired, it never gets the
+  shared `outfitter-github-token-default` PAT or a per-tape LiteLLM secret that copies the org key,
+  and the owner's shared browser never answers its capture/action/inspect requests.
+
 ## Admin ops (Sysop tools, #286)
 
 `POST /api/admin/ops`, on both origins, with a personal API token (dev mode also accepts the dev

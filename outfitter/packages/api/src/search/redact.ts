@@ -24,6 +24,9 @@ const PATTERNS: RegExp[] = [
   // Also with a prefix, as env vars have one (VOYAGE_API_KEY=, NGROK_AUTHTOKEN=): \b doesn't fire after `_`.
   /(?<![A-Za-z0-9])((?:[A-Za-z0-9]+_)*(?:api[_-]?key|secret|password|passwd|token|authtoken|access[_-]?key)["']?\s*[:=]\s*["']?)[^\s"',;]{8,}/gi,
   /\bpa-[A-Za-z0-9_-]{30,}/g, // Voyage AI keys
+  // E9 PR5: env-style names ending in a bare `_KEY` (`OUTFITTER_LITELLM_KEY=`), which the prefixed
+  // pattern above doesn't list. The prefix is required, so a lone `key=` isn't caught.
+  /(?<![A-Za-z0-9])([A-Za-z0-9]+_(?:[A-Za-z0-9]+_)*key["']?\s*[:=]\s*["']?)[^\s"',;]{8,}/gi,
 ];
 
 export function redact(text: string): string {

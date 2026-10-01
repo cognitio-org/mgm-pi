@@ -36,8 +36,8 @@
 import { OAuth2Client } from "google-auth-library";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { tokenAudiences, type Config } from "./config.ts";
-import type { Store } from "./store/types.ts";
-import { TOKEN_PREFIX, hashToken, isTokenActive } from "./tokens.ts";
+import type { ApiToken, ApiTokenKind, Store } from "./store/types.ts";
+import { TOKEN_PREFIX, hashToken, isTokenActive, tokenKind } from "./tokens.ts";
 
 export interface Identity {
   email: string;
@@ -77,18 +77,23 @@ function headerString(req: RequestLike, name: string): string | undefined {
 
 const IAP_ISSUERS = ["https://cloud.google.com/iap"];
 
-/** Resolves an `outf_...` bearer token to its owner's identity via sha256 lookup against the
- * tokens store. Never reveals whether a rejected token was unknown, revoked or expired (see
- * tokens.ts's tokenExpiresAt) -- all throw the same generic message, since telling them apart
- * would confirm to a guesser that they'd found a once-valid token. Updates lastUsedAt at most once per LAST_USED_THROTTLE_MS, best-effort (a
- * failed update never fails the auth check itself). Always `operator: false` here -- a token's
- * owner only becomes an operator through identityFromRequest's OUTFITTER_OPERATORS check, never
- * on the "link" role (see identityFromLinkRequest). */
-export async function identityFromApiToken(bearer: string, store: TokenStore): Promise<Identity> {
+/** Resolves an `outf_...` bearer token to its stored record. Never reveals whether a rejected
+ * token was unknown, revoked, expired (see tokens.ts's tokenExpiresAt) or of the wrong kind -- all
+ * throw the same generic message, since telling them apart would confirm to a guesser that they'd
+ * found a once-valid token. E9 §5.2: each kind works on its own routes only. A Dongle (`kind`
+ * absent or "dongle") is what /api/* accepts; an A2A key is what the link role's /a2a accepts
+ * (routes/a2a.ts). So an A2A key on /api/* and a Dongle on /a2a both get 401. Updates lastUsedAt
+ * at most once per LAST_USED_THROTTLE_MS, best-effort (a failed update never fails the auth check
+ * itself). */
+/** verifyApiToken's refusal of the token itself (unknown, revoked, expired, the wrong kind), as
+ * opposed to a store error, which is not the token's fault. */
+export class InvalidApiTokenError extends Error {}
+
+export async function verifyApiToken(bearer: string, store: TokenStore, kind: ApiTokenKind): Promise<ApiToken> {
   const record = await store.tokens.findByHash(hashToken(bearer));
   const now = Date.now();
-  if (!record || !isTokenActive(record, now)) {
-    throw new Error("invalid or revoked API token");
+  if (!record || !isTokenActive(record, now) || tokenKind(record) !== kind) {
+    throw new InvalidApiTokenError("invalid or revoked API token");
   }
 
   const lastUsed = record.lastUsedAt ? Date.parse(record.lastUsedAt) : Number.NaN;
@@ -99,6 +104,15 @@ export async function identityFromApiToken(bearer: string, store: TokenStore): P
       // best-effort; a failed lastUsedAt write must never block auth.
     }
   }
+  return record;
+}
+
+/** verifyApiToken for a Dongle (the only kind /api/* accepts), as its owner's identity. Always
+ * `operator: false` here -- a token's owner only becomes an operator through identityFromRequest's
+ * OUTFITTER_OPERATORS check, never on the "link" role (see identityFromLinkRequest). An A2A key
+ * never resolves here; routes/a2a.ts calls verifyApiToken with "a2a" itself. */
+export async function identityFromApiToken(bearer: string, store: TokenStore): Promise<Identity> {
+  const record = await verifyApiToken(bearer, store, "dongle");
   return { email: record.ownerEmail, operator: false, viaToken: true };
 }
 

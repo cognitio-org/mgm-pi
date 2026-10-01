@@ -326,6 +326,7 @@ describe("agentlink up-frame ordering", () => {
       turnWaiters: inner.turnWaiters,
       aeAgents: inner.aeAgents,
       aeSessions: inner.aeSessions,
+      a2aTasks: inner.a2aTasks,
       close: () => inner.close(),
     };
 

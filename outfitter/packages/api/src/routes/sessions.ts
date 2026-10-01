@@ -6,13 +6,14 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { RouteContext } from "./context.ts";
 import type { GithubCredential, Session, PiEntry, Run } from "../store/types.ts";
 import { mailHeldNotice, MAIL_MAX_TEXT } from "../mail.ts";
-import { GITHUB_TOKEN_DEFAULT_SECRET } from "../secrets.ts";
+import { GITHUB_TOKEN_DEFAULT_SECRET, isA2ASession } from "../secrets.ts";
 import { GITHUB_APP_ID_SECRET, GITHUB_APP_INSTALLATION_SECRET, GITHUB_APP_KEY_SECRET, GITHUB_APP_SLUG_SECRET, githubAppSecretsUsable, githubRepoName } from "../github-app.ts";
 import { sessionGithubTokenSecretName } from "../operator.ts";
 import { entryForWire } from "../entry-wire.ts";
 import { summarizeStartup } from "../startup.ts";
 import { sessionJsonl } from "../session-jsonl.ts";
 import { SessionArchivedError, SessionFormattedError } from "../runs.ts";
+import { createSession, postUserMail } from "../session-create.ts";
 import type { Identity } from "../auth.ts";
 
 /** Same checks `GithubAppTokens.mint` uses before it calls GitHub. Existence of a secret version is not enough. */
@@ -295,6 +296,10 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
 
     const existing = await ctx.store.sessions.findById(id);
     if (existing?.archivedAt) return reply.code(409).send({ error: ARCHIVED_ERROR });
+    // E9 security review: an A2A task's session keeps the branch, repo and transcript its task
+    // made. A teleport import would rewrite them (x-outfitter-branch) under the remote caller's
+    // next turn; the owner exports it instead.
+    if (existing && isA2ASession(existing)) return reply.code(409).send({ error: "an A2A task's session can't be imported into" });
     if (existing?.repo && carried.patch?.repo && existing.repo !== carried.patch.repo) {
       return reply.code(409).send({ error: "this session is already bound to a repository" });
     }
@@ -431,28 +436,16 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     const guru = await ctx.store.gurus.findById(body.guruId);
     if (!guru) return reply.code(400).send({ error: `unknown guruId: ${body.guruId}` });
 
-    const now = new Date().toISOString();
-    const session: Session = {
-      id: randomUUID(),
-      name: body.name,
-      // Only archive, restore and format check it -- see Session.ownerEmail's doc comment and
-      // EPIC.md's E2.2 note (finding #5, docs/reports/security-review-pr1.md).
+    const { session, run } = await createSession(ctx, {
       ownerEmail: req.identity?.email,
       guruId: body.guruId,
-      // repo omitted = non-coding session (protocol.md): no clone, no branch.
-      repo: body.repo ?? null,
-      baseBranch: body.repo ? body.baseBranch : undefined,
-      branch: body.repo ? (body.branch ?? `outfitter/${randomUUID().slice(0, 8)}`) : undefined,
+      repo: body.repo,
+      baseBranch: body.baseBranch,
+      branch: body.branch,
       prompt: body.prompt,
-      modelOverride: body.model,
-      status: "open",
-      cost: 0,
-      createdAt: now,
-      updatedAt: now,
-    };
-    await ctx.store.sessions.insert(session);
-
-    const run = await postUserMail(ctx, session.id, req.identity?.email, body.prompt);
+      name: body.name,
+      model: body.model,
+    });
     return reply.code(201).send({ session, run });
   });
 
@@ -608,22 +601,6 @@ async function stopRun(ctx: RouteContext, run: Run): Promise<Run | null> {
   // STOP_GRACE_MS, RunManager.reconcileStoppingOnce cancels the sandbox via the provider.
   await ctx.agentLink.send(run.id, { t: "stop", reason: "user" });
   return ctx.store.runs.update(run.id, { state: "stopping", updatedAt: new Date().toISOString() });
-}
-
-/** Stores a browser message as mail (so a failed wake or a run that dies before it is ready can't
- * lose it); MailService.post also makes the one inline wake attempt. Returns the session's run, or
- * null when that wake failed -- the message is queued either way and Cloud Tasks / the /tick sweep
- * keep trying, so the caller must not retry (it would enqueue the text twice). */
-async function postUserMail(
-  ctx: RouteContext,
-  sessionId: string,
-  email: string | undefined,
-  text: string,
-  behavior?: "steer" | "followUp",
-) {
-  await ctx.mail.post({ sessionId, from: { kind: "user", email }, text, behavior });
-  await ctx.agentLink.deliverMailForSession(sessionId);
-  return ctx.store.runs.findActiveForSession(sessionId);
 }
 
 export const ARCHIVED_ERROR = "this floppy is archived; restore it first";

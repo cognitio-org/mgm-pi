@@ -10,6 +10,7 @@ import { AeSessions } from "./ae-sessions.ts";
 import { createNgrokApi, type NgrokApi } from "./ngrok-api.ts";
 import { PreviewService } from "./previews.ts";
 import { TurnWaiters } from "./turns.ts";
+import { A2ATasks } from "./a2a/tasks.ts";
 import { VoiceService } from "./voice.ts";
 import { VoiceUsage } from "./voice-usage.ts";
 import Fastify, { type FastifyInstance } from "fastify";
@@ -84,6 +85,8 @@ export interface App {
   turns: TurnWaiters;
   /** E9 §4: stops the Agent Engine sessions of closed Outfitter sessions. */
   aeSessions: AeSessions;
+  /** E9 §5.3 A2A tasks (tests reach endForKey and get through it). */
+  a2a: A2ATasks;
   /** Stops the run reconciler interval, (role link/all) the down-queue poller, and (role web/all)
    * the provider status poller; call from tests and from main.ts on shutdown. */
   stopBackgroundTasks: () => void;
@@ -124,6 +127,8 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   // E9 §1: turn waiters (settle, run end, deadline) for A2A tasks and delegation.
   const turns = new TurnWaiters(store, runs, (msg, err) => fastify.log.warn({ err }, msg));
   agentLink.setTurnWaiters(turns);
+  // E9 §5.3: A2A tasks, on the store, read through their sessions' runs and turn waiters.
+  const a2a = new A2ATasks({ store, runs, turns, mail, agentLink, secrets: secretsBroker, log: (msg, err) => fastify.log.warn({ err }, msg) });
   // #193: a run whose agent vanished without a bye gets its sandbox's exit reason read promptly.
   agentLink.onAgentLost((runId) => runs.noteAgentLost(runId));
 
@@ -225,6 +230,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     previews,
     turns,
     aeSessions,
+    a2a,
     providers,
     voice:
       opts.voice ??
@@ -270,7 +276,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     ssePoller.stop();
   };
 
-  return { fastify, runs, agentLink, sse, laptopProbe, providerStatus, mail, previews, turns, aeSessions, stopBackgroundTasks };
+  return { fastify, runs, agentLink, sse, laptopProbe, providerStatus, mail, previews, turns, aeSessions, a2a, stopBackgroundTasks };
 }
 
 /** GET /api/sessions/:id/browser/captures/:captureId, or undefined. Query strings are ignored. */

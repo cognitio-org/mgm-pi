@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 import { MemoryStore } from "../src/store/memory.ts";
 import { runAdminOp, type AdminCaller } from "../src/admin/ops.ts";
 import { hasAdminTools, tapeCapabilities, updateGuru } from "../src/gurus-service.ts";
+import { a2aTapeProblem } from "../src/a2a/keys.ts";
 
 const reference = readFileSync(new URL("../../../../kernal/skills/outfitter-admin/references/e9-tapes.md", import.meta.url), "utf8");
 const calls = [...reference.matchAll(/```json\n([\s\S]*?)```/g)].map((m) => JSON.parse(m[1]) as { action: string; id: string; fields: Record<string, unknown> });
@@ -50,6 +51,8 @@ describe("E9 tape definitions (outfitter-admin references/e9-tapes.md)", () => {
   test("a2a-coder: no subagent tools, nothing an A2A key refuses, memory tool only after the owner's edit", async () => {
     const store = new MemoryStore();
     const tape = await create(store, "a2a-coder");
+    // PR5's A2A key rule as it stands (A2A_TAPE_TOOLS allowlist, no env or packages).
+    assert.equal(a2aTapeProblem(tape), undefined, "an A2A key may list a2a-coder as created");
     for (const t of ["subagent", "bg_wait", "subagent_supervisor", "subagents_enable", "agent_engine"]) assert.ok(!tape.tools?.includes(t), t);
     assert.ok(tape.tools?.includes("memory") && tape.tools.includes("edit") && tape.tools.includes("bash"));
     const edited = await updateGuru(store, "a2a-coder", { memory: "tool" }, human);
@@ -61,5 +64,6 @@ describe("E9 tape definitions (outfitter-admin references/e9-tapes.md)", () => {
     assert.equal(g.memory, "tool");
     assert.notEqual(g.mergeFromCloud, true);
     assert.deepEqual(tapeCapabilities(g), ["memory"]);
+    assert.equal(a2aTapeProblem(g), undefined, "an A2A key may list a2a-coder after the owner's edit");
   });
 });

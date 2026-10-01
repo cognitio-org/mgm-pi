@@ -51,6 +51,8 @@ the run.
 - **No admin tools, no `agentEngine`, no `mergeFromCloud`.** A2A keys refuse a tape with any of
   them, and with `memory: auto`.
 - **Memory: tool only.** Keep the explicit `tools` list, so what a remote task can use stays fixed.
+  A2A keys also refuse a tape with no `tools` list, a tool outside the A2A set (`read`, `grep`,
+  `find`, `ls`, `bash`, `edit`, `write`, `git`, `github_pr`, `memory`), `env` or `packages`.
 
 ```json
 {
@@ -66,8 +68,10 @@ the run.
 ```
 
 After it is created, tell the person to set **Memory: tool** in the web tape editor (never auto), and
-to leave Agent Engine and Admin tools off. Then they can name `a2a-coder` in an A2A key on the
-Dongles page.
+to leave Agent Engine and Admin tools off. A remote caller never spends the org-wide LiteLLM key,
+so the tape also needs its own budgeted key in Secret Manager, `outfitter-litellm-key-a2a-coder`
+(not a copy of the org key); without it the A2A key can't be created. Then they can name
+`a2a-coder` in an A2A key on the Dongles page.
 
 `model` is the fleet default here. Use another model only if the person asks. No `thinking` is set,
 so pi's default applies.

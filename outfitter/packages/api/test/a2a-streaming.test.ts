@@ -16,6 +16,8 @@ import { GithubBroker, type GithubResponse } from "../src/github-broker.ts";
 import { MemorySecretsBroker } from "../src/secrets.ts";
 
 const OWNER = "owner@mgms.eu";
+// PR5's A2A tape rule (a2aTapeProblem): an explicit tools list inside A2A_TAPE_TOOLS, no env/packages.
+const A2A_TOOLS = ["read", "bash", "edit", "write", "git", "github_pr"];
 const LINK = "https://link.example";
 const SHA = "0123456789abcdef0123456789abcdef01234567";
 
@@ -28,7 +30,7 @@ interface Setup {
 
 async function setup(env: Record<string, string> = {}, opts: { store?: Store; github?: GithubBroker; scope?: Partial<A2AKeyScope> } = {}): Promise<Setup> {
   const store = opts.store ?? new MemoryStore();
-  if (!(await store.gurus.findById("coder"))) await seedGuru(store, { id: "coder", name: "Coder" });
+  if (!(await store.gurus.findById("coder"))) await seedGuru(store, { id: "coder", name: "Coder", tools: A2A_TOOLS });
   const token = generateToken();
   const now = Date.now();
   const record: ApiToken = {
@@ -667,8 +669,14 @@ describe("GithubBroker.openPullUrl (the result's prUrl)", () => {
   test("asks for an open PR with head owner:branch and returns its github.com URL", async () => {
     const calls: Array<{ route: string; params: Record<string, unknown> }> = [];
     const broker = fakePulls(calls, () => ({ status: 200, data: [{ html_url: "https://github.com/acme/widgets/pull/3" }], headers: {} }));
-    assert.equal(await broker.openPullUrl(session, "outfitter/a2a-12345678"), "https://github.com/acme/widgets/pull/3");
-    assert.deepEqual(calls[0].params, { owner: "acme", repo: "widgets", head: "acme:outfitter/a2a-12345678", state: "open", per_page: 1 });
+    assert.equal(await broker.openPullUrl(session, "outfitter/a2a-0123456789ab"), "https://github.com/acme/widgets/pull/3");
+    assert.deepEqual(calls[0].params, { owner: "acme", repo: "widgets", head: "acme:outfitter/a2a-0123456789ab", state: "open", per_page: 1 });
+    // An A2A session: only its own outfitter/a2a-* branch is looked up (the broker gate's rule).
+    const a2a = { ...session, origin: "a2a" as const, a2aTokenId: "k1", branch: "outfitter/a2a-0123456789ab" };
+    assert.equal(await broker.openPullUrl(a2a, "outfitter/a2a-0123456789ab"), "https://github.com/acme/widgets/pull/3");
+    assert.equal(await broker.openPullUrl(a2a, "outfitter/other"), undefined);
+    assert.equal(await broker.openPullUrl({ ...a2a, branch: "feature" }, "feature"), undefined);
+    assert.equal(calls.length, 2, "no lookup for a branch the A2A session doesn't own");
   });
 
   test("nothing on no PR, an error, a non-GitHub URL, no token or no repo", async () => {

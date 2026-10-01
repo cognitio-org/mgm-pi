@@ -95,7 +95,8 @@ const app = await buildTestApp(
   { a2aHandler: (opts) => new TckHandler(opts) },
 );
 app.fastify.log.level = "warn";
-await seedGuru(app.store, { id: "coder", name: "Coder" });
+// PR5's A2A tape rule (a2aTapeProblem): an explicit tools list inside A2A_TAPE_TOOLS.
+await seedGuru(app.store, { id: "coder", name: "Coder", tools: ["read", "bash", "edit", "write"] });
 const token = generateToken();
 const now = Date.now();
 await app.store.tokens.insert({

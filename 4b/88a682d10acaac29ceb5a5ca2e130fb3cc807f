@@ -1,0 +1,93 @@
+outfitter/integrations/agent-engine/pyproject.toml
+  s_1d3bdd6f362f9b::t_f45a43ca0cafd0 11
+outfitter/packages/web/package.json
+  s_1d3bdd6f362f9b::t_f45a43ca0cafd0 20
+outfitter/packages/agentd/package.json
+  s_1d3bdd6f362f9b::t_f45a43ca0cafd0 18
+outfitter/packages/api/package.json
+  s_1d3bdd6f362f9b::t_f45a43ca0cafd0 22
+kernal/.pi/extensions/sentry/config.ts
+  s_1d3bdd6f362f9b::t_e01556bd8d7e75 1-54
+kernal/package-lock.json
+  s_1d3bdd6f362f9b::t_61f1d224075f89 11-12,1915-2562
+kernal/package.json
+  s_1d3bdd6f362f9b::t_5436d2d212198b 17-18
+outfitter/integrations/agent-engine/sample-agent/agents/outfitter-delegate/src/outfitter_delegate/main.py
+  s_1d3bdd6f362f9b::t_ea941ff3d590eb 21,25-30,63-71
+outfitter/integrations/agent-engine/uv.lock
+  s_1d3bdd6f362f9b::t_4f93f0f0d6f36a 1711,1730
+outfitter/packages/agentd/src/main.ts
+  s_1d3bdd6f362f9b::t_073b00fc583eef 34,83-88,97,169
+outfitter/packages/agentd/src/run.ts
+  s_1d3bdd6f362f9b::t_1f135b4981aa1f 59,473-476,594
+outfitter/packages/api/src/config.ts
+  s_1d3bdd6f362f9b::t_af38f1adb47d9b 126-128,522
+outfitter/packages/api/src/main.ts
+  s_1d3bdd6f362f9b::t_491290fd54bbc0 2,18-20
+outfitter/packages/api/src/sentry.ts
+  s_1d3bdd6f362f9b::t_427ecbb10a9497 1-64
+outfitter/packages/api/src/server.ts
+  s_1d3bdd6f362f9b::t_1070e99226bead 41,109-126
+outfitter/packages/api/src/types/fastify.d.ts
+  s_1d3bdd6f362f9b::t_0b82ab988811f2 2,8-10
+outfitter/packages/web/src/components/ErrorBoundary.tsx
+  s_1d3bdd6f362f9b::t_7c536ef0783112 2,85-88
+outfitter/packages/web/src/main.tsx
+  s_1d3bdd6f362f9b::t_d0aa5966e87071 6,8-9
+outfitter/packages/web/src/vite-env.d.ts
+  s_1d3bdd6f362f9b::t_ec59359016da81 8-11
+outfitter/packages/web/test/error-boundary.test.tsx
+  s_1d3bdd6f362f9b::t_d006871e148629 2,5-13,91-103
+kernal/.pi/extensions/sentry/client.ts
+  s_a563b1072eb2b4::t_0d51564cd8b3ec 1-75
+kernal/.pi/extensions/sentry/index.ts
+  s_a563b1072eb2b4::t_530b2dea73c9ce 1-101
+outfitter/integrations/agent-engine/sample-agent/agents/outfitter-delegate/src/outfitter_delegate/sentry_config.py
+  s_a563b1072eb2b4::t_eabc7f9bb881d4 1-101
+outfitter/integrations/agent-engine/sentry_config.py
+  s_a563b1072eb2b4::t_cbcc537e7c7149 1-101
+outfitter/packages/agentd/src/sentry.ts
+  s_30935801e5d99b::t_fdc0cff6d1d522 1-73
+outfitter/packages/agentd/test/run.test.ts
+  s_a563b1072eb2b4::t_e3ae1da215361f 15,853-886
+outfitter/packages/agentd/test/sentry.test.ts
+  s_a563b1072eb2b4::t_c4dce91fdbe8d3 1-117
+outfitter/packages/api/test/sentry.test.ts
+  s_a563b1072eb2b4::t_d398111e24f67d 1-121
+outfitter/packages/web/src/lib/sentry.ts
+  s_a563b1072eb2b4::t_ceeeb9980875df 1-47
+outfitter/packages/web/test/sentry.test.ts
+  s_a563b1072eb2b4::t_8d8121fccf22c4 1-67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "4b88a682d10acaac29ceb5a5ca2e130fb3cc807f",
+  "prompts": {},
+  "sessions": {
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    },
+    "s_30935801e5d99b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a8e3ffd24438d6ba5",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_a563b1072eb2b4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a5b13e302ffb6253c",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

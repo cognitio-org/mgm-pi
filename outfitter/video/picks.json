@@ -9,7 +9,9 @@
     "card-fleet": "stills/card-fleet-take3.png",
     "crt-front": "stills/crt-front-take3.png",
     "crt-angle": "stills/crt-angle-take3.png",
-    "crt-shoulder": "stills/crt-shoulder-take3.png"
+    "crt-shoulder": "stills/crt-shoulder-take3.png",
+    "rocky-lab": "stills/rocky-lab-take2.png",
+    "rocky-side": "stills/rocky-side-take3.png"
   },
   "shots": {
     "02-sidewalk": "veo/02-sidewalk-take1.mp4",
@@ -21,7 +23,7 @@
   "signed": {
     "12-rocky": {
       "file": "12-rocky.mp4",
-      "from": "veo/12-rocky-take1.mp4",
+      "from": "veo/12-rocky-take2.mp4",
       "name": "Rambo",
       "start": 5.3,
       "write": 1.2

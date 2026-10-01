@@ -76,6 +76,40 @@ TRANSIENT = ("429", "resource_exhausted", "resource has been exhausted",  # per-
              "connection reset", "connection aborted", "temporarily")
 FAILED = []  # takes that failed for good this run; a rerun retries just these
 
+# ESTIMATED list prices in USD (Sep 2026 public price lists, not your invoice -- the APIs return no
+# prices; Billing > Reports is the truth). Edit if Google's pricing page says otherwise.
+# Image: per 1M tokens (input, output); Veo: per second of video without audio; TTS: per 1M tokens
+# (text in, audio out) with audio at ~25 tokens per second.
+RATES = {
+    "gemini-3-pro-image": (2.0, 120.0), "gemini-3-pro-image-preview": (2.0, 120.0),
+    "gemini-3.1-flash-image": (0.5, 60.0), "gemini-2.5-flash-image": (0.3, 30.0),
+    "veo-3.1-generate-001": 0.20, "veo-3.1-generate-preview": 0.20, "veo-3.1-fast-generate-001": 0.10,
+    "veo-3.1-lite-generate-001": 0.03, "veo-3.0-generate-001": 0.20,
+    "gemini-2.5-pro-tts": (1.0, 20.0), "gemini-3.1-flash-tts-preview": (0.5, 10.0), "gemini-2.5-flash-tts": (0.5, 10.0),
+}
+SPENT = []  # estimated USD per successful take this run
+
+
+def estimate(model, *, tokens_in=0, tokens_out=0, seconds=0.0, audio_seconds=0.0, chars=0):
+    """Rough cost of one successful take, recorded for the end-of-run total. None if unknown."""
+    rate = RATES.get(model)
+    if rate is None:
+        return None
+    if isinstance(rate, float):                          # Veo: per second
+        usd = rate * seconds
+    elif audio_seconds or chars:                         # TTS: ~4 chars per text token
+        usd = (chars / 4 * rate[0] + audio_seconds * 25 * rate[1]) / 1e6
+    else:                                                # image: token counts from the response
+        usd = (tokens_in * rate[0] + tokens_out * rate[1]) / 1e6
+    SPENT.append(usd)
+    return usd
+
+
+def cost_note(usd):
+    if usd is None:
+        return ""
+    return ", est. <$0.01" if usd < 0.005 else f", est. ${usd:.2f}"
+
 
 def transient(err):
     s = str(err).lower()
@@ -165,7 +199,10 @@ def run_stills(spec, args):
             chosen = out / f"{st['id']}.png"
             if not chosen.exists():
                 chosen.write_bytes(img)
-            print(f"  wrote {path} ({model})")
+            u = resp.usage_metadata
+            usd = estimate(model, tokens_in=(u.prompt_token_count or 0) if u else 0,
+                           tokens_out=(u.candidates_token_count or 1120) if u else 1120)
+            print(f"  wrote {path} ({model}{cost_note(usd)})")
 
 
 # --- shots --------------------------------------------------------------------------------------
@@ -209,7 +246,8 @@ def run_shots(spec, args):
             except Exception as e:  # noqa: BLE001
                 skip(path, e)
                 continue
-            pending.append({"path": path, "op": op, "model": model, "submit": submit, "tries": 1})
+            pending.append({"path": path, "op": op, "model": model, "submit": submit, "tries": 1,
+                            "seconds": sh["seconds"]})
     while pending:                              # all jobs run in parallel server-side
         time.sleep(15)
         still = []
@@ -244,7 +282,8 @@ def run_shots(spec, args):
                 skip(path, f"no video returned (safety filter: {reasons}); try rewording the prompt")
                 continue
             path.write_bytes(vids[0].video.video_bytes)
-            print(f"  wrote {path} ({model})")
+            usd = estimate(model, seconds=job["seconds"])
+            print(f"  wrote {path} ({model}{cost_note(usd)})")
         pending = still
         if pending:
             print(f"  waiting on {len(pending)} clip(s)...")
@@ -279,7 +318,9 @@ def run_voices(spec, args):
                 skip(path, e)
                 continue
             path.write_bytes(resp.audio_content)
-            print(f"  wrote {path} ({model})")
+            secs = max(len(resp.audio_content) - 44, 0) / (24000 * 2)   # 24 kHz mono 16-bit WAV
+            usd = estimate(model, audio_seconds=secs, chars=len(line["text"]) + len(v["direction"]))
+            print(f"  wrote {path} ({model}, {secs:.1f} s{cost_note(usd)})")
 
 
 def takes_for(kind, args, item=None):
@@ -303,8 +344,11 @@ def confirm(spec, args):
     if not (stills or secs or lines):
         print("nothing to generate: every take already exists in out/")
         raise SystemExit(0)
+    video_rate = RATES.get(args.video_model or VIDEO_MODELS[0], 0.20)
+    image_out = RATES.get(args.image_model or IMAGE_MODELS[0], (2.0, 120.0))[1]
+    est = secs * video_rate + stills * 1120 * image_out / 1e6 + lines * 0.002
     print(f"project {PROJECT}: will generate {stills} still(s), {secs} s of 1080p Veo video, {lines} voice take(s)"
-          " (takes already in out/ are skipped)")
+          f" -- est. ${est:.2f} at list prices (takes already in out/ are skipped)")
     if args.dry_run or args.yes:
         return
     if input("Generate? [y/N] ").strip().lower() != "y":
@@ -333,6 +377,9 @@ def main():
         run_shots(spec, args)
     if args.what in ("voices", "all"):
         run_voices(spec, args)
+    if SPENT:
+        print(f"estimated cost of this run: ${sum(SPENT):.2f} for {len(SPENT)} take(s) "
+              "(list prices; failed or skipped takes aren't billed; Billing > Reports has the real figure)")
     if FAILED:
         raise SystemExit(f"{len(FAILED)} take(s) failed: {', '.join(FAILED)}. Run the same command again to retry just those.")
 

@@ -89,4 +89,4 @@ source video (local only) --extract-frames.sh--> reference/*.png (gitignored)
   the final video, not even as b-roll.
 - No Apple / Mac / rainbow logo, no Mac-shaped all-in-one; generic beige desktop and CRT.
 - No real people: original character, fictional CEO name in the letter. Don't feed real faces to
-  Veo. Prefer an adult lead or an over-the-shoulder child with a voice actor.
+  Veo. The cast is adults (see script.md); voices are generated, never cloned from a real person.

@@ -218,10 +218,15 @@ def run_shots(spec, args):
             if path.exists():
                 continue
             start = OUT / "stills" / f"{sh['start']}.png" if sh.get("start") else None
+            end = OUT / "stills" / f"{sh['end']}.png" if sh.get("end") else None
+            for need in (start, end):
+                if need and not need.exists() and not args.dry_run:
+                    raise SystemExit(f"{sh['id']}: needs {need} -- run `generate.py stills` first")
             if start and not start.exists() and not args.dry_run:
                 raise SystemExit(f"{sh['id']}: needs {start} -- run `generate.py stills` first")
             prompt = fill(sh["prompt"], spec)
-            print(f"shot {path.name}: {sh['seconds']} s, start={start.name if start else 'text only'}")
+            print(f"shot {path.name}: {sh['seconds']} s, start={start.name if start else 'text only'}"
+                  + (f", end={end.name}" if end else ""))
             if args.dry_run:
                 print(f"  prompt: {prompt}")
                 continue
@@ -237,6 +242,8 @@ def run_shots(spec, args):
                 number_of_videos=1,
                 person_generation="allow_adult",
                 negative_prompt=spec["negative"],
+                # Veo interpolates from the start still to this one: pins the shot's final frame.
+                last_frame=types.Image(image_bytes=end.read_bytes(), mime_type="image/png") if end else None,
             )
             def submit(m, source=source, config=config):
                 return client.models.generate_videos(model=m, source=source, config=config)

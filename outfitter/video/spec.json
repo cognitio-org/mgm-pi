@@ -15,6 +15,13 @@
       ]
     },
     {
+      "id": "lead-side-smile",
+      "refs": [
+        "lead-side"
+      ],
+      "prompt": "Photograph. The exact same person, clothes, room, lighting, camera position and framing as the reference image, but now they have turned their head toward the camera with a huge, beaming, delighted open-mouth smile, and hold one firm thumbs-up close beside their face. The out-of-focus monitor edge still fills the right third of the frame. {suffix}"
+    },
+    {
       "id": "lead-glow",
       "prompt": "Photograph against a plain pale blue-grey studio backdrop: the top of the head and forehead of the same person as the reference image at the bottom of the frame; above the head, inside a soft white elliptical glow, a ring of twelve small generic beige desktop computers with CRT screens float, their screens showing green text. {suffix}",
       "refs": [
@@ -79,7 +86,15 @@
       "seconds": 8,
       "start": "lead-side",
       "takes": 3,
-      "prompt": "The person reads the screen and nods slowly twice with an earnest deadpan expression, then turns their head toward the camera and raises one firm thumbs-up close beside their face, holding it completely still for a full second. Locked-off camera, no cuts, no zoom. {set} {suffix}"
+      "prompt": "The person reads the screen and nods slowly twice with an earnest deadpan expression, then turns their head toward the camera, raises one firm thumbs-up close beside their face and breaks into a huge, beaming smile, holding the smile and the thumbs-up completely still for the last second. Locked-off camera, no cuts, no zoom. {set} {suffix}"
+    },
+    {
+      "id": "11-closeup-smile",
+      "seconds": 8,
+      "start": "lead-side",
+      "end": "lead-side-smile",
+      "takes": 3,
+      "prompt": "The person reads the screen and nods slowly twice with an earnest deadpan expression, then turns their head toward the camera, raises one firm thumbs-up close beside their face and breaks into a huge, beaming smile, holding the smile and the thumbs-up completely still for the last second. Locked-off camera, no cuts, no zoom. {set} {suffix}"
     }
   ],
   "voices": {

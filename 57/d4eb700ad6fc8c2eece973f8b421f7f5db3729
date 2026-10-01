@@ -1,0 +1,46 @@
+outfitter/docs/reports/agent-engine-spike.md
+  s_1d3bdd6f362f9b::t_b9a6fdab7cc4d4 1-190
+outfitter/docs/specs/atlas-agent-engine-and-a2a.md
+  s_1d3bdd6f362f9b::t_8d42d6d9280b2b 841-842
+  s_1d3bdd6f362f9b::t_16de1e25df3c35 64-68
+  s_1d3bdd6f362f9b::t_0f42ece021ef4e 755
+  s_1d3bdd6f362f9b::t_2231c4a6264379 596,598-611
+  s_1d3bdd6f362f9b::t_a645d7d42caecd 349-355
+  s_1d3bdd6f362f9b::t_b394f4e075da1d 366-369
+  s_1d3bdd6f362f9b::t_58b402078e4b8f 454-457
+  s_1d3bdd6f362f9b::t_3281b5918e3ffc 475-498
+  s_1d3bdd6f362f9b::t_fb1984af3b2641 749
+  s_1d3bdd6f362f9b::t_736e82fd4a1a5c 72-75
+  s_1d3bdd6f362f9b::t_d35bda3db1d346 522,524
+  s_1d3bdd6f362f9b::t_106cbfb77d4551 820-824
+  s_1d3bdd6f362f9b::t_0b5c2ea433dc69 162-165,169-175,179-184
+  s_1d3bdd6f362f9b::t_e08be0f34977f6 326-340,342-345
+  s_1d3bdd6f362f9b::t_23108658935802 250-259,263-266,268-276
+  s_1d3bdd6f362f9b::t_b34540dc84c4ec 293-307
+  s_1d3bdd6f362f9b::t_f98cfcf27bd2de 411-415,417-420,422-423
+  s_1d3bdd6f362f9b::t_f70ba6009e17f7 715-720,723-728
+  s_1d3bdd6f362f9b::t_21980ae8f53645 762-766,768-772
+  s_1d3bdd6f362f9b::t_8ee177d0fe748b 789-790,793-798
+  s_1d3bdd6f362f9b::t_40f55543c8fb52 9-11
+  s_1d3bdd6f362f9b::t_feaef8c51b9372 775-783
+  s_1d3bdd6f362f9b::t_3188acf3ea5930 658-666,668-687
+  s_1d3bdd6f362f9b::t_d31569710c8709 440-447
+  s_1d3bdd6f362f9b::t_ceb027d0880559 629-636
+  s_1d3bdd6f362f9b::t_8a226e3985953f 192-224,226-238
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "57d4eb700ad6fc8c2eece973f8b421f7f5db3729",
+  "prompts": {},
+  "sessions": {
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

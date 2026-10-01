@@ -165,6 +165,11 @@
       "id": "MGM",
       "who": "MGM",
       "text": "Dear Sysop. Outfitter rules the fleet. Your Outfitter friend, M G M."
+    },
+    {
+      "id": "PAT-short",
+      "who": "PAT",
+      "text": "Twelve Drives at once. Atlas memory. And Atlas agents that hand my agents work!"
     }
   ],
   "set": "The room: a 1990 computer lab with mustard-yellow walls, powder-blue and beige tones, generic unbranded beige desktop computers with separate CRT monitors."

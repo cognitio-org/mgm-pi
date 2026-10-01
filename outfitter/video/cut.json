@@ -1,5 +1,5 @@
 {
-  "_about": "The edit: each cut is a list of segments laid end to end (slot = seconds on screen; bars of the ~84 BPM music are 2.857 s) joined by dissolves, plus voice lines placed at times. Sources come from picks.json. Edit timings here and rerun assemble.py.",
+  "_about": "The edit: each cut is a list of segments laid end to end (slot = seconds on screen; bars of the ~84 BPM music are 2.857 s) joined by dissolves. Segments and voice lines tagged with the same 'letter' belong together: the letter's lines play one after another from its first segment, and its segments stretch (to whole bars) when the lines need more room. 'voice_tempo' > 1 speeds every line up (1.1 = 10% faster). Edit and rerun assemble.py.",
   "dissolve": 1.0,
   "music": {
     "file": "reference/stems/htdemucs/source-audio/no_vocals.wav",
@@ -35,7 +35,8 @@
           "double": {
             "ui": "new-floppy-filled",
             "mix": 0.5
-          }
+          },
+          "letter": "LEE"
         },
         {
           "t": "screen",
@@ -50,7 +51,8 @@
             0.45,
             0.55,
             0.55
-          ]
+          ],
+          "letter": "LEE"
         },
         {
           "t": "card",
@@ -58,7 +60,8 @@
           "slot": 5.7,
           "quote": "The first bug it fixed!",
           "name": "Lee",
-          "age": 61
+          "age": 61,
+          "letter": "LEE"
         },
         {
           "t": "screen",
@@ -73,7 +76,8 @@
             0.45,
             0.7,
             0.6
-          ]
+          ],
+          "letter": "PAT"
         },
         {
           "t": "printout",
@@ -90,12 +94,14 @@
             "* A Control Panel with all the keys",
             "",
             "How much will all this cost?"
-          ]
+          ],
+          "letter": "PAT"
         },
         {
           "t": "clip",
           "src": "shots.08-glow",
-          "slot": 5.7
+          "slot": 5.7,
+          "letter": "PAT"
         },
         {
           "t": "card",
@@ -103,7 +109,8 @@
           "slot": 4.3,
           "quote": "Could you make a computer I can just talk to?",
           "name": "Jo",
-          "age": 47
+          "age": 47,
+          "letter": "JO"
         },
         {
           "t": "screen",
@@ -118,7 +125,8 @@
             0.8,
             0.85,
             0.4
-          ]
+          ],
+          "letter": "JO"
         },
         {
           "t": "card",
@@ -128,9 +136,10 @@
           "name": "MGM",
           "age": 54,
           "write": {
-            "start": 3.4,
+            "on_voice": "MGM",
             "dur": 1.2
-          }
+          },
+          "letter": "MGM"
         },
         {
           "t": "file",
@@ -148,43 +157,43 @@
       "voices": [
         {
           "id": "LEE-a",
-          "at": 8.9
+          "letter": "LEE"
         },
         {
           "id": "LEE-b",
-          "at": 9.0
+          "letter": "LEE"
         },
         {
           "id": "LEE-c",
-          "at": 20.3
+          "letter": "LEE"
         },
         {
           "id": "PAT-a",
-          "at": 25.9
+          "letter": "PAT"
         },
         {
           "id": "PAT-b",
-          "at": 31.6
+          "letter": "PAT"
         },
         {
           "id": "PAT-c",
-          "at": 31.7
+          "letter": "PAT"
         },
         {
           "id": "PAT-d",
-          "at": 43.0
+          "letter": "PAT"
         },
         {
           "id": "PAT-e",
-          "at": 43.1
+          "letter": "PAT"
         },
         {
           "id": "JO",
-          "at": 48.8
+          "letter": "JO"
         },
         {
           "id": "MGM",
-          "at": 60.2
+          "letter": "MGM"
         }
       ]
     },
@@ -203,7 +212,7 @@
         },
         {
           "t": "printout",
-          "slot": 11.4,
+          "slot": 5.7,
           "lines": [
             "MY WISH LIST",
             "",
@@ -213,7 +222,8 @@
             "* Atlas agents <-> my agents (A2A)",
             "",
             "How much will all this cost?"
-          ]
+          ],
+          "letter": "PAT"
         },
         {
           "t": "card",
@@ -223,9 +233,10 @@
           "name": "MGM",
           "age": 54,
           "write": {
-            "start": 3.0,
+            "on_voice": "MGM",
             "dur": 1.2
-          }
+          },
+          "letter": "MGM"
         },
         {
           "t": "file",
@@ -242,18 +253,18 @@
       ],
       "voices": [
         {
-          "id": "PAT-b",
-          "at": 5.9
-        },
-        {
-          "id": "PAT-c",
-          "at": 6.0
+          "id": "PAT-short",
+          "letter": "PAT"
         },
         {
           "id": "MGM",
-          "at": 17.3
+          "letter": "MGM"
         }
       ]
     }
-  }
+  },
+  "bar": 2.857,
+  "voice_lead": 0.3,
+  "voice_tail": 0.6,
+  "voice_tempo": 1.0
 }

@@ -30,6 +30,11 @@
       "id": "card-talk",
       "prompt": "A child's crayon drawing on off-white paper, scanned flat: a smiling boxy computer with a speech bubble and a big drawn ear, little sound lines around it, in green, red and blue crayon. Lots of empty paper on the left half for text. No text, no letters.",
       "aspect": "4:3"
+    },
+    {
+      "id": "card-fleet",
+      "aspect": "4:3",
+      "prompt": "A child's crayon drawing on off-white paper, scanned flat: a ring of small smiling boxy computers holding hands, with one big gold crown floating above the ring, drawn with wobbly lines in yellow, blue and green crayon. Lots of empty paper on the left half for text. No text, no letters."
     }
   ],
   "shots": [
@@ -47,7 +52,9 @@
       "id": "05-lab",
       "seconds": 8,
       "start": "lead-lab",
-      "prompt": "The person at the beige computer reads the screen and nods slowly, earnest and calm. The second person keeps working in the background. Locked-off camera, no cuts. {set} {suffix}"
+      "prompt": "The person at the beige computer reads the screen and nods slowly, earnest and calm. The second person keeps working in the background. Locked-off camera, no cuts. {set} {suffix}",
+      "takes": 0,
+      "note": "not in the current cut (Rocky only appears in 11-closeup); set takes to 2 to generate"
     },
     {
       "id": "07-mouse",

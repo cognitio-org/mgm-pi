@@ -7,7 +7,11 @@ import { ARM_DELAY_MS } from "./UiRequestPanel.tsx";
 // that reaches other people (its agent could answer that itself), so it asks here instead: a small
 // badge in the corner of every page while the signed-in person has pending asks, opening to one
 // compact card per ask with Approve / Deny. Nothing else: no page, settings or history. All text is
-// rendered as React text (escaped); the api already stripped control characters and capped it.
+// rendered as React text (escaped); the api already refused hidden characters and capped it.
+//
+// Review fixes: the api's facts and the agent's text are shown apart, and the text is labelled as
+// the agent's; a long text must be opened in full before Approve wakes; every card re-arms whenever
+// the stack changes, so answering one can't slide an armed button under the pointer.
 
 /** How often the widget looks for asks while the tab is visible (and on focus). */
 export const POLL_MS = 10_000;
@@ -23,13 +27,15 @@ interface Props {
   pollMs?: number;
   load?: () => Promise<{ approvals: LaptopApproval[] }>;
   decide?: (id: string, approve: boolean) => Promise<unknown>;
+  now?: () => number;
 }
 
-export function LaptopApprovals({ pollMs = POLL_MS, load = api.laptopApprovals, decide = api.decideLaptopApproval }: Props) {
+export function LaptopApprovals({ pollMs = POLL_MS, load = api.laptopApprovals, decide = api.decideLaptopApproval, now = Date.now }: Props) {
   const [items, setItems] = useState<LaptopApproval[]>([]);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // A token or signed-out page can't have asks: stop asking.
+  // A token page (403) or an api without the route (404) can't have asks: stop asking. A 401 (an
+  // IAP session lapsing) is a blip: keep polling.
   const off = useRef(false);
   const seq = useRef(0);
 
@@ -40,11 +46,10 @@ export function LaptopApprovals({ pollMs = POLL_MS, load = api.laptopApprovals, 
       const { approvals } = await load();
       if (id === seq.current) setItems(Array.isArray(approvals) ? approvals : []);
     } catch (err) {
-      if (err instanceof ApiError && (err.status === 401 || err.status === 403 || err.status === 404)) {
+      if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
         off.current = true;
         setItems([]);
       }
-      // Anything else is a blip: keep what is shown, try again on the next tick.
     }
   }, [load]);
 
@@ -63,11 +68,16 @@ export function LaptopApprovals({ pollMs = POLL_MS, load = api.laptopApprovals, 
     };
   }, [refresh, pollMs]);
 
-  useEffect(() => {
-    if (!items.length) setOpen(false);
-  }, [items.length]);
+  const nowIso = new Date(now()).toISOString();
+  const live = items.filter((a) => a.expiresAt > nowIso);
+  // Every card's arm delay restarts when the stack changes (an answer, a new ask, an expiry).
+  const stackKey = live.map((a) => a.id).join(",");
 
-  if (!items.length) return null;
+  useEffect(() => {
+    if (!live.length) setOpen(false);
+  }, [live.length]);
+
+  if (!live.length) return null;
 
   async function answer(id: string, approve: boolean) {
     setError(null);
@@ -80,13 +90,13 @@ export function LaptopApprovals({ pollMs = POLL_MS, load = api.laptopApprovals, 
     void refresh();
   }
 
-  const label = `${items.length} laptop request${items.length === 1 ? "" : "s"} to approve`;
+  const label = `${live.length} laptop request${live.length === 1 ? "" : "s"} to approve`;
   return (
     <div className="laptop-approvals" aria-live="polite">
       {open && (
         <div className="laptop-approvals-panel" role="dialog" aria-label="Laptop approvals">
-          {items.map((a) => (
-            <ApprovalCard key={a.id} approval={a} onAnswer={answer} />
+          {live.map((a) => (
+            <ApprovalCard key={a.id} approval={a} stackKey={stackKey} now={now} onAnswer={answer} />
           ))}
           {error && (
             <p className="laptop-approvals-error" role="alert">
@@ -96,13 +106,28 @@ export function LaptopApprovals({ pollMs = POLL_MS, load = api.laptopApprovals, 
         </div>
       )}
       <button type="button" className="btn laptop-approvals-badge" aria-expanded={open} aria-label={label} title={label} onClick={() => setOpen((v) => !v)}>
-        Approve <span className="laptop-approvals-count">{items.length}</span>
+        Approve <span className="laptop-approvals-count">{live.length}</span>
       </button>
     </div>
   );
 }
 
-function ApprovalCard({ approval, onAnswer }: { approval: LaptopApproval; onAnswer: (id: string, approve: boolean) => Promise<void> }) {
+function minutesLeft(expiresAt: string, now: number): string {
+  const m = Math.max(0, Math.ceil((Date.parse(expiresAt) - now) / 60_000));
+  return m <= 1 ? "expires within a minute" : `expires in ${m} min`;
+}
+
+function ApprovalCard({
+  approval,
+  stackKey,
+  now,
+  onAnswer,
+}: {
+  approval: LaptopApproval;
+  stackKey: string;
+  now: () => number;
+  onAnswer: (id: string, approve: boolean) => Promise<void>;
+}) {
   const [armed, setArmed] = useState(false);
   const [sending, setSending] = useState(false);
   const [full, setFull] = useState(false);
@@ -110,12 +135,16 @@ function ApprovalCard({ approval, onAnswer }: { approval: LaptopApproval; onAnsw
     setArmed(false);
     const timer = setTimeout(() => setArmed(true), ARM_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [approval.id]);
+  }, [approval.id, stackKey]);
 
   const long = approval.summary.length > CLIP;
   const text = full || !long ? approval.summary : `${approval.summary.slice(0, CLIP - 1)}…`;
+  // A long text is read in full before it can be approved; Deny never waits for that.
+  const mayApprove = armed && !sending && (!long || full);
   const busy = sending || !armed;
-  const where = [`laptop ${shortSession(approval.origin.laptopSessionId)}`, approval.origin.repo, relativeTime(approval.createdAt)].filter(Boolean).join(" · ");
+  const where = [`laptop ${shortSession(approval.origin.laptopSessionId)}`, approval.origin.repo, relativeTime(approval.createdAt, now()), minutesLeft(approval.expiresAt, now())]
+    .filter(Boolean)
+    .join(" · ");
 
   async function respond(approve: boolean) {
     setSending(true);
@@ -130,17 +159,34 @@ function ApprovalCard({ approval, onAnswer }: { approval: LaptopApproval; onAnsw
     <div className="ui-request ui-request-outfitter laptop-approval" role="alertdialog" aria-label={approval.title}>
       <small className="ui-request-source">Outfitter asks you (not the agent)</small>
       <strong>{approval.title}</strong>
-      <pre className="laptop-approval-text">{text}</pre>
-      {long && (
-        <button type="button" className="laptop-approval-more" onClick={() => setFull((v) => !v)}>
-          {full ? "Show less" : "Show all"}
-        </button>
+      {approval.facts?.length ? (
+        <dl className="laptop-approval-facts">
+          {approval.facts.map((f) => (
+            <div key={f.label}>
+              <dt>{f.label}</dt>
+              <dd>{f.value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+      {approval.summary && (
+        <>
+          <small className="laptop-approval-from">
+            Text from your laptop's agent ({approval.summary.length} characters)
+          </small>
+          <pre className="laptop-approval-text">{text}</pre>
+          {long && (
+            <button type="button" className="laptop-approval-more" onClick={() => setFull((v) => !v)}>
+              {full ? "Show less" : "Show all to approve"}
+            </button>
+          )}
+        </>
       )}
       <small className="laptop-approval-where" title={approval.origin.laptopSessionId}>
         {where}
       </small>
       <div className="composer-row">
-        <button type="button" className="btn btn-primary" disabled={busy} onClick={() => respond(true)}>
+        <button type="button" className="btn btn-primary" disabled={!mayApprove} onClick={() => respond(true)}>
           Approve
         </button>
         <button type="button" className="btn" disabled={busy} onClick={() => respond(false)}>

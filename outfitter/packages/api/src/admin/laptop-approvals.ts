@@ -63,37 +63,39 @@ function matchOf(ownerEmail: string, op: string, args: Record<string, unknown>, 
   return { ownerEmail: lower(ownerEmail), op, argsDigest: argsDigest(op, args), laptopSessionId: laptop.sessionId, ...(laptop.repo ? { repo: laptop.repo } : {}) };
 }
 
-/** C0/C1 controls bar tab and newline, line/paragraph separators, and bidi overrides/isolates. */
-function hidden(c: number): boolean {
-  return (
-    c <= 0x08 ||
-    (c >= 0x0b && c <= 0x1f) ||
-    (c >= 0x7f && c <= 0x9f) ||
-    c === 0x2028 ||
-    c === 0x2029 ||
-    (c >= 0x202a && c <= 0x202e) ||
-    (c >= 0x2066 && c <= 0x2069)
-  );
-}
+/** Controls bar newline and tab, format characters (zero-width, bidi), private use, tags,
+ * variation selectors, line and paragraph separators: shown as a visible `�` on the card, so
+ * nothing can hide there. An op should refuse such text before it asks (memory.save does). */
+const HIDDEN = new RegExp("[\\p{Cc}\\p{Cf}\\p{Co}\\u{E0000}-\\u{E007F}\\u{FE00}-\\u{FE0F}\\u{E0100}-\\u{E01EF}\\u{2028}\\u{2029}]", "gu");
 
-/** Strips control characters (bar newline and tab) and caps: the card's text is shown escaped, but
- * an escape sequence or a bidi override could still mislead whoever reads it. */
+/** The card's text: hidden characters made visible, capped by code point (never half a pair). */
 function cardText(text: string, max: number): string {
-  const flat = [...text.replace(/\r\n?/g, "\n")].map((ch) => (hidden(ch.codePointAt(0) ?? 0) ? " " : ch)).join("");
-  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+  const flat = text.replace(/\r\n?/g, "\n").replace(HIDDEN, (c) => (c === "\n" || c === "\t" ? c : "�"));
+  const points = [...flat];
+  return points.length > max ? `${points.slice(0, max - 1).join("")}…` : flat;
 }
 
-export interface CreateLaptopApproval {
+/** What the widget shows for an op (its `laptopCard`). `facts` are the api's words; `summary` is the
+ * content the agent sent, shown in a box labelled as the agent's. */
+export interface LaptopCard {
+  title: string;
+  facts?: Array<{ label: string; value: string }>;
+  summary: string;
+}
+
+export interface CreateLaptopApproval extends LaptopCard {
   ownerEmail: string;
   op: string;
   args: Record<string, unknown>;
   laptop: LaptopOrigin;
-  /** One line: what is asked. */
-  title: string;
-  /** The exact content, as it would be saved (already redacted by the op's card). */
-  summary: string;
   now?: number;
 }
+
+const MAX_FACTS = 6;
+const MAX_FACT = 200;
+
+/** After a yes, the laptop has at least this long to rerun (its poll is every 3 s). */
+export const APPROVED_USE_MS = 2 * 60_000;
 
 /** Stores a pending approval for this ask, or returns the one already pending for the same ask. */
 export async function createLaptopApproval(store: Pick<Store, "laptopApprovals">, ask: CreateLaptopApproval): Promise<{ ok: true; approval: LaptopApproval } | { ok: false; error: string }> {
@@ -111,6 +113,9 @@ export async function createLaptopApproval(store: Pick<Store, "laptopApprovals">
     op: ask.op,
     argsDigest: match.argsDigest,
     title: cardText(ask.title, MAX_TITLE),
+    ...(ask.facts?.length
+      ? { facts: ask.facts.slice(0, MAX_FACTS).map((f) => ({ label: cardText(f.label, 40), value: cardText(f.value, MAX_FACT) })) }
+      : {}),
     summary: cardText(ask.summary, MAX_SUMMARY),
     origin: { laptopSessionId: ask.laptop.sessionId, ...(ask.laptop.repo ? { repo: ask.laptop.repo } : {}) },
     state: "pending",
@@ -165,6 +170,7 @@ export interface LaptopApprovalView {
   id: string;
   op: string;
   title: string;
+  facts?: Array<{ label: string; value: string }>;
   summary: string;
   origin: { laptopSessionId: string; repo?: string };
   createdAt: string;
@@ -172,7 +178,16 @@ export interface LaptopApprovalView {
 }
 
 export function laptopApprovalView(a: LaptopApproval): LaptopApprovalView {
-  return { id: a.id, op: a.op, title: a.title, summary: a.summary, origin: { ...a.origin }, createdAt: a.createdAt, expiresAt: a.expiresAt };
+  return {
+    id: a.id,
+    op: a.op,
+    title: a.title,
+    ...(a.facts?.length ? { facts: a.facts.map((f) => ({ ...f })) } : {}),
+    summary: a.summary,
+    origin: { ...a.origin },
+    createdAt: a.createdAt,
+    expiresAt: a.expiresAt,
+  };
 }
 
 /** The signed-in person's pending asks, for the widget; never a Dongle's (it is the agent's). */
@@ -198,10 +213,12 @@ export async function decideLaptopApproval(
   const held = await store.laptopApprovals.get(id);
   const email = lower(decider.email);
   if (!held || held.ownerEmail !== email) return { ok: false, status: 404, error: "no such approval" };
-  if (!(await store.laptopApprovals.decide(id, email, approved ? "approved" : "denied", email, iso(now)))) {
+  // A yes in the last seconds still leaves the laptop time to poll and rerun (review: near expiry).
+  const useBy = approved ? (iso(now + APPROVED_USE_MS) > held.expiresAt ? iso(now + APPROVED_USE_MS) : held.expiresAt) : held.expiresAt;
+  if (!(await store.laptopApprovals.decide(id, email, approved ? "approved" : "denied", email, iso(now), useBy))) {
     return { ok: false, status: 409, error: "that approval is no longer pending" };
   }
-  return { ok: true, approval: { ...held, state: approved ? "approved" : "denied", decidedBy: email, decidedAt: iso(now) } };
+  return { ok: true, approval: { ...held, state: approved ? "approved" : "denied", decidedBy: email, decidedAt: iso(now), expiresAt: useBy } };
 }
 
 /** `approvals.get` for a laptop: the state of one of the caller's own asks. */

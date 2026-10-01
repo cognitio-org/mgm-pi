@@ -38,7 +38,7 @@ import type { AgentEngine } from "../agentengine/index.ts";
 import type { Environment, Guru, Session, Store } from "../store/types.ts";
 import { ago, capText, clip, diffFields, fields, resolveRef, row, shortId } from "./render.ts";
 import { searchSessions, sessionTranscript } from "../search/service.ts";
-import { canonicalJson, consumeLaptopApproval, createLaptopApproval, laptopApprovalStatus, type LaptopApprovalState } from "./laptop-approvals.ts";
+import { consumeLaptopApproval, createLaptopApproval, laptopApprovalStatus, type LaptopApprovalState, type LaptopCard } from "./laptop-approvals.ts";
 
 export type AdminOpClass = "read" | "write" | "delete" | "operator" | "approve";
 
@@ -107,9 +107,10 @@ export interface AdminOp {
    * widget (laptop-approvals.ts), never on `confirmed`, which the laptop's agent could send itself.
    * Needs `laptop`. `laptopCard` says what the widget shows. */
   webApproval?: true;
-  /** The widget's card for a `webApproval` op: one line of what is asked, and the exact content
-   * (redacted as it would be acted on). Without it: the op name and its canonical args. */
-  laptopCard?: (args: Args) => { title: string; summary: string };
+  /** The widget's card for a `webApproval` op (required with it): one line of what is asked, the
+   * api's facts, and the exact content (redacted as it would be acted on). `{error}` refuses the
+   * call before anyone is asked (malformed args, text with hidden characters). */
+  laptopCard?: (args: Args) => LaptopCard | { error: string };
   /** The approval card for this op, when the default (drive.ts approvalText) says too little: an
    * `approve` op shows what it answers. Every word must come from the api or be clipped, escaped
    * and labelled as remote text. */
@@ -596,6 +597,11 @@ export function registerAdminOp(name: string, op: AdminOp): () => void {
   // E9.9: a laptop reaches memory reads and writes, and ops whose every yes is asked in the web
   // app (`webApproval`, for #354's laptop `ae.*`); everything else stays Drive only.
   if (op.webApproval && !op.laptop) throw new Error(`admin op ${name}: webApproval is for laptop-callable ops`);
+  // A webApproval op lifts the memory-only rule, so it must actually ask (review): a class that
+  // always asks, or `asks`; and say on its card what it asks.
+  if (op.webApproval && (!op.laptopCard || (!op.asks && op.kind !== "delete" && op.kind !== "operator" && op.kind !== "approve"))) {
+    throw new Error(`admin op ${name}: a webApproval op needs a laptopCard, and asks (or a class that always asks)`);
+  }
   if (op.laptop && !op.webApproval && (op.capability !== "memory" || (op.kind !== "read" && op.kind !== "write"))) {
     throw new Error(`admin op ${name}: only a memory read or write (or a webApproval op) may be laptop-callable`);
   }
@@ -776,8 +782,9 @@ async function laptopGate(
     const used = await consumeLaptopApproval(ctx.store, { ownerEmail: caller.email, op, args, approvalId: caller.laptopApprovalId, laptop: caller.laptop, now });
     return used.ok ? used : { ok: false, result: { ok: false, error: used.error } };
   }
-  const card = def.laptopCard ? def.laptopCard(args) : { title: `Allow ${op} from your laptop?`, summary: canonicalJson(args) };
-  const made = await createLaptopApproval(ctx.store, { ownerEmail: caller.email, op, args, laptop: caller.laptop, title: card.title, summary: card.summary, now });
+  const card = def.laptopCard?.(args) ?? { error: `${op} has no approval card` };
+  if ("error" in card) return { ok: false, result: { ok: false, error: card.error } };
+  const made = await createLaptopApproval(ctx.store, { ownerEmail: caller.email, op, args, laptop: caller.laptop, ...card, now });
   if (!made.ok) return { ok: false, result: { ok: false, error: made.error } };
   return {
     ok: false,

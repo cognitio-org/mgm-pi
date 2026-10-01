@@ -538,7 +538,9 @@ export interface LaptopApproval {
   argsDigest: string;
   /** What is asked, one line ("Share a memory with the team"). */
   title: string;
-  /** The card's text: the exact content, redacted and capped. Shown escaped. */
+  /** The api's own facts about the ask (type, label, who sees it), shown apart from the content. */
+  facts?: Array<{ label: string; value: string }>;
+  /** The exact content the agent sent, redacted and capped. Shown escaped, labelled as the agent's. */
   summary: string;
   origin: { laptopSessionId: string; repo?: string };
   state: "pending" | "approved" | "denied" | "used";
@@ -567,6 +569,9 @@ export interface AdminAuditEntry {
   ok: boolean;
   /** The one-line error, when `ok` is false. */
   error?: string;
+  /** E9.9: for a laptop approval's decision, what was decided (`<op> <argsDigest>`), since the
+   * approval itself is gone a day later. */
+  detail?: string;
   /** Whether the caller came with the person's approval (laptop TUI confirm, or a Drive's web
    * approval card, then `approvalId`). */
   approved: boolean;
@@ -634,8 +639,9 @@ export interface LaptopApprovalsCollection {
   listPending(ownerEmail: string, nowIso: string, limit: number): Promise<LaptopApproval[]>;
   /** The owner's pending, unexpired approval for this exact op, digest and laptop session, if any. */
   findPending(match: LaptopApprovalMatch, nowIso: string): Promise<LaptopApproval | null>;
-  /** pending -> approved/denied, if it is the owner's, still pending and unexpired. */
-  decide(id: string, ownerEmail: string, decision: "approved" | "denied", by: string, nowIso: string): Promise<boolean>;
+  /** pending -> approved/denied, if it is the owner's, still pending and unexpired; `expiresAt`
+   * becomes `useBy` (a yes near expiry still leaves the laptop time to rerun). */
+  decide(id: string, ownerEmail: string, decision: "approved" | "denied", by: string, nowIso: string, useBy: string): Promise<boolean>;
   /** approved -> used, once: only if owner, op, digest and origin match and it is unexpired. */
   consume(id: string, match: LaptopApprovalMatch, nowIso: string): Promise<boolean>;
 }

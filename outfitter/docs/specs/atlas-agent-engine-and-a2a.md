@@ -505,9 +505,12 @@ a one-time import.
   - It opens to one compact card per ask, styled as the Drive's "Outfitter asks you (not the agent)"
     card:
     - what is asked (`Share a memory with the team`, `Add a term to the team's shared glossary`);
-    - the exact text, escaped and clipped at 280 characters, with "Show all";
-    - where it came from: the laptop session's first 8 characters, the repo, and how long ago;
-    - Approve and Deny, which wake 1 s after the card appears.
+    - the api's facts (type, label, who sees it);
+    - the exact text, in a box labelled as the laptop agent's, escaped and clipped at 280
+      characters. A longer text has to be opened with "Show all to approve" before Approve wakes;
+    - where it came from: the laptop session's first 8 characters, the repo, how long ago, and
+      when it expires;
+    - Approve and Deny, which wake 1 s after the card appears and again whenever the stack changes.
   - There is no page, no setting and no history.
 - **`memory.context`:** a laptop has no tape, so the api doesn't check for `auto`. Kernal only asks
   when its own setting is `auto`. The answer has the same 2.5 s deadline, budgets, repo filter and
@@ -543,7 +546,8 @@ a one-time import.
     at most 10 minutes; Esc aborts the wait. Once approved, it reruns the save with `approvalId`
     (`laptop-approval.ts`, `callWithWebApproval`, reusable for #354). In print or json mode it
     doesn't wait: it returns the pending `approvalId`, and a later call with the same arguments plus
-    the tool's `approvalId` parameter runs it once approved.
+    the tool's `approvalId` parameter runs it once approved. That later call has to be in the same
+    pi session (`kernal -c -p`), since the approval is bound to its laptop session.
   - **Credentials:** pi loads each extension in its own module instance (jiti, `moduleCache:
     false`). So the Dongle cache in `_shared/outfitter-env.ts` lives on `globalThis`
     (`Symbol.for("kernal.outfitterCredentials")`). Otherwise outfitter-admin's scrub would leave
@@ -600,9 +604,15 @@ a one-time import.
     TUI confirm (`confirmed`) is the client's word. It was the first design here, and the owner
     replaced it with the web widget (2026-10-01) for shared memory. A laptop `delete` still takes
     `confirmed`.
-  - **What the widget can't stop:** a person who approves what they didn't read. The card shows the
-    exact text and where it came from, and its buttons wake late. A prompt-injected agent can still
-    ask, at most 10 pending at a time.
+  - **What the widget can't stop:**
+    - **A person who approves what they didn't read.** The card shows the exact text and where it
+      came from. Shared text with invisible characters is refused before anyone is asked, and runs
+      of blank lines are squeezed. A long text must be opened in full before Approve wakes, and
+      every card re-arms when the stack changes. A prompt-injected agent can still ask, at most 10
+      pending at a time.
+    - **The same machine.** The agent's shell could drive the person's signed-in browser (OS
+      automation, profile cookies) and click Approve itself. A passkey step-up on the decide route
+      is the follow-up that closes this.
   - **Repo is unverified.** An approved shared save can be filed under a repo the person can't
     reach, and it then shows in other users' recall for that repo. The card shows the repo.
 - **Cost:** recall retrieves on every laptop prompt too (§3.4), now the default for every Dongle

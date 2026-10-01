@@ -1473,6 +1473,37 @@ h4.voice-menu-heading {
   font-size: 0.78rem;
 }
 
+.laptop-approval-facts {
+  margin: 0.35rem 0;
+  font-size: 0.78rem;
+}
+
+.laptop-approval-facts > div {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.laptop-approval-facts dt {
+  min-width: 4.5rem;
+  color: var(--text-dim);
+}
+
+.laptop-approval-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.laptop-approval-from {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--text-dim);
+}
+
+.laptop-approval-text {
+  border: 1px dashed var(--border);
+  padding: 0.35rem;
+}
+
 .laptop-approval-more {
   padding: 0;
   border: 0;

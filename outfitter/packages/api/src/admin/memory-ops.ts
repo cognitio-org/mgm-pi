@@ -29,6 +29,7 @@ import type { Session } from "../store/types.ts";
 import { capText, clip } from "./render.ts";
 import { memoryUsage } from "../agentengine/usage.ts";
 import { registerAdminOp, type AdminCaller, type AdminContext, type AdminResult, type LaptopContext } from "./ops.ts";
+import type { LaptopCard } from "./laptop-approvals.ts";
 
 /** Token budgets for the two reads (E9 §3.3); each loses the server's 500-token formatting reserve. */
 export const OWN_TOKENS = 1400;
@@ -181,8 +182,27 @@ export function recalledFrom(response: unknown): { items: Recalled[]; docs: numb
 
 /** Recalled text as it may enter a prompt: no namespace prefixes, no tag that could close or open
  * the memory frame, one line, clipped. */
+/**
+ * Characters a person can't see but a model reads (E9.9 review H1): controls bar newline and tab,
+ * format characters (zero-width, bidi, soft hyphen), private use, Unicode tags (the "ASCII
+ * smuggling" range), variation selectors, line and paragraph separators. A shared save holding one
+ * is refused, so the approval card shows exactly what is saved; recalled text has them stripped.
+ */
+const HIDDEN = new RegExp("[\\p{Cc}\\p{Cf}\\p{Co}\\u{E0000}-\\u{E007F}\\u{FE00}-\\u{FE0F}\\u{E0100}-\\u{E01EF}\\u{2028}\\u{2029}]", "gu");
+
+export function hasHiddenChars(text: string): boolean {
+  HIDDEN.lastIndex = 0;
+  const found = HIDDEN.test(text.replace(/[\n\t]/g, ""));
+  HIDDEN.lastIndex = 0;
+  return found;
+}
+
+export function stripHiddenChars(text: string): string {
+  return text.replace(HIDDEN, (c) => (c === "\n" || c === "\t" ? c : ""));
+}
+
 export function sanitizeRecalled(text: string): string {
-  const flat = stripNamespaces(text).replace(/<\s*\/?\s*memory\b[^>]*>?/gi, "[memory tag]").replace(/\s+/g, " ").trim();
+  const flat = stripHiddenChars(stripNamespaces(text)).replace(/<\s*\/?\s*memory\b[^>]*>?/gi, "[memory tag]").replace(/\s+/g, " ").trim();
   return clip(flat, MAX_ITEM);
 }
 
@@ -276,12 +296,21 @@ type SaveArgs = { type: MemoryType; text: string; label?: string; shared: boolea
 function saveArgs(args: Record<string, unknown>): SaveArgs | { error: string } {
   const type = args.type;
   if (typeof type !== "string" || !(SEARCH_TYPES as readonly string[]).includes(type)) return { error: `type must be one of: ${SEARCH_TYPES.join(", ")}` };
-  const raw = typeof args.text === "string" ? args.text.trim() : "";
+  let raw = typeof args.text === "string" ? args.text.replace(/\r\n?/g, "\n").trim() : "";
   if (!raw) return { error: "text is required" };
   if (raw.length > MAX_TEXT) return { error: `text is too long (${MAX_TEXT} characters at most)` };
   if (args.label !== undefined && typeof args.label !== "string") return { error: "label must be a string" };
-  const label = typeof args.label === "string" && args.label.trim() ? redact(args.label.trim()).slice(0, MAX_LABEL) : undefined;
   if (args.shared !== undefined && typeof args.shared !== "boolean") return { error: "shared must be true or false" };
+  const shared = args.shared === true || type === "taxonomic";
+  if (shared) {
+    // What the owner approves is what teammates' models read (E9.9 review H1, M2): nothing hidden,
+    // and no run of blank lines to push the rest of the text out of the card's view.
+    if (hasHiddenChars(raw) || (typeof args.label === "string" && hasHiddenChars(args.label))) {
+      return { error: "a shared memory can't hold invisible or control characters (zero-width, bidi, tags); remove them" };
+    }
+    raw = raw.replace(/\n{3,}/g, "\n\n");
+  }
+  const label = typeof args.label === "string" && args.label.trim() ? redact(args.label.trim()).slice(0, MAX_LABEL) : undefined;
   return { type: type as MemoryType, text: redact(raw), ...(label ? { label } : {}), shared: args.shared === true };
 }
 
@@ -290,12 +319,19 @@ function saveArgs(args: Record<string, unknown>): SaveArgs | { error: string } {
  * would be saved (redacted as saveArgs does). Bad args still get a card that says so; the save
  * refuses them after the yes, as it would have before.
  */
-function saveCard(args: Record<string, unknown>): { title: string; summary: string } {
-  const title = args.type === "taxonomic" ? "Add a term to the team's shared glossary" : "Share a memory with the team";
+function saveCard(args: Record<string, unknown>): LaptopCard | { error: string } {
   const a = saveArgs(args);
-  if ("error" in a) return { title, summary: `(this request is malformed: ${a.error})` };
-  const lines = [`Type: ${a.type}`, ...(a.label ? [`Label: ${a.label}`] : []), "Everyone on this Outfitter gets it recalled into their prompts.", "", a.text];
-  return { title, summary: lines.join("\n") };
+  // Refused before anyone is asked: the owner's yes would only meet the same error.
+  if ("error" in a) return a;
+  return {
+    title: a.type === "taxonomic" ? "Add a term to the team's shared glossary" : "Share a memory with the team",
+    facts: [
+      { label: "Type", value: a.type },
+      ...(a.label ? [{ label: "Label", value: a.label }] : []),
+      { label: "Seen by", value: "everyone on this Outfitter, recalled into their prompts" },
+    ],
+    summary: a.text,
+  };
 }
 
 function firstLine(text: string, max: number): string {

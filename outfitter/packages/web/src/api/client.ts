@@ -841,6 +841,9 @@ export interface LaptopApproval {
   id: string;
   op: string;
   title: string;
+  /** The api's own facts (type, label, who sees it). */
+  facts?: Array<{ label: string; value: string }>;
+  /** The content the laptop's agent sent, exactly as it would be used. */
   summary: string;
   origin: { laptopSessionId: string; repo?: string };
   createdAt: string;

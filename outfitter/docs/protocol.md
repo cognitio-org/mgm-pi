@@ -815,9 +815,16 @@ Code: `packages/api/src/admin/laptop-approvals.ts`, collection `laptopApprovals`
    - At most 10 pending per owner. Past that: `10 approvals are already waiting; answer them in the
      Outfitter web app first`.
    - `confirmed: true` is ignored.
+   - An `approvalId` that isn't a string (`null`, say) counts as absent.
+   - When the op's `laptopCard` returns `{error}`, the call is refused and nothing is asked. For
+     `memory.save`, that covers malformed args and shared text or a label holding invisible or
+     control characters (zero-width, bidi, Unicode tags, variation selectors, private use).
+   - The card then shows exactly what is saved. A shared save also squeezes runs of blank lines to
+     one, in the save and on the card alike.
 2. **Poll.** `approvals.get {id}`, a read: `{ok: true, text, state}`, where `state` is
-   `pending | approved | denied | expired | used`. An unanswered or unused approval past its 10
-   minutes reads `expired`. Another owner's id, or an unknown one, answers `no such approval`. From a
+   `pending | approved | denied | expired | used`. An unanswered or unused approval past its
+   `expiresAt` reads `expired`. A yes moves `expiresAt` to at least 2 minutes after the decision,
+   so a yes in the last seconds can still be used. Another owner's id, or an unknown one, answers `no such approval`. From a
    Drive it is refused. Kernal polls every 3 s for up to 10 minutes.
 3. **Run.** Repeat the same op, args and `laptop`, adding `approvalId` at the top level of the body
    (not in `args`). `consumeLaptopApproval(store, {ownerEmail, op, args, approvalId, laptop})`
@@ -835,19 +842,38 @@ Code: `packages/api/src/admin/laptop-approvals.ts`, collection `laptopApprovals`
 
 **Widget routes** (web role only, behind IAP; not registered on link). Both need a person: a token
 identity gets `403`.
-- `GET /api/laptop-approvals` → `{approvals: [{id, op, title, summary, origin: {laptopSessionId,
-  repo?}, createdAt, expiresAt}]}`: the signed-in person's pending, unexpired asks, oldest first.
-- `POST /api/laptop-approvals/:id {approve: boolean}` → `{ok: true, state}`.
+- `GET /api/laptop-approvals` → `{approvals: [{id, op, title, facts?: [{label, value}], summary,
+  origin: {laptopSessionId, repo?}, createdAt, expiresAt}]}`: the signed-in person's pending,
+  unexpired asks, oldest first.
+  - `facts` are the api's own words.
+  - `summary` is the content the agent sent, which the widget labels as the agent's.
+- `POST /api/laptop-approvals/:id {approve: boolean}` → `{ok: true, state}`. It must be JSON
+  (`415` otherwise), and `Sec-Fetch-Site`, when sent, must be `same-origin` (`403` otherwise).
   - Another owner's id: `404`. Already answered or expired: `409`. `approve` not a boolean: `400`.
-  - Audited in `adminAudit` as `approvals.approve` or `approvals.deny`, with `via: "web"`, target
-    and `approvalId` the approval id, and `sessionId` the laptop session.
+  - Audited in `adminAudit` as `approvals.approve` or `approvals.deny`, with `via: "web"`. Target
+    and `approvalId` are the approval id, `sessionId` is the laptop session, and `detail` is
+    `<op> <argsDigest>`, which records what was approved after the row's TTL removes it.
+  - A refused attempt by a signed-in caller is audited too (`ok: false`, plus `detail: "via a
+    token"` for a Dongle).
 
 **For another op.** Register it with `laptop: true, webApproval: true`, an `asks` (or a class that
-always asks: `delete`, `operator`, `approve`), and a `laptopCard(args) → {title, summary}`.
-- The card is one line of what is asked, plus the exact content, redacted as the op would act on it.
-- Without `laptopCard` the widget shows `Allow <op> from your laptop?` and the canonical args.
+always asks: `delete`, `operator`, `approve`), and a `laptopCard(args) → {title, facts?, summary} |
+{error}`. `registerAdminOp` refuses a `webApproval` op without both.
+- The card is one line of what is asked, the api's facts, and the exact content, redacted as the op
+  would act on it.
+- Resolve anything a prefix or name could later mean differently, and put the resolved id in the
+  args the digest covers, or in the card. The Drive path's `resolveTarget` does this before asking.
 - `registerAdminOp` lets a `webApproval` op be laptop-callable whatever its capability, and lets an
   `approve` op be laptop-callable only with it.
+
+**Limits (owner check):** the widget is a boundary against the agent's API calls, not against
+everything it can do.
+- **Same machine.** The agent's shell runs as the person, often on the machine where their browser
+  is signed in to the web app. With OS automation (AppleScript, Accessibility) or a browser
+  profile's cookies, it could click Approve itself. A WebAuthn or passkey step-up on the decide
+  route would close that; it is a follow-up.
+- **Dev mode.** Dev mode (`OUTFITTER_DEV=1`) treats every caller as `dev@localhost`, a Dongle
+  included, so there anyone can approve.
 
 ## Browser companion
 

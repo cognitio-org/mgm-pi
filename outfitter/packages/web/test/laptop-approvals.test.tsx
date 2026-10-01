@@ -24,7 +24,11 @@ const ASK: LaptopApproval = {
   id: "0b6f3c2e-0000-4000-8000-000000000001",
   op: "memory.save",
   title: "Share a memory with the team",
-  summary: "Type: semantic\nLabel: deploy\n\n<img src=x onerror=alert(1)> deploys go through tag-release.sh",
+  facts: [
+    { label: "Type", value: "semantic" },
+    { label: "Label", value: "deploy" },
+  ],
+  summary: "<img src=x onerror=alert(1)> deploys go through tag-release.sh",
   origin: { laptopSessionId: "laptop:0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b", repo: "acme/widgets" },
   createdAt: new Date().toISOString(),
   expiresAt: new Date(Date.now() + 600_000).toISOString(),
@@ -62,20 +66,45 @@ describe("LaptopApprovals", () => {
     expect(card.textContent).toContain("Share a memory with the team");
     expect(card.querySelector("pre")!.textContent).toContain("<img src=x onerror=alert(1)>");
     expect(card.querySelector("img")).toBeNull();
+    expect([...card.querySelectorAll("dt")].map((d) => d.textContent)).toEqual(["Type", "Label"]);
+    expect(card.querySelector(".laptop-approval-from")!.textContent).toContain("Text from your laptop's agent");
+    expect(card.textContent).toMatch(/expires in \d+ min/);
     expect(card.textContent).toContain(`laptop ${shortSession(ASK.origin.laptopSessionId)}`);
     expect(card.textContent).toContain("acme/widgets");
     expect(shortSession(ASK.origin.laptopSessionId)).toBe("0199a1b2");
   });
 
-  it("long content is clipped, with Show all", async () => {
+  it("long content is clipped, and Approve waits until it is shown in full (Deny doesn't)", async () => {
+    vi.useFakeTimers();
     const long = { ...ASK, summary: `start ${"x".repeat(CLIP * 2)} end` };
     const { badge } = await render(async () => ({ approvals: [long] }));
     act(() => badge()!.click());
+    act(() => vi.advanceTimersByTime(ARM_DELAY_MS));
     const pre = () => container!.querySelector("pre")!.textContent!;
     expect(pre().length).toBe(CLIP);
     expect(pre()).not.toContain("end");
+    expect(buttons().map((b) => b.disabled)).toEqual([true, false]);
     act(() => container!.querySelector<HTMLButtonElement>(".laptop-approval-more")!.click());
     expect(pre()).toContain("end");
+    expect(buttons().map((b) => b.disabled)).toEqual([false, false]);
+  });
+
+  it("expired asks are hidden; a 401 is a blip, the widget keeps polling", async () => {
+    vi.useFakeTimers();
+    const old = { ...ASK, expiresAt: new Date(Date.now() - 1000).toISOString() };
+    let calls = 0;
+    const load = async () => {
+      calls += 1;
+      if (calls === 1) throw new ApiError(401, "sign in");
+      return { approvals: [old] };
+    };
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => root!.render(<LaptopApprovals load={load} pollMs={1000} />));
+    await act(async () => vi.advanceTimersByTime(1000));
+    expect(calls).toBeGreaterThan(1);
+    expect(container!.innerHTML).toBe("");
   });
 
   it("Approve and Deny wake after the arm delay, call the api, and the card goes", async () => {
@@ -94,6 +123,11 @@ describe("LaptopApprovals", () => {
     await act(async () => buttons()[0].click());
     expect(decide).toHaveBeenCalledWith(ASK.id, true);
     expect(container!.querySelectorAll(".laptop-approval").length).toBe(1);
+    // The next card slid up under the pointer: it re-arms, so a double click can't approve it.
+    expect(buttons().every((b) => b.disabled)).toBe(true);
+    await act(async () => buttons()[0].click());
+    expect(decide).toHaveBeenCalledTimes(1);
+    act(() => vi.advanceTimersByTime(ARM_DELAY_MS));
     await act(async () => buttons()[1].click());
     expect(decide).toHaveBeenLastCalledWith("0b6f3c2e-0000-4000-8000-000000000002", false);
     expect(container!.innerHTML).toBe("");

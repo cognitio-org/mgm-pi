@@ -1275,7 +1275,8 @@ function laptopMatchFilter(m: LaptopApprovalMatch): Record<string, unknown> {
     op: m.op,
     argsDigest: m.argsDigest,
     "origin.laptopSessionId": m.laptopSessionId,
-    "origin.repo": m.repo ?? { $exists: false },
+    // `null` matches a missing field and a stored null alike, as the memory store's `?? null` does.
+    "origin.repo": m.repo ?? null,
   };
 }
 
@@ -1303,10 +1304,10 @@ class MongoLaptopApprovals implements LaptopApprovalsCollection {
     return laptopApprovalOf(await this.col.findOne({ ...laptopMatchFilter(match), state: "pending", expiresAt: { $gt: nowIso } }));
   }
 
-  async decide(id: string, ownerEmail: string, decision: "approved" | "denied", by: string, nowIso: string): Promise<boolean> {
+  async decide(id: string, ownerEmail: string, decision: "approved" | "denied", by: string, nowIso: string, useBy: string): Promise<boolean> {
     const result = await this.col.updateOne(
       { _id: id, ownerEmail, state: "pending", expiresAt: { $gt: nowIso } },
-      { $set: { state: decision, decidedBy: by, decidedAt: nowIso } },
+      { $set: { state: decision, decidedBy: by, decidedAt: nowIso, expiresAt: useBy, expireAt: new Date(Date.parse(useBy) + LAPTOP_APPROVAL_TTL_MS) } },
     );
     return result.modifiedCount === 1;
   }

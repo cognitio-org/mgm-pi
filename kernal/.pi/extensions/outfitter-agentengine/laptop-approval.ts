@@ -9,7 +9,8 @@
  * is theirs, approved, unused and for exactly this op and args; Kernal decides nothing.
  *
  * In print mode (`kernal -p`) nothing waits: the pending approval id comes back, and a later call
- * with the same arguments and `approvalId` runs it once it is approved.
+ * with the same arguments and `approvalId` runs it once it is approved. It must be in the same pi
+ * session (`kernal -c -p`): the api binds the approval to the laptop session it came from.
  */
 import type { AdminReply, AdminTransport, LaptopContext } from "../outfitter-admin/transport.ts";
 
@@ -55,19 +56,26 @@ export async function waitForApproval(transport: AdminTransport, id: string, sig
     const r = await transport.call("approvals.get", { id }, { signal });
     if (signal?.aborted) return "cancelled";
     if (r.ok && r.state && r.state !== "pending") return r.state as WaitOutcome;
-    // "no such approval" won't change; anything else (a blip) is tried again.
-    if (!r.ok && /no such approval/.test(r.error)) return "expired";
+    // "no such approval" or a refused id won't change; anything else (a blip) is tried again.
+    if (!r.ok && /no such approval|id is required|for a laptop/.test(r.error)) return "expired";
     if (now() >= deadline) return "timeout";
   }
 }
 
-const WHY: Record<Exclude<WaitOutcome, "approved">, string> = {
-  denied: "you denied it in the Outfitter web app",
-  expired: "the approval expired before it was answered; ask again",
-  used: "that approval was already used; ask again",
-  timeout: "no answer in the Outfitter web app within 10 minutes; ask again",
-  cancelled: "cancelled while waiting for approval",
-};
+function why(outcome: Exclude<WaitOutcome, "approved">, timeoutMs: number): string {
+  switch (outcome) {
+    case "denied":
+      return "you denied it in the Outfitter web app";
+    case "expired":
+      return "the approval expired or was withdrawn; ask again";
+    case "used":
+      return "that approval was already used; ask again";
+    case "timeout":
+      return `no answer in the Outfitter web app within ${Math.round(timeoutMs / 60_000)} minutes; ask again`;
+    case "cancelled":
+      return "cancelled while waiting for approval";
+  }
+}
 
 /**
  * Calls `op` from a laptop; when the API asks for the owner's yes, waits for it in the web widget
@@ -89,11 +97,13 @@ export async function callWithWebApproval(
       ok: false,
       needsApproval: true,
       approvalId: id,
-      error: `waiting for your approval: ${WEB_APPROVAL_HINT}. Once approved, call again with the same arguments and approvalId "${id}" (it expires in 10 minutes)`,
+      // The approval is bound to this pi session: a later run must continue it (`kernal -c -p`).
+      error: `waiting for your approval: ${WEB_APPROVAL_HINT}. Once approved, call again in this same session (kernal -c -p) with the same arguments and approvalId "${id}"; it expires in 10 minutes`,
     };
   }
-  w.notify?.(`${WEB_APPROVAL_HINT}: Kernal waits up to 10 minutes (Esc cancels).`);
+  const timeoutMs = w.timeoutMs ?? APPROVAL_WAIT_MS;
+  w.notify?.(`${WEB_APPROVAL_HINT}: Kernal waits up to ${Math.round(timeoutMs / 60_000)} minutes (Esc cancels).`);
   const outcome = await waitForApproval(transport, id, opts.signal, w);
-  if (outcome !== "approved") return { ok: false, error: `not done: ${WHY[outcome]}` };
+  if (outcome !== "approved") return { ok: false, error: `not done: ${why(outcome, timeoutMs)}` };
   return transport.call(op, args, { signal: opts.signal, laptop: opts.laptop, approvalId: id });
 }

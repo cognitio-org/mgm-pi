@@ -40,7 +40,8 @@ export async function registerAdminRoutes(app: FastifyInstance, ctx: RouteContex
         operator: false,
         approved: body.confirmed === true,
         ...(laptop.value ? { laptop: laptop.value } : {}),
-        ...(body.approvalId !== undefined ? { laptopApprovalId: body.approvalId } : {}),
+        // A string only: `null` or a number reads as no approval yet, so it asks afresh.
+        ...(typeof body.approvalId === "string" ? { laptopApprovalId: body.approvalId } : {}),
       },
       body.op,
       body.args,

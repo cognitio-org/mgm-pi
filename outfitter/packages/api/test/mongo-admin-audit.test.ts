@@ -91,10 +91,10 @@ describe("MongoAdminAudit", () => {
     assert.equal(await store.laptopApprovals.findPending({ ...match, repo: undefined }, t(0)), null, "a repo-less ask is another ask");
     assert.equal(await store.laptopApprovals.findPending(match, t(600_000)), null, "expired");
     assert.equal(await store.laptopApprovals.consume("la1", match, t(0)), false, "pending can't be used");
-    assert.equal(await store.laptopApprovals.decide("la1", "eve@example.com", "approved", "eve@example.com", t(0)), false, "not hers");
-    assert.equal(await store.laptopApprovals.decide("la1", "ada@example.com", "approved", "ada@example.com", t(700_000)), false, "after expiry");
-    assert.equal(await store.laptopApprovals.decide("la1", "ada@example.com", "approved", "ada@example.com", t(0)), true);
-    assert.equal(await store.laptopApprovals.decide("la1", "ada@example.com", "denied", "ada@example.com", t(0)), false, "final");
+    assert.equal(await store.laptopApprovals.decide("la1", "eve@example.com", "approved", "eve@example.com", t(0), t(600_000)), false, "not hers");
+    assert.equal(await store.laptopApprovals.decide("la1", "ada@example.com", "approved", "ada@example.com", t(700_000), t(600_000)), false, "after expiry");
+    assert.equal(await store.laptopApprovals.decide("la1", "ada@example.com", "approved", "ada@example.com", t(0), t(600_000)), true);
+    assert.equal(await store.laptopApprovals.decide("la1", "ada@example.com", "denied", "ada@example.com", t(0), t(600_000)), false, "final");
     assert.equal(await store.laptopApprovals.consume("la1", { ...match, argsDigest: "d2" }, t(0)), false, "digest");
     assert.equal(await store.laptopApprovals.consume("la1", { ...match, laptopSessionId: "laptop:other-session" }, t(0)), false, "origin");
     assert.equal(await store.laptopApprovals.consume("la1", match, t(600_000)), false, "expired");

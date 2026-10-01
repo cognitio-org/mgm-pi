@@ -6,7 +6,9 @@ replaces the 2026-09-29 draft on `origin/outfitter/53ec3b3e`; "Changes from the 
 lists what was wrong there.
 - **Citations:** repo claims cite `file:line` at `423b877`. Agent Engine claims cite its docs
   (`D/` = `https://www.mongodb.com/docs/agentengine/`). A2A claims cite the v1.0 spec (`A2A §n`).
-- **UNVERIFIED:** anything not checked is marked **UNVERIFIED** and is on the spike list (PR0).
+- **UNVERIFIED:** anything not checked is marked **UNVERIFIED**. After the PR0 spike (2026-10-01,
+  `docs/reports/agent-engine-spike.md`), the only ones left need a live Agent Engine account (see
+  "Live checks" under Delivery).
 - **Review:** an adversarial review (2026-10-01) is folded in.
 
 ## Context
@@ -59,12 +61,18 @@ Decisions (confirmed with the owner, 2026-10-01):
 - **Memory backend:** Agent Engine's memory service, not a store of our own.
 - **Tapes:** trimmed to what the four parts need (Foreman plus an A2A worker tape). No persona
   tapes, and no tools that duplicate the MongoDB MCP server.
-- **Cluster:** the main cluster moves from M0 to Flex and also holds Agent Engine's memory
-  databases. Agent Engine connects with a hand-made user that can only reach those databases (§3.1).
+- **Clusters (revised after the PR0 spike):** two clusters in the existing Atlas project. `outfitter`
+  stays M0 and untouched. A new Flex cluster, `outfitter-memory`, holds only Agent Engine's memory
+  (§3.1).
+  - The first decision (share one Flex cluster) can't work. The memory server creates 10 search
+    indexes, Flex allows 10 per cluster, and session search already uses 2.
 - **Extraction LLM:** through the LiteLLM gateway, with a direct provider key only if PR0 shows the
   memory runtime can't reach it.
 - **Users:** both users (Matthew, Matej) get A2A keys and memory from day one. No allowlist gate.
-- **Blocking `SendMessage`:** waits up to 55 min, then returns the task still `WORKING` (§5.3).
+- **Blocking `SendMessage` (revised after the PR0 spike):** waits up to 25 s, then returns the task
+  still `WORKING` (§5.3).
+  - Was 55 min. The TCK's client times out at 30 s, and Python `a2a-sdk` at 5 s by default, so a
+    longer wait only holds a Cloud Run request open.
 - **`outfitter-delegate`:** lives in the agents project, with its A2A key as a workspace-scoped
   secret (§6).
 
@@ -151,20 +159,29 @@ Don't use run state `idle` (EPIC.md:517-519: agentd is idle before any prompt).
   - Each part is off while its project id is unset, so dev and CI need no account.
 - **Base URL:** `AGENT_ENGINE_BASE_URL`, default `https://agentengine.mongodb.com`.
 - **Token:**
-  - `POST /api/v1/oauth/token`, `grant_type=client_credentials`, sent as HTTP Basic.
-  - Cached per project and refreshed 5 min before `expires_in` (3600).
+  - `POST /api/v1/oauth/token`, form `grant_type=client_credentials`, credentials as HTTP Basic
+    (body `client_id`/`client_secret` also works).
+  - Response `{access_token, token_type, expires_in: 3600}`.
+  - Cached per project and refreshed 5 min before expiry.
   - One in-flight refresh per instance, since token requests are rate-limited (429).
 - **Module:** `packages/api/src/agentengine/`:
   - `client.ts`: fetch, token, typed errors.
-  - `memory.ts`: wraps `@mongodb-js/agent-engine-sdk-memory` in HTTP-direct mode with `projectId`.
-    The token is fixed per `Memory` instance, so it injects `Authorization` through `fetchImpl`.
-    **UNVERIFIED:** the `fetchImpl` option; the fallback is to rebuild the instance on refresh.
-  - `agents.ts`: invoke, executions.
+  - `memory.ts`: wraps `@mongodb-js/agent-engine-sdk-memory` in HTTP-direct mode with `projectId`
+    and an explicit `baseUrl`.
+    - The SDK's token is a fixed header per instance (`memory.js:139-149`). So we pass no token and
+      a `fetchImpl` (`MemoryOptions.fetchImpl`, called on every attempt, `clients/memory.js:148`).
+    - That `fetchImpl` sets `Authorization` from the cache and force-refreshes once on 401, which
+      the SDK doesn't retry.
+  - `agents.ts`: invoke, executions, runtime sessions.
   - A `FakeAgentEngine` for tests.
 - **Preview risk:** pin SDK versions exactly (0.11.7 at the time of writing, from npm) and keep
   every Agent Engine type inside this module.
-- **Rotation:** a runbook in `deploy/agent-engine.md` for both service-account secrets (90 days).
-  The api logs a warning 14 days before expiry, using `secret_expires_at` recorded at setup.
+- **Rotation:**
+  - A runbook in `deploy/agent-engine.md` for both service-account secrets (90 days).
+  - A service account can't read its own expiry ("You can't manage service accounts with a service
+    account's access token"). So the owner records `service_account.active_secret.expires_at` from
+    the create or rotate response as config `AGENT_ENGINE_*_SA_EXPIRES_AT`.
+  - The api logs a warning 14 days before. The old secret stays valid up to 7 days after a rotate.
 
 ### 3. Memory
 #### 3.1 Where it lives
@@ -172,35 +189,53 @@ Don't use run state `idle` (EPIC.md:517-519: agentd is idle before any prompt).
   `D/add-features/memory-only.md`).
 - **Its data sits in an Atlas cluster we supply** (`MONGODB_URI`), Flex at minimum
   (`D/add-features/memory.md`).
-- **Decision: the main cluster `outfitter` moves from M0 to Flex and is shared.**
-  - Agent Engine's data lives in its own databases on the same cluster: `MONGOMEM_DB_NAME` (default
-    `mdb_memory_<project-id>`) and `MDB_AGENTIC_STORE_DB` (default `mdb_store`).
-  - Outfitter keeps database `outfitter` (`MONGODB_DB`).
-  - It's one cluster and one bill. The upgrade also lifts M0's three-search-index cap, which session
-    search already presses on (indexes.ts:3).
-- **Database user `outfitter-agentengine`**, created by hand, is the only credential Agent Engine
-  gets. It is limited to cluster `outfitter` and has role `readWrite` on the two memory databases
-  only.
-  - It has no access to `outfitter`. That boundary is the only thing between the two datasets, so
-    the owner step checks it (Verification).
-  - It needs whatever Agent Engine uses to create its Search and Vector Search indexes on those
-    databases. **UNVERIFIED** (PR0): whether `readWrite` is enough, or which narrower extra role is
-    needed. Never `readWriteAnyDatabase` or `atlasAdmin`.
+- **Decision: two clusters in the existing Atlas project** (revised 2026-10-01 after the spike).
+
+| Cluster | Tier | Holds | Cost |
+|---|---|---|---|
+| `outfitter` | M0, unchanged | Outfitter's `outfitter` database and session search's 2 indexes | free |
+| `outfitter-memory` (new) | Flex, GCP `CENTRAL_US` | only Agent Engine's memory databases and its 10 indexes | $8–30/month (https://www.mongodb.com/pricing) |
+
+- **Why not share one Flex cluster:** at startup the memory server creates 10 search indexes, two
+  each on `memory_semantic`, `memory_episodic`, `memory_snapshot`, `memory_taxonomic` and
+  `memory_procedural` (memory-server 0.11.7 `ENGINE_SEARCH_INDEXES`). Flex allows 10 search and
+  vector indexes per cluster, and session search already has 2
+  (https://www.mongodb.com/docs/atlas/atlas-search/about/feature-compatibility/).
+- **No headroom on `outfitter-memory`:**
+  - Memory uses exactly 10 of 10. Never declare `short_term` in `metadata_partition_index`, because
+    it adds 2 more (STM indexes).
+  - If a future Agent Engine version needs more, only `outfitter-memory` moves to M10; `outfitter`
+    isn't touched. PR3's health check alerts on a memory-server index error.
+- **Database names are always suffixed with the project id:** `mdb_memory_<projectId>` and
+  `mdb_store_<projectId>` (memory-server `resolve_project_scoped_db`; a custom `MONGOMEM_DB_NAME`
+  also gets `_<projectId>`). Namespaces stay under Flex's 95-byte limit.
+- **Database user `agent-engine-memory`**, created by hand, is the only credential Agent Engine gets.
+  - It is scoped to cluster `outfitter-memory` (`--scope outfitter-memory:CLUSTER`), with
+    `readWrite@mdb_memory_<id>` and `readWrite@mdb_store_<id>`.
+  - That is enough: `readWrite` includes `createSearchIndexes`, `listSearchIndexes`,
+    `updateSearchIndex` and `dropSearchIndex`
+    (https://www.mongodb.com/docs/atlas/atlas-search/manage-indexes/).
+  - The server also calls `listDatabases`, which without the privilege returns only authorised
+    databases.
+- **The other direction:** today's users are unscoped (`outfitter-api` has `readWriteAnyDatabase`,
+  `mgm_db_user` `atlasAdmin`), so they reach every cluster in the project.
+  - Owner step: scope `outfitter-api` to cluster `outfitter` and narrow it to `readWrite@outfitter`.
+    The api only uses `MONGODB_DB`.
+  - `mgm_db_user` is the owner's admin and stays.
 - **Never run `agentengine atlas setup` against this Atlas project.** It creates a user with
-  `readWriteAnyDatabase` (`D/reference/limitations.md`), which would reach Outfitter's data. The
-  memory project is set up by hand (Owner steps).
-- **Network:** the project's IP access list is already `0.0.0.0/0` (atlas.md:37), so Agent Engine's
-  data plane gets in without `atlas setup-ip-access`. Narrowing the list is E7. When it happens,
-  add Agent Engine's ranges there.
-- **Upgrade risks** (PR0, owner-run):
-  - The M0 to Flex move is an Atlas tier change with a short interruption. **UNVERIFIED:** that
-    Atlas does it in place and keeps the search indexes. Otherwise re-run `deploy/atlas-search.sh`
-    after.
-  - **UNVERIFIED:** autoEmbed (session search) works on Flex as on M0.
-  - **UNVERIFIED:** the index budget on Flex covers session search's two indexes plus the ones
-    memory creates.
-  - Atlas billing must be enabled first (atlas.md:98). EPIC.md:87,121 ("Flex/M10 deferred") is
-    updated.
+  `readWriteAnyDatabase` (`D/reference/limitations.md`). The memory project is set up by hand (Owner
+  steps).
+- **Network:** the project's IP access list is shared and already `0.0.0.0/0` (atlas.md:37), so
+  Agent Engine's data plane gets in. Narrowing the list is E7. When it happens, add Agent Engine's
+  ranges.
+- **Billing:**
+  - Flex needs a payment method on the Atlas org (atlas.md:98). Today the org has one $0 Sept 2026
+    invoice, pending.
+  - The same step raises the M0's automated-embedding limit from 3 RPM / 2k TPM to 2,000 RPM / 16M
+    TPM. "Paid" covers an M0 with a payment method
+    (https://www.mongodb.com/docs/vector-search/crud-embeddings/automated-embedding/models/). That
+    lifts session search's rate-limit problem (sysop-tools.md:88) as a side effect.
+  - EPIC.md:87,121 ("Flex/M10 deferred") is updated.
 - **Embeddings:**
   - Voyage, through our own `VOYAGE_API_KEY` project secret (default `voyage-4-large`, 1024 dims).
     This is not Atlas autoEmbed.
@@ -212,18 +247,33 @@ Don't use run state `idle` (EPIC.md:517-519: agentd is idle before any prompt).
   - Taxonomic is left out, because extracted taxonomic memories default to `org` visibility
     (`D/add-features/memory-types.md`).
 - **Extraction LLM:**
-  - `extraction_llm: {provider: openai, base_url: <LiteLLM gateway>, auth_header: authorization,
-    api_key_secret: LLM_API_KEY, model: <LiteLLM model group>}` (`D/add-features/memory.md`).
+  - Under `memory:` in `project-config.yaml`: `extraction_llm: {provider: openai, base_url: <LiteLLM
+    gateway>, auth_header: authorization, api_key_secret: LLM_API_KEY, model: <LiteLLM model
+    group>}`.
+  - `api_key_secret` must be one of the fixed names `LLM_API_KEY | OPENAI_API_KEY |
+    ANTHROPIC_API_KEY | GEMINI_API_KEY | CEREBRAS_API_KEY`.
+  - `base_url` must be public `https` (no credentials, query or fragment; a trailing `/v1` is
+    normalised), and it forces Chat Completions. Source: memory-server `_ExtractionLLMConfig`,
+    `D/add-features/memory.md`.
+  - The memory server bundles LiteLLM. It won't become ready without an LLM key and a Voyage key,
+    even with extraction off.
   - `LLM_API_KEY` is a LiteLLM virtual key with its own budget. Its Secret Manager copy is
     `outfitter-agentengine-extraction-key`; not `outfitter-litellm-key-*`, which `secrets.ts:235`
     reads as a tape id.
-  - **UNVERIFIED:** that the memory runtime has egress to the gateway. If not, use a direct provider
-    key.
+  - The gateway must take a bearer key directly, with no IAP in front.
+  - **UNVERIFIED** (live check): that the memory runtime has egress to the gateway. The server code
+    has no egress handling, and the egress docs cover only agent and tool sandboxes. If it can't
+    reach the gateway, use a direct provider key.
 - **Filterable metadata:**
-  - Declare `metadata_partition_key: [{name: repo, type: string}]` and
-    `metadata_partition_index: {semantic: [both], episodic: [both]}` in `project-config.yaml`.
-  - Needs memory server ≥ 0.0.81, then `memory apply --upgrade`
-    (`D/sdk/python/packages/agent-engine-sdk-memory.md`).
+  - Inside the `memory:` block: `metadata_partition_key: [{name: repo, type: string}]` and
+    `metadata_partition_index: {semantic: [both], episodic: [both], procedural: [both]}`. Never
+    `short_term` (index budget).
+  - **Declare these before the memory server first starts.** It creates its indexes once and only
+    logs "definition mismatch" for keys added later. The fix then is to drop its indexes and
+    restart.
+  - Current runtimes (0.11.x) meet the "≥ 0.0.81" requirement.
+  - Filters accept `$eq`/`$gt…$lte`/`$in`/`$nin`/`$ne`/`$exists`/`$and`/`$or`/`$nor` on
+    `metadata.<name>`.
 
 #### 3.2 Identity, types and visibility
 - **Identity:** the api binds each call with `memory.bind({userId, sessionId})`.
@@ -240,6 +290,21 @@ Don't use run state `idle` (EPIC.md:517-519: agentd is idle before any prompt).
   - Everything is `private` unless the agent saves with `shared: true`, which sets `org`.
   - Taxonomic always needs `shared: true`.
   - Outfitter has two users (Matthew, Matej); `org` is visible to both.
+  - **Reads never return private and org together.** `userId` and `visibility` combine as AND ("There
+    is no union: … make two calls and merge", Python SDK README). So every read is two calls:
+    - bound to the user with `visibility` unset, which returns all of that user's memories;
+    - unbound with `visibility: "org"`, which returns everyone's shared memories.
+  - The api merges, dedupes by id, and splits the token budget 2:1 (own:org).
+- **Project-wide uniqueness** (memory-server indexes):
+  - `(org_id, label)` is unique for semantic, and `saveSemantic` upserts by default. So two users or
+    repos using the same label would overwrite each other.
+  - Procedure names are unique per project, deleted ones included. Taxonomic `(domain, term)` is
+    unique per project.
+  - **So the api namespaces every key:**
+    - semantic `label` = `<userHash>:<repoSlug|_>:<slug>`
+    - procedure name = `<userHash>:<repoSlug|_>:<slug>`
+    - taxonomic stays unprefixed, since it's shared by design and owner-only
+  - The model never sees the prefix.
 - **Repo scope:**
   - Semantic and episodic carry `metadata.repo`. Procedures carry a `repo:<R>` tag, since
     `saveProcedure` has tags, not metadata.
@@ -258,15 +323,36 @@ Don't use run state `idle` (EPIC.md:517-519: agentd is idle before any prompt).
   - Actions: `search {query, type?, limit?}` and `save {type, text, label?, shared?}`. The repo comes
     from the session, never from the model.
   - Ops: `memory.search` (read), `memory.save` (write, audited).
+  - **`search` goes through `buildContext`, not the per-type search methods.** In SDK 0.11.7,
+    `searchSemantic`/`searchEpisodes`/`searchTaxonomic` take no metadata filter, and the unified
+    `search` passes `metadataFilter` only to the procedural leg (`memory.js:577-586`).
+    - So `search` calls `buildContext({query, enabledSources, metadataFilter, maxTokens})`, twice
+      (own and org, §3.2), and returns its `formatted_context`.
+    - A `type` narrows `enabledSources`.
+    - If formatted text proves too coarse, `client.ts` can call `POST …/memory/retrieval/
+      context-from-sources` (the Python SDK's route, per-source filters, `include_memories`) directly.
+      **UNVERIFIED** that the gateway exposes it.
+  - **`save` maps to the SDK per type:**
+    - semantic: `saveSemantic({text, label})`. The label is required: the model's or a slug of the
+      text, namespaced as in §3.2.
+    - episodic: `saveEpisode({title, content, sessionId})`.
+    - procedural: `saveProcedure({procedure, description, content, tags: ["repo:<R>"]})`.
+    - taxonomic: `saveTaxonomic({domain, term, definition})`.
   - `save` text goes through `search/redact.ts`.
-  - The SDK has no delete (the JS facade documents none), so there's no forget action. Wrong
-    memories are fixed by saving a correction; semantic reconciles with `UPDATE`.
+  - **No forget action in v1.** Neither SDK facade has delete. The memory server has soft
+    `DELETE /{semantic|episodic|procedural|taxonomic}/{id}`, but whether the gateway proxies it is
+    **UNVERIFIED** (live check). Wrong memories are fixed by saving a correction under the same label
+    (semantic upserts).
 - **Recall (`auto`):** an agentd pi extension `pi-extension/outfitter-memory.ts`.
   - On `before_agent_start` it calls op `memory.context {query: prompt}` over the admin socket.
     agentd makes the socket group-owned by the agent gid (`run.ts:959-967`).
-  - The api runs `buildContext({query, maxTokens: 2000, enabledSources: [semantic, episodic,
-    procedural]})`. The default sources are episodic and semantic only. 2000 tokens leaves ~1500
-    after the 500-token reserve.
+  - The api runs `buildContext({query, maxTokens, enabledSources: new Set(["semantic", "episodic",
+    "procedural"]), metadataFilter})`. `enabledSources` is a `Set`, and the default is episodic and
+    semantic only.
+    - It makes the own and org calls of §3.2, 1400 and 700 tokens. Each loses a 500-token
+      formatting reserve.
+  - **UNVERIFIED** (live check): how `buildContext`'s single filter treats a source that lacks
+    `metadata.repo`. Procedural is declared in the partition index for that reason.
   - The extension sets `event.systemPromptOptions.sections.memory`. pi rebuilds from sections
     (`extensions.md:571`), and an earlier handler returning `systemPrompt` (pi-memory does,
     `pi-memory/index.ts:1581-1583`) would drop an `appendSystemPrompt` edit.
@@ -277,7 +363,10 @@ Don't use run state `idle` (EPIC.md:517-519: agentd is idle before any prompt).
 - **Record (`auto`):** the api records each user prompt and each settled final assistant message
   (§1) with `recordTurn`.
   - It hooks in next to the session-search indexer (`agentlink.ts:1534`), after `redact.ts`.
-  - `idempotencyKey` = the entry id, so replays dedupe.
+  - It calls `recordTurn` on a handle from `memory.bind({userId, sessionId})`; `recordTurn` takes no
+    `userId`.
+  - `idempotencyKey` = the entry id, so replays dedupe. The SDK's default is a fresh UUID per call,
+    which dedupes nothing (`memory.js:255`).
   - Tool output is never sent.
   - Best effort, queued, dropped on failure.
   - Agent Engine extracts long-term memories itself (every 20 messages or 3 idle minutes,
@@ -319,14 +408,19 @@ Don't use run state `idle` (EPIC.md:517-519: agentd is idle before any prompt).
 - **Tool `agent_engine`**, in the same Kernal extension:
   - `list`: the enabled agents with descriptions (op `ae.list`, read).
   - `invoke {agent, message, wait?}` (op `ae.invoke`, write, audited with agent and execution id).
-    - Uses `invokeStream` (`D/deploy/invoke-agent.md`): the execution id comes from the first frame,
-      and it reads until `done`/`error` or `wait` seconds (default 120, max 280). Then it closes
-      and returns `{status, executionId, response?}`.
+    - Uses `invokeStream` (`D/deploy/invoke-agent.md`). It reads SSE `data: {chunk_type, content,
+      metadata, execution_id}` frames until `done`/`error` or `wait` seconds (default 120, max
+      280), then closes and returns `{status, executionId, response?}`.
+    - The execution id comes from **the first frame that carries `execution_id`**. It's only present
+      "when available", so it isn't guaranteed on frame 1.
     - A sync `invoke` would only return the id at the end, and aborting it "closes only your side".
-    - Sends `X-Session-ID: outf-<session8>-<agent>`, so one Outfitter session reuses one Agent
-      Engine session and its sandbox pair. Sessions without an id take new sandboxes, and a full
-      pool fails with `pool full`.
+    - Sends `X-Session-ID: outf-<session8>-<agent>` as a request header, plus `session_id` in the
+      body as the CLI does. The id comes back in the `X-Session-ID` response header.
+    - One Outfitter session thus reuses one Agent Engine session and its sandbox pair. Sessions
+      without an id take new sandboxes, and a full pool fails with `pool full`.
     - Sends `X-Mdb-Agent-Engine-Custom-Outfitter-Session: <session8>` only, with no email.
+    - **Never sends `X-Agent-Engine-Test-Session`/`X-Agentic-Test-Session`.** The CLI's `invoke` sends
+      them, and they mark the session as a test.
   - `get {executionId}` (op `ae.get`, read): `GET /api/v1/projects/{p}/executions/{id}
     ?workspace_id=…`.
   - `resume {executionId, decision, notes?}` (op `ae.resume`, new class `approve`): for executions
@@ -343,17 +437,24 @@ Don't use run state `idle` (EPIC.md:517-519: agentd is idle before any prompt).
 - **Cost:**
   - Runtime is billed per vCPU-second, and a session holds its sandboxes until
     `agent_idle_ttl_seconds` (default 600).
-  - When the Outfitter session closes, the api stops the Agent Engine session through the REST call
-    behind `agentengine workspace sessions stop` (PR0 finds it, e.g. with the CLI's verbose flag).
-    Failing that, the idle TTL applies. `executions/{id}/cancel` on a finished execution releases
-    nothing.
+  - When the Outfitter session closes, the api stops each Agent Engine session it opened:
+    `POST /api/v1/projects/{p}/workspaces/{w}/runtime-sessions/{sessionId}/stop`. The body is empty;
+    202 means accepted, and history is kept.
+    - Captured from CLI 0.1.118 `workspace sessions stop`, along with `GET …/runtime-sessions`
+      (`{sessions: [{session_id, status, is_test_session, last_activity_at, scheduled_release_at}]}`).
+    - **UNVERIFIED** (live check): that a service-account token is allowed on these routes. If not,
+      the idle TTL applies.
+  - `executions/{id}/cancel` on a finished execution releases nothing (`cancelled: false`).
 
 ### 5. Inbound: a standard A2A v1.0 server
 #### 5.1 Surface
 - **Where:** the link role (the public origin). The routes are registered in every branch of
   `routes/index.ts`. They sit outside `/api/*`, so they skip the IAP preHandler (`server.ts:
   154-155`) and authenticate themselves.
-- **Agent Card** at `/.well-known/agent-card.json`, served with `Access-Control-Allow-Origin: *`:
+- **Agent Card** at `/.well-known/agent-card.json`, served with `Access-Control-Allow-Origin: *`,
+  `Cache-Control`, `ETag` and `Last-Modified`. The TCK's SHOULD caching tests need the last three.
+  - Built with the SDK's `AgentCard.fromJSON`. Proto3 serialisation drops defaults such as `list: []`
+    and `required: false`, which is harmless.
   - `name: "Outfitter"`, `description`, `version` = the release, `provider`.
   - `supportedInterfaces: [{url: <link>/a2a, protocolBinding: "JSONRPC", protocolVersion: "1.0"}]`.
   - `defaultInputModes: ["text/plain", "application/json"]`, `defaultOutputModes: ["text/plain",
@@ -371,9 +472,30 @@ Don't use run state `idle` (EPIC.md:517-519: agentd is idle before any prompt).
   - Push-notification methods return `PushNotificationNotSupported` (-32003).
 - **Version:** `A2A-Version: 1.0`, as a header or a query parameter (A2A §3.6.1). A missing version
   means 0.3 and gets `VersionNotSupported` (-32009).
-- **Implementation:** `@a2a-js/sdk` 1.3.0's handler and types behind our own Fastify route.
-  **UNVERIFIED:** how its server mounts outside Express. The fallback is its types plus our own
-  dispatch (PR0).
+  - The SDK's `validateVersion` does this against the card's `protocolVersion`.
+  - Our route reads the query parameter itself; the SDK reads only the header.
+- **Implementation** (verified in the spike: the toy server passed 81/81 TCK MUST tests):
+  - **Reuse from `@a2a-js/sdk` 1.3.0:** `JsonRpcTransportHandler` (parsing, `fromJSON`/`toJSON`,
+    error mapping), `validateVersion`, `Extensions`, `SSE_HEADERS`/`formatSSEEvent`, `AgentCard`, and
+    the error classes from `@a2a-js/sdk/errors`. No `express` dependency; the Express adapter is
+    optional.
+  - **Our own `A2ARequestHandler`** (`packages/api/src/a2a/handler.ts`, the SDK's 12-method
+    interface) on the `a2aTasks` store, rather than the SDK's `DefaultRequestHandler`/
+    `AgentExecutor`. Those keep task state on an in-process event bus:
+    - `SubscribeToTask` on another instance gets one snapshot and closes.
+    - `CancelTask` without the bus writes CANCELED and never stops the run.
+    - A blocking call waits for `execute()`, pinning a run to one request.
+    - It also accepts any client `contextId` for a new task.
+  - **Route `routes/a2a.ts`**, an encapsulated Fastify plugin:
+    - `removeAllContentTypeParsers()` plus an `application/json` parser.
+    - A `*` parser that maps to -32005; Fastify accepts `text/plain` by default.
+    - `setErrorHandler`: a JSON syntax error becomes -32700, not Fastify's 400; 413 for oversize.
+    - `ignoreTrailingSlash` (the TCK posts to `/a2a/`).
+    - Version from header or query, auth through `identityFromApiToken`.
+    - SSE through `reply.hijack()` and `reply.raw`. An error before the first event goes back as
+      plain JSON.
+  - **Extensions** are echoed only when the handler calls `ctx.addActivatedExtension(uri)`; the
+    route then sets the `A2A-Extensions` response header.
 
 #### 5.2 A2A keys
 - **A new token kind on `ApiToken`** (`store/types.ts:601-621`): `kind?: "dongle" | "a2a"` and
@@ -397,8 +519,9 @@ Don't use run state `idle` (EPIC.md:517-519: agentd is idle before any prompt).
 - **Limits:**
   - `maxConcurrent` (default 2) non-terminal tasks per key, and 60 requests/min per key. Both are
     atomic claims in the store, since Cloud Run runs several link instances.
-  - 64 KB request body; prompt text up to `MAIL_MAX_TEXT` (32,000, `mail.ts:37`), beyond which
+  - 64 KB request body (413). Prompt text up to `MAIL_MAX_TEXT` (32,000, `mail.ts:37`), beyond which
     -32602.
+  - Malformed JSON gets -32700, and a wrong content type -32005 (§5.1 route).
 - **Rotation:** the key held by `outfitter-delegate` (§6) expires in 90 days. The Dongles page shows
   "expires in N days", and the runbook covers replacing the Agent Engine secret.
 
@@ -470,12 +593,22 @@ Don't use run state `idle` (EPIC.md:517-519: agentd is idle before any prompt).
   - Order (A2A §3.1.2): the Task, then a `statusUpdate` per change (the latest tool name as status
     text while working), then `artifactUpdate`, then the final `statusUpdate`, then close.
   - No token streaming in v1.
-- **Blocking `SendMessage`** (no `returnImmediately`):
+- **Blocking `SendMessage`** (no `returnImmediately`), owner decision 2026-10-01:
   - A2A requires waiting until a terminal or interrupted state (A2A §3.2.2).
-  - The link allows 3600 s (`deploy/service.sh:246-258`), so the call waits up to 55 min, then
-    returns the task still `WORKING`.
-  - That breaks the MUST; the deviation is documented in the card description and in the PR's TCK
-    notes.
+  - **We wait up to 25 s**, polling the row, then return the task still `WORKING`, with
+    `historyLength` applied.
+  - That breaks the MUST for anything slower. The deviation is documented in the card and skill
+    descriptions ("send `returnImmediately: true`; poll `GetTask` or stream").
+  - **TCK behaviour (spike):**
+    - `CORE-EXECUTION-MODE-001` passes on a WORKING reply; it checks only the schema.
+    - Six setup-dependent tests skip when a blocking send isn't terminal.
+    - The TCK client's own 30 s read timeout fails any slower blocking call, whatever our cap. 25 s
+      stays under it.
+  - **Client notes, for the README and §6:**
+    - Python `a2a-sdk` streams by default whenever the card says `streaming: true`.
+      `ClientConfig(streaming=False)` with `returnImmediately` or `polling=True` gives
+      request/response.
+    - Its default httpx timeout is 5 s.
 
 #### 5.4 Memory for A2A sessions
 - **Identity:** an A2A session uses `userId = a2a:<tokenId>`, never the owner's.
@@ -493,8 +626,14 @@ An Agent Engine agent reaches Outfitter as an A2A client of §5. No Outfitter co
 Engine beyond one tool module.
 - **Deliverable:** `outfitter/integrations/agent-engine/`, containing:
   - `outfitter_tools.py`: `@app.tool` functions `outfitter_start(task, skill, repo?)` and
-    `outfitter_status(task_id)`, using `a2a-sdk` with `returnImmediately: true`. A coding task runs
-    far longer than one tool call should hold a sandbox.
+    `outfitter_status(task_id)`. A coding task runs far longer than one tool call should hold a
+    sandbox. They use `a2a-sdk` 1.2.x, which sends `A2A-Version: 1.0` and v1.0 method names by
+    default (spike), with:
+    - `ClientConfig(streaming=False)` and `returnImmediately`. Otherwise it streams, since the card
+      says `streaming: true`.
+    - Bearer through `httpx.AsyncClient(headers=…)`.
+    - The extension through `ServiceParametersFactory.create([with_a2a_extensions([uri])])`, plus
+      `message.metadata[uri]`.
   - A sample LangGraph agent `outfitter-delegate`. Its `agent.yaml` lists both tools under
     `sandboxes.tool.tools` (tools run in the agent sandbox otherwise). The tool sandbox gets
     `network.egress_mode: allow_list` for the link host and `secrets: [OUTFITTER_A2A_KEY]`.
@@ -516,13 +655,36 @@ the `outfitter-admin` skill's references.
 - **`foreman`:** plans and delegates, doesn't edit.
   - Model `DEFAULT_CLOUD_MODEL` (`litellm/claude-auto-llm`, `config.ts:372`), thinking `high`,
     `memory: auto`, `agentEngine: true`.
-  - Tools: `read, grep, find, ls, subagent, bg_wait, git, github_issue, github_pr, memory,
-    agent_engine`.
-    - `subagent` and `bg_wait` are pi-subagents' parent tools (`src/extension/index.js:703`,
-      `runs/background/wait-tool.js:28`).
+  - Tools: `read, grep, find, ls, subagent, bg_wait, subagent_supervisor, git, github_issue,
+    github_pr, memory, agent_engine`.
+    - `subagent`, `bg_wait` and `subagent_supervisor` are pi-subagents' parent tools
+      (`src/extension/index.js:703`, `runs/background/wait-tool.js:28`,
+      `intercom/native-supervisor-channel.js:12`).
+    - `subagent_supervisor` answers a child's `contact_supervisor`; without it, a child that asks
+      blocks until timeout.
+    - Not `subagents_enable` (0.71.0's lazy loader). With it in the allowlist, `subagent` stays
+      hidden until the model calls the loader.
     - `edit`/`write`/`bash` are left out on purpose.
-  - **UNVERIFIED:** whether the tape's `--tools` allowlist carries into child pi processes, which
-    need `edit`/`bash`. pi-subagents also sits at 0.70.1 installed against 0.71.0 in the lockfile.
+  - **Children (verified in the spike, pi 0.87.0 + pi-subagents 0.71.0, live run):**
+    - **Tools:** children don't inherit `--tools`/`--exclude-tools`. These are CLI-only for the
+      parent session (`guru.ts:126-129`; pi `main.js:425-429`). pi-subagents children are
+      in-process SDK sessions with tools from the agent definition (`child-session.js:226-235`).
+      The builtin `worker` gets `read, grep, find, ls, bash, edit, write, contact_supervisor`. So
+      the foreman delegates real edits.
+    - **Model:** children use the agent definition's or Kernal's subagent model (`worker` =
+      `litellm/claude-sonnet-5`, default `litellm/gemini-3.8-flash`), not the foreman's.
+    - **Extensions:** they don't load agentd's `--extension` files (spend, mail, browser). Spend
+      still shows up through the shared LiteLLM key.
+    - **Background children lose the git proxy (#317):** 0.71.0 runs `subagent` in the background by
+      default and strips `GIT_CONFIG_*`. So **children only edit and commit; the foreman pushes and
+      opens PRs** with its own `git`/`github_pr`. The tape prompt says so.
+    - **Gates:** launching a child needs no human confirmation (`policy/authority.js:11-20`), and the
+      spawn budget is unlimited unless configured. So the foreman runs unattended in a Drive.
+  - **Optional agent definition** `kernal/.pi/agents/coder.md` (copied into the image):
+    - `tools: read, grep, find, ls, bash, edit, write, contact_supervisor`, `defaultContext: fresh`.
+    - A prompt that says "commit to the task branch, never push, end with a summary".
+  - The foreman's "doesn't edit" is a working style, not a security boundary: it delegates to
+    children with bash.
 - **`a2a-coder`:** the default skill for inbound tasks.
   - Default model, the standard coding tools, `memory: tool`, no admin tools, no `agentEngine`.
   - Prompt: finish without asking, commit to the task branch, open a PR only when the task says so,
@@ -550,12 +712,20 @@ the `outfitter-admin` skill's references.
   - Org memory needs an explicit `shared: true` save from a non-A2A Drive, and extraction never
     writes taxonomic.
   - Both users see org memory. The recall block says it may be wrong.
-- **Database isolation:** the cluster is shared, so the boundary is the database user (§3.1).
-  - `outfitter-agentengine` has `readWrite` on the memory databases only, and `agentengine atlas
-    setup` is never run.
-  - The owner verifies the user can't read `outfitter` before the URI goes into Agent Engine.
+- **Database isolation:** separate clusters, plus scoped users (§3.1).
+  - `agent-engine-memory` is scoped to `outfitter-memory` with `readWrite` on its two databases
+    only. `outfitter-api` is narrowed to cluster `outfitter` and `readWrite@outfitter`.
+  - `agentengine atlas setup` is never run.
+  - The owner verifies, as `agent-engine-memory`, that `outfitter` can't be reached before the URI
+    goes into Agent Engine.
   - If that user's password leaked, the damage is limited to memory data. It's stored only in the
     memory project's secrets.
+- **Repo-supplied subagent definitions:** a cloned repo's `.pi/agents/*.md` outranks builtin and
+  user agents. So an inbound A2A repo could redefine `worker` with other tools or prompt, and
+  `agentScope` is a model-chosen parameter, not a control.
+  - Tapes reachable over A2A (`a2a-coder`) don't get `subagent`.
+  - PR8 sets pi-subagents `agentExcludeDirs` for repo scope in the image, or registers a capability
+    ceiling (`registerSubagentCapabilityCeiling`).
 - **PII:** no emails go to Agent Engine (hashed user ids, session-prefix headers).
 - **Egress stays as it is** (all public 443). Restricting it is E7.
 - **Audit:** `ae.invoke`, `ae.resume`, `memory.save` and `aeAgents` changes write `adminAudit` rows.
@@ -576,47 +746,56 @@ E9 and marks E5.4 ("reuse pi-memory … GCS", EPIC.md:539) superseded.
 
 | PR | Contents | Depends on |
 |---|---|---|
-| PR0 | Spike: the UNVERIFIED list. Owner runs the billed parts. | |
+| PR0 | Spike (done 2026-10-01, `docs/reports/agent-engine-spike.md`); live checks remain, below | |
 | PR1 | Turn-settled signal (§1): agentd flush plus `lastEntryId`, api waiters and deadline sweep | |
 | PR2 | Agent Engine client, two-project config, fake, rotation warning (§2). Tape fields `memory`/`agentEngine` (types, validation, web editor, `RunSpecGuru`, protocol.md). Op capability gating, `approve` class, socket opening, `READ_ACTIONS` | PR0 |
 | PR3 | Memory: ops, Kernal `memory` tool, agentd `outfitter-memory.ts` (image copy and prewarm `Dockerfile:240-243, 317-318`, `main.ts:247-249`, `guru.ts:115-117` `--extension`), `recordTurn`, pi-memory shutdown, `deploy/agent-engine.md` | PR1, PR2 |
 | PR4 | Outbound: `aeAgents` (both stores, web page), `agent_engine` tool, resume card | PR2 |
 | PR5 | A2A keys (`auth.ts`, tokens routes, Dongles page), `a2aTasks` and indexes, session-create service, card, routes in `routes/index.ts`, core methods, branch rule, A2A memory identity | PR1, PR2 |
-| PR6 | Streaming, `INPUT_REQUIRED`, checkpoint-gated completion, TCK run against dev | PR5 |
+| PR6 | Streaming, `INPUT_REQUIRED`, checkpoint-gated completion. TCK in CI against a test build whose fake executor follows the TCK's `tck-*` messageId script over the real handler and store; a Bearer-injection pytest plugin, since the TCK has no auth option. Dev gets a smoke run only | PR5 |
 | PR7 | `integrations/agent-engine/` tool module and sample agent | PR6 |
 | PR8 | `foreman` and `a2a-coder` definitions, skill references, EPIC.md | PR3, PR4, PR6 |
 
 PR3/PR4 run in parallel with PR5/PR6. Deploy config (`deploy/service.sh`, `config.ts`) for new
 secrets lands with the PR that reads them.
 
-**Spike list (PR0):**
-- `@a2a-js/sdk` server on Fastify.
-- Whether `a2a-sdk` (Python) 1.2.x speaks v1.0 by default.
-- `fetchImpl` on the memory SDK.
+**PR0 spike (2026-10-01):** all code-side items are resolved and folded in above. Results:
+`docs/reports/agent-engine-spike.md`.
+
+**Live checks still open**, needing an Agent Engine account. They're run after owner steps 1–5,
+before PR2 merges:
 - Memory-runtime egress to the LiteLLM gateway.
-- `buildContext` visibility: which value returns private and org together.
-- The REST call behind `workspace sessions stop`.
-- pi-subagents child tool inheritance.
-- TCK flags and bearer support, and its verdict on the 55-min cap.
+- Service-account tokens on `runtime-sessions` list and stop.
+- Whether the gateway proxies the memory server's DELETE routes.
+- How `buildContext`'s single filter treats a source without `metadata.repo`.
+- Whether the gateway exposes `POST …/memory/retrieval/context-from-sources`.
+- That the memory server creates exactly 10 indexes on `outfitter-memory`.
 
 ### Owner steps (billed or console)
-1. **Atlas:**
-   - Enable billing (atlas.md:98).
-   - Upgrade cluster `outfitter` from M0 to Flex. Then check session search
-     (`deploy/atlas-search.sh` with `DRY_RUN=1`) and the app.
-   - Create DB user `outfitter-agentengine`, limited to cluster `outfitter`, with `readWrite` on the
-     memory databases only.
-   - With `mongosh` as that user, confirm that reading `outfitter` is refused.
+1. **Atlas** (exact commands in `docs/reports/agent-engine-spike.md`):
+   - Add a payment method to org `6aafdde3306e4ae530995071`, through the Atlas UI under Billing or
+     the GCP Marketplace path in atlas.md §7.
+   - Create Flex cluster `outfitter-memory` (GCP `CENTRAL_US`). `outfitter` stays M0.
+   - Scope `outfitter-api` to cluster `outfitter` and narrow it to `readWrite@outfitter`. Check the
+     app afterwards.
+   - After the memory project exists (step 4), create DB user `agent-engine-memory`, scoped to
+     `outfitter-memory`, with `readWrite@mdb_memory_<id>,readWrite@mdb_store_<id>`.
+   - With `mongosh` as that user, confirm `outfitter` is unreachable.
 2. **Voyage:** get a Voyage API key on an account with a payment method.
 3. **LiteLLM:** mint a virtual key for extraction, with a budget.
 4. **Memory project:**
    - `agentengine auth login`, then `create --memory-only` and `project create`.
    - Set secrets `MONGODB_URI`, `VOYAGE_API_KEY`, `LLM_API_KEY`.
-   - Edit `project-config.yaml` (extraction types, `extraction_llm`, metadata partition).
+   - Edit `project-config.yaml`: extraction types, `extraction_llm`, and the metadata partition.
+     **The partition must be in place before the first `memory apply`** (§3.1).
    - `memory configure`, then `memory apply --wait`. Never `agentengine atlas setup`; the access
      list is already open.
-5. **Agents project:** create it. Create one `PROJECT_OWNER` service account per project, and store
-   them in `outfitter-agentengine-memory-sa` and `outfitter-agentengine-agents-sa`.
+   - The `agentengine` CLI is a Go binary from the GitHub Releases of
+     `mongodb/agent-engine-client-libraries`, v0.1.118 at the time of writing. PyPI's `agentengine`
+     is an unrelated package.
+5. **Agents project:** create it. Create one `PROJECT_OWNER` service account per project, store
+   them in `outfitter-agentengine-memory-sa` and `outfitter-agentengine-agents-sa`, and record each
+   `active_secret.expires_at` (§2).
 6. **For PR4:** deploy at least one agent in the agents project, and list it on the Agent Engine
    agents page.
 7. **For PR7:** create an A2A key for `a2a-coder`, set it workspace-scoped, and deploy
@@ -638,8 +817,11 @@ secrets lands with the PR that reads them.
   - An A2A reply to a `confirm`, a subagent approval or an `admin:` card is refused.
   - A Drive without `agentEngine` can't call `ae.*`; without `memory`, can't call `memory.*`.
   - The public card lists no tapes.
-- **A2A conformance:** `a2a-tck` against dev with the JSON-RPC transport at MUST level. The PR lists
-  every failure with its reason (the blocking cap is expected).
+- **A2A conformance:** `./run_tck.py --sut-host <test server> --transport jsonrpc --level must` in
+  CI.
+  - It runs against the fake-executor test build, with Bearer injected by the pytest plugin.
+  - Target: 0 MUST failures (the spike's toy server got 81 passed, 0 failed).
+  - The PR lists skips and SHOULD failures with reasons.
 - **End to end:**
   1. **Memory:** session A saves "repo X runs `npm run test:unit`". A new session B on repo X
      (`memory: auto`) has it in the prompt and uses it.
@@ -656,8 +838,8 @@ secrets lands with the PR that reads them.
      and reports the result from `outfitter_status`.
 
 ## Open questions for the owner
-None. All five were decided on 2026-10-01 (see Context). What's left is technical and on the PR0
-spike list.
+None. All were decided on 2026-10-01 (see Context), including two revisions after the spike: two
+clusters, and a 25 s blocking cap. What's left are the live checks under Delivery.
 
 ## References
 - Agent Engine docs: https://www.mongodb.com/docs/agentengine/ (index `llms.txt`). Pages:

@@ -1,0 +1,85 @@
+outfitter/packages/api/src/agentengine/usage.ts
+  s_1d3bdd6f362f9b::t_99c6f8a625cbfc 1-58
+kernal/.pi/extensions/outfitter-agentengine/memory.ts
+  s_1d3bdd6f362f9b::t_9d06b698e9e6b3 21-23,32-33
+  s_1d3bdd6f362f9b::t_372c450cc8a7dc 1-20,24-31,34-84
+outfitter/docs/protocol.md
+  s_1d3bdd6f362f9b::t_34a3267ececab8 278-286
+outfitter/image/Dockerfile
+  s_1d3bdd6f362f9b::t_4248d12f61cf79 244,319
+kernal/tests/outfitter-memory.test.ts
+  s_1d3bdd6f362f9b::t_989e1d6124d2fe 1-98
+outfitter/packages/api/test/memory-ops.test.ts
+  s_1d3bdd6f362f9b::t_8d5063ed4b38c8 8-9,416-444
+  s_1d3bdd6f362f9b::t_d8219e10eb0823 1-7,10-62,64-131,134-378,396,400-415,445-446
+  s_1d3bdd6f362f9b::t_45eefddec46601 379-395,397-399
+  s_1d3bdd6f362f9b::t_11944d11b9d259 133
+  s_1d3bdd6f362f9b::t_1dccbe0aa19ad1 63,132
+outfitter/packages/agentd/test/admin-socket.test.ts
+  s_1d3bdd6f362f9b::t_927089461dbaff 4
+  s_1d3bdd6f362f9b::t_86227e0ae41965 312-370
+outfitter/packages/agentd/src/run.ts
+  s_1d3bdd6f362f9b::t_89fd9b6f812892 8-10,18,150-155,698,861-866
+  s_1d3bdd6f362f9b::t_4248d12f61cf79 867,989-1003
+outfitter/packages/api/src/admin/memory-ops.ts
+  s_1d3bdd6f362f9b::t_bae11c3180c370 1-20,23-129,131-137,141-253,255-278,280-285
+  s_1d3bdd6f362f9b::t_4cd13c03d5bcdd 138-140
+  s_1d3bdd6f362f9b::t_d1281d3e56309c 279
+  s_1d3bdd6f362f9b::t_d8ee996cd8b7a3 254
+  s_1d3bdd6f362f9b::t_1dccbe0aa19ad1 21,130
+  s_1d3bdd6f362f9b::t_99c6f8a625cbfc 22
+outfitter/packages/agentd/test/outfitter-memory.test.ts
+  s_1d3bdd6f362f9b::t_0a70674af8cce1 1-146
+outfitter/packages/api/src/agentlink.ts
+  s_1d3bdd6f362f9b::t_d8ee996cd8b7a3 9,380-381,421-424,1559-1560
+outfitter/packages/api/test/helpers.ts
+  s_1d3bdd6f362f9b::t_3e3c3829c236f2 55-56,93
+  s_1d3bdd6f362f9b::t_8d5063ed4b38c8 19
+outfitter/packages/api/src/agentengine/recorder.ts
+  s_1d3bdd6f362f9b::t_99c6f8a625cbfc 17
+  s_1d3bdd6f362f9b::t_ef07ad20545dc8 1-16,18-173
+outfitter/packages/agentd/src/main.ts
+  s_1d3bdd6f362f9b::t_4248d12f61cf79 250
+outfitter/packages/api/test/fake-agent-engine.ts
+  s_1d3bdd6f362f9b::t_dba976fa86970b 10-11,35-38,69-72,163-171,180-192,222-231
+  s_1d3bdd6f362f9b::t_4cd13c03d5bcdd 157
+  s_1d3bdd6f362f9b::t_94892cc67cda95 232-233
+kernal/.pi/extensions/outfitter-agentengine/index.ts
+  s_1d3bdd6f362f9b::t_24e586712fe85c 1-25
+outfitter/packages/api/test/tape-capabilities.test.ts
+  s_1d3bdd6f362f9b::t_30ec8de70a85d0 160,163-165
+  s_1d3bdd6f362f9b::t_f3fe30cc70d720 238-239
+outfitter/packages/api/src/server.ts
+  s_1d3bdd6f362f9b::t_bfa7d4770a4272 31-34
+  s_1d3bdd6f362f9b::t_d8ee996cd8b7a3 160-166
+outfitter/packages/api/src/agentengine/identity.ts
+  s_1d3bdd6f362f9b::t_95f0a096a346af 1-87
+outfitter/packages/api/src/store/types.ts
+  s_1d3bdd6f362f9b::t_b91b106f6dfcf3 54-59
+outfitter/packages/agentd/pi-extension/outfitter-memory.ts
+  s_1d3bdd6f362f9b::t_53ebd261825098 1-118
+outfitter/packages/agentd/src/guru.ts
+  s_1d3bdd6f362f9b::t_b4edba0ab79484 141-142
+  s_1d3bdd6f362f9b::t_576c00e5ee72d2 38-40,86-95,131,143-144
+outfitter/deploy/agent-engine.md
+  s_1d3bdd6f362f9b::t_e9b01af038a397 1-11,14-81,83-127
+  s_1d3bdd6f362f9b::t_059d68ab01b494 12-13,82
+outfitter/deploy/agent-engine/memory/project-config.yaml
+  s_1d3bdd6f362f9b::t_059d68ab01b494 1-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "aee51fdead8abe0b2f0e0563dd27b31ba8d96891",
+  "prompts": {},
+  "sessions": {
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

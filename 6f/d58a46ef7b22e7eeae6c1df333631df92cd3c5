@@ -1,0 +1,38 @@
+outfitter/image/agents/coder.md
+  s_1d3bdd6f362f9b::t_74e86190d36ca7 1-27
+outfitter/EPIC.md
+  s_1d3bdd6f362f9b::t_6c0bc170c14e0b 89-91,123,543-546,642-671
+  s_1d3bdd6f362f9b::t_21d87d67fd2526 672
+outfitter/packages/api/test/e9-tapes.test.ts
+  s_1d3bdd6f362f9b::t_8e8645343a1bb0 1-65
+kernal/skills/outfitter-admin/SKILL.md
+  s_1d3bdd6f362f9b::t_2fda7ef5911727 40-45
+outfitter/image/Dockerfile
+  s_1d3bdd6f362f9b::t_d2ac5398fd4eda 159-161
+  s_1d3bdd6f362f9b::t_40caea1c2454aa 49-52
+  s_1d3bdd6f362f9b::t_9c348cffc7b115 157-158,173
+kernal/tests/image-subagents.test.ts
+  s_1d3bdd6f362f9b::t_730c1526c40f1c 1-84
+kernal/skills/outfitter-admin/references/e9-tapes.md
+  s_1d3bdd6f362f9b::t_cf5e9420b45189 1-72
+outfitter/image/render-settings.sh
+  s_1d3bdd6f362f9b::t_8c94bda383ac0f 9-18,20,28,35-36,38,40
+.github/workflows/outfitter-ci.yml
+  s_1d3bdd6f362f9b::t_fdcd1f3edd1ac6 121-125,166
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "6fd58a46ef7b22e7eeae6c1df333631df92cd3c5",
+  "prompts": {},
+  "sessions": {
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

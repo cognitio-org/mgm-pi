@@ -6,12 +6,13 @@
 //
 // Every lookup takes the key: another key's task or context reads as missing.
 
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { AgentLink } from "../agentlink.ts";
 import type { MailService } from "../mail.ts";
 import type { RunManager } from "../runs.ts";
 import type { TurnWaiters } from "../turns.ts";
 import { createSession, postUserMail } from "../session-create.ts";
+import { parseSessionRepo } from "../session-repo.ts";
 import {
   A2A_OPEN_STATES,
   A2A_TERMINAL_STATES,
@@ -22,6 +23,7 @@ import {
   type A2ATaskState,
   type ApiToken,
   type PiEntry,
+  type Run,
   type Session,
   type Store,
   type TurnWaiter,
@@ -39,6 +41,20 @@ const START_GRACE_MS = 2 * 60_000;
 const SWEEP_LIMIT = 200;
 /** Cap on the final assistant text kept as the result. */
 export const A2A_RESULT_TEXT_MAX = 32_000;
+/** §5.3: a settled repo task waits this long for a landed checkpoint, then FAILED. */
+export const A2A_CHECKPOINT_TIMEOUT_MS = 2 * 60_000;
+/** Cap on an INPUT_REQUIRED question shown to the caller. */
+const QUESTION_MAX = 1_000;
+/** Answers kept per task (the retry dedupe, and `history`). */
+const ANSWER_IDS_MAX = 20;
+/** Newest entries looked at for the live state (the task's prompt, the latest tool). */
+const TURN_SCAN = 200;
+/** Newest entries looked at for the result text, once per finished task. */
+const TEXT_SCAN = 400;
+/** Tool names the status text may show; any other tool (an MCP server's, a subagent) is "a tool". */
+const SHOWN_TOOLS = new Set(["bash", "read", "edit", "write", "grep", "find", "ls"]);
+/** §5.3: the UI requests a remote caller may answer. confirm and select stay with the owner. */
+const ANSWERABLE_UI_METHODS = new Set(["input", "editor"]);
 
 /** An A2A key as the handler sees it: the token row, its scope checked present. */
 export interface A2AKey {
@@ -78,6 +94,29 @@ export interface StartTaskInput {
 /** Thrown for a task or context the key doesn't have: TaskNotFound (-32001) on the wire. */
 export class A2ATaskNotFound extends Error {}
 
+/** Thrown when a message names a task that isn't waiting for the caller's input. `task` is the
+ * task as it is now: the handler maps terminal to -32004 and anything else to -32602. */
+export class A2ATaskNotAnswerable extends Error {
+  readonly task: A2ATask;
+  constructor(task: A2ATask, message = "the task is not waiting for input") {
+    super(message);
+    this.task = task;
+  }
+}
+
+/** A task's state as refresh derives it while its turn runs. */
+interface LiveState {
+  state: A2ATaskState;
+  statusText: string;
+  /** The pi UI request shown as INPUT_REQUIRED. */
+  questionId?: string;
+}
+
+/** The one GitHub read the result needs (GithubBroker.openPullUrl). */
+export interface A2APullLookup {
+  openPullUrl(session: Session, branch: string): Promise<string | undefined>;
+}
+
 export interface A2ATasksDeps {
   store: Store;
   runs: Pick<RunManager, "stop">;
@@ -87,6 +126,10 @@ export interface A2ATasksDeps {
   /** Whether a tape has a LiteLLM key of its own (an A2A task never runs on the org default).
    * Absent: not checked at task start, and agentlink.ts's run-time refusal is the only gate. */
   secrets?: Pick<SecretsBroker, "hasDedicatedLitellmKey">;
+  /** The result's prUrl. Absent: no prUrl. */
+  pulls?: A2APullLookup;
+  /** Overrides A2A_CHECKPOINT_TIMEOUT_MS (config A2A_CHECKPOINT_TIMEOUT_MS). */
+  checkpointTimeoutMs?: number;
   log?: (msg: string, err?: unknown) => void;
   now?: () => number;
 }
@@ -115,6 +158,13 @@ export class A2ATasks {
     const row = await this.store.a2aTasks.findForToken(key.id, id);
     if (!row) throw new A2ATaskNotFound("task not found");
     return this.refresh(row);
+  }
+
+  /** The key's task as stored, not refreshed (an answer must see the question the caller saw). */
+  async peek(key: A2AKey, id: string): Promise<A2ATask> {
+    const row = await this.store.a2aTasks.findForToken(key.id, id);
+    if (!row) throw new A2ATaskNotFound("task not found");
+    return row;
   }
 
   /** The key's tasks, newest first, with every open one refreshed first. */
@@ -178,7 +228,8 @@ export class A2ATasks {
       // The same messageId, sent twice at once: the other request made the task.
       const first = await this.store.a2aTasks.findByMessageId(key.id, input.messageId);
       if (first) return this.refresh(first);
-      throw new Error("a2a task insert refused");
+      // That task finished in between, which frees its messageId: insert once more.
+      if (!(await this.store.a2aTasks.insert(row))) throw new Error("a2a task insert refused");
     }
     if (rejected || !scope) return row;
 
@@ -226,6 +277,7 @@ export class A2ATasks {
       const waiter = await this.deps.turns.register({ sessionId: s.id, mailId, owner: A2A_WAITER_OWNER });
       const attached = await this.store.a2aTasks.transition(row.id, ["submitted"], {
         sessionId: s.id,
+        promptMarker: promptMarkerOf(text),
         mailId,
         waiterId: waiter.id,
         guruId: scope.guruId,
@@ -469,8 +521,9 @@ export class A2ATasks {
 
   /**
    * The task's current state from its session, run and turn waiter (§5.3's table), written back
-   * when it changed. INPUT_REQUIRED never appears here: answering UI requests over A2A is PR6, so
-   * a pending request reads as WORKING "waiting for the owner".
+   * when it changed. A pending `input`/`editor` request of the run that took the task's mail is
+   * INPUT_REQUIRED with the question as the status text; a `confirm`/`select` or an admin approval
+   * card stays with the owner (WORKING, "waiting for the owner" / "waiting for owner approval").
    */
   async refresh(row: A2ATask): Promise<A2ATask> {
     if (isTerminal(row.state)) return row;
@@ -485,6 +538,7 @@ export class A2ATasks {
 
     if (waiter.status === "settled") {
       const done = await this.completion(row, session, waiter);
+      if ("pending" in done) return done.pending;
       return this.finish(row, done.state, done.statusText, done.result ? { result: done.result } : {});
     }
     if (waiter.status === "ended") {
@@ -493,63 +547,226 @@ export class A2ATasks {
     }
 
     const run = await this.store.runs.findActiveForSession(session.id);
-    let state: A2ATaskState;
-    let statusText: string;
-    // Never back from WORKING: a run that went away before taking the mail is the waiter's to end.
-    if (row.state !== "working" && waiter.ackRunId === undefined && (!run || run.state === "queued")) {
-      state = "submitted";
-      statusText = "waiting for a Drive";
-    } else {
-      state = "working";
-      statusText = await this.workingText(run);
+    // Never back to SUBMITTED: a run that went away before taking the mail is the waiter's to end.
+    if (row.state === "submitted" && waiter.ackRunId === undefined && (!run || run.state === "queued")) {
+      return this.update(row, { state: "submitted", statusText: "waiting for a Drive" });
     }
-    if (state === row.state && statusText === row.statusText) return row;
+    return this.update(row, await this.liveState(row, session.id, run, waiter));
+  }
+
+  /** Writes an open task's state, status text and shown question when any changed. */
+  private async update(row: A2ATask, live: LiveState): Promise<A2ATask> {
+    const questionId = live.questionId ?? row.questionId;
+    if (live.state === row.state && live.statusText === row.statusText && questionId === row.questionId) return row;
     return (
-      (await this.store.a2aTasks.transition(row.id, A2A_OPEN_STATES, { state, statusText, updatedAt: this.nowIso() })) ??
-      (await this.reread(row))
+      (await this.store.a2aTasks.transition(row.id, A2A_OPEN_STATES, {
+        state: live.state,
+        statusText: live.statusText,
+        ...(live.questionId ? { questionId: live.questionId } : {}),
+        updatedAt: this.nowIso(),
+      })) ?? (await this.reread(row))
     );
   }
 
-  private async workingText(run: Awaited<ReturnType<Store["runs"]["findActiveForSession"]>>): Promise<string> {
-    if (!run) return "working";
-    // §5.3: confirms, selects and admin approvals stay with the owner in the web UI.
-    if (run.pendingUiRequest) return "waiting for the owner";
-    if (await this.store.adminApprovals.get(run.id)) return "waiting for owner approval";
-    if (run.state === "queued" || run.state === "provisioning") return "starting a Drive";
-    return "working";
+  /** WORKING with what the run is doing, or INPUT_REQUIRED (§5.3 "What can be answered"). */
+  private async liveState(row: A2ATask, sessionId: string, run: Run | null, waiter: TurnWaiter): Promise<LiveState> {
+    if (!run) return { state: "working", statusText: "working" };
+    // Admin cards live in adminApprovals, never in pendingUiRequest, and are the owner's alone.
+    const approval = await this.store.adminApprovals.get(run.id);
+    if (approval && !approval.decision && Date.parse(approval.expiresAt) > this.now()) {
+      return { state: "working", statusText: "waiting for owner approval" };
+    }
+    if (run.state === "queued" || run.state === "provisioning") {
+      return { state: "working", statusText: run.pendingUiRequest ? "waiting for the owner" : "starting a Drive" };
+    }
+    const turn = await this.liveTurn(row, sessionId, waiter);
+    if (run.pendingUiRequest) {
+      const question = answerableRequest(run, waiter);
+      // The caller's answer is on its way to pi: not a question any more.
+      if (question && question.id === row.answeredQuestionId) return { state: "working", statusText: "working" };
+      // Only while the task's own turn is the one running: after an owner's message in the same
+      // session, the dialog may be theirs.
+      if (question && turn.own) return { state: "input-required", statusText: questionText(question), questionId: question.id };
+      // confirm/select (pi-subagents' "Authorize subagent…", spawn budgets, MCP tool approvals).
+      return { state: "working", statusText: "waiting for the owner" };
+    }
+    return { state: "working", statusText: turn.tool ? `working: ${turn.tool}` : "working" };
   }
 
   /**
-   * PR6 seam (§5.3 "Completion"): what a settled turn means for the task. PR5 completes at once
-   * with the turn's final assistant text. PR6 replaces this with the checkpoint-gated rule: send
-   * the `{t: "checkpoint"}` down-frame, COMPLETED only once it reports `pushed` (FAILED "result
-   * not pushed" after 2 min), and a result with the data part {branch, head, compareUrl, prUrl?}.
+   * The newest part of the task's own turn: `own` while its prompt is the latest prompt in its run
+   * (no owner message has joined since), and the last built-in tool it called. Scans the newest
+   * TURN_SCAN entries; a prompt further back than that reads as not own (safe: no question).
    */
-  protected async completion(_row: A2ATask, session: Session, waiter: TurnWaiter): Promise<{ state: A2ATaskState; statusText: string; result?: A2ATaskResult }> {
-    const text = await this.turnText(session.id, waiter);
-    return { state: "completed", statusText: "done", result: text ? { text } : {} };
+  private async liveTurn(row: A2ATask, sessionId: string, waiter: TurnWaiter): Promise<{ own: boolean; tool?: string }> {
+    if (!waiter.ackRunId || waiter.ackSeq === undefined) return { own: false };
+    const recent = await this.store.entries.listRecent(sessionId, TURN_SCAN);
+    let tool: string | undefined;
+    for (let i = recent.length - 1; i >= 0; i--) {
+      const e = recent[i];
+      if (e.runId !== waiter.ackRunId) continue;
+      if (e.seq <= waiter.ackSeq) break;
+      const prompt = userText(e.entry);
+      if (prompt !== undefined) return isOwnPrompt(row, prompt) ? { own: true, ...(tool ? { tool } : {}) } : { own: false };
+      tool ??= lastToolName(e.entry);
+    }
+    return { own: false };
+  }
+
+  /**
+   * SendMessage with the taskId of an INPUT_REQUIRED task: the text answers the pending `input`/
+   * `editor` request the caller was shown (a `ui_response` to pi, by that request's id, so it can
+   * never answer a confirm or a later question that replaced it). A retried answer (same messageId
+   * and text) returns the task as it is, `applied: false`. Anything else throws
+   * A2ATaskNotAnswerable.
+   */
+  async answer(key: A2AKey, taskId: string, messageId: string, text: string, reply?: unknown): Promise<{ task: A2ATask; applied: boolean }> {
+    const before = await this.store.a2aTasks.findForToken(key.id, taskId);
+    if (!before) throw new A2ATaskNotFound("task not found");
+    // A retry resends the same message; the same id with other text is a new answer.
+    const answerKey = `${messageId}#${createHash("sha256").update(text).digest("base64url").slice(0, 16)}`;
+    if (before.answerKeys?.includes(answerKey)) return { task: await this.refresh(before), applied: false };
+    // The question the caller saw is the one on the row before this refresh.
+    const shown = before.state === "input-required" ? before.questionId : undefined;
+    const row = await this.refresh(before);
+    if (row.state !== "input-required" || !row.sessionId || !row.waiterId) throw new A2ATaskNotAnswerable(row);
+    if (!shown || row.questionId !== shown) throw new A2ATaskNotAnswerable(row, "the task's question changed; GetTask shows the new one");
+    const run = await this.store.runs.findActiveForSession(row.sessionId);
+    const waiter = await this.deps.turns.get(row.waiterId);
+    const request = run && waiter && waiter.status === "open" ? answerableRequest(run, waiter) : undefined;
+    if (!run || !request || request.id !== shown) throw new A2ATaskNotAnswerable(await this.refresh(row));
+    // One answer per question, across instances: only the request that moves it out of
+    // INPUT_REQUIRED sends.
+    const claimed = await this.store.a2aTasks.transition(row.id, ["input-required"], {
+      state: "working",
+      statusText: "working",
+      answeredQuestionId: request.id,
+      answerKeys: [...(row.answerKeys ?? []), answerKey].slice(-ANSWER_IDS_MAX),
+      ...(reply !== undefined ? { replies: [...(row.replies ?? []), reply].slice(-ANSWER_IDS_MAX) } : {}),
+      updatedAt: this.nowIso(),
+    });
+    if (!claimed) {
+      const now = await this.reread(row);
+      if (now.answerKeys?.includes(answerKey)) return { task: now, applied: false };
+      throw new A2ATaskNotAnswerable(now);
+    }
+    try {
+      await this.deps.agentLink.send(run.id, { t: "ui_response", id: request.id, value: text });
+    } catch (err) {
+      // Not delivered: put the question back, so the same answer can be sent again.
+      await this.store.a2aTasks.transition(row.id, ["working"], {
+        state: "input-required",
+        statusText: row.statusText ?? questionText(request),
+        answeredQuestionId: "",
+        answerKeys: (claimed.answerKeys ?? []).filter((k) => k !== answerKey),
+        ...(reply !== undefined ? { replies: (claimed.replies ?? []).slice(0, -1) } : {}),
+        updatedAt: this.nowIso(),
+      });
+      throw err;
+    }
+    // As POST /api/sessions/:id/ui-response does, but only while it is still this request.
+    await this.store.runs.clearPendingUiRequest(run.id, request.id, this.nowIso());
+    return { task: claimed, applied: true };
+  }
+
+  /**
+   * §5.3 "Completion": what a settled turn means for the task.
+   * - A task without a repository has nothing to push: COMPLETED with the turn's final text.
+   * - A repo task asks for the `{t: "checkpoint"}` down-frame once, then is COMPLETED when a
+   *   checkpoint stored after the settle landed (`Session.checkpoint.landedAt`), with the data part
+   *   {branch, head, compareUrl, prUrl?}. FAILED "result not pushed" after the timeout. Until then
+   *   `pending` (WORKING, "pushing the result").
+   */
+  protected async completion(
+    row: A2ATask,
+    session: Session,
+    waiter: TurnWaiter,
+  ): Promise<{ state: A2ATaskState; statusText: string; result?: A2ATaskResult } | { pending: A2ATask }> {
+    if (!session.repo) return { state: "completed", statusText: "done", result: await this.textResult(row, session.id, waiter) };
+
+    const settledAt = waiter.finishedAt ?? waiter.updatedAt;
+    const cp = session.checkpoint;
+    // Both times come from the instance holding the run's socket (the settle and the checkpoint
+    // frame arrive on it), so they compare on one clock.
+    if (cp?.landedAt && cp.landedAt >= settledAt && cp.branch && cp.head) {
+      return {
+        state: "completed",
+        statusText: "done",
+        result: { ...(await this.textResult(row, session.id, waiter)), ...(await this.branchResult(session, cp.branch, cp.head)) },
+      };
+    }
+    if (!row.checkpointRequestedAt) {
+      // Only the refresh that sets it asks: two instances refreshing at once send one frame.
+      const asked = await this.store.a2aTasks.transition(
+        row.id,
+        A2A_OPEN_STATES,
+        { state: "working", statusText: "pushing the result", checkpointRequestedAt: this.nowIso(), updatedAt: this.nowIso() },
+        { unlessSet: "checkpointRequestedAt" },
+      );
+      // No active run: it stopped after the settle, and its stop checkpoint is what counts.
+      const run = asked ? await this.store.runs.findActiveForSession(session.id) : null;
+      if (run) {
+        await this.deps.agentLink
+          .send(run.id, { t: "checkpoint", message: `outfitter A2A task ${row.id.slice(0, 8)}` })
+          .catch((err) => this.log(`a2a task ${row.id}: checkpoint request failed`, err));
+      }
+      return { pending: asked ?? (await this.reread(row)) };
+    }
+    const timeout = this.deps.checkpointTimeoutMs ?? A2A_CHECKPOINT_TIMEOUT_MS;
+    if (this.now() - Date.parse(row.checkpointRequestedAt) > timeout) return { state: "failed", statusText: "result not pushed" };
+    return { pending: row };
+  }
+
+  private async textResult(row: A2ATask, sessionId: string, waiter: TurnWaiter): Promise<A2ATaskResult> {
+    const text = await this.turnText(row, sessionId, waiter);
+    return text ? { text } : {};
+  }
+
+  /** The data part's fields: the pushed branch and head, the compare link, and an open PR's URL. */
+  private async branchResult(session: Session, branch: string, head: string): Promise<A2ATaskResult> {
+    const out: A2ATaskResult = { branch, head };
+    const parsed = session.repo ? parseSessionRepo(session.repo) : undefined;
+    if (parsed) {
+      // Without a base branch, GitHub compares against the repository's default branch.
+      const range = session.baseBranch ? `${refPart(session.baseBranch)}...${refPart(branch)}` : refPart(branch);
+      out.compareUrl = `https://github.com/${pathPart(parsed.owner)}/${pathPart(parsed.repo)}/compare/${range}`;
+    }
+    const prUrl = await this.deps.pulls?.openPullUrl(session, branch).catch(() => undefined);
+    if (prUrl) out.prUrl = prUrl;
+    return out;
   }
 
   /**
    * The last assistant text of this task's turn only: entries of the run that accepted its mail,
-   * after the acceptance and up to the settle's last entry. Nothing else in the session (an
-   * earlier task's answer, the owner's own later turns in the web UI) ever goes back to the
-   * caller; without the settle's entry id there is no bound, so no text.
+   * from its own prompt up to the next prompt (an owner's message in the same session) or the
+   * settle's last entry. Nothing else in the session (an earlier task's answer, the owner's own
+   * turns in the web UI) ever goes back to the caller. Without the settle's entry id, or with the
+   * task's prompt further back than TEXT_SCAN entries, there is no text.
    */
-  private async turnText(sessionId: string, waiter: TurnWaiter): Promise<string | undefined> {
+  private async turnText(row: A2ATask, sessionId: string, waiter: TurnWaiter): Promise<string | undefined> {
     if (!waiter.settledEntryId || !waiter.ackRunId || waiter.ackSeq === undefined) return undefined;
     const last = await this.store.entries.findByEntryId(sessionId, waiter.settledEntryId);
     if (!last || last.runId !== waiter.ackRunId) return undefined;
-    const recent = await this.store.entries.listRecent(sessionId, 200);
+    const recent = await this.store.entries.listRecent(sessionId, TEXT_SCAN);
+    let candidate: string | undefined;
     for (let i = recent.length - 1; i >= 0; i--) {
       const e = recent[i];
       if (e.runId !== waiter.ackRunId || e.seq > last.seq) continue;
       if (e.seq <= waiter.ackSeq) break;
-      const raw = assistantText(e.entry);
-      // Secret-shaped strings out before the text is stored for the caller: a prompt-injected
-      // model may echo what its Drive can read (handler.ts redacts again on the way out).
-      const text = raw ? redact(raw) : undefined;
-      if (text) return text.length > A2A_RESULT_TEXT_MAX ? `${text.slice(0, A2A_RESULT_TEXT_MAX)}…` : text;
+      const prompt = userText(e.entry);
+      if (prompt !== undefined) {
+        if (isOwnPrompt(row, prompt)) return candidate;
+        // Someone else's prompt: what came after it is theirs.
+        candidate = undefined;
+        continue;
+      }
+      if (candidate === undefined) {
+        const raw = assistantText(e.entry);
+        // Secret-shaped strings out before the text is stored for the caller: a prompt-injected
+        // model may echo what its Drive can read (handler.ts redacts again on the way out).
+        const text = raw ? redact(raw) : undefined;
+        if (text) candidate = text.length > A2A_RESULT_TEXT_MAX ? `${text.slice(0, A2A_RESULT_TEXT_MAX)}…` : text;
+      }
     }
     return undefined;
   }
@@ -609,6 +826,79 @@ function endedText(waiter: TurnWaiter): string {
     default:
       return "the task ended before it finished";
   }
+}
+
+/** The run's pending UI request when the caller may answer it: `input`/`editor`, asked by the run
+ * that took the task's mail (not the owner's own later turn in the web UI), with an id. */
+function answerableRequest(run: Run, waiter: TurnWaiter): { id: string; method: string; title?: unknown; placeholder?: unknown } | undefined {
+  const req = run.pendingUiRequest as { id?: unknown; method?: unknown; title?: unknown; placeholder?: unknown; source?: unknown } | undefined;
+  if (!req || typeof req !== "object") return undefined;
+  if (typeof req.id !== "string" || !req.id || typeof req.method !== "string" || !ANSWERABLE_UI_METHODS.has(req.method)) return undefined;
+  // agentlink strips `source` from pi's events; one that has it is the api's own card.
+  if (req.source !== undefined) return undefined;
+  if (!waiter.ackRunId || run.id !== waiter.ackRunId) return undefined;
+  return { id: req.id, method: req.method, title: req.title, placeholder: req.placeholder };
+}
+
+function uiRequestId(req: unknown): string | undefined {
+  const id = (req as { id?: unknown } | undefined)?.id;
+  return typeof id === "string" ? id : undefined;
+}
+
+/** The question as one line of plain text, capped. */
+function questionText(req: { title?: unknown; placeholder?: unknown }): string {
+  const clean = (v: unknown) => (typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim() : "");
+  const title = clean(req.title);
+  const hint = clean(req.placeholder);
+  // The question is the model's text and is stored as the status text the caller reads: secret-
+  // shaped strings out here too (handler.ts wireStatus redacts again on the way out).
+  const text = redact(title ? (hint ? `${title} (${hint})` : title) : "the task needs an answer");
+  return text.length > QUESTION_MAX ? `${text.slice(0, QUESTION_MAX - 1)}…` : text;
+}
+
+/** The last tool call in a pi assistant message entry: a built-in tool's name, else "a tool". */
+function lastToolName(entry: PiEntry): string | undefined {
+  if (entry.type !== "message") return undefined;
+  const message = entry.message as { role?: unknown; content?: unknown } | undefined;
+  if (message?.role !== "assistant" || !Array.isArray(message.content)) return undefined;
+  for (let i = message.content.length - 1; i >= 0; i--) {
+    const c = message.content[i] as { type?: unknown; name?: unknown } | null;
+    if (c?.type === "toolCall") return typeof c.name === "string" && SHOWN_TOOLS.has(c.name) ? c.name : "a tool";
+  }
+  return undefined;
+}
+
+/** A pi user message entry's text (a prompt), or undefined for any other entry. */
+function userText(entry: PiEntry): string | undefined {
+  if (entry.type !== "message") return undefined;
+  const message = entry.message as { role?: unknown; content?: unknown } | undefined;
+  if (message?.role !== "user") return undefined;
+  if (typeof message.content === "string") return message.content;
+  if (!Array.isArray(message.content)) return "";
+  return message.content
+    .filter((c): c is { type: "text"; text: string } => !!c && c.type === "text" && typeof c.text === "string")
+    .map((c) => c.text)
+    .join("\n");
+}
+
+/** Whether a prompt is this task's own: it carries the task's nonce marker. A row from before the
+ * marker existed takes the first prompt after its mail was accepted as its own. */
+function isOwnPrompt(row: A2ATask, prompt: string): boolean {
+  return row.promptMarker ? prompt.includes(row.promptMarker) : true;
+}
+
+/** wrapA2APrompt's opening marker (`<<<a2a-<nonce>`), unique to one task. */
+export function promptMarkerOf(wrapped: string): string | undefined {
+  return /<<<a2a-[0-9a-f]{12}\b/.exec(wrapped)?.[0];
+}
+
+function pathPart(s: string): string {
+  return encodeURIComponent(s);
+}
+
+/** A branch for a compare URL: each segment encoded, the slashes kept. */
+function refPart(s: string): string {
+  return s.split("/").map(encodeURIComponent).join("/");
 }
 
 /** A pi assistant message entry's text parts, joined. */

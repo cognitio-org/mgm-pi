@@ -6,7 +6,18 @@
 // The caller's key arrives as the call context's user (A2AKeyUser), set by routes/a2a.ts after
 // it verified the bearer.
 
-import { Message, Role, TaskState, type AgentCard, type Artifact, type Part, type Task } from "@a2a-js/sdk";
+import { randomUUID } from "node:crypto";
+import {
+  Message,
+  Role,
+  TaskState,
+  type AgentCard,
+  type Artifact,
+  type Part,
+  type Task,
+  type TaskArtifactUpdateEvent,
+  type TaskStatus,
+} from "@a2a-js/sdk";
 import type {
   CancelTaskRequest,
   DeleteTaskPushNotificationConfigRequest,
@@ -35,15 +46,19 @@ import type { Config } from "../config.ts";
 import { MAIL_MAX_TEXT } from "../mail.ts";
 import { redact } from "../search/redact.ts";
 import type { A2ATask, A2ATaskState, Store } from "../store/types.ts";
+import { isTokenActive } from "../tokens.ts";
 import { A2A_REPO_RE, SKILL_ID_RE, a2aTapeProblem } from "./keys.ts";
 import { extendedCard, OUTFITTER_TASK_EXTENSION, publicCard } from "./card.ts";
-import { A2ATaskNotFound, isTerminal, type A2AKey, type A2ATasks, type StartTaskInput } from "./tasks.ts";
+import { A2ATaskNotAnswerable, A2ATaskNotFound, isTerminal, type A2AKey, type A2ATasks, type StartTaskInput } from "./tasks.ts";
 
-/** The verified key, as the SDK's call-context user. */
+/** The verified key, as the SDK's call-context user, with the request's lifetime: `signal` aborts
+ * when the client goes away, which ends a stream's polling at once. */
 export class A2AKeyUser implements User {
   readonly key: A2AKey;
-  constructor(key: A2AKey) {
+  readonly signal: AbortSignal | undefined;
+  constructor(key: A2AKey, signal?: AbortSignal) {
     this.key = key;
+    this.signal = signal;
   }
   get isAuthenticated(): boolean {
     return true;
@@ -73,6 +88,17 @@ const TITLE_MAX = 80;
 const MESSAGE_ID_MAX = 128;
 /** The caller's text kept for `history`: enough to recognise the task, not a second copy of it. */
 const HISTORY_TEXT_MAX = 4_000;
+/** An open stream re-checks that its key is still active every this many polls (1 min at the
+ * default 2 s): a key revoked or expired since the request closes its streams. */
+const STREAM_KEY_RECHECK_POLLS = 30;
+
+/** A key already holds config.a2aStreamsPerKey open streams (across instances). routes/a2a.ts
+ * sends it as HTTP 429, like the request rate limit, before any SSE starts. */
+export class A2AStreamLimitError extends Error {
+  constructor(limit: number) {
+    super(`over ${limit} open streams for this key; close one, or poll GetTask`);
+  }
+}
 
 export interface A2AHandlerOptions {
   store: Store;
@@ -80,10 +106,15 @@ export interface A2AHandlerOptions {
   tasks: A2ATasks;
 }
 
+/** Builds the handler routes/a2a.ts serves (a test seam: the TCK build's scripted handler). */
+export type A2AHandlerFactory = (opts: A2AHandlerOptions) => OutfitterA2AHandler;
+
 export class OutfitterA2AHandler implements A2ARequestHandler {
-  private readonly opts: A2AHandlerOptions;
+  protected readonly opts: A2AHandlerOptions;
   private readonly card: AgentCard;
   private readonly blockingWaits = new Map<string, number>();
+  /** Stream polls of one task on this instance share one refresh per half poll interval. */
+  private readonly polls = new Map<string, { at: number; task: Promise<A2ATask> }>();
 
   constructor(opts: A2AHandlerOptions) {
     this.opts = opts;
@@ -104,7 +135,21 @@ export class OutfitterA2AHandler implements A2ARequestHandler {
     return extendedCard(this.opts.config, tapes);
   }
 
-  async sendMessage(params: SendMessageRequest, context: ServerCallContext): Promise<Task> {
+  async sendMessage(params: SendMessageRequest, context: ServerCallContext): Promise<Message | Task> {
+    const key = keyOf(context);
+    const accepted = await this.accept(params, context);
+    let task = accepted.task;
+    // A repeated messageId gets the task as it is: retries must not each hold a waiting request.
+    if (params.configuration?.returnImmediately !== true && accepted.fresh) task = await this.waitBlocking(key, task);
+    return this.wireTask(task, params.configuration?.historyLength);
+  }
+
+  /**
+   * The message part of SendMessage and SendStreamingMessage: a new task, a follow-up in a
+   * context, or (with a taskId) the answer to an INPUT_REQUIRED task. `fresh` is false for a
+   * repeated messageId.
+   */
+  protected async accept(params: SendMessageRequest, context: ServerCallContext): Promise<{ task: A2ATask; fresh: boolean }> {
     const key = keyOf(context);
     const message = params.message;
     if (!message) throw new RequestMalformedError("message is required");
@@ -116,20 +161,25 @@ export class OutfitterA2AHandler implements A2ARequestHandler {
       context.addActivatedExtension(OUTFITTER_TASK_EXTENSION);
     }
     const prompt = promptFrom(message.parts);
-    const historyLength = params.configuration?.historyLength;
 
-    let task: A2ATask;
     if (message.taskId) {
-      // §5.3 "Message to an existing task". INPUT_REQUIRED replies are PR6; nothing here produces
-      // that state yet, so no A2A message can answer a UI request.
-      const existing = await this.opts.tasks.get(key, message.taskId).catch(rethrowNotFound);
+      // §5.3 "Message to an existing task": INPUT_REQUIRED takes the text as its answer (input and
+      // editor requests only; A2ATasks.answer). Terminal: -32004. Anything else: -32602.
+      const existing = await this.opts.tasks.peek(key, message.taskId).catch(rethrowNotFound);
       if (message.contextId && message.contextId !== existing.contextId) {
         throw new RequestMalformedError("taskId and contextId don't belong together");
       }
-      if (isTerminal(existing.state)) {
-        throw new UnsupportedOperationError("the task has finished; send a new message with its contextId to continue");
+      try {
+        const answered = await this.opts.tasks.answer(key, existing.id, message.messageId, prompt, historyMessage(message, prompt));
+        return { task: answered.task, fresh: answered.applied };
+      } catch (err) {
+        if (!(err instanceof A2ATaskNotAnswerable)) return rethrowNotFound(err);
+        if (isTerminal(err.task.state)) {
+          throw new UnsupportedOperationError("the task has finished; send a new message with its contextId to continue");
+        }
+        if (err.task.state === "input-required") throw new RequestMalformedError(err.message);
+        throw new RequestMalformedError("the task is working; wait for it or cancel it");
       }
-      throw new RequestMalformedError("the task is working; wait for it or cancel it");
     }
 
     const input: StartTaskInput = {
@@ -143,12 +193,7 @@ export class OutfitterA2AHandler implements A2ARequestHandler {
       message: historyMessage(message, prompt),
     };
     const started = await this.opts.tasks.start(key, input).catch(rethrowNotFound);
-    task = started.task;
-
-    // A repeated messageId gets the task as it is: retries must not each hold a waiting request.
-    const repeated = started.repeated;
-    if (params.configuration?.returnImmediately !== true && !repeated) task = await this.waitBlocking(key, task);
-    return toWireTask(task, historyLength);
+    return { task: started.task, fresh: !started.repeated };
   }
 
   /** §5.3 blocking SendMessage: poll the row until terminal or interrupted, at most the cap
@@ -174,23 +219,154 @@ export class OutfitterA2AHandler implements A2ARequestHandler {
     }
   }
 
-  async *sendMessageStream(_params: SendMessageRequest, _context: ServerCallContext): AsyncGenerator<StreamResponse, void, undefined> {
-    // PR6 seam: stream the Task, then a statusUpdate per change (polling the row every 2 s), then
-    // artifactUpdate and the final statusUpdate (§5.3 "Streaming"). The card says streaming:false
-    // until then.
-    throw new UnsupportedOperationError("streaming is not supported yet; use SendMessage with returnImmediately and GetTask");
+  /**
+   * §5.3 "Streaming": the Task, then a statusUpdate per change of state or status text (the row is
+   * polled every A2A_STREAM_POLL_MS, so a change made on any link instance shows), the result's
+   * artifactUpdate before the final statusUpdate, then close. Closes on a terminal or interrupted
+   * (INPUT_REQUIRED) state, as A2A §3.1.2 has it, and at A2A_STREAM_MAX_MS.
+   */
+  async *sendMessageStream(params: SendMessageRequest, context: ServerCallContext): AsyncGenerator<StreamResponse, void, undefined> {
+    const key = keyOf(context);
+    const release = await this.claimStream(key);
+    try {
+      const { task } = await this.accept(params, context);
+      yield* this.follow(key, task, context, true, params.configuration?.historyLength);
+    } finally {
+      await release();
+    }
   }
 
-  async *resubscribe(_params: SubscribeToTaskRequest, _context: ServerCallContext): AsyncGenerator<StreamResponse, void, undefined> {
-    // PR6 seam: SubscribeToTask, same polling stream as sendMessageStream.
-    throw new UnsupportedOperationError("streaming is not supported yet; poll GetTask");
+  /** SubscribeToTask: the same stream for an existing task, open until it is terminal. A terminal
+   * task is UnsupportedOperation (-32004), A2A §3.1.6. */
+  async *resubscribe(params: SubscribeToTaskRequest, context: ServerCallContext): AsyncGenerator<StreamResponse, void, undefined> {
+    const key = keyOf(context);
+    if (!params.id) throw new RequestMalformedError("id is required");
+    const task = await this.opts.tasks.get(key, params.id).catch(rethrowNotFound);
+    if (isTerminal(task.state)) throw new UnsupportedOperationError("the task has finished; GetTask returns its result");
+    const release = await this.claimStream(key);
+    try {
+      yield* this.follow(key, task, context, false);
+    } finally {
+      await release();
+    }
+  }
+
+  /**
+   * One of the key's open streams, counted in the store across every link instance (a2aTasks
+   * slots), or A2AStreamLimitError. A slot names its own expiry (the stream's longest life plus a
+   * minute), so one left by a crashed instance is reclaimed. Returns the release.
+   */
+  private async claimStream(key: A2AKey): Promise<() => Promise<void>> {
+    const limit = this.opts.config.a2aStreamsPerKey;
+    const slots = this.opts.store.a2aTasks;
+    const slotKey = `${key.id}#streams`;
+    const slot = `${Date.now() + this.opts.config.a2aStreamMaxMs + 60_000}:${randomUUID()}`;
+    if (!(await slots.claimSlot(slotKey, slot, limit))) {
+      for (const held of await slots.listSlots(slotKey)) {
+        if (Number(held.split(":")[0]) < Date.now()) await slots.releaseSlot(slotKey, held);
+      }
+      if (!(await slots.claimSlot(slotKey, slot, limit))) throw new A2AStreamLimitError(limit);
+    }
+    let released = false;
+    return async () => {
+      if (released) return;
+      released = true;
+      await slots.releaseSlot(slotKey, slot).catch(() => undefined);
+    };
+  }
+
+  /** The task for a stream's poll; streams of one task on this instance share a refresh. */
+  private pollTask(key: A2AKey, id: string): Promise<A2ATask> {
+    const k = `${key.id}:${id}`;
+    const now = Date.now();
+    const shared = this.polls.get(k);
+    if (shared && now - shared.at < this.opts.config.a2aStreamPollMs / 2) return shared.task;
+    const task = this.opts.tasks.get(key, id);
+    this.polls.set(k, { at: now, task });
+    const forget = () => {
+      if (this.polls.get(k)?.task === task) this.polls.delete(k);
+    };
+    task.then(
+      () => setTimeout(forget, this.opts.config.a2aStreamPollMs).unref?.(),
+      forget,
+    );
+    return task;
+  }
+
+  private async *follow(
+    key: A2AKey,
+    first: A2ATask,
+    context: ServerCallContext,
+    closeOnInterrupt: boolean,
+    historyLength?: number,
+  ): AsyncGenerator<StreamResponse, void, undefined> {
+    yield { payload: { $case: "task", value: this.wireTask(first, historyLength) } };
+    const done = (t: A2ATask) => isTerminal(t.state) || (closeOnInterrupt && t.state === "input-required");
+    if (done(first)) return;
+    const signal = signalOf(context);
+    const deadline = Date.now() + this.opts.config.a2aStreamMaxMs;
+    let polls = 0;
+    let last = first;
+    while (!signal?.aborted) {
+      const left = deadline - Date.now();
+      if (left <= 0) return;
+      await sleep(Math.min(this.opts.config.a2aStreamPollMs, left), signal);
+      if (signal?.aborted) return;
+      if (++polls % STREAM_KEY_RECHECK_POLLS === 0 && !(await this.keyActive(key))) return;
+      let current: A2ATask;
+      try {
+        current = await this.pollTask(key, last.id);
+      } catch (err) {
+        if (err instanceof A2ATaskNotFound) return;
+        throw err;
+      }
+      if (current.state === last.state && current.statusText === last.statusText && current.questionId === last.questionId) continue;
+      if (current.state === "completed") {
+        for (const value of this.artifactEvents(current)) yield { payload: { $case: "artifactUpdate", value } };
+      }
+      yield {
+        payload: {
+          $case: "statusUpdate",
+          value: { taskId: current.id, contextId: current.contextId, status: wireStatus(current), metadata: undefined },
+        },
+      };
+      last = current;
+      if (done(current)) return;
+    }
+  }
+
+  /** The key is still there, unrevoked and unexpired (an open stream outlives its auth check). */
+  private async keyActive(key: A2AKey): Promise<boolean> {
+    const token = await this.opts.store.tokens.findById(key.id);
+    return !!token && token.kind === "a2a" && isTokenActive(token);
+  }
+
+  /** The task's artifacts (on COMPLETED: the result). The TCK build overrides it for its scripts. */
+  protected artifactsOf(task: A2ATask): Artifact[] {
+    return resultArtifacts(task);
+  }
+
+  /** The artifacts as stream events, each whole (no chunks). */
+  protected artifactEvents(task: A2ATask): TaskArtifactUpdateEvent[] {
+    return this.artifactsOf(task).map((artifact) => ({
+      taskId: task.id,
+      contextId: task.contextId,
+      artifact,
+      append: false,
+      lastChunk: true,
+      metadata: undefined,
+    }));
+  }
+
+  protected wireTask(task: A2ATask, historyLength?: number): Task {
+    return toWireTask(task, historyLength, this.artifactsOf(task));
   }
 
   async getTask(params: GetTaskRequest, context: ServerCallContext): Promise<Task> {
     const key = keyOf(context);
     if (!params.id) throw new RequestMalformedError("id is required");
     const task = await this.opts.tasks.get(key, params.id).catch(rethrowNotFound);
-    return toWireTask(task, params.historyLength);
+    return this.wireTask(task, params.historyLength);
   }
 
   async listTasks(params: ListTasksRequest, context: ServerCallContext): Promise<ListTasksResponse> {
@@ -218,7 +394,7 @@ export class OutfitterA2AHandler implements A2ARequestHandler {
     const page = tasks.slice(0, pageSize);
     const last = page[page.length - 1];
     return {
-      tasks: page.map((t) => toWireTask(t, params.historyLength)),
+      tasks: page.map((t) => this.wireTask(t, params.historyLength)),
       nextPageToken: tasks.length > pageSize && last ? encodeCursor(last) : "",
       pageSize,
       totalSize: total,
@@ -230,7 +406,7 @@ export class OutfitterA2AHandler implements A2ARequestHandler {
     if (!params.id) throw new RequestMalformedError("id is required");
     const canceled = await this.opts.tasks.cancel(key, params.id).catch(rethrowNotFound);
     if (!canceled) throw new TaskNotCancelableError("the task has already finished");
-    return toWireTask(canceled);
+    return this.wireTask(canceled);
   }
 
   async createTaskPushNotificationConfig(_p: TaskPushNotificationConfig, _c: ServerCallContext): Promise<TaskPushNotificationConfig> {
@@ -251,6 +427,25 @@ export class OutfitterA2AHandler implements A2ARequestHandler {
   async deleteTaskPushNotificationConfig(_p: DeleteTaskPushNotificationConfigRequest, _c: ServerCallContext): Promise<void> {
     throw new PushNotificationNotSupportedError("push notifications are not supported");
   }
+}
+
+function signalOf(context: ServerCallContext): AbortSignal | undefined {
+  const user = context.user;
+  return user instanceof A2AKeyUser ? user.signal : undefined;
+}
+
+/** Resolves after `ms`, or at once when `signal` aborts. */
+function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", done, { once: true });
+  });
 }
 
 function keyOf(context: ServerCallContext): A2AKey {
@@ -381,37 +576,60 @@ function agentMessage(task: A2ATask, text: string): Message {
   };
 }
 
+function dataPart(value: Record<string, unknown>): Part {
+  return { content: { $case: "data", value }, metadata: undefined, filename: "", mediaType: "application/json" };
+}
+
 /**
- * The row as an A2A Task. `history` is the caller's message (historyLength 0: none). On COMPLETED,
- * one artifact with the final assistant text. PR6 seam: the data part {branch, head, compareUrl,
- * prUrl?} joins it there, from A2ATaskResult.
+ * §5.3 "Result artifact", on COMPLETED: one artifact with a text part (the turn's final assistant
+ * message) and, for a repo task, a data part {branch, head, compareUrl, prUrl?} in camelCase
+ * (integrations/agent-engine/README.md "Server contract"). Nothing when the result has neither.
  */
-export function toWireTask(task: A2ATask, historyLength?: number): Task {
-  let history: Message[] = [];
-  if (task.message !== undefined) {
-    const original = Message.fromJSON(task.message);
-    history = [{ ...original, taskId: task.id, contextId: task.contextId }];
+export function resultArtifacts(task: A2ATask): Artifact[] {
+  if (task.state !== "completed" || !task.result) return [];
+  const { text, branch, head, compareUrl, prUrl } = task.result;
+  const parts: Part[] = [];
+  // Redacted on the way out too (tasks.ts redacts what it stores): secret-shaped strings never
+  // leave over A2A, whatever wrote the row.
+  if (text) parts.push(textPart(redact(text)));
+  if (branch && head) {
+    parts.push(dataPart({ branch, head, ...(compareUrl ? { compareUrl } : {}), ...(prUrl ? { prUrl } : {}) }));
   }
-  if (historyLength !== undefined) history = historyLength <= 0 ? [] : history.slice(-historyLength);
-  const artifacts: Artifact[] = [];
-  if (task.state === "completed" && task.result?.text) {
-    artifacts.push({
+  if (parts.length === 0) return [];
+  return [
+    {
       artifactId: `${task.id}-result`,
       name: "result",
-      description: "The task's final answer",
-      parts: [textPart(redact(task.result.text))],
+      description: "The task's final answer, and the branch it pushed",
+      parts,
       metadata: undefined,
       extensions: [],
-    });
+    },
+  ];
+}
+
+function wireStatus(task: A2ATask): TaskStatus {
+  return {
+    state: STATE_TO_WIRE[task.state],
+    // Status text includes an INPUT_REQUIRED question (tasks.ts questionText); every Task and
+    // streaming statusUpdate goes through here.
+    message: task.statusText ? agentMessage(task, redact(task.statusText)) : undefined,
+    timestamp: task.updatedAt,
+  };
+}
+
+/** The row as an A2A Task. `history` is the caller's message, then its answers to INPUT_REQUIRED
+ * (historyLength 0: none). */
+export function toWireTask(task: A2ATask, historyLength?: number, artifacts: Artifact[] = resultArtifacts(task)): Task {
+  let history: Message[] = [];
+  for (const json of [...(task.message !== undefined ? [task.message] : []), ...(task.replies ?? [])]) {
+    history.push({ ...Message.fromJSON(json), taskId: task.id, contextId: task.contextId });
   }
+  if (historyLength !== undefined) history = historyLength <= 0 ? [] : history.slice(-historyLength);
   return {
     id: task.id,
     contextId: task.contextId,
-    status: {
-      state: STATE_TO_WIRE[task.state],
-      message: task.statusText ? agentMessage(task, redact(task.statusText)) : undefined,
-      timestamp: task.updatedAt,
-    },
+    status: wireStatus(task),
     artifacts,
     history,
     metadata: undefined,

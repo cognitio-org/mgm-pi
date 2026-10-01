@@ -1,0 +1,77 @@
+name: Outfitter A2A TCK
+# E9 PR6 (outfitter/docs/specs/atlas-agent-engine-and-a2a.md, Verification "A2A conformance"): the
+# A2A v1.0 TCK at MUST level against the api's scripted test build (packages/api/test/tck/sut.ts:
+# the real link-role handler and store, with a fake executor that follows the TCK's tck-* messageId
+# script). Fails on any MUST failure not listed in test/tck/known-defects.txt; SHOULD and MAY are
+# reported only. Its own workflow, so Outfitter CI's jobs are untouched. Nothing here deploys or
+# reaches the cloud.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "outfitter/packages/api/**"
+      - "outfitter/packages/provider-local/**"
+      - "outfitter/package.json"
+      - "outfitter/package-lock.json"
+      - ".github/workflows/outfitter-a2a-tck.yml"
+  pull_request:
+    paths:
+      - "outfitter/packages/api/**"
+      - "outfitter/packages/provider-local/**"
+      - "outfitter/package.json"
+      - "outfitter/package-lock.json"
+      - ".github/workflows/outfitter-a2a-tck.yml"
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+permissions:
+  contents: read
+
+jobs:
+  tck:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      # a2aproject/a2a-tck; known-defects.txt and run-tck.sh's TCK_COMMIT are for this commit.
+      TCK_REF: 263b9cfaf16a554bdfb166a7ba5b67716e946349
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The TCK's own Python code runs in this job; it gets no token to read.
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with: { node-version: 24, cache: npm, cache-dependency-path: outfitter/package-lock.json }
+      - name: Install the workspace and build provider-local
+        working-directory: outfitter
+        run: |
+          npm ci
+          npm run build -w packages/provider-local
+      - name: Check out the TCK
+        uses: actions/checkout@v5
+        with:
+          repository: a2aproject/a2a-tck
+          ref: ${{ env.TCK_REF }}
+          path: a2a-tck
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+      - name: Install the TCK (its uv.lock)
+        working-directory: a2a-tck
+        run: uv sync --frozen
+      - name: TCK, MUST level (fails on any failure that isn't a known TCK defect)
+        working-directory: outfitter/packages/api
+        run: TCK_DIR="$GITHUB_WORKSPACE/a2a-tck" test/tck/run-tck.sh must
+      - name: TCK, SHOULD level (report only)
+        if: ${{ !cancelled() }}
+        working-directory: outfitter/packages/api
+        run: TCK_DIR="$GITHUB_WORKSPACE/a2a-tck" test/tck/run-tck.sh should
+      - name: TCK, MAY level (report only)
+        if: ${{ !cancelled() }}
+        working-directory: outfitter/packages/api
+        run: TCK_DIR="$GITHUB_WORKSPACE/a2a-tck" test/tck/run-tck.sh may
+      - name: Keep the last TCK report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: a2a-tck-report
+          path: a2a-tck/reports/
+          if-no-files-found: ignore

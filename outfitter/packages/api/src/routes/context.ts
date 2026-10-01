@@ -2,6 +2,7 @@ import type { PreviewService } from "../previews.ts";
 import type { TurnWaiters } from "../turns.ts";
 import type { AeSessions } from "../ae-sessions.ts";
 import type { A2ATasks } from "../a2a/tasks.ts";
+import type { A2AHandlerFactory } from "../a2a/handler.ts";
 import type { Store } from "../store/types.ts";
 import type { SessionIndexer } from "../search/service.ts";
 import type { Config } from "../config.ts";
@@ -51,6 +52,8 @@ export interface RouteContext {
   aeSessions: AeSessions;
   /** E9 §5.3 A2A tasks (routes/a2a.ts); the tick refreshes the open ones. */
   a2a: A2ATasks;
+  /** E9 PR6 test seam: builds the A2A handler (the TCK build's scripted one). Absent: OutfitterA2AHandler. */
+  a2aHandler?: A2AHandlerFactory;
   /** #197: sandbox logs (Cloud Logging, through the scoped log view) and stats (Cloud Monitoring).
    * NoSandboxTelemetry in dev and tests unless one injects a fake. */
   telemetry: SandboxTelemetry;

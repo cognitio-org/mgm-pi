@@ -286,6 +286,7 @@ describe("agentlink up-frame ordering", () => {
       insert: (r) => inner.runs.insert(r),
       insertIfNoActive: (r) => inner.runs.insertIfNoActive(r),
       findById: (id) => inner.runs.findById(id),
+      clearPendingUiRequest: (id, uiRequestId, nowIso) => inner.runs.clearPendingUiRequest(id, uiRequestId, nowIso),
       findActiveForSession: (s) => inner.runs.findActiveForSession(s),
       findLatestForSession: (s) => inner.runs.findLatestForSession(s),
       listForSession: (s) => inner.runs.listForSession(s),

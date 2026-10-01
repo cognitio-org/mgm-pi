@@ -262,6 +262,14 @@ class MongoRuns implements RunsCollection {
     return stripId<Run>(result);
   }
 
+  async clearPendingUiRequest(id: string, uiRequestId: string, nowIso: string): Promise<boolean> {
+    const result = await this.col.updateOne(
+      { _id: id, "pendingUiRequest.id": uiRequestId },
+      { $unset: { pendingUiRequest: "" }, $set: { updatedAt: nowIso } },
+    );
+    return result.modifiedCount === 1;
+  }
+
   async mergeStartup(id: string, fields: Partial<RunStartup>, unlessSet?: keyof RunStartup): Promise<Run | null> {
     const set: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(fields)) {
@@ -1525,11 +1533,13 @@ class MongoA2ATasks implements A2ATasksCollection {
   }
 
   async insert(task: A2ATask): Promise<boolean> {
+    const { openMessageId: _ignored, ...rest } = task;
+    const open = task.messageId !== undefined && A2A_OPEN_STATES.includes(task.state);
     try {
-      await this.col.insertOne({ ...task, ...a2aExpiry(task), _id: task.id });
+      await this.col.insertOne({ ...rest, ...(open ? { openMessageId: task.messageId } : {}), ...a2aExpiry(task), _id: task.id });
       return true;
     } catch (err) {
-      // The unique {tokenId, messageId} index: a retried SendMessage, possibly racing the first.
+      // The unique {tokenId, openMessageId} index: a retried SendMessage, possibly racing the first.
       if (isDuplicateKeyError(err)) return false;
       throw err;
     }
@@ -1540,7 +1550,7 @@ class MongoA2ATasks implements A2ATasksCollection {
   }
 
   async findByMessageId(tokenId: string, messageId: string): Promise<A2ATask | null> {
-    return stripA2ATask(await this.col.findOne({ tokenId, messageId }));
+    return stripA2ATask(await this.col.findOne({ tokenId, openMessageId: messageId }));
   }
 
   async latestInContext(tokenId: string, contextId: string): Promise<A2ATask | null> {
@@ -1578,13 +1588,16 @@ class MongoA2ATasks implements A2ATasksCollection {
     return rows.map((d) => stripA2ATask(d)!);
   }
 
-  async transition(id: string, from: readonly A2ATaskState[], patch: Partial<A2ATask>): Promise<A2ATask | null> {
-    const { id: _id, tokenId: _tokenId, ...rest } = patch;
+  async transition(id: string, from: readonly A2ATaskState[], patch: Partial<A2ATask>, opts: { unlessSet?: "checkpointRequestedAt" } = {}): Promise<A2ATask | null> {
+    const { id: _id, tokenId: _tokenId, openMessageId: _open, ...rest } = patch;
     const set: Record<string, unknown> = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined));
-    if (rest.state && !A2A_OPEN_STATES.includes(rest.state)) {
+    const terminal = !!rest.state && !A2A_OPEN_STATES.includes(rest.state);
+    if (terminal) {
       set.expireAt = new Date((rest.updatedAt ? Date.parse(rest.updatedAt) : Date.now()) + FINISHED_A2A_TASK_TTL_MS);
     }
-    const doc = await this.col.findOneAndUpdate({ _id: id, state: { $in: [...from] } }, { $set: set }, { returnDocument: "after" });
+    const update = terminal ? { $set: set, $unset: { openMessageId: "" as const } } : { $set: set };
+    const filter = { _id: id, state: { $in: [...from] }, ...(opts.unlessSet ? { [opts.unlessSet]: { $exists: false } } : {}) };
+    const doc = await this.col.findOneAndUpdate(filter, update, { returnDocument: "after" });
     return stripA2ATask(doc);
   }
 
@@ -1699,6 +1712,12 @@ export class MongoStore implements Store {
   }
 
   private async ensureIndexes(db: Db): Promise<void> {
+    // E9 PR6: the A2A messageId dedupe moved to openMessageId (open tasks only). PR5's index on
+    // messageId would refuse a reused messageId after its task finished; gone if it was never built.
+    await db
+      .collection("a2aTasks")
+      .dropIndex("a2a_message_dedupe")
+      .catch(() => undefined);
     await Promise.all([
       db.collection("entries").createIndex({ sessionId: 1, "entry.id": 1 }, { unique: true }),
       db.collection("entries").createIndex({ sessionId: 1, seq: 1 }),
@@ -1728,8 +1747,8 @@ export class MongoStore implements Store {
       db.collection("a2aTasks").createIndex({ tokenId: 1, contextId: 1, createdAt: -1 }),
       db.collection("a2aTasks").createIndex({ tokenId: 1, createdAt: -1 }),
       db.collection("a2aTasks").createIndex(
-        { tokenId: 1, messageId: 1 },
-        { name: "a2a_message_dedupe", unique: true, partialFilterExpression: { messageId: { $type: "string" } } },
+        { tokenId: 1, openMessageId: 1 },
+        { name: "a2a_open_message_dedupe", unique: true, partialFilterExpression: { openMessageId: { $type: "string" } } },
       ),
       db.collection("a2aTasks").createIndex({ state: 1, createdAt: 1 }),
       db.collection("a2aTasks").createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),

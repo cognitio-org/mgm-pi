@@ -201,7 +201,7 @@ describe("Agent Card", () => {
     assert.ok(res.headers.etag && res.headers["last-modified"]);
     const card = res.json();
     assert.deepEqual(card.supportedInterfaces, [{ url: `${LINK}/a2a`, protocolBinding: "JSONRPC", protocolVersion: "1.0" }]);
-    assert.notEqual(card.capabilities.streaming, true, "streaming stays off until PR6");
+    assert.equal(card.capabilities.streaming, true);
     assert.equal(card.capabilities.extendedAgentCard, true);
     assert.deepEqual(card.skills.map((s: { id: string }) => s.id), ["coding"]);
     assert.doesNotMatch(res.body, /Secret Coder|"coder"/);
@@ -293,17 +293,15 @@ describe("JSON-RPC transport", () => {
     await app.fastify.close();
   });
 
-  test("push methods -32003; streaming -32004 (PR6); unknown methods -32601", async () => {
+  test("push methods -32003; SubscribeToTask on an unknown task -32001; unknown methods -32601", async () => {
     const { app, token } = await setup();
     const push = await rpc(app, "CreateTaskPushNotificationConfig", { taskId: "x", url: "https://example.com" }, { token });
     assert.equal(push.json().error.code, -32003);
     const getPush = await rpc(app, "GetTaskPushNotificationConfig", { taskId: "x", id: "y" }, { token });
     assert.equal(getPush.json().error.code, -32003);
-    const stream = await rpc(app, "SendStreamingMessage", { message: message("hi") }, { token });
-    assert.equal(stream.statusCode, 200);
-    assert.equal(stream.json().error.code, -32004);
     const sub = await rpc(app, "SubscribeToTask", { id: "x" }, { token });
-    assert.equal(sub.json().error.code, -32004);
+    assert.equal(sub.statusCode, 200);
+    assert.equal(sub.json().error.code, -32001);
     const unknown = await rpc(app, "Frobnicate", {}, { token });
     assert.equal(unknown.json().error.code, -32601);
     await app.fastify.close();
@@ -517,6 +515,9 @@ describe("SendMessage and tasks", () => {
     assert.equal(busy.contextId, first.contextId);
     assert.match(busy.status.message.parts[0].text, /one task at a time per context/);
     await settle(store, record.id, first.id, "first answer");
+    // A repo task completes once a checkpoint after its settle reports the branch landed (§5.3).
+    const firstSession = (await store.sessions.findById((await store.a2aTasks.findForToken(record.id, first.id))!.sessionId!))!;
+    await store.sessions.update(firstSession.id, { checkpoint: { branch: firstSession.branch, head: "a".repeat(40), at: new Date().toISOString(), landed: true, landedAt: new Date().toISOString() } });
     const next = (await send(app, token, message("two", { contextId: first.contextId }))).json().result.task;
     assert.equal(next.status.state, "TASK_STATE_SUBMITTED");
     assert.equal(next.contextId, first.contextId);
@@ -726,6 +727,10 @@ async function settle(store: Store, tokenId: string, taskId: string, reply: stri
   let seq = (await store.entries.maxSeq(sessionId)) + 1;
   await store.turnWaiters.markAcked(sessionId, row.mailId!, runId, seq, new Date().toISOString());
   seq++;
+  // pi stores the task's prompt (the mail's text) as a user entry first.
+  const mail = (await store.mail.findById(row.mailId!))!;
+  await store.entries.insertIfNew(sessionId, seq, { id: `u-${randomUUID()}`, parentId: null, type: "message", message: { role: "user", content: [{ type: "text", text: mail.text }] } }, { runId });
+  seq++;
   const entryId = `e-${randomUUID()}`;
   const content = reply === undefined ? [{ type: "toolCall", name: "bash" }] : [{ type: "text", text: reply }];
   await store.entries.insertIfNew(sessionId, seq, { id: entryId, parentId: null, type: "message", message: { role: "assistant", content } }, { runId });
@@ -774,6 +779,17 @@ function contract(name: string, getStore: () => Store) {
       assert.equal((await store.a2aTasks.findByMessageId("k1", "m1"))?.id, a.id);
       assert.equal(await store.a2aTasks.findForToken("k2", a.id), null);
       assert.equal((await store.a2aTasks.findForToken("k1", a.id))?.id, a.id);
+      // Only while it is open: once finished, the messageId may start a new task (the TCK reuses one).
+      await store.a2aTasks.transition(a.id, ["submitted"], { state: "completed", updatedAt: now() });
+      assert.equal((await store.a2aTasks.findForToken("k1", a.id))?.openMessageId, undefined);
+      assert.equal(await store.a2aTasks.findByMessageId("k1", "m1"), null);
+      const b = row({ messageId: "m1" });
+      assert.equal(await store.a2aTasks.insert(b), true);
+      assert.equal((await store.a2aTasks.findByMessageId("k1", "m1"))?.id, b.id);
+      assert.equal(await store.a2aTasks.insert(row({ messageId: "m1" })), false);
+      // A task rejected from the start never holds its messageId.
+      assert.equal(await store.a2aTasks.insert(row({ messageId: "m9", state: "rejected" })), true);
+      assert.equal(await store.a2aTasks.insert(row({ messageId: "m9", state: "rejected" })), true);
     });
 
     test("transition never leaves a terminal state; contexts and lists are per key", async () => {

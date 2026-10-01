@@ -130,6 +130,17 @@ export interface Config {
   /** A2A_REQUESTS_PER_MINUTE: per A2A key, across instances (E9 §5.2, default 60). A local TCK run
    * raises it; the TCK sends far more than a real client. */
   a2aRequestsPerMinute: number;
+  /** A2A_STREAM_POLL_MS: how often a SendStreamingMessage/SubscribeToTask stream re-reads its task
+   * row (E9 §5.3, 2 s; the row is the truth across link instances). Tests and the TCK build shorten it. */
+  a2aStreamPollMs: number;
+  /** A2A_STREAM_MAX_MS: the longest one stream stays open (default 10 min, at most 55 min, under the
+   * link service's 1 h request timeout). The client resubscribes for more. */
+  a2aStreamMaxMs: number;
+  /** A2A_STREAMS_PER_KEY: open streams one key may hold, across instances (default 4). */
+  a2aStreamsPerKey: number;
+  /** A2A_CHECKPOINT_TIMEOUT_MS: how long a settled repo task waits for its checkpoint to report the
+   * branch pushed before it is FAILED "result not pushed" (E9 §5.3, 2 min). Tests shorten it. */
+  a2aCheckpointTimeoutMs: number;
   /** NGROK_GOOGLE_OAUTH (Secret Manager outfitter-ngrok-google-oauth): our Google OAuth client for
    * ngrok's sign-in on secure previews, JSON {client_id, client_secret}. Absent or unparseable:
    * ngrok's managed Google app is used instead. */
@@ -507,6 +518,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     release: (env.OUTFITTER_RELEASE ?? "").trim(),
     a2aBlockingCapMs: Math.max(0, Math.min(25_000, envInt("A2A_BLOCKING_CAP_MS", 25_000, env))),
     a2aRequestsPerMinute: Math.max(1, envInt("A2A_REQUESTS_PER_MINUTE", 60, env)),
+    a2aStreamPollMs: Math.max(20, Math.min(10_000, envInt("A2A_STREAM_POLL_MS", 2_000, env))),
+    a2aStreamMaxMs: Math.max(1_000, Math.min(55 * 60_000, envInt("A2A_STREAM_MAX_MS", 10 * 60_000, env))),
+    a2aStreamsPerKey: Math.max(1, Math.min(50, envInt("A2A_STREAMS_PER_KEY", 4, env))),
+    a2aCheckpointTimeoutMs: Math.max(100, Math.min(30 * 60_000, envInt("A2A_CHECKPOINT_TIMEOUT_MS", 2 * 60_000, env))),
     ...(envGoogleOauth(env.NGROK_GOOGLE_OAUTH) ? { ngrokGoogleOauth: envGoogleOauth(env.NGROK_GOOGLE_OAUTH) } : {}),
     litellmBaseUrl: env.LITELLM_BASE_URL ?? "https://router.kernal.one/v1",
     litellmAdminKey: env.LITELLM_ADMIN_KEY ?? "",

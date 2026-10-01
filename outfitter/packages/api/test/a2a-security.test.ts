@@ -228,6 +228,24 @@ describe("A2A results: redacted on the way out", () => {
     assert.match(wire, /\[redacted\]/);
   });
 
+  test("PR6: an INPUT_REQUIRED question and a repo result's text part are redacted too", () => {
+    const now = new Date().toISOString();
+    const base = { id: randomUUID(), contextId: "c1", tokenId: "k1", ownerEmail: OWNER, createdAt: now, updatedAt: now };
+    const asking: A2ATask = { ...base, state: "input-required", statusText: "Use GH_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123?", questionId: "q1" };
+    const asked = JSON.stringify(toWireTask(asking));
+    assert.doesNotMatch(asked, /ghp_abcdefghij/);
+    assert.match(asked, /\[redacted\]/);
+    const done: A2ATask = {
+      ...base,
+      state: "completed",
+      statusText: "done",
+      result: { text: "pushed; OUTFITTER_LITELLM_KEY=supersecretvalue1", branch: "outfitter/a2a-0123456789ab", head: "0123456789abcdef0123456789abcdef01234567" },
+    };
+    const wire = toWireTask(done);
+    assert.doesNotMatch(JSON.stringify(wire), /supersecretvalue1/);
+    assert.equal(wire.artifacts[0].parts.length, 2, "the text part and the branch data part");
+  });
+
   test("the stored result is redacted at completion", async () => {
     const store = new MemoryStore();
     await seedTape(store, "coder");
@@ -239,6 +257,10 @@ describe("A2A results: redacted on the way out", () => {
     const runId = run?.id ?? "r-test";
     let seq = (await store.entries.maxSeq(row.sessionId!)) + 1;
     await store.turnWaiters.markAcked(row.sessionId!, row.mailId!, runId, seq, new Date().toISOString());
+    seq++;
+    // PR6: the result is bounded by the task's own prompt, which pi stores as a user entry first.
+    const mail = (await store.mail.findById(row.mailId!))!;
+    await store.entries.insertIfNew(row.sessionId!, seq, { id: `u-${randomUUID()}`, parentId: null, type: "message", message: { role: "user", content: [{ type: "text", text: mail.text }] } }, { runId });
     seq++;
     const entryId = `e-${randomUUID()}`;
     const text = "printenv says LITELLM_API_KEY=sk-abcdefghijklmnopqrstuvwxyz";

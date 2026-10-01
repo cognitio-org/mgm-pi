@@ -331,6 +331,44 @@ export class GithubBroker {
     return this.settle(runId, op, key, write, result);
   }
 
+  /**
+   * E9 §5.3: the html_url of the open pull request whose head is `branch` in the session's
+   * repository, for an A2A task's result. Undefined when there is none, or when GitHub can't be
+   * asked (no token, an error, a rate limit); never throws. Read-only, with the broker's own
+   * credential, so it works after the task's Drive has stopped.
+   */
+  async openPullUrl(session: Session, branch: string): Promise<string | undefined> {
+    try {
+      const parsed = session.repo ? parseSessionRepo(session.repo) : undefined;
+      if (!parsed || !branch) return undefined;
+      // Same fail-closed rule as the broker's A2A gate: only the session's own outfitter/a2a-* branch.
+      if (isA2ASession(session) && (!isA2ABranch(session.branch) || branch !== session.branch)) return undefined;
+      let token = "";
+      if (this.secrets.brokerGithubToken) {
+        token = (await this.secrets.brokerGithubToken(session)).token;
+      } else {
+        const guru = await this.store.gurus.findById(session.guruId);
+        if (!guru) return undefined;
+        token = (await this.secrets.secretsForRun(session, guru)).githubToken;
+      }
+      token = token.trim();
+      if (!token) return undefined;
+      const res = await this.transportFor(token).request("GET /repos/{owner}/{repo}/pulls", {
+        owner: parsed.owner,
+        repo: parsed.repo,
+        head: `${parsed.owner}:${branch}`,
+        state: "open",
+        per_page: 1,
+      });
+      if (res.status < 200 || res.status >= 300 || !Array.isArray(res.data)) return undefined;
+      const url = (res.data[0] as { html_url?: unknown } | undefined)?.html_url;
+      // Only a github.com pull request URL goes back to the caller.
+      return typeof url === "string" && /^https:\/\/github\.com\/[^\s?#]+\/pull\/\d+$/.test(url) ? url : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private async ownerLogin(session: Session): Promise<string> {
     if (!session.ownerEmail) return "";
     try {

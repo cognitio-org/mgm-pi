@@ -1,0 +1,9 @@
+# Known A2A TCK defects at the pinned commit (run-tck.sh TCK_COMMIT): tests that fail against a
+# conforming server. One `classname::name  # reason` per line; check_results.py lets exactly these
+# fail and reports when one starts passing.
+
+# CORE-SEND-003: the requirement says "MUST return ContentTypeNotSupportedError", and we do (-32005
+# with the CONTENT_TYPE_NOT_SUPPORTED ErrorInfo, as A2A §3.3.2 and the Agent Engine client contract
+# require), but test_must_requirement gives this requirement no expected_error, so it demands a
+# successful response instead.
+tests.compatibility.core_operations.test_requirements::test_must_requirement[CORE-SEND-003-jsonrpc]  # TCK runner expects success where the spec requires -32005

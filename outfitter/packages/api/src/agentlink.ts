@@ -1694,8 +1694,22 @@ export class AgentLink {
           branchAllowed(reported, current, prefix) &&
           (pushed || reported === current);
         if (reported !== undefined && current !== undefined) checkpoint.branch = takeBranch ? reported : current;
-        if (takeBranch && pushed && frame.head !== undefined) checkpoint.head = String(frame.head);
+        // agentd sends a head only after push() returned: pushed, or already on the remote
+        // (`pushed: false` with a head). Either way the remote branch is at that head. A frame
+        // without one (the branch wasn't allowed, nothing could be committed) leaves the old head.
+        const head = frame.head !== undefined ? String(frame.head) : undefined;
+        const landed = takeBranch && head !== undefined && /^[0-9a-f]{40}([0-9a-f]{24})?$/i.test(head);
+        if (landed) checkpoint.head = head;
         else if (session?.checkpoint?.head) checkpoint.head = session.checkpoint.head;
+        // E9 §5.3: an A2A repo task completes on a landed checkpoint stored after its turn settled.
+        if (current !== undefined) {
+          checkpoint.at = now;
+          checkpoint.landed = landed;
+          // A later frame that didn't land (nothing to commit on a detached HEAD, say) must not
+          // hide the push before it.
+          const landedAt = landed ? now : session?.checkpoint?.landedAt;
+          if (landedAt) checkpoint.landedAt = landedAt;
+        }
         // Finding #3 (docs/reports/security-review-pr1.md): snapshotUrl/workspaceUrl round-trip
         // back out as run.spec.snapshot.url / run.spec.workspace.snapshotUrl on the *next* run and
         // get fetched there -- validate before persisting rather than storing whatever a

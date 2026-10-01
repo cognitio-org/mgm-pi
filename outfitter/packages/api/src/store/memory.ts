@@ -238,6 +238,15 @@ class MemoryRuns implements RunsCollection {
     return clone(next);
   }
 
+  async clearPendingUiRequest(id: string, uiRequestId: string, nowIso: string): Promise<boolean> {
+    const row = this.rows.get(id);
+    const pending = row?.pendingUiRequest as { id?: unknown } | undefined;
+    if (!row || pending?.id !== uiRequestId) return false;
+    const { pendingUiRequest: _cleared, ...rest } = row;
+    this.rows.set(id, { ...rest, updatedAt: nowIso });
+    return true;
+  }
+
   async mergeStartup(id: string, fields: Partial<RunStartup>, unlessSet?: keyof RunStartup): Promise<Run | null> {
     const row = this.rows.get(id);
     if (!row) return null;
@@ -1166,12 +1175,14 @@ class MemoryA2ATasks implements A2ATasksCollection {
 
   async insert(task: A2ATask): Promise<boolean> {
     if (this.rows.has(task.id)) return false;
-    if (task.messageId !== undefined) {
+    const { openMessageId: _ignored, ...rest } = task;
+    const open = task.messageId !== undefined && A2A_OPEN_STATES.includes(task.state);
+    if (open) {
       for (const row of this.rows.values()) {
-        if (row.tokenId === task.tokenId && row.messageId === task.messageId) return false;
+        if (row.tokenId === task.tokenId && row.openMessageId === task.messageId) return false;
       }
     }
-    this.rows.set(task.id, clone(task));
+    this.rows.set(task.id, clone(open ? { ...rest, openMessageId: task.messageId } : rest));
     return true;
   }
 
@@ -1182,7 +1193,7 @@ class MemoryA2ATasks implements A2ATasksCollection {
 
   async findByMessageId(tokenId: string, messageId: string): Promise<A2ATask | null> {
     for (const row of this.rows.values()) {
-      if (row.tokenId === tokenId && row.messageId === messageId) return clone(row);
+      if (row.tokenId === tokenId && row.openMessageId === messageId) return clone(row);
     }
     return null;
   }
@@ -1225,11 +1236,13 @@ class MemoryA2ATasks implements A2ATasksCollection {
       .map(clone);
   }
 
-  async transition(id: string, from: readonly A2ATaskState[], patch: Partial<A2ATask>): Promise<A2ATask | null> {
+  async transition(id: string, from: readonly A2ATaskState[], patch: Partial<A2ATask>, opts: { unlessSet?: "checkpointRequestedAt" } = {}): Promise<A2ATask | null> {
     const row = this.rows.get(id);
     if (!row || !from.includes(row.state)) return null;
-    const { id: _id, tokenId: _tokenId, ...rest } = patch;
+    if (opts.unlessSet && row[opts.unlessSet] !== undefined) return null;
+    const { id: _id, tokenId: _tokenId, openMessageId: _open, ...rest } = patch;
     Object.assign(row, rest);
+    if (!A2A_OPEN_STATES.includes(row.state)) delete row.openMessageId;
     return clone(row);
   }
 

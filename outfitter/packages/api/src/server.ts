@@ -29,7 +29,8 @@ import { ProviderStatusService } from "./providers-status.ts";
 import { ModelsService } from "./models.ts";
 import { registerRoutes } from "./routes/index.ts";
 import { MailService, CloudTasksWakeScheduler, NoopWakeScheduler, type WakeScheduler } from "./mail.ts";
-import type { GithubBroker } from "./github-broker.ts";
+import { GithubBroker } from "./github-broker.ts";
+import type { A2AHandlerFactory } from "./a2a/handler.ts";
 import { GithubCatalog } from "./github-catalog.ts";
 import { createAgentEngine, type AgentEngine } from "./agentengine/index.ts";
 import { MemoryRecorder } from "./agentengine/recorder.ts";
@@ -54,6 +55,9 @@ export interface BuildAppOptions {
   github?: GithubBroker;
   /** Shortens installation-token refresh waits. Production omits this. */
   githubRefresh?: GithubRefreshTiming;
+  /** E9 PR6: the A2A request handler, for the TCK build's scripted executor (test/tck/sut.ts).
+   * Production omits it and gets OutfitterA2AHandler. */
+  a2aHandler?: A2AHandlerFactory;
   /** #197: sandbox logs and stats. Tests inject a fake; production omits it and gets Cloud
    * Logging/Monitoring (or nothing, in dev or without GCP_PROJECT). */
   telemetry?: SandboxTelemetry;
@@ -116,7 +120,9 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     token: config.localTunnelToken,
   });
   const mail = new MailService(store, runs, wakeSchedulerFor(config), (msg, err) => fastify.log.warn({ err }, msg));
-  const agentLink = new AgentLink(store, config, secretsBroker, sse, laptopProbe, mail, opts.github, opts.githubRefresh);
+  // One broker for agentd's github.request frames and the A2A result's pull request lookup.
+  const github = opts.github ?? new GithubBroker(store, secretsBroker);
+  const agentLink = new AgentLink(store, config, secretsBroker, sse, laptopProbe, mail, github, opts.githubRefresh);
   // Session search (#289): chunks follow entries as they arrive, and imports and formats.
   const indexer = new SessionIndexer(store, (msg) => fastify.log.warn(msg));
   agentLink.setIndexer(indexer);
@@ -128,7 +134,17 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   const turns = new TurnWaiters(store, runs, (msg, err) => fastify.log.warn({ err }, msg));
   agentLink.setTurnWaiters(turns);
   // E9 §5.3: A2A tasks, on the store, read through their sessions' runs and turn waiters.
-  const a2a = new A2ATasks({ store, runs, turns, mail, agentLink, secrets: secretsBroker, log: (msg, err) => fastify.log.warn({ err }, msg) });
+  const a2a = new A2ATasks({
+    store,
+    runs,
+    turns,
+    mail,
+    agentLink,
+    secrets: secretsBroker,
+    pulls: github,
+    checkpointTimeoutMs: config.a2aCheckpointTimeoutMs,
+    log: (msg, err) => fastify.log.warn({ err }, msg),
+  });
   // #193: a run whose agent vanished without a bye gets its sandbox's exit reason read promptly.
   agentLink.onAgentLost((runId) => runs.noteAgentLost(runId));
 
@@ -231,6 +247,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     turns,
     aeSessions,
     a2a,
+    ...(opts.a2aHandler ? { a2aHandler: opts.a2aHandler } : {}),
     providers,
     voice:
       opts.voice ??

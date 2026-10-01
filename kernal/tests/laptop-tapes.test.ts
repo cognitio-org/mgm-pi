@@ -458,6 +458,15 @@ describe("bin/kernal --tape", () => {
     assert.doesNotMatch(got.out, /KERNAL_TAPE(_AGENT_ENGINE)?=/);
     assert.equal(calls.length, 0);
   });
+
+  test("a /tape restart's env: pi-memory's real directory comes back before anything starts", async () => {
+    // What restartInto hands bin/kernal as is: the last run's pi-memory override (memory now off).
+    const b = bundle({ kernal: { memory: "off" } });
+    const got = await run(b, [], { KERNAL_PI_MEMORY_OFF: "1", KERNAL_PI_MEMORY_SOURCE: "/real", PI_MEMORY_DIR: "/empty", PI_MEMORY_EXIT_SUMMARY: "0", KERNAL_TAPE: "stale" });
+    assert.equal(got.code, 0, got.err);
+    assert.match(got.out, /env:PI_MEMORY_DIR=\/real$/m);
+    assert.doesNotMatch(got.out, /PI_MEMORY_EXIT_SUMMARY|KERNAL_TAPE=/);
+  });
 });
 
 describe("/tape", () => {

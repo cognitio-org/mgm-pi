@@ -28,6 +28,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { tapePiArgs, tapeExcludeTools } from "../_shared/tape-args.ts";
 import { REPO } from "../_shared/repo.ts";
+import { kernalSection } from "../connect/settings.ts";
 import { TAPE_ID, tapeMarkers } from "../_shared/tape-env.ts";
 
 export { tapeExcludeTools, TAPE_ID };
@@ -720,8 +721,7 @@ export async function listCloudTapes(transport: { call(op: string, args: Record<
 
 /** `kernal.tape` in settings.json: the tape new sessions play. Undefined: none. */
 export function activeTape(settings: Record<string, unknown>): string | undefined {
-  const k = settings.kernal as Record<string, unknown> | undefined;
-  const t = k?.tape;
+  const t = kernalSection(settings).tape;
   return typeof t === "string" && TAPE_ID.test(t) ? t : undefined;
 }
 

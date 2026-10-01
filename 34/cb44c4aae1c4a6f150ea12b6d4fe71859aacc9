@@ -1,0 +1,21 @@
+outfitter/docs/specs/atlas-agent-engine-and-a2a.md
+  s_1d3bdd6f362f9b::t_149a2c118d3c08 435-436,464,951-952,979-1108
+kernal/README.md
+  s_1d3bdd6f362f9b::t_9d8506931e0ede 283-284,784-820
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "34cb44c4aae1c4a6f150ea12b6d4fe71859aacc9",
+  "prompts": {},
+  "sessions": {
+    "s_1d3bdd6f362f9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a151cba7-6dab-4d30-b7b6-ef600dd4f9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

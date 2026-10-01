@@ -18,7 +18,7 @@ Disk Box, Drive, ▶ Play, ⏏ Eject, Control Panel.
   action-movie hero ... red cloth headband ... a bandolier of 3.5-inch floppy disks" (see spec.json; the
   joke is the action hero sitting at a beige computer in the lab, deadpan, giving the smug thumbs-up) (stills `rocky-lab` -> `rocky-side`, shot `12-rocky`) -- an original generated character, not modeled on anyone real. Same description and
   reference still everywhere. This is **Rocky, the last fan**: seen only in the final beat
-  (silent nod and thumbs-up, "Rocky" writes on). MGM, Age 54, is a letter writer heard but not
+  (silent nod and thumbs-up, "Rambo" writes on). MGM, Age 54, is a letter writer heard but not
   seen: MGM's letter plays over a wish card signed "MGM".
 
 ## Structure (mirrors the reference, at its ~84 BPM: 1 bar = 2.86 s)
@@ -29,7 +29,7 @@ Disk Box, Drive, ▶ Play, ⏏ Eject, Control Panel.
 | C Letter 2 | 10-17 | 0:25.7-0:48.6 | Asks the CEO to persuade a parent; reads an absurd spec list off a printout; "how much will all this cost?" | **Pat, 41**, asks Sysop to write to their *boss*; reads the Outfitter feature list off a dot-matrix printout |
 | D Letter 3 | 18-21 | 0:48.6-1:00 | A dream wish (talking to dolphins) over a paint-program beach | **Jo, 47**: a computer you can just talk to, and take your work home -- over a pixel-art beach |
 | E Punchline letter | 22-23 | 1:00-1:05.7 | One-line letter: "___ rules the world" | **MGM, 54** (MGM's own voice): "Outfitter rules the fleet." over a wish card; "MGM" writes on |
-| F Last fan | 24-25 | 1:05.7-1:11.4 | Nod, turn, thumbs-up, name writes on | **Rocky**: side-on close-up, nod, thumbs-up, freeze; "Rocky" writes on; music swells |
+| F Last fan | 24-25 | 1:05.7-1:11.4 | Nod, turn, thumbs-up, name writes on | **Rocky**: side-on close-up, nod, thumbs-up, freeze; "Rambo" writes on; music swells |
 | G Close | 26 | 1:11.4-1:15 | Thank-you card, logo | Thank-you card, `READY.`, logo |
 
 (The reference's reflective "computers are only tools" letter is dropped from the 75 s cut.)
@@ -53,7 +53,7 @@ Cuts land on bar lines; transitions are 1-1.5 s dissolves, montage beats double-
 | 9 | 0:48.6-0:52.9 | Wish card: crayon computer with a speech bubble and an ear. "Jo, Age 47" | MADE `card-talk` | JO |
 | 10 | 0:52.9-1:00.0 | Pixel-art beach; a floppy ejects and flies to a laptop on a towel | TOUR + UI | (JO continues) |
 | 11 | 1:00.0-1:05.7 | Wish card: crayon ring of little computers wearing a crown. Quote: "Outfitter rules the fleet." "MGM" writes on, Age 54 | MADE `card-fleet` + `signature.sh` | MGM (recorded by MGM) |
-| 12 | 1:05.7-1:11.4 | **Rocky**, tight side-on close-up (the reference's framing): reads, nods, turns to camera, one thumbs-up beside the face, settling into a quietly proud, slightly smug look (not a grin), freeze; "Rocky" writes on, lower right | VEO `11-closeup` take 3, or `11-closeup-proud` (start `lead-side`, end `lead-side-proud`) + `signature.sh` | -- (music swell) |
+| 12 | 1:05.7-1:11.4 | **Rocky**, tight side-on close-up (the reference's framing): reads, nods, turns to camera, one thumbs-up beside the face, settling into a quietly proud, slightly smug look (not a grin), freeze; "Rambo" writes on, lower right | VEO `12-rocky` (start `rocky-side`) + `signature.sh` | -- (music swell) |
 | 13 | 1:11.4-1:15.0 | White serif on blue: "Thanks for all your letters. Our grown-up fans keep us going." Dissolve to `READY.` and the logo | MADE + UI | -- (music button) |
 
 **Printout (7) text**, matching PAT-c: MY WISH LIST / • Twelve Drives at once / • A Tape for every
@@ -75,7 +75,7 @@ use its logo with MongoDB's permission.
 - **Title write-on (1)** and **signature write-on (12, `signature.sh`):** "Dear Sysop," and the punchline letter writer's own name (as
   the reference signs its letter writer) in Sacramento (bundled, SIL OFL), white fill,
   chrome/purple outline, written on left to right. Run before `vhs.sh`:
-  `./signature.sh out/veo/11-closeup-take2.mp4 out/12-rocky.mp4 "Rocky" 5.0 1.2` (time the
+  `./signature.sh out/veo/12-rocky-take1.mp4 out/12-rocky.mp4 "Rambo" 5.0 1.2` (time the
   start to the thumbs-up) and, on MGM's card clip, `... out/11-mgm.mp4 "MGM" 3.5 1.0`.
 
 ## UI captures needed
@@ -151,5 +151,5 @@ plus a touch of room reverb, so it doesn't sound too clean against the 1990 pict
 | 0:00-0:05.7 | 1 "Dear Sysop," over the sidewalk run | -- |
 | 0:05.7-0:17.1 | 7 Printout pan | PAT-b, PAT-c (first four items, through the Atlas agents), PAT-d |
 | 0:17.1-0:21.4 | 11 MGM's wish card, "MGM" writes on | MGM (recorded) |
-| 0:21.4-0:25.7 | 12 Rocky's thumbs-up, "Rocky" writes on | -- |
+| 0:21.4-0:25.7 | 12 Rocky's thumbs-up, "Rambo" writes on | -- |
 | 0:25.7-0:30.0 | 13 Thank-you card, logo | -- |

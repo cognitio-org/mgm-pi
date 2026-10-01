@@ -8,6 +8,7 @@
 import type { SessionIndexer } from "./search/service.ts";
 import type { DriveAdmin } from "./admin/drive.ts";
 import type { PreviewService } from "./previews.ts";
+import type { TurnWaiters } from "./turns.ts";
 import { askForIde } from "./ide.ts";
 
 /** #273: how many times a run's model may ask for the IDE in an hour. */
@@ -369,6 +370,8 @@ export class AgentLink {
   private readonly github: GithubBroker;
   /** Drive previews (#217); unset in apps built without one (setPreviews). */
   private previews: PreviewService | undefined;
+  /** E9 §1: settles and mail acceptance feed the turn waiters; unset in apps built without them. */
+  private turns: TurnWaiters | undefined;
   /** Sysop tools (#287): the Drive side of the admin op registry; unset until setDriveAdmin. */
   private driveAdmin: DriveAdmin | undefined;
   /** Session search (#289): indexes each new entry; unset in apps built without one. */
@@ -1389,6 +1392,11 @@ export class AgentLink {
     this.previews = previews;
   }
 
+  /** E9 §1 turn waiters: wired by buildApp after construction. */
+  setTurnWaiters(turns: TurnWaiters): void {
+    this.turns = turns;
+  }
+
   onAgentLost(listener: (runId: string) => void): void {
     this.agentLostListeners.push(listener);
   }
@@ -1574,6 +1582,7 @@ export class AgentLink {
         }
         const thought = liveThoughtTextFromEvent(event);
         if (thought !== null) await this.noteLiveThought(sessionId, runId, thought);
+        await this.noteTurnEvent(runId, sessionId, seq, event);
         await this.ack(runId, socket, seq, now);
         break;
       }
@@ -1815,6 +1824,8 @@ export class AgentLink {
         // #217: the run's previews and preview credential go with it (the tick's sweep catches a run
         // that ends without a bye).
         if (stored && this.previews) void this.previews.closeRun(runId).catch(() => {});
+        // E9 §1 layer 2: a turn this run accepted and never settled ends with the run.
+        if (stored && this.turns) await this.turns.noteRunEnded(runId).catch((err) => console.warn(`[agentlink] turn waiters: ${err}`));
         // Then start the next run for it, and for mail held back while this run was stopping --
         // except after an explicit stop, which the /tick sweep may still override later.
         if (reason !== "stop") await this.mail.wakeIfMail(sessionId);
@@ -1822,6 +1833,25 @@ export class AgentLink {
       }
       default:
         break; // unknown frame type: ignore, forward-compatible
+    }
+  }
+
+  /** E9 §1: feeds the turn waiters from the seq stream. pi's `response` to `mail:<id>` is the
+   * mail's acceptance (agentd's `mail.ack` frame follows it unsequenced, so it can't be ordered
+   * against a settle); `agent_settled` is the settle, with agentd's `lastEntryId` when it sent one.
+   * A failure is logged, not thrown: holding back the ack would stall the run's whole stream, and
+   * the tick sweep's deadline covers a lost settle. */
+  private async noteTurnEvent(runId: string, sessionId: string, seq: number, event: { type?: string; [key: string]: unknown }): Promise<void> {
+    if (!this.turns || !Number.isFinite(seq)) return;
+    try {
+      if (event.type === "response" && event.success === true && typeof event.id === "string" && event.id.startsWith("mail:")) {
+        await this.turns.noteMailAccepted(sessionId, runId, event.id.slice("mail:".length), seq);
+      } else if (event.type === "agent_settled") {
+        const lastEntryId = typeof event.lastEntryId === "string" && event.lastEntryId.length <= 256 ? event.lastEntryId : undefined;
+        await this.turns.noteSettled(sessionId, runId, seq, lastEntryId);
+      }
+    } catch (err) {
+      console.warn(`[agentlink] turn waiters (${String(event.type)}): ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

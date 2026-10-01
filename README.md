@@ -57,7 +57,7 @@ Qwen 3.6 reasons by default and spends 400-1600 tokens on trivial prompts. Send
 
 ## Exposing the model to the cloud LiteLLM router
 
-LiteLLM (`litellm.augment-code.support`, GCP Cloud Run) reaches the laptop through ngrok on a
+LiteLLM (`router.kernal.one`, GCP Cloud Run) reaches the laptop through ngrok on a
 stable domain (`TUNNEL_DOMAIN_LMSTUDIO` in `.env`, pay-as-you-go plan). A bearer token
 (`LOCAL_TUNNEL_TOKEN`) is enforced by an ngrok traffic policy, so unauthenticated requests never
 reach the laptop. The router model is `local-qwen-mlx`; its payload lives in

@@ -499,7 +499,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     buildCommit: (env.OUTFITTER_BUILD_COMMIT ?? "").trim(),
     release: (env.OUTFITTER_RELEASE ?? "").trim(),
     ...(envGoogleOauth(env.NGROK_GOOGLE_OAUTH) ? { ngrokGoogleOauth: envGoogleOauth(env.NGROK_GOOGLE_OAUTH) } : {}),
-    litellmBaseUrl: env.LITELLM_BASE_URL ?? "https://litellm.augment-code.support/v1",
+    litellmBaseUrl: env.LITELLM_BASE_URL ?? "https://router.kernal.one/v1",
     litellmAdminKey: env.LITELLM_ADMIN_KEY ?? "",
     providerPollMs: envInt("PROVIDER_POLL_MS", 5 * 60_000, env),
     linkOrigin: env.OUTFITTER_LINK_ORIGIN ?? "",

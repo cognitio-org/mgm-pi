@@ -44,7 +44,7 @@ jobs:
       - run: npm ci
       - env:
           LITELLM_AGENT_KEY: ${{ secrets.LITELLM_CI_KEY }}
-          LITELLM_BASE_URL: ${{ vars.LITELLM_BASE_URL || 'https://litellm.augment-code.support/v1' }}
+          LITELLM_BASE_URL: ${{ vars.LITELLM_BASE_URL || 'https://router.kernal.one/v1' }}
         run: |
           if [[ -z "$LITELLM_AGENT_KEY" ]]; then echo "::notice::LITELLM_CI_KEY secret not set; live tests skipped"; exit 0; fi
           npm run test:live

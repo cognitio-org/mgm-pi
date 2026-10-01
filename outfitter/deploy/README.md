@@ -162,7 +162,7 @@ the page and never moved the fleet, because `release.sh` deploys the page first.
    ```
 
    Two more E2.10 config vars are plain (non-secret) env vars, not Secret Manager entries —
-   `LITELLM_BASE_URL` (default `https://litellm.augment-code.support/v1`, same var name as kernal's
+   `LITELLM_BASE_URL` (default `https://router.kernal.one/v1`, same var name as kernal's
    `.env.example`) and `PROVIDER_POLL_MS` (default 300000 = 5 minutes). `service.sh` sets both in
    `ENV_VARS` from `config.env`; change them there (and merge) so every deploy agrees.
 

@@ -110,7 +110,10 @@ export async function registerHookRoutes(app: FastifyInstance, ctx: RouteContext
     // #217: share links past their deadline, previews of runs that ended without a bye, and what a
     // crash left on ngrok's side. Never fails the tick.
     const previews = await ctx.previews.sweep().catch(() => undefined);
-    return { woken, ...(previews ? { previews } : {}) };
+    // E9 §1: turn waiters whose run ended without a bye, whose mail can't be delivered, or whose
+    // deadline passed. Never fails the tick.
+    const turns = await ctx.turns.sweep().catch(() => undefined);
+    return { woken, ...(previews ? { previews } : {}), ...(turns ? { turns } : {}) };
   });
 
   // §5.3 guardrail 1 (gke-sandbox-provider.md): two Cloud Scheduler HTTP jobs (warm-up/warm-down)

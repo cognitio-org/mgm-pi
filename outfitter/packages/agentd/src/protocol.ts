@@ -104,6 +104,8 @@ export interface UpEntry {
   entry: PiSessionEntry;
 }
 
+/** `agent_settled` is sent only after the tailer flush, with `lastEntryId` added (protocol.md's
+ * "Turn settled"); every other event is pi's own, unchanged. */
 export interface UpEvent {
   t: "event";
   seq: number;

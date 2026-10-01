@@ -141,8 +141,8 @@ export function backends(env: Record<string, string>, litellmMeta: Map<string, M
     },
     {
       id: "litellm",
-      label: "LiteLLM router  (litellm.augment-code.support)",
-      baseUrl: normalizeBaseUrl(env.LITELLM_BASE_URL, "https://litellm.augment-code.support/v1"),
+      label: "LiteLLM router  (router.kernal.one)",
+      baseUrl: normalizeBaseUrl(env.LITELLM_BASE_URL, "https://router.kernal.one/v1"),
       apiKey: cleanKey(env.LITELLM_AGENT_KEY || env.LITELLM_API_KEY),  // agent-specific key first
       keyVar: "LITELLM_AGENT_KEY",
       discover: true,

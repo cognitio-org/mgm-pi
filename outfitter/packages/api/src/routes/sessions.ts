@@ -599,10 +599,6 @@ async function stopRun(ctx: RouteContext, run: Run): Promise<Run | null> {
   return ctx.store.runs.update(run.id, { state: "stopping", updatedAt: new Date().toISOString() });
 }
 
-/** Stores a browser message as mail (so a failed wake or a run that dies before it is ready can't
- * lose it); MailService.post also makes the one inline wake attempt. Returns the session's run, or
- * null when that wake failed -- the message is queued either way and Cloud Tasks / the /tick sweep
- * keep trying, so the caller must not retry (it would enqueue the text twice). */
 export const ARCHIVED_ERROR = "this floppy is archived; restore it first";
 
 /** #207: who may archive, restore or format a floppy: its owner, or a sysop. A session with no

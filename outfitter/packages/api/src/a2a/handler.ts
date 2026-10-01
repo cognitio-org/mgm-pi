@@ -65,8 +65,13 @@ const STATE_TO_WIRE: Record<A2ATaskState, TaskState> = {
 const BRANCH_RE = /^[A-Za-z0-9_./-]{1,255}$/;
 const LIST_PAGE_DEFAULT = 50;
 const LIST_PAGE_MAX = 100;
-const BLOCKING_POLL_MS = 500;
+const BLOCKING_POLL_MS = 1_000;
+/** Blocking SendMessage waits one key may hold at once on this instance; more return at once. */
+const BLOCKING_WAITS_PER_KEY = 2;
 const TITLE_MAX = 80;
+const MESSAGE_ID_MAX = 128;
+/** The caller's text kept for `history`: enough to recognise the task, not a second copy of it. */
+const HISTORY_TEXT_MAX = 4_000;
 
 export interface A2AHandlerOptions {
   store: Store;
@@ -77,6 +82,7 @@ export interface A2AHandlerOptions {
 export class OutfitterA2AHandler implements A2ARequestHandler {
   private readonly opts: A2AHandlerOptions;
   private readonly card: AgentCard;
+  private readonly blockingWaits = new Map<string, number>();
 
   constructor(opts: A2AHandlerOptions) {
     this.opts = opts;
@@ -102,6 +108,7 @@ export class OutfitterA2AHandler implements A2ARequestHandler {
     const message = params.message;
     if (!message) throw new RequestMalformedError("message is required");
     if (!message.messageId) throw new RequestMalformedError("message.messageId is required");
+    if (message.messageId.length > MESSAGE_ID_MAX) throw new RequestMalformedError(`message.messageId is over ${MESSAGE_ID_MAX} characters`);
     if (message.role !== Role.ROLE_USER) throw new RequestMalformedError("message.role must be ROLE_USER");
     const ext = extensionParams(message.metadata);
     if (ext.requested && context.requestedExtensions?.includes(OUTFITTER_TASK_EXTENSION)) {
@@ -132,26 +139,38 @@ export class OutfitterA2AHandler implements A2ARequestHandler {
       ...(ext.skill !== undefined ? { skill: ext.skill } : {}),
       ...(ext.repo !== undefined ? { repo: ext.repo } : {}),
       ...(ext.baseBranch !== undefined ? { baseBranch: ext.baseBranch } : {}),
-      message: Message.toJSON(message),
+      message: historyMessage(message, prompt),
     };
-    task = await this.opts.tasks.start(key, input).catch(rethrowNotFound);
+    const started = await this.opts.tasks.start(key, input).catch(rethrowNotFound);
+    task = started.task;
 
-    if (params.configuration?.returnImmediately !== true) task = await this.waitBlocking(key, task);
+    // A repeated messageId gets the task as it is: retries must not each hold a waiting request.
+    const repeated = started.repeated;
+    if (params.configuration?.returnImmediately !== true && !repeated) task = await this.waitBlocking(key, task);
     return toWireTask(task, historyLength);
   }
 
   /** §5.3 blocking SendMessage: poll the row until terminal or interrupted, at most the cap
    * (25 s), then return the task as it is. A documented deviation for long tasks. */
   private async waitBlocking(key: A2AKey, task: A2ATask): Promise<A2ATask> {
-    const deadline = Date.now() + this.opts.config.a2aBlockingCapMs;
-    let current = task;
-    while (!isTerminal(current.state) && current.state !== "input-required") {
-      const left = deadline - Date.now();
-      if (left <= 0) break;
-      await new Promise((resolve) => setTimeout(resolve, Math.min(BLOCKING_POLL_MS, left)));
-      current = await this.opts.tasks.get(key, current.id);
+    const held = this.blockingWaits.get(key.id) ?? 0;
+    if (held >= BLOCKING_WAITS_PER_KEY) return task;
+    this.blockingWaits.set(key.id, held + 1);
+    try {
+      const deadline = Date.now() + this.opts.config.a2aBlockingCapMs;
+      let current = task;
+      while (!isTerminal(current.state) && current.state !== "input-required") {
+        const left = deadline - Date.now();
+        if (left <= 0) break;
+        await new Promise((resolve) => setTimeout(resolve, Math.min(BLOCKING_POLL_MS, left)));
+        current = await this.opts.tasks.get(key, current.id);
+      }
+      return current;
+    } finally {
+      const left = (this.blockingWaits.get(key.id) ?? 1) - 1;
+      if (left <= 0) this.blockingWaits.delete(key.id);
+      else this.blockingWaits.set(key.id, left);
     }
-    return current;
   }
 
   async *sendMessageStream(_params: SendMessageRequest, _context: ServerCallContext): AsyncGenerator<StreamResponse, void, undefined> {
@@ -308,6 +327,12 @@ function fencedJson(value: unknown): string {
   const longest = Math.max(0, ...[...json.matchAll(/`+/g)].map((m) => m[0].length));
   const fence = "`".repeat(Math.max(3, longest + 1));
   return `${fence}json\n${json}\n${fence}`;
+}
+
+/** The caller's message for `history`, as A2A JSON: its ids and role, and its text capped. */
+function historyMessage(message: Message, prompt: string): unknown {
+  const text = prompt.length > HISTORY_TEXT_MAX ? `${prompt.slice(0, HISTORY_TEXT_MAX)}…` : prompt;
+  return Message.toJSON({ ...message, parts: [textPart(text)], metadata: undefined });
 }
 
 function titleOf(prompt: string): string {

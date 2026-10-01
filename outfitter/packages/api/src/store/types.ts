@@ -651,7 +651,7 @@ export interface ApiToken {
   expiresAt?: string;
   /** E9 §5.2: what the token is for. Absent (every token minted before the field) means
    * "dongle". A Dongle works on /api/* only; an A2A key on the link role's /a2a only (auth.ts's
-   * identityFromApiToken enforces both). */
+   * verifyApiToken enforces both). */
   kind?: ApiTokenKind;
   /** Set exactly when `kind` is "a2a": what the key's tasks may use. Fixed at creation. */
   a2a?: A2AKeyScope;

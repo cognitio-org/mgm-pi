@@ -122,29 +122,37 @@ export class A2ATasks {
    * SUBMITTED once its session and mail exist, or REJECTED with the reason as its status text
    * (scope, tape, concurrency, one task at a time per context). A repeated messageId returns the
    * task the first send made.
+   *
+   * Two claims, both atomic in the store across instances: the context's (one open task at a
+   * time) and one of the key's `maxConcurrent` slots. A key slot is held until the task is
+   * terminal AND its session has no active run, so the limit bounds Drives, not just tasks.
    */
-  async start(key: A2AKey, input: StartTaskInput): Promise<A2ATask> {
+  async start(key: A2AKey, input: StartTaskInput): Promise<{ task: A2ATask; repeated: boolean }> {
     const repeat = await this.store.a2aTasks.findByMessageId(key.id, input.messageId);
-    if (repeat) return this.refresh(repeat);
+    if (repeat) return { task: await this.refresh(repeat), repeated: true };
+    return { task: await this.startNew(key, input), repeated: false };
+  }
+
+  private async startNew(key: A2AKey, input: StartTaskInput): Promise<A2ATask> {
 
     let contextId = input.contextId;
     let session: Session | null = null;
-    let busy = false;
-    let sessionGone = false;
+    let rejected: string | undefined;
     if (contextId !== undefined) {
       if (!(await this.store.a2aTasks.latestInContext(key.id, contextId))) throw new A2ATaskNotFound("context not found");
-      // Busy while any of the context's tasks is still open (not only the newest by createdAt,
-      // which two tasks made in one millisecond would leave ambiguous).
-      for (const open of await this.store.a2aTasks.listOpen(50, key.id)) {
-        if (open.contextId === contextId && !isTerminal((await this.refresh(open)).state)) busy = true;
-      }
       const sessionId = await this.store.a2aTasks.sessionForContext(key.id, contextId);
       if (sessionId) {
         session = await this.store.sessions.findById(sessionId);
-        sessionGone = !session;
+        if (!session) rejected = "this context's session no longer exists";
       }
     } else {
       contextId = randomUUID();
+    }
+    let scope: TaskScope | undefined;
+    if (!rejected) {
+      const found = await this.scopeFor(key, input, session);
+      if ("rejected" in found) rejected = found.rejected;
+      else scope = found;
     }
 
     const nowIso = this.nowIso();
@@ -154,8 +162,9 @@ export class A2ATasks {
       tokenId: key.id,
       ownerEmail: key.ownerEmail,
       messageId: input.messageId,
-      state: "submitted",
-      ...(input.message !== undefined ? { message: input.message } : {}),
+      // A rejected task keeps no copy of the caller's message: it costs storage and runs nothing.
+      ...(rejected ? { state: "rejected" as const, statusText: rejected } : { state: "submitted" as const }),
+      ...(!rejected && input.message !== undefined ? { message: input.message } : {}),
       createdAt: nowIso,
       updatedAt: nowIso,
     };
@@ -165,36 +174,47 @@ export class A2ATasks {
       if (first) return this.refresh(first);
       throw new Error("a2a task insert refused");
     }
+    if (rejected || !scope) return row;
 
-    if (busy) return this.finish(row, "rejected", "one task at a time per context: wait for the last one or cancel it");
-    if (sessionGone) return this.finish(row, "rejected", "this context's session no longer exists");
-    const scope = await this.scopeFor(key, input, session);
-    if ("rejected" in scope) return this.finish(row, "rejected", scope.rejected);
-
-    await this.reconcileKey(key.id);
+    if (!(await this.claimContext(row))) {
+      return this.finish(row, "rejected", "one task at a time per context: wait for the last one or cancel it");
+    }
+    await this.reconcileKey(key.id, contextId);
     if (!(await this.store.a2aTasks.claimSlot(key.id, row.id, key.scope.maxConcurrent))) {
       const n = key.scope.maxConcurrent;
-      return this.finish(row, "rejected", `this key already has ${n} task${n === 1 ? "" : "s"} in progress, its limit`);
+      return this.finish(row, "rejected", `this key already has ${n} task${n === 1 ? "" : "s"} or Drive${n === 1 ? "" : "s"} in progress, its limit`);
     }
 
+    const launched: Launched = { mailPosted: false };
     try {
-      return await this.launch(key, row, input, scope, session);
+      await this.launch(key, row, input, scope, session, launched);
     } catch (err) {
       this.log(`a2a task ${row.id}: start failed`, err);
       const partial = await this.reread(row);
       if (partial.waiterId) await this.deps.turns.cancel(partial.waiterId, "the A2A task could not be started").catch(() => null);
+      // The mail may be stored already: no later wake may run what the caller was told failed.
+      if (launched.mailPosted && launched.mailId) await this.store.mail.markDead(launched.mailId, this.nowIso()).catch(() => false);
+      if (launched.createdSessionId && !launched.mailPosted) {
+        // A session with no mail would only clutter the owner's list.
+        await this.store.sessions.setArchivedAt(launched.createdSessionId, this.nowIso()).catch(() => null);
+      }
       return this.finish(partial, "failed", "the task could not be started");
     }
+    const after = await this.reread(row);
+    // CancelTask landed while the mail was being posted: its markDead may have found no mail yet.
+    if (after.state === "canceled") await this.stopCanceledWork(after).catch((err) => this.log(`a2a task ${row.id}: cancel cleanup failed`, err));
+    return after;
   }
 
   /** Creates the session (or reuses the context's), registers the turn waiter, then posts. */
-  private async launch(key: A2AKey, row: A2ATask, input: StartTaskInput, scope: TaskScope, session: Session | null): Promise<A2ATask> {
+  private async launch(key: A2AKey, row: A2ATask, input: StartTaskInput, scope: TaskScope, session: Session | null, launched: Launched): Promise<void> {
     const mailId = randomUUID().replaceAll("-", "");
+    launched.mailId = mailId;
     const text = wrapA2APrompt(key.name, input.prompt);
-    const started: { task: A2ATask | null } = { task: null };
     const attach = async (s: Session) => {
+      if (!session) launched.createdSessionId = s.id;
       const waiter = await this.deps.turns.register({ sessionId: s.id, mailId, owner: A2A_WAITER_OWNER });
-      started.task = await this.store.a2aTasks.transition(row.id, ["submitted"], {
+      const attached = await this.store.a2aTasks.transition(row.id, ["submitted"], {
         sessionId: s.id,
         mailId,
         waiterId: waiter.id,
@@ -204,7 +224,7 @@ export class A2ATasks {
         statusText: "waiting for a Drive",
         updatedAt: this.nowIso(),
       });
-      if (!started.task) {
+      if (!attached) {
         // Canceled before it was posted: post nothing.
         await this.deps.turns.cancel(waiter.id, "canceled over A2A");
         throw new Error("a2a task left submitted before its mail was posted");
@@ -212,35 +232,42 @@ export class A2ATasks {
     };
 
     if (session) {
-      if (session.archivedAt) return this.finish(row, "rejected", "this context's session is archived");
+      if (session.archivedAt) throw new Error("the context's session is archived");
       await attach(session);
+      launched.mailPosted = true;
       await postUserMail(this.deps, session.id, key.ownerEmail, text, "followUp", { id: mailId, backgroundWake: true });
-    } else {
-      await createSession(
-        this.deps,
-        {
-          ownerEmail: key.ownerEmail,
-          guruId: scope.guruId,
-          repo: scope.repo,
-          baseBranch: scope.repo ? input.baseBranch : undefined,
-          // §5.3: always this branch, never the client's. branch-policy.ts's branchPrefixForSession
-          // keeps the session's pushes on it.
-          branch: scope.repo ? a2aBranchFor(row.id) : undefined,
-          prompt: text,
-          name: `A2A: ${input.title}`,
-          origin: "a2a",
-          a2aTokenId: key.id,
-        },
-        { mailId, beforeMail: attach, backgroundWake: true },
-      );
+      return;
     }
-    // A CancelTask can land between attach and here; the row then says canceled already.
-    return started.task ?? (await this.reread(row));
+    await createSession(
+      this.deps,
+      {
+        ownerEmail: key.ownerEmail,
+        guruId: scope.guruId,
+        repo: scope.repo,
+        baseBranch: scope.repo ? input.baseBranch : undefined,
+        // §5.3: always this branch, never the client's. branch-policy.ts's branchPrefixForSession
+        // keeps the session's pushes on it.
+        branch: scope.repo ? a2aBranchFor(row.id) : undefined,
+        prompt: text,
+        name: `A2A: ${input.title}`,
+        origin: "a2a",
+        a2aTokenId: key.id,
+      },
+      {
+        mailId,
+        beforeMail: async (s) => {
+          await attach(s);
+          launched.mailPosted = true;
+        },
+        backgroundWake: true,
+      },
+    );
   }
 
   /** The tape and repo a task runs with, or why it is rejected. A follow-up keeps its context's. */
   private async scopeFor(key: A2AKey, input: StartTaskInput, session: Session | null): Promise<TaskScope | { rejected: string }> {
     if (session && session.a2aTokenId !== key.id) return { rejected: "this context's session belongs to another key" };
+    if (session?.archivedAt) return { rejected: "this context's session is archived" };
     const skill = session ? session.guruId : (input.skill ?? key.scope.tapes[0]);
     if (session && input.skill !== undefined && input.skill !== session.guruId) {
       return { rejected: "a context keeps its tape; start a new task (no contextId) to use another" };
@@ -256,6 +283,9 @@ export class A2ATasks {
       if (input.repo !== undefined && repoKey(input.repo) !== repoKey(session.repo ?? "")) {
         return { rejected: "a context keeps its repository; start a new task (no contextId) to use another" };
       }
+      if (input.baseBranch !== undefined && input.baseBranch !== (session.baseBranch ?? "main")) {
+        return { rejected: "a context keeps its base branch; start a new task (no contextId) to use another" };
+      }
       if (session.repo && !key.scope.repos.some((r) => repoKey(r) === repoKey(session.repo!))) {
         return { rejected: `repository ${session.repo} is not allowed for this key` };
       }
@@ -269,8 +299,9 @@ export class A2ATasks {
 
   /**
    * CancelTask (§5.3): CANCELED first, so nothing after can move it; then the waiter, the mail
-   * (marked dead if pi hasn't taken it, so no later wake delivers it), and the run working on it
-   * (`runs.stop(runId, "a2a")`). A terminal task is not cancelable (null).
+   * (marked dead if pi hasn't taken it, so no later wake delivers it), and the session's run
+   * (`runs.stop(runId, "a2a")`). A terminal task is not cancelable (null). The cleanup after the
+   * transition is best-effort: the task is canceled either way, and the tick finishes the rest.
    */
   async cancel(key: A2AKey, id: string): Promise<A2ATask | null> {
     const found = await this.store.a2aTasks.findForToken(key.id, id);
@@ -283,43 +314,79 @@ export class A2ATasks {
       updatedAt: this.nowIso(),
     });
     if (!canceled) return null;
-    await this.store.a2aTasks.releaseSlot(key.id, row.id);
-
-    const waiter = canceled.waiterId ? await this.deps.turns.get(canceled.waiterId) : null;
-    if (canceled.waiterId) await this.deps.turns.cancel(canceled.waiterId, "canceled over A2A");
-    const mail = canceled.mailId ? await this.store.mail.findById(canceled.mailId) : null;
-    if (canceled.mailId) await this.store.mail.markDead(canceled.mailId, this.nowIso());
-    if (canceled.sessionId) {
-      const run = await this.store.runs.findActiveForSession(canceled.sessionId);
-      // Only a run that has this task's mail: an earlier task's idle run isn't working on it.
-      if (run && (waiter?.ackRunId === run.id || mail?.deliveredRunId === run.id)) {
-        await this.deps.runs.stop(run.id, "a2a");
-      }
+    try {
+      await this.stopCanceledWork(canceled);
+    } catch (err) {
+      this.log(`a2a task ${row.id}: cancel cleanup failed`, err);
     }
     return canceled;
   }
 
-  /** /api/hooks/tick: refreshes every open task (so a finished one frees its key's slot even if
-   * nobody asks about it again). Never throws. */
+  /** A canceled task's waiter, mail and run, then its claims. An A2A session runs only its
+   * context's tasks, one at a time, so its active run (provisioning included) is this task's. */
+  private async stopCanceledWork(task: A2ATask): Promise<void> {
+    if (task.waiterId) await this.deps.turns.cancel(task.waiterId, "canceled over A2A");
+    if (task.mailId) await this.store.mail.markDead(task.mailId, this.nowIso());
+    if (task.sessionId) {
+      const session = await this.store.sessions.findById(task.sessionId);
+      const run = await this.store.runs.findActiveForSession(task.sessionId);
+      if (run && session?.origin === "a2a" && session.a2aTokenId === task.tokenId) await this.deps.runs.stop(run.id, "a2a");
+    }
+    await this.releaseIfDone(task);
+  }
+
+  /** /api/hooks/tick: refreshes every open task, then frees the claims of finished ones whose
+   * Drive has stopped. Never throws. */
   async sweep(): Promise<number> {
     let changed = 0;
+    const keys = new Set<string>();
     for (const row of await this.store.a2aTasks.listOpen(SWEEP_LIMIT)) {
+      keys.add(row.tokenId);
       try {
         if ((await this.refresh(row)).state !== row.state) changed++;
       } catch (err) {
         this.log(`a2a task ${row.id}: sweep failed`, err);
       }
     }
+    for (const tokenId of keys) await this.reconcileSlots(tokenId).catch((err) => this.log(`a2a key ${tokenId}: slot sweep failed`, err));
     return changed;
   }
 
-  /** Refreshes the key's open tasks, then frees any slot whose task is gone or finished. */
-  private async reconcileKey(tokenId: string): Promise<void> {
+  /** Refreshes the key's open tasks, then frees the slots of tasks that are gone, or finished
+   * with no Drive left. `followUpContext`: a follow-up is about to reuse that context's Drive, so
+   * its finished tasks' slots go now. */
+  private async reconcileKey(tokenId: string, followUpContext?: string): Promise<void> {
     for (const row of await this.store.a2aTasks.listOpen(50, tokenId)) await this.refresh(row);
+    await this.reconcileSlots(tokenId, followUpContext);
+  }
+
+  private async reconcileSlots(tokenId: string, followUpContext?: string): Promise<void> {
     for (const taskId of await this.store.a2aTasks.listSlots(tokenId)) {
       const row = await this.store.a2aTasks.findForToken(tokenId, taskId);
-      if (!row || isTerminal(row.state)) await this.store.a2aTasks.releaseSlot(tokenId, taskId);
+      if (!row) await this.store.a2aTasks.releaseSlot(tokenId, taskId);
+      else if (isTerminal(row.state) && row.contextId === followUpContext) await this.store.a2aTasks.releaseSlot(tokenId, taskId);
+      else await this.releaseIfDone(row);
     }
+  }
+
+  /** The context's one-open-task claim, after freeing it from a holder that has finished. */
+  private async claimContext(row: A2ATask): Promise<boolean> {
+    const slot = contextSlot(row.tokenId, row.contextId);
+    if (await this.store.a2aTasks.claimSlot(slot, row.id, 1)) return true;
+    for (const holderId of await this.store.a2aTasks.listSlots(slot)) {
+      const holder = await this.store.a2aTasks.findForToken(row.tokenId, holderId);
+      if (!holder || isTerminal((await this.refresh(holder)).state)) await this.store.a2aTasks.releaseSlot(slot, holderId);
+    }
+    return this.store.a2aTasks.claimSlot(slot, row.id, 1);
+  }
+
+  /** Frees a terminal task's claims: the context's at once, the key's once its session has no
+   * active run (a finished task's idle Drive still counts against maxConcurrent). */
+  private async releaseIfDone(row: A2ATask): Promise<void> {
+    if (!isTerminal(row.state)) return;
+    await this.store.a2aTasks.releaseSlot(contextSlot(row.tokenId, row.contextId), row.id);
+    if (row.sessionId && (await this.store.runs.findActiveForSession(row.sessionId))) return;
+    await this.store.a2aTasks.releaseSlot(row.tokenId, row.id);
   }
 
   /**
@@ -350,7 +417,8 @@ export class A2ATasks {
     const run = await this.store.runs.findActiveForSession(session.id);
     let state: A2ATaskState;
     let statusText: string;
-    if (waiter.ackRunId === undefined && (!run || run.state === "queued")) {
+    // Never back from WORKING: a run that went away before taking the mail is the waiter's to end.
+    if (row.state !== "working" && waiter.ackRunId === undefined && (!run || run.state === "queued")) {
       state = "submitted";
       statusText = "waiting for a Drive";
     } else {
@@ -375,30 +443,40 @@ export class A2ATasks {
 
   /**
    * PR6 seam (§5.3 "Completion"): what a settled turn means for the task. PR5 completes at once
-   * with the final assistant text. PR6 replaces this with the checkpoint-gated rule: send the
-   * `{t: "checkpoint"}` down-frame, COMPLETED only once it reports `pushed` (FAILED "result not
-   * pushed" after 2 min), and a result with the data part {branch, head, compareUrl, prUrl?}.
+   * with the turn's final assistant text. PR6 replaces this with the checkpoint-gated rule: send
+   * the `{t: "checkpoint"}` down-frame, COMPLETED only once it reports `pushed` (FAILED "result
+   * not pushed" after 2 min), and a result with the data part {branch, head, compareUrl, prUrl?}.
    */
-  protected async completion(row: A2ATask, session: Session, _waiter: TurnWaiter): Promise<{ state: A2ATaskState; statusText: string; result?: A2ATaskResult }> {
-    const text = await this.finalAssistantText(session.id);
+  protected async completion(_row: A2ATask, session: Session, waiter: TurnWaiter): Promise<{ state: A2ATaskState; statusText: string; result?: A2ATaskResult }> {
+    const text = await this.turnText(session.id, waiter);
     return { state: "completed", statusText: "done", result: text ? { text } : {} };
   }
 
-  /** The last assistant message's text in the session, capped. */
-  private async finalAssistantText(sessionId: string): Promise<string | undefined> {
-    const recent = await this.store.entries.listRecent(sessionId, 50);
+  /**
+   * The last assistant text of this task's turn only: entries of the run that accepted its mail,
+   * after the acceptance and up to the settle's last entry. Nothing else in the session (an
+   * earlier task's answer, the owner's own later turns in the web UI) ever goes back to the
+   * caller; without the settle's entry id there is no bound, so no text.
+   */
+  private async turnText(sessionId: string, waiter: TurnWaiter): Promise<string | undefined> {
+    if (!waiter.settledEntryId || !waiter.ackRunId || waiter.ackSeq === undefined) return undefined;
+    const last = await this.store.entries.findByEntryId(sessionId, waiter.settledEntryId);
+    if (!last || last.runId !== waiter.ackRunId) return undefined;
+    const recent = await this.store.entries.listRecent(sessionId, 200);
     for (let i = recent.length - 1; i >= 0; i--) {
-      const text = assistantText(recent[i].entry);
+      const e = recent[i];
+      if (e.runId !== waiter.ackRunId || e.seq > last.seq) continue;
+      if (e.seq <= waiter.ackSeq) break;
+      const text = assistantText(e.entry);
       if (text) return text.length > A2A_RESULT_TEXT_MAX ? `${text.slice(0, A2A_RESULT_TEXT_MAX)}…` : text;
     }
     return undefined;
   }
 
-  /** Moves an open task to `state` (once), freeing its slot when that is terminal. */
+  /** Moves an open task to `state` (once), then frees its claims when it is terminal. */
   private async finish(row: A2ATask, state: A2ATaskState, statusText: string, extra: Partial<A2ATask> = {}): Promise<A2ATask> {
-    const next = await this.store.a2aTasks.transition(row.id, A2A_OPEN_STATES, { ...extra, state, statusText, updatedAt: this.nowIso() });
-    if (!next) return this.reread(row);
-    if (isTerminal(state)) await this.store.a2aTasks.releaseSlot(row.tokenId, row.id);
+    const next = (await this.store.a2aTasks.transition(row.id, A2A_OPEN_STATES, { ...extra, state, statusText, updatedAt: this.nowIso() })) ?? (await this.reread(row));
+    await this.releaseIfDone(next);
     return next;
   }
 
@@ -410,6 +488,18 @@ export class A2ATasks {
 interface TaskScope {
   guruId: string;
   repo: string | null;
+}
+
+/** What launch got done before it threw, for start's cleanup. */
+interface Launched {
+  mailId?: string;
+  createdSessionId?: string;
+  mailPosted: boolean;
+}
+
+/** The slots key for a context's one-open-task claim (A2ATasksCollection.claimSlot, max 1). */
+function contextSlot(tokenId: string, contextId: string): string {
+  return `${tokenId}#ctx:${contextId}`;
 }
 
 /** §5.3: an A2A task's branch, from its id; never the client's. */

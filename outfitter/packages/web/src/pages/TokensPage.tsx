@@ -98,9 +98,20 @@ export function TokensPage() {
     e.preventDefault();
     setCreateAttempted(true);
     if (!name.trim() || a2aIncomplete) return;
+    // A repository typed but not added yet is meant too; one that isn't owner/name stops here.
+    let scopeRepos = repos;
+    if (kind === "a2a" && repoInput.trim()) {
+      const typed = normalizeA2ARepo(repoInput);
+      if (!typed) {
+        setRepoError("use owner/name, or clear the field");
+        return;
+      }
+      if (!repos.some((r) => r.toLowerCase() === typed.toLowerCase())) scopeRepos = [...repos, typed];
+      setRepoInput("");
+    }
     setCreating(true);
     try {
-      const scope = kind === "a2a" ? { tapes: chosenTapes, repos, maxConcurrent } : undefined;
+      const scope = kind === "a2a" ? { tapes: chosenTapes, repos: scopeRepos, maxConcurrent } : undefined;
       const result = await withFloppySound(api.createToken(name.trim(), scope));
       setJustCreated(result);
       setName("");

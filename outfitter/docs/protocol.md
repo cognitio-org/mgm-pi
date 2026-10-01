@@ -712,7 +712,12 @@ see `deploy/README.md` "Live-test identity". Laptop clients still use personal t
   as an artifact), FAILED when the turn ends otherwise, CANCELED by `CancelTask` (the run stopped
   with reason `a2a`, unsent mail marked dead). The tick refreshes open tasks.
 - A repeated `messageId` from the same key returns the first task. `maxConcurrent` (default 2)
-  open tasks per key. A blocking `SendMessage` waits at most 25 s, then returns the task as it is.
+  per key counts open tasks and finished ones whose Drive is still up; one open task per context.
+  A blocking `SendMessage` waits at most 25 s (two at once per key per instance), then returns the
+  task as it is. Finished rows expire after 30 days; a rejected one keeps no copy of the message.
+- An A2A session's agent can't merge, and through the GitHub broker may only read and open its
+  own branch's pull request (`github-broker.ts`'s `A2A_GITHUB_OPS`). Internal errors go back as
+  "Internal error" only.
 
 ## Admin ops (Sysop tools, #286)
 

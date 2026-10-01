@@ -105,10 +105,10 @@ export async function verifyApiToken(bearer: string, store: TokenStore, kind: Ap
 
 /** verifyApiToken for a Dongle (the only kind /api/* accepts), as its owner's identity. Always
  * `operator: false` here -- a token's owner only becomes an operator through identityFromRequest's
- * OUTFITTER_OPERATORS check, never on the "link" role (see identityFromLinkRequest). `kind` is for
- * routes/a2a.ts; every /api/* caller leaves it at "dongle". */
-export async function identityFromApiToken(bearer: string, store: TokenStore, kind: ApiTokenKind = "dongle"): Promise<Identity> {
-  const record = await verifyApiToken(bearer, store, kind);
+ * OUTFITTER_OPERATORS check, never on the "link" role (see identityFromLinkRequest). An A2A key
+ * never resolves here; routes/a2a.ts calls verifyApiToken with "a2a" itself. */
+export async function identityFromApiToken(bearer: string, store: TokenStore): Promise<Identity> {
+  const record = await verifyApiToken(bearer, store, "dongle");
   return { email: record.ownerEmail, operator: false, viaToken: true };
 }
 

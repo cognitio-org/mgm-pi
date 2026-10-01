@@ -253,6 +253,15 @@ describe("JSON-RPC transport", () => {
     await app.fastify.close();
   });
 
+  test("without a key, even a malformed request is HTTP 401", async () => {
+    const { app } = await setup();
+    const res = await app.fastify.inject({ method: "POST", url: "/a2a", headers: { "content-type": "application/json", "a2a-version": "1.0" }, payload: "{not json" });
+    assert.equal(res.statusCode, 401);
+    const typed = await app.fastify.inject({ method: "POST", url: "/a2a", headers: { "content-type": "text/plain" }, payload: "x" });
+    assert.equal(typed.statusCode, 401);
+    await app.fastify.close();
+  });
+
   test("wrong content type -32005, bad JSON -32700, over 64 KB 413, raw/url parts -32005, a long prompt -32602", async () => {
     const { app, token } = await setup();
     const auth = { authorization: `Bearer ${token}`, "a2a-version": "1.0" };
@@ -457,7 +466,7 @@ describe("SendMessage and tasks", () => {
     const first = (await send(app, token, message("one"))).json().result.task;
     const second = (await send(app, token, message("two"))).json().result.task;
     assert.equal(second.status.state, "TASK_STATE_REJECTED");
-    assert.match(second.status.message.parts[0].text, /1 task in progress/);
+    assert.match(second.status.message.parts[0].text, /1 task or Drive in progress/);
     assert.equal((await rpc(app, "CancelTask", { id: first.id }, { token })).json().result.status.state, "TASK_STATE_CANCELED");
     const third = (await send(app, token, message("three"))).json().result.task;
     assert.equal(third.status.state, "TASK_STATE_SUBMITTED");
@@ -516,16 +525,80 @@ describe("SendMessage and tasks", () => {
     await app.fastify.close();
   });
 
-  test("COMPLETED on settle, with the final assistant text as the artifact; its slot is freed", async () => {
+  test("COMPLETED on settle, with the turn's final text; the slot is held until its Drive stops", async () => {
     const { store, app, token, record } = await setup({ maxConcurrent: 1 });
     const task = (await send(app, token, message("one"))).json().result.task;
     await settle(store, record.id, task.id, "All fixed.");
     const got = (await rpc(app, "GetTask", { id: task.id, historyLength: 0 }, { token })).json().result;
     assert.equal(got.status.state, "TASK_STATE_COMPLETED");
     assert.equal(got.artifacts[0].parts[0].text, "All fixed.");
+    // The finished task's Drive is still up (idle): it still counts against maxConcurrent.
+    assert.deepEqual(await store.a2aTasks.listSlots(record.id), [task.id]);
+    const blocked = (await send(app, token, message("two"))).json().result.task;
+    assert.equal(blocked.status.state, "TASK_STATE_REJECTED");
+    const row = (await store.a2aTasks.findForToken(record.id, task.id))!;
+    const run = (await store.runs.findActiveForSession(row.sessionId!))!;
+    await store.runs.update(run.id, { state: "stopped" });
+    await rpc(app, "ListTasks", {}, { token });
     assert.deepEqual(await store.a2aTasks.listSlots(record.id), []);
     const withHistory = (await rpc(app, "GetTask", { id: task.id }, { token })).json().result;
     assert.equal(withHistory.history[0].parts[0].text, "one");
+    await app.fastify.close();
+  });
+
+  test("a follow-up's result never carries the previous task's answer", async () => {
+    const { store, app, token, record } = await setup();
+    const first = (await send(app, token, message("one"))).json().result.task;
+    await settle(store, record.id, first.id, "the secret first answer");
+    const next = (await send(app, token, message("two", { contextId: first.contextId }))).json().result.task;
+    await settle(store, record.id, next.id, undefined);
+    const got = (await rpc(app, "GetTask", { id: next.id }, { token })).json().result;
+    assert.equal(got.status.state, "TASK_STATE_COMPLETED");
+    assert.doesNotMatch(JSON.stringify(got), /secret first answer/);
+    await app.fastify.close();
+  });
+
+  test("two follow-ups at once in one context: only one runs", async () => {
+    const { store, app, token, record } = await setup({ maxConcurrent: 5 });
+    const first = (await send(app, token, message("one"))).json().result.task;
+    await settle(store, record.id, first.id, "done");
+    const [a, b] = await Promise.all([
+      send(app, token, message("two", { contextId: first.contextId })),
+      send(app, token, message("three", { contextId: first.contextId })),
+    ]);
+    const states = [a.json().result.task.status.state, b.json().result.task.status.state].sort();
+    assert.deepEqual(states, ["TASK_STATE_REJECTED", "TASK_STATE_SUBMITTED"]);
+    await app.fastify.close();
+  });
+
+  test("a rejected task keeps no copy of the message; a messageId over 128 characters is -32602", async () => {
+    const { store, app, token, record } = await setup();
+    const task = (await send(app, token, withExt(message("secret payload"), { skill: "second" }))).json().result.task;
+    assert.equal((await store.a2aTasks.findForToken(record.id, task.id))!.message, undefined);
+    assert.equal((await send(app, token, { ...message("x"), messageId: "m".repeat(129) })).json().error.code, -32602);
+    await app.fastify.close();
+  });
+
+  test("a blocking retry of a messageId returns at once", async () => {
+    const { app, token } = await setup();
+    const msg = message("slow");
+    await send(app, token, msg);
+    const started = Date.now();
+    const again = await send(app, token, msg, {});
+    assert.ok(Date.now() - started < 250, "no second wait");
+    assert.ok(again.json().result.task.id);
+    await app.fastify.close();
+  });
+
+  test("an internal error reaches the caller as 'Internal error' only", async () => {
+    const { store, app, token } = await setup();
+    store.a2aTasks.findForToken = async () => {
+      throw new Error("connection to cluster0-shard-00-01.example.mongodb.net:27017 closed");
+    };
+    const res = await rpc(app, "GetTask", { id: "x" }, { token });
+    assert.equal(res.json().error.code, -32603);
+    assert.equal(res.json().error.message, "Internal error");
+    assert.doesNotMatch(res.body, /mongodb\.net/);
     await app.fastify.close();
   });
 
@@ -567,6 +640,17 @@ describe("SendMessage and tasks", () => {
     assert.equal((await rpc(app, "GetTask", { id: task.id }, { token })).json().result.status.state, "TASK_STATE_CANCELED");
     assert.equal((await rpc(app, "CancelTask", { id: task.id }, { token })).json().error.code, -32002);
     assert.equal((await rpc(app, "CancelTask", { id: "nope" }, { token })).json().error.code, -32001);
+    await app.fastify.close();
+  });
+
+  test("CancelTask stops the session's Drive even before it took the mail, and frees the slot", async () => {
+    const { store, app, token, record } = await setup({ maxConcurrent: 1 });
+    const task = (await send(app, token, message("one"))).json().result.task;
+    const row = (await store.a2aTasks.findForToken(record.id, task.id))!;
+    const run = (await store.runs.findActiveForSession(row.sessionId!))!;
+    await rpc(app, "CancelTask", { id: task.id }, { token });
+    assert.equal((await store.runs.findById(run.id))!.state, "stopped");
+    assert.deepEqual(await store.a2aTasks.listSlots(record.id), []);
     await app.fastify.close();
   });
 
@@ -629,17 +713,20 @@ describe("SendMessage and tasks", () => {
   });
 });
 
-/** Finishes a task's turn the way a settle would, after an assistant reply. */
-async function settle(store: Store, tokenId: string, taskId: string, reply: string): Promise<void> {
+/** Finishes a task's turn the way agentd would: pi accepts the mail on the session's run, then
+ * replies (`reply`, or tool calls only when undefined), then settles. */
+async function settle(store: Store, tokenId: string, taskId: string, reply: string | undefined): Promise<void> {
   const row = (await store.a2aTasks.findForToken(tokenId, taskId))!;
-  const seq = (await store.entries.maxSeq(row.sessionId!)) + 1;
-  await store.entries.insertIfNew(row.sessionId!, seq, {
-    id: `e-${randomUUID()}`,
-    parentId: null,
-    type: "message",
-    message: { role: "assistant", content: [{ type: "text", text: reply }] },
-  });
-  await store.turnWaiters.finish(row.waiterId!, { status: "settled" }, new Date().toISOString());
+  const sessionId = row.sessionId!;
+  const run = await store.runs.findActiveForSession(sessionId);
+  const runId = run?.id ?? "r-test";
+  let seq = (await store.entries.maxSeq(sessionId)) + 1;
+  await store.turnWaiters.markAcked(sessionId, row.mailId!, runId, seq, new Date().toISOString());
+  seq++;
+  const entryId = `e-${randomUUID()}`;
+  const content = reply === undefined ? [{ type: "toolCall", name: "bash" }] : [{ type: "text", text: reply }];
+  await store.entries.insertIfNew(sessionId, seq, { id: entryId, parentId: null, type: "message", message: { role: "assistant", content } }, { runId });
+  await store.turnWaiters.finish(row.waiterId!, { status: "settled", settledEntryId: entryId }, new Date().toISOString());
 }
 
 describe("A2A memory identity (§5.4)", () => {

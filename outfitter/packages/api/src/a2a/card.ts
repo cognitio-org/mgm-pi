@@ -27,7 +27,7 @@ export function publicCardJson(config: Pick<Config, "role" | "origin" | "linkOri
     description:
       "Outfitter runs coding tasks in cloud Drives: it clones a repository, works on a branch of its own " +
       `(outfitter/a2a-*), pushes it, and reports the branch and head. ${BLOCKING_NOTE}`,
-    version: config.release || config.buildCommit || "dev",
+    version: config.release || "dev",
     provider: { organization: "Kernal", url: "https://kernal.one" },
     supportedInterfaces: [{ url: `${a2aOrigin(config)}/a2a`, protocolBinding: "JSONRPC", protocolVersion: A2A_PROTOCOL_VERSION }],
     defaultInputModes: ["text/plain", "application/json"],

@@ -111,6 +111,22 @@ describe("TokensPage: A2A keys", () => {
   });
 });
 
+describe("TokensPage: a typed repository", () => {
+  it("is included when the key is created without pressing Add", async () => {
+    const calls = stubFetch();
+    await render();
+    await act(async () => setValue(container!.querySelector<HTMLSelectElement>('select[aria-label="Token kind"]')!, "a2a"));
+    await act(async () => {});
+    await act(async () => container!.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+    await act(async () => setValue(container!.querySelector<HTMLInputElement>('input[aria-label="Repository"]')!, "acme/gadgets"));
+    await act(async () => setValue(container!.querySelector<HTMLInputElement>('input[aria-label="Token name"]')!, "new"));
+    await act(async () => [...container!.querySelectorAll("button")].find((b) => b.textContent === "Create A2A key")!.click());
+    await act(async () => {});
+    const post = calls.find((c) => c.init?.method === "POST")!;
+    expect(JSON.parse(String(post.init!.body)).a2a.repos).toEqual(["acme/gadgets"]);
+  });
+});
+
 describe("a2a-keys helpers", () => {
   it("mirror the api's tape refusal", () => {
     expect(a2aTapeProblem({})).toBeUndefined();

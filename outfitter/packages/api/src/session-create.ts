@@ -1,5 +1,5 @@
 // Creating a session and posting its first message: the one path POST /api/sessions
-// (routes/sessions.ts) and an A2A task (a2a/service.ts) both take, so a session made either way
+// (routes/sessions.ts) and an A2A task (a2a/tasks.ts) both take, so a session made either way
 // is the same document with the same mail behind it (E9 §5.3).
 
 import { randomUUID } from "node:crypto";
@@ -89,8 +89,10 @@ export async function createSession(
   return { session, run };
 }
 
-/** Posts a person's message to a session, delivers it if a run is live, and returns the active
- * run (null when none could be started yet; the mail waits for one). */
+/** Stores a person's message as mail (so a failed wake or a run that dies before it is ready can't
+ * lose it); MailService.post also makes the one inline wake attempt. Returns the session's run, or
+ * null when that wake failed -- the message is queued either way and Cloud Tasks / the /tick sweep
+ * keep trying, so the caller must not retry (it would enqueue the text twice). */
 export async function postUserMail(
   deps: SessionCreateDeps,
   sessionId: string,

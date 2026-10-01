@@ -1495,14 +1495,22 @@ class MongoAeSessions implements AeSessionsCollection {
   }
 }
 
-type A2ATaskDoc = A2ATask & { _id: string };
+type A2ATaskDoc = A2ATask & { _id: string; expireAt?: Date };
+/** Finished A2A tasks are kept this long (the TTL index on expireAt), then dropped. */
+const FINISHED_A2A_TASK_TTL_MS = 30 * 24 * 60 * 60_000;
 type A2ASlotsDoc = { _id: string; tasks: string[] };
 type A2ARequestsDoc = { _id: string; count: number; expireAt: Date };
 
 function stripA2ATask(doc: A2ATaskDoc | null): A2ATask | null {
   if (!doc) return null;
-  const { _id, ...rest } = doc;
+  const { _id, expireAt, ...rest } = doc;
   return rest;
+}
+
+/** A row that is terminal from the start (a rejection) expires like one that became so. */
+function a2aExpiry(task: Pick<A2ATask, "state" | "updatedAt">): { expireAt: Date } | Record<string, never> {
+  if (A2A_OPEN_STATES.includes(task.state)) return {};
+  return { expireAt: new Date(Date.parse(task.updatedAt) + FINISHED_A2A_TASK_TTL_MS) };
 }
 
 class MongoA2ATasks implements A2ATasksCollection {
@@ -1518,7 +1526,7 @@ class MongoA2ATasks implements A2ATasksCollection {
 
   async insert(task: A2ATask): Promise<boolean> {
     try {
-      await this.col.insertOne({ ...task, _id: task.id });
+      await this.col.insertOne({ ...task, ...a2aExpiry(task), _id: task.id });
       return true;
     } catch (err) {
       // The unique {tokenId, messageId} index: a retried SendMessage, possibly racing the first.
@@ -1572,7 +1580,10 @@ class MongoA2ATasks implements A2ATasksCollection {
 
   async transition(id: string, from: readonly A2ATaskState[], patch: Partial<A2ATask>): Promise<A2ATask | null> {
     const { id: _id, tokenId: _tokenId, ...rest } = patch;
-    const set = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined));
+    const set: Record<string, unknown> = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined));
+    if (rest.state && !A2A_OPEN_STATES.includes(rest.state)) {
+      set.expireAt = new Date((rest.updatedAt ? Date.parse(rest.updatedAt) : Date.now()) + FINISHED_A2A_TASK_TTL_MS);
+    }
     const doc = await this.col.findOneAndUpdate({ _id: id, state: { $in: [...from] } }, { $set: set }, { returnDocument: "after" });
     return stripA2ATask(doc);
   }
@@ -1721,6 +1732,7 @@ export class MongoStore implements Store {
         { name: "a2a_message_dedupe", unique: true, partialFilterExpression: { messageId: { $type: "string" } } },
       ),
       db.collection("a2aTasks").createIndex({ state: 1, createdAt: 1 }),
+      db.collection("a2aTasks").createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
       db.collection("a2aRequests").createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
     ]);
     // Non-fatal: a deployment that already holds two active runs for one session (the race this

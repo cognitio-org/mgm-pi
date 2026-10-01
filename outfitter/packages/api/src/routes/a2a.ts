@@ -48,6 +48,16 @@ function requestedVersion(req: FastifyRequest): string | undefined {
   return typeof fromQuery === "string" && fromQuery ? fromQuery.trim() : undefined;
 }
 
+/** An internal error's message (a store or network error can name hosts, collections, indexes)
+ * stays in the log; the caller gets "Internal error". Mutates and returns the response. */
+function maskInternal<T extends { error?: RpcError }>(req: FastifyRequest, response: T): T {
+  if (response.error?.code === -32603) {
+    req.log.warn({ a2aError: response.error.message }, "a2a internal error");
+    response.error = { code: -32603, message: "Internal error" };
+  }
+  return response;
+}
+
 class RpcParseError extends Error {}
 class RpcContentTypeError extends Error {}
 
@@ -58,6 +68,8 @@ export async function registerA2ARoutes(app: FastifyInstance, ctx: RouteContext)
   const cardBody = JSON.stringify(AgentCard.toJSON(card));
   const etag = `"${createHash("sha256").update(cardBody).digest("base64url").slice(0, 27)}"`;
   const lastModified = new Date().toUTCString();
+  /** The key each request authenticated with (the onRequest hook), for its handler. */
+  const keys = new WeakMap<FastifyRequest, A2AKey>();
 
   // Public and unauthenticated: an Authorization header is ignored here (the Agent Engine client
   // sends its key on every request from the same httpx client).
@@ -97,6 +109,30 @@ export async function registerA2ARoutes(app: FastifyInstance, ctx: RouteContext)
       return reply.code(500).send(rpcError(requestId(req), { code: -32603, message: "Internal error" }));
     });
 
+    // Auth and the rate limit come first, before the body is even parsed: a request without a
+    // valid key is HTTP 401 whatever it carries.
+    a2a.addHook("onRequest", async (req, reply) => {
+      const key = await authenticate(req);
+      if (!key) {
+        return reply
+          .code(401)
+          .header("www-authenticate", 'Bearer realm="outfitter-a2a"')
+          .send(rpcError(null, { code: -32600, message: "an A2A key is required" }));
+      }
+      const now = Date.now();
+      const window = Math.floor(now / 60_000);
+      const count = await ctx.store.a2aTasks.countRequest(key.id, String(window), new Date((window + 2) * 60_000).toISOString());
+      // §5.2: per key, counted in fixed one-minute windows shared by every link instance.
+      const limit = ctx.config.a2aRequestsPerMinute;
+      if (count > limit) {
+        return reply
+          .code(429)
+          .header("retry-after", String(Math.max(1, Math.ceil(((window + 1) * 60_000 - now) / 1000))))
+          .send(rpcError(null, { code: -32600, message: `over ${limit} requests a minute for this key` }));
+      }
+      keys.set(req, key);
+    });
+
     const route = (req: FastifyRequest, reply: FastifyReply) => handle(req, reply);
     // The TCK posts to /a2a/, the card's URL (and the Agent Engine client) to /a2a.
     a2a.post("/a2a", { bodyLimit: A2A_BODY_LIMIT }, route);
@@ -114,25 +150,8 @@ export async function registerA2ARoutes(app: FastifyInstance, ctx: RouteContext)
   }
 
   async function handle(req: FastifyRequest, reply: FastifyReply) {
-    const key = await authenticate(req);
-    if (!key) {
-      return reply
-        .code(401)
-        .header("www-authenticate", 'Bearer realm="outfitter-a2a"')
-        .send(rpcError(requestId(req), { code: -32600, message: "an A2A key is required" }));
-    }
-
-    const now = Date.now();
-    const window = Math.floor(now / 60_000);
-    const count = await ctx.store.a2aTasks.countRequest(key.id, String(window), new Date((window + 2) * 60_000).toISOString());
-    // §5.2: per key, counted in fixed one-minute windows shared by every link instance.
-    const limit = ctx.config.a2aRequestsPerMinute;
-    if (count > limit) {
-      return reply
-        .code(429)
-        .header("retry-after", String(Math.max(1, Math.ceil(((window + 1) * 60_000 - now) / 1000))))
-        .send(rpcError(requestId(req), { code: -32600, message: `over ${limit} requests a minute for this key` }));
-    }
+    const key = keys.get(req);
+    if (!key) throw new Error("a2a: request reached the handler without a verified key");
 
     if (req.body === undefined || req.body === null || typeof req.body !== "object") {
       return reply.code(200).send(rpcError(null, { code: -32600, message: "Invalid Request" }));
@@ -151,6 +170,7 @@ export async function registerA2ARoutes(app: FastifyInstance, ctx: RouteContext)
     }
 
     const out = await rpc.handle(req.body as Record<string, unknown>, callContext);
+    if (typeof (out as AsyncGenerator)[Symbol.asyncIterator] !== "function") maskInternal(req, out as { error?: RpcError });
     const activated = callContext.activatedExtensions;
     const extHeader = activated && activated.length > 0 ? Extensions.toServiceParameter(activated) : undefined;
     if (typeof (out as AsyncGenerator)[Symbol.asyncIterator] !== "function") {
@@ -173,7 +193,7 @@ async function streamOut(req: FastifyRequest, reply: FastifyReply, out: AsyncGen
   try {
     first = await it.next();
   } catch (err) {
-    return reply.code(200).send(rpcError(requestId(req), JsonRpcTransportHandler.mapToJSONRPCError(err)));
+    return reply.code(200).send(maskInternal(req, rpcError(requestId(req), JsonRpcTransportHandler.mapToJSONRPCError(err))));
   }
   const firstValue = first.value as { error?: unknown } | undefined;
   if (first.done || firstValue?.error) {
@@ -193,7 +213,7 @@ async function streamOut(req: FastifyRequest, reply: FastifyReply, out: AsyncGen
     raw.write(formatSSEEvent(first.value));
     for (let n = await it.next(); !n.done && !closed; n = await it.next()) raw.write(formatSSEEvent(n.value));
   } catch (err) {
-    if (!closed) raw.write(formatSSEErrorEvent(rpcError(requestId(req), JsonRpcTransportHandler.mapToJSONRPCError(err))));
+    if (!closed) raw.write(formatSSEErrorEvent(maskInternal(req, rpcError(requestId(req), JsonRpcTransportHandler.mapToJSONRPCError(err)))));
   } finally {
     if (!raw.writableEnded) raw.end();
   }

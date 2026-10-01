@@ -3,7 +3,11 @@
 
 One 16x16 rucksack, the same pixels as LogoMark. The pocket is a solid cutout
 (a translucent panel disappears at tab size) and the cursor blinks in the SVG.
-PNG and ICO are the purple tile, for browsers and home screens that ignore SVG.
+
+The SVG and ICO have no tile: a tile flips to a cream square on dark tab bars. The
+rucksack is purple on light tabs and cream on dark ones (prefers-color-scheme), and
+its cutouts are transparent. The ICO is the light colours, for browsers that ignore
+SVG. The home-screen PNG keeps the purple tile, since iOS fills transparency.
 """
 
 import struct
@@ -16,9 +20,11 @@ OUTS = [
     ROOT / "packages" / "web" / "public",
 ]
 
-# tile, pack, cursor. Cuts punch back to the tile.
-LIGHT = ("#302870", "#f4efe4", "#5cff8a")
-DARK = ("#f1ebdd", "#302870", "#1f8a4c")
+# Tab icons (SVG, ICO): pack, cursor on a transparent background.
+LIGHT = ("#302870", "#1f8a4c")
+DARK = ("#f1ebdd", "#5cff8a")
+# Home-screen icon: tile, pack, cursor. Cuts punch back to the tile.
+TOUCH = ("#302870", "#f4efe4", "#5cff8a")
 PACK = [
     (5, 0, 2, 5),
     (9, 0, 2, 5),
@@ -31,32 +37,35 @@ CURSOR = (12, 12, 2, 3)
 
 def svg() -> str:
     def rects(items: list[tuple[int, int, int, int]], cls: str) -> str:
+        fill = ' fill="#000"' if cls == "cut" else ""
         return "\n".join(
-            f'  <rect class="{cls}" x="{x}" y="{y}" width="{w}" height="{h}"/>'
+            f'  <rect class="{cls}" x="{x}" y="{y}" width="{w}" height="{h}"{fill}/>'
             for x, y, w, h in items
         )
 
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges">
   <title>Kernal</title>
   <style>
-    .tile {{ fill: {LIGHT[0]}; }}
-    .pack {{ fill: {LIGHT[1]}; }}
-    .cut {{ fill: {LIGHT[0]}; }}
-    .cursor {{ fill: {LIGHT[2]}; }}
+    .pack {{ fill: {LIGHT[0]}; }}
+    .cursor {{ fill: {LIGHT[1]}; }}
     @media (prefers-color-scheme: dark) {{
-      .tile {{ fill: {DARK[0]}; }}
-      .pack {{ fill: {DARK[1]}; }}
-      .cut {{ fill: {DARK[0]}; }}
-      .cursor {{ fill: {DARK[2]}; }}
+      .pack {{ fill: {DARK[0]}; }}
+      .cursor {{ fill: {DARK[1]}; }}
     }}
     @media (prefers-reduced-motion: no-preference) {{
       .cursor {{ animation: blink 1.2s steps(1) infinite; }}
     }}
     @keyframes blink {{ 50% {{ opacity: 0; }} }}
   </style>
-  <rect class="tile" width="16" height="16"/>
-{rects(PACK, "pack")}
+  <defs>
+    <mask id="cuts">
+      <rect width="16" height="16" fill="#fff"/>
 {rects(CUTS, "cut")}
+    </mask>
+  </defs>
+  <g mask="url(#cuts)">
+{rects(PACK, "pack")}
+  </g>
   <rect class="cursor" x="{CURSOR[0]}" y="{CURSOR[1]}" width="{CURSOR[2]}" height="{CURSOR[3]}"/>
 </svg>
 """
@@ -66,19 +75,20 @@ def hex_rgb(color: str) -> tuple[int, int, int]:
     return tuple(int(color[i : i + 2], 16) for i in (1, 3, 5))  # type: ignore[return-value]
 
 
-def raster(tile: str, pack: str, cursor: str) -> list[list[tuple[int, int, int, int]]]:
-    bg, fg, cur = hex_rgb(tile), hex_rgb(pack), hex_rgb(cursor)
-    grid = [[(*bg, 255) for _ in range(16)] for _ in range(16)]
+def raster(tile: str | None, pack: str, cursor: str) -> list[list[tuple[int, int, int, int]]]:
+    """The 16x16 grid; tile=None leaves the background and the cutouts transparent."""
+    bg = (*hex_rgb(tile), 255) if tile else (0, 0, 0, 0)
+    grid = [[bg for _ in range(16)] for _ in range(16)]
 
-    def paint(rects: list[tuple[int, int, int, int]], color: tuple[int, int, int]) -> None:
+    def paint(rects: list[tuple[int, int, int, int]], color: tuple[int, int, int, int]) -> None:
         for x, y, w, h in rects:
             for yy in range(y, y + h):
                 for xx in range(x, x + w):
-                    grid[yy][xx] = (*color, 255)
+                    grid[yy][xx] = color
 
-    paint(PACK, fg)
+    paint(PACK, (*hex_rgb(pack), 255))
     paint(CUTS, bg)
-    paint([CURSOR], cur)
+    paint([CURSOR], (*hex_rgb(cursor), 255))
     return grid
 
 
@@ -127,10 +137,11 @@ def ico(images: list[tuple[int, bytes]]) -> bytes:
 
 
 def main() -> None:
-    grid = raster(*LIGHT)
+    grid = raster(None, *LIGHT)
     png16 = png(16, 16, scale(grid, 1))
     png32 = png(32, 32, scale(grid, 2))
-    touch = png(180, 180, pad(scale(grid, 11), 180, (*hex_rgb(LIGHT[0]), 255)))
+    touch_grid = raster(*TOUCH)
+    touch = png(180, 180, pad(scale(touch_grid, 11), 180, (*hex_rgb(TOUCH[0]), 255)))
     icon = ico([(16, png16), (32, png32)])
     text = svg()
     for directory in OUTS:

@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["pillow>=10"]
+# dependencies = ["pillow>=10", "numpy>=1.26"]
 # ///
 """Builds the finished cuts from picks.json + cut.json.
 
@@ -130,11 +130,11 @@ def card(seg, picks):
     return canvas, name, (nx, ny)
 
 
-def ui_canvas(picks, key):
-    """A UI screenshot centred on a dark 16:9 canvas, so pans never distort it."""
+def ui_canvas(picks, key, aspect=16 / 9):
+    """A UI screenshot centred on a dark canvas of the given aspect, so pans never distort it."""
     shot = Image.open(pick(picks, f"ui.{key}")).convert("RGB")
-    cw = max(shot.width, round(shot.height * 16 / 9))
-    canvas = Image.new("RGB", (cw, round(cw * 9 / 16)), (24, 20, 44))
+    cw = max(shot.width, round(shot.height * aspect))
+    canvas = Image.new("RGB", (cw, round(cw / aspect)), (24, 20, 44))
     canvas.paste(shot, ((canvas.width - shot.width) // 2, (canvas.height - shot.height) // 2))
     return canvas
 
@@ -178,14 +178,38 @@ def still_video(img, seconds, out, push=0.00035):
        f":d={frames}:s={W}x{H}:fps={FPS},trim=duration={seconds}", *x264("-t", seconds), out)
 
 
-def clip_video(src, start, seconds, out, freeze=0.0):
+def vhs_pause(t0):
+    """What a tape deck shows when you hit pause: the frame jitters, two bright noisy bars tear
+    through it, the picture flickers. From t0 on (timeline filters only), computed at half size --
+    the VHS pass keeps ~480 lines anyway."""
+    on = f"enable='gte(t,{t0})'"
+    band = lambda speed, phase, h: f"between(mod(Y-T*{speed}+{phase},H),0,{h})"
+    b1, b2 = band(150, 0, 34), band(105, 260, 20)
+    dx = f"(({b1})*(26+12*random(1))+({b2})*(16+8*random(2)))*sin(Y*0.7+T*80)+2*sin(T*37)"
+    dy = "1.5*sin(T*53)"
+    return (f"scale={W // 2}:{H // 2},format=yuv444p,"
+            f"geq=lum='lum(X+{dx},Y+{dy})+55*({b1})+30*({b2})':cb='cb(X+{dx},Y+{dy})':cr='cr(X+{dx},Y+{dy})':{on},"
+            f"noise=alls=30:allf=t:{on},eq=brightness='0.04*sin(t*31)':eval=frame:{on},"
+            f"rgbashift=rh=6:bh=-6:enable='between(t,{t0},{t0}+0.25)',"
+            f"scale={W}:{H}:flags=bicubic,format=yuv420p")
+
+
+def clip_video(src, start, seconds, out, freeze=0.0, fill="pause"):
+    """Fit a clip to its slot. A clip that runs short is slowed at most 15%; the rest of the slot is a
+    VHS pause on its last frame (fill="pause") -- the era's way to hide a timing gap -- or a plain
+    freeze (fill="freeze", e.g. the thumbs-up's deliberate freeze-frame)."""
     play = seconds - freeze
     avail = max(duration(src) - start, 0.1)
-    slow = max(1.0, play / avail)                # stretch a short clip rather than run out
-    ff("-ss", start, "-i", src, "-vf",
-       f"setpts={slow:.4f}*(PTS-STARTPTS),scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
-       f"fps={FPS},trim=duration={play},setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration={seconds},"
-       f"trim=duration={seconds}", *x264(), out)
+    slow = min(1.15, max(1.0, play / avail))
+    played = min(play, avail * slow)
+    held = seconds - played
+    vf = (f"setpts={slow:.4f}*(PTS-STARTPTS),scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
+          f"fps={FPS},trim=duration={played},setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration={seconds},"
+          f"trim=duration={seconds}")
+    # A deliberate freeze (the punchline) stays clean; only an unplanned gap gets the pause glitch.
+    if fill == "pause" and held > freeze + 0.05:
+        vf += "," + vhs_pause(round(played, 3))
+    ff("-ss", start, "-i", src, "-vf", vf, *x264(), out)
 
 
 def reveal(base, overlay_img, x, y, start, dur, out):
@@ -205,7 +229,7 @@ def blend(base, top_img, mix, out):
        *x264(), out)
 
 
-def screen_video(canvas, seconds, out, frm, to):
+def screen_video(canvas, seconds, out, frm, to, size=(W, H)):
     """Pan/zoom across a screenshot: frm/to = [centre x, centre y, visible width] as fractions."""
     png = out.with_suffix(".png")
     canvas.save(png)
@@ -216,9 +240,62 @@ def screen_video(canvas, seconds, out, frm, to):
     z = f"(1/({w0}+({w1}-{w0})*{p}))"
     cx, cy = f"({x0}+({x1}-{x0})*{p})", f"({y0}+({y1}-{y0})*{p})"
     ff("-loop", "1", "-i", png, "-vf",
-       f"scale={W * 2}:{H * 2},zoompan=z='{z}':x='max(0,min(iw-iw/zoom,{cx}*iw-iw/zoom/2))'"
-       f":y='max(0,min(ih-ih/zoom,{cy}*ih-ih/zoom/2))':d={frames}:s={W}x{H}:fps={FPS},trim=duration={seconds}",
-       *x264("-t", seconds), out)
+       f"scale={size[0] * 2}:{size[1] * 2},zoompan=z='{z}':x='max(0,min(iw-iw/zoom,{cx}*iw-iw/zoom/2))'"
+       f":y='max(0,min(ih-ih/zoom,{cy}*ih-ih/zoom/2))':d={frames}:s={size[0]}x{size[1]}:fps={FPS},"
+       f"trim=duration={seconds}", *x264("-t", seconds), out)
+
+
+def green_screen(monitor):
+    """Find the chroma-green screen in a monitor still: (mask image, four corners TL, TR, BL, BR)."""
+    import numpy as np
+    from PIL import ImageFilter
+    a = np.asarray(monitor.convert("RGB")).astype(int)
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    key = (g > 110) & (g > r * 1.35) & (g > b * 1.35)
+    if key.sum() < 2000:
+        raise SystemExit("no green screen found in the monitor still -- pick a take with a solid green screen")
+    mask = Image.fromarray((key * 255).astype("uint8")).filter(ImageFilter.MedianFilter(5))
+    mask = mask.filter(ImageFilter.MaxFilter(7)).filter(ImageFilter.GaussianBlur(1.5))   # cover the green fringe
+    ys, xs = np.nonzero(np.asarray(mask) > 128)
+    s, d = xs + ys, xs - ys
+    tl, br = (xs[s.argmin()], ys[s.argmin()]), (xs[s.argmax()], ys[s.argmax()])
+    tr, bl = (xs[d.argmax()], ys[d.argmax()]), (xs[d.argmin()], ys[d.argmin()])
+    cx, cy = xs.mean(), ys.mean()
+    grow = lambda p: (cx + (p[0] - cx) * 1.04, cy + (p[1] - cy) * 1.04)   # past the rounded glass corners
+    return mask, [grow(p) for p in (tl, tr, bl, br)]
+
+
+def monitor_video(seg, picks, seconds, out):
+    """The reference's look: a real Outfitter screenshot playing on a CRT in the room. The screenshot
+    pans inside the screen (4:3), gets curvature, scanlines and phosphor glow, is warped into the
+    monitor still's green screen, and the whole shot pushes in slowly."""
+    monitor = cover(Image.open(pick(picks, f"stills.{seg['monitor']}")).convert("RGB"), W, H)
+    mask, quad = green_screen(monitor)
+    mon_png, mask_png = out.with_name(out.stem + "-mon.png"), out.with_name(out.stem + "-mask.png")
+    monitor.save(mon_png)
+    mask.save(mask_png)
+    lines = Image.new("RGBA", (1440, 1080), (0, 0, 0, 0))
+    ld = ImageDraw.Draw(lines)
+    for y in range(0, 1080, 4):
+        ld.line((0, y, 1440, y), fill=(0, 0, 0, 70), width=1)
+    lines_png = out.with_name(out.stem + "-lines.png")
+    lines.save(lines_png)
+    content = out.with_name(out.stem + "-content.mp4")
+    screen_video(ui_canvas(picks, seg["ui"], aspect=4 / 3), seconds, content,
+                 seg.get("from", [0.5, 0.5, 1.0]), seg.get("to", [0.5, 0.5, 0.8]), size=(1440, 1080))
+    (x0, y0), (x1, y1), (x2, y2), (x3, y3) = quad
+    push = seg.get("push", 0.00035)
+    ff("-i", content, "-loop", "1", "-framerate", FPS, "-i", mon_png, "-loop", "1", "-framerate", FPS, "-i", mask_png,
+       "-loop", "1", "-framerate", FPS, "-i", lines_png, "-filter_complex",
+       "[0:v]format=rgb24,eq=brightness=0.03:contrast=1.05:saturation=1.1,lenscorrection=k1=-0.10:k2=-0.02[c0];"
+       "[c0][3:v]overlay=format=rgb:shortest=1,format=gbrp[c1];"   # blend in RGB: screen mode on YUV tints the chroma
+       "[c1]split[c2][c3];[c3]gblur=sigma=7[glow];[c2][glow]blend=all_mode=screen:all_opacity=0.35,vignette=PI/6[crt];"
+       f"[crt]scale={W}:{H},perspective=x0={x0:.1f}:y0={y0:.1f}:x1={x1:.1f}:y1={y1:.1f}:x2={x2:.1f}:y2={y2:.1f}"
+       f":x3={x3:.1f}:y3={y3:.1f}:sense=destination,format=rgba[warp];"
+       "[2:v]format=gray[m];[warp][m]alphamerge[screen];"
+       "[1:v][screen]overlay=shortest=1,"
+       f"zoompan=z='1+{push}*on':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={FPS},"
+       f"trim=duration={seconds}", *x264("-t", seconds), out)
 
 
 def endcard(seg, seconds, out):
@@ -246,7 +323,8 @@ def render_segment(i, seg, length, picks, work):
     out = work / f"seg{i:02d}.mp4"
     t = seg["t"]
     if t in ("clip", "file"):
-        clip_video(pick(picks, seg["src"]), seg.get("in", 0), length, out, seg.get("freeze", 0))
+        clip_video(pick(picks, seg["src"]), seg.get("in", 0), length, out, seg.get("freeze", 0),
+                   seg.get("fill", "pause"))
     elif t == "card":
         img, name, (nx, ny) = card(seg, picks)
         still_video(img, length, out)
@@ -254,6 +332,14 @@ def render_segment(i, seg, length, picks, work):
             tmp = out.with_name(out.stem + "-nosig.mp4")
             out.rename(tmp)
             reveal(tmp, name, nx, ny, seg["write"]["start"], seg["write"]["dur"], out)
+    elif t == "monitor":
+        mon = picks.get("stills", {}).get(seg["monitor"])
+        if mon and (OUT / mon).exists():
+            monitor_video(seg, picks, length, out)
+        else:
+            print(f"    (no monitor still {seg['monitor']} yet -- plain pan instead)")
+            screen_video(ui_canvas(picks, seg["ui"]), length, out, seg.get("from", [0.5, 0.5, 1.0]),
+                         seg.get("to", [0.5, 0.5, 0.8]))
     elif t == "screen":
         screen_video(ui_canvas(picks, seg["ui"]), length, out, seg.get("from", [0.5, 0.5, 1.0]),
                      seg.get("to", [0.5, 0.5, 0.8]))
@@ -284,17 +370,33 @@ def render_segment(i, seg, length, picks, work):
     return out
 
 
+def loudness(path):
+    """Integrated loudness (LUFS) of a file, from ffmpeg's loudnorm analysis."""
+    r = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-af",
+                        "loudnorm=print_format=json", "-f", "null", "-"], capture_output=True, text=True)
+    stats = json.loads(r.stderr[r.stderr.rindex("{"):r.stderr.rindex("}") + 1])
+    return float(stats["input_i"])
+
+
 def prep_voices(cut, edit, picks, work):
-    """Trim each line's leading/trailing silence (TTS pads it), optionally speed it up; return durations."""
+    """Bring every line to the same loudness (a home-mic recording sits far below the TTS lines and
+    vanishes under the music), trim leading/trailing silence, optionally speed up; return durations."""
     tempo = edit.get("voice_tempo", 1.0)
+    target = edit.get("voice_lufs", -16.0)
     trim = ("silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.05,areverse,"
             "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.15,areverse")
     files, durs = {}, {}
     for v in cut["voices"]:
+        src = pick(picks, f"voices.{v['id']}")
+        lufs = loudness(src)
+        if lufs < -60:
+            raise SystemExit(f"voice {v['id']} ({src}) is silent ({lufs} LUFS) -- check the recording")
+        gain = min(target - lufs, 30.0)
         out = work / f"vox-{v['id']}.wav"
-        af = trim + (f",atempo={tempo}" if tempo != 1.0 else "")
-        ff("-i", pick(picks, f"voices.{v['id']}"), "-af", af, "-ar", 48000, "-ac", 2, out)
+        af = f"volume={gain:.1f}dB,alimiter=limit=0.89:level=false," + trim + (f",atempo={tempo}" if tempo != 1.0 else "")
+        ff("-i", src, "-af", af, "-ar", 48000, "-ac", 2, out)
         files[v["id"]], durs[v["id"]] = out, duration(out)
+        print(f"  voice {v['id']:9} {lufs:6.1f} LUFS {gain:+5.1f} dB  {durs[v['id']]:.1f} s")
     return files, durs
 
 

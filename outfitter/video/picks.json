@@ -6,7 +6,10 @@
     "lead-side": "stills/lead-side-take3.png",
     "card-bug": "stills/card-bug-take1.png",
     "card-talk": "stills/card-talk-take2.png",
-    "card-fleet": "stills/card-fleet-take3.png"
+    "card-fleet": "stills/card-fleet-take3.png",
+    "crt-front": "stills/crt-front-take1.png",
+    "crt-angle": "stills/crt-angle-take1.png",
+    "crt-shoulder": "stills/crt-shoulder-take1.png"
   },
   "shots": {
     "02-sidewalk": "veo/02-sidewalk-take1.mp4",

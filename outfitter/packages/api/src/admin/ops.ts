@@ -6,11 +6,19 @@
 // Classes: `read` runs directly. `write` runs directly and is audited. `delete` and `operator`
 // need `approved` on the caller: the laptop's TUI confirm (a Dongle's holder is the person at the
 // keyboard), or the Drive's web approval card (#287). A write to a tape that already has admin
-// tools also needs it (gurus-service.ts).
+// tools also needs it (gurus-service.ts). `approve` (E9 §4: answering an Agent Engine execution's
+// review pause) is audited and always needs `approved`, whoever the caller is.
+//
+// Capabilities (E9 §3.3): every op names the tape capability it needs -- `admin` (the Sysop tools),
+// `memory` or `agentEngine` -- and a Drive's call is refused unless its tape has it, so agentd
+// opening the socket for memory doesn't hand the model `tapes.*`. Only `admin` ops work from a
+// laptop (a Dongle has no tape or session); the others say "Drive only". Later PRs add their ops
+// with registerAdminOp.
 
 import { randomUUID } from "node:crypto";
 import {
   ADMIN_TOOLS_LEVELS,
+  MEMORY_LEVELS,
   THINKING_LEVELS,
   createGuru,
   deleteGuru,
@@ -18,13 +26,18 @@ import {
   hasAdminTools,
   updateGuru,
   type GuruInput,
+  type TapeCapability,
 } from "../gurus-service.ts";
 import type { ModelsService } from "../models.ts";
+import type { AgentEngine } from "../agentengine/index.ts";
 import type { Environment, Guru, Session, Store } from "../store/types.ts";
 import { ago, capText, clip, diffFields, fields, resolveRef, row, shortId } from "./render.ts";
 import { searchSessions, sessionTranscript } from "../search/service.ts";
 
-export type AdminOpClass = "read" | "write" | "delete" | "operator";
+export type AdminOpClass = "read" | "write" | "delete" | "operator" | "approve";
+
+/** The tape capability an op needs (see the module doc). */
+export type AdminCapability = TapeCapability;
 
 export interface AdminCaller {
   email: string;
@@ -35,6 +48,9 @@ export interface AdminCaller {
   operator: boolean;
   sessionId?: string;
   runId?: string;
+  /** For a Drive: what its tape allows now (gurus-service.ts tapeCapabilities). Unused for a
+   * Dongle, which reaches `admin` ops only. */
+  capabilities?: readonly AdminCapability[];
   /** The person approved this call (see the module doc). */
   approved?: boolean;
   approvalId?: string;
@@ -43,6 +59,9 @@ export interface AdminCaller {
 export interface AdminContext {
   store: Store;
   models: Pick<ModelsService, "list">;
+  /** E9: the Agent Engine parts configured here; a part is undefined while it's off. Only a
+   * Drive's calls carry it (memory and agentEngine ops are Drive only). */
+  agentEngine?: AgentEngine;
   now?: () => number;
   /** Where a handler's thrown error goes; the caller only sees "internal error". */
   log?: (message: string) => void;
@@ -54,8 +73,14 @@ export type AdminResult =
 
 type Args = Record<string, unknown>;
 
-interface AdminOp {
+export interface AdminOp {
   kind: AdminOpClass;
+  /** The tape capability a Drive needs to call this op. Anything but `admin` is Drive only. */
+  capability: AdminCapability;
+  /** The approval card for this op, when the default (drive.ts approvalText) says too little: an
+   * `approve` op shows what it answers. Every word must come from the api or be clipped, escaped
+   * and labelled as remote text. */
+  card?: (args: Args, target?: string) => { title: string; message: string };
   /** A reason this call is refused outright, checked before any approval is asked for (an agent
    * may never change an admin tape, so asking the owner first would only waste their yes). */
   refused?: (ctx: AdminContext, args: Args) => Promise<string | undefined>;
@@ -81,6 +106,10 @@ const TAPE_FIELDS = [
 
 const ENVIRONMENT_FIELDS = ["name", "repo", "baseBranch", "env"] as const;
 
+/** Tape fields only a person sets (gurus-service.ts). Passed through to the service so an agent
+ * that names one gets its refusal, rather than having the field quietly dropped. */
+const WEB_ONLY_FIELDS = ["adminTools", "memory", "agentEngine"] as const;
+
 function pick(args: Args, keys: readonly string[]): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const key of keys) if (args[key] !== undefined) out[key] = args[key];
@@ -98,6 +127,8 @@ function tapeLine(g: Guru, now: number): string {
     g.model,
     g.thinking && g.thinking !== "off" ? `thinking=${g.thinking}` : undefined,
     hasAdminTools(g) ? `admin=${g.adminTools}` : undefined,
+    g.memory && g.memory !== "off" ? `memory=${g.memory}` : undefined,
+    g.agentEngine === true ? "agentEngine" : undefined,
     ago(g.updatedAt, now),
   );
 }
@@ -110,6 +141,8 @@ function tapeDetail(g: Guru): string {
     ["fallbackModel", g.fallbackModel],
     ["thinking", g.thinking],
     ["adminTools", hasAdminTools(g) ? g.adminTools : undefined],
+    ["memory", g.memory && g.memory !== "off" ? g.memory : undefined],
+    ["agentEngine", g.agentEngine === true ? true : undefined],
     ["tools", g.tools],
     ["excludeTools", g.excludeTools],
     ["env", envKeys(g.env)],
@@ -231,6 +264,7 @@ async function adminTapeRefusal(ctx: AdminContext, args: Args): Promise<string |
 export const ADMIN_OPS: Record<string, AdminOp> = {
   "tapes.list": {
     kind: "read",
+    capability: "admin",
     async run(ctx, _caller, args) {
       const now = nowOf(ctx);
       const tapes = (await ctx.store.gurus.list()).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -245,6 +279,7 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
 
   "tapes.get": {
     kind: "read",
+    capability: "admin",
     async run(ctx, _caller, args) {
       const tape = await resolveTape(ctx, args.id);
       if (!tape.ok) return tape;
@@ -254,6 +289,7 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
 
   "tapes.meta": {
     kind: "read",
+    capability: "admin",
     async run(ctx, caller, args) {
       let models: string[] = [];
       try {
@@ -276,6 +312,7 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
           `thinking: ${THINKING_LEVELS.join("|")}`,
           `env denylist: ${envDenylist().join(", ")}`,
           `adminTools: ${ADMIN_TOOLS_LEVELS.join("|")} (web UI only)`,
+          `memory: ${MEMORY_LEVELS.join("|")}, agentEngine: true|false (web UI only)`,
           `you: ${caller.email}${caller.operator ? " (sysop)" : ""}`,
         ].join("\n"),
       };
@@ -284,9 +321,10 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
 
   "tapes.create": {
     kind: "write",
+    capability: "admin",
     async run(ctx, _caller, args) {
       const body = { ...pick(args, TAPE_FIELDS), ...(args.id !== undefined ? { id: args.id } : {}) } as GuruInput;
-      if (args.adminTools !== undefined) (body as Partial<Guru>).adminTools = args.adminTools as Guru["adminTools"];
+      Object.assign(body, pick(args, WEB_ONLY_FIELDS));
       const result = await createGuru(ctx.store, body, { kind: "agent" });
       if (!result.ok) return { ok: false, error: asTape(result.error), target: typeof body.id === "string" ? body.id : undefined };
       const note = await modelNote(ctx, [result.guru.model, result.guru.fallbackModel]);
@@ -296,12 +334,13 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
 
   "tapes.update": {
     kind: "write",
+    capability: "admin",
     refused: adminTapeRefusal,
     async run(ctx, caller, args) {
       const tape = await resolveTape(ctx, args.id);
       if (!tape.ok) return tape;
       const patch = pick(args, TAPE_FIELDS) as Partial<GuruInput>;
-      if (args.adminTools !== undefined) (patch as Partial<Guru>).adminTools = args.adminTools as Guru["adminTools"];
+      Object.assign(patch, pick(args, WEB_ONLY_FIELDS));
       if (Object.keys(patch).length === 0) return { ok: false, error: "nothing to update" };
       const result = await updateGuru(ctx.store, tape.item.id, patch, { kind: "agent", approved: caller.approved, operator: caller.operator });
       if (!result.ok) return { ok: false, error: asTape(result.error), target: tape.item.id };
@@ -313,6 +352,7 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
 
   "tapes.delete": {
     kind: "delete",
+    capability: "admin",
     refused: adminTapeRefusal,
     async run(ctx, caller, args) {
       const tape = await resolveTape(ctx, args.id);
@@ -325,6 +365,7 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
 
   "environments.list": {
     kind: "read",
+    capability: "admin",
     async run(ctx, _caller, args) {
       const now = nowOf(ctx);
       const envs = (await ctx.store.environments.list()).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -337,6 +378,7 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
 
   "environments.get": {
     kind: "read",
+    capability: "admin",
     async run(ctx, _caller, args) {
       const env = resolveRef(await ctx.store.environments.list(), args.id, "environment");
       if (!env.ok) return env;
@@ -357,6 +399,7 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
 
   "environments.create": {
     kind: "write",
+    capability: "admin",
     async run(ctx, _caller, args) {
       const body = pick(args, ENVIRONMENT_FIELDS) as Partial<Environment>;
       if (typeof body.name !== "string" || !body.name) return { ok: false, error: "name is required" };
@@ -371,6 +414,7 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
 
   "environments.update": {
     kind: "write",
+    capability: "admin",
     async run(ctx, _caller, args) {
       const env = resolveRef(await ctx.store.environments.list(), args.id, "environment");
       if (!env.ok) return env;
@@ -387,6 +431,7 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
 
   "sessions.list": {
     kind: "read",
+    capability: "admin",
     async run(ctx, caller, args) {
       const now = nowOf(ctx);
       let guruId: string | undefined;
@@ -409,6 +454,7 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
 
   "sessions.search": {
     kind: "read",
+    capability: "admin",
     async run(ctx, caller, args) {
       const a = { ...args };
       // Printed ids are prefixes; the store filters on full ones.
@@ -430,6 +476,7 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
 
   "sessions.transcript": {
     kind: "read",
+    capability: "admin",
     async run(ctx, caller, args) {
       const found = await findSession(ctx, args.id);
       if (!found.ok) return found;
@@ -442,6 +489,7 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
 
   "sessions.get": {
     kind: "read",
+    capability: "admin",
     async run(ctx, _caller, args) {
       const found = await findSession(ctx, args.id);
       if (!found.ok) return found;
@@ -471,7 +519,53 @@ export const ADMIN_OPS: Record<string, AdminOp> = {
 
 /** Field names an approval card may show: the ones an op actually reads. Anything else in args is
  * ignored by the op, so naming it would only let the caller write its own words onto the card. */
-export const CARD_FIELDS: readonly string[] = [...new Set<string>([...TAPE_FIELDS, ...ENVIRONMENT_FIELDS, "adminTools"])];
+export const CARD_FIELDS: readonly string[] = [...new Set<string>([...TAPE_FIELDS, ...ENVIRONMENT_FIELDS, ...WEB_ONLY_FIELDS])];
+
+const OP_NAME = /^[a-z][a-zA-Z]*\.[a-z][a-zA-Z]*$/;
+
+/**
+ * Adds an op to the registry (E9 PR3/PR4: `memory.*`, `ae.*`). Returns a function that removes it
+ * again, for tests. Refuses a duplicate or malformed name, or a capability or class it doesn't know,
+ * so a typo can't register an op that skips its gate.
+ */
+export function registerAdminOp(name: string, op: AdminOp): () => void {
+  if (!OP_NAME.test(name)) throw new Error(`admin op name must look like area.action: ${name}`);
+  if (Object.hasOwn(ADMIN_OPS, name)) throw new Error(`admin op ${name} is already registered`);
+  if (!(["admin", "memory", "agentEngine"] as const).includes(op.capability)) throw new Error(`admin op ${name}: unknown capability ${String(op.capability)}`);
+  if (!(["read", "write", "delete", "operator", "approve"] as const).includes(op.kind)) throw new Error(`admin op ${name}: unknown class ${String(op.kind)}`);
+  ADMIN_OPS[name] = op;
+  return () => {
+    if (ADMIN_OPS[name] === op) delete ADMIN_OPS[name];
+  };
+}
+
+/** The op's definition, if `op` names one (own keys only). */
+export function adminOp(op: unknown): AdminOp | undefined {
+  return typeof op === "string" && Object.hasOwn(ADMIN_OPS, op) ? ADMIN_OPS[op] : undefined;
+}
+
+const CAPABILITY_OFF: Record<AdminCapability, string> = {
+  admin: "admin tools are off for this tape",
+  memory: "memory is off for this tape",
+  agentEngine: "Agent Engine is off for this tape",
+};
+
+/** The refusal for `op` on a Drive whose tape lacks what it needs. */
+export function capabilityOff(op: unknown): string {
+  const def = adminOp(op);
+  return def ? CAPABILITY_OFF[def.capability] : CAPABILITY_OFF.admin;
+}
+
+/** Why this caller may not reach this op's capability, or undefined when it may. */
+function capabilityRefusal(def: AdminOp, caller: AdminCaller, op: string): string | undefined {
+  if (caller.via === "token") return def.capability === "admin" ? undefined : `${op} works only in a Drive`;
+  return caller.capabilities?.includes(def.capability) ? undefined : CAPABILITY_OFF[def.capability];
+}
+
+/** True for the classes that wait for the person's yes. */
+function needsYes(def: AdminOp): boolean {
+  return def.kind === "delete" || def.kind === "operator" || def.kind === "approve";
+}
 
 /**
  * The record an op would act on, resolved now: its full id and a label for the approval card. A
@@ -497,8 +591,10 @@ export async function resolveTarget(ctx: AdminContext, op: unknown, args: unknow
  * the owner first (drive.ts), then runs the op once with `approved`. Unknown ops say no; running
  * them reports the error. */
 export async function approvalNeeded(ctx: AdminContext, caller: AdminCaller, op: unknown, args: unknown): Promise<boolean> {
-  if (typeof op !== "string" || !Object.hasOwn(ADMIN_OPS, op)) return false;
-  const def = ADMIN_OPS[op];
+  const def = adminOp(op);
+  if (!def) return false;
+  // Refused anyway: don't ask the owner first.
+  if (capabilityRefusal(def, caller, op as string)) return false;
   if (def.kind === "operator" && !caller.operator) return false;
   const a: Args = args && typeof args === "object" && !Array.isArray(args) ? (args as Args) : {};
   try {
@@ -506,7 +602,7 @@ export async function approvalNeeded(ctx: AdminContext, caller: AdminCaller, op:
   } catch {
     return false;
   }
-  return def.kind === "delete" || def.kind === "operator";
+  return needsYes(def);
 }
 
 /** One line per op, for an unknown-op error: short enough to retry from. */
@@ -528,10 +624,12 @@ export async function runAdminOp(ctx: AdminContext, caller: AdminCaller, op: unk
 
   let result: AdminResult & { target?: string };
   try {
-    if (def.kind === "operator" && !caller.operator) result = { ok: false, error: "sysop rights required" };
+    const gated = capabilityRefusal(def, caller, op);
+    if (gated) result = { ok: false, error: gated };
+    else if (def.kind === "operator" && !caller.operator) result = { ok: false, error: "sysop rights required" };
     else {
       const refusal = def.refused ? await def.refused(ctx, a) : undefined;
-      const needsApproval = def.kind === "delete" || def.kind === "operator";
+      const needsApproval = needsYes(def);
       if (refusal) result = { ok: false, error: refusal };
       else result = needsApproval && !caller.approved ? { ok: false, error: "needs approval", needsApproval: true } : await def.run(ctx, caller, a);
     }

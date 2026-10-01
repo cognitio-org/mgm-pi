@@ -245,6 +245,11 @@ export interface RunSpecMessage {
     /** Sysop tools (#287): sent only when on; tells agentd to open its admin socket. The API checks
      * the tape again on every admin.request, so this is not the security boundary. */
     adminTools?: "manage" | "operator";
+    /** E9 (docs/specs/atlas-agent-engine-and-a2a.md §3.3): sent only when on. agentd opens the
+     * admin socket for it too; the API checks the tape's capabilities on every admin.request. */
+    memory?: "tool" | "auto";
+    /** E9 §4: sent only when exactly true; opens the admin socket like `memory`. */
+    agentEngine?: true;
   };
   snapshot: { url?: string; jsonl?: string };
   // litellmBaseUrl is server-controlled (config.litellmBaseUrl), never guru-editable -- see
@@ -1268,6 +1273,8 @@ export class AgentLink {
         ...(guru.playwrightBeforeCheckpoint === true ? { playwrightBeforeCheckpoint: true } : {}),
         ...(allowExternalHtmlResources ? { allowExternalHtmlResources: true } : {}),
         ...(guru.adminTools === "manage" || guru.adminTools === "operator" ? { adminTools: guru.adminTools } : {}),
+        ...(guru.memory === "tool" || guru.memory === "auto" ? { memory: guru.memory } : {}),
+        ...(guru.agentEngine === true ? { agentEngine: true as const } : {}),
       },
       snapshot: { url: session.checkpoint?.snapshotUrl, ...(jsonl ? { jsonl } : {}) },
       secrets: {

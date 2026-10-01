@@ -196,7 +196,7 @@ Down (api → agentd):
 
 | t | fields | effect |
 |---|---|---|
-| `run.spec` | `session {id, name, cwd:"/workspace"}, repo? {cloneUrl, branch, baseBranch, createBranch, branchPrefix?} (absent for non-coding sessions: agentd starts with an empty /workspace, or restores `workspace.snapshotUrl`), workspace? {snapshotUrl?}, guru {systemPrompt?, appendSystemPrompt?, model, thinking, tools?, excludeTools?, packages?, env?, playwrightBeforeCheckpoint?, allowExternalHtmlResources?}, snapshot {url?, jsonl?}, secrets {githubToken, litellmKey, litellmBaseUrl?, ngrokAuthtoken?}, author? {name, email, login?}, preview? {internalDomain}, ide? {version, artifacts {amd64?, arm64?}}, idleStopSeconds, checkpointEvery` | start the run. `preview` with `secrets.ngrokAuthtoken` (drive-previews.md, #217): agentd starts the preview listener and pins `OUTFITTER_PREVIEW_PORT`/`OUTFITTER_PREVIEW_TOKEN` for the tool; the credential (ACL `bind:*.<internalDomain>`) stays in a root-only ngrok config, never in pi's env. Absent: no previews. `ide` (browser-ide.md, #241; only with `preview`, for a Tape with `browserIde`): agentd downloads that code-server release from GitHub at once, niced, checks the SHA-256 for its architecture, and moves it root-owned to `/opt/code-server` without the bundled Copilot (`src/ide-install.ts`). A failed install is logged and never fails the run |
+| `run.spec` | `session {id, name, cwd:"/workspace"}, repo? {cloneUrl, branch, baseBranch, createBranch, branchPrefix?} (absent for non-coding sessions: agentd starts with an empty /workspace, or restores `workspace.snapshotUrl`), workspace? {snapshotUrl?}, guru {systemPrompt?, appendSystemPrompt?, model, thinking, tools?, excludeTools?, packages?, env?, playwrightBeforeCheckpoint?, allowExternalHtmlResources?, adminTools?, memory?, agentEngine?}, snapshot {url?, jsonl?}, secrets {githubToken, litellmKey, litellmBaseUrl?, ngrokAuthtoken?}, author? {name, email, login?}, preview? {internalDomain}, ide? {version, artifacts {amd64?, arm64?}}, idleStopSeconds, checkpointEvery` | start the run. `preview` with `secrets.ngrokAuthtoken` (drive-previews.md, #217): agentd starts the preview listener and pins `OUTFITTER_PREVIEW_PORT`/`OUTFITTER_PREVIEW_TOKEN` for the tool; the credential (ACL `bind:*.<internalDomain>`) stays in a root-only ngrok config, never in pi's env. Absent: no previews. `ide` (browser-ide.md, #241; only with `preview`, for a Tape with `browserIde`): agentd downloads that code-server release from GitHub at once, niced, checks the SHA-256 for its architecture, and moves it root-owned to `/opt/code-server` without the bundled Copilot (`src/ide-install.ts`). A failed install is logged and never fails the run |
 | `ack` | `seq` | agentd may drop buffered frames ≤ seq |
 | `prompt` | `text, images?, behavior?: "steer"\|"followUp"` | pi RPC `prompt` (with `streamingBehavior` if pi is busy) |
 | `steer` / `follow_up` | `text` | pi RPC same name |
@@ -261,14 +261,26 @@ request, reads resent once after a link drop, writes (with `idempotencyKey`) sen
 | up | `{t: "admin.request", reqId, op, args, idempotencyKey?}` |
 | down | `{t: "admin.result", reqId, ok: true, text}` or `{..., ok: false, error, needsApproval?}` |
 
-- agentd opens the socket only when `run.spec.guru.adminTools` is `manage` or `operator`, and pins
-  `OUTFITTER_ADMIN_SOCKET` after the tape's env (empty otherwise), like the GitHub socket.
+- agentd opens the socket only when the tape has a capability that uses it: `run.spec.guru.adminTools`
+  is `manage` or `operator`, `memory` is `tool` or `auto`, or `agentEngine` is `true` (E9,
+  docs/specs/atlas-agent-engine-and-a2a.md §3.3). Each of the three is sent only when on. It pins
+  `OUTFITTER_ADMIN_SOCKET` after the tape's env (empty otherwise), like the GitHub socket, and
+  `OUTFITTER_ADMIN_CAPS` to those capabilities, comma-separated in the order `admin,memory,agentEngine`
+  (empty when the socket is closed). Kernal registers its admin and session-search tools only when
+  `admin` is listed (unset means admin only: a laptop, or an agentd from before E9).
+- Every op names the tape capability it needs: `admin` (all of `tapes.*`, `environments.*`,
+  `sessions.*`), `memory` (`memory.*`, E9 PR3) or `agentEngine` (`ae.*`, E9 PR4). The api refuses an
+  op whose capability the tape lacks (`admin tools are off for this tape`, `memory is off for this
+  tape`, `Agent Engine is off for this tape`), so a socket opened for memory never reaches `tapes.*`.
+  A tape with none of the three is refused before the op is looked at, and not audited.
 - The model's shell can reach the socket, so the api decides everything. It reads the tape again on
-  every call: with admin tools off, every op is `admin tools are off for this tape`. Ops run as the
+  every call (and again after an approval wait), so turning a capability off takes effect at once. Ops run as the
   session's owner, with sysop rights only when the owner is an operator and the tape says
   `operator`.
-- A delete, an operator op, or a change to a tape with admin tools waits for the owner, up to 10
-  minutes. The api resolves the target first and names it on the card (name and full id), then acts
+- A delete, an operator op, an `approve` op (E9: answering an Agent Engine execution's review
+  pause, `ae.resume`), or a change to a tape with admin tools waits for the owner, up to 10
+  minutes. `approve` always asks, whoever the owner is; its card is the op's own (what it answers,
+  with remote text clipped and labelled), never the agent's words. The api resolves the target first and names it on the card (name and full id), then acts
   on that exact record. The request is a row in `adminApprovals` (one per run; claim, decide and
   clear are conditional writes). The owner's session page shows it as a confirm card through the
   `pendingUiRequest` channel, ahead of pi's own question, with id `admin:<approvalId>` and
@@ -279,8 +291,12 @@ request, reads resent once after a link drop, writes (with `idempotencyKey`) sen
   result means declined, unanswered, or replaced.
 - A write's `idempotencyKey` is remembered on the run (hashed, next to the GitHub keys), so a replay
   returns the first result. At most 8 admin requests per run are handled at once.
-- No `API_PROTOCOL_VERSION` bump: an older api never sends `adminTools`, so an agentd never opens
-  the socket against it.
+- No `API_PROTOCOL_VERSION` bump: an older api never sends `adminTools`, `memory` or `agentEngine`,
+  so an agentd never opens the socket against it; an older agentd ignores `memory` and
+  `agentEngine` (the socket then opens for admin tools only, as before).
+- Reads (no `idempotencyKey`, resent once) are the ops ending in `.list`, `.get`, `.meta`,
+  `.search`, `.transcript` or `.context` (`memory.context`, the recall before each prompt);
+  everything else is a write.
 
 ### Mailbox (E5.5)
 
@@ -611,6 +627,11 @@ outline|text, `around`, `window`, `from`, `maxChars`, `toolOutput` none|trimmed|
   confirms in the TUI).
 - Setting a tape's `adminTools`, or changing or deleting a tape that has them, is refused: only a
   sysop does that, in the web UI.
+- Setting or changing a tape's `memory` (`off|tool|auto`) or `agentEngine` (boolean) is refused
+  (`memory can only be set in the web UI`): a person sets them in the web UI. A body repeating the
+  current value passes.
+- `memory.*` and `ae.*` ops (capabilities `memory`, `agentEngine`) answer `<op> works only in a
+  Drive`: a Dongle has no tape or session to bind them to.
 - Every non-read op that passes those checks writes an `adminAudit` row.
 
 ## Browser companion

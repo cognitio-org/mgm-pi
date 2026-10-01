@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RunController, type LinkPort } from "../src/run.js";
 import { listenBrokerSocket } from "../src/broker-socket.js";
+import { adminCapabilities, type RunSpecGuru } from "../src/protocol.js";
 import { emptySessionJsonl } from "../src/session.js";
 import type { GitOps } from "../src/git.js";
 import type { DownMessage, DownRunSpec, UpAdminRequest, UpMessage } from "../src/protocol.js";
@@ -165,11 +166,11 @@ function controllerFor(path: string, link: FakeLink, workspace: string, env: { v
   });
 }
 
-function specFor(adminTools: "off" | "manage" | undefined): DownRunSpec {
+function specFor(adminTools: "off" | "manage" | undefined, more: Partial<RunSpecGuru> = {}): DownRunSpec {
   return {
     t: "run.spec",
     session: { id: "sess-adm", name: "adm", cwd: "/workspace" },
-    guru: { model: "fake/model", adminTools, env: { OUTFITTER_ADMIN_SOCKET: "/tmp/spoofed.sock" } },
+    guru: { model: "fake/model", adminTools, ...more, env: { OUTFITTER_ADMIN_SOCKET: "/tmp/spoofed.sock", OUTFITTER_ADMIN_CAPS: "admin" } },
     snapshot: { jsonl: emptySessionJsonl("sess-adm", "/workspace") },
     secrets: {},
     idleStopSeconds: 3600,
@@ -194,6 +195,7 @@ test("admin socket: opened for a tape with admin tools, pinned, forwards frames 
   link.deliver(specFor("manage"));
   await waitFor(() => env.value !== undefined);
   assert.equal(env.value!.OUTFITTER_ADMIN_SOCKET, path, "guru.env cannot retarget the socket");
+  assert.equal(env.value!.OUTFITTER_ADMIN_CAPS, "admin");
   assert.equal(((await stat(path)).mode & 0o777), 0o660);
 
   const client = await connect(path);
@@ -228,12 +230,48 @@ for (const adminTools of ["off", undefined] as const) {
       await rm(dir, { recursive: true, force: true });
       await rm(workspace, { recursive: true, force: true });
     });
-    link.deliver(specFor(adminTools));
+    link.deliver(specFor(adminTools, { memory: "off", agentEngine: false }));
     await waitFor(() => env.value !== undefined);
     assert.equal(env.value!.OUTFITTER_ADMIN_SOCKET, "");
+    assert.equal(env.value!.OUTFITTER_ADMIN_CAPS, "", "guru.env cannot claim capabilities");
     await assert.rejects(stat(path), { code: "ENOENT" });
   });
 }
+
+// E9 (docs/specs/atlas-agent-engine-and-a2a.md §3.3): memory and Agent Engine ops go through the
+// same socket, so it opens for either; OUTFITTER_ADMIN_CAPS tells Kernal which tools to register.
+for (const [label, more, caps] of [
+  ["memory tool", { memory: "tool" }, "memory"],
+  ["memory auto", { memory: "auto" }, "memory"],
+  ["agentEngine", { agentEngine: true }, "agentEngine"],
+  ["admin, memory and agentEngine", { adminTools: "operator", memory: "auto", agentEngine: true }, "admin,memory,agentEngine"],
+] as const) {
+  test(`admin socket: opened for ${label}, with OUTFITTER_ADMIN_CAPS=${caps}`, async (t) => {
+    const { dir, path } = await socketDir();
+    const link = new FakeLink();
+    const env: { value?: Record<string, string> } = {};
+    const workspace = await mkdtemp(join(tmpdir(), "adm-ws-"));
+    const controller = controllerFor(path, link, workspace, env);
+    t.after(async () => {
+      controller.dispose();
+      await new Promise((r) => setTimeout(r, 50));
+      await rm(dir, { recursive: true, force: true });
+      await rm(workspace, { recursive: true, force: true });
+    });
+    link.deliver(specFor(undefined, more as Partial<RunSpecGuru>));
+    await waitFor(() => env.value !== undefined);
+    assert.equal(env.value!.OUTFITTER_ADMIN_SOCKET, path);
+    assert.equal(env.value!.OUTFITTER_ADMIN_CAPS, caps);
+    assert.equal(((await stat(path)).mode & 0o777), 0o660);
+  });
+}
+
+test("adminCapabilities: only exact values count, in a fixed order", () => {
+  assert.deepEqual(adminCapabilities({}), []);
+  assert.deepEqual(adminCapabilities({ adminTools: "off", memory: "off", agentEngine: false }), []);
+  assert.deepEqual(adminCapabilities({ memory: "bogus" as never, agentEngine: "true" as never }), []);
+  assert.deepEqual(adminCapabilities({ agentEngine: true, memory: "tool", adminTools: "manage" }), ["admin", "memory", "agentEngine"]);
+});
 
 test("admin broker: a write fails on link drop and is never resent; a read is resent once", async (t) => {
   const { dir, path } = await socketDir();

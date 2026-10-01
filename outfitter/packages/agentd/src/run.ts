@@ -54,6 +54,7 @@ import type {
   UpMessage,
   UpAdminRequest,
 } from "./protocol.js";
+import { adminCapabilities } from "./protocol.js";
 
 /** The start-up phases the `startup` frame carries: run.spec through pi ready. Later "first ..."
  * milestones depend on the person's prompt, not on starting up. */
@@ -830,11 +831,17 @@ export class RunController {
       await this.startGithubSocket(this.deps.githubSocketPath);
     }
     // Sysop tools (#287): pinned after guru.env like the GitHub socket. Empty unless the tape has
-    // admin tools, so Kernal's outfitter-admin registers nothing on an ordinary Drive.
+    // admin tools, memory or Agent Engine (E9 §3.3), so Kernal's outfitter-admin registers nothing
+    // on an ordinary Drive. OUTFITTER_ADMIN_CAPS says which of the three, so a memory-only Drive
+    // doesn't get the admin tools; the API refuses an op the tape lacks either way.
     secretEnv.OUTFITTER_ADMIN_SOCKET = "";
-    const adminTools = this.spec.guru.adminTools;
-    if (this.deps.adminSocketPath && (adminTools === "manage" || adminTools === "operator")) {
-      if (await this.startAdminSocket(this.deps.adminSocketPath)) secretEnv.OUTFITTER_ADMIN_SOCKET = this.deps.adminSocketPath;
+    secretEnv.OUTFITTER_ADMIN_CAPS = "";
+    const caps = adminCapabilities(this.spec.guru);
+    if (this.deps.adminSocketPath && caps.length > 0) {
+      if (await this.startAdminSocket(this.deps.adminSocketPath)) {
+        secretEnv.OUTFITTER_ADMIN_SOCKET = this.deps.adminSocketPath;
+        secretEnv.OUTFITTER_ADMIN_CAPS = caps.join(",");
+      }
     }
     if (this.spec.repo) {
       secretEnv.OUTFITTER_SESSION_BRANCH = this.spec.repo.branch;

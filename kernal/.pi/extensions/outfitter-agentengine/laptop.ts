@@ -16,13 +16,15 @@
  *
  * Each call carries `laptop: {sessionId: "laptop:<pi session id>", repo}`. The repo is the working
  * directory's GitHub `origin` remote, lowercased; it only scopes the owner's own memory. The API
- * decides whose memory it is (the Dongle's owner) and enforces every rule; this side asks the
- * person before a shared save, because the API takes `confirmed` as their word.
+ * decides whose memory it is (the Dongle's owner) and enforces every rule. A shared or taxonomic
+ * save waits for the owner's yes in the Outfitter web app's approval widget (laptop-approval.ts):
+ * this agent's shell runs as the person and could answer a TUI confirm itself, so that is no gate.
+ * `/memory import` saves private notes only, so it needs no approval.
  */
 import { readSettings, updateSettings } from "../connect/settings.ts";
 import { remote } from "../_shared/git.ts";
 import type { AdminTransport, LaptopContext } from "../outfitter-admin/transport.ts";
-import { registerMemoryTool, type Confirm } from "./memory.ts";
+import { registerMemoryTool } from "./memory.ts";
 import { applyMemory, recallQuery, requestRecall } from "./recall.ts";
 import { TurnRecorder } from "./record.ts";
 import { importPlan, piMemoryInjectionOff, piMemorySource, withoutPiMemoryTools, type ImportNote } from "./pi-memory.ts";
@@ -113,6 +115,12 @@ function personHere(ctx: any): boolean {
   return ctx?.mode === "tui" && typeof ctx?.ui?.confirm === "function";
 }
 
+/** Whether a tool call may wait for a web approval: not in print or json mode, which must end. */
+export function waits(ctx: any): boolean {
+  const mode = ctx?.mode;
+  return typeof mode === "string" && mode !== "print" && mode !== "json";
+}
+
 // ---------- registration ----------
 
 export interface LaptopDeps {
@@ -143,8 +151,9 @@ export function registerLaptopMemory(pi: any, transport: AdminTransport, deps: L
 
   registerMemoryTool(pi, transport, {
     laptop: context,
-    confirm: (ctx) =>
-      personHere(ctx) ? (title, message, signal) => ctx.ui.confirm(title, message, { signal, timeout: CONFIRM_TIMEOUT_MS }) : undefined,
+    // A shared save waits for the owner's yes in the web app's widget, interactively; print mode
+    // (`kernal -p`) gets the pending approval id back at once instead of blocking.
+    approval: (ctx) => (waits(ctx) ? { wait: true, notify: (m) => ctx?.ui?.notify?.(m, "info") } : undefined),
   });
 
   pi.on("session_start", async (_event: unknown, ctx: any) => {
@@ -311,5 +320,3 @@ function registerMemoryCommand(
     notify([`imported ${saved} of ${notes.length} note${notes.length === 1 ? "" : "s"}`, ...failed.slice(0, 3).map((e) => `  ${e}`)].join("\n"), failed.length ? "warning" : "info");
   }
 }
-
-export type { Confirm };

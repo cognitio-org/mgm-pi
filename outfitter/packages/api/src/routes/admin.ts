@@ -11,6 +11,8 @@
 // E9.9: `laptop: {sessionId, repo?}` binds a `memory.*` call (admin/memory-ops.ts): sessionId is
 // `laptop:<pi session id>`, repo the working directory's GitHub `owner/name`. Both are checked here
 // and only scope the token owner's own memory; the identity is always the token's owner.
+// `approvalId` names the web approval a rerun of a `webApproval` op (a shared memory.save) claims;
+// for those ops `confirmed` counts for nothing (admin/laptop-approvals.ts).
 
 import type { FastifyInstance } from "fastify";
 import type { RouteContext } from "./context.ts";
@@ -24,7 +26,7 @@ export async function registerAdminRoutes(app: FastifyInstance, ctx: RouteContex
     if (!identity || (!identity.viaToken && !ctx.config.devMode)) {
       return reply.code(403).send({ error: "admin ops need an API token" });
     }
-    const body = (req.body ?? {}) as { op?: unknown; args?: unknown; confirmed?: unknown; laptop?: unknown };
+    const body = (req.body ?? {}) as { op?: unknown; args?: unknown; confirmed?: unknown; laptop?: unknown; approvalId?: unknown };
     const laptop = laptopContext(body.laptop);
     if (!laptop.ok) return { ok: false, error: laptop.error };
     if (typeof body.op === "string" && body.op.startsWith("memory.") && !laptopMemoryRate.take(identity.email.toLowerCase())) {
@@ -32,7 +34,14 @@ export async function registerAdminRoutes(app: FastifyInstance, ctx: RouteContex
     }
     return runAdminOp(
       { store: ctx.store, models: ctx.modelsService, agentEngine: ctx.agentEngine, log: (m) => req.log.warn(m) },
-      { email: identity.email, via: "token", operator: false, approved: body.confirmed === true, ...(laptop.value ? { laptop: laptop.value } : {}) },
+      {
+        email: identity.email,
+        via: "token",
+        operator: false,
+        approved: body.confirmed === true,
+        ...(laptop.value ? { laptop: laptop.value } : {}),
+        ...(body.approvalId !== undefined ? { laptopApprovalId: body.approvalId } : {}),
+      },
       body.op,
       body.args,
     );

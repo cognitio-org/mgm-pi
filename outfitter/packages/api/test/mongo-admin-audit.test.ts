@@ -67,6 +67,45 @@ describe("MongoAdminAudit", () => {
     assert.equal(await store.adminApprovals.get("run-a"), null);
   });
 
+  test("laptopApprovals (E9.9): find, list, decide and consume are conditional; the TTL index exists", async () => {
+    const t = (ms: number) => new Date(Date.parse("2026-10-01T12:00:00.000Z") + ms).toISOString();
+    const match = { ownerEmail: "ada@example.com", op: "memory.save", argsDigest: "d1", laptopSessionId: "laptop:abcdefgh-1", repo: "acme/widgets" };
+    const base = {
+      ownerEmail: match.ownerEmail,
+      op: match.op,
+      argsDigest: match.argsDigest,
+      title: "Share a memory with the team",
+      summary: "s",
+      origin: { laptopSessionId: match.laptopSessionId, repo: match.repo },
+      state: "pending" as const,
+      createdAt: t(0),
+      expiresAt: t(600_000),
+    };
+    await store.laptopApprovals.insert({ ...base, id: "la1" });
+    await store.laptopApprovals.insert({ ...base, id: "la2", argsDigest: "d2", createdAt: t(1) });
+    await store.laptopApprovals.insert({ ...base, id: "la3", ownerEmail: "eve@example.com" });
+    assert.equal((await store.laptopApprovals.get("la1"))!.state, "pending");
+    assert.equal((await store.laptopApprovals.get("la1") as { _id?: unknown; expireAt?: unknown })._id, undefined);
+    assert.deepEqual((await store.laptopApprovals.listPending("ada@example.com", t(0), 10)).map((a) => a.id), ["la1", "la2"]);
+    assert.equal((await store.laptopApprovals.findPending(match, t(0)))!.id, "la1");
+    assert.equal(await store.laptopApprovals.findPending({ ...match, repo: undefined }, t(0)), null, "a repo-less ask is another ask");
+    assert.equal(await store.laptopApprovals.findPending(match, t(600_000)), null, "expired");
+    assert.equal(await store.laptopApprovals.consume("la1", match, t(0)), false, "pending can't be used");
+    assert.equal(await store.laptopApprovals.decide("la1", "eve@example.com", "approved", "eve@example.com", t(0)), false, "not hers");
+    assert.equal(await store.laptopApprovals.decide("la1", "ada@example.com", "approved", "ada@example.com", t(700_000)), false, "after expiry");
+    assert.equal(await store.laptopApprovals.decide("la1", "ada@example.com", "approved", "ada@example.com", t(0)), true);
+    assert.equal(await store.laptopApprovals.decide("la1", "ada@example.com", "denied", "ada@example.com", t(0)), false, "final");
+    assert.equal(await store.laptopApprovals.consume("la1", { ...match, argsDigest: "d2" }, t(0)), false, "digest");
+    assert.equal(await store.laptopApprovals.consume("la1", { ...match, laptopSessionId: "laptop:other-session" }, t(0)), false, "origin");
+    assert.equal(await store.laptopApprovals.consume("la1", match, t(600_000)), false, "expired");
+    const both = await Promise.all([store.laptopApprovals.consume("la1", match, t(0)), store.laptopApprovals.consume("la1", match, t(0))]);
+    assert.deepEqual(both.sort(), [false, true], "used once");
+    assert.equal((await store.laptopApprovals.get("la1"))!.state, "used");
+    // @ts-expect-error -- reach past the Store interface for the index list.
+    const indexes = await store.client.db(DB_NAME).collection("laptopApprovals").indexes();
+    assert.ok(indexes.some((i: { key: Record<string, unknown>; expireAfterSeconds?: number }) => i.key.expireAt === 1 && i.expireAfterSeconds === 0));
+  });
+
   test("adminTools round-trips on a tape", async () => {
     const now = new Date().toISOString();
     await store.gurus.insert({ id: "sysop", name: "Sysop", model: "a/b", adminTools: "manage", createdAt: now, updatedAt: now });

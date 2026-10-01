@@ -17,8 +17,8 @@
 // - E9.9 laptops: a Dongle reaches these ops too (`laptop: true`), as the token's owner: the same
 //   user hash as their Drives, sessionId `laptop:<pi session id>`, and the repo Kernal read from the
 //   working directory's git remote (routes/admin.ts validates both; they scope, never authorise).
-//   A shared or taxonomic save needs `confirmed` (the laptop's TUI confirm) in place of the Drive's
-//   card. `memory.record` takes a laptop's own turns when the person opted in; a Drive's are recorded
+//   A shared or taxonomic save needs the owner's yes in the web app's approval widget in place of
+//   the Drive's card (laptop-approvals.ts); `confirmed` from a Dongle does not count. `memory.record` takes a laptop's own turns when the person opted in; a Drive's are recorded
 //   by the api (agentengine/recorder.ts), so it is laptop only.
 
 import { redact } from "../search/redact.ts";
@@ -285,6 +285,19 @@ function saveArgs(args: Record<string, unknown>): SaveArgs | { error: string } {
   return { type: type as MemoryType, text: redact(raw), ...(label ? { label } : {}), shared: args.shared === true };
 }
 
+/**
+ * The web widget's card for a laptop's shared save (E9.9): what it asks, and the exact text that
+ * would be saved (redacted as saveArgs does). Bad args still get a card that says so; the save
+ * refuses them after the yes, as it would have before.
+ */
+function saveCard(args: Record<string, unknown>): { title: string; summary: string } {
+  const title = args.type === "taxonomic" ? "Add a term to the team's shared glossary" : "Share a memory with the team";
+  const a = saveArgs(args);
+  if ("error" in a) return { title, summary: `(this request is malformed: ${a.error})` };
+  const lines = [`Type: ${a.type}`, ...(a.label ? [`Label: ${a.label}`] : []), "Everyone on this Outfitter gets it recalled into their prompts.", "", a.text];
+  return { title, summary: lines.join("\n") };
+}
+
 function firstLine(text: string, max: number): string {
   return clip(text.split("\n").find((l) => l.trim())?.trim() ?? text, max);
 }
@@ -400,9 +413,12 @@ registerAdminOp("memory.save", {
   kind: "write",
   capability: "memory",
   laptop: true,
-  // Shared memory reaches the other users' prompts (their recall): the owner approves each one (a
-  // laptop sends `confirmed` after its TUI confirm). An A2A session may never write it (§5.4), so it
-  // is refused before anyone is asked.
+  // Shared memory reaches the other users' prompts (their recall): the owner approves each one, on
+  // the Drive's card or, from a laptop, in the web app's approval widget (`webApproval`; a laptop's
+  // `confirmed` doesn't count, its agent could send it). An A2A session may never write it (§5.4),
+  // so it is refused before anyone is asked.
+  webApproval: true,
+  laptopCard: saveCard,
   asks: async (_ctx, args) => args.shared === true || args.type === "taxonomic",
   async refused(ctx, args, caller) {
     if (args.shared !== true && args.type !== "taxonomic") return undefined;

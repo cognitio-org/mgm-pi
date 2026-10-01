@@ -139,16 +139,19 @@ describe("POST /api/admin/ops memory.* with a Dongle", () => {
     await a.fastify.close();
   });
 
-  test("shared and taxonomic saves need confirmed (the laptop's TUI yes); a private one doesn't", async () => {
+  test("shared and taxonomic saves wait for the web widget, and `confirmed` counts for nothing; a private one doesn't wait", async () => {
     const { app: a, fake, store } = await app();
-    assert.deepEqual(await op(a, "memory.save", { type: "semantic", text: "team fact", label: "f", shared: true }), { ok: false, error: "needs approval", needsApproval: true });
-    assert.deepEqual(await op(a, "memory.save", { type: "taxonomic", text: "d", label: "outfitter:tape", shared: true }), { ok: false, error: "needs approval", needsApproval: true });
+    const asked = await op(a, "memory.save", { type: "semantic", text: "team fact", label: "f", shared: true });
+    assert.deepEqual([asked.ok, asked.needsApproval, typeof (asked as { approvalId?: string }).approvalId], [false, true, "string"]);
+    const tax = await op(a, "memory.save", { type: "taxonomic", text: "d", label: "outfitter:tape", shared: true });
+    assert.equal(tax.needsApproval, true);
+    const confirmed = await op(a, "memory.save", { type: "semantic", text: "team fact", label: "f", shared: true }, { laptop: LAPTOP, confirmed: true });
+    assert.equal(confirmed.needsApproval, true, "the agent's own `confirmed` is not a yes");
+    assert.equal((confirmed as { approvalId?: string }).approvalId, (asked as { approvalId?: string }).approvalId, "the same ask reuses its approval");
     assert.equal(fake.semantic.length, 0);
-    const yes = await op(a, "memory.save", { type: "semantic", text: "team fact", label: "f", shared: true }, { laptop: LAPTOP, confirmed: true });
-    assert.deepEqual(yes, { ok: true, text: 'saved semantic memory "f" (shared)' });
-    assert.equal(fake.semantic[0].visibility, "org");
-    const [row] = await store.adminAudit.listRecent(1);
-    assert.deepEqual([row.op, row.via, row.actor, row.approved, row.ok, row.sessionId], ["memory.save", "token", ADA, true, true, SID]);
+    assert.equal((await op(a, "memory.save", { type: "semantic", text: "mine", label: "p" })).ok, true);
+    const [row] = await store.adminAudit.listRecent(2).then((r) => r.slice(1));
+    assert.deepEqual([row.op, row.via, row.actor, row.approved, row.ok, row.sessionId], ["memory.save", "token", ADA, false, false, SID]);
     await a.fastify.close();
   });
 

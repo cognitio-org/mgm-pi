@@ -825,4 +825,24 @@ export const api = {
   browserCapture(sessionId: string, captureId: string): Promise<Blob> {
     return requestBlob(`/api/sessions/${sessionId}/browser/captures/${captureId}`);
   },
+
+  /** E9.9: the signed-in person's pending asks from their laptops (the approval widget). */
+  laptopApprovals(): Promise<{ approvals: LaptopApproval[] }> {
+    return request("/api/laptop-approvals");
+  },
+
+  decideLaptopApproval(id: string, approve: boolean): Promise<{ ok: true; state: string }> {
+    return request(`/api/laptop-approvals/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify({ approve }) });
+  },
 };
+
+/** E9.9: one ask from a laptop, as the api's widget route shows it (admin/laptop-approvals.ts). */
+export interface LaptopApproval {
+  id: string;
+  op: string;
+  title: string;
+  summary: string;
+  origin: { laptopSessionId: string; repo?: string };
+  createdAt: string;
+  expiresAt: string;
+}

@@ -8,7 +8,9 @@
  *   delete until the owner approves it in the web UI, so a write may wait minutes.
  * - On a laptop: POST /api/admin/ops on OUTFITTER_API with OUTFITTER_TOKEN (a Dongle), the same
  *   pair teleport uses (_shared/outfitter-env.ts). `confirmed` is sent only after the person said
- *   yes in the TUI. E9.9: a `memory.*` call also sends `laptop: {sessionId, repo?}`.
+ *   yes in the TUI. E9.9: a `memory.*` call also sends `laptop: {sessionId, repo?}`, and an op that
+ *   needs the owner's yes in the web app comes back `{needsApproval, approvalId}`; its rerun sends
+ *   `approvalId` (outfitter-agentengine/laptop-approval.ts).
  * - Neither: no transport, and the extension registers no admin tools. Inside a Drive
  *   (OUTFITTER_SESSION_ID) it is the socket or nothing, never HTTP.
  *
@@ -19,7 +21,9 @@ import { randomUUID } from "node:crypto";
 import { connect } from "node:net";
 import { outfitterCredentials } from "../_shared/outfitter-env.ts";
 
-export type AdminReply = { ok: true; text: string } | { ok: false; error: string; needsApproval?: boolean };
+/** `approvalId` (E9.9): a laptop op waiting for the owner's yes in the Outfitter web app; `state`:
+ * what `approvals.get` says about it (laptop-approval.ts). */
+export type AdminReply = { ok: true; text: string; state?: string } | { ok: false; error: string; needsApproval?: boolean; approvalId?: string };
 
 /** E9.9: what a laptop's `memory.*` call is bound to (the API validates both; they only scope). */
 export interface LaptopContext {
@@ -32,7 +36,7 @@ export interface LaptopContext {
 export interface AdminTransport {
   kind: "drive" | "laptop";
   /** `laptop` goes in the request body next to `args` (HTTP only; a Drive's identity is its session). */
-  call(op: string, args: Record<string, unknown>, opts?: { confirmed?: boolean; signal?: AbortSignal; laptop?: LaptopContext }): Promise<AdminReply>;
+  call(op: string, args: Record<string, unknown>, opts?: { confirmed?: boolean; signal?: AbortSignal; laptop?: LaptopContext; approvalId?: string }): Promise<AdminReply>;
 }
 
 export type FetchFn = typeof fetch;
@@ -55,10 +59,19 @@ export function isReadOp(op: string): boolean {
   return READ_ACTIONS.test(op);
 }
 
+const STATE = /^(pending|approved|denied|expired|used)$/;
+const APPROVAL_ID = /^[0-9a-f-]{36}$/;
+
 function reply(msg: any): AdminReply {
-  if (msg?.ok === true) return { ok: true, text: typeof msg.text === "string" ? msg.text : "" };
+  if (msg?.ok === true) {
+    const text = typeof msg.text === "string" ? msg.text : "";
+    return typeof msg.state === "string" && STATE.test(msg.state) ? { ok: true, text, state: msg.state } : { ok: true, text };
+  }
   const error = typeof msg?.error === "string" && msg.error.trim() ? msg.error.trim() : "admin request failed";
-  return msg?.needsApproval === true ? { ok: false, error, needsApproval: true } : { ok: false, error };
+  if (msg?.needsApproval !== true) return { ok: false, error };
+  return typeof msg.approvalId === "string" && APPROVAL_ID.test(msg.approvalId)
+    ? { ok: false, error, needsApproval: true, approvalId: msg.approvalId }
+    : { ok: false, error, needsApproval: true };
 }
 
 type SocketFailure = Error & { code?: string; sent?: boolean };
@@ -186,7 +199,13 @@ export function httpTransport(apiBase: string, token: string, fetchFn: FetchFn =
         res = await fetchFn(`${base}/api/admin/ops`, {
           method: "POST",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ op, args, ...(opts.confirmed ? { confirmed: true } : {}), ...(opts.laptop ? { laptop: opts.laptop } : {}) }),
+          body: JSON.stringify({
+            op,
+            args,
+            ...(opts.confirmed ? { confirmed: true } : {}),
+            ...(opts.laptop ? { laptop: opts.laptop } : {}),
+            ...(opts.approvalId ? { approvalId: opts.approvalId } : {}),
+          }),
           signal,
           redirect: "manual",
         });

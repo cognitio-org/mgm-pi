@@ -8,7 +8,9 @@
 // keyboard), or the Drive's web approval card (#287). A write to a tape that already has admin
 // tools also needs it (gurus-service.ts). `approve` (E9 §4: answering an Agent Engine execution's
 // review pause) is audited and always needs `approved`, whoever the caller is. A change to a tape
-// with memory or Agent Engine needs it too (an op's `asks`).
+// with memory or Agent Engine needs it too (an op's `asks`). E9.9: for an op registered with
+// `webApproval` a Dongle's `confirmed` counts for nothing; its yes comes from the web app's approval
+// widget (laptop-approvals.ts, runAdminOp's laptopGate).
 //
 // Capabilities (E9 §3.3): every op names the tape capability it needs -- `admin` (the Sysop tools),
 // `memory` or `agentEngine` -- and a Drive's call is refused unless its tape has it, so agentd
@@ -36,6 +38,7 @@ import type { AgentEngine } from "../agentengine/index.ts";
 import type { Environment, Guru, Session, Store } from "../store/types.ts";
 import { ago, capText, clip, diffFields, fields, resolveRef, row, shortId } from "./render.ts";
 import { searchSessions, sessionTranscript } from "../search/service.ts";
+import { canonicalJson, consumeLaptopApproval, createLaptopApproval, laptopApprovalStatus, type LaptopApprovalState } from "./laptop-approvals.ts";
 
 export type AdminOpClass = "read" | "write" | "delete" | "operator" | "approve";
 
@@ -67,6 +70,9 @@ export interface AdminCaller {
   approvalId?: string;
   /** A Dongle's `laptop` context (E9.9); never set for a Drive. */
   laptop?: LaptopContext;
+  /** E9.9: the `approvalId` a Dongle's rerun names (POST body). Unchecked as sent: runAdminOp uses
+   * it only through consumeLaptopApproval, and only for a `webApproval` op. */
+  laptopApprovalId?: unknown;
 }
 
 export interface AdminContext {
@@ -81,8 +87,8 @@ export interface AdminContext {
 }
 
 export type AdminResult =
-  | { ok: true; text: string }
-  | { ok: false; error: string; needsApproval?: boolean };
+  | { ok: true; text: string; state?: LaptopApprovalState }
+  | { ok: false; error: string; needsApproval?: boolean; approvalId?: string };
 
 type Args = Record<string, unknown>;
 
@@ -97,6 +103,13 @@ export interface AdminOp {
   /** False: never written to adminAudit, although not a read (E9.9 `memory.record`, a laptop's own
    * turns into its own private memory, many a session; the usage log counts them instead). */
   audit?: false;
+  /** E9.9: from a Dongle, a call that needs the person's yes waits for it in the web app's approval
+   * widget (laptop-approvals.ts), never on `confirmed`, which the laptop's agent could send itself.
+   * Needs `laptop`. `laptopCard` says what the widget shows. */
+  webApproval?: true;
+  /** The widget's card for a `webApproval` op: one line of what is asked, and the exact content
+   * (redacted as it would be acted on). Without it: the op name and its canonical args. */
+  laptopCard?: (args: Args) => { title: string; summary: string };
   /** The approval card for this op, when the default (drive.ts approvalText) says too little: an
    * `approve` op shows what it answers. Every word must come from the api or be clipped, escaped
    * and labelled as remote text. */
@@ -576,13 +589,15 @@ export function registerAdminOp(name: string, op: AdminOp): () => void {
   }
   // An approve op answers something remote on the owner's behalf: it must say on the card what it
   // answers, and it must never be reachable from a laptop, where `confirmed` is the caller's own word.
-  if (op.kind === "approve" && (!op.card || op.capability === "admin" || op.laptop)) {
+  // E9.9: unless its yes comes from the web approval widget (`webApproval`), which it can't answer.
+  if (op.kind === "approve" && (!op.card || op.capability === "admin" || (op.laptop && !op.webApproval))) {
     throw new Error(`admin op ${name}: an approve op needs its own card and a Drive-only capability`);
   }
-  // E9.9: only memory reads and writes reach a laptop; Agent Engine agents and anything that waits
-  // for the owner's yes stay Drive only.
-  if (op.laptop && (op.capability !== "memory" || (op.kind !== "read" && op.kind !== "write"))) {
-    throw new Error(`admin op ${name}: only a memory read or write may be laptop-callable`);
+  // E9.9: a laptop reaches memory reads and writes, and ops whose every yes is asked in the web
+  // app (`webApproval`, for #354's laptop `ae.*`); everything else stays Drive only.
+  if (op.webApproval && !op.laptop) throw new Error(`admin op ${name}: webApproval is for laptop-callable ops`);
+  if (op.laptop && !op.webApproval && (op.capability !== "memory" || (op.kind !== "read" && op.kind !== "write"))) {
+    throw new Error(`admin op ${name}: only a memory read or write (or a webApproval op) may be laptop-callable`);
   }
   // Skipping the audit is for a laptop's own memory writes (memory.record) only.
   if (op.audit === false && (op.kind !== "write" || !op.laptop)) throw new Error(`admin op ${name}: only a laptop memory write may skip the audit`);
@@ -696,13 +711,24 @@ export async function runAdminOp(ctx: AdminContext, caller: AdminCaller, op: unk
   const gated = capabilityRefusal(def, caller, op);
   if (gated) return { ok: false, error: gated };
 
+  // E9.9: a Dongle's yes for a webApproval op is only ever the web widget's (laptopGate below); its
+  // own `confirmed` and any approval id it names count for nothing until consumed.
+  const webGated = caller.via === "token" && def.webApproval === true;
+  if (webGated) caller = { ...caller, approved: false, approvalId: undefined };
+
   let result: AdminResult & { target?: string };
   try {
     if (def.kind === "operator" && !caller.operator) result = { ok: false, error: "sysop rights required" };
     else {
       const refusal = def.refused ? await def.refused(ctx, a, caller) : undefined;
       if (refusal) result = { ok: false, error: refusal };
-      else result = !caller.approved && (await needsYes(ctx, def, a)) ? { ok: false, error: "needs approval", needsApproval: true } : await def.run(ctx, caller, a);
+      else if (webGated && (await needsYes(ctx, def, a))) {
+        const gate = await laptopGate(ctx, def, caller, op, a);
+        if (gate.ok) {
+          caller = { ...caller, approved: true, approvalId: gate.approvalId };
+          result = await def.run(ctx, caller, a);
+        } else result = gate.result;
+      } else result = !caller.approved && (await needsYes(ctx, def, a)) ? { ok: false, error: "needs approval", needsApproval: true } : await def.run(ctx, caller, a);
     }
   } catch (err) {
     ctx.log?.(`admin op ${op} failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -732,6 +758,44 @@ export async function runAdminOp(ctx: AdminContext, caller: AdminCaller, op: unk
   const { target: _target, ...out } = result;
   return out;
 }
+
+/**
+ * E9.9: a Dongle's call to a webApproval op that needs a yes. With an `approvalId`: consume it (the
+ * one check, consumeLaptopApproval) and run. Without: ask in the web widget, and say so.
+ */
+async function laptopGate(
+  ctx: AdminContext,
+  def: AdminOp,
+  caller: AdminCaller,
+  op: string,
+  args: Args,
+): Promise<{ ok: true; approvalId: string } | { ok: false; result: AdminResult & { target?: string } }> {
+  if (!caller.laptop) return { ok: false, result: { ok: false, error: `${op} from a laptop needs a newer Kernal (no session id was sent)` } };
+  const now = nowOf(ctx);
+  if (caller.laptopApprovalId !== undefined) {
+    const used = await consumeLaptopApproval(ctx.store, { ownerEmail: caller.email, op, args, approvalId: caller.laptopApprovalId, laptop: caller.laptop, now });
+    return used.ok ? used : { ok: false, result: { ok: false, error: used.error } };
+  }
+  const card = def.laptopCard ? def.laptopCard(args) : { title: `Allow ${op} from your laptop?`, summary: canonicalJson(args) };
+  const made = await createLaptopApproval(ctx.store, { ownerEmail: caller.email, op, args, laptop: caller.laptop, title: card.title, summary: card.summary, now });
+  if (!made.ok) return { ok: false, result: { ok: false, error: made.error } };
+  return {
+    ok: false,
+    result: { ok: false, error: "needs your approval in the Outfitter web app", needsApproval: true, approvalId: made.approval.id, target: made.approval.id },
+  };
+}
+
+// E9.9: a laptop polls its web approval here (laptop-approvals.ts). Owner only; another owner's id
+// reads as not found. Registered as an `admin` read, which a Dongle may always call.
+registerAdminOp("approvals.get", {
+  kind: "read",
+  capability: "admin",
+  async run(ctx, caller, args) {
+    if (caller.via !== "token") return { ok: false, error: "approvals.get is for a laptop; a Drive's approvals are its session's cards" };
+    const r = await laptopApprovalStatus(ctx.store, caller.email, args.id, nowOf(ctx));
+    return r.ok ? { ok: true, text: `approval ${String(args.id)}: ${r.state}`, state: r.state } : r;
+  },
+});
 
 let auditSeq = 0;
 

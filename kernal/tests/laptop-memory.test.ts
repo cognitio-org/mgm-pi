@@ -1,6 +1,6 @@
 // E9.9 (#349, outfitter/docs/specs/atlas-agent-engine-and-a2a.md §3.5): Agent Engine memory on a
 // laptop -- the settings and their defaults, what registers in each mode, recall (framing, the 3 s
-// cap, skipped on errors), the tool's laptop context and shared-save confirm, opt-in recording, pi-
+// cap, skipped on errors), the tool's laptop context and shared-save web approval, opt-in recording, pi-
 // memory turned off (tools here, injection in bin/kernal), and the one-time import.
 
 import { test, describe, beforeEach, afterEach } from "node:test";
@@ -10,7 +10,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import register from "../.pi/extensions/outfitter-agentengine/index.ts";
-import { cachedRepoOf, effectiveMode, githubRepo, importNotes, laptopContextOf, memorySettings, recordingOn } from "../.pi/extensions/outfitter-agentengine/laptop.ts";
+import { cachedRepoOf, effectiveMode, githubRepo, importNotes, laptopContextOf, memorySettings, recordingOn, waits } from "../.pi/extensions/outfitter-agentengine/laptop.ts";
 import { applyMemory, memoryBlock, requestRecall } from "../.pi/extensions/outfitter-agentengine/recall.ts";
 import { TurnRecorder, lastTurn } from "../.pi/extensions/outfitter-agentengine/record.ts";
 import { PI_MEMORY_TOOLS, importPlan, parseMemoryFile, piMemorySource, withoutPiMemoryTools } from "../.pi/extensions/outfitter-agentengine/pi-memory.ts";
@@ -177,6 +177,33 @@ describe("laptop context", () => {
     assert.deepEqual(bodies[0], { op: "memory.search", args: { query: "q" }, laptop: LAPTOP });
     assert.deepEqual(bodies[1], { op: "tapes.list", args: {} });
   });
+
+  test("the HTTP transport sends approvalId in the body and reads approvalId and state back", async () => {
+    const bodies: any[] = [];
+    const answers = [
+      { ok: false, error: "needs your approval in the Outfitter web app", needsApproval: true, approvalId: "0b6f3c2e-0000-4000-8000-000000000001" },
+      { ok: true, text: "approval x: approved", state: "approved" },
+      { ok: false, error: "x", needsApproval: true, approvalId: "<script>" },
+      { ok: true, text: "", state: "bogus" },
+    ];
+    const fetchFn = (async (_url: string, init: any) => {
+      bodies.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(answers.shift()), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    const t = httpTransport("https://link.example", "outf_x", fetchFn);
+    assert.deepEqual(await t.call("memory.save", { type: "semantic", text: "t", shared: true }, { laptop: LAPTOP }), {
+      ok: false,
+      error: "needs your approval in the Outfitter web app",
+      needsApproval: true,
+      approvalId: "0b6f3c2e-0000-4000-8000-000000000001",
+    });
+    assert.deepEqual(await t.call("approvals.get", { id: "x" }), { ok: true, text: "approval x: approved", state: "approved" });
+    assert.deepEqual(await t.call("memory.save", { text: "t" }, { laptop: LAPTOP, approvalId: "0b6f3c2e-0000-4000-8000-000000000001" }), { ok: false, error: "x", needsApproval: true }, "a malformed id is dropped");
+    assert.deepEqual(await t.call("approvals.get", { id: "x" }), { ok: true, text: "" }, "an unknown state is dropped");
+    assert.equal(bodies[2].approvalId, "0b6f3c2e-0000-4000-8000-000000000001");
+    assert.equal(bodies[0].approvalId, undefined);
+    assert.equal(bodies[0].confirmed, undefined);
+  });
 });
 
 describe("recall", () => {
@@ -247,28 +274,77 @@ describe("the memory tool on a laptop", () => {
     assert.deepEqual([calls[0].op, calls[0].opts.laptop, calls[0].opts.confirmed], ["memory.save", LAPTOP, undefined]);
   });
 
-  test("free text is redacted before it leaves the laptop; the confirm shows type and label, no escapes", async () => {
+  test("free text is redacted before it leaves the laptop, a shared save's too", async () => {
     const { transport, calls } = fakeTransport();
     await runMemory({ action: "search", query: "why does token=ghp_abcdefghijklmnopqrstuvwxyz0123 fail" }, transport, undefined, { laptop: LAPTOP });
     assert.ok(!String(calls[0].args.query).includes("ghp_"));
-    let shownText = "";
-    await runMemory({ action: "save", type: "taxonomic", text: "a \x1b[2Jhidden\x1b[0m term\u0007", label: "outfitter:tape", shared: true }, transport, undefined, { laptop: LAPTOP, confirm: async (_t, m) => ((shownText = m), true) });
-    assert.match(shownText, /taxonomic, label "outfitter:tape"/);
-    assert.doesNotMatch(shownText, /[\x00-\x08\x0b-\x1f\x7f]/);
+    await runMemory({ action: "save", type: "taxonomic", text: "use ghp_abcdefghijklmnopqrstuvwxyz0123", label: "outfitter:tape", shared: true }, transport, undefined, { laptop: LAPTOP });
+    assert.ok(!String(calls[1].args.text).includes("ghp_"));
   });
 
-  test("a shared or taxonomic save asks first, then sends confirmed; no / nobody there: nothing sent", async () => {
-    const asked: string[] = [];
-    const yes = fakeTransport();
-    await runMemory({ action: "save", type: "semantic", text: "team fact", shared: true }, yes.transport, undefined, { laptop: LAPTOP, confirm: async (t, m) => (asked.push(m), true) });
-    assert.equal(yes.calls[0].opts.confirmed, true);
-    assert.match(asked[0], /team fact/);
-    const no = fakeTransport();
-    const declined = await runMemory({ action: "save", type: "taxonomic", text: "d", label: "a:b", shared: true }, no.transport, undefined, { laptop: LAPTOP, confirm: async () => false });
-    assert.equal(declined.isError, true);
-    const nobody = await runMemory({ action: "save", type: "semantic", text: "x", shared: true }, no.transport, undefined, { laptop: LAPTOP });
-    assert.match(nobody.content[0].text, /needs your yes/);
-    assert.equal(no.calls.length, 0);
+  // The API's side of a web approval, scripted: the first save asks, approvals.get answers in turn.
+  function approvingTransport(states: string[], saved: AdminReply = { ok: true, text: 'saved semantic memory "f" (shared)' }) {
+    const ID = "0b6f3c2e-0000-4000-8000-000000000001";
+    return fakeTransport((call) => {
+      if (call.op === "approvals.get") return { ok: true, text: "", state: states.shift() ?? "pending" };
+      if ((call.opts as { approvalId?: string }).approvalId === ID) return saved;
+      return { ok: false, error: "needs your approval in the Outfitter web app", needsApproval: true, approvalId: ID };
+    });
+  }
+  const fast = (notes: string[] = []) => ({ wait: true, notify: (m: string) => notes.push(m), pollMs: 1, sleep: async () => {} });
+
+  test("a shared save never sends confirmed: it waits for the web widget, polls approvals.get, reruns with the approvalId", async () => {
+    const notes: string[] = [];
+    const { transport, calls } = approvingTransport(["pending", "pending", "approved"]);
+    const r = await runMemory({ action: "save", type: "semantic", text: "team fact", label: "f", shared: true }, transport, undefined, { laptop: LAPTOP, approval: fast(notes) });
+    assert.equal(r.isError, undefined, r.content[0].text);
+    assert.match(notes[0], /Approve in the Outfitter web app \(widget\)/);
+    assert.deepEqual(calls.map((c) => c.op), ["memory.save", "approvals.get", "approvals.get", "approvals.get", "memory.save"]);
+    assert.ok(calls.every((c) => c.opts.confirmed === undefined), "confirmed is never sent");
+    assert.deepEqual(calls[4].args, calls[0].args, "the rerun is the same op and args");
+    assert.equal((calls[4].opts as { approvalId?: string }).approvalId, "0b6f3c2e-0000-4000-8000-000000000001");
+    assert.deepEqual(calls[4].opts.laptop, LAPTOP);
+  });
+
+  test("denied, expired, timed out or cancelled: no rerun", async () => {
+    for (const state of ["denied", "expired", "used"]) {
+      const { transport, calls } = approvingTransport([state]);
+      const r = await runMemory({ action: "save", type: "semantic", text: "x", shared: true }, transport, undefined, { laptop: LAPTOP, approval: fast() });
+      assert.equal(r.isError, true, state);
+      assert.equal(calls.filter((c) => c.op === "memory.save").length, 1, state);
+    }
+    let t = 0;
+    const slow = approvingTransport([]);
+    const timedOut = await runMemory({ action: "save", type: "semantic", text: "x", shared: true }, slow.transport, undefined, {
+      laptop: LAPTOP,
+      approval: { wait: true, pollMs: 3000, timeoutMs: 10 * 60_000, now: () => t, sleep: async (ms) => void (t += ms) },
+    });
+    assert.match(timedOut.content[0].text, /within 10 minutes/);
+    assert.equal(slow.calls.filter((c) => c.op === "approvals.get").length, 200, "every 3 s for 10 minutes");
+    const abort = new AbortController();
+    const held = approvingTransport([]);
+    const cancelled = await runMemory({ action: "save", type: "semantic", text: "x", shared: true }, held.transport, abort.signal, {
+      laptop: LAPTOP,
+      approval: { wait: true, sleep: async () => abort.abort() },
+    });
+    assert.match(cancelled.content[0].text, /cancelled/);
+    assert.equal(held.calls.filter((c) => c.op === "memory.save").length, 1);
+  });
+
+  test("print mode: the pending approval comes back at once; a later call with approvalId runs it", async () => {
+    const { transport, calls } = approvingTransport([]);
+    const pending = await runMemory({ action: "save", type: "semantic", text: "team fact", label: "f", shared: true }, transport, undefined, { laptop: LAPTOP });
+    assert.equal(pending.isError, true);
+    assert.match(pending.content[0].text, /Approve in the Outfitter web app \(widget\).*approvalId "0b6f3c2e-0000-4000-8000-000000000001"/);
+    assert.equal(calls.length, 1, "nothing polled");
+    const later = await runMemory(
+      { action: "save", type: "semantic", text: "team fact", label: "f", shared: true, approvalId: "0b6f3c2e-0000-4000-8000-000000000001" },
+      transport,
+      undefined,
+      { laptop: LAPTOP },
+    );
+    assert.equal(later.isError, undefined);
+    assert.equal("approvalId" in calls[1].args, false, "approvalId goes in the body, not the args");
   });
 
   test("without a session id it says so instead of calling", async () => {
@@ -278,14 +354,17 @@ describe("the memory tool on a laptop", () => {
     assert.equal(calls.length, 0);
   });
 
-  test("registered tool: context and confirm come from the call's ctx", async () => {
+  test("registered tool: context from the call's ctx; print mode returns the pending approval without waiting", async () => {
     const { pi, tools } = fakePi();
-    const { transport, calls } = fakeTransport();
+    const { transport, calls } = approvingTransport([]);
     register(pi, { transport, env: {}, settings: { kernal: { memory: "tool" } }, repoOf });
-    await tools[0].execute("id", { action: "save", type: "semantic", text: "t", shared: true }, undefined, undefined, ctxOf().ctx);
-    assert.deepEqual([calls[0].opts.laptop, calls[0].opts.confirmed], [LAPTOP, true]);
-    await tools[0].execute("id", { action: "save", type: "semantic", text: "t", shared: true }, undefined, undefined, ctxOf({ mode: "print" }).ctx);
-    assert.equal(calls.length, 1, "print mode has nobody to say yes");
+    const r = await tools[0].execute("id", { action: "save", type: "semantic", text: "t", shared: true }, undefined, undefined, ctxOf({ mode: "print" }).ctx);
+    assert.match(r.content[0].text, /waiting for your approval/);
+    assert.deepEqual([calls.length, calls[0].opts.laptop, calls[0].opts.confirmed], [1, LAPTOP, undefined]);
+    assert.equal(waits(ctxOf().ctx), true);
+    assert.equal(waits(ctxOf({ mode: "rpc" }).ctx), true);
+    assert.equal(waits(ctxOf({ mode: "print" }).ctx), false);
+    assert.equal(waits(ctxOf({ mode: "json" }).ctx), false);
   });
 });
 

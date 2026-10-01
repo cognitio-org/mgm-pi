@@ -458,7 +458,8 @@ a one-time import.
   - An op registered with `laptop: true` passes the capability gate for a token caller
     (`capabilityRefusal`, `admin/ops.ts`). Only `memory.search`, `memory.context`, `memory.save` and
     `memory.record` have it. `registerAdminOp` refuses `laptop` on anything but a memory read or
-    write, so `ae.*`, `approve`, `delete` and `operator` ops can never be laptop-callable.
+    write, unless the op also has `webApproval` (its every yes is asked in the web app, below). So
+    `ae.*`, `approve`, `delete` and `operator` ops are laptop-callable only that way (#354).
   - `ae.*` still answers `<op> works only in a Drive`; admin ops are unchanged.
   - The route now hands the api's Agent Engine clients to the ops (`RouteContext.agentEngine`). When
     memory isn't configured, every call says `Agent Engine memory is not configured on this
@@ -478,10 +479,36 @@ a one-time import.
     wrong repo only changes which of the owner's memories are read, or which repo a save is filed
     under. The org reads are the same as from a Drive.
   - A Dongle call to a memory op without `laptop` gets `memory from a laptop needs a newer Kernal`.
-- **Approval:** a `shared: true` or taxonomic `memory.save` from a Dongle needs `confirmed: true`,
-  sent by Kernal after the person says yes in the TUI. Without it the reply is `needsApproval`. In
-  print mode nobody can confirm, and Kernal refuses the save before sending it. The A2A refusal
-  doesn't apply (a Dongle is never an A2A session). Saves are audited as `via: "token"`.
+- **Approval (web-gated; owner decision 2026-10-01):** a `shared: true` or taxonomic `memory.save`
+  from a Dongle waits for the owner's yes in the Outfitter web app's approval widget.
+  - **Why not the TUI confirm:** on a laptop the agent's shell runs as the person, so it can read the
+    Dongle and send `confirmed: true` itself. The confirm was no boundary.
+  - **Why the web app:** in a Drive the boundary is the E8.2 web approval card, which the agent
+    can't answer. A laptop has no Outfitter session or run to hang that card on. So the asks wait,
+    scoped to their owner, in `laptopApprovals` (`admin/laptop-approvals.ts`), and a person under
+    IAP answers them (never a Dongle).
+  - **Flow:** the save answers `{needsApproval: true, approvalId}`. Kernal polls
+    `approvals.get {id}` and then reruns the same op and args with `approvalId`.
+    `consumeLaptopApproval` checks that the approval is approved, unexpired and unused, for the same
+    owner, op, args digest and laptop session and repo. It marks the approval used in one
+    conditional write, and only then does the save run. `confirmed` counts for nothing here.
+    Protocol: docs/protocol.md "Laptop approvals".
+  - **Generic:** any op registered `laptop: true, webApproval: true` gets the same gate. #354's
+    laptop `ae.invoke` and `ae.resume` use it.
+  - The A2A refusal doesn't apply (a Dongle is never an A2A session). Saves are audited as
+    `via: "token"` with the approval id, and each decision as `approvals.approve` or
+    `approvals.deny` (`via: "web"`).
+  - `/memory import` saves private notes only, so it needs no approval.
+- **Widget (web, `LaptopApprovals.tsx`; owner asked for it minimal):**
+  - A badge in the corner of every page, shown only while the signed-in person has pending laptop
+    asks. It polls `GET /api/laptop-approvals` every 10 s while the tab is visible, and on focus.
+  - It opens to one compact card per ask, styled as the Drive's "Outfitter asks you (not the agent)"
+    card:
+    - what is asked (`Share a memory with the team`, `Add a term to the team's shared glossary`);
+    - the exact text, escaped and clipped at 280 characters, with "Show all";
+    - where it came from: the laptop session's first 8 characters, the repo, and how long ago;
+    - Approve and Deny, which wake 1 s after the card appears.
+  - There is no page, no setting and no history.
 - **`memory.context`:** a laptop has no tape, so the api doesn't check for `auto`. Kernal only asks
   when its own setting is `auto`. The answer has the same 2.5 s deadline, budgets, repo filter and
   framing as in a Drive (§3.3).
@@ -511,8 +538,12 @@ a one-time import.
   - **`/memory [status] | off | tool | auto | record on|off | import [--dry-run]`.** `record on`
     asks in the TUI first, saying what is sent. Changes apply at the next start.
   - **Tool (`tool`, `auto`):** the Drive's `memory` tool, over the HTTP transport, with `laptop` on
-    every call. A shared or taxonomic save asks with `ctx.ui.confirm` first, then sends `confirmed`.
-    The confirm shows the type, the label and the text, with control characters stripped.
+    every call. A shared or taxonomic save never sends `confirmed`. On `needsApproval` it tells the
+    person "Approve in the Outfitter web app (widget)". It then polls `approvals.get` every 3 s, for
+    at most 10 minutes; Esc aborts the wait. Once approved, it reruns the save with `approvalId`
+    (`laptop-approval.ts`, `callWithWebApproval`, reusable for #354). In print or json mode it
+    doesn't wait: it returns the pending `approvalId`, and a later call with the same arguments plus
+    the tool's `approvalId` parameter runs it once approved.
   - **Credentials:** pi loads each extension in its own module instance (jiti, `moduleCache:
     false`). So the Dongle cache in `_shared/outfitter-env.ts` lives on `globalThis`
     (`Symbol.for("kernal.outfitterCredentials")`). Otherwise outfitter-admin's scrub would leave
@@ -563,15 +594,17 @@ a one-time import.
   (`MemoryRateLimit`, in-process per instance, so it bounds cost rather than setting an exact quota).
   Past the cap the reply is `too many memory calls from this Dongle; try again in a minute`.
 - **Security limits (owner check):**
-  - **`confirmed` is the client's word.** The agent's shell runs as the same user, so it can read
-    the Dongle from the `.env` it came from, or from pi's original environment (`ps eww` on macOS).
-    Scrubbing it from `process.env` (`_shared/outfitter-env.ts`) is a speed bump. A prompt-injected
-    agent could therefore save a shared memory without the TUI confirm, and that memory is then
-    recalled into every teammate's prompt. The same was already true of a laptop `delete`.
-  - The owner chose the TUI confirm (#349). The alternatives: route a Dongle's shared saves through
-    the web approval card, or refuse them from laptops.
-  - **Repo is unverified.** A confirmed shared save can be filed under a repo the person can't
-    reach, and it then shows in other users' recall for that repo.
+  - **The Dongle is readable by the agent.** The agent's shell runs as the same user, so it can
+    read the Dongle from the `.env` it came from, or from pi's original environment (`ps eww` on
+    macOS). Scrubbing it from `process.env` (`_shared/outfitter-env.ts`) is a speed bump. So a
+    TUI confirm (`confirmed`) is the client's word. It was the first design here, and the owner
+    replaced it with the web widget (2026-10-01) for shared memory. A laptop `delete` still takes
+    `confirmed`.
+  - **What the widget can't stop:** a person who approves what they didn't read. The card shows the
+    exact text and where it came from, and its buttons wake late. A prompt-injected agent can still
+    ask, at most 10 pending at a time.
+  - **Repo is unverified.** An approved shared save can be filed under a repo the person can't
+    reach, and it then shows in other users' recall for that repo. The card shows the repo.
 - **Cost:** recall retrieves on every laptop prompt too (§3.4), now the default for every Dongle
   holder. `/memory tool` keeps the tool without per-prompt recall.
 - **Ships in:** Kernal v0.2.11, after an Outfitter release with this api, since an older api answers

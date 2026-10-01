@@ -152,6 +152,19 @@ Sysop tools (#287): an admin op from a Drive's agent held for the session owner'
 undecided, unexpired row; `clear` deletes only the matching row. Kept off the run document because
 several routes return runs whole.
 
+### `laptopApprovals`
+
+E9.9: a laptop op waiting for its owner's yes in the web app's approval widget
+(`admin/laptop-approvals.ts`). Owner scoped, not per run (a laptop has no run). `_id` = `id` (a
+UUID): `{id, ownerEmail (lowercased), op, argsDigest (sha256 of canonical {op, args}), title,
+summary (the card text, control characters stripped, at most 6,000 characters), origin:
+{laptopSessionId, repo?}, state: pending|approved|denied|used, createdAt, expiresAt (+10 min),
+decidedAt?, decidedBy?, usedAt?}`. `expired` is computed: pending or approved past `expiresAt`.
+`decide` and `consume` are single conditional updates (owner, state, unexpired; consume also op,
+digest and origin), so an approval is decided once and used once. Index `{ownerEmail, state,
+createdAt}` (the widget's list, the dedupe lookup); TTL on the Mongo-only `expireAt` (a day after
+`expiresAt`, so a late poll still reads `expired` or `used`).
+
 ### `users`
 
 Every distinct IAP identity seen, upserted on `GET /api/me`. `{email (== _id), createdAt,

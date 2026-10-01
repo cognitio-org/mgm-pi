@@ -46,6 +46,9 @@ import type {
   AdminAuditCollection,
   AdminApproval,
   AdminApprovalsCollection,
+  LaptopApproval,
+  LaptopApprovalMatch,
+  LaptopApprovalsCollection,
   ChunkHit,
   ChunkQuery,
   SessionChunk,
@@ -968,6 +971,58 @@ class MemoryAdminApprovals implements AdminApprovalsCollection {
   }
 }
 
+/** True when `a` is what `m` names: the same owner, op, digest, and laptop session and repo. */
+export function laptopApprovalMatches(a: LaptopApproval, m: LaptopApprovalMatch): boolean {
+  return (
+    a.ownerEmail === m.ownerEmail &&
+    a.op === m.op &&
+    a.argsDigest === m.argsDigest &&
+    a.origin.laptopSessionId === m.laptopSessionId &&
+    (a.origin.repo ?? null) === (m.repo ?? null)
+  );
+}
+
+class MemoryLaptopApprovals implements LaptopApprovalsCollection {
+  private readonly rows = new Map<string, LaptopApproval>();
+
+  async insert(approval: LaptopApproval): Promise<void> {
+    if (this.rows.has(approval.id)) throw new Error(`duplicate laptop approval ${approval.id}`);
+    this.rows.set(approval.id, clone(approval));
+  }
+
+  async get(id: string): Promise<LaptopApproval | null> {
+    const row = this.rows.get(id);
+    return row ? clone(row) : null;
+  }
+
+  async listPending(ownerEmail: string, nowIso: string, limit: number): Promise<LaptopApproval[]> {
+    return [...this.rows.values()]
+      .filter((a) => a.ownerEmail === ownerEmail && a.state === "pending" && a.expiresAt > nowIso)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .slice(0, limit)
+      .map(clone);
+  }
+
+  async findPending(match: LaptopApprovalMatch, nowIso: string): Promise<LaptopApproval | null> {
+    const hit = [...this.rows.values()].find((a) => a.state === "pending" && a.expiresAt > nowIso && laptopApprovalMatches(a, match));
+    return hit ? clone(hit) : null;
+  }
+
+  async decide(id: string, ownerEmail: string, decision: "approved" | "denied", by: string, nowIso: string): Promise<boolean> {
+    const held = this.rows.get(id);
+    if (!held || held.ownerEmail !== ownerEmail || held.state !== "pending" || held.expiresAt <= nowIso) return false;
+    this.rows.set(id, { ...held, state: decision, decidedBy: by, decidedAt: nowIso });
+    return true;
+  }
+
+  async consume(id: string, match: LaptopApprovalMatch, nowIso: string): Promise<boolean> {
+    const held = this.rows.get(id);
+    if (!held || held.state !== "approved" || held.expiresAt <= nowIso || !laptopApprovalMatches(held, match)) return false;
+    this.rows.set(id, { ...held, state: "used", usedAt: nowIso });
+    return true;
+  }
+}
+
 class MemoryAdminAudit implements AdminAuditCollection {
   private readonly rows: AdminAuditEntry[] = [];
 
@@ -1290,6 +1345,7 @@ export class MemoryStore implements Store {
   readonly formattedSessions = new MemoryFormattedSessions();
   readonly adminAudit = new MemoryAdminAudit();
   readonly adminApprovals = new MemoryAdminApprovals();
+  readonly laptopApprovals = new MemoryLaptopApprovals();
   readonly sessionChunks = new MemorySessionChunks();
   readonly previews = new MemoryPreviews();
   readonly turnWaiters = new MemoryTurnWaiters();

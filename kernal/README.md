@@ -770,8 +770,12 @@ except memories you save as shared. The design is §3.5 of
   `bin/kernal` handles the last two before pi starts. Kernal offers the import once.
 - The repo for a session comes from the working directory's GitHub `origin`. It only narrows which
   of your memories are recalled.
-- A shared save (the team sees it in their prompts) asks you first. In print mode there is nobody to
-  ask, so it is refused.
+- A shared save (the team sees it in their prompts) waits for your yes in the Outfitter web app:
+  the approval widget in the corner of any page shows the exact text, with Approve and Deny.
+  - Kernal waits up to 10 minutes, and Esc stops the wait.
+  - In print mode it doesn't wait. It answers with the pending approval id, and the same save with
+    that `approvalId` runs it once you approve.
+  - It's not a terminal confirm because the agent's shell runs as you and could answer that itself.
 - Needs an Outfitter release with E9.9. An older one answers "works only in a Drive", Kernal says
   so once, and recall is skipped.
 

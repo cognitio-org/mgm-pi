@@ -756,8 +756,8 @@ see `deploy/README.md` "Live-test identity". Laptop clients still use personal t
 identity). It is the laptop's way into the admin op registry (`packages/api/src/admin/ops.ts`); a
 Drive reaches the same registry through agentd's admin socket (#287), not this route.
 
-Request: `{op, args?, confirmed?, laptop?}`. Reply, always `200` for an authenticated call:
-`{ok: true, text}` or `{ok: false, error, needsApproval?}`. `text` is compact, capped text meant
+Request: `{op, args?, confirmed?, laptop?, approvalId?}`. Reply, always `200` for an authenticated
+call: `{ok: true, text, state?}` or `{ok: false, error, needsApproval?, approvalId?}`. `text` is compact, capped text meant
 for a model, not JSON to parse. Ops so far: `tapes.list|get|meta|create|update|delete`,
 `environments.list|get|create|update`, `sessions.list|get|search|transcript` (#289: session search
 and compact transcripts; `search` takes `query`, `mode` text (default)|hybrid|semantic (these two fall back to text when they can't run), `owner:"me"`, `tape`,
@@ -784,7 +784,8 @@ outline|text, `around`, `window`, `from`, `maxChars`, `toolOutput` none|trimmed|
   - `memory.search {query, type?, limit?}`, `memory.context {query}`: reads, as in a Drive. There is
     no tape, so `context` always answers; Kernal sends it only in its `auto` mode.
   - `memory.save {type, text, label?, shared?}`: audited (`via: "token"`). `shared: true` or
-    `type: "taxonomic"` returns `needsApproval: true` unless `confirmed` is true (Kernal's TUI yes).
+    `type: "taxonomic"` waits for the owner's yes in the web app (Laptop approvals, below);
+    `confirmed` doesn't count for it.
   - `memory.record {turns: [{entryId, role: "user"|"assistant", text}]}`: 1 to 20 turns, laptop
     only (a Drive is refused). Each text is redacted and capped; relayed mail and Outfitter notices
     are skipped, and raw text over 32,000 characters is refused. It calls `recordTurn` with
@@ -794,6 +795,59 @@ outline|text, `around`, `window`, `from`, `maxChars`, `toolOutput` none|trimmed|
     calls from this Dongle; try again in a minute`.
   - Saves are audited with the laptop's session id.
 - Every non-read op that passes those checks writes an `adminAudit` row, except `memory.record`.
+
+### Laptop approvals (E9.9)
+
+On a laptop the agent's shell runs as the person and can read the Dongle, so `confirmed` is not a
+boundary for anything that reaches other people. An op registered with `webApproval: true` (today
+`memory.save` when shared or taxonomic; #354's laptop `ae.invoke`/`ae.resume` are meant to use the
+same thing) asks the owner in the web app's approval widget instead. A Dongle can't answer it.
+Code: `packages/api/src/admin/laptop-approvals.ts`, collection `laptopApprovals`.
+
+1. **Create.** The Dongle calls the op as usual, with `laptop`. If the call needs a yes, the api
+   stores a pending approval and answers
+   `{ok: false, error: "needs your approval in the Outfitter web app", needsApproval: true, approvalId}`.
+   - The approval is bound to the token's owner, the op, `argsDigest` (sha256 of the canonical JSON of
+     `{op, args}`: keys sorted at every level, `undefined` dropped) and the laptop origin
+     (`laptop.sessionId`, `laptop.repo`).
+   - It expires 10 minutes after it is created.
+   - The same ask while one is still pending gets the same `approvalId`.
+   - At most 10 pending per owner. Past that: `10 approvals are already waiting; answer them in the
+     Outfitter web app first`.
+   - `confirmed: true` is ignored.
+2. **Poll.** `approvals.get {id}`, a read: `{ok: true, text, state}`, where `state` is
+   `pending | approved | denied | expired | used`. An unanswered or unused approval past its 10
+   minutes reads `expired`. Another owner's id, or an unknown one, answers `no such approval`. From a
+   Drive it is refused. Kernal polls every 3 s for up to 10 minutes.
+3. **Run.** Repeat the same op, args and `laptop`, adding `approvalId` at the top level of the body
+   (not in `args`). `consumeLaptopApproval(store, {ownerEmail, op, args, approvalId, laptop})`
+   checks, in one conditional write, that the approval:
+   - is `approved`, and unexpired;
+   - belongs to the same owner, with the same op, digest, `laptop.sessionId` and repo (or none).
+
+   It then marks the approval `used` and runs the op once, as approved. The audit row carries
+   `approved: true, approvalId`.
+   - Otherwise nothing runs, and the error says why: `not approved yet; …`, `denied in the Outfitter
+     web app`, `that approval expired; ask again`, `that approval was already used; ask again`,
+     `that approval was for a different request (…)`, or `no such approval`.
+   - A failed check doesn't use up the approval.
+   - If the op itself fails after the check, the approval is still used.
+
+**Widget routes** (web role only, behind IAP; not registered on link). Both need a person: a token
+identity gets `403`.
+- `GET /api/laptop-approvals` → `{approvals: [{id, op, title, summary, origin: {laptopSessionId,
+  repo?}, createdAt, expiresAt}]}`: the signed-in person's pending, unexpired asks, oldest first.
+- `POST /api/laptop-approvals/:id {approve: boolean}` → `{ok: true, state}`.
+  - Another owner's id: `404`. Already answered or expired: `409`. `approve` not a boolean: `400`.
+  - Audited in `adminAudit` as `approvals.approve` or `approvals.deny`, with `via: "web"`, target
+    and `approvalId` the approval id, and `sessionId` the laptop session.
+
+**For another op.** Register it with `laptop: true, webApproval: true`, an `asks` (or a class that
+always asks: `delete`, `operator`, `approve`), and a `laptopCard(args) → {title, summary}`.
+- The card is one line of what is asked, plus the exact content, redacted as the op would act on it.
+- Without `laptopCard` the widget shows `Allow <op> from your laptop?` and the canonical args.
+- `registerAdminOp` lets a `webApproval` op be laptop-callable whatever its capability, and lets an
+  `approve` op be laptop-callable only with it.
 
 ## Browser companion
 

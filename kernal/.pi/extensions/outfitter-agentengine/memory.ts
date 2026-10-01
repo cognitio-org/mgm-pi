@@ -9,19 +9,20 @@
  * text comes back already labelled as notes that may be wrong.
  *
  * On a laptop (E9.9, laptop.ts) the same tool goes over the Dongle's HTTP transport with a `laptop`
- * context, and a shared or taxonomic save asks the person in the TUI first (the API takes
- * `confirmed` as their yes); with nobody at the terminal it is refused here.
+ * context, and a shared or taxonomic save waits for the owner's yes in the Outfitter web app's
+ * approval widget (laptop-approval.ts). Not a TUI confirm: the agent's own shell could answer that.
  */
 import { redact } from "../_shared/redact.ts";
 import type { AdminReply, AdminTransport, LaptopContext } from "../outfitter-admin/transport.ts";
+import { callWithWebApproval, type ApprovalWait } from "./laptop-approval.ts";
 
 export type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean; details?: unknown };
-export type Confirm = (title: string, message: string, signal?: AbortSignal) => Promise<boolean>;
 
-/** A laptop call's extras: its context, and the person's confirm when one is at the terminal. */
+/** A laptop call's extras: its context, and how a web approval is waited for. */
 export interface LaptopCall {
   laptop?: LaptopContext;
-  confirm?: Confirm;
+  /** Absent: don't wait (print mode). */
+  approval?: ApprovalWait;
 }
 
 const ACTIONS = ["search", "save"] as const;
@@ -43,6 +44,8 @@ export const MEMORY_TOOL = {
       text: { type: "string", description: "save: the memory itself." },
       label: { type: "string", description: "save: short name (same label replaces); taxonomic: domain:term." },
       shared: { type: "boolean", description: "save: visible to the team (taxonomic needs it)." },
+      // No description: only a pending-approval reply names it, and says how to use it.
+      approvalId: { type: "string" },
       limit: { type: "integer" },
     },
   },
@@ -99,22 +102,18 @@ export async function runMemory(params: Record<string, any>, transport: AdminTra
   const args = redacted(mapped.args);
   const shared = mapped.op === "memory.save" && (args.shared === true || args.type === "taxonomic");
   if (!shared) return result(await transport.call(mapped.op, args, { signal, laptop: laptop.laptop }));
-  // Shared memory is recalled into the other users' prompts: the person says yes first.
-  if (!laptop.confirm) return fail("memory: a shared memory needs your yes at the terminal; save it privately, or run Kernal in the TUI");
-  const label = typeof args.label === "string" && args.label.trim() ? `, label "${shown(args.label, 120)}"` : "";
-  const yes = await laptop.confirm(
-    "Save a shared memory?",
-    `Everyone on your Outfitter will have this recalled into their prompts (${shown(String(args.type), 20)}${label}):\n\n${shown(String(args.text), 600)}`,
-    signal,
+  // Shared memory is recalled into the other users' prompts: the owner says yes in the web app,
+  // where this laptop's agent can't. The API asks; this side only waits and reruns.
+  const approvalId = typeof params?.approvalId === "string" && params.approvalId.trim() ? params.approvalId.trim() : undefined;
+  return result(
+    await callWithWebApproval(transport, mapped.op, args, { laptop: laptop.laptop, signal, ...(approvalId ? { approvalId } : {}) }, laptop.approval ?? { wait: false }),
   );
-  if (!yes) return fail("memory: not saved (you said no)");
-  return result(await transport.call(mapped.op, args, { signal, laptop: laptop.laptop, confirmed: true }));
 }
 
-/** On a laptop: how to get each call's context and confirm (laptop.ts). */
+/** On a laptop: how to get each call's context, and how to wait for a web approval (laptop.ts). */
 export interface LaptopTool {
   laptop: (ctx: any) => Promise<LaptopContext | undefined>;
-  confirm: (ctx: any) => Confirm | undefined;
+  approval: (ctx: any) => ApprovalWait | undefined;
 }
 
 /** Registers the tool on `pi` over `transport` (index.ts and laptop.ts decide whether to). */
@@ -123,7 +122,7 @@ export function registerMemoryTool(pi: { registerTool(tool: any): void }, transp
     ...MEMORY_TOOL,
     execute: async (_id: string, params: any, signal: AbortSignal | undefined, _update?: unknown, ctx?: any) => {
       try {
-        const call: LaptopCall = laptop ? { laptop: await laptop.laptop(ctx), confirm: laptop.confirm(ctx) } : {};
+        const call: LaptopCall = laptop ? { laptop: await laptop.laptop(ctx), approval: laptop.approval(ctx) } : {};
         return await runMemory(params, transport, signal, call);
       } catch (err) {
         return { content: [{ type: "text" as const, text: `memory: ${err instanceof Error ? err.message : String(err)}` }], isError: true, details: undefined };

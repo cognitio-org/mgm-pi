@@ -320,6 +320,25 @@ export interface RunSpecGuru {
   /** Sysop tools (#287): the tape's admin tools. "manage" or "operator" makes agentd open the admin
    * socket; the API still checks every call. Absent means off. */
   adminTools?: "off" | "manage" | "operator";
+  /** E9 (docs/specs/atlas-agent-engine-and-a2a.md §3.3): Agent Engine memory. "tool" or "auto"
+   * also makes agentd open the admin socket (the memory ops go through it). Absent means off; an
+   * older agentd ignores it. */
+  memory?: "off" | "tool" | "auto";
+  /** E9 §4: calls to Agent Engine agents. True also opens the admin socket. Absent means off. */
+  agentEngine?: boolean;
+}
+
+export type AdminCapability = "admin" | "memory" | "agentEngine";
+
+/** What a run's tape lets it reach through the admin socket, in a fixed order. Empty: the socket
+ * stays closed. The API checks the tape again on every call; this only decides whether to open it
+ * and what Kernal registers (OUTFITTER_ADMIN_CAPS). */
+export function adminCapabilities(guru: Pick<RunSpecGuru, "adminTools" | "memory" | "agentEngine">): AdminCapability[] {
+  const caps: AdminCapability[] = [];
+  if (guru.adminTools === "manage" || guru.adminTools === "operator") caps.push("admin");
+  if (guru.memory === "tool" || guru.memory === "auto") caps.push("memory");
+  if (guru.agentEngine === true) caps.push("agentEngine");
+  return caps;
 }
 
 export interface RunSpecSnapshot {

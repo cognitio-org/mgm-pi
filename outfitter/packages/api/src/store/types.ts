@@ -466,11 +466,21 @@ export interface Guru {
    * sysop actions, and only when the session's owner is an operator. Set only by a person in the
    * web UI (gurus-service.ts); an agent can never set or raise it. */
   adminTools?: AdminToolsLevel;
+  /** Tape option, default off (E9, docs/specs/atlas-agent-engine-and-a2a.md §3.3). Agent Engine
+   * memory for this tape's Drives: "tool" gives the agent a `memory` tool, "auto" also recalls
+   * before each prompt and records turns. Set only by a person in the web UI (gurus-service.ts),
+   * like adminTools. Absent means off. */
+  memory?: MemoryLevel;
+  /** Tape option, default off (E9 §4). When true, this tape's Drives may call the listed Agent
+   * Engine agents (the `agent_engine` tool). Set only by a person in the web UI, like adminTools. */
+  agentEngine?: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
 export type AdminToolsLevel = "off" | "manage" | "operator";
+
+export type MemoryLevel = "off" | "tool" | "auto";
 
 /** An admin op from a run's agent held for the session owner's decision (Sysop tools, #287;
  * admin/approvals.ts). At most one per run, in its own collection so Run documents -- which several

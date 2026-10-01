@@ -4,7 +4,7 @@
 
 import { randomUUID } from "node:crypto";
 import { parseBranchPrefix } from "./branch-policy.ts";
-import type { AdminToolsLevel, Guru, Store } from "./store/types.ts";
+import type { AdminToolsLevel, Guru, MemoryLevel, Store } from "./store/types.ts";
 
 export type GuruInput = Omit<Guru, "id" | "createdAt" | "updatedAt"> & { id?: string };
 
@@ -83,6 +83,28 @@ export function hasAdminTools(guru: Pick<Guru, "adminTools">): boolean {
   return guru.adminTools === "manage" || guru.adminTools === "operator";
 }
 
+export const MEMORY_LEVELS: readonly MemoryLevel[] = ["off", "tool", "auto"];
+
+/** True when the tape's Drives get Agent Engine memory at all (absent means off). */
+export function hasMemory(guru: Pick<Guru, "memory">): boolean {
+  return guru.memory === "tool" || guru.memory === "auto";
+}
+
+/**
+ * What a tape lets its Drives reach through agentd's admin socket (E9 §3.3): `admin` for the
+ * Sysop tools, `memory` and `agentEngine` for the Agent Engine ops. Each admin op names the one it
+ * needs (admin/ops.ts), so opening the socket for memory never exposes `tapes.*`.
+ */
+export type TapeCapability = "admin" | "memory" | "agentEngine";
+
+export function tapeCapabilities(guru: Pick<Guru, "adminTools" | "memory" | "agentEngine">): TapeCapability[] {
+  const caps: TapeCapability[] = [];
+  if (hasAdminTools(guru)) caps.push("admin");
+  if (hasMemory(guru)) caps.push("memory");
+  if (guru.agentEngine === true) caps.push("agentEngine");
+  return caps;
+}
+
 /**
  * Who is writing. Only a person in the web UI (IAP, or dev mode) may set `adminTools`, and only an
  * operator may set it to `operator`. An agent -- a Drive's broker call or anything holding a
@@ -124,11 +146,13 @@ const WRITABLE_FIELDS = [
   "allowExternalHtmlResources",
   "browserIde",
   "adminTools",
+  "memory",
+  "agentEngine",
 ] as const;
 
 const STRING_FIELDS = ["name", "systemPrompt", "appendSystemPrompt", "model", "fallbackModel", "thinking", "branchPrefix"] as const;
 const LIST_FIELDS = ["tools", "excludeTools", "packages"] as const;
-const BOOLEAN_FIELDS = ["mergeFromCloud", "playwrightBeforeCheckpoint", "allowExternalHtmlResources", "browserIde"] as const;
+const BOOLEAN_FIELDS = ["mergeFromCloud", "playwrightBeforeCheckpoint", "allowExternalHtmlResources", "browserIde", "agentEngine"] as const;
 
 /** Tape ids an agent may not take: `default` is the fleet's undeletable fallback, and `sysop` is
  * the built-in admin tape a person turns admin tools on for. */
@@ -181,6 +205,9 @@ export function guruValidationError(body: Partial<GuruInput>): string | undefine
   if (body.adminTools !== undefined && !(ADMIN_TOOLS_LEVELS as readonly unknown[]).includes(body.adminTools)) {
     return `adminTools must be one of: ${ADMIN_TOOLS_LEVELS.join(", ")}`;
   }
+  if (body.memory !== undefined && !(MEMORY_LEVELS as readonly unknown[]).includes(body.memory)) {
+    return `memory must be one of: ${MEMORY_LEVELS.join(", ")}`;
+  }
   if (body.branchPrefix !== undefined) {
     const parsed = parseBranchPrefix(body.branchPrefix);
     if (!parsed.ok) return "branchPrefix must be a branch name prefix such as outfitter/";
@@ -210,6 +237,23 @@ function adminToolsError(body: Partial<GuruInput>, writer: GuruWriter, existing?
 }
 
 /**
+ * `memory` and `agentEngine` (E9): like adminTools, only a person in the web UI sets them, so an
+ * agent can't give a tape (its own, or one it builds) the reach of Outfitter's Agent Engine
+ * credentials. Any person may; unlike adminTools they grant no rights over Outfitter itself. A
+ * body repeating the current value (absent counts as off) passes.
+ */
+function capabilityFieldsError(body: Partial<GuruInput>, writer: GuruWriter, existing?: Guru): GuruWriteResult | undefined {
+  if (writer.kind !== "agent") return undefined;
+  if (body.memory !== undefined && (existing?.memory ?? "off") !== body.memory) {
+    return { ok: false, status: 403, error: "memory can only be set in the web UI" };
+  }
+  if (body.agentEngine !== undefined && (existing?.agentEngine ?? false) !== body.agentEngine) {
+    return { ok: false, status: 403, error: "agentEngine can only be set in the web UI" };
+  }
+  return undefined;
+}
+
+/**
  * Who may change a tape as it stands. An agent needs approval for any delete and for any change to
  * a tape that has admin tools. A tape with operator admin tools runs with sysop rights, so only a
  * sysop may change or delete it at all -- otherwise anyone could rewrite the prompt a sysop's next
@@ -224,7 +268,14 @@ function guardError(existing: Guru, writer: GuruWriter, action: "update" | "dele
     if (!writer.operator) return { ok: false, status: 403, error: `only a sysop can change tape ${existing.id} (it has admin tools)` };
     return undefined;
   }
-  if (writer.kind === "human" || writer.approved || action !== "delete") return undefined;
+  if (writer.kind === "human" || writer.approved) return undefined;
+  // E9: a tape with memory or Agent Engine runs its owners' sessions against their memory and the
+  // listed agents, so an agent rewriting its prompt, env or packages waits for the person's yes
+  // (the Drive's card, the laptop's confirm), like a delete.
+  if (action === "update" && tapeCapabilities(existing).length > 0) {
+    return { ok: false, status: 403, error: `changing tape ${existing.id} needs approval (it has memory or Agent Engine)` };
+  }
+  if (action !== "delete") return undefined;
   return { ok: false, status: 403, error: `deleting tape ${existing.id} needs approval` };
 }
 
@@ -234,7 +285,7 @@ export async function createGuru(store: Store, raw: GuruInput, writer: GuruWrite
   if (!body.name || !body.model) return { ok: false, status: 400, error: "name and model are required" };
   const invalid = guruValidationError(body);
   if (invalid) return { ok: false, status: 400, error: invalid };
-  const denied = adminToolsError(body, writer);
+  const denied = adminToolsError(body, writer) ?? capabilityFieldsError(body, writer);
   if (denied) return denied;
   // Agents name tapes with a slug so later calls stay short; the web UI's ids are left as they were.
   if (writer.kind === "agent" && body.id !== undefined && (typeof body.id !== "string" || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(body.id))) {
@@ -264,7 +315,7 @@ export async function updateGuru(
   if (invalid) return { ok: false, status: 400, error: invalid };
   const existing = await store.gurus.findById(id);
   if (!existing) return { ok: false, status: 404, error: "guru not found" };
-  const denied = adminToolsError(patch, writer, existing);
+  const denied = adminToolsError(patch, writer, existing) ?? capabilityFieldsError(patch, writer, existing);
   if (denied) return denied;
   const approval = guardError(existing, writer, "update");
   if (approval) return approval;

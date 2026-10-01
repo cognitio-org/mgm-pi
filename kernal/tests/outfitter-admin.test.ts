@@ -10,7 +10,7 @@ import { join } from "node:path";
 import register, { personHere } from "../.pi/extensions/outfitter-admin/index.ts";
 import { ADMIN_TOOLS, confirmText, runTool } from "../.pi/extensions/outfitter-admin/tools.ts";
 import { outfitterCredentials } from "../.pi/extensions/_shared/outfitter-env.ts";
-import { adminTransport, httpTransport, socketTransport, type AdminTransport } from "../.pi/extensions/outfitter-admin/transport.ts";
+import { adminTransport, hasAdminCapability, httpTransport, isReadOp, socketTransport, type AdminTransport } from "../.pi/extensions/outfitter-admin/transport.ts";
 
 function fakePi() {
   const tools: any[] = [];
@@ -44,6 +44,27 @@ describe("registration", () => {
     assert.deepEqual(tools.map((t) => t.name), ["session_search", "session_transcript", "outfitter_tapes", "outfitter_environments", "outfitter_sessions"]);
     assert.equal(tools.filter((t) => t.promptSnippet).length, 1);
     assert.equal(tools.flatMap((t) => t.promptGuidelines ?? []).length, 1);
+  });
+
+  test("a Drive socket without the admin capability (E9 memory/Agent Engine only): no admin or search tools", () => {
+    const { pi, tools } = fakePi();
+    register(pi, { transport: recorder([], "drive").transport, admin: false });
+    assert.equal(tools.length, 0);
+  });
+
+  test("hasAdminCapability: unset means admin only (laptop, older agentd); set means exactly the list", () => {
+    assert.equal(hasAdminCapability("admin", {}), true);
+    assert.equal(hasAdminCapability("memory", {}), false);
+    assert.equal(hasAdminCapability("admin", { OUTFITTER_ADMIN_CAPS: "" }), false);
+    assert.equal(hasAdminCapability("admin", { OUTFITTER_ADMIN_CAPS: "memory,agentEngine" }), false);
+    assert.equal(hasAdminCapability("memory", { OUTFITTER_ADMIN_CAPS: "memory,agentEngine" }), true);
+    assert.equal(hasAdminCapability("agentEngine", { OUTFITTER_ADMIN_CAPS: " admin , agentEngine" }), true);
+    assert.equal(hasAdminCapability("memory", { OUTFITTER_ADMIN_CAPS: "memoryx" }), false);
+  });
+
+  test("isReadOp: reads, including memory.context, carry no idempotency key and are retried", () => {
+    for (const op of ["tapes.list", "tapes.get", "tapes.meta", "sessions.search", "sessions.transcript", "memory.context", "ae.get"]) assert.equal(isReadOp(op), true, op);
+    for (const op of ["tapes.create", "memory.save", "ae.invoke", "ae.resume", "tapes.delete"]) assert.equal(isReadOp(op), false, op);
   });
 
   test("local sessions alone: only the two search tools", () => {

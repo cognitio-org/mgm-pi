@@ -145,6 +145,12 @@ export interface Guru {
    * also allows sysop actions for a sysop's own sessions. Only a person sets it here; only a sysop
    * may choose operator. */
   adminTools?: "off" | "manage" | "operator";
+  /** Tape option, default off (E9). Agent Engine memory for its Drives: "tool" gives the agent a
+   * memory tool, "auto" also recalls before each prompt and records turns. Only a person sets it. */
+  memory?: "off" | "tool" | "auto";
+  /** Tape option, default off (E9). Its Drives may call the listed Agent Engine agents. Only a
+   * person sets it. */
+  agentEngine?: boolean;
   createdAt: string;
   updatedAt: string;
 }

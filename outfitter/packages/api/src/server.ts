@@ -27,6 +27,7 @@ import { registerRoutes } from "./routes/index.ts";
 import { MailService, CloudTasksWakeScheduler, NoopWakeScheduler, type WakeScheduler } from "./mail.ts";
 import type { GithubBroker } from "./github-broker.ts";
 import { GithubCatalog } from "./github-catalog.ts";
+import { createAgentEngine, type AgentEngine } from "./agentengine/index.ts";
 import { CachedSandboxTelemetry, GcpSandboxTelemetry, NoSandboxTelemetry, type SandboxTelemetry } from "./sandbox-telemetry.ts";
 
 export interface BuildAppOptions {
@@ -51,6 +52,9 @@ export interface BuildAppOptions {
   /** #217 Drive previews' ngrok API. Tests inject a fake; production builds one from NGROK_API_KEY
    * when PREVIEW_DOMAIN is set. */
   ngrok?: NgrokApi;
+  /** E9 Agent Engine. Tests inject one on a FakeAgentEngine; production builds one from config
+   * (each part off while its project id is unset). */
+  agentEngine?: AgentEngine;
   /** #252 web voice. Tests inject one with a fake fetch; production builds one from config. */
   voice?: VoiceService;
   /** #257. Tests inject one with a fake fetch; production builds one from config. */
@@ -145,7 +149,10 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     localModels: config.localModels,
   });
   // Sysop tools (#287): admin.request frames from a Drive run through the admin op registry.
-  agentLink.setDriveAdmin(new DriveAdmin({ store, config, models: modelsService, log: (msg) => fastify.log.warn(msg) }));
+  // E9: the Agent Engine clients the memory and ae ops use (PR3/PR4); token caches live here, one
+  // per project per instance.
+  const agentEngine = opts.agentEngine ?? createAgentEngine(config.agentEngine, { log: (msg) => fastify.log.warn(msg) });
+  agentLink.setDriveAdmin(new DriveAdmin({ store, config, models: modelsService, agentEngine, log: (msg) => fastify.log.warn(msg) }));
 
   // Auth guards every /api/* route except /api/hooks/* (called by an external service with no IAP
   // session and no agentd identity token; it authenticates itself via its own HMAC signature

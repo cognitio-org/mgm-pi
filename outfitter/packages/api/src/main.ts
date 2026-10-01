@@ -1,4 +1,4 @@
-import { assertGkeConfigured, assertSandboxOrigin, loadConfig, mailboxWarning } from "./config.ts";
+import { agentEngineWarnings, assertGkeConfigured, assertSandboxOrigin, loadConfig, mailboxWarning } from "./config.ts";
 import { ensureSysopTape } from "./gurus-service.ts";
 import { openStore } from "./store/index.ts";
 import { createProviders } from "./providers/index.ts";
@@ -18,6 +18,9 @@ assertSandboxOrigin(config);
 assertGkeConfigured(config);
 const mailboxProblem = mailboxWarning(config);
 if (mailboxProblem) console.warn(JSON.stringify({ severity: "WARNING", message: mailboxProblem }));
+// E9 §2: a project id without credentials, and the 14-day rotation warning (also logged on token
+// refreshes, agentengine/client.ts, for instances that live that long).
+for (const message of agentEngineWarnings(config)) console.warn(JSON.stringify({ severity: "WARNING", message }));
 const store = await openStore(config.mongodbUri, config.mongodbDb);
 // The full registry, not just the default provider (createProvider's old return): after a later
 // SANDBOX_PROVIDER switch, in-flight runs recorded under the *previous* default still need their

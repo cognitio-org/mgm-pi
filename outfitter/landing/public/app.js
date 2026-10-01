@@ -50,6 +50,8 @@
       document.removeEventListener("keydown", greet, true);
     }
     if (sound.contains(ev.target)) return done();
+    // Not over the TV: it has its own sound.
+    if (ev.target.closest && ev.target.closest("[data-no-greet]")) return;
     greeting = true;
     Floppy.playGreeting().then(function (played) {
       greeting = false;
@@ -117,10 +119,14 @@
   var BUILTIN = [
     { name: "OUTFITTER", type: "PRG", blocks: 12, program: ["10 SYS2061"], launch: true },
     { name: "KERNAL", type: "PRG", blocks: 8, program: KERNAL_PRG, launch: true },
+    // The intro video (tv.js). Listed only once the video is on the site.
+    { name: "DEAR SYSOP", type: "PRG", blocks: 87, program: ['10 REM "DEAR SYSOP" (1990)', "20 SYS49152"], tv: true },
     { name: "GURUS", type: "SEQ", blocks: 3 },
     { name: "TOKENS.LOG", type: "SEQ", blocks: 1 }
   ];
   var launchable = false;   // OUTFITTER is in memory, so SYS 2061 starts it
+  var tvLoaded = false;     // DEAR SYSOP is in memory, so SYS 49152 plays it again
+  function tvAvailable() { return !!(window.KernalTV && KernalTV.available()); }
 
   // SAVEd programs live in localStorage, which can be missing, blocked or hold junk.
   function savedFiles() {
@@ -130,7 +136,7 @@
     } catch (e) { return {}; }
   }
   function disk() {
-    var files = BUILTIN.slice(), saved = savedFiles(), used = 0;
+    var files = BUILTIN.filter(function (f) { return !f.tv || tvAvailable(); }), saved = savedFiles(), used = 0;
     Object.keys(saved).forEach(function (name) {
       var lines = saved[name];
       if (!Array.isArray(lines)) return;
@@ -166,6 +172,8 @@
         strobe(false);
         launchable = !!file && file.name === "OUTFITTER";
         autorun = launchable && !m.inProgram();
+        tvLoaded = !!file && !!file.tv;
+        if (tvLoaded) KernalTV.open();
         return file ? { program: file.program } : { program: Basic.directory(disk()), raw: true };
       });
     }));
@@ -195,6 +203,7 @@
   }
 
   function sys(addr, m) {
+    if (addr === 49152 && tvLoaded) { KernalTV.open(); return; }
     if (addr !== 2061 || !launchable) return;
     m.print("\nLAUNCHING APP.KERNAL.ONE ...");
     return wait(500).then(function () { window.location.href = APP_URL; });
@@ -206,7 +215,7 @@
     promptEl.textContent = "";
     poked.border = poked.background = null;
     applyColors();
-    launchable = false;
+    launchable = tvLoaded = false;
     return wait(400);
   }
 
@@ -299,6 +308,7 @@
     "BASIC V2, AS ON THE C64. TRY:",
     'LOAD "OUTFITTER",8,1     OPEN OUTFITTER',
     'LOAD "KERNAL",8 THEN RUN MEET KERNAL',
+    'LOAD "DEAR SYSOP",8,1    WATCH THE TAPE',
     'LOAD "$",8 THEN LIST     DISK DIRECTORY',
     "POKE 53280,2             BORDER COLOUR",
     "SYS 64738                RESET",
@@ -314,7 +324,8 @@
   ];
   // HELP isn't C64 BASIC; the page answers it before the machine sees the line.
   function help() {
-    machine.print(HELP.map(function (l) { return "\n" + l; }).join(""));
+    var lines = HELP.filter(function (l) { return tvAvailable() || l.indexOf("DEAR SYSOP") < 0; });
+    machine.print(lines.map(function (l) { return "\n" + l; }).join(""));
     machine.ready();
   }
 

@@ -4,3 +4,4 @@ reference/
 *.mov
 *.webm
 out/
+*.wav

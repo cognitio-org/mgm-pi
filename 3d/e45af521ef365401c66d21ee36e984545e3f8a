@@ -1,0 +1,23 @@
+outfitter/landing/public/favicon.svg
+  s_162e2233a4f0f3::t_7fe12fcd37597d 4-5,7-8,15-22,27
+outfitter/landing/tools/favicon.py
+  s_162e2233a4f0f3::t_a01678548fd2ee 6-10,23-27,40,42,49-50,52-53,60-62,64-68,78-81,83,87,89,91,140,143-144
+outfitter/packages/web/public/favicon.svg
+  s_162e2233a4f0f3::t_847c0d55d983eb 4-5,7-8,15-22,27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "3de45af521ef365401c66d21ee36e984545e3f8a",
+  "prompts": {},
+  "sessions": {
+    "s_162e2233a4f0f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d82cf409-27ab-46f7-b6cd-1549691ef502",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

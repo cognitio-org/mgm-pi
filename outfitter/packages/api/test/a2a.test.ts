@@ -24,7 +24,8 @@ async function linkApp(env: Record<string, string> = {}, store?: Store): Promise
 }
 
 async function seedTape(store: Store, id: string, extra: Partial<Guru> = {}): Promise<Guru> {
-  return seedGuru(store, { id, name: `Tape ${id}`, ...extra });
+  // An A2A tape needs an explicit tools list inside A2A_TAPE_TOOLS (a2aTapeProblem).
+  return seedGuru(store, { id, name: `Tape ${id}`, tools: ["read", "bash", "edit", "write"], ...extra });
 }
 
 /** Stores a token and returns its plaintext. */
@@ -354,7 +355,7 @@ describe("SendMessage and tasks", () => {
     assert.equal(session.guruId, "coder");
     assert.equal(session.repo, "acme/widgets", "the key's spelling of the repo");
     assert.equal(session.baseBranch, "develop");
-    assert.equal(session.branch, `outfitter/a2a-${task.id.replaceAll("-", "").slice(0, 8)}`);
+    assert.equal(session.branch, `outfitter/a2a-${task.id.replaceAll("-", "").slice(0, 12)}`);
     assert.equal(session.name, "A2A: Fix the flaky test");
     assert.match(session.prompt!, /remote A2A caller/);
     assert.match(session.prompt!, /Fix the flaky test/);
@@ -372,12 +373,12 @@ describe("SendMessage and tasks", () => {
     const res = await send(app, token, withExt(message("go"), { repo: "acme/widgets", branch: "main", baseBranch: "main" }));
     const row = (await store.a2aTasks.findForToken(record.id, res.json().result.task.id))!;
     const session = (await store.sessions.findById(row.sessionId!))!;
-    assert.match(session.branch!, /^outfitter\/a2a-[0-9a-f]{8}$/);
+    assert.match(session.branch!, /^outfitter\/a2a-[0-9a-f]{12}$/);
     const prefix = branchPrefixForSession(session, "outfitter/");
     assert.equal(branchAllowed(session.branch!, session.branch!, prefix), true);
     assert.equal(branchAllowed("main", session.branch!, prefix), false);
     assert.equal(branchAllowed("outfitter/other", session.branch!, prefix), false);
-    assert.equal(branchAllowed("outfitter/a2a-ffffffff", session.branch!, prefix), false);
+    assert.equal(branchAllowed("outfitter/a2a-ffffffffffff", session.branch!, prefix), false);
     assert.equal(branchPrefixForSession({ branch: "outfitter/x" }, undefined), "outfitter/");
     await app.fastify.close();
   });
@@ -739,8 +740,8 @@ describe("A2A memory identity (§5.4)", () => {
   });
 
   test("a2aTapeProblem allows memory: tool, refuses auto", () => {
-    assert.equal(a2aTapeProblem({ id: "t", memory: "tool" }), undefined);
-    assert.ok(a2aTapeProblem({ id: "t", memory: "auto" }));
+    assert.equal(a2aTapeProblem({ id: "t", memory: "tool", tools: ["read", "memory"] }), undefined);
+    assert.ok(a2aTapeProblem({ id: "t", memory: "auto", tools: ["read"] }));
   });
 });
 

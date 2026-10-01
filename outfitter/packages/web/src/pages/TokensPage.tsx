@@ -148,7 +148,9 @@ export function TokensPage() {
       <p className="session-meta">
         An <strong>A2A key</strong> lets another agent (an Agent Engine agent, any A2A client) start coding tasks on
         the link service's <code>/a2a</code>, as you, on the tapes and repositories you pick here, each on its own{" "}
-        <code>outfitter/a2a-*</code> branch. It works nowhere else.
+        <code>outfitter/a2a-*</code> branch. It works nowhere else. Its tapes need an explicit tools list, no
+        environment variables, and a LiteLLM key of their own (never the shared one). Revoking it stops its tasks and
+        Drives. Anything you or a teammate write in an A2A session can reach that caller's later answers.
       </p>
 
       {apiError && <SystemErrorDialog error={apiError} onRestart={load} onResume={() => setApiError(null)} />}

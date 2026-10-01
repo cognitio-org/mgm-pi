@@ -85,11 +85,15 @@ const IAP_ISSUERS = ["https://cloud.google.com/iap"];
  * (routes/a2a.ts). So an A2A key on /api/* and a Dongle on /a2a both get 401. Updates lastUsedAt
  * at most once per LAST_USED_THROTTLE_MS, best-effort (a failed update never fails the auth check
  * itself). */
+/** verifyApiToken's refusal of the token itself (unknown, revoked, expired, the wrong kind), as
+ * opposed to a store error, which is not the token's fault. */
+export class InvalidApiTokenError extends Error {}
+
 export async function verifyApiToken(bearer: string, store: TokenStore, kind: ApiTokenKind): Promise<ApiToken> {
   const record = await store.tokens.findByHash(hashToken(bearer));
   const now = Date.now();
   if (!record || !isTokenActive(record, now) || tokenKind(record) !== kind) {
-    throw new Error("invalid or revoked API token");
+    throw new InvalidApiTokenError("invalid or revoked API token");
   }
 
   const lastUsed = record.lastUsedAt ? Date.parse(record.lastUsedAt) : Number.NaN;

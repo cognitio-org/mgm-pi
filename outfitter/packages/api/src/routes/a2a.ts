@@ -13,7 +13,7 @@ import { AgentCard, Extensions, HTTP_EXTENSION_HEADER, SSE_HEADERS, formatSSEErr
 import { JsonRpcTransportHandler, ServerCallContext, validateVersion } from "@a2a-js/sdk/server";
 import { ContentTypeNotSupportedError } from "@a2a-js/sdk/errors";
 import type { RouteContext } from "./context.ts";
-import { bearerFromHeader, verifyApiToken } from "../auth.ts";
+import { InvalidApiTokenError, bearerFromHeader, verifyApiToken } from "../auth.ts";
 import { TOKEN_PREFIX } from "../tokens.ts";
 import { A2AKeyUser, OutfitterA2AHandler } from "../a2a/handler.ts";
 import { a2aKeyOf, type A2AKey } from "../a2a/tasks.ts";
@@ -56,6 +56,57 @@ function maskInternal<T extends { error?: RpcError }>(req: FastifyRequest, respo
     response.error = { code: -32603, message: "Internal error" };
   }
   return response;
+}
+
+/** A bearer longer than this is never a key (outf_ plus 43 base64url characters). */
+const MAX_BEARER_LENGTH = 256;
+/** How long a bearer that failed lookup is refused without asking the store again. Short: a key
+ * created just after a typo works within this, and a revoked one is refused by the store anyway. */
+export const A2A_FAILED_BEARER_TTL_MS = 60_000;
+/** Bearers remembered at most, per link instance (oldest dropped first). */
+export const A2A_FAILED_BEARER_MAX = 1_000;
+
+/**
+ * E9 security review: a bounded LRU of sha256(bearer) for bearers that failed lookup (unknown,
+ * revoked, expired, a Dongle), so repeating a bad key doesn't cost a Mongo read every time. Only
+ * failures are cached, so a valid key is never refused by it. Per instance and in memory: rate
+ * limiting by IP (Cloud Armor in front of the link service) is the owner's follow-up.
+ */
+export class FailedBearerCache {
+  private readonly entries = new Map<string, number>();
+  private readonly ttlMs: number;
+  private readonly max: number;
+  private readonly now: () => number;
+
+  constructor(ttlMs = A2A_FAILED_BEARER_TTL_MS, max = A2A_FAILED_BEARER_MAX, now: () => number = Date.now) {
+    this.ttlMs = ttlMs;
+    this.max = max;
+    this.now = now;
+  }
+
+  has(digest: string): boolean {
+    const until = this.entries.get(digest);
+    if (until === undefined) return false;
+    if (until <= this.now()) {
+      this.entries.delete(digest);
+      return false;
+    }
+    return true;
+  }
+
+  add(digest: string): void {
+    this.entries.delete(digest);
+    this.entries.set(digest, this.now() + this.ttlMs);
+    while (this.entries.size > this.max) {
+      const oldest = this.entries.keys().next().value;
+      if (oldest === undefined) break;
+      this.entries.delete(oldest);
+    }
+  }
+
+  get size(): number {
+    return this.entries.size;
+  }
 }
 
 class RpcParseError extends Error {}
@@ -139,14 +190,24 @@ export async function registerA2ARoutes(app: FastifyInstance, ctx: RouteContext)
     a2a.post("/a2a/", { bodyLimit: A2A_BODY_LIMIT }, route);
   });
 
+  const failedBearers = new FailedBearerCache();
+
   async function authenticate(req: FastifyRequest): Promise<A2AKey | undefined> {
     const bearer = bearerFromHeader(req);
-    if (!bearer?.startsWith(TOKEN_PREFIX)) return undefined;
+    if (!bearer?.startsWith(TOKEN_PREFIX) || bearer.length > MAX_BEARER_LENGTH) return undefined;
+    // A bearer that just failed skips the store: repeating a bad key costs a hash, not a Mongo read.
+    const digest = createHash("sha256").update(bearer).digest("base64url");
+    if (failedBearers.has(digest)) return undefined;
+    let key: A2AKey | undefined;
     try {
-      return a2aKeyOf(await verifyApiToken(bearer, ctx.store, "a2a"));
-    } catch {
-      return undefined;
+      key = a2aKeyOf(await verifyApiToken(bearer, ctx.store, "a2a"));
+    } catch (err) {
+      // A store error is not the bearer's fault: 401 this once, but don't remember it.
+      if (!(err instanceof InvalidApiTokenError)) return undefined;
+      key = undefined;
     }
+    if (!key) failedBearers.add(digest);
+    return key;
   }
 
   async function handle(req: FastifyRequest, reply: FastifyReply) {

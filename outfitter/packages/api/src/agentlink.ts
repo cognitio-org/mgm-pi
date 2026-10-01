@@ -28,7 +28,9 @@ import { validateSnapshotUrl, snapshotHostAllowlist } from "./snapshot-url.ts";
 import { MAIL_LEASE_MS, MAIL_MAX_ATTEMPTS, type MailService } from "./mail.ts";
 import { isBrowserActionKind, parseBrowserAction } from "./browser-action.ts";
 import { GithubBroker } from "./github-broker.ts";
-import { branchAllowed, branchPrefixForSession } from "./branch-policy.ts";
+import { branchAllowed, branchPrefixForSession, isA2ABranch } from "./branch-policy.ts";
+import { A2A_NO_DEDICATED_KEY, a2aTapeProblem } from "./a2a/keys.ts";
+import { isA2ASession } from "./secrets.ts";
 import { entryForWire } from "./entry-wire.ts";
 import { sessionJsonl } from "./session-jsonl.ts";
 import {
@@ -86,6 +88,11 @@ export class MissingGithubTokenError extends Error {
     this.detail = detail;
   }
 }
+
+/** E9 security review: an A2A session's run refused at spec time, terminal like a missing GitHub
+ * token (4412, the session's mail held with `detail` as its note). Its tape no longer passes
+ * a2aTapeProblem, it has no LiteLLM key of its own, or its branch isn't `outfitter/a2a-<hex>`. */
+export class A2ARunRefusedError extends MissingGithubTokenError {}
 
 /** #158: the GitHub App is configured but couldn't mint a token just now (network, timeout, a
  * 5xx, a Secret Manager blip). Not terminal: handleConnection's generic catch closes with 1011 so
@@ -1001,7 +1008,12 @@ export class AgentLink {
       built = await this.buildRunSpec(run, session, guru);
     } catch (err) {
       if (err instanceof MissingGithubTokenError) {
-        request.log.warn(err, "run.spec build failed: no usable GitHub token for this repo session");
+        request.log.warn(
+          err,
+          err instanceof A2ARunRefusedError
+            ? "run.spec build refused: this A2A session can't run as it stands"
+            : "run.spec build failed: no usable GitHub token for this repo session",
+        );
         // #172: this won't fix itself, so park the session's mail (with the reason as its notice)
         // instead of letting the /tick sweep start a new run and sandbox for it every few minutes
         // until the mail runs out of attempts. Retry releases it. A run the user started gets the
@@ -1189,7 +1201,24 @@ export class AgentLink {
       updatedAt: new Date().toISOString(),
     });
 
+    // E9 security review: an A2A session's run is checked again here, whatever let it be woken: the
+    // tape as it stands now (the web UI may have changed it since the task started), its branch
+    // (a teleport import must not move it off `outfitter/a2a-*`), and below its LiteLLM key.
+    const a2aSession = isA2ASession(session);
+    if (a2aSession) {
+      const problem = a2aTapeProblem(guru);
+      if (problem) throw new A2ARunRefusedError(`a2a session ${session.id}: tape refused`, `${problem}, so this A2A session can't run.`);
+      if (session.repo && !isA2ABranch(session.branch)) {
+        throw new A2ARunRefusedError(`a2a session ${session.id}: bad branch`, "this A2A session's branch isn't an outfitter/a2a-* branch, so it can't run.");
+      }
+    }
     const secrets = await this.secretsBroker.secretsForRun(session, guru);
+    // A remote caller spends the tape's own LiteLLM key (a bounded, revocable budget), never the
+    // org-wide default; GcpSecretsBroker doesn't fall back for an A2A session. Not exempt in dev
+    // mode: MemorySecretsBroker reports every tape's key as its own unless told otherwise.
+    if (a2aSession && (secrets.litellmKeySource !== "guru" || (!secrets.litellmKey && !this.config.devMode))) {
+      throw new A2ARunRefusedError(`a2a session ${session.id}: ${A2A_NO_DEDICATED_KEY}`, `${A2A_NO_DEDICATED_KEY}, so this A2A session can't run.`);
+    }
     // GcpSecretsBroker (secrets.ts) resolves a missing `outfitter-github-token-<sessionId>` secret
     // to "" rather than throwing -- after a GitHub App installation token, then the shared
     // `outfitter-github-token-default` -- so a session with no repo (which needs no GitHub token at
@@ -1279,7 +1308,9 @@ export class AgentLink {
         tools: guru.tools,
         excludeTools: guru.excludeTools,
         packages: guru.packages,
-        env: guru.env,
+        // Never for an A2A session (a2aTapeProblem refuses such a tape already): pi's env is
+        // readable by the model, and the model's text goes back to the remote caller.
+        env: a2aSession ? undefined : guru.env,
         ...(guru.playwrightBeforeCheckpoint === true ? { playwrightBeforeCheckpoint: true } : {}),
         ...(allowExternalHtmlResources ? { allowExternalHtmlResources: true } : {}),
         ...(guru.adminTools === "manage" || guru.adminTools === "operator" ? { adminTools: guru.adminTools } : {}),

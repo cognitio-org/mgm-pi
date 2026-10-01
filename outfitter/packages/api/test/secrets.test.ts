@@ -40,7 +40,7 @@ describe("GcpSecretsBroker", () => {
       throw notFoundError();
     });
     const secrets = await broker.secretsForRun(testSession(), testGuru());
-    assert.deepEqual(secrets, { githubToken: "", litellmKey: "", githubCredential: "none" });
+    assert.deepEqual(secrets, { githubToken: "", litellmKey: "", litellmKeySource: "none", githubCredential: "none" });
   });
 
   test("falls back to outfitter-litellm-key-default when outfitter-litellm-key-<guruId> is missing", async () => {

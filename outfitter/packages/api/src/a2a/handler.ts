@@ -33,6 +33,7 @@ import {
 } from "@a2a-js/sdk/errors";
 import type { Config } from "../config.ts";
 import { MAIL_MAX_TEXT } from "../mail.ts";
+import { redact } from "../search/redact.ts";
 import type { A2ATask, A2ATaskState, Store } from "../store/types.ts";
 import { A2A_REPO_RE, SKILL_ID_RE, a2aTapeProblem } from "./keys.ts";
 import { extendedCard, OUTFITTER_TASK_EXTENSION, publicCard } from "./card.ts";
@@ -398,7 +399,7 @@ export function toWireTask(task: A2ATask, historyLength?: number): Task {
       artifactId: `${task.id}-result`,
       name: "result",
       description: "The task's final answer",
-      parts: [textPart(task.result.text)],
+      parts: [textPart(redact(task.result.text))],
       metadata: undefined,
       extensions: [],
     });
@@ -408,7 +409,7 @@ export function toWireTask(task: A2ATask, historyLength?: number): Task {
     contextId: task.contextId,
     status: {
       state: STATE_TO_WIRE[task.state],
-      message: task.statusText ? agentMessage(task, task.statusText) : undefined,
+      message: task.statusText ? agentMessage(task, redact(task.statusText)) : undefined,
       timestamp: task.updatedAt,
     },
     artifacts,

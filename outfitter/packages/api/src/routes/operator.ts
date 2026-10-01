@@ -18,7 +18,7 @@ import {
 import { GITHUB_TOKEN_DEFAULT_SECRET } from "../secrets.ts";
 import { requireOperator } from "../auth.ts";
 import { fetchJson, failedResponse } from "../providers-status.ts";
-import { normalizeOwnerMatch } from "../tokens.ts";
+import { normalizeOwnerMatch, tokenKind } from "../tokens.ts";
 import { publicToken } from "./tokens.ts";
 
 /** Longer than the 3s probes in providers-status.ts: a manual "test this value" click is a rare,
@@ -228,6 +228,13 @@ export async function registerOperatorRoutes(app: FastifyInstance, ctx: RouteCon
     if ("error" in match) return reply.code(400).send({ error: match.error });
 
     const revoked = await ctx.store.tokens.revokeAllForOwners(match, new Date().toISOString());
+    // E9: a revoked A2A key's tasks and Drives stop too (the tick sweep retries a failure).
+    for (const token of revoked) {
+      if (tokenKind(token) !== "a2a") continue;
+      await ctx.a2a.endForKey(token.id, "canceled", "the A2A key was revoked").catch((err) => {
+        req.log.warn({ err }, "a2a: ending a revoked key's tasks failed; the tick sweep will retry");
+      });
+    }
     const owners = [...new Set(revoked.map((t) => t.ownerEmail))].sort();
     req.log.info({ operator: req.identity!.email, match, count: revoked.length, owners }, "operator token revoke");
     return { match, revoked: revoked.map(publicToken), owners };

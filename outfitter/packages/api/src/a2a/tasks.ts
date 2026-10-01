@@ -26,7 +26,10 @@ import {
   type Store,
   type TurnWaiter,
 } from "../store/types.ts";
-import { a2aTapeProblem, repoKey } from "./keys.ts";
+import type { SecretsBroker } from "../secrets.ts";
+import { isTokenActive } from "../tokens.ts";
+import { redact } from "../search/redact.ts";
+import { A2A_NO_DEDICATED_KEY, a2aTapeProblem, repoKey } from "./keys.ts";
 
 /** Who the turn waiters of A2A tasks belong to (TurnWaiter.owner). */
 export const A2A_WAITER_OWNER = "a2a";
@@ -81,6 +84,9 @@ export interface A2ATasksDeps {
   turns: TurnWaiters;
   mail: MailService;
   agentLink: AgentLink;
+  /** Whether a tape has a LiteLLM key of its own (an A2A task never runs on the org default).
+   * Absent: not checked at task start, and agentlink.ts's run-time refusal is the only gate. */
+  secrets?: Pick<SecretsBroker, "hasDedicatedLitellmKey">;
   log?: (msg: string, err?: unknown) => void;
   now?: () => number;
 }
@@ -278,6 +284,8 @@ export class A2ATasks {
     if (!guru) return { rejected: `tape "${skill}" no longer exists` };
     const problem = a2aTapeProblem(guru);
     if (problem) return { rejected: `${problem}, so it can't be used over A2A` };
+    const keyProblem = await this.litellmKeyProblem(skill);
+    if (keyProblem) return { rejected: keyProblem };
 
     if (session) {
       if (input.repo !== undefined && repoKey(input.repo) !== repoKey(session.repo ?? "")) {
@@ -335,14 +343,80 @@ export class A2ATasks {
     await this.releaseIfDone(task);
   }
 
-  /** /api/hooks/tick: refreshes every open task, then frees the claims of finished ones whose
-   * Drive has stopped. Never throws. */
+  /** Why the tape's runs would have no LiteLLM key of their own, or undefined (also when no broker
+   * can tell: agentlink.ts refuses the run then). A broker error refuses too: nothing starts on a
+   * key that couldn't be checked. Also POST /api/me/tokens' check for kind "a2a". */
+  async litellmKeyProblem(guruId: string): Promise<string | undefined> {
+    const secrets = this.deps.secrets;
+    if (!secrets?.hasDedicatedLitellmKey) return undefined;
+    try {
+      return (await secrets.hasDedicatedLitellmKey(guruId)) ? undefined : A2A_NO_DEDICATED_KEY;
+    } catch (err) {
+      this.log(`a2a: LiteLLM key check for tape ${guruId} failed`, err);
+      return "the tape's LiteLLM key could not be checked just now";
+    }
+  }
+
+  /**
+   * The key was revoked (DELETE /api/me/tokens/:id) or has lapsed: each open task ends (`state`,
+   * with a generic `reason`) through the cancel path (waiter, mail marked dead, the session's run
+   * stopped), then every Drive the key still holds a slot for is stopped too, idle ones included.
+   * Best-effort per task; the tick sweep ends what this misses. Returns the tasks ended.
+   */
+  async endForKey(tokenId: string, state: "canceled" | "failed", reason: string): Promise<number> {
+    let ended = 0;
+    // Bounded: each batch ends what it lists, so the next lists the rest.
+    for (let batch = 0; batch < 10; batch++) {
+      const open = await this.store.a2aTasks.listOpen(SWEEP_LIMIT, tokenId);
+      let progressed = false;
+      for (const row of open) {
+        const done = await this.store.a2aTasks.transition(row.id, A2A_OPEN_STATES, { state, statusText: reason, updatedAt: this.nowIso() });
+        if (!done) continue;
+        progressed = true;
+        ended++;
+        await this.stopCanceledWork(done).catch((err) => this.log(`a2a task ${row.id}: key-end cleanup failed`, err));
+      }
+      if (!progressed || open.length < SWEEP_LIMIT) break;
+    }
+    for (const taskId of await this.store.a2aTasks.listSlots(tokenId)) {
+      try {
+        const row = await this.store.a2aTasks.findForToken(tokenId, taskId);
+        if (!row?.sessionId) continue;
+        const session = await this.store.sessions.findById(row.sessionId);
+        const run = await this.store.runs.findActiveForSession(row.sessionId);
+        if (run && session?.a2aTokenId === tokenId) await this.deps.runs.stop(run.id, "a2a");
+      } catch (err) {
+        this.log(`a2a key ${tokenId}: stopping task ${taskId}'s Drive failed`, err);
+      }
+    }
+    await this.reconcileSlots(tokenId).catch((err) => this.log(`a2a key ${tokenId}: slot sweep failed`, err));
+    return ended;
+  }
+
+  /** The tick sweep's check of a key: ends its tasks when it was revoked, has expired, or is gone.
+   * True when it did. */
+  private async endIfKeyGone(tokenId: string): Promise<boolean> {
+    const token = await this.store.tokens.findById(tokenId);
+    if (token && isTokenActive(token, this.now())) return false;
+    if (token?.revokedAt || !token) await this.endForKey(tokenId, "canceled", "the A2A key was revoked");
+    else await this.endForKey(tokenId, "failed", "the A2A key has expired");
+    return true;
+  }
+
+  /** /api/hooks/tick: ends the tasks of keys that were revoked or have expired, refreshes every
+   * other open task, then frees the claims of finished ones whose Drive has stopped. Never throws. */
   async sweep(): Promise<number> {
     let changed = 0;
     const keys = new Set<string>();
+    const goneKeys = new Map<string, boolean>();
     for (const row of await this.store.a2aTasks.listOpen(SWEEP_LIMIT)) {
       keys.add(row.tokenId);
       try {
+        if (!goneKeys.has(row.tokenId)) goneKeys.set(row.tokenId, await this.endIfKeyGone(row.tokenId));
+        if (goneKeys.get(row.tokenId)) {
+          changed++;
+          continue;
+        }
         if ((await this.refresh(row)).state !== row.state) changed++;
       } catch (err) {
         this.log(`a2a task ${row.id}: sweep failed`, err);
@@ -467,7 +541,10 @@ export class A2ATasks {
       const e = recent[i];
       if (e.runId !== waiter.ackRunId || e.seq > last.seq) continue;
       if (e.seq <= waiter.ackSeq) break;
-      const text = assistantText(e.entry);
+      const raw = assistantText(e.entry);
+      // Secret-shaped strings out before the text is stored for the caller: a prompt-injected
+      // model may echo what its Drive can read (handler.ts redacts again on the way out).
+      const text = raw ? redact(raw) : undefined;
       if (text) return text.length > A2A_RESULT_TEXT_MAX ? `${text.slice(0, A2A_RESULT_TEXT_MAX)}…` : text;
     }
     return undefined;
@@ -502,9 +579,13 @@ function contextSlot(tokenId: string, contextId: string): string {
   return `${tokenId}#ctx:${contextId}`;
 }
 
+/** Hex characters of the task id in its branch name: 48 bits, so one key's tasks don't collide
+ * (branch-policy.ts A2A_BRANCH_RE requires at least this many). */
+export const A2A_BRANCH_ID_CHARS = 12;
+
 /** §5.3: an A2A task's branch, from its id; never the client's. */
 export function a2aBranchFor(taskId: string): string {
-  return `outfitter/a2a-${taskId.replaceAll("-", "").slice(0, 8)}`;
+  return `outfitter/a2a-${taskId.replaceAll("-", "").toLowerCase().slice(0, A2A_BRANCH_ID_CHARS)}`;
 }
 
 /** What the caller is told when the turn ended without settling: no run notes, which are the

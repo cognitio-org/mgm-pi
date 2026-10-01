@@ -16,21 +16,50 @@ export const SKILL_ID_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 export const A2A_REPO_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
 
 /**
+ * The pi tools an A2A tape may list (E9 security review): file and shell work in the Drive, git,
+ * opening a PR, and `memory` (scoped to the key, §5.4). Anything that reaches past the Drive in the
+ * owner's name is left out: `subagent`, `subagents_enable` and `subagent_supervisor` (more Drives
+ * and tapes), `agent_engine` (the owner's Agent Engine agents), `github_issue` (writes outside the
+ * task's branch), and every tool not listed here, including ones added later.
+ */
+export const A2A_TAPE_TOOLS: readonly string[] = ["read", "grep", "find", "ls", "bash", "edit", "write", "git", "github_pr", "memory"];
+
+/**
  * Why `guru` can't be reached over A2A, or undefined when it can. A remote caller acts in the
  * owner's name with nobody watching, so:
  * - admin tools: an admin tape runs `tapes.*` writes without approval (admin/ops.ts);
  * - `agentEngine`: it could reach the owner's Agent Engine agents;
  * - `memory: "auto"`: it would record the caller's turns and recall into them (§5.4);
  * - `mergeFromCloud`: it could merge into the base branch, past the forced `outfitter/a2a-*`
- *   branch (§8: a remote caller acts "only on branch outfitter/a2a-*").
+ *   branch (§8: a remote caller acts "only on branch outfitter/a2a-*");
+ * - `env`: the tape's env goes into pi's environment, where a prompt-injected model can print it
+ *   into the result the caller reads (agentlink.ts also strips it from an A2A run's spec);
+ * - `tools`: an explicit list, every entry in A2A_TAPE_TOOLS. No list means pi's defaults plus
+ *   whatever the Drive adds, which is not something to hand a remote caller.
  */
-export function a2aTapeProblem(guru: Pick<Guru, "id" | "adminTools" | "agentEngine" | "memory" | "mergeFromCloud">): string | undefined {
+export function a2aTapeProblem(
+  guru: Pick<Guru, "id" | "adminTools" | "agentEngine" | "memory" | "mergeFromCloud" | "env" | "tools">,
+): string | undefined {
   if (hasAdminTools(guru)) return `tape "${guru.id}" has admin tools`;
   if (guru.agentEngine === true) return `tape "${guru.id}" can call Agent Engine agents`;
   if (guru.memory === "auto") return `tape "${guru.id}" has automatic memory`;
   if (guru.mergeFromCloud === true) return `tape "${guru.id}" may merge from the cloud`;
+  if (guru.env && Object.keys(guru.env).length > 0) return `tape "${guru.id}" sets environment variables`;
+  if (!Array.isArray(guru.tools) || guru.tools.length === 0) return `tape "${guru.id}" has no tools list`;
+  const outside = guru.tools.filter((t) => !A2A_TAPE_TOOLS.includes(t));
+  if (outside.length > 0) {
+    return `tape "${guru.id}" has tools not allowed over A2A (${outside.slice(0, 5).join(", ").slice(0, 120)})`;
+  }
   return undefined;
 }
+
+/** Why the tape's runs would get no LiteLLM key of their own, or undefined when they would. An
+ * A2A session never falls back to the org-wide default key (secrets.ts): a remote caller gets a
+ * bounded, revocable budget or nothing. */
+export type A2ALitellmKeyCheck = (guruId: string) => Promise<string | undefined>;
+
+/** The one-line reason for a tape with no `outfitter-litellm-key-<guruId>` secret. */
+export const A2A_NO_DEDICATED_KEY = "tape has no dedicated LiteLLM key";
 
 /** Lowercased `owner/name`, for comparing a task's repo against a key's (GitHub names are
  * case-insensitive). */
@@ -43,7 +72,11 @@ export function repoKey(repo: string): string {
  * `owner/name` repos, and maxConcurrent 1..A2A_MAX_CONCURRENT_LIMIT (default 2). Duplicates are
  * dropped, order kept (the first tape is the default skill). An error string for a 400.
  */
-export async function parseA2AKeyScope(store: Pick<Store, "gurus">, raw: unknown): Promise<A2AKeyScope | { error: string }> {
+export async function parseA2AKeyScope(
+  store: Pick<Store, "gurus">,
+  raw: unknown,
+  litellmKeyCheck?: A2ALitellmKeyCheck,
+): Promise<A2AKeyScope | { error: string }> {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return { error: "a2a must be an object with tapes and repos" };
   const body = raw as { tapes?: unknown; repos?: unknown; maxConcurrent?: unknown };
 
@@ -57,6 +90,8 @@ export async function parseA2AKeyScope(store: Pick<Store, "gurus">, raw: unknown
     if (!guru) return { error: `unknown tape: ${id}` };
     const problem = a2aTapeProblem(guru);
     if (problem) return { error: `${problem}, so it can't be used over A2A` };
+    const keyProblem = litellmKeyCheck ? await litellmKeyCheck(id) : undefined;
+    if (keyProblem) return { error: `tape "${id}": ${keyProblem}, so it can't be used over A2A` };
     tapes.push(id);
   }
 

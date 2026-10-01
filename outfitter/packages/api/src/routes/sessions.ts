@@ -6,7 +6,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { RouteContext } from "./context.ts";
 import type { GithubCredential, Session, PiEntry, Run } from "../store/types.ts";
 import { mailHeldNotice, MAIL_MAX_TEXT } from "../mail.ts";
-import { GITHUB_TOKEN_DEFAULT_SECRET } from "../secrets.ts";
+import { GITHUB_TOKEN_DEFAULT_SECRET, isA2ASession } from "../secrets.ts";
 import { GITHUB_APP_ID_SECRET, GITHUB_APP_INSTALLATION_SECRET, GITHUB_APP_KEY_SECRET, GITHUB_APP_SLUG_SECRET, githubAppSecretsUsable, githubRepoName } from "../github-app.ts";
 import { sessionGithubTokenSecretName } from "../operator.ts";
 import { entryForWire } from "../entry-wire.ts";
@@ -296,6 +296,10 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
 
     const existing = await ctx.store.sessions.findById(id);
     if (existing?.archivedAt) return reply.code(409).send({ error: ARCHIVED_ERROR });
+    // E9 security review: an A2A task's session keeps the branch, repo and transcript its task
+    // made. A teleport import would rewrite them (x-outfitter-branch) under the remote caller's
+    // next turn; the owner exports it instead.
+    if (existing && isA2ASession(existing)) return reply.code(409).send({ error: "an A2A task's session can't be imported into" });
     if (existing?.repo && carried.patch?.repo && existing.repo !== carried.patch.repo) {
       return reply.code(409).send({ error: "this session is already bound to a repository" });
     }

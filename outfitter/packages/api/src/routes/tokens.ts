@@ -50,7 +50,8 @@ export async function registerTokenRoutes(app: FastifyInstance, ctx: RouteContex
       // E9 §5.2: the owner makes A2A keys in the web UI. A Dongle (an agent on a laptop) can't
       // mint one: that would hand a remote caller tasks in the owner's name.
       if (req.identity?.viaToken) return reply.code(403).send({ error: "A2A keys are created in the web UI, not with a token" });
-      const scope = await parseA2AKeyScope(ctx.store, body.a2a);
+      // Each tape needs a LiteLLM key of its own: A2A never runs on the org-wide default.
+      const scope = await parseA2AKeyScope(ctx.store, body.a2a, (guruId) => ctx.a2a.litellmKeyProblem(guruId));
       if ("error" in scope) return reply.code(400).send({ error: scope.error });
       a2a = scope;
     } else if (body.a2a !== undefined) {
@@ -94,6 +95,13 @@ export async function registerTokenRoutes(app: FastifyInstance, ctx: RouteContex
     if (!existing || existing.ownerEmail !== email) return reply.code(404).send({ error: "token not found" });
     if (existing.revokedAt) return { record: publicToken(existing) };
     const updated = await ctx.store.tokens.update(id, { revokedAt: new Date().toISOString() });
+    // E9 security review: revoking an A2A key stops its work, not just its next request. Its open
+    // tasks are canceled and its Drives stopped now; the tick sweep ends whatever this misses.
+    if (tokenKind(existing) === "a2a") {
+      await ctx.a2a.endForKey(id, "canceled", "the A2A key was revoked").catch((err) => {
+        req.log.warn({ err }, "a2a: ending a revoked key's tasks failed; the tick sweep will retry");
+      });
+    }
     return { record: publicToken(updated!) };
   });
 }

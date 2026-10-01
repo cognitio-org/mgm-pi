@@ -59,7 +59,12 @@ export interface SecretsBroker {
 /** E9: a session an A2A task created. Its runs never get the org-default LiteLLM key, its tape's
  * env, or a branch other than its own `outfitter/a2a-*` one. */
 export function isA2ASession(session: Pick<Session, "origin" | "a2aTokenId"> | null | undefined): boolean {
-  return session?.origin !== undefined || session?.a2aTokenId !== undefined;
+  // Any non-empty origin or token id counts: an unknown origin fails closed, as A2A.
+  return isSet(session?.origin) || isSet(session?.a2aTokenId);
+}
+
+function isSet(value: unknown): boolean {
+  return value !== undefined && value !== null && value !== "";
 }
 
 /** Dev broker: reads fixed values from env so local runs work with no Secret Manager. Defaults to
@@ -251,6 +256,12 @@ export class GcpSecretsBroker implements SecretsBroker {
         credential: "none",
       };
     }
+    // E9 security review: a Drive a remote caller drives never holds the org-wide PAT, even behind
+    // agentd's git proxy. buildRunSpec refuses the run (missing GitHub token) instead.
+    if (isA2ASession(session)) {
+      console.warn(`[secrets] session ${session.id}: A2A session, not using ${GITHUB_TOKEN_DEFAULT_SECRET}`);
+      return { token: "", credential: "none" };
+    }
     const shared = await this.accessSecretOrEmpty(GITHUB_TOKEN_DEFAULT_SECRET);
     if (shared) {
       console.log(
@@ -264,14 +275,21 @@ export class GcpSecretsBroker implements SecretsBroker {
    * `fallback: false`: a remote caller never spends the org-wide key. */
   private async litellmKeyForGuru(guruId: string, fallback: boolean): Promise<{ key: string; source: "guru" | "default" | "none" }> {
     const key = await this.accessSecretOrEmpty(`outfitter-litellm-key-${guruId}`);
+    if (!fallback) {
+      // A copy of the org-wide key in the tape's secret is still the org-wide key.
+      if (!key || key.trim() === (await this.defaultLitellmKey()).trim()) return { key: "", source: "none" };
+      return { key, source: "guru" };
+    }
     if (key) return { key, source: "guru" };
-    if (!fallback) return { key: "", source: "none" };
     const shared = await this.defaultLitellmKey();
     return { key: shared, source: shared ? "default" : "none" };
   }
 
+  /** A per-tape secret that only copies the org-wide key is not a key of its own. */
   async hasDedicatedLitellmKey(guruId: string): Promise<boolean> {
-    return (await this.accessSecretOrEmpty(`outfitter-litellm-key-${guruId}`)) !== "";
+    const own = await this.accessSecretOrEmpty(`outfitter-litellm-key-${guruId}`);
+    if (!own) return false;
+    return own.trim() !== (await this.defaultLitellmKey()).trim();
   }
 
   async defaultLitellmKey(): Promise<string> {

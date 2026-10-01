@@ -6,6 +6,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Store, Mail, MailSender, PiEntry, Session } from "./store/types.ts";
 import type { RunManager } from "./runs.ts";
+import { isA2ASession } from "./secrets.ts";
 
 export const MAIL_LEASE_MS = 60_000;
 /** Claims and mail-driven wakes both count: room for a wake plus a delivery, three times over. */
@@ -293,12 +294,18 @@ export class MailService {
     const text = typeof data.text === "string" ? data.text : "";
 
     let problem: string | undefined;
-    let recipient: Session | null;
-    if (!to || !text.trim()) problem = "a send needs both `to` and non-empty `text`";
+    let recipient: Session | null = null;
+    const sender = await this.store.sessions.findById(fromSessionId);
+    // E9 security review: a send is a session-file entry, which an A2A Drive's `bash` can write
+    // whatever its tools list says. A remote caller must not steer the owner's other sessions (on
+    // their tapes and keys), and other sessions' text must not reach a remote caller's session.
+    if (isA2ASession(sender)) problem = "an A2A task's session can't message other sessions";
+    else if (!to || !text.trim()) problem = "a send needs both `to` and non-empty `text`";
     else if (to.length > MAIL_MAX_TO) problem = `\`to\` is over ${MAIL_MAX_TO} characters`;
     else if (text.length > MAIL_MAX_TEXT) problem = `the message is over ${MAIL_MAX_TEXT} characters`;
     else if (to === fromSessionId) problem = "a session can't message itself";
     else if (!(recipient = await this.store.sessions.findById(to))) problem = `there is no session "${to}"`;
+    else if (isA2ASession(recipient)) problem = `there is no session "${to}"`;
     else if (recipient.archivedAt) problem = `session "${to}" is archived`;
     else if ((await this.store.mail.countSentSince(fromSessionId, new Date(Date.now() - 3_600_000).toISOString())) >= MAIL_SENDS_PER_HOUR) {
       problem = `this session has sent ${MAIL_SENDS_PER_HOUR} messages in the last hour, the limit`;
@@ -317,7 +324,6 @@ export class MailService {
       return fromSessionId;
     }
 
-    const sender = await this.store.sessions.findById(fromSessionId);
     await this.post(
       {
         id,

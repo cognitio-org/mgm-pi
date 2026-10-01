@@ -740,7 +740,15 @@ see `deploy/README.md` "Live-test identity". Laptop clients still use personal t
   read. The caller's answer to an INPUT_REQUIRED question (PR6) reaches pi as plain text, not
   wrapped as untrusted A2A input like the task prompt. "Private" memory (`a2a:<tokenId>`,
   `memory-identity.ts`) means per key and per owner within a trusted team, not isolation from the
-  team: anyone who can post into the session can steer what is recorded.
+  team: anyone who can post into the session can steer what is recorded. The tape's own LiteLLM
+  key is in pi's environment, and `redact()` is defence in depth only: the remote caller can read
+  that key (shared with the owner's runs of the tape and every A2A key listing it, and not revoked
+  with the A2A key). Use A2A-only tapes with a budgeted key, and rotate it when you revoke; per-task
+  minted keys are a follow-up.
+- An A2A session can't send or receive `outfitter_send` mail (a send is a session-file entry its
+  `bash` could forge), its run is refused once its key is revoked or expired, it never gets the
+  shared `outfitter-github-token-default` PAT or a per-tape LiteLLM secret that copies the org key,
+  and the owner's shared browser never answers its capture/action/inspect requests.
 
 ## Admin ops (Sysop tools, #286)
 

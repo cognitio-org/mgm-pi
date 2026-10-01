@@ -20,6 +20,7 @@ import { DriveAdmin } from "../src/admin/drive.ts";
 import { registerAdminOp, type AdminOp } from "../src/admin/ops.ts";
 import { FailedBearerCache } from "../src/routes/a2a.ts";
 import { OUTFITTER_TASK_EXTENSION } from "../src/a2a/card.ts";
+import { MAIL_ENTRY_TYPE, mailIdFor } from "../src/mail.ts";
 
 const OWNER = "dev@localhost";
 const TOOLS = ["read", "bash", "edit", "write"];
@@ -140,11 +141,12 @@ describe("A2A credentials: the tape's own LiteLLM key only", () => {
 });
 
 /** An A2A session with a run, as a task would leave it, and agentd's socket on it. */
-async function a2aRun(opts: { tape?: Partial<Guru>; session?: Partial<Session>; dedicated?: string[] } = {}) {
+async function a2aRun(opts: { tape?: Partial<Guru>; session?: Partial<Session>; dedicated?: string[]; key?: Partial<ApiToken> } = {}) {
   const store = new MemoryStore();
   const secretsBroker = new MemorySecretsBroker("", "sk-test-llm", opts.dedicated ? new Set(opts.dedicated) : undefined);
   const app = await buildTestApp({}, { store, secretsBroker });
   await seedTape(store, "coder", opts.tape);
+  await mintKey(store, {}, { id: "k1", ...opts.key });
   const now = new Date().toISOString();
   const session: Session = {
     id: "s1",
@@ -189,6 +191,8 @@ describe("A2A runs: agentlink.ts refuses at spec time", () => {
     ["a tape with env", { tape: { env: { TOKEN: "x" } } }, /tape refused/],
     ["a branch moved off outfitter/a2a-*", { session: { branch: "main" } }, /bad branch/],
     ["an 8-character A2A branch", { session: { branch: "outfitter/a2a-12345678" } }, /bad branch/],
+    ["a revoked key", { key: { revokedAt: new Date().toISOString() } }, /key inactive/],
+    ["an expired key", { key: { expiresAt: new Date(Date.now() - 1000).toISOString() } }, /key inactive/],
   ] as const) {
     test(`a run is refused (4412) for ${name}`, async () => {
       const { app, store, runId, agent } = await a2aRun(opts as never);
@@ -434,6 +438,65 @@ describe("/a2a negative bearer cache", () => {
     assert.equal((await call(token)).statusCode, 200);
     assert.equal((await call(token)).statusCode, 200);
     assert.equal(lookups, 3);
+    await app.fastify.close();
+  });
+});
+
+describe("A2A re-review fixes", () => {
+  const blank = (id: string, extra: Partial<Session> = {}): Session => {
+    const now = new Date().toISOString();
+    return { id, guruId: "coder", repo: null, status: "open", cost: 0, ownerEmail: OWNER, createdAt: now, updatedAt: now, ...extra };
+  };
+
+  test("an A2A Drive's outfitter_send entry is bounced, and no session can send into an A2A session", async () => {
+    const app = await buildTestApp();
+    await app.store.sessions.insert(blank("a2a-s", { origin: "a2a", a2aTokenId: "k1" }));
+    await app.store.sessions.insert(blank("owner-s"));
+    const entry = (to: string, id: string) => ({ id, parentId: null, type: "custom", customType: MAIL_ENTRY_TYPE, data: { to, text: "do something", urgent: true } });
+    assert.equal(await app.mail.handleAgentSend("a2a-s", entry("owner-s", "e1")), "a2a-s");
+    assert.equal(await app.store.mail.findById(mailIdFor("a2a-s", "e1")), null);
+    assert.match((await app.store.mail.findById(mailIdFor("a2a-s", "e1", "bounce")))?.text ?? "", /A2A task's session can't message/);
+    assert.equal(await app.mail.handleAgentSend("owner-s", entry("a2a-s", "e2")), "owner-s");
+    assert.equal(await app.store.mail.findById(mailIdFor("owner-s", "e2")), null);
+    await app.fastify.close();
+  });
+
+  test("GcpSecretsBroker: no shared GitHub PAT, and no copy of the org LiteLLM key, for an A2A session", async () => {
+    const secrets: Record<string, string> = {
+      "outfitter-github-token-default": "ghp_shared",
+      "outfitter-litellm-key-default": "sk-org",
+      "outfitter-litellm-key-copy": "sk-org",
+    };
+    const broker = new GcpSecretsBroker("p", async (id) => {
+      if (id in secrets) return secrets[id];
+      throw Object.assign(new Error("not found"), { code: 404 });
+    });
+    const guru = { id: "copy", name: "c", model: "m", createdAt: "", updatedAt: "" } as Guru;
+    const a2a = await broker.secretsForRun(blank("s1", { repo: "acme/widgets", origin: "a2a", a2aTokenId: "k1" }), guru);
+    assert.equal(a2a.githubToken, "");
+    assert.equal(a2a.litellmKey, "");
+    assert.equal(a2a.litellmKeySource, "none");
+    assert.equal(await broker.hasDedicatedLitellmKey("copy"), false);
+    const owner = await broker.secretsForRun(blank("s2", { repo: "acme/widgets" }), guru);
+    assert.equal(owner.githubToken, "ghp_shared");
+  });
+
+  test("a2aTapeProblem refuses extra packages", () => {
+    assert.match(a2aTapeProblem({ id: "t", tools: ["read"], packages: ["npm:x"] }) ?? "", /packages/);
+  });
+
+  test("a task is REJECTED when its key was revoked after the request authenticated", async () => {
+    const store = new MemoryStore();
+    await seedTape(store, "coder");
+    const app = await buildTestApp({ OUTFITTER_ROLE: "link", OUTFITTER_ORIGIN: "https://link.example" }, { store });
+    const { record } = await mintKey(store);
+    await store.tokens.update(record.id, { revokedAt: new Date().toISOString() });
+    const { task } = await app.a2a.start(
+      { id: record.id, name: record.name, ownerEmail: OWNER, scope: record.a2a! },
+      { messageId: randomUUID(), prompt: "go", title: "go" },
+    );
+    assert.equal(task.state, "rejected");
+    assert.equal(task.sessionId, undefined);
     await app.fastify.close();
   });
 });

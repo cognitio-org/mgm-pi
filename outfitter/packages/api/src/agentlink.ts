@@ -31,6 +31,7 @@ import { GithubBroker } from "./github-broker.ts";
 import { branchAllowed, branchPrefixForSession, isA2ABranch } from "./branch-policy.ts";
 import { A2A_NO_DEDICATED_KEY, a2aTapeProblem } from "./a2a/keys.ts";
 import { isA2ASession } from "./secrets.ts";
+import { isTokenActive } from "./tokens.ts";
 import { entryForWire } from "./entry-wire.ts";
 import { sessionJsonl } from "./session-jsonl.ts";
 import {
@@ -605,6 +606,11 @@ export class AgentLink {
     if (typeof requestId !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(requestId)) return;
     const now = new Date().toISOString();
     const session = await this.store.sessions.findById(sessionId);
+    // E9: the owner's browser never reaches a session a remote caller drives.
+    if (isA2ASession(session)) {
+      await this.sendCaptureResult(sessionId, { t: "browser.capture.result", requestId, error: "no_share" });
+      return;
+    }
     const saved = await this.store.browserRequests.insertPendingIfShared(sessionId, {
       id: requestId,
       sessionId,
@@ -664,6 +670,10 @@ export class AgentLink {
     }
     const now = new Date().toISOString();
     const session = await this.store.sessions.findById(sessionId);
+    if (isA2ASession(session)) {
+      await this.sendActionResult(sessionId, { t: "browser.action.result", requestId, error: "no_share" });
+      return;
+    }
     const saved = await this.store.browserRequests.insertPendingIfShared(sessionId, {
       id: requestId,
       sessionId,
@@ -718,6 +728,10 @@ export class AgentLink {
     if (typeof requestId !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(requestId)) return;
     const now = new Date().toISOString();
     const session = await this.store.sessions.findById(sessionId);
+    if (isA2ASession(session)) {
+      await this.sendInspectResult(sessionId, { t: "browser.inspect.result", requestId, error: "no_share" });
+      return;
+    }
     const saved = await this.store.browserRequests.insertPendingIfShared(sessionId, {
       id: requestId,
       sessionId,
@@ -1170,6 +1184,22 @@ export class AgentLink {
 
   private async buildRunSpec(run: Run, session: Session, guru: Guru): Promise<BuiltRunSpec> {
     const runId = run.id;
+    // E9 security review: an A2A session's run is checked again here, before anything is minted,
+    // whatever woke it: its key (revoked or expired: no more work in the caller's name), the tape
+    // as it stands now (the web UI may have changed it since the task started), its branch (a
+    // teleport import must not move it off `outfitter/a2a-*`), and below its LiteLLM key.
+    const a2aSession = isA2ASession(session);
+    if (a2aSession) {
+      const token = session.a2aTokenId ? await this.store.tokens.findById(session.a2aTokenId) : null;
+      if (!token || !isTokenActive(token)) {
+        throw new A2ARunRefusedError(`a2a session ${session.id}: key inactive`, "this A2A session's key was revoked or has expired, so it can't run.");
+      }
+      const problem = a2aTapeProblem(guru);
+      if (problem) throw new A2ARunRefusedError(`a2a session ${session.id}: tape refused`, `${problem}, so this A2A session can't run.`);
+      if (session.repo && !isA2ABranch(session.branch)) {
+        throw new A2ARunRefusedError(`a2a session ${session.id}: bad branch`, "this A2A session's branch isn't an outfitter/a2a-* branch, so it can't run.");
+      }
+    }
     // E2.8 laptop model preflight (src/laptop.ts): swap a laptop-only model for the guru's cloud
     // fallback when the laptop tunnel probes offline, and record it on the run for the UI.
     const wanted = session.modelOverride ?? guru.model;
@@ -1201,17 +1231,6 @@ export class AgentLink {
       updatedAt: new Date().toISOString(),
     });
 
-    // E9 security review: an A2A session's run is checked again here, whatever let it be woken: the
-    // tape as it stands now (the web UI may have changed it since the task started), its branch
-    // (a teleport import must not move it off `outfitter/a2a-*`), and below its LiteLLM key.
-    const a2aSession = isA2ASession(session);
-    if (a2aSession) {
-      const problem = a2aTapeProblem(guru);
-      if (problem) throw new A2ARunRefusedError(`a2a session ${session.id}: tape refused`, `${problem}, so this A2A session can't run.`);
-      if (session.repo && !isA2ABranch(session.branch)) {
-        throw new A2ARunRefusedError(`a2a session ${session.id}: bad branch`, "this A2A session's branch isn't an outfitter/a2a-* branch, so it can't run.");
-      }
-    }
     const secrets = await this.secretsBroker.secretsForRun(session, guru);
     // A remote caller spends the tape's own LiteLLM key (a bounded, revocable budget), never the
     // org-wide default; GcpSecretsBroker doesn't fall back for an A2A session. Not exempt in dev

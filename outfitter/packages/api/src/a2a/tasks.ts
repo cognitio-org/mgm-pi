@@ -186,6 +186,10 @@ export class A2ATasks {
       return this.finish(row, "rejected", "one task at a time per context: wait for the last one or cancel it");
     }
     await this.reconcileKey(key.id, contextId);
+    // The key may have been revoked since this request authenticated, after the revocation's
+    // endForKey listed the key's open tasks: nothing starts on it now.
+    const token = await this.store.tokens.findById(key.id);
+    if (!token || !isTokenActive(token, this.now())) return this.finish(row, "rejected", "the A2A key was revoked or has expired");
     if (!(await this.store.a2aTasks.claimSlot(key.id, row.id, key.scope.maxConcurrent))) {
       const n = key.scope.maxConcurrent;
       return this.finish(row, "rejected", `this key already has ${n} task${n === 1 ? "" : "s"} or Drive${n === 1 ? "" : "s"} in progress, its limit`);

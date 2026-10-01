@@ -38,13 +38,15 @@ export const A2A_TAPE_TOOLS: readonly string[] = ["read", "grep", "find", "ls", 
  *   whatever the Drive adds, which is not something to hand a remote caller.
  */
 export function a2aTapeProblem(
-  guru: Pick<Guru, "id" | "adminTools" | "agentEngine" | "memory" | "mergeFromCloud" | "env" | "tools">,
+  guru: Pick<Guru, "id" | "adminTools" | "agentEngine" | "memory" | "mergeFromCloud" | "env" | "tools" | "packages">,
 ): string | undefined {
   if (hasAdminTools(guru)) return `tape "${guru.id}" has admin tools`;
   if (guru.agentEngine === true) return `tape "${guru.id}" can call Agent Engine agents`;
   if (guru.memory === "auto") return `tape "${guru.id}" has automatic memory`;
   if (guru.mergeFromCloud === true) return `tape "${guru.id}" may merge from the cloud`;
   if (guru.env && Object.keys(guru.env).length > 0) return `tape "${guru.id}" sets environment variables`;
+  // An extension package's code runs at load whatever `tools` says.
+  if (Array.isArray(guru.packages) && guru.packages.length > 0) return `tape "${guru.id}" loads extra packages`;
   if (!Array.isArray(guru.tools) || guru.tools.length === 0) return `tape "${guru.id}" has no tools list`;
   const outside = guru.tools.filter((t) => !A2A_TAPE_TOOLS.includes(t));
   if (outside.length > 0) {

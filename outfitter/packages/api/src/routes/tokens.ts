@@ -93,10 +93,10 @@ export async function registerTokenRoutes(app: FastifyInstance, ctx: RouteContex
     // Same 404 whether the token doesn't exist or belongs to someone else -- don't confirm another
     // user's token id exists.
     if (!existing || existing.ownerEmail !== email) return reply.code(404).send({ error: "token not found" });
-    if (existing.revokedAt) return { record: publicToken(existing) };
-    const updated = await ctx.store.tokens.update(id, { revokedAt: new Date().toISOString() });
+    const updated = existing.revokedAt ? existing : await ctx.store.tokens.update(id, { revokedAt: new Date().toISOString() });
     // E9 security review: revoking an A2A key stops its work, not just its next request. Its open
-    // tasks are canceled and its Drives stopped now; the tick sweep ends whatever this misses.
+    // tasks are canceled and its Drives stopped now; the tick sweep ends whatever this misses. A
+    // repeated DELETE of a revoked key runs it again (a retry after a failed first try).
     if (tokenKind(existing) === "a2a") {
       await ctx.a2a.endForKey(id, "canceled", "the A2A key was revoked").catch((err) => {
         req.log.warn({ err }, "a2a: ending a revoked key's tasks failed; the tick sweep will retry");

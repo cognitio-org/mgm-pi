@@ -73,8 +73,9 @@ export function branchPrefixForSession(
   session: { origin?: string; a2aTokenId?: string; branch?: string } | null | undefined,
   guruPrefix: unknown,
 ): string {
-  if (session?.origin !== undefined || session?.a2aTokenId !== undefined) {
-    return isA2ABranch(session.branch) ? `${session.branch}/` : NO_PREFIX;
+  // The same test as secrets.ts's isA2ASession (this module has no imports).
+  if ((session?.origin ?? "") !== "" || (session?.a2aTokenId ?? "") !== "") {
+    return isA2ABranch(session?.branch) ? `${session?.branch}/` : NO_PREFIX;
   }
   return branchPrefixOf(guruPrefix);
 }

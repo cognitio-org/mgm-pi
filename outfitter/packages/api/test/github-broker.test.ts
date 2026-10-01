@@ -115,6 +115,10 @@ async function socketApp(opts: { mergeFromCloud?: boolean; a2a?: boolean } = {})
     ...(opts.a2a ? { tools: ["read", "bash", "github_pr"] } : {}),
   });
   const now = new Date().toISOString();
+  if (opts.a2a) {
+    // And an active key behind it.
+    await store.tokens.insert({ id: "k1", ownerEmail: "o@x", name: "k", prefix: "outf_x", hash: "h-k1", createdAt: now, expiresAt: new Date(Date.now() + 86_400_000).toISOString(), kind: "a2a", a2a: { tapes: ["test-guru"], repos: ["acme/widgets"], maxConcurrent: 2 } });
+  }
   const session: Session = {
     id: "s1",
     guruId: "test-guru",

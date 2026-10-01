@@ -72,6 +72,41 @@ export function laptopContext(raw: unknown): { ok: true; value?: LaptopContext }
   return { ok: true, value: { sessionId } };
 }
 
+/**
+ * A Dongle's `memory.*` calls per minute, per owner (E9.9): recall runs on every laptop prompt and
+ * recording after every turn, so this is generous for a person and a ceiling for a runaway client
+ * or a leaked Dongle (each call can cost Agent Engine retrieval, embedding and extraction).
+ * In-process, per instance: a bound on cost, not an exact quota.
+ */
+export class MemoryRateLimit {
+  private readonly windows = new Map<string, { start: number; count: number }>();
+  perMinute: number;
+  private readonly now: () => number;
+
+  constructor(perMinute = 120, now: () => number = Date.now) {
+    this.perMinute = perMinute;
+    this.now = now;
+  }
+
+  /** True when `key` may make one more call now (and counts it). */
+  take(key: string): boolean {
+    if (this.perMinute < 1) return false;
+    const t = this.now();
+    if (this.windows.size > 1_000) for (const [k, w] of this.windows) if (t - w.start >= 60_000) this.windows.delete(k);
+    const w = this.windows.get(key);
+    if (!w || t - w.start >= 60_000) {
+      this.windows.set(key, { start: t, count: 1 });
+      return true;
+    }
+    if (w.count >= this.perMinute) return false;
+    w.count += 1;
+    return true;
+  }
+}
+
+/** The route's limiter (tests lower `perMinute`). */
+export const laptopMemoryRate = new MemoryRateLimit();
+
 async function ready(ctx: AdminContext, caller: AdminCaller): Promise<Ready | { ok: false; error: string }> {
   const memory = ctx.agentEngine?.memory;
   if (!memory) return { ok: false, error: "Agent Engine memory is not configured on this Outfitter" };
@@ -396,6 +431,8 @@ registerAdminOp("memory.save", {
 // ---------- laptop turn recording (E9.9) ----------
 
 const MAX_RECORD_TURNS = 20;
+/** Raw text a turn may bring, before redaction and the recorder's own 8,000-character cap. */
+const MAX_RECORD_RAW = 32_000;
 const ENTRY_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 type RecordTurn = { entryId: string; role: "user" | "assistant"; text: string };
@@ -410,6 +447,7 @@ function recordArgs(args: Record<string, unknown>): RecordTurn[] | { error: stri
     if (typeof entryId !== "string" || !ENTRY_ID.test(entryId)) return { error: "each turn needs an entryId (pi's entry id)" };
     if (role !== "user" && role !== "assistant") return { error: "role must be user or assistant" };
     if (typeof text !== "string") return { error: "text must be a string" };
+    if (text.length > MAX_RECORD_RAW) return { error: `text is too long (${MAX_RECORD_RAW} characters at most)` };
     out.push({ entryId, role, text });
   }
   return out;
@@ -419,7 +457,9 @@ function recordArgs(args: Record<string, unknown>): RecordTurn[] | { error: stri
  * A laptop's own turns into its owner's memory, when the person opted in (Kernal's
  * `memoryRecord`): user prompts and final assistant messages, never tool output (Kernal sends
  * neither tool calls nor results, and this op takes text only). Redacted and capped here as well,
- * keyed `laptop:<pi session id>:<entry id>` so a resend dedupes. Not audited: it is the person's own
+ * keyed `<user hash>:laptop:<pi session id>:<entry id>` so a resend dedupes. The user hash is in
+ * the key because the session id is the client's to choose: another Dongle holder who learned it
+ * could otherwise claim the same keys first, in case Agent Engine scopes keys per project. Not audited: it is the person's own
  * transcript going into their own private memory, many times a session (usage.ts counts it).
  */
 registerAdminOp("memory.record", {
@@ -440,7 +480,7 @@ registerAdminOp("memory.record", {
       const content = recordableText(t.role, t.text);
       if (content === undefined) continue;
       try {
-        await bound.recordTurn({ role: t.role, content, idempotencyKey: `${r.id.sessionId}:${t.entryId}` });
+        await bound.recordTurn({ role: t.role, content, idempotencyKey: `${r.id.userId}:${r.id.sessionId}:${t.entryId}` });
         memoryUsage.note("recordTurn");
         recorded += 1;
       } catch (err) {

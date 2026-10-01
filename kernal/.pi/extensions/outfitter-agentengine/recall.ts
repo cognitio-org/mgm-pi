@@ -13,6 +13,7 @@
  * - The text is untrusted: the API frames it as notes that may be wrong, never instructions, and
  *   this side makes sure it can't close the `<memory>` tag it sits in.
  */
+import { redact } from "../_shared/redact.ts";
 import type { AdminTransport, LaptopContext } from "../outfitter-admin/transport.ts";
 
 export const RECALL_TIMEOUT_MS = 3_000;
@@ -39,9 +40,10 @@ export function applyMemory(options: PromptOptions | undefined, text: string | u
   }
 }
 
-/** The prompt as a recall query, or "" for none. */
+/** The prompt as a recall query, or "" for none: redacted here before it leaves the laptop (the API
+ * redacts again before embedding), then cut. */
 export function recallQuery(prompt: unknown): string {
-  return typeof prompt === "string" ? prompt.trim().slice(0, MAX_QUERY) : "";
+  return typeof prompt === "string" ? redact(prompt.trim()).slice(0, MAX_QUERY) : "";
 }
 
 /**

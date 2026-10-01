@@ -787,8 +787,12 @@ outline|text, `around`, `window`, `from`, `maxChars`, `toolOutput` none|trimmed|
     `type: "taxonomic"` returns `needsApproval: true` unless `confirmed` is true (Kernal's TUI yes).
   - `memory.record {turns: [{entryId, role: "user"|"assistant", text}]}`: 1 to 20 turns, laptop
     only (a Drive is refused). Each text is redacted and capped; relayed mail and Outfitter notices
-    are skipped. It calls `recordTurn` with `idempotencyKey = laptop:<pi session id>:<entry id>`.
-    Not audited. Kernal sends it only when the person opted in (`kernal.memoryRecord`).
+    are skipped, and raw text over 32,000 characters is refused. It calls `recordTurn` with
+    `idempotencyKey = <user hash>:laptop:<pi session id>:<entry id>`. Not audited. Kernal sends it
+    only when the person opted in (`kernal.memoryRecord`).
+  - At most 120 `memory.*` calls a minute per owner, per api instance; past that, `too many memory
+    calls from this Dongle; try again in a minute`.
+  - Saves are audited with the laptop's session id.
 - Every non-read op that passes those checks writes an `adminAudit` row, except `memory.record`.
 
 ## Browser companion

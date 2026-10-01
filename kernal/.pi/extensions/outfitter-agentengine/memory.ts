@@ -12,6 +12,7 @@
  * context, and a shared or taxonomic save asks the person in the TUI first (the API takes
  * `confirmed` as their yes); with nobody at the terminal it is refused here.
  */
+import { redact } from "../_shared/redact.ts";
 import type { AdminReply, AdminTransport, LaptopContext } from "../outfitter-admin/transport.ts";
 
 export type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean; details?: unknown };
@@ -76,23 +77,38 @@ function result(reply: AdminReply): ToolResult {
 
 const fail = (text: string): ToolResult => ({ content: [{ type: "text", text }], isError: true, details: undefined });
 
+/** Model text as the person sees it in a confirm: no control characters (an escape sequence could
+ * hide or redraw what they are agreeing to), clipped. */
+export function shown(text: string, max: number): string {
+  const flat = text.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, " ");
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
+/** A laptop's args with the free text redacted before it leaves the machine (the API does it too). */
+function redacted(args: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...args };
+  for (const key of ["query", "text", "label"]) if (typeof out[key] === "string") out[key] = redact(out[key] as string);
+  return out;
+}
+
 export async function runMemory(params: Record<string, any>, transport: AdminTransport, signal?: AbortSignal, laptop: LaptopCall = {}): Promise<ToolResult> {
   const mapped = memoryOp(params ?? {});
   if ("error" in mapped) return fail(mapped.error);
   if (transport.kind !== "laptop") return result(await transport.call(mapped.op, mapped.args, { signal }));
   if (!laptop.laptop) return fail("memory: this session has no id yet; try again after the first prompt");
-  const shared = mapped.op === "memory.save" && (mapped.args.shared === true || mapped.args.type === "taxonomic");
-  if (!shared) return result(await transport.call(mapped.op, mapped.args, { signal, laptop: laptop.laptop }));
+  const args = redacted(mapped.args);
+  const shared = mapped.op === "memory.save" && (args.shared === true || args.type === "taxonomic");
+  if (!shared) return result(await transport.call(mapped.op, args, { signal, laptop: laptop.laptop }));
   // Shared memory is recalled into the other users' prompts: the person says yes first.
   if (!laptop.confirm) return fail("memory: a shared memory needs your yes at the terminal; save it privately, or run Kernal in the TUI");
-  const text = String(mapped.args.text);
+  const label = typeof args.label === "string" && args.label.trim() ? `, label "${shown(args.label, 120)}"` : "";
   const yes = await laptop.confirm(
     "Save a shared memory?",
-    `Everyone on your Outfitter will have this recalled into their prompts:\n\n${text.length > 600 ? `${text.slice(0, 599)}…` : text}`,
+    `Everyone on your Outfitter will have this recalled into their prompts (${shown(String(args.type), 20)}${label}):\n\n${shown(String(args.text), 600)}`,
     signal,
   );
   if (!yes) return fail("memory: not saved (you said no)");
-  return result(await transport.call(mapped.op, mapped.args, { signal, laptop: laptop.laptop, confirmed: true }));
+  return result(await transport.call(mapped.op, args, { signal, laptop: laptop.laptop, confirmed: true }));
 }
 
 /** On a laptop: how to get each call's context and confirm (laptop.ts). */

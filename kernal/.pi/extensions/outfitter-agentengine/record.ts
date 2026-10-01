@@ -42,34 +42,41 @@ export function cleanText(raw: string): string {
 }
 
 /**
- * The last turn on a branch (oldest first, as getBranch returns it): its user prompt and final
- * assistant text, minus entries already sent. Nothing when the newest user entry has no text.
+ * The last turn on a branch (oldest first, as getBranch returns it): its user prompts (the one that
+ * started it and any sent while it ran) and its final assistant text, minus entries already sent.
+ * The turn starts after the previous turn's answer: an assistant message that ended for any reason
+ * but a tool call.
  */
 export function lastTurn(branch: readonly Entry[], sent: ReadonlySet<string> = new Set()): Turn[] {
   let final: Turn | undefined;
   let seenAssistant = false;
+  let seenUser = false;
+  const prompts: Turn[] = [];
   for (let i = branch.length - 1; i >= 0; i--) {
     const e = branch[i];
     if (e?.type !== "message" || typeof e.id !== "string") continue;
     const role = e.message?.role;
-    // Only the turn's last assistant message is its answer; an earlier one is a step between tools.
     if (role === "assistant") {
-      if (seenAssistant) continue;
-      seenAssistant = true;
-      if (e.message?.stopReason === "error" || e.message?.stopReason === "aborted") continue;
-      const text = textOf(e.message?.content).trim();
-      if (text) final = { entryId: e.id, role: "assistant", text: cleanText(text) };
+      // Only the turn's last assistant message is its answer; an earlier one is a step between tools.
+      if (!seenAssistant) {
+        seenAssistant = true;
+        if (e.message?.stopReason === "error" || e.message?.stopReason === "aborted") continue;
+        const text = textOf(e.message?.content).trim();
+        if (text) final = { entryId: e.id, role: "assistant", text: cleanText(text) };
+        continue;
+      }
+      // Before this turn's prompts: the previous turn's answer ends the walk.
+      if (seenUser && e.message?.stopReason !== "toolUse") break;
       continue;
     }
     if (role === "user") {
+      seenUser = true;
       const text = textOf(e.message?.content).trim();
-      if (!text) return [];
-      const turn: Turn[] = [{ entryId: e.id, role: "user", text: cleanText(text) }];
-      if (final) turn.push(final);
-      return turn.filter((t) => !sent.has(t.entryId));
+      if (text) prompts.unshift({ entryId: e.id, role: "user", text: cleanText(text) });
     }
   }
-  return [];
+  if (!seenUser) return [];
+  return [...prompts, ...(final ? [final] : [])].filter((t) => !sent.has(t.entryId));
 }
 
 /** The background queue: `note` after each turn, `flush` at shutdown. */

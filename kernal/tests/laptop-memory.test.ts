@@ -180,6 +180,14 @@ describe("laptop context", () => {
 });
 
 describe("recall", () => {
+  test("the query is redacted before it is sent", async () => {
+    const { pi, emit } = fakePi();
+    const { transport, calls } = fakeTransport();
+    register(pi, { transport, env: {}, settings: {}, repoOf });
+    await emit("before_agent_start", { prompt: "use sk-ant-abcdefghijklmnopqrstu here", systemPromptOptions: {} }, ctxOf().ctx);
+    assert.ok(!String(calls[0].args.query).includes("sk-ant-"));
+  });
+
   test("puts memory.context's answer in sections.memory, with the laptop context", async () => {
     const { pi, emit } = fakePi();
     const { transport, calls } = fakeTransport(() => ({ ok: true, text: "Notes from earlier sessions.\n- tests: npm run test:unit" }));
@@ -239,6 +247,16 @@ describe("the memory tool on a laptop", () => {
     assert.deepEqual([calls[0].op, calls[0].opts.laptop, calls[0].opts.confirmed], ["memory.save", LAPTOP, undefined]);
   });
 
+  test("free text is redacted before it leaves the laptop; the confirm shows type and label, no escapes", async () => {
+    const { transport, calls } = fakeTransport();
+    await runMemory({ action: "search", query: "why does token=ghp_abcdefghijklmnopqrstuvwxyz0123 fail" }, transport, undefined, { laptop: LAPTOP });
+    assert.ok(!String(calls[0].args.query).includes("ghp_"));
+    let shownText = "";
+    await runMemory({ action: "save", type: "taxonomic", text: "a \x1b[2Jhidden\x1b[0m term\u0007", label: "outfitter:tape", shared: true }, transport, undefined, { laptop: LAPTOP, confirm: async (_t, m) => ((shownText = m), true) });
+    assert.match(shownText, /taxonomic, label "outfitter:tape"/);
+    assert.doesNotMatch(shownText, /[\x00-\x08\x0b-\x1f\x7f]/);
+  });
+
   test("a shared or taxonomic save asks first, then sends confirmed; no / nobody there: nothing sent", async () => {
     const asked: string[] = [];
     const yes = fakeTransport();
@@ -292,6 +310,20 @@ describe("recording (opt-in)", () => {
     assert.ok(!JSON.stringify(turns).includes("hmm"));
     assert.deepEqual(lastTurn(branch, new Set(["u1"])).map((t) => t.entryId), ["a2"], "already sent is skipped");
     assert.deepEqual(lastTurn([...branch.slice(0, 5), msg("a3", "assistant", [{ type: "text", text: "x" }], "aborted")]).map((t) => t.entryId), ["u1"], "an aborted answer isn't recorded");
+  });
+
+  test("prompts sent while the turn ran are recorded too, back to the previous answer", () => {
+    const steered = [
+      msg("u0", "user", "earlier"),
+      msg("a0", "assistant", [{ type: "text", text: "earlier answer" }], "stop"),
+      msg("u1", "user", "first"),
+      msg("a1", "assistant", [{ type: "toolCall", name: "bash" }], "toolUse"),
+      msg("t1", "toolResult", [{ type: "text", text: "out" }]),
+      msg("u2", "user", "also this"),
+      msg("a2", "assistant", [{ type: "text", text: "both done" }], "stop"),
+    ];
+    assert.deepEqual(lastTurn(steered).map((t) => t.entryId), ["u1", "u2", "a2"]);
+    assert.deepEqual(lastTurn([msg("a", "assistant", [{ type: "text", text: "hi" }])]), [], "no prompt, no turn");
   });
 
   test("queued in the background as memory.record with the laptop context; a turn goes once", async () => {
@@ -379,7 +411,11 @@ describe("pi-memory", () => {
     };
     try {
       const on = run({ kernal: {} }, DONGLE);
-      assert.match(on, /dir=\S*kernal-no-pi-memory\.\S+ sum=0 off=1 src=\/h\/\.pi\/agent\/memory/);
+      assert.match(on, /dir=\S*kernal-no-pi-memory\/\S+ sum=0 off=1 src=\/h\/\.pi\/agent\/memory/);
+      assert.equal(run({ subagents: { memory: "off" }, kernal: { memory: "auto" } }, DONGLE).includes("off=1"), true, "only kernal.memory counts");
+      writeFileSync(join(dir, "settings.json"), JSON.stringify({ kernal: { memory: "off" } }));
+      const minified = execFileSync("bash", ["-c", `${fn}\npi_memory_env\necho "off=\${KERNAL_PI_MEMORY_OFF:-}"`], { encoding: "utf8", env: { PATH: process.env.PATH ?? "", HOME: "/h", TMPDIR: dir, PI_CODING_AGENT_DIR: dir, ...DONGLE } }).trim();
+      assert.equal(minified, "off=", "one-line JSON is read too");
       assert.match(run({ kernal: { memory: "tool" } }, { ...DONGLE, PI_MEMORY_DIR: "/mine" }), /sum=0 off=1 src=\/mine$/);
       assert.equal(run({ kernal: { memory: "off" } }, DONGLE), "dir= sum= off= src=");
       assert.equal(run({ kernal: {} }, {}), "dir= sum= off= src=", "no Dongle: pi-memory stays");
@@ -479,5 +515,33 @@ describe("/memory and the import", () => {
     const second = ctxOf();
     await again.emit("session_start", {}, second.ctx);
     assert.equal(second.notes.length, 0);
+  });
+});
+
+describe("the Dongle is shared by every extension's copy of outfitter-env", () => {
+  test("two module instances (pi loads each extension with its own jiti): both get the token", async () => {
+    const saved = { api: process.env.OUTFITTER_API, token: process.env.OUTFITTER_TOKEN };
+    const slot = Symbol.for("kernal.outfitterCredentials");
+    const g = globalThis as any;
+    const before = g[slot];
+    delete g[slot];
+    process.env.OUTFITTER_API = "https://link.example";
+    process.env.OUTFITTER_TOKEN = "outf_shared_test";
+    try {
+      const url = new URL("../.pi/extensions/_shared/outfitter-env.ts", import.meta.url).href;
+      const a = await import(`${url}?instance=a`);
+      const b = await import(`${url}?instance=b`);
+      assert.notEqual(a, b, "separate module instances");
+      assert.equal(a.outfitterCredentials().token, "outf_shared_test");
+      assert.equal(process.env.OUTFITTER_TOKEN, undefined, "scrubbed by the first");
+      assert.equal(b.outfitterCredentials().token, "outf_shared_test", "the second still has it");
+    } finally {
+      if (before === undefined) delete g[slot];
+      else g[slot] = before;
+      for (const [k, v] of [["OUTFITTER_API", saved.api], ["OUTFITTER_TOKEN", saved.token]] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
   });
 });

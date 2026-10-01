@@ -170,10 +170,22 @@ if [[ -x "$ROOT/pi/pi" ]]; then PI="$ROOT/pi/pi"; else PI="$ROOT/node_modules/.b
 pi_memory_env() {
   [[ -z "${OUTFITTER_SESSION_ID:-}" && -z "${OUTFITTER_ADMIN_SOCKET:-}" ]] || return 0
   [[ -n "${OUTFITTER_API:-}" && -n "${OUTFITTER_TOKEN:-}" ]] || return 0
-  local mode empty
-  mode="$(sed -nE 's/^[[:space:]]*"memory":[[:space:]]*"(off|tool|auto)".*/\1/p' "$PI_CODING_AGENT_DIR/settings.json" 2>/dev/null | head -1)"
+  local mode empty parent settings="$PI_CODING_AGENT_DIR/settings.json"
+  # Exactly kernal.memory, the way the extension reads it (unparseable JSON reads as unset there too).
+  # Without node, the first `"memory": "off|tool|auto"` line, which is where /memory writes it.
+  if command -v node >/dev/null 2>&1; then
+    mode="$(node -e 'try { const k = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).kernal; const m = k && k.memory; if (["off", "tool", "auto"].includes(m)) process.stdout.write(m); } catch {}' "$settings" 2>/dev/null || true)"
+  else
+    mode="$(sed -nE 's/^[[:space:]]*"memory":[[:space:]]*"(off|tool|auto)".*/\1/p' "$settings" 2>/dev/null | head -1)"
+  fi
   [[ "${mode:-auto}" != off ]] || return 0
-  empty="$(mktemp -d "${TMPDIR:-/tmp}/kernal-no-pi-memory.XXXXXX" 2>/dev/null)" || return 0
+  # A fresh empty directory per start (pi-memory writes compaction handoffs into it, which must not
+  # reach another session), under one private parent whose day-old leftovers are cleared here.
+  parent="${TMPDIR:-/tmp}"; parent="${parent%/}/kernal-no-pi-memory"
+  mkdir -p -m 700 "$parent" 2>/dev/null || return 0
+  [[ -d "$parent" && ! -L "$parent" && -O "$parent" ]] || return 0
+  find "$parent" -mindepth 1 -maxdepth 1 -type d -mtime +1 -exec rm -rf {} + 2>/dev/null || true
+  empty="$(mktemp -d "$parent/XXXXXX" 2>/dev/null)" || return 0
   export KERNAL_PI_MEMORY_SOURCE="${KERNAL_PI_MEMORY_SOURCE:-${PI_MEMORY_DIR:-$HOME/.pi/agent/memory}}"
   export PI_MEMORY_DIR="$empty" PI_MEMORY_EXIT_SUMMARY=0 KERNAL_PI_MEMORY_OFF=1
 }

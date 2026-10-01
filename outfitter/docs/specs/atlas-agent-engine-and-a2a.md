@@ -492,7 +492,10 @@ a one-time import.
     recorder): trimmed, relayed mail and Outfitter's notices dropped, `redact.ts`, capped at 8,000
     characters.
   - Each turn is sent with `recordTurn` on a handle bound to `{userId, sessionId: "laptop:<id>"}`,
-    `idempotencyKey = laptop:<pi session id>:<entry id>`, so a resend dedupes.
+    `idempotencyKey = <user hash>:laptop:<pi session id>:<entry id>`, so a resend dedupes. The user
+    hash is there because the client chooses the session id. Without it, another Dongle holder who
+    learned the id could claim the keys first, if Agent Engine scopes keys per project rather than
+    per user. Raw text over 32,000 characters is refused.
   - A Drive caller is refused (`a Drive records its turns itself`): the api records Drive turns from
     stored entries (§3.3).
   - **Not audited (decision):** it is the person's own transcript going into their own private
@@ -509,14 +512,23 @@ a one-time import.
     asks in the TUI first, saying what is sent. Changes apply at the next start.
   - **Tool (`tool`, `auto`):** the Drive's `memory` tool, over the HTTP transport, with `laptop` on
     every call. A shared or taxonomic save asks with `ctx.ui.confirm` first, then sends `confirmed`.
+    The confirm shows the type, the label and the text, with control characters stripped.
+  - **Credentials:** pi loads each extension in its own module instance (jiti, `moduleCache:
+    false`). So the Dongle cache in `_shared/outfitter-env.ts` lives on `globalThis`
+    (`Symbol.for("kernal.outfitterCredentials")`). Otherwise outfitter-admin's scrub would leave
+    outfitter-agentengine with no token.
+  - **Redaction:** the recall query and the tool's `query`, `text` and `label` go through
+    `_shared/redact.ts` before they leave the laptop. The api redacts them again.
   - **Recall (`auto`):** on `before_agent_start`, `memory.context {query: prompt}`. It gives up after
     3 s and aborts the request; any error is skipped. "Not configured", "Drive only" and "newer
     Kernal" errors are told once a process. The answer goes in `sections.memory` (or appended to a
     forced prompt) with `memoryBlock`'s tag escaping, the same code as agentd's recall extension
     (`recall.ts`). A test checks the two produce the same block.
-  - **Recording (`memoryRecord`):** after each turn (`agent_end`), the branch's last user prompt and
-    its final assistant message (the last assistant entry only, not aborted or errored), text blocks
-    only.
+  - **Recording (`memoryRecord`):** after each turn (`agent_end`), text blocks only, from:
+    - the turn's user prompts: the one that started it, and any sent while it ran, back to the
+      previous turn's answer;
+    - its final assistant message: the last assistant entry only, and not if it was aborted or
+      errored.
     - Never tool calls, tool results, thinking or custom messages.
     - Redacted with `_shared/redact.ts` (the api redacts again).
     - Queued (at most 100) and sent in batches of 20, one session per batch, in the background. The
@@ -525,9 +537,15 @@ a one-time import.
     - Its seven tools are taken out of the active set at `session_start` (`setActiveTools`).
     - Prompt injection: pi-memory reads `PI_MEMORY_DIR` when it is imported, possibly before this
       extension runs, so `bin/kernal` (`pi_memory_env`) works out the same mode from settings.json
-      and the Dongle before it starts pi. When memory is on it sets `PI_MEMORY_DIR` to a fresh empty
-      directory and `PI_MEMORY_EXIT_SUMMARY=0`, and keeps the real directory in
-      `KERNAL_PI_MEMORY_SOURCE` (with `KERNAL_PI_MEMORY_OFF=1`). Never inside a Drive.
+      and the Dongle before it starts pi.
+      - It reads exactly `kernal.memory` with node. Without node, it falls back to `sed` on the
+        line `/memory` writes.
+      - When memory is on, it sets `PI_MEMORY_DIR` to a fresh empty directory and
+        `PI_MEMORY_EXIT_SUMMARY=0`, and keeps the real directory in `KERNAL_PI_MEMORY_SOURCE` (with
+        `KERNAL_PI_MEMORY_OFF=1`).
+      - The empty directory is a new `mktemp -d` under a private `$TMPDIR/kernal-no-pi-memory`
+        (day-old ones are removed), because pi-memory writes compaction handoffs into it.
+      - Never inside a Drive.
     - The extension also sets `PI_MEMORY_EXIT_SUMMARY=0`, which pi-memory reads at exit.
   - **Import (`/memory import`, offered once in the TUI when there are notes):**
     - Reads `MEMORY.md` in the real pi-memory directory. pi-memory's `<!-- time [session] -->` stamps
@@ -541,6 +559,19 @@ a one-time import.
       upserts instead of doubling.
     - Daily logs and the scratchpad are not imported: they are running notes, and Agent Engine
       extracts episodes from recorded turns.
+- **Rate limit:** a Dongle's `memory.*` calls are capped per owner at 120 a minute
+  (`MemoryRateLimit`, in-process per instance, so it bounds cost rather than setting an exact quota).
+  Past the cap the reply is `too many memory calls from this Dongle; try again in a minute`.
+- **Security limits (owner check):**
+  - **`confirmed` is the client's word.** The agent's shell runs as the same user, so it can read
+    the Dongle from the `.env` it came from, or from pi's original environment (`ps eww` on macOS).
+    Scrubbing it from `process.env` (`_shared/outfitter-env.ts`) is a speed bump. A prompt-injected
+    agent could therefore save a shared memory without the TUI confirm, and that memory is then
+    recalled into every teammate's prompt. The same was already true of a laptop `delete`.
+  - The owner chose the TUI confirm (#349). The alternatives: route a Dongle's shared saves through
+    the web approval card, or refuse them from laptops.
+  - **Repo is unverified.** A confirmed shared save can be filed under a repo the person can't
+    reach, and it then shows in other users' recall for that repo.
 - **Cost:** recall retrieves on every laptop prompt too (§3.4), now the default for every Dongle
   holder. `/memory tool` keeps the tool without per-prompt recall.
 - **Ships in:** Kernal v0.2.11, after an Outfitter release with this api, since an older api answers

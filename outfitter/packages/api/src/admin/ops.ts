@@ -584,7 +584,8 @@ export function registerAdminOp(name: string, op: AdminOp): () => void {
   if (op.laptop && (op.capability !== "memory" || (op.kind !== "read" && op.kind !== "write"))) {
     throw new Error(`admin op ${name}: only a memory read or write may be laptop-callable`);
   }
-  if (op.audit === false && op.kind !== "write") throw new Error(`admin op ${name}: only a write may skip the audit`);
+  // Skipping the audit is for a laptop's own memory writes (memory.record) only.
+  if (op.audit === false && (op.kind !== "write" || !op.laptop)) throw new Error(`admin op ${name}: only a laptop memory write may skip the audit`);
   ADMIN_OPS[name] = op;
   return () => {
     if (ADMIN_OPS[name] === op) delete ADMIN_OPS[name];
@@ -714,7 +715,7 @@ export async function runAdminOp(ctx: AdminContext, caller: AdminCaller, op: unk
         at: new Date(nowOf(ctx)).toISOString(),
         actor: caller.email,
         via: caller.via,
-        sessionId: caller.sessionId,
+        sessionId: caller.sessionId ?? caller.laptop?.sessionId,
         runId: caller.runId,
         op,
         target: result.target ?? (typeof a.id === "string" ? a.id : undefined),

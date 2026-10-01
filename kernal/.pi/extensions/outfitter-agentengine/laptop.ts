@@ -175,7 +175,10 @@ export function registerLaptopMemory(pi: any, transport: AdminTransport, deps: L
           onError: (error) => {
             if (told || !/not configured|works only in a Drive|newer Kernal|no admin ops/.test(error)) return;
             told = true;
-            ctx?.ui?.notify?.(`memory: ${error} (recall is skipped; /memory off to stop asking)`, "warning");
+            ctx?.ui?.notify?.(
+              `memory: ${error}. Recall is skipped, and pi-memory is off while memory is on: /memory off, then restart Kernal, brings pi-memory back.`,
+              "warning",
+            );
           },
         });
         applyMemory(event?.systemPromptOptions, text);
@@ -233,12 +236,13 @@ function preview(notes: ImportNote[]): string {
 }
 
 /** Saves `notes` as private, repo-less semantic memories. A report line, never a throw. */
-export async function importNotes(transport: AdminTransport, notes: ImportNote[], laptop: LaptopContext): Promise<{ saved: number; failed: string[] }> {
+export async function importNotes(transport: AdminTransport, notes: ImportNote[], laptop: LaptopContext, progress?: (message: string) => void): Promise<{ saved: number; failed: string[] }> {
   let saved = 0;
   const failed: string[] = [];
   // Repo-less on purpose: pi-memory's notes were never about one repository.
   const context: LaptopContext = { sessionId: laptop.sessionId };
-  for (const note of notes) {
+  for (const [i, note] of notes.entries()) {
+    if (i > 0 && i % 25 === 0) progress?.(`importing: ${i} of ${notes.length}…`);
     const reply = await transport.call("memory.save", { type: "semantic", text: note.text, label: note.label }, { laptop: context });
     if (reply.ok) saved++;
     else {
@@ -302,7 +306,7 @@ function registerMemoryCommand(
     if (!yes) return;
     const laptop = await o.context(ctx);
     if (!laptop) return notify("memory: this session has no id yet; send a prompt first, then /memory import", "warning");
-    const { saved, failed } = await importNotes(transport, notes, laptop);
+    const { saved, failed } = await importNotes(transport, notes, laptop, (m) => notify(m));
     if (saved > 0) writeKernal({ memoryImported: new Date().toISOString() });
     notify([`imported ${saved} of ${notes.length} note${notes.length === 1 ? "" : "s"}`, ...failed.slice(0, 3).map((e) => `  ${e}`)].join("\n"), failed.length ? "warning" : "info");
   }

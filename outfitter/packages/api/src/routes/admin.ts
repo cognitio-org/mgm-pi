@@ -15,7 +15,7 @@
 import type { FastifyInstance } from "fastify";
 import type { RouteContext } from "./context.ts";
 import { runAdminOp } from "../admin/ops.ts";
-import { laptopContext } from "../admin/memory-ops.ts";
+import { laptopContext, laptopMemoryRate } from "../admin/memory-ops.ts";
 
 export async function registerAdminRoutes(app: FastifyInstance, ctx: RouteContext): Promise<void> {
   app.post("/api/admin/ops", async (req, reply) => {
@@ -27,6 +27,9 @@ export async function registerAdminRoutes(app: FastifyInstance, ctx: RouteContex
     const body = (req.body ?? {}) as { op?: unknown; args?: unknown; confirmed?: unknown; laptop?: unknown };
     const laptop = laptopContext(body.laptop);
     if (!laptop.ok) return { ok: false, error: laptop.error };
+    if (typeof body.op === "string" && body.op.startsWith("memory.") && !laptopMemoryRate.take(identity.email.toLowerCase())) {
+      return { ok: false, error: "too many memory calls from this Dongle; try again in a minute" };
+    }
     return runAdminOp(
       { store: ctx.store, models: ctx.modelsService, agentEngine: ctx.agentEngine, log: (m) => req.log.warn(m) },
       { email: identity.email, via: "token", operator: false, approved: body.confirmed === true, ...(laptop.value ? { laptop: laptop.value } : {}) },

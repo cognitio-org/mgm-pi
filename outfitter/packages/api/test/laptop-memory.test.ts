@@ -13,7 +13,7 @@ import { hashToken } from "../src/tokens.ts";
 import { createAgentEngine } from "../src/agentengine/index.ts";
 import { laptopIdentity, memoryUserHash } from "../src/agentengine/identity.ts";
 import { ADMIN_OPS, registerAdminOp, runAdminOp } from "../src/admin/ops.ts";
-import { laptopContext, RECALL_FRAME } from "../src/admin/memory-ops.ts";
+import { laptopContext, laptopMemoryRate, MemoryRateLimit, RECALL_FRAME } from "../src/admin/memory-ops.ts";
 import { DriveAdmin } from "../src/admin/drive.ts";
 
 const ADA = "Ada@Example.com";
@@ -82,7 +82,8 @@ describe("laptop identity and context", () => {
     const run = async () => ({ ok: true as const, text: "" });
     assert.throws(() => registerAdminOp("aetest.list", { kind: "read", capability: "agentEngine", laptop: true, run } as never), /only a memory read or write/);
     assert.throws(() => registerAdminOp("memtest.wipe", { kind: "delete", capability: "memory", laptop: true, run }), /only a memory read or write/);
-    assert.throws(() => registerAdminOp("memtest.get", { kind: "read", capability: "memory", audit: false, run } as never), /only a write may skip/);
+    assert.throws(() => registerAdminOp("memtest.get", { kind: "read", capability: "memory", audit: false, run } as never), /only a laptop memory write may skip/);
+    assert.throws(() => registerAdminOp("memtest.burn", { kind: "write", capability: "memory", audit: false, run } as never), /only a laptop memory write may skip/);
   });
 });
 
@@ -147,7 +148,7 @@ describe("POST /api/admin/ops memory.* with a Dongle", () => {
     assert.deepEqual(yes, { ok: true, text: 'saved semantic memory "f" (shared)' });
     assert.equal(fake.semantic[0].visibility, "org");
     const [row] = await store.adminAudit.listRecent(1);
-    assert.deepEqual([row.op, row.via, row.actor, row.approved, row.ok], ["memory.save", "token", ADA, true, true]);
+    assert.deepEqual([row.op, row.via, row.actor, row.approved, row.ok, row.sessionId], ["memory.save", "token", ADA, true, true, SID]);
     await a.fastify.close();
   });
 
@@ -180,8 +181,8 @@ describe("memory.record (opt-in laptop recording)", () => {
     });
     assert.deepEqual(r, { ok: true, text: "recorded 2 of 2 turns" });
     assert.deepEqual(fake.turns.map((t) => [t.role, t.idempotency_key, t.user_id, t.session_id]), [
-      ["user", `${SID}:e1`, HASH, SID],
-      ["assistant", `${SID}:e2`, HASH, SID],
+      ["user", `${HASH}:${SID}:e1`, HASH, SID],
+      ["assistant", `${HASH}:${SID}:e2`, HASH, SID],
     ]);
     assert.ok(!String(fake.turns[0].content).includes("sk-abc"), String(fake.turns[0].content));
     assert.deepEqual(await store.adminAudit.listRecent(5), [], "recording is never audited");
@@ -193,7 +194,9 @@ describe("memory.record (opt-in laptop recording)", () => {
     const turns = [{ entryId: "e1", role: "user", text: "hello" }];
     await op(a, "memory.record", { turns });
     await op(a, "memory.record", { turns });
-    assert.deepEqual(fake.turns.map((t) => t.idempotency_key), [`${SID}:e1`, `${SID}:e1`]);
+    assert.deepEqual(fake.turns.map((t) => t.idempotency_key), [`${HASH}:${SID}:e1`, `${HASH}:${SID}:e1`]);
+    await op(a, "memory.record", { turns }, { laptop: LAPTOP }, BOB_TOKEN);
+    assert.notEqual(fake.turns[2].idempotency_key, fake.turns[0].idempotency_key, "another owner reusing the session id never claims the same key");
     await a.fastify.close();
   });
 
@@ -214,6 +217,7 @@ describe("memory.record (opt-in laptop recording)", () => {
       [[{ entryId: "e1", role: "toolResult", text: "x" }], /role must be/],
       [[{ entryId: "bad id!", role: "user", text: "x" }], /entryId/],
       [[{ entryId: "e1", role: "user", text: { x: 1 } }], /text must be/],
+      [[{ entryId: "e1", role: "user", text: "x".repeat(32_001) }], /too long/],
     ] as const) {
       assert.match((await op(a, "memory.record", { turns })).error!, error);
     }
@@ -228,5 +232,28 @@ describe("memory.record (opt-in laptop recording)", () => {
     const caller = { email: ADA, via: "drive" as const, operator: false, sessionId: "s1", capabilities: ["memory" as const] };
     assert.deepEqual(await runAdminOp({ store, models: { list: async () => [] }, agentEngine }, caller, "memory.record", { turns: [{ entryId: "e1", role: "user", text: "x" }] }), { ok: false, error: "a Drive records its turns itself" });
     assert.equal(fake.turns.length, 0);
+  });
+});
+
+describe("rate limit", () => {
+  test("per owner per minute, then a fresh window", () => {
+    let t = 0;
+    const rl = new MemoryRateLimit(2, () => t);
+    assert.deepEqual([rl.take("a"), rl.take("a"), rl.take("a"), rl.take("b")], [true, true, false, true]);
+    t = 60_000;
+    assert.equal(rl.take("a"), true);
+  });
+
+  test("the route refuses memory calls past the limit, one owner at a time; admin ops aren't counted", async () => {
+    const { app: a } = await app();
+    const before = laptopMemoryRate.perMinute;
+    laptopMemoryRate.perMinute = 0;
+    try {
+      assert.match((await op(a, "memory.search", { query: "x" })).error!, /too many memory calls/);
+      assert.equal((await op(a, "tapes.list", {})).ok, true);
+    } finally {
+      laptopMemoryRate.perMinute = before;
+      await a.fastify.close();
+    }
   });
 });

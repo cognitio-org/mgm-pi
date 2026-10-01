@@ -103,7 +103,9 @@ own expiry, so the date in config.env is the only record: update it with every r
 
 **Database user (`agent-engine-memory`):**
 
-1. `atlas dbusers update agent-engine-memory --password "<new, from a password manager>" $P`.
+1. Set a new password (from a password manager) for `agent-engine-memory`, in the Atlas UI
+   (Database Access) or with `atlas dbusers update agent-engine-memory $P` at an interactive
+   prompt. Never put the password on the command line, where it lands in shell history and `ps`.
 2. Build the new URI, add a GSM version to `outfitter-agentengine-mongodb-uri`, and
    `... | agentengine secret set MONGODB_URI --stdin`; re-apply memory.
 3. Re-check its scope: `atlas dbusers describe agent-engine-memory $P -o json` shows only
@@ -116,9 +118,10 @@ it stays at 3 RPM), new GSM version, `secret set VOYAGE_API_KEY --stdin`, re-app
 
 - Retrieval is billed per doc, and `memory: auto` recalls on every prompt, so `auto` is set per
   tape, by a person, in the web UI.
-- The api logs one line a day per instance, `agent engine memory usage`, with that day's
-  `search`, `context`, `save` and `recordTurn` counts, retrieved `docs` and `errors`. Sum them across
-  instances in Cloud Logging and compare with the Agent Engine bill.
+- Each api instance logs `agent engine memory usage` lines: one per UTC hour that had memory calls,
+  and one at shutdown, with `day`, `hour`, the `search`, `context`, `save` and `recordTurn` counts,
+  retrieved `docs` and `errors`. Sum them per `day` across instances in Cloud Logging and compare
+  with the Agent Engine bill.
 - Extraction tokens are billed by LiteLLM to the extraction key, outside Agent Engine's caps.
 
 ## Agents project (PR4)

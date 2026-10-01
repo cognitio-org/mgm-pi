@@ -21,7 +21,9 @@ const PATTERNS: RegExp[] = [
   /\b([a-z][a-z0-9+.-]*:\/\/)[^\s:@/]+:[^\s@/]+@/gi, // any URI with a user:password (agentd's logger does the same)
   /(authorization:\s*(?:bearer|basic|token)\s+)[^\s"']+/gi,
   /((?:api[_-]?key|secret|password|passwd|token|access[_-]?key)["']?\s*[:=]\s*)(["'])[^"'\n]{4,}\2/gi, // quoted, may hold spaces
-  /\b((?:api[_-]?key|secret|password|passwd|token|access[_-]?key)["']?\s*[:=]\s*["']?)[^\s"',;]{8,}/gi,
+  // Also with a prefix, as env vars have one (VOYAGE_API_KEY=, NGROK_AUTHTOKEN=): \b doesn't fire after `_`.
+  /(?<![A-Za-z0-9])((?:[A-Za-z0-9]+_)*(?:api[_-]?key|secret|password|passwd|token|authtoken|access[_-]?key)["']?\s*[:=]\s*["']?)[^\s"',;]{8,}/gi,
+  /\bpa-[A-Za-z0-9_-]{30,}/g, // Voyage AI keys
 ];
 
 export function redact(text: string): string {

@@ -69,14 +69,18 @@ export function requestContext(socketPath: string, query: string, timeoutMs = RE
     socket.on("data", (chunk: string) => {
       buf += chunk;
       if (buf.length > MAX_REPLY) return finish();
-      const nl = buf.indexOf("\n");
-      if (nl < 0) return;
-      try {
-        const msg = JSON.parse(buf.slice(0, nl));
-        if (msg?.t !== "admin.result" || msg.reqId !== reqId || msg.ok !== true || typeof msg.text !== "string") return finish();
-        finish(msg.text);
-      } catch {
-        finish();
+      // The first non-blank line is the answer (blank ones are skipped, as Kernal's transport does).
+      for (let nl = buf.indexOf("\n"); nl >= 0; nl = buf.indexOf("\n")) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line);
+          if (msg?.t !== "admin.result" || msg.reqId !== reqId || msg.ok !== true || typeof msg.text !== "string") return finish();
+          return finish(msg.text);
+        } catch {
+          return finish();
+        }
       }
     });
   });
@@ -100,6 +104,10 @@ export function applyMemory(options: PromptOptions | undefined, text: string | u
   }
 }
 
+/**
+ * A handler that runs after this one and returns a whole `systemPrompt` would drop the block; the
+ * one package that did (pi-memory) is off whenever this extension loads (agentd's PI_MEMORY_DIR).
+ */
 export default function outfitterMemory(pi: PiMemoryApi, env: NodeJS.ProcessEnv = process.env, deps: { connect?: Connect; timeoutMs?: number } = {}): void {
   const socketPath = env.OUTFITTER_ADMIN_SOCKET?.trim();
   // No socket (agentd couldn't open it) or no memory capability: nothing to ask.

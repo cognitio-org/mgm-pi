@@ -36,7 +36,9 @@ export function memoryUserHash(email: string): string {
 
 export function memoryIdentity(session: Pick<Session, "id" | "ownerEmail" | "repo" | "origin" | "a2aTokenId">): MemoryIdentity | undefined {
   const repo = session.repo?.trim().toLowerCase() || undefined;
-  if (session.origin !== undefined) {
+  // A token id without the marker counts as A2A too: a session that came from a key must never fall
+  // back to the owner's identity because one field was lost (a fork, a restore, a store write).
+  if (session.origin !== undefined || session.a2aTokenId !== undefined) {
     // Anything but "a2a" is a marker this code doesn't know: refuse rather than treat it as a Drive.
     if (session.origin !== "a2a") return undefined;
     const tokenId = session.a2aTokenId?.trim();
@@ -79,7 +81,12 @@ export function namespacedKey(id: Pick<MemoryIdentity, "owner" | "repo">, label:
   return `${id.owner}:${repoSlug(id.repo)}:${slug}`;
 }
 
-const NAMESPACE = /\b(?:[0-9a-f]{16}|a2a-[0-9a-f]{12}):[^\s:]+:(?=[a-z0-9])/g;
+const NAMESPACE = /\b(?:[0-9a-f]{16}|a2a-[0-9a-f]{12}):([^\s:]+):(?=[a-z0-9])/g;
+
+/** The repo part (`owner~name` or `_`) of every namespaced key in `text`. */
+export function namespacedRepos(text: string): string[] {
+  return [...text.matchAll(new RegExp(NAMESPACE.source, "g"))].map((m) => m[1]);
+}
 
 /** Takes the `<owner>:<repo>:` prefix off any key in recalled text. */
 export function stripNamespaces(text: string): string {

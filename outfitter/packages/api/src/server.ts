@@ -163,6 +163,8 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     const recorder = new MemoryRecorder({ store, memory: () => agentEngine.memory, usage: memoryUsage, log: (msg) => fastify.log.warn(msg) });
     agentLink.setMemoryRecorder(recorder);
     turns.onSettled((sessionId, lastEntryId) => void recorder.noteSettled(sessionId, lastEntryId));
+    // The usage counts this instance still holds go out with it (agentengine/usage.ts).
+    fastify.addHook("onClose", async () => memoryUsage.flush());
   }
 
   // Auth guards every /api/* route except /api/hooks/* (called by an external service with no IAP

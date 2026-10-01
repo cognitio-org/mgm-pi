@@ -63,6 +63,12 @@ test("before_agent_start: memory.context with the prompt, a read (no idempotency
   assert.equal(event.systemPromptOptions.sections.preamble, "p");
 });
 
+test("blank lines before the reply are skipped", async (t) => {
+  const s = await fakeSocket((req) => `\n\n${JSON.stringify({ t: "admin.result", reqId: req.reqId, ok: true, text: "- fact" })}\n`);
+  t.after(() => s.close());
+  assert.equal(await requestContext(s.path, "q", 1_000), "- fact");
+});
+
 test("a forced system prompt gets the block appended inside <memory> tags", () => {
   const options: any = { sections: {}, forceSystemPrompt: "FORCED" };
   applyMemory(options, "- fact");

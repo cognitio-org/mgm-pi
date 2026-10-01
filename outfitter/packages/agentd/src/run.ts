@@ -381,6 +381,8 @@ export class RunController {
   private githubSocket: GithubSocket | undefined;
   /** Broker socket for admin ops (Sysop tools), only when the tape has admin tools. */
   private adminSocket: BrokerSocket<"admin"> | undefined;
+  /** E9 §3.3: the empty PI_MEMORY_DIR, made once (emptyPiMemoryDir). */
+  private piMemoryDir: string | undefined;
   /** True once the API link has opened, false after it drops, until the next open. */
   private apiLinkUp = true;
   /** Serializes git-proxy forwards with the phase-0 checkpoint push. */
@@ -861,7 +863,7 @@ export class RunController {
     // E9 §3.3: with Agent Engine memory on, pi-memory is off -- its tools are excluded (renderGuru),
     // an empty PI_MEMORY_DIR stops its prompt injection, and no LLM exit summary. Pinned after
     // guru.env so a tape can't point it back at a real memory directory.
-    if (agentEngineMemoryOn(spec.guru)) {
+    if (agentEngineMemoryOn(this.spec.guru)) {
       secretEnv.PI_MEMORY_EXIT_SUMMARY = "0";
       secretEnv.PI_MEMORY_DIR = await this.emptyPiMemoryDir();
     }
@@ -985,22 +987,25 @@ export class RunController {
     }
   }
 
-  /** Same ownership and link handling as the GitHub socket. True once it is listening. */
   /** A fresh, empty directory pi-memory may write into (it creates its subdirectories there), owned
-   * by the user pi runs as. If it can't be made, a path that doesn't exist yet: pi-memory creates it
-   * empty, which still keeps the real memory out of the prompt. */
+   * by the user pi runs as; one per controller, so a respawned pi reuses it. If it can't be made, a
+   * path under that user's home: pi-memory creates it empty, which still keeps any real memory out
+   * of the prompt, and its parent is not world-writable. */
   private async emptyPiMemoryDir(): Promise<string> {
+    if (this.piMemoryDir) return this.piMemoryDir;
     const root = this.deps.piMemoryTmpRoot ?? tmpdir();
     try {
       const dir = await mkdtemp(join(root, "pi-memory-off-"));
       if (this.deps.runAsUser) await chown(dir, this.deps.runAsUser.uid, this.deps.runAsUser.gid);
-      return dir;
+      this.piMemoryDir = dir;
     } catch (err) {
       this.onLog(`pi-memory dir: ${err instanceof Error ? err.message : String(err)}`);
-      return join(root, `pi-memory-off-${process.pid}-${Date.now()}`);
+      this.piMemoryDir = join(this.deps.runAsUser?.home ?? root, ".pi-memory-off");
     }
+    return this.piMemoryDir;
   }
 
+  /** Same ownership and link handling as the GitHub socket. True once it is listening. */
   private async startAdminSocket(path: string): Promise<boolean> {
     try {
       await listenBrokerSocket({

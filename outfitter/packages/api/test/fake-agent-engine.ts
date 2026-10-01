@@ -7,7 +7,8 @@
 //   const ae = createAgentEngine(fake.config(), { fetch: fake.fetch });
 //
 // Routes: POST /api/v1/oauth/token; under /api/v1/projects/{p}/: memory/turns, memory/context,
-// memory/semantic (POST, DELETE /{id}), memory/retrieval/context-from-sources,
+// memory/semantic (POST, DELETE /{id}), memory/{episodic,procedural,taxonomic} (POST, E9 PR3),
+// memory/retrieval/context-from-sources,
 // executions/{id}, workspaces/{w}/runtime-sessions (GET, POST /{id}/stop). Anything else is 404.
 
 import { randomUUID } from "node:crypto";
@@ -31,6 +32,10 @@ export interface FakeSemantic {
   visibility?: string;
   metadata?: Record<string, unknown>;
   deleted?: boolean;
+  /** Absent: semantic. E9 PR3 keeps episodes, procedures and terms here too. */
+  source?: "semantic" | "episodic" | "procedural" | "taxonomic";
+  /** The request body it was saved with (episodic/procedural/taxonomic). */
+  body?: Record<string, unknown>;
 }
 
 interface Issued {
@@ -61,6 +66,10 @@ export class FakeAgentEngine {
   tokenDelayMs = 0;
   readonly semantic: FakeSemantic[] = [];
   readonly turns: Array<Record<string, unknown>> = [];
+  /** E9 PR3: /memory/context also returns selected_memories (ids to dedupe on), as the real one may. */
+  selectedMemories = false;
+  /** E9 PR3: the next N /memory/context calls answer 503. */
+  contextFailures = 0;
   readonly executions = new Map<string, Record<string, unknown>>();
   readonly runtimeSessions = new Map<string, Array<{ session_id: string; status: string }>>();
   private readonly tokens = new Map<string, Issued>();
@@ -145,11 +154,20 @@ export class FakeAgentEngine {
     }
     if (req.method === "POST" && rest === "/memory/semantic") {
       const label = String(b.label ?? "");
-      const existing = this.semantic.find((s) => s.label === label && !s.deleted);
+      const existing = this.semantic.find((s) => s.label === label && !s.deleted && !s.source);
       const item: FakeSemantic = existing ?? { id: randomUUID(), label, text: "" };
       Object.assign(item, { text: String(b.text ?? b.content ?? ""), userId: b.user_id as string | undefined, visibility: b.visibility as string | undefined, metadata: b.metadata as Record<string, unknown> | undefined });
       if (!existing) this.semantic.push(item);
       return json(200, { id: item.id, label: item.label, has_embedding: false, acknowledged: true });
+    }
+    const typed = /^\/memory\/(episodic|procedural|taxonomic)$/.exec(rest);
+    if (req.method === "POST" && typed) {
+      const source = typed[1] as "episodic" | "procedural" | "taxonomic";
+      const text = String(b.content ?? b.definition ?? "");
+      const item: FakeSemantic = { id: randomUUID(), label: String(b.title ?? b.procedure ?? b.term ?? ""), text, userId: b.user_id as string | undefined, visibility: b.visibility as string | undefined, metadata: b.metadata as Record<string, unknown> | undefined, source, body: b };
+      this.semantic.push(item);
+      const named = source === "episodic" ? { title: item.label } : source === "procedural" ? { procedure: item.label } : { domain: String(b.domain ?? ""), term: item.label };
+      return json(200, { id: item.id, ...named, has_embedding: false, acknowledged: true });
     }
     const del = /^\/memory\/semantic\/([^/]+)$/.exec(rest);
     if (req.method === "DELETE" && del) {
@@ -159,8 +177,19 @@ export class FakeAgentEngine {
       return json(200, { deleted: true, soft: req.query.soft === "true" });
     }
     if (req.method === "POST" && rest === "/memory/context") {
-      const hits = this.visible(b.user_id as string | undefined, b.visibility as string | undefined);
-      return json(200, { formatted_context: hits.map((s) => `- ${s.text}`).join("\n"), metadata: { token_count: 0, memory_counts: { semantic: hits.length }, timing: {} } });
+      const sources = Array.isArray(b.enabled_sources) ? (b.enabled_sources as string[]) : undefined;
+      const hits = this.visible(b.user_id as string | undefined, b.visibility as string | undefined).filter(
+        (s) => (!sources || sources.includes(s.source ?? "semantic")) && matches(s.metadata ?? {}, b.metadata_filter as Record<string, unknown> | undefined),
+      );
+      if (this.contextFailures > 0) {
+        this.contextFailures--;
+        return json(503, { detail: "memory server unavailable" });
+      }
+      return json(200, {
+        formatted_context: hits.map((s) => `- ${s.text}`).join("\n"),
+        metadata: { token_count: 0, memory_counts: { semantic: hits.length }, timing: {} },
+        ...(this.selectedMemories ? { selected_memories: hits.map((s) => ({ id: s.id, content: s.text, source: s.source ?? "semantic", timestamp: "2026-10-01T00:00:00Z" })) } : {}),
+      });
     }
     if (req.method === "POST" && rest === "/memory/retrieval/context-from-sources") {
       const hits = this.visible(b.user_id as string | undefined, b.visibility as string | undefined);
@@ -188,6 +217,18 @@ export class FakeAgentEngine {
   private visible(userId: string | undefined, visibility: string | undefined): FakeSemantic[] {
     return this.semantic.filter((s) => !s.deleted && (userId === undefined || userId === null || s.userId === userId) && (!visibility || s.visibility === visibility));
   }
+}
+
+/** A tiny metadata_filter on `metadata.<k>`: equality, $exists, $or and $and (E9 §3.1). */
+function matches(metadata: Record<string, unknown>, filter: Record<string, unknown> | undefined): boolean {
+  if (!filter) return true;
+  return Object.entries(filter).every(([k, v]) => {
+    if (k === "$or") return (v as Array<Record<string, unknown>>).some((f) => matches(metadata, f));
+    if (k === "$and") return (v as Array<Record<string, unknown>>).every((f) => matches(metadata, f));
+    const value = metadata[k.replace(/^metadata\./, "")];
+    if (v && typeof v === "object" && "$exists" in v) return (value !== undefined) === (v as { $exists: boolean }).$exists;
+    return value === v;
+  });
 }
 
 function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {

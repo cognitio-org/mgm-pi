@@ -5,8 +5,9 @@
  * `abort`, `ui_response`, `rpc`, `checkpoint`, `diff`, `read`, `stop`, `browser.capture.entry`,
  * `browser.capture.result`, `browser.action.result`, `browser.inspect.result`, `github.result`).
  */
-import { mkdir, readFile, open as openFile, chown, stat } from "node:fs/promises";
-import { resolve, sep } from "node:path";
+import { mkdir, mkdtemp, readFile, open as openFile, chown, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve, sep } from "node:path";
 import { branchAllowed, DEFAULT_BRANCH_PREFIX, normalizeBranchPrefix } from "./branch-policy.js";
 import { ActionListener } from "./browser-action.js";
 import { CaptureListener } from "./browser-capture.js";
@@ -14,7 +15,7 @@ import { InspectListener } from "./browser-inspect.js";
 import { PreviewListener } from "./preview.js";
 import { IdeManager, type IdeManagerOptions } from "./ide-server.js";
 import { CodeServerInstaller, type IdeInstallResult, type IdeInstallState } from "./ide-install.js";
-import { renderGuru } from "./guru.js";
+import { agentEngineMemoryOn, renderGuru } from "./guru.js";
 import { discoverAppendSystemPromptFile } from "./append-system.js";
 import { attributionTrailers, authHeaderSecret, botIdentityEnv, sanitizeAuthor, type GitOps } from "./git.js";
 import { githubRepoHttps, gitProxyInsteadOfEnv, parseGithubCloneUrl, startGitProxy, type GitProxy } from "./git-proxy.js";
@@ -146,6 +147,12 @@ export interface RunControllerDeps {
   /** Chrome companion §13 (OUTFITTER_BROWSER_EXTENSION): path to pi-extension/outfitter-browser.ts.
    * Set together with `downloadCapture`: the loopback listener starts only while the extension loads. */
   browserExtensionPath?: string;
+  /** E9 §3.3 (OUTFITTER_MEMORY_EXTENSION): path to pi-extension/outfitter-memory.ts (or its built
+   * .js), the recall extension; renderGuru loads it only for a `memory: auto` tape. */
+  memoryExtensionPath?: string;
+  /** E9 §3.3: where the empty PI_MEMORY_DIR for a tape with Agent Engine memory is made. Default
+   * os.tmpdir(); tests pass their own. */
+  piMemoryTmpRoot?: string;
   /** GET the capture jpeg with the run's API credential (the socket's bearer plus the run token).
    * Not a user Dongle, and not passed into the sandbox. */
   downloadCapture?: (sessionId: string, captureId: string) => Promise<Buffer>;
@@ -688,6 +695,7 @@ export class RunController {
       spendExtensionPath: this.deps.spendFile ? this.deps.spendExtensionPath : undefined,
       mailExtensionPath: this.deps.mailExtensionPath,
       browserExtensionPath: this.deps.browserExtensionPath,
+      memoryExtensionPath: this.deps.memoryExtensionPath,
       skipModelArg,
       appendSystemPromptFile: discoverAppendSystemPromptFile(this.deps.workspace, process.env.PI_CODING_AGENT_DIR),
     });
@@ -850,6 +858,13 @@ export class RunController {
         secretEnv.OUTFITTER_ADMIN_CAPS = caps.join(",");
       }
     }
+    // E9 §3.3: with Agent Engine memory on, pi-memory is off -- its tools are excluded (renderGuru),
+    // an empty PI_MEMORY_DIR stops its prompt injection, and no LLM exit summary. Pinned after
+    // guru.env so a tape can't point it back at a real memory directory.
+    if (agentEngineMemoryOn(spec.guru)) {
+      secretEnv.PI_MEMORY_EXIT_SUMMARY = "0";
+      secretEnv.PI_MEMORY_DIR = await this.emptyPiMemoryDir();
+    }
     if (this.spec.repo) {
       secretEnv.OUTFITTER_SESSION_BRANCH = this.spec.repo.branch;
       secretEnv.OUTFITTER_BRANCH_PREFIX = normalizeBranchPrefix(this.spec.repo.branchPrefix) ?? DEFAULT_BRANCH_PREFIX;
@@ -971,6 +986,21 @@ export class RunController {
   }
 
   /** Same ownership and link handling as the GitHub socket. True once it is listening. */
+  /** A fresh, empty directory pi-memory may write into (it creates its subdirectories there), owned
+   * by the user pi runs as. If it can't be made, a path that doesn't exist yet: pi-memory creates it
+   * empty, which still keeps the real memory out of the prompt. */
+  private async emptyPiMemoryDir(): Promise<string> {
+    const root = this.deps.piMemoryTmpRoot ?? tmpdir();
+    try {
+      const dir = await mkdtemp(join(root, "pi-memory-off-"));
+      if (this.deps.runAsUser) await chown(dir, this.deps.runAsUser.uid, this.deps.runAsUser.gid);
+      return dir;
+    } catch (err) {
+      this.onLog(`pi-memory dir: ${err instanceof Error ? err.message : String(err)}`);
+      return join(root, `pi-memory-off-${process.pid}-${Date.now()}`);
+    }
+  }
+
   private async startAdminSocket(path: string): Promise<boolean> {
     try {
       await listenBrokerSocket({

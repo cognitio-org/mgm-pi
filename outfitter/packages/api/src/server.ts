@@ -28,6 +28,10 @@ import { MailService, CloudTasksWakeScheduler, NoopWakeScheduler, type WakeSched
 import type { GithubBroker } from "./github-broker.ts";
 import { GithubCatalog } from "./github-catalog.ts";
 import { createAgentEngine, type AgentEngine } from "./agentengine/index.ts";
+import { MemoryRecorder } from "./agentengine/recorder.ts";
+import { memoryUsage } from "./agentengine/usage.ts";
+// E9 PR3: registers the memory.* admin ops (side effect only).
+import "./admin/memory-ops.ts";
 import { CachedSandboxTelemetry, GcpSandboxTelemetry, NoSandboxTelemetry, type SandboxTelemetry } from "./sandbox-telemetry.ts";
 
 export interface BuildAppOptions {
@@ -153,6 +157,13 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   // per project per instance.
   const agentEngine = opts.agentEngine ?? createAgentEngine(config.agentEngine, { log: (msg) => fastify.log.warn(msg) });
   agentLink.setDriveAdmin(new DriveAdmin({ store, config, models: modelsService, agentEngine, log: (msg) => fastify.log.warn(msg) }));
+  // E9 §3.3: `memory: auto` tapes record user prompts as they arrive and each settled turn's final
+  // assistant message (the settle comes after agentd flushed the turn's entries).
+  if (agentEngine.memory) {
+    const recorder = new MemoryRecorder({ store, memory: () => agentEngine.memory, usage: memoryUsage, log: (msg) => fastify.log.warn(msg) });
+    agentLink.setMemoryRecorder(recorder);
+    turns.onSettled((sessionId, lastEntryId) => void recorder.noteSettled(sessionId, lastEntryId));
+  }
 
   // Auth guards every /api/* route except /api/hooks/* (called by an external service with no IAP
   // session and no agentd identity token; it authenticates itself via its own HMAC signature

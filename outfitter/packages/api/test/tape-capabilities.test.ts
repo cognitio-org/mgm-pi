@@ -157,10 +157,12 @@ describe("tape fields memory and agentEngine", () => {
 });
 
 describe("op capability gating", () => {
-  test("every registered op names a known capability; the built-in ones are admin", () => {
+  test("every registered op names a known capability; memory.* is memory, ae.* agentEngine, the rest admin", () => {
     for (const [name, op] of Object.entries(ADMIN_OPS)) {
       assert.ok(["admin", "memory", "agentEngine"].includes(op.capability), name);
-      if (!name.includes("test.")) assert.equal(op.capability, "admin", name);
+      if (name.includes("test.")) continue;
+      const expected = name.startsWith("memory.") ? "memory" : name.startsWith("ae.") ? "agentEngine" : "admin";
+      assert.equal(op.capability, expected, name);
     }
   });
 
@@ -233,8 +235,8 @@ describe("op capability gating", () => {
 
   test("a read op's name must be one Kernal treats as a read, and only those", () => {
     const run = async () => ({ ok: true as const, text: "" });
-    assert.throws(() => registerAdminOp("memory.save", { kind: "read", capability: "memory", run }), /a read must end in/);
-    assert.throws(() => registerAdminOp("memory.context", { kind: "write", capability: "memory", run }), /a read must end in/);
+    assert.throws(() => registerAdminOp("memx.save", { kind: "read", capability: "memory", run }), /a read must end in/);
+    assert.throws(() => registerAdminOp("memx.context", { kind: "write", capability: "memory", run }), /a read must end in/);
   });
 
   test("registerAdminOp refuses duplicates, bad names and unknown capabilities or classes", () => {

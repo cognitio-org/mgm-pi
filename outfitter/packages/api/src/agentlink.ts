@@ -6,6 +6,7 @@
 // reconnect's "hello" if it was already ready).
 
 import type { SessionIndexer } from "./search/service.ts";
+import type { MemoryRecorder } from "./agentengine/recorder.ts";
 import type { DriveAdmin } from "./admin/drive.ts";
 import type { PreviewService } from "./previews.ts";
 import type { TurnWaiters } from "./turns.ts";
@@ -376,6 +377,8 @@ export class AgentLink {
   private driveAdmin: DriveAdmin | undefined;
   /** Session search (#289): indexes each new entry; unset in apps built without one. */
   private indexer: SessionIndexer | undefined;
+  /** E9 §3.3: recordTurn for `memory: auto` tapes, next to the indexer; unset without memory. */
+  private memoryRecorder: MemoryRecorder | undefined;
   /** Admin requests being handled per run, capped at MAX_ADMIN_IN_FLIGHT. */
   private readonly adminInFlight = new Map<string, number>();
   /** Installation-token refresh timers, one per run. Cleared only when that run's current socket closes. */
@@ -413,6 +416,10 @@ export class AgentLink {
 
   setIndexer(indexer: SessionIndexer): void {
     this.indexer = indexer;
+  }
+
+  setMemoryRecorder(recorder: MemoryRecorder): void {
+    this.memoryRecorder = recorder;
   }
 
   /** Sysop tools (#287): server.ts wires this once the models service exists. */
@@ -1549,6 +1556,8 @@ export class AgentLink {
         const inserted = await this.store.entries.insertIfNew(sessionId, seq, entry, { runId });
         // Off the ack path: search indexing must never hold up or fail an entry.
         if (inserted) void this.indexer?.indexEntry(sessionId, entry);
+        // E9 §3.3: a user prompt goes to Agent Engine memory the same way (redacted, best effort).
+        if (inserted) void this.memoryRecorder?.noteEntry(sessionId, entry);
         if (inserted) {
           await this.store.sessions.update(sessionId, { leafId: entry.id, updatedAt: now });
           this.sse.publish(sessionId, { type: "entry", data: entryForWire({ entry, runId }) });

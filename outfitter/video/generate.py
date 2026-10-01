@@ -247,13 +247,23 @@ def takes_for(kind, args, item=None):
     return {"stills": 3, "voices": 2}.get(kind) or (item or {}).get("takes", 2)
 
 
+def missing(kind, ext, items, args, subdir):
+    """Takes that don't exist yet -- the only ones a run generates (and bills)."""
+    return [it for it in items for k in range(1, takes_for(kind, args, it) + 1)
+            if not (OUT / subdir / f"{it['id']}-take{k}.{ext}").exists()]
+
+
 def confirm(spec, args):
     want = lambda k: args.what in (k, "all")  # noqa: E731
-    stills = sum(takes_for("stills", args) for _ in selected(spec["stills"], args.only)) if want("stills") else 0
-    secs = sum(sh["seconds"] * takes_for("shots", args, sh) for sh in selected(spec["shots"], args.only)) if want("shots") else 0
-    lines = sum(takes_for("voices", args) for _ in selected(spec["lines"], args.only)) if want("voices") else 0
-    print(f"project {PROJECT}: up to {stills} still(s), {secs} s of 1080p Veo video, {lines} voice take(s)"
-          " (files that already exist are skipped and not billed)")
+    stills = len(missing("stills", "png", selected(spec["stills"], args.only), args, "stills")) if want("stills") else 0
+    shots = missing("shots", "mp4", selected(spec["shots"], args.only), args, "veo") if want("shots") else []
+    secs = sum(sh["seconds"] for sh in shots)
+    lines = len(missing("voices", "wav", selected(spec["lines"], args.only), args, "voices")) if want("voices") else 0
+    if not (stills or secs or lines):
+        print("nothing to generate: every take already exists in out/")
+        raise SystemExit(0)
+    print(f"project {PROJECT}: will generate {stills} still(s), {secs} s of 1080p Veo video, {lines} voice take(s)"
+          " (takes already in out/ are skipped)")
     if args.dry_run or args.yes:
         return
     if input("Generate? [y/N] ").strip().lower() != "y":

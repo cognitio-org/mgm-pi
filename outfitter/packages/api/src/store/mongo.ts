@@ -479,6 +479,11 @@ class MongoFleetSettings implements FleetSettingsCollection {
   async put(settings: FleetSettings): Promise<void> {
     await this.col.replaceOne({ _id: "fleet" }, settings, { upsert: true });
   }
+
+  async insertIfAbsent(settings: FleetSettings): Promise<boolean> {
+    const res = await this.col.updateOne({ _id: "fleet" }, { $setOnInsert: settings }, { upsert: true });
+    return res.upsertedCount === 1;
+  }
 }
 
 class MongoTokens implements TokensCollection {

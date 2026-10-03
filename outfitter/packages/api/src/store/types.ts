@@ -1375,6 +1375,8 @@ export interface FleetSettingsCollection {
   get(): Promise<FleetSettings | null>;
   /** Replaces the document wholesale. */
   put(settings: FleetSettings): Promise<void>;
+  /** Stores `settings` only if there is no document yet (atomic across instances). True when it did. */
+  insertIfAbsent(settings: FleetSettings): Promise<boolean>;
 }
 
 export interface Store {

@@ -40,8 +40,20 @@ export interface ClientFleetSettings {
 
 export const DEFAULT_TRACES_SAMPLE_RATE = 0.05;
 
+/** The project's own Sentry DSN (the owner's, 2026-10-01), so turning Sentry on is one click with
+ * nothing to paste. Stored, never sent anywhere while Sentry is off: off stays the default. A DSN is
+ * not a secret (every browser bundle using Sentry ships one). */
+export const DEFAULT_SENTRY_DSN = "https://1318f3af9a71b190730c227fb61c32dc@o4512181408432128.ingest.us.sentry.io/4512181422260224";
+
 export function defaultFleetSettings(): FleetSettings {
-  return { telemetry: { sentry: { enabled: false, tracesSampleRate: DEFAULT_TRACES_SAMPLE_RATE } } };
+  return { telemetry: { sentry: { enabled: false, dsn: DEFAULT_SENTRY_DSN, tracesSampleRate: DEFAULT_TRACES_SAMPLE_RATE } } };
+}
+
+/** Writes the defaults (Sentry off, with the project DSN kept) when no document exists yet, so the
+ * DSN is in the store from the first boot. Never touches a document an operator has saved, even one
+ * whose DSN they cleared. True when it wrote one. */
+export async function ensureFleetSettings(store: Pick<Store, "fleetSettings">): Promise<boolean> {
+  return store.fleetSettings.insertIfAbsent(defaultFleetSettings());
 }
 
 /** The stored document with every missing field defaulted; a malformed field reads as its default. */

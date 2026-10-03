@@ -10,7 +10,9 @@ Sentry is **off everywhere until an operator turns it on**, in the web app under
 (`fleetSettings` collection, `outfitter/packages/api/src/fleet-settings.ts`) holding
 
 - `enabled`: whether anything is sent at all,
-- `dsn`: where events go (kept while off, so turning Sentry back on is one click),
+- `dsn`: where events go. It defaults to the project's own DSN (`DEFAULT_SENTRY_DSN`), and the API
+  stores it in the document on first boot (`ensureFleetSettings`), so turning Sentry on is one click.
+  It is kept while off, never sent to clients while off, and never re-added once an operator clears it,
 - `tracesSampleRate`: the fraction of traces kept (default 0.05). Errors are always sent in full.
 
 No machine carries its own DSN. Each reads the fleet settings and follows them:

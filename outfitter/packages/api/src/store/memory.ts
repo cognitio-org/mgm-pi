@@ -416,6 +416,12 @@ class MemoryFleetSettings implements FleetSettingsCollection {
   async put(settings: FleetSettings): Promise<void> {
     this.doc = clone(settings);
   }
+
+  async insertIfAbsent(settings: FleetSettings): Promise<boolean> {
+    if (this.doc) return false;
+    this.doc = clone(settings);
+    return true;
+  }
 }
 
 class MemoryTokens implements TokensCollection {

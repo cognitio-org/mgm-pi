@@ -10,7 +10,9 @@ import { MemoryStore } from "../src/store/memory.ts";
 import {
   FleetSettingsCache,
   clientFleetSettings,
+  DEFAULT_SENTRY_DSN,
   defaultFleetSettings,
+  ensureFleetSettings,
   isSentryDsn,
   parseSentryUpdate,
   withDefaults,
@@ -40,9 +42,22 @@ async function bearerFor(store: MemoryStore, ownerEmail: string): Promise<{ auth
 }
 
 describe("fleet settings document", () => {
-  test("no document means Sentry off at a 5% trace rate", () => {
+  test("no document means Sentry off at a 5% trace rate, with the project DSN kept for later", () => {
     assert.deepEqual(withDefaults(null), defaultFleetSettings());
-    assert.deepEqual(defaultFleetSettings().telemetry.sentry, { enabled: false, tracesSampleRate: 0.05 });
+    assert.deepEqual(defaultFleetSettings().telemetry.sentry, { enabled: false, dsn: DEFAULT_SENTRY_DSN, tracesSampleRate: 0.05 });
+    assert.equal(isSentryDsn(DEFAULT_SENTRY_DSN), true);
+    assert.deepEqual(clientFleetSettings(defaultFleetSettings()).telemetry.sentry, { enabled: false }, "never sent to clients while off");
+  });
+
+  test("ensureFleetSettings stores the defaults once and never overwrites an operator's document", async () => {
+    const store = new MemoryStore();
+    assert.equal(await ensureFleetSettings(store), true);
+    assert.equal((await store.fleetSettings.get())?.telemetry.sentry.dsn, DEFAULT_SENTRY_DSN);
+    assert.equal((await store.fleetSettings.get())?.telemetry.sentry.enabled, false);
+    const cleared = { telemetry: { sentry: { enabled: false, tracesSampleRate: 0.05 } }, updatedBy: "operator@mgms.eu" };
+    await store.fleetSettings.put(cleared);
+    assert.equal(await ensureFleetSettings(store), false);
+    assert.deepEqual(await store.fleetSettings.get(), cleared, "a DSN the operator removed stays removed");
   });
 
   test("malformed stored fields read as their defaults", () => {

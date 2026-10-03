@@ -1,0 +1,143 @@
+outfitter/packages/api/test/stop.test.ts
+  s_d20562570301f1::t_e76d60cbd172c5 319
+outfitter/packages/web/test/sentry.test.ts
+  s_d20562570301f1::t_cf75929000151c 1,4-5,16-23,32-34,36,40-44,47-50,53-64
+outfitter/packages/api/test/helpers.ts
+  s_d20562570301f1::t_c234437b56c891 102-103
+outfitter/packages/web/src/pages/SettingsPage.tsx
+  s_d20562570301f1::t_103f512cb5ad78 280,303-305,308,489
+  s_d20562570301f1::t_29fab643f14b07 284-285,294
+  s_d20562570301f1::t_40b9dacef34d56 6,277-279,281-283,286-293,295-302,306-307,309-381,488
+  s_d20562570301f1::t_a27ff67cea1800 490
+kernal/.pi/npm/package.json
+  s_d20562570301f1::t_aab3a1dd758349 5
+outfitter/packages/agentd/src/protocol.ts
+  s_d20562570301f1::t_a20da9882c91b7 430
+  s_d20562570301f1::t_daad5636140142 344-349,414
+outfitter/image/Dockerfile
+  s_d20562570301f1::t_5988e01fc2dd2b 98-99,101
+outfitter/packages/agentd/src/run.ts
+  s_d20562570301f1::t_daad5636140142 59,470-474
+kernal/.pi/extensions/_shared/fleet-settings.ts
+  s_d20562570301f1::t_e636cf88178fab 1-36,40-63,65-68,71-76,80-87,89-91,97-112
+  s_d20562570301f1::t_d0b34d75a81d9a 37-39,64,69-70,77-79,88,92-96
+outfitter/packages/web/src/lib/sentry.ts
+  s_d20562570301f1::t_3df1e71597b437 1-7,9,17-18,20-23,25-31,33-34,36,38,43
+outfitter/packages/agentd/src/sentry.ts
+  s_d20562570301f1::t_1f1b4fb8029bab 2-6,8-11,14,17,19-26,30-33,38-42,49-50,57-59,72-74,76
+  s_d20562570301f1::t_50c816b80cb78f 27-29
+outfitter/packages/api/test/fleet-settings.test.ts
+  s_d20562570301f1::t_e3649104b68a03 1-110,130-272
+  s_d20562570301f1::t_50c816b80cb78f 111-129
+outfitter/packages/api/src/sentry.ts
+  s_d20562570301f1::t_f75ea404b02532 1-4,6-11,15,17-21,23,26-28,30-37,39-42,46,50-51,58-62,65,67,71-72,80,85,88,92-94,96-98
+  s_d20562570301f1::t_68d6b098e6a0c8 22
+  s_d20562570301f1::t_50c816b80cb78f 38,43-45,47-49,52-57
+outfitter/packages/api/src/store/mongo.ts
+  s_d20562570301f1::t_9193559c811272 69,73,467-483,1758,1791
+outfitter/integrations/agent-engine/sample-agent/agents/outfitter-delegate/src/outfitter_delegate/sentry_config.py
+  s_d20562570301f1::t_0c25729a26d125 3-7,9-17,30-31,33,38-46,48,50-51,53-54,60-65,71,73,80,91
+outfitter/integrations/agent-engine/sample-agent/agents/outfitter-delegate/pyproject.toml
+  s_d20562570301f1::t_b34c3bfcba9331 18-20
+kernal/.pi/extensions/sentry/client.ts
+  s_d20562570301f1::t_53d5cd79ba6442 3,8-14,21,24-25,33-39,56-66,87,90-93,109,124,126,132-133,140-146,158-165,171,173,175-179,181-182,191,197-199
+  s_d20562570301f1::t_ad5c70fec003e0 20,22,67-69,74,83-84
+  s_d20562570301f1::t_d0215fbf78afd6 96-99
+  s_d20562570301f1::t_729f7458931b3d 75,77,130
+  s_d20562570301f1::t_c370a9b5f63d77 23,44-45,70-73,76,80,86,88,111,125,127-129,131,134-135,166-170,172,174,180,183-190,192-194
+  s_d20562570301f1::t_1cd554b0fdfc60 78-79,81-82,89,94-95,100-108,113,116,136-139,147-154,156-157
+  s_d20562570301f1::t_e24fe8d9585093 40
+kernal/.pi/extensions/sentry/index.ts
+  s_d20562570301f1::t_5adeb6b9e9bfb8 69,71-74,76-81
+  s_d20562570301f1::t_d0b34d75a81d9a 30,60-65,124,127-131
+  s_d20562570301f1::t_848e4a24278b89 3-4,6-10,12-18,20-21,24-27,29,31,33-44,46,49,51-59,68,70,87,92-93,99,115-123,125,132-136,138-144,147-148
+  s_d20562570301f1::t_c370a9b5f63d77 66,75,126,137
+  s_d20562570301f1::t_5ec18617bf4de3 67
+outfitter/packages/api/test/sentry.test.ts
+  s_d20562570301f1::t_50c816b80cb78f 64-65,71,73-74,77-82,135,137
+  s_d20562570301f1::t_620fe5ec6ec5a0 1-4,10,17,20-46,49-50,54-55,59-63,66-70,72,75-76,83-88,98-99,102,113,122-131,136,138,146-147,150-152,161
+kernal/tests/sentry.test.ts
+  s_d20562570301f1::t_57c3704cc57c34 2-6,11-16,18,21-25,27-29,33,35-43,46,50,59,62-117,119-120,122-126,149-159,161,163,165,168-171,173,175-178,180,183-185,222-228,243-255,278,280-283,285-299,301-308,319,328-359,363-366,369-374,377-394,425-430
+  s_d20562570301f1::t_c370a9b5f63d77 160,162,164,166-167,172,174,179,181-182,186-221,300
+  s_d20562570301f1::t_fff744bec7ff9e 10,17,31-32,118,121,127-132,134-140,143-146,229-242,395-410,413-414,416-424
+.github/workflows/outfitter-ci.yml
+  s_d20562570301f1::t_5988e01fc2dd2b 120-121
+outfitter/packages/api/src/fleet-settings.ts
+  s_d20562570301f1::t_af9a2ebcd92d4c 1-115,118-119,123,129-132,136-137,142-150,153-160,162-171
+  s_d20562570301f1::t_50c816b80cb78f 116-117,134,138,161
+  s_d20562570301f1::t_bc66851d1013d2 133,135,139-141
+  s_d20562570301f1::t_285cdfff4416fb 120-122,124-128
+  s_d20562570301f1::t_195e18fe01fd8f 151-152
+outfitter/packages/agentd/src/main.ts
+  s_d20562570301f1::t_daad5636140142 34,91-92
+outfitter/packages/api/src/store/memory.ts
+  s_d20562570301f1::t_b391a36b12f1ec 68,72,409-420,1369
+outfitter/packages/api/src/store/types.ts
+  s_d20562570301f1::t_d5b9a9b3c18800 1372-1379,1403
+  s_d20562570301f1::t_b391a36b12f1ec 8
+outfitter/packages/api/src/routes/me.ts
+  s_d20562570301f1::t_7dabeb1bd4b489 3,21-24
+  s_d20562570301f1::t_b598ec48e3c7cb 25
+kernal/tests/fixtures/sentry-real-child.ts
+  s_d20562570301f1::t_61524916e12290 1-60
+outfitter/packages/web/src/api/client.ts
+  s_d20562570301f1::t_88c6d67000d7f8 261-280,288,576-582
+  s_d20562570301f1::t_b5410954fcc70a 583
+outfitter/packages/api/src/agentlink.ts
+  s_d20562570301f1::t_890b6eb8e99253 47,281-283,1309,1356-1367
+  s_d20562570301f1::t_0d31a0a94bab29 386-387,1471-1472
+  s_d20562570301f1::t_183eb6071fad22 1473-1474
+outfitter/docs/protocol.md
+  s_d20562570301f1::t_8ec9b29faafdd6 199
+outfitter/packages/api/src/routes/operator.ts
+  s_d20562570301f1::t_92052ca71d343b 9
+  s_d20562570301f1::t_7dabeb1bd4b489 145-147,151-166
+  s_d20562570301f1::t_5a99ad491b548f 167-168
+outfitter/packages/api/src/routes/context.ts
+  s_d20562570301f1::t_0d31a0a94bab29 23,28-30
+outfitter/packages/api/src/server.ts
+  s_d20562570301f1::t_c234437b56c891 41,46-47,116-120
+  s_d20562570301f1::t_0d31a0a94bab29 42,112-115,121-127,129-134,136-140,167,270
+outfitter/packages/agentd/test/run.test.ts
+  s_d20562570301f1::t_f1a2e246f50e2e 853,856,859,862-871,873-874,877,886-887
+outfitter/packages/web/src/main.tsx
+  s_d20562570301f1::t_1bb2c2438a2c31 8-10
+outfitter/packages/api/src/types/fastify.d.ts
+  s_d20562570301f1::t_8ec9b29faafdd6 8-9
+docs/reports/sentry-integration-plan.md
+  s_d20562570301f1::t_415c39b57716e2 1-26,30,34-57,63-97
+  s_d20562570301f1::t_2b8667008f99ca 27-29,31-33,58-62
+kernal/.pi/extensions/sentry/config.ts
+  s_d20562570301f1::t_0a17642ad6b002 2-4,6-12,14-15,17-23,26-31,34-35,40-53
+kernal/README.md
+  s_d20562570301f1::t_f7e6f6098708b0 590-605
+outfitter/packages/web/test/telemetry-panel.test.tsx
+  s_d20562570301f1::t_7bd88b970ae6e2 1-49,51-114,127-148
+  s_d20562570301f1::t_103f512cb5ad78 50,115-126
+kernal/package.json
+  s_d20562570301f1::t_7a60eab88e77e3 17
+outfitter/packages/agentd/test/sentry.test.ts
+  s_d20562570301f1::t_5bc0c44d19ed95 1-4,10-29,33-34,38-39,43-45,55-56,58,61-62,72-73,76-77,88,98-100,108
+kernal/.pi/extensions/sentry/lib.ts
+  s_d20562570301f1::t_ebf41334ca7eec 23-36
+kernal/.pi/npm/package-lock.json
+  s_d20562570301f1::t_9d03322a3e1c2c 9,34-39,707-1052,1065-1180,1325-1333,1377-1388,2054-2065,2542-2558,2599-2607,3249-3266,3336-3359,3554-3589,3666-3681,4291-4302,4663-4677
+kernal/package-lock.json
+  s_d20562570301f1::t_c2c4da5e4b085c 11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "85c19bc6029525991bf0c058495b831e722ac454",
+  "prompts": {},
+  "sessions": {
+    "s_d20562570301f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d84632f2-81dd-4a9c-87c6-4dfa7488758e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -28,6 +28,8 @@ import { scrubEvent } from "./lib.ts";
 export interface SentrySpan {
   setStatus(outcome: "ok" | "error"): void;
   end(): void;
+  /** The SDK's own span, for parenting another span to this one. */
+  raw?: unknown;
 }
 
 export interface SentryInit {
@@ -43,8 +45,11 @@ export interface SentryInit {
 export interface SentryLike {
   /** May load the SDK first, so it may be async; applySentry waits for it. */
   init(options: SentryInit): void | Promise<void>;
-  captureException(error: unknown, context?: { tags?: Record<string, string> }): string;
-  startInactiveSpan(options: { name: string; op: string; attributes?: Record<string, string | number | boolean> }): SentrySpan;
+  captureException(error: unknown, context?: { tags?: Record<string, string>; fingerprint?: string[] }): string;
+  /** `parent`: the span this one belongs to (pi's events give no active-span context, so it is
+   * passed explicitly); with `onlyIfParent`, no span at all without one. A child of an unsampled
+   * span is unsampled too, so a run and its tool calls are kept or dropped together. */
+  startInactiveSpan(options: { name: string; op: string; attributes?: Record<string, string | number | boolean>; parent?: SentrySpan; onlyIfParent?: boolean }): SentrySpan;
 }
 
 /** `@sentry/node`'s span status is a numeric code (1 = ok, 2 = error); this hides that encoding
@@ -97,6 +102,10 @@ export const realSentry: SentryLike = {
       // can gate and scrub them. The SDK's default ("stream") sends spans one by one through a hook
       // that can edit but never drop one, and it ignores beforeSendTransaction, with a warning.
       traceLifecycle: "static",
+      // No sentry-trace/baggage headers on outbound requests (the SDK's default is every host):
+      // they would tell each LLM provider the Kernal version, the Sentry org and one id that is the
+      // same across all of them, and would keep doing so while Sentry is off.
+      tracePropagationTargets: [],
       tracesSampler: ({ parentSampled }) => (sending() ? (parentSampled ?? options.gate().tracesSampleRate) : 0),
       beforeSend: (event) => (sending() ? scrubEvent(event, home) : null),
       beforeSendTransaction: (event) => (sending() ? scrubEvent(event, home) : null),
@@ -112,11 +121,16 @@ export const realSentry: SentryLike = {
   captureException(error, context) {
     return state().sdk!.captureException(error, context);
   },
-  startInactiveSpan(options) {
-    const span = state().sdk!.startInactiveSpan(options);
+  startInactiveSpan({ parent, onlyIfParent, ...options }) {
+    const span = state().sdk!.startInactiveSpan({
+      ...options,
+      ...(parent ? { parentSpan: parent.raw as SentryNode.Span } : {}),
+      ...(onlyIfParent ? { onlyIfParent: true } : {}),
+    });
     return {
       setStatus: (outcome) => { span.setStatus(toSpanStatus(outcome)); },
       end: () => { span.end(); },
+      raw: span,
     };
   },
 };
@@ -155,6 +169,16 @@ export function newInstance(): number {
 
 export function isCurrent(instance: number): boolean {
   return state().instance === instance;
+}
+
+/** For `/sentry`: what this process is actually doing, beside what was decided. */
+export function liveStatus(): "sending" | "starting" | "failed" | "restart-needed" | "idle" {
+  const s = state();
+  if (s.sending) return "sending";
+  if (s.failed) return "failed";
+  if (s.dsn !== undefined && !s.started) return "starting";
+  if (s.started && s.want?.on && s.want.dsn !== s.dsn) return "restart-needed";
+  return "idle";
 }
 
 /** Whether events leave this process right now. index.ts checks it before starting a span. */

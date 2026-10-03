@@ -6,16 +6,18 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import Fastify from "fastify";
+import { createServer } from "node:http";
 import {
   applySentrySettings,
   sentryEnabled,
   installSentryErrorHandler,
-  captureException,
-  withSentrySpan,
   resetSentryForTests,
   Sentry,
   type SentryRuntime,
 } from "../src/sentry.ts";
+
+const captureException = (e: unknown) => Sentry.captureException(e);
+const withSentrySpan = <T,>(name: string, op: string, task: () => Promise<T>) => Sentry.startSpan({ name, op }, task);
 
 const DSN = "https://examplePublicKey@o0.ingest.sentry.io/0";
 const ON = { enabled: true, dsn: DSN, tracesSampleRate: 0.05 };
@@ -25,17 +27,23 @@ const OFF = { enabled: false, dsn: DSN, tracesSampleRate: 0.05 };
 function fakeTransport() {
   const errors: string[] = [];
   const items: string[] = [];
+  const transactions: Array<{ transaction?: string; contexts?: { trace?: { status?: string } } }> = [];
+  const events: Array<{ request?: Record<string, unknown> }> = [];
   const transport: SentryRuntime["transport"] = () => ({
     send: async (envelope) => {
       for (const [header, payload] of envelope[1] as Array<[{ type: string }, { exception?: { values?: Array<{ value?: string }> } }]>) {
         items.push(header.type);
-        if (header.type === "event") errors.push(payload.exception?.values?.[0]?.value ?? "");
+        if (header.type === "event") {
+          errors.push(payload.exception?.values?.[0]?.value ?? "");
+          events.push(payload as never);
+        }
+        if (header.type === "transaction") transactions.push(payload as never);
       }
       return {};
     },
     flush: async () => true,
   });
-  return { transport, errors, items };
+  return { transport, errors, items, transactions, events };
 }
 
 function runtime(transport: SentryRuntime["transport"]): SentryRuntime {
@@ -90,25 +98,16 @@ describe("applySentrySettings", () => {
 });
 
 describe("captureException", () => {
-  test("is a no-op when Sentry is off", () => {
-    assert.doesNotThrow(() => captureException(new Error("ignored")));
-  });
-
   test("reports the error when Sentry is on", async () => {
     const { transport, errors } = fakeTransport();
     applySentrySettings(ON, runtime(transport));
-    captureException(new Error("boom"), { runId: "r1" });
+    captureException(new Error("boom"));
     await Sentry.flush(1000);
     assert.deepEqual(errors, ["boom"]);
   });
 });
 
-describe("withSentrySpan", () => {
-  test("runs the task untraced when Sentry is off", async () => {
-    const result = await withSentrySpan("job", "task", async () => 42);
-    assert.equal(result, 42);
-  });
-
+describe("traces", () => {
   test("runs the task inside a span when Sentry is on", async () => {
     applySentrySettings(ON, runtime(fakeTransport().transport));
     let sawActiveSpan = false;
@@ -159,5 +158,31 @@ describe("installSentryErrorHandler", () => {
     assert.equal(res.statusCode, 500);
     await Sentry.flush(1000);
     assert.deepEqual(errors, ["kaboom"]);
+  });
+});
+
+describe("what leaves the API", () => {
+  test("no trace headers on outbound requests", async () => {
+    let headers: Record<string, unknown> = {};
+    const server = createServer((req, res) => { headers = req.headers; res.end("ok"); });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    applySentrySettings({ ...ON, tracesSampleRate: 1 }, runtime(fakeTransport().transport));
+    await withSentrySpan("job", "task", async () => {
+      await fetch(`http://127.0.0.1:${(server.address() as { port: number }).port}/`);
+    });
+    server.close();
+    assert.equal(headers["sentry-trace"], undefined);
+    assert.equal(headers.baggage, undefined);
+  });
+
+  test("an event never carries the request's headers, body or query", async () => {
+    const { transport, events } = fakeTransport();
+    applySentrySettings(ON, runtime(transport));
+    Sentry.captureEvent({
+      message: "x",
+      request: { method: "PUT", url: "https://outfitter.test/api/operator/secrets/x?token=abc", headers: { authorization: "Bearer outf_secret" }, data: { value: "secret" }, cookies: { a: "b" } },
+    });
+    await Sentry.flush(1000);
+    assert.deepEqual(events[0]?.request, { method: "PUT", url: "https://outfitter.test/api/operator/secrets/x" });
   });
 });

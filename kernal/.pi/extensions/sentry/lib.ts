@@ -1,4 +1,5 @@
 /** Pure logic for the Sentry extension's event handling; tested without pi or @sentry/node. */
+import { redact } from "../_shared/redact.ts";
 
 /** The shape of AgentEndEvent.messages this extension needs — the full AgentMessage union has many
  * more fields and variants, none of which matter here. */
@@ -24,13 +25,50 @@ export function toolSpanAttributes(toolName: string): Record<string, string> {
 /**
  * What leaves the laptop, trimmed of who sent it: the machine's hostname (`server_name`, which
  * @sentry/node fills in, and which is usually the person's name) is dropped, and the home directory
- * in any path or message becomes `~`. The event is plain JSON, so one pass over its text catches
- * stack frames, exception values and breadcrumbs alike.
+ * in any string (stack frames, exception values, breadcrumbs, span data) becomes `~`.
+ *
+ * A walk, not a JSON round trip: an event carries `sdkProcessingMetadata` (the SDK's own scopes,
+ * full of cycles), which is never sent and must reach the SDK untouched. Never throws: a throwing
+ * beforeSend makes the SDK drop the event ("callback_error").
  */
 export function scrubEvent<E extends object>(event: E, home: string): E {
   const { server_name: _host, ...rest } = event as E & { server_name?: string };
   if (!home || home === "/") return rest as E;
-  const text = JSON.stringify(rest);
-  const needle = JSON.stringify(home).slice(1, -1);
-  return JSON.parse(text.split(needle).join("~")) as E;
+  const seen = new WeakMap<object, unknown>();
+  const walk = (value: unknown, key?: string): unknown => {
+    if (typeof value === "string") return value.split(home).join("~");
+    if (!value || typeof value !== "object" || key === "sdkProcessingMetadata") return value;
+    if (seen.has(value)) return seen.get(value);
+    if (Array.isArray(value)) {
+      const out: unknown[] = [];
+      seen.set(value, out);
+      for (const item of value) out.push(walk(item));
+      return out;
+    }
+    if (Object.getPrototypeOf(value) !== Object.prototype) return value; // class instances: as they are
+    const out: Record<string, unknown> = {};
+    seen.set(value, out);
+    for (const [k, v] of Object.entries(value)) out[k] = walk(v, k);
+    return out;
+  };
+  try {
+    return walk(rest) as E;
+  } catch {
+    return rest as E;
+  }
+}
+
+/**
+ * A failed run's error as it is reported: secret-looking tokens redacted (a provider's message can
+ * echo part of a key), and a fingerprint that ignores numbers and ids, so one provider outage is one
+ * Sentry issue rather than one per request id, however many laptops hit it.
+ */
+export function agentRunReport(message: string): { message: string; fingerprint: string[] } {
+  const clean = redact(message);
+  const shape = clean
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "<id>")
+    .replace(/\b(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{12,}\b/g, "<id>")
+    .replace(/\d+/g, "<n>")
+    .slice(0, 200);
+  return { message: clean, fingerprint: ["agent_end", shape] };
 }

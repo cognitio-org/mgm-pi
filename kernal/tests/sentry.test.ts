@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decide, defaultEnvironment, describe as describeDecision, optedOut } from "../.pi/extensions/sentry/config.ts";
 import { applySentry, sending, _resetSentryState, type SentryLike, type SentryInit, type SentrySpan } from "../.pi/extensions/sentry/client.ts";
-import { agentRunError, scrubEvent, toolSpanAttributes } from "../.pi/extensions/sentry/lib.ts";
+import { agentRunError, agentRunReport, scrubEvent, toolSpanAttributes } from "../.pi/extensions/sentry/lib.ts";
 import { MAX_CACHE_AGE_MS, cachedFleetSettings, parseFleetSettings, refreshFleetSettings, type FleetSettings } from "../.pi/extensions/_shared/fleet-settings.ts";
 import sentryExtension from "../.pi/extensions/sentry/index.ts";
 import { makePi } from "./harness.ts";
@@ -45,14 +45,14 @@ function fakeFetch(body: unknown, status = 200) {
 function fakeSentry() {
   const inits: SentryInit[] = [];
   const captured: { error: unknown; context?: any }[] = [];
-  const spans: { name: string; op: string; attributes?: any; status?: "ok" | "error"; ended: boolean }[] = [];
+  const spans: { name: string; op: string; attributes?: any; parent?: string; onlyIfParent?: boolean; status?: "ok" | "error"; ended: boolean }[] = [];
   const sentry: SentryLike = {
     init(options) { inits.push(options); },
     captureException(error, context) { captured.push({ error, context }); return "event-id"; },
     startInactiveSpan(options) {
-      const rec = { name: options.name, op: options.op, attributes: options.attributes, status: undefined as "ok" | "error" | undefined, ended: false };
+      const rec = { name: options.name, op: options.op, attributes: options.attributes, parent: (options.parent?.raw as any)?.name, onlyIfParent: options.onlyIfParent, status: undefined as "ok" | "error" | undefined, ended: false };
       spans.push(rec);
-      const span: SentrySpan = { setStatus: (o) => { rec.status = o; }, end: () => { rec.ended = true; } };
+      const span: SentrySpan = { setStatus: (o) => { rec.status = o; }, end: () => { rec.ended = true; }, raw: rec };
       return span;
     },
   };
@@ -77,6 +77,19 @@ describe("sentry config: both Outfitter and the person must say yes", () => {
   test("a release bundle reports as production, a source checkout as development", () => {
     assert.equal(defaultEnvironment(true), "production");
     assert.equal(defaultEnvironment(false), "development");
+  });
+
+  test("the status line tells a decision apart from what is actually happening", () => {
+    const on = { on: true as const, dsn: DSN, tracesSampleRate: 0.05 };
+    assert.match(describeDecision(on, "failed"), /failed to start/);
+    assert.match(describeDecision(on, "restart-needed"), /DSN changed/);
+    assert.match(describeDecision(on, "starting"), /Starting up/);
+  });
+
+  test("agentRunReport redacts keys and keeps the fingerprint free of numbers and ids", () => {
+    const r = agentRunReport("401: invalid key sk-ant-api03-AbCdEf1234567890abcdef1234567890");
+    assert.ok(!r.message.includes("AbCdEf1234567890"), r.message);
+    assert.equal(agentRunReport("503 after 3 tries").fingerprint[1], "<n> after <n> tries");
   });
 
   test("the status line says who decided", () => {
@@ -240,10 +253,22 @@ describe("the real @sentry/node, in a child process", () => {
     assert.equal(r.reloadError, undefined, "a reloaded module copy still reaches the running SDK");
     assert.ok(r.whileOn.includes("event"));
     assert.deepEqual(r.whileOff, [], "no events, client reports or sessions while off");
+    assert.deepEqual(r.runChildren, ["tool.read"], "a tool call is a child span inside its run's transaction");
+    assert.deepEqual(r.traceHeaders, { sentryTrace: null, baggage: null }, "no trace headers on outbound requests");
   });
 });
 
 describe("scrubEvent", () => {
+  test("survives the SDK's cyclic metadata and leaves it untouched", () => {
+    const scope: any = { name: "scope" };
+    scope.self = scope;
+    const event = { message: "/Users/someone/x", sdkProcessingMetadata: { capturedSpanScope: scope }, spans: [{ data: { path: "/Users/someone/y" } }] };
+    const out = scrubEvent(event, "/Users/someone");
+    assert.equal(out.message, "~/x");
+    assert.equal(out.spans[0].data.path, "~/y");
+    assert.equal(out.sdkProcessingMetadata.capturedSpanScope, scope);
+  });
+
   test("drops the hostname and writes the home directory as ~", () => {
     const event = {
       server_name: "Someones-MacBook-Pro.local",
@@ -325,15 +350,43 @@ describe("sentry extension wired to pi", () => {
     assert.equal(spans[0].status, "error");
   });
 
-  test("tool calls get their own spans, keyed by toolCallId, open across the two events", async () => {
+  test("tool calls are child spans of their run, keyed by toolCallId, open across the two events", async () => {
     const { pi, spans } = await load({ cached: ON });
+    await pi.emit("agent_start", {}, {});
     await pi.emit("tool_execution_start", { toolCallId: "c1", toolName: "read" }, {});
     await pi.emit("tool_execution_start", { toolCallId: "c2", toolName: "write" }, {});
-    assert.equal(spans[0].ended, false);
+    assert.equal(spans[1].ended, false);
     await pi.emit("tool_execution_end", { toolCallId: "c2", toolName: "write", isError: true }, {});
     await pi.emit("tool_execution_end", { toolCallId: "c1", toolName: "read", isError: false }, {});
-    assert.deepEqual(spans.map((s) => [s.name, s.op, s.status, s.ended]), [["tool.read", "tool.execute", "ok", true], ["tool.write", "tool.execute", "error", true]]);
-    assert.deepEqual(spans[0].attributes, { "kernal.tool": "read" });
+    assert.deepEqual(spans.slice(1).map((s) => [s.name, s.op, s.parent, s.onlyIfParent, s.status, s.ended]), [
+      ["tool.read", "tool.execute", "agent.run", true, "ok", true],
+      ["tool.write", "tool.execute", "agent.run", true, "error", true],
+    ]);
+    assert.deepEqual(spans[1].attributes, { "kernal.tool": "read" });
+  });
+
+  test("a tool call outside an agent run gets no span", async () => {
+    const { pi, spans } = await load({ cached: ON });
+    await pi.emit("tool_execution_start", { toolCallId: "c1", toolName: "read" }, {});
+    await pi.emit("tool_execution_end", { toolCallId: "c1", toolName: "read", isError: false }, {});
+    assert.equal(spans.length, 0);
+  });
+
+  test("a failed run is reported redacted and grouped by its message's shape", async () => {
+    const { pi, captured } = await load({ cached: ON });
+    await pi.emit("agent_start", {}, {});
+    await pi.emit("agent_end", { messages: [{ role: "assistant", stopReason: "error", errorMessage: "429: rate limited (request req_8f3a9c2e1b7d4f60)" }] }, {});
+    assert.deepEqual(captured[0].context.fingerprint, ["agent_end", "<n>: rate limited (request <id>)"]);
+  });
+
+  test("/sentry on that cannot be saved stays off and says so", async () => {
+    const fake = fakeSentry();
+    const pi = makePi();
+    sentryExtension(pi as any, { sentry: fake.sentry, credentials: CREDS, settings: { kernal: { sentry: false } }, cacheFile: tmpFile(), fetch: fakeFetch(ON).fn, onRefresh: () => {}, saveOptOut: () => { throw new Error("settings.json is not valid JSON"); } });
+    const notes: string[] = [];
+    await pi.commands.get("sentry")!.handler("on", { ui: { notify: (m: string) => notes.push(m) } });
+    assert.equal(sending(), false);
+    assert.match(notes[0], /stays off/);
   });
 
   test("off by default: nothing cached, Outfitter off -- no init, no spans, no captures", async () => {

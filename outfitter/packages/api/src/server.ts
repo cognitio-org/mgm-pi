@@ -128,7 +128,8 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   installSentryErrorHandler(fastify);
   fastify.addHook("onRequest", async (req) => {
     fleetSettings.refreshIfStale();
-    if (!sentryEnabled()) return;
+    // A websocket (agentd's /agent/ws, the browser stream) is hijacked and never reaches onResponse.
+    if (!sentryEnabled() || req.headers.upgrade?.toLowerCase() === "websocket") return;
     req.sentrySpan = Sentry.startInactiveSpan({
       name: `${req.method} ${req.routeOptions?.url ?? "(unmatched route)"}`,
       op: "http.server",

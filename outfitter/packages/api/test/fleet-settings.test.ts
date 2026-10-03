@@ -82,6 +82,8 @@ describe("fleet settings document", () => {
     assert.equal(isSentryDsn("https://abc@o0.ingest.sentry.io/"), false, "no project id");
     assert.equal(isSentryDsn("https://abc:secret@o0.ingest.sentry.io/1"), false, "a secret key has no place here");
     assert.equal(isSentryDsn("ftp://abc@o0.ingest.sentry.io/1"), false);
+    assert.equal(isSentryDsn("http://abc@o0.ingest.sentry.io/1"), false, "clear text, outside dev");
+    assert.equal(isSentryDsn("http://abc@127.0.0.1:9/1", true), true);
     assert.equal(isSentryDsn("not a url"), false);
   });
 
@@ -91,9 +93,10 @@ describe("fleet settings document", () => {
     assert.ok("error" in parseSentryUpdate({ telemetry: { sentry: { enabled: true, dsn: "nope" } } }));
     assert.ok("error" in parseSentryUpdate({ telemetry: { sentry: { enabled: false, tracesSampleRate: 1.5 } } }));
     assert.deepEqual(parseSentryUpdate({ telemetry: { sentry: { enabled: false, dsn: "  " } } }), { value: { enabled: false, tracesSampleRate: 0.05 } });
-    assert.deepEqual(parseSentryUpdate({ telemetry: { sentry: { enabled: true, dsn: ` ${DSN} `, tracesSampleRate: 0.2 } } }), {
+    assert.deepEqual(parseSentryUpdate({ telemetry: { sentry: { enabled: true, dsn: ` ${DSN} `, tracesSampleRate: 0.2 } } }, { allowHttp: true }), {
       value: { enabled: true, dsn: DSN, tracesSampleRate: 0.2 },
     });
+    assert.ok("error" in parseSentryUpdate({ telemetry: { sentry: { enabled: true, dsn: DSN } } }), "http:// only in dev");
   });
 });
 

@@ -56,7 +56,7 @@ import type {
   UpAdminRequest,
 } from "./protocol.js";
 import { adminCapabilities } from "./protocol.js";
-import { initSentry, withSentrySpan, captureException } from "./sentry.js";
+import { initSentry, withSentrySpan, captureException, flushSentry } from "./sentry.js";
 
 /** The start-up phases the `startup` frame carries: run.spec through pi ready. Later "first ..."
  * milestones depend on the person's prompt, not on starting up. */
@@ -591,7 +591,7 @@ export class RunController {
     this.onLog(`run failed: ${message}`);
     captureException(err);
     this.stopping = true;
-    void this.bye("error", message).then(() => this.onExit(1));
+    void Promise.all([this.bye("error", message), flushSentry()]).then(() => this.onExit(1));
   }
 
   private async begin(spec: DownRunSpec): Promise<void> {
@@ -1224,7 +1224,9 @@ export class RunController {
     this.stopHeartbeat();
     this.tailer?.stop();
     this.spendTailer?.stop();
-    void this.bye("error", `pi exited: code=${code} signal=${signal}`).then(() => this.onExit(1));
+    const message = `pi exited: code=${code} signal=${signal}`;
+    captureException(new Error(message));
+    void Promise.all([this.bye("error", message), flushSentry()]).then(() => this.onExit(1));
   }
 
   private stopCaptureListener(): Promise<void> {

@@ -882,9 +882,36 @@ test("RunController: a failed run (fail(), same 404 scenario above) reports the 
   link.deliver(spec);
 
   await waitFor(() => getExitCode() === 1);
-  await Sentry.flush(1000);
+  // No flush here: agentd itself must have delivered the event before it exited.
   assert.equal(values.length, 1);
   assert.match(values[0] ?? "", /404/);
+});
+
+test("RunController: pi exiting on its own is reported to Sentry before agentd exits (sentry.ts)", async (t) => {
+  t.after(async () => {
+    await resetSentryForTests();
+  });
+  const values: string[] = [];
+  initSentry({ dsn: "https://examplePublicKey@o0.ingest.sentry.io/0", tracesSampleRate: 0, environment: "test" }, () => ({
+    send: async (envelope) => {
+      for (const [header, payload] of envelope[1] as Array<[{ type: string }, { exception?: { values?: Array<{ value?: string }> } }]>) {
+        if (header.type === "event") values.push(payload.exception?.values?.[0]?.value ?? "");
+      }
+      return {};
+    },
+    flush: async () => true,
+  }));
+  let child: PiProcess | undefined;
+  const { controller, link, spec, states, getExitCode } = await setupController({}, {
+    spawnPi: (opts) => (child = spawnPi({ ...opts, piBin: process.execPath, args: [fakePiPath, ...opts.args] })),
+  });
+  t.after(() => controller.dispose());
+  link.deliver(spec);
+  await waitFor(() => states.includes("idle"));
+  child!.kill("SIGKILL");
+  await waitFor(() => getExitCode() === 1);
+  assert.equal(values.length, 1);
+  assert.match(values[0] ?? "", /pi exited: code=null signal=SIGKILL/);
 });
 
 test("RunController: E2.11 spend tailer lines become `spend` up-frames with an accumulated `estimate`", async (t) => {

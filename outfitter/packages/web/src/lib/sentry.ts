@@ -34,6 +34,8 @@ export async function initSentry(load: () => Promise<ClientFleetSettings> = () =
   if (!sentry?.enabled || !sentry.dsn) return false;
   Sentry.init({
     dsn: sentry.dsn,
+    // "development" from `vite` (dev server), "production" from a build, like the API's own.
+    environment: import.meta.env.DEV ? "development" : "production",
     integrations: [Sentry.browserTracingIntegration(), Sentry.replayIntegration()],
     tracesSampleRate: sentry.tracesSampleRate,
     replaysSessionSampleRate: 0.0,

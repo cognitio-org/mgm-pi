@@ -30,6 +30,11 @@ Outfitter that has never saved them, or a failed read with nothing cached. A lap
 refused (401/403) replaces its cached copy with off, and a cached copy older than 30 days reads as
 off.
 
+No runtime adds `sentry-trace`/`baggage` headers to its outbound calls (`tracePropagationTargets: []`):
+the SDK's default is every host, which would tell each LLM provider and API the release, the Sentry
+org and one id shared across all of them, whether Sentry was on or not. The API also strips the
+request's headers, body, cookies and query from any event.
+
 "Off" means nothing leaves a process once its SDK has started either: besides the event hooks, the
 API and Kernal gate the transport itself, so client reports and session envelopes stop too.
 
@@ -47,12 +52,14 @@ decided.
 
 ## 2. What is sent
 
-- **Errors (100%)**: unhandled route errors (API), failed runs (agentd, reported once by `fail()`),
+- **Errors (100%)**: unhandled route errors (API), failed runs and unexpected pi exits (agentd,
+  flushed before it exits),
   React crashes caught by the ErrorBoundary (web), agent runs that end in an assistant error and
   uncaught exceptions (Kernal), LLM call failures (Python).
 - **Traces (the fleet rate, default 5%)**: one span per API request (named after the route pattern,
-  never the raw URL), agentd's run start-up, and in Kernal one transaction per agent run with a
-  child span per tool call. A tool span carries only the tool name, never its arguments or output.
+  never the raw URL; none for websockets), agentd's run start-up, and in Kernal one transaction per
+  agent run with a child span per tool call, sampled together (a tool call outside a run is not
+  traced). A tool span carries only the tool name, never its arguments or output.
 - **Session replay (web)**: error-only (`replaysSessionSampleRate: 0`, `replaysOnErrorSampleRate: 1`)
   to stay inside the free plan's replay quota.
 

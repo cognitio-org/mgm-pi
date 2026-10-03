@@ -305,6 +305,9 @@ function TelemetryPanel({ fleet, onSaved }: { fleet: FleetSettings; onSaved: (fl
       const updated = await withFloppySound(api.putFleetSentry({ enabled, dsn: dsn.trim() || undefined, tracesSampleRate }));
       setSaved(true);
       setAttempted(false);
+      // Show what was stored ("5.0" saves as 5), so the form is clean again.
+      setPercent(String(Math.round(updated.telemetry.sentry.tracesSampleRate * 1000) / 10));
+      setDsn(updated.telemetry.sentry.dsn ?? "");
       onSaved(updated);
     } catch (err) {
       setApiError(toApiErrorState(err, "Save failed"));
@@ -326,7 +329,7 @@ function TelemetryPanel({ fleet, onSaved }: { fleet: FleetSettings; onSaved: (fl
         <form onSubmit={save}>
           <div className="form-row">
             <label>
-              <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Send errors and
+              <input type="checkbox" checked={enabled} onChange={(e) => { setEnabled(e.target.checked); setSaved(false); }} /> Send errors and
               traces to Sentry
             </label>
           </div>
@@ -336,7 +339,7 @@ function TelemetryPanel({ fleet, onSaved }: { fleet: FleetSettings; onSaved: (fl
               id="sentry-dsn"
               className="mono"
               value={dsn}
-              onChange={(e) => setDsn(e.target.value)}
+              onChange={(e) => { setDsn(e.target.value); setSaved(false); }}
               placeholder="https://<key>@<org>.ingest.us.sentry.io/<project id>"
               aria-invalid={attempted && !!dsnInvalid}
               autoComplete="off"
@@ -350,7 +353,7 @@ function TelemetryPanel({ fleet, onSaved }: { fleet: FleetSettings; onSaved: (fl
               id="sentry-rate"
               inputMode="decimal"
               value={percent}
-              onChange={(e) => setPercent(e.target.value)}
+              onChange={(e) => { setPercent(e.target.value); setSaved(false); }}
               aria-invalid={attempted && !!rateInvalid}
               style={{ maxWidth: "8em" }}
             />

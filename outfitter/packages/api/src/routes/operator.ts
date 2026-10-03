@@ -152,7 +152,7 @@ export async function registerOperatorRoutes(app: FastifyInstance, ctx: RouteCon
   // whole; this instance applies it at once, the others within FleetSettingsCache's window, and
   // laptops on their next Kernal start.
   app.put("/api/operator/fleet-settings", { preHandler: requireOperator }, async (req, reply) => {
-    const parsed = parseSentryUpdate(req.body);
+    const parsed = parseSentryUpdate(req.body, { allowHttp: ctx.config.devMode });
     if ("error" in parsed) return reply.code(400).send({ error: parsed.error });
     const settings = {
       ...withDefaults(await ctx.store.fleetSettings.get()),

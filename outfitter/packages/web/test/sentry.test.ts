@@ -33,7 +33,7 @@ describe("initSentry", () => {
     const { initSentry, isSentryInitialized } = await freshModule();
     expect(await initSentry(on)).toBe(true);
     expect(initMock).toHaveBeenCalledTimes(1);
-    expect(initMock.mock.calls[0]?.[0]).toMatchObject({ dsn: DSN, tracesSampleRate: 0.2 });
+    expect(initMock.mock.calls[0]?.[0]).toMatchObject({ dsn: DSN, tracesSampleRate: 0.2, environment: "development" });
     expect(isSentryInitialized()).toBe(true);
   });
 

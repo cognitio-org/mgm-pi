@@ -42,12 +42,21 @@ export function applySentrySettings(settings: SentryFleetSettings, runtime: Sent
       ...(runtime.release ? { release: runtime.release } : {}),
       // Defaults minus OnUnhandledRejection: its listener would turn Node's crash on an unhandled
       // rejection into a warning, for the rest of the process even after Sentry is turned off.
-      integrations: (defaults) => [...defaults.filter((i) => i.name !== "OnUnhandledRejection"), Sentry.fastifyIntegration()],
+      integrations: (defaults) => defaults.filter((i) => i.name !== "OnUnhandledRejection"),
+      // No sentry-trace/baggage headers on outbound calls (GitHub, LiteLLM, GCP, ngrok): the SDK's
+      // default is every host, and it keeps adding them while Sentry is off.
+      tracePropagationTargets: [],
       // Live gates: the SDK keeps running once started, so turning Sentry off (or changing the
-      // rate) must be read per event, not baked into init. A trace the web app started keeps the
-      // browser's sampling decision.
-      tracesSampler: ({ parentSampled }) => (sending ? (parentSampled ?? tracesSampleRate) : 0),
-      beforeSend: (event) => (sending ? event : null),
+      // rate) must be read per event, not baked into init.
+      tracesSampler: () => (sending ? tracesSampleRate : 0),
+      // Never the request itself: its headers carry Dongles and IAP assertions, and an operator
+      // route's body can be a secret's value. (The SDK starts after Fastify and http are loaded, so
+      // its request instrumentation is not hooked in today; this holds if that ever changes.)
+      beforeSend: (event) => {
+        if (!sending) return null;
+        if (event.request) event.request = { method: event.request.method, url: event.request.url?.split("?")[0] };
+        return event;
+      },
       beforeSendTransaction: (event) => (sending ? event : null),
       // And at the wire: client reports (counts of what the gates dropped) and sessions bypass the
       // hooks above. While off, nothing at all leaves this process.
@@ -74,19 +83,10 @@ export function installSentryErrorHandler(fastify: FastifyInstance): void {
   Sentry.setupFastifyErrorHandler(fastify);
 }
 
-/** Reports an error Sentry wouldn't otherwise see (e.g. one caught and handled outside a Fastify
- * request, like the background run reconciler). A no-op when Sentry is off. */
-export function captureException(error: unknown, context?: Record<string, unknown>): void {
-  if (!sending) return;
-  Sentry.captureException(error, context ? { extra: context } : undefined);
-}
-
-/** Wraps an async task in a Sentry span (e.g. a background job tick) so it shows up in tracing
- * alongside request spans, at the fleet's sample rate. Runs the task directly, untraced, when
- * Sentry is off -- callers don't need to branch on sentryEnabled(). */
-export async function withSentrySpan<T>(name: string, op: string, task: () => Promise<T>): Promise<T> {
-  if (!sending) return task();
-  return Sentry.startSpan({ name, op }, task);
+/** Sends what is queued before the process exits (Cloud Run's SIGTERM). Returns at once while
+ * Sentry was never started. */
+export async function closeSentry(timeoutMs = 2000): Promise<void> {
+  if (initialized) await Sentry.close(timeoutMs).catch(() => undefined);
 }
 
 /** Test-only: forgets the SDK state so the next applySentrySettings starts a fresh client. */

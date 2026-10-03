@@ -27,8 +27,8 @@ import { cachedFleetSettings, refreshFleetSettings, type FleetSettings } from ".
 import { readSettings, updateKernal } from "../connect/settings.ts";
 import { installedVersion } from "../kernal-update/index.ts";
 import { decide, defaultEnvironment, describe, optedOut, type SentryDecision } from "./config.ts";
-import { applySentry, isCurrent, newInstance, realSentry, sending, type SentryLike, type SentrySpan } from "./client.ts";
-import { agentRunError, toolSpanAttributes, type AgentEndMessage } from "./lib.ts";
+import { applySentry, isCurrent, liveStatus, newInstance, realSentry, sending, type SentryLike, type SentrySpan } from "./client.ts";
+import { agentRunError, agentRunReport, toolSpanAttributes, type AgentEndMessage } from "./lib.ts";
 
 export type Deps = {
   sentry?: SentryLike;
@@ -63,7 +63,7 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
   const apply = async () => {
     if (isCurrent(instance)) await applySentry(decision(), runtime, sentry);
   };
-  void apply();
+  void apply().catch(() => undefined);
 
   // Opted out: no request to Outfitter either. Otherwise refresh in the background.
   // Never rejects: an unhandled rejection would crash pi (client.ts says why nothing catches them).
@@ -89,7 +89,10 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
 
   pi.on("agent_end", async (event: { messages: AgentEndMessage[] }) => {
     const error = agentRunError(event.messages ?? []);
-    if (error && sending()) sentry.captureException(new Error(error), { tags: { source: "agent_end" } });
+    if (error && sending()) {
+      const report = agentRunReport(error);
+      sentry.captureException(new Error(report.message), { tags: { source: "agent_end" }, fingerprint: report.fingerprint });
+    }
     runSpan?.setStatus(error ? "error" : "ok");
     runSpan?.end();
     runSpan = undefined;
@@ -97,10 +100,14 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
 
   pi.on("tool_execution_start", async (event: { toolCallId: string; toolName: string }) => {
     if (!sending()) return;
+    // A child of the run's span, and only inside a run: kept or dropped with it by the sampler.
+    if (!runSpan) return;
     toolSpans.set(event.toolCallId, sentry.startInactiveSpan({
       name: `tool.${event.toolName}`,
       op: "tool.execute",
       attributes: toolSpanAttributes(event.toolName),
+      parent: runSpan,
+      onlyIfParent: true,
     }));
   });
 
@@ -119,7 +126,8 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
     handler: async (args: string, ctx: any) => {
       const notify = (m: string, level = "info") => ctx?.ui?.notify?.(m, level);
       const sub = (args ?? "").trim() || "status";
-      if (sub === "status") return notify(describe(decision()));
+      const status = () => describe(decision(), liveStatus());
+      if (sub === "status") return notify(status());
       if (sub === "off") {
         // Stop first: a settings.json that cannot be written must not keep Sentry sending.
         laptopOff = true;
@@ -127,17 +135,21 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
         try {
           saveOptOut(false);
         } catch (err) {
-          return notify(`Sentry is off for this session, but saving that failed (${err instanceof Error ? err.message : String(err)}); it comes back on the next start.`, "warning");
+          return notify(`Sentry is off for now, but saving that failed (${err instanceof Error ? err.message : String(err)}); it comes back on the next /new, /resume, /reload or start.`, "warning");
         }
-        return notify(describe(decision()));
+        return notify(status());
       }
       if (sub === "on") {
-        saveOptOut(undefined);
+        try {
+          saveOptOut(undefined);
+        } catch (err) {
+          return notify(`Could not save that (${err instanceof Error ? err.message : String(err)}); Sentry stays off on this laptop.`, "warning");
+        }
         laptopOff = false;
         await apply();
         // The cached copy may be old after an opt-out (no refresh ran); fetch now.
         if (hasDongle) await refresh();
-        return notify(describe(decision()));
+        return notify(status());
       }
       return notify(USAGE, "warning");
     },

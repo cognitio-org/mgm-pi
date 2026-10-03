@@ -7,13 +7,25 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 
 const items: string[] = [];
+const transactions: Array<{ transaction?: string; spans?: Array<{ description?: string }> }> = [];
+let traceHeaders: { sentryTrace: string | null; baggage: string | null } | undefined;
 const server = createServer((req, res) => {
+  if (req.url === "/outbound") {
+    // Stands in for an LLM provider: what headers did Kernal's fetch carry?
+    traceHeaders = { sentryTrace: (req.headers["sentry-trace"] as string) ?? null, baggage: (req.headers.baggage as string) ?? null };
+    res.end("ok");
+    return;
+  }
   const chunks: Buffer[] = [];
   req.on("data", (c) => chunks.push(c));
   req.on("end", () => {
     const lines = Buffer.concat(chunks).toString("utf8").split("\n");
     for (let i = 1; i < lines.length; i += 2) {
-      try { items.push(JSON.parse(lines[i]).type); } catch {}
+      try {
+        const type = JSON.parse(lines[i]).type;
+        items.push(type);
+        if (type === "transaction") transactions.push(JSON.parse(lines[i + 1]));
+      } catch {}
     }
     res.end("{}");
   });
@@ -37,12 +49,18 @@ await second.applySentry({ on: true, dsn, tracesSampleRate: 1 }, runtime);
 let reloadError: string | undefined;
 try {
   second.realSentry.captureException(new Error("after reload"));
-  const span = second.realSentry.startInactiveSpan({ name: "agent.run", op: "agent.run" });
-  span.setStatus("ok");
-  span.end();
+  const run = second.realSentry.startInactiveSpan({ name: "agent.run", op: "agent.run" });
+  const tool = second.realSentry.startInactiveSpan({ name: "tool.read", op: "tool.execute", parent: run, onlyIfParent: true });
+  await fetch(`http://127.0.0.1:${port}/outbound`);
+  tool.setStatus("ok");
+  tool.end();
+  run.setStatus("ok");
+  run.end();
 } catch (err) {
   reloadError = String(err);
 }
+// The SDK hands a finished transaction to its exporter on a short timer, not at once.
+await new Promise((r) => setTimeout(r, 1500));
 await Sentry.flush(2000);
 const whileOn = [...items];
 
@@ -56,5 +74,6 @@ await Sentry.close(2000);
 const whileOff = [...items];
 
 server.close();
-console.log(JSON.stringify({ integrations, unhandledRejectionListeners, reloadError, whileOn, whileOff }));
+const runChildren = (transactions.find((t) => t.transaction === "agent.run")?.spans ?? []).map((sp) => sp.description);
+console.log(JSON.stringify({ integrations, unhandledRejectionListeners, reloadError, whileOn, whileOff, runChildren, traceHeaders }));
 process.exit(0);

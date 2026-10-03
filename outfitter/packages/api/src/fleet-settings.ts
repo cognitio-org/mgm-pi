@@ -89,9 +89,10 @@ function isRate(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1;
 }
 
-/** A Sentry DSN: http(s)://<public key>@<host>/<numeric project id>. Not a secret (it ships in
- * every browser bundle that uses Sentry), but a typo would silently send nothing anywhere. */
-export function isSentryDsn(value: string): boolean {
+/** A Sentry DSN: https://<public key>@<host>/<numeric project id> (http:// too with `allowHttp`,
+ * for a local test sink in dev). Not a secret (it ships in every browser bundle that uses Sentry),
+ * but a typo would silently send nothing anywhere, and http:// would send stack traces in clear. */
+export function isSentryDsn(value: string, allowHttp = false): boolean {
   if (value.length > 300) return false;
   let url: URL;
   try {
@@ -99,18 +100,18 @@ export function isSentryDsn(value: string): boolean {
   } catch {
     return false;
   }
-  return (url.protocol === "https:" || url.protocol === "http:") && url.username !== "" && !url.password && /^\/\d+$/.test(url.pathname) && !url.search && !url.hash;
+  return (url.protocol === "https:" || (allowHttp && url.protocol === "http:")) && url.username !== "" && !url.password && /^\/\d+$/.test(url.pathname) && !url.search && !url.hash;
 }
 
 /** Validates PUT /api/operator/fleet-settings' body: the whole `telemetry.sentry` section. An empty
  * DSN removes it; turning Sentry on needs one. */
-export function parseSentryUpdate(body: unknown): { value: SentryFleetSettings } | { error: string } {
+export function parseSentryUpdate(body: unknown, opts: { allowHttp?: boolean } = {}): { value: SentryFleetSettings } | { error: string } {
   const s = (body as { telemetry?: { sentry?: unknown } } | undefined)?.telemetry?.sentry as Record<string, unknown> | undefined;
   if (!s || typeof s !== "object") return { error: "telemetry.sentry is required" };
   if (typeof s.enabled !== "boolean") return { error: "telemetry.sentry.enabled must be true or false" };
   if (s.dsn !== undefined && typeof s.dsn !== "string") return { error: "telemetry.sentry.dsn must be a string" };
   const dsn = typeof s.dsn === "string" ? s.dsn.trim() : "";
-  if (dsn && !isSentryDsn(dsn)) return { error: "telemetry.sentry.dsn is not a Sentry DSN (https://<key>@<host>/<project id>)" };
+  if (dsn && !isSentryDsn(dsn, opts.allowHttp)) return { error: "telemetry.sentry.dsn is not a Sentry DSN (https://<key>@<host>/<project id>)" };
   if (s.enabled && !dsn) return { error: "a DSN is required to turn Sentry on" };
   const rate = s.tracesSampleRate === undefined ? DEFAULT_TRACES_SAMPLE_RATE : s.tracesSampleRate;
   if (!isRate(rate)) return { error: "telemetry.sentry.tracesSampleRate must be a number from 0 to 1" };

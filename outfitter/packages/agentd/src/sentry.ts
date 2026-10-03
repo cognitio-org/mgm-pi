@@ -24,6 +24,9 @@ export function initSentry(settings: RunSpecTelemetry["sentry"] | undefined, tra
   Sentry.init({
     dsn: settings.dsn,
     tracesSampleRate: settings.tracesSampleRate,
+    // No sentry-trace/baggage headers on outbound calls (GitHub, LiteLLM, the API): the SDK's
+    // default is every host.
+    tracePropagationTargets: [],
     // Defaults minus OnUnhandledRejection: its listener would turn Node's crash on an unhandled
     // rejection into a warning.
     integrations: (defaults) => defaults.filter((i) => i.name !== "OnUnhandledRejection"),
@@ -67,6 +70,12 @@ export async function withSentrySpan<T>(name: string, op: string, task: () => Pr
       throw error;
     }
   });
+}
+
+/** Sends what is queued, at most `timeoutMs`: before agentd's process.exit, which would otherwise
+ * kill the in-flight request carrying the run's one error. Returns at once while Sentry is off. */
+export async function flushSentry(timeoutMs = 2000): Promise<void> {
+  if (initialized) await Sentry.flush(timeoutMs).catch(() => undefined);
 }
 
 /** Test-only: forgets the SDK state so each test gets a clean slate. */

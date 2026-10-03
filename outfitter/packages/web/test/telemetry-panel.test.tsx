@@ -117,6 +117,19 @@ describe("Settings → Telemetry", () => {
     expect(calls.filter((c) => c.url === "/api/operator/settings").length).toBe(1);
   });
 
+  it("after a save the form is clean again, and editing clears the Saved note", async () => {
+    serve({ enabled: false, dsn: DSN, tracesSampleRate: 0.05 });
+    const el = await render();
+    await act(async () => setValue(el.querySelector("#sentry-rate") as HTMLInputElement, "5.0"));
+    await act(async () => checkbox(el).click());
+    await act(async () => saveButton(el).click());
+    await settle();
+    expect((el.querySelector("#sentry-rate") as HTMLInputElement).value).toBe("5");
+    expect(saveButton(el).disabled).toBe(true);
+    await act(async () => checkbox(el).click());
+    expect(el.textContent).not.toContain("Saved.");
+  });
+
   it("an untouched rate is sent as stored, not as its rounded percentage", async () => {
     const calls = serve({ enabled: false, dsn: DSN, tracesSampleRate: 0.0123 });
     const el = await render();

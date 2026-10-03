@@ -37,11 +37,16 @@ export function defaultEnvironment(isPackagedBundle: boolean): string {
   return isPackagedBundle ? "production" : "development";
 }
 
-/** One line for `/sentry` and `/sentry status`. */
-export function describe(decision: SentryDecision): string {
+/** One line for `/sentry` and `/sentry status`. `live` is what the process is actually doing
+ * (client.ts liveStatus), which can lag the decision: the SDK may still be loading, may have failed
+ * to start, or may be bound to a DSN Outfitter has since replaced. */
+export function describe(decision: SentryDecision, live: "sending" | "starting" | "failed" | "restart-needed" | "idle" = "sending"): string {
   if (decision.on) {
+    if (live === "failed") return "Sentry: on in Outfitter, but it failed to start in this Kernal, so nothing is sent (restart Kernal to retry).";
+    if (live === "restart-needed") return "Sentry: on in Outfitter, but its DSN changed; nothing is sent until Kernal restarts.";
     const pct = Math.round(decision.tracesSampleRate * 1000) / 10;
-    return `Sentry: on, set by Outfitter (errors, and ${pct}% of agent runs traced). /sentry off stops it on this laptop.`;
+    const starting = live === "starting" ? " Starting up." : "";
+    return `Sentry: on, set by Outfitter (errors, and ${pct}% of agent runs traced).${starting} /sentry off stops it on this laptop.`;
   }
   switch (decision.why) {
     case "laptop":

@@ -38,10 +38,13 @@ import { memoryUsage } from "./agentengine/usage.ts";
 // E9 PR3: registers the memory.* admin ops (side effect only).
 import "./admin/memory-ops.ts";
 import { CachedSandboxTelemetry, GcpSandboxTelemetry, NoSandboxTelemetry, type SandboxTelemetry } from "./sandbox-telemetry.ts";
-import { installSentryErrorHandler, sentryEnabled, Sentry } from "./sentry.ts";
+import { applySentrySettings, installSentryErrorHandler, sentryEnabled, Sentry, type SentryRuntime } from "./sentry.ts";
+import { FleetSettingsCache } from "./fleet-settings.ts";
 
 export interface BuildAppOptions {
   store: Store;
+  /** Tests: where Sentry events go instead of the network (buildTestApp passes a no-op one). */
+  sentryTransport?: SentryRuntime["transport"];
   config: Config;
   /** The full registry in production (main.ts's createProviders(config)), so a run started under
    * a since-abandoned SANDBOX_PROVIDER default can still be stopped/reconciled through its own
@@ -106,23 +109,35 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   const fastify = Fastify({ logger: true, forceCloseConnections: true });
   await fastify.register(fastifyWebsocket);
 
-  // Sentry (sentry.ts): a no-op pair when SENTRY_DSN is unset. The error handler hooks
-  // fastify's own onError (alongside, not instead of, any route-level error handling); the
-  // onRequest/onResponse pair below gives every request a trace span at the 5% sample rate
-  // initSentry() configured.
+  // Fleet settings (fleet-settings.ts): what an operator set in the web app for every machine.
+  // Sentry follows its section (sentry.ts); read once before routes register, so a Sentry that is
+  // on starts before the first request, then refreshed when stale on each request below.
+  const fleetSettings = new FleetSettingsCache(store);
+  const sentryRuntime: SentryRuntime = {
+    release: config.release,
+    environment: config.devMode ? "development" : "production",
+    ...(opts.sentryTransport ? { transport: opts.sentryTransport } : {}),
+  };
+  fleetSettings.onChange((settings) => applySentrySettings(settings.telemetry.sentry, sentryRuntime));
+  await fleetSettings.get();
+
+  // Sentry's error hook goes on fastify's own onError (alongside, not instead of, any route-level
+  // error handling); the onRequest/onResponse pair gives a request a trace span at the fleet's
+  // sample rate. Both do nothing while Sentry is off. The span is named after the route pattern,
+  // never the raw URL: ids and query strings would make every name unique and can carry tokens.
   installSentryErrorHandler(fastify);
-  if (sentryEnabled()) {
-    fastify.addHook("onRequest", async (req) => {
-      req.sentrySpan = Sentry.startInactiveSpan({
-        name: `${req.method} ${req.routeOptions?.url ?? req.url}`,
-        op: "http.server",
-      });
+  fastify.addHook("onRequest", async (req) => {
+    fleetSettings.refreshIfStale();
+    if (!sentryEnabled()) return;
+    req.sentrySpan = Sentry.startInactiveSpan({
+      name: `${req.method} ${req.routeOptions?.url ?? "(unmatched route)"}`,
+      op: "http.server",
     });
-    fastify.addHook("onResponse", async (req, reply) => {
-      req.sentrySpan?.setStatus(Sentry.getSpanStatusFromHttpCode(reply.statusCode));
-      req.sentrySpan?.end();
-    });
-  }
+  });
+  fastify.addHook("onResponse", async (req, reply) => {
+    req.sentrySpan?.setStatus(Sentry.getSpanStatusFromHttpCode(reply.statusCode));
+    req.sentrySpan?.end();
+  });
 
   // PUT /import sends a raw JSONL body; treat it as text instead of trying to JSON-parse it whole.
   fastify.addContentTypeParser(
@@ -149,6 +164,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   const ngrok = opts.ngrok ?? (config.ngrokApiKey && config.previewDomain ? createNgrokApi(config.ngrokApiKey) : undefined);
   const previews = new PreviewService({ store, config, ngrok, log: (msg, detail) => fastify.log.warn(detail ?? {}, msg) });
   agentLink.setPreviews(previews);
+  agentLink.setFleetSettings(fleetSettings);
   // E9 §1: turn waiters (settle, run end, deadline) for A2A tasks and delegation.
   const turns = new TurnWaiters(store, runs, (msg, err) => fastify.log.warn({ err }, msg));
   agentLink.setTurnWaiters(turns);
@@ -251,6 +267,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
 
   await registerRoutes(fastify, {
     store,
+    fleetSettings,
     indexer,
     config,
     runs,

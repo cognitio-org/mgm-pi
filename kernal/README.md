@@ -587,6 +587,22 @@ After a failed model turn the agent points at `/report` once. `KERNAL_REPORT_REP
 `KERNAL_REPORT_ASSIGNEE` override the target; if `gh` is not logged in the report stays local and the
 notice says where it is.
 
+### Error reports to Sentry (`/sentry`)
+
+Off unless Outfitter turns it on. An Outfitter operator switches Sentry on or off for every machine
+at once, under Settings → Telemetry in the web app, and sets the DSN and trace sample rate there too.
+Kernal reads that setting with your Dongle (`OUTFITTER_API` + `OUTFITTER_TOKEN`). Without a Dongle,
+nothing is sent. A change reaches the laptop by its next start, or during a session once the
+background check finishes. When on, Kernal sends failed agent runs, uncaught crashes in `-p` mode,
+and a sample of agent-run and tool timings. Tool timings carry the tool name only, never its
+arguments or output. Every event leaves without your hostname, and with your home directory written
+as `~`.
+
+`/sentry` shows whether it is on and who decided. `/sentry off` stops it on this laptop
+(`kernal.sentry: false` in settings.json) and stops Kernal asking Outfitter at all. `/sentry on`
+returns to Outfitter's setting; it cannot turn Sentry on if Outfitter has it off. Details:
+`docs/reports/sentry-integration-plan.md`.
+
 ## Teleport
 
 Move a pi session between machines, the way Claude Code's teleport does: push it from one checkout,

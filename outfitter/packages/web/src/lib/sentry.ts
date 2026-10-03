@@ -1,47 +1,44 @@
-// Sentry error/performance monitoring for the browser app. Initialized once from main.tsx before
-// the app renders, so a crash during the very first render still reaches Sentry. The default DSN
-// below is this project's public Sentry DSN (safe to ship in a browser bundle -- DSNs are not
-// secrets, same as every other Sentry browser SDK deployed in the wild); VITE_SENTRY_DSN lets a
-// fork or a different environment (e.g. a staging build) point at a different Sentry project
-// without editing source.
+// Sentry error/performance monitoring for the browser app, switched by the fleet settings an
+// operator sets on the Settings page (Telemetry): main.tsx calls initSentry() as the app starts, it
+// reads GET /api/fleet-settings, and only an `enabled: true` answer (which carries the DSN) starts
+// the SDK. Off, unreachable, or signed out: nothing is sent. The render does not wait for it, so a
+// crash in the very first render, before the answer arrives, is not reported.
+//
+// A change on the Settings page applies to each browser on its next load.
 import * as Sentry from "@sentry/react";
+import { api, type ClientFleetSettings } from "../api/client.ts";
 
-const DEFAULT_DSN = "https://1318f3af9a71b190730c227fb61c32dc@o4512181408432128.ingest.us.sentry.io/4512181422260224";
-
-/** True once initSentry has run. Lets callers (the ErrorBoundary) tell a real "Sentry never
- * initialized" state apart from "Sentry initialized but had nothing to report". */
 let initialized = false;
 
 export function isSentryInitialized(): boolean {
   return initialized;
 }
 
-/** Initializes the Sentry browser SDK. Safe to call more than once (Sentry.init replaces the
- * previous client instead of stacking clients) -- tests that need a clean slate call this again
- * rather than reaching into SDK internals.
+/** Starts the Sentry browser SDK when the fleet settings say so. Resolves to whether it did; never
+ * throws (a failed read means off). Only the first successful call takes effect.
  *
- * Sample rates are deliberately low/free-tier-friendly:
- * - tracesSampleRate 0.05: a trace for 1 in 20 page loads/navigations, enough to catch
- *   performance regressions without burning the whole trace quota.
- * - replaysSessionSampleRate 0.0: no session replay for ordinary sessions -- replay storage is
- *   the first thing a free Sentry plan runs out of.
- * - replaysOnErrorSampleRate 1.0: once a session actually throws, capture its replay buffer so
- *   there's a recording of the crash to look at. This is the "error-only replay" free-tier
- *   pattern Sentry's own docs recommend.
+ * Replay stays free-tier-friendly whatever the trace rate: replaysSessionSampleRate 0 (no replay for
+ * ordinary sessions -- replay storage is the first thing a free plan runs out of) and
+ * replaysOnErrorSampleRate 1 (once a session throws, its replay buffer is kept), the "error-only
+ * replay" pattern Sentry's own docs recommend.
  */
-export function initSentry(): void {
-  const dsn = import.meta.env.VITE_SENTRY_DSN?.trim() || DEFAULT_DSN;
-  if (!dsn) {
-    initialized = false;
-    return;
+export async function initSentry(load: () => Promise<ClientFleetSettings> = () => api.fleetSettings()): Promise<boolean> {
+  if (initialized) return true;
+  let settings: ClientFleetSettings;
+  try {
+    settings = await load();
+  } catch {
+    return false;
   }
-
+  const sentry = settings.telemetry?.sentry;
+  if (!sentry?.enabled || !sentry.dsn) return false;
   Sentry.init({
-    dsn,
+    dsn: sentry.dsn,
     integrations: [Sentry.browserTracingIntegration(), Sentry.replayIntegration()],
-    tracesSampleRate: 0.05,
+    tracesSampleRate: sentry.tracesSampleRate,
     replaysSessionSampleRate: 0.0,
     replaysOnErrorSampleRate: 1.0,
   });
   initialized = true;
+  return true;
 }

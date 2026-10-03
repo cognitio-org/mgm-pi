@@ -123,9 +123,6 @@ export interface Config {
    * and, for a tagged release, its outfitter-v* tag. GET /api/version; empty in dev. */
   buildCommit: string;
   release: string;
-  /** SENTRY_DSN: error reporting and tracing for this process (sentry.ts). Empty disables it
-   * entirely -- dev and any environment that hasn't been given a DSN run with no Sentry client. */
-  sentryDsn: string;
   /** A2A_BLOCKING_CAP_MS: how long a blocking A2A SendMessage (no returnImmediately) waits for a
    * terminal or interrupted state before returning the task as it is (E9 §5.3, owner decision
    * 2026-10-01: 25 s, under the TCK client's 30 s read timeout). Tests shorten it. */
@@ -519,7 +516,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     },
     buildCommit: (env.OUTFITTER_BUILD_COMMIT ?? "").trim(),
     release: (env.OUTFITTER_RELEASE ?? "").trim(),
-    sentryDsn: (env.SENTRY_DSN ?? "").trim(),
     a2aBlockingCapMs: Math.max(0, Math.min(25_000, envInt("A2A_BLOCKING_CAP_MS", 25_000, env))),
     a2aRequestsPerMinute: Math.max(1, envInt("A2A_REQUESTS_PER_MINUTE", 60, env)),
     a2aStreamPollMs: Math.max(20, Math.min(10_000, envInt("A2A_STREAM_POLL_MS", 2_000, env))),

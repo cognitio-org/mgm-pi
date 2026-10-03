@@ -341,6 +341,12 @@ export function adminCapabilities(guru: Pick<RunSpecGuru, "adminTools" | "memory
   return caps;
 }
 
+/** Fleet settings (api/src/fleet-settings.ts): sent only while an operator has Sentry on for the
+ * fleet. agentd starts Sentry with it (sentry.ts); absent, nothing is sent. */
+export interface RunSpecTelemetry {
+  sentry: { dsn: string; tracesSampleRate: number; environment: string; release?: string };
+}
+
 export interface RunSpecSnapshot {
   url?: string;
   jsonl?: string;
@@ -405,6 +411,7 @@ export interface RunSpec {
   author?: RunSpecAuthor;
   preview?: RunSpecPreview;
   ide?: RunSpecIde;
+  telemetry?: RunSpecTelemetry;
   idleStopSeconds: number;
   checkpointEvery: string;
 }
@@ -420,6 +427,7 @@ export interface DownRunSpec {
   author?: RunSpecAuthor;
   preview?: RunSpecPreview;
   ide?: RunSpecIde;
+  telemetry?: RunSpecTelemetry;
   idleStopSeconds: number;
   checkpointEvery: string;
 }

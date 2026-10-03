@@ -31,7 +31,7 @@ import { createLogger } from "./logger.js";
 import { getPiVersion } from "./pi-version.js";
 import { preloadSessionManager } from "./session.js";
 import { bootTimings } from "./boot-timings.js";
-import { initSentry, tagRun } from "./sentry.js";
+import { tagRun } from "./sentry.js";
 
 const AGENTD_VERSION = "0.1.0";
 const DEFAULT_WORKSPACE = "/workspace";
@@ -80,12 +80,6 @@ async function main(): Promise<void> {
   delete process.env.RUN_TOKEN;
   delete process.env.OUTFITTER_DEV_TOKEN;
 
-  // SENTRY_DSN (sentry.ts): started before resolveAssignment, so even a misconfigured deployment's
-  // very first throw (OUTFITTER_API/RUN_ID/RUN_TOKEN missing) reaches Sentry if a DSN is configured.
-  // The run id is tagged below once known -- on the env path, right after this call; on a GKE warm
-  // pod, only once the assignment wait resolves.
-  initSentry(bootEnv.SENTRY_DSN ?? "");
-
   const warmWait = isWarmAssignmentWait(bootEnv);
   // Env path (Cloud Run, docker, inprocess, GKE cold, or a genuinely missing assignment): resolve
   // right now, before any phase is logged or any child spawned -- byte for byte the same checks,
@@ -94,6 +88,8 @@ async function main(): Promise<void> {
   // assignment.ts existed). Only a GKE warm pod defers this (see the `if (!assignment)` block
   // below), so it can pre-pay the run-independent setup while idle waiting to be claimed.
   let assignment: Assignment | undefined = warmWait ? undefined : await resolveAssignment(bootEnv);
+  // Sentry starts with run.spec (sentry.ts); the run id it tags events with is known here, or, on a
+  // GKE warm pod, once the assignment wait resolves below.
   if (assignment) tagRun(assignment.runId);
 
   const devToken = bootEnv.OUTFITTER_DEV_TOKEN;

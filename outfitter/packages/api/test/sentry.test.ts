@@ -1,68 +1,105 @@
-// sentry.ts: SENTRY_DSN gates everything (dev/test default to unset, so every export becomes a
-// no-op); when it's set, errors from a Fastify route reach Sentry via the onError hook
-// installSentryErrorHandler wires up in server.ts. Sentry processes captured events off an
-// internal queue, not synchronously, so assertions on a beforeSend spy await Sentry.flush() first.
+// sentry.ts: the fleet settings' Sentry section (fleet-settings.ts) gates everything -- off by
+// default, so every export is a no-op; on, errors from a Fastify route reach Sentry via the onError
+// hook installSentryErrorHandler wires up in server.ts. A fake transport stands in for the network:
+// Sentry processes captured events off an internal queue, so assertions await Sentry.flush() first.
 
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import Fastify from "fastify";
 import {
-  initSentry,
+  applySentrySettings,
   sentryEnabled,
   installSentryErrorHandler,
   captureException,
   withSentrySpan,
   resetSentryForTests,
   Sentry,
+  type SentryRuntime,
 } from "../src/sentry.ts";
 
-afterEach(() => {
-  resetSentryForTests();
+const DSN = "https://examplePublicKey@o0.ingest.sentry.io/0";
+const ON = { enabled: true, dsn: DSN, tracesSampleRate: 0.05 };
+const OFF = { enabled: false, dsn: DSN, tracesSampleRate: 0.05 };
+
+/** Every envelope item type sent, and each error event's message, instead of a network call. */
+function fakeTransport() {
+  const errors: string[] = [];
+  const items: string[] = [];
+  const transport: SentryRuntime["transport"] = () => ({
+    send: async (envelope) => {
+      for (const [header, payload] of envelope[1] as Array<[{ type: string }, { exception?: { values?: Array<{ value?: string }> } }]>) {
+        items.push(header.type);
+        if (header.type === "event") errors.push(payload.exception?.values?.[0]?.value ?? "");
+      }
+      return {};
+    },
+    flush: async () => true,
+  });
+  return { transport, errors, items };
+}
+
+function runtime(transport: SentryRuntime["transport"]): SentryRuntime {
+  return { release: "", environment: "test", transport };
+}
+
+afterEach(async () => {
+  await resetSentryForTests();
 });
 
-describe("initSentry", () => {
-  test("does nothing without a DSN -- sentryEnabled() stays false", () => {
-    initSentry({ sentryDsn: "", release: "" });
+describe("applySentrySettings", () => {
+  test("off by default: sentryEnabled() is false before any settings arrive", () => {
     assert.equal(sentryEnabled(), false);
   });
 
-  test("turns on with a DSN", () => {
-    initSentry({ sentryDsn: "https://examplePublicKey@o0.ingest.sentry.io/0", release: "" });
+  test("turns on with enabled settings and a DSN", () => {
+    applySentrySettings(ON, runtime(fakeTransport().transport));
     assert.equal(sentryEnabled(), true);
   });
 
-  test("only the first call takes effect -- a later call with no DSN doesn't turn it back off", () => {
-    initSentry({ sentryDsn: "https://examplePublicKey@o0.ingest.sentry.io/0", release: "" });
-    initSentry({ sentryDsn: "", release: "" });
-    assert.equal(sentryEnabled(), true);
+  test("enabled without a DSN stays off", () => {
+    applySentrySettings({ enabled: true, tracesSampleRate: 0.05 }, runtime(fakeTransport().transport));
+    assert.equal(sentryEnabled(), false);
+  });
+
+  test("turning it off later stops everything at once, client reports included, without a restart", async () => {
+    const { transport, items } = fakeTransport();
+    applySentrySettings(ON, runtime(transport));
+    applySentrySettings(OFF, runtime(transport));
+    assert.equal(sentryEnabled(), false);
+    captureException(new Error("after off"));
+    Sentry.captureException(new Error("direct, still gated"));
+    await withSentrySpan("dropped", "task", async () => undefined);
+    await Sentry.flush(1000);
+    await Sentry.getClient()?.close(1000);
+    assert.deepEqual(items, []);
+  });
+
+  test("leaves Node's crash on an unhandled rejection alone", () => {
+    const before = process.listenerCount("unhandledRejection");
+    applySentrySettings(ON, runtime(fakeTransport().transport));
+    assert.equal(process.listenerCount("unhandledRejection"), before);
+  });
+
+  test("a new DSN on a running instance sends nothing until it restarts", () => {
+    applySentrySettings(ON, runtime(fakeTransport().transport));
+    applySentrySettings({ ...ON, dsn: "https://otherKey@o0.ingest.sentry.io/1" }, runtime(fakeTransport().transport));
+    assert.equal(sentryEnabled(), false);
+    applySentrySettings(ON, runtime(fakeTransport().transport));
+    assert.equal(sentryEnabled(), true, "back on the DSN it started with");
   });
 });
 
 describe("captureException", () => {
   test("is a no-op when Sentry is off", () => {
-    // No init() call this test -- resetSentryForTests() in afterEach left it off from the
-    // previous test too. Nothing to assert beyond "this doesn't throw".
     assert.doesNotThrow(() => captureException(new Error("ignored")));
   });
 
   test("reports the error when Sentry is on", async () => {
-    const captured: Array<{ exception?: { values?: Array<{ value?: string }> } }> = [];
-    // initSentry() first, so captureException's own "am I on" check (sentry.ts's module-level
-    // `initialized`) matches the SDK's state; the direct Sentry.init() below layers beforeSend on
-    // top without resetting that flag.
-    initSentry({ sentryDsn: "https://examplePublicKey@o0.ingest.sentry.io/0", release: "" });
-    Sentry.init({
-      dsn: "https://examplePublicKey@o0.ingest.sentry.io/0",
-      tracesSampleRate: 0.05,
-      beforeSend(event) {
-        captured.push(event);
-        return null; // swallow -- no network call
-      },
-    });
+    const { transport, errors } = fakeTransport();
+    applySentrySettings(ON, runtime(transport));
     captureException(new Error("boom"), { runId: "r1" });
     await Sentry.flush(1000);
-    assert.equal(captured.length, 1);
-    assert.equal(captured[0]?.exception?.values?.[0]?.value, "boom");
+    assert.deepEqual(errors, ["boom"]);
   });
 });
 
@@ -73,7 +110,7 @@ describe("withSentrySpan", () => {
   });
 
   test("runs the task inside a span when Sentry is on", async () => {
-    initSentry({ sentryDsn: "https://examplePublicKey@o0.ingest.sentry.io/0", release: "" });
+    applySentrySettings(ON, runtime(fakeTransport().transport));
     let sawActiveSpan = false;
     const result = await withSentrySpan("job", "task", async () => {
       sawActiveSpan = Sentry.getActiveSpan() !== undefined;
@@ -82,31 +119,23 @@ describe("withSentrySpan", () => {
     assert.equal(result, "done");
     assert.equal(sawActiveSpan, true);
   });
+
+  test("the fleet's sample rate decides whether a trace is kept", async () => {
+    const { transport, items } = fakeTransport();
+    applySentrySettings({ ...ON, tracesSampleRate: 1 }, runtime(transport));
+    await withSentrySpan("kept", "task", async () => undefined);
+    applySentrySettings({ ...ON, tracesSampleRate: 0 }, runtime(transport));
+    await withSentrySpan("dropped", "task", async () => undefined);
+    await Sentry.flush(1000);
+    assert.equal(items.filter((t) => t === "transaction").length, 1);
+  });
 });
 
 describe("installSentryErrorHandler", () => {
-  test("is a no-op when Sentry is off -- a route error gets the app's own handling, not Sentry's", async () => {
-    const fastify = Fastify();
-    installSentryErrorHandler(fastify);
-    fastify.get("/boom", async () => {
-      throw new Error("kaboom");
-    });
-    const res = await fastify.inject({ method: "GET", url: "/boom" });
-    assert.equal(res.statusCode, 500);
-  });
-
-  test("reports an unhandled route error to Sentry (5% trace sampling config, capture always-on)", async () => {
-    const captured: Array<{ exception?: { values?: Array<{ value?: string }> } }> = [];
-    initSentry({ sentryDsn: "https://examplePublicKey@o0.ingest.sentry.io/0", release: "" });
-    Sentry.init({
-      dsn: "https://examplePublicKey@o0.ingest.sentry.io/0",
-      tracesSampleRate: 0.05,
-      integrations: [Sentry.fastifyIntegration()],
-      beforeSend(event) {
-        captured.push(event);
-        return null;
-      },
-    });
+  test("once Sentry is turned off a route error gets the app's own handling and nothing is sent", async () => {
+    const { transport, errors } = fakeTransport();
+    applySentrySettings(ON, runtime(transport));
+    applySentrySettings(OFF, runtime(transport));
     const fastify = Fastify();
     installSentryErrorHandler(fastify);
     fastify.get("/boom", async () => {
@@ -115,7 +144,20 @@ describe("installSentryErrorHandler", () => {
     const res = await fastify.inject({ method: "GET", url: "/boom" });
     assert.equal(res.statusCode, 500);
     await Sentry.flush(1000);
-    assert.equal(captured.length, 1);
-    assert.equal(captured[0]?.exception?.values?.[0]?.value, "kaboom");
+    assert.deepEqual(errors, []);
+  });
+
+  test("reports an unhandled route error to Sentry while it is on", async () => {
+    const { transport, errors } = fakeTransport();
+    applySentrySettings(ON, runtime(transport));
+    const fastify = Fastify();
+    installSentryErrorHandler(fastify);
+    fastify.get("/boom", async () => {
+      throw new Error("kaboom");
+    });
+    const res = await fastify.inject({ method: "GET", url: "/boom" });
+    assert.equal(res.statusCode, 500);
+    await Sentry.flush(1000);
+    assert.deepEqual(errors, ["kaboom"]);
   });
 });

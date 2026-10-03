@@ -850,28 +850,31 @@ test("RunController: a non-2xx snapshot fetch fails the run with a clear, status
   assert.ok(!states.includes("idle"));
 });
 
-test("RunController: a failed run (fail(), same 404 scenario above) reports the error to Sentry (sentry.ts)", async (t) => {
+test("RunController: a failed run (fail(), same 404 scenario above) reports the error to Sentry once (sentry.ts)", async (t) => {
   const previousAllowlist = process.env.SNAPSHOT_HOST_ALLOWLIST;
   process.env.SNAPSHOT_HOST_ALLOWLIST = "example.test";
-  t.after(() => {
+  t.after(async () => {
     if (previousAllowlist === undefined) delete process.env.SNAPSHOT_HOST_ALLOWLIST;
     else process.env.SNAPSHOT_HOST_ALLOWLIST = previousAllowlist;
-    resetSentryForTests();
+    await resetSentryForTests();
   });
 
-  const captured: Array<{ exception?: { values?: Array<{ value?: string }> } }> = [];
-  initSentry("https://examplePublicKey@o0.ingest.sentry.io/0");
-  Sentry.init({
-    dsn: "https://examplePublicKey@o0.ingest.sentry.io/0",
-    tracesSampleRate: 0.05,
-    beforeSend(event) {
-      captured.push(event);
-      return null; // swallow -- no network call
+  // Started here with a fake transport; the run.spec's own telemetry below is then a no-op
+  // re-init, the same settings the API would send while Sentry is on for the fleet.
+  const telemetry = { sentry: { dsn: "https://examplePublicKey@o0.ingest.sentry.io/0", tracesSampleRate: 1, environment: "test" } };
+  const values: string[] = [];
+  initSentry(telemetry.sentry, () => ({
+    send: async (envelope) => {
+      for (const [header, payload] of envelope[1] as Array<[{ type: string }, { exception?: { values?: Array<{ value?: string }> } }]>) {
+        if (header.type === "event") values.push(payload.exception?.values?.[0]?.value ?? "");
+      }
+      return {};
     },
-  });
+    flush: async () => true,
+  }));
 
   const { controller, link, spec, getExitCode } = await setupController(
-    { snapshot: { url: "https://example.test/missing-snapshot.jsonl" } },
+    { snapshot: { url: "https://example.test/missing-snapshot.jsonl" }, telemetry },
     { fetchFn: (async () => new Response("not found", { status: 404, statusText: "Not Found" })) as any },
   );
   t.after(() => controller.dispose());
@@ -880,8 +883,8 @@ test("RunController: a failed run (fail(), same 404 scenario above) reports the 
 
   await waitFor(() => getExitCode() === 1);
   await Sentry.flush(1000);
-  assert.equal(captured.length, 1);
-  assert.match(captured[0]?.exception?.values?.[0]?.value ?? "", /404/);
+  assert.equal(values.length, 1);
+  assert.match(values[0] ?? "", /404/);
 });
 
 test("RunController: E2.11 spend tailer lines become `spend` up-frames with an accumulated `estimate`", async (t) => {

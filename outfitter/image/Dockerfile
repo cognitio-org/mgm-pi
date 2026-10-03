@@ -95,9 +95,10 @@ RUN npm ci --legacy-peer-deps --omit=dev --no-audit --no-fund --loglevel=error \
   # Uninstall (not rm -rf) so each excluded package's own dependency subtree goes with it. The list
   # follows render-settings.sh's default EXCLUDE, except voice: pi-listen is vendored (kernal/.pi/npm/
   # vendor, never copied into the image), so what's uninstalled here is its native dependency,
-  # sherpa-onnx-node. The settings file only stops pi loading them.
+  # sherpa-onnx-node. The settings file only stops pi loading them. @sentry/node is the laptop
+  # sentry extension's, removed above: a Drive reports through agentd (its own copy, from run.spec).
   && npm uninstall --no-save --legacy-peer-deps --omit=dev --no-audit --no-fund --loglevel=error \
-       pi-lsp pi-powerline-footer sherpa-onnx-node open-codebase-index \
+       pi-lsp pi-powerline-footer sherpa-onnx-node open-codebase-index @sentry/node \
   && rm -rf node_modules/recheck-jar
 
 # pi-subagents and pi-mcp-adapter bundled (#142, #222): pi's loader evaluates each module one by

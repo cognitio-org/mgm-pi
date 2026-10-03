@@ -316,6 +316,7 @@ describe("agentlink up-frame ordering", () => {
       environments: inner.environments,
       users: inner.users,
       providers: inner.providers,
+      fleetSettings: inner.fleetSettings,
       tokens: inner.tokens,
       browserShares: inner.browserShares,
       browserRequests: inner.browserRequests,

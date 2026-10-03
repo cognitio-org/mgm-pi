@@ -1,8 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Sentry's real init() reaches the network (and would actually start reporting), so these tests
-// drive lib/sentry.ts against a mock @sentry/react instead -- asserting the options this app
-// configures (DSN selection, sample rates, integrations) without a live SDK.
+// drive lib/sentry.ts against a mock @sentry/react instead -- asserting that the fleet settings
+// (GET /api/fleet-settings, passed in here as `load`) decide whether it starts and with what.
 const initMock = vi.fn();
 const browserTracingIntegrationMock = vi.fn(() => ({ name: "BrowserTracing" }));
 const replayIntegrationMock = vi.fn(() => ({ name: "Replay" }));
@@ -13,55 +13,54 @@ vi.mock("@sentry/react", () => ({
   replayIntegration: () => replayIntegrationMock(),
 }));
 
-const DEFAULT_DSN = "https://1318f3af9a71b190730c227fb61c32dc@o4512181408432128.ingest.us.sentry.io/4512181422260224";
+const DSN = "https://example@o0.ingest.sentry.io/1";
+const on = async () => ({ telemetry: { sentry: { enabled: true as const, dsn: DSN, tracesSampleRate: 0.2 } } });
+const off = async () => ({ telemetry: { sentry: { enabled: false as const } } });
+
+async function freshModule() {
+  vi.resetModules();
+  return import("../src/lib/sentry.ts");
+}
 
 describe("initSentry", () => {
   beforeEach(() => {
     initMock.mockClear();
     browserTracingIntegrationMock.mockClear();
     replayIntegrationMock.mockClear();
-    vi.unstubAllEnvs();
   });
 
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  it("initializes with the default DSN when VITE_SENTRY_DSN is unset", async () => {
-    vi.resetModules();
-    const { initSentry, isSentryInitialized } = await import("../src/lib/sentry.ts");
-    initSentry();
+  it("starts with the fleet's DSN and trace rate when an operator turned Sentry on", async () => {
+    const { initSentry, isSentryInitialized } = await freshModule();
+    expect(await initSentry(on)).toBe(true);
     expect(initMock).toHaveBeenCalledTimes(1);
-    expect(initMock.mock.calls[0]?.[0]).toMatchObject({ dsn: DEFAULT_DSN });
+    expect(initMock.mock.calls[0]?.[0]).toMatchObject({ dsn: DSN, tracesSampleRate: 0.2 });
     expect(isSentryInitialized()).toBe(true);
   });
 
-  it("prefers VITE_SENTRY_DSN over the default DSN when set", async () => {
-    vi.stubEnv("VITE_SENTRY_DSN", "https://example@o0.ingest.sentry.io/1");
-    vi.resetModules();
-    const { initSentry } = await import("../src/lib/sentry.ts");
-    initSentry();
-    expect(initMock.mock.calls[0]?.[0]).toMatchObject({ dsn: "https://example@o0.ingest.sentry.io/1" });
+  it("sends nothing while the fleet has Sentry off", async () => {
+    const { initSentry, isSentryInitialized } = await freshModule();
+    expect(await initSentry(off)).toBe(false);
+    expect(initMock).not.toHaveBeenCalled();
+    expect(isSentryInitialized()).toBe(false);
   });
 
-  it("configures the free-tier error-only replay sample rates and a low trace sample rate", async () => {
-    vi.resetModules();
-    const { initSentry } = await import("../src/lib/sentry.ts");
-    initSentry();
-    expect(initMock.mock.calls[0]?.[0]).toMatchObject({
-      tracesSampleRate: 0.05,
-      replaysSessionSampleRate: 0.0,
-      replaysOnErrorSampleRate: 1.0,
-    });
+  it("a failed settings read (signed out, API down) means off, and never throws", async () => {
+    const { initSentry } = await freshModule();
+    expect(await initSentry(async () => Promise.reject(new Error("401")))).toBe(false);
+    expect(initMock).not.toHaveBeenCalled();
   });
 
-  it("registers browser tracing and replay integrations", async () => {
-    vi.resetModules();
-    const { initSentry } = await import("../src/lib/sentry.ts");
-    initSentry();
-    expect(browserTracingIntegrationMock).toHaveBeenCalledTimes(1);
-    expect(replayIntegrationMock).toHaveBeenCalledTimes(1);
-    const integrations = initMock.mock.calls[0]?.[0]?.integrations;
-    expect(integrations).toEqual([{ name: "BrowserTracing" }, { name: "Replay" }]);
+  it("keeps replay error-only whatever the trace rate", async () => {
+    const { initSentry } = await freshModule();
+    await initSentry(on);
+    expect(initMock.mock.calls[0]?.[0]).toMatchObject({ replaysSessionSampleRate: 0.0, replaysOnErrorSampleRate: 1.0 });
+    expect(initMock.mock.calls[0]?.[0]?.integrations).toEqual([{ name: "BrowserTracing" }, { name: "Replay" }]);
+  });
+
+  it("only the first successful call starts the SDK", async () => {
+    const { initSentry } = await freshModule();
+    await initSentry(on);
+    await initSentry(on);
+    expect(initMock).toHaveBeenCalledTimes(1);
   });
 });

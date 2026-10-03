@@ -66,9 +66,11 @@ import type {
   A2ATaskListQuery,
   A2ATaskState,
   A2ATasksCollection,
+  FleetSettingsCollection,
 } from "./types.ts";
 import { A2A_OPEN_STATES } from "./types.ts";
 import type { VoicePrefs } from "../voice.ts";
+import type { FleetSettings } from "../fleet-settings.ts";
 import { AE_SESSION_EXECUTIONS, BROWSER_CAPTURES_PER_SESSION, entryInsertFields, type EntryInsertOptions } from "./types.ts";
 import { TOKEN_TTL_MS } from "../tokens.ts";
 import { SearchUnavailableError } from "./types.ts";
@@ -459,6 +461,23 @@ class MongoProviders implements ProvidersCollection {
     // row leaves them out -- $set kept a "down" row's old meta, and would keep an unregistered
     // sandbox row's last capacity and default marker (#169). The filter supplies _id on insert.
     await this.col.replaceOne({ _id: record.id }, record, { upsert: true });
+  }
+}
+
+/** One document, `_id: "fleet"` (fleet-settings.ts). */
+class MongoFleetSettings implements FleetSettingsCollection {
+  private readonly col: MongoCollection<FleetSettings & { _id: string }>;
+
+  constructor(col: MongoCollection<FleetSettings & { _id: string }>) {
+    this.col = col;
+  }
+
+  async get(): Promise<FleetSettings | null> {
+    return stripId<FleetSettings>(await this.col.findOne({ _id: "fleet" }));
+  }
+
+  async put(settings: FleetSettings): Promise<void> {
+    await this.col.replaceOne({ _id: "fleet" }, settings, { upsert: true });
   }
 }
 
@@ -1736,6 +1755,7 @@ export class MongoStore implements Store {
   readonly aeAgents: AeAgentsCollection;
   readonly aeSessions: AeSessionsCollection;
   readonly a2aTasks: A2ATasksCollection;
+  readonly fleetSettings: FleetSettingsCollection;
   private readonly client: MongoClient;
 
   private constructor(client: MongoClient, db: Db) {
@@ -1768,6 +1788,7 @@ export class MongoStore implements Store {
       db.collection<A2ASlotsDoc>("a2aSlots"),
       db.collection<A2ARequestsDoc>("a2aRequests"),
     );
+    this.fleetSettings = new MongoFleetSettings(db.collection("fleetSettings"));
   }
 
   /** `dbName` wins over the database in the URI; the stored URI has none, so the default keeps

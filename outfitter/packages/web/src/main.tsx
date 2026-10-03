@@ -5,8 +5,9 @@ import { App } from "./App.tsx";
 import { installChunkReload } from "./lib/chunk-reload.ts";
 import { initSentry } from "./lib/sentry.ts";
 
-// Before anything else renders, so a crash during the very first render still reaches Sentry.
-initSentry();
+// Reads the fleet settings and starts Sentry only if an operator turned it on (lib/sentry.ts). Not
+// awaited: the app renders at once.
+void initSentry();
 installChunkReload();
 
 const el = document.getElementById("root");

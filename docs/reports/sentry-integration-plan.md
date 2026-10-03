@@ -1,73 +1,97 @@
-# Sentry Integration Plan: Kernel & Outfitter
+# Sentry Integration: Kernal & Outfitter
 
-This document outlines the investigation, architecture, and implementation plan for integrating Sentry into **Kernel** and **Outfitter**. 
+Error reporting and low-volume tracing for Kernal (the laptop CLI) and Outfitter (API, agentd, web
+app, Agent Engine Python agent). Epic [#368](https://github.com/cognitio-org/mgm-pi/issues/368).
 
-## 1. Sentry Project Configuration & Credentials
+## 1. One switch, set in Outfitter (fleet settings)
 
-- **DSN**: `https://1318f3af9a71b190730c227fb61c32dc@o4512181408432128.ingest.us.sentry.io/4512181422260224`
-- **Environment Variables**:
-  - `SENTRY_DSN`
-  - `SENTRY_ENVIRONMENT` (`development`, `staging`, `production`)
-  - `SENTRY_TRACES_SAMPLE_RATE` (default: `0.05` / 5%)
+Sentry is **off everywhere until an operator turns it on**, in the web app under
+**Settings → Telemetry**. That panel writes the fleet settings: one document
+(`fleetSettings` collection, `outfitter/packages/api/src/fleet-settings.ts`) holding
 
----
+- `enabled`: whether anything is sent at all,
+- `dsn`: where events go (kept while off, so turning Sentry back on is one click),
+- `tracesSampleRate`: the fraction of traces kept (default 0.05). Errors are always sent in full.
 
-## 2. Free Tier Optimization Strategy
+No machine carries its own DSN. Each reads the fleet settings and follows them:
 
-Sentry free tiers have strict monthly quotas (typically ~5,000 errors, ~10,000 transactions, and ~50 session replays). To maximize diagnostic value while preventing quota exhaustion:
+| Runtime | How it gets the settings | When a change applies |
+|---|---|---|
+| API | its own store, through `FleetSettingsCache` (re-read when stale, on requests) | within a minute; at once on the instance that took the change |
+| agentd (Drives) | run.spec's `telemetry`, sent only while Sentry is on (`docs/protocol.md`) | the next run start |
+| web app | `GET /api/fleet-settings` before it starts the SDK | the browser's next load |
+| Kernal laptops | `GET /api/fleet-settings` with the laptop's Dongle, cached in `~/.kernal/.fleet-settings.json` | the next Kernal start (or mid-session, once the background refresh lands) |
+| Agent Engine Python agent | still `SENTRY_DSN` in its own env: it has no API channel at start-up | its next deploy |
 
-1. **Errors (100% Capture)**:
-   - `sampleRate: 1.0` for unhandled exceptions, unhandled rejections, and critical logger errors. Unhandled errors are rare in normal operation but invaluable when debugging.
-2. **Performance Tracing (5% Sample Rate)**:
-   - `tracesSampleRate: 0.05` (5%) for normal API requests and background worker tasks.
-   - Use `tracesSampler` to force 100% tracing for requests that result in HTTP 5xx status codes or agent execution failures.
-3. **Session Replay (Error-Triggered Only)**:
-   - `sessionSampleRate: 0.0` (0 normal sessions recorded).
-   - `errorSessionSampleRate: 1.0` (100% replay recording on unhandled frontend errors). This preserves the 50/month replay limit strictly for bug reproduction.
-4. **Metrics & Logs**:
-   - Emit custom Sentry metrics (`metrics.incr`, `metrics.distribution`) selectively for critical events (e.g. agent run started, tool execution failure, API timeout).
+Off is also the answer whenever a reader cannot get the settings: a laptop with no Dongle, an
+Outfitter that has never saved them, or a failed read with nothing cached. A laptop whose Dongle is
+refused (401/403) replaces its cached copy with off, and a cached copy older than 30 days reads as
+off.
 
----
+"Off" means nothing leaves a process once its SDK has started either: besides the event hooks, the
+API and Kernal gate the transport itself, so client reports and session envelopes stop too.
 
-## 3. Component Breakdown & Integration Steps
+`GET /api/fleet-settings` is open to any signed-in caller (an IAP session, or a Dongle on the link
+role) and returns the DSN only while Sentry is on. `PUT /api/operator/fleet-settings` is
+operator-only and exists on the web role only. `GET /api/operator/settings` shows the full document,
+including who changed it last.
 
-### [Sentry-1] Core Sentry Configuration & Sampling Strategy (Issue #369)
-- Create a shared configuration module (`sentry.config.ts` / `sentry.py`) handling DSN resolution, environment tagging, and sampling rate enforcement.
+### A person's own opt-out (Kernal)
 
-### [Sentry-2] Kernel Sentry Integration (Issue #370)
-- **Target**: `kernal/` (Node.js TypeScript CLI & coding agent).
-- **Implementation**:
-  - Initialize `@sentry/node` at CLI startup (`bin/kernal`).
-  - Capture unhandled exceptions, process rejections, and agent tool errors.
-  - Instrument agent execution loops with Sentry OpenTelemetry tracing spans to trace LLM calls, tool executions, and step latency.
+`/sentry off` in Kernal writes `kernal.sentry: false` to the agent settings.json. It stops sending at
+once and keeps Kernal from even asking Outfitter. `/sentry on` clears it, which means "follow
+Outfitter": it can never turn Sentry on when the fleet has it off. `/sentry` shows which of the two
+decided.
 
-### [Sentry-3] Outfitter Backend (API & Agentd) Integration (Issue #371)
-- **Target**: `outfitter/packages/api` and `outfitter/packages/agentd` (Node.js/Express/Fastify backend services).
-- **Implementation**:
-  - Setup Sentry request and error handling middleware.
-  - Trace incoming API endpoints, database queries, and async agent dispatch queues.
+## 2. What is sent
 
-### [Sentry-4] Outfitter Frontend Web Integration (Issue #372)
-- **Target**: `outfitter/packages/web` (React frontend).
-- **Implementation**:
-  - Initialize `@sentry/react` with BrowserTracing and Replay integration.
-  - Configure error-only session replay (`sessionSampleRate: 0.0`, `errorSessionSampleRate: 1.0`).
-  - Wrap root React tree with Sentry ErrorBoundary.
+- **Errors (100%)**: unhandled route errors (API), failed runs (agentd, reported once by `fail()`),
+  React crashes caught by the ErrorBoundary (web), agent runs that end in an assistant error and
+  uncaught exceptions (Kernal), LLM call failures (Python).
+- **Traces (the fleet rate, default 5%)**: one span per API request (named after the route pattern,
+  never the raw URL), agentd's run start-up, and in Kernal one transaction per agent run with a
+  child span per tool call. A tool span carries only the tool name, never its arguments or output.
+- **Session replay (web)**: error-only (`replaysSessionSampleRate: 0`, `replaysOnErrorSampleRate: 1`)
+  to stay inside the free plan's replay quota.
 
-### [Sentry-5] Outfitter Agent Engine (Python) Integration (Issue #373)
-- **Target**: `outfitter/integrations/agent-engine` (Python FastAPI / Agent runtime).
-- **Implementation**:
-  - Initialize `sentry-sdk` with FastAPI and OpenTelemetry integrations.
-  - Capture agent runtime exceptions and trace LLM / tool call spans.
+Kernal trims events before they leave the laptop: no hostname, the home directory written as `~`,
+no console breadcrumbs (`Console` integration dropped). Kernal, the API and agentd all drop
+`OnUnhandledRejection`, because any `unhandledRejection` listener would stop Node from crashing on
+one (pi registers none). An unhandled rejection is therefore still raised as an uncaught exception,
+which Sentry reports. The integration lists use the SDK's function form: an array is added to the
+defaults, so filtering a copy of them drops nothing.
 
----
+## 3. Implementation notes
 
-## 4. Tracking & Execution
+- **Kernal ships `@sentry/node` in `kernal/.pi/npm`**, the extension packages that `scripts/package.sh`
+  installs exactly as locked into every bundle. The extension imports the SDK's ESM entry by absolute
+  path. pi's compiled (Bun) binary resolves bare names from outside that tree, and CommonJS
+  `require`, wrongly. The SDK loads only once Sentry is on, so it costs nothing while off. A failure
+  to start is reported once on stderr and never stops Kernal. The Outfitter image removes both the
+  extension and the package; a Drive reports through agentd.
+- **Process-wide state**: pi re-instantiates extensions on /new, /resume, /fork and /reload with a
+  fresh module copy, so Kernal keeps its Sentry state on `globalThis`. The SDK starts once per
+  process; after that, on/off and the rate are a live gate that `beforeSend`, `beforeSendTransaction`
+  and `tracesSampler` read for every event. The API works the same way. A new DSN cannot replace the
+  one a running process started with, so that process sends nothing until it restarts.
+- **Versions**: Kernal is on `@sentry/node` 11.2.0, the version verified inside pi's Bun binary;
+  11.4.0 also pulls in `oxc-parser`'s native binaries. Kernal sets `traceLifecycle: "static"`, so
+  spans are sent as whole transactions that `beforeSendTransaction` can gate. Outfitter's API,
+  agentd and web app are on the 9.x line.
 
-- **Epic Ticket**: [#368](https://github.com/cognitio-org/mgm-pi/issues/368)
-- **Sub-tickets**:
-  - [Sentry-1] Configuration: [#369](https://github.com/cognitio-org/mgm-pi/issues/369)
-  - [Sentry-2] Kernel: [#370](https://github.com/cognitio-org/mgm-pi/issues/370)
-  - [Sentry-3] Outfitter Backend: [#371](https://github.com/cognitio-org/mgm-pi/issues/371)
-  - [Sentry-4] Outfitter Frontend Web: [#372](https://github.com/cognitio-org/mgm-pi/issues/372)
-  - [Sentry-5] Outfitter Agent Engine (Python): [#373](https://github.com/cognitio-org/mgm-pi/issues/373)
+## 4. Not done yet
+
+- The Agent Engine Python agent still reads `SENTRY_DSN` from its own env (see the table above).
+- In Kernal's interactive mode, pi's own `uncaughtException` handler exits before Sentry's runs, so
+  a TUI crash appears in pi's crash report, not in Sentry. Print mode (`-p`) is reported.
+- Not built: always tracing failed requests (a `tracesSampler` that keeps every 5xx), and custom
+  Sentry metrics.
+
+## 5. Tracking
+
+- Epic: [#368](https://github.com/cognitio-org/mgm-pi/issues/368)
+- [Sentry-1] Configuration and sampling (now the fleet settings): [#369](https://github.com/cognitio-org/mgm-pi/issues/369)
+- [Sentry-2] Kernal: [#370](https://github.com/cognitio-org/mgm-pi/issues/370)
+- [Sentry-3] Outfitter API and agentd: [#371](https://github.com/cognitio-org/mgm-pi/issues/371)
+- [Sentry-4] Outfitter web: [#372](https://github.com/cognitio-org/mgm-pi/issues/372)
+- [Sentry-5] Agent Engine (Python): [#373](https://github.com/cognitio-org/mgm-pi/issues/373)

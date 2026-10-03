@@ -1,65 +1,53 @@
 /**
- * Sentry extension: config defaults/overrides (config.ts), init-once guarding (client.ts), error
- * capture and agent/tool trace sampling driven through the real entry point with a fake pi
- * (harness.ts) and a fake Sentry client (no network, no real @sentry/node init).
+ * Sentry extension: the on/off rules (config.ts: Outfitter's fleet settings and the person's own
+ * `/sentry off`), the fleet-settings cache and fetch (_shared/fleet-settings.ts), the process-wide
+ * live gate (client.ts), event scrubbing (lib.ts), and error capture and trace spans driven through
+ * the real entry point with a fake pi (harness.ts) and a fake Sentry client (no network, no real
+ * @sentry/node init).
  */
 import { test, describe, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_DSN, DEFAULT_TRACES_SAMPLE_RATE, ERROR_SAMPLE_RATE, parseSampleRate, defaultEnvironment, sentryConfig } from "../.pi/extensions/sentry/config.ts";
-import { initSentryOnce, _resetSentryInitState, type SentryLike, type SentrySpan } from "../.pi/extensions/sentry/client.ts";
-import { agentRunError, toolSpanAttributes } from "../.pi/extensions/sentry/lib.ts";
-import sentryExtension, { _resetProcessErrorCaptureState } from "../.pi/extensions/sentry/index.ts";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { decide, defaultEnvironment, describe as describeDecision, optedOut } from "../.pi/extensions/sentry/config.ts";
+import { applySentry, sending, _resetSentryState, type SentryLike, type SentryInit, type SentrySpan } from "../.pi/extensions/sentry/client.ts";
+import { agentRunError, scrubEvent, toolSpanAttributes } from "../.pi/extensions/sentry/lib.ts";
+import { MAX_CACHE_AGE_MS, cachedFleetSettings, parseFleetSettings, refreshFleetSettings, type FleetSettings } from "../.pi/extensions/_shared/fleet-settings.ts";
+import sentryExtension from "../.pi/extensions/sentry/index.ts";
 import { makePi } from "./harness.ts";
 
-describe("sentry config", () => {
-  test("defaults: this project's DSN, development environment, 5% traces", () => {
-    const c = sentryConfig({}, false);
-    assert.equal(c.dsn, DEFAULT_DSN);
-    assert.equal(c.environment, "development");
-    assert.equal(c.tracesSampleRate, DEFAULT_TRACES_SAMPLE_RATE);
-    assert.equal(c.tracesSampleRate, 0.05);
-    assert.equal(c.enabled, true);
-  });
+const DSN = "https://publicKey@o0.ingest.us.sentry.io/1";
+const API = "https://link.outfitter.test";
+const CREDS = { api: API, token: "outf_dongle" };
+const ON: FleetSettings = { telemetry: { sentry: { enabled: true, dsn: DSN, tracesSampleRate: 0.05 } } };
+const OFF: FleetSettings = { telemetry: { sentry: { enabled: false } } };
 
-  test("a packaged bundle defaults to the production environment", () => {
-    assert.equal(defaultEnvironment(true), "production");
-    assert.equal(defaultEnvironment(false), "development");
-    assert.equal(sentryConfig({}, true).environment, "production");
-  });
+function tmpFile(): string {
+  return join(mkdtempSync(join(tmpdir(), "kernal-fleet-")), "fleet-settings.json");
+}
 
-  test("SENTRY_DSN set to the empty string disables Sentry entirely", () => {
-    const c = sentryConfig({ SENTRY_DSN: "" }, false);
-    assert.equal(c.dsn, undefined);
-    assert.equal(c.enabled, false);
-  });
+function writeCache(file: string, settings: FleetSettings, api = API, fetchedAt = new Date().toISOString()): void {
+  writeFileSync(file, JSON.stringify({ api, fetchedAt, settings }));
+}
 
-  test("SENTRY_DSN, SENTRY_ENVIRONMENT and SENTRY_TRACES_SAMPLE_RATE override the defaults", () => {
-    const c = sentryConfig({ SENTRY_DSN: "https://key@o0.ingest.sentry.io/1", SENTRY_ENVIRONMENT: "staging", SENTRY_TRACES_SAMPLE_RATE: "0.25" }, false);
-    assert.equal(c.dsn, "https://key@o0.ingest.sentry.io/1");
-    assert.equal(c.environment, "staging");
-    assert.equal(c.tracesSampleRate, 0.25);
-  });
-
-  test("parseSampleRate clamps to [0,1] and falls back on unset/unparsable", () => {
-    assert.equal(parseSampleRate(undefined, 0.05), 0.05);
-    assert.equal(parseSampleRate("", 0.05), 0.05);
-    assert.equal(parseSampleRate("not-a-number", 0.05), 0.05);
-    assert.equal(parseSampleRate("2", 0.05), 1);
-    assert.equal(parseSampleRate("-1", 0.05), 0);
-    assert.equal(parseSampleRate("0.3", 0.05), 0.3);
-  });
-
-  test("errors are always sampled at 100%, independent of the traces rate", () => {
-    assert.equal(ERROR_SAMPLE_RATE, 1);
-  });
-});
+/** A fetch that answers GET /api/fleet-settings with `body`, recording what it was asked. */
+function fakeFetch(body: unknown, status = 200) {
+  const calls: { url: string; auth?: string }[] = [];
+  const fn = (async (url: URL | string, init?: RequestInit) => {
+    calls.push({ url: String(url), auth: (init?.headers as Record<string, string> | undefined)?.authorization });
+    return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  return { fn, calls };
+}
 
 function fakeSentry() {
-  const initCalls: any[] = [];
+  const inits: SentryInit[] = [];
   const captured: { error: unknown; context?: any }[] = [];
   const spans: { name: string; op: string; attributes?: any; status?: "ok" | "error"; ended: boolean }[] = [];
   const sentry: SentryLike = {
-    init(options) { initCalls.push(options); },
+    init(options) { inits.push(options); },
     captureException(error, context) { captured.push({ error, context }); return "event-id"; },
     startInactiveSpan(options) {
       const rec = { name: options.name, op: options.op, attributes: options.attributes, status: undefined as "ok" | "error" | undefined, ended: false };
@@ -67,35 +55,204 @@ function fakeSentry() {
       const span: SentrySpan = { setStatus: (o) => { rec.status = o; }, end: () => { rec.ended = true; } };
       return span;
     },
-    isInitialized() { return initCalls.length > 0; },
-    async close() { return true; },
   };
-  return { sentry, initCalls, captured, spans };
+  return { sentry, inits, captured, spans };
 }
 
-describe("initSentryOnce", () => {
-  beforeEach(() => _resetSentryInitState());
-
-  test("initializes once with dsn/environment/tracesSampleRate, and a release when given one", () => {
-    const { sentry, initCalls } = fakeSentry();
-    const config = sentryConfig({}, false);
-    assert.equal(initSentryOnce(config, "0.2.0", sentry), true);
-    assert.deepEqual(initCalls, [{ dsn: config.dsn, environment: "development", tracesSampleRate: 0.05, release: "0.2.0" }]);
+describe("sentry config: both Outfitter and the person must say yes", () => {
+  test("on only with a Dongle, the fleet on, and no local opt-out", () => {
+    assert.deepEqual(decide(ON, { optedOut: false, hasDongle: true }), { on: true, dsn: DSN, tracesSampleRate: 0.05 });
+    assert.deepEqual(decide(OFF, { optedOut: false, hasDongle: true }), { on: false, why: "fleet" });
+    assert.deepEqual(decide(ON, { optedOut: false, hasDongle: false }), { on: false, why: "no-dongle" });
+    assert.deepEqual(decide(ON, { optedOut: true, hasDongle: true }), { on: false, why: "laptop" });
   });
 
-  test("a second call does not re-init", () => {
-    const { sentry, initCalls } = fakeSentry();
-    const config = sentryConfig({}, false);
-    initSentryOnce(config, undefined, sentry);
-    initSentryOnce(config, undefined, sentry);
-    assert.equal(initCalls.length, 1);
+  test("kernal.sentry: false is the only opt-out; anything else follows the fleet", () => {
+    assert.equal(optedOut({ kernal: { sentry: false } }), true);
+    assert.equal(optedOut({ kernal: { sentry: true } }), false, "true cannot force it on");
+    assert.equal(optedOut({ kernal: {} }), false);
+    assert.equal(optedOut({}), false);
   });
 
-  test("disabled config (SENTRY_DSN=) never calls init", () => {
-    const { sentry, initCalls } = fakeSentry();
-    const config = sentryConfig({ SENTRY_DSN: "" }, false);
-    assert.equal(initSentryOnce(config, undefined, sentry), false);
-    assert.equal(initCalls.length, 0);
+  test("a release bundle reports as production, a source checkout as development", () => {
+    assert.equal(defaultEnvironment(true), "production");
+    assert.equal(defaultEnvironment(false), "development");
+  });
+
+  test("the status line says who decided", () => {
+    assert.match(describeDecision({ on: true, dsn: DSN, tracesSampleRate: 0.05 }), /on, set by Outfitter.*5% of agent runs/);
+    assert.match(describeDecision({ on: false, why: "laptop" }), /off on this laptop/);
+    assert.match(describeDecision({ on: false, why: "fleet" }), /Outfitter has it off/);
+    assert.match(describeDecision({ on: false, why: "no-dongle" }), /not connected to Outfitter/);
+  });
+});
+
+describe("fleet settings on the laptop", () => {
+  test("parseFleetSettings: anything but a well-formed 'on' reads as off", () => {
+    assert.deepEqual(parseFleetSettings(ON), ON);
+    assert.deepEqual(parseFleetSettings({ telemetry: { sentry: { enabled: true } } }), OFF, "no DSN");
+    assert.deepEqual(parseFleetSettings({ telemetry: { sentry: { enabled: true, dsn: "not a dsn" } } }), OFF);
+    assert.deepEqual(parseFleetSettings(null), OFF);
+    assert.deepEqual(parseFleetSettings({ telemetry: { sentry: { enabled: true, dsn: DSN, tracesSampleRate: 7 } } }).telemetry.sentry, { enabled: true, dsn: DSN, tracesSampleRate: 0 });
+  });
+
+  test("the cache is used only with a Dongle, and only from the same Outfitter", () => {
+    const file = tmpFile();
+    writeCache(file, ON);
+    assert.deepEqual(cachedFleetSettings(CREDS, file), ON);
+    assert.deepEqual(cachedFleetSettings({}, file), OFF, "no Dongle: off, cached or not");
+    assert.deepEqual(cachedFleetSettings({ ...CREDS, api: "https://other.test" }, file), OFF);
+    assert.deepEqual(cachedFleetSettings(CREDS, join(tmpdir(), "missing", "x.json")), OFF);
+  });
+
+  test("refresh asks with the Dongle and caches the answer for the next start", async () => {
+    const file = tmpFile();
+    const { fn, calls } = fakeFetch(ON);
+    assert.deepEqual(await refreshFleetSettings(CREDS, { fetch: fn, file }), ON);
+    assert.deepEqual(calls, [{ url: `${API}/api/fleet-settings`, auth: "Bearer outf_dongle" }]);
+    const cache = JSON.parse(readFileSync(file, "utf8"));
+    assert.equal(cache.api, API);
+    assert.deepEqual(cache.settings, ON);
+  });
+
+  test("an outage keeps the cached answer and does not throw", async () => {
+    const file = tmpFile();
+    writeCache(file, ON);
+    assert.equal(await refreshFleetSettings(CREDS, { fetch: fakeFetch({}, 503).fn, file }), undefined);
+    const offline = (async () => { throw new Error("offline"); }) as typeof fetch;
+    assert.equal(await refreshFleetSettings(CREDS, { fetch: offline, file }), undefined);
+    assert.deepEqual(cachedFleetSettings(CREDS, file), ON);
+  });
+
+  test("a refused Dongle replaces a cached 'on' with off", async () => {
+    const file = tmpFile();
+    writeCache(file, ON);
+    assert.deepEqual(await refreshFleetSettings(CREDS, { fetch: fakeFetch({ error: "invalid token" }, 401).fn, file }), OFF);
+    assert.deepEqual(cachedFleetSettings(CREDS, file), OFF);
+  });
+
+  test("a cached answer older than the limit reads as off", () => {
+    const file = tmpFile();
+    const now = Date.parse("2026-10-03T00:00:00.000Z");
+    writeCache(file, ON, API, new Date(now - MAX_CACHE_AGE_MS - 1).toISOString());
+    assert.deepEqual(cachedFleetSettings(CREDS, file, now), OFF);
+    writeCache(file, ON, API, new Date(now - 1000).toISOString());
+    assert.deepEqual(cachedFleetSettings(CREDS, file, now), ON);
+  });
+
+  test("an OUTFITTER_API with a path prefix keeps it", async () => {
+    const { fn, calls } = fakeFetch(ON);
+    await refreshFleetSettings({ api: "https://example.test/outfitter/", token: "t" }, { fetch: fn, file: tmpFile() });
+    assert.equal(calls[0].url, "https://example.test/outfitter/api/fleet-settings");
+  });
+
+  test("no Dongle: no request at all", async () => {
+    const { fn, calls } = fakeFetch(ON);
+    assert.equal(await refreshFleetSettings({}, { fetch: fn, file: tmpFile() }), undefined);
+    assert.equal(calls.length, 0);
+  });
+});
+
+describe("applySentry: the process-wide live gate", () => {
+  beforeEach(() => _resetSentryState());
+  const runtime = { environment: "development" };
+
+  test("starts the SDK once, then only moves the gate", async () => {
+    const { sentry, inits } = fakeSentry();
+    await applySentry({ on: true, dsn: DSN, tracesSampleRate: 0.05 }, runtime, sentry);
+    assert.equal(sending(), true);
+    await applySentry({ on: false, why: "laptop" }, runtime, sentry);
+    assert.equal(sending(), false);
+    assert.equal(inits[0].gate().sending, false, "the SDK's beforeSend sees off at once");
+    await applySentry({ on: true, dsn: DSN, tracesSampleRate: 0.5 }, runtime, sentry);
+    assert.equal(inits.length, 1);
+    assert.equal(inits[0].gate().tracesSampleRate, 0.5);
+  });
+
+  test("never starts while off", async () => {
+    const { sentry, inits } = fakeSentry();
+    await applySentry({ on: false, why: "fleet" }, runtime, sentry);
+    assert.equal(inits.length, 0);
+    assert.equal(sending(), false);
+  });
+
+  test("a new DSN mid-process sends nothing until Kernal restarts", async () => {
+    const { sentry } = fakeSentry();
+    await applySentry({ on: true, dsn: DSN, tracesSampleRate: 0.05 }, runtime, sentry);
+    await applySentry({ on: true, dsn: "https://otherKey@o0.ingest.us.sentry.io/2", tracesSampleRate: 0.05 }, runtime, sentry);
+    assert.equal(sending(), false);
+  });
+
+  test("a decision that changes while the SDK is still loading wins once it has loaded", async () => {
+    let release!: () => void;
+    const inits: SentryInit[] = [];
+    const slow: SentryLike = {
+      init: (o) => { inits.push(o); return new Promise<void>((r) => { release = r; }); },
+      captureException: () => "id",
+      startInactiveSpan: () => ({ setStatus() {}, end() {} }),
+    };
+    const starting = applySentry({ on: true, dsn: DSN, tracesSampleRate: 0.05 }, runtime, slow);
+    await applySentry({ on: false, why: "laptop" }, runtime, slow);
+    release();
+    await starting;
+    assert.equal(inits.length, 1);
+    assert.equal(sending(), false);
+  });
+
+  test("an SDK that fails to start leaves Sentry off and never throws", async () => {
+    const broken: SentryLike = {
+      init: () => { throw new Error("Cannot find module '@sentry/node'"); },
+      captureException: () => "id",
+      startInactiveSpan: () => ({ setStatus() {}, end() {} }),
+    };
+    const errors: unknown[] = [];
+    const original = console.error;
+    console.error = (...a: unknown[]) => { errors.push(a[0]); };
+    try {
+      await applySentry({ on: true, dsn: DSN, tracesSampleRate: 0.05 }, runtime, broken);
+      await applySentry({ on: true, dsn: DSN, tracesSampleRate: 0.05 }, runtime, broken);
+    } finally {
+      console.error = original;
+    }
+    assert.equal(sending(), false);
+    assert.equal(errors.length, 1, "said once");
+    assert.match(String(errors[0]), /Sentry did not start/);
+  });
+
+  test("the state survives a reload: a second extension instance does not start the SDK again", () => {
+    const { sentry, inits } = fakeSentry();
+    const file = tmpFile();
+    writeCache(file, ON);
+    sentryExtension(makePi() as any, { sentry, credentials: CREDS, settings: {}, cacheFile: file, fetch: fakeFetch(ON).fn, onRefresh: () => {} });
+    sentryExtension(makePi() as any, { sentry, credentials: CREDS, settings: {}, cacheFile: file, fetch: fakeFetch(ON).fn, onRefresh: () => {} });
+    assert.equal(inits.length, 1);
+  });
+});
+
+describe("the real @sentry/node, in a child process", () => {
+  test("drops Console and OnUnhandledRejection, survives a reload, and sends nothing at all while off", () => {
+    const out = execFileSync(process.execPath, ["--import", "./tests/resolve-pi.mjs", "tests/fixtures/sentry-real-child.ts"], { encoding: "utf8", timeout: 60_000 });
+    const r = JSON.parse(out.trim().split("\n").at(-1)!);
+    assert.ok(!r.integrations.includes("Console"), "console lines never ride along as breadcrumbs");
+    assert.ok(!r.integrations.includes("OnUnhandledRejection"));
+    assert.ok(r.integrations.includes("OnUncaughtException"));
+    assert.equal(r.unhandledRejectionListeners, 0, "pi keeps crashing on an unhandled rejection");
+    assert.equal(r.reloadError, undefined, "a reloaded module copy still reaches the running SDK");
+    assert.ok(r.whileOn.includes("event"));
+    assert.deepEqual(r.whileOff, [], "no events, client reports or sessions while off");
+  });
+});
+
+describe("scrubEvent", () => {
+  test("drops the hostname and writes the home directory as ~", () => {
+    const event = {
+      server_name: "Someones-MacBook-Pro.local",
+      exception: { values: [{ value: "ENOENT: /Users/someone/project/x.ts", stacktrace: { frames: [{ filename: "/Users/someone/.kernal/kernal-0.2.10/.pi/extensions/a.ts" }] } }] },
+    };
+    const out = scrubEvent(event, "/Users/someone");
+    assert.equal((out as any).server_name, undefined);
+    assert.equal(out.exception.values[0].value, "ENOENT: ~/project/x.ts");
+    assert.equal(out.exception.values[0].stacktrace.frames[0].filename, "~/.kernal/kernal-0.2.10/.pi/extensions/a.ts");
   });
 });
 
@@ -109,9 +266,6 @@ describe("sentry lib", () => {
     assert.equal(agentRunError(messages as any), "503: overloaded");
     assert.equal(agentRunError([{ role: "assistant", stopReason: "stop" }] as any), undefined);
     assert.equal(agentRunError([]), undefined);
-  });
-
-  test("agentRunError falls back to a placeholder when the error carries no message", () => {
     assert.equal(agentRunError([{ role: "assistant", stopReason: "error" }] as any), "(error without message)");
   });
 
@@ -121,12 +275,37 @@ describe("sentry lib", () => {
 });
 
 describe("sentry extension wired to pi", () => {
-  beforeEach(() => { _resetSentryInitState(); _resetProcessErrorCaptureState(); });
+  beforeEach(() => _resetSentryState());
 
-  test("an agent run that ends cleanly produces an ok trace span and no captured error", async () => {
-    const { sentry, spans, captured } = fakeSentry();
+  /** The extension on a fake pi, with the fleet `cached` from a previous start and `fresh` from
+   * Outfitter now. Resolves once the background refresh has landed. */
+  async function load(opts: { cached?: FleetSettings; fresh?: unknown; settings?: Record<string, unknown>; credentials?: typeof CREDS | {} } = {}) {
+    const fake = fakeSentry();
     const pi = makePi();
-    sentryExtension(pi as any, { sentry, env: {} });
+    const file = tmpFile();
+    if (opts.cached) writeCache(file, opts.cached);
+    const fetch = fakeFetch(opts.fresh ?? opts.cached ?? OFF);
+    const saved: Array<false | undefined> = [];
+    let refreshed: Promise<void> = Promise.resolve();
+    sentryExtension(pi as any, {
+      sentry: fake.sentry,
+      credentials: opts.credentials ?? CREDS,
+      settings: opts.settings ?? {},
+      saveOptOut: (v) => saved.push(v),
+      fetch: fetch.fn,
+      cacheFile: file,
+      onRefresh: (p) => { refreshed = p; },
+    });
+    await refreshed;
+    await new Promise((r) => setImmediate(r)); // the start-up apply, which nothing awaits
+    const notes: string[] = [];
+    const ctx = { ui: { notify: (m: string) => notes.push(m) } };
+    const command = (args: string) => pi.commands.get("sentry")!.handler(args, ctx);
+    return { ...fake, pi, fetch, saved, notes, command };
+  }
+
+  test("a clean agent run on: an ok trace span and no captured error", async () => {
+    const { pi, spans, captured } = await load({ cached: ON });
     await pi.emit("agent_start", {}, {});
     await pi.emit("agent_end", { messages: [{ role: "assistant", stopReason: "stop", content: [] }] }, {});
     assert.equal(captured.length, 0);
@@ -137,79 +316,117 @@ describe("sentry extension wired to pi", () => {
   });
 
   test("an agent run that ends in an assistant error is captured and its span marked error", async () => {
-    const { sentry, spans, captured } = fakeSentry();
-    const pi = makePi();
-    sentryExtension(pi as any, { sentry, env: {} });
+    const { pi, spans, captured } = await load({ cached: ON });
     await pi.emit("agent_start", {}, {});
     await pi.emit("agent_end", { messages: [{ role: "assistant", stopReason: "error", errorMessage: "401: nope" }] }, {});
     assert.equal(captured.length, 1);
     assert.equal((captured[0].error as Error).message, "401: nope");
     assert.equal(captured[0].context.tags.source, "agent_end");
     assert.equal(spans[0].status, "error");
-    assert.equal(spans[0].ended, true);
   });
 
-  test("a tool call gets its own span, started and ended across the two tool_execution events", async () => {
-    const { sentry, spans } = fakeSentry();
-    const pi = makePi();
-    sentryExtension(pi as any, { sentry, env: {} });
-    await pi.emit("tool_execution_start", { toolCallId: "c1", toolName: "bash", args: {} }, {});
-    assert.equal(spans.length, 1);
-    assert.equal(spans[0].ended, false, "the span stays open between the two events");
-    await pi.emit("tool_execution_end", { toolCallId: "c1", toolName: "bash", result: {}, isError: false }, {});
-    assert.equal(spans[0].name, "tool.bash");
-    assert.equal(spans[0].op, "tool.execute");
-    assert.deepEqual(spans[0].attributes, { "kernal.tool": "bash" });
-    assert.equal(spans[0].status, "ok");
-    assert.equal(spans[0].ended, true);
-  });
-
-  test("a failed tool call's span is marked error", async () => {
-    const { sentry, spans } = fakeSentry();
-    const pi = makePi();
-    sentryExtension(pi as any, { sentry, env: {} });
-    await pi.emit("tool_execution_start", { toolCallId: "c1", toolName: "write" }, {});
-    await pi.emit("tool_execution_end", { toolCallId: "c1", toolName: "write", isError: true }, {});
-    assert.equal(spans[0].status, "error");
-  });
-
-  test("concurrent tool calls get independent spans keyed by toolCallId", async () => {
-    const { sentry, spans } = fakeSentry();
-    const pi = makePi();
-    sentryExtension(pi as any, { sentry, env: {} });
+  test("tool calls get their own spans, keyed by toolCallId, open across the two events", async () => {
+    const { pi, spans } = await load({ cached: ON });
     await pi.emit("tool_execution_start", { toolCallId: "c1", toolName: "read" }, {});
-    await pi.emit("tool_execution_start", { toolCallId: "c2", toolName: "grep" }, {});
-    await pi.emit("tool_execution_end", { toolCallId: "c2", toolName: "grep", isError: false }, {});
+    await pi.emit("tool_execution_start", { toolCallId: "c2", toolName: "write" }, {});
+    assert.equal(spans[0].ended, false);
+    await pi.emit("tool_execution_end", { toolCallId: "c2", toolName: "write", isError: true }, {});
     await pi.emit("tool_execution_end", { toolCallId: "c1", toolName: "read", isError: false }, {});
-    assert.equal(spans.length, 2);
-    assert.ok(spans.every((s) => s.ended));
+    assert.deepEqual(spans.map((s) => [s.name, s.op, s.status, s.ended]), [["tool.read", "tool.execute", "ok", true], ["tool.write", "tool.execute", "error", true]]);
+    assert.deepEqual(spans[0].attributes, { "kernal.tool": "read" });
   });
 
-  test("SENTRY_DSN='' disables the extension: no init, no handlers registered", async () => {
-    const { sentry, initCalls, spans } = fakeSentry();
-    const pi = makePi();
-    sentryExtension(pi as any, { sentry, env: { SENTRY_DSN: "" } });
-    assert.equal(initCalls.length, 0);
-    assert.equal(pi.handlers.size, 0, "a disabled extension subscribes to nothing");
+  test("off by default: nothing cached, Outfitter off -- no init, no spans, no captures", async () => {
+    const { pi, inits, spans, captured } = await load({});
+    await pi.emit("agent_start", {}, {});
+    await pi.emit("agent_end", { messages: [{ role: "assistant", stopReason: "error", errorMessage: "x" }] }, {});
     await pi.emit("tool_execution_start", { toolCallId: "c1", toolName: "read" }, {});
+    assert.equal(inits.length, 0);
     assert.equal(spans.length, 0);
+    assert.equal(captured.length, 0);
   });
 
-  test("uncaughtException and unhandledRejection are captured with a distinguishing tag", async () => {
-    const { sentry, captured } = fakeSentry();
+  test("no Dongle: off, and Outfitter is never asked", async () => {
+    const { inits, fetch } = await load({ cached: ON, credentials: {} });
+    assert.equal(inits.length, 0);
+    assert.equal(fetch.calls.length, 0);
+  });
+
+  test("Outfitter turning it on reaches a running session once the refresh lands", async () => {
+    const { pi, inits, spans } = await load({ cached: OFF, fresh: ON });
+    assert.equal(inits.length, 1);
+    assert.equal(inits[0].dsn, DSN);
+    await pi.emit("agent_start", {}, {});
+    assert.equal(spans.length, 1);
+  });
+
+  test("Outfitter turning it off stops a running session's sending", async () => {
+    const { inits } = await load({ cached: ON, fresh: OFF });
+    assert.equal(inits.length, 1, "started from the cache");
+    assert.equal(sending(), false, "then stopped by the fresh answer");
+  });
+
+  test("an opted-out laptop sends nothing and does not even ask Outfitter", async () => {
+    const { inits, fetch, notes, command } = await load({ cached: ON, settings: { kernal: { sentry: false } } });
+    assert.equal(inits.length, 0);
+    assert.equal(fetch.calls.length, 0);
+    await command("");
+    assert.match(notes[0], /off on this laptop/);
+  });
+
+  test("/sentry off stops sending at once and saves kernal.sentry: false; /sentry on clears it", async () => {
+    const { saved, notes, command } = await load({ cached: ON });
+    assert.equal(sending(), true);
+    await command("off");
+    assert.equal(sending(), false);
+    assert.deepEqual(saved, [false]);
+    assert.match(notes.at(-1)!, /off on this laptop/);
+    await command("on");
+    assert.equal(sending(), true);
+    assert.deepEqual(saved, [false, undefined]);
+    assert.match(notes.at(-1)!, /on, set by Outfitter/);
+  });
+
+  test("/sentry on cannot override Outfitter's off", async () => {
+    const { notes, command } = await load({ cached: OFF });
+    await command("on");
+    assert.equal(sending(), false);
+    assert.match(notes.at(-1)!, /Outfitter has it off/);
+  });
+
+  test("an older instance's late refresh cannot turn sending back on after a reload", async () => {
+    const { sentry } = fakeSentry();
+    let releaseOld!: (r: Response) => void;
+    const slowFetch = (() => new Promise<Response>((r) => { releaseOld = r; })) as typeof fetch;
+    let oldRefresh: Promise<void> = Promise.resolve();
+    const file = tmpFile();
+    writeCache(file, OFF);
+    sentryExtension(makePi() as any, { sentry, credentials: CREDS, settings: {}, cacheFile: file, fetch: slowFetch, onRefresh: (p) => { oldRefresh = p; } });
+    // /reload: a new instance, opted out.
+    sentryExtension(makePi() as any, { sentry, credentials: CREDS, settings: { kernal: { sentry: false } }, cacheFile: file, fetch: fakeFetch(ON).fn, onRefresh: () => {} });
+    releaseOld(new Response(JSON.stringify(ON), { status: 200, headers: { "content-type": "application/json" } }));
+    await oldRefresh;
+    await new Promise((r) => setImmediate(r));
+    assert.equal(sending(), false);
+  });
+
+  test("/sentry off stops sending even when saving the setting fails", async () => {
+    const fake = fakeSentry();
     const pi = makePi();
-    sentryExtension(pi as any, { sentry, env: {} });
-    const uncaught = process.listeners("uncaughtException").slice(-1)[0] as (e: Error) => void;
-    const unhandled = process.listeners("unhandledRejection").slice(-1)[0] as (r: unknown) => void;
-    try {
-      uncaught(new Error("boom"));
-      unhandled("rejected-value");
-      assert.equal(captured.length, 2);
-      assert.equal(captured[0].context.tags.source, "uncaughtException");
-      assert.equal(captured[1].context.tags.source, "unhandledRejection");
-    } finally {
-      process.removeListener("uncaughtException", uncaught);
-      process.removeListener("unhandledRejection", unhandled);
-    }
+    const file = tmpFile();
+    writeCache(file, ON);
+    sentryExtension(pi as any, { sentry: fake.sentry, credentials: CREDS, settings: {}, cacheFile: file, fetch: fakeFetch(ON).fn, onRefresh: () => {}, saveOptOut: () => { throw new Error("settings.json is not valid JSON"); } });
+    await new Promise((r) => setImmediate(r));
+    assert.equal(sending(), true);
+    const notes: string[] = [];
+    await pi.commands.get("sentry")!.handler("off", { ui: { notify: (m: string) => notes.push(m) } });
+    assert.equal(sending(), false);
+    assert.match(notes[0], /saving that failed/);
+  });
+
+  test("an unknown subcommand prints the usage", async () => {
+    const { notes, command } = await load({});
+    await command("maybe");
+    assert.match(notes[0], /usage: \/sentry/);
   });
 });

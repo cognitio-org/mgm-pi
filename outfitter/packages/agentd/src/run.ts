@@ -56,7 +56,7 @@ import type {
   UpAdminRequest,
 } from "./protocol.js";
 import { adminCapabilities } from "./protocol.js";
-import { withSentrySpan, captureException } from "./sentry.js";
+import { initSentry, withSentrySpan, captureException } from "./sentry.js";
 
 /** The start-up phases the `startup` frame carries: run.spec through pi ready. Later "first ..."
  * milestones depend on the person's prompt, not on starting up. */
@@ -467,10 +467,11 @@ export class RunController {
       case "run.spec":
         if (!this.began) {
           this.began = true;
-          // Task execution tracing (sentry.ts, 5% sample rate): one span for the whole run, from
-          // run.spec through its terminal state (checkpointing/stopping, or fail() below on a
-          // thrown error). A no-op span when Sentry is off.
-          void withSentrySpan("run", "agentd.run", () => this.begin(msg)).catch((err) => this.fail(err));
+          // Sentry (sentry.ts) starts here, from the fleet settings the API put in this run.spec
+          // (absent: off). The span covers the run's start-up, begin(): clone or restore through pi
+          // ready, at the fleet's sample rate. A failure is reported once, by fail().
+          initSentry(msg.telemetry?.sentry);
+          void withSentrySpan("run.start", "agentd.run", () => this.begin(msg)).catch((err) => this.fail(err));
         }
         return;
       case "ack":

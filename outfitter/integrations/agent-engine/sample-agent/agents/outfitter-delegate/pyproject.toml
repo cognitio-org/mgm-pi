@@ -15,6 +15,9 @@ dependencies = [
     # outfitter_tools.py
     "a2a-sdk==1.2.1",
     "httpx>=0.28,<1",
+    # sentry_config.py imports it directly (agent-engine-runner-shared also pulls it in); the 2.x
+    # line the tests ran against.
+    "sentry-sdk~=2.71",
 ]
 
 [project.scripts]

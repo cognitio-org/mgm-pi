@@ -5,6 +5,7 @@
 
 import type { SandboxProviderName } from "../config.ts";
 import type { VoiceEngine, VoicePrefs } from "../voice.ts";
+import type { FleetSettings } from "../fleet-settings.ts";
 
 export type RunState = "queued" | "provisioning" | "running" | "idle" | "stopping" | "stopped" | "failed";
 
@@ -1368,6 +1369,14 @@ export interface A2ATasksCollection {
   countRequest(tokenId: string, windowId: string, expireAtIso: string): Promise<number>;
 }
 
+/** Fleet settings (fleet-settings.ts): one document, written only by an operator. */
+export interface FleetSettingsCollection {
+  /** The stored document, or null before an operator ever saved one. */
+  get(): Promise<FleetSettings | null>;
+  /** Replaces the document wholesale. */
+  put(settings: FleetSettings): Promise<void>;
+}
+
 export interface Store {
   sessions: SessionsCollection;
   entries: EntriesCollection;
@@ -1391,5 +1400,6 @@ export interface Store {
   aeAgents: AeAgentsCollection;
   aeSessions: AeSessionsCollection;
   a2aTasks: A2ATasksCollection;
+  fleetSettings: FleetSettingsCollection;
   close(): Promise<void>;
 }

@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { greetingName } from "../greeting.ts";
+import { clientFleetSettings, withDefaults } from "../fleet-settings.ts";
 import type { RouteContext } from "./context.ts";
 
 /** GET /api/me: the caller's identity, established by the auth preHandler in server.ts. Also
@@ -16,6 +17,11 @@ export async function registerMeRoute(app: FastifyInstance, ctx: RouteContext): 
     commit: ctx.config.buildCommit || null,
     release: ctx.config.release || null,
   }));
+
+  // Fleet settings (fleet-settings.ts) for this caller's own machine: Kernal reads it with a
+  // Dongle on the link role, the web app under IAP before it starts Sentry. Read from the store,
+  // not the instance cache, so a laptop sees an operator's change on its next start.
+  app.get("/api/fleet-settings", async () => clientFleetSettings(withDefaults(await ctx.store.fleetSettings.get())));
 
   app.get("/api/me", async (req) => {
     const email = req.identity!.email;

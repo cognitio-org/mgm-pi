@@ -258,6 +258,26 @@ export interface OperatorSecretRow {
   appliesAt: "next run" | "next deploy";
 }
 
+/** Fleet settings (api fleet-settings.ts): what an operator sets once for every machine. */
+export interface SentryFleetSettings {
+  enabled: boolean;
+  /** Kept while off, so turning Sentry back on needs no re-entry. */
+  dsn?: string;
+  tracesSampleRate: number;
+}
+
+export interface FleetSettings {
+  telemetry: { sentry: SentryFleetSettings };
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+/** GET /api/fleet-settings: a client's view, with the DSN only while Sentry is on. */
+export interface ClientFleetSettings {
+  telemetry: { sentry: { enabled: false } | { enabled: true; dsn: string; tracesSampleRate: number } };
+  updatedAt?: string;
+}
+
 export interface OperatorSettings {
   litellmBaseUrl: string;
   sandboxProvider: string;
@@ -265,6 +285,7 @@ export interface OperatorSettings {
   tunnelDomain: string;
   operators: string[];
   secrets: OperatorSecretRow[];
+  fleetSettings: FleetSettings;
 }
 
 /** How a run's sandbox ended (api provider-local SandboxExit). */
@@ -550,6 +571,14 @@ export const api = {
 
   operatorSettings(): Promise<OperatorSettings> {
     return request("/api/operator/settings");
+  },
+
+  fleetSettings(): Promise<ClientFleetSettings> {
+    return request("/api/fleet-settings");
+  },
+
+  putFleetSentry(sentry: SentryFleetSettings): Promise<FleetSettings> {
+    return request("/api/operator/fleet-settings", { method: "PUT", body: JSON.stringify({ telemetry: { sentry } }) });
   },
 
   putOperatorSecret(secretName: string, value: string): Promise<OperatorSecretRow> {

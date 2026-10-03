@@ -1,30 +1,48 @@
-// sentry.ts: SENTRY_DSN gates everything (unset by default -- every export becomes a no-op);
-// when it's set, captureException/withSentrySpan report to Sentry. Sentry processes captured
-// events off an internal queue, not synchronously, so assertions on a beforeSend spy await
-// Sentry.flush() first.
+// sentry.ts: run.spec's `telemetry` (the fleet settings, sent only while Sentry is on) gates
+// everything -- absent, every export is a no-op; present, captureException/withSentrySpan report to
+// Sentry. A fake transport stands in for the network: Sentry processes captured events off an
+// internal queue, so assertions await Sentry.flush() first.
 
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { initSentry, sentryEnabled, captureException, withSentrySpan, tagRun, resetSentryForTests, Sentry } from "../src/sentry.js";
 
-afterEach(() => {
-  resetSentryForTests();
+const SETTINGS = { dsn: "https://examplePublicKey@o0.ingest.sentry.io/0", tracesSampleRate: 0.05, environment: "test" };
+
+type Event = { tags?: Record<string, unknown>; exception?: { values?: Array<{ value?: string }> } };
+
+function fakeTransport() {
+  const events: Event[] = [];
+  const transport: NonNullable<Parameters<typeof initSentry>[1]> = () => ({
+    send: async (envelope) => {
+      for (const [header, payload] of envelope[1] as Array<[{ type: string }, Event]>) {
+        if (header.type === "event") events.push(payload);
+      }
+      return {};
+    },
+    flush: async () => true,
+  });
+  return { transport, events };
+}
+
+afterEach(async () => {
+  await resetSentryForTests();
 });
 
 describe("initSentry", () => {
-  test("does nothing without a DSN -- sentryEnabled() stays false", () => {
-    initSentry("");
+  test("does nothing without telemetry -- sentryEnabled() stays false", () => {
+    initSentry(undefined);
     assert.equal(sentryEnabled(), false);
   });
 
-  test("turns on with a DSN", () => {
-    initSentry("https://examplePublicKey@o0.ingest.sentry.io/0");
+  test("turns on with the run.spec's telemetry", () => {
+    initSentry(SETTINGS, fakeTransport().transport);
     assert.equal(sentryEnabled(), true);
   });
 
-  test("only the first call takes effect -- a later call with no DSN doesn't turn it back off", () => {
-    initSentry("https://examplePublicKey@o0.ingest.sentry.io/0");
-    initSentry("");
+  test("only the first call takes effect", () => {
+    initSentry(SETTINGS, fakeTransport().transport);
+    initSentry(undefined);
     assert.equal(sentryEnabled(), true);
   });
 });
@@ -34,22 +52,14 @@ describe("tagRun", () => {
     assert.doesNotThrow(() => tagRun("run1"));
   });
 
-  test("tags events with the run id once Sentry is on", async () => {
-    const captured: Array<{ tags?: Record<string, unknown> }> = [];
-    initSentry("https://examplePublicKey@o0.ingest.sentry.io/0");
-    Sentry.init({
-      dsn: "https://examplePublicKey@o0.ingest.sentry.io/0",
-      tracesSampleRate: 0.05,
-      beforeSend(event) {
-        captured.push(event);
-        return null;
-      },
-    });
+  test("a run id tagged before Sentry starts still lands on its events", async () => {
+    const { transport, events } = fakeTransport();
     tagRun("run-abc");
+    initSentry(SETTINGS, transport);
     captureException(new Error("boom"));
     await Sentry.flush(1000);
-    assert.equal(captured.length, 1);
-    assert.equal(captured[0]?.tags?.runId, "run-abc");
+    assert.equal(events.length, 1);
+    assert.equal(events[0]?.tags?.runId, "run-abc");
   });
 });
 
@@ -59,20 +69,12 @@ describe("captureException", () => {
   });
 
   test("reports the error when Sentry is on", async () => {
-    const captured: Array<{ exception?: { values?: Array<{ value?: string }> } }> = [];
-    initSentry("https://examplePublicKey@o0.ingest.sentry.io/0");
-    Sentry.init({
-      dsn: "https://examplePublicKey@o0.ingest.sentry.io/0",
-      tracesSampleRate: 0.05,
-      beforeSend(event) {
-        captured.push(event);
-        return null;
-      },
-    });
+    const { transport, events } = fakeTransport();
+    initSentry(SETTINGS, transport);
     captureException(new Error("clone failed"), { runId: "r1" });
     await Sentry.flush(1000);
-    assert.equal(captured.length, 1);
-    assert.equal(captured[0]?.exception?.values?.[0]?.value, "clone failed");
+    assert.equal(events.length, 1);
+    assert.equal(events[0]?.exception?.values?.[0]?.value, "clone failed");
   });
 });
 
@@ -83,7 +85,7 @@ describe("withSentrySpan", () => {
   });
 
   test("runs the task inside a span when Sentry is on", async () => {
-    initSentry("https://examplePublicKey@o0.ingest.sentry.io/0");
+    initSentry(SETTINGS, fakeTransport().transport);
     let sawActiveSpan = false;
     const result = await withSentrySpan("run", "agentd.run", async () => {
       sawActiveSpan = Sentry.getActiveSpan() !== undefined;
@@ -93,17 +95,9 @@ describe("withSentrySpan", () => {
     assert.equal(sawActiveSpan, true);
   });
 
-  test("reports a thrown error and re-throws it, so the caller's own error handling still runs", async () => {
-    const captured: Array<{ exception?: { values?: Array<{ value?: string }> } }> = [];
-    initSentry("https://examplePublicKey@o0.ingest.sentry.io/0");
-    Sentry.init({
-      dsn: "https://examplePublicKey@o0.ingest.sentry.io/0",
-      tracesSampleRate: 1,
-      beforeSend(event) {
-        captured.push(event);
-        return null;
-      },
-    });
+  test("re-throws a thrown error without reporting it itself (the caller's fail() does, once)", async () => {
+    const { transport, events } = fakeTransport();
+    initSentry({ ...SETTINGS, tracesSampleRate: 1 }, transport);
     await assert.rejects(
       withSentrySpan("run", "agentd.run", async () => {
         throw new Error("clone failed");
@@ -111,7 +105,6 @@ describe("withSentrySpan", () => {
       /clone failed/,
     );
     await Sentry.flush(1000);
-    assert.equal(captured.length, 1);
-    assert.equal(captured[0]?.exception?.values?.[0]?.value, "clone failed");
+    assert.equal(events.length, 0);
   });
 });

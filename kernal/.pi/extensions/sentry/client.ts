@@ -52,6 +52,8 @@ export interface SentryLike {
   startInactiveSpan(options: { name: string; op: string; attributes?: Record<string, string | number | boolean>; parent?: SentrySpan; onlyIfParent?: boolean }): SentrySpan;
   /** A crash pi recorded in an earlier run (lib.ts CrashRecord), as a fatal event. */
   captureCrash(crash: CrashRecord): void;
+  /** Waits (at most `timeoutMs`) until what is queued has been sent. */
+  flush(timeoutMs: number): Promise<boolean>;
 }
 
 /** `@sentry/node`'s span status is a numeric code (1 = ok, 2 = error); this hides that encoding
@@ -127,11 +129,18 @@ export const realSentry: SentryLike = {
     const error = new Error(crash.message || "(crash without message)");
     error.name = crash.kind === "uncaught_exception" ? "UncaughtException" : "Crash";
     if (crash.stack) error.stack = crash.stack; // the SDK parses frames from it
+    // Grouped by the top stack frames only: the message's paths and ids would split one bug into
+    // many issues. When it happened goes in extra, not a tag (tags are for low-cardinality values).
+    const frames = (crash.stack ?? "").split("\n").filter((l) => /^\s+at /.test(l)).slice(0, 3).map((l) => l.trim());
     state().sdk!.captureException(error, {
       level: "fatal",
-      tags: { source: "crash", crashed_at: crash.timestamp, ...(crash.kind ? { kind: crash.kind } : {}), ...(crash.version ? { pi_version: crash.version } : {}) },
-      fingerprint: ["crash", error.name, (crash.stack ?? "").split("\n").slice(0, 3).join("\n")],
+      tags: { source: "crash", ...(crash.kind ? { kind: crash.kind } : {}), ...(crash.version ? { pi_version: crash.version } : {}) },
+      extra: { crashedAt: crash.timestamp },
+      fingerprint: ["crash", error.name, ...(frames.length ? frames : [error.message])],
     });
+  },
+  async flush(timeoutMs) {
+    return (await state().sdk?.flush(timeoutMs)) ?? true;
   },
   startInactiveSpan({ parent, onlyIfParent, ...options }) {
     const span = state().sdk!.startInactiveSpan({

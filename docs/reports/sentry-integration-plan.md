@@ -84,14 +84,18 @@ defaults, so filtering a copy of them drops nothing.
   and `tracesSampler` read for every event. The API works the same way. A new DSN cannot replace the
   one a running process started with, so that process sends nothing until it restarts.
 - **Versions**: every runtime is on the same SDK line, `@sentry/node` / `@sentry/react` 11.2.0,
-  pinned exactly (the version verified inside pi's Bun binary; 11.4.0 also pulls in `oxc-parser`'s
-  native binaries). All of them set `traceLifecycle: "static"`, so spans are sent as whole
+  pinned exactly (the version verified inside pi's Bun binary). It brings `@sentry/bundler-plugins`,
+  with `oxc-parser`'s native binding and the `sentry` CLI (no install scripts), about 18 MB per image
+  or bundle. The API, agentd and Kernal set `traceLifecycle: "static"`, so spans are sent as whole
   transactions that `beforeSendTransaction` can gate; SDK 11's default streams spans past that hook.
+  The web app keeps streaming on purpose: it starts only when on, and streamed page spans are named
+  "Pageload"/"Navigation" instead of a pathname that can carry ids.
 - **Interactive crashes**: pi's own `uncaughtException` handler runs first in interactive mode and
   calls `process.exit`, so nothing can be sent at crash time. pi writes each crash to the agent dir's
   `crashes.json` first, though. The first time Sentry is on in a later run, Kernal sends the crashes
-  it has not sent yet as fatal events (tag `source: crash`), and records their timestamps in
-  `.sentry-crashes-sent.json` beside the settings cache. It sends message, stack, kind and pi version
+  it has not sent yet as fatal events (tag `source: crash`, grouped by their top stack frames), and
+  once they have been delivered records their timestamps in `.sentry-crashes-sent.json` beside the
+  settings cache. Two Kernals starting at the same moment may both send one; it groups with the first. It sends message, stack, kind and pi version
   only, never the record's working directory or session file.
 
 ## 4. Not done yet

@@ -79,6 +79,6 @@ const whileOff = [...items];
 server.close();
 const runChildren = (transactions.find((t) => t.transaction === "agent.run")?.spans ?? []).map((sp) => sp.description);
 const fatal = events.find((e) => e.level === "fatal");
-const crash = fatal && { level: fatal.level, type: fatal.exception.values[0].type, value: fatal.exception.values[0].value, hasFrames: (fatal.exception.values[0].stacktrace?.frames?.length ?? 0) >= 2, source: fatal.tags?.source };
+const crash = fatal && { level: fatal.level, type: fatal.exception.values[0].type, value: fatal.exception.values[0].value, hasFrames: (fatal.exception.values[0].stacktrace?.frames?.length ?? 0) >= 2, source: fatal.tags?.source, crashedAtTag: "crashed_at" in (fatal.tags ?? {}) };
 console.log(JSON.stringify({ crash, integrations, unhandledRejectionListeners, reloadError, whileOn, whileOff, runChildren, traceHeaders }));
 process.exit(0);

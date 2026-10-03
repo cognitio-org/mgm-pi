@@ -36,6 +36,9 @@ export async function initSentry(load: () => Promise<ClientFleetSettings> = () =
     dsn: sentry.dsn,
     // "development" from `vite` (dev server), "production" from a build, like the API's own.
     environment: import.meta.env.DEV ? "development" : "production",
+    // SDK 11's default span streaming, on purpose: page loads and navigations are named
+    // "Pageload"/"Navigation" rather than after the pathname, which can carry session ids. (Unlike
+    // the API and Kernal, nothing here needs beforeSendTransaction: the SDK starts only when on.)
     integrations: [Sentry.browserTracingIntegration(), Sentry.replayIntegration()],
     tracesSampleRate: sentry.tracesSampleRate,
     replaysSessionSampleRate: 0.0,

@@ -21,7 +21,7 @@
  * whole run there (agentd/src/sentry.ts, from run.spec's telemetry).
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { inSandbox } from "../_shared/env.ts";
@@ -81,7 +81,7 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
    * crashes.json first, though. So the first time Sentry is on in a later run, the crashes not yet
    * sent go out (once per process, and each crash once, by its timestamp).
    */
-  const reportCrashes = () => {
+  const reportCrashes = async () => {
     if (!sending() || !claimCrashReport()) return;
     try {
       const sent = readJson(crashesSentFile);
@@ -89,7 +89,12 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
       const crashes = crashesToReport(readJson(crashFile), already, (deps.now ?? Date.now)());
       if (!crashes.length) return;
       for (const crash of crashes) sentry.captureCrash(crash);
-      writeFileSync(crashesSentFile, JSON.stringify([...already, ...crashes.map((c) => c.timestamp)].slice(-50)) + "\n");
+      // Marked sent only once they have left: a `kernal -p` that exits right after start must not
+      // lose them. (A send that times out is retried next start; a duplicate groups with the first.)
+      if (!(await sentry.flush(5000))) return;
+      const tmp = `${crashesSentFile}.${process.pid}.tmp`;
+      writeFileSync(tmp, JSON.stringify([...already, ...crashes.map((c) => c.timestamp)].slice(-50)) + "\n");
+      renameSync(tmp, crashesSentFile);
     } catch {
       // A crash report is never worth a failed start.
     }
@@ -98,7 +103,7 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
   const apply = async () => {
     if (!isCurrent(instance)) return;
     await applySentry(decision(), runtime, sentry);
-    reportCrashes();
+    await reportCrashes();
   };
   void apply().catch(() => undefined);
 

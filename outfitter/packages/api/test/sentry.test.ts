@@ -130,6 +130,8 @@ describe("traces", () => {
   });
 });
 
+// The "on" case lives in sentry-request-spans.test.ts: the SDK reads its Fastify integration's
+// options from the first client a process starts, and this file starts many.
 describe("installSentryErrorHandler", () => {
   test("once Sentry is turned off a route error gets the app's own handling and nothing is sent", async () => {
     const { transport, errors } = fakeTransport();
@@ -146,23 +148,6 @@ describe("installSentryErrorHandler", () => {
     assert.deepEqual(errors, []);
   });
 
-  test("reports an unhandled route error to Sentry while it is on", async () => {
-    const { transport, errors } = fakeTransport();
-    applySentrySettings(ON, runtime(transport));
-    const fastify = Fastify();
-    installSentryErrorHandler(fastify);
-    fastify.get("/boom", async () => {
-      throw new Error("kaboom");
-    });
-    fastify.get("/bad-request", async () => {
-      throw Object.assign(new Error("not a 5xx"), { statusCode: 400 });
-    });
-    const res = await fastify.inject({ method: "GET", url: "/boom" });
-    assert.equal(res.statusCode, 500);
-    assert.equal((await fastify.inject({ method: "GET", url: "/bad-request" })).statusCode, 400);
-    await Sentry.flush(1000);
-    assert.deepEqual(errors, ["kaboom"], "once (not twice with the SDK's own integration), and never a 4xx");
-  });
 });
 
 describe("what leaves the API", () => {

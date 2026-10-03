@@ -42,7 +42,12 @@ export function applySentrySettings(settings: SentryFleetSettings, runtime: Sent
       ...(runtime.release ? { release: runtime.release } : {}),
       // Defaults minus OnUnhandledRejection: its listener would turn Node's crash on an unhandled
       // rejection into a warning, for the rest of the process even after Sentry is turned off.
-      integrations: (defaults) => defaults.filter((i) => i.name !== "OnUnhandledRejection"),
+      // Fastify's integration keeps its tracing but leaves errors to our onError hook
+      // (installSentryErrorHandler), so each route error is one event without relying on Dedupe.
+      integrations: (defaults) => [
+        ...defaults.filter((i) => i.name !== "OnUnhandledRejection" && i.name !== "Fastify"),
+        Sentry.fastifyIntegration({ shouldHandleError: () => false }),
+      ],
       // No sentry-trace/baggage headers on outbound calls (GitHub, LiteLLM, GCP, ngrok): the SDK's
       // default is every host, and it keeps adding them while Sentry is off.
       tracePropagationTargets: [],
@@ -80,13 +85,15 @@ export function sentryEnabled(): boolean {
 }
 
 /** Reports a route error that ends in a 5xx, from Fastify's own onError hook (alongside, not
- * instead of, the app's error handling). Our hook, not only the SDK's Fastify integration: buildApp
- * creates Fastify before the fleet settings can start Sentry, and the hook does not depend on the
- * order. If the integration reports the same error too, the SDK's Dedupe drops the copy. */
+ * instead of, the app's error handling). The only reporter of route errors: the SDK's Fastify
+ * integration is told not to (applySentrySettings). The status is the error's own (`statusCode`,
+ * else `status`, as Fastify reads it), else the reply's, else 500. */
 export function installSentryErrorHandler(fastify: FastifyInstance): void {
   fastify.addHook("onError", async (_req, reply, error) => {
-    const status = (error as { statusCode?: number }).statusCode ?? reply.statusCode;
-    if (sending && (status === undefined || status < 400 || status >= 500)) Sentry.captureException(error);
+    if (!sending) return;
+    const own = (error as { statusCode?: number; status?: number }).statusCode ?? (error as { status?: number }).status;
+    const status = typeof own === "number" && own >= 400 ? own : reply.statusCode >= 400 ? reply.statusCode : 500;
+    if (status >= 500) Sentry.captureException(error);
   });
 }
 

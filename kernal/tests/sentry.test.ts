@@ -51,6 +51,7 @@ function fakeSentry() {
     init(options) { inits.push(options); },
     captureException(error, context) { captured.push({ error, context }); return "event-id"; },
     captureCrash(crash) { crashes.push(crash); },
+    async flush() { return true; },
     startInactiveSpan(options) {
       const rec = { name: options.name, op: options.op, attributes: options.attributes, parent: (options.parent?.raw as any)?.name, onlyIfParent: options.onlyIfParent, status: undefined as "ok" | "error" | undefined, ended: false };
       spans.push(rec);
@@ -205,6 +206,7 @@ describe("applySentry: the process-wide live gate", () => {
       init: (o) => { inits.push(o); return new Promise<void>((r) => { release = r; }); },
       captureException: () => "id",
       captureCrash: () => {},
+      flush: async () => true,
       startInactiveSpan: () => ({ setStatus() {}, end() {} }),
     };
     const starting = applySentry({ on: true, dsn: DSN, tracesSampleRate: 0.05 }, runtime, slow);
@@ -220,6 +222,7 @@ describe("applySentry: the process-wide live gate", () => {
       init: () => { throw new Error("Cannot find module '@sentry/node'"); },
       captureException: () => "id",
       captureCrash: () => {},
+      flush: async () => true,
       startInactiveSpan: () => ({ setStatus() {}, end() {} }),
     };
     const errors: unknown[] = [];
@@ -312,7 +315,7 @@ describe("the real @sentry/node, in a child process", () => {
     assert.deepEqual(r.whileOff, [], "no events, client reports or sessions while off");
     assert.deepEqual(r.runChildren, ["tool.read"], "a tool call is a child span inside its run's transaction");
     assert.deepEqual(r.traceHeaders, { sentryTrace: null, baggage: null }, "no trace headers on outbound requests");
-    assert.deepEqual(r.crash, { level: "fatal", type: "UncaughtException", value: "boom", hasFrames: true, source: "crash" }, "a recorded crash arrives as a fatal event with its stack");
+    assert.deepEqual(r.crash, { level: "fatal", type: "UncaughtException", value: "boom", hasFrames: true, source: "crash", crashedAtTag: false }, "a recorded crash arrives as a fatal event with its stack");
   });
 });
 

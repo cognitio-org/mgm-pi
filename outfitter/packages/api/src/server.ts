@@ -121,10 +121,10 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   fleetSettings.onChange((settings) => applySentrySettings(settings.telemetry.sentry, sentryRuntime));
   await fleetSettings.get();
 
-  // Sentry's error hook goes on fastify's own onError (alongside, not instead of, any route-level
-  // error handling); the onRequest/onResponse pair gives a request a trace span at the fleet's
-  // sample rate. Both do nothing while Sentry is off. The span is named after the route pattern,
-  // never the raw URL: ids and query strings would make every name unique and can carry tokens.
+  // Route errors that end in a 5xx are reported from Fastify's onError hook (sentry.ts); the
+  // onRequest/onResponse pair gives a request a trace span at the fleet's sample rate. Both do
+  // nothing while Sentry is off. The span is named after the route pattern, never the raw URL: ids
+  // and query strings would make every name unique and can carry tokens.
   installSentryErrorHandler(fastify);
   fastify.addHook("onRequest", async (req) => {
     fleetSettings.refreshIfStale();

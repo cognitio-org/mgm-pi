@@ -46,6 +46,9 @@ export function applySentrySettings(settings: SentryFleetSettings, runtime: Sent
       // No sentry-trace/baggage headers on outbound calls (GitHub, LiteLLM, GCP, ngrok): the SDK's
       // default is every host, and it keeps adding them while Sentry is off.
       tracePropagationTargets: [],
+      // A request's spans leave together as one transaction, which beforeSendTransaction gates.
+      // SDK 11's default ("stream") sends spans one by one and skips that hook.
+      traceLifecycle: "static",
       // Live gates: the SDK keeps running once started, so turning Sentry off (or changing the
       // rate) must be read per event, not baked into init.
       tracesSampler: () => (sending ? tracesSampleRate : 0),
@@ -76,11 +79,15 @@ export function sentryEnabled(): boolean {
   return sending;
 }
 
-/** Adds Sentry's Fastify error hook (captures unhandled route errors, status >= 500 by default)
- * without replacing the app's own setErrorHandler. Installed whether or not Sentry is on yet --
- * it can turn on later -- and a no-op while off (no client, or beforeSend drops the event). */
+/** Reports a route error that ends in a 5xx, from Fastify's own onError hook (alongside, not
+ * instead of, the app's error handling). Our hook, not only the SDK's Fastify integration: buildApp
+ * creates Fastify before the fleet settings can start Sentry, and the hook does not depend on the
+ * order. If the integration reports the same error too, the SDK's Dedupe drops the copy. */
 export function installSentryErrorHandler(fastify: FastifyInstance): void {
-  Sentry.setupFastifyErrorHandler(fastify);
+  fastify.addHook("onError", async (_req, reply, error) => {
+    const status = (error as { statusCode?: number }).statusCode ?? reply.statusCode;
+    if (sending && (status === undefined || status < 400 || status >= 500)) Sentry.captureException(error);
+  });
 }
 
 /** Sends what is queued before the process exits (Cloud Run's SIGTERM). Returns at once while

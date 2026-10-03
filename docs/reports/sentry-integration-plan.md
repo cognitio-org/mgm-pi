@@ -83,16 +83,22 @@ defaults, so filtering a copy of them drops nothing.
   process; after that, on/off and the rate are a live gate that `beforeSend`, `beforeSendTransaction`
   and `tracesSampler` read for every event. The API works the same way. A new DSN cannot replace the
   one a running process started with, so that process sends nothing until it restarts.
-- **Versions**: Kernal is on `@sentry/node` 11.2.0, the version verified inside pi's Bun binary;
-  11.4.0 also pulls in `oxc-parser`'s native binaries. Kernal sets `traceLifecycle: "static"`, so
-  spans are sent as whole transactions that `beforeSendTransaction` can gate. Outfitter's API,
-  agentd and web app are on the 9.x line.
+- **Versions**: every runtime is on the same SDK line, `@sentry/node` / `@sentry/react` 11.2.0,
+  pinned exactly (the version verified inside pi's Bun binary; 11.4.0 also pulls in `oxc-parser`'s
+  native binaries). All of them set `traceLifecycle: "static"`, so spans are sent as whole
+  transactions that `beforeSendTransaction` can gate; SDK 11's default streams spans past that hook.
+- **Interactive crashes**: pi's own `uncaughtException` handler runs first in interactive mode and
+  calls `process.exit`, so nothing can be sent at crash time. pi writes each crash to the agent dir's
+  `crashes.json` first, though. The first time Sentry is on in a later run, Kernal sends the crashes
+  it has not sent yet as fatal events (tag `source: crash`), and records their timestamps in
+  `.sentry-crashes-sent.json` beside the settings cache. It sends message, stack, kind and pi version
+  only, never the record's working directory or session file.
 
 ## 4. Not done yet
 
 - The Agent Engine Python agent still reads `SENTRY_DSN` from its own env (see the table above).
-- In Kernal's interactive mode, pi's own `uncaughtException` handler exits before Sentry's runs, so
-  a TUI crash appears in pi's crash report, not in Sentry. Print mode (`-p`) is reported.
+- A crash is reported on the next start with Sentry on, not at the moment it happens; a crash
+  recorded by a bundle version that was then upgraded away from stays in that bundle's crashes.json.
 - Not built: always tracing failed requests (a `tracesSampler` that keeps every 5xx), and custom
   Sentry metrics.
 

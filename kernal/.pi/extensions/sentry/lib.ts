@@ -72,3 +72,38 @@ export function agentRunReport(message: string): { message: string; fingerprint:
     .slice(0, 200);
   return { message: clean, fingerprint: ["agent_end", shape] };
 }
+
+/** One record from pi's crashes.json (pi core/crash-log.js recordCrash, kept 5 deep). Only these
+ * fields are ever sent: never its `cwd` or `sessionFile`. */
+export interface CrashRecord {
+  timestamp: string;
+  version?: string;
+  kind?: string;
+  message?: string;
+  stack?: string;
+}
+
+/** pi drops crash records older than this from its own notice; so does this. */
+export const CRASH_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** The crashes to report now: well-formed, recent, and not already sent (`reported` holds the
+ * timestamps of those that were). */
+export function crashesToReport(records: unknown, reported: readonly string[], now: number): CrashRecord[] {
+  if (!Array.isArray(records)) return [];
+  const sent = new Set(reported);
+  const out: CrashRecord[] = [];
+  for (const r of records) {
+    if (!r || typeof r !== "object" || typeof (r as CrashRecord).timestamp !== "string") continue;
+    const c = r as Record<string, unknown>;
+    const age = now - Date.parse(c.timestamp as string);
+    if (!(age >= 0 && age <= CRASH_MAX_AGE_MS) || sent.has(c.timestamp as string)) continue;
+    out.push({
+      timestamp: c.timestamp as string,
+      ...(typeof c.version === "string" ? { version: c.version } : {}),
+      ...(typeof c.kind === "string" ? { kind: c.kind } : {}),
+      ...(typeof c.message === "string" ? { message: redact(c.message) } : {}),
+      ...(typeof c.stack === "string" ? { stack: redact(c.stack) } : {}),
+    });
+  }
+  return out;
+}

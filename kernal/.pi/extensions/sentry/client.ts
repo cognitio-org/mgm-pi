@@ -22,7 +22,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { SentryDecision } from "./config.ts";
-import { scrubEvent } from "./lib.ts";
+import { scrubEvent, type CrashRecord } from "./lib.ts";
 
 /** A started-but-not-yet-ended span: the handle index.ts holds between a start and end event. */
 export interface SentrySpan {
@@ -50,6 +50,8 @@ export interface SentryLike {
    * passed explicitly); with `onlyIfParent`, no span at all without one. A child of an unsampled
    * span is unsampled too, so a run and its tool calls are kept or dropped together. */
   startInactiveSpan(options: { name: string; op: string; attributes?: Record<string, string | number | boolean>; parent?: SentrySpan; onlyIfParent?: boolean }): SentrySpan;
+  /** A crash pi recorded in an earlier run (lib.ts CrashRecord), as a fatal event. */
+  captureCrash(crash: CrashRecord): void;
 }
 
 /** `@sentry/node`'s span status is a numeric code (1 = ok, 2 = error); this hides that encoding
@@ -121,6 +123,16 @@ export const realSentry: SentryLike = {
   captureException(error, context) {
     return state().sdk!.captureException(error, context);
   },
+  captureCrash(crash) {
+    const error = new Error(crash.message || "(crash without message)");
+    error.name = crash.kind === "uncaught_exception" ? "UncaughtException" : "Crash";
+    if (crash.stack) error.stack = crash.stack; // the SDK parses frames from it
+    state().sdk!.captureException(error, {
+      level: "fatal",
+      tags: { source: "crash", crashed_at: crash.timestamp, ...(crash.kind ? { kind: crash.kind } : {}), ...(crash.version ? { pi_version: crash.version } : {}) },
+      fingerprint: ["crash", error.name, (crash.stack ?? "").split("\n").slice(0, 3).join("\n")],
+    });
+  },
   startInactiveSpan({ parent, onlyIfParent, ...options }) {
     const span = state().sdk!.startInactiveSpan({
       ...options,
@@ -151,6 +163,8 @@ interface ProcessState {
   sdk?: typeof SentryNode;
   /** Bumped by every extension instance (newInstance); an older instance's late apply is ignored. */
   instance: number;
+  /** Earlier runs' crashes were reported (or claimed) by this process (claimCrashReport). */
+  crashesClaimed?: boolean;
 }
 
 const SLOT = Symbol.for("kernal.sentry");
@@ -169,6 +183,15 @@ export function newInstance(): number {
 
 export function isCurrent(instance: number): boolean {
   return state().instance === instance;
+}
+
+/** True the first time it is called in a process: earlier runs' crashes are reported once, not by
+ * every extension instance a /new or /reload creates. */
+export function claimCrashReport(): boolean {
+  const s = state();
+  if (s.crashesClaimed) return false;
+  s.crashesClaimed = true;
+  return true;
 }
 
 /** For `/sentry`: what this process is actually doing, beside what was decided. */

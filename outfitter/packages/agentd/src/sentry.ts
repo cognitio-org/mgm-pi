@@ -27,6 +27,8 @@ export function initSentry(settings: RunSpecTelemetry["sentry"] | undefined, tra
     // No sentry-trace/baggage headers on outbound calls (GitHub, LiteLLM, the API): the SDK's
     // default is every host.
     tracePropagationTargets: [],
+    // Spans leave as whole transactions; SDK 11's default ("stream") sends them one by one.
+    traceLifecycle: "static",
     // Defaults minus OnUnhandledRejection: its listener would turn Node's crash on an unhandled
     // rejection into a warning.
     integrations: (defaults) => defaults.filter((i) => i.name !== "OnUnhandledRejection"),

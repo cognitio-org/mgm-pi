@@ -154,10 +154,14 @@ describe("installSentryErrorHandler", () => {
     fastify.get("/boom", async () => {
       throw new Error("kaboom");
     });
+    fastify.get("/bad-request", async () => {
+      throw Object.assign(new Error("not a 5xx"), { statusCode: 400 });
+    });
     const res = await fastify.inject({ method: "GET", url: "/boom" });
     assert.equal(res.statusCode, 500);
+    assert.equal((await fastify.inject({ method: "GET", url: "/bad-request" })).statusCode, 400);
     await Sentry.flush(1000);
-    assert.deepEqual(errors, ["kaboom"]);
+    assert.deepEqual(errors, ["kaboom"], "once (not twice with the SDK's own integration), and never a 4xx");
   });
 });
 

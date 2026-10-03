@@ -8,6 +8,7 @@ import { join } from "node:path";
 
 const items: string[] = [];
 const transactions: Array<{ transaction?: string; spans?: Array<{ description?: string }> }> = [];
+const events: any[] = [];
 let traceHeaders: { sentryTrace: string | null; baggage: string | null } | undefined;
 const server = createServer((req, res) => {
   if (req.url === "/outbound") {
@@ -25,6 +26,7 @@ const server = createServer((req, res) => {
         const type = JSON.parse(lines[i]).type;
         items.push(type);
         if (type === "transaction") transactions.push(JSON.parse(lines[i + 1]));
+        if (type === "event") events.push(JSON.parse(lines[i + 1]));
       } catch {}
     }
     res.end("{}");
@@ -49,6 +51,7 @@ await second.applySentry({ on: true, dsn, tracesSampleRate: 1 }, runtime);
 let reloadError: string | undefined;
 try {
   second.realSentry.captureException(new Error("after reload"));
+  second.realSentry.captureCrash({ timestamp: "2026-10-03T11:00:00.000Z", kind: "uncaught_exception", message: "boom", stack: "Error: boom\n    at crash (/tmp/x.js:1:1)\n    at main (/tmp/y.js:2:2)" });
   const run = second.realSentry.startInactiveSpan({ name: "agent.run", op: "agent.run" });
   const tool = second.realSentry.startInactiveSpan({ name: "tool.read", op: "tool.execute", parent: run, onlyIfParent: true });
   await fetch(`http://127.0.0.1:${port}/outbound`);
@@ -75,5 +78,7 @@ const whileOff = [...items];
 
 server.close();
 const runChildren = (transactions.find((t) => t.transaction === "agent.run")?.spans ?? []).map((sp) => sp.description);
-console.log(JSON.stringify({ integrations, unhandledRejectionListeners, reloadError, whileOn, whileOff, runChildren, traceHeaders }));
+const fatal = events.find((e) => e.level === "fatal");
+const crash = fatal && { level: fatal.level, type: fatal.exception.values[0].type, value: fatal.exception.values[0].value, hasFrames: (fatal.exception.values[0].stacktrace?.frames?.length ?? 0) >= 2, source: fatal.tags?.source };
+console.log(JSON.stringify({ crash, integrations, unhandledRejectionListeners, reloadError, whileOn, whileOff, runChildren, traceHeaders }));
 process.exit(0);

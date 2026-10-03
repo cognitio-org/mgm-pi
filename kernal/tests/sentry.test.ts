@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decide, defaultEnvironment, describe as describeDecision, optedOut } from "../.pi/extensions/sentry/config.ts";
 import { applySentry, sending, _resetSentryState, type SentryLike, type SentryInit, type SentrySpan } from "../.pi/extensions/sentry/client.ts";
-import { agentRunError, agentRunReport, scrubEvent, toolSpanAttributes } from "../.pi/extensions/sentry/lib.ts";
+import { CRASH_MAX_AGE_MS, agentRunError, agentRunReport, crashesToReport, scrubEvent, toolSpanAttributes } from "../.pi/extensions/sentry/lib.ts";
 import { MAX_CACHE_AGE_MS, cachedFleetSettings, parseFleetSettings, refreshFleetSettings, type FleetSettings } from "../.pi/extensions/_shared/fleet-settings.ts";
 import sentryExtension from "../.pi/extensions/sentry/index.ts";
 import { makePi } from "./harness.ts";
@@ -45,10 +45,12 @@ function fakeFetch(body: unknown, status = 200) {
 function fakeSentry() {
   const inits: SentryInit[] = [];
   const captured: { error: unknown; context?: any }[] = [];
+  const crashes: any[] = [];
   const spans: { name: string; op: string; attributes?: any; parent?: string; onlyIfParent?: boolean; status?: "ok" | "error"; ended: boolean }[] = [];
   const sentry: SentryLike = {
     init(options) { inits.push(options); },
     captureException(error, context) { captured.push({ error, context }); return "event-id"; },
+    captureCrash(crash) { crashes.push(crash); },
     startInactiveSpan(options) {
       const rec = { name: options.name, op: options.op, attributes: options.attributes, parent: (options.parent?.raw as any)?.name, onlyIfParent: options.onlyIfParent, status: undefined as "ok" | "error" | undefined, ended: false };
       spans.push(rec);
@@ -56,7 +58,7 @@ function fakeSentry() {
       return span;
     },
   };
-  return { sentry, inits, captured, spans };
+  return { sentry, inits, captured, spans, crashes };
 }
 
 describe("sentry config: both Outfitter and the person must say yes", () => {
@@ -202,6 +204,7 @@ describe("applySentry: the process-wide live gate", () => {
     const slow: SentryLike = {
       init: (o) => { inits.push(o); return new Promise<void>((r) => { release = r; }); },
       captureException: () => "id",
+      captureCrash: () => {},
       startInactiveSpan: () => ({ setStatus() {}, end() {} }),
     };
     const starting = applySentry({ on: true, dsn: DSN, tracesSampleRate: 0.05 }, runtime, slow);
@@ -216,6 +219,7 @@ describe("applySentry: the process-wide live gate", () => {
     const broken: SentryLike = {
       init: () => { throw new Error("Cannot find module '@sentry/node'"); },
       captureException: () => "id",
+      captureCrash: () => {},
       startInactiveSpan: () => ({ setStatus() {}, end() {} }),
     };
     const errors: unknown[] = [];
@@ -242,6 +246,59 @@ describe("applySentry: the process-wide live gate", () => {
   });
 });
 
+describe("crashes from earlier runs (pi's crashes.json)", () => {
+  beforeEach(() => _resetSentryState());
+  const now = Date.parse("2026-10-03T12:00:00.000Z");
+  const record = (timestamp: string, extra: Record<string, unknown> = {}) => ({
+    timestamp, version: "0.87.1", kind: "uncaught_exception", message: "boom", stack: "Error: boom\n    at x (/Users/someone/a.ts:1:1)",
+    sessionFile: "/Users/someone/.pi/sessions/s.jsonl", cwd: "/Users/someone/secret-project", ...extra,
+  });
+
+  test("crashesToReport: recent, unsent, well-formed, and never the cwd or session file", () => {
+    const records = [record("2026-10-03T11:00:00.000Z"), record("2026-10-02T11:00:00.000Z"), record(new Date(now - CRASH_MAX_AGE_MS - 1).toISOString()), { nope: 1 }];
+    const out = crashesToReport(records, ["2026-10-02T11:00:00.000Z"], now);
+    assert.deepEqual(out.map((c) => c.timestamp), ["2026-10-03T11:00:00.000Z"]);
+    assert.equal((out[0] as any).cwd, undefined);
+    assert.equal((out[0] as any).sessionFile, undefined);
+    assert.deepEqual(crashesToReport("garbage", [], now), []);
+  });
+
+  async function start(opts: { cached: FleetSettings; crashFile: string; sentFile: string }) {
+    const fake = fakeSentry();
+    sentryExtension(makePi() as any, {
+      sentry: fake.sentry, credentials: CREDS, settings: {}, cacheFile: (() => { const f = tmpFile(); writeCache(f, opts.cached); return f; })(),
+      fetch: fakeFetch(opts.cached).fn, onRefresh: () => {}, crashFile: opts.crashFile, crashesSentFile: opts.sentFile, now: () => now,
+    });
+    await new Promise((r) => setImmediate(r));
+    return fake;
+  }
+
+  test("sent once Sentry is on, and each crash only once, across restarts", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kernal-crash-"));
+    const crashFile = join(dir, "crashes.json");
+    const sentFile = join(dir, "sent.json");
+    writeFileSync(crashFile, JSON.stringify([record("2026-10-03T11:00:00.000Z")]));
+    const first = await start({ cached: ON, crashFile, sentFile });
+    assert.equal(first.crashes.length, 1);
+    assert.equal(first.crashes[0].message, "boom");
+    _resetSentryState(); // a later Kernal start
+    const second = await start({ cached: ON, crashFile, sentFile });
+    assert.equal(second.crashes.length, 0);
+  });
+
+  test("nothing is sent, or marked sent, while Sentry is off", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kernal-crash-"));
+    const crashFile = join(dir, "crashes.json");
+    const sentFile = join(dir, "sent.json");
+    writeFileSync(crashFile, JSON.stringify([record("2026-10-03T11:00:00.000Z")]));
+    const off = await start({ cached: OFF, crashFile, sentFile });
+    assert.equal(off.crashes.length, 0);
+    _resetSentryState();
+    const on = await start({ cached: ON, crashFile, sentFile });
+    assert.equal(on.crashes.length, 1, "still pending for the first start with Sentry on");
+  });
+});
+
 describe("the real @sentry/node, in a child process", () => {
   test("drops Console and OnUnhandledRejection, survives a reload, and sends nothing at all while off", () => {
     const out = execFileSync(process.execPath, ["--import", "./tests/resolve-pi.mjs", "tests/fixtures/sentry-real-child.ts"], { encoding: "utf8", timeout: 60_000 });
@@ -255,6 +312,7 @@ describe("the real @sentry/node, in a child process", () => {
     assert.deepEqual(r.whileOff, [], "no events, client reports or sessions while off");
     assert.deepEqual(r.runChildren, ["tool.read"], "a tool call is a child span inside its run's transaction");
     assert.deepEqual(r.traceHeaders, { sentryTrace: null, baggage: null }, "no trace headers on outbound requests");
+    assert.deepEqual(r.crash, { level: "fatal", type: "UncaughtException", value: "boom", hasFrames: true, source: "crash" }, "a recorded crash arrives as a fatal event with its stack");
   });
 });
 

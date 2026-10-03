@@ -21,14 +21,17 @@
  * whole run there (agentd/src/sentry.ts, from run.spec's telemetry).
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { inSandbox } from "../_shared/env.ts";
 import { outfitterCredentials, type OutfitterCredentials } from "../_shared/outfitter-env.ts";
-import { cachedFleetSettings, refreshFleetSettings, type FleetSettings } from "../_shared/fleet-settings.ts";
+import { cachedFleetSettings, fleetSettingsCachePath, refreshFleetSettings, type FleetSettings } from "../_shared/fleet-settings.ts";
 import { readSettings, updateKernal } from "../connect/settings.ts";
 import { installedVersion } from "../kernal-update/index.ts";
 import { decide, defaultEnvironment, describe, optedOut, type SentryDecision } from "./config.ts";
-import { applySentry, isCurrent, liveStatus, newInstance, realSentry, sending, type SentryLike, type SentrySpan } from "./client.ts";
-import { agentRunError, agentRunReport, toolSpanAttributes, type AgentEndMessage } from "./lib.ts";
+import { applySentry, claimCrashReport, isCurrent, liveStatus, newInstance, realSentry, sending, type SentryLike, type SentrySpan } from "./client.ts";
+import { agentRunError, agentRunReport, crashesToReport, toolSpanAttributes, type AgentEndMessage } from "./lib.ts";
 
 export type Deps = {
   sentry?: SentryLike;
@@ -41,6 +44,14 @@ export type Deps = {
   cacheFile?: string;
   /** Tests: the background refresh, to await it. */
   onRefresh?: (done: Promise<void>) => void;
+  /** pi's crash log (default: the agent dir's crashes.json) and the record of those already sent. */
+  crashFile?: string;
+  crashesSentFile?: string;
+  now?: () => number;
+};
+
+const readJson = (file: string): unknown => {
+  try { return JSON.parse(readFileSync(file, "utf8")); } catch { return undefined; }
 };
 
 const USAGE = "usage: /sentry [status] | off | on";
@@ -60,8 +71,34 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
   // Only the newest instance decides: an older one's refresh landing after a /reload (and maybe a
   // /sentry off in the new one) must not turn sending back on.
   const instance = newInstance();
+  const agentDir = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
+  const crashFile = deps.crashFile ?? join(agentDir, "crashes.json");
+  const crashesSentFile = deps.crashesSentFile ?? join(dirname(fleetSettingsCachePath()), ".sentry-crashes-sent.json");
+
+  /**
+   * Crashes from earlier runs. In interactive mode pi's own uncaughtException handler runs first and
+   * exits at once (process.exit), so nothing can be sent at crash time; pi does write each crash to
+   * crashes.json first, though. So the first time Sentry is on in a later run, the crashes not yet
+   * sent go out (once per process, and each crash once, by its timestamp).
+   */
+  const reportCrashes = () => {
+    if (!sending() || !claimCrashReport()) return;
+    try {
+      const sent = readJson(crashesSentFile);
+      const already = Array.isArray(sent) ? sent.filter((x): x is string => typeof x === "string") : [];
+      const crashes = crashesToReport(readJson(crashFile), already, (deps.now ?? Date.now)());
+      if (!crashes.length) return;
+      for (const crash of crashes) sentry.captureCrash(crash);
+      writeFileSync(crashesSentFile, JSON.stringify([...already, ...crashes.map((c) => c.timestamp)].slice(-50)) + "\n");
+    } catch {
+      // A crash report is never worth a failed start.
+    }
+  };
+
   const apply = async () => {
-    if (isCurrent(instance)) await applySentry(decision(), runtime, sentry);
+    if (!isCurrent(instance)) return;
+    await applySentry(decision(), runtime, sentry);
+    reportCrashes();
   };
   void apply().catch(() => undefined);
 

@@ -1,0 +1,49 @@
+kernal/tests/fixtures/sentry-real-child.ts
+  s_d20562570301f1::t_bf83021bfc40b2 11,29,54,81-83
+outfitter/packages/agentd/package.json
+  s_d20562570301f1::t_4629ccdb6b6bd1 18
+outfitter/packages/api/package.json
+  s_d20562570301f1::t_4629ccdb6b6bd1 22
+kernal/tests/sentry.test.ts
+  s_d20562570301f1::t_bf83021bfc40b2 16,48,53,61,207,222,249-301,315
+outfitter/packages/api/src/sentry.ts
+  s_d20562570301f1::t_16968d65c23976 49-51
+  s_d20562570301f1::t_f28a25e89c65fb 82-85,87-90
+outfitter/packages/api/test/sentry.test.ts
+  s_d20562570301f1::t_f28a25e89c65fb 157-159,162,164
+outfitter/packages/api/src/server.ts
+  s_d20562570301f1::t_f28a25e89c65fb 124-127
+outfitter/packages/agentd/src/sentry.ts
+  s_d20562570301f1::t_16968d65c23976 30-31
+docs/reports/sentry-integration-plan.md
+  s_d20562570301f1::t_3331c9c2234b1f 86-95,100-101
+.gitignore
+  s_d20562570301f1::t_92c3a150c27047 38
+kernal/.pi/extensions/sentry/index.ts
+  s_d20562570301f1::t_92c3a150c27047 24-26,29,33-34,47-54,74-97,99-101
+kernal/.pi/extensions/sentry/lib.ts
+  s_d20562570301f1::t_5e91f50e47fef1 75-109
+outfitter/packages/web/package.json
+  s_d20562570301f1::t_4629ccdb6b6bd1 20
+kernal/.pi/extensions/sentry/client.ts
+  s_d20562570301f1::t_5e91f50e47fef1 25,53-54,126-135,166-167,188-194
+  s_d20562570301f1::t_cdd7aa587dcd7a 195-196
+outfitter/package-lock.json
+  s_d20562570301f1::t_3fdfc76c549002 904-906,908-910,912-914,916-918,920-931,933,936-947,949,952-963,965,968-979,981,984-995,997,1000-1011,1013,1016-1027,1029,1032-1046,1048,1051-1065,1067,1070-1084,1086,1089-1103,1105,1108-1122,1124,1127-1141,1143,1146-1160,1162,1165-1179,1181,1184-1195,1197,1200-1211,1213,1216-1227,1229,1232-1243,1245,1594-1597,1600-1605,1608,1611-1614,1617-1619,1622,1625-1628,1631-1637,1640-1665,1668-1671,1674,1677,1680-1683,1685-1687,1689,1693-1695,1698-1704,1707,1710-1713,1716-1717,1720,1723,1726-1729,1732-1746,1749-1753,1755-1756,1759-1769,1771-1772,1775-1778,1781-1782,1785-1796,1798-1799,3450-3461,3978-3981,3984,5999-6043,6770-6781,6963-6966,6968-6970,6972,6975,7533-7538,7717,7743,7772
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "d71a4d8a683488014c6f4356c3244ae8fa1c1aba",
+  "prompts": {},
+  "sessions": {
+    "s_d20562570301f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d84632f2-81dd-4a9c-87c6-4dfa7488758e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

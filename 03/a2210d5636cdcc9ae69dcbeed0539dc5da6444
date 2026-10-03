@@ -1,0 +1,19 @@
+docs/reports/sentry-integration-plan.md
+  s_30935801e5d99b::t_d86dc0887f3c2d 1-73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "03a2210d5636cdcc9ae69dcbeed0539dc5da6444",
+  "prompts": {},
+  "sessions": {
+    "s_30935801e5d99b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a8e3ffd24438d6ba5",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

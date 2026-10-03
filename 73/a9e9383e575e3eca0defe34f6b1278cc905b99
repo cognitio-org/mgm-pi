@@ -1,0 +1,31 @@
+outfitter/packages/api/src/store/types.ts
+  s_d20562570301f1::t_bd0c31dd4f8843 1378-1379
+docs/reports/sentry-integration-plan.md
+  s_d20562570301f1::t_5e7ad153cc83f6 13-15
+outfitter/packages/api/src/fleet-settings.ts
+  s_d20562570301f1::t_bd0c31dd4f8843 43-47,49-56
+outfitter/packages/api/src/main.ts
+  s_d20562570301f1::t_bd0c31dd4f8843 3,43-44
+outfitter/packages/api/src/store/memory.ts
+  s_d20562570301f1::t_bd0c31dd4f8843 419-424
+outfitter/packages/api/test/fleet-settings.test.ts
+  s_d20562570301f1::t_62adad95c0a52a 13,15,45,47-60
+outfitter/packages/api/src/store/mongo.ts
+  s_d20562570301f1::t_bd0c31dd4f8843 482-486
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "73a9e9383e575e3eca0defe34f6b1278cc905b99",
+  "prompts": {},
+  "sessions": {
+    "s_d20562570301f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d84632f2-81dd-4a9c-87c6-4dfa7488758e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

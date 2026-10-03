@@ -8,6 +8,7 @@
     "agentd": "dist/src/main.js"
   },
   "scripts": {
+    "prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "tsc -p tsconfig.json",
     "postbuild": "chmod +x dist/test/fake-pi.js",
     "pretest": "npm run build",

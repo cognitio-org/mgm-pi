@@ -1,0 +1,38 @@
+outfitter/packages/api/test/sentry-request-spans.test.ts
+  s_d20562570301f1::t_9df9bf5dd152ee 91
+  s_d20562570301f1::t_665860c14292bd 6-7,15,20,29,74-90,92-96
+  s_d20562570301f1::t_e067adb4b15e46 97-99
+kernal/.pi/extensions/sentry/client.ts
+  s_d20562570301f1::t_e76e33c4af6e81 55-56,132-134,137-139,142-143
+  s_d20562570301f1::t_d0ac19847cc215 144
+outfitter/packages/web/src/lib/sentry.ts
+  s_d20562570301f1::t_e76e33c4af6e81 39-41
+kernal/.pi/extensions/sentry/index.ts
+  s_d20562570301f1::t_e76e33c4af6e81 24,84,92-97,106
+kernal/tests/fixtures/sentry-real-child.ts
+  s_d20562570301f1::t_e76e33c4af6e81 82
+outfitter/packages/api/src/sentry.ts
+  s_d20562570301f1::t_e76e33c4af6e81 45-50,88-90,93-96
+outfitter/packages/api/test/sentry.test.ts
+  s_d20562570301f1::t_665860c14292bd 133-134
+docs/reports/sentry-integration-plan.md
+  s_d20562570301f1::t_e76e33c4af6e81 87-89,91-92,96-98
+kernal/tests/sentry.test.ts
+  s_d20562570301f1::t_e76e33c4af6e81 54,209,225,318
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "f92e2d3d7d5dc2e3fd1ef9012134ad711d74005e",
+  "prompts": {},
+  "sessions": {
+    "s_d20562570301f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d84632f2-81dd-4a9c-87c6-4dfa7488758e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

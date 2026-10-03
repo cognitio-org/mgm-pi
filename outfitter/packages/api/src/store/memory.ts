@@ -65,9 +65,11 @@ import type {
   A2ATaskListQuery,
   A2ATaskState,
   A2ATasksCollection,
+  FleetSettingsCollection,
 } from "./types.ts";
 import { AE_SESSION_EXECUTIONS } from "./types.ts";
 import type { VoicePrefs } from "../voice.ts";
+import type { FleetSettings } from "../fleet-settings.ts";
 import { A2A_OPEN_STATES, BROWSER_CAPTURES_PER_SESSION, SearchUnavailableError, entryInsertFields, type EntryInsertOptions } from "./types.ts";
 
 function clone<T>(value: T): T {
@@ -401,6 +403,24 @@ class MemoryProviders implements ProvidersCollection {
 
   async upsert(record: ProviderRecord): Promise<void> {
     this.rows.set(record.id, clone(record));
+  }
+}
+
+class MemoryFleetSettings implements FleetSettingsCollection {
+  private doc: FleetSettings | null = null;
+
+  async get(): Promise<FleetSettings | null> {
+    return this.doc ? clone(this.doc) : null;
+  }
+
+  async put(settings: FleetSettings): Promise<void> {
+    this.doc = clone(settings);
+  }
+
+  async insertIfAbsent(settings: FleetSettings): Promise<boolean> {
+    if (this.doc) return false;
+    this.doc = clone(settings);
+    return true;
   }
 }
 
@@ -1352,6 +1372,7 @@ export class MemoryStore implements Store {
   readonly aeAgents = new MemoryAeAgents();
   readonly aeSessions = new MemoryAeSessions();
   readonly a2aTasks = new MemoryA2ATasks();
+  readonly fleetSettings = new MemoryFleetSettings();
 
   constructor() {
     const tables: BrowserTables = {

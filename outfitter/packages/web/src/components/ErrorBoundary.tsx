@@ -1,4 +1,5 @@
 import { Component, useState, type ErrorInfo, type ReactNode } from "react";
+import * as Sentry from "@sentry/react";
 import { isStaleChunkError, reloadForStaleChunk } from "../lib/chunk-reload.ts";
 
 interface PanicProps {
@@ -81,6 +82,10 @@ export class ErrorBoundary extends Component<Props, State> {
     if (isStaleChunkError(error) && reloadForStaleChunk()) return;
     // eslint-disable-next-line no-console -- last resort once the UI itself has crashed
     console.error("KERNAL PANIC:", error, info.componentStack);
+    // Reports the crash to Sentry (lib/sentry.ts) with the React component stack attached, same
+    // as the console.error above -- the crash screen already tells the person their sessions are
+    // safe, this is what tells us a KERNAL PANIC happened at all.
+    Sentry.captureException(error, { contexts: { react: { componentStack: info.componentStack } } });
   }
 
   handleReload = () => {

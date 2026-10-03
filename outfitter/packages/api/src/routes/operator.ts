@@ -6,6 +6,7 @@
 
 import type { FastifyInstance } from "fastify";
 import type { RouteContext } from "./context.ts";
+import { parseSentryUpdate, withDefaults } from "../fleet-settings.ts";
 import type { Guru } from "../store/types.ts";
 import type { SecretKind } from "../operator.ts";
 import {
@@ -141,7 +142,28 @@ export async function registerOperatorRoutes(app: FastifyInstance, ctx: RouteCon
       tunnelDomain: ctx.config.tunnelDomainLmstudio,
       operators: ctx.config.operators,
       secrets,
+      // Unlike GET /api/fleet-settings, the DSN is shown while Sentry is off too, so the operator
+      // can see what turning it back on would send to.
+      fleetSettings: withDefaults(await ctx.store.fleetSettings.get()),
     };
+  });
+
+  // Fleet settings (fleet-settings.ts): the Telemetry panel's save. Replaces the Sentry section
+  // whole; this instance applies it at once, the others within FleetSettingsCache's window, and
+  // laptops on their next Kernal start.
+  app.put("/api/operator/fleet-settings", { preHandler: requireOperator }, async (req, reply) => {
+    const parsed = parseSentryUpdate(req.body, { allowHttp: ctx.config.devMode });
+    if ("error" in parsed) return reply.code(400).send({ error: parsed.error });
+    const settings = {
+      ...withDefaults(await ctx.store.fleetSettings.get()),
+      telemetry: { sentry: parsed.value },
+      updatedAt: new Date().toISOString(),
+      updatedBy: req.identity!.email,
+    };
+    await ctx.store.fleetSettings.put(settings);
+    ctx.fleetSettings.set(settings);
+    req.log.info({ operator: req.identity!.email, sentryEnabled: parsed.value.enabled, tracesSampleRate: parsed.value.tracesSampleRate }, "operator fleet settings write");
+    return settings;
   });
 
   app.put("/api/operator/secrets/:secretName", { preHandler: requireOperator }, async (req, reply) => {

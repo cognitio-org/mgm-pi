@@ -1,8 +1,16 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { ErrorBoundary } from "../src/components/ErrorBoundary.tsx";
+
+// ErrorBoundary.componentDidCatch reports the crash to Sentry (lib/sentry.ts) -- mocked here
+// rather than let the real SDK run (it would try to reach the network for every test crash).
+const captureExceptionMock = vi.fn();
+vi.mock("@sentry/react", () => ({
+  captureException: (...args: unknown[]) => captureExceptionMock(...args),
+}));
+
+const { ErrorBoundary } = await import("../src/components/ErrorBoundary.tsx");
 
 // Silences React's "not configured to support act(...)" warning -- this file drives real
 // createRoot renders (see the comment on `mount` below for why), which React only recognizes as a
@@ -78,6 +86,19 @@ describe("ErrorBoundary", () => {
     const alertEl = container.querySelector('[role="alert"]');
     expect(alertEl).not.toBeNull();
     expect(container.querySelector("h1")?.textContent).toContain("KERNAL PANIC");
+    unmount();
+  });
+
+  it("reports the caught error to Sentry", () => {
+    captureExceptionMock.mockClear();
+    const { unmount } = mount(
+      <ErrorBoundary>
+        <Bomb />
+      </ErrorBoundary>,
+    );
+    expect(captureExceptionMock).toHaveBeenCalledTimes(1);
+    const [reportedError] = captureExceptionMock.mock.calls[0] as [Error];
+    expect(reportedError.message).toBe("boom");
     unmount();
   });
 });

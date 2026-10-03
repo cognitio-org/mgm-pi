@@ -12,6 +12,7 @@ import { SandboxMemoryPeak } from "../src/sandbox-memory.js";
 import type { DownMessage, DownRunSpec, PiRpcCommand, PiRpcEvent, RunSpecIde, RunState, UpMessage } from "../src/protocol.js";
 import { OUTFITTER_BOT_IDENTITY, type GitOps, type CloneSpec, type PushSpec } from "../src/git.js";
 import type { PiProcess } from "../src/pi.js";
+import { initSentry, resetSentryForTests, Sentry } from "../src/sentry.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fakePiPath = join(here, "fake-pi.js");
@@ -847,6 +848,70 @@ test("RunController: a non-2xx snapshot fetch fails the run with a clear, status
   assert.match(bye.message, /Not Found/);
   await waitFor(() => getExitCode() === 1);
   assert.ok(!states.includes("idle"));
+});
+
+test("RunController: a failed run (fail(), same 404 scenario above) reports the error to Sentry once (sentry.ts)", async (t) => {
+  const previousAllowlist = process.env.SNAPSHOT_HOST_ALLOWLIST;
+  process.env.SNAPSHOT_HOST_ALLOWLIST = "example.test";
+  t.after(async () => {
+    if (previousAllowlist === undefined) delete process.env.SNAPSHOT_HOST_ALLOWLIST;
+    else process.env.SNAPSHOT_HOST_ALLOWLIST = previousAllowlist;
+    await resetSentryForTests();
+  });
+
+  // Started here with a fake transport; the run.spec's own telemetry below is then a no-op
+  // re-init, the same settings the API would send while Sentry is on for the fleet.
+  const telemetry = { sentry: { dsn: "https://examplePublicKey@o0.ingest.sentry.io/0", tracesSampleRate: 1, environment: "test" } };
+  const values: string[] = [];
+  initSentry(telemetry.sentry, () => ({
+    send: async (envelope) => {
+      for (const [header, payload] of envelope[1] as Array<[{ type: string }, { exception?: { values?: Array<{ value?: string }> } }]>) {
+        if (header.type === "event") values.push(payload.exception?.values?.[0]?.value ?? "");
+      }
+      return {};
+    },
+    flush: async () => true,
+  }));
+
+  const { controller, link, spec, getExitCode } = await setupController(
+    { snapshot: { url: "https://example.test/missing-snapshot.jsonl" }, telemetry },
+    { fetchFn: (async () => new Response("not found", { status: 404, statusText: "Not Found" })) as any },
+  );
+  t.after(() => controller.dispose());
+
+  link.deliver(spec);
+
+  await waitFor(() => getExitCode() === 1);
+  // No flush here: agentd itself must have delivered the event before it exited.
+  assert.equal(values.length, 1);
+  assert.match(values[0] ?? "", /404/);
+});
+
+test("RunController: pi exiting on its own is reported to Sentry before agentd exits (sentry.ts)", async (t) => {
+  t.after(async () => {
+    await resetSentryForTests();
+  });
+  const values: string[] = [];
+  initSentry({ dsn: "https://examplePublicKey@o0.ingest.sentry.io/0", tracesSampleRate: 0, environment: "test" }, () => ({
+    send: async (envelope) => {
+      for (const [header, payload] of envelope[1] as Array<[{ type: string }, { exception?: { values?: Array<{ value?: string }> } }]>) {
+        if (header.type === "event") values.push(payload.exception?.values?.[0]?.value ?? "");
+      }
+      return {};
+    },
+    flush: async () => true,
+  }));
+  let child: PiProcess | undefined;
+  const { controller, link, spec, states, getExitCode } = await setupController({}, {
+    spawnPi: (opts) => (child = spawnPi({ ...opts, piBin: process.execPath, args: [fakePiPath, ...opts.args] })),
+  });
+  t.after(() => controller.dispose());
+  link.deliver(spec);
+  await waitFor(() => states.includes("idle"));
+  child!.kill("SIGKILL");
+  await waitFor(() => getExitCode() === 1);
+  assert.equal(values.length, 1);
+  assert.match(values[0] ?? "", /pi exited: code=null signal=SIGKILL/);
 });
 
 test("RunController: E2.11 spend tailer lines become `spend` up-frames with an accumulated `estimate`", async (t) => {

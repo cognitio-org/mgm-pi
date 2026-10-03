@@ -56,6 +56,7 @@ import type {
   UpAdminRequest,
 } from "./protocol.js";
 import { adminCapabilities } from "./protocol.js";
+import { initSentry, withSentrySpan, captureException, flushSentry } from "./sentry.js";
 
 /** The start-up phases the `startup` frame carries: run.spec through pi ready. Later "first ..."
  * milestones depend on the person's prompt, not on starting up. */
@@ -466,7 +467,11 @@ export class RunController {
       case "run.spec":
         if (!this.began) {
           this.began = true;
-          void this.begin(msg).catch((err) => this.fail(err));
+          // Sentry (sentry.ts) starts here, from the fleet settings the API put in this run.spec
+          // (absent: off). The span covers the run's start-up, begin(): clone or restore through pi
+          // ready, at the fleet's sample rate. A failure is reported once, by fail().
+          initSentry(msg.telemetry?.sentry);
+          void withSentrySpan("run.start", "agentd.run", () => this.begin(msg)).catch((err) => this.fail(err));
         }
         return;
       case "ack":
@@ -584,8 +589,9 @@ export class RunController {
   private fail(err: unknown): void {
     const message = err instanceof Error ? err.message : String(err);
     this.onLog(`run failed: ${message}`);
+    captureException(err);
     this.stopping = true;
-    void this.bye("error", message).then(() => this.onExit(1));
+    void Promise.all([this.bye("error", message), flushSentry()]).then(() => this.onExit(1));
   }
 
   private async begin(spec: DownRunSpec): Promise<void> {
@@ -1218,7 +1224,9 @@ export class RunController {
     this.stopHeartbeat();
     this.tailer?.stop();
     this.spendTailer?.stop();
-    void this.bye("error", `pi exited: code=${code} signal=${signal}`).then(() => this.onExit(1));
+    const message = `pi exited: code=${code} signal=${signal}`;
+    captureException(new Error(message));
+    void Promise.all([this.bye("error", message), flushSentry()]).then(() => this.onExit(1));
   }
 
   private stopCaptureListener(): Promise<void> {

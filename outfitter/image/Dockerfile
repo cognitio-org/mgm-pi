@@ -68,7 +68,8 @@ COPY outfitter/image/agents/ ./.pi/agents/
 # could only add a second, possibly contradicting, paragraph. It also returns early under
 # KERNAL_SANDBOX=1, for an image built without this line.
 RUN rm -rf ./.pi/extensions/kernal-voice ./.pi/extensions/kernal-update ./.pi/extensions/kernal-admin \
-           ./.pi/extensions/kernal-codebase-index ./.pi/extensions/kernal-chrome ./.pi/extensions/kernal-html-preview
+           ./.pi/extensions/kernal-codebase-index ./.pi/extensions/kernal-chrome ./.pi/extensions/kernal-html-preview \
+           ./.pi/extensions/sentry
 
 # TUI/laptop-only packages (voice input, terminal footer, editor LSP) make no sense for a cloud
 # guru with no terminal, no editor and no microphone attached; drop them from the image's
@@ -94,9 +95,10 @@ RUN npm ci --legacy-peer-deps --omit=dev --no-audit --no-fund --loglevel=error \
   # Uninstall (not rm -rf) so each excluded package's own dependency subtree goes with it. The list
   # follows render-settings.sh's default EXCLUDE, except voice: pi-listen is vendored (kernal/.pi/npm/
   # vendor, never copied into the image), so what's uninstalled here is its native dependency,
-  # sherpa-onnx-node. The settings file only stops pi loading them.
+  # sherpa-onnx-node. The settings file only stops pi loading them. @sentry/node is the laptop
+  # sentry extension's, removed above: a Drive reports through agentd (its own copy, from run.spec).
   && npm uninstall --no-save --legacy-peer-deps --omit=dev --no-audit --no-fund --loglevel=error \
-       pi-lsp pi-powerline-footer sherpa-onnx-node open-codebase-index \
+       pi-lsp pi-powerline-footer sherpa-onnx-node open-codebase-index @sentry/node \
   && rm -rf node_modules/recheck-jar
 
 # pi-subagents and pi-mcp-adapter bundled (#142, #222): pi's loader evaluates each module one by

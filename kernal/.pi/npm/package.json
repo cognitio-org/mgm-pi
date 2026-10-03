@@ -2,6 +2,7 @@
   "name": "pi-extensions",
   "private": true,
   "dependencies": {
+    "@sentry/node": "11.2.0",
     "open-codebase-index": "^0.32.1",
     "pi-lsp": "^0.1.7",
     "pi-mcp-adapter": "^2.37.0",

@@ -3,6 +3,7 @@ import { useAppVersion } from "../hooks/useAppVersion.ts";
 import {
   api,
   ApiError,
+  type FleetSettings,
   type OperatorSettings,
   type OperatorSecretRow,
   type RevokeTokensResult,
@@ -273,6 +274,114 @@ function RevokeDonglesPanel() {
   );
 }
 
+/** Fleet settings' Sentry section (api fleet-settings.ts): one switch for every Kernal laptop, Drive
+ * and Outfitter service. The DSN stays stored while Sentry is off, so turning it back on is one
+ * click. The rate is edited as a percentage; the API stores the fraction. */
+function TelemetryPanel({ fleet, onSaved }: { fleet: FleetSettings; onSaved: (fleet: FleetSettings) => void }) {
+  const current = fleet.telemetry.sentry;
+  const [enabled, setEnabled] = useState(current.enabled);
+  const [dsn, setDsn] = useState(current.dsn ?? "");
+  const storedPercent = String(Math.round(current.tracesSampleRate * 1000) / 10);
+  const [percent, setPercent] = useState(storedPercent);
+  const [attempted, setAttempted] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [apiError, setApiError] = useState<ApiErrorState | null>(null);
+
+  const rate = Number(percent) / 100;
+  const rateInvalid = percent.trim() === "" || !Number.isFinite(rate) || rate < 0 || rate > 1 ? "A percentage from 0 to 100" : null;
+  const dsnInvalid = enabled && !dsn.trim() ? "A DSN is needed to turn Sentry on" : null;
+  const dirty = enabled !== current.enabled || dsn.trim() !== (current.dsn ?? "") || percent.trim() !== storedPercent;
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setAttempted(true);
+    setSaved(false);
+    if (rateInvalid || dsnInvalid) return;
+    setSaving(true);
+    try {
+      // An untouched percentage sends the stored rate as it is, not its rounded display.
+      const tracesSampleRate = percent.trim() === storedPercent ? current.tracesSampleRate : rate;
+      const updated = await withFloppySound(api.putFleetSentry({ enabled, dsn: dsn.trim() || undefined, tracesSampleRate }));
+      setSaved(true);
+      setAttempted(false);
+      // Show what was stored ("5.0" saves as 5), so the form is clean again.
+      setPercent(String(Math.round(updated.telemetry.sentry.tracesSampleRate * 1000) / 10));
+      setDsn(updated.telemetry.sentry.dsn ?? "");
+      onSaved(updated);
+    } catch (err) {
+      setApiError(toApiErrorState(err, "Save failed"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="panel">
+      <h3 className="panel-title"><span className="panel-label">Sentry</span></h3>
+      <div className="panel-body">
+        <p className="session-meta">
+          Error reports and a sample of traces from every Kernal laptop with a {vocabulary.token.one.toLowerCase()}, every
+          Drive and this app. Off sends nothing anywhere. A change reaches the API within a minute, new runs at
+          their start, browsers on their next load and laptops on their next Kernal start. A person can still turn
+          it off on their own laptop with <code>/sentry off</code>.
+        </p>
+        <form onSubmit={save}>
+          <div className="form-row">
+            <label>
+              <input type="checkbox" checked={enabled} onChange={(e) => { setEnabled(e.target.checked); setSaved(false); }} /> Send errors and
+              traces to Sentry
+            </label>
+          </div>
+          <div className="form-row">
+            <label htmlFor="sentry-dsn">DSN</label>
+            <input
+              id="sentry-dsn"
+              className="mono"
+              value={dsn}
+              onChange={(e) => { setDsn(e.target.value); setSaved(false); }}
+              placeholder="https://<key>@<org>.ingest.us.sentry.io/<project id>"
+              aria-invalid={attempted && !!dsnInvalid}
+              autoComplete="off"
+              spellCheck={false}
+            />
+            {attempted && dsnInvalid && <SyntaxError>{dsnInvalid}</SyntaxError>}
+          </div>
+          <div className="form-row">
+            <label htmlFor="sentry-rate">Traces kept (%)</label>
+            <input
+              id="sentry-rate"
+              inputMode="decimal"
+              value={percent}
+              onChange={(e) => { setPercent(e.target.value); setSaved(false); }}
+              aria-invalid={attempted && !!rateInvalid}
+              style={{ maxWidth: "8em" }}
+            />
+            {attempted && rateInvalid && <SyntaxError>{rateInvalid}</SyntaxError>}
+          </div>
+          <div className="toolbar">
+            <button type="submit" className="btn btn-primary" disabled={saving || !dirty}>
+              {saving ? <Working label="Saving" /> : "Save"}
+            </button>
+          </div>
+        </form>
+        {saved && (
+          <p className="note" role="status">
+            Saved. Sentry is {enabled ? "on" : "off"} for the fleet.
+          </p>
+        )}
+        {fleet.updatedAt && (
+          <p className="session-meta">
+            Last changed {new Date(fleet.updatedAt).toLocaleString()}
+            {fleet.updatedBy ? ` by ${fleet.updatedBy}` : ""}.
+          </p>
+        )}
+        {apiError && <SystemErrorDialog error={apiError} onResume={() => setApiError(null)} />}
+      </div>
+    </div>
+  );
+}
+
 export function SettingsPage() {
   const { version } = useAppVersion();
   const [settings, setSettings] = useState<OperatorSettings | null>(null);
@@ -378,6 +487,9 @@ export function SettingsPage() {
         </tbody>
       </table>
       </div>
+
+      <h3>Telemetry</h3>
+      <TelemetryPanel fleet={settings.fleetSettings} onSaved={(fleetSettings) => setSettings({ ...settings, fleetSettings })} />
 
       <h3>Access</h3>
       <RevokeDonglesPanel />

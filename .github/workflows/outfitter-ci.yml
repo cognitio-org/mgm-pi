@@ -117,6 +117,8 @@ jobs:
             ! test -e /opt/kernal/.pi/extensions/kernal-voice
             ! test -e /opt/kernal/.pi/extensions/kernal-admin
             ! test -e /opt/kernal/.pi/npm/node_modules/open-codebase-index
+            ! test -e /opt/kernal/.pi/extensions/sentry
+            ! test -e /opt/kernal/.pi/npm/node_modules/@sentry/node
             # Drive previews (#217): agentd starts the ngrok agent; it must be the pinned version.
             su agent -s /bin/sh -c "ngrok version" | tee /dev/stderr | grep -q "ngrok version 3\."
             # E9 PR8: the pi find tool needs fd (PI_OFFLINE=1 never downloads it); the foreman coder

@@ -20,10 +20,14 @@ import type { VoiceService } from "../voice.ts";
 import type { VoiceUsage } from "../voice-usage.ts";
 import type { GithubCatalog } from "../github-catalog.ts";
 import type { AgentEngine } from "../agentengine/index.ts";
+import type { FleetSettingsCache } from "../fleet-settings.ts";
 
 /** Dependencies every route module needs; built once in server.ts and threaded through. */
 export interface RouteContext {
   store: Store;
+  /** Fleet settings (fleet-settings.ts): GET /api/fleet-settings reads them, the operator PUT
+   * writes through here so this instance applies the change at once. */
+  fleetSettings: FleetSettingsCache;
   /** Session search (#289): keeps sessionChunks in step with imports and formats. */
   indexer: SessionIndexer;
   config: Config;

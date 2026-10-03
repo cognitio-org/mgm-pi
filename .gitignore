@@ -31,3 +31,8 @@ kernal/.pi/bug-reports/
 
 # google-github-actions/auth credential config (outfitter-deploy.yml)
 gha-creds-*.json
+
+# Kernal caches beside the agent dir (a source checkout puts them in the repo root)
+.update-check.json
+.fleet-settings.json
+.sentry-crashes-sent.json

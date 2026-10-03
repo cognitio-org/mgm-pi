@@ -31,6 +31,7 @@ import { createLogger } from "./logger.js";
 import { getPiVersion } from "./pi-version.js";
 import { preloadSessionManager } from "./session.js";
 import { bootTimings } from "./boot-timings.js";
+import { tagRun } from "./sentry.js";
 
 const AGENTD_VERSION = "0.1.0";
 const DEFAULT_WORKSPACE = "/workspace";
@@ -87,6 +88,9 @@ async function main(): Promise<void> {
   // assignment.ts existed). Only a GKE warm pod defers this (see the `if (!assignment)` block
   // below), so it can pre-pay the run-independent setup while idle waiting to be claimed.
   let assignment: Assignment | undefined = warmWait ? undefined : await resolveAssignment(bootEnv);
+  // Sentry starts with run.spec (sentry.ts); the run id it tags events with is known here, or, on a
+  // GKE warm pod, once the assignment wait resolves below.
+  if (assignment) tagRun(assignment.runId);
 
   const devToken = bootEnv.OUTFITTER_DEV_TOKEN;
   const workspace = bootEnv.WORKSPACE ?? DEFAULT_WORKSPACE;
@@ -158,6 +162,7 @@ async function main(): Promise<void> {
     assignedAt = Date.now();
     assignmentWaitMs = assignment.waitedMs;
     logger = logger.child({ runId: assignment.runId });
+    tagRun(assignment.runId);
     phase(`assigned (waitedMs=${assignment.waitedMs})`);
   }
   logger.addSecret(assignment.runToken);

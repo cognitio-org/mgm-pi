@@ -44,6 +44,7 @@ import {
 import { parseSessionRepo } from "./session-repo.ts";
 import { parseBootTimings, parseStartupPhases, startupLogLine, summarizeStartup, type StartupSummary } from "./startup.ts";
 import { isAssistantMessageEntry, liveThoughtTextFromEvent } from "./live-thought.ts";
+import { sentryOn, type FleetSettingsCache } from "./fleet-settings.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 /** #285: how often the open thought is written onto the run. The poller already lags by its
@@ -277,6 +278,9 @@ export interface RunSpecMessage {
    * agentd adds `Co-authored-by`/`On-behalf-of` trailers from this). Omitted when the session has
    * no owner on record; agentd then commits as the bot alone. See docs/protocol.md. */
   author?: { name: string; email: string; login?: string };
+  /** Fleet settings (fleet-settings.ts): present only while an operator has Sentry on for the
+   * fleet. agentd starts Sentry with it (agentd/src/sentry.ts); absent, it sends nothing. */
+  telemetry?: { sentry: { dsn: string; tracesSampleRate: number; environment: string; release?: string } };
   idleStopSeconds: number;
   checkpointEvery: string;
 }
@@ -379,6 +383,8 @@ export class AgentLink {
   private readonly github: GithubBroker;
   /** Drive previews (#217); unset in apps built without one (setPreviews). */
   private previews: PreviewService | undefined;
+  /** Fleet settings (fleet-settings.ts): run.spec's `telemetry`; unset in apps built without them. */
+  private fleetSettings: FleetSettingsCache | undefined;
   /** E9 §1: settles and mail acceptance feed the turn waiters; unset in apps built without them. */
   private turns: TurnWaiters | undefined;
   /** Sysop tools (#287): the Drive side of the admin op registry; unset until setDriveAdmin. */
@@ -1300,6 +1306,7 @@ export class AgentLink {
     // there would only lengthen the reconnect agentd waits out (#185).
     const stored = isReadyState(run.state) ? [] : await this.store.entries.listForSession(session.id);
     const jsonl = stored.length > 0 ? sessionJsonl(session, stored.map((e) => e.entry)) : undefined;
+    const sentry = (await this.fleetSettings?.get())?.telemetry.sentry;
     return {
       githubTokenExpiresAt: secrets.githubTokenExpiresAt,
       keepCurrentGithubToken,
@@ -1346,6 +1353,18 @@ export class AgentLink {
       ...(previewConfig ? { preview: { internalDomain: previewConfig.internalDomain } } : {}),
       ...(browserIde && previewConfig ? { ide: this.config.ideCodeServer } : {}),
       ...(author ? { author } : {}),
+      ...(sentry && sentryOn(sentry)
+        ? {
+            telemetry: {
+              sentry: {
+                dsn: sentry.dsn,
+                tracesSampleRate: sentry.tracesSampleRate,
+                environment: this.config.devMode ? "development" : "production",
+                ...(this.config.release ? { release: this.config.release } : {}),
+              },
+            },
+          }
+        : {}),
       idleStopSeconds: this.config.idleStopSeconds,
       // Deviation from protocol.md (checkpointEvery isn't specced further, and agentd's
       // protocol.ts types it as a string rather than a number): checkpoint after every turn.
@@ -1447,6 +1466,10 @@ export class AgentLink {
   /** Drive previews (#217): wired by buildApp after construction. */
   setPreviews(previews: PreviewService): void {
     this.previews = previews;
+  }
+
+  setFleetSettings(fleetSettings: FleetSettingsCache): void {
+    this.fleetSettings = fleetSettings;
   }
 
   /** E9 §1 turn waiters: wired by buildApp after construction. */

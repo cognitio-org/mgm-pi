@@ -99,6 +99,8 @@ export async function buildTestApp(
     githubCatalog: opts.githubCatalog,
     agentEngine: opts.agentEngine,
     a2aHandler: opts.a2aHandler,
+    // A test that turns Sentry on through the fleet settings never reaches the network.
+    sentryTransport: () => ({ send: async () => ({}), flush: async () => true }),
   });
   await app.fastify.ready();
   return { ...app, store, provider, secretAdmin };

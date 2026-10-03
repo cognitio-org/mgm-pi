@@ -1,5 +1,7 @@
 import { agentEngineWarnings, assertGkeConfigured, assertSandboxOrigin, loadConfig, mailboxWarning } from "./config.ts";
 import { ensureSysopTape } from "./gurus-service.ts";
+import { ensureFleetSettings } from "./fleet-settings.ts";
+import { closeSentry } from "./sentry.ts";
 import { openStore } from "./store/index.ts";
 import { createProviders } from "./providers/index.ts";
 import {
@@ -39,6 +41,8 @@ const app = await buildApp({ store, config, provider: providers, secretsBroker, 
 // Sysop tools (#290): the built-in admin tape, once, on the web role. Never overwrites an edited one.
 if (config.role !== "link") {
   await ensureSysopTape(store, config.defaultCloudModel).catch((err) => app.fastify.log.warn({ err }, "sysop tape seed failed"));
+  // Fleet settings: Sentry off, with the project DSN stored, until an operator changes them.
+  await ensureFleetSettings(store).catch((err) => app.fastify.log.warn({ err }, "fleet settings seed failed"));
 }
 
 const port = Number.parseInt(process.env.PORT ?? "8080", 10);
@@ -48,6 +52,7 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.on(signal, async () => {
     app.stopBackgroundTasks();
     await app.fastify.close();
+    await closeSentry();
     await store.close();
     process.exit(0);
   });

@@ -520,17 +520,30 @@ async function bearer(account: session.SessionAccount): Promise<string | undefin
   }
 }
 
+/** A request to Outfitter with the session's token; undefined without one. After a 401 the
+ * keychain is read once more and the request retried once (spec §2.4): another Kernal may have
+ * rotated the pair since. The same token again means the server refused it, so no retry then. */
+async function authedFetch(account: session.SessionAccount, url: string, init: RequestInit, fetchImpl?: typeof fetch): Promise<Response | undefined> {
+  const doFetch = fetchImpl ?? deps().fetch;
+  const send = (token: string) => doFetch(url, {
+    ...init,
+    headers: { ...(init.headers as Record<string, string>), authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+  const token = await bearer(account);
+  if (!token) return undefined;
+  const res = await send(token);
+  if (res.status !== 401) return res;
+  const again = await bearer(account);
+  return again && again !== token ? send(again) : res;
+}
+
 async function fetchConfig(profile: string | undefined, fetchImpl?: typeof fetch): Promise<ResolvedConfig | undefined> {
   const account = signedInAccount();
   if (!account) return undefined;
-  const token = await bearer(account);
-  if (!token) return undefined;
-  const doFetch = fetchImpl ?? deps().fetch;
   const url = `${account.api}/api/config${profile ? `?profile=${encodeURIComponent(profile)}` : ""}`;
-  const res = await doFetch(url, {
-    headers: { authorization: `Bearer ${token}`, accept: "application/json" },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-  });
+  const res = await authedFetch(account, url, { headers: { accept: "application/json" } }, fetchImpl);
+  if (!res) return undefined;
   if (res.status === 404 && profile) {
     const body = (await res.json().catch(() => ({}))) as { error?: string; profiles?: unknown };
     if (body.error === "unknown_profile") {
@@ -598,15 +611,12 @@ export async function refreshProviderKeys(opts: { fetch?: typeof fetch } = {}): 
   try {
     const account = signedInAccount();
     if (!account) return;
-    const token = await bearer(account);
-    if (!token) return;
-    const res = await (opts.fetch ?? deps().fetch)(`${account.api}/api/device/provider-keys`, {
+    const res = await authedFetch(account, `${account.api}/api/device/provider-keys`, {
       method: "POST",
-      headers: { authorization: `Bearer ${token}`, accept: "application/json", "content-type": "application/json" },
+      headers: { accept: "application/json", "content-type": "application/json" },
       body: "{}",
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) return;
+    }, opts.fetch);
+    if (!res?.ok) return;
     const keys = ((await res.json()) as { keys?: unknown }).keys;
     if (!keys || typeof keys !== "object") return;
     const st = state();
@@ -619,8 +629,8 @@ export async function refreshProviderKeys(opts: { fetch?: typeof fetch } = {}): 
   }
 }
 
-/** POST /api/device/router-key when the device's key has under 7 days left (spec §5.5), then
- * stores the new one. True when it re-minted. Never throws. */
+/** POST /api/device/router-key when the device's key has under 7 days left, or with `force` after
+ * the router refused it (spec §5.5), then stores the new one. True when it re-minted. Never throws. */
 export async function remintRouterKeyIfDue(opts: { fetch?: typeof fetch; force?: boolean } = {}): Promise<boolean> {
   try {
     const account = signedInAccount();
@@ -630,18 +640,22 @@ export async function remintRouterKeyIfDue(opts: { fetch?: typeof fetch; force?:
     if (!current) return false;
     const left = current.expiresAt ? Date.parse(current.expiresAt) - d.now() : Infinity;
     if (!opts.force && !(left < ROUTER_KEY_REMINT_MS)) return false;
-    const token = await bearer(account);
-    if (!token) return false;
-    const res = await (opts.fetch ?? d.fetch)(`${account.api}/api/device/router-key`, {
+    const res = await authedFetch(account, `${account.api}/api/device/router-key`, {
       method: "POST",
-      headers: { authorization: `Bearer ${token}`, accept: "application/json", "content-type": "application/json" },
+      headers: { accept: "application/json", "content-type": "application/json" },
       body: "{}",
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) return false;
+    }, opts.fetch);
+    if (!res?.ok) return false;
     const k = ((await res.json()) as { routerKey?: Record<string, unknown> }).routerKey;
     if (!k || typeof k.key !== "string" || typeof k.baseUrl !== "string" || typeof k.alias !== "string") return false;
     d.session.setRouterKey({ key: k.key, baseUrl: k.baseUrl, alias: k.alias, ...(typeof k.expiresAt === "string" ? { expiresAt: k.expiresAt } : {}) }, { api: account.api, email: account.email });
+    // The server deleted the old key: the new one replaces it in what this process resolved, so
+    // connect's next registerAll (kernal-config asks for one) uses it. Only the key changes; the
+    // rest of a fresh answer still waits for the next start or /config reload (spec §10).
+    for (const r of state().resolved.values()) {
+      const v = r.values["router.key"];
+      if (v?.source === "device") r.values["router.key"] = { ...v, value: k.key };
+    }
     return true;
   } catch {
     return false;

@@ -275,6 +275,50 @@ describe("refreshConfig", () => {
   });
 });
 
+describe("a 401 on an authenticated call", () => {
+  // Another Kernal rotated the pair after this one read it: the keychain now holds kda_new.
+  function rotated() {
+    let reads = 0;
+    const tokens: string[] = [];
+    _setCentralConfigDeps({
+      session: {
+        loginState: () => ({ signedIn: true, account: ACCOUNT }),
+        getAccessToken: async () => { const t = reads++ === 0 ? "kda_old" : "kda_new"; tokens.push(t); return t; },
+        getRouterKey: () => routerKey,
+        setRouterKey: (k: RouterKey) => { savedKeys.push(k); routerKey = k; },
+      },
+    });
+    return tokens;
+  }
+  const only = (body: unknown) => (init?: RequestInit) =>
+    (init?.headers as Record<string, string>).authorization === "Bearer kda_new" ? { body } : { status: 401, body: { error: "invalid_token" } };
+
+  test("re-reads the keychain once and retries once: settings, provider keys and the re-mint", async () => {
+    routerKey = { key: "sk-old", baseUrl: "u", alias: "a" };
+    const { fn, calls } = fakeFetch({
+      "/api/config": only(response({ "model.default": { value: "m1", source: "user" } })),
+      "/api/device/provider-keys": only({ keys: { openrouter: "sk-or-v1-acct" } }),
+      "/api/device/router-key": only({ routerKey: { key: "sk-new", baseUrl: "u", alias: "a" } }),
+    });
+    setup(fn);
+    rotated();
+    assert.equal((await refreshConfig())?.values["model.default"].value, "m1");
+    rotated();
+    await refreshProviderKeys();
+    assert.equal(providerKey("openrouter"), "sk-or-v1-acct");
+    rotated();
+    assert.equal(await remintRouterKeyIfDue({ force: true }), true);
+    assert.deepEqual(calls.map((c) => c.auth), ["Bearer kda_old", "Bearer kda_new", "Bearer kda_old", "Bearer kda_new", "Bearer kda_old", "Bearer kda_new"]);
+  });
+
+  test("the same token again: no second request", async () => {
+    const { fn, calls } = fakeFetch({ "/api/config": () => ({ status: 401, body: {} }) });
+    setup(fn);
+    assert.equal(await refreshConfig(), undefined);
+    assert.equal(calls.length, 1);
+  });
+});
+
 describe("the answer", () => {
   test("secret, unknown and mistyped keys are dropped, so none reaches the cache", async () => {
     const { fn } = fakeFetch({ "/api/config": () => ({ body: response({
@@ -370,6 +414,18 @@ describe("router key", () => {
     assert.equal(calls[0].method, "POST");
     assert.equal(calls[0].auth, "Bearer kda_test");
     assert.deepEqual(savedKeys, [{ key: "sk-new", baseUrl: "https://router.kernal.one/v1", alias: "kernal-device-x", expiresAt: "2027-01-01T00:00:00.000Z" }]);
+  });
+
+  test("a re-mint replaces the deleted key in this process's resolution, and nothing else", async () => {
+    routerKey = { key: "sk-old", baseUrl: "u", alias: "a" };
+    writeCacheFile(response({ "model.default": { value: "m1", source: "user" } }));
+    const { fn } = fakeFetch({ "/api/device/router-key": () => ({ body: { routerKey: { key: "sk-new", baseUrl: "u", alias: "a" } } }) });
+    setup(fn);
+    assert.equal(layerCentralEnv({}).LITELLM_AGENT_KEY, "sk-old");
+    writeCacheFile(response({ "model.default": { value: "m2", source: "user" } }));   // a refresh landed meanwhile
+    assert.equal(await remintRouterKeyIfDue({ force: true }), true);
+    assert.equal(layerCentralEnv({}).LITELLM_AGENT_KEY, "sk-new");
+    assert.equal(getValue("model.default"), "m1", "the rest waits for the next start or /config reload");
   });
 
   test("not re-minted with time left, without a key, or signed out", async () => {

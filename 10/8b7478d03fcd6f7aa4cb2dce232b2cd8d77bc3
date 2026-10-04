@@ -1,0 +1,53 @@
+outfitter/packages/web/test/sentry-sourcemaps.test.ts
+  s_38ec74cfb7fa1d::t_97c1dfb7c212af 19-21
+  s_38ec74cfb7fa1d::t_ec239718732ae0 1-18,22-23
+outfitter/packages/api/Dockerfile
+  s_38ec74cfb7fa1d::t_5ce80d496af798 16-17,37-42,44-51
+  s_38ec74cfb7fa1d::t_9b4e956b743327 43
+outfitter/deploy/cloudbuild-api-sentry.yaml
+  s_38ec74cfb7fa1d::t_95f0622ef59660 1-26
+outfitter/deploy/env.sh
+  s_38ec74cfb7fa1d::t_1e1b8af6d13650 198-216
+outfitter/deploy/README.md
+  s_38ec74cfb7fa1d::t_64aa9924d1b714 730-763
+outfitter/packages/web/vite.config.ts
+  s_38ec74cfb7fa1d::t_8a52fc913644d4 3-20,22-58,64,84
+  s_38ec74cfb7fa1d::t_76082ac627ea49 21
+outfitter/deploy/cloudbuild-api.yaml
+  s_38ec74cfb7fa1d::t_db804ed1f870be 2-3,5,7-8,11
+  s_38ec74cfb7fa1d::t_9b4e956b743327 6
+outfitter/deploy/service.sh
+  s_38ec74cfb7fa1d::t_8250166ea32b3e 102
+outfitter/deploy/config.env
+  s_38ec74cfb7fa1d::t_8250166ea32b3e 106-110
+outfitter/deploy/CLAUDE.md
+  s_38ec74cfb7fa1d::t_387ca0ddbc7ca2 20-22
+outfitter/deploy/test/sentry-sourcemaps.test.sh
+  s_38ec74cfb7fa1d::t_6d3672dfcc0f0b 1-175
+outfitter/deploy/sentry-token.sh
+  s_38ec74cfb7fa1d::t_c4665d810e5102 1-95
+outfitter/packages/web/package.json
+  s_38ec74cfb7fa1d::t_d06184a5588748 29
+outfitter/deploy/build-api-image.sh
+  s_38ec74cfb7fa1d::t_8250166ea32b3e 20
+.github/workflows/outfitter-ci.yml
+  s_38ec74cfb7fa1d::t_d0e9634d69a681 50
+outfitter/package-lock.json
+  s_38ec74cfb7fa1d::t_3678a20e05d816 7781
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "108b7478d03fcd6f7aa4cb2dce232b2cd8d77bc3",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

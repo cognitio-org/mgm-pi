@@ -45,7 +45,10 @@ including who changed it last.
 
 ### A person's own opt-out (Kernal)
 
-`/sentry off` in Kernal writes `kernal.sentry: false` to the agent settings.json. It stops sending at
+`/sentry off` in Kernal writes `telemetry.sentry.enabled: false` to this machine's config layer
+(`~/.kernal/config.local.json`, where `/admin`'s "Only this machine" saves too, so either undoes the
+other; #374's `kernal.sentry: false` in the agent settings.json still counts, and `/sentry on`
+clears it). It stops sending at
 once and keeps Kernal from even asking Outfitter. `/sentry on` clears it, which means "follow
 Outfitter": it can never turn Sentry on when the fleet has it off. `/sentry` shows which of the two
 decided.

@@ -1,15 +1,17 @@
 /**
  * Whether this laptop sends to Sentry, and with what: pure functions over the fleet settings
- * (_shared/fleet-settings.ts) and the person's own `kernal.sentry` setting, so the test suite checks
+ * (_shared/fleet-settings.ts) and the person's own opt-outs on this machine, so the test suite checks
  * every combination without the network or @sentry/node.
  *
  * Two inputs, and both must say yes:
  *   - Outfitter's fleet settings, which an operator sets once for every machine. They carry the DSN
  *     and the trace sample rate; nothing about Sentry is configured on the laptop. No Dongle, or no
  *     answer from Outfitter yet, means off.
- *   - `kernal.sentry` in the agent settings.json, the person's own override, changed with
- *     `/sentry off|on`. It can only turn sending off: `false` stops it whatever the fleet says;
- *     unset follows the fleet.
+ *   - `telemetry.sentry.enabled` in this machine's config layer (~/.kernal/config.local.json), the
+ *     person's own override, changed with `/sentry off|on` or /admin's "Only this machine" (both
+ *     through central-config's setLocalOptOut). It can only turn sending off: `false` stops it
+ *     whatever the fleet says; unset follows the fleet. The legacy `kernal.sentry: false` in the
+ *     agent settings.json (#374) still counts as `false`.
  * The #424 signals (Signals below) follow the same rule, each with its own fleet setting and its own
  * local opt-out, and all of them stay off whenever Sentry itself is off.
  */
@@ -46,24 +48,29 @@ export type SentryDecision =
   | { on: true; dsn: string; tracesSampleRate: number; signals?: Signals }
   | { on: false; why: "laptop" | "fleet" | "no-dongle" };
 
-/** True when the person turned Sentry off on this laptop (`kernal.sentry: false`). */
-export function optedOut(settings: Record<string, unknown>): boolean {
-  return kernalSection(settings).sentry === false;
+/**
+ * True when this machine opts `key` out: a `false` from its own config layer (config.local.json,
+ * which `/sentry` and /admin both write) or the key's legacy settings.json flag (SENTRY_LOCAL_FLAGS).
+ * The same two places central-config's resolution reads, so `/sentry status` and /admin agree. Only
+ * ever off: no local value turns anything on.
+ */
+export function localOptOut(key: string, settings: Record<string, unknown>, values: Record<string, ConfigValue> = {}): boolean {
+  const v = values[key];
+  // The legacy flag is read from `settings` itself, never from a resolution made earlier.
+  const fromConfig = v?.value === false && v.source !== "default" && !isCentralSource(v.source) && v.sourceName !== "settings.json";
+  return kernalSection(settings)[SENTRY_LOCAL_FLAGS[key]] === false || fromConfig;
 }
 
-/** The signals turned off on this laptop: `kernal.sentryAgentTraces: false` and so on in
- * settings.json (what `/sentry agent off` writes), or a `false` from this machine's own config layer
- * (~/.kernal/config.local.json, .env, the shell; /admin can write the first). Only ever off: no
- * local value turns a signal on. */
+/** True when the person turned Sentry off on this laptop (localOptOut of telemetry.sentry.enabled). */
+export function optedOut(settings: Record<string, unknown>, values: Record<string, ConfigValue> = {}): boolean {
+  return localOptOut("telemetry.sentry.enabled", settings, values);
+}
+
+/** The signals turned off on this laptop (localOptOut of each: what `/sentry agent off` and so on
+ * write). Only ever off: no local value turns a signal on. */
 export function signalOptOuts(settings: Record<string, unknown>, values: Record<string, ConfigValue> = {}): Signals {
-  const k = kernalSection(settings);
   const out: Signals = { ...NO_SIGNALS };
-  for (const s of SIGNALS) {
-    const v = values[signalKey(s)];
-    // settings.json's flag is read from `settings` itself, never from a resolution made earlier.
-    const fromConfig = v?.value === false && v.source !== "default" && !isCentralSource(v.source) && v.sourceName !== "settings.json";
-    out[s] = k[SENTRY_LOCAL_FLAGS[signalKey(s)]] === false || fromConfig;
-  }
+  for (const s of SIGNALS) out[s] = localOptOut(signalKey(s), settings, values);
   return out;
 }
 

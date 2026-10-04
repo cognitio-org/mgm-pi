@@ -73,8 +73,12 @@ describe("sentry config: both Outfitter and the person must say yes", () => {
     assert.deepEqual(decide(ON, { optedOut: true, hasDongle: true }), { on: false, why: "laptop" });
   });
 
-  test("kernal.sentry: false is the only opt-out; anything else follows the fleet", () => {
+  test("only a local false opts out (config.local.json or the legacy kernal.sentry); anything else follows the fleet", () => {
     assert.equal(optedOut({ kernal: { sentry: false } }), true);
+    const local = (value: boolean, source = "local") => ({ "telemetry.sentry.enabled": { value, source, override: "opt-out", locked: false } }) as any;
+    assert.equal(optedOut({}, local(false)), true, "config.local.json's false (/sentry off, /admin)");
+    assert.equal(optedOut({}, local(true)), false);
+    assert.equal(optedOut({}, local(false, "fleet")), false, "the fleet's off is not this laptop's opt-out");
     assert.equal(optedOut({ kernal: { sentry: true } }), false, "true cannot force it on");
     assert.equal(optedOut({ kernal: {} }), false);
     assert.equal(optedOut({}), false);
@@ -506,7 +510,7 @@ describe("sentry extension wired to pi", () => {
     assert.match(notes[0], /off on this laptop/);
   });
 
-  test("/sentry off stops sending at once and saves kernal.sentry: false; /sentry on clears it", async () => {
+  test("/sentry off stops sending at once and saves the opt-out; /sentry on clears it", async () => {
     const { saved, notes, command } = await load({ cached: ON });
     assert.equal(sending(), true);
     await command("off");

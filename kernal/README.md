@@ -627,9 +627,11 @@ arguments or output, unless the fleet turns on prompts and outputs (below). Ever
 as `~`.
 
 `/sentry` shows whether it is on and who decided. `/sentry off` stops it on this laptop
-(`kernal.sentry: false` in settings.json) and stops Kernal asking Outfitter at all. `/sentry on`
-returns to Outfitter's setting; it cannot turn Sentry on if Outfitter has it off. Details:
-`docs/reports/sentry-integration-plan.md`.
+(`telemetry.sentry.enabled: false` in `~/.kernal/config.local.json`, the same place `/admin`'s
+"Only this machine" saves, so either one undoes the other) and stops Kernal asking Outfitter at all.
+`/sentry on` returns to Outfitter's setting; it cannot turn Sentry on if Outfitter has it off. An
+older `kernal.sentry: false` in settings.json still counts as off, and `/sentry on` (or clearing it
+in `/admin`) removes it too. Details: `docs/reports/sentry-integration-plan.md`.
 
 Three more signals (#424), each off unless an operator turns it on for the fleet
 (`telemetry.sentry.*` in the central settings, shown by `/config`), and all off whenever Sentry
@@ -648,8 +650,9 @@ itself is off:
   input and output tokens, spend and errors, sent without your hostname.
 
 `/sentry agent off`, `/sentry content off` and `/sentry metrics off` turn one off on this laptop
-(`kernal.sentryAgentTraces`, `kernal.sentryAgentContent` and `kernal.sentryMetrics: false` in
-settings.json); `… on` follows Outfitter again. The fleet's `telemetry.sentry.logs` and
+(`telemetry.sentry.agentTraces`, `agentContent` or `metrics: false` in `~/.kernal/config.local.json`,
+again shared with `/admin`); `… on` follows Outfitter again. A local `on` never turns a signal on:
+only the fleet does. The fleet's `telemetry.sentry.logs` and
 `telemetry.sentry.profilesSampleRate` never apply to Kernal: a laptop sends no logs, and pi's
 Bun-compiled binary can't load Sentry's native profiler. No request Kernal makes, LLM calls
 included, carries Sentry trace headers.

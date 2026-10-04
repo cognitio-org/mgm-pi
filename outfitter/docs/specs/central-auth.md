@@ -419,8 +419,9 @@ v1 keys (`SETTINGS_SCHEMA_VERSION = 1`):
 
 `router.key` is never stored by Outfitter: it is the device's CA-5 key, which Kernal reads from its
 keychain (`getRouterKey`, §2.2). It is declared so `/config` and `/admin` can show its source.
-Personal provider keys are not settings (§4). `telemetry.sentry.enabled`'s local level is the
-existing `kernal.sentry: false` in settings.json.
+Personal provider keys are not settings (§4). `telemetry.sentry.enabled`'s local level (and the
+#424 signals') is this machine's config layer, `~/.kernal/config.local.json`, which `/sentry off`
+and `/admin` both write; the legacy `kernal.sentry: false` in settings.json still counts as `false`.
 
 The `router.deviceKey.*`, `router.keys.models` and `router.runKey.*` keys are the router key limits
 (§5.2, owner decision of 2026-10-04): operators set them at the fleet level only (`PUT

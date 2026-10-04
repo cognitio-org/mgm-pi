@@ -36,9 +36,9 @@ import { dirname, join } from "node:path";
 import { inSandbox } from "../_shared/env.ts";
 import { outfitterCredentials, type OutfitterCredentials } from "../_shared/outfitter-env.ts";
 import { cachedFleetSettings, fleetSettingsCachePath, refreshFleetSettings, type FleetSettings } from "../_shared/fleet-settings.ts";
-import { SENTRY_LOCAL_FLAGS, refreshConfig, resolve, type ResolvedConfig } from "../_shared/central-config.ts";
+import { refreshConfig, resolve, setLocalOptOut, type ResolvedConfig } from "../_shared/central-config.ts";
 import { loginState } from "../_shared/outfitter-session.ts";
-import { readSettings, updateKernal } from "../connect/settings.ts";
+import { readSettings } from "../connect/settings.ts";
 import { installedVersion } from "../kernal-update/index.ts";
 import {
   SIGNAL_WORDS, decide, defaultEnvironment, describe, fleetFromConfig, optedOut, releaseName, signalKey, signalOptOuts,
@@ -59,11 +59,13 @@ export type Deps = {
   signedIn?: boolean;
   /** The central resolution and its refresh (default: central-config's resolve / refreshConfig). */
   central?: { resolve: () => ResolvedConfig; refresh: () => Promise<ResolvedConfig | undefined> };
-  /** The agent settings.json (default: readSettings()). */
+  /** The agent settings.json, for the legacy opt-out flags (default: readSettings()). */
   settings?: Record<string, unknown>;
-  /** Where `kernal.sentry` is written (default: updateKernal). */
+  /** Saves (`false`) or clears this machine's telemetry.sentry.enabled opt-out (default:
+   * central-config's setLocalOptOut: config.local.json, where /admin saves too; clearing also
+   * removes the legacy `kernal.sentry` flag). */
   saveOptOut?: (value: false | undefined) => void;
-  /** Where a signal's `kernal.sentryAgentTraces` (and so on) is written (default: updateKernal). */
+  /** The same for a signal's telemetry.sentry.agentTraces (and so on). */
   saveSignalOptOut?: (signal: Signal, value: false | undefined) => void;
   fetch?: typeof fetch;
   cacheFile?: string;
@@ -92,18 +94,19 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
   const hasDongle = signedIn || !!(creds.api && creds.token);
   const version = installedVersion();
   const runtime = { environment: defaultEnvironment(version !== undefined), ...(version ? { release: releaseName(version) } : {}) };
-  const saveOptOut = deps.saveOptOut ?? ((value: false | undefined) => updateKernal({ sentry: value }));
-  const saveSignalOptOut = deps.saveSignalOptOut ?? ((signal: Signal, value: false | undefined) => updateKernal({ [SENTRY_LOCAL_FLAGS[signalKey(signal)]]: value }));
+  const saveOptOut = deps.saveOptOut ?? ((value: false | undefined) => setLocalOptOut("telemetry.sentry.enabled", value === false));
+  const saveSignalOptOut = deps.saveSignalOptOut ?? ((signal: Signal, value: false | undefined) => setLocalOptOut(signalKey(signal), value === false));
 
   const settings = deps.settings ?? readSettings();
-  let laptopOff = optedOut(settings);
-  // A `false` from this machine's config layer (config.local.json, which /admin writes) opts a signal
-  // out too, signed in or not. (A test that injects `settings` but no `central` reads none: it must
-  // not see the developer's own ~/.kernal files.)
+  // The opt-outs live in this machine's config layer (config.local.json, which /sentry and /admin
+  // both write), read through the central resolution signed in or not, plus the legacy settings.json
+  // flags. (A test that injects `settings` but no `central` reads no config layer: it must not see
+  // the developer's own ~/.kernal files.)
   const localValues = (): ResolvedConfig["values"] => {
     if (deps.settings && !deps.central) return {};
     try { return central.resolve().values; } catch { return {}; }
   };
+  let laptopOff = optedOut(settings, localValues());
   let signalsOff: Signals = signalOptOuts(settings, localValues());
   let fleet: FleetSettings = signedIn ? fleetFromConfig(central.resolve().values) : cachedFleetSettings(creds, deps.cacheFile);
   const decision = (): SentryDecision => decide(fleet, { optedOut: laptopOff, hasDongle, signalsOff });
@@ -313,7 +316,7 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
       const status = () => describe(decision(), liveStatus(), { fleet, signalsOff });
       if (sub === "status" && words.length <= 1) return notify(status());
       if (sub === "off" && words.length === 1) {
-        // Stop first: a settings.json that cannot be written must not keep Sentry sending.
+        // Stop first: a config.local.json that cannot be written must not keep Sentry sending.
         laptopOff = true;
         await apply();
         try {
@@ -329,7 +332,8 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
         } catch (err) {
           return notify(`Could not save that (${errText(err)}); Sentry stays off on this laptop.`, "warning");
         }
-        laptopOff = false;
+        // Both places are cleared now; re-read through the same path as at start.
+        laptopOff = optedOut({}, localValues());
         await apply();
         // The cached copy may be old after an opt-out (no refresh ran); fetch now.
         if (hasDongle) await refresh();
@@ -353,7 +357,7 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
         } catch (err) {
           return notify(`Could not save that (${errText(err)}); it stays off on this laptop.`, "warning");
         }
-        // Still off if this machine's config layer (config.local.json, .env) says so.
+        // Both places are cleared now; re-read through the same path as at start.
         signalsOff = { ...signalsOff, [signal]: signalOptOuts({}, localValues())[signal] };
         await apply();
         // Signed in, the cached resolution still has the opt-out folded in; fetch it again.

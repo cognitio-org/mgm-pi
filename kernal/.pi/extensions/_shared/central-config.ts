@@ -507,6 +507,9 @@ function signedInAccount(): session.SessionAccount | undefined {
   return s?.signedIn ? s.account : undefined;
 }
 
+/** Signed in to Outfitter (kernal login), as the resolution sees it. */
+export const isSignedIn = (): boolean => !!signedInAccount();
+
 /** --profile <name> / KERNAL_PROFILE (bin/kernal turns the flag into the env var). */
 export function activeProfile(env: NodeJS.ProcessEnv = process.env): string | undefined {
   return env.KERNAL_PROFILE?.trim() || undefined;

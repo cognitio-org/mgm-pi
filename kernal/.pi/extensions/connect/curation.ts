@@ -9,9 +9,11 @@
  * A change starts from what the target holds now: the account document from the same GET that
  * supplies its If-Match version, config.local.json read from disk. The resolution is memoised for
  * the process and may be older, which would drop another machine's additions.
+ *
+ * kernal-admin is imported only when a change is saved: the Outfitter Drive image deletes it
+ * (outfitter/image/Dockerfile), and a static import would stop connect loading there at all.
  */
-import { readLocalOverrides, resolve, type ResolvedConfig } from "../_shared/central-config.ts";
-import { saveSettings, settingsView, signedInAccount } from "../kernal-admin/central.ts";
+import { isSignedIn, readLocalOverrides, resolve, type ResolvedConfig } from "../_shared/central-config.ts";
 import { CURATION_KEYS, CURATION_LEVELS, DEFAULT_OPENROUTER_MODELS, NO_CURATION, curateOpenRouter, parseIdList, type CurationLists } from "./lib.ts";
 
 export type CurationTarget = "account" | "machine";
@@ -32,7 +34,7 @@ export function curationLists(r?: ResolvedConfig): CurationLists {
 }
 
 /** Whether "my account" is a target right now (signed in to Outfitter). */
-export const canSaveToAccount = () => !!signedInAccount();
+export const canSaveToAccount = () => isSignedIn();
 
 const LEVEL_WORDS: Record<string, string> = { add: "your account", profileAdd: "your profile", localAdd: "this machine", remove: "your account", profileRemove: "your profile", localRemove: "this machine" };
 
@@ -49,6 +51,7 @@ export async function changeCuration(action: "add" | "remove", rawId: string, ta
   // A removal takes any stored id (one saved on the Settings page may not have the shape); an add must.
   if (!id || /,/.test(id) || (action === "add" && (!ID_SHAPE.test(id) || id.length > MAX_ID))) throw new Error(`"${id.slice(0, 80)}" is not an OpenRouter model id (vendor/model)`);
   if (action === "add" && opts.catalogue?.length && !opts.catalogue.includes(id) && !opts.catalogue.includes(id.replace(/:[^/:]+$/, ""))) throw new Error(`OpenRouter doesn't list ${id}`);
+  const { saveSettings, settingsView } = await import("../kernal-admin/central.ts").catch(() => { throw new Error("the curated list can't be changed here (no /admin on this machine)"); });
   const lists = curationLists();
   if (action === "add" && lists.fleetRemove.includes(id)) throw new Error(`${id} is hidden by your Sysop for everyone; it can't be added back`);
 

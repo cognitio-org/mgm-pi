@@ -33,6 +33,8 @@ export interface RouterKey {
 }
 
 export interface RouterKeysCollection {
+  /** Stores a new record, replacing one with the same alias: a re-mint reuses its device's alias
+   * (`mintDeviceKey` deletes the old key in LiteLLM first). */
   insert(key: RouterKey): Promise<void>;
   findByAlias(alias: string): Promise<RouterKey | null>;
   /** The live (not deleted) key of a device, if any. */
@@ -40,6 +42,7 @@ export interface RouterKeysCollection {
   listActiveForUser(userId: string): Promise<RouterKey[]>;
   /** Keys whose delete is still owed: deleteFailedAt set, or kind "run" past expiresAt. */
   listPendingDelete(limit: number): Promise<RouterKey[]>;
+  /** Merges `patch`; a field set to undefined is removed (deleteFailedAt once a retry worked). */
   update(alias: string, patch: Partial<RouterKey>): Promise<RouterKey | null>;
 }
 
@@ -58,74 +61,148 @@ export interface ProviderKeyMeta {
 }
 
 export interface ProviderKeysCollection {
+  /** Sorted by provider. */
   listForUser(userId: string): Promise<ProviderKeyMeta[]>;
   upsert(meta: ProviderKeyMeta): Promise<void>;
   delete(id: string): Promise<boolean>;
 }
 
-const notImplemented = (what: string): never => {
-  throw new Error(`${what}: not implemented yet (CA-4/CA-5, docs/specs/central-auth.md)`);
-};
+/** listPendingDelete's rule, shared by both stores: a failed delete, or a run key whose LiteLLM
+ * `duration` has already ended (deleting it then only tidies LiteLLM's key list). */
+function deleteOwed(key: RouterKey, now: string): boolean {
+  if (key.deletedAt) return false;
+  if (key.deleteFailedAt) return true;
+  return key.kind === "run" && !!key.expiresAt && key.expiresAt <= now;
+}
+
+/** `patch` applied to `key`, with undefined fields removed rather than kept as undefined. */
+function applyPatch(key: RouterKey, patch: Partial<RouterKey>): RouterKey {
+  const next: Record<string, unknown> = { ...key };
+  for (const [field, value] of Object.entries(patch)) {
+    if (field === "alias") continue;
+    if (value === undefined) delete next[field];
+    else next[field] = value;
+  }
+  return next as unknown as RouterKey;
+}
+
+// ---------- memory (dev/tests) ----------
 
 export class MemoryRouterKeys implements RouterKeysCollection {
-  async insert(_key: RouterKey): Promise<void> {
-    notImplemented("routerKeys.insert");
+  private readonly keys = new Map<string, RouterKey>();
+
+  async insert(key: RouterKey): Promise<void> {
+    this.keys.set(key.alias, { ...key });
   }
-  async findByAlias(_alias: string): Promise<RouterKey | null> {
+  async findByAlias(alias: string): Promise<RouterKey | null> {
+    const key = this.keys.get(alias);
+    return key ? { ...key } : null;
+  }
+  async findActiveForDevice(deviceId: string): Promise<RouterKey | null> {
+    for (const key of this.keys.values()) {
+      if (key.deviceId === deviceId && !key.deletedAt) return { ...key };
+    }
     return null;
   }
-  async findActiveForDevice(_deviceId: string): Promise<RouterKey | null> {
-    return null;
+  async listActiveForUser(userId: string): Promise<RouterKey[]> {
+    return [...this.keys.values()].filter((k) => k.userId === userId && !k.deletedAt).map((k) => ({ ...k }));
   }
-  async listActiveForUser(_userId: string): Promise<RouterKey[]> {
-    return [];
+  async listPendingDelete(limit: number): Promise<RouterKey[]> {
+    const now = new Date().toISOString();
+    return [...this.keys.values()]
+      .filter((k) => deleteOwed(k, now))
+      .slice(0, limit)
+      .map((k) => ({ ...k }));
   }
-  async listPendingDelete(_limit: number): Promise<RouterKey[]> {
-    return [];
-  }
-  async update(_alias: string, _patch: Partial<RouterKey>): Promise<RouterKey | null> {
-    return notImplemented("routerKeys.update");
+  async update(alias: string, patch: Partial<RouterKey>): Promise<RouterKey | null> {
+    const key = this.keys.get(alias);
+    if (!key) return null;
+    const next = applyPatch(key, patch);
+    this.keys.set(alias, next);
+    return { ...next };
   }
 }
 
 export class MemoryProviderKeys implements ProviderKeysCollection {
-  async listForUser(_userId: string): Promise<ProviderKeyMeta[]> {
-    return [];
+  private readonly metas = new Map<string, ProviderKeyMeta>();
+
+  async listForUser(userId: string): Promise<ProviderKeyMeta[]> {
+    return [...this.metas.values()]
+      .filter((m) => m.userId === userId)
+      .sort((a, b) => a.provider.localeCompare(b.provider))
+      .map((m) => ({ ...m }));
   }
-  async upsert(_meta: ProviderKeyMeta): Promise<void> {
-    notImplemented("providerKeys.upsert");
+  async upsert(meta: ProviderKeyMeta): Promise<void> {
+    this.metas.set(meta.id, { ...meta });
   }
-  async delete(_id: string): Promise<boolean> {
-    return notImplemented("providerKeys.delete");
+  async delete(id: string): Promise<boolean> {
+    return this.metas.delete(id);
   }
 }
 
+// ---------- Mongo ----------
+
 export type RouterKeyDoc = RouterKey & { _id: string };
-export type ProviderKeyDoc = ProviderKeyMeta & { _id: string };
+/** `_id` is the meta's `id`, not stored twice. */
+export type ProviderKeyDoc = Omit<ProviderKeyMeta, "id"> & { _id: string };
+
+function routerKeyFromDoc(doc: RouterKeyDoc | null): RouterKey | null {
+  if (!doc) return null;
+  const { _id, ...key } = doc;
+  return { ...key, alias: key.alias ?? _id };
+}
+
+function providerKeyFromDoc(doc: ProviderKeyDoc): ProviderKeyMeta {
+  const { _id, ...meta } = doc;
+  return { id: _id, ...meta };
+}
 
 export class MongoRouterKeys implements RouterKeysCollection {
   private readonly col: MongoCollection<RouterKeyDoc>;
   constructor(col: MongoCollection<RouterKeyDoc>) {
     this.col = col;
   }
-  async insert(_key: RouterKey): Promise<void> {
-    void this.col;
-    notImplemented("routerKeys.insert");
+  async insert(key: RouterKey): Promise<void> {
+    // replaceOne, not insertOne: a re-mint keeps the alias, and the old record's deletedAt and
+    // deleteFailedAt must not carry over to the new key.
+    await this.col.replaceOne({ _id: key.alias }, { ...key }, { upsert: true });
   }
-  async findByAlias(_alias: string): Promise<RouterKey | null> {
-    return null;
+  async findByAlias(alias: string): Promise<RouterKey | null> {
+    return routerKeyFromDoc(await this.col.findOne({ _id: alias }));
   }
-  async findActiveForDevice(_deviceId: string): Promise<RouterKey | null> {
-    return null;
+  async findActiveForDevice(deviceId: string): Promise<RouterKey | null> {
+    return routerKeyFromDoc(await this.col.findOne({ deviceId, deletedAt: { $exists: false } }));
   }
-  async listActiveForUser(_userId: string): Promise<RouterKey[]> {
-    return [];
+  async listActiveForUser(userId: string): Promise<RouterKey[]> {
+    const rows = await this.col.find({ userId, deletedAt: { $exists: false } }).toArray();
+    return rows.map((r) => routerKeyFromDoc(r)!);
   }
-  async listPendingDelete(_limit: number): Promise<RouterKey[]> {
-    return [];
+  async listPendingDelete(limit: number): Promise<RouterKey[]> {
+    const now = new Date().toISOString();
+    const rows = await this.col
+      .find({
+        deletedAt: { $exists: false },
+        $or: [{ deleteFailedAt: { $exists: true } }, { kind: "run", expiresAt: { $lte: now } }],
+      })
+      .limit(limit)
+      .toArray();
+    return rows.map((r) => routerKeyFromDoc(r)!);
   }
-  async update(_alias: string, _patch: Partial<RouterKey>): Promise<RouterKey | null> {
-    return notImplemented("routerKeys.update");
+  async update(alias: string, patch: Partial<RouterKey>): Promise<RouterKey | null> {
+    const set: Record<string, unknown> = {};
+    const unset: Record<string, ""> = {};
+    for (const [field, value] of Object.entries(patch)) {
+      if (field === "alias") continue;
+      if (value === undefined) unset[field] = "";
+      else set[field] = value;
+    }
+    if (!Object.keys(set).length && !Object.keys(unset).length) return this.findByAlias(alias);
+    const doc = await this.col.findOneAndUpdate(
+      { _id: alias },
+      { ...(Object.keys(set).length ? { $set: set } : {}), ...(Object.keys(unset).length ? { $unset: unset } : {}) },
+      { returnDocument: "after" },
+    );
+    return routerKeyFromDoc(doc);
   }
 }
 
@@ -134,15 +211,17 @@ export class MongoProviderKeys implements ProviderKeysCollection {
   constructor(col: MongoCollection<ProviderKeyDoc>) {
     this.col = col;
   }
-  async listForUser(_userId: string): Promise<ProviderKeyMeta[]> {
-    void this.col;
-    return [];
+  async listForUser(userId: string): Promise<ProviderKeyMeta[]> {
+    const rows = await this.col.find({ userId }).sort({ provider: 1 }).toArray();
+    return rows.map(providerKeyFromDoc);
   }
-  async upsert(_meta: ProviderKeyMeta): Promise<void> {
-    notImplemented("providerKeys.upsert");
+  async upsert(meta: ProviderKeyMeta): Promise<void> {
+    const { id, ...rest } = meta;
+    await this.col.replaceOne({ _id: id }, rest, { upsert: true });
   }
-  async delete(_id: string): Promise<boolean> {
-    return notImplemented("providerKeys.delete");
+  async delete(id: string): Promise<boolean> {
+    const result = await this.col.deleteOne({ _id: id });
+    return result.deletedCount > 0;
   }
 }
 

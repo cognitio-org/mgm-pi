@@ -483,7 +483,7 @@ research on Sonnet; review on Opus).
   `outfitter/packages/api/test/routes.test.ts`) until it's no longer active, 90s timeout, skippable
   with `--force` (threaded through `kernal --teleport <id> --force` and `/teleport pull <id> --force`).
   What `kernal --teleport <id>` does **not** yet do for an Outfitter-backed pull specifically: repo and
-  clean-tree verification. That logic already exists in `cli.ts`/`index.ts` and runs unconditionally
+  clean-tree verification. That logic already exists in `index.ts` and runs unconditionally
   for any store whose manifest carries a `repo` section (same code path GitStore uses) -- it isn't
   Outfitter-specific, and OutfitterStore's `get()` does populate `manifest.repo` (from the session's
   `repo`/`branch`/`checkpoint.head`) when the cloud session has a repo, so the existing check does

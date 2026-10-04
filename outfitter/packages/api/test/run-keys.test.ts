@@ -68,7 +68,8 @@ describe("RunKeys.keyForRun", () => {
     assert.equal(gen!.body.max_budget, RUN_KEY_MAX_BUDGET_USD);
     assert.deepEqual(gen!.body.metadata, { outfitter: "run", runId: "r1", sessionId: "s1" });
     // The LiteLLM user exists first, keyed by the user id, never the email alone.
-    assert.equal(fake.users.get(userIdFor(OWNER))?.user_email, OWNER);
+    assert.equal(fake.users.get(userIdFor(OWNER))?.metadata?.email, OWNER);
+    assert.equal(fake.users.get(userIdFor(OWNER))?.user_role, "internal_user");
     const record = await store.routerKeys.findByAlias("outfitter-run-r1");
     assert.equal(record?.kind, "run");
     assert.equal(record?.userId, userIdFor(OWNER));

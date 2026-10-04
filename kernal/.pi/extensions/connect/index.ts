@@ -53,6 +53,12 @@ export function writeEnvValues(values: Record<string, string | undefined>): stri
   return file;
 }
 
+/** The env entries a registration depends on, as one comparable string (held in memory only). */
+export function backendInputs(env: Record<string, string>): string {
+  const names = ["LMSTUDIO_BASE_URL", "LMSTUDIO_MODEL", "LITELLM_BASE_URL", "LITELLM_AGENT_KEY", "LITELLM_API_KEY", "OPENROUTER_BASE_URL", "OPENROUTER_API_KEY", "OPENROUTER_MODELS"];
+  return JSON.stringify(names.map((n) => env[n] ?? ""));
+}
+
 /** Every .env the agent reads, nearest last, with the process environment on top. */
 export function loadEnv(cwd: string): Record<string, string> {
   let out: Record<string, string> = {};
@@ -154,8 +160,13 @@ export default async function (pi: ExtensionAPI) {
   const models = new Map<string, string[]>();
   const registered = new Set<string>();   // backends whose provider is registered with pi right now
 
+  // What the account delivered when the last registration began (central-config, held in memory),
+  // so a delivery that lands while it runs is noticed. Only the account's part: connect itself edits
+  // process.env (OPENROUTER_API_KEY, below), which must not look like a change.
+  let registeredFrom = "";
   async function registerAll(envOverride?: Record<string, string>) {
     const env = { ...loadEnv(process.cwd()), ...(envOverride ?? {}) };
+    registeredFrom = backendInputs(layerCentralEnv({}));
     litellmMeta.clear(); lmstudioMeta.clear(); reachable.clear(); keyRejected.clear(); registered.clear();
     // A cloud sandbox has no local model server: there the lmstudio backend is kept only when
     // LMSTUDIO_BASE_URL was set on purpose (a guru opting in to a tunnelled laptop model), and is
@@ -290,6 +301,13 @@ export default async function (pi: ExtensionAPI) {
     }
     throw new Error(`unknown op ${req?.op}`);
   });
+
+  // The account's keys (central-config) arrive in the background, often while the first
+  // registration above is still probing the servers. kernal-config then asks for a reload over the
+  // bus, but nobody served it yet and busRequest drops the request silently (2026-10-04: OpenRouter
+  // stayed "No API key" for the whole session). So check once now that we serve the bus: anything
+  // that lands later reaches the handler above.
+  if (backendInputs(layerCentralEnv({})) !== registeredFrom) void registerAll().catch(() => {});
 
   pi.registerCommand("connect", {
     description: "Connect to lmstudio | litellm | openrouter [model]",

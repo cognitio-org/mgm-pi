@@ -7,7 +7,7 @@
 // LiteLLM's management API, as used here (https://docs.litellm.ai/docs/proxy/virtual_keys,
 // /docs/proxy/users, /docs/proxy/cost_tracking):
 //   GET  /user/info?user_id=        the user and its keys (`keys[].token` is the key's hashed id)
-//   POST /user/new                  { user_id, user_email, auto_create_key: false }
+//   POST /user/new                  { user_id, user_role: internal_user, auto_create_key: false, metadata: { email } }
 //   POST /key/generate              { key_alias, user_id, duration, max_budget, budget_duration,
 //                                     rpm_limit, models?, metadata } -> { key, token, expires }
 //   POST /key/delete                { keys: [token] } or { key_aliases: [alias] }
@@ -65,7 +65,7 @@ export interface UserSpend {
 }
 
 export interface LitellmKeys {
-  /** Creates the LiteLLM user `userId` (user_email = email) if missing. Idempotent. */
+  /** Creates the LiteLLM user `userId` (an internal_user, email in metadata) if missing. Idempotent. */
   ensureLitellmUser(user: { userId: string; email: string }): Promise<void>;
   /** /key/generate with key_alias `kernal-device-<deviceId>`, user_id, limits, and metadata
    * {outfitter: "device", deviceId, deviceName}. Records a RouterKey (store/keys.ts). Deletes the
@@ -251,10 +251,6 @@ function isKeyGone(status: number, detail: string): boolean {
   return status === 404 || /not found|does not exist|keys deleted: 0/i.test(detail);
 }
 
-function isUserExists(detail: string): boolean {
-  return /already exists|unique constraint/i.test(detail);
-}
-
 function toIso(value: unknown): string | undefined {
   if (typeof value !== "string" || !value) return undefined;
   const ms = Date.parse(value);
@@ -368,11 +364,20 @@ class HttpLitellmKeys implements LitellmKeys {
     const info = await this.call("GET", "/user/info", { query: { user_id: user.userId } });
     const existing = info.ok && (info.body as { user_info?: unknown } | undefined)?.user_info;
     if (!existing) {
+      // No user_email: LiteLLM keeps emails unique, and the person may already have a LiteLLM login
+      // under that email (the owner's is a proxy_admin). Adopting it would make every device key an
+      // admin key, since a key's role comes from its user; colliding with it failed the mint (409,
+      // 2026-10-04). The email goes in metadata instead, and the role is pinned to internal_user.
       const created = await this.call("POST", "/user/new", {
-        body: { user_id: user.userId, user_email: user.email, auto_create_key: false },
+        body: { user_id: user.userId, user_role: "internal_user", auto_create_key: false, metadata: { email: user.email, source: "outfitter" } },
       });
-      // Another instance may have created it a moment ago.
-      if (!created.ok && !isUserExists(errorDetail(created.body))) throw this.failure("/user/new", created.status, created.body);
+      // Another instance may have created it a moment ago. Only that counts: re-check by id rather
+      // than trusting an "already exists" message, which LiteLLM also uses for other fields.
+      if (!created.ok) {
+        const again = await this.call("GET", "/user/info", { query: { user_id: user.userId } });
+        const nowExists = again.ok && (again.body as { user_info?: unknown } | undefined)?.user_info;
+        if (!nowExists) throw this.failure("/user/new", created.status, created.body);
+      }
     }
     this.knownUsers.add(user.userId);
   }
@@ -588,8 +593,11 @@ class HttpLitellmKeys implements LitellmKeys {
       }
     }
     const emails = new Map<string, string>();
-    const userRows = (Array.isArray(users) ? users : ((users as { users?: unknown[] } | undefined)?.users ?? [])) as Array<{ user_id?: string; user_email?: string | null }>;
-    for (const u of userRows) if (u.user_id && u.user_email) emails.set(u.user_id, u.user_email);
+    const userRows = (Array.isArray(users) ? users : ((users as { users?: unknown[] } | undefined)?.users ?? [])) as Array<{ user_id?: string; user_email?: string | null; metadata?: { email?: unknown } | null }>;
+    for (const u of userRows) {
+      const email = u.user_email || (typeof u.metadata?.email === "string" ? u.metadata.email : undefined);
+      if (u.user_id && email) emails.set(u.user_id, email);
+    }
     return [...totals.entries()]
       .filter(([userId]) => userId)
       .map(([userId, total]) => ({ userId, ...(emails.has(userId) ? { email: emails.get(userId) } : {}), total: money(total) }))

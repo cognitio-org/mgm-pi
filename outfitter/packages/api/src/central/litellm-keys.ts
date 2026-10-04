@@ -21,6 +21,7 @@
 
 import type { Config } from "../config.ts";
 import type { FleetSettings } from "../fleet-settings.ts";
+import { metrics, type MetricAttributes } from "../sentry.ts";
 import type { RouterKey, RouterKeysCollection } from "../store/keys.ts";
 import type { Store } from "../store/types.ts";
 import type { DeviceDelivery, DeviceLifecycle, LifecycleDevice } from "./device-lifecycle.ts";
@@ -201,6 +202,21 @@ export class LitellmError extends Error {
     super(message);
     this.name = "LitellmError";
     this.status = status;
+  }
+}
+
+/** #424: `task` counted as `<name>` with its outcome (ok, failed), and timed as `<name>.duration`
+ * in milliseconds. Nothing but the task while Sentry's metrics are off (sentry.ts). */
+async function measured<T>(name: string, attributes: MetricAttributes, task: () => Promise<T>): Promise<T> {
+  const started = performance.now();
+  let outcome = "failed";
+  try {
+    const value = await task();
+    outcome = "ok";
+    return value;
+  } finally {
+    metrics.count(name, { ...attributes, outcome });
+    metrics.distribution(`${name}.duration`, performance.now() - started, "millisecond", { ...attributes, outcome });
   }
 }
 
@@ -390,6 +406,10 @@ class HttpLitellmKeys implements LitellmKeys {
   }
 
   async mintDeviceKey(args: { userId: string; email: string; deviceId: string; deviceName: string } & KeyLimits): Promise<MintedKey> {
+    return measured("router.key.mint", { kind: "device" }, () => this.mintDeviceKeyNow(args));
+  }
+
+  private async mintDeviceKeyNow(args: { userId: string; email: string; deviceId: string; deviceName: string } & KeyLimits): Promise<MintedKey> {
     const alias = deviceKeyAlias(args.deviceId);
     // One live key per device: the old one goes first (LiteLLM keeps aliases unique, too).
     // A failed delete here is not owed to the sweep: the previous key is still the device's live
@@ -423,6 +443,10 @@ class HttpLitellmKeys implements LitellmKeys {
   }
 
   async mintRunKey(args: { userId: string; email: string; runId: string; sessionId: string; durationSeconds: number; mint?: number } & KeyLimits): Promise<MintedKey> {
+    return measured("router.key.mint", { kind: "run" }, () => this.mintRunKeyNow(args));
+  }
+
+  private async mintRunKeyNow(args: { userId: string; email: string; runId: string; sessionId: string; durationSeconds: number; mint?: number } & KeyLimits): Promise<MintedKey> {
     const alias = runKeyAlias(args.runId, args.mint);
     const seconds = Math.max(1, Math.ceil(args.durationSeconds));
     const maxBudget = args.maxBudget ?? RUN_KEY_MAX_BUDGET_USD;
@@ -491,7 +515,14 @@ class HttpLitellmKeys implements LitellmKeys {
   async userSpend(userId: string, month: string): Promise<UserSpend> {
     const cacheKey = `${userId}|${month}`;
     const cached = this.spendCache.get(cacheKey);
-    if (cached && this.now().getTime() - cached.at < SPEND_CACHE_MS) return cached.value;
+    if (cached && this.now().getTime() - cached.at < SPEND_CACHE_MS) {
+      metrics.count("spend.lookup", { scope: "user", outcome: "cached" });
+      return cached.value;
+    }
+    return measured("spend.lookup", { scope: "user" }, () => this.userSpendNow(userId, month, cacheKey));
+  }
+
+  private async userSpendNow(userId: string, month: string, cacheKey: string): Promise<UserSpend> {
 
     const { start, end } = monthRange(month);
     const [info, logs] = await Promise.all([
@@ -540,6 +571,10 @@ class HttpLitellmKeys implements LitellmKeys {
   }
 
   async allUsersSpend(month: string): Promise<Array<{ userId: string; email?: string; total: number }>> {
+    return measured("spend.lookup", { scope: "all" }, () => this.allUsersSpendNow(month));
+  }
+
+  private async allUsersSpendNow(month: string): Promise<Array<{ userId: string; email?: string; total: number }>> {
     const { start, end } = monthRange(month);
     const [logs, users] = await Promise.all([
       this.ok("GET", "/spend/logs", { query: { start_date: start, end_date: end } }),

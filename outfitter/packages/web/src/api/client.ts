@@ -264,6 +264,12 @@ export interface SentryFleetSettings {
   /** Kept while off, so turning Sentry back on needs no re-entry. */
   dsn?: string;
   tracesSampleRate: number;
+  /** #424's signals, each absent (off) unless an operator turned it on. */
+  logs?: boolean;
+  metrics?: boolean;
+  agentTraces?: boolean;
+  agentContent?: boolean;
+  profilesSampleRate?: number;
 }
 
 export interface FleetSettings {
@@ -273,9 +279,24 @@ export interface FleetSettings {
 }
 
 /** GET /api/fleet-settings: a client's view, with the DSN only while Sentry is on, and then the
- * deploy's outfitter-v* release too on a tagged deploy (#421). */
+ * deploy's outfitter-v* release too on a tagged deploy (#421). #424's signals are there only while
+ * on; the browser reads profilesSampleRate (lib/sentry.ts) and sends no logs. */
 export interface ClientFleetSettings {
-  telemetry: { sentry: { enabled: false } | { enabled: true; dsn: string; tracesSampleRate: number; release?: string } };
+  telemetry: {
+    sentry:
+      | { enabled: false }
+      | {
+          enabled: true;
+          dsn: string;
+          tracesSampleRate: number;
+          release?: string;
+          logs?: boolean;
+          metrics?: boolean;
+          agentTraces?: boolean;
+          agentContent?: boolean;
+          profilesSampleRate?: number;
+        };
+  };
   updatedAt?: string;
 }
 

@@ -9,6 +9,7 @@ import { settingsDocId, type SettingsDoc } from "../src/store/settings.ts";
 import { defaultFleetSettings } from "../src/fleet-settings.ts";
 import { runSettingExcluded, runSpecSettings } from "../src/central/run-keys.ts";
 import { userIdFor } from "../src/central/user-id.ts";
+import { SETTINGS_SCHEMA_VERSION } from "../src/central/settings-schema.ts";
 
 const OWNER = "owner@example.com";
 const USER = userIdFor(OWNER);
@@ -48,7 +49,7 @@ describe("runSpecSettings", () => {
     await seedOwner(store);
     const fleet = { ...defaultFleetSettings(), values: { "model.provider": "litellm", "memory.mode": "tool" }, version: 3 };
     const settings = await runSpecSettings(store, fleet, OWNER);
-    assert.equal(settings?.schemaVersion, 1);
+    assert.equal(settings?.schemaVersion, SETTINGS_SCHEMA_VERSION);
     assert.equal(settings?.profile, "work");
     assert.deepEqual(settings?.values["model.default"], { value: "litellm/work-model", source: "profile", sourceName: "work" });
     assert.deepEqual(settings?.values["compaction.summaryModel"], { value: "litellm/gpt-5.4-nano", source: "user" });

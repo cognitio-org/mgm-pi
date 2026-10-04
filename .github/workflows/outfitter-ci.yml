@@ -105,8 +105,18 @@ jobs:
           curl -s http://localhost:18081/api/nope -o /tmp/nope.json -w '%{http_code}\n' | grep -qx 404
           grep -qi 'error' /tmp/nope.json
           docker rm -f api-web
+      - name: The control-plane image loads Sentry's profiler add-on (#424)
+        # @sentry/profiling-node is a native add-on; the api loads it only when profiles are on and
+        # skips it with a warning if it can't, so a broken one would otherwise go unnoticed.
+        run: |
+          docker run --rm --entrypoint node outfitter-api:ci -e \
+            "import('@sentry/profiling-node').then((m) => { if (typeof m.nodeProfilingIntegration !== 'function') process.exit(1); console.log('profiling-node loads'); })"
       - name: Build the sandbox image
         run: docker build -f outfitter/image/Dockerfile -t outfitter-agent:ci .
+      - name: agentd in the sandbox image loads Sentry's profiler add-on (#424)
+        run: |
+          docker run --rm --workdir /opt/outfitter/agentd --entrypoint node outfitter-agent:ci -e \
+            "import('@sentry/profiling-node').then((m) => { if (typeof m.nodeProfilingIntegration !== 'function') process.exit(1); console.log('profiling-node loads'); })"
       - name: pi starts as the agent user with its own home and loads every extension
         run: |
           docker run --rm --entrypoint sh outfitter-agent:ci -c '

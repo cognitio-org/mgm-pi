@@ -48,6 +48,17 @@ export interface CreateLoggerOptions {
 
 const REDACTED = "[redacted]";
 
+/** #424: where every INFO, WARNING and ERROR line also goes, already redacted as written: Sentry's
+ * logs, while the fleet settings have them on (sentry.ts sets it at run.spec). DEBUG lines (pi's
+ * own stderr) stay local. One per process, like Sentry itself. */
+export type LogSink = (severity: Exclude<Severity, "DEBUG">, message: string, fields: LogFields) => void;
+
+let logSink: LogSink | undefined;
+
+export function setLogSink(sink: LogSink | undefined): void {
+  logSink = sink;
+}
+
 /** Query params commonly used to carry a secret in a URL (LiteLLM/GitHub/GCS-signed-URL style). */
 const SENSITIVE_QUERY_KEYS = /\b(token|key|secret|signature|credential|auth)\b/i;
 
@@ -131,6 +142,13 @@ class LoggerImpl implements Logger {
       JSON.stringify(mergedFields); // probe: throws here (not later, mid-write) if unserialisable
     } catch {
       mergedFields = UNSERIALISABLE_FIELDS;
+    }
+    if (logSink && severity !== "DEBUG") {
+      try {
+        logSink(severity, redactedMessage, mergedFields);
+      } catch {
+        // A sink (Sentry) that throws must never cost the line itself.
+      }
     }
     if (this.isTTY) {
       const extra = Object.keys(mergedFields).length > 0 ? ` ${JSON.stringify(mergedFields)}` : "";

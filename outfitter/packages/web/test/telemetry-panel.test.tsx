@@ -90,6 +90,12 @@ function checkbox(el: HTMLElement): HTMLInputElement {
   return label!.querySelector("input") as HTMLInputElement;
 }
 
+function signal(el: HTMLElement, key: string): HTMLInputElement {
+  const input = el.querySelector(`input[data-signal="${key}"]`);
+  if (!input) throw new Error(`no ${key} switch`);
+  return input as HTMLInputElement;
+}
+
 describe("Settings → Telemetry", () => {
   it("shows the stored settings, the DSN included while off, and who changed them last", async () => {
     serve({ enabled: false, dsn: DSN, tracesSampleRate: 0.05 });
@@ -146,6 +152,49 @@ describe("Settings → Telemetry", () => {
     await act(async () => saveButton(el).click());
     await settle();
     expect(el.textContent).toContain("A DSN is needed to turn Sentry on");
+    expect(calls.some((c) => c.method === "PUT")).toBe(false);
+  });
+
+  it("#424: every further signal starts off; turning some on sends only those, the profile rate as a fraction", async () => {
+    const calls = serve({ enabled: true, dsn: DSN, tracesSampleRate: 0.05 });
+    const el = await render();
+    for (const key of ["logs", "metrics", "agentTraces", "agentContent"]) expect(signal(el, key).checked).toBe(false);
+    expect(signal(el, "agentContent").disabled).toBe(true);
+    expect((el.querySelector("#sentry-profiles") as HTMLInputElement).value).toBe("0");
+    await act(async () => signal(el, "logs").click());
+    await act(async () => signal(el, "agentTraces").click());
+    expect(signal(el, "agentContent").disabled).toBe(false);
+    await act(async () => signal(el, "agentContent").click());
+    await act(async () => setValue(el.querySelector("#sentry-profiles") as HTMLInputElement, "10"));
+    await act(async () => saveButton(el).click());
+    await settle();
+    expect(calls.find((c) => c.method === "PUT")?.body).toEqual({
+      telemetry: { sentry: { enabled: true, dsn: DSN, tracesSampleRate: 0.05, logs: true, agentTraces: true, agentContent: true, profilesSampleRate: 0.1 } },
+    });
+    expect(saveButton(el).disabled).toBe(true);
+  });
+
+  it("#424: shows stored signals, and turning agent traces off turns content off with them", async () => {
+    const calls = serve({ enabled: true, dsn: DSN, tracesSampleRate: 0.05, agentTraces: true, agentContent: true, metrics: true, profilesSampleRate: 0.5 } as never);
+    const el = await render();
+    expect(signal(el, "metrics").checked).toBe(true);
+    expect(signal(el, "agentContent").checked).toBe(true);
+    expect((el.querySelector("#sentry-profiles") as HTMLInputElement).value).toBe("50");
+    await act(async () => signal(el, "agentTraces").click());
+    expect(signal(el, "agentContent").checked).toBe(false);
+    await act(async () => setValue(el.querySelector("#sentry-profiles") as HTMLInputElement, "0"));
+    await act(async () => saveButton(el).click());
+    await settle();
+    expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ telemetry: { sentry: { enabled: true, dsn: DSN, tracesSampleRate: 0.05, metrics: true } } });
+  });
+
+  it("#424: refuses a profile rate outside 0 to 100%", async () => {
+    const calls = serve({ enabled: true, dsn: DSN, tracesSampleRate: 0.05 });
+    const el = await render();
+    await act(async () => setValue(el.querySelector("#sentry-profiles") as HTMLInputElement, "-1"));
+    await act(async () => saveButton(el).click());
+    await settle();
+    expect(el.textContent).toContain("A percentage from 0 to 100");
     expect(calls.some((c) => c.method === "PUT")).toBe(false);
   });
 

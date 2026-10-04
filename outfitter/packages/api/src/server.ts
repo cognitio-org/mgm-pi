@@ -39,7 +39,7 @@ import { memoryUsage } from "./agentengine/usage.ts";
 // E9 PR3: registers the memory.* admin ops (side effect only).
 import "./admin/memory-ops.ts";
 import { CachedSandboxTelemetry, GcpSandboxTelemetry, NoSandboxTelemetry, type SandboxTelemetry } from "./sandbox-telemetry.ts";
-import { applySentrySettings, installSentryErrorHandler, sentryEnabled, Sentry, type SentryRuntime } from "./sentry.ts";
+import { applySentrySettings, installSentryErrorHandler, sentryEnabled, sentryLogMethod, Sentry, type SentryRuntime } from "./sentry.ts";
 import { FleetSettingsCache } from "./fleet-settings.ts";
 import { DeviceLifecycle } from "./central/device-lifecycle.ts";
 import { isPublicDevicePath } from "./central/device-tokens.ts";
@@ -113,7 +113,9 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     opts.provider instanceof SandboxProviders ? opts.provider : SandboxProviders.single(config.sandboxProvider, opts.provider);
   // forceCloseConnections: idle keep-alive/websocket sockets otherwise stall fastify.close() for
   // as long as they're open (observed in tests: ~30s before a lingering ws finally times out).
-  const fastify = Fastify({ logger: true, forceCloseConnections: true });
+  // The logger is pino's default (what `logger: true` gives) plus #424's hook, which also sends a
+  // line to Sentry as a log while the fleet settings have Sentry's logs on (sentry.ts).
+  const fastify = Fastify({ logger: { hooks: { logMethod: sentryLogMethod } }, forceCloseConnections: true });
   await fastify.register(fastifyWebsocket);
 
   // Fleet settings (fleet-settings.ts): what an operator set in the web app for every machine.

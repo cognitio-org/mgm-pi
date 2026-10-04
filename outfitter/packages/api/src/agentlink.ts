@@ -44,7 +44,8 @@ import {
 import { parseSessionRepo } from "./session-repo.ts";
 import { parseBootTimings, parseStartupPhases, startupLogLine, summarizeStartup, type StartupSummary } from "./startup.ts";
 import { isAssistantMessageEntry, liveThoughtTextFromEvent } from "./live-thought.ts";
-import { sentryOn, type FleetSettingsCache } from "./fleet-settings.ts";
+import { sentryOn, sentrySignals, signalsOnWire, type FleetSettingsCache, type SentrySignals } from "./fleet-settings.ts";
+import { countRunEnd } from "./runs.ts";
 import { runSpecSettings, type RunKeys, type RunSpecSettings } from "./central/run-keys.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -280,8 +281,9 @@ export interface RunSpecMessage {
    * no owner on record; agentd then commits as the bot alone. See docs/protocol.md. */
   author?: { name: string; email: string; login?: string };
   /** Fleet settings (fleet-settings.ts): present only while an operator has Sentry on for the
-   * fleet. agentd starts Sentry with it (agentd/src/sentry.ts); absent, it sends nothing. */
-  telemetry?: { sentry: { dsn: string; tracesSampleRate: number; environment: string; release?: string } };
+   * fleet. agentd starts Sentry with it (agentd/src/sentry.ts); absent, it sends nothing. #424's
+   * signals (logs, metrics, agentTraces, agentContent, profilesSampleRate) are there only when on. */
+  telemetry?: { sentry: { dsn: string; tracesSampleRate: number; environment: string; release?: string } & Partial<SentrySignals> };
   /** CA-6 (central-auth.md §9): the session owner's resolved settings (their default profile, no
    * device level; central/run-keys.ts runSpecSettings). Absent without an owner, for an A2A
    * session, or when they can't be resolved. agentd applies the keys it knows (settings.ts). */
@@ -1394,6 +1396,7 @@ export class AgentLink {
                 tracesSampleRate: sentry.tracesSampleRate,
                 environment: this.config.devMode ? "development" : "production",
                 ...(this.config.release ? { release: this.config.release } : {}),
+                ...signalsOnWire(sentrySignals(sentry)),
               },
             },
           }
@@ -1947,6 +1950,8 @@ export class AgentLink {
           // its lease.
           await this.store.mail.releaseRun(runId);
           stored = true;
+          // #424: agentd's ByeReason, or "other" for anything an older or newer agentd sends.
+          countRunEnd(reason === "error" ? "failed" : "stopped", ["error", "stop", "idle", "sigterm"].includes(reason) ? `agent_${reason}` : "agent_other");
         } finally {
           if (this.sockets.get(runId) === socket) this.sockets.delete(runId);
           closeQuietly(socket, stored ? 1000 : 1011, stored ? reason : "bye not stored");

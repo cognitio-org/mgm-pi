@@ -21,6 +21,7 @@ import {
 } from "../central/provider-keys.ts";
 import { currentSpendMonth, deviceKeyAlias, isSpendMonth, mintDeviceRouterKey, routerKeyLimits } from "../central/litellm-keys.ts";
 import type { Device } from "../store/devices.ts";
+import { metrics } from "../sentry.ts";
 
 /** A Dongle (an `outf_` token: viaToken without a device) never reads or writes keys (§3.5, decision
  * 12); a person under IAP or a signed-in Kernal may. */
@@ -91,8 +92,10 @@ export async function registerKeyRoutes(app: FastifyInstance, ctx: RouteContext)
       // the key, in its config.
       const status = (err as { response?: { status?: unknown } } | undefined)?.response?.status;
       req.log.warn({ provider, status, message: err instanceof Error ? err.message : String(err) }, "provider key write failed");
+      metrics.count("provider_key.write", { provider, op: "set", outcome: "failed" });
       return reply.code(502).send({ error: "secret_write_failed" });
     }
+    metrics.count("provider_key.write", { provider, op: "set", outcome: "ok" });
     req.log.info({ provider, deviceId: req.identity!.deviceId }, "provider key set");
     return view;
   });
@@ -103,6 +106,7 @@ export async function registerKeyRoutes(app: FastifyInstance, ctx: RouteContext)
     const { provider } = req.params;
     if (!isProviderKeyProvider(provider)) return reply.code(400).send({ error: "unknown_provider" });
     await deleteProviderKey(deps(req), { userId: userIdFor(req.identity!.email), provider });
+    metrics.count("provider_key.write", { provider, op: "delete", outcome: "ok" });
     req.log.info({ provider, deviceId: req.identity!.deviceId }, "provider key removed");
     return reply.code(204).send();
   });

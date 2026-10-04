@@ -10,7 +10,7 @@
 // before a validation change is skipped instead of reaching a Kernal as the wrong type.
 
 import type { Store } from "../store/types.ts";
-import { sentryOn, type FleetSettings } from "../fleet-settings.ts";
+import { sentryOn, sentrySignals, signalsOnWire, type FleetSettings } from "../fleet-settings.ts";
 import { settingsDocId, type SettingsDoc } from "../store/settings.ts";
 import { userIdFor } from "./user-id.ts";
 import {
@@ -51,7 +51,8 @@ export const DEFAULT_GROUP = "everyone";
 /** The fleet level's values: `values` plus the three Sentry keys from `telemetry.sentry`. Sentry
  * counts as set only while it is on (with a DSN), the same rule as clientFleetSettings: while it is
  * off, `enabled` falls to its default (false), the DSN is absent and the sample rate is the
- * schema's default. */
+ * schema's default. #424's signal keys follow the same rule, and are set only when on (each
+ * defaults to off), so with Sentry off or a signal off it resolves to its default, false or 0. */
 export function fleetLevelValues(fleet: FleetSettings): Record<string, SettingValue> {
   const values: Record<string, SettingValue> = { ...(isPlainObject(fleet.values) ? fleet.values : {}) };
   const sentry = fleet.telemetry.sentry;
@@ -59,6 +60,7 @@ export function fleetLevelValues(fleet: FleetSettings): Record<string, SettingVa
     values["telemetry.sentry.enabled"] = true;
     values["telemetry.sentry.dsn"] = sentry.dsn;
     values["telemetry.sentry.tracesSampleRate"] = sentry.tracesSampleRate;
+    for (const [field, value] of Object.entries(signalsOnWire(sentrySignals(sentry)))) values[`telemetry.sentry.${field}`] = value;
   }
   return values;
 }

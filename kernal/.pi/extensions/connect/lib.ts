@@ -135,6 +135,36 @@ export function keepListed(curated: string[], catalogue: any): { kept: string[];
   return { kept: curated.filter(listed), dropped: curated.filter((id) => !listed(id)) };
 }
 
+/** #440: the curated OpenRouter list's central settings, one add and one remove key per level. */
+export const CURATION_KEYS = {
+  fleetAdd: "openrouter.models.fleetAdd", fleetRemove: "openrouter.models.fleetRemove",
+  add: "openrouter.models.add", remove: "openrouter.models.remove",
+  localAdd: "openrouter.models.localAdd", localRemove: "openrouter.models.localRemove",
+} as const;
+export type CurationLists = Record<keyof typeof CURATION_KEYS, string[]>;
+export const NO_CURATION: CurationLists = { fleetAdd: [], fleetRemove: [], add: [], remove: [], localAdd: [], localRemove: [] };
+
+/** "a/b, c/d,,a/b" → ["a/b", "c/d"]: trimmed, empties and repeats dropped. */
+export function parseIdList(text: unknown): string[] {
+  if (typeof text !== "string") return [];
+  return [...new Set(text.split(",").map((s) => s.trim()).filter(Boolean))];
+}
+
+/**
+ * The OpenRouter models to offer: the base list (Kernal's defaults), plus every level's adds, minus
+ * every level's removes. A fleet removal always wins, so "hidden from everyone" holds. When
+ * OPENROUTER_MODELS replaced the base (`replaced`), only the fleet's removals still apply.
+ */
+export function curateOpenRouter(base: string[], lists: CurationLists, replaced = false): string[] {
+  const out = new Set(base);
+  if (!replaced) {
+    for (const id of [...lists.fleetAdd, ...lists.add, ...lists.localAdd]) out.add(id);
+    for (const id of [...lists.remove, ...lists.localRemove]) out.delete(id);
+  }
+  for (const id of lists.fleetRemove) out.delete(id);
+  return [...out];
+}
+
 export function backends(env: Record<string, string>, litellmMeta: Map<string, ModelMeta>, lmstudioMeta: Map<string, LmStudioMeta> = new Map()): Backend[] {
   // LMSTUDIO_CONTEXT caps the window pi budgets against; the served window comes from /api/v0/models
   const lmCap = Number(env.LMSTUDIO_CONTEXT) || Infinity;

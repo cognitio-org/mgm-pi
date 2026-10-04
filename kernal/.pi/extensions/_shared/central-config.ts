@@ -81,11 +81,11 @@ export interface KnownSetting {
 }
 
 /** The schema version this Kernal was built against. */
-export const KNOWN_SCHEMA_VERSION = 2;
+export const KNOWN_SCHEMA_VERSION = 3;
 
 const PERSONAL: readonly Level[] = ["fleet", "user", "profile", "device", "local"];
 
-/** The v1 keys (spec §3.2), and v2's Sentry signals (#424). */
+/** The v1 keys (spec §3.2), v2's Sentry signals (#424) and v3's curated OpenRouter list (#440). */
 export const KNOWN_SETTINGS: readonly KnownSetting[] = [
   { key: "router.baseUrl", type: "url", secret: false, levels: ["fleet", "local"], override: "none", default: "https://router.kernal.one/v1", env: ["LITELLM_BASE_URL"], description: "The LiteLLM router this machine's router key is for." },
   { key: "router.key", type: "string", secret: true, levels: ["device", "local"], override: "any", env: ["LITELLM_AGENT_KEY", "LITELLM_API_KEY"], description: "This device's own router key, minted at sign-in." },
@@ -107,6 +107,14 @@ export const KNOWN_SETTINGS: readonly KnownSetting[] = [
   { key: "telemetry.sentry.metrics", type: "boolean", secret: false, levels: ["fleet", "local"], override: "opt-out", default: false, description: "Counters: agent runs, tool and model calls, tokens, spend, errors." },
   { key: "telemetry.sentry.logs", type: "boolean", secret: false, levels: ["fleet", "local"], override: "opt-out", default: false, description: "Server logs to Sentry (Outfitter and Drives; a laptop sends none)." },
   { key: "telemetry.sentry.profilesSampleRate", type: "number", min: 0, max: 1, secret: false, levels: ["fleet"], override: "none", default: 0, description: "Share of traces profiled (Outfitter and Drives; not Kernal's binary)." },
+  // v3 (#440): the curated OpenRouter list, one add and one remove key per level so they combine
+  // (connect/lib.ts curateOpenRouter). Comma-separated model ids.
+  { key: "openrouter.models.fleetAdd", type: "string", secret: false, levels: ["fleet"], override: "none", description: "OpenRouter models offered to everyone on top of Kernal's curated list." },
+  { key: "openrouter.models.fleetRemove", type: "string", secret: false, levels: ["fleet"], override: "none", description: "OpenRouter models hidden from everyone; nobody can add them back." },
+  { key: "openrouter.models.add", type: "string", secret: false, levels: ["user", "profile"], override: "any", description: "OpenRouter models you added to your curated list." },
+  { key: "openrouter.models.remove", type: "string", secret: false, levels: ["user", "profile"], override: "any", description: "OpenRouter models you removed from your curated list." },
+  { key: "openrouter.models.localAdd", type: "string", secret: false, levels: ["local"], override: "any", description: "OpenRouter models this machine adds to the curated list." },
+  { key: "openrouter.models.localRemove", type: "string", secret: false, levels: ["local"], override: "any", description: "OpenRouter models this machine removes from the curated list." },
 ];
 
 /** The legacy settings.json flags (`kernal.<flag>: false`) that were each key's local opt-out

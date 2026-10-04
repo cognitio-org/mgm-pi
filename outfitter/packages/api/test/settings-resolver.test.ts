@@ -44,6 +44,23 @@ describe("schema validation", () => {
     assert.equal(coerceSettingValue(decl("router.baseUrl"), "http://r.example/v1", { allowHttp: true }), "http://r.example/v1", "http in dev mode");
   });
 
+  test("the curated OpenRouter list (#440): each key is written at its own level only", () => {
+    const ids = "deepseek/deepseek-v4-pro,openai/gpt-5.5";
+    for (const key of ["openrouter.models.fleetAdd", "openrouter.models.fleetRemove"]) {
+      assert.deepEqual(parseValueWrite("fleet", { values: { [key]: ids } }), { patch: { [key]: ids } });
+      assert.deepEqual(parseValueWrite("user", { values: { [key]: ids } }), { error: "level_not_allowed", key });
+    }
+    for (const key of ["openrouter.models.add", "openrouter.models.remove"]) {
+      for (const level of ["user", "profile"] as const) assert.deepEqual(parseValueWrite(level, { values: { [key]: ids } }), { patch: { [key]: ids } });
+      assert.deepEqual(parseValueWrite("fleet", { values: { [key]: ids } }), { error: "level_not_allowed", key });
+    }
+    // this machine's own keys are declared for Kernal but never stored by Outfitter
+    for (const key of ["openrouter.models.localAdd", "openrouter.models.localRemove"]) {
+      assert.deepEqual(parseValueWrite("user", { values: { [key]: ids } }), { error: "level_not_allowed", key });
+    }
+    assert.equal(SETTINGS_SCHEMA_VERSION, 3);
+  });
+
   test("parseValueWrite checks declared, secret, level and type, in that order", () => {
     assert.deepEqual(parseValueWrite("user", { values: { "model.default": "m", "voice.enabled": null } }), { patch: { "model.default": "m", "voice.enabled": null } });
     assert.deepEqual(parseValueWrite("user", {}), { error: "invalid_request" });

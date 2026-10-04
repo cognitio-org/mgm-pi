@@ -59,6 +59,12 @@ cp -R "$ROOT/skills" "$STAGE/skills"
 cp "$ROOT/../.env.example" "$STAGE/.env.example" 2>/dev/null || cp "$ROOT/.env.example" "$STAGE/.env.example"
 mkdir -p "$STAGE/.codebase-index"; cp "$ROOT/.codebase-index/config.json" "$STAGE/.codebase-index/config.json"
 echo "$VERSION" > "$STAGE/VERSION"; echo "pi $PI_VERSION" >> "$STAGE/VERSION"
+# bin/kernal runs some .ts entry points with node before pi starts (kernal login/logout/whoami).
+# Node takes a .ts file's module type from the nearest package.json; without one here it
+# climbs out of the install and can find e.g. ~/package.json with "type": "commonjs", which turns
+# `import` into a SyntaxError (v0.3.0, `kernal login`). This file stops that walk, like kernal/'s own
+# package.json does in a source checkout.
+printf '{\n  "name": "kernal-bundle",\n  "private": true,\n  "type": "module"\n}\n' > "$STAGE/package.json"
 
 # Chrome companion. install.sh copies these out of the bundle onto stable paths
 # (~/.kernal/chrome). The versioned directory moves on every upgrade, so Chrome
@@ -125,6 +131,8 @@ if [[ "$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/x64/; s/aarch64/arm64
     && grep -qE "^lmstudio" "$ROOT/dist/$NAME.smoke.txt" && grep -qE "^litellm" "$ROOT/dist/$NAME.smoke.txt" \
     && { KERNAL_NO_DISCOVERY=1 KERNAL_SKIP_LMS=1 HOME="$SMOKE_HOME" LMSTUDIO_BASE_URL=http://127.0.0.1:9/v1 timeout 25 ./bin/kernal -p --no-session --model lmstudio/qwen/qwen3.6-35b-a3b "x" >> "$ROOT/dist/$NAME.smoke.txt" 2>&1 || true; } \
     && ! grep -q "Failed to load extension" "$ROOT/dist/$NAME.smoke.txt" \
+    && { HOME="$SMOKE_HOME" ./bin/kernal whoami >> "$ROOT/dist/$NAME.smoke.txt" 2>&1 || true; } \
+    && grep -q "not signed in" "$ROOT/dist/$NAME.smoke.txt" \
     && { KERNAL_NO_DISCOVERY=1 KERNAL_SKIP_LMS=1 HOME="$SMOKE_HOME" ./bin/kernal --teleport > "$ROOT/dist/$NAME.teleport.txt" 2>&1 || true; } \
     && grep -q "Usage: kernal --teleport" "$ROOT/dist/$NAME.teleport.txt" \
     && { KERNAL_NO_DISCOVERY=1 KERNAL_SKIP_LMS=1 HOME="$SMOKE_HOME" KERNAL_TELEPORT_STORE="$SMOKE_HOME/teleport-store" LMSTUDIO_BASE_URL=http://127.0.0.1:9/v1 timeout 60 ./bin/kernal --teleport kernal-smoke-no-such-id -p --no-session --model lmstudio/qwen/qwen3.6-35b-a3b </dev/null >> "$ROOT/dist/$NAME.teleport.txt" 2>&1 || true; } \

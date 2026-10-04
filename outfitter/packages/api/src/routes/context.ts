@@ -77,6 +77,6 @@ export interface RouteContext {
   /** #389 (docs/specs/central-auth.md §5.3): device login and revoke hooks. routes/device.ts
    * announces; CA-5's router keys listen. */
   deviceLifecycle: DeviceLifecycle;
-  /** CA-5: LiteLLM key minting and spend; undefined while OUTFITTER_LITELLM_ADMIN_KEY is unset. */
+  /** CA-5: LiteLLM key minting and spend; undefined while LITELLM_ADMIN_KEY is unset. */
   litellmKeys?: LitellmKeys;
 }

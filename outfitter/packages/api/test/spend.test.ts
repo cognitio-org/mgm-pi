@@ -9,13 +9,14 @@ import { buildTestApp } from "./helpers.ts";
 import { FakeLitellm } from "./fake-litellm.ts";
 import { createLitellmKeys, currentSpendMonth, type LitellmKeys } from "../src/central/litellm-keys.ts";
 import { registerKeyRoutes } from "../src/routes/keys.ts";
+import { defaultFleetSettings, type FleetSettings } from "../src/fleet-settings.ts";
 import type { RouteContext } from "../src/routes/context.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import type { Device } from "../src/store/devices.ts";
 import type { Identity } from "../src/auth.ts";
 import { userIdFor } from "../src/central/user-id.ts";
 
-const CONFIG = { litellmBaseUrl: "https://router.test/v1", litellmKeyAdminKey: "sk-admin-test" };
+const CONFIG = { litellmBaseUrl: "https://router.test/v1", litellmAdminKey: "sk-admin-test" };
 const DEV_USER = userIdFor("dev@localhost");
 
 /** The dev user with one device key and one run key in the fake, and a month of logs. */
@@ -197,14 +198,15 @@ const DEVICE: Device = {
 } as Device;
 
 /** registerKeyRoutes behind a preHandler setting `identity`, with a devices collection that knows `devices`. */
-async function bareRouterApp(opts: { role: "link" | "web" | "all"; identity: Identity; store: MemoryStore; keys?: LitellmKeys; devices?: Device[] }) {
+async function bareRouterApp(opts: { role: "link" | "web" | "all"; identity: Identity; store: MemoryStore; keys?: LitellmKeys; devices?: Device[]; fleet?: FleetSettings }) {
   const app = Fastify();
   app.addHook("preHandler", async (req) => {
     req.identity = opts.identity;
   });
   const devices = { findById: async (id: string) => opts.devices?.find((d) => d.id === id) ?? null };
   const store = Object.assign(Object.create(opts.store), { devices });
-  const ctx = { config: { role: opts.role, litellmBaseUrl: CONFIG.litellmBaseUrl }, store, secretAdmin: undefined, litellmKeys: opts.keys } as unknown as RouteContext;
+  const fleetSettings = { get: async () => opts.fleet ?? defaultFleetSettings() };
+  const ctx = { config: { role: opts.role, litellmBaseUrl: CONFIG.litellmBaseUrl }, store, secretAdmin: undefined, litellmKeys: opts.keys, fleetSettings } as unknown as RouteContext;
   await registerKeyRoutes(app, ctx);
   await app.ready();
   return app;
@@ -229,6 +231,22 @@ describe("POST /api/device/router-key", () => {
     assert.ok(!fake.keys.has(first.tokenId!), "the old key is gone");
     assert.equal(fake.keys.size, 1);
     assert.ok(fake.users.has(DEVICE.userId));
+    await app.close();
+  });
+
+  test("a re-mint uses the fleet's device key limits", async () => {
+    const fake = new FakeLitellm();
+    const store = new MemoryStore();
+    const keys = createLitellmKeys(CONFIG, store, { fetch: fake.fetch })!;
+    const fleet = { ...defaultFleetSettings(), values: { "router.deviceKey.maxBudgetUsd": 9, "router.deviceKey.durationDays": 30, "router.deviceKey.rpmLimit": 10 } };
+    const app = await bareRouterApp({ role: "link", identity, store, keys, devices: [DEVICE], fleet });
+    const res = await app.inject({ method: "POST", url: "/api/device/router-key" });
+    assert.equal(res.statusCode, 200, res.body);
+    const [gen] = fake.callsTo("/key/generate");
+    assert.equal(gen!.body.max_budget, 9);
+    assert.equal(gen!.body.duration, "30d");
+    assert.equal(gen!.body.budget_duration, "30d");
+    assert.equal(gen!.body.rpm_limit, 10);
     await app.close();
   });
 

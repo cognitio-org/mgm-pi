@@ -148,9 +148,13 @@ export interface Config {
   /** LITELLM_BASE_URL: the LiteLLM proxy's OpenAI-compatible base URL (a trailing /v1 is stripped
    * before appending management endpoints like /model/info). Same var name as kernal's .env.example. */
   litellmBaseUrl: string;
-  /** LITELLM_ADMIN_KEY: key used by the provider status service to call LiteLLM's management
-   * endpoints (/health, /model/info, /key/info). Falls back to SecretsBroker.defaultLitellmKey()
-   * (the same default key runs get) when unset. */
+  /** LITELLM_ADMIN_KEY (Secret Manager outfitter-litellm-admin, minted by deploy/litellm-admin.sh,
+   * mounted on both api roles, never a Drive): the LiteLLM management key. The provider status
+   * service probes /health, /model/info and /key/info with it (falling back to
+   * SecretsBroker.defaultLitellmKey() when unset), and central/litellm-keys.ts creates users and
+   * mints and deletes per-device and per-run keys with it (#389 CA-5; unset: no key minting, device
+   * login still works without a router key). Its allowed routes are litellm-admin.sh's
+   * ALLOWED_ROUTES. */
   litellmAdminKey: string;
   /** PROVIDER_POLL_MS: the maximum age of provider status before a read of GET /api/providers
    * re-polls every probe (in the request; there is no background poller). Default 5 minutes. */
@@ -218,11 +222,6 @@ export interface Config {
    * a device code. The link role prints it in POST /api/device/code's `verification_uri`. Empty:
    * `origin` (role "all" serves both). */
   webOrigin: string;
-  /** OUTFITTER_LITELLM_ADMIN_KEY (Secret Manager outfitter-litellm-admin-key, both api roles, never
-   * a Drive): the LiteLLM key that creates users and mints and deletes per-device and per-run keys
-   * (central/litellm-keys.ts). Empty: no key minting; device login still works, without a router
-   * key. Separate from LITELLM_ADMIN_KEY, which only probes /health and /model/info. */
-  litellmKeyAdminKey: string;
   /** CA-6 (#395, central-auth.md §9): OUTFITTER_RUN_KEY_FALLBACK, on unless "0". While minting is
    * on, a Drive run whose own key can't be minted gets the shared outfitter-litellm-key-* instead
    * of failing (central/run-keys.ts). CA-10 turns it off. */
@@ -542,7 +541,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     a2aCheckpointTimeoutMs: Math.max(100, Math.min(30 * 60_000, envInt("A2A_CHECKPOINT_TIMEOUT_MS", 2 * 60_000, env))),
     ...(envGoogleOauth(env.NGROK_GOOGLE_OAUTH) ? { ngrokGoogleOauth: envGoogleOauth(env.NGROK_GOOGLE_OAUTH) } : {}),
     litellmBaseUrl: env.LITELLM_BASE_URL ?? "https://router.kernal.one/v1",
-    litellmAdminKey: env.LITELLM_ADMIN_KEY ?? "",
+    litellmAdminKey: (env.LITELLM_ADMIN_KEY ?? "").trim(),
     providerPollMs: envInt("PROVIDER_POLL_MS", 5 * 60_000, env),
     linkOrigin: env.OUTFITTER_LINK_ORIGIN ?? "",
     operators: envOperators("OUTFITTER_OPERATORS", env),
@@ -562,7 +561,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     agentEngine: envAgentEngine(env),
     loginAllow: envOperators("OUTFITTER_LOGIN_ALLOW", env),
     webOrigin: (env.OUTFITTER_WEB_ORIGIN ?? "").trim().replace(/\/+$/, ""),
-    litellmKeyAdminKey: (env.OUTFITTER_LITELLM_ADMIN_KEY ?? "").trim(),
     runKeyFallback: (env.OUTFITTER_RUN_KEY_FALLBACK ?? "").trim() !== "0",
   };
 }

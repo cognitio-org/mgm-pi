@@ -19,7 +19,7 @@ import {
   setProviderKey,
   type ProviderKeyDeps,
 } from "../central/provider-keys.ts";
-import { currentSpendMonth, deviceKeyAlias, isSpendMonth, mintDeviceRouterKey } from "../central/litellm-keys.ts";
+import { currentSpendMonth, deviceKeyAlias, isSpendMonth, mintDeviceRouterKey, routerKeyLimits } from "../central/litellm-keys.ts";
 import type { Device } from "../store/devices.ts";
 
 /** A Dongle (an `outf_` token: viaToken without a device) never reads or writes keys (§3.5, decision
@@ -159,7 +159,8 @@ export async function registerKeyRoutes(app: FastifyInstance, ctx: RouteContext)
       if (!device) return;
       reply.header("cache-control", "no-store");
       try {
-        const routerKey = await mintDeviceRouterKey(ctx.litellmKeys, { id: device.id, userId: device.userId, ownerEmail: device.ownerEmail, name: device.name }, ctx.config);
+        const limits = routerKeyLimits(await ctx.fleetSettings.get()).device;
+        const routerKey = await mintDeviceRouterKey(ctx.litellmKeys, { id: device.id, userId: device.userId, ownerEmail: device.ownerEmail, name: device.name }, ctx.config, limits);
         // A revoke that ran while minting deleted the previous key, not this one (its RouterKey
         // record was written after). Revoke marks the device first, so a re-read catches it; a
         // failed delete here is recorded and swept.

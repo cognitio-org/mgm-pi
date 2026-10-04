@@ -13,6 +13,8 @@ export interface SettingDecl {
   values?: string[];
   min?: number;
   max?: number;
+  /** For type "number": whole numbers only. */
+  integer?: boolean;
   secret: boolean;
   levels: SettingLevel[];
   override: OverrideRule;

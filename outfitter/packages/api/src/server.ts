@@ -43,7 +43,7 @@ import { applySentrySettings, installSentryErrorHandler, sentryEnabled, Sentry, 
 import { FleetSettingsCache } from "./fleet-settings.ts";
 import { DeviceLifecycle } from "./central/device-lifecycle.ts";
 import { isPublicDevicePath } from "./central/device-tokens.ts";
-import { createLitellmKeys, registerLitellmDeviceHooks, type LitellmKeys } from "./central/litellm-keys.ts";
+import { createLitellmKeys, registerLitellmDeviceHooks, routerKeyLimits, type LitellmKeys } from "./central/litellm-keys.ts";
 
 export interface BuildAppOptions {
   store: Store;
@@ -84,7 +84,7 @@ export interface BuildAppOptions {
    * every installation itself. */
   githubCatalog?: GithubCatalog;
   /** #389 CA-5: LiteLLM key minting. Tests inject one on a fake fetch; production builds one from
-   * config (none while OUTFITTER_LITELLM_ADMIN_KEY is unset). */
+   * config (none while LITELLM_ADMIN_KEY is unset). */
   litellmKeys?: LitellmKeys;
 }
 
@@ -250,9 +250,12 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   // register theirs here; routes/device.ts announces the events.
   const deviceLifecycle = new DeviceLifecycle((msg, err) => fastify.log.warn({ err }, msg));
   const litellmKeys = opts.litellmKeys ?? createLitellmKeys(config, store, { log: (msg, err) => fastify.log.warn({ err }, msg) });
-  registerLitellmDeviceHooks(deviceLifecycle, litellmKeys, config);
+  // Key limits are fleet settings (router.deviceKey.*, router.runKey.*, router.keys.models), read at
+  // each mint so an operator's change applies to the next key.
+  const keyLimits = async () => routerKeyLimits(await fleetSettings.get());
+  registerLitellmDeviceHooks(deviceLifecycle, litellmKeys, config, keyLimits);
   // CA-6 (#395): per-run LiteLLM keys for Drives, and the system team for Outfitter's own calls.
-  const runKeys = new RunKeys({ keys: litellmKeys, store, config, log: (msg, err) => fastify.log.warn({ err }, msg) });
+  const runKeys = new RunKeys({ keys: litellmKeys, store, config, limits: keyLimits, log: (msg, err) => fastify.log.warn({ err }, msg) });
   agentLink.setRunKeys(runKeys);
   void runKeys.ensureSystemTeam();
 

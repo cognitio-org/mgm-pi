@@ -379,6 +379,7 @@ interface SettingDecl {
   type: "string" | "boolean" | "number" | "enum" | "url";
   values?: readonly string[];          // enum
   min?: number; max?: number;          // number
+  integer?: boolean;                   // number: whole numbers only
   secret: boolean;                     // never cached, never in GET /api/config, never shown back
   delivery?: "login";                  // where a secret comes from
   levels: readonly SettingLevel[];     // who may set it
@@ -409,11 +410,26 @@ v1 keys (`SETTINGS_SCHEMA_VERSION = 1`):
 | `telemetry.sentry.enabled` | boolean | no | fleet, local | opt-out | false | |
 | `telemetry.sentry.dsn` | url | no | fleet | none | | |
 | `telemetry.sentry.tracesSampleRate` | number 0..1 | no | fleet | none | 0.05 | |
+| `router.deviceKey.durationDays` | number 1..365, integer | no | fleet | none | 90 | |
+| `router.deviceKey.maxBudgetUsd` | number 0..100000 | no | fleet | none | 50 | |
+| `router.deviceKey.budgetPeriodDays` | number 1..365, integer | no | fleet | none | 30 | |
+| `router.deviceKey.rpmLimit` | number 1..100000, integer | no | fleet | none | 120 | |
+| `router.keys.models` | string, comma-separated | no | fleet | none | (unset: every model) | |
+| `router.runKey.maxBudgetUsd` | number 0..100000 | no | fleet | none | 20 | |
 
 `router.key` is never stored by Outfitter: it is the device's CA-5 key, which Kernal reads from its
 keychain (`getRouterKey`, §2.2). It is declared so `/config` and `/admin` can show its source.
 Personal provider keys are not settings (§4). `telemetry.sentry.enabled`'s local level is the
 existing `kernal.sentry: false` in settings.json.
+
+The `router.deviceKey.*`, `router.keys.models` and `router.runKey.*` keys are the router key limits
+(§5.2, owner decision of 2026-10-04): operators set them at the fleet level only (`PUT
+/api/operator/config/fleet`) and nothing below can change them. The api reads them when it mints a
+key, so a change applies to the next key minted, never to keys already out. They are added to v1
+because no v1 schema has been released yet; Kernal ignores them (they are not in its
+`KNOWN_SETTINGS`), and run.spec.settings leaves out every `router.*` key. The web account page
+lists them read-only under "From the fleet", at their default when the fleet sets none. There is no
+operator editor for fleet values in the web app yet (Settings → Telemetry edits only Sentry).
 
 ### 3.3 Storage
 
@@ -530,28 +546,36 @@ expects, so an older Kernal keeps working against a newer server.
 
 ### 5.1 Configuration
 
-- `config.litellmKeyAdminKey` from `OUTFITTER_LITELLM_ADMIN_KEY` (already in config.ts), mounted
-  from Secret Manager **`outfitter-litellm-admin-key`** on both api services (web and link; the
-  link role mints at the token exchange). Never on the agent job, never sent to a Drive or laptop.
-  Unset: `createLitellmKeys` returns undefined and nothing mints (logins carry no router key, runs
-  keep today's shared keys).
-- Distinct from the existing `LITELLM_ADMIN_KEY` (`outfitter-litellm-admin`), which only probes
-  `/health` and `/model/info`.
+- `config.litellmAdminKey` from the existing **`LITELLM_ADMIN_KEY`**, Secret Manager
+  **`outfitter-litellm-admin`**, which `deploy/service.sh` has long mounted on both api services
+  (web and link; the link role mints at the token exchange). The key is minted by
+  `deploy/litellm-admin.sh` (#403): LiteLLM user `outfitter-svc` (proxy_admin) with
+  `allowed_routes` limited to that script's `ALLOWED_ROUTES`, which list every route below. The
+  same key also serves the provider status probe (`/health/liveliness`, `/model/info`, `/key/info`).
+  Owner decision: mounted on both roles (accepted). Never on the agent job, never sent to a Drive or
+  laptop. Unset: `createLitellmKeys` returns undefined and nothing mints (logins carry no router
+  key, runs keep today's shared keys).
 - `config.litellmBaseUrl` is where keys are minted and the `baseUrl` sent with each key.
 
 ### 5.2 Keys
 
-All through LiteLLM's management API (`/user/new`, `/user/info`, `/key/generate`, `/key/delete`,
-`/team/new`, `/spend/logs`); task D checks each field against LiteLLM's docs and mocks LiteLLM in
-every test.
+All through LiteLLM's management API (`/user/new`, `/user/info`, `/user/list`, `/key/generate`,
+`/key/delete`, `/team/list`, `/team/new`, `/spend/logs`); task D checks each field against
+LiteLLM's docs and mocks LiteLLM in every test.
 - **User**: `user_id = userId`, `user_email = email`. Created at first login (idempotent).
-- **Device key**: `key_alias = kernal-device-<deviceId>`, `user_id`, `duration = "90d"`,
-  `max_budget` 50 (USD), `budget_duration = "30d"`, `rpm_limit` 120, `models` unset (every model the
-  proxy allows), `metadata = { outfitter: "device", deviceId, deviceName }`. The limits are module
-  constants in `central/litellm-keys.ts`. Model access per key is where #378's `local/...` question
-  will be enforced; v1 leaves `models` unset.
+- **Device key**: `key_alias = kernal-device-<deviceId>`, `user_id`, `duration` (default `"90d"`),
+  `max_budget` (default 50 USD), `budget_duration` (default `"30d"`), `rpm_limit` (default 120),
+  `models` (default unset: every model the proxy allows), `metadata = { outfitter: "device",
+  deviceId, deviceName }`.
 - **Run key** (§9): `key_alias = outfitter-run-<runId>`, `user_id` of the session owner, `duration`
-  = the run's seconds, `max_budget` 20, `metadata = { outfitter: "run", runId, sessionId }`.
+  = the run's seconds, `max_budget` (default 20 USD), `models` (as device keys), `metadata = {
+  outfitter: "run", runId, sessionId }`.
+- **Limits are central settings** (§3.2, fleet level only): `router.deviceKey.durationDays`,
+  `.maxBudgetUsd`, `.budgetPeriodDays`, `.rpmLimit`, `router.keys.models` (both kinds) and
+  `router.runKey.maxBudgetUsd`. `routerKeyLimits(fleet)` (`central/litellm-keys.ts`) resolves them
+  through `resolveKey` at each mint (device login hook, `POST /api/device/router-key`, `RunKeys`);
+  the defaults are the schema's, equal to the module constants. Model access per key is where
+  #378's `local/...` question will be enforced.
 - **Record**: collection **`routerKeys`** (`store/keys.ts`, `RouterKey`): `{ _id: alias, alias,
   kind: device | run | system, userId?, ownerEmail?, deviceId?, runId?, litellmTokenId?, models?,
   maxBudget?, budgetDuration?, createdAt, expiresAt?, deletedAt?, deleteFailedAt? }`; never the key.
@@ -782,7 +806,7 @@ Rules:
 | **A** CA-1 api (#390) | `api/src/central/device-tokens.ts`, `api/src/central/device-login.ts` (new: flow logic, allow-list), `api/src/store/devices.ts`, `api/src/routes/device.ts`, `api/src/auth.ts`, `api/src/routes/tokens.ts` (Dongle fix 1), `api/test/device-*.test.ts`, tests pinning old Dongle behaviour (`tokens.test.ts`, `token-verification.test.ts`, `auth.test.ts`, `roles.test.ts` as needed) | `api/src/routes/me.ts` (optional `ip` field for B); `api/src/server.ts` (pass `config` to `identityFromLinkRequest` in the auth preHandler, one line, so Dongle fix 3 runs on link); `deploy/service.sh` (OUTFITTER_LOGIN_ALLOW, OUTFITTER_WEB_ORIGIN); `deploy/config.env` (Matej in IAP_MEMBERS); `docs/protocol.md` (a "Device login" section) |
 | **B** CA-1 web (#390) | `web/src/pages/DeviceApprovePage.tsx`, `web/src/pages/DevicesPage.tsx`, `web/src/api/devices.ts`, `web/src/components/devices/*` (new), `web/src/lib/devices.ts` (new, pure helpers), `web/test/devices*.test.ts(x)` | `web/src/App.tsx`: remove the `/tokens` nav line, drop `operatorOnly` from the `/devices` line; `web/src/style.css` or `web/src/styles/*` (new rules at the end) |
 | **C** CA-3 settings api (#392) | `api/src/central/settings-schema.ts`, `api/src/central/settings-resolver.ts`, `api/src/store/settings.ts`, `api/src/routes/config.ts`, `api/src/fleet-settings.ts`, `api/test/settings-*.test.ts`, `api/test/config-routes.test.ts` | `api/src/routes/operator.ts` (bump the fleet `version` in the existing PUT); `api/src/store/memory.ts` + `mongo.ts` `FleetSettings` classes only if the version bump needs it |
-| **D** CA-4 + CA-5 api (#393, #394) | `api/src/central/litellm-keys.ts`, `api/src/central/provider-keys.ts` (new), `api/src/store/keys.ts`, `api/src/routes/keys.ts`, `api/test/litellm-keys.test.ts`, `api/test/provider-keys.test.ts`, `api/test/spend.test.ts` | `api/src/routes/hooks.ts` (one `sweepRouterKeys()` call in the tick); `deploy/service.sh` (mount `OUTFITTER_LITELLM_ADMIN_KEY=outfitter-litellm-admin-key:latest` in SECRETS); `deploy/README.md` (the secret) |
+| **D** CA-4 + CA-5 api (#393, #394) | `api/src/central/litellm-keys.ts`, `api/src/central/provider-keys.ts` (new), `api/src/store/keys.ts`, `api/src/routes/keys.ts`, `api/test/litellm-keys.test.ts`, `api/test/provider-keys.test.ts`, `api/test/spend.test.ts` | `api/src/routes/hooks.ts` (one `sweepRouterKeys()` call in the tick); `deploy/README.md` (the secret's consumers; `LITELLM_ADMIN_KEY` was already mounted) |
 | **E** CA-2 kernal login (#391) | `kernal/.pi/extensions/_shared/outfitter-session.ts`, `kernal/.pi/extensions/_shared/keychain.ts` (new, the backends), `kernal/.pi/extensions/kernal-login/*`, `kernal/.pi/extensions/_shared/outfitter-env.ts`, `kernal/tests/outfitter-session.test.ts`, `kernal/tests/login-cli.test.ts` | one-line `creds.token` → `await outfitterBearer(creds)` edits in `teleport/outfitter-store.ts`, `outfitter-admin/transport.ts`, `outfitter-agentengine/*`, `_shared/fleet-settings.ts`, `sentry/index.ts`; `bin/kernal` `pi_memory_env` check (§2.7) |
 | **F** CA-8 config client (#397) | `kernal/.pi/extensions/_shared/central-config.ts`, `kernal/.pi/extensions/kernal-config/*` (new `/config`), `kernal/tests/central-config.test.ts`, `kernal/tests/config-command.test.ts` | `connect/index.ts` (`loadEnv` layering, `/setup` text); `sentry/index.ts` + `sentry/config.ts` (read the three sentry keys from central-config when signed in) |
 | **G** CA-9 /admin (#398) | `kernal/.pi/extensions/kernal-admin/*`, `kernal/tests/admin*.test.ts` | none |
@@ -798,12 +822,14 @@ in this document.
 
 ## 14. Owner steps (never performed by an agent)
 
-1. Create the Secret Manager secret `outfitter-litellm-admin-key` with a LiteLLM key allowed to
-   manage users, keys and teams (limited to `/user/*`, `/key/*`, `/team/*`, `/spend/*` routes if
-   LiteLLM allows), readable by the api service account only (#384's approval).
+1. Run `ROTATE=1 outfitter/deploy/litellm-admin.sh` (or plain `litellm-admin.sh` if
+   `outfitter-litellm-admin` holds no scoped key yet) once the follow-up that added `/team/list` and
+   `/user/list` to `ALLOWED_ROUTES` is merged: a key's routes are fixed when it is minted. The secret
+   is readable by the api service account only (#384's approval).
 2. Add `user:matej@mgms.eu` to IAP: merge A's `deploy/config.env` change, then run `deploy/access.sh`.
-3. Deploy with `OUTFITTER_LOGIN_ALLOW` and `OUTFITTER_WEB_ORIGIN` set (A's `service.sh` change) and
-   the admin key mounted (D's change), through a release tag.
+3. Deploy with `OUTFITTER_LOGIN_ALLOW` and `OUTFITTER_WEB_ORIGIN` set (A's `service.sh` change),
+   through a release tag (`LITELLM_ADMIN_KEY` is already mounted). Optionally set the router key
+   limits (§3.2) with `PUT /api/operator/config/fleet`; the defaults apply otherwise.
 4. Point `link.kernal.one` at the link service if it isn't already (it's baked into releases).
 5. Move Outfitter's own default key into the `outfitter-system` team (I's PR says which).
 6. After everyone is on device keys: block the hand-issued `LITELLM_AGENT_KEY`s, Matej's key and the
@@ -819,11 +845,13 @@ in this document.
 3. **Rotation grace**: a replaced access token stays valid until its own expiry and a replaced
    refresh token for 60 s, so concurrent Kernal processes and crashes don't sign the machine out;
    refresh-token reuse after the grace revokes the device (theft signal).
-4. **Separate admin key variable** `OUTFITTER_LITELLM_ADMIN_KEY` (secret
-   `outfitter-litellm-admin-key`) mounted on both api roles: the link role mints at the token
-   exchange and re-mint, and runs start on both roles. Never on Drives or laptops.
+4. **One admin key variable**: the existing `LITELLM_ADMIN_KEY` (secret `outfitter-litellm-admin`,
+   minted scoped by `litellm-admin.sh`) mounted on both api roles: the link role mints at the token
+   exchange and re-mint, and runs start on both roles. Never on Drives or laptops. (Superseded the
+   earlier separate `OUTFITTER_LITELLM_ADMIN_KEY`, 2026-10-04.)
 5. **Device router keys expire after 90 days** and are re-minted by Kernal; budget 50 USD / 30 days,
-   120 rpm. Run keys: budget 20 USD, LiteLLM `duration` as the backstop.
+   120 rpm, every model. Run keys: budget 20 USD, LiteLLM `duration` as the backstop. These are the
+   defaults of fleet-only settings (§3.2, owner decision 2026-10-04), not constants.
 6. **Login allow-list** is a new env var in PREVIEW_ALLOW's format, set by deploy from IAP_MEMBERS
    plus operators; empty outside dev refuses device logins but leaves Dongles alone, so a deploy
    without it changes nothing for existing users.

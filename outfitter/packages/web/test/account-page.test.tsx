@@ -32,6 +32,7 @@ const schema = {
     { key: "model.default", type: "string", secret: false, levels: PERSONAL, override: "any", since: 1, description: "Start model." },
     { key: "model.thinking", type: "enum", values: ["off", "low", "high"], secret: false, levels: PERSONAL, override: "any", since: 1, description: "Thinking." },
     { key: "localHost.shareModels", type: "boolean", secret: false, levels: ["user", "profile", "device", "local"], override: "any", default: false, since: 1, description: "Share local models." },
+    { key: "router.deviceKey.maxBudgetUsd", type: "number", min: 0, max: 100000, secret: false, levels: ["fleet"], override: "none", default: 50, since: 1, description: "Device key budget." },
   ],
 };
 
@@ -47,6 +48,7 @@ function config(profile: string | null) {
       "model.default": { value: "claude-auto-llm", source: "profile", sourceName: profile ?? "work", override: "any", locked: false, localAllowed: true },
       "model.thinking": { value: "high", source: "fleet", override: "none", locked: true, localAllowed: false },
       "localHost.shareModels": { value: false, source: "default", override: "any", locked: false, localAllowed: true },
+      "router.deviceKey.maxBudgetUsd": { value: 50, source: "default", override: "none", locked: false, localAllowed: false },
     },
     versions: { fleet: 3, user: 3, profile: 2, device: 0 },
     resolvedAt: "2026-10-04T10:00:00.000Z",
@@ -258,6 +260,16 @@ describe("AccountPage: account-wide settings", () => {
     expect(s.textContent).toContain("router.baseUrl");
     expect(s.textContent).toContain("set by your Sysop");
     expect(s.querySelector("input, select")).toBeNull();
+  });
+
+  it("lists a fleet-only setting at its default as set by the Sysop; other defaults stay out", async () => {
+    stubFetch();
+    await render();
+    const s = section("account-fleet");
+    const row = [...s.querySelectorAll("tr")].find((tr) => tr.textContent?.includes("router.deviceKey.maxBudgetUsd"));
+    expect(row?.textContent).toContain("50");
+    expect(row?.textContent).toContain("set by your Sysop");
+    expect(s.textContent).not.toContain("localHost.shareModels");
   });
 });
 

@@ -403,9 +403,10 @@ SSE subscribers, and acks.
 is applied, so the real `secrets.litellmKey` can never be sent to a guru-controlled host.
 
 **Run keys and settings (CA-6, #395, docs/specs/central-auth.md §9).** With router key minting on
-(`OUTFITTER_LITELLM_ADMIN_KEY`), a run of a session with an owner gets its own LiteLLM key in
+(`LITELLM_ADMIN_KEY`), a run of a session with an owner gets its own LiteLLM key in
 `secrets.litellmKey`: alias `outfitter-run-<runId>`, the owner's `user_id`, LiteLLM `duration` 24 h
-(the agent job's task timeout), budget 20 USD (`central/run-keys.ts`). It is minted once, on the
+(the agent job's task timeout), budget the fleet setting `router.runKey.maxBudgetUsd` (default
+20 USD) and models `router.keys.models` (default all) (`central/run-keys.ts`). It is minted once, on the
 run's first spec; a reconnect of a running run gets `litellmKey: ""` (agentd keeps its first spec).
 A spec re-sent while the run still provisions never deletes a key that may have gone out: it gets the
 shared key while the fallback is on, otherwise an additional key `outfitter-run-<runId>-<n>`.

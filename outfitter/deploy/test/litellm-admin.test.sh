@@ -2,7 +2,7 @@
 # litellm-admin.sh against a fake router (node http) and a fake gcloud that keeps secrets in files.
 # Checks: first run creates the user, mints one scoped key and stores it; a rerun does nothing;
 # ROTATE=1 stores a new key, disables the old version and deletes the old key; no key value ever
-# reaches stdout/stderr. No network, no GCP.
+# reaches stdout/stderr; the key's allowed routes are exactly the ones the api calls. No network, no GCP.
 #   bash outfitter/deploy/test/litellm-admin.test.sh
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -82,6 +82,20 @@ run
 grep -q '"user_role":"proxy_admin"' "${ROUTER_LOG}" || fail "service user not proxy_admin"
 grep -q '"allowed_routes":\["/key/generate"' "${ROUTER_LOG}" || fail "key not scoped"
 grep -q '/key/regenerate' "${ROUTER_LOG}" && fail "regenerate must not be allowed"
+# The minted key's allowed_routes equal the LiteLLM routes the api calls with it, plus EXTRA_ROUTES
+# (routes kept on purpose without a caller; none today). Either side having a route the other
+# lacks fails: a missing route breaks the api, an extra one widens a key the link service holds.
+EXTRA_ROUTES=""
+API_SRC="${HERE}/../../packages/api/src"
+called="$( { grep -ohE '(this\.(call|ok)\("(GET|POST)", "/[a-z/_]+"|\$\{root\}/[a-z/_]+)' \
+  "${API_SRC}/central/litellm-keys.ts" "${API_SRC}/providers-status.ts" "${API_SRC}/models.ts" | grep -oE '/[a-z/_]+'
+  for r in ${EXTRA_ROUTES}; do echo "${r}"; done; } | sort -u)"
+[[ "$(wc -l <<<"${called}")" -ge 10 ]] || fail "found too few api routes: ${called}"
+allowed="$(grep -m1 '^POST /key/generate ' "${ROUTER_LOG}" | sed 's/^POST \/key\/generate //' \
+  | node -e 'let b="";process.stdin.on("data",(c)=>(b+=c)).on("end",()=>console.log(JSON.parse(b).allowed_routes.join("\n")))' \
+  | sort -u)"
+[[ "${allowed}" == "${called}" ]] || fail "allowed_routes != routes the api calls (+EXTRA_ROUTES):
+$(diff <(echo "${called}") <(echo "${allowed}") | grep '^[<>]' | sed 's/^</  called, not allowed:/; s/^>/  allowed, not called:/')"
 
 # Rerun is a no-op.
 run

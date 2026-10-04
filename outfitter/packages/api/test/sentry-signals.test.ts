@@ -116,8 +116,18 @@ describe("the fleet document", () => {
   });
 });
 
+/** These tests turn profiles on through the app: start the SDK first (same DSN) with a stand-in
+ * profiler, so the app's settings reuse it instead of loading the real native one, whose trace
+ * lifecycle keeps a chunk timer alive and would hold the test process open. */
+function withFakeProfiler(): void {
+  const factory = () => ({ name: "FakeProfiling", setup: () => undefined });
+  applySentrySettings({ ...ON, profilesSampleRate: 0.1 }, runtime(fakeTransport().transport, { loadProfiler: async () => factory as never }));
+  applySentrySettings({ ...ON, enabled: false }, runtime(fakeTransport().transport));
+}
+
 describe("routes", () => {
   test("the operator fleet write stores signals in telemetry.sentry; GET /api/config and /api/fleet-settings carry them", async () => {
+    withFakeProfiler();
     const app = await buildTestApp();
     const f = app.fastify;
     try {
@@ -159,6 +169,7 @@ describe("routes", () => {
   });
 
   test("run.spec's telemetry carries the signals that are on, and only those", async () => {
+    withFakeProfiler();
     const app = await buildTestApp();
     try {
       await app.fastify.inject({

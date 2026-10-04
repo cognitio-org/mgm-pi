@@ -80,3 +80,45 @@ jobs:
       - name: Attach the installer script
         env: { GH_TOKEN: "${{ github.token }}" }
         run: gh release upload '${{ github.event.release.tag_name }}' kernal/scripts/install.sh --clobber
+  # #421: the Sentry release kernal@X.Y.Z (what a bundle's Sentry extension reports, kernal/.pi/
+  # extensions/sentry/config.ts releaseName), its commits linked, finalized. No deploy marker: a
+  # bundle is downloaded, not deployed. Skipped until the SENTRY_ORG / SENTRY_PROJECT variables and
+  # the SENTRY_AUTH_TOKEN secret are set (outfitter/deploy/README.md "Sentry releases"); a Sentry
+  # failure never fails the release.
+  sentry:
+    needs: [validate, build, installer]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check whether Sentry releases are configured
+        id: sentry
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+        run: |
+          if [[ -n "$SENTRY_AUTH_TOKEN" && -n "$SENTRY_ORG" && -n "$SENTRY_PROJECT" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::SENTRY_ORG, SENTRY_PROJECT or SENTRY_AUTH_TOKEN not set; Sentry release skipped"
+          fi
+      - uses: actions/checkout@v5
+        if: steps.sentry.outputs.enabled == 'true'
+        with:
+          fetch-depth: 0
+      - name: Sentry release
+        if: steps.sentry.outputs.enabled == 'true'
+        continue-on-error: true
+        uses: getsentry/action-release@ff07929a6537bac57790c3451cf4d364aca38528 # v3.7.0
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+        with:
+          release: kernal@${{ needs.validate.outputs.version }}
+          set_commits: auto
+          ignore_missing: true
+          ignore_empty: true
+          finalize: true
+          disable_telemetry: true

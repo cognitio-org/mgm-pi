@@ -116,6 +116,30 @@ that ran before that grant (Actions run `35853815936`, tag `outfitter-v2026.09.2
 the page and never moved the fleet, because `release.sh` deploys the page first. See
 `docs/reports/sandbox-git.md`.
 
+### Sentry releases (#421)
+
+After `release.sh` succeeds, the deploy workflow creates the Sentry release named after the tag
+(`outfitter-vYYYY.MM.DD.N`, the `OUTFITTER_RELEASE` the api, link, Drives and, through
+`GET /api/fleet-settings`, the web app report under), links its commits, finalizes it and records
+a `production` deploy. A manual re-run or rollback of an existing tag records another deploy on
+that release. Kernal's release workflow (`.github/workflows/release.yml`) does the same for
+`kernal@X.Y.Z`, the name a bundle reports, without a deploy marker. A Sentry failure never fails a
+deploy or a Kernal release.
+
+Both steps skip, with a notice, until the owner sets up (repository Settings -> Secrets and
+variables -> Actions):
+
+1. Repository **variable** `SENTRY_ORG`: the Sentry organization slug.
+2. Repository **variable** `SENTRY_PROJECT`: the project slug (the one the fleet's DSN points at).
+3. Repository **secret** `SENTRY_AUTH_TOKEN`: an internal-integration or personal token with the
+   `project:releases` and `org:read` scopes.
+4. In Sentry, the GitHub integration with `cognitio-org/mgm-pi` added (Settings -> Integrations
+   -> GitHub), so commits can be linked. Without it the release is created but linking fails, which
+   stops the step before the deploy marker and finalize (a warning only; the deploy is unaffected).
+
+Web source maps (un-minified stack traces for the browser app) are not uploaded yet: that needs the
+Sentry plugin in the image build, a separate follow-up.
+
 ## Order of operations
 
 1. **`./baseline.sh`** — enables the required APIs, creates the `outfitter` Artifact Registry

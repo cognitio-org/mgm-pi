@@ -11,7 +11,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { decide, defaultEnvironment, describe as describeDecision, optedOut } from "../.pi/extensions/sentry/config.ts";
+import { decide, defaultEnvironment, describe as describeDecision, optedOut, releaseName } from "../.pi/extensions/sentry/config.ts";
 import { applySentry, sending, _resetSentryState, type SentryLike, type SentryInit, type SentrySpan } from "../.pi/extensions/sentry/client.ts";
 import { CRASH_MAX_AGE_MS, agentRunError, agentRunReport, crashesToReport, scrubEvent, toolSpanAttributes } from "../.pi/extensions/sentry/lib.ts";
 import { MAX_CACHE_AGE_MS, cachedFleetSettings, parseFleetSettings, refreshFleetSettings, type FleetSettings } from "../.pi/extensions/_shared/fleet-settings.ts";
@@ -80,6 +80,11 @@ describe("sentry config: both Outfitter and the person must say yes", () => {
   test("a release bundle reports as production, a source checkout as development", () => {
     assert.equal(defaultEnvironment(true), "production");
     assert.equal(defaultEnvironment(false), "development");
+  });
+
+  test("a bundle reports the release kernal@X.Y.Z, the name release.yml creates", () => {
+    assert.equal(releaseName("0.3.0"), "kernal@0.3.0");
+    assert.equal(releaseName("1.2.0-rc.1"), "kernal@1.2.0-rc.1");
   });
 
   test("the status line tells a decision apart from what is actually happening", () => {

@@ -272,9 +272,10 @@ export interface FleetSettings {
   updatedBy?: string;
 }
 
-/** GET /api/fleet-settings: a client's view, with the DSN only while Sentry is on. */
+/** GET /api/fleet-settings: a client's view, with the DSN only while Sentry is on, and then the
+ * deploy's outfitter-v* release too on a tagged deploy (#421). */
 export interface ClientFleetSettings {
-  telemetry: { sentry: { enabled: false } | { enabled: true; dsn: string; tracesSampleRate: number } };
+  telemetry: { sentry: { enabled: false } | { enabled: true; dsn: string; tracesSampleRate: number; release?: string } };
   updatedAt?: string;
 }
 

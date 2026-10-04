@@ -41,9 +41,12 @@ export interface FleetSettings {
   updatedBy?: string;
 }
 
-/** What a client (Kernal, the web app) is told: the DSN only while Sentry is on. */
+/** What a client (Kernal, the web app) is told: the DSN only while Sentry is on. `release` (#421)
+ * is this deploy's outfitter-v* tag (OUTFITTER_RELEASE), there only while on and only on a tagged
+ * deploy: the web app reports under it, so its events land on the Sentry release the deploy workflow
+ * created. Kernal ignores it (a laptop reports its own kernal@X.Y.Z). */
 export interface ClientFleetSettings {
-  telemetry: { sentry: { enabled: false } | { enabled: true; dsn: string; tracesSampleRate: number } };
+  telemetry: { sentry: { enabled: false } | { enabled: true; dsn: string; tracesSampleRate: number; release?: string } };
   updatedAt?: string;
 }
 
@@ -124,10 +127,14 @@ export function sentryOn(s: SentryFleetSettings): s is SentryFleetSettings & { d
   return s.enabled && typeof s.dsn === "string" && s.dsn !== "";
 }
 
-export function clientFleetSettings(settings: FleetSettings): ClientFleetSettings {
+export function clientFleetSettings(settings: FleetSettings, opts: { release?: string } = {}): ClientFleetSettings {
   const s = settings.telemetry.sentry;
   return {
-    telemetry: { sentry: sentryOn(s) ? { enabled: true, dsn: s.dsn, tracesSampleRate: s.tracesSampleRate } : { enabled: false } },
+    telemetry: {
+      sentry: sentryOn(s)
+        ? { enabled: true, dsn: s.dsn, tracesSampleRate: s.tracesSampleRate, ...(opts.release ? { release: opts.release } : {}) }
+        : { enabled: false },
+    },
     ...(settings.updatedAt ? { updatedAt: settings.updatedAt } : {}),
   };
 }

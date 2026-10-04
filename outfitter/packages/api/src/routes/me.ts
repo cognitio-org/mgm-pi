@@ -21,8 +21,10 @@ export async function registerMeRoute(app: FastifyInstance, ctx: RouteContext): 
 
   // Fleet settings (fleet-settings.ts) for this caller's own machine: Kernal reads it with a
   // Dongle on the link role, the web app under IAP before it starts Sentry. Read from the store,
-  // not the instance cache, so a laptop sees an operator's change on its next start.
-  app.get("/api/fleet-settings", async () => clientFleetSettings(withDefaults(await ctx.store.fleetSettings.get())));
+  // not the instance cache, so a laptop sees an operator's change on its next start. While Sentry is
+  // on it also names this deploy's release (#421), which the web app reports under.
+  app.get("/api/fleet-settings", async () =>
+    clientFleetSettings(withDefaults(await ctx.store.fleetSettings.get()), { release: ctx.config.release || undefined }));
 
   app.get("/api/me", async (req) => {
     const email = req.identity!.email;

@@ -277,7 +277,7 @@ function RevokeDonglesPanel() {
 /** #424's signal switches (api fleet-settings.ts SentryFleetSettings), each off unless turned on
  * here, and each nothing while Sentry itself is off. */
 const SENTRY_SIGNALS = [
-  { key: "logs", label: "Send server logs", hint: "Outfitter's own and every Drive's (info and up, redacted). Kernal laptops send none." },
+  { key: "logs", label: "Send server logs", hint: "Outfitter's own and every Drive's (info and up, secrets redacted, emails as user ids). Kernal laptops send none." },
   { key: "metrics", label: "Send metrics", hint: "Counts and timings: sign-ins, router keys, runs, tool calls, tokens and spend." },
   { key: "agentTraces", label: "Send AI agent traces", hint: "Each agent run, model call and tool call, with models, tokens, cost and timing." },
   {

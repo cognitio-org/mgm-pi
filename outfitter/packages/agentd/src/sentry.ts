@@ -102,22 +102,25 @@ export function initSentry(settings: RunSpecTelemetry["sentry"] | undefined, tra
   if (runId) Sentry.setTag("runId", runId);
   initialized = true;
   if (signals.logs) setLogSink(forwardLog);
-  if (signals.profilesSampleRate > 0) profiler = startProfiler(test);
+  if (signals.profilesSampleRate > 0) profiler = startProfiler(test).catch(() => false);
 }
 
 /** Loads @sentry/profiling-node (a native add-on; Node 24's linux x64/arm64 glibc binaries ship in
- * the package) and adds it to the running SDK. Not loadable: a warning, and no profiles. */
+ * the package) and adds it to the running SDK. Never rejects: an add-on that won't load, or an
+ * integration that throws while it is built or set up, is a warning and no profiles. (Nothing
+ * awaits this promise outside tests, and agentd keeps Node's crash on an unhandled rejection.) */
 async function startProfiler(test: SentryTestOptions): Promise<boolean> {
-  let factory: ProfilerFactory;
   try {
-    factory = test.loadProfiler ? await test.loadProfiler() : ((await import("@sentry/profiling-node")).nodeProfilingIntegration as unknown as ProfilerFactory);
+    const factory: ProfilerFactory = test.loadProfiler
+      ? await test.loadProfiler()
+      : ((await import("@sentry/profiling-node")).nodeProfilingIntegration as unknown as ProfilerFactory);
+    if (!initialized) return false;
+    Sentry.addIntegration(factory());
+    return true;
   } catch (err) {
-    console.warn(`[agentd] sentry: profiling is on but @sentry/profiling-node did not load, so this run sends no profiles: ${err instanceof Error ? err.message : String(err)}`);
+    console.warn(`[agentd] sentry: profiling is on but did not start, so this run sends no profiles: ${err instanceof Error ? err.message : String(err)}`);
     return false;
   }
-  if (!initialized) return false;
-  Sentry.addIntegration(factory());
-  return true;
 }
 
 const LOG_MESSAGE_MAX = 4096;

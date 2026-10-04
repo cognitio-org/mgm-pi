@@ -16,8 +16,14 @@ import type { Config } from "./config.ts";
 import { SandboxProviders } from "./providers/registry.ts";
 import { metrics } from "./sentry.ts";
 
+export function isTerminal(state: string | undefined): boolean {
+  return state === "stopped" || state === "failed";
+}
+
 /** #424: a run reaching a terminal state, as Sentry metrics (a no-op while they are off):
- * `run.finished` (stopped) or `run.failed`, with a fixed `cause`. */
+ * `run.finished` (stopped) or `run.failed`, with a fixed `cause`. Callers count only a run's move
+ * into a terminal state (not isTerminal before), so a run that a user's stop and agentd's
+ * answering bye both end is counted once. */
 export function countRunEnd(state: "stopped" | "failed" | undefined, cause: string): void {
   if (state === "stopped") metrics.count("run.finished", { cause });
   else if (state === "failed") metrics.count("run.failed", { cause });
@@ -290,12 +296,15 @@ export class RunManager {
         // best-effort: the reconciler will clean up an unresponsive sandbox later
       });
     }
+    // #424: counted only on the move into a terminal state. Read again after the provider's stop:
+    // agentd answers its SIGTERM with a bye, which may already have ended (and counted) the run.
+    const ended = isTerminal(run.state) || isTerminal((await this.store.runs.findById(runId))?.state);
     const stopped = await this.store.runs.update(runId, {
       state: "stopped",
       reason,
       updatedAt: new Date().toISOString(),
     });
-    countRunEnd("stopped", "stop");
+    if (!ended) countRunEnd("stopped", "stop");
     return stopped;
   }
 

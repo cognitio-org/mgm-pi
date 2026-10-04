@@ -6,7 +6,7 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { Writable } from "node:stream";
-import { AgentTracer, CONTENT_FIELD_MAX, scrubContent, sentryStartSpan, truncateBytes, type SpanLike, type SpanStart } from "../src/agent-trace.js";
+import { AgentTracer, CONTENT_BUDGET, CONTENT_FIELD_MAX, MAX_CHILD_SPANS, scrubContent, sentryStartSpan, truncateBytes, type SpanLike, type SpanStart } from "../src/agent-trace.js";
 import { agentTraceSignals, initSentry, profilerStartedForTests, resetSentryForTests, Sentry, signalsFrom, toSentryLog } from "../src/sentry.js";
 import { createLogger } from "../src/logger.js";
 import type { PiRpcEvent } from "../src/protocol.js";
@@ -291,10 +291,123 @@ describe("with the real SDK", () => {
     } finally {
       console.warn = warn;
     }
-    assert.match(warnings.join(""), /did not load.*ELF mismatch/);
+    assert.match(warnings.join(""), /did not start.*ELF mismatch/);
     await resetSentryForTests();
 
     initSentry({ ...BASE }, fakeTransport().transport, { loadProfiler: async () => assert.fail("loaded at rate 0") });
     assert.equal(profilerStartedForTests(), undefined);
+  });
+
+  test("profiles: a profiler that throws while built or set up is a warning, never a rejection", async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => void rejections.push(reason);
+    process.on("unhandledRejection", onRejection);
+    const warn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (m: string) => void warnings.push(m);
+    try {
+      const throwingFactory = () => {
+        throw new Error("factory exploded");
+      };
+      assert.doesNotThrow(() => initSentry({ ...BASE, profilesSampleRate: 1 }, fakeTransport().transport, { loadProfiler: async () => throwingFactory as never }));
+      assert.equal(await profilerStartedForTests(), false);
+      await resetSentryForTests();
+
+      const throwingSetup = () => ({
+        name: "FakeProfiling",
+        setup: () => {
+          throw new Error("setup exploded");
+        },
+      });
+      assert.doesNotThrow(() => initSentry({ ...BASE, profilesSampleRate: 1 }, fakeTransport().transport, { loadProfiler: async () => throwingSetup as never }));
+      assert.equal(await profilerStartedForTests(), false);
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      console.warn = warn;
+      process.off("unhandledRejection", onRejection);
+    }
+    assert.deepEqual(rejections, []);
+    assert.match(warnings.join("\n"), /factory exploded/);
+    assert.match(warnings.join("\n"), /setup exploded/);
+  });
+});
+
+describe("agent run budgets (one agent run's envelope under 1 MiB, children under the SDK's 1000)", () => {
+  /** A run of `calls` model calls, each asking for a tool, with large content everywhere. */
+  function bigRun(calls: number): PiRpcEvent[] {
+    const blob = (tag: string) => `${tag} ${"x".repeat(20_000)}`;
+    const events: PiRpcEvent[] = [{ type: "agent_start" }, { type: "message_end", message: { role: "user", content: blob("prompt") } }];
+    for (let i = 0; i < calls; i++) {
+      events.push(
+        { type: "message_start", message: { role: "assistant", model: "m", provider: "litellm", content: [] } },
+        { type: "message_end", message: { role: "assistant", model: "m", provider: "litellm", usage: usage(100, 10, 0.001), stopReason: "toolUse", content: [{ type: "text", text: blob(`out${i}`) }] } },
+        { type: "tool_execution_start", toolCallId: `c${i}`, toolName: "bash", args: { command: blob(`args${i}`) } },
+        { type: "tool_execution_end", toolCallId: `c${i}`, toolName: "bash", result: { content: [{ type: "text", text: blob(`res${i}`) }] }, isError: false },
+        { type: "message_end", message: { role: "toolResult", toolCallId: `c${i}`, toolName: "bash", content: [{ type: "text", text: blob(`res${i}`) }] } },
+      );
+    }
+    events.push(
+      { type: "message_start", message: { role: "assistant", model: "m", provider: "litellm", content: [] } },
+      { type: "message_end", message: { role: "assistant", model: "m", provider: "litellm", usage: usage(100, 10, 0.001), stopReason: "stop", content: [{ type: "text", text: blob("final") }] } },
+      { type: "agent_end", messages: [], willRetry: false },
+    );
+    return events;
+  }
+
+  async function sentTransaction(calls: number, content: boolean): Promise<{ bytes: number; root: Record<string, unknown>; spans: number }> {
+    const { transport, items } = fakeTransport();
+    initSentry({ ...BASE, agentTraces: true, agentContent: content }, transport);
+    play(new AgentTracer({ agentName: "kernal-drive", content, startSpan: sentryStartSpan }), bigRun(calls));
+    await Sentry.flush(5000);
+    const tx = items.filter((i) => i.type === "transaction");
+    assert.equal(tx.length, 1, "one agent run, one transaction");
+    const event = tx[0]!.payload as { contexts: { trace: { data: Record<string, unknown> } }; spans: unknown[] };
+    // SDK 11.2.0 moves gen_ai child spans out of the transaction into a span container item of the
+    // same envelope (core's extractGenAiSpans): count and size both.
+    const genAi = items.filter((i) => i.type === "span").flatMap((i) => (i.payload as { items: unknown[] }).items);
+    const bytes = items.filter((i) => i.type === "transaction" || i.type === "span").reduce((n, i) => n + Buffer.byteLength(JSON.stringify(i.payload)), 0);
+    return { bytes, root: event.contexts.trace.data, spans: event.spans.length + genAi.length };
+  }
+
+  test("a 200-call run with content on stays under 1 MiB, its content marked truncated, its totals whole", async () => {
+    const { bytes, root, spans } = await sentTransaction(200, true);
+    assert.ok(bytes < 1024 * 1024, `envelope is ${bytes} bytes`);
+    assert.equal(root["outfitter.agent.content_truncated"], true);
+    assert.equal(root["outfitter.agent.model_calls"], 201);
+    assert.equal(root["outfitter.agent.tool_calls"], 200);
+    assert.ok(typeof root["gen_ai.input.messages"] === "string", "the root keeps its prompt");
+    assert.ok(typeof root["gen_ai.output.messages"] === "string", "and its final answer");
+    assert.equal(spans, 401);
+  });
+
+  test("past MAX_CHILD_SPANS no new spans open (counted), metadata only stays under 1 MiB, totals still count every call", async () => {
+    const calls = MAX_CHILD_SPANS; // 2 children a call: twice the cap
+    const { bytes, root, spans } = await sentTransaction(calls, false);
+    assert.ok(bytes < 1024 * 1024, `envelope is ${bytes} bytes`);
+    assert.equal(spans, MAX_CHILD_SPANS);
+    assert.equal(root["outfitter.agent.spans_dropped"], 2 * calls + 1 - MAX_CHILD_SPANS);
+    assert.equal(root["outfitter.agent.model_calls"], calls + 1);
+    assert.equal(root["outfitter.agent.tool_calls"], calls);
+    assert.equal(root["outfitter.agent.content_truncated"], undefined);
+    await resetSentryForTests();
+
+    // Both budgets spent at once: the largest envelope an agent run can make.
+    const worst = await sentTransaction(calls, true);
+    assert.ok(worst.bytes < 1024 * 1024, `envelope is ${worst.bytes} bytes`);
+    assert.equal(worst.spans, MAX_CHILD_SPANS);
+  });
+
+  test("content within budget is never marked; the budget holds with the recorder too", () => {
+    const small = recorder();
+    play(new AgentTracer({ agentName: "a", content: true, startSpan: small.startSpan }));
+    assert.equal(small.spans[0]!.attributes["outfitter.agent.content_truncated"], undefined);
+
+    const big = recorder();
+    play(new AgentTracer({ agentName: "a", content: true, startSpan: big.startSpan }), bigRun(200));
+    const contentBytes = big.spans
+      .flatMap((s) => ["gen_ai.input.messages", "gen_ai.output.messages", "gen_ai.tool.call.arguments", "gen_ai.tool.call.result"].map((k) => s.attributes[k]))
+      .filter((v): v is string => typeof v === "string")
+      .reduce((n, v) => n + Buffer.byteLength(v), 0);
+    assert.ok(contentBytes <= CONTENT_BUDGET, String(contentBytes));
   });
 });

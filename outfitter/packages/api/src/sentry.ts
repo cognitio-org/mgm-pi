@@ -20,6 +20,7 @@ import * as Sentry from "@sentry/node";
 import type { FastifyInstance } from "fastify";
 import { sentryOn, sentrySignals, type SentryFleetSettings, type SentrySignals } from "./fleet-settings.ts";
 import { redact as redactShared } from "./search/redact.ts";
+import { userIdFor } from "./central/user-id.ts";
 
 /** Secret-shaped strings out of a log line: search/redact.ts's patterns (kept byte-identical to
  * Kernal's _shared/redact.ts, which a Kernal test checks), plus Kernal's device tokens and a bare
@@ -29,10 +30,23 @@ const EXTRA_PATTERNS: RegExp[] = [
   /(\bbearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi,
 ];
 
+/** An email address anywhere in a log string. */
+const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
+
+/** A log string with every email address replaced by its Outfitter user id (central/user-id.ts):
+ * still the same person across lines, and never the address itself. Logs name operators,
+ * approvers and owners by email (`operator`, `approver`, `by`, `email`, `owners`, a revoke's
+ * `match`), and the logs signal promises a redacted copy, so none of them leaves as written. */
+export function pseudonymizeEmails(text: string): string {
+  return text.replace(EMAIL, (email) => userIdFor(email));
+}
+
+/** A log string as it may leave for Sentry: secret-shaped strings redacted, email addresses as
+ * user ids. */
 export function redact(text: string): string {
   let out = text;
   for (const re of EXTRA_PATTERNS) out = out.replace(re, (match, prefix?: string) => (typeof prefix === "string" && match.startsWith(prefix) ? `${prefix}[redacted]` : "[redacted]"));
-  return redactShared(out);
+  return pseudonymizeEmails(redactShared(out));
 }
 
 export interface SentryRuntime {
@@ -114,7 +128,7 @@ export function applySentrySettings(settings: SentryFleetSettings, runtime: Sent
     initDsn = settings.dsn;
   }
   sending = settings.dsn === initDsn;
-  if (sending && signals.profilesSampleRate > 0 && !profiler) profiler = startProfiler(signals.profilesSampleRate, runtime);
+  if (sending && signals.profilesSampleRate > 0 && !profiler) profiler = startProfiler(signals.profilesSampleRate, runtime).catch(() => false);
 }
 
 type Transport = ReturnType<NonNullable<Sentry.NodeOptions["transport"]>>;
@@ -145,25 +159,26 @@ export function itemAllowed(type: string | undefined): boolean {
 
 /** Loads @sentry/profiling-node (a native add-on: Node 24's prebuilt binary for linux x64/arm64
  * glibc ships in the package, so the api image needs no build tools) and adds it to the running
- * SDK, profiling while a sampled trace is open (profileLifecycle "trace"). A missing or unloadable
- * add-on is a warning, never a failed start. */
+ * SDK, profiling while a sampled trace is open (profileLifecycle "trace"). Never rejects: a missing
+ * or unloadable add-on, or an integration that throws while it is built or set up, is a warning,
+ * never a failed start. (Nothing awaits this promise outside tests, and the api keeps Node's crash
+ * on an unhandled rejection.) */
 async function startProfiler(rate: number, runtime: SentryRuntime): Promise<boolean> {
-  let factory: ProfilerFactory;
   try {
-    factory = runtime.loadProfiler
+    const factory: ProfilerFactory = runtime.loadProfiler
       ? await runtime.loadProfiler()
       : ((await import("@sentry/profiling-node")).nodeProfilingIntegration as unknown as ProfilerFactory);
+    const client = Sentry.getClient();
+    if (!client) return false;
+    // The integration reads these from the client when it is added (SDK 11 has no per-transaction
+    // profilesSampleRate). Set on the live options: the SDK started before profiling was asked for.
+    Object.assign(client.getOptions(), { profileSessionSampleRate: rate, profileLifecycle: "trace" });
+    Sentry.addIntegration(factory());
+    return true;
   } catch (err) {
-    console.warn(`[sentry] profiling is on but @sentry/profiling-node did not load, so this instance sends no profiles: ${err instanceof Error ? err.message : String(err)}`);
+    console.warn(`[sentry] profiling is on but did not start, so this instance sends no profiles: ${err instanceof Error ? err.message : String(err)}`);
     return false;
   }
-  const client = Sentry.getClient();
-  if (!client) return false;
-  // The integration reads these from the client when it is added (SDK 11 has no per-transaction
-  // profilesSampleRate). Set on the live options: the SDK started before profiling was asked for.
-  Object.assign(client.getOptions(), { profileSessionSampleRate: rate, profileLifecycle: "trace" });
-  Sentry.addIntegration(factory());
-  return true;
 }
 
 /** Whether events are being sent right now. */

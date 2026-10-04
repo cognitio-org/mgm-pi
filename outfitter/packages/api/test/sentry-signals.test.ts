@@ -29,6 +29,7 @@ import {
   type SentryRuntime,
 } from "../src/sentry.ts";
 import { registerStaticRoutes } from "../src/routes/static.ts";
+import { userIdFor } from "../src/central/user-id.ts";
 
 const DSN = "http://publicKey@127.0.0.1:9/1";
 const ON: SentryFleetSettings = { enabled: true, dsn: DSN, tracesSampleRate: 0.05 };
@@ -325,6 +326,52 @@ describe("metrics", () => {
       await app.fastify.close();
     }
   });
+
+  test("a run ends once: a user's stop, agentd's answering bye and a second stop count one run.finished", async () => {
+    const { transport, items } = fakeTransport();
+    applySentrySettings({ ...ON, metrics: true }, runtime(transport));
+    const app = await buildTestApp();
+    try {
+      await app.fastify.inject({ method: "PUT", url: "/api/operator/fleet-settings", payload: { telemetry: { sentry: { enabled: true, dsn: DSN, tracesSampleRate: 0, metrics: true } } } });
+      const { session, runId, runToken } = await makeRunningSession(app);
+      const agent = await openAgentSocket(app, runId);
+      sendHello(agent, runId, session.id, runToken);
+      await agent.nextMessage(); // run.spec
+      await app.runs.stop(runId, "user");
+      agent.send({ t: "bye", reason: "sigterm" });
+      assert.equal((await agent.nextClose()).code, 1000);
+      await app.runs.stop(runId, "user");
+      await Sentry.flush(1000);
+      const ends = sentMetrics(items).filter((m) => m.name === "run.finished" || m.name === "run.failed");
+      assert.equal(ends.length, 1, JSON.stringify(ends));
+      assert.equal((ends[0] as unknown as { attributes: Record<string, { value: unknown }> }).attributes.cause?.value, "stop");
+    } finally {
+      app.stopBackgroundTasks();
+      await app.fastify.close();
+    }
+  });
+
+  test("a bye that ends a running run counts it", async () => {
+    const { transport, items } = fakeTransport();
+    applySentrySettings({ ...ON, metrics: true }, runtime(transport));
+    const app = await buildTestApp();
+    try {
+      await app.fastify.inject({ method: "PUT", url: "/api/operator/fleet-settings", payload: { telemetry: { sentry: { enabled: true, dsn: DSN, tracesSampleRate: 0, metrics: true } } } });
+      const { session, runId, runToken } = await makeRunningSession(app);
+      const agent = await openAgentSocket(app, runId);
+      sendHello(agent, runId, session.id, runToken);
+      await agent.nextMessage();
+      agent.send({ t: "bye", reason: "idle" });
+      assert.equal((await agent.nextClose()).code, 1000);
+      await Sentry.flush(1000);
+      const ends = sentMetrics(items).filter((m) => m.name === "run.finished" || m.name === "run.failed");
+      assert.equal(ends.length, 1, JSON.stringify(ends));
+      assert.equal((ends[0] as unknown as { attributes: Record<string, { value: unknown }> }).attributes.cause?.value, "agent_idle");
+    } finally {
+      app.stopBackgroundTasks();
+      await app.fastify.close();
+    }
+  });
 });
 
 describe("profiles", () => {
@@ -355,7 +402,40 @@ describe("profiles", () => {
     } finally {
       console.warn = warn;
     }
-    assert.match(warnings.join("\n"), /profiling-node did not load.*no prebuilt binary/);
+    assert.match(warnings.join("\n"), /profiling is on but did not start.*no prebuilt binary/);
+  });
+
+  test("a profiler that throws while built or set up is a warning, never a rejection or a throw", async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => void rejections.push(reason);
+    process.on("unhandledRejection", onRejection);
+    const warnings: string[] = [];
+    const warn = console.warn;
+    console.warn = (msg: string) => void warnings.push(msg);
+    try {
+      const throwingFactory = () => {
+        throw new Error("factory exploded");
+      };
+      assert.doesNotThrow(() => applySentrySettings({ ...ON, profilesSampleRate: 1 }, runtime(fakeTransport().transport, { loadProfiler: async () => throwingFactory as never })));
+      assert.equal(await profilerStartedForTests(), false);
+      await resetSentryForTests();
+
+      const throwingSetup = () => ({
+        name: "FakeProfiling",
+        setup: () => {
+          throw new Error("setup exploded");
+        },
+      });
+      assert.doesNotThrow(() => applySentrySettings({ ...ON, profilesSampleRate: 1 }, runtime(fakeTransport().transport, { loadProfiler: async () => throwingSetup as never })));
+      assert.equal(await profilerStartedForTests(), false);
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      console.warn = warn;
+      process.off("unhandledRejection", onRejection);
+    }
+    assert.deepEqual(rejections, []);
+    assert.match(warnings.join("\n"), /factory exploded/);
+    assert.match(warnings.join("\n"), /setup exploded/);
   });
 
   test("the real @sentry/profiling-node loads on this Node", async () => {
@@ -403,5 +483,21 @@ describe("redact", () => {
     assert.equal(redact("sent Bearer eyJhbGciOiJIUzI1NiJ9xyz"), "sent Bearer [redacted]");
     assert.equal(redact("Authorization: Bearer abc.def.ghi-jkl"), "Authorization: Bearer [redacted]");
     assert.equal(redact("kda_short"), "kda_short", "too short to be a token");
+  });
+
+  test("email addresses become Outfitter user ids", () => {
+    assert.equal(redact("approved by Ana.Smith+x@Example.co.uk today"), `approved by ${userIdFor("ana.smith+x@example.co.uk")} today`);
+    assert.equal(redact("no address in example.com or @handle"), "no address in example.com or @handle");
+  });
+
+  test("a log line naming people by email never forwards an address", () => {
+    const log = toSentryLog(
+      [{ operator: "op@corp.example", approver: "a@b.cc", by: "c@d.ee", email: "e@f.gg", owners: ["g@h.ii"], match: { email: "j@k.ll" } }, "operator token revoke for op@corp.example"],
+      30,
+    )!;
+    const sent = JSON.stringify(log);
+    assert.ok(!/@/.test(sent), sent);
+    assert.equal(log.attributes.operator, userIdFor("op@corp.example"));
+    assert.equal(log.message, `operator token revoke for ${userIdFor("op@corp.example")}`);
   });
 });

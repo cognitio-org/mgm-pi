@@ -29,6 +29,21 @@ export const CONTENT_FIELD_MAX = 8 * 1024;
  * final cut drops anyway. */
 const CONTENT_SCAN_MAX = 64 * 1024;
 
+// agentd sends spans as whole transactions (sentry.ts traceLifecycle "static"): an agent run's
+// invoke_agent root ends as one envelope. SDK 11.2.0 keeps only the first 1000 child spans of a
+// transaction, silently (core's MAX_SPAN_COUNT), then moves the gen_ai ones out of the transaction
+// into one span container item of the same envelope (core's extractGenAiSpans; Relay caps a
+// container at 12 MiB, an event at 1 MiB). Content at 16 KB a span would make that envelope
+// megabytes on a long run. So each agent run has budgets, which keep its envelope under 1 MiB:
+/** All content fields of one agent run together, in UTF-8 bytes. Past it, content stops (marked
+ * outfitter.agent.content_truncated) and the metadata goes on. */
+export const CONTENT_BUDGET = 384 * 1024;
+/** Of CONTENT_BUDGET, what is kept for the root's own prompt and final answer, set last. */
+const ROOT_CONTENT_RESERVE = 2 * CONTENT_FIELD_MAX;
+/** Child spans (chat, execute_tool) of one agent run. Past it, no new spans open (counted in
+ * outfitter.agent.spans_dropped); the run's totals and metrics still count every call. */
+export const MAX_CHILD_SPANS = 500;
+
 type Attr = string | number | boolean;
 
 /** The part of a Sentry span this module uses; tests pass a recorder. */
@@ -58,6 +73,9 @@ export const sentryStartSpan: StartSpan = (opts) =>
     attributes: opts.attributes,
     ...(opts.parent ? { parentSpan: opts.parent as Sentry.Span } : { parentSpan: null, forceTransaction: true }),
   }) as unknown as SpanLike;
+
+/** Stands in for a child span past MAX_CHILD_SPANS: records nothing, sends nothing. */
+const DROPPED_SPAN: SpanLike = { setAttribute: () => undefined, setStatus: () => undefined, updateName: () => undefined, end: () => undefined };
 
 const STATUS_OK = { code: 1 };
 const STATUS_ERROR = (message: string) => ({ code: 2, message });
@@ -160,11 +178,24 @@ interface Totals {
   tools: number;
 }
 
+/** One open agent run: its root span, totals, and what its budgets have spent. */
+interface AgentRun {
+  span: SpanLike;
+  totals: Totals;
+  prompt?: unknown[];
+  /** Content bytes set on this run's spans so far (CONTENT_BUDGET). */
+  contentBytes: number;
+  contentTruncated: boolean;
+  /** Child spans opened (MAX_CHILD_SPANS), and those not opened past it. */
+  children: number;
+  droppedSpans: number;
+}
+
 export class AgentTracer {
   private readonly opts: AgentTracerOptions;
   private readonly startSpan: StartSpan;
   private readonly now: () => number;
-  private agent: { span: SpanLike; totals: Totals; prompt?: unknown[] } | undefined;
+  private agent: AgentRun | undefined;
   private chat: { span: SpanLike; startedAt: number; firstChunkAt?: number } | undefined;
   private readonly tools = new Map<string, { span: SpanLike; startedAt: number; name: string }>();
   /** Content only: what was added since the last model call (a prompt, tool results). */
@@ -195,8 +226,30 @@ export class AgentTracer {
     }
   }
 
-  private scrub(value: unknown): string {
-    return scrubContent(value, this.opts.secrets?.() ?? []);
+  /** Sets a content field on `span`, scrubbed, while the agent run's content budget lasts (the
+   * root's own fields may use the reserve the children's may not). Content off, or a span not
+   * opened: nothing. */
+  private setContent(agent: AgentRun, span: SpanLike, key: string, value: unknown, root = false): void {
+    if (!this.opts.content || span === DROPPED_SPAN) return;
+    if (agent.contentTruncated && !root) return;
+    const text = scrubContent(value, this.opts.secrets?.() ?? []);
+    const bytes = Buffer.byteLength(text);
+    if (agent.contentBytes + bytes > (root ? CONTENT_BUDGET : CONTENT_BUDGET - ROOT_CONTENT_RESERVE)) {
+      agent.contentTruncated = true;
+      return;
+    }
+    agent.contentBytes += bytes;
+    span.setAttribute(key, text);
+  }
+
+  /** A child span of the agent run, or DROPPED_SPAN past MAX_CHILD_SPANS. */
+  private startChild(agent: AgentRun, opts: Omit<SpanStart, "parent">): SpanLike {
+    if (agent.children >= MAX_CHILD_SPANS) {
+      agent.droppedSpans++;
+      return DROPPED_SPAN;
+    }
+    agent.children++;
+    return this.startSpan({ ...opts, parent: agent.span });
   }
 
   private handle(event: PiRpcEvent): void {
@@ -232,6 +285,10 @@ export class AgentTracer {
     this.agent = {
       span: this.startSpan({ name: `invoke_agent ${this.opts.agentName}`, op: "gen_ai.invoke_agent", attributes }),
       totals: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, calls: 0, tools: 0 },
+      contentBytes: 0,
+      contentTruncated: false,
+      children: 0,
+      droppedSpans: 0,
     };
     this.pendingInput = [];
     this.lastOutput = undefined;
@@ -245,7 +302,7 @@ export class AgentTracer {
     if (model) attributes["gen_ai.request.model"] = model;
     if (message.provider) attributes["gen_ai.provider.name"] = message.provider;
     this.chat = {
-      span: this.startSpan({ name: model ? `chat ${model}` : "chat", op: "gen_ai.chat", attributes, parent: this.agent.span }),
+      span: this.startChild(this.agent, { name: model ? `chat ${model}` : "chat", op: "gen_ai.chat", attributes }),
       startedAt: this.now(),
     };
   }
@@ -299,9 +356,9 @@ export class AgentTracer {
     if (message.stopReason) span.setAttribute("gen_ai.response.finish_reasons", message.stopReason);
     if (chat.firstChunkAt !== undefined) span.setAttribute("gen_ai.response.time_to_first_chunk", (chat.firstChunkAt - chat.startedAt) / 1000);
     if (this.opts.content) {
-      if (this.pendingInput.length > 0) span.setAttribute("gen_ai.input.messages", this.scrub(this.pendingInput));
+      if (this.pendingInput.length > 0) this.setContent(this.agent, span, "gen_ai.input.messages", this.pendingInput);
       const out = [{ role: "assistant", parts: parts(message.content), ...(message.stopReason ? { finish_reason: message.stopReason } : {}) }];
-      span.setAttribute("gen_ai.output.messages", this.scrub(out));
+      this.setContent(this.agent, span, "gen_ai.output.messages", out);
       this.lastOutput = out;
     }
     this.pendingInput = [];
@@ -326,8 +383,8 @@ export class AgentTracer {
     if (!this.agent) return;
     this.tools.get(id)?.span.end();
     const attributes: Record<string, Attr> = { "gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": name };
-    if (this.opts.content && args !== undefined) attributes["gen_ai.tool.call.arguments"] = this.scrub(args);
-    const span = this.startSpan({ name: `execute_tool ${name}`, op: "gen_ai.execute_tool", attributes, parent: this.agent.span });
+    const span = this.startChild(this.agent, { name: `execute_tool ${name}`, op: "gen_ai.execute_tool", attributes });
+    if (args !== undefined) this.setContent(this.agent, span, "gen_ai.tool.call.arguments", args);
     this.tools.set(id, { span, startedAt: this.now(), name });
   }
 
@@ -337,7 +394,7 @@ export class AgentTracer {
     this.tools.delete(id);
     const outcome = isError ? "error" : "ok";
     tool.span.setAttribute("outfitter.tool.outcome", outcome);
-    if (this.opts.content && result !== undefined) tool.span.setAttribute("gen_ai.tool.call.result", this.scrub(toolResultText(result)));
+    if (result !== undefined && this.agent) this.setContent(this.agent, tool.span, "gen_ai.tool.call.result", toolResultText(result));
     tool.span.setStatus(isError ? STATUS_ERROR("tool_error") : STATUS_OK);
     tool.span.end();
     if (this.agent) this.agent.totals.tools++;
@@ -370,10 +427,12 @@ export class AgentTracer {
     span.setAttribute("outfitter.agent.model_calls", t.calls);
     span.setAttribute("outfitter.agent.tool_calls", t.tools);
     if (this.opts.content) {
-      if (agent.prompt) span.setAttribute("gen_ai.input.messages", this.scrub(agent.prompt));
+      if (agent.prompt) this.setContent(agent, span, "gen_ai.input.messages", agent.prompt, true);
       const final = this.lastOutput ?? lastAssistant(messages);
-      if (final) span.setAttribute("gen_ai.output.messages", this.scrub(final));
+      if (final) this.setContent(agent, span, "gen_ai.output.messages", final, true);
+      if (agent.contentTruncated) span.setAttribute("outfitter.agent.content_truncated", true);
     }
+    if (agent.droppedSpans > 0) span.setAttribute("outfitter.agent.spans_dropped", agent.droppedSpans);
     span.setStatus(status);
     span.end();
     this.pendingInput = [];

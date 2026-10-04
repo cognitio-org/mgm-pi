@@ -45,7 +45,7 @@ import { parseSessionRepo } from "./session-repo.ts";
 import { parseBootTimings, parseStartupPhases, startupLogLine, summarizeStartup, type StartupSummary } from "./startup.ts";
 import { isAssistantMessageEntry, liveThoughtTextFromEvent } from "./live-thought.ts";
 import { sentryOn, sentrySignals, signalsOnWire, type FleetSettingsCache, type SentrySignals } from "./fleet-settings.ts";
-import { countRunEnd } from "./runs.ts";
+import { countRunEnd, isTerminal } from "./runs.ts";
 import { runSpecSettings, type RunKeys, type RunSpecSettings } from "./central/run-keys.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -1940,18 +1940,21 @@ export class AgentLink {
         // reconnects and sends the bye again (the reconnect gets 4409 if the run did stop).
         let stored = false;
         try {
+          // #424: counted only when this bye ends the run; a user's stop (RunManager.stop, whose
+          // SIGTERM this bye may answer) or an earlier copy of this bye already counted it.
+          const before = await this.store.runs.findById(runId);
           await this.store.runs.update(runId, {
             state: reason === "error" ? "failed" : "stopped",
             reason,
             lastSeenAt: now,
             updatedAt: now,
           });
+          // agentd's ByeReason, or "other" for anything an older or newer agentd sends.
+          if (!isTerminal(before?.state)) countRunEnd(reason === "error" ? "failed" : "stopped", ["error", "stop", "idle", "sigterm"].includes(reason) ? `agent_${reason}` : "agent_other");
           // Mail this run was handed but never acked goes back to the queue now rather than after
           // its lease.
           await this.store.mail.releaseRun(runId);
           stored = true;
-          // #424: agentd's ByeReason, or "other" for anything an older or newer agentd sends.
-          countRunEnd(reason === "error" ? "failed" : "stopped", ["error", "stop", "idle", "sigterm"].includes(reason) ? `agent_${reason}` : "agent_other");
         } finally {
           if (this.sockets.get(runId) === socket) this.sockets.delete(runId);
           closeQuietly(socket, stored ? 1000 : 1011, stored ? reason : "bye not stored");

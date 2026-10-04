@@ -7,7 +7,7 @@ with a `/connect` command that switches between three backends:
 |---|---|---|
 | `lmstudio` | Local LM Studio (MLX) on `localhost:1234` | discovered live (`qwen/qwen3.6-35b-a3b`, ...) |
 | `litellm` | Cloud router `router.kernal.one` | discovered live, scoped to the agent key's team |
-| `openrouter` | openrouter.ai | curated list, override with `OPENROUTER_MODELS` |
+| `openrouter` | openrouter.ai | curated list (override with `OPENROUTER_MODELS`), minus ids OpenRouter no longer lists |
 
 Everything here is extensions and settings on top of pi; pi's own source is never modified. How the
 pieces work inside, and why they are built that way, is in [docs/architecture.md](docs/architecture.md).

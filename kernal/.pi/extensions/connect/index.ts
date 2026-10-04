@@ -21,7 +21,7 @@ import { truncateToWidth } from "@earendil-works/pi-tui";
 import { env, inSandbox } from "../_shared/env.ts";
 import {
   type Backend, type ModelMeta, type LmStudioMeta, backends, parseEnvText, parseModelInfo, parseLmStudioModels, parseSpendHeaders, rootUrl, normalizeBaseUrl,
-  sessionEstimate, money, footerStatus, budgetRows, renderPanel, cleanKey, keyCheckUrl, authFailureText, busServe,
+  sessionEstimate, money, footerStatus, budgetRows, renderPanel, cleanKey, keyCheckUrl, authFailureText, busServe, keepListed,
 } from "./lib.ts";
 import { settingsPath, updateSettings } from "./settings.ts";
 import { layerCentralEnv, webOrigin } from "../_shared/central-config.ts";
@@ -81,6 +81,7 @@ export async function getJson(url: string, apiKey: string, timeoutMs = 4000): Pr
 
 const reachable = new Set<string>();   // backends whose server answered discovery
 const keyRejected = new Map<string, string>();   // backend id → why the provider refused its key (401/403)
+const notListed = new Map<string, string[]>();   // backend id → curated model ids the provider no longer lists
 
 /** Verify a key against the backend's cheapest authenticated endpoint; only a definite 401/403 counts. */
 async function checkKey(b: Backend, timeoutMs = 5000): Promise<boolean> {
@@ -130,7 +131,15 @@ export async function testConnection(b: Pick<Backend, "id" | "baseUrl" | "apiKey
 
 const keyHint = (id: string) => id === "openrouter" ? "OpenRouter keys start with sk-or-v1-; paste just the key, no \"Bearer\" or quotes." : "Ask Matthew to check the key.";
 async function discover(b: Backend, litellmMeta: Map<string, ModelMeta>, lmstudioMeta: Map<string, LmStudioMeta>): Promise<string[]> {
-  if (!b.discover || env("NO_DISCOVERY")) return b.fallback;   // KERNAL_NO_DISCOVERY: offline / tests
+  if (env("NO_DISCOVERY")) return b.fallback;   // KERNAL_NO_DISCOVERY: offline / tests
+  if (b.id === "openrouter") {
+    const list = await getJson(`${b.baseUrl}/models`, b.apiKey);
+    if (list) reachable.add(b.id);
+    const { kept, dropped } = keepListed(b.fallback, list);
+    if (dropped.length) notListed.set(b.id, dropped);
+    return kept;
+  }
+  if (!b.discover) return b.fallback;
   if (b.id === "lmstudio") {
     const native = await getJson(`${rootUrl(b.baseUrl)}/api/v0/models`, b.apiKey);
     if (native) { reachable.add(b.id); for (const [k, v] of parseLmStudioModels(native)) lmstudioMeta.set(k, v); }
@@ -167,7 +176,7 @@ export default async function (pi: ExtensionAPI) {
   async function registerAll(envOverride?: Record<string, string>) {
     const env = { ...loadEnv(process.cwd()), ...(envOverride ?? {}) };
     registeredFrom = backendInputs(layerCentralEnv({}));
-    litellmMeta.clear(); lmstudioMeta.clear(); reachable.clear(); keyRejected.clear(); registered.clear();
+    litellmMeta.clear(); lmstudioMeta.clear(); reachable.clear(); keyRejected.clear(); notListed.clear(); registered.clear();
     // A cloud sandbox has no local model server: there the lmstudio backend is kept only when
     // LMSTUDIO_BASE_URL was set on purpose (a guru opting in to a tunnelled laptop model), and is
     // never probed on localhost by default.
@@ -249,6 +258,7 @@ export default async function (pi: ExtensionAPI) {
     const anyKey = defs.some((d) => d.id !== "lmstudio" && d.apiKey);
     if (ctx.hasUI && !anyKey && !reachable.has("lmstudio")) ctx.ui.notify("No model connections yet: no API keys and no local model server answering. Run /setup.", "warning");
     if (ctx.hasUI) for (const [id, why] of keyRejected) ctx.ui.notify(`${id} rejected the key (${why}); its models are hidden until /setup saves a working one. ${keyHint(id)}`, "warning");
+    if (ctx.hasUI) for (const [id, ids] of notListed) ctx.ui.notify(`${id} doesn't list ${ids.join(", ")}; left out of /model and /connect. Fix OPENROUTER_MODELS if you set it.`, "warning");
   });
 
   // ---------- /connect ----------

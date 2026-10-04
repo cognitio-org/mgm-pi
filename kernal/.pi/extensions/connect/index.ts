@@ -27,7 +27,6 @@ import {
 } from "./lib.ts";
 import { settingsPath, updateSettings } from "./settings.ts";
 import { describeSource, layerCentralEnv, reresolve, webOrigin } from "../_shared/central-config.ts";
-import { modelSaveTargets, saveModelDefault } from "../kernal-admin/central.ts";
 import { loginState } from "../_shared/outfitter-session.ts";
 
 /** The .env that /setup writes: next to the agent dir (bundle root or the kernal/ checkout). */
@@ -283,8 +282,11 @@ export default async function (pi: ExtensionAPI) {
    */
   async function saveTarget(ctx: Pick<ExtensionCommandContext, "ui" | "hasUI">, provider: string, model: string): Promise<{ ok: boolean; message: string }> {
     const legacy = { ok: true, message: "saved as default" };
-    const targets = ctx.hasUI ? modelSaveTargets() : undefined;
-    if (!targets) {
+    // Loaded only here: the Drive image ships without kernal-admin (outfitter/image/Dockerfile), and
+    // a Drive never asks (no UI, no login).
+    const admin = ctx.hasUI ? await import("../kernal-admin/central.ts").catch(() => undefined) : undefined;
+    const targets = admin?.modelSaveTargets();
+    if (!admin || !targets) {
       // Non-interactive, signed in: settings.json only, as before; say when the account still wins.
       const r = (() => { try { return reresolve(); } catch { return undefined; } })();
       const v = r?.values["model.default"];
@@ -295,7 +297,7 @@ export default async function (pi: ExtensionAPI) {
     }
     const pick = await ctx.ui.select(`Save ${provider}/${model} as the default`, [targets.account, targets.machine]);
     if (pick === undefined) return { ok: true, message: "saved in this machine's settings.json only" };
-    return saveModelDefault(pick === targets.account ? "account" : "machine", provider, model);
+    return admin.saveModelDefault(pick === targets.account ? "account" : "machine", provider, model);
   }
 
   /** Switch to a model and save it as the default. Returns why not, or undefined on success. */

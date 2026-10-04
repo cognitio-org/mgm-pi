@@ -546,6 +546,13 @@ describe("/connect: save to my account (profile X) or only this machine", () => 
     assert.equal(calls.length, 0);
   });
 
+  test("connect and the shared modules import nothing the Drive image removes (kernal-admin, kernal-voice, ...)", () => {
+    const removed = /from "\.\.\/(kernal-admin|kernal-voice|kernal-update|kernal-codebase-index|kernal-chrome|kernal-html-preview|sentry)\//;
+    for (const f of ["connect/index.ts", "kernal-config/index.ts", "compaction/index.ts", "outfitter-agentengine/laptop.ts", "_shared/central-config.ts", "_shared/central-apply.ts"]) {
+      assert.doesNotMatch(readFileSync(join(import.meta.dirname, "..", ".pi", "extensions", f), "utf8"), removed, f);
+    }
+  });
+
   test("whenSaved says when each key applies", () => {
     assert.equal(whenSaved(["compaction.masking", "model.default", "memory.mode"]),
       "compaction.masking applies now; model.default at the next session (/new or a restart; a running conversation keeps its model); memory.mode at the next start.");

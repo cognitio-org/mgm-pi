@@ -1,0 +1,122 @@
+kernal/.pi/extensions/outfitter-agentengine/laptop.ts
+  s_38ec74cfb7fa1d::t_b8359953ed0527 145-148,154
+  s_38ec74cfb7fa1d::t_64d971790d9c20 266-270
+  s_38ec74cfb7fa1d::t_c0b76ca7cc31fe 17-21
+  s_38ec74cfb7fa1d::t_396b24c87b5b77 229,231
+  s_38ec74cfb7fa1d::t_4a7f19e5988ed7 135-136
+  s_38ec74cfb7fa1d::t_419b76a560b1bf 30
+  s_38ec74cfb7fa1d::t_8b0d27984968fb 64-82
+  s_38ec74cfb7fa1d::t_f96ae2faa4c585 280,283-288
+kernal/tests/central-delivery.test.ts
+  s_38ec74cfb7fa1d::t_014870fc204cb4 78-79
+kernal/tests/central-config.test.ts
+  s_38ec74cfb7fa1d::t_84ba23c9805ee1 130-141,143-147,150,154,157-160
+  s_38ec74cfb7fa1d::t_a26d3347220f21 63-64,79-80,104-105
+kernal/.pi/extensions/compaction/index.ts
+  s_38ec74cfb7fa1d::t_d04a2652e4a443 18-21
+  s_38ec74cfb7fa1d::t_93dcc493af90ab 55-60,70,75-76,80,92-94,96-105,107-109
+  s_38ec74cfb7fa1d::t_d979e7288ea0c0 233,252,260,270,289,291
+  s_38ec74cfb7fa1d::t_83ce8b26bc47da 34,118-119
+  s_38ec74cfb7fa1d::t_cdeb031a8cf504 106
+  s_38ec74cfb7fa1d::t_11df34823dfa55 61-69,71-74,77-79,81-87,91,95
+kernal/.pi/extensions/kernal-admin/central.ts
+  s_38ec74cfb7fa1d::t_c6ba1040b24857 340-351
+  s_38ec74cfb7fa1d::t_91d4e1153990fd 352-392
+  s_38ec74cfb7fa1d::t_29879440039e4f 28
+  s_38ec74cfb7fa1d::t_57e0893d75d188 303,330,334
+  s_38ec74cfb7fa1d::t_cab1093747eb30 291-292,294
+kernal/.pi/extensions/kernal-admin/index.ts
+  s_38ec74cfb7fa1d::t_41a0b18f018de4 280-288,291,293-294,299,301,308-313
+  s_38ec74cfb7fa1d::t_66b0d9efe656c1 49-50
+outfitter/packages/agentd/src/settings.ts
+  s_38ec74cfb7fa1d::t_c9c082a99f52cf 42-52
+  s_38ec74cfb7fa1d::t_7127c860b057c9 9-11
+  s_38ec74cfb7fa1d::t_e7ba6ad66fc6f7 84
+kernal/tests/config-command.test.ts
+  s_38ec74cfb7fa1d::t_014870fc204cb4 65
+kernal/bin/kernal
+  s_38ec74cfb7fa1d::t_dcba8506bd71a0 170-173,177,179-181,184,186-187,189-196,199,202-203,207-209,211
+  s_38ec74cfb7fa1d::t_ff926d2bff8242 484-487,490-491
+  s_38ec74cfb7fa1d::t_fed199bb8834fb 178,182
+  s_38ec74cfb7fa1d::t_195762f5193150 488-489
+  s_38ec74cfb7fa1d::t_e5554ed0cfcd0b 197-198,201,204-206,210
+kernal/.pi/extensions/_shared/central-apply.ts
+  s_38ec74cfb7fa1d::t_4677872c923993 1-164,167-226
+  s_38ec74cfb7fa1d::t_de67950ab0f0e5 165-166
+kernal/.pi/extensions/kernal-voice/index.ts
+  s_38ec74cfb7fa1d::t_a0fb7ff099f100 19
+  s_38ec74cfb7fa1d::t_7bc06918096a3c 7-10
+  s_38ec74cfb7fa1d::t_15f90efd615b72 80-84
+kernal/README.md
+  s_38ec74cfb7fa1d::t_643b964de7312c 56-87
+kernal/.pi/extensions/kernal-config/index.ts
+  s_38ec74cfb7fa1d::t_3431d34bda8de6 103,105-107
+  s_38ec74cfb7fa1d::t_69b264ab04a22d 123-134
+  s_38ec74cfb7fa1d::t_2f0d110ae2ddd3 144,146,148-150
+  s_38ec74cfb7fa1d::t_8b709571fb860a 43-46
+  s_38ec74cfb7fa1d::t_b08710f0e09336 18-23,32-35
+  s_38ec74cfb7fa1d::t_16d8287374fc2c 80
+kernal/.pi/extensions/connect/index.ts
+  s_38ec74cfb7fa1d::t_693f01ced6a714 274-290,292-298
+  s_38ec74cfb7fa1d::t_fb6b7f1115030f 13-15
+  s_38ec74cfb7fa1d::t_6047ae9b02c969 291
+  s_38ec74cfb7fa1d::t_b114bb6c4768a0 29-30
+kernal/.pi/extensions/kernal-admin/app.ts
+  s_38ec74cfb7fa1d::t_758e132caaddfe 1028-1032
+  s_38ec74cfb7fa1d::t_b570820949f80f 856
+  s_38ec74cfb7fa1d::t_5e86f005b3b6d5 995,997-998,1000,1002-1011
+kernal/tests/central-apply.test.ts
+  s_38ec74cfb7fa1d::t_d424fa960a93ac 1-553
+kernal/tests/admin-central.test.ts
+  s_38ec74cfb7fa1d::t_4a339e20dc3967 83
+  s_38ec74cfb7fa1d::t_c2d8a020a9c59e 177-178,180
+  s_38ec74cfb7fa1d::t_a26d3347220f21 75
+  s_38ec74cfb7fa1d::t_45e3d29c4fdb19 110
+outfitter/docs/specs/central-auth.md
+  s_38ec74cfb7fa1d::t_e55f42ec6a9b04 821-826
+  s_38ec74cfb7fa1d::t_d9e2a9c9c41ec4 765-808
+kernal/.pi/extensions/_shared/central-config.ts
+  s_38ec74cfb7fa1d::t_50e4b3dbf2d660 727-729
+  s_38ec74cfb7fa1d::t_1038d0a7e5ca47 959-963
+  s_38ec74cfb7fa1d::t_3f1fe0e9720ef1 98-103
+  s_38ec74cfb7fa1d::t_69cb0a716620f1 332-333
+  s_38ec74cfb7fa1d::t_7c33ec3b02e018 115-122
+  s_38ec74cfb7fa1d::t_264e0b4eb7db9d 42
+  s_38ec74cfb7fa1d::t_167b7dce9fd969 73-75
+  s_38ec74cfb7fa1d::t_b51478940db929 646
+  s_38ec74cfb7fa1d::t_1cb4a1019c52b3 858,860
+  s_38ec74cfb7fa1d::t_6ae13d612be54d 630
+  s_38ec74cfb7fa1d::t_c6eb72f9ea417a 610-613,621-623,626-627,636-645,647-648,651,661-662
+  s_38ec74cfb7fa1d::t_7dbaa00112cfc4 276-277,279-283
+  s_38ec74cfb7fa1d::t_994864d6f045a8 373-388
+  s_38ec74cfb7fa1d::t_4690fce48ec6f7 826-829
+  s_38ec74cfb7fa1d::t_30a8eb583136e2 710-712
+  s_38ec74cfb7fa1d::t_da4af00186a8fa 1009
+  s_38ec74cfb7fa1d::t_c5939089817047 48,53-54
+  s_38ec74cfb7fa1d::t_0bfc3d76aa7213 749-750
+  s_38ec74cfb7fa1d::t_0c294b1b57b282 667
+  s_38ec74cfb7fa1d::t_41c9e89921709c 17-29
+  s_38ec74cfb7fa1d::t_b58ffc7aea43b0 696,700-709,713-726,730-748,751
+  s_38ec74cfb7fa1d::t_f86c104ee75187 427-543
+  s_38ec74cfb7fa1d::t_4b980e740ec188 752
+outfitter/packages/agentd/test/settings.test.ts
+  s_38ec74cfb7fa1d::t_ed2b3cfa42e032 70
+  s_38ec74cfb7fa1d::t_7c379558ebb8e9 85-92
+  s_38ec74cfb7fa1d::t_2ef1f6086aabad 120
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "0d86a9e91589e33c04cf41c83eca34965f5eb90a",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

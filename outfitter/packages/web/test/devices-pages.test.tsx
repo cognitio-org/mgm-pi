@@ -198,6 +198,22 @@ describe("DeviceApprovePage", () => {
     expect(container!.querySelector("[role='alertdialog']")).not.toBeNull();
   });
 
+  it("inside a frame shows only an open-directly notice: no lookup, no Approve (clickjacking)", async () => {
+    const calls = stubFetch((url) => {
+      if (url.startsWith("/api/device/pending")) return json(pendingBody());
+      if (url === "/api/me") return json({ email: "a@example.com" });
+    });
+    const top = vi.spyOn(window, "top", "get").mockReturnValue({} as Window);
+    try {
+      await render(<DeviceApprovePage />, "/device?code=BCDF-GHJK");
+      expect(text()).toContain("Open this page directly");
+      expect([...container!.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Approve")).toBe(false);
+      expect(calls).toEqual([]);
+    } finally {
+      top.mockRestore();
+    }
+  });
+
   it("an expired code offers no buttons", async () => {
     stubFetch((url) => {
       if (url.startsWith("/api/device/pending")) return json(pendingBody({ expiresAt: new Date(Date.now() - 1000).toISOString() }));

@@ -6,6 +6,7 @@ import {
   formatUserCodeInput,
   ipsDiffer,
   isExpired,
+  isFramed,
   normalizeUserCode,
   platformLabel,
   userCodeLetters,
@@ -75,5 +76,20 @@ describe("deviceIp", () => {
     expect(deviceIp({ lastSeenIp: "1.1.1.1", loginIp: "2.2.2.2" })).toBe("1.1.1.1");
     expect(deviceIp({ loginIp: "2.2.2.2" })).toBe("2.2.2.2");
     expect(deviceIp({})).toBeUndefined();
+  });
+});
+
+describe("isFramed", () => {
+  it("is false at the top, true in a frame, and true when the check throws", () => {
+    const self = {} as Window;
+    expect(isFramed({ top: self, self })).toBe(false);
+    expect(isFramed({ top: {} as Window, self })).toBe(true);
+    const crossOrigin = {
+      self,
+      get top(): Window {
+        throw new Error("SecurityError");
+      },
+    };
+    expect(isFramed(crossOrigin)).toBe(true);
   });
 });

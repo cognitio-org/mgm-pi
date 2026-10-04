@@ -76,3 +76,14 @@ export function isExpired(expiresAt: string, now: number = Date.now()): boolean 
 export function deviceIp(row: { lastSeenIp?: string; loginIp?: string }): string | undefined {
   return row.lastSeenIp || row.loginIp || undefined;
 }
+
+/** True when the page runs inside a frame. The approve page refuses to work there, so another
+ * site can't frame /device?code=<its code> and steer a click onto Approve (clickjacking). A
+ * cross-origin parent can make the check throw; that counts as framed. */
+export function isFramed(win: { readonly top: unknown; readonly self: unknown } = window): boolean {
+  try {
+    return win.top !== win.self;
+  } catch {
+    return true;
+  }
+}

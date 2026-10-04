@@ -7,7 +7,7 @@ import { SystemErrorDialog, type ApiErrorState } from "../components/SystemError
 import { SyntaxError } from "../components/SyntaxError.tsx";
 import { Working } from "../components/Working.tsx";
 import { toApiErrorState } from "../lib/api-error.ts";
-import { formatUserCodeInput, normalizeUserCode } from "../lib/devices.ts";
+import { formatUserCodeInput, isFramed, normalizeUserCode } from "../lib/devices.ts";
 import { vocabulary } from "../lib/vocabulary.ts";
 
 type Phase =
@@ -18,8 +18,30 @@ type Phase =
 
 /** #389 CA-1 web (docs/specs/central-auth.md §1.5, §1.9, §6): /device, where a person approves a
  * `kernal login` code. A `?code=` link only fills the code in and looks it up; nothing is approved
- * until the person clicks Approve. */
+ * until the person clicks Approve. Inside a frame the page only asks to be opened directly
+ * (see isFramed): no lookup, no request card, no Approve. */
 export function DeviceApprovePage() {
+  const [framed] = useState(() => isFramed());
+  return framed ? <FramedNotice /> : <DeviceApproveForm />;
+}
+
+function FramedNotice() {
+  return (
+    <div className="device-approve">
+      <div className="page-heading">
+        <h2>Sign in a {vocabulary.kernal.one}</h2>
+      </div>
+      <p className="device-warning" role="alert">
+        Open this page directly: a sign-in can't be approved from inside another page.{" "}
+        <a href={window.location.href} target="_blank" rel="noopener noreferrer">
+          Open it in a new tab
+        </a>
+      </p>
+    </div>
+  );
+}
+
+function DeviceApproveForm() {
   const [params] = useSearchParams();
   const initial = params.get("code") ?? "";
   const [input, setInput] = useState(formatUserCodeInput(initial));
@@ -65,7 +87,7 @@ export function DeviceApprovePage() {
   }
 
   async function decide(approve: boolean) {
-    if (phase.kind !== "review") return;
+    if (phase.kind !== "review" || isFramed()) return;
     const { pending } = phase;
     setDeciding(approve ? "approve" : "deny");
     try {

@@ -1,0 +1,23 @@
+kernal/.pi/extensions/connect/index.ts
+  s_c67f9150e24079::t_ebd152d3d8a5db 261
+kernal/.pi/extensions/connect/lib.ts
+  s_c67f9150e24079::t_b6aa714feac24f 133-135
+kernal/tests/connect.test.ts
+  s_c67f9150e24079::t_1065043e34c929 130-131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "71a82496f79f9e37e930750f4d7c0cb7b6e6d6a1",
+  "prompts": {},
+  "sessions": {
+    "s_c67f9150e24079": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "17f761ab-de7d-4690-a895-e067e9f608df",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

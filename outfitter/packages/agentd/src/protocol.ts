@@ -347,6 +347,15 @@ export interface RunSpecTelemetry {
   sentry: { dsn: string; tracesSampleRate: number; environment: string; release?: string };
 }
 
+/** Central settings (docs/specs/central-auth.md §9): the session owner's resolved values, from
+ * their default profile. agentd applies the keys it knows (settings.ts) and ignores the rest; an
+ * older api omits it. Never a secret. */
+export interface RunSpecSettings {
+  schemaVersion: number;
+  profile: string | null;
+  values: Record<string, { value: unknown; source: string; sourceName?: string }>;
+}
+
 export interface RunSpecSnapshot {
   url?: string;
   jsonl?: string;
@@ -412,6 +421,7 @@ export interface RunSpec {
   preview?: RunSpecPreview;
   ide?: RunSpecIde;
   telemetry?: RunSpecTelemetry;
+  settings?: RunSpecSettings;
   idleStopSeconds: number;
   checkpointEvery: string;
 }
@@ -428,6 +438,7 @@ export interface DownRunSpec {
   preview?: RunSpecPreview;
   ide?: RunSpecIde;
   telemetry?: RunSpecTelemetry;
+  settings?: RunSpecSettings;
   idleStopSeconds: number;
   checkpointEvery: string;
 }

@@ -68,9 +68,10 @@ export interface LitellmKeys {
   /** /key/delete by alias (or LiteLLM token id); marks the RouterKey deleted. A key LiteLLM no longer
    * has counts as deleted. On failure records deleteFailedAt and throws; the sweep retries. */
   deleteKey(ref: { alias: string } | { tokenId: string }): Promise<void>;
-  /** A short-lived key for one Drive run (CA-6): key_alias `outfitter-run-<runId>`, `duration`
-   * (LiteLLM's own expiry, so a missed delete still dies), user_id of the session owner. */
-  mintRunKey(args: { userId: string; email: string; runId: string; sessionId: string; durationSeconds: number } & KeyLimits): Promise<MintedKey>;
+  /** A short-lived key for one Drive run (CA-6): key_alias `runKeyAlias(runId, mint)`, `duration`
+   * (LiteLLM's own expiry, so a missed delete still dies), user_id of the session owner. `mint`
+   * (default 1) numbers a run's further keys, so a new one never replaces an earlier record. */
+  mintRunKey(args: { userId: string; email: string; runId: string; sessionId: string; durationSeconds: number; mint?: number } & KeyLimits): Promise<MintedKey>;
   /** Creates the LiteLLM team `team_alias` if missing (CA-6's `system` team) and returns its id. */
   ensureTeam(teamAlias: string): Promise<string>;
   /** This month's spend for a user (§8), from /user/info and /spend/logs. */
@@ -100,8 +101,10 @@ export function deviceKeyAlias(deviceId: string): string {
   return `${DEVICE_KEY_PREFIX}${deviceId}`;
 }
 
-export function runKeyAlias(runId: string): string {
-  return `${RUN_KEY_PREFIX}${runId}`;
+/** `outfitter-run-<runId>` for a run's first key, `outfitter-run-<runId>-<mint>` for any later one
+ * (a run id is a UUID, so the suffix never reads as another run's alias). */
+export function runKeyAlias(runId: string, mint: number = 1): string {
+  return mint > 1 ? `${RUN_KEY_PREFIX}${runId}-${mint}` : `${RUN_KEY_PREFIX}${runId}`;
 }
 
 /** `YYYY-MM` with a real month. */
@@ -347,8 +350,8 @@ class HttpLitellmKeys implements LitellmKeys {
     );
   }
 
-  async mintRunKey(args: { userId: string; email: string; runId: string; sessionId: string; durationSeconds: number } & KeyLimits): Promise<MintedKey> {
-    const alias = runKeyAlias(args.runId);
+  async mintRunKey(args: { userId: string; email: string; runId: string; sessionId: string; durationSeconds: number; mint?: number } & KeyLimits): Promise<MintedKey> {
+    const alias = runKeyAlias(args.runId, args.mint);
     const seconds = Math.max(1, Math.ceil(args.durationSeconds));
     const maxBudget = args.maxBudget ?? RUN_KEY_MAX_BUDGET_USD;
     const fallbackExpiry = new Date(this.now().getTime() + seconds * 1000).toISOString();

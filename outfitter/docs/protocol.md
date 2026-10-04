@@ -402,6 +402,26 @@ SSE subscribers, and acks.
 `guru.ts`). agentd pins it into the spawned pi process's `LITELLM_BASE_URL` env var after `guru.env`
 is applied, so the real `secrets.litellmKey` can never be sent to a guru-controlled host.
 
+**Run keys and settings (CA-6, #395, docs/specs/central-auth.md §9).** With router key minting on
+(`OUTFITTER_LITELLM_ADMIN_KEY`), a run of a session with an owner gets its own LiteLLM key in
+`secrets.litellmKey`: alias `outfitter-run-<runId>`, the owner's `user_id`, LiteLLM `duration` 24 h
+(the agent job's task timeout), budget 20 USD (`central/run-keys.ts`). It is minted once, on the
+run's first spec; a reconnect of a running run gets `litellmKey: ""` (agentd keeps its first spec).
+A spec re-sent while the run still provisions never deletes a key that may have gone out: it gets the
+shared key while the fallback is on, otherwise an additional key `outfitter-run-<runId>-<n>`.
+The api deletes all of the run's keys when its `bye` is stored; a run that ends any other way leaves its key
+to LiteLLM's expiry and the tick's sweep. Without minting, without an owner, and for an A2A session
+the key is the shared one as before; while `OUTFITTER_RUN_KEY_FALLBACK` is on (the default until
+CA-10) a failed mint also falls back to it, and with it off the spec build fails retryably (1011).
+
+`run.spec.settings?` `{ schemaVersion, profile, values: { "<key>": { value, source, sourceName? } } }`
+is the owner's resolved central settings (their default profile, no device level; `router.*` and
+`telemetry.*` left out). Absent without an owner, for an A2A session, or when they can't be resolved.
+agentd (`src/settings.ts`) fills only what the tape leaves unset: `model.default` → `guru.model` when
+it is blank, `model.thinking` → `guru.thinking`, `compaction.summaryModel` → `KERNAL_SUMMARY_MODEL`
+in `guru.env`; and it passes the whole set to Kernal as `KERNAL_RUN_SETTINGS` (JSON, values only).
+`memory.mode` is not applied in a Drive: Agent Engine memory there is the tape's capability.
+
 `run.spec.author` is the session's person, for commit attribution (kernal/docs/git-github-spec.md,
 "Attribution"). The api fills it from the session owner's user record, and only when that record has
 a `githubEmail` (ideally the person's GitHub noreply address; never the sign-in email, which would

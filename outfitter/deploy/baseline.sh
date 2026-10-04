@@ -74,8 +74,9 @@ create_service_account "kernal-web" "kernal.one landing page (static, no project
 # add-iam-policy-binding is itself idempotent (re-adding an existing binding is a no-op), so these
 # don't need their own existence checks.
 
-echo "-- IAM roles for ${API_SA_EMAIL}: run.developer, secretmanager.secretAccessor, logging.logWriter --"
-for role in roles/run.developer roles/secretmanager.secretAccessor roles/logging.logWriter; do
+# secretmanager.secretAccessor is granted below by secret-scope.sh, limited to outfitter-* secrets.
+echo "-- IAM roles for ${API_SA_EMAIL}: run.developer, logging.logWriter --"
+for role in roles/run.developer roles/logging.logWriter; do
   gcloud projects add-iam-policy-binding "${PROJECT}" \
     --member="serviceAccount:${API_SA_EMAIL}" \
     --role="${role}" \
@@ -86,7 +87,7 @@ done
 # Operator settings API (routes/operator.ts, src/secrets.ts's GcpSecretAdmin): create a secret the
 # first time an operator sets it, add a new version on every Replace, disable all enabled versions
 # on Disable, and list/access versions to show the masked value and "next run"/"next deploy" state.
-# secretmanager.secretAccessor (above) only covers reading the *latest* version, not any of that.
+# secretmanager.secretAccessor (granted by secret-scope.sh, below) only covers reading the *latest* version, not any of that.
 # No predefined role is both broad enough and this narrow: roles/secretmanager.secretVersionAdder
 # can add versions but can't create a secret or disable a version, and
 # roles/secretmanager.admin also grants IAM policy changes and secret deletion the API never
@@ -114,12 +115,10 @@ else
     --quiet >/dev/null
 fi
 
-echo "-- IAM role for ${API_SA_EMAIL}: projects/${PROJECT}/roles/${SECRET_ADMIN_ROLE_ID} --"
-gcloud projects add-iam-policy-binding "${PROJECT}" \
-  --member="serviceAccount:${API_SA_EMAIL}" \
-  --role="projects/${PROJECT}/roles/${SECRET_ADMIN_ROLE_ID}" \
-  --condition=None \
-  --quiet >/dev/null
+# Both secret roles (secretAccessor and this custom role) are bound only to outfitter-* secrets: the
+# LiteLLM router's secrets share this project (#389 IAM check). secret-scope.sh owns those bindings.
+echo "-- Secret roles for ${API_SA_EMAIL}, scoped to outfitter-* secrets (secret-scope.sh) --"
+"$(dirname "${BASH_SOURCE[0]}")/secret-scope.sh"
 
 # Scoped to the outfitter-agent resource, not project-wide: the API only needs to impersonate this
 # one service account to start Cloud Run Job executions as it (RunManager.wake -> CloudRunProvider).

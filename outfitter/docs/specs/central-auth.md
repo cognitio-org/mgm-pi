@@ -81,8 +81,8 @@ JSON; anything malformed is `400 { "error": "invalid_request" }`.
 ```
 
 `verification_uri` is `config.webOrigin` (OUTFITTER_WEB_ORIGIN) + `/device`, falling back to
-`config.origin` (role all). The record stores the caller's IP (first `X-Forwarded-For` hop, else
-the socket address). A user-code collision on insert retries with a new code.
+`config.origin` (role all). The record stores the caller's IP (last `X-Forwarded-For` hop, the one
+Cloud Run appends, else the socket address; the first hop is the caller's to forge). A user-code collision on insert retries with a new code.
 Errors: `429 { "error": "rate_limited", "retryAfter": <s> }` (§1.9); `503 { "error":
 "login_unavailable" }` when `config.loginAllow` is empty outside dev mode.
 
@@ -208,7 +208,8 @@ app" }`), so no signed-in Kernal can approve another.
 - **Allow-list**: `config.loginAllow` (OUTFITTER_LOGIN_ALLOW, already in config.ts), entries in
   PREVIEW_ALLOW's format; match with `previews.ts` `parseAllowlist` (emails exact, `domain:` by
   suffix `@domain`, `group:` ignored), case-insensitive. Operators (`config.operators`) always
-  count as allowed. Checked at approve, at the token exchange, and at every refresh. Dev mode
+  count as allowed. Checked at approve, at the token exchange, at every refresh, and on every use
+  of a device access token (the only re-check a machine token, §1.7, ever gets). Dev mode
   with an empty list allows everyone. Outside dev mode an empty list refuses every device login
   (`login_unavailable`) and leaves Dongles as they are today.
 - **Dongles** (until CA-10): also refused (generic 401) when the owner is no longer allowed, on
@@ -778,7 +779,7 @@ Rules:
 
 | Task | Owns (create/modify) | Additive edits allowed in shared files |
 |---|---|---|
-| **A** CA-1 api (#390) | `api/src/central/device-tokens.ts`, `api/src/central/device-login.ts` (new: flow logic, allow-list), `api/src/store/devices.ts`, `api/src/routes/device.ts`, `api/src/auth.ts`, `api/src/routes/tokens.ts` (Dongle fix 1), `api/test/device-*.test.ts`, tests pinning old Dongle behaviour (`tokens.test.ts`, `token-verification.test.ts`, `auth.test.ts`, `roles.test.ts` as needed) | `api/src/routes/me.ts` (optional `ip` field for B); `deploy/service.sh` (OUTFITTER_LOGIN_ALLOW, OUTFITTER_WEB_ORIGIN); `deploy/config.env` (Matej in IAP_MEMBERS); `docs/protocol.md` (a "Device login" section) |
+| **A** CA-1 api (#390) | `api/src/central/device-tokens.ts`, `api/src/central/device-login.ts` (new: flow logic, allow-list), `api/src/store/devices.ts`, `api/src/routes/device.ts`, `api/src/auth.ts`, `api/src/routes/tokens.ts` (Dongle fix 1), `api/test/device-*.test.ts`, tests pinning old Dongle behaviour (`tokens.test.ts`, `token-verification.test.ts`, `auth.test.ts`, `roles.test.ts` as needed) | `api/src/routes/me.ts` (optional `ip` field for B); `api/src/server.ts` (pass `config` to `identityFromLinkRequest` in the auth preHandler, one line, so Dongle fix 3 runs on link); `deploy/service.sh` (OUTFITTER_LOGIN_ALLOW, OUTFITTER_WEB_ORIGIN); `deploy/config.env` (Matej in IAP_MEMBERS); `docs/protocol.md` (a "Device login" section) |
 | **B** CA-1 web (#390) | `web/src/pages/DeviceApprovePage.tsx`, `web/src/pages/DevicesPage.tsx`, `web/src/api/devices.ts`, `web/src/components/devices/*` (new), `web/src/lib/devices.ts` (new, pure helpers), `web/test/devices*.test.ts(x)` | `web/src/App.tsx`: remove the `/tokens` nav line, drop `operatorOnly` from the `/devices` line; `web/src/style.css` or `web/src/styles/*` (new rules at the end) |
 | **C** CA-3 settings api (#392) | `api/src/central/settings-schema.ts`, `api/src/central/settings-resolver.ts`, `api/src/store/settings.ts`, `api/src/routes/config.ts`, `api/src/fleet-settings.ts`, `api/test/settings-*.test.ts`, `api/test/config-routes.test.ts` | `api/src/routes/operator.ts` (bump the fleet `version` in the existing PUT); `api/src/store/memory.ts` + `mongo.ts` `FleetSettings` classes only if the version bump needs it |
 | **D** CA-4 + CA-5 api (#393, #394) | `api/src/central/litellm-keys.ts`, `api/src/central/provider-keys.ts` (new), `api/src/store/keys.ts`, `api/src/routes/keys.ts`, `api/test/litellm-keys.test.ts`, `api/test/provider-keys.test.ts`, `api/test/spend.test.ts` | `api/src/routes/hooks.ts` (one `sweepRouterKeys()` call in the tick); `deploy/service.sh` (mount `OUTFITTER_LITELLM_ADMIN_KEY=outfitter-litellm-admin-key:latest` in SECRETS); `deploy/README.md` (the secret) |

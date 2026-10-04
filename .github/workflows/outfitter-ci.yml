@@ -45,6 +45,8 @@ jobs:
           bash deploy/test/gke-schedule.test.sh
           bash deploy/test/gke-teardown.test.sh
           bash deploy/test/release-gke-off.test.sh
+          bash deploy/test/litellm-admin.test.sh
+          bash deploy/test/secret-scope.test.sh
           bash deploy/test/service-env-gke-off.test.sh
           bash deploy/test/gke-workflow-check.test.sh
           bash deploy/test/heredoc-backticks.test.sh

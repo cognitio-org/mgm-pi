@@ -56,6 +56,7 @@ import type {
   UpAdminRequest,
 } from "./protocol.js";
 import { adminCapabilities } from "./protocol.js";
+import { applyRunSettings } from "./settings.js";
 import { initSentry, withSentrySpan, captureException, flushSentry } from "./sentry.js";
 
 /** The start-up phases the `startup` frame carries: run.spec through pi ready. Later "first ..."
@@ -600,6 +601,9 @@ export class RunController {
       this.startup = new StartupPhases({ log: (message, fields) => logger.info(message, fields) });
       this.startup.mark("run.spec received");
     }
+    // Central settings (settings.ts): the owner's values fill what the tape leaves unset, before
+    // anything reads the guru.
+    spec = applyRunSettings(spec, this.onLog);
     this.spec = spec;
     this.publishedBranch = spec.repo?.branch;
     this.deps.link.setSessionId?.(spec.session.id);

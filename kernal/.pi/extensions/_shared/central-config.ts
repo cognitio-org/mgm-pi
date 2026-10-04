@@ -310,6 +310,9 @@ interface State {
   providerKeys: Map<string, string>;
   warned: Set<string>;
   deps: Partial<CentralConfigDeps>;
+  /** The login the resolution was made for (#443): adoptKeychainLogin tells a re-login as another
+   * account (the resolution and the provider keys were theirs) from a new device of the same one. */
+  login?: { api: string; email: string; deviceId: string };
 }
 
 /**
@@ -775,6 +778,7 @@ export function resolve(profile: string | undefined = activeProfile(deps().env()
   const cache = account ? readCache(account.api, account.email, profile, deps().now()) : undefined;
   const r = resolveFrom(cache, account, profile);
   st.resolved.set(id, r);
+  if (account) st.login = { api: account.api, email: account.email, deviceId: account.deviceId };
   writeEffective(r, profile);
   return r;
 }
@@ -1044,6 +1048,46 @@ export async function remintRouterKeyIfDue(opts: { fetch?: typeof fetch; force?:
     return true;
   } catch {
     return false;
+  }
+}
+
+export type KeychainAdoption = { adopted: false } | { adopted: true; accountChanged: boolean };
+
+/**
+ * After the router refused `refused` (this process's device router key), the login and router key
+ * are read from the keychain again first (#443): another terminal may have signed in again since,
+ * which revoked this process's device (and deleted its key on the router) and stored a new key. A
+ * stored key that differs from the refused one is adopted into this process's resolution, so
+ * connect's next registerAll uses it; nothing is minted, which would only rotate the key the other
+ * process just got. A re-login as another account also drops the cached resolution and the
+ * provider keys (they were the old account's) and resolves again for the new one.
+ * `{ adopted: false }` when the keychain still holds the refused key, or no login or key at all:
+ * then re-minting (remintRouterKeyIfDue with force) is the remedy. Access tokens need no adopting:
+ * every request reads its bearer from the keychain (getAccessToken). Never throws.
+ */
+export function adoptKeychainLogin(refused: string): KeychainAdoption {
+  try {
+    const account = signedInAccount();
+    if (!account) return { adopted: false };
+    const stored = safe(() => deps().session.getRouterKey({ api: account.api, email: account.email }));
+    if (!stored?.key || stored.key === refused) return { adopted: false };
+    const st = state();
+    const was = st.login;
+    const accountChanged = !!was && (was.api !== account.api || was.email !== account.email);
+    if (accountChanged) {
+      st.resolved.clear();
+      st.providerKeys.clear();
+      safe(() => resolve());   // the new account's cache, and its router key from the keychain
+    } else {
+      for (const r of st.resolved.values()) {
+        const v = r.values["router.key"];
+        if (v?.source === "device") r.values["router.key"] = { ...v, value: stored.key };
+      }
+    }
+    st.login = { api: account.api, email: account.email, deviceId: account.deviceId };
+    return { adopted: true, accountChanged };
+  } catch {
+    return { adopted: false };
   }
 }
 

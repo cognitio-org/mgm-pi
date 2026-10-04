@@ -12,8 +12,9 @@
  * memory, the router key re-minted when due); start-up never waits on it. connect has registered
  * its providers by then (it loads first), so when the refresh brings keys it didn't have, or a new
  * router key, this asks connect to register again (`kernal:connect` op "reload"). A device router
- * key the router refuses (401, at connect's key check or on a request) is re-minted once per
- * process (spec §5.5). Values are edited in the web app's Account page or with /admin (CA-9), not
+ * key the router refuses (401, at connect's key check or on a request) is first looked up in the
+ * keychain again: a different key there (another terminal signed in again, #443) is adopted without
+ * minting; otherwise it is re-minted once per process (spec §5.5). Values are edited in the web app's Account page or with /admin (CA-9), not
  * here.
  *
  * Applying the personal keys (#437, _shared/central-apply.ts): at session_start a new, empty session
@@ -30,7 +31,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { inSandbox } from "../_shared/env.ts";
 import { busRequest } from "../connect/lib.ts";
 import {
-  KNOWN_SETTINGS, PROVIDER_ENV, activeProfile, describeSource, displayValue, providerKey, reloadConfig, remintRouterKeyIfDue,
+  KNOWN_SETTINGS, PROVIDER_ENV, activeProfile, adoptKeychainLogin, describeSource, displayValue, providerKey, refreshProviderKeys, reloadConfig, remintRouterKeyIfDue,
   resolve, startBackgroundRefresh, webOrigin, type ResolvedConfig,
 } from "../_shared/central-config.ts";
 import { applyModelAtSessionStart, applyVoiceSettings, describeChanges, snapshot } from "../_shared/central-apply.ts";
@@ -107,6 +108,15 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
       rekeyed = true;   // once per process: a key refused again needs kernal login, not a loop
       if (await remintRouterKeyIfDue({ fetch: deps.fetch, force: true })) await reloadConnect();
     };
+    // #443: the keychain first. Another terminal that signed in again revoked this device (its key
+    // is gone on the router) and stored a new key: adopt that one, no mint. Re-mint only when the
+    // keychain still holds the refused key.
+    const recover = async (refused: string) => {
+      const a = adoptKeychainLogin(refused);
+      if (!a.adopted) return rekey();
+      if (a.accountChanged) await refreshProviderKeys({ fetch: deps.fetch });
+      await reloadConnect();
+    };
     const before = delivered();
     const settingsBefore = snapshot(resolve());
     const done = startBackgroundRefresh({ fetch: deps.fetch }).then(async () => {
@@ -116,14 +126,16 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
       if (delivered().some((v, i) => v !== before[i])) await reloadConnect();
       // connect's start-up key check found the device's key refused.
       const backends = await busRequest<{ id: string; rejected?: string }[]>(bus, "kernal:connect", { op: "state" }).catch(() => undefined);
-      if (backends?.find((b) => b.id === "litellm")?.rejected) await rekey();
+      const refused = deviceRouterKey();
+      if (refused && backends?.find((b) => b.id === "litellm")?.rejected) await recover(refused);
     });
     deps.onRefresh?.(done);
     pi.on("after_provider_response", (ev, ctx) => {
       if (ev.status !== 401 || ctx?.model?.provider !== "litellm") return;
       const refused = deviceRouterKey();
       // Not awaited: the reply is not held up. After the start-up work, which may have re-minted already.
-      const p = done.then(() => (refused && deviceRouterKey() === refused ? rekey() : undefined));
+      // A key adopted or re-minted since (by an earlier 401) is not refused again here.
+      const p = done.then(() => (refused && deviceRouterKey() === refused ? recover(refused) : undefined));
       deps.onRekey?.(p);
     });
   }

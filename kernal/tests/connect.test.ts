@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   parseEnvText, parseModelInfo, parseLmStudioModels, backends, normalizeBaseUrl, rootUrl, parseSpendHeaders, sessionEstimate,
   money, pctText, price, fit, bar, budgetRows, renderPanel, footerStatus, plainLen, QWEN_THINKING_MAP, DEFAULT_OPENROUTER_MODELS,
-  cleanKey, keyCheckUrl, authFailureText, FREE, DEFAULT_PAID,
+  cleanKey, keyCheckUrl, authFailureText, FREE, DEFAULT_PAID, keepListed,
 } from "../.pi/extensions/connect/lib.ts";
 
 const id = (_c: string, t: string) => t;   // identity painter
@@ -122,6 +122,14 @@ describe("backends", () => {
     const or = backends({ OPENROUTER_MODELS: " a/b, c/d ,, " }, new Map()).find((b) => b.id === "openrouter")!;
     assert.deepEqual(or.fallback, ["a/b", "c/d"]);
     assert.deepEqual(backends({}, new Map()).find((b) => b.id === "openrouter")!.fallback, DEFAULT_OPENROUTER_MODELS);
+  });
+
+  test("curated OpenRouter ids are checked against OpenRouter's catalogue", () => {
+    const catalogue = { data: [{ id: "a/b" }, { id: "deepseek/deepseek-v4-pro" }] };
+    assert.deepEqual(keepListed(["a/b", "deepseek/deepseek-v4"], catalogue), { kept: ["a/b"], dropped: ["deepseek/deepseek-v4"] });
+    // catalogue unreadable or empty: keep the curated list rather than offer nothing
+    assert.deepEqual(keepListed(["a/b"], undefined), { kept: ["a/b"], dropped: [] });
+    assert.deepEqual(keepListed(["a/b"], { data: [] }), { kept: ["a/b"], dropped: [] });
   });
 
   test("normalizeBaseUrl repairs what people type", () => {

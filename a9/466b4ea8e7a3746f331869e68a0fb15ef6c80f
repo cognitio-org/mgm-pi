@@ -1,0 +1,137 @@
+outfitter/packages/api/src/central/settings-resolver.ts
+  s_38ec74cfb7fa1d::t_d9f87dade71249 13
+  s_38ec74cfb7fa1d::t_147579c6f94c8e 54-55,63
+outfitter/packages/api/src/agentlink.ts
+  s_38ec74cfb7fa1d::t_3e04f22669fe2e 1953-1954
+  s_38ec74cfb7fa1d::t_3aa6adb6747991 284-286
+  s_38ec74cfb7fa1d::t_60b905ba97676a 1399
+  s_38ec74cfb7fa1d::t_8feeb3bbf75b17 47
+  s_38ec74cfb7fa1d::t_24a399cbe9f584 48
+outfitter/packages/api/src/central/settings-schema.ts
+  s_38ec74cfb7fa1d::t_52cc5a3d3dae9b 66-68
+  s_38ec74cfb7fa1d::t_f1df42bb566336 268-303
+  s_38ec74cfb7fa1d::t_6db04ecd9ee6d1 58
+outfitter/packages/api/src/routes/static.ts
+  s_38ec74cfb7fa1d::t_9cf68c8a26a55b 7,27-49,54,58,71
+outfitter/packages/api/src/central/litellm-keys.ts
+  s_38ec74cfb7fa1d::t_62f002cb1714b0 513-520
+  s_38ec74cfb7fa1d::t_b49a5aa5019b23 404-407
+  s_38ec74cfb7fa1d::t_a4b2126e4f4f93 569-572
+  s_38ec74cfb7fa1d::t_2ca0adc4477c4d 24
+  s_38ec74cfb7fa1d::t_3f16081b90f5e2 208-222
+  s_38ec74cfb7fa1d::t_5d584ed093b58c 441-444
+outfitter/packages/api/test/sentry-signals.test.ts
+  s_38ec74cfb7fa1d::t_076456e73515be 1-23,25-249,270-300,303,306-308,310,312-396
+  s_38ec74cfb7fa1d::t_7651eac4e7840f 24
+  s_38ec74cfb7fa1d::t_7d9af770be5a8e 250-269
+  s_38ec74cfb7fa1d::t_9269683d1f7d68 301-302,304-305,309,311
+outfitter/packages/web/src/pages/SettingsPage.tsx
+  s_38ec74cfb7fa1d::t_6dde51fa825d7d 408-447
+  s_38ec74cfb7fa1d::t_2304f007cf7413 277-303,305-307,312,314-316,323-324,326-332,338,343-349,353-355
+outfitter/packages/agentd/package.json
+  s_38ec74cfb7fa1d::t_4e574f7390ea79 20
+outfitter/packages/agentd/src/run.ts
+  s_38ec74cfb7fa1d::t_fd68766481b3b5 1150-1151
+  s_38ec74cfb7fa1d::t_e73328ff81400e 602,1257
+  s_38ec74cfb7fa1d::t_ca81bcd8885215 1438
+  s_38ec74cfb7fa1d::t_b6d23316922446 1421
+  s_38ec74cfb7fa1d::t_478bb57bdbb264 377-378
+  s_38ec74cfb7fa1d::t_010b4a36d6b809 437
+  s_38ec74cfb7fa1d::t_8ed369415a8d28 60-64
+  s_38ec74cfb7fa1d::t_53b702b2511bf4 625-639
+  s_38ec74cfb7fa1d::t_ca0a5414fd95e0 1287-1293
+  s_38ec74cfb7fa1d::t_19244f9506e485 1404
+outfitter/packages/api/src/fleet-settings.ts
+  s_38ec74cfb7fa1d::t_1e6129811b3c91 295-300
+  s_38ec74cfb7fa1d::t_0407e832710622 6-7
+  s_38ec74cfb7fa1d::t_29fe815e3d7b5e 112-113,115
+  s_38ec74cfb7fa1d::t_8dc58faa2c672e 228-230
+  s_38ec74cfb7fa1d::t_7c49f818105a07 241-245
+  s_38ec74cfb7fa1d::t_efd242bfd9e934 202
+  s_38ec74cfb7fa1d::t_8a9d4dc6b6ee9d 146
+  s_38ec74cfb7fa1d::t_0cc008e6441816 31-94
+outfitter/packages/agentd/src/sentry.ts
+  s_38ec74cfb7fa1d::t_d4bb9fcd2672ca 2-7,13-21,25-47,51-65,70,72-73,76-82,94-100,104-154,157-176,217-221,227-229
+outfitter/packages/agentd/src/agent-trace.ts
+  s_38ec74cfb7fa1d::t_b7e2240cf2f543 1-392
+outfitter/packages/web/test/sentry.test.ts
+  s_38ec74cfb7fa1d::t_672b0d1a7a0e67 10-11,16
+  s_38ec74cfb7fa1d::t_955ec9ec6e32d4 33
+  s_38ec74cfb7fa1d::t_f305dbd35e3bf6 74-96
+outfitter/docs/specs/central-auth.md
+  s_38ec74cfb7fa1d::t_4a7171e30d5143 420-430
+outfitter/docs/protocol.md
+  s_38ec74cfb7fa1d::t_a156e2e21757cb 199
+.github/workflows/outfitter-ci.yml
+  s_38ec74cfb7fa1d::t_091c22c3579598 108-113,116-119
+outfitter/packages/agentd/test/agent-trace.test.ts
+  s_38ec74cfb7fa1d::t_296c73b177e719 1-88,91-300
+  s_38ec74cfb7fa1d::t_2ce798087cdc69 89-90
+outfitter/packages/api/package.json
+  s_38ec74cfb7fa1d::t_4e574f7390ea79 23
+outfitter/packages/api/src/routes/index.ts
+  s_38ec74cfb7fa1d::t_54d2dbad2ec3f5 14
+  s_38ec74cfb7fa1d::t_8fac131db8ce59 57-58
+outfitter/packages/api/src/routes/device.ts
+  s_38ec74cfb7fa1d::t_401fb24fa8717c 16,66-68,79-85,144
+outfitter/packages/agentd/src/redact.ts
+  s_38ec74cfb7fa1d::t_2e8269ed897b8b 3-8
+  s_38ec74cfb7fa1d::t_53102e2c3e80fd 1-2,9-45
+outfitter/packages/web/src/api/client.ts
+  s_38ec74cfb7fa1d::t_fd1b953ef921e9 267-272
+  s_38ec74cfb7fa1d::t_f7d5c8667758ee 282-283,285-299
+outfitter/packages/agentd/src/protocol.ts
+  s_38ec74cfb7fa1d::t_f0cebe05bf5561 347-364
+outfitter/packages/api/src/server.ts
+  s_38ec74cfb7fa1d::t_d43e9519726576 116-118
+  s_38ec74cfb7fa1d::t_b2384593aaf784 42
+outfitter/packages/agentd/src/logger.ts
+  s_38ec74cfb7fa1d::t_9defd4d19dba53 51-61
+  s_38ec74cfb7fa1d::t_41129e57fe30d4 146-152
+outfitter/packages/api/src/sentry.ts
+  s_38ec74cfb7fa1d::t_13d2361fada00e 22-36
+  s_38ec74cfb7fa1d::t_3940d9e3ed16b3 1-4,12-17,21,44-45,48-51,56-58,64,68,101-104,106-107,110,117-166,174-178,192-306,313-317,325-326
+outfitter/packages/web/test/telemetry-panel.test.tsx
+  s_38ec74cfb7fa1d::t_39a298d018d4fb 158-200
+  s_38ec74cfb7fa1d::t_8834b70722151e 93-98
+outfitter/packages/api/src/routes/config.ts
+  s_38ec74cfb7fa1d::t_8ece0f1c3fcc0f 57-59,70-74
+  s_38ec74cfb7fa1d::t_c18e7cd471708d 378-379
+outfitter/packages/api/src/runs.ts
+  s_38ec74cfb7fa1d::t_5deef36344958f 270
+  s_38ec74cfb7fa1d::t_ef45d955ef31da 377
+  s_38ec74cfb7fa1d::t_81cf22c9ff57a9 435-437
+  s_38ec74cfb7fa1d::t_9b53df5d76cc6a 17-24
+  s_38ec74cfb7fa1d::t_43c92ae73c026d 246
+  s_38ec74cfb7fa1d::t_aa2e468525d71e 465
+  s_38ec74cfb7fa1d::t_6f324ca6235477 393
+  s_38ec74cfb7fa1d::t_35bd612b27ce13 293,298-299
+outfitter/packages/api/test/run-spec-settings.test.ts
+  s_38ec74cfb7fa1d::t_c72f2ef54168d3 12
+  s_38ec74cfb7fa1d::t_1c4604de05d86a 52
+outfitter/packages/api/src/routes/keys.ts
+  s_38ec74cfb7fa1d::t_af042107ef13e7 109
+  s_38ec74cfb7fa1d::t_7faf94d15f84c2 24
+  s_38ec74cfb7fa1d::t_b4865c23d3855e 95,98
+outfitter/packages/web/src/lib/sentry.ts
+  s_38ec74cfb7fa1d::t_c0757b10a99a01 47,51-56
+  s_38ec74cfb7fa1d::t_9c8825cb02e98e 35-36
+outfitter/package-lock.json
+  s_38ec74cfb7fa1d::t_4792605dbf8e13 1710-1723,1740-1753,5947-5958,7757,7784
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "a9466b4ea8e7a3746f331869e68a0fb15ef6c80f",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

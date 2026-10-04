@@ -116,11 +116,16 @@ export function deviceRateLimits(now?: () => number): DeviceRateLimits {
 
 // ---------- shapes ----------
 
-/** The caller's IP: the first X-Forwarded-For hop (Cloud Run's front end sets it), else the socket. */
+/** The caller's IP: the last X-Forwarded-For hop, else the socket. Cloud Run's front end keeps any
+ * X-Forwarded-For the caller sent and appends the address it saw, so only the last hop is not the
+ * caller's to choose. The first is, and trusting it would let a caller dodge the per-IP rate limits
+ * or pick the requestIp the approve page compares against. Both roles are served by Cloud Run
+ * directly, with no load balancer adding a hop after it (deploy/access.sh). */
 export function clientIp(req: { headers: Record<string, string | string[] | undefined>; ip?: string }): string | undefined {
   const raw = req.headers["x-forwarded-for"];
-  const first = (Array.isArray(raw) ? raw[0] : raw)?.split(",")[0]?.trim();
-  return first || req.ip || undefined;
+  const joined = Array.isArray(raw) ? raw.join(",") : raw;
+  const last = joined?.split(",").map((hop) => hop.trim()).filter(Boolean).at(-1);
+  return last || req.ip || undefined;
 }
 
 export function lifecycleDevice(d: Device): LifecycleDevice {

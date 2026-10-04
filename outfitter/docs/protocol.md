@@ -720,8 +720,9 @@ kind: `403 tokens are created in the web app`); no token is ever an operator, on
 
 **Rate limits**, per instance: `/code` 10 per IP per 10 minutes; `/token` 120 per IP per minute;
 `/pending` and `/approve` together 20 per person per 10 minutes. Over the limit: `429 { error:
-"rate_limited", retryAfter }`. `GET /api/me` includes `ip` (the first X-Forwarded-For hop) so the
-approve page can warn when the code was requested from elsewhere.
+"rate_limited", retryAfter }`. `GET /api/me` includes `ip` (the last X-Forwarded-For hop, which
+Cloud Run appends) so the approve page can warn when the code was requested from elsewhere. Every
+per-IP check uses that same hop.
 
 ## A2A server (E9 §5, PR5)
 

@@ -23,7 +23,7 @@ export interface DeviceCode {
   deviceName: string;
   platform?: string;
   kernalVersion?: string;
-  /** The caller's IP as the link role saw it (first X-Forwarded-For hop on Cloud Run). */
+  /** The caller's IP as the link role saw it (last X-Forwarded-For hop on Cloud Run). */
   requestIp?: string;
   createdAt: string;
   expiresAt: string;

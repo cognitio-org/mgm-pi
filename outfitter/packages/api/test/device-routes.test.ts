@@ -53,7 +53,7 @@ async function login(p: Pair, approver = "alice@example.com", ip = "198.51.100.7
   const code = await p.link.fastify.inject({
     method: "POST",
     url: "/api/device/code",
-    headers: { "x-forwarded-for": `${ip}, 10.0.0.1` },
+    headers: { "x-forwarded-for": `10.0.0.1, ${ip}` },
     payload: { deviceName: "mbp-alice", platform: "darwin-arm64", kernalVersion: "0.3.0" },
   });
   assert.equal(code.statusCode, 200, code.body);
@@ -277,6 +277,23 @@ describe("device login over HTTP", () => {
     await p.close();
   });
 
+  test("a machine token stops working once its owner is off both lists (it never refreshes)", async (t) => {
+    const p = await pair(t);
+    const made = await p.web.fastify.inject({ method: "POST", url: "/api/operator/machine-tokens", headers: iapHeaders("sysop@example.com"), payload: { name: "ci-e2e" } });
+    assert.equal(made.statusCode, 201, made.body);
+    const headers = bearer(made.json().token);
+    assert.equal((await p.link.fastify.inject({ method: "GET", url: "/api/me", headers })).statusCode, 200);
+    await p.close();
+    // The next deploy drops the operator from OUTFITTER_OPERATORS; they were never on ALLOW.
+    for (const role of ["link", "web"]) {
+      const app = await buildTestApp({ ...COMMON, OUTFITTER_OPERATORS: "", OUTFITTER_ROLE: role, IAP_AUDIENCE: TEST_IAP_AUDIENCE }, { store: p.store });
+      const refused = await app.fastify.inject({ method: "GET", url: "/api/me", headers });
+      assert.equal(refused.statusCode, 401, role);
+      assert.equal(refused.json().error, "invalid or revoked API token");
+      await app.fastify.close();
+    }
+  });
+
   test("routes register per role: the public flow on link, the person's routes on web, both on all", async (t) => {
     const p = await pair(t);
     for (const url of ["/api/device/code", "/api/device/token", "/api/device/refresh", "/api/device/revoke"]) {
@@ -328,6 +345,8 @@ describe("availability and rate limits (§1.9)", () => {
     assert.equal(limited.json().error, "rate_limited");
     assert.ok(limited.json().retryAfter > 0 && limited.json().retryAfter <= 600);
     assert.equal((await ask("198.51.100.2")).statusCode, 200, "another IP");
+    // A caller can't pick a new IP: Cloud Run appends the real one after whatever it sent.
+    assert.equal((await ask("192.0.2.200, 198.51.100.1")).statusCode, 429, "a spoofed leading hop");
     await link.fastify.close();
   });
 
@@ -392,10 +411,12 @@ describe("Dongle fixes (§1.8)", () => {
 });
 
 describe("GET /api/me ip (for the approve page's warning)", () => {
-  test("is the first X-Forwarded-For hop", async () => {
+  test("is the last X-Forwarded-For hop, the one Cloud Run appends; a hop the caller sent is ignored", async () => {
     const app = await buildTestApp({});
-    const me = await app.fastify.inject({ method: "GET", url: "/api/me", headers: { "x-forwarded-for": "203.0.113.5, 10.1.1.1" } });
+    const me = await app.fastify.inject({ method: "GET", url: "/api/me", headers: { "x-forwarded-for": "198.51.100.66, 203.0.113.5" } });
     assert.equal(me.json().ip, "203.0.113.5");
+    const plain = await app.fastify.inject({ method: "GET", url: "/api/me", headers: { "x-forwarded-for": "203.0.113.5" } });
+    assert.equal(plain.json().ip, "203.0.113.5");
     await app.fastify.close();
   });
 });

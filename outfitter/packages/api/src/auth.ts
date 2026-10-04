@@ -44,7 +44,7 @@ import { tokenAudiences, type Config } from "./config.ts";
 import type { ApiToken, ApiTokenKind, Store } from "./store/types.ts";
 import { TOKEN_PREFIX, hashToken, isTokenActive, tokenKind } from "./tokens.ts";
 import { ACCESS_TOKEN_PREFIX } from "./central/device-tokens.ts";
-import { clientIp, deviceForAccessToken, dongleOwnerAllowed } from "./central/device-login.ts";
+import { clientIp, deviceForAccessToken, dongleOwnerAllowed, isLoginAllowed } from "./central/device-login.ts";
 
 export interface Identity {
   email: string;
@@ -136,12 +136,16 @@ export async function identityFromApiToken(bearer: string, store: Pick<Store, "t
 }
 
 /** #389 CA-1 (docs/specs/central-auth.md §1.6): a device access token (`kda_`) as its owner's
- * identity, never an operator. Every refusal is the Dongle's generic one. lastSeenAt/lastSeenIp
- * are rewritten at most once per LAST_USED_THROTTLE_MS, best-effort. */
-export async function identityFromDeviceToken(bearer: string, store: Pick<Store, "devices">, ip?: string): Promise<Identity> {
+ * identity, never an operator. Every refusal is the Dongle's generic one. Given a config, an owner
+ * no longer on the login allow-list is refused too: a machine token (§1.7) never refreshes, so this
+ * is the only place its owner's access is re-checked, and for a laptop it closes the up-to-an-hour
+ * window before the next refresh. lastSeenAt/lastSeenIp are rewritten at most once per
+ * LAST_USED_THROTTLE_MS, best-effort. */
+export async function identityFromDeviceToken(bearer: string, store: Pick<Store, "devices">, ip?: string, config?: AllowConfig): Promise<Identity> {
   const now = Date.now();
   const device = await deviceForAccessToken(store, bearer, now);
   if (!device) throw new InvalidApiTokenError("invalid or revoked API token");
+  if (config && !isLoginAllowed(device.ownerEmail, config)) throw new InvalidApiTokenError("invalid or revoked API token");
   const lastSeen = device.lastSeenAt ? Date.parse(device.lastSeenAt) : Number.NaN;
   if (!Number.isFinite(lastSeen) || now - lastSeen >= LAST_USED_THROTTLE_MS) {
     try {
@@ -155,7 +159,7 @@ export async function identityFromDeviceToken(bearer: string, store: Pick<Store,
 
 /** A bearer of either kind /api/* accepts: a device access token or a Dongle. */
 async function identityFromBearer(bearer: string, req: RequestLike, store: TokenStore, config?: AllowConfig): Promise<Identity> {
-  if (bearer.startsWith(ACCESS_TOKEN_PREFIX)) return identityFromDeviceToken(bearer, store, clientIp(req));
+  if (bearer.startsWith(ACCESS_TOKEN_PREFIX)) return identityFromDeviceToken(bearer, store, clientIp(req), config);
   return identityFromApiToken(bearer, store, config);
 }
 
@@ -182,7 +186,7 @@ export async function identityFromRequest(req: RequestLike, config: Config, stor
   const bearer = bearerFromHeader(req);
   // #389: a device access token is verified even in dev mode. It is what a signed-in Kernal sends,
   // and the routes only a device may use (key delivery, CA-4/CA-5) need its deviceId.
-  if (bearer?.startsWith(ACCESS_TOKEN_PREFIX)) return identityFromDeviceToken(bearer, store, clientIp(req));
+  if (bearer?.startsWith(ACCESS_TOKEN_PREFIX)) return identityFromDeviceToken(bearer, store, clientIp(req), config);
 
   if (config.devMode) return { email: "dev@localhost", operator: true };
 

@@ -20,22 +20,42 @@ import type { RouteContext } from "../src/routes/context.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { MemorySecretAdmin, type SecretAdmin } from "../src/secrets.ts";
 import type { Identity } from "../src/auth.ts";
+import type { Device } from "../src/store/devices.ts";
 
 const DEV_EMAIL = "dev@localhost";
 const VALUE = "sk-or-v1-abcdefghijklmnop1234";
 
 /** registerKeyRoutes on its own, behind a preHandler that sets `identity` (CA-1's job in server.ts). */
-async function bareApp(opts: { role: "link" | "web" | "all"; identity: Identity; store?: MemoryStore; secrets?: SecretAdmin }) {
-  const store = opts.store ?? new MemoryStore();
+async function bareApp(opts: { role: "link" | "web" | "all"; identity: Identity; store?: MemoryStore; secrets?: SecretAdmin; devices?: Device[]; logs?: string[] }) {
+  const memory = opts.store ?? new MemoryStore();
   const secrets = opts.secrets ?? new MemorySecretAdmin();
-  const app = Fastify();
+  const logs = opts.logs;
+  const app = Fastify(logs ? { logger: { level: "info", stream: { write: (line: string) => void logs.push(line) } } } : {});
   app.addHook("preHandler", async (req) => {
     req.identity = opts.identity;
   });
+  // MemoryDevices is a stub until CA-1: the caller's own device is a laptop unless `devices` says otherwise.
+  const known = opts.devices ?? (opts.identity.deviceId ? [laptop(opts.identity.deviceId, opts.identity.email)] : []);
+  const devices = { findById: async (id: string) => known.find((d) => d.id === id) ?? null };
+  const store = Object.assign(Object.create(memory), { devices }) as MemoryStore;
   const ctx = { config: { role: opts.role, litellmBaseUrl: "https://router.test/v1" }, store, secretAdmin: secrets } as unknown as RouteContext;
   await registerKeyRoutes(app, ctx);
   await app.ready();
-  return { app, store, secrets };
+  return { app, store: memory, secrets };
+}
+
+function laptop(id: string, ownerEmail: string): Device {
+  return {
+    id,
+    userId: userIdFor(ownerEmail),
+    ownerEmail,
+    name: "mbp",
+    kind: "laptop",
+    createdAt: "2026-10-01T00:00:00.000Z",
+    approvedBy: ownerEmail,
+    accessHash: "h",
+    accessExpiresAt: "2026-10-04T11:00:00.000Z",
+  } as Device;
 }
 
 describe("provider key values and names", () => {
@@ -173,6 +193,60 @@ describe("POST /api/device/provider-keys (delivery)", () => {
     const put = await app.inject({ method: "PUT", url: "/api/me/provider-keys/anthropic", payload: { value: "sk-ant-abcdefgh" } });
     assert.equal(put.statusCode, 200, put.body);
     assert.equal(put.json().last4, "efgh");
+    await app.close();
+  });
+
+  test("a machine token (CI, §1.7) neither receives nor manages its operator's keys; a revoked device is 404", async () => {
+    const store = new MemoryStore();
+    const secrets = new MemorySecretAdmin();
+    await setProviderKey({ providerKeys: store.providerKeys, secrets }, { userId: userIdFor("op@example.com"), provider: "openrouter", value: VALUE, setBy: "op@example.com" });
+    const identity: Identity = { email: "op@example.com", operator: true, viaToken: true, deviceId: "dev_ci" };
+    const cases: Array<[Device, number, string]> = [
+      [{ ...laptop("dev_ci", "op@example.com"), kind: "machine" }, 403, "machine_token"],
+      [{ ...laptop("dev_ci", "op@example.com"), revokedAt: "2026-10-02T00:00:00.000Z" }, 404, "device not found"],
+    ];
+    for (const [device, status, error] of cases) {
+      const { app } = await bareApp({ role: "all", identity, store, secrets, devices: [device] });
+      for (const [method, url] of [
+        ["POST", "/api/device/provider-keys"],
+        ["GET", "/api/me/provider-keys"],
+        ["PUT", "/api/me/provider-keys/openrouter"],
+        ["DELETE", "/api/me/provider-keys/openrouter"],
+      ] as const) {
+        const res = await app.inject({ method, url, payload: method === "PUT" ? { value: "sk-replaced-12345678" } : undefined });
+        assert.equal(res.statusCode, status, `${error} ${method} ${url}: ${res.body}`);
+        assert.deepEqual(res.json(), { error });
+        assert.ok(!res.body.includes(VALUE));
+      }
+      await app.close();
+    }
+    assert.equal(await secrets.accessLatest(providerKeySecretName(userIdFor("op@example.com"), "openrouter")), VALUE, "untouched");
+  });
+
+  test("a failed Secret Manager write is a 502 whose log and answer never carry the value", async () => {
+    const inner = new MemorySecretAdmin();
+    // What a Gaxios error looks like: the request (with the base64 payload) in its config.
+    const failing: SecretAdmin = Object.assign(Object.create(inner), {
+      addVersion: async (_name: string, value: string) => {
+        const err = Object.assign(new Error("Request failed with status code 503"), {
+          config: { data: { payload: { data: Buffer.from(value, "utf8").toString("base64") } }, body: value },
+          response: { status: 503, data: { error: { message: "unavailable" } } },
+        });
+        throw err;
+      },
+    });
+    const logs: string[] = [];
+    const { app } = await bareApp({ role: "web", identity: { email: DEV_EMAIL, operator: false }, secrets: failing, logs });
+    const res = await app.inject({ method: "PUT", url: "/api/me/provider-keys/openrouter", payload: { value: VALUE } });
+    assert.equal(res.statusCode, 502, res.body);
+    assert.deepEqual(res.json(), { error: "secret_write_failed" });
+    const all = logs.join("\n");
+    assert.ok(all.includes("provider key write failed"), all);
+    assert.ok(all.includes("503"));
+    for (const secret of [VALUE, Buffer.from(VALUE, "utf8").toString("base64")]) {
+      assert.ok(!all.includes(secret), "the value is not logged");
+      assert.ok(!res.body.includes(secret));
+    }
     await app.close();
   });
 

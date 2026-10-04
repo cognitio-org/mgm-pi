@@ -64,6 +64,25 @@ describe("LitellmKeys.userSpend", () => {
     assert.equal(fake.callsTo("/spend/logs").length, 3);
   });
 
+  test("a user LiteLLM has never seen has zero spend (404 now, user_info null on older LiteLLMs)", async () => {
+    for (const unknownUser of ["404", "null"] as const) {
+      const { fake, keys } = seeded();
+      fake.unknownUser = unknownUser;
+      fake.spendLogs = [];
+      const spend = await keys.userSpend("u_never_logged_in", "2026-10");
+      assert.equal(spend.total, 0, unknownUser);
+      assert.deepEqual(spend.byDevice, []);
+      assert.deepEqual(spend.byModel, []);
+      assert.equal(fake.callsTo("/spend/logs").length, 1, "the logs are still read");
+    }
+  });
+
+  test("any other /user/info failure still throws", async () => {
+    const { fake, keys } = seeded();
+    fake.failNext("/user/info", 500);
+    await assert.rejects(keys.userSpend(DEV_USER, "2026-10"), /\/user\/info answered 500/);
+  });
+
   test("an older LiteLLM's summarized day rows still give the total and models", async () => {
     const { fake, keys } = seeded();
     fake.spendLogs = [{ startTime: "2026-10-01", spend: 2, models: { a: 1.5, b: 0.5 }, users: { [DEV_USER]: 2 } }];
@@ -120,6 +139,17 @@ describe("GET /api/me/spend and /api/operator/spend", () => {
       assert.equal(bad.statusCode, 400, month);
       assert.deepEqual(bad.json(), { error: "invalid_month" });
     }
+    await app.fastify.close();
+  });
+
+  test("someone who never signed in to Kernal gets zero spend, not an error", async () => {
+    const { fake, store, keys } = seeded();
+    fake.users.clear();
+    fake.spendLogs = [];
+    const app = await buildTestApp({}, { store, litellmKeys: keys });
+    const res = await app.fastify.inject({ method: "GET", url: "/api/me/spend?month=2026-10" });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json().total, 0);
     await app.fastify.close();
   });
 
@@ -221,6 +251,26 @@ describe("POST /api/device/router-key", () => {
       await app.close();
     }
     assert.equal(fake.callsTo("/key/generate").length, 0);
+  });
+
+  test("a revoke that lands while minting: the new key is deleted, not handed out", async () => {
+    const fake = new FakeLitellm();
+    const store = new MemoryStore();
+    const devices: Device[] = [DEVICE];
+    // The revoke marks the device while /key/generate is in flight.
+    const racing: typeof fetch = async (input, init) => {
+      if (new URL(String(input)).pathname === "/key/generate") devices[0] = { ...DEVICE, revokedAt: "2026-10-04T10:00:00.000Z" };
+      return fake.fetch(input, init);
+    };
+    const keys = createLitellmKeys(CONFIG, store, { fetch: racing })!;
+    const app = await bareRouterApp({ role: "link", identity, store, keys, devices });
+    const res = await app.inject({ method: "POST", url: "/api/device/router-key" });
+    assert.equal(res.statusCode, 404, res.body);
+    assert.deepEqual(res.json(), { error: "device not found" });
+    assert.ok(!res.body.includes("sk-fake"));
+    assert.equal(fake.keys.size, 0, "the fresh key is gone from LiteLLM");
+    assert.ok((await store.routerKeys.findByAlias(`kernal-device-${DEVICE.id}`))?.deletedAt);
+    await app.close();
   });
 
   test("503 without minting; 502 when LiteLLM fails", async () => {

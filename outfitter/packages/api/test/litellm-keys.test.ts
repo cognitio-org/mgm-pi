@@ -125,6 +125,20 @@ describe("mintDeviceKey", () => {
     assert.equal(record?.deletedAt, undefined);
   });
 
+  test("a re-mint whose previous delete fails throws and leaves the live key off the sweep", async () => {
+    const { fake, store, keys } = setup();
+    const first = await keys.mintDeviceKey({ userId: device.userId, email: device.ownerEmail, deviceId: device.id, deviceName: device.name });
+    fake.failNext("/key/delete", 500);
+    await assert.rejects(keys.mintDeviceKey({ userId: device.userId, email: device.ownerEmail, deviceId: device.id, deviceName: device.name }));
+    assert.equal(fake.callsTo("/key/generate").length, 1, "no second key");
+    const record = await store.routerKeys.findActiveForDevice(device.id);
+    assert.equal(record?.litellmTokenId, first.tokenId);
+    assert.equal(record?.deleteFailedAt, undefined);
+    assert.deepEqual(await store.routerKeys.listPendingDelete(50), []);
+    assert.deepEqual(await sweepRouterKeys(keys, store), { deleted: 0, failed: 0 });
+    assert.ok(fake.keys.has(first.tokenId!), "the device keeps its key");
+  });
+
   test("a key that can't be recorded is deleted again", async () => {
     const store = new MemoryStore();
     const failing: RouterKeysCollection = Object.assign(Object.create(store.routerKeys), {

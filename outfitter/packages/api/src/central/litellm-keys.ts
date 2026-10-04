@@ -317,8 +317,10 @@ class HttpLitellmKeys implements LitellmKeys {
   async mintDeviceKey(args: { userId: string; email: string; deviceId: string; deviceName: string } & KeyLimits): Promise<MintedKey> {
     const alias = deviceKeyAlias(args.deviceId);
     // One live key per device: the old one goes first (LiteLLM keeps aliases unique, too).
+    // A failed delete here is not owed to the sweep: the previous key is still the device's live
+    // key and the mint is abandoned, so the device keeps using it.
     const previous = await this.routerKeys.findActiveForDevice(args.deviceId);
-    if (previous) await this.deleteKey({ alias: previous.alias });
+    if (previous) await this.removeKey({ alias: previous.alias }, false);
     const maxBudget = args.maxBudget ?? DEVICE_KEY_MAX_BUDGET_USD;
     const budgetDuration = args.budgetDuration ?? DEVICE_KEY_BUDGET_DURATION;
     return this.generate(
@@ -376,6 +378,11 @@ class HttpLitellmKeys implements LitellmKeys {
   }
 
   async deleteKey(ref: { alias: string } | { tokenId: string }): Promise<void> {
+    return this.removeKey(ref, true);
+  }
+
+  /** deleteKey; with `owed` false a failure is not recorded (deleteFailedAt is what the sweep retries). */
+  private async removeKey(ref: { alias: string } | { tokenId: string }, owed: boolean): Promise<void> {
     const record = "alias" in ref ? await this.routerKeys.findByAlias(ref.alias) : null;
     if (record?.deletedAt) return;
     const tokenId = "tokenId" in ref ? ref.tokenId : record?.litellmTokenId;
@@ -387,7 +394,7 @@ class HttpLitellmKeys implements LitellmKeys {
       if (record) await this.routerKeys.update(record.alias, { deletedAt: now, deleteFailedAt: undefined });
       return;
     }
-    if (record) await this.routerKeys.update(record.alias, { deleteFailedAt: now });
+    if (record && owed) await this.routerKeys.update(record.alias, { deleteFailedAt: now });
     throw res instanceof Error ? res : this.failure("/key/delete", res.status, res.body);
   }
 
@@ -413,13 +420,17 @@ class HttpLitellmKeys implements LitellmKeys {
 
     const { start, end } = monthRange(month);
     const [info, logs] = await Promise.all([
-      this.ok("GET", "/user/info", { query: { user_id: userId } }),
+      this.call("GET", "/user/info", { query: { user_id: userId } }),
       this.ok("GET", "/spend/logs", { query: { user_id: userId, start_date: start, end_date: end, summarize: "false" } }),
     ]);
+    // A user LiteLLM has never seen (nobody minted for them yet) has no keys and zero spend: 404 on
+    // current LiteLLM, 200 with `user_info: null` on older ones (as in ensureLitellmUser).
+    const unknownUser = info.status === 404 || (info.ok && !(info.body as { user_info?: unknown } | undefined)?.user_info);
+    if (!info.ok && !unknownUser) throw this.failure("/user/info", info.status, info.body);
     // The user's live keys by hashed token: an alias for a log row whose metadata lacks one, and
     // the device name from the key's metadata.
     const byToken = new Map<string, LitellmKeyInfo>();
-    for (const k of ((info as { keys?: LitellmKeyInfo[] } | undefined)?.keys ?? [])) {
+    for (const k of (unknownUser ? [] : ((info.body as { keys?: LitellmKeyInfo[] } | undefined)?.keys ?? []))) {
       if (k?.token) byToken.set(k.token, k);
     }
     const devices = new Map<string, UserSpend["byDevice"][number]>();

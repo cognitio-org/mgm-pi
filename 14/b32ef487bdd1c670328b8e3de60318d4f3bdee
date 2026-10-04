@@ -1,0 +1,34 @@
+kernal/.pi/extensions/kernal-config/index.ts
+  s_38ec74cfb7fa1d::t_94435e80829379 12-17,21,23-24,28,30-31,35-44
+  s_38ec74cfb7fa1d::t_375bb11ae56ecb 79-93,95-101
+  s_38ec74cfb7fa1d::t_c4a2dfc5429ac7 45
+kernal/tests/central-config.test.ts
+  s_38ec74cfb7fa1d::t_ff3d8a1092ede8 419-430
+  s_38ec74cfb7fa1d::t_abd1a9fc11d5cb 278-321
+kernal/.pi/extensions/_shared/central-config.ts
+  s_38ec74cfb7fa1d::t_a5501b99640773 523-540
+  s_38ec74cfb7fa1d::t_f75d8bc121031e 643,645,647-648
+  s_38ec74cfb7fa1d::t_50fccef3f7bbb1 652-658
+  s_38ec74cfb7fa1d::t_23297944c0c9a0 632-633
+  s_38ec74cfb7fa1d::t_aba3123372fedc 545-546
+  s_38ec74cfb7fa1d::t_b18d37393b197a 614,616,618-619
+kernal/tests/central-delivery.test.ts
+  s_38ec74cfb7fa1d::t_a6c4704b415430 80
+  s_38ec74cfb7fa1d::t_ad4cc10682ad83 1-79,81-142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "14b32ef487bdd1c670328b8e3de60318d4f3bdee",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

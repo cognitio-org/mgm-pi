@@ -14,6 +14,6 @@
     "build:index": "bash scripts/prebundle.sh .pi/npm/node_modules"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.87.1"
+    "@earendil-works/pi-coding-agent": "0.99.2"
   }
 }

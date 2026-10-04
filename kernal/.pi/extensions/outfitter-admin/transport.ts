@@ -19,7 +19,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { connect } from "node:net";
-import { outfitterCredentials } from "../_shared/outfitter-env.ts";
+import { outfitterBearer, outfitterCredentials, sendWithBearer } from "../_shared/outfitter-env.ts";
 
 /** `approvalId` (E9.9): a laptop op waiting for the owner's yes in the Outfitter web app; `state`:
  * what `approvals.get` says about it (laptop-approval.ts). */
@@ -186,7 +186,9 @@ async function errorBody(res: Response): Promise<string | undefined> {
   }
 }
 
-export function httpTransport(apiBase: string, token: string, fetchFn: FetchFn = fetch, timeouts: TransportTimeouts = {}): AdminTransport {
+/** `token`: a fixed bearer, or outfitterBearer bound to this process's credentials (which, after a
+ * 401, is asked once more with the rejected token; see sendWithBearer). */
+export function httpTransport(apiBase: string, token: string | ((rejected?: string) => Promise<string | undefined>), fetchFn: FetchFn = fetch, timeouts: TransportTimeouts = {}): AdminTransport {
   const base = apiBase.replace(/\/+$/, "");
   return {
     kind: "laptop",
@@ -196,19 +198,22 @@ export function httpTransport(apiBase: string, token: string, fetchFn: FetchFn =
       const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
       let res: Response;
       try {
-        res = await fetchFn(`${base}/api/admin/ops`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            op,
-            args,
-            ...(opts.confirmed ? { confirmed: true } : {}),
-            ...(opts.laptop ? { laptop: opts.laptop } : {}),
-            ...(opts.approvalId ? { approvalId: opts.approvalId } : {}),
-          }),
-          signal,
-          redirect: "manual",
+        const body = JSON.stringify({
+          op,
+          args,
+          ...(opts.confirmed ? { confirmed: true } : {}),
+          ...(opts.laptop ? { laptop: opts.laptop } : {}),
+          ...(opts.approvalId ? { approvalId: opts.approvalId } : {}),
         });
+        res = await sendWithBearer(token, (bearer) =>
+          fetchFn(`${base}/api/admin/ops`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
+            body,
+            signal,
+            redirect: "manual",
+          }),
+        );
       } catch (err) {
         if (opts.signal?.aborted) return { ok: false, error: read ? "cancelled" : `cancelled${MAYBE_APPLIED}` };
         if (timeout.aborted) return { ok: false, error: `Outfitter did not answer in time${read ? "" : MAYBE_APPLIED}` };
@@ -256,7 +261,7 @@ export function adminTransport(env?: NodeJS.ProcessEnv, fetchFn?: FetchFn): Admi
   if (socket) return socketTransport(socket);
   // In a Drive the socket is the only way in; never fall back to a Dongle there.
   if (e.OUTFITTER_SESSION_ID) return undefined;
-  const { api, token } = outfitterCredentials(env);
-  if (api && token) return httpTransport(api, token, fetchFn);
+  const creds = outfitterCredentials(env);
+  if (creds.api && creds.token) return httpTransport(creds.api, (rejected) => outfitterBearer(creds, rejected), fetchFn);
   return undefined;
 }

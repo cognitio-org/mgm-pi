@@ -17,7 +17,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { env } from "./env.ts";
-import type { OutfitterCredentials } from "./outfitter-env.ts";
+import { outfitterBearer, sendWithBearer, type OutfitterCredentials } from "./outfitter-env.ts";
 
 export type SentrySettings = { enabled: false } | { enabled: true; dsn: string; tracesSampleRate: number };
 
@@ -85,10 +85,16 @@ export async function refreshFleetSettings(
   const doFetch = opts.fetch ?? fetch;
   let settings: FleetSettings;
   try {
-    const res = await doFetch(`${creds.api.replace(/\/+$/, "")}/api/fleet-settings`, {
-      headers: { authorization: `Bearer ${creds.token}`, accept: "application/json" },
-      signal: AbortSignal.timeout(opts.timeoutMs ?? FETCH_TIMEOUT_MS),
-    });
+    const signal = AbortSignal.timeout(opts.timeoutMs ?? FETCH_TIMEOUT_MS);
+    // A 401 for a session token is retried once with a newer one before it counts as a refusal.
+    const res = await sendWithBearer(
+      (rejected) => outfitterBearer(creds, rejected),
+      (token) =>
+        doFetch(`${creds.api!.replace(/\/+$/, "")}/api/fleet-settings`, {
+          headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+          signal,
+        }),
+    );
     // A refused Dongle (revoked, expired) is an answer, not an outage: the cached "on" must not
     // outlive it, so it is replaced with off. Anything else (5xx, an older Outfitter) keeps it.
     if (res.status === 401 || res.status === 403) settings = OFF;

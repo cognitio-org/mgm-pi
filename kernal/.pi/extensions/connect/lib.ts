@@ -118,7 +118,8 @@ const PROXY_COMPAT = { supportsDeveloperRole: false, supportsReasoningEffort: tr
 
 export const DEFAULT_OPENROUTER_MODELS = [
   "anthropic/claude-sonnet-5", "anthropic/claude-opus-5", "openai/gpt-5.5", "google/gemini-3.8-flash",
-  "qwen/qwen3.6-35b-a3b", "deepseek/deepseek-v4-pro", "moonshotai/kimi-k3", "z-ai/glm-5.1",
+  "qwen/qwen3.6-35b-a3b", "deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash", "moonshotai/kimi-k3",
+  "z-ai/glm-5.1",
 ];
 
 /**

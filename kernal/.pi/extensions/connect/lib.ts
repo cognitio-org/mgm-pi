@@ -139,10 +139,13 @@ export function keepListed(curated: string[], catalogue: any): { kept: string[];
 export const CURATION_KEYS = {
   fleetAdd: "openrouter.models.fleetAdd", fleetRemove: "openrouter.models.fleetRemove",
   add: "openrouter.models.add", remove: "openrouter.models.remove",
+  profileAdd: "openrouter.models.profileAdd", profileRemove: "openrouter.models.profileRemove",
   localAdd: "openrouter.models.localAdd", localRemove: "openrouter.models.localRemove",
 } as const;
 export type CurationLists = Record<keyof typeof CURATION_KEYS, string[]>;
-export const NO_CURATION: CurationLists = { fleetAdd: [], fleetRemove: [], add: [], remove: [], localAdd: [], localRemove: [] };
+export const NO_CURATION: CurationLists = { fleetAdd: [], fleetRemove: [], add: [], remove: [], profileAdd: [], profileRemove: [], localAdd: [], localRemove: [] };
+/** Each level's own pair, farthest first: a nearer level's add or remove wins over a farther one's. */
+export const CURATION_LEVELS = [["fleetAdd", undefined], ["add", "remove"], ["profileAdd", "profileRemove"], ["localAdd", "localRemove"]] as const;
 
 /** "a/b, c/d,,a/b" → ["a/b", "c/d"]: trimmed, empties and repeats dropped. */
 export function parseIdList(text: unknown): string[] {
@@ -151,15 +154,18 @@ export function parseIdList(text: unknown): string[] {
 }
 
 /**
- * The OpenRouter models to offer: the base list (Kernal's defaults), plus every level's adds, minus
- * every level's removes. A fleet removal always wins, so "hidden from everyone" holds. When
- * OPENROUTER_MODELS replaced the base (`replaced`), only the fleet's removals still apply.
+ * The OpenRouter models to offer: the base list (Kernal's defaults), then each level's removes and
+ * adds from the fleet's down to this machine's, so a nearer level wins (this machine can add back
+ * what the account removed). The fleet's removals come last and always win, so "hidden from
+ * everyone" holds. When OPENROUTER_MODELS replaced the base (`replaced`), only those still apply.
  */
 export function curateOpenRouter(base: string[], lists: CurationLists, replaced = false): string[] {
   const out = new Set(base);
   if (!replaced) {
-    for (const id of [...lists.fleetAdd, ...lists.add, ...lists.localAdd]) out.add(id);
-    for (const id of [...lists.remove, ...lists.localRemove]) out.delete(id);
+    for (const [add, remove] of CURATION_LEVELS) {
+      if (remove) for (const id of lists[remove]) out.delete(id);
+      for (const id of lists[add]) out.add(id);
+    }
   }
   for (const id of lists.fleetRemove) out.delete(id);
   return [...out];

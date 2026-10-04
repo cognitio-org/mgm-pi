@@ -143,6 +143,10 @@ describe("backends", () => {
     assert.deepEqual(curateOpenRouter(base, lists), ["c/d", "e/f", "u/1", "m/1"]);
     // a fleet removal wins over every add, a default included
     assert.deepEqual(curateOpenRouter(base, { ...lists, fleetRemove: ["u/1", "m/1", "c/d"] }), ["e/f"]);
+    // the nearer level wins: this machine adds back what the account removed, a profile overrides the user
+    assert.deepEqual(curateOpenRouter(base, { ...NO_CURATION, remove: ["a/b"], localAdd: ["a/b"] }), ["c/d", "e/f", "a/b"]);
+    assert.deepEqual(curateOpenRouter(base, { ...NO_CURATION, add: ["u/1"], profileRemove: ["u/1"] }), base);
+    assert.deepEqual(curateOpenRouter(base, { ...NO_CURATION, localAdd: ["a/b"], fleetRemove: ["a/b"] }), ["c/d", "e/f"], "except over a fleet removal");
     // OPENROUTER_MODELS replaced the base: adds and personal removes don't apply, fleet removals do
     assert.deepEqual(curateOpenRouter(["x/y", "c/d"], { ...lists, fleetRemove: ["c/d"] }, true), ["x/y"]);
   });

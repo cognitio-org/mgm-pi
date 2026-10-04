@@ -430,16 +430,21 @@ with the three Sentry keys above and set at the fleet level only while Sentry is
 
 v3 keys (`SETTINGS_SCHEMA_VERSION = 3`, #440), the curated OpenRouter list. Each is a string of
 comma-separated model ids. There is one add and one remove key per level, so the levels combine
-instead of the lowest one replacing the list. Kernal works out the list as Kernal's defaults, plus
-every add, minus every remove. A fleet removal always wins, even over an add at a lower level.
-`OPENROUTER_MODELS` in `.env` replaces the defaults and the adds; fleet removals still apply.
+instead of the lowest one replacing the list.
+
+Kernal builds the list from its defaults, then applies each level's removes and adds in this order:
+the fleet's adds, the user, the profile, then this machine. A nearer level wins: this machine can
+add back a model your account removed. The fleet's removals are applied last and always win.
+`OPENROUTER_MODELS` in `.env` replaces the defaults and every add; fleet removals still apply.
 
 | Key | Type | Secret | Levels | Override | Default | Env |
 |---|---|---|---|---|---|---|
 | `openrouter.models.fleetAdd` | string (ids) | no | fleet | none | | |
 | `openrouter.models.fleetRemove` | string (ids) | no | fleet | none | | |
-| `openrouter.models.add` | string (ids) | no | user, profile | any | | |
-| `openrouter.models.remove` | string (ids) | no | user, profile | any | | |
+| `openrouter.models.add` | string (ids) | no | user | any | | |
+| `openrouter.models.remove` | string (ids) | no | user | any | | |
+| `openrouter.models.profileAdd` | string (ids) | no | profile | any | | |
+| `openrouter.models.profileRemove` | string (ids) | no | profile | any | | |
 | `openrouter.models.localAdd` | string (ids) | no | local | any | | |
 | `openrouter.models.localRemove` | string (ids) | no | local | any | | |
 

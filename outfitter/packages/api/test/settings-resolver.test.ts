@@ -51,9 +51,15 @@ describe("schema validation", () => {
       assert.deepEqual(parseValueWrite("user", { values: { [key]: ids } }), { error: "level_not_allowed", key });
     }
     for (const key of ["openrouter.models.add", "openrouter.models.remove"]) {
-      for (const level of ["user", "profile"] as const) assert.deepEqual(parseValueWrite(level, { values: { [key]: ids } }), { patch: { [key]: ids } });
-      assert.deepEqual(parseValueWrite("fleet", { values: { [key]: ids } }), { error: "level_not_allowed", key });
+      assert.deepEqual(parseValueWrite("user", { values: { [key]: ids } }), { patch: { [key]: ids } });
+      for (const level of ["fleet", "profile"] as const) assert.deepEqual(parseValueWrite(level, { values: { [key]: ids } }), { error: "level_not_allowed", key });
     }
+    // a profile has its own pair, so it adds to the user's list instead of replacing it
+    for (const key of ["openrouter.models.profileAdd", "openrouter.models.profileRemove"]) {
+      assert.deepEqual(parseValueWrite("profile", { values: { [key]: ids } }), { patch: { [key]: ids } });
+      assert.deepEqual(parseValueWrite("user", { values: { [key]: ids } }), { error: "level_not_allowed", key });
+    }
+    assert.deepEqual(parseValueWrite("user", { values: { "openrouter.models.add": "a/b,".repeat(300) } }), { error: "invalid_value", key: "openrouter.models.add" }, "1024 characters at most");
     // this machine's own keys are declared for Kernal but never stored by Outfitter
     for (const key of ["openrouter.models.localAdd", "openrouter.models.localRemove"]) {
       assert.deepEqual(parseValueWrite("user", { values: { [key]: ids } }), { error: "level_not_allowed", key });

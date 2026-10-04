@@ -111,8 +111,10 @@ export const KNOWN_SETTINGS: readonly KnownSetting[] = [
   // (connect/lib.ts curateOpenRouter). Comma-separated model ids.
   { key: "openrouter.models.fleetAdd", type: "string", secret: false, levels: ["fleet"], override: "none", description: "OpenRouter models offered to everyone on top of Kernal's curated list." },
   { key: "openrouter.models.fleetRemove", type: "string", secret: false, levels: ["fleet"], override: "none", description: "OpenRouter models hidden from everyone; nobody can add them back." },
-  { key: "openrouter.models.add", type: "string", secret: false, levels: ["user", "profile"], override: "any", description: "OpenRouter models you added to your curated list." },
-  { key: "openrouter.models.remove", type: "string", secret: false, levels: ["user", "profile"], override: "any", description: "OpenRouter models you removed from your curated list." },
+  { key: "openrouter.models.add", type: "string", secret: false, levels: ["user"], override: "any", description: "OpenRouter models you added to your curated list." },
+  { key: "openrouter.models.remove", type: "string", secret: false, levels: ["user"], override: "any", description: "OpenRouter models you removed from your curated list." },
+  { key: "openrouter.models.profileAdd", type: "string", secret: false, levels: ["profile"], override: "any", description: "OpenRouter models this profile adds to your curated list." },
+  { key: "openrouter.models.profileRemove", type: "string", secret: false, levels: ["profile"], override: "any", description: "OpenRouter models this profile removes from your curated list." },
   { key: "openrouter.models.localAdd", type: "string", secret: false, levels: ["local"], override: "any", description: "OpenRouter models this machine adds to the curated list." },
   { key: "openrouter.models.localRemove", type: "string", secret: false, levels: ["local"], override: "any", description: "OpenRouter models this machine removes from the curated list." },
 ];
@@ -361,7 +363,8 @@ function writeWhole(file: string, text: string): void {
   renameSync(tmp, file);
 }
 
-function readLocalOverrides(): Record<string, unknown> {
+/** config.local.json's values, read from disk now (not the memoised resolution). */
+export function readLocalOverrides(): Record<string, unknown> {
   try {
     const f = JSON.parse(readFileSync(localOverridesPath(), "utf8")) as { version?: unknown; values?: unknown };
     return f && f.version === 1 && f.values && typeof f.values === "object" ? (f.values as Record<string, unknown>) : {};

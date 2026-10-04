@@ -219,6 +219,9 @@ input[aria-invalid=true]:focus { box-shadow: 0 0 0 3px var(--err-soft); }
 .mlist button[aria-pressed=true] { background: var(--sel); border-color: color-mix(in srgb, var(--accent) 40%, transparent); color: var(--accent-ink); }
 .mlist .id { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mlist li.curated { display: flex; align-items: center; gap: 2px; }
+.mlist li[hidden] { display: none; }
+.unlisted { padding: 0 16px 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.unlisted .chip { display: inline-flex; align-items: center; gap: 4px; font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
 .mlist button.rm { width: auto; flex: none; min-height: 28px; padding: 0 8px; font-family: inherit; color: var(--muted); }
 .mlist button.rm:hover { color: var(--err); background: var(--err-soft); }
 .curate { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 4px 16px 14px; }
@@ -996,11 +999,13 @@ function renderModel(view) {
   api("GET", "/models").then(function (d) { drawModels(view, d); }, function (e) { failed(view, e); });
 }
 // #440: the curated OpenRouter list. Adds and removes go to the account or to this machine only.
-var curateTarget = "account";
+var curateTarget = "account", curateChosen = false;
 function curateRow(view, d) {
   var c = d.curation;
   if (c.replacedByEnv) return el("p", { class: "note", style: "padding: 0 16px 14px" }, "OPENROUTER_MODELS in .env sets this whole list; edit it there, or remove it to curate the list here.");
+  // Signed out: only this machine. Signed in again later: back to the account unless chosen by hand.
   if (!c.canAccount) curateTarget = "machine";
+  else if (!curateChosen) curateTarget = "account";
   var input = el("input", { type: "text", list: "or-catalogue", placeholder: "Add any OpenRouter model, e.g. deepseek/deepseek-v4-pro", "aria-label": "OpenRouter model to add", autocomplete: "off" });
   var dl = el("datalist", { id: "or-catalogue" });
   (c.catalogue || []).forEach(function (id) { dl.appendChild(el("option", { value: id })); });
@@ -1008,14 +1013,19 @@ function curateRow(view, d) {
   [["account", "My account"], ["machine", "This machine"]].forEach(function (t) {
     var b = el("button", { type: "button", "aria-pressed": curateTarget === t[0] ? "true" : "false", text: t[1] });
     if (t[0] === "account" && !c.canAccount) { b.disabled = true; b.title = "Run kernal login to save to your account"; }
-    b.addEventListener("click", function () { curateTarget = t[0]; Array.prototype.forEach.call(seg.children, function (x) { x.setAttribute("aria-pressed", x === b ? "true" : "false"); }); });
+    b.addEventListener("click", function () { curateTarget = t[0]; curateChosen = true; Array.prototype.forEach.call(seg.children, function (x) { x.setAttribute("aria-pressed", x === b ? "true" : "false"); }); });
     seg.appendChild(b);
   });
   var addBtn = el("button", { type: "button", class: "btn sm", text: "Add" });
   function submit() { var id = input.value.trim(); if (id) curate(view, "add", id, addBtn); }
   addBtn.addEventListener("click", submit);
   input.addEventListener("keydown", function (e) { if (e.key === "Enter") submit(); });
-  return el("div", { class: "curate" }, input, dl, addBtn, el("span", { class: "note", text: "Save to" }), seg);
+  var row = el("div", { class: "curate" }, input, dl, addBtn, el("span", { class: "note", text: "Save to" }), seg);
+  if (!(c.unavailable || []).length) return row;
+  // On a list but not offered (OpenRouter doesn't list them): still removable here.
+  var un = el("div", { class: "unlisted" }, el("span", { class: "note warnnote", text: "Not on OpenRouter:" }));
+  c.unavailable.forEach(function (id) { un.appendChild(el("span", { class: "chip" }, id, curateButton(view, d, "remove", id))); });
+  return el("div", {}, un, row);
 }
 function curateButton(view, d, action, id) {
   var b = el("button", { type: "button", class: "rm", title: "Remove " + id + " from the list", "aria-label": "Remove " + id + " from the list", text: "×" });

@@ -287,7 +287,7 @@ export default async function (pi: ExtensionAPI) {
       if (modelId === BROWSE) { modelId = await browseOpenRouter(ctx); if (!modelId) return; }
     }
     // Not on the list but OpenRouter has it: offer to add it first, so pi can switch to it.
-    if (b.id === "openrouter" && !ids.includes(modelId) && openrouterCatalogue.includes(modelId) && !(await offerToAdd(ctx, modelId))) return;
+    if (b.id === "openrouter" && !ids.includes(modelId) && (await loadCatalogue()).includes(modelId) && !(await offerToAdd(ctx, modelId))) return;
     const problem = await selectModel(ctx, b.id, modelId);
     if (problem) ctx.ui.notify(problem, "error");
     else ctx.ui.notify(`Connected to ${b.id} / ${modelId} (saved as default)`, "info");
@@ -295,14 +295,19 @@ export default async function (pi: ExtensionAPI) {
 
   const BROWSE = "Browse all OpenRouter models…";
 
+  /** OpenRouter's catalogue, fetched now when start-up didn't get it (offline, KERNAL_NO_DISCOVERY). */
+  async function loadCatalogue(): Promise<string[]> {
+    if (!openrouterCatalogue.length && !env("NO_DISCOVERY")) {   // offline: no catalogue, so no id check either
+      const b = byId("openrouter");
+      const list = b?.apiKey ? await getJson(`${b.baseUrl}/models`, b.apiKey, 8000) : undefined;
+      openrouterCatalogue = ((list?.data ?? []) as any[]).map((m) => String(m?.id)).sort();
+    }
+    return openrouterCatalogue;
+  }
+
   /** Search OpenRouter's whole catalogue, then pick one of the matches. */
   async function browseOpenRouter(ctx: ExtensionCommandContext): Promise<string | undefined> {
-    if (!openrouterCatalogue.length) {
-      const b = byId("openrouter");
-      const list = b ? await getJson(`${b.baseUrl}/models`, b.apiKey, 8000) : undefined;
-      openrouterCatalogue = ((list?.data ?? []) as any[]).map((m) => String(m?.id)).sort();
-      if (!openrouterCatalogue.length) { ctx.ui.notify("OpenRouter's model list could not be read; try again later", "error"); return undefined; }
-    }
+    if (!(await loadCatalogue()).length) { ctx.ui.notify("OpenRouter's model list could not be read; try again later", "error"); return undefined; }
     const query = await ctx.ui.input(`Search ${openrouterCatalogue.length} OpenRouter models (part of an id, e.g. deepseek)`, "");
     if (query === undefined) return undefined;
     const q = query.trim().toLowerCase();
@@ -318,9 +323,11 @@ export default async function (pi: ExtensionAPI) {
     const pick = await ctx.ui.select(`${id} is not on your OpenRouter list`, canSaveToAccount() ? [ACCOUNT, MACHINE] : [MACHINE]);
     if (!pick) return false;
     try {
-      ctx.ui.notify(await changeCuration("add", id, pick === ACCOUNT ? "account" : "machine"), "info");
+      ctx.ui.notify(await changeCuration("add", id, pick === ACCOUNT ? "account" : "machine", { catalogue: await loadCatalogue() }), "info");
     } catch (e: any) { ctx.ui.notify(`Not added: ${e?.message ?? e}`, "error"); return false; }
     await registerAll();
+    // Saved, but this process still resolves the old list (Outfitter didn't answer the reload).
+    if (!(models.get("openrouter") ?? []).includes(id)) { ctx.ui.notify(`${id} is saved, but this session couldn't pick up the change; it is offered from the next start`, "warning"); return false; }
     return true;
   }
 
@@ -345,6 +352,7 @@ export default async function (pi: ExtensionAPI) {
   const curationState = () => ({
     lists: curationLists(), catalogue: openrouterCatalogue, canAccount: canSaveToAccount(),
     replacedByEnv: !!loadEnv(process.cwd()).OPENROUTER_MODELS,
+    unavailable: notListed.get("openrouter") ?? [],   // on a list, but OpenRouter doesn't list them
   });
 
   // /admin (and anything else) asks through the shared event bus rather than duplicating this state.
@@ -355,7 +363,7 @@ export default async function (pi: ExtensionAPI) {
       if (req.action !== "add" && req.action !== "remove") throw new Error("action is add or remove");
       if (req.target !== "account" && req.target !== "machine") throw new Error("target is account or machine");
       if (curationState().replacedByEnv) throw new Error("OPENROUTER_MODELS in .env sets the whole OpenRouter list: edit it there, or remove it to curate the list here");
-      const message = await changeCuration(req.action, String(req.model ?? ""), req.target as CurationTarget);
+      const message = await changeCuration(req.action, String(req.model ?? ""), req.target as CurationTarget, { catalogue: req.action === "add" ? await loadCatalogue() : undefined });
       await registerAll();
       return { message, ...curationState(), models: models.get("openrouter") ?? [] };
     }

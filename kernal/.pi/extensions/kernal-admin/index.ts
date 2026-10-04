@@ -290,7 +290,7 @@ export function createApi(d: ApiDeps): Api {
     "POST /model/curate": async (body: { action?: string; id?: string; target?: string }) => {
       if (typeof body.id !== "string" || !body.id.trim()) return fail(400, { error: "id is required" });
       try {
-        const r = await busRequest(bus, "kernal:connect", { op: "curate", action: body.action, model: body.id, target: body.target }, 30_000);
+        const r = await busRequest(bus, "kernal:connect", { op: "curate", action: body.action, model: body.id, target: body.target }, 90_000);   // account: GET, PUT, reloads, re-registration
         if (r === undefined) return fail(503, { error: "the connect extension is not loaded" });
         return { body: r };
       } catch (e: any) { return fail(422, { error: e.message }); }

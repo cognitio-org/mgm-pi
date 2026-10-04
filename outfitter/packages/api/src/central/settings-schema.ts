@@ -67,8 +67,8 @@ const ROUTER_LIMIT = { secret: false, levels: ["fleet"], override: "none", since
 const SENTRY_SIGNAL = { type: "boolean", secret: false, levels: ["fleet", "local"], override: "opt-out", default: false, since: 2 } as const;
 
 /** #440's curated OpenRouter list: comma-separated model ids, one add and one remove key per level
- * so the levels combine (Kernal: defaults + every add − every remove; a fleet removal always wins)
- * instead of the lowest level replacing the list. */
+ * so the levels combine instead of the lowest level replacing the list. Kernal applies them from
+ * the fleet's adds down to this machine's, the nearer level winning; a fleet removal always wins. */
 const OPENROUTER_LIST = { type: "string", secret: false, since: 3 } as const;
 
 /** The v1 keys (spec §3.2). */
@@ -309,8 +309,10 @@ export const SETTINGS_SCHEMA: readonly SettingDecl[] = [
   // v3 (#440)
   { ...OPENROUTER_LIST, key: "openrouter.models.fleetAdd", levels: ["fleet"], override: "none", description: "OpenRouter models offered to everyone on top of Kernal's curated list, comma-separated." },
   { ...OPENROUTER_LIST, key: "openrouter.models.fleetRemove", levels: ["fleet"], override: "none", description: "OpenRouter models hidden from everyone, comma-separated; nobody can add them back." },
-  { ...OPENROUTER_LIST, key: "openrouter.models.add", levels: ["user", "profile"], override: "any", description: "OpenRouter models you added to your curated list, comma-separated." },
-  { ...OPENROUTER_LIST, key: "openrouter.models.remove", levels: ["user", "profile"], override: "any", description: "OpenRouter models you removed from your curated list, comma-separated." },
+  { ...OPENROUTER_LIST, key: "openrouter.models.add", levels: ["user"], override: "any", description: "OpenRouter models you added to your curated list, comma-separated." },
+  { ...OPENROUTER_LIST, key: "openrouter.models.remove", levels: ["user"], override: "any", description: "OpenRouter models you removed from your curated list, comma-separated." },
+  { ...OPENROUTER_LIST, key: "openrouter.models.profileAdd", levels: ["profile"], override: "any", description: "OpenRouter models this profile adds to your curated list, comma-separated." },
+  { ...OPENROUTER_LIST, key: "openrouter.models.profileRemove", levels: ["profile"], override: "any", description: "OpenRouter models this profile removes from your curated list, comma-separated." },
   { ...OPENROUTER_LIST, key: "openrouter.models.localAdd", levels: ["local"], override: "any", description: "OpenRouter models this machine adds to the curated list, comma-separated." },
   { ...OPENROUTER_LIST, key: "openrouter.models.localRemove", levels: ["local"], override: "any", description: "OpenRouter models this machine removes from the curated list, comma-separated." },
 ];

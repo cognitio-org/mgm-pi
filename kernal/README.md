@@ -86,7 +86,10 @@ remove models on it:
 
 The lists are central settings (`openrouter.models.*`; `/config` shows them).
 - The fleet can add models for everyone or hide them; a hidden model can't be added back.
-- Your account's changes and this machine's changes add up.
+- Your account's changes and this machine's changes add up. Where they disagree, the nearer one
+  wins: a profile over your user list, this machine over both.
+- Ids are checked against OpenRouter's catalogue. A listed model OpenRouter later drops shows on
+  `/admin` under *Not on OpenRouter*, where you can remove it.
 - `OPENROUTER_MODELS` in `.env` still replaces the whole list, but the fleet's hidden models stay hidden.
 
 Model can also be given on the CLI: `pi --model litellm/claude-sonnet-5:high`.

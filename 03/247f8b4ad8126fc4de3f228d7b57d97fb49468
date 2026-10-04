@@ -1,0 +1,32 @@
+outfitter/packages/web/src/components/account/SettingsEditor.tsx
+  s_38ec74cfb7fa1d::t_0edc69b3b609fb 1,41,43,45-60,63-69,81,106-108,169
+outfitter/packages/web/src/components/account/SpendPanel.tsx
+  s_38ec74cfb7fa1d::t_074bbf6eeb9a8a 18,25,37-46,142-147
+outfitter/packages/web/src/components/account/ProviderKeysPanel.tsx
+  s_38ec74cfb7fa1d::t_0edc69b3b609fb 139-145
+outfitter/packages/web/test/account-page.test.tsx
+  s_38ec74cfb7fa1d::t_2ad22dade37298 439
+  s_38ec74cfb7fa1d::t_ba6397c827a335 237-253
+  s_38ec74cfb7fa1d::t_f9bb721e802481 314-380
+  s_38ec74cfb7fa1d::t_3221480fd24d29 98-104,107-116
+  s_38ec74cfb7fa1d::t_74410bb737c436 60-62
+  s_38ec74cfb7fa1d::t_e6a34bf960ef2b 149-151
+  s_38ec74cfb7fa1d::t_aaf0010b85def5 438,440-450
+  s_38ec74cfb7fa1d::t_6abbfff7a47f14 390-393
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "03247f8b4ad8126fc4de3f228d7b57d97fb49468",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -223,6 +223,10 @@ export interface Config {
    * (central/litellm-keys.ts). Empty: no key minting; device login still works, without a router
    * key. Separate from LITELLM_ADMIN_KEY, which only probes /health and /model/info. */
   litellmKeyAdminKey: string;
+  /** CA-6 (#395, central-auth.md §9): OUTFITTER_RUN_KEY_FALLBACK, on unless "0". While minting is
+   * on, a Drive run whose own key can't be minted gets the shared outfitter-litellm-key-* instead
+   * of failing (central/run-keys.ts). CA-10 turns it off. */
+  runKeyFallback: boolean;
 }
 
 /** One Agent Engine project and the service account that acts in it. */
@@ -559,5 +563,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     loginAllow: envOperators("OUTFITTER_LOGIN_ALLOW", env),
     webOrigin: (env.OUTFITTER_WEB_ORIGIN ?? "").trim().replace(/\/+$/, ""),
     litellmKeyAdminKey: (env.OUTFITTER_LITELLM_ADMIN_KEY ?? "").trim(),
+    runKeyFallback: (env.OUTFITTER_RUN_KEY_FALLBACK ?? "").trim() !== "0",
   };
 }

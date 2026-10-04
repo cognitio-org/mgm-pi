@@ -27,15 +27,22 @@ import { dirname, join } from "node:path";
 import { inSandbox } from "../_shared/env.ts";
 import { outfitterCredentials, type OutfitterCredentials } from "../_shared/outfitter-env.ts";
 import { cachedFleetSettings, fleetSettingsCachePath, refreshFleetSettings, type FleetSettings } from "../_shared/fleet-settings.ts";
+import { refreshConfig, resolve, type ResolvedConfig } from "../_shared/central-config.ts";
+import { loginState } from "../_shared/outfitter-session.ts";
 import { readSettings, updateKernal } from "../connect/settings.ts";
 import { installedVersion } from "../kernal-update/index.ts";
-import { decide, defaultEnvironment, describe, optedOut, type SentryDecision } from "./config.ts";
+import { decide, defaultEnvironment, describe, fleetFromConfig, optedOut, type SentryDecision } from "./config.ts";
 import { applySentry, claimCrashReport, isCurrent, liveStatus, newInstance, realSentry, sending, type SentryLike, type SentrySpan } from "./client.ts";
 import { agentRunError, agentRunReport, crashesToReport, toolSpanAttributes, type AgentEndMessage } from "./lib.ts";
 
 export type Deps = {
   sentry?: SentryLike;
   credentials?: OutfitterCredentials;
+  /** Signed in with `kernal login` (default: loginState()). Then the three Sentry keys come from the
+   * central settings instead of GET /api/fleet-settings. */
+  signedIn?: boolean;
+  /** The central resolution and its refresh (default: central-config's resolve / refreshConfig). */
+  central?: { resolve: () => ResolvedConfig; refresh: () => Promise<ResolvedConfig | undefined> };
   /** The agent settings.json (default: readSettings()). */
   settings?: Record<string, unknown>;
   /** Where `kernal.sentry` is written (default: updateKernal). */
@@ -60,13 +67,16 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
   if (inSandbox()) return;
   const sentry = deps.sentry ?? realSentry;
   const creds = deps.credentials ?? outfitterCredentials();
-  const hasDongle = !!(creds.api && creds.token);
+  const signedIn = deps.signedIn ?? loginState().signedIn;
+  const central = deps.central ?? { resolve: () => resolve(), refresh: () => refreshConfig({ fetch: deps.fetch }) };
+  // Connected to Outfitter: a login (CA-8) or, on a laptop not signed in yet, a Dongle.
+  const hasDongle = signedIn || !!(creds.api && creds.token);
   const version = installedVersion();
   const runtime = { environment: defaultEnvironment(version !== undefined), ...(version ? { release: version } : {}) };
   const saveOptOut = deps.saveOptOut ?? ((value: false | undefined) => updateKernal({ sentry: value }));
 
   let laptopOff = optedOut(deps.settings ?? readSettings());
-  let fleet: FleetSettings = cachedFleetSettings(creds, deps.cacheFile);
+  let fleet: FleetSettings = signedIn ? fleetFromConfig(central.resolve().values) : cachedFleetSettings(creds, deps.cacheFile);
   const decision = (): SentryDecision => decide(fleet, { optedOut: laptopOff, hasDongle });
   // Only the newest instance decides: an older one's refresh landing after a /reload (and maybe a
   // /sentry off in the new one) must not turn sending back on.
@@ -109,8 +119,11 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
 
   // Opted out: no request to Outfitter either. Otherwise refresh in the background.
   // Never rejects: an unhandled rejection would crash pi (client.ts says why nothing catches them).
+  const fetchFleet = (): Promise<FleetSettings | undefined> => signedIn
+    ? central.refresh().then((r) => (r ? fleetFromConfig(r.values) : undefined))
+    : refreshFleetSettings(creds, { fetch: deps.fetch, file: deps.cacheFile });
   const refresh = (): Promise<void> =>
-    refreshFleetSettings(creds, { fetch: deps.fetch, file: deps.cacheFile })
+    fetchFleet()
       .then((fresh) => {
         if (!fresh) return;
         fleet = fresh;

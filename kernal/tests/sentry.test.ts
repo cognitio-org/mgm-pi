@@ -279,7 +279,7 @@ describe("crashes from earlier runs (pi's crashes.json)", () => {
   async function start(opts: { cached: FleetSettings; crashFile: string; sentFile: string }) {
     const fake = fakeSentry();
     sentryExtension(makePi() as any, {
-      sentry: fake.sentry, credentials: CREDS, settings: {}, cacheFile: (() => { const f = tmpFile(); writeCache(f, opts.cached); return f; })(),
+      signedIn: false, sentry: fake.sentry, credentials: CREDS, settings: {}, cacheFile: (() => { const f = tmpFile(); writeCache(f, opts.cached); return f; })(),
       fetch: fakeFetch(opts.cached).fn, onRefresh: () => {}, crashFile: opts.crashFile, crashesSentFile: opts.sentFile, now: () => now,
     });
     await new Promise((r) => setImmediate(r));
@@ -330,7 +330,9 @@ describe("the real @sentry/node, in a child process", () => {
     // SDK's span item), counters only with metrics on and never with the hostname, and no AI SDK
     // auto-instrumentation runs beside them.
     for (const name of ["OpenAI", "Anthropic_AI", "Google_GenAI", "VercelAI", "LangChain"]) assert.ok(!r.integrations.includes(name), name);
-    assert.deepEqual(r.genAi, { agentTransaction: true, chatInputTokens: 10, chatOp: "gen_ai.chat", metrics: ["kernal.tool.calls"], metricHasHost: false, metricTool: "read" });
+    // Content in a gen_ai span leaves with home as ~ (the SDK moves the span after scrubbing), and
+    // content recorded before an agentContent opt-out never leaves at all.
+    assert.deepEqual(r.genAi, { agentTransaction: true, chatInputTokens: 10, chatOp: "gen_ai.chat", chatInputScrubbed: true, staleSpanSent: true, staleContent: null, metrics: ["kernal.tool.calls"], metricHasHost: false, metricTool: "read" });
   });
 });
 
@@ -389,6 +391,7 @@ describe("sentry extension wired to pi", () => {
     const saved: Array<false | undefined> = [];
     let refreshed: Promise<void> = Promise.resolve();
     sentryExtension(pi as any, {
+      signedIn: false, // not the developer's own login
       sentry: fake.sentry,
       credentials: opts.credentials ?? CREDS,
       settings: opts.settings ?? {},
@@ -458,7 +461,7 @@ describe("sentry extension wired to pi", () => {
   test("/sentry on that cannot be saved stays off and says so", async () => {
     const fake = fakeSentry();
     const pi = makePi();
-    sentryExtension(pi as any, { sentry: fake.sentry, credentials: CREDS, settings: { kernal: { sentry: false } }, cacheFile: tmpFile(), fetch: fakeFetch(ON).fn, onRefresh: () => {}, saveOptOut: () => { throw new Error("settings.json is not valid JSON"); } });
+    sentryExtension(pi as any, { signedIn: false, sentry: fake.sentry, credentials: CREDS, settings: { kernal: { sentry: false } }, cacheFile: tmpFile(), fetch: fakeFetch(ON).fn, onRefresh: () => {}, saveOptOut: () => { throw new Error("settings.json is not valid JSON"); } });
     const notes: string[] = [];
     await pi.commands.get("sentry")!.handler("on", { ui: { notify: (m: string) => notes.push(m) } });
     assert.equal(sending(), false);
@@ -545,7 +548,7 @@ describe("sentry extension wired to pi", () => {
     const pi = makePi();
     const file = tmpFile();
     writeCache(file, ON);
-    sentryExtension(pi as any, { sentry: fake.sentry, credentials: CREDS, settings: {}, cacheFile: file, fetch: fakeFetch(ON).fn, onRefresh: () => {}, saveOptOut: () => { throw new Error("settings.json is not valid JSON"); } });
+    sentryExtension(pi as any, { signedIn: false, sentry: fake.sentry, credentials: CREDS, settings: {}, cacheFile: file, fetch: fakeFetch(ON).fn, onRefresh: () => {}, saveOptOut: () => { throw new Error("settings.json is not valid JSON"); } });
     await new Promise((r) => setImmediate(r));
     assert.equal(sending(), true);
     const notes: string[] = [];

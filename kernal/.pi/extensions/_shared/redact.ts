@@ -21,7 +21,10 @@ const PATTERNS: RegExp[] = [
   /\bglpat-[A-Za-z0-9_-]{20,}/g, // GitLab
   /\bnpm_[A-Za-z0-9]{30,}/g,
   /\b([a-z][a-z0-9+.-]*:\/\/)[^\s:@/]+:[^\s@/]+@/gi, // any URI with a user:password (agentd's logger does the same)
-  /(authorization:\s*(?:bearer|basic|token)\s+)[^\s"']+/gi,
+  // Header name optional and possibly quoted (JSON-serialised headers: "Authorization":"Bearer x").
+  // `\\` stops the match at an escaped quote instead of eating its backslash.
+  /(authorization["']?\s*[:=]\s*["']?(?:bearer|basic|token)\s+)[^\s"'\\]+/gi,
+  /(\bbearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi, // a bare bearer credential, whatever its shape
   /((?:api[_-]?key|secret|password|passwd|token|access[_-]?key)["']?\s*[:=]\s*)(["'])[^"'\n]{4,}\2/gi, // quoted, may hold spaces
   // Also with a prefix, as env vars have one (VOYAGE_API_KEY=, NGROK_AUTHTOKEN=): \b doesn't fire after `_`.
   /(?<![A-Za-z0-9])((?:[A-Za-z0-9]+_)*(?:api[_-]?key|secret|password|passwd|token|authtoken|access[_-]?key)["']?\s*[:=]\s*["']?)[^\s"',;]{8,}/gi,

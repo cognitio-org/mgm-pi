@@ -175,6 +175,9 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
   /** One agent run's spans. `agent`: gen_ai spans (agentTraces), else #374's plain ones. */
   type Run = { span: SentrySpan; agent: boolean; content: ContentBudget | undefined; chat?: { span: SentrySpan; startedAt: number; firstChunk: boolean } };
   let run: Run | undefined;
+  /** A run's content budget, only while agentContent is still on: an opt-out (`/sentry content off`,
+   * or a fleet refresh) mid-run stops recording at the next step, not at the next run. */
+  const contentOf = (r: Run | undefined): ContentBudget | undefined => (r?.content && liveSignals().agentContent ? r.content : undefined);
   let prompt: string | undefined;
   const toolSpans = new Map<string, SentrySpan>();
 
@@ -211,7 +214,7 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
     if (!run?.agent || !sending()) return undefined;
     endChat("ok"); // a request that never produced a message (should not happen; never leave one open)
     const start = chatSpanStart(ctx?.model);
-    const input = run.content ? run.content.take(chatInputContent(event?.messages ?? [])) : {};
+    const input = contentOf(run)?.take(chatInputContent(event?.messages ?? [])) ?? {};
     run.chat = {
       span: sentry.startInactiveSpan({ ...start, attributes: { ...start.attributes, ...input }, parent: run.span, onlyIfParent: true }),
       startedAt: Date.now(),
@@ -242,7 +245,7 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
     if (failed) count(METRICS.errors, 1, { kind: "model_call", model, provider });
     const chat = run?.chat;
     if (!chat) return;
-    chat.span.setAttributes({ ...usage, ...(run?.content ? run.content.take(chatOutputContent(m)) : {}) });
+    chat.span.setAttributes({ ...usage, ...(contentOf(run)?.take(chatOutputContent(m)) ?? {}) });
     endChat(failed ? "error" : "ok");
   });
 
@@ -259,7 +262,8 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
     run = undefined;
     if (!r) return;
     if (r.chat) { r.chat.span.setStatus("error"); r.chat.span.end(); } // the run ended mid-call
-    if (r.agent && r.content) r.span.setAttributes(r.content.take(agentOutputContent(messages)));
+    const content = r.agent ? contentOf(r) : undefined;
+    if (content) r.span.setAttributes(content.take(agentOutputContent(messages)));
     r.span.setStatus(error ? "error" : "ok");
     r.span.end();
   });
@@ -269,7 +273,7 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
     // A child of the run's span, and only inside a run: kept or dropped with it by the sampler.
     if (!run) return;
     const start = run.agent ? toolSpanStart(event.toolName) : { name: `tool.${event.toolName}`, op: "tool.execute", attributes: toolSpanAttributes(event.toolName) };
-    const args = run.agent && run.content ? run.content.take(toolArgsContent(event.args)) : {};
+    const args = (run.agent ? contentOf(run)?.take(toolArgsContent(event.args)) : undefined) ?? {};
     toolSpans.set(event.toolCallId, sentry.startInactiveSpan({
       ...start,
       attributes: { ...start.attributes, ...args },
@@ -284,7 +288,7 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
     const span = toolSpans.get(event.toolCallId);
     toolSpans.delete(event.toolCallId);
     if (!span) return;
-    if (run?.agent) span.setAttributes({ ...toolOutcome(event.isError), ...(run.content ? run.content.take(toolResultContent(event.result)) : {}) });
+    if (run?.agent) span.setAttributes({ ...toolOutcome(event.isError), ...(contentOf(run)?.take(toolResultContent(event.result)) ?? {}) });
     span.setStatus(event.isError ? "error" : "ok");
     span.end();
   });

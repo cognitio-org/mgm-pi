@@ -4,6 +4,7 @@
  * line on stdout. A local HTTP server stands in for Sentry and records every envelope item type.
  */
 import { createServer } from "node:http";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 const items: string[] = [];
@@ -69,20 +70,32 @@ try {
 // #424, metrics off: a counter never leaves.
 second.realSentry.count("kernal.test.dropped", 1, { tool: "read" });
 
-// #424, agent monitoring and metrics on: gen_ai spans (the SDK moves the run's gen_ai children into a
-// span item of their own) and a counter, without the hostname.
-const signals = { agentTraces: true, agentContent: false, metrics: true };
+// #424, agent monitoring, content and metrics on: gen_ai spans (the SDK moves the run's gen_ai
+// children into a span item of their own) and a counter, without the hostname. The content carries
+// the home directory: the SDK moves those spans after beforeSendTransaction has scrubbed them, and
+// this pins that order (a later SDK that extracts first would leak the home path here).
+const signals = { agentTraces: true, agentContent: true, metrics: true };
+const secretPath = `${homedir()}/secret.txt`;
 await second.applySentry({ on: true, dsn, tracesSampleRate: 1, signals }, runtime);
 let genAiError: string | undefined;
 try {
   const agent = second.realSentry.startInactiveSpan({ name: "invoke_agent kernal", op: "gen_ai.invoke_agent", attributes: { "gen_ai.agent.name": "kernal" } });
   const chat = second.realSentry.startInactiveSpan({ name: "chat claude-x", op: "gen_ai.chat", attributes: { "gen_ai.request.model": "claude-x" }, parent: agent, onlyIfParent: true });
-  chat.setAttributes({ "gen_ai.usage.input_tokens": 10, "gen_ai.usage.output_tokens": 5 });
+  chat.setAttributes({ "gen_ai.usage.input_tokens": 10, "gen_ai.usage.output_tokens": 5, "gen_ai.input.messages": JSON.stringify([{ role: "user", parts: [{ type: "text", content: `read ${secretPath}` }] }]) });
   chat.setStatus("ok");
   chat.end();
   agent.setStatus("ok");
   agent.end();
   second.realSentry.count("kernal.tool.calls", 1, { tool: "read", outcome: "ok" });
+  // The SDK hands a finished transaction to its exporter on a short timer: let that run leave first.
+  await new Promise((r) => setTimeout(r, 1500));
+  await Sentry.flush(2000);
+  // Content recorded before an opt-out landed: the run leaves without it (the wire-level backstop).
+  const stale = second.realSentry.startInactiveSpan({ name: "invoke_agent kernal", op: "gen_ai.invoke_agent", attributes: { "gen_ai.agent.name": "kernal" } });
+  const staleChat = second.realSentry.startInactiveSpan({ name: "chat stale", op: "gen_ai.chat", attributes: { "gen_ai.input.messages": "recorded before the opt-out" }, parent: stale, onlyIfParent: true });
+  await second.applySentry({ on: true, dsn, tracesSampleRate: 1, signals: { ...signals, agentContent: false } }, runtime);
+  staleChat.end();
+  stale.end();
 } catch (err) {
   genAiError = String(err);
 }
@@ -106,14 +119,19 @@ const runChildren = (transactions.find((t) => t.transaction === "agent.run")?.sp
 const fatal = events.find((e) => e.level === "fatal");
 const crash = fatal && { level: fatal.level, type: fatal.exception.values[0].type, value: fatal.exception.values[0].value, hasFrames: (fatal.exception.values[0].stacktrace?.frames?.length ?? 0) >= 2, source: fatal.tags?.source, crashedAtTag: "crashed_at" in (fatal.tags ?? {}) };
 const chatSpan = spanItems.find((sp) => sp.name === "chat claude-x");
+const staleSpan = spanItems.find((sp) => sp.name === "chat stale");
+const chatInput = String(chatSpan?.attributes?.["gen_ai.input.messages"]?.value ?? "");
 const genAi = {
   error: genAiError,
   agentTransaction: transactions.some((t) => t.transaction === "invoke_agent kernal"),
   chatInputTokens: chatSpan?.attributes?.["gen_ai.usage.input_tokens"]?.value,
   chatOp: chatSpan?.attributes?.["sentry.op"]?.value,
+  chatInputScrubbed: chatInput.includes("~/secret.txt") && !chatInput.includes(homedir()),
+  staleSpanSent: staleSpan !== undefined,
+  staleContent: staleSpan?.attributes?.["gen_ai.input.messages"]?.value ?? null,
   metrics: metricItems.map((m) => m.name),
   metricHasHost: metricItems.some((m) => "server.address" in (m.attributes ?? {})),
   metricTool: metricItems[0]?.attributes?.tool?.value,
 };
-console.log(JSON.stringify({ crash, integrations, unhandledRejectionListeners, reloadError, whileOn, whileOff, runChildren, traceHeaders, genAi }));
-process.exit(0);
+// Exit once the line is written: stdout to a pipe is asynchronous, and an early exit cuts it at 64 KiB.
+process.stdout.write(JSON.stringify({ crash, integrations, unhandledRejectionListeners, reloadError, whileOn, whileOff, runChildren, traceHeaders, genAi }) + "\n", () => process.exit(0));

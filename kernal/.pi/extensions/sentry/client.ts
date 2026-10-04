@@ -86,6 +86,26 @@ const DROPPED_INTEGRATIONS = new Set([
   "OpenAI", "Anthropic_AI", "Google_GenAI", "Mistral", "Groq", "TogetherAI", "LangChain", "LangGraph", "Mastra", "VercelAI",
 ]);
 
+/** The agent content attributes (agent.ts) that only agentContent allows on a span. */
+export const CONTENT_ATTRIBUTES = ["gen_ai.input.messages", "gen_ai.output.messages", "gen_ai.tool.call.arguments", "gen_ai.tool.call.result", "kernal.content.dropped"] as const;
+
+/** A transaction without agent content on any of its spans: the backstop, at the wire, for content
+ * recorded before an opt-out landed (index.ts stops recording at once; this drops what is queued). */
+export function stripAgentContent<E extends { spans?: Array<{ data?: Record<string, unknown> }>; contexts?: { trace?: { data?: Record<string, unknown> } } }>(event: E): E {
+  const strip = (data: Record<string, unknown> | undefined) => {
+    if (!data) return data;
+    const out = { ...data };
+    for (const k of CONTENT_ATTRIBUTES) delete out[k];
+    return out;
+  };
+  const trace = event.contexts?.trace;
+  return {
+    ...event,
+    ...(event.spans ? { spans: event.spans.map((span) => ({ ...span, data: strip(span.data) })) } : {}),
+    ...(trace ? { contexts: { ...event.contexts, trace: { ...trace, data: strip(trace.data) } } } : {}),
+  };
+}
+
 /** A metric as it leaves: without `server.address` (@sentry/node adds the hostname to every metric,
  * and it is usually the person's name) and with the home directory as `~` in its attributes. */
 export function scrubMetric<M extends { attributes?: Record<string, unknown> }>(metric: M, home: string): M {
@@ -135,7 +155,8 @@ export const realSentry: SentryLike = {
       tracePropagationTargets: [],
       tracesSampler: ({ parentSampled }) => (sending() ? (parentSampled ?? options.gate().tracesSampleRate) : 0),
       beforeSend: (event) => (sending() ? scrubEvent(event, home) : null),
-      beforeSendTransaction: (event) => (sending() ? scrubEvent(event, home) : null),
+      // Agent content only while agentContent is still on when the transaction leaves (#424 review).
+      beforeSendTransaction: (event) => (sending() ? scrubEvent(options.gate().signals.agentContent ? event : stripAgentContent(event as any), home) : null),
       // Metrics only with their own fleet setting on too (#424). The SDK collects them whenever it
       // runs; index.ts counts nothing while off, and this drops anything that slips past.
       beforeSendMetric: (metric) => (sending() && options.gate().signals.metrics ? scrubMetric(metric, home) : null),

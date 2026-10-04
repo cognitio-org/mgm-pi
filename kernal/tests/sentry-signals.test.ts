@@ -10,8 +10,8 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NO_SIGNALS, decide, describe as describeDecision, fleetFromConfig, signalOptOuts } from "../.pi/extensions/sentry/config.ts";
-import { liveSignals, scrubMetric, _resetSentryState, type SentryLike, type SentrySpan } from "../.pi/extensions/sentry/client.ts";
-import { ContentBudget, FIELD_LIMIT_BYTES, METRICS, chatSpanEnd, cleanText, messagesJson, toolResultContent, truncateUtf8 } from "../.pi/extensions/sentry/agent.ts";
+import { liveSignals, scrubMetric, stripAgentContent, _resetSentryState, type SentryLike, type SentrySpan } from "../.pi/extensions/sentry/client.ts";
+import { ContentBudget, FIELD_LIMIT_BYTES, METRICS, chatSpanEnd, cleanText, cleanValue, messagesJson, toolArgsContent, toolResultContent, truncateUtf8 } from "../.pi/extensions/sentry/agent.ts";
 import { redact } from "../.pi/extensions/_shared/redact.ts";
 import { parseFleetSettings, type FleetSettings } from "../.pi/extensions/_shared/fleet-settings.ts";
 import { KNOWN_SETTINGS } from "../.pi/extensions/_shared/central-config.ts";
@@ -122,6 +122,34 @@ describe("content: redacted, truncated, never the system prompt", () => {
     }
   });
 
+  test("redact catches a bearer credential of any shape: bare, in a header line, or JSON-quoted", () => {
+    const opaque = "abcdefghijklmnopqrstuvwxyz0123";
+    assert.equal(redact(`Bearer ${opaque}`), "Bearer [redacted]");
+    assert.equal(redact(`authorization: Bearer ${opaque}`), "authorization: Bearer [redacted]");
+    assert.equal(redact(JSON.stringify({ Authorization: `Bearer ${opaque}` })), '{"Authorization":"Bearer [redacted]"}');
+    assert.equal(redact(JSON.stringify({ Authorization: `Basic ${opaque}` })), '{"Authorization":"Basic [redacted]"}');
+    // An escaped quote ends the match without losing its backslash, so the JSON stays well formed.
+    assert.equal(redact(JSON.stringify(`authorization: Bearer ${opaque}" x`)), '"authorization: Bearer [redacted]\\" x"');
+    assert.equal(redact("the bearer of bad news"), "the bearer of bad news", "an ordinary word after bearer stays");
+    // Tool arguments as cleanValue serialises them, with a headers map.
+    const args = toolArgsContent({ url: "https://api.example.com", headers: { Authorization: `Bearer ${opaque}`, Accept: "application/json" } })["gen_ai.tool.call.arguments"];
+    assert.ok(!args.includes(opaque), args);
+    assert.deepEqual(JSON.parse(args).headers, { Authorization: "Bearer [redacted]", Accept: "application/json" });
+    assert.ok(!cleanValue({ cmd: `curl -H 'Authorization: Bearer ${opaque}'` }).includes(opaque));
+  });
+
+  test("stripAgentContent drops content from every span of a transaction and keeps the rest", () => {
+    const event = {
+      contexts: { trace: { op: "gen_ai.invoke_agent", data: { "gen_ai.agent.name": "kernal", "gen_ai.input.messages": "p", "gen_ai.output.messages": "o" } } },
+      spans: [{ op: "gen_ai.execute_tool", data: { "gen_ai.tool.name": "read", "gen_ai.tool.call.arguments": "a", "gen_ai.tool.call.result": "r" } as Record<string, unknown> }, { op: "x" }],
+    };
+    const out = stripAgentContent(event);
+    assert.deepEqual(out.contexts.trace.data, { "gen_ai.agent.name": "kernal" });
+    assert.deepEqual(out.spans[0].data, { "gen_ai.tool.name": "read" });
+    assert.equal(out.spans[1].data, undefined);
+    assert.equal(event.spans[0].data!["gen_ai.tool.call.result"], "r", "the original is not changed");
+  });
+
   test("truncateUtf8 cuts on a character boundary within the byte limit", () => {
     const out = truncateUtf8("é".repeat(10_000), 100);
     assert.ok(Buffer.byteLength(out, "utf8") <= 100);
@@ -199,7 +227,7 @@ describe("agent monitoring wired to pi", () => {
     const saved: Array<[string, false | undefined]> = [];
     let refreshed: Promise<void> = Promise.resolve();
     sentryExtension(pi as any, {
-      sentry: fake.sentry, credentials: CREDS, settings, cacheFile: file, fetch,
+      signedIn: false, sentry: fake.sentry, credentials: CREDS, settings, cacheFile: file, fetch,
       onRefresh: (p) => { refreshed = p; }, saveOptOut: () => {}, saveSignalOptOut: (s, v) => { saved.push([s, v]); },
     });
     await refreshed;
@@ -278,6 +306,26 @@ describe("agent monitoring wired to pi", () => {
     assert.equal(tool.attributes["gen_ai.tool.call.result"], "file body");
     const all = JSON.stringify(spans);
     assert.ok(!all.includes("SYSTEM PROMPT") && !all.includes("sk-secretsecret"), "nothing from the system prompt");
+  });
+
+  test("content off mid-run stops recording at the next step, not the next run", async () => {
+    const { pi, spans, command } = await start(ALL);
+    await pi.emit("before_agent_start", { prompt: "fix it" }, ctx);
+    await pi.emit("agent_start", {}, ctx);
+    await pi.emit("tool_execution_start", { toolCallId: "c1", toolName: "read", args: { path: "/etc/x" } }, ctx);
+    await command("content off");
+    await pi.emit("tool_execution_end", { toolCallId: "c1", toolName: "read", isError: false, result: { content: [{ type: "text", text: "file body" }] } }, ctx);
+    await pi.emit("context", { messages: [{ role: "user", content: [{ type: "text", text: "fix it" }] }] }, ctx);
+    await pi.emit("message_end", { message: assistant }, ctx);
+    await pi.emit("agent_end", { messages: [{ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "done" }] }] }, ctx);
+    const [run, tool, chat] = spans;
+    assert.equal(tool.op, "gen_ai.execute_tool");
+    assert.equal(tool.attributes["gen_ai.tool.call.arguments"], "{\"path\":\"/etc/x\"}", "recorded while content was on");
+    assert.equal(tool.attributes["gen_ai.tool.call.result"], undefined);
+    assert.equal(tool.attributes["kernal.tool.outcome"], "ok", "the span itself still completes");
+    assert.equal(chat.attributes["gen_ai.input.messages"], undefined);
+    assert.equal(chat.attributes["gen_ai.output.messages"], undefined);
+    assert.equal(run.attributes["gen_ai.output.messages"], undefined);
   });
 
   test("a run the sampler dropped builds no content", async () => {

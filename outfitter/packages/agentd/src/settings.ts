@@ -6,8 +6,9 @@
 //   - model.default     -> guru.model, when the tape names no model
 //   - model.thinking    -> guru.thinking, when the tape sets no level
 //   - compaction.summaryModel -> KERNAL_SUMMARY_MODEL in guru.env, when the tape sets none
-// The whole set also goes to Kernal as KERNAL_RUN_SETTINGS (JSON, values only) for the keys agentd
-// has no switch for (compaction.masking, voice.*, ...). memory.mode is not applied: Agent Engine
+// The whole set also goes to Kernal as KERNAL_RUN_SETTINGS (JSON: the values and each one's source
+// level) for the keys agentd has no switch for (compaction.masking, ...); Kernal ranks them with the
+// fleet, below the tape's own env (central-config.ts, #437). memory.mode is not applied: Agent Engine
 // memory in a Drive is the tape's capability, which the api checks on every admin.request, so a
 // person's laptop preference can't turn it on there. Unknown keys and values of the wrong type are
 // ignored, so an older agentd keeps working against a newer api.
@@ -36,6 +37,17 @@ export function settingValues(settings: unknown): Record<string, string | number
     if (typeof v === "string" || typeof v === "boolean" || (typeof v === "number" && Number.isFinite(v))) values[key] = v;
   }
   return values;
+}
+
+/** Where each value came from (fleet, user, profile, default, ...), for Kernal's /config and its
+ * precedence (central-config.ts reads KERNAL_RUN_SETTINGS, #437). Level names only. */
+export function settingSources(settings: unknown): Record<string, string> {
+  const sources: Record<string, string> = {};
+  if (!isPlainObject(settings) || !isPlainObject(settings.values)) return sources;
+  for (const [key, entry] of Object.entries(settings.values)) {
+    if (isPlainObject(entry) && typeof entry.source === "string" && /^[a-z]{1,16}$/.test(entry.source)) sources[key] = entry.source;
+  }
+  return sources;
 }
 
 function nonBlank(value: unknown): string | undefined {
@@ -69,7 +81,7 @@ export function applyRunSettings(spec: DownRunSpec, onLog: (line: string) => voi
   if (env[RUN_SETTINGS_ENV] === undefined) {
     const profile = isPlainObject(spec.settings) && typeof spec.settings.profile === "string" ? spec.settings.profile : null;
     const schemaVersion = isPlainObject(spec.settings) && typeof spec.settings.schemaVersion === "number" ? spec.settings.schemaVersion : 0;
-    env[RUN_SETTINGS_ENV] = JSON.stringify({ schemaVersion, profile, values });
+    env[RUN_SETTINGS_ENV] = JSON.stringify({ schemaVersion, profile, values, sources: settingSources(spec.settings) });
   }
   guru.env = env;
   // Key names only: the values are a person's preferences, not for the log.

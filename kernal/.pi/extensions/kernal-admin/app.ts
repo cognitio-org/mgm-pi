@@ -862,7 +862,7 @@ function renderSettings(view) {
 function sourceTag(r) {
   if (!r.sourceLabel) return el("span", { class: "note", text: "not set" });
   var central = ["fleet", "group", "user", "profile", "device"].indexOf(r.source) >= 0;
-  return el("span", { class: "tag" + (central ? " accent" : r.source === "dotenv" ? " warn" : ""), title: r.source === "dotenv" ? ".env is deprecated for this: save it to your account or this machine" : null, text: r.sourceLabel });
+  return el("span", { class: "tag" + (central ? " accent" : r.source === "dotenv" ? " warn" : ""), title: r.source === "dotenv" ? ".env is deprecated for this: save it to your account or this machine" : r.source === "legacy" ? "Set on this machine before it had an account: a value saved to your account or this machine wins over it" : null, text: r.sourceLabel });
 }
 function shownValue(r) {
   if (r.value === undefined) return "—";
@@ -1042,13 +1042,23 @@ function curate(view, action, id, btn) {
 }
 function drawModels(view, d) {
   clear(view);
-  add(view, head("Model", "Choosing a model switches this session now and saves it as the default for the next start, like /connect."));
+  add(view, head("Model", "Choosing a model switches this session now and saves it as the default for the next session, like /connect."));
   var cur = d.current;
-  add(view, card("Current", null, null, kv([
+  var defText = d.default ? d.default.provider + (d.default.model ? "/" + d.default.model : "") : "not set";
+  var rows = [
     ["In use", el("span", { class: "mono", text: cur ? cur.provider + "/" + cur.id : "none" })],
-    ["Default at start", el("span", { class: "mono", text: d.default ? d.default.provider + "/" + d.default.model : "not set" })],
+    ["Default at start", el("span", {}, el("span", { class: "mono", text: defText }), d.default && d.default.source ? el("span", { class: "note", text: "  from " + d.default.source }) : null)],
     ["Thinking", el("span", { text: d.thinking || "—" })]
-  ])));
+  ];
+  // Signed in (#437): where a chosen default goes, as on the Settings page.
+  var target = null;
+  if (d.saveTargets && d.saveTargets.length) {
+    var pickTarget = el("select", { "aria-label": "Save the default to" });
+    d.saveTargets.forEach(function (t) { pickTarget.appendChild(el("option", { value: t.id, text: t.label })); });
+    target = pickTarget;
+    rows.push(["Save the default to", pickTarget]);
+  }
+  add(view, card("Current", null, null, kv(rows)));
   var search = el("input", { type: "search", placeholder: "Filter models", "aria-label": "Filter models", autocomplete: "off" });
   add(view, el("div", { class: "toolbar" }, search));
   var lists = [];
@@ -1065,8 +1075,11 @@ function drawModels(view, d) {
         btn.addEventListener("click", function () {
           if (isCur) return;
           btn.disabled = true; btn.appendChild(spinner());
-          api("POST", "/model", { provider: p.id, id: id }).then(function () {
-            toast("Switched to " + p.id + "/" + id + " and saved it as the default", "ok");
+          var body = { provider: p.id, id: id };
+          if (target) body.target = target.value;
+          api("POST", "/model", body).then(function (r) {
+            if (r && r.message) toast("Switched to " + p.id + "/" + id + ": " + r.message, r.savedAsDefault === false ? "error" : "ok");
+            else toast("Switched to " + p.id + "/" + id + " and saved it as the default", "ok");
             api("GET", "/models").then(function (fresh) { drawModels(view, fresh); });
           }, function (e) { btn.disabled = false; var s = btn.querySelector(".spin"); if (s) s.remove(); toast(e.message, "error"); });
         });

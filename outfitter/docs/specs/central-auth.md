@@ -782,6 +782,50 @@ function providerKey(provider: string): string | undefined;   // §4, memory onl
   three keys from central-config (F changes the sentry extension's source, task E having already
   switched its bearer).
 
+### 10.1 Applying the personal keys (CA-11, #437)
+
+`model.provider`, `model.default`, `model.thinking`, `compaction.summaryModel`,
+`compaction.masking`, `memory.mode`, `voice.enabled`, `voice.language` (`accountFirst` in Kernal's
+`KNOWN_SETTINGS`) are applied, not only shown. Their order differs from the one above (rule `any`
+still, so nothing is locked):
+
+1. this machine (`config.local.json`, source `local`);
+2. the account, as the server resolved it: device → profile → user;
+3. legacy local values (source `legacy`, `sourceName` says where; `/config` shows "<where>
+   (legacy)"): settings.json `defaultProvider`/`defaultModel` (as a pair) and
+   `defaultThinkingLevel`, unless equal to the release's `settings.shipped.json`;
+   `kernal.compaction.summaryModel`/`masking`; `kernal.memory`; pi-listen's `voice.enabled`/
+   `voice.language`; `KERNAL_SUMMARY_MODEL` in .env (still warned about), then in the shell;
+4. fleet and group; then the default.
+
+Where each applies (`_shared/central-apply.ts`): only a value from this machine or from Outfitter
+is applied over what pi, pi-listen and compaction read for themselves; a legacy value or a default
+changes nothing, so an unconfigured Kernal starts as before.
+- **Model and thinking**: pi chooses its start-up model from settings.json before any extension's
+  `session_start`, and has no hook to change that choice earlier, so `kernal-config` switches a
+  new, empty session (`session_start` reasons `startup` and `new`) once with `pi.setModel` and
+  `pi.setThinkingLevel` (pi's supported extension API). Never a session with messages (resume,
+  fork, continue), never over `--model`/`--models`/`--provider`/`--thinking`, never in a Drive;
+  pi's per-model `modelThinkingLevels` still wins over `model.thinking`. A change therefore reaches
+  the next session; a running conversation never switches model. Writing settings.json before pi
+  starts was rejected: it would turn every central value into a "legacy" one, so removing it from
+  the account would leave the machine on it.
+- **Compaction**: read on every use; this machine and the account from the resolution, the legacy
+  places live (as before), then the fleet.
+- **Memory**: decided at start. `outfitter-agentengine/laptop.ts` (`chosenMode`) and `bin/kernal`
+  decide the same way; bin/kernal runs before pi, so central-config writes the signed-in resolution
+  (non-secret: `values`, `sources`, and the personal keys' `fleet` values) to
+  `<cache dir>/effective.json` (`effective.<profile>.json` with `--profile`), one key per line so a
+  shell without node reads it with sed. Rewritten on each resolve, refresh and local save.
+- **Voice**: written into pi-listen's settings (at kernal-voice's load, the start-up refresh,
+  `/config reload` and `/admin` saves); pi-listen reads them at its next `session_start`.
+- **Mid-session**: the start-up refresh takes over the personal keys' fresh values at once (the
+  rest still waits for the next start or `/config reload`); `/config` says when each kind applies.
+- **Drives**: agentd passes the owner's settings to Kernal as `KERNAL_RUN_SETTINGS` (values and
+  each one's source level); inside a sandbox central-config reads them as the central layer, ranked
+  with the fleet so the tape and its env stay in charge (agentd already turns `model.default`,
+  `model.thinking` and `compaction.summaryModel` into the guru's model, thinking and env).
+
 ## 11. /admin (CA-9, task G, #398; after F)
 
 `kernal/.pi/extensions/kernal-admin/*` only.
@@ -794,6 +838,31 @@ function providerKey(provider: string): string | undefined;   // §4, memory onl
 - Signed in, keys typed into `/admin` go to `PUT /api/me/provider-keys/:provider` (link), not `.env`.
 - `locked` values are read-only with "set by your Sysop".
 - Signed out: exactly today's behaviour (.env and settings.json).
+- **Default model (CA-11, #437)**: signed in, the Model page and `/connect` (TUI: `ctx.ui.select`)
+  offer the same two targets for a newly chosen default, through the same versioned PUT
+  (`saveModelDefault`: `model.provider` and `model.default`); an account save also clears this
+  machine's own `model.*` overrides, which would otherwise keep winning there. Both still write
+  settings.json (pi's own default). Signed out, without a UI, or on Escape: settings.json only.
+  Saves say when each key applies (`whenSaved`).
+- **A default set inside Kernal goes to the account (owner decision 2026-10-04, #437)**: pi's model
+  picker Ctrl+S ("set as default"), the default thinking level and pi's `/login` default model are
+  written by pi itself to settings.json (`defaultProvider`+`defaultModel` as a pair,
+  `defaultThinkingLevel`). Kernal (`_shared/default-sync.ts`, registered by kernal-config) saves
+  each such change to the account (active profile, else the user level) through the same versioned
+  PUT (`saveAccountDefaults`: GET for the version, PUT with If-Match; a 409 refetches the version
+  and retries once), so new sessions on every machine start with it. pi 0.87's `model_select` /
+  `thinking_level_select` carry no persist flag, so the change is detected in settings.json against
+  a record of the three keys as last seen (`kernal-defaults-synced.json` next to settings.json):
+  created from settings.json when missing, moved on after Kernal's own writes (`/connect`, the Model
+  page: `noteOwnDefaultsWrite`) and after every sync. It is checked a moment after those events (pi
+  queues its write), and at `session_start` and `agent_start` (a Ctrl+S that emits nothing, or one
+  made just before quitting). No fs.watch. Per-session changes (Enter in the picker, cycling, a
+  session's thinking level) never write settings.json and never reach the account. Signed out, in a
+  Drive, or without kernal-admin: nothing is sent and the record moves on. A failure (offline, 401,
+  a second 409, a refused value) never breaks the session; one notice says it stays on this machine.
+  On success a `config.local.json` pin of the same key is removed (the notice says so), so the new
+  default applies on this machine too. A backend outside `model.provider`'s choices is saved as
+  `model.default = "<provider>/<id>"`.
 
 ## 12. Migration (CA-10, task J, #399; after E and F)
 

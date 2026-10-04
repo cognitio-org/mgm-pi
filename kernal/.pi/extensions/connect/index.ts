@@ -10,8 +10,11 @@
  *
  * Backends are registered as pi providers at startup. LM Studio and LiteLLM models are discovered
  * live (LiteLLM via /model/info for prices and limits, falling back to /v1/models); OpenRouter uses
- * a curated list (OPENROUTER_MODELS overrides; central settings add and remove models, curation.ts). The chosen backend/model is saved to the agent
- * dir's settings.json. Secrets come from ~/localllm/.env, ../.env or ./.env (see README).
+ * a curated list (OPENROUTER_MODELS overrides; central settings add and remove models, curation.ts).
+ * The chosen backend/model is saved to the agent dir's settings.json; signed in, /connect also asks
+ * whether it goes to the account (profile X) or only this machine (#437: model.provider/model.default
+ * are central settings, which the next session starts on). Secrets come from ~/localllm/.env, ../.env
+ * or ./.env (see README).
  * All pure logic lives in ./lib.ts and is unit-tested.
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
@@ -26,7 +29,8 @@ import {
 } from "./lib.ts";
 import { canSaveToAccount, changeCuration, curationLists, type CurationTarget } from "./curation.ts";
 import { settingsPath, updateSettings } from "./settings.ts";
-import { layerCentralEnv, webOrigin } from "../_shared/central-config.ts";
+import { noteOwnDefaultsWrite } from "../_shared/default-sync.ts";
+import { clearLocalOverrides, describeSource, layerCentralEnv, reresolve, webOrigin, type ConfigValue } from "../_shared/central-config.ts";
 import { loginState } from "../_shared/outfitter-session.ts";
 
 /** The .env that /setup writes: next to the agent dir (bundle root or the kernal/ checkout). */
@@ -163,6 +167,9 @@ async function discover(b: Backend, litellmMeta: Map<string, ModelMeta>, lmstudi
 export { settingsPath };
 export function saveDefault(provider: string, model: string) {
   updateSettings((s) => { s.defaultProvider = provider; s.defaultModel = model; });
+  // #437: Kernal's own write, whichever target the person then picks (or none): never echoed to the
+  // account by the Ctrl+S sync (_shared/default-sync.ts).
+  try { noteOwnDefaultsWrite(); } catch {}
 }
 
 export default async function (pi: ExtensionAPI) {
@@ -289,8 +296,46 @@ export default async function (pi: ExtensionAPI) {
     // Not on the list but OpenRouter has it: offer to add it first, so pi can switch to it.
     if (b.id === "openrouter" && !ids.includes(modelId) && (await loadCatalogue()).includes(modelId) && !(await offerToAdd(ctx, modelId))) return;
     const problem = await selectModel(ctx, b.id, modelId);
-    if (problem) ctx.ui.notify(problem, "error");
-    else ctx.ui.notify(`Connected to ${b.id} / ${modelId} (saved as default)`, "info");
+    if (problem) { ctx.ui.notify(problem, "error"); return; }
+    const saved = await saveTarget(ctx, b.id, modelId);
+    ctx.ui.notify(`Connected to ${b.id} / ${modelId} (${saved.message})`, saved.ok ? "info" : "warning");
+  }
+
+  /**
+   * #437: signed in with a UI, where the new default goes: the account (profile X) or only this
+   * machine (kernal-admin/central.ts saves both, as the Settings page does). settings.json has it
+   * already (selectModel), so signed out, without a UI or on Escape nothing else changes.
+   */
+  async function saveTarget(ctx: Pick<ExtensionCommandContext, "ui" | "hasUI">, provider: string, model: string): Promise<{ ok: boolean; message: string }> {
+    const legacy = { ok: true, message: "saved as default" };
+    // Loaded only here: the Drive image ships without kernal-admin (outfitter/image/Dockerfile), and
+    // a Drive never asks (no UI, no login).
+    const admin = ctx.hasUI ? await import("../kernal-admin/central.ts").catch(() => undefined) : undefined;
+    const targets = admin?.modelSaveTargets();
+    if (!admin || !targets) {
+      // Signed out or non-interactive: settings.json only, as before; say when something else
+      // still wins at the next session.
+      const wins = otherDefault(provider, model);
+      return wins ? { ok: true, message: `saved in settings.json; ${wins}: /connect in the TUI, signed in, saves to your account or this machine` } : legacy;
+    }
+    const pick = await ctx.ui.select(`Save ${provider}/${model} as the default`, [targets.account, targets.machine]);
+    if (pick === undefined) {
+      const wins = otherDefault(provider, model);
+      return { ok: true, message: `saved in this machine's settings.json only${wins ? `; ${wins}` : ""}` };
+    }
+    return admin.saveModelDefault(pick === targets.account ? "account" : "machine", provider, model);
+  }
+
+  /** What the next session starts on instead of `provider`/`model`, when a central value (or this
+   * machine's own) still names another backend or model; undefined when settings.json decides. */
+  function otherDefault(provider: string, model: string): string | undefined {
+    const r = (() => { try { return reresolve(); } catch { return undefined; } })();
+    if (!r) return undefined;
+    const decides = (v: ConfigValue | undefined) => !!v && v.source !== "legacy" && v.source !== "default";
+    const m = r.values["model.default"], p = r.values["model.provider"];
+    if (decides(m) && m!.value !== model && m!.value !== `${provider}/${model}`) return `${describeSource(m!)} sets ${String(m!.value)}, which the next session starts on`;
+    if (decides(p) && p!.value !== provider) return `${describeSource(p!)} sets the backend ${String(p!.value)}, which the next session starts on`;
+    return undefined;
   }
 
   const BROWSE = "Browse all OpenRouter models…";
@@ -337,6 +382,9 @@ export default async function (pi: ExtensionAPI) {
     if (!model) return `Model "${modelId}" not found on ${backendId}. Known: ${(models.get(backendId) ?? []).join(", ")}`;
     if (!(await pi.setModel(model))) return `Could not switch to ${backendId}/${modelId}`;
     saveDefault(backendId, modelId);
+    // #437: an explicit choice replaces this machine's earlier one (config.local.json), which would
+    // otherwise win over settings.json at the next session; "Only this machine" writes it again.
+    try { clearLocalOverrides(["model.provider", "model.default"]); } catch {}
     ctx.ui.setStatus("connect", `⇄ ${backendId}/${modelId}`);
     return undefined;
   }

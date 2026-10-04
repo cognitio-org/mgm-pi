@@ -53,6 +53,48 @@ without a terminal, and the file is copied to `.env.bak-<time>` before the first
 `~/localllm/.env` and the `.env` files next to the install are touched, never a project's own. Keys
 left in `.env` keep working, with a deprecation warning.
 
+### Centrally managed settings
+
+Signed in, these come from your account (web app → Account, or `/admin` → Settings) and Kernal
+applies them: `model.provider`, `model.default`, `model.thinking`, `compaction.summaryModel`,
+`compaction.masking`, `memory.mode`, `voice.enabled`, `voice.language`. For each, the first of
+these that sets it wins:
+
+1. **this machine**: `~/.kernal/config.local.json` ("Only this machine" in `/connect` or `/admin`);
+2. **your account**: the device, then the profile (`--profile`), then the account itself;
+3. **what this machine set before**, shown as "(legacy)" in `/config`: `settings.json`'s
+   `defaultProvider`/`defaultModel`/`defaultThinkingLevel` (only when they differ from what the
+   release shipped, or in a source checkout from the committed `settings.json`),
+   `kernal.compaction`, `kernal.memory`, pi-listen's `voice` settings (not the values Kernal wrote
+   there itself: its voice seed, or a copy of the account's value) and `KERNAL_SUMMARY_MODEL`;
+4. the fleet's value, then the default.
+
+So a change on your account reaches a laptop that once ran `/connect`, while an explicit "only this
+machine" choice still wins there. When a change takes effect:
+
+- **compaction**: at once (start-up refresh, `/config reload`, an `/admin` save);
+- **model and thinking**: at the next session (`/new` or the next start). A new, empty session
+  switches once to that default at start; a running conversation never switches model, and
+  `--model`/`--models`/`--provider`/`--thinking` on the command line still win;
+- **voice**: written into pi-listen's settings, which it reads at the next session;
+- **memory**: at the next start (`bin/kernal` reads the resolved value from
+  `~/.kernal/config-cache/effective[.<profile>].json` before pi starts).
+
+Signed in, `/connect` and the `/admin` Model page ask where a new default goes: "Save to my account
+(profile X)" or "Only this machine" (both also update `settings.json`, pi's own default). Signed
+out, or without a terminal, nothing changes: the choice goes to `settings.json` as before. In a
+Drive the owner's settings arrive with the run (`KERNAL_RUN_SETTINGS`) and rank below the tape's
+own choices.
+
+A default set inside pi itself, Ctrl+S in the model picker ("set as default") or the default
+thinking level, also goes to your account when you are signed in: the active profile, else the
+account itself, so new sessions on every machine start with it. Kernal sees pi write it to
+`settings.json` and saves it with the same versioned request as `/admin` (a conflict is retried
+once). If this machine had pinned that key ("Only this machine"), the pin is removed so the new
+default applies here too, and the notice says so. Choosing a model for this session only (Enter,
+cycling) never touches the account. Signed out or in a Drive it stays in `settings.json`; if the
+save fails (offline, expired sign-in), a notice says it was kept on this machine.
+
 ## Run (from any repo)
 
 ```bash

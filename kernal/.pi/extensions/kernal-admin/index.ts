@@ -46,8 +46,8 @@ import { APP_CSS, APP_JS, FAVICON, INDEX_HTML } from "./app.ts";
 import { backendPill, connectionsView, fieldById, idleMs, indexFields, leaksSecret, redactSecrets, secretValues, validateConnections, type ConnectionEdit } from "./lib.ts";
 import { startAdminServer, type AdminServer, type Api, type ApiResult } from "./server.ts";
 import { env } from "../_shared/env.ts";
-import { providerKey, refreshProviderKeys, resolve as resolveConfig } from "../_shared/central-config.ts";
-import { PROVIDER_OF_FIELD, PROVIDERS, listProviderKeys, saveSettings, settingsView, signedInAccount, sourceLabel, writeProviderKey } from "./central.ts";
+import { appliesOverLocal, describeSource, providerKey, refreshProviderKeys, resolve as resolveConfig } from "../_shared/central-config.ts";
+import { PROVIDER_OF_FIELD, PROVIDERS, listProviderKeys, modelSaveTargets, saveModelDefault, saveSettings, settingsView, signedInAccount, sourceLabel, writeProviderKey } from "./central.ts";
 
 export const ASSETS = {
   "/index.html": { type: "text/html; charset=utf-8", body: INDEX_HTML },
@@ -277,10 +277,21 @@ export function createApi(d: ApiDeps): Api {
       const ctx = d.ctx();
       const settings = readJson(settingsPath()) ?? {};
       const m = ctx?.model;
+      // #437: the default the next session starts on is the resolved one (this machine, the
+      // account, settings.json, the fleet), with its source; settings.json's when nothing applies.
+      const resolved = safe(() => resolveConfig());
+      const rp = resolved?.values["model.provider"], rm = resolved?.values["model.default"];
+      const central = appliesOverLocal(rm) || appliesOverLocal(rp);
+      const def = central
+        ? { provider: String(rp?.value ?? settings.defaultProvider ?? "litellm"), model: rm ? String(rm.value) : undefined, source: describeSource(appliesOverLocal(rm) ? rm! : rp!) }
+        : settings.defaultProvider ? { provider: settings.defaultProvider, model: settings.defaultModel, source: "settings.json" } : undefined;
+      const targets = modelSaveTargets();
       return { body: {
         current: m ? { provider: m.provider, id: m.id } : undefined,
-        default: settings.defaultProvider ? { provider: settings.defaultProvider, model: settings.defaultModel } : undefined,
+        default: def,
         thinking: safe(() => d.pi.getThinkingLevel()),
+        // Signed in: where a chosen default goes (POST /model's target); absent signed out.
+        ...(targets ? { saveTargets: [{ id: "account", label: targets.account }, { id: "machine", label: targets.machine }] } : {}),
         providers: (await connections()).map((b) => ({ ...withPill(b), models: b.registered ? b.models : [] })),
         curation: await busRequest(bus, "kernal:connect", { op: "curation" }, 5_000).catch(() => undefined),
       } };
@@ -296,15 +307,21 @@ export function createApi(d: ApiDeps): Api {
       } catch (e: any) { return fail(422, { error: e.message }); }
     },
 
-    "POST /model": async (body: { provider?: string; id?: string }) => {
+    "POST /model": async (body: { provider?: string; id?: string; target?: string }) => {
       if (typeof body.provider !== "string" || typeof body.id !== "string") return fail(400, { error: "provider and id are required" });
+      if (body.target !== undefined && body.target !== "account" && body.target !== "machine") return fail(400, { error: "target is account or machine" });
       const ctx = d.ctx();
       if (!ctx) return fail(409, { error: "no session yet" });
       try {
         const r = await busRequest(bus, "kernal:connect", { op: "select", ctx, provider: body.provider, model: body.id }, 20_000);
         if (r === undefined) return fail(503, { error: "the connect extension is not loaded" });
-        return { body: { provider: body.provider, id: body.id, savedAsDefault: true } };
       } catch (e: any) { return fail(422, { error: e.message }); }
+      // settings.json has the choice now (connect's select); signed in it also goes where asked.
+      if (body.target && modelSaveTargets()) {
+        const saved = await saveModelDefault(body.target, body.provider, body.id);
+        return { body: { provider: body.provider, id: body.id, savedAsDefault: saved.ok, target: body.target, message: saved.message } };
+      }
+      return { body: { provider: body.provider, id: body.id, savedAsDefault: true } };
     },
 
     // ---------- codebase index ----------

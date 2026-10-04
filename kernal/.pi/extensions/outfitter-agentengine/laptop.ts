@@ -14,6 +14,11 @@
  * bin/kernal reads `memory` the same way, before pi starts, to turn pi-memory's prompt injection and
  * exit summary off (pi-memory.ts says why it has to be there).
  *
+ * `memory` is also the central setting `memory.mode` (#437, chosenMode): this machine's
+ * config.local.json and the account (web Account page, /admin Settings) win over `kernal.memory`,
+ * which wins over the fleet's value. bin/kernal reads the same resolution from central-config's
+ * effective file in ~/.kernal/config-cache.
+ *
  * Each call carries `laptop: {sessionId: "laptop:<pi session id>", repo}`. The repo is the working
  * directory's GitHub `origin` remote, lowercased; it only scopes the owner's own memory. The API
  * decides whose memory it is (the Dongle's owner) and enforces every rule. A shared or taxonomic
@@ -22,6 +27,7 @@
  * `/memory import` saves private notes only, so it needs no approval.
  */
 import { kernalSection, readSettings, updateKernal } from "../connect/settings.ts";
+import { describeSource, reresolve, resolve, type ConfigValue } from "../_shared/central-config.ts";
 import { cachedRepoOf, type RepoOf } from "../_shared/repo.ts";
 import { personHere } from "../_shared/person.ts";
 import type { AdminTransport, LaptopContext } from "../outfitter-admin/transport.ts";
@@ -53,6 +59,25 @@ export function memorySettings(settings: Record<string, unknown> = readSettings(
     ...(typeof k.memoryImported === "string" ? { memoryImported: k.memoryImported } : {}),
     memoryImportOffered: k.memoryImportOffered === true,
   };
+}
+
+/**
+ * `memory.mode` (#437): this machine's own choice (config.local.json) or the account's (device,
+ * profile, user) beats the legacy `kernal.memory`, which beats the fleet's; bin/kernal decides the
+ * same way before pi starts (from central-config's effective file). `central` is central-config's
+ * resolution of the key; `settings.memory` is the legacy value, read here so tests can hand it in.
+ */
+export function chosenMode(settings: Pick<MemorySettings, "memory">, central: ConfigValue | undefined): { memory?: MemoryMode; source?: string } {
+  const mode = (v: ConfigValue | undefined) => (v && (MODES as readonly unknown[]).includes(v.value) ? (v.value as MemoryMode) : undefined);
+  const strong = central && ((central.source === "local" && !central.sourceName) || ["user", "profile", "device"].includes(central.source));
+  if (strong && mode(central)) return { memory: mode(central), source: describeSource(central!) };
+  if (settings.memory) return { memory: settings.memory, source: "settings.json kernal.memory" };
+  if (central && (central.source === "fleet" || central.source === "group") && mode(central)) return { memory: mode(central), source: describeSource(central) };
+  return {};
+}
+
+function centralMemoryMode(): ConfigValue | undefined {
+  try { return resolve().values["memory.mode"]; } catch { return undefined; }
 }
 
 /** The mode in force: the setting, else `auto` with a Dongle configured; always off without one. */
@@ -107,6 +132,8 @@ export interface LaptopDeps {
   repoOf?: RepoOf;
   /** Tests: shorter recall wait. */
   recallTimeoutMs?: number;
+  /** central-config's `memory.mode` (default: this process's resolution). */
+  centralMode?: () => ConfigValue | undefined;
 }
 
 /**
@@ -115,13 +142,16 @@ export interface LaptopDeps {
  */
 export function registerLaptopMemory(pi: any, transport: AdminTransport, deps: LaptopDeps = {}): { mode: MemoryMode; recording: boolean } {
   const env = deps.env ?? process.env;
-  const settings = memorySettings(deps.settings ?? readSettings());
+  const legacy = memorySettings(deps.settings ?? readSettings());
+  const centralMode = deps.centralMode ?? centralMemoryMode;
+  const chosen = chosenMode(legacy, centralMode());
+  const settings: MemorySettings = { ...legacy, ...(chosen.memory ? { memory: chosen.memory } : {}) };
   const mode = effectiveMode(settings, true);
   const recording = recordingOn(settings, mode);
   const repoOf = deps.repoOf ?? cachedRepoOf();
   const context = (ctx: any) => laptopContextOf(ctx, repoOf);
 
-  registerMemoryCommand(pi, transport, { settings, mode, env, context });
+  registerMemoryCommand(pi, transport, { settings, mode, env, context, source: chosen.source, centralMode });
   if (mode === "off") return { mode, recording };
 
   // pi-memory reads this at exit, so setting it here is enough (bin/kernal does too).
@@ -196,9 +226,9 @@ async function offerImport(ctx: any, settings: MemorySettings, env: NodeJS.Proce
 
 const USAGE = "usage: /memory [status] | off | tool | auto | record on|off | import [--dry-run]";
 
-function status(settings: MemorySettings, mode: MemoryMode, env: NodeJS.ProcessEnv): string {
+function status(settings: MemorySettings, mode: MemoryMode, env: NodeJS.ProcessEnv, source?: string): string {
   return [
-    `memory: ${mode}${settings.memory ? "" : " (default)"}`,
+    `memory: ${mode}${settings.memory ? (source && source !== "settings.json kernal.memory" ? ` (${source})` : "") : " (default)"}`,
     `  recording laptop turns: ${recordingOn(settings, mode) ? "on" : settings.memoryRecord ? "opted in, but memory is off" : "off (opt in with /memory record on)"}`,
     `  pi-memory: ${mode === "off" ? "on" : piMemoryInjectionOff(env) ? "off (its tools, prompt and exit summary)" : "tools off; restart Kernal to turn its prompt off too"}`,
     `  pi-memory import: ${settings.memoryImported ? `done ${settings.memoryImported.slice(0, 10)}` : "not yet (/memory import)"}`,
@@ -233,7 +263,11 @@ export async function importNotes(transport: AdminTransport, notes: ImportNote[]
 function registerMemoryCommand(
   pi: any,
   transport: AdminTransport,
-  o: { settings: MemorySettings; mode: MemoryMode; env: NodeJS.ProcessEnv; context: (ctx: any) => Promise<LaptopContext | undefined> },
+  o: {
+    settings: MemorySettings; mode: MemoryMode; env: NodeJS.ProcessEnv; context: (ctx: any) => Promise<LaptopContext | undefined>;
+    /** Where the mode came from (chosenMode), and the central value to check a /memory write against. */
+    source?: string; centralMode: () => ConfigValue | undefined;
+  },
 ): void {
   if (typeof pi.registerCommand !== "function") return;
   pi.registerCommand("memory", {
@@ -243,9 +277,15 @@ function registerMemoryCommand(
       const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
       const sub = parts[0] ?? "status";
       try {
-        if (sub === "status") return notify(status(o.settings, o.mode, o.env));
+        if (sub === "status") return notify(status(o.settings, o.mode, o.env, o.source));
         if ((MODES as readonly string[]).includes(sub)) {
           updateKernal({ memory: sub });
+          // The effective file bin/kernal reads at the next start follows the new legacy value.
+          try { reresolve(); } catch {}
+          const wins = chosenMode({ memory: sub as MemoryMode }, o.centralMode());
+          if (wins.memory && wins.memory !== sub) {
+            return notify(`memory set to ${sub} in settings.json, but ${wins.source} sets ${wins.memory}, which wins: change it with /admin Settings ("Only this machine") or at your account page.`, "warning");
+          }
           return notify(`memory set to ${sub}; it applies when Kernal next starts.${sub === "off" ? " pi-memory comes back then." : " pi-memory is off from then on."}`);
         }
         if (sub === "record") {

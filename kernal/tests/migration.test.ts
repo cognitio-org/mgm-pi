@@ -209,6 +209,51 @@ describe("offerEnvImport", () => {
     assert.deepEqual(r.kept, ["OPENROUTER_API_KEY"]);
   });
 
+  test("two files, two values for a provider key: the other value is asked about, then warned about", async () => {
+    const s = await signedIn("OPENROUTER_API_KEY=sk-or-v1-oldoldoldold9876\n");
+    const near = join(s.home, "near.env");
+    writeFileSync(near, `OPENROUTER_API_KEY=${OR_KEY}\n`, { mode: 0o600 });
+    const files = [realpathSync(s.envFile), realpathSync(near)];
+    // Upload the nearest value, then say no to the older one left in ~/localllm/.env.
+    const r = await offerEnvImport({ ...s.io(["y", "n"]), files });
+    assert.deepEqual(r.uploaded, ["OPENROUTER_API_KEY"]);
+    assert.deepEqual(r.removed, ["OPENROUTER_API_KEY"]);
+    assert.deepEqual(r.kept, ["OPENROUTER_API_KEY"]);
+    assert.equal(s.asked.length, 2);
+    assert.match(s.asked[1], /^OPENROUTER_API_KEY is also set to a different value \(…9876\) in .*localllm\/\.env, which would now override your account key\. Remove it too\? \[y\/N\]/);
+    assert.equal(readFileSync(near, "utf8"), "");
+    assert.equal(readFileSync(s.envFile, "utf8"), "OPENROUTER_API_KEY=sk-or-v1-oldoldoldold9876\n");
+    assert.ok(s.lines.some((l) => /^OPENROUTER_API_KEY is still set to a different value in .*localllm\/\.env; it overrides your account key until you remove it$/.test(l)));
+    assert.ok(!s.lines.some((l) => l.includes("is deprecated")), "the specific warning replaces the generic one");
+    assert.ok(!s.lines.some((l) => l.includes("oldoldold") || l.includes(OR_KEY)), "no output line carries a key");
+  });
+
+  test("two files, two values for LITELLM_AGENT_KEY: yes to both removes both", async () => {
+    const s = await signedIn("LITELLM_AGENT_KEY=sk-shared-older-1111\n", { routerKey: true });
+    const near = join(s.home, "near.env");
+    writeFileSync(near, "LITELLM_AGENT_KEY=sk-shared-newer-2222\nLITELLM_BASE_URL=x\n", { mode: 0o600 });
+    const files = [realpathSync(s.envFile), realpathSync(near)];
+    const r = await offerEnvImport({ ...s.io(["y", "y"]), files });
+    assert.match(s.asked[0], /^Remove LITELLM_AGENT_KEY from .*near\.env\?/);
+    assert.match(s.asked[1], /^LITELLM_AGENT_KEY is also set to a different value \(…1111\) in .*localllm\/\.env, which would now override this device's own router key/);
+    assert.deepEqual(r.removed, ["LITELLM_AGENT_KEY"]);
+    assert.deepEqual(r.kept, []);
+    assert.equal(r.backups.length, 2);
+    assert.equal(readFileSync(near, "utf8"), "LITELLM_BASE_URL=x\n");
+    assert.equal(readFileSync(s.envFile, "utf8"), "");
+    assert.deepEqual(findEnvVars(files, ["LITELLM_AGENT_KEY"]), []);
+  });
+
+  test("two files, two values for LITELLM_AGENT_KEY: no to the older one warns that it overrides the device key", async () => {
+    const s = await signedIn("LITELLM_AGENT_KEY=sk-shared-older-1111\n", { routerKey: true });
+    const near = join(s.home, "near.env");
+    writeFileSync(near, "LITELLM_AGENT_KEY=sk-shared-newer-2222\n", { mode: 0o600 });
+    const r = await offerEnvImport({ ...s.io(["y", ""]), files: [realpathSync(s.envFile), realpathSync(near)] });
+    assert.deepEqual(r.kept, ["LITELLM_AGENT_KEY"]);
+    assert.equal(readFileSync(s.envFile, "utf8"), "LITELLM_AGENT_KEY=sk-shared-older-1111\n");
+    assert.ok(s.lines.some((l) => /^LITELLM_AGENT_KEY is still set to a different value in .*localllm\/\.env; it overrides this device's own router key until you remove it$/.test(l)));
+  });
+
   test("no .env files: nothing to do", async () => {
     const r = await offerEnvImport({ err: () => assert.fail("no output"), ask: async () => assert.fail("no question"), files: [] });
     assert.deepEqual(r, { uploaded: [], removed: [], kept: [], backups: [] });

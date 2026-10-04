@@ -145,7 +145,7 @@ ROOT="$(cd -P "$(dirname "$SRC")/.." && pwd)"
 found_env=0
 if [[ -f "$ROOT/../.env" ]]; then set -a; source "$ROOT/../.env"; set +a; found_env=1; fi
 if [[ -f "$ROOT/.env" ]]; then set -a; source "$ROOT/.env"; set +a; found_env=1; fi
-[[ $found_env == 1 || -f "${KERNAL_AUTH_DIR:-$HOME/.kernal/auth}/accounts.json" ]] || echo "kernal: not set up yet — run kernal login (or /setup inside the agent for this machine only)" >&2
+[[ $found_env == 1 ]] || echo "kernal: no .env yet — run /setup inside the agent to configure your connections" >&2
 export PI_CODING_AGENT_DIR="$ROOT/.pi"
 # A release bundle pins pi's version: it changes only with Kernal itself (`kernal update`), so pi's own
 # "New version available. Run pi update" notice is wrong advice here. A source checkout keeps it, as a

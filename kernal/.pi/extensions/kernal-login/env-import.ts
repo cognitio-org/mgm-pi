@@ -11,8 +11,9 @@
  *
  * Every question defaults to No, and nothing is asked without a terminal (a script, a pipe). Before
  * the first change to a file it is copied whole to `<file>.bak-<UTC time>`, mode 0600; each file is
- * then rewritten whole and renamed into place. Keys left in `.env` get a one-line deprecation
- * warning.
+ * then rewritten whole and renamed into place. When another file still sets the same name to a
+ * different value, that value would now win, so it is asked about too (and warned about if it stays).
+ * Keys left in `.env` get a one-line deprecation warning.
  *
  * Only the `.env` files Kernal itself owns are read: ~/localllm/.env and the two that bin/kernal
  * sources (next to the bundle and one level up). A project's own `.env` in the working directory,
@@ -220,7 +221,7 @@ async function offer(io: EnvImportIo, result: EnvImportResult): Promise<void> {
         writeFileSync(tmp, next, { mode: statSync(file).mode & 0o777 });
         renameSync(tmp, file);
       }
-      result.removed.push(f.name);
+      if (!result.removed.includes(f.name)) result.removed.push(f.name);
       return true;
     } catch (err) {
       io.err(`Could not remove ${f.name} from .env: ${err instanceof Error ? err.message : String(err)}`);
@@ -228,6 +229,22 @@ async function offer(io: EnvImportIo, result: EnvImportResult): Promise<void> {
     }
   };
   const where = (f: EnvFinding) => f.files.join(", ");
+  /** Names still set to another value after a removal, with where: that value now wins over the
+   * account or device key (connect's loadEnv reads every file; layerCentralEnv fills only gaps). */
+  const shadowed = new Map<string, string>();
+  const replaces = (name: string) => ((ROUTER_KEY_ENV as readonly string[]).includes(name)
+    ? "this device's own router key"
+    : name === DONGLE_ENV ? "your login" : "your account key");
+  /** After `f` was removed: asks about each other value the files still give the same name. */
+  const stripRest = async (f: EnvFinding, ask: (q: string) => Promise<string>): Promise<void> => {
+    for (let rest = findEnvVars(files, [f.name])[0]; rest; rest = findEnvVars(files, [f.name])[0]) {
+      const answer = await ask(`${f.name} is also set to a different value (${last4(cleanKey(rest.value))}) in ${where(rest)}, which would now override ${replaces(f.name)}. Remove it too? [y/N] `);
+      if (yes(answer) && strip(rest)) continue;
+      shadowed.set(f.name, where(rest));
+      if (!result.kept.includes(f.name)) result.kept.push(f.name);
+      return;
+    }
+  };
 
   const providers = Object.entries(PROVIDER_ENV).filter(([provider]) => !NOT_IMPORTED.has(provider));
   const keys = findEnvVars(files, providers.map(([, name]) => name));
@@ -256,20 +273,23 @@ async function offer(io: EnvImportIo, result: EnvImportResult): Promise<void> {
       }
       result.uploaded.push(f.name);
       io.err(`Uploaded ${f.name} to your account.`);
-      if (!strip(f)) result.kept.push(f.name);
+      if (!strip(f)) { result.kept.push(f.name); continue; }
+      await stripRest(f, io.ask);
     }
     for (const f of removeOnly) {
       const why = f.name === DONGLE_ENV
         ? "this login replaces the Dongle"
         : "this device's own router key replaces it, and a key in .env would win over it";
       const answer = await io.ask(`Remove ${f.name} from ${where(f)}? ${why[0].toUpperCase()}${why.slice(1)}. [y/N] `);
-      if (yes(answer) && strip(f)) continue;
+      if (yes(answer) && strip(f)) { await stripRest(f, io.ask); continue; }
       result.kept.push(f.name);
     }
   }
 
   for (const name of result.kept) {
-    if (name === DONGLE_ENV) io.err(`${name} in .env is deprecated: kernal login replaces it`);
+    const other = shadowed.get(name);
+    if (other) io.err(`${name} is still set to a different value in ${other}; it overrides ${replaces(name)} until you remove it`);
+    else if (name === DONGLE_ENV) io.err(`${name} in .env is deprecated: kernal login replaces it`);
     else if ((ROUTER_KEY_ENV as readonly string[]).includes(name)) io.err(`${name} in .env is deprecated: this device's own router key replaces it`);
     else io.err(`${name} in .env is deprecated: run kernal login again to move it to your account, or save it with /admin`);
   }

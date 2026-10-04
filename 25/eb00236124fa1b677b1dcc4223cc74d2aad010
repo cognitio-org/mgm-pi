@@ -1,0 +1,115 @@
+outfitter/packages/api/src/routes/device.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 8-9,11,13-33,35-177
+outfitter/packages/api/src/server.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 283
+outfitter/packages/api/src/store/devices.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 26,84-86,88,103-104,106,114-118,121-133,138-146,148-150,152-157,159-162,164-169,174-178,180-182,184-185,188-189,192-208,210-213,215-216,218-226,236-272,278-285,287-288,290-291,293-296,298-299,308-309,311-312,314-315,317-325,327-334,336-343,345-346,348-357
+outfitter/packages/api/test/preview-routes.test.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 12,26,38-39,48-49
+outfitter/packages/web/src/components/account/ProviderKeysPanel.tsx
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1-175
+outfitter/packages/api/test/format.test.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 11,111-112,114,121-123
+outfitter/packages/web/test/devices-pages.test.tsx
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1-309
+outfitter/deploy/README.md
+  s_38ec74cfb7fa1d::t_da0e7859de613b 147,157,689-709
+outfitter/packages/api/test/auth.test.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 57-59,63-64
+outfitter/deploy/litellm-admin.sh
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1-133
+outfitter/packages/api/src/central/device-login.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1-481
+outfitter/packages/api/test/device-store-mongo.test.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1-154
+outfitter/docs/specs/central-auth.md
+  s_38ec74cfb7fa1d::t_da0e7859de613b 84-85,211-212,782
+outfitter/packages/web/src/components/devices/DeviceRequestCard.tsx
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1-106
+outfitter/packages/api/src/routes/me.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 5,35-37
+outfitter/packages/api/test/archive.test.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 13,256,287-288,295-297
+outfitter/deploy/service.sh
+  s_38ec74cfb7fa1d::t_da0e7859de613b 214-232
+outfitter/deploy/test/service-env-gke-off.test.sh
+  s_38ec74cfb7fa1d::t_da0e7859de613b 122,138
+outfitter/packages/web/src/pages/AccountPage.tsx
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1-12,15-17,19-83,90-175
+outfitter/packages/web/src/pages/DeviceApprovePage.tsx
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1-10,13-22,24-28,30,34-205
+outfitter/packages/web/src/styles/devices.css
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1-62
+.github/workflows/outfitter-ci.yml
+  s_38ec74cfb7fa1d::t_da0e7859de613b 48
+outfitter/deploy/CLAUDE.md
+  s_38ec74cfb7fa1d::t_da0e7859de613b 18-19
+outfitter/packages/web/src/style.css
+  s_38ec74cfb7fa1d::t_da0e7859de613b 14
+outfitter/deploy/config.env
+  s_38ec74cfb7fa1d::t_da0e7859de613b 88-93
+outfitter/packages/web/src/components/account/LocalModelsPanel.tsx
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1-72
+outfitter/packages/web/src/components/account/SettingsEditor.tsx
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1-229
+outfitter/packages/web/src/components/account/SpendPanel.tsx
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1-182
+outfitter/packages/api/test/device-login.test.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1-396
+outfitter/packages/api/src/routes/tokens.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 43-46,54
+outfitter/packages/api/test/browser-ide-open.test.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 16,40,44-45,51-52,68-69
+outfitter/packages/api/test/device-iap.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1-28
+outfitter/packages/web/src/api/devices.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 44-53
+outfitter/packages/web/src/App.tsx
+  s_38ec74cfb7fa1d::t_da0e7859de613b 56-57
+outfitter/packages/api/src/auth.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 32-39,46-47,53-55,57-59,73-78,86-87,109,128,130,132-134,138-165,172,175,178-184,186-190,193-194
+outfitter/packages/api/test/ae-agents.test.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 499,515,518
+outfitter/packages/api/test/operator.test.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 14,66-67,70-74
+outfitter/packages/web/src/components/account/ProfilesPanel.tsx
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1-234
+outfitter/packages/web/src/lib/account.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1-171
+outfitter/packages/web/src/lib/devices.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1-89
+outfitter/packages/web/src/styles/pages.css
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1095-1114
+outfitter/packages/web/test/account-lib.test.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1-106
+outfitter/packages/web/test/account-page.test.tsx
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1-456
+outfitter/packages/api/src/central/device-tokens.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 8-9,38-86
+outfitter/deploy/test/litellm-admin.test.sh
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1-98
+outfitter/docs/protocol.md
+  s_38ec74cfb7fa1d::t_da0e7859de613b 701-746
+outfitter/packages/web/test/devices.test.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1-95
+outfitter/packages/api/test/device-routes.test.ts
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1-422
+outfitter/packages/web/src/pages/DevicesPage.tsx
+  s_38ec74cfb7fa1d::t_da0e7859de613b 1-8,11-13,15-48,55-134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "25eb00236124fa1b677b1dcc4223cc74d2aad010",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

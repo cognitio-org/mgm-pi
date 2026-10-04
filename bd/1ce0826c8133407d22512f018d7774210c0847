@@ -1,0 +1,26 @@
+outfitter/landing/tools/legal-pages.py
+  s_c67f9150e24079::t_ada81f9a506492 7,19-20,198-223,226,231,313,326-330
+  s_c67f9150e24079::t_66295248e16626 18
+outfitter/landing/public/privacy/index.html
+  s_c67f9150e24079::t_ada81f9a506492 54,176,180-205,208,213
+  s_c67f9150e24079::t_66295248e16626 53,214
+outfitter/landing/public/terms/index.html
+  s_c67f9150e24079::t_66295248e16626 52,139
+  s_c67f9150e24079::t_ada81f9a506492 61,119,132-136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "bd1ce0826c8133407d22512f018d7774210c0847",
+  "prompts": {},
+  "sessions": {
+    "s_c67f9150e24079": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "17f761ab-de7d-4690-a895-e067e9f608df",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

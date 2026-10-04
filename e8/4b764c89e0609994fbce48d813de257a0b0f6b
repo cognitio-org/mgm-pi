@@ -1,0 +1,52 @@
+kernal/tests/central-config.test.ts
+  s_38ec74cfb7fa1d::t_0980b884de7294 391
+  s_38ec74cfb7fa1d::t_43479d4d7ffac9 398
+docs/reports/sentry-integration-plan.md
+  s_38ec74cfb7fa1d::t_f69bc631f8a3f2 48-51
+kernal/.pi/extensions/_shared/central-config.ts
+  s_38ec74cfb7fa1d::t_9fc144c7a06b27 253
+  s_38ec74cfb7fa1d::t_a9e7a9874b5cbb 651
+  s_38ec74cfb7fa1d::t_4cbdbf110619e4 29,112-115,255-257,303,389-390,624-650
+kernal/.pi/extensions/sentry/index.ts
+  s_38ec74cfb7fa1d::t_4c28bd4d0cab17 62,64-66,68
+  s_38ec74cfb7fa1d::t_a52248f9096d46 319
+  s_38ec74cfb7fa1d::t_2d9dd5bb07f061 39,41
+  s_38ec74cfb7fa1d::t_1c5804603b9586 97-98,101-104,109
+  s_38ec74cfb7fa1d::t_6a6adeb540e285 335-336
+  s_38ec74cfb7fa1d::t_3e606a06a65b9e 360
+kernal/.pi/extensions/sentry/config.ts
+  s_38ec74cfb7fa1d::t_6402ac8c9a2d19 3
+  s_38ec74cfb7fa1d::t_ea91fd6c21a20b 10-14
+  s_38ec74cfb7fa1d::t_bec8274b851d7f 51-66,69-70,73
+kernal/README.md
+  s_38ec74cfb7fa1d::t_d84054b385d4cd 630-634
+  s_38ec74cfb7fa1d::t_3907a8481bdb5c 653-655
+kernal/tests/sentry-local-optout.test.ts
+  s_38ec74cfb7fa1d::t_e53a66a48ccd2a 171
+  s_38ec74cfb7fa1d::t_1671b8dbd511a3 1-170,172-220
+kernal/.pi/extensions/kernal-admin/central.ts
+  s_38ec74cfb7fa1d::t_f161eabb58a69a 24-25
+  s_38ec74cfb7fa1d::t_86af27e47b7abb 190-193
+  s_38ec74cfb7fa1d::t_13dd3abfb6b028 281-286
+outfitter/docs/specs/central-auth.md
+  s_38ec74cfb7fa1d::t_7d07f97433b5fa 422-424
+kernal/tests/sentry.test.ts
+  s_38ec74cfb7fa1d::t_1b7cea22eb9cb0 76,78-81
+  s_38ec74cfb7fa1d::t_7b4b30fa6e03fb 513
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "e84b764c89e0609994fbce48d813de257a0b0f6b",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

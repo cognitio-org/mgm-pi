@@ -1,6 +1,6 @@
 /**
  * `kernal login`, `kernal logout`, `kernal whoami` (#391 CA-2, outfitter/docs/specs/central-auth.md
- * §2.5). bin/kernal runs this with node before pi starts, like teleport/cli.ts: argv[2] is the
+ * §2.5). bin/kernal runs this with node before pi starts, so it imports nothing from pi: argv[2] is the
  * subcommand, the rest its flags. Owned by task E. Exit codes: 0 done, 1 failed, 2 usage.
  * The commands themselves are in commands.ts.
  *

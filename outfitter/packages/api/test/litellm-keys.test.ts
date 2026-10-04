@@ -66,7 +66,7 @@ describe("ensureLitellmUser", () => {
     await keys.ensureLitellmUser({ userId: device.userId, email: device.ownerEmail });
     const created = fake.callsTo("/user/new");
     assert.equal(created.length, 1);
-    assert.deepEqual(created[0].body, { user_id: device.userId, user_email: device.ownerEmail, auto_create_key: false });
+    assert.deepEqual(created[0].body, { user_id: device.userId, user_role: "internal_user", auto_create_key: false, metadata: { email: device.ownerEmail, source: "outfitter" } });
     assert.equal(fake.callsTo("/user/info").length, 1, "the second call is answered from memory");
   });
 
@@ -80,12 +80,32 @@ describe("ensureLitellmUser", () => {
     assert.equal(fake.callsTo("/user/new").length, 1);
   });
 
-  test("a race with another instance (user already exists) is fine; any other failure throws", async () => {
+  test("a race with another instance (the id now exists) is fine; any other failure throws", async () => {
     const { fake, keys } = setup();
-    fake.failNext("/user/new", 400, { error: { message: "User already exists" } });
+    // The first look misses, another instance creates the user, our /user/new loses the race.
+    fake.failNext("/user/info", 404, { detail: { error: "User not found" } });
+    fake.users.set(device.userId, { user_id: device.userId });
     await keys.ensureLitellmUser({ userId: device.userId, email: device.ownerEmail });
+    assert.equal(fake.callsTo("/user/info").length, 2, "re-checked by id after the failed create");
     fake.failNext("/user/new", 500, { error: { message: "database down" } });
     await assert.rejects(keys.ensureLitellmUser({ userId: "u_other", email: "b@example.com" }), /\/user\/new answered 500: database down/);
+  });
+
+  test("an 'already exists' about another field is not a race: it throws", async () => {
+    const { fake, keys } = setup();
+    fake.failNext("/user/new", 409, { detail: { error: "User with email a@example.com already exists" } });
+    await assert.rejects(keys.ensureLitellmUser({ userId: device.userId, email: device.ownerEmail }), /\/user\/new answered 409/);
+  });
+
+  test("a person who already has a LiteLLM login (same email, proxy_admin) still gets an internal_user (2026-10-04)", async () => {
+    const { fake, keys } = setup();
+    fake.users.set("0adf-human", { user_id: "0adf-human", user_email: device.ownerEmail, user_role: "proxy_admin" });
+    await keys.ensureLitellmUser({ userId: device.userId, email: device.ownerEmail });
+    const created = fake.users.get(device.userId);
+    assert.equal(created?.user_role, "internal_user", "never inherits the human login's admin role");
+    assert.equal(created?.user_email ?? null, null, "no email: it would collide with the existing login");
+    assert.deepEqual(created?.metadata, { email: device.ownerEmail, source: "outfitter" });
+    assert.equal(fake.users.get("0adf-human")?.user_role, "proxy_admin", "the human login is untouched");
   });
 });
 

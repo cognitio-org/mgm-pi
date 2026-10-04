@@ -19,7 +19,18 @@ import { homedir } from "node:os";
 import { env } from "./env.ts";
 import { outfitterBearer, sendWithBearer, type OutfitterCredentials } from "./outfitter-env.ts";
 
-export type SentrySettings = { enabled: false } | { enabled: true; dsn: string; tracesSampleRate: number };
+/** The signals beside errors and traces (#424), each off unless the fleet turned it on. A field is
+ * present only when on (`true`, or a rate above 0), so an older answer and "all off" read the same.
+ * `logs` and `profilesSampleRate` are parsed for completeness; Kernal uses neither (sentry/config.ts). */
+export interface SentrySignals {
+  agentTraces?: true;
+  agentContent?: true;
+  metrics?: true;
+  logs?: true;
+  profilesSampleRate?: number;
+}
+
+export type SentrySettings = { enabled: false } | ({ enabled: true; dsn: string; tracesSampleRate: number } & SentrySignals);
 
 export interface FleetSettings {
   telemetry: { sentry: SentrySettings };
@@ -55,8 +66,22 @@ export function parseFleetSettings(json: unknown): FleetSettings {
   if (!s || s.enabled !== true || typeof s.dsn !== "string" || !/^https?:\/\/[^/@\s]+@[^/\s]+\/\d+$/.test(s.dsn)) {
     return { telemetry: { sentry: { enabled: false } }, ...base };
   }
-  const rate = typeof s.tracesSampleRate === "number" && s.tracesSampleRate >= 0 && s.tracesSampleRate <= 1 ? s.tracesSampleRate : 0;
-  return { telemetry: { sentry: { enabled: true, dsn: s.dsn, tracesSampleRate: rate } }, ...base };
+  const rate = isRate(s.tracesSampleRate) ? s.tracesSampleRate : 0;
+  return { telemetry: { sentry: { enabled: true, dsn: s.dsn, tracesSampleRate: rate, ...parseSignals(s) } }, ...base };
+}
+
+const isRate = (v: unknown): v is number => typeof v === "number" && v >= 0 && v <= 1;
+
+/** The #424 signals out of a `telemetry.sentry` object: only an exact `true` (or a rate in 0..1
+ * above 0) turns one on. */
+export function parseSignals(s: Record<string, unknown>): SentrySignals {
+  return {
+    ...(s.agentTraces === true ? { agentTraces: true as const } : {}),
+    ...(s.agentContent === true ? { agentContent: true as const } : {}),
+    ...(s.metrics === true ? { metrics: true as const } : {}),
+    ...(s.logs === true ? { logs: true as const } : {}),
+    ...(isRate(s.profilesSampleRate) && s.profilesSampleRate > 0 ? { profilesSampleRate: s.profilesSampleRate } : {}),
+  };
 }
 
 /** The last answer from this laptop's Outfitter, or off: no Dongle, nothing cached yet, an

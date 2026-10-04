@@ -394,6 +394,15 @@ describe("override rules", () => {
     setup();
     assert.equal(getValue("telemetry.sentry.enabled"), false);
   });
+
+  test("#424: kernal.sentryAgentTraces: false (and so on) are those signals' local opt-outs; a local true can't turn one on", () => {
+    writeCacheFile(response({ "telemetry.sentry.agentTraces": { value: true, source: "fleet" }, "telemetry.sentry.metrics": { value: true, source: "fleet" } }));
+    settings = { kernal: { sentryAgentTraces: false, sentryAgentContent: true } };
+    setup();
+    assert.equal(getValue("telemetry.sentry.agentTraces"), false);
+    assert.equal(getValue("telemetry.sentry.metrics"), true);
+    assert.equal(getValue("telemetry.sentry.agentContent"), false, "the default, whatever settings.json says");
+  });
 });
 
 describe("router key", () => {

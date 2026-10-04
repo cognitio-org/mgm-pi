@@ -81,11 +81,11 @@ export interface KnownSetting {
 }
 
 /** The schema version this Kernal was built against. */
-export const KNOWN_SCHEMA_VERSION = 1;
+export const KNOWN_SCHEMA_VERSION = 2;
 
 const PERSONAL: readonly Level[] = ["fleet", "user", "profile", "device", "local"];
 
-/** The v1 keys (spec §3.2). */
+/** The v1 keys (spec §3.2), and v2's Sentry signals (#424). */
 export const KNOWN_SETTINGS: readonly KnownSetting[] = [
   { key: "router.baseUrl", type: "url", secret: false, levels: ["fleet", "local"], override: "none", default: "https://router.kernal.one/v1", env: ["LITELLM_BASE_URL"], description: "The LiteLLM router this machine's router key is for." },
   { key: "router.key", type: "string", secret: true, levels: ["device", "local"], override: "any", env: ["LITELLM_AGENT_KEY", "LITELLM_API_KEY"], description: "This device's own router key, minted at sign-in." },
@@ -101,7 +101,22 @@ export const KNOWN_SETTINGS: readonly KnownSetting[] = [
   { key: "telemetry.sentry.enabled", type: "boolean", secret: false, levels: ["fleet", "local"], override: "opt-out", default: false, description: "Send errors to Sentry. Only the fleet turns it on; a machine may turn it off." },
   { key: "telemetry.sentry.dsn", type: "url", secret: false, levels: ["fleet"], override: "none", description: "Where Sentry events go." },
   { key: "telemetry.sentry.tracesSampleRate", type: "number", min: 0, max: 1, secret: false, levels: ["fleet"], override: "none", default: 0.05, description: "Share of agent runs traced." },
+  // #424: each off by default, turned on for the fleet only; a machine may turn one off (/sentry).
+  { key: "telemetry.sentry.agentTraces", type: "boolean", secret: false, levels: ["fleet", "local"], override: "opt-out", default: false, description: "AI agent monitoring: agent runs, model calls (model, tokens, cost) and tool calls as gen_ai spans." },
+  { key: "telemetry.sentry.agentContent", type: "boolean", secret: false, levels: ["fleet", "local"], override: "opt-out", default: false, description: "Prompts, outputs and tool arguments/results on agent spans, redacted (needs agentTraces)." },
+  { key: "telemetry.sentry.metrics", type: "boolean", secret: false, levels: ["fleet", "local"], override: "opt-out", default: false, description: "Counters: agent runs, tool and model calls, tokens, spend, errors." },
+  { key: "telemetry.sentry.logs", type: "boolean", secret: false, levels: ["fleet", "local"], override: "opt-out", default: false, description: "Server logs to Sentry (Outfitter and Drives; a laptop sends none)." },
+  { key: "telemetry.sentry.profilesSampleRate", type: "number", min: 0, max: 1, secret: false, levels: ["fleet"], override: "none", default: 0, description: "Share of traces profiled (Outfitter and Drives; not Kernal's binary)." },
 ];
+
+/** The settings.json flags (`kernal.<flag>: false`) that are each key's local opt-out: what
+ * `/sentry off`, `/sentry agent off` and so on write (spec §3.2 for the first). */
+export const SENTRY_LOCAL_FLAGS: Readonly<Record<string, string>> = {
+  "telemetry.sentry.enabled": "sentry",
+  "telemetry.sentry.agentTraces": "sentryAgentTraces",
+  "telemetry.sentry.agentContent": "sentryAgentContent",
+  "telemetry.sentry.metrics": "sentryMetrics",
+};
 
 const BY_KEY = new Map(KNOWN_SETTINGS.map((d) => [d.key, d]));
 
@@ -365,8 +380,10 @@ function localLayers(decl: KnownSetting, overrides: Record<string, unknown>, set
   const out: Layer[] = [];
   const own = coerce(decl, overrides[decl.key]);
   if (own !== undefined) out.push({ value: own, source: "local" });
-  // telemetry.sentry.enabled's local level is the existing `kernal.sentry: false` (spec §3.2).
-  if (decl.key === "telemetry.sentry.enabled" && kernalSection(settings).sentry === false) {
+  // telemetry.sentry.enabled's local level is the existing `kernal.sentry: false` (spec §3.2); the
+  // #424 signals' are `kernal.sentryAgentTraces: false` and so on (SENTRY_LOCAL_FLAGS).
+  const flag = SENTRY_LOCAL_FLAGS[decl.key];
+  if (flag && kernalSection(settings)[flag] === false) {
     out.push({ value: false, source: "local", sourceName: "settings.json" });
   }
   const fromVars = (read: (name: string) => string | undefined, source: "dotenv" | "env") => {

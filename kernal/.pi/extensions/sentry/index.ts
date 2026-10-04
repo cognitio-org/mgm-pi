@@ -9,13 +9,22 @@
  * for the network; a fresh copy is fetched in the background and applied as soon as it lands, so an
  * operator's change is in force here by the next Kernal start at the latest.
  *
- * Two kinds of events while on:
+ * What is sent while on:
  *   - errors: an agent run that ends with an assistant stopReason of "error", plus an uncaught
  *     exception (@sentry/node's own handler), always sent in full.
  *   - traces: one span per agent run (agent_start → agent_end) and one child span per tool call
  *     (tool_execution_start → tool_execution_end), kept at the fleet's sample rate by the SDK's
  *     sampler. A span carries only the tool name, never its arguments or output.
- * Every event leaves without the hostname and with the home directory written as `~` (lib.ts).
+ *   - with the fleet's agentTraces on (#424), those spans are Sentry's AI agent spans instead
+ *     (agent.ts): `gen_ai.invoke_agent` for the run, a `gen_ai.chat` per model call (model,
+ *     provider, tokens, cost, finish reason, time to first chunk) and `gen_ai.execute_tool` per tool
+ *     call. With agentContent on too, they carry the prompt, the model's messages and outputs, and
+ *     tool arguments and results, redacted and truncated; never the system prompt.
+ *   - with the fleet's metrics on (#424): counters for runs, tool calls, model calls, tokens, spend
+ *     and errors (agent.ts METRICS).
+ * Never logs or profiles from a laptop, whatever the fleet says (config.ts says why).
+ * Every event leaves without the hostname and with the home directory written as `~` (lib.ts), and
+ * no request (an LLM call included) carries trace headers (client.ts).
  *
  * Not in a Drive: outfitter/image/Dockerfile removes this extension, and agentd reports for the
  * whole run there (agentd/src/sentry.ts, from run.spec's telemetry).
@@ -27,18 +36,25 @@ import { dirname, join } from "node:path";
 import { inSandbox } from "../_shared/env.ts";
 import { outfitterCredentials, type OutfitterCredentials } from "../_shared/outfitter-env.ts";
 import { cachedFleetSettings, fleetSettingsCachePath, refreshFleetSettings, type FleetSettings } from "../_shared/fleet-settings.ts";
-import { refreshConfig, resolve, type ResolvedConfig } from "../_shared/central-config.ts";
+import { SENTRY_LOCAL_FLAGS, refreshConfig, resolve, type ResolvedConfig } from "../_shared/central-config.ts";
 import { loginState } from "../_shared/outfitter-session.ts";
 import { readSettings, updateKernal } from "../connect/settings.ts";
 import { installedVersion } from "../kernal-update/index.ts";
-import { decide, defaultEnvironment, describe, releaseName, fleetFromConfig, optedOut, type SentryDecision } from "./config.ts";
-import { applySentry, claimCrashReport, isCurrent, liveStatus, newInstance, realSentry, sending, type SentryLike, type SentrySpan } from "./client.ts";
+import {
+  SIGNAL_WORDS, decide, defaultEnvironment, describe, fleetFromConfig, optedOut, releaseName, signalKey, signalOptOuts,
+  type SentryDecision, type Signal, type Signals,
+} from "./config.ts";
+import { applySentry, claimCrashReport, isCurrent, liveSignals, liveStatus, newInstance, realSentry, sending, type SentryLike, type SentrySpan } from "./client.ts";
 import { agentRunError, agentRunReport, crashesToReport, toolSpanAttributes, type AgentEndMessage } from "./lib.ts";
+import {
+  ContentBudget, METRICS, agentInputContent, agentOutputContent, agentSpanStart, chatInputContent, chatOutputContent, chatSpanEnd,
+  chatSpanStart, finishReason, toolArgsContent, toolOutcome, toolResultContent, toolSpanStart,
+} from "./agent.ts";
 
 export type Deps = {
   sentry?: SentryLike;
   credentials?: OutfitterCredentials;
-  /** Signed in with `kernal login` (default: loginState()). Then the three Sentry keys come from the
+  /** Signed in with `kernal login` (default: loginState()). Then the Sentry keys come from the
    * central settings instead of GET /api/fleet-settings. */
   signedIn?: boolean;
   /** The central resolution and its refresh (default: central-config's resolve / refreshConfig). */
@@ -47,6 +63,8 @@ export type Deps = {
   settings?: Record<string, unknown>;
   /** Where `kernal.sentry` is written (default: updateKernal). */
   saveOptOut?: (value: false | undefined) => void;
+  /** Where a signal's `kernal.sentryAgentTraces` (and so on) is written (default: updateKernal). */
+  saveSignalOptOut?: (signal: Signal, value: false | undefined) => void;
   fetch?: typeof fetch;
   cacheFile?: string;
   /** Tests: the background refresh, to await it. */
@@ -61,7 +79,8 @@ const readJson = (file: string): unknown => {
   try { return JSON.parse(readFileSync(file, "utf8")); } catch { return undefined; }
 };
 
-const USAGE = "usage: /sentry [status] | off | on";
+const USAGE = "usage: /sentry [status] | off | on | agent off|on | content off|on | metrics off|on";
+const SUBCOMMANDS = ["status", "off", "on", "agent off", "agent on", "content off", "content on", "metrics off", "metrics on"];
 
 export default function (pi: ExtensionAPI, deps: Deps = {}) {
   if (inSandbox()) return;
@@ -74,10 +93,20 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
   const version = installedVersion();
   const runtime = { environment: defaultEnvironment(version !== undefined), ...(version ? { release: releaseName(version) } : {}) };
   const saveOptOut = deps.saveOptOut ?? ((value: false | undefined) => updateKernal({ sentry: value }));
+  const saveSignalOptOut = deps.saveSignalOptOut ?? ((signal: Signal, value: false | undefined) => updateKernal({ [SENTRY_LOCAL_FLAGS[signalKey(signal)]]: value }));
 
-  let laptopOff = optedOut(deps.settings ?? readSettings());
+  const settings = deps.settings ?? readSettings();
+  let laptopOff = optedOut(settings);
+  // A `false` from this machine's config layer (config.local.json, which /admin writes) opts a signal
+  // out too, signed in or not. (A test that injects `settings` but no `central` reads none: it must
+  // not see the developer's own ~/.kernal files.)
+  const localValues = (): ResolvedConfig["values"] => {
+    if (deps.settings && !deps.central) return {};
+    try { return central.resolve().values; } catch { return {}; }
+  };
+  let signalsOff: Signals = signalOptOuts(settings, localValues());
   let fleet: FleetSettings = signedIn ? fleetFromConfig(central.resolve().values) : cachedFleetSettings(creds, deps.cacheFile);
-  const decision = (): SentryDecision => decide(fleet, { optedOut: laptopOff, hasDongle });
+  const decision = (): SentryDecision => decide(fleet, { optedOut: laptopOff, hasDongle, signalsOff });
   // Only the newest instance decides: an older one's refresh landing after a /reload (and maybe a
   // /sentry off in the new one) must not turn sending back on.
   const instance = newInstance();
@@ -135,70 +164,166 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
     deps.onRefresh?.(done);
   }
 
-  let runSpan: SentrySpan | undefined;
+  // ---------- spans and counters ----------
+
+  /** A counter, only while the metrics signal is on. Never throws: telemetry never breaks a run. */
+  const count = (name: string, value: number, attributes?: Record<string, string>) => {
+    if (!liveSignals().metrics || !(value > 0)) return;
+    try { sentry.count(name, value, attributes); } catch { /* ignore */ }
+  };
+
+  /** One agent run's spans. `agent`: gen_ai spans (agentTraces), else #374's plain ones. */
+  type Run = { span: SentrySpan; agent: boolean; content: ContentBudget | undefined; chat?: { span: SentrySpan; startedAt: number; firstChunk: boolean } };
+  let run: Run | undefined;
+  let prompt: string | undefined;
   const toolSpans = new Map<string, SentrySpan>();
 
-  pi.on("agent_start", async () => {
-    runSpan = sending() ? sentry.startInactiveSpan({ name: "agent.run", op: "agent.run" }) : undefined;
+  const endChat = (outcome: "ok" | "error") => {
+    if (!run?.chat) return;
+    run.chat.span.setStatus(outcome);
+    run.chat.span.end();
+    run.chat = undefined;
+  };
+
+  pi.on("before_agent_start", async (event: { prompt?: string }) => {
+    prompt = typeof event?.prompt === "string" ? event.prompt : undefined;
+  });
+
+  pi.on("agent_start", async (_event: unknown, ctx: any) => {
+    const text = prompt;
+    prompt = undefined;
+    if (!sending()) { run = undefined; return; }
+    const signals = liveSignals();
+    if (!signals.agentTraces) {
+      run = { span: sentry.startInactiveSpan({ name: "agent.run", op: "agent.run" }), agent: false, content: undefined };
+      return;
+    }
+    const span = sentry.startInactiveSpan(agentSpanStart({ model: ctx?.model, conversationId: safe(() => ctx?.sessionManager?.getSessionId?.()) }));
+    // Content only for a run the sampler kept: an unsampled run's spans are never sent.
+    const content = signals.agentContent && span.sampled !== false ? new ContentBudget() : undefined;
+    if (content && text) span.setAttributes(content.take(agentInputContent(text)));
+    run = { span, agent: true, content };
+  });
+
+  // A model call begins when pi builds its request (the `context` event, which leaves the system
+  // prompt out) and ends with the assistant message (message_end). Nothing here changes the request.
+  pi.on("context", async (event: { messages?: unknown[] }, ctx: any) => {
+    if (!run?.agent || !sending()) return undefined;
+    endChat("ok"); // a request that never produced a message (should not happen; never leave one open)
+    const start = chatSpanStart(ctx?.model);
+    const input = run.content ? run.content.take(chatInputContent(event?.messages ?? [])) : {};
+    run.chat = {
+      span: sentry.startInactiveSpan({ ...start, attributes: { ...start.attributes, ...input }, parent: run.span, onlyIfParent: true }),
+      startedAt: Date.now(),
+      firstChunk: false,
+    };
+    return undefined;
+  });
+
+  pi.on("message_update", async (event: { message?: { role?: string } }) => {
+    const chat = run?.chat;
+    if (!chat || chat.firstChunk || event?.message?.role !== "assistant") return;
+    chat.firstChunk = true;
+    chat.span.setAttributes({ "gen_ai.response.time_to_first_chunk": (Date.now() - chat.startedAt) / 1000 });
+  });
+
+  pi.on("message_end", async (event: { message?: any }) => {
+    const m = event?.message;
+    if (m?.role !== "assistant") return;
+    const model = String(m.responseModel ?? m.model ?? "unknown");
+    const provider = String(m.provider ?? "unknown");
+    const failed = m.stopReason === "error";
+    // Counters: one per model call, whether or not the call is traced.
+    count(METRICS.modelCalls, 1, { model, provider, finish_reason: finishReason(m.stopReason) });
+    const usage = chatSpanEnd(m);
+    count(METRICS.inputTokens, Number(usage["gen_ai.usage.input_tokens"]) || 0, { model, provider });
+    count(METRICS.outputTokens, Number(usage["gen_ai.usage.output_tokens"]) || 0, { model, provider });
+    count(METRICS.costUsd, Number(usage["gen_ai.cost.total_tokens"] ?? 0) || 0, { model, provider });
+    if (failed) count(METRICS.errors, 1, { kind: "model_call", model, provider });
+    const chat = run?.chat;
+    if (!chat) return;
+    chat.span.setAttributes({ ...usage, ...(run?.content ? run.content.take(chatOutputContent(m)) : {}) });
+    endChat(failed ? "error" : "ok");
   });
 
   pi.on("agent_end", async (event: { messages: AgentEndMessage[] }) => {
-    const error = agentRunError(event.messages ?? []);
+    const messages = event.messages ?? [];
+    const error = agentRunError(messages);
     if (error && sending()) {
       const report = agentRunReport(error);
       sentry.captureException(new Error(report.message), { tags: { source: "agent_end" }, fingerprint: report.fingerprint });
     }
-    runSpan?.setStatus(error ? "error" : "ok");
-    runSpan?.end();
-    runSpan = undefined;
+    count(METRICS.agentRuns, 1, { outcome: error ? "error" : "ok" });
+    if (error) count(METRICS.errors, 1, { kind: "agent_run" });
+    const r = run;
+    run = undefined;
+    if (!r) return;
+    if (r.chat) { r.chat.span.setStatus("error"); r.chat.span.end(); } // the run ended mid-call
+    if (r.agent && r.content) r.span.setAttributes(r.content.take(agentOutputContent(messages)));
+    r.span.setStatus(error ? "error" : "ok");
+    r.span.end();
   });
 
-  pi.on("tool_execution_start", async (event: { toolCallId: string; toolName: string }) => {
+  pi.on("tool_execution_start", async (event: { toolCallId: string; toolName: string; args?: unknown }) => {
     if (!sending()) return;
     // A child of the run's span, and only inside a run: kept or dropped with it by the sampler.
-    if (!runSpan) return;
+    if (!run) return;
+    const start = run.agent ? toolSpanStart(event.toolName) : { name: `tool.${event.toolName}`, op: "tool.execute", attributes: toolSpanAttributes(event.toolName) };
+    const args = run.agent && run.content ? run.content.take(toolArgsContent(event.args)) : {};
     toolSpans.set(event.toolCallId, sentry.startInactiveSpan({
-      name: `tool.${event.toolName}`,
-      op: "tool.execute",
-      attributes: toolSpanAttributes(event.toolName),
-      parent: runSpan,
+      ...start,
+      attributes: { ...start.attributes, ...args },
+      parent: run.span,
       onlyIfParent: true,
     }));
   });
 
-  pi.on("tool_execution_end", async (event: { toolCallId: string; toolName: string; isError: boolean }) => {
+  pi.on("tool_execution_end", async (event: { toolCallId: string; toolName: string; isError: boolean; result?: unknown }) => {
+    count(METRICS.toolCalls, 1, { tool: event.toolName, outcome: event.isError ? "error" : "ok" });
+    if (event.isError) count(METRICS.errors, 1, { kind: "tool", tool: event.toolName });
     const span = toolSpans.get(event.toolCallId);
     toolSpans.delete(event.toolCallId);
     if (!span) return;
+    if (run?.agent) span.setAttributes({ ...toolOutcome(event.isError), ...(run.content ? run.content.take(toolResultContent(event.result)) : {}) });
     span.setStatus(event.isError ? "error" : "ok");
     span.end();
   });
 
+  // What is queued (a `kernal -p` run's transaction and counters) leaves before pi exits, within a
+  // bound: a slow network must not hold up quitting.
+  pi.on("session_shutdown", async () => {
+    if (!sending()) return;
+    try { await sentry.flush(2000); } catch { /* ignore */ }
+  });
+
+  // ---------- /sentry ----------
+
   pi.registerCommand("sentry", {
-    description: "sentry [status] | off | on -- error reports to Sentry, as Outfitter set them for everyone; off stops them on this laptop",
+    description: "sentry [status] | off | on | agent|content|metrics off|on -- reports to Sentry, as Outfitter set them for everyone; off stops them on this laptop",
     getArgumentCompletions: (prefix: string) =>
-      ["status", "off", "on"].filter((v) => v.startsWith(prefix)).map((value) => ({ value, label: value })),
+      SUBCOMMANDS.filter((v) => v.startsWith(prefix)).map((value) => ({ value, label: value })),
     handler: async (args: string, ctx: any) => {
       const notify = (m: string, level = "info") => ctx?.ui?.notify?.(m, level);
-      const sub = (args ?? "").trim() || "status";
-      const status = () => describe(decision(), liveStatus());
-      if (sub === "status") return notify(status());
-      if (sub === "off") {
+      const words = (args ?? "").trim().split(/\s+/).filter(Boolean);
+      const sub = words[0] ?? "status";
+      const status = () => describe(decision(), liveStatus(), { fleet, signalsOff });
+      if (sub === "status" && words.length <= 1) return notify(status());
+      if (sub === "off" && words.length === 1) {
         // Stop first: a settings.json that cannot be written must not keep Sentry sending.
         laptopOff = true;
         await apply();
         try {
           saveOptOut(false);
         } catch (err) {
-          return notify(`Sentry is off for now, but saving that failed (${err instanceof Error ? err.message : String(err)}); it comes back on the next /new, /resume, /reload or start.`, "warning");
+          return notify(`Sentry is off for now, but saving that failed (${errText(err)}); it comes back on the next /new, /resume, /reload or start.`, "warning");
         }
         return notify(status());
       }
-      if (sub === "on") {
+      if (sub === "on" && words.length === 1) {
         try {
           saveOptOut(undefined);
         } catch (err) {
-          return notify(`Could not save that (${err instanceof Error ? err.message : String(err)}); Sentry stays off on this laptop.`, "warning");
+          return notify(`Could not save that (${errText(err)}); Sentry stays off on this laptop.`, "warning");
         }
         laptopOff = false;
         await apply();
@@ -206,9 +331,40 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
         if (hasDongle) await refresh();
         return notify(status());
       }
+      const signal = SIGNAL_WORDS[sub];
+      const onOff = words[1];
+      if (signal && words.length === 2 && (onOff === "off" || onOff === "on")) {
+        if (onOff === "off") {
+          signalsOff = { ...signalsOff, [signal]: true };
+          await apply();
+          try {
+            saveSignalOptOut(signal, false);
+          } catch (err) {
+            return notify(`That is off for now, but saving it failed (${errText(err)}); it comes back on the next /new, /resume, /reload or start.`, "warning");
+          }
+          return notify(status());
+        }
+        try {
+          saveSignalOptOut(signal, undefined);
+        } catch (err) {
+          return notify(`Could not save that (${errText(err)}); it stays off on this laptop.`, "warning");
+        }
+        // Still off if this machine's config layer (config.local.json, .env) says so.
+        signalsOff = { ...signalsOff, [signal]: signalOptOuts({}, localValues())[signal] };
+        await apply();
+        // Signed in, the cached resolution still has the opt-out folded in; fetch it again.
+        if (hasDongle) await refresh();
+        return notify(status());
+      }
       return notify(USAGE, "warning");
     },
   });
+}
+
+const errText = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+function safe<T>(f: () => T): T | undefined {
+  try { return f(); } catch { return undefined; }
 }
 
 export { decide, describe, optedOut, type SentryDecision } from "./config.ts";

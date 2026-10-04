@@ -9,6 +9,8 @@ import { join } from "node:path";
 const items: string[] = [];
 const transactions: Array<{ transaction?: string; spans?: Array<{ description?: string }> }> = [];
 const events: any[] = [];
+const spanItems: any[] = [];
+const metricItems: any[] = [];
 let traceHeaders: { sentryTrace: string | null; baggage: string | null } | undefined;
 const server = createServer((req, res) => {
   if (req.url === "/outbound") {
@@ -27,6 +29,8 @@ const server = createServer((req, res) => {
         items.push(type);
         if (type === "transaction") transactions.push(JSON.parse(lines[i + 1]));
         if (type === "event") events.push(JSON.parse(lines[i + 1]));
+        if (type === "span") spanItems.push(...(JSON.parse(lines[i + 1]).items ?? []));
+        if (type === "trace_metric") metricItems.push(...(JSON.parse(lines[i + 1]).items ?? []));
       } catch {}
     }
     res.end("{}");
@@ -62,6 +66,27 @@ try {
 } catch (err) {
   reloadError = String(err);
 }
+// #424, metrics off: a counter never leaves.
+second.realSentry.count("kernal.test.dropped", 1, { tool: "read" });
+
+// #424, agent monitoring and metrics on: gen_ai spans (the SDK moves the run's gen_ai children into a
+// span item of their own) and a counter, without the hostname.
+const signals = { agentTraces: true, agentContent: false, metrics: true };
+await second.applySentry({ on: true, dsn, tracesSampleRate: 1, signals }, runtime);
+let genAiError: string | undefined;
+try {
+  const agent = second.realSentry.startInactiveSpan({ name: "invoke_agent kernal", op: "gen_ai.invoke_agent", attributes: { "gen_ai.agent.name": "kernal" } });
+  const chat = second.realSentry.startInactiveSpan({ name: "chat claude-x", op: "gen_ai.chat", attributes: { "gen_ai.request.model": "claude-x" }, parent: agent, onlyIfParent: true });
+  chat.setAttributes({ "gen_ai.usage.input_tokens": 10, "gen_ai.usage.output_tokens": 5 });
+  chat.setStatus("ok");
+  chat.end();
+  agent.setStatus("ok");
+  agent.end();
+  second.realSentry.count("kernal.tool.calls", 1, { tool: "read", outcome: "ok" });
+} catch (err) {
+  genAiError = String(err);
+}
+
 // The SDK hands a finished transaction to its exporter on a short timer, not at once.
 await new Promise((r) => setTimeout(r, 1500));
 await Sentry.flush(2000);
@@ -80,5 +105,15 @@ server.close();
 const runChildren = (transactions.find((t) => t.transaction === "agent.run")?.spans ?? []).map((sp) => sp.description);
 const fatal = events.find((e) => e.level === "fatal");
 const crash = fatal && { level: fatal.level, type: fatal.exception.values[0].type, value: fatal.exception.values[0].value, hasFrames: (fatal.exception.values[0].stacktrace?.frames?.length ?? 0) >= 2, source: fatal.tags?.source, crashedAtTag: "crashed_at" in (fatal.tags ?? {}) };
-console.log(JSON.stringify({ crash, integrations, unhandledRejectionListeners, reloadError, whileOn, whileOff, runChildren, traceHeaders }));
+const chatSpan = spanItems.find((sp) => sp.name === "chat claude-x");
+const genAi = {
+  error: genAiError,
+  agentTransaction: transactions.some((t) => t.transaction === "invoke_agent kernal"),
+  chatInputTokens: chatSpan?.attributes?.["gen_ai.usage.input_tokens"]?.value,
+  chatOp: chatSpan?.attributes?.["sentry.op"]?.value,
+  metrics: metricItems.map((m) => m.name),
+  metricHasHost: metricItems.some((m) => "server.address" in (m.attributes ?? {})),
+  metricTool: metricItems[0]?.attributes?.tool?.value,
+};
+console.log(JSON.stringify({ crash, integrations, unhandledRejectionListeners, reloadError, whileOn, whileOff, runChildren, traceHeaders, genAi }));
 process.exit(0);

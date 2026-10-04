@@ -1,10 +1,12 @@
 // Secret-shaped strings out of text before it is indexed (Sysop tools, #289). Indexed text is sent
 // to MongoDB's embedding service and comes back in search results, so tokens a tool printed must not
 // ride along. Pattern-based and deliberately broad: a false positive costs a word in a snippet.
+// Also what Sentry's agent spans carry when prompts and outputs are on (#424, sentry/agent.ts).
 
 const PATTERNS: RegExp[] = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
   /\boutf_[A-Za-z0-9_-]{8,}/g, // Outfitter Dongles
+  /\bkd[acr]_[A-Za-z0-9_-]{16,}/g, // Outfitter device tokens: access, refresh, device code (#389 CA-1)
   /\bgh[pousr]_[A-Za-z0-9]{20,}/g, // GitHub tokens
   /\bgithub_pat_[A-Za-z0-9_]{20,}/g,
   /\bsk-(?:ant-|proj-|or-)?[A-Za-z0-9_-]{16,}/g, // Anthropic, OpenAI, OpenRouter, LiteLLM keys
@@ -24,6 +26,12 @@ const PATTERNS: RegExp[] = [
   // Also with a prefix, as env vars have one (VOYAGE_API_KEY=, NGROK_AUTHTOKEN=): \b doesn't fire after `_`.
   /(?<![A-Za-z0-9])((?:[A-Za-z0-9]+_)*(?:api[_-]?key|secret|password|passwd|token|authtoken|access[_-]?key)["']?\s*[:=]\s*["']?)[^\s"',;]{8,}/gi,
   /\bpa-[A-Za-z0-9_-]{30,}/g, // Voyage AI keys
+  /\bgsk_[A-Za-z0-9]{20,}/g, // Groq
+  /\bxai-[A-Za-z0-9]{20,}/g, // xAI
+  /\bpplx-[A-Za-z0-9]{20,}/g, // Perplexity
+  /\btvly-[A-Za-z0-9_-]{16,}/g, // Tavily
+  /\br8_[A-Za-z0-9]{20,}/g, // Replicate
+  /\bfw_[A-Za-z0-9]{20,}/g, // Fireworks
   // E9 PR5: env-style names ending in a bare `_KEY` (`OUTFITTER_LITELLM_KEY=`), which the prefixed
   // pattern above doesn't list. The prefix is required, so a lone `key=` isn't caught.
   /(?<![A-Za-z0-9])([A-Za-z0-9]+_(?:[A-Za-z0-9]+_)*key["']?\s*[:=]\s*["']?)[^\s"',;]{8,}/gi,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ConfigResponse, SettingDecl, SettingsDocView, SettingValue } from "../../api/account.ts";
 import {
   accountErrorText,
@@ -38,14 +38,34 @@ export function SettingsEditor({ label, decls, doc, effective, onSave, onReload 
   const [saved, setSaved] = useState(false);
   const [attempted, setAttempted] = useState(false);
 
-  // A new document (another profile, or a reload after a 409) starts from its stored values.
+  // The stored values the drafts were last based on, to tell a person's edits from them.
   const declKeys = decls.map((d) => d.key).join(",");
+  const base = useRef({ id: doc.id, declKeys, drafts: draftsFor(decls, doc) });
   useEffect(() => {
-    setDrafts(draftsFor(decls, doc));
-    setStale(false);
-    setError(null);
-    setAttempted(false);
+    const fresh = draftsFor(decls, doc);
+    const prev = base.current;
+    base.current = { id: doc.id, declKeys, drafts: fresh };
+    if (prev.id !== doc.id || prev.declKeys !== declKeys) {
+      // A new document (another profile) starts from its stored values.
+      setDrafts(fresh);
+      setStale(false);
+      setError(null);
+      setAttempted(false);
+      return;
+    }
+    // The same document saved somewhere else on the page (the share toggle, a profile action):
+    // keys the person changed keep their drafts, the rest follow the new stored values.
+    setDrafts((current) =>
+      Object.fromEntries(decls.map((d) => [d.key, current[d.key] !== prev.drafts[d.key] ? current[d.key] : fresh[d.key]])),
+    );
   }, [doc.id, doc.version, declKeys]);
+
+  /** Starts over from `from`'s stored values: after this editor's own save, Reload or Discard. */
+  function resetTo(from: SettingsDocView) {
+    const fresh = draftsFor(decls, from);
+    base.current = { id: from.id, declKeys, drafts: fresh };
+    setDrafts(fresh);
+  }
 
   const { values, problems } = changedValues(decls, doc.values, drafts);
   const dirty = Object.keys(values).length > 0;
@@ -58,7 +78,7 @@ export function SettingsEditor({ label, decls, doc, effective, onSave, onReload 
     setSaving(true);
     setError(null);
     try {
-      await onSave(values, doc.version);
+      resetTo(await onSave(values, doc.version));
       setSaved(true);
     } catch (err) {
       if (isStaleWrite(err)) setStale(true);
@@ -83,6 +103,9 @@ export function SettingsEditor({ label, decls, doc, effective, onSave, onReload 
             className="btn"
             onClick={() => {
               setStale(false);
+              setError(null);
+              setAttempted(false);
+              resetTo(doc);
               onReload();
             }}
           >
@@ -143,7 +166,7 @@ export function SettingsEditor({ label, decls, doc, effective, onSave, onReload 
         <button type="submit" className="btn btn-primary" disabled={saving || stale || !dirty}>
           {saving ? <Working label="Saving" /> : "Save"}
         </button>
-        <button type="button" className="btn" disabled={saving || !dirty} onClick={() => setDrafts(draftsFor(decls, doc))}>
+        <button type="button" className="btn" disabled={saving || !dirty} onClick={() => resetTo(doc)}>
           Discard changes
         </button>
         {saved && !dirty && <span className="session-meta">Saved.</span>}

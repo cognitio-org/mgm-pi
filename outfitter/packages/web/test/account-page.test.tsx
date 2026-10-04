@@ -57,6 +57,9 @@ interface Options {
   operator?: boolean;
   putUser?: (body: any, headers: Record<string, string>) => Response;
   spendStatus?: number;
+  operatorSpendStatus?: number;
+  /** Answer a profile's PUT, PATCH or DELETE with this status instead (a 409 stale_version). */
+  profileWriteStatus?: Partial<Record<"PUT" | "PATCH" | "DELETE", number>>;
 }
 
 function stubFetch(opts: Options = {}) {
@@ -92,10 +95,25 @@ function stubFetch(opts: Options = {}) {
         profiles.push(doc as (typeof profiles)[number]);
         return json(doc, 201);
       }
+      const forced = opts.profileWriteStatus?.[method as "PUT" | "PATCH" | "DELETE"];
+      if (url.startsWith("/api/config/profiles/") && forced) return json({ error: "stale_version", current: null }, forced);
+      if (url.startsWith("/api/config/profiles/") && method === "PUT") {
+        const p = profiles.find((p) => p.name === decodeURIComponent(url.split("/").pop()!))!;
+        Object.assign(p, { values: { ...p.values, ...body.values }, version: p.version + 1 });
+        return json(p);
+      }
       if (url.startsWith("/api/config/profiles/") && method === "PATCH") {
         const name = decodeURIComponent(url.split("/").pop()!);
-        for (const p of profiles) p.isDefault = p.name === name;
-        return json(profiles.find((p) => p.name === name));
+        const p = profiles.find((p) => p.name === name)!;
+        if (body.rename) {
+          Object.assign(p, { name: body.rename, version: p.version + 1 });
+          return json(p);
+        }
+        for (const q of profiles) {
+          if (q.isDefault !== (q.name === name)) q.version += 1;
+          q.isDefault = q.name === name;
+        }
+        return json(p);
       }
       if (url.startsWith("/api/config/profiles/") && method === "DELETE") {
         const name = decodeURIComponent(url.split("/").pop()!);
@@ -128,6 +146,9 @@ function stubFetch(opts: Options = {}) {
         });
       }
       if (url.startsWith("/api/operator/spend")) {
+        if (opts.operatorSpendStatus) {
+          return json({ error: opts.operatorSpendStatus === 503 ? "spend_unavailable" : "router_failed" }, opts.operatorSpendStatus);
+        }
         return json({ month: "2026-10", total: 40, users: [{ userId: "u_abc", email: "dev@localhost", total: 12.5 }, { userId: "u_def", email: "matej@example.com", total: 27.5 }] });
       }
       return json({ error: "not found" }, 404);
@@ -213,6 +234,23 @@ describe("AccountPage: account-wide settings", () => {
     expect(s.textContent).not.toContain("Changed elsewhere");
   });
 
+  it("keeps unsaved edits when the share toggle saves the same document", async () => {
+    const calls = stubFetch();
+    await render();
+    const s = section("account-wide");
+    const field = () => s.querySelector('[aria-label="model.default value"]') as HTMLInputElement;
+    await act(async () => setValue(field(), "typed-model"));
+    await click(section("account-local").querySelector('input[type="checkbox"]') as HTMLInputElement);
+    expect(field().value).toBe("typed-model");
+    expect(s.textContent).not.toContain("Changed elsewhere");
+    await click(button(s, "Save"));
+    const puts = calls.filter((c) => c.method === "PUT" && c.url === "/api/config/user");
+    expect(puts.length).toBe(2);
+    // The save is based on the version the toggle left, and sends only the typed key.
+    expect(puts[1].headers["If-Match"]).toBe('W/"4"');
+    expect(puts[1].body).toEqual({ values: { "model.default": "typed-model" } });
+  });
+
   it("lists the fleet's values read-only", async () => {
     stubFetch();
     await render();
@@ -273,6 +311,73 @@ describe("AccountPage: profiles", () => {
   });
 });
 
+describe("AccountPage: profile changes", () => {
+  it("renames a profile with If-Match and then edits it under the new name", async () => {
+    const calls = stubFetch();
+    await render();
+    const s = section("account-profiles");
+    await click(button(s, "Edit")); // personal (work is selected)
+    await click([...s.querySelectorAll("button")].filter((b) => b.textContent === "Rename")[0] as HTMLButtonElement);
+    await act(async () => setValue(s.querySelector('[aria-label="New name for personal"]') as HTMLInputElement, "home"));
+    await click(button(s, "Save name"));
+    const patch = calls.find((c) => c.method === "PATCH");
+    expect(patch?.url).toBe("/api/config/profiles/personal");
+    expect(patch?.headers["If-Match"]).toBe('W/"1"');
+    expect(patch?.body).toEqual({ rename: "home" });
+    expect(s.querySelector('form[aria-label="Profile home"]')).not.toBeNull();
+    expect(s.querySelector('[aria-label="New name for personal"]')).toBeNull();
+  });
+
+  it("keeps a profile's unsaved edits when another profile becomes the default", async () => {
+    stubFetch();
+    await render();
+    const s = section("account-profiles");
+    const field = () => s.querySelector('form[aria-label="Profile work"] [aria-label="model.default value"]') as HTMLInputElement;
+    await act(async () => setValue(field(), "typed-model"));
+    await click(button(s, "Make default")); // personal; work's version moves too
+    expect(field().value).toBe("typed-model");
+  });
+
+  it("says 'changed elsewhere' when a profile's values lost a race, and never retries", async () => {
+    const calls = stubFetch({ profileWriteStatus: { PUT: 409 } });
+    await render();
+    const form = section("account-profiles").querySelector('form[aria-label="Profile work"]') as HTMLElement;
+    await act(async () => setValue(form.querySelector('[aria-label="model.default value"]') as HTMLInputElement, "other"));
+    await click(button(form, "Save"));
+    expect(form.textContent).toContain("Changed elsewhere");
+    expect(calls.filter((c) => c.method === "PUT" && c.url.startsWith("/api/config/profiles/")).length).toBe(1);
+    expect(button(form, "Save").disabled).toBe(true);
+  });
+
+  it.each([
+    ["PATCH", "Make default"],
+    ["DELETE", "Delete"],
+  ] as const)("a %s that lost a race says so and reloads the list instead of retrying", async (method, label) => {
+    const calls = stubFetch({ profileWriteStatus: { [method]: 409 } });
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    await render();
+    const s = section("account-profiles");
+    const lists = () => calls.filter((c) => c.method === "GET" && c.url === "/api/config/profiles").length;
+    const before = lists();
+    await click([...s.querySelectorAll("button")].filter((b) => b.textContent === label)[0] as HTMLButtonElement);
+    expect(s.textContent).toContain("Changed elsewhere");
+    expect(calls.filter((c) => c.method === method).length).toBe(1);
+    expect(lists()).toBe(before + 1);
+  });
+
+  it("falls back to the default profile when the selected one is deleted", async () => {
+    stubFetch();
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    await render();
+    const s = section("account-profiles");
+    await click(button(s, "Edit")); // personal
+    expect(s.querySelector('form[aria-label="Profile personal"]')).not.toBeNull();
+    await click([...s.querySelectorAll("button")].filter((b) => b.textContent === "Delete")[0] as HTMLButtonElement);
+    expect(s.textContent).not.toContain("personal");
+    expect(s.querySelector('form[aria-label="Profile work"]')).not.toBeNull();
+  });
+});
+
 describe("AccountPage: personal keys", () => {
   it("shows only the last four characters and never shows a typed key back", async () => {
     const calls = stubFetch();
@@ -282,6 +387,10 @@ describe("AccountPage: personal keys", () => {
     await click(button(s, "Set")); // the first unset provider (Deepgram)
     const input = s.querySelector('[aria-label="Deepgram key"]') as HTMLInputElement;
     expect(input.type).toBe("password");
+    // Not a sign-in form: password managers aren't offered the key.
+    expect(input.autocomplete).toBe("new-password");
+    expect(input.getAttribute("data-lpignore")).toBe("true");
+    expect(input.hasAttribute("data-1p-ignore")).toBe(true);
     await act(async () => setValue(input, "dg-secret-value-1234"));
     await click(button(s, "Save"));
     const put = calls.find((c) => c.method === "PUT" && c.url === "/api/me/provider-keys/deepgram");
@@ -324,6 +433,19 @@ describe("AccountPage: spend", () => {
     const s = section("account-spend");
     expect(s.textContent).toContain("matej@example.com");
     expect(s.textContent).toContain("$40.00");
+  });
+
+  it.each([
+    [500, "router_failed"],
+    [503, "isn't available"],
+  ])("tells a Sysop when everyone's spend fails (%i)", async (status, text) => {
+    stubFetch({ operator: true, operatorSpendStatus: status });
+    await render();
+    const s = section("account-spend");
+    expect(s.textContent).toContain("Everyone");
+    expect(s.querySelector('[role="alert"]')?.textContent).toContain(text);
+    // The person's own spend still shows.
+    expect(s.textContent).toContain("$12.50");
   });
 
   it("says when spend isn't available", async () => {

@@ -136,7 +136,13 @@ function ProviderKeyRowView({
           <form onSubmit={save} style={{ display: "inline-flex", gap: "0.4rem", alignItems: "center", flexWrap: "wrap" }}>
             <input
               type="password"
-              autoComplete="off"
+              // Not a sign-in form: keep browser and extension password managers from offering to
+              // save the key (Chromium and Safari ignore "off" on a password field).
+              autoComplete="new-password"
+              data-1p-ignore=""
+              data-lpignore="true"
+              data-bwignore="true"
+              data-form-type="other"
               spellCheck={false}
               value={value}
               onChange={(e) => setValue(e.target.value)}

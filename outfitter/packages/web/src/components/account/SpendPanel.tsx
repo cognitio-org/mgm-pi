@@ -15,12 +15,14 @@ export function SpendPanel({ operator }: { operator: boolean }) {
   const [all, setAll] = useState<AllSpend | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [allError, setAllError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setAllError(null);
     setUnavailable(false);
     const mine = accountApi.spend(month);
     const everyone = operator ? accountApi.allSpend(month) : Promise.resolve(null);
@@ -32,7 +34,16 @@ export function SpendPanel({ operator }: { operator: boolean }) {
         if (isUnavailable(m.reason)) setUnavailable(true);
         else setError(accountErrorText(m.reason, "Couldn't load spend"));
       }
-      setAll(e.status === "fulfilled" ? e.value : null);
+      if (e.status === "fulfilled") setAll(e.value);
+      else {
+        // A failed operator view says so, rather than look like the feature isn't there.
+        setAll(null);
+        setAllError(
+          isUnavailable(e.reason)
+            ? "Everyone's spend isn't available on this deployment yet."
+            : accountErrorText(e.reason, "Couldn't load everyone's spend"),
+        );
+      }
       setLoading(false);
     });
     return () => {
@@ -128,6 +139,12 @@ export function SpendPanel({ operator }: { operator: boolean }) {
         </>
       ) : null}
 
+      {operator && !loading && allError && (
+        <>
+          <h4>Everyone ({vocabulary.operator.one} view)</h4>
+          <p className="syntax-error" role="alert">{allError}</p>
+        </>
+      )}
       {operator && all && (
         <>
           <h4>Everyone ({vocabulary.operator.one} view)</h4>

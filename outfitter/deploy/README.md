@@ -751,3 +751,37 @@ MASTER_KEY_PROJECT=<project> ./litellm-admin.sh   # if kernal-litellm-prod-maste
 The master key goes to curl through a process substitution and the new key straight into
 `gcloud secrets versions add`; neither is printed. Running services pick the new version up on their
 next revision. Test: `bash test/litellm-admin.test.sh`.
+
+## Web source maps (`sentry-token.sh`, owner-run)
+
+The web app's minified stack traces in Sentry become readable once the api image build uploads the
+web source maps (#423). The build does that only when the Secret Manager secret
+`sentry-release-token` exists; until then, and in local dev, CI and tests, nothing changes.
+
+- **Build:** `env.sh build_api_image` (used by `service.sh` and `build-api-image.sh`) submits
+  `cloudbuild-api-sentry.yaml` when the secret exists and `cloudbuild-api.yaml` otherwise (Cloud
+  Build fails any build whose `availableSecrets` name a missing secret). The sentry config hands the
+  token to `docker build` as a BuildKit secret; the Dockerfile reads it in the one RUN that builds
+  the web, so it never lands in a layer, a build arg or a log.
+- **Upload:** `@sentry/bundler-plugins` in `packages/web/vite.config.ts` writes hidden maps,
+  injects debug IDs, uploads to `SENTRY_ORG`/`SENTRY_PROJECT` (`config.env`: `cognitio-flow` /
+  `kernal-one`) and deletes the maps. No release is created at build time: debug IDs match frames
+  to maps without one, and the web app gets its release from the api at runtime (#421). An upload
+  failure warns and the build carries on without maps.
+- **No maps ship:** the Dockerfile deletes any `*.map` after the web build and fails if one is left.
+- **Access:** the secret is not named `outfitter-*`, so outfitter-api (scoped by `secret-scope.sh`)
+  can't read it. Only `outfitter-builder@`, the account builds run as (`ci-setup.sh`), gets
+  `roles/secretmanager.secretAccessor`, on this secret alone.
+
+Create an organization auth token in Sentry (Settings > Developer Settings > Organization Tokens,
+org `cognitio-flow`), copy it, then from a clean `main` checkout:
+
+```bash
+pbpaste | DRY_RUN=1 ./sentry-token.sh   # checks the token and outfitter-builder@, shows the plan
+pbpaste | ./sentry-token.sh             # creates/updates the secret, disables old versions, grants the builder
+```
+
+The token is read from stdin only and piped straight into gcloud. Re-running with the same token
+changes nothing; a new token becomes the only enabled version. The next release that builds a new
+api image uploads its maps. To stop uploading, delete the secret. Test:
+`bash test/sentry-sourcemaps.test.sh`.

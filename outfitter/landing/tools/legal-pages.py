@@ -4,7 +4,7 @@
 The pages share index.html's <head> theme script byte for byte, so the CSP hash in
 security-headers.conf covers them too (test/legal.test.mjs checks it). Edit the text here and
 re-run: python3 outfitter/landing/tools/legal-pages.py
-Placeholders the owner must fill are <mark class="todo">[…]</mark>.
+`todo()` marks text the owner still has to supply: <mark class="todo">[…]</mark>.
 """
 import pathlib, re
 
@@ -15,10 +15,9 @@ BRAND = INDEX[INDEX.index('<a class="brand"'):INDEX.index("</a>", INDEX.index('<
 UPDATED = "5 October 2026"
 
 def todo(text): return f'<mark class="todo">[{text}]</mark>'
-ENTITY = todo("Legal entity name")
-ADDRESS = todo("Registered address")
-EMAIL = todo("privacy@ contact email")
-LAW = todo("Governing law and courts, e.g. the laws of Croatia, courts of Zagreb")
+ENTITY = "Cognitio Flow Ltd"
+ADDRESS = "59624 Sunflower Drive, Yucca Valley, California 92284, USA"
+EMAIL = '<a href="mailto:mgm@mgms.eu">mgm@mgms.eu</a>'
 
 def page(title, description, body):
     return f"""<!doctype html>
@@ -195,18 +194,41 @@ undue delay if a breach affects your data.</p>
 restrict or port your data, and object to processing based on legitimate interests. Write to {EMAIL}; we
 answer within one month. You can also delete sessions and revoke devices and tokens yourself in the web app. If
 you are in the EEA or UK, you may complain to your data protection authority.</p>
-<p>California residents: we don't sell or share personal information for cross-context behavioural
-advertising.</p>
 
-<h2>11. Children</h2>
+<h2>11. California privacy rights</h2>
+<p>If you live in California, the California Consumer Privacy Act (as amended by the CPRA) gives you these rights:</p>
+<ul>
+  <li><strong>Know and access:</strong> the categories and specific pieces of personal information we have about you,
+    where it came from, why we use it and who we disclose it to.</li>
+  <li><strong>Delete</strong> personal information we collected from you, and <strong>correct</strong> inaccurate
+    information.</li>
+  <li><strong>Opt out of sale or sharing.</strong> We don't sell your personal information or share it for
+    cross-context behavioural advertising, and haven't in the past 12 months.</li>
+  <li><strong>Limit use of sensitive personal information.</strong> We only use it, for example account
+    credentials, to provide the Service.</li>
+  <li><strong>Non-discrimination:</strong> we won't treat you differently for using these rights.</li>
+</ul>
+<p>In the past 12 months we collected these categories, for the purposes in section 5, from you, your devices
+and the services you connect: identifiers (email, device and account IDs); customer records (name, GitHub
+details); internet and network activity (usage, logs); professional information in the content you give the
+Service; account credentials (stored hashed or in Secret Manager); and audio, which is streamed for
+transcription and not kept. We disclosed them to the service providers in section 6, for business purposes
+only.</p>
+<p>To make a request, email {EMAIL}. We'll verify it by matching the request to your signed-in account email,
+and answer within 45 days. You can use an authorised agent with your written permission.</p>
+<p><strong>Do Not Track.</strong> We don't track you across other sites, and we don't use third-party trackers,
+so we treat every visit the same whether or not your browser sends a Do Not Track or Global Privacy Control
+signal.</p>
+
+<h2>12. Children</h2>
 <p>The Service is for professionals and isn't directed at anyone under 16. We don't knowingly collect their data.</p>
 
-<h2>12. Changes</h2>
+<h2>13. Changes</h2>
 <p>We'll update this page when our practices change, and tell signed-in users about material changes before they
 take effect. If we add new kinds of data, for example financial data for a banking integration, we'll update
 this policy and ask for consent where required before collecting it.</p>
 
-<h2>13. Contact</h2>
+<h2>14. Contact</h2>
 <p>{ENTITY}, {ADDRESS}. Email: {EMAIL}.</p>
 """
 
@@ -288,7 +310,7 @@ allows.</p>
 <h2>11. Limitation of liability</h2>
 <p>To the fullest extent the law allows, we are not liable for indirect, incidental, special, consequential or
 punitive damages, or for lost profits, revenue, data or goodwill. Our total liability for any claim about the
-Service is limited to the greater of the amount you paid us in the 12 months before the claim and EUR 100. Nothing
+Service is limited to the greater of the amount you paid us in the 12 months before the claim and US$100. Nothing
 in these terms limits liability that can't be limited by law, such as for death or personal injury caused by
 negligence, fraud, or gross negligence or wilful misconduct. Consumers keep any mandatory rights they have under
 local law.</p>
@@ -301,9 +323,11 @@ content or your breach of these terms.</p>
 <p>We may update these terms. We'll post the new version here and tell signed-in users about material changes at
 least 14 days before they apply. If you keep using the Service after that, the new terms apply.</p>
 
-<h2>14. Governing law</h2>
-<p>These terms are governed by {LAW}. Consumers also keep the protection of the mandatory laws of the country where
-they live.</p>
+<h2>14. Governing law and disputes</h2>
+<p>These terms are governed by the laws of the State of California and applicable United States federal law,
+without regard to conflict-of-laws rules. Any dispute about them or the Service will be heard only in the state or
+federal courts located in California, and you and we consent to their jurisdiction. If you are a consumer living
+outside the United States, you also keep the protection of the mandatory laws of the country where you live.</p>
 
 <h2>15. Contact</h2>
 <p>{ENTITY}, {ADDRESS}. Email: {EMAIL}.</p>

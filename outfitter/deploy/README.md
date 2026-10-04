@@ -276,9 +276,12 @@ the page and never moved the fleet, because `release.sh` deploys the page first.
    the server log rather than going on a page — it is this section's `outfitter-github-token-` plus
    the session id.
 
-   `outfitter-api`'s `secretmanager.secretAccessor` role from `baseline.sh` is project-wide, so no
-   per-secret IAM binding is needed for either group. `baseline.sh` also grants `outfitter-api` a
-   project-scoped custom role, `projects/<PROJECT>/roles/outfitterSecretAdmin` (create/get secrets,
+   `outfitter-api`'s `secretmanager.secretAccessor` role covers every secret whose name starts with
+   `outfitter-` (an IAM condition set by `secret-scope.sh`, which `baseline.sh` runs), so no
+   per-secret IAM binding is needed for either group. Since #389's IAM check it is no longer
+   project-wide: the LiteLLM router's own secrets (`kernal-litellm-prod-*`) share this project and
+   must stay out of reach of the API. `outfitter-api` also has a project-scoped custom role, under the
+   same condition, `projects/<PROJECT>/roles/outfitterSecretAdmin` (create/get secrets,
    add/disable/list versions — narrower than `roles/secretmanager.admin`): the operator settings API
    (`/api/operator/*`, E2.14) needs to create a secret the first time an operator sets it, add a new
    version on Replace, and disable all enabled versions on Disable, none of which

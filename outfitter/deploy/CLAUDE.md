@@ -17,6 +17,8 @@
   a GitHub Release for Outfitter: Releases here are Kernal's, and `kernal update` reads the latest.
 - `litellm-admin.sh` (without `DRY_RUN=1`) is owner-run: it reads the router master key and mints
   Outfitter's scoped admin key into `outfitter-litellm-admin`. `DRY_RUN=1` reads nothing secret.
+- `secret-scope.sh` (without `DRY_RUN=1`) is owner-run: it changes outfitter-api's project IAM
+  (secret roles limited to `outfitter-*` secrets). `DRY_RUN=1` is safe.
 - `atlas-search.sh` (session search indexes, #289) is owner-run without `DRY_RUN=1`: its vector
   index makes Atlas embed every chunk through Voyage (billed). `DRY_RUN=1` is safe.
 - GKE (README.md "GKE provider (optional)"): `gke-cluster.sh` (without `DRY_RUN=1`), `gke-iam.sh`

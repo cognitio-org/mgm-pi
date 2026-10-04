@@ -280,7 +280,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     }
     try {
       req.identity =
-        config.role === "link" ? await identityFromLinkRequest(req, store) : await identityFromRequest(req, config, store);
+        config.role === "link" ? await identityFromLinkRequest(req, store, config) : await identityFromRequest(req, config, store);
     } catch (err) {
       reply.code(401).send({ error: err instanceof Error ? err.message : "unauthorized" });
     }

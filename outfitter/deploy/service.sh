@@ -211,6 +211,25 @@ if [[ -n "${PREVIEW_DOMAIN:-}" ]]; then
   ENV_VARS="${ENV_VARS},PREVIEW_DOMAIN=${PREVIEW_DOMAIN},PREVIEW_ALLOW=${PREVIEW_ALLOW#;}"
   echo "   previews: https://<id>.${PREVIEW_DOMAIN}, secure previews open to: ${PREVIEW_ALLOW#;}"
 fi
+# #390 device login (docs/specs/central-auth.md §1.6), both roles: web checks it when a person
+# approves a device code, link at the token exchange, at every refresh and on every Dongle use.
+# The same people as PREVIEW_ALLOW: IAP_MEMBERS plus the operators, ';'-separated.
+LOGIN_ALLOW="$(tr ',' ';' <<<"${IAP_MEMBERS:-}")${OUTFITTER_OPERATORS:+;${OUTFITTER_OPERATORS}}"
+ENV_VARS="${ENV_VARS},OUTFITTER_LOGIN_ALLOW=${LOGIN_ALLOW#;}"
+echo "   device login open to: ${LOGIN_ALLOW#;}"
+if [[ "${ROLE}" == "link" ]]; then
+  # Where POST /api/device/code sends the person to approve: the web role's public origin
+  # (app.kernal.one), read from its Ready domain mapping (env.sh public_origin) unless given.
+  if [[ -z "${OUTFITTER_WEB_ORIGIN:-}" ]]; then
+    OUTFITTER_WEB_ORIGIN="$(public_origin outfitter-api || true)"
+  fi
+  if [[ -n "${OUTFITTER_WEB_ORIGIN:-}" ]]; then
+    ENV_VARS="${ENV_VARS},OUTFITTER_WEB_ORIGIN=${OUTFITTER_WEB_ORIGIN}"
+    echo "   device approval page: ${OUTFITTER_WEB_ORIGIN}/device"
+  else
+    echo "   warning: no web origin found for outfitter-api; device login would send people to ${ORIGIN}/device. Set OUTFITTER_WEB_ORIGIN." >&2
+  fi
+fi
 if [[ "${ROLE}" == "web" ]]; then
   # Needed both for IAP_AUDIENCE (below) and for the run.invoker binding further down.
   PROJECT_NUMBER="$(gcloud projects describe "${PROJECT}" --format='value(projectNumber)')"

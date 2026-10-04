@@ -54,11 +54,14 @@ async function tokenFor(store: MemoryStore, ownerEmail: string): Promise<string>
 describe("identityFromRequest: operator flag (non-dev)", () => {
   const prodConfig = loadConfig({ OUTFITTER_OPERATORS: "operator@mgms.eu" } as NodeJS.ProcessEnv);
 
-  test("an outf_ token owned by an operator resolves operator: true", async () => {
+  // #390 Dongle fix 2: this used to resolve operator: true, which gave a Dongle the operator role
+  // on the "all" role. Only IAP and dev mode make operators now.
+  test("an outf_ token owned by an operator still resolves operator: false", async () => {
     const store = new MemoryStore();
     const token = await tokenFor(store, "operator@mgms.eu");
     const identity = await identityFromRequest({ headers: { authorization: `Bearer ${token}` } }, prodConfig, store);
-    assert.equal(identity.operator, true);
+    assert.equal(identity.operator, false);
+    assert.equal(identity.viaToken, true);
   });
 
   test("an outf_ token owned by a non-operator resolves operator: false", async () => {

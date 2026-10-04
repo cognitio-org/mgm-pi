@@ -1,0 +1,40 @@
+outfitter/packages/api/src/routes/keys.ts
+  s_38ec74cfb7fa1d::t_7b9203aefe7bee 74,80,86-95,102
+  s_38ec74cfb7fa1d::t_60a69c905623c7 146
+  s_38ec74cfb7fa1d::t_7edfb702029b2b 158-159,163-171
+  s_38ec74cfb7fa1d::t_7f62c6f2f9def4 22-23
+  s_38ec74cfb7fa1d::t_3ea146041686e4 44-61
+  s_38ec74cfb7fa1d::t_e74292c8a860ad 5
+outfitter/packages/api/test/provider-keys.test.ts
+  s_38ec74cfb7fa1d::t_73e4c485d3fb1f 44-58
+  s_38ec74cfb7fa1d::t_5cf51f2fa840fd 23
+  s_38ec74cfb7fa1d::t_e92a6a7e2a26f9 29-30,32-33,37-40
+  s_38ec74cfb7fa1d::t_b6d6afcabb764e 199-252
+outfitter/packages/api/test/litellm-keys.test.ts
+  s_38ec74cfb7fa1d::t_0cc8e4e86646f7 128-141
+outfitter/packages/api/src/central/litellm-keys.ts
+  s_38ec74cfb7fa1d::t_43fe82dbfb64cc 423,426-429,433
+  s_38ec74cfb7fa1d::t_0391c7497f8f8a 320-321,323
+  s_38ec74cfb7fa1d::t_7b4fdcb6a88fca 381-385
+  s_38ec74cfb7fa1d::t_e63ac666ccd02d 397
+outfitter/packages/api/test/spend.test.ts
+  s_38ec74cfb7fa1d::t_33ba2ba5be422d 256-275
+  s_38ec74cfb7fa1d::t_00d5aa1d3f73af 67-85
+  s_38ec74cfb7fa1d::t_088897bbe09aa1 145-155
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "09ce65af5950128ff7e9ae629f4de7831fd97b31",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

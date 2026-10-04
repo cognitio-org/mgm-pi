@@ -11,7 +11,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makePi, tmpAgentDir, stubFetch } from "./harness.ts";
-import { _resetCentralConfig, _setCentralConfigDeps } from "../.pi/extensions/_shared/central-config.ts";
+import { _resetCentralConfig, _setCentralConfigDeps, providerKey, refreshProviderKeys, resolve } from "../.pi/extensions/_shared/central-config.ts";
 import configExtension from "../.pi/extensions/kernal-config/index.ts";
 
 const API = "https://link.outfitter.test";
@@ -165,5 +165,113 @@ describe("router key re-mint", () => {
       assert.ok(pi.unregistered.includes("litellm"), "the refused key hid litellm");
       assert.equal(key("litellm"), "sk-new");
     } finally { restore(); }
+  });
+});
+
+describe("#443: a router key refused after another terminal signed in again", () => {
+  const OTHER = { ...ACCOUNT, deviceId: "dev_bbbbbbbbbbbbbbbb" };
+  let account = ACCOUNT;
+  beforeEach(() => {
+    account = ACCOUNT;
+    _setCentralConfigDeps({ session: {
+      loginState: () => ({ signedIn: true, account }),
+      getAccessToken: async () => "kda_test",
+      getRouterKey: () => routerKey,
+      setRouterKey: (k: RouterKey) => { routerKey = k; },
+    } });
+  });
+  /** What another terminal's `kernal logout; kernal login` leaves in the keychain. */
+  const reLogin = (key: string, as = OTHER) => { account = as; routerKey = { key, baseUrl: "https://router.kernal.one/v1", alias: "kernal-device-y" }; };
+
+  test("the keychain holds a newer key: adopted and registered, nothing minted", async () => {
+    const { key, refused } = await start();
+    assert.equal(key("litellm"), "sk-old");
+    reLogin("sk-other");
+    await refused();
+    assert.equal(key("litellm"), "sk-other");
+    assert.ok(!calls.includes("/api/device/router-key"), "no POST /api/device/router-key");
+    assert.equal(routerKey!.key, "sk-other", "the keychain is left as the other terminal wrote it");
+  });
+
+  test("the keychain still holds the refused key: re-minted once", async () => {
+    const { key, refused } = await start();
+    await refused();
+    assert.equal(key("litellm"), "sk-new");
+    assert.equal(calls.filter((c) => c === "/api/device/router-key").length, 1);
+  });
+
+  test("adopted key refused too, keychain unchanged since: then it re-mints (once)", async () => {
+    const { key, refused } = await start();
+    reLogin("sk-other");
+    await refused();
+    await refused();
+    assert.equal(key("litellm"), "sk-new");
+    await refused();
+    assert.equal(calls.filter((c) => c === "/api/device/router-key").length, 1);
+  });
+
+  test("re-login as another account: the resolution and the provider keys are the new account's", async () => {
+    providerKeys = { openrouter: "sk-or-v1-first" };
+    const { key, refused } = await start();
+    assert.equal(providerKey("openrouter"), "sk-or-v1-first");
+    providerKeys = { openrouter: "sk-or-v1-second" };
+    reLogin("sk-other", { ...OTHER, email: "b@example.com", userId: "u_2" });
+    await refused();
+    assert.equal(key("litellm"), "sk-other");
+    assert.equal(resolve().account, "b@example.com");
+    assert.equal(providerKey("openrouter"), "sk-or-v1-second");
+    assert.ok(!calls.includes("/api/device/router-key"));
+  });
+});
+
+describe("#443: the real session store, another process signs in again", () => {
+  test("the router key and the access token come from the keychain's newer login", async () => {
+    const session = await import("../.pi/extensions/_shared/outfitter-session.ts");
+    const authDir = mkdtempSync(join(tmpdir(), "kernal-delivery-auth-"));
+    const storage = { authDir, env: { ...process.env, KERNAL_AUTH_BACKEND: "file" } as NodeJS.ProcessEnv, notice: () => {} };
+    let issued = 0;
+    const bearers: Record<string, string[]> = {};
+    const net = (async (url: URL | string, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname;
+      calls.push(path);
+      const auth = (init?.headers as Record<string, string> | undefined)?.authorization;
+      if (auth) (bearers[path] ??= []).push(auth);
+      const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+      if (path === "/api/device/code") return json({ device_code: "dc", user_code: "UC", verification_uri: `${API}/device`, interval: 0, expires_in: 600 });
+      if (path === "/api/device/token") {
+        issued++;
+        return json({ access_token: `kda_${issued}`, refresh_token: `kdr_${issued}`, expires_in: 3600, device: { id: `dev_${issued}`, name: "mbp" }, account: { email: ACCOUNT.email, userId: "u_1" },
+          delivery: { routerKey: { key: `sk-login-${issued}`, baseUrl: "https://router.kernal.one/v1", alias: `kernal-device-${issued}` } } });
+      }
+      if (path === "/api/device/revoke") return json({});
+      if (path === "/api/config") return json({ schemaVersion: 1, account: { email: ACCOUNT.email, userId: "u_1" }, profile: null, profiles: [], values: {}, resolvedAt: "2026-10-05T10:00:00.000Z" });
+      if (path === "/api/device/provider-keys") return json({ keys: {} });
+      if (path === "/api/device/router-key") return json({ routerKey: { key: "sk-minted", baseUrl: "https://router.kernal.one/v1", alias: "kernal-device-m" } });
+      return new Response("{}", { status: 404 });
+    }) as typeof fetch;
+    const signIn = () => session.login({ ...storage, api: API, print: () => {}, openBrowser: false, fetch: net, sleep: async () => {} });
+    const bound = {
+      loginState: (o: any = {}) => session.loginState({ ...storage, ...o }),
+      getAccessToken: (o: any = {}) => session.getAccessToken({ ...storage, ...o }),
+      getRouterKey: (o: any = {}) => session.getRouterKey({ ...storage, ...o }),
+      setRouterKey: (k: any, o: any = {}) => session.setRouterKey(k, { ...storage, ...o }),
+    };
+    await signIn();
+    _resetCentralConfig();
+    _setCentralConfigDeps({ session: bound as any, env: () => ({ OUTFITTER_API: API }), dotenv: () => ({}), settings: () => ({}), fetch: net, warn: () => {} });
+    const { pi, key, refused } = await start();
+    assert.equal(key("litellm"), "sk-login-1");
+    assert.deepEqual(bearers["/api/config"], ["Bearer kda_1"]);
+
+    await signIn();   // another terminal: kernal login again (revokes dev_1, stores kda_2 and sk-login-2)
+    await refused();
+    assert.equal(key("litellm"), "sk-login-2", "the newer login's key is adopted");
+    assert.ok(!calls.includes("/api/device/router-key"), "nothing minted");
+
+    // The settings and the provider keys are fetched with the newer login's access token.
+    await pi.commands.get("config")!.handler("reload", { ui: { notify: () => {} } });
+    assert.equal(bearers["/api/config"].at(-1), "Bearer kda_2");
+    await refreshProviderKeys({ fetch: net });
+    assert.equal(bearers["/api/device/provider-keys"].at(-1), "Bearer kda_2");
   });
 });

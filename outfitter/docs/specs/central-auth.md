@@ -669,7 +669,10 @@ previous key first. `deleteKey` treats "not found" as deleted; on any other fail
 
 - **`POST /api/device/router-key`** (link/all, device token only) → 200 `{ routerKey }`: deletes
   the device's key and mints a new one. Kernal calls it when its key is within 7 days of
-  `expiresAt` or the router answered 401 for the key (CA-8), then `setRouterKey`.
+  `expiresAt` or the router answered 401 for the key (CA-8), then `setRouterKey`. After a 401 it
+  first reads the keychain again (#443): a different key there means another Kernal signed in
+  again (revoking this device and its key), so that key is adopted and nothing is minted. Only a
+  keychain that still holds the refused key leads to a re-mint (once per process).
 - **Sweep**: the link role's `/api/hooks/tick` (existing Cloud Scheduler tick) calls a
   `sweepRouterKeys()` exported by task D, which retries deletes in `listPendingDelete(50)`. Task D
   adds that one call to the tick handler.

@@ -927,6 +927,7 @@ function drawSettings(view, d) {
     if (target === "account") body.version = d.target.version;
     return api("POST", "/settings", body).then(function (res) {
       toast(res.message || "Saved", "ok");
+      (res.warnings || []).forEach(function (w) { toast(w, "warn"); });
       api("GET", "/settings").then(function (fresh) { drawSettings(view, fresh); }, function () {});
       return true;
     }, function (e) {

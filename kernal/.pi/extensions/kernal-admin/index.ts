@@ -20,10 +20,11 @@
  * .env (central.ts, spec §11). Signed out, every page behaves as before.
  */
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { VERSION as PI_VERSION } from "@earendil-works/pi-coding-agent";
-import { backends, busRequest, cleanKey, normalizeBaseUrl, parseLmStudioModels, rootUrl, type Bus } from "../connect/lib.ts";
+import { backends, busRequest, cleanKey, normalizeBaseUrl, parseEnvText, parseLmStudioModels, rootUrl, type Bus } from "../connect/lib.ts";
 import { envFilePath, getJson, loadEnv, settingsPath, testConnection, writeEnvValues } from "../connect/index.ts";
 import {
   applyEdit, applyEmbeddingChoice, embeddingBaseUrl, embeddingProblem, getAt, invalidatesIndex, refreshRouterKey, rerankerProblem, routerFromEnv, setReranking,
@@ -60,6 +61,20 @@ const PAGES = ["overview", "settings", "connections", "model", "index", "subagen
 
 const agentDir = () => process.env.PI_CODING_AGENT_DIR || join(process.env.HOME ?? "", ".pi", "agent");
 const readJson = (f: string) => { try { return JSON.parse(readFileSync(f, "utf8")); } catch { return undefined; } };
+
+/** The .env file whose value for `field` connect's loadEnv ends up with (its files, nearest last,
+ * as in connect/index.ts), when that value is not empty; else undefined. */
+const envFileSetting = (field: string, cwd = process.cwd()): string | undefined => {
+  let from: string | undefined, value = "";
+  for (const f of [join(homedir(), "localllm", ".env"), envFilePath(), join(cwd, "..", ".env"), join(cwd, ".env")]) {
+    const parsed = safe(() => parseEnvText(readFileSync(f, "utf8")));
+    if (parsed && field in parsed) { from = f; value = parsed[field]; }
+  }
+  return value ? from : undefined;
+};
+/** This machine has its own copy of `field` (a .env file connect reads, or the shell), which wins
+ * over the account's key (central-config's layerCentralEnv). */
+const hasLocalCopy = (field: string) => !!process.env[field] || !!envFileSetting(field);
 const safe = <T>(f: () => T): T | undefined => { try { return f(); } catch { return undefined; } };
 const fail = (status: number, body: Record<string, unknown>): ApiResult => ({ status, body });
 
@@ -153,6 +168,9 @@ export function createApi(d: ApiDeps): Api {
         for (const field of Object.keys(values)) {
           const provider = PROVIDER_OF_FIELD[field];
           if (!provider) continue;
+          // Remove takes away the key in use: a local copy (.env or the shell) is removed here only,
+          // as signed out; the account's key, which other machines use, only when it is the one in use.
+          if (values[field] === "" && hasLocalCopy(field)) continue;
           const why = await writeProviderKey(account, provider, values[field] === "" ? null : values[field]);
           if (why) keyErrors[field] = why; else toAccount.push(field);
         }
@@ -169,6 +187,14 @@ export function createApi(d: ApiDeps): Api {
       }
       const file = Object.keys(values).length ? writeEnvValues(values) : envFilePath();
       for (const k of Object.keys(values)) if (values[k] === "") delete process.env[k];
+      // connect reads more .env files than the one written here, and a local key wins over the
+      // account's: name the file that still sets a key just moved to the account or removed.
+      if (account) {
+        for (const field of new Set([...toAccount, ...Object.keys(values).filter((k) => PROVIDER_OF_FIELD[k] && values[k] === "")])) {
+          const still = envFileSetting(field);
+          if (still) warnings[field] = `${field} in ${still} still wins${toAccount.includes(field) ? " over your account's key" : ""}: remove it there`;
+        }
+      }
       // As /setup does: re-register every provider from the new values, live.
       const state = (await busRequest<ConnState[]>(bus, "kernal:connect", { op: "reload" }, 30_000).catch(() => undefined)) ?? [];
       // The reranker keeps its own copy of the router URL and key; bring it along, as start-up does.

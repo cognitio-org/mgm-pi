@@ -9,7 +9,9 @@
  *   Keys            signed in, a provider key typed into /admin goes to PUT /api/me/provider-keys/:provider
  *                   (write-only, Outfitter keeps it in Secret Manager), not to .env.
  *
- * A locked value (the fleet decides it) is read-only, "set by your Sysop". Signed out there is no
+ * A locked value (the fleet decides it) is read-only, "set by your Sysop". An opt-out value this
+ * machine turned off is locked against the levels below it, not against the person: it stays
+ * editable on this machine. Signed out there is no
  * account target: the Settings page saves to this machine only, and Connections writes .env as before.
  *
  * Requests go to the link origin with the session's access token (the same token central-config
@@ -19,8 +21,8 @@
 import { readFileSync } from "node:fs";
 import * as session from "../_shared/outfitter-session.ts";
 import {
-  KNOWN_SETTINGS, PROVIDER_ENV, coerce, describeSource, displayValue, localOverridesPath, reloadConfig, resolve, setLocalOverride,
-  type KnownSetting, type ResolvedConfig, type SettingValue,
+  KNOWN_SETTINGS, PROVIDER_ENV, coerce, describeSource, displayValue, isCentralSource, localOverridesPath, reloadConfig, resolve, setLocalOverride,
+  type ConfigValue, type KnownSetting, type ResolvedConfig, type SettingValue,
 } from "../_shared/central-config.ts";
 
 const FETCH_TIMEOUT_MS = 10_000;
@@ -108,6 +110,25 @@ export function accountTarget(r: ResolvedConfig): AccountTarget {
   return r.profile ? { level: "profile", name: r.profile } : { level: "user" };
 }
 
+/** Signed in with no central answer yet (first start after kernal login, or an expired cache):
+ * the resolution doesn't know the account's default profile, so ask Outfitter before choosing
+ * the account target. Undefined when Outfitter can't answer either. */
+async function withCentralAnswer(d: AdminCentralDeps, r: ResolvedConfig): Promise<ResolvedConfig | undefined> {
+  if (r.fetchedAt !== null) return r;
+  let fresh: ResolvedConfig | undefined;
+  try { fresh = await d.reload(); } catch { fresh = undefined; }
+  return fresh && fresh.fetchedAt !== null ? fresh : undefined;
+}
+
+/** Locked by the fleet or a group (or a lock the server sent), not by this machine's own opt-out
+ * or by an opt-out key's default. */
+export function sysopLocked(v: ConfigValue | undefined): boolean {
+  return !!v?.locked && isCentralSource(v.source);
+}
+
+/** An opt-out key nothing central has turned on: this machine can turn it off, never on. */
+const offByDefault = (decl: KnownSetting, v: ConfigValue | undefined) => decl.override === "opt-out" && !!v?.locked && v.source === "default";
+
 const targetPath = (t: AccountTarget) => (t.level === "profile" ? `/api/config/profiles/${encodeURIComponent(t.name)}` : "/api/config/user");
 const targetLabel = (t: AccountTarget) => (t.level === "profile" ? `Save to my account (profile ${t.name})` : "Save to my account");
 
@@ -160,7 +181,8 @@ export function settingsRows(r: ResolvedConfig, target: AccountTarget | undefine
     const canLevelAccount = !!target && decl.levels.includes(levelOf(target));
     const canLevelMachine = decl.levels.includes("local") && !decl.secret;
     let readOnly: string | undefined;
-    if (v?.locked) readOnly = "set by your Sysop";
+    if (sysopLocked(v)) readOnly = "set by your Sysop";
+    else if (offByDefault(decl, v) && machineValues[decl.key] === undefined) readOnly = "off unless your Sysop turns it on";
     else if (decl.secret) readOnly = decl.key === "router.key" ? "this device's key from kernal login; a key of your own goes on the Connections page" : "a secret";
     else if (!canLevelAccount && !canLevelMachine) readOnly = decl.levels.includes("fleet") && decl.levels.length === 1 ? "only your Sysop sets this" : "can't be set here";
     const account = accountValues ? coerce(decl, accountValues[decl.key]) : undefined;
@@ -182,11 +204,19 @@ export function settingsRows(r: ResolvedConfig, target: AccountTarget | undefine
 /** GET /settings: the resolution as rows, and the account document's version for the next write. */
 export async function settingsView(): Promise<SettingsView> {
   const d = deps();
-  const r = d.resolve();
+  let r = d.resolve();
   const account = signedInAccount();
   const machine = readMachineValues();
-  const base = { profile: r.profile, profiles: r.profiles ?? [], fetchedAt: r.fetchedAt, localFile: localOverridesPath() };
-  if (!account) return { signedIn: false, ...base, rows: settingsRows(r, undefined, undefined, machine) };
+  const baseOf = (r: ResolvedConfig) => ({ profile: r.profile, profiles: r.profiles ?? [], fetchedAt: r.fetchedAt, localFile: localOverridesPath() });
+  if (!account) return { signedIn: false, ...baseOf(r), rows: settingsRows(r, undefined, undefined, machine) };
+  const known = await withCentralAnswer(d, r);
+  if (!known) {
+    return { signedIn: true, account: { email: account.email, api: account.api }, ...baseOf(r),
+      targetProblem: "Outfitter could not be reached to learn your account's profile: account saves are off until it answers (or run kernal login)",
+      rows: settingsRows(r, undefined, undefined, machine) };
+  }
+  r = known;
+  const base = baseOf(r);
   const target = accountTarget(r);
   let doc: OutfitterAnswer | undefined;
   try { doc = await outfitterRequest(account, "GET", targetPath(target)); } catch { doc = undefined; }
@@ -230,11 +260,16 @@ export function validateSettingValues(values: unknown, allowed: (decl: KnownSett
 /** POST /settings: `{ target: "account" | "machine", values: { key: value | null }, version }`. */
 export async function saveSettings(req: SaveRequest): Promise<SaveResult> {
   const d = deps();
-  const r = d.resolve();
-  const lockedOrSecret = (decl: KnownSetting) => r.values[decl.key]?.locked ? "set by your Sysop" : decl.secret ? "a secret is not saved here" : undefined;
+  let r = d.resolve();
+  const lockedOrSecret = (decl: KnownSetting) => sysopLocked(r.values[decl.key]) ? "set by your Sysop" : decl.secret ? "a secret is not saved here" : undefined;
 
   if (req.target === "machine") {
     const { patch, errors } = validateSettingValues(req.values, (decl) => lockedOrSecret(decl) ?? (decl.levels.includes("local") ? undefined : "can't be set on this machine"));
+    // An opt-out key nothing central turned on: this machine may turn it off (or clear that), not on.
+    for (const [k, v] of Object.entries(patch)) {
+      const decl = KNOWN_SETTINGS.find((s) => s.key === k)!;
+      if (v === true && offByDefault(decl, r.values[k])) { errors[k] = "off unless your Sysop turns it on"; delete patch[k]; }
+    }
     if (Object.keys(errors).length) return { status: 422, body: { error: "nothing was saved", errors } };
     if (!Object.keys(patch).length) return { status: 200, body: { message: "Nothing to save" } };
     // Validated above, so setLocalOverride only throws on a disk error: then nothing more is written.
@@ -243,14 +278,26 @@ export async function saveSettings(req: SaveRequest): Promise<SaveResult> {
     } catch (e: any) {
       return { status: 500, body: { error: String(e?.message ?? e).slice(0, 300) } };
     }
+    // config.local.json is the lowest local layer: a .env entry or a shell variable still wins over it.
+    const after = (() => { try { return d.resolve(); } catch { return undefined; } })();
+    const warnings: string[] = [];
+    for (const k of Object.keys(patch)) {
+      const v = after?.values[k];
+      if (v && (v.source === "dotenv" || v.source === "env") && v.sourceName) {
+        warnings.push(`${v.sourceName} in ${v.source === "dotenv" ? ".env" : "the shell"} still wins over this machine's ${k}: remove it there`);
+      }
+    }
     const n = Object.keys(patch).length;
-    return { status: 200, body: { message: `Saved ${n} setting${n === 1 ? "" : "s"} to ${localOverridesPath()} (this machine only). They take effect at the next start.`, saved: Object.keys(patch) } };
+    return { status: 200, body: { message: `Saved ${n} setting${n === 1 ? "" : "s"} to ${localOverridesPath()} (this machine only). They take effect at the next start.`, saved: Object.keys(patch), ...(warnings.length ? { warnings } : {}) } };
   }
 
   if (req.target !== "account") return { status: 400, body: { error: "target is account or machine" } };
   const account = signedInAccount();
   if (!account) return { status: 409, body: { error: "not signed in: run kernal login to save to your account" } };
   if (typeof req.version !== "number" || !Number.isInteger(req.version) || req.version < 0) return { status: 400, body: { error: "version is required: reload the page" } };
+  const known = await withCentralAnswer(d, r);
+  if (!known) return { status: 502, body: { error: "Outfitter could not be reached to learn your account's profile; nothing was saved" } };
+  r = known;
   const target = accountTarget(r);
   const level = levelOf(target);
   const { patch, errors } = validateSettingValues(req.values, (decl) => lockedOrSecret(decl) ?? (decl.levels.includes(level) ? undefined : level === "profile" ? "can't be set in a profile" : "can't be set on your account"));

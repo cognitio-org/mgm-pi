@@ -7,12 +7,12 @@
  */
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makePi, tmpAgentDir } from "./harness.ts";
 import {
-  _resetCentralConfig, _setCentralConfigDeps, configCachePath, localOverridesPath, resolve, type ConfigResponse,
+  _resetCentralConfig, _setCentralConfigDeps, configCachePath, localOverridesPath, reloadConfig, resolve, setLocalOverride, type ConfigResponse,
 } from "../.pi/extensions/_shared/central-config.ts";
 import {
   _setAdminCentralDeps, accountTarget, parseEtag, saveSettings, settingsRows, settingsView, validateSettingValues, writeProviderKey, listProviderKeys,
@@ -108,12 +108,14 @@ describe("rows: each value's source and whether it can be edited", () => {
     assert.equal(row("voice.language").sourceLabel, "your account");
     assert.equal(row("compaction.summaryModel").sourceLabel, "shell (KERNAL_SUMMARY_MODEL)");
     assert.equal(row("router.baseUrl").sourceLabel, "fleet");
-    for (const k of ["router.baseUrl", "telemetry.sentry.enabled"]) {
-      assert.equal(row(k).locked, true, k);
-      assert.equal(row(k).readOnly, "set by your Sysop", k);
-      assert.equal(row(k).canAccount, false);
-      assert.equal(row(k).canMachine, false);
-    }
+    assert.equal(row("router.baseUrl").locked, true);
+    assert.equal(row("router.baseUrl").readOnly, "set by your Sysop");
+    assert.equal(row("router.baseUrl").canAccount, false);
+    assert.equal(row("router.baseUrl").canMachine, false);
+    // Off by default is not the Sysop's doing: it only can't be turned on here.
+    assert.equal(row("telemetry.sentry.enabled").locked, true);
+    assert.equal(row("telemetry.sentry.enabled").readOnly, "off unless your Sysop turns it on");
+    assert.equal(row("telemetry.sentry.enabled").canMachine, false);
     assert.equal(row("model.default").canAccount, true);
     assert.equal(row("model.default").canMachine, true);
   });
@@ -138,6 +140,42 @@ describe("rows: each value's source and whether it can be edited", () => {
     assert.equal(row("localHost.shareModels").canAccount, true);
     assert.equal(row("router.baseUrl").canAccount, false, "router.baseUrl has no user level");
     assert.equal(row("router.baseUrl").canMachine, true);
+  });
+
+  test("an opt-out this machine set stays this machine's to undo, never \"set by your Sysop\"", async () => {
+    writeCache(response({ "telemetry.sentry.enabled": { value: true, source: "fleet" } }));
+    setup();
+    setLocalOverride("telemetry.sentry.enabled", false);
+    const r = resolve();
+    assert.deepEqual(r.values["telemetry.sentry.enabled"], { value: false, source: "local", override: "opt-out", locked: true });
+    const row = settingsRows(r, { level: "user" }, {}, { "telemetry.sentry.enabled": false }).find((x) => x.key === "telemetry.sentry.enabled")!;
+    assert.equal(row.readOnly, undefined);
+    assert.equal(row.canMachine, true);
+    const undo = await saveSettings({ target: "machine", values: { "telemetry.sentry.enabled": null } });
+    assert.equal(undo.status, 200, JSON.stringify(undo.body));
+    assert.deepEqual(resolve().values["telemetry.sentry.enabled"], { value: true, source: "fleet", override: "opt-out", locked: false });
+  });
+
+  test("an opt-out key off by default: this machine may turn it off, not on", async () => {
+    signedIn = false;
+    setup();
+    const on = await saveSettings({ target: "machine", values: { "telemetry.sentry.enabled": true } });
+    assert.equal(on.status, 422);
+    assert.match((on.body.errors as any)["telemetry.sentry.enabled"], /Sysop turns it on/);
+    assert.equal((await saveSettings({ target: "machine", values: { "telemetry.sentry.enabled": false } })).status, 200);
+  });
+
+  test("a machine save that .env or the shell still overrides says so", async () => {
+    signedIn = false;
+    dotenv = { LITELLM_BASE_URL: "https://dot.test/v1" };
+    shell = { OUTFITTER_API: API, KERNAL_SUMMARY_MODEL: "from-shell" };
+    setup();
+    const r = await saveSettings({ target: "machine", values: { "router.baseUrl": "https://mine.test/v1", "compaction.summaryModel": "mine", "model.default": "fine" } });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const w = r.body.warnings as string[];
+    assert.equal(w.length, 2);
+    assert.match(w[0], /LITELLM_BASE_URL in \.env still wins/);
+    assert.match(w[1], /KERNAL_SUMMARY_MODEL in the shell still wins/);
   });
 
   test("form values are checked against the schema; strings from a form are parsed; empty removes", () => {
@@ -186,6 +224,9 @@ describe("signed out: the machine only, no network", () => {
 });
 
 describe("signed in: saving to the account", () => {
+  // A central answer is cached unless a test says otherwise (see "no cached answer" below).
+  beforeEach(() => { writeCache(response({})); });
+
   test("GET the profile document with the session token; its ETag is the version a save names", async () => {
     writeCache(response({}, { profile: "work", profiles: ["work", "home"] }), "work");
     shell = { OUTFITTER_API: API, KERNAL_PROFILE: "work" };
@@ -276,6 +317,35 @@ describe("signed in: saving to the account", () => {
     assert.equal(o.calls.length, 0);
   });
 
+  test("no cached answer: the account's default profile is asked for before choosing the target", async () => {
+    rmSync(configCachePath(API, EMAIL, undefined));
+    const o = fakeOutfitter({
+      "GET /api/config": () => ({ body: response({}, { profile: "work", profiles: ["work"] }) }),
+      "GET /api/config/profiles/work": () => ({ body: { values: {}, version: 2 }, etag: 'W/"2"' }),
+      "PUT /api/config/profiles/work": () => ({ body: { version: 3 }, etag: 'W/"3"' }),
+    });
+    setup(o.fn);
+    _setAdminCentralDeps({ reload: () => reloadConfig() });
+    const v = await settingsView();
+    assert.deepEqual(v.target, { level: "profile", name: "work", label: "Save to my account (profile work)", version: 2 });
+    const r = await saveSettings({ target: "account", values: { "model.default": "x" }, version: 2 });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(o.calls.find((c) => c.method === "PUT")!.path, "/api/config/profiles/work");
+    assert.ok(!o.calls.some((c) => c.path === "/api/config/user"), "never the account-wide level");
+  });
+
+  test("no cached answer and Outfitter unreachable: account saves are off, nothing is sent", async () => {
+    rmSync(configCachePath(API, EMAIL, undefined));
+    const o = fakeOutfitter({});
+    setup(o.fn);
+    const v = await settingsView();
+    assert.equal(v.target, undefined);
+    assert.match(v.targetProblem!, /learn your account's profile/);
+    const r = await saveSettings({ target: "account", values: { "model.default": "x" }, version: 0 });
+    assert.equal(r.status, 502);
+    assert.ok(!o.calls.some((c) => c.method === "PUT"));
+  });
+
   test("after a 401 the token is read again and the request retried once", async () => {
     tokens = ["kda_old", "kda_new"];
     const o = fakeOutfitter({ "PUT /api/config/user": (c) => (c.auth === "Bearer kda_new" ? { body: { version: 1 } } : { status: 401, body: { error: "unauthorized" } }) });
@@ -339,6 +409,37 @@ describe("/admin routes", () => {
     assert.deepEqual((r.body as any).savedToAccount, ["OPENROUTER_API_KEY"]);
     assert.match((r.body as any).message, /1 key to your account \(a@example.com\) and 1 setting to/);
     assert.ok(!JSON.stringify(r.body).includes(OR_KEY));
+  });
+
+  test("signed in, Remove on Connections takes away a local key only, never the account's", async () => {
+    const o = fakeOutfitter({ "DELETE /api/me/provider-keys/openrouter": () => ({ status: 204 }), "POST /api/device/provider-keys": () => ({ body: { keys: { openrouter: OR_KEY } } }) });
+    setup(o.fn);
+    const r = await routes()({ method: "POST", path: "/connections", query: new URLSearchParams(), body: { clear: ["OPENROUTER_API_KEY"] } });
+    assert.equal(r.status ?? 200, 200, JSON.stringify(r.body));
+    assert.equal(o.calls.filter((c) => c.method === "DELETE").length, 0, "the account's key is kept");
+    assert.match(readFileSync(envFile, "utf8"), /^OPENROUTER_API_KEY=$/m, "the .env copy is gone");
+    // No local copy left: now Remove is the account's key in use, and goes to Outfitter.
+    const again = await routes()({ method: "POST", path: "/connections", query: new URLSearchParams(), body: { clear: ["OPENROUTER_API_KEY"] } });
+    assert.equal(again.status ?? 200, 200, JSON.stringify(again.body));
+    assert.equal(o.calls.filter((c) => c.method === "DELETE").length, 1);
+  });
+
+  test("signed in, a key moved to the account names another .env that still overrides it", async () => {
+    const other = join(fakeHome, ".env");
+    writeFileSync(other, "OPENROUTER_API_KEY=sk-or-v1-PROJECT-KEY-1111\n");
+    try {
+      const o = fakeOutfitter({
+        "PUT /api/me/provider-keys/openrouter": () => ({ body: { provider: "openrouter", last4: "5678", setAt: "t" } }),
+        "POST /api/device/provider-keys": () => ({ body: { keys: { openrouter: OR_KEY } } }),
+      });
+      setup(o.fn);
+      const r = await routes()({ method: "POST", path: "/connections", query: new URLSearchParams(), body: { OPENROUTER_API_KEY: OR_KEY } });
+      assert.equal(r.status ?? 200, 200, JSON.stringify(r.body));
+      // process.cwd() is the real path (/private/var/... on macOS), so match the file by its tail.
+      assert.match((r.body as any).warnings.OPENROUTER_API_KEY, /kernal-admin-central-home-[^/]+\/\.env still wins over your account's key: remove it there/);
+    } finally {
+      rmSync(other, { force: true });
+    }
   });
 
   test("signed in, a refused key saves nothing anywhere", async () => {

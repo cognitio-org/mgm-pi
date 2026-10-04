@@ -10,6 +10,7 @@ import { generateToken, hashToken, tokenPrefix } from "../src/tokens.ts";
 import { MAIL_ENTRY_TYPE, mailIdFor } from "../src/mail.ts";
 import { SessionArchivedError } from "../src/runs.ts";
 import type { Mail, Run, Session, Store } from "../src/store/types.ts";
+import { TEST_IAP_AUDIENCE, iapHeaders, useFakeIap } from "./device-iap.ts";
 
 const TASKS_AUTH = { authorization: "Bearer test-agent-token" };
 
@@ -252,7 +253,7 @@ describe("archived floppies are read-only", () => {
 
 describe("who may archive and restore", () => {
   async function prodApp(store: Store) {
-    return buildTestApp({ OUTFITTER_DEV: "0", OUTFITTER_OPERATORS: "sysop@example.com" }, { store });
+    return buildTestApp({ OUTFITTER_DEV: "0", OUTFITTER_OPERATORS: "sysop@example.com", IAP_AUDIENCE: TEST_IAP_AUDIENCE }, { store });
   }
 
   test("the owner may; another user gets 403", async () => {
@@ -283,14 +284,17 @@ describe("who may archive and restore", () => {
     await app.fastify.close();
   });
 
-  test("a sysop may manage anyone's floppy, and is the only one who may manage an ownerless one", async () => {
+  test("a sysop may manage anyone's floppy, and is the only one who may manage an ownerless one", async (t) => {
+    useFakeIap(t);
     const store = new MemoryStore();
     const app = await prodApp(store);
     await insertSession(store, "owned", { ownerEmail: "owner@example.com" });
     await insertSession(store, "ownerless");
 
     assert.equal((await archive(app, "ownerless", await bearerFor(store, "someone@example.com"))).statusCode, 403);
-    const sysop = await bearerFor(store, "sysop@example.com");
+    // #390: a sysop's Dongle is not a sysop; the person signed in through IAP is.
+    assert.equal((await archive(app, "ownerless", await bearerFor(store, "sysop@example.com"))).statusCode, 403);
+    const sysop = iapHeaders("sysop@example.com");
     assert.equal((await archive(app, "owned", sysop)).statusCode, 200);
     assert.equal((await archive(app, "ownerless", sysop)).statusCode, 200);
     await app.fastify.close();

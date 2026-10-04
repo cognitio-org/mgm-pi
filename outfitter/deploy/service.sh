@@ -73,6 +73,10 @@ IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}/outfitter-api:${TAG}"
 # read by the provider status service's LiteLLM probe, falling back to the default guru LiteLLM key
 # (outfitter-litellm-key-default, secrets.ts's SecretsBroker.defaultLitellmKey) when unset.
 SECRETS="$(existing_secrets MONGODB_URI=outfitter-mongodb-uri:latest GITHUB_PAT=outfitter-github-pat:latest LITELLM_ADMIN_KEY=outfitter-litellm-admin:latest LOCAL_TUNNEL_TOKEN=outfitter-local-tunnel-token:latest NGROK_API_KEY=outfitter-ngrok-api-key:latest NGROK_GOOGLE_OAUTH=outfitter-ngrok-google-oauth:latest)"
+# #394 (central-auth.md §5.1): the router admin key that mints per-user device and run keys. Both
+# roles (link mints at device login, runs start on both); skipped until the owner creates it.
+ROUTER_ADMIN_SECRET="$(existing_secrets OUTFITTER_LITELLM_ADMIN_KEY=outfitter-litellm-admin-key:latest)"
+[[ -n "${ROUTER_ADMIN_SECRET}" ]] && SECRETS="${SECRETS:+${SECRETS},}${ROUTER_ADMIN_SECRET}"
 # #252 web voice: the Deepgram Member key POST /api/voice/token mints browser tokens with. Web role
 # only (the exception to "identical for both roles"): link serves no voice route, and this key can
 # mint tokens and read usage, unlike the usage-only key kernal bundles ship.
@@ -206,6 +210,25 @@ if [[ -n "${PREVIEW_DOMAIN:-}" ]]; then
   PREVIEW_ALLOW="$(tr ',' ';' <<<"${IAP_MEMBERS:-}")${OUTFITTER_OPERATORS:+;${OUTFITTER_OPERATORS}}"
   ENV_VARS="${ENV_VARS},PREVIEW_DOMAIN=${PREVIEW_DOMAIN},PREVIEW_ALLOW=${PREVIEW_ALLOW#;}"
   echo "   previews: https://<id>.${PREVIEW_DOMAIN}, secure previews open to: ${PREVIEW_ALLOW#;}"
+fi
+# #390 device login (docs/specs/central-auth.md §1.6), both roles: web checks it when a person
+# approves a device code, link at the token exchange, at every refresh and on every Dongle use.
+# The same people as PREVIEW_ALLOW: IAP_MEMBERS plus the operators, ';'-separated.
+LOGIN_ALLOW="$(tr ',' ';' <<<"${IAP_MEMBERS:-}")${OUTFITTER_OPERATORS:+;${OUTFITTER_OPERATORS}}"
+ENV_VARS="${ENV_VARS},OUTFITTER_LOGIN_ALLOW=${LOGIN_ALLOW#;}"
+echo "   device login open to: ${LOGIN_ALLOW#;}"
+if [[ "${ROLE}" == "link" ]]; then
+  # Where POST /api/device/code sends the person to approve: the web role's public origin
+  # (app.kernal.one), read from its Ready domain mapping (env.sh public_origin) unless given.
+  if [[ -z "${OUTFITTER_WEB_ORIGIN:-}" ]]; then
+    OUTFITTER_WEB_ORIGIN="$(public_origin outfitter-api || true)"
+  fi
+  if [[ -n "${OUTFITTER_WEB_ORIGIN:-}" ]]; then
+    ENV_VARS="${ENV_VARS},OUTFITTER_WEB_ORIGIN=${OUTFITTER_WEB_ORIGIN}"
+    echo "   device approval page: ${OUTFITTER_WEB_ORIGIN}/device"
+  else
+    echo "   warning: no web origin found for outfitter-api; device login would send people to ${ORIGIN}/device. Set OUTFITTER_WEB_ORIGIN." >&2
+  fi
 fi
 if [[ "${ROLE}" == "web" ]]; then
   # Needed both for IAP_AUDIENCE (below) and for the run.invoker binding further down.

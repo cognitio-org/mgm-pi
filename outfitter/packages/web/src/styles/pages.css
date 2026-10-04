@@ -1092,3 +1092,23 @@ a.chip.github-fact {
     max-width: 100vw;
   }
 }
+
+/* #389 CA-7: the Account page's sections, spend tables side by side, and value sources. */
+.account-section {
+  margin-bottom: 2rem;
+}
+
+.account-spend-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1rem;
+}
+
+.account-source::before {
+  content: none;
+}
+
+.account-source[data-source="fleet"],
+.account-source[data-source="group"] {
+  border-color: var(--accent);
+}

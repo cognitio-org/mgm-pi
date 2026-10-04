@@ -23,6 +23,7 @@ import type { SecretsBroker, SecretAdmin } from "./secrets.ts";
 import { identityFromRequest, identityFromLinkRequest, verifyAgentToken, bearerFromHeader } from "./auth.ts";
 import { RunManager } from "./runs.ts";
 import { AgentLink, type GithubRefreshTiming } from "./agentlink.ts";
+import { RunKeys } from "./central/run-keys.ts";
 import { SseHub, SsePoller } from "./sse.ts";
 import { LaptopProbe } from "./laptop.ts";
 import { ProviderStatusService } from "./providers-status.ts";
@@ -250,6 +251,10 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   const deviceLifecycle = new DeviceLifecycle((msg, err) => fastify.log.warn({ err }, msg));
   const litellmKeys = opts.litellmKeys ?? createLitellmKeys(config, store, { log: (msg, err) => fastify.log.warn({ err }, msg) });
   registerLitellmDeviceHooks(deviceLifecycle, litellmKeys, config);
+  // CA-6 (#395): per-run LiteLLM keys for Drives, and the system team for Outfitter's own calls.
+  const runKeys = new RunKeys({ keys: litellmKeys, store, config, log: (msg, err) => fastify.log.warn({ err }, msg) });
+  agentLink.setRunKeys(runKeys);
+  void runKeys.ensureSystemTeam();
 
   fastify.addHook("preHandler", async (req, reply) => {
     if (!req.url.startsWith("/api/") || req.url.startsWith("/api/hooks/")) return;
@@ -275,7 +280,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     }
     try {
       req.identity =
-        config.role === "link" ? await identityFromLinkRequest(req, store) : await identityFromRequest(req, config, store);
+        config.role === "link" ? await identityFromLinkRequest(req, store, config) : await identityFromRequest(req, config, store);
     } catch (err) {
       reply.code(401).send({ error: err instanceof Error ? err.message : "unauthorized" });
     }

@@ -1,0 +1,112 @@
+kernal/.pi/extensions/_shared/outfitter-session.ts
+  s_38ec74cfb7fa1d::t_17f986646f7400 1-92
+outfitter/packages/api/src/server.ts
+  s_38ec74cfb7fa1d::t_d23d0b9e060678 248-253,256-258
+  s_38ec74cfb7fa1d::t_e54404c2e620d0 43-45
+  s_38ec74cfb7fa1d::t_e918523b607306 85-87
+  s_38ec74cfb7fa1d::t_68617f3cf451e4 328-329
+outfitter/packages/api/src/store/settings.ts
+  s_38ec74cfb7fa1d::t_3f8a54120d30df 1-109
+outfitter/packages/web/src/pages/AccountPage.tsx
+  s_38ec74cfb7fa1d::t_16ce7bc3903218 1-15
+outfitter/packages/api/src/central/device-tokens.ts
+  s_38ec74cfb7fa1d::t_76309a154f21d6 1-35
+outfitter/packages/api/test/helpers.ts
+  s_38ec74cfb7fa1d::t_195850eb182192 25
+  s_38ec74cfb7fa1d::t_34f1ce7774afd7 105
+  s_38ec74cfb7fa1d::t_90d49fa8c62ab0 65-66
+outfitter/packages/api/src/store/devices.ts
+  s_38ec74cfb7fa1d::t_01ffbca5a8e97f 1-69,74-96,98-169,174-192,197-230,232-236
+  s_38ec74cfb7fa1d::t_9afe1b1125ba67 97
+  s_38ec74cfb7fa1d::t_64ff5adc3c0046 231
+  s_38ec74cfb7fa1d::t_99a75f9fff928e 170-173,193-196
+  s_38ec74cfb7fa1d::t_58b90501404d03 70-73
+outfitter/packages/api/src/routes/keys.ts
+  s_38ec74cfb7fa1d::t_96ce322a11593f 1-13
+outfitter/packages/api/test/stop.test.ts
+  s_38ec74cfb7fa1d::t_0dc7cbd6acc280 333-337
+outfitter/packages/api/src/central/settings-resolver.ts
+  s_38ec74cfb7fa1d::t_c5a0f309f8c072 1-49
+outfitter/packages/web/src/pages/DeviceApprovePage.tsx
+  s_38ec74cfb7fa1d::t_f25cdac7b8d2a8 1-14
+outfitter/packages/web/src/App.tsx
+  s_38ec74cfb7fa1d::t_4040f7a9ed0db8 43-46,241-243
+  s_38ec74cfb7fa1d::t_452c56b4f50b14 57-59
+kernal/.pi/extensions/kernal-login/cli.ts
+  s_38ec74cfb7fa1d::t_6f90143c180663 1-23
+outfitter/packages/api/src/central/litellm-keys.ts
+  s_38ec74cfb7fa1d::t_2b919570478630 1-81
+outfitter/packages/api/src/store/keys.ts
+  s_38ec74cfb7fa1d::t_2089cd06869986 1-157
+outfitter/packages/web/src/pages/DevicesPage.tsx
+  s_38ec74cfb7fa1d::t_cbac53b0056ff5 1-15
+outfitter/packages/web/src/lib/vocabulary.ts
+  s_38ec74cfb7fa1d::t_c23dd49738c133 29-32
+outfitter/packages/api/src/config.ts
+  s_38ec74cfb7fa1d::t_fa4319a535f544 212-225,559-561
+outfitter/packages/api/src/store/memory.ts
+  s_38ec74cfb7fa1d::t_d0e6585c3f5a3a 73-75
+  s_38ec74cfb7fa1d::t_2b4502b76dbeeb 1379-1384
+outfitter/packages/api/src/store/types.ts
+  s_38ec74cfb7fa1d::t_58dab7557291e2 1409-1415
+  s_38ec74cfb7fa1d::t_85c6b2169a3b1f 9-11
+outfitter/packages/api/src/auth.ts
+  s_38ec74cfb7fa1d::t_c157a0a5c5b7c1 54-57
+outfitter/packages/api/src/routes/index.ts
+  s_38ec74cfb7fa1d::t_4a01c1b299f97b 23-25
+  s_38ec74cfb7fa1d::t_4c32dc387647d8 68-72
+outfitter/packages/api/src/store/mongo.ts
+  s_38ec74cfb7fa1d::t_eb31faaee95482 78-83
+  s_38ec74cfb7fa1d::t_216c7e440f81db 1770-1775
+  s_38ec74cfb7fa1d::t_625150054353ce 1872-1875
+  s_38ec74cfb7fa1d::t_e3d8fd056dc4ac 1809-1813
+outfitter/packages/api/test/central-contract.test.ts
+  s_38ec74cfb7fa1d::t_0c766013326414 1-98
+outfitter/packages/web/src/api/client.ts
+  s_38ec74cfb7fa1d::t_13aae6e0bd304d 443-445
+outfitter/packages/api/src/central/user-id.ts
+  s_38ec74cfb7fa1d::t_5674f0b60cdb22 1-20
+outfitter/packages/api/src/routes/config.ts
+  s_38ec74cfb7fa1d::t_9aa2b82977cee7 1-11
+outfitter/packages/api/src/central/settings-schema.ts
+  s_38ec74cfb7fa1d::t_ea00753243b9f2 1-209
+  s_38ec74cfb7fa1d::t_4f4466c3c1d068 210-243
+outfitter/packages/api/src/routes/context.ts
+  s_38ec74cfb7fa1d::t_40f24411558b09 24-25
+  s_38ec74cfb7fa1d::t_b06746f05ea15e 77-81
+outfitter/docs/specs/central-auth.md
+  s_38ec74cfb7fa1d::t_878ebb0887dcdd 1-759,763-839
+  s_38ec74cfb7fa1d::t_476ae49404f1e1 760-762
+outfitter/packages/web/src/api/devices.ts
+  s_38ec74cfb7fa1d::t_ec184a74ef5a12 1-44
+kernal/.pi/extensions/_shared/central-config.ts
+  s_38ec74cfb7fa1d::t_67b5943f8a7df8 1-70
+outfitter/docs/glossary.md
+  s_38ec74cfb7fa1d::t_8e541870a3fc48 28-30
+outfitter/packages/api/src/routes/device.ts
+  s_38ec74cfb7fa1d::t_5f3514455bbbe1 1-14
+outfitter/packages/api/src/central/device-lifecycle.ts
+  s_38ec74cfb7fa1d::t_598f59a4d4bcd0 1-101
+outfitter/packages/web/src/lib/glossary.ts
+  s_38ec74cfb7fa1d::t_480d82e146b436 125-148
+outfitter/packages/web/src/api/account.ts
+  s_38ec74cfb7fa1d::t_7932c4f4de288e 1-131
+kernal/bin/kernal
+  s_38ec74cfb7fa1d::t_522739b937e75c 323-337,339-341
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "ed3e2e221b26a56e7daf110a75b7844e42eb6f49",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

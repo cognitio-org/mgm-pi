@@ -87,7 +87,7 @@ done
 # Operator settings API (routes/operator.ts, src/secrets.ts's GcpSecretAdmin): create a secret the
 # first time an operator sets it, add a new version on every Replace, disable all enabled versions
 # on Disable, and list/access versions to show the masked value and "next run"/"next deploy" state.
-# secretmanager.secretAccessor (above) only covers reading the *latest* version, not any of that.
+# secretmanager.secretAccessor (granted by secret-scope.sh, below) only covers reading the *latest* version, not any of that.
 # No predefined role is both broad enough and this narrow: roles/secretmanager.secretVersionAdder
 # can add versions but can't create a secret or disable a version, and
 # roles/secretmanager.admin also grants IAM policy changes and secret deletion the API never

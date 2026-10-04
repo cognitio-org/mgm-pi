@@ -94,10 +94,20 @@ describe("/teleport pull without a UI (kernal --teleport <id> -p)", () => {
     const store = join(base, "store");
     const cwd = join(base, "work");
     mkdirSync(cwd);
-    const prev = { store: process.env.KERNAL_TELEPORT_STORE, agent: process.env.PI_CODING_AGENT_DIR, sandbox: process.env.KERNAL_SANDBOX };
-    process.env.KERNAL_TELEPORT_STORE = store;
-    process.env.PI_CODING_AGENT_DIR = join(base, "agent");
-    process.env.KERNAL_SANDBOX = "1";   // no prefetch at load
+    // GitStore commits, and CI has no git identity.
+    const setEnv: Record<string, string> = {
+      KERNAL_TELEPORT_STORE: store,
+      PI_CODING_AGENT_DIR: join(base, "agent"),
+      KERNAL_SANDBOX: "1",   // no prefetch at load
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_AUTHOR_NAME: "Test",
+      GIT_AUTHOR_EMAIL: "test@example.com",
+      GIT_COMMITTER_NAME: "Test",
+      GIT_COMMITTER_EMAIL: "test@example.com",
+    };
+    const prev = Object.fromEntries(Object.keys(setEnv).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, setEnv);
     const stderr: string[] = [];
     const exits: number[] = [];
     const origError = console.error;
@@ -138,7 +148,7 @@ describe("/teleport pull without a UI (kernal --teleport <id> -p)", () => {
     } finally {
       console.error = origError;
       headless.exit = origExit;
-      for (const [k, v] of [["KERNAL_TELEPORT_STORE", prev.store], ["PI_CODING_AGENT_DIR", prev.agent], ["KERNAL_SANDBOX", prev.sandbox]] as const) {
+      for (const [k, v] of Object.entries(prev)) {
         if (v === undefined) delete process.env[k]; else process.env[k] = v;
       }
     }

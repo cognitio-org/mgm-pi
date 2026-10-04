@@ -208,6 +208,108 @@ export function settingDecl(key: string): SettingDecl | undefined {
   return SETTINGS_SCHEMA.find((d) => d.key === key);
 }
 
+/** What GET /api/config/schema answers: every key still in use. */
+export function publicSchema(): { schemaVersion: number; settings: SettingDecl[] } {
+  return { schemaVersion: SETTINGS_SCHEMA_VERSION, settings: SETTINGS_SCHEMA.filter((d) => !d.retired) };
+}
+
+/** Profile names (§3.3): what `kernal --profile` takes, so short and shell-safe. */
+export const PROFILE_NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+/** Profiles per user: a guard against a runaway client, far above what a person keeps. */
+export const MAX_PROFILES = 20;
+
+const MAX_STRING_LENGTH = 1024;
+const MAX_URL_LENGTH = 2048;
+
+/** Options for coerceSettingValue and parseValueWrite. `allowHttp` (dev mode only) also accepts
+ * http:// URLs; otherwise a `url` must be https, so a Kernal never sends its router key in clear. */
+export interface CoerceOptions {
+  allowHttp?: boolean;
+}
+
+/** `value` as the declared type, or undefined when it doesn't fit. Used on writes (a misfit is a
+ * 400) and again on reads, so a value stored before a validation change never reaches a Kernal
+ * as the wrong type. Strings are trimmed and must not be empty: "unset" is `null` on a write. */
+export function coerceSettingValue(decl: SettingDecl, value: unknown, opts: CoerceOptions = {}): SettingValue | undefined {
+  switch (decl.type) {
+    case "boolean":
+      return typeof value === "boolean" ? value : undefined;
+    case "number":
+      if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+      if (decl.min !== undefined && value < decl.min) return undefined;
+      if (decl.max !== undefined && value > decl.max) return undefined;
+      return value;
+    case "enum":
+      return typeof value === "string" && decl.values?.includes(value) ? value : undefined;
+    case "string": {
+      if (typeof value !== "string") return undefined;
+      const v = value.trim();
+      return v && v.length <= MAX_STRING_LENGTH && !/[\u0000-\u001f\u007f]/.test(v) ? v : undefined;
+    }
+    case "url": {
+      if (typeof value !== "string") return undefined;
+      const v = value.trim();
+      if (!v || v.length > MAX_URL_LENGTH) return undefined;
+      try {
+        const url = new URL(v);
+        return url.protocol === "https:" || (opts.allowHttp && url.protocol === "http:") ? v : undefined;
+      } catch {
+        return undefined;
+      }
+    }
+  }
+}
+
+/** The levels a stored document can hold (fleet is the fleetSettings document; local is never on
+ * the server). */
+export type WritableLevel = Exclude<SettingLevel, "local">;
+
+export type ValueWriteError = { error: "invalid_request" } | { error: "invalid_value" | "unknown_key" | "level_not_allowed"; key: string };
+
+/** Validates a value write's body (§3.5): `{ values: { key: value | null } }`. Each key must be
+ * declared, not retired, not secret, allowed at `level`, and valid for its type (`null` removes
+ * it and needs only the first four). Answers the normalized patch. */
+export function parseValueWrite(level: WritableLevel, body: unknown, opts: CoerceOptions = {}): { patch: Record<string, SettingValue | null> } | ValueWriteError {
+  const values = (body as { values?: unknown } | null | undefined)?.values;
+  if (!values || typeof values !== "object" || Array.isArray(values)) return { error: "invalid_request" };
+  const patch: Record<string, SettingValue | null> = {};
+  for (const [key, raw] of Object.entries(values as Record<string, unknown>)) {
+    const decl = settingDecl(key);
+    if (!decl || decl.retired || decl.secret) return { error: "unknown_key", key };
+    if (!decl.levels.includes(level)) return { error: "level_not_allowed", key };
+    if (raw === null) {
+      patch[key] = null;
+      continue;
+    }
+    const value = coerceSettingValue(decl, raw, opts);
+    if (value === undefined) return { error: "invalid_value", key };
+    patch[key] = value;
+  }
+  return { patch };
+}
+
+/** `values` with `patch` applied (`null` removes a key). */
+export function applyValuePatch(values: Record<string, SettingValue>, patch: Record<string, SettingValue | null>): Record<string, SettingValue> {
+  const next = { ...values };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) delete next[key];
+    else next[key] = value;
+  }
+  return next;
+}
+
+/** What every level route answers for one document (§3.5). Version 0: it doesn't exist yet. */
+export interface SettingsDocView {
+  id: string;
+  level: WritableLevel;
+  name?: string;
+  isDefault?: boolean;
+  values: Record<string, SettingValue>;
+  version: number;
+  updatedAt?: string;
+}
+
 // ---------- GET /api/config's answer (§3.4) ----------
 
 /** Where a resolved value came from. "default" is the schema's own default. Kernal adds its local

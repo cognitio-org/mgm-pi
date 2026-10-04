@@ -9,13 +9,16 @@
 //   - the API itself (sentry.ts, through FleetSettingsCache below).
 //   - agentd, through run.spec's `telemetry` (agentlink.ts), so a Drive needs no Sentry env either.
 //   - the web app (lib/sentry.ts), from GET /api/fleet-settings before it starts Sentry.
-// The one writer is PUT /api/operator/fleet-settings (routes/operator.ts), operators only.
+// The writers are PUT /api/operator/fleet-settings (routes/operator.ts) and, for every fleet-level
+// key of the central settings schema (#392), PUT /api/operator/config/fleet (routes/config.ts);
+// operators only, both through updateFleetSettings, which bumps `version`.
 //
 // Off is the default everywhere: no document, a document with Sentry disabled, or a reader that
 // cannot reach the API (a laptop with no Dongle) all mean nothing is sent. The Agent Engine Python
 // agent has no API channel at start-up and still reads SENTRY_DSN from its own env.
 
 import type { Store } from "./store/types.ts";
+import type { SettingValue } from "./central/settings-schema.ts";
 
 export interface SentryFleetSettings {
   enabled: boolean;
@@ -28,6 +31,12 @@ export interface SentryFleetSettings {
 
 export interface FleetSettings {
   telemetry: { sentry: SentryFleetSettings };
+  /** #392 central settings (docs/specs/central-auth.md §3.3): the fleet level's values for every
+   * other schema key (central/settings-schema.ts). The three `telemetry.sentry.*` keys are never
+   * here: they stay in `telemetry.sentry` above, which older readers know. */
+  values?: Record<string, SettingValue>;
+  /** Bumped by every write (both PUTs); absent means 0. The fleet ETag (§3.5). */
+  version?: number;
   updatedAt?: string;
   updatedBy?: string;
 }
@@ -67,9 +76,47 @@ export function withDefaults(doc: Partial<FleetSettings> | null | undefined): Fl
       tracesSampleRate: isRate(s.tracesSampleRate) ? s.tracesSampleRate : DEFAULT_TRACES_SAMPLE_RATE,
     };
   }
+  const values = fleetValues(doc?.values);
+  if (values) base.values = values;
+  if (typeof doc?.version === "number" && Number.isInteger(doc.version) && doc.version > 0) base.version = doc.version;
   if (typeof doc?.updatedAt === "string") base.updatedAt = doc.updatedAt;
   if (typeof doc?.updatedBy === "string") base.updatedBy = doc.updatedBy;
   return base;
+}
+
+/** The stored `values` with anything that isn't a plain value, and the Sentry keys (which live in
+ * `telemetry.sentry`), dropped. Undefined when nothing is left. Type checks against the schema
+ * happen in the resolver, which skips a value that no longer fits. */
+function fleetValues(raw: unknown): Record<string, SettingValue> | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out: Record<string, SettingValue> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (key.startsWith(SENTRY_KEY_PREFIX)) continue;
+    if (typeof value === "string" || typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value))) out[key] = value;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** The schema keys that are read from, and written to, `telemetry.sentry` instead of `values`. */
+export const SENTRY_KEY_PREFIX = "telemetry.sentry.";
+
+/** Writes the fleet document through `change` (given the current one, defaults filled in) and
+ * bumps `version`, only if the stored version is still `expectedVersion`; without one, retries a
+ * few times against concurrent writers, so the operator PUT (no If-Match) still never loses a
+ * version bump. Answers the stored document, or the current one when the version didn't match. */
+export async function updateFleetSettings(
+  store: Pick<Store, "fleetSettings">,
+  change: (current: FleetSettings) => FleetSettings,
+  expectedVersion?: number,
+): Promise<{ ok: true; settings: FleetSettings } | { ok: false; current: FleetSettings }> {
+  for (let attempt = 0; ; attempt++) {
+    const current = withDefaults(await store.fleetSettings.get());
+    const version = current.version ?? 0;
+    if (expectedVersion !== undefined && version !== expectedVersion) return { ok: false, current };
+    const next = { ...change(current), version: version + 1 };
+    if (await store.fleetSettings.replaceAtVersion(next, version)) return { ok: true, settings: next };
+    if (expectedVersion !== undefined || attempt >= 4) return { ok: false, current: withDefaults(await store.fleetSettings.get()) };
+  }
 }
 
 /** On only with a DSN to send to; a stored `enabled: true` without one reads as off. */

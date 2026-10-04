@@ -53,9 +53,8 @@ const NAV_ITEMS: Array<{ to: string; end?: boolean; label: string; hint: string;
   { to: "/gurus", label: vocabulary.guru.many, hint: vocabulary.guru.hint },
   { to: "/github", label: vocabulary.github.one, hint: vocabulary.github.hint },
   { to: "/providers", label: vocabulary.provider.many, hint: vocabulary.provider.hint },
-  { to: "/tokens", label: vocabulary.token.many, hint: vocabulary.token.hint },
   // #389: sysops only while the pages are placeholders; CA-1 web and CA-7 drop operatorOnly on their own line.
-  { to: "/devices", label: vocabulary.device.many, hint: vocabulary.device.hint, operatorOnly: true },
+  { to: "/devices", label: vocabulary.device.many, hint: vocabulary.device.hint },
   { to: "/account", label: vocabulary.account.one, hint: vocabulary.account.hint, operatorOnly: true },
   { to: "/settings", label: vocabulary.settings.one, hint: `${vocabulary.settings.hint} — ${vocabulary.operator.hint}`, operatorOnly: true },
 ];

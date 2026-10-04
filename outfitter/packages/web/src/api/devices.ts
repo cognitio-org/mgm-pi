@@ -41,4 +41,14 @@ export const devicesApi = {
   revoke(id: string): Promise<{ id: string; revokedAt: string }> {
     return request(`/api/me/devices/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
+  /** The approver's own address for §1.9's warning: `GET /api/me`'s optional `ip` (task A may add
+   * it). Undefined when the api doesn't send it or the call fails; the page then skips the check. */
+  async myIp(): Promise<string | undefined> {
+    try {
+      const me = await request<{ ip?: unknown }>("/api/me");
+      return typeof me?.ip === "string" && me.ip.trim() ? me.ip.trim() : undefined;
+    } catch {
+      return undefined;
+    }
+  },
 };

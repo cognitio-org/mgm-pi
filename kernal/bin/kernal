@@ -320,7 +320,25 @@ KERNAL_OWN_BIN="${KERNAL_HOME:-$HOME/.kernal}/bin"
 [[ -f "$ROOT/VERSION" ]] || KERNAL_OWN_BIN="$ROOT/.pi/bin"     # a source checkout keeps it out of $HOME
 [[ -d "$KERNAL_OWN_BIN" ]] && export PATH="$PATH:$KERNAL_OWN_BIN"
 
+# Central settings (#397, outfitter/docs/specs/central-auth.md §2.6): `--profile <name>` (or
+# `--profile=<name>`) anywhere on the command line picks this process's settings profile. It is
+# consumed here and passed on as KERNAL_PROFILE, which pi never sees as a flag.
+_args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --profile)
+      [[ -n "${2:-}" && "${2:-}" != -* ]] || { echo "kernal: --profile needs a profile name" >&2; exit 2; }
+      export KERNAL_PROFILE="$2"; shift 2 ;;
+    --profile=*) export KERNAL_PROFILE="${1#--profile=}"; shift ;;
+    *) _args+=("$1"); shift ;;
+  esac
+done
+set -- ${_args[@]+"${_args[@]}"}
+
 case "${1:-}" in
+  login|logout|whoami)
+    # Sign-in to Outfitter (#391, central-auth.md §2.5): before pi starts, like --teleport below.
+    exec node "$ROOT/.pi/extensions/kernal-login/cli.ts" "$@" ;;
   github)
     # The same setup /github runs inside the agent, from a plain terminal.
     if command -v gh >/dev/null 2>&1; then

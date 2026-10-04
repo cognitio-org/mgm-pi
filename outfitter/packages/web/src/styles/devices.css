@@ -1,0 +1,62 @@
+/* #389 CA-1 web: the /device approve page and the Devices page. */
+
+.device-approve {
+  max-width: 44rem;
+}
+
+.device-code-input {
+  font-family: var(--font-mono, monospace);
+  font-size: 1.25rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  width: 11ch;
+}
+
+.device-request,
+.device-done,
+.device-dongles {
+  margin: 1rem 0;
+}
+
+.device-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.35rem 1rem;
+  margin: 0.75rem 0;
+}
+
+.device-facts dt {
+  color: var(--text-dim);
+}
+
+.device-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.device-warning {
+  border: 2px solid var(--warn);
+  background: var(--warn);
+  color: var(--warn-contrast);
+  padding: 0.5rem 0.75rem;
+  margin: 0.75rem 0;
+}
+
+.device-warning code {
+  color: inherit;
+}
+
+.device-expired {
+  color: var(--danger);
+}
+
+@media (max-width: 500px) {
+  .device-facts {
+    grid-template-columns: 1fr;
+    gap: 0.1rem;
+  }
+
+  .device-facts dd {
+    margin-bottom: 0.4rem;
+  }
+}

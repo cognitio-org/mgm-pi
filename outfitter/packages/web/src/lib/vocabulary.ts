@@ -26,6 +26,10 @@ export const vocabulary = {
   drive: { one: "Drive", many: "Drives", hint: "cloud sandboxes running agents right now" },
   provider: { one: "Peripheral", many: "Peripherals", hint: "model and service providers, and their health" },
   token: { one: "Dongle", many: "Dongles", hint: "personal access tokens for Kernal teleport" },
+  // #389 central sign-in and settings (docs/specs/central-auth.md §6-§7).
+  device: { one: "Device", many: "Devices", hint: "computers where Kernal is signed in with your account" },
+  account: { one: "Account", many: "Account", hint: "your Kernal settings: profiles, keys, local models and spend" },
+  profile: { one: "Profile", many: "Profiles", hint: "named sets of Kernal settings, picked with kernal --profile" },
   settings: { one: "Control Panel", many: "Control Panel", hint: "keys and deployment settings" },
   operator: { one: "Sysop", many: "Sysops", hint: "can change keys and deployment settings" },
   help: { one: "Manual", many: "Manual", hint: "what Outfitter is" },

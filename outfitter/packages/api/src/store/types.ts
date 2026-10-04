@@ -6,6 +6,9 @@
 import type { SandboxProviderName } from "../config.ts";
 import type { VoiceEngine, VoicePrefs } from "../voice.ts";
 import type { FleetSettings } from "../fleet-settings.ts";
+import type { DeviceCodesCollection, DevicesCollection } from "./devices.ts";
+import type { SettingsCollection } from "./settings.ts";
+import type { ProviderKeysCollection, RouterKeysCollection } from "./keys.ts";
 
 export type RunState = "queued" | "provisioning" | "running" | "idle" | "stopping" | "stopped" | "failed";
 
@@ -1377,6 +1380,9 @@ export interface FleetSettingsCollection {
   put(settings: FleetSettings): Promise<void>;
   /** Stores `settings` only if there is no document yet (atomic across instances). True when it did. */
   insertIfAbsent(settings: FleetSettings): Promise<boolean>;
+  /** #392: replaces the document only if its stored `version` (absent = 0, no document = 0) is
+   * `expectedVersion` (atomic across instances). True when it did. */
+  replaceAtVersion(settings: FleetSettings, expectedVersion: number): Promise<boolean>;
 }
 
 export interface Store {
@@ -1403,5 +1409,12 @@ export interface Store {
   aeSessions: AeSessionsCollection;
   a2aTasks: A2ATasksCollection;
   fleetSettings: FleetSettingsCollection;
+  // Central sign-in and settings (#389, docs/specs/central-auth.md §9): each collection lives in
+  // its own store module, owned by the task that builds it.
+  deviceCodes: DeviceCodesCollection;
+  devices: DevicesCollection;
+  settings: SettingsCollection;
+  routerKeys: RouterKeysCollection;
+  providerKeys: ProviderKeysCollection;
   close(): Promise<void>;
 }

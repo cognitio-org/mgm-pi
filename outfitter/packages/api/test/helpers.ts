@@ -22,6 +22,7 @@ import type { VoiceUsage } from "../src/voice-usage.ts";
 import type { GithubCatalog } from "../src/github-catalog.ts";
 import type { AgentEngine } from "../src/agentengine/index.ts";
 import type { A2AHandlerFactory } from "../src/a2a/handler.ts";
+import type { LitellmKeys } from "../src/central/litellm-keys.ts";
 
 export interface TestApp extends App {
   store: Store;
@@ -61,6 +62,8 @@ export interface BuildTestAppOptions {
   agentEngine?: AgentEngine;
   /** E9 PR6: the A2A handler (the TCK build's scripted one, test/tck/sut.ts). */
   a2aHandler?: A2AHandlerFactory;
+  /** #389 CA-5: LiteLLM key minting on a fake fetch (createLitellmKeys(config, store, { fetch })). */
+  litellmKeys?: LitellmKeys;
 }
 
 export async function buildTestApp(
@@ -99,6 +102,7 @@ export async function buildTestApp(
     githubCatalog: opts.githubCatalog,
     agentEngine: opts.agentEngine,
     a2aHandler: opts.a2aHandler,
+    litellmKeys: opts.litellmKeys,
     // A test that turns Sentry on through the fleet settings never reaches the network.
     sentryTransport: () => ({ send: async () => ({}), flush: async () => true }),
   });

@@ -25,6 +25,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { RouteContext } from "./context.ts";
 import { verifyTasksToken, bearerFromHeader } from "../auth.ts";
+import { sweepRouterKeys } from "../central/litellm-keys.ts";
 import { GkeEndpointError, GkeProvider, KubeError, WARM_POOL_MAX_REPLICAS, WARM_POOL_MIN_REPLICAS } from "../providers/gke.ts";
 // Review finding L4: gke.ts itself is imported statically here (it's cheap -- no
 // google-auth-library or network at module load, only inside GkeProvider's methods), unlike
@@ -117,12 +118,15 @@ export async function registerHookRoutes(app: FastifyInstance, ctx: RouteContext
     const agentEngine = await ctx.aeSessions.sweep().catch(() => undefined);
     // E9 §5.3: A2A tasks whose turn finished with nobody polling, so their key's slot frees.
     const a2a = await ctx.a2a.sweep().catch(() => undefined);
+    // #394 §5.5: router key deletes that failed, and run keys past their expiry. Never fails the tick.
+    const routerKeys = await sweepRouterKeys(ctx.litellmKeys, ctx.store);
     return {
       woken,
       ...(previews ? { previews } : {}),
       ...(turns ? { turns } : {}),
       ...(agentEngine ? { agentEngine } : {}),
       ...(a2a !== undefined ? { a2a } : {}),
+      ...(routerKeys ? { routerKeys } : {}),
     };
   });
 

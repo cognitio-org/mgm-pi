@@ -1,0 +1,44 @@
+kernal/tests/sentry.test.ts
+  s_38ec74cfb7fa1d::t_8412197f34cfa4 14,85-87
+  s_38ec74cfb7fa1d::t_54d9f4591bf022 88-89
+outfitter/packages/api/src/routes/me.ts
+  s_38ec74cfb7fa1d::t_4341ea9103eb68 24-27
+outfitter/packages/web/src/api/client.ts
+  s_38ec74cfb7fa1d::t_4341ea9103eb68 275-276,278
+outfitter/packages/web/src/lib/sentry.ts
+  s_38ec74cfb7fa1d::t_4341ea9103eb68 39-41
+outfitter/packages/web/test/sentry.test.ts
+  s_38ec74cfb7fa1d::t_4341ea9103eb68 40-49
+kernal/.pi/extensions/sentry/index.ts
+  s_38ec74cfb7fa1d::t_8412197f34cfa4 34,75
+outfitter/packages/api/src/fleet-settings.ts
+  s_38ec74cfb7fa1d::t_4341ea9103eb68 44-47,49,130,133-137
+.github/workflows/outfitter-deploy.yml
+  s_38ec74cfb7fa1d::t_c8d9a1559258d6 110-144
+kernal/.pi/extensions/sentry/config.ts
+  s_38ec74cfb7fa1d::t_8412197f34cfa4 55-61
+outfitter/packages/api/test/fleet-settings.test.ts
+  s_38ec74cfb7fa1d::t_4341ea9103eb68 50,185-192
+  s_38ec74cfb7fa1d::t_7f395820b4ee84 193-196
+.github/workflows/release.yml
+  s_38ec74cfb7fa1d::t_c8d9a1559258d6 83-124
+outfitter/deploy/README.md
+  s_38ec74cfb7fa1d::t_1897d45d86261a 119-135,139-142
+  s_38ec74cfb7fa1d::t_64e8f5bf60c0a2 136-138
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "38529357ea09a76fa20c52c608505d875865a236",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

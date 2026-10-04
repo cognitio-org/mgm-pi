@@ -155,7 +155,7 @@ fi
 # the smoke run may have written settings (pi records e.g. the changelog version); ship the pristine copy
 cp "$STAGE/.pi/settings.shipped.json" "$STAGE/.pi/settings.json"
 rm -rf "$STAGE/.pi/agents"
-rm -rf "${SMOKE_HOME:-/nonexistent}" "$STAGE/Library" "$STAGE/.pi/sessions" "$STAGE/.pi/trust.json" "$STAGE/.pi/auth.json" "$STAGE/.pi/models-store.json" "$STAGE/.pi/mcp-cache.json" "$STAGE/.pi/agent/trust"
+rm -rf "${SMOKE_HOME:-/nonexistent}" "$STAGE/Library" "$STAGE/.pi/sessions" "$STAGE/.pi/trust.json" "$STAGE/.pi/auth.json" "$STAGE/.pi/models-store.json" "$STAGE/.pi/mcp-cache.json" "$STAGE/.pi/agent/trust" "$STAGE/.pi/kernal-defaults-synced.json"
 
 # 4b. shared keys shipped in the bundle's .env (private-repo distribution to family users).
 #     DEEPGRAM_API_KEY: from the CI secret, or from ~/localllm/.env when building locally. /setup

@@ -376,18 +376,43 @@ export async function saveModelDefault(target: ModelSaveTarget, provider: string
       ? { ok: true, message: `saved as this machine's default (${localOverridesPath()})` }
       : { ok: false, message: `not saved to this machine: ${String(r.body.error ?? r.status)}${r.body.errors ? ` (${Object.values(r.body.errors as object).join("; ")})` : ""}` };
   }
-  const view = await settingsView();
-  if (!view.target) return { ok: false, message: `not saved to your account: ${view.targetProblem ?? "Outfitter did not answer"}` };
-  const r = await saveSettings({ target: "account", values, version: view.target.version });
-  if (r.status !== 200) {
-    return { ok: false, message: `not saved to your account: ${String(r.body.error ?? r.status)}${r.body.errors ? ` (${Object.values(r.body.errors as object).join("; ")})` : ""}` };
-  }
-  const machine = readMachineValues();
+  const saved = await saveAccountDefaults(values);
+  return saved.ok ? { ok: true, message: `saved as the default on ${saved.where}` } : { ok: false, message: `not saved to your account: ${saved.message}` };
+}
+
+export type AccountDefaultsResult = { ok: boolean; message: string; where?: string; profile?: string; clearedPins: string[] };
+
+/**
+ * The model.* defaults (any of model.provider, model.default, model.thinking) to the account: the
+ * profile in use, else the user level, with the Settings page's versioned PUT. A 409 (changed
+ * elsewhere since the GET) refetches the version and tries once more. On success this machine's own
+ * pins of those keys (config.local.json) are removed, since they would keep winning here over the
+ * account (`clearedPins` names them). Never throws; `message` says why on failure.
+ */
+export async function saveAccountDefaults(values: Record<string, SettingValue>): Promise<AccountDefaultsResult> {
   try {
-    for (const k of Object.keys(values)) if (machine[k] !== undefined) setLocalOverride(k, undefined);
-  } catch {}
-  const where = view.target.name ? `your account (profile ${view.target.name})` : "your account";
-  return { ok: true, message: `saved as the default on ${where}` };
+    if (!signedInAccount()) return { ok: false, message: "not signed in", clearedPins: [] };
+    let last: SaveResult | undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const view = await settingsView();
+      if (!view.target) return { ok: false, message: view.targetProblem ?? "Outfitter did not answer", clearedPins: [] };
+      const r = await saveSettings({ target: "account", values, version: view.target.version });
+      if (r.status === 200) {
+        const machine = readMachineValues();
+        const clearedPins: string[] = [];
+        try {
+          for (const k of Object.keys(values)) if (machine[k] !== undefined) { setLocalOverride(k, undefined); clearedPins.push(k); }
+        } catch {}
+        return { ok: true, message: String(r.body.message ?? "saved"), where: view.target.name ? `your account (profile ${view.target.name})` : "your account", ...(view.target.name ? { profile: view.target.name } : {}), clearedPins };
+      }
+      last = r;
+      if (!(r.status === 409 && r.body.stale)) break;
+    }
+    const b = last?.body ?? {};
+    return { ok: false, message: `${String(b.error ?? last?.status)}${b.errors ? ` (${Object.values(b.errors as object).join("; ")})` : ""}`, clearedPins: [] };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e), clearedPins: [] };
+  }
 }
 
 // ---------- personal provider keys (spec §4) ----------

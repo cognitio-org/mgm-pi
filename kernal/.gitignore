@@ -3,3 +3,6 @@
 
 # skills copied in by scripts/prebundle.sh
 .pi/skills/
+
+# the Ctrl+S default sync's record of settings.json's defaults (_shared/default-sync.ts)
+.pi/kernal-defaults-synced.json

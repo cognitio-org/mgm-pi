@@ -824,6 +824,25 @@ changes nothing, so an unconfigured Kernal starts as before.
   machine's own `model.*` overrides, which would otherwise keep winning there. Both still write
   settings.json (pi's own default). Signed out, without a UI, or on Escape: settings.json only.
   Saves say when each key applies (`whenSaved`).
+- **A default set inside Kernal goes to the account (owner decision 2026-10-04, #437)**: pi's model
+  picker Ctrl+S ("set as default"), the default thinking level and pi's `/login` default model are
+  written by pi itself to settings.json (`defaultProvider`+`defaultModel` as a pair,
+  `defaultThinkingLevel`). Kernal (`_shared/default-sync.ts`, registered by kernal-config) saves
+  each such change to the account (active profile, else the user level) through the same versioned
+  PUT (`saveAccountDefaults`: GET for the version, PUT with If-Match; a 409 refetches the version
+  and retries once), so new sessions on every machine start with it. pi 0.87's `model_select` /
+  `thinking_level_select` carry no persist flag, so the change is detected in settings.json against
+  a record of the three keys as last seen (`kernal-defaults-synced.json` next to settings.json):
+  created from settings.json when missing, moved on after Kernal's own writes (`/connect`, the Model
+  page: `noteOwnDefaultsWrite`) and after every sync. It is checked a moment after those events (pi
+  queues its write), and at `session_start` and `agent_start` (a Ctrl+S that emits nothing, or one
+  made just before quitting). No fs.watch. Per-session changes (Enter in the picker, cycling, a
+  session's thinking level) never write settings.json and never reach the account. Signed out, in a
+  Drive, or without kernal-admin: nothing is sent and the record moves on. A failure (offline, 401,
+  a second 409, a refused value) never breaks the session; one notice says it stays on this machine.
+  On success a `config.local.json` pin of the same key is removed (the notice says so), so the new
+  default applies on this machine too. A backend outside `model.provider`'s choices is saved as
+  `model.default = "<provider>/<id>"`.
 
 ## 12. Migration (CA-10, task J, #399; after E and F)
 

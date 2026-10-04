@@ -26,6 +26,7 @@ import {
   sessionEstimate, money, footerStatus, budgetRows, renderPanel, cleanKey, keyCheckUrl, authFailureText, busServe, keepListed,
 } from "./lib.ts";
 import { settingsPath, updateSettings } from "./settings.ts";
+import { noteOwnDefaultsWrite } from "../_shared/default-sync.ts";
 import { clearLocalOverrides, describeSource, layerCentralEnv, reresolve, webOrigin, type ConfigValue } from "../_shared/central-config.ts";
 import { loginState } from "../_shared/outfitter-session.ts";
 
@@ -162,6 +163,9 @@ async function discover(b: Backend, litellmMeta: Map<string, ModelMeta>, lmstudi
 export { settingsPath };
 export function saveDefault(provider: string, model: string) {
   updateSettings((s) => { s.defaultProvider = provider; s.defaultModel = model; });
+  // #437: Kernal's own write, whichever target the person then picks (or none): never echoed to the
+  // account by the Ctrl+S sync (_shared/default-sync.ts).
+  try { noteOwnDefaultsWrite(); } catch {}
 }
 
 export default async function (pi: ExtensionAPI) {

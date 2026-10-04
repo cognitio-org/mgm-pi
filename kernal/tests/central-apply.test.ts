@@ -713,7 +713,7 @@ describe("/connect: save to my account (profile X) or only this machine", () => 
 
   test("connect and the shared modules import nothing the Drive image removes (kernal-admin, kernal-voice, ...)", () => {
     const removed = /from "\.\.\/(kernal-admin|kernal-voice|kernal-update|kernal-codebase-index|kernal-chrome|kernal-html-preview|sentry)\//;
-    for (const f of ["connect/index.ts", "kernal-config/index.ts", "compaction/index.ts", "outfitter-agentengine/laptop.ts", "_shared/central-config.ts", "_shared/central-apply.ts"]) {
+    for (const f of ["connect/index.ts", "kernal-config/index.ts", "compaction/index.ts", "outfitter-agentengine/laptop.ts", "_shared/central-config.ts", "_shared/central-apply.ts", "_shared/default-sync.ts"]) {
       assert.doesNotMatch(readFileSync(join(import.meta.dirname, "..", ".pi", "extensions", f), "utf8"), removed, f);
     }
   });

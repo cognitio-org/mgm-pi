@@ -21,6 +21,10 @@
  * background refresh and /config reload take over fresh values and apply what is safe live
  * (compaction at once, voice and the model at the next session, memory at the next start). A
  * running conversation never switches model.
+ *
+ * A default set inside Kernal (pi's Ctrl+S in the model picker, a default thinking level) goes to the
+ * account (_shared/default-sync.ts): pi writes it to settings.json, and this saves it with the
+ * versioned PUT, so new sessions on every machine start with it. Per-session changes never do.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { inSandbox } from "../_shared/env.ts";
@@ -30,6 +34,7 @@ import {
   resolve, startBackgroundRefresh, webOrigin, type ResolvedConfig,
 } from "../_shared/central-config.ts";
 import { applyModelAtSessionStart, applyVoiceSettings, describeChanges, snapshot } from "../_shared/central-apply.ts";
+import { pendingDefaults, registerDefaultSync, type SyncResult } from "../_shared/default-sync.ts";
 
 /** /config's note on when a change reaches this Kernal. */
 export const WHEN_NOTE = "Compaction changes apply at once; model, thinking and voice at the next session (/new or a restart: a running conversation never switches model); memory at the next start.";
@@ -44,6 +49,9 @@ export type Deps = {
   argv?: readonly string[];
   /** Tests: what session_start applied. */
   onApplied?: (r: import("../_shared/central-apply.ts").StartApplyResult) => void;
+  /** Tests: each run of the default sync (a Ctrl+S default to the account), and its settle time. */
+  onDefaultsSynced?: (r: SyncResult) => void;
+  defaultsSettleMs?: number;
 };
 
 /** The device's router key in use, or undefined when a local key (or none) is. */
@@ -120,9 +128,15 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
     });
   }
 
+  // #437: a default set with Ctrl+S (or the default thinking level) goes to the account.
+  const defaults = inSandbox() ? undefined : registerDefaultSync(pi as any, { onSynced: deps.onDefaultsSynced, settleMs: deps.defaultsSettleMs });
+
   // #437: a new, empty session starts on the default model and thinking level the account (or
   // this machine) sets; pi chose its own from settings.json just before.
   pi.on("session_start", async (event: any, ctx: any) => {
+    // A default set just before the last quit (Ctrl+S, then exit) goes to the account first, so the
+    // new session does not start on the account's older one. Only when one is pending.
+    if (defaults && pendingDefaults()) await defaults.run(ctx);
     const r = await applyModelAtSessionStart(pi, event, ctx, { argv: deps.argv });
     deps.onApplied?.(r);
     if (!ctx?.hasUI) return;

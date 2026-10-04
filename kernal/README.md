@@ -86,6 +86,15 @@ out, or without a terminal, nothing changes: the choice goes to `settings.json` 
 Drive the owner's settings arrive with the run (`KERNAL_RUN_SETTINGS`) and rank below the tape's
 own choices.
 
+A default set inside pi itself, Ctrl+S in the model picker ("set as default") or the default
+thinking level, also goes to your account when you are signed in: the active profile, else the
+account itself, so new sessions on every machine start with it. Kernal sees pi write it to
+`settings.json` and saves it with the same versioned request as `/admin` (a conflict is retried
+once). If this machine had pinned that key ("Only this machine"), the pin is removed so the new
+default applies here too, and the notice says so. Choosing a model for this session only (Enter,
+cycling) never touches the account. Signed out or in a Drive it stays in `settings.json`; if the
+save fails (offline, expired sign-in), a notice says it was kept on this machine.
+
 ## Run (from any repo)
 
 ```bash

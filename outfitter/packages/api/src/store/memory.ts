@@ -425,6 +425,12 @@ class MemoryFleetSettings implements FleetSettingsCollection {
     this.doc = clone(settings);
     return true;
   }
+
+  async replaceAtVersion(settings: FleetSettings, expectedVersion: number): Promise<boolean> {
+    if ((this.doc?.version ?? 0) !== expectedVersion) return false;
+    this.doc = clone(settings);
+    return true;
+  }
 }
 
 class MemoryTokens implements TokensCollection {

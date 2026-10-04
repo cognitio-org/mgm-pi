@@ -6,7 +6,7 @@
 
 import type { FastifyInstance } from "fastify";
 import type { RouteContext } from "./context.ts";
-import { parseSentryUpdate, withDefaults } from "../fleet-settings.ts";
+import { parseSentryUpdate, updateFleetSettings, withDefaults } from "../fleet-settings.ts";
 import type { Guru } from "../store/types.ts";
 import type { SecretKind } from "../operator.ts";
 import {
@@ -154,13 +154,10 @@ export async function registerOperatorRoutes(app: FastifyInstance, ctx: RouteCon
   app.put("/api/operator/fleet-settings", { preHandler: requireOperator }, async (req, reply) => {
     const parsed = parseSentryUpdate(req.body, { allowHttp: ctx.config.devMode });
     if ("error" in parsed) return reply.code(400).send({ error: parsed.error });
-    const settings = {
-      ...withDefaults(await ctx.store.fleetSettings.get()),
-      telemetry: { sentry: parsed.value },
-      updatedAt: new Date().toISOString(),
-      updatedBy: req.identity!.email,
-    };
-    await ctx.store.fleetSettings.put(settings);
+    // #392: through updateFleetSettings, which bumps the fleet `version` central settings' If-Match reads.
+    const written = await updateFleetSettings(ctx.store, (current) => ({ ...current, telemetry: { sentry: parsed.value }, updatedAt: new Date().toISOString(), updatedBy: req.identity!.email }));
+    if (!written.ok) return reply.code(409).send({ error: "fleet settings changed concurrently, try again" });
+    const settings = written.settings;
     ctx.fleetSettings.set(settings);
     req.log.info({ operator: req.identity!.email, sentryEnabled: parsed.value.enabled, tracesSampleRate: parsed.value.tracesSampleRate }, "operator fleet settings write");
     return settings;

@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { greetingName } from "../greeting.ts";
 import { clientFleetSettings, withDefaults } from "../fleet-settings.ts";
 import type { RouteContext } from "./context.ts";
+import { clientIp } from "../central/device-login.ts";
 
 /** GET /api/me: the caller's identity, established by the auth preHandler in server.ts. Also
  * registered on the "link" role (routes/index.ts) so a teleport client can sanity-check its token
@@ -31,6 +32,9 @@ export async function registerMeRoute(app: FastifyInstance, ctx: RouteContext): 
       email,
       operator: req.identity!.operator,
       linkOrigin: ctx.config.linkOrigin || undefined,
+      // #389 CA-1: the caller's IP as this role sees it, so the approve page can warn when a device
+      // code was requested from somewhere else (docs/specs/central-auth.md §1.9).
+      ip: clientIp(req),
       // Omitted when there is nothing safe to greet with. The web UI copies it into a cookie the
       // kernal.one landing page can read; see landing/public/welcome.js.
       ...(name ? { name } : {}),

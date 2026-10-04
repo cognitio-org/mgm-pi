@@ -7,7 +7,7 @@ with a `/connect` command that switches between three backends:
 |---|---|---|
 | `lmstudio` | Local LM Studio (MLX) on `localhost:1234` | discovered live (`qwen/qwen3.6-35b-a3b`, ...) |
 | `litellm` | Cloud router `router.kernal.one` | discovered live, scoped to the agent key's team |
-| `openrouter` | openrouter.ai | curated list (override with `OPENROUTER_MODELS`), minus ids OpenRouter no longer lists |
+| `openrouter` | openrouter.ai | curated list you can add to (see *The OpenRouter list*), minus ids OpenRouter doesn't list |
 
 Everything here is extensions and settings on top of pi; pi's own source is never modified. How the
 pieces work inside, and why they are built that way, is in [docs/architecture.md](docs/architecture.md).
@@ -114,8 +114,25 @@ Inside pi:
 /connect                         pick backend, then model
 /connect litellm                 pick a model on the router
 /connect lmstudio qwen/qwen3.6-35b-a3b
+/connect openrouter              ... ends with "Browse all OpenRouter models…"
 /model                           pi's own picker also lists all three providers
 ```
+
+**The OpenRouter list.** Kernal ships a short curated list of OpenRouter models. You can add or
+remove models on it:
+- in `/connect openrouter`, choose *Browse all OpenRouter models…*, search OpenRouter's whole
+  catalogue and pick a model. Kernal offers to add it to your account's list (every Kernal you
+  sign in to) or to this machine's, then switches to it.
+- on `/admin` → Model, each listed OpenRouter model has a × to remove it, and an *Add* box takes
+  any id from the catalogue. Changes are saved to your account or to this machine.
+
+The lists are central settings (`openrouter.models.*`; `/config` shows them).
+- The fleet can add models for everyone or hide them; a hidden model can't be added back.
+- Your account's changes and this machine's changes add up. Where they disagree, the nearer one
+  wins: a profile over your user list, this machine over both.
+- Ids are checked against OpenRouter's catalogue. A listed model OpenRouter later drops shows on
+  `/admin` under *Not on OpenRouter*, where you can remove it.
+- `OPENROUTER_MODELS` in `.env` still replaces the whole list, but the fleet's hidden models stay hidden.
 
 Model can also be given on the CLI: `pi --model litellm/claude-sonnet-5:high`.
 The choice is saved to `.pi/settings.json` (`defaultProvider` / `defaultModel`) and reused next start.

@@ -428,6 +428,26 @@ with the three Sentry keys above and set at the fleet level only while Sentry is
 | `telemetry.sentry.agentContent` | boolean (needs agentTraces) | no | fleet, local | opt-out | false | |
 | `telemetry.sentry.profilesSampleRate` | number 0..1 | no | fleet | none | 0 | |
 
+v3 keys (`SETTINGS_SCHEMA_VERSION = 3`, #440), the curated OpenRouter list. Each is a string of
+comma-separated model ids. There is one add and one remove key per level, so the levels combine
+instead of the lowest one replacing the list.
+
+Kernal builds the list from its defaults, then applies each level's removes and adds in this order:
+the fleet's adds, the user, the profile, then this machine. A nearer level wins: this machine can
+add back a model your account removed. The fleet's removals are applied last and always win.
+`OPENROUTER_MODELS` in `.env` replaces the defaults and every add; fleet removals still apply.
+
+| Key | Type | Secret | Levels | Override | Default | Env |
+|---|---|---|---|---|---|---|
+| `openrouter.models.fleetAdd` | string (ids) | no | fleet | none | | |
+| `openrouter.models.fleetRemove` | string (ids) | no | fleet | none | | |
+| `openrouter.models.add` | string (ids) | no | user | any | | |
+| `openrouter.models.remove` | string (ids) | no | user | any | | |
+| `openrouter.models.profileAdd` | string (ids) | no | profile | any | | |
+| `openrouter.models.profileRemove` | string (ids) | no | profile | any | | |
+| `openrouter.models.localAdd` | string (ids) | no | local | any | | |
+| `openrouter.models.localRemove` | string (ids) | no | local | any | | |
+
 `router.key` is never stored by Outfitter: it is the device's CA-5 key, which Kernal reads from its
 keychain (`getRouterKey`, §2.2). It is declared so `/config` and `/admin` can show its source.
 Personal provider keys are not settings (§4). `telemetry.sentry.enabled`'s local level (and the

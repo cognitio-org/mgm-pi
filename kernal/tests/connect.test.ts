@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   parseEnvText, parseModelInfo, parseLmStudioModels, backends, normalizeBaseUrl, rootUrl, parseSpendHeaders, sessionEstimate,
   money, pctText, price, fit, bar, budgetRows, renderPanel, footerStatus, plainLen, QWEN_THINKING_MAP, DEFAULT_OPENROUTER_MODELS,
-  cleanKey, keyCheckUrl, authFailureText, FREE, DEFAULT_PAID, keepListed,
+  cleanKey, keyCheckUrl, authFailureText, FREE, DEFAULT_PAID, keepListed, parseIdList, curateOpenRouter, NO_CURATION,
 } from "../.pi/extensions/connect/lib.ts";
 
 const id = (_c: string, t: string) => t;   // identity painter
@@ -132,6 +132,23 @@ describe("backends", () => {
     // catalogue unreadable or empty: keep the curated list rather than offer nothing
     assert.deepEqual(keepListed(["a/b"], undefined), { kept: ["a/b"], dropped: [] });
     assert.deepEqual(keepListed(["a/b"], { data: [] }), { kept: ["a/b"], dropped: [] });
+  });
+
+  test("curated list settings: comma-separated ids, every level's adds and removes combine (#440)", () => {
+    assert.deepEqual(parseIdList(" a/b, c/d ,,a/b "), ["a/b", "c/d"]);
+    assert.deepEqual(parseIdList(undefined), []);
+    const base = ["a/b", "c/d", "e/f"];
+    assert.deepEqual(curateOpenRouter(base, NO_CURATION), base);
+    const lists = { ...NO_CURATION, fleetAdd: ["f/1"], add: ["u/1"], localAdd: ["m/1"], remove: ["a/b"], localRemove: ["f/1"] };
+    assert.deepEqual(curateOpenRouter(base, lists), ["c/d", "e/f", "u/1", "m/1"]);
+    // a fleet removal wins over every add, a default included
+    assert.deepEqual(curateOpenRouter(base, { ...lists, fleetRemove: ["u/1", "m/1", "c/d"] }), ["e/f"]);
+    // the nearer level wins: this machine adds back what the account removed, a profile overrides the user
+    assert.deepEqual(curateOpenRouter(base, { ...NO_CURATION, remove: ["a/b"], localAdd: ["a/b"] }), ["c/d", "e/f", "a/b"]);
+    assert.deepEqual(curateOpenRouter(base, { ...NO_CURATION, add: ["u/1"], profileRemove: ["u/1"] }), base);
+    assert.deepEqual(curateOpenRouter(base, { ...NO_CURATION, localAdd: ["a/b"], fleetRemove: ["a/b"] }), ["c/d", "e/f"], "except over a fleet removal");
+    // OPENROUTER_MODELS replaced the base: adds and personal removes don't apply, fleet removals do
+    assert.deepEqual(curateOpenRouter(["x/y", "c/d"], { ...lists, fleetRemove: ["c/d"] }, true), ["x/y"]);
   });
 
   test("normalizeBaseUrl repairs what people type", () => {

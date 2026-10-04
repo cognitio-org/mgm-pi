@@ -46,7 +46,7 @@ function fleet(sentry: SentryFleetSettings): FleetSettings {
 
 describe("the schema", () => {
   test("five new keys, version 2, booleans off and opt-out like telemetry.sentry.enabled, the rate fleet-only at 0", () => {
-    assert.equal(SETTINGS_SCHEMA_VERSION, 2);
+    assert.ok(SETTINGS_SCHEMA_VERSION >= 2);   // added in v2; later versions add other keys
     for (const key of SIGNAL_KEYS) {
       const d = settingDecl(key)!;
       assert.ok(d, key);

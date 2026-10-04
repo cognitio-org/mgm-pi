@@ -1,0 +1,59 @@
+outfitter/packages/web/src/pages/SettingsPage.tsx
+  s_38ec74cfb7fa1d::t_ea8e1b97c1d713 280
+outfitter/packages/api/src/sentry.ts
+  s_38ec74cfb7fa1d::t_b00ba7cd9da921 162-165,168,171-177,179
+  s_38ec74cfb7fa1d::t_d6747fb5b991e4 131
+  s_38ec74cfb7fa1d::t_19eca6c01a2ccc 23
+  s_38ec74cfb7fa1d::t_d0ea1d740a39cd 33-43
+  s_38ec74cfb7fa1d::t_b5ffe2b5cecd8d 44-45,49
+outfitter/packages/api/test/sentry-signals.test.ts
+  s_38ec74cfb7fa1d::t_448f2ce7289459 329-374
+  s_38ec74cfb7fa1d::t_f9181670236f62 487-502
+  s_38ec74cfb7fa1d::t_08a81ad18b3f5d 405-438
+  s_38ec74cfb7fa1d::t_e0b6019ce5fa93 32
+outfitter/packages/agentd/src/agent-trace.ts
+  s_38ec74cfb7fa1d::t_c0e73d41d8fba6 33-37
+  s_38ec74cfb7fa1d::t_4cbad0afa231ca 198
+  s_38ec74cfb7fa1d::t_d3a6643423b711 359,361
+  s_38ec74cfb7fa1d::t_c6122b2896d378 397
+  s_38ec74cfb7fa1d::t_11495f81297bb1 77-79
+  s_38ec74cfb7fa1d::t_e85f248f701b7c 386-387
+  s_38ec74cfb7fa1d::t_fe5726616f3111 430,432-433,435
+  s_38ec74cfb7fa1d::t_6a0b161afda116 229-252
+  s_38ec74cfb7fa1d::t_9b50b8e9b0044d 32,38-46
+  s_38ec74cfb7fa1d::t_37f2f2fb13a169 305
+  s_38ec74cfb7fa1d::t_0561f5a5daf2b1 181-193
+  s_38ec74cfb7fa1d::t_80675085283bfb 288-291
+outfitter/packages/agentd/src/sentry.ts
+  s_38ec74cfb7fa1d::t_4e97d4a22488b9 105,109-111,114-119,121
+outfitter/packages/agentd/test/agent-trace.test.ts
+  s_38ec74cfb7fa1d::t_6bb5b044cd7720 365-369
+  s_38ec74cfb7fa1d::t_efaa4c4589d9e5 9,294
+  s_38ec74cfb7fa1d::t_de08d60bd3329c 392-397
+  s_38ec74cfb7fa1d::t_b446a7198202af 335
+  s_38ec74cfb7fa1d::t_53cf21eae7cb89 374,386
+  s_38ec74cfb7fa1d::t_71e1109f3a1699 300-334,336-364,370-373,375-385,387-391,398-412
+outfitter/packages/api/src/agentlink.ts
+  s_38ec74cfb7fa1d::t_a0810b5cbc2ef0 1943-1945,1952-1953
+  s_38ec74cfb7fa1d::t_5036fca9e52c33 48
+outfitter/packages/api/src/runs.ts
+  s_38ec74cfb7fa1d::t_95015183ea918b 19-22
+  s_38ec74cfb7fa1d::t_17f92312bac55b 299-301,307
+  s_38ec74cfb7fa1d::t_52df702f0099c4 24-26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "b0df7d8a61485ea212b5d6b936cc3a88e87b4b08",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

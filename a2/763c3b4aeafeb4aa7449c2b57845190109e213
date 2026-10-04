@@ -1,0 +1,37 @@
+kernal/.pi/extensions/_shared/central-config.ts
+  s_38ec74cfb7fa1d::t_3c0123a1febcf4 420,422,450,454,516-520
+  s_38ec74cfb7fa1d::t_4bb4f1a9ebe3ec 2,8-20,22-29,57-419,421,423-449,451-453,455-473,482-492,501-515,521,523-555,558-565,568-589,591-710
+  s_38ec74cfb7fa1d::t_48009b4f8a95a9 522
+kernal/.pi/extensions/kernal-config/index.ts
+  s_38ec74cfb7fa1d::t_604c50d90f83bd 1-43,45-82
+  s_38ec74cfb7fa1d::t_b633ae6b6b799b 44
+kernal/tests/central-config.test.ts
+  s_38ec74cfb7fa1d::t_2e4f64d6006e4d 1-497
+kernal/.pi/extensions/sentry/config.ts
+  s_38ec74cfb7fa1d::t_3a7af9892f9910 14-15,27-38
+  s_38ec74cfb7fa1d::t_1abb15109d9e4e 39-40
+kernal/.pi/extensions/sentry/index.ts
+  s_38ec74cfb7fa1d::t_3a7af9892f9910 30-31,34,41-45,70-73,79,122-124,126
+kernal/.pi/extensions/connect/index.ts
+  s_38ec74cfb7fa1d::t_10160d5da46534 27-28,62-63,185,187-190
+  s_38ec74cfb7fa1d::t_14d1752f1f8a79 64
+kernal/tests/config-command.test.ts
+  s_38ec74cfb7fa1d::t_b633ae6b6b799b 92,186
+  s_38ec74cfb7fa1d::t_8676b597143294 1-91,93-185,187-207
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "a2763c3b4aeafeb4aa7449c2b57845190109e213",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

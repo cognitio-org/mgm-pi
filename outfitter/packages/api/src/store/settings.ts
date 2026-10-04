@@ -51,55 +51,120 @@ export interface SettingsCollection {
   put(doc: SettingsDoc, expectedVersion: number): Promise<SettingsWriteResult>;
   /** Deletes only at `expectedVersion`. */
   delete(id: string, expectedVersion: number): Promise<SettingsWriteResult | { ok: true; doc: null }>;
-  /** Makes `name` the user's only default profile (atomic enough: clears the others first). */
+  /** Makes `name` the user's only default profile (atomic enough: clears the others first). Every
+   * document it changes gets a new version, so a write holding the old one is refused rather than
+   * putting a second default back. */
   setDefaultProfile(userId: string, name: string): Promise<void>;
 }
 
-const notImplemented = (what: string): never => {
-  throw new Error(`${what}: not implemented yet (CA-3, docs/specs/central-auth.md)`);
-};
+function clone<T>(value: T): T {
+  return structuredClone(value);
+}
+
+function byName(a: SettingsDoc, b: SettingsDoc): number {
+  return (a.name ?? "").localeCompare(b.name ?? "");
+}
+
+// ---------- memory (dev/tests) ----------
 
 export class MemorySettings implements SettingsCollection {
-  /** Nothing is stored until CA-3 lands: every level reads as unset. */
-  async get(_id: string): Promise<SettingsDoc | null> {
-    return null;
+  private readonly docs = new Map<string, SettingsDoc>();
+
+  async get(id: string): Promise<SettingsDoc | null> {
+    const doc = this.docs.get(id);
+    return doc ? clone(doc) : null;
   }
-  async listProfiles(_userId: string): Promise<SettingsDoc[]> {
-    return [];
+
+  async listProfiles(userId: string): Promise<SettingsDoc[]> {
+    return [...this.docs.values()].filter((d) => d.level === "profile" && d.userId === userId).sort(byName).map(clone);
   }
-  async put(_doc: SettingsDoc, _expectedVersion: number): Promise<SettingsWriteResult> {
-    return notImplemented("settings.put");
+
+  async put(doc: SettingsDoc, expectedVersion: number): Promise<SettingsWriteResult> {
+    const current = this.docs.get(doc.id);
+    if ((current?.version ?? 0) !== expectedVersion) return { ok: false, current: current ? clone(current) : null };
+    const stored = { ...clone(doc), version: expectedVersion + 1 };
+    this.docs.set(doc.id, stored);
+    return { ok: true, doc: clone(stored) };
   }
-  async delete(_id: string, _expectedVersion: number): Promise<SettingsWriteResult | { ok: true; doc: null }> {
-    return notImplemented("settings.delete");
+
+  async delete(id: string, expectedVersion: number): Promise<SettingsWriteResult | { ok: true; doc: null }> {
+    const current = this.docs.get(id);
+    if (!current || current.version !== expectedVersion) return { ok: false, current: current ? clone(current) : null };
+    this.docs.delete(id);
+    return { ok: true, doc: null };
   }
-  async setDefaultProfile(_userId: string, _name: string): Promise<void> {
-    notImplemented("settings.setDefaultProfile");
+
+  async setDefaultProfile(userId: string, name: string): Promise<void> {
+    const now = new Date().toISOString();
+    for (const doc of this.docs.values()) {
+      if (doc.level !== "profile" || doc.userId !== userId) continue;
+      const want = doc.name === name;
+      if ((doc.isDefault === true) === want) continue;
+      if (want) doc.isDefault = true;
+      else delete doc.isDefault;
+      doc.version += 1;
+      doc.updatedAt = now;
+    }
   }
 }
 
+// ---------- Mongo ----------
+
 export type SettingsDocMongo = SettingsDoc & { _id: string };
+
+function fromMongo(doc: SettingsDocMongo | null): SettingsDoc | null {
+  if (!doc) return null;
+  const { _id, ...rest } = doc;
+  return rest;
+}
 
 export class MongoSettings implements SettingsCollection {
   private readonly col: MongoCollection<SettingsDocMongo>;
   constructor(col: MongoCollection<SettingsDocMongo>) {
     this.col = col;
   }
-  async get(_id: string): Promise<SettingsDoc | null> {
-    void this.col;
-    return null;
+
+  async get(id: string): Promise<SettingsDoc | null> {
+    return fromMongo(await this.col.findOne({ _id: id }));
   }
-  async listProfiles(_userId: string): Promise<SettingsDoc[]> {
-    return [];
+
+  async listProfiles(userId: string): Promise<SettingsDoc[]> {
+    const docs = await this.col.find({ level: "profile", userId }).sort({ name: 1 }).toArray();
+    return docs.map((d) => fromMongo(d)!);
   }
-  async put(_doc: SettingsDoc, _expectedVersion: number): Promise<SettingsWriteResult> {
-    return notImplemented("settings.put");
+
+  async put(doc: SettingsDoc, expectedVersion: number): Promise<SettingsWriteResult> {
+    const stored: SettingsDocMongo = { ...doc, _id: doc.id, version: expectedVersion + 1 };
+    if (expectedVersion === 0) {
+      try {
+        await this.col.insertOne(stored);
+        return { ok: true, doc: fromMongo(stored)! };
+      } catch (err) {
+        if ((err as { code?: number }).code !== 11000) throw err;
+        return { ok: false, current: await this.get(doc.id) };
+      }
+    }
+    const res = await this.col.replaceOne({ _id: doc.id, version: expectedVersion }, stored);
+    if (res.matchedCount === 1) return { ok: true, doc: fromMongo(stored)! };
+    return { ok: false, current: await this.get(doc.id) };
   }
-  async delete(_id: string, _expectedVersion: number): Promise<SettingsWriteResult | { ok: true; doc: null }> {
-    return notImplemented("settings.delete");
+
+  async delete(id: string, expectedVersion: number): Promise<SettingsWriteResult | { ok: true; doc: null }> {
+    const res = await this.col.deleteOne({ _id: id, version: expectedVersion });
+    if (res.deletedCount === 1) return { ok: true, doc: null };
+    return { ok: false, current: await this.get(id) };
   }
-  async setDefaultProfile(_userId: string, _name: string): Promise<void> {
-    notImplemented("settings.setDefaultProfile");
+
+  async setDefaultProfile(userId: string, name: string): Promise<void> {
+    const now = new Date().toISOString();
+    await this.col.updateMany(
+      { level: "profile", userId, name: { $ne: name }, isDefault: true },
+      { $unset: { isDefault: "" }, $inc: { version: 1 }, $set: { updatedAt: now } },
+    );
+    await this.col.updateOne(
+      { level: "profile", userId, name, isDefault: { $ne: true } },
+      { $set: { isDefault: true, updatedAt: now }, $inc: { version: 1 } },
+    );
   }
 }
 

@@ -11,6 +11,7 @@ import { buildTestApp, seedGuru } from "./helpers.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { MemorySecretAdmin } from "../src/secrets.ts";
 import type { Session, Store } from "../src/store/types.ts";
+import { TEST_IAP_AUDIENCE, iapHeaders, useFakeIap } from "./device-iap.ts";
 
 const OPERATOR_ENV = { OUTFITTER_DEV: "0", OUTFITTER_OPERATORS: "operator@mgms.eu" };
 
@@ -62,12 +63,15 @@ describe("GET /api/me: operator flag", () => {
     await app.fastify.close();
   });
 
-  test("an operator's identity reports operator: true", async () => {
+  test("an operator signed in through IAP reports operator: true; the same operator's Dongle does not (#390)", async (t) => {
+    useFakeIap(t);
     const store = new MemoryStore();
     const auth = await bearerFor(store, "operator@mgms.eu");
-    const app = await buildTestApp(OPERATOR_ENV, { store });
-    const res = await app.fastify.inject({ method: "GET", url: "/api/me", headers: auth });
-    assert.equal(res.json().operator, true);
+    const app = await buildTestApp({ ...OPERATOR_ENV, IAP_AUDIENCE: TEST_IAP_AUDIENCE }, { store });
+    const viaIap = await app.fastify.inject({ method: "GET", url: "/api/me", headers: iapHeaders("operator@mgms.eu") });
+    assert.equal(viaIap.json().operator, true);
+    const viaDongle = await app.fastify.inject({ method: "GET", url: "/api/me", headers: auth });
+    assert.equal(viaDongle.json().operator, false);
     await app.fastify.close();
   });
 });

@@ -36,6 +36,9 @@ export async function initSentry(load: () => Promise<ClientFleetSettings> = () =
     dsn: sentry.dsn,
     // "development" from `vite` (dev server), "production" from a build, like the API's own.
     environment: import.meta.env.DEV ? "development" : "production",
+    // The deploy's outfitter-v* tag, from the api (#421): the same release the api's own events and
+    // the deploy workflow's Sentry release use. Absent in dev and on an untagged deploy.
+    ...(sentry.release ? { release: sentry.release } : {}),
     // SDK 11's default span streaming, on purpose: page loads and navigations are named
     // "Pageload"/"Navigation" rather than after the pathname, which can carry session ids. (Unlike
     // the API and Kernal, nothing here needs beforeSendTransaction: the SDK starts only when on.)

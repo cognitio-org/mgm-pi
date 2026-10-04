@@ -52,6 +52,13 @@ export function defaultEnvironment(isPackagedBundle: boolean): string {
   return isPackagedBundle ? "production" : "development";
 }
 
+/** The Sentry release a bundle reports: `kernal@X.Y.Z`, the name release.yml creates the release
+ * under (with its commits), and one that can't collide with Outfitter's `outfitter-v…` releases in
+ * the same Sentry project. */
+export function releaseName(version: string): string {
+  return `kernal@${version}`;
+}
+
 /** One line for `/sentry` and `/sentry status`. `live` is what the process is actually doing
  * (client.ts liveStatus), which can lag the decision: the SDK may still be loading, may have failed
  * to start, or may be bound to a DSN Outfitter has since replaced. */

@@ -107,6 +107,41 @@ jobs:
           FORCE_ALL: ${{ inputs.force_all && '1' || '' }}
           USE_GKE_GCLOUD_AUTH_PLUGIN: "True"
         run: ./release.sh
+      # #421: the Sentry release named after the tag (what OUTFITTER_RELEASE makes the api, link,
+      # Drives and web app report), its commits linked from the checkout above (fetch-depth 0),
+      # finalized, and a production deploy recorded. A redeploy or rollback of an existing tag just
+      # records another deploy on that release. Skipped until the SENTRY_ORG / SENTRY_PROJECT
+      # variables and the SENTRY_AUTH_TOKEN secret are set (deploy/README.md "Sentry releases"); a
+      # Sentry failure never fails a deploy that already happened.
+      - name: Check whether Sentry releases are configured
+        id: sentry
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+        run: |
+          if [[ -n "$SENTRY_AUTH_TOKEN" && -n "$SENTRY_ORG" && -n "$SENTRY_PROJECT" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::SENTRY_ORG, SENTRY_PROJECT or SENTRY_AUTH_TOKEN not set; Sentry release skipped"
+          fi
+      - name: Sentry release
+        if: steps.sentry.outputs.enabled == 'true'
+        continue-on-error: true
+        uses: getsentry/action-release@ff07929a6537bac57790c3451cf4d364aca38528 # v3.7.0
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+        with:
+          release: ${{ github.ref_name }}
+          environment: production
+          set_commits: auto
+          # A rollback's or first release's previous-release commit may not be found; still create it.
+          ignore_missing: true
+          ignore_empty: true
+          finalize: true
+          disable_telemetry: true
 
   # #219: Playwright against what just shipped, signed in through IAP as outfitter-e2e. A separate
   # workflow file with its own Workload Identity pool: this workflow's deploy credentials never

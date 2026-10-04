@@ -31,7 +31,7 @@ import { refreshConfig, resolve, type ResolvedConfig } from "../_shared/central-
 import { loginState } from "../_shared/outfitter-session.ts";
 import { readSettings, updateKernal } from "../connect/settings.ts";
 import { installedVersion } from "../kernal-update/index.ts";
-import { decide, defaultEnvironment, describe, fleetFromConfig, optedOut, type SentryDecision } from "./config.ts";
+import { decide, defaultEnvironment, describe, releaseName, fleetFromConfig, optedOut, type SentryDecision } from "./config.ts";
 import { applySentry, claimCrashReport, isCurrent, liveStatus, newInstance, realSentry, sending, type SentryLike, type SentrySpan } from "./client.ts";
 import { agentRunError, agentRunReport, crashesToReport, toolSpanAttributes, type AgentEndMessage } from "./lib.ts";
 
@@ -72,7 +72,7 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
   // Connected to Outfitter: a login (CA-8) or, on a laptop not signed in yet, a Dongle.
   const hasDongle = signedIn || !!(creds.api && creds.token);
   const version = installedVersion();
-  const runtime = { environment: defaultEnvironment(version !== undefined), ...(version ? { release: version } : {}) };
+  const runtime = { environment: defaultEnvironment(version !== undefined), ...(version ? { release: releaseName(version) } : {}) };
   const saveOptOut = deps.saveOptOut ?? ((value: false | undefined) => updateKernal({ sentry: value }));
 
   let laptopOff = optedOut(deps.settings ?? readSettings());

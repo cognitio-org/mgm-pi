@@ -37,6 +37,16 @@ describe("initSentry", () => {
     expect(isSentryInitialized()).toBe(true);
   });
 
+  it("reports under the deploy's release the api names, and sets none without one", async () => {
+    const { initSentry } = await freshModule();
+    await initSentry(async () => ({ telemetry: { sentry: { enabled: true as const, dsn: DSN, tracesSampleRate: 0.2, release: "outfitter-v2026.10.04.1" } } }));
+    expect(initMock.mock.calls[0]?.[0]).toMatchObject({ release: "outfitter-v2026.10.04.1" });
+    const again = await freshModule();
+    initMock.mockClear();
+    await again.initSentry(on);
+    expect(initMock.mock.calls[0]?.[0]).not.toHaveProperty("release");
+  });
+
   it("sends nothing while the fleet has Sentry off", async () => {
     const { initSentry, isSentryInitialized } = await freshModule();
     expect(await initSentry(off)).toBe(false);

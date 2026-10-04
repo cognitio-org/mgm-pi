@@ -123,6 +123,30 @@ export const GLOSSARY_TERMS: GlossaryTerm[] = [
     linkTo: "/tokens",
   },
   {
+    id: "devices",
+    label: "Devices",
+    meaning: "The computers where Kernal is signed in with your account (kernal login). Sign one out here.",
+    codeName: "device login (device-code flow)",
+    glyph: "▣", // ▣
+    linkTo: "/devices",
+  },
+  {
+    id: "account",
+    label: "Account",
+    meaning: "Your Kernal settings: profiles, personal provider keys, local model sharing and router spend.",
+    codeName: "central settings",
+    glyph: "☰", // ☰
+    linkTo: "/account",
+  },
+  {
+    id: "profiles",
+    label: "Profiles",
+    meaning: "Named sets of Kernal settings, such as work and personal, picked per Kernal with --profile.",
+    codeName: "settings profiles",
+    glyph: "◫", // ◫
+    linkTo: "/account",
+  },
+  {
     id: "github",
     label: "GitHub",
     meaning: "Repositories the GitHub App can reach, with their latest commit and open pull requests.",

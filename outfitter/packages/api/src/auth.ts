@@ -51,6 +51,10 @@ export interface Identity {
    * Dongle is how an agent reaches the API from a laptop, so a few writes that only a person may
    * make (a tape's `adminTools`, gurus-service.ts) refuse it. */
   viaToken?: boolean;
+  /** #389 CA-1 (docs/specs/central-auth.md §1.6): set when the caller used a device access token
+   * (`kda_`), to the device's id. Such a caller also has `viaToken: true` and is never an operator.
+   * Routes that only a signed-in Kernal may use (key delivery, CA-4/CA-5) require it. */
+  deviceId?: string;
 }
 
 /** True when `email` (trimmed, case-insensitive) is in `operators`. */

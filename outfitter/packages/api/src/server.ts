@@ -40,6 +40,9 @@ import "./admin/memory-ops.ts";
 import { CachedSandboxTelemetry, GcpSandboxTelemetry, NoSandboxTelemetry, type SandboxTelemetry } from "./sandbox-telemetry.ts";
 import { applySentrySettings, installSentryErrorHandler, sentryEnabled, Sentry, type SentryRuntime } from "./sentry.ts";
 import { FleetSettingsCache } from "./fleet-settings.ts";
+import { DeviceLifecycle } from "./central/device-lifecycle.ts";
+import { isPublicDevicePath } from "./central/device-tokens.ts";
+import { createLitellmKeys, registerLitellmDeviceHooks, type LitellmKeys } from "./central/litellm-keys.ts";
 
 export interface BuildAppOptions {
   store: Store;
@@ -79,6 +82,9 @@ export interface BuildAppOptions {
    * reads the GitHub App id and key. Omitted installation id is fine: the catalog discovers
    * every installation itself. */
   githubCatalog?: GithubCatalog;
+  /** #389 CA-5: LiteLLM key minting. Tests inject one on a fake fetch; production builds one from
+   * config (none while OUTFITTER_LITELLM_ADMIN_KEY is unset). */
+  litellmKeys?: LitellmKeys;
 }
 
 export interface App {
@@ -239,8 +245,17 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   // token only (identityFromLinkRequest) — that role is never behind IAP (IAP is enforced
   // service-wide by Cloud Run, so it would also block agentd's WebSocket and the ngrok webhook),
   // and personal tokens (E4.1b) are the only credential a laptop teleport client can present here.
+  // #389 (docs/specs/central-auth.md §5.3): device login and revoke hooks. CA-5's router keys
+  // register theirs here; routes/device.ts announces the events.
+  const deviceLifecycle = new DeviceLifecycle((msg, err) => fastify.log.warn({ err }, msg));
+  const litellmKeys = opts.litellmKeys ?? createLitellmKeys(config, store, { log: (msg, err) => fastify.log.warn({ err }, msg) });
+  registerLitellmDeviceHooks(deviceLifecycle, litellmKeys, config);
+
   fastify.addHook("preHandler", async (req, reply) => {
     if (!req.url.startsWith("/api/") || req.url.startsWith("/api/hooks/")) return;
+    // The device-code flow's own endpoints (central/device-tokens.ts) check the credential in their
+    // body themselves: a Kernal that is not signed in yet has no bearer.
+    if (isPublicDevicePath(req.method, req.url)) return;
     // The Drive downloads a jpeg with the same credential as its socket (agent id token + run
     // token), not a user Dongle. Any other caller, and a run token that isn't this session's,
     // falls through to IAP / outf_ below.
@@ -310,6 +325,8 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
         : new CachedSandboxTelemetry(new GcpSandboxTelemetry(config.gcpProject, config.gkeNamespace))),
     githubCatalog:
       opts.githubCatalog ?? new GithubCatalog(async (name) => (await secretAdmin.accessLatest(name)) ?? ""),
+    deviceLifecycle,
+    ...(litellmKeys ? { litellmKeys } : {}),
   });
   // The down-queue poller only makes sense where AgentLink sockets actually live (role "link" or
   // "all", same condition as registering /agent/ws itself) — see agentLink.startDownQueuePoller's

@@ -40,6 +40,10 @@ const GurusPage = lazyRoute(() => import("./pages/GurusPage.tsx").then((m) => ({
 const SettingsPage = lazyRoute(() => import("./pages/SettingsPage.tsx").then((m) => ({ default: m.SettingsPage })));
 const ManualPage = lazyRoute(() => import("./pages/ManualPage.tsx").then((m) => ({ default: m.ManualPage })));
 const GithubPage = lazyRoute(() => import("./pages/GithubPage.tsx").then((m) => ({ default: m.GithubPage })));
+// #389 central sign-in and settings (docs/specs/central-auth.md §6-§7).
+const DevicesPage = lazyRoute(() => import("./pages/DevicesPage.tsx").then((m) => ({ default: m.DevicesPage })));
+const DeviceApprovePage = lazyRoute(() => import("./pages/DeviceApprovePage.tsx").then((m) => ({ default: m.DeviceApprovePage })));
+const AccountPage = lazyRoute(() => import("./pages/AccountPage.tsx").then((m) => ({ default: m.AccountPage })));
 
 const PANIC_TEST_ENABLED = Boolean(import.meta.env.DEV || import.meta.env.OUTFITTER_DEV);
 
@@ -50,6 +54,9 @@ const NAV_ITEMS: Array<{ to: string; end?: boolean; label: string; hint: string;
   { to: "/github", label: vocabulary.github.one, hint: vocabulary.github.hint },
   { to: "/providers", label: vocabulary.provider.many, hint: vocabulary.provider.hint },
   { to: "/tokens", label: vocabulary.token.many, hint: vocabulary.token.hint },
+  // #389: sysops only while the pages are placeholders; CA-1 web and CA-7 drop operatorOnly on their own line.
+  { to: "/devices", label: vocabulary.device.many, hint: vocabulary.device.hint, operatorOnly: true },
+  { to: "/account", label: vocabulary.account.one, hint: vocabulary.account.hint, operatorOnly: true },
   { to: "/settings", label: vocabulary.settings.one, hint: `${vocabulary.settings.hint} — ${vocabulary.operator.hint}`, operatorOnly: true },
 ];
 
@@ -231,6 +238,9 @@ export function App() {
             <Route path="/github" element={<GithubPage />} />
             <Route path="/providers" element={<ProvidersPage />} />
             <Route path="/tokens" element={<TokensPage />} />
+            <Route path="/devices" element={<DevicesPage />} />
+            <Route path="/device" element={<DeviceApprovePage />} />
+            <Route path="/account" element={<AccountPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             {PANIC_TEST_ENABLED && <Route path="/panic-test" element={<PanicTest />} />}
             <Route path="/manual" element={<ManualPage />} />

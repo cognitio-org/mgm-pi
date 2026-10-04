@@ -21,6 +21,8 @@ import type { VoiceUsage } from "../voice-usage.ts";
 import type { GithubCatalog } from "../github-catalog.ts";
 import type { AgentEngine } from "../agentengine/index.ts";
 import type { FleetSettingsCache } from "../fleet-settings.ts";
+import type { DeviceLifecycle } from "../central/device-lifecycle.ts";
+import type { LitellmKeys } from "../central/litellm-keys.ts";
 
 /** Dependencies every route module needs; built once in server.ts and threaded through. */
 export interface RouteContext {
@@ -72,4 +74,9 @@ export interface RouteContext {
   /** Repositories the GitHub App can reach, plus creating one and a Floppy's live status.
    * Mints its own tokens; a Drive's installation token is unchanged. */
   githubCatalog: GithubCatalog;
+  /** #389 (docs/specs/central-auth.md §5.3): device login and revoke hooks. routes/device.ts
+   * announces; CA-5's router keys listen. */
+  deviceLifecycle: DeviceLifecycle;
+  /** CA-5: LiteLLM key minting and spend; undefined while OUTFITTER_LITELLM_ADMIN_KEY is unset. */
+  litellmKeys?: LitellmKeys;
 }

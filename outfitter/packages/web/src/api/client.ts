@@ -440,7 +440,9 @@ async function errorMessage(res: Response): Promise<string> {
   return message;
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+/** Exported for the per-feature client modules (api/devices.ts, api/account.ts; #389) so they
+ * don't each add to `api` below. */
+export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, authedInit(init));
   if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
   if (res.status === 204) return undefined as T;

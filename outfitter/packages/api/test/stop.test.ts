@@ -330,6 +330,11 @@ describe("agentlink up-frame ordering", () => {
       aeAgents: inner.aeAgents,
       aeSessions: inner.aeSessions,
       a2aTasks: inner.a2aTasks,
+      deviceCodes: inner.deviceCodes,
+      devices: inner.devices,
+      settings: inner.settings,
+      routerKeys: inner.routerKeys,
+      providerKeys: inner.providerKeys,
       close: () => inner.close(),
     };
 

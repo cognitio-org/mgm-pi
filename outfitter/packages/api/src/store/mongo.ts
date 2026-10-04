@@ -75,6 +75,12 @@ import { AE_SESSION_EXECUTIONS, BROWSER_CAPTURES_PER_SESSION, entryInsertFields,
 import { TOKEN_TTL_MS } from "../tokens.ts";
 import { SearchUnavailableError } from "./types.ts";
 import { CHUNKS_COLLECTION, CHUNKS_TEXT_INDEX, CHUNKS_VECTOR_INDEX } from "../search/indexes.ts";
+import { MongoDeviceCodes, MongoDevices, ensureDeviceIndexes, type DeviceCodeDoc, type DeviceDoc } from "./devices.ts";
+import { MongoSettings, ensureSettingsIndexes, type SettingsDocMongo } from "./settings.ts";
+import { MongoProviderKeys, MongoRouterKeys, ensureKeyIndexes, type ProviderKeyDoc, type RouterKeyDoc } from "./keys.ts";
+import type { DeviceCodesCollection, DevicesCollection } from "./devices.ts";
+import type { SettingsCollection } from "./settings.ts";
+import type { ProviderKeysCollection, RouterKeysCollection } from "./keys.ts";
 
 // Typed as RunState[], not inferred as string[]: used in a Mongo `$in` filter against Run.state,
 // which the mongodb driver's Filter<T> types as a union of the literal RunState strings.
@@ -1761,6 +1767,12 @@ export class MongoStore implements Store {
   readonly aeSessions: AeSessionsCollection;
   readonly a2aTasks: A2ATasksCollection;
   readonly fleetSettings: FleetSettingsCollection;
+  // #389 central sign-in and settings (docs/specs/central-auth.md §9).
+  readonly deviceCodes: DeviceCodesCollection;
+  readonly devices: DevicesCollection;
+  readonly settings: SettingsCollection;
+  readonly routerKeys: RouterKeysCollection;
+  readonly providerKeys: ProviderKeysCollection;
   private readonly client: MongoClient;
 
   private constructor(client: MongoClient, db: Db) {
@@ -1794,6 +1806,11 @@ export class MongoStore implements Store {
       db.collection<A2ARequestsDoc>("a2aRequests"),
     );
     this.fleetSettings = new MongoFleetSettings(db.collection("fleetSettings"));
+    this.deviceCodes = new MongoDeviceCodes(db.collection<DeviceCodeDoc>("deviceCodes"));
+    this.devices = new MongoDevices(db.collection<DeviceDoc>("devices"));
+    this.settings = new MongoSettings(db.collection<SettingsDocMongo>("settings"));
+    this.routerKeys = new MongoRouterKeys(db.collection<RouterKeyDoc>("routerKeys"));
+    this.providerKeys = new MongoProviderKeys(db.collection<ProviderKeyDoc>("providerKeys"));
   }
 
   /** `dbName` wins over the database in the URI; the stored URI has none, so the default keeps
@@ -1852,6 +1869,10 @@ export class MongoStore implements Store {
       // E9.9: the widget's list (an owner's pending ones) and the dedupe lookup; gone a day on.
       db.collection("laptopApprovals").createIndex({ ownerEmail: 1, state: 1, createdAt: 1 }),
       db.collection("laptopApprovals").createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
+      // #389 (docs/specs/central-auth.md §9): each store module declares its own indexes.
+      ensureDeviceIndexes(db),
+      ensureSettingsIndexes(db),
+      ensureKeyIndexes(db),
     ]);
     // Non-fatal: a deployment that already holds two active runs for one session (the race this
     // index closes) would otherwise fail every boot. Until the duplicates are cleaned up,

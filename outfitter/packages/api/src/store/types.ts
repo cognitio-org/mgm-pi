@@ -6,6 +6,9 @@
 import type { SandboxProviderName } from "../config.ts";
 import type { VoiceEngine, VoicePrefs } from "../voice.ts";
 import type { FleetSettings } from "../fleet-settings.ts";
+import type { DeviceCodesCollection, DevicesCollection } from "./devices.ts";
+import type { SettingsCollection } from "./settings.ts";
+import type { ProviderKeysCollection, RouterKeysCollection } from "./keys.ts";
 
 export type RunState = "queued" | "provisioning" | "running" | "idle" | "stopping" | "stopped" | "failed";
 
@@ -1403,5 +1406,12 @@ export interface Store {
   aeSessions: AeSessionsCollection;
   a2aTasks: A2ATasksCollection;
   fleetSettings: FleetSettingsCollection;
+  // Central sign-in and settings (#389, docs/specs/central-auth.md §9): each collection lives in
+  // its own store module, owned by the task that builds it.
+  deviceCodes: DeviceCodesCollection;
+  devices: DevicesCollection;
+  settings: SettingsCollection;
+  routerKeys: RouterKeysCollection;
+  providerKeys: ProviderKeysCollection;
   close(): Promise<void>;
 }

@@ -447,6 +447,7 @@ var ICONS = {
   model: '<rect x="5" y="5" width="10" height="10" rx="2"/><path d="M8 1.5v3M12 1.5v3M8 15.5v3M12 15.5v3M1.5 8h3M1.5 12h3M15.5 8h3M15.5 12h3"/>',
   index: '<circle cx="8.5" cy="8.5" r="5.5"/><path d="M13 13l5 5M6 8.5h5M8.5 6v5"/>',
   github: '<path d="M10 1.8a8.2 8.2 0 0 0-2.6 16c.4.1.6-.2.6-.4v-1.5c-2.3.5-2.8-1.1-2.8-1.1-.4-1-.9-1.2-.9-1.2-.8-.5 0-.5 0-.5.9.1 1.3.9 1.3.9.7 1.3 2 .9 2.5.7.1-.6.3-.9.5-1.1-1.8-.2-3.8-.9-3.8-4.1 0-.9.3-1.7.9-2.2-.1-.3-.4-1.1.1-2.3 0 0 .7-.2 2.3.9a7.8 7.8 0 0 1 4.2 0c1.6-1.1 2.3-.9 2.3-.9.5 1.2.2 2 .1 2.3.6.5.9 1.3.9 2.2 0 3.2-2 3.9-3.8 4.1.3.3.6.8.6 1.6v2.4c0 .2.1.5.6.4A8.2 8.2 0 0 0 10 1.8z"/>',
+  settings: '<path d="M3 5h8M15 5h2M3 10h3M10 10h7M3 15h9M16 15h1"/><circle cx="13" cy="5" r="2"/><circle cx="8" cy="10" r="2"/><circle cx="14" cy="15" r="2"/>',
   key: '<circle cx="6.5" cy="10" r="3.5"/><path d="M10 10h8M15.5 10v3M18 10v2.5"/>',
   subagents: '<circle cx="10" cy="4.5" r="2.5"/><circle cx="4" cy="15.5" r="2.5"/><circle cx="16" cy="15.5" r="2.5"/><path d="M10 7v3M10 10l-5 3.5M10 10l5 3.5"/>',
   power: '<path d="M10 2v7M5.5 4.8a7 7 0 1 0 9 0"/>',
@@ -514,6 +515,7 @@ function gone(title, text) {
 // ---------- navigation and the unsaved-changes guard ----------
 var PAGES = [
   { id: "overview", label: "Overview", icon: "overview", render: renderOverview },
+  { id: "settings", label: "Settings", icon: "settings", render: renderSettings },
   { id: "connections", label: "Connections", icon: "connections", render: renderConnections },
   { id: "model", label: "Model", icon: "model", render: renderModel },
   { id: "index", label: "Codebase index", short: "Index", icon: "index", render: renderIndex },
@@ -721,7 +723,10 @@ function drawConnections(view, d) {
   var rows = {};
   var backends = {}; (d.backends || []).forEach(function (b) { backends[b.id] = b; });
 
-  add(view, head("Connections", "Where models come from. Saved to the keys file; the providers reconnect as soon as you save, no restart."));
+  var keySrc = d.keySources || {};
+  add(view, head("Connections", d.account
+    ? "Where models come from. Signed in as " + d.account.email + ": a provider key you type here is saved to your account, not the keys file. The providers reconnect as soon as you save."
+    : "Where models come from. Saved to the keys file; the providers reconnect as soon as you save, no restart."));
 
   function textRow(key, label, help, type, placeholder, mono) {
     var input = el("input", { type: type || "text", value: v[key] || "", placeholder: placeholder || null, class: mono ? "mono" : null, autocomplete: "off", spellcheck: "false" });
@@ -742,6 +747,7 @@ function drawConnections(view, d) {
       clear(box); fs.set(key, "");
       add(box, [
         isSet ? el("span", { class: "chip", text: masked, title: "Only the last four characters are ever shown" }) : el("span", { class: "note", text: "Not set" }),
+        isSet && keySrc[key] ? el("span", { class: "tag" + (keySrc[key] === "your account" || keySrc[key] === "this device" ? " accent" : ""), text: "from " + keySrc[key] }) : null,
         el("button", { class: "btn sm", type: "button", on: { click: editing } }, isSet ? "Replace" : "Add key"),
         isSet ? el("button", { class: "btn sm ghost danger", type: "button", on: { click: removing } }, "Remove") : null
       ]);
@@ -833,6 +839,147 @@ function drawConnections(view, d) {
       return false;
     });
   }
+}
+
+// =====================================================================================
+// Settings: each central value's source, saved to the account or to this machine
+// =====================================================================================
+var settingsTarget = null;   // "account" or "machine", kept while the page is open
+function renderSettings(view) {
+  add(view, head("Settings", "What Kernal is set to, and where each value comes from."));
+  loading(view);
+  api("GET", "/settings").then(function (d) { drawSettings(view, d); }, function (e) { failed(view, e); });
+}
+function sourceTag(r) {
+  if (!r.sourceLabel) return el("span", { class: "note", text: "not set" });
+  var central = ["fleet", "group", "user", "profile", "device"].indexOf(r.source) >= 0;
+  return el("span", { class: "tag" + (central ? " accent" : r.source === "dotenv" ? " warn" : ""), title: r.source === "dotenv" ? ".env is deprecated for this: save it to your account or this machine" : null, text: r.sourceLabel });
+}
+function shownValue(r) {
+  if (r.value === undefined) return "—";
+  if (r.type === "boolean") return r.value ? "on" : "off";
+  return String(r.value);
+}
+function drawSettings(view, d) {
+  clear(view);
+  var canAccount = !!(d.signedIn && d.target);
+  if (settingsTarget !== "account" && settingsTarget !== "machine") settingsTarget = canAccount ? "account" : "machine";
+  if (settingsTarget === "account" && !canAccount) settingsTarget = "machine";
+  var target = settingsTarget;
+  var fs = formState(save, function () { drawSettings(view, d); });
+  var rows = {};
+
+  var sub = d.signedIn
+    ? "Signed in as " + d.account.email + (d.profile ? ", profile " + d.profile : "") + ". Values your Sysop locks are read-only."
+    : "Not signed in: these are this machine's settings. Run kernal login to keep them on your account.";
+  add(view, head("Settings", sub, el("button", { class: "btn", type: "button", on: { click: function () { reload(); } } }, icon("refresh", 14), "Reload")));
+  if (d.targetProblem) add(view, callout("warn", "Your account's settings could not be read (" + d.targetProblem + "); saving to the account is off until they can."));
+
+  // Where a save goes. Switching redraws the rows with that target's own values.
+  var seg = el("div", { class: "seg", role: "group", "aria-label": "Save to" });
+  [["account", d.target ? d.target.label : "Save to my account"], ["machine", "Only this machine"]].forEach(function (t) {
+    var b = el("button", { type: "button", "aria-pressed": target === t[0] ? "true" : "false", disabled: t[0] === "account" && !canAccount }, t[1]);
+    b.addEventListener("click", function () {
+      if (target === t[0]) return;
+      if (fs.count() && !confirm("You have unsaved changes for the other target. Switch without saving?")) return;
+      settingsTarget = t[0]; drawSettings(view, d);
+    });
+    seg.appendChild(b);
+  });
+  var where = target === "account"
+    ? "Saved on Outfitter for " + d.account.email + ": every Kernal signed in to your account uses it from its next start."
+    : "Saved in " + d.localFile + " on this machine only; it wins over your account where the setting allows it. Takes effect at the next start.";
+  add(view, card("Save to", null, null, el("div", { class: "rows" }, seg, el("p", { class: "note", text: where }))));
+
+  var list = el("div", { class: "rows" });
+  d.rows.forEach(function (r) {
+    var editable = target === "account" ? r.canAccount : r.canMachine;
+    var here = target === "account" ? r.account : r.machine;
+    var initial = here === undefined ? "" : String(here);
+    var control;
+    if (r.type === "boolean" || r.type === "enum") {
+      var opts = r.type === "boolean" ? [["true", "on"], ["false", "off"]] : (r.choices || []).map(function (c) { return [c, c]; });
+      control = el("select", { disabled: !editable }, el("option", { value: "", text: "not set here" }), opts.map(function (o) { return el("option", { value: o[0], text: o[1] }); }));
+      control.value = initial;
+      control.addEventListener("change", function () { fs.set(r.key, control.value); row.setError(null); });
+    } else {
+      control = el("input", { type: r.type === "number" ? "number" : r.type === "url" ? "url" : "text", value: initial, class: "mono", placeholder: r.value !== undefined && !r.secret ? shownValue(r) : "not set here", autocomplete: "off", spellcheck: "false", disabled: !editable, step: r.type === "number" ? "any" : null, min: r.min, max: r.max });
+      control.addEventListener("input", function () { fs.set(r.key, control.value); row.setError(null); });
+    }
+    var now = el("div", { class: "help" }, "Now: ", el("span", { class: "mono", text: shownValue(r) }), " · from ", sourceTag(r),
+      r.readOnly ? el("span", { class: "note", text: " · " + r.readOnly }) : !editable ? el("span", { class: "note", text: target === "account" ? " · can't be set on your account; try this machine" : " · can't be set on this machine" }) : null);
+    var row = frow("s-" + r.key.replace(/\./g, "-"), r.key, r.description, control, now);
+    if (r.locked) row.classList.add("locked");
+    if (editable) fs.track(r.key, initial, row);
+    rows[r.key] = row;
+    list.appendChild(row);
+  });
+  add(view, card("Values", "Every setting this Kernal knows. Empty means not set at the target; the value then comes from elsewhere.", null, list));
+  if (d.providerKeys) add(view, providerKeysCard(d.providerKeys));
+  add(view, fs.bar);
+  view.setAttribute("aria-busy", "false");
+
+  function save(changes) {
+    var values = {};
+    for (var k in changes) values[k] = changes[k] === "" ? null : changes[k];
+    for (var r in rows) rows[r].setError(null);
+    var body = { target: target, values: values };
+    if (target === "account") body.version = d.target.version;
+    return api("POST", "/settings", body).then(function (res) {
+      toast(res.message || "Saved", "ok");
+      (res.warnings || []).forEach(function (w) { toast(w, "warn"); });
+      api("GET", "/settings").then(function (fresh) { drawSettings(view, fresh); }, function () {});
+      return true;
+    }, function (e) {
+      var errs = e.data && e.data.errors;
+      if (e.status === 409 && e.data && e.data.stale) {
+        toast("Changed elsewhere, reload: your account's settings were saved from another place since this page loaded. Nothing was overwritten.", "error");
+        add(view, callout("error", "Changed elsewhere, reload. Your edits are still in the form; Reload discards them and shows the current values."));
+      } else if (errs) { for (var f in errs) if (rows[f]) rows[f].setError(errs[f]); toast("Nothing saved: fix the highlighted fields", "error"); }
+      else toast(e.message, "error");
+      return false;
+    });
+  }
+}
+/** Personal provider keys on the account: write-only, shown as their last four characters. */
+function providerKeysCard(pk) {
+  var have = {}; (pk.keys || []).forEach(function (k) { have[k.provider] = k; });
+  var box = el("div", { class: "rows" });
+  if (pk.unavailable) box.appendChild(callout("warn", "The keys on your account could not be read just now."));
+  pk.providers.forEach(function (p) {
+    var cell = el("div", { class: "secret" });
+    var row = frow("k-" + p, p, null, cell);
+    function idle() {
+      clear(cell);
+      var k = have[p];
+      add(cell, [
+        k ? el("span", { class: "chip", text: "…" + k.last4, title: k.setAt ? "set " + new Date(k.setAt).toLocaleString() : null }) : el("span", { class: "note", text: "Not set" }),
+        el("button", { class: "btn sm", type: "button", on: { click: editing } }, k ? "Replace" : "Add key"),
+        k ? el("button", { class: "btn sm ghost danger", type: "button", on: { click: remove } }, "Remove") : null
+      ]);
+    }
+    function editing() {
+      clear(cell);
+      var input = el("input", { type: "password", class: "mono", placeholder: "Paste the key", autocomplete: "new-password", spellcheck: "false", "aria-label": p + " key" });
+      var saveBtn = el("button", { class: "btn sm primary", type: "button" }, "Save to my account");
+      saveBtn.addEventListener("click", function () { send(input.value, saveBtn); });
+      add(cell, el("div", { class: "inline" }, input, saveBtn, el("button", { class: "btn sm ghost", type: "button", on: { click: idle } }, "Cancel")));
+      input.focus();
+    }
+    function remove() { if (confirm("Remove the " + p + " key from your account?")) send(null); }
+    function send(value, btn) {
+      row.setError(null);
+      if (btn) btn.disabled = true;
+      api("POST", "/settings/provider-key", { provider: p, value: value }).then(function (res) {
+        toast(res.message, "ok");
+        have = {}; (res.keys || []).forEach(function (k) { have[k.provider] = k; });
+        idle();
+      }, function (e) { if (btn) btn.disabled = false; row.setError((e.data && e.data.errors && e.data.errors.value) || e.message); });
+    }
+    idle();
+    box.appendChild(row);
+  });
+  return card("Keys on your account", "Personal provider keys, kept by Outfitter and delivered to your signed-in Kernals. Never shown again after saving; never written to .env.", null, box);
 }
 
 // =====================================================================================

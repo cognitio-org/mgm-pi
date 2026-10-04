@@ -2,7 +2,7 @@
  * /admin — a local web admin for kernal: status, connections, model, codebase index, subagents.
  *
  *   /admin          start the server (if it is not running) and open the page in the browser
- *   /admin index    ...opened at one page (overview, connections, model, index, subagents)
+ *   /admin index    ...opened at one page (overview, settings, connections, model, index, subagents)
  *   /admin status   where it is and when it stops
  *   /admin stop     stop it now
  *
@@ -14,12 +14,17 @@
  * re-registered by asking connect over pi's event bus, as /setup does. Index settings through
  * kernal-codebase-index (FIELDS, applyEdit, setReranking, applyEmbeddingChoice, writeConfig), and the
  * index state by asking that extension over the bus. Security notes are in server.ts.
+ *
+ * Signed in to Outfitter (kernal login), the Settings page shows each central setting's source and
+ * saves to the account or to this machine, and a provider key typed here goes to the account, not
+ * .env (central.ts, spec §11). Signed out, every page behaves as before.
  */
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { VERSION as PI_VERSION } from "@earendil-works/pi-coding-agent";
-import { backends, busRequest, cleanKey, normalizeBaseUrl, parseLmStudioModels, rootUrl, type Bus } from "../connect/lib.ts";
+import { backends, busRequest, cleanKey, normalizeBaseUrl, parseEnvText, parseLmStudioModels, rootUrl, type Bus } from "../connect/lib.ts";
 import { envFilePath, getJson, loadEnv, settingsPath, testConnection, writeEnvValues } from "../connect/index.ts";
 import {
   applyEdit, applyEmbeddingChoice, embeddingBaseUrl, embeddingProblem, getAt, invalidatesIndex, refreshRouterKey, rerankerProblem, routerFromEnv, setReranking,
@@ -41,6 +46,8 @@ import { APP_CSS, APP_JS, FAVICON, INDEX_HTML } from "./app.ts";
 import { backendPill, connectionsView, fieldById, idleMs, indexFields, leaksSecret, redactSecrets, secretValues, validateConnections, type ConnectionEdit } from "./lib.ts";
 import { startAdminServer, type AdminServer, type Api, type ApiResult } from "./server.ts";
 import { env } from "../_shared/env.ts";
+import { providerKey, refreshProviderKeys, resolve as resolveConfig } from "../_shared/central-config.ts";
+import { PROVIDER_OF_FIELD, PROVIDERS, listProviderKeys, saveSettings, settingsView, signedInAccount, sourceLabel, writeProviderKey } from "./central.ts";
 
 export const ASSETS = {
   "/index.html": { type: "text/html; charset=utf-8", body: INDEX_HTML },
@@ -50,10 +57,24 @@ export const ASSETS = {
 };
 
 /** Pages `/admin <page>` can open directly. */
-const PAGES = ["overview", "connections", "model", "index", "subagents", "github"];
+const PAGES = ["overview", "settings", "connections", "model", "index", "subagents", "github"];
 
 const agentDir = () => process.env.PI_CODING_AGENT_DIR || join(process.env.HOME ?? "", ".pi", "agent");
 const readJson = (f: string) => { try { return JSON.parse(readFileSync(f, "utf8")); } catch { return undefined; } };
+
+/** The .env file whose value for `field` connect's loadEnv ends up with (its files, nearest last,
+ * as in connect/index.ts), when that value is not empty; else undefined. */
+const envFileSetting = (field: string, cwd = process.cwd()): string | undefined => {
+  let from: string | undefined, value = "";
+  for (const f of [join(homedir(), "localllm", ".env"), envFilePath(), join(cwd, "..", ".env"), join(cwd, ".env")]) {
+    const parsed = safe(() => parseEnvText(readFileSync(f, "utf8")));
+    if (parsed && field in parsed) { from = f; value = parsed[field]; }
+  }
+  return value ? from : undefined;
+};
+/** This machine has its own copy of `field` (a .env file connect reads, or the shell), which wins
+ * over the account's key (central-config's layerCentralEnv). */
+const hasLocalCopy = (field: string) => !!process.env[field] || !!envFileSetting(field);
 const safe = <T>(f: () => T): T | undefined => { try { return f(); } catch { return undefined; } };
 const fail = (status: number, body: Record<string, unknown>): ApiResult => ({ status, body });
 
@@ -85,6 +106,15 @@ export function createApi(d: ApiDeps): Api {
     try { return { body: await f(ctx) }; }
     catch (e: any) { return e instanceof AgentError ? fail(e.status, { error: e.message, errors: e.errors }) : fail(500, { error: String(e?.message ?? e).slice(0, 300) }); }
   };
+  /** Signed in: where the router and OpenRouter keys in use come from, in the Settings page's words. */
+  const keySources = () => {
+    const out: Record<string, string> = {};
+    const router = safe(() => resolveConfig().values["router.key"]);
+    if (router) out.LITELLM_AGENT_KEY = sourceLabel(router);
+    const or = env().OPENROUTER_API_KEY;
+    if (or) out.OPENROUTER_API_KEY = providerKey("openrouter") === or && !process.env.OPENROUTER_API_KEY ? "your account" : "this machine";
+    return out;
+  };
   const shortName = (id: string) => ({ lmstudio: "Local server", litellm: "Router", openrouter: "OpenRouter" } as Record<string, string>)[id] ?? id;
 
   const routes: Record<string, (body: any, query: URLSearchParams) => Promise<ApiResult>> = {
@@ -114,15 +144,57 @@ export function createApi(d: ApiDeps): Api {
     },
 
     // ---------- connections ----------
-    "GET /connections": async () => ({ body: { values: connectionsView(env()), backends: (await connections()).map(withPill), envFile: envFilePath() } }),
+    "GET /connections": async () => {
+      const account = signedInAccount();
+      const keys = account ? await listProviderKeys(account) : undefined;
+      return { body: {
+        values: connectionsView(env()), backends: (await connections()).map(withPill), envFile: envFilePath(),
+        // Signed in: where each key comes from, and which keys the account holds (last four only).
+        ...(account ? { account: { email: account.email, keys: keys ?? [], keysUnavailable: !keys }, keySources: keySources() } : {}),
+      } };
+    },
 
     "POST /connections": async (body: ConnectionEdit) => {
       const { values, errors, warnings } = validateConnections(body);
       if (Object.keys(errors).length) return fail(422, { error: "some fields need fixing", errors, warnings });
       if (!Object.keys(values).length) return { body: { message: "Nothing to save", warnings } };
       const before = env();
-      const file = writeEnvValues(values);
+      // Signed in, a provider key goes to the account (spec §11), never into .env, and the .env copy
+      // is removed so the account's key is the one this machine uses. A refused key saves nothing.
+      const account = signedInAccount();
+      const toAccount: string[] = [];
+      if (account) {
+        const keyErrors: Record<string, string> = {};
+        for (const field of Object.keys(values)) {
+          const provider = PROVIDER_OF_FIELD[field];
+          if (!provider) continue;
+          // Remove takes away the key in use: a local copy (.env or the shell) is removed here only,
+          // as signed out; the account's key, which other machines use, only when it is the one in use.
+          if (values[field] === "" && hasLocalCopy(field)) continue;
+          const why = await writeProviderKey(account, provider, values[field] === "" ? null : values[field]);
+          if (why) keyErrors[field] = why; else toAccount.push(field);
+        }
+        if (Object.keys(keyErrors).length) {
+          return fail(422, { error: toAccount.length ? `saved ${toAccount.join(", ")} to your account; nothing else was saved` : "nothing was saved", errors: keyErrors, warnings });
+        }
+        const envText = safe(() => readFileSync(envFilePath(), "utf8")) ?? "";
+        for (const field of toAccount) {
+          if (new RegExp(`^\\s*(?:export\\s+)?${field}\\s*=`, "m").test(envText)) values[field] = "";
+          else delete values[field];
+          delete process.env[field];
+        }
+        if (toAccount.length) await refreshProviderKeys();
+      }
+      const file = Object.keys(values).length ? writeEnvValues(values) : envFilePath();
       for (const k of Object.keys(values)) if (values[k] === "") delete process.env[k];
+      // connect reads more .env files than the one written here, and a local key wins over the
+      // account's: name the file that still sets a key just moved to the account or removed.
+      if (account) {
+        for (const field of new Set([...toAccount, ...Object.keys(values).filter((k) => PROVIDER_OF_FIELD[k] && values[k] === "")])) {
+          const still = envFileSetting(field);
+          if (still) warnings[field] = `${field} in ${still} still wins${toAccount.includes(field) ? " over your account's key" : ""}: remove it there`;
+        }
+      }
       // As /setup does: re-register every provider from the new values, live.
       const state = (await busRequest<ConnState[]>(bus, "kernal:connect", { op: "reload" }, 30_000).catch(() => undefined)) ?? [];
       // The reranker keeps its own copy of the router URL and key; bring it along, as start-up does.
@@ -135,9 +207,19 @@ export function createApi(d: ApiDeps): Api {
       if ("KERNAL_USER" in values && values.KERNAL_USER !== (before.KERNAL_USER ?? "")) notes.push("Your name shows in the banner from the next start.");
       for (const b of state) if (b.rejected) notes.push(`${shortName(b.id)} rejected the key (${b.rejected}).`);
       const ready = state.filter((b) => b.registered).map((b) => shortName(b.id));
+      for (const field of toAccount) {
+        const provider = PROVIDER_OF_FIELD[field];
+        if (body[field as keyof ConnectionEdit] && !providerKey(provider)) notes.push(`${shortName(provider)}: the key is on your account; Kernal picks it up at its next start.`);
+      }
+      const toFile = Object.keys(values).filter((k) => !toAccount.includes(k));
+      const n = toFile.length;
+      const where = [
+        toAccount.length ? `${toAccount.length === 1 ? "1 key" : `${toAccount.length} keys`} to your account (${account!.email})` : "",
+        n ? `${n} setting${n === 1 ? "" : "s"} to ${file}` : "",
+      ].filter(Boolean).join(" and ");
       return { body: {
-        message: `Saved ${Object.keys(values).length} setting${Object.keys(values).length === 1 ? "" : "s"} to ${file}. ${state.length ? `Connected: ${ready.join(", ") || "none"}.` : "Restart kernal to reconnect."}`,
-        saved: Object.keys(values), warnings, notes, backends: state.map(withPill),
+        message: `Saved ${where}. ${state.length ? `Connected: ${ready.join(", ") || "none"}.` : "Restart kernal to reconnect."}`,
+        saved: [...toFile, ...toAccount], savedToAccount: toAccount, warnings, notes, backends: state.map(withPill),
       } };
     },
 
@@ -154,6 +236,40 @@ export function createApi(d: ApiDeps): Api {
       const native = await getJson(`${rootUrl(url)}/api/v0/models`, "lm-studio", 3000);
       const ids = native ? [...parseLmStudioModels(native).keys()] : ((await getJson(`${url}/models`, "lm-studio", 3000))?.data ?? []).map((m: any) => String(m.id));
       return { body: { models: ids.filter((id: string) => !/embed/i.test(id)).sort() } };
+    },
+
+    // ---------- settings: each central value's source, and where a save goes (central.ts) ----------
+    "GET /settings": async () => {
+      const view = await settingsView();
+      const account = signedInAccount();
+      const keys = account ? await listProviderKeys(account) : undefined;
+      return { body: { ...view, ...(account ? { providerKeys: { providers: PROVIDERS, keys: keys ?? [], unavailable: !keys } } : {}) } };
+    },
+
+    "POST /settings": async (body: { target?: unknown; values?: unknown; version?: unknown }) => {
+      const r = await saveSettings(body);
+      return r.status === 200 ? { body: r.body } : fail(r.status, r.body);
+    },
+
+    // Signed in only: a personal provider key, written to the account and never shown back (spec §4).
+    "POST /settings/provider-key": async (body: { provider?: unknown; value?: unknown }) => {
+      const account = signedInAccount();
+      if (!account) return fail(409, { error: "not signed in: run kernal login to keep keys on your account" });
+      if (typeof body.provider !== "string" || !PROVIDERS.includes(body.provider)) return fail(400, { error: "unknown provider" });
+      let value: string | null = null;
+      if (body.value !== null) {
+        if (typeof body.value !== "string" || /[\r\n\0]/.test(body.value)) return fail(422, { error: "some fields need fixing", errors: { value: "must be a single line" } });
+        value = cleanKey(body.value);
+        if (!value || /\s/.test(value)) return fail(422, { error: "some fields need fixing", errors: { value: "a key has no spaces in it; paste just the key" } });
+      }
+      const why = await writeProviderKey(account, body.provider, value);
+      if (why) return fail(422, { error: why, errors: { value: why } });
+      await refreshProviderKeys();
+      const keys = await listProviderKeys(account);
+      return { body: {
+        message: value === null ? `Removed the ${body.provider} key from your account.` : `Saved the ${body.provider} key to your account (${account.email}). It is never shown again.`,
+        keys: keys ?? [],
+      } };
     },
 
     // ---------- model ----------

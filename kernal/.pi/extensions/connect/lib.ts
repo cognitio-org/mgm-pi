@@ -130,7 +130,9 @@ export const DEFAULT_OPENROUTER_MODELS = [
 export function keepListed(curated: string[], catalogue: any): { kept: string[]; dropped: string[] } {
   const live = new Set(((catalogue?.data ?? []) as any[]).map((m) => String(m?.id)));
   if (!live.size) return { kept: curated, dropped: [] };
-  return { kept: curated.filter((id) => live.has(id)), dropped: curated.filter((id) => !live.has(id)) };
+  // Routing variants (":nitro", ":floor", ":online", ...) work on any model but aren't listed.
+  const listed = (id: string) => live.has(id) || live.has(id.replace(/:[^/:]+$/, ""));
+  return { kept: curated.filter(listed), dropped: curated.filter((id) => !listed(id)) };
 }
 
 export function backends(env: Record<string, string>, litellmMeta: Map<string, ModelMeta>, lmstudioMeta: Map<string, LmStudioMeta> = new Map()): Backend[] {

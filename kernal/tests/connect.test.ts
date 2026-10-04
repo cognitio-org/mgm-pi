@@ -127,6 +127,8 @@ describe("backends", () => {
   test("curated OpenRouter ids are checked against OpenRouter's catalogue", () => {
     const catalogue = { data: [{ id: "a/b" }, { id: "deepseek/deepseek-v4-pro" }] };
     assert.deepEqual(keepListed(["a/b", "deepseek/deepseek-v4"], catalogue), { kept: ["a/b"], dropped: ["deepseek/deepseek-v4"] });
+    // a routing variant counts as its listed base model; an unlisted base still doesn't
+    assert.deepEqual(keepListed(["a/b:nitro", "x/y:nitro"], catalogue), { kept: ["a/b:nitro"], dropped: ["x/y:nitro"] });
     // catalogue unreadable or empty: keep the curated list rather than offer nothing
     assert.deepEqual(keepListed(["a/b"], undefined), { kept: ["a/b"], dropped: [] });
     assert.deepEqual(keepListed(["a/b"], { data: [] }), { kept: ["a/b"], dropped: [] });

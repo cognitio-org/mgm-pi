@@ -258,7 +258,7 @@ export default async function (pi: ExtensionAPI) {
     const anyKey = defs.some((d) => d.id !== "lmstudio" && d.apiKey);
     if (ctx.hasUI && !anyKey && !reachable.has("lmstudio")) ctx.ui.notify("No model connections yet: no API keys and no local model server answering. Run /setup.", "warning");
     if (ctx.hasUI) for (const [id, why] of keyRejected) ctx.ui.notify(`${id} rejected the key (${why}); its models are hidden until /setup saves a working one. ${keyHint(id)}`, "warning");
-    if (ctx.hasUI) for (const [id, ids] of notListed) ctx.ui.notify(`${id} no longer lists ${ids.join(", ")}; left out of /model and /connect. Fix OPENROUTER_MODELS if you set it.`, "warning");
+    if (ctx.hasUI) for (const [id, ids] of notListed) ctx.ui.notify(`${id} doesn't list ${ids.join(", ")}; left out of /model and /connect. Fix OPENROUTER_MODELS if you set it.`, "warning");
   });
 
   // ---------- /connect ----------

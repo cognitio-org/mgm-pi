@@ -637,8 +637,8 @@ Move a pi session between machines, the way Claude Code's teleport does: push it
 pull it into another. `.pi/extensions/teleport/lib.ts` defines a small `Store` interface
 (`list`/`get`/`put`) and a `GitStore` implementation on top of it. `.pi/extensions/teleport/
 outfitter-store.ts` implements the same interface against the Outfitter cloud API instead;
-`store-factory.ts` picks between them (see "Outfitter store" below), and neither `index.ts` (the pi
-extension) nor `cli.ts` (`kernal --teleport`) know which one they're talking to.
+`store-factory.ts` picks between them (see "Outfitter store" below), and `index.ts` (the pi extension,
+which also serves `kernal --teleport`) doesn't know which one it's talking to.
 
 **What gets pushed.** `/teleport push` sends the *entire* session transcript -- every prompt, tool
 call and tool result, which can include file contents, command output and anything pasted into the
@@ -651,7 +651,7 @@ teleported there the same as you would a checked-in secret.
 /teleport list            list sessions in the store
 /teleport push [name]     push the current session
 /teleport pull [id]       pull a session by id (prompts to pick one if omitted)
-kernal --teleport <id>       headless pull + launch, from any shell (see below)
+kernal --teleport <id>    pull + launch, from any shell (see below)
 ```
 
 ### Store layout
@@ -691,8 +691,8 @@ teleported.
   `git fetch origin <branch> && git checkout <branch>` before importing.
 - The session id is preserved across the hop (`SessionManager.forkFrom(tmpFile, cwd, undefined, {
   id })`); if a session with that id already exists locally, the interactive `/teleport pull` asks
-  whether to overwrite it or fork under a new id, and the headless `kernal --teleport` always forks
-  under a new id (the non-destructive default with no one there to ask).
+  whether to overwrite it or fork under a new id; without a UI (`kernal --teleport <id> -p ...`) it
+  always forks under a new id (the non-destructive default with no one there to ask).
 
 ### Model remap
 
@@ -749,12 +749,17 @@ whatever has been persisted so far -- the transcript tail may then be missing.
 
 ### Headless: `kernal --teleport <id>`
 
-pi has no "run a slash command at startup" flag, so `bin/kernal` handles `--teleport` itself: before pi
-starts, `.pi/extensions/teleport/cli.ts` does the store lookup, repo/branch checks, and
-`SessionManager.forkFrom` import (headlessly — no interactive prompts, so an id collision always
-forks under a new id), prints the resulting session file path, and `bin/kernal` execs
-`pi -a --session <path> ...` pointed at it. Everything else about `kernal`'s argument handling is
-unchanged.
+`bin/kernal` starts pi with `/teleport pull <id> [--force]` as its first message. pi runs a first
+message that names an extension command as that command once the session is up, so the pull is the
+same one `/teleport pull` does: store lookup, repo/branch checks, `SessionManager.forkFrom` import,
+model remap, then a switch to the imported session. Any other pi arguments are passed on (a later
+message runs in the imported session); `@file` arguments are refused, because pi would put the file
+text in front of the command. With a UI, errors show in it and you stay in a fresh session. Without
+one (`-p`, `--mode json`) messages go to stderr, an id collision imports under a new id, and a
+failure exits 1 before any prompt runs.
+
+It used to run a node script before pi started. Release bundles ship pi as a compiled binary, not
+the npm package, so that script could not import `SessionManager` there (#426).
 
 ### Auto-push
 

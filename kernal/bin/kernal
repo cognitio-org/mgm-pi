@@ -338,7 +338,7 @@ set -- ${_args[@]+"${_args[@]}"}
 
 case "${1:-}" in
   login|logout|whoami)
-    # Sign-in to Outfitter (#391, central-auth.md §2.5): before pi starts, like --teleport below.
+    # Sign-in to Outfitter (#391, central-auth.md §2.5): before pi starts, with node.
     exec node "$ROOT/.pi/extensions/kernal-login/cli.ts" "$@" ;;
   github)
     # The same setup /github runs inside the agent, from a plain terminal.
@@ -416,26 +416,30 @@ case "${1:-}" in
     # native-messaging manifest. An unpacked extension keeps the old files until reload.
     KERNAL_HOME="$(cd -P "$ROOT/.." && pwd)" KERNAL_VERSION="${2:-}" bash "$tmp/install.sh"; exit $? ;;
   --teleport)
-    # pi has no "run a slash command at startup" flag, so the pull happens here, headlessly, before
-    # pi starts: .pi/extensions/teleport/cli.ts fetches the session from the store, checks out the
-    # matching repo branch, imports it for this cwd and prints the session file; pi opens that.
-    # (cli.ts uses its own process.cwd(), which node resolves symlinks in the same way pi does.)
+    # The pull runs inside pi, not before it (#426): a bundle ships pi as a compiled binary, so a
+    # node-run script can't import pi's SessionManager. pi runs its first message as a slash command
+    # once the session is up, so pi starts on "/teleport pull <id>": the teleport extension's own pull
+    # (store lookup, repo/branch checks, import, then a switch to that session). With a UI, errors
+    # show there; without one (-p, --mode json) they go to stderr and pi exits 1.
     id="${2:-}"
     if [[ -z "$id" || "$id" == -* ]]; then echo "Usage: kernal --teleport <session-id> [--force] [pi args...]" >&2; exit 1; fi
+    # The id travels inside the slash command, which the extension splits on whitespace.
+    if [[ ! "$id" =~ ^[A-Za-z0-9._:-]+$ ]]; then echo "kernal --teleport: \"$id\" is not a session id" >&2; exit 1; fi
     shift 2
     # --force (only meaningful for KERNAL_TELEPORT_STORE=outfitter: skip waiting for an active cloud
-    # run to stop) is consumed here, not passed on to pi. bash 3.2 (macOS default) treats an empty
-    # array as unbound under set -u, hence ${arr[@]+"${arr[@]}"} below (see scripts/install.sh).
-    force=()
+    # run to stop) goes to the pull, not to pi. pi puts @file text in front of the first message,
+    # which would stop it being a command, so @file arguments are refused here. bash 3.2 (macOS
+    # default) treats an empty array as unbound under set -u, hence ${arr[@]+"${arr[@]}"} below.
+    pull="/teleport pull $id"
     rest=()
     for a in "$@"; do
-      if [[ "$a" == "--force" ]]; then force=(--force); else rest+=("$a"); fi
+      if [[ "$a" == "--force" ]]; then pull="$pull --force"
+      elif [[ "$a" == @* ]]; then echo "kernal --teleport: @file arguments can't be combined with --teleport; attach them once the session is open" >&2; exit 1
+      else rest+=("$a"); fi
     done
-    set -- ${rest[@]+"${rest[@]}"}
-    session_path="$(node "$ROOT/.pi/extensions/teleport/cli.ts" "$id" ${force[@]+"${force[@]}"})"
     if [[ -x "$ROOT/pi/pi" ]]; then PI="$ROOT/pi/pi"; else PI="$ROOT/node_modules/.bin/pi"; fi
     pi_memory_env
-    exec "$PI" -a --session "$session_path" "$@" ;;
+    exec "$PI" -a "$pull" ${rest[@]+"${rest[@]}"} ;;
 esac
 
 # Make sure the local model is resident so pi does not stall on LM Studio's just-in-time reload.

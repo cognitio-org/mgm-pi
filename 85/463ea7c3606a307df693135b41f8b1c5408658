@@ -1,0 +1,19 @@
+kernal/.pi/extensions/connect/lib.ts
+  s_c67f9150e24079::t_ee543ffccf497d 121-122
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "85463ea7c3606a307df693135b41f8b1c5408658",
+  "prompts": {},
+  "sessions": {
+    "s_c67f9150e24079": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "17f761ab-de7d-4690-a895-e067e9f608df",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -1,0 +1,48 @@
+outfitter/packages/api/src/fleet-settings.ts
+  s_38ec74cfb7fa1d::t_296e1d7d8b9d45 34-39
+  s_38ec74cfb7fa1d::t_0d05b4a1f3653f 21
+  s_38ec74cfb7fa1d::t_7e303da6fc18f6 79-81,87-120
+  s_38ec74cfb7fa1d::t_b0a9752b09e50b 12-14
+  s_38ec74cfb7fa1d::t_e27e4d104abf3f 121
+outfitter/packages/api/src/routes/operator.ts
+  s_38ec74cfb7fa1d::t_649438d901f45b 157-160
+  s_38ec74cfb7fa1d::t_e3d59d0d203e07 9
+outfitter/packages/api/test/settings-mongo.test.ts
+  s_38ec74cfb7fa1d::t_3c28e4b7a331f5 1-84
+outfitter/packages/api/src/store/memory.ts
+  s_38ec74cfb7fa1d::t_f177228fd60051 428-433
+outfitter/packages/api/src/central/settings-resolver.ts
+  s_38ec74cfb7fa1d::t_fd742f9f6c52c8 5-10,13-14,16-25,34-108,111-112,116-139,142-144,146,149-151,154-159
+outfitter/packages/api/src/central/settings-schema.ts
+  s_38ec74cfb7fa1d::t_c5376be9015465 211-306
+outfitter/packages/api/src/routes/config.ts
+  s_38ec74cfb7fa1d::t_8d2834ebe9147e 5-9,11,13-27,29-369
+outfitter/packages/api/test/settings-resolver.test.ts
+  s_38ec74cfb7fa1d::t_3ec648c36da636 200,202,204-210
+  s_38ec74cfb7fa1d::t_9d973edb377137 1-199,201,203,211-222
+outfitter/packages/api/src/store/types.ts
+  s_38ec74cfb7fa1d::t_cf55e667ed2454 1383-1385
+outfitter/packages/api/src/store/mongo.ts
+  s_38ec74cfb7fa1d::t_1a8553a1e8e776 493-508
+outfitter/packages/api/test/config-routes.test.ts
+  s_38ec74cfb7fa1d::t_fee8320df8b92c 1-21,23-371
+  s_38ec74cfb7fa1d::t_7aba0c16e7ace3 22
+outfitter/packages/api/src/store/settings.ts
+  s_38ec74cfb7fa1d::t_3a3985bf6f4426 54-56,60-68,71-75,77-79,81-87,89-94,96-107,111-112,115-120,126-128,130-133,135-149,151-155,157-167
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "cc4ef4a3554dc4c1efb940a91fc860533639e937",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}
